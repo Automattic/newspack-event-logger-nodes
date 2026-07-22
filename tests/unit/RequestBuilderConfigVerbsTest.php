@@ -82,6 +82,43 @@ class RequestBuilderConfigVerbsTest extends TestCase {
 		$this->assertSame( '', $rb->flight()->target() );
 	}
 
+	public function test_set_inflight_delta_verb_writes_to_flight(): void {
+		$rb = new Request_Builder_Node();
+		$rb->name( 'rb' );
+		$interpreter = $this->read_private( $rb, 'interpreter' );
+		$verbs       = $interpreter->commands();
+		$this->assertArrayHasKey( 'set_inflight_delta', $verbs );
+		$this->assertFalse( $rb->flight()->delta(), 'delta defaults off' );
+		$this->assertSame( 'ok', $verbs['set_inflight_delta']( $interpreter, [ '1' ] ) );
+		$this->assertTrue( $rb->flight()->delta() );
+	}
+
+	public function test_set_inflight_delta_bare_or_zero_arg_disables(): void {
+		$rb = new Request_Builder_Node();
+		$rb->name( 'rb' );
+		$interpreter = $this->read_private( $rb, 'interpreter' );
+		$verbs       = $interpreter->commands();
+		$verbs['set_inflight_delta']( $interpreter, [ '1' ] );
+		$this->assertTrue( $rb->flight()->delta() );
+		$this->assertSame( 'ok', $verbs['set_inflight_delta']( $interpreter, [ '0' ] ) );
+		$this->assertFalse( $rb->flight()->delta(), '0 disables' );
+		$verbs['set_inflight_delta']( $interpreter, [ '1' ] );
+		$this->assertSame( 'ok', $verbs['set_inflight_delta']( $interpreter, [] ) );
+		$this->assertFalse( $rb->flight()->delta(), 'bare arg disables' );
+	}
+
+	public function test_dump_config_round_trips_the_inflight_delta_knob(): void {
+		$rb = new Request_Builder_Node();
+		$rb->name( 'rb-delta-dump' );
+		// Default off — dump_config emits only non-default settings, so no knob.
+		$this->assertStringNotContainsString( 'set_inflight_delta', $rb->dump_config() );
+		$rb->flight()->set_delta( true );
+		$this->assertStringContainsString(
+			'cmd rb-delta-dump:config set_inflight_delta 1',
+			$rb->dump_config()
+		);
+	}
+
 	public function test_set_errors_target_empty_args_clears_target(): void {
 		$rb = new Request_Builder_Node();
 		$rb->name( 'rb' );

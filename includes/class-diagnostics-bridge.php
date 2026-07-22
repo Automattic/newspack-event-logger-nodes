@@ -14,11 +14,11 @@
  *  - `newspack_nodes/alert` — each rate-limited fleet-health alert. It rides the
  *    active request logger when one is started; otherwise (the supervisor tick,
  *    where the logger is un-started / rule-gated / root) it is written DIRECTLY
- *    into a dedicated single-writer `errors.fleet.p0` log so the alert always
- *    reaches the Error Log. That dir is matched by the dashboard's existing
- *    `errors.*` subscription glob (zero UI change) and NOT co-written with the
- *    request-builder's `void_warranty` errors.p* partitions — whose >PIPE_BUF
- *    single-writer appends a foreign atomic append could tear.
+ *    into the errors family, KEY='fleet' hash-routing to `errors.p{N}` — the same
+ *    dirs the request-builder writes and the dashboard's `errors.*` glob covers
+ *    (zero UI change). Every append in that family is now ≤PIPE_BUF atomic
+ *    (Request_Builder and this bridge both fit via `Line_Fitter`, and no
+ *    errors partition lifts the cap), so two writers on one dir is safe.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -27,7 +27,7 @@ namespace Newspack_Event_Logger_Nodes;
 
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
-use Newspack_Nodes\Partition_Node;
+use Newspack_Nodes\Topic_Node;
 
 if ( ! \defined( 'ABSPATH' ) ) {
 	exit;
@@ -35,37 +35,23 @@ if ( ! \defined( 'ABSPATH' ) ) {
 
 class Diagnostics_Bridge {
 
-	/**
-	 * Producer basename for the fleet-alert log. Registered on
-	 * `newspack_nodes/registered_log_producers` so Log_Cleaner keeps its
-	 * `{producer}.p{N}` dirs; the writer targets the single `.p0`.
-	 */
-	public const FLEET_PRODUCER = 'errors.fleet';
-
 	/** @var string Stable synthetic id keying the fleet-alert entries (Message::KEY). */
 	private const FLEET_KEY = 'fleet';
 
-	// Probe-log geometry: 1 MiB x 2 segments, keep a day, default cap.
-	private const SEGMENT_SIZE = 1048576;
-	private const MIN_SEGMENTS = 2;
-	private const MAX_SEGMENTS = 2;
-	private const MIN_LIFETIME = 86400;
-	private const MAX_LIFETIME = 0;
-
 	/**
-	 * errors.fleet.p0 write seam (filesystem side-effect). Lazily-defaulted at the
-	 * call site to a closure that fills + flushes the real Partition; tests reassign
-	 * it to force a throw and prove on_alert swallows it, WITHOUT short-circuiting
-	 * the partition-build + fit_to_line path (which stays under real coverage).
+	 * errors-family write seam (filesystem side-effect). Lazily-defaulted at the
+	 * call site to a closure that fills + flushes the real Topic; tests reassign it
+	 * to force a throw and prove on_alert swallows it, WITHOUT short-circuiting the
+	 * topic-build + Line_Fitter path (which stays under real coverage).
 	 *
-	 * Signature: `function ( Partition_Node $partition, array $packed ): void`.
+	 * Signature: `function ( Topic_Node $topic, array $packed ): void`.
 	 *
 	 * @var \Closure|null
 	 */
 	public static ?\Closure $write_seam = null;
 
-	/** @var Partition_Node|null Lazily-built single-writer errors.fleet.p0, reused across the process. */
-	private static ?Partition_Node $errors_partition = null;
+	/** @var Topic_Node|null Lazily-built anonymous errors.p{partition} Topic, reused across the process. */
+	private static ?Topic_Node $errors_topic = null;
 
 	/**
 	 * `newspack_nodes/stderr` listener: log the line to the active request when a
@@ -103,8 +89,10 @@ class Diagnostics_Bridge {
 	}
 
 	/**
-	 * Direct errors.fleet.p0 write for the no-active-logger case, mirroring the
+	 * Direct errors.p{N} write for the no-active-logger case, mirroring the
 	 * Request_Builder emit_error entry shape ({ n, k:'alert', m, ts }, KEY=fleet).
+	 * KEY='fleet' routes the Topic to one partition the dashboard's `errors.*` glob
+	 * covers.
 	 *
 	 * @param string $message Alert message.
 	 */
@@ -115,71 +103,51 @@ class Diagnostics_Bridge {
 		$msg[ Message::TIMESTAMP ] = Core::$now;
 		$msg[ Message::KEY ]       = self::FLEET_KEY;
 		$msg[ Message::VALUE ]     = $entry;
-		$msg                       = self::fit_to_line( $msg );
+		$msg                       = Line_Fitter::fit( $msg, [ 'm' ] );
 		if ( null === $msg ) {
-			return; // Pathologically unfittable — drop, never emit oversize.
+			// Defensively dead ('m' always shrinks to fit); loud for parity.
+			Core::print_less_often( 'DiagnosticsBridge: dropped an unfittable alert ', $message );
+			return;
 		}
 		$write = self::$write_seam ?? self::real_write( ... );
-		$write( self::errors_partition(), $msg );
+		$write( self::errors_topic(), $msg );
 	}
 
 	/**
-	 * The default errors.fleet.p0 write (fill + flush) that `$write_seam` stands in
+	 * The default errors-family write (fill + flush) that `$write_seam` stands in
 	 * for. A named method so its `array<int, mixed>` packed-message type is declared
-	 * for the Partition::fill() contract.
+	 * for the Topic::fill() contract.
 	 *
 	 * @param array<int, mixed> $packed Packed alert message.
 	 */
-	private static function real_write( Partition_Node $partition, array $packed ): void {
-		$partition->fill( $packed );
-		$partition->flush();
+	private static function real_write( Topic_Node $topic, array $packed ): void {
+		$topic->fill( $packed );
+		$topic->flush();
 	}
 
 	/**
-	 * Fit the entry to the log's physical boundary: the PACKED line (with newline)
-	 * must stay under PIPE_BUF or the default-cap Partition drops it. A character
-	 * cap is a proxy — JSON escaping packs a multibyte char as up to 6 bytes — so
-	 * measure packed_size and halve `m` until it fits. Null when nothing is left to
-	 * cut. Mirrors the substrate's Job_Probe_Node::fit_to_line.
-	 *
-	 * @param array<int, mixed> $message The minted alert message.
-	 * @return array<int, mixed>|null The fitting message, or null to drop.
-	 */
-	private static function fit_to_line( array $message ): ?array {
-		while ( Message::packed_size( $message ) + 1 > Partition_Node::MAX_LINE_SIZE ) {
-			$value = $message[ Message::VALUE ];
-			if ( ! \is_array( $value ) ) {
-				return null;
-			}
-			$m = Core::as_string( $value['m'] ?? '' );
-			if ( '' === $m ) {
-				return null;
-			}
-			$value['m']                = \mb_substr( $m, 0, \intdiv( \mb_strlen( $m ), 2 ) );
-			$message[ Message::VALUE ] = $value;
-		}
-		return $message;
-	}
-
-	/**
-	 * Build (once) the single-writer errors.fleet.p0 Partition. Anonymous: it writes
+	 * Build (once) the anonymous errors.p{partition} Topic. KEY-routed by
+	 * hash_to_partition, geometry matching the request-builder topology's
+	 * errors:partition args (segment/retention from Config). Anonymous: it writes
 	 * by dir, needs no Core registration or sink.
 	 */
-	private static function errors_partition(): Partition_Node {
-		if ( null !== self::$errors_partition ) {
-			return self::$errors_partition;
+	private static function errors_topic(): Topic_Node {
+		if ( null !== self::$errors_topic ) {
+			return self::$errors_topic;
 		}
-		$partition = new Partition_Node();
-		$partition->arguments( [
-			Config::get_logs_directory() . '/' . self::FLEET_PRODUCER . '.p0',
-			(string) self::SEGMENT_SIZE,
-			(string) self::MIN_SEGMENTS,
-			(string) self::MAX_SEGMENTS,
-			(string) self::MIN_LIFETIME,
-			(string) self::MAX_LIFETIME,
+		$num_partitions = \max( 1, Core::as_int( Config::value( 'num_partitions' ) ) );
+		$topic          = new Topic_Node();
+		$topic->arguments( [
+			Config::get_logs_directory() . '/errors.p{partition}',
+			(string) $num_partitions,
+			(string) Core::as_int( Config::value( 'segment_size' ) ),
+			(string) Core::as_int( Config::value( 'min_segments' ) ),
+			(string) Core::as_int( Config::value( 'max_segments' ) ),
+			(string) Core::as_int( Config::value( 'min_lifetime' ) ),
+			(string) Core::as_int( Config::value( 'max_lifetime' ) ),
 		] );
-		self::$errors_partition = $partition;
-		return $partition;
+		self::$errors_topic = $topic;
+		return $topic;
 	}
 
 	/**
@@ -189,7 +157,7 @@ class Diagnostics_Bridge {
 	 * @api Used by tests.
 	 */
 	public static function reset(): void {
-		self::$errors_partition?->remove_node();
-		self::$errors_partition = null;
+		self::$errors_topic?->remove_node();
+		self::$errors_topic = null;
 	}
 }

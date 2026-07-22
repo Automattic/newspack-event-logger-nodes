@@ -8,6 +8,7 @@ use Newspack_Nodes\Callback_Node;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Node_Names;
+use Newspack_Nodes\Partition_Node;
 use Newspack_Nodes\Router_Node;
 use PHPUnit\Framework\Attributes\CoversClass;
 
@@ -44,10 +45,22 @@ class RequestFlightTest extends TestCase {
 		} );
 	}
 
-	public function test_fire_emits_inflight_batch_through_sink_chain(): void {
-		// End-to-end: RequestBuilder auto-attaches Flight in its ctor (Task 22),
-		// the overridden sink() setter propagates the sink down, and Flight's
-		// fire_cb() calls inflight_snapshot() and emits the batch.
+	/**
+	 * Every KEY='inflight' message the sink saw, in order.
+	 *
+	 * @param array<int,array> $got
+	 * @return array<int,array>
+	 */
+	private function inflight_messages( array $got ): array {
+		return \array_values( \array_filter(
+			$got,
+			static fn ( $m ): bool => 'inflight' === ( $m[ Message::KEY ] ?? '' )
+		) );
+	}
+
+	public function test_fire_emits_one_message_per_inflight_request(): void {
+		// Per-record: one TM_STRUCT per in-flight request (KEY='inflight', rid in
+		// VALUE), NOT one batched list — that crossed the 4KB cap at ~10 concurrent.
 		$rb = new Request_Builder_Node();
 		$rb->name( 'rb-flight-e2e' );
 
@@ -61,19 +74,21 @@ class RequestFlightTest extends TestCase {
 		$flight->target( 'gyroscope_partition' );
 		$flight->fire_cb();
 
-		$this->assertCount( 1, $got );
-		$this->assertSame( Message::TM_STRUCT, $got[0][ Message::TYPE ] );
-		$this->assertSame( 'gyroscope_partition', $got[0][ Message::TO ] );
-		$this->assertSame( 'inflight', $got[0][ Message::KEY ] );
-		$this->assertSame( 'rb-flight-e2e:flight', $got[0][ Message::FROM ] );
-		$batch = $got[0][ Message::VALUE ];
-		$this->assertCount( 2, $batch );
-		$this->assertSame( 'r-1', $batch[0]['rid'] );
-		// Default state for a primed request with no stack frames matches
-		// legacy InflightTracker (lines 141-143): the unwound-stack default.
-		$this->assertSame( 'process', $batch[0]['state'] );
-		$this->assertSame( '/a', $batch[0]['url'] );
-		$this->assertSame( 'r-2', $batch[1]['rid'] );
+		$inflight = $this->inflight_messages( $got );
+		$this->assertCount( 2, $inflight, 'one message per in-flight request' );
+		foreach ( $inflight as $m ) {
+			$this->assertSame( Message::TM_STRUCT, $m[ Message::TYPE ] );
+			$this->assertSame( 'gyroscope_partition', $m[ Message::TO ] );
+			$this->assertSame( 'inflight', $m[ Message::KEY ] );
+			$this->assertSame( 'rb-flight-e2e:flight', $m[ Message::FROM ] );
+			// VALUE is a single record with the rid inside — not a batch array.
+			$this->assertIsArray( $m[ Message::VALUE ] );
+			$this->assertArrayHasKey( 'rid', $m[ Message::VALUE ] );
+		}
+		$this->assertSame( [ 'r-1', 'r-2' ], \array_map( static fn ( $m ) => $m[ Message::VALUE ]['rid'], $inflight ) );
+		// Default state for a primed request with no stack frames: unwound default.
+		$this->assertSame( 'process', $inflight[0][ Message::VALUE ]['state'] );
+		$this->assertSame( '/a', $inflight[0][ Message::VALUE ]['url'] );
 	}
 
 	public function test_patron_pointer_round_trips(): void {
@@ -149,36 +164,128 @@ class RequestFlightTest extends TestCase {
 		$this->assertSame( [], $got );
 	}
 
-	public function test_fire_emits_batch_to_target_when_all_wired(): void {
-		// Asserts the wire-level message shape RequestFlight emits
-		$rb = new Request_Builder_Node();
-		$batch = [
+	public function test_fire_emits_the_per_record_wire_shape(): void {
+		// Asserts the per-record wire-level message shape RequestFlight emits.
+		$rb  = new Request_Builder_Node();
+		$rows = [
 			'r-1' => [ 'url' => '/a', 'request_method' => 'GET',  'timestamp' => 1.0 ],
-			'r-2' => [ 'url' => '/b', 'request_method' => 'POST', 'timestamp' => 2.0 ]
+			'r-2' => [ 'url' => '/b', 'request_method' => 'POST', 'timestamp' => 2.0 ],
 		];
-		$rb->cache->set( 'r-1', (object) $batch['r-1'] );
-		$rb->cache->set( 'r-2', (object) $batch['r-2'] );
+		$rb->cache->set( 'r-1', (object) $rows['r-1'] );
+		$rb->cache->set( 'r-2', (object) $rows['r-2'] );
 
 		$got = [];
 		$rb->name( 'patron-with-batch' );
 		$rb->sink( $this->capture_sink( $got ) );
 
 		$flight = $rb->flight();
-		$flight->name( 'flight-emits' );
 		$flight->target( 'gyroscope_partition' );
 		$flight->fire_cb();
 
-		$this->assertCount( 1, $got );
-		$this->assertSame( Message::TM_STRUCT, $got[0][ Message::TYPE ] );
-		$this->assertSame( 'gyroscope_partition', $got[0][ Message::TO ] );
-		$this->assertSame( 'inflight', $got[0][ Message::KEY ] );
-		$this->assertSame( 'flight-emits', $got[0][ Message::FROM ] );
-		$this->assertSame( $batch['r-1']['url'],            $got[0][ Message::VALUE ][0]['url'] );
-		$this->assertSame( $batch['r-1']['request_method'], $got[0][ Message::VALUE ][0]['method'] );
-		$this->assertSame( $batch['r-1']['timestamp'],      $got[0][ Message::VALUE ][0]['start_time'] );
-		$this->assertSame( $batch['r-2']['url'],            $got[0][ Message::VALUE ][1]['url'] );
-		$this->assertSame( $batch['r-2']['request_method'], $got[0][ Message::VALUE ][1]['method'] );
-		$this->assertSame( $batch['r-2']['timestamp'],      $got[0][ Message::VALUE ][1]['start_time'] );
+		$inflight = $this->inflight_messages( $got );
+		$this->assertCount( 2, $inflight );
+		$this->assertSame( $rows['r-1']['url'],            $inflight[0][ Message::VALUE ]['url'] );
+		$this->assertSame( $rows['r-1']['request_method'], $inflight[0][ Message::VALUE ]['method'] );
+		$this->assertSame( $rows['r-1']['timestamp'],      $inflight[0][ Message::VALUE ]['start_time'] );
+		$this->assertSame( $rows['r-2']['url'],            $inflight[1][ Message::VALUE ]['url'] );
+		$this->assertSame( $rows['r-2']['request_method'], $inflight[1][ Message::VALUE ]['method'] );
+		$this->assertSame( $rows['r-2']['timestamp'],      $inflight[1][ Message::VALUE ]['start_time'] );
+	}
+
+	public function test_delta_off_reemits_unchanged_rows_every_tick(): void {
+		// The stock default (delta OFF): a fresh subscriber sees the whole cache
+		// within one tick — every row re-emitted each fire regardless of activity.
+		Core::$now = 100.0;
+		$rb = new Request_Builder_Node();
+		$rb->name( 'rb-delta-off' );
+		$got = [];
+		$rb->sink( $this->capture_sink( $got ) );
+		$rb->cache->set( 'r-1', (object) [ 'url' => '/a', 'request_method' => 'GET', 'timestamp' => 10.0, 'last_log_ts' => 10.0 ] );
+
+		$flight = $rb->flight();
+		$flight->target( 'gyroscope_partition' );
+		$flight->fire_cb();
+		Core::$now = 200.0;
+		$flight->fire_cb();
+
+		$this->assertCount( 2, $this->inflight_messages( $got ), 'delta off re-emits the unchanged row on every tick' );
+	}
+
+	public function test_delta_on_suppresses_unchanged_rows_and_advances_the_watermark(): void {
+		Core::$now = 100.0;
+		$rb = new Request_Builder_Node();
+		$rb->name( 'rb-delta-on' );
+		$got = [];
+		$rb->sink( $this->capture_sink( $got ) );
+		$rb->cache->set( 'r-1', (object) [ 'url' => '/a', 'request_method' => 'GET', 'timestamp' => 10.0, 'last_log_ts' => 10.0 ] );
+
+		$flight = $rb->flight();
+		$flight->set_delta( true );
+		$flight->target( 'gyroscope_partition' );
+
+		// First tick: emits (initial watermark 0), advancing the watermark to 100.
+		$flight->fire_cb();
+		$this->assertCount( 1, $this->inflight_messages( $got ) );
+
+		// Second tick: the row's last_log_ts (10) < watermark (100) → suppressed.
+		Core::$now = 200.0;
+		$flight->fire_cb();
+		$this->assertCount( 1, $this->inflight_messages( $got ), 'unchanged row suppressed under delta' );
+
+		// Advance the row's activity past the watermark → re-emitted next tick.
+		$rb->cache->get( 'r-1' )->last_log_ts = 150.0;
+		Core::$now = 300.0;
+		$flight->fire_cb();
+		$this->assertCount( 2, $this->inflight_messages( $got ), 'advanced row re-emitted under delta' );
+	}
+
+	public function test_inflight_row_clips_url_and_user_agent_like_the_completed_path(): void {
+		$rb = new Request_Builder_Node();
+		$rb->name( 'rb-clip-inflight' );
+		$got = [];
+		$rb->sink( $this->capture_sink( $got ) );
+		$rb->cache->set( 'r-clip', (object) [
+			'url'            => '/' . \str_repeat( 'u', 3000 ),
+			'user_agent'     => \str_repeat( 'A', 900 ),
+			'request_method' => 'GET',
+			'timestamp'      => 1.0,
+		] );
+
+		$flight = $rb->flight();
+		$flight->target( 'gyroscope_partition' );
+		$flight->fire_cb();
+
+		$inflight = $this->inflight_messages( $got );
+		$this->assertCount( 1, $inflight );
+		$this->assertSame( 2003, \strlen( $inflight[0][ Message::VALUE ]['url'] ) );
+		$this->assertSame( 503, \strlen( $inflight[0][ Message::VALUE ]['user_agent'] ) );
+	}
+
+	public function test_inflight_row_fits_a_multibyte_payload_under_pipe_buf(): void {
+		// gyroscope:partition lost void_warranty; the char clip is only a proxy —
+		// a 2000-char multibyte url packs past PIPE_BUF, so the fit must trim it.
+		$rb = new Request_Builder_Node();
+		$rb->name( 'rb-fit-inflight' );
+		$got = [];
+		$rb->sink( $this->capture_sink( $got ) );
+		$rb->cache->set( 'r-fit', (object) [
+			'url'            => '/' . \str_repeat( '错', 3000 ),
+			'user_agent'     => \str_repeat( '错', 900 ),
+			'request_method' => 'GET',
+			'timestamp'      => 1.0,
+		] );
+
+		$flight = $rb->flight();
+		$flight->target( 'gyroscope_partition' );
+		$flight->fire_cb();
+
+		$inflight = $this->inflight_messages( $got );
+		$this->assertCount( 1, $inflight, 'the row was fitted + emitted, not dropped' );
+		$this->assertLessThanOrEqual(
+			Partition_Node::MAX_LINE_SIZE,
+			Message::packed_size( $inflight[0] ) + 1,
+			'the packed in-flight row + newline fits under PIPE_BUF'
+		);
 	}
 
 	public function test_setting_target_enables_snapshot_hitchhike(): void {

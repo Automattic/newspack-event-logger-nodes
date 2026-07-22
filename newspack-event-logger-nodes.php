@@ -100,7 +100,7 @@ if ( \function_exists( 'register_activation_hook' ) ) {
 	\register_activation_hook( __FILE__, [ '\\Newspack_Event_Logger_Nodes\\Rule_Set', 'migrate_from_legacy' ] );
 }
 
-const NEWSPACK_EVENT_LOGGER_NODES_RUNTIME_BASENAMES = [ 'firehose', 'jobintake', \Newspack_Event_Logger_Nodes\Diagnostics_Bridge::FLEET_PRODUCER ];
+const NEWSPACK_EVENT_LOGGER_NODES_RUNTIME_BASENAMES = [ 'firehose', 'jobintake' ];
 
 /**
  * @param array<int, string> $producers Producers registered by prior contributors.

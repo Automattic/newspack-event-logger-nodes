@@ -95,12 +95,12 @@ function connectedEnvelope( { pid = 4242, slot = 3 } = {} ) {
 	return m;
 }
 
-// A gyroscope inflight-snapshot envelope as the wire delivers it.
-function inflightEnvelope( requests ) {
+// A gyroscope per-record inflight envelope as the wire delivers it.
+function inflightEnvelope( request ) {
 	const m = newMessage();
 	m[ TYPE ] = TM_STRUCT;
 	m[ KEY ] = 'inflight';
-	m[ VALUE ] = requests;
+	m[ VALUE ] = request;
 	return m;
 }
 
@@ -159,9 +159,11 @@ describe( 'useGyroscopeGraph — exospine + RemoteLink wiring', () => {
 			FakeEventSource.last.dispatch(
 				'msg',
 				pack(
-					inflightEnvelope( [
-						{ rid: 'watched', url: '/x', state: 'process' },
-					] )
+					inflightEnvelope( {
+						rid: 'watched',
+						url: '/x',
+						state: 'process',
+					} )
 				)
 			);
 		} );
@@ -248,9 +250,11 @@ describe( 'useGyroscopeGraph — end-to-end routing through the exospine', () =>
 			FakeEventSource.last.dispatch(
 				'msg',
 				pack(
-					inflightEnvelope( [
-						{ rid: 'r-flow', url: '/x', state: 'process' },
-					] )
+					inflightEnvelope( {
+						rid: 'r-flow',
+						url: '/x',
+						state: 'process',
+					} )
 				)
 			);
 		} );
@@ -313,7 +317,7 @@ describe( 'useGyroscopeGraph — page visibility lifecycle', () => {
 	test( 'reopening on refocus RESUMES from the last streamed offset (carries &positions=), not a blind tail', () => {
 		const { rerender } = renderHook( () => useGyroscopeGraph() );
 		// A tailed record: segment:offset:length in ID, partition dir in FROM.
-		const rec = inflightEnvelope( [ { rid: 'r1' } ] );
+		const rec = inflightEnvelope( { rid: 'r1' } );
 		rec[ FROM ] = 'gyroscope.p0';
 		rec[ ID ] = '1:64:20';
 		act( () => {
@@ -342,9 +346,11 @@ describe( 'useGyroscopeGraph — page visibility lifecycle', () => {
 			FakeEventSource.last.dispatch(
 				'msg',
 				pack(
-					inflightEnvelope( [
-						{ rid: 'old', url: '/x', state: 'process' },
-					] )
+					inflightEnvelope( {
+						rid: 'old',
+						url: '/x',
+						state: 'process',
+					} )
 				)
 			);
 		} );
@@ -383,9 +389,11 @@ describe( 'useGyroscopeGraph — teardown', () => {
 			source.dispatch(
 				'msg',
 				pack(
-					inflightEnvelope( [
-						{ rid: 'late', url: '/x', state: 'process' },
-					] )
+					inflightEnvelope( {
+						rid: 'late',
+						url: '/x',
+						state: 'process',
+					} )
 				)
 			)
 		).not.toThrow();

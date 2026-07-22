@@ -1,27 +1,21 @@
 /**
  * gyroscope:view tests — owns the in-flight request model.
  *
- * Like rawLogsView / requestlog/view, two cadences: the HIGH-frequency in-flight
- * map (node.requests) + RPS (node.rps) live on the instance and are NOT published
- * — the React view's refresh tick calls node.snapshot() each interval to reap
- * completed entries and read the sorted+capped render list. The LOW-frequency
- * control model publishes via setState('view', …).
+ * Two cadences: the HIGH-frequency in-flight map (node.requests) + RPS (node.rps)
+ * live on the instance and are NOT published — the React view's refresh tick calls
+ * node.snapshot() each interval to reap completed entries, age out stragglers, and
+ * read the sorted+capped render list. The LOW-frequency control model publishes via
+ * setState('view', …).
  *
- * The accumulation/expiry logic is ported verbatim from Inflight.js's
- * requestsRef-map handleMessage + renderRequests reaper:
- *  - inflight snapshot envelope (KEY='inflight', VALUE=array) → upsert each req
- *    by rid; NEVER overwrite a req already marked complete (the snapshot
- *    predates a completion already in the map).
- *  - completion envelope (VALUE=object with rid) → merge {...existing, ...req,
- *    state:'complete', time_ms, est_ms}.
- *  - snapshot() → count + DELETE complete entries (they show for one tick then
- *    reap), update RPS from that count, sort remaining by est_ms desc, cap.
- *
- * The view consumes raw envelopes directly (no upstream transform): it
- * dispatches on KEY/VALUE shape — `KEY === 'inflight'` + array VALUE is a
- * snapshot, an object VALUE with `rid` is a completion, `KEY === 'connected'`
- * and anything else is dropped. Local TM_STRUCT control messages (clear /
- * connection) still ride VALUE.action.
+ * The producer now emits ONE record per in-flight request (KEY='inflight', rid in
+ * VALUE), not one batched list. The view is written ONCE, correct under BOTH producer
+ * modes (full re-emit / delta) with no mode awareness:
+ *  - inflight record (KEY='inflight', object with rid) → upsert by rid, stamping a
+ *    freshness time; NEVER overwrite a req already marked complete.
+ *  - completion (KEY=rid, object with rid) → merge {state:'complete', time/est_ms}.
+ *  - snapshot() → show+reap complete entries (one tick), age out in-flight rows not
+ *    refreshed within the staleness window (crash/eviction backstop under delta),
+ *    update RPS, sort by est_ms desc, cap.
  */
 
 import {
@@ -37,18 +31,17 @@ import { GyroscopeViewNode } from '../gyroscope-view-node';
 // Naming registers in the per-process Core registry; clear it between tests.
 beforeEach( () => Core.reset() );
 
-// Construct + name directly — createX factory is gone; bare-new is the seam.
 function makeView( name ) {
 	const node = new GyroscopeViewNode();
 	node.name = name;
 	return node;
 }
 
-// A wire envelope as the EventSource delivers it: KEY='inflight', VALUE=array.
-function inflightEnvelope( requests ) {
+// A wire envelope: ONE in-flight record — KEY='inflight', VALUE=single object.
+function inflightEnvelope( request ) {
 	const m = newMessage();
 	m[ KEY ] = 'inflight';
-	m[ VALUE ] = requests;
+	m[ VALUE ] = request;
 	return m;
 }
 
@@ -76,47 +69,48 @@ function controlMsg( payload ) {
 	return m;
 }
 
-test( 'upserts inflight requests from a wire envelope into node.requests keyed by rid', () => {
+test( 'upserts a per-record inflight envelope into node.requests keyed by rid', () => {
 	const v = makeView( 'gyroscope:view' );
-	v.fill(
-		inflightEnvelope( [
-			{ rid: 'a', url: '/a', state: 'process' },
-			{ rid: 'b', url: '/b', state: 'query' },
-		] )
-	);
+	v.fill( inflightEnvelope( { rid: 'a', url: '/a', state: 'process' } ) );
+	v.fill( inflightEnvelope( { rid: 'b', url: '/b', state: 'query' } ) );
 	expect( v.requests.size ).toBe( 2 );
 	expect( v.requests.get( 'a' ).url ).toBe( '/a' );
+	// An inflight record is NOT a completion — state stays as delivered.
+	expect( v.requests.get( 'a' ).state ).toBe( 'process' );
 } );
 
 test( 'appending inflight rows does NOT publish setState (no per-row re-render)', () => {
 	const v = makeView( 'gyroscope:view' );
 	const spy = jest.spyOn( v, 'setState' );
-	v.fill( inflightEnvelope( [ { rid: 'a', url: '/a', state: 'process' } ] ) );
+	v.fill( inflightEnvelope( { rid: 'a', url: '/a', state: 'process' } ) );
 	v.fill( completeEnvelope( { rid: 'a', url: '/a', duration_ms: 5 } ) );
 	expect( spy ).not.toHaveBeenCalled();
 } );
 
-test( 'a later inflight snapshot updates an in-flight request', () => {
+test( 'a later inflight record updates an in-flight request', () => {
 	const v = makeView( 'gyroscope:view' );
-	v.fill( inflightEnvelope( [ { rid: 'a', url: '/a', state: 'process' } ] ) );
-	v.fill( inflightEnvelope( [ { rid: 'a', url: '/a', state: 'render' } ] ) );
+	v.fill( inflightEnvelope( { rid: 'a', url: '/a', state: 'process' } ) );
+	v.fill( inflightEnvelope( { rid: 'a', url: '/a', state: 'render' } ) );
 	expect( v.requests.get( 'a' ).state ).toBe( 'render' );
 } );
 
-test( 'an inflight snapshot never overwrites a request already marked complete', () => {
+test( 'an inflight record never overwrites a request already marked complete', () => {
 	const v = makeView( 'gyroscope:view' );
 	v.fill( completeEnvelope( { rid: 'a', url: '/a', duration_ms: 7 } ) );
-	// A late snapshot (produced before the completion) must not resurrect it.
-	v.fill( inflightEnvelope( [ { rid: 'a', url: '/a', state: 'process' } ] ) );
+	// A late record (produced before the completion) must not resurrect it.
+	v.fill( inflightEnvelope( { rid: 'a', url: '/a', state: 'process' } ) );
 	expect( v.requests.get( 'a' ).state ).toBe( 'complete' );
 } );
 
-test( 'completion merges into an existing entry and sets time_ms/est_ms', () => {
+test( 'a completion retires the matching in-flight entry, merging + marking complete', () => {
 	const v = makeView( 'gyroscope:view' );
 	v.fill(
-		inflightEnvelope( [
-			{ rid: 'a', url: '/a', method: 'GET', state: 'process' },
-		] )
+		inflightEnvelope( {
+			rid: 'a',
+			url: '/a',
+			method: 'GET',
+			state: 'process',
+		} )
 	);
 	v.fill(
 		completeEnvelope( { rid: 'a', duration_ms: 33, status_code: 200 } )
@@ -128,6 +122,21 @@ test( 'completion merges into an existing entry and sets time_ms/est_ms', () => 
 	expect( req.time_ms ).toBe( 33 );
 	expect( req.est_ms ).toBe( 33 );
 	expect( req.status_code ).toBe( 200 );
+} );
+
+test( 'a completion whose rid is literally "inflight" still lands as a completion', () => {
+	// Adversarial header: X-A8C-Request-Id can be the string 'inflight', making
+	// KEY collide with the in-flight sentinel — state:'complete' must win.
+	const view = makeView( 'gyroscope:view' );
+	view.fill(
+		completeEnvelope( {
+			rid: 'inflight',
+			state: 'complete',
+			duration_ms: 4321,
+		} )
+	);
+	expect( view.requests.get( 'inflight' ).state ).toBe( 'complete' );
+	expect( view.requests.get( 'inflight' ).est_ms ).toBe( 4321 );
 } );
 
 test( 'completion with no prior inflight entry still records the request', () => {
@@ -168,9 +177,15 @@ test( 'drops an object VALUE missing rid (defensive)', () => {
 	expect( v.requests.size ).toBe( 0 );
 } );
 
+test( 'drops an inflight record missing rid (defensive)', () => {
+	const v = makeView( 'gyroscope:view' );
+	v.fill( inflightEnvelope( { url: '/no-rid', state: 'process' } ) );
+	expect( v.requests.size ).toBe( 0 );
+} );
+
 test( 'snapshot() reaps complete entries (shown one tick then deleted)', () => {
 	const v = makeView( 'gyroscope:view' );
-	v.fill( inflightEnvelope( [ { rid: 'a', url: '/a', state: 'process' } ] ) );
+	v.fill( inflightEnvelope( { rid: 'a', url: '/a', state: 'process' } ) );
 	v.fill( completeEnvelope( { rid: 'b', url: '/b', duration_ms: 5 } ) );
 	// First snapshot still includes the completed request.
 	const first = v.snapshot( 100 );
@@ -182,14 +197,67 @@ test( 'snapshot() reaps complete entries (shown one tick then deleted)', () => {
 	expect( second.map( ( r ) => r.rid ) ).toEqual( [ 'a' ] );
 } );
 
+test( 'snapshot() ages out an in-flight row not refreshed within the staleness window', () => {
+	const nowSpy = jest.spyOn( Date, 'now' );
+	try {
+		nowSpy.mockReturnValue( 10_000 );
+		const v = makeView( 'gyroscope:view' );
+		v.fill(
+			inflightEnvelope( {
+				rid: 'stale-8201',
+				url: '/s',
+				state: 'process',
+			} )
+		);
+		v.fill(
+			inflightEnvelope( {
+				rid: 'fresh-8202',
+				url: '/f',
+				state: 'process',
+			} )
+		);
+		// 16 min later, refresh ONLY 'fresh'; 'stale' passes the aging window.
+		nowSpy.mockReturnValue( 10_000 + 16 * 60 * 1000 );
+		v.fill(
+			inflightEnvelope( {
+				rid: 'fresh-8202',
+				url: '/f',
+				state: 'render',
+			} )
+		);
+		const rows = v.snapshot( 100 ).map( ( r ) => r.rid );
+		expect( rows ).toEqual( [ 'fresh-8202' ] );
+		expect( v.requests.has( 'stale-8201' ) ).toBe( false );
+	} finally {
+		nowSpy.mockRestore();
+	}
+} );
+
 test( 'snapshot() sorts by est_ms descending and caps to maxRows', () => {
 	const v = makeView( 'gyroscope:view' );
 	v.fill(
-		inflightEnvelope( [
-			{ rid: 'a', url: '/a', state: 'process', est_ms: 10 },
-			{ rid: 'b', url: '/b', state: 'process', est_ms: 90 },
-			{ rid: 'c', url: '/c', state: 'process', est_ms: 50 },
-		] )
+		inflightEnvelope( {
+			rid: 'a',
+			url: '/a',
+			state: 'process',
+			est_ms: 10,
+		} )
+	);
+	v.fill(
+		inflightEnvelope( {
+			rid: 'b',
+			url: '/b',
+			state: 'process',
+			est_ms: 90,
+		} )
+	);
+	v.fill(
+		inflightEnvelope( {
+			rid: 'c',
+			url: '/c',
+			state: 'process',
+			est_ms: 50,
+		} )
 	);
 	const sorted = v.snapshot( 2 );
 	expect( sorted ).toHaveLength( 2 ); // capped
@@ -221,12 +289,8 @@ test( 'RPS tracking aggregates per second, not one entry per tick (bounded windo
 
 test( 'clear empties the map, history and rps', () => {
 	const v = makeView( 'gyroscope:view' );
-	v.fill(
-		inflightEnvelope( [
-			{ rid: 'a', url: '/a', state: 'process' },
-			{ rid: 'b', url: '/b', state: 'process' },
-		] )
-	);
+	v.fill( inflightEnvelope( { rid: 'a', url: '/a', state: 'process' } ) );
+	v.fill( inflightEnvelope( { rid: 'b', url: '/b', state: 'process' } ) );
 	v.fill( completeEnvelope( { rid: 'c', url: '/c', duration_ms: 5 } ) );
 	v.snapshot( 100 ); // builds some rps history
 	v.fill( controlMsg( { action: 'clear' } ) );

@@ -7,6 +7,7 @@ use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Node_Names;
+use Newspack_Nodes\Partition_Node;
 use Newspack_Nodes\Router_Node;
 use Newspack_Nodes\Tests\Capture_Sink_Node;
 use PHPUnit\Framework\Attributes\CoversClass;
@@ -1706,6 +1707,58 @@ class RequestBuilderTest extends TestCase {
 		$this->fill( $rb, 3, 'r1', 'error', [ 'm' => 'boom' ] );
 		// Cache still holds r1 since complete hasn't arrived.
 		$this->assertSame( 1, $this->cache_size( $rb ) );
+	}
+
+	// --- emit_error: packed-size fit under PIPE_BUF -----------------------
+
+	/** The lone message the node forwarded to its errors target (null if none). */
+	private function captured_error( Capture_Sink_Node $capture ): ?array {
+		foreach ( $capture->captured as $m ) {
+			if ( 'errors:target' === Core::as_string( $m[ Message::TO ] ?? '' ) ) {
+				return $m;
+			}
+		}
+		return null;
+	}
+
+	public function test_emit_error_fits_an_oversize_entry_under_pipe_buf(): void {
+		// The errors partition no longer lifts the 4KB cap, so emit_error must
+		// fit the enriched line at the source. A near-limit multibyte `m` plus a
+		// pathologically long url would pack well past PIPE_BUF unfitted.
+		$rb = new Request_Builder_Node();
+		$rb->set_errors_target( 'errors:target' );
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+
+		$this->fill( $rb, 1, 'r-fit-7733', 'process (start)' );
+		$this->fill( $rb, 2, 'r-fit-7733', 'request', [ 'm' => 'GET /err-7733/' . \str_repeat( 'u', 3000 ) ] );
+		$this->fill( $rb, 3, 'r-fit-7733', 'error', [ 'm' => \str_repeat( '错', 900 ) ] );
+
+		$err = $this->captured_error( $capture );
+		$this->assertNotNull( $err, 'the error line was forwarded, not dropped' );
+		$this->assertLessThanOrEqual(
+			Partition_Node::MAX_LINE_SIZE,
+			Message::packed_size( $err ) + 1,
+			'the emitted error line + newline stays under PIPE_BUF'
+		);
+	}
+
+	public function test_emit_error_drops_a_pathologically_unfittable_entry(): void {
+		// A bulk field the fit can't shrink (not `m`/`url`) keeps the record over
+		// the cap after halving both — it must be dropped, never emitted oversize.
+		$rb = new Request_Builder_Node();
+		$rb->set_errors_target( 'errors:target' );
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+
+		$this->fill( $rb, 1, 'r-drop-7734', 'process (start)' );
+		$this->fill( $rb, 2, 'r-drop-7734', 'request', [ 'm' => 'GET /d-7734' ] );
+		$this->fill( $rb, 3, 'r-drop-7734', 'error', [ 'm' => 'x', 'bulk' => \str_repeat( 'Z', 5000 ) ] );
+
+		$this->assertNull(
+			$this->captured_error( $capture ),
+			'an unfittable error entry is dropped, never emitted oversize'
+		);
 	}
 
 	// --- environment_v3 malformed-entry guard -----------------------------
