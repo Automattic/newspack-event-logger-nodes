@@ -399,7 +399,12 @@ class Request_Builder_Node extends Timer_Node {
 		$message[ Message::TO ]        = $this->errors_target;
 		$message[ Message::KEY ]       = $rid;
 		$message[ Message::VALUE ]     = $entry;
-		$this->guarded( fn () => $this->sink->fill( $message ) );
+		$fitted = Line_Fitter::fit( $message, [ 'm', 'url' ] );
+		if ( null === $fitted ) {
+			$this->print_less_often( 'WARNING: dropping oversize error entry for ', $rid );
+			return;
+		}
+		$this->guarded( fn () => $this->sink->fill( $fitted ) );
 	}
 
 	/**
@@ -596,6 +601,9 @@ class Request_Builder_Node extends Timer_Node {
 		$inflight_target = $this->flight()->target();
 		if ( \is_string( $inflight_target ) && '' !== $inflight_target ) {
 			$out .= "cmd {$this->name}:config set_inflight_target {$inflight_target}\n";
+		}
+		if ( $this->flight()->delta() ) {
+			$out .= "cmd {$this->name}:config set_inflight_delta 1\n";
 		}
 		return $out;
 	}
@@ -820,7 +828,12 @@ class Request_Builder_Node extends Timer_Node {
 		$message[ Message::TO ]        = $this->completed_target;
 		$message[ Message::KEY ]       = $summary['rid'];
 		$message[ Message::VALUE ]     = $summary;
-		$this->guarded( fn () => $this->sink->fill( $message ) );
+		$fitted = Line_Fitter::fit( $message, [ 'url', 'user_agent' ] );
+		if ( null === $fitted ) {
+			$this->print_less_often( 'WARNING: dropping oversize completed summary for ', Core::as_string( $summary['rid'] ) );
+			return;
+		}
+		$this->guarded( fn () => $this->sink->fill( $fitted ) );
 	}
 
 	/**
@@ -1270,6 +1283,21 @@ class Request_Builder_Node extends Timer_Node {
 						/** @var self $patron */
 						$patron = $interpreter->patron();
 						$patron->flight()->target( $arg );
+						return 'ok';
+					},
+				],
+				[
+					'name'        => 'set_inflight_delta',
+					'description' => 'Emit only in-flight rows whose activity advanced since the last snapshot tick. Default off re-emits every row each tick (a fresh subscriber sees the whole cache in one tick); a bare/empty or `0` arg disables.',
+					'args'        => [
+						[ 'name' => 'on', 'type' => 'bool', 'required' => false ],
+					],
+					'handler'     => static function ( Command_Interpreter_Node $interpreter, array $args ): string {
+						$arg = \trim( Core::as_string( $args[0] ?? '' ) );
+						// Bare/empty/0 disables; any other value enables.
+						/** @var self $patron */
+						$patron = $interpreter->patron();
+						$patron->flight()->set_delta( '' !== $arg && '0' !== $arg );
 						return 'ok';
 					},
 				],

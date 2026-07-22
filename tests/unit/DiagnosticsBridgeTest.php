@@ -108,7 +108,7 @@ class DiagnosticsBridgeTest extends TestCase {
 		Diagnostics_Bridge::on_stderr( 'orphan diagnostic 7732' );
 		$this->assertNull( Log_Manager::started_instance() );
 		$this->assertDirectoryDoesNotExist( self::TEST_DIR . '/logs/firehose.p0' );
-		$this->assertDirectoryDoesNotExist( self::TEST_DIR . '/logs/errors.fleet.p0' );
+		$this->assertDirectoryDoesNotExist( self::TEST_DIR . '/logs/errors.p0' );
 	}
 
 	// ── alert bridge ──────────────────────────────────────────────────────────
@@ -128,11 +128,11 @@ class DiagnosticsBridgeTest extends TestCase {
 		) );
 		$this->assertCount( 1, $alerts, 'alert rode the active request firehose' );
 		$this->assertSame( 'Worker combined.p0 stopped heartbeating 9913s ago.', $alerts[0]['value']['m'] );
-		// Path (a) rides the firehose, NOT a direct errors.fleet.p0 write.
-		$this->assertDirectoryDoesNotExist( self::TEST_DIR . '/logs/errors.fleet.p0' );
+		// Path (a) rides the firehose, NOT a direct errors.p* write.
+		$this->assertDirectoryDoesNotExist( self::TEST_DIR . '/logs/errors.p0' );
 	}
 
-	public function test_alert_writes_directly_to_the_fleet_errors_dir_when_no_started_log_manager(): void {
+	public function test_alert_writes_directly_to_an_errors_partition_when_no_started_log_manager(): void {
 		Log_Manager::reset();
 		Diagnostics_Bridge::on_alert( [
 			'key'      => 'supervisor_down',
@@ -140,11 +140,18 @@ class DiagnosticsBridgeTest extends TestCase {
 			'message'  => 'Supervisor stopped heartbeating 9914s ago.',
 		] );
 
-		// A dedicated single-writer dir, matched by the Error Log's existing
-		// `errors.*` glob (glob("{logs}/errors.*")) → surfaces with zero UI change.
-		$this->assertTrue( \fnmatch( 'errors.*', 'errors.fleet.p0' ), 'the errors.* subscription matches the fleet dir' );
-		$errors = $this->read_entries( 'errors.fleet.p0' );
-		$this->assertCount( 1, $errors, 'a fleet alert reaches errors.fleet.p0 with no active request logger' );
+		// KEY='fleet' hash-routes to errors.p{N} (num_partitions=1 → errors.p0), a
+		// dir the Error Log's existing `errors.*` glob already covers — zero UI
+		// change, and now uniformly ≤PIPE_BUF atomic with the worker's own writes.
+		$this->assertTrue( \fnmatch( 'errors.*', 'errors.p0' ), 'the errors.* subscription matches the errors partition dir' );
+		$lines = $this->read_raw_lines( 'errors.p0' );
+		$this->assertCount( 1, $lines, 'a fleet alert reaches errors.p0 with no active request logger' );
+		$this->assertLessThanOrEqual(
+			Partition_Node::MAX_LINE_SIZE,
+			\strlen( $lines[0] ) + 1,
+			'the record was written whole and stays under PIPE_BUF'
+		);
+		$errors = $this->read_entries( 'errors.p0' );
 		$this->assertSame( 'fleet', $errors[0]['key'], 'KEY is the stable synthetic fleet id' );
 		$this->assertSame( 'alert', $errors[0]['value']['k'] );
 		$this->assertSame( 'Supervisor stopped heartbeating 9914s ago.', $errors[0]['value']['m'] );
@@ -170,19 +177,13 @@ class DiagnosticsBridgeTest extends TestCase {
 			'message'  => \str_repeat( '错', 900 ),
 		] );
 
-		$lines = $this->read_raw_lines( 'errors.fleet.p0' );
+		$lines = $this->read_raw_lines( 'errors.p0' );
 		$this->assertCount( 1, $lines, 'multibyte alert written, not dropped as oversize' );
 		$this->assertLessThanOrEqual(
 			Partition_Node::MAX_LINE_SIZE,
 			\strlen( $lines[0] ) + 1,
 			'packed line + newline stays under PIPE_BUF'
 		);
-	}
-
-	public function test_fleet_errors_dir_is_registered_as_a_log_producer(): void {
-		// Otherwise the substrate Log_Cleaner sweeps the undeclared dir.
-		$producers = \newspack_event_logger_nodes_register_log_producers( [] );
-		$this->assertContains( 'errors.fleet', $producers );
 	}
 
 	public function test_on_alert_swallows_a_throwing_write_path(): void {

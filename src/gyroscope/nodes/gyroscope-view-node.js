@@ -2,6 +2,9 @@ import { Node, KEY, VALUE } from '@newspack-nodes/runtime';
 
 const RPS_WINDOW_SEC = 10;
 
+// Age out an in-flight row unseen this long — a crash/eviction backstop.
+const INFLIGHT_STALE_MS = 15 * 60 * 1000;
+
 /**
  * `gyroscope:view` — owns the in-flight request model.
  *
@@ -15,23 +18,23 @@ const RPS_WINDOW_SEC = 10;
  *   `setState('view', { connectionError })` — the reconnect banner, consumed by
  *   `useNodeState('gyroscope:view','view')`.
  *
- * `fill()` dispatches directly on the wire envelope shape (no upstream
- * transform — _sse delivers raw envelopes):
- * - `KEY === 'inflight'` + array VALUE: upsert each request by rid, NEVER
- *   overwriting one already marked complete (the snapshot predates a completion
- *   that may already be in the map). `RequestFlight` emits these periodically.
- * - VALUE is an object with `rid`: a completion. Merge into the existing entry,
- *   mark state=complete, derive time_ms/est_ms from duration_ms.
+ * The producer emits ONE record per in-flight request (KEY='inflight', rid in
+ * VALUE), not a batched list. This view is written ONCE, correct under BOTH
+ * producer modes (full per-tick re-emit / delta) with NO mode awareness:
+ * - `KEY === 'inflight'` + object VALUE with `rid`: upsert that request by rid,
+ *   stamping a freshness time; NEVER overwrite one already marked complete (a
+ *   late record may predate a completion already in the map). Under full re-emit
+ *   this refreshes every row each tick; under delta, only advanced rows arrive.
+ * - VALUE is an object with `rid` (KEY=rid): a completion — the source of
+ *   RETIREMENT under both modes. Merge, mark state=complete, derive time/est_ms.
  *   `RequestBuilder`'s `completed:tee` fans these out at request-complete.
  * - `KEY === 'connected'` (substrate sentinel) and any unrecognized shape are
  *   dropped.
  * - A local TM_STRUCT control message (VALUE.action: `clear` / `connection`):
  *   dispatched + published (low-frequency path).
  *
- * The map accumulation, the `snapshot()` reaper (delete-completed-after-one-tick,
- * sort by est_ms desc, cap), and the 10s-window RPS are migrated verbatim from
- * `Inflight.js` (`requestsRef` + `handleMessage` + `renderRequests` +
- * `updateRequestsPerSecond` + `handleBeforeConnect`).
+ * `snapshot()` reaps completed entries (shown one tick), ages out in-flight rows
+ * past INFLIGHT_STALE_MS, sorts by est_ms desc, and caps — plus the 10s-window RPS.
  */
 export class GyroscopeViewNode extends Node {
 	constructor() {
@@ -51,8 +54,8 @@ export class GyroscopeViewNode extends Node {
 		if ( ! value ) {
 			return;
 		}
-		// Wire envelope: inflight snapshot.
-		if ( 'inflight' === key && Array.isArray( value ) ) {
+		// Inflight record; complete state wins a rid-named-inflight collision.
+		if ( 'inflight' === key && value.rid && 'complete' !== value.state ) {
 			this._inflight( value );
 			return;
 		}
@@ -60,7 +63,7 @@ export class GyroscopeViewNode extends Node {
 		if ( 'connected' === key ) {
 			return;
 		}
-		// Wire envelope: completion (single object with rid).
+		// Wire envelope: completion (KEY=rid, single object with rid).
 		if (
 			typeof value === 'object' &&
 			! Array.isArray( value ) &&
@@ -76,13 +79,11 @@ export class GyroscopeViewNode extends Node {
 		}
 	}
 
-	// Inflight snapshot: upsert by rid; never overwrite a completed entry.
-	_inflight( requests ) {
-		for ( const req of requests ) {
-			const existing = this.requests.get( req.rid );
-			if ( ! existing || 'complete' !== existing.state ) {
-				this.requests.set( req.rid, req );
-			}
+	// Upsert one record by rid + stamp freshness; skip if already complete.
+	_inflight( req ) {
+		const existing = this.requests.get( req.rid );
+		if ( ! existing || 'complete' !== existing.state ) {
+			this.requests.set( req.rid, { ...req, _seen: Date.now() } );
 		}
 	}
 
@@ -119,14 +120,21 @@ export class GyroscopeViewNode extends Node {
 		this.setState( 'view', { connectionError: this.connectionError } );
 	}
 
-	// Build the render snapshot and reap completed entries (one-tick display).
+	// Render snapshot: reap completed (one tick), age out stale in-flight rows.
 	snapshot( maxRows ) {
 		const allRequests = [];
 		let completedCount = 0;
+		const now = Date.now();
 		for ( const [ rid, req ] of this.requests ) {
 			if ( 'complete' === req.state ) {
 				completedCount += 1;
 				this.requests.delete( rid );
+				allRequests.push( req ); // shown one tick, then reaped
+				continue;
+			}
+			if ( req._seen && now - req._seen > INFLIGHT_STALE_MS ) {
+				this.requests.delete( rid ); // stale straggler — drop, don't render
+				continue;
 			}
 			allRequests.push( req );
 		}

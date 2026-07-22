@@ -19,6 +19,8 @@ use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Rule_Set;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Message;
+use Newspack_Nodes\Partition_Node;
+use Newspack_Nodes\Topic_Node;
 use PHPUnit\Framework\Attributes\CoversClass;
 
 #[CoversClass( Log_Manager::class )]
@@ -272,6 +274,94 @@ class LogManagerTest extends TestCase {
 			$this->find_last_entry( 'binstderr (truncated)' ),
 			'oversized invalid-UTF8 data must hit the truncation branch, not be dropped'
 		);
+	}
+
+	// ── firehose ≤PIPE_BUF invariant (nothing writes >4KB into the firehose) ──
+
+	public function test_firehose_partition_never_lifts_the_pipe_buf_cap(): void {
+		// The firehose is multi-writer; the Partition drops oversize records WHOLE
+		// so atomic appends stay safe. That safety depends on the cap never being
+		// lifted — assert the materialized partition keeps large writes DISABLED.
+		$this->require_config_or_skip();
+		$lm = $this->fresh_log_manager();
+		$lm->start( 'work' );
+		$lm->message( 'materialize', [ 'm' => 'partition-8801' ] );
+
+		$topic_prop = new \ReflectionProperty( Log_Manager::class, 'topic' );
+		$topic_prop->setAccessible( true );
+		$firehose = $topic_prop->getValue( $lm );
+		$this->assertInstanceOf( Topic_Node::class, $firehose );
+
+		$parts_prop = new \ReflectionProperty( Topic_Node::class, 'partitions' );
+		$parts_prop->setAccessible( true );
+		$partitions = $parts_prop->getValue( $firehose );
+		$this->assertNotEmpty( $partitions, 'a partition materialized on the first message' );
+
+		$flag = new \ReflectionProperty( Partition_Node::class, 'allow_large_writes' );
+		$flag->setAccessible( true );
+		foreach ( $partitions as $partition ) {
+			$this->assertFalse(
+				$flag->getValue( $partition ),
+				'firehose partition must keep the PIPE_BUF cap (large writes disabled)'
+			);
+		}
+	}
+
+	public function test_worst_case_envelope_fits_a_full_data_payload_under_pipe_buf(): void {
+		// The MAX_DATA_SIZE (3840) ↔ PIPE_BUF (4096) gap must absorb the WHOLE
+		// positional envelope at the extremes: a data payload sitting exactly at
+		// MAX_DATA_SIZE plus a maximum-length request-id KEY. If it doesn't, the
+		// Partition drops the record whole and this test sees no full-size line.
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::TEST_DIR );
+
+		// Max-length rid: init_firehose caps X-A8C-Request-Id at 64 chars.
+		$_SERVER['HTTP_X_A8C_REQUEST_ID'] = \str_repeat( 'R', 70 );
+
+		// Adversarial data whose encoded length is EXACTLY MAX_DATA_SIZE: multibyte
+		// (6-byte \uXXXX escapes) + quote/backslash escapes, then ASCII pad to land
+		// on 3840 — not plain padding, so escape expansion is exercised.
+		$m  = \str_repeat( '错', 300 ) . \str_repeat( '"', 100 ) . \str_repeat( '\\', 100 );
+		$m .= \str_repeat( 'x', 3840 - \strlen( (string) \wp_json_encode( [ 'm' => $m ] ) ) );
+		$this->assertSame(
+			3840,
+			\strlen( (string) \wp_json_encode( [ 'm' => $m ] ) ),
+			'the data payload sits exactly at MAX_DATA_SIZE'
+		);
+
+		$lm = $this->fresh_log_manager();
+		$lm->start( 'work' );
+		$lm->message( 'e', [ 'm' => $m ] );
+		$lm->finish();
+
+		$max = 0;
+		foreach ( \glob( self::TEST_DIR . '/logs/firehose.p*/*.log' ) ?: [] as $file ) {
+			foreach ( \array_filter( \explode( "\n", (string) \file_get_contents( $file ) ) ) as $line ) {
+				$max = \max( $max, \strlen( $line ) );
+			}
+		}
+		$this->assertGreaterThan( 3840, $max, 'the full worst-case record survived — not dropped as oversize' );
+		$this->assertLessThanOrEqual( 4096, $max + 1, 'packed record + newline fits PIPE_BUF at the extremes' );
+	}
+
+	public function test_no_shipped_topology_lifts_the_firehose_pipe_buf_cap(): void {
+		// A void_warranty / allow_large_writes grant on a firehose partition would
+		// let a >PIPE_BUF append tear a peer's atomic write on the multi-writer
+		// firehose. Pin that no shipped topology ever grants it.
+		$dir   = \dirname( __DIR__, 2 ) . '/topologies';
+		$files = \glob( $dir . '/*.tsl' ) ?: [];
+		$this->assertNotEmpty( $files, 'the topologies dir resolved to .tsl files' );
+		foreach ( $files as $file ) {
+			foreach ( \file( $file ) ?: [] as $line ) {
+				if ( \preg_match( '/void_warranty|allow_large_writes/', $line ) ) {
+					$this->assertStringNotContainsString(
+						'firehose',
+						$line,
+						\basename( $file ) . ': the multi-writer firehose must never lift the PIPE_BUF cap'
+					);
+				}
+			}
+		}
 	}
 
 	public function test_error_convenience_method(): void {

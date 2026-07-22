@@ -6,8 +6,8 @@
  *
  * This is a THIN view over the `gyroscope:*` node graph (mounted by
  * `useGyroscopeGraph`). The graph owns all data: `gyroscope:stream` holds the SSE
- * connection, `gyroscope:transform` turns envelopes into inflight/complete
- * dispatches, and `gyroscope:view` holds the in-flight model (the rid-keyed map +
+ * connection feeding `gyroscope:view`, which dispatches inflight/complete
+ * envelopes itself and holds the in-flight model (the rid-keyed map +
  * the reap/sort/cap snapshot + RPS). This component only renders.
  *
  * The refresh-interval timer (user-controllable, 0-9 keys + dropdown) drives the

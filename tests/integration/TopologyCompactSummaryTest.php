@@ -190,45 +190,59 @@ class TopologyCompactSummaryTest extends TestCase {
 		$this->assertSame( 7200, $this->partition_geometry( $errors, 'max_lifetime' ) );
 	}
 
-	public function test_errors_partition_accepts_enriched_records_larger_than_pipe_buf(): void {
-		$this->load_topology( 'combined' );
+	/**
+	 * A ≤PIPE_BUF record round-trips through the named partition; a >PIPE_BUF one
+	 * drops whole. void_warranty was removed from errors / completed / gyroscope —
+	 * the whole family is uniformly ≤PIPE_BUF atomic (each producer fits at the
+	 * source). Re-adding a grant would round-trip the oversize record and break this.
+	 */
+	private function assert_partition_enforces_pipe_buf_cap( string $node ): void {
+		$partition = Core::node( $node );
+		$this->assertInstanceOf( Partition_Node::class, $partition );
 
-		$errors = Core::node( 'errors:partition' );
-		$this->assertInstanceOf( Partition_Node::class, $errors );
+		$small                   = Message::new_message();
+		$small[ Message::TYPE ]  = Message::TM_STRUCT;
+		$small[ Message::KEY ]   = 'small-cap-731';
+		$small[ Message::VALUE ] = [ 'k' => 'x', 'm' => 'sentinel-731' ];
+		$this->assertLessThan( Partition_Node::MAX_LINE_SIZE, \strlen( Message::packed( $small ) . "\n" ) );
+		$partition->fill( $small );
 
-		$message                       = Message::new_message();
-		$message[ Message::TYPE ]      = Message::TM_STRUCT;
-		$message[ Message::FROM ]      = 'request-builder';
-		$message[ Message::KEY ]       = 'large-error-rid-731';
-		$message[ Message::VALUE ]     = [
-			'ts' => 731.25,
-			'k'  => 'error',
-			'm'  => \str_repeat( 'payload-sentinel-731-', 170 ),
-		];
-		$this->assertLessThan( Partition_Node::MAX_LINE_SIZE, \strlen( Message::packed( $message ) . "\n" ) );
-		$message[ Message::VALUE ]['method'] = 'PATCH';
-		$message[ Message::VALUE ]['url']    = '/' . \str_repeat( 'url-sentinel-731-', 80 );
-		$this->assertGreaterThan( Partition_Node::MAX_LINE_SIZE, \strlen( Message::packed( $message ) . "\n" ) );
+		$big                   = Message::new_message();
+		$big[ Message::TYPE ]  = Message::TM_STRUCT;
+		$big[ Message::KEY ]   = 'large-cap-731';
+		$big[ Message::VALUE ] = [ 'k' => 'x', 'm' => \str_repeat( 'payload-sentinel-731-', 250 ) ];
+		$this->assertGreaterThan( Partition_Node::MAX_LINE_SIZE, \strlen( Message::packed( $big ) . "\n" ) );
+		$partition->fill( $big );
+		$partition->flush();
 
-		$errors->fill( $message );
-		$errors->flush();
-
-		$round_trip = null;
-		foreach ( $errors->get_segments( true ) as $segment ) {
-			$bytes = $errors->read_at( (int) $segment['id'], 0, (int) $segment['size'] );
+		$keys = [];
+		foreach ( $partition->get_segments( true ) as $segment ) {
+			$bytes = $partition->read_at( (int) $segment['id'], 0, (int) $segment['size'] );
 			foreach ( \explode( "\n", $bytes ) as $line ) {
 				if ( '' === $line ) {
 					continue;
 				}
-				$unpacked = Message::unpacked( $line );
-				if ( 'large-error-rid-731' === $unpacked[ Message::KEY ] ) {
-					$round_trip = $unpacked[ Message::VALUE ];
-				}
+				$keys[] = Message::unpacked( $line )[ Message::KEY ];
 			}
 		}
 
-		$this->assertIsArray( $round_trip, 'the enriched error record was dropped at the partition size cap' );
-		$this->assertSame( $message[ Message::VALUE ], $round_trip );
+		$this->assertContains( 'small-cap-731', $keys, "$node: a ≤PIPE_BUF record round-trips" );
+		$this->assertNotContains( 'large-cap-731', $keys, "$node: a >PIPE_BUF record drops whole — the cap is enforced (no void_warranty)" );
+	}
+
+	public function test_errors_partition_enforces_the_pipe_buf_cap(): void {
+		$this->load_topology( 'combined' );
+		$this->assert_partition_enforces_pipe_buf_cap( 'errors:partition' );
+	}
+
+	public function test_completed_partition_enforces_the_pipe_buf_cap(): void {
+		$this->load_topology( 'combined' );
+		$this->assert_partition_enforces_pipe_buf_cap( 'completed:partition' );
+	}
+
+	public function test_gyroscope_partition_enforces_the_pipe_buf_cap(): void {
+		$this->load_topology( 'combined' );
+		$this->assert_partition_enforces_pipe_buf_cap( 'gyroscope:partition' );
 	}
 
 	/**

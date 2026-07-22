@@ -22,34 +22,72 @@ use Newspack_Nodes\Timer_Node;
 
 class Request_Flight_Node extends Timer_Node {
 
+	/** URL / user_agent display clips — identical to the completed-summary path. */
+	private const MAX_URL_LENGTH        = 2000;
+	private const MAX_USER_AGENT_LENGTH = 500;
+
+	/** Delta mode: emit only rows whose activity advanced since the last fire. */
+	private bool $delta = false;
+
+	/** Wall-clock watermark of the last fire that emitted rows (delta mode). */
+	private float $last_fire_ts = 0.0;
+
 	/**
 	 * Router-TIMER tick (Timer_Node::fire_cb guards the null-sink case and calls
-	 * this). Snapshot the patron's in-flight map and emit one compact batch to the
-	 * configured gyroscope target.
+	 * this). Snapshot the patron's in-flight map and emit ONE TM_STRUCT message per
+	 * in-flight request (KEY='inflight', rid in VALUE) to the configured gyroscope
+	 * target — never a single batched list, which crossed the 4KB cap under load.
 	 *
 	 * @api Used by substrate.
 	 */
 	protected function fire(): void {
-		$batch = $this->inflight_snapshot();
-		if ( empty( $batch ) ) {
+		// Guards also narrow target (string) + sink (Node) for the analyzer.
+		if ( ! \is_string( $this->target ) || '' === $this->target || null === $this->sink ) {
 			return;
 		}
-		// Reject Node's array-target form; Flight emits to one named partition.
-		if ( ! \is_string( $this->target ) || '' === $this->target ) {
+		// Local narrows past the intervening calls (a property would re-widen).
+		$sink = $this->sink;
+		$rows = $this->inflight_snapshot();
+		if ( empty( $rows ) ) {
 			return;
 		}
-		// Guard also narrows ?Node -> Node for the analyzer before ->fill().
-		if ( null === $this->sink ) {
-			return;
+		$watermark = $this->last_fire_ts;
+		$now       = Core::$now > 0.0 ? Core::$now : \microtime( true );
+		$emitted   = false;
+		foreach ( $rows as $row ) {
+			// Delta: skip a row with no activity since the previous fire.
+			if ( $this->delta && Core::as_float( $row['last_log_ts'] ?? 0 ) < $watermark ) {
+				continue;
+			}
+			$message                       = Message::new_message();
+			$message[ Message::TYPE ]      = Message::TM_STRUCT;
+			$message[ Message::TIMESTAMP ] = Core::$now;
+			$message[ Message::FROM ]      = $this->name;
+			$message[ Message::TO ]        = $this->target;
+			$message[ Message::KEY ]       = 'inflight';
+			$message[ Message::VALUE ]     = $row;
+			$fitted = Line_Fitter::fit( $message, [ 'url', 'user_agent' ] );
+			if ( null === $fitted ) {
+				$this->print_less_often( 'WARNING: dropping oversize in-flight row for ', Core::as_string( $row['rid'] ?? '' ) );
+				continue;
+			}
+			$sink->fill( $fitted );
+			$emitted = true;
 		}
-		$message                       = Message::new_message();
-		$message[ Message::TYPE ]      = Message::TM_STRUCT;
-		$message[ Message::TIMESTAMP ] = Core::$now;
-		$message[ Message::FROM ]      = $this->name;
-		$message[ Message::TO ]        = $this->target;
-		$message[ Message::KEY ]       = 'inflight';
-		$message[ Message::VALUE ]     = $batch;
-		$this->sink->fill( $message );
+		// Watermark advances only when rows emitted (reference parity).
+		if ( $emitted ) {
+			$this->last_fire_ts = $now;
+		}
+	}
+
+	/** Toggle delta mode (emit only advanced rows). Off = full per-tick re-emit. */
+	public function set_delta( bool $on ): void {
+		$this->delta = $on;
+	}
+
+	/** Current delta mode; read by the patron's dump_config round-trip. */
+	public function delta(): bool {
+		return $this->delta;
 	}
 
 	/**
@@ -89,10 +127,15 @@ class Request_Flight_Node extends Timer_Node {
 			$url_v         = $r['url'] ?? '';
 			$remote_addr_v = $r['remote_addr'] ?? '';
 			$user_agent_v  = $r['user_agent'] ?? '';
+			// Display clips identical to build_compact_summary (byte-based).
+			$url        = Core::as_string( $url_v );
+			$url        = \strlen( $url ) > self::MAX_URL_LENGTH ? \substr( $url, 0, self::MAX_URL_LENGTH ) . '...' : $url;
+			$user_agent = Core::as_string( $user_agent_v );
+			$user_agent = \strlen( $user_agent ) > self::MAX_USER_AGENT_LENGTH ? \substr( $user_agent, 0, self::MAX_USER_AGENT_LENGTH ) . '...' : $user_agent;
 			$out[]         = [
 				'rid'         => Core::as_string( $rid ),
 				'method'      => Core::as_string( $method_v, 'GET' ),
-				'url'         => Core::as_string( $url_v ),
+				'url'         => $url,
 				'state'       => Request_Builder_Node::extract_state( $r ),
 				'what'        => Request_Builder_Node::extract_what( $r ),
 				'time_ms'     => \round( $time_ms, 1 ),
@@ -101,7 +144,7 @@ class Request_Flight_Node extends Timer_Node {
 				'last_log_ts' => $last_log_ts,
 				'lag_ms'      => \max( 0, \round( ( $tracker_ts - $last_log_ts ) * 1000, 1 ) ),
 				'remote_addr' => Core::as_string( $remote_addr_v ),
-				'user_agent'  => Core::as_string( $user_agent_v ),
+				'user_agent'  => $user_agent,
 			];
 		}
 		return $out;

@@ -7,6 +7,7 @@ use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Callback_Node;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Node_Names;
+use Newspack_Nodes\Partition_Node;
 use Newspack_Nodes\Router_Node;
 use PHPUnit\Framework\Attributes\CoversClass;
 
@@ -125,6 +126,40 @@ class RequestBuilderCompactSummaryTest extends TestCase {
 		) );
 		$this->assertLessThanOrEqual( 2003, \strlen( $compact[0][ Message::VALUE ]['url'] ) );
 		$this->assertLessThanOrEqual( 503, \strlen( $compact[0][ Message::VALUE ]['user_agent'] ) );
+	}
+
+	public function test_compact_summary_fits_a_multibyte_payload_under_pipe_buf(): void {
+		// completed:partition lost void_warranty, so the summary must fit at the
+		// source. The 2000/500-char clips are for DISPLAY; a multibyte url clips
+		// to 2000 chars but JSON-packs past PIPE_BUF, so the fit must trim it more.
+		$rb       = new Request_Builder_Node();
+		$rb->name( 'rb-fit-8102' );
+		$captured = [];
+		$rb->sink( $this->capture_sink( $captured ) );
+		$rb->set_completed_target( 'completed:tee' );
+
+		$rb->emit_request(
+			(object) [
+				'rid'            => 'r-fit-8102',
+				'url'            => '/' . \str_repeat( '错', 3000 ),
+				'request_method' => 'GET',
+				'timestamp'      => 0,
+				'duration_ms'    => 0,
+				'status_code'    => 0,
+				'user_agent'     => \str_repeat( '错', 900 ),
+			]
+		);
+
+		$compact = \array_values( \array_filter(
+			$captured,
+			static fn( $m ): bool => 'completed:tee' === $m[ Message::TO ]
+		) );
+		$this->assertCount( 1, $compact, 'the summary was fitted + emitted, not dropped' );
+		$this->assertLessThanOrEqual(
+			Partition_Node::MAX_LINE_SIZE,
+			Message::packed_size( $compact[0] ) + 1,
+			'the packed compact summary + newline fits under PIPE_BUF'
+		);
 	}
 
 	public function test_inflight_snapshot_returns_active_requests_in_compact_form(): void {
