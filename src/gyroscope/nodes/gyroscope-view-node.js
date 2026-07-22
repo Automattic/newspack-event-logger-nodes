@@ -54,7 +54,10 @@ export class GyroscopeViewNode extends Node {
 		if ( ! value ) {
 			return;
 		}
-		// Inflight record; complete state wins a rid-named-inflight collision.
+		// @longform Inflight record. The rid is client-supplied (X-A8C header,
+		// not charset-confined), so ANY sentinel is spoofable as a rid; the
+		// server-owned state field is what routes that collision safely —
+		// completions always carry state 'complete', running rows never do.
 		if ( 'inflight' === key && value.rid && 'complete' !== value.state ) {
 			this._inflight( value );
 			return;
