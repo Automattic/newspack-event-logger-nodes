@@ -27,25 +27,28 @@ import RequestProfile from '../RequestProfile';
 /**
  * Overview Section component.
  *
- * @param {Object}   props                    Component props.
- * @param {Object}   props.overview           Overview data object.
- * @param {Object}   props.filteredStats      Filtered overview stats from parent.
- * @param {string}   props.serverFilter       Current server filter value.
- * @param {Function} props.setServerFilter    Server filter setter.
- * @param {string[]} props.serverNames        Available server names.
- * @param {string}   props.searchQuery        Search query state.
- * @param {Function} props.setSearchQuery     Search query setter.
- * @param {boolean}  props.searchLoading      Search loading state.
- * @param {string}   props.searchError        Search error message.
- * @param {Function} props.onSearch           Search handler callback.
- * @param {string}   props.refreshInterval    Refresh interval state.
- * @param {Function} props.setRefreshInterval Refresh interval setter.
- * @param {string}   props.chartMetric        Selected chart metric (lifted from parent).
- * @param {Function} props.setChartMetric     Chart metric setter.
- * @param {string}   props.chartBreakdown     Selected breakdown dim (lifted from parent).
- * @param {Function} props.setChartBreakdown  Breakdown dim setter.
- * @param {Object}   props.breakdownData      Breakdown time series for current dim.
- * @param {Object}   props.categoryData       Category time series data.
+ * @param {Object}     props                        Component props.
+ * @param {Object}     props.overview               Overview data object.
+ * @param {Object}     props.filteredStats          Filtered overview stats from parent.
+ * @param {string}     props.serverFilter           Current server filter value.
+ * @param {Function}   props.setServerFilter        Server filter setter.
+ * @param {string[]}   props.serverNames            Available server names.
+ * @param {string}     props.searchQuery            Search query state.
+ * @param {Function}   props.setSearchQuery         Search query setter.
+ * @param {boolean}    props.searchLoading          Search loading state.
+ * @param {string}     props.searchError            Search error message.
+ * @param {Function}   props.onSearch               Search handler callback.
+ * @param {Array|null} props.searchResults          Pattern-search result rows, or null.
+ * @param {boolean}    props.searchResultsTruncated Whether the result set was capped.
+ * @param {Function}   props.onSelectResult         Row-click handler (deep-links by rid).
+ * @param {string}     props.refreshInterval        Refresh interval state.
+ * @param {Function}   props.setRefreshInterval     Refresh interval setter.
+ * @param {string}     props.chartMetric            Selected chart metric (lifted from parent).
+ * @param {Function}   props.setChartMetric         Chart metric setter.
+ * @param {string}     props.chartBreakdown         Selected breakdown dim (lifted from parent).
+ * @param {Function}   props.setChartBreakdown      Breakdown dim setter.
+ * @param {Object}     props.breakdownData          Breakdown time series for current dim.
+ * @param {Object}     props.categoryData           Category time series data.
  * @return {Object|null} Rendered component or null if no overview data.
  */
 export default function OverviewSection( {
@@ -59,6 +62,9 @@ export default function OverviewSection( {
 	searchLoading,
 	searchError,
 	onSearch,
+	searchResults,
+	searchResultsTruncated,
+	onSelectResult,
 	refreshInterval,
 	setRefreshInterval,
 	chartMetric,
@@ -136,7 +142,7 @@ export default function OverviewSection( {
 							<TextControl
 								__next40pxDefaultSize
 								placeholder={ __(
-									'Search request ID…',
+									'Request ID or /url pattern…',
 									'newspack-event-logger-nodes'
 								) }
 								value={ searchQuery }
@@ -212,6 +218,56 @@ export default function OverviewSection( {
 						</div>
 					</div>
 				</CardHeader>
+				{ Array.isArray( searchResults ) &&
+					searchResults.length > 0 && (
+						<div className="event-logger-search-results">
+							<p className="event-logger-search-results-caption">
+								{ __(
+									'Matches in recent traffic',
+									'newspack-event-logger-nodes'
+								) }
+							</p>
+							<ul>
+								{ searchResults.map( ( result ) => (
+									<li key={ result.rid }>
+										<button
+											type="button"
+											onClick={ () =>
+												onSelectResult( result.rid )
+											}
+										>
+											<span className="event-logger-search-result-method">
+												{ result.method }
+											</span>
+											<span className="event-logger-search-result-url">
+												{ result.url || result.rid }
+											</span>
+											<span className="event-logger-search-result-count">
+												{ sprintf(
+													// translators: %d: number of matching lines in the request.
+													_n(
+														'%d match',
+														'%d matches',
+														result.match_count || 0,
+														'newspack-event-logger-nodes'
+													),
+													result.match_count || 0
+												) }
+											</span>
+										</button>
+									</li>
+								) ) }
+							</ul>
+							{ searchResultsTruncated && (
+								<p className="event-logger-search-results-note">
+									{ __(
+										'Showing first results — narrow your search for more.',
+										'newspack-event-logger-nodes'
+									) }
+								</p>
+							) }
+						</div>
+					) }
 				<CardBody>
 					<div className="event-logger-stats-grid">
 						<div className="event-logger-stat">

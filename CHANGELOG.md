@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Performance dashboard: server-side pattern search across recent firehose traffic.** Non-rid input in the Overview search box now runs a new `request_grep` verb on the performance CI: it drains the recent window of every firehose partition through ephemeral request-scope Consumers and groups matches by request id with the SAME engine `wp nodes reqgrep` uses — the shared `Reqgrep_Core` class extracted from the CLI (grouping state machine, history buckets, byte/line caps, and the single `compile()` source of the match regex, so CLI and dashboard counts agree). The reply is a bounded summary (url, method, time, match count, first-match excerpt; result cap 50, global scan budget, every cap — including the engine's per-request clip — reported in `truncated`); clicking a result drives the existing request-detail deep link. Rid-shaped input keeps the exact lookup, and its miss message now hints at the `/pattern` syntax.
+
 ## [0.36.1] - 2026-07-16
 
 ### Removed

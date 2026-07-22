@@ -56,6 +56,9 @@ function mount( overview, overrides = {} ) {
 		searchLoading: false,
 		searchError: '',
 		onSearch: jest.fn(),
+		searchResults: null,
+		searchResultsTruncated: false,
+		onSelectResult: jest.fn(),
 		refreshInterval: '5000',
 		setRefreshInterval: jest.fn(),
 		chartMetric: 'volume',
@@ -177,6 +180,68 @@ describe( 'OverviewSection', () => {
 		expect( onSearch ).toHaveBeenCalledTimes( 2 );
 		expect( onSearch ).toHaveBeenNthCalledWith( 1, 'rid-123' );
 		expect( onSearch ).toHaveBeenNthCalledWith( 2, 'rid-123' );
+		unmount();
+	} );
+
+	it( 'renders pattern-search results and deep-links on a row click', () => {
+		const onSelectResult = jest.fn();
+		const { container, unmount } = mount(
+			{},
+			{
+				searchResults: [
+					{
+						rid: 'r1',
+						url: '/calendar',
+						method: 'GET',
+						match_count: 3,
+					},
+					{
+						rid: 'r2',
+						url: '/feed',
+						method: 'POST',
+						match_count: 1,
+					},
+				],
+				onSelectResult,
+			}
+		);
+		expect( container.textContent ).toContain( '/calendar' );
+		expect( container.textContent ).toContain( 'GET' );
+		// The panel labels its scope so the "recent traffic" limit is honest.
+		expect( container.textContent.toLowerCase() ).toContain(
+			'recent traffic'
+		);
+		const row = container.querySelector(
+			'.event-logger-search-results button'
+		);
+		act( () => {
+			row.click();
+		} );
+		expect( onSelectResult ).toHaveBeenCalledWith( 'r1' );
+		unmount();
+	} );
+
+	it( 'shows a truncation note when the result set is capped', () => {
+		const { container, unmount } = mount(
+			{},
+			{
+				searchResults: [
+					{ rid: 'r1', url: '/x', method: 'GET', match_count: 1 },
+				],
+				searchResultsTruncated: true,
+			}
+		);
+		expect( container.textContent.toLowerCase() ).toContain(
+			'showing first'
+		);
+		unmount();
+	} );
+
+	it( 'renders no results list when searchResults is empty', () => {
+		const { container, unmount } = mount( {}, { searchResults: [] } );
+		expect(
+			container.querySelector( '.event-logger-search-results' )
+		).toBeNull();
 		unmount();
 	} );
 } );
