@@ -91,8 +91,8 @@ class JobRouterTest extends TestCase {
 	public function test_firehose_top_level_id_survives_into_normalized_record(): void {
 		// First-class job identity: the top-level `id` (sibling of `m`) must
 		// reach the written jobs entry so Job_Worker keys jobstats by handler:id.
-		$entry       = $this->firehose_entry( 'job', 'films_import', [ 'stage' => 'films' ] );
-		$entry['id'] = 'films-8842';
+		$entry            = $this->firehose_entry( 'job', 'films_import', [ 'stage' => 'films' ] );
+		$entry['m']['id'] = 'films-8842'; // Producers put the id IN the job body.
 		$this->jr->fill( $this->msg( 'firehose:consumer', $entry ) );
 
 		$this->assertCount( 1, $this->sink->captured );

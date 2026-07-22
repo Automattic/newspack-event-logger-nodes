@@ -110,8 +110,8 @@ class Job_Router_Node extends Node {
 			'ts'         => $raw_timestamp,
 		];
 
-		// First-class identity: forward the top-level `id` (jobstats key).
-		$id = Core::as_string( $entry['id'] ?? '' );
+		// First-class identity: the id lives IN the job body (jobstats key).
+		$id = Core::as_string( $body['id'] ?? '' );
 		if ( '' !== $id ) {
 			$normalized['id'] = $id;
 		}
