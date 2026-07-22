@@ -36,6 +36,7 @@ import {
 } from '@newspack-nodes/shared/utils/formatUtils';
 import fnv1a from '@newspack-nodes/shared/utils/fnv1a';
 import ConnectionBanner from '@newspack-nodes/shared/components/ConnectionBanner';
+import StalenessIndicator from '@newspack-nodes/shared/components/StalenessIndicator';
 import './styles/inflight.scss';
 import './styles/request-stream.scss';
 
@@ -550,25 +551,10 @@ export default function Inflight( { maxRows = 20 } ) {
 								requestsPerSecond.toFixed( 1 )
 							) }
 						</span>
-						{ staleSec !== null && (
-							<span
-								style={ {
-									color:
-										staleSec > 10 ? '#dba617' : '#757575',
-									fontSize: '11px',
-									marginLeft: '8px',
-								} }
-							>
-								{ sprintf(
-									// translators: %d: seconds since the last event was received.
-									__(
-										'%ds ago',
-										'newspack-event-logger-nodes'
-									),
-									staleSec
-								) }
-							</span>
-						) }
+						<StalenessIndicator
+							paused={ false }
+							staleSec={ staleSec }
+						/>
 					</span>
 					<select
 						className="newspack-nodes-select"

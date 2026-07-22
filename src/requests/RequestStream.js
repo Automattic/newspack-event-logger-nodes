@@ -39,6 +39,7 @@ import { Core, useNodeState } from '@newspack-nodes/runtime';
 import { useRequestLogGraph } from './hooks/useRequestLogGraph';
 import useVirtualization from '@newspack-nodes/shared/hooks/useVirtualization';
 import ConnectionBanner from '@newspack-nodes/shared/components/ConnectionBanner';
+import StalenessIndicator from '@newspack-nodes/shared/components/StalenessIndicator';
 import SegmentBrowseSidebar from '../components/SegmentBrowseSidebar';
 import {
 	formatDuration,
@@ -551,25 +552,10 @@ export default function RequestStream( { maxEntries = 500 } ) {
 						<span className="newspack-nodes-toolbar-stats__rps">
 							{ requestsPerSecond.toFixed( 1 ) } req/s
 						</span>
-						{ staleSec !== null && (
-							<span
-								style={ {
-									color:
-										staleSec > 10 ? '#dba617' : '#757575',
-									fontSize: '11px',
-									marginLeft: '8px',
-								} }
-							>
-								{ sprintf(
-									// translators: %d: seconds since the last request was received.
-									__(
-										'%ds ago',
-										'newspack-event-logger-nodes'
-									),
-									staleSec
-								) }
-							</span>
-						) }
+						<StalenessIndicator
+							paused={ isPaused }
+							staleSec={ staleSec }
+						/>
 					</span>
 					<button
 						className={ `button ${ isPaused ? 'is-paused' : '' }` }

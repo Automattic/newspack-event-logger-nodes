@@ -360,6 +360,22 @@ describe( 'useErrorLogGraph — page visibility / pause lifecycle', () => {
 		expect( Core.node( VIEW ).setStateCache.view.paused ).toBe( false );
 	} );
 
+	test( 'a user pause outranks a visibility refocus: pause → hide → refocus stays CLOSED', () => {
+		// Pause and visibility are combined into ONE isActive gate, so a refocus
+		// cannot auto-resume a user-paused stream. Regression guard against a
+		// fork back to a separate visibility path.
+		const { result, rerender } = renderHook( () => useErrorLogGraph() );
+		act( () => result.current.setPaused( true ) );
+		expect( FakeEventSource.last.closed ).toBe( true );
+		const afterPause = FakeEventSource.instances.length;
+		mockPageVisible = false;
+		act( () => rerender( { n: 1 } ) );
+		mockPageVisible = true;
+		act( () => rerender( { n: 2 } ) );
+		expect( FakeEventSource.instances.length ).toBe( afterPause );
+		expect( FakeEventSource.last.closed ).toBe( true );
+	} );
+
 	test( 'clear() empties the view buffer', () => {
 		const { result } = renderHook( () => useErrorLogGraph() );
 		act( () => {
