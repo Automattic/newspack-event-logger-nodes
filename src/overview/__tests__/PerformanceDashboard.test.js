@@ -47,6 +47,9 @@ const mockGraph = {
 	fetchUrlBreakdown: jest.fn().mockResolvedValue( null ),
 	listRules: jest.fn().mockResolvedValue( { rules: [] } ),
 	upsertRule: jest.fn().mockResolvedValue( { rule: {} } ),
+	requestGrep: jest
+		.fn()
+		.mockResolvedValue( { results: [], truncated: false } ),
 };
 jest.mock( '../hooks/usePerformanceGraph', () => ( {
 	__esModule: true,
@@ -250,6 +253,11 @@ describe( 'PerformanceDashboard', () => {
 		mockGraph.listRules.mockResolvedValue( { rules: [] } );
 		mockGraph.upsertRule.mockReset();
 		mockGraph.upsertRule.mockResolvedValue( { rule: {} } );
+		mockGraph.requestGrep.mockReset();
+		mockGraph.requestGrep.mockResolvedValue( {
+			results: [],
+			truncated: false,
+		} );
 		globalThis.__ruleEditProps = null;
 		mockNavState.selectedUrl = null;
 		mockNavState.selectedRequest = null;
@@ -663,6 +671,24 @@ describe( 'PerformanceDashboard', () => {
 		unmount();
 	} );
 
+	it( 'a rid-shaped miss hints at the /pattern syntax', async () => {
+		// 'checkout' is rid-shaped so it routes to exact lookup; the miss must
+		// teach the text-searcher the escape hatch instead of dead-ending.
+		mockGraph.resolveRequest.mockResolvedValue( null );
+		mockView = loadedView();
+		const { unmount } = renderComponent(
+			React.createElement( PerformanceDashboard, { onError: jest.fn() } )
+		);
+		await flushEffects();
+		await act( async () => {
+			await globalThis.__overviewProps.onSearch( 'checkout' );
+		} );
+		expect( globalThis.__overviewProps.searchError ).toContain(
+			'prefix with / to search recent traffic'
+		);
+		unmount();
+	} );
+
 	it( 'resolveRequestId from URL navigation selects the resolved URL and request', async () => {
 		mockGraph.resolveRequest.mockResolvedValue( {
 			url_hash: 'h-known',
@@ -733,6 +759,87 @@ describe( 'PerformanceDashboard', () => {
 			await globalThis.__overviewProps.onSearch( 'r1' );
 		} );
 		expect( mockNavState.selectRequest ).not.toHaveBeenCalled();
+		unmount();
+	} );
+
+	it( 'a /url-pattern search runs request_grep and renders the result list', async () => {
+		mockGraph.requestGrep.mockResolvedValue( {
+			results: [
+				{ rid: 'r1', url: '/calendar', method: 'GET', match_count: 2 },
+			],
+			truncated: true,
+		} );
+		mockView = loadedView();
+		const { unmount } = renderComponent(
+			React.createElement( PerformanceDashboard, {
+				onError: jest.fn(),
+			} )
+		);
+		await flushEffects();
+		await act( async () => {
+			await globalThis.__overviewProps.onSearch( '/calendar' );
+		} );
+		// Pattern (has '/') → grep, NOT the exact-rid resolveRequest.
+		expect( mockGraph.requestGrep ).toHaveBeenCalledWith( '/calendar' );
+		expect( mockGraph.resolveRequest ).not.toHaveBeenCalled();
+		expect( globalThis.__overviewProps.searchResults ).toEqual( [
+			{ rid: 'r1', url: '/calendar', method: 'GET', match_count: 2 },
+		] );
+		expect( globalThis.__overviewProps.searchResultsTruncated ).toBe(
+			true
+		);
+		unmount();
+	} );
+
+	it( 'an empty grep result surfaces the no-matches message', async () => {
+		mockGraph.requestGrep.mockResolvedValue( {
+			results: [],
+			truncated: false,
+		} );
+		mockView = loadedView();
+		const { unmount } = renderComponent(
+			React.createElement( PerformanceDashboard, {
+				onError: jest.fn(),
+			} )
+		);
+		await flushEffects();
+		await act( async () => {
+			await globalThis.__overviewProps.onSearch( '/nope' );
+		} );
+		expect( globalThis.__overviewProps.searchResults ).toBeNull();
+		expect(
+			( globalThis.__overviewProps.searchError || '' ).toLowerCase()
+		).toContain( 'no matches in recent traffic' );
+		unmount();
+	} );
+
+	it( 'selecting a grep result deep-links via the exact-rid path', async () => {
+		mockGraph.requestGrep.mockResolvedValue( {
+			results: [
+				{ rid: 'grep-rid', url: '/x', method: 'GET', match_count: 1 },
+			],
+			truncated: false,
+		} );
+		mockGraph.resolveRequest.mockResolvedValue( {
+			url_hash: 'h9',
+			partition: 0,
+			url: '/x',
+		} );
+		mockView = loadedView();
+		const { unmount } = renderComponent(
+			React.createElement( PerformanceDashboard, {
+				onError: jest.fn(),
+			} )
+		);
+		await flushEffects();
+		await act( async () => {
+			await globalThis.__overviewProps.onSearch( '/x' );
+		} );
+		await act( async () => {
+			await globalThis.__overviewProps.onSelectResult( 'grep-rid' );
+		} );
+		expect( mockGraph.resolveRequest ).toHaveBeenCalledWith( 'grep-rid' );
+		expect( mockNavState.selectRequest ).toHaveBeenCalledWith( 'grep-rid' );
 		unmount();
 	} );
 

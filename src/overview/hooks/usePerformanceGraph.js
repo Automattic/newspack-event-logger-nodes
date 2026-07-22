@@ -62,6 +62,9 @@ const HTTP = '_http';
 // Per-URL ruleset CI via the same exospine (the "Log this URL" affordance).
 const RULES_TARGET = '_shell/_http/rules';
 
+// Default matched-request cap for requestGrep (server clamps to its own max).
+const GREP_RESULT_LIMIT = 20;
+
 // Slice view + receiver names.
 const OVERVIEW_VIEW = 'overview:view';
 const URLS_VIEW = 'urls:view';
@@ -595,11 +598,24 @@ export function usePerformanceGraph( opts = {} ) {
 		[ awaitReply ]
 	);
 
+	// requestGrep: pattern-search recent firehose; resolves the grep summary.
+	const requestGrep = useCallback(
+		( pattern, limit = GREP_RESULT_LIMIT ) =>
+			awaitReply(
+				REQUESTDETAIL_VIEW,
+				'request_grep',
+				formatCommandArgs( [ pattern ], { limit } ),
+				TARGET
+			),
+		[ awaitReply ]
+	);
+
 	return {
 		handleUrlParamsChange,
 		resolveRequest,
 		fetchUrlBreakdown,
 		listRules,
 		upsertRule,
+		requestGrep,
 	};
 }

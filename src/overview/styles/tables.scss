@@ -199,3 +199,75 @@
 		}
 	}
 }
+
+// =============================================================================
+// Pattern-search (request_grep) results dropdown
+// =============================================================================
+
+.event-logger-search-results {
+	padding: base.$space-sm base.$space-lg;
+	border-bottom: 1px solid var(--paper-shadow);
+
+	ul {
+		margin: 0;
+		list-style: none;
+	}
+
+	li {
+		margin: 0;
+	}
+
+	button {
+		display: flex;
+		align-items: baseline;
+		gap: base.$space-md;
+		width: 100%;
+		padding: base.$space-xs base.$space-sm;
+		background: none;
+		border: 0;
+		border-radius: base.$border-radius-sm;
+		cursor: pointer;
+		text-align: left;
+		color: var(--ink);
+
+		&:hover {
+			background: var(--paper-3);
+		}
+	}
+}
+
+.event-logger-search-result-method {
+	flex: 0 0 auto;
+	font-family: base.$mono-font;
+	font-size: 11px;
+	color: var(--ink-3);
+}
+
+.event-logger-search-result-url {
+	flex: 1 1 auto;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-family: base.$mono-font;
+	font-size: 12px;
+}
+
+.event-logger-search-result-count {
+	flex: 0 0 auto;
+	font-size: 11px;
+	color: var(--ink-3);
+}
+
+.event-logger-search-results-caption {
+	margin: 0 0 base.$space-xs;
+	font-size: 11px;
+	color: var(--ink-3);
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+}
+
+.event-logger-search-results-note {
+	margin: base.$space-xs 0 0;
+	font-size: 11px;
+	color: var(--ink-3);
+}

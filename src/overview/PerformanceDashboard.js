@@ -73,6 +73,10 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 	const [ searchQuery, setSearchQuery ] = useState( '' );
 	const [ searchError, setSearchError ] = useState( null );
 	const [ searchLoading, setSearchLoading ] = useState( false );
+	// request_grep result rows + whether the server capped them.
+	const [ searchResults, setSearchResults ] = useState( null );
+	const [ searchResultsTruncated, setSearchResultsTruncated ] =
+		useState( false );
 	const [ requestPartition, setRequestPartition ] = useState( null );
 	const [ refreshInterval, setRefreshInterval ] = useState( () => {
 		// Load from localStorage, validated against allowed dropdown values.
@@ -177,6 +181,7 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 		fetchUrlBreakdown,
 		listRules,
 		upsertRule,
+		requestGrep,
 	} = usePerformanceGraph( {
 		serverFilter,
 		chartBreakdown,
@@ -239,6 +244,7 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 			}
 			setSearchLoading( true );
 			setSearchError( null );
+			setSearchResults( null );
 			const data = await commandResolveRef.current?.( rid.trim() );
 			if ( data && data.url_hash && data.partition !== undefined ) {
 				let urlObj = urls.find( ( u ) => u.hash === data.url_hash );
@@ -264,7 +270,7 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 					sprintf(
 						// translators: %s: the request ID that was searched for.
 						__(
-							'Request "%s" not found',
+							'Request "%s" not found — prefix with / to search recent traffic',
 							'newspack-event-logger-nodes'
 						),
 						rid
@@ -274,6 +280,66 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 			setSearchLoading( false );
 		},
 		[ urls, selectUrl, selectRequest, updateBrowserUrl ]
+	);
+
+	/**
+	 * Pattern-search recent firehose traffic and render the matching-request list.
+	 *
+	 * @param {string} pattern The search pattern.
+	 */
+	const patternSearch = useCallback(
+		async ( pattern ) => {
+			setSearchLoading( true );
+			setSearchError( null );
+			setSearchResults( null );
+			setSearchResultsTruncated( false );
+			const data = await requestGrep( pattern.trim() );
+			const results = data?.results ?? [];
+			if ( results.length > 0 ) {
+				setSearchResults( results );
+				setSearchResultsTruncated( !! data?.truncated );
+			} else {
+				setSearchError(
+					__(
+						'No matches in recent traffic',
+						'newspack-event-logger-nodes'
+					)
+				);
+			}
+			setSearchLoading( false );
+		},
+		[ requestGrep ]
+	);
+
+	/**
+	 * Search box submit: a rid-shaped token keeps today's exact request lookup;
+	 * anything else (a URL or text pattern) runs a recent-traffic pattern search.
+	 *
+	 * @param {string} query The raw search input.
+	 */
+	const handleSearch = useCallback(
+		( query ) => {
+			const trimmed = ( query || '' ).trim();
+			if ( ! trimmed ) {
+				return;
+			}
+			if ( /^[a-zA-Z0-9_-]+$/.test( trimmed ) ) {
+				searchRequest( trimmed );
+			} else {
+				patternSearch( trimmed );
+			}
+		},
+		[ searchRequest, patternSearch ]
+	);
+
+	// Clicking a pattern-search result deep-links via the exact-rid path.
+	const selectSearchResult = useCallback(
+		( rid ) => {
+			setSearchResults( null );
+			setSearchResultsTruncated( false );
+			searchRequest( rid );
+		},
+		[ searchRequest ]
 	);
 
 	// Save refresh interval to localStorage.
@@ -533,7 +599,10 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 				setSearchQuery={ setSearchQuery }
 				searchLoading={ searchLoading }
 				searchError={ searchError }
-				onSearch={ searchRequest }
+				onSearch={ handleSearch }
+				searchResults={ searchResults }
+				searchResultsTruncated={ searchResultsTruncated }
+				onSelectResult={ selectSearchResult }
 				refreshInterval={ refreshInterval }
 				setRefreshInterval={ setRefreshInterval }
 				chartMetric={ chartMetric }

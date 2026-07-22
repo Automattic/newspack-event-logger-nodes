@@ -48,6 +48,7 @@ namespace Newspack_Event_Logger_Nodes\CLI;
 use Newspack_Event_Logger_Nodes\Config;
 use Newspack_Nodes\Core;
 use Newspack_Event_Logger_Nodes\LRU_Cache;
+use Newspack_Event_Logger_Nodes\Reqgrep_Core;
 use Newspack_Nodes\Callback_Node;
 use Newspack_Nodes\Consumer_Node;
 use Newspack_Nodes\Event_Framework;
@@ -67,21 +68,6 @@ class Reqgrep_Command {
 
 	/** Seconds between in-flight cache rotations (60 × 3 = 180s idle ceiling). */
 	private const INFLIGHT_ROTATE_INTERVAL = 60.0;
-
-	/**
-	 * Maximum bytes per in-progress request. Disk-sourced lines are already
-	 * PIPE_BUF-capped at 4KB by LogManager and RequestBuilder already truncates
-	 * the `m` field to 1KB at source, so 10MB only matters when stdin pipes in
-	 * giant lines from a non-canonical producer. 300 slots × 10MB = 3GB worst
-	 * case ceiling; the typical run stays well under PHP's memory_limit.
-	 */
-	private const MAX_BYTES_PER_REQUEST = 10 * 1024 * 1024;
-
-	/** Maximum lines per in-progress request. */
-	private const MAX_LINES_PER_REQUEST = 20000;
-
-	/** Maximum lines per request retained in history buckets. */
-	private const MAX_LINES_PER_REQUEST_IN_HISTORY = 10000;
 
 	/**
 	 * Output sink — lazily a Stdout_Node in production (see emit()); tests swap in
@@ -114,8 +100,8 @@ class Reqgrep_Command {
 	/** Formatting state — last seen timestamp. */
 	private float $fmt_last_timestamp = 0;
 
-	/** @var array<int, array<string, array<int, string>>> History buckets; each bucket maps rid => lines. */
-	private array $history = [ [] ];
+	/** Grouping/matching engine (shared with the request_grep verb); built by init_core(). */
+	private ?Reqgrep_Core $core = null;
 
 	/** True if --incomplete was passed. */
 	private bool $incomplete = false;
@@ -131,9 +117,6 @@ class Reqgrep_Command {
 
 	/** Search pattern (positional arg, default '.'). */
 	private string $pattern = '.';
-
-	/** Pre-compiled regex pattern for matching. */
-	private string $pattern_regex = '/./i';
 
 	/** True if --raw was passed. */
 	private bool $raw = false;
@@ -195,7 +178,6 @@ class Reqgrep_Command {
 	 */
 	public function __invoke( array $args, array $assoc_args ): void {
 		$this->pattern       = $args[0] ?? '.';
-		$this->pattern_regex = '/' . \preg_quote( $this->pattern, '/' ) . '/i';
 		$this->incomplete    = isset( $assoc_args['incomplete'] );
 		$this->raw           = isset( $assoc_args['raw'] );
 		$bucket_size_arg     = $assoc_args['bucket-size'] ?? 250;
@@ -224,6 +206,7 @@ class Reqgrep_Command {
 					$this->emit( '' );
 				}
 			);
+		$this->init_core();
 
 		// Validate explicit --firehose against the configured logs directory.
 		if ( isset( $assoc_args['firehose'] ) ) {
@@ -495,9 +478,9 @@ class Reqgrep_Command {
 
 	/**
 	 * Process one unpacked firehose Message: the entry hash sits at
-	 * Message::VALUE, the routing rid at Message::KEY. Spool the re-packed
-	 * envelope (the accepted minimal bridge — raw mode echoes it, formatted mode
-	 * unpacks it) and hand off to the rid-grouping state machine.
+	 * Message::VALUE, the routing rid at Message::KEY. Re-pack the envelope (the
+	 * accepted minimal bridge — raw mode echoes it, formatted mode unpacks it) and
+	 * hand it to the shared rid-grouping engine.
 	 *
 	 * @param array<int, mixed> $message The 7-field positional Message array.
 	 */
@@ -507,76 +490,42 @@ class Reqgrep_Command {
 		if ( ! \is_array( $entry ) || '' === $rid ) {
 			return;
 		}
-		$this->group_and_output( $entry, $rid, Message::packed( $message ) );
+		$this->require_core()->push( $entry, $rid, Message::packed( $message ) );
 	}
 
 	/**
-	 * Rid-grouping state machine — the shared tail of the read paths.
-	 *
-	 *  - Already-tracked rid: append; print on `process (complete)`.
-	 *  - New rid + envelope matches pattern: pull history, append, start tracking.
-	 *  - No match: stash in history (bounded by num_buckets × bucket_size).
-	 *
-	 * @param array<int|string, mixed> $entry Decoded entry hash (the Message VALUE).
-	 * @param string                   $rid   Request id (the Message KEY).
-	 * @param string                   $line  Packed Message envelope (spooled + grepped).
+	 * Build the shared grouping/matching engine from the parsed run config. Its
+	 * on_complete emits the assembled request (unless --incomplete suppresses
+	 * completed output); on_history_miss surfaces the tune-your-buckets warning.
+	 * The engine shares the LruCache the on-evict callback drives, so output_remaining
+	 * still walks $this->inflight for the [incomplete] tail.
 	 */
-	private function group_and_output( array $entry, string $rid, string $line ): void {
-		$key = Core::as_string( $entry['k'] ?? '' );
+	private function init_core(): void {
+		$on_complete = function ( array $lines, string $rid ): void {
+			// to_lines narrows the engine's lines to strings for output.
+			if ( ! $this->incomplete ) {
+				$this->output_request( self::to_lines( $lines ), $rid );
+			}
+		};
+		$on_miss = static function (): void {
+			\WP_CLI::warning( "Couldn't find request start in history - try increasing --bucket-size or --num-buckets" );
+		};
+		$this->core = new Reqgrep_Core(
+			$this->pattern,
+			$this->require_inflight(),
+			$this->bucket_size,
+			$this->num_buckets,
+			$on_complete,
+			$on_miss
+		);
+	}
 
-		$inflight = $this->require_inflight();
-		$state    = $inflight->get( $rid );
-		if ( $state instanceof \stdClass ) {
-			// Already tracking this rid: extend it and finalize on complete.
-			$this->append_to_state( $state, $line );
-			$this->finalize_if_complete( $inflight, $state, $rid, $key );
-		} elseif ( $rid === $this->pattern || \preg_match( $this->pattern_regex, $line ) ) {
-			// New matching rid: bootstrap state from history (if any).
-			$state        = new \stdClass();
-			$state->lines = [];
-			$state->bytes = 0;
-
-			$found_history = false;
-			foreach ( $this->history as $recent ) {
-				if ( isset( $recent[ $rid ] ) ) {
-					$found_history = true;
-					foreach ( $recent[ $rid ] as $hist_line ) {
-						if ( ! $this->append_to_state( $state, $hist_line ) ) {
-							break 2; // Cap hit — stop merging history.
-						}
-					}
-				}
-			}
-
-			$n = Core::num_int( $entry['n'] ?? 0 );
-			if ( ! $found_history && $n > 1 && \count( $this->history ) >= $this->num_buckets ) {
-				\WP_CLI::warning( "Couldn't find request start in history - try increasing --bucket-size or --num-buckets" );
-			}
-
-			$this->append_to_state( $state, $line );
-			$inflight->set( $rid, $state );
-			$this->finalize_if_complete( $inflight, $state, $rid, $key );
-		} else {
-			// Not matching — stash in history; bound per-rid lines (memory).
-			$recent_idx = \count( $this->history ) - 1;
-			if ( ! isset( $this->history[ $recent_idx ][ $rid ] ) ) {
-				$this->history[ $recent_idx ][ $rid ] = [];
-			}
-			if ( \count( $this->history[ $recent_idx ][ $rid ] ) < self::MAX_LINES_PER_REQUEST_IN_HISTORY ) {
-				$this->history[ $recent_idx ][ $rid ][] = $line;
-			}
-
-			// Rotate history buckets on overflow; trim to num_buckets.
-			if ( \count( $this->history[ $recent_idx ], COUNT_RECURSIVE ) > $this->bucket_size ) {
-				$this->history[] = [];
-			}
-			if ( \count( $this->history ) > $this->num_buckets ) {
-				\array_shift( $this->history );
-			}
+	/** Narrow the setup-assigned engine to non-null; null means a read ran before init_core(). */
+	private function require_core(): Reqgrep_Core {
+		if ( null === $this->core ) {
+			throw new \RuntimeException( 'reqgrep core not initialized' );
 		}
-
-		// Roll the LruCache; on-evict prints [incomplete] for dropped rids.
-		$inflight->rotate_if_due();
+		return $this->core;
 	}
 
 	/**
@@ -589,55 +538,6 @@ class Reqgrep_Command {
 			throw new \RuntimeException( 'in-flight cache not initialized' );
 		}
 		return $this->inflight;
-	}
-
-	/**
-	 * Append a line to the in-flight request state, respecting line + byte caps.
-	 *
-	 * @param \stdClass $state State object with ->lines and ->bytes fields.
-	 * @param string    $line  Raw JSON line (already m-truncated).
-	 * @return bool True if appended; false if a cap was hit (caller may stop).
-	 */
-	private function append_to_state( \stdClass $state, string $line ): bool {
-		$line_bytes = \strlen( $line );
-		// Dynamic \stdClass: ->bytes always int, ->lines always a string list.
-		$bytes = Core::int( $state->bytes );
-		if ( ! \is_array( $state->lines ) ) {
-			$state->lines = [];
-		}
-		// Reference, not copy: append mutates property in place (avoid COW).
-		/** @var list<string> $lines */
-		$lines = &$state->lines;
-		if ( $bytes + $line_bytes > self::MAX_BYTES_PER_REQUEST ) {
-			return false;
-		}
-		if ( \count( $lines ) >= self::MAX_LINES_PER_REQUEST ) {
-			return false;
-		}
-		$lines[]      = $line;
-		$state->bytes = $bytes + $line_bytes;
-		return true;
-	}
-
-	/**
-	 * Finalize a tracked rid once its `process (complete)` line arrives: print
-	 * the assembled request (unless --incomplete suppresses completed output)
-	 * and evict it from the in-flight cache. The shared tail of both
-	 * group_and_output branches.
-	 *
-	 * @param LRU_Cache $inflight In-flight request cache.
-	 * @param \stdClass $state    The rid's accumulated state.
-	 * @param string    $rid      Request id.
-	 * @param string    $key      This entry's `k` field.
-	 */
-	private function finalize_if_complete( LRU_Cache $inflight, \stdClass $state, string $rid, string $key ): void {
-		if ( 'process (complete)' !== $key ) {
-			return;
-		}
-		if ( ! $this->incomplete ) {
-			$this->output_request( self::to_lines( $state->lines ), $rid );
-		}
-		$inflight->delete( $rid );
 	}
 
 	/**

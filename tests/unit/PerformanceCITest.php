@@ -207,6 +207,31 @@ class PerformanceCITest extends TestCase {
 		return $rid;
 	}
 
+	/**
+	 * Seed a firehose partition segment with packed Message envelopes (rid at
+	 * Message::KEY, entry hash at Message::VALUE) — newline-delimited, the layout
+	 * the substrate Consumer line-splits. Mirrors Log_Manager's on-disk shape.
+	 *
+	 * @param int                              $partition Partition index.
+	 * @param array<int, array<string, mixed>> $entries   Firehose entry hashes (each carries `rid`).
+	 */
+	private function write_firehose( int $partition, array $entries ): void {
+		$dir = $this->tmp . "/logs/firehose.p{$partition}";
+		if ( ! \is_dir( $dir ) ) {
+			\mkdir( $dir, 0755, true );
+		}
+		$buffer = '';
+		foreach ( $entries as $entry ) {
+			$message                       = Message::new_message();
+			$message[ Message::TYPE ]      = Message::TM_STRUCT;
+			$message[ Message::TIMESTAMP ] = (float) ( $entry['ts'] ?? \time() );
+			$message[ Message::KEY ]       = (string) ( $entry['rid'] ?? '' );
+			$message[ Message::VALUE ]     = $entry;
+			$buffer                       .= Message::packed( $message ) . "\n";
+		}
+		\file_put_contents( "{$dir}/0.log", $buffer, LOCK_EX );
+	}
+
 	// -------------------------------------------------------------------------
 	// overview verb
 	// -------------------------------------------------------------------------
@@ -914,6 +939,85 @@ class PerformanceCITest extends TestCase {
 			'request_search',
 			'whatever'
 		);
+
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( 'permission denied', $result );
+	}
+
+	// -------------------------------------------------------------------------
+	// request_grep verb (server-side recent-firehose pattern search)
+	// -------------------------------------------------------------------------
+
+	public function test_request_grep_returns_matching_request_summary(): void {
+		// One completed request whose URL matches, plus a non-matching one.
+		$this->write_firehose( 0, [
+			[ 'rid' => 'grepR1', 'k' => 'process (start)', 'm' => '12345 on host', 'ts' => 1700000000.0, 'n' => 1 ],
+			[ 'rid' => 'grepR1', 'k' => 'request', 'm' => 'GET /calendar/today?x=1', 'ts' => 1700000000.0, 'n' => 2 ],
+			[ 'rid' => 'grepR1', 'k' => 'process (complete)', 'm' => '(done)', 'ts' => 1700000000.4, 'n' => 3, 'duration_ms' => 400 ],
+			[ 'rid' => 'grepNoise', 'k' => 'request', 'm' => 'GET /feed', 'ts' => 1700000001.0, 'n' => 1 ],
+			[ 'rid' => 'grepNoise', 'k' => 'process (complete)', 'm' => '(done)', 'ts' => 1700000001.2, 'n' => 2 ],
+		] );
+
+		$interpreter = new Performance_CI_Node();
+		$result      = VerbHarness::fire( $interpreter, 'performance', 'request_grep', '/calendar' );
+
+		$this->assertIsArray( $result );
+		$this->assertSame( 'recent', $result['scope'] );
+		$this->assertSame( '/calendar', $result['pattern'] );
+		$this->assertSame( 1, $result['scanned_partitions'] );
+		$this->assertFalse( $result['truncated'] );
+		$this->assertCount( 1, $result['results'] );
+
+		$summary = $result['results'][0];
+		$this->assertSame( 'grepR1', $summary['rid'] );
+		$this->assertSame( '/calendar/today', $summary['url'] );
+		$this->assertSame( 'GET', $summary['method'] );
+		$this->assertGreaterThanOrEqual( 1, $summary['match_count'] );
+		$this->assertStringContainsString( '/calendar', $summary['first_match_excerpt'] );
+	}
+
+	public function test_request_grep_truncates_at_result_limit(): void {
+		// Three matching completed requests; --limit=2 → 2 results + truncated.
+		$entries = [];
+		foreach ( [ 'gA', 'gB', 'gC' ] as $i => $rid ) {
+			$entries[] = [ 'rid' => $rid, 'k' => 'request', 'm' => "GET /match/{$rid}", 'ts' => 1700000000.0 + $i, 'n' => 1 ];
+			$entries[] = [ 'rid' => $rid, 'k' => 'process (complete)', 'm' => '(done)', 'ts' => 1700000000.5 + $i, 'n' => 2 ];
+		}
+		$this->write_firehose( 0, $entries );
+
+		$interpreter = new Performance_CI_Node();
+		$result      = VerbHarness::fire( $interpreter, 'performance', 'request_grep', '/match --limit=2' );
+
+		$this->assertCount( 2, $result['results'] );
+		$this->assertTrue( $result['truncated'] );
+	}
+
+	public function test_request_grep_empty_when_no_match(): void {
+		$this->write_firehose( 0, [
+			[ 'rid' => 'z1', 'k' => 'request', 'm' => 'GET /other', 'ts' => 1700000000.0, 'n' => 1 ],
+			[ 'rid' => 'z1', 'k' => 'process (complete)', 'm' => '(done)', 'ts' => 1700000000.2, 'n' => 2 ],
+		] );
+
+		$interpreter = new Performance_CI_Node();
+		$result      = VerbHarness::fire( $interpreter, 'performance', 'request_grep', '/nonexistent' );
+
+		$this->assertSame( [], $result['results'] );
+		$this->assertFalse( $result['truncated'] );
+		$this->assertSame( 1, $result['scanned_partitions'] );
+	}
+
+	public function test_request_grep_requires_pattern(): void {
+		$interpreter = new Performance_CI_Node();
+		$result      = VerbHarness::fire( $interpreter, 'performance', 'request_grep' );
+
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( 'pattern required', \strtolower( $result ) );
+	}
+
+	public function test_request_grep_rejects_unauthorized(): void {
+		$GLOBALS['_current_user_can'] = false;
+		$interpreter                  = new Performance_CI_Node();
+		$result                       = VerbHarness::fire( $interpreter, 'performance', 'request_grep', '/x' );
 
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'permission denied', $result );

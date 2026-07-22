@@ -31,12 +31,16 @@ namespace Newspack_Event_Logger_Nodes\App;
 use Newspack_Event_Logger_Nodes\Config as AppConfig;
 use Newspack_Event_Logger_Nodes\Flame_Builder_Node;
 use Newspack_Event_Logger_Nodes\Hook_Categorizer;
+use Newspack_Event_Logger_Nodes\LRU_Cache;
+use Newspack_Event_Logger_Nodes\Reqgrep_Core;
 use Newspack_Event_Logger_Nodes\Request_Builder_Node;
 use Newspack_Event_Logger_Nodes\Rule_Set;
 use Newspack_Event_Logger_Nodes\Stats_Store;
+use Newspack_Nodes\Callback_Node;
 use Newspack_Nodes\Command_Args;
 use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Config as RuntimeConfig;
+use Newspack_Nodes\Consumer_Node;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Node_Names;
@@ -52,6 +56,28 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * missing-rid scan from walking unbounded numbers of firehose entries.
 	 */
 	public const MAX_INDEX_ENTRIES = 100000;
+
+	/** `request_grep` default / max matched-request results (bounds the reply). */
+	private const GREP_RESULT_LIMIT_DEFAULT = 20;
+	private const GREP_RESULT_LIMIT_MAX     = 50;
+
+	/**
+	 * `request_grep` hard scan budget: stop feeding the grouping engine after this
+	 * many firehose lines so a fat firehose can't wedge a request-scope verb even
+	 * inside the (already bounded) `recent` seek window.
+	 */
+	private const GREP_MAX_SCAN_LINES = 200000;
+
+	/** `request_grep` first-match excerpt length (bounded for the reply). */
+	private const GREP_EXCERPT_LENGTH = 200;
+
+	/** `request_grep` in-flight LruCache geometry (100 × 3 = 300 concurrent rids). */
+	private const GREP_INFLIGHT_BUCKET_SIZE = 100;
+	private const GREP_INFLIGHT_NUM_BUCKETS = 3;
+
+	/** `request_grep` history-bucket geometry for the shared grouping engine. */
+	private const GREP_HISTORY_BUCKET_SIZE = 250;
+	private const GREP_HISTORY_NUM_BUCKETS = 10;
 
 	/**
 	 * Valid breakdown dimensions for the `overview` / `url_detail` verbs —
@@ -908,6 +934,189 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
+	 * Pattern-search the RECENT firehose window; return a bounded summary of matching
+	 * REQUESTS (grouped by rid). Reuses the shared Reqgrep_Core grouping/matching
+	 * engine so the dashboard and `wp nodes reqgrep` agree byte-for-byte on what
+	 * matches. Each firehose partition is drained by an EPHEMERAL request-scope
+	 * Consumer (no offsetlog/deadletter, seeded at `recent`) removed in a finally, so
+	 * the workers' durable cursor dirs are never touched. Bounded three ways: a
+	 * per-request byte/line cap (in the engine), a global scan-line budget, and a
+	 * result cap — every limit is reported honestly in `truncated`.
+	 *
+	 * @return array{pattern:string, scope:string, scanned_partitions:int, results:array<int,array<string,mixed>>, truncated:bool, result_count:int}
+	 */
+	private static function run_request_grep( string $pattern, int $limit ): array {
+		$num_partitions = Core::as_int( AppConfig::value( 'num_partitions' ), 1 );
+		$log_base       = RuntimeConfig::get_base_directory() . '/logs';
+
+		$results       = [];
+		$truncated     = false;
+		$scanned_lines = 0;
+		$regex         = Reqgrep_Core::compile( $pattern );
+
+		/** @param list<string> $lines */
+		$on_complete = static function ( array $lines, string $rid, bool $clipped = false ) use ( &$results, &$truncated, $limit, $regex ): void {
+			if ( \count( $results ) >= $limit ) {
+				$truncated = true;
+				return;
+			}
+			// Engine byte/line caps clip the tail — the reply must say so.
+			$truncated = $truncated || $clipped;
+			$results[] = self::summarize_grep_request( $lines, $rid, $regex );
+		};
+
+		$inflight = new LRU_Cache( self::GREP_INFLIGHT_BUCKET_SIZE, self::GREP_INFLIGHT_NUM_BUCKETS );
+		$core     = new Reqgrep_Core(
+			$pattern,
+			$inflight,
+			self::GREP_HISTORY_BUCKET_SIZE,
+			self::GREP_HISTORY_NUM_BUCKETS,
+			$on_complete
+		);
+
+		/** @param array<int,mixed> $message */
+		$on_message = static function ( array $message ) use ( $core, &$scanned_lines, &$truncated ): void {
+			$entry = $message[ Message::VALUE ];
+			$rid   = Core::as_string( $message[ Message::KEY ] ?? '' );
+			if ( ! \is_array( $entry ) || '' === $rid ) {
+				return;
+			}
+			if ( $scanned_lines >= self::GREP_MAX_SCAN_LINES ) {
+				$truncated = true;
+				return;
+			}
+			++$scanned_lines;
+			// array_values keeps the positional list for the packer.
+			$core->push( $entry, $rid, Message::packed( \array_values( $message ) ) );
+		};
+
+		$scanned_partitions = 0;
+		for ( $p = 0; $p < $num_partitions; $p++ ) {
+			$source_dir = "{$log_base}/firehose.p{$p}";
+			if ( ! \is_dir( $source_dir ) ) {
+				continue;
+			}
+			$consumer = new Consumer_Node();
+			self::name_scratch_consumer( $consumer, $p );
+			$consumer->sink( new Callback_Node( $on_message ) );
+			try {
+				// source_dir only: no offsetlog/deadletter (ephemeral).
+				$consumer->arguments( [ $source_dir ] );
+				$consumer->next_offset( 'recent' );
+				$consumer->drain();
+			} finally {
+				$consumer->remove_node();
+			}
+			++$scanned_partitions;
+		}
+
+		return [
+			'pattern'            => $pattern,
+			'scope'              => 'recent',
+			'scanned_partitions' => $scanned_partitions,
+			'results'            => $results,
+			'truncated'          => $truncated,
+			'result_count'       => \count( $results ),
+		];
+	}
+
+	/**
+	 * Build one matching request's summary from its grouped packed-Message lines.
+	 * url/method come from the `request` firehose entry ("METHOD url"); ts from the
+	 * `process (start)` entry (fallback: the first entry). match_count / excerpt are
+	 * derived by re-matching each packed line against the SAME compiled regex the
+	 * grouping used, so the dashboard's count agrees with reqgrep's.
+	 *
+	 * @param array<array-key,mixed> $lines Packed Message envelopes for the request.
+	 * @param string                 $rid   Request id.
+	 * @param string                 $regex The pre-compiled search regex.
+	 * @return array<string,mixed>
+	 */
+	private static function summarize_grep_request( array $lines, string $rid, string $regex ): array {
+		$url         = '';
+		$method      = '';
+		$ts          = 0.0;
+		$ts_set      = false;
+		$match_count = 0;
+		$excerpt     = '';
+
+		foreach ( $lines as $line ) {
+			if ( ! \is_string( $line ) ) {
+				continue;
+			}
+			try {
+				$message = Message::unpacked( $line );
+			} catch ( \InvalidArgumentException $e ) {
+				continue;
+			}
+			$entry = $message[ Message::VALUE ];
+			if ( ! \is_array( $entry ) ) {
+				continue;
+			}
+			$key = Core::as_string( $entry['k'] ?? '' );
+
+			if ( ! $ts_set ) {
+				$ts     = Core::num_float( $entry['ts'] ?? 0 );
+				$ts_set = true;
+			}
+			if ( 'process (start)' === $key ) {
+				$ts = Core::num_float( $entry['ts'] ?? $ts );
+			}
+			if ( 'request' === $key && '' === $method ) {
+				[ $method, $url ] = self::parse_request_line( Core::as_string( $entry['m'] ?? '' ) );
+			}
+
+			if ( 1 === \preg_match( $regex, $line ) ) {
+				++$match_count;
+				if ( '' === $excerpt ) {
+					$excerpt = self::grep_excerpt( $key, $entry['m'] ?? '' );
+				}
+			}
+		}
+
+		return [
+			'rid'                 => $rid,
+			'url'                 => $url,
+			'method'              => $method,
+			'ts'                  => $ts,
+			'match_count'         => $match_count,
+			'first_match_excerpt' => $excerpt,
+		];
+	}
+
+	/**
+	 * Parse a firehose `request` entry's `m` ("METHOD full-url") into [method, url].
+	 * Mirrors Request_Builder_Node's request-line parse (query stripped from url).
+	 *
+	 * @return array{0:string,1:string}
+	 */
+	private static function parse_request_line( string $message ): array {
+		$parts  = \explode( ' ', $message, 2 );
+		$method = $parts[0];
+		$url    = isset( $parts[1] ) ? \explode( '?', $parts[1], 2 )[0] : '';
+		return [ $method, $url ];
+	}
+
+	/**
+	 * Bounded, human-readable excerpt of the first matching entry ("key: message").
+	 * Arrays JSON-encode; the whole thing is trimmed to GREP_EXCERPT_LENGTH.
+	 *
+	 * @param string $key     The entry `k` field.
+	 * @param mixed  $message The entry `m` field (string or array).
+	 */
+	private static function grep_excerpt( string $key, mixed $message ): string {
+		$text = \is_array( $message ) ? Core::as_string( \wp_json_encode( $message ) ) : Core::as_string( $message );
+		$raw  = '' === $key ? $text : "{$key}: {$text}";
+		return \substr( \trim( $raw ), 0, self::GREP_EXCERPT_LENGTH );
+	}
+
+	/** Name a transient scratch Consumer uniquely (per scan) so a live worker's registry can't collide; caller removes it. */
+	private static function name_scratch_consumer( Consumer_Node $consumer, int $index ): void {
+		$token = \getmypid() . '-' . \spl_object_id( $consumer );
+		$consumer->name( "firehose-grep.{$token}.p{$index}" );
+	}
+
+	/**
 	 * Decode a synced array-option value. Settings_Sync_Node::scalarize()
 	 * JSON-encodes arrays unconditionally, so the wire form is always JSON. A
 	 * non-JSON value is a contract violation: reject it explicitly to [] with a
@@ -1173,6 +1382,29 @@ class Performance_CI_Node extends Service_CI_Node {
 				}
 
 				throw new \RuntimeException( \esc_html( "Request not found: rid={$rid}" ) );
+					},
+				],
+				[
+					'name'        => 'request_grep',
+					'description' => 'Pattern-search recent firehose traffic; returns a bounded summary of matching requests (rid, url, method, ts, match_count).',
+					'args'        => [
+						[ 'name' => 'pattern', 'type' => 'string', 'required' => true ],
+						[ 'name' => 'limit', 'type' => 'int', 'required' => false, 'default' => self::GREP_RESULT_LIMIT_DEFAULT ],
+					],
+					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
+				self::require_manage_options();
+
+				$parsed  = Command_Args::parse( self::arg_strings( $args ) );
+				$pattern = Core::as_string( $parsed['positional'][0] ?? '' );
+				if ( '' === \trim( $pattern ) ) {
+					throw new \RuntimeException( 'pattern required' );
+				}
+				$limit = \min(
+					self::GREP_RESULT_LIMIT_MAX,
+					\max( 1, (int) ( $parsed['options']['limit'] ?? self::GREP_RESULT_LIMIT_DEFAULT ) )
+				);
+
+				return self::run_request_grep( $pattern, $limit );
 					},
 				],
 				[

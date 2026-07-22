@@ -515,6 +515,47 @@ describe( 'usePerformanceGraph — rules commands (_http/rules)', () => {
 	} );
 } );
 
+describe( 'usePerformanceGraph — requestGrep (recent-firehose pattern search)', () => {
+	test( 'exposes the requestGrep callback', () => {
+		const client = makeFakeClient();
+		const { result } = renderHook( () =>
+			usePerformanceGraph( { commandClient: client } )
+		);
+		expect( typeof result.current.requestGrep ).toBe( 'function' );
+	} );
+
+	test( 'requestGrep sends request_grep to the performance CI and resolves the summary', async () => {
+		const payload = {
+			pattern: '/calendar',
+			scope: 'recent',
+			truncated: false,
+			results: [
+				{ rid: 'r1', url: '/calendar', method: 'GET', match_count: 2 },
+			],
+		};
+		const client = makeFakeClient( { request_grep: payload } );
+		let api;
+		renderHook(
+			( p ) => {
+				api = usePerformanceGraph( p );
+				return api;
+			},
+			{ initialProps: { commandClient: client } }
+		);
+		await act( async () => {} );
+		let result;
+		await act( async () => {
+			result = await api.requestGrep( '/calendar', 25 );
+		} );
+		const grep = findVerb( client.batches, 'request_grep' );
+		expect( grep ).toBeTruthy();
+		expect( grep[ TO ] ).toBe( 'performance' );
+		expect( grep[ VALUE ].arguments ).toContain( '/calendar' );
+		expect( grep[ VALUE ].arguments ).toContain( '--limit=25' );
+		expect( result ).toEqual( payload );
+	} );
+} );
+
 describe( 'usePerformanceGraph — timer suspension on modal open / tab visibility', () => {
 	test( 'pauses perf:timer while a URL detail is open, re-arms when it closes', async () => {
 		const client = makeFakeClient( {

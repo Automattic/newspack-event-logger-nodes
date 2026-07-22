@@ -106,7 +106,6 @@ class ReqgrepCommandTest extends TestCase {
 			$ref->setValue( $cmd, $value );
 		};
 		$set( 'pattern', $pattern );
-		$set( 'pattern_regex', '/' . \preg_quote( $pattern, '/' ) . '/i' );
 		$set( 'raw', $raw );
 		$set( 'incomplete', $incomplete );
 		$set( 'bucket_size', $bucket_size );
@@ -126,6 +125,8 @@ class ReqgrepCommandTest extends TestCase {
 			}
 		);
 		$set( 'inflight', $inflight );
+		// Build the shared grouping engine from the props just set (mirrors __invoke).
+		( new \ReflectionMethod( $cmd, 'init_core' ) )->invoke( $cmd );
 
 		$this->process_message  = new \ReflectionMethod( $cmd, 'process_message' );
 		$this->format_entry     = new \ReflectionMethod( $cmd, 'format_entry' );
@@ -139,6 +140,12 @@ class ReqgrepCommandTest extends TestCase {
 	private function get_prop( string $prop ) {
 		$ref = new \ReflectionProperty( $this->cmd, $prop );
 		return $ref->getValue( $this->cmd );
+	}
+
+	/** The grouping engine's history buckets now live on the shared Reqgrep_Core. */
+	private function core_history(): array {
+		$core = ( new \ReflectionProperty( $this->cmd, 'core' ) )->getValue( $this->cmd );
+		return ( new \ReflectionProperty( $core, 'history' ) )->getValue( $core );
 	}
 
 	/**
@@ -534,7 +541,7 @@ class ReqgrepCommandTest extends TestCase {
 		}
 
 		// History should have been rotated/trimmed; check internal state.
-		$history = $this->get_prop( 'history' );
+		$history = $this->core_history();
 		$this->assertIsArray( $history );
 		// num_buckets caps at 3.
 		$this->assertLessThanOrEqual( 3, \count( $history ) );
@@ -549,7 +556,7 @@ class ReqgrepCommandTest extends TestCase {
 			$this->feed( $cmd, [ 'n' => $i, 'rid' => $rid, 'k' => 'init', 'm' => "msg{$i}", 'ts' => 1700000000.0 + $i * 0.001 ] );
 		}
 		// history bucket 0 should have the rid with up to 10 lines.
-		$history = $this->get_prop( 'history' );
+		$history = $this->core_history();
 		$this->assertNotEmpty( $history );
 		$this->assertArrayHasKey( $rid, $history[0] ?? [] );
 	}
