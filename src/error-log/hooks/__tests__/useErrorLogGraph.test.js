@@ -34,6 +34,7 @@ import {
 	TM_STRUCT,
 	Core,
 	Node,
+	CommandClient,
 	useNodeState,
 	mountExospine,
 } from '@newspack-nodes/runtime';
@@ -44,6 +45,7 @@ jest.mock( '@newspack-nodes/shared/hooks/usePageVisibility', () => ( {
 	default: () => mockPageVisible,
 } ) );
 
+import { makeFakeCommandClient } from '@newspack-nodes/shared/test-utils/fakeCommandClient';
 import { useErrorLogGraph } from '../useErrorLogGraph';
 
 // Minimal FakeEventSource — same shape as the substrate's sse_connector tests.
@@ -73,7 +75,15 @@ beforeEach( () => {
 	FakeEventSource.instances = [];
 	global.EventSource = FakeEventSource;
 	window.NewspackNodesData = { restUrl: '/wp-json/', nonce: 'NONCE' };
+	// The mount-time list_logs POST would hit the real client (no server under
+	// jsdom); default it to a resolving no-op. Browse tests inject their own.
+	jest.spyOn( CommandClient, 'fromGlobal' ).mockReturnValue( {
+		buildMessage: () => newMessage(),
+		postBatch: () => Promise.resolve( [] ),
+	} );
 } );
+
+afterEach( () => jest.restoreAllMocks() );
 
 const INTERPRETER = '_command_interpreter';
 const ROUTER = '_router';
@@ -108,6 +118,13 @@ function errorEnvelope( rid, value ) {
 	m[ KEY ] = rid;
 	m[ VALUE ] = value;
 	return m;
+}
+
+// CommandClient double keyed by verb, built on the shared HttpOut-seam helper.
+function makeFakeClient( payloadByVerb = {} ) {
+	return makeFakeCommandClient(
+		( m ) => payloadByVerb[ m[ VALUE ]?.name ] ?? null
+	);
 }
 
 describe( 'useErrorLogGraph — exospine + RemoteLink wiring', () => {
@@ -377,6 +394,64 @@ describe( 'useErrorLogGraph — page visibility / pause lifecycle', () => {
 		expect(
 			Core.node( VIEW ).entries.map( ( entry ) => entry.rid )
 		).toEqual( [ 'match' ] );
+	} );
+} );
+
+describe( 'useErrorLogGraph — glob browse', () => {
+	test( 'exposes a browse model cataloging the `errors.*` partitions', async () => {
+		const client = makeFakeClient( {
+			list_logs: [
+				{ key: 'errors.p0', label: 'errors.p0' },
+				{ key: 'errors.p5', label: 'errors.p5' },
+				{ key: 'completed.p0', label: 'completed.p0' },
+			],
+		} );
+		const { result } = renderHook( () =>
+			useErrorLogGraph( { commandClient: client } )
+		);
+		await act( async () => {} );
+		expect(
+			result.current.browse.partitions.map( ( p ) => p.key )
+		).toEqual( [ 'errors.p0', 'errors.p5' ] );
+	} );
+
+	test( 'selecting a partition narrows the live SSE subscription to that dir', async () => {
+		const client = makeFakeClient( {
+			list_logs: [ { key: 'errors.p5', label: 'errors.p5' } ],
+		} );
+		const { result } = renderHook( () =>
+			useErrorLogGraph( { commandClient: client } )
+		);
+		await act( async () => {} );
+		// Default tail is the glob; the URL is byte-identical to today.
+		expect( FakeEventSource.last.url ).toContain( 'subscribe=errors.*' );
+		await act( async () =>
+			result.current.browse.selectPartition( 'errors.p5' )
+		);
+		expect( FakeEventSource.last.url ).toContain( 'subscribe=errors.p5' );
+		expect( FakeEventSource.last.url ).not.toContain(
+			'subscribe=errors.*'
+		);
+	} );
+
+	test( 'refocus resumes the browsed partition, not the glob', async () => {
+		const client = makeFakeClient( {
+			list_logs: [ { key: 'errors.p5', label: 'errors.p5' } ],
+		} );
+		const { result, rerender } = renderHook( () =>
+			useErrorLogGraph( { commandClient: client } )
+		);
+		await act( async () => {} );
+		await act( async () =>
+			result.current.browse.selectPartition( 'errors.p5' )
+		);
+		expect( FakeEventSource.last.url ).toContain( 'subscribe=errors.p5' );
+		mockPageVisible = false;
+		act( () => rerender( { n: 1 } ) );
+		mockPageVisible = true;
+		act( () => rerender( { n: 2 } ) );
+		// The reopened stream is still the browsed dir, not the glob.
+		expect( FakeEventSource.last.url ).toContain( 'subscribe=errors.p5' );
 	} );
 } );
 

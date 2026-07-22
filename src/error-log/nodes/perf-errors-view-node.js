@@ -1,5 +1,6 @@
 import { Node, KEY, VALUE } from '@newspack-nodes/runtime';
 import fnv1a from '@newspack-nodes/shared/utils/fnv1a';
+import { PendingReplies } from '@newspack-nodes/shared/pendingReplies';
 
 const DEFAULT_MAX_ENTRIES = 5000;
 const RPS_WINDOW_SEC = 10;
@@ -59,11 +60,22 @@ export class PerfErrorsViewNode extends Node {
 		this.paused = false;
 		this.connectionError = false;
 		this.filter = '';
+		// Hook-stamped ID → { resolve, reject }; settled when its reply lands.
+		this.replies = new PendingReplies();
 		this._publish();
 	}
 
 	fill( message ) {
 		const value = message[ VALUE ];
+		// A raw-logs catalog reply (VALUE.name); raw envelopes can't match it.
+		if (
+			value &&
+			'object' === typeof value &&
+			'name' in value &&
+			this.replies.settle( message )
+		) {
+			return;
+		}
 		if ( value && typeof value === 'object' && value.action ) {
 			// LOW-freq control change — publish (button/banner re-render).
 			this._control( value );

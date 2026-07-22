@@ -41,11 +41,14 @@ import {
 import '../nodes/register';
 import usePageVisibility from '@newspack-nodes/shared/hooks/usePageVisibility';
 import { useVisibilityGatedLink } from '@newspack-nodes/shared/hooks/useVisibilityGatedLink';
+import useGlobBrowse from '../../hooks/useGlobBrowse';
 
 // The RemoteLink node, the inspectable stream Tee, and the view-model node.
 const LINK = 'perferrors:link';
 const TEE = 'perferrors:stream';
 const VIEW = 'perferrors:view';
+// The glob this dashboard tails across partitions.
+const GLOB = 'errors.*';
 
 // Build a TM_STRUCT control message the view's fill() routes on its `action`.
 const controlMsg = ( value ) => {
@@ -76,17 +79,20 @@ export function useErrorLogGraph( opts = {} ) {
 	isPausedRef.current = isPaused;
 	const filterRef = useRef( '' );
 
-	// First connect tails; a reconnect resumes from last offset (no gap-drop).
+	const isActive = isPageVisible && ! isPaused;
+	// Browse target useGlobBrowse writes; onConnect reads it on (re)connect.
+	const browseTargetRef = useRef( { subscribe: [ GLOB ], positions: null } );
+
+	// First connect applies the browse target; a reconnect resumes its offset.
 	const { viewRef } = useVisibilityGatedLink( {
 		mountNodes: ( interpreter ) => {
 			const { maxEntries } = optsRef.current;
 			// Subscribe topic is the only ctor token now.
-			const link = interpreter.makeNode( 'RemoteLink', LINK, [
-				'errors.*',
-			] );
+			const link = interpreter.makeNode( 'RemoteLink', LINK, [ GLOB ] );
 			// Pass-through Tee on the stream edge; copies each frame to view.
 			link.target = TEE;
-			link.client = CommandClient.fromGlobal();
+			link.client =
+				optsRef.current.commandClient || CommandClient.fromGlobal();
 
 			const tee = interpreter.makeNode( 'Tee', TEE );
 			tee.connectNode( VIEW );
@@ -112,9 +118,23 @@ export function useErrorLogGraph( opts = {} ) {
 
 			return { link, view };
 		},
-		isActive: isPageVisible && ! isPaused,
-		onConnect: ( link, { isReconnect } ) =>
-			link.connect( isReconnect ? link.resumePositions() : null ),
+		isActive,
+		onConnect: ( link, { isReconnect } ) => {
+			const { subscribe, positions } = browseTargetRef.current;
+			link.setSubscribe(
+				subscribe,
+				isReconnect ? link.resumePositions() ?? positions : positions
+			);
+		},
+	} );
+
+	// Kafka-UI browse over the glob (partition select + segment seeks).
+	const browse = useGlobBrowse( {
+		glob: GLOB,
+		linkName: LINK,
+		viewName: VIEW,
+		isActive,
+		browseTargetRef,
 	} );
 
 	// setPaused: flip hook state (re-runs effect) and publish it to view.
@@ -142,5 +162,5 @@ export function useErrorLogGraph( opts = {} ) {
 		}
 	};
 
-	return { setPaused, clear, setFilter };
+	return { setPaused, clear, setFilter, browse };
 }

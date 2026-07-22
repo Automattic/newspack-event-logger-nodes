@@ -623,6 +623,158 @@ describe( 'ErrorLog', () => {
 		expect( list.scrollTop ).toBe( 133 );
 	} );
 
+	// A browse model the mocked graph hook hands back for the browse-UI tests.
+	function browseMock( overrides = {} ) {
+		return {
+			partitions: [],
+			selectedPartition: '',
+			selectPartition: jest.fn(),
+			segments: [],
+			mode: 'live',
+			segmentId: null,
+			follow: jest.fn(),
+			replay: jest.fn(),
+			browseSegment: jest.fn(),
+			...overrides,
+		};
+	}
+
+	describe( 'glob browse UI', () => {
+		it( 'does not render the partition selector or sidebar in the default live view', () => {
+			registerViewFixture();
+			useErrorLogGraph.mockReturnValue( {
+				setPaused,
+				clear,
+				setFilter: setStreamFilter,
+				browse: browseMock(),
+			} );
+			const { container } = mount();
+			expect(
+				container.querySelector( 'select.newspack-nodes-select' )
+			).toBeNull();
+			expect(
+				container.querySelector( '.newspack-nodes-log-browser' )
+			).toBeNull();
+		} );
+
+		it( 'renders a partition selector (All + each dir) once partitions are cataloged', () => {
+			registerViewFixture();
+			useErrorLogGraph.mockReturnValue( {
+				setPaused,
+				clear,
+				setFilter: setStreamFilter,
+				browse: browseMock( {
+					partitions: [
+						{ key: 'errors.p0', label: 'errors.p0' },
+						{ key: 'errors.p4', label: 'errors.p4' },
+					],
+				} ),
+			} );
+			const { container } = mount();
+			const select = container.querySelector(
+				'select.newspack-nodes-select'
+			);
+			expect( select ).toBeTruthy();
+			const options = Array.from( select.options ).map(
+				( o ) => o.value
+			);
+			expect( options ).toEqual( [ '', 'errors.p0', 'errors.p4' ] );
+		} );
+
+		it( 'selecting a partition drives browse.selectPartition', () => {
+			registerViewFixture();
+			const selectPartition = jest.fn();
+			useErrorLogGraph.mockReturnValue( {
+				setPaused,
+				clear,
+				setFilter: setStreamFilter,
+				browse: browseMock( {
+					partitions: [ { key: 'errors.p4', label: 'errors.p4' } ],
+					selectPartition,
+				} ),
+			} );
+			const { container } = mount();
+			const select = container.querySelector(
+				'select.newspack-nodes-select'
+			);
+			const setter = Object.getOwnPropertyDescriptor(
+				window.HTMLSelectElement.prototype,
+				'value'
+			).set;
+			act( () => {
+				setter.call( select, 'errors.p4' );
+				select.dispatchEvent(
+					new Event( 'change', { bubbles: true } )
+				);
+			} );
+			expect( selectPartition ).toHaveBeenCalledWith( 'errors.p4' );
+		} );
+
+		it( 'renders the segment sidebar with Live/Replay + segments when a partition is selected', () => {
+			registerViewFixture();
+			useErrorLogGraph.mockReturnValue( {
+				setPaused,
+				clear,
+				setFilter: setStreamFilter,
+				browse: browseMock( {
+					partitions: [ { key: 'errors.p4', label: 'errors.p4' } ],
+					selectedPartition: 'errors.p4',
+					segments: [
+						{ id: 9, size: 2048 },
+						{ id: 8, size: 512 },
+					],
+					mode: 'browse',
+					segmentId: 9,
+				} ),
+			} );
+			const { container } = mount();
+			const sidebar = container.querySelector(
+				'.newspack-nodes-log-browser'
+			);
+			expect( sidebar ).toBeTruthy();
+			expect( sidebar.textContent ).toContain( 'Segment 9' );
+			expect( sidebar.textContent ).toContain( 'Segment 8' );
+			expect( sidebar.textContent ).toMatch( /Live/ );
+			expect( sidebar.textContent ).toMatch( /Replay/ );
+		} );
+
+		it( 'clicking a segment drives browse.browseSegment; Live/Replay drive follow/replay', () => {
+			registerViewFixture();
+			const browse = browseMock( {
+				partitions: [ { key: 'errors.p4', label: 'errors.p4' } ],
+				selectedPartition: 'errors.p4',
+				segments: [ { id: 9, size: 2048 } ],
+			} );
+			useErrorLogGraph.mockReturnValue( {
+				setPaused,
+				clear,
+				setFilter: setStreamFilter,
+				browse,
+			} );
+			const { container } = mount();
+			const sidebar = container.querySelector(
+				'.newspack-nodes-log-browser'
+			);
+			const segBtn = sidebar.querySelector(
+				'.newspack-nodes-log-browser__item'
+			);
+			act( () => segBtn.click() );
+			expect( browse.browseSegment ).toHaveBeenCalledWith( {
+				id: 9,
+				size: 2048,
+			} );
+			const buttons = Array.from( sidebar.querySelectorAll( 'button' ) );
+			act( () =>
+				buttons.find( ( b ) => /Live/.test( b.textContent ) ).click()
+			);
+			expect( browse.follow ).toHaveBeenCalled();
+			act( () =>
+				buttons.find( ( b ) => /Replay/.test( b.textContent ) ).click()
+			);
+			expect( browse.replay ).toHaveBeenCalled();
+		} );
+	} );
+
 	it( 'sources the staleness display from the link connector lastEventTime', () => {
 		// Staleness reads the link's lastEventTime, not the view node's.
 		registerViewFixture( {

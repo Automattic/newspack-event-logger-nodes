@@ -1,5 +1,6 @@
 import { Node, VALUE } from '@newspack-nodes/runtime';
 import fnv1a from '@newspack-nodes/shared/utils/fnv1a';
+import { PendingReplies } from '@newspack-nodes/shared/pendingReplies';
 
 const DEFAULT_MAX_ENTRIES = 1000;
 const RPS_WINDOW_SEC = 10;
@@ -72,11 +73,22 @@ export class RequestLogViewNode extends Node {
 		this.paused = false;
 		this.connectionError = false;
 		this.filter = '';
+		// Hook-stamped ID → { resolve, reject }; settled when its reply lands.
+		this.replies = new PendingReplies();
 		this._publish();
 	}
 
 	fill( message ) {
 		const value = message[ VALUE ];
+		// A raw-logs catalog reply (VALUE.name); request rows can't match it.
+		if (
+			value &&
+			'object' === typeof value &&
+			'name' in value &&
+			this.replies.settle( message )
+		) {
+			return;
+		}
 		if ( value && value.action ) {
 			// LOW-freq control change — publish (button/label re-render).
 			this._control( value );

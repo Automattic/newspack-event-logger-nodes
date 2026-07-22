@@ -1,0 +1,17 @@
+/**
+ * SegmentBrowseSidebar layout — the browse rail: a partition <select> stacked
+ * above the substrate LogBrowser (which carries its own 200px width + colors).
+ * Layout only; colors come from the shared themed controls + LogBrowser.
+ */
+
+.event-logger-browse-rail {
+	flex-shrink: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+
+	// Match the LogBrowser's fixed rail width so the lone select aligns to it.
+	.newspack-nodes-select {
+		width: 200px;
+	}
+}

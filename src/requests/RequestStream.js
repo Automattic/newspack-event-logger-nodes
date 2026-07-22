@@ -39,6 +39,7 @@ import { Core, useNodeState } from '@newspack-nodes/runtime';
 import { useRequestLogGraph } from './hooks/useRequestLogGraph';
 import useVirtualization from '@newspack-nodes/shared/hooks/useVirtualization';
 import ConnectionBanner from '@newspack-nodes/shared/components/ConnectionBanner';
+import SegmentBrowseSidebar from '../components/SegmentBrowseSidebar';
 import {
 	formatDuration,
 	getDurationClass,
@@ -245,11 +246,12 @@ const StreamRow = memo( function StreamRow( {
  * @return {import('react').ReactElement} Rendered component.
  */
 export default function RequestStream( { maxEntries = 500 } ) {
-	// Mount the node graph; it returns the thin control callbacks.
+	// Mount the graph; returns the control callbacks + the browse model.
 	const {
 		setPaused,
 		clear,
 		setFilter: setViewFilter,
+		browse,
 	} = useRequestLogGraph( { maxEntries } );
 
 	// Low-freq view model (pause button, empty-state label, reconnect banner).
@@ -505,6 +507,13 @@ export default function RequestStream( { maxEntries = 500 } ) {
 		pushedRef.current.rps = -1;
 	};
 
+	// Switch partition; the hook clears the view, so rebase our rows.
+	const handleSelectPartition = ( key ) => {
+		browse?.selectPartition( key );
+		rebaseRenderedRows();
+		pushedRef.current.rps = -1;
+	};
+
 	return (
 		<div
 			className="event-logger-request-stream"
@@ -635,60 +644,71 @@ export default function RequestStream( { maxEntries = 500 } ) {
 				</div>
 			) }
 
-			<div
-				role="row"
-				className="event-logger-request-stream-header-row"
-				style={ { gridTemplateColumns: gridTemplate } }
-			>
-				{ visibleColumns.map( ( col ) => (
-					<span
-						key={ col }
-						role="columnheader"
-						className="event-logger-request-stream-th"
-						title={ COLUMNS[ col ]?.tooltip }
+			<div className="event-logger-request-stream-body">
+				<SegmentBrowseSidebar
+					browse={ browse }
+					onSelectPartition={ handleSelectPartition }
+				/>
+				<div className="event-logger-request-stream-main">
+					<div
+						role="row"
+						className="event-logger-request-stream-header-row"
+						style={ { gridTemplateColumns: gridTemplate } }
 					>
-						{ COLUMNS[ col ]?.label || col }
-					</span>
-				) ) }
-			</div>
-			<div
-				role="rowgroup"
-				className="event-logger-request-stream-list"
-				ref={ listRef }
-				onScroll={ handleScroll }
-			>
-				<div
-					className="event-logger-request-stream-content"
-					ref={ contentRef }
-					style={ { minHeight: totalHeight } }
-				>
-					{ entries.length === 0 ? (
-						<div className="event-logger-request-stream-empty">
-							{ isPaused
-								? __(
-										'Paused - click play to resume',
-										'newspack-event-logger-nodes'
-								  )
-								: __(
-										'Waiting for requests…',
-										'newspack-event-logger-nodes'
-								  ) }
+						{ visibleColumns.map( ( col ) => (
+							<span
+								key={ col }
+								role="columnheader"
+								className="event-logger-request-stream-th"
+								title={ COLUMNS[ col ]?.tooltip }
+							>
+								{ COLUMNS[ col ]?.label || col }
+							</span>
+						) ) }
+					</div>
+					<div
+						role="rowgroup"
+						className="event-logger-request-stream-list"
+						ref={ listRef }
+						onScroll={ handleScroll }
+					>
+						<div
+							className="event-logger-request-stream-content"
+							ref={ contentRef }
+							style={ { minHeight: totalHeight } }
+						>
+							{ entries.length === 0 ? (
+								<div className="event-logger-request-stream-empty">
+									{ isPaused
+										? __(
+												'Paused - click play to resume',
+												'newspack-event-logger-nodes'
+										  )
+										: __(
+												'Waiting for requests…',
+												'newspack-event-logger-nodes'
+										  ) }
+								</div>
+							) : (
+								<>
+									<div
+										style={ {
+											height: offsetTop,
+											flexShrink: 0,
+										} }
+									/>
+									{ visibleEntries.map( ( entry ) => (
+										<StreamRow
+											key={ entry.seq }
+											entry={ entry }
+											visibleColumns={ visibleColumns }
+											gridTemplate={ gridTemplate }
+										/>
+									) ) }
+								</>
+							) }
 						</div>
-					) : (
-						<>
-							<div
-								style={ { height: offsetTop, flexShrink: 0 } }
-							/>
-							{ visibleEntries.map( ( entry ) => (
-								<StreamRow
-									key={ entry.seq }
-									entry={ entry }
-									visibleColumns={ visibleColumns }
-									gridTemplate={ gridTemplate }
-								/>
-							) ) }
-						</>
-					) }
+					</div>
 				</div>
 			</div>
 		</div>
