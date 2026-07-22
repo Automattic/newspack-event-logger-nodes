@@ -506,6 +506,29 @@ describe( 'ErrorLog', () => {
 		expect( container.textContent ).toContain( '--:--:--' );
 	} );
 
+	it( 'gives alert a distinct accent and stderr a muted one', () => {
+		registerViewFixture( {
+			entries: [
+				entry( { seq: 1, id: 1, rid: 'r_alert', ts: 1, k: 'alert' } ),
+				entry( { seq: 2, id: 2, rid: 'r_stderr', ts: 2, k: 'stderr' } ),
+			],
+		} );
+		const { container } = mount();
+		tickFrame();
+		expect(
+			container.querySelector( '.entry-keyword--alert' )
+		).toBeTruthy();
+		expect(
+			container.querySelector( '.entry-keyword--stderr' )
+		).toBeTruthy();
+		// An alert must NOT fall through to the generic info accent.
+		expect(
+			container.querySelector(
+				'.entry-keyword--alert.entry-keyword--info'
+			)
+		).toBeFalsy();
+	} );
+
 	it( 'falls back to an empty model when the view node is absent', () => {
 		// No fixture — useNodeState yields undefined; the view still renders.
 		const { container } = mount();

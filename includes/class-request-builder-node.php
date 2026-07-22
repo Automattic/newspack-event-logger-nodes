@@ -227,8 +227,9 @@ class Request_Builder_Node extends Timer_Node {
 			$request->seq_stack  = $stack;
 		}
 
-		// Forward errors/warnings to errors.log; pass rid so it rides KEY.
+		// Forward errors/warnings/alerts/stderr to errors.log, rid as KEY.
 		if ( 'error' === $keyword || 'warning' === $keyword
+			|| 'alert' === $keyword || 'stderr' === $keyword
 			|| \str_ends_with( $keyword, '(error)' )
 			|| \str_ends_with( $keyword, '(warning)' )
 		) {

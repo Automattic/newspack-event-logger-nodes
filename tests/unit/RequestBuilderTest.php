@@ -728,6 +728,27 @@ class RequestBuilderTest extends TestCase {
 		$this->assertCount( 2, $errors );
 	}
 
+	public function test_alert_and_stderr_keywords_forwarded_to_errors_target(): void {
+		$rb      = new Request_Builder_Node();
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+		$rb->set_errors_target( 'errors:target' );
+
+		$this->fill( $rb, 1, 'r1', 'process (start)' );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$this->fill( $rb, 3, 'r1', 'alert', [ 'm' => 'fleet degraded 5591' ] );
+		$this->fill( $rb, 4, 'r1', 'stderr', [ 'm' => 'worker diagnostic 5591' ] );
+		$this->fill( $rb, 5, 'r1', 'process (complete)' );
+
+		$forwarded = \array_values( \array_filter(
+			$capture->captured,
+			fn ( $m ) => 'errors:target' === $m[ Message::TO ]
+		) );
+		$this->assertCount( 2, $forwarded, 'alert + stderr both forwarded to the Error Log' );
+		$kinds = \array_map( fn ( $m ) => $m[ Message::VALUE ]['k'], $forwarded );
+		$this->assertSame( [ 'alert', 'stderr' ], $kinds );
+	}
+
 	// --- Idle timeout via the builder's own Router-hitchhike timer --------
 
 	/**

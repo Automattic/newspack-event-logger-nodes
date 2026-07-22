@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Performance dashboard: server-side pattern search across recent firehose traffic.** Non-rid input in the Overview search box now runs a new `request_grep` verb on the performance CI: it drains the recent window of every firehose partition through ephemeral request-scope Consumers and groups matches by request id with the SAME engine `wp nodes reqgrep` uses — the shared `Reqgrep_Core` class extracted from the CLI (grouping state machine, history buckets, byte/line caps, and the single `compile()` source of the match regex, so CLI and dashboard counts agree). The reply is a bounded summary (url, method, time, match count, first-match excerpt; result cap 50, global scan budget, every cap — including the engine's per-request clip — reported in `truncated`); clicking a result drives the existing request-detail deep link. Rid-shaped input keeps the exact lookup, and its miss message now hints at the `/pattern` syntax.
+- **`Log_Manager::alert()` + bridges for the substrate's diagnostic seams.** A new `Diagnostics_Bridge` listens on the substrate's `newspack_nodes/stderr` and `newspack_nodes/alert` actions: stderr/`print_less_often` lines join the active request's log as `k:'stderr'` entries (and forward to the Error Log; dropped when no logger is started — they already reach `error_log`), and fleet-health alerts reach the Error Log — via `Log_Manager::alert()` when a request logger is started, else written to a dedicated single-writer `errors.fleet.p0` log that the dashboard's existing `errors.*` subscription picks up unchanged (GC-registered as a log producer, throw-safe so a failing write can never unwind the supervisor tick, and packed-byte-fitted under PIPE_BUF — character caps are a proxy). Error Log rows gain a distinct accent for `alert` and a muted one for `stderr`.
+
+### Fixed
+
+- **`Log_Manager::message()`'s size guard no longer misses invalid-UTF8 data.** The check now encodes with `JSON_INVALID_UTF8_SUBSTITUTE`, so oversized payloads containing invalid bytes hit the truncation branch instead of skipping it (`wp_json_encode` returning `false`) and being silently dropped by the Partition after substitution inflated them past the line cap.
 
 ## [0.36.1] - 2026-07-16
 

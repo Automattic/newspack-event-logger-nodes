@@ -300,7 +300,10 @@ class Log_Manager {
 		if ( isset( $data['m'] ) && \is_string( $data['m'] ) && false !== \strpos( $data['m'], '?' ) ) {
 			$data['m'] = self::redact_url( $data['m'] );
 		}
-		$data_json = \wp_json_encode( $data );
+		// @longform Substitute-on-error: invalid-UTF8 data still yields a
+		// string sized like Message::packed()'s output (same flag) — else
+		// the guard skips truncating and the Partition drops the record.
+		$data_json = \wp_json_encode( $data, \JSON_INVALID_UTF8_SUBSTITUTE | \JSON_PARTIAL_OUTPUT_ON_ERROR );
 		if ( false !== $data_json && \strlen( $data_json ) > self::MAX_DATA_SIZE ) {
 			Core::print_less_often( "LogManager: data truncated for category \"{$category}\", size=", (string) \strlen( $data_json ), \sprintf( ' (limit=%d).', self::MAX_DATA_SIZE ) );
 			$category .= ' (truncated)';
@@ -607,6 +610,32 @@ class Log_Manager {
 	 */
 	public function info( string $message ): bool {
 		return $this->message( 'info', [ 'm' => $message ] );
+	}
+
+	/**
+	 * Log a fleet-alert message. The bridge that carries substrate
+	 * `newspack_nodes/alert` conditions into the firehose rides this when a
+	 * started request logger is present; Request_Builder forwards `alert` to the
+	 * Error Log the same way it forwards error/warning.
+	 *
+	 * @api Used by the substrate-alert bridge.
+	 * @param string $message Alert message.
+	 * @return bool True on success.
+	 */
+	public function alert( string $message ): bool {
+		return $this->message( 'alert', [ 'm' => $message ] );
+	}
+
+	/**
+	 * The active instance IFF it has already started logging — the bridge's seam
+	 * for "is there somewhere to log this line?". Never creates or starts an
+	 * instance (unlike instance()), so an unmatched / rule-gated / root context
+	 * yields null and the caller drops or writes elsewhere.
+	 *
+	 * @api Used by the substrate-diagnostics bridge.
+	 */
+	public static function started_instance(): ?self {
+		return ( null !== self::$instance && true === self::$instance->started ) ? self::$instance : null;
 	}
 
 	/**
