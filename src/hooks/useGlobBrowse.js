@@ -20,25 +20,17 @@
  * the graph hook's `onConnect` re-applies it on the next connect. That ref is the
  * single source of truth the graph hook reads for first-connect + refocus.
  *
- * @param {Object}   o
- * @param {string}   o.glob            The subscription glob (e.g. `errors.*`).
- * @param {string}   o.linkName        RemoteLink node name (HttpOut + SSE seek).
- * @param {string}   o.viewName        View node name (owns the reply PendingReplies).
- * @param {boolean}  o.isActive        Whether the stream is open right now.
- * @param {Object}   o.browseTargetRef `{ current: { subscribe, positions } }` the
- *                                     graph hook reads on (re)connect.
- * @param {string[]} [o.liveSubscribe] Live-mode subscription list (defaults to
- *                                     [ glob ]).
+ * @param {Object}  o
+ * @param {string}  o.glob            The subscription glob (e.g. `errors.*`).
+ * @param {string}  o.linkName        RemoteLink node name (HttpOut + SSE seek).
+ * @param {string}  o.viewName        View node name (owns the reply PendingReplies).
+ * @param {boolean} o.isActive        Whether the stream is open right now.
+ * @param {Object}  o.browseTargetRef `{ current: { subscribe, positions } }` the
+ *                                    graph hook reads on (re)connect.
  * @return {Object} Browse state + actions for the LogBrowser + partition select.
  */
 
-import {
-	useState,
-	useEffect,
-	useRef,
-	useCallback,
-	useMemo,
-} from '@wordpress/element';
+import { useState, useEffect, useRef, useCallback } from '@wordpress/element';
 import {
 	Core,
 	useNodeState,
@@ -92,13 +84,8 @@ export default function useGlobBrowse( {
 	viewName,
 	isActive,
 	browseTargetRef,
-	liveSubscribe = null,
 } ) {
 	const globPrefix = glob.endsWith( '*' ) ? glob.slice( 0, -1 ) : glob;
-	const live = useMemo(
-		() => liveSubscribe ?? [ glob ],
-		[ glob, liveSubscribe ]
-	);
 
 	const [ partitions, setPartitions ] = useState( [] );
 	const [ selectedPartition, setSelectedPartition ] = useState( '' );
@@ -165,8 +152,7 @@ export default function useGlobBrowse( {
 					logs.filter(
 						( l ) =>
 							'string' === typeof l?.key &&
-							( l.key.startsWith( globPrefix ) ||
-								live.includes( l.key ) )
+							l.key.startsWith( globPrefix )
 					)
 				);
 			} )
@@ -174,7 +160,7 @@ export default function useGlobBrowse( {
 		return () => {
 			cancelled = true;
 		};
-	}, [ fetchCatalog, globPrefix, live ] );
+	}, [ fetchCatalog, globPrefix ] );
 
 	// The selected partition's segment catalog (log_status); '' clears it.
 	useEffect( () => {
@@ -217,9 +203,9 @@ export default function useGlobBrowse( {
 			Core.node( viewName )?.fill(
 				viewControl( { action: 'select', dir: key } )
 			);
-			reposition( key ? [ key ] : live, null );
+			reposition( key ? [ key ] : [ glob ], null );
 		},
-		[ live, viewName, reposition ]
+		[ glob, viewName, reposition ]
 	);
 
 	// Live / Replay / segment seeks — only within an explicitly selected dir.
