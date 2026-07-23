@@ -131,4 +131,28 @@ class RequestBuilderConfigVerbsTest extends TestCase {
 		$this->assertSame( 'ok', $verbs['set_errors_target']( $interpreter, [] ) );
 		$this->assertSame( '', $this->read_private( $rb, 'errors_target' ) );
 	}
+
+	public function test_set_alerts_target_verb_persists_and_clears(): void {
+		$rb = new Request_Builder_Node();
+		$rb->name( 'rb' );
+		$interpreter = $this->read_private( $rb, 'interpreter' );
+		$verbs       = $interpreter->commands();
+		$this->assertArrayHasKey( 'set_alerts_target', $verbs );
+		$this->assertSame( 'ok', $verbs['set_alerts_target']( $interpreter, [ 'alerts:partition' ] ) );
+		$this->assertSame( 'alerts:partition', $this->read_private( $rb, 'alerts_target' ) );
+		// Empty arg clears the target.
+		$this->assertSame( 'ok', $verbs['set_alerts_target']( $interpreter, [] ) );
+		$this->assertSame( '', $this->read_private( $rb, 'alerts_target' ) );
+	}
+
+	public function test_dump_config_round_trips_the_alerts_target(): void {
+		$rb = new Request_Builder_Node();
+		$rb->name( 'rb-alerts-dump' );
+		$this->assertStringNotContainsString( 'set_alerts_target', $rb->dump_config() );
+		$rb->set_alerts_target( 'alerts:partition' );
+		$this->assertStringContainsString(
+			'cmd rb-alerts-dump:config set_alerts_target alerts:partition',
+			$rb->dump_config()
+		);
+	}
 }
