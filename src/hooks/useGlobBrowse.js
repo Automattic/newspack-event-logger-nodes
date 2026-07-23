@@ -165,7 +165,8 @@ export default function useGlobBrowse( {
 					logs.filter(
 						( l ) =>
 							'string' === typeof l?.key &&
-							l.key.startsWith( globPrefix )
+							( l.key.startsWith( globPrefix ) ||
+								live.includes( l.key ) )
 					)
 				);
 			} )
@@ -173,7 +174,7 @@ export default function useGlobBrowse( {
 		return () => {
 			cancelled = true;
 		};
-	}, [ fetchCatalog, globPrefix ] );
+	}, [ fetchCatalog, globPrefix, live ] );
 
 	// The selected partition's segment catalog (log_status); '' clears it.
 	useEffect( () => {

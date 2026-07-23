@@ -16,7 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`Log_Manager::alert()` + bridges for the substrate's diagnostic seams.** A new `Diagnostics_Bridge` listens on the substrate's `newspack_nodes/stderr` and `newspack_nodes/alert` actions: stderr/`print_less_often` lines join the active request's log as `k:'stderr'` entries (and forward to the Error Log; dropped when no logger is started — they already reach `error_log`), and fleet-health alerts reach the Error Log — via `Log_Manager::alert()` when a request logger is started, else written DIRECTLY into the errors family: an anonymous `errors.p{partition}` Topic with `KEY='fleet'` hash-routes to one `errors.p{N}` dir — the same dirs the request-builder writes and the dashboard's existing `errors.*` subscription already covers (zero UI change). The write is throw-safe so a failing write can never unwind the supervisor tick, and packed-byte-fitted under PIPE_BUF (character caps are a proxy) so it co-writes the multi-writer errors dir atomically. Error Log rows gain a distinct accent for `alert` and a muted one for `stderr`.
 - The Error Log dashboard's live stream also tails `alerts.p0`, so fleet
   alerts stay visible after leaving the errors family. `useGlobBrowse` gained
-  a `liveSubscribe` option for multi-source live mode.
+  a `liveSubscribe` option for multi-source live mode; the partition picker's
+  catalog also admits any `liveSubscribe` entry (not just glob-prefix matches),
+  so `alerts.p0` is browsable/replayable from the sidebar too.
 
 ### Changed
 
