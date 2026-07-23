@@ -26,6 +26,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`Log_Manager::message()`'s size guard no longer misses invalid-UTF8 data.** The check now encodes with `JSON_INVALID_UTF8_SUBSTITUTE`, so oversized payloads containing invalid bytes hit the truncation branch instead of skipping it (`wp_json_encode` returning `false`) and being silently dropped by the Partition after substitution inflated them past the line cap.
 
+### Removed
+
+- `Diagnostics_Bridge::on_alert` and the `newspack_nodes/alert` listener — the
+  substrate now journals fleet alerts itself into `alerts.p0` (requires
+  newspack-nodes with the alerts-journal change). The bridge carries only the
+  stderr seam now.
+
 ## [0.36.1] - 2026-07-16
 
 ### Removed

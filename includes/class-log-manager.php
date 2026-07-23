@@ -613,12 +613,11 @@ class Log_Manager {
 	}
 
 	/**
-	 * Log a fleet-alert message. The bridge that carries substrate
-	 * `newspack_nodes/alert` conditions into the firehose rides this when a
-	 * started request logger is present; Request_Builder forwards `alert` to the
-	 * Error Log the same way it forwards error/warning.
+	 * Log a fleet-alert message to the current request's firehose stream.
+	 * Request_Builder forwards `alert` entries to the alerts journal AND the
+	 * Error Log, the same way it forwards error/warning to the Error Log.
 	 *
-	 * @api Used by the substrate-alert bridge.
+	 * @api Used by external plugins.
 	 * @param string $message Alert message.
 	 * @return bool True on success.
 	 */
