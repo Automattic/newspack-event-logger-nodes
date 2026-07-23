@@ -179,11 +179,10 @@ function newspack_event_logger_nodes_resolve_settings_sync_value( $value, string
 	);
 } )();
 
-// @longform Bridge substrate diagnostics (stderr + fleet alerts) into the
-// Error Log. File-scope like the hooks above: the actions never fire without
-// the substrate, so no presence guard is needed. See Diagnostics_Bridge.
+// @longform Bridge substrate stderr diagnostics into the Error Log. File-scope
+// like the hooks above: the action never fires without the substrate, so no
+// presence guard is needed. See Diagnostics_Bridge.
 \add_action( 'newspack_nodes/stderr', [ \Newspack_Event_Logger_Nodes\Diagnostics_Bridge::class, 'on_stderr' ] );
-\add_action( 'newspack_nodes/alert', [ \Newspack_Event_Logger_Nodes\Diagnostics_Bridge::class, 'on_alert' ] );
 
 function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\Command_Interpreter_Node $base_interpreter ): void {
 	$base_interpreter->make_node( 'Discovery_CI',   'discovery' );
