@@ -78,6 +78,9 @@ class Request_Builder_Node extends Timer_Node {
 	/** @var string Named target for error/warning lines (empty = disabled). */
 	private $errors_target = '';
 
+	/** @var string Late-bound node NAME `alert` entries also forward to ('' = off). */
+	private $alerts_target = '';
+
 	/** @var int Process line counter (for tests/debug). */
 	private $line_counter = 0;
 
@@ -233,7 +236,11 @@ class Request_Builder_Node extends Timer_Node {
 			|| \str_ends_with( $keyword, '(error)' )
 			|| \str_ends_with( $keyword, '(warning)' )
 		) {
-			$this->emit_error( $entry, $rid, $request );
+			$this->emit_entry( $entry, $rid, $request, $this->errors_target );
+			// Fleet-alert journal: `alert` entries ALSO land in alerts.p0.
+			if ( 'alert' === $keyword ) {
+				$this->emit_entry( $entry, $rid, $request, $this->alerts_target );
+			}
 		}
 
 		if ( isset( $this->state_callbacks[ $keyword ] ) ) {
@@ -371,16 +378,17 @@ class Request_Builder_Node extends Timer_Node {
 	}
 
 	/**
-	 * Emit an error/warning entry via the named errors_target.
+	 * Emit an error/warning/alert entry via a named target partition.
 	 *
 	 * @param array<string, mixed> $entry   Decoded entry.
 	 * @param string               $rid     Request id — propagated to Message::KEY so
 	 *                                      downstream readers can identify the request
 	 *                                      without re-parsing the entry payload.
 	 * @param \stdClass             $request Active request state supplying authoritative URL context.
+	 * @param string               $target  Destination node name ('' = skip).
 	 */
-	private function emit_error( array $entry, string $rid, \stdClass $request ): void {
-		if ( '' === $this->errors_target || null === $this->sink ) {
+	private function emit_entry( array $entry, string $rid, \stdClass $request, string $target ): void {
+		if ( '' === $target || null === $this->sink ) {
 			return;
 		}
 		unset( $entry['url'], $entry['method'] );
@@ -396,7 +404,7 @@ class Request_Builder_Node extends Timer_Node {
 		$message[ Message::TYPE ]      = Message::TM_STRUCT;
 		$message[ Message::TIMESTAMP ] = Core::$now;
 		$message[ Message::FROM ]      = $this->name;
-		$message[ Message::TO ]        = $this->errors_target;
+		$message[ Message::TO ]        = $target;
 		$message[ Message::KEY ]       = $rid;
 		$message[ Message::VALUE ]     = $entry;
 		$fitted = Line_Fitter::fit( $message, [ 'm', 'url' ] );
@@ -594,6 +602,9 @@ class Request_Builder_Node extends Timer_Node {
 		$out = parent::dump_config();
 		if ( '' !== $this->errors_target ) {
 			$out .= "cmd {$this->name}:config set_errors_target {$this->errors_target}\n";
+		}
+		if ( '' !== $this->alerts_target ) {
+			$out .= "cmd {$this->name}:config set_alerts_target {$this->alerts_target}\n";
 		}
 		if ( '' !== $this->completed_target ) {
 			$out .= "cmd {$this->name}:config set_completed_target {$this->completed_target}\n";
@@ -1071,6 +1082,15 @@ class Request_Builder_Node extends Timer_Node {
 	}
 
 	/**
+	 * Set the named target `alert` entries also forward to (the fleet journal).
+	 *
+	 * @param string $target Target node name for alert forwarding.
+	 */
+	public function set_alerts_target( string $target ): void {
+		$this->alerts_target = $target;
+	}
+
+	/**
 	 * Expose every named destination this node actually writes to so the
 	 * console's TARGET column reflects the full fan-out: the primary target plus
 	 * the conditional errors_target / completed_target and the flight sibling's
@@ -1089,6 +1109,9 @@ class Request_Builder_Node extends Timer_Node {
 		$extras  = [];
 		if ( '' !== $this->errors_target ) {
 			$extras[] = $this->errors_target;
+		}
+		if ( '' !== $this->alerts_target ) {
+			$extras[] = $this->alerts_target;
 		}
 		if ( '' !== $this->completed_target ) {
 			$extras[] = $this->completed_target;
@@ -1253,6 +1276,21 @@ class Request_Builder_Node extends Timer_Node {
 						/** @var self $patron */
 						$patron = $interpreter->patron();
 						$patron->set_errors_target( $arg );
+						return 'ok';
+					},
+				],
+				[
+					'name'        => 'set_alerts_target',
+					'description' => 'Also forward `alert` keywords to a named partition (the fleet-alert journal).',
+					'args'        => [
+						[ 'name' => 'target', 'type' => 'node_name', 'required' => true ],
+					],
+					'handler'     => static function ( Command_Interpreter_Node $interpreter, array $args ): string {
+						$arg = \trim( Core::as_string( $args[0] ?? '' ) );
+						// Empty arg clears target (disables secondary emit).
+						/** @var self $patron */
+						$patron = $interpreter->patron();
+						$patron->set_alerts_target( $arg );
 						return 'ok';
 					},
 				],

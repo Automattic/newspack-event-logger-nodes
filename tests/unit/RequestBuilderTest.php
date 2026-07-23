@@ -750,6 +750,53 @@ class RequestBuilderTest extends TestCase {
 		$this->assertSame( [ 'alert', 'stderr' ], $kinds );
 	}
 
+	public function test_alert_keyword_forwards_to_both_alerts_and_errors_targets(): void {
+		$rb      = new Request_Builder_Node();
+		$capture = new Capture_Sink_Node();
+		$rb->name( 'rb' );
+		$rb->sink( $capture );
+		$rb->set_errors_target( 'my-errors:partition' );
+		$rb->set_alerts_target( 'my-alerts:partition' );
+
+		$this->fill( $rb, 1, 'r1', 'process (start)', [ 'm' => '1 on host', 'l' => '' ] );
+		$this->fill( $rb, 2, 'r1', 'alert', [ 'm' => 'fleet went sideways' ] );
+
+		$tos = \array_map( static fn ( array $m ): string => $m[ Message::TO ], $capture->captured );
+		$this->assertContains( 'my-alerts:partition', $tos );
+		$this->assertContains( 'my-errors:partition', $tos );
+		$this->assertCount( 2, $capture->captured );
+	}
+
+	public function test_error_keyword_does_not_forward_to_alerts_target(): void {
+		$rb      = new Request_Builder_Node();
+		$capture = new Capture_Sink_Node();
+		$rb->name( 'rb' );
+		$rb->sink( $capture );
+		$rb->set_errors_target( 'my-errors:partition' );
+		$rb->set_alerts_target( 'my-alerts:partition' );
+
+		$this->fill( $rb, 1, 'r1', 'process (start)', [ 'm' => '1 on host', 'l' => '' ] );
+		$this->fill( $rb, 2, 'r1', 'error', [ 'm' => 'a plain error' ] );
+
+		$tos = \array_map( static fn ( array $m ): string => $m[ Message::TO ], $capture->captured );
+		$this->assertContains( 'my-errors:partition', $tos );
+		$this->assertNotContains( 'my-alerts:partition', $tos );
+	}
+
+	public function test_alert_without_alerts_target_still_forwards_to_errors_target(): void {
+		$rb      = new Request_Builder_Node();
+		$capture = new Capture_Sink_Node();
+		$rb->name( 'rb' );
+		$rb->sink( $capture );
+		$rb->set_errors_target( 'my-errors:partition' );
+
+		$this->fill( $rb, 1, 'r1', 'process (start)', [ 'm' => '1 on host', 'l' => '' ] );
+		$this->fill( $rb, 2, 'r1', 'alert', [ 'm' => 'fleet went sideways' ] );
+
+		$tos = \array_map( static fn ( array $m ): string => $m[ Message::TO ], $capture->captured );
+		$this->assertSame( [ 'my-errors:partition' ], $tos );
+	}
+
 	// --- Idle timeout via the builder's own Router-hitchhike timer --------
 
 	/**
@@ -1058,6 +1105,19 @@ class RequestBuilderTest extends TestCase {
 		$result = $rb->target();
 		$this->assertIsArray( $result );
 		$this->assertSame( [ 'errors:target' ], $result );
+	}
+
+	public function test_target_appends_alerts_target_alongside_errors_target(): void {
+		$rb = new Request_Builder_Node();
+		$rb->connect_node( 'main:target' );
+		$rb->set_errors_target( 'errors:target' );
+		$rb->set_alerts_target( 'alerts:target' );
+
+		$result = $rb->target();
+		$this->assertIsArray( $result );
+		$this->assertContains( 'main:target', $result );
+		$this->assertContains( 'errors:target', $result );
+		$this->assertContains( 'alerts:target', $result );
 	}
 
 	public function test_target_does_not_duplicate_errors_target_already_in_array(): void {
@@ -1675,10 +1735,10 @@ class RequestBuilderTest extends TestCase {
 		$this->assertSame( 'rid_nl', $parsed['rid'] );
 	}
 
-	// --- emit_error: silent on missing target / missing sink --------------
+	// --- emit_entry: silent on missing target / missing sink --------------
 
-	public function test_emit_error_silent_when_errors_target_unset(): void {
-		// No set_errors_target call → emit_error early-returns; the completed
+	public function test_emit_entry_silent_when_errors_target_unset(): void {
+		// No set_errors_target call → emit_entry early-returns; the completed
 		// request still emits.
 		$rb      = new Request_Builder_Node();
 		$capture = new Capture_Sink_Node();
@@ -1696,8 +1756,8 @@ class RequestBuilderTest extends TestCase {
 		$this->assertSame( '/x', $req['url'] );
 	}
 
-	public function test_emit_error_silent_when_sink_is_null(): void {
-		// errors_target set but no sink wired → emit_error early-returns.
+	public function test_emit_entry_silent_when_sink_is_null(): void {
+		// errors_target set but no sink wired → emit_entry early-returns.
 		$rb = new Request_Builder_Node();
 		$rb->set_errors_target( 'errors:target' );
 
@@ -1709,7 +1769,7 @@ class RequestBuilderTest extends TestCase {
 		$this->assertSame( 1, $this->cache_size( $rb ) );
 	}
 
-	// --- emit_error: packed-size fit under PIPE_BUF -----------------------
+	// --- emit_entry: packed-size fit under PIPE_BUF -----------------------
 
 	/** The lone message the node forwarded to its errors target (null if none). */
 	private function captured_error( Capture_Sink_Node $capture ): ?array {
@@ -1721,8 +1781,8 @@ class RequestBuilderTest extends TestCase {
 		return null;
 	}
 
-	public function test_emit_error_fits_an_oversize_entry_under_pipe_buf(): void {
-		// The errors partition no longer lifts the 4KB cap, so emit_error must
+	public function test_emit_entry_fits_an_oversize_entry_under_pipe_buf(): void {
+		// The errors partition no longer lifts the 4KB cap, so emit_entry must
 		// fit the enriched line at the source. A near-limit multibyte `m` plus a
 		// pathologically long url would pack well past PIPE_BUF unfitted.
 		$rb = new Request_Builder_Node();
@@ -1743,7 +1803,7 @@ class RequestBuilderTest extends TestCase {
 		);
 	}
 
-	public function test_emit_error_drops_a_pathologically_unfittable_entry(): void {
+	public function test_emit_entry_drops_a_pathologically_unfittable_entry(): void {
 		// A bulk field the fit can't shrink (not `m`/`url`) keeps the record over
 		// the cap after halving both — it must be dropped, never emitted oversize.
 		$rb = new Request_Builder_Node();
