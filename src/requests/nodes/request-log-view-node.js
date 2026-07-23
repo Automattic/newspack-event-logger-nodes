@@ -1,4 +1,4 @@
-import { Node, VALUE, ID } from '@newspack-nodes/runtime';
+import { KEY, Node, VALUE, ID } from '@newspack-nodes/runtime';
 import fnv1a from '@newspack-nodes/shared/utils/fnv1a';
 import { PendingReplies } from '@newspack-nodes/shared/pendingReplies';
 import { SeekTracker } from '@newspack-nodes/shared/nodes/seekTracker';
@@ -110,7 +110,7 @@ export class RequestLogViewNode extends Node {
 			if ( this.seekActive ) {
 				this._trackPosition( message );
 			}
-			this._appendRow( value );
+			this._appendRow( value, message[ KEY ] ?? '' );
 		}
 	}
 
@@ -174,8 +174,8 @@ export class RequestLogViewNode extends Node {
 		} );
 	}
 
-	// Defensively shape completed-request VALUE, then enrich to render entry.
-	_appendRow( req ) {
+	// Shape completed-request VALUE into an entry; rid arrives as message KEY.
+	_appendRow( req, rid = '' ) {
 		// Belt: drops frames arriving in the pause-click→async-close window.
 		if ( this.paused ) {
 			return;
@@ -197,7 +197,7 @@ export class RequestLogViewNode extends Node {
 			// Monotonic per-mount key; dup rids → distinct DOM (no jump).
 			seq: this.entryCounter,
 			timestamp: req.end_time || 0,
-			rid: req.rid || '',
+			rid,
 			method: req.method || 'GET',
 			url,
 			urlHash: urlHash( url ),

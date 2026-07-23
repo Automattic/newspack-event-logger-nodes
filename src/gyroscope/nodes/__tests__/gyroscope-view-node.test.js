@@ -37,19 +37,21 @@ function makeView( name ) {
 	return node;
 }
 
-// A wire envelope: ONE in-flight record — KEY=rid (the Tachikoma shape).
+// A wire envelope: ONE in-flight record — the rid rides KEY ONLY, never VALUE.
 function inflightEnvelope( request ) {
+	const { rid = '', ...row } = request;
 	const m = newMessage();
-	m[ KEY ] = request.rid ?? '';
-	m[ VALUE ] = request;
+	m[ KEY ] = rid;
+	m[ VALUE ] = row;
 	return m;
 }
 
-// A completion as produced: KEY=rid, VALUE always stamped state:'complete'.
+// A completion as produced: KEY=rid, VALUE stamped state:'complete', no rid.
 function completeEnvelope( request ) {
+	const { rid = '', ...row } = request;
 	const m = newMessage();
-	m[ KEY ] = request.rid;
-	m[ VALUE ] = { state: 'complete', ...request };
+	m[ KEY ] = rid;
+	m[ VALUE ] = { state: 'complete', ...row };
 	return m;
 }
 

@@ -46,7 +46,7 @@ class RequestFlightTest extends TestCase {
 	}
 
 	/**
-	 * Every in-flight record the sink saw (KEY=rid, matching the VALUE rid).
+	 * Every in-flight record the sink saw (non-empty KEY carries the rid).
 	 *
 	 * @param array<int,array> $got
 	 * @return array<int,array>
@@ -54,7 +54,7 @@ class RequestFlightTest extends TestCase {
 	private function inflight_messages( array $got ): array {
 		return \array_values( \array_filter(
 			$got,
-			static fn ( $m ): bool => ( $m[ Message::KEY ] ?? '' ) === ( $m[ Message::VALUE ]['rid'] ?? null )
+			static fn ( $m ): bool => '' !== ( $m[ Message::KEY ] ?? '' ) && \is_array( $m[ Message::VALUE ] ?? null )
 		) );
 	}
 
@@ -79,16 +79,33 @@ class RequestFlightTest extends TestCase {
 		foreach ( $inflight as $m ) {
 			$this->assertSame( Message::TM_STRUCT, $m[ Message::TYPE ] );
 			$this->assertSame( 'gyroscope_partition', $m[ Message::TO ] );
-			$this->assertSame( $m[ Message::VALUE ]['rid'], $m[ Message::KEY ], 'KEY is always the rid' );
 			$this->assertSame( 'rb-flight-e2e:flight', $m[ Message::FROM ] );
-			// VALUE is a single record with the rid inside — not a batch array.
+			// The rid lives in KEY ONLY — VALUE carries no duplicate field.
 			$this->assertIsArray( $m[ Message::VALUE ] );
-			$this->assertArrayHasKey( 'rid', $m[ Message::VALUE ] );
+			$this->assertArrayNotHasKey( 'rid', $m[ Message::VALUE ] );
 		}
-		$this->assertSame( [ 'r-1', 'r-2' ], \array_map( static fn ( $m ) => $m[ Message::VALUE ]['rid'], $inflight ) );
+		$this->assertSame( [ 'r-1', 'r-2' ], \array_map( static fn ( $m ) => $m[ Message::KEY ], $inflight ) );
 		// Default state for a primed request with no stack frames: unwound default.
 		$this->assertSame( 'process', $inflight[0][ Message::VALUE ]['state'] );
 		$this->assertSame( '/a', $inflight[0][ Message::VALUE ]['url'] );
+	}
+
+	public function test_fire_stamps_a_string_key_for_an_all_digits_rid(): void {
+		// PHP coerces the all-digits map key to int; the wire KEY must come
+		// back as the STRING rid regardless.
+		$rb = new Request_Builder_Node();
+		$rb->name( 'rb-numeric-rid' );
+		$got = [];
+		$rb->sink( $this->capture_sink( $got ) );
+		$rb->cache->set( '4477', (object) [ 'url' => '/n', 'request_method' => 'GET', 'timestamp' => 1.0 ] );
+
+		$flight = $rb->flight();
+		$flight->target( 'gyroscope_partition' );
+		$flight->fire_cb();
+
+		$inflight = $this->inflight_messages( $got );
+		$this->assertCount( 1, $inflight );
+		$this->assertSame( '4477', $inflight[0][ Message::KEY ] );
 	}
 
 	public function test_patron_pointer_round_trips(): void {

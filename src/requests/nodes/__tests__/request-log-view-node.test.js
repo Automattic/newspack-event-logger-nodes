@@ -9,6 +9,7 @@
 
 import fnv1a from '@newspack-nodes/shared/utils/fnv1a';
 import {
+	KEY,
 	VALUE,
 	TYPE,
 	ID,
@@ -32,10 +33,13 @@ function makeView( name, opts = {} ) {
 }
 
 // A row message from requestlog:transform: TM_STRUCT carrying the mapped row.
+// The rid rides KEY only (the completed-stream wire shape), never VALUE.
 function rowMsg( req ) {
+	const { rid = '', ...value } = req;
 	const m = newMessage();
 	m[ TYPE ] = TM_STRUCT;
-	m[ VALUE ] = req;
+	m[ KEY ] = rid;
+	m[ VALUE ] = value;
 	return m;
 }
 

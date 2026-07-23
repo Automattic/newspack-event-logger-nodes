@@ -111,11 +111,14 @@ function connectedEnvelope( { pid = 4242, slot = 3 } = {} ) {
 	return m;
 }
 
-// A completed-request envelope: no special KEY, request row in VALUE.
+// A completed-request envelope: KEY carries the rid, the summary VALUE
+// never duplicates it (the completed-stream wire shape).
 function completedEnvelope( req ) {
+	const { rid = '', ...value } = req;
 	const m = newMessage();
 	m[ TYPE ] = TM_STRUCT;
-	m[ VALUE ] = req;
+	m[ KEY ] = rid;
+	m[ VALUE ] = value;
 	return m;
 }
 
@@ -168,7 +171,7 @@ describe( 'useRequestLogGraph — exospine + RemoteLink wiring', () => {
 		const watcher = new Node();
 		watcher.name = 'watcher';
 		const seen = [];
-		watcher.fill = ( m ) => seen.push( m[ VALUE ].rid );
+		watcher.fill = ( m ) => seen.push( m[ KEY ] );
 		Core.node( TEE ).connectNode( 'watcher' );
 		act( () => {
 			FakeEventSource.last.dispatch(

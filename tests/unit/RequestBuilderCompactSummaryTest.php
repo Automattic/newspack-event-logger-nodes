@@ -86,8 +86,10 @@ class RequestBuilderCompactSummaryTest extends TestCase {
 		) );
 		$this->assertCount( 1, $compact );
 		$this->assertSame( Message::TM_STRUCT, $compact[0][ Message::TYPE ] );
+		// The rid rides in KEY only; VALUE carries no duplicate field.
+		$this->assertSame( 'r-1', $compact[0][ Message::KEY ] );
 		$summary = $compact[0][ Message::VALUE ];
-		$this->assertSame( 'r-1', $summary['rid'] );
+		$this->assertArrayNotHasKey( 'rid', $summary );
 		$this->assertSame( 'GET', $summary['method'] );
 		$this->assertSame( '/path', $summary['url'] );
 		$this->assertSame( 200, $summary['status_code'] );
@@ -169,15 +171,16 @@ class RequestBuilderCompactSummaryTest extends TestCase {
 		$rb->cache->set( 'r-2', (object) [ 'url' => '/b', 'request_method' => 'POST', 'timestamp' => 2.0 ] );
 		$snap = $rb->flight->inflight_snapshot();
 		$this->assertCount( 2, $snap );
-		$this->assertSame( 'r-1', $snap[0]['rid'] );
+		// Rows are keyed by rid; the row itself carries no duplicate field.
+		$this->assertSame( [ 'r-1', 'r-2' ], \array_keys( $snap ) );
+		$this->assertArrayNotHasKey( 'rid', $snap['r-1'] );
 		// Default state for a primed request with no stack frames matches
 		// legacy InflightTracker (lines 141-143): the unwound-stack default.
-		$this->assertSame( 'process', $snap[0]['state'] );
-		$this->assertSame( '/a', $snap[0]['url'] );
-		$this->assertSame( 'GET', $snap[0]['method'] );
-		$this->assertEqualsWithDelta( 1.0, $snap[0]['start_time'], 1e-9 );
-		$this->assertSame( 'r-2', $snap[1]['rid'] );
-		$this->assertSame( 'POST', $snap[1]['method'] );
+		$this->assertSame( 'process', $snap['r-1']['state'] );
+		$this->assertSame( '/a', $snap['r-1']['url'] );
+		$this->assertSame( 'GET', $snap['r-1']['method'] );
+		$this->assertEqualsWithDelta( 1.0, $snap['r-1']['start_time'], 1e-9 );
+		$this->assertSame( 'POST', $snap['r-2']['method'] );
 	}
 
 	public function test_set_completed_target_via_verb_enables_compact_summary_on_next_completion(): void {

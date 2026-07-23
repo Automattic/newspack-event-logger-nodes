@@ -1,4 +1,4 @@
-import { Node, VALUE } from '@newspack-nodes/runtime';
+import { KEY, Node, VALUE } from '@newspack-nodes/runtime';
 
 const RPS_WINDOW_SEC = 10;
 
@@ -19,17 +19,19 @@ const INFLIGHT_STALE_MS = 15 * 60 * 1000;
  *   `useNodeState('gyroscope:view','view')`.
  *
  * The producer emits ONE record per in-flight request, KEY=rid — the Tachikoma
- * shape: the key is always the request identity, and the server-built `state`
- * field alone says what a record IS. This view is written ONCE, correct under
- * BOTH producer modes (full per-tick re-emit / delta) with NO mode awareness:
- * - object VALUE with `rid`, state `complete`: a completion — the source of
- *   RETIREMENT under both modes. Merge, derive time/est_ms.
+ * shape: the key is always the request identity (NOT duplicated in VALUE), and
+ * the server-built `state` field alone says what a record IS. This view is
+ * written ONCE, correct under BOTH producer modes (full per-tick re-emit /
+ * delta) with NO mode awareness:
+ * - object VALUE with `state` `complete` + non-empty KEY: a completion — the
+ *   source of RETIREMENT under both modes. Merge, derive time/est_ms.
  *   `RequestBuilder`'s `completed:tee` fans these out at request-complete.
- * - object VALUE with `rid`, any other state: an in-flight upsert by rid,
- *   stamping a freshness time; NEVER overwrite one already marked complete (a
- *   late record may predate a completion already in the map). Under full
- *   re-emit this refreshes every row each tick; under delta only advanced rows.
- * - rid-less shapes (the substrate `connected` sentinel included) are dropped.
+ * - object VALUE with any other `state` + non-empty KEY: an in-flight upsert
+ *   by rid, stamping a freshness time; NEVER overwrite one already marked
+ *   complete (a late record may predate a completion already in the map).
+ *   Under full re-emit this refreshes every row each tick; delta only advanced.
+ * - keyless or state-less shapes are dropped (the substrate `connected`
+ *   sentinel and catalog replies carry no `state`).
  * - A local TM_STRUCT control message (VALUE.action: `clear` / `connection`):
  *   dispatched + published (low-frequency path).
  *
@@ -53,16 +55,19 @@ export class GyroscopeViewNode extends Node {
 		if ( ! value ) {
 			return;
 		}
-		// Gyroscope record: it's in-flight if it's not complete.
+		// Gyroscope record: rid rides KEY; `state` says what the record IS.
+		const rid = message[ KEY ] ?? '';
 		if (
 			typeof value === 'object' &&
 			! Array.isArray( value ) &&
-			value.rid
+			value.state &&
+			rid
 		) {
+			const req = { ...value, rid };
 			if ( 'complete' === value.state ) {
-				this._complete( value );
+				this._complete( req );
 			} else {
-				this._inflight( value );
+				this._inflight( req );
 			}
 			return;
 		}

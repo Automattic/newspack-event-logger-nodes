@@ -54,7 +54,7 @@ class Request_Flight_Node extends Timer_Node {
 		$watermark = $this->last_fire_ts;
 		$now       = Core::$now > 0.0 ? Core::$now : \microtime( true );
 		$emitted   = false;
-		foreach ( $rows as $row ) {
+		foreach ( $rows as $rid => $row ) {
 			// Delta: skip a row with no activity since the previous fire.
 			if ( $this->delta && Core::as_float( $row['last_log_ts'] ?? 0 ) < $watermark ) {
 				continue;
@@ -64,11 +64,11 @@ class Request_Flight_Node extends Timer_Node {
 			$message[ Message::TIMESTAMP ] = Core::$now;
 			$message[ Message::FROM ]      = $this->name;
 			$message[ Message::TO ]        = $this->target;
-			$message[ Message::KEY ]       = Core::as_string( $row['rid'] ?? '' );
+			$message[ Message::KEY ]       = (string) $rid;
 			$message[ Message::VALUE ]     = $row;
 			$fitted = Line_Fitter::fit( $message, [ 'url', 'user_agent' ] );
 			if ( null === $fitted ) {
-				$this->print_less_often( 'WARNING: dropping oversize in-flight row for ', Core::as_string( $row['rid'] ?? '' ) );
+				$this->print_less_often( 'WARNING: dropping oversize in-flight row for ', (string) $rid );
 				continue;
 			}
 			$sink->fill( $fitted );
@@ -96,9 +96,11 @@ class Request_Flight_Node extends Timer_Node {
 	 * periodic fire — emitted to the gyroscope partition for cross-spoke
 	 * aggregation.
 	 *
-	 * Reads the live LruCache (the canonical in-flight map);
+	 * Reads the live LruCache (the canonical in-flight map). Keyed by rid —
+	 * the rid rides Message::KEY on the wire, never duplicated in the row.
+	 * (PHP coerces an all-digits rid to an int key; fire() casts it back.)
 	 *
-	 * @return array<int,array<string,mixed>>
+	 * @return array<array-key,array<string,mixed>>
 	 */
 	public function inflight_snapshot(): array {
 		$patron = $this->patron();
@@ -132,8 +134,7 @@ class Request_Flight_Node extends Timer_Node {
 			$url        = \strlen( $url ) > self::MAX_URL_LENGTH ? \substr( $url, 0, self::MAX_URL_LENGTH ) . '...' : $url;
 			$user_agent = Core::as_string( $user_agent_v );
 			$user_agent = \strlen( $user_agent ) > self::MAX_USER_AGENT_LENGTH ? \substr( $user_agent, 0, self::MAX_USER_AGENT_LENGTH ) . '...' : $user_agent;
-			$out[]         = [
-				'rid'         => Core::as_string( $rid ),
+			$out[ Core::as_string( $rid ) ] = [
 				'method'      => Core::as_string( $method_v, 'GET' ),
 				'url'         => $url,
 				'state'       => Request_Builder_Node::extract_state( $r ),

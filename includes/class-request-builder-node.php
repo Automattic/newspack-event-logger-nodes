@@ -829,17 +829,18 @@ class Request_Builder_Node extends Timer_Node {
 		if ( '' === $this->completed_target || null === $this->sink ) {
 			return;
 		}
-		$summary                   = $this->build_compact_summary( $request );
+		$summary = $this->build_compact_summary( $request );
+		$rid     = Core::as_string( $request->rid ?? '' );
 		$message                       = Message::new_message();
 		$message[ Message::TYPE ]      = Message::TM_STRUCT;
 		$message[ Message::TIMESTAMP ] = Core::$now;
 		$message[ Message::FROM ]      = $this->name;
 		$message[ Message::TO ]        = $this->completed_target;
-		$message[ Message::KEY ]       = $summary['rid'];
+		$message[ Message::KEY ]       = $rid;
 		$message[ Message::VALUE ]     = $summary;
 		$fitted = Line_Fitter::fit( $message, [ 'url', 'user_agent' ] );
 		if ( null === $fitted ) {
-			$this->print_less_often( 'WARNING: dropping oversize completed summary for ', Core::as_string( $summary['rid'] ) );
+			$this->print_less_often( 'WARNING: dropping oversize completed summary for ', $rid );
 			return;
 		}
 		$this->guarded( fn () => $this->sink->fill( $fitted ) );
@@ -864,8 +865,6 @@ class Request_Builder_Node extends Timer_Node {
 		/** @var int|float|string|bool|null $ua_raw */
 		$ua_raw = $r['user_agent'] ?? '';
 		$ua     = (string) $ua_raw;
-		/** @var int|float|string|bool|null $rid_raw */
-		$rid_raw = $r['rid'] ?? '';
 		/** @var int|float|string|bool|null $method_raw */
 		$method_raw = $r['request_method'] ?? 'GET';
 		/** @var int|float|string|bool|null $remote_addr_raw */
@@ -875,8 +874,8 @@ class Request_Builder_Node extends Timer_Node {
 		$ts = $r['timestamp'] ?? 0;
 		/** @var int|float $dur */
 		$dur = $r['duration_ms'] ?? 0;
+		// No rid here — it rides Message::KEY on the completed stream.
 		return [
-			'rid'          => (string) $rid_raw,
 			'method'       => (string) $method_raw,
 			'url'          => \strlen( $url ) > 2000 ? \substr( $url, 0, 2000 ) . '...' : $url,
 			'start_time'   => $ts,

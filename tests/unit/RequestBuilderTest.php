@@ -856,13 +856,15 @@ class RequestBuilderTest extends TestCase {
 		$rb->fire_cb();
 
 		$completed = null;
+		$rid       = null;
 		foreach ( $capture->captured as $m ) {
 			if ( 'completed:tee' === ( $m[ Message::TO ] ?? '' ) ) {
 				$completed = (array) $m[ Message::VALUE ];
+				$rid       = $m[ Message::KEY ];
 			}
 		}
 		$this->assertNotNull( $completed, 'timed-out request mirrored to the completed target' );
-		$this->assertSame( 'r1', $completed['rid'] );
+		$this->assertSame( 'r1', $rid, 'the rid rides KEY, not the summary VALUE' );
 		$this->assertSame( 'T', $completed['error_status'] );
 	}
 
@@ -1142,7 +1144,7 @@ class RequestBuilderTest extends TestCase {
 
 		$snap = $rb->flight->inflight_snapshot();
 		$this->assertCount( 1, $snap );
-		$this->assertSame( 1700000000.000, $snap[0]['start_time'] );
+		$this->assertSame( 1700000000.000, $snap['r1']['start_time'] );
 	}
 
 	public function test_target_appends_flight_inflight_target(): void {
