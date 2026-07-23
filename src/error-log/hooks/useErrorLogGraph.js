@@ -47,8 +47,10 @@ import useGlobBrowse from '../../hooks/useGlobBrowse';
 const LINK = 'perferrors:link';
 const TEE = 'perferrors:stream';
 const VIEW = 'perferrors:view';
-// The glob this dashboard tails across partitions.
+// The glob this dashboard tails, plus the substrate's single-dir alert journal.
 const GLOB = 'errors.*';
+const ALERTS_DIR = 'alerts.p0';
+const LIVE_SUBSCRIBE = [ GLOB, ALERTS_DIR ];
 
 // Build a TM_STRUCT control message the view's fill() routes on its `action`.
 const controlMsg = ( value ) => {
@@ -81,14 +83,19 @@ export function useErrorLogGraph( opts = {} ) {
 
 	const isActive = isPageVisible && ! isPaused;
 	// Browse target useGlobBrowse writes; onConnect reads it on (re)connect.
-	const browseTargetRef = useRef( { subscribe: [ GLOB ], positions: null } );
+	const browseTargetRef = useRef( {
+		subscribe: LIVE_SUBSCRIBE,
+		positions: null,
+	} );
 
 	// First connect applies the browse target; a reconnect resumes its offset.
 	const { viewRef } = useVisibilityGatedLink( {
 		mountNodes: ( interpreter ) => {
 			const { maxEntries } = optsRef.current;
-			// Subscribe topic is the only ctor token now.
-			const link = interpreter.makeNode( 'RemoteLink', LINK, [ GLOB ] );
+			// Subscribe topics are the only ctor tokens now.
+			const link = interpreter.makeNode( 'RemoteLink', LINK, [
+				LIVE_SUBSCRIBE.join( ',' ),
+			] );
 			// Pass-through Tee on the stream edge; copies each frame to view.
 			link.target = TEE;
 			link.client =
