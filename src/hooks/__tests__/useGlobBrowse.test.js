@@ -138,6 +138,7 @@ async function renderBrowse( {
 	errorVerbs = [],
 	isActive = true,
 	glob = GLOB,
+	liveSubscribe,
 } = {} ) {
 	const graph = buildGraph( payloadByVerb, errorVerbs );
 	let hook;
@@ -149,6 +150,7 @@ async function renderBrowse( {
 				viewName: VIEW,
 				isActive,
 				browseTargetRef: graph.browseTargetRef,
+				liveSubscribe,
 			},
 		} );
 	} );
@@ -282,6 +284,26 @@ describe( 'useGlobBrowse — reposition seeks', () => {
 		await act( async () => result.current.selectPartition( '' ) );
 		expect( setSubscribe ).toHaveBeenCalledWith( [ 'errors.*' ], null );
 		expect( browseTargetRef.current.subscribe ).toEqual( [ 'errors.*' ] );
+	} );
+
+	test( 'liveSubscribe overrides the live reposition target', async () => {
+		const { result, link, browseTargetRef } = await renderBrowse( {
+			payloadByVerb: { list_logs: [ { key: 'errors.p3' } ] },
+			liveSubscribe: [ 'errors.*', 'alerts.p0' ],
+		} );
+		await act( async () => result.current.selectPartition( 'errors.p3' ) );
+		const setSubscribe = jest
+			.spyOn( link, 'setSubscribe' )
+			.mockImplementation( () => {} );
+		await act( async () => result.current.selectPartition( '' ) );
+		expect( setSubscribe ).toHaveBeenCalledWith(
+			[ 'errors.*', 'alerts.p0' ],
+			null
+		);
+		expect( browseTargetRef.current.subscribe ).toEqual( [
+			'errors.*',
+			'alerts.p0',
+		] );
 	} );
 
 	test( 'browseSegment seeks the selected dir to that segment head', async () => {
