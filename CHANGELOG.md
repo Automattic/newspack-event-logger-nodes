@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.37.0] - 2026-07-23
+
 ### Changed
 - **The completed and gyroscope streams no longer duplicate the rid in VALUE
   — it rides `Message::KEY` alone.** `build_compact_summary()` and
