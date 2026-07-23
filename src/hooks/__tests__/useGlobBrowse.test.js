@@ -183,6 +183,37 @@ describe( 'useGlobBrowse — partition catalog', () => {
 		] );
 	} );
 
+	test( 'also exposes a liveSubscribe entry outside the glob prefix, but not a non-matching decoy', async () => {
+		const { result } = await renderBrowse( {
+			liveSubscribe: [ 'errors.*', 'alerts.p0' ],
+			payloadByVerb: {
+				list_logs: [
+					{ key: 'errors.p0', label: 'errors.p0' },
+					{ key: 'alerts.p0', label: 'alerts.p0' },
+					{ key: 'completed.p1', label: 'completed.p1' },
+				],
+			},
+		} );
+		expect( result.current.partitions.map( ( p ) => p.key ) ).toEqual( [
+			'errors.p0',
+			'alerts.p0',
+		] );
+	} );
+
+	test( 'without liveSubscribe, a key outside the glob prefix stays excluded (default-null path)', async () => {
+		const { result } = await renderBrowse( {
+			payloadByVerb: {
+				list_logs: [
+					{ key: 'errors.p0', label: 'errors.p0' },
+					{ key: 'alerts.p0', label: 'alerts.p0' },
+				],
+			},
+		} );
+		expect( result.current.partitions.map( ( p ) => p.key ) ).toEqual( [
+			'errors.p0',
+		] );
+	} );
+
 	test( 'defaults selectedPartition to "" (All partitions, live) with no segments', async () => {
 		const { result } = await renderBrowse( {
 			payloadByVerb: { list_logs: [ { key: 'errors.p0' } ] },
