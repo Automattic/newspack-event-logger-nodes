@@ -729,7 +729,7 @@ class RequestBuilderTest extends TestCase {
 		$this->assertCount( 2, $errors );
 	}
 
-	public function test_alert_and_stderr_keywords_forwarded_to_errors_target(): void {
+	public function test_stderr_keyword_forwarded_to_errors_target_but_alert_is_not(): void {
 		$rb      = new Request_Builder_Node();
 		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
@@ -745,12 +745,11 @@ class RequestBuilderTest extends TestCase {
 			$capture->captured,
 			fn ( $m ) => 'errors:target' === $m[ Message::TO ]
 		) );
-		$this->assertCount( 2, $forwarded, 'alert + stderr both forwarded to the Error Log' );
-		$kinds = \array_map( fn ( $m ) => $m[ Message::VALUE ]['k'], $forwarded );
-		$this->assertSame( [ 'alert', 'stderr' ], $kinds );
+		$this->assertCount( 1, $forwarded, 'only stderr goes to the Error Log; alert routes to alerts_target' );
+		$this->assertSame( 'stderr', $forwarded[0][ Message::VALUE ]['k'] );
 	}
 
-	public function test_alert_keyword_forwards_to_both_alerts_and_errors_targets(): void {
+	public function test_alert_keyword_forwards_only_to_alerts_target(): void {
 		$rb      = new Request_Builder_Node();
 		$capture = new Capture_Sink_Node();
 		$rb->name( 'rb' );
@@ -762,9 +761,7 @@ class RequestBuilderTest extends TestCase {
 		$this->fill( $rb, 2, 'r1', 'alert', [ 'm' => 'fleet went sideways' ] );
 
 		$tos = \array_map( static fn ( array $m ): string => $m[ Message::TO ], $capture->captured );
-		$this->assertContains( 'my-alerts:partition', $tos );
-		$this->assertContains( 'my-errors:partition', $tos );
-		$this->assertCount( 2, $capture->captured );
+		$this->assertSame( [ 'my-alerts:partition' ], $tos );
 	}
 
 	public function test_error_keyword_does_not_forward_to_alerts_target(): void {
@@ -783,7 +780,7 @@ class RequestBuilderTest extends TestCase {
 		$this->assertNotContains( 'my-alerts:partition', $tos );
 	}
 
-	public function test_alert_without_alerts_target_still_forwards_to_errors_target(): void {
+	public function test_alert_without_alerts_target_is_dropped_not_rerouted(): void {
 		$rb      = new Request_Builder_Node();
 		$capture = new Capture_Sink_Node();
 		$rb->name( 'rb' );
@@ -793,8 +790,7 @@ class RequestBuilderTest extends TestCase {
 		$this->fill( $rb, 1, 'r1', 'process (start)', [ 'm' => '1 on host', 'l' => '' ] );
 		$this->fill( $rb, 2, 'r1', 'alert', [ 'm' => 'fleet went sideways' ] );
 
-		$tos = \array_map( static fn ( array $m ): string => $m[ Message::TO ], $capture->captured );
-		$this->assertSame( [ 'my-errors:partition' ], $tos );
+		$this->assertSame( [], $capture->captured, 'no alerts_target means no forward — never a fallback to errors' );
 	}
 
 	// --- Idle timeout via the builder's own Router-hitchhike timer --------

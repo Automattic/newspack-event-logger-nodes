@@ -230,17 +230,15 @@ class Request_Builder_Node extends Timer_Node {
 			$request->seq_stack  = $stack;
 		}
 
-		// Forward errors/warnings/alerts/stderr to errors.log, rid as KEY.
-		if ( 'error' === $keyword || 'warning' === $keyword
-			|| 'alert' === $keyword || 'stderr' === $keyword
+		// Alerts route to the journal; onward fan-out is topology wiring.
+		if ( 'alert' === $keyword ) {
+			$this->emit_entry( $entry, $rid, $request, $this->alerts_target );
+		} elseif ( 'error' === $keyword || 'warning' === $keyword
+			|| 'stderr' === $keyword
 			|| \str_ends_with( $keyword, '(error)' )
 			|| \str_ends_with( $keyword, '(warning)' )
 		) {
 			$this->emit_entry( $entry, $rid, $request, $this->errors_target );
-			// Fleet-alert journal: `alert` entries ALSO land in alerts.p0.
-			if ( 'alert' === $keyword ) {
-				$this->emit_entry( $entry, $rid, $request, $this->alerts_target );
-			}
 		}
 
 		if ( isset( $this->state_callbacks[ $keyword ] ) ) {
@@ -1281,7 +1279,7 @@ class Request_Builder_Node extends Timer_Node {
 				],
 				[
 					'name'        => 'set_alerts_target',
-					'description' => 'Also forward `alert` keywords to a named partition (the fleet-alert journal).',
+					'description' => 'Forward `alert` keywords to a named partition (the fleet-alert journal).',
 					'args'        => [
 						[ 'name' => 'target', 'type' => 'node_name', 'required' => true ],
 					],
