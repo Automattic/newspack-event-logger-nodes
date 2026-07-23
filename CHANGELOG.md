@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **The completed and gyroscope streams no longer duplicate the rid in VALUE
+  — it rides `Message::KEY` alone.** `build_compact_summary()` and
+  `inflight_snapshot()` (now a rid-keyed map) dropped the `rid` field; the
+  gyroscope and request-log view nodes read the KEY and discriminate records
+  on the server-built `state` field. Old on-disk segments (rid in both
+  places) replay fine; a dashboard tab left open across the deploy should be
+  refreshed so its bundle reads the new shape.
+
 ### Added
 
 - **Request Log + Error Log gain Kafka-UI-style browsing on the substrate's shared browse core.** A new `useGlobBrowse` hook (one wiring, both dashboards) catalogs the glob's partition dirs via the substrate's `raw-logs` CI and composes the shared `@newspack-nodes/shared` `LogBrowser` + `useLogPositions`; a new shared `SegmentBrowseSidebar` component renders the partition picker + segment rail. Default view is unchanged (all partitions, live tail — pinned byte-exact); picking a partition narrows the SSE subscription to that dir and offers Live / Replay / per-segment seeks over the existing `positions` transport. No server changes; no shared component forked.

@@ -95,12 +95,14 @@ function connectedEnvelope( { pid = 4242, slot = 3 } = {} ) {
 	return m;
 }
 
-// A gyroscope per-record inflight envelope as the wire delivers it.
+// A gyroscope per-record inflight envelope as the wire delivers it:
+// KEY carries the rid, the row VALUE never duplicates it.
 function inflightEnvelope( request ) {
+	const { rid = '', ...row } = request;
 	const m = newMessage();
 	m[ TYPE ] = TM_STRUCT;
-	m[ KEY ] = 'inflight';
-	m[ VALUE ] = request;
+	m[ KEY ] = rid;
+	m[ VALUE ] = row;
 	return m;
 }
 
@@ -168,7 +170,7 @@ describe( 'useGyroscopeGraph — exospine + RemoteLink wiring', () => {
 			);
 		} );
 		// The watcher saw the raw stream AND the view accumulated the request.
-		expect( seen ).toContain( 'inflight' );
+		expect( seen ).toContain( 'watched' );
 		expect( Core.node( VIEW ).requests.has( 'watched' ) ).toBe( true );
 	} );
 
@@ -273,7 +275,6 @@ describe( 'useGyroscopeGraph — end-to-end routing through the exospine', () =>
 						m[ TYPE ] = TM_STRUCT;
 						m[ KEY ] = 'rid-done';
 						m[ VALUE ] = {
-							rid: 'rid-done',
 							state: 'complete',
 							url: '/done',
 							duration_ms: 42,
