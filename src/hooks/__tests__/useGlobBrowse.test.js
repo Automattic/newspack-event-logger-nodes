@@ -138,7 +138,6 @@ async function renderBrowse( {
 	errorVerbs = [],
 	isActive = true,
 	glob = GLOB,
-	liveSubscribe,
 } = {} ) {
 	const graph = buildGraph( payloadByVerb, errorVerbs );
 	let hook;
@@ -150,7 +149,6 @@ async function renderBrowse( {
 				viewName: VIEW,
 				isActive,
 				browseTargetRef: graph.browseTargetRef,
-				liveSubscribe,
 			},
 		} );
 	} );
@@ -180,37 +178,6 @@ describe( 'useGlobBrowse — partition catalog', () => {
 		expect( result.current.partitions.map( ( p ) => p.key ) ).toEqual( [
 			'errors.p0',
 			'errors.p3',
-		] );
-	} );
-
-	test( 'also exposes a liveSubscribe entry outside the glob prefix, but not a non-matching decoy', async () => {
-		const { result } = await renderBrowse( {
-			liveSubscribe: [ 'errors.*', 'alerts.p0' ],
-			payloadByVerb: {
-				list_logs: [
-					{ key: 'errors.p0', label: 'errors.p0' },
-					{ key: 'alerts.p0', label: 'alerts.p0' },
-					{ key: 'completed.p1', label: 'completed.p1' },
-				],
-			},
-		} );
-		expect( result.current.partitions.map( ( p ) => p.key ) ).toEqual( [
-			'errors.p0',
-			'alerts.p0',
-		] );
-	} );
-
-	test( 'without liveSubscribe, a key outside the glob prefix stays excluded (default-null path)', async () => {
-		const { result } = await renderBrowse( {
-			payloadByVerb: {
-				list_logs: [
-					{ key: 'errors.p0', label: 'errors.p0' },
-					{ key: 'alerts.p0', label: 'alerts.p0' },
-				],
-			},
-		} );
-		expect( result.current.partitions.map( ( p ) => p.key ) ).toEqual( [
-			'errors.p0',
 		] );
 	} );
 
@@ -315,26 +282,6 @@ describe( 'useGlobBrowse — reposition seeks', () => {
 		await act( async () => result.current.selectPartition( '' ) );
 		expect( setSubscribe ).toHaveBeenCalledWith( [ 'errors.*' ], null );
 		expect( browseTargetRef.current.subscribe ).toEqual( [ 'errors.*' ] );
-	} );
-
-	test( 'liveSubscribe overrides the live reposition target', async () => {
-		const { result, link, browseTargetRef } = await renderBrowse( {
-			payloadByVerb: { list_logs: [ { key: 'errors.p3' } ] },
-			liveSubscribe: [ 'errors.*', 'alerts.p0' ],
-		} );
-		await act( async () => result.current.selectPartition( 'errors.p3' ) );
-		const setSubscribe = jest
-			.spyOn( link, 'setSubscribe' )
-			.mockImplementation( () => {} );
-		await act( async () => result.current.selectPartition( '' ) );
-		expect( setSubscribe ).toHaveBeenCalledWith(
-			[ 'errors.*', 'alerts.p0' ],
-			null
-		);
-		expect( browseTargetRef.current.subscribe ).toEqual( [
-			'errors.*',
-			'alerts.p0',
-		] );
 	} );
 
 	test( 'browseSegment seeks the selected dir to that segment head', async () => {

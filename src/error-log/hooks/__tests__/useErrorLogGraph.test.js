@@ -193,10 +193,11 @@ describe( 'useErrorLogGraph — exospine + RemoteLink wiring', () => {
 		expect( Core.node( HEARTBEAT ).target ).toBe( `${ HTTP }/workers` );
 	} );
 
-	test( 'opens an EventSource against /messages/stream with errors.* + alerts.p0 when visible', () => {
+	test( 'opens an EventSource against /messages/stream?subscribe=errors.* when visible', () => {
 		renderHook( () => useErrorLogGraph() );
+		expect( FakeEventSource.last ).toBeTruthy();
 		expect( FakeEventSource.last.url ).toBe(
-			'/wp-json/newspack-nodes/v1/messages/stream?subscribe=errors.*%2Calerts.p0&_wpnonce=NONCE'
+			'/wp-json/newspack-nodes/v1/messages/stream?subscribe=errors.*&_wpnonce=NONCE'
 		);
 	} );
 
