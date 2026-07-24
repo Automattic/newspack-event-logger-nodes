@@ -75,7 +75,7 @@ class RequestBuilderRoundTripTest extends TestCase {
 		// The Leg B payoff: a request whose head (process start + request) is read
 		// by worker 1 and is still IN FLIGHT when the worker recycles must complete
 		// on worker 2 — because its cache rode in the offsetlog alongside the cursor
-		// (set_snapshot_node). Without the snapshot, worker 2 starts with an empty
+		// (add_snapshot_node). Without the snapshot, worker 2 starts with an empty
 		// cache, the post-respawn `process (complete)` finds no r1, and the request
 		// vanishes (absent from requests.log, unclickable) — the original bug.
 		$topic = new Topic_Node();
@@ -91,7 +91,7 @@ class RequestBuilderRoundTripTest extends TestCase {
 		$c1->arguments( [ "{$this->tmp}/firehose.p0", "{$this->tmp}/offsets/rb/p0" ] );
 		$c1->name( 'firehose:consumer' );
 		$c1->sink( $rb1 );
-		$c1->set_snapshot_node( 'request-builder' );
+		$c1->add_snapshot_node( 'request-builder' );
 		$this->pump_consumer( $c1 ); // r1 now in-flight in rb1's cache.
 		$c1->checkpoint();           // co-commit {offset, cache} into the offsetlog.
 
@@ -107,7 +107,7 @@ class RequestBuilderRoundTripTest extends TestCase {
 		$c2->arguments( [ "{$this->tmp}/firehose.p0", "{$this->tmp}/offsets/rb/p0" ] ); // stashes the cache + resumes the cursor
 		$c2->name( 'firehose:consumer' );
 		$c2->sink( $rb2 );
-		$c2->set_snapshot_node( 'request-builder' ); // records the name; restore is deferred to the first poll.
+		$c2->add_snapshot_node( 'request-builder' ); // records the name; restore is deferred to the first poll.
 
 		// The completion arrives AFTER the respawn.
 		$this->topic_write( $topic, '/x', [ 'n' => 3, 'rid' => 'r1', 'k' => 'process (complete)', 'duration_ms' => 50.0, 'status_code' => 200, 'ts' => 1 ] );

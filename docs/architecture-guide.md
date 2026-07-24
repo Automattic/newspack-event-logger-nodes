@@ -196,9 +196,9 @@ make_node Tee firehose:tee
 cmd request-builder:config set_completed_target completed:tee
 cmd request-builder:config set_errors_target errors:partition
 cmd request-builder:config set_inflight_target gyroscope:partition
-cmd firehose:consumer:config set_snapshot_node request-builder
+cmd firehose:consumer:config add_snapshot_node request-builder
 cmd firehose:consumer:config set_multi_writer true
-cmd requests:consumer:config set_snapshot_node flame-builder
+cmd requests:consumer:config add_snapshot_node flame-builder
 cmd flame-builder:config configure_stats <partition>
 cmd flame-builder:config set_stats_target <eln:stats_mirror_node>
 cmd flame-builder:config set_is_hub <eln:is_hub>
@@ -222,7 +222,7 @@ connect_node jobintake:consumer job-router
 
 The Tee is on the firehose side because that source fans out to two targets (`request-builder` + `job-router`). The jobintake Consumer has one target, so it connects directly to `job-router`; both nested firehose jobs and flat intake jobs now pass through the same normalization and stale-age guard before `jobs:partition`. **A Consumer's `connect_node()` goes to a Tee only when the source has more than one target.** Single-target inputs connect directly. Number of Tees = number of source-fan-outs, not number of sources.
 
-`cmd <partition>:config void_warranty` on the output Partitions lifts the per-message cap to 10MB *without* a per-Partition lock — each is written by exactly one worker fleet, and the substrate refuses to spawn a topology set where two fleets write the same partition, so the exclusivity lock that `allow_large_writes` carries is redundant here (v0.16.0). `Request_Builder` JSON regularly exceeds the 4KB PIPE_BUF atomic-append ceiling on pages with many timed hooks. The `completed:tee` fan-out carries the per-request compact summary `Request_Builder` emits at request-complete time; `gyroscope:partition` additionally receives the periodic in-flight snapshots from the hidden `Request_Flight_Node` sibling, which fire on the Router's 1s TIMER (enabled by a non-empty `set_inflight_target`, with no separate interval knob). The `cmd firehose:consumer:config set_snapshot_node request-builder` line wires the consumer's offsetlog to checkpoint `Request_Builder`'s in-flight cache, so in-flight requests survive a worker respawn (v0.16.0); the parallel `cmd requests:consumer:config set_snapshot_node flame-builder` checkpoints `Flame_Builder`'s pending stats the same way. `cmd firehose:consumer:config set_multi_writer true` tells the firehose Consumer to expect concurrent producers (many FPM workers append to `firehose.pN`).
+`cmd <partition>:config void_warranty` on the output Partitions lifts the per-message cap to 10MB *without* a per-Partition lock — each is written by exactly one worker fleet, and the substrate refuses to spawn a topology set where two fleets write the same partition, so the exclusivity lock that `allow_large_writes` carries is redundant here (v0.16.0). `Request_Builder` JSON regularly exceeds the 4KB PIPE_BUF atomic-append ceiling on pages with many timed hooks. The `completed:tee` fan-out carries the per-request compact summary `Request_Builder` emits at request-complete time; `gyroscope:partition` additionally receives the periodic in-flight snapshots from the hidden `Request_Flight_Node` sibling, which fire on the Router's 1s TIMER (enabled by a non-empty `set_inflight_target`, with no separate interval knob). The `cmd firehose:consumer:config add_snapshot_node request-builder` line wires the consumer's offsetlog to checkpoint `Request_Builder`'s in-flight cache, so in-flight requests survive a worker respawn (v0.16.0); the parallel `cmd requests:consumer:config add_snapshot_node flame-builder` checkpoints `Flame_Builder`'s pending stats the same way. `cmd firehose:consumer:config set_multi_writer true` tells the firehose Consumer to expect concurrent producers (many FPM workers append to `firehose.pN`).
 
 ### `topologies/performance.tsl`
 
@@ -243,7 +243,7 @@ make_node Tee       completed:tee
 cmd request-builder:config set_completed_target  completed:tee
 cmd request-builder:config set_errors_target     errors:partition
 cmd request-builder:config set_inflight_target   gyroscope:partition
-cmd firehose:consumer:config set_snapshot_node   request-builder
+cmd firehose:consumer:config add_snapshot_node   request-builder
 cmd firehose:consumer:config set_multi_writer    true
 cmd requests:partition:config void_warranty
 cmd requests:partition:config with_index request-index
@@ -262,7 +262,7 @@ make_node Consumer requests:consumer <config:logs_dir>/requests.p<partition> <co
 make_node Flame_Builder flame-builder
 make_node Partition flames:partition <config:logs_dir>/flames.p<partition> <config:segment_size> <config:num_segments> <config:max_lifespan>
 make_node Partition flame-stats:partition <config:logs_dir>/flame-stats.p<partition> <config:segment_size> <config:num_segments> <config:max_lifespan>
-cmd requests:consumer:config set_snapshot_node flame-builder
+cmd requests:consumer:config add_snapshot_node flame-builder
 cmd flame-builder:config configure_stats <partition>
 cmd flame-builder:config set_stats_target <eln:stats_mirror_node>
 cmd flame-builder:config set_is_hub <eln:is_hub>

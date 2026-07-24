@@ -5,7 +5,7 @@
  * These assert the SHAPE the topologies must keep so a hand-assembled graph
  * can't silently drop a load-bearing wire. The motivating miss: `combined.tsl`
  * fed `requests:consumer → flame-builder` but never ran
- * `set_snapshot_node flame-builder`, so the Consumer's checkpoint skipped
+ * `add_snapshot_node flame-builder`, so the Consumer's checkpoint skipped
  * flame-builder's `save_state()` — the stats mirror never flushed and the
  * in-flight leaderboard state never resumed on respawn. Its siblings
  * (`flame-builder.tsl`, `performance.tsl`) had the line; combined didn't.
@@ -22,7 +22,7 @@ use Newspack_Event_Logger_Nodes\Tests\TestCase;
 
 class TopologyShapeTest extends TestCase {
 
-	/** A Consumer must set_snapshot_node to the stateful node it feeds, or that node's state is lost. */
+	/** A Consumer must add_snapshot_node to the stateful node it feeds, or that node's state is lost. */
 	public function test_every_consumer_snapshots_the_stateful_node_it_feeds(): void {
 		foreach ( $this->topology_files() as $path ) {
 			$name      = \basename( $path );
@@ -169,7 +169,7 @@ class TopologyShapeTest extends TestCase {
 
 	/** Wiring verbs whose first arg names another node must reference a declared node (token/number args excluded). */
 	public function test_wiring_target_args_reference_declared_nodes(): void {
-		$node_ref_verbs = [ 'set_completed_target', 'set_errors_target', 'set_inflight_target', 'set_snapshot_node' ];
+		$node_ref_verbs = [ 'set_completed_target', 'set_errors_target', 'set_inflight_target', 'add_snapshot_node' ];
 		foreach ( $this->topology_files() as $path ) {
 			$name = \basename( $path );
 			$topo = $this->parse_topology( $path );
@@ -311,7 +311,7 @@ class TopologyShapeTest extends TestCase {
 	}
 
 	/**
-	 * consumer-name → snapshot target from `set_snapshot_node` cmds.
+	 * consumer-name → snapshot target from `add_snapshot_node` cmds.
 	 *
 	 * @param list<array{node:string, verb:string, args:list<string>}> $cmds
 	 * @return array<string,string>
@@ -319,7 +319,7 @@ class TopologyShapeTest extends TestCase {
 	private function snapshot_map( array $cmds ): array {
 		$map = [];
 		foreach ( $cmds as $cmd ) {
-			if ( 'set_snapshot_node' === $cmd['verb'] && isset( $cmd['args'][0] ) ) {
+			if ( 'add_snapshot_node' === $cmd['verb'] && isset( $cmd['args'][0] ) ) {
 				$map[ $cmd['node'] ] = $cmd['args'][0];
 			}
 		}

@@ -17,7 +17,7 @@ make_node Partition completed:partition <config:logs_dir>/completed.p0 1048576 <
 make_node Partition requests:partition <config:logs_dir>/requests.p<partition>
 make_node Request_Builder request-builder 100 3
 make_node Tee completed:tee
-cmd firehose:consumer:config set_snapshot_node request-builder
+cmd firehose:consumer:config add_snapshot_node request-builder
 cmd firehose:consumer:config set_multi_writer true
 cmd request-builder:config set_alerts_target alerts:partition
 cmd request-builder:config set_errors_target errors:partition
