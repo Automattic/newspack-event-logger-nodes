@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.40.0] - 2026-07-24
+
 ### Changed
 - **Cached per-tick clock everywhere; `\Newspack_Nodes\Core::right_now()` is the
   one `\microtime(true)` site.** Ported the substrate's clock treatment into the
