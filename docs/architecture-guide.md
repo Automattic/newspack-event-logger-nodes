@@ -183,7 +183,8 @@ make_node Consumer requests:consumer <config:logs_dir>/requests.p<partition> <co
 make_node Consumer jobintake:consumer <config:logs_dir>/jobintake.p<partition> <config:offsets_dir>/jobintake.jobs.p<partition>
 make_node Request_Builder request-builder 100 3
 make_node Flame_Builder flame-builder
-make_node Job_Router job-router 60
+make_node Job_Router job-router
+make_node Age_Sieve jobs:sieve 60 1
 make_node Partition completed:partition <config:logs_dir>/completed.p<partition> 1048576 <config:num_segments> 0
 make_node Partition gyroscope:partition <config:logs_dir>/gyroscope.p<partition> 1048576 <config:num_segments> 0
 make_node Partition errors:partition <config:logs_dir>/errors.p<partition> ...
@@ -216,7 +217,8 @@ connect_node completed:tee completed:partition
 connect_node completed:tee gyroscope:partition
 connect_node requests:consumer flame-builder
 connect_node flame-builder flames:partition
-connect_node job-router jobs:partition
+connect_node job-router jobs:sieve
+connect_node jobs:sieve jobs:partition
 connect_node jobintake:consumer job-router
 ```
 
@@ -282,16 +284,18 @@ The job-routing half. Tails `firehose.log` + `jobintake.log`; `Job_Router` norma
 ```tsl
 make_node Consumer firehose:consumer <config:logs_dir>/firehose.p<partition> <config:offsets_dir>/firehose.job-router.p<partition>
 make_node Consumer jobintake:consumer <config:logs_dir>/jobintake.p<partition> <config:offsets_dir>/jobintake.jobs.p<partition>
-make_node Job_Router job-router 60
+make_node Job_Router job-router
+make_node Age_Sieve jobs:sieve 60 1
 make_node Partition jobs:partition <config:logs_dir>/jobs.p<partition> ...
 cmd firehose:consumer:config set_multi_writer true
 cmd jobs:partition:config void_warranty
 connect_node firehose:consumer job-router
-connect_node job-router jobs:partition
+connect_node job-router jobs:sieve
+connect_node jobs:sieve jobs:partition
 connect_node jobintake:consumer job-router
 ```
 
-Both Consumers feed `job-router`. It selects a nested array under `m` when present and otherwise treats the entry itself as the job body, so firehose and Job Intake records take one normalization path. Routing does not depend on the Consumer name in `Message::FROM`. The positional `60` is the default maximum job age in seconds; topology-console edits may supply a different numeric, finite, non-negative `stale_timeout`.
+Both Consumers feed `job-router`. It selects a nested array under `m` when present and otherwise treats the entry itself as the job body, so firehose and Job Intake records take one normalization path. Routing does not depend on the Consumer name in `Message::FROM`. Job_Router takes no arguments: staleness is the downstream `Age_Sieve`'s job — it drops messages whose envelope `TIMESTAMP` age exceeds its `max_age` argument (60s here, with the drop warning enabled).
 
 ### `topologies/aggregator.tsl`
 
@@ -449,10 +453,9 @@ Validation:
 
 - Handler name pattern `/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/`
 - `parameters` must be an array when present; omission normalizes to `[]`
-- `stale_timeout` is a positional float argument, default `60`, and fails loudly unless numeric, finite, and non-negative; an age exactly equal to the timeout is accepted
-- Job timestamps must be numeric and finite; missing, malformed, non-finite, or older timestamps are dropped
+- Staleness is not Job_Router's concern: the topology's `Age_Sieve` (between `job-router` and `jobs:partition`) drops messages whose envelope `TIMESTAMP` age exceeds 60s; body `ts` values pass through as data
 
-Invalid handler names, non-array parameters, and stale entries emit a drop audit. Router-level size rejection is not duplicated here: producers use `\Newspack_Nodes\Job_Intake::MAX_JOB_SIZE` when they need the canonical intake limit, and the downstream Partition enforces writes. Job_Worker_Node handles valid-but-unregistered handler names after reading `jobs.log`.
+Invalid handler names and non-array parameters emit a drop audit. Router-level size rejection is not duplicated here: producers use `\Newspack_Nodes\Job_Intake::MAX_JOB_SIZE` when they need the canonical intake limit, and the downstream Partition enforces writes. Job_Worker_Node handles valid-but-unregistered handler names after reading `jobs.log`.
 
 Job_Worker_Node (downstream) reads `jobs.log` and looks up the handler in `newspack_nodes/job_handlers` (kind=job) or `newspack_nodes/remote_job_handlers` (kind=remote_job) via `load_handlers_from_filters()`, which the worker calls in its constructor at topology bootstrap. Registration is filter-only; there are no programmatic setter methods.
 
