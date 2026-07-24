@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 **Pairs with newspack-nodes > 0.50.0** (the `add_snapshot_node` verb).
 
 ### Changed
+- Staleness moved out of `Job_Router` into the substrate's new `Age_Sieve`:
+  `job-router.tsl` wires `job-router → jobs:sieve (Age_Sieve 60 1) →
+  jobs:partition`, and Job_Router's `stale_timeout` argument, guard, and
+  the body-ts (`ts`) age check are deleted — the envelope TIMESTAMP is the
+  age criterion now.
 - `flame-builder.tsl` and `request-builder.tsl` migrate `set_snapshot_node`
   (deleted upstream) to `add_snapshot_node`; a Consumer can now co-commit
   multiple nodes' states, keyed by name, in one offsetlog frame.
