@@ -475,11 +475,14 @@ class LogManagerTest extends TestCase {
 		$this->assertNull( Log_Manager::started_instance() );
 	}
 
-	public function test_started_instance_is_null_before_first_message(): void {
+	public function test_matched_request_is_started_at_construction(): void {
+		// A request the ruleset classifies as logged must appear in the
+		// firehose even if nothing ever calls message() — the old lazy start
+		// left matched-but-quiet requests invisible.
 		$this->require_config_or_skip();
 		$lm = $this->fresh_log_manager();
 		$this->assertTrue( $lm->enabled, 'precondition: this request is logged' );
-		$this->assertNull( Log_Manager::started_instance(), 'enabled-but-unstarted must not count as started' );
+		$this->assertSame( $lm, Log_Manager::started_instance(), 'matched => started at construction' );
 	}
 
 	public function test_started_instance_returns_the_started_instance(): void {
@@ -1760,14 +1763,15 @@ class LogManagerTest extends TestCase {
 		$this->assertTrue( true );
 	}
 
-	public function test_finish_before_started_is_noop(): void {
+	public function test_finish_without_a_url_match_is_noop(): void {
 		$this->require_config_or_skip();
 
 		$lm = Log_Manager::instance();
-		// Never started — finish should bail out without emitting any entries.
+		// Not matched (no request_url ruleset hit in this harness path) and
+		// never started — finish must bail without emitting entries.
+		( new \ReflectionProperty( Log_Manager::class, 'started' ) )->setValue( $lm, false );
 		$lm->finish();
 
-		// 'finished' latch should remain unchanged because started was false.
 		$ref = new \ReflectionProperty( Log_Manager::class, 'finished' );
 		$this->assertFalse( $ref->getValue( $lm ) );
 	}

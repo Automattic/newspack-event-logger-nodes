@@ -242,7 +242,9 @@ class Log_Manager {
 
 		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
 		$this->request_url = isset( $_SERVER['REQUEST_URI'] ) ? \sanitize_text_field( \wp_unslash( Core::as_string( $_SERVER['REQUEST_URI'] ) ) ) : '/unknown';
-		$this->matches_url_filter( $this->request_url );
+		if ( $this->matches_url_filter( $this->request_url ) ) {
+			$this->ensure_started();
+		}
 	}
 
 	/**
