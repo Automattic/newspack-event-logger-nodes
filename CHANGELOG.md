@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.38.0] - 2026-07-23
+
+**Pairs with newspack-nodes ≥ 0.50.0** (raw-span TSL parsing, the stock
+`topic-probe` include, and the re-keyed consumer cursors — see that
+release's BREAKING note; this release's topologies use the new
+`{topology}.{source}.pN` offsetlog layout).
+
 ### Added
 - **Rule patterns match worker URLs.** A third pattern form, `path?query`
   (e.g. `/jobs/render?job-worker`), matches exact path + query prefix and
