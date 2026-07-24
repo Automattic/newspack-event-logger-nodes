@@ -237,7 +237,6 @@ class LogManagerTest extends TestCase {
 
 	public function test_message_returns_true(): void {
 		$this->require_config_or_skip();
-		// The rule gate: select the categories this test emits.
 		$this->set_rules_option( [ [ 'id' => 'root', 'pattern' => '/', 'action' => 'log', 'custom_events' => [ 'test_category' ] ] ] );
 		$lm     = Log_Manager::instance();
 		$result = $lm->message( 'test_category', [ 'm' => 'hello world' ] );
@@ -246,7 +245,6 @@ class LogManagerTest extends TestCase {
 
 	public function test_message_truncates_large_data(): void {
 		$this->require_config_or_skip();
-		// The rule gate: select the categories this test emits.
 		$this->set_rules_option( [ [ 'id' => 'root', 'pattern' => '/', 'action' => 'log', 'custom_events' => [ 'big_data' ] ] ] );
 		$lm = Log_Manager::instance();
 
@@ -268,7 +266,6 @@ class LogManagerTest extends TestCase {
 	public function test_message_truncates_oversized_invalid_utf8_data(): void {
 		$this->require_config_or_skip();
 		$this->rmdir_recursive( self::TEST_DIR );
-		// The rule gate: select the categories this test emits.
 		$this->set_rules_option( [ [ 'id' => 'root', 'pattern' => '/', 'action' => 'log', 'custom_events' => [ 'work', 'binstderr' ] ] ] );
 		$lm = $this->fresh_log_manager();
 		$lm->start( 'work' );
@@ -390,7 +387,6 @@ class LogManagerTest extends TestCase {
 			'the data payload sits exactly at MAX_DATA_SIZE'
 		);
 
-		// The rule gate: select the categories this test emits.
 		$this->set_rules_option( [ [ 'id' => 'root', 'pattern' => '/', 'action' => 'log', 'custom_events' => [ 'work', 'e' ] ] ] );
 		$lm = $this->fresh_log_manager();
 		$lm->start( 'work' );
@@ -670,72 +666,23 @@ class LogManagerTest extends TestCase {
 		$this->assertTrue( $lm->enabled, 'Matching URL should be enabled' );
 	}
 
-	// ── Rule-scoped emission gate: 0 hooks = 0 hooks, 0 events = 0 events ──
+	// ── No emission gate: rule selections drive instrumentation at the ──
+	// ── producers; any category an active producer emits is written.   ──
 
-	public function test_zero_custom_events_drops_third_party_categories(): void {
+	public function test_producer_categories_log_without_rule_selection(): void {
 		$this->require_config_or_skip();
 		$this->set_rules_option( [ [ 'id' => 'jobs', 'pattern' => '/jobs/', 'action' => 'log' ] ] );
 		$_SERVER['REQUEST_URI'] = '/jobs/image-to-wordpress?job-worker';
 		$lm                     = $this->fresh_log_manager();
 		$this->assertTrue( $lm->enabled );
-		// 0 custom events selected: producer profile categories don't log.
-		$this->assertFalse( $lm->message( 'pyrobase (start)', [ 'm' => '/x.html' ] ) );
-		$this->assertFalse( $lm->message( 'query hook', [ 'm' => 'q-9021' ] ) );
-		$this->assertFalse( $lm->message( 'save', [ 'm' => 'obj-9021' ] ) );
-		// The structural skeleton always logs.
-		$this->assertTrue( $lm->message( 'error', [ 'm' => 'boom-9021' ] ) );
-		$this->assertTrue( $lm->message( 'job', [ 'handler' => 'h-9021' ] ) );
-		$this->assertTrue( $lm->message( 'memory', [ 'peak' => '97MB' ] ) );
-	}
-
-	public function test_selected_custom_events_log_while_others_still_drop(): void {
-		$this->require_config_or_skip();
-		$this->set_rules_option( [
-			[
-				'id'            => 'jobs',
-				'pattern'       => '/jobs/',
-				'action'        => 'log',
-				'custom_events' => [ 'pyrobase' ],
-			],
-		] );
-		$_SERVER['REQUEST_URI'] = '/jobs/render';
-		$lm                     = $this->fresh_log_manager();
 		$this->assertTrue( $lm->message( 'pyrobase (start)', [ 'm' => '/x.html' ] ) );
-		$this->assertTrue( $lm->message( 'pyrobase (complete)', [ 'duration_ms' => 5 ] ) );
-		$this->assertFalse( $lm->message( 'query hook', [ 'm' => 'still off' ] ) );
-	}
-
-	public function test_selected_hooks_allow_their_hook_entries(): void {
-		$this->require_config_or_skip();
-		$this->set_rules_option( [
-			[
-				'id'      => 'jobs',
-				'pattern' => '/jobs/',
-				'action'  => 'log',
-				'hooks'   => [ 'query' ],
-			],
-		] );
-		$_SERVER['REQUEST_URI'] = '/jobs/render';
-		$lm                     = $this->fresh_log_manager();
-		$this->assertTrue( $lm->message( 'query hook (start)', [ 'm' => 'q' ] ) );
-		$this->assertTrue( $lm->message( 'query hook', [ 'm' => 'q' ] ) );
-		$this->assertFalse( $lm->message( 'pre_kses hook', [ 'm' => 'k' ] ) );
-	}
-
-	public function test_significant_events_pass_the_gate(): void {
-		$this->require_config_or_skip();
-		$this->set_rules_option( [
-			[
-				'id'                 => 'jobs',
-				'pattern'            => '/jobs/',
-				'action'             => 'log',
-				'significant_events' => [ 'save' ],
-			],
-		] );
-		$_SERVER['REQUEST_URI'] = '/jobs/render';
-		$lm                     = $this->fresh_log_manager();
-		$this->assertTrue( $lm->message( 'save (start)', [ 'm' => 'obj' ] ) );
-		$this->assertFalse( $lm->message( 'include', [ 'm' => '/tpl' ] ) );
+		$this->assertTrue( $lm->message( 'metadatacache', [ 'm' => '731 l1, 25 apcu' ] ) );
+		$this->assertTrue( $lm->message( 'query hook', [ 'm' => 'q-9021' ] ) );
+		$this->assertTrue( $lm->message( 'error', [ 'm' => 'boom-9021' ] ) );
+		// Landed in the firehose, not just a truthy return.
+		$lm->finish();
+		$this->assertNotNull( $this->find_last_entry( 'metadatacache' ) );
+		$this->assertNotNull( $this->find_last_entry( 'query hook' ) );
 	}
 
 	public function test_matches_url_filter_directly(): void {
@@ -946,7 +893,6 @@ class LogManagerTest extends TestCase {
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
 		Config::reset();
 
-		// The rule gate: select the categories this test emits.
 		$this->set_rules_option( [ [ 'id' => 'root', 'pattern' => '/', 'action' => 'log', 'custom_events' => [ 'redaction_test', 'test' ] ] ] );
 		$lm = Log_Manager::instance();
 		$lm->start( 'redaction_test' );
@@ -1083,7 +1029,6 @@ class LogManagerTest extends TestCase {
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
 		Config::reset();
 
-		// The rule gate: select the categories this test emits.
 		$this->set_rules_option( [ [ 'id' => 'root', 'pattern' => '/', 'action' => 'log', 'custom_events' => [ 'ts_override_test', 'test' ] ] ] );
 		$lm = Log_Manager::instance();
 		$lm->start( 'ts_override_test' );
@@ -1108,7 +1053,6 @@ class LogManagerTest extends TestCase {
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
 		Config::reset();
 
-		// The rule gate: select the categories this test emits.
 		$this->set_rules_option( [ [ 'id' => 'root', 'pattern' => '/', 'action' => 'log', 'custom_events' => [ 'rid_override_test', 'test' ] ] ] );
 		$lm = Log_Manager::instance();
 		$lm->start( 'rid_override_test' );
@@ -1134,7 +1078,6 @@ class LogManagerTest extends TestCase {
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
 		Config::reset();
 
-		// The rule gate: select the categories this test emits.
 		$this->set_rules_option( [ [ 'id' => 'root', 'pattern' => '/', 'action' => 'log', 'custom_events' => [ 'n_override_test', 'test' ] ] ] );
 		$lm = Log_Manager::instance();
 		$lm->start( 'n_override_test' );
@@ -1717,7 +1660,6 @@ class LogManagerTest extends TestCase {
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
 		Config::reset();
 
-		// The rule gate: select the categories this test emits.
 		$this->set_rules_option( [ [ 'id' => 'root', 'pattern' => '/', 'action' => 'log', 'custom_events' => [ 'outer', 'middle', 'inner' ] ] ] );
 		$lm = Log_Manager::instance();
 		// Three unclosed starts on top of the root 'process' entry.
@@ -1897,7 +1839,6 @@ class LogManagerTest extends TestCase {
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
 		Config::reset();
 
-		// The rule gate: select the categories this test emits.
 		$this->set_rules_option( [ [ 'id' => 'root', 'pattern' => '/', 'action' => 'log', 'custom_events' => [ 'truncation_test', 'oversized_event' ] ] ] );
 		$lm = Log_Manager::instance();
 		$lm->start( 'truncation_test' );
@@ -1931,7 +1872,10 @@ class LogManagerTest extends TestCase {
 	 */
 	public function test_message_short_circuits_when_started_set_externally(): void {
 		$this->require_config_or_skip();
-		$lm = Log_Manager::instance();
+		// Non-matching URL: no eager start at construction, so topic is null.
+		$this->set_rules_option( [ [ 'id' => 'api', 'pattern' => '/api/', 'action' => 'log' ] ] );
+		$_SERVER['REQUEST_URI'] = '/other/page';
+		$lm                     = $this->fresh_log_manager();
 		// Force-start without calling start() — Topic remains null because
 		// init_firehose was never invoked.
 		$started_ref = new \ReflectionProperty( Log_Manager::class, 'started' );
@@ -2183,7 +2127,6 @@ class LogManagerTest extends TestCase {
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
 		Config::reset();
 
-		// The rule gate: select the categories this test emits.
 		$this->set_rules_option( [ [ 'id' => 'root', 'pattern' => '/', 'action' => 'log', 'custom_events' => [ 'outer', 'inner', 'deeper' ] ] ] );
 		$lm = Log_Manager::instance();
 		$lm->start( 'outer' );

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- **The emission gate.** v0.38.0's `category_allowed()` filtered every
+  non-structural category through the governing rule's selections — an
+  unrequested second filter. Rule selections already drive instrumentation
+  at the producers (`App\Core` only wraps `Rule_Set::hooks_for()` hooks),
+  so the gate's sole real effect was dropping producer categories the rules
+  UI never lists: pyrobase's per-request stats summaries (`metadatacache`,
+  `combinedcache`, `requestcache`, `memcached`) vanished from the firehose.
+  Removed outright; any category an active producer emits is written.
+
 ## [0.40.1] - 2026-07-24
 
 ### Fixed
