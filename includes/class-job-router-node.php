@@ -21,7 +21,8 @@
  * SECURITY:
  * - Handler name must match HANDLER_NAME_PATTERN before reaching disk.
  * - Parameters must be array-shaped or absent.
- * - Entries older than the configured stale timeout are dropped before disk.
+ * - Staleness is the Age_Sieve's job: the topology wires
+ *   `job-router → jobs:sieve (Age_Sieve) → jobs:partition`.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -39,34 +40,10 @@ if ( ! \defined( 'ABSPATH' ) ) {
 class Job_Router_Node extends Node {
 	use \Newspack_Nodes\Schema_Reflection;
 
-	public const DEFAULT_STALE_TIMEOUT = 60.0;
-
 	public const HANDLER_NAME_PATTERN = '/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/';
 
 	public const KIND_JOB        = 'job';
 	public const KIND_REMOTE_JOB = 'remote_job';
-
-	private float $stale_timeout = self::DEFAULT_STALE_TIMEOUT;
-
-	/**
-	 * Parse the maximum accepted job age while retaining the raw argument for
-	 * topology dump round-trips.
-	 *
-	 * @api Used by the substrate during make_node construction.
-	 * @param list<string>|null $args Maximum job age in seconds at token 0, or null to read back.
-	 */
-	public function arguments( ?array $args = null ): array {
-		if ( null === $args ) {
-			return parent::arguments();
-		}
-		$raw_timeout = $args[0] ?? self::DEFAULT_STALE_TIMEOUT;
-		$timeout     = \is_numeric( $raw_timeout ) ? (float) $raw_timeout : null;
-		if ( null === $timeout || ! \is_finite( $timeout ) || 0.0 > $timeout ) {
-			throw new \InvalidArgumentException( 'stale_timeout must be numeric, finite, and non-negative' );
-		}
-		$this->parse_schema_args( $args );
-		return $args;
-	}
 
 	public function fill( array $message ): void {
 		++$this->counter;
@@ -116,13 +93,6 @@ class Job_Router_Node extends Node {
 			$normalized['id'] = $id;
 		}
 
-		// Stale guard: fail if the entry exceeds the configured maximum age.
-		$timestamp = \is_numeric( $raw_timestamp ) ? (float) $raw_timestamp : null;
-		if ( null === $timestamp || ! \is_finite( $timestamp ) || Core::$now - $timestamp > $this->stale_timeout ) {
-			$this->drop_message( $message, 'stale entry' );
-			return;
-		}
-
 		// Forward normalized VALUE; Node::fill stamps TO from $this->target.
 		$message[ Message::VALUE ] = $normalized;
 		parent::fill( $message );
@@ -133,14 +103,7 @@ class Job_Router_Node extends Node {
 		return [
 			'category'    => 'Routing',
 			'description' => 'Normalizes nested or flat job entries and routes them to jobs:partition.',
-			'arguments'   => [
-				[
-					'name'        => 'stale_timeout',
-					'type'        => 'float',
-					'default'     => self::DEFAULT_STALE_TIMEOUT,
-					'description' => 'Maximum job age in seconds; entries older than this are dropped.',
-				],
-			],
+			'arguments'   => [],
 			'commands'    => [],
 		];
 	}

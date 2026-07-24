@@ -68,6 +68,17 @@ class JobRouterTest extends TestCase {
 		];
 	}
 
+	public function test_age_is_not_job_routers_concern(): void {
+		// Staleness moved to the Age_Sieve after job-router in the topology;
+		// an ancient body ts routes through untouched.
+		$entry       = $this->jobintake_entry( 'job', 'old_job', [] );
+		$entry['ts'] = Core::$now - 86400.0;
+		$this->jr->fill( $this->msg( 'jobintake:consumer', $entry ) );
+
+		$this->assertCount( 1, $this->sink->captured );
+		$this->assertSame( 'old_job', $this->sink->captured[0][ Message::VALUE ]['handler'] );
+	}
+
 	public function test_output_is_keyed_by_k_for_job_worker_dispatch(): void {
 		// JobRouter output must carry the kind under `k` — the same field
 		// Job_Worker dispatches on and Job_Intake writes — so a firehose job
@@ -259,106 +270,22 @@ class JobRouterTest extends TestCase {
 		$this->assertSame( $entry_timestamp, $this->sink->captured[0][ Message::VALUE ]['ts'] );
 	}
 
-	public function test_missing_timestamp_is_dropped_as_stale(): void {
-		$entry = [
-			'k'          => 'job',
-			'handler'    => 'missing_timestamp',
-			'parameters' => [],
-		];
+
+
+
+
+	public function test_garbage_body_timestamps_route_through_as_data(): void {
+		// The envelope TIMESTAMP (Age_Sieve's criterion) gates age; a garbage
+		// body ts is just data for downstream coercion to zero out.
+		$entry       = $this->jobintake_entry( 'job', 'weird_ts_job', [] );
+		$entry['ts'] = 'not-a-timestamp-913';
 		$this->jr->fill( $this->msg( 'jobintake:consumer', $entry ) );
 
-		$this->assertCount( 0, $this->sink->captured );
-	}
-
-	public function test_default_stale_timeout_accepts_exact_boundary_and_drops_older_entry(): void {
-		$boundary = $this->jobintake_entry(
-			'job',
-			'boundary_job',
-			[],
-			Core::$now - Job_Router_Node::DEFAULT_STALE_TIMEOUT
-		);
-		$this->jr->fill( $this->msg( 'jobintake:consumer', $boundary ) );
-
-		$stale = $this->jobintake_entry(
-			'job',
-			'stale_job',
-			[],
-			Core::$now - Job_Router_Node::DEFAULT_STALE_TIMEOUT - 0.25
-		);
-		$this->jr->fill( $this->msg( 'jobintake:consumer', $stale ) );
-
 		$this->assertCount( 1, $this->sink->captured );
-		$this->assertSame( 'boundary_job', $this->sink->captured[0][ Message::VALUE ]['handler'] );
+		$this->assertSame( 'not-a-timestamp-913', $this->sink->captured[0][ Message::VALUE ]['ts'] );
 	}
 
-	public function test_stale_timeout_argument_controls_exact_boundary(): void {
-		$custom_timeout = 37.5;
-		$this->jr->arguments( [ (string) $custom_timeout ] );
-
-		$fresh = $this->jobintake_entry( 'job', 'fresh_job', [] );
-		$fresh['ts'] = Core::$now - 37.25;
-		$this->jr->fill( $this->msg( 'jobintake:consumer', $fresh ) );
-
-		$boundary = $this->jobintake_entry( 'job', 'boundary_job', [] );
-		$boundary['ts'] = Core::$now - $custom_timeout;
-		$this->jr->fill( $this->msg( 'jobintake:consumer', $boundary ) );
-
-		$stale = $this->jobintake_entry( 'job', 'stale_job', [] );
-		$stale['ts'] = Core::$now - 37.75;
-		$this->jr->fill( $this->msg( 'jobintake:consumer', $stale ) );
-
-		$this->assertCount( 2, $this->sink->captured );
-		$this->assertSame( 'fresh_job', $this->sink->captured[0][ Message::VALUE ]['handler'] );
-		$this->assertSame( 'boundary_job', $this->sink->captured[1][ Message::VALUE ]['handler'] );
-		$this->assertSame( [ '37.5' ], $this->jr->arguments() );
-		$this->assertStringContainsString( "make_node Job_Router job-router 37.5\n", $this->jr->dump_config() );
-	}
-
-	public function test_invalid_stale_timeout_arguments_fail_without_mutating_valid_config(): void {
-		$this->jr->arguments( [ '37.5' ] );
-		$invalid_timeouts = [ '1e309', 'not-a-timeout-913', '-12.75' ];
-
-		foreach ( $invalid_timeouts as $invalid_timeout ) {
-			try {
-				$this->jr->arguments( [ $invalid_timeout ] );
-				$this->fail( "stale_timeout '$invalid_timeout' should fail" );
-			} catch ( \InvalidArgumentException $e ) {
-				$this->assertSame( 'stale_timeout must be numeric, finite, and non-negative', $e->getMessage() );
-			}
-
-			$this->assertSame( [ '37.5' ], $this->jr->arguments() );
-			$this->assertStringContainsString( "make_node Job_Router job-router 37.5\n", $this->jr->dump_config() );
-		}
-	}
-
-	public function test_non_numeric_and_non_finite_timestamps_are_dropped_as_stale(): void {
-		$invalid_timestamps = [
-			'overflow string' => '1e309',
-			'non-numeric'     => 'not-a-timestamp-947',
-			'positive INF'    => \INF,
-			'negative INF'    => -\INF,
-			'NAN'             => \NAN,
-		];
-
-		foreach ( $invalid_timestamps as $label => $invalid_timestamp ) {
-			$entry       = $this->jobintake_entry( 'job', 'invalid_timestamp', [] );
-			$entry['ts'] = $invalid_timestamp;
-			$this->jr->fill( $this->msg( 'jobintake:consumer', $entry ) );
-			$this->assertCount( 0, $this->sink->captured, "$label timestamp must be dropped" );
-		}
-	}
-
-	public function test_node_schema_declares_stale_timeout_argument(): void {
-		$this->assertSame(
-			[
-				[
-					'name'        => 'stale_timeout',
-					'type'        => 'float',
-					'default'     => 60.0,
-					'description' => 'Maximum job age in seconds; entries older than this are dropped.',
-				],
-			],
-			Job_Router_Node::node_schema()['arguments']
-		);
+	public function test_node_schema_declares_no_arguments(): void {
+		$this->assertSame( [], Job_Router_Node::node_schema()['arguments'], 'staleness moved to the Age_Sieve; Job_Router takes no arguments' );
 	}
 }
