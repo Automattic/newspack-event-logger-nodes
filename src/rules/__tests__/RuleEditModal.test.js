@@ -126,6 +126,37 @@ describe( 'RuleEditModal — log rule fields', () => {
 		return r;
 	}
 
+	test( 'the Delete button is a two-click confirm before onDelete fires', () => {
+		const onDelete = jest.fn();
+		const r = renderComponent(
+			<RuleEditModal
+				rule={ LOG_RULE }
+				onSave={ onSave }
+				onCancel={ onCancel }
+				onDelete={ onDelete }
+			/>
+		);
+		mounted.push( r );
+		const del = [ ...document.querySelectorAll( 'button' ) ].find( ( b ) =>
+			/Delete rule/.test( b.textContent )
+		);
+		expect( del ).toBeTruthy();
+		// First click arms the confirm; nothing deleted yet.
+		act( () => del.click() );
+		expect( onDelete ).not.toHaveBeenCalled();
+		expect( del.textContent ).toMatch( /Confirm delete/ );
+		act( () => del.click() );
+		expect( onDelete ).toHaveBeenCalledTimes( 1 );
+	} );
+
+	test( 'no Delete button without an onDelete handler (new rule)', () => {
+		mount( LOG_RULE );
+		const del = [ ...document.querySelectorAll( 'button' ) ].find( ( b ) =>
+			/Delete rule/.test( b.textContent )
+		);
+		expect( del ).toBeUndefined();
+	} );
+
 	test( 'renders the pattern input prefilled from the rule', () => {
 		mount( LOG_RULE );
 		const input = inDialog( 'input[name="rule-pattern"]' );

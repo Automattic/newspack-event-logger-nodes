@@ -2284,6 +2284,25 @@ class FlameBuilderTest extends TestCase {
 		$this->assertStringContainsString( 'cmd fb:config set_stats_target flames-stats', $dump );
 	}
 
+	public function test_configure_stats_rejects_a_non_numeric_partition(): void {
+		$fb = new Flame_Builder_Node();
+		$fb->name( 'fb' );
+		// An unresolved token must fail loud, not configure partition 0.
+		$result = $this->read_private( $fb, 'interpreter' )
+			->dispatch( 'configure_stats', [ '<partition>' ] );
+		$this->assertSame( 'usage: configure_stats <partition>', $result );
+		$this->assertStringNotContainsString( 'configure_stats', $fb->dump_config() );
+	}
+
+	public function test_configure_stats_builds_the_store_on_the_given_partition(): void {
+		$fb = new Flame_Builder_Node();
+		$fb->name( 'fb' );
+		$result = $this->read_private( $fb, 'interpreter' )
+			->dispatch( 'configure_stats', [ '3' ] );
+		$this->assertSame( 'ok', $result );
+		$this->assertStringContainsString( 'cmd fb:config configure_stats 3', $fb->dump_config() );
+	}
+
 	public function test_set_stats_store_after_partition_arms_the_mirror(): void {
 		Core::$memd = new InMemoryMemcached();
 		$p          = $this->make_partition( 'flames-stats' );

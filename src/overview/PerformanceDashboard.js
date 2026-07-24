@@ -181,6 +181,7 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 		fetchUrlBreakdown,
 		listRules,
 		upsertRule,
+		removeRule,
 		requestGrep,
 	} = usePerformanceGraph( {
 		serverFilter,
@@ -541,6 +542,23 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 		[ upsertRule ]
 	);
 
+	// Delete: remove the open rule, close only RuleEditModal, error inline.
+	const deleteRule = useCallback( async () => {
+		const id = ruleDraft?.id;
+		const res = await removeRule( id );
+		setRuleDraft( null );
+		if ( ! res ) {
+			setRuleError(
+				__(
+					'Could not delete the logging rule.',
+					'newspack-event-logger-nodes'
+				)
+			);
+			return;
+		}
+		setExistingRule( null );
+	}, [ removeRule, ruleDraft ] );
+
 	// Handle initial search query from URL parameter.
 	useEffect( () => {
 		if ( initialSearchQuery ) {
@@ -787,6 +805,7 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 					rule={ ruleDraft }
 					onSave={ saveRule }
 					onCancel={ () => setRuleDraft( null ) }
+					onDelete={ ruleDraft.id ? deleteRule : undefined }
 					className={ `topology-app theme-${ getStoredTheme() }` }
 				/>
 			) }

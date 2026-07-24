@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Rule patterns match worker URLs.** A third pattern form, `path?query`
+  (e.g. `/jobs/render?job-worker`), matches exact path + query prefix and
+  outranks exact and prefix rules; the rule editor's helper text documents it.
+- **Delete button in the performance dashboard's rule editor.** Editing an
+  existing rule from "Log this URL" exposes a two-click Delete (arm, then
+  confirm) that removes the rule in place — no round-trip to admin settings.
+  The settings modal keeps save/cancel only (its rows already delete).
+
+### Changed
+- **0 hooks means 0 hooks: the emission gate.** `Log_Manager::message()` only
+  writes a non-structural category when the governing rule selects it — as a
+  custom event, significant event, or hook (`{hook} hook` matches with or
+  without the suffix). Structural lifecycle categories (request, process,
+  error, alert, job, …) always pass. Previously producer-side emissions
+  bypassed the rule entirely. This includes the standalone profiler
+  drop-in's `{plugin} plugin (start/complete)` rows and pyrobase's profile
+  events — select them on a rule (custom events) to keep those waterfalls.
+- **Admin settings list rules sorted by action, then pattern.**
+- **Dashboards skip the partition dropdown when only one partition exists** —
+  the sole partition auto-selects, a label replaces the select, and the
+  segment list loads immediately.
+- **`errors`/`gyroscope`/`completed` hardwired to `.p0`** in
+  `request-builder.tsl` (single-partition journals); topologies adopt the
+  substrate's stock `topic-probe` include instead of private probe wiring.
+- **`configure_stats` fails loud on a non-numeric partition.** An unresolved
+  `<partition>` token returns the usage error instead of silently configuring
+  partition 0; the stale joined-args `preg_split` is gone.
+
 ## [0.37.0] - 2026-07-23
 
 ### Changed

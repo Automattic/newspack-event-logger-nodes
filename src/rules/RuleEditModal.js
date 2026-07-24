@@ -39,6 +39,7 @@ export default function RuleEditModal( {
 	rule,
 	onSave,
 	onCancel,
+	onDelete,
 	className = '',
 } ) {
 	const [ pattern, setPattern ] = useState( rule?.pattern ?? '' );
@@ -63,6 +64,7 @@ export default function RuleEditModal( {
 	const [ error, setError ] = useState( '' );
 	const [ isHooksOpen, setIsHooksOpen ] = useState( false );
 	const [ isCustomOpen, setIsCustomOpen ] = useState( false );
+	const [ confirmDelete, setConfirmDelete ] = useState( false );
 
 	const isLog = 'log' === action;
 
@@ -267,6 +269,27 @@ export default function RuleEditModal( {
 			</div>
 
 			<div className="rule-edit-actions">
+				{ onDelete && (
+					<button
+						type="button"
+						className="button button-link-delete rule-edit-actions__delete"
+						onClick={ () =>
+							confirmDelete
+								? onDelete()
+								: setConfirmDelete( true )
+						}
+					>
+						{ confirmDelete
+							? __(
+									'Confirm delete',
+									'newspack-event-logger-nodes'
+							  )
+							: __(
+									'Delete rule',
+									'newspack-event-logger-nodes'
+							  ) }
+					</button>
+				) }
 				<button type="button" className="button" onClick={ onCancel }>
 					{ __( 'Cancel', 'newspack-event-logger-nodes' ) }
 				</button>

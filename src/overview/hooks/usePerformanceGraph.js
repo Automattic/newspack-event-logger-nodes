@@ -598,6 +598,12 @@ export function usePerformanceGraph( opts = {} ) {
 		[ awaitReply ]
 	);
 
+	// removeRule — delete by rule id; resolves the CI's { deleted } reply.
+	const removeRule = useCallback(
+		( id ) => awaitReply( URLDETAIL_VIEW, 'delete', [ id ], RULES_TARGET ),
+		[ awaitReply ]
+	);
+
 	// requestGrep: pattern-search recent firehose; resolves the grep summary.
 	const requestGrep = useCallback(
 		( pattern, limit = GREP_RESULT_LIMIT ) =>
@@ -616,6 +622,7 @@ export function usePerformanceGraph( opts = {} ) {
 		fetchUrlBreakdown,
 		listRules,
 		upsertRule,
+		removeRule,
 		requestGrep,
 	};
 }

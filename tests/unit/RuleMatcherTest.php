@@ -51,16 +51,47 @@ final class RuleMatcherTest extends TestCase {
 		$this->assertSame( 'shop', $matcher->match( '/shop/cart?coupon=X' )->id );
 	}
 
+	public function test_a_query_pattern_targets_only_matching_query_urls(): void {
+		// Worker URLs are distinguished ONLY by query (`?job-worker`): a
+		// pattern with content after `?` matches that path exactly AND the
+		// query by prefix, so workers get their own rule.
+		$matcher = new Rule_Matcher( [
+			new Rule( 'page', '/jobs/image-to-wordpress?', Rule::ACTION_SKIP ),
+			new Rule( 'worker', '/jobs/image-to-wordpress?job-worker', Rule::ACTION_LOG ),
+		] );
+		$hit = $matcher->match( '/jobs/image-to-wordpress?job-worker' );
+		$this->assertSame( 'worker', $hit->id );
+		$this->assertTrue( $hit->is_log() );
+		// No query → the exact-path rule; a different query too.
+		$this->assertSame( 'page', $matcher->match( '/jobs/image-to-wordpress' )->id );
+		$this->assertSame( 'page', $matcher->match( '/jobs/image-to-wordpress?preview=1' )->id );
+	}
+
+	public function test_query_pattern_matches_query_prefix_case_insensitively(): void {
+		$matcher = new Rule_Matcher(
+			[ new Rule( 'w', '/jobs/x?JOB-worker', Rule::ACTION_LOG ) ]
+		);
+		$this->assertSame( 'w', $matcher->match( '/jobs/X?job-worker&extra=1' )->id );
+		// The path part is exact, never a prefix.
+		$this->assertNull( $matcher->match( '/jobs/x/sub?job-worker' ) );
+	}
+
+	public function test_query_pattern_outranks_exact_and_prefix(): void {
+		$matcher = new Rule_Matcher( [
+			new Rule( 'prefix', '/jobs/', Rule::ACTION_LOG ),
+			new Rule( 'exact', '/jobs/x?', Rule::ACTION_LOG ),
+			new Rule( 'query', '/jobs/x?job-worker', Rule::ACTION_SKIP ),
+		] );
+		$hit = $matcher->match( '/jobs/x?job-worker' );
+		$this->assertSame( 'query', $hit->id );
+		$this->assertTrue( $hit->is_skip() );
+	}
+
 	public function test_match_is_cached_per_url(): void {
 		$matcher = new Rule_Matcher( [ new Rule( 'root', '/', Rule::ACTION_LOG ) ] );
 		$first  = $matcher->match( '/a' );
 		$second = $matcher->match( '/a' );
 		$this->assertSame( $first, $second );
-	}
-
-	public function test_normalize_appends_question_terminator(): void {
-		$this->assertSame( '/shop?', Rule_Matcher::normalize( '/shop?x=1' ) );
-		$this->assertSame( '/shop?', Rule_Matcher::normalize( '/shop' ) );
 	}
 
 	public function test_matching_is_case_insensitive(): void {
@@ -78,7 +109,4 @@ final class RuleMatcherTest extends TestCase {
 		$this->assertSame( 'root', $matcher->match( '/About' )->id, 'no case-specific rule falls through to /' );
 	}
 
-	public function test_normalize_lowercases_the_path(): void {
-		$this->assertSame( '/shop?', Rule_Matcher::normalize( '/SHOP?x=1' ) );
-	}
 }
