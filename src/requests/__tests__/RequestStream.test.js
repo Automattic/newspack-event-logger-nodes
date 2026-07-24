@@ -570,6 +570,7 @@ describe( 'RequestStream', () => {
 				browse: browseMock( {
 					partitions: [
 						{ key: 'completed.p3', label: 'completed.p3' },
+						{ key: 'completed.p4', label: 'completed.p4' },
 					],
 					selectPartition,
 				} ),

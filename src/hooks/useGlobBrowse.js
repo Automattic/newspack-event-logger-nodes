@@ -208,6 +208,15 @@ export default function useGlobBrowse( {
 		[ glob, viewName, reposition ]
 	);
 
+	// A sole partition auto-selects: one dir IS the whole live glob.
+	const selectPartitionRef = useRef( selectPartition );
+	selectPartitionRef.current = selectPartition;
+	useEffect( () => {
+		if ( 1 === partitions.length && '' === selectedRef.current ) {
+			selectPartitionRef.current( partitions[ 0 ].key );
+		}
+	}, [ partitions ] );
+
 	// Live / Replay / segment seeks — only within an explicitly selected dir.
 	const follow = useCallback( () => {
 		const sel = selectedRef.current;

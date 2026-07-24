@@ -38,30 +38,44 @@ export default function SegmentBrowseSidebar( { browse, onSelectPartition } ) {
 		return null;
 	}
 	const selectedPartition = browse.selectedPartition ?? '';
+	// One dir: useGlobBrowse auto-selects it; show a label, not a dropdown.
+	const single = 1 === partitions.length;
 
 	return (
 		<div className="event-logger-browse-rail">
-			<select
-				className="newspack-nodes-select"
-				value={ selectedPartition }
-				onChange={ ( e ) => onSelectPartition( e.target.value ) }
-				title={ __(
-					'Browse a partition',
-					'newspack-event-logger-nodes'
-				) }
-			>
-				<option value="">
-					{ __(
-						'All partitions (live)',
+			{ single ? (
+				<div
+					className="event-logger-browse-rail__single"
+					title={ __(
+						'The only partition',
 						'newspack-event-logger-nodes'
 					) }
-				</option>
-				{ partitions.map( ( p ) => (
-					<option key={ p.key } value={ p.key }>
-						{ p.label || p.key }
+				>
+					{ partitions[ 0 ].label || partitions[ 0 ].key }
+				</div>
+			) : (
+				<select
+					className="newspack-nodes-select"
+					value={ selectedPartition }
+					onChange={ ( e ) => onSelectPartition( e.target.value ) }
+					title={ __(
+						'Browse a partition',
+						'newspack-event-logger-nodes'
+					) }
+				>
+					<option value="">
+						{ __(
+							'All partitions (live)',
+							'newspack-event-logger-nodes'
+						) }
 					</option>
-				) ) }
-			</select>
+					{ partitions.map( ( p ) => (
+						<option key={ p.key } value={ p.key }>
+							{ p.label || p.key }
+						</option>
+					) ) }
+				</select>
+			) }
 
 			{ selectedPartition && (
 				<LogBrowser

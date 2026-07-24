@@ -5,10 +5,12 @@
 #                                            └→ Partition (flame-stats:partition — stats mirror = full aggregates + top-N per-URL (10 flame / 100 dim / 100 cat), snapshot-per-checkpoint; off unless <eln:stats_mirror_node> set)
 #                                            └→ flame-builder:auto-tuner (owned sibling, hidden)
 
-make_node Consumer requests:consumer <config:logs_dir>/requests.p<partition> <config:offsets_dir>/requests.<topology>.p<partition> <config:deadletter_dir>/requests.<topology>.p<partition>
+include topic-probe
+
+make_node Consumer requests:consumer <config:logs_dir>/requests.p<partition> <config:offsets_dir>/<topology>.requests.p<partition> <config:deadletter_dir>/<topology>.requests.p<partition>
 make_node Flame_Builder flame-builder
-make_node Partition flames:partition <config:logs_dir>/flames.p<partition> <config:segment_size> <config:min_segments> <config:max_segments> <config:min_lifetime> <config:max_lifetime>
-make_node Partition flame-stats:partition <config:logs_dir>/flame-stats.p<partition> <config:segment_size> <config:min_segments> <config:max_segments> <config:min_lifetime> <config:max_lifetime>
+make_node Partition flames:partition <config:logs_dir>/flames.p<partition>
+make_node Partition flame-stats:partition <config:logs_dir>/flame-stats.p<partition>
 cmd requests:consumer:config set_snapshot_node flame-builder
 cmd flame-builder:config configure_stats <partition>
 cmd flame-builder:config set_stats_target <eln:stats_mirror_node>

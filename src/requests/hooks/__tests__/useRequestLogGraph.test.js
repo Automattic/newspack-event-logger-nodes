@@ -431,7 +431,10 @@ describe( 'useRequestLogGraph — glob browse', () => {
 
 	test( 'selecting a partition narrows the live SSE subscription to that dir', async () => {
 		const client = makeFakeClient( {
-			list_logs: [ { key: 'completed.p2', label: 'completed.p2' } ],
+			list_logs: [
+				{ key: 'completed.p2', label: 'completed.p2' },
+				{ key: 'completed.p3', label: 'completed.p3' },
+			],
 		} );
 		const { result } = renderHook( () =>
 			useRequestLogGraph( { commandClient: client } )
@@ -451,7 +454,10 @@ describe( 'useRequestLogGraph — glob browse', () => {
 
 	test( 'browsing a segment seeks that dir; the SSE url carries the positions', async () => {
 		const client = makeFakeClient( {
-			list_logs: [ { key: 'completed.p2', label: 'completed.p2' } ],
+			list_logs: [
+				{ key: 'completed.p2', label: 'completed.p2' },
+				{ key: 'completed.p3', label: 'completed.p3' },
+			],
 			log_status: { segments: [ { id: 7, size: 4096 } ] },
 		} );
 		const { result } = renderHook( () =>
@@ -504,7 +510,10 @@ describe( 'useRequestLogGraph — pause vs visibility precedence + replay surviv
 
 	test( 'a paused replay resumes mid-replay and still flips to Live at the boundary', async () => {
 		const client = makeFakeClient( {
-			list_logs: [ { key: 'completed.p0', label: 'completed.p0' } ],
+			list_logs: [
+				{ key: 'completed.p0', label: 'completed.p0' },
+				{ key: 'completed.p1', label: 'completed.p1' },
+			],
 			// Newest segment 9 is 500 bytes — the replay catch-up boundary.
 			log_status: { segments: [ { id: 9, size: 500 } ] },
 		} );
