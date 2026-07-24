@@ -12,6 +12,7 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use Newspack_Event_Logger_Nodes\LRU_Cache;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
+use Newspack_Nodes\Core;
 use PHPUnit\Framework\Attributes\CoversClass;
 
 #[CoversClass( LRU_Cache::class )]
@@ -234,8 +235,11 @@ class LruCacheTest extends TestCase {
 	}
 
 	public function test_rotate_if_due_rotates_after_interval(): void {
-		$cache   = new LRU_Cache( 100, 2 );
-		$evicted = [];
+		// Timed rotation reads the cached per-tick clock (production drives this
+		// from the drain loop); advance Core::$now to simulate elapsed ticks.
+		Core::$now = 500.0;
+		$cache     = new LRU_Cache( 100, 2 );
+		$evicted   = [];
 		$cache->with_timed_rotation( 0.001, function ( $k, $v ) use ( &$evicted ) {
 			$evicted[ $k ] = $v;
 		} );
@@ -243,9 +247,9 @@ class LruCacheTest extends TestCase {
 		$cache->set( 'a', 1 );
 		$cache->set( 'b', 2 );
 
-		\usleep( 2000 );
+		Core::$now = 500.002; // +2ms > 1ms interval.
 		$cache->rotate_if_due(); // bucket 0 → bucket 1 (no eviction yet, count <= 2).
-		\usleep( 2000 );
+		Core::$now = 500.004;
 		$cache->rotate_if_due(); // bucket 1 → bucket 2 (count > 2, evicts bucket 0).
 
 		$this->assertArrayHasKey( 'a', $evicted );

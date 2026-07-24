@@ -13,6 +13,8 @@
 
 namespace Newspack_Event_Logger_Nodes;
 
+use Newspack_Nodes\Core;
+
 if ( ! \defined( 'ABSPATH' ) ) {
 	exit;
 }
@@ -96,7 +98,7 @@ class LRU_Cache {
 	 * Force a bucket rotation, evicting the oldest bucket if at capacity.
 	 */
 	private function force_rotate(): void {
-		$this->last_rotation = \microtime( true );
+		$this->last_rotation = Core::$now ?: Core::right_now();
 		++$this->current;
 		$this->buckets[ $this->current ] = [];
 
@@ -148,7 +150,7 @@ class LRU_Cache {
 		if ( $this->rotate_interval <= 0 ) {
 			return;
 		}
-		$now = \microtime( true );
+		$now = Core::$now ?: Core::right_now();
 		if ( $now - $this->last_rotation >= $this->rotate_interval ) {
 			$this->force_rotate();
 		}
@@ -164,7 +166,7 @@ class LRU_Cache {
 	public function with_timed_rotation( float $seconds, callable $on_evict ): self {
 		$this->rotate_interval = $seconds;
 		$this->on_evict        = $on_evict;
-		$this->last_rotation   = \microtime( true );
+		$this->last_rotation   = Core::$now ?: Core::right_now();
 		return $this;
 	}
 
