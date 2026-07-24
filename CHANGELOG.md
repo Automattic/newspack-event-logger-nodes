@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.40.1] - 2026-07-24
+
 ### Fixed
 - **Matched requests always reach the firehose.** The Log_Manager called
   `matches_url_filter()` at construction and discarded the result; a request
