@@ -56,6 +56,22 @@ test( 'renders nothing when there are no partitions', () => {
 	expect( container.querySelector( '.newspack-nodes-select' ) ).toBeNull();
 } );
 
+test( 'a single partition renders a static label, not a dropdown', () => {
+	// One dir makes "All partitions (live)" meaningless — the rail shows the
+	// dir name and goes straight to its segments (useGlobBrowse auto-selects).
+	const { container } = mount( {
+		browse: browseMock( {
+			partitions: [ { key: 'errors.p0', label: 'errors.p0' } ],
+			selectedPartition: 'errors.p0',
+		} ),
+		onSelectPartition: jest.fn(),
+	} );
+	expect(
+		container.querySelector( 'select.newspack-nodes-select' )
+	).toBeNull();
+	expect( container.textContent ).toContain( 'errors.p0' );
+} );
+
 test( 'renders the partition select (All + each dir) when partitions exist', () => {
 	const { container } = mount( {
 		browse: browseMock( {
@@ -83,7 +99,10 @@ test( 'a select change calls onSelectPartition with the chosen key', () => {
 	const onSelectPartition = jest.fn();
 	const { container } = mount( {
 		browse: browseMock( {
-			partitions: [ { key: 'errors.p6', label: 'errors.p6' } ],
+			partitions: [
+				{ key: 'errors.p1', label: 'errors.p1' },
+				{ key: 'errors.p6', label: 'errors.p6' },
+			],
 		} ),
 		onSelectPartition,
 	} );

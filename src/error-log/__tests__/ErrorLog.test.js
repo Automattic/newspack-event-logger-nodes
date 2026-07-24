@@ -689,7 +689,10 @@ describe( 'ErrorLog', () => {
 				clear,
 				setFilter: setStreamFilter,
 				browse: browseMock( {
-					partitions: [ { key: 'errors.p4', label: 'errors.p4' } ],
+					partitions: [
+						{ key: 'errors.p4', label: 'errors.p4' },
+						{ key: 'errors.p5', label: 'errors.p5' },
+					],
 					selectPartition,
 				} ),
 			} );

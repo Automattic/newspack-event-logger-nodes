@@ -433,7 +433,10 @@ describe( 'useErrorLogGraph — glob browse', () => {
 
 	test( 'selecting a partition narrows the live SSE subscription to that dir', async () => {
 		const client = makeFakeClient( {
-			list_logs: [ { key: 'errors.p5', label: 'errors.p5' } ],
+			list_logs: [
+				{ key: 'errors.p5', label: 'errors.p5' },
+				{ key: 'errors.p6', label: 'errors.p6' },
+			],
 		} );
 		const { result } = renderHook( () =>
 			useErrorLogGraph( { commandClient: client } )
@@ -452,7 +455,10 @@ describe( 'useErrorLogGraph — glob browse', () => {
 
 	test( 'refocus resumes the browsed partition, not the glob', async () => {
 		const client = makeFakeClient( {
-			list_logs: [ { key: 'errors.p5', label: 'errors.p5' } ],
+			list_logs: [
+				{ key: 'errors.p5', label: 'errors.p5' },
+				{ key: 'errors.p6', label: 'errors.p6' },
+			],
 		} );
 		const { result, rerender } = renderHook( () =>
 			useErrorLogGraph( { commandClient: client } )

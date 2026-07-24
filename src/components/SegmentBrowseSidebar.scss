@@ -14,4 +14,13 @@
 	.newspack-nodes-select {
 		width: 200px;
 	}
+
+	// The sole-partition label sits where the select would (same rail width).
+	&__single {
+		width: 200px;
+		box-sizing: border-box;
+		padding: 4px 8px;
+		font-family: inherit;
+		opacity: 0.8;
+	}
 }

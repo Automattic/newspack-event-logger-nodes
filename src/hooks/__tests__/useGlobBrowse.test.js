@@ -183,11 +183,29 @@ describe( 'useGlobBrowse — partition catalog', () => {
 
 	test( 'defaults selectedPartition to "" (All partitions, live) with no segments', async () => {
 		const { result } = await renderBrowse( {
-			payloadByVerb: { list_logs: [ { key: 'errors.p0' } ] },
+			payloadByVerb: {
+				list_logs: [ { key: 'errors.p0' }, { key: 'errors.p1' } ],
+			},
 		} );
 		expect( result.current.selectedPartition ).toBe( '' );
 		expect( result.current.segments ).toEqual( [] );
 		expect( result.current.mode ).toBe( 'live' );
+	} );
+
+	test( 'auto-selects a sole partition so its segments load immediately', async () => {
+		// One dir: the "All partitions (live)" hop is pointless — the rail
+		// should land on the dir with its segment list already fetched.
+		const { result } = await renderBrowse( {
+			payloadByVerb: {
+				list_logs: [ { key: 'errors.p0', label: 'errors.p0' } ],
+				log_status: {
+					log_id: 'errors.p0',
+					segments: [ { id: 4, size: 96 } ],
+				},
+			},
+		} );
+		expect( result.current.selectedPartition ).toBe( 'errors.p0' );
+		expect( result.current.segments ).toEqual( [ { id: 4, size: 96 } ] );
 	} );
 
 	test( 'does not throw when the graph is absent', async () => {
@@ -386,8 +404,11 @@ describe( 'useGlobBrowse — guards', () => {
 	} );
 
 	test( 'Live / Replay / segment seeks are no-ops with no partition selected', async () => {
+		// Two partitions so the sole-partition auto-select stays out of play.
 		const { result, link } = await renderBrowse( {
-			payloadByVerb: { list_logs: [ { key: 'errors.p3' } ] },
+			payloadByVerb: {
+				list_logs: [ { key: 'errors.p3' }, { key: 'errors.p5' } ],
+			},
 		} );
 		const setSubscribe = jest
 			.spyOn( link, 'setSubscribe' )
