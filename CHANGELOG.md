@@ -8,16 +8,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **`hub-control.tsl` is now a thin overlay over the substrate `settings-sync`
+  topology.** It `include settings-sync`s the substrate's settings-sync + spokes
+  plane (which itself now pushes the full six-axis `remote_*` geometry) and keeps
+  only ELN's own pieces: the `Discovery_Collector_Node` and the three app-key
+  pushes (`rules`, `log_memory`, `flush_every_line`). The substrate and ELN stop
+  maintaining the same settings-sync graph in two files. The topology NAME stays
+  `hub-control` (worker type, locks, `<topology>`-scoped cursors unchanged — no
+  cursor reset on ELN installs). Tracks the substrate's `remote_*` rename
+  (`remote_max_segments` → `remote_num_segments`, `remote_max_lifetime` →
+  `remote_lifetime`) and its new remote hard-cap knob (`remote_max_segments`,
+  `0` = spoke derives `2 × num_segments`), which the hub can now fan out to cap a
+  spoke's disk unconditionally.
 - Track the substrate's retention rename: the count target is now `num_segments`,
   the age rule is `lifetime`, and `max_segments` is a trailing hard-cap token
   (0 = derive 2× num_segments). `Log_Manager::init_firehose()` reads
   `num_segments` / `lifetime` / `max_segments` and passes the firehose Topic the
   new tail order (`… segment_size min_segments num_segments min_lifetime lifetime
   max_segments`). `request-builder.tsl` swaps `<config:max_segments>` →
-  `<config:num_segments>`, and `hub-control.tsl`'s settings-sync seeds the
-  `newspack_nodes_lifetime` local option in place of the retired
-  `newspack_nodes_max_lifetime`. Test configs rename `max_segments`→`num_segments`
-  and `max_lifetime`→`lifetime`.
+  `<config:num_segments>`; the settings-sync geometry seeds (now in the substrate
+  `settings-sync` topology ELN includes) carry `newspack_nodes_lifetime` in place
+  of the retired `newspack_nodes_max_lifetime`. Test configs rename
+  `max_segments`→`num_segments` and `max_lifetime`→`lifetime`.
 
 ## [0.39.0] - 2026-07-23
 
