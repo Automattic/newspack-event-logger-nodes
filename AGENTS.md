@@ -37,6 +37,20 @@ WordPress VIP Go (enforced by `phpcs.xml.dist`):
 
 ## Build / Test
 
+Fresh clone, once (the substrate checkout must sit at `../newspack-nodes` —
+the build kit + shared JS resolve through it):
+
+```bash
+npm install                  # JS toolchain (esbuild, jest, eslint, hooks)
+composer install             # PHP deps + the classmap autoloader
+npm run build                # compile the dashboard bundles into build/
+```
+
+After adding/renaming a Node class, regenerate the classmap (`make_node` and
+the console palette read it): `composer build:autoloaders` (= `composer
+install --optimize-autoloader`) or `composer dump-autoload -o`. `composer
+update` only when you mean to move dependency versions.
+
 ```bash
 # Tests (require newspack-nodes to also be installed/activated). Always
 # pass `--enforce-time-limit` so a hung test (readline without a TTY,

@@ -48,6 +48,13 @@ return [
 
 There is no operator hub toggle — `enable_aggregator` (like `enable_workers` before it) was retired. Hub-mode is derived from whether the `aggregator` topology is in the substrate's `topologies` list. Remote-spoke credentials (when this site is the hub) live in the substrate **Vault** (the substrate's `vault` CI); the per-spoke `Remote_Source` nodes are wired on the topology console canvas.
 
+## Development
+
+Fresh clone: `npm install && composer install && npm run build` (the
+`newspack-nodes` checkout must sit beside this repo — the build kit and
+shared JS resolve through `../newspack-nodes`). Regenerate the classmap
+after adding a Node class: `composer build:autoloaders`. See `AGENTS.md`.
+
 ## Features
 
 Application graph backed by `newspack-nodes` partitions, surfaced as dashboards and SSE streams:
