@@ -7,7 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-**Pairs with newspack-nodes > 0.50.0** (the `add_snapshot_node` verb).
+## [0.39.0] - 2026-07-23
+
+**Pairs with newspack-nodes ≥ 0.51.0** (the `add_snapshot_node` verb and the
+substrate's `Age_Sieve`).
 
 ### Changed
 - Staleness moved out of `Job_Router` into the substrate's new `Age_Sieve`:
