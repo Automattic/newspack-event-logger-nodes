@@ -313,6 +313,61 @@ class LogManagerTest extends TestCase {
 		}
 	}
 
+	public function test_firehose_topic_receives_renamed_retention_axes(): void {
+		// The substrate renamed the retention axes: num_segments (count target),
+		// lifetime (age rule), and a NEW trailing max_segments (hard cap). Seed
+		// distinct values for all three — none equal to any default — and prove
+		// Log_Manager reads the new keys and passes them into the firehose tail in
+		// the correct positions. Against the old key reads (`max_segments` as the
+		// count target, `max_lifetime` for age) this fails: `max_lifetime` no
+		// longer resolves and the values land in the wrong slots.
+		$this->require_config_or_skip();
+
+		$config_path = self::TEST_DIR . '/retention-config.php';
+		\file_put_contents(
+			$config_path,
+			'<?php return ' . \var_export(
+				[
+					'base_directory'   => self::TEST_DIR,
+					'num_partitions'   => 1,
+					'segment_size'     => 4096,
+					'min_segments'     => 3,
+					'num_segments'     => 6,
+					'min_lifetime'     => 7,
+					'lifetime'         => 999,
+					'max_segments'     => 13,
+					'enable_logging'   => true,
+					'memcache_servers' => [],
+					'allowed_users'    => [],
+					'custom_colors'    => [],
+					'log_memory'       => false,
+					'flush_every_line' => true,
+				],
+				true
+			) . ';'
+		);
+
+		Log_Manager::reset();
+		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $config_path );
+		Config::reset();
+
+		$this->set_rules_option( [ [ 'id' => 'root', 'pattern' => '/', 'action' => 'log', 'custom_events' => [ 'work' ] ] ] );
+		$lm = Log_Manager::instance();
+		$lm->start( 'work' );
+		$lm->message( 'work', [ 'm' => 'materialize' ] );
+
+		$topic_prop = new \ReflectionProperty( Log_Manager::class, 'topic' );
+		$topic_prop->setAccessible( true );
+		$firehose = $topic_prop->getValue( $lm );
+		$this->assertInstanceOf( Topic_Node::class, $firehose );
+
+		foreach ( [ 'num_segments' => 6, 'lifetime' => 999, 'max_segments' => 13, 'min_segments' => 3, 'min_lifetime' => 7 ] as $axis => $expected ) {
+			$prop = new \ReflectionProperty( Topic_Node::class, $axis );
+			$prop->setAccessible( true );
+			$this->assertSame( $expected, $prop->getValue( $firehose ), "firehose Topic {$axis} must come from the renamed config key" );
+		}
+	}
+
 	public function test_worst_case_envelope_fits_a_full_data_payload_under_pipe_buf(): void {
 		// The MAX_DATA_SIZE (3840) ↔ PIPE_BUF (4096) gap must absorb the WHOLE
 		// positional envelope at the extremes: a data payload sitting exactly at

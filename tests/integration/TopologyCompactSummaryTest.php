@@ -72,9 +72,10 @@ class TopologyCompactSummaryTest extends TestCase {
 						'offsets_dir'  => $tmp . '/offsets',
 						'segment_size' => '1048576',
 						'min_segments' => '3',
-						'max_segments' => '5',
+						'num_segments' => '5',
 						'min_lifetime' => '120',
-						'max_lifetime' => '7200',
+						'lifetime'     => '7200',
+						'max_segments' => '11',
 					];
 				}
 				return $values[ $key ] ?? null;
@@ -175,9 +176,9 @@ class TopologyCompactSummaryTest extends TestCase {
 	}
 
 	/**
-	 * The `<config:segment_size> <config:min_segments> <config:max_segments>
-	 * <config:min_lifetime> <config:max_lifetime>` Partition line must resolve
-	 * all four new retention tokens from config in the new argument order.
+	 * The `<config:segment_size> <config:min_segments> <config:num_segments>
+	 * <config:min_lifetime> <config:lifetime> <config:max_segments>` Partition
+	 * line must resolve all new retention tokens from config in the new order.
 	 */
 	public function test_config_token_partition_carries_new_retention_geometry(): void {
 		$this->load_topology( 'combined' );
@@ -185,9 +186,10 @@ class TopologyCompactSummaryTest extends TestCase {
 		$errors = Core::node( 'errors:partition' );
 		$this->assertInstanceOf( Partition_Node::class, $errors );
 		$this->assertSame( 3, $this->partition_geometry( $errors, 'min_segments' ) );
-		$this->assertSame( 5, $this->partition_geometry( $errors, 'max_segments' ) );
+		$this->assertSame( 5, $this->partition_geometry( $errors, 'num_segments' ) );
 		$this->assertSame( 120, $this->partition_geometry( $errors, 'min_lifetime' ) );
-		$this->assertSame( 7200, $this->partition_geometry( $errors, 'max_lifetime' ) );
+		$this->assertSame( 7200, $this->partition_geometry( $errors, 'lifetime' ) );
+		$this->assertSame( 11, $this->partition_geometry( $errors, 'max_segments' ) );
 	}
 
 	/**
@@ -246,7 +248,7 @@ class TopologyCompactSummaryTest extends TestCase {
 	}
 
 	/**
-	 * The literal `1048576 <config:min_segments> <config:max_segments> 0 0`
+	 * The literal `1048576 <config:min_segments> <config:num_segments> 0 0`
 	 * Partition line keeps its two trailing zero lifetimes while picking up the
 	 * segment counts from config.
 	 */
@@ -256,9 +258,9 @@ class TopologyCompactSummaryTest extends TestCase {
 		$completed = Core::node( 'completed:partition' );
 		$this->assertInstanceOf( Partition_Node::class, $completed );
 		$this->assertSame( 3, $this->partition_geometry( $completed, 'min_segments' ) );
-		$this->assertSame( 5, $this->partition_geometry( $completed, 'max_segments' ) );
+		$this->assertSame( 5, $this->partition_geometry( $completed, 'num_segments' ) );
 		$this->assertSame( 0, $this->partition_geometry( $completed, 'min_lifetime' ) );
-		$this->assertSame( 0, $this->partition_geometry( $completed, 'max_lifetime' ) );
+		$this->assertSame( 0, $this->partition_geometry( $completed, 'lifetime' ) );
 	}
 
 	private function partition_geometry( Partition_Node $partition, string $prop ): int {

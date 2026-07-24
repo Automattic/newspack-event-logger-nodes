@@ -397,16 +397,17 @@ class Log_Manager {
 		$this->partition_idx = Partition_Node::hash_to_partition( $this->request_id, $num_partitions );
 		$segment_size = Core::as_int( Config::value( 'segment_size' ) );
 		$min_segments = Core::as_int( Config::value( 'min_segments' ) );
-		$max_segments = Core::as_int( Config::value( 'max_segments' ) );
+		$num_segments = Core::as_int( Config::value( 'num_segments' ) );
 		$min_lifetime = Core::as_int( Config::value( 'min_lifetime' ) );
-		$max_lifetime = Core::as_int( Config::value( 'max_lifetime' ) );
+		$lifetime     = Core::as_int( Config::value( 'lifetime' ) );
+		$max_segments = Core::as_int( Config::value( 'max_segments' ) );
 		$existing = Core::node( '_firehose:topic' );
 		if ( $existing instanceof Topic_Node ) {
 			$this->topic = $existing;
 		} else {
 			$this->topic = new Topic_Node();
 			$this->topic->name( '_firehose:topic' );
-			$this->topic->arguments( [ $dir_template, (string) $num_partitions, (string) $segment_size, (string) $min_segments, (string) $max_segments, (string) $min_lifetime, (string) $max_lifetime ] );
+			$this->topic->arguments( [ $dir_template, (string) $num_partitions, (string) $segment_size, (string) $min_segments, (string) $num_segments, (string) $min_lifetime, (string) $lifetime, (string) $max_segments ] );
 			$this->topic->patron( $this->topic );
 			$ci = Core::node( Node_Names::COMMAND_INTERPRETER );
 			if ( null !== $ci ) {

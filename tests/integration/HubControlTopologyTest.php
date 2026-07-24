@@ -109,7 +109,7 @@ class HubControlTopologyTest extends TestCase {
 		$map = $registry->getValue( Core::node( 'settings-sync' ) );
 
 		// Six substrate keys (num_partitions + the five remote_* geometry keys:
-		// segment_size, min_segments, max_segments, min_lifetime, max_lifetime)
+		// segment_size, min_segments, num_segments, min_lifetime, lifetime)
 		// + three ELN app keys (rules, log_memory, flush_every_line). The seven
 		// ruleset-absorbed settings were retired (Task 10) and the single `rules`
 		// option is fanned out in their place.
@@ -120,7 +120,7 @@ class HubControlTopologyTest extends TestCase {
 		// value onward to ITS spokes. Registry is a LIST of {to,remote} per local.
 		$this->assertSame(
 			[
-				[ 'to' => 'settings', 'remote' => 'newspack_nodes_max_segments' ],
+				[ 'to' => 'settings', 'remote' => 'newspack_nodes_num_segments' ],
 				[ 'to' => 'settings', 'remote' => 'newspack_nodes_remote_max_segments' ],
 			],
 			$map['newspack_nodes_remote_max_segments']

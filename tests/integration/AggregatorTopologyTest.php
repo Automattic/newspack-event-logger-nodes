@@ -50,9 +50,10 @@ class AggregatorTopologyTest extends TestCase {
 						'num_partitions' => '1',
 						'segment_size'  => '1048576',
 						'min_segments'  => '3',
-						'max_segments'  => '5',
+						'num_segments'  => '5',
 						'min_lifetime'  => '120',
-						'max_lifetime'  => '7200',
+						'lifetime'      => '7200',
+						'max_segments'  => '11',
 					];
 				}
 				return $values[ $key ] ?? null;
@@ -101,8 +102,8 @@ class AggregatorTopologyTest extends TestCase {
 
 	/**
 	 * The firehose Topic must receive the new-order retention geometry
-	 * (dir_template num_partitions segment_size min_segments max_segments
-	 * min_lifetime max_lifetime) from the seeded `<config:*>` tokens.
+	 * (dir_template num_partitions segment_size min_segments num_segments
+	 * min_lifetime lifetime max_segments) from the seeded `<config:*>` tokens.
 	 */
 	public function test_firehose_topic_carries_new_retention_geometry(): void {
 		$this->load_aggregator();
@@ -110,9 +111,10 @@ class AggregatorTopologyTest extends TestCase {
 		$topic = Core::node( 'firehose:topic' );
 		$this->assertInstanceOf( Topic_Node::class, $topic );
 		$this->assertSame( 3, $this->topic_geometry( $topic, 'min_segments' ) );
-		$this->assertSame( 5, $this->topic_geometry( $topic, 'max_segments' ) );
+		$this->assertSame( 5, $this->topic_geometry( $topic, 'num_segments' ) );
 		$this->assertSame( 120, $this->topic_geometry( $topic, 'min_lifetime' ) );
-		$this->assertSame( 7200, $this->topic_geometry( $topic, 'max_lifetime' ) );
+		$this->assertSame( 7200, $this->topic_geometry( $topic, 'lifetime' ) );
+		$this->assertSame( 11, $this->topic_geometry( $topic, 'max_segments' ) );
 	}
 
 	private function topic_geometry( Topic_Node $topic, string $prop ): int {
