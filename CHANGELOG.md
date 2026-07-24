@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Matched requests always reach the firehose.** The Log_Manager called
+  `matches_url_filter()` at construction and discarded the result; a request
+  the ruleset classified as logged but which emitted no explicit events never
+  started — no process line, no memory summary, no finish. A URL match now
+  starts logging eagerly at construction.
+
 ## [0.40.0] - 2026-07-24
 
 ### Changed
