@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Track the substrate's retention rename: the count target is now `num_segments`,
+  the age rule is `lifetime`, and `max_segments` is a trailing hard-cap token
+  (0 = derive 2× num_segments). `Log_Manager::init_firehose()` reads
+  `num_segments` / `lifetime` / `max_segments` and passes the firehose Topic the
+  new tail order (`… segment_size min_segments num_segments min_lifetime lifetime
+  max_segments`). `request-builder.tsl` swaps `<config:max_segments>` →
+  `<config:num_segments>`, and `hub-control.tsl`'s settings-sync seeds the
+  `newspack_nodes_lifetime` local option in place of the retired
+  `newspack_nodes_max_lifetime`. Test configs rename `max_segments`→`num_segments`
+  and `max_lifetime`→`lifetime`.
+
 ## [0.39.0] - 2026-07-23
 
 **Pairs with newspack-nodes ≥ 0.51.0** (the `add_snapshot_node` verb and the
