@@ -1447,7 +1447,7 @@ class Flame_Builder_Node extends Node {
 	 * where memcache is volatile; disabled when the name is empty.
 	 *
 	 * Stores the name only — the node is resolved by name lazily at flush/reload
-	 * (like set_snapshot_node), so this verb can't fail on a not-yet-built node
+	 * (like add_snapshot_node), so this verb can't fail on a not-yet-built node
 	 * whose make_node comes later in a console-serialized override. The partition
 	 * lifts its own 4KB PIPE_BUF cap via `cmd <name>:config void_warranty` in the
 	 * topology, alongside its make_node.
@@ -1871,7 +1871,7 @@ class Flame_Builder_Node extends Node {
 	 * the flame-builder → flame-stats:partition edge. Display only: the mirror
 	 * writes go straight to the partition at flush (bypassing the sink), so
 	 * without this override the partition renders disconnected even while it
-	 * fills. What actually gets mirrored is driven by set_snapshot_node +
+	 * fills. What actually gets mirrored is driven by add_snapshot_node +
 	 * set_stats_target, not by this method.
 	 *
 	 * @api Used by substrate.

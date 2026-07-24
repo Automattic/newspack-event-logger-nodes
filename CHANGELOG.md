@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+**Pairs with newspack-nodes > 0.50.0** (the `add_snapshot_node` verb).
+
+### Changed
+- `flame-builder.tsl` and `request-builder.tsl` migrate `set_snapshot_node`
+  (deleted upstream) to `add_snapshot_node`; a Consumer can now co-commit
+  multiple nodes' states, keyed by name, in one offsetlog frame.
+
 ## [0.38.0] - 2026-07-23
 
 **Pairs with newspack-nodes ≥ 0.50.0** (raw-span TSL parsing, the stock
