@@ -124,6 +124,23 @@ class RequestBuilderTest extends TestCase {
 	}
 
 	/**
+	 * Per-line activity tracking reads the cached per-tick clock, not a fresh
+	 * \microtime() syscall. Pin Core::$now to a sentinel distinct from any real
+	 * clock (700.25) and prove tracker_ts lands on it — the OLD code stamped
+	 * \microtime(true) (~1.7e9) and would miss the pin.
+	 */
+	public function test_tracker_ts_reads_pinned_cached_clock(): void {
+		$rb = new Request_Builder_Node();
+		Core::$now = 700.25;
+		$this->fill( $rb, 1, 'r1', 'process (start)', [ 'm' => '1 on host', 'l' => '' ] );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
+
+		$request = $rb->cache->get( 'r1' );
+		$this->assertInstanceOf( \stdClass::class, $request );
+		$this->assertSame( 700.25, $request->tracker_ts );
+	}
+
+	/**
 	 * A flood of missing-message warnings with DIFFERENT sequence numbers must
 	 * throttle on the stable category prefix — not mint a fresh key per seq_n.
 	 * The pre-split call baked $seq_n into the throttled string, so every call

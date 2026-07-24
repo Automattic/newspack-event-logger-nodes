@@ -52,7 +52,7 @@ class Request_Flight_Node extends Timer_Node {
 			return;
 		}
 		$watermark = $this->last_fire_ts;
-		$now       = Core::$now > 0.0 ? Core::$now : \microtime( true );
+		$now       = Core::$now > 0.0 ? Core::$now : Core::right_now();
 		$emitted   = false;
 		foreach ( $rows as $rid => $row ) {
 			// Delta: skip a row with no activity since the previous fire.
@@ -108,7 +108,7 @@ class Request_Flight_Node extends Timer_Node {
 			return [];
 		}
 		$out = [];
-		$now = ( Core::$now > 0.0 ? Core::$now : \microtime( true ) );
+		$now = ( Core::$now > 0.0 ? Core::$now : Core::right_now() );
 		foreach ( $patron->cache->iterate() as $rid => $request ) {
 			// Rebuild string-keyed prop map so extract_* gets array<str,mixed>.
 			if ( ! $request instanceof \stdClass ) {

@@ -168,7 +168,7 @@ class Flame_Builder_Node extends Node {
 	/** @api Used by substrate */
 	public function __construct() {
 		$this->stats_cache     = new LRU_Cache( self::STATS_CACHE_BUCKET_SIZE, self::STATS_CACHE_NUM_BUCKETS );
-		$this->last_flush_time = \microtime( true );
+		$this->last_flush_time = Core::$now ?: Core::right_now();
 		$this->reset_pending();
 
 		// Owned auto-tuner sibling (patron-linked; hidden from the canvas).
@@ -226,8 +226,8 @@ class Flame_Builder_Node extends Node {
 			$this->accumulate_all_stats( $url_hash, $flame_data, $profiles, $request );
 		}
 
-		// Periodic flush.
-		$now_f = \microtime( true );
+		// Periodic flush; cached per-tick clock gates the throttle.
+		$now_f = Core::$now ?: Core::right_now();
 		if ( $now_f - $this->last_flush_time >= self::FLUSH_INTERVAL_SEC ) {
 			$this->guarded( fn () => $this->flush() );
 			$this->last_flush_time = $now_f;
@@ -250,7 +250,7 @@ class Flame_Builder_Node extends Node {
 			foreach ( $this->stats_cache->iterate() as $_ ) {
 				++$stats_count;
 			}
-			$now = ( Core::$now ?: \microtime( true ) );
+			$now = ( Core::$now ?: Core::right_now() );
 			$payload = [
 				'stats_count'              => $stats_count,
 				'pending_url_count'        => \count( $this->pending ),
@@ -1653,8 +1653,8 @@ class Flame_Builder_Node extends Node {
 	 * from the partition oldest→newest, collapse to the latest frame per key
 	 * (frames are append-ordered, so last-wins), then restore each key ONCE under
 	 * a TTL decayed by its age. O(unique keys) memcache sets instead of O(all
-	 * appends). Core::$now is stale during the config phase, so \microtime(true)
-	 * is the "now" reference.
+	 * appends). Core::$now is stale during the config phase, so Core::right_now()
+	 * gives the fresh "now" reference (and re-warms the cache as a side benefit).
 	 *
 	 * Every partition frame is committed — the un-committed buffer is never written
 	 * (it dies with a crash) — so recovery counts each request exactly once.
@@ -1704,7 +1704,7 @@ class Flame_Builder_Node extends Node {
 				$latest[ $key ] = [ $typed, $ttl, Core::num_float( $ts ) ];
 			}
 		}
-		$now = \microtime( true );
+		$now = Core::right_now();
 		foreach ( $latest as $key => [ $data, $ttl, $ts ] ) {
 			$store->restore( $key, $data, $ttl - (int) ( $now - $ts ) );
 		}

@@ -341,10 +341,12 @@ class Log_Manager {
 		// Strip caller rid (real one is Message::KEY); blocks a forged rid.
 		unset( $data['rid'] );
 
-		$entry = [ 'n' => $this->line_number, 'k' => $category ] + $data + [ 'ts' => \microtime( true ) ];
+		// Request-scope hot: cache frozen; one fresh read, threaded to both.
+		$now                                           = Core::right_now();
+		$entry = [ 'n' => $this->line_number, 'k' => $category ] + $data + [ 'ts' => $now ];
 		$message                                       = \Newspack_Nodes\Message::new_message();
 		$message[ \Newspack_Nodes\Message::TYPE ]      = \Newspack_Nodes\Message::TM_STRUCT;
-		$message[ \Newspack_Nodes\Message::TIMESTAMP ] = \Newspack_Nodes\Core::$now;
+		$message[ \Newspack_Nodes\Message::TIMESTAMP ] = $now;
 		$message[ \Newspack_Nodes\Message::KEY ]       = $this->request_id;
 		$message[ \Newspack_Nodes\Message::VALUE ]     = $entry;
 		$this->topic->fill( $message );

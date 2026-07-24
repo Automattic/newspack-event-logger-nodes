@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Cached per-tick clock everywhere; `\Newspack_Nodes\Core::right_now()` is the
+  one `\microtime(true)` site.** Ported the substrate's clock treatment into the
+  application: every `\microtime(true)` in `includes/` now reads either the cached
+  `Core::$now` (or the `Core::$now ?: Core::right_now()` warming idiom where
+  request-scope entry is possible) inside drain-driven node paths, or routes
+  through `Core::right_now()` for genuinely fresh needs and cold paths (which also
+  warms the cache). `Log_Manager::message()` — the per-request firehose write, the
+  hottest ELN surface — drops from two clock reads per line (one bare
+  `\microtime`, one `Core::$now`) to one `Core::right_now()` threaded into both the
+  entry `ts` and the message `TIMESTAMP`, which also makes those two timestamps
+  agree per line instead of the message stamp freezing at request-load time.
+  Behavior is otherwise unchanged; no payload sizes change.
 - **`hub-control.tsl` is now a thin overlay over the substrate `settings-sync`
   topology.** It `include settings-sync`s the substrate's settings-sync + spokes
   plane (which itself now pushes the full six-axis `remote_*` geometry) and keeps
