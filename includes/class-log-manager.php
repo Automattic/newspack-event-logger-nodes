@@ -173,6 +173,29 @@ class Log_Manager {
 	/** @var Rule|null The rule governing this request (null ⇒ no match ⇒ skip). */
 	private ?Rule $matched_rule = null;
 
+	/**
+	 * Request-lifecycle categories that always log — the skeleton every trace
+	 * needs plus the FUNCTIONAL job queue. Everything else is a producer's
+	 * custom category, gated by the governing rule's selections: 0 hooks
+	 * means 0 hooks, 0 custom events means 0 custom events.
+	 */
+	private const STRUCTURAL_CATEGORIES = [
+		'process'        => true,
+		'request'        => true,
+		'environment_v3' => true,
+		'resources'      => true,
+		'memory'         => true,
+		'error'          => true,
+		'warning'        => true,
+		'info'           => true,
+		'alert'          => true,
+		'stderr'         => true,
+		'job'            => true,
+	];
+
+	/** @var array<string, true>|null Rule-selected categories (lazy). */
+	private ?array $allowed_categories = null;
+
 	/** @var Rule_Matcher|null Built once per request from the autoloaded rule list. */
 	private ?Rule_Matcher $matcher = null;
 	/** @var int */
@@ -295,6 +318,9 @@ class Log_Manager {
 	 */
 	public function message( string $category, array $data = [] ): bool {
 		if ( ! $this->ensure_started() ) {
+			return false;
+		}
+		if ( ! $this->category_allowed( $category ) ) {
 			return false;
 		}
 		if ( isset( $data['m'] ) && \is_string( $data['m'] ) && false !== \strpos( $data['m'], '?' ) ) {
@@ -794,6 +820,38 @@ class Log_Manager {
 			self::$context_stack[]           = self::$instance;
 			self::$instance                  = null;
 		}
+	}
+
+	/**
+	 * Whether the governing rule admits this category. Structural lifecycle
+	 * categories always pass; anything else must be selected on the rule —
+	 * as a custom event, a significant event, or a hook (`{hook} hook`
+	 * entries match their hook name with or without the suffix).
+	 */
+	private function category_allowed( string $category ): bool {
+		$base = (string) \preg_replace( '/ \((?:start|complete)\)$/', '', $category );
+		if ( isset( self::STRUCTURAL_CATEGORIES[ $base ] ) ) {
+			return true;
+		}
+		if ( null === $this->allowed_categories ) {
+			$allowed = [];
+			$rule    = $this->matched_rule;
+			if ( null !== $rule ) {
+				foreach ( \array_merge( $rule->custom_events, $rule->significant_events ) as $event ) {
+					if ( '' !== $event ) {
+						$allowed[ \strtolower( $event ) ] = true;
+					}
+				}
+				foreach ( Rule_Set::hooks_for( $rule ) as $hook ) {
+					if ( '' !== $hook ) {
+						$allowed[ \strtolower( $hook ) ]           = true;
+						$allowed[ \strtolower( $hook ) . ' hook' ] = true;
+					}
+				}
+			}
+			$this->allowed_categories = $allowed;
+		}
+		return isset( $this->allowed_categories[ \strtolower( $base ) ] );
 	}
 
 	/**

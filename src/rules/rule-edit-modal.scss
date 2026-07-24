@@ -98,6 +98,11 @@
 		justify-content: flex-end;
 		gap: 8px;
 		margin-top: 20px;
+
+		// Delete sits apart on the left; Cancel/Save keep the right edge.
+		&__delete {
+			margin-right: auto;
+		}
 	}
 
 	// The tag pills need horizontal room; a wider minimum keeps them from wrapping

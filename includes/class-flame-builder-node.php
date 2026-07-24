@@ -1997,14 +1997,12 @@ class Flame_Builder_Node extends Node {
 						[ 'name' => 'partition', 'type' => 'int', 'required' => true, 'default' => '<partition>' ],
 					],
 					'handler'     => static function ( Command_Interpreter_Node $interpreter, array $args ): string {
-						$arg = Core::as_string( $args[0] ?? '' );
-						// Constant valid pattern: preg_split never false here.
-						/** @var list<string> $parts */
-						$parts = \preg_split( '/\s+/', \trim( $arg ) );
-						if ( \count( $parts ) < 1 || '' === $parts[0] ) {
+						// Pre-tokenized args; non-numeric fails loud, never p0.
+						$arg = \trim( Core::as_string( $args[0] ?? '' ) );
+						if ( ! \is_numeric( $arg ) ) {
 							return 'usage: configure_stats <partition>';
 						}
-						$partition = (int) $parts[0];
+						$partition = (int) $arg;
 
 						// Substrate retention config; store uses Core::$memd.
 						$max_lifespan = Core::num_int( \Newspack_Event_Logger_Nodes\Config::value( 'min_lifetime' ), 86400 );

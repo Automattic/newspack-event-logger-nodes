@@ -24,16 +24,23 @@ final class Rule_Matcher {
 	private array $rules;
 
 	/**
+	 * Most-specific-first: query-bearing patterns (exact path + query prefix)
+	 * outrank exact paths, which outrank prefixes; length breaks ties.
+	 *
 	 * @param Rule[] $rules Unsorted rule list.
 	 */
 	public function __construct( array $rules ) {
+		$rank = static function ( Rule $r ): int {
+			if ( '' !== self::pattern_query( $r->pattern ) ) {
+				return 0;
+			}
+			return $r->is_exact() ? 1 : 2;
+		};
 		\usort(
 			$rules,
-			static function ( Rule $a, Rule $b ): int {
-				if ( $a->is_exact() !== $b->is_exact() ) {
-					return $a->is_exact() ? -1 : 1;
-				}
-				return \strlen( $b->pattern ) <=> \strlen( $a->pattern );
+			static function ( Rule $a, Rule $b ) use ( $rank ): int {
+				return $rank( $a ) <=> $rank( $b )
+					?: \strlen( $b->pattern ) <=> \strlen( $a->pattern );
 			}
 		);
 		$this->rules = $rules;
@@ -42,37 +49,56 @@ final class Rule_Matcher {
 	/**
 	 * The governing rule for a URL, or null when nothing matches (⇒ skip).
 	 * Matching is case-insensitive (target + patterns are compared lowercased).
+	 * Three pattern forms:
+	 *  - `/blog`            — path prefix (query ignored)
+	 *  - `/about?`          — exact path (query ignored)
+	 *  - `/jobs/x?job-work` — exact path AND query prefix (worker URLs)
 	 */
 	public function match( string $url ): ?Rule {
-		$target = self::normalize( $url );
-		if ( \array_key_exists( $target, $this->cache ) ) {
-			return $this->cache[ $target ];
+		[ $t_path, $t_query ] = self::split( $url );
+		$key                  = "{$t_path}?{$t_query}";
+		if ( \array_key_exists( $key, $this->cache ) ) {
+			return $this->cache[ $key ];
 		}
 		$hit = null;
 		foreach ( $this->rules as $rule ) {
-			$pattern = \strtolower( $rule->pattern );
-			if ( $rule->is_exact() ) {
-				if ( $target === $pattern ) {
+			[ $p_path, $p_query ] = self::split( $rule->pattern );
+			if ( '' !== $p_query ) {
+				if ( $t_path === $p_path && \str_starts_with( $t_query, $p_query ) ) {
 					$hit = $rule;
 					break;
 				}
 				continue;
 			}
-			if ( \str_starts_with( $target, $pattern ) ) {
+			if ( $rule->is_exact() ) {
+				if ( $t_path === $p_path ) {
+					$hit = $rule;
+					break;
+				}
+				continue;
+			}
+			if ( \str_starts_with( $t_path, $p_path ) ) {
 				$hit = $rule;
 				break;
 			}
 		}
-		$this->cache[ $target ] = $hit;
+		$this->cache[ $key ] = $hit;
 		return $hit;
 	}
 
+
+	/** A pattern's query part ('' for prefix/exact forms), lowercased. */
+	private static function pattern_query( string $pattern ): string {
+		return self::split( $pattern )[1];
+	}
+
 	/**
-	 * Normalize a URL for rule matching: drop the query string, re-append a
-	 * single '?' terminator so an exact 'pattern?' matches the path, and
-	 * lowercase for case-insensitive matching.
+	 * Split a URL or pattern into lowercased [path, query] ('' = no query).
+	 *
+	 * @return array{0: string, 1: string}
 	 */
-	public static function normalize( string $url ): string {
-		return \strtolower( \explode( '?', $url, 2 )[0] ) . '?';
+	private static function split( string $url ): array {
+		$parts = \explode( '?', $url, 2 );
+		return [ \strtolower( $parts[0] ), \strtolower( $parts[1] ?? '' ) ];
 	}
 }

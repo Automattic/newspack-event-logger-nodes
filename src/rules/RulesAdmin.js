@@ -197,7 +197,13 @@ export default function RulesAdmin() {
 			</tr>
 		);
 	} else if ( rules.length > 0 ) {
-		tableBody = rules.map( ( rule ) => (
+		// Grouped for scanning: log rules first, alphabetical within action.
+		const sorted = [ ...rules ].sort(
+			( a, b ) =>
+				( a.action || '' ).localeCompare( b.action || '' ) ||
+				( a.pattern || '' ).localeCompare( b.pattern || '' )
+		);
+		tableBody = sorted.map( ( rule ) => (
 			<RuleRow
 				key={ rule.id }
 				rule={ rule }

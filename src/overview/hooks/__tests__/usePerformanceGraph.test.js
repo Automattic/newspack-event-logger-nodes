@@ -446,6 +446,28 @@ describe( 'usePerformanceGraph — rules commands (_http/rules)', () => {
 		expect( result ).toEqual( { rules } );
 	} );
 
+	test( 'removeRule sends the delete verb with the rule id and resolves', async () => {
+		const client = makeFakeClient( { delete: { deleted: true } } );
+		let api;
+		renderHook(
+			( p ) => {
+				api = usePerformanceGraph( p );
+				return api;
+			},
+			{ initialProps: { commandClient: client } }
+		);
+		await act( async () => {} );
+		let result;
+		await act( async () => {
+			result = await api.removeRule( 'r-del-42' );
+		} );
+		const del = findVerb( client.batches, 'delete' );
+		expect( del ).toBeTruthy();
+		expect( del[ TO ] ).toBe( 'rules' );
+		expect( del[ VALUE ].arguments ).toEqual( [ 'r-del-42' ] );
+		expect( result ).toEqual( { deleted: true } );
+	} );
+
 	test( 'upsertRule sends the upsert verb with the RAW JSON rule as arguments and resolves { rule }', async () => {
 		const saved = { id: 'abc', pattern: '/blog?', action: 'log' };
 		const client = makeFakeClient( { upsert: { rule: saved } } );

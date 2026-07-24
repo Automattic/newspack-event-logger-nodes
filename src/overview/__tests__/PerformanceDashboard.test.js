@@ -47,6 +47,7 @@ const mockGraph = {
 	fetchUrlBreakdown: jest.fn().mockResolvedValue( null ),
 	listRules: jest.fn().mockResolvedValue( { rules: [] } ),
 	upsertRule: jest.fn().mockResolvedValue( { rule: {} } ),
+	removeRule: jest.fn().mockResolvedValue( { deleted: true } ),
 	requestGrep: jest
 		.fn()
 		.mockResolvedValue( { results: [], truncated: false } ),
@@ -252,6 +253,8 @@ describe( 'PerformanceDashboard', () => {
 		mockGraph.listRules.mockReset();
 		mockGraph.listRules.mockResolvedValue( { rules: [] } );
 		mockGraph.upsertRule.mockReset();
+		mockGraph.removeRule.mockReset();
+		mockGraph.removeRule.mockResolvedValue( { deleted: true } );
 		mockGraph.upsertRule.mockResolvedValue( { rule: {} } );
 		mockGraph.requestGrep.mockReset();
 		mockGraph.requestGrep.mockResolvedValue( {
@@ -1106,6 +1109,53 @@ describe( 'PerformanceDashboard', () => {
 			expect( globalThis.__ruleEditProps.rule.pattern ).toBe( '/foo?' );
 			expect( globalThis.__ruleEditProps.rule.action ).toBe( 'log' );
 			expect( globalThis.__ruleEditProps.rule.id ).toBe( '' );
+			unmount();
+		} );
+
+		it( 'editing an existing rule exposes onDelete: it removes and closes the editor', async () => {
+			const existing = { id: 'r-77', pattern: '/foo?', action: 'log' };
+			mockGraph.listRules.mockResolvedValue( { rules: [ existing ] } );
+			mockView = urlModalView( '/foo' );
+			const { container, unmount } = renderComponent(
+				React.createElement( PerformanceDashboard, {
+					onError: jest.fn(),
+				} )
+			);
+			await flushEffects();
+			await act( async () => {
+				container
+					.querySelector( '.event-logger-rule-control button' )
+					.click();
+			} );
+			expect( typeof globalThis.__ruleEditProps.onDelete ).toBe(
+				'function'
+			);
+			await act( async () => {
+				await globalThis.__ruleEditProps.onDelete();
+			} );
+			expect( mockGraph.removeRule ).toHaveBeenCalledWith( 'r-77' );
+			// The URL modal stays open; only the RuleEditModal closed.
+			expect(
+				container.querySelector( '[data-testid="rule-edit-modal"]' )
+			).toBeNull();
+			unmount();
+		} );
+
+		it( 'a blank add draft gets no onDelete', async () => {
+			mockGraph.listRules.mockResolvedValue( { rules: [] } );
+			mockView = urlModalView( '/foo' );
+			const { container, unmount } = renderComponent(
+				React.createElement( PerformanceDashboard, {
+					onError: jest.fn(),
+				} )
+			);
+			await flushEffects();
+			await act( async () => {
+				container
+					.querySelector( '.event-logger-rule-control button' )
+					.click();
+			} );
+			expect( globalThis.__ruleEditProps.onDelete ).toBeUndefined();
 			unmount();
 		} );
 

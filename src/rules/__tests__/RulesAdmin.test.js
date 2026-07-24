@@ -128,6 +128,42 @@ describe( 'RulesAdmin', () => {
 		return r;
 	}
 
+	test( 'lists rules sorted by action, then pattern', () => {
+		setGraph( {
+			rules: [
+				{
+					...SAMPLE_RULES[ 0 ],
+					id: 'z',
+					pattern: '/zebra',
+					action: 'skip',
+				},
+				{
+					...SAMPLE_RULES[ 0 ],
+					id: 'b',
+					pattern: '/blog',
+					action: 'log',
+				},
+				{
+					...SAMPLE_RULES[ 0 ],
+					id: 'a',
+					pattern: '/admin',
+					action: 'skip',
+				},
+				{
+					...SAMPLE_RULES[ 0 ],
+					id: 'j',
+					pattern: '/jobs',
+					action: 'log',
+				},
+			],
+		} );
+		const { container } = mount();
+		const patterns = [
+			...container.querySelectorAll( 'tbody tr td:first-child' ),
+		].map( ( td ) => td.textContent );
+		expect( patterns ).toEqual( [ '/blog', '/jobs', '/admin', '/zebra' ] );
+	} );
+
 	test( 'mounts the graph (calls useRulesGraph)', () => {
 		mount();
 		expect( useRulesGraph ).toHaveBeenCalled();
