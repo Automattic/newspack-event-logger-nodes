@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.41.3] - 2026-07-25
+
 ### Fixed
 - `ConfigTest` builds its fixture base through the shared realpathed temp-dir
   helper, so the suite passes on macOS hosts where `/tmp` symlinks to
