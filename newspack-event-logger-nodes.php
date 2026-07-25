@@ -41,6 +41,11 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	if ( ! \class_exists( '\\Newspack_Nodes\\Bootstrap' ) ) {
 		return;
 	}
+	// Substrate handshake (the API is 0.54+; older substrates load as before).
+	if ( \method_exists( '\\Newspack_Nodes\\Bootstrap', 'version_at_least' )
+		&& ! \Newspack_Nodes\Bootstrap::version_at_least( '0.54.0', 'Newspack Event Logger Nodes' ) ) {
+		return;
+	}
 
 	if ( \defined( 'WP_CLI' ) && \WP_CLI ) {
 		\WP_CLI::add_command( 'nodes reqgrep', '\\Newspack_Event_Logger_Nodes\\CLI\\Reqgrep_Command' );
