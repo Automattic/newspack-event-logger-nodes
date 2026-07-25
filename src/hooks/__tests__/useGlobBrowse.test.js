@@ -626,3 +626,78 @@ describe( 'useGlobBrowse — time travel (pause / step / jump)', () => {
 		} );
 	} );
 } );
+
+describe( 'useGlobBrowse — segment-rail maintenance', () => {
+	const PAYLOADS = {
+		list_logs: [ { key: 'errors.p2', label: 'errors.p2' } ],
+		log_status: { segments: [ { id: 3, size: 4096 } ] },
+	};
+
+	// Count of log_status commands the client has seen so far.
+	const statusCalls = ( client ) =>
+		sentCommands( client ).filter( ( c ) => 'log_status' === c.name )
+			.length;
+
+	it( 'refreshes the segment catalog on a 10s cadence', async () => {
+		jest.useFakeTimers();
+		const graph = buildGraph( PAYLOADS, [] );
+		let hook;
+		await act( async () => {
+			hook = renderHook( ( props ) => useGlobBrowse( props ), {
+				initialProps: {
+					glob: GLOB,
+					linkName: LINK,
+					viewName: VIEW,
+					isActive: true,
+					browseTargetRef: graph.browseTargetRef,
+				},
+			} );
+		} );
+		await act( async () => {
+			hook.result.current.selectPartition( 'errors.p2' );
+		} );
+		const before = statusCalls( graph.client );
+		expect( before ).toBeGreaterThan( 0 );
+		await act( async () => {
+			jest.advanceTimersByTime( 10000 );
+		} );
+		expect( statusCalls( graph.client ) ).toBe( before + 1 );
+		jest.useRealTimers();
+	} );
+
+	it( 'a record from an unknown segment refetches the rail once', async () => {
+		const graph = buildGraph( PAYLOADS, [] );
+		let hook;
+		await act( async () => {
+			hook = renderHook( ( props ) => useGlobBrowse( props ), {
+				initialProps: {
+					glob: GLOB,
+					linkName: LINK,
+					viewName: VIEW,
+					isActive: true,
+					browseTargetRef: graph.browseTargetRef,
+				},
+			} );
+		} );
+		await act( async () => {
+			hook.result.current.selectPartition( 'errors.p2' );
+		} );
+		const before = statusCalls( graph.client );
+		// A rotation: the view reports a segment the rail doesn't know.
+		await act( async () => {
+			graph.view.publishView( {
+				mode: 'live',
+				lastReceivedSegment: 8,
+			} );
+		} );
+		expect( statusCalls( graph.client ) ).toBe( before + 1 );
+		// The SAME unknown segment must not refetch again (no loop).
+		await act( async () => {
+			graph.view.publishView( {
+				mode: 'live',
+				lastReceivedSegment: 8,
+			} );
+		} );
+		expect( statusCalls( graph.client ) ).toBe( before + 1 );
+	} );
+} );
