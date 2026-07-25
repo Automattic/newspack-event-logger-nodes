@@ -80,16 +80,6 @@ class Request_Flight_Node extends Timer_Node {
 		}
 	}
 
-	/** Toggle delta mode (emit only advanced rows). Off = full per-tick re-emit. */
-	public function set_delta( bool $on ): void {
-		$this->delta = $on;
-	}
-
-	/** Current delta mode; read by the patron's dump_config round-trip. */
-	public function delta(): bool {
-		return $this->delta;
-	}
-
 	/**
 	 * Snapshot the in-flight request map as a list of compact rows. Each row's
 	 * `state` field carries the top-of-stack hook name. Consumed by RequestFlight's
@@ -149,6 +139,16 @@ class Request_Flight_Node extends Timer_Node {
 			];
 		}
 		return $out;
+	}
+
+	/** Toggle delta mode (emit only advanced rows). Off = full per-tick re-emit. */
+	public function set_delta( bool $on ): void {
+		$this->delta = $on;
+	}
+
+	/** Current delta mode; read by the patron's dump_config round-trip. */
+	public function delta(): bool {
+		return $this->delta;
 	}
 
 	/**

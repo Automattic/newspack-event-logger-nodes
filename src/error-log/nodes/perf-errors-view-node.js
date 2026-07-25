@@ -69,14 +69,6 @@ export class PerfErrorsViewNode extends Node {
 		this._publish();
 	}
 
-	// Seek feedback surfaced for the published model (and view-node tests).
-	get mode() {
-		return this.seek.mode;
-	}
-	get lastReceivedSegment() {
-		return this.seek.lastReceivedSegment;
-	}
-
 	fill( message ) {
 		const value = message[ VALUE ];
 		// A raw-logs catalog reply (VALUE.name); raw envelopes can't match it.
@@ -277,6 +269,14 @@ export class PerfErrorsViewNode extends Node {
 		}
 		const idx = ( this._head - 1 - i + this.maxEntries ) % this.maxEntries;
 		return this._ring[ idx ];
+	}
+
+	// Seek feedback surfaced for the published model (and view-node tests).
+	get mode() {
+		return this.seek.mode;
+	}
+	get lastReceivedSegment() {
+		return this.seek.lastReceivedSegment;
 	}
 
 	// Number of live entries in the ring (O(1)).

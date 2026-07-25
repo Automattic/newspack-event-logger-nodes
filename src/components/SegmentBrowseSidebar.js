@@ -16,21 +16,8 @@
 
 import { __, sprintf } from '@wordpress/i18n';
 import LogBrowser from '@newspack-nodes/shared/components/LogBrowser';
+import formatBytes from '@newspack-nodes/shared/utils/formatBytes';
 import './SegmentBrowseSidebar.scss';
-
-// Compact byte size for the segment list's meta column.
-const formatBytes = ( bytes ) => {
-	if ( ! bytes ) {
-		return '0 B';
-	}
-	if ( bytes < 1024 ) {
-		return `${ bytes } B`;
-	}
-	if ( bytes < 1024 * 1024 ) {
-		return `${ ( bytes / 1024 ).toFixed( 1 ) } KB`;
-	}
-	return `${ ( bytes / ( 1024 * 1024 ) ).toFixed( 1 ) } MB`;
-};
 
 export default function SegmentBrowseSidebar( { browse, onSelectPartition } ) {
 	const partitions = browse?.partitions ?? [];
