@@ -201,6 +201,8 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 		searchTimerRef.current = setTimeout( () => {
 			const query = searchQuery.toLowerCase();
 			const matches = [];
+			// Starts precede their completes, so one pass suffices.
+			const startKeywordHits = new Set();
 
 			for ( let i = 0; i < entries.length; i++ ) {
 				const e = entries[ i ];
@@ -215,9 +217,26 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 					message = JSON.stringify( e.m ).toLowerCase();
 				}
 
-				if ( keyword.includes( query ) || message.includes( query ) ) {
-					matches.push( i );
+				const keywordHit = keyword.includes( query );
+				const messageHit = message.includes( query );
+				if ( ! keywordHit && ! messageHit ) {
+					continue;
 				}
+				// Suffix-anchored like the parser: truncated tails opt out.
+				const paired = e.pairId !== null && e.pairId !== undefined;
+				if ( keywordHit && paired && keyword.endsWith( '(start)' ) ) {
+					startKeywordHits.add( e.pairId );
+				}
+				// Keyword-only hit its start already made: duplicate stop.
+				if (
+					! messageHit &&
+					paired &&
+					keyword.endsWith( '(complete)' ) &&
+					startKeywordHits.has( e.pairId )
+				) {
+					continue;
+				}
+				matches.push( i );
 			}
 
 			setMatchedIndices( matches );

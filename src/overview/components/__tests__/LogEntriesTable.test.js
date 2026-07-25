@@ -221,8 +221,8 @@ describe( 'LogEntriesTable', () => {
 		act( () => {
 			jest.advanceTimersByTime( 200 );
 		} );
-		// "db (start)" matches; "db (complete)" matches too.
-		expect( container.textContent ).toMatch( /matches|\d+\/\d+/ );
+		// "db (start)" matches; its complete is the same finding, counted once.
+		expect( container.textContent ).toContain( '1 match' );
 		jest.useRealTimers();
 		unmount();
 	} );
@@ -314,6 +314,77 @@ describe( 'LogEntriesTable', () => {
 			);
 		} );
 		expect( container.textContent ).toMatch( /matches|\d+\/\d+/ );
+		jest.useRealTimers();
+		unmount();
+	} );
+
+	function searchFor( container, input, query ) {
+		const setter = Object.getOwnPropertyDescriptor(
+			window.HTMLInputElement.prototype,
+			'value'
+		).set;
+		act( () => {
+			setter.call( input, query );
+			input.dispatchEvent( new Event( 'input', { bubbles: true } ) );
+		} );
+		act( () => {
+			jest.advanceTimersByTime( 200 );
+		} );
+	}
+
+	it( 'keyword match counts a start/complete pair once (start only)', () => {
+		const entries = makeEntries();
+		jest.useFakeTimers();
+		const { container, unmount } = renderComponent(
+			React.createElement( LogEntriesTable, { entries } )
+		);
+		// 'render' hits both rows of the childless pair by keyword; the
+		// complete adds nothing over its start, so it is not a stop.
+		searchFor( container, container.querySelector( 'input' ), 'render' );
+		expect( container.textContent ).toContain( '1 match' );
+		expect( container.textContent ).not.toContain( '2 matches' );
+		jest.useRealTimers();
+		unmount();
+	} );
+
+	it( 'keeps a complete whose message matches, not just its keyword', () => {
+		const entries = makeEntries();
+		entries[ 5 ] = { ...entries[ 5 ], m: 'render queue drained qz41' };
+		jest.useFakeTimers();
+		const { container, unmount } = renderComponent(
+			React.createElement( LogEntriesTable, { entries } )
+		);
+		// 'render' hits the start keyword AND the complete's message.
+		searchFor( container, container.querySelector( 'input' ), 'render' );
+		expect( container.textContent ).toContain( '2 matches' );
+		jest.useRealTimers();
+		unmount();
+	} );
+
+	it( 'keeps a truncated complete — "(complete)" mid-keyword is not a pair end', () => {
+		const entries = makeEntries();
+		// Log_Manager appends " (truncated)" to an oversized category, so the
+		// pair-end token is no longer the suffix; the row must stay a stop.
+		entries[ 5 ] = { ...entries[ 5 ], k: 'render (complete) (truncated)' };
+		jest.useFakeTimers();
+		const { container, unmount } = renderComponent(
+			React.createElement( LogEntriesTable, { entries } )
+		);
+		searchFor( container, container.querySelector( 'input' ), 'render' );
+		expect( container.textContent ).toContain( '2 matches' );
+		jest.useRealTimers();
+		unmount();
+	} );
+
+	it( 'keeps completes when the query matches only their keyword suffix', () => {
+		const entries = makeEntries();
+		jest.useFakeTimers();
+		const { container, unmount } = renderComponent(
+			React.createElement( LogEntriesTable, { entries } )
+		);
+		// 'complete' misses every start keyword, so the completes stand alone.
+		searchFor( container, container.querySelector( 'input' ), 'complete' );
+		expect( container.textContent ).toContain( '3 matches' );
 		jest.useRealTimers();
 		unmount();
 	} );

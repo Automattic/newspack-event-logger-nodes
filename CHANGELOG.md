@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Request-details search counts a start/complete pair as one finding: a
+  `(complete)` row whose only hit is the keyword its `(start)` already matched
+  is no longer a separate `n`/`p` stop, so a childless pair takes one press,
+  not two. A complete still matches on its own when the query hits its
+  message/payload, or hits only the complete keyword itself.
+
 ### Added
 - Substrate version handshake at boot: on a substrate older than 0.54.0 the
   plugin goes dormant with an admin notice (via the substrate's
