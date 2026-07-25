@@ -52,6 +52,7 @@ class FakeCatalogView extends Node {
 		super();
 		this.replies = new PendingReplies();
 		this.controls = [];
+		this.rows = [];
 	}
 	fill( message ) {
 		if ( this.replies.settle( message ) ) {
@@ -60,6 +61,8 @@ class FakeCatalogView extends Node {
 		const value = message[ VALUE ];
 		if ( value && value.action ) {
 			this.controls.push( value );
+		} else {
+			this.rows.push( message );
 		}
 	}
 	// The last control message of a given action (or undefined).
@@ -281,6 +284,7 @@ describe( 'useGlobBrowse — reposition seeks', () => {
 		expect( browseTargetRef.current ).toEqual( {
 			subscribe: [ 'errors.p3' ],
 			positions: null,
+			explicit: false,
 		} );
 		// The switch arms single-dir seek tracking on the view (dir carried).
 		expect( view.lastControl( 'select' ) ).toEqual( {
@@ -512,6 +516,113 @@ describe( 'useGlobBrowse — inactive (paused / hidden) gating', () => {
 		expect( browseTargetRef.current ).toEqual( {
 			subscribe: [ 'errors.p3' ],
 			positions: null,
+			explicit: false,
+		} );
+	} );
+} );
+
+describe( 'useGlobBrowse — time travel (pause / step / jump)', () => {
+	const PAYLOADS = {
+		list_logs: [ { key: 'errors.p2', label: 'errors.p2' } ],
+		log_status: { segments: [ { id: 3, size: 4096 } ] },
+		read_message: {
+			message: [ 1, 'stamped', '', '3:57:41', '', 0, 'stepped-row' ],
+			cursor: { segment: 3, offset: 98 },
+		},
+	};
+
+	async function renderTimeTravel() {
+		const setPausedRef = { current: jest.fn() };
+		// Paused semantics: browse actions record; nothing repositions live.
+		const isActiveNow = () => false;
+		const graph = buildGraph( PAYLOADS, [] );
+		let hook;
+		await act( async () => {
+			hook = renderHook( ( props ) => useGlobBrowse( props ), {
+				initialProps: {
+					glob: GLOB,
+					linkName: LINK,
+					viewName: VIEW,
+					isActive: false,
+					browseTargetRef: graph.browseTargetRef,
+					setPausedRef,
+					isActiveNow,
+				},
+			} );
+		} );
+		await act( async () => {
+			hook.result.current.selectPartition( 'errors.p2' );
+		} );
+		return { ...graph, ...hook, setPausedRef };
+	}
+
+	it( 'a segment click pauses before it seeks', async () => {
+		const { result, setPausedRef } = await renderTimeTravel();
+		await act( async () => {
+			result.current.browseSegment( { id: 3 } );
+		} );
+		expect( setPausedRef.current ).toHaveBeenCalledWith( true );
+	} );
+
+	it( 'step reads ONE message at the cursor and advances it', async () => {
+		const { result, client, view, browseTargetRef } =
+			await renderTimeTravel();
+		await act( async () => {
+			result.current.browseSegment( { id: 3 } );
+		} );
+		await act( async () => {
+			await result.current.step();
+		} );
+		expect( sentCommands( client ) ).toContainEqual( {
+			name: 'read_message',
+			args: [ 'errors.p2', '3:0' ],
+		} );
+		// The record was admitted through the paused belt…
+		expect( view.lastControl( 'step' ) ).toEqual( {
+			action: 'step',
+			frames: 1,
+		} );
+		expect( view.rows.map( ( m ) => m[ VALUE ] ) ).toContain(
+			'stepped-row'
+		);
+		// …and the recorded target advanced to the post-step cursor.
+		expect( browseTargetRef.current.positions ).toEqual( {
+			'errors.p2': { segment: 3, offset: 98 },
+		} );
+		expect( browseTargetRef.current.explicit ).toBe( true );
+	} );
+
+	it( 'jumpTo pauses, seeks the position, and steps it', async () => {
+		const { result, client, setPausedRef } = await renderTimeTravel();
+		await act( async () => {
+			await result.current.jumpTo( { segment: 5, offset: 44 } );
+		} );
+		expect( setPausedRef.current ).toHaveBeenCalledWith( true );
+		expect( sentCommands( client ) ).toContainEqual( {
+			name: 'read_message',
+			args: [ 'errors.p2', '5:44' ],
+		} );
+	} );
+
+	it( 'connectPositions honors an explicit seek once on reconnect', () => {
+		const { connectPositions } = require( '../useGlobBrowse' );
+		const link = {
+			resumePositions: () => ( {
+				'errors.p2': { segment: 9, offset: 7 },
+			} ),
+		};
+		const target = {
+			subscribe: [ 'errors.p2' ],
+			positions: { 'errors.p2': { segment: 3, offset: 98 } },
+			explicit: true,
+		};
+		expect( connectPositions( target, link, true ) ).toEqual( {
+			'errors.p2': { segment: 3, offset: 98 },
+		} );
+		// Single-use: the NEXT reconnect resumes live again.
+		expect( target.explicit ).toBe( false );
+		expect( connectPositions( target, link, true ) ).toEqual( {
+			'errors.p2': { segment: 9, offset: 7 },
 		} );
 	} );
 } );

@@ -70,6 +70,17 @@ function catalogCommand( id, from, name, args ) {
 	return m;
 }
 
+// Reconnect positions: an explicit seek applies ONCE; else resume the tail.
+export function connectPositions( target, link, isReconnect ) {
+	if ( target.explicit ) {
+		target.explicit = false;
+		return target.positions;
+	}
+	return isReconnect
+		? link.resumePositions() ?? target.positions
+		: target.positions;
+}
+
 // A TM_STRUCT control message routed by the view's fill() on its `action`.
 function viewControl( value ) {
 	const m = newMessage();
@@ -84,6 +95,8 @@ export default function useGlobBrowse( {
 	viewName,
 	isActive,
 	browseTargetRef,
+	setPausedRef,
+	isActiveNow,
 } ) {
 	const globPrefix = glob.endsWith( '*' ) ? glob.slice( 0, -1 ) : glob;
 
@@ -185,15 +198,23 @@ export default function useGlobBrowse( {
 		};
 	}, [ selectedPartition, fetchCatalog ] );
 
-	// Record the browse target; reposition the live stream only when active.
+	// @longform Record the browse target; reposition the live stream only
+	// when active. A PAUSED-time seek records as EXPLICIT and reconnect
+	// applies it once (connectPositions); a live delivery consumes it, so
+	// later reconnects resume the tail instead of re-running the old seek.
 	const reposition = useCallback(
 		( subscribe, positions ) => {
-			browseTargetRef.current = { subscribe, positions };
-			if ( isActiveRef.current ) {
+			const active = isActiveNow ? isActiveNow() : isActiveRef.current;
+			browseTargetRef.current = {
+				subscribe,
+				positions,
+				explicit: null !== positions && ! active,
+			};
+			if ( active ) {
 				Core.node( linkName )?.setSubscribe( subscribe, positions );
 			}
 		},
-		[ browseTargetRef, linkName ]
+		[ browseTargetRef, linkName, isActiveNow ]
 	);
 
 	// Switch partition: reset+arm the view's seek (dir), or widen to glob ('').
@@ -244,11 +265,66 @@ export default function useGlobBrowse( {
 			if ( ! sel ) {
 				return;
 			}
+			// Time-travel: a past segment pauses; Step walks it, Play streams.
+			setPausedRef?.current?.( true );
 			lpBrowse( segment.id );
 			browseView();
 			reposition( [ sel ], segmentPositions( sel, segment.id ) );
 		},
-		[ lpBrowse, reposition, browseView ]
+		[ lpBrowse, reposition, browseView, setPausedRef ]
+	);
+
+	// @longform Paused-only single-step: the stream stays OFFLINE; one record
+	// is fetched over the command channel (the raw-logs read_message verb,
+	// server-stamped by the real read model), admitted through the view's
+	// paused belt, and the recorded target advances to the post-step cursor
+	// so the next step continues from there and Play resumes streaming there.
+	const step = useCallback( () => {
+		const sel = selectedRef.current;
+		const link = Core.node( linkName );
+		if ( ! sel || ! link || ( isActiveNow && isActiveNow() ) ) {
+			return undefined;
+		}
+		const cursor =
+			browseTargetRef.current.positions?.[ sel ] ??
+			link.resumePositions()?.[ sel ];
+		if ( ! cursor || 'object' !== typeof cursor ) {
+			return undefined;
+		}
+		return fetchCatalog( 'read_message', [
+			sel,
+			`${ cursor.segment }:${ cursor.offset }`,
+		] )
+			.then( ( result ) => {
+				const view = Core.node( viewName );
+				if ( ! result?.message || ! view ) {
+					return;
+				}
+				view.fill( viewControl( { action: 'step', frames: 1 } ) );
+				view.fill( result.message );
+				browseTargetRef.current = {
+					subscribe: [ sel ],
+					positions: { [ sel ]: { ...result.cursor } },
+					explicit: true,
+				};
+			} )
+			.catch( () => {} );
+	}, [ linkName, viewName, fetchCatalog, browseTargetRef, isActiveNow ] );
+
+	// Offset jump: pause, seek the pasted position, and step that message.
+	const jumpTo = useCallback(
+		( position ) => {
+			const sel = selectedRef.current;
+			if ( ! sel ) {
+				return undefined;
+			}
+			setPausedRef?.current?.( true );
+			lpBrowse( position.segment );
+			browseView();
+			reposition( [ sel ], { [ sel ]: position } );
+			return step();
+		},
+		[ lpBrowse, browseView, reposition, step, setPausedRef ]
 	);
 
 	return {
@@ -262,5 +338,7 @@ export default function useGlobBrowse( {
 		follow,
 		replay,
 		browseSegment,
+		step,
+		jumpTo,
 	};
 }

@@ -424,7 +424,7 @@ describe( 'useRequestLogGraph — glob browse', () => {
 		);
 	} );
 
-	test( 'browsing a segment seeks that dir; the SSE url carries the positions', async () => {
+	test( 'a segment browse PAUSES (stream closes); Play reopens at the seek', async () => {
 		const client = makeFakeClient( {
 			list_logs: [
 				{ key: 'completed.p2', label: 'completed.p2' },
@@ -442,6 +442,10 @@ describe( 'useRequestLogGraph — glob browse', () => {
 		await act( async () =>
 			result.current.browse.browseSegment( { id: 7, size: 4096 } )
 		);
+		// Time-travel: the click pauses; the closed stream never saw the seek.
+		expect( FakeEventSource.last.closed ).toBe( true );
+		// Play streams from the browsed segment (the recorded explicit seek).
+		await act( async () => result.current.setPaused( false ) );
 		const url = FakeEventSource.last.url;
 		expect( url ).toContain( 'subscribe=completed.p2' );
 		const positions = JSON.parse(
@@ -501,6 +505,9 @@ describe( 'useRequestLogGraph — pause vs visibility precedence + replay surviv
 		);
 		const view = Core.node( VIEW );
 		expect( view.mode ).toBe( 'replay' );
+
+		// The click paused; Play starts the replay (consuming the seek).
+		await act( async () => result.current.setPaused( false ) );
 
 		// A replayed record short of the boundary keeps replay + a resume cursor.
 		const rec = completedEnvelope( { rid: 'r1', url: '/a' } );
