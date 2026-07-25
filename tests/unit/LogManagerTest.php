@@ -291,17 +291,14 @@ class LogManagerTest extends TestCase {
 		$lm->message( 'materialize', [ 'm' => 'partition-8801' ] );
 
 		$topic_prop = new \ReflectionProperty( Log_Manager::class, 'topic' );
-		$topic_prop->setAccessible( true );
 		$firehose = $topic_prop->getValue( $lm );
 		$this->assertInstanceOf( Topic_Node::class, $firehose );
 
 		$parts_prop = new \ReflectionProperty( Topic_Node::class, 'partitions' );
-		$parts_prop->setAccessible( true );
 		$partitions = $parts_prop->getValue( $firehose );
 		$this->assertNotEmpty( $partitions, 'a partition materialized on the first message' );
 
 		$flag = new \ReflectionProperty( Partition_Node::class, 'allow_large_writes' );
-		$flag->setAccessible( true );
 		foreach ( $partitions as $partition ) {
 			$this->assertFalse(
 				$flag->getValue( $partition ),
@@ -354,13 +351,11 @@ class LogManagerTest extends TestCase {
 		$lm->message( 'work', [ 'm' => 'materialize' ] );
 
 		$topic_prop = new \ReflectionProperty( Log_Manager::class, 'topic' );
-		$topic_prop->setAccessible( true );
 		$firehose = $topic_prop->getValue( $lm );
 		$this->assertInstanceOf( Topic_Node::class, $firehose );
 
 		foreach ( [ 'num_segments' => 6, 'lifetime' => 999, 'max_segments' => 13, 'min_segments' => 3, 'min_lifetime' => 7 ] as $axis => $expected ) {
 			$prop = new \ReflectionProperty( Topic_Node::class, $axis );
-			$prop->setAccessible( true );
 			$this->assertSame( $expected, $prop->getValue( $firehose ), "firehose Topic {$axis} must come from the renamed config key" );
 		}
 	}

@@ -90,7 +90,6 @@ class PerformanceCITest extends TestCase {
 		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'min_lifetime' => 4321 ] );
 
 		$method = new \ReflectionMethod( Performance_CI_Node::class, 'stats_stores' );
-		$method->setAccessible( true );
 		/** @var array<int,Stats_Store> $stores */
 		$stores = $method->invoke( null );
 
@@ -103,7 +102,6 @@ class PerformanceCITest extends TestCase {
 		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'max_lifespan' => 4321 ] );
 
 		$method = new \ReflectionMethod( Performance_CI_Node::class, 'stats_stores' );
-		$method->setAccessible( true );
 		/** @var array<int,Stats_Store> $stores */
 		$stores = $method->invoke( null );
 
@@ -1264,7 +1262,6 @@ class PerformanceCITest extends TestCase {
 		// a contract violation, explicitly rejected to [] (NOT csv-split into a
 		// 2-element list — the old "legacy senders" comma fallback was unreachable).
 		$ref = new \ReflectionMethod( Performance_CI_Node::class, 'decode_array_value' );
-		$ref->setAccessible( true );
 		$this->assertSame( [], $ref->invoke( null, 'zebra.example,quux.example' ) );
 	}
 
@@ -1272,9 +1269,7 @@ class PerformanceCITest extends TestCase {
 		// A JSON array-option value is json_decoded and sanitize_settings_array keeps
 		// the keys — the old csv-split flattened an assoc map to a list of "1"s.
 		$decode = new \ReflectionMethod( Performance_CI_Node::class, 'decode_array_value' );
-		$decode->setAccessible( true );
 		$sanitize = new \ReflectionMethod( Performance_CI_Node::class, 'sanitize_settings_value' );
-		$sanitize->setAccessible( true );
 
 		$decoded = $decode->invoke( null, (string) \json_encode( [ 'advancedemail' => true, 'amazons3' => true ] ) );
 
@@ -1309,7 +1304,6 @@ class PerformanceCITest extends TestCase {
 		// auto-tune thresholds moved to per-rule fields), so the sanitizer's
 		// float branch is exercised directly.
 		$ref = new \ReflectionMethod( Performance_CI_Node::class, 'sanitize_settings_value' );
-		$ref->setAccessible( true );
 
 		$this->assertEqualsWithDelta( 1.5, $ref->invoke( null, '1.5', 'float' ), 0.001 );
 		$this->assertNull( $ref->invoke( null, 'notafloat', 'float' ) );
@@ -1319,7 +1313,6 @@ class PerformanceCITest extends TestCase {
 
 	public function test_sanitize_settings_value_int_bounds(): void {
 		$ref = new \ReflectionMethod( Performance_CI_Node::class, 'sanitize_settings_value' );
-		$ref->setAccessible( true );
 
 		$this->assertSame( 42, $ref->invoke( null, '42', 'int' ) );
 		$this->assertNull( $ref->invoke( null, 'notanumber', 'int' ) );
@@ -1358,7 +1351,6 @@ class PerformanceCITest extends TestCase {
 		// recursion branch), not flattened or rejected. Tested on the sanitizer
 		// directly — the ruleset option itself now re-tiers on set().
 		$sanitize = new \ReflectionMethod( Performance_CI_Node::class, 'sanitize_settings_value' );
-		$sanitize->setAccessible( true );
 
 		$this->assertSame(
 			[ 'group' => [ 'inner' => 'val' ] ],
@@ -1412,7 +1404,6 @@ class PerformanceCITest extends TestCase {
 		// for array-typed options and only ever a whitelisted type): a non-array
 		// value for the array branch, and an unrecognized type.
 		$ref = new \ReflectionMethod( Performance_CI_Node::class, 'sanitize_settings_value' );
-		$ref->setAccessible( true );
 
 		$this->assertNull( $ref->invoke( null, 'not-an-array', 'array' ) );
 		$this->assertNull( $ref->invoke( null, 'whatever', 'nonexistent-type' ) );
