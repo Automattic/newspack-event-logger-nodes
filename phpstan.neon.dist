@@ -50,6 +50,16 @@ parameters:
         # Node subclass / static call here references them. Point PHPStan
         # at the substrate sources so it can discover those symbols.
         - ../newspack-nodes/includes
+    ignoreErrors:
+        # The boot version handshake guards the RUNTIME substrate, which can be
+        # older than the sibling checkout this analysis reads. The sibling
+        # always has version_at_least, so the presence check reads always-true
+        # here — but deployment skew is the very case the guard exists for.
+        -
+            identifier: function.alreadyNarrowedType
+            message: '#version_at_least#'
+            path: newspack-event-logger-nodes.php
+            count: 1
     stubFiles:
         # Refine getrusage()'s plain-array core type to the documented
         # int-keyed shape so Log_Manager::log_resources()'s ru_* reads +

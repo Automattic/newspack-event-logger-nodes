@@ -37,7 +37,8 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: Automattic/newspack-nodes
-          ref: main
+          # Pinned substrate tag — bump when adopting a newer substrate.
+          ref: v0.53.0
           path: .newspack-nodes
 
       - name: Setup PHP
