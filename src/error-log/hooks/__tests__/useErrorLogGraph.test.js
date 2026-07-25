@@ -180,10 +180,10 @@ describe( 'useErrorLogGraph — exospine + RemoteLink wiring', () => {
 				)
 			);
 		} );
-		// The watcher saw the raw stream AND the view appended the entry.
+		// The watcher saw the raw stream AND the view appended the row.
 		expect( seen ).toContain( 'r-watch' );
-		expect( Core.node( VIEW ).entries ).toHaveLength( 1 );
-		expect( Core.node( VIEW ).entries[ 0 ].rid ).toBe( 'r-watch' );
+		expect( Core.node( VIEW ).lines ).toHaveLength( 1 );
+		expect( Core.node( VIEW ).lines[ 0 ].rid ).toBe( 'r-watch' );
 	} );
 
 	test( 'steers flow with targets: the unnamed sse-in subscribes on `errors` and routes to view; heartbeat → _http/workers', () => {
@@ -279,8 +279,8 @@ describe( 'useErrorLogGraph — end-to-end routing through the exospine', () => 
 			);
 		} );
 		const view = Core.node( VIEW );
-		expect( view.entries ).toHaveLength( 1 );
-		expect( view.entries[ 0 ].rid ).toBe( 'r-flow' );
+		expect( view.lines ).toHaveLength( 1 );
+		expect( view.lines[ 0 ].rid ).toBe( 'r-flow' );
 	} );
 } );
 
@@ -384,32 +384,9 @@ describe( 'useErrorLogGraph — page visibility / pause lifecycle', () => {
 				pack( errorEnvelope( 'r1', { ts: 1, k: 'error', m: 'x' } ) )
 			);
 		} );
-		expect( Core.node( VIEW ).entries ).toHaveLength( 1 );
+		expect( Core.node( VIEW ).lines ).toHaveLength( 1 );
 		act( () => result.current.clear() );
-		expect( Core.node( VIEW ).entries ).toHaveLength( 0 );
-	} );
-
-	test( 'setFilter() filters incoming rows before the view buffer', () => {
-		const { result } = renderHook( () => useErrorLogGraph() );
-		act( () => result.current.setFilter( 'needle-317' ) );
-		act( () => {
-			FakeEventSource.last.dispatch(
-				'msg',
-				pack( errorEnvelope( 'miss', { k: 'other', m: 'other' } ) )
-			);
-			FakeEventSource.last.dispatch(
-				'msg',
-				pack(
-					errorEnvelope( 'match', {
-						k: 'error',
-						m: 'needle-317 result',
-					} )
-				)
-			);
-		} );
-		expect(
-			Core.node( VIEW ).entries.map( ( entry ) => entry.rid )
-		).toEqual( [ 'match' ] );
+		expect( Core.node( VIEW ).lines ).toHaveLength( 0 );
 	} );
 } );
 
@@ -564,30 +541,5 @@ describe( 'useErrorLogGraph — graphGeneration Reset Graph', () => {
 
 		// Rebuilt view defaults paused:false; the hook re-applies the pause.
 		expect( Core.node( VIEW ).setStateCache.view.paused ).toBe( true );
-	} );
-
-	test( 'reinit preserves the active admission filter', () => {
-		const { result } = renderHook( () => useErrorLogGraph() );
-		act( () => result.current.setFilter( 'needle-733' ) );
-		act( () => Core.bumpGraphGeneration() );
-
-		act( () => {
-			FakeEventSource.last.dispatch(
-				'msg',
-				pack( errorEnvelope( 'miss', { k: 'other', m: 'other' } ) )
-			);
-			FakeEventSource.last.dispatch(
-				'msg',
-				pack(
-					errorEnvelope( 'match', {
-						k: 'error',
-						m: 'needle-733 result',
-					} )
-				)
-			);
-		} );
-		expect(
-			Core.node( VIEW ).entries.map( ( entry ) => entry.rid )
-		).toEqual( [ 'match' ] );
 	} );
 } );

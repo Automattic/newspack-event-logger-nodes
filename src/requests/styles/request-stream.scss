@@ -1,7 +1,11 @@
 /**
  * Request Stream Styles
  *
- * Smooth scrolling real-time request log with animations.
+ * ELN-specific chrome only. The log pane + scrollbar, the header-bar look, the
+ * empty state, and the row striping/hover/height are the shared substrate
+ * classes (`newspack-nodes-log-rows` / `-log-header` / `-log-row` from
+ * LogRowList.scss); this file keeps the page layout, the COLUMN-grid override
+ * for the shared rows, and the duration/status/timing cell accents.
  */
 
 @use "base";
@@ -14,9 +18,18 @@
 	display: flex;
 	flex-direction: column;
 	font-family: base.$system-font;
+
+	// ELN rows are COLUMN grids; the template rides inline per row.
+	.newspack-nodes-log-row {
+		display: grid;
+		gap: 12px;
+		align-items: center;
+	}
 }
 
-.event-logger-request-stream-header {
+// Layout (flex row + divider) comes from the shared header rule in base.scss,
+// which lists `.event-logger-request-stream__header`.
+.event-logger-request-stream__header {
 	flex-shrink: 0;
 }
 
@@ -28,19 +41,15 @@
 	min-width: 100px;
 }
 
-.event-logger-request-stream-error {
-	@include base.dark-error-banner;
-}
-
 // Browse layout: the segment sidebar sits beside the scrolling request pane.
-.event-logger-request-stream-body {
+.event-logger-request-stream__body {
 	flex: 1;
 	min-height: 0;
 	display: flex;
 }
 
 // The pane column — header row + scrolling list — beside the browse sidebar.
-.event-logger-request-stream-main {
+.event-logger-request-stream__main {
 	flex: 1;
 	min-width: 0;
 	min-height: 0;
@@ -48,120 +57,31 @@
 	flex-direction: column;
 }
 
-// The DARK log pane — the scrolling request list. Light chrome sits above it;
-// this is the terminal-surface equivalent of Raw Logs' canvas-container.
-.event-logger-request-stream-list {
-	flex: 1;
-	overflow-y: scroll;
-	overflow-x: hidden;
-	background: var(--paper-3);
-	border: 1px solid var(--paper-shadow);
+// The dynamic column header: the wrapper publishes --stream-grid-template and
+// dissolves (display: contents) so the shared header row becomes the grid.
+.event-logger-request-stream-columns {
+	display: contents;
+
+	.newspack-nodes-log-header {
+		display: grid;
+		grid-template-columns: var(--stream-grid-template);
+		gap: 12px;
+	}
+}
+
+// The wrapper interposes, so re-square the pane corner the shared sibling
+// rule (.newspack-nodes-log-header + .newspack-nodes-log-rows) can't reach.
+.event-logger-request-stream-columns + .newspack-nodes-log-rows {
 	border-top: none;
 	border-radius: 0 0 var(--np-radius-md) var(--np-radius-md);
-	padding: 0;
-	-webkit-overflow-scrolling: touch;
-	display: flex;
-	flex-direction: column;
-
-	// Custom scrollbar.
-	&::-webkit-scrollbar {
-		width: 8px;
-	}
-
-	&::-webkit-scrollbar-track {
-		background: var(--paper-3);
-		border-radius: 4px;
-	}
-
-	&::-webkit-scrollbar-thumb {
-		background: var(--paper-shadow);
-		border-radius: 4px;
-
-		&:hover {
-			background: var(--ink-3);
-		}
-	}
 }
 
-// Column-header row caps the dark pane — light-on-dark labels.
-.event-logger-request-stream-header-row {
-	display: grid;
-	gap: 12px;
-	padding: 6px 8px;
-	background: var(--paper-2);
-	border: 1px solid var(--paper-shadow);
-	border-bottom: none;
-	border-radius: var(--np-radius-md) var(--np-radius-md) 0 0;
-	flex-shrink: 0;
-}
-
-.event-logger-request-stream-th {
-	color: var(--ink-3);
-	font-size: 11px;
-	font-weight: 600;
-	text-transform: uppercase;
-	letter-spacing: 0.5px;
-	cursor: default;
-}
-
-.event-logger-request-stream-content {
-	display: flex;
-	flex-direction: column;
-	will-change: transform; // GPU acceleration for smooth transforms.
-}
-
-.event-logger-request-stream-empty {
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	height: 100%;
-	color: var(--ink-3);
-	font-size: 14px;
-	font-style: italic;
-}
-
-.event-logger-request-stream-entry {
-	display: grid;
-	gap: 12px;
-	align-items: center;
-	padding: 8px 12px;
-	height: 33px; // Fixed height for virtualization.
-	box-sizing: border-box;
-	border-radius: 4px;
-	text-decoration: none;
-	color: inherit;
-	font-family: base.$mono-font;
-	font-size: 12px;
-
-	// Use class-based alternating instead of nth-child to prevent
-	// color flipping during smooth scroll animation. Dark-pane rows.
-	&.row-odd {
-		background: var(--paper-2);
-
-		&:hover {
-			background: color-mix(in srgb, base.$accent 20%, var(--paper-2));
-		}
-	}
-
-	&.row-even {
-		// Surface tiers are nearly identical on dark skins, so tint every other
-		// row toward the ink for visible striping (lighter on dark, darker on
-		// light — it adapts to the skin).
-		background: color-mix(in srgb, base.$ink 8%, var(--paper-2));
-
-		&:hover {
-			background: color-mix(in srgb, base.$accent 20%, var(--paper-2));
-		}
-	}
-}
-
-// Responsive adjustments — the search input is flex:1 now (canonical class),
-// and the toolbar already wraps by default, so only the entry spacing needs
-// narrowing.
+// Responsive adjustments — the search input is flex:1 (canonical class) and
+// the toolbar wraps by default, so only the row spacing needs narrowing.
 @media (max-width: 1200px) {
-	.event-logger-request-stream-entry {
+	.event-logger-request-stream .newspack-nodes-log-row {
 		gap: 8px;
-		padding: 6px 10px;
+		padding: 0 10px;
 	}
 }
 

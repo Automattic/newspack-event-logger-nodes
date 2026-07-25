@@ -2,7 +2,7 @@
  * Error Log dashboard base — the shared dashboard chrome (src/styles/base.scss)
  * plus this page's scoped reset. The error log's dark log-row + entry styling
  * lives in error-log.scss (which `@use "base"`); the shared `.entry-*` cells and
- * the `.event-logger-error-log-header` chrome come from the shared base.
+ * the `.event-logger-error-log__header` chrome come from the shared base.
  * `@forward` re-exports the shared tokens/mixins so error-log.scss keeps
  * resolving `base.$token` / `base.<mixin>`.
  */
