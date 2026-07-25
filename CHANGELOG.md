@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.41.0] - 2026-07-24
+
 ### Fixed
 - Request-details search counts a start/complete pair as one finding: a
   `(complete)` row whose only hit is the keyword its `(start)` already matched
@@ -22,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   plugin — the stack deploys as a unit, so a missing API means too old.
 
 ### Changed
-- The release workflow pins the newspack-nodes checkout to the `v0.53.0` tag
+- The release workflow pins the newspack-nodes checkout to the `v0.54.0` tag
   instead of tracking `main` — bump the pin when adopting a newer substrate.
 
 ## [0.40.2] - 2026-07-24
