@@ -470,10 +470,6 @@ export default function UrlDetailView( {
 						__( 'Mem', 'newspack-event-logger-nodes' ),
 						'numeric'
 					) }
-					<div
-						className="event-logger-table__cell event-logger-table__cell--center"
-						style={ { width: '30px' } }
-					></div>
 				</div>
 
 				<div ref={ listRef } className="event-logger-table__list">

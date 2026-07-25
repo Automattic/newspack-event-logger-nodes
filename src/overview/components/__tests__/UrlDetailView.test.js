@@ -106,6 +106,15 @@ describe( 'UrlDetailView', () => {
 		unmount();
 	} );
 
+	it( 'the header has exactly as many cells as the grid has columns', () => {
+		// A 7th child wrapped onto an implicit 8px-gapped grid row and
+		// inflated the header height (the --requests template is 6 tracks).
+		const { container, unmount } = mount();
+		const header = container.querySelector( '.event-logger-table__header' );
+		expect( header.children.length ).toBe( 6 );
+		unmount();
+	} );
+
 	it( 'renders REQUEST_ID, method, status, duration, memory cells', () => {
 		const { container, unmount } = mount();
 		const text = container.textContent;

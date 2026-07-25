@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   re-running the old seek.
 
 ### Fixed
+- **The Recent Requests header sits at the same height as every other
+  table header**: a vestigial seventh header cell (a leftover 30px
+  actions column) wrapped onto an implicit 8px-gapped grid row under the
+  six-track template, inflating the header. The cell is gone.
 - **The segment rail stays current** (parity with the substrate viewers):
   the selected partition's segment list refreshes on a 10s cadence and
   refetches immediately when a record arrives from a segment the rail
