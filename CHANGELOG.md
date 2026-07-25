@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.42.1] - 2026-07-25
+
+### Fixed
+- **Rebuilt against newspack-nodes v1.6.0** (release workflow pin bump) to
+  pick up the inlined shared fixes: the browse rail highlights the clicked
+  segment immediately, the hub/console header subtitle yields width instead
+  of wrapping, and the console Inspector's Connect toggle sizes to its label.
+
 ## [0.42.0] - 2026-07-25
 
 ### Added
