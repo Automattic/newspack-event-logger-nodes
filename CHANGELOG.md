@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.42.0] - 2026-07-25
+
 ### Added
 - **Time travel in the Request Log and Error Log** (parity with the
   substrate viewers): selecting a past segment pauses the stream, the
@@ -33,8 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **Request Log and Error Log rebased onto the substrate's log-stream
-  common base** (requires newspack-nodes with `LogStreamViewNode` /
-  `LogStreamViewer`, v1.3.1+ unreleased). The view nodes extend the
+  common base** (requires newspack-nodes v1.4.0+ for
+  `LogStreamViewNode` / `LogStreamViewer`). The view nodes extend the
   shared `LogStreamViewNode` (ring, paused belt + step budget, decaying
   rate, seek tracking, reply settling, shared control verbs) and keep
   only their entry enrichment; the components are thin wrappers over the
