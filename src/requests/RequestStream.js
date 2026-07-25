@@ -38,8 +38,6 @@ import './styles/request-stream.scss';
 
 const ROW_HEIGHT = 33;
 const VIEW_NODE = 'requestlog:view';
-// SSE connector owns liveness; "Xs ago" reads its lastEventTime, not the view.
-const LINK_NODE = 'requestlog:link';
 const EMPTY_VIEW = { paused: false, connectionError: false };
 const COLUMNS_STORAGE_KEY = 'event-logger-stream-columns';
 
@@ -337,10 +335,6 @@ export default function RequestStream( { maxEntries = 500 } ) {
 
 	// Re-read the live nodes each frame so a graph reinit is picked up.
 	const getViewNode = useCallback( () => Core.node( VIEW_NODE ), [] );
-	const getLastEventTime = useCallback(
-		() => Core.node( LINK_NODE )?.lastEventTime() ?? null,
-		[]
-	);
 
 	// The wrapper publishes the grid template; scss applies it to the header.
 	const listHeader = (
@@ -405,7 +399,6 @@ export default function RequestStream( { maxEntries = 500 } ) {
 					: undefined
 			}
 			getViewNode={ getViewNode }
-			getLastEventTime={ getLastEventTime }
 			sidebar={
 				<SegmentBrowseSidebar
 					browse={ browse }
