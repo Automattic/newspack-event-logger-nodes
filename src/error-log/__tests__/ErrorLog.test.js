@@ -352,18 +352,6 @@ describe( 'ErrorLog', () => {
 		).toBeUndefined();
 	} );
 
-	it( 'sources the staleness display from the link connector lastEventTime', () => {
-		registerViewFixture();
-		Core.nodes.set( 'perferrors:link', {
-			lastEventTime: () => Date.now() - 5000,
-		} );
-		const { container } = mount();
-		expect(
-			container.querySelector( '.newspack-nodes-toolbar-stats' )
-				.textContent
-		).toMatch( /\d+s ago/ );
-	} );
-
 	describe( 'glob browse UI', () => {
 		it( 'renders neither the partition selector nor the sidebar by default', () => {
 			registerViewFixture();

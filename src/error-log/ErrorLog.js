@@ -28,8 +28,6 @@ import './styles/error-log.scss';
 
 const ROW_HEIGHT = 33;
 const VIEW_NODE = 'perferrors:view';
-// SSE connector owns liveness; "Xs ago" reads its lastEventTime, not the view.
-const LINK_NODE = 'perferrors:link';
 const EMPTY_VIEW = { paused: false, connectionError: false };
 
 /**
@@ -146,6 +144,9 @@ const renderCount = ( stats ) =>
 				stats.visible
 		  );
 
+// translators note: entries/second readout, one decimal place.
+const renderRate = ( lps ) => `${ lps.toFixed( 1 ) } entries/s`;
+
 /**
  * Memoized row component.
  */
@@ -241,10 +242,6 @@ export default function ErrorLog() {
 
 	// Re-read the live nodes each frame so a graph reinit is picked up.
 	const getViewNode = useCallback( () => Core.node( VIEW_NODE ), [] );
-	const getLastEventTime = useCallback(
-		() => Core.node( LINK_NODE )?.lastEventTime() ?? null,
-		[]
-	);
 
 	return (
 		<LogStreamViewer
@@ -273,7 +270,6 @@ export default function ErrorLog() {
 					: undefined
 			}
 			getViewNode={ getViewNode }
-			getLastEventTime={ getLastEventTime }
 			sidebar={
 				<SegmentBrowseSidebar
 					browse={ browse }
@@ -290,6 +286,7 @@ export default function ErrorLog() {
 				'newspack-event-logger-nodes'
 			) }
 			renderCount={ renderCount }
+			renderRate={ renderRate }
 			listHeader={ listHeader }
 		/>
 	);
