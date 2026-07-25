@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.41.1] - 2026-07-24
+
 ### Changed
 - Dropped `ReflectionProperty`/`ReflectionMethod::setAccessible()` calls from
   the test suite — deprecated in PHP 8.5, a no-op since PHP 8.1.
