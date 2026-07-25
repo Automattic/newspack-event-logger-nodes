@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.41.2] - 2026-07-24
+
 ### Changed
 - Adopted the substrate's shared `formatBytes`
   (`@newspack-nodes/shared/utils/formatBytes`) in `SegmentBrowseSidebar`,
