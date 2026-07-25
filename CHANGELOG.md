@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Adopted the substrate's shared `formatBytes`
+  (`@newspack-nodes/shared/utils/formatBytes`) in `SegmentBrowseSidebar`,
+  dropping the local byte-identical copy; the release workflow's substrate
+  checkout pin moves to v1.1.0 (which ships that module).
+- `TopologyShapeTest` matches the statement front-end's canonical
+  `command_node` verb (substrate v1.1.0+ canonicalizes `cmd` to it).
+
 ## [0.41.1] - 2026-07-24
 
 ### Changed

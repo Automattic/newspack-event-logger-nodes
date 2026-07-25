@@ -237,108 +237,6 @@ class Log_Manager {
 	}
 
 	/**
-	 * Log final summary including memory usage and resources.
-	 */
-	public function finish(): void {
-		if ( $this->finished || ! $this->started ) {
-			return;
-		}
-		$this->finished = true;
-		$now = \hrtime( true );
-		while ( \count( $this->times ) > 1 ) {
-			$this->emit_orphaned_complete( \array_pop( $this->times ), $now );
-		}
-
-		$this->message( 'memory', [
-			'm' => [
-				'peak' => \round( \memory_get_peak_usage( true ) / self::BYTES_PER_MB, 2 ) . 'MB',
-				'end'  => \round( \memory_get_usage( true ) / self::BYTES_PER_MB, 2 ) . 'MB',
-			],
-		] );
-		$this->log_resources();
-		$complete_extra = [];
-		$error          = \error_get_last();
-		if ( $error && \in_array( $error['type'], self::FATAL_TYPES, true ) ) {
-			$complete_extra['fatal_error']  = \substr( $error['message'], 0, 1024 );
-			$complete_extra['fatal_file']   = $error['file'];
-			$complete_extra['fatal_line']   = $error['line'];
-			$complete_extra['fatal_type']   = $error['type'];
-			$complete_extra['fatal_plugin'] = self::extract_plugin_slug( $error['file'] );
-			$complete_extra['error_status'] = 'F';
-		}
-
-		$this->complete( 'process', \array_merge( [ 'status_code' => \http_response_code() ?: 0 ], $complete_extra ) );
-		$this->topic?->flush();
-		$this->started = false;
-	}
-
-	/**
-	 * Emit a single orphaned `(complete)` line for an unclosed timer-stack
-	 * frame. Shared by complete()'s mismatched-close drain and finish()'s
-	 * end-of-request stack close; muted frames are skipped.
-	 *
-	 * @param array{label: string, ts: int|float, muted?: bool, m?: mixed} $entry Timer-stack frame.
-	 * @param int|float $now Reference hrtime() reading.
-	 */
-	private function emit_orphaned_complete( array $entry, $now ): void {
-		if ( ! empty( $entry['muted'] ) ) {
-			return;
-		}
-		$duration_ms = ( $now - $entry['ts'] ) / self::NS_PER_MS;
-		$this->message( "{$entry['label']} (complete)", [ 'm' => '(orphaned)', 'duration_ms' => $duration_ms ] );
-	}
-
-	/**
-	 * Log a message with the given category and data.
-	 *
-	 * @param string $category Event category/keyword.
-	 * @param array<string, mixed>  $data     Additional data to include.
-	 * @return bool True on success.
-	 */
-	public function message( string $category, array $data = [] ): bool {
-		if ( ! $this->ensure_started() ) {
-			return false;
-		}
-		if ( isset( $data['m'] ) && \is_string( $data['m'] ) && false !== \strpos( $data['m'], '?' ) ) {
-			$data['m'] = self::redact_url( $data['m'] );
-		}
-		// @longform Substitute-on-error: invalid-UTF8 data still yields a
-		// string sized like Message::packed()'s output (same flag) — else
-		// the guard skips truncating and the Partition drops the record.
-		$data_json = \wp_json_encode( $data, \JSON_INVALID_UTF8_SUBSTITUTE | \JSON_PARTIAL_OUTPUT_ON_ERROR );
-		if ( false !== $data_json && \strlen( $data_json ) > self::MAX_DATA_SIZE ) {
-			Core::print_less_often( "LogManager: data truncated for category \"{$category}\", size=", (string) \strlen( $data_json ), \sprintf( ' (limit=%d).', self::MAX_DATA_SIZE ) );
-			$category .= ' (truncated)';
-			$data = [ 'm' => \substr( $data_json, 0, 1000 ) . '...' ];
-		}
-		if ( null === $this->topic ) {
-			return false;
-		}
-		// Strip caller rid (real one is Message::KEY); blocks a forged rid.
-		unset( $data['rid'] );
-
-		// Request-scope hot: cache frozen; one fresh read, threaded to both.
-		$now                                           = Core::right_now();
-		$entry = [ 'n' => $this->line_number, 'k' => $category ] + $data + [ 'ts' => $now ];
-		$message                                       = \Newspack_Nodes\Message::new_message();
-		$message[ \Newspack_Nodes\Message::TYPE ]      = \Newspack_Nodes\Message::TM_STRUCT;
-		$message[ \Newspack_Nodes\Message::TIMESTAMP ] = $now;
-		$message[ \Newspack_Nodes\Message::KEY ]       = $this->request_id;
-		$message[ \Newspack_Nodes\Message::VALUE ]     = $entry;
-		$this->topic->fill( $message );
-		++$this->line_number;
-
-		if ( $this->flush_every_line ) {
-			$this->topic->flush();
-		}
-
-		if ( $this->line_number > self::MAX_LOG_LINES && ! $this->line_limited ) {
-			$this->line_limited = true;
-		}
-		return true;
-	}
-
-	/**
 	 * Ensure that full logging has started.
 	 *
 	 * @return bool True if logging is started.
@@ -453,6 +351,56 @@ class Log_Manager {
 	}
 
 	/**
+	 * Log a message with the given category and data.
+	 *
+	 * @param string $category Event category/keyword.
+	 * @param array<string, mixed>  $data     Additional data to include.
+	 * @return bool True on success.
+	 */
+	public function message( string $category, array $data = [] ): bool {
+		if ( ! $this->ensure_started() ) {
+			return false;
+		}
+		if ( isset( $data['m'] ) && \is_string( $data['m'] ) && false !== \strpos( $data['m'], '?' ) ) {
+			$data['m'] = self::redact_url( $data['m'] );
+		}
+		// @longform Substitute-on-error: invalid-UTF8 data still yields a
+		// string sized like Message::packed()'s output (same flag) — else
+		// the guard skips truncating and the Partition drops the record.
+		$data_json = \wp_json_encode( $data, \JSON_INVALID_UTF8_SUBSTITUTE | \JSON_PARTIAL_OUTPUT_ON_ERROR );
+		if ( false !== $data_json && \strlen( $data_json ) > self::MAX_DATA_SIZE ) {
+			Core::print_less_often( "LogManager: data truncated for category \"{$category}\", size=", (string) \strlen( $data_json ), \sprintf( ' (limit=%d).', self::MAX_DATA_SIZE ) );
+			$category .= ' (truncated)';
+			$data = [ 'm' => \substr( $data_json, 0, 1000 ) . '...' ];
+		}
+		if ( null === $this->topic ) {
+			return false;
+		}
+		// Strip caller rid (real one is Message::KEY); blocks a forged rid.
+		unset( $data['rid'] );
+
+		// Request-scope hot: cache frozen; one fresh read, threaded to both.
+		$now                                           = Core::right_now();
+		$entry = [ 'n' => $this->line_number, 'k' => $category ] + $data + [ 'ts' => $now ];
+		$message                                       = \Newspack_Nodes\Message::new_message();
+		$message[ \Newspack_Nodes\Message::TYPE ]      = \Newspack_Nodes\Message::TM_STRUCT;
+		$message[ \Newspack_Nodes\Message::TIMESTAMP ] = $now;
+		$message[ \Newspack_Nodes\Message::KEY ]       = $this->request_id;
+		$message[ \Newspack_Nodes\Message::VALUE ]     = $entry;
+		$this->topic->fill( $message );
+		++$this->line_number;
+
+		if ( $this->flush_every_line ) {
+			$this->topic->flush();
+		}
+
+		if ( $this->line_number > self::MAX_LOG_LINES && ! $this->line_limited ) {
+			$this->line_limited = true;
+		}
+		return true;
+	}
+
+	/**
 	 * Redact sensitive query parameters from a URL.
 	 *
 	 * @param string $url URL to redact.
@@ -523,6 +471,58 @@ class Log_Manager {
 			\sprintf( 'nvcsw => %d',    $r['ru_nvcsw']    ?? 0 ), \sprintf( 'nivcsw => %d',  $r['ru_nivcsw']  ?? 0 ),
 		];
 		$this->message( 'resources', [ 'm' => \implode( ', ', $info ) ] );
+	}
+
+	/**
+	 * Log final summary including memory usage and resources.
+	 */
+	public function finish(): void {
+		if ( $this->finished || ! $this->started ) {
+			return;
+		}
+		$this->finished = true;
+		$now = \hrtime( true );
+		while ( \count( $this->times ) > 1 ) {
+			$this->emit_orphaned_complete( \array_pop( $this->times ), $now );
+		}
+
+		$this->message( 'memory', [
+			'm' => [
+				'peak' => \round( \memory_get_peak_usage( true ) / self::BYTES_PER_MB, 2 ) . 'MB',
+				'end'  => \round( \memory_get_usage( true ) / self::BYTES_PER_MB, 2 ) . 'MB',
+			],
+		] );
+		$this->log_resources();
+		$complete_extra = [];
+		$error          = \error_get_last();
+		if ( $error && \in_array( $error['type'], self::FATAL_TYPES, true ) ) {
+			$complete_extra['fatal_error']  = \substr( $error['message'], 0, 1024 );
+			$complete_extra['fatal_file']   = $error['file'];
+			$complete_extra['fatal_line']   = $error['line'];
+			$complete_extra['fatal_type']   = $error['type'];
+			$complete_extra['fatal_plugin'] = self::extract_plugin_slug( $error['file'] );
+			$complete_extra['error_status'] = 'F';
+		}
+
+		$this->complete( 'process', \array_merge( [ 'status_code' => \http_response_code() ?: 0 ], $complete_extra ) );
+		$this->topic?->flush();
+		$this->started = false;
+	}
+
+	/**
+	 * Emit a single orphaned `(complete)` line for an unclosed timer-stack
+	 * frame. Shared by complete()'s mismatched-close drain and finish()'s
+	 * end-of-request stack close; muted frames are skipped.
+	 *
+	 * @param array{label: string, ts: int|float, muted?: bool, m?: mixed} $entry Timer-stack frame.
+	 * @param int|float $now Reference hrtime() reading.
+	 */
+	private function emit_orphaned_complete( array $entry, $now ): void {
+		if ( ! empty( $entry['muted'] ) ) {
+			return;
+		}
+		$duration_ms = ( $now - $entry['ts'] ) / self::NS_PER_MS;
+		$this->message( "{$entry['label']} (complete)", [ 'm' => '(orphaned)', 'duration_ms' => $duration_ms ] );
 	}
 
 	/**
@@ -628,18 +628,6 @@ class Log_Manager {
 	 */
 	public function alert( string $message ): bool {
 		return $this->message( 'alert', [ 'm' => $message ] );
-	}
-
-	/**
-	 * The active instance IFF it has already started logging — the bridge's seam
-	 * for "is there somewhere to log this line?". Never creates or starts an
-	 * instance (unlike instance()), so an unmatched / rule-gated / root context
-	 * yields null and the caller drops or writes elsewhere.
-	 *
-	 * @api Used by the substrate-diagnostics bridge.
-	 */
-	public static function started_instance(): ?self {
-		return ( null !== self::$instance && true === self::$instance->started ) ? self::$instance : null;
 	}
 
 	/**
@@ -799,6 +787,18 @@ class Log_Manager {
 			self::$context_stack[]           = self::$instance;
 			self::$instance                  = null;
 		}
+	}
+
+	/**
+	 * The active instance IFF it has already started logging — the bridge's seam
+	 * for "is there somewhere to log this line?". Never creates or starts an
+	 * instance (unlike instance()), so an unmatched / rule-gated / root context
+	 * yields null and the caller drops or writes elsewhere.
+	 *
+	 * @api Used by the substrate-diagnostics bridge.
+	 */
+	public static function started_instance(): ?self {
+		return ( null !== self::$instance && true === self::$instance->started ) ? self::$instance : null;
 	}
 
 	/**

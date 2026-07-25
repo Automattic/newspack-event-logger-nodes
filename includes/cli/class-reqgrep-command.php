@@ -412,6 +412,45 @@ class Reqgrep_Command {
 	}
 
 	/**
+	 * Build the shared grouping/matching engine from the parsed run config. Its
+	 * on_complete emits the assembled request (unless --incomplete suppresses
+	 * completed output); on_history_miss surfaces the tune-your-buckets warning.
+	 * The engine shares the LruCache the on-evict callback drives, so output_remaining
+	 * still walks $this->inflight for the [incomplete] tail.
+	 */
+	private function init_core(): void {
+		$on_complete = function ( array $lines, string $rid ): void {
+			// to_lines narrows the engine's lines to strings for output.
+			if ( ! $this->incomplete ) {
+				$this->output_request( self::to_lines( $lines ), $rid );
+			}
+		};
+		$on_miss = static function (): void {
+			\WP_CLI::warning( "Couldn't find request start in history - try increasing --bucket-size or --num-buckets" );
+		};
+		$this->core = new Reqgrep_Core(
+			$this->pattern,
+			$this->require_inflight(),
+			$this->bucket_size,
+			$this->num_buckets,
+			$on_complete,
+			$on_miss
+		);
+	}
+
+	/**
+	 * Narrow the run-setup-assigned `$inflight` cache to non-null. The cache is
+	 * built in the command's setup before any line processing; a null here means
+	 * a caller invoked a processing method before setup, which is a bug.
+	 */
+	private function require_inflight(): LRU_Cache {
+		if ( null === $this->inflight ) {
+			throw new \RuntimeException( 'in-flight cache not initialized' );
+		}
+		return $this->inflight;
+	}
+
+	/**
 	 * Detect whether `$stream` has piped data attached. fstat() reports the
 	 * type bits — S_IFIFO (pipe) or S_IFREG (file) means data; everything
 	 * else (tty, /dev/null, sockets) is "no piped data, use cat mode."
@@ -493,51 +532,12 @@ class Reqgrep_Command {
 		$this->require_core()->push( $entry, $rid, Message::packed( $message ) );
 	}
 
-	/**
-	 * Build the shared grouping/matching engine from the parsed run config. Its
-	 * on_complete emits the assembled request (unless --incomplete suppresses
-	 * completed output); on_history_miss surfaces the tune-your-buckets warning.
-	 * The engine shares the LruCache the on-evict callback drives, so output_remaining
-	 * still walks $this->inflight for the [incomplete] tail.
-	 */
-	private function init_core(): void {
-		$on_complete = function ( array $lines, string $rid ): void {
-			// to_lines narrows the engine's lines to strings for output.
-			if ( ! $this->incomplete ) {
-				$this->output_request( self::to_lines( $lines ), $rid );
-			}
-		};
-		$on_miss = static function (): void {
-			\WP_CLI::warning( "Couldn't find request start in history - try increasing --bucket-size or --num-buckets" );
-		};
-		$this->core = new Reqgrep_Core(
-			$this->pattern,
-			$this->require_inflight(),
-			$this->bucket_size,
-			$this->num_buckets,
-			$on_complete,
-			$on_miss
-		);
-	}
-
 	/** Narrow the setup-assigned engine to non-null; null means a read ran before init_core(). */
 	private function require_core(): Reqgrep_Core {
 		if ( null === $this->core ) {
 			throw new \RuntimeException( 'reqgrep core not initialized' );
 		}
 		return $this->core;
-	}
-
-	/**
-	 * Narrow the run-setup-assigned `$inflight` cache to non-null. The cache is
-	 * built in the command's setup before any line processing; a null here means
-	 * a caller invoked a processing method before setup, which is a bug.
-	 */
-	private function require_inflight(): LRU_Cache {
-		if ( null === $this->inflight ) {
-			throw new \RuntimeException( 'in-flight cache not initialized' );
-		}
-		return $this->inflight;
 	}
 
 	/**

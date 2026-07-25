@@ -295,8 +295,8 @@ class TopologyShapeTest extends TestCase {
 				case 'connect_node':
 					$edges[] = [ $parts[1], $parts[2] ];
 					break;
-				case 'cmd':
-					// cmd <node>:config <verb> [args...]  — node names contain ':', so strip only the trailing ':config'.
+				case 'command_node':
+					// command_node <node>:config <verb> [args...] — names contain ':'; strip only the trailing ':config'.
 					$cmds[] = [
 						'node' => \preg_replace( '/:config$/', '', $parts[1] ),
 						'verb' => $parts[2] ?? '',
