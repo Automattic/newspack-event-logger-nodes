@@ -52,6 +52,9 @@ import { endPosition } from '@newspack-nodes/shared/nodes/seekTracker';
 // The substrate service CI that catalogs on-disk logs + segments.
 const RAW_LOGS = 'raw-logs';
 
+// Segment-rail maintenance cadence (rotation + size growth).
+const SEGMENTS_REFRESH_MS = 10000;
+
 // Monotonic op-id correlating a catalog reply to its pending Promise.
 let nextOpId = 0;
 function makeOpId() {
@@ -182,21 +185,41 @@ export default function useGlobBrowse( {
 			return undefined;
 		}
 		let cancelled = false;
-		fetchCatalog( 'log_status', [ selectedPartition ] )
-			.then( ( status ) => {
-				if ( ! cancelled ) {
-					setSegments( status?.segments ?? [] );
-				}
-			} )
-			.catch( () => {
-				if ( ! cancelled ) {
-					setSegments( [] );
-				}
-			} );
+		const refresh = () =>
+			fetchCatalog( 'log_status', [ selectedPartition ] )
+				.then( ( status ) => {
+					if ( ! cancelled ) {
+						setSegments( status?.segments ?? [] );
+					}
+				} )
+				.catch( () => {} );
+		refresh();
+		// Maintain the rail: rotation and size growth while streaming.
+		const id = setInterval( refresh, SEGMENTS_REFRESH_MS );
 		return () => {
 			cancelled = true;
+			clearInterval( id );
 		};
 	}, [ selectedPartition, fetchCatalog ] );
+
+	// A record from an unknown segment = rotation; refetch once (no loops).
+	const staleSegmentRef = useRef( null );
+	const lastReceivedSegment = viewModel?.lastReceivedSegment ?? null;
+	useEffect( () => {
+		if (
+			! selectedPartition ||
+			null === lastReceivedSegment ||
+			staleSegmentRef.current === lastReceivedSegment ||
+			0 === segments.length ||
+			segments.some( ( s ) => s.id === lastReceivedSegment )
+		) {
+			return;
+		}
+		staleSegmentRef.current = lastReceivedSegment;
+		fetchCatalog( 'log_status', [ selectedPartition ] )
+			.then( ( status ) => setSegments( status?.segments ?? [] ) )
+			.catch( () => {} );
+	}, [ lastReceivedSegment, segments, selectedPartition, fetchCatalog ] );
 
 	// @longform Record the browse target; reposition the live stream only
 	// when active. A PAUSED-time seek records as EXPLICIT and reconnect

@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   re-running the old seek.
 
 ### Fixed
+- **The segment rail stays current** (parity with the substrate viewers):
+  the selected partition's segment list refreshes on a 10s cadence and
+  refetches immediately when a record arrives from a segment the rail
+  doesn't know, once per unknown segment.
 - **Debug rows render as columns** — the column-grid override no longer
   applies to debug rows, which use the shared flex cells; and both
   dashboards keep the debug KEY column, which carries the request id.
