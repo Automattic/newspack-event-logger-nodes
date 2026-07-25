@@ -23,8 +23,9 @@ class ConfigTest extends TestCase {
 	protected function setUp(): void {
 		parent::setUp();
 		Config::reset();
-		$this->temp_dir = '/tmp/newspack-event-logger-nodes-test-config-' . \uniqid();
-		\mkdir( $this->temp_dir, 0755, true );
+		// The shared helper realpaths, so expectations survive macOS's
+		// /tmp -> /private/tmp symlink when Config resolves the base.
+		$this->temp_dir = $this->make_temp_dir( 'newspack-event-logger-nodes-test-config-' );
 		// Clear WP option store between tests.
 		$GLOBALS['_wp_options'] = [];
 		// Clear any LOCAL_NEWSPACK_NODES_CONF leftover.
