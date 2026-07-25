@@ -41,9 +41,9 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	if ( ! \class_exists( '\\Newspack_Nodes\\Bootstrap' ) ) {
 		return;
 	}
-	// Substrate handshake (the API is 0.54+; older substrates load as before).
-	if ( \method_exists( '\\Newspack_Nodes\\Bootstrap', 'version_at_least' )
-		&& ! \Newspack_Nodes\Bootstrap::version_at_least( '0.54.0', 'Newspack Event Logger Nodes' ) ) {
+	// Substrate handshake: dormant when too old (no notice API pre-0.54).
+	if ( ! \method_exists( '\\Newspack_Nodes\\Bootstrap', 'version_at_least' )
+		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '0.54.0', 'Newspack Event Logger Nodes' ) ) {
 		return;
 	}
 
