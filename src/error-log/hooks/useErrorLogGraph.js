@@ -30,7 +30,7 @@
  * an external bridge: they are NOT routed through the graph.
  */
 
-import { useRef, useState } from '@wordpress/element';
+import { useRef, useState, useCallback } from '@wordpress/element';
 import {
 	CommandClient,
 	TYPE,
@@ -41,7 +41,7 @@ import {
 import '../nodes/register';
 import usePageVisibility from '@newspack-nodes/shared/hooks/usePageVisibility';
 import { useVisibilityGatedLink } from '@newspack-nodes/shared/hooks/useVisibilityGatedLink';
-import useGlobBrowse from '../../hooks/useGlobBrowse';
+import useGlobBrowse, { connectPositions } from '../../hooks/useGlobBrowse';
 
 // The RemoteLink node, the inspectable stream Tee, and the view-model node.
 const LINK = 'perferrors:link';
@@ -77,6 +77,14 @@ export function useErrorLogGraph( opts = {} ) {
 	// Mirror isPaused into a ref so reinit mountNodes sees current pause.
 	const isPausedRef = useRef( isPaused );
 	isPausedRef.current = isPaused;
+	const isPageVisibleRef = useRef( isPageVisible );
+	isPageVisibleRef.current = isPageVisible;
+	// Same-tick truth for browse actions (a click pauses AND seeks at once).
+	const isActiveNow = useCallback(
+		() => isPageVisibleRef.current && ! isPausedRef.current,
+		[]
+	);
+	const setPausedRef = useRef( null );
 
 	const isActive = isPageVisible && ! isPaused;
 	// Browse target useGlobBrowse writes; onConnect reads it on (re)connect.
@@ -112,10 +120,10 @@ export function useErrorLogGraph( opts = {} ) {
 		},
 		isActive,
 		onConnect: ( link, { isReconnect } ) => {
-			const { subscribe, positions } = browseTargetRef.current;
+			const target = browseTargetRef.current;
 			link.setSubscribe(
-				subscribe,
-				isReconnect ? link.resumePositions() ?? positions : positions
+				target.subscribe,
+				connectPositions( target, link, isReconnect )
 			);
 		},
 	} );
@@ -127,15 +135,20 @@ export function useErrorLogGraph( opts = {} ) {
 		viewName: VIEW,
 		isActive,
 		browseTargetRef,
+		setPausedRef,
+		isActiveNow,
 	} );
 
 	// setPaused: flip hook state (re-runs effect) and publish it to view.
 	const setPaused = ( paused ) => {
+		// Refs flip NOW: a same-tick seek must record, not hit the stream.
+		isPausedRef.current = paused;
 		setIsPaused( paused );
 		if ( viewRef.current ) {
 			viewRef.current.fill( controlMsg( { action: 'pause', paused } ) );
 		}
 	};
+	setPausedRef.current = setPaused;
 
 	// clear: empty the view ring (counter + rate reset ride along).
 	const clear = () => {

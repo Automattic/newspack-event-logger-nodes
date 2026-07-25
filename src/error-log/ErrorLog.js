@@ -23,6 +23,7 @@ import { useErrorLogGraph } from './hooks/useErrorLogGraph';
 import LogStreamViewer from '@newspack-nodes/shared/components/LogStreamViewer';
 import LogListHeader from '@newspack-nodes/shared/components/LogListHeader';
 import SegmentBrowseSidebar from '../components/SegmentBrowseSidebar';
+import parseOffsetJump from '@newspack-nodes/shared/utils/parseOffsetJump';
 import './styles/error-log.scss';
 
 const ROW_HEIGHT = 33;
@@ -254,6 +255,23 @@ export default function ErrorLog() {
 			isPaused={ isPaused }
 			connectionError={ connectionError }
 			onTogglePause={ () => setPaused( ! isPaused ) }
+			onStep={ browse?.selectedPartition ? browse.step : undefined }
+			onJump={
+				browse?.selectedPartition
+					? ( text ) => {
+							const position = parseOffsetJump(
+								text,
+								browse.lastReceivedSegment ??
+									( 'number' === typeof browse.segmentId
+										? browse.segmentId
+										: null )
+							);
+							if ( position ) {
+								browse.jumpTo( position );
+							}
+					  }
+					: undefined
+			}
 			getViewNode={ getViewNode }
 			getLastEventTime={ getLastEventTime }
 			sidebar={

@@ -21,7 +21,7 @@
 	font-family: base.$system-font;
 
 	// ELN rows are COLUMN grids; the template rides inline per row.
-	.newspack-nodes-log-row {
+	.newspack-nodes-log-row:not(.is-debug) {
 		display: grid;
 		gap: 12px;
 		align-items: center;

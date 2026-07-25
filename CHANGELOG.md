@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Time travel in the Request Log and Error Log** (parity with the
+  substrate viewers): selecting a past segment pauses the stream, the
+  step button walks it one record at a time over the command channel
+  (the substrate's `read_message` verb — the stream stays offline while
+  paused), and the offset input jumps to a pasted message ID
+  (`seg:off:len`) or bare offset and steps exactly that record. Play
+  resumes streaming from wherever you stepped to; a live-delivered seek
+  is single-use, so a later pause/play resumes the tail instead of
+  re-running the old seek.
+
+### Fixed
+- **Debug rows render as columns** — the column-grid override no longer
+  applies to debug rows, which use the shared flex cells; and both
+  dashboards keep the debug KEY column, which carries the request id.
+
 ### Changed
 - **Request Log and Error Log rebased onto the substrate's log-stream
   common base** (requires newspack-nodes with `LogStreamViewNode` /
