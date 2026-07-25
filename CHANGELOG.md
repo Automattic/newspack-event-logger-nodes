@@ -18,7 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Substrate version handshake at boot: on a substrate older than 0.54.0 the
   plugin goes dormant with an admin notice (via the substrate's
   `Bootstrap::version_at_least()`) instead of fataling on a missing API.
-  No-op on substrates that predate the handshake API (nodes < 0.54.0).
+  A substrate predating the handshake API (nodes < 0.54.0) also parks the
+  plugin — the stack deploys as a unit, so a missing API means too old.
 
 ### Changed
 - The release workflow pins the newspack-nodes checkout to the `v0.53.0` tag
