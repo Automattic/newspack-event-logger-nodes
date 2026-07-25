@@ -1,16 +1,13 @@
 /**
- * perferrors:view tests — owns the Error Log view model.
+ * perferrors:view tests — the Error Log's LogStreamViewNode subclass.
  *
- * Two cadences (matching requestLogView): the HIGH-frequency error buffer
- * (node.entries) lives on the instance and is NOT published — the React view's
- * rAF reads it directly each frame. The LOW-frequency control model
- * ({ paused, connectionError }) publishes via setState('view', …).
- *
- * As of the chain collapse, `_sse` targets the view directly: fill() now
- * receives the raw 7-field envelope
- * (KEY=rid, VALUE={ts, k, m, n, method, url}) and shapes it into a row inline
- * (no perferrors:transform). Control messages still come HOOK-DIRECT from
- * useErrorLogGraph (VALUE.action set, no KEY) and re-publish.
+ * The shared base owns the ring (`lines`/`lineAt`/`linesCount`), the monotonic
+ * `id` + `isEven` stamps, the paused belt + step budget, the decaying `lps`,
+ * seek tracking, reply settling, and the shared control verbs; those have their
+ * own suite in the substrate. Here we pin the subclass surface: `shapeRow`'s
+ * envelope validation + enrichment (KEY=rid, VALUE={ts, k, m, n, method, url},
+ * plus the shared debug trio), the `select` seek arming, and the published
+ * view model.
  */
 
 import fnv1a from '@newspack-nodes/shared/utils/fnv1a';
@@ -26,6 +23,7 @@ import {
 	newMessage,
 	Core,
 } from '@newspack-nodes/runtime';
+import { LogStreamViewNode } from '@newspack-nodes/shared/nodes/log-stream-view-node';
 import { PerfErrorsViewNode } from '../perf-errors-view-node';
 
 // Naming registers in the per-process Core registry; clear it between tests.
@@ -33,7 +31,7 @@ beforeEach( () => Core.reset() );
 
 // Construct + name directly — createX factory is gone; bare-new is the seam.
 function makeView( name, opts = {} ) {
-	const node = new PerfErrorsViewNode( opts.maxEntries );
+	const node = new PerfErrorsViewNode( opts.maxLines );
 	node.name = name;
 	return node;
 }
@@ -55,110 +53,73 @@ const controlMsg = ( payload ) => {
 	return m;
 };
 
-test( 'appends rows newest-first with seq, capped', () => {
-	const v = makeView( 'perferrors:view', { maxEntries: 2 } );
+test( 'extends the shared LogStreamViewNode base', () => {
+	expect( makeView( 'perferrors:view' ) ).toBeInstanceOf( LogStreamViewNode );
+} );
+
+test( 'appends rows newest-first with the base monotonic id, capped', () => {
+	const v = makeView( 'perferrors:view', { maxLines: 2 } );
 	v.fill( envMsg( 'a', { ts: 1, k: 'error', m: 'x' } ) );
 	v.fill( envMsg( 'b', { ts: 2, k: 'warning', m: 'y' } ) );
 	v.fill( envMsg( 'c', { ts: 3, k: 'error', m: 'z' } ) );
-	expect( v.entries.map( ( e ) => e.rid ) ).toEqual( [ 'c', 'b' ] );
-	expect( v.entries[ 0 ].seq ).toBe( 3 );
+	expect( v.lines.map( ( e ) => e.rid ) ).toEqual( [ 'c', 'b' ] );
+	expect( v.lines[ 0 ].id ).toBe( 3 );
+	expect( v.lines[ 0 ].isEven ).toBe( false );
 } );
 
-test( 'filters envelopes before they enter the buffer', () => {
-	const v = makeView( 'perferrors:view' );
-	v.fill( envMsg( 'before-filter', { k: 'old', m: 'old' } ) );
-	v.fill( controlMsg( { action: 'filter', filter: 'needle-317' } ) );
-	v.fill( envMsg( 'miss', { k: 'other', m: 'other' } ) );
-	v.fill( envMsg( 'needle-317-rid', { k: 'other', m: 'other' } ) );
-	v.fill( envMsg( 'keyword-match', { k: 'NEEDLE-317', m: 'other' } ) );
-	v.fill( envMsg( 'message-match', { k: 'other', m: 'needle-317 text' } ) );
-	v.fill(
-		envMsg( 'method-only-match', {
-			k: 'other',
-			m: 'other',
-			method: 'NEEDLE-317',
-			url: '/method-only',
-		} )
-	);
-	v.fill(
-		envMsg( 'url-match', {
-			k: 'other',
-			m: 'other',
-			method: 'PATCH',
-			url: '/NEEDLE-317/path',
-		} )
-	);
-
-	expect( v.entries.map( ( entry ) => entry.rid ) ).toEqual( [
-		'url-match',
-		'message-match',
-		'keyword-match',
-		'needle-317-rid',
-	] );
-	expect( v.entries.map( ( entry ) => entry.seq ) ).toEqual( [ 4, 3, 2, 1 ] );
-} );
-
-test( 'rejects a non-string admission filter', () => {
-	const v = makeView( 'perferrors:view' );
-	expect( () =>
-		v.fill( controlMsg( { action: 'filter', filter: { bad: 317 } } ) )
-	).toThrow( 'error log filter must be a string' );
-} );
-
-test( 'RPS tracking aggregates per second, not one entry per error (bounded window)', () => {
-	// Perf: the errors/sec window is per-second buckets, not one per error.
-	const v = makeView( 'perferrors:view', { maxEntries: 100000 } );
-	for ( let i = 0; i < 500; i++ ) {
-		v.fill( envMsg( `r${ i }`, { ts: i, k: 'error', m: `m${ i }` } ) );
-	}
-	expect( Array.isArray( v.rpsBuckets ) ).toBe( true );
-	expect( v.rpsBuckets.length ).toBeLessThanOrEqual( 12 );
-} );
-
-test( 'a read mid-stream then more appends keeps newest-first across the coalesce boundary', () => {
+test( 'exposes a decaying lps rate on the node instance', () => {
 	const v = makeView( 'perferrors:view' );
 	v.fill( envMsg( 'a', { ts: 1, k: 'error', m: 'x' } ) );
-	v.fill( envMsg( 'b', { ts: 2, k: 'error', m: 'y' } ) );
-	expect( v.entries.map( ( e ) => e.rid ) ).toEqual( [ 'b', 'a' ] );
-	v.fill( envMsg( 'c', { ts: 3, k: 'error', m: 'z' } ) );
-	expect( v.entries.map( ( e ) => e.rid ) ).toEqual( [ 'c', 'b', 'a' ] );
+	expect( typeof v.lps ).toBe( 'number' );
+	expect( v.lps ).toBeGreaterThan( 0 );
 } );
 
-test( 'exposes O(1) windowed reads — entriesCount + entryAt (newest-first) — for the virtual list', () => {
+test( 'exposes O(1) windowed reads — linesCount + lineAt (newest-first) — for the virtual list', () => {
 	const v = makeView( 'perferrors:view' );
 	v.fill( envMsg( 'a', { ts: 1, k: 'error', m: 'x' } ) );
 	v.fill( envMsg( 'b', { ts: 2, k: 'error', m: 'y' } ) );
 	v.fill( envMsg( 'c', { ts: 3, k: 'error', m: 'z' } ) );
-	expect( v.entriesCount ).toBe( 3 );
-	expect( v.entryAt( 0 ).rid ).toBe( 'c' ); // newest
-	expect( v.entryAt( 2 ).rid ).toBe( 'a' ); // oldest
-	expect( v.entryAt( 3 ) ).toBeUndefined();
+	expect( v.linesCount ).toBe( 3 );
+	expect( v.lineAt( 0 ).rid ).toBe( 'c' ); // newest
+	expect( v.lineAt( 2 ).rid ).toBe( 'a' ); // oldest
+	expect( v.lineAt( 3 ) ).toBeUndefined();
 } );
 
-test( 'entryAt + entriesCount respect the cap (oldest overwritten) on a small ring', () => {
-	const v = makeView( 'perferrors:view', { maxEntries: 3 } );
+test( 'lineAt + linesCount respect the cap (oldest overwritten) on a small ring', () => {
+	const v = makeView( 'perferrors:view', { maxLines: 3 } );
 	for ( let i = 0; i < 10; i++ ) {
 		v.fill( envMsg( `r${ i }`, { ts: i, k: 'error', m: `m${ i }` } ) );
 	}
-	expect( v.entriesCount ).toBe( 3 );
-	expect( v.entryAt( 0 ).rid ).toBe( 'r9' ); // newest
-	expect( v.entryAt( 2 ).rid ).toBe( 'r7' ); // oldest in cap
+	expect( v.linesCount ).toBe( 3 );
+	expect( v.lineAt( 0 ).rid ).toBe( 'r9' ); // newest
+	expect( v.lineAt( 2 ).rid ).toBe( 'r7' ); // oldest in cap
 } );
 
-test( 'enriches each row with seq, id (= seq), rid, ts, k, and m', () => {
+test( 'enriches each row with rid, ts, k, m + the shared debug trio', () => {
 	const v = makeView( 'perferrors:view' );
 	v.fill( envMsg( 'first', { ts: 111, k: 'error', m: 'one' } ) );
-	v.fill( envMsg( 'second', { ts: 222, k: 'warning', m: 'two' } ) );
-	expect( v.entries[ 0 ] ).toEqual( {
-		seq: 2,
+	const m2 = envMsg( 'second', { ts: 222, k: 'warning', m: 'two' } );
+	m2[ ID ] = '4:640:80';
+	v.fill( m2 );
+	expect( v.lines[ 0 ] ).toMatchObject( {
 		id: 2,
 		rid: 'second',
 		ts: 222,
 		k: 'warning',
 		m: 'two',
+		msgId: '4:640:80',
+		key: 'second',
+		struct: true,
 	} );
-	expect( v.entries[ 1 ] ).toEqual( {
-		seq: 1,
+	expect( JSON.parse( v.lines[ 0 ].raw ) ).toEqual( {
+		ts: 222,
+		k: 'warning',
+		m: 'two',
+	} );
+	expect( v.lines[ 0 ].content ).toContain( 'second' );
+	expect( v.lines[ 0 ].content ).toContain( 'warning' );
+	expect( v.lines[ 0 ].content ).toContain( 'two' );
+	expect( v.lines[ 1 ] ).toMatchObject( {
 		id: 1,
 		rid: 'first',
 		ts: 111,
@@ -180,7 +141,7 @@ test( 'retains request URL context and hashes it for the URL detail link', () =>
 		} )
 	);
 
-	expect( v.entries[ 0 ] ).toEqual(
+	expect( v.lines[ 0 ] ).toEqual(
 		expect.objectContaining( {
 			method: 'PATCH',
 			url,
@@ -203,15 +164,15 @@ test( 'hashes the full request URL while clipping only its display value', () =>
 		} )
 	);
 
-	expect( v.entries[ 0 ].url ).toHaveLength( 2003 );
-	expect( v.entries[ 0 ].urlHash ).toBe( fnv1a( url ) );
-	expect( v.entries[ 0 ].urlHash ).not.toBe( fnv1a( v.entries[ 0 ].url ) );
+	expect( v.lines[ 0 ].url ).toHaveLength( 2003 );
+	expect( v.lines[ 0 ].urlHash ).toBe( fnv1a( url ) );
+	expect( v.lines[ 0 ].urlHash ).not.toBe( fnv1a( v.lines[ 0 ].url ) );
 } );
 
 test( 'defaults missing optional VALUE fields (ts=0, k="", m="")', () => {
 	const v = makeView( 'perferrors:view' );
 	v.fill( envMsg( 'rid', {} ) );
-	expect( v.entries[ 0 ] ).toEqual(
+	expect( v.lines[ 0 ] ).toEqual(
 		expect.objectContaining( { rid: 'rid', ts: 0, k: '', m: '' } )
 	);
 } );
@@ -219,34 +180,40 @@ test( 'defaults missing optional VALUE fields (ts=0, k="", m="")', () => {
 test( 'clips long m at 1000 chars with ellipsis', () => {
 	const v = makeView( 'perferrors:view' );
 	v.fill( envMsg( 'rid', { ts: 1, k: 'X', m: 'x'.repeat( 2000 ), n: 0 } ) );
-	expect( v.entries[ 0 ].m.length ).toBe( 1003 );
-	expect( v.entries[ 0 ].m.endsWith( '...' ) ).toBe( true );
+	expect( v.lines[ 0 ].m.length ).toBe( 1003 );
+	expect( v.lines[ 0 ].m.endsWith( '...' ) ).toBe( true );
+} );
+
+test( 'clips the debug raw JSON at 8192 chars + ellipsis', () => {
+	const v = makeView( 'perferrors:view' );
+	v.fill( envMsg( 'rid-raw', { ts: 1, k: 'X', m: 'y'.repeat( 9000 ) } ) );
+	expect( v.lines[ 0 ].raw.length ).toBe( 8195 );
+	expect( v.lines[ 0 ].raw.endsWith( '...' ) ).toBe( true );
 } );
 
 test( 'drops envelopes with no rid (KEY empty)', () => {
 	const v = makeView( 'perferrors:view' );
 	v.fill( envMsg( '', { ts: 1, k: 'error', m: 'x' } ) );
-	expect( v.entries ).toHaveLength( 0 );
+	expect( v.lines ).toHaveLength( 0 );
 } );
 
 test( 'drops envelopes whose VALUE is a string (not an object)', () => {
 	const v = makeView( 'perferrors:view' );
 	v.fill( envMsg( 'rid', 'just a string' ) );
-	expect( v.entries ).toHaveLength( 0 );
+	expect( v.lines ).toHaveLength( 0 );
 } );
 
 test( 'drops envelopes whose VALUE is an array', () => {
 	const v = makeView( 'perferrors:view' );
 	v.fill( envMsg( 'rid', [ 1, 2, 3 ] ) );
-	expect( v.entries ).toHaveLength( 0 );
+	expect( v.lines ).toHaveLength( 0 );
 } );
 
 test( 'drops the `connected` sentinel (which the SseInNode would otherwise stream through)', () => {
 	const v = makeView( 'perferrors:view' );
 	// The `connected` sentinel must NOT land in the error buffer.
 	v.fill( envMsg( 'connected', { slot: 0, partition: 0, pid: 1 } ) );
-	// Either dropped or ignored — either way entries buffer stays empty.
-	expect( v.entries ).toHaveLength( 0 );
+	expect( v.lines ).toHaveLength( 0 );
 } );
 
 test( 'appending rows does NOT publish setState (no per-row React re-render)', () => {
@@ -261,10 +228,23 @@ test( 'pause stops appends and publishes paused', () => {
 	const v = makeView( 'perferrors:view' );
 	v.fill( controlMsg( { action: 'pause', paused: true } ) );
 	v.fill( envMsg( 'a', { ts: 1, k: 'error', m: 'x' } ) );
-	expect( v.entries ).toHaveLength( 0 );
+	expect( v.lines ).toHaveLength( 0 );
 	expect( Core.node( 'perferrors:view' ).setStateCache.view.paused ).toBe(
 		true
 	);
+} );
+
+test( 'a step budget admits exactly that many rows through the paused belt', () => {
+	const v = makeView( 'perferrors:view' );
+	v.fill( controlMsg( { action: 'pause', paused: true } ) );
+	v.fill( controlMsg( { action: 'step', frames: 2 } ) );
+	v.fill( envMsg( 'stepped-1', { ts: 1, k: 'error', m: 'x' } ) );
+	v.fill( envMsg( 'stepped-2', { ts: 2, k: 'error', m: 'y' } ) );
+	v.fill( envMsg( 'dropped-3', { ts: 3, k: 'error', m: 'z' } ) );
+	expect( v.lines.map( ( e ) => e.rid ) ).toEqual( [
+		'stepped-2',
+		'stepped-1',
+	] );
 } );
 
 test( 'connection control publishes connectionError', () => {
@@ -275,14 +255,14 @@ test( 'connection control publishes connectionError', () => {
 	).toBe( true );
 } );
 
-test( 'clear empties the buffer', () => {
+test( 'clear empties the ring and resets the id counter', () => {
 	const v = makeView( 'perferrors:view' );
 	v.fill( envMsg( 'a', { ts: 1, k: 'error', m: 'x' } ) );
 	v.fill( controlMsg( { action: 'clear' } ) );
-	expect( v.entries ).toHaveLength( 0 );
-	// Counter reset: the next row is seq 1 again.
+	expect( v.lines ).toHaveLength( 0 );
+	// Counter reset: the next row is id 1 again.
 	v.fill( envMsg( 'after', { ts: 2, k: 'error', m: 'y' } ) );
-	expect( v.entries[ 0 ].seq ).toBe( 1 );
+	expect( v.lines[ 0 ].id ).toBe( 1 );
 } );
 
 test( 'publishes an initial view model on construction', () => {
@@ -310,7 +290,7 @@ const catalogReply = ( id, name, payload, { error = false } = {} ) => {
 };
 
 describe( 'perferrors:view — catalog-reply correlation (PendingReplies)', () => {
-	test( 'settles a pending reply by message ID and does NOT append it as an entry', () => {
+	test( 'settles a pending reply by message ID and does NOT append it as a row', () => {
 		const v = makeView( 'perferrors:view' );
 		const seen = [];
 		v.replies.add(
@@ -326,7 +306,7 @@ describe( 'perferrors:view — catalog-reply correlation (PendingReplies)', () =
 		expect( seen ).toEqual( [
 			[ { key: 'errors.p7', label: 'errors.p7' } ],
 		] );
-		expect( v.entries ).toHaveLength( 0 );
+		expect( v.lines ).toHaveLength( 0 );
 	} );
 
 	test( 'a TM_ERROR reply rejects the pending Promise', async () => {
@@ -347,7 +327,7 @@ describe( 'perferrors:view — catalog-reply correlation (PendingReplies)', () =
 		const m = envMsg( 'r-seek-903', { ts: 1, k: 'error', m: 'x' } );
 		m[ ID ] = '3:512:100';
 		v.fill( m );
-		expect( v.entries.map( ( e ) => e.rid ) ).toEqual( [ 'r-seek-903' ] );
+		expect( v.lines.map( ( e ) => e.rid ) ).toEqual( [ 'r-seek-903' ] );
 	} );
 } );
 
@@ -369,10 +349,12 @@ describe( 'perferrors:view — seek feedback (single-dir browse)', () => {
 		expect( v.mode ).toBe( 'live' );
 	} );
 
-	test( 'a select control with a dir arms tracking and follows the segment', () => {
+	test( 'a select control with a dir arms tracking, clears the ring, and follows the segment', () => {
 		const v = makeView( 'perferrors:view' );
+		v.fill( envMsg( 'pre-select', { ts: 1, k: 'error', m: 'x' } ) );
 		v.fill( controlMsg( { action: 'select', dir: 'errors.p3' } ) );
 		expect( v.seekActive ).toBe( true );
+		expect( v.lines ).toHaveLength( 0 );
 		v.fill( envWithId( '98:0:40' ) );
 		expect( v.lastReceivedSegment ).toBe( 98 );
 		expect( v.setStateCache.view.lastReceivedSegment ).toBe( 98 );
@@ -389,12 +371,15 @@ describe( 'perferrors:view — seek feedback (single-dir browse)', () => {
 		expect( v.lastReceivedSegment ).toBe( null );
 	} );
 
-	test( 'browse enters replay and flips to live once a record reaches the end', () => {
+	test( 'browse enters replay from a clean slate and flips to live at the end', () => {
 		const v = makeView( 'perferrors:view' );
 		v.fill( controlMsg( { action: 'select', dir: 'errors.p3' } ) );
+		v.fill( envWithId( '97:0:40', 'pre-browse' ) );
 		v.fill(
 			controlMsg( { action: 'browse', endSegment: 105, endOffset: 1200 } )
 		);
+		// A rewind starts clean: replays must not mix into the live tail.
+		expect( v.lines ).toHaveLength( 0 );
 		expect( v.mode ).toBe( 'replay' );
 		expect( v.setStateCache.view.mode ).toBe( 'replay' );
 		v.fill( envWithId( '98:100:20' ) ); // behind the end segment

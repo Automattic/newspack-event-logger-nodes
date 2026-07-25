@@ -206,8 +206,8 @@
 // Every dashboard carries the full selector list (the per-page header class that
 // matches is the only one with a target element).
 .event-logger-inflight-header,
-.event-logger-request-stream-header,
-.event-logger-error-log-header,
+.event-logger-request-stream__header,
+.event-logger-error-log__header,
 .worker-status-full .worker-status-header {
 	display: flex;
 	justify-content: space-between;

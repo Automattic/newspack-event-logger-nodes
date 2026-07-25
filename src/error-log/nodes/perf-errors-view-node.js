@@ -1,12 +1,13 @@
-import { Node, KEY, VALUE, ID } from '@newspack-nodes/runtime';
+import { KEY, VALUE, ID } from '@newspack-nodes/runtime';
 import fnv1a from '@newspack-nodes/shared/utils/fnv1a';
-import { PendingReplies } from '@newspack-nodes/shared/pendingReplies';
-import { SeekTracker } from '@newspack-nodes/shared/nodes/seekTracker';
+import { LogStreamViewNode } from '@newspack-nodes/shared/nodes/log-stream-view-node';
 
-const DEFAULT_MAX_ENTRIES = 5000;
-const RPS_WINDOW_SEC = 10;
+const DEFAULT_MAX_LINES = 5000;
+// Defensive bounds for raw envelope VALUEs (view owns the row mapping).
 const MAX_M_LENGTH = 1000;
 const MAX_URL_LENGTH = 2000;
+// Debug-mode raw retention per row (pretty-printable); ~PIPE_BUF x2.
+const MAX_RAW_LENGTH = 8192;
 
 // Clip a string at `max`, appending an ellipsis. Non-strings become empty.
 const clip = ( value, max ) => {
@@ -19,278 +20,88 @@ const clip = ( value, max ) => {
 /**
  * `perferrors:view` — owns the Error Log view model.
  *
- * `_sse` targets the view directly. fill() receives raw 7-field envelopes
- * (KEY=rid, VALUE={ts, k, m, n, method, url}) and shapes them into rows
- * inline via a tiny dispatch in `_appendEnvelope`.
+ * A `LogStreamViewNode` subclass: the ring, paused belt + step budget,
+ * decaying lps, seek tracking, reply settling, and the shared control verbs
+ * all live in the shared base. This class adds the Error Log's specifics:
+ * - the `select` control (partition switch: reset the tracker, arm
+ *   `seekActive` — breadcrumbs only mean anything within ONE dir; a glob
+ *   mixes segments) and its `seekTracking()` gate;
+ * - `shapeRow()`: validates + enriches a raw errors envelope (KEY=rid,
+ *   VALUE={ts, k, m, n, method, url}) into a row — drop empty-rid, the
+ *   `connected` sentinel, and non-object VALUEs; clip m@1000 + url@2000;
+ *   hash the FULL url for the URL detail link — plus the shared debug trio
+ *   (`msgId`, `key`, `raw`, `struct`) and the searchable `content` line.
  *
- * Two cadences, deliberately split for performance (mirrors requestLogView):
- * - HIGH frequency (the error stream): `_appendEnvelope` validates + enriches
- *   each envelope, writes it into a fixed ring buffer (O(1): write at head,
- *   advance, overwrite oldest), and updates `this.rps`, but
- *   does NOT publish. The React view reads the VISIBLE window straight off the
- *   node each animation frame via `entriesCount` + `entryAt(i)` (newest-first) —
- *   O(rows-on-screen), not O(buffer). `entries` materializes the whole buffer
- *   newest-first for the React snapshot and tests.
- * - LOW frequency (control): only `_control` publishes the small view model via
- *   `setState('view', { paused, connectionError })` — the pause button and the
- *   reconnect banner, consumed by `useNodeState('perferrors:view','view')`.
- *
- * `fill()` distinguishes its two inputs by `VALUE.action`:
- * - control (`VALUE = { action, … }`, KEY empty) comes HOOK-DIRECT from
- *   `useErrorLogGraph` (pause / clear / filter / connection-status).
- * - everything else is treated as a stream envelope and routed through
- *   `_appendEnvelope`, which drops envelopes with no rid, non-object/array
- *   VALUE, the `connected` sentinel, or entries outside the active filter, and
- *   clips `m` at 1000 chars.
- *
- * Buffer + entry-enrichment logic migrated verbatim from `ErrorLog.js`.
+ * @param {number} [maxLines] Ring cap (defaults to DEFAULT_MAX_LINES).
  */
-export class PerfErrorsViewNode extends Node {
-	constructor( maxEntries ) {
-		super();
-		this.maxEntries = maxEntries || DEFAULT_MAX_ENTRIES;
-		// Ring buffer: write at _head mod maxEntries, oldest overwritten; O(1).
-		this._ring = [];
-		this._head = 0;
-		this._count = 0;
-		this.entryCounter = 0;
-		// Per-second RPS buckets + running total, bounded to the window.
-		this.rpsBuckets = [];
-		this.rpsWindowTotal = 0;
-		this.rps = 0;
-		this.paused = false;
-		this.connectionError = false;
-		this.filter = '';
-		// Seek feedback; armed for a single dir only (a glob mixes segments).
-		this.seek = new SeekTracker();
+export class PerfErrorsViewNode extends LogStreamViewNode {
+	constructor( maxLines ) {
+		super( maxLines || DEFAULT_MAX_LINES );
 		this.seekActive = false;
-		// Hook-stamped ID → { resolve, reject }; settled when its reply lands.
-		this.replies = new PendingReplies();
 		this._publish();
 	}
 
-	fill( message ) {
-		const value = message[ VALUE ];
-		// A raw-logs catalog reply (VALUE.name); raw envelopes can't match it.
-		if (
-			value &&
-			'object' === typeof value &&
-			'name' in value &&
-			this.replies.settle( message )
-		) {
-			return;
-		}
-		if ( value && typeof value === 'object' && value.action ) {
-			// LOW-freq control change — publish (button/banner re-render).
-			this._control( value );
-			this._publish();
-		} else {
-			// Raw envelope: validate, enrich, append. HIGH-freq — no publish.
-			if ( this.seekActive ) {
-				this._trackPosition( message );
-			}
-			this._appendEnvelope( message );
-		}
-	}
-
 	_control( value ) {
-		if ( 'pause' === value.action ) {
-			this.paused = value.paused;
-		} else if ( 'clear' === value.action ) {
-			this._clear();
-		} else if ( 'filter' === value.action ) {
-			this._setFilter( value.filter );
-		} else if ( 'connection' === value.action ) {
-			this.connectionError = value.connectionError;
-		} else if ( 'select' === value.action ) {
+		if ( 'select' === value.action ) {
 			// Partition switch: reset the tracker; arm only for a single dir.
 			this.seekActive = !! value.dir;
 			this.seek.select();
 			this._clear();
-		} else if ( 'browse' === value.action ) {
-			this.seek.browse( value.endSegment ?? null, value.endOffset ?? 0 );
-		} else if ( 'follow' === value.action ) {
-			this.seek.follow();
+		} else {
+			super._control( value );
 		}
 	}
 
-	// Track the record's breadcrumb; publish on segment/catch-up change only.
-	_trackPosition( message ) {
-		if ( this.seek.track( message[ ID ] ) ) {
-			this._publish();
-		}
+	seekTracking() {
+		return this.seekActive;
 	}
 
-	_setFilter( filter ) {
-		if ( 'string' !== typeof filter ) {
-			throw new TypeError( 'error log filter must be a string' );
-		}
-		const normalized = filter.toLowerCase();
-		if ( normalized === this.filter ) {
-			return;
-		}
-		this.filter = normalized;
-		this.entries = [];
-		this.entryCounter = 0;
-	}
-
-	// Clear buffer + counter + RPS window (matches handleClear in ErrorLog).
-	_clear() {
-		this.entries = [];
-		this.entryCounter = 0;
-		this.rpsBuckets = [];
-		this.rpsWindowTotal = 0;
-		this.rps = 0;
-	}
-
-	// Publish only the low-freq view model; entries/rps stay off setState.
-	_publish() {
-		this.setState( 'view', {
-			paused: this.paused,
-			connectionError: this.connectionError,
-			mode: this.seek.mode,
-			lastReceivedSegment: this.seek.lastReceivedSegment,
-		} );
-	}
-
-	// A raw stream envelope (KEY=rid): validate, enrich, append newest-first.
-	_appendEnvelope( message ) {
+	// A raw errors envelope (KEY=rid): validate + enrich into a row.
+	shapeRow( message ) {
 		const rid = message[ KEY ];
 		if ( ! rid ) {
-			return;
+			return null;
 		}
 		// SseInNode streams a `connected` sentinel too; it's not an error.
 		if ( 'connected' === rid ) {
-			return;
+			return null;
 		}
 		const value = message[ VALUE ];
-		if ( ! value || typeof value !== 'object' || Array.isArray( value ) ) {
-			return;
-		}
-		// Belt: drops frames arriving in the pause-click→async-close window.
-		if ( this.paused ) {
-			return;
+		if ( ! value || 'object' !== typeof value || Array.isArray( value ) ) {
+			return null;
 		}
 
 		let m = value.m || '';
-		if ( typeof m === 'string' && m.length > MAX_M_LENGTH ) {
+		if ( 'string' === typeof m && m.length > MAX_M_LENGTH ) {
 			m = m.substring( 0, MAX_M_LENGTH ) + '...';
 		}
 		const k = value.k || '';
 		const method = 'string' === typeof value.method ? value.method : '';
 		const rawUrl = 'string' === typeof value.url ? value.url : '';
 		const url = clip( rawUrl, MAX_URL_LENGTH );
-		this._updateRequestsPerSecond( 1 );
-		if (
-			this.filter &&
-			! [ rid, k, m, url ].some(
-				( field ) =>
-					'string' === typeof field &&
-					field.toLowerCase().includes( this.filter )
-			)
-		) {
-			return;
-		}
-
-		this.entryCounter += 1;
 		const row = {
-			// Monotonic per-mount React key (distinct DOM per dup rid).
-			seq: this.entryCounter,
-			id: this.entryCounter,
 			rid,
 			ts: value.ts || 0,
 			k,
 			m,
+			msgId: 'string' === typeof message[ ID ] ? message[ ID ] : '',
+			key: 'string' === typeof rid ? rid : '',
+			raw: clip( JSON.stringify( value ), MAX_RAW_LENGTH ),
+			struct: true,
+			content: `${ rid } ${ k } ${ m }${ url ? ' ' + url : '' }`,
 		};
 		if ( url ) {
 			row.method = method;
 			row.url = url;
 			row.urlHash = fnv1a( rawUrl );
 		}
-		this._writeEntry( row );
+		return row;
 	}
 
-	// Errors/sec over a 10s window: per-second buckets, O(1) per error.
-	_updateRequestsPerSecond( completedCount ) {
-		if ( completedCount <= 0 ) {
-			return;
-		}
-		const sec = Math.floor( Date.now() / 1000 );
-		const last = this.rpsBuckets[ this.rpsBuckets.length - 1 ];
-		if ( last && last.sec === sec ) {
-			last.count += completedCount;
-		} else {
-			this.rpsBuckets.push( { sec, count: completedCount } );
-		}
-		this.rpsWindowTotal += completedCount;
-		const oldest = sec - RPS_WINDOW_SEC;
-		while (
-			this.rpsBuckets.length > 0 &&
-			this.rpsBuckets[ 0 ].sec <= oldest
-		) {
-			this.rpsWindowTotal -= this.rpsBuckets[ 0 ].count;
-			this.rpsBuckets.shift();
-		}
-		this.rps = this.rpsWindowTotal / RPS_WINDOW_SEC;
-	}
-
-	// Whole buffer newest-first — O(n), filter/tests only (not per-frame).
-	get entries() {
-		const out = new Array( this._count );
-		for ( let i = 0; i < this._count; i++ ) {
-			out[ i ] = this.entryAt( i );
-		}
-		return out;
-	}
-
-	set entries( value ) {
-		this._ring = [];
-		this._head = 0;
-		this._count = 0;
-		if ( Array.isArray( value ) ) {
-			// Seed oldest-first so the newest entry lands last (at head-1).
-			for ( let i = value.length - 1; i >= 0; i-- ) {
-				this._writeEntry( value[ i ] );
-			}
-		}
-	}
-
-	// Write one entry at the ring head and advance, capping at maxEntries.
-	_writeEntry( entry ) {
-		this._ring[ this._head ] = entry;
-		this._head = ( this._head + 1 ) % this.maxEntries;
-		this._count = Math.min( this._count + 1, this.maxEntries );
-	}
-
-	// The i-th entry newest-first (i=0 newest), O(1); undefined out of range.
-	entryAt( i ) {
-		if ( i < 0 || i >= this._count ) {
-			return undefined;
-		}
-		const idx = ( this._head - 1 - i + this.maxEntries ) % this.maxEntries;
-		return this._ring[ idx ];
-	}
-
-	// Seek feedback surfaced for the published model (and view-node tests).
-	get mode() {
-		return this.seek.mode;
-	}
-	get lastReceivedSegment() {
-		return this.seek.lastReceivedSegment;
-	}
-
-	// Number of live entries in the ring (O(1)).
-	get entriesCount() {
-		return this._count;
-	}
-	// View-model terminal: fill() mutates state + publishes; never forwards.
 	static nodeSchema() {
 		return {
-			category: 'Hidden',
+			...super.nodeSchema(),
 			description: 'Owns the Error Log view model.',
-			arguments: [],
-			commands: [],
-			has_target: false,
 		};
 	}
 }

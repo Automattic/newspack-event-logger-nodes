@@ -1,10 +1,12 @@
 /**
- * requestlog:view tests — owns the Request Log view model.
+ * requestlog:view tests — the Request Log's LogStreamViewNode subclass.
  *
- * Two cadences (matching rawLogsView): the HIGH-frequency request buffer
- * (node.entries) + RPS (node.rps) live on the instance and are NOT published —
- * the React view's rAF reads them directly each frame. The LOW-frequency control
- * model ({ paused }) publishes via setState('view', …).
+ * The shared base owns the ring (`lines`/`lineAt`/`linesCount`), the monotonic
+ * `id` + `isEven` stamps, the paused belt + step budget, the decaying `lps`,
+ * seek tracking, reply settling, and the shared control verbs; those have their
+ * own suite in the substrate. Here we pin the subclass surface: `shapeRow`'s
+ * defensive enrichment (+ the shared debug trio), the `select` seek arming,
+ * and the published view model.
  */
 
 import fnv1a from '@newspack-nodes/shared/utils/fnv1a';
@@ -20,6 +22,7 @@ import {
 	newMessage,
 	Core,
 } from '@newspack-nodes/runtime';
+import { LogStreamViewNode } from '@newspack-nodes/shared/nodes/log-stream-view-node';
 import { RequestLogViewNode } from '../request-log-view-node';
 
 // Naming registers in the per-process Core registry; clear it between tests.
@@ -27,13 +30,12 @@ beforeEach( () => Core.reset() );
 
 // Construct + name directly (createX gone); bare-new + name= is the seam.
 function makeView( name, opts = {} ) {
-	const node = new RequestLogViewNode( opts.maxEntries );
+	const node = new RequestLogViewNode( opts.maxLines );
 	node.name = name;
 	return node;
 }
 
-// A row message from requestlog:transform: TM_STRUCT carrying the mapped row.
-// The rid rides KEY only (the completed-stream wire shape), never VALUE.
+// A completed-request envelope: TM_STRUCT, KEY=rid, VALUE=the raw summary.
 function rowMsg( req ) {
 	const { rid = '', ...value } = req;
 	const m = newMessage();
@@ -65,37 +67,17 @@ function row( overrides = {} ) {
 	};
 }
 
-test( 'appends rows newest-first to node.entries (no publish)', () => {
+test( 'extends the shared LogStreamViewNode base', () => {
+	expect( makeView( 'requestlog:view' ) ).toBeInstanceOf( LogStreamViewNode );
+} );
+
+test( 'appends rows newest-first into lines (no publish)', () => {
 	const v = makeView( 'requestlog:view' );
 	v.fill( rowMsg( row( { rid: 'a' } ) ) );
 	v.fill( rowMsg( row( { rid: 'b' } ) ) );
 	v.fill( rowMsg( row( { rid: 'c' } ) ) );
-	expect( v.entries[ 0 ].rid ).toBe( 'c' ); // newest first (unshift)
-	expect( v.entries ).toHaveLength( 3 );
-} );
-
-test( 'filters rows before they enter the buffer', () => {
-	const v = makeView( 'requestlog:view' );
-	v.fill( rowMsg( row( { rid: 'before-filter', url: '/old' } ) ) );
-	v.fill( controlMsg( { action: 'filter', filter: 'needle-317' } ) );
-	v.fill( rowMsg( row( { rid: 'miss', url: '/other' } ) ) );
-	v.fill( rowMsg( row( { rid: 'first-match', url: '/needle-317/first' } ) ) );
-	v.fill(
-		rowMsg( row( { rid: 'second-match', url: '/NEEDLE-317/second' } ) )
-	);
-
-	expect( v.entries.map( ( entry ) => entry.rid ) ).toEqual( [
-		'second-match',
-		'first-match',
-	] );
-	expect( v.entries.map( ( entry ) => entry.seq ) ).toEqual( [ 2, 1 ] );
-} );
-
-test( 'rejects a non-string admission filter', () => {
-	const v = makeView( 'requestlog:view' );
-	expect( () =>
-		v.fill( controlMsg( { action: 'filter', filter: { bad: 317 } } ) )
-	).toThrow( 'request log filter must be a string' );
+	expect( v.lines[ 0 ].rid ).toBe( 'c' ); // newest first
+	expect( v.lines ).toHaveLength( 3 );
 } );
 
 test( 'appending rows does NOT publish setState (no per-row React re-render)', () => {
@@ -106,14 +88,14 @@ test( 'appending rows does NOT publish setState (no per-row React re-render)', (
 	expect( spy ).not.toHaveBeenCalled();
 } );
 
-test( 'caps the buffer at maxEntries (newest kept)', () => {
-	const v = makeView( 'requestlog:view', { maxEntries: 3 } );
+test( 'caps the ring at maxLines (newest kept)', () => {
+	const v = makeView( 'requestlog:view', { maxLines: 3 } );
 	for ( let i = 0; i < 5; i++ ) {
 		v.fill( rowMsg( row( { rid: `r${ i }` } ) ) );
 	}
-	expect( v.entries ).toHaveLength( 3 );
-	expect( v.entries[ 0 ].rid ).toBe( 'r4' ); // newest
-	expect( v.entries[ 2 ].rid ).toBe( 'r2' ); // oldest still in cap
+	expect( v.lines ).toHaveLength( 3 );
+	expect( v.lines[ 0 ].rid ).toBe( 'r4' ); // newest
+	expect( v.lines[ 2 ].rid ).toBe( 'r2' ); // oldest still in cap
 } );
 
 test( 'urlHash keeps the ?worker marker so nodes/ELN URLs deep-link (matches PHP url_hash)', () => {
@@ -122,81 +104,96 @@ test( 'urlHash keeps the ?worker marker so nodes/ELN URLs deep-link (matches PHP
 		rowMsg( row( { rid: 'w', url: '/jobs/x?supervisor', end_time: 1 } ) )
 	);
 	// PHP url_hash hashes the full string incl. ?worker; don't strip at '?'.
-	expect( v.entries[ 0 ].urlHash ).toBe( fnv1a( '/jobs/x?supervisor' ) );
-	expect( v.entries[ 0 ].urlHash ).not.toBe( fnv1a( '/jobs/x' ) );
+	expect( v.lines[ 0 ].urlHash ).toBe( fnv1a( '/jobs/x?supervisor' ) );
+	expect( v.lines[ 0 ].urlHash ).not.toBe( fnv1a( '/jobs/x' ) );
 } );
 
-test( 'enriches each row with seq, urlHash, and timestamp', () => {
+test( 'stamps each row with the base monotonic id + isEven stripe', () => {
 	const v = makeView( 'requestlog:view' );
 	v.fill( rowMsg( row( { rid: 'first', url: '/a', end_time: 111 } ) ) );
 	v.fill( rowMsg( row( { rid: 'second', url: '/b', end_time: 222 } ) ) );
-	expect( v.entries[ 0 ] ).toMatchObject( {
-		seq: 2,
+	expect( v.lines[ 0 ] ).toMatchObject( {
+		id: 2,
+		isEven: true,
 		rid: 'second',
 		url: '/b',
 		timestamp: 222,
 	} );
-	expect( typeof v.entries[ 0 ].urlHash ).toBe( 'string' );
-	expect( v.entries[ 1 ] ).toMatchObject( {
-		seq: 1,
+	expect( typeof v.lines[ 0 ].urlHash ).toBe( 'string' );
+	expect( v.lines[ 1 ] ).toMatchObject( {
+		id: 1,
+		isEven: false,
 		rid: 'first',
 		timestamp: 111,
 	} );
 } );
 
-test( 'exposes a numeric rps on the node instance', () => {
+test( 'carries the shared debug trio + a searchable content line on each row', () => {
+	const v = makeView( 'requestlog:view' );
+	const m = rowMsg(
+		row( { rid: 'r-dbg-407', url: '/dbg-407', status_code: 503 } )
+	);
+	m[ ID ] = '7:120:30';
+	v.fill( m );
+	const shaped = v.lines[ 0 ];
+	expect( shaped.msgId ).toBe( '7:120:30' );
+	expect( shaped.key ).toBe( 'r-dbg-407' );
+	expect( shaped.struct ).toBe( true );
+	expect( JSON.parse( shaped.raw ) ).toMatchObject( {
+		url: '/dbg-407',
+		status_code: 503,
+	} );
+	expect( shaped.content ).toBe( 'GET /dbg-407 503 r-dbg-407' );
+} );
+
+test( 'clips the debug raw JSON at 8192 chars + ellipsis', () => {
+	const v = makeView( 'requestlog:view' );
+	v.fill(
+		rowMsg(
+			row( { rid: 'r-raw', url: '/raw', user_agent: 'u'.repeat( 9000 ) } )
+		)
+	);
+	expect( v.lines[ 0 ].raw.length ).toBe( 8195 );
+	expect( v.lines[ 0 ].raw.endsWith( '...' ) ).toBe( true );
+} );
+
+test( 'exposes a decaying lps rate on the node instance', () => {
 	const v = makeView( 'requestlog:view' );
 	v.fill( rowMsg( row() ) );
-	expect( typeof v.rps ).toBe( 'number' );
-	expect( v.rps ).toBeGreaterThan( 0 );
+	expect( typeof v.lps ).toBe( 'number' );
+	expect( v.lps ).toBeGreaterThan( 0 );
 } );
 
-test( 'RPS tracking aggregates per second, not one entry per request (bounded window)', () => {
-	// Perf: the rps window collapses to per-second buckets, not one/request.
-	const v = makeView( 'requestlog:view', { maxEntries: 100000 } );
-	for ( let i = 0; i < 500; i++ ) {
-		v.fill( rowMsg( row( { rid: `r${ i }`, url: `/p/${ i }` } ) ) );
-	}
-	expect( Array.isArray( v.rpsBuckets ) ).toBe( true );
-	expect( v.rpsBuckets.length ).toBeLessThanOrEqual( 12 );
-} );
-
-test( 'a read mid-stream then more appends keeps newest-first across the coalesce boundary', () => {
-	const v = makeView( 'requestlog:view' );
-	v.fill( rowMsg( row( { rid: 'a' } ) ) );
-	v.fill( rowMsg( row( { rid: 'b' } ) ) );
-	expect( v.entries.map( ( e ) => e.rid ) ).toEqual( [ 'b', 'a' ] );
-	v.fill( rowMsg( row( { rid: 'c' } ) ) );
-	expect( v.entries.map( ( e ) => e.rid ) ).toEqual( [ 'c', 'b', 'a' ] );
-} );
-
-test( 'exposes O(1) windowed reads — entriesCount + entryAt (newest-first) — for the virtual list', () => {
+test( 'exposes O(1) windowed reads — linesCount + lineAt (newest-first) — for the virtual list', () => {
 	const v = makeView( 'requestlog:view' );
 	v.fill( rowMsg( row( { rid: 'a' } ) ) );
 	v.fill( rowMsg( row( { rid: 'b' } ) ) );
 	v.fill( rowMsg( row( { rid: 'c' } ) ) );
-	expect( v.entriesCount ).toBe( 3 );
-	expect( v.entryAt( 0 ).rid ).toBe( 'c' ); // newest
-	expect( v.entryAt( 2 ).rid ).toBe( 'a' ); // oldest
-	expect( v.entryAt( 3 ) ).toBeUndefined();
-} );
-
-test( 'entryAt + entriesCount respect the cap (oldest overwritten) on a small ring', () => {
-	const v = makeView( 'requestlog:view', { maxEntries: 3 } );
-	for ( let i = 0; i < 10; i++ ) {
-		v.fill( rowMsg( row( { rid: `r${ i }` } ) ) );
-	}
-	expect( v.entriesCount ).toBe( 3 );
-	expect( v.entryAt( 0 ).rid ).toBe( 'r9' ); // newest
-	expect( v.entryAt( 2 ).rid ).toBe( 'r7' ); // oldest in cap
+	expect( v.linesCount ).toBe( 3 );
+	expect( v.lineAt( 0 ).rid ).toBe( 'c' ); // newest
+	expect( v.lineAt( 2 ).rid ).toBe( 'a' ); // oldest
+	expect( v.lineAt( 3 ) ).toBeUndefined();
 } );
 
 test( 'pause stops appends and the published model reflects paused', () => {
 	const v = makeView( 'requestlog:view' );
 	v.fill( controlMsg( { action: 'pause', paused: true } ) );
 	v.fill( rowMsg( row( { rid: 'ignored' } ) ) );
-	expect( v.entries ).toHaveLength( 0 );
+	expect( v.lines ).toHaveLength( 0 );
 	expect( v.setStateCache.view.paused ).toBe( true );
+} );
+
+test( 'a step budget admits exactly that many rows through the paused belt', () => {
+	const v = makeView( 'requestlog:view' );
+	v.fill( controlMsg( { action: 'pause', paused: true } ) );
+	v.fill( controlMsg( { action: 'step', frames: 2 } ) );
+	v.fill( rowMsg( row( { rid: 'stepped-1' } ) ) );
+	v.fill( rowMsg( row( { rid: 'stepped-2' } ) ) );
+	v.fill( rowMsg( row( { rid: 'dropped-3' } ) ) );
+	expect( v.lines.map( ( e ) => e.rid ) ).toEqual( [
+		'stepped-2',
+		'stepped-1',
+	] );
 } );
 
 test( 'resume after pause lets rows through again', () => {
@@ -206,21 +203,20 @@ test( 'resume after pause lets rows through again', () => {
 	v.fill( controlMsg( { action: 'pause', paused: false } ) );
 	v.fill( rowMsg( row( { rid: 'kept' } ) ) );
 	expect( v.setStateCache.view.paused ).toBe( false );
-	expect( v.entries ).toHaveLength( 1 );
-	expect( v.entries[ 0 ].rid ).toBe( 'kept' );
+	expect( v.lines ).toHaveLength( 1 );
+	expect( v.lines[ 0 ].rid ).toBe( 'kept' );
 } );
 
-test( 'clear empties the buffer, counter and rps', () => {
+test( 'clear empties the ring and resets the id counter', () => {
 	const v = makeView( 'requestlog:view' );
 	for ( let i = 0; i < 10; i++ ) {
 		v.fill( rowMsg( row( { rid: `r${ i }` } ) ) );
 	}
 	v.fill( controlMsg( { action: 'clear' } ) );
-	expect( v.entries ).toHaveLength( 0 );
-	expect( v.rps ).toBe( 0 );
-	// Counter reset: the next row is seq 1 again.
+	expect( v.lines ).toHaveLength( 0 );
+	// Counter reset: the next row is id 1 again.
 	v.fill( rowMsg( row( { rid: 'after' } ) ) );
-	expect( v.entries[ 0 ].seq ).toBe( 1 );
+	expect( v.lines[ 0 ].id ).toBe( 1 );
 } );
 
 test( 'the published model carries paused, connectionError, and seek feedback', () => {
@@ -274,14 +270,14 @@ test( 'names the node', () => {
 test( 'drops a raw envelope whose VALUE has no url (defensive)', () => {
 	const v = makeView( 'requestlog:view' );
 	v.fill( rowMsg( { rid: 'no-url' } ) );
-	expect( v.entries ).toHaveLength( 0 );
+	expect( v.lines ).toHaveLength( 0 );
 } );
 
 test( 'drops a raw envelope whose VALUE is not an object', () => {
 	const v = makeView( 'requestlog:view' );
 	v.fill( rowMsg( 'string' ) );
 	v.fill( rowMsg( [ 1, 2, 3 ] ) );
-	expect( v.entries ).toHaveLength( 0 );
+	expect( v.lines ).toHaveLength( 0 );
 } );
 
 test( 'clips url at 2000 chars + ellipsis when appending', () => {
@@ -295,9 +291,9 @@ test( 'clips url at 2000 chars + ellipsis when appending', () => {
 			duration_ms: 1,
 		} )
 	);
-	expect( v.entries ).toHaveLength( 1 );
-	expect( v.entries[ 0 ].url.length ).toBe( 2003 );
-	expect( v.entries[ 0 ].url.endsWith( '...' ) ).toBe( true );
+	expect( v.lines ).toHaveLength( 1 );
+	expect( v.lines[ 0 ].url.length ).toBe( 2003 );
+	expect( v.lines[ 0 ].url.endsWith( '...' ) ).toBe( true );
 } );
 
 test( 'clips user_agent at 500 chars + ellipsis when appending', () => {
@@ -311,16 +307,16 @@ test( 'clips user_agent at 500 chars + ellipsis when appending', () => {
 			user_agent: longUA,
 		} )
 	);
-	expect( v.entries ).toHaveLength( 1 );
-	expect( v.entries[ 0 ].user_agent.length ).toBe( 503 );
-	expect( v.entries[ 0 ].user_agent.endsWith( '...' ) ).toBe( true );
+	expect( v.lines ).toHaveLength( 1 );
+	expect( v.lines[ 0 ].user_agent.length ).toBe( 503 );
+	expect( v.lines[ 0 ].user_agent.endsWith( '...' ) ).toBe( true );
 } );
 
-test( 'fills sensible defaults for missing fields on the appended entry', () => {
+test( 'fills sensible defaults for missing fields on the appended row', () => {
 	const v = makeView( 'requestlog:view' );
 	v.fill( rowMsg( { url: 'https://x' } ) );
-	expect( v.entries ).toHaveLength( 1 );
-	const e = v.entries[ 0 ];
+	expect( v.lines ).toHaveLength( 1 );
+	const e = v.lines[ 0 ];
 	expect( e.rid ).toBe( '' );
 	expect( e.method ).toBe( 'GET' );
 	expect( e.duration_ms ).toBe( 0 );
@@ -340,7 +336,7 @@ const catalogReply = ( id, name, payload, { error = false } = {} ) => {
 };
 
 describe( 'requestlog:view — catalog-reply correlation (PendingReplies)', () => {
-	test( 'settles a pending reply by message ID and does NOT append it as an entry', () => {
+	test( 'settles a pending reply by message ID and does NOT append it as a row', () => {
 		const v = makeView( 'requestlog:view' );
 		const seen = [];
 		v.replies.add(
@@ -357,7 +353,7 @@ describe( 'requestlog:view — catalog-reply correlation (PendingReplies)', () =
 		expect( seen ).toEqual( [
 			{ log_id: 'completed.p4', segments: [ { id: 5, size: 42 } ] },
 		] );
-		expect( v.entries ).toHaveLength( 0 );
+		expect( v.lines ).toHaveLength( 0 );
 	} );
 
 	test( 'a TM_ERROR reply rejects the pending Promise', async () => {
@@ -378,7 +374,7 @@ describe( 'requestlog:view — catalog-reply correlation (PendingReplies)', () =
 		const m = rowMsg( row( { rid: 'r-seek-803', url: '/seek-803' } ) );
 		m[ ID ] = '9:1024:256';
 		v.fill( m );
-		expect( v.entries.map( ( e ) => e.rid ) ).toEqual( [ 'r-seek-803' ] );
+		expect( v.lines.map( ( e ) => e.rid ) ).toEqual( [ 'r-seek-803' ] );
 	} );
 } );
 
@@ -400,10 +396,12 @@ describe( 'requestlog:view — seek feedback (single-dir browse)', () => {
 		expect( v.mode ).toBe( 'live' );
 	} );
 
-	test( 'a select control with a dir arms tracking and follows the segment', () => {
+	test( 'a select control with a dir arms tracking, clears the ring, and follows the segment', () => {
 		const v = makeView( 'requestlog:view' );
+		v.fill( rowMsg( row( { rid: 'pre-select' } ) ) );
 		v.fill( controlMsg( { action: 'select', dir: 'completed.p4' } ) );
 		expect( v.seekActive ).toBe( true );
+		expect( v.lines ).toHaveLength( 0 );
 		v.fill( rowWithId( '98:0:40' ) );
 		expect( v.lastReceivedSegment ).toBe( 98 );
 		expect( v.setStateCache.view.lastReceivedSegment ).toBe( 98 );
@@ -420,12 +418,15 @@ describe( 'requestlog:view — seek feedback (single-dir browse)', () => {
 		expect( v.lastReceivedSegment ).toBe( null );
 	} );
 
-	test( 'browse enters replay and flips to live once a record reaches the end', () => {
+	test( 'browse enters replay from a clean slate and flips to live at the end', () => {
 		const v = makeView( 'requestlog:view' );
 		v.fill( controlMsg( { action: 'select', dir: 'completed.p4' } ) );
+		v.fill( rowWithId( '97:0:40', { rid: 'pre-browse' } ) );
 		v.fill(
 			controlMsg( { action: 'browse', endSegment: 105, endOffset: 1200 } )
 		);
+		// A rewind starts clean: replays must not mix into the live tail.
+		expect( v.lines ).toHaveLength( 0 );
 		expect( v.mode ).toBe( 'replay' );
 		expect( v.setStateCache.view.mode ).toBe( 'replay' );
 		v.fill( rowWithId( '98:100:20' ) ); // behind the end segment

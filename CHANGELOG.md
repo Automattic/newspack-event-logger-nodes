@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Request Log and Error Log rebased onto the substrate's log-stream
+  common base** (requires newspack-nodes with `LogStreamViewNode` /
+  `LogStreamViewer`, v1.3.1+ unreleased). The view nodes extend the
+  shared `LogStreamViewNode` (ring, paused belt + step budget, decaying
+  rate, seek tracking, reply settling, shared control verbs) and keep
+  only their entry enrichment; the components are thin wrappers over the
+  shared `LogStreamViewer` chrome (toolbar, filter, counts, staleness,
+  pause, Debug rows, Clear, connection banner) with their column grids,
+  column picker, and `SegmentBrowseSidebar` plugged into its extension
+  points. Both dashboards inherit the whole viewer feature line for
+  free: ring virtualization with smooth scrolling and flood hardening,
+  Debug mode (ID · KEY · VALUE — KEY carries the request id), the
+  decaying rate readout, clear-on-rewind, and the shared log-area
+  styles. Net −2,000 lines: the bespoke rAF loops, `useVirtualization`,
+  smooth-scroll machinery, and duplicated ring/RPS/seek code are gone.
+  View-node-side URL filtering moved to the chrome's client-side match
+  (changing the filter no longer discards buffered history), and paused
+  rows no longer count toward the rate.
+
 ## [0.41.3] - 2026-07-25
 
 ### Fixed

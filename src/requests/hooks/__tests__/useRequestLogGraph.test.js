@@ -179,10 +179,10 @@ describe( 'useRequestLogGraph — exospine + RemoteLink wiring', () => {
 				pack( completedEnvelope( { rid: 'r-watch', url: '/x' } ) )
 			);
 		} );
-		// The watcher saw the raw stream AND the view appended the entry.
+		// The watcher saw the raw stream AND the view appended the row.
 		expect( seen ).toContain( 'r-watch' );
-		expect( Core.node( VIEW ).entries ).toHaveLength( 1 );
-		expect( Core.node( VIEW ).entries[ 0 ].rid ).toBe( 'r-watch' );
+		expect( Core.node( VIEW ).lines ).toHaveLength( 1 );
+		expect( Core.node( VIEW ).lines[ 0 ].rid ).toBe( 'r-watch' );
 	} );
 
 	test( 'opens an EventSource against /messages/stream?subscribe=completed.* when visible', () => {
@@ -277,8 +277,8 @@ describe( 'useRequestLogGraph — end-to-end routing through the exospine', () =
 			);
 		} );
 		const view = Core.node( VIEW );
-		expect( view.entries ).toHaveLength( 1 );
-		expect( view.entries[ 0 ].rid ).toBe( 'r-flow' );
+		expect( view.lines ).toHaveLength( 1 );
+		expect( view.lines[ 0 ].rid ).toBe( 'r-flow' );
 	} );
 } );
 
@@ -377,37 +377,9 @@ describe( 'useRequestLogGraph — page visibility / pause lifecycle', () => {
 				)
 			);
 		} );
-		expect( Core.node( VIEW ).entries ).toHaveLength( 1 );
+		expect( Core.node( VIEW ).lines ).toHaveLength( 1 );
 		act( () => result.current.clear() );
-		expect( Core.node( VIEW ).entries ).toHaveLength( 0 );
-	} );
-
-	test( 'setFilter() filters incoming rows before the view buffer', () => {
-		const { result } = renderHook( () => useRequestLogGraph() );
-		act( () => result.current.setFilter( 'needle-317' ) );
-		act( () => {
-			FakeEventSource.last.dispatch(
-				'msg',
-				pack(
-					completedEnvelope( {
-						rid: 'miss',
-						url: '/other',
-					} )
-				)
-			);
-			FakeEventSource.last.dispatch(
-				'msg',
-				pack(
-					completedEnvelope( {
-						rid: 'match',
-						url: '/needle-317/result',
-					} )
-				)
-			);
-		} );
-		expect(
-			Core.node( VIEW ).entries.map( ( entry ) => entry.rid )
-		).toEqual( [ 'match' ] );
+		expect( Core.node( VIEW ).lines ).toHaveLength( 0 );
 	} );
 } );
 
@@ -678,30 +650,5 @@ describe( 'useRequestLogGraph — graphGeneration Reset Graph', () => {
 
 		// Rebuilt view defaults paused:false; hook re-applies surviving pause.
 		expect( Core.node( VIEW ).setStateCache.view.paused ).toBe( true );
-	} );
-
-	test( 'reinit preserves the active admission filter', () => {
-		const { result } = renderHook( () => useRequestLogGraph() );
-		act( () => result.current.setFilter( 'needle-733' ) );
-		act( () => Core.bumpGraphGeneration() );
-
-		act( () => {
-			FakeEventSource.last.dispatch(
-				'msg',
-				pack( completedEnvelope( { rid: 'miss', url: '/other' } ) )
-			);
-			FakeEventSource.last.dispatch(
-				'msg',
-				pack(
-					completedEnvelope( {
-						rid: 'match',
-						url: '/needle-733/result',
-					} )
-				)
-			);
-		} );
-		expect(
-			Core.node( VIEW ).entries.map( ( entry ) => entry.rid )
-		).toEqual( [ 'match' ] );
 	} );
 } );

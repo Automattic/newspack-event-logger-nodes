@@ -1,26 +1,33 @@
 /**
- * RequestStream UI-surface tests — the thin view over the requestlog node graph.
- *
- * The graph is owned by useRequestLogGraph (tested separately); here we mock it to
- * hand back spy control callbacks, and we register a fixture `requestlog:view`
- * node in Core so the view can read its low-frequency model via useNodeState and
- * its high-frequency buffer (entries/rps/lastEventTime) directly off the node in
- * the rAF.
+ * RequestStream UI-surface tests — the thin wrapper over the shared
+ * `LogStreamViewer` chrome. The virtualized list (LogRowList) and the browse
+ * sidebar's LogBrowser are exercised by their own suites; here they are mocked
+ * to markers that capture the props RequestStream wires into them, so these
+ * tests cover the toolbar wiring, the column picker, the row/header renderers,
+ * and the browse rail. Mirrors the substrate's PartitionViewer.test.js.
  */
 
 jest.mock( '../hooks/useRequestLogGraph', () => ( {
 	useRequestLogGraph: jest.fn(),
 } ) );
-jest.mock( '@newspack-nodes/shared/hooks/useVirtualization', () => ( {
+
+// Capture the props RequestStream hands the shared list + sidebar each render.
+let logRowListProps;
+jest.mock( '@newspack-nodes/shared/components/LogRowList', () => ( {
 	__esModule: true,
-	default: ( _ref, _row, total ) => ( {
-		startIndex: 0,
-		endIndex: total,
-		paddingTop: 0,
-		paddingBottom: 0,
-		offsetTop: 0,
-		totalHeight: total * 33,
-	} ),
+	default: ( props ) => {
+		logRowListProps = props;
+		return <div data-testid="log-row-list" />;
+	},
+} ) );
+
+let logBrowserProps;
+jest.mock( '@newspack-nodes/shared/components/LogBrowser', () => ( {
+	__esModule: true,
+	default: ( props ) => {
+		logBrowserProps = props;
+		return <div data-testid="log-browser" />;
+	},
 } ) );
 
 import * as React from 'react';
@@ -30,18 +37,22 @@ import { renderComponent, act } from '../../test-helpers/renderHook';
 
 const { useRequestLogGraph } = require( '../hooks/useRequestLogGraph' );
 
-// requestlog:view stand-in: view model + high-freq buffer/rps on instance.
+// requestlog:view stand-in: model in setStateCache.view, ring on the node.
 function registerViewFixture( {
 	paused = false,
 	connectionError = false,
-	entries = [],
-	rps = 0,
+	lines = [],
 } = {} ) {
 	const node = {
 		registrations: { view: {} },
 		setStateCache: {},
-		entries,
-		rps,
+		lines,
+		get linesCount() {
+			return this.lines.length;
+		},
+		lineAt( i ) {
+			return this.lines[ i ];
+		},
 		register( event, listener, cb ) {
 			this.registrations[ event ][ listener ] = cb;
 			if ( event in this.setStateCache ) {
@@ -63,9 +74,10 @@ function registerViewFixture( {
 	return node;
 }
 
-function entry( overrides = {} ) {
+function row( overrides = {} ) {
 	return {
-		seq: 1,
+		id: 1,
+		isEven: false,
 		rid: 'r1',
 		url: '/foo',
 		urlHash: 'abc123',
@@ -79,33 +91,39 @@ function entry( overrides = {} ) {
 	};
 }
 
+// A browse model the mocked graph hook hands back for the browse-UI tests.
+function browseMock( overrides = {} ) {
+	return {
+		partitions: [],
+		selectedPartition: '',
+		selectPartition: jest.fn(),
+		segments: [],
+		mode: 'live',
+		lastReceivedSegment: null,
+		segmentId: null,
+		follow: jest.fn(),
+		replay: jest.fn(),
+		browseSegment: jest.fn(),
+		...overrides,
+	};
+}
+
 describe( 'RequestStream', () => {
 	let setPaused;
-	let clear;
-	let setStreamFilter;
-	let rafCbs;
 	const mounted = [];
 
 	beforeEach( () => {
 		Core.reset();
 		window.localStorage.clear();
+		logRowListProps = undefined;
+		logBrowserProps = undefined;
 		setPaused = jest.fn();
-		clear = jest.fn();
-		setStreamFilter = jest.fn();
 		useRequestLogGraph.mockClear();
 		useRequestLogGraph.mockReturnValue( {
 			setPaused,
-			clear,
-			setFilter: setStreamFilter,
+			clear: jest.fn(),
+			browse: browseMock(),
 		} );
-
-		// Capture rAF callbacks so a test can drive exactly one frame.
-		rafCbs = [];
-		global.requestAnimationFrame = ( cb ) => {
-			rafCbs.push( cb );
-			return rafCbs.length;
-		};
-		global.cancelAnimationFrame = () => {};
 	} );
 
 	afterEach( () => {
@@ -122,58 +140,23 @@ describe( 'RequestStream', () => {
 		return r;
 	}
 
-	// Run a single queued animation frame.
-	const tickFrame = () => {
-		const cbs = rafCbs;
-		rafCbs = [];
-		act( () => cbs.forEach( ( cb ) => cb( performance.now() ) ) );
-	};
-
-	it( 'renders the Request Log heading', () => {
+	it( 'renders the Request Log heading (no source picker)', () => {
 		registerViewFixture();
 		const { container } = mount();
-		expect( container.textContent ).toMatch( /Request/i );
+		expect( container.textContent ).toContain( 'Request Log' );
+		// pickerOptions is null: the toolbar has no source dropdown.
+		expect(
+			container.querySelector(
+				'.newspack-nodes-toolbar select.newspack-nodes-select'
+			)
+		).toBeNull();
 	} );
 
-	it( 'renders an "empty" message initially', () => {
-		registerViewFixture();
-		const { container } = mount();
-		expect( container.textContent.toLowerCase() ).toMatch(
-			/no|empty|wait/i
-		);
-	} );
-
-	it( 'renders entries read from the node buffer in the rAF', () => {
-		registerViewFixture( {
-			entries: [ entry( { rid: 'r-flow', url: '/foo' } ) ],
-		} );
-		const { container } = mount();
-		tickFrame();
-		expect( container.textContent ).toContain( 'r-flow' );
-	} );
-
-	it( 'refreshes equal-shaped rows when the view node is rebuilt', () => {
-		registerViewFixture( {
-			entries: [
-				entry( { seq: 2, rid: 'old-second' } ),
-				entry( { seq: 1, rid: 'old-first' } ),
-			],
-		} );
-		const { container } = mount();
-		tickFrame();
-
-		registerViewFixture( {
-			entries: [
-				entry( { seq: 2, rid: 'rebuilt-second-733' } ),
-				entry( { seq: 1, rid: 'rebuilt-first-521' } ),
-			],
-		} );
-		tickFrame();
-
-		expect( container.textContent ).toContain( 'rebuilt-first-521' );
-		expect( container.textContent ).toContain( 'rebuilt-second-733' );
-		expect( container.textContent ).not.toContain( 'old-first' );
-		expect( container.textContent ).not.toContain( 'old-second' );
+	it( 'wires LogRowList at the live requestlog:view node with the fixed row height', () => {
+		const node = registerViewFixture();
+		mount();
+		expect( logRowListProps.getNode() ).toBe( node );
+		expect( logRowListProps.rowHeight ).toBe( 33 );
 	} );
 
 	it( 'pause button reflects the view model and calls setPaused on click', () => {
@@ -194,213 +177,6 @@ describe( 'RequestStream', () => {
 		expect( setPaused ).toHaveBeenCalledWith( false );
 	} );
 
-	it( 'Clear button calls the graph clear callback', () => {
-		registerViewFixture( {
-			entries: [ entry( { rid: 'r-foo' } ) ],
-		} );
-		const { container } = mount();
-		tickFrame();
-		expect( container.textContent ).toContain( 'r-foo' );
-		const clearBtn = Array.from(
-			container.querySelectorAll( 'button' )
-		).find( ( b ) => b.textContent === 'Clear' );
-		act( () => clearBtn.click() );
-		expect( clear ).toHaveBeenCalled();
-	} );
-
-	it( 'toggles the column picker on Cols button click', () => {
-		registerViewFixture();
-		const { container } = mount();
-		const colsBtn = Array.from(
-			container.querySelectorAll( 'button' )
-		).find( ( b ) => b.textContent === 'Cols' );
-		expect( colsBtn ).toBeTruthy();
-		act( () => colsBtn.click() );
-		expect(
-			container.querySelector( '.newspack-nodes-column-picker' )
-		).toBeTruthy();
-	} );
-
-	it( 'renders the replacement buffer after sending a filter to the view node', () => {
-		const node = registerViewFixture( {
-			entries: [
-				entry( { seq: 2, rid: 'rB', url: '/baz' } ),
-				entry( { seq: 1, rid: 'rA', url: '/foo/bar' } ),
-			],
-		} );
-		const { container } = mount();
-		tickFrame();
-		expect( container.textContent ).toContain( 'rA' );
-		expect( container.textContent ).toContain( 'rB' );
-		const input = container.querySelector( '.newspack-nodes-search-input' );
-		expect( input ).toBeTruthy();
-		setStreamFilter.mockImplementation( () => {
-			node.entries = [
-				entry( { seq: 2, rid: 'replacementB', url: '/foo/b' } ),
-				entry( { seq: 1, rid: 'replacementA', url: '/foo/a' } ),
-			];
-		} );
-		const setter = Object.getOwnPropertyDescriptor(
-			window.HTMLInputElement.prototype,
-			'value'
-		).set;
-		act( () => {
-			setter.call( input, 'foo' );
-			input.dispatchEvent( new Event( 'input', { bubbles: true } ) );
-		} );
-		tickFrame();
-		expect( setStreamFilter ).toHaveBeenCalledWith( 'foo' );
-		expect( container.textContent ).toContain( 'replacementA' );
-		expect( container.textContent ).toContain( 'replacementB' );
-		expect( container.textContent ).not.toContain( 'rA' );
-		expect( container.textContent ).not.toContain( 'rB' );
-	} );
-
-	it( 'keeps buffered stripes stable on a live prepend while scrolled', () => {
-		const firstAnchor = entry( {
-			seq: 2,
-			rid: 'first-anchor',
-		} );
-		const secondAnchor = entry( {
-			seq: 1,
-			rid: 'second-anchor',
-		} );
-		const node = registerViewFixture( {
-			entries: [ firstAnchor, secondAnchor ],
-		} );
-		const { container } = mount();
-		tickFrame();
-		const list = container.querySelector(
-			'.event-logger-request-stream-list'
-		);
-		list.scrollTop = 99;
-		act( () => list.dispatchEvent( new Event( 'scroll' ) ) );
-		const findRow = ( rid ) =>
-			[
-				...container.querySelectorAll(
-					'.event-logger-request-stream-entry'
-				),
-			].find( ( row ) => row.textContent.includes( rid ) );
-		const firstStripe = findRow( firstAnchor.rid ).classList.contains(
-			'row-even'
-		);
-		const secondStripe = findRow( secondAnchor.rid ).classList.contains(
-			'row-even'
-		);
-
-		node.entries = [
-			entry( {
-				seq: 3,
-				rid: 'new-buffered-entry',
-			} ),
-			firstAnchor,
-			secondAnchor,
-		];
-		tickFrame();
-
-		expect(
-			findRow( firstAnchor.rid ).classList.contains( 'row-even' )
-		).toBe( firstStripe );
-		expect(
-			findRow( secondAnchor.rid ).classList.contains( 'row-even' )
-		).toBe( secondStripe );
-		const rows = container.querySelectorAll(
-			'.event-logger-request-stream-entry[role="row"]'
-		);
-		expect( rows ).toHaveLength( 3 );
-		expect( rows[ 0 ].classList.contains( 'row-even' ) ).not.toBe(
-			rows[ 1 ].classList.contains( 'row-even' )
-		);
-		expect( rows[ 1 ].classList.contains( 'row-even' ) ).not.toBe(
-			rows[ 2 ].classList.contains( 'row-even' )
-		);
-	} );
-
-	it( 'rebases scroll animation state when the admission filter changes', () => {
-		const node = registerViewFixture( {
-			entries: [ entry( { seq: 1, rid: 'before-rebase' } ) ],
-		} );
-		const { container } = mount();
-		tickFrame();
-		node.entries = [
-			entry( { seq: 2, rid: 'sliding-row' } ),
-			entry( { seq: 1, rid: 'before-rebase' } ),
-		];
-		tickFrame();
-		const list = container.querySelector(
-			'.event-logger-request-stream-list'
-		);
-		const content = container.querySelector(
-			'.event-logger-request-stream-content'
-		);
-		expect( content.style.transform ).toBe( 'translate3d(0,-33px,0)' );
-		act( () => {
-			list.scrollTop = 99;
-			list.dispatchEvent( new Event( 'scroll', { bubbles: true } ) );
-		} );
-		setStreamFilter.mockImplementation( () => {
-			node.entries = [];
-		} );
-		const input = container.querySelector( '.newspack-nodes-search-input' );
-		const setter = Object.getOwnPropertyDescriptor(
-			window.HTMLInputElement.prototype,
-			'value'
-		).set;
-		act( () => {
-			setter.call( input, 'rebase-733' );
-			input.dispatchEvent( new Event( 'input', { bubbles: true } ) );
-		} );
-
-		expect( list.scrollTop ).toBe( 0 );
-		expect( content.style.transform ).toBe( '' );
-		act( () => list.dispatchEvent( new Event( 'scroll' ) ) );
-		expect( content.style.transform ).toBe( '' );
-	} );
-
-	it( 'renders user_agent and remote_addr columns when entry carries them', () => {
-		window.localStorage.setItem(
-			'event-logger-stream-columns',
-			JSON.stringify( [
-				'time',
-				'rid',
-				'url',
-				'status',
-				'remote_addr',
-				'user_agent',
-				'duration',
-			] )
-		);
-		registerViewFixture( {
-			entries: [
-				entry( {
-					rid: 'r-ua',
-					url: '/x',
-					user_agent: 'Mozilla/5.0',
-					remote_addr: '192.168.1.1',
-				} ),
-			],
-		} );
-		const { container } = mount();
-		tickFrame();
-		expect( container.textContent ).toContain( 'r-ua' );
-		expect( container.textContent ).toContain( 'Mozilla/5.0' );
-		window.localStorage.removeItem( 'event-logger-stream-columns' );
-	} );
-
-	it( 'displays the requests/second read from the node in the rAF', () => {
-		registerViewFixture( {
-			entries: [ entry( { rid: 'r-rps' } ) ],
-			rps: 4.2,
-		} );
-		const { container } = mount();
-		tickFrame();
-		const rps = container.querySelector(
-			'.newspack-nodes-toolbar-stats__rps'
-		);
-		expect( rps ).not.toBeNull();
-		expect( rps.textContent ).toMatch( /4\.2 req\/s/ );
-	} );
-
 	it( 'shows the reconnect banner when the view model reports connectionError', () => {
 		registerViewFixture( { connectionError: true } );
 		const { container } = mount();
@@ -417,68 +193,179 @@ describe( 'RequestStream', () => {
 		).toBeNull();
 	} );
 
-	it( 'falls back to an empty model when the view node is absent', () => {
-		// No fixture → useNodeState undefined; view still renders (Waiting…).
+	it( 'passes the URL filter text and placeholder down to LogRowList', () => {
+		registerViewFixture();
 		const { container } = mount();
-		expect( container.textContent.toLowerCase() ).toMatch(
-			/wait|no|empty/i
+		const input = container.querySelector( '.newspack-nodes-search-input' );
+		expect( input.placeholder ).toBe( 'Filter by URL…' );
+		const setter = Object.getOwnPropertyDescriptor(
+			window.HTMLInputElement.prototype,
+			'value'
+		).set;
+		act( () => {
+			setter.call( input, 'needle-317' );
+			input.dispatchEvent( new Event( 'input', { bubbles: true } ) );
+		} );
+		expect( logRowListProps.filter ).toBe( 'needle-317' );
+	} );
+
+	it( 'matchRow matches on the row URL only (not rid or user agent)', () => {
+		registerViewFixture();
+		mount();
+		const { matchRow } = logRowListProps;
+		expect(
+			matchRow(
+				row( { url: '/NEEDLE-317/x', rid: 'r-a' } ),
+				'needle-317'
+			)
+		).toBe( true );
+		expect(
+			matchRow(
+				row( { url: '/other', rid: 'needle-317', user_agent: 'x' } ),
+				'needle-317'
+			)
+		).toBe( false );
+	} );
+
+	it( 'reflects the counts LogRowList reports up as requests + req/s', () => {
+		registerViewFixture();
+		const { container } = mount();
+		act( () =>
+			logRowListProps.onStats( { total: 40, visible: 12, lps: 3.5 } )
+		);
+		expect( container.textContent ).toContain( '12 / 40 requests' );
+		expect( container.textContent ).toContain( '3.5 req/s' );
+	} );
+
+	it( 'shows the plain count when nothing is filtered out', () => {
+		registerViewFixture();
+		const { container } = mount();
+		act( () =>
+			logRowListProps.onStats( { total: 7, visible: 7, lps: 0 } )
+		);
+		expect( container.textContent ).toContain( '7 requests' );
+	} );
+
+	it( 'clear empties the ring and rebases the list via resetSignal', () => {
+		const node = registerViewFixture( {
+			lines: [ row( { id: 1, rid: 'r-clear' } ) ],
+		} );
+		const { container } = mount();
+		const before = logRowListProps.resetSignal;
+		const buttons = container.querySelectorAll( '.button' );
+		const clearBtn = Array.from( buttons ).find(
+			( b ) => b.textContent === 'Clear'
+		);
+		act( () => clearBtn.click() );
+		expect( node.lines ).toEqual( [] );
+		expect( logRowListProps.resetSignal ).toBe( before + 1 );
+	} );
+
+	it( 'renderRow draws the visible-column cells on a grid log row keyed by id', () => {
+		registerViewFixture();
+		mount();
+		const { container } = renderComponent(
+			logRowListProps.renderRow(
+				row( {
+					id: 8,
+					isEven: true,
+					rid: 'r-cells',
+					url: '/cells',
+					status_code: 404,
+					duration_ms: 1500,
+				} )
+			)
+		);
+		const el = container.querySelector( '.newspack-nodes-log-row' );
+		expect( el.classList.contains( 'row-even' ) ).toBe( true );
+		expect( el.style.gridTemplateColumns ).toContain( '240px' );
+		expect( el.querySelector( '.entry-url-link' ).textContent ).toBe(
+			'/cells'
+		);
+		expect( el.querySelector( '.entry-status--4xx' ).textContent ).toBe(
+			'404'
+		);
+		expect( el.querySelector( '.entry-duration--slow' ) ).toBeTruthy();
+		expect( el.querySelector( '.entry-rid' ).textContent ).toBe(
+			'r-cells'
+		);
+		expect( el.querySelector( '.entry-ip' ).textContent ).toBe(
+			'10.0.0.1'
 		);
 	} );
 
-	it( 'does not throw rendering an entry with no user_agent (defaults to "-")', () => {
-		window.localStorage.setItem(
-			'event-logger-stream-columns',
-			JSON.stringify( [ 'time', 'rid', 'url', 'user_agent' ] )
+	it( 'striping comes from the stamped isEven, not position', () => {
+		registerViewFixture();
+		mount();
+		const { container } = renderComponent(
+			logRowListProps.renderRow( row( { id: 3, isEven: false } ) )
 		);
-		registerViewFixture( {
-			entries: [ entry( { rid: 'r-no-ua', user_agent: '' } ) ],
-		} );
-		const { container } = mount();
-		tickFrame();
-		expect( container.textContent ).toContain( 'r-no-ua' );
-		window.localStorage.removeItem( 'event-logger-stream-columns' );
+		const el = container.querySelector( '.newspack-nodes-log-row' );
+		expect( el.classList.contains( 'row-odd' ) ).toBe( true );
 	} );
 
-	it( 'renders the placeholder time string for entries with a falsy timestamp', () => {
-		// Drives formatTime's !ts branch → renders --:--:--.--- for zero ts.
-		registerViewFixture( {
-			entries: [ entry( { rid: 'r-noT', timestamp: 0 } ) ],
-		} );
+	it( 'renders the default column headers via the shared LogListHeader', () => {
+		registerViewFixture();
 		const { container } = mount();
-		tickFrame();
-		expect( container.textContent ).toContain( 'r-noT' );
-		expect( container.textContent ).toContain( '--:--:--.---' );
+		const ths = [
+			...container.querySelectorAll( '.newspack-nodes-log-header__th' ),
+		].map( ( el ) => el.textContent );
+		expect( ths ).toEqual( [
+			'Time',
+			'Request ID',
+			'URL',
+			'Status',
+			'IP',
+			'Duration',
+		] );
+	} );
+
+	it( 'the header wrapper carries the same grid template as the rows', () => {
+		registerViewFixture();
+		const { container } = mount();
+		const wrapper = container.querySelector(
+			'.event-logger-request-stream-columns'
+		);
+		expect( wrapper ).toBeTruthy();
+		const template = wrapper.style.getPropertyValue(
+			'--stream-grid-template'
+		);
+		expect( template ).toBe( '100px 240px auto 50px 100px 70px' );
+
+		const { container: rowc } = renderComponent(
+			logRowListProps.renderRow( row( { id: 5 } ) )
+		);
+		expect(
+			rowc.querySelector( '.newspack-nodes-log-row' ).style
+				.gridTemplateColumns
+		).toBe( template );
 	} );
 
 	it( 'toggleColumn removes a checked column when its checkbox is clicked', () => {
-		// Uncheck a visible column in the picker → its header disappears.
 		registerViewFixture();
 		const { container } = mount();
 		const colsBtn = Array.from(
 			container.querySelectorAll( 'button' )
 		).find( ( b ) => b.textContent === 'Cols' );
 		act( () => colsBtn.click() );
-		// rid is in DEFAULT_COLUMNS, so its column header should be present.
-		const headersBefore = Array.from(
-			container.querySelectorAll(
-				'.event-logger-request-stream-header-row [role="columnheader"]'
-			)
-		).map( ( n ) => n.textContent );
-		expect( headersBefore ).toContain( 'Request ID' );
+		expect(
+			container.querySelector( '.newspack-nodes-column-picker' )
+		).toBeTruthy();
 		const checkbox = container.querySelector( '#col-rid' );
-		expect( checkbox ).toBeTruthy();
 		expect( checkbox.checked ).toBe( true );
 		act( () => checkbox.click() );
-		const headersAfter = Array.from(
-			container.querySelectorAll(
-				'.event-logger-request-stream-header-row [role="columnheader"]'
+		const ths = [
+			...container.querySelectorAll( '.newspack-nodes-log-header__th' ),
+		].map( ( el ) => el.textContent );
+		expect( ths ).not.toContain( 'Request ID' );
+		expect(
+			JSON.parse(
+				window.localStorage.getItem( 'event-logger-stream-columns' )
 			)
-		).map( ( n ) => n.textContent );
-		expect( headersAfter ).not.toContain( 'Request ID' );
+		).not.toContain( 'rid' );
 	} );
 
-	it( 'toggleColumn adds an unchecked column when its checkbox is clicked', () => {
-		// Adding user_agent inserts it in COLUMNS order (IP..duration).
+	it( 'toggleColumn adds an unchecked column in canonical order', () => {
 		registerViewFixture();
 		const { container } = mount();
 		const colsBtn = Array.from(
@@ -486,63 +373,58 @@ describe( 'RequestStream', () => {
 		).find( ( b ) => b.textContent === 'Cols' );
 		act( () => colsBtn.click() );
 		const uaCheckbox = container.querySelector( '#col-user_agent' );
-		expect( uaCheckbox ).toBeTruthy();
 		expect( uaCheckbox.checked ).toBe( false );
 		act( () => uaCheckbox.click() );
-		const headers = Array.from(
-			container.querySelectorAll(
-				'.event-logger-request-stream-header-row [role="columnheader"]'
-			)
-		).map( ( n ) => n.textContent );
-		expect( headers ).toContain( 'UA' );
-		// Order check: UA sits between IP (remote_addr) and Duration.
-		const ipIdx = headers.indexOf( 'IP' );
-		const uaIdx = headers.indexOf( 'UA' );
-		const durIdx = headers.indexOf( 'Duration' );
+		const ths = [
+			...container.querySelectorAll( '.newspack-nodes-log-header__th' ),
+		].map( ( el ) => el.textContent );
+		const ipIdx = ths.indexOf( 'IP' );
+		const uaIdx = ths.indexOf( 'UA' );
+		const durIdx = ths.indexOf( 'Duration' );
 		expect( ipIdx ).toBeLessThan( uaIdx );
 		expect( uaIdx ).toBeLessThan( durIdx );
 	} );
 
-	// A browse model the mocked graph hook hands back for the browse-UI tests.
-	function browseMock( overrides = {} ) {
-		return {
-			partitions: [],
-			selectedPartition: '',
-			selectPartition: jest.fn(),
-			segments: [],
-			mode: 'live',
-			segmentId: null,
-			follow: jest.fn(),
-			replay: jest.fn(),
-			browseSegment: jest.fn(),
-			...overrides,
-		};
-	}
+	it( 'restores a saved column selection from localStorage', () => {
+		window.localStorage.setItem(
+			'event-logger-stream-columns',
+			JSON.stringify( [ 'time', 'rid', 'user_agent' ] )
+		);
+		registerViewFixture();
+		const { container } = mount();
+		const ths = [
+			...container.querySelectorAll( '.newspack-nodes-log-header__th' ),
+		].map( ( el ) => el.textContent );
+		expect( ths ).toEqual( [ 'Time', 'Request ID', 'UA' ] );
+	} );
+
+	it( 'sources the staleness display from the link connector lastEventTime', () => {
+		registerViewFixture();
+		Core.nodes.set( 'requestlog:link', {
+			lastEventTime: () => Date.now() - 5000,
+		} );
+		const { container } = mount();
+		expect(
+			container.querySelector( '.newspack-nodes-toolbar-stats' )
+				.textContent
+		).toMatch( /\d+s ago/ );
+	} );
 
 	describe( 'glob browse UI', () => {
 		it( 'renders neither the partition selector nor the sidebar by default', () => {
 			registerViewFixture();
-			useRequestLogGraph.mockReturnValue( {
-				setPaused,
-				clear,
-				setFilter: setStreamFilter,
-				browse: browseMock(),
-			} );
 			const { container } = mount();
 			expect(
 				container.querySelector( 'select.newspack-nodes-select' )
 			).toBeNull();
-			expect(
-				container.querySelector( '.newspack-nodes-log-browser' )
-			).toBeNull();
+			expect( logBrowserProps ).toBeUndefined();
 		} );
 
 		it( 'renders a partition selector (All + each dir) once partitions are cataloged', () => {
 			registerViewFixture();
 			useRequestLogGraph.mockReturnValue( {
 				setPaused,
-				clear,
-				setFilter: setStreamFilter,
+				clear: jest.fn(),
 				browse: browseMock( {
 					partitions: [
 						{ key: 'completed.p0', label: 'completed.p0' },
@@ -565,8 +447,7 @@ describe( 'RequestStream', () => {
 			const selectPartition = jest.fn();
 			useRequestLogGraph.mockReturnValue( {
 				setPaused,
-				clear,
-				setFilter: setStreamFilter,
+				clear: jest.fn(),
 				browse: browseMock( {
 					partitions: [
 						{ key: 'completed.p3', label: 'completed.p3' },
@@ -592,7 +473,7 @@ describe( 'RequestStream', () => {
 			expect( selectPartition ).toHaveBeenCalledWith( 'completed.p3' );
 		} );
 
-		it( 'renders the segment sidebar with Live/Replay + segments when browsing', () => {
+		it( 'renders the segment sidebar when a partition is selected', () => {
 			registerViewFixture();
 			const browse = browseMock( {
 				partitions: [ { key: 'completed.p3', label: 'completed.p3' } ],
@@ -603,21 +484,15 @@ describe( 'RequestStream', () => {
 			} );
 			useRequestLogGraph.mockReturnValue( {
 				setPaused,
-				clear,
-				setFilter: setStreamFilter,
+				clear: jest.fn(),
 				browse,
 			} );
-			const { container } = mount();
-			const sidebar = container.querySelector(
-				'.newspack-nodes-log-browser'
-			);
-			expect( sidebar ).toBeTruthy();
-			expect( sidebar.textContent ).toContain( 'Segment 6' );
-			act( () =>
-				sidebar
-					.querySelector( '.newspack-nodes-log-browser__item' )
-					.click()
-			);
+			mount();
+			expect( logBrowserProps.items ).toEqual( [
+				{ id: 6, size: 4096 },
+			] );
+			expect( logBrowserProps.mode ).toBe( 'browse' );
+			logBrowserProps.onSelectItem( { id: 6, size: 4096 } );
 			expect( browse.browseSegment ).toHaveBeenCalledWith( {
 				id: 6,
 				size: 4096,
@@ -625,246 +500,9 @@ describe( 'RequestStream', () => {
 		} );
 	} );
 
-	it( 'sources the staleness display from the link connector lastEventTime', () => {
-		// Staleness = connection liveness; rAF reads the link's lastEventTime.
-		registerViewFixture( {
-			entries: [ entry( { rid: 'r-stale' } ) ],
-		} );
-		Core.nodes.set( 'requestlog:link', {
-			lastEventTime: () => Date.now() - 5000,
-		} );
+	it( 'falls back to an empty model when the view node is absent', () => {
+		// No fixture → useNodeState undefined; the chrome still renders.
 		const { container } = mount();
-		tickFrame();
-		// Find a sibling span in stats whose text matches "Xs ago".
-		const stats = container.querySelector(
-			'.newspack-nodes-toolbar-stats'
-		);
-		expect( stats ).toBeTruthy();
-		expect( stats.textContent ).toMatch( /\d+s ago/ );
-	} );
-
-	it( 'scrolling away from top and back restores the saved animation offset', () => {
-		// Scroll away saves offsetRef; back-to-top restores it.
-		registerViewFixture( {
-			entries: Array.from( { length: 20 }, ( _, i ) =>
-				entry( { seq: i + 1, rid: `r-${ i }` } )
-			),
-		} );
-		const { container } = mount();
-		tickFrame();
-		const list = container.querySelector(
-			'.event-logger-request-stream-list'
-		);
-		expect( list ).toBeTruthy();
-		// Away from top → save branch (offsetRef saved, then zeroed).
-		act( () => {
-			list.scrollTop = 500;
-			list.dispatchEvent( new Event( 'scroll', { bubbles: true } ) );
-		} );
-		// Back to top — fires restore branch.
-		act( () => {
-			list.scrollTop = 0;
-			list.dispatchEvent( new Event( 'scroll', { bubbles: true } ) );
-		} );
-		// Component must still be alive and rendering entries.
-		expect( container.textContent ).toContain( 'r-0' );
-	} );
-
-	it( 'rAF maintains scroll position when buffer grows and the list is scrolled down', () => {
-		// rAF bumps scrollTop for newly prepended entries (scroll preserved).
-		const node = registerViewFixture( {
-			entries: [ entry( { seq: 1, rid: 'r-1' } ) ],
-		} );
-		const { container } = mount();
-		tickFrame();
-		const list = container.querySelector(
-			'.event-logger-request-stream-list'
-		);
-		// Scroll down so isAtTop is false on the next frame.
-		act( () => {
-			list.scrollTop = 500;
-			list.dispatchEvent( new Event( 'scroll', { bubbles: true } ) );
-		} );
-		const before = list.scrollTop;
-		// New buffer entry → next frame bumps scrollTop by ROW_HEIGHT.
-		node.entries = [
-			entry( { seq: 2, rid: 'r-2' } ),
-			entry( { seq: 1, rid: 'r-1' } ),
-		];
-		tickFrame();
-		expect( list.scrollTop ).toBeGreaterThan( before );
-	} );
-
-	it( 'rAF snaps the smooth-scroll offset to zero when it has decayed past the threshold', () => {
-		// Once |offset| < 0.5 the next frame snaps to 0, clears transform.
-		const node = registerViewFixture( {
-			entries: [ entry( { seq: 1, rid: 'r-1' } ) ],
-		} );
-		const { container } = mount();
-		// First frame establishes content / list refs.
-		tickFrame();
-		const content = container.querySelector(
-			'.event-logger-request-stream-content'
-		);
-		// Row at top → offsetRef = -33; later frames decay it to zero.
-		node.entries = [
-			entry( { seq: 2, rid: 'r-2' } ),
-			entry( { seq: 1, rid: 'r-1' } ),
-		];
-		tickFrame();
-		// Drive enough frames for |offset| to decay below 0.5 (~1%/frame).
-		for ( let i = 0; i < 800; i++ ) {
-			tickFrame();
-		}
-		// After the snap, the transform must be cleared and offset is zero.
-		expect( content.style.transform ).toBe( '' );
-	} );
-
-	it( 'keeps rendering the newest row after the buffer saturates its cap', () => {
-		// At the cap the buffer rotates; key change off newest seq, not length.
-		const rotated = ( top ) =>
-			[ top, top - 1, top - 2 ].map( ( s ) =>
-				entry( { seq: s, rid: `r-${ s }`, url: `/u/${ s }` } )
-			);
-		const node = registerViewFixture( { entries: rotated( 3 ) } );
-		const { container } = mount( { maxEntries: 3 } );
-		tickFrame();
-		expect( container.textContent ).toContain( 'r-3' );
-		// Buffer rotates: length still 3, newest seq is now 4, oldest (1) gone.
-		node.entries = rotated( 4 );
-		tickFrame();
-		expect( container.textContent ).toContain( 'r-4' );
-		expect( container.textContent ).not.toContain( 'r-1' );
-	} );
-
-	it( 'applies the full one-row offset when a new row is committed at the top', () => {
-		// Offset lands in the same commit as the new row (no flicker).
-		const node = registerViewFixture( {
-			entries: [ entry( { seq: 1, rid: 'r-1' } ) ],
-		} );
-		const { container } = mount();
-		tickFrame(); // baseline render — no scroll for the first row.
-		const content = container.querySelector(
-			'.event-logger-request-stream-content'
-		);
-		expect( content.style.transform ).toBe( '' );
-		node.entries = [
-			entry( { seq: 2, rid: 'r-2' } ),
-			entry( { seq: 1, rid: 'r-1' } ),
-		];
-		tickFrame();
-		expect( content.style.transform ).toBe( 'translate3d(0,-33px,0)' );
-	} );
-
-	it( 'staleness is connection-driven, so a filter never affects it', () => {
-		// Connection-driven staleness: a non-matching filter keeps "Xs ago".
-		registerViewFixture( { entries: [] } );
-		Core.nodes.set( 'requestlog:link', {
-			lastEventTime: () => Date.now() - 3000,
-		} );
-		const { container } = mount();
-		tickFrame();
-		const input = container.querySelector( '.newspack-nodes-search-input' );
-		const setter = Object.getOwnPropertyDescriptor(
-			window.HTMLInputElement.prototype,
-			'value'
-		).set;
-		act( () => {
-			setter.call( input, 'zzz-no-match' );
-			input.dispatchEvent( new Event( 'input', { bubbles: true } ) );
-		} );
-		tickFrame();
-		const stats = container.querySelector(
-			'.newspack-nodes-toolbar-stats'
-		);
-		expect( stats.textContent ).toMatch( /\d+s ago/ );
-	} );
-
-	it( 'Clear keeps the live-stream staleness (connection still alive)', () => {
-		// Clear empties rows but the connection lives → "Xs ago" persists.
-		const node = registerViewFixture( {
-			entries: [ entry( { seq: 1, rid: 'r-1' } ) ],
-		} );
-		Core.nodes.set( 'requestlog:link', {
-			lastEventTime: () => Date.now() - 8000,
-		} );
-		const { container } = mount();
-		tickFrame();
-		expect(
-			container.querySelector( '.newspack-nodes-toolbar-stats' )
-				.textContent
-		).toMatch( /\d+s ago/ );
-		// Clear empties the log; the node buffer empties too.
-		node.entries = [];
-		const clearBtn = Array.from(
-			container.querySelectorAll( 'button' )
-		).find( ( b ) => b.textContent === 'Clear' );
-		act( () => clearBtn.click() );
-		tickFrame();
-		expect(
-			container.querySelector( '.newspack-nodes-toolbar-stats' )
-				.textContent
-		).toMatch( /\d+s ago/ );
-	} );
-
-	it( 'resets "Xs ago" when an idle stream gets a heartbeat (connector lastEventTime advances)', () => {
-		// Idle stream: a heartbeat advancing lastEventTime resets "Xs ago".
-		jest.useFakeTimers();
-		registerViewFixture( { entries: [] } );
-		Core.nodes.set( 'requestlog:link', {
-			lastEventTime: () => Date.now() - 12000,
-		} );
-		const { container } = mount();
-		tickFrame();
-		// Advance the 1s display timer so the ticking "now" re-reads the ref.
-		act( () => {
-			jest.advanceTimersByTime( 1000 );
-		} );
-		const stats = container.querySelector(
-			'.newspack-nodes-toolbar-stats'
-		);
-		expect( stats.textContent ).toMatch( /1[123]s ago/ );
-		// Heartbeat advances lastEventTime → "Xs ago" resets, not past 12s.
-		Core.node( 'requestlog:link' ).lastEventTime = () => Date.now();
-		tickFrame();
-		act( () => {
-			jest.advanceTimersByTime( 1000 );
-		} );
-		expect( stats.textContent ).toMatch( /[01]s ago/ );
-		jest.useRealTimers();
-	} );
-
-	it( 'baselines the first row after Clear (no slide), then slides the next', () => {
-		// Post-clear: first row baselines (no slide); the next one slides.
-		const node = registerViewFixture( {
-			entries: [
-				entry( { seq: 3, rid: 'r-3' } ),
-				entry( { seq: 2, rid: 'r-2' } ),
-				entry( { seq: 1, rid: 'r-1' } ),
-			],
-		} );
-		const { container } = mount();
-		tickFrame();
-		const content = container.querySelector(
-			'.event-logger-request-stream-content'
-		);
-		node.entries = [];
-		const clearBtn = Array.from(
-			container.querySelectorAll( 'button' )
-		).find( ( b ) => b.textContent === 'Clear' );
-		act( () => clearBtn.click() );
-		tickFrame();
-		expect( content.style.transform ).toBe( '' );
-		// First post-clear row — baseline, no slide.
-		node.entries = [ entry( { seq: 1, rid: 'a' } ) ];
-		tickFrame();
-		expect( content.style.transform ).toBe( '' );
-		// Second post-clear row — slides.
-		node.entries = [
-			entry( { seq: 2, rid: 'b' } ),
-			entry( { seq: 1, rid: 'a' } ),
-		];
-		tickFrame();
-		expect( content.style.transform ).toBe( 'translate3d(0,-33px,0)' );
+		expect( container.textContent ).toContain( 'Request Log' );
 	} );
 } );

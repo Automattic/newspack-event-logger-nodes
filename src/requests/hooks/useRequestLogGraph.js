@@ -16,9 +16,10 @@
  *   requestlog:view        (the view-model node the React view reads)
  *
  * Every node sinks into the interpreter; flow is steered by each node's `target`.
- * The graph is a direct sse-in → requestlog:view. The view's `_appendRow()` does
+ * The graph is a direct sse-in → requestlog:view. The view's `shapeRow()` does
  * the defensive shaping (drop missing-url, clip url@2000 + UA@500, default-fill) —
- * the single place that knows envelope → render-entry mapping.
+ * the single place that knows envelope → render-row mapping. Display filtering
+ * lives in the chrome (`LogStreamViewer` matchRow), not the view node.
  *
  * The graph + connection lifecycle are handed to the shared
  * `useVisibilityGatedLink` hook: it mounts via `mountExospine` (snapshotting Core so
@@ -57,8 +58,8 @@ const controlMsg = ( value ) => {
 
 /**
  * @param {Object} [opts]            Options.
- * @param {number} [opts.maxEntries] View buffer cap (default 1000).
- * @return {{ setPaused: Function, clear: Function, setFilter: Function }}
+ * @param {number} [opts.maxEntries] View ring cap (default 1000).
+ * @return {{ setPaused: Function, clear: Function, browse: Object }}
  *   Control callbacks for the thin React view (the view's own state is read via
  *   useNodeState). Reset Graph is driven by a `Core.bumpGraphGeneration()`
  *   bump — mountExospine subscribes this reused mount's rebuild to it.
@@ -74,7 +75,6 @@ export function useRequestLogGraph( opts = {} ) {
 	// Mirror isPaused into a ref so reinit mountNodes sees current pause.
 	const isPausedRef = useRef( isPaused );
 	isPausedRef.current = isPaused;
-	const filterRef = useRef( '' );
 
 	const isActive = isPageVisible && ! isPaused;
 	// Browse target useGlobBrowse writes; onConnect reads it on (re)connect.
@@ -98,20 +98,13 @@ export function useRequestLogGraph( opts = {} ) {
 			// The view node — the single dashboard consumer of the stream.
 			const view = interpreter.makeNode( 'RequestLogView', VIEW );
 			if ( maxEntries ) {
-				view.maxEntries = maxEntries;
+				// Safe pre-stream: the base ring caps writes against maxLines.
+				view.maxLines = maxEntries;
 			}
 
 			// Re-publish a surviving pause to the fresh view on reinit.
 			if ( isPausedRef.current ) {
 				view.fill( controlMsg( { action: 'pause', paused: true } ) );
-			}
-			if ( filterRef.current ) {
-				view.fill(
-					controlMsg( {
-						action: 'filter',
-						filter: filterRef.current,
-					} )
-				);
 			}
 
 			return { link, view };
@@ -143,22 +136,12 @@ export function useRequestLogGraph( opts = {} ) {
 		}
 	};
 
-	// clear: empty the view buffer (matches RequestStream's handleClear).
+	// clear: empty the view ring (counter + rate reset ride along).
 	const clear = () => {
 		if ( viewRef.current ) {
 			viewRef.current.fill( controlMsg( { action: 'clear' } ) );
 		}
 	};
 
-	const setFilter = ( filter ) => {
-		if ( 'string' !== typeof filter ) {
-			throw new TypeError( 'request log filter must be a string' );
-		}
-		filterRef.current = filter;
-		if ( viewRef.current ) {
-			viewRef.current.fill( controlMsg( { action: 'filter', filter } ) );
-		}
-	};
-
-	return { setPaused, clear, setFilter, browse };
+	return { setPaused, clear, browse };
 }

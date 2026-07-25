@@ -14,8 +14,9 @@
  *
  *   perferrors:view  (the view-model node the React view reads)
  *
- * The link targets the view directly; the view's `fill()` shapes envelopes
- * into rows inline.
+ * The link targets the view directly; the view's `shapeRow()` shapes envelopes
+ * into rows inline. Display filtering lives in the chrome (`LogStreamViewer`
+ * matchRow), not the view node.
  *
  * Every node sinks into the interpreter; flow is steered by each node's `target`. The
  * graph + connection lifecycle are handed to the shared `useVisibilityGatedLink` hook:
@@ -24,10 +25,9 @@
  * and RECONNECTS from the last seen offset on refocus. The `connected → slot` bridge
  * and slot keep-alive live inside RemoteLink.
  *
- * Returns the thin control callbacks the view calls — `setPaused`, `clear`, and
- * `setFilter`. These are dispatched HOOK-DIRECT to the view node
- * (`viewRef.current.fill`), an external bridge: they are NOT routed through
- * the graph.
+ * Returns the thin control callbacks the view calls — `setPaused` and `clear`.
+ * These are dispatched HOOK-DIRECT to the view node (`viewRef.current.fill`),
+ * an external bridge: they are NOT routed through the graph.
  */
 
 import { useRef, useState } from '@wordpress/element';
@@ -60,8 +60,8 @@ const controlMsg = ( value ) => {
 
 /**
  * @param {Object} [opts]            Options.
- * @param {number} [opts.maxEntries] View buffer cap (default 5000).
- * @return {{ setPaused: Function, clear: Function, setFilter: Function }}
+ * @param {number} [opts.maxEntries] View ring cap (default 5000).
+ * @return {{ setPaused: Function, clear: Function, browse: Object }}
  *   Control callbacks for the thin React view (the view's own state is read via
  *   useNodeState). Reset Graph is driven by a `Core.bumpGraphGeneration()`
  *   bump — mountExospine subscribes this reused mount's rebuild to it.
@@ -77,7 +77,6 @@ export function useErrorLogGraph( opts = {} ) {
 	// Mirror isPaused into a ref so reinit mountNodes sees current pause.
 	const isPausedRef = useRef( isPaused );
 	isPausedRef.current = isPaused;
-	const filterRef = useRef( '' );
 
 	const isActive = isPageVisible && ! isPaused;
 	// Browse target useGlobBrowse writes; onConnect reads it on (re)connect.
@@ -100,20 +99,13 @@ export function useErrorLogGraph( opts = {} ) {
 			// The view-model — shapes raw envelopes into rows inline.
 			const view = interpreter.makeNode( 'PerfErrorsView', VIEW );
 			if ( maxEntries ) {
-				view.maxEntries = maxEntries;
+				// Safe pre-stream: the base ring caps writes against maxLines.
+				view.maxLines = maxEntries;
 			}
 
 			// Re-publish a surviving pause to the fresh view on reinit.
 			if ( isPausedRef.current ) {
 				view.fill( controlMsg( { action: 'pause', paused: true } ) );
-			}
-			if ( filterRef.current ) {
-				view.fill(
-					controlMsg( {
-						action: 'filter',
-						filter: filterRef.current,
-					} )
-				);
 			}
 
 			return { link, view };
@@ -145,22 +137,12 @@ export function useErrorLogGraph( opts = {} ) {
 		}
 	};
 
-	// clear: empty the view buffer (matches ErrorLog's handleClear).
+	// clear: empty the view ring (counter + rate reset ride along).
 	const clear = () => {
 		if ( viewRef.current ) {
 			viewRef.current.fill( controlMsg( { action: 'clear' } ) );
 		}
 	};
 
-	const setFilter = ( filter ) => {
-		if ( 'string' !== typeof filter ) {
-			throw new TypeError( 'error log filter must be a string' );
-		}
-		filterRef.current = filter;
-		if ( viewRef.current ) {
-			viewRef.current.fill( controlMsg( { action: 'filter', filter } ) );
-		}
-	};
-
-	return { setPaused, clear, setFilter, browse };
+	return { setPaused, clear, browse };
 }
