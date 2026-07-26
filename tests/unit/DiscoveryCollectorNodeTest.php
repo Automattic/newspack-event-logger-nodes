@@ -48,12 +48,24 @@ class DiscoveryCollectorNodeTest extends TestCase {
 	}
 
 	/** Build a named collector wired to a capturing sink and connected to a Tee target. */
+	/**
+	 * The collector now mints one SIGNED probe per spoke, so the harness wires a
+	 * real egress node and gives it a session — a spoke it cannot sign for is
+	 * skipped, which is the point of the change.
+	 */
 	private function wired_node( Capture_Sink_Node $sink ): Discovery_Collector_Node {
 		$sink->name( '_command_interpreter' );
+		\update_option( \Newspack_Nodes\Vault::OPTION_KEY, [ 'tw0' => [ 'url' => 'https://tw0.example' ] ] );
+		\Newspack_Nodes\Vault::get_instance()->reset_cache();
+		$egress = new \Newspack_Nodes\HTTP_Out_Node();
+		$egress->name( 'spokes:tw0' );
+		$egress->arguments( [ 'tw0' ] );
+		\Newspack_Nodes\Command_Auth::remember_session( 'tw0', \str_repeat( '5', 32 ), 'harness-session-key' );
+
 		$node = new Discovery_Collector_Node();
 		$node->name( 'discovery-collector' );
 		$node->sink( $sink );
-		$node->connect_node( 'spokes:tee' );
+		$node->connect_node( 'spokes:tw0' );
 		return $node;
 	}
 
@@ -81,7 +93,7 @@ class DiscoveryCollectorNodeTest extends TestCase {
 		return Core::arr( $v );
 	}
 
-	public function test_fire_emits_one_discovery_get_command_to_tee(): void {
+	public function test_fire_emits_one_signed_discovery_get_per_spoke(): void {
 		$sink = new Capture_Sink_Node();
 		$node = $this->wired_node( $sink );
 
@@ -90,7 +102,7 @@ class DiscoveryCollectorNodeTest extends TestCase {
 		$this->assertCount( 1, $sink->captured );
 		$out = $sink->captured[0];
 		$this->assertSame( Message::TM_COMMAND, $out[ Message::TYPE ] );
-		$this->assertSame( 'spokes:tee/discovery', $out[ Message::TO ] );
+		$this->assertSame( 'spokes:tw0/discovery', $out[ Message::TO ] );
 		$this->assertSame( 'discovery-collector', $out[ Message::FROM ] );
 		$this->assertSame( 'get', $out[ Message::VALUE ]['name'] );
 		$this->assertSame( [], $out[ Message::VALUE ]['arguments'] );

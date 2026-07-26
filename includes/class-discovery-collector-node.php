@@ -16,6 +16,10 @@
 
 namespace Newspack_Event_Logger_Nodes;
 
+use Newspack_Nodes\Command_Auth;
+use Newspack_Nodes\Core;
+use Newspack_Nodes\Fanout_Targets;
+use Newspack_Nodes\HTTP_Out_Node;
 use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Config as RuntimeConfig;
 use Newspack_Nodes\Message;
@@ -24,6 +28,7 @@ use Newspack_Nodes\Timer_Node;
 \defined( 'ABSPATH' ) || exit;
 
 class Discovery_Collector_Node extends Timer_Node {
+	use Fanout_Targets;
 
 	/** Default discovery cadence (seconds) used when arguments() is armed without an explicit interval. */
 	private const DEFAULT_INTERVAL_SECONDS = 300;
@@ -84,16 +89,32 @@ class Discovery_Collector_Node extends Timer_Node {
 		if ( null === $this->sink ) {
 			return;
 		}
-		$target                = \is_array( $this->target ) ? ( $this->target[0] ?? '' ) : $this->target;
-		$out                   = Message::new_message();
-		$out[ Message::TYPE ]  = Message::TM_COMMAND;
-		$out[ Message::FROM ]  = $this->name;
-		$out[ Message::TO ]    = $target . '/discovery';
-		$out[ Message::VALUE ] = [
-			'name'      => 'get',
-			'arguments' => [],
-		];
-		$this->sink->fill( $out );
+		$sink = $this->sink;
+		// One signed probe per spoke; re-addressing post-mint can't verify.
+		foreach ( $this->live_targets() as $target ) {
+			$spoke = $this->spoke_for( $target );
+			if ( '' === $spoke || ! Command_Auth::has_session( $spoke ) ) {
+				$this->print_less_often( 'discovery-collector: no session for ', $target, '; skipping' );
+				continue;
+			}
+			$out                   = Message::new_message();
+			$out[ Message::TYPE ]  = Message::TM_COMMAND;
+			$out[ Message::FROM ]  = $this->name;
+			$out[ Message::TO ]    = $this->target_path( $target, 'discovery' );
+			$out[ Message::VALUE ] = [
+				'name'      => 'get',
+				'arguments' => [],
+			];
+			Command_Auth::sign_for( $spoke, $out );
+			$sink->fill( $out );
+		}
+	}
+
+	/** The vault id a target egress speaks for; '' when it is not one. */
+	private function spoke_for( string $target ): string {
+		[ $head ] = Message::split_first( $target );
+		$node     = Core::node( $head );
+		return $node instanceof HTTP_Out_Node ? $node->vault_id() : '';
 	}
 
 	/**

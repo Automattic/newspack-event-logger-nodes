@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **`Discovery_Collector` fans out itself, one signed probe per spoke.** A
+  signature under one spoke's key verifies only there, so a `Tee` re-addressing
+  the probe after the mint would produce something no spoke can verify.
+  `spokes:tee` is deleted from `hub-control.tsl`; connect `discovery-collector`
+  and `settings-sync` directly to each `HTTP_Out`. A spoke with no live session
+  is skipped rather than sent something that will be refused. Requires
+  newspack-nodes with `Fanout_Targets` and `HTTP_Out_Node::vault_id()`.
+
 ## [0.42.1] - 2026-07-25
 
 ### Fixed
