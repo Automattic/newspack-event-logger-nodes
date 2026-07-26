@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **The dashboards' own command mints complete.** `usePerformanceGraph`,
+  `useRulesGraph`, `useHookCatalogGraph` and `useGlobBrowse` each built commands
+  without marking them, so every first poll shipped unsigned and was refused —
+  self-healing on the next tick, but noisy and wasteful. Found by running the
+  substrate's mint audit against THIS plugin's source, which the earlier passes
+  never did.
 - **Test harness authenticates and polyfills `TextEncoder`.** The substrate's
   emitters hold until a command session exists, and its signer needs
   `TextEncoder` — which jsdom lacks. Both were added to the substrate's harness

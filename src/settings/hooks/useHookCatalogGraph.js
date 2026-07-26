@@ -47,7 +47,9 @@ import {
 	VALUE,
 	TM_COMMAND,
 	TM_RESPONSE,
+	markLocal,
 } from '@newspack-nodes/runtime';
+
 import '../nodes/register';
 
 const HTTP = '_http';
@@ -70,6 +72,7 @@ function buildCommand( verb, id ) {
 	m[ TO ] = `${ HTTP }/performance`;
 	m[ ID ] = id;
 	m[ VALUE ] = { name: verb, arguments: [] };
+	markLocal( m );
 	return m;
 }
 

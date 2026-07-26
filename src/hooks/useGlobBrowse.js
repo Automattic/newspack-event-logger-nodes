@@ -42,7 +42,9 @@ import {
 	VALUE,
 	TM_COMMAND,
 	TM_STRUCT,
+	markLocal,
 } from '@newspack-nodes/runtime';
+
 import useLogPositions, {
 	segmentPositions,
 	replayPositions,
@@ -70,6 +72,7 @@ function catalogCommand( id, from, name, args ) {
 	m[ TO ] = RAW_LOGS;
 	m[ ID ] = id;
 	m[ VALUE ] = { name, arguments: args };
+	markLocal( m );
 	return m;
 }
 
