@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.42.2] - 2026-07-26
 
+### Changed
+- **Release builds against newspack-nodes 2.0.0.** The workflow pinned an older
+  substrate tag, so the archive was compiled against a runtime that predates the
+  command-session exports this version needs.
+
 ### Fixed
 - **Pause → Replay → Step now steps** in the Request Log and Error Log.
   `useGlobBrowse`'s step carried its own copy of the substrate's cursor logic,
