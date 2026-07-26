@@ -46,7 +46,9 @@ import {
 	TM_COMMAND,
 	TM_STRUCT,
 	formatCommandArgs,
+	markLocal,
 } from '@newspack-nodes/runtime';
+
 import { useBatchedPoll } from '@newspack-nodes/shared/hooks/useBatchedPoll';
 import { addSliceFetcher } from '@newspack-nodes/shared/helpers/addSliceFetcher';
 import usePageVisibility from '@newspack-nodes/shared/hooks/usePageVisibility';
@@ -268,6 +270,7 @@ export function usePerformanceGraph( opts = {} ) {
 				m[ ID ] = id;
 			}
 			m[ VALUE ] = { name: verb, arguments: args };
+			markLocal( m );
 			interpreter.fill( m );
 			return true;
 		},
