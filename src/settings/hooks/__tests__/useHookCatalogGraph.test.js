@@ -28,6 +28,8 @@ import {
 	TM_RESPONSE,
 	TM_ERROR,
 	Core,
+	forgetSession,
+	__setAuthFetch,
 } from '@newspack-nodes/runtime';
 import { useHookCatalogGraph } from '../useHookCatalogGraph';
 
@@ -95,6 +97,26 @@ describe( 'useHookCatalogGraph — exospine + I/O boundary wiring', () => {
 			expect( node ).toBeTruthy();
 			expect( node.sink ).toBe( interpreter );
 		}
+	} );
+
+	/** Opening the modal must not mint before /auth has landed. */
+	test( 'signs the catalog fetch fired on open', async () => {
+		forgetSession();
+		__setAuthFetch( async () => ( {
+			handle: 'eeee5555eeee5555eeee5555eeee5555',
+			key: 'key-hookcatalog-late-auth',
+			expires_in: 3600,
+			now: 1771000000,
+		} ) );
+		const client = makeFakeClient();
+
+		renderHook( () =>
+			useHookCatalogGraph( { isOpen: true, commandClient: client } )
+		);
+		await act( async () => {} );
+
+		expect( client.batches.length ).toBeGreaterThanOrEqual( 1 );
+		expect( client.batches[ 0 ][ 0 ][ VALUE ].auth ).toBeDefined();
 	} );
 
 	test( 'does NOT mount _output / _completion / _uptime / _cwd (dashboards are not REPLs)', () => {

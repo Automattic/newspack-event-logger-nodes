@@ -43,6 +43,7 @@ import {
 	TM_COMMAND,
 	TM_STRUCT,
 	markLocal,
+	ensureSession,
 } from '@newspack-nodes/runtime';
 
 import useLogPositions, {
@@ -153,7 +154,13 @@ export default function useGlobBrowse( {
 			const promise = new Promise( ( resolve, reject ) =>
 				view.replies.add( id, resolve, reject )
 			);
-			link.send( catalogCommand( id, viewName, name, args ) );
+			// After the session lands; re-resolved, as teardown can beat it.
+			ensureSession().then( () => {
+				const live = Core.node( linkName );
+				if ( live ) {
+					live.send( catalogCommand( id, viewName, name, args ) );
+				}
+			} );
 			return promise;
 		},
 		[ linkName, viewName ]

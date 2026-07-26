@@ -25,6 +25,8 @@ import {
 	TM_ERROR,
 	Core,
 	formatCommandArgs,
+	forgetSession,
+	__setAuthFetch,
 } from '@newspack-nodes/runtime';
 import { useRulesGraph } from '../useRulesGraph';
 
@@ -171,6 +173,63 @@ describe( 'useRulesGraph — exospine + receiver wiring', () => {
 		expect( msg[ TO ] ).toBe( 'rules' );
 		expect( msg[ FROM ] ).toBe( RECV );
 		expect( msg[ VALUE ].name ).toBe( 'list' );
+	} );
+
+	/**
+	 * Mount races /auth: the graph is built synchronously, the session arrives a
+	 * round trip later. Firing the list before then mints it UNSIGNED and the
+	 * server refuses it — the page then looked "half-working", alive only because
+	 * a later user-triggered refresh happened to run after auth landed.
+	 */
+	test( 'holds the mount-time list until the session is established', async () => {
+		forgetSession();
+		__setAuthFetch( async () => ( {
+			handle: 'cccc3333cccc3333cccc3333cccc3333',
+			key: 'key-late-auth',
+			expires_in: 3600,
+			now: 1771000000,
+		} ) );
+		const client = makeFakeClient();
+
+		renderHook( () => useRulesGraph( { commandClient: client } ) );
+		await act( async () => {} );
+
+		expect( client.batches.length ).toBeGreaterThanOrEqual( 1 );
+		expect( client.batches[ 0 ][ 0 ][ VALUE ].auth ).toBeDefined();
+	} );
+
+	/** A click during the /auth round trip must still mint a signed command. */
+	test( 'signs a dispatch fired while the session is still in flight', async () => {
+		forgetSession();
+		let landAuth;
+		const inFlight = new Promise( ( resolve ) => {
+			landAuth = resolve;
+		} );
+		__setAuthFetch( () =>
+			inFlight.then( () => ( {
+				handle: 'aaaa9999aaaa9999aaaa9999aaaa9999',
+				key: 'key-rules-in-flight',
+				expires_in: 3600,
+				now: 1771000000,
+			} ) )
+		);
+		const client = makeFakeClient( { list: { rules: [] } } );
+		const { result } = renderHook( () =>
+			useRulesGraph( { commandClient: client } )
+		);
+		await act( async () => {} );
+
+		await act( async () => {
+			const pending = result.current.list();
+			landAuth();
+			await pending;
+		} );
+
+		const listed = client.batches
+			.flat()
+			.filter( ( m ) => 'list' === m[ VALUE ]?.name );
+		expect( listed.length ).toBeGreaterThanOrEqual( 1 );
+		expect( listed[ 0 ][ VALUE ].auth ).toBeDefined();
 	} );
 
 	test( 'exposes the model + CRUD callbacks', async () => {

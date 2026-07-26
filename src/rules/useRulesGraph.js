@@ -44,6 +44,7 @@ import {
 	TM_COMMAND,
 	formatCommandArgs,
 	markLocal,
+	ensureSession,
 } from '@newspack-nodes/runtime';
 
 import './nodes/register';
@@ -95,11 +96,17 @@ export function useRulesGraph( opts = {} ) {
 
 			bumpBuild( ( n ) => n + 1 );
 
-			// Fire one immediate uncorrelated list; its reply refreshes view.
-			shell.fill( buildCommand( 'list', [], makeOpId() ) );
+			// One uncorrelated list once authed; its reply refreshes view.
+			ensureSession().then( () => {
+				if ( shellRef.current !== shell ) {
+					return; // unmounted while /auth was in flight
+				}
+				shell.fill( buildCommand( 'list', [], makeOpId() ) );
+			} );
 
 			return () => {
 				interpreterRef.current = null;
+				shellRef.current = null;
 			};
 		};
 
@@ -121,7 +128,12 @@ export function useRulesGraph( opts = {} ) {
 		const promise = new Promise( ( resolve, reject ) => {
 			view.replies.add( id, resolve, reject );
 		} );
-		shell.fill( buildCommand( verb, args, id ) );
+		// After the session lands: a click can beat /auth.
+		ensureSession().then( () => {
+			if ( shellRef.current === shell ) {
+				shell.fill( buildCommand( verb, args, id ) );
+			}
+		} );
 		return promise;
 	}, [] );
 
