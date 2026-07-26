@@ -46,6 +46,7 @@ import {
 import useLogPositions, {
 	segmentPositions,
 	replayPositions,
+	stepPosition,
 } from '@newspack-nodes/shared/hooks/useLogPositions';
 import { endPosition } from '@newspack-nodes/shared/nodes/seekTracker';
 
@@ -315,16 +316,15 @@ export default function useGlobBrowse( {
 		if ( ! sel || ! link || ( isActiveNow && isActiveNow() ) ) {
 			return undefined;
 		}
-		const cursor =
-			browseTargetRef.current.positions?.[ sel ] ??
-			link.resumePositions()?.[ sel ];
-		if ( ! cursor || 'object' !== typeof cursor ) {
+		const position = stepPosition(
+			link,
+			sel,
+			browseTargetRef.current.positions
+		);
+		if ( null === position ) {
 			return undefined;
 		}
-		return fetchCatalog( 'read_message', [
-			sel,
-			`${ cursor.segment }:${ cursor.offset }`,
-		] )
+		return fetchCatalog( 'read_message', [ sel, position ] )
 			.then( ( result ) => {
 				const view = Core.node( viewName );
 				if ( ! result?.message || ! view ) {
