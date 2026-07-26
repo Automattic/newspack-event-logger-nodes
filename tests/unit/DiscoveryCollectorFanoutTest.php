@@ -36,6 +36,7 @@ class DiscoveryCollectorFanoutTest extends TestCase {
 	}
 
 	protected function tearDown(): void {
+		HTTP_Out_Node::$curl_dispatch = null;
 		Command_Auth::forget_session( 'tw0' );
 		Command_Auth::forget_session( 'tw1' );
 		Vault::get_instance()->reset_cache();
@@ -91,6 +92,30 @@ class DiscoveryCollectorFanoutTest extends TestCase {
 
 		$this->assertCount( 1, $sink->captured );
 		$this->assertSame( 'spokes:tw0/discovery', $sink->captured[0][ Message::TO ] );
+	}
+
+	/**
+	 * Same deadlock Settings_Sync had: a probe is this collector's only traffic to
+	 * a spoke, so skipping for want of a session leaves nothing to ask for one.
+	 * The target may also be a PATH, so the egress is resolved by its HEAD.
+	 */
+	public function test_a_path_form_target_without_a_session_kicks_the_handshake(): void {
+		$this->egress( 'spokes:tw0', 'tw0' );
+		$posts                        = 0;
+		HTTP_Out_Node::$curl_dispatch = static function ( array $opts ) use ( &$posts ): \CurlHandle {
+			++$posts;
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.curl_curl_init
+			return \curl_init();
+		};
+
+		$sink = new Capture_Sink_Node();
+		$node = $this->collector( $sink );
+		$node->connect_node( 'spokes:tw0/discovery' );
+
+		$node->fire();
+
+		$this->assertSame( [], $sink->captured, 'no session: nothing may be minted' );
+		$this->assertGreaterThan( 0, $posts, 'the skip path must ask for a handshake' );
 	}
 
 	public function test_a_vanished_egress_node_is_pruned_from_the_fan_out(): void {

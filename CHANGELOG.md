@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.42.4] - 2026-07-26
+
+### Fixed
+- **`Discovery_Collector` asks for the handshake it is waiting on.** It skipped
+  every spoke without a session, and a probe is its only traffic to one — so
+  nothing ever triggered `/auth` and the pair sat there. It now resolves the
+  egress by the target's HEAD (a target may be a path, `spoke/discovery`, which
+  the old full-path lookup missed entirely) and calls `ensure_session()` on the
+  skip path. Same deadlock, same fix as `Settings_Sync` in newspack-nodes 2.1.1.
+
 ## [0.42.3] - 2026-07-26
 
 ### Security
