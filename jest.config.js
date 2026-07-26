@@ -17,7 +17,9 @@ module.exports = createJestConfig( {
 	extraMappers: {
 		'^d3$': path.resolve( __dirname, 'node_modules/d3' ),
 	},
+	// @noble/hashes is the substrate's synchronous command signer; it and d3 ship
+	// ESM-only, so both must opt OUT of the node_modules transform skip.
 	transformIgnorePatterns: [
-		'node_modules/(?!(d3|d3-.*|internmap|delaunator|robust-predicates)/)',
+		'node_modules/(?!(@noble/.*|d3|d3-.*|internmap|delaunator|robust-predicates)/)',
 	],
 } );

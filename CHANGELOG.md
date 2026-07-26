@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Dashboards inline the substrate's synchronous command signer.** Bundles
+  rebuilt; the jest transform opts `@noble/hashes` out of the `node_modules`
+  skip the same way d3 already was, since both ship ESM-only. Requires the
+  matching newspack-nodes change.
+
+### Changed
 - **`Discovery_Collector` fans out itself, one signed probe per spoke.** A
   signature under one spoke's key verifies only there, so a `Tee` re-addressing
   the probe after the mint would produce something no spoke can verify.
