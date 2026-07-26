@@ -35,15 +35,9 @@ import {
 	mountExospine,
 	CommandClient,
 	useNodeState,
-	newMessage,
-	TYPE,
 	TO,
-	FROM,
 	ID,
-	VALUE,
-	TM_COMMAND,
 	formatCommandArgs,
-	markLocal,
 	ensureSession,
 } from '@newspack-nodes/runtime';
 
@@ -62,13 +56,13 @@ function makeOpId() {
 
 // TM_COMMAND to rules CI; FROM = receiver Tee, TO = _http/rules.
 function buildCommand( verb, args, id ) {
-	const m = newMessage();
-	m[ TYPE ] = TM_COMMAND;
-	m[ FROM ] = RECV;
+	// The receiver Tee mints (FROM=its name, LOCAL, signed); TO/ID after.
+	const m = Core.node( RECV )?.command( verb, args ) ?? null;
+	if ( null === m ) {
+		return null; // unauthenticated; re-auth is under way
+	}
 	m[ TO ] = `${ HTTP }/rules`;
 	m[ ID ] = id;
-	m[ VALUE ] = { name: verb, arguments: args };
-	markLocal( m );
 	return m;
 }
 
