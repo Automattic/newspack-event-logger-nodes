@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.42.2] - 2026-07-26
+
 ### Fixed
 - **Pause → Replay → Step now steps** in the Request Log and Error Log.
   `useGlobBrowse`'s step carried its own copy of the substrate's cursor logic,
