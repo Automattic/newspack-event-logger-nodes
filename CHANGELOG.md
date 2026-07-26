@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Test harness authenticates and polyfills `TextEncoder`.** The substrate's
+  emitters hold until a command session exists, and its signer needs
+  `TextEncoder` — which jsdom lacks. Both were added to the substrate's harness
+  when it gained the signer; this one needed the same. Requires the matching
+  newspack-nodes change.
 - **The E2E dispatch harness signs its commands.** `HTTP_In` no longer signs on
   ingress, so a request must arrive signed like a real client's. Requires the
   matching newspack-nodes change.
