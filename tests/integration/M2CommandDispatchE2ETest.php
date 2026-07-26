@@ -36,6 +36,7 @@ class M2CommandDispatchE2ETest extends TestCase {
 
 	protected function setUp(): void {
 		parent::setUp();
+		\Newspack_Nodes\Command_Auth::$claim_nonce = static fn ( string $n, int $t ): bool => true;
 		// Auth-gated CIs (aggregator, performance) check manage_options.
 		$GLOBALS['_current_user_can'] = true;
 		// Wipe the hook store and re-attach both mount callbacks (substrate
@@ -168,6 +169,8 @@ class M2CommandDispatchE2ETest extends TestCase {
 		$message[ Message::ID ]    = "e2e-{$verb}";
 		$message[ Message::VALUE ] = [ 'name' => $verb, 'arguments' => '', 'payload' => \json_decode( $args, true ) ];
 
+		// Ingress no longer signs; a request arrives signed like a real client's.
+		\Newspack_Nodes\Command_Auth::sign( $message );
 		$req->set_body( Message::packed( $message ) );
 		// text/plain matches the JSONL/text-plain wire contract (the controller
 		// ignores the header, but real callers post JSONL as text/plain).
