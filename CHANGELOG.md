@@ -10,9 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.42.2] - 2026-07-26
 
 ### Changed
-- **Release builds against newspack-nodes 2.0.0.** The workflow pinned an older
-  substrate tag, so the archive was compiled against a runtime that predates the
-  command-session exports this version needs.
+- **Release builds against newspack-nodes 2.0.0**, and declares
+  `@noble/hashes`. The workflow pinned an older substrate tag, so the archive
+  compiled against a runtime predating the command-session exports; and the
+  substrate runtime this plugin inlines imports `@noble/hashes` for its
+  synchronous HMAC, which resolved locally only by walking up into the
+  substrate's own `node_modules`. CI checks the substrate out without its
+  dependencies, so it has to be declared here.
 
 ### Fixed
 - **Pause → Replay → Step now steps** in the Request Log and Error Log.
