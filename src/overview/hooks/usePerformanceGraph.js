@@ -47,6 +47,7 @@ import {
 	TM_STRUCT,
 	formatCommandArgs,
 	markLocal,
+	readyToMint,
 } from '@newspack-nodes/runtime';
 
 import { useBatchedPoll } from '@newspack-nodes/shared/hooks/useBatchedPoll';
@@ -260,6 +261,10 @@ export function usePerformanceGraph( opts = {} ) {
 		( verb, args, from, id, target = TARGET ) => {
 			const interpreter = interpreterRef.current;
 			if ( ! interpreter ) {
+				return false;
+			}
+			// Hold, and ask: the next poke lands signed.
+			if ( ! readyToMint() ) {
 				return false;
 			}
 			const m = newMessage();

@@ -26,6 +26,8 @@ import {
 	TM_RESPONSE,
 	TM_ERROR,
 	TIMESTAMP,
+	forgetSession,
+	__setAuthFetch,
 } from '@newspack-nodes/runtime';
 import { PendingReplies } from '@newspack-nodes/shared/pendingReplies';
 import useGlobBrowse from '../useGlobBrowse';
@@ -164,6 +166,31 @@ beforeEach( () => {
 	global.EventSource = FakeEventSource;
 	window.NewspackNodesData = { restUrl: '/wp-json/', nonce: 'NONCE' };
 	mountExospine();
+} );
+
+/**
+ * The mount-time list_logs races /auth: the graph builds synchronously, the
+ * session lands a round trip later. Firing before then mints an UNSIGNED
+ * command the server refuses, and the browser looks alive only because a later
+ * user action happens to run after auth.
+ */
+describe( 'useGlobBrowse — authentication', () => {
+	test( 'signs the mount-time catalog fetch', async () => {
+		forgetSession();
+		__setAuthFetch( async () => ( {
+			handle: 'dddd4444dddd4444dddd4444dddd4444',
+			key: 'key-glob-late-auth',
+			expires_in: 3600,
+			now: 1771000000,
+		} ) );
+
+		const { client } = await renderBrowse( {
+			payloadByVerb: { list_logs: [] },
+		} );
+
+		expect( client.batches.length ).toBeGreaterThanOrEqual( 1 );
+		expect( client.batches[ 0 ][ VALUE ].auth ).toBeDefined();
+	} );
 } );
 
 describe( 'useGlobBrowse — partition catalog', () => {

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Dashboard commands hold for the session instead of racing it.** A graph is
+  built synchronously; the session lands a round trip later. `useRulesGraph`,
+  `useGlobBrowse` and `useHookCatalogGraph` fired their first fetch immediately,
+  minting UNSIGNED — which is why these pages looked half-alive, working only
+  once a later user action happened to run after auth. Each now fires on
+  `ensureSession()`, guarded against a teardown mid-round-trip.
+- **`usePerformanceGraph` sends nothing while unauthenticated.** `sendCommand`
+  gates on `readyToMint()`, which also asks for a session — so a poke that lands
+  before auth is dropped rather than refused, and the next one works. Requires
+  the matching newspack-nodes change.
+
 ### Changed
 - **The dashboards' own command mints complete.** `usePerformanceGraph`,
   `useRulesGraph`, `useHookCatalogGraph` and `useGlobBrowse` each built commands

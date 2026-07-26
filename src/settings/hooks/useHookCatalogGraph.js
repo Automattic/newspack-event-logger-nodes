@@ -48,6 +48,7 @@ import {
 	TM_COMMAND,
 	TM_RESPONSE,
 	markLocal,
+	ensureSession,
 } from '@newspack-nodes/runtime';
 
 import '../nodes/register';
@@ -135,7 +136,12 @@ export function useHookCatalogGraph( opts = {} ) {
 		const promise = new Promise( ( resolve, reject ) => {
 			view.replies.add( id, resolve, reject );
 		} );
-		interpreter.fill( buildCommand( verb, id ) );
+		// After the session lands: opening can beat /auth.
+		ensureSession().then( () => {
+			if ( interpreterRef.current === interpreter ) {
+				interpreter.fill( buildCommand( verb, id ) );
+			}
+		} );
 		return promise;
 	}, [] );
 

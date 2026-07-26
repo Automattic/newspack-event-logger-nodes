@@ -30,6 +30,8 @@ import {
 	TM_RESPONSE,
 	TM_ERROR,
 	parseCommandArgs,
+	forgetSession,
+	__setAuthFetch,
 } from '@newspack-nodes/runtime';
 import { usePerformanceGraph } from '../usePerformanceGraph';
 
@@ -239,6 +241,26 @@ describe( 'usePerformanceGraph — poll slices fire live args', () => {
 		expect( countVerbs( client.batches, 'overview' ) ).toBeGreaterThan(
 			before
 		);
+	} );
+
+	/**
+	 * Unauthenticated, every poke would mint an UNSIGNED command the server
+	 * refuses — and a dashboard pokes on every filter change, modal close and
+	 * poll tick. Holding is what keeps a dead session from becoming a flood.
+	 */
+	test( 'sends nothing while unauthenticated', async () => {
+		forgetSession();
+		__setAuthFetch( async () => null );
+		const client = makeFakeClient();
+		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
+			initialProps: { commandClient: client },
+		} );
+		await act( async () => {} );
+		await act( async () => {
+			rerender( { commandClient: client, serverFilter: 'web7' } );
+		} );
+
+		expect( countVerbs( client.batches, 'overview' ) ).toBe( 0 );
 	} );
 } );
 
