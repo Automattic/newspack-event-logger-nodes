@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Pause → Replay → Step now steps** in the Request Log and Error Log.
+  `useGlobBrowse`'s step carried its own copy of the substrate's cursor logic,
+  including the object-only guard that silently dropped Replay's magic `start`
+  token. It now uses the shared `stepPosition()` resolver. Requires the matching
+  newspack-nodes change.
 - **Dashboard commands mint through `Node.command()`.** The hand-built builders
   called `markLocal()`, which marks LOCAL but declines to sign with no session —
   passing the browser's gate and earning a server refusal. Minting through the

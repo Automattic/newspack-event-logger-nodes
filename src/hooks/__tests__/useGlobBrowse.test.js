@@ -591,6 +591,26 @@ describe( 'useGlobBrowse — time travel (pause / step / jump)', () => {
 		expect( setPausedRef.current ).toHaveBeenCalledWith( true );
 	} );
 
+	/**
+	 * Replay seeks the magic 'start' token, so the cursor is a STRING. Step used
+	 * to require an object and silently returned — pause → Replay → Step did
+	 * nothing until a segment click replaced the token.
+	 */
+	it( 'step reads from the magic start token a Replay seeks', async () => {
+		const { result, client } = await renderTimeTravel();
+		await act( async () => {
+			result.current.replay();
+		} );
+		await act( async () => {
+			await result.current.step();
+		} );
+
+		expect( sentCommands( client ) ).toContainEqual( {
+			name: 'read_message',
+			args: [ 'errors.p2', 'start' ],
+		} );
+	} );
+
 	it( 'step reads ONE message at the cursor and advances it', async () => {
 		const { result, client, view, browseTargetRef } =
 			await renderTimeTravel();
