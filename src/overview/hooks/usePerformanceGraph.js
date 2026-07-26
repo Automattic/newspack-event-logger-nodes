@@ -40,14 +40,10 @@ import {
 	newMessage,
 	TYPE,
 	TO,
-	FROM,
 	ID,
 	VALUE,
-	TM_COMMAND,
 	TM_STRUCT,
 	formatCommandArgs,
-	markLocal,
-	readyToMint,
 } from '@newspack-nodes/runtime';
 
 import { useBatchedPoll } from '@newspack-nodes/shared/hooks/useBatchedPoll';
@@ -263,19 +259,15 @@ export function usePerformanceGraph( opts = {} ) {
 			if ( ! interpreter ) {
 				return false;
 			}
-			// Hold, and ask: the next poke lands signed.
-			if ( ! readyToMint() ) {
+			// The receiver mints; null = unauthenticated (asks for a session).
+			const m = Core.node( from )?.command( verb, args ) ?? null;
+			if ( null === m ) {
 				return false;
 			}
-			const m = newMessage();
-			m[ TYPE ] = TM_COMMAND;
-			m[ FROM ] = from;
 			m[ TO ] = target;
 			if ( id ) {
 				m[ ID ] = id;
 			}
-			m[ VALUE ] = { name: verb, arguments: args };
-			markLocal( m );
 			interpreter.fill( m );
 			return true;
 		},

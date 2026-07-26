@@ -36,13 +36,10 @@ import {
 	useNodeState,
 	newMessage,
 	TYPE,
-	FROM,
 	TO,
 	ID,
 	VALUE,
-	TM_COMMAND,
 	TM_STRUCT,
-	markLocal,
 	ensureSession,
 } from '@newspack-nodes/runtime';
 
@@ -67,13 +64,13 @@ function makeOpId() {
 
 // A raw-logs verb command; reply routes back to FROM (the view's replies).
 function catalogCommand( id, from, name, args ) {
-	const m = newMessage();
-	m[ TYPE ] = TM_COMMAND;
-	m[ FROM ] = from;
+	// The view mints; TO/ID after (neither is signed).
+	const m = Core.node( from )?.command( name, args ) ?? null;
+	if ( null === m ) {
+		return null; // unauthenticated; re-auth is under way
+	}
 	m[ TO ] = RAW_LOGS;
 	m[ ID ] = id;
-	m[ VALUE ] = { name, arguments: args };
-	markLocal( m );
 	return m;
 }
 

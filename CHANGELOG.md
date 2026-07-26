@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Dashboard commands mint through `Node.command()`.** The hand-built builders
+  called `markLocal()`, which marks LOCAL but declines to sign with no session —
+  passing the browser's gate and earning a server refusal. Minting through the
+  receiver node gates on the session instead. Requires the matching
+  newspack-nodes change.
 - **Dashboard commands hold for the session instead of racing it.** A graph is
   built synchronously; the session lands a round trip later. `useRulesGraph`,
   `useGlobBrowse` and `useHookCatalogGraph` fired their first fetch immediately,

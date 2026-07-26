@@ -18,6 +18,7 @@ return [
 
 	// Per-URL ruleset seed; skips out-specify '/' (worker IPC + wp-cron).
 	'rules'                       => [
+		[ 'pattern' => '/wp-json/newspack-nodes/v1/auth?', 'action' => 'skip' ],
 		[ 'pattern' => '/wp-json/newspack-nodes/v1/command?', 'action' => 'skip' ],
 		[ 'pattern' => '/wp-json/newspack-nodes/v1/log/stream?', 'action' => 'skip' ],
 		[ 'pattern' => '/wp-json/newspack-nodes/v1/messages/stream?', 'action' => 'skip' ],

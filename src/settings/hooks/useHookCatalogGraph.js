@@ -42,12 +42,10 @@ import {
 	newMessage,
 	TYPE,
 	TO,
-	FROM,
 	ID,
 	VALUE,
 	TM_COMMAND,
 	TM_RESPONSE,
-	markLocal,
 	ensureSession,
 } from '@newspack-nodes/runtime';
 
@@ -67,13 +65,13 @@ function makeOpId() {
 
 // Build the TM_COMMAND addressed at the `performance` CI.
 function buildCommand( verb, id ) {
-	const m = newMessage();
-	m[ TYPE ] = TM_COMMAND;
-	m[ FROM ] = VIEW;
+	// The view mints; TO/ID after (neither is signed).
+	const m = Core.node( VIEW )?.command( verb, [] ) ?? null;
+	if ( null === m ) {
+		return null; // unauthenticated; re-auth is under way
+	}
 	m[ TO ] = `${ HTTP }/performance`;
 	m[ ID ] = id;
-	m[ VALUE ] = { name: verb, arguments: [] };
-	markLocal( m );
 	return m;
 }
 
