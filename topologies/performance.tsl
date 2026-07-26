@@ -3,3 +3,4 @@
 #
 include request-builder
 include flame-builder
+secure

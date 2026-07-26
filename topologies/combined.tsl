@@ -12,3 +12,4 @@ disconnect_node firehose:consumer
 connect_node firehose:consumer firehose:tee
 connect_node firehose:tee request-builder
 connect_node firehose:tee job-router
+secure

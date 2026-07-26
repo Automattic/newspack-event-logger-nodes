@@ -38,26 +38,15 @@ class AggregatorTopologyTest extends TestCase {
 		Topology_Registry::register_stock_dir( \dirname( __DIR__, 2 ) . '/topologies' );
 		Command_Interpreter_Node::register_namespace( 'Newspack_Event_Logger_Nodes\\' );
 		Command_Interpreter_Node::register_namespace( 'Newspack_Nodes\\' );
-		$tmp = $this->tmp;
-		Core::register_config_namespace(
-			'config',
-			static function ( string $key ) use ( $tmp ) {
-				static $values = null;
-				if ( null === $values ) {
-					$values = [
-						'logs_dir'      => $tmp . '/logs',
-						'offsets_dir'   => $tmp . '/offsets',
-						'num_partitions' => '1',
-						'segment_size'  => '1048576',
-						'min_segments'  => '3',
-						'num_segments'  => '5',
-						'min_lifetime'  => '120',
-						'lifetime'      => '7200',
-						'max_segments'  => '11',
-					];
-				}
-				return $values[ $key ] ?? null;
-			}
+		$this->use_scratch_config(
+			$this->tmp,
+			[
+				'min_segments' => '3',
+				'num_segments' => '5',
+				'min_lifetime' => '120',
+				'lifetime'     => '7200',
+				'max_segments' => '11',
+			]
 		);
 	}
 

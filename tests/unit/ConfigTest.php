@@ -22,14 +22,15 @@ class ConfigTest extends TestCase {
 
 	protected function setUp(): void {
 		parent::setUp();
+		// Blank the env BEFORE the reset: anything that reads config after it
+		// (make_temp_dir resolves the base dir) would re-cache the old file.
+		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' );
 		Config::reset();
 		// The shared helper realpaths, so expectations survive macOS's
 		// /tmp -> /private/tmp symlink when Config resolves the base.
 		$this->temp_dir = $this->make_temp_dir( 'newspack-event-logger-nodes-test-config-' );
 		// Clear WP option store between tests.
 		$GLOBALS['_wp_options'] = [];
-		// Clear any LOCAL_NEWSPACK_NODES_CONF leftover.
-		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' );
 		// Snapshot the declared-key registry; simulate_unwired_request() empties it.
 		$keys                        = new \ReflectionProperty( RuntimeConfig::class, 'registered_keys' );
 		$this->saved_registered_keys = $keys->getValue();

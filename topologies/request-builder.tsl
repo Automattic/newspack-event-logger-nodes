@@ -29,3 +29,4 @@ connect_node completed:tee completed:partition
 connect_node completed:tee gyroscope:partition
 connect_node firehose:consumer request-builder
 connect_node request-builder requests:partition
+secure

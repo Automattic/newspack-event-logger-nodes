@@ -37,6 +37,52 @@ abstract class TestCase extends RuntimeTestCase {
 	}
 
 	/**
+	 * Point the `config` token namespace at a per-test scratch tree.
+	 *
+	 * Topology TSL resolves `<config:KEY>` through the substrate's registered
+	 * `config` namespace. Tests that load a topology in-process override it so
+	 * the Consumer/Partition nodes open under their own scratch dir instead of
+	 * the shared base directory, where orphan lock dirs from prior runs burn
+	 * ORPHAN_GRACE_S * partitions seconds in `Lock::try_steal_orphan_or_stale()`.
+	 *
+	 * Only the three directory keys are replaced; everything else defers to the
+	 * substrate resolver, which also answers the `<config:KEY>` tokens node
+	 * schemas carry as argument DEFAULTS — a hand-listed key set goes stale the
+	 * next time a schema grows one. An unanswerable key throws rather than
+	 * resolving empty: a null there silently built `/combined.firehose.p0` out
+	 * of a missing `deadletter_dir`.
+	 *
+	 * Callers must restore `Core::$config_resolvers` in tearDown.
+	 *
+	 * @param string                $tmp       Scratch dir, inside the configured base.
+	 * @param array<string, string> $overrides Per-test values for any config key.
+	 */
+	protected function use_scratch_config( string $tmp, array $overrides = [] ): void {
+		\Newspack_Nodes\Config::register_token_namespace();
+		$substrate = \Newspack_Nodes\Core::$config_resolvers['config'];
+		$values    = \array_merge(
+			[
+				'logs_dir'       => $tmp . '/logs',
+				'offsets_dir'    => $tmp . '/offsets',
+				'deadletter_dir' => $tmp . '/deadletter',
+			],
+			$overrides
+		);
+		\Newspack_Nodes\Core::register_config_namespace(
+			'config',
+			static function ( string $key ) use ( $values, $substrate ): string {
+				$value = $values[ $key ] ?? $substrate( $key );
+				if ( null === $value ) {
+					throw new \RuntimeException(
+						\sprintf( 'test config namespace cannot resolve %s', $key )
+					);
+				}
+				return (string) $value;
+			}
+		);
+	}
+
+	/**
 	 * Same as the substrate helper but also resets the application Config
 	 * cache so its merged result picks up the new file.
 	 */

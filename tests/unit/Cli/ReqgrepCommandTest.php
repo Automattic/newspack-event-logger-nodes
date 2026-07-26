@@ -59,7 +59,7 @@ class ReqgrepCommandTest extends TestCase {
 		// stray Consumer timers behind (follow_mode runs its Consumers under it).
 		Event_Framework::reset();
 		// Use /tmp directly for tests that exercise __invoke (path validation).
-		$staging = '/tmp/reqgrep-test-' . \uniqid();
+		$staging = \Newspack_Nodes\Config::get_base_directory() . '/reqgrep-test-' . \uniqid();
 		\mkdir( $staging, 0755, true );
 		$this->tmp = \realpath( $staging ) ?: $staging;
 
@@ -842,7 +842,7 @@ class ReqgrepCommandTest extends TestCase {
 	}
 
 	public function test_cat_mode_drives_consumer_and_process_message(): void {
-		$tmp = '/tmp/reqgrep-cat-mode-' . \uniqid();
+		$tmp = \Newspack_Nodes\Config::get_base_directory() . '/reqgrep-cat-mode-' . \uniqid();
 		\mkdir( $tmp, 0755, true );
 		try {
 			// A complete request matching '/calendar' plus a noise line that
@@ -880,7 +880,7 @@ class ReqgrepCommandTest extends TestCase {
 	public function test_cat_mode_recent_offset_skips_older_segments(): void {
 		// `cat_offset = 'recent'` seeds the Consumer at the second-to-last segment
 		// so a long-running cat doesn't replay ancient history.
-		$tmp = '/tmp/reqgrep-cat-recent-' . \uniqid();
+		$tmp = \Newspack_Nodes\Config::get_base_directory() . '/reqgrep-cat-recent-' . \uniqid();
 		\mkdir( "{$tmp}.p0", 0755, true );
 		try {
 			// Three segments: 0 (oldest), 3 (second-to-last), 5 (newest).
@@ -925,7 +925,7 @@ class ReqgrepCommandTest extends TestCase {
 	}
 
 	public function test_cat_mode_skips_partition_with_no_segments(): void {
-		$tmp = '/tmp/reqgrep-cat-nosegs-' . \uniqid();
+		$tmp = \Newspack_Nodes\Config::get_base_directory() . '/reqgrep-cat-nosegs-' . \uniqid();
 		\mkdir( "{$tmp}.p0", 0755, true );
 		try {
 			$cmd = $this->make_cmd();
@@ -954,7 +954,7 @@ class ReqgrepCommandTest extends TestCase {
 	// -------------------------------------------------------------------------
 
 	public function test_build_consumer_targets_flat_partition_dir(): void {
-		$tmp = '/tmp/reqgrep-build-' . \uniqid();
+		$tmp = \Newspack_Nodes\Config::get_base_directory() . '/reqgrep-build-' . \uniqid();
 		\mkdir( "{$tmp}.p0", 0755, true );
 		try {
 			$cmd = $this->make_cmd();
@@ -975,7 +975,7 @@ class ReqgrepCommandTest extends TestCase {
 	}
 
 	public function test_build_consumer_strips_log_suffix_from_base_dir(): void {
-		$tmp = '/tmp/reqgrep-build-log-' . \uniqid();
+		$tmp = \Newspack_Nodes\Config::get_base_directory() . '/reqgrep-build-log-' . \uniqid();
 		\mkdir( "{$tmp}/firehose.p1", 0755, true );
 		try {
 			$cmd = $this->make_cmd();
@@ -1002,7 +1002,7 @@ class ReqgrepCommandTest extends TestCase {
 	public function test_follow_mode_with_max_iterations_terminates(): void {
 		// Production calls follow_mode() with no arg → PHP_INT_MAX → runs until
 		// SIGINT. Tests pass a small max so the drain loop returns.
-		$tmp = '/tmp/reqgrep-follow-bounded-' . \uniqid();
+		$tmp = \Newspack_Nodes\Config::get_base_directory() . '/reqgrep-follow-bounded-' . \uniqid();
 		\mkdir( "{$tmp}.p0", 0755, true );
 		try {
 			$cmd = $this->make_cmd();
@@ -1029,7 +1029,7 @@ class ReqgrepCommandTest extends TestCase {
 		// follow_mode prints "Base dir:" + "Following N partition(s)" via
 		// WP_CLI::log before entering the drain loop. With max_iterations=0 the
 		// loop is a no-op and only the entry log lines fire.
-		$tmp = '/tmp/reqgrep-follow-entry-log-' . \uniqid();
+		$tmp = \Newspack_Nodes\Config::get_base_directory() . '/reqgrep-follow-entry-log-' . \uniqid();
 		\mkdir( "{$tmp}.p0", 0755, true );
 		try {
 			$GLOBALS['_test_wp_cli_logs'] = [];
@@ -1056,7 +1056,7 @@ class ReqgrepCommandTest extends TestCase {
 	public function test_follow_mode_seeds_at_tail_and_does_not_replay_history(): void {
 		// A partition with existing data: follow seeds each Consumer at 'end'
 		// (the tail), so a bounded drain never replays the pre-existing lines.
-		$tmp = '/tmp/reqgrep-follow-tail-' . \uniqid();
+		$tmp = \Newspack_Nodes\Config::get_base_directory() . '/reqgrep-follow-tail-' . \uniqid();
 		try {
 			$this->seed_partition( $tmp, 0, [
 				[ 'n' => 1, 'rid' => 'existing-rid', 'k' => 'process (start)',    'm' => '/before', 'ts' => 1700000000.0 ],
@@ -1093,7 +1093,7 @@ class ReqgrepCommandTest extends TestCase {
 		// point Config at it via use_base_dir(), and exercise __invoke
 		// end-to-end. Default `assoc_args` (no --follow, stdin not piped)
 		// routes to cat_mode.
-		$base_dir = '/tmp/reqgrep-invoke-' . \uniqid();
+		$base_dir = \Newspack_Nodes\Config::get_base_directory() . '/reqgrep-invoke-' . \uniqid();
 		\mkdir( "{$base_dir}/logs/firehose.p0", 0755, true );
 		\mkdir( "{$base_dir}/logs/firehose.log", 0755, true );
 		try {
@@ -1145,7 +1145,7 @@ class ReqgrepCommandTest extends TestCase {
 	public function test_invoke_errors_when_path_does_not_exist(): void {
 		// Invalid --path triggers WP_CLI::error which our stub throws as
 		// RuntimeException — verify the validation branch fires.
-		$base_dir = '/tmp/reqgrep-invoke-bad-' . \uniqid();
+		$base_dir = \Newspack_Nodes\Config::get_base_directory() . '/reqgrep-invoke-bad-' . \uniqid();
 		\mkdir( "{$base_dir}/logs", 0755, true );
 		try {
 			$GLOBALS['_wp_options']['newspack_nodes_base_directory'] = $base_dir;
@@ -1169,8 +1169,8 @@ class ReqgrepCommandTest extends TestCase {
 		// --path outside the configured logs/ tree triggers a WP_CLI::error
 		// (security envelope: don't let users read arbitrary files via the
 		// CLI's own file-walker).
-		$base_dir = '/tmp/reqgrep-invoke-outside-' . \uniqid();
-		$elsewhere = '/tmp/reqgrep-invoke-elsewhere-' . \uniqid();
+		$base_dir = \Newspack_Nodes\Config::get_base_directory() . '/reqgrep-invoke-outside-' . \uniqid();
+		$elsewhere = \Newspack_Nodes\Config::get_base_directory() . '/reqgrep-invoke-elsewhere-' . \uniqid();
 		\mkdir( "{$base_dir}/logs", 0755, true );
 		\mkdir( $elsewhere, 0755, true );
 		try {
@@ -1194,7 +1194,7 @@ class ReqgrepCommandTest extends TestCase {
 
 	public function test_invoke_clamps_bucket_size_to_max(): void {
 		// bucket-size >10000 must clamp to 10000.
-		$base_dir = '/tmp/reqgrep-invoke-clamp-' . \uniqid();
+		$base_dir = \Newspack_Nodes\Config::get_base_directory() . '/reqgrep-invoke-clamp-' . \uniqid();
 		\mkdir( "{$base_dir}/logs/firehose.p0", 0755, true );
 		\mkdir( "{$base_dir}/logs/firehose.log", 0755, true );
 		try {
@@ -1228,7 +1228,7 @@ class ReqgrepCommandTest extends TestCase {
 
 	public function test_invoke_clamps_bucket_size_to_min(): void {
 		// bucket-size <1 must clamp to 1.
-		$base_dir = '/tmp/reqgrep-invoke-clamp-min-' . \uniqid();
+		$base_dir = \Newspack_Nodes\Config::get_base_directory() . '/reqgrep-invoke-clamp-min-' . \uniqid();
 		\mkdir( "{$base_dir}/logs/firehose.p0", 0755, true );
 		\mkdir( "{$base_dir}/logs/firehose.log", 0755, true );
 		try {
@@ -1262,7 +1262,7 @@ class ReqgrepCommandTest extends TestCase {
 
 	public function test_invoke_recent_offset_takes_effect(): void {
 		// --recent must propagate to the cat_offset property which cat_mode reads.
-		$base_dir = '/tmp/reqgrep-invoke-recent-' . \uniqid();
+		$base_dir = \Newspack_Nodes\Config::get_base_directory() . '/reqgrep-invoke-recent-' . \uniqid();
 		\mkdir( "{$base_dir}/logs/firehose.p0", 0755, true );
 		\mkdir( "{$base_dir}/logs/firehose.log", 0755, true );
 		try {
@@ -1299,7 +1299,7 @@ class ReqgrepCommandTest extends TestCase {
 	}
 
 	public function test_invoke_propagates_raw_flag(): void {
-		$base_dir = '/tmp/reqgrep-invoke-raw-' . \uniqid();
+		$base_dir = \Newspack_Nodes\Config::get_base_directory() . '/reqgrep-invoke-raw-' . \uniqid();
 		\mkdir( "{$base_dir}/logs/firehose.p0", 0755, true );
 		\mkdir( "{$base_dir}/logs/firehose.log", 0755, true );
 		try {
@@ -1329,7 +1329,7 @@ class ReqgrepCommandTest extends TestCase {
 	}
 
 	public function test_invoke_propagates_incomplete_flag(): void {
-		$base_dir = '/tmp/reqgrep-invoke-incomplete-' . \uniqid();
+		$base_dir = \Newspack_Nodes\Config::get_base_directory() . '/reqgrep-invoke-incomplete-' . \uniqid();
 		\mkdir( "{$base_dir}/logs/firehose.p0", 0755, true );
 		\mkdir( "{$base_dir}/logs/firehose.log", 0755, true );
 		try {

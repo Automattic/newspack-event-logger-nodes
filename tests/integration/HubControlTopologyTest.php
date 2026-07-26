@@ -40,23 +40,7 @@ class HubControlTopologyTest extends TestCase {
 		Topology_Registry::register_stock_dir(
 			\dirname( __DIR__, 2 ) . '/topologies'
 		);
-		$tmp = $this->tmp;
-		Core::register_config_namespace(
-			'config',
-			static function ( string $key ) use ( $tmp ) {
-				static $values = null;
-				if ( null === $values ) {
-					$values = [
-						'logs_dir'     => $tmp . '/logs',
-						'offsets_dir'  => $tmp . '/offsets',
-						'segment_size' => '1048576',
-						'num_segments' => '4',
-						'max_lifespan' => '3600',
-					];
-				}
-				return $values[ $key ] ?? null;
-			}
-		);
+		$this->use_scratch_config( $this->tmp, [ 'num_segments' => '4' ] );
 	}
 
 	protected function tearDown(): void {

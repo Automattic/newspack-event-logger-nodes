@@ -20,3 +20,4 @@ cmd flames:partition:config with_index flame-index
 cmd flame-stats:partition:config void_warranty
 connect_node requests:consumer flame-builder
 connect_node flame-builder flames:partition
+secure
