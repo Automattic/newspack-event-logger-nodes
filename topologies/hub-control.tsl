@@ -1,7 +1,7 @@
 # hub-control topology — ELN overlay over the substrate settings-sync plane.
 #
 # Includes the substrate `settings-sync` topology (settings:consumer →
-# settings-sync → spokes:tee plus the six-axis remote_* geometry pushes) and
+# settings-sync fans out per spoke, plus the six-axis remote_* geometry pushes) and
 # layers on the ELN-only pieces: the discovery-collector fan-out and the three
 # application-key pushes (rules, log_memory, flush_every_line). The
 # `num_partitions = 1` pin must live here — frontmatter is read from the
@@ -19,4 +19,3 @@ cmd settings-sync:config add_setting newspack_event_logger_nodes_rules performan
 cmd settings-sync:config add_setting newspack_event_logger_nodes_log_memory performance newspack_event_logger_nodes_log_memory
 cmd settings-sync:config add_setting newspack_event_logger_nodes_flush_every_line performance newspack_event_logger_nodes_flush_every_line
 
-connect_node discovery-collector spokes:tee

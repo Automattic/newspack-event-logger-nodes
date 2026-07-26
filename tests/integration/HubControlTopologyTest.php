@@ -4,7 +4,7 @@
  *
  * ELN's hub-control is now an overlay: it `include`s the substrate `settings-sync`
  * topology (Consumer tailing settings.p0, the substrate Settings_Sync_Node with
- * the six-axis remote_* geometry pushes, and the shared spokes:tee) and layers on
+ * the six-axis remote_* geometry pushes) and layers on
  * the Discovery_Collector_Node plus the three ELN app-key pushes. Loads the TSL
  * in-process via Topology_Loader against a real CommandInterpreter+Router pair
  * (the same path the worker takes at spawn time), then asserts on Core's node
@@ -83,12 +83,11 @@ class HubControlTopologyTest extends TestCase {
 		$this->assertSame( '1', $front['num_partitions'] );
 	}
 
-	public function test_mounts_the_four_pipeline_nodes(): void {
+	public function test_mounts_the_three_pipeline_nodes(): void {
 		$this->load_hub_control();
 
 		$this->assertInstanceOf( Consumer_Node::class, Core::node( 'settings:consumer' ) );
 		$this->assertInstanceOf( Settings_Sync_Node::class, Core::node( 'settings-sync' ) );
-		$this->assertInstanceOf( Tee_Node::class, Core::node( 'spokes:tee' ) );
 		$this->assertInstanceOf( Discovery_Collector_Node::class, Core::node( 'discovery-collector' ) );
 	}
 
@@ -98,8 +97,10 @@ class HubControlTopologyTest extends TestCase {
 		// connect_node sets the logical TO target (Tachikoma owner); every node
 		// physically sinks into _command_interpreter, so assert on target().
 		$this->assertSame( 'settings-sync', Core::node( 'settings:consumer' )->target() );
-		$this->assertSame( 'spokes:tee', Core::node( 'settings-sync' )->target() );
-		$this->assertSame( 'spokes:tee', Core::node( 'discovery-collector' )->target() );
+		// Both minters now carry their own spoke list and fan out themselves, so
+		// the stock topology leaves it empty — an operator connects each HTTP_Out.
+		$this->assertSame( [], Core::node( 'settings-sync' )->target() );
+		$this->assertSame( [], Core::node( 'discovery-collector' )->target() );
 	}
 
 	public function test_settings_sync_registers_all_ten_settings(): void {
