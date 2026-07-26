@@ -16,3 +16,4 @@ connect_node jobintake:consumer job-router
 connect_node firehose:consumer job-router
 connect_node job-router jobs:sieve
 connect_node jobs:sieve jobs:partition
+secure

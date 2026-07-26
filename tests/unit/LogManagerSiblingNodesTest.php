@@ -24,7 +24,9 @@ use PHPUnit\Framework\Attributes\CoversClass;
 #[CoversClass( Log_Manager::class )]
 class LogManagerSiblingNodesTest extends TestCase {
 
-	private const TEST_DIR = '/tmp/event-logger-nodes-sibling-test';
+	// MUST match logging-enabled.php's base_directory: storage nodes refuse a
+	// path outside the runtime tree, and this suite writes logs/ under it.
+	private const TEST_DIR = '/tmp/event-logger-nodes-test';
 
 	/** @var array Original $_SERVER backup. */
 	private array $orig_server;

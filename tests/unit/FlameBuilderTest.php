@@ -61,7 +61,8 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	private function make_partition( string $name ): \Newspack_Nodes\Partition_Node {
-		$dir               = \sys_get_temp_dir() . '/flamestats_' . \uniqid();
+		// Inside the runtime tree: storage nodes refuse a path outside it.
+		$dir               = \Newspack_Nodes\Config::get_base_directory() . '/flamestats_' . \uniqid();
 		$this->temp_dirs[] = $dir;
 		$p = new \Newspack_Nodes\Partition_Node();
 		// Pin a 64 MiB segment so every mirror frame lands in one un-pruned segment.

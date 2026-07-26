@@ -46,13 +46,10 @@ class TopologyCompactSummaryTest extends TestCase {
 	 * because the base substrate TestCase resets Core in setUp() but leaves
 	 * the registry alone — re-registration on the same path is a no-op.
 	 *
-	 * Topology_Loader::load no longer takes a `$config` array — `<config:KEY>`
-	 * tokens resolve through the substrate's registered `config` namespace.
-	 * Override that resolver here so the TSL's `<config:logs_dir>` /
-	 * `<config:offsets_dir>` (and the segment/lifespan literals) point at this
-	 * test's scratch dir instead of the real base directory — otherwise the
-	 * Consumer/Partition nodes open against `/tmp/newspack-nodes` and stall on
-	 * orphan lock dirs from prior runs.
+	 * `use_scratch_config()` repoints the `<config:*>` directory tokens at that
+	 * scratch dir and seeds the retention geometry these tests assert on —
+	 * every value distinct from the baseline config's, so a token that stopped
+	 * flowing through would fail rather than coincide.
 	 */
 	protected function setUp(): void {
 		parent::setUp();
@@ -61,25 +58,15 @@ class TopologyCompactSummaryTest extends TestCase {
 		Topology_Registry::register_stock_dir(
 			\dirname( __DIR__, 2 ) . '/topologies'
 		);
-		$tmp = $this->tmp;
-		Core::register_config_namespace(
-			'config',
-			static function ( string $key ) use ( $tmp ) {
-				static $values = null;
-				if ( null === $values ) {
-					$values = [
-						'logs_dir'     => $tmp . '/logs',
-						'offsets_dir'  => $tmp . '/offsets',
-						'segment_size' => '1048576',
-						'min_segments' => '3',
-						'num_segments' => '5',
-						'min_lifetime' => '120',
-						'lifetime'     => '7200',
-						'max_segments' => '11',
-					];
-				}
-				return $values[ $key ] ?? null;
-			}
+		$this->use_scratch_config(
+			$this->tmp,
+			[
+				'min_segments' => '3',
+				'num_segments' => '5',
+				'min_lifetime' => '120',
+				'lifetime'     => '7200',
+				'max_segments' => '11',
+			]
 		);
 	}
 

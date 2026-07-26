@@ -28,3 +28,4 @@ include topic-probe
 make_node Remote_Job_Rewrite remote-job-rewrite
 make_node Topic firehose:topic <config:logs_dir>/firehose.p{partition}
 connect_node remote-job-rewrite firehose:topic
+secure

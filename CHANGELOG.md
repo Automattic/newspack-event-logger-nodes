@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.42.3] - 2026-07-26
+
+### Security
+- **Every stock topology now declares `secure` (level 1).** A worker whose
+  graph never declares a secure level ran armed-but-undeclared and logged
+  `no secure level declared` on every boot. Level 1 disables the verb class
+  that mints commands on the caller's behalf (`make_node`, `slurp`, `config`,
+  `env`, `var`, `func`, `reply_to`) once the graph is built. Requires
+  newspack-nodes 2.1.0, which introduces the `secure` / `insecure` verbs — the
+  release pin moves with it.
+
+### Fixed
+- **Tests seed their scratch config through one helper.** Three integration
+  tests each carried their own `<config:*>` resolver map, and all three omitted
+  `deadletter_dir` — which resolved empty and built a Consumer against
+  `/combined.firehose.p0`. `TestCase::use_scratch_config()` repoints only the
+  directory tokens and defers the rest to the substrate resolver, so a key it
+  cannot answer throws instead of resolving empty.
+- Scratch paths in the reqgrep, flame-builder, and sibling-node tests now sit
+  under the configured base directory rather than a hardcoded `/tmp` sibling,
+  which the substrate's storage-containment check refuses.
+
 ## [0.42.2] - 2026-07-26
 
 ### Changed
