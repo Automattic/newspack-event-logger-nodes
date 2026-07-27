@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.43.0] - 2026-07-27
+
+### Changed
+- **Adopts newspack-nodes v2.2.3** (was v2.1.0). The bundled console/runtime
+  therefore changes behavior: the REPL's `echo` is now `print` and appends no
+  newline, `var` follows Shell3 semantics (bare `var` lists, `var <name>` reads
+  and autovivifies, `var <name> =` deletes, the full operator set applies),
+  double-quoted strings expand `\n` and friends while single quotes and
+  backticks stay literal, an unquoted `#` comments to end-of-line anywhere, and
+  the message composer can set FROM / TIMESTAMP / ID / KEY. It also carries two
+  aggregation fixes that matter here: a reconnecting `Remote_Source` no longer
+  resumes inside a record (which was dead-lettering one firehose record per
+  reconnect), and the SSE slot survives a re-auth round trip.
+- **`jobs:sieve` age guard raised from 60s to 900s.** A reconnect costs ~45s of
+  stream downtime and the checkpoint interval adds up to 30 more, which
+  straddled the old 60s guard and dropped queued jobs as a side effect of a
+  reconnect rather than of genuine staleness.
+- **Stats `min_lifetime` raised to 43200.**
+
 ## [0.42.4] - 2026-07-26
 
 ### Fixed
