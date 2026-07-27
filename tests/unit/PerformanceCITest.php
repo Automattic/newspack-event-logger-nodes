@@ -107,7 +107,7 @@ class PerformanceCITest extends TestCase {
 
 		$this->assertNotEmpty( $stores );
 		$this->assertSame(
-			3600,
+			43200,
 			$stores[0]->ttl(),
 			'retired substrate key must no longer feed the stats window'
 		);
