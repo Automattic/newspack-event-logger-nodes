@@ -131,7 +131,7 @@ class TopologyShapeTest extends TestCase {
 				'line'
 			);
 			$this->assertContains( 'make_node Job_Router job-router', $statements, "$topology: Job_Router takes no stale timeout" );
-			$this->assertContains( 'make_node Age_Sieve jobs:sieve 60 1', $statements, "$topology: the sieve owns the 60s age guard" );
+			$this->assertContains( 'make_node Age_Sieve jobs:sieve 900 1', $statements, "$topology: the sieve owns the age guard" );
 			$this->assertContains( 'connect_node job-router jobs:sieve', $statements );
 			$this->assertContains( 'connect_node jobs:sieve jobs:partition', $statements );
 		}
