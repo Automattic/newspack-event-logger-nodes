@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Adopts newspack-nodes v2.2.4.** Release bundles now carry ownership-fenced
+  SSE slot leases and the matching heartbeat/disconnect diagnostics, so a stale
+  connection cannot release its successor's slot and a future disconnect names
+  whether the endpoint reported lease loss or the stream ended without a reason.
+
 ## [0.43.0] - 2026-07-27
 
 ### Changed

@@ -1,3 +1,5 @@
+/* global expectConsoleWarn */
+
 /**
  * useRequestLogGraph tests — the Request Log dashboard graph now clips onto the
  * substrate's canonical rule-#2 backbone (`_command_interpreter` → `_router`)
@@ -96,6 +98,7 @@ const HEARTBEAT = '_heartbeat';
 const VIEW = 'requestlog:view';
 const TEE = 'requestlog:stream';
 const COMPOSED_NAMES = [ HTTP, HEARTBEAT ];
+const LEASE_OWNER = '9007199254740993';
 
 // Build a `connected` envelope: flat KEY VALUE string; SLOT omitted if null.
 function connectedEnvelope( { pid = 4242, slot = 3 } = {} ) {
@@ -104,7 +107,7 @@ function connectedEnvelope( { pid = 4242, slot = 3 } = {} ) {
 	m[ KEY ] = 'connected';
 	const parts = [ `PID ${ pid }` ];
 	if ( null !== slot && undefined !== slot ) {
-		parts.push( `SLOT ${ slot }` );
+		parts.push( `SLOT ${ slot } OWNER ${ LEASE_OWNER }` );
 	}
 	parts.push( 'SUBSCRIPTIONS x INTERVAL 2000' );
 	m[ VALUE ] = parts.join( ' ' );
@@ -223,6 +226,9 @@ describe( 'useRequestLogGraph — slot keep-alive bridge', () => {
 
 	test( 'a `connected` envelope with no slot leaves heartbeat slot null', () => {
 		renderHook( () => useRequestLogGraph() );
+		expectConsoleWarn(
+			'ERROR: SseInNode: connected envelope missing or invalid SLOT'
+		);
 		act( () => {
 			FakeEventSource.last.dispatch(
 				'connected',

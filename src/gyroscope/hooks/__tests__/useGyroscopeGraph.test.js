@@ -1,3 +1,5 @@
+/* global expectConsoleWarn */
+
 /**
  * useGyroscopeGraph tests — the Gyroscope dashboard graph clips onto the
  * substrate's canonical rule-#2 backbone (`_command_interpreter` → `_router`)
@@ -80,6 +82,7 @@ const HEARTBEAT = '_heartbeat';
 const VIEW = 'gyroscope:view';
 const TEE = 'gyroscope:stream';
 const COMPOSED_NAMES = [ HTTP, HEARTBEAT ];
+const LEASE_OWNER = '9007199254740993';
 
 // A `connected` envelope as a flat `KEY VALUE` string (SseInNode shape).
 function connectedEnvelope( { pid = 4242, slot = 3 } = {} ) {
@@ -88,7 +91,7 @@ function connectedEnvelope( { pid = 4242, slot = 3 } = {} ) {
 	m[ KEY ] = 'connected';
 	const parts = [ `PID ${ pid }` ];
 	if ( null !== slot && undefined !== slot ) {
-		parts.push( `SLOT ${ slot }` );
+		parts.push( `SLOT ${ slot } OWNER ${ LEASE_OWNER }` );
 	}
 	parts.push( 'SUBSCRIPTIONS x INTERVAL 2000' );
 	m[ VALUE ] = parts.join( ' ' );
@@ -212,6 +215,9 @@ describe( 'useGyroscopeGraph — slot keep-alive bridge', () => {
 
 	test( 'a `connected` envelope with no slot leaves heartbeat slot null', () => {
 		renderHook( () => useGyroscopeGraph() );
+		expectConsoleWarn(
+			'ERROR: SseInNode: connected envelope missing or invalid SLOT'
+		);
 		act( () => {
 			FakeEventSource.last.dispatch(
 				'connected',
