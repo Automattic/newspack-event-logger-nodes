@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.43.1] - 2026-07-28
+
 ### Changed
 - **Adopts newspack-nodes v2.2.4.** Release bundles now carry ownership-fenced
   SSE slot leases and the matching heartbeat/disconnect diagnostics, so a stale
