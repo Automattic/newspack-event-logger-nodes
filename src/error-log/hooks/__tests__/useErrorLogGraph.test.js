@@ -1,3 +1,5 @@
+/* global expectConsoleWarn */
+
 /**
  * useErrorLogGraph tests — the Error Log dashboard graph migrated onto the
  * substrate's canonical rule-#2 backbone (`_command_interpreter → _router`) via
@@ -96,6 +98,7 @@ const TEE = 'perferrors:stream';
 const COMPOSED_NAMES = [ HTTP, HEARTBEAT ];
 // Names that MUST NOT be registered any more — the dead route/transform nodes.
 const REMOVED_NODE_NAMES = [ 'perferrors:route', 'perferrors:transform' ];
+const LEASE_OWNER = '9007199254740993';
 
 // Build a `connected` envelope as a flat `KEY VALUE` string (SseInNode shape).
 function connectedEnvelope( { pid = 4242, slot = 3 } = {} ) {
@@ -104,7 +107,7 @@ function connectedEnvelope( { pid = 4242, slot = 3 } = {} ) {
 	m[ KEY ] = 'connected';
 	const parts = [ `PID ${ pid }` ];
 	if ( null !== slot && undefined !== slot ) {
-		parts.push( `SLOT ${ slot }` );
+		parts.push( `SLOT ${ slot } OWNER ${ LEASE_OWNER }` );
 	}
 	parts.push( 'SUBSCRIPTIONS x INTERVAL 2000' );
 	m[ VALUE ] = parts.join( ' ' );
@@ -230,6 +233,9 @@ describe( 'useErrorLogGraph — slot keep-alive bridge', () => {
 
 	test( 'a `connected` envelope with no slot leaves heartbeat slot null', () => {
 		renderHook( () => useErrorLogGraph() );
+		expectConsoleWarn(
+			'ERROR: SseInNode: connected envelope missing or invalid SLOT'
+		);
 		act( () => {
 			FakeEventSource.last.dispatch(
 				'connected',
