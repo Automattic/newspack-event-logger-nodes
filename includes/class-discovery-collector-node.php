@@ -95,7 +95,10 @@ class Discovery_Collector_Node extends Timer_Node {
 			$egress = $this->egress_for( $target );
 			$spoke  = $egress?->vault_id() ?? '';
 			if ( '' === $spoke || ! Command_Auth::has_session( $spoke ) ) {
-				$this->print_less_often( 'discovery-collector: no session for ', $target, '; skipping' );
+				$uptime = (int) ( Core::$now - Core::$init_time );
+				if ( $uptime > 30 ) {
+					$this->print_less_often( 'discovery-collector: no session for ', $target, '; skipping' );
+				}
 				// Skipping alone deadlocks: someone must ask for the handshake.
 				$egress?->ensure_session();
 				continue;
