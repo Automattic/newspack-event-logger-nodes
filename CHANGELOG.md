@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.43.2] - 2026-07-28
+
+### Changed
+- **Adopts newspack-nodes v2.2.5.** Release bundles now carry the canonical
+  seven-check Site Health/doctor report, APCu-capable command sessions, and
+  base-dir-independent diagnostics while preserving full attached-console
+  access to normal workers.
+
 ## [0.43.1] - 2026-07-28
 
 ### Changed
