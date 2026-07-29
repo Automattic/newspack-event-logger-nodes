@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.43.3] - 2026-07-29
+
+### Changed
+- **Bundles newspack-nodes v2.2.9.** Dashboard first polls now survive
+  navigation-time authentication and visibility races, so request details load
+  without requiring a page reload.
+
 ## [0.43.2] - 2026-07-28
 
 ### Changed
