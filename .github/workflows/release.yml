@@ -30,11 +30,11 @@ jobs:
 
       - name: Checkout
         if: steps.validate.outputs.is_release == 'true'
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Checkout newspack-nodes runtime (for the @newspack-nodes/runtime alias)
         if: steps.validate.outputs.is_release == 'true'
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: Automattic/newspack-nodes
           # Pinned substrate tag — bump when adopting a newer substrate.
@@ -50,7 +50,7 @@ jobs:
 
       - name: Setup Node
         if: steps.validate.outputs.is_release == 'true'
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: '24'
 
