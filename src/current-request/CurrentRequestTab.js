@@ -110,7 +110,7 @@ export default function CurrentRequestTab( { commandClient } = {} ) {
 
 	if ( 'idle' === state.status ) {
 		return (
-			<div className="eln-current-request eln-current-request--empty">
+			<div className="eln-current-request eln-current-request--empty newspack-nodes-empty-state">
 				<p>
 					{ __(
 						'No request to inspect on this page yet.',
@@ -123,7 +123,7 @@ export default function CurrentRequestTab( { commandClient } = {} ) {
 
 	if ( 'loading' === state.status ) {
 		return (
-			<div className="eln-current-request eln-current-request--loading">
+			<div className="eln-current-request eln-current-request--loading newspack-nodes-performance-loading">
 				<p>{ __( 'Loading…', 'newspack-event-logger-nodes' ) }</p>
 			</div>
 		);
@@ -131,7 +131,7 @@ export default function CurrentRequestTab( { commandClient } = {} ) {
 
 	if ( 'processing' === state.status ) {
 		return (
-			<div className="eln-current-request eln-current-request--processing">
+			<div className="eln-current-request eln-current-request--processing newspack-nodes-status">
 				<p>
 					{ __(
 						'This request is still processing — the request builder hasn’t logged it yet.',
@@ -155,9 +155,9 @@ export default function CurrentRequestTab( { commandClient } = {} ) {
 	const hasProfiles = !! request.profiles;
 
 	return (
-		<div className="eln-current-request newspack-nodes-theme">
+		<div className="eln-current-request">
 			<div className="eln-current-request__head">
-				<h2 className="eln-current-request__title">
+				<h2 className="eln-current-request__title newspack-dashboard-title">
 					{ __( 'Request:', 'newspack-event-logger-nodes' ) } { rid }
 				</h2>
 				<a
@@ -198,7 +198,11 @@ export default function CurrentRequestTab( { commandClient } = {} ) {
 					</p>
 				) }
 				{ Number( request.status_code ) > 0 && (
-					<p>
+					<p
+						className={ `newspack-nodes-status${
+							isError ? ' is-error' : ''
+						}` }
+					>
 						<strong>
 							{ __( 'Status:', 'newspack-event-logger-nodes' ) }
 						</strong>{ ' ' }
@@ -209,12 +213,12 @@ export default function CurrentRequestTab( { commandClient } = {} ) {
 			</div>
 			{ hasFlame && (
 				<div className="eln-current-request__flame">
-					<h3>
+					<h3 className="newspack-nodes-section-heading">
 						{ __( 'Request Trace', 'newspack-event-logger-nodes' ) }
 					</h3>
 					<Suspense
 						fallback={
-							<p>
+							<p className="eln-current-request__chart-loading newspack-nodes-performance-loading">
 								{ __(
 									'Loading chart…',
 									'newspack-event-logger-nodes'

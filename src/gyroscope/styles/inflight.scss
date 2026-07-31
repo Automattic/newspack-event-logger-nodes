@@ -4,15 +4,9 @@
  * Live request view, gyroscope page.
  */
 
-@use "base";
-
 // Inflight requests (Gyroscope-style live view)
 .event-logger-inflight {
-	background: var(--paper-3);
-	border-radius: 4px;
 	padding: 16px;
-	color: var(--ink);
-	font-family: base.$system-font;
 	height: 100%;
 	display: flex;
 	flex-direction: column;
@@ -24,26 +18,19 @@
 
 // The stats readout runs count/rps side-by-side here (vs. the canonical
 // class's default stacked layout) — genuine per-dashboard layout, not look.
-.newspack-nodes-toolbar-stats {
+.event-logger-inflight .newspack-nodes-toolbar-stats {
 	flex-direction: row;
 	gap: 8px 16px;
 }
 
-.event-logger-inflight-error {
-	@include base.dark-error-banner;
-}
-
 .newspack-nodes-column-picker {
-	gap: base.$space-md; // Slightly wider gap for this variant
+	gap: 12px;
 }
 
 .event-logger-state-badge {
 	display: inline-block;
 	padding: 2px 6px;
-	border-radius: 3px;
 	font-size: 10px;
-	font-weight: 600;
-	text-transform: lowercase;
 	max-width: 90px;
 	overflow: hidden;
 	text-overflow: ellipsis;

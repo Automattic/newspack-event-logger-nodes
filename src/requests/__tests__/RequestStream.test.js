@@ -271,7 +271,7 @@ describe( 'RequestStream', () => {
 					isEven: true,
 					rid: 'r-cells',
 					url: '/cells',
-					status_code: 404,
+					status_code: 418,
 					duration_ms: 1500,
 				} )
 			)
@@ -282,9 +282,11 @@ describe( 'RequestStream', () => {
 		expect( el.querySelector( '.entry-url-link' ).textContent ).toBe(
 			'/cells'
 		);
-		expect( el.querySelector( '.entry-status--4xx' ).textContent ).toBe(
-			'404'
-		);
+		const status = el.querySelector( '.entry-status' );
+		expect( status.textContent ).toBe( '418' );
+		expect( status.dataset.status ).toBe( '418' );
+		expect( status.className ).not.toContain( 'entry-status--' );
+		expect( status.style.color ).toBe( '' );
 		expect( el.querySelector( '.entry-duration--slow' ) ).toBeTruthy();
 		expect( el.querySelector( '.entry-rid' ).textContent ).toBe(
 			'r-cells'

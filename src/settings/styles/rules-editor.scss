@@ -1,28 +1,22 @@
 /**
- * Rules editor — table field layout + the plain-DOM delete-confirm overlay.
- * (RuleEditModal itself is a @wordpress/components Modal and needs no styling
- * here; only the confirm dialog is hand-rolled.)
+ * Rules editor layout and semantic action accents.
  */
 
 .rules-admin {
 	.rules-admin__badge {
 		display: inline-block;
 		padding: 2px 8px;
-		border-radius: 3px;
 		font-size: 11px;
-		font-weight: 600;
-		text-transform: uppercase;
-		letter-spacing: 0.02em;
 	}
 
 	.rules-admin__badge--log {
-		background: #d5e5f5;
-		color: #003da5;
+		background: var(--np-primary-subtle);
+		color: var(--np-primary);
 	}
 
 	.rules-admin__badge--skip {
-		background: #e0e0e0;
-		color: #555;
+		background: var(--np-surface-muted);
+		color: var(--np-text-secondary);
 	}
 }
 
@@ -39,9 +33,6 @@
 .rules-admin__confirm {
 	max-width: 420px;
 	padding: 20px 24px;
-	background: #fff;
-	border-radius: 4px;
-	box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
 
 	.rules-admin__confirm-actions {
 		display: flex;
@@ -50,6 +41,3 @@
 		margin-top: 16px;
 	}
 }
-
-// RuleEditModal's own field layout moved to src/rules/rule-edit-modal.scss
-// (imported by the component) so the performance-dashboard bundle gets it too.

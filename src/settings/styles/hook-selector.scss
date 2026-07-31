@@ -1,17 +1,8 @@
 /**
- * Hook Selector Styles
- *
- * Hook selector modal for configuring tracked hooks.
- * Uses doubled selectors for specificity to override WP component styles.
+ * Hook picker geometry. Shared modal/button/badge classes own chrome.
  */
 
-@use "base";
-
-// Hook Selector Modal
-// Double selector for specificity (overrides Gutenberg defaults)
 .event-logger-hook-selector-modal.event-logger-hook-selector-modal {
-	// Fit content up to a max-height, THEN the list (not the modal) scrolls:
-	// flex-column frame + static header + flex-growing scroll area below it.
 	&.components-modal__frame {
 		width: 1100px;
 		max-width: 95vw;
@@ -19,12 +10,8 @@
 		max-height: 70vh;
 		display: flex;
 		flex-direction: column;
-	}
-
-	// The WP close (×) button defaults to a near-black currentColor — invisible
-	// on dark skins when this picker is opened from the themed dashboard.
-	.components-modal__header button {
-		color: var(--ink, var(--np-text));
+		grid-template: none;
+		gap: 0;
 	}
 
 	.components-modal__content,
@@ -40,8 +27,6 @@
 	.hook-selector-header {
 		flex: 0 0 auto;
 		padding: 16px 20px;
-		border-bottom: 1px solid var(--paper-shadow, var(--np-border));
-		background: var(--paper-2, var(--np-surface-subtle));
 
 		.components-search-control {
 			margin-bottom: 12px;
@@ -64,14 +49,11 @@
 	.hook-selector-category-header {
 		display: flex;
 		align-items: center;
+		gap: 8px;
+		width: 100%;
+		height: auto;
 		padding: 10px 16px;
 		cursor: pointer;
-		background: base.$white;
-		gap: 8px;
-
-		&:hover {
-			background: var(--paper-2, var(--np-surface-subtle));
-		}
 
 		.components-checkbox-control__input-container {
 			margin: 0;
@@ -83,71 +65,35 @@
 		grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
 		gap: 4px 16px;
 		padding: 8px 16px 16px 40px;
-		background: var(--hover);
-		border-top: 1px solid var(--paper-3, var(--np-surface-muted));
-	}
-
-	.hook-selector-category {
-		border-bottom: 1px solid var(--paper-3, var(--np-surface-muted));
-
-		&:last-child {
-			border-bottom: none;
-		}
-
-		// Discovered category styling
-		&.hook-selector-category-discovered {
-			background: base.$discovered-bg;
-			border-left: 3px solid base.$recommended-color;
-
-			.hook-selector-category-header {
-				background: base.$discovered-bg;
-
-				&:hover {
-					background: base.$discovered-hover;
-				}
-			}
-
-			.hook-selector-hooks {
-				background: base.$discovered-hooks;
-			}
-		}
 	}
 
 	.hook-selector-expand {
 		width: 16px;
-		font-size: 10px;
-		color: var(--ink-3, var(--np-text-secondary));
 		flex-shrink: 0;
+		font-size: 10px;
 	}
 
 	.hook-selector-category-name {
-		font-weight: 500;
-		font-size: 14px;
 		flex-shrink: 0;
+		font-size: 14px;
 	}
 
 	.hook-selector-recommended {
-		color: base.$recommended-color;
+		color: var(--brass-text);
 		margin-left: 4px;
 		font-size: 12px;
 	}
 
 	.hook-selector-category-desc {
-		// Light-chrome muted text — was a $dark-* token before the value flip,
-		// which would read as a near-black term ink on this white modal.
-		color: var(--ink-3, var(--np-text-secondary));
-		font-size: 12px;
 		flex: 1;
 		margin-left: 8px;
+		font-size: 12px;
 	}
 
 	.hook-selector-category-count {
-		font-size: 12px;
-		color: var(--ink-3, var(--np-text-secondary));
-		background: var(--paper-shadow, var(--np-border));
 		padding: 2px 8px;
-		border-radius: 10px;
 		flex-shrink: 0;
+		font-size: 12px;
 	}
 
 	.hook-selector-hook {
@@ -158,100 +104,19 @@
 		cursor: pointer;
 		font-size: 12px;
 
-		&:hover {
-			background: var(--cyan-subtle, var(--np-primary-subtle));
-		}
-
 		input[type="checkbox"] {
 			margin: 0;
 		}
 	}
 
 	.hook-selector-hook-name {
-		font-family: base.$mono-font;
-		font-size: 11px;
-		// Mono hook name body text on the light modal (was a $dark-bg-* token).
-		color: var(--ink, var(--np-text));
 		word-break: break-all;
-	}
-
-	.hook-selector-hook-recommended {
-		.hook-selector-hook-name {
-			font-weight: 500;
-		}
+		font-size: 11px;
 	}
 
 	.hook-selector-recommended-star {
-		color: base.$recommended-color;
+		color: var(--brass-text);
 		margin-left: 4px;
 		font-size: 10px;
-	}
-}
-
-// =============================================================================
-// Dashboard skin — the picker portals with the console skin classes (forwarded
-// from RuleEditModal). Re-theme the light-mode surfaces onto the skin tokens.
-// Scoped to `.topology-app`, which only the dashboard passes.
-// =============================================================================
-
-.event-logger-hook-selector-modal.topology-app {
-	.hook-selector-header {
-		background: var(--paper-2);
-		border-color: var(--paper-shadow);
-	}
-
-	.hook-selector-categories {
-		background: transparent;
-	}
-
-	.hook-selector-category {
-		border-color: var(--paper-shadow);
-	}
-
-	.hook-selector-category-header {
-		background: transparent;
-
-		&:hover {
-			background: var(--hover);
-		}
-	}
-
-	.hook-selector-hooks {
-		background: transparent;
-		border-color: var(--paper-shadow);
-	}
-
-	.hook-selector-hook:hover {
-		background: var(--hover);
-	}
-
-	.hook-selector-category-count {
-		background: var(--paper-2);
-		color: var(--ink-3);
-	}
-
-	.hook-selector-expand,
-	.hook-selector-category-desc {
-		color: var(--ink-3);
-	}
-
-	.hook-selector-hook-name {
-		color: var(--ink);
-	}
-
-	.hook-selector-category.hook-selector-category-discovered {
-		background: var(--paper-2);
-
-		.hook-selector-category-header {
-			background: var(--paper-2);
-
-			&:hover {
-				background: var(--hover);
-			}
-		}
-
-		.hook-selector-hooks {
-			background: var(--paper-3);
-		}
 	}
 }

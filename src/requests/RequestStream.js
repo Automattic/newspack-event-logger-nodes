@@ -3,7 +3,7 @@
  * Request Stream Component — real-time scrolling log of completed requests.
  *
  * A THIN wrapper over the shared `LogStreamViewer` chrome (toolbar, filter,
- * counts + staleness, pause, Debug, Clear, banner, body split, virtualized
+ * counts + rate, pause, Debug, Clear, banner, body split, virtualized
  * `LogRowList`). The `requestlog:*` node graph (mounted by `useRequestLogGraph`)
  * owns all data: `requestlog:link` holds the EventSource and routes envelopes
  * to `requestlog:view` (a `LogStreamViewNode` subclass), whose ring the list
@@ -32,7 +32,6 @@ import parseOffsetJump from '@newspack-nodes/shared/utils/parseOffsetJump';
 import {
 	formatDuration,
 	getDurationClass,
-	getStatusClass,
 } from '@newspack-nodes/shared/utils/formatUtils';
 import './styles/request-stream.scss';
 
@@ -158,7 +157,7 @@ const StreamRow = memo( function StreamRow( {
 	return (
 		<div
 			role="row"
-			className={ `newspack-nodes-log-row ${
+			className={ `newspack-nodes-log-row newspack-nodes-table__row ${
 				row.isEven ? 'row-even' : 'row-odd'
 			}` }
 			style={ { gridTemplateColumns: gridTemplate } }
@@ -170,7 +169,7 @@ const StreamRow = memo( function StreamRow( {
 							<span
 								key={ col }
 								role="cell"
-								className="entry-time"
+								className="newspack-nodes-table__cell entry-time"
 							>
 								{ formatTime( row.timestamp ) }
 							</span>
@@ -180,7 +179,7 @@ const StreamRow = memo( function StreamRow( {
 							<span
 								key={ col }
 								role="cell"
-								className={ `entry-duration entry-duration--${ getDurationClass(
+								className={ `newspack-nodes-table__cell entry-duration entry-duration--${ getDurationClass(
 									row.duration_ms
 								) }` }
 							>
@@ -192,16 +191,19 @@ const StreamRow = memo( function StreamRow( {
 							<span
 								key={ col }
 								role="cell"
-								className={ `entry-status entry-status--${ getStatusClass(
-									row.status_code
-								) }` }
+								className="newspack-nodes-table__cell entry-status"
+								data-status={ row.status_code }
 							>
 								{ row.status_code }
 							</span>
 						);
 					case 'url':
 						return (
-							<span key={ col } role="cell" className="entry-url">
+							<span
+								key={ col }
+								role="cell"
+								className="newspack-nodes-table__cell entry-url"
+							>
 								<span className="entry-method">
 									{ row.method }
 								</span>{ ' ' }
@@ -219,7 +221,11 @@ const StreamRow = memo( function StreamRow( {
 						);
 					case 'rid':
 						return (
-							<span key={ col } role="cell">
+							<span
+								key={ col }
+								role="cell"
+								className="newspack-nodes-table__cell"
+							>
 								<a
 									className="entry-rid"
 									href={ `admin.php?page=event-logger-overview&request=${ encodeURIComponent(
@@ -236,7 +242,11 @@ const StreamRow = memo( function StreamRow( {
 						);
 					case 'remote_addr':
 						return (
-							<span key={ col } role="cell" className="entry-ip">
+							<span
+								key={ col }
+								role="cell"
+								className="newspack-nodes-table__cell entry-ip"
+							>
 								{ row.remote_addr || '-' }
 							</span>
 						);
@@ -245,7 +255,7 @@ const StreamRow = memo( function StreamRow( {
 							<span
 								key={ col }
 								role="cell"
-								className="entry-ua"
+								className="newspack-nodes-table__cell entry-ua"
 								title={ row.user_agent }
 							>
 								{ row.user_agent || '-' }

@@ -1,96 +1,13 @@
-// ThemedRoot paints the console-selected skin onto the standalone ELN
-// dashboards. The `.topology-app` provider supplies the skin tokens; this sheet
-// reskins the dashboard chrome — and the detail Modal, which portals to <body>
-// (PerformanceDashboard gives the modal frame the skin classes so the tokens are
-// in scope there too). No --np-* fallback: the skin context is always present.
-
-@use "@newspack-nodes/shared/styles/inputs";
-
-// Skin-adaptive `.button` theming — the SAME shared mixin the devtools hub uses
-// (one source): stock WordPress `.button` under the Newspack skins, token-themed
-// under the decorative ones (crt/nord/…). Without this the dashboards' buttons
-// stayed admin-styled in every skin.
-@include inputs.skin-adaptive-buttons;
-
-// Page surface — the dashboard root only (the modal has its own frame, below).
-.topology-app > .newspack-nodes-theme {
-	// The dashboard's base surface (outermost) — matches the --paper-3 body.
-	background: var(--paper-3);
+// The shared Nodes UI asset owns every skin surface and component appearance.
+// Event Logger retains only its standalone dashboard and portal geometry.
+.newspack-nodes-skin-root > .event-logger-admin-wrap {
 	min-height: calc(100vh - 96px);
 	box-sizing: border-box;
 }
 
-// The URL/request detail Modal portals to <body> outside .topology-app;
-// PerformanceDashboard tags its frame with the skin classes, so paint it here.
 .event-logger-performance-modal.components-modal__frame {
-	background: var(--paper-2);
-	color: var(--ink);
-	border: 1px solid var(--paper-shadow);
-	// `.topology-app` (added to this frame for the skin tokens) ALSO imposes the
-	// console's GRID layout, which squishes the modal content into a ~232px
-	// column. Restore the Modal's own flex-column stacking — the tokens are
-	// custom properties, unaffected by resetting `display`/`grid`.
 	display: flex;
 	flex-direction: column;
 	grid-template: none;
 	gap: 0;
-}
-
-// All skinned chrome. Scoped to the dashboard root (`.topology-app >
-// .newspack-nodes-theme`, the ThemedRoot child) and the detail modal frame — NOT
-// the bare `.newspack-nodes-theme`, which the substrate debug-overlay console
-// ALSO mounts under (`.topology-app.newspack-nodes-theme` combined). Keeping
-// these reskin rules off that bare class is what stops the form-control bg from
-// painting the console's own REPL + settings-panel inputs unreadable.
-.topology-app > .newspack-nodes-theme,
-.event-logger-performance-modal {
-	// Base text colour: anything that doesn't set its own colour inherits this,
-	// so table cells / headers / sortable buttons read without per-element rules.
-	color: var(--ink);
-
-	// Page + section headings carry no class and inherit WP-admin's dark default
-	// ink (#1d2327) — invisible on the skinned surface. h1 covers the
-	// @wordpress/components Modal title (`.components-modal__header-heading`).
-	.newspack-dashboard-title,
-	h1,
-	h2,
-	h3,
-	h4,
-	h5,
-	h6 {
-		color: var(--ink);
-	}
-
-	// Buttons — the shared @wordpress reskin (WP-core .button + is-primary /
-	// is-secondary / is-tertiary). Defined once in _inputs.scss so the modal
-	// frames (which portal out and must re-declare) can't drift from this.
-	@include inputs.wp-reskin;
-
-	// @wordpress/components surfaces (Card / Surface / InputControl) paint WHITE
-	// from their own emotion CSS — the charts sit inside white Cards otherwise.
-	.components-card,
-	.components-surface {
-		background: var(--paper-2);
-		color: var(--ink);
-		border-color: var(--paper-shadow);
-		box-shadow: none;
-	}
-
-	.components-card__header,
-	.components-card__body,
-	.components-card__footer,
-	.components-card__divider {
-		background: transparent;
-		border-color: var(--paper-shadow);
-	}
-
-	// Form-control chrome (select / input / textarea + the @wordpress InputControl
-	// wrappers) is owned by the shared `@newspack-nodes/shared/styles/controls`
-	// partial (@use'd via the dashboard base), so dashboard menus match the
-	// console's canonical look — no per-plugin !important overrides.
-
-	.components-base-control__label,
-	.components-input-control__label {
-		color: var(--ink-3);
-	}
 }

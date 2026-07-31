@@ -1,14 +1,4 @@
-/**
- * Table Styles
- *
- * Unified table system for URL table and recent requests.
- */
-
 @use "base";
-
-// =============================================================================
-// Shared Table Base
-// =============================================================================
 
 .event-logger-table {
 	display: flex;
@@ -20,61 +10,82 @@
 }
 
 .event-logger-table__header {
-	@include base.table-header;
+	display: grid;
+	gap: 8px;
+	padding: 8px 12px;
+	align-items: center;
+	font-size: 13px;
 }
 
 .event-logger-table__header-btn {
-	@include base.sortable-header-button;
+	width: 100%;
+	min-width: 0;
+	text-align: left;
+	justify-content: flex-start;
+
+	&--numeric {
+		text-align: right;
+		justify-content: flex-end;
+	}
+
+	&--center {
+		text-align: center;
+		justify-content: center;
+	}
+}
+
+.event-logger-table__row {
+	display: grid;
+	gap: 8px;
+	padding: 0 12px;
+	align-items: center;
+	box-sizing: border-box;
+	cursor: pointer;
+}
+
+.event-logger-table__cell {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+
+	code {
+		display: block;
+		font-size: 12px;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
 
 	&--numeric {
 		text-align: right;
 	}
 
-	&--center {
-		text-align: center;
-	}
-}
-
-.event-logger-table__list {
-	@include base.table-list;
-}
-
-.event-logger-table__row {
-	@include base.table-row;
-}
-
-.event-logger-table__cell {
-	@include base.table-cell;
-
-	&--numeric {
-		@include base.table-cell-numeric;
-	}
-
-	&--center {
+	&--center,
+	&--status {
 		text-align: center;
 	}
 
 	&--status {
-		text-align: center;
-		font-family: base.$mono-font;
 		font-size: 11px;
-		font-weight: 600;
 	}
 
 	&--mono {
-		font-family: base.$mono-font;
 		font-size: 12px;
 	}
 }
 
 .event-logger-table__empty {
-	@include base.table-empty;
+	display: flex;
+	align-items: center;
+	justify-content: center;
 	height: 100px;
-}
+	padding: 0;
 
-// =============================================================================
-// URL Table Variant
-// =============================================================================
+	&::before {
+		display: none;
+	}
+}
 
 .event-logger-table--urls {
 	.event-logger-table__header,
@@ -86,10 +97,6 @@
 	}
 }
 
-// =============================================================================
-// Pagination
-// =============================================================================
-
 .event-logger-table__pagination {
 	display: flex;
 	justify-content: space-between;
@@ -97,7 +104,6 @@
 	padding: 8px 0;
 	margin-top: 4px;
 	font-size: 13px;
-	color: var(--ink-3);
 }
 
 .event-logger-table__pagination-controls {
@@ -106,23 +112,10 @@
 	gap: 8px;
 }
 
-// Appearance is the stock `.button button-small`; only the disabled dim is
-// local (the decorative skins don't add a disabled state to `.button`).
-.event-logger-table__pagination-btn {
-	&:disabled {
-		opacity: 0.4;
-		cursor: default;
-	}
-}
-
 .event-logger-table__pagination-page {
 	font-size: 13px;
 	white-space: nowrap;
 }
-
-// =============================================================================
-// Request Table Variant
-// =============================================================================
 
 .event-logger-table--requests {
 	margin-top: 20px;
@@ -137,17 +130,11 @@
 	}
 }
 
-// =============================================================================
-// Log Entries (non-virtualized table)
-// =============================================================================
-
 .event-logger-log-entries {
-	@include base.widefat-themed;
-
-	// Drop the mixin's --paper to --paper-2 so it reads as a panel on the
-	// --paper-3 page base rather than the lightest/elevated surface.
-	.widefat {
-		background: var(--paper-2);
+	.log-entries-actions {
+		display: flex;
+		align-items: center;
+		gap: 12px;
 	}
 
 	table {
@@ -173,40 +160,29 @@
 
 		&__count {
 			font-size: 12px;
-			color: var(--ink-3);
 			min-width: 50px;
 			text-align: center;
 		}
 
 		&__nav {
-			background: none;
-			border: 1px solid var(--paper-shadow);
-			border-radius: 3px;
-			cursor: pointer;
-			font-size: 10px;
-			padding: 2px 5px;
-			color: var(--ink-3);
-			line-height: 1;
-
-			&:disabled {
-				opacity: 0.4;
-				cursor: default;
-			}
-
-			&:hover:not(:disabled) {
-				background: var(--paper-3);
-			}
+			min-width: 26px;
+			justify-content: center;
 		}
 	}
 }
 
-// =============================================================================
-// Pattern-search (request_grep) results dropdown
-// =============================================================================
+.newspack-nodes-ui .button.button-small.log-entries-search__nav {
+	min-height: 0;
+	padding: 2px 5px;
+	font-size: 10px;
+	line-height: 1;
+	white-space: nowrap;
+	margin-bottom: 0;
+	vertical-align: baseline;
+}
 
 .event-logger-search-results {
 	padding: base.$space-sm base.$space-lg;
-	border-bottom: 1px solid var(--paper-shadow);
 
 	ul {
 		margin: 0;
@@ -217,30 +193,29 @@
 		margin: 0;
 	}
 
-	button {
+	.event-logger-search-result {
 		display: flex;
 		align-items: baseline;
 		gap: base.$space-md;
 		width: 100%;
-		padding: base.$space-xs base.$space-sm;
-		background: none;
-		border: 0;
-		border-radius: base.$border-radius-sm;
-		cursor: pointer;
 		text-align: left;
-		color: var(--ink);
-
-		&:hover {
-			background: var(--paper-3);
-		}
+		justify-content: flex-start;
 	}
+}
+
+.newspack-nodes-ui .button.button-small.event-logger-search-result {
+	min-height: 0;
+	padding: base.$space-xs base.$space-sm;
+	font-size: inherit;
+	line-height: inherit;
+	white-space: normal;
+	margin-bottom: 0;
+	vertical-align: baseline;
 }
 
 .event-logger-search-result-method {
 	flex: 0 0 auto;
-	font-family: base.$mono-font;
 	font-size: 11px;
-	color: var(--ink-3);
 }
 
 .event-logger-search-result-url {
@@ -248,26 +223,20 @@
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
-	font-family: base.$mono-font;
 	font-size: 12px;
 }
 
 .event-logger-search-result-count {
 	flex: 0 0 auto;
 	font-size: 11px;
-	color: var(--ink-3);
 }
 
 .event-logger-search-results-caption {
 	margin: 0 0 base.$space-xs;
 	font-size: 11px;
-	color: var(--ink-3);
-	text-transform: uppercase;
-	letter-spacing: 0.04em;
 }
 
 .event-logger-search-results-note {
 	margin: base.$space-xs 0 0;
 	font-size: 11px;
-	color: var(--ink-3);
 }

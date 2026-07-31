@@ -2,8 +2,8 @@
  * ThemedRoot is the no-box token-provider that puts a console-selected skin's
  * universal tokens (--paper/--ink/--cyan/…) in scope above a standalone ELN
  * dashboard root. It reads the persisted skin once at mount via the shared
- * getStoredTheme and renders a `display:contents` wrapper carrying
- * `topology-app newspack-nodes-theme theme-<slug>`.
+ * initSkin and renders a `display:contents` wrapper carrying the explicit
+ * skinned, non-graph product root contract.
  */
 
 import * as React from 'react';
@@ -14,7 +14,7 @@ import { renderComponent } from '../../test-helpers/renderHook';
 describe( 'ThemedRoot', () => {
 	afterEach( () => window.localStorage.clear() );
 
-	it( 'wraps children in a display:contents topology-app token provider', () => {
+	it( 'wraps children in the exact display:contents skinned non-graph provider', () => {
 		const { container, unmount } = renderComponent(
 			React.createElement(
 				ThemedRoot,
@@ -22,11 +22,12 @@ describe( 'ThemedRoot', () => {
 				React.createElement( 'span', { 'data-testid': 'child' }, 'hi' )
 			)
 		);
-		const wrapper = container.querySelector( '.topology-app' );
+		const wrapper = container.firstElementChild;
 		expect( wrapper ).not.toBeNull();
-		expect( wrapper.classList.contains( 'newspack-nodes-theme' ) ).toBe(
-			true
+		expect( wrapper.className ).toBe(
+			'newspack-nodes-skin-root newspack-nodes-theme newspack-nodes-ui'
 		);
+		expect( wrapper.classList.contains( 'topology-app' ) ).toBe( false );
 		expect( wrapper.style.display ).toBe( 'contents' );
 		// No font-family override: the skin's font cascades in.
 		expect( wrapper.style.fontFamily ).toBe( '' );

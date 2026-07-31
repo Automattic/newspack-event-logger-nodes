@@ -98,6 +98,11 @@ describe( 'RequestDetailView', () => {
 			} )
 		);
 		expect( container.textContent ).toContain( 'Timed out' );
+		const badge = container.querySelector( '.newspack-nodes-badge' );
+		expect( badge.className ).toBe(
+			'newspack-nodes-badge newspack-nodes-status is-warning'
+		);
+		expect( badge.style.color ).toBe( '' );
 		unmount();
 	} );
 
@@ -111,6 +116,11 @@ describe( 'RequestDetailView', () => {
 			} )
 		);
 		expect( container.textContent ).toContain( 'Fatal error' );
+		const badge = container.querySelector( '.newspack-nodes-badge' );
+		expect( badge.className ).toBe(
+			'newspack-nodes-badge newspack-nodes-status is-error'
+		);
+		expect( badge.style.color ).toBe( '' );
 		unmount();
 	} );
 

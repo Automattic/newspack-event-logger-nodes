@@ -29,7 +29,6 @@ import {
 import { __, sprintf } from '@wordpress/i18n';
 
 import { useNodeState } from '@newspack-nodes/runtime';
-import { getStoredTheme } from '@newspack-nodes/shared/theme';
 import { computeIndentedEntries } from './utils/logEntryUtils';
 import { DASHBOARD_REFRESH_OPTIONS } from './constants';
 import { usePerformanceGraph } from './hooks/usePerformanceGraph';
@@ -592,7 +591,7 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 			overviewSlice.loading );
 	if ( ! overviewResolved ) {
 		return (
-			<div className="event-logger-performance-loading">
+			<div className="newspack-nodes-performance-loading">
 				<Spinner />
 				<p>
 					{ __(
@@ -681,51 +680,63 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 						selectUrl( null );
 						selectRequest( null );
 					} }
-					className={ `topology-app newspack-nodes-theme theme-${ getStoredTheme() } event-logger-performance-modal` }
+					className="event-logger-performance-modal newspack-nodes-modal newspack-nodes-skin-root newspack-nodes-theme newspack-nodes-ui"
 					headerActions={
 						! selectedRequest && (
 							<>
-								<div className="event-logger-header-stats">
-									<span>
+								<div className="event-logger-header-stats newspack-nodes-stats-grid">
+									<span className="newspack-nodes-stat">
 										{ urlRequestsPerSecond.toFixed( 2 ) }
-										<small>req/s</small>
+										<small className="newspack-nodes-stat-label">
+											req/s
+										</small>
 									</span>
-									<span>
+									<span className="newspack-nodes-stat">
 										{ urlDetail.stats?.avg_ms?.toFixed(
 											0
 										) || 0 }
 										ms
-										<small>avg</small>
+										<small className="newspack-nodes-stat-label">
+											avg
+										</small>
 									</span>
-									<span>
+									<span className="newspack-nodes-stat">
 										{ urlDetail.stats?.p50_ms?.toFixed(
 											0
 										) || 0 }
 										ms
-										<small>p50</small>
+										<small className="newspack-nodes-stat-label">
+											p50
+										</small>
 									</span>
-									<span>
+									<span className="newspack-nodes-stat">
 										{ urlDetail.stats?.p95_ms?.toFixed(
 											0
 										) || 0 }
 										ms
-										<small>p95</small>
+										<small className="newspack-nodes-stat-label">
+											p95
+										</small>
 									</span>
-									<span>
+									<span className="newspack-nodes-stat">
 										{ urlDetail.stats?.p99_ms?.toFixed(
 											0
 										) || 0 }
 										ms
-										<small>p99</small>
+										<small className="newspack-nodes-stat-label">
+											p99
+										</small>
 									</span>
 									{ ( urlDetail.stats?.avg_peak_mb || 0 ) >
 										0 && (
-										<span>
+										<span className="newspack-nodes-stat">
 											{ urlDetail.stats?.avg_peak_mb?.toFixed(
 												1
 											) || 0 }
 											MB
-											<small>mem</small>
+											<small className="newspack-nodes-stat-label">
+												mem
+											</small>
 										</span>
 									) }
 								</div>
@@ -747,10 +758,7 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 											  ) }
 									</button>
 									{ ruleError && (
-										<span
-											className="event-logger-rule-error"
-											style={ { color: '#d63638' } }
-										>
+										<span className="event-logger-rule-error newspack-nodes-status is-error">
 											{ ruleError }
 										</span>
 									) }
@@ -763,7 +771,7 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 					{ selectedRequest && requestDetail && (
 						<button
 							type="button"
-							className="event-logger-modal-back-button"
+							className="button button-small event-logger-modal-back-button"
 							onClick={ () => selectRequest( null ) }
 							aria-label={ __(
 								'Back to URL details',
@@ -806,7 +814,7 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 					onSave={ saveRule }
 					onCancel={ () => setRuleDraft( null ) }
 					onDelete={ ruleDraft.id ? deleteRule : undefined }
-					className={ `topology-app theme-${ getStoredTheme() }` }
+					className="newspack-nodes-skin-root"
 				/>
 			) }
 		</div>

@@ -37,6 +37,15 @@ const HOOKS = {
 	'REST API': [ 'rest_api_init' ],
 };
 
+function productRootClasses( element ) {
+	return Array.from( element.classList ).filter(
+		( className ) =>
+			'topology-app' === className ||
+			className.startsWith( 'theme-' ) ||
+			className.startsWith( 'newspack-nodes-' )
+	);
+}
+
 describe( 'HookSelectorModal', () => {
 	const mounted = [];
 
@@ -86,6 +95,24 @@ describe( 'HookSelectorModal', () => {
 		expect( global.__hookcatalogLastIsOpen ).toBe( true );
 	} );
 
+	it( 'uses the exact standalone product modal root classes', () => {
+		mount( {
+			isOpen: true,
+			onClose: jest.fn(),
+			selected: [],
+			onSelect: jest.fn(),
+		} );
+		const frame = document.querySelector(
+			'.event-logger-hook-selector-modal'
+		);
+		expect( frame ).toBeTruthy();
+		expect( productRootClasses( frame ) ).toEqual( [
+			'newspack-nodes-modal',
+			'newspack-nodes-theme',
+			'newspack-nodes-ui',
+		] );
+	} );
+
 	it( 'renders categories from the hook model', () => {
 		global.__hookcatalogMockModel = {
 			hooksByCategory: HOOKS,
@@ -99,6 +126,15 @@ describe( 'HookSelectorModal', () => {
 		} );
 		expect( document.body.textContent ).toContain( 'Lifecycle' );
 		expect( document.body.textContent ).toContain( 'REST API' );
+		const category = document.querySelector( '.hook-selector-category' );
+		expect( category.classList.contains( 'newspack-nodes-card' ) ).toBe(
+			false
+		);
+		expect(
+			category
+				.querySelector( '.hook-selector-category-header' )
+				.classList.contains( 'button' )
+		).toBe( false );
 	} );
 
 	it( 'shows a spinner while loading', () => {

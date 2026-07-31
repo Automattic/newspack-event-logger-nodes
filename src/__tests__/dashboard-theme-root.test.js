@@ -1,7 +1,7 @@
 /**
  * Tests that the dashboard page roots (overview's AdminApp + the error log's
- * ErrorLogPage) carry the `.newspack-nodes-theme` class so their var(--np-*)
- * token references resolve from the shared newspack-nodes-theme stylesheet.
+ * ErrorLogPage) sit below one exact skinned non-graph provider. Child roots
+ * must not repeat token-provider classes.
  *
  * Both roots render a lazy-loaded child; the assertion is on the
  * synchronously-rendered wrapper, then we flush the pending lazy resolution
@@ -28,57 +28,51 @@ const flushLazy = async () =>
 		await Promise.resolve();
 	} );
 
+const TOKEN_ROOT_CLASSES = [
+	'topology-app',
+	'newspack-nodes-skin-root',
+	'newspack-nodes-theme',
+	'newspack-nodes-ui',
+];
+
+function expectNoTokenRoot( element ) {
+	for ( const className of TOKEN_ROOT_CLASSES ) {
+		expect( element.classList.contains( className ) ).toBe( false );
+	}
+}
+
 describe( 'overview theme root', () => {
-	it( 'AdminApp root carries .newspack-nodes-theme', async () => {
+	it( 'AdminApp has one exact skinned provider and no repeated child provider', async () => {
 		const { container, unmount } = renderComponent(
 			React.createElement( AdminApp )
 		);
+		const provider = container.firstElementChild;
+		const page = provider.querySelector( '.event-logger-admin-wrap' );
+		expect( provider.className ).toBe(
+			'newspack-nodes-skin-root newspack-nodes-theme newspack-nodes-ui'
+		);
+		expect( page ).not.toBeNull();
+		expect( page.className ).toBe(
+			'event-logger-admin-wrap newspack-nodes-admin-wrap'
+		);
 		expect(
-			container.querySelector(
-				'.event-logger-admin-wrap.newspack-nodes-theme'
-			)
-		).not.toBeNull();
+			page.querySelector( '.event-logger-admin-app' ).className
+		).toBe( 'event-logger-admin-app newspack-nodes-admin-app' );
+		expectNoTokenRoot( page );
 		await flushLazy();
 		unmount();
 	} );
 
-	it( 'ErrorLogPage root carries .newspack-nodes-theme', async () => {
+	it( 'ErrorLogPage has one exact skinned provider and no repeated child provider', async () => {
 		const { container, unmount } = renderComponent(
 			React.createElement( ErrorLogPage )
 		);
-		expect(
-			container.querySelector( '.newspack-nodes-theme' )
-		).not.toBeNull();
-		await flushLazy();
-		unmount();
-	} );
-
-	// ThemedRoot wraps each root so a skin's universal tokens are in scope.
-	it( 'AdminApp wraps its root in a ThemedRoot token provider', async () => {
-		const { container, unmount } = renderComponent(
-			React.createElement( AdminApp )
+		const provider = container.firstElementChild;
+		expect( provider.className ).toBe(
+			'newspack-nodes-skin-root newspack-nodes-theme newspack-nodes-ui'
 		);
-		const provider = container.querySelector(
-			'.topology-app.newspack-nodes-theme'
-		);
-		expect( provider ).not.toBeNull();
 		expect( provider.style.display ).toBe( 'contents' );
-		expect(
-			provider.querySelector( '.event-logger-admin-wrap' )
-		).not.toBeNull();
-		await flushLazy();
-		unmount();
-	} );
-
-	it( 'ErrorLogPage wraps its root in a ThemedRoot token provider', async () => {
-		const { container, unmount } = renderComponent(
-			React.createElement( ErrorLogPage )
-		);
-		const provider = container.querySelector(
-			'.topology-app.newspack-nodes-theme'
-		);
-		expect( provider ).not.toBeNull();
-		expect( provider.style.display ).toBe( 'contents' );
+		expectNoTokenRoot( provider.firstElementChild );
 		await flushLazy();
 		unmount();
 	} );

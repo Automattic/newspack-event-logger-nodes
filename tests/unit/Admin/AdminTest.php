@@ -395,10 +395,7 @@ class AdminTest extends TestCase {
 		$this->assertStringContainsString( 'Settings reset to defaults.', $html );
 	}
 
-	public function test_render_settings_page_wrap_carries_newspack_theme_class(): void {
-		// The settings chrome references var(--np-*) tokens (Newspack reskin), so
-		// the page wrap must carry the .newspack-nodes-theme class that defines
-		// them; without it every token falls back to its CSS default.
+	public function test_render_settings_page_wrap_has_exact_standalone_product_root_classes(): void {
 		$admin = new Admin();
 		$admin->register_settings();
 
@@ -406,9 +403,13 @@ class AdminTest extends TestCase {
 		$admin->render_settings_page();
 		$html = \ob_get_clean();
 
-		$this->assertStringContainsString(
-			'wrap event-logger-settings-wrap newspack-nodes-theme',
-			$html
+		$this->assertSame(
+			1,
+			\preg_match( '/<div class="([^"]*event-logger-settings-wrap[^"]*)">/', $html, $matches )
+		);
+		$this->assertSame(
+			'wrap event-logger-settings-wrap newspack-nodes-theme newspack-nodes-ui',
+			$matches[1]
 		);
 	}
 

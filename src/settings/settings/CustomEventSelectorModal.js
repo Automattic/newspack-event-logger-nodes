@@ -107,7 +107,7 @@ export default function CustomEventSelectorModal( {
 				'newspack-event-logger-nodes'
 			) }
 			onRequestClose={ onClose }
-			className={ `event-logger-custom-event-modal newspack-nodes-theme ${ className }`.trim() }
+			className={ `event-logger-custom-event-modal newspack-nodes-modal newspack-nodes-theme newspack-nodes-ui ${ className }`.trim() }
 		>
 			<div className="custom-event-header">
 				<SearchControl
@@ -162,7 +162,7 @@ export default function CustomEventSelectorModal( {
 						<label
 							key={ event }
 							htmlFor={ eventId }
-							className={ `custom-event-item${
+							className={ `custom-event-item newspack-nodes-interactive-row${
 								isSelected ? ' is-selected' : ''
 							}` }
 						>
@@ -183,7 +183,7 @@ export default function CustomEventSelectorModal( {
 			</div>
 
 			<div className="custom-event-footer">
-				<span className="custom-event-count">
+				<span className="custom-event-count newspack-nodes-status">
 					{ sprintf(
 						// translators: 1: number of selected events, 2: total number of events.
 						_n(

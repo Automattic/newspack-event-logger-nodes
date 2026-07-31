@@ -1,12 +1,6 @@
 /**
- * TagInputField styles. Imported by the component itself so EVERY bundle that
- * renders it (the settings rules editor AND the performance dashboard's "Log
- * this URL" modal, via RuleEditModal's Significant Events field) gets them —
- * these were previously inlined in settings.scss, which only the settings
- * bundle loads.
+ * Tag and selector geometry. Shared badge/status/control styles own chrome.
  */
-
-@use "base";
 
 .event-logger-tag-input {
 	max-width: 60em;
@@ -34,24 +28,9 @@
 	align-items: center;
 	gap: 4px;
 	padding: 4px 6px 4px 10px;
-	border-radius: base.$border-radius-sm;
 	font-size: 13px;
 	line-height: 1.4;
 	max-width: 100%;
-
-	// Default values - subtle gray
-	&.is-default {
-		background: var(--paper-shadow, var(--np-border));
-		border: 1px solid var(--ink-3, var(--np-border-strong));
-		color: var(--ink, var(--np-text));
-	}
-
-	// Custom/user-added values — Cobalt highlight.
-	&.is-custom {
-		background: var(--np-primary-subtle);
-		border: 1px solid var(--np-primary);
-		color: var(--ink, var(--np-text));
-	}
 }
 
 .event-logger-tag-text {
@@ -59,9 +38,6 @@
 	overflow-wrap: break-word;
 }
 
-// The @wordpress/components icon Button already draws a transparent,
-// hover-lit control; only the pill-fit sizing is local (drop the chrome
-// re-theme so the button keeps its themed component look).
 button.components-button.event-logger-tag-remove {
 	flex-shrink: 0;
 	display: flex;
@@ -88,10 +64,6 @@ button.components-button.event-logger-tag-remove {
 	gap: 8px;
 }
 
-// =============================================================================
-// Hook/Event Selector
-// =============================================================================
-
 .event-logger-selector-row {
 	display: flex;
 	align-items: center;
@@ -99,35 +71,5 @@ button.components-button.event-logger-tag-remove {
 }
 
 .event-logger-selector-count {
-	color: var(--ink-3, var(--np-text-secondary));
 	font-size: 13px;
-}
-
-// =============================================================================
-// Dashboard skin — when the field renders inside a dashboard-portaled modal it
-// carries the console skin classes; re-theme the light-mode tag pills onto the
-// skin tokens (the bare <input> is themed by rule-edit-modal.scss's control
-// rules). Scoped to `.topology-app`, which only the dashboard passes.
-// =============================================================================
-
-.topology-app {
-	.event-logger-tag-token {
-		&.is-default {
-			background: var(--paper-2);
-			border-color: var(--paper-shadow);
-			color: var(--ink);
-		}
-
-		&.is-custom {
-			background: var(--paper-2);
-			// Match the console's tee-target chips (`.topology-edit-chip`): quiet
-			// --ink-3 border, not the garish full --cyan.
-			border-color: var(--ink-3);
-			color: var(--ink);
-		}
-	}
-
-	.event-logger-selector-count {
-		color: var(--ink-3);
-	}
 }

@@ -16,7 +16,6 @@
 
 namespace Newspack_Event_Logger_Nodes;
 
-use Newspack_Nodes\Bootstrap;
 use Newspack_Nodes\Config as RuntimeConfig;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Config_Utils;
@@ -29,9 +28,6 @@ if ( ! \defined( 'ABSPATH' ) ) {
  * Configuration management class.
  */
 class Config {
-
-	/** XXX: One-time marker so `correct_option_autoload()` sweeps once per install. */
-	public const AUTOLOAD_FIXED_OPTION = 'newspack_event_logger_nodes_autoload_fixed';
 
 	/** Staging option: custom-event names discovered across spokes (admin/health-check only). */
 	public const OPTION_DISCOVERED_EVENTS = 'newspack_event_logger_nodes_discovered_events';
@@ -260,31 +256,6 @@ class Config {
 		}
 		RuntimeConfig::register_keys( Settings_Schema::get()->overlay_keys() );
 		RuntimeConfig::register_keys( \array_keys( self::load_config_defaults() ) );
-	}
-
-	/**
-	 * One-time autoload-correction sweep, applying `autoload_for()` to every
-	 * application option (schema keys + the explicitly-non-autoloaded set).
-	 * Fixes existing installs that persisted these with the wrong flag, once,
-	 * guarded by a marker. Hooked on `admin_init`; no-op on WP < 6.6. The
-	 * substrate runs its own sweep for the `newspack_nodes_*` keys.
-	 */
-	public static function correct_option_autoload(): void {
-		if ( ! \function_exists( 'wp_set_option_autoload' ) ) {
-			return;
-		}
-		if ( ! empty( \get_option( self::AUTOLOAD_FIXED_OPTION ) ) ) {
-			return;
-		}
-		$options = \array_keys( self::$non_autoloaded_options );
-		$schema  = Settings_Schema::get();
-		foreach ( $schema->overlay_keys() as $key ) {
-			$options[] = $schema->prefix() . $key;
-		}
-		foreach ( \array_unique( $options ) as $option ) {
-			\wp_set_option_autoload( $option, self::autoload_for( $option ) );
-		}
-		\update_option( self::AUTOLOAD_FIXED_OPTION, '1', false );
 	}
 
 	/**

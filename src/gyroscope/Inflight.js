@@ -13,9 +13,9 @@
  * The refresh-interval timer (user-controllable, 0-9 keys + dropdown) drives the
  * render cadence: each tick it calls `Core.node('gyroscope:view').snapshot(maxRows)`
  * — which reaps completed entries (shown one tick then dropped), sorts by est_ms
- * desc, caps to maxRows — and reads `.rps` off the node (and the RemoteLink's
- * `lastEventTime()` for staleness). A busy stream never re-renders React per
- * message; only the cheap snapshot is pushed at the refresh cadence.
+ * desc, caps to maxRows — and reads `.rps` off the node. A busy stream never
+ * re-renders React per message; only the cheap snapshot is pushed at the
+ * refresh cadence.
  *
  * The low-frequency `{ connectionError }` model (the reconnect banner) is read
  * separately via `useNodeState('gyroscope:view','view')`.
@@ -31,19 +31,15 @@ import {
 	formatDuration,
 	getDurationClass,
 	getStateColor,
-	getStatusClass,
 	getTextColor,
 } from '@newspack-nodes/shared/utils/formatUtils';
 import fnv1a from '@newspack-nodes/shared/utils/fnv1a';
 import ConnectionBanner from '@newspack-nodes/shared/components/ConnectionBanner';
-import StalenessIndicator from '@newspack-nodes/shared/components/StalenessIndicator';
 import './styles/inflight.scss';
 import './styles/request-stream.scss';
 
 // The view node the refresh tick reads the in-flight snapshot + rps off of.
 const VIEW_NODE = 'gyroscope:view';
-// SseIn stamps lastEventTime on frames + idle heartbeats; staleness reads it.
-const LINK_NODE = 'gyroscope:link';
 // The low-frequency view model before the view node publishes one.
 const EMPTY_VIEW = { connectionError: false };
 
@@ -176,7 +172,6 @@ export default function Inflight( { maxRows = 20 } ) {
 	const { connectionError } = useNodeState( VIEW_NODE, 'view' ) ?? EMPTY_VIEW;
 
 	const [ requests, setRequests ] = useState( [] );
-	const [ lastEventTime, setLastEventTime ] = useState( null );
 	const [ refreshInterval, setRefreshInterval ] = useState( () => {
 		// Load from localStorage; validate against allowed dropdown values.
 		const validValues = INFLIGHT_REFRESH_OPTIONS.map(
@@ -246,18 +241,7 @@ export default function Inflight( { maxRows = 20 } ) {
 		}
 		setRequests( node.snapshot( maxRows ) );
 		setRequestsPerSecond( node.rps );
-		setLastEventTime( Core.node( LINK_NODE )?.lastEventTime() ?? null );
 	}, [ maxRows ] );
-
-	// Ticking "Xs ago" display.
-	const [ now, setNow ] = useState( Date.now() );
-	useEffect( () => {
-		const id = setInterval( () => setNow( Date.now() ), 1000 );
-		return () => clearInterval( id );
-	}, [] );
-	const staleSec = lastEventTime
-		? Math.max( 0, Math.floor( ( now - lastEventTime ) / 1000 ) )
-		: null;
 
 	// Keyboard shortcuts: 0-9 to set refresh interval.
 	useEffect( () => {
@@ -327,7 +311,11 @@ export default function Inflight( { maxRows = 20 } ) {
 		switch ( col ) {
 			case 'rid':
 				return (
-					<span key={ col } role="cell">
+					<span
+						key={ col }
+						role="cell"
+						className="newspack-nodes-table__cell"
+					>
 						<a
 							className="entry-rid"
 							href={ `admin.php?page=event-logger-overview&request=${ encodeURIComponent(
@@ -348,7 +336,7 @@ export default function Inflight( { maxRows = 20 } ) {
 					<span
 						key={ col }
 						role="cell"
-						className={ `entry-duration entry-duration--${ getDurationClass(
+						className={ `newspack-nodes-table__cell entry-duration entry-duration--${ getDurationClass(
 							req.time_ms
 						) }` }
 					>
@@ -361,7 +349,7 @@ export default function Inflight( { maxRows = 20 } ) {
 					<span
 						key={ col }
 						role="cell"
-						className={ `entry-duration entry-duration--${ getDurationClass(
+						className={ `newspack-nodes-table__cell entry-duration entry-duration--${ getDurationClass(
 							req.est_ms || req.time_ms || 0
 						) }` }
 					>
@@ -374,8 +362,8 @@ export default function Inflight( { maxRows = 20 } ) {
 					<span
 						key={ col }
 						role="cell"
-						className={ `entry-duration entry-timing--${
-							ageMs > 5000 ? 'warning' : 'normal'
+						className={ `newspack-nodes-table__cell entry-duration newspack-nodes-status${
+							ageMs > 5000 ? ' is-warning' : ''
 						}` }
 					>
 						{ formatDuration( ageMs ) }
@@ -387,8 +375,8 @@ export default function Inflight( { maxRows = 20 } ) {
 					<span
 						key={ col }
 						role="cell"
-						className={ `entry-duration entry-timing--${
-							req.lag_ms > 1000 ? 'warning' : 'normal'
+						className={ `newspack-nodes-table__cell entry-duration newspack-nodes-status${
+							req.lag_ms > 1000 ? ' is-warning' : ''
 						}` }
 					>
 						{ formatDuration( req.lag_ms || 0 ) }
@@ -397,9 +385,13 @@ export default function Inflight( { maxRows = 20 } ) {
 
 			case 'state':
 				return (
-					<span key={ col } role="cell">
+					<span
+						key={ col }
+						role="cell"
+						className="newspack-nodes-table__cell"
+					>
 						<span
-							className="event-logger-state-badge"
+							className="event-logger-state-badge newspack-nodes-badge"
 							style={ badgeStyle( getStateColor( req.state ) ) }
 						>
 							{ req.state === 'include template'
@@ -414,7 +406,7 @@ export default function Inflight( { maxRows = 20 } ) {
 					<span
 						key={ col }
 						role="cell"
-						className="entry-url"
+						className="newspack-nodes-table__cell entry-url"
 						title={ req.what }
 					>
 						{ req.what }
@@ -426,9 +418,8 @@ export default function Inflight( { maxRows = 20 } ) {
 					<span
 						key={ col }
 						role="cell"
-						className={ `entry-status entry-status--${ getStatusClass(
-							req.status_code
-						) }` }
+						className="newspack-nodes-table__cell entry-status"
+						data-status={ req.status_code }
 					>
 						{ req.status_code }
 					</span>
@@ -439,7 +430,7 @@ export default function Inflight( { maxRows = 20 } ) {
 					<span
 						key={ col }
 						role="cell"
-						className="entry-url"
+						className="newspack-nodes-table__cell entry-url"
 						title={ req.url }
 					>
 						<span className="entry-method">{ req.method }</span>{ ' ' }
@@ -460,7 +451,11 @@ export default function Inflight( { maxRows = 20 } ) {
 
 			case 'remote_addr':
 				return (
-					<span key={ col } role="cell" className="entry-ip">
+					<span
+						key={ col }
+						role="cell"
+						className="newspack-nodes-table__cell entry-ip"
+					>
 						{ req.remote_addr || '-' }
 					</span>
 				);
@@ -470,7 +465,7 @@ export default function Inflight( { maxRows = 20 } ) {
 					<span
 						key={ col }
 						role="cell"
-						className="entry-ua"
+						className="newspack-nodes-table__cell entry-ua"
 						title={ req.user_agent }
 					>
 						{ req.user_agent || '-' }
@@ -479,7 +474,11 @@ export default function Inflight( { maxRows = 20 } ) {
 
 			default:
 				return (
-					<span key={ col } role="cell" className="entry-default">
+					<span
+						key={ col }
+						role="cell"
+						className="newspack-nodes-table__cell entry-default"
+					>
 						-
 					</span>
 				);
@@ -492,7 +491,7 @@ export default function Inflight( { maxRows = 20 } ) {
 			role="table"
 			aria-label="In-flight requests"
 		>
-			<div className="event-logger-inflight-header">
+			<div className="event-logger-inflight-header newspack-nodes-inflight-header">
 				<h1 className="newspack-dashboard-title">
 					{ __(
 						'In-Flight Requests',
@@ -510,7 +509,7 @@ export default function Inflight( { maxRows = 20 } ) {
 					].map( ( category ) => (
 						<span
 							key={ category }
-							className="event-logger-state-badge"
+							className="event-logger-state-badge newspack-nodes-badge"
 							style={ badgeStyle(
 								window.eventLoggerHookCategories?._colors?.[
 									category
@@ -523,7 +522,7 @@ export default function Inflight( { maxRows = 20 } ) {
 					{ [ 'process', 'complete' ].map( ( state ) => (
 						<span
 							key={ state }
-							className="event-logger-state-badge"
+							className="event-logger-state-badge newspack-nodes-badge"
 							style={ badgeStyle( getStateColor( state ) ) }
 						>
 							{ state }
@@ -551,10 +550,6 @@ export default function Inflight( { maxRows = 20 } ) {
 								requestsPerSecond.toFixed( 1 )
 							) }
 						</span>
-						<StalenessIndicator
-							paused={ false }
-							staleSec={ staleSec }
-						/>
 					</span>
 					<select
 						className="newspack-nodes-select"
@@ -620,24 +615,27 @@ export default function Inflight( { maxRows = 20 } ) {
 
 			<div
 				role="row"
-				className="event-logger-request-stream-header-row"
+				className="event-logger-request-stream-header-row newspack-nodes-table__header"
 				style={ { gridTemplateColumns: gridTemplate } }
 			>
 				{ visibleColumns.map( ( col ) => (
 					<span
 						key={ col }
 						role="columnheader"
-						className="event-logger-request-stream-th"
+						className="event-logger-request-stream-th newspack-nodes-table__cell"
 						title={ COLUMNS[ col ]?.tooltip }
 					>
 						{ COLUMNS[ col ]?.label || col }
 					</span>
 				) ) }
 			</div>
-			<div role="rowgroup" className="event-logger-request-stream-list">
+			<div
+				role="rowgroup"
+				className="event-logger-request-stream-list newspack-nodes-table"
+			>
 				<div className="event-logger-request-stream-content">
 					{ requests.length === 0 ? (
-						<div className="event-logger-request-stream-empty">
+						<div className="event-logger-request-stream-empty newspack-nodes-empty-state">
 							{ __(
 								'No active requests.',
 								'newspack-event-logger-nodes'
@@ -655,7 +653,7 @@ export default function Inflight( { maxRows = 20 } ) {
 								<div
 									key={ req.rid }
 									role="row"
-									className={ `event-logger-request-stream-entry ${
+									className={ `event-logger-request-stream-entry newspack-nodes-table__row ${
 										index % 2 === 0 ? 'row-even' : 'row-odd'
 									}` }
 									style={ {

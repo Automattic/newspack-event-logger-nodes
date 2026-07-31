@@ -15,7 +15,7 @@ export default function LoadingFallback( {
 	message = __( 'Loading…', 'newspack-event-logger-nodes' ),
 } ) {
 	return (
-		<div className="event-logger-performance-loading">
+		<div className="newspack-nodes-performance-loading">
 			<Spinner />
 			<p>{ message }</p>
 		</div>

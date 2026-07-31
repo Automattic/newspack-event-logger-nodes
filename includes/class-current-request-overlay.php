@@ -66,7 +66,12 @@ class Current_Request_Overlay {
 		\wp_enqueue_script( self::HANDLE, "{$url}/index.js", $deps, $ver, true );
 		if ( \file_exists( "{$dir}/index.css" ) ) {
 			$style_ver = \Newspack_Nodes\Admin\Admin::css_cache_version( "{$dir}/index.css", $ver );
-			\wp_enqueue_style( self::HANDLE, "{$url}/index.css", [], $style_ver );
+			\wp_enqueue_style(
+				self::HANDLE,
+				"{$url}/index.css",
+				[ 'wp-components', 'newspack-nodes-ui' ],
+				$style_ver
+			);
 		}
 	}
 

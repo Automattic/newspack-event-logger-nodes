@@ -1,26 +1,15 @@
-// Current-Request overlay tab. The overlay's `.topology-app` sets a monospace
-// `--font-mono` that bleeds into the reused dashboard pieces (RequestProfile,
-// flame labels); reset to the WP-admin sans so this reads like the dashboard.
+/**
+ * Current-request overlay layout. Shared title/status/state classes own chrome.
+ */
+
 .eln-current-request {
 	display: flex;
 	flex-direction: column;
 	gap: 16px;
 	padding: 16px;
-	font-family: -apple-system, blinkmacsystemfont, "Segoe UI", roboto,
-		oxygen-sans, ubuntu, cantarell, "Helvetica Neue", sans-serif;
-	// Reset the console's 13px/1.45 mono typography too, so the reused dashboard
-	// pieces size like the dashboard (only the family was overridden before).
 	font-size: 13px;
 	line-height: 1.5;
 
-	// WP-admin's fixed #1d2327 heading color vanishes on dark hub themes; follow the theme ink (fallback = WP heading color).
-	h2,
-	h3 {
-		color: var(--ink, #1d2327);
-	}
-
-	// Top row: the "Request: <rid>" heading on the left, "View full trace"
-	// pinned to the upper-right corner on the same row.
 	&__head {
 		display: flex;
 		align-items: center;
@@ -28,29 +17,35 @@
 		gap: 16px;
 	}
 
-	// The "Request: <rid>" heading — mirrors the dashboard modal's title.
 	&__title {
 		margin: 0;
 		min-width: 0;
 		font-size: 20px;
-		font-weight: 600;
 		word-break: break-all;
 	}
 
-	// URL/Time/Duration/Memory/Status block, full-width below the head row.
-	&__info {
-		p {
-			margin: 4px 0;
-		}
+	&__info p {
+		margin: 4px 0;
 	}
 
 	&__trace {
 		flex: 0 0 auto;
 	}
 
+	&__chart-loading {
+		display: block;
+		min-height: 0;
+	}
+
 	&--empty,
-	&--loading,
-	&--processing {
-		opacity: 0.85;
+	&--loading {
+		padding: 16px;
+		min-height: 0;
+		align-items: stretch;
+		justify-content: flex-start;
+	}
+
+	&--empty::before {
+		display: none;
 	}
 }

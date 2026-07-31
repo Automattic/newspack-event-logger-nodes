@@ -157,8 +157,65 @@ describe( 'LogEntriesTable', () => {
 		expect( container.textContent ).toContain( 'Log Entries' );
 		expect( container.textContent ).toContain( 'Fold All' );
 		expect( container.textContent ).toContain( 'Unfold All' );
+		for ( const button of container.querySelectorAll(
+			'.log-entries-actions button'
+		) ) {
+			expect( [ ...button.classList ] ).toEqual( [ 'button-link' ] );
+		}
+		const table = container.querySelector( 'table' );
+		expect(
+			table.classList.contains( 'newspack-nodes-table--undivided' )
+		).toBe( true );
+		const cells = table.querySelectorAll( 'tbody tr:first-child td' );
+		for ( const cell of [ ...cells ].slice( 0, 2 ) ) {
+			expect(
+				cell.classList.contains( 'newspack-nodes-table__terminal-data' )
+			).toBe( false );
+		}
+		for ( const cell of [ ...cells ].slice( 2 ) ) {
+			expect(
+				cell.classList.contains( 'newspack-nodes-table__terminal-data' )
+			).toBe( true );
+		}
+		const disclosure = Array.from(
+			container.querySelectorAll( '.newspack-nodes-status' )
+		).find( ( node ) => [ '▶', '▼' ].includes( node.textContent.trim() ) );
+		expect( disclosure.classList.contains( 'is-info' ) ).toBe( true );
 		// expandedSet empty by default: child pairs folded; process shows.
 		expect( container.textContent ).toContain( 'process (start)' );
+		unmount();
+	} );
+
+	it( 'renders duration, peak memory, and child count with shared metadata tiers', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( LogEntriesTable, {
+				entries: makeEntries(),
+			} )
+		);
+		const spans = [ ...container.querySelectorAll( 'span' ) ];
+		const duration = spans.find(
+			( node ) =>
+				node.classList.contains( 'newspack-nodes-status' ) &&
+				node.textContent.includes( '(1000.000ms)' )
+		);
+		const peakMemory = spans.find(
+			( node ) => '[4MB]' === node.textContent.trim()
+		);
+		const childCount = spans.find(
+			( node ) => '[1 entry]' === node.textContent.trim()
+		);
+
+		expect( [ ...duration.classList ] ).toEqual( [
+			'newspack-nodes-status',
+		] );
+		expect( [ ...peakMemory.classList ] ).toEqual( [
+			'newspack-nodes-status',
+			'is-warning',
+		] );
+		expect( [ ...childCount.classList ] ).toEqual( [
+			'newspack-nodes-status',
+			'is-muted',
+		] );
 		unmount();
 	} );
 
@@ -671,6 +728,10 @@ describe( 'LogEntriesTable', () => {
 			'.log-entries-search__nav'
 		);
 		expect( navButtons.length ).toBeGreaterThanOrEqual( 3 );
+		navButtons.forEach( ( button ) => {
+			expect( button.classList.contains( 'button' ) ).toBe( true );
+			expect( button.classList.contains( 'button-small' ) ).toBe( true );
+		} );
 		// Click each in turn — prev/next/clear.
 		act( () => navButtons[ 0 ].click() );
 		flushRAF();

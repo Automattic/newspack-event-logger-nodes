@@ -92,6 +92,30 @@ describe( 'Inflight', () => {
 		registerViewFixture();
 		const { container } = mount();
 		expect( container.textContent ).toContain( 'In-Flight Requests' );
+		expect(
+			container.querySelector( '.event-logger-inflight-header' ).className
+		).toBe( 'event-logger-inflight-header newspack-nodes-inflight-header' );
+	} );
+
+	it( 'keeps the toolbar outside the canonical bordered rowgroup', () => {
+		registerViewFixture();
+		const { container } = mount();
+		const root = container.querySelector( '.event-logger-inflight' );
+		const toolbar = root.querySelector( '.newspack-nodes-toolbar' );
+		const header = root.querySelector( '.newspack-nodes-table__header' );
+		const rowgroup = root.querySelector(
+			'.event-logger-request-stream-list'
+		);
+
+		expect( root.classList.contains( 'newspack-nodes-table' ) ).toBe(
+			false
+		);
+		expect( toolbar.closest( '.newspack-nodes-table' ) ).toBeNull();
+		expect( rowgroup.getAttribute( 'role' ) ).toBe( 'rowgroup' );
+		expect( rowgroup.classList.contains( 'newspack-nodes-table' ) ).toBe(
+			true
+		);
+		expect( rowgroup.previousElementSibling ).toBe( header );
 	} );
 
 	it( 'mounts the gyroscope graph via useGyroscopeGraph', () => {
@@ -202,7 +226,7 @@ describe( 'Inflight', () => {
 					rid: 'r-columns',
 					url: '/columns?debug=1',
 					method: 'POST',
-					status_code: 503,
+					status_code: 599,
 					state: 'include template',
 					what: 'Templates/Home.html',
 					remote_addr: '203.0.113.10',
@@ -223,23 +247,67 @@ describe( 'Inflight', () => {
 		expect( container.textContent ).toContain( 'template' );
 		expect( container.textContent ).toContain( '203.0.113.10' );
 		expect( container.textContent ).toContain( 'Jest Browser' );
+		const status = container.querySelector( '.entry-status' );
+		expect( status.textContent ).toBe( '599' );
+		expect( status.dataset.status ).toBe( '599' );
+		expect( status.className ).not.toContain( 'entry-status--' );
+		expect( status.style.color ).toBe( '' );
 	} );
 
-	it( 'sources "Xs ago" staleness from the link connector, not row arrivals', () => {
-		// Connector owns liveness: an idle stream still shows a fresh "ago".
-		registerViewFixture(); // no row arrivals
-		Core.nodes.set( 'gyroscope:link', { lastEventTime: () => Date.now() } );
+	it( 'renders age and lag through the shared neutral and warning status tiers', () => {
+		window.localStorage.setItem(
+			'event-logger-columns',
+			JSON.stringify( [ 'age', 'lag' ] )
+		);
+		const now = Date.now() / 1000;
+		registerViewFixture( {
+			rows: [
+				{
+					rid: 'warning-timing',
+					last_log_ts: now - 6.41,
+					lag_ms: 1283,
+				},
+				{
+					rid: 'neutral-timing',
+					last_log_ts: now - 0.64,
+					lag_ms: 283,
+				},
+			],
+		} );
 		const { container } = mount();
 		tickRefresh();
-		expect( container.textContent ).toMatch( /\d+s ago/ );
+		const rows = container.querySelectorAll(
+			'.event-logger-request-stream-entry'
+		);
+		const warningCells = rows[ 0 ].querySelectorAll( '[role="cell"]' );
+		const neutralCells = rows[ 1 ].querySelectorAll( '[role="cell"]' );
+
+		for ( const cell of warningCells ) {
+			expect( cell.classList.contains( 'newspack-nodes-status' ) ).toBe(
+				true
+			);
+			expect( cell.classList.contains( 'is-warning' ) ).toBe( true );
+			expect( cell.className ).not.toContain( 'entry-timing--' );
+		}
+		for ( const cell of neutralCells ) {
+			expect( cell.classList.contains( 'newspack-nodes-status' ) ).toBe(
+				true
+			);
+			expect( cell.classList.contains( 'is-warning' ) ).toBe( false );
+			expect( cell.className ).not.toContain( 'entry-timing--' );
+		}
 	} );
 
-	it( 'hides "Xs ago" when the link stream is closed (lastEventTime null)', () => {
-		registerViewFixture();
-		Core.nodes.set( 'gyroscope:link', { lastEventTime: () => null } );
+	it( 'does not render stream staleness in the toolbar', () => {
+		registerViewFixture( { rps: 7.3 } );
+		Core.nodes.set( 'gyroscope:link', {
+			lastEventTime: () => Date.now() - 37_000,
+		} );
 		const { container } = mount();
 		tickRefresh();
-		expect( container.textContent ).not.toMatch( /\d+s ago/ );
+		const toolbar = container.querySelector( '.newspack-nodes-toolbar' );
+		expect( toolbar.textContent ).toMatch( /7\.3 req\/s/ );
+		expect( toolbar.textContent ).not.toMatch( /\d+s ago/ );
 	} );
 
 	it( 'does not throw when the view node is absent (no fixture registered)', () => {

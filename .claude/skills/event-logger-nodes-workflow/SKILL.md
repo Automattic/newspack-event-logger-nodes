@@ -60,8 +60,6 @@ The seven global logging settings (`log_urls`/`skip_urls`/`log_events`/`custom_e
 - Durable state lives in `Rule_Set` (`includes/class-rule-set.php`): the rule LIST rides the autoloaded `newspack_event_logger_nodes_rules` option; a heavy rule's hooks (past `INLINE_HOOK_LIMIT = 100`) tier out to a non-autoloaded `newspack_event_logger_nodes_rule_hooks_<id>` option mirrored into memcache (`evlog:rules:hooks:<id>`, TTL 3600, warmed on miss). Every write MUST go through `Rule_Set::save()` so inline↔pointer tiering + orphan reconcile hold — never raw `update_option`.
 - A rule's id is `Rule_Set::id_for($pattern)` (the pattern's `Log_Manager::url_hash()`) — one id per pattern; client-supplied ids are ignored.
 - Editing goes through the `Rules_CI_Node` service CI (`rules` shell-name; verbs `list`/`save`/`upsert`/`delete` at `_http/rules`). The full rules-editor UI (`src/rules/RulesAdmin`) mounts on the **settings page**, into the `#event-logger-rules-editor` "Logging Rules" container — `src/settings/index.js` is the mount point, not a separate submenu. The performance dashboard (`src/overview/PerformanceDashboard.js`) reuses `src/rules/RuleEditModal` for an inline "Log this URL" quick-add on the URL-detail view (the `upsert` path); it is not the full editor.
-- Migration is activation-only + version-gated (`Rule_Set::SCHEMA_VERSION = 2`): v0→v1 folds the legacy options, v1→v2 rekeys ids to the pattern-hash scheme. Don't add a request-path version check.
-
 #### Adding a React dashboard / page
 
 The v0.8.0 substrate-canonical pattern: every dashboard mounts the substrate's exospine, builds its node graph from substrate JS primitives, and exposes a view node that React subscribes to.

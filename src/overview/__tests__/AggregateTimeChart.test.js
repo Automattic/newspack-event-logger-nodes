@@ -176,6 +176,12 @@ describe( 'AggregateTimeChart', () => {
 		);
 		expect( container.textContent ).toContain( 'Request Volume' );
 		expect( d3Mock.select ).toHaveBeenCalled();
+		const tooltip = container.querySelector(
+			'.event-logger-chart-tooltip'
+		);
+		expect( tooltip ).not.toBeNull();
+		expect( tooltip.className ).toBe( 'event-logger-chart-tooltip' );
+		expect( tooltip.getAttribute( 'style' ) ).toBeNull();
 		unmount();
 	} );
 

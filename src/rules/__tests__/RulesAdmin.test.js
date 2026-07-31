@@ -169,9 +169,21 @@ describe( 'RulesAdmin', () => {
 		expect( useRulesGraph ).toHaveBeenCalled();
 	} );
 
+	test( 'inherits the standalone settings provider without repeating root classes', () => {
+		const { container } = mount();
+		expect( container.firstElementChild.className ).toBe( 'rules-admin' );
+	} );
+
 	test( 'renders a wp-list-table with a row per rule', () => {
 		const { container } = mount();
-		expect( container.querySelector( 'table.wp-list-table' ) ).toBeTruthy();
+		const table = container.querySelector( 'table.wp-list-table' );
+		expect( table ).toBeTruthy();
+		expect(
+			table.classList.contains( 'newspack-nodes-table--undivided' )
+		).toBe( true );
+		expect(
+			table.classList.contains( 'newspack-nodes-table--diagnostic' )
+		).toBe( false );
 		expect(
 			container.querySelector( 'tr[data-rule-id="r1"]' )
 		).toBeTruthy();
@@ -359,5 +371,17 @@ describe( 'RulesAdmin', () => {
 		expect( confirmDel.classList.contains( 'button-link-delete' ) ).toBe(
 			true
 		);
+	} );
+
+	test( 'the inline confirm dialog adds only the canonical modal appearance class', () => {
+		const { container } = mount();
+		const row = container.querySelector( 'tr[data-rule-id="r1"]' );
+		const del = Array.from( row.querySelectorAll( 'button' ) ).find(
+			( b ) => b.textContent.trim() === 'Delete'
+		);
+		click( del );
+		expect(
+			document.querySelector( '.rules-admin__confirm' ).className
+		).toBe( 'rules-admin__confirm newspack-nodes-modal' );
 	} );
 } );

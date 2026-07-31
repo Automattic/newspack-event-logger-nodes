@@ -80,6 +80,68 @@ describe( 'UrlTable', () => {
 		expect( container.textContent ).toContain( '/foo' );
 		expect( container.textContent ).toContain( '/bar' );
 		expect( container.textContent ).toContain( '/baz' );
+		for ( const header of container.querySelectorAll(
+			'.event-logger-table__header-btn'
+		) ) {
+			expect(
+				header.classList.contains(
+					'newspack-nodes-sortable-header-button'
+				)
+			).toBe( true );
+			expect(
+				header.classList.contains( 'newspack-nodes-table__cell' )
+			).toBe( true );
+			expect( header.classList.contains( 'button' ) ).toBe( false );
+			expect( header.classList.contains( 'button-small' ) ).toBe( false );
+		}
+		unmount();
+	} );
+
+	it( 'keeps the toolbar outside the canonical bordered list surface', () => {
+		const { container, unmount } = mount();
+		const root = container.querySelector( '.event-logger-table--urls' );
+		const toolbar = root.querySelector( '.event-logger-url-search' );
+		const header = root.querySelector( '.newspack-nodes-table__header' );
+		const list = root.querySelector( '.event-logger-table__list' );
+
+		expect( root.classList.contains( 'newspack-nodes-table' ) ).toBe(
+			false
+		);
+		expect( toolbar.closest( '.newspack-nodes-table' ) ).toBeNull();
+		expect( list.classList.contains( 'newspack-nodes-table' ) ).toBe(
+			true
+		);
+		expect( list.previousElementSibling ).toBe( header );
+		unmount();
+	} );
+
+	it( 'binds every HTTP status column to the shared CSS data contract', () => {
+		const { container, unmount } = mount();
+		const headerCells = [
+			...container.querySelectorAll(
+				'.event-logger-table__header .event-logger-table__cell--status'
+			),
+		];
+		const firstRowCells = [
+			...container
+				.querySelector( '.event-logger-table__row' )
+				.querySelectorAll( '.event-logger-table__cell--status' ),
+		];
+
+		for ( const cells of [ headerCells, firstRowCells ] ) {
+			expect( cells.map( ( cell ) => cell.dataset.status ) ).toEqual( [
+				'218',
+				'307',
+				'418',
+				'599',
+			] );
+			for ( const cell of cells ) {
+				expect( cell.classList.contains( 'entry-status' ) ).toBe(
+					true
+				);
+				expect( cell.style.color ).toBe( '' );
+			}
+		}
 		unmount();
 	} );
 
@@ -212,6 +274,39 @@ describe( 'UrlTable', () => {
 		expect( onSelect ).toHaveBeenCalledWith(
 			expect.objectContaining( { url: '/bar' } )
 		);
+		unmount();
+	} );
+
+	it( 'shows keyboard selection with the canonical selected-row state', () => {
+		function KeyboardSelectionHarness() {
+			const [ selectedUrl, setSelectedUrl ] = React.useState( null );
+			return React.createElement( UrlTable, {
+				urls: URLS,
+				selectedUrl,
+				onSelect: setSelectedUrl,
+				onParamsChange: jest.fn(),
+				totalUrls: 3,
+			} );
+		}
+
+		const { container, unmount } = renderComponent(
+			React.createElement( KeyboardSelectionHarness )
+		);
+		const row = Array.from(
+			container.querySelectorAll( '.event-logger-table__row' )
+		).find( ( candidate ) => candidate.textContent.includes( '/bar' ) );
+
+		expect( row.classList.contains( 'is-selected' ) ).toBe( false );
+		act( () => {
+			row.dispatchEvent(
+				new KeyboardEvent( 'keydown', {
+					key: ' ',
+					bubbles: true,
+				} )
+			);
+		} );
+		expect( row.classList.contains( 'is-selected' ) ).toBe( true );
+		expect( row.classList.contains( 'selected' ) ).toBe( false );
 		unmount();
 	} );
 

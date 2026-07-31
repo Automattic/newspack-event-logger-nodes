@@ -229,22 +229,7 @@ export default function CategoryTimeChart( { data, mode, title } ) {
 				ref={ containerRef }
 				style={ { width: '100%', minHeight: '200px' } }
 			/>
-			<div
-				ref={ tooltipRef }
-				style={ {
-					display: 'none',
-					position: 'absolute',
-					background: 'rgba(0,0,0,0.85)',
-					color: '#fff',
-					padding: '6px 10px',
-					borderRadius: '4px',
-					fontSize: '11px',
-					fontFamily: 'monospace',
-					pointerEvents: 'none',
-					whiteSpace: 'nowrap',
-					zIndex: 10,
-				} }
-			/>
+			<div ref={ tooltipRef } className="event-logger-chart-tooltip" />
 		</div>
 	);
 }

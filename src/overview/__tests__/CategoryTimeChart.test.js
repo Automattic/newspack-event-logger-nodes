@@ -171,6 +171,12 @@ describe( 'CategoryTimeChart', () => {
 		expect( globalThis.__lastRenderFn ).toEqual( expect.any( Function ) );
 		// d3.select must have been called (chart actually rendered).
 		expect( d3Mock.select ).toHaveBeenCalled();
+		const tooltip = container.querySelector(
+			'.event-logger-chart-tooltip'
+		);
+		expect( tooltip ).not.toBeNull();
+		expect( tooltip.className ).toBe( 'event-logger-chart-tooltip' );
+		expect( tooltip.getAttribute( 'style' ) ).toBeNull();
 		unmount();
 	} );
 

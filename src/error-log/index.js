@@ -28,7 +28,6 @@ export function ErrorLogPage() {
 	return (
 		<ThemedRoot>
 			<div
-				className="newspack-nodes-theme"
 				style={ {
 					position: 'fixed',
 					top: '32px',
@@ -36,7 +35,6 @@ export function ErrorLogPage() {
 					right: '0',
 					bottom: '0',
 					zIndex: 99,
-					background: '#1e1e1e',
 					transition: 'left 0.1s ease-in-out',
 					margin: 0,
 					padding: 0,

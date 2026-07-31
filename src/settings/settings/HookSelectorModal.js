@@ -332,7 +332,7 @@ export default function HookSelectorModal( {
 					: __( 'Select Hooks to Log', 'newspack-event-logger-nodes' )
 			}
 			onRequestClose={ onClose }
-			className={ `event-logger-hook-selector-modal newspack-nodes-theme ${ className }`.trim() }
+			className={ `event-logger-hook-selector-modal newspack-nodes-modal newspack-nodes-theme newspack-nodes-ui ${ className }`.trim() }
 			style={ { width: '800px', maxWidth: '90vw' } }
 		>
 			<div className="hook-selector-header">
@@ -402,12 +402,12 @@ export default function HookSelectorModal( {
 			<div className="hook-selector-categories">
 				{ loading && (
 					<div
+						className="hook-selector-loading newspack-nodes-status"
 						style={ {
 							padding: '12px 16px',
 							display: 'flex',
 							alignItems: 'center',
 							gap: '8px',
-							color: '#757575',
 						} }
 					>
 						<Spinner />
@@ -442,7 +442,9 @@ export default function HookSelectorModal( {
 								className="hook-selector-category"
 							>
 								<div
-									className="hook-selector-category-header"
+									className={ `hook-selector-category-header newspack-nodes-interactive-row${
+										allSelected ? ' is-selected' : ''
+									}` }
 									role="button"
 									tabIndex={ 0 }
 									onClick={ () => toggleExpanded( category ) }
@@ -479,7 +481,7 @@ export default function HookSelectorModal( {
 									<span className="hook-selector-category-desc">
 										{ meta.description }
 									</span>
-									<span className="hook-selector-category-count">
+									<span className="hook-selector-category-count newspack-nodes-badge">
 										{ counts.selected }/{ counts.total }
 									</span>
 								</div>
@@ -489,6 +491,8 @@ export default function HookSelectorModal( {
 										{ hooks.map( ( hook ) => {
 											const isRecommended =
 												RECOMMENDED_HOOKS.has( hook );
+											const isSelected =
+												localSelected.has( hook );
 											const hookId = `hook-${ hook.replace(
 												/[^a-z0-9]/gi,
 												'-'
@@ -497,7 +501,11 @@ export default function HookSelectorModal( {
 												<label
 													key={ hook }
 													htmlFor={ hookId }
-													className={ `hook-selector-hook${
+													className={ `hook-selector-hook newspack-nodes-interactive-row${
+														isSelected
+															? ' is-selected'
+															: ''
+													}${
 														isRecommended
 															? ' hook-selector-hook-recommended'
 															: ''
