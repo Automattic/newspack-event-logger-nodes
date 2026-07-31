@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Selecting a server blanked every chart on the Performance dashboard.**
+  `is_hub` tested the ACTIVE topology names for a literal `aggregator`, so a hub
+  running the stock topology through a wrapper (`aggregator-eve`, which is just
+  `include aggregator`) read as a spoke. Flame Builder then wrote no
+  `dim_by_server` / `cat_by_server` / `leaderboard_by_server` bucket at all, and
+  every server-scoped read came back empty while the global ones stayed full.
+  A hub is now a site that RUNS `aggregator`, directly or through a wrapper.
+  Per-server data accrues from the fix forward; the gap cannot be backfilled.
+
+### Changed
+
+- **The vendored `reorder-node-methods` tooling now passes the comment-length
+  gate.** Function-level prose moved into docblocks, inline prose condensed to
+  one line; four algorithm notes that genuinely need the length carry
+  `@longform`. No behavior change — the tool's own test still passes 38/38.
+
+
 ## [0.43.8] - 2026-07-31
 
 ### Added

@@ -70,6 +70,20 @@ class ElnConfigTokenTest extends TestCase {
 		$this->assertSame( '1', Core::resolve_config_token( 'eln', 'is_hub' ) );
 	}
 
+	public function test_is_hub_true_when_an_active_topology_wraps_aggregator(): void {
+		// Deployments run the stock aggregator through a locally-named wrapper,
+		// so the ACTIVE name is never `aggregator` and a name match sees a spoke.
+		$dir = $this->make_temp_dir( 'eln-hub-wrapper-' );
+		\file_put_contents( "{$dir}/okapi-hub.tsl", "include aggregator\n" );
+		Topology_Registry::register_user_dir( $dir );
+
+		$GLOBALS['_wp_options']['newspack_nodes_topologies'] = [ 'combined', 'okapi-hub' ];
+		\Newspack_Nodes\Config::reset();
+		Config::reset();
+
+		$this->assertSame( '1', Core::resolve_config_token( 'eln', 'is_hub' ) );
+	}
+
 	// --- schema-token / owned-empty guards ----------------------------------
 
 	public function test_stats_mirror_node_unset_is_owned_empty_under_strict(): void {

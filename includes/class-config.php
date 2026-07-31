@@ -19,6 +19,7 @@ namespace Newspack_Event_Logger_Nodes;
 use Newspack_Nodes\Config as RuntimeConfig;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Config_Utils;
+use Newspack_Nodes\Topology_Registry;
 
 if ( ! \defined( 'ABSPATH' ) ) {
 	exit;
@@ -234,8 +235,14 @@ class Config {
 		$config = self::load_config();
 
 		if ( 'is_hub' === $key ) {
-			// A hub is a site whose active topologies include `aggregator`.
-			return \in_array( 'aggregator', \array_keys( \Newspack_Nodes\Bootstrap::get_topologies() ), true );
+			// A hub RUNS `aggregator` — directly, or via a local wrapper.
+			foreach ( \array_keys( \Newspack_Nodes\Bootstrap::get_topologies() ) as $active ) {
+				if ( 'aggregator' === $active
+					|| \in_array( 'aggregator', Topology_Registry::includes( $active ), true ) ) {
+					return true;
+				}
+			}
+			return false;
 		}
 
 		return $config[ $key ] ?? null;
