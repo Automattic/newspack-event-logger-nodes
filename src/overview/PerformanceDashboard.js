@@ -771,7 +771,7 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 					{ selectedRequest && requestDetail && (
 						<button
 							type="button"
-							className="button button-small event-logger-modal-back-button"
+							className="button is-plain event-logger-modal-back-button"
 							onClick={ () => selectRequest( null ) }
 							aria-label={ __(
 								'Back to URL details',

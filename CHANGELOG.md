@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.43.6] - 2026-07-31
+
+### Fixed
+
+- **The request-detail back arrow drops its button chrome.** It sat in the
+  modal header beside the bare close glyph, but carried `button button-small`,
+  so a bordered, filled box appeared next to an unadorned `×`. It now carries
+  the canonical `is-plain` role — no fill, no border, surrounding ink, and none
+  of `button-link`'s link color or hover underline; the component stylesheet
+  keeps only its geometry.
+
 ## [0.43.5] - 2026-07-30
 
 ### Fixed
