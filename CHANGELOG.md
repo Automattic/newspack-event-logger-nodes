@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.43.10] - 2026-07-31
+
 ### Fixed
 
 - **Three `make_node` examples documented a retention arg list that does not
