@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Documentation accuracy pass.** `docs/API.md` claimed there is no rate-limit
+  gate on `/command` (there is), named `dump_metadata` as a `workers` verb (it is
+  `dump_graph`), and asserted a longer SSE slot TTL for hub connections than for
+  browsers (`SSE_Slot_Pool` is a flat 60s for every caller). `docs/architecture-guide.md`
+  documented `alerts`/`errors`/`gyroscope`/`completed` as per-partition when all
+  four are `.p0`, put `void_warranty`'s cap at 10 MB rather than 32 MiB, and
+  described a third config storage tier that does not exist. `README.md` read
+  0.35.2 against a shipped 0.43.11.
+- **`LRU_Cache` records its lineage.** It is a variant of Tachikoma's bucket LRU
+  (`Nodes/Table.pm` `lru_lookup`) in the shape our DN `ReqGrep.pm` uses it. This
+  repo is public and the DN tree is not, so the citation says which half a reader
+  can follow. The reqgrep comments also spelled the class `LruCache`.
+- **Dropped the four `InstrumentalityGrail` / `InstrumentalityFlight.pm` citations**
+  from `Request_Flight_Node`, its two tests, and the architecture guide. Every
+  behavioral description stays; only the unfollowable pointer goes. The substrate's
+  `docs/tachikoma-lineage.md` names both modules and what they resemble.
+
+### Removed
+
+- **Dead `Core` and `Partition_Node` imports** in `Remote_Job_Rewrite_Node`, left
+  behind when the oversize guard was removed in `a4741aa`.
+
 ## [0.43.11] - 2026-07-31
 
 ### Changed
