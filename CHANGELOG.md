@@ -7,16 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.43.11] - 2026-07-31
+
+### Changed
+
+- The architecture guide now says WHY the Partition lines carry no retention
+  tail: `node_schema()` defaults each retention arg to its `<config:…>` token,
+  so an omitted tail is not an unset one.
+
+
 ## [0.43.10] - 2026-07-31
 
 ### Fixed
 
-- **Three `make_node` examples documented a retention arg list that does not
-  exist.** `flames:partition`, `flame-stats:partition`, and `firehose:topic` in
-  the architecture guide passed `<config:segment_size> <config:num_segments>
-  <config:max_lifespan>` — the retired 3-arg tail, missing `min_segments`. The
-  shipped topologies pass no retention args at all. Copying any of them into a
-  TSL produced the wrong geometry.
+- **Three `make_node` examples froze at a superseded retention spelling.**
+  `flames:partition`, `flame-stats:partition`, and `firehose:topic` in the
+  architecture guide passed `<config:segment_size> <config:num_segments>
+  <config:max_lifespan>`. That tail was correct when written, then was
+  superseded twice: `max_lifespan` was renamed, and `node_schema()` learned to
+  default each retention arg to its `<config:…>` token, so the topologies
+  dropped the tail entirely. The examples now match the shipped TSL.
 
 ### Changed
 
