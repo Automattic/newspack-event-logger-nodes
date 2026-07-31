@@ -991,8 +991,11 @@ describe( 'PerformanceDashboard', () => {
 		const backButton = container.querySelector(
 			'.event-logger-modal-back-button'
 		);
+		// Bare glyph, matching the modal close beside it: the canonical button
+		// base carrying the plain role, never the boxed secondary chrome.
 		expect( backButton.classList.contains( 'button' ) ).toBe( true );
-		expect( backButton.classList.contains( 'button-small' ) ).toBe( true );
+		expect( backButton.classList.contains( 'is-plain' ) ).toBe( true );
+		expect( backButton.classList.contains( 'button-small' ) ).toBe( false );
 		act( () => {
 			backButton.click();
 		} );
