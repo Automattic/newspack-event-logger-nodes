@@ -21,7 +21,12 @@
 
 import { useState } from '@wordpress/element';
 import { __, _n, sprintf } from '@wordpress/i18n';
-import { Modal, TextControl, SelectControl } from '@wordpress/components';
+import {
+	BaseControl,
+	Modal,
+	TextControl,
+	SelectControl,
+} from '@wordpress/components';
 
 import HookSelectorModal from '../settings/settings/HookSelectorModal';
 import CustomEventSelectorModal from '../settings/settings/CustomEventSelectorModal';
@@ -103,7 +108,7 @@ export default function RuleEditModal( {
 					: __( 'Add rule', 'newspack-event-logger-nodes' )
 			}
 			onRequestClose={ onCancel }
-			className={ `event-logger-rule-edit-modal newspack-nodes-theme ${ className }`.trim() }
+			className={ `event-logger-rule-edit-modal newspack-nodes-modal newspack-nodes-theme newspack-nodes-ui ${ className }`.trim() }
 		>
 			<div className="rule-edit-body">
 				<TextControl
@@ -141,9 +146,9 @@ export default function RuleEditModal( {
 				{ isLog && (
 					<>
 						<div className="rule-edit-hooks-field">
-							<span className="rule-edit-field-label">
+							<BaseControl.VisualLabel className="rule-edit-field-label">
 								{ __( 'Hooks', 'newspack-event-logger-nodes' ) }
-							</span>
+							</BaseControl.VisualLabel>
 							<button
 								type="button"
 								className="button"
@@ -154,7 +159,7 @@ export default function RuleEditModal( {
 									'newspack-event-logger-nodes'
 								) }
 							</button>
-							<span className="rule-edit-field-count">
+							<span className="rule-edit-field-count newspack-nodes-status">
 								{ sprintf(
 									// translators: %d: number of selected hooks.
 									_n(
@@ -169,12 +174,12 @@ export default function RuleEditModal( {
 						</div>
 
 						<div className="rule-edit-custom-field">
-							<span className="rule-edit-field-label">
+							<BaseControl.VisualLabel className="rule-edit-field-label">
 								{ __(
 									'Custom events',
 									'newspack-event-logger-nodes'
 								) }
-							</span>
+							</BaseControl.VisualLabel>
 							<button
 								type="button"
 								className="button"
@@ -185,7 +190,7 @@ export default function RuleEditModal( {
 									'newspack-event-logger-nodes'
 								) }
 							</button>
-							<span className="rule-edit-field-count">
+							<span className="rule-edit-field-count newspack-nodes-status">
 								{ sprintf(
 									// translators: %d: number of selected custom events.
 									_n(
@@ -200,12 +205,12 @@ export default function RuleEditModal( {
 						</div>
 
 						<div className="rule-edit-tag-field components-base-control">
-							<span className="components-base-control__label">
+							<BaseControl.VisualLabel className="rule-edit-field-label">
 								{ __(
 									'Significant events',
 									'newspack-event-logger-nodes'
 								) }
-							</span>
+							</BaseControl.VisualLabel>
 							<TagInputField
 								fieldName="rule-significant"
 								initialValues={ significant }
@@ -259,10 +264,7 @@ export default function RuleEditModal( {
 				) }
 
 				{ error && (
-					<p
-						className="rule-edit-error"
-						style={ { color: '#d63638' } }
-					>
+					<p className="rule-edit-error newspack-nodes-error-banner">
 						{ error }
 					</p>
 				) }

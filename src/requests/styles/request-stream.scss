@@ -5,19 +5,16 @@
  * empty state, and the row striping/hover/height are the shared substrate
  * classes (`newspack-nodes-log-rows` / `-log-header` / `-log-row` from
  * LogRowList.scss); this file keeps the page layout, the COLUMN-grid override
- * for the shared rows, and the duration/status/timing cell accents.
+ * for the shared rows, and the duration/timing cell accents.
  */
 
 @use "base";
 
 .event-logger-request-stream {
-	background: var(--paper-3);
-	color: var(--ink);
 	padding: 16px 20px;
 	height: 100%;
 	display: flex;
 	flex-direction: column;
-	font-family: base.$system-font;
 
 	// ELN rows are COLUMN grids; the template rides inline per row.
 	.newspack-nodes-log-row:not(.is-debug) {
@@ -35,7 +32,7 @@
 
 // The stats readout runs count/rps side-by-side here (vs. the canonical
 // class's default stacked layout) — genuine per-dashboard layout, not look.
-.newspack-nodes-toolbar-stats {
+.event-logger-request-stream .newspack-nodes-toolbar-stats {
 	flex-direction: row;
 	gap: 8px 16px;
 	min-width: 100px;
@@ -69,13 +66,6 @@
 	}
 }
 
-// The wrapper interposes, so re-square the pane corner the shared sibling
-// rule (.newspack-nodes-log-header + .newspack-nodes-log-rows) can't reach.
-.event-logger-request-stream-columns + .newspack-nodes-log-rows {
-	border-top: none;
-	border-radius: 0 0 var(--np-radius-md) var(--np-radius-md);
-}
-
 // Responsive adjustments — the search input is flex:1 (canonical class) and
 // the toolbar wraps by default, so only the row spacing needs narrowing.
 @media (max-width: 1200px) {
@@ -89,8 +79,7 @@
 // Duration color classes (matches formatUtils getDurationColor thresholds)
 // =============================================================================
 
-// Duration / status / timing inks sit on the log-pane rows — skin-adaptive
-// var(--ink*)/status colors, so they read on the pane in every skin.
+// Duration/timing inks sit on the log-pane rows and remain skin-adaptive.
 .entry-duration {
 	&--fast {
 		color: base.$status-2xx; // < 1000ms
@@ -102,45 +91,5 @@
 
 	&--critical {
 		color: base.$error-text; // > 5000ms
-	}
-}
-
-// =============================================================================
-// Status code color classes (matches formatUtils STATUS_COLORS)
-// =============================================================================
-
-.entry-status {
-	&--2xx {
-		color: base.$status-2xx;
-	}
-
-	&--3xx {
-		color: base.$status-3xx;
-	}
-
-	&--4xx {
-		color: base.$warning-color;
-	}
-
-	&--5xx {
-		color: base.$error-text;
-	}
-
-	&--unknown {
-		color: var(--ink-3);
-	}
-}
-
-// =============================================================================
-// Timing warning classes (age, lag)
-// =============================================================================
-
-.entry-timing {
-	&--normal {
-		color: var(--ink-3);
-	}
-
-	&--warning {
-		color: base.$warning-color;
 	}
 }

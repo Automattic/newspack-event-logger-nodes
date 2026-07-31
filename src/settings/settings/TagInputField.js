@@ -159,7 +159,7 @@ export default function TagInputField( {
 					>
 						{ __( 'Select Hooks', 'newspack-event-logger-nodes' ) }
 					</button>
-					<span className="event-logger-selector-count">
+					<span className="event-logger-selector-count newspack-nodes-status">
 						{ sprintf(
 							// translators: %d: number of selected hooks.
 							_n(
@@ -195,7 +195,7 @@ export default function TagInputField( {
 					>
 						{ __( 'Select Events', 'newspack-event-logger-nodes' ) }
 					</button>
-					<span className="event-logger-selector-count">
+					<span className="event-logger-selector-count newspack-nodes-status">
 						{ sprintf(
 							// translators: %d: number of selected events.
 							_n(
@@ -225,7 +225,7 @@ export default function TagInputField( {
 				<div className={ containerClass }>
 					{ values.map( ( value, index ) => {
 						const isDefault = defaultSet.has( value );
-						const tokenClass = `event-logger-tag-token ${
+						const tokenClass = `event-logger-tag-token newspack-nodes-badge ${
 							isDefault ? 'is-default' : 'is-custom'
 						}`;
 						return (

@@ -3,12 +3,9 @@
  * escaping the themed dashboard root, so they must carry the theme classes
  * themselves or their token references resolve to nothing.
  *
- * The contract diverges by page:
- *   - The OVERVIEW dashboard is reskinned onto the PURE universal tokens, so its
- *     Modal needs the full `.topology-app … theme-<slug>` context (which DEFINES
- *     those tokens), keyed off the stored skin.
- *   - The SETTINGS modals live on the un-reskinned settings page (still --np-*),
- *     so `newspack-nodes-theme` alone is correct for them.
+ * Every modal opts into the canonical modal/theme/UI contract. Overview adds
+ * the non-layout skin root; settings modals stay on the standalone product
+ * palette. Neither context borrows `.topology-app`.
  */
 
 import fs from 'fs';
@@ -20,33 +17,35 @@ const read = ( rel ) =>
 describe( 'dashboard Modal theme class', () => {
 	it( 'overview PerformanceDashboard Modal carries the full skin context', () => {
 		const src = read( 'overview/PerformanceDashboard.js' );
-		expect( src ).toMatch(
-			/topology-app newspack-nodes-theme theme-\$\{ getStoredTheme\(\) \} event-logger-performance-modal/
-		);
 		expect( src ).toContain(
-			"import { getStoredTheme } from '@newspack-nodes/shared/theme';"
+			'event-logger-performance-modal newspack-nodes-modal newspack-nodes-skin-root newspack-nodes-theme newspack-nodes-ui'
+		);
+		expect( src ).not.toContain( 'getStoredTheme' );
+		expect( src ).not.toMatch(
+			/className=.*topology-app.*event-logger-performance-modal/
 		);
 	} );
 
-	// Dark-skin modals need --ink on the close (×) button or it's invisible.
+	// Shared modal chrome owns the close-button paint in every skin.
 	it.each( [
 		'overview/styles/modal.scss',
 		'rules/rule-edit-modal.scss',
 		'settings/styles/custom-event-selector.scss',
 		'settings/styles/hook-selector.scss',
-	] )( '%s: colours the modal close button with --ink', ( rel ) => {
-		expect( read( rel ) ).toMatch(
-			/\.components-modal__header\s*>?\s*button\s*\{[^}]*color:\s*var\(\s*--ink[,)]/
+	] )( '%s: does not repaint the modal close button', ( rel ) => {
+		expect( read( rel ) ).not.toMatch(
+			/\.components-modal__header\s*>?\s*button\s*\{[^}]*(?:color|background|border|box-shadow|outline)\s*:/
 		);
 	} );
 
 	it.each( [
 		'settings/settings/HookSelectorModal.js',
 		'settings/settings/CustomEventSelectorModal.js',
-	] )( '%s: the Modal carries newspack-nodes-theme', ( rel ) => {
-		// Base classes + forwarded `${ className }` (empty on settings page).
-		expect( read( rel ) ).toMatch(
-			/event-logger-[\w-]+-modal newspack-nodes-theme \$\{ className \}/
+	] )( '%s: the Modal carries the standalone product contract', ( rel ) => {
+		const src = read( rel );
+		expect( src ).toMatch(
+			/event-logger-[\w-]+-modal newspack-nodes-modal newspack-nodes-theme newspack-nodes-ui \$\{ className \}/
 		);
+		expect( src ).not.toMatch( /className=.*topology-app/ );
 	} );
 } );

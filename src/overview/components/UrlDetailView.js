@@ -26,26 +26,9 @@ import ResponseTimeChart from '../ResponseTimeChart';
 import RequestProfile from '../RequestProfile';
 import AggregateTimeChart from '../AggregateTimeChart';
 import CategoryTimeChart from '../CategoryTimeChart';
-import { getStatusColor } from '@newspack-nodes/shared/utils/formatUtils';
 import useVirtualization from '@newspack-nodes/shared/hooks/useVirtualization';
 
 const ROW_HEIGHT = 40;
-
-/**
- * Get color for error status indicator.
- *
- * @param {string} errorStatus Error status code ('F', 'T', or falsy).
- * @return {string|null} Color hex or null.
- */
-const getErrorStatusColor = ( errorStatus ) => {
-	if ( errorStatus === 'F' ) {
-		return '#d63638';
-	}
-	if ( errorStatus === 'T' ) {
-		return '#dba617';
-	}
-	return null;
-};
 
 /**
  * Memoized request row component.
@@ -64,9 +47,12 @@ const RequestRow = memo( function RequestRow( {
 	const barField = metric === 'memory' ? 'peak_mb' : 'duration_ms';
 	const barValue = req[ barField ] || 0;
 	const barPct = maxBar > 0 ? ( barValue / maxBar ) * 100 : 0;
-	const statusColor =
-		getErrorStatusColor( req.error_status ) ||
-		getStatusColor( req.status_code );
+	let statusRole = '';
+	if ( 'T' === req.error_status ) {
+		statusRole = ' newspack-nodes-status is-warning';
+	} else if ( 'F' === req.error_status ) {
+		statusRole = ' newspack-nodes-status is-error';
+	}
 	const handleKeyDown = ( e ) => {
 		if ( e.key === 'Enter' || e.key === ' ' ) {
 			e.preventDefault();
@@ -78,19 +64,19 @@ const RequestRow = memo( function RequestRow( {
 		<div
 			role="button"
 			tabIndex={ 0 }
-			className="event-logger-table__row"
+			className="event-logger-table__row newspack-nodes-table__row"
 			style={ { height: ROW_HEIGHT } }
 			onClick={ () => onSelect( req.rid ) }
 			onKeyDown={ handleKeyDown }
 		>
-			<div className="event-logger-table__cell">
+			<div className="event-logger-table__cell newspack-nodes-table__cell">
 				{ new Date( req.timestamp * 1000 ).toLocaleString() }
 			</div>
-			<div className="event-logger-table__cell">
+			<div className="event-logger-table__cell newspack-nodes-table__cell">
 				{ req.method || '-' }
 			</div>
 			<div
-				className="event-logger-table__cell event-logger-table__cell--mono"
+				className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--mono"
 				style={ {
 					background: `linear-gradient(to right, rgba(100, 181, 246, 0.15) ${ barPct }%, transparent ${ barPct }%)`,
 				} }
@@ -98,8 +84,8 @@ const RequestRow = memo( function RequestRow( {
 				<code>{ req.rid }</code>
 			</div>
 			<div
-				className="event-logger-table__cell event-logger-table__cell--status"
-				style={ { color: statusColor } }
+				className={ `event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--status entry-status${ statusRole }` }
+				data-status={ statusRole ? undefined : req.status_code }
 			>
 				{ req.error_status === 'F' && (
 					<span
@@ -123,10 +109,10 @@ const RequestRow = memo( function RequestRow( {
 				) }
 				{ ! req.error_status && ( req.status_code || '-' ) }
 			</div>
-			<div className="event-logger-table__cell event-logger-table__cell--numeric">
+			<div className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--numeric">
 				{ req.duration_ms?.toFixed( 0 ) || 0 }ms
 			</div>
-			<div className="event-logger-table__cell event-logger-table__cell--numeric">
+			<div className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--numeric">
 				{ req.peak_mb > 0 ? `${ req.peak_mb }MB` : '-' }
 			</div>
 		</div>
@@ -229,7 +215,7 @@ export default function UrlDetailView( {
 	const renderSortHeader = ( field, label, variant = '' ) => (
 		<button
 			type="button"
-			className={ `event-logger-table__header-btn${
+			className={ `newspack-nodes-sortable-header-button event-logger-table__header-btn newspack-nodes-table__cell${
 				variant ? ` event-logger-table__header-btn--${ variant }` : ''
 			}` }
 			onClick={ () => onRequestSort( field ) }
@@ -284,9 +270,9 @@ export default function UrlDetailView( {
 							/>
 							{ breakdownLoading && (
 								<span
+									className="newspack-nodes-status"
 									style={ {
 										fontSize: '12px',
-										color: '#757575',
 										paddingBottom: '8px',
 									} }
 								>
@@ -359,7 +345,7 @@ export default function UrlDetailView( {
 						</h3>
 						<Suspense
 							fallback={
-								<div>
+								<div className="event-logger-detail-loading newspack-nodes-performance-loading">
 									{ __(
 										'Loading chart…',
 										'newspack-event-logger-nodes'
@@ -386,9 +372,9 @@ export default function UrlDetailView( {
 						}
 					/>
 					<p
+						className="newspack-nodes-status"
 						style={ {
 							fontSize: '12px',
-							color: '#666',
 							marginTop: '8px',
 						} }
 					>
@@ -444,15 +430,15 @@ export default function UrlDetailView( {
 				</div>
 
 				{ /* Header outside scroll container */ }
-				<div className="event-logger-table__header">
+				<div className="event-logger-table__header newspack-nodes-table__header">
 					{ renderSortHeader(
 						'timestamp',
 						__( 'Time', 'newspack-event-logger-nodes' )
 					) }
-					<div className="event-logger-table__cell">
+					<div className="event-logger-table__cell newspack-nodes-table__cell">
 						{ __( 'Method', 'newspack-event-logger-nodes' ) }
 					</div>
-					<div className="event-logger-table__cell">
+					<div className="event-logger-table__cell newspack-nodes-table__cell">
 						{ __( 'Request ID', 'newspack-event-logger-nodes' ) }
 					</div>
 					{ renderSortHeader(
@@ -472,9 +458,12 @@ export default function UrlDetailView( {
 					) }
 				</div>
 
-				<div ref={ listRef } className="event-logger-table__list">
+				<div
+					ref={ listRef }
+					className="event-logger-table__list newspack-nodes-table"
+				>
 					{ filteredRequests.length === 0 ? (
-						<div className="event-logger-table__empty">
+						<div className="event-logger-table__empty newspack-nodes-empty-state">
 							{ __(
 								'No requests to display',
 								'newspack-event-logger-nodes'

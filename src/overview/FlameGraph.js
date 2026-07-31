@@ -564,7 +564,7 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 	// Gate the empty state on original data; pruning must not fake "no data".
 	if ( ! data || ! data.children || data.children.length === 0 ) {
 		return (
-			<div className="event-logger-flame-empty">
+			<div className="event-logger-flame-empty newspack-nodes-empty-state">
 				<p>
 					{ __(
 						'No flame graph data available.',

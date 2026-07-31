@@ -1,14 +1,3 @@
-/**
- * Modal Styles
- *
- * Performance dashboard modal, header stats, back button.
- * Uses doubled selectors for specificity to override WP component styles.
- */
-
-@use "base";
-
-// Performance Dashboard Modal Styles
-// Double selector for specificity (overrides Gutenberg defaults)
 .event-logger-performance-modal.event-logger-performance-modal {
 	&.components-modal__frame {
 		width: 95vw;
@@ -17,34 +6,24 @@
 		max-height: 95vh;
 		margin: 2.5vh auto;
 
-		// Back button positioned next to the X close button
 		.event-logger-modal-back-button {
 			position: absolute;
 			top: 18px;
-			right: 64px; // To the left of the X button
+			right: 64px;
 			width: 36px;
 			height: 36px;
+			min-height: 36px;
 			padding: 0;
 			margin: 0;
-			border: none;
-			background: transparent;
-			cursor: pointer;
-			font-size: 18px;
-			color: var(--ink);
 			display: flex;
 			align-items: center;
 			justify-content: center;
-			border-radius: 2px;
 			z-index: 10;
-
-			&:hover {
-				background: rgba(0, 0, 0, 0.1);
-			}
-
-			&:focus {
-				outline: 2px solid base.$focus-color;
-				outline-offset: -2px;
-			}
+			font-size: 18px;
+			line-height: inherit;
+			white-space: normal;
+			margin-bottom: 0;
+			vertical-align: baseline;
 		}
 	}
 
@@ -52,37 +31,28 @@
 		overflow-y: auto;
 	}
 
-	// Header stats next to title
 	.components-modal__header {
 		flex-wrap: nowrap;
 		gap: 16px;
-	}
-
-	// The WP close (×) button inherits a near-black currentColor by default —
-	// invisible on dark skins. Paint it --ink, as rule-edit-modal.scss does.
-	// Direct child only: headerActions (the stats + rule-control button) also
-	// live in the header, and they own their own theming.
-	.components-modal__header > button {
-		color: var(--ink);
 	}
 
 	.event-logger-header-stats {
 		display: flex;
 		gap: 16px;
 		margin-left: auto;
-		margin-right: 48px; // Space for close button
-		font-size: 14px;
+		margin-right: 48px;
 		white-space: nowrap;
+		font-size: 14px;
 
-		span {
+		.newspack-nodes-stat {
 			display: flex;
 			align-items: baseline;
 			gap: 4px;
+			font-size: 14px;
+		}
 
-			small {
-				color: var(--ink-3);
-				font-size: 11px;
-			}
+		.newspack-nodes-stat-label {
+			font-size: 11px;
 		}
 	}
 }

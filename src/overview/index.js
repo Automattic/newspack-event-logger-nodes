@@ -55,7 +55,7 @@ export function AdminApp() {
 
 	return (
 		<ThemedRoot>
-			<div className="event-logger-admin-wrap newspack-nodes-theme">
+			<div className="event-logger-admin-wrap newspack-nodes-admin-wrap">
 				<h1 className="newspack-dashboard-title">
 					{ __(
 						'Event Logger - Performance Dashboard',
@@ -73,7 +73,7 @@ export function AdminApp() {
 					</Notice>
 				) }
 
-				<div className="event-logger-admin-app">
+				<div className="event-logger-admin-app newspack-nodes-admin-app">
 					<Suspense
 						fallback={
 							<LoadingFallback

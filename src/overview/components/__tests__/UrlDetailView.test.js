@@ -106,12 +106,46 @@ describe( 'UrlDetailView', () => {
 		unmount();
 	} );
 
+	it( 'keeps Recent Requests controls outside the canonical bordered list surface', () => {
+		const { container, unmount } = mount();
+		const root = container.querySelector( '.event-logger-table--requests' );
+		const toolbar = root.querySelector( 'h3' ).parentElement;
+		const header = root.querySelector( '.newspack-nodes-table__header' );
+		const list = root.querySelector( '.event-logger-table__list' );
+
+		expect( root.classList.contains( 'newspack-nodes-table' ) ).toBe(
+			false
+		);
+		expect( toolbar.closest( '.newspack-nodes-table' ) ).toBeNull();
+		expect( list.classList.contains( 'newspack-nodes-table' ) ).toBe(
+			true
+		);
+		expect( list.previousElementSibling ).toBe( header );
+		unmount();
+	} );
+
 	it( 'the header has exactly as many cells as the grid has columns', () => {
 		// A 7th child wrapped onto an implicit 8px-gapped grid row and
 		// inflated the header height (the --requests template is 6 tracks).
 		const { container, unmount } = mount();
 		const header = container.querySelector( '.event-logger-table__header' );
 		expect( header.children.length ).toBe( 6 );
+		for ( const sortButton of header.querySelectorAll(
+			'.event-logger-table__header-btn'
+		) ) {
+			expect(
+				sortButton.classList.contains(
+					'newspack-nodes-sortable-header-button'
+				)
+			).toBe( true );
+			expect(
+				sortButton.classList.contains( 'newspack-nodes-table__cell' )
+			).toBe( true );
+			expect( sortButton.classList.contains( 'button' ) ).toBe( false );
+			expect( sortButton.classList.contains( 'button-small' ) ).toBe(
+				false
+			);
+		}
 		unmount();
 	} );
 
@@ -124,6 +158,88 @@ describe( 'UrlDetailView', () => {
 		expect( text ).toContain( 'GET' );
 		expect( text ).toContain( 'POST' );
 		expect( text ).toContain( '4MB' );
+		unmount();
+	} );
+
+	it( 'binds every request status kind to the shared CSS contract', async () => {
+		const { container, unmount } = mount( {
+			sortedRequests: [
+				{
+					rid: 'success-218',
+					timestamp: 1748960101,
+					status_code: 218,
+				},
+				{
+					rid: 'redirect-307',
+					timestamp: 1748960102,
+					status_code: 307,
+				},
+				{
+					rid: 'client-418',
+					timestamp: 1748960103,
+					status_code: 418,
+				},
+				{
+					rid: 'server-599',
+					timestamp: 1748960104,
+					status_code: 599,
+				},
+				{
+					rid: 'timeout',
+					timestamp: 1748960105,
+					error_status: 'T',
+				},
+				{
+					rid: 'fatal',
+					timestamp: 1748960106,
+					error_status: 'F',
+				},
+			],
+		} );
+		await act( async () => {} );
+		const statuses = Object.fromEntries(
+			[ ...container.querySelectorAll( '.event-logger-table__row' ) ].map(
+				( row ) => {
+					const cell = row.querySelector(
+						'.event-logger-table__cell--status'
+					);
+					return [
+						row.querySelector( 'code' ).textContent,
+						{
+							className: cell.className,
+							color: cell.style.color,
+							status: cell.dataset.status,
+						},
+					];
+				}
+			)
+		);
+
+		for ( const [ rid, status ] of [
+			[ 'success-218', '218' ],
+			[ 'redirect-307', '307' ],
+			[ 'client-418', '418' ],
+			[ 'server-599', '599' ],
+		] ) {
+			expect( statuses[ rid ].status ).toBe( status );
+			expect( statuses[ rid ].className ).toContain( 'entry-status' );
+			expect( statuses[ rid ].className ).not.toContain(
+				'newspack-nodes-status'
+			);
+			expect( statuses[ rid ].color ).toBe( '' );
+		}
+		expect( statuses.timeout ).toEqual( {
+			className:
+				'event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--status entry-status newspack-nodes-status is-warning',
+			color: '',
+			status: undefined,
+		} );
+		expect( statuses.fatal ).toEqual( {
+			className:
+				'event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--status entry-status newspack-nodes-status is-error',
+			color: '',
+			status: undefined,
+		} );
 		unmount();
 	} );
 

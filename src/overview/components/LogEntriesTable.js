@@ -800,8 +800,8 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 			return (
 				<>
 					<span
+						className="newspack-nodes-status is-info"
 						style={ {
-							color: 'var(--cyan, #003da5)',
 							fontSize: '10px',
 							marginRight: '4px',
 						} }
@@ -820,8 +820,8 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 			return (
 				<>
 					<span
+						className="newspack-nodes-status is-info"
 						style={ {
-							color: 'var(--cyan, #003da5)',
 							fontSize: '10px',
 							marginRight: '4px',
 						} }
@@ -850,10 +850,13 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 			return null;
 		}
 		return (
-			<span style={ { color: '#666' } }>
+			<span className="newspack-nodes-status">
 				{ hasDuration && `(${ entry.duration_ms.toFixed( 3 ) }ms)` }
 				{ hasPeak && (
-					<span style={ { color: '#996600', marginLeft: '6px' } }>
+					<span
+						className="newspack-nodes-status is-warning"
+						style={ { marginLeft: '6px' } }
+					>
 						[{ entry.peak_mb }MB]
 					</span>
 				) }
@@ -881,9 +884,8 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 		const stats = renderStats( entry );
 		const childBadge = entry.childCount > 0 && (
 			<span
+				className="newspack-nodes-status is-muted"
 				style={ {
-					color: '#888',
-					fontSize: '11px',
 					marginLeft: '6px',
 				} }
 			>
@@ -974,34 +976,19 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 						realCount ?? entries.length
 					) }
 				</h3>
-				<div style={ { fontSize: '13px' } }>
+				<div className="log-entries-actions">
 					<button
 						type="button"
+						className="button-link"
 						onClick={ foldAll }
-						style={ {
-							background: 'none',
-							border: 'none',
-							color: 'var(--cyan, #003da5)',
-							cursor: 'pointer',
-							fontSize: '13px',
-							marginRight: '12px',
-							padding: 0,
-						} }
 					>
 						&minus;{ ' ' }
 						{ __( 'Fold All', 'newspack-event-logger-nodes' ) }
 					</button>
 					<button
 						type="button"
+						className="button-link"
 						onClick={ unfoldAll }
-						style={ {
-							background: 'none',
-							border: 'none',
-							color: 'var(--cyan, #003da5)',
-							cursor: 'pointer',
-							fontSize: '13px',
-							padding: 0,
-						} }
 					>
 						+ { __( 'Unfold All', 'newspack-event-logger-nodes' ) }
 					</button>
@@ -1050,7 +1037,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 				</div>
 				{ searchQuery && (
 					<div className="log-entries-search__controls">
-						<span className="log-entries-search__count">
+						<span className="log-entries-search__count newspack-nodes-status">
 							{ matchedIndices.length === 0 &&
 								__(
 									'No matches',
@@ -1076,7 +1063,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 						</span>
 						<button
 							type="button"
-							className="log-entries-search__nav"
+							className="button button-small log-entries-search__nav"
 							onClick={ () => {
 								if ( currentMatchIndex < 0 ) {
 									navigateToMatch( 0 );
@@ -1098,7 +1085,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 						</button>
 						<button
 							type="button"
-							className="log-entries-search__nav"
+							className="button button-small log-entries-search__nav"
 							onClick={ () => {
 								if ( currentMatchIndex < 0 ) {
 									navigateToMatch( 0 );
@@ -1121,7 +1108,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 						</button>
 						<button
 							type="button"
-							className="log-entries-search__nav"
+							className="button button-small log-entries-search__nav"
 							onClick={ clearSearch }
 							title={ __(
 								'Clear search (Esc)',
@@ -1134,7 +1121,10 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 				) }
 			</div>
 			<div>
-				<table ref={ tableRef } className="widefat striped">
+				<table
+					ref={ tableRef }
+					className="newspack-nodes-table newspack-nodes-table--undivided"
+				>
 					<thead>
 						<tr>
 							<th style={ { width: '6px', padding: 0 } }></th>
@@ -1208,8 +1198,8 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 									/>
 									<td>{ entry.n }</td>
 									<td
+										className="newspack-nodes-table__terminal-data"
 										style={ {
-											fontFamily: 'monospace',
 											fontSize: '11px',
 											whiteSpace: 'nowrap',
 										} }
@@ -1283,8 +1273,8 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 											: entry.displayTime }
 									</td>
 									<td
+										className="newspack-nodes-table__terminal-data"
 										style={ {
-											fontFamily: 'monospace',
 											fontSize: '12px',
 											whiteSpace: 'nowrap',
 											paddingLeft: `${
@@ -1295,8 +1285,8 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 										{ renderKeyword( entry ) }
 									</td>
 									<td
+										className="newspack-nodes-table__terminal-data"
 										style={ {
-											fontFamily: 'monospace',
 											fontSize: '11px',
 											whiteSpace: 'pre-wrap',
 											wordBreak: 'break-all',

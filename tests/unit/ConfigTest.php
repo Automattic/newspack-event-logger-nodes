@@ -8,9 +8,10 @@
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use Newspack_Event_Logger_Nodes\Config;
+use Newspack_Event_Logger_Nodes\Rule_Set;
+use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Config as RuntimeConfig;
 use Newspack_Nodes\Config_Utils;
-use Newspack_Event_Logger_Nodes\Tests\TestCase;
 
 #[\PHPUnit\Framework\Attributes\CoversClass( Config::class )]
 class ConfigTest extends TestCase {
@@ -45,6 +46,26 @@ class ConfigTest extends TestCase {
 		$keys = new \ReflectionProperty( RuntimeConfig::class, 'registered_keys' );
 		$keys->setValue( null, $this->saved_registered_keys );
 		parent::tearDown();
+	}
+
+	public function test_completed_migration_surface_is_absent(): void {
+		$this->assertFalse( \method_exists( Config::class, 'correct_option_autoload' ) );
+		$this->assertFalse( \method_exists( Rule_Set::class, 'migrate_from_legacy' ) );
+		$this->assertFalse( \defined( Rule_Set::class . '::OPTION_SCHEMA_VERSION' ) );
+		$this->assertFalse( \defined( Rule_Set::class . '::SCHEMA_VERSION' ) );
+	}
+
+	public function test_activation_hooks_exclude_completed_migrations(): void {
+		$callbacks = \array_column( $GLOBALS['_wp_test_activation_hooks'] ?? [], 'callback' );
+
+		foreach (
+			[
+				[ '\\Newspack_Event_Logger_Nodes\\Config', 'correct_option_autoload' ],
+				[ '\\Newspack_Event_Logger_Nodes\\Rule_Set', 'migrate_from_legacy' ],
+			] as $completed_migration
+		) {
+			$this->assertNotContains( $completed_migration, $callbacks );
+		}
 	}
 
 	// ── load_config: shape + caching ───────────────────────────────────────
@@ -112,27 +133,6 @@ class ConfigTest extends TestCase {
 		Config::reset();
 
 		$this->assertSame( [ 'application-file-7319' ], Config::load_config()['allowed_users'] );
-	}
-
-	public function test_correct_option_autoload_applies_policy(): void {
-		// One-time sweep flips existing installs to match autoload_for():
-		// hot-path scalars autoloaded; the admin-only discovered_events staging
-		// list kept off autoload.
-		$GLOBALS['_wp_set_option_autoload'] = [];
-		$GLOBALS['_wp_options']             = [];
-
-		Config::correct_option_autoload();
-
-		$this->assertTrue( $GLOBALS['_wp_set_option_autoload']['newspack_event_logger_nodes_enable_logging'] );
-		$this->assertFalse( $GLOBALS['_wp_set_option_autoload']['newspack_event_logger_nodes_discovered_events'] );
-	}
-
-	public function test_correct_option_autoload_runs_once(): void {
-		$GLOBALS['_wp_options'] = [];
-		Config::correct_option_autoload();
-		$GLOBALS['_wp_set_option_autoload'] = [];
-		Config::correct_option_autoload();
-		$this->assertSame( [], $GLOBALS['_wp_set_option_autoload'] );
 	}
 
 	public function test_reset_clears_cache(): void {

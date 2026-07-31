@@ -21,6 +21,15 @@ beforeAll( () => {
 } );
 import { renderComponent, act } from '../../../test-helpers/renderHook';
 
+function productRootClasses( element ) {
+	return Array.from( element.classList ).filter(
+		( className ) =>
+			'topology-app' === className ||
+			className.startsWith( 'theme-' ) ||
+			className.startsWith( 'newspack-nodes-' )
+	);
+}
+
 describe( 'CustomEventSelectorModal', () => {
 	const mounted = [];
 
@@ -60,6 +69,29 @@ describe( 'CustomEventSelectorModal', () => {
 		expect( text ).toContain( 'wp.template.render' );
 		expect( text ).toContain( 'wp.query.run' );
 		expect( text ).toContain( '0 of 3 events selected' );
+		expect(
+			document
+				.querySelector( '.custom-event-item' )
+				.classList.contains( 'newspack-nodes-card' )
+		).toBe( false );
+	} );
+
+	it( 'uses the exact standalone product modal root classes', () => {
+		mount( {
+			isOpen: true,
+			onClose: jest.fn(),
+			selected: [],
+			onSelect: jest.fn(),
+		} );
+		const frame = document.querySelector(
+			'.event-logger-custom-event-modal'
+		);
+		expect( frame ).toBeTruthy();
+		expect( productRootClasses( frame ) ).toEqual( [
+			'newspack-nodes-modal',
+			'newspack-nodes-theme',
+			'newspack-nodes-ui',
+		] );
 	} );
 
 	it( 'pre-checks the selected events when the modal opens', () => {

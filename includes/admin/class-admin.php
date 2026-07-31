@@ -386,7 +386,7 @@ class Admin {
 			? \admin_url( 'admin-post.php' )
 			: '/wp-admin/admin-post.php';
 		?>
-		<div class="wrap event-logger-settings-wrap newspack-nodes-theme">
+		<div class="wrap event-logger-settings-wrap newspack-nodes-theme newspack-nodes-ui">
 			<h1><?php \esc_html_e( 'Event Logger Settings', 'newspack-event-logger-nodes' ); ?></h1>
 			<?php
 			// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- read-only notice flag.

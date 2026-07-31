@@ -1,3 +1,4 @@
+/* global globalThis */
 /**
  * RuleEditModal tests — the single-rule draft editor. Renders a @wordpress/components
  * Modal editing pattern / action / (for log rules) hooks / custom events /
@@ -11,8 +12,9 @@
 
 jest.mock( '../../settings/settings/HookSelectorModal', () => ( {
 	__esModule: true,
-	default: ( { isOpen, onSelect, onClose } ) =>
-		isOpen
+	default: ( { isOpen, onSelect, onClose, className } ) => {
+		globalThis.__hookSelectorClassName = className;
+		return isOpen
 			? ( () => {
 					const el = require( 'react' ).createElement;
 					return el(
@@ -28,13 +30,15 @@ jest.mock( '../../settings/settings/HookSelectorModal', () => ( {
 						'apply-hooks'
 					);
 			  } )()
-			: null,
+			: null;
+	},
 } ) );
 
 jest.mock( '../../settings/settings/CustomEventSelectorModal', () => ( {
 	__esModule: true,
-	default: ( { isOpen, onSelect, onClose } ) =>
-		isOpen
+	default: ( { isOpen, onSelect, onClose, className } ) => {
+		globalThis.__customSelectorClassName = className;
+		return isOpen
 			? ( () => {
 					const el = require( 'react' ).createElement;
 					return el(
@@ -50,7 +54,8 @@ jest.mock( '../../settings/settings/CustomEventSelectorModal', () => ( {
 						'apply-custom'
 					);
 			  } )()
-			: null,
+			: null;
+	},
 } ) );
 
 import { renderComponent, act } from '../../test-helpers/renderHook';
@@ -98,6 +103,15 @@ function saveButton() {
 	);
 }
 
+function productRootClasses( element ) {
+	return Array.from( element.classList ).filter(
+		( className ) =>
+			'topology-app' === className ||
+			className.startsWith( 'theme-' ) ||
+			className.startsWith( 'newspack-nodes-' )
+	);
+}
+
 describe( 'RuleEditModal — log rule fields', () => {
 	let onSave;
 	let onCancel;
@@ -125,6 +139,42 @@ describe( 'RuleEditModal — log rule fields', () => {
 		mounted.push( r );
 		return r;
 	}
+
+	test( 'uses the exact standalone product modal root classes', () => {
+		mount( LOG_RULE );
+		const frame = document.querySelector( '.event-logger-rule-edit-modal' );
+		expect( frame ).toBeTruthy();
+		expect( productRootClasses( frame ) ).toEqual( [
+			'newspack-nodes-modal',
+			'newspack-nodes-theme',
+			'newspack-nodes-ui',
+		] );
+	} );
+
+	test( 'adds the skinned portal root only when the caller requests it', () => {
+		const r = renderComponent(
+			<RuleEditModal
+				rule={ LOG_RULE }
+				onSave={ onSave }
+				onCancel={ onCancel }
+				className="newspack-nodes-skin-root"
+			/>
+		);
+		mounted.push( r );
+		const frame = document.querySelector( '.event-logger-rule-edit-modal' );
+		expect( productRootClasses( frame ) ).toEqual( [
+			'newspack-nodes-modal',
+			'newspack-nodes-theme',
+			'newspack-nodes-ui',
+			'newspack-nodes-skin-root',
+		] );
+		expect( globalThis.__hookSelectorClassName ).toBe(
+			'newspack-nodes-skin-root'
+		);
+		expect( globalThis.__customSelectorClassName ).toBe(
+			'newspack-nodes-skin-root'
+		);
+	} );
 
 	test( 'the Delete button is a two-click confirm before onDelete fires', () => {
 		const onDelete = jest.fn();
@@ -180,11 +230,27 @@ describe( 'RuleEditModal — log rule fields', () => {
 		).toBeTruthy();
 	} );
 
-	test( 'shows the current hooks count', () => {
-		mount( LOG_RULE );
-		expect( inDialog( '.rule-edit-hooks-field' ).textContent ).toContain(
-			'1'
-		);
+	test( 'shows selected counts as plain shared modal status text', () => {
+		mount( {
+			...LOG_RULE,
+			hooks: [ 'init', 'wp_loaded' ],
+			custom_events: [ 'cache_hit', 'cache_miss', 'purge' ],
+		} );
+		const counts = [
+			...document.querySelectorAll( '.rule-edit-field-count' ),
+		];
+		expect( counts ).toHaveLength( 2 );
+		expect( counts.map( ( count ) => count.textContent.trim() ) ).toEqual( [
+			'2 hooks',
+			'3 events',
+		] );
+		for ( const count of counts ) {
+			expect( count.classList ).toContain( 'newspack-nodes-status' );
+			expect( count.classList ).not.toContain( 'newspack-nodes-badge' );
+			expect( count.classList ).not.toContain(
+				'newspack-nodes-status-badge'
+			);
+		}
 	} );
 
 	test( 'onSave emits the draft with pattern / action / hooks / thresholds', () => {

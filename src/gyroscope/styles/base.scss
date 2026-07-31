@@ -1,14 +1,8 @@
 /**
- * Gyroscope dashboard base — the shared dashboard chrome (src/styles/base.scss)
- * plus this page's scoped reset + the 4-column stats grid. `@forward` re-exports
- * the shared tokens/mixins so the sibling stylesheets (`@use "base"`) keep
- * resolving `base.$token` / `base.<mixin>`.
+ * Gyroscope dashboard base forwards the shared token/mixin API and emits only
+ * this page's scoped border-box reset.
  */
 @forward "../../styles/base";
 @use "../../styles/base" as base;
 
 @include base.scoped-reset("#event-logger-gyroscope");
-
-.event-logger-stats-grid {
-	@include base.stats-grid;
-}

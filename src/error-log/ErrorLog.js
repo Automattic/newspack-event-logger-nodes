@@ -3,7 +3,7 @@
  * errors.log.
  *
  * A THIN wrapper over the shared `LogStreamViewer` chrome (toolbar, filter,
- * counts + staleness, pause, Debug, Clear, banner, body split, virtualized
+ * counts + rate, pause, Debug, Clear, banner, body split, virtualized
  * `LogRowList`). The `perferrors:*` node graph (mounted by `useErrorLogGraph`)
  * owns all data: the substrate's `perferrors:link` holds the EventSource and
  * streams envelopes into `perferrors:view` (a `LogStreamViewNode` subclass),
@@ -154,15 +154,15 @@ const ErrorRow = memo( function ErrorRow( { row } ) {
 	return (
 		<div
 			role="row"
-			className={ `newspack-nodes-log-row ${
+			className={ `newspack-nodes-log-row newspack-nodes-table__row ${
 				row.isEven ? 'row-even' : 'row-odd'
 			}` }
 			style={ { gridTemplateColumns: GRID_TEMPLATE } }
 		>
-			<span role="cell" className="entry-time">
+			<span role="cell" className="newspack-nodes-table__cell entry-time">
 				{ formatTime( row.ts ) }
 			</span>
-			<span role="cell">
+			<span role="cell" className="newspack-nodes-table__cell">
 				<a
 					className="entry-rid"
 					href={ `admin.php?page=event-logger-overview&request=${ encodeURIComponent(
@@ -176,7 +176,7 @@ const ErrorRow = memo( function ErrorRow( { row } ) {
 					{ row.rid }
 				</a>
 			</span>
-			<span role="cell" className="entry-url">
+			<span role="cell" className="newspack-nodes-table__cell entry-url">
 				{ row.url && (
 					<>
 						<span className="entry-method">{ row.method }</span>{ ' ' }
@@ -195,13 +195,17 @@ const ErrorRow = memo( function ErrorRow( { row } ) {
 			</span>
 			<span
 				role="cell"
-				className={ `entry-keyword entry-keyword--${ getKeywordClass(
+				className={ `newspack-nodes-table__cell entry-keyword entry-keyword--${ getKeywordClass(
 					row.k
 				) }` }
 			>
 				{ row.k }
 			</span>
-			<span role="cell" className="entry-message" title={ row.m }>
+			<span
+				role="cell"
+				className="newspack-nodes-table__cell entry-message"
+				title={ row.m }
+			>
 				{ row.m }
 			</span>
 		</div>

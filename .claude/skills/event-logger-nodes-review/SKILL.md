@@ -157,8 +157,6 @@ The seven global logging settings (`log_urls`/`skip_urls`/`log_events`/`custom_e
 - **Don't revive the global logging options.** A diff that reintroduces `log_urls`/`skip_urls`/`log_events`/`custom_events`/etc. as `Settings_Schema` fields or option rows is reviving retired machinery — those are per-rule now. (`enable_logging`, `log_memory`, `flush_every_line`, `allowed_users`, `hook_start_priority` stay global.)
 - **Discovery stages hooks, it doesn't write rules.** `Discovery_Collector_Node` stages spoke-reported hooks into a non-autoloaded `discovered_hooks` option (surfaced in the editor's picker) — the editor is the only writer of rules. A diff that has discovery union-merge into a `/` rule and save the ruleset regresses the "empty means empty" fix.
 - **`upsert` edits match by id, add matches by pattern.** `Rules_CI_Node::upsert` replaces in place by `id` when the incoming rule carries one (an edit → rename doesn't orphan the old pattern), falling back to pattern-match only for the id-less "Log this URL" add. Don't collapse them back to pattern-only.
-- **Migration is activation-only + version-gated** (`SCHEMA_VERSION = 2`). No request-path version check.
-
 ## React / dashboard nits
 
 - `@wordpress/element` for React, `@wordpress/api-fetch` for REST.
@@ -168,7 +166,7 @@ The seven global logging settings (`log_urls`/`skip_urls`/`log_events`/`custom_e
 
 ## Tests
 
-- Unit tests under `tests/unit/` — mostly flat. ELN owns five Service-CI test files: `DiscoveryCITest.php`, `LoggerCITest.php`, `EventsCITest.php`, `PerformanceCITest.php`, `RulesCITest.php` (the `AggregatorCITest` / `SettingsCITest` are substrate tests in newspack-nodes, not here). The per-URL-ruleset engine has its own suite: `RuleTest.php`, `RuleSetTest.php`, `RuleMatcherTest.php`, `RulesetMigrationTest.php`. The only subdirs are `tests/unit/Admin/` and `tests/unit/Cli/`. Integration tests under `tests/integration/`. There is no `tests/unit/Rest/` subdirectory; per-plugin REST controllers were retired with the Service CI cutover.
+- Unit tests under `tests/unit/` — mostly flat. ELN owns five Service-CI test files: `DiscoveryCITest.php`, `LoggerCITest.php`, `EventsCITest.php`, `PerformanceCITest.php`, `RulesCITest.php` (the `AggregatorCITest` / `SettingsCITest` are substrate tests in newspack-nodes, not here). The per-URL-ruleset engine has its own suite: `RuleTest.php`, `RuleSetTest.php`, `RuleMatcherTest.php`. The only subdirs are `tests/unit/Admin/` and `tests/unit/Cli/`. Integration tests under `tests/integration/`. There is no `tests/unit/Rest/` subdirectory; per-plugin REST controllers were retired with the Service CI cutover.
 - Coverage report under `/volumes/pyrobase/tmp/newspack-event-logger-nodes-coverage/` after running `tests/run-coverage.sh`. New code should add tests so coverage doesn't regress.
 - Test fixtures use `Message::TM_STRUCT` for array-VALUE messages (was `TM_BYTESTREAM` pre-rename; if you see TM_BYTESTREAM in a fixture with array VALUE, that's a stale test that needs updating).
 - New Service CI verbs should have a happy-path test, an unauthorized-request test (verifying `require_manage_options` throws for non-admins), and a memcache-failure test (where the handler reads `Core::$memd`). Rate-limit tests aren't applicable — Service CI verbs aren't rate-limited at the CI layer; the SSE slot pool is the only structural backpressure.

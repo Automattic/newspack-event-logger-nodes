@@ -6,15 +6,6 @@
 
 @use "base";
 
-// Flame graph empty state
-.event-logger-flame-empty {
-	padding: 24px;
-	text-align: center;
-	color: var(--ink-3);
-	background: var(--paper-2);
-	border-radius: 4px;
-}
-
 // Flame graph tooltip - ensure it appears above WordPress admin elements
 .d3-flame-graph-tip {
 	z-index: 100001 !important;
@@ -25,4 +16,12 @@
 	font-family: base.$mono-font;
 	font-size: 12px;
 	line-height: 1.4;
+}
+
+.event-logger-flame-empty {
+	padding: 24px;
+
+	&::before {
+		display: none;
+	}
 }

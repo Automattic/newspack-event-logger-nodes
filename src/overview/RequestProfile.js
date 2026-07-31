@@ -101,17 +101,7 @@ export default function RequestProfile( {
 			{ title && <h3>{ title }</h3> }
 
 			{ /* Summary bar */ }
-			<div
-				className="event-logger-profile-bar"
-				style={ {
-					display: 'flex',
-					height: '24px',
-					borderRadius: '4px',
-					overflow: 'hidden',
-					marginBottom: '16px',
-					background: 'var(--paper-3, #ecf0f1)',
-				} }
-			>
+			<div className="event-logger-profile-bar">
 				{ sortedProfiles.map( ( { state, time } ) => {
 					if ( isCallbackCategory( state ) ) {
 						return null;
@@ -144,7 +134,7 @@ export default function RequestProfile( {
 			</div>
 
 			{ /* Profile table */ }
-			<table className="widefat striped" style={ { fontSize: '13px' } }>
+			<table className="newspack-nodes-table newspack-nodes-table--undivided">
 				<thead>
 					<tr>
 						<th style={ { width: '40%' } }>
@@ -202,9 +192,9 @@ export default function RequestProfile( {
 											{ state }
 											{ hasEntries && (
 												<span
+													className="newspack-nodes-status"
 													style={ {
 														marginLeft: '6px',
-														color: 'var(--ink-3, #999)',
 													} }
 												>
 													{ isExpanded ? '▼' : '▶' }
@@ -212,41 +202,43 @@ export default function RequestProfile( {
 											) }
 										</td>
 										<td
+											className="newspack-nodes-table__terminal-data"
 											style={ {
 												textAlign: 'right',
-												fontFamily: 'monospace',
 											} }
 										>
 											{ formatDuration( time ) }
 										</td>
 										<td
+											className="newspack-nodes-table__terminal-data"
 											style={ {
 												textAlign: 'right',
-												fontFamily: 'monospace',
 											} }
 										>
 											{ pct.toFixed( 1 ) }%
 										</td>
 										<td
+											className="newspack-nodes-table__terminal-data"
 											style={ {
 												textAlign: 'right',
-												fontFamily: 'monospace',
 											} }
 										>
 											{ Math.round( count ) }
 										</td>
 									</tr>
 									{ isExpanded && hasEntries && (
-										<tr key={ `${ state }-entries` }>
+										<tr
+											key={ `${ state }-entries` }
+											className="newspack-nodes-table__details"
+										>
 											<td
 												colSpan={ 4 }
 												style={ {
 													padding: '0 0 0 30px',
-													background:
-														'var(--paper-2, #f9f9f9)',
 												} }
 											>
 												<table
+													className="newspack-nodes-table newspack-nodes-table--undivided"
 													style={ {
 														width: '100%',
 														fontSize: '12px',
@@ -299,11 +291,10 @@ export default function RequestProfile( {
 																				) }
 																		</td>
 																		<td
+																			className="newspack-nodes-table__terminal-data"
 																			style={ {
 																				textAlign:
 																					'right',
-																				fontFamily:
-																					'monospace',
 																				padding:
 																					'4px 8px',
 																				width: '80px',
@@ -314,11 +305,10 @@ export default function RequestProfile( {
 																			) }
 																		</td>
 																		<td
+																			className="newspack-nodes-table__terminal-data"
 																			style={ {
 																				textAlign:
 																					'right',
-																				fontFamily:
-																					'monospace',
 																				padding:
 																					'4px 8px',
 																				width: '60px',
@@ -339,8 +329,8 @@ export default function RequestProfile( {
 																	colSpan={
 																		3
 																	}
+																	className="newspack-nodes-status"
 																	style={ {
-																		color: 'var(--ink-3, #999)',
 																		fontStyle:
 																			'italic',
 																		padding:
@@ -376,13 +366,8 @@ export default function RequestProfile( {
 							<td colSpan={ 4 } style={ { textAlign: 'center' } }>
 								<button
 									type="button"
-									className="button-link"
+									className="button-link event-logger-profile-expansion"
 									onClick={ () => setShowAll( ! showAll ) }
-									style={ {
-										color: 'var(--cyan, #0073aa)',
-										cursor: 'pointer',
-										padding: '4px 8px',
-									} }
 								>
 									{ showAll
 										? __(
@@ -403,12 +388,9 @@ export default function RequestProfile( {
 							</td>
 						</tr>
 					) }
-					<tr
-						style={ {
-							fontWeight: 'bold',
-							background: 'var(--paper-2, #f5f5f5)',
-						} }
-					>
+				</tbody>
+				<tfoot>
+					<tr className="newspack-nodes-table__summary">
 						<td>
 							{ __(
 								'Total Profiled',
@@ -416,17 +398,17 @@ export default function RequestProfile( {
 							) }
 						</td>
 						<td
+							className="newspack-nodes-table__terminal-data"
 							style={ {
 								textAlign: 'right',
-								fontFamily: 'monospace',
 							} }
 						>
 							{ formatDuration( profiledTime ) }
 						</td>
 						<td
+							className="newspack-nodes-table__terminal-data"
 							style={ {
 								textAlign: 'right',
-								fontFamily: 'monospace',
 							} }
 						>
 							{ totalMs > 0
@@ -438,7 +420,7 @@ export default function RequestProfile( {
 						</td>
 						<td />
 					</tr>
-				</tbody>
+				</tfoot>
 			</table>
 		</div>
 	);

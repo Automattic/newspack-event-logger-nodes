@@ -71,6 +71,16 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit {
 			return null;
 		}
 
+		/** @return array<int,mixed>|null The recorded wp_enqueue_style args for $handle. */
+		private function enqueued_style_for( string $handle ): ?array {
+			foreach ( $GLOBALS['_enqueued_styles'] as $rec ) {
+				if ( ( $rec[0] ?? '' ) === $handle ) {
+					return $rec;
+				}
+			}
+			return null;
+		}
+
 		// ── enqueue_on_overlay_pages ────────────────────────────────────────
 
 		public function test_does_not_enqueue_when_page_is_not_an_overlay_page(): void {
@@ -98,16 +108,17 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit {
 			$enq = $this->enqueued_script_for( self::HANDLE );
 			$this->assertNotNull( $enq, 'overlay page must enqueue the tab bundle' );
 			$this->assertStringEndsWith( 'build/current-request/index.js', (string) ( $enq[1] ?? '' ) );
-			// The style is enqueued ONLY when the bundle's index.css exists on disk
-			// (build/ is gitignored, so a fresh checkout that hasn't run the build
-			// has none). Assert that exact contract rather than assume a built tree.
-			$css_on_disk   = \file_exists( \NEWSPACK_EVENT_LOGGER_NODES_DIR . 'build/current-request/index.css' );
-			$style_handles = \array_map( static fn ( $r ) => $r[0] ?? '', $GLOBALS['_enqueued_styles'] );
-			if ( $css_on_disk ) {
-				$this->assertContains( self::HANDLE, $style_handles, 'the bundle css must enqueue when index.css is present on disk' );
-			} else {
-				$this->assertNotContains( self::HANDLE, $style_handles, 'no index.css on disk → no style enqueued' );
-			}
+			$this->assertFileExists(
+				\NEWSPACK_EVENT_LOGGER_NODES_DIR . 'build/current-request/index.css',
+				'Current Request CSS missing — run `npm run build`'
+			);
+			$style = $this->enqueued_style_for( self::HANDLE );
+			$this->assertNotNull( $style, 'the direct Current Request stylesheet must enqueue' );
+			$this->assertSame(
+				[ 'wp-components', 'newspack-nodes-ui' ],
+				$style[2] ?? null
+			);
+			$this->assertNotContains( 'newspack-nodes-graph', $style[2] ?? [] );
 		}
 
 		// ── enqueue_inline_data ─────────────────────────────────────────────

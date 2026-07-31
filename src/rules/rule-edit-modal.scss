@@ -1,20 +1,12 @@
 /**
- * RuleEditModal field layout + (in the dashboard) skin-token theming.
- * Imported by the component itself so EVERY bundle that renders the modal (the
- * settings rules editor AND the performance dashboard's "Log this URL") gets it.
+ * RuleEditModal layout. Shared Nodes/WP classes own every visual property.
  */
 
-@use "@newspack-nodes/shared/styles/inputs";
-
 .event-logger-rule-edit-modal {
-	// Breathing room below the header divider before the first field.
 	.rule-edit-body {
 		padding-top: 16px;
 	}
 
-	// The @wordpress controls carry `__nextHasNoMarginBottom` (which zeroes their
-	// margin), so add a comfortable gap between one field's help text and the next
-	// field's label.
 	.rule-edit-body .components-base-control,
 	.rule-edit-field,
 	.rule-edit-hooks-field,
@@ -30,17 +22,11 @@
 		gap: 10px;
 	}
 
-	// Match the @wordpress control labels (URL PATTERN / ACTION / …): small,
-	// uppercase, normal weight. Colour is themed below (dim in the dashboard).
 	.rule-edit-field-label {
+		margin-bottom: 0;
 		min-width: 130px;
-		font-size: 11px;
-		font-weight: 400;
-		text-transform: uppercase;
-		letter-spacing: 0.04em;
 	}
 
-	// Equal-width Hooks / Custom-events buttons read tidier than auto-sized ones.
 	.rule-edit-hooks-field button,
 	.rule-edit-custom-field button {
 		min-width: 140px;
@@ -48,27 +34,18 @@
 	}
 
 	.rule-edit-field-count {
-		color: #757575;
 		font-size: 12px;
 	}
 
-	// Significant-events tag field: label above, tags + input, help below. The
-	// label is a plain <span> (TagInputField isn't a @wordpress control), so give
-	// it the same small/uppercase/spacing treatment the real control labels get.
-	.rule-edit-tag-field .components-base-control__label {
+	.rule-edit-tag-field .rule-edit-field-label {
 		display: block;
 		margin-bottom: 8px;
-		font-size: 11px;
-		font-weight: 400;
-		text-transform: uppercase;
-		letter-spacing: 0.04em;
 	}
 
 	.rule-edit-tag-field .components-base-control__help {
 		margin: 8px 0 0;
 	}
 
-	// The tag input should span the field, not sit at its natural width.
 	.rule-edit-tag-field {
 		.event-logger-tag-input,
 		.event-logger-tag-input-row {
@@ -81,7 +58,6 @@
 		}
 	}
 
-	// The two numeric thresholds are narrow; sit them side by side on one row.
 	.rule-edit-threshold-row {
 		display: flex;
 		gap: 16px;
@@ -99,15 +75,11 @@
 		gap: 8px;
 		margin-top: 20px;
 
-		// Delete sits apart on the left; Cancel/Save keep the right edge.
 		&__delete {
 			margin-right: auto;
 		}
 	}
 
-	// The tag pills need horizontal room; a wider minimum keeps them from wrapping
-	// every value onto its own line on the light settings page — but cap it so a
-	// long tag row doesn't stretch the dialog edge-to-edge.
 	&.components-modal__frame {
 		min-width: 560px;
 		width: 640px;
@@ -115,17 +87,7 @@
 	}
 }
 
-// In the performance dashboard these modals portal to <body> carrying the skin
-// classes (`topology-app theme-*`), so the skin tokens (--paper/--ink/…) are in
-// scope. Theme the frame + @wordpress controls with those tokens — the same
-// mechanism ThemedRoot uses for the dashboard root and the detail modal, so it's
-// skin-adaptive. Scoped to `.topology-app`, which only the dashboard passes, so
-// the light settings page is untouched.
-
-// Layout: the dashboard's global `.topology-app` CSS leaks `display: grid` onto
-// the portaled frame, squishing the content to a min-content column. Restore the
-// Modal's flex-column stacking (tokens are custom props, unaffected by display).
-.event-logger-rule-edit-modal.topology-app.components-modal__frame {
+.newspack-nodes-skin-root.event-logger-rule-edit-modal.components-modal__frame {
 	display: flex;
 	flex-direction: column;
 	grid-template: none;
@@ -147,69 +109,25 @@
 	}
 }
 
-.event-logger-rule-edit-modal.topology-app.components-modal__frame,
-.event-logger-hook-selector-modal.topology-app.components-modal__frame,
-.event-logger-custom-event-modal.topology-app.components-modal__frame {
-	background: var(--paper-2);
-	color: var(--ink);
-	border: 1px solid var(--paper-shadow);
-
-	// Undo the leaked console grid on the picker frames too.
+.newspack-nodes-skin-root.event-logger-rule-edit-modal.components-modal__frame,
+.newspack-nodes-skin-root.event-logger-hook-selector-modal.components-modal__frame,
+.newspack-nodes-skin-root.event-logger-custom-event-modal.components-modal__frame {
 	display: flex;
 	flex-direction: column;
 	grid-template: none;
 	gap: 0;
 
-	// A 1px header divider on every modal (the custom-event picker already had one).
 	.components-modal__header {
-		border-bottom: 1px solid var(--paper-shadow);
 		padding: 0 18px;
 		height: 64px;
 	}
 
 	.components-modal__header .components-modal__header-heading,
-	.components-modal__header button {
+	.components-modal__header > button {
 		padding: 0;
 		font-size: 18px;
 		line-height: 1;
-		color: var(--ink);
 		min-width: 24px;
 		height: 24px;
-
-		&:hover {
-			background: var(--oxide);
-			color: var(--paper);
-		}
-	}
-
-	// Form-control chrome (select / input / textarea / checkbox, incl. the
-	// @wordpress InputControl wrappers + number spinner) is owned by the shared
-	// `@newspack-nodes/shared/styles/controls` partial (@use'd via the dashboard
-	// base), so every menu matches the console's canonical look. Only
-	// modal-specific chrome stays below.
-
-	// Labels — including SelectControl's, which renders as a bare flex-item — and
-	// the per-field help text (WP defaults it to a low-contrast grey).
-	// Field labels — one step below full brightness (--ink-2), uppercase, all
-	// consistent (Hooks / Custom events used to be full-bright, the rest dim).
-	.components-base-control__label,
-	.components-input-control__label,
-	.components-flex-item,
-	.rule-edit-field-label {
-		color: var(--ink-2);
-	}
-
-	// Secondary text (help lines, the hook/event counts) stays muted.
-	.components-base-control__help,
-	.rule-edit-field-count {
-		color: var(--ink-3);
-	}
-
-	// Portal frames escape ThemedRoot's DOM subtree, so its @wordpress reskin
-	// can't reach here — pull the SAME mixin so the modal buttons never drift.
-	@include inputs.wp-reskin;
-
-	::placeholder {
-		color: var(--ink-3);
 	}
 }

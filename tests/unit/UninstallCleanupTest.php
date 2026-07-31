@@ -15,6 +15,8 @@ require_once \dirname( __DIR__, 2 ) . '/includes/uninstall-cleanup.php';
 
 final class UninstallCleanupTest extends TestCase {
 
+	private const LEGACY_RULES_SCHEMA_OPTION = 'newspack_event_logger_nodes_rules_schema_version';
+
 	/** Minimal wpdb double: get_col resolves a prefix LIKE against _wp_options. */
 	private function wpdb(): object {
 		return new class() {
@@ -69,7 +71,7 @@ final class UninstallCleanupTest extends TestCase {
 
 	/**
 	 * The ruleset ([54]) storage — the autoloaded rule list, every per-heavy-rule
-	 * durable hooks option, and the migration version marker — must all be swept on
+	 * durable hooks option, and the legacy schema marker — must all be swept on
 	 * uninstall. They ride the shared `newspack_event_logger_nodes_` prefix, so the
 	 * existing sweep already covers them; this pins that so a future prefix change
 	 * can't orphan the distinctive `_rule_hooks_*` rows.
@@ -79,7 +81,7 @@ final class UninstallCleanupTest extends TestCase {
 			\Newspack_Event_Logger_Nodes\Rule_Set::OPTION_RULES              => [ [ 'id' => 'a', 'pattern' => '/', 'action' => 'log' ] ],
 			\Newspack_Event_Logger_Nodes\Rule_Set::hooks_option_name( 'a' )  => [ 'init' ],
 			\Newspack_Event_Logger_Nodes\Rule_Set::hooks_option_name( 'b2' ) => [ 'wp' ],
-			\Newspack_Event_Logger_Nodes\Rule_Set::OPTION_SCHEMA_VERSION     => 1,
+			self::LEGACY_RULES_SCHEMA_OPTION                                => 1,
 			'other_plugin_option'                                           => 'keep',
 		];
 
@@ -88,7 +90,7 @@ final class UninstallCleanupTest extends TestCase {
 		$this->assertArrayNotHasKey( \Newspack_Event_Logger_Nodes\Rule_Set::OPTION_RULES, $GLOBALS['_wp_options'] );
 		$this->assertArrayNotHasKey( \Newspack_Event_Logger_Nodes\Rule_Set::hooks_option_name( 'a' ), $GLOBALS['_wp_options'] );
 		$this->assertArrayNotHasKey( \Newspack_Event_Logger_Nodes\Rule_Set::hooks_option_name( 'b2' ), $GLOBALS['_wp_options'] );
-		$this->assertArrayNotHasKey( \Newspack_Event_Logger_Nodes\Rule_Set::OPTION_SCHEMA_VERSION, $GLOBALS['_wp_options'] );
+		$this->assertArrayNotHasKey( self::LEGACY_RULES_SCHEMA_OPTION, $GLOBALS['_wp_options'] );
 		$this->assertSame( 'keep', $GLOBALS['_wp_options']['other_plugin_option'] );
 	}
 }

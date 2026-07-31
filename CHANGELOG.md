@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Event Logger dashboards adopt the canonical newspack-nodes UI layer.**
+  Controls, modals, focus rings, status colors, and theme skins now share the
+  substrate implementation, including audited contrast for every action state
+  and semantic status surface.
+
+### Removed
+
+- **Removed the in-flight dashboard's seconds-since-last-SSE indicator.**
+  Request rate, reconnect handling, and the stream watchdog are unchanged.
+- **Removed completed one-time migrations.** The autoload-correction sweep,
+  pre-v0.28 ruleset upgrader, activation hooks, public migration constants,
+  and obsolete tests are gone.
+
 ## [0.43.3] - 2026-07-29
 
 ### Changed

@@ -583,9 +583,30 @@ describe( 'PerformanceDashboard', () => {
 		expect( container.textContent ).toContain( 'UrlDetailView' );
 		expect( container.textContent ).toContain( 'req/s' );
 		expect( container.textContent ).toContain( 'p50' );
-		expect(
-			container.querySelector( '[data-testid="modal"]' )
-		).toBeTruthy();
+		const modal = container.querySelector( '[data-testid="modal"]' );
+		expect( modal ).toBeTruthy();
+		expect( modal.className ).toBe(
+			'event-logger-performance-modal newspack-nodes-modal newspack-nodes-skin-root newspack-nodes-theme newspack-nodes-ui'
+		);
+		const headerStats = Array.from(
+			modal.querySelectorAll(
+				'.event-logger-header-stats > .newspack-nodes-stat'
+			)
+		);
+		expect( headerStats ).toHaveLength( 6 );
+		for ( const stat of headerStats ) {
+			expect(
+				stat.querySelector( '.newspack-nodes-stat-value' )
+			).toBeNull();
+			expect(
+				Array.from( stat.childNodes ).some(
+					( node ) =>
+						window.Node.TEXT_NODE === node.nodeType &&
+						'' !== node.textContent.trim()
+				)
+			).toBe( true );
+			expect( stat.querySelector( ':scope > small' ) ).not.toBeNull();
+		}
 		unmount();
 	} );
 
@@ -967,10 +988,13 @@ describe( 'PerformanceDashboard', () => {
 			} )
 		);
 		await flushEffects();
+		const backButton = container.querySelector(
+			'.event-logger-modal-back-button'
+		);
+		expect( backButton.classList.contains( 'button' ) ).toBe( true );
+		expect( backButton.classList.contains( 'button-small' ) ).toBe( true );
 		act( () => {
-			container
-				.querySelector( '.event-logger-modal-back-button' )
-				.click();
+			backButton.click();
 		} );
 		expect( mockNavState.selectRequest ).toHaveBeenCalledWith( null );
 		expect( mockNavState.selectUrl ).not.toHaveBeenCalledWith( null );
@@ -1109,6 +1133,9 @@ describe( 'PerformanceDashboard', () => {
 			expect( globalThis.__ruleEditProps.rule.pattern ).toBe( '/foo?' );
 			expect( globalThis.__ruleEditProps.rule.action ).toBe( 'log' );
 			expect( globalThis.__ruleEditProps.rule.id ).toBe( '' );
+			expect( globalThis.__ruleEditProps.className ).toBe(
+				'newspack-nodes-skin-root'
+			);
 			unmount();
 		} );
 
@@ -1247,6 +1274,9 @@ describe( 'PerformanceDashboard', () => {
 			expect(
 				container.querySelector( '.event-logger-rule-error' )
 			).toBeTruthy();
+			expect(
+				container.querySelector( '.event-logger-rule-error' ).className
+			).toBe( 'event-logger-rule-error newspack-nodes-status is-error' );
 			unmount();
 		} );
 	} );

@@ -60,7 +60,7 @@ function ConfirmDeleteModal( { pattern, onCancel, onConfirm } ) {
 			} }
 		>
 			<div
-				className="rules-admin__confirm"
+				className="rules-admin__confirm newspack-nodes-modal"
 				role="dialog"
 				aria-modal="true"
 				aria-label={ __(
@@ -109,7 +109,7 @@ function RuleRow( { rule, onEdit, onDelete } ) {
 			</td>
 			<td>
 				<span
-					className={ `rules-admin__badge rules-admin__badge--${ rule.action }` }
+					className={ `rules-admin__badge newspack-nodes-badge rules-admin__badge--${ rule.action }` }
 				>
 					{ 'log' === rule.action
 						? __( 'Log', 'newspack-event-logger-nodes' )
@@ -225,7 +225,7 @@ export default function RulesAdmin() {
 	}
 
 	return (
-		<div className="rules-admin newspack-nodes-theme">
+		<div className="rules-admin">
 			{ error && (
 				<div className="notice notice-error">
 					<p>{ error }</p>
@@ -242,7 +242,7 @@ export default function RulesAdmin() {
 				</button>
 			</p>
 
-			<table className="wp-list-table widefat fixed striped">
+			<table className="wp-list-table fixed newspack-nodes-table newspack-nodes-table--undivided">
 				<thead>
 					<tr>
 						<th style={ { width: '32%' } }>

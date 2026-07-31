@@ -14,7 +14,6 @@ import {
 } from '@wordpress/element';
 import { __, _n, sprintf } from '@wordpress/i18n';
 import { TextControl } from '@wordpress/components';
-import { STATUS_COLORS } from '@newspack-nodes/shared/utils/formatUtils';
 import useVirtualization from '@newspack-nodes/shared/hooks/useVirtualization';
 
 const ROW_HEIGHT = 40;
@@ -72,18 +71,18 @@ const UrlRow = memo( function UrlRow( {
 		<div
 			role="button"
 			tabIndex={ 0 }
-			className={ `event-logger-table__row${
-				isSelected ? ' selected' : ''
+			className={ `event-logger-table__row newspack-nodes-table__row${
+				isSelected ? ' is-selected' : ''
 			}` }
 			onClick={ () => onSelect( url ) }
 			onKeyDown={ handleKeyDown }
 			style={ { height: ROW_HEIGHT } }
 		>
-			<div className="event-logger-table__cell event-logger-table__cell--numeric">
+			<div className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--numeric">
 				{ formatNum( url.count ) }
 			</div>
 			<div
-				className="event-logger-table__cell"
+				className="event-logger-table__cell newspack-nodes-table__cell"
 				style={ {
 					background: `linear-gradient(to right, rgba(100, 181, 246, 0.15) ${ barPct }%, transparent ${ barPct }%)`,
 				} }
@@ -91,42 +90,42 @@ const UrlRow = memo( function UrlRow( {
 				<code>{ url.url }</code>
 			</div>
 			<div
-				className="event-logger-table__cell event-logger-table__cell--status"
-				style={ { color: STATUS_COLORS[ '2xx' ] } }
+				className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--status entry-status"
+				data-status="218"
 			>
 				{ pct( url.count_2xx, url.count ) }
 			</div>
 			<div
-				className="event-logger-table__cell event-logger-table__cell--status"
-				style={ { color: STATUS_COLORS[ '3xx' ] } }
+				className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--status entry-status"
+				data-status="307"
 			>
 				{ pct( url.count_3xx, url.count ) }
 			</div>
 			<div
-				className="event-logger-table__cell event-logger-table__cell--status"
-				style={ { color: STATUS_COLORS[ '4xx' ] } }
+				className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--status entry-status"
+				data-status="418"
 			>
 				{ pct( url.count_4xx, url.count ) }
 			</div>
 			<div
-				className="event-logger-table__cell event-logger-table__cell--status"
-				style={ { color: STATUS_COLORS[ '5xx' ] } }
+				className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--status entry-status"
+				data-status="599"
 			>
 				{ pct( url.count_5xx, url.count ) }
 			</div>
-			<div className="event-logger-table__cell event-logger-table__cell--numeric">
+			<div className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--numeric">
 				{ formatNum( url.avg_ms, 'ms' ) }
 			</div>
-			<div className="event-logger-table__cell event-logger-table__cell--numeric">
+			<div className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--numeric">
 				{ formatNum( url.min_ms, 'ms' ) }
 			</div>
-			<div className="event-logger-table__cell event-logger-table__cell--numeric">
+			<div className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--numeric">
 				{ formatNum( url.max_ms, 'ms' ) }
 			</div>
-			<div className="event-logger-table__cell event-logger-table__cell--numeric">
+			<div className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--numeric">
 				{ formatNum( url.p95_ms, 'ms' ) }
 			</div>
-			<div className="event-logger-table__cell event-logger-table__cell--numeric">
+			<div className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--numeric">
 				{ url.avg_peak_mb > 0
 					? formatNum( url.avg_peak_mb, 'MB' )
 					: '-' }
@@ -355,10 +354,13 @@ export default function UrlTable( {
 
 			{ /* Scroll container for header + list */ }
 			<div className="event-logger-table__scroll">
-				<div className="event-logger-table__header" role="row">
+				<div
+					className="event-logger-table__header newspack-nodes-table__header"
+					role="row"
+				>
 					<button
 						type="button"
-						className="event-logger-table__header-btn event-logger-table__header-btn--numeric"
+						className="newspack-nodes-sortable-header-button event-logger-table__header-btn newspack-nodes-table__cell event-logger-table__header-btn--numeric"
 						onClick={ () => handleSort( 'count' ) }
 					>
 						{ __( 'Reqs', 'newspack-event-logger-nodes' ) }
@@ -366,39 +368,39 @@ export default function UrlTable( {
 					</button>
 					<button
 						type="button"
-						className="event-logger-table__header-btn"
+						className="newspack-nodes-sortable-header-button event-logger-table__header-btn newspack-nodes-table__cell"
 						onClick={ () => handleSort( 'url' ) }
 					>
 						{ __( 'URL', 'newspack-event-logger-nodes' ) }
 						{ sortIndicator( 'url' ) }
 					</button>
 					<span
-						className="event-logger-table__cell event-logger-table__cell--status"
-						style={ { color: STATUS_COLORS[ '2xx' ] } }
+						className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--status entry-status"
+						data-status="218"
 					>
 						2xx
 					</span>
 					<span
-						className="event-logger-table__cell event-logger-table__cell--status"
-						style={ { color: STATUS_COLORS[ '3xx' ] } }
+						className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--status entry-status"
+						data-status="307"
 					>
 						3xx
 					</span>
 					<span
-						className="event-logger-table__cell event-logger-table__cell--status"
-						style={ { color: STATUS_COLORS[ '4xx' ] } }
+						className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--status entry-status"
+						data-status="418"
 					>
 						4xx
 					</span>
 					<span
-						className="event-logger-table__cell event-logger-table__cell--status"
-						style={ { color: STATUS_COLORS[ '5xx' ] } }
+						className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--status entry-status"
+						data-status="599"
 					>
 						5xx
 					</span>
 					<button
 						type="button"
-						className="event-logger-table__header-btn event-logger-table__header-btn--numeric"
+						className="newspack-nodes-sortable-header-button event-logger-table__header-btn newspack-nodes-table__cell event-logger-table__header-btn--numeric"
 						onClick={ () => handleSort( 'avg_ms' ) }
 					>
 						{ __( 'Avg', 'newspack-event-logger-nodes' ) }
@@ -406,7 +408,7 @@ export default function UrlTable( {
 					</button>
 					<button
 						type="button"
-						className="event-logger-table__header-btn event-logger-table__header-btn--numeric"
+						className="newspack-nodes-sortable-header-button event-logger-table__header-btn newspack-nodes-table__cell event-logger-table__header-btn--numeric"
 						onClick={ () => handleSort( 'min_ms' ) }
 					>
 						{ __( 'Min', 'newspack-event-logger-nodes' ) }
@@ -414,7 +416,7 @@ export default function UrlTable( {
 					</button>
 					<button
 						type="button"
-						className="event-logger-table__header-btn event-logger-table__header-btn--numeric"
+						className="newspack-nodes-sortable-header-button event-logger-table__header-btn newspack-nodes-table__cell event-logger-table__header-btn--numeric"
 						onClick={ () => handleSort( 'max_ms' ) }
 					>
 						{ __( 'Max', 'newspack-event-logger-nodes' ) }
@@ -422,14 +424,14 @@ export default function UrlTable( {
 					</button>
 					<button
 						type="button"
-						className="event-logger-table__header-btn event-logger-table__header-btn--numeric"
+						className="newspack-nodes-sortable-header-button event-logger-table__header-btn newspack-nodes-table__cell event-logger-table__header-btn--numeric"
 						onClick={ () => handleSort( 'p95_ms' ) }
 					>
 						p95{ sortIndicator( 'p95_ms' ) }
 					</button>
 					<button
 						type="button"
-						className="event-logger-table__header-btn event-logger-table__header-btn--numeric"
+						className="newspack-nodes-sortable-header-button event-logger-table__header-btn newspack-nodes-table__cell event-logger-table__header-btn--numeric"
 						onClick={ () => handleSort( 'avg_peak_mb' ) }
 					>
 						{ __( 'Mem', 'newspack-event-logger-nodes' ) }
@@ -439,11 +441,11 @@ export default function UrlTable( {
 
 				<div
 					ref={ listRef }
-					className="event-logger-table__list"
+					className="event-logger-table__list newspack-nodes-table"
 					style={ { paddingTop, paddingBottom } }
 				>
 					{ filteredUrls.length === 0 ? (
-						<div className="event-logger-table__empty">
+						<div className="event-logger-table__empty newspack-nodes-empty-state">
 							{ searchTerm
 								? sprintf(
 										// translators: %s: the URL search term.
@@ -486,7 +488,7 @@ export default function UrlTable( {
 				if ( total <= URLS_PER_PAGE ) {
 					return (
 						<div className="event-logger-table__pagination">
-							<span className="event-logger-table__pagination-info">
+							<span className="event-logger-table__pagination-info newspack-nodes-status">
 								{ total > 0
 									? sprintf(
 											// translators: %s: total number of URLs.
@@ -506,7 +508,7 @@ export default function UrlTable( {
 
 				return (
 					<div className="event-logger-table__pagination">
-						<span className="event-logger-table__pagination-info">
+						<span className="event-logger-table__pagination-info newspack-nodes-status">
 							{ sprintf(
 								// translators: 1: first row number on the page, 2: last row number on the page, 3: total number of URLs.
 								__(

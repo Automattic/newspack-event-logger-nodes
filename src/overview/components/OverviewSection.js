@@ -179,8 +179,8 @@ export default function OverviewSection( {
 						</div>
 						{ searchError && (
 							<span
+								className="newspack-nodes-status is-error"
 								style={ {
-									color: '#dc3232',
 									fontSize: '12px',
 								} }
 							>
@@ -196,9 +196,9 @@ export default function OverviewSection( {
 							} }
 						>
 							<span
+								className="newspack-nodes-status"
 								style={ {
 									fontSize: '13px',
-									color: '#757575',
 								} }
 							>
 								{ __(
@@ -221,7 +221,7 @@ export default function OverviewSection( {
 				{ Array.isArray( searchResults ) &&
 					searchResults.length > 0 && (
 						<div className="event-logger-search-results">
-							<p className="event-logger-search-results-caption">
+							<p className="event-logger-search-results-caption newspack-nodes-status">
 								{ __(
 									'Matches in recent traffic',
 									'newspack-event-logger-nodes'
@@ -232,17 +232,18 @@ export default function OverviewSection( {
 									<li key={ result.rid }>
 										<button
 											type="button"
+											className="button button-small event-logger-search-result"
 											onClick={ () =>
 												onSelectResult( result.rid )
 											}
 										>
-											<span className="event-logger-search-result-method">
+											<span className="event-logger-search-result-method newspack-nodes-status">
 												{ result.method }
 											</span>
 											<span className="event-logger-search-result-url">
 												{ result.url || result.rid }
 											</span>
-											<span className="event-logger-search-result-count">
+											<span className="event-logger-search-result-count newspack-nodes-status">
 												{ sprintf(
 													// translators: %d: number of matching lines in the request.
 													_n(
@@ -259,7 +260,7 @@ export default function OverviewSection( {
 								) ) }
 							</ul>
 							{ searchResultsTruncated && (
-								<p className="event-logger-search-results-note">
+								<p className="event-logger-search-results-note newspack-nodes-status">
 									{ __(
 										'Showing first results — narrow your search for more.',
 										'newspack-event-logger-nodes'
@@ -269,46 +270,46 @@ export default function OverviewSection( {
 						</div>
 					) }
 				<CardBody>
-					<div className="event-logger-stats-grid">
-						<div className="event-logger-stat">
-							<span className="event-logger-stat-value">
+					<div className="newspack-nodes-stats-grid event-logger-overview-stats">
+						<div className="newspack-nodes-stat">
+							<span className="newspack-nodes-stat-value">
 								{ filteredStats.totalUrls }
 							</span>
-							<span className="event-logger-stat-label">
+							<span className="newspack-nodes-stat-label">
 								{ __(
 									'Unique URLs',
 									'newspack-event-logger-nodes'
 								) }
 							</span>
 						</div>
-						<div className="event-logger-stat">
-							<span className="event-logger-stat-value">
+						<div className="newspack-nodes-stat">
+							<span className="newspack-nodes-stat-value">
 								{ filteredStats.totalRequests.toLocaleString() }
 							</span>
-							<span className="event-logger-stat-label">
+							<span className="newspack-nodes-stat-label">
 								{ __(
 									'Total Requests',
 									'newspack-event-logger-nodes'
 								) }
 							</span>
 						</div>
-						<div className="event-logger-stat">
-							<span className="event-logger-stat-value">
+						<div className="newspack-nodes-stat">
+							<span className="newspack-nodes-stat-value">
 								{ filteredStats.globalAvgMs.toFixed( 0 ) }
 								ms
 							</span>
-							<span className="event-logger-stat-label">
+							<span className="newspack-nodes-stat-label">
 								{ __(
 									'Avg Response',
 									'newspack-event-logger-nodes'
 								) }
 							</span>
 						</div>
-						<div className="event-logger-stat">
-							<span className="event-logger-stat-value">
+						<div className="newspack-nodes-stat">
+							<span className="newspack-nodes-stat-value">
 								{ filteredStats.requestsPerSecond.toFixed( 2 ) }
 							</span>
-							<span className="event-logger-stat-label">
+							<span className="newspack-nodes-stat-label">
 								{ __(
 									'Req/s (last hour)',
 									'newspack-event-logger-nodes'
@@ -316,14 +317,14 @@ export default function OverviewSection( {
 							</span>
 						</div>
 						{ filteredStats.globalAvgPeakMb > 0 && (
-							<div className="event-logger-stat">
-								<span className="event-logger-stat-value">
+							<div className="newspack-nodes-stat">
+								<span className="newspack-nodes-stat-value">
 									{ filteredStats.globalAvgPeakMb.toFixed(
 										1
 									) }
 									MB
 								</span>
-								<span className="event-logger-stat-label">
+								<span className="newspack-nodes-stat-label">
 									{ __(
 										'Avg Peak Memory',
 										'newspack-event-logger-nodes'
@@ -390,9 +391,9 @@ export default function OverviewSection( {
 									/>
 									{ breakdownLoading && (
 										<span
+											className="newspack-nodes-status"
 											style={ {
 												fontSize: '12px',
-												color: '#757575',
 												paddingBottom: '8px',
 											} }
 										>
@@ -474,9 +475,9 @@ export default function OverviewSection( {
 								title={ null }
 							/>
 							<p
+								className="newspack-nodes-status"
 								style={ {
 									fontSize: '12px',
-									color: '#666',
 									marginTop: '8px',
 								} }
 							>

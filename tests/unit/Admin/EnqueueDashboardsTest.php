@@ -38,6 +38,7 @@ namespace {
 namespace Newspack_Event_Logger_Nodes\Tests\Unit\Admin {
 
 	use Newspack_Event_Logger_Nodes\Tests\TestCase;
+	use PHPUnit\Framework\Attributes\DataProvider;
 
 	class EnqueueDashboardsTest extends TestCase {
 
@@ -78,6 +79,26 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit\Admin {
 			return null;
 		}
 
+		/** Find the wp_enqueue_style record (positional stub) for $handle. */
+		private function enqueued_style_for( string $handle ): ?array {
+			foreach ( $GLOBALS['_enqueued_styles'] as $rec ) {
+				if ( ( $rec[0] ?? '' ) === $handle ) {
+					return $rec;
+				}
+			}
+			return null;
+		}
+
+		/** @return array<string,array{string,string}> Dashboard page and tree pairs. */
+		public static function graph_dashboard_pages(): array {
+			return [
+				'overview'  => [ 'event-logger-overview', 'overview' ],
+				'error log' => [ 'event-logger-errors', 'error-log' ],
+				'gyroscope' => [ 'event-logger-gyroscope', 'gyroscope' ],
+				'requests'  => [ 'event-logger-requests', 'requests' ],
+			];
+		}
+
 		public function test_skips_unmapped_page(): void {
 			$_GET = [ 'page' => 'totally-unrelated' ];
 			$this->dispatch( 'toplevel_page_x' );
@@ -114,6 +135,22 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit\Admin {
 			$this->assertArrayHasKey( 'version', $data );
 		}
 
+		#[DataProvider( 'graph_dashboard_pages' )]
+		public function test_graph_dashboard_style_has_exact_graph_dependency( string $page, string $tree ): void {
+			$asset = \NEWSPACK_EVENT_LOGGER_NODES_DIR . "build/{$tree}/index.css";
+			$this->assertFileExists( $asset, "ELN {$tree} CSS missing — run `npm run build`" );
+
+			$_GET = [ 'page' => $page ];
+			$this->dispatch( "nodes_page_{$page}" );
+
+			$style = $this->enqueued_style_for( "newspack-nodes-{$tree}" );
+			$this->assertNotNull( $style, "{$tree} dashboard style must enqueue" );
+			$this->assertSame(
+				[ 'wp-components', 'newspack-nodes-graph' ],
+				$style[2] ?? null
+			);
+		}
+
 		public function test_settings_page_keeps_per_tree_extras(): void {
 			$tree  = 'settings';
 			$asset = \NEWSPACK_EVENT_LOGGER_NODES_DIR . "build/{$tree}/index.js";
@@ -124,6 +161,13 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit\Admin {
 
 			$handle = "newspack-nodes-{$tree}";
 			$this->assertNotNull( $this->enqueued_script_for( $handle ), 'settings dashboard script must enqueue' );
+			$style = $this->enqueued_style_for( $handle );
+			$this->assertNotNull( $style, 'settings dashboard style must enqueue' );
+			$this->assertSame(
+				[ 'wp-components', 'newspack-nodes-ui' ],
+				$style[2] ?? null
+			);
+			$this->assertNotContains( 'newspack-nodes-graph', $style[2] ?? [] );
 
 			// Per-tree inline-script extras are preserved (eventLoggerDashboards
 			// + newspackNodesRecommendedHooks blocks anchored on the handle).

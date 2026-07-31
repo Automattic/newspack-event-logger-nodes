@@ -1,19 +1,24 @@
 /**
- * Request Profile table theming.
- *
- * RequestProfile renders inside the hub's themed `.topology-app.theme-*`
- * (via the current-request tab) AND standalone (via PerformanceDashboard). Its
- * profile table is a WP-core `.widefat .striped` table, which hardcodes a light
- * surface that does NOT reskin under the decorative hub themes. This stylesheet
- * — imported by RequestProfile.js itself so it rides into every bundle the
- * component lands in — re-skins only the table's color properties via the
- * universal --paper/--ink tokens. The WP-core light fallbacks keep the
- * STANDALONE Performance Dashboard (where those tokens are undefined)
- * byte-identical to today.
+ * RequestProfile layout ships with the component because it is rendered in
+ * both the performance dashboard and the current-request overlay.
  */
 
-@use "base";
+.event-logger-request-profile h3 {
+	margin: 0 0 12px;
+	font-size: 16px;
+}
 
-.event-logger-request-profile {
-	@include base.widefat-themed;
+.event-logger-profile-bar {
+	display: flex;
+	height: 24px;
+	overflow: hidden;
+	margin-bottom: 16px;
+	background: var(--paper-3);
+	border-radius: var(--button-radius);
+}
+
+.newspack-nodes-ui
+	.event-logger-request-profile
+	.button-link.event-logger-profile-expansion {
+	padding: 4px 8px;
 }

@@ -89,10 +89,9 @@ export default function RequestDetailView( {
 							{ __( 'Error:', 'newspack-event-logger-nodes' ) }
 						</strong>{ ' ' }
 						<span
-							style={ {
-								color: isTimedOut ? '#dba617' : '#d63638',
-								fontWeight: 600,
-							} }
+							className={ `newspack-nodes-badge newspack-nodes-status ${
+								isTimedOut ? 'is-warning' : 'is-error'
+							}` }
 						>
 							{ isTimedOut
 								? __(
@@ -109,7 +108,7 @@ export default function RequestDetailView( {
 			</div>
 
 			{ hasNoDetail && (
-				<p style={ { color: '#757575', fontStyle: 'italic' } }>
+				<p className="event-logger-request-detail-empty newspack-nodes-no-selection">
 					{ __(
 						'No log entries available for this request.',
 						'newspack-event-logger-nodes'
@@ -123,12 +122,12 @@ export default function RequestDetailView( {
 					className="event-logger-flame-container"
 					style={ SECTION_STYLE }
 				>
-					<h3>
+					<h3 className="newspack-nodes-section-heading">
 						{ __( 'Request Trace', 'newspack-event-logger-nodes' ) }
 					</h3>
 					<Suspense
 						fallback={
-							<div>
+							<div className="event-logger-detail-loading newspack-nodes-performance-loading">
 								{ __(
 									'Loading chart…',
 									'newspack-event-logger-nodes'

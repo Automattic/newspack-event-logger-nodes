@@ -7,77 +7,39 @@
 @use "base";
 
 .event-logger-request-stream {
-	background: var(--paper-3);
-	color: var(--ink);
 	padding: 16px 20px;
 	height: 100%;
 	display: flex;
 	flex-direction: column;
-	font-family: base.$system-font;
 }
 
 .event-logger-request-stream-header {
 	flex-shrink: 0;
 }
 
-.event-logger-request-stream-error {
-	@include base.dark-error-banner;
-}
-
-// The DARK log pane — the scrolling request list. Light chrome sits above it;
-// this is the terminal-surface equivalent of Raw Logs' canvas-container.
 .event-logger-request-stream-list {
 	flex: 1;
 	overflow-y: scroll;
 	overflow-x: hidden;
-	background: var(--paper-2);
-	border: 1px solid var(--paper-shadow);
-	border-top: none;
-	border-radius: 0 0 var(--np-radius-md) var(--np-radius-md);
 	padding: 0;
 	-webkit-overflow-scrolling: touch;
 	display: flex;
 	flex-direction: column;
 
-	// Custom scrollbar.
 	&::-webkit-scrollbar {
 		width: 8px;
 	}
-
-	&::-webkit-scrollbar-track {
-		background: var(--paper-3);
-		border-radius: 4px;
-	}
-
-	&::-webkit-scrollbar-thumb {
-		background: var(--paper-shadow);
-		border-radius: 4px;
-
-		&:hover {
-			background: var(--ink-3);
-		}
-	}
 }
 
-// Column-header row caps the dark pane — light-on-dark labels.
 .event-logger-request-stream-header-row {
 	display: grid;
 	gap: 12px;
 	padding: 6px 8px;
-	background: var(--paper-2);
-	border: 1px solid var(--paper-shadow);
-	border-bottom: none;
-	border-radius: var(--np-radius-md) var(--np-radius-md) 0 0;
 	flex-shrink: 0;
 }
 
 .event-logger-request-stream-th {
-	color: var(--ink-3);
 	font-size: 11px;
-	font-weight: 600;
-	text-transform: uppercase;
-	letter-spacing: 0.5px;
-	cursor: default;
 }
 
 .event-logger-request-stream-content {
@@ -91,9 +53,12 @@
 	align-items: center;
 	justify-content: center;
 	height: 100%;
-	color: var(--ink-3);
+	padding: 0;
 	font-size: 14px;
-	font-style: italic;
+
+	&::before {
+		display: none;
+	}
 }
 
 .event-logger-request-stream-entry {
@@ -103,32 +68,7 @@
 	padding: 8px 12px;
 	height: 33px; // Fixed height for virtualization.
 	box-sizing: border-box;
-	border-radius: 4px;
-	text-decoration: none;
-	color: inherit;
-	font-family: base.$mono-font;
 	font-size: 12px;
-
-	// Use class-based alternating instead of nth-child to prevent
-	// color flipping during smooth scroll animation. Dark-pane rows.
-	&.row-odd {
-		background: var(--paper-2);
-
-		&:hover {
-			background: color-mix(in srgb, base.$accent 20%, var(--paper-2));
-		}
-	}
-
-	&.row-even {
-		// Surface tiers are nearly identical on dark skins, so tint every other
-		// row toward the ink for visible striping (lighter on dark, darker on
-		// light — it adapts to the skin).
-		background: color-mix(in srgb, base.$ink 8%, var(--paper-2));
-
-		&:hover {
-			background: color-mix(in srgb, base.$accent 20%, var(--paper-2));
-		}
-	}
 }
 
 // Responsive adjustments.
@@ -143,8 +83,7 @@
 // Duration color classes (matches formatUtils getDurationColor thresholds)
 // =============================================================================
 
-// Duration / status / timing inks sit on the log-pane rows — skin-adaptive
-// var(--ink*)/status colors, so they read on the pane in every skin.
+// Duration/timing inks sit on the log-pane rows and remain skin-adaptive.
 .entry-duration {
 	&--fast {
 		color: base.$status-2xx; // < 1000ms
@@ -156,45 +95,5 @@
 
 	&--critical {
 		color: base.$error-text; // > 5000ms
-	}
-}
-
-// =============================================================================
-// Status code color classes (matches formatUtils STATUS_COLORS)
-// =============================================================================
-
-.entry-status {
-	&--2xx {
-		color: base.$status-2xx;
-	}
-
-	&--3xx {
-		color: base.$status-3xx;
-	}
-
-	&--4xx {
-		color: base.$warning-color;
-	}
-
-	&--5xx {
-		color: base.$error-text;
-	}
-
-	&--unknown {
-		color: var(--ink-3);
-	}
-}
-
-// =============================================================================
-// Timing warning classes (age, lag)
-// =============================================================================
-
-.entry-timing {
-	&--normal {
-		color: var(--ink-3);
-	}
-
-	&--warning {
-		color: base.$warning-color;
 	}
 }

@@ -1,10 +1,6 @@
 /**
- * Performance overview dashboard base — the shared dashboard chrome
- * (src/styles/base.scss) plus this page's scoped reset and the two rules that
- * diverge from the shared set: a space-between flex stats row (not the 4-column
- * grid) and a padded admin wrap. `@forward` re-exports the shared tokens/mixins
- * so the sibling stylesheets (`@use "base"`) keep resolving `base.$token` /
- * `base.<mixin>`.
+ * Performance overview base forwards the shared token/mixin API, emits its
+ * scoped reset, and keeps the two page-specific layout overrides below.
  */
 @forward "../../styles/base";
 @use "../../styles/base" as base;
@@ -12,7 +8,7 @@
 @include base.scoped-reset("#event-logger-admin");
 
 // Overview's stats row is a space-between flex, not the shared 4-column grid.
-.event-logger-stats-grid {
+.event-logger-overview-stats {
 	display: flex;
 	justify-content: space-between;
 	align-items: baseline;

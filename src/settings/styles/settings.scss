@@ -1,173 +1,25 @@
 /**
- * Settings Page Styles
- *
- * Clean WordPress admin settings styling for Event Logger.
- * Matches Pyrobase settings page aesthetic.
+ * WordPress settings-page layout. Core/shared styles own all appearance.
  */
 
-@use "base";
-
-// =============================================================================
-// Settings Form Layout - Card Style (matches Pyrobase)
-// =============================================================================
-
 .event-logger-settings-wrap {
-	// Section headers
 	h2 {
-		font-size: 16px;
-		font-weight: 600;
-		color: var(--ink, var(--np-text));
 		padding-bottom: 12px;
-		border-bottom: 1px solid var(--ink-3, var(--np-border-strong));
 		margin-top: 32px;
+		font-size: 16px;
 	}
 
-	// Card-style form tables
 	.form-table {
-		background: base.$white;
-		border: 1px solid var(--ink-3, var(--np-border-strong));
-		border-radius: base.$border-radius-lg;
 		padding: 8px;
 		margin-top: 16px;
 
-		th {
-			font-weight: 500;
-			color: var(--ink, var(--np-text));
-			padding: 16px 12px;
-			vertical-align: top;
-		}
-
+		th,
 		td {
 			padding: 16px 12px;
 		}
 
-		// Rounded inputs
-		input[type="text"],
-		input[type="url"],
-		input[type="number"],
-		input[type="password"],
-		select {
-			border-radius: base.$border-radius;
-			border: 1px solid #8c8f94;
-			padding: 8px 12px;
-			transition:
-				border-color 0.15s ease,
-				box-shadow 0.15s ease;
-
-			&:focus {
-				border-color: base.$focus-color;
-				box-shadow: 0 0 0 2px rgba(0, 61, 165, 0.2);
-				outline: none;
-			}
+		th {
+			vertical-align: top;
 		}
 	}
-
-	// Field rows with reset buttons
-	.event-logger-field-row {
-		display: flex;
-		align-items: flex-start;
-		gap: 10px;
-	}
-
-	.event-logger-field-content {
-		flex: 1;
-		max-width: 35em;
-	}
-
-	// Reset buttons - consistent styling for all types
-	.event-logger-reset-btn,
-	.event-logger-reset-field,
-	.event-logger-reset-number,
-	.event-logger-reset-text {
-		flex-shrink: 0;
-		width: 36px;
-		height: 36px;
-		padding: 0;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		font-size: 18px;
-		color: var(--ink-3, var(--np-text-secondary));
-		background: var(--paper-2, var(--np-surface-subtle));
-		border: 1px solid var(--ink-3, var(--np-border-strong));
-		border-radius: base.$border-radius;
-		cursor: pointer;
-		transition: all 0.15s ease;
-
-		&:hover {
-			color: base.$focus-color;
-			background: var(--hover);
-			border-color: base.$focus-color;
-		}
-
-		&:focus {
-			outline: 2px solid base.$focus-color;
-			outline-offset: 2px;
-		}
-	}
-}
-
-// =============================================================================
-// Auto-Disable Row
-// =============================================================================
-
-.event-logger-auto-disable-row {
-	display: flex;
-	align-items: center;
-	gap: 10px;
-	flex-wrap: wrap;
-}
-
-.event-logger-auto-disable-label {
-	display: flex;
-	align-items: center;
-	gap: 5px;
-	white-space: nowrap;
-}
-
-// =============================================================================
-// Storage Display
-// =============================================================================
-
-.event-logger-storage-display {
-	font-weight: 500;
-	font-size: 14px;
-	padding: 8px 0;
-	color: var(--ink, var(--np-text));
-}
-
-// =============================================================================
-// Field Descriptions
-// =============================================================================
-
-.event-logger-field-desc {
-	margin-top: 6px;
-	color: var(--ink-3, var(--np-text-secondary));
-	font-size: 13px;
-	line-height: 1.5;
-
-	code {
-		background: var(--paper-shadow, var(--np-border));
-		padding: 1px 5px;
-		border-radius: 3px;
-		font-size: 12px;
-	}
-}
-
-.event-logger-field-examples {
-	margin-top: 4px;
-	color: var(--ink-3, var(--np-text-secondary));
-	font-size: 12px;
-	font-style: italic;
-}
-
-// =============================================================================
-// Submit Row
-// =============================================================================
-
-.event-logger-submit-row {
-	display: flex;
-	align-items: center;
-	gap: 12px;
-	margin-top: 20px;
 }

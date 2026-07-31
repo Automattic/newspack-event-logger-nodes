@@ -23,6 +23,19 @@ import GyroscopePage from '../gyroscope/GyroscopePage';
 import RequestStreamPage from '../requests/RequestStreamPage';
 import { renderComponent } from '../test-helpers/renderHook';
 
+const TOKEN_ROOT_CLASSES = [
+	'topology-app',
+	'newspack-nodes-skin-root',
+	'newspack-nodes-theme',
+	'newspack-nodes-ui',
+];
+
+function expectNoTokenRoot( element ) {
+	for ( const className of TOKEN_ROOT_CLASSES ) {
+		expect( element.classList.contains( className ) ).toBe( false );
+	}
+}
+
 describe( 'page wrappers', () => {
 	it( 'GyroscopePage mounts <Inflight maxRows={100}>', () => {
 		const { container, unmount } = renderComponent(
@@ -40,49 +53,28 @@ describe( 'page wrappers', () => {
 		unmount();
 	} );
 
-	// Each wrapper must carry .newspack-nodes-theme so var(--np-*) resolves.
-	it( 'GyroscopePage root carries .newspack-nodes-theme', () => {
+	it( 'GyroscopePage uses one exact skinned provider without repeating it on the page root', () => {
 		const { container, unmount } = renderComponent(
 			React.createElement( GyroscopePage )
 		);
-		expect(
-			container.querySelector( '.newspack-nodes-theme' )
-		).not.toBeNull();
+		const provider = container.firstElementChild;
+		expect( provider.className ).toBe(
+			'newspack-nodes-skin-root newspack-nodes-theme newspack-nodes-ui'
+		);
+		expectNoTokenRoot( provider.firstElementChild );
 		unmount();
 	} );
 
-	it( 'RequestStreamPage root carries .newspack-nodes-theme', () => {
+	it( 'RequestStreamPage uses one exact skinned provider without repeating it on the page root', () => {
 		const { container, unmount } = renderComponent(
 			React.createElement( RequestStreamPage )
 		);
-		expect(
-			container.querySelector( '.newspack-nodes-theme' )
-		).not.toBeNull();
-		unmount();
-	} );
-
-	// Each wrapper sits in a ThemedRoot provider so a skin's tokens scope it.
-	it( 'GyroscopePage wraps its root in a ThemedRoot token provider', () => {
-		const { container, unmount } = renderComponent(
-			React.createElement( GyroscopePage )
+		const provider = container.firstElementChild;
+		expect( provider.className ).toBe(
+			'newspack-nodes-skin-root newspack-nodes-theme newspack-nodes-ui'
 		);
-		const provider = container.querySelector(
-			'.topology-app.newspack-nodes-theme'
-		);
-		expect( provider ).not.toBeNull();
 		expect( provider.style.display ).toBe( 'contents' );
-		unmount();
-	} );
-
-	it( 'RequestStreamPage wraps its root in a ThemedRoot token provider', () => {
-		const { container, unmount } = renderComponent(
-			React.createElement( RequestStreamPage )
-		);
-		const provider = container.querySelector(
-			'.topology-app.newspack-nodes-theme'
-		);
-		expect( provider ).not.toBeNull();
-		expect( provider.style.display ).toBe( 'contents' );
+		expectNoTokenRoot( provider.firstElementChild );
 		unmount();
 	} );
 } );

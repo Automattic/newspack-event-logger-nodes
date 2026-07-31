@@ -32,7 +32,7 @@ export default function SegmentBrowseSidebar( { browse, onSelectPartition } ) {
 		<div className="event-logger-browse-rail">
 			{ single ? (
 				<div
-					className="event-logger-browse-rail__single"
+					className="event-logger-browse-rail__single newspack-nodes-status"
 					title={ __(
 						'The only partition',
 						'newspack-event-logger-nodes'

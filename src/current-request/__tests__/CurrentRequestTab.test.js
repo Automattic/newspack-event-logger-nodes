@@ -117,6 +117,9 @@ test( 'renders the request summary cards + full-trace deep link when found', asy
 	expect(
 		view.container.querySelector( '[data-testid="profiles"]' )
 	).not.toBeNull();
+	expect(
+		view.container.querySelector( '.eln-current-request' ).className
+	).toBe( 'eln-current-request' );
 } );
 
 test( 'shows a still-processing state (with retry) when the request is not in the log yet', async () => {

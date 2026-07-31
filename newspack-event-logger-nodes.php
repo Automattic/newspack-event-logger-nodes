@@ -99,12 +99,6 @@ $_newspack_event_logger_nodes_load = static function (): void {
 
 \add_action( 'plugins_loaded', $_newspack_event_logger_nodes_load, 11 );
 
-// XXX: one-time ruleset migration on activation (deploy reinstalls+activates).
-if ( \function_exists( 'register_activation_hook' ) ) {
-	\register_activation_hook( __FILE__, [ '\\Newspack_Event_Logger_Nodes\\Config', 'correct_option_autoload' ] );
-	\register_activation_hook( __FILE__, [ '\\Newspack_Event_Logger_Nodes\\Rule_Set', 'migrate_from_legacy' ] );
-}
-
 const NEWSPACK_EVENT_LOGGER_NODES_RUNTIME_BASENAMES = [ 'firehose', 'jobintake' ];
 
 /**
@@ -289,6 +283,10 @@ function newspack_event_logger_nodes_on_vault_changed( string $id, string $actio
 			return;
 		}
 		$tree = $page_to_tree[ $page ];
+		$style_deps = [ 'wp-components', 'newspack-nodes-ui' ];
+		if ( \in_array( $tree, [ 'overview', 'error-log', 'gyroscope', 'requests' ], true ) ) {
+			$style_deps = [ 'wp-components', 'newspack-nodes-graph' ];
+		}
 
 		$rest_url      = \function_exists( 'rest_url' ) ? \rest_url() : '/wp-json/';
 		$nonce         = \function_exists( 'wp_create_nonce' ) ? \wp_create_nonce( 'wp_rest' ) : '';
@@ -308,6 +306,7 @@ function newspack_event_logger_nodes_on_vault_changed( string $id, string $actio
 				'dir'              => NEWSPACK_EVENT_LOGGER_NODES_DIR . "build/{$tree}",
 				'url'              => NEWSPACK_EVENT_LOGGER_NODES_URL . "build/{$tree}",
 				'version_fallback' => NEWSPACK_EVENT_LOGGER_NODES_VERSION,
+				'style_deps'       => $style_deps,
 				'localize'         => $localized,
 			]
 		);

@@ -183,6 +183,18 @@ describe( 'OverviewSection', () => {
 		unmount();
 	} );
 
+	it( 'renders request-search failures as compact inline status text', () => {
+		const { container, unmount } = mount(
+			{},
+			{ searchError: 'Search unavailable' }
+		);
+		const error = Array.from( container.querySelectorAll( 'span' ) ).find(
+			( element ) => 'Search unavailable' === element.textContent
+		);
+		expect( error.className ).toBe( 'newspack-nodes-status is-error' );
+		unmount();
+	} );
+
 	it( 'renders pattern-search results and deep-links on a row click', () => {
 		const onSelectResult = jest.fn();
 		const { container, unmount } = mount(
@@ -213,6 +225,9 @@ describe( 'OverviewSection', () => {
 		);
 		const row = container.querySelector(
 			'.event-logger-search-results button'
+		);
+		expect( row.className ).toBe(
+			'button button-small event-logger-search-result'
 		);
 		act( () => {
 			row.click();

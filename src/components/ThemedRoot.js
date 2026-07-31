@@ -6,14 +6,14 @@ import './ThemedRoot.scss';
 /**
  * No-box themed token-provider for standalone ELN dashboards. Reads the
  * console-selected skin (persisted in localStorage) once at mount and wraps its
- * children in a `display:contents` `.topology-app.newspack-nodes-theme.theme-<slug>`
- * div, putting the skin's universal tokens (--paper/--ink/--cyan/--font-mono/…)
- * in scope so the dashboard reskins onto them.
+ * children in a `display:contents` skinned non-graph provider, putting the
+ * skin's universal tokens (--paper/--ink/--cyan/--font-mono/…) in scope so the
+ * dashboard reskins onto them without inheriting topology layout.
  *
- * `display: contents` drops this wrapper's own box, so `.topology-app`'s console
- * grid/size/background layout never renders — but inheritance still passes
- * through, so the skin's `font-family: var(--font-mono)` cascades into the
- * dashboard (terminal-mono under decorative skins, the Newspack sans by default).
+ * `display: contents` drops this wrapper's own box, but inheritance still
+ * passes through, so the skin's `font-family: var(--font-mono)` cascades into
+ * the dashboard (terminal-mono under decorative skins, the Newspack sans by
+ * default).
  *
  * The dashboard's dark surface only covers its own box; the WP-admin area around
  * it (the ~20px left gutter beside the menu, the right `max-width` margin, the
@@ -70,7 +70,7 @@ export default function ThemedRoot( { children } ) {
 	return (
 		<div
 			ref={ ref }
-			className="topology-app newspack-nodes-theme"
+			className="newspack-nodes-skin-root newspack-nodes-theme newspack-nodes-ui"
 			style={ { display: 'contents' } }
 		>
 			{ children }

@@ -12,16 +12,16 @@
 .event-logger-performance-dashboard,
 .event-logger-performance-modal {
 	.tick text {
-		fill: base.$ink-3;
+		fill: var(--ink-3);
 	}
 
 	.y-label {
-		fill: base.$ink;
+		fill: var(--ink);
 	}
 
 	.tick line,
 	.domain {
-		stroke: base.$border;
+		stroke: var(--paper-shadow);
 	}
 }
 
@@ -29,13 +29,11 @@
 .event-logger-response-chart,
 .event-logger-aggregate-time-chart,
 .event-logger-flame-container,
-.event-logger-request-profile,
 .event-logger-table--requests,
 .event-logger-log-entries {
 	h3 {
 		margin: 0 0 12px;
 		font-size: 16px;
-		font-weight: 600;
 	}
 }
 
@@ -43,5 +41,32 @@
 .event-logger-performance-dashboard .components-card__header h2 {
 	margin: 0;
 	font-size: 18px;
-	font-weight: 600;
+}
+
+.event-logger-chart-tooltip {
+	display: none;
+	position: absolute;
+	padding: 6px 10px;
+	background: color-mix(in srgb, var(--ink) 85%, transparent);
+	color: var(--paper);
+	border-radius: var(--button-radius);
+	font-family: base.$mono-font;
+	font-size: 11px;
+	pointer-events: none;
+	white-space: nowrap;
+	z-index: 10;
+}
+
+.event-logger-detail-loading {
+	display: block;
+	min-height: 0;
+}
+
+.event-logger-request-detail-empty {
+	padding: 0;
+	text-align: left;
+
+	&::before {
+		display: none;
+	}
 }

@@ -1,19 +1,8 @@
 /**
- * Custom Event Selector Modal Styles
- *
- * A polished modal for selecting custom events with color swatches.
- * Refined administrative aesthetic with subtle micro-interactions.
+ * Custom-event picker geometry. Shared modal/status classes own chrome.
  */
 
-@use "base";
-
-// =============================================================================
-// Modal Container
-// =============================================================================
-
 .event-logger-custom-event-modal.event-logger-custom-event-modal {
-	// Fit content up to a max-height, THEN the grid (not the modal) scrolls:
-	// flex-column frame + static header + flex-growing scroll area below it.
 	&.components-modal__frame {
 		width: 680px;
 		max-width: 95vw;
@@ -21,27 +10,16 @@
 		max-height: 85vh;
 		display: flex;
 		flex-direction: column;
-		border-radius: base.$border-radius-lg;
-		box-shadow:
-			0 4px 6px rgba(0, 0, 0, 0.07),
-			0 12px 28px rgba(0, 0, 0, 0.12);
+		grid-template: none;
+		gap: 0;
 	}
 
 	.components-modal__header {
-		border-bottom: 1px solid var(--paper-shadow, var(--np-border));
 		padding: 16px 20px;
 	}
 
 	.components-modal__header-heading {
 		font-size: 15px;
-		font-weight: 600;
-		color: var(--ink, var(--np-text));
-	}
-
-	// The WP close (×) button defaults to a near-black currentColor — invisible
-	// on dark skins when this picker is opened from the themed dashboard.
-	.components-modal__header button {
-		color: var(--ink, var(--np-text));
 	}
 
 	.components-modal__content,
@@ -55,32 +33,13 @@
 	}
 }
 
-// =============================================================================
-// Header Section
-// =============================================================================
-
 .custom-event-header {
 	flex: 0 0 auto;
 	padding: 16px 20px;
-	background: var(--paper-2, var(--np-surface-subtle));
-	border-bottom: 1px solid var(--paper-3, var(--np-surface-muted));
 }
 
 .custom-event-search {
 	margin-bottom: 12px;
-
-	.components-search-control__input {
-		border-radius: base.$border-radius !important;
-		border-color: var(--ink-3, var(--np-border-strong)) !important;
-		transition:
-			border-color 0.15s ease,
-			box-shadow 0.15s ease;
-
-		&:focus {
-			border-color: base.$focus-color !important;
-			box-shadow: 0 0 0 1px base.$focus-color !important;
-		}
-	}
 }
 
 .custom-event-actions {
@@ -88,10 +47,6 @@
 	align-items: center;
 	gap: 8px;
 }
-
-// =============================================================================
-// Event Grid
-// =============================================================================
 
 .custom-event-grid {
 	display: grid;
@@ -101,178 +56,57 @@
 	flex: 1 1 auto;
 	min-height: 0;
 	overflow-y: auto;
-	background: var(--paper-3, var(--np-surface-muted));
 
-	// Subtle scrollbar styling
 	&::-webkit-scrollbar {
 		width: 8px;
 	}
-
-	&::-webkit-scrollbar-track {
-		background: var(--paper-2, var(--np-surface-subtle));
-	}
-
-	&::-webkit-scrollbar-thumb {
-		background: var(--ink-3, var(--np-border-strong));
-		border-radius: 4px;
-
-		&:hover {
-			background: var(--ink-3, var(--np-text-secondary));
-		}
-	}
 }
-
-// =============================================================================
-// Event Item
-// =============================================================================
 
 .custom-event-item {
 	display: flex;
 	align-items: center;
 	gap: 10px;
 	padding: 10px 14px;
-	background: base.$white;
 	cursor: pointer;
-	transition: background 0.12s ease;
 	position: relative;
 
-	&:hover {
-		background: var(--paper-2, var(--np-surface-subtle));
-	}
-
-	&.is-selected {
-		background: var(--cyan-subtle, var(--np-primary-subtle));
-
-		.custom-event-name {
-			color: var(--ink, var(--np-text));
-			font-weight: 500;
-		}
-
-		.custom-event-swatch {
-			transform: scale(1.1);
-			box-shadow:
-				0 0 0 2px base.$white,
-				0 0 0 3px var(--event-color);
-		}
+	&.is-selected .custom-event-swatch {
+		transform: scale(1.1);
 	}
 }
 
-// =============================================================================
-// Custom Checkbox
-// =============================================================================
-
-// A visible native checkbox (themed by the shared controls partial, matching the
-// hook picker) — not a hidden input with a CSS-drawn box.
-.custom-event-checkbox {
-	margin: 0;
-	flex-shrink: 0;
-}
-
-// =============================================================================
-// Color Swatch
-// =============================================================================
-
-// stylelint-disable no-descending-specificity
+// The swatch is event data, not shared card chrome.
 .custom-event-swatch {
 	position: relative;
 	width: 14px;
 	height: 14px;
-	background: var(--event-color, #ffa726);
+	background: var(--event-color);
 	border-radius: 3px;
 	flex-shrink: 0;
-	transition:
-		transform 0.15s ease,
-		box-shadow 0.15s ease;
 	box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.1);
+	transition: transform 0.15s ease;
 }
-
-// =============================================================================
-// Event Name
-// =============================================================================
 
 .custom-event-name {
 	font-size: 13px;
-	color: var(--ink-3, var(--np-text-secondary));
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
-	transition:
-		color 0.12s ease,
-		font-weight 0.12s ease;
-	letter-spacing: -0.01em;
 }
-// stylelint-enable no-descending-specificity
-
-// =============================================================================
-// Footer
-// =============================================================================
 
 .custom-event-footer {
 	flex: 0 0 auto;
 	padding: 12px 20px;
-	border-top: 1px solid var(--paper-3, var(--np-surface-muted));
-	background: var(--paper-2, var(--np-surface-subtle));
 	display: flex;
 	justify-content: flex-end;
 }
 
 .custom-event-count {
 	font-size: 12px;
-	color: var(--ink-3, var(--np-text-secondary));
 }
-
-// =============================================================================
-// Responsive
-// =============================================================================
 
 @media (max-width: 600px) {
 	.custom-event-grid {
 		grid-template-columns: 1fr;
-	}
-}
-
-// =============================================================================
-// Dashboard skin — the picker portals with the console skin classes (forwarded
-// from RuleEditModal). Re-theme the light-mode surfaces onto the skin tokens and
-// let the frame fit its content up to a max-height (no full-viewport empty gap).
-// Scoped to `.topology-app`, which only the dashboard passes.
-// =============================================================================
-
-.event-logger-custom-event-modal.topology-app {
-	&.components-modal__frame {
-		height: auto;
-		max-height: 85vh;
-	}
-
-	.custom-event-header,
-	.custom-event-footer {
-		background: transparent;
-		border-color: var(--paper-shadow);
-	}
-
-	.custom-event-grid {
-		background: transparent;
-	}
-
-	.custom-event-item {
-		background: var(--paper-2);
-
-		&:hover,
-		&.is-selected {
-			background: var(--paper-3);
-		}
-	}
-
-	.custom-event-name {
-		color: var(--ink);
-	}
-
-	.custom-event-count {
-		color: var(--ink-3);
-	}
-
-	.custom-event-checkbox + .custom-event-swatch::before {
-		background: transparent;
-		border-color: var(--paper-shadow);
 	}
 }

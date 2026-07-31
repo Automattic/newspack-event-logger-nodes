@@ -2,7 +2,7 @@
 /**
  * Settings_Schema: the application's config declaration — ONE Field per setting.
  *
- * The single source both Config (overlay key-list + autoload sweep) and Admin
+ * The single source both Config (overlay key-list) and Admin
  * (register_setting + add_settings_field loops, option_names, delete-on-blank
  * set, reset list) derive from. Replaces the three parallel arrays those two
  * classes used to hand-maintain in lockstep (Config::$option_schema,
