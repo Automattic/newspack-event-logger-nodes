@@ -9,13 +9,13 @@ The application has **two** REST endpoints. Everything else is a verb on a servi
 
 Both endpoints are owned by the **substrate** (`newspack-nodes`). The application contributes the verbs each CI exposes; nothing in this plugin registers its own REST routes.
 
-See [`../newspack-nodes/API.md`](../newspack-nodes/API.md) for the wire shape of both endpoints (TM_COMMAND envelope layout, SSE event format, slot-pool 429 semantics, HMAC for the worker spawn endpoint).
+See [`../newspack-nodes/API.md`](../newspack-nodes/API.md) for the wire shape of both endpoints (TM_COMMAND envelope layout, per-command HMAC signing, SSE event format, slot-pool 429 semantics, and HMAC for the worker spawn endpoint).
 
 ## Authentication and Rate Limiting
 
 The substrate enforces `current_user_can( 'manage_options' )` on `/command` and `/messages/stream`; insufficient permissions return `403 Forbidden`. Each verb handler that needs a capability check also calls `self::require_manage_options()` at the top, so a misconfigured substrate-side gate still rejects writes.
 
-There is no rate-limit gate on `/command` itself; the per-verb cost (memcache reads, partition index walks, filesystem scans) is the budget.
+`/command` also carries its own per-user burst limit (`HTTP_In_Node::check_permission`): `RATE_LIMIT_BURST = 30` POSTs per `RATE_LIMIT_WINDOW_S = 1` second per user, bucketed by clock-second and transient-backed, returning `429 Too Many Requests` on overflow. The budget is tunable via the `newspack_nodes/command_rate_limit` filter (clamped to a minimum of 1).
 
 SSE rate-limiting is independent and **fail-closed**: the substrate's `SSE_Out_Node` consults the substrate's `\Newspack_Nodes\SSE_Slot_Pool` before opening headers, and memcache down means HTTP 429. The slot pool IS the rate limit and cannot fall through silently.
 
@@ -37,7 +37,7 @@ Content-Type: application/json
 - `KEY` is the verb name on that CI.
 - `VALUE` is the verb arguments (JSON object). The substrate validates each argument against the CI's `node_schema()['commands'][*]['args']` declaration before dispatching.
 
-The reply is a TM_COMMAND-shaped envelope routed back via the `TO=FROM` reply, with the verb's return value in `VALUE`. A verb that throws sends back a TM_ERROR envelope; the dashboard view's pending-Map handler converts the structured `{ message }` payload into a rejected Promise (see architecture-guide.md → "Canonical view contract").
+The reply is a TM_COMMAND-shaped envelope sent back via `TO=FROM`, carrying the verb's return value in `VALUE`. A verb that throws sends back a TM_ERROR envelope; the dashboard view's pending-Map handler converts the structured `{ message }` payload into a rejected Promise (see architecture-guide.md → "Canonical view contract").
 
 ## Service CIs
 
@@ -55,11 +55,11 @@ Read by hub aggregators probing each spoke. The CI handler itself doesn't call `
 
 ### `status` — health probe (moved to the substrate)
 
-Moved to the substrate `status` CI (newspack-nodes). `status.get` still reports the application `version` alongside the substrate `runtime_version`, plus `num_partitions`, active `topologies`, and `cache_available`. See `../newspack-nodes/API.md`.
+Moved to the substrate `status` CI (newspack-nodes). `status.get` returns the substrate `runtime_version`, `num_partitions`, active `topologies`, `cache_available`, and a `timestamp` — it carries no application version field. See `../newspack-nodes/API.md`.
 
 ### `settings` — substrate integer settings (moved to the substrate)
 
-Moved to the substrate `settings` CI (newspack-nodes). It owns the substrate-key whitelist (`num_partitions`, `num_segments`, `segment_size`, `max_lifespan`). See `../newspack-nodes/API.md`.
+Moved to the substrate `settings` CI (newspack-nodes). It owns a seven-key integer whitelist (`num_partitions`, `segment_size`, `min_segments`, `num_segments`, `min_lifetime`, `lifetime`, `max_segments`) — the old single `num_segments`/`max_lifespan` pair split into this dual-rule retention scheme. See `../newspack-nodes/API.md`.
 
 ### `rules` — per-URL logging ruleset CRUD
 
@@ -72,8 +72,6 @@ Backs the "Logging Rules" editor on the settings page. All four verbs route thro
 | `upsert` | `{ rule (required, JSON rule object) }` | `{ rule: {...} }` — single add/replace keyed by pattern. A same-pattern rule is replaced in place (preserving its id); an edit that carries the old id and changes the pattern rekeys and drops the old-pattern entry. This is the performance-dashboard "log this URL" path. |
 | `delete` | `{ id (required) }` | `{ deleted: bool }` — drop the matching rule and re-save. |
 
-The `performance` stats verbs build one `Stats_Store` per partition, reading `num_partitions` straight from substrate config — **unclamped**.
-
 ### `servers` — remote-spoke registry CRUD (replaced by the substrate `vault` CI)
 
 The old `servers` CI and its `Server_Registry` backing store were deleted. Remote-spoke credentials now live in the substrate **Vault**, managed through the substrate `vault` CI. See `../newspack-nodes/API.md`.
@@ -84,7 +82,7 @@ Moved to the substrate `aggregator` CI (newspack-nodes), which reports per-spoke
 
 ### `performance` — the omnibus dashboard CI
 
-The largest CI; every Performance-tree dashboard verb lives here.
+The largest CI; every Performance-tree dashboard verb lives here. Its stats verbs build one `Stats_Store` per partition, reading `num_partitions` straight from substrate config — **unclamped**.
 
 | Verb | Args | Returns |
 |------|------|---------|
@@ -92,6 +90,7 @@ The largest CI; every Performance-tree dashboard verb lives here.
 | `urls` | `{ sort? = 'count', order? = 'desc', limit?: int = 50 (1..1000), offset?: int = 0 (0..10000), search?, server? }` | `{ data: [...], total, limit, offset }` — paginated/sortable URL leaderboard. Sort whitelisted against `URL_SORTS`; unknown sort falls back to `count`. Requires `manage_options`. |
 | `url_detail` | `{ hash (required, `[a-f0-9]{8,64}`), breakdown?, categories?: bool }` | `{ stats, requests, aggregate_flame, aggregate_profiles, last_modified[, breakdown_time_series, category_time_series] }`. Throws TM_ERROR `URL not found` for unknown hashes. Requires `manage_options`. |
 | `request_search` | `{ rid (required, non-empty) }` | `{ rid, partition, url_hash }` so the dashboard can deep-link without scanning every partition. Requires `manage_options`. |
+| `request_grep` | `{ pattern (required), limit?: int = 20 (1..50) }` | `{ pattern, scope, scanned_partitions, results: [...], truncated, result_count }` — pattern-search across the recent firehose window, grouped by request. Shares its matching/grouping engine with `wp nodes reqgrep` (`Reqgrep_Core`) so both agree on what matches. Requires `manage_options`. |
 | `request_detail` | `{ rid (required), partition?: int = 0 }` | Full request body + merged flame data. Throws TM_ERROR `invalid partition` for out-of-range partition; `Request not found` for unknown rid. Requires `manage_options`. |
 | `hooks_registered` | — | `{ total_hooks, categories, hooks_by_category }`. Requires `manage_options`. |
 | `set` | `{ option (required, string), value (required, string) }` | `{ option, updated: bool }`. Normalized positional single-option writer (`set <option> <value>`) for a 3-option whitelist (`newspack_event_logger_nodes_rules` → array, `_log_memory` → bool, `_flush_every_line` → bool); array-typed options carry their value as JSON. Autoload follows `AppConfig::autoload_for`; the write emits a settings event that `Settings_Sync_Node` fans out to spokes. Requires `manage_options`. |
@@ -102,7 +101,7 @@ The dashboards also call into substrate-owned CIs over the same `/command` endpo
 
 | TO | Verb examples | Used by |
 |----|---------------|---------|
-| `workers` | `list`, `restart`, `heartbeat`, `dump_metadata`, `cleanup_status` | Workers dashboard, performance dashboards' restart action, every SSE dashboard's `_heartbeat` keep-alive |
+| `workers` | `list`, `restart`, `heartbeat`, `dump_graph`, `cleanup_status` | Workers dashboard, performance dashboards' restart action, every SSE dashboard's `_heartbeat` keep-alive |
 | `_http/<ci-name>` | (transport wrapper) | All dashboards — the React graphs target `_http/<ci-name>` so the substrate's `Http_Out_Node` routes the reply back to FROM |
 
 `_http/workers` is the canonical heartbeat target used by every SSE dashboard's `_heartbeat` node to keep the slot alive.
@@ -115,13 +114,13 @@ The substrate's single SSE surface. A client subscribes to one or more `<log>.p<
 GET /wp-json/newspack-nodes/v1/messages/stream?subscribe=<log>.p<N>[,<log>.p<N>...][&positions=...]
 ```
 
-Per-line transforms live in the browser, inside each dashboard's view node (e.g. `RequestLogViewNode`, `GyroscopeViewNode`, `PerfErrorsViewNode`); the browser consumes the stream through the runtime `_sse` node (`SseInNode`) inside each dashboard's node graph. Hub-side aggregator connections (`Remote_Source_Node` cURL pulls) get a longer slot TTL than browsers.
+Per-line transforms live in the browser, inside each dashboard's view node (e.g. `RequestLogViewNode`, `GyroscopeViewNode`, `PerfErrorsViewNode`); the browser consumes the stream through the runtime `_sse` node (`SseInNode`) inside each dashboard's node graph. The slot TTL (60s) is the same for every caller; hub-side aggregator connections (`Remote_Source_Node` cURL pulls) send `workers.heartbeat` every 10s, browsers every 5s.
 
 Operational discipline:
 - Memcache slot pool gates connections; new connections fail with **HTTP 429** when the pool is full or memcache is unreachable (fail-closed).
 - Two heartbeats: server→client SSE `heartbeat` events when no data flows; client→server keepalive that refreshes the slot. **Only the client refreshes a slot's TTL** — the server-side check is check-only. Each client's TTL must outlive its own heartbeat interval.
 - Flush before the framework sleeps, NOT per-event. Per-event flushing tanks throughput on TLS/proxy paths.
-- A bounded per-connection runtime cap; the client reconnects after timeout.
+- No application-level connection timeout — the stream disables PHP's execution time limit. A connection ends only when the slot lease is lost or the client disconnects; infrastructure limits (PHP-FPM, a proxy) can still cap it from outside the application.
 
 See [`../newspack-nodes/API.md`](../newspack-nodes/API.md) for full request/response shape and subscription syntax.
 
