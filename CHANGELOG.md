@@ -16,7 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `dim_by_server` / `cat_by_server` / `leaderboard_by_server` bucket at all, and
   every server-scoped read came back empty while the global ones stayed full.
   A hub is now a site that RUNS `aggregator`, directly or through a wrapper.
-  Per-server data accrues from the fix forward; the gap cannot be backfilled.
+  To backfill, delete the derived partitions and their offsetlogs and let the
+  Consumer re-read the firehose from the start — the raw records were never
+  lost, only the derived stats. `jobs:sieve` (Age_Sieve, 900s) is what keeps
+  that replay from re-firing historical jobs.
 
 ### Changed
 
