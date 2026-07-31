@@ -262,8 +262,8 @@ Per-partition flame builder. Tails `requests.log`; `Flame_Builder` emits `flames
 ```tsl
 make_node Consumer requests:consumer <config:logs_dir>/requests.p<partition> <config:offsets_dir>/requests.flame-builder.p<partition>
 make_node Flame_Builder flame-builder
-make_node Partition flames:partition <config:logs_dir>/flames.p<partition> <config:segment_size> <config:num_segments> <config:max_lifespan>
-make_node Partition flame-stats:partition <config:logs_dir>/flame-stats.p<partition> <config:segment_size> <config:num_segments> <config:max_lifespan>
+make_node Partition flames:partition <config:logs_dir>/flames.p<partition>
+make_node Partition flame-stats:partition <config:logs_dir>/flame-stats.p<partition>
 cmd requests:consumer:config add_snapshot_node flame-builder
 cmd flame-builder:config configure_stats <partition>
 cmd flame-builder:config set_stats_target <eln:stats_mirror_node>
@@ -303,7 +303,7 @@ Hub-side ingest. Per-spoke substrate `Remote_Source` nodes (operator-wired on th
 
 ```tsl
 make_node Remote_Job_Rewrite remote-job-rewrite
-make_node Topic firehose:topic <config:logs_dir>/firehose.p{partition} <config:num_partitions> <config:segment_size> <config:num_segments> <config:max_lifespan>
+make_node Topic firehose:topic <config:logs_dir>/firehose.p{partition}
 connect_node remote-job-rewrite firehose:topic
 ```
 
