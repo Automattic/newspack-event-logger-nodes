@@ -41,7 +41,7 @@ Fresh clone, once (the substrate checkout must sit at `../newspack-nodes` —
 the build kit + shared JS resolve through it):
 
 ```bash
-npm install                  # JS toolchain (esbuild, jest, eslint, hooks)
+npm install                  # JS toolchain (esbuild, jest, eslint, lint-staged)
 composer install             # PHP deps + the classmap autoloader
 npm run build                # compile the dashboard bundles into build/
 ```
@@ -72,17 +72,31 @@ npm run build
 
 The plugin is shipped as a standard WordPress plugin; how it's deployed (containers, bind mounts, rsync, etc.) is environment-specific and lives outside this repo.
 
+### Git hooks
+
+Hooks are the tracked files in `scripts/` (`pre-commit`, `commit-msg`, `pre-push`),
+reached via `core.hooksPath`, which `composer install` sets:
+
+```bash
+git config core.hooksPath scripts    # what composer's post-install-cmd runs
+```
+
+A clone that has never run `composer install` has no hooks at all. `pre-commit`
+first runs `scripts/sync-shared-scripts.sh`, which refreshes this plugin's copy
+of the shared tooling from `../newspack-nodes/scripts/` when that sibling is
+checked out — edit shared scripts THERE, not here.
+
 ## Versioning & Release
 
-The version appears in three places: the `Version:` header in `newspack-event-logger-nodes.php`, the `NEWSPACK_EVENT_LOGGER_NODES_VERSION` PHP constant in the same file, and the `"version"` field in `package.json`. Do NOT edit these by hand — `tools/bump-event-logger-nodes-version.sh` (in `dndocker/`) rewrites all three atomically and refuses to bump to a version that's already current.
+The version appears in three places: the `Version:` header in `newspack-event-logger-nodes.php`, the `NEWSPACK_EVENT_LOGGER_NODES_VERSION` PHP constant in the same file, and the `"version"` field in `package.json`. Do NOT edit these by hand — `scripts/bump-version.sh` rewrites all three atomically and refuses to bump to a version that's already current.
 
 Releases are **automated by GitHub Actions** (`.github/workflows/release.yml`): pushing a `v<major>.<minor>.<patch>` tag builds the archive and publishes the GitHub Release with BOTH artifacts. You only bump, changelog, commit, and tag:
 
 ```bash
 # 1. Update CHANGELOG.md: rename `## [Unreleased]` → `## [<version>] - <date>`,
 #    then add a fresh empty `## [Unreleased]` above it (Keep-a-Changelog format).
-# 2. Bump version across plugin header + constant + package.json (from dndocker root):
-dndocker/tools/bump-event-logger-nodes-version.sh <version>
+# 2. Bump version across plugin header + constant + package.json:
+./scripts/bump-version.sh <version>
 # 3. Commit the changelog + bump together (e.g. `chore(release): <version>`).
 # 4. Tag and push — the workflow does the rest:
 git tag v<version>
