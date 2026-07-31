@@ -49,8 +49,8 @@ rm -rf /tmp/newspack-event-logger-nodes-test 2>/dev/null
 
 # Run PHPUnit with coverage
 "$PHPUNIT" --configuration phpunit.xml \
-    --coverage-clover ${OUT}/newspack-event-logger-nodes-coverage/clover.xml \
-    --coverage-html ${OUT}/newspack-event-logger-nodes-coverage \
+    --coverage-clover "${OUT}"/newspack-event-logger-nodes-coverage/clover.xml \
+    --coverage-html "${OUT}"/newspack-event-logger-nodes-coverage \
 	--enforce-time-limit \
     "$@"
 
@@ -58,5 +58,5 @@ echo ""
 echo "Coverage report: ${OUT}/newspack-event-logger-nodes-coverage/index.html"
 
 rm -rf /tmp/event-logger-nodes-test                   \
-       /tmp/newspack-event-logger-nodes-test-*        \
+       /tmp/newspack-event-logger-nodes-test*         \
 	   /tmp/phpunit-cache-newspack-event-logger-nodes

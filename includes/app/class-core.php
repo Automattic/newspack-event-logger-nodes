@@ -169,7 +169,7 @@ class Core {
 				continue;
 			}
 
-			foreach ( $priority_callbacks as $id => &$cb ) {
+			foreach ( $priority_callbacks as &$cb ) {
 				$original      = $cb['function'];
 				$accepted_args = (int) $cb['accepted_args'];
 				$name          = self::short_name( $original );

@@ -98,10 +98,12 @@ class Ruleset_Bench_Command {
 		$inline_samps = [];
 		for ( $i = 0; $i < $iterations; $i++ ) {
 			$t = \hrtime( true );
+			// phpcs:disable VariableAnalysis.CodeAnalysis.VariableAnalysis.UnusedVariable -- the accumulator IS the measurement; dropping it empties the loop.
 			$bound = 0;
 			foreach ( $hooks as $h ) {
 				$bound += \strlen( $h ); // stand-in for 3x add_filter dispatch.
 			}
+			// phpcs:enable VariableAnalysis.CodeAnalysis.VariableAnalysis.UnusedVariable
 			$inline_samps[] = ( \hrtime( true ) - $t ) / 1000.0;
 		}
 
@@ -116,10 +118,12 @@ class Ruleset_Bench_Command {
 			$t = \hrtime( true );
 			$fetched = null !== $memd ? $memd->get( $mc_key ) : $hooks;
 			if ( \is_array( $fetched ) ) {
+				// phpcs:disable VariableAnalysis.CodeAnalysis.VariableAnalysis.UnusedVariable -- the accumulator IS the measurement; dropping it empties the loop.
 				$bound = 0;
 				foreach ( $fetched as $h ) {
 					$bound += \is_string( $h ) ? \strlen( $h ) : 0;
 				}
+				// phpcs:enable VariableAnalysis.CodeAnalysis.VariableAnalysis.UnusedVariable
 			}
 			$pointer_samps[] = ( \hrtime( true ) - $t ) / 1000.0;
 		}

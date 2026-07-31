@@ -246,10 +246,7 @@ class Flame_Builder_Node extends Node {
 		$verb      = \strtoupper( \explode( ' ', \trim( $value ), 2 )[0] );
 
 		if ( 'GET_STATS' === $verb ) {
-			$stats_count = 0;
-			foreach ( $this->stats_cache->iterate() as $_ ) {
-				++$stats_count;
-			}
+			$stats_count = \iterator_count( $this->stats_cache->iterate() );
 			$now = ( Core::$now ?: Core::right_now() );
 			$payload = [
 				'stats_count'              => $stats_count,

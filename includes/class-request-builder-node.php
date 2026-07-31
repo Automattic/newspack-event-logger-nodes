@@ -1149,7 +1149,7 @@ class Request_Builder_Node extends Timer_Node {
 		if ( isset( $state['buckets'] ) && \is_array( $state['buckets'] ) ) {
 			foreach ( $state['buckets'] as &$bucket ) {
 				if ( \is_array( $bucket ) ) {
-					foreach ( $bucket as $key => &$val ) {
+					foreach ( $bucket as &$val ) {
 						if ( $val instanceof \stdClass ) {
 							$val = (array) $val;
 						}
@@ -1181,7 +1181,7 @@ class Request_Builder_Node extends Timer_Node {
 		if ( isset( $cache_state['buckets'] ) && \is_array( $cache_state['buckets'] ) ) {
 			foreach ( $cache_state['buckets'] as &$bucket ) {
 				if ( \is_array( $bucket ) ) {
-					foreach ( $bucket as $key => &$val ) {
+					foreach ( $bucket as &$val ) {
 						if ( \is_array( $val ) ) {
 							$val = (object) $val;
 						}
