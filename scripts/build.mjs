@@ -14,6 +14,7 @@ import esbuild from 'esbuild';
 import * as sass from 'sass';
 import rtlcss from 'rtlcss';
 import path from 'node:path';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __dirname = path.dirname( fileURLToPath( import.meta.url ) );
@@ -42,6 +43,26 @@ const alias = {
 		process.env.NEWSPACK_NODES_SHARED ||
 		path.resolve( ROOT, '../newspack-nodes/src/shared' ),
 };
+
+/**
+ * Pin every dependency we own to OUR copy, so a dev build and a CI build emit
+ * the same bytes.
+ *
+ * Shared substrate source importing a bare dep (`d3`, `@noble/hashes`) resolves
+ * it from ITS own tree first. In CI that tree is a dependency-free checkout, so
+ * resolution falls through to `nodePaths` below and finds ours. In a dev
+ * checkout the sibling HAS node_modules, so esbuild bundles a second copy under
+ * a different absolute path — 88KB of duplicate d3 in the overview bundle.
+ */
+for ( const dep of Object.keys(
+	JSON.parse( readFileSync( path.join( ROOT, 'package.json' ), 'utf8' ) )
+		.dependencies || {}
+) ) {
+	// `@wordpress/*` is externalised by a plugin; a path alias would defeat it.
+	if ( ! dep.startsWith( '@wordpress/' ) ) {
+		alias[ dep ] = path.resolve( ROOT, 'node_modules', dep );
+	}
+}
 
 const ENTRIES = [
 	{

@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A dev build and a CI build now emit the same bytes.** Shared substrate
+  source importing a bare dependency (`d3`, `@noble/hashes`) resolved it from
+  the substrate's own tree first. CI checks the substrate out without
+  `node_modules`, so resolution fell through to this plugin's copy; a developer
+  checkout HAS `node_modules`, so esbuild bundled a second copy under a
+  different absolute path — 88KB of duplicate d3 in the overview bundle. Every
+  dependency this plugin owns is now pinned to its own copy. Verified by
+  building against a substrate checkout carrying `node_modules` and diffing the
+  result against the published release: byte-identical.
+
+
 ## [0.43.6] - 2026-07-31
 
 ### Fixed
