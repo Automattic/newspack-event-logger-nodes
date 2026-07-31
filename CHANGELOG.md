@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A synced ruleset is rekeyed by pattern, like every other write path.**
+  `Rule_Set::apply_synced()` — the hub→spoke receiver, and the only rule-write
+  path that crosses a trust boundary — took the id off the wire verbatim while
+  the config seed and the editor's save/upsert both re-derived it. Two entries
+  could then persist for one pattern and race in the matcher, or share an id and
+  alias one durable hooks option, where the inline entry's `delete_option` wiped
+  the pointer entry's list: 107 hooks gone behind one rate-limited notice.
+
+  The three copies of "rekey by pattern, collapse duplicates" are now one
+  `Rule_Set::rekey_by_pattern()` that all three callers use, so the invariant
+  can't hold in two places and lapse in the third again. A heavy synced rule's
+  durable option is keyed by the derived id, so a spoke that received one under
+  a wire-supplied id re-tiers it on the next sync.
+
 ### Changed
 
 - **Documentation accuracy pass.** `docs/API.md` claimed there is no rate-limit

@@ -45,6 +45,30 @@ final class Rule_Set {
 	}
 
 	/**
+	 * Rekey every rule to its pattern-derived id, ignoring any id it arrived
+	 * with, and collapse duplicate patterns to one rule (last entry wins).
+	 *
+	 * The pattern IS the identity, so this is what makes "one rule per URL"
+	 * true rather than merely conventional. Every write path runs through it:
+	 * the config seed, the editor's save/upsert, and the hub→spoke sync. Two
+	 * entries that kept differing ids for one pattern would both persist and
+	 * race in the matcher; two that kept a SHARED id would alias one durable
+	 * hooks option, and the inline one's delete_option would wipe the pointer
+	 * one's list.
+	 *
+	 * @param Rule[] $rules Rules carrying arbitrary (or absent) ids.
+	 * @return Rule[]
+	 */
+	public static function rekey_by_pattern( array $rules ): array {
+		$by_id = [];
+		foreach ( $rules as $rule ) {
+			$id           = self::id_for( $rule->pattern );
+			$by_id[ $id ] = $rule->with_id( $id );
+		}
+		return \array_values( $by_id );
+	}
+
+	/**
 	 * Resolve a rule's hooks. Inline is free; pointer reads mc, then the durable
 	 * option (warming mc), then gives up to [] with a single notice.
 	 *
@@ -121,25 +145,30 @@ final class Rule_Set {
 	}
 
 	/**
-	 * Turn config rule maps into Rule objects, deriving each id from its pattern
-	 * (a config-supplied id is ignored — the pattern is the identity) and
-	 * collapsing duplicate patterns to one rule, last entry wins.
+	 * Turn config rule maps into Rule objects, rekeyed by pattern.
 	 *
 	 * @param array<array-key, mixed> $entries
 	 * @return Rule[]
 	 */
 	private static function rules_from_config( array $entries ): array {
-		$by_id = [];
+		return self::rekey_by_pattern( self::rules_from_maps( $entries ) );
+	}
+
+	/**
+	 * Decode a list of stored/wire rule maps, skipping non-array junk.
+	 *
+	 * @param array<array-key, mixed> $entries
+	 * @return Rule[]
+	 */
+	private static function rules_from_maps( array $entries ): array {
+		$rules = [];
 		foreach ( $entries as $entry ) {
-			if ( ! \is_array( $entry ) ) {
-				continue;
+			if ( \is_array( $entry ) ) {
+				/** @var array<string, mixed> $entry rule shape (Rule::to_array()). */
+				$rules[] = Rule::from_array( $entry );
 			}
-			/** @var array<string, mixed> $entry config rule shape (Rule::from_array()). */
-			$rule                = Rule::from_array( $entry );
-			$rule                = $rule->with_id( self::id_for( $rule->pattern ) );
-			$by_id[ $rule->id ]  = $rule;
 		}
-		return \array_values( $by_id );
+		return $rules;
 	}
 
 	/**
@@ -290,14 +319,7 @@ final class Rule_Set {
 	 * @param array<int|string, mixed> $rules_array Hydrated rule maps off the wire.
 	 */
 	public static function apply_synced( array $rules_array ): void {
-		$rules = [];
-		foreach ( $rules_array as $entry ) {
-			if ( \is_array( $entry ) ) {
-				/** @var array<string, mixed> $entry hydrated rule shape (Rule::to_array()). */
-				$rules[] = Rule::from_array( $entry );
-			}
-		}
-		( new self( [] ) )->save( $rules );
+		( new self( [] ) )->save( self::rekey_by_pattern( self::rules_from_maps( $rules_array ) ) );
 	}
 
 	/**

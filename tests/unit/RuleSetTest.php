@@ -254,7 +254,9 @@ final class RuleSetTest extends TestCase {
 
 		Rule_Set::apply_synced( $wire );
 
-		$this->assertSame( $big, $GLOBALS['_wp_options'][ Rule_Set::hooks_option_name( 'big' ) ], 'spoke must persist the hooks to its own durable option' );
+		// Keyed by the PATTERN-derived id, not the 'big' the wire supplied.
+		$option = Rule_Set::hooks_option_name( Rule_Set::id_for( '/heavy/' ) );
+		$this->assertSame( $big, $GLOBALS['_wp_options'][ $option ], 'spoke must persist the hooks to its own durable option' );
 		$stored = $GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ][0];
 		$this->assertSame( 'mc', $stored['hooks_in'], 'a large synced rule must re-tier to a pointer, not bloat OPTION_RULES' );
 		$this->assertNull( $stored['hooks'] );
@@ -330,5 +332,56 @@ final class RuleSetTest extends TestCase {
 	public function test_id_for_is_a_pure_function_of_the_pattern(): void {
 		$this->assertSame( Rule_Set::id_for( '/a/' ), Rule_Set::id_for( '/a/' ) );
 		$this->assertNotSame( Rule_Set::id_for( '/a/' ), Rule_Set::id_for( '/b/' ) );
+	}
+
+	// ── apply_synced: the pattern is the identity, off the wire too ─────────
+
+	/**
+	 * The hub→spoke sync is the one rule-write path that crosses a trust
+	 * boundary, so it must re-derive ids exactly as the config and editor paths
+	 * do — a wire-supplied id is not the rule's identity.
+	 */
+	public function test_apply_synced_derives_the_id_from_the_pattern(): void {
+		Rule_Set::apply_synced( [
+			[ 'id' => 'not-a-pattern-hash-4471', 'pattern' => '/', 'action' => 'log', 'hooks' => [ 'init' ] ],
+		] );
+
+		$rules = Rule_Set::load()->rules();
+		$this->assertCount( 1, $rules );
+		$this->assertSame( Rule_Set::id_for( '/' ), $rules[0]->id );
+	}
+
+	public function test_apply_synced_collapses_two_rules_sharing_one_pattern(): void {
+		Rule_Set::apply_synced( [
+			[ 'id' => 'aaaaaaaaaaaa', 'pattern' => '/shop', 'action' => 'log',  'hooks' => [ 'init' ] ],
+			[ 'id' => 'bbbbbbbbbbbb', 'pattern' => '/shop', 'action' => 'skip', 'hooks' => [] ],
+		] );
+
+		$rules = Rule_Set::load()->rules();
+		$this->assertCount( 1, $rules, 'one pattern is one rule' );
+		$this->assertTrue( $rules[0]->is_skip(), 'last entry wins, matching the config path' );
+	}
+
+	/**
+	 * Two entries sharing an id used to alias one durable hooks option: the
+	 * later inline rule's delete_option wiped the earlier pointer rule's list,
+	 * losing every hook behind one rate-limited notice.
+	 */
+	public function test_apply_synced_keeps_a_pointer_rules_hooks_when_another_entry_shares_its_id(): void {
+		$many = [];
+		for ( $i = 0; $i < Rule_Set::INLINE_HOOK_LIMIT + 7; $i++ ) {
+			$many[] = "hook_probe_{$i}";
+		}
+		Rule_Set::apply_synced( [
+			[ 'id' => 'dupdupdupdup', 'pattern' => '/heavy', 'action' => 'log', 'hooks' => $many ],
+			[ 'id' => 'dupdupdupdup', 'pattern' => '/light', 'action' => 'log', 'hooks' => [ 'init' ] ],
+		] );
+
+		$by_pattern = [];
+		foreach ( Rule_Set::load()->rules() as $rule ) {
+			$by_pattern[ $rule->pattern ] = \count( Rule_Set::hooks_for( $rule ) );
+		}
+		$this->assertSame( \count( $many ), $by_pattern['/heavy'] ?? -1 );
+		$this->assertSame( 1, $by_pattern['/light'] ?? -1 );
 	}
 }
