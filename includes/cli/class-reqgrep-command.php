@@ -13,10 +13,10 @@
  *    (`Message::packed`); the entry hash is at `Message::VALUE`, the rid at
  *    `Message::KEY`. There is no legacy entry-hash format.
  *  - Logs path: `Config::get_logs_directory() . '/firehose.log'`.
- *  - Namespace: `Newspack_Event_Logger_Nodes\CLI`. Uses the local LruCache port.
+ *  - Namespace: `Newspack_Event_Logger_Nodes\CLI`. Uses the local LRU_Cache.
  *
  * Behaviour preserved 1:1:
- *  - 300-slot 3-bucket × 100 LruCache with 60-second timed rotation; on-evict
+ *  - 300-slot 3-bucket × 100 LRU_Cache with 60-second timed rotation; on-evict
  *    callback prints `[incomplete]` and drops.
  *  - Per-rid byte cap MAX_BYTES_PER_REQUEST = 10MB.
  *  - Line caps MAX_LINES_PER_REQUEST = 20000, MAX_LINES_PER_REQUEST_IN_HISTORY = 10000.
@@ -193,7 +193,7 @@ class Reqgrep_Command {
 		$num_partitions_cfg   = $this->config['num_partitions'] ?? 1;
 		$this->num_partitions = Core::num_int( $num_partitions_cfg );
 
-		// LruCache: 300 slots, 60s rotation, on-evict prints [incomplete].
+		// LRU_Cache: 300 slots, 60s rotation, on-evict prints [incomplete].
 		$this->inflight = ( new LRU_Cache( self::INFLIGHT_BUCKET_SIZE, self::INFLIGHT_NUM_BUCKETS ) )
 			->with_timed_rotation(
 				self::INFLIGHT_ROTATE_INTERVAL,
@@ -415,7 +415,7 @@ class Reqgrep_Command {
 	 * Build the shared grouping/matching engine from the parsed run config. Its
 	 * on_complete emits the assembled request (unless --incomplete suppresses
 	 * completed output); on_history_miss surfaces the tune-your-buckets warning.
-	 * The engine shares the LruCache the on-evict callback drives, so output_remaining
+	 * The engine shares the LRU_Cache the on-evict callback drives, so output_remaining
 	 * still walks $this->inflight for the [incomplete] tail.
 	 */
 	private function init_core(): void {
