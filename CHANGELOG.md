@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.43.8] - 2026-07-31
+
+### Added
+
+- **Vendored copies of the substrate's shared tooling** (`scripts/bump-version.sh`
+  + `scripts/lib/`, `reorder-node-methods`, the coverage and comment-length
+  gates, `pre-commit`, `commit-msg`), so a standalone clone works without a
+  sibling checkout. `scripts/sync-shared-scripts.sh` refreshes them from
+  `../newspack-nodes/scripts/` on each `pre-commit` when that sibling exists —
+  edit shared scripts THERE, not here.
+- **`scripts/commit-msg`** — the conventional-commit gate, now a tracked hook.
+  It skips cleanly where commitlint isn't installed.
+
+### Changed
+
+- **Git hooks come from `core.hooksPath`, not `.git/hooks`.** `composer install`
+  now points git at `scripts/`, so the hooks are version controlled and reviewed
+  with the code they gate. A clone that has never run `composer install` has no
+  hooks at all.
+- `scripts/bump-version.sh` replaces dndocker's `tools/bump-event-logger-nodes-version.sh`.
+  Behavior is unchanged; the shared flow lives in `scripts/lib/bump-version.sh`
+  and the wrapper is only the per-plugin knobs.
+
+### Removed
+
+- `brainmaestro/composer-git-hooks` — `core.hooksPath` does the job with no
+  dependency, and cghooks-installed `.git/hooks` files are now dead files git
+  ignores.
+
+
 ## [0.43.7] - 2026-07-31
 
 ### Fixed
