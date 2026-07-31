@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Three `make_node` examples documented a retention arg list that does not
+  exist.** `flames:partition`, `flame-stats:partition`, and `firehose:topic` in
+  the architecture guide passed `<config:segment_size> <config:num_segments>
+  <config:max_lifespan>` — the retired 3-arg tail, missing `min_segments`. The
+  shipped topologies pass no retention args at all. Copying any of them into a
+  TSL produced the wrong geometry.
+
+### Changed
+
+- **`lint-docs.sh` is a shared pre-push gate.** The doc-drift lint was
+  substrate-only; it now ships to every plugin via `sync-shared-scripts.sh` and
+  runs from each `pre-push`. It caught three `make_node` examples in
+  event-logger-nodes documenting a retention arg list the shipped topology never
+  passes.
+
+
 ## [0.43.9] - 2026-07-31
 
 ### Fixed
