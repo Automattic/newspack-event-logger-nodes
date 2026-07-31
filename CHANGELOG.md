@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.43.5] - 2026-07-30
+
+### Fixed
+
+- **Bundles newspack-nodes v2.2.10.** The release workflow still pinned the
+  v2.2.9 substrate, so v0.43.4 shipped its dashboards built against the
+  pre-normalization shared stylesheet — the canonical UI layer that release
+  announced was absent from the published bundles.
+
 ## [0.43.4] - 2026-07-30
 
 ### Changed
