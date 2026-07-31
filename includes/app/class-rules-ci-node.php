@@ -73,23 +73,6 @@ class Rules_CI_Node extends Service_CI_Node {
 		return $shape;
 	}
 
-	/**
-	 * Rekey every rule to its pattern-derived id (Rule_Set::id_for), ignoring any
-	 * client-supplied id, and collapse duplicate patterns to one rule (last wins).
-	 * The pattern is the identity — a save can never persist two rules for one URL.
-	 *
-	 * @param Rule[] $rules
-	 * @return Rule[]
-	 */
-	private static function ensure_ids( array $rules ): array {
-		$by_id = [];
-		foreach ( $rules as $rule ) {
-			$id            = Rule_Set::id_for( $rule->pattern );
-			$by_id[ $id ]  = $rule->with_id( $id );
-		}
-		return \array_values( $by_id );
-	}
-
 	/** @api Used by the substrate to provide UI etc. */
 	public static function node_schema(): array {
 		return \array_merge( parent::node_schema(), [
@@ -125,7 +108,7 @@ class Rules_CI_Node extends Service_CI_Node {
 							/** @var array<string, mixed> $entry decoded rule object (Rule::to_array() shape). */
 							$rules[] = Rule::from_array( $entry );
 						}
-						$rules = self::ensure_ids( $rules );
+						$rules = Rule_Set::rekey_by_pattern( $rules );
 						Rule_Set::load()->save( $rules );
 						return [ 'saved' => \count( $rules ) ];
 					},

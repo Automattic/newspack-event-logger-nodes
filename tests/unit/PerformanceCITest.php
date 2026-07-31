@@ -1293,7 +1293,9 @@ class PerformanceCITest extends TestCase {
 		$interpreter = new Performance_CI_Node();
 		VerbHarness::fire( $interpreter, 'performance', 'set', $args );
 
-		$this->assertSame( $big, $GLOBALS['_wp_options'][ Rule_Set::hooks_option_name( 'big' ) ], 'the heavy rule\'s hooks must land in a local durable option' );
+		// Keyed by the PATTERN-derived id, not the 'big' the wire supplied.
+		$option = Rule_Set::hooks_option_name( Rule_Set::id_for( '/heavy/' ) );
+		$this->assertSame( $big, $GLOBALS['_wp_options'][ $option ], 'the heavy rule\'s hooks must land in a local durable option' );
 		$stored = $GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ][0];
 		$this->assertSame( 'mc', $stored['hooks_in'], 'OPTION_RULES must hold a small pointer, not the inline blob' );
 		$this->assertNull( $stored['hooks'] );
