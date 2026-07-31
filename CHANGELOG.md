@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.43.7] - 2026-07-31
+
 ### Fixed
 
 - **A dev build and a CI build now emit the same bytes.** Shared substrate
