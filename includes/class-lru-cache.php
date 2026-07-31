@@ -5,6 +5,10 @@
  * Simple bucket-based LRU cache for in-memory data.
  * Evicts oldest bucket when capacity exceeded.
  *
+ * A variant of Tachikoma's bucket LRU — `Nodes/Table.pm` `lru_lookup`
+ * (https://github.com/datapoke/tachikoma), in the shape our DN `ReqGrep.pm`
+ * uses it. That DN tree is not public, so only the Table.pm half is followable.
+ *
  * Store objects (not arrays) for zero-copy mutation — objects are
  * references in PHP, so get() returns the same instance.
  *

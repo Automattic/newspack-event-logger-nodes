@@ -11,8 +11,8 @@ use Newspack_Nodes\Tests\TestCase;
 use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
- * Per-request `n`-sequence validation ported from Tachikoma's
- * InstrumentalityGrail, plus the timed-out-trace log signal on eviction.
+ * Per-request `n`-sequence validation, plus the timed-out-trace log signal on
+ * eviction.
  * Detects mid-stream orphans, dupes, reordering, and rid reuse — the correctness
  * guard complementing the Consumer seal-grace fix.
  */

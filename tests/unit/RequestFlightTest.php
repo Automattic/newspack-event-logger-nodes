@@ -13,10 +13,10 @@ use Newspack_Nodes\Router_Node;
 use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
- * RequestFlight is a hidden Timer-sibling Node attached to RequestBuilder.
- * Mirrors Perl Tachikoma's InstrumentalityFlight.pm: periodically snapshots
- * the patron's in-progress request map and emits a TM_STRUCT batch to a
- * configured target node (typically a gyroscope partition).
+ * RequestFlight is a hidden Timer-sibling Node attached to RequestBuilder:
+ * periodically snapshots the patron's in-progress request map and emits a
+ * TM_STRUCT batch to a configured target node (typically a gyroscope
+ * partition).
  *
  * Hidden from the topology canvas via the substrate's patron filter
  * (`Node::patron()` non-null → dump_metadata skips it).

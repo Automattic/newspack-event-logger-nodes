@@ -1,9 +1,9 @@
 <?php
 /**
- * RequestFlight: hidden sibling Node attached to RequestBuilder. Mirrors
- * Perl Tachikoma's InstrumentalityFlight.pm. Periodically snapshots the
- * patron's in-progress request map and emits a compact-summary batch to
- * the configured target (gyroscope partition).
+ * RequestFlight: hidden sibling Node attached to RequestBuilder. Periodically
+ * snapshots the patron's in-progress request map and emits a compact-summary
+ * batch to the configured target (gyroscope partition). Its non-public DN
+ * ancestor is named in newspack-nodes' docs/tachikoma-lineage.md.
  *
  * Hidden from the topology editor by the substrate's patron filter in
  * dump_metadata; configuration surfaces on the patron's :config interpreter as

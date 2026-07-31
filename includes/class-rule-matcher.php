@@ -1,6 +1,6 @@
 <?php
 /**
- * Longest-prefix rule matcher.
+ * Most-specific-first rule matcher: query-bearing, then exact, then prefix.
  *
  * @package Newspack_Event_Logger_Nodes
  */

@@ -15,10 +15,8 @@
 
 namespace Newspack_Event_Logger_Nodes;
 
-use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Node;
-use Newspack_Nodes\Partition_Node;
 
 \defined( 'ABSPATH' ) || exit;
 
@@ -29,11 +27,10 @@ class Remote_Job_Rewrite_Node extends Node {
 	 *
 	 * VALUE is the firehose entry as an array (Log_Manager writes dicts;
 	 * Request_Builder_Node reads them). When it's a `k:"job"` entry, flip the
-	 * kind to `remote_job`. The rewrite can only grow the message by the
-	 * 6-byte `job` -> `remote_job` delta, but the post-rewrite packed size is
-	 * still guarded against the PIPE_BUF cap a downstream Partition write would
-	 * enforce — an oversized line is dropped (rate-limited) rather than
-	 * forwarded to corrupt the segment.
+	 * kind to `remote_job`. The rewrite can only grow the message by the 7-byte
+	 * `job` -> `remote_job` delta, so it does no size check of its own: the
+	 * downstream Partition enforces its own line cap and drops an oversize
+	 * record there.
 	 *
 	 * @api Entry point invoked by the substrate Router / upstream sink.
 	 * @param array<int, mixed> $message Message reference; VALUE is the entry array.

@@ -156,7 +156,7 @@ class Reqgrep_Core {
 			}
 		}
 
-		// Roll the LruCache; caller's on-evict fires for dropped rids.
+		// Roll the LRU_Cache; caller's on-evict fires for dropped rids.
 		$this->inflight->rotate_if_due();
 	}
 
