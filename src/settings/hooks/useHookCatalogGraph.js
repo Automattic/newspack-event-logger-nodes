@@ -48,6 +48,7 @@ import {
 	TM_RESPONSE,
 	ensureSession,
 } from '@newspack-nodes/runtime';
+import useReconcile from '@newspack-nodes/shared/hooks/useReconcile';
 
 import '../nodes/register';
 
@@ -143,26 +144,34 @@ export function useHookCatalogGraph( opts = {} ) {
 		return promise;
 	}, [] );
 
-	// Fetch hooks_registered on open; on failure route an empty-catalog reply.
-	useEffect( () => {
-		if ( ! isOpen ) {
-			return;
-		}
-		dispatch( 'hooks_registered' ).catch( () => {
+	// @longform
+	// A refused catalog routed a synthetic empty reply and stopped there, so
+	// the picker showed "no hooks" — indistinguishable from a site that really
+	// has none — until the modal was reopened. Reconciled, the same refusal
+	// re-establishes itself; the empty reply now only clears the spinner while
+	// the loop keeps trying, and dispatch's own not-mounted rejection gates it
+	// until the graph exists.
+	const load = useCallback( async () => {
+		try {
+			return await dispatch( 'hooks_registered' );
+		} catch ( e ) {
 			const interpreter = interpreterRef.current;
-			if ( ! interpreter ) {
-				return;
+			if ( interpreter ) {
+				const fake = newMessage();
+				fake[ TYPE ] = TM_COMMAND | TM_RESPONSE;
+				fake[ TO ] = VIEW;
+				fake[ VALUE ] = {
+					name: 'hooks_registered',
+					payload: { hooks_by_category: {} },
+				};
+				interpreter.fill( fake );
 			}
-			const fake = newMessage();
-			fake[ TYPE ] = TM_COMMAND | TM_RESPONSE;
-			fake[ TO ] = VIEW;
-			fake[ VALUE ] = {
-				name: 'hooks_registered',
-				payload: { hooks_by_category: {} },
-			};
-			interpreter.fill( fake );
-		} );
-	}, [ isOpen, dispatch ] );
+			throw e;
+		}
+	}, [ dispatch ] );
+
+	// isOpen is a DEP too: re-opening the modal is a fresh ask.
+	useReconcile( { load, enabled: isOpen, deps: [ isOpen ] } );
 
 	// Read the published model for the modal (keeps the modal presentational).
 	const view = useNodeState( VIEW, 'view' );
