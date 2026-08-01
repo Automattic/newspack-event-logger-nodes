@@ -22,6 +22,7 @@ import {
 } from '@wordpress/element';
 import { __ } from '@wordpress/i18n';
 import { formatCommandArgs } from '@newspack-nodes/runtime';
+import useReconcile from '@newspack-nodes/shared/hooks/useReconcile';
 import { getCommandClient } from '@newspack-nodes/shared/utils/commandClient';
 import unwrapCommandResponse from '@newspack-nodes/shared/utils/unwrapCommandResponse';
 // Reuse the perf dashboard's flame + profile; FlameGraph is d3-heavy (lazy).
@@ -73,40 +74,44 @@ export default function CurrentRequestTab( { commandClient } = {} ) {
 		};
 	}, [] );
 
-	const load = useCallback( () => {
+	// @longform
+	// Throws rather than swallowing, so the reconcile loop keeps asking. That
+	// serves both failure modes at once: request_detail legitimately throws
+	// until requests.log has the record, and a refused command threw the same
+	// way — the old catch collapsed both into a permanent "processing" that
+	// never retried, so an expired session looked exactly like a slow write.
+	const load = useCallback( async () => {
 		if ( ! rid ) {
 			return;
 		}
-		setState( { status: 'loading' } );
 		const client = commandClient || getCommandClient();
-		client
-			.send( {
-				to: 'performance',
-				verb: 'request_detail',
-				args: formatCommandArgs( [ rid ], { partition } ),
-			} )
-			.then( ( reply ) => {
-				if ( ! mountedRef.current ) {
-					return;
-				}
-				// request_detail throws until requests.log has it (processing).
-				const request = unwrapCommandResponse( reply );
-				setState(
-					request
-						? { status: 'found', request }
-						: { status: 'processing' }
-				);
-			} )
-			.catch( () => {
-				if ( mountedRef.current ) {
-					setState( { status: 'processing' } );
-				}
-			} );
+		const reply = await client.send( {
+			to: 'performance',
+			verb: 'request_detail',
+			args: formatCommandArgs( [ rid ], { partition } ),
+		} );
+		if ( ! mountedRef.current ) {
+			return;
+		}
+		const request = unwrapCommandResponse( reply );
+		if ( ! request ) {
+			throw new Error( 'request not written yet' );
+		}
+		setState( { status: 'found', request } );
 	}, [ rid, partition, commandClient ] );
 
+	const { settled, reconcileNow } = useReconcile( {
+		load,
+		enabled: !! rid,
+		deps: [ rid, partition ],
+	} );
+
+	// Anything short of found, with a rid in hand, is still on its way.
 	useEffect( () => {
-		load();
-	}, [ load ] );
+		if ( rid && ! settled ) {
+			setState( { status: 'processing' } );
+		}
+	}, [ rid, settled ] );
 
 	if ( 'idle' === state.status ) {
 		return (
@@ -138,7 +143,11 @@ export default function CurrentRequestTab( { commandClient } = {} ) {
 						'newspack-event-logger-nodes'
 					) }
 				</p>
-				<button type="button" className="button" onClick={ load }>
+				<button
+					type="button"
+					className="button"
+					onClick={ reconcileNow }
+				>
 					{ __( 'Refresh', 'newspack-event-logger-nodes' ) }
 				</button>
 			</div>
