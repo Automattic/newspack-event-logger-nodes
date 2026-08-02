@@ -25,6 +25,7 @@ import { useState, useEffect, useCallback, useMemo } from '@wordpress/element';
 import { __, _n, sprintf } from '@wordpress/i18n';
 
 import { Core, useNodeState } from '@newspack-nodes/runtime';
+import useRouterTick from '@newspack-nodes/shared/hooks/useRouterTick';
 import { useGyroscopeGraph } from './hooks/useGyroscopeGraph';
 import { INFLIGHT_REFRESH_OPTIONS } from './constants';
 import {
@@ -273,15 +274,12 @@ export default function Inflight( { maxRows = 20 } ) {
 		return () => window.removeEventListener( 'keydown', handleKeyDown );
 	}, [] );
 
-	// Separate display refresh interval - independent of data collection.
-	useEffect( () => {
-		const intervalMs = refreshInterval * 1000;
-		const displayTimer = setInterval( () => {
-			renderRequests();
-		}, intervalMs );
-
-		return () => clearInterval( displayTimer );
-	}, [ refreshInterval, renderRequests ] );
+	// Display refresh: sub-second takes its own slot, 1s+ rides the Router.
+	useRouterTick( {
+		name: 'gyroscope:display',
+		onTick: renderRequests,
+		intervalMs: refreshInterval * 1000,
+	} );
 
 	/**
 	 * Toggle a column's visibility.

@@ -49,6 +49,7 @@ import useLogPositions, {
 	stepPosition,
 } from '@newspack-nodes/shared/hooks/useLogPositions';
 import { endPosition } from '@newspack-nodes/shared/nodes/seekTracker';
+import useRouterTick from '@newspack-nodes/shared/hooks/useRouterTick';
 
 // The substrate service CI that catalogs on-disk logs + segments.
 const RAW_LOGS = 'raw-logs';
@@ -186,29 +187,44 @@ export default function useGlobBrowse( {
 		};
 	}, [ fetchCatalog, globPrefix ] );
 
+	// @longform
 	// The selected partition's segment catalog (log_status); '' clears it.
+	// Keyed on the partition the reply BELONGS to (reusing selectedRef above),
+	// not a shared cancelled flag: React runs the old cleanup then the new
+	// effect body, so one boolean is un-set by the very re-run it should
+	// cancel, and a slow reply repopulates the rail for a partition the user
+	// already left. Both segment writers below go through this.
+	const applySegments = useCallback( ( forPartition, status ) => {
+		if ( selectedRef.current === forPartition ) {
+			setSegments( status?.segments ?? [] );
+		}
+	}, [] );
+
+	const refreshSegments = useCallback( () => {
+		const forPartition = selectedPartition;
+		if ( ! forPartition ) {
+			return;
+		}
+		fetchCatalog( 'log_status', [ forPartition ] )
+			.then( ( status ) => applySegments( forPartition, status ) )
+			.catch( () => {} );
+	}, [ selectedPartition, fetchCatalog, applySegments ] );
+
 	useEffect( () => {
 		if ( ! selectedPartition ) {
 			setSegments( [] );
-			return undefined;
+			return;
 		}
-		let cancelled = false;
-		const refresh = () =>
-			fetchCatalog( 'log_status', [ selectedPartition ] )
-				.then( ( status ) => {
-					if ( ! cancelled ) {
-						setSegments( status?.segments ?? [] );
-					}
-				} )
-				.catch( () => {} );
-		refresh();
-		// Maintain the rail: rotation and size growth while streaming.
-		const id = setInterval( refresh, SEGMENTS_REFRESH_MS );
-		return () => {
-			cancelled = true;
-			clearInterval( id );
-		};
-	}, [ selectedPartition, fetchCatalog ] );
+		refreshSegments();
+	}, [ selectedPartition, refreshSegments ] );
+
+	// Maintain the rail: rotation and size growth while streaming.
+	useRouterTick( {
+		name: `${ viewName }:segments`,
+		onTick: refreshSegments,
+		intervalMs: SEGMENTS_REFRESH_MS,
+		enabled: Boolean( selectedPartition ),
+	} );
 
 	// A record from an unknown segment = rotation; refetch once (no loops).
 	const staleSegmentRef = useRef( null );
@@ -224,10 +240,17 @@ export default function useGlobBrowse( {
 			return;
 		}
 		staleSegmentRef.current = lastReceivedSegment;
-		fetchCatalog( 'log_status', [ selectedPartition ] )
-			.then( ( status ) => setSegments( status?.segments ?? [] ) )
+		const forPartition = selectedPartition;
+		fetchCatalog( 'log_status', [ forPartition ] )
+			.then( ( status ) => applySegments( forPartition, status ) )
 			.catch( () => {} );
-	}, [ lastReceivedSegment, segments, selectedPartition, fetchCatalog ] );
+	}, [
+		lastReceivedSegment,
+		segments,
+		selectedPartition,
+		fetchCatalog,
+		applySegments,
+	] );
 
 	// @longform Record the browse target; reposition the live stream only
 	// when active. A PAUSED-time seek records as EXPLICIT and reconnect

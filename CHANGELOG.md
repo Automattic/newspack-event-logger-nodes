@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The build takes ONE substrate override, `NEWSPACK_NODES_SRC`.** It replaces
+  four independent ones — `NEWSPACK_NODES_RUNTIME`, `_DEBUG_OVERLAY`, `_SHARED`,
+  `_BUILD_KIT` — which all named paths inside the same directory. Every alias and
+  the build-kit path now derive from that one base via the substrate's
+  `build-kit/alias-map.js`, so a new alias needs no workflow change.
+
+  That enumeration is what made `ERR_MODULE_NOT_FOUND` releases possible: omit
+  any single variable and the build fell back to a nonexistent sibling path.
+  Setting a retired name now fails immediately and names it, rather than being
+  silently ignored — a stale override that does nothing is how a release builds
+  against the wrong checkout and still goes green. `release.yml` updated to match.
+
+  Build output is byte-identical, verified by rebuilding with only `build.mjs`
+  varying.
+
+- **Pollers ride the Router heartbeat.** The URL-detail breakdown reload and the
+  segment-rail catalog each owned a private `setInterval`; they now use the
+  substrate's `useRouterTick`, so a dashboard page runs the Router's one 1s slot
+  instead of several competing heartbeats. They also pause while the tab is
+  hidden, matching the SSE gating.
+
+  The gyroscope in-flight display rides it too, including its 100ms and 500ms
+  options: `TimerNode.setTimer` gives a sub-second interval its own slot rather
+  than rounding it to the Router tick, so the refresh dropdown keeps meaning what
+  it says while the timer becomes a graph node like the rest.
+
+- **The segment rail no longer accepts a reply for a partition you already
+  left.** Its in-flight guard was a single shared flag, which React un-sets on
+  the very effect re-run that should cancel it, so a slow `log_status` could
+  repopulate the rail after the selection changed. Replies are now matched to the
+  partition that asked, and the rotation refetch — which had no guard at all —
+  goes through the same check.
+
+### Fixed
+
+- **The hook catalog and Current Request tab converge instead of loading once.** A
+  refused hook catalog routed a synthetic empty reply and stopped, so the picker
+  showed "no hooks" — indistinguishable from a site that genuinely has none — until
+  the modal was reopened. The Current Request tab collapsed a refused command and a
+  not-yet-written request into the same permanent "still processing", so an expired
+  session looked exactly like a slow write. Both reconcile now.
+
 ## [0.43.12] - 2026-07-31
 
 ### Security

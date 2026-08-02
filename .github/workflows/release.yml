@@ -58,10 +58,7 @@ jobs:
         if: steps.validate.outputs.is_release == 'true'
         # npm ci: reproducible install from the committed lock; release:archive (build-release.sh) is the single source of truth for what ships.
         env:
-          NEWSPACK_NODES_RUNTIME: ${{ github.workspace }}/.newspack-nodes/src/runtime/index.js
-          NEWSPACK_NODES_DEBUG_OVERLAY: ${{ github.workspace }}/.newspack-nodes/src/debug-overlay/DebugOverlay.js
-          NEWSPACK_NODES_SHARED: ${{ github.workspace }}/.newspack-nodes/src/shared
-          NEWSPACK_NODES_BUILD_KIT: ${{ github.workspace }}/.newspack-nodes/src/build-kit/index.mjs
+          NEWSPACK_NODES_SRC: ${{ github.workspace }}/.newspack-nodes/src
         run: |
           npm ci --prefer-offline --no-audit --no-fund
           npm run release:archive
