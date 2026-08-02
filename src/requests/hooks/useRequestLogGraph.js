@@ -9,7 +9,7 @@
  *                          `requestlog:link:http` (HttpOut — POST /command boundary),
  *                          `requestlog:link:heartbeat` (Heartbeat — slot keep-alive),
  *                          and wires the `connected → slot` bridge to its own
- *                          heartbeat. `.client` is the injected CommandClient.)
+ *                          heartbeat. `.client` is the injected transport.)
  *
  * Plus the single view node:
  *
@@ -31,7 +31,6 @@
 import { useRef, useState, useCallback } from '@wordpress/element';
 import {
 	Core,
-	CommandClient,
 	TYPE,
 	VALUE,
 	TM_STRUCT,
@@ -99,8 +98,7 @@ export function useRequestLogGraph( opts = {} ) {
 			// Pass-through Tee on the stream edge; copies each frame to view.
 			link.target = TEE;
 			// The shared `_http` carries every command out; both ride it.
-			const client =
-				optsRef.current.commandClient || CommandClient.fromGlobal();
+			const client = optsRef.current.commandClient;
 			Core.node( '_http' ).client = client;
 			link.client = client;
 

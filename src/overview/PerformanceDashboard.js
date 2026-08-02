@@ -50,7 +50,7 @@ import './styles/charts.scss';
  *
  * @param {Object}   props                 Component props.
  * @param {Function} props.onError         Error handler callback.
- * @param {Object}   [props.commandClient] Optional CommandClient (the graph
+ * @param {Object}   [props.commandClient] Optional transport (the graph
  *                                         lazily defaults it in production;
  *                                         tests inject a double).
  * @return {import('react').ReactElement} Rendered component.

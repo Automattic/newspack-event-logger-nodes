@@ -6,7 +6,7 @@
  * positions)` seeks (via the substrate's useLogPositions).
  *
  * The graph is built REAL (mountExospine + a RemoteLink + a settling view node);
- * catalog replies ride a CommandClient double whose postBatch addresses the reply
+ * catalog replies ride a transport double whose postBatch addresses the reply
  * back along FROM so it routes interpreter → router → the Request node that asked.
  */
 
@@ -76,7 +76,7 @@ class FakeCatalogView extends Node {
 	}
 }
 
-// CommandClient double: postBatch returns replies keyed by verb, addressed FROM.
+// Transport double: postBatch returns replies keyed by verb, addressed FROM.
 // A verb in `errorVerbs` replies TM_ERROR so the catch paths are exercised.
 function makeFakeClient( payloadByVerb = {}, errorVerbs = [] ) {
 	const client = {

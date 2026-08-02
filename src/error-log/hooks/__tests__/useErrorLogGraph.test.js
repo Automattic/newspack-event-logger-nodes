@@ -34,7 +34,6 @@ import {
 	TM_STRUCT,
 	Core,
 	Node,
-	CommandClient,
 	useNodeState,
 	mountExospine,
 } from '@newspack-nodes/runtime';
@@ -46,6 +45,7 @@ jest.mock( '@newspack-nodes/shared/hooks/usePageVisibility', () => ( {
 } ) );
 
 import { makeFakeCommandClient } from '@newspack-nodes/shared/test-utils/fakeCommandClient';
+import { installFakeCommandWire } from '@newspack-nodes/shared/test-utils/fakeCommandWire';
 import { useErrorLogGraph } from '../useErrorLogGraph';
 
 // Minimal FakeEventSource — same shape as the substrate's sse_connector tests.
@@ -75,12 +75,10 @@ beforeEach( () => {
 	FakeEventSource.instances = [];
 	global.EventSource = FakeEventSource;
 	window.NewspackNodesData = { restUrl: '/wp-json/', nonce: 'NONCE' };
-	// The mount-time list_logs POST would hit the real client (no server under
-	// jsdom); default it to a resolving no-op. Browse tests inject their own.
-	jest.spyOn( CommandClient, 'fromGlobal' ).mockReturnValue( {
-		buildMessage: () => newMessage(),
-		postBatch: () => Promise.resolve( [] ),
-	} );
+	// The mount-time list_logs POST would hit the network under jsdom. The
+	// wire takes it and says nothing back, so no reply lands outside act();
+	// browse tests inject their own transport and answer for real.
+	installFakeCommandWire( () => undefined );
 } );
 
 afterEach( () => jest.restoreAllMocks() );
@@ -121,7 +119,7 @@ function errorEnvelope( rid, value ) {
 	return m;
 }
 
-// CommandClient double keyed by verb, built on the shared HttpOut-seam helper.
+// Transport double keyed by verb, built on the shared HttpOut-seam helper.
 function makeFakeClient( payloadByVerb = {} ) {
 	return makeFakeCommandClient(
 		( m ) => payloadByVerb[ m[ VALUE ]?.name ] ?? null
@@ -208,11 +206,14 @@ describe( 'useErrorLogGraph — exospine + RemoteLink wiring', () => {
 		expect( FakeEventSource.last ).toBeNull();
 	} );
 
-	test( 'the composed HttpOut has a CommandClient client wired (the POST boundary is constructable)', () => {
+	test( 'the composed HttpOut defaults its transport on the first POST', () => {
 		renderHook( () => useErrorLogGraph() );
 		const http = Core.node( HTTP );
-		expect( http.client ).toBeTruthy();
-		expect( typeof http.client.buildMessage ).toBe( 'function' );
+		// HttpOut defaults its transport on the first POST, so nothing is
+		// wired until something is sent — which is what makes a palette drop
+		// need no nonce threaded through construction.
+		installFakeCommandWire( () => undefined );
+		http.fill( newMessage() );
 		expect( typeof http.client.postBatch ).toBe( 'function' );
 	} );
 } );

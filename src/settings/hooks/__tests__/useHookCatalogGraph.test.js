@@ -39,7 +39,7 @@ const HTTP = '_http';
 const REQUEST = 'hookcatalog:request';
 const ALL_GRAPH_NAMES = [ HTTP, REQUEST ];
 
-// A fake CommandClient (HttpOutNode seam): postBatch returns TO=FROM replies.
+// A fake transport (HttpOutNode seam): postBatch returns TO=FROM replies.
 function makeFakeClient( payloadByVerb = {}, opts = {} ) {
 	const client = {
 		batches: [],
@@ -128,7 +128,7 @@ describe( 'useHookCatalogGraph — exospine + I/O boundary wiring', () => {
 		}
 	} );
 
-	test( '_http has the injected CommandClient as its client', () => {
+	test( '_http has the injected transport as its client', () => {
 		const client = makeFakeClient();
 		renderHook( () =>
 			useHookCatalogGraph( { isOpen: false, commandClient: client } )
