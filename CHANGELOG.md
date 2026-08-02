@@ -21,6 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   goes with the graph. It still covers the case it was written for, a missing
   request-detail view on a live graph.
 
+### Removed
+
+- **`CurrentRequestTab`'s mounted-ref guard.** Unmounting removes the Request
+  node, and a removed node REJECTS its outstanding request rather than resolving
+  it, so the `if ( ! mountedRef.current )` after the await had become
+  unreachable — deleting it left every test in the file green, which is the
+  definition of dead code.
+
 ## [0.43.13] - 2026-08-02
 
 ### Fixed
