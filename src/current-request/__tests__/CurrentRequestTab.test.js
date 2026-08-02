@@ -41,13 +41,28 @@ function setBlob( blob ) {
 	window.NewspackEventLoggerNodes = { currentRequest: blob };
 }
 
+// @longform
+// Every render is torn down: Core.reset() clears the node registry but stops
+// no timers, so a tab left mounted keeps its reconcile loop running and can
+// mint into the NEXT test's node — which is the same name every time.
+const views = [];
+const render = ( ...args ) => {
+	const view = renderComponent( ...args );
+	views.push( view );
+	return view;
+};
+
 beforeEach( () => {
 	Core.reset();
 	window.NewspackNodesData = { restUrl: '/wp-json/', nonce: 'NONCE' };
 } );
 
 afterEach( () => {
+	while ( views.length ) {
+		views.pop().unmount();
+	}
 	delete window.NewspackEventLoggerNodes;
+	delete global.fetch;
 } );
 
 // Poll until `assert` holds; the reply crosses a real async wire.
@@ -88,7 +103,7 @@ test( 'renders the request summary cards + full-trace deep link when found', asy
 
 	let view;
 	await act( async () => {
-		view = renderComponent( <CurrentRequestTab /> );
+		view = render( <CurrentRequestTab /> );
 	} );
 	// Flush the lazy FlameGraph import (Suspense) after the fetch.
 	await act( async () => {} );
@@ -130,7 +145,7 @@ test( 'shows a still-processing state (with retry) when the request is not in th
 
 	let view;
 	await act( async () => {
-		view = renderComponent( <CurrentRequestTab /> );
+		view = render( <CurrentRequestTab /> );
 	} );
 
 	expect( view.container.textContent.toLowerCase() ).toContain(
@@ -142,7 +157,7 @@ test( 'shows a still-processing state (with retry) when the request is not in th
 test( 'renders an idle hint when no request id is localized', async () => {
 	let view;
 	await act( async () => {
-		view = renderComponent( <CurrentRequestTab /> );
+		view = render( <CurrentRequestTab /> );
 	} );
 	expect( view.container.textContent.toLowerCase() ).toContain(
 		'no request'
@@ -168,7 +183,7 @@ test.each( [
 		} );
 		let view;
 		await act( async () => {
-			view = renderComponent( <CurrentRequestTab /> );
+			view = render( <CurrentRequestTab /> );
 		} );
 		await act( async () => {} );
 		expect( view.container.textContent ).toContain( label );
@@ -186,8 +201,6 @@ test.each( [
 // A reply resolving after unmount must be swallowed by the mountedRef guard.
 test( 'ignores a request_detail reply that arrives after the tab unmounts', async () => {
 	setBlob( { rid: 'late1', perfUrl: 'admin.php?page=x' } );
-	// The reply outlives the node it was addressed to; the Router says so.
-	expectConsoleWarn( '_router: WARNING: message not addressed' );
 	// Hold the wire open so the reply lands only after the unmount.
 	const wire = answerWith( { rid: 'late1', url: '/x', duration_ms: 1 } );
 	let resolveReply;
@@ -199,16 +212,19 @@ test( 'ignores a request_detail reply that arrives after the tab unmounts', asyn
 	);
 	let view;
 	await act( async () => {
-		view = renderComponent( <CurrentRequestTab /> );
+		view = render( <CurrentRequestTab /> );
 	} );
 	// load() fired; the reply is in flight.
 	await waitFor( () => expect( global.fetch ).toHaveBeenCalled() );
 	// Tear the tab down while the request_detail call is still in flight.
 	view.unmount();
-	// The guard drops the late reply: a setState here would fail the suite's
+	// Unmounting removed the node, so its request already rejected; the late
+	// reply has nowhere to land. A setState here would fail the suite's
 	// console gate with React's update-after-unmount warning.
 	await act( async () => {
 		resolveReply();
 	} );
 	expect( view.container.textContent ).toBe( '' );
+	// And it never reached the tab: the found-state heading would show it.
+	expect( view.container.textContent ).not.toContain( 'late1' );
 } );

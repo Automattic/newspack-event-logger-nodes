@@ -16,7 +16,6 @@ import {
 	useState,
 	useEffect,
 	useCallback,
-	useRef,
 	lazy,
 	Suspense,
 } from '@wordpress/element';
@@ -67,15 +66,6 @@ export default function CurrentRequestTab() {
 	const [ state, setState ] = useState(
 		rid ? { status: 'loading' } : { status: 'idle' }
 	);
-	// Guard async resolution so a late reply never setStates a torn-down tab.
-	const mountedRef = useRef( true );
-	useEffect( () => {
-		mountedRef.current = true;
-		return () => {
-			mountedRef.current = false;
-		};
-	}, [] );
-
 	// @longform
 	// Throws rather than swallowing, so the reconcile loop keeps asking. That
 	// serves both failure modes at once: request_detail legitimately throws
@@ -86,13 +76,11 @@ export default function CurrentRequestTab() {
 		if ( ! rid ) {
 			return;
 		}
+		// No mounted-guard: unmounting removes the node, which rejects.
 		const request = await requestDetail(
 			'request_detail',
 			formatCommandArgs( [ rid ], { partition } )
 		);
-		if ( ! mountedRef.current ) {
-			return;
-		}
 		if ( ! request ) {
 			throw new Error( 'request not written yet' );
 		}
