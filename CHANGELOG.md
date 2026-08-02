@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`npm run lint:deadcode:js` — the JS half of the dead-code audit.** Mirrors
+  the substrate's `knip.json`: `__tests__` out of `project`, knip's jest plugin
+  off so a module reachable only from its own test reads as dead (the rule
+  `phpstan-deadcode` already applies to `tests/`), and the `@newspack-nodes/*`
+  aliases resolved through the sibling checkout. Opt-in, not in the push gate.
+
+  knip cannot parse JSX in a `.js` file, which silently drops that file's
+  `import()` expressions — so `ErrorLog`, `PerformanceDashboard`, and
+  `FlameGraph` are listed as `entry`. Without that, each read as an unused file
+  and took its whole import subtree with it (36 false positives in pyrobase,
+  15 here).
+
+### Removed
+
+- **`@xyflow/react`.** Declared but imported nowhere in this plugin or the
+  substrate, and absent from every built bundle. Found by knip.
+
 ### Changed
 
 - **The build takes ONE substrate override, `NEWSPACK_NODES_SRC`.** It replaces

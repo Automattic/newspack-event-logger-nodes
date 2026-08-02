@@ -71,6 +71,15 @@ tests/run-coverage.sh
 npm run lint:php
 npm run lint:js
 
+# Opt-in dead-code audit (NOT in the lint gate) — PHP, then JS. Most findings
+# are public API / test seams, not real dead code; verify every call path first.
+# knip's jest plugin is off, so a module reachable only from its own test reads
+# as dead — the same rule phpstan-deadcode applies. knip also cannot parse JSX
+# in a `.js` file, which drops that file's `import()` expressions, so each
+# `lazy( () => import( './X' ) )` target is listed as `entry` in knip.json.
+npm run lint:deadcode
+npm run lint:deadcode:js
+
 # Build dashboards.
 npm run build
 ```
