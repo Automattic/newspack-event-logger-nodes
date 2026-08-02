@@ -21,6 +21,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and took its whole import subtree with it (36 false positives in pyrobase,
   15 here).
 
+### Changed
+
+- **`makeOpId` comes from `@newspack-nodes/shared/utils/makeOpId`.** All four
+  hooks here (`useGlobBrowse`, `usePerformanceGraph`, `useRulesGraph`,
+  `useHookCatalogGraph`) carried a private `let nextOpId = 0` plus a copy of the
+  function, identical to the shared one bar the prefix string — which is exactly
+  what the shared version takes as an argument. With the substrate's three, that
+  takes the util from 2-of-9 adoption to 9-of-9.
+
 ### Removed
 
 - **`@xyflow/react`.** Declared but imported nowhere in this plugin or the
