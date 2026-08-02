@@ -689,6 +689,9 @@ describe( 'useGlobBrowse — segment-rail maintenance', () => {
 		// The rail rides the Router TIMER, and beforeEach armed that slot under
 		// REAL timers — re-mount the backbone so its 1s slot is a fake one.
 		jest.useFakeTimers();
+		// Core.reset() only swaps the node map; without this the beforeEach
+		// router keeps its real interval and ticks on beside the fake clock.
+		Core.node( '_router' )?.stopTimer();
 		Core.reset();
 		mountExospine();
 		const graph = buildGraph( PAYLOADS, [] );

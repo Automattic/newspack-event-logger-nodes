@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`useGlobBrowse`'s 10s-cadence test no longer leaves a real router interval
+  running.** It re-mounted the backbone under fake timers precisely to avoid
+  that, but `Core.reset()` only swaps the node map — the router armed in
+  `beforeEach` kept its real 1s interval and ticked on beside the frozen clock
+  for the rest of the test. Stopping it first is the one line that was missing.
+  Caught by the substrate's new arm-then-fake guard.
+
 ### Added
 
 - **`npm run lint:deadcode:js` — the JS half of the dead-code audit.** Mirrors
