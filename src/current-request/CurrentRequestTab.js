@@ -23,8 +23,7 @@ import {
 import { __ } from '@wordpress/i18n';
 import { formatCommandArgs } from '@newspack-nodes/runtime';
 import useReconcile from '@newspack-nodes/shared/hooks/useReconcile';
-import { getCommandClient } from '@newspack-nodes/shared/utils/commandClient';
-import unwrapCommandResponse from '@newspack-nodes/shared/utils/unwrapCommandResponse';
+import useRequestNode from '@newspack-nodes/shared/hooks/useRequestNode';
 // Reuse the perf dashboard's flame + profile; FlameGraph is d3-heavy (lazy).
 import RequestProfile from '../overview/RequestProfile';
 
@@ -56,12 +55,15 @@ function statusLabel( errorStatus ) {
 }
 
 /**
- * @param {Object} [props]               Props.
- * @param {Object} [props.commandClient] Injected one-shot command client (tests); defaults to the page singleton.
  * @return {import('react').ReactElement} The tab.
  */
-export default function CurrentRequestTab( { commandClient } = {} ) {
+export default function CurrentRequestTab() {
 	const { rid = '', partition = 0, perfUrl = '' } = currentRequestData();
+	// One node, one job — its reply is addressed back to it.
+	const requestDetail = useRequestNode(
+		'performance:request_detail',
+		'performance'
+	);
 	const [ state, setState ] = useState(
 		rid ? { status: 'loading' } : { status: 'idle' }
 	);
@@ -84,21 +86,18 @@ export default function CurrentRequestTab( { commandClient } = {} ) {
 		if ( ! rid ) {
 			return;
 		}
-		const client = commandClient || getCommandClient();
-		const reply = await client.send( {
-			to: 'performance',
-			verb: 'request_detail',
-			args: formatCommandArgs( [ rid ], { partition } ),
-		} );
+		const request = await requestDetail(
+			'request_detail',
+			formatCommandArgs( [ rid ], { partition } )
+		);
 		if ( ! mountedRef.current ) {
 			return;
 		}
-		const request = unwrapCommandResponse( reply );
 		if ( ! request ) {
 			throw new Error( 'request not written yet' );
 		}
 		setState( { status: 'found', request } );
-	}, [ rid, partition, commandClient ] );
+	}, [ rid, partition, requestDetail ] );
 
 	const { settled, reconcileNow } = useReconcile( {
 		load,

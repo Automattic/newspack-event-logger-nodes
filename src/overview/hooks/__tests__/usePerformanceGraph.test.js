@@ -25,6 +25,7 @@ import {
 	ID,
 	TO,
 	FROM,
+	KEY,
 	VALUE,
 	TM_COMMAND,
 	TM_RESPONSE,
@@ -931,22 +932,26 @@ describe( 'usePerformanceGraph — invalid selection guards', () => {
 } );
 
 describe( 'usePerformanceGraph — no-graph fallbacks & awaited rejections', () => {
-	test( 'resolveRequest falls back to the one-shot client when the graph is gone', async () => {
+	test( 'resolveRequest falls back to its own Request node when the detail view is gone', async () => {
 		const client = makeFakeClient( {
 			request_search: { url_hash: 'h', partition: 1 },
 		} );
-		const { getApi, unmount } = renderGraph( { commandClient: client } );
+		const { getApi } = renderGraph( { commandClient: client } );
 		await act( async () => {} );
-		unmount(); // interpreterRef.current → null, view nodes removed
+		// Drop the view the primary path needs; the fallback verb remains.
+		Core.node( 'requestdetail:view' ).removeNode();
 		let resolved;
 		await act( async () => {
 			resolved = await getApi().resolveRequest( 'r9' );
 		} );
-		expect( client.send ).toHaveBeenCalledWith( {
-			to: 'performance',
-			verb: 'request_search',
-			args: [ 'r9' ],
-		} );
+		const sent = client.batches
+			.flat()
+			.find( ( m ) => 'request_search' === m[ VALUE ]?.name );
+		expect( sent ).toBeTruthy();
+		// Addressed, not correlated: FROM is the node, ID and KEY stay empty.
+		expect( sent[ FROM ] ).toBe( 'performance:request_search' );
+		expect( sent[ ID ] ).toBe( '' );
+		expect( sent[ KEY ] ).toBe( '' );
 		expect( resolved ).toEqual( { url_hash: 'h', partition: 1 } );
 	} );
 

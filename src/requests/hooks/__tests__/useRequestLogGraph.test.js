@@ -1,5 +1,3 @@
-/* global expectConsoleWarn */
-
 /**
  * useRequestLogGraph tests — the Request Log dashboard graph now clips onto the
  * substrate's canonical rule-#2 backbone (`_command_interpreter` → `_router`)

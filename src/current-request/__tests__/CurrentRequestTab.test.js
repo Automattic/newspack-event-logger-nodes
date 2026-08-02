@@ -6,14 +6,8 @@
  * localizes into `window.NewspackEventLoggerNodes.currentRequest`.
  */
 
-import {
-	newMessage,
-	TYPE,
-	VALUE,
-	TM_COMMAND,
-	TM_RESPONSE,
-	TM_ERROR,
-} from '@newspack-nodes/runtime';
+import { Core, TO, FROM, ID, KEY, VALUE } from '@newspack-nodes/runtime';
+import { installFakeCommandWire } from '@newspack-nodes/shared/test-utils/fakeCommandWire';
 import { renderComponent, act } from '../../test-helpers/renderHook';
 import CurrentRequestTab from '../CurrentRequestTab';
 
@@ -33,36 +27,41 @@ jest.mock( '../../overview/RequestProfile', () => ( {
 	),
 } ) );
 
-// Spy on unwrap: the only observable of the mountedRef guard on a late reply.
-jest.mock( '@newspack-nodes/shared/utils/unwrapCommandResponse', () => {
-	const actual = jest.requireActual(
-		'@newspack-nodes/shared/utils/unwrapCommandResponse'
+// The tab's command rides the graph; this answers the wire, replying
+// TO = FROM the way the server does.
+let seen;
+function answerWith( payload, { error = false } = {} ) {
+	seen = jest.fn( () =>
+		error ? new Error( String( payload ) ) : payload
 	);
-	return {
-		__esModule: true,
-		default: jest.fn( ( ...args ) => actual.default( ...args ) ),
-	};
-} );
-import unwrapCommandResponse from '@newspack-nodes/shared/utils/unwrapCommandResponse';
-
-// One-shot CommandClient seam; `error: true` returns a TM_ERROR reply.
-function fakeClient( payload, { error = false } = {} ) {
-	const reply = newMessage();
-	reply[ TYPE ] = error
-		? TM_COMMAND | TM_RESPONSE | TM_ERROR
-		: TM_COMMAND | TM_RESPONSE;
-	// VALUE is the `{ name, payload }` envelope unwrapCommandResponse reads.
-	reply[ VALUE ] = { name: 'request_search', payload };
-	return { send: jest.fn().mockResolvedValue( reply ) };
+	return installFakeCommandWire( ( m ) => seen( m ) );
 }
 
 function setBlob( blob ) {
 	window.NewspackEventLoggerNodes = { currentRequest: blob };
 }
 
+beforeEach( () => {
+	Core.reset();
+	window.NewspackNodesData = { restUrl: '/wp-json/', nonce: 'NONCE' };
+} );
+
 afterEach( () => {
 	delete window.NewspackEventLoggerNodes;
 } );
+
+// Poll until `assert` holds; the reply crosses a real async wire.
+const waitFor = async ( assert ) => {
+	for ( let i = 0; i < 50; i++ ) {
+		try {
+			assert();
+			return;
+		} catch ( e ) {
+			await new Promise( ( r ) => setTimeout( r, 10 ) );
+		}
+	}
+	assert();
+};
 
 test( 'renders the request summary cards + full-trace deep link when found', async () => {
 	setBlob( {
@@ -71,7 +70,7 @@ test( 'renders the request summary cards + full-trace deep link when found', asy
 		perfUrl: 'admin.php?page=event-logger-overview',
 	} );
 	// `request_detail` returns the request envelope this fixture mirrors.
-	const client = fakeClient( {
+	answerWith( {
 		rid: 'abc123',
 		url: '/wp-admin/index.php',
 		duration_ms: 432,
@@ -89,18 +88,19 @@ test( 'renders the request summary cards + full-trace deep link when found', asy
 
 	let view;
 	await act( async () => {
-		view = renderComponent(
-			<CurrentRequestTab commandClient={ client } />
-		);
+		view = renderComponent( <CurrentRequestTab /> );
 	} );
 	// Flush the lazy FlameGraph import (Suspense) after the fetch.
 	await act( async () => {} );
 
-	expect( client.send ).toHaveBeenCalledWith( {
-		to: 'performance',
-		verb: 'request_detail',
-		args: [ 'abc123', '--partition=2' ],
-	} );
+	const sent = seen.mock.calls[ 0 ][ 0 ];
+	expect( sent[ TO ] ).toBe( 'performance' );
+	expect( sent[ VALUE ].name ).toBe( 'request_detail' );
+	expect( sent[ VALUE ].arguments ).toEqual( [ 'abc123', '--partition=2' ] );
+	// Addressed, not correlated: the reply routes back on FROM alone.
+	expect( sent[ FROM ] ).toBe( 'performance:request_detail' );
+	expect( sent[ ID ] ).toBe( '' );
+	expect( sent[ KEY ] ).toBe( '' );
 	const text = view.container.textContent;
 	expect( text ).toContain( 'Request:' ); // the rid heading
 	expect( text ).toContain( 'abc123' ); // the rid itself
@@ -124,15 +124,13 @@ test( 'renders the request summary cards + full-trace deep link when found', asy
 
 test( 'shows a still-processing state (with retry) when the request is not in the log yet', async () => {
 	setBlob( { rid: 'pending9', perfUrl: 'admin.php?page=x' } );
-	const client = fakeClient( 'Request not found: rid=pending9', {
+	answerWith( 'Request not found: rid=pending9', {
 		error: true,
 	} );
 
 	let view;
 	await act( async () => {
-		view = renderComponent(
-			<CurrentRequestTab commandClient={ client } />
-		);
+		view = renderComponent( <CurrentRequestTab /> );
 	} );
 
 	expect( view.container.textContent.toLowerCase() ).toContain(
@@ -144,7 +142,7 @@ test( 'shows a still-processing state (with retry) when the request is not in th
 test( 'renders an idle hint when no request id is localized', async () => {
 	let view;
 	await act( async () => {
-		view = renderComponent( <CurrentRequestTab commandClient={ null } /> );
+		view = renderComponent( <CurrentRequestTab /> );
 	} );
 	expect( view.container.textContent.toLowerCase() ).toContain(
 		'no request'
@@ -160,7 +158,7 @@ test.each( [
 	'labels error_status %s as "%s" in the status card',
 	async ( errorStatus, label ) => {
 		setBlob( { rid: 'err1', perfUrl: 'admin.php?page=x' } );
-		const client = fakeClient( {
+		answerWith( {
 			rid: 'err1',
 			url: '/x',
 			duration_ms: 1,
@@ -170,9 +168,7 @@ test.each( [
 		} );
 		let view;
 		await act( async () => {
-			view = renderComponent(
-				<CurrentRequestTab commandClient={ client } />
-			);
+			view = renderComponent( <CurrentRequestTab /> );
 		} );
 		await act( async () => {} );
 		expect( view.container.textContent ).toContain( label );
@@ -190,33 +186,29 @@ test.each( [
 // A reply resolving after unmount must be swallowed by the mountedRef guard.
 test( 'ignores a request_detail reply that arrives after the tab unmounts', async () => {
 	setBlob( { rid: 'late1', perfUrl: 'admin.php?page=x' } );
+	// The reply outlives the node it was addressed to; the Router says so.
+	expectConsoleWarn( '_router: WARNING: message not addressed' );
+	// Hold the wire open so the reply lands only after the unmount.
+	const wire = answerWith( { rid: 'late1', url: '/x', duration_ms: 1 } );
 	let resolveReply;
-	const reply = newMessage();
-	reply[ TYPE ] = TM_COMMAND | TM_RESPONSE;
-	reply[ VALUE ] = {
-		name: 'request_detail',
-		payload: { rid: 'late1', url: '/x', duration_ms: 1 },
-	};
-	const client = {
-		send: jest.fn(
-			() => new Promise( ( resolve ) => ( resolveReply = resolve ) )
-		),
-	};
+	global.fetch = jest.fn(
+		( ...args ) =>
+			new Promise( ( resolve ) => {
+				resolveReply = () => resolve( wire( ...args ) );
+			} )
+	);
 	let view;
 	await act( async () => {
-		view = renderComponent(
-			<CurrentRequestTab commandClient={ client } />
-		);
+		view = renderComponent( <CurrentRequestTab /> );
 	} );
-	// load() fired; the reply is in flight (send is pending).
-	expect( client.send ).toHaveBeenCalled();
-	// Scope the post-unmount assertion to THIS reply only.
-	unwrapCommandResponse.mockClear();
+	// load() fired; the reply is in flight.
+	await waitFor( () => expect( global.fetch ).toHaveBeenCalled() );
 	// Tear the tab down while the request_detail call is still in flight.
 	view.unmount();
-	// The mountedRef guard must drop the late reply before it's unwrapped.
+	// The guard drops the late reply: a setState here would fail the suite's
+	// console gate with React's update-after-unmount warning.
 	await act( async () => {
-		resolveReply( reply );
+		resolveReply();
 	} );
-	expect( unwrapCommandResponse ).not.toHaveBeenCalled();
+	expect( view.container.textContent ).toBe( '' );
 } );

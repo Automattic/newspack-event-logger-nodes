@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The two one-shot `CommandClient.send()` calls became `Request` nodes.**
+  `CurrentRequestTab`'s `request_detail` and `usePerformanceGraph`'s rid-search
+  fallback each mint from their own node now, and their replies route back
+  `TO = FROM` — no correlation, and the command rides the graph's own egress
+  instead of a POST outside it. The substrate deleted `send()`; these were its
+  last callers here. `CurrentRequestTab`'s `commandClient` prop is gone: tests
+  answer the wire (`installFakeCommandWire`) rather than replacing the transport.
+
+  The rid-search fallback no longer answers after the hook unmounts — its node
+  goes with the graph. It still covers the case it was written for, a missing
+  request-detail view on a live graph.
+
 ## [0.43.13] - 2026-08-02
 
 ### Fixed
