@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.44.1] - 2026-08-02
+
+### Fixed
+
+- **Rebuilt against substrate v2.4.2**, which keeps a `Request` node alive while
+  any hook still holds it. `useRequestNode` is inlined into these bundles, so
+  0.44.0 shipped the copy that let the console's topology seed and the
+  canonical-node read remove each other's `topologies:get` — a red
+  `is not mounted` / `was removed` toast on entering edit mode. No source change
+  here; the pin is the fix.
+
 ## [0.44.0] - 2026-08-02
 
 ### Changed
