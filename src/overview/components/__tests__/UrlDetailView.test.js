@@ -46,6 +46,7 @@ jest.mock( '../../CategoryTimeChart', () => ( {
 } ) );
 
 import * as React from 'react';
+import { Core, mountExospine } from '@newspack-nodes/runtime';
 import UrlDetailView from '../UrlDetailView';
 import { renderComponent, act } from '../../../test-helpers/renderHook';
 
@@ -388,7 +389,12 @@ describe( 'UrlDetailView', () => {
 	} );
 
 	it( 're-fetches the selected breakdown on the five-minute interval', () => {
+		// The refresh rides the Router TIMER that PerformanceDashboard's graph
+		// owns; this component is rendered alone here, so stand that backbone in
+		// — and only AFTER useFakeTimers, so its 1s slot is a fake one.
 		jest.useFakeTimers();
+		Core.reset();
+		const host = mountExospine( () => {} );
 		const fetchUrlBreakdown = jest.fn().mockResolvedValue( null );
 		const { unmount } = mount( { fetchUrlBreakdown } );
 		act( () => {
@@ -400,6 +406,7 @@ describe( 'UrlDetailView', () => {
 			'status'
 		);
 		unmount();
+		host.teardown();
 		jest.useRealTimers();
 	} );
 

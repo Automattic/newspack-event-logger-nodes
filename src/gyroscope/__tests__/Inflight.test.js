@@ -15,7 +15,7 @@ jest.mock( '../hooks/useGyroscopeGraph', () => ( {
 } ) );
 
 import * as React from 'react';
-import { Core } from '@newspack-nodes/runtime';
+import { Core, mountExospine } from '@newspack-nodes/runtime';
 import Inflight from '../Inflight';
 import { renderComponent, act } from '../../test-helpers/renderHook';
 
@@ -64,17 +64,24 @@ describe( 'Inflight', () => {
 		return r;
 	}
 
+	let host;
+
 	beforeEach( () => {
 		Core.reset();
 		useGyroscopeGraph.mockClear();
 		useGyroscopeGraph.mockReturnValue( {} );
 		jest.useFakeTimers();
+		// The display refresh rides the Router TIMER; useGyroscopeGraph, which
+		// brings that backbone up in production, is mocked out here.
+		host = mountExospine( () => {} );
 	} );
 
 	afterEach( () => {
 		while ( mounted.length ) {
 			mounted.pop().unmount();
 		}
+		host?.teardown();
+		host = null;
 		delete window.eventLoggerHookCategories;
 		jest.useRealTimers();
 		// Clear localStorage between tests so persisted state doesn't leak.

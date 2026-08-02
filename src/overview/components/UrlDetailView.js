@@ -19,6 +19,9 @@ import { __, _n, sprintf } from '@wordpress/i18n';
 import { SelectControl } from '@wordpress/components';
 import { CHART_METRIC_OPTIONS, CHART_BREAKDOWN_OPTIONS } from '../constants';
 
+// Breakdown series move slowly; five minutes keeps the charts current.
+const BREAKDOWN_REFRESH_MS = 300000;
+
 // Lazy load FlameGraph (heaviest component - uses d3-flame-graph).
 const FlameGraph = lazy( () => import( '../FlameGraph' ) );
 
@@ -27,6 +30,7 @@ import RequestProfile from '../RequestProfile';
 import AggregateTimeChart from '../AggregateTimeChart';
 import CategoryTimeChart from '../CategoryTimeChart';
 import useVirtualization from '@newspack-nodes/shared/hooks/useVirtualization';
+import useRouterTick from '@newspack-nodes/shared/hooks/useRouterTick';
 
 const ROW_HEIGHT = 40;
 
@@ -197,12 +201,14 @@ export default function UrlDetailView( {
 	}, [ chartBreakdown, loadBreakdown ] );
 
 	// Re-fetch breakdown data every 5 minutes to keep charts current.
-	useEffect( () => {
-		const id = setInterval( () => {
-			loadBreakdown( chartBreakdown );
-		}, 300000 );
-		return () => clearInterval( id );
+	const reloadBreakdown = useCallback( () => {
+		loadBreakdown( chartBreakdown );
 	}, [ chartBreakdown, loadBreakdown ] );
+	useRouterTick( {
+		name: 'urldetail:breakdown',
+		onTick: reloadBreakdown,
+		intervalMs: BREAKDOWN_REFRESH_MS,
+	} );
 
 	/**
 	 * Render sortable column header.

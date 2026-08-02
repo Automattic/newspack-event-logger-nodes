@@ -14,35 +14,37 @@ import esbuild from 'esbuild';
 import * as sass from 'sass';
 import rtlcss from 'rtlcss';
 import path from 'node:path';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __dirname = path.dirname( fileURLToPath( import.meta.url ) );
 const ROOT = path.resolve( __dirname, '..' );
 
-// Sibling newspack-nodes checkout; CI overrides via NEWSPACK_NODES_BUILD_KIT.
-const buildKit =
-	process.env.NEWSPACK_NODES_BUILD_KIT ||
-	path.resolve( ROOT, '../newspack-nodes/src/build-kit/index.mjs' );
+// @longform
+// ONE override for the whole substrate surface. It was four — one per alias
+// plus the kit — all naming paths inside the same directory, so omitting any
+// single one resolved to a nonexistent sibling path.
+const substrateSrc =
+	process.env.NEWSPACK_NODES_SRC ||
+	path.resolve( ROOT, '../newspack-nodes/src' );
+if ( ! existsSync( substrateSrc ) ) {
+	throw new Error(
+		`substrate src not found at ${ substrateSrc } — set NEWSPACK_NODES_SRC when building outside a sibling newspack-nodes checkout`
+	);
+}
+const buildKit = path.join( substrateSrc, 'build-kit/index.mjs' );
 const { buildDashboards } = await import( pathToFileURL( buildKit ).href );
+const { esbuildAlias, assertNoRetiredOverrides } = (
+	await import(
+		pathToFileURL( path.join( substrateSrc, 'build-kit/alias-map.cjs' ) )
+			.href
+	)
+).default;
 
-const alias = {
-	// Substrate runtime: CI sets NEWSPACK_NODES_RUNTIME; else sibling checkout.
-	'@newspack-nodes/runtime':
-		process.env.NEWSPACK_NODES_RUNTIME ||
-		path.resolve( ROOT, '../newspack-nodes/src/runtime/index.js' ),
-	// Overlay: CI sets NEWSPACK_NODES_DEBUG_OVERLAY; else sibling checkout.
-	'@newspack-nodes/debug-overlay':
-		process.env.NEWSPACK_NODES_DEBUG_OVERLAY ||
-		path.resolve(
-			ROOT,
-			'../newspack-nodes/src/debug-overlay/DebugOverlay.js'
-		),
-	// Shared React: CI sets NEWSPACK_NODES_SHARED; else sibling src/shared.
-	'@newspack-nodes/shared':
-		process.env.NEWSPACK_NODES_SHARED ||
-		path.resolve( ROOT, '../newspack-nodes/src/shared' ),
-};
+// Refuse the retired per-alias overrides; never silently ignore one.
+assertNoRetiredOverrides( process.env );
+
+const alias = esbuildAlias( substrateSrc );
 
 /**
  * Pin every dependency we own to OUR copy, so a dev build and a CI build emit

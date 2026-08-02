@@ -686,7 +686,11 @@ describe( 'useGlobBrowse — segment-rail maintenance', () => {
 			.length;
 
 	it( 'refreshes the segment catalog on a 10s cadence', async () => {
+		// The rail rides the Router TIMER, and beforeEach armed that slot under
+		// REAL timers — re-mount the backbone so its 1s slot is a fake one.
 		jest.useFakeTimers();
+		Core.reset();
+		mountExospine();
 		const graph = buildGraph( PAYLOADS, [] );
 		let hook;
 		await act( async () => {
