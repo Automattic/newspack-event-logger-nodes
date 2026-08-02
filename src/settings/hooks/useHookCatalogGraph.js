@@ -51,18 +51,12 @@ import {
 import useReconcile from '@newspack-nodes/shared/hooks/useReconcile';
 
 import '../nodes/register';
+import makeOpId from '@newspack-nodes/shared/utils/makeOpId';
 
 const HTTP = '_http';
 const VIEW = 'hookcatalog:view';
 // `_http` is backbone-owned (teardownSpine removes it); only the view is ours.
 const GRAPH_NODE_NAMES = [ VIEW ];
-
-// Monotonic ID counter; the view matches message[ID] to a pending resolver.
-let nextOpId = 0;
-function makeOpId() {
-	nextOpId += 1;
-	return `hookcatalog-op-${ Date.now() }-${ nextOpId }`;
-}
 
 // Build the TM_COMMAND addressed at the `performance` CI.
 function buildCommand( verb, id ) {
@@ -131,7 +125,7 @@ export function useHookCatalogGraph( opts = {} ) {
 		if ( ! view ) {
 			return Promise.reject( new Error( 'view not mounted' ) );
 		}
-		const id = makeOpId();
+		const id = makeOpId( 'hookcatalog-op' );
 		const promise = new Promise( ( resolve, reject ) => {
 			view.replies.add( id, resolve, reject );
 		} );

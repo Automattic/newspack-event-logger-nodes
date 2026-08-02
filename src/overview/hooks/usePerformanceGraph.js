@@ -52,6 +52,7 @@ import usePageVisibility from '@newspack-nodes/shared/hooks/usePageVisibility';
 import { getCommandClient } from '@newspack-nodes/shared/utils/commandClient';
 import unwrapCommandResponse from '@newspack-nodes/shared/utils/unwrapCommandResponse';
 import '../nodes/register';
+import makeOpId from '@newspack-nodes/shared/utils/makeOpId';
 
 // The server CI mount + the egress path the Fetchers/on-demand commands target.
 const SERVER = 'performance';
@@ -92,13 +93,6 @@ const isValidHash = ( h ) => 'string' === typeof h && /^[a-f0-9]+$/.test( h );
 const isValidRequestId = ( r ) =>
 	'string' === typeof r && /^[a-zA-Z0-9_-]+$/.test( r );
 const isValidPartition = ( p ) => Number.isInteger( p ) && p >= 0;
-
-// Monotonic op-id: correlates an awaited reply to a pending Promise.
-let nextOpId = 0;
-function makeOpId() {
-	nextOpId += 1;
-	return `performance-op-${ Date.now() }-${ nextOpId }`;
-}
 
 // Dedup server + active chart dim into the breakdown list; pad with status.
 const breakdownsFor = ( currentBreakdown ) => {
@@ -477,7 +471,7 @@ export function usePerformanceGraph( opts = {} ) {
 		async ( rid ) => {
 			const view = Core.node( REQUESTDETAIL_VIEW );
 			if ( interpreterRef.current && view && view.replies ) {
-				const id = makeOpId();
+				const id = makeOpId( 'performance-op' );
 				const promise = new Promise( ( resolve, reject ) => {
 					view.replies.add( id, resolve, reject );
 				} );
@@ -523,7 +517,7 @@ export function usePerformanceGraph( opts = {} ) {
 			if ( ! interpreterRef.current || ! view || ! view.replies ) {
 				return null;
 			}
-			const id = makeOpId();
+			const id = makeOpId( 'performance-op' );
 			const promise = new Promise( ( resolve, reject ) => {
 				view.replies.add( id, resolve, reject );
 			} );
@@ -558,7 +552,7 @@ export function usePerformanceGraph( opts = {} ) {
 			if ( ! interpreterRef.current || ! view || ! view.replies ) {
 				return null;
 			}
-			const id = makeOpId();
+			const id = makeOpId( 'performance-op' );
 			const promise = new Promise( ( resolve, reject ) => {
 				view.replies.add( id, resolve, reject );
 			} );

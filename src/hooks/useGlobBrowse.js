@@ -50,19 +50,13 @@ import useLogPositions, {
 } from '@newspack-nodes/shared/hooks/useLogPositions';
 import { endPosition } from '@newspack-nodes/shared/nodes/seekTracker';
 import useRouterTick from '@newspack-nodes/shared/hooks/useRouterTick';
+import makeOpId from '@newspack-nodes/shared/utils/makeOpId';
 
 // The substrate service CI that catalogs on-disk logs + segments.
 const RAW_LOGS = 'raw-logs';
 
 // Segment-rail maintenance cadence (rotation + size growth).
 const SEGMENTS_REFRESH_MS = 10000;
-
-// Monotonic op-id correlating a catalog reply to its pending Promise.
-let nextOpId = 0;
-function makeOpId() {
-	nextOpId += 1;
-	return `globbrowse-op-${ Date.now() }-${ nextOpId }`;
-}
 
 // A raw-logs verb command; reply routes back to FROM (the view's replies).
 function catalogCommand( id, from, name, args ) {
@@ -149,7 +143,7 @@ export default function useGlobBrowse( {
 			if ( ! link || ! view || ! view.replies ) {
 				return Promise.reject( new Error( 'graph not ready' ) );
 			}
-			const id = makeOpId();
+			const id = makeOpId( 'globbrowse-op' );
 			const promise = new Promise( ( resolve, reject ) =>
 				view.replies.add( id, resolve, reject )
 			);

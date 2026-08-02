@@ -42,17 +42,11 @@ import {
 } from '@newspack-nodes/runtime';
 
 import './nodes/register';
+import makeOpId from '@newspack-nodes/shared/utils/makeOpId';
 
 const HTTP = '_http';
 const RECV = 'rules:in';
 const VIEW = 'rules:view';
-
-// Monotonic ID counter; the view matches message[ID] to a pending resolver.
-let nextOpId = 0;
-function makeOpId() {
-	nextOpId += 1;
-	return `rules-op-${ Date.now() }-${ nextOpId }`;
-}
 
 // TM_COMMAND to rules CI; FROM = receiver Tee, TO = _http/rules.
 function buildCommand( verb, args, id ) {
@@ -95,7 +89,9 @@ export function useRulesGraph( opts = {} ) {
 				if ( shellRef.current !== shell ) {
 					return; // unmounted while /auth was in flight
 				}
-				shell.fill( buildCommand( 'list', [], makeOpId() ) );
+				shell.fill(
+					buildCommand( 'list', [], makeOpId( 'rules-op' ) )
+				);
 			} );
 
 			return () => {
@@ -118,7 +114,7 @@ export function useRulesGraph( opts = {} ) {
 		if ( ! view ) {
 			return Promise.reject( new Error( 'view not mounted' ) );
 		}
-		const id = makeOpId();
+		const id = makeOpId( 'rules-op' );
 		const promise = new Promise( ( resolve, reject ) => {
 			view.replies.add( id, resolve, reject );
 		} );
