@@ -8,7 +8,7 @@
  *                          `gyroscope:link:http` (HttpOut — POST /command boundary),
  *                          `gyroscope:link:heartbeat` (Heartbeat — slot keep-alive),
  *                          and wires the `connected → slot` bridge to its own
- *                          heartbeat. `.client` is the injected CommandClient.)
+ *                          heartbeat. `.client` is the injected transport.)
  *
  * Plus the single dashboard node:
  *
@@ -28,13 +28,7 @@
  * inside RemoteLink. `onConnect` resets the view map before each (re)connect.
  */
 
-import {
-	CommandClient,
-	TYPE,
-	VALUE,
-	TM_STRUCT,
-	newMessage,
-} from '@newspack-nodes/runtime';
+import { TYPE, VALUE, TM_STRUCT, newMessage } from '@newspack-nodes/runtime';
 import '../nodes/register';
 import usePageVisibility from '@newspack-nodes/shared/hooks/usePageVisibility';
 import { useVisibilityGatedLink } from '@newspack-nodes/shared/hooks/useVisibilityGatedLink';
@@ -70,7 +64,6 @@ export function useGyroscopeGraph() {
 			] );
 			// Pass-through Tee on the stream edge; copies each frame to view.
 			link.target = TEE;
-			link.client = CommandClient.fromGlobal();
 
 			const tee = interpreter.makeNode( 'Tee', TEE );
 			tee.connectNode( VIEW );

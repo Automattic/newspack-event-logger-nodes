@@ -39,7 +39,7 @@ const INTERPRETER = '_command_interpreter';
 const ROUTER = '_router';
 const HTTP = '_http';
 
-// Fake CommandClient: postBatch returns TO=FROM replies keyed by verb.
+// Fake transport: postBatch returns TO=FROM replies keyed by verb.
 function makeFakeClient( payloadByVerb = {}, opts = {} ) {
 	const client = {
 		batches: [],

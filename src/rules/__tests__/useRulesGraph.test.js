@@ -63,7 +63,7 @@ const SAMPLE_RULES = [
 	},
 ];
 
-// A fake CommandClient (HttpOutNode seam): postBatch echoes TO=FROM replies.
+// A fake transport (HttpOutNode seam): postBatch echoes TO=FROM replies.
 function makeFakeClient( payloadByVerb = {}, opts = {} ) {
 	const client = {
 		batches: [],
@@ -158,7 +158,7 @@ describe( 'useRulesGraph — exospine + receiver wiring', () => {
 		}
 	} );
 
-	test( '_http has the injected CommandClient as its client', async () => {
+	test( '_http has the injected transport as its client', async () => {
 		const client = makeFakeClient();
 		renderHook( () => useRulesGraph( { commandClient: client } ) );
 		await act( async () => {} );

@@ -22,19 +22,19 @@
  *
  * The command boundary is injectable: tests pass `opts.commandClient` (assigned
  * to `_http.client`) so the hook never touches the network. Production lazily
- * defaults to a freshly-constructed CommandClient.
+ * defaults (inside HttpOut) to the localized transport.
  */
 
 import { useCallback, useEffect, useRef, useState } from '@wordpress/element';
-import { mountExospine, CommandClient } from '@newspack-nodes/runtime';
+import { mountExospine } from '@newspack-nodes/runtime';
 import useReconcile from '@newspack-nodes/shared/hooks/useReconcile';
 import useRequestNode from '@newspack-nodes/shared/hooks/useRequestNode';
 
 /**
  * @param {Object}  [opts]               Options.
  * @param {boolean} [opts.isOpen]        When true, fires one hook-catalog fetch.
- * @param {Object}  [opts.commandClient] CommandClient seam assigned to `_http.client`;
- *                                       defaults to a freshly-constructed CommandClient.
+ * @param {Object}  [opts.commandClient] transport seam assigned to `_http.client`;
+ *                                       defaults (inside HttpOut) to the localized transport.
  * @return {{ hooksByCategory: Object, loading: boolean }} The render model.
  */
 export function useHookCatalogGraph( opts = {} ) {
@@ -48,8 +48,9 @@ export function useHookCatalogGraph( opts = {} ) {
 	// Mount the backbone once and give `_http` its client.
 	useEffect( () => {
 		const { http, teardown } = mountExospine();
-		http.client =
-			optsRef.current.commandClient || CommandClient.fromGlobal();
+		if ( optsRef.current.commandClient ) {
+			http.client = optsRef.current.commandClient;
+		}
 		return teardown;
 	}, [] );
 

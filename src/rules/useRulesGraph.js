@@ -3,7 +3,7 @@
  * canonical rule-#2 backbone (`_command_interpreter → _router`) using the
  * substrate's HTTP I/O boundary node. Modeled on useVaultGraph, single-concern:
  *
- *   _http     (HttpOutNode — POST /command boundary; .client = CommandClient)
+ *   _http     (HttpOutNode — POST /command boundary; .client = the transport)
  *   rules:in  (Tee) → rules:view (RulesViewNode) — list/save/upsert/delete
  *
  * Each CRUD op builds a TM_COMMAND (FROM = `rules:in`, TO = `_http/rules`, verb
@@ -20,10 +20,10 @@
  * refresh the table.
  *
  * The command boundary is injectable: tests pass `opts.commandClient` (assigned
- * to `_http.client`). Production lazily defaults to a fresh CommandClient.
+ * to `_http.client`). Production lets HttpOut default it.
  *
  * @param {Object} [opts]               Options (testing seams).
- * @param {Object} [opts.commandClient] CommandClient seam assigned to `_http.client`.
+ * @param {Object} [opts.commandClient] transport seam assigned to `_http.client`.
  * @return {{ rules: Array, loading: boolean, error: (string|null),
  *   list: Function, saveAll: Function, upsert: Function, remove: Function }}
  *   The render model plus CRUD callbacks.
@@ -33,7 +33,6 @@ import { useCallback, useEffect, useRef, useState } from '@wordpress/element';
 import {
 	Core,
 	mountExospine,
-	CommandClient,
 	useNodeState,
 	TO,
 	formatCommandArgs,
@@ -74,8 +73,9 @@ export function useRulesGraph( opts = {} ) {
 
 	useEffect( () => {
 		const build = ( { interpreter, shell, http } ) => {
-			http.client =
-				optsRef.current.commandClient || CommandClient.fromGlobal();
+			if ( optsRef.current.commandClient ) {
+				http.client = optsRef.current.commandClient;
+			}
 
 			const recv = interpreter.makeNode( 'Tee', RECV );
 			interpreter.makeNode( 'RulesView', VIEW );

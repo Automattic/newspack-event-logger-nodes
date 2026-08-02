@@ -41,6 +41,7 @@ jest.mock( '@newspack-nodes/shared/hooks/usePageVisibility', () => ( {
 } ) );
 
 import { useGyroscopeGraph } from '../useGyroscopeGraph';
+import { installFakeCommandWire } from '@newspack-nodes/shared/test-utils/fakeCommandWire';
 
 // Minimal FakeEventSource — same shape as the substrate's sse_connector test.
 class FakeEventSource {
@@ -189,11 +190,14 @@ describe( 'useGyroscopeGraph — exospine + RemoteLink wiring', () => {
 		expect( FakeEventSource.last ).toBeNull();
 	} );
 
-	test( 'the composed HttpOut has a CommandClient client wired (the POST boundary is constructable)', () => {
+	test( 'the composed HttpOut defaults its transport on the first POST', () => {
 		renderHook( () => useGyroscopeGraph() );
 		const http = Core.node( HTTP );
-		expect( http.client ).toBeTruthy();
-		expect( typeof http.client.buildMessage ).toBe( 'function' );
+		// HttpOut defaults its transport on the first POST, so nothing is
+		// wired until something is sent — which is what makes a palette drop
+		// need no nonce threaded through construction.
+		installFakeCommandWire( () => undefined );
+		http.fill( newMessage() );
 		expect( typeof http.client.postBatch ).toBe( 'function' );
 	} );
 } );

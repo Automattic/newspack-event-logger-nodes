@@ -29,6 +29,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   apart. `hookcatalog:view` went with it: the awaited catalog IS the model, so
   the hook holds it rather than publishing into a node it then reads back.
 
+- **`CommandClient` is gone from the substrate**, folded into `HttpOut` as a
+  `commandTransport` closure. The `_http.client` seam is unchanged and
+  duck-typed, so the fakes here still work; what changed is that production no
+  longer constructs one — HttpOut defaults it on the first POST, so these hooks
+  only assign a client when a test injects one.
+
 ### Removed
 
 - **`CurrentRequestTab`'s mounted-ref guard.** Unmounting removes the Request
