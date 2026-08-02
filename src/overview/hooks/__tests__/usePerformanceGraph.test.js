@@ -13,7 +13,6 @@
  * overview + urls are POLLED (on the Timer, live args via the getters); url_detail
  * and request_detail are ON-DEMAND (modal-open → fetch); resolveRequest /
  * fetchUrlBreakdown are awaited Promises settled via the relevant view's
- * PendingReplies. The hook returns ONLY control callbacks; React reads each slice
  * via its own useNodeState.
  */
 

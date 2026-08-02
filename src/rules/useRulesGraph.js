@@ -36,28 +36,30 @@ import {
 	CommandClient,
 	useNodeState,
 	TO,
-	ID,
 	formatCommandArgs,
 	ensureSession,
 } from '@newspack-nodes/runtime';
 
 import './nodes/register';
-import makeOpId from '@newspack-nodes/shared/utils/makeOpId';
+import useRequestNode from '@newspack-nodes/shared/hooks/useRequestNode';
 
 const HTTP = '_http';
 const RECV = 'rules:in';
 const VIEW = 'rules:view';
 
-// TM_COMMAND to rules CI; FROM = receiver Tee, TO = _http/rules.
-function buildCommand( verb, args, id ) {
-	// The receiver Tee mints (FROM=its name, LOCAL, signed); TO/ID after.
-	const m = Core.node( RECV )?.command( verb, args ) ?? null;
+/**
+ * Ask the `rules` CI to re-list, FROM the table's own receiver Tee — its reply
+ * repaints `rules:view`, and that IS the result.
+ *
+ * @param {Object} shell The `_shell` Tap every command routes through.
+ */
+function fireList( shell ) {
+	const m = Core.node( RECV )?.command( 'list', [] ) ?? null;
 	if ( null === m ) {
-		return null; // unauthenticated; re-auth is under way
+		return; // unauthenticated; re-auth is under way
 	}
 	m[ TO ] = `${ HTTP }/rules`;
-	m[ ID ] = id;
-	return m;
+	shell.fill( m );
 }
 
 export function useRulesGraph( opts = {} ) {
@@ -84,14 +86,12 @@ export function useRulesGraph( opts = {} ) {
 
 			bumpBuild( ( n ) => n + 1 );
 
-			// One uncorrelated list once authed; its reply refreshes view.
+			// One list once authed; its reply repaints the table.
 			ensureSession().then( () => {
 				if ( shellRef.current !== shell ) {
 					return; // unmounted while /auth was in flight
 				}
-				shell.fill(
-					buildCommand( 'list', [], makeOpId( 'rules-op' ) )
-				);
+				fireList( shell );
 			} );
 
 			return () => {
@@ -104,55 +104,45 @@ export function useRulesGraph( opts = {} ) {
 		return teardown;
 	}, [] );
 
-	// Dispatch a verb; the view settles the Promise by matching message[ID].
-	const dispatch = useCallback( ( verb, args = [] ) => {
-		const shell = shellRef.current;
-		if ( ! shell ) {
+	// A node per mutating verb; the table refresh is a publish, not an await.
+	const saveNode = useRequestNode( 'rules:save', 'rules' );
+	const upsertNode = useRequestNode( 'rules:upsert', 'rules' );
+	const deleteNode = useRequestNode( 'rules:delete', 'rules' );
+
+	const list = useCallback( () => {
+		if ( ! shellRef.current ) {
 			return Promise.reject( new Error( 'graph not mounted' ) );
 		}
-		const view = Core.node( VIEW );
-		if ( ! view ) {
-			return Promise.reject( new Error( 'view not mounted' ) );
-		}
-		const id = makeOpId( 'rules-op' );
-		const promise = new Promise( ( resolve, reject ) => {
-			view.replies.add( id, resolve, reject );
-		} );
-		// After the session lands: a click can beat /auth.
-		ensureSession().then( () => {
-			if ( shellRef.current === shell ) {
-				shell.fill( buildCommand( verb, args, id ) );
-			}
-		} );
-		return promise;
+		fireList( shellRef.current );
+		return Promise.resolve();
 	}, [] );
 
-	const list = useCallback( () => dispatch( 'list', [] ), [ dispatch ] );
-
 	// Run a mutating verb, then re-list to refresh the table; failure rejects.
-	const runMutation = useCallback(
-		async ( verb, args ) => {
-			const result = await dispatch( verb, args );
-			dispatch( 'list', [] ).catch( () => {} );
-			return result;
-		},
-		[ dispatch ]
-	);
+	const runMutation = useCallback( async ( request, verb, args ) => {
+		const result = await request( verb, args );
+		if ( shellRef.current ) {
+			fireList( shellRef.current );
+		}
+		return result;
+	}, [] );
 
 	// save/upsert: raw JSON is ONE arg token (CI json_decodes $args[0]).
 	const saveAll = useCallback(
-		( rules ) => runMutation( 'save', [ JSON.stringify( rules ) ] ),
-		[ runMutation ]
+		( rules ) =>
+			runMutation( saveNode, 'save', [ JSON.stringify( rules ) ] ),
+		[ saveNode, runMutation ]
 	);
 
 	const upsert = useCallback(
-		( rule ) => runMutation( 'upsert', [ JSON.stringify( rule ) ] ),
-		[ runMutation ]
+		( rule ) =>
+			runMutation( upsertNode, 'upsert', [ JSON.stringify( rule ) ] ),
+		[ upsertNode, runMutation ]
 	);
 
 	const remove = useCallback(
-		( id ) => runMutation( 'delete', formatCommandArgs( [ id ] ) ),
-		[ runMutation ]
+		( id ) =>
+			runMutation( deleteNode, 'delete', formatCommandArgs( [ id ] ) ),
+		[ deleteNode, runMutation ]
 	);
 
 	const model = useNodeState( VIEW, 'view' );

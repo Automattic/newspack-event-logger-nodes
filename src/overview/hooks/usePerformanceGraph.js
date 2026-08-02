@@ -23,10 +23,8 @@
  *   requestdetailIn (Tee) → requestdetail:view (RequestDetailView)
  *
  * resolveRequest (request_search, navigation) + fetchUrlBreakdown (url_detail
- * breakdown) are AWAITED Promises settled via the relevant view's PendingReplies
  * (the useHookCatalogGraph / hook-catalog-view-node pattern): the hook stashes a
  * resolver under message[ID], the server replies TO=FROM=that view, and the view's
- * PendingReplies.settle resolves/rejects without touching its data slice.
  *
  * The hook returns ONLY control callbacks (`handleUrlParamsChange`,
  * `resolveRequest`, `fetchUrlBreakdown`); React reads each slice via its own
@@ -51,7 +49,6 @@ import { addSliceFetcher } from '@newspack-nodes/shared/helpers/addSliceFetcher'
 import usePageVisibility from '@newspack-nodes/shared/hooks/usePageVisibility';
 import useRequestNode from '@newspack-nodes/shared/hooks/useRequestNode';
 import '../nodes/register';
-import makeOpId from '@newspack-nodes/shared/utils/makeOpId';
 
 // The server CI mount + the egress path the Fetchers/on-demand commands target.
 const SERVER = 'performance';
@@ -59,7 +56,17 @@ const TARGET = `_shell/_http/${ SERVER }`;
 const HTTP = '_http';
 
 // Per-URL ruleset CI via the same exospine (the "Log this URL" affordance).
-const RULES_TARGET = '_shell/_http/rules';
+/**
+ * Put the just-minted command on the wire NOW: these are event-driven, not
+ * part of the batched poll tick that would otherwise carry them.
+ *
+ * @param {Promise} pending The request's promise, returned unchanged.
+ * @return {Promise} `pending`.
+ */
+function flushed( pending ) {
+	Core.node( HTTP )?.flush();
+	return pending;
+}
 
 // Default matched-request cap for requestGrep (server clamps to its own max).
 const GREP_RESULT_LIMIT = 20;
@@ -155,11 +162,16 @@ export function usePerformanceGraph( opts = {} ) {
 	const optsRef = useRef( opts );
 	optsRef.current = opts;
 
-	// The rid-search fallback's own node: its reply is addressed back to it.
+	// One node per awaited verb; each reply is addressed back to it.
 	const requestSearch = useRequestNode(
 		`${ SERVER }:request_search`,
 		SERVER
 	);
+	const urlDetail = useRequestNode( `${ SERVER }:url_detail`, SERVER );
+	const grep = useRequestNode( `${ SERVER }:request_grep`, SERVER );
+	const rulesList = useRequestNode( 'rules:list', 'rules' );
+	const rulesUpsert = useRequestNode( 'rules:upsert', 'rules' );
+	const rulesDelete = useRequestNode( 'rules:delete', 'rules' );
 
 	// Live UI state the Fetcher getters + on-demand fetches read at fire time.
 	const serverFilterRef = useRef( serverFilter );
@@ -471,37 +483,21 @@ export function usePerformanceGraph( opts = {} ) {
 		[ sendCommand, sendControl ]
 	);
 
-	// resolveRequest — request_search for deep links; shared-client fallback.
+	// resolveRequest — request_search for deep links.
 	const resolveRequest = useCallback(
 		async ( rid ) => {
-			const view = Core.node( REQUESTDETAIL_VIEW );
-			if ( interpreterRef.current && view && view.replies ) {
-				const id = makeOpId( 'performance-op' );
-				const promise = new Promise( ( resolve, reject ) => {
-					view.replies.add( id, resolve, reject );
-				} );
-				const http = Core.node( HTTP );
-				if ( http ) {
-					http.lock();
-				}
-				sendCommand(
-					'request_search',
-					formatCommandArgs( [ rid ] ),
-					REQUESTDETAIL_VIEW,
-					id
-				);
-				if ( http ) {
-					http.flush();
-				}
-				return promise.catch( () => null );
-			}
 			try {
-				return await requestSearch( 'request_search', [ rid ] );
+				return await flushed(
+					requestSearch(
+						'request_search',
+						formatCommandArgs( [ rid ] )
+					)
+				);
 			} catch ( err ) {
 				return null;
 			}
 		},
-		[ sendCommand, interpreterRef, requestSearch ]
+		[ requestSearch ]
 	);
 
 	// fetchUrlBreakdown — per-URL dimensional series; null on bad hash/error.
@@ -510,101 +506,65 @@ export function usePerformanceGraph( opts = {} ) {
 			if ( ! isValidHash( hash ) ) {
 				return null;
 			}
-			const view = Core.node( URLDETAIL_VIEW );
-			if ( ! interpreterRef.current || ! view || ! view.replies ) {
-				return null;
-			}
-			const id = makeOpId( 'performance-op' );
-			const promise = new Promise( ( resolve, reject ) => {
-				view.replies.add( id, resolve, reject );
-			} );
-			const http = Core.node( HTTP );
-			if ( http ) {
-				http.lock();
-			}
-			sendCommand(
-				'url_detail',
-				formatCommandArgs( [ hash ], { breakdown } ),
-				URLDETAIL_VIEW,
-				id
-			);
-			if ( http ) {
-				http.flush();
-			}
 			try {
-				const payload = await promise;
+				const payload = await flushed(
+					urlDetail(
+						'url_detail',
+						formatCommandArgs( [ hash ], { breakdown } )
+					)
+				);
 				return ( payload && payload.breakdown_time_series ) || null;
 			} catch ( err ) {
 				onError?.( err );
 				return null;
 			}
 		},
-		[ sendCommand, onError, interpreterRef ]
+		[ urlDetail, onError ]
 	);
 
-	// Send a correlated command; the view settles it via PendingReplies.
+	// Await one verb through its own node; a failure is reported, not thrown.
 	const awaitReply = useCallback(
-		async ( viewName, verb, args, target ) => {
-			const view = Core.node( viewName );
-			if ( ! interpreterRef.current || ! view || ! view.replies ) {
-				return null;
-			}
-			const id = makeOpId( 'performance-op' );
-			const promise = new Promise( ( resolve, reject ) => {
-				view.replies.add( id, resolve, reject );
-			} );
-			const http = Core.node( HTTP );
-			if ( http ) {
-				http.lock();
-			}
-			sendCommand( verb, args, viewName, id, target );
-			if ( http ) {
-				http.flush();
-			}
+		async ( request, verb, args ) => {
 			try {
-				return await promise;
+				return await flushed( request( verb, args ) );
 			} catch ( err ) {
 				onError?.( err );
 				return null;
 			}
 		},
-		[ sendCommand, onError, interpreterRef ]
+		[ onError ]
 	);
 
 	// listRules — current ruleset for the modal; resolves { rules }.
 	const listRules = useCallback(
-		() => awaitReply( URLDETAIL_VIEW, 'list', [], RULES_TARGET ),
-		[ awaitReply ]
+		() => awaitReply( rulesList, 'list', [] ),
+		[ awaitReply, rulesList ]
 	);
 
 	// upsertRule: whole raw JSON is one arg token (CI json_decodes $args[0]).
 	const upsertRule = useCallback(
 		( ruleObject ) =>
-			awaitReply(
-				URLDETAIL_VIEW,
-				'upsert',
-				[ JSON.stringify( ruleObject ) ],
-				RULES_TARGET
-			),
-		[ awaitReply ]
+			awaitReply( rulesUpsert, 'upsert', [
+				JSON.stringify( ruleObject ),
+			] ),
+		[ awaitReply, rulesUpsert ]
 	);
 
 	// removeRule — delete by rule id; resolves the CI's { deleted } reply.
 	const removeRule = useCallback(
-		( id ) => awaitReply( URLDETAIL_VIEW, 'delete', [ id ], RULES_TARGET ),
-		[ awaitReply ]
+		( id ) => awaitReply( rulesDelete, 'delete', [ id ] ),
+		[ awaitReply, rulesDelete ]
 	);
 
 	// requestGrep: pattern-search recent firehose; resolves the grep summary.
 	const requestGrep = useCallback(
 		( pattern, limit = GREP_RESULT_LIMIT ) =>
 			awaitReply(
-				REQUESTDETAIL_VIEW,
+				grep,
 				'request_grep',
-				formatCommandArgs( [ pattern ], { limit } ),
-				TARGET
+				formatCommandArgs( [ pattern ], { limit } )
 			),
-		[ awaitReply ]
+		[ awaitReply, grep ]
 	);
 
 	return {

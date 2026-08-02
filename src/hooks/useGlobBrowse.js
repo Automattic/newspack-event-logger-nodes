@@ -13,7 +13,6 @@
  * the same key SseIn tracks resume offsets under), so no new server verb is
  * needed: `list_logs` catalogs the concrete dirs, `log_status` their segments —
  * both reached through the RemoteLink's own HttpOut (`link.send`) and settled via
- * the view node's PendingReplies, the established ELN verb path.
  *
  * Repositioning is imperative and gated on `isActive`: while the stream is closed
  * (paused / hidden) a browse action only records the target in `browseTargetRef`;
@@ -23,7 +22,6 @@
  * @param {Object}  o
  * @param {string}  o.glob            The subscription glob (e.g. `errors.*`).
  * @param {string}  o.linkName        RemoteLink node name (HttpOut + SSE seek).
- * @param {string}  o.viewName        View node name (owns the reply PendingReplies).
  * @param {boolean} o.isActive        Whether the stream is open right now.
  * @param {Object}  o.browseTargetRef `{ current: { subscribe, positions } }` the
  *                                    graph hook reads on (re)connect.
@@ -36,11 +34,8 @@ import {
 	useNodeState,
 	newMessage,
 	TYPE,
-	TO,
-	ID,
 	VALUE,
 	TM_STRUCT,
-	ensureSession,
 } from '@newspack-nodes/runtime';
 
 import useLogPositions, {
@@ -50,25 +45,13 @@ import useLogPositions, {
 } from '@newspack-nodes/shared/hooks/useLogPositions';
 import { endPosition } from '@newspack-nodes/shared/nodes/seekTracker';
 import useRouterTick from '@newspack-nodes/shared/hooks/useRouterTick';
-import makeOpId from '@newspack-nodes/shared/utils/makeOpId';
+import useRequestNode from '@newspack-nodes/shared/hooks/useRequestNode';
 
 // The substrate service CI that catalogs on-disk logs + segments.
 const RAW_LOGS = 'raw-logs';
 
 // Segment-rail maintenance cadence (rotation + size growth).
 const SEGMENTS_REFRESH_MS = 10000;
-
-// A raw-logs verb command; reply routes back to FROM (the view's replies).
-function catalogCommand( id, from, name, args ) {
-	// The view mints; TO/ID after (neither is signed).
-	const m = Core.node( from )?.command( name, args ) ?? null;
-	if ( null === m ) {
-		return null; // unauthenticated; re-auth is under way
-	}
-	m[ TO ] = RAW_LOGS;
-	m[ ID ] = id;
-	return m;
-}
 
 // Reconnect positions: an explicit seek applies ONCE; else resume the tail.
 export function connectPositions( target, link, isReconnect ) {
@@ -135,28 +118,26 @@ export default function useGlobBrowse( {
 		);
 	}, [ viewName ] );
 
-	// Fire a catalog verb through the link's HttpOut; settle via view.replies.
+	// A node per catalog verb; each reply lands on the one that asked.
+	const listNode = useRequestNode( `${ viewName }:list`, RAW_LOGS );
+	const statusNode = useRequestNode( `${ viewName }:status`, RAW_LOGS );
+	const readNode = useRequestNode( `${ viewName }:read`, RAW_LOGS );
+
 	const fetchCatalog = useCallback(
 		( name, args ) => {
-			const link = Core.node( linkName );
-			const view = Core.node( viewName );
-			if ( ! link || ! view || ! view.replies ) {
-				return Promise.reject( new Error( 'graph not ready' ) );
+			const request = {
+				list_logs: listNode,
+				log_status: statusNode,
+				read_message: readNode,
+			}[ name ];
+			if ( ! request ) {
+				return Promise.reject(
+					new Error( `no request node for ${ name }` )
+				);
 			}
-			const id = makeOpId( 'globbrowse-op' );
-			const promise = new Promise( ( resolve, reject ) =>
-				view.replies.add( id, resolve, reject )
-			);
-			// After the session lands; re-resolved, as teardown can beat it.
-			ensureSession().then( () => {
-				const live = Core.node( linkName );
-				if ( live ) {
-					live.send( catalogCommand( id, viewName, name, args ) );
-				}
-			} );
-			return promise;
+			return request( name, args );
 		},
-		[ linkName, viewName ]
+		[ listNode, statusNode, readNode ]
 	);
 
 	// One-shot list_logs → the glob's concrete partition dirs.

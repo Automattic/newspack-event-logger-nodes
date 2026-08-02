@@ -21,6 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   goes with the graph. It still covers the case it was written for, a missing
   request-detail view on a live graph.
 
+- **Every op-id in the dashboards is gone.** `useGlobBrowse`, `useHookCatalogGraph`,
+  `useRulesGraph` and `usePerformanceGraph` stamped a correlator into
+  `message[ID]` and had a view node settle the match. Each awaited verb is now
+  its own `Request` node, and its reply is addressed back to it — a listing, a
+  status and a single-record read can be in flight together with nothing to tell
+  apart. `hookcatalog:view` went with it: the awaited catalog IS the model, so
+  the hook holds it rather than publishing into a node it then reads back.
+
 ### Removed
 
 - **`CurrentRequestTab`'s mounted-ref guard.** Unmounting removes the Request

@@ -8,7 +8,6 @@
  *   - a TM_STRUCT { action:'loading' } control (modal open → spinner);
  *   - a TM_STRUCT { action:'clear' } control (modal close → reset to empty);
  *   - a TM_ERROR reply (keep prior data, surface error);
- *   - an awaited resolveOnly verb via PendingReplies (fetchUrlBreakdown), which
  *     does NOT touch the data slice — it resolves the caller's Promise.
  */
 
@@ -102,20 +101,4 @@ test( 'a TM_ERROR reply keeps prior data + surfaces the error', () => {
 		last_modified: 1,
 		requests: [ { rid: 'a' } ],
 	} );
-} );
-
-test( 'an awaited resolveOnly verb resolves via PendingReplies without touching data', async () => {
-	const v = makeView();
-	v.fill( reply( { last_modified: 1, requests: [] } ) );
-	const dataBefore = view().data;
-
-	const promise = new Promise( ( resolve, reject ) => {
-		v.replies.add( 'op-1', resolve, reject );
-	} );
-	v.fill( reply( { breakdown_time_series: { x: 1 } }, { id: 'op-1' } ) );
-	await expect( promise ).resolves.toEqual( {
-		breakdown_time_series: { x: 1 },
-	} );
-	// The pending-matched reply did NOT clobber the data slice.
-	expect( view().data ).toBe( dataBefore );
 } );
