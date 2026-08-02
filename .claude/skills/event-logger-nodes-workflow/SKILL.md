@@ -137,17 +137,17 @@ Workers cache loaded classes for the duration of their process lifetime (~10 min
 
 ```bash
 # Restart all worker types in one shot.
-wp nodes restart all --all-partitions
+wp nodes restart all
 
 # Or per topology — the basename of the `.tsl` file (run `wp nodes types`
 # first to enumerate cataloged topologies). Current topologies: combined,
 # request-builder, job-router, flame-builder, performance, aggregator, hub-control.
-wp nodes restart combined        --all-partitions
-wp nodes restart request-builder --all-partitions
-wp nodes restart job-router      --all-partitions
-wp nodes restart flame-builder   --all-partitions
-wp nodes restart aggregator      --all-partitions   # hub-only; errors out on spokes (substrate validates against active topologies)
-wp nodes restart hub-control     --all-partitions   # hub-only single-instance settings-sync + discovery control plane
+wp nodes restart combined       
+wp nodes restart request-builder
+wp nodes restart job-router     
+wp nodes restart flame-builder  
+wp nodes restart aggregator        # hub-only; errors out on spokes (substrate validates against active topologies)
+wp nodes restart hub-control       # hub-only single-instance settings-sync + discovery control plane
 ```
 
 The worker-CLI verbs (`wp nodes {types,run,restart,status}` and `{ls,cli}`) are all registered by the **substrate**. This plugin registers two CLI commands (in the `WP_CLI` block of `newspack-event-logger-nodes.php`): `wp nodes reqgrep` (`Reqgrep_Command` — application-aware firehose filter) and `wp nodes ruleset-bench` (`Ruleset_Bench_Command` — dev-only per-URL-ruleset matcher benchmark, off the request hot path).

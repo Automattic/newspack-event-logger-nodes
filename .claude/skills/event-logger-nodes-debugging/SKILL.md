@@ -83,7 +83,7 @@ wp option get newspack_event_logger_nodes_stats_salt
 
 # Force a flush (rotates salt, all old keys orphan via TTL).
 wp option update newspack_event_logger_nodes_stats_salt $(openssl rand -hex 4)
-wp nodes restart combined --all-partitions   # pick up new salt (or `restart all`)
+wp nodes restart combined   # pick up new salt (or `restart all`)
 ```
 
 **Caps to remember**: `MAX_DIM_VALUES=20`, `MAX_URL_DIM_VALUES=10`, `MAX_CAT_VALUES=50`. Overflow rolls into a synthetic "Other" bucket; the `total` pseudo-category survives capping.
