@@ -49,8 +49,7 @@ import {
 import { useBatchedPoll } from '@newspack-nodes/shared/hooks/useBatchedPoll';
 import { addSliceFetcher } from '@newspack-nodes/shared/helpers/addSliceFetcher';
 import usePageVisibility from '@newspack-nodes/shared/hooks/usePageVisibility';
-import { getCommandClient } from '@newspack-nodes/shared/utils/commandClient';
-import unwrapCommandResponse from '@newspack-nodes/shared/utils/unwrapCommandResponse';
+import useRequestNode from '@newspack-nodes/shared/hooks/useRequestNode';
 import '../nodes/register';
 import makeOpId from '@newspack-nodes/shared/utils/makeOpId';
 
@@ -155,6 +154,12 @@ export function usePerformanceGraph( opts = {} ) {
 
 	const optsRef = useRef( opts );
 	optsRef.current = opts;
+
+	// The rid-search fallback's own node: its reply is addressed back to it.
+	const requestSearch = useRequestNode(
+		`${ SERVER }:request_search`,
+		SERVER
+	);
 
 	// Live UI state the Fetcher getters + on-demand fetches read at fire time.
 	const serverFilterRef = useRef( serverFilter );
@@ -491,20 +496,12 @@ export function usePerformanceGraph( opts = {} ) {
 				return promise.catch( () => null );
 			}
 			try {
-				const client =
-					optsRef.current.commandClient || getCommandClient();
-				return unwrapCommandResponse(
-					await client.send( {
-						to: SERVER,
-						verb: 'request_search',
-						args: [ rid ],
-					} )
-				);
+				return await requestSearch( 'request_search', [ rid ] );
 			} catch ( err ) {
 				return null;
 			}
 		},
-		[ sendCommand, interpreterRef ]
+		[ sendCommand, interpreterRef, requestSearch ]
 	);
 
 	// fetchUrlBreakdown — per-URL dimensional series; null on bad hash/error.

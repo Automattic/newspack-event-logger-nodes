@@ -1,5 +1,3 @@
-/* global expectConsoleWarn */
-
 /**
  * useGyroscopeGraph tests — the Gyroscope dashboard graph clips onto the
  * substrate's canonical rule-#2 backbone (`_command_interpreter` → `_router`)

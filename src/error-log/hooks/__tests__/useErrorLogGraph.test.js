@@ -1,5 +1,3 @@
-/* global expectConsoleWarn */
-
 /**
  * useErrorLogGraph tests — the Error Log dashboard graph migrated onto the
  * substrate's canonical rule-#2 backbone (`_command_interpreter → _router`) via
