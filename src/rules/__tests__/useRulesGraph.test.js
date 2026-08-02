@@ -3,7 +3,8 @@
  * the substrate's I/O boundary node (exospine + `_http`) with ONE receiver Tee
  * (`rules:in`) in front of the `rules:view` model node. Modeled on
  * useVaultGraph: each verb dispatches a TM_COMMAND through the interpreter
- * (FROM = `rules:in`, TO = `_http/rules`, verb in VALUE.name); the reply routes
+ * (the table's list FROM = `rules:in`, each mutation FROM its own Request node,
+ * TO = `_http/rules`, verb in VALUE.name); the reply routes
  * TO=FROM back into the Tee, which fans it to the view. `_http.client` is
  * injected via `opts.commandClient` so the hook never touches the network.
  *
@@ -287,7 +288,9 @@ describe( 'useRulesGraph — mutations dispatch the verb then re-list', () => {
 		const up = findVerb( client.batches, 'upsert' );
 		expect( up ).toBeTruthy();
 		expect( up[ TO ] ).toBe( 'rules' );
-		expect( up[ FROM ] ).toBe( RECV );
+		// Each mutation mints from its OWN node; the reply lands there.
+		expect( up[ FROM ] ).toBe( 'rules:upsert' );
+		expect( up[ ID ] ).toBe( '' );
 		// The whole raw JSON is one arg token the CI json_decodes ($args[0]).
 		expect( up[ VALUE ].arguments ).toEqual( [
 			JSON.stringify( SAMPLE_RULES[ 0 ] ),
@@ -343,7 +346,8 @@ describe( 'useRulesGraph — mutations dispatch the verb then re-list', () => {
 
 		const del = findVerb( client.batches, 'delete' );
 		expect( del ).toBeTruthy();
-		expect( del[ FROM ] ).toBe( RECV );
+		expect( del[ FROM ] ).toBe( 'rules:delete' );
+		expect( del[ ID ] ).toBe( '' );
 		expect( del[ VALUE ].arguments ).toEqual(
 			formatCommandArgs( [ 'r1' ] )
 		);

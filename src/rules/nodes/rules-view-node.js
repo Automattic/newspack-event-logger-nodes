@@ -1,8 +1,5 @@
 import { Node, TYPE, VALUE, TM_ERROR } from '@newspack-nodes/runtime';
-import {
-	errorMessage,
-	PendingReplies,
-} from '@newspack-nodes/shared/pendingReplies';
+import { errorMessage } from '@newspack-nodes/shared/errorMessage';
 
 /**
  * `rules:view` — owns the per-URL logging-ruleset editor view model.
@@ -12,14 +9,10 @@ import {
  * outbound FROM by the server's TO=FROM reply). VALUE is the `{ name, payload }`
  * envelope.
  *
- * A `list` reply refreshes the table (`payload.rules`). The `replies` registry
- * lets the hook await `list` / `save` / `upsert` / `delete`: it stashes
- * `{ resolve, reject }` under each outbound `message[ID]`, and a matching reply
- * settles it. On a `list` reply the model ALSO refreshes even when the settle
- * path consumed it, so a mutation's awaited re-list repaints. An un-correlated
- * TM_ERROR surfaces as the table banner (prior rules preserved); a
- * pending-matched TM_ERROR is owned by the caller's catch and leaves the banner
- * clean. Every change publishes via `setState('view', model)`, read by
+ * A `list` reply refreshes the table (`payload.rules`).
+ * TM_ERROR surfaces as the table banner (prior rules preserved); a mutation's
+ * failure lands on ITS node, never here, so the caller's catch owns it and the
+ * banner stays clean. Every change publishes via `setState('view', model)`, read by
  * `useNodeState('rules:view','view')`.
  */
 export class RulesViewNode extends Node {
@@ -30,13 +23,11 @@ export class RulesViewNode extends Node {
 			loading: true,
 			error: null,
 		};
-		this.replies = new PendingReplies();
 		this._publish();
 	}
 
 	fill( message ) {
-		const settled = this.replies.settle( message );
-		if ( ! settled && 0 !== ( ( message[ TYPE ] || 0 ) & TM_ERROR ) ) {
+		if ( 0 !== ( ( message[ TYPE ] || 0 ) & TM_ERROR ) ) {
 			this._applyError( message[ VALUE ] );
 			this._publish();
 			return;
@@ -72,12 +63,6 @@ export class RulesViewNode extends Node {
 
 	_publish() {
 		this.setState( 'view', this.model );
-	}
-
-	// Reject in-flight pending promises before removal so no caller strands.
-	removeNode() {
-		this.replies.rejectAll( 'View removed before reply' );
-		super.removeNode();
 	}
 
 	static nodeSchema() {

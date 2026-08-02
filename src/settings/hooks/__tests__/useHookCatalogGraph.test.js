@@ -1,11 +1,11 @@
 /**
  * useHookCatalogGraph tests — the Performance Logger hook-catalog graph clipped
  * onto the substrate's I/O boundary node (exospine + `_http`), plus the
- * `hookcatalog:view` model node.
+ * `hookcatalog:request` node that holds the awaited catalog.
  *
  * Migrated from the bespoke `hookcatalog:command` Node to the substrate's
  * HttpOutNode: the hook dispatches the `hooks_registered` verb as a TM_COMMAND
- * through the interpreter (FROM=`hookcatalog:view`, TO=`_http/performance`); the reply
+ * through the interpreter (FROM=`hookcatalog:request`, TO=`_http/performance`); the reply
  * routes via TO=FROM back into the view, which extracts hooks_by_category.
  *
  * Every node sinks into the interpreter (rule #2); flow is steered ONLY by each node's
@@ -36,8 +36,8 @@ import { useHookCatalogGraph } from '../useHookCatalogGraph';
 const INTERPRETER = '_command_interpreter';
 const ROUTER = '_router';
 const HTTP = '_http';
-const VIEW = 'hookcatalog:view';
-const ALL_GRAPH_NAMES = [ HTTP, VIEW ];
+const REQUEST = 'hookcatalog:request';
+const ALL_GRAPH_NAMES = [ HTTP, REQUEST ];
 
 // A fake CommandClient (HttpOutNode seam): postBatch returns TO=FROM replies.
 function makeFakeClient( payloadByVerb = {}, opts = {} ) {
@@ -84,7 +84,7 @@ beforeEach( () => {
 } );
 
 describe( 'useHookCatalogGraph — exospine + I/O boundary wiring', () => {
-	test( 'mounts the backbone + _http + the view, each sinking into the interpreter', () => {
+	test( 'mounts the backbone + _http + the request node', () => {
 		const client = makeFakeClient();
 		renderHook( () =>
 			useHookCatalogGraph( { isOpen: false, commandClient: client } )
@@ -92,11 +92,10 @@ describe( 'useHookCatalogGraph — exospine + I/O boundary wiring', () => {
 		const interpreter = Core.node( INTERPRETER );
 		expect( interpreter ).toBeTruthy();
 		expect( Core.node( ROUTER ) ).toBeTruthy();
-		for ( const name of ALL_GRAPH_NAMES ) {
-			const node = Core.node( name );
-			expect( node ).toBeTruthy();
-			expect( node.sink ).toBe( interpreter );
-		}
+		expect( Core.node( HTTP ).sink ).toBe( interpreter );
+		// A Request node routes through `_shell`, the Tap every command does.
+		expect( Core.node( REQUEST ).sink ).toBe( Core.node( '_shell' ) );
+		expect( Core.node( REQUEST ).target ).toBe( `${ HTTP }/performance` );
 	} );
 
 	/** Opening the modal must not mint before /auth has landed. */
@@ -145,13 +144,14 @@ describe( 'useHookCatalogGraph — exospine + I/O boundary wiring', () => {
 		expect( client.batches.length ).toBe( 0 );
 	} );
 
+	// Closed means nothing is being asked for, so nothing is loading.
 	test( 'returns the default render model before any fetch', () => {
 		const client = makeFakeClient();
 		const { result } = renderHook( () =>
 			useHookCatalogGraph( { isOpen: false, commandClient: client } )
 		);
 		expect( result.current.hooksByCategory ).toEqual( {} );
-		expect( result.current.loading ).toBe( true );
+		expect( result.current.loading ).toBe( false );
 	} );
 } );
 
@@ -171,14 +171,16 @@ describe( 'useHookCatalogGraph — fire on open routes through the exospine', ()
 		expect( client.batches.length ).toBeGreaterThanOrEqual( 1 );
 		const msg = client.batches[ 0 ][ 0 ];
 		expect( msg[ TO ] ).toBe( 'performance' );
-		expect( msg[ FROM ] ).toBe( VIEW );
+		expect( msg[ FROM ] ).toBe( REQUEST );
+		// Addressed, not correlated.
+		expect( msg[ ID ] ).toBe( '' );
 		expect( msg[ VALUE ].name ).toBe( 'hooks_registered' );
 		// hooks_registered takes no args; empty token array, no payload.
 		expect( msg[ VALUE ].arguments ).toEqual( [] );
 		expect( msg[ VALUE ].payload ).toBeUndefined();
 	} );
 
-	test( 'the resolved catalog routes _http → interpreter → router → hookcatalog:view and lands in the model', async () => {
+	test( 'the resolved catalog routes back to the node that asked, into the model', async () => {
 		const hooks = {
 			Lifecycle: [ 'init' ],
 			'REST API': [ 'rest_api_init' ],
@@ -195,10 +197,6 @@ describe( 'useHookCatalogGraph — fire on open routes through the exospine', ()
 		} );
 		expect( result.current.hooksByCategory ).toEqual( hooks );
 		expect( result.current.loading ).toBe( false );
-		// Confirm it actually landed in the view node's published model.
-		expect( Core.node( VIEW ).setStateCache.view.hooksByCategory ).toEqual(
-			hooks
-		);
 	} );
 
 	test( 'loading is true between dispatch and resolve', async () => {

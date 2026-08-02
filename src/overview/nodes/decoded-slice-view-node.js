@@ -5,7 +5,7 @@ import {
 	TM_ERROR,
 	TM_STRUCT,
 } from '@newspack-nodes/runtime';
-import { errorMessage } from '@newspack-nodes/shared/pendingReplies';
+import { errorMessage } from '@newspack-nodes/shared/errorMessage';
 
 /**
  * DecodedSliceViewNode — the focused custom slice-view base for the Performance
@@ -27,12 +27,8 @@ import { errorMessage } from '@newspack-nodes/shared/pendingReplies';
  *                                                it via storeResult), clear loading/error;
  *   - a TM_ERROR reply                        → error string, clear loading, KEEP prior data.
  *
- * Optional awaited-verb path: a subclass that ALSO awaits a verb (the on-demand
- * url_detail/request_detail views await fetchUrlBreakdown/resolveRequest) assigns
- * `this.replies = new PendingReplies()` and stashes `{ resolve, reject }` under
- * each outbound `message[ID]`. `fill()` then settles a matching reply FIRST and
- * returns — the awaited reply never touches the data slice. With no match (or no
- * `replies`) it falls through to the slice path below.
+ * An awaited verb is minted from its OWN Request node and its reply is
+ * addressed there, so what lands here is only ever this slice's.
  *
  * Subclasses supply `emptySlice()` (the shaped-but-empty initial model) and
  * `storeResult(payload)` (how a successful payload becomes the slice). A
@@ -47,9 +43,6 @@ export class DecodedSliceViewNode extends Node {
 
 	fill( message ) {
 		// Awaited-verb path: a settled reply is consumed here, not slice logic.
-		if ( this.replies && this.replies.settle( message ) ) {
-			return;
-		}
 
 		const value = message[ VALUE ];
 		const type = message[ TYPE ] || 0;

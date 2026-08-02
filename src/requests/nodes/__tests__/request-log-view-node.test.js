@@ -16,9 +16,6 @@ import {
 	TYPE,
 	ID,
 	TM_STRUCT,
-	TM_COMMAND,
-	TM_RESPONSE,
-	TM_ERROR,
 	newMessage,
 	Core,
 } from '@newspack-nodes/runtime';
@@ -324,58 +321,6 @@ test( 'fills sensible defaults for missing fields on the appended row', () => {
 	expect( e.remote_addr ).toBe( '' );
 	expect( e.user_agent ).toBe( '' );
 	expect( e.timestamp ).toBe( 0 );
-} );
-
-// A raw-logs catalog reply: TM_COMMAND|TM_RESPONSE, VALUE={ name, payload }.
-const catalogReply = ( id, name, payload, { error = false } = {} ) => {
-	const m = newMessage();
-	m[ TYPE ] = TM_COMMAND | TM_RESPONSE | ( error ? TM_ERROR : 0 );
-	m[ ID ] = id;
-	m[ VALUE ] = { name, payload };
-	return m;
-};
-
-describe( 'requestlog:view — catalog-reply correlation (PendingReplies)', () => {
-	test( 'settles a pending reply by message ID and does NOT append it as a row', () => {
-		const v = makeView( 'requestlog:view' );
-		const seen = [];
-		v.replies.add(
-			'reqlog-op-801',
-			( payload ) => seen.push( payload ),
-			() => {}
-		);
-		v.fill(
-			catalogReply( 'reqlog-op-801', 'log_status', {
-				log_id: 'completed.p4',
-				segments: [ { id: 5, size: 42 } ],
-			} )
-		);
-		expect( seen ).toEqual( [
-			{ log_id: 'completed.p4', segments: [ { id: 5, size: 42 } ] },
-		] );
-		expect( v.lines ).toHaveLength( 0 );
-	} );
-
-	test( 'a TM_ERROR reply rejects the pending Promise', async () => {
-		const v = makeView( 'requestlog:view' );
-		const promise = new Promise( ( resolve, reject ) =>
-			v.replies.add( 'reqlog-op-802', resolve, reject )
-		);
-		v.fill(
-			catalogReply( 'reqlog-op-802', 'list_logs', 'nope-802', {
-				error: true,
-			} )
-		);
-		await expect( promise ).rejects.toThrow( 'nope-802' );
-	} );
-
-	test( 'a completed-request row carrying a seek ID breadcrumb is still appended', () => {
-		const v = makeView( 'requestlog:view' );
-		const m = rowMsg( row( { rid: 'r-seek-803', url: '/seek-803' } ) );
-		m[ ID ] = '9:1024:256';
-		v.fill( m );
-		expect( v.lines.map( ( e ) => e.rid ) ).toEqual( [ 'r-seek-803' ] );
-	} );
 } );
 
 // Seek/live feedback: only meaningful while browsing ONE partition dir, so it is

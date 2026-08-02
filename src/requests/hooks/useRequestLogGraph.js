@@ -30,6 +30,7 @@
 
 import { useRef, useState, useCallback } from '@wordpress/element';
 import {
+	Core,
 	CommandClient,
 	TYPE,
 	VALUE,
@@ -97,8 +98,11 @@ export function useRequestLogGraph( opts = {} ) {
 			const link = interpreter.makeNode( 'RemoteLink', LINK, [ GLOB ] );
 			// Pass-through Tee on the stream edge; copies each frame to view.
 			link.target = TEE;
-			link.client =
+			// The shared `_http` carries every command out; both ride it.
+			const client =
 				optsRef.current.commandClient || CommandClient.fromGlobal();
+			Core.node( '_http' ).client = client;
+			link.client = client;
 
 			const tee = interpreter.makeNode( 'Tee', TEE );
 			tee.connectNode( VIEW );

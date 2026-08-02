@@ -7,7 +7,7 @@
  *
  * The graph is built REAL (mountExospine + a RemoteLink + a settling view node);
  * catalog replies ride a CommandClient double whose postBatch addresses the reply
- * back along FROM so it routes interpreter → router → view.replies.settle.
+ * back along FROM so it routes interpreter → router → the Request node that asked.
  */
 
 import { renderHook, act } from '../../test-helpers/renderHook';
@@ -29,7 +29,7 @@ import {
 	forgetSession,
 	__setAuthFetch,
 } from '@newspack-nodes/runtime';
-import { PendingReplies } from '@newspack-nodes/shared/pendingReplies';
+import { installFakeCommandWire } from '@newspack-nodes/shared/test-utils/fakeCommandWire';
 import useGlobBrowse from '../useGlobBrowse';
 
 class FakeEventSource {
@@ -47,19 +47,16 @@ class FakeEventSource {
 	}
 }
 
-// Minimal settling view: swallows catalog replies, records control messages,
-// and can publish a seek view model (what the real view node would publish).
+// Minimal view: records control messages and rows, and can publish a seek
+// view model (what the real view node would publish). Catalog replies never
+// reach it — each is addressed to the Request node that asked.
 class FakeCatalogView extends Node {
 	constructor() {
 		super();
-		this.replies = new PendingReplies();
 		this.controls = [];
 		this.rows = [];
 	}
 	fill( message ) {
-		if ( this.replies.settle( message ) ) {
-			return;
-		}
 		const value = message[ VALUE ];
 		if ( value && value.action ) {
 			this.controls.push( value );
@@ -129,6 +126,9 @@ function buildGraph( payloadByVerb, errorVerbs ) {
 	const client = makeFakeClient( payloadByVerb, errorVerbs );
 	const link = interpreter.makeNode( 'RemoteLink', LINK, [ GLOB ] );
 	link.target = VIEW;
+	// The shared `_http` singleton carries every command out — the link's
+	// stream and the catalog Request nodes both ride it.
+	Core.node( '_http' ).client = client;
 	link.client = client;
 	const view = interpreter.makeNode( 'FakeCatalogView', VIEW );
 	const browseTargetRef = {
@@ -238,8 +238,10 @@ describe( 'useGlobBrowse — partition catalog', () => {
 		expect( result.current.segments ).toEqual( [ { id: 4, size: 96 } ] );
 	} );
 
+	// The catalog fetch has its own node, which raises a backbone if absent.
 	test( 'does not throw when the graph is absent', async () => {
 		Core.reset();
+		installFakeCommandWire( () => [] );
 		let hook;
 		await act( async () => {
 			hook = renderHook( ( props ) => useGlobBrowse( props ), {

@@ -1,5 +1,4 @@
 import { DecodedSliceViewNode } from './decoded-slice-view-node';
-import { PendingReplies } from '@newspack-nodes/shared/pendingReplies';
 
 /**
  * `urldetail:view` — owns the ON-DEMAND url_detail slice. Fetched on modal-open
@@ -8,14 +7,7 @@ import { PendingReplies } from '@newspack-nodes/shared/pendingReplies';
  * applies unchanged. React reads it via useNodeState('urldetail:view','view') in
  * <UrlDetailView>.
  *
- * It also owns a PendingReplies registry for the awaited fetchUrlBreakdown verb:
- * the hook stashes a `{ resolve, reject }` under the outbound message[ID], and
- * the base fill() settles the matching reply first — without touching the data
- * slice (a breakdown reply is the caller's Promise, not the modal's stats).
+ * The awaited fetchUrlBreakdown verb is a different node's job — a breakdown
+ * reply is that node's Promise, not this modal's stats.
  */
-export class UrlDetailViewNode extends DecodedSliceViewNode {
-	constructor() {
-		super();
-		this.replies = new PendingReplies();
-	}
-}
+export class UrlDetailViewNode extends DecodedSliceViewNode {}
