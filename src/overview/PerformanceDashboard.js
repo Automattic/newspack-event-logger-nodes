@@ -41,6 +41,9 @@ import { BLANK_RULE } from '../rules/constants';
 
 import UrlTable from './UrlTable';
 
+// No URL to name. canLogUrl tests for it — a hash here would offer a rule.
+const UNKNOWN_URL = () => __( 'Unknown URL', 'newspack-event-logger-nodes' );
+
 import './styles/modal.scss';
 import './styles/tables.scss';
 import './styles/charts.scss';
@@ -140,38 +143,37 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 		setServerNames( Array.from( names ).sort() );
 	}, [ serverBreakdownData, serverFilter ] );
 
-	// resolveRequestId for ?request= deep links; reaches resolveRequest by ref.
-	const resolveRequestId = useCallback( async ( rid ) => {
-		const data = await commandResolveRef.current?.( rid );
-		if ( ! data || ! data.url_hash || data.partition === undefined ) {
-			// Report the miss so the caller holds the intent for the retry.
-			return false;
+	// The one place a hash becomes a title; request_search sends no URL.
+	const urlObjForHash = useCallback( async ( hash ) => {
+		const known = urlsRef.current.find( ( u ) => u.hash === hash );
+		if ( known ) {
+			return known;
 		}
-		let urlObj = urlsRef.current.find( ( u ) => u.hash === data.url_hash );
-		if ( ! urlObj ) {
-			// request_search answers with a hash; url_detail holds the URL.
-			const resolved = await commandResolveUrlRef.current?.(
-				data.url_hash
-			);
-			urlObj = {
-				hash: data.url_hash,
-				// Sentinel, not the hash: canLogUrl tests for it.
-				url:
-					resolved?.url ||
-					__( 'Unknown URL', 'newspack-event-logger-nodes' ),
-			};
-		}
-		setRequestPartitionRef.current( data.partition );
-		selectUrlRef.current( urlObj );
-		selectRequestRef.current( rid );
-		return true;
+		const resolved = await commandResolveUrlRef.current?.( hash );
+		return { hash, url: resolved?.url || UNKNOWN_URL() };
 	}, [] );
 
-	// resolveUrlHash for ?url= deep links; reaches url_detail by ref.
-	const resolveUrlHash = useCallback(
-		( hash ) => commandResolveUrlRef.current?.( hash ) ?? null,
-		[]
+	// resolveRequestId for ?request= deep links; reaches resolveRequest by ref.
+	const resolveRequestId = useCallback(
+		async ( rid ) => {
+			const data = await commandResolveRef.current?.( rid );
+			if ( ! data || ! data.url_hash || data.partition === undefined ) {
+				// Report the miss so the caller holds the intent to retry.
+				return false;
+			}
+			setRequestPartitionRef.current( data.partition );
+			selectUrlRef.current( await urlObjForHash( data.url_hash ) );
+			selectRequestRef.current( rid );
+			return true;
+		},
+		[ urlObjForHash ]
 	);
+
+	// ?url= deep links; null = no answer, so the caller holds the intent.
+	const resolveUrlHash = useCallback( async ( hash ) => {
+		const resolved = await commandResolveUrlRef.current?.( hash );
+		return resolved ? { url: resolved.url || UNKNOWN_URL() } : null;
+	}, [] );
 
 	const {
 		selectedUrl,
@@ -263,15 +265,7 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 			setSearchResults( null );
 			const data = await commandResolveRef.current?.( rid.trim() );
 			if ( data && data.url_hash && data.partition !== undefined ) {
-				let urlObj = urls.find( ( u ) => u.hash === data.url_hash );
-				if ( ! urlObj ) {
-					urlObj = {
-						hash: data.url_hash,
-						url:
-							data.url ||
-							__( 'Unknown URL', 'newspack-event-logger-nodes' ),
-					};
-				}
+				const urlObj = await urlObjForHash( data.url_hash );
 				setRequestPartition( data.partition );
 				selectUrl( urlObj );
 				selectRequest( rid.trim() );
@@ -295,7 +289,7 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 			}
 			setSearchLoading( false );
 		},
-		[ urls, selectUrl, selectRequest, updateBrowserUrl ]
+		[ urlObjForHash, selectUrl, selectRequest, updateBrowserUrl ]
 	);
 
 	/**
@@ -484,9 +478,7 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 	const [ ruleError, setRuleError ] = useState( null );
 
 	const ruleUrl = selectedUrl?.url;
-	const canLogUrl =
-		!! ruleUrl &&
-		__( 'Unknown URL', 'newspack-event-logger-nodes' ) !== ruleUrl;
+	const canLogUrl = !! ruleUrl && UNKNOWN_URL() !== ruleUrl;
 	// Strip origin so exact rule matches REQUEST_URI ('?' = match sentinel).
 	const rulePath = ruleUrl ? ruleUrl.replace( /^https?:\/\/[^/]+/, '' ) : '';
 	// Append the sentinel only for a URL that lacks a '?'; else use path as-is.
