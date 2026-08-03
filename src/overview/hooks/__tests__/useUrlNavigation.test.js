@@ -37,6 +37,88 @@ describe( 'useUrlNavigation', () => {
 		pushSpy.mockRestore();
 	} );
 
+	// ── deep links must resolve hashes that are NOT in the loaded page ─────
+	//
+	// `urls` holds one page of the catalog (50 of ~1000). A deep link to a
+	// low-traffic URL — the case deep links are FOR — never appears in it, so
+	// searching the list silently opens nothing. Hash deliberately absent from
+	// URLS: a hash that happens to be loaded passes either way and proves
+	// nothing, which is exactly why this shipped.
+
+	it( 'resolves a ?url= hash that is not in the loaded page', async () => {
+		setLocation( 'http://localhost/wp-admin/?url=notinpage' );
+		const resolveUrlHash = jest
+			.fn()
+			.mockResolvedValue( { url: '/deep/link/target.webp' } );
+
+		const { result, unmount } = renderHook( () =>
+			useUrlNavigation( URLS, undefined, resolveUrlHash )
+		);
+		await act( async () => {} );
+
+		expect( resolveUrlHash ).toHaveBeenCalledWith( 'notinpage' );
+		expect( result.current.selectedUrl ).toEqual( {
+			hash: 'notinpage',
+			url: '/deep/link/target.webp',
+		} );
+		unmount();
+	} );
+
+	it( 'keeps the ?url= intent when a resolve attempt fails', async () => {
+		// The graph may not be connected on the first effect pass. Discarding
+		// the intent then makes the failure permanent and silent.
+		setLocation( 'http://localhost/wp-admin/?url=notinpage' );
+		const resolveUrlHash = jest
+			.fn()
+			.mockResolvedValueOnce( null )
+			.mockResolvedValue( { url: '/late/arrival' } );
+
+		// Each poll tick hands the hook a FRESH array — that is the retry
+		// signal in production, where urls arrives via useNodeState.
+		let tick = [ ...URLS ];
+		const { result, rerender, unmount } = renderHook( () =>
+			useUrlNavigation( tick, undefined, resolveUrlHash )
+		);
+		await act( async () => {} );
+		expect( result.current.selectedUrl ).toBeNull();
+
+		await act( async () => {
+			tick = [ ...URLS ];
+			rerender();
+		} );
+		await act( async () => {} );
+
+		expect( resolveUrlHash.mock.calls.length ).toBeGreaterThan( 1 );
+		expect( result.current.selectedUrl ).toEqual( {
+			hash: 'notinpage',
+			url: '/late/arrival',
+		} );
+		unmount();
+	} );
+
+	it( 'keeps the ?request= intent when the resolver reports failure', async () => {
+		setLocation( 'http://localhost/wp-admin/?request=abc123def4567890' );
+		const resolveRequestId = jest
+			.fn()
+			.mockResolvedValueOnce( false )
+			.mockResolvedValue( true );
+
+		let tick = [ ...URLS ];
+		const { rerender, unmount } = renderHook( () =>
+			useUrlNavigation( tick, resolveRequestId )
+		);
+		await act( async () => {} );
+
+		await act( async () => {
+			tick = [ ...URLS ];
+			rerender();
+		} );
+		await act( async () => {} );
+
+		expect( resolveRequestId.mock.calls.length ).toBeGreaterThan( 1 );
+		unmount();
+	} );
+
 	it( 'starts with no selection and exposes the API surface', () => {
 		const { result, unmount } = renderHook( () =>
 			useUrlNavigation( URLS )

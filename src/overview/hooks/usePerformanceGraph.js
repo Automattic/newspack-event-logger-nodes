@@ -500,6 +500,23 @@ export function usePerformanceGraph( opts = {} ) {
 		[ requestSearch ]
 	);
 
+	// resolveUrlHash — url_detail for a ?url= hash outside the loaded page.
+	const resolveUrlHash = useCallback(
+		async ( hash ) => {
+			if ( ! isValidHash( hash ) ) {
+				return null;
+			}
+			try {
+				return await flushed(
+					urlDetail( 'url_detail', urlDetailArgs( hash ) )
+				);
+			} catch ( err ) {
+				return null; // Caller holds the intent; the interval retries.
+			}
+		},
+		[ urlDetail ]
+	);
+
 	// fetchUrlBreakdown — per-URL dimensional series; null on bad hash/error.
 	const fetchUrlBreakdown = useCallback(
 		async ( hash, breakdown ) => {
@@ -570,6 +587,7 @@ export function usePerformanceGraph( opts = {} ) {
 	return {
 		handleUrlParamsChange,
 		resolveRequest,
+		resolveUrlHash,
 		fetchUrlBreakdown,
 		listRules,
 		upsertRule,

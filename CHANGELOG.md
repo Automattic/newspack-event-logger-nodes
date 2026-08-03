@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`?url=` and `?request=` deep links never opened their modal.** Both fired
+  exactly once, discarded the intent before the resolve settled, and failed
+  silently. `?url=` resolved its hash by searching `urls` — one page of the
+  catalog — so a deep link to a low-traffic URL, which is what deep links are
+  FOR, found nothing; `?request=` fired before the command graph was
+  necessarily connected, and one miss was permanent. The intent is now held
+  until a resolve settles, so the existing refresh interval retries, and a hash
+  outside the loaded page is resolved through `url_detail` rather than a list
+  lookup.
+
 ## [0.44.6] - 2026-08-03
 
 ### Fixed
