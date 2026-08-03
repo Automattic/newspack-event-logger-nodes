@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A `?url=` deep link titled the modal with the hash instead of the URL** —
+  but only when the hash was outside the loaded page, which is why it looked
+  intermittent. The in-page path selects a full index entry and has the URL;
+  the resolver path returned `url_detail`'s raw payload, which nests the URL
+  under `stats`, so the caller's `data.url` was undefined and it fell back to
+  the hash. `resolveUrlHash` now returns the documented `{ url }`, and returns
+  `null` when the reply carries no URL so the intent is held for the next
+  refresh rather than settled on a wrong title. An empty URL is an *answer*,
+  not a miss — retrying it would re-issue `url_detail` every tick forever and
+  never open the modal.
+- **A `?request=` deep link titled the modal "Unknown URL"** whenever the
+  request's URL was outside the loaded page — the same defect one path over.
+  `request_search` answers `{rid, partition, url_hash}` and never a URL, so the
+  fallback it was reaching for could not have fired. It now resolves the hash
+  through `url_detail`. The sentinel is kept when that fails rather than
+  falling back to the hash: `canLogUrl` compares against it, and a hash-titled
+  modal would offer to write a logging rule keyed on a hash.
+
+### Changed
+
+- The `?url=` hash resolver no longer requests the per-URL category series it
+  discarded. Selecting the URL refetches with the full argument set a moment
+  later, so every deep link was building that payload twice.
+
 ## [0.44.7] - 2026-08-03
 
 ### Fixed
