@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The performance dashboard read one partition of four.** Every disk-walking
+  verb — `request_search`, `request_detail`, `request_grep`, the recent-requests
+  URL walk — and the memcache stats fan-out looped to the global
+  `num_partitions`, which is 1 on the hub while the topology runs four workers.
+  Roughly three of every four rid links 404'd, and the overview showed a quarter
+  of the fleet's stats. They now resolve their partitions from the topology's
+  own declaration via `Bootstrap::node_dirs()` / `node_partitions()`, so nothing
+  in this plugin builds a `.p{N}` path or assumes where the partition token
+  sits.
+- **`wp nodes reqgrep` followed one partition of four**, the same bug on the CLI
+  surface. Partition dirs now come from `Log_Manager::firehose_dirs()`, the one
+  owner of the firehose layout; `--firehose` overrides route through it too.
+
+### Changed
+
+- **`request_search` tries the rid's own partition first.** A rid rides one hash
+  the whole way — the firehose Topic routes it by KEY, the worker on that
+  partition consumes it, Request_Builder writes it to the request partition of
+  the same index — so the hash names the partition outright and the remaining
+  fan-out is only a fallback for a reader whose count lags the writer's across a
+  re-partition.
+
 ## [0.44.5] - 2026-08-03
 
 ### Changed

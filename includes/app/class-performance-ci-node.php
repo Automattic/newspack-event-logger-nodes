@@ -31,15 +31,16 @@ namespace Newspack_Event_Logger_Nodes\App;
 use Newspack_Event_Logger_Nodes\Config as AppConfig;
 use Newspack_Event_Logger_Nodes\Flame_Builder_Node;
 use Newspack_Event_Logger_Nodes\Hook_Categorizer;
+use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\LRU_Cache;
 use Newspack_Event_Logger_Nodes\Reqgrep_Core;
 use Newspack_Event_Logger_Nodes\Request_Builder_Node;
 use Newspack_Event_Logger_Nodes\Rule_Set;
 use Newspack_Event_Logger_Nodes\Stats_Store;
+use Newspack_Nodes\Bootstrap;
 use Newspack_Nodes\Callback_Node;
 use Newspack_Nodes\Command_Args;
 use Newspack_Nodes\Command_Interpreter_Node;
-use Newspack_Nodes\Config as RuntimeConfig;
 use Newspack_Nodes\Consumer_Node;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
@@ -56,6 +57,17 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * missing-rid scan from walking unbounded numbers of firehose entries.
 	 */
 	public const MAX_INDEX_ENTRIES = 100000;
+
+	/**
+	 * TSL node names the disk-walking verbs resolve their partitions through.
+	 * The dirs come from the DECLARATION (`Bootstrap::node_dirs`), never from a
+	 * path this class builds: request-builder alone pins `alerts.p0` and
+	 * `gyroscope.p0` while `requests.p<partition>` expands, so any assumption
+	 * about the naming scheme is wrong for most of its partitions.
+	 */
+	private const NODE_FLAMES        = 'flames:partition';
+	private const NODE_FLAME_BUILDER = 'flame-builder';
+	private const NODE_REQUESTS      = 'requests:partition';
 
 	/** `request_grep` default / max matched-request results (bounds the reply). */
 	private const GREP_RESULT_LIMIT_DEFAULT = 20;
@@ -680,7 +692,10 @@ class Performance_CI_Node extends Service_CI_Node {
 	// Stats_Store helpers — fan out across partitions and merge.
 
 	/**
-	 * One Stats_Store per partition over the shared `Core::$memd` handle.
+	 * One Stats_Store per flame-builder worker over the shared `Core::$memd`
+	 * handle. `configure_stats <partition>` keys each store by the WORKER index,
+	 * and nothing of it lands on disk — so the index space comes from the
+	 * declaring topology's count, not from a dir listing.
 	 *
 	 * @return array<int,Stats_Store>
 	 */
@@ -688,10 +703,9 @@ class Performance_CI_Node extends Service_CI_Node {
 		if ( null === Core::$memd ) {
 			return [];
 		}
-		$num_partitions = Core::as_int( AppConfig::value( 'num_partitions' ), 1 );
-		$max_lifespan   = Core::as_int( AppConfig::value( 'min_lifetime' ), 86400 );
-		$stores         = [];
-		for ( $p = 0; $p < $num_partitions; $p++ ) {
+		$max_lifespan = Core::as_int( AppConfig::value( 'min_lifetime' ), 86400 );
+		$stores       = [];
+		foreach ( Bootstrap::node_partitions( self::NODE_FLAME_BUILDER ) as $p ) {
 			$stores[] = new Stats_Store( $p, $max_lifespan );
 		}
 		return $stores;
@@ -707,16 +721,12 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @return array<int,array<string,mixed>>
 	 */
 	private static function find_recent_requests_for_url( string $url_hash ): array {
-		$num_partitions = Core::as_int( AppConfig::value( 'num_partitions' ), 1 );
-		$base_dir       = RuntimeConfig::get_base_directory();
-		$log_base       = $base_dir . '/logs';
-
 		$requests      = [];
 		$entries_count = 0;
-		for ( $p = 0; $p < $num_partitions; $p++ ) {
+		foreach ( Bootstrap::node_dirs( self::NODE_REQUESTS ) as $p => $dir ) {
 			$partition = new Partition_Node();
 			self::name_scratch_partition( $partition, 'requests', $p );
-			$partition->arguments( [ "{$log_base}/requests.p{$p}" ] );
+			$partition->arguments( [ $dir ] );
 			$partition->with_index(
 				static function ( array $message, array $position ): ?string {
 					return Request_Builder_Node::format_index_entry( $message, $position );
@@ -771,15 +781,36 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
+	 * Request partitions to search for `$rid`, its own partition first.
+	 *
+	 * A rid rides the same hash the whole way: the firehose Topic routes it by
+	 * KEY, the worker on that partition consumes it, and Request_Builder writes
+	 * it to the request partition of the SAME index. So the hash names the
+	 * partition outright and the rest of the fan-out is a fallback — needed
+	 * because the guess uses the reader's partition count, which lags the
+	 * writer's across a re-partition.
+	 *
+	 * @return array<int,string> Partition index => dir, hashed partition first.
+	 */
+	private static function search_order( string $rid ): array {
+		$dirs = Bootstrap::node_dirs( self::NODE_REQUESTS );
+		$hit  = Partition_Node::hash_to_partition( $rid, \max( 1, \count( $dirs ) ) );
+		if ( ! isset( $dirs[ $hit ] ) ) {
+			return $dirs;
+		}
+		return [ $hit => $dirs[ $hit ] ] + $dirs;
+	}
+
+	/**
 	 * Locate a single request index entry by rid in one partition.
 	 * Returns the search shape `{rid, partition, url_hash}`.
 	 * @return array<string, mixed>
 	 */
-	private static function find_request_index_entry( string $log_base, int $partition, string $rid, int &$entries_count ): ?array {
+	private static function find_request_index_entry( string $dir, int $partition, string $rid, int &$entries_count ): ?array {
 		$result   = null;
 		$requests = new Partition_Node();
 		self::name_scratch_partition( $requests, 'requests', $partition );
-		$requests->arguments( [ "{$log_base}/requests.p{$partition}" ] );
+		$requests->arguments( [ $dir ] );
 		$requests->with_index(
 			static function ( array $message, array $position ): ?string {
 				return Request_Builder_Node::format_index_entry( $message, $position );
@@ -814,12 +845,12 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * PerfRequestsController::find_request_in_partition.
 	 * @return array<array-key, mixed>|null Decoded request body (keys come from the JSON envelope).
 	 */
-	private static function find_request_in_partition( string $log_base, int $partition, string $rid, int $num_partitions ): ?array {
+	private static function find_request_in_partition( string $dir, int $partition, string $rid ): ?array {
 		$result        = null;
 		$entries_count = 0;
 		$requests = new Partition_Node();
 		self::name_scratch_partition( $requests, 'requests', $partition );
-		$requests->arguments( [ "{$log_base}/requests.p{$partition}" ] );
+		$requests->arguments( [ $dir ] );
 		$requests->with_index(
 			static function ( array $message, array $position ): ?string {
 				return Request_Builder_Node::format_index_entry( $message, $position );
@@ -856,7 +887,7 @@ class Performance_CI_Node extends Service_CI_Node {
 			return null;
 		}
 
-		$flame = self::find_flame_for_rid( $log_base, $rid, $num_partitions );
+		$flame = self::find_flame_for_rid( $rid );
 		if ( null !== $flame ) {
 			$result['flame_data'] = $flame;
 		}
@@ -869,12 +900,12 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * into, so a per-rid lookup has to fan out across all of them.
 	 * @return array<array-key, mixed>|null Decoded flame blob (keys come from the JSON envelope).
 	 */
-	private static function find_flame_for_rid( string $log_base, string $rid, int $num_partitions ): ?array {
+	private static function find_flame_for_rid( string $rid ): ?array {
 		$entries_count = 0;
-		for ( $p = 0; $p < $num_partitions; $p++ ) {
+		foreach ( Bootstrap::node_dirs( self::NODE_FLAMES ) as $p => $dir ) {
 			$flames = new Partition_Node();
 			self::name_scratch_partition( $flames, 'flames', $p );
-			$flames->arguments( [ "{$log_base}/flames.p{$p}" ] );
+			$flames->arguments( [ $dir ] );
 			$flames->with_index(
 				static function ( array $message, array $position ): ?string {
 					return Flame_Builder_Node::format_index_entry( $message, $position );
@@ -946,9 +977,6 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @return array{pattern:string, scope:string, scanned_partitions:int, results:array<int,array<string,mixed>>, truncated:bool, result_count:int}
 	 */
 	private static function run_request_grep( string $pattern, int $limit ): array {
-		$num_partitions = Core::as_int( AppConfig::value( 'num_partitions' ), 1 );
-		$log_base       = RuntimeConfig::get_base_directory() . '/logs';
-
 		$results       = [];
 		$truncated     = false;
 		$scanned_lines = 0;
@@ -991,8 +1019,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		};
 
 		$scanned_partitions = 0;
-		for ( $p = 0; $p < $num_partitions; $p++ ) {
-			$source_dir = "{$log_base}/firehose.p{$p}";
+		foreach ( Log_Manager::firehose_dirs() as $p => $source_dir ) {
 			if ( ! \is_dir( $source_dir ) ) {
 				continue;
 			}
@@ -1366,13 +1393,9 @@ class Performance_CI_Node extends Service_CI_Node {
 					throw new \RuntimeException( 'rid required' );
 				}
 
-				$num_partitions = Core::as_int( AppConfig::value( 'num_partitions' ), 1 );
-				$base_dir       = RuntimeConfig::get_base_directory();
-				$log_base       = $base_dir . '/logs';
-				$scanned        = 0;
-
-				for ( $p = 0; $p < $num_partitions; $p++ ) {
-					$found = self::find_request_index_entry( $log_base, $p, $rid, $scanned );
+				$scanned = 0;
+				foreach ( self::search_order( $rid ) as $p => $dir ) {
+					$found = self::find_request_index_entry( $dir, $p, $rid, $scanned );
 					if ( null !== $found ) {
 						return $found;
 					}
@@ -1424,15 +1447,12 @@ class Performance_CI_Node extends Service_CI_Node {
 				}
 				$partition = (int) ( $parsed['options']['partition'] ?? 0 );
 
-				$num_partitions = Core::as_int( AppConfig::value( 'num_partitions' ), 1 );
-				$base_dir       = RuntimeConfig::get_base_directory();
-				$log_base       = $base_dir . '/logs';
-
-				if ( $partition < 0 || $partition >= $num_partitions ) {
+				$dirs = Bootstrap::node_dirs( self::NODE_REQUESTS );
+				if ( ! isset( $dirs[ $partition ] ) ) {
 					throw new \RuntimeException( 'invalid partition' );
 				}
 
-				$result = self::find_request_in_partition( $log_base, $partition, $rid, $num_partitions );
+				$result = self::find_request_in_partition( $dirs[ $partition ], $partition, $rid );
 				if ( null === $result ) {
 					throw new \RuntimeException( \esc_html( "Request not found: rid={$rid}" ) );
 				}

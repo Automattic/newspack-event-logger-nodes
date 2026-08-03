@@ -10,6 +10,7 @@
 
 namespace Newspack_Event_Logger_Nodes;
 
+use Newspack_Nodes\Bootstrap;
 use Newspack_Nodes\Topic_Node;
 use Newspack_Nodes\Partition_Node;
 use Newspack_Nodes\Callback_Node;
@@ -89,6 +90,9 @@ class Log_Manager {
 	 * and dropping the whole map. 256 keeps the full curated allowlist — even with
 	 * several oversized values — comfortably under MAX_DATA_SIZE. */
 	private const ENV_VALUE_MAX = 256;
+
+	/** TSL node name an aggregator hub declares its firehose Topic under. */
+	private const FIREHOSE_NODE = 'firehose:topic';
 
 	/** @var int Maximum data size in bytes for log entry data arrays. */
 	private const MAX_DATA_SIZE = 3840;
@@ -253,6 +257,44 @@ class Log_Manager {
 		return true;
 	}
 
+	/** Dir template for the firehose Topic. The one place its layout is written. */
+	private static function firehose_dir_template(): string {
+		return Config::get_logs_directory() . '/firehose.p{partition}';
+	}
+
+	/**
+	 * Firehose dirs indexed by partition, for readers (dashboard grep, reqgrep).
+	 *
+	 * init_firehose() builds this Topic in REQUEST scope, so on an ordinary site
+	 * no topology declares it and the global count is all there is. An
+	 * aggregator hub does declare one, and it re-partitions above that global —
+	 * so where a declaration exists it wins, and the reader spans what the hub
+	 * actually writes. Readers only; the writer stays on the cheap config read
+	 * because it runs on every request.
+	 *
+	 * `$log_path` is `reqgrep --firehose`'s override: a log base whose partitions
+	 * are its `.p{N}` siblings, expanded over the same index space.
+	 *
+	 * @return array<int,string>
+	 */
+	public static function firehose_dirs( string $log_path = '' ): array {
+		$declared = Bootstrap::node_dirs( self::FIREHOSE_NODE );
+		if ( '' === $log_path && [] !== $declared ) {
+			return $declared;
+		}
+		$template = '' === $log_path
+			? self::firehose_dir_template()
+			: (string) \preg_replace( '/\.log$/', '', $log_path ) . '.p{partition}';
+		$count    = [] !== $declared
+			? \count( $declared )
+			: \max( 1, Core::as_int( Config::value( 'num_partitions' ) ) );
+		$dirs     = [];
+		for ( $p = 0; $p < $count; $p++ ) {
+			$dirs[ $p ] = Core::resolve_partition_template( $template, $p );
+		}
+		return $dirs;
+	}
+
 	/**
 	 * Finish initialization
 	 */
@@ -267,7 +309,7 @@ class Log_Manager {
 			$_SERVER['UNIQUE_ID'] = $this->request_id;
 		}
 
-		$dir_template        = Config::get_logs_directory() . '/firehose.p{partition}';
+		$dir_template        = self::firehose_dir_template();
 		$num_partitions      = Core::as_int( Config::value( 'num_partitions' ) );
 		$num_partitions      = $num_partitions > 0 ? $num_partitions : 1;
 		$this->partition_idx = Partition_Node::hash_to_partition( $this->request_id, $num_partitions );

@@ -63,9 +63,15 @@ class PerformanceCITest extends TestCase {
 		global $wp_actions, $wp_filter;
 		$wp_actions = [];
 		$wp_filter  = [];
+		// The disk verbs resolve their partitions from the ACTIVE topology's
+		// declaration, so the tests need one active. One worker keeps every
+		// existing partition-0 assertion true. AFTER the $wp_filter reset above
+		// — it registers the catalog filter.
+		$this->activate_shipped_topology( 'combined', 1 );
 	}
 
 	protected function tearDown(): void {
+		\Newspack_Nodes\Topology_Registry::reset_basename_cache();
 		VerbHarness::reset();
 		Settings_Event_Writer::$append_seam = null;
 		$GLOBALS['_wp_options']       = [];
@@ -873,6 +879,87 @@ class PerformanceCITest extends TestCase {
 		);
 
 		$this->assertArrayNotHasKey( 'breakdown_time_series', $result );
+	}
+
+	// -------------------------------------------------------------------------
+	// Partition span: the dashboard reads a topology's OWN worker count, not
+	// the global `num_partitions`. The hub runs four workers on a global 1, so
+	// a reader looping to the global sees a quarter of the fleet. Both tests
+	// activate the SHIPPED topologies so a renamed node fails them.
+	// -------------------------------------------------------------------------
+
+	private function activate_shipped_topology( string $name, int $num_partitions ): void {
+		\Newspack_Nodes\Topology_Registry::reset_basename_cache();
+		// ELN's own dir first; the substrate's behind it, for `include topic-probe`.
+		\Newspack_Nodes\Topology_Registry::register_stock_dir( \dirname( __DIR__, 2 ) . '/topologies' );
+		\Newspack_Nodes\Topology_Registry::register_builtin_dir( \dirname( __DIR__, 3 ) . '/newspack-nodes/topologies' );
+		\add_filter(
+			'newspack_nodes/topologies',
+			static function ( array $topologies ) use ( $name, $num_partitions ): array {
+				$topologies[ $name ] = [ 'topology' => $name, 'num_partitions' => $num_partitions, 'stale_timeout' => 60 ];
+				return $topologies;
+			}
+		);
+		$GLOBALS['_wp_options']['newspack_nodes_topologies'] = [ $name ];
+		\Newspack_Nodes\Config::reset();
+	}
+
+	public function test_request_search_spans_the_topologys_own_worker_count(): void {
+		// Global num_partitions stays 1; combined runs 4. A rid living in p2 is
+		// invisible to a reader that loops to the global.
+		$this->activate_shipped_topology( 'combined', 4 );
+		$rid = $this->write_request(
+			[
+				'rid'            => 'rid-high-partition-000000000001',
+				'url'            => '/deep',
+				'timestamp'      => 1700000400,
+				'duration_ms'    => 20,
+				'status_code'    => 200,
+				'peak_mb'        => 3,
+				'request_method' => 'GET',
+			],
+			2
+		);
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'request_search', $rid );
+
+		$this->assertIsArray( $result );
+		$this->assertSame( 2, $result['partition'] );
+	}
+
+	public function test_request_search_tries_the_rids_own_partition_first(): void {
+		// This rid hashes to 3 of 4. Seeded in BOTH 3 and 0, an ascending scan
+		// returns 0 — only hash-first returns 3.
+		$this->activate_shipped_topology( 'combined', 4 );
+		$body = [
+			'rid'            => 'rid-hash-order-0000000000000001',
+			'url'            => '/hashed',
+			'timestamp'      => 1700000400,
+			'duration_ms'    => 20,
+			'status_code'    => 200,
+			'peak_mb'        => 3,
+			'request_method' => 'GET',
+		];
+		$this->assertSame( 3, \Newspack_Nodes\Partition_Node::hash_to_partition( $body['rid'], 4 ) );
+		$this->write_request( $body, 0 );
+		$rid = $this->write_request( $body, 3 );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'request_search', $rid );
+
+		$this->assertIsArray( $result );
+		$this->assertSame( 3, $result['partition'] );
+	}
+
+	public function test_stats_stores_span_the_topologys_own_worker_count(): void {
+		// flame-builder writes its stats to memcache keyed by worker index, so
+		// the store fan-out has to follow the topology count, not the global.
+		$this->activate_shipped_topology( 'combined', 3 );
+
+		$method = new \ReflectionMethod( Performance_CI_Node::class, 'stats_stores' );
+		/** @var array<int,Stats_Store> $stores */
+		$stores = $method->invoke( null );
+
+		$this->assertCount( 3, $stores );
 	}
 
 	// -------------------------------------------------------------------------

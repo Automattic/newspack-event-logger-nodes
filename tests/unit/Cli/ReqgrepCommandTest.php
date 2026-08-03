@@ -861,7 +861,7 @@ class ReqgrepCommandTest extends TestCase {
 				$ref->setValue( $cmd, $value );
 			};
 			$set( 'base_dir', $tmp );
-			$set( 'num_partitions', 1 );
+			$set( 'partition_dirs', [ "{$tmp}.p0" ] );
 			$set( 'cat_offset', 'start' );
 
 			$captured = $this->capture_output( $cmd );
@@ -909,7 +909,7 @@ class ReqgrepCommandTest extends TestCase {
 				$ref->setValue( $cmd, $value );
 			};
 			$set( 'base_dir', $tmp );
-			$set( 'num_partitions', 1 );
+			$set( 'partition_dirs', [ "{$tmp}.p0" ] );
 			$set( 'cat_offset', 'recent' );
 
 			$captured = $this->capture_output( $cmd );
@@ -934,7 +934,7 @@ class ReqgrepCommandTest extends TestCase {
 				$ref->setValue( $cmd, $value );
 			};
 			$set( 'base_dir', $tmp );
-			$set( 'num_partitions', 1 );
+			$set( 'partition_dirs', [ "{$tmp}.p0" ] );
 			$set( 'cat_offset', 'start' );
 
 			$captured = $this->capture_output( $cmd );
@@ -949,47 +949,67 @@ class ReqgrepCommandTest extends TestCase {
 		}
 	}
 
-	// -------------------------------------------------------------------------
-	// build_consumer: partition-dir derivation.
-	// -------------------------------------------------------------------------
+	public function test_cat_mode_spans_the_declared_topic_partition_count(): void {
+		// The firehose Topic re-partitions above the global count on an
+		// aggregator hub. Global stays 1; the Topic declares 4, and the request
+		// lives in p2 — invisible to a reader looping to the global.
+		$stock = $this->tmp . '/tsl';
+		\mkdir( $stock, 0755, true );
+		\file_put_contents(
+			"{$stock}/agg-wide.tsl",
+			"make_node Topic firehose:topic <config:logs_dir>/firehose.p{partition} 4\n"
+		);
+		\Newspack_Nodes\Topology_Registry::reset_basename_cache();
+		\Newspack_Nodes\Topology_Registry::register_stock_dir( $stock );
+		\add_filter(
+			'newspack_nodes/topologies',
+			static function ( array $topologies ): array {
+				$topologies['agg-wide'] = [ 'topology' => 'agg-wide', 'num_partitions' => 1, 'stale_timeout' => 60 ];
+				return $topologies;
+			}
+		);
+		\update_option( 'newspack_nodes_topologies', [ 'agg-wide' ] );
+		Config::reset();
+		\Newspack_Nodes\Config::reset();
 
-	public function test_build_consumer_targets_flat_partition_dir(): void {
-		$tmp = \Newspack_Nodes\Config::get_base_directory() . '/reqgrep-build-' . \uniqid();
-		\mkdir( "{$tmp}.p0", 0755, true );
 		try {
-			$cmd = $this->make_cmd();
-			$set = function ( string $prop, $value ) use ( $cmd ): void {
-				$ref = new \ReflectionProperty( $cmd, $prop );
-				$ref->setValue( $cmd, $value );
-			};
-			$set( 'base_dir', $tmp );
+			$logs = \Newspack_Nodes\Config::get_base_directory() . '/logs';
+			$this->seed_partition( "{$logs}/firehose.log", 2, [
+				[ 'n' => 1, 'rid' => 'wide-rid', 'k' => 'process (start)',    'm' => '/calendar/today', 'ts' => 1700000000.0 ],
+				[ 'n' => 5, 'rid' => 'wide-rid', 'k' => 'process (complete)', 'm' => '/calendar/today', 'ts' => 1700000000.5 ],
+			] );
 
-			$ref      = new \ReflectionMethod( $cmd, 'build_consumer' );
-			$consumer = $ref->invoke( $cmd, 0 );
+			$cmd = $this->make_cmd( '/calendar' );
+			$ref = new \ReflectionProperty( $cmd, 'partition_dirs' );
+			$ref->setValue( $cmd, \Newspack_Event_Logger_Nodes\Log_Manager::firehose_dirs() );
+			( new \ReflectionProperty( $cmd, 'cat_offset' ) )->setValue( $cmd, 'start' );
 
-			$src = new \ReflectionProperty( $consumer, 'source_dir' );
-			$this->assertSame( "{$tmp}.p0", $src->getValue( $consumer ) );
+			$captured = $this->capture_output( $cmd );
+			( new \ReflectionMethod( $cmd, 'cat_mode' ) )->invoke( $cmd );
+
+			$this->assertStringContainsString( 'wide-rid', self::joined( $captured ) );
 		} finally {
-			$this->rmdir_recursive( $tmp );
+			\Newspack_Nodes\Topology_Registry::reset_basename_cache();
+			\delete_option( 'newspack_nodes_topologies' );
+			Config::reset();
+			\Newspack_Nodes\Config::reset();
 		}
 	}
 
-	public function test_build_consumer_strips_log_suffix_from_base_dir(): void {
-		$tmp = \Newspack_Nodes\Config::get_base_directory() . '/reqgrep-build-log-' . \uniqid();
-		\mkdir( "{$tmp}/firehose.p1", 0755, true );
-		try {
-			$cmd = $this->make_cmd();
-			$set = function ( string $prop, $value ) use ( $cmd ): void {
-				$ref = new \ReflectionProperty( $cmd, $prop );
-				$ref->setValue( $cmd, $value );
-			};
-			$set( 'base_dir', "{$tmp}/firehose.log" );
+	// -------------------------------------------------------------------------
+	// build_consumer: reads the dir it is handed. The `.p{N}` derivation lives
+	// in Log_Manager::firehose_dirs — see LogManagerTest.
+	// -------------------------------------------------------------------------
 
-			$ref      = new \ReflectionMethod( $cmd, 'build_consumer' );
-			$consumer = $ref->invoke( $cmd, 1 );
+	public function test_build_consumer_reads_the_dir_it_is_given(): void {
+		$tmp = \Newspack_Nodes\Config::get_base_directory() . '/reqgrep-build-' . \uniqid();
+		\mkdir( "{$tmp}.p0", 0755, true );
+		try {
+			$consumer = ( new \ReflectionMethod( $this->make_cmd(), 'build_consumer' ) )
+				->invoke( $this->make_cmd(), "{$tmp}.p0" );
 
 			$src = new \ReflectionProperty( $consumer, 'source_dir' );
-			$this->assertSame( "{$tmp}/firehose.p1", $src->getValue( $consumer ) );
+			$this->assertSame( "{$tmp}.p0", $src->getValue( $consumer ) );
 		} finally {
 			$this->rmdir_recursive( $tmp );
 		}
@@ -1011,7 +1031,7 @@ class ReqgrepCommandTest extends TestCase {
 				$ref->setValue( $cmd, $value );
 			};
 			$set( 'base_dir', $tmp );
-			$set( 'num_partitions', 1 );
+			$set( 'partition_dirs', [ "{$tmp}.p0" ] );
 
 			// 0 iterations: seed the tail Consumers + log lines, no polling.
 			$ref = new \ReflectionMethod( $cmd, 'follow_mode' );
@@ -1040,7 +1060,7 @@ class ReqgrepCommandTest extends TestCase {
 				$ref->setValue( $cmd, $value );
 			};
 			$set( 'base_dir', $tmp );
-			$set( 'num_partitions', 1 );
+			$set( 'partition_dirs', [ "{$tmp}.p0" ] );
 
 			$ref = new \ReflectionMethod( $cmd, 'follow_mode' );
 			$ref->invoke( $cmd, 0 );
@@ -1069,7 +1089,7 @@ class ReqgrepCommandTest extends TestCase {
 				$ref->setValue( $cmd, $value );
 			};
 			$set( 'base_dir', $tmp );
-			$set( 'num_partitions', 1 );
+			$set( 'partition_dirs', [ "{$tmp}.p0" ] );
 
 			$ref = new \ReflectionMethod( $cmd, 'follow_mode' );
 			$captured = $this->capture_output( $cmd );
