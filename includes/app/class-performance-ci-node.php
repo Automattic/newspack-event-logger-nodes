@@ -1448,6 +1448,10 @@ class Performance_CI_Node extends Service_CI_Node {
 				$partition = (int) ( $parsed['options']['partition'] ?? 0 );
 
 				$dirs = Bootstrap::node_dirs( self::NODE_REQUESTS );
+				// No declared set: unfindable rid, not a bad partition.
+				if ( [] === $dirs ) {
+					throw new \RuntimeException( \esc_html( "Request not found: rid={$rid}" ) );
+				}
 				if ( ! isset( $dirs[ $partition ] ) ) {
 					throw new \RuntimeException( 'invalid partition' );
 				}

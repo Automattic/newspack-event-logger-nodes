@@ -950,6 +950,19 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( 3, $result['partition'] );
 	}
 
+	public function test_request_detail_says_not_found_when_no_topology_is_active(): void {
+		// Nothing declares requests:partition, so there is no partition set to
+		// be outside of. "invalid partition" blames the caller for a request
+		// that is merely unfindable.
+		\update_option( 'newspack_nodes_topologies', [] );
+		\Newspack_Nodes\Config::reset();
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'request_detail', 'some-rid' );
+
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( 'not found', \strtolower( $result ) );
+	}
+
 	public function test_stats_stores_span_the_topologys_own_worker_count(): void {
 		// flame-builder writes its stats to memcache keyed by worker index, so
 		// the store fan-out has to follow the topology count, not the global.

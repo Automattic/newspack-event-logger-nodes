@@ -2291,6 +2291,45 @@ class LogManagerTest extends TestCase {
 		);
 	}
 
+	public function test_firehose_dirs_union_a_narrower_declaration_with_the_global_span(): void {
+		// init_firehose() still hashes the rid over the GLOBAL count and writes
+		// there on every request. A topology that pins a LOWER count than the
+		// global must widen the reader's span, never narrow it — returning the
+		// declaration alone is the same silent under-read, inverted.
+		$this->use_base_dir( self::TEST_DIR, [ 'num_partitions' => 3 ] );
+		$stock = self::TEST_DIR . '/tsl';
+		\mkdir( $stock, 0755, true );
+		\file_put_contents(
+			"{$stock}/narrow.tsl",
+			"make_node Topic firehose:topic <config:logs_dir>/firehose.p{partition} 1\n"
+		);
+		\Newspack_Nodes\Topology_Registry::reset_basename_cache();
+		\Newspack_Nodes\Topology_Registry::register_stock_dir( $stock );
+		\add_filter(
+			'newspack_nodes/topologies',
+			static function ( array $topologies ): array {
+				$topologies['narrow'] = [ 'topology' => 'narrow', 'num_partitions' => 1, 'stale_timeout' => 60 ];
+				return $topologies;
+			}
+		);
+		\update_option( 'newspack_nodes_topologies', [ 'narrow' ] );
+		\Newspack_Nodes\Config::reset();
+
+		try {
+			$dirs = Log_Manager::firehose_dirs();
+
+			$logs = \Newspack_Nodes\Core::resolve_config_token( 'config', 'logs_dir' );
+			$this->assertSame(
+				[ "{$logs}/firehose.p0", "{$logs}/firehose.p1", "{$logs}/firehose.p2" ],
+				\array_values( $dirs )
+			);
+		} finally {
+			\Newspack_Nodes\Topology_Registry::reset_basename_cache();
+			\delete_option( 'newspack_nodes_topologies' );
+			\Newspack_Nodes\Config::reset();
+		}
+	}
+
 	public function test_firehose_dirs_override_strips_the_log_suffix(): void {
 		$this->use_base_dir( self::TEST_DIR, [ 'num_partitions' => 2 ] );
 
