@@ -71,8 +71,10 @@ tests/run-coverage.sh
 npm run lint:php
 npm run lint:js
 
-# Opt-in dead-code audit (NOT in the lint gate) — PHP, then JS. Most findings
-# are public API / test seams, not real dead code; verify every call path first.
+# Dead-code audit — PHP, then JS. BOTH are gated in pre-commit on staged files.
+# Tests are excluded as consumers, so an export only its test imports reads as
+# unused — mark those `@testonly` in the docblock. Most findings are public API
+# or test seams, not real dead code; verify every call path first.
 # knip's jest plugin is off, so a module reachable only from its own test reads
 # as dead — the same rule phpstan-deadcode applies. knip also cannot parse JSX
 # in a `.js` file, which drops that file's `import()` expressions, so each

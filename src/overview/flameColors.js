@@ -12,7 +12,9 @@ const FRACTION_PER_DEPTH = 0.13;
 const MAX_FRACTION = 0.65;
 
 // Label text colors: near-black on bright shades, near-white on deep.
+/** @testonly Exported for FlameGraph-colors.test.js. */
 export const DARK_TEXT = '#0b140d';
+/** @testonly Exported for FlameGraph-colors.test.js. */
 export const LIGHT_TEXT = '#eafff1';
 
 // Luminance threshold below which a shade needs light text.
@@ -23,6 +25,7 @@ const LUMINANCE_THRESHOLD = 0.5;
  *
  * @param {string} color Hex (with or without leading #) or `rgb(...)` string.
  * @return {{r: number, g: number, b: number}} RGB channels (0-255).
+ * @testonly Exported for FlameGraph-colors.test.js; callers use textOn().
  */
 export const parseColor = ( color ) => {
 	const str = String( color ).trim();
@@ -84,6 +87,7 @@ export const shadeForDepth = ( depth, accent, bg ) => {
  *
  * @param {{r: number, g: number, b: number}} rgb RGB channels (0-255).
  * @return {number} Relative luminance, 0 (black) to 1 (white).
+ * @testonly Exported for FlameGraph-colors.test.js; callers use textOn().
  */
 export const relativeLuminance = ( { r, g, b } ) =>
 	( 0.2126 * r + 0.7152 * g + 0.0722 * b ) / 255;
