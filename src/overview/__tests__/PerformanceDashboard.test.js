@@ -70,8 +70,9 @@ const mockNavState = {
 };
 jest.mock( '../hooks/useUrlNavigation', () => ( {
 	__esModule: true,
-	default: ( _urls, resolveRequestId ) => {
+	default: ( _urls, resolveRequestId, resolveUrlHash ) => {
 		globalThis.__resolveRequestId = resolveRequestId;
+		globalThis.__resolveUrlHash = resolveUrlHash;
 		return mockNavState;
 	},
 } ) );
@@ -678,7 +679,6 @@ describe( 'PerformanceDashboard', () => {
 		mockGraph.resolveRequest.mockResolvedValue( {
 			url_hash: 'h1',
 			partition: 0,
-			url: '/foo',
 		} );
 		mockView = loadedView();
 		const { unmount } = renderComponent(
@@ -827,6 +827,53 @@ describe( 'PerformanceDashboard', () => {
 		expect( mockNavState.setInitialSearchQuery ).toHaveBeenCalledWith(
 			null
 		);
+		unmount();
+	} );
+
+	it( 'searchRequest resolves an off-page hash the same way the deep link does', async () => {
+		// The search box is the third caller of this block. It had the same
+		// always-undefined `data.url` the ?request= path did.
+		mockGraph.resolveRequest.mockResolvedValue( {
+			url_hash: 'h-offpage',
+			partition: 1,
+		} );
+		mockGraph.resolveUrlHash.mockResolvedValue( {
+			url: '/quokka/census-2026',
+		} );
+		mockView = loadedView();
+		const { unmount } = renderComponent(
+			React.createElement( PerformanceDashboard, {
+				onError: jest.fn(),
+			} )
+		);
+		await flushEffects();
+		await act( async () => {
+			await globalThis.__overviewProps.onSearch( 'rid-search' );
+		} );
+		expect( mockGraph.resolveUrlHash ).toHaveBeenCalledWith( 'h-offpage' );
+		expect( mockNavState.selectUrl ).toHaveBeenCalledWith( {
+			hash: 'h-offpage',
+			url: '/quokka/census-2026',
+		} );
+		unmount();
+	} );
+
+	it( 'the ?url= resolver applies the sentinel, never a hash title', async () => {
+		// A hash title is not merely ugly: canLogUrl only rejects the
+		// sentinel, so a hash would offer to write a rule keyed on `<hash>?`.
+		mockGraph.resolveUrlHash.mockResolvedValue( { url: '' } );
+		mockView = loadedView();
+		const { unmount } = renderComponent(
+			React.createElement( PerformanceDashboard, {
+				onError: jest.fn(),
+			} )
+		);
+		await flushEffects();
+		let resolved;
+		await act( async () => {
+			resolved = await globalThis.__resolveUrlHash( 'h-empty' );
+		} );
+		expect( resolved ).toEqual( { url: 'Unknown URL' } );
 		unmount();
 	} );
 

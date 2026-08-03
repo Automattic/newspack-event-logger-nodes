@@ -27,6 +27,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   falling back to the hash: `canLogUrl` compares against it, and a hash-titled
   modal would offer to write a logging rule keyed on a hash.
 
+- **The dashboard search box had the same defect as both deep links.** Typing a
+  rid whose URL sat outside the loaded page titled the modal "Unknown URL" too —
+  it was the third copy of one block, and only two were fixed. All three now go
+  through a single `urlObjForHash`, and the unknown-URL sentinel is applied in
+  one place and compared in one place. `useUrlNavigation` no longer falls back
+  to the hash: a hash title passed `canLogUrl` and offered to write a logging
+  rule keyed on `<hash>?`.
+
 ### Changed
 
 - The `?url=` hash resolver no longer requests the per-URL category series it

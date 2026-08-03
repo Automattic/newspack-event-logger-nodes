@@ -51,7 +51,9 @@ const updateBrowserUrl = ( params ) => {
  *                                      isn't — owner resolves the URL hash and
  *                                      selects both. Return false to report a
  *                                      miss so the intent is held for a retry.
- * @param {Function} [resolveUrlHash]   Optional async (hash) -> {url}|null.
+ * @param {Function} [resolveUrlHash]   Optional async (hash) -> {url}|null. The
+ *                                      url is display-ready: the resolver owns
+ *                                      the unknown-URL fallback, not this hook.
  *                                      Answers for a hash outside the loaded
  *                                      page. Null holds the intent.
  * @return {Object} Navigation state and callbacks.
@@ -133,10 +135,7 @@ export default function useUrlNavigation(
 					if ( ! data ) {
 						return; // Keep the intent; the next tick retries.
 					}
-					selectUrl( {
-						hash: initialUrlHash,
-						url: data.url || initialUrlHash,
-					} );
+					selectUrl( { hash: initialUrlHash, url: data.url } );
 					if ( initialRequestId ) {
 						selectRequest( initialRequestId );
 					}
