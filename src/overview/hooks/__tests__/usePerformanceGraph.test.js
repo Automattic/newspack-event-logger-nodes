@@ -434,6 +434,100 @@ describe( 'usePerformanceGraph — resolveRequest & fetchUrlBreakdown (awaited)'
 		expect( breakdowns ).toHaveLength( 0 );
 		expect( client.batches.flat().length ).toBe( before );
 	} );
+
+	test( 'resolveUrlHash returns the URL, which url_detail nests under stats', async () => {
+		// useUrlNavigation reads `.url` and falls back to the hash, so a raw
+		// payload here titles the modal with the hash. The URL below must not
+		// equal that fallback, or the bug passes.
+		const client = makeFakeClient( {
+			url_detail: {
+				stats: { hash: 'b4dc0ffee', url: '/quokka/census-2026' },
+				requests: [],
+			},
+		} );
+		let api;
+		renderHook(
+			( p ) => {
+				api = usePerformanceGraph( p );
+				return api;
+			},
+			{ initialProps: { commandClient: client } }
+		);
+		await act( async () => {} );
+		let resolved;
+		await act( async () => {
+			resolved = await api.resolveUrlHash( 'b4dc0ffee' );
+		} );
+		expect( resolved.url ).toBe( '/quokka/census-2026' );
+	} );
+
+	test( 'resolveUrlHash settles on a known-empty URL instead of retrying forever', async () => {
+		// An indexed entry whose url is '' is answerable — null here would
+		// re-issue url_detail every refresh tick and never open the modal.
+		const client = makeFakeClient( {
+			url_detail: { stats: { hash: 'b4dc0ffee', url: '' } },
+		} );
+		let api;
+		renderHook(
+			( p ) => {
+				api = usePerformanceGraph( p );
+				return api;
+			},
+			{ initialProps: { commandClient: client } }
+		);
+		await act( async () => {} );
+		let resolved;
+		await act( async () => {
+			resolved = await api.resolveUrlHash( 'b4dc0ffee' );
+		} );
+		expect( resolved ).toEqual( { url: '' } );
+	} );
+
+	test( 'resolveUrlHash does not ask for the category series it throws away', async () => {
+		// It reads one string. Selecting the URL immediately refetches with
+		// the full arg set, so asking for categories here pays for it twice.
+		const client = makeFakeClient( {
+			url_detail: { stats: { hash: 'b4dc0ffee', url: '/x' } },
+		} );
+		let api;
+		renderHook(
+			( p ) => {
+				api = usePerformanceGraph( p );
+				return api;
+			},
+			{ initialProps: { commandClient: client } }
+		);
+		await act( async () => {} );
+		await act( async () => {
+			await api.resolveUrlHash( 'b4dc0ffee' );
+		} );
+		const detail = findVerb( client.batches, 'url_detail' );
+		expect(
+			parseCommandArgs( detail[ VALUE ].arguments ).options.categories
+		).toBeUndefined();
+	} );
+
+	test( 'resolveUrlHash holds the intent when the reply carries no URL', async () => {
+		// Null keeps the ?url= intent alive for the next refresh tick. Anything
+		// truthy settles it, and settles it on a title that is not the URL.
+		const client = makeFakeClient( {
+			url_detail: { stats: { hash: 'b4dc0ffee' }, requests: [] },
+		} );
+		let api;
+		renderHook(
+			( p ) => {
+				api = usePerformanceGraph( p );
+				return api;
+			},
+			{ initialProps: { commandClient: client } }
+		);
+		await act( async () => {} );
+		let resolved;
+		await act( async () => {
+			resolved = await api.resolveUrlHash( 'b4dc0ffee' );
+		} );
+		expect( resolved ).toBeNull();
+	} );
 } );
 
 describe( 'usePerformanceGraph — rules commands (_http/rules)', () => {

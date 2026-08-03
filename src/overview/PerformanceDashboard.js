@@ -149,10 +149,15 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 		}
 		let urlObj = urlsRef.current.find( ( u ) => u.hash === data.url_hash );
 		if ( ! urlObj ) {
+			// request_search answers with a hash; url_detail holds the URL.
+			const resolved = await commandResolveUrlRef.current?.(
+				data.url_hash
+			);
 			urlObj = {
 				hash: data.url_hash,
+				// Sentinel, not the hash: canLogUrl tests for it.
 				url:
-					data.url ||
+					resolved?.url ||
 					__( 'Unknown URL', 'newspack-event-logger-nodes' ),
 			};
 		}

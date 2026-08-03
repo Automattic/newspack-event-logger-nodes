@@ -94,6 +94,9 @@ function armTimer( timer, intervalMs ) {
 const urlDetailArgs = ( hash ) =>
 	formatCommandArgs( [ hash ], { categories: true } );
 
+// NOT urlDetailArgs: the resolver reads one string, and selecting refetches.
+const urlLookupArgs = ( hash ) => formatCommandArgs( [ hash ] );
+
 // Validation guards for command args.
 const isValidHash = ( h ) => 'string' === typeof h && /^[a-f0-9]+$/.test( h );
 const isValidRequestId = ( r ) =>
@@ -507,9 +510,12 @@ export function usePerformanceGraph( opts = {} ) {
 				return null;
 			}
 			try {
-				return await flushed(
-					urlDetail( 'url_detail', urlDetailArgs( hash ) )
+				const payload = await flushed(
+					urlDetail( 'url_detail', urlLookupArgs( hash ) )
 				);
+				// stats.url is the URL; '' is an ANSWER, undefined is a retry.
+				const url = payload?.stats?.url;
+				return undefined === url ? null : { url };
 			} catch ( err ) {
 				return null; // Caller holds the intent; the interval retries.
 			}

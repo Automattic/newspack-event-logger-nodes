@@ -44,6 +44,7 @@ jest.mock( '@newspack-nodes/runtime', () => ( {
 const mockGraph = {
 	handleUrlParamsChange: jest.fn(),
 	resolveRequest: jest.fn().mockResolvedValue( null ),
+	resolveUrlHash: jest.fn().mockResolvedValue( null ),
 	fetchUrlBreakdown: jest.fn().mockResolvedValue( null ),
 	listRules: jest.fn().mockResolvedValue( { rules: [] } ),
 	upsertRule: jest.fn().mockResolvedValue( { rule: {} } ),
@@ -249,6 +250,8 @@ describe( 'PerformanceDashboard', () => {
 		mockGraph.handleUrlParamsChange.mockClear();
 		mockGraph.resolveRequest.mockReset();
 		mockGraph.resolveRequest.mockResolvedValue( null );
+		mockGraph.resolveUrlHash.mockReset();
+		mockGraph.resolveUrlHash.mockResolvedValue( null );
 		mockGraph.fetchUrlBreakdown.mockClear();
 		mockGraph.listRules.mockReset();
 		mockGraph.listRules.mockResolvedValue( { rules: [] } );
@@ -717,7 +720,6 @@ describe( 'PerformanceDashboard', () => {
 		mockGraph.resolveRequest.mockResolvedValue( {
 			url_hash: 'h-known',
 			partition: 2,
-			url: '/known',
 		} );
 		mockView = loadedView( {
 			urls: {
@@ -744,12 +746,73 @@ describe( 'PerformanceDashboard', () => {
 		unmount();
 	} );
 
+	it( 'resolveRequestId asks url_detail for a hash outside the loaded page', async () => {
+		// request_search answers {rid, partition, url_hash} — never a url. A
+		// deep-linked request whose URL is off the loaded page therefore has
+		// no title unless the hash is resolved, which is what this asserts.
+		mockGraph.resolveRequest.mockResolvedValue( {
+			url_hash: 'h-offpage',
+			partition: 3,
+		} );
+		mockGraph.resolveUrlHash.mockResolvedValue( {
+			url: '/quokka/census-2026',
+		} );
+		mockView = loadedView( {
+			urls: {
+				data: [ { hash: 'h-known', url: '/known' } ],
+				total: 1,
+				loading: false,
+				error: null,
+			},
+		} );
+		const { unmount } = renderComponent(
+			React.createElement( PerformanceDashboard, {
+				onError: jest.fn(),
+			} )
+		);
+		await flushEffects();
+		await act( async () => {
+			await globalThis.__resolveRequestId( 'rid-offpage' );
+		} );
+		expect( mockGraph.resolveUrlHash ).toHaveBeenCalledWith( 'h-offpage' );
+		expect( mockNavState.selectUrl ).toHaveBeenCalledWith( {
+			hash: 'h-offpage',
+			url: '/quokka/census-2026',
+		} );
+		unmount();
+	} );
+
+	it( 'resolveRequestId keeps the Unknown URL sentinel when the hash will not resolve', async () => {
+		// The sentinel is load-bearing: canLogUrl compares against it to
+		// disable "Log this URL". Titling with the raw hash would re-enable
+		// the button and offer to write a rule whose pattern is a hash.
+		mockGraph.resolveRequest.mockResolvedValue( {
+			url_hash: 'h-offpage',
+			partition: 3,
+		} );
+		mockGraph.resolveUrlHash.mockResolvedValue( null );
+		mockView = loadedView();
+		const { unmount } = renderComponent(
+			React.createElement( PerformanceDashboard, {
+				onError: jest.fn(),
+			} )
+		);
+		await flushEffects();
+		await act( async () => {
+			await globalThis.__resolveRequestId( 'rid-offpage' );
+		} );
+		expect( mockNavState.selectUrl ).toHaveBeenCalledWith( {
+			hash: 'h-offpage',
+			url: 'Unknown URL',
+		} );
+		unmount();
+	} );
+
 	it( 'runs and clears the initial search query from URL navigation', async () => {
 		mockNavState.initialSearchQuery = 'rid-initial';
 		mockGraph.resolveRequest.mockResolvedValue( {
 			url_hash: 'missing-hash',
 			partition: 0,
-			url: '/from-search',
 		} );
 		mockView = loadedView();
 		const { unmount } = renderComponent(
