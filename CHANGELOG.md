@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.44.7] - 2026-08-03
+
 ### Fixed
 
 - **`?url=` and `?request=` deep links never opened their modal.** Both fired
