@@ -2272,6 +2272,36 @@ class LogManagerTest extends TestCase {
 		$this->assertSame( 'akismet', $this->invoke_extract_plugin_slug( $nested ) );
 	}
 
+	// -------------------------------------------------------------------------
+	// firehose_dirs — the one owner of the firehose layout. Readers (dashboard
+	// grep, reqgrep) resolve their partitions through it rather than each
+	// rebuilding `.p{N}` and looping to the global count.
+	// -------------------------------------------------------------------------
+
+	public function test_firehose_dirs_span_the_global_count_when_no_topology_declares_one(): void {
+		// 3 is distinct from the 1 a missing key would fall back to.
+		$this->use_base_dir( self::TEST_DIR, [ 'num_partitions' => 3 ] );
+
+		$dirs = Log_Manager::firehose_dirs();
+
+		$logs = \Newspack_Nodes\Core::resolve_config_token( 'config', 'logs_dir' );
+		$this->assertSame(
+			[ "{$logs}/firehose.p0", "{$logs}/firehose.p1", "{$logs}/firehose.p2" ],
+			\array_values( $dirs )
+		);
+	}
+
+	public function test_firehose_dirs_override_strips_the_log_suffix(): void {
+		$this->use_base_dir( self::TEST_DIR, [ 'num_partitions' => 2 ] );
+
+		$dirs = Log_Manager::firehose_dirs( '/somewhere/else/firehose.log' );
+
+		$this->assertSame(
+			[ '/somewhere/else/firehose.p0', '/somewhere/else/firehose.p1' ],
+			\array_values( $dirs )
+		);
+	}
+
 	public function test_extract_plugin_slug_strips_php_suffix_for_single_file_plugin(): void {
 		// Single-file plugin directly under WP_PLUGIN_DIR — slug strips `.php`.
 		$path = \WP_PLUGIN_DIR . '/hello.php';

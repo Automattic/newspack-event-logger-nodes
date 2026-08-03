@@ -48,6 +48,7 @@ namespace Newspack_Event_Logger_Nodes\CLI;
 use Newspack_Event_Logger_Nodes\Config;
 use Newspack_Nodes\Core;
 use Newspack_Event_Logger_Nodes\LRU_Cache;
+use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Reqgrep_Core;
 use Newspack_Nodes\Callback_Node;
 use Newspack_Nodes\Consumer_Node;
@@ -88,9 +89,6 @@ class Reqgrep_Command {
 	 */
 	private string $cat_offset = 'start';
 
-	/** @var array<string, mixed> Loaded config snapshot. */
-	private array $config = [];
-
 	/** Formatting state — current indent column. */
 	private int $fmt_indent = 0;
 
@@ -112,8 +110,8 @@ class Reqgrep_Command {
 	/** History bucket count. */
 	private int $num_buckets = 10;
 
-	/** Number of partitions to walk. */
-	private int $num_partitions = 1;
+	/** @var array<int,string> Firehose partition dirs to walk, indexed by partition. */
+	private array $partition_dirs = [];
 
 	/** Search pattern (positional arg, default '.'). */
 	private string $pattern = '.';
@@ -187,11 +185,10 @@ class Reqgrep_Command {
 		$follow              = isset( $assoc_args['follow'] );
 		$this->cat_offset    = isset( $assoc_args['recent'] ) ? 'recent' : 'start';
 
-		$this->config         = Config::load_config();
 		$path_arg             = $assoc_args['firehose'] ?? null;
-		$this->base_dir       = \is_string( $path_arg ) ? $path_arg : Config::get_logs_directory() . '/firehose.log';
-		$num_partitions_cfg   = $this->config['num_partitions'] ?? 1;
-		$this->num_partitions = Core::num_int( $num_partitions_cfg );
+		$override             = \is_string( $path_arg ) ? $path_arg : '';
+		$this->base_dir       = '' !== $override ? $override : Config::get_logs_directory() . '/firehose.log';
+		$this->partition_dirs = Log_Manager::firehose_dirs( $override );
 
 		// LRU_Cache: 300 slots, 60s rotation, on-evict prints [incomplete].
 		$this->inflight = ( new LRU_Cache( self::INFLIGHT_BUCKET_SIZE, self::INFLIGHT_NUM_BUCKETS ) )
@@ -564,13 +561,13 @@ class Reqgrep_Command {
 	 * SIGINT). Tests pass a small number to bound the drain loop.
 	 */
 	private function follow_mode( int $max_iterations = \PHP_INT_MAX ): void {
-		for ( $p = 0; $p < $this->num_partitions; $p++ ) {
-			$consumer = $this->build_consumer( $p );
+		foreach ( $this->partition_dirs as $dir ) {
+			$consumer = $this->build_consumer( $dir );
 			$consumer->next_offset( 'end' ); // Tail — don't replay history on attach.
 		}
 
 		\WP_CLI::log( 'Base dir: ' . $this->base_dir );
-		\WP_CLI::log( 'Following ' . $this->num_partitions . ' partition(s)... (Ctrl+C to stop)' );
+		\WP_CLI::log( 'Following ' . \count( $this->partition_dirs ) . ' partition(s)... (Ctrl+C to stop)' );
 
 		$framework = Event_Framework::instance();
 		$framework->install_signal_handlers();
@@ -583,17 +580,15 @@ class Reqgrep_Command {
 	}
 
 	/**
-	 * Build an ephemeral Consumer over one firehose partition. The partition dir
-	 * is the log basename with `.log` stripped plus `.p{N}` (matching the
-	 * firehose layout); the sink is a Callback_Node that routes each unpacked
-	 * Message to process_message. No offsetlog — a reqgrep run keeps no durable
-	 * cursor.
+	 * Build an ephemeral Consumer over one firehose partition dir (resolved by
+	 * Log_Manager::firehose_dirs, which owns the layout). The sink is a
+	 * Callback_Node that routes each unpacked Message to process_message. No
+	 * offsetlog — a reqgrep run keeps no durable cursor.
 	 *
-	 * @param int $partition Partition index.
+	 * @param string $source_dir Concrete partition dir.
 	 */
-	private function build_consumer( int $partition ): Consumer_Node {
-		$source_dir = \preg_replace( '/\.log$/', '', $this->base_dir ) . ".p{$partition}";
-		$sink       = new Callback_Node( $this->process_message( ... ) );
+	private function build_consumer( string $source_dir ): Consumer_Node {
+		$sink = new Callback_Node( $this->process_message( ... ) );
 		$consumer = new Consumer_Node();
 		$consumer->sink( $sink );
 		$consumer->arguments( [ $source_dir ] );
@@ -606,8 +601,8 @@ class Reqgrep_Command {
 	 * start. Flush incomplete requests once every partition is exhausted.
 	 */
 	private function cat_mode(): void {
-		for ( $p = 0; $p < $this->num_partitions; $p++ ) {
-			$consumer = $this->build_consumer( $p );
+		foreach ( $this->partition_dirs as $dir ) {
+			$consumer = $this->build_consumer( $dir );
 			if ( 'recent' === $this->cat_offset ) {
 				$consumer->next_offset( 'recent' );
 			}
