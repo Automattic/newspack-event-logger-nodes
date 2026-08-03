@@ -41,9 +41,9 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	if ( ! \class_exists( '\\Newspack_Nodes\\Bootstrap' ) ) {
 		return;
 	}
-	// Substrate handshake: dormant when too old (no notice API pre-0.54).
+	// Dormant when too old; 2.5.0 = the unguarded Bootstrap::node_dirs floor.
 	if ( ! \method_exists( '\\Newspack_Nodes\\Bootstrap', 'version_at_least' )
-		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '0.54.0', 'Newspack Event Logger Nodes' ) ) {
+		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.5.0', 'Newspack Event Logger Nodes' ) ) {
 		return;
 	}
 

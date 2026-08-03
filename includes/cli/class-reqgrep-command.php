@@ -185,8 +185,21 @@ class Reqgrep_Command {
 		$follow              = isset( $assoc_args['follow'] );
 		$this->cat_offset    = isset( $assoc_args['recent'] ) ? 'recent' : 'start';
 
-		$path_arg             = $assoc_args['firehose'] ?? null;
-		$override             = \is_string( $path_arg ) ? $path_arg : '';
+		// Validate --firehose FIRST: dirs opened must be the canonical path.
+		$override = '';
+		if ( isset( $assoc_args['firehose'] ) ) {
+			$path_value = Core::str( $assoc_args['firehose'] );
+			$real_path  = \realpath( $path_value );
+			if ( false === $real_path ) {
+				\WP_CLI::error( 'Invalid path: ' . $path_value );
+				return;
+			}
+			if ( 0 !== \strpos( $real_path, Config::get_logs_directory() ) ) {
+				\WP_CLI::error( 'Path must be within the logs directory.' );
+				return;
+			}
+			$override = $real_path;
+		}
 		$this->base_dir       = '' !== $override ? $override : Config::get_logs_directory() . '/firehose.log';
 		$this->partition_dirs = Log_Manager::firehose_dirs( $override );
 
@@ -204,21 +217,6 @@ class Reqgrep_Command {
 				}
 			);
 		$this->init_core();
-
-		// Validate explicit --firehose against the configured logs directory.
-		if ( isset( $assoc_args['firehose'] ) ) {
-			$path_value = Core::str( $assoc_args['firehose'] );
-			$real_path  = \realpath( $path_value );
-			if ( false === $real_path ) {
-				\WP_CLI::error( 'Invalid path: ' . $path_value );
-				return;
-			}
-			$logs_dir = Config::get_logs_directory();
-			if ( 0 !== \strpos( $real_path, $logs_dir ) ) {
-				\WP_CLI::error( 'Path must be within the logs directory.' );
-			}
-			$this->base_dir = $real_path;
-		}
 
 		// Detect pipe / file redirection (stdin) vs. cat / follow mode.
 		$use_stdin = $this->stdin_has_data();

@@ -17,13 +17,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of the fleet's stats. They now resolve their partitions from the topology's
   own declaration via `Bootstrap::node_dirs()` / `node_partitions()`, so nothing
   in this plugin builds a `.p{N}` path or assumes where the partition token
-  sits.
+  sits. The firehose span is the UNION of the declaration and the global count,
+  never one replacing the other — `init_firehose()` still hashes over the global
+  on every request, so a topology pinning a LOWER count must widen the reader,
+  not narrow it.
+- **`wp nodes reqgrep --firehose` resolved its partition dirs from the raw
+  argument**, before the realpath + logs-dir containment check that follows it.
+  The check still aborted the run, but the canonicalized path never reached the
+  reads. Validation now runs first and the canonical path is what gets opened.
+- **`request_detail` reported "invalid partition" for an unfindable rid** when no
+  active topology declares `requests:partition` — there is no partition set to
+  be outside of, so the accurate answer is "not found".
 - **`wp nodes reqgrep` followed one partition of four**, the same bug on the CLI
   surface. Partition dirs now come from `Log_Manager::firehose_dirs()`, the one
   owner of the firehose layout; `--firehose` overrides route through it too.
 
 ### Changed
 
+- **Requires newspack-nodes 2.5.0.** The partition resolution above calls
+  `Bootstrap::node_dirs()` / `node_partitions()` unguarded, so an older
+  substrate would fatal rather than degrade; the plugin stays dormant with an
+  admin notice instead.
 - **`request_search` tries the rid's own partition first.** A rid rides one hash
   the whole way — the firehose Topic routes it by KEY, the worker on that
   partition consumes it, Request_Builder writes it to the request partition of

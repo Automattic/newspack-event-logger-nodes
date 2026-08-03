@@ -1152,6 +1152,35 @@ class ReqgrepCommandTest extends TestCase {
 		}
 	}
 
+	public function test_invoke_reads_from_the_validated_path_not_the_raw_argument(): void {
+		// The containment check canonicalizes --firehose with realpath(); the
+		// dirs actually read must come from THAT, not the raw argument, or the
+		// check governs only whether the command aborts.
+		$base_dir = \Newspack_Nodes\Config::get_base_directory() . '/reqgrep-canon-' . \uniqid();
+		\mkdir( "{$base_dir}/logs/real", 0755, true );
+		\file_put_contents( "{$base_dir}/logs/real/firehose.log", '' );
+		\symlink( "{$base_dir}/logs/real", "{$base_dir}/logs/link" );
+		try {
+			$GLOBALS['_wp_options']['newspack_nodes_base_directory'] = $base_dir;
+			$this->use_base_dir( $base_dir );
+			\Newspack_Event_Logger_Nodes\Config::reset();
+
+			$cmd = new \Newspack_Event_Logger_Nodes\CLI\Reqgrep_Command();
+			$this->capture_output( $cmd );
+			$cmd->__invoke( [ '.' ], [ 'firehose' => "{$base_dir}/logs/link/firehose.log" ] );
+
+			$dirs = ( new \ReflectionProperty( $cmd, 'partition_dirs' ) )->getValue( $cmd );
+			$real = \realpath( "{$base_dir}/logs/real" );
+			$this->assertSame( "{$real}/firehose.p0", $dirs[0] );
+		} finally {
+			$GLOBALS['_wp_actions'] = [];
+			\Newspack_Nodes\Config::reset();
+			\Newspack_Event_Logger_Nodes\Config::reset();
+			@\unlink( "{$base_dir}/logs/link" );
+			$this->rmdir_recursive( $base_dir );
+		}
+	}
+
 	public function test_synopsis_uses_firehose_not_global_path(): void {
 		// `--path` collides with WP-CLI's global --path (which WP-CLI consumes
 		// before the command runs), so the firehose-dir override must use its

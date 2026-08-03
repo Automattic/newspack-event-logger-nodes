@@ -265,32 +265,35 @@ class Log_Manager {
 	/**
 	 * Firehose dirs indexed by partition, for readers (dashboard grep, reqgrep).
 	 *
-	 * init_firehose() builds this Topic in REQUEST scope, so on an ordinary site
-	 * no topology declares it and the global count is all there is. An
-	 * aggregator hub does declare one, and it re-partitions above that global —
-	 * so where a declaration exists it wins, and the reader spans what the hub
-	 * actually writes. Readers only; the writer stays on the cheap config read
-	 * because it runs on every request.
+	 * The UNION of two spans, never one replacing the other. init_firehose()
+	 * builds this Topic in REQUEST scope and hashes the rid over the GLOBAL
+	 * count on every request, so that span always holds data. An aggregator hub
+	 * additionally declares a `firehose:topic`, whose own count may sit above
+	 * the global (fan-in) or below it (a pinned `var num_partitions`) — widening
+	 * the reader either way, narrowing it never. A dir that holds nothing costs
+	 * a scan of nothing; a dir left out is data the dashboard cannot see.
+	 *
+	 * Readers only. The writer stays on the cheap config read — it runs on
+	 * every request and must not parse topologies to log a line.
 	 *
 	 * `$log_path` is `reqgrep --firehose`'s override: a log base whose partitions
-	 * are its `.p{N}` siblings, expanded over the same index space.
+	 * are its `.p{N}` siblings. An explicit path answers only for itself, so no
+	 * declaration joins that span.
 	 *
 	 * @return array<int,string>
 	 */
 	public static function firehose_dirs( string $log_path = '' ): array {
-		$declared = Bootstrap::node_dirs( self::FIREHOSE_NODE );
-		if ( '' === $log_path && [] !== $declared ) {
-			return $declared;
-		}
+		$declared = '' === $log_path ? Bootstrap::node_dirs( self::FIREHOSE_NODE ) : [];
 		$template = '' === $log_path
 			? self::firehose_dir_template()
 			: (string) \preg_replace( '/\.log$/', '', $log_path ) . '.p{partition}';
-		$count    = [] !== $declared
-			? \count( $declared )
-			: \max( 1, Core::as_int( Config::value( 'num_partitions' ) ) );
-		$dirs     = [];
+		$count    = \max(
+			\count( $declared ),
+			\max( 1, Core::as_int( Config::value( 'num_partitions' ) ) )
+		);
+		$dirs = [];
 		for ( $p = 0; $p < $count; $p++ ) {
-			$dirs[ $p ] = Core::resolve_partition_template( $template, $p );
+			$dirs[ $p ] = $declared[ $p ] ?? Core::resolve_partition_template( $template, $p );
 		}
 		return $dirs;
 	}
