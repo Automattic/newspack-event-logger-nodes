@@ -513,11 +513,11 @@ export function usePerformanceGraph( opts = {} ) {
 				const payload = await flushed(
 					urlDetail( 'url_detail', urlLookupArgs( hash ) )
 				);
-				// stats.url is the URL; '' is an ANSWER, undefined is a retry.
-				const url = payload?.stats?.url;
-				return undefined === url ? null : { url };
+				// A reply settles the intent, even one that names no URL.
+				return { url: payload?.stats?.url || '' };
 			} catch ( err ) {
-				return null; // Caller holds the intent; the interval retries.
+				// A TM_ERROR is a reply too, and a final one.
+				return err?.fromServer ? { url: '' } : null;
 			}
 		},
 		[ urlDetail ]
