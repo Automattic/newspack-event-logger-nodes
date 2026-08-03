@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.44.2] - 2026-08-02
+
+### Changed
+
+- **Substrate pinned to newspack-nodes v2.4.3.** Brings the per-site SSE slot
+  namespace — the pool keyed on `gethostname()`, which on Atomic is the shared
+  pool host, so co-located sites collapsed onto a single 10-slot budget and the
+  surplus was refused with a permanent HTTP 429. Also brings the staggered
+  Remote_Link connects, the phased session request, and the topology console's
+  auto-layout and stored-coordinate fixes.
+
 ## [0.44.1] - 2026-08-02
 
 ### Fixed
