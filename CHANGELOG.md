@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.44.5] - 2026-08-03
+
+### Changed
+
+- **Substrate pinned to newspack-nodes v2.4.6.** Dashboards stop polling while
+  their tab is hidden — the router tick every poller hitchhikes is now gated on
+  page visibility — and the SSE slot poke drops from every 5s to every 15s
+  against the server's 60s lease TTL.
+
 ## [0.44.4] - 2026-08-03
 
 ### Changed
