@@ -507,12 +507,10 @@ describe( 'usePerformanceGraph — resolveRequest & fetchUrlBreakdown (awaited)'
 		).toBeUndefined();
 	} );
 
-	test( 'resolveUrlHash holds the intent when the reply carries no URL', async () => {
-		// Null keeps the ?url= intent alive for the next refresh tick. Anything
-		// truthy settles it, and settles it on a title that is not the URL.
-		const client = makeFakeClient( {
-			url_detail: { stats: { hash: 'b4dc0ffee' }, requests: [] },
-		} );
+	test( 'resolveUrlHash settles when the server says the hash is unknown', async () => {
+		// A bookmarked hash aged out of the index makes url_detail THROW.
+		// Holding the intent there re-polls every tick and never opens.
+		const client = makeFakeClient( {}, { errorVerbs: [ 'url_detail' ] } );
 		let api;
 		renderHook(
 			( p ) => {
@@ -522,10 +520,35 @@ describe( 'usePerformanceGraph — resolveRequest & fetchUrlBreakdown (awaited)'
 			{ initialProps: { commandClient: client } }
 		);
 		await act( async () => {} );
+
 		let resolved;
 		await act( async () => {
 			resolved = await api.resolveUrlHash( 'b4dc0ffee' );
 		} );
+
+		expect( resolved ).toEqual( { url: '' } );
+	} );
+
+	test( 'resolveUrlHash holds the intent when no reply arrives at all', async () => {
+		// Torn-down graph: the request rejects without ever reaching a server,
+		// which is the case the ?url= intent is SUPPOSED to outlive.
+		const client = makeFakeClient();
+		let api;
+		renderHook(
+			( p ) => {
+				api = usePerformanceGraph( p );
+				return api;
+			},
+			{ initialProps: { commandClient: client } }
+		);
+		await act( async () => {} );
+		Core.reset();
+
+		let resolved;
+		await act( async () => {
+			resolved = await api.resolveUrlHash( 'b4dc0ffee' );
+		} );
+
 		expect( resolved ).toBeNull();
 	} );
 } );

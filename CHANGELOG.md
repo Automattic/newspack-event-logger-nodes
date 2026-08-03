@@ -35,6 +35,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to the hash: a hash title passed `canLogUrl` and offered to write a logging
   rule keyed on `<hash>?`.
 
+- **A `?url=` deep link to a hash that had aged out of the index polled
+  forever.** `url_detail` throws for an unindexed hash, which landed in the
+  catch, returned null, and held the intent — so the effect re-issued the
+  command every refresh tick and never opened the modal. The rule is now
+  simply *a reply settles, no reply holds*: a payload settles even when it
+  names no URL, a TM_ERROR settles because it is a final answer, and only a
+  timeout or a torn-down graph keeps the intent alive. Requires Newspack Nodes
+  with `fromServer` on `RequestNode` rejections.
+
 ### Changed
 
 - The `?url=` hash resolver no longer requests the per-URL category series it
