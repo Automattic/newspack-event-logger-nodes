@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.44.3] - 2026-08-03
+
+### Changed
+
+- **Substrate pinned to newspack-nodes v2.4.4.** Brings the Topic partition-dir
+  declaration fix: a Topic that re-partitions beyond its topology's worker count
+  now declares every directory it writes, so `Log_Cleaner` stops treating them as
+  orphans and worker status shows them all.
+
 ## [0.44.2] - 2026-08-02
 
 ### Changed
