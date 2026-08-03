@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.44.4] - 2026-08-03
+
+### Changed
+
+- **Substrate pinned to newspack-nodes v2.4.5.** A node whose schema declares
+  `hidden` is now hidden on the topology console canvas, not just in the palette.
+
 ## [0.44.3] - 2026-08-03
 
 ### Changed
