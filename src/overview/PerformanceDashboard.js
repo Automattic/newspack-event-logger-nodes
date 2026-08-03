@@ -91,6 +91,7 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 
 	// Refs break the resolve/navigation ↔ selection cycle.
 	const commandResolveRef = useRef( null );
+	const commandResolveUrlRef = useRef( null );
 	const selectUrlRef = useRef( () => {} );
 	const selectRequestRef = useRef( () => {} );
 	const urlsRef = useRef( [] );
@@ -143,7 +144,8 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 	const resolveRequestId = useCallback( async ( rid ) => {
 		const data = await commandResolveRef.current?.( rid );
 		if ( ! data || ! data.url_hash || data.partition === undefined ) {
-			return;
+			// Report the miss so the caller holds the intent for the retry.
+			return false;
 		}
 		let urlObj = urlsRef.current.find( ( u ) => u.hash === data.url_hash );
 		if ( ! urlObj ) {
@@ -157,7 +159,14 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 		setRequestPartitionRef.current( data.partition );
 		selectUrlRef.current( urlObj );
 		selectRequestRef.current( rid );
+		return true;
 	}, [] );
+
+	// resolveUrlHash for ?url= deep links; reaches url_detail by ref.
+	const resolveUrlHash = useCallback(
+		( hash ) => commandResolveUrlRef.current?.( hash ) ?? null,
+		[]
+	);
 
 	const {
 		selectedUrl,
@@ -167,7 +176,7 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 		initialSearchQuery,
 		setInitialSearchQuery,
 		updateBrowserUrl,
-	} = useUrlNavigation( urls, resolveRequestId );
+	} = useUrlNavigation( urls, resolveRequestId, resolveUrlHash );
 
 	selectUrlRef.current = selectUrl;
 	selectRequestRef.current = baseSelectRequest;
@@ -177,6 +186,7 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 	const {
 		handleUrlParamsChange,
 		resolveRequest,
+		resolveUrlHash: graphResolveUrlHash,
 		fetchUrlBreakdown,
 		listRules,
 		upsertRule,
@@ -194,6 +204,7 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 		commandClient,
 	} );
 	commandResolveRef.current = resolveRequest;
+	commandResolveUrlRef.current = graphResolveUrlHash;
 
 	// Reset the search-sourced partition when leaving request detail.
 	useEffect( () => {

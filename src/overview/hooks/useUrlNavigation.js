@@ -46,13 +46,21 @@ const updateBrowserUrl = ( params ) => {
  * Custom hook for URL navigation state and browser history management.
  *
  * @param {Array}    urls               Array of URL objects with hash property.
- * @param {Function} [resolveRequestId] Optional async (rid) -> void. Called on
- *                                      mount when `?request=` is set but `?url=`
+ * @param {Function} [resolveRequestId] Optional async (rid) -> boolean. Called
+ *                                      when `?request=` is set but `?url=`
  *                                      isn't — owner resolves the URL hash and
- *                                      selects both.
+ *                                      selects both. Return false to report a
+ *                                      miss so the intent is held for a retry.
+ * @param {Function} [resolveUrlHash]   Optional async (hash) -> {url}|null.
+ *                                      Answers for a hash outside the loaded
+ *                                      page. Null holds the intent.
  * @return {Object} Navigation state and callbacks.
  */
-export default function useUrlNavigation( urls, resolveRequestId ) {
+export default function useUrlNavigation(
+	urls,
+	resolveRequestId,
+	resolveUrlHash
+) {
 	// Selection state.
 	const [ selectedUrl, setSelectedUrl ] = useState( null );
 	const [ selectedRequest, setSelectedRequest ] = useState( null );
@@ -72,6 +80,8 @@ export default function useUrlNavigation( urls, resolveRequestId ) {
 	// Refs for navigation state tracking.
 	const isPopstateNavigation = useRef( false );
 	const isInitialMount = useRef( true );
+	// One resolve in flight at a time; the effect re-runs on every urls tick.
+	const resolveInFlight = useRef( false );
 
 	// Wrapper to select URL.
 	const selectUrl = useCallback( ( url ) => {
@@ -83,27 +93,73 @@ export default function useUrlNavigation( urls, resolveRequestId ) {
 		setSelectedRequest( rid );
 	}, [] );
 
-	// Restore state from URL parameters when URLs are loaded.
+	// @longform Restore selection from ?url= / ?request=.
+	//
+	// The intent is held until a resolve SETTLES, never cleared on the way in.
+	// Clearing early made one failed attempt permanent and silent: the graph
+	// may not be connected on the first pass, and `urls` is one page of the
+	// catalog, so a deep-linked low-traffic hash is never in it. The effect
+	// re-runs on each urls tick, which is the retry.
 	useEffect( () => {
-		if ( initialUrlHash && urls.length > 0 ) {
+		if ( ! initialUrlHash && ! initialRequestId ) {
+			return;
+		}
+		if ( resolveInFlight.current ) {
+			return;
+		}
+
+		const settle = () => {
+			setInitialUrlHash( null );
+			setInitialRequestId( null );
+		};
+
+		if ( initialUrlHash ) {
 			const urlObj = urls.find( ( u ) => u.hash === initialUrlHash );
 			if ( urlObj ) {
 				selectUrl( urlObj );
-				// If a request ID is also in the URL, set it after URL loads.
 				if ( initialRequestId ) {
 					selectRequest( initialRequestId );
 				}
+				settle();
+				return;
 			}
-			// Clear initial values so this only runs once.
-			setInitialUrlHash( null );
-			setInitialRequestId( null );
+			// Outside the loaded page: only the server can answer.
+			if ( ! resolveUrlHash ) {
+				return;
+			}
+			resolveInFlight.current = true;
+			Promise.resolve( resolveUrlHash( initialUrlHash ) )
+				.then( ( data ) => {
+					if ( ! data ) {
+						return; // Keep the intent; the next tick retries.
+					}
+					selectUrl( {
+						hash: initialUrlHash,
+						url: data.url || initialUrlHash,
+					} );
+					if ( initialRequestId ) {
+						selectRequest( initialRequestId );
+					}
+					settle();
+				} )
+				.finally( () => {
+					resolveInFlight.current = false;
+				} );
 			return;
 		}
-		// ?request= without ?url=: resolver fetches entry fresh, selects both.
-		if ( ! initialUrlHash && initialRequestId && resolveRequestId ) {
-			const rid = initialRequestId;
-			setInitialRequestId( null );
-			resolveRequestId( rid );
+
+		// ?request= without ?url=: the resolver finds the URL and selects both.
+		if ( resolveRequestId ) {
+			resolveInFlight.current = true;
+			Promise.resolve( resolveRequestId( initialRequestId ) )
+				.then( ( ok ) => {
+					if ( false !== ok ) {
+						setInitialRequestId( null );
+					}
+				} )
+				.finally( () => {
+					resolveInFlight.current = false;
+				} );
 		}
 	}, [
 		urls,
@@ -112,6 +168,7 @@ export default function useUrlNavigation( urls, resolveRequestId ) {
 		selectUrl,
 		selectRequest,
 		resolveRequestId,
+		resolveUrlHash,
 	] );
 
 	// Update browser URL when selection changes.
