@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.44.6] - 2026-08-03
+
 ### Fixed
 
 - **The performance dashboard read one partition of four.** Every disk-walking
@@ -21,10 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   never one replacing the other — `init_firehose()` still hashes over the global
   on every request, so a topology pinning a LOWER count must widen the reader,
   not narrow it.
-- **`wp nodes reqgrep --firehose` resolved its partition dirs from the raw
-  argument**, before the realpath + logs-dir containment check that follows it.
-  The check still aborted the run, but the canonicalized path never reached the
-  reads. Validation now runs first and the canonical path is what gets opened.
+- **`wp nodes reqgrep --firehose` now validates before it resolves.** The
+  logs-dir containment check runs first, and the canonicalized path is what the
+  command opens.
 - **`request_detail` reported "invalid partition" for an unfindable rid** when no
   active topology declares `requests:partition` — there is no partition set to
   be outside of, so the accurate answer is "not found".
