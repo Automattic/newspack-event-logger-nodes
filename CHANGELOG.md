@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`useGlobBrowse` takes its replay boundary from the substrate's
+  `browseControl()`** instead of re-deriving `end?.segment ?? null` /
+  `end?.offset ?? 0` from the half-boundary `endPosition()` returned. One of
+  three copies of that mapping; the substrate now owns the whole control. An
+  empty source consequently FOLLOWS rather than entering a replay that can
+  never catch up. Requires newspack-nodes with `browseControl` — bump the
+  `release.yml` substrate pin before releasing.
+
 ### Fixed
 
 - **Job retry and batch fan-in work again.** `Job_Router_Node` normalized an
