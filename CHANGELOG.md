@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Job retry and batch fan-in work again.** `Job_Router_Node` normalized an
+  entry by REBUILDING a fixed record — `k`, `handler`, `parameters`, `ts`, and
+  `id` — instead of overlaying onto the body, so it silently dropped every
+  field it had not heard of. Four of those are load-bearing:
+  `Job_Worker_Node::schedule_retry()` reads `retries`/`attempt` to decide a
+  retry, `settle_batch()` reads `batch`, and `key` re-hashes the partition on
+  requeue. `Job_Intake::write_job()` writes all four, and this plugin owns the
+  jobintake → jobs.log leg wherever it is active — so a job that opted into
+  retries re-entered with `retries` absent, read as 0, and went to the poison
+  path on its next throw. Every configured retry budget was capped at one
+  attempt, and a batch never settled. The router now carries
+  `Job_Intake::DISPATCH_FIELDS`, the substrate's canonical list, rather than a
+  fifth hand-maintained copy of it.
+
+  Requires newspack-nodes with `Job_Intake::DISPATCH_FIELDS` (unreleased at
+  time of writing) — bump the `release.yml` substrate pin before releasing.
+
 ## [0.44.9] - 2026-08-04
 
 ### Fixed

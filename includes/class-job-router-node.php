@@ -18,7 +18,10 @@
  * Output shape (one wire form for jobs.log, regardless of source) — the kind
  * stays under `k`, the same field Job_Intake writes and Job_Worker dispatches
  * on, so nothing downstream has to rename it:
- *   { k, handler, parameters, ts } plus `id` when the body carries one.
+ *   { k, handler, parameters, ts }, plus `id` when the body carries one, plus
+ *   whichever of `Job_Intake::DISPATCH_FIELDS` the body carries. Those last
+ *   are load-bearing, not decoration: Job_Worker reads them back to decide a
+ *   retry and to settle a batch, so dropping them disables both silently.
  *
  * SECURITY:
  * - Handler name must match HANDLER_NAME_PATTERN before reaching disk.
@@ -33,6 +36,7 @@
 namespace Newspack_Event_Logger_Nodes;
 
 use Newspack_Nodes\Core;
+use Newspack_Nodes\Job_Intake;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Node;
 
@@ -120,6 +124,13 @@ class Job_Router_Node extends Node {
 			'parameters' => $parameters,
 			'ts'         => $raw_timestamp,
 		];
+
+		// Job_Worker reads these back — dropping them disabled retry.
+		foreach ( Job_Intake::DISPATCH_FIELDS as $field ) {
+			if ( isset( $body[ $field ] ) ) {
+				$normalized[ $field ] = $body[ $field ];
+			}
+		}
 
 		// First-class identity: the id lives IN the job body (jobstats key).
 		$id = Core::as_string( $body['id'] ?? '' );
