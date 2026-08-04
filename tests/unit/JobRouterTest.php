@@ -119,6 +119,59 @@ class JobRouterTest extends TestCase {
 		$this->assertSame( 'img-5309', $this->sink->captured[0][ Message::VALUE ]['id'] );
 	}
 
+	/**
+	 * `Job_Worker_Node::schedule_retry()` reads `retries`/`attempt` off the
+	 * jobs.log entry, and `Job_Intake::write_job()` writes them there — so a
+	 * normalizer that rebuilds a fixed record instead of overlaying drops the
+	 * opt-in between the two. A retried job then re-enters with retries=0 and
+	 * goes straight to the poison path on its next throw, capping every
+	 * configured retry budget at one attempt wherever this plugin is active.
+	 *
+	 * Seeded distinct from the 0 defaults, and from each other, so a fix that
+	 * carries only one field or reads the wrong one still fails.
+	 */
+	public function test_retry_and_batch_fields_survive_normalization(): void {
+		$entry              = $this->jobintake_entry( 'job', 'films_import', [ 'stage' => 'films' ] );
+		$entry['retries']   = 7;
+		$entry['attempt']   = 3;
+		$entry['batch']     = 'batch-4417';
+		$entry['key']       = 'films:eu-west';
+		$this->jr->fill( $this->msg( 'jobintake:consumer', $entry ) );
+
+		$this->assertCount( 1, $this->sink->captured );
+		$out = $this->sink->captured[0][ Message::VALUE ];
+		$this->assertSame( 7, $out['retries'] );
+		$this->assertSame( 3, $out['attempt'] );
+		$this->assertSame( 'batch-4417', $out['batch'] );
+		$this->assertSame( 'films:eu-west', $out['key'] );
+	}
+
+	/** The same fields ride a firehose-wrapped body, under `m`. */
+	public function test_retry_fields_survive_from_a_firehose_wrapped_body(): void {
+		$entry                   = $this->firehose_entry( 'job', 'films_import', [] );
+		$entry['m']['retries']   = 5;
+		$entry['m']['batch']     = 'batch-9021';
+		$this->jr->fill( $this->msg( 'firehose:consumer', $entry ) );
+
+		$this->assertCount( 1, $this->sink->captured );
+		$out = $this->sink->captured[0][ Message::VALUE ];
+		$this->assertSame( 5, $out['retries'] );
+		$this->assertSame( 'batch-9021', $out['batch'] );
+	}
+
+	/** Absent optional fields stay absent — no zero-valued keys invented. */
+	public function test_absent_retry_fields_are_not_invented(): void {
+		$entry = $this->jobintake_entry( 'job', 'plain_job', [] );
+		$this->jr->fill( $this->msg( 'jobintake:consumer', $entry ) );
+
+		$this->assertCount( 1, $this->sink->captured );
+		$out = $this->sink->captured[0][ Message::VALUE ];
+		$this->assertArrayNotHasKey( 'retries', $out );
+		$this->assertArrayNotHasKey( 'attempt', $out );
+		$this->assertArrayNotHasKey( 'batch', $out );
+		$this->assertArrayNotHasKey( 'key', $out );
+	}
+
 	public function test_absent_id_omits_id_key_from_normalized_record(): void {
 		$entry = $this->firehose_entry( 'job', 'plain_job', [] );
 		$this->jr->fill( $this->msg( 'firehose:consumer', $entry ) );
