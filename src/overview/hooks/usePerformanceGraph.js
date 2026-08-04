@@ -68,6 +68,9 @@ import '../nodes/register';
 // The server CI mount + the egress path the Fetchers/on-demand commands target.
 const SERVER = 'performance';
 const TARGET = `_shell/_http/${ SERVER }`;
+// The declared poll cadence; also the fallback for an unparseable setting.
+const DEFAULT_REFRESH_INTERVAL_MS = 15000;
+
 const HTTP = '_http';
 
 /**
@@ -253,7 +256,7 @@ export function usePerformanceGraph( opts = {} ) {
 	const {
 		serverFilter = '',
 		chartBreakdown = 'status',
-		refreshInterval = '15000',
+		refreshInterval = String( DEFAULT_REFRESH_INTERVAL_MS ),
 		requestPartition = null,
 		selectedUrl = null,
 		selectedRequest = null,
@@ -290,8 +293,9 @@ export function usePerformanceGraph( opts = {} ) {
 
 	const isPageVisible = usePageVisibility();
 
-	// Poll cadence (ms): >1000 throttles the router TIMER; 0 every tick.
-	const intervalMs = parseInt( refreshInterval, 10 ) || 0;
+	// Poll cadence (ms); an unparseable setting takes the declared default.
+	const intervalMs =
+		parseInt( refreshInterval, 10 ) || DEFAULT_REFRESH_INTERVAL_MS;
 
 	// Poll graph: overview+urls on Timer; on-demand url/request detail views.
 	const { interpreterRef } = useBatchedPoll( {

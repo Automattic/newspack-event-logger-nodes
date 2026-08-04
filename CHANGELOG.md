@@ -19,6 +19,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **An unparseable refresh setting no longer polls at 1Hz.** `usePerformanceGraph`
+  derived its cadence with `parseInt( refreshInterval, 10 ) || 0`, and 0 meant
+  "every router tick" to `useBatchedPoll` — so a bad setting silently produced
+  the most expensive poll available while looking configured. It now falls back
+  to the declared 15s default, which the parameter default also references
+  instead of repeating the literal.
+
 - **Job retry and batch fan-in work again.** `Job_Router_Node` normalized an
   entry by REBUILDING a fixed record — `k`, `handler`, `parameters`, `ts`, and
   `id` — instead of overlaying onto the body, so it silently dropped every
