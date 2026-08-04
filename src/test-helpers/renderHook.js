@@ -61,6 +61,28 @@ export function renderComponent( element ) {
 	};
 }
 
+/**
+ * Run a hook inside a real React render and hand back its return value.
+ *
+ * Mounts a throwaway Wrapper that renders null and does nothing but call
+ * `useHook( props )`, so effects, refs, and state behave exactly as they would
+ * in a component. Every render reassigns `result.current`, so read it fresh
+ * after each `act` — destructuring it once captures the FIRST render's value
+ * and silently goes stale. `rerender` replaces the props wholesale rather than
+ * merging, and most call sites here ignore props entirely, passing
+ * `() => useSomething()`.
+ *
+ * @param {(props: Object) => *} useHook                Invoked on every render; its
+ *                                                      return value becomes
+ *                                                      `result.current`.
+ * @param {Object}               [options]              Mount options.
+ * @param {Object}               [options.initialProps] Props for the first
+ *                                                      render.
+ * @return {{ result: { current: * }, rerender: (nextProps: Object) => void,
+ *   unmount: () => void }} `result` holds the latest return value; `rerender`
+ *   re-runs the hook with new props; `unmount` tears down the root and removes
+ *   the container from the document. Both are already wrapped in `act`.
+ */
 export function renderHook( useHook, { initialProps = {} } = {} ) {
 	const result = { current: undefined };
 	let setProps;

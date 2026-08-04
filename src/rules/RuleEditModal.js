@@ -11,12 +11,6 @@
  * `onSave(draft)` emits the assembled rule object (the id round-trips so the
  * parent's upsert can preserve it); the parent decides upsert vs save. Pattern
  * must be non-empty — an empty pattern blocks save with an inline message.
- *
- * @param {Object}   props          Component props.
- * @param {Object}   props.rule     The rule draft to edit (wire shape from Rules_CI).
- * @param {Function} props.onSave   Called with the edited draft on Save.
- * @param {Function} props.onCancel Dismiss handler (Cancel / ESC / backdrop).
- * @return {import('react').ReactElement} The modal.
  */
 
 import { useState } from '@wordpress/element';
@@ -40,6 +34,21 @@ function toNumber( value, parse ) {
 	return Number.isFinite( n ) ? n : 0;
 }
 
+/**
+ * Rule edit modal.
+ *
+ * Delete is the owner's call: RulesAdmin deletes from its table rows and passes
+ * no handler, so the modal shows no delete button; the performance dashboard
+ * passes one only once the draft has an id.
+ *
+ * @param {Object}                  props             Component props.
+ * @param {Object}                  props.rule        The rule draft to edit (wire shape from Rules_CI).
+ * @param {(draft: Object) => void} props.onSave      Called with the edited draft on Save.
+ * @param {() => void}              props.onCancel    Dismiss handler (Cancel / ESC / backdrop).
+ * @param {(() => void)|undefined}  [props.onDelete]  Delete handler; omitted hides the delete button.
+ * @param {string}                  [props.className] Extra class names for the modal and its child modals.
+ * @return {import('react').ReactElement} The modal.
+ */
 export default function RuleEditModal( {
 	rule,
 	onSave,
@@ -49,7 +58,7 @@ export default function RuleEditModal( {
 } ) {
 	const [ pattern, setPattern ] = useState( rule?.pattern ?? '' );
 	const [ action, setAction ] = useState(
-		'skip' === rule?.action ? 'skip' : 'log'
+		/** @type {'log'|'skip'} */ ( 'skip' === rule?.action ? 'skip' : 'log' )
 	);
 	const [ hooks, setHooks ] = useState(
 		Array.isArray( rule?.hooks ) ? rule.hooks : []

@@ -142,13 +142,13 @@ const CATEGORY_META = {
 /**
  * Hook Selector Modal component.
  *
- * @param {Object}   props             Component props.
- * @param {boolean}  props.isOpen      Whether the modal is open.
- * @param {Function} props.onClose     Close callback.
- * @param {Array}    props.selected    Currently selected hooks.
- * @param {Function} props.onSelect    Callback when hooks are selected.
- * @param {string}   props.mode        'include' or 'exclude' mode.
- * @param {string}   [props.className] Extra classes for the modal frame (skin theming).
+ * @param {Object}                 props             Component props.
+ * @param {boolean}                props.isOpen      Whether the modal is open.
+ * @param {() => void}             props.onClose     Close callback.
+ * @param {Array}                  props.selected    Currently selected hooks.
+ * @param {(hooks: Array) => void} props.onSelect    Called on Apply with the selected hook names.
+ * @param {string}                 props.mode        'include' or 'exclude' mode.
+ * @param {string}                 [props.className] Extra classes for the modal frame (skin theming).
  * @return {import('react').ReactElement|null} Rendered component.
  */
 export default function HookSelectorModal( {

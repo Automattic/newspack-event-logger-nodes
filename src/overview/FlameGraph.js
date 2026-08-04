@@ -73,6 +73,24 @@ const getTooltipText = ( d ) => {
 };
 
 /**
+ * The methods `createTooltip()` hangs off the tooltip function it returns.
+ *
+ * @typedef {Object} TooltipMembers
+ * @property {(d: Object) => void} show       Show the tip for a frame.
+ * @property {() => void}          hide       Hide it, keeping its state.
+ * @property {() => void}          restore    Re-show the last tip.
+ * @property {() => boolean}       hasState   Whether a tip is replayable.
+ * @property {() => void}          clearState Forget the last tip.
+ * @property {() => void}          destroy    Remove the element and its state.
+ */
+
+/**
+ * The tooltip d3-flame-graph is handed: callable, carrying those methods.
+ *
+ * @typedef {(() => void) & TooltipMembers} Tooltip
+ */
+
+/**
  * Build a tooltip satisfying d3-flame-graph's tooltip contract.
  *
  * The chart calls the returned function once to create the element, then
@@ -85,7 +103,7 @@ const getTooltipText = ( d ) => {
  * vanishes mid-read. `.clearState()` drops that record when the pointer
  * leaves the graph.
  *
- * @return {Function} Tooltip exposing .show(), .hide(), .restore(), .hasState(), .clearState() and .destroy().
+ * @return {Tooltip} Tooltip exposing .show(), .hide(), .restore(), .hasState(), .clearState() and .destroy().
  */
 const createTooltip = () => {
 	let tooltipEl = null;
@@ -117,8 +135,9 @@ const createTooltip = () => {
 		const text = getTooltipText( d );
 
 		// d3-flame-graph passes no event; window.event is the only source.
-		const mouseX = window.event?.pageX || 0;
-		const mouseY = window.event?.pageY || 0;
+		const mouseEvent = /** @type {MouseEvent} */ ( window.event );
+		const mouseX = mouseEvent?.pageX || 0;
+		const mouseY = mouseEvent?.pageY || 0;
 		const viewportWidth = window.innerWidth;
 
 		const spaceOnRight = viewportWidth - ( mouseX - window.scrollX ) - 25;
@@ -237,7 +256,7 @@ const readThemeTokens = ( container ) => {
  *
  * @param {string} accent Theme accent hex.
  * @param {string} bg     Theme background hex.
- * @return {Function} d3-flame-graph color mapper: (d) => 'rgb(...)'.
+ * @return {(d: Object) => string} d3-flame-graph color mapper: (d) => 'rgb(...)'.
  */
 const createColorMapper = ( accent, bg ) => ( d ) =>
 	shadeForDepth( d.depth, accent, bg );
@@ -434,10 +453,10 @@ export const pruneFlameGraph = ( root, options = {} ) => {
  * `lastModified` (a single request, whose flame never changes) makes every
  * render count as a change.
  *
- * @param {Object}   props               Component props.
- * @param {Object}   props.data          Flame tree root: { name, value, children[] }.
- * @param {number}   props.lastModified  Server timestamp gating updates; omit for single requests.
- * @param {Function} props.onRevealEntry Called with the frame's path on Cmd/Ctrl+Click.
+ * @param {Object}                   props                 Component props.
+ * @param {Object}                   props.data            Flame tree root: { name, value, children[] }.
+ * @param {number}                   [props.lastModified]  Server timestamp gating updates; omit for single requests.
+ * @param {(path: string[]) => void} [props.onRevealEntry] Called with the frame's path — root-first frame names — on Cmd/Ctrl+Click; absent disables reveal.
  * @return {import('react').ReactElement} Rendered component.
  */
 export default function FlameGraph( { data, lastModified, onRevealEntry } ) {

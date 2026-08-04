@@ -45,10 +45,15 @@ const clip = ( value, max ) => {
  *   mixes segments) and its `seekTracking()` gate;
  * - `shapeRow()`, which validates and enriches a raw errors envelope
  *   (KEY=rid, VALUE={ts, k, m, n, method, url}) into a row.
- *
- * @param {number} [maxLines] Ring cap (defaults to DEFAULT_MAX_LINES).
  */
 export class PerfErrorsViewNode extends LogStreamViewNode {
+	/**
+	 * Start disarmed on the glob and publish the initial view model, so a React
+	 * subscriber mounting before the first row reads a defined model rather
+	 * than undefined. Breadcrumb tracking arms only once `select` names a dir.
+	 *
+	 * @param {number} [maxLines] Ring cap (defaults to DEFAULT_MAX_LINES).
+	 */
 	constructor( maxLines ) {
 		super( maxLines || DEFAULT_MAX_LINES );
 		this.seekActive = false;

@@ -1,0 +1,46 @@
+{
+  "$comment": "Type-check ONLY (noEmit). Not a build config \u2014 esbuild and jest never read it. The JSDoc types are already written and linted; this checks them against the code. Run: npm run lint:types The `paths` block mirrors TARGETS in ../newspack-nodes/src/build-kit/alias-map.cjs, resolved against the SIBLING substrate checkout \u2014 the same assumption scripts/sync-shared-scripts.sh makes. Without it the build aliases are invisible and every aliased import reads as a missing module. The `react` / `react/*` entries are NOT redundant: this repo and the sibling substrate each carry their own @types/react, so shared components pulled in through the aliases resolve a DIFFERENT nominal CSSProperties than this repo's JSX expects, and every style prop crossing the boundary fails. Pinning both to this repo's copy gives the two trees one identity.",
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "target": "es2022",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": false,
+    "noImplicitAny": false,
+    "skipLibCheck": true,
+    "types": [
+      "node"
+    ],
+    "paths": {
+      "@newspack-nodes/runtime": [
+        "../newspack-nodes/src/runtime/index.js"
+      ],
+      "@newspack-nodes/debug-overlay": [
+        "../newspack-nodes/src/debug-overlay/DebugOverlay.js"
+      ],
+      "@newspack-nodes/shared/*": [
+        "../newspack-nodes/src/shared/*"
+      ],
+      "@newspack-nodes/shared": [
+        "../newspack-nodes/src/shared"
+      ],
+      "react": [
+        "./node_modules/@types/react"
+      ],
+      "react/*": [
+        "./node_modules/@types/react/*"
+      ]
+    }
+  },
+  "include": [
+    "src/**/*.js",
+    "types/**/*.d.ts"
+  ],
+  "exclude": [
+    "**/__tests__/**",
+    "**/*.test.js"
+  ]
+}

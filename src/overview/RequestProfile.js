@@ -21,7 +21,9 @@ const DEFAULT_VISIBLE_COUNT = 10;
 
 /**
  * Test whether a profile category is a per-callback breakdown entry.
- * These contain " @N " (e.g. "the_content @10 do_blocks").
+ * These contain ` \@N ` (e.g. `the_content \@10 do_blocks`). The at-signs are
+ * backslash-escaped: unescaped, the JSDoc parser reads `\@10` as a malformed
+ * tag and fails the file.
  *
  * @param {string} state Category name.
  * @return {boolean} True if callback breakdown.
@@ -31,11 +33,11 @@ const isCallbackCategory = ( state ) => / @\d+$/.test( state );
 /**
  * Request Profile Component.
  *
- * @param {Object}      props                   Component props.
- * @param {Object}      props.profiles          Profiles data from request.
- * @param {number}      props.totalMs           Total request duration in ms.
- * @param {number}      props.totalProfiledTime Pre-calculated total profiled time (optional).
- * @param {string|null} props.title             Custom title (null to hide heading).
+ * @param {Object}      props                     Component props.
+ * @param {Object}      props.profiles            Profiles data from request.
+ * @param {number}      props.totalMs             Total request duration in ms.
+ * @param {number}      [props.totalProfiledTime] Pre-calculated total profiled time; derived from `profiles` when omitted.
+ * @param {string|null} [props.title]             Custom title (null to hide heading); defaults to "Time Breakdown".
  * @return {import('react').ReactElement|null} Rendered component or null if no data.
  */
 export default function RequestProfile( {

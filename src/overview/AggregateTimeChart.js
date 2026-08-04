@@ -58,12 +58,12 @@ const formatSeconds = ( seconds ) => {
  * mount it before the first fetch returns. `breakdownData`, when present,
  * supplants `data` as the series source; `data` then only gates that render.
  *
- * @param {Object}      props               Component props.
- * @param {Object}      props.data          Bucket key => `{ count, sum_ms, sum_peak_mb }`, the single-series source.
- * @param {Object|null} props.breakdownData Bucket key => dimension value => `{ c, s, m }` (count, sum ms, sum peak MB).
- * @param {string}      props.metric        'volume' | 'avg' | 'cumulative' | 'memory'.
- * @param {string}      props.breakdown     Dimension `breakdownData` was fetched for; picks the palette only.
- * @param {string}      props.serverFilter  Server name for the heading; the caller has already filtered the data.
+ * @param {Object}      props                Component props.
+ * @param {Object}      props.data           Bucket key => `{ count, sum_ms, sum_peak_mb }`, the single-series source.
+ * @param {Object|null} props.breakdownData  Bucket key => dimension value => `{ c, s, m }` (count, sum ms, sum peak MB).
+ * @param {string}      props.metric         'volume' | 'avg' | 'cumulative' | 'memory'.
+ * @param {string}      props.breakdown      Dimension `breakdownData` was fetched for; picks the palette only.
+ * @param {string}      [props.serverFilter] Server name for the heading; the caller has already filtered the data.
  * @return {import('react').ReactElement|null} Rendered chart, or null while no data has arrived.
  */
 export default function AggregateTimeChart( {

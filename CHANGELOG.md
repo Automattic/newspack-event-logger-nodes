@@ -7,10 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Four lint gates, matching the substrate.** `npm run lint:types` runs
+  `tsc --noEmit` over `src/` through the JSDoc already in the source, and
+  lint-staged blocks a commit on it alongside three eslint rules:
+  `react-hooks/exhaustive-deps`, `jsdoc/require-jsdoc`, and
+  `import/no-restricted-paths`. Baselines were measured before gating rather
+  than assumed — two rules were already at zero, `require-jsdoc` was 23, and
+  the type check was 105. All four now sit at zero.
+- `typescript` and the two `@types` packages are declared devDependencies
+  instead of resolving transitively, so the gate cannot drift silently.
+
 ### Changed
 
 - Documentation refresh across the PHP and JS sources — docblocks brought back
   in line with what the code does. No behavior change.
+- `.distignore` excludes `tsconfig.check.json` and `types/`, which were
+  shipping inside the release zip.
 - The newspaper-order method gate (`reorder-node-methods --check`) now runs in
   lint-staged for both PHP and JS, matching the substrate.
 
