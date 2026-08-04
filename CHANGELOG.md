@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`set_is_hub` uses the substrate's bool parse.** Its handler re-spelled the
+  rule locally as `'true' === $arg || '1' === $arg`, so it accepted `true`/`1`
+  and rejected `yes`/`on` for an argument its own schema declares
+  `'type' => 'bool'`. One of four implementations of that parse; it now calls
+  `Schema_Reflection::truthy()`, which this class already had the trait for.
+
 - **`Log_Manager` reads the partition count through the substrate accessor.**
   It clamped `num_partitions` with `max( 1, … )` and `> 0 ? … : 1` — two more
   spellings, neither with an upper bound — so an option above `MAX_PARTITIONS`
