@@ -63,12 +63,14 @@
 	"lint-staged": {
 		"*.{js,jsx}": [
 			"eslint",
+			"node scripts/reorder-node-methods.js --check",
 			"node scripts/lint-comment-length.mjs",
 			"sh -c 'npm run lint:deadcode:js --silent'"
 		],
 		"*.scss": "stylelint --customSyntax postcss-scss",
 		"*.php": [
 			"./vendor/bin/phpcs",
+			"php scripts/reorder-node-methods.php --check",
 			"sh -c 'npm run lint:phpstan --silent'",
 			"php scripts/lint-comment-length.php"
 		],

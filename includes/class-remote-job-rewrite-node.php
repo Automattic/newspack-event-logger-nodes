@@ -3,12 +3,13 @@
  * Remote_Job_Rewrite_Node — hub-side `k:"job"` -> `k:"remote_job"` rewrite on
  * aggregated firehose entries.
  *
- * The rewrite is a graph node the hub topology wires between the aggregated
- * source and the jobs partition, keeping the substrate Remote_Source / SSE_In
- * application-agnostic. A spoke-produced `k:"job"` entry, once
- * aggregated on the hub, becomes `k:"remote_job"` so it dispatches through the
- * `newspack_nodes/remote_job_handlers` filter (centrally on the hub) rather than
- * locally. Non-`job` entries and non-array VALUEs pass through untouched.
+ * The rewrite is a graph node the `aggregator` topology wires between the
+ * per-spoke substrate `Remote_Source_Node`s and the firehose `Topic`, keeping
+ * the substrate Remote_Source / SSE_In application-agnostic. A spoke-produced
+ * `k:"job"` entry, once aggregated on the hub, becomes `k:"remote_job"` so it
+ * dispatches through the `newspack_nodes/remote_job_handlers` filter (centrally
+ * on the hub) rather than locally. Non-`job` entries and non-array VALUEs pass
+ * through untouched.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -20,6 +21,12 @@ use Newspack_Nodes\Node;
 
 \defined( 'ABSPATH' ) || exit;
 
+/**
+ * Stateless pass-through transform: one `k` rewrite, then the base forward.
+ *
+ * The node takes no constructor arguments, exposes no verbs, and holds no
+ * state, so a hub may wire one instance behind every spoke's Remote_Source.
+ */
 class Remote_Job_Rewrite_Node extends Node {
 
 	/**
@@ -29,8 +36,11 @@ class Remote_Job_Rewrite_Node extends Node {
 	 * Request_Builder_Node reads them). When it's a `k:"job"` entry, flip the
 	 * kind to `remote_job`. The rewrite can only grow the message by the 7-byte
 	 * `job` -> `remote_job` delta, so it does no size check of its own: the
-	 * downstream Partition enforces its own line cap and drops an oversize
-	 * record there.
+	 * Topic's Partition enforces its own line cap and drops an oversize record
+	 * there.
+	 *
+	 * `parent::fill()` stamps TO from the target when TO is empty and throws
+	 * when no sink is wired, so an unwired rewrite fails loudly on first entry.
 	 *
 	 * @api Entry point invoked by the substrate Router / upstream sink.
 	 * @param array<int, mixed> $message Message reference; VALUE is the entry array.
@@ -47,7 +57,10 @@ class Remote_Job_Rewrite_Node extends Node {
 	/**
 	 * Topology console manifest: a pass-through transform with a sink target.
 	 *
+	 * Merging over the base keeps `registrations` and `accepts_fill` inherited.
+	 *
 	 * @api Used by the substrate to resolve the node + provide UI.
+	 * @return array<string, mixed> Palette entry and node configuration form.
 	 */
 	public static function node_schema(): array {
 		return \array_merge( parent::node_schema(), [

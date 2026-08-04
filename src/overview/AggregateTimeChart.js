@@ -1,8 +1,16 @@
 /**
- * Aggregate Time Chart Component
+ * Aggregate time chart — the Performance dashboard's main time series.
  *
- * D3-based chart with dropdown-controlled metric and breakdown dimensions.
- * Stacked bars for volume/cumulative metrics, line chart for avg response time.
+ * Plots the whole retention window in 5-minute buckets (`buildTimeSlots`) as
+ * one of two D3 shapes. `volume` and `cumulative` stack their series into a
+ * stacked area chart; `avg` and `memory` overlay one translucent area per
+ * series, because averages do not add up.
+ *
+ * The parent owns the metric and breakdown dropdowns, refetches the breakdown
+ * series when either changes, and filters by server before the data arrives —
+ * this component draws what it is handed and computes no totals of its own.
+ * `OverviewSection` mounts it for the global series, `UrlDetailView` for one
+ * URL's series.
  */
 
 import { useCallback, useMemo } from '@wordpress/element';
@@ -21,10 +29,11 @@ import {
 } from '@newspack-nodes/shared/hooks/useTimeChart';
 
 /**
- * Format a value in seconds to human-readable form.
+ * Format a duration in seconds for the cumulative axis and its tooltip.
+ * Sub-second values read as milliseconds, values past 1000s as kiloseconds.
  *
- * @param {number} seconds Value in seconds.
- * @return {string} Formatted string.
+ * @param {number} seconds Duration in seconds.
+ * @return {string} Formatted duration, e.g. `250ms`, `4.2s`, `1.5Ks`.
  */
 const formatSeconds = ( seconds ) => {
 	if ( seconds === 0 ) {
@@ -45,13 +54,17 @@ const formatSeconds = ( seconds ) => {
 /**
  * Aggregate Time Chart component.
  *
+ * Renders nothing until `data` holds at least one bucket, so a caller may
+ * mount it before the first fetch returns. `breakdownData`, when present,
+ * supplants `data` as the series source; `data` then only gates that render.
+ *
  * @param {Object}      props               Component props.
- * @param {Object}      props.data          Status code time series (aggregate_time_series).
- * @param {Object|null} props.breakdownData Dimensional time series or null.
- * @param {string}      props.metric        'volume' | 'avg' | 'cumulative'.
- * @param {string}      props.breakdown     'status' | 'method' | 'server' | etc.
- * @param {string}      props.serverFilter  Server name to filter by, or '' for all.
- * @return {import('react').ReactElement} Rendered component.
+ * @param {Object}      props.data          Bucket key => `{ count, sum_ms, sum_peak_mb }`, the single-series source.
+ * @param {Object|null} props.breakdownData Bucket key => dimension value => `{ c, s, m }` (count, sum ms, sum peak MB).
+ * @param {string}      props.metric        'volume' | 'avg' | 'cumulative' | 'memory'.
+ * @param {string}      props.breakdown     Dimension `breakdownData` was fetched for; picks the palette only.
+ * @param {string}      props.serverFilter  Server name for the heading; the caller has already filtered the data.
+ * @return {import('react').ReactElement|null} Rendered chart, or null while no data has arrived.
  */
 export default function AggregateTimeChart( {
 	data,
@@ -60,12 +73,12 @@ export default function AggregateTimeChart( {
 	breakdown = 'status',
 	serverFilter = '',
 } ) {
-	// Pre-compute chart data.
 	const chartState = useMemo( () => {
 		if ( ! data ) {
 			return { chartData: [], keys: [], colorMap: {}, isLine: false };
 		}
 
+		// isLine: averages don't add up, so they overlay instead of stacking.
 		const isLine = metric === 'avg' || metric === 'memory';
 		const effectiveBreakdown = breakdownData;
 		const slots = buildTimeSlots();
@@ -153,17 +166,15 @@ export default function AggregateTimeChart( {
 
 			const { chartData, keys, colorMap, isLine } = chartState;
 
-			// Clear previous chart.
+			// Every render redraws from scratch; d3 holds no update join.
 			d3.select( refs.containerRef.current ).selectAll( '*' ).remove();
 
-			// Dimensions.
 			const width =
 				( refs.containerRef.current.clientWidth || 800 ) -
 				MARGIN.left -
 				MARGIN.right;
 			const height = 280 - MARGIN.top - MARGIN.bottom;
 
-			// Create SVG.
 			const svg = d3
 				.select( refs.containerRef.current )
 				.append( 'svg' )
@@ -175,13 +186,11 @@ export default function AggregateTimeChart( {
 					`translate(${ MARGIN.left },${ MARGIN.top })`
 				);
 
-			// X scale.
 			const x = d3
 				.scaleTime()
 				.domain( d3.extent( chartData, ( d ) => d.date ) )
 				.range( [ 0, width ] );
 
-			// X axis.
 			svg.append( 'g' )
 				.attr( 'transform', `translate(0,${ height })` )
 				.call(
@@ -195,7 +204,7 @@ export default function AggregateTimeChart( {
 				.style( 'text-anchor', 'end' );
 
 			if ( isLine ) {
-				// LINE CHART for avg response time / memory.
+				// Overlaid areas for avg response time / avg peak memory.
 				let yMax = 0;
 				chartData.forEach( ( d ) => {
 					keys.forEach( ( k ) => {
@@ -241,7 +250,6 @@ export default function AggregateTimeChart( {
 							  )
 					);
 
-				// Draw overlaid areas.
 				const area = d3
 					.area()
 					.x( ( d ) => x( d.date ) )
@@ -264,7 +272,6 @@ export default function AggregateTimeChart( {
 						.attr( 'd', area );
 				} );
 
-				// Tooltip.
 				const ttFmt =
 					metric === 'memory'
 						? ( v ) => `${ v.toFixed( 1 ) }MB`
@@ -291,7 +298,6 @@ export default function AggregateTimeChart( {
 					containerRef: refs.containerRef,
 				} );
 
-				// Legend.
 				drawLegend(
 					svg,
 					keys.map( ( k ) => ( {
@@ -301,7 +307,7 @@ export default function AggregateTimeChart( {
 					width + MARGIN.left + MARGIN.right
 				);
 			} else {
-				// STACKED AREA CHART for volume/cumulative.
+				// Stacked areas for request volume / cumulative time.
 				const stack = d3.stack().keys( keys );
 				const stackedData = stack( chartData );
 
@@ -337,7 +343,6 @@ export default function AggregateTimeChart( {
 							: __( 'Requests', 'newspack-event-logger-nodes' )
 					);
 
-				// Draw stacked areas.
 				const stackArea = d3
 					.area()
 					.x( ( d ) => x( d.data.date ) )
@@ -356,7 +361,7 @@ export default function AggregateTimeChart( {
 					.attr( 'stroke-width', 0.5 )
 					.attr( 'd', stackArea );
 
-				// Tooltip.
+				// The stacked tooltip leads with the column total.
 				const saFmt =
 					metric === 'cumulative'
 						? ( v ) => formatSeconds( v )
@@ -398,7 +403,6 @@ export default function AggregateTimeChart( {
 					containerRef: refs.containerRef,
 				} );
 
-				// Legend.
 				drawLegend(
 					svg,
 					keys.map( ( k ) => ( {
@@ -414,6 +418,7 @@ export default function AggregateTimeChart( {
 
 	const { containerRef, tooltipRef } = useTimeChart( renderFn );
 
+	// Guard sits below every hook; hoisting it would break hook order.
 	if ( ! data || Object.keys( data ).length === 0 ) {
 		return null;
 	}

@@ -1,10 +1,23 @@
 /**
- * Shared constants for performance monitoring components.
+ * Constants for the Gyroscope dashboard's in-flight requests view.
+ *
+ * Only `Inflight.js` consumes this module; the Performance Dashboard keeps its
+ * own options in `src/overview/constants.js`.
  */
 
 /**
- * Refresh interval options for inflight real-time view (shorter intervals).
- * Values are numbers in seconds for SSE streaming interval.
+ * Refresh-interval choices for the in-flight view's dropdown.
+ *
+ * Each `value` is a number of SECONDS. It sets how often `Inflight` samples
+ * `gyroscope:view.snapshot()` for rows and `.rps` — the render cadence, not the
+ * SSE stream, which pushes every message regardless and carries no interval.
+ * `Inflight` multiplies by 1000 for `useRouterTick`.
+ *
+ * The list doubles as the validation whitelist for the persisted
+ * `event-logger-inflight-refresh` localStorage value: a saved number absent
+ * here is discarded. It must therefore keep containing every value `Inflight`
+ * can select on its own — the `2` default and the 0–9 keyboard map — or the
+ * dropdown renders a selection it has no option for.
  */
 export const INFLIGHT_REFRESH_OPTIONS = [
 	{ value: 0.1, label: '100ms' },

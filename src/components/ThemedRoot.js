@@ -4,11 +4,17 @@ import { SKIN_EVENT, initSkin } from '@newspack-nodes/shared/theme';
 import './ThemedRoot.scss';
 
 /**
- * No-box themed token-provider for standalone ELN dashboards. Reads the
- * console-selected skin (persisted in localStorage) once at mount and wraps its
- * children in a `display:contents` skinned non-graph provider, putting the
- * skin's universal tokens (--paper/--ink/--cyan/--font-mono/…) in scope so the
- * dashboard reskins onto them without inheriting topology layout.
+ * No-box themed token-provider for standalone ELN dashboards. It applies the
+ * console-selected skin (persisted in localStorage) to `<html>` at mount and
+ * wraps its children in a `display:contents` skinned non-graph provider,
+ * putting the skin's universal tokens (--paper/--ink/--cyan/--font-mono/…) in
+ * scope so the dashboard reskins onto them without inheriting topology layout.
+ *
+ * The three classes are the whole contract. `newspack-nodes-skin-root` +
+ * `newspack-nodes-theme` is the selector the substrate's skin sheet emits every
+ * `--paper-*`/`--ink-*` token under, and `newspack-nodes-ui` opts into the
+ * shared component appearance. Dropping `topology-app` is what keeps the graph
+ * layout out.
  *
  * `display: contents` drops this wrapper's own box, but inheritance still
  * passes through, so the skin's `font-family: var(--font-mono)` cascades into
@@ -18,9 +24,11 @@ import './ThemedRoot.scss';
  * The dashboard's dark surface only covers its own box; the WP-admin area around
  * it (the ~20px left gutter beside the menu, the right `max-width` margin, the
  * footer area below the content) otherwise shows the light body background as
- * stray strips. The effect below paints `document.body` with the RESOLVED skin
- * surface (read once from this themed wrapper) so every gutter matches the
- * dashboard; it's restored on unmount.
+ * stray strips. The effect below paints `document.body` with the skin surface
+ * resolved from inside this wrapper, and repaints on every `SKIN_EVENT` — the
+ * same-tab skin-change signal, which the `storage` event never delivers — so
+ * every gutter tracks the live skin. The original background is restored on
+ * unmount.
  *
  * @param {Object}                    props          Component props.
  * @param {import('react').ReactNode} props.children Dashboard root(s) to skin.
@@ -29,7 +37,7 @@ import './ThemedRoot.scss';
 export default function ThemedRoot( { children } ) {
 	const ref = useRef( null );
 
-	// Paint WP-admin gutters to the skin base surface on skin change.
+	// Paint WP-admin gutters to the skin base surface, on mount and on change.
 	useEffect( () => {
 		// Apply persisted skin to <html> before gutter probe reads --paper-3.
 		initSkin();
@@ -38,8 +46,18 @@ export default function ThemedRoot( { children } ) {
 			return undefined;
 		}
 		let previous = null;
+		/**
+		 * Paint `document.body` with the skin's `--paper-3`, resolved by a
+		 * throwaway probe span parented INSIDE the themed wrapper — the token
+		 * only exists under the skin-root selector, so a probe anywhere else
+		 * reads nothing.
+		 *
+		 * A token that fails to resolve computes as transparent; leave the body
+		 * untouched rather than paint it see-through. The pre-paint background
+		 * is captured on the first successful paint only, so an unmount that
+		 * never painted restores nothing.
+		 */
 		const paintGutters = () => {
-			// Resolve the skin's --paper-3 from inside the themed wrapper.
 			const probe = document.createElement( 'span' );
 			host.appendChild( probe );
 			let paper;

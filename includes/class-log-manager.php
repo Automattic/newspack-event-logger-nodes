@@ -1,9 +1,15 @@
 <?php
 /**
- * Log Manager
+ * Log Manager — the event logger's per-request firehose writer.
  *
- * JSONL logging via Newspack_Nodes Topic + Partition.
- * This is the public API for Pyrobase and other plugins to log events.
+ * A logged request opens the shared `_firehose:topic` Topic, hashes its request
+ * id to a partition, and appends one TM_STRUCT Message per log line. Each line
+ * lands on disk as a JSON array (Message::packed), keyed by the request id, and
+ * `Request_Builder_Node` / `Flame_Builder_Node` reassemble those lines
+ * downstream into requests, flame graphs, and stats.
+ *
+ * This file is also the event logger's public API: Pyrobase, Nuclear Gyrobase,
+ * and the substrate's job worker all log through `Log_Manager::instance()`.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -24,13 +30,21 @@ if ( ! \defined( 'ABSPATH' ) ) {
 /**
  * Log manager class.
  *
- * Singleton that provides the request lifecycle logging API.
- * External plugins (Pyrobase, etc.) use this to log custom events.
+ * One instance governs one request context. Construction resolves the rule
+ * matching REQUEST_URI and starts logging when that rule says `log`; a
+ * `skip` rule, no rule at all, `enable_logging` off, or a root process leaves
+ * the instance inert and every write returns false.
+ *
+ * Nested contexts — background jobs, cron, template subprocesses — suspend the
+ * active instance onto a LIFO stack and install a fresh one. See
+ * begin_job_context() / end_job_context(), the pair the substrate's job worker
+ * hooks around every handler.
  */
 class Log_Manager {
 
 	/**
-	 * PHP error types that indicate a fatal crash.
+	 * PHP error types finish() reports as a fatal crash, read out of
+	 * error_get_last() and attached to the final `process (complete)` line.
 	 */
 	const FATAL_TYPES = [ E_ERROR, E_PARSE, E_COMPILE_ERROR, E_USER_ERROR ];
 
@@ -94,7 +108,10 @@ class Log_Manager {
 	/** TSL node name an aggregator hub declares its firehose Topic under. */
 	private const FIREHOSE_NODE = 'firehose:topic';
 
-	/** @var int Maximum data size in bytes for log entry data arrays. */
+	/** @var int Encoded-data cap in bytes. Headroom under PIPE_BUF (4096), which
+	 * is what keeps a lock-free append atomic against every other writer on this
+	 * multi-writer log. Payloads that can exceed it belong in
+	 * \Newspack_Nodes\Job_Intake::queue(), not here — message() truncates. */
 	private const MAX_DATA_SIZE = 3840;
 
 	/** @var int Mute start/complete after this many lines, leaving room for messages + finish. */
@@ -111,6 +128,8 @@ class Log_Manager {
 
 	/** @var array<int, self> Stack of suspended parent LogManager instances. */
 	private static $context_stack = [];
+
+	/** @var self|null The active instance; instance() creates it on demand. */
 	private static ?self $instance = null;
 
 	/** @var array<int, array<string, mixed>> LIFO $_SERVER snapshots for begin/end_job_context. */
@@ -156,19 +175,19 @@ class Log_Manager {
 		'_URL',
 	];
 
-	/** @var bool */
+	/** @var bool The governing rule says log this request. */
 	public $enabled          = false;
 
 	/** @var array<string, mixed> Cached config (loaded once at construction). */
 	private $config = [];
-	/** @var bool */
+	/** @var bool finish() has run; nothing more will be written. */
 	private $finished        = false;
 
 	/** @var bool Flush write buffer after every log line (survives OOM/crash). */
 	private $flush_every_line = false;
-	/** @var bool */
+	/** @var bool Past MAX_LOG_LINES; start()/complete() pairs go quiet. */
 	private $line_limited    = false;
-	/** @var int */
+	/** @var int The next line's `n` field, 1-based. */
 	private $line_number     = 1;
 
 	/** @var bool Append peak_mb to every complete() entry for memory profiling. */
@@ -179,26 +198,36 @@ class Log_Manager {
 
 	/** @var Rule_Matcher|null Built once per request from the autoloaded rule list. */
 	private ?Rule_Matcher $matcher = null;
-	/** @var int */
+	/** @var int Firehose partition this request's id hashes to. */
 	private $partition_idx   = 0;
-	/** @var string */
+	/** @var string This request's id — the KEY every Message carries. */
 	private $request_id      = '';
-	/** @var float|null */
+	/** @var float|null hrtime() reading the profiler drop-in took at request start. */
 	private $request_time    = null;
-	/** @var int|float|null */
+	/** @var int|float|null Wall-clock request start, from the profiler drop-in. */
 	private $request_ts      = null;
-	/** @var string */
+	/** @var string Sanitized REQUEST_URI, or '/unknown' when there is none. */
 	private $request_url     = '';
 
 	/** Saved UNIQUE_ID for suspend/resume. */
 	private ?string $saved_unique_id = null;
-	/** @var bool|null */
+	/** @var bool|null True while logging, false after finish(), null before the first ensure_started(). */
 	private $started         = null;
 	/** @var array<int, array{label: string, ts: int|float, muted?: bool, m?: mixed}> Timer-frame stack. */
 	private $times           = [];
-	/** @var \Newspack_Nodes\Topic_Node|null */
+	/** @var \Newspack_Nodes\Topic_Node|null The firehose Topic; null until init_firehose() runs. */
 	private $topic           = null;
 
+	/**
+	 * Resolve this request's context and start logging when a rule allows it.
+	 *
+	 * Bails inert — leaving `enabled` false — when `enable_logging` is off or the
+	 * process runs as root, whose writes would leave root-owned segment files the
+	 * web user could never append to. Otherwise it builds the rule matcher,
+	 * adopts the profiler drop-in's request-start readings (consuming them from
+	 * the `$newspack_profiler` global so a nested context cannot claim them
+	 * twice), and starts eagerly when the governing rule says `log`.
+	 */
 	public function __construct() {
 		// Assign self FIRST: load_config() re-enters instance(); null recurses.
 		self::$instance = $this;
@@ -229,7 +258,8 @@ class Log_Manager {
 	}
 
 	/**
-	 * Resolve the governing rule for a URL and set enabled accordingly.
+	 * Resolve the governing rule for a URL, storing it and setting `enabled`
+	 * accordingly. No rule matched means skip — there is no log-all baseline.
 	 *
 	 * @param string $url URL to check.
 	 * @return bool True if URL should be logged.
@@ -241,7 +271,9 @@ class Log_Manager {
 	}
 
 	/**
-	 * Ensure that full logging has started.
+	 * Ensure that full logging has started: register finish() as a shutdown
+	 * function, attach the firehose Topic, and open the request. Idempotent, and
+	 * a no-op once the rule declined this request or finish() has already run.
 	 *
 	 * @return bool True if logging is started.
 	 */
@@ -280,7 +312,8 @@ class Log_Manager {
 	 * are its `.p{N}` siblings. An explicit path answers only for itself, so no
 	 * declaration joins that span.
 	 *
-	 * @return array<int,string>
+	 * @param string $log_path Log base overriding the configured layout; '' uses the config.
+	 * @return array<int,string> Partition index => directory.
 	 */
 	public static function firehose_dirs( string $log_path = '' ): array {
 		$declared = '' === $log_path ? Bootstrap::node_dirs( self::FIREHOSE_NODE ) : [];
@@ -299,7 +332,12 @@ class Log_Manager {
 	}
 
 	/**
-	 * Finish initialization
+	 * Mint the request id, pick its partition, and attach the firehose Topic.
+	 *
+	 * The id comes from the edge (`HTTP_X_A8C_REQUEST_ID`), else from `UNIQUE_ID`,
+	 * else it is generated and published back into `$_SERVER['UNIQUE_ID']` so a
+	 * subprocess inherits the same identity. `_firehose:topic` is built once per
+	 * process and adopted by every later context.
 	 */
 	private function init_firehose(): void {
 		// request_id FIRST: Topic ctor re-enters message(), which needs a rid.
@@ -341,7 +379,7 @@ class Log_Manager {
 	}
 
 	/**
-	 * Generate a new request ID for the current request.
+	 * Generate a new request ID: 32 base-36 characters over 25 random bytes.
 	 *
 	 * @return string
 	 */
@@ -354,7 +392,10 @@ class Log_Manager {
 	}
 
 	/**
-	 * Log process details
+	 * Open the request: `process (start)`, `request`, environment, resources.
+	 *
+	 * The `process` frame this pushes is the root of the timer stack — finish()
+	 * closes it last, and every orphaned frame above it drains first.
 	 *
 	 * @return void
 	 */
@@ -387,20 +428,30 @@ class Log_Manager {
 	}
 
 	/**
-	 * The governing rule's id, or '' when nothing matched.
+	 * The governing rule's id, or '' when nothing matched. Rides the
+	 * `process (start)` line as `rule`, which is how a reader attributes a
+	 * request to the rule that admitted it.
 	 *
-	 * @api Used by external plugins.
+	 * @api Public accessor.
 	 */
 	public function governing_rule_id(): string {
 		return $this->matched_rule->id ?? '';
 	}
 
 	/**
-	 * Log a message with the given category and data.
+	 * Write one firehose line: a TM_STRUCT Message keyed by the request id.
+	 *
+	 * The entry carries the line number as `n`, the category as `k`, the caller's
+	 * data, and a `ts` timestamp. Data encoding over MAX_DATA_SIZE is NOT chunked
+	 * — the category gains `" (truncated)"` and the data collapses to a
+	 * 1000-character excerpt, so anything larger belongs in
+	 * `\Newspack_Nodes\Job_Intake::queue()` instead. A caller-supplied `rid` is
+	 * dropped: the real one is the Message KEY, and honoring the caller's would
+	 * let it forge another request's identity.
 	 *
 	 * @param string $category Event category/keyword.
 	 * @param array<string, mixed>  $data     Additional data to include.
-	 * @return bool True on success.
+	 * @return bool True when the line was written; false when logging never started or the Topic is missing.
 	 */
 	public function message( string $category, array $data = [] ): bool {
 		if ( ! $this->ensure_started() ) {
@@ -455,6 +506,14 @@ class Log_Manager {
 		return \preg_replace( self::URL_REDACT_PATTERN, '$1$2=[REDACTED]', $url ) ?? $url;
 	}
 
+	/**
+	 * Emit the curated `environment_v3` map for this request.
+	 *
+	 * Every value is stripped of control characters, redacted where it carries a
+	 * query string, and capped at ENV_VALUE_MAX bytes — in that order, so a cut
+	 * can never expose the tail of a secret the redaction would have covered.
+	 * Sensitive and array-valued keys are dropped outright.
+	 */
 	private function log_environment(): void {
 		$env = [];
 		foreach ( self::ENV_ALLOWLIST as $key ) {
@@ -501,6 +560,11 @@ class Log_Manager {
 		return false;
 	}
 
+	/**
+	 * Emit a `resources` line from getrusage(): CPU time, faults, I/O blocks,
+	 * signals, context switches. Called at request open and again at finish, so
+	 * a reader can difference the two. Silent when getrusage() is unavailable.
+	 */
 	private function log_resources(): void {
 		$r = \getrusage();
 		if ( ! $r ) {
@@ -519,7 +583,15 @@ class Log_Manager {
 	}
 
 	/**
-	 * Log final summary including memory usage and resources.
+	 * Close the request: drain the timer stack, then log memory, resources, and
+	 * the final `process (complete)` line before flushing the Topic.
+	 *
+	 * Registered as a shutdown function by ensure_started(), so it also runs
+	 * after a fatal. When error_get_last() reports one of FATAL_TYPES, the
+	 * completion line carries the message, file, line, type, offending plugin
+	 * slug, and `error_status` = `F`.
+	 *
+	 * Idempotent: a second call after the first returns immediately.
 	 */
 	public function finish(): void {
 		if ( $this->finished || ! $this->started ) {
@@ -593,7 +665,13 @@ class Log_Manager {
 	}
 
 	/**
-	 * Complete a labeled operation and log the duration.
+	 * Close a labeled operation and log its duration.
+	 *
+	 * Search runs from the top of the timer stack down to the first frame with
+	 * this label. Frames above it never got their own complete() — they drain as
+	 * `(orphaned)` lines, innermost first, so an unbalanced caller costs its own
+	 * frames and not the enclosing ones. An unknown label matches nothing and
+	 * leaves the stack untouched. A muted frame closes silently.
 	 *
 	 * @param string $label Label that was passed to start().
 	 * @param array<string, mixed>  $data  Additional data to include in the complete event.
@@ -664,8 +742,9 @@ class Log_Manager {
 
 	/**
 	 * Log a fleet-alert message to the current request's firehose stream.
-	 * Request_Builder forwards `alert` entries to the alerts journal AND the
-	 * Error Log, the same way it forwards error/warning to the Error Log.
+	 * `Request_Builder_Node` routes `alert` entries to its `alerts_target` — the
+	 * fleet journal — and to nothing else; `error` / `warning` are the keywords
+	 * that reach the Error Log.
 	 *
 	 * @api Used by external plugins.
 	 * @param string $message Alert message.
@@ -676,7 +755,13 @@ class Log_Manager {
 	}
 
 	/**
-	 * Start timing a labeled operation.
+	 * Start timing a labeled operation and push its frame on the timer stack.
+	 *
+	 * Two budgets guard the stack. Past MAX_TIMER_DEPTH the call is dropped
+	 * entirely; past MAX_LOG_LINES the frame is pushed muted, so it still times
+	 * the operation but emits neither its start nor its complete line. A frame is
+	 * also dropped when the start line itself could not be written — pair every
+	 * start() with a complete() carrying the same label.
 	 *
 	 * @param string $label Label for the timer (e.g., 'query', 'template').
 	 * @param array<string, mixed>  $data  Additional data to include in the start event.
@@ -738,6 +823,9 @@ class Log_Manager {
 	 * restore the $_SERVER snapshot pushed by begin_job_context(). The symmetric
 	 * pair to begin_job_context() — safe to call on an empty stack (no-op restore)
 	 * so a throwing/unpaired begin can't fatal here.
+	 *
+	 * Fires `newspack_event_logger_nodes_scope_changed`, which `App\Core` uses to
+	 * rebind its hook instrumentation to the restored scope's rule.
 	 */
 	public static function end_job_context(): void {
 		self::resume();
@@ -784,7 +872,9 @@ class Log_Manager {
 	 * mid-method still leaves a complete snapshot to restore from, and so an
 	 * unpaired/throwing begin still leaves end_job_context a snapshot to pop.
 	 * Public static so handlers (and direct callers like cron) can nest their own
-	 * sub-scopes — pair with end_job_context() in a finally block.
+	 * sub-scopes — pair with end_job_context() in a finally block. Both ends fire
+	 * `newspack_event_logger_nodes_scope_changed` so `App\Core` rebinds its hook
+	 * instrumentation to whichever rule now governs.
 	 *
 	 * @param string $handler Job handler name.
 	 * @param string $id      First-class job identity ('' ⇒ no id segment).
@@ -822,6 +912,9 @@ class Log_Manager {
 	 * The suspended instance keeps its state (timers, request ID, buffer)
 	 * intact. A new instance will be created on the next instance() call.
 	 * Call resume() to restore the parent context.
+	 *
+	 * The parent's buffered lines are flushed on the way out, so the nested
+	 * context's lines land after them rather than interleaved.
 	 */
 	public static function suspend(): void {
 		if ( null !== self::$instance ) {
@@ -874,15 +967,14 @@ class Log_Manager {
 	/**
 	 * Drain every materialized Partition's in-memory batch to disk.
 	 *
-	 * Callers that hand off to a
-	 * subprocess writing to the same firehose (nuclear-gyrobase's run_gyrobase.sh,
-	 * pyrobase's template execution) call this BEFORE `proc_open` so the
-	 * parent's buffered Messages land in segment order before the child starts
-	 * appending. Without it, the subprocess can write between the parent's
-	 * accumulated Messages and the next size-threshold / timer flush, leaving
-	 * entries on disk out of logical order.
+	 * Two callers need this. A caller handing off to a subprocess that writes the
+	 * same firehose (nuclear-gyrobase's run_gyrobase.sh) flushes BEFORE
+	 * `proc_open`, or the child appends between the parent's accumulated Messages
+	 * and the next size-threshold / timer flush and the segment ends up out of
+	 * logical order. A caller that has just written a `job` entry flushes so the
+	 * Job Router sees the work now rather than whenever the batch happens to fill.
 	 *
-	 * @api Used by external plugins (nuclear-gyrobase + pyrobase pre-proc_open flush).
+	 * @api Used by external plugins (nuclear-gyrobase, pyrobase).
 	 */
 	public function flush(): void {
 		$this->topic?->flush();
@@ -904,7 +996,9 @@ class Log_Manager {
 	}
 
 	/**
-	 * Get the singleton instance.
+	 * The active instance, constructed on first call. Construction is what
+	 * resolves the governing rule and may start logging — a caller that only
+	 * wants to write to an already-started context wants started_instance().
 	 *
 	 * @return self
 	 */
@@ -913,7 +1007,8 @@ class Log_Manager {
 	}
 
 	/**
-	 * Get the request ID for the current request.
+	 * Get the request ID for the current request. Empty until init_firehose()
+	 * runs, which is how callers detect an unlogged request.
 	 *
 	 * @api Used by external plugins.
 	 * @return string
@@ -936,7 +1031,10 @@ class Log_Manager {
 	 * Refresh firehose segment state from disk.
 	 *
 	 * Call after a subprocess that may have written to or rotated the firehose,
-	 * so subsequent writes go to the current segment.
+	 * so subsequent writes go to the current segment. Reflection reaches the
+	 * substrate's protected `Topic_Node::partition()` and
+	 * `Partition_Node::init_current_segment()` — renaming either breaks this
+	 * silently, since neither call can fail at compile time.
 	 *
 	 * @api Used by external plugins.
 	 */

@@ -1,7 +1,20 @@
 /**
- * Flame Graph Component
+ * Flame graph for the request, per-URL, and current-request detail views.
  *
- * D3-based flame graph visualization using d3-flame-graph.
+ * Wraps `d3-flame-graph` in a React component and adds what the dashboards
+ * need on top of it: frames shaded by stack depth in the active theme's
+ * accent, a viewport-aware tooltip, zoom and tooltip that both survive an
+ * auto-refresh re-render, Cmd/Ctrl+Click to reveal a frame in the log table,
+ * and a refit when the container (not the window) resizes. `pruneFlameGraph`
+ * caps the rendered frame count so a pathological aggregate cannot lock up
+ * the browser.
+ *
+ * D3 owns the SVG; React owns only the container element and two auxiliary
+ * pointer handlers.
+ *
+ * Frames arrive from `Flame_Tree` as `{ name, value, children[], detail? }`,
+ * where `value` is milliseconds and a child's value never exceeds its
+ * parent's.
  */
 
 import { useEffect, useRef, useMemo } from '@wordpress/element';
@@ -13,31 +26,30 @@ import './styles/flame-graph.scss';
 import { shadeForDepth, pickLabelColor, isColorParseable } from './flameColors';
 
 /**
- * Get tooltip text for a flame graph node.
+ * Build the tooltip text for a frame: name, shares of parent and total, duration.
+ *
+ * A frame whose share of its parent matches its share of the total (within
+ * 0.1 point) shows one percentage rather than repeating itself.
  *
  * @param {Object} d D3 hierarchy node.
  * @return {string} Tooltip text.
  */
 const getTooltipText = ( d ) => {
-	// Use 'detail' if available, else 'name' (stable label).
+	// 'detail' carries the message; 'name' is the stable label.
 	const name = d.data?.detail || d.data?.name || 'unknown';
 	const value = d.data?.value || 0;
 
-	// Find root by traversing up.
 	let root = d;
 	while ( root.parent ) {
 		root = root.parent;
 	}
 	const rootValue = root.data?.value || 0;
 
-	// Calculate % of total.
 	const pctTotal = rootValue > 0 ? ( value / rootValue ) * 100 : 100;
 
-	// Calculate % of parent.
 	const parentValue = d.parent?.data?.value || 0;
 	const pctParent = parentValue > 0 ? ( value / parentValue ) * 100 : 100;
 
-	// Format: show both percentages for non-root nodes.
 	if ( d.parent && Math.abs( pctParent - pctTotal ) > 0.1 ) {
 		return sprintf(
 			// translators: 1: node name, 2: percent of parent, 3: percent of total, 4: duration in milliseconds.
@@ -61,14 +73,27 @@ const getTooltipText = ( d ) => {
 };
 
 /**
- * Create tooltip with viewport-aware positioning and state persistence.
+ * Build a tooltip satisfying d3-flame-graph's tooltip contract.
  *
- * @return {Function} Tooltip with .show(), .hide(), .restore() methods.
+ * The chart calls the returned function once to create the element, then
+ * `.show(d)` and `.hide()` on hover. Positioning prefers the space right of
+ * and below the cursor, flipping or clamping when the tip would overflow a
+ * viewport edge.
+ *
+ * `.show()` also records what it rendered so `.restore()` can replay it: an
+ * auto-refresh destroys the hovered frame, and without the replay the tooltip
+ * vanishes mid-read. `.clearState()` drops that record when the pointer
+ * leaves the graph.
+ *
+ * @return {Function} Tooltip exposing .show(), .hide(), .restore(), .hasState(), .clearState() and .destroy().
  */
 const createTooltip = () => {
 	let tooltipEl = null;
-	let lastState = null; // tooltip state, restored after updates.
+	let lastState = null;
 
+	/**
+	 * Create the tooltip element. d3-flame-graph calls this once, on attach.
+	 */
 	const tip = function () {
 		tooltipEl = d3
 			.select( 'body' )
@@ -79,6 +104,11 @@ const createTooltip = () => {
 			.style( 'pointer-events', 'none' );
 	};
 
+	/**
+	 * Show the tooltip for a frame, positioned near the cursor.
+	 *
+	 * @param {Object} d D3 hierarchy node under the pointer.
+	 */
 	tip.show = function ( d ) {
 		if ( ! tooltipEl ) {
 			tip();
@@ -86,22 +116,19 @@ const createTooltip = () => {
 
 		const text = getTooltipText( d );
 
-		// Get mouse position and viewport dimensions.
+		// d3-flame-graph passes no event; window.event is the only source.
 		const mouseX = window.event?.pageX || 0;
 		const mouseY = window.event?.pageY || 0;
 		const viewportWidth = window.innerWidth;
 
-		// Calculate available space to the right of cursor.
 		const spaceOnRight = viewportWidth - ( mouseX - window.scrollX ) - 25;
 
-		// Use a reasonable max width, clamped to available space.
 		const maxWidth = Math.min( 500, Math.max( 250, spaceOnRight ) );
 
-		// Position: prefer right of cursor, but clamp to viewport.
 		let left = mouseX + 15;
 		const rightEdge = window.scrollX + viewportWidth - 10;
 
-		// Apply styles, set text, then measure.
+		// Text and styles must land before the element can be measured.
 		tooltipEl
 			.style( 'max-width', maxWidth + 'px' )
 			.style( 'white-space', 'pre-wrap' )
@@ -110,22 +137,19 @@ const createTooltip = () => {
 			.text( text )
 			.style( 'display', 'block' );
 
-		// Measure actual size after text and styles applied.
 		const tipNode = tooltipEl.node();
 		const tipWidth = tipNode.offsetWidth;
 		const tipHeight = tipNode.offsetHeight;
 
-		// If tooltip would overflow right edge, shift left to fit.
 		if ( left + tipWidth > rightEdge ) {
 			left = rightEdge - tipWidth;
 		}
 
-		// Ensure tooltip doesn't go off left edge.
 		if ( left < window.scrollX + 10 ) {
 			left = window.scrollX + 10;
 		}
 
-		// Keep tooltip above mouse if near bottom.
+		// Flip above the cursor rather than run off the bottom.
 		let top = mouseY + 15;
 		if ( mouseY + tipHeight + 20 > window.innerHeight + window.scrollY ) {
 			top = mouseY - tipHeight - 15;
@@ -133,18 +157,21 @@ const createTooltip = () => {
 
 		tooltipEl.style( 'left', left + 'px' ).style( 'top', top + 'px' );
 
-		// Store state for restoration after data updates.
 		lastState = { text, left, top };
 	};
 
+	/**
+	 * Hide the tooltip, keeping its state so `restore()` can bring it back.
+	 */
 	tip.hide = function () {
 		if ( tooltipEl ) {
 			tooltipEl.style( 'display', 'none' );
 		}
-		// Don't clear lastState here; we still restore on autorefresh.
 	};
 
-	// Restore tooltip after a data update (else it vanishes on autorefresh).
+	/**
+	 * Re-show the last tooltip after a data update destroyed its frame.
+	 */
 	tip.restore = function () {
 		if ( lastState && tooltipEl ) {
 			tooltipEl
@@ -155,16 +182,25 @@ const createTooltip = () => {
 		}
 	};
 
-	// Check if we have state to restore (not whether currently displayed).
+	/**
+	 * Whether a tooltip state exists to restore — not whether one is displayed.
+	 *
+	 * @return {boolean} True when `restore()` has something to replay.
+	 */
 	tip.hasState = function () {
 		return lastState !== null;
 	};
 
-	// Clear state explicitly (e.g., when user moves mouse away).
+	/**
+	 * Forget the last tooltip, so a refresh does not resurrect it.
+	 */
 	tip.clearState = function () {
 		lastState = null;
 	};
 
+	/**
+	 * Remove the tooltip element and drop its state.
+	 */
 	tip.destroy = function () {
 		if ( tooltipEl ) {
 			tooltipEl.remove();
@@ -231,16 +267,19 @@ const applyLabelContrast = ( container ) => {
 };
 
 /**
- * Get the path from root to a node (array of names).
+ * Build the root-to-node path, one segment per frame.
+ *
+ * Segments prefer `detail` ("name: message") over `name`, which is what
+ * `LogEntriesTable.revealPath()` expects — it matches on the detail path and
+ * falls back to the base names.
  *
  * @param {Object} d D3 hierarchy node.
- * @return {Array} Array of node names from root to this node.
+ * @return {Array} Frame labels from the root down to this node.
  */
 const getNodePath = ( d ) => {
 	const path = [];
 	let current = d;
 	while ( current ) {
-		// Use detail (with message) if available, else name.
 		path.unshift( current.data?.detail || current.data?.name || 'unknown' );
 		current = current.parent;
 	}
@@ -248,28 +287,29 @@ const getNodePath = ( d ) => {
 };
 
 /**
- * Find a node by following a path of names.
+ * Walk a path of frame names down from the root and return the node it names.
+ *
+ * Matching is on `data.name` alone, so a path segment that `getNodePath()`
+ * took from `detail` will not match. Zoom restoration therefore resolves only
+ * for detail-less frames.
  *
  * @param {Object} node D3 hierarchy node (root).
- * @param {Array}  path Array of names to follow.
- * @return {Object|null} Found node or null.
+ * @param {Array}  path Names to follow, root first.
+ * @return {Object|null} The named node, or null when the path does not resolve.
  */
 const findNodeByPath = ( node, path ) => {
 	if ( ! path || path.length === 0 ) {
 		return null;
 	}
 
-	// Check if current node matches first path element.
 	if ( node.data?.name !== path[ 0 ] ) {
 		return null;
 	}
 
-	// If this is the last element, we found it.
 	if ( path.length === 1 ) {
 		return node;
 	}
 
-	// Search children for next path element.
 	if ( node.children ) {
 		const remainingPath = path.slice( 1 );
 		for ( const child of node.children ) {
@@ -350,6 +390,7 @@ const collectNonRootValues = ( node, values, isRoot ) => {
  * @param {number} [options.softMaxNodes] Frames ranked within this are always kept (default 1000).
  * @param {number} [options.hardMaxNodes] Absolute ceiling on rendered node count (default 5000).
  * @return {Object} Pruned tree (a copy; the input is not mutated).
+ * @testonly Exported for FlameGraph.test.js; the component prunes internally.
  */
 export const pruneFlameGraph = ( root, options = {} ) => {
 	if ( ! root ) {
@@ -386,26 +427,30 @@ export const pruneFlameGraph = ( root, options = {} ) => {
 };
 
 /**
- * Flame Graph component.
+ * Flame graph component.
+ *
+ * The chart is built once and updated in place afterwards, so an auto-refresh
+ * neither flickers nor loses the viewer's zoom and tooltip. Omitting
+ * `lastModified` (a single request, whose flame never changes) makes every
+ * render count as a change.
  *
  * @param {Object}   props               Component props.
- * @param {Object}   props.data          Flame graph data structure.
- * @param {number}   props.lastModified  Server-side timestamp for change detection (optional).
- * @param {Function} props.onRevealEntry Callback with node path on Cmd/Ctrl+Click.
+ * @param {Object}   props.data          Flame tree root: { name, value, children[] }.
+ * @param {number}   props.lastModified  Server timestamp gating updates; omit for single requests.
+ * @param {Function} props.onRevealEntry Called with the frame's path on Cmd/Ctrl+Click.
  * @return {import('react').ReactElement} Rendered component.
  */
 export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 	const containerRef = useRef( null );
 	const chartRef = useRef( null );
 	const tooltipRef = useRef( null );
-	const metaClickRef = useRef( false ); // tooltip meta across refreshes.
+	const metaClickRef = useRef( false ); // Cmd/Ctrl held at the last mousedown.
 	const zoomedNodeRef = useRef( null ); // zoomed path across refreshes.
-	const lastChangeKeyRef = useRef( '' ); // skip redundant updates.
+	const lastChangeKeyRef = useRef( '' ); // last rendered lastModified.
 
-	// Keep top frames + everything >= 0.1% of total; cap before rendering.
 	const prunedData = useMemo( () => pruneFlameGraph( data ), [ data ] );
 
-	// Create/update chart when data changes.
+	// Build the chart on first run; update it in place on every later one.
 	useEffect( () => {
 		if ( ! prunedData || ! containerRef.current ) {
 			return;
@@ -418,22 +463,19 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 		const { accent, bg } = readThemeTokens( container );
 		const colorMapper = createColorMapper( accent, bg );
 
-		// Skip update if data unchanged (server timestamp for aggregates).
 		const dataChanged = lastModified
 			? String( lastModified ) !== lastChangeKeyRef.current
-			: true; // No timestamp = single request, always render on mount.
+			: true; // No timestamp: a single request's flame never changes.
 
 		if ( chartRef.current ) {
-			// Only update if data actually changed.
 			if ( dataChanged ) {
 				if ( lastModified ) {
 					lastChangeKeyRef.current = String( lastModified );
 				}
 
-				// Check if tooltip has state to restore after update.
 				const tooltipHasState = tooltipRef.current?.hasState?.();
 
-				// Update existing chart - no flicker.
+				// Update in place — rebuilding the chart flickers.
 				chartRef.current
 					.width( width )
 					.setColorMapper( colorMapper )
@@ -441,7 +483,7 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 				chartRef.current.update( prunedData );
 				applyLabelContrast( container );
 
-				// Restore zoom to previously zoomed node after update.
+				// Re-zoom to where the viewer was before the data changed.
 				if ( zoomedNodeRef.current ) {
 					const selection = d3.select( container ).datum();
 					const targetNode = findNodeByPath(
@@ -459,7 +501,7 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 				}
 			}
 		} else {
-			// Create new chart only on first render.
+			// First run: build the chart and its tooltip.
 			if ( lastModified ) {
 				lastChangeKeyRef.current = String( lastModified );
 			}
@@ -485,10 +527,10 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 						return;
 					}
 
-					// Track zoomed node path for preservation across refreshes.
+					// Remember the zoom so a refresh can return to it.
 					zoomedNodeRef.current = d ? getNodePath( d ) : null;
 
-					// Disable transitions after animation completes.
+					// 305ms: just past the 300ms zoom mousedown enabled.
 					setTimeout( () => {
 						if ( chartRef.current ) {
 							chartRef.current.transitionDuration( 0 );
@@ -507,36 +549,33 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 		}
 	}, [ prunedData, lastModified, onRevealEntry ] );
 
-	// Cleanup on unmount - reset zoom state so navigation resets view.
+	// Tear down on unmount; tooltips live on <body>, outside React's reach.
 	useEffect( () => {
 		const container = containerRef.current;
 		return () => {
-			// Destroy chart instance if it has a destroy method.
 			if ( chartRef.current?.destroy ) {
 				chartRef.current.destroy();
 			}
-			// Remove all D3 elements from container.
 			if ( container ) {
 				d3.select( container ).selectAll( '*' ).remove();
 			}
-			// Destroy tooltip state properly before removing elements.
 			tooltipRef.current?.destroy?.();
-			// Remove any tooltip elements that d3-flame-graph may have created.
+			// Sweep any tip d3-flame-graph created behind our back.
 			d3.selectAll( '.d3-flame-graph-tip' ).remove();
-			// Clear refs.
 			chartRef.current = null;
 			tooltipRef.current = null;
 			zoomedNodeRef.current = null;
 		};
 	}, [] );
 
-	// Re-fit on CONTAINER resize (window resize misses panels); debounced.
+	// Refit on CONTAINER resize; a window listener misses panel resizes.
 	useEffect( () => {
 		const container = containerRef.current;
 		if ( ! container || typeof window.ResizeObserver === 'undefined' ) {
 			return undefined;
 		}
 		let timer = null;
+		// Debounced 150ms: a drag fires the observer on every frame.
 		const ro = new window.ResizeObserver( () => {
 			if ( timer ) {
 				clearTimeout( timer );
@@ -576,14 +615,16 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 	}
 
 	/**
-	 * Handle mouse leave to clear tooltip state.
+	 * Forget the tooltip when the pointer leaves, so no refresh revives it.
 	 */
 	const handleMouseLeave = () => {
 		tooltipRef.current?.clearState?.();
 	};
 
 	/**
-	 * Handle mousedown to enable transitions before d3-flame-graph processes the click.
+	 * Animate the zoom about to happen: d3-flame-graph reads the duration when
+	 * it handles the click, and the chart's own onClick zeroes it again once
+	 * the animation has run.
 	 */
 	const handleMouseDown = () => {
 		if ( chartRef.current ) {

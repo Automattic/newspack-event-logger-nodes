@@ -2,12 +2,10 @@
 /**
  * Flame_Tree — the pure flame-graph algorithm split out of Flame_Builder_Node.
  *
- * Stateless tree construction and manipulation: build a flame tree from a
- * request's log entries (LIFO span matching), number duplicate siblings so they
- * survive aggregation, strip those suffixes for display/storage, merge trees
- * incrementally across requests, and finalize a merged tree (sums→averages,
- * parent≥children normalization). No node state, no I/O — Flame_Builder_Node
- * calls these; the clock is passed in rather than read.
+ * The node owns the state, the I/O, and the clock; this file owns the math.
+ * Every function here is static, takes its reference timestamp as an argument,
+ * and touches nothing outside the tree it was handed — which is what makes the
+ * algorithm testable without a running graph.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -20,29 +18,62 @@ if ( ! \defined( 'ABSPATH' ) ) {
 	exit;
 }
 
+/**
+ * Stateless flame-tree construction, aggregation, and finalization.
+ *
+ * The four stages, in the order Flame_Builder_Node runs them:
+ *
+ * 1. `build_flame_data()` turns one request's log entries into a tree.
+ * 2. `strip_name_suffixes()` drops the hidden duplicate-sibling numbering
+ *    before a per-request tree is stored or displayed.
+ * 3. `merge_flame_children_incremental()` folds a per-request tree into the
+ *    per-URL aggregate, accumulating sums rather than means.
+ * 4. `finalize_flame_node()` divides those sums by the aggregate's request
+ *    count and strips the internal bookkeeping fields for display.
+ */
 final class Flame_Tree {
 
+	/** Keyword a closing span logs: `<label> (complete)`. Capture 1 is the base name. */
 	const PATTERN_COMPLETE = '/^(.+?) \(complete\)$/';
-	const PATTERN_START    = '/^(.+?) \(start\)$/';
+
+	/** Keyword an opening span logs: `<label> (start)`. Capture 1 is the base name. */
+	const PATTERN_START = '/^(.+?) \(start\)$/';
 
 	/** Expire aggregate children not seen within this window. Keep in sync with Flame_Builder_Node's copy. */
 	private const AGGREGATE_EXPIRY_SEC = 3600;
 
+	/** Recursion ceiling for the tree walks; deeper subtrees are left alone. */
 	private const MAX_RECURSION_DEPTH = 50;
-	private const MAX_STACK_DEPTH     = 50;
+
+	/** Open-span ceiling; spans nested deeper are recorded but never matched. */
+	private const MAX_STACK_DEPTH = 50;
 
 	/**
-	 * Build a flame graph from a request's log entries.
+	 * Build a flame graph from one request's log entries.
 	 *
-	 * This handles improperly nested events (e.g., when a child span outlives
-	 * its parent) by using LIFO matching like the log-manager does.
+	 * Each entry is a firehose line as `Log_Manager` wrote it: `k` holds the
+	 * keyword (`<label> (start)` or `<label> (complete)`), `l` a stable label
+	 * that aggregation groups on, `m` the volatile message, and a complete
+	 * additionally carries `duration_ms` and `ts`.
+	 *
+	 * A start pushes a node; a complete matches the nearest open node of the
+	 * same base name — LIFO, as `Log_Manager::complete()` itself matches —
+	 * stamps its duration and timestamp, then pops it along with everything
+	 * above it. Children that outlive their parent therefore survive in the
+	 * tree with a value of 0, and a complete matching nothing is dropped.
+	 *
+	 * Spans nested beyond MAX_STACK_DEPTH are attached to the tree but never
+	 * pushed, so their completes match nothing — or, when an ancestor shares
+	 * the base name, the wrong node — and their own value stays 0.
+	 *
+	 * The root's own value is left at 0; the caller overwrites it with the
+	 * request's measured duration.
 	 *
 	 * @param array<array-key, mixed> $entries Log entries.
 	 * @param int                     $now_ts  Reference timestamp for un-stamped completes.
 	 * @return array<string, mixed> Flame graph data.
 	 */
 	public static function build_flame_data( array $entries, int $now_ts ): array {
-		// Root node.
 		$root = [
 			'name'     => 'request',
 			'value'    => 0,
@@ -78,7 +109,7 @@ final class Flame_Tree {
 					$new_node['detail'] = "{$base_name}: {$detail}";
 				}
 
-				// Add as child of current top of stack.
+				// Attach by reference so the complete can stamp it in place.
 				$top_idx                                 = \count( $stack ) - 1;
 				$stack[ $top_idx ]['node']['children'][] = &$new_node;
 
@@ -106,7 +137,6 @@ final class Flame_Tree {
 				}
 
 				if ( $found_idx >= 1 ) {
-					// Set duration and timestamp on matched node.
 					$stack[ $found_idx ]['node']['value'] = $duration_ms;
 					$stack[ $found_idx ]['node']['ts']    = Core::num_int( $ts_raw, $now_ts );
 
@@ -129,11 +159,12 @@ final class Flame_Tree {
 	/**
 	 * Recursively number duplicate sibling names with hidden suffix.
 	 *
-	 * Appends \x00{N} to duplicate names so they stay separate during merge,
-	 * but the suffix is stripped before display.
+	 * Merging keys on `name`, so two siblings sharing one would collapse into
+	 * a single aggregate node. Appending \x00{N} keeps them apart; every read
+	 * path strips the suffix again before storage or display.
 	 *
 	 * @param array<array-key, mixed> $node  Flame node (modified by reference).
-	 * @param int                  $depth Current recursion depth.
+	 * @param int                     $depth Current recursion depth.
 	 */
 	private static function number_duplicate_siblings( array &$node, int $depth = 0 ): void {
 		if ( $depth > self::MAX_RECURSION_DEPTH ) {
@@ -171,6 +202,10 @@ final class Flame_Tree {
 	/**
 	 * Strip hidden sequence suffixes (\x00N) from flame node names recursively.
 	 *
+	 * Run on a per-request tree before it is stored or displayed. Aggregate
+	 * trees keep their suffixes until finalize_flame_node() strips them, since
+	 * the suffix is what holds duplicate siblings apart across merges.
+	 *
 	 * @param array<string, mixed> $node  Flame node (modified in place).
 	 * @param int                  $depth Current recursion depth.
 	 */
@@ -202,8 +237,19 @@ final class Flame_Tree {
 	 * `seen_count` (true count of those requests). Display values come from
 	 * finalize at flush time (sum_value / total_count).
 	 *
+	 * Node `name` is the merge key, which is why build_flame_data numbers
+	 * duplicate siblings first. `ts` records the last request to touch a node;
+	 * anything older than AGGREGATE_EXPIRY_SEC is dropped, and an aggregate
+	 * node carrying no `ts` at all expires on the next merge. An incoming
+	 * node's `detail` never reaches the aggregate: a merged node holds `name`,
+	 * `sum_value`, `seen_count`, `ts`, and `children`, nothing else. Of those,
+	 * `seen_count` is bookkeeping — finalize divides by the aggregate's own
+	 * request count and drops it, so nothing reads it back today.
+	 *
 	 * @param array<array-key, mixed> $existing Existing aggregate children (list).
 	 * @param array<array-key, mixed> $incoming Incoming per-request children (list).
+	 * @param int                     $now_ts   Timestamp for un-stamped nodes and the expiry cutoff.
+	 * @param int                     $depth    Current recursion depth.
 	 * @return array<int, mixed>
 	 */
 	public static function merge_flame_children_incremental( array $existing, array $incoming, int $now_ts, int $depth = 0 ): array {
@@ -269,7 +315,13 @@ final class Flame_Tree {
 	 * Finalize a flame node for display: convert sums to averages, strip
 	 * suffixes, normalize parent ≥ children, and remove internal fields.
 	 *
-	 * @param array<array-key, mixed> $node Flame node (modified by reference).
+	 * The divisor is the aggregate's own request count, not the node's
+	 * `seen_count`, so a node appearing in a minority of requests averages
+	 * down — the flame shows mean cost per request, not per appearance.
+	 *
+	 * @param array<array-key, mixed> $node        Flame node (modified by reference).
+	 * @param int                     $total_count Requests the aggregate covers; 0 skips the averaging.
+	 * @param int                     $depth       Current recursion depth.
 	 */
 	public static function finalize_flame_node( array &$node, int $total_count, int $depth = 0 ): void {
 		if ( $depth > self::MAX_RECURSION_DEPTH ) {

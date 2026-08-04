@@ -3,12 +3,16 @@
  * Admin: application-side WP-Settings-API surface and per-option granular
  * worker-restart on save.
  *
- * Owns ONLY the application-level options:
- *   - enable_logging
- *   - log_memory / flush_every_line
+ * Renders exactly three checkboxes, the only application options with a
+ * settings field: `enable_logging`, `log_memory`, and `flush_every_line`. The
+ * remaining application keys `Settings_Schema` declares — `allowed_users`,
+ * `rules`, `hook_start_priority` — are overlay-only (`ui: false`): loaded by
+ * Config, never rendered, never reset here.
  *
  * URL filters, hook lists, and auto-tune thresholds are per-rule fields in the
- * `newspack_event_logger_nodes_rules` option, not global settings.
+ * `newspack_event_logger_nodes_rules` option, not global settings. That option
+ * is edited by the React ruleset editor mounted below the form, through the
+ * `rules` service CI — never by the Settings API.
  *
  * Substrate-level options (base_directory, partitioning, memcache_servers)
  * live on `\Newspack_Nodes\Admin\Admin` under the
@@ -22,13 +26,18 @@
  *   - Menu page slug:     `newspack-event-logger-nodes`
  *   - Option prefix:      `newspack_event_logger_nodes_`
  *
+ * Every derived view of the settings — the register/render loops, the reset
+ * set, the delete-on-blank subset, the restart classification — comes from the
+ * one `Settings_Schema`; this class hand-maintains no parallel list.
+ *
  * Per-option worker-restart classification preserved for application options
  * only; substrate options classify on substrate Admin.
  *
  * Does NOT mount React dashboards — that wiring stays in the main plugin file's
- * `admin_enqueue_scripts` hook. This class owns the WP-Settings-API surface
- * only: the `/options-general.php?page=newspack-event-logger-nodes`
- * settings page.
+ * `admin_enqueue_scripts` hook, which also enqueues the `settings` bundle whose
+ * `RulesAdmin` tree fills the `#event-logger-rules-editor` div rendered here.
+ * This class owns the WP-Settings-API surface only: the
+ * `/options-general.php?page=newspack-event-logger-nodes` settings page.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -50,14 +59,17 @@ use Newspack_Nodes\Config_System\Settings_Renderer;
 \defined( 'ABSPATH' ) || exit;
 
 /**
- * Admin settings page.
+ * The Event Logger settings page and the option-write behavior around it.
  */
 class Admin {
 
 	/**
-	 * Nonce action / field name for the flush-memcache-stats form.
+	 * Nonce action for the flush-memcache-stats form. Doubles as the
+	 * `admin_post_{$action}` suffix routing that POST to `handle_flush_stats`.
 	 */
 	public const FLUSH_STATS_ACTION = 'newspack_event_logger_nodes_flush_stats';
+
+	/** POST field carrying the flush-memcache-stats nonce. */
 	public const FLUSH_STATS_NONCE  = 'newspack_event_logger_nodes_flush_stats_nonce';
 
 	/**
@@ -81,57 +93,72 @@ class Admin {
 	public const OPTION_PREFIX = 'newspack_event_logger_nodes_';
 
 	/**
-	 * Nonce action / field name for the reset-to-defaults form.
+	 * Nonce action for the reset-to-defaults form. Doubles as the
+	 * `admin_post_{$action}` suffix routing that POST to `handle_reset_settings`.
 	 */
 	public const RESET_ACTION = 'newspack_event_logger_nodes_reset_settings';
 
-	/** Hidden-input array name carrying per-field reset marks ({option} => "1"). */
+	/**
+	 * Hidden-input array name carrying per-field reset marks ({option} => "1").
+	 * The marks ride the ordinary nonce-verified settings POST to `options.php`,
+	 * where `Reset_Gate` reads them — NOT the reset-to-defaults form above.
+	 */
 	public const RESET_MARK_FIELD = 'newspack_event_logger_nodes_reset';
+
+	/** POST field carrying the reset-to-defaults nonce. */
 	public const RESET_NONCE  = 'newspack_event_logger_nodes_reset_nonce';
 
 	/**
 	 * Settings page slug used by `add_settings_section/field()` and
-	 * `do_settings_sections()`. Distinct from the menu-page slug below.
+	 * `do_settings_sections()`. Distinct from the menu-page slug above.
 	 */
 	public const SETTINGS_PAGE = 'newspack_event_logger_nodes';
 
 	/**
 	 * Text-like keys that get a `pre_update_option_{$option}` delete-on-blank
-	 * filter: a blank submission (or `↺` field-reset) deletes the row so the file
-	 * default resurfaces under presence-based Config, instead of storing '' (which
-	 * would override the default). The scalar subset of $option_names — checkbox
-	 * bools and multi-select arrays are EXCLUDED (an unchecked box / empty
-	 * selection is a real override). Derived from the Schema's
-	 * `delete_on_blank_options()` in `register_settings()`.
+	 * filter: a blank submission deletes the row so the file default resurfaces
+	 * under presence-based Config, instead of storing '' (which would override
+	 * the default). Bool fields are EXCLUDED — an unchecked box is a real
+	 * override — and they reset only through the explicit `↺` mark. Derived from
+	 * the Schema's `delete_on_blank_options()` in `register_settings()`, which
+	 * classifies every non-`bool` Field as text-like. This plugin's three
+	 * settings fields are all bools today, so the list is empty; it stays wired
+	 * because the first non-bool Field must behave correctly the day it lands.
 	 *
 	 * @var array<int, string>
 	 */
 	private static array $delete_on_blank_options = [];
 
 	/**
-	 * Application-level option names cleared by `handle_reset_settings()`.
+	 * Every application option with a settings field — the set `Reset_Gate`
+	 * attaches its per-field gate to. Booleans included, so a reset clears them
+	 * all.
 	 *
 	 * Substrate-level options (base_directory, num_partitions, max_segments,
 	 * segment_size, min_lifetime, memcache_servers) live on
-	 * `\Newspack_Nodes\Admin\Admin` and reset via its own form. Application
-	 * admin only owns the keys below. (The aggregator spoke list is NOT here —
-	 * it's owned by the substrate `\Newspack_Nodes\Vault` and managed by its
-	 * `vault` REST CRUD, not the settings form, so the reset doesn't touch it.)
+	 * `\Newspack_Nodes\Admin\Admin` and reset via its own form. The aggregator
+	 * spoke list is excluded too: the substrate `\Newspack_Nodes\Vault` owns it
+	 * through the `vault` REST CRUD, not a settings-form field.
 	 *
 	 * Derived from the single Settings_Schema in `register_settings()` (the
-	 * `setting_option_names()` set). Kept as a property of this exact name because
-	 * AdminTest reads it by reflection and `handle_reset_settings()` reads it as
-	 * the base reset list (extendable via the `…_reset_options` filter). EVERY
-	 * settings-form option (booleans + multi-selects included) appears here so a
-	 * reset clears them all and the shared `Reset_Gate` attaches its gate to each.
-	 * (The aggregator spoke list is excluded — owned by the substrate
-	 * `\Newspack_Nodes\Vault` and managed by its `vault` REST CRUD, not a
-	 * settings-form field.)
+	 * `setting_option_names()` set). `handle_reset_settings()` deliberately
+	 * re-derives the same list from the Schema rather than reading this cache,
+	 * so a reset works before `register_settings()` has ever run. The property
+	 * keeps this exact name because `tests/unit/Admin/AdminTest.php` reads it by
+	 * reflection to assert the reset set covers every registered setting.
 	 *
 	 * @var array<int, string>
 	 */
 	private static array $option_names = [];
 
+	/**
+	 * Register the whole admin surface: the Settings submenu, the Settings-API
+	 * wiring, both admin-post handlers, the three panels below the form, and the
+	 * two option-write filters.
+	 *
+	 * Constructing a second Admin double-registers every hook, so the plugin
+	 * builds exactly one.
+	 */
 	public function __construct() {
 		\add_action( 'admin_menu', [ $this, 'add_admin_menu' ] );
 		\add_action( 'admin_init', [ $this, 'register_settings' ] );
@@ -151,6 +178,10 @@ class Admin {
 
 	// -- Field callbacks ----------------------------------------------------
 
+	/**
+	 * The master logging switch. Ships on in the config file, and passes a hard
+	 * default of 1 so it still renders checked without one.
+	 */
 	public static function enable_logging_callback(): void {
 		self::render_checkbox(
 			'enable_logging',
@@ -194,6 +225,7 @@ class Admin {
 	 * @param int    $hard_default 0 or 1 — used only if both the WP option AND the file
 	 *                              default are absent (e.g., on a brand-new install
 	 *                              with no config-file override for this key).
+	 * @return int 0 or 1.
 	 */
 	private static function bool_option_with_file_default( string $short_key, int $hard_default = 0 ): int {
 		$file_default = self::bool_file_default( $short_key, $hard_default );
@@ -212,6 +244,7 @@ class Admin {
 	 *
 	 * @param string $short_key    Option key without the `newspack_event_logger_nodes_` prefix.
 	 * @param int    $hard_default 0 or 1 — used only if the file default is absent.
+	 * @return int 0 or 1.
 	 */
 	private static function bool_file_default( string $short_key, int $hard_default = 0 ): int {
 		$defaults = Config::load_config_defaults();
@@ -225,6 +258,7 @@ class Admin {
 	 * (`bool_file_default`) and the default-write skip (`skip_default_writes`).
 	 *
 	 * @param mixed $value Any value (only bools are coerced; numerics pass via (int)(bool)).
+	 * @return int 0 or 1.
 	 */
 	private static function bool_to_int( $value ): int {
 		return (int) (bool) $value;
@@ -237,6 +271,7 @@ class Admin {
 
 	// ---- Debugging field callbacks ---------------------------------------
 
+	/** Peak-memory annotation on every completed request. Ships off. */
 	public static function log_memory_callback(): void {
 		self::render_checkbox(
 			'log_memory',
@@ -244,6 +279,7 @@ class Admin {
 		);
 	}
 
+	/** Unbuffered firehose writes — crash survivability over throughput. Ships off. */
 	public static function flush_every_line_callback(): void {
 		self::render_checkbox(
 			'flush_every_line',
@@ -252,9 +288,15 @@ class Admin {
 	}
 
 	/**
-	 * Reset-to-defaults handler — admin-post target.
+	 * Reset-to-defaults handler — the `admin_post_{RESET_ACTION}` target.
 	 *
-	 * Nonce + permission checks before deleting any options.
+	 * Nonce + permission checks first, then delete every application settings
+	 * row so the file defaults resurface under presence-based Config. Redirects
+	 * back to the settings page with `reset=1` and exits either way, so nothing
+	 * downstream of the handler runs.
+	 *
+	 * Deletion is scoped by `OPTION_PREFIX`: a Schema that ever names a foreign
+	 * option cannot make this handler delete it.
 	 */
 	public function handle_reset_settings(): void {
 		self::verify_admin_post( self::RESET_NONCE, self::RESET_ACTION );
@@ -313,6 +355,9 @@ class Admin {
 	 * users, so a demoted account loses access immediately without needing the
 	 * whitelist updated.
 	 *
+	 * With no user API available — a CLI context — the whitelist is skipped
+	 * rather than enforced against a nonexistent login, so `wp` stays usable.
+	 *
 	 * @return bool True if user is allowed.
 	 */
 	public static function current_user_allowed(): bool {
@@ -333,11 +378,19 @@ class Admin {
 	}
 
 	/**
-	 * Flush memcache stats by rotating the schema salt. Every existing
+	 * Flush memcache stats by rotating the schema salt — the
+	 * `admin_post_{FLUSH_STATS_ACTION}` target. Every existing
 	 * `evlog[:salt]:p{N}:…` key orphans instantly and ages out by TTL.
-	 * request-workers are restarted because FlameBuilder caches `prefix`
-	 * at construction — without a restart the live FlameBuilder keeps
-	 * writing under the OLD salt, defeating the flush.
+	 *
+	 * Every worker of every active topology is then flagged for restart, because
+	 * `Stats_Store` computes `prefix` in its constructor: a live
+	 * `Flame_Builder_Node` holds a store built under the OLD salt and would keep
+	 * writing there, defeating the flush. The restart is best-effort — a failure
+	 * only delays the new salt until the next supervisor spawn, so it is logged,
+	 * not surfaced.
+	 *
+	 * Redirects back to the settings page with `flushed=1` and the restart count,
+	 * and exits either way.
 	 */
 	public function handle_flush_stats(): void {
 		self::verify_admin_post( self::FLUSH_STATS_NONCE, self::FLUSH_STATS_ACTION );
@@ -378,6 +431,15 @@ class Admin {
 		exit;
 	}
 
+	/**
+	 * Render the settings page: the `flushed` / `reset` notices, the Settings-API
+	 * form posting to `options.php`, the hidden reset form the "Reset to
+	 * Defaults" button submits, and then the `settings_after_form` panels.
+	 *
+	 * Permission is re-checked here rather than trusting the menu-registration
+	 * gate alone, since `add_options_page` only enforces `manage_options` while
+	 * `current_user_allowed()` also honors the `allowed_users` whitelist.
+	 */
 	public function render_settings_page(): void {
 		if ( ! self::current_user_allowed() ) {
 			\wp_die( \esc_html__( 'You do not have permission to access this page.', 'newspack-event-logger-nodes' ) );
@@ -443,12 +505,23 @@ class Admin {
 	}
 
 	/**
-	 * `pre_update_option` filter: skip writing options whose value still equals the default.
+	 * `pre_update_option` filter: never store a value equal to the file default.
+	 *
+	 * Presence-based Config reads a stored row as an override, so a row holding
+	 * the default would pin that value and survive a later change to the config
+	 * file. Saving a field back to its default therefore DELETES the row and
+	 * returns the old value, short-circuiting WordPress's own write.
+	 *
+	 * Runs on every option WordPress updates, so it bails unless stripping the
+	 * prefix leaves a key the file defaults declare. Footgun: the prefix is
+	 * stripped by LENGTH, never matched with `str_starts_with`, so a foreign
+	 * option whose tail past character 29 happens to equal an application key
+	 * would be judged against this plugin's defaults.
 	 *
 	 * @param mixed  $value     New option value about to be written.
 	 * @param string $option    Full option name.
 	 * @param mixed  $old_value Current stored value.
-	 * @return mixed The value to persist (unchanged unless short-circuited).
+	 * @return mixed The value to persist, or $old_value when the row was deleted.
 	 */
 	public function skip_default_writes( mixed $value, string $option, mixed $old_value ): mixed {
 		$key = \substr( $option, \strlen( 'newspack_event_logger_nodes_' ) );
@@ -475,13 +548,11 @@ class Admin {
 	}
 
 	/**
-	 * Top-level "Event Logger" page + Settings submenu under Settings.
+	 * Add the "Event Logger" entry under the standard Settings menu.
 	 *
-	 * The top-level menu is gated through the existing `admin_menu` hook in
-	 * the main plugin file (which mounts dashboards as submenus). This callback
-	 * adds ONLY the Settings submenu under the standard Settings menu; the
-	 * top-level menu handles dashboards, so configuration lives under Settings
-	 * while dashboards stay top-level.
+	 * ONLY that entry. The top-level "Event Logger" menu and its dashboard
+	 * submenus belong to the main plugin file's own `admin_menu` closure, so
+	 * configuration lives under Settings while dashboards stay top-level.
 	 */
 	public function add_admin_menu(): void {
 		if ( ! self::current_user_allowed() ) {
@@ -500,7 +571,10 @@ class Admin {
 	}
 
 	/**
-	 * Register settings with the WP Settings API.
+	 * Register settings with the WP Settings API, in Schema order: cache the two
+	 * derived option lists, `register_setting()` each field, attach the
+	 * `Reset_Gate` to every resettable option, then add the sections and fields
+	 * to the settings page.
 	 *
 	 * Wires application-level options ONLY. Substrate options (base_directory,
 	 * partitioning, memcache_servers) are registered by
@@ -511,7 +585,7 @@ class Admin {
 	public function register_settings(): void {
 		$schema = Settings_Schema::get();
 
-		// Cache the derived reset surface under the historical property names.
+		// Cache the derived option lists the reset wiring below consumes.
 		self::$option_names            = $schema->setting_option_names();
 		self::$delete_on_blank_options = $schema->delete_on_blank_options();
 
@@ -525,18 +599,37 @@ class Admin {
 
 	// -- Section callbacks --------------------------------------------------
 
+	/**
+	 * Intro for the General section, which holds `enable_logging`.
+	 *
+	 * A section renders only when the Schema gives it at least one rendered
+	 * field, so of the four declared sections only this one and Debugging reach
+	 * the page.
+	 */
 	public static function general_section_callback(): void {
 		echo '<p>' . \esc_html__( 'Enable or disable event logging.', 'newspack-event-logger-nodes' ) . '</p>';
 	}
 
+	/**
+	 * Intro for the Instrumentation section, which no longer has any field: the
+	 * URL filters and hook lists it described became per-rule and moved to the
+	 * ruleset editor. The section is declared but never rendered, so this text
+	 * never prints.
+	 */
 	public static function instrumentation_section_callback(): void {
 		echo '<p>' . \esc_html__( 'URL filters and hooks to time. Use Browse Hooks / Browse Events to populate from the recommended set.', 'newspack-event-logger-nodes' ) . '</p>';
 	}
 
+	/**
+	 * Intro for the Performance Workers section, which no longer has any field:
+	 * the auto-tune thresholds it described became per-rule. Declared but never
+	 * rendered, like Instrumentation above.
+	 */
 	public static function workers_section_callback(): void {
 		echo '<p>' . \esc_html__( 'Automatically disable noisy events and protect slow ones.', 'newspack-event-logger-nodes' ) . '</p>';
 	}
 
+	/** Intro for the Debugging section: `log_memory` + `flush_every_line`. */
 	public static function debugging_section_callback(): void {
 		echo '<p>' . \esc_html__( 'Diagnostic toggles for tracing OOMs and mysterious slowness. Both add overhead — disable when not needed.', 'newspack-event-logger-nodes' ) . '</p>';
 	}
@@ -607,10 +700,14 @@ class Admin {
 	 * `restart:` key — 'supervisor_only', [], 'all', or node-type tokens like
 	 * `Flame_Builder` / `Discovery_Collector`), which `Restart_Planner` resolves
 	 * to the set of live topologies whose graphs instantiate that node and touches
-	 * each one's per-partition lock dir. Workers pick the flag up at their next
-	 * graceful exit point (segment-close in Worker_Base). `stats_salt` is rotated
-	 * by the flush handler (not a settings Field), so it's classified here — its
-	 * stats producer is `Stats_Store`, which runs inside `Flame_Builder`.
+	 * each one's per-partition lock dir. A worker sees the flag on its next
+	 * `Worker_Base::should_continue()` check and exits for the supervisor to
+	 * respawn. `stats_salt` is rotated by the flush handler and is not a settings
+	 * Field, so `restart_for()` would return `[]` for it; it is classified inline
+	 * here instead, against `Flame_Builder` — the node its `Stats_Store` runs in.
+	 *
+	 * Best-effort throughout: a planner failure is swallowed because the next
+	 * supervisor pass loads the new config regardless.
 	 *
 	 * @param string $option Option name (full WP option key).
 	 */

@@ -1,3 +1,14 @@
+/**
+ * The Error Log dashboard's view node.
+ *
+ * The `errors.*` partitions carry one record per error, warning, or stderr
+ * line that `Request_Builder_Node` split off the firehose. This file maps
+ * those raw envelopes to the rows `ErrorLog.js` renders, and does nothing
+ * else: the stream plumbing lives in `useErrorLogGraph`, the browse controls
+ * in `useGlobBrowse`, and every generic log-stream behavior in the shared
+ * `LogStreamViewNode` base.
+ */
+
 import { KEY, VALUE, ID } from '@newspack-nodes/runtime';
 import fnv1a from '@newspack-nodes/shared/utils/fnv1a';
 import { LogStreamViewNode } from '@newspack-nodes/shared/nodes/log-stream-view-node';
@@ -9,7 +20,13 @@ const MAX_URL_LENGTH = 2000;
 // Debug-mode raw retention per row (pretty-printable); ~PIPE_BUF x2.
 const MAX_RAW_LENGTH = 8192;
 
-// Clip a string at `max`, appending an ellipsis. Non-strings become empty.
+/**
+ * Clip a string at `max`, appending an ellipsis.
+ *
+ * @param {*}      value Candidate string; anything else yields ''.
+ * @param {number} max   Longest string kept before the ellipsis.
+ * @return {string} The clipped string, or '' for a non-string.
+ */
 const clip = ( value, max ) => {
 	if ( 'string' !== typeof value ) {
 		return '';
@@ -26,11 +43,8 @@ const clip = ( value, max ) => {
  * - the `select` control (partition switch: reset the tracker, arm
  *   `seekActive` — breadcrumbs only mean anything within ONE dir; a glob
  *   mixes segments) and its `seekTracking()` gate;
- * - `shapeRow()`: validates + enriches a raw errors envelope (KEY=rid,
- *   VALUE={ts, k, m, n, method, url}) into a row — drop empty-rid, the
- *   `connected` sentinel, and non-object VALUEs; clip m@1000 + url@2000;
- *   hash the FULL url for the URL detail link — plus the shared debug trio
- *   (`msgId`, `key`, `raw`, `struct`) and the searchable `content` line.
+ * - `shapeRow()`, which validates and enriches a raw errors envelope
+ *   (KEY=rid, VALUE={ts, k, m, n, method, url}) into a row.
  *
  * @param {number} [maxLines] Ring cap (defaults to DEFAULT_MAX_LINES).
  */
@@ -38,12 +52,22 @@ export class PerfErrorsViewNode extends LogStreamViewNode {
 	constructor( maxLines ) {
 		super( maxLines || DEFAULT_MAX_LINES );
 		this.seekActive = false;
+		// Publish a model up front so the view renders before the first row.
 		this._publish();
 	}
 
+	/**
+	 * Apply the Error Log's own `select` verb; defer the rest to the base.
+	 *
+	 * A partition switch resets the seek tracker and clears the ring, and
+	 * arms breadcrumb tracking only for a concrete dir: a segment/offset
+	 * breadcrumb means nothing across a glob, whose records interleave
+	 * partitions. An empty `dir` widens back to the glob and disarms.
+	 *
+	 * @param {Object} value Control payload; `action` picks the verb.
+	 */
 	_control( value ) {
 		if ( 'select' === value.action ) {
-			// Partition switch: reset the tracker; arm only for a single dir.
 			this.seekActive = !! value.dir;
 			this.seek.select();
 			this._clear();
@@ -52,17 +76,35 @@ export class PerfErrorsViewNode extends LogStreamViewNode {
 		}
 	}
 
+	/**
+	 * Gate the base's breadcrumb tracking on the armed single-dir selection.
+	 *
+	 * @return {boolean} True while one partition dir is selected.
+	 */
 	seekTracking() {
 		return this.seekActive;
 	}
 
-	// A raw errors envelope (KEY=rid): validate + enrich into a row.
+	/**
+	 * Validate and enrich one raw errors envelope into a row.
+	 *
+	 * Drops an empty rid, the `connected` sentinel, and any VALUE that is not
+	 * a plain object. Clips the message at 1000 characters and the displayed
+	 * URL at 2000, but hashes the FULL URL, so `urlHash` keys the same
+	 * Overview URL detail the server's `Log_Manager::url_hash()` does. The
+	 * `n` line number survives only inside `raw`, the debug-mode JSON of the
+	 * whole VALUE clipped at 8192, which rides along with `msgId`, `key`, and
+	 * the `struct` flag; `content` is the line the viewer's filter matches.
+	 *
+	 * @param {Array} message The 7-field envelope (KEY=rid, VALUE=entry).
+	 * @return {Object|null} Row fields, or null to drop the envelope.
+	 */
 	shapeRow( message ) {
 		const rid = message[ KEY ];
 		if ( ! rid ) {
 			return null;
 		}
-		// SseInNode streams a `connected` sentinel too; it's not an error.
+		// SseIn snoops the `connected` handshake off; drop it if it lands.
 		if ( 'connected' === rid ) {
 			return null;
 		}
@@ -98,6 +140,11 @@ export class PerfErrorsViewNode extends LogStreamViewNode {
 		return row;
 	}
 
+	/**
+	 * The base's Hidden, target-less schema under this node's description.
+	 *
+	 * @return {Object} Schema the console palette and `help` render.
+	 */
 	static nodeSchema() {
 		return {
 			...super.nodeSchema(),

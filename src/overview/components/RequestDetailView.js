@@ -1,28 +1,56 @@
 /**
  * Request Detail View Component
  *
- * Displays detailed information for a selected request including
- * request info, flame graph, profile breakdown, and log entries.
+ * Everything known about one logged request: the summary line, the flame
+ * graph, the profile breakdown, and the log entries table. `PerformanceDashboard`
+ * renders this inside the URL modal once a request row is selected.
+ *
+ * The data arrives already assembled. The `requestdetail:view` node holds the
+ * slice the `performance` CI's `request_detail` verb returns — the durable
+ * request body read out of a `requests.log` partition, with the matching
+ * `flames.log` entry merged in as `flame_data`. Nothing here fetches: each
+ * section renders its prop and hides itself when that prop is empty.
+ *
+ * The flame graph and the entries table talk to each other through `revealRef`:
+ * `LogEntriesTable` publishes its `revealPath` function there, and a
+ * Cmd/Ctrl+click on a flame frame calls it to unfold and scroll to the matching
+ * row.
  */
 
 import { lazy, Suspense, useRef } from '@wordpress/element';
 import { __ } from '@wordpress/i18n';
 
-// Lazy load FlameGraph (heaviest component - uses d3-flame-graph).
+/**
+ * The flame graph drags in d3 and d3-flame-graph, the heaviest dependency in
+ * this bundle, so it loads only when a request that has flame data is open.
+ *
+ * knip cannot parse JSX in a `.js` file and so never sees this `import()`;
+ * `FlameGraph.js` is therefore listed as an entry in `knip.json` to keep the
+ * dead-code audit from claiming it.
+ */
 const FlameGraph = lazy( () => import( '../FlameGraph' ) );
 
 import RequestProfile from '../RequestProfile';
 import LogEntriesTable from './LogEntriesTable';
 
+/** Vertical rhythm between the detail's sections. */
 const SECTION_STYLE = { marginBottom: '20px' };
 
 /**
  * Request Detail View Component.
  *
+ * `requestDetail` is the decoded request body: `url`, `timestamp` (seconds),
+ * `duration_ms`, `peak_mb`, `status_code`, `profiles`, and `error_status`.
+ * `Request_Builder_Node` stamps `error_status` as one character — `-` for a
+ * clean request, `T` for one evicted before it completed, `F` for a fatal — and
+ * only the last two get a badge. The durable body names the HTTP verb
+ * `request_method`; the compact summary that `build_compact_summary()` writes
+ * names it `method`, so both are read.
+ *
  * @param {Object} props                 Component props.
- * @param {Object} props.requestDetail   Request detail data object.
- * @param {Object} props.flameData       Flame graph data.
- * @param {Array}  props.indentedEntries Processed log entries array.
+ * @param {Object} props.requestDetail   Decoded request body; see above.
+ * @param {Object} props.flameData       Server-built flame tree, or null.
+ * @param {Array}  props.indentedEntries Log entries from computeIndentedEntries().
  * @param {number} props.realEntryCount  Count of real (non-placeholder) log entries.
  * @return {import('react').ReactElement} Request detail view.
  */
@@ -116,7 +144,7 @@ export default function RequestDetailView( {
 				</p>
 			) }
 
-			{ /* Request Flame Graph (built client-side from entries) */ }
+			{ /* Request Flame Graph (built by Flame_Builder_Node, read here) */ }
 			{ hasFlame && (
 				<div
 					className="event-logger-flame-container"

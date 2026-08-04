@@ -2,9 +2,16 @@
 /**
  * Discovery_Collector_Node — hub-side periodic discovery fan-out + union-merge.
  *
- * fire() mints a `discovery.get` TM_COMMAND to every connected spoke's
- * Discovery_CI. Each spoke's reply self-routes back (TO=FROM) into fill(),
- * which monotonically union-merges the reply's registered_hooks into the
+ * Mounted by the `hub-control` topology; an operator connects it to the same
+ * per-spoke `HTTP_Out` egress nodes that carry settings-sync. On every tick
+ * fire() mints one `discovery.get` TM_COMMAND per connected target, signed
+ * under that spoke's own session key — the second minter on the hub's fan-out,
+ * for the reason Settings_Sync_Node is the first: a signature verifies only at
+ * the destination it was minted for, so a Tee re-addressing one command after
+ * the mint would produce something no spoke can verify.
+ *
+ * Each spoke's Discovery_CI reply self-routes back (TO=FROM) into fill(), which
+ * monotonically union-merges the reply's registered_hooks into the
  * discovered_hooks staging option and its custom_events into the discovered_events
  * staging option — a passive catalog of what spokes instrument, never written
  * into the ruleset (the editor is the only rules writer). Folded incrementally
@@ -33,13 +40,16 @@ class Discovery_Collector_Node extends Timer_Node {
 	/** Default discovery cadence (seconds) used when arguments() is armed without an explicit interval. */
 	private const DEFAULT_INTERVAL_SECONDS = 300;
 
-	/** Maximum discovered events to merge. */
+	/** Cap on discovered names, applied per reply and again to each staging option. */
 	private const MAX_EVENTS = 10000;
 
 	/**
 	 * Arm the recurring discovery-fan-out timer. A Timer_Node subclass does not
 	 * self-schedule, so we explicitly call set_timer() here. A blank/absent
 	 * interval falls back to the default 300s discovery cadence.
+	 *
+	 * The token is SECONDS, unlike the base Timer_Node argument, which is
+	 * milliseconds; this converts before scheduling.
 	 *
 	 * @api Called by the substrate during make_node construction.
 	 * @param list<string>|null $args Interval in seconds (digits) at token 0, empty for the default, or null to read back.
@@ -59,9 +69,12 @@ class Discovery_Collector_Node extends Timer_Node {
 	/**
 	 * Reply handler: fold one spoke's discovery payload into the hub's options.
 	 *
-	 * Gates on a TM_STRUCT-or-array VALUE carrying the unwrapped discovery
-	 * payload under VALUE['payload']. The merge is monotonic + idempotent, so
-	 * out-of-order / partial replies converge to the same union.
+	 * Gates on an array VALUE carrying the verb result under VALUE['payload'] —
+	 * the reply envelope Command_Interpreter_Node mints — and ignores anything
+	 * else, TYPE included. The merge is monotonic and idempotent, so
+	 * out-of-order or partial replies converge to the same union.
+	 *
+	 * Terminal: nothing is forwarded to the sink.
 	 *
 	 * @param array<int,mixed> $message Message reference (a spoke's `discovery.get` reply).
 	 */
@@ -79,9 +92,15 @@ class Discovery_Collector_Node extends Timer_Node {
 	}
 
 	/**
-	 * Periodic fan-out: emit one `discovery.get` command toward the connected
-	 * Tee, which broadcasts it to every spoke's Discovery_CI. Drops silently
-	 * if the node has no sink.
+	 * Periodic fan-out: mint and sign one `discovery.get` command per live
+	 * target, addressed at that spoke's `discovery` CI. Drops silently if the
+	 * node has no sink.
+	 *
+	 * A target with no established session is skipped and asked to handshake:
+	 * the far side has no key to verify a signature yet, and the skip alone
+	 * would deadlock, since nothing else drives HTTP_Out's `/auth` round-trip.
+	 * The missing-session warning stays quiet for the first 30 seconds of
+	 * process life, when a handshake is simply still in flight.
 	 *
 	 * @api Driven by the substrate Timer (fire_cb).
 	 */
@@ -116,7 +135,12 @@ class Discovery_Collector_Node extends Timer_Node {
 		}
 	}
 
-	/** The egress a target names; a target may be a path, so resolve its head. */
+	/**
+	 * The egress a target names; a target may be a path, so resolve its head.
+	 *
+	 * @param string $target Target name or path, as stored by connect_node().
+	 * @return HTTP_Out_Node|null The egress node, or null when the head names something else.
+	 */
 	private function egress_for( string $target ): ?HTTP_Out_Node {
 		[ $head ] = Message::split_first( $target );
 		$node     = Core::node( $head );
@@ -127,6 +151,9 @@ class Discovery_Collector_Node extends Timer_Node {
 	 * Union-merge a single reply's registered_hooks / custom_events into the
 	 * hub's options: remote-string sanitization, MAX_EVENTS cap, custom-event
 	 * exclusion, and option-cache invalidation before the read-modify-write.
+	 *
+	 * Union-only — a name a spoke stops reporting stays staged until an
+	 * operator clears the option.
 	 *
 	 * @param array<array-key,mixed> $payload One spoke's discovery payload.
 	 */
@@ -184,7 +211,12 @@ class Discovery_Collector_Node extends Timer_Node {
 	/**
 	 * Union $names into a discovered_* staging catalog option — a passive record
 	 * of what spokes report, never the ruleset (the editor is the only rules
-	 * writer). Non-autoloaded; capped to bound option growth.
+	 * writer). Non-autoloaded; once the option holds MAX_EVENTS names, further
+	 * new ones are dropped. Writes only when something actually changed.
+	 *
+	 * The stored shape is `name => true`, a presence flag. `Config::get_custom_colors()`
+	 * reads the events option as `event => color` and renders every non-string
+	 * value with its default swatch, so the two shapes coexist.
 	 *
 	 * @param string                 $option Fully-qualified staging option name.
 	 * @param array<int,int|string> $names  Names to union in (array_keys output; numeric names coerce to int).
@@ -216,6 +248,7 @@ class Discovery_Collector_Node extends Timer_Node {
 	 * Topology console manifest: palette entry — interval is positional via arguments().
 	 *
 	 * @api Used by the substrate to resolve the node + provide UI.
+	 * @return array<string, mixed>
 	 */
 	public static function node_schema(): array {
 		return \array_merge( parent::node_schema(), [

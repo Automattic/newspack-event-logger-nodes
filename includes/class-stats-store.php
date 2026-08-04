@@ -2,9 +2,14 @@
 /**
  * Stats Store
  *
- * Memcache-based storage for performance stats. Uses a 9-namespace schema
- * (hourly, lb, lb_s, urls, url, dim, url_dim, categories, url_cat) keyed by
- * `evlog[:salt]:p{N}:{namespace}:...`.
+ * The memcache schema for performance stats, expressed as one small key/value
+ * API. Nine namespaces (`hourly`, `lb`, `lb_s`, `urls`, `url`, `dim`,
+ * `url_dim`, `categories`, `url_cat`) live under the per-partition prefix
+ * `evlog[:salt]:p{N}:`. `Flame_Builder_Node` produces every value;
+ * `App\Performance_CI_Node` and the admin flush button consume them.
+ *
+ * Stats live in memcache alone — the only durable state this file writes is the
+ * salt option that prefixes the keys.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -19,43 +24,89 @@ if ( ! \defined( 'ABSPATH' ) ) {
 
 /**
  * Stats storage using memcache.
+ *
+ * Keys are `evlog[:salt]:p{N}:{namespace}[:...]`, so every flame-builder
+ * partition owns a disjoint keyspace and readers fan one store out per
+ * partition. Values are plain arrays, always keyed by string.
+ *
+ * Retention: the per-URL blob (`url`) is the high-volume namespace and expires
+ * at `ttl_url_stats()` — a twenty-fourth of the lifespan, floored at an hour.
+ * Every other namespace expires at `ttl()`.
+ *
+ * Bucketing belongs to the producer; this class stores whatever key it is
+ * handed. `Flame_Builder_Node` buckets everything — `hourly` included — in
+ * five-minute keys of the form `Y-m-d-H-ii`, so the `hourly` namespace and the
+ * `get_url_index_hourly()` name are historical rather than descriptive.
+ *
+ * Reads and writes fail soft: `Core::$memd` is reached through `?->`, so a
+ * missing handle yields `[]`, `null`, or `false` and the dashboards render "no
+ * data" instead of an error. Keep it that way — the SSE slot pool is
+ * deliberately the opposite, and unifying the two breaks its rate limit.
+ *
+ * The prefix is computed once, in the constructor. A `flush_all()` salt
+ * rotation therefore reaches a long-running worker only when it restarts.
  */
 class Stats_Store {
 
+	/** Distinct category values kept per bucket; `Flame_Builder_Node` rolls the overflow into "Other". */
 	public const MAX_CAT_VALUES           = 50;
+	/** Distinct values kept per global dimension bucket. */
 	public const MAX_DIM_VALUES           = 20;
+	/** Raw durations sampled per URL bucket for percentiles; Algorithm R past the cap. */
 	public const MAX_DURATIONS_PER_BUCKET = 100;
+	/** Distinct values kept per per-URL dimension bucket. */
 	public const MAX_URL_DIM_VALUES       = 10;
+	/** Category time series, global or per server. */
 	public const NS_CATEGORIES  = 'categories';
+	/** Dimensional time series, global or per server. */
 	public const NS_DIM         = 'dim';
 
+	/** Request totals per bucket; one key per partition. */
 	public const NS_HOURLY      = 'hourly';
+	/** Global leaderboard bucket. */
 	public const NS_LB          = 'lb';
+	/** Per-server leaderboard bucket. */
 	public const NS_LB_S        = 'lb_s';
+	/** Per-URL stats blob: flame tree and profiles. */
 	public const NS_URL         = 'url';
+	/** URL index bucket. */
 	public const NS_URLS        = 'urls';
+	/** Per-URL category time series. */
 	public const NS_URL_CAT     = 'url_cat';
+	/** Per-URL dimensional time series. */
 	public const NS_URL_DIM     = 'url_dim';
 
+	/** Key prefix ahead of the salt. */
 	private const PREFIX_BASE  = 'evlog';
+	/** Floor, in seconds, under both `ttl()` and `ttl_url_stats()`. */
 	private const PREFIX_FLOOR = 3600;
+	/** Option holding the rotatable salt; rotating it orphans every key. */
 	private const SALT_OPTION  = 'newspack_event_logger_nodes_stats_salt';
 
 	/**
 	 * Mirror seam — when set, invoked `(string $key, array $data, int $ttl, string $ns)`
-	 * AFTER each memcache write so a durable partition can shadow stats for
-	 * cold-boot replay. The namespace lets the mirror route aggregates vs. the
-	 * bounded per-URL namespaces. Null (default) = zero overhead. Signature:
+	 * after each memcache write that landed, so a durable partition can shadow
+	 * stats for cold-boot replay. The namespace lets the mirror route aggregates
+	 * vs. the bounded per-URL namespaces. Null (default) = zero overhead.
+	 * `Flame_Builder_Node::arm_stats_mirror()` is the only wiring. Signature:
 	 * `function(string $key, array $data, int $ttl, string $ns): void`.
 	 *
 	 * @var \Closure|null
 	 */
 	public ?\Closure $mirror = null;
+	/** @var int Retention window in seconds, floored at PREFIX_FLOOR. */
 	private int $max_lifespan;
 
+	/** @var int Flame-builder partition whose keyspace this store owns. */
 	private int $partition;
+	/** @var string Key prefix, frozen at construction. */
 	private string $prefix;
 
+	/**
+	 * @param int $partition    Flame-builder partition to read and write.
+	 * @param int $max_lifespan Retention window in seconds, seeded from the
+	 *                          substrate `min_lifetime` config key.
+	 */
 	public function __construct(
 		int $partition = 0,
 		int $max_lifespan = 86400
@@ -65,6 +116,11 @@ class Stats_Store {
 		$this->prefix       = $this->compute_prefix();
 	}
 
+	/**
+	 * Build the key prefix from the current salt. Outside WordPress — CLI and
+	 * unit tests, where `get_option` is absent — the prefix stays unsalted, which
+	 * keeps every such caller on one keyspace.
+	 */
 	private function compute_prefix(): string {
 		$salt = '';
 		if ( \function_exists( 'get_option' ) ) {
@@ -75,24 +131,35 @@ class Stats_Store {
 	}
 
 	/**
-	 * Alias of `get_url_bucket` matching upstream naming.
+	 * Read one `urls` bucket. Identical to `get_url_bucket()`, under the name
+	 * `Flame_Builder_Node` writes and reads through.
 	 *
-	 * @return array<string, mixed>
+	 * @param string $bucket Bucket key.
+	 * @return array<string, mixed> Bucket contents, [] on miss.
 	 */
 	public function get_url_index_hourly( string $bucket ): array {
 		return $this->get_url_bucket( $bucket );
 	}
 
-	// URL index: { bucket => { url => {count, sum_req_time, samples} } }.
-
 	/**
-	 * @return array<string, mixed>
+	 * Read one `urls` bucket: `{ url_hash => { url, count, timed_count, sum_ms,
+	 * min_ms, max_ms, avg_ms, p50_ms, p95_ms, p99_ms, durations, count_2xx,
+	 * count_3xx, count_4xx, count_5xx, sum_peak_mb, max_peak_mb, last_seen } }`.
+	 *
+	 * @param string $bucket Bucket key.
+	 * @return array<string, mixed> Bucket contents, [] on miss.
 	 */
 	public function get_url_bucket( string $bucket ): array {
 		$val = Core::$memd?->get( $this->key( self::NS_URLS, $bucket ) );
 		return self::map_or_empty( $val );
 	}
 
+	/**
+	 * Join a memcache key from the prefix, the partition, and the caller's parts.
+	 *
+	 * @param string ...$parts Namespace token first, then any sub-keys.
+	 * @return string Full key.
+	 */
 	private function key( string ...$parts ): string {
 		\array_unshift( $parts, $this->prefix, 'p' . $this->partition );
 		return \implode( ':', $parts );
@@ -118,20 +185,26 @@ class Stats_Store {
 		return $out;
 	}
 
-	// Hourly: { Y-m-d-H => {count, sum_ms, sum_peak_mb} } (one key/partition).
-
 	/**
-	 * @return array<string, mixed>
+	 * Read the partition's request totals: `{ bucket => { count, sum_ms,
+	 * sum_peak_mb } }`. One key holds the whole retention window, so a dashboard
+	 * gets every bucket in a single round-trip.
+	 *
+	 * @return array<string, mixed> Totals by bucket, [] on miss.
 	 */
 	public function get_hourly(): array {
 		$val = Core::$memd?->get( $this->key( self::NS_HOURLY ) );
 		return self::map_or_empty( $val );
 	}
 
-	// Leaderboard: 5-min buckets, sums + per-category sums.
-
 	/**
-	 * @return array<string, mixed>
+	 * Read one global leaderboard bucket: `{ count, sum_req_time, categories: {
+	 * cat => { samples, sum_time, sum_count, entries } } }`. Sums, never means —
+	 * `sums_to_display()` divides at read time so cross-bucket and
+	 * cross-partition merges stay exact addition.
+	 *
+	 * @param string $bucket Bucket key.
+	 * @return array<string, mixed> Bucket sums, [] on miss.
 	 */
 	public function get_leaderboard_bucket( string $bucket ): array {
 		$val = Core::$memd?->get( $this->key( self::NS_LB, $bucket ) );
@@ -139,7 +212,12 @@ class Stats_Store {
 	}
 
 	/**
-	 * @return array<string, mixed>
+	 * Read one leaderboard bucket for a single reporting server. Same shape as
+	 * `get_leaderboard_bucket()`.
+	 *
+	 * @param string $server Server name; hashed into the key.
+	 * @param string $bucket Bucket key.
+	 * @return array<string, mixed> Bucket sums, [] on miss.
 	 */
 	public function get_server_leaderboard_bucket( string $server, string $bucket ): array {
 		$val = Core::$memd?->get( $this->key( self::NS_LB_S, self::server_key( $server ), $bucket ) );
@@ -149,6 +227,9 @@ class Stats_Store {
 	/**
 	 * Hash a server name to a key-safe ASCII token (FNV-1a 32-bit hex).
 	 * Used for `lb_s` / `dim:_:srv` keys so server names don't break colons.
+	 *
+	 * @param string $server Server name; '' hashes to ''.
+	 * @return string Eight hex digits, or ''.
 	 */
 	public static function server_key( string $server ): string {
 		if ( '' === $server ) {
@@ -163,10 +244,13 @@ class Stats_Store {
 		return \sprintf( '%08x', $hash );
 	}
 
-	// Dimensional: { bucket => { value => {c, s, m} } } per dimension.
-
 	/**
-	 * @return array<string, mixed>
+	 * Read one dimension's series: `{ bucket => { value => { c, s, m } } }` —
+	 * request count, summed duration in ms, summed peak MB per distinct value.
+	 *
+	 * @param string $dimension Dimension name, e.g. `ua`.
+	 * @param string $server    Reporting server; '' reads the global series.
+	 * @return array<string, mixed> Series by bucket, [] on miss.
 	 */
 	public function get_dimensional( string $dimension, string $server = '' ): array {
 		$parts = [ self::NS_DIM, $dimension ];
@@ -177,30 +261,34 @@ class Stats_Store {
 		return self::map_or_empty( $val );
 	}
 
-	// Per-URL dimensional: { dim => { bucket => { value => {c, s, m} } } }.
-
 	/**
-	 * @return array<string, mixed>
+	 * Read one URL's dimensional series, every dimension in one value:
+	 * `{ dim => { bucket => { value => { c, s, m } } } }`.
+	 *
+	 * @param string $url_hash 12-char URL hash.
+	 * @return array<string, mixed> Series by dimension, [] on miss.
 	 */
 	public function get_url_dimensional( string $url_hash ): array {
 		$val = Core::$memd?->get( $this->key( self::NS_URL_DIM, $url_hash ) );
 		return self::map_or_empty( $val );
 	}
 
-	// Categories (global): per-bucket category sums (keys t, c, n).
-
 	/**
-	 * @return array<string, mixed>
+	 * Read the global category series: `{ bucket => { cat => { t, c, n } } }` —
+	 * summed time in ms, summed invocation count, and requests sampled.
+	 *
+	 * @return array<string, mixed> Series by bucket, [] on miss.
 	 */
 	public function get_categories(): array {
 		$val = Core::$memd?->get( $this->key( self::NS_CATEGORIES ) );
 		return self::map_or_empty( $val );
 	}
 
-	// Per-URL categories: { bucket => { cat => {t, c, n} } } per url_hash.
-
 	/**
-	 * @return array<string, mixed>
+	 * Read one URL's category series. Same shape as `get_categories()`.
+	 *
+	 * @param string $url_hash 12-char URL hash.
+	 * @return array<string, mixed> Series by bucket, [] on miss.
 	 */
 	public function get_url_categories( string $url_hash ): array {
 		$val = Core::$memd?->get( $this->key( self::NS_URL_CAT, $url_hash ) );
@@ -208,7 +296,10 @@ class Stats_Store {
 	}
 
 	/**
-	 * @param array<string, mixed> $data
+	 * Overwrite the partition's request totals.
+	 *
+	 * @param array<string, mixed> $data Totals keyed by bucket.
+	 * @return bool True when the set landed.
 	 */
 	public function set_hourly( array $data ): bool {
 		return $this->store( $this->key( self::NS_HOURLY ), $data, $this->ttl(), self::NS_HOURLY );
@@ -219,8 +310,11 @@ class Stats_Store {
 	 * to the mirror seam — a rejected/failed set must not be durably recorded and
 	 * resurrected on cold boot.
 	 *
-	 * @param array<string, mixed> $data
+	 * @param string               $key  Full memcache key.
+	 * @param array<string, mixed> $data Value to store.
+	 * @param int                  $ttl  Expiry in seconds.
 	 * @param string               $ns   Namespace routing hint for the mirror.
+	 * @return bool True when the set landed.
 	 */
 	private function store( string $key, array $data, int $ttl, string $ns ): bool {
 		$ok = (bool) Core::$memd?->set( $key, $data, $ttl );
@@ -230,13 +324,17 @@ class Stats_Store {
 		return $ok;
 	}
 
+	/** Retention window, in seconds, for every namespace but `url`. */
 	public function ttl(): int {
 		return $this->max_lifespan;
 	}
 
 	/**
-	 * @param array<int, string> $buckets
-	 * @return array<string, mixed>
+	 * Read many `urls` buckets in one round-trip. Per-key gets across a retention
+	 * window are a latency cliff on the dashboards; this is the path they use.
+	 *
+	 * @param array<int, string> $buckets Bucket keys.
+	 * @return array<string, mixed> Bucket contents keyed by bucket; misses absent.
 	 */
 	public function get_url_buckets( array $buckets ): array {
 		if ( empty( $buckets ) ) {
@@ -263,16 +361,20 @@ class Stats_Store {
 	/**
 	 * Explicit bucket setter (FlameBuilder's full-bucket overwrite path).
 	 *
-	 * @param array<string, mixed> $data
+	 * @param string               $bucket Bucket key.
+	 * @param array<string, mixed> $data   Whole bucket, replacing what is stored.
+	 * @return bool True when the set landed.
 	 */
 	public function set_url_index_hourly( string $bucket, array $data ): bool {
 		return $this->store( $this->key( self::NS_URLS, $bucket ), $data, $this->ttl(), self::NS_URLS );
 	}
 
-	// Per-URL stats blob (flame, profiles, ...); shorter TTL (high volume).
-
 	/**
-	 * @return array<array-key, mixed>|null
+	 * Read one URL's stats blob — flame tree, profiles, last_modified. Whole, not
+	 * summable: readers take the first partition that has it rather than merging.
+	 *
+	 * @param string $url_hash 12-char URL hash.
+	 * @return array<array-key, mixed>|null Blob, or null on miss.
 	 */
 	public function get_url_stats( string $url_hash ): ?array {
 		$val = Core::$memd?->get( $this->key( self::NS_URL, $url_hash ) );
@@ -280,32 +382,51 @@ class Stats_Store {
 	}
 
 	/**
-	 * @param array<string, mixed> $data
+	 * Overwrite one URL's stats blob, under the shorter per-URL TTL.
+	 *
+	 * @param string               $url_hash 12-char URL hash.
+	 * @param array<string, mixed> $data     Whole blob.
+	 * @return bool True when the set landed.
 	 */
 	public function set_url_stats( string $url_hash, array $data ): bool {
 		return $this->store( $this->key( self::NS_URL, $url_hash ), $data, $this->ttl_url_stats(), self::NS_URL );
 	}
 
+	/** Retention for the high-volume `url` namespace: a day's worth cut to a 24th, floored at an hour. */
 	public function ttl_url_stats(): int {
 		return \max( self::PREFIX_FLOOR, (int) ( $this->max_lifespan / 24 ) );
 	}
 
 	/**
-	 * @param array<string, mixed> $data
+	 * Overwrite one global leaderboard bucket.
+	 *
+	 * @param string               $bucket Bucket key.
+	 * @param array<string, mixed> $data   Merged bucket sums.
+	 * @return bool True when the set landed.
 	 */
 	public function set_leaderboard_bucket( string $bucket, array $data ): bool {
 		return $this->store( $this->key( self::NS_LB, $bucket ), $data, $this->ttl(), self::NS_LB );
 	}
 
 	/**
-	 * @param array<string, mixed> $data
+	 * Overwrite one leaderboard bucket for a single reporting server.
+	 *
+	 * @param string               $server Server name; hashed into the key.
+	 * @param string               $bucket Bucket key.
+	 * @param array<string, mixed> $data   Merged bucket sums.
+	 * @return bool True when the set landed.
 	 */
 	public function set_server_leaderboard_bucket( string $server, string $bucket, array $data ): bool {
 		return $this->store( $this->key( self::NS_LB_S, self::server_key( $server ), $bucket ), $data, $this->ttl(), self::NS_LB_S );
 	}
 
 	/**
-	 * @param array<string, mixed> $data
+	 * Overwrite one dimension's series, global or per server.
+	 *
+	 * @param string               $dimension Dimension name.
+	 * @param array<string, mixed> $data      Series keyed by bucket.
+	 * @param string               $server    Reporting server; '' writes the global series.
+	 * @return bool True when the set landed.
 	 */
 	public function set_dimensional( string $dimension, array $data, string $server = '' ): bool {
 		$parts = [ self::NS_DIM, $dimension ];
@@ -316,21 +437,32 @@ class Stats_Store {
 	}
 
 	/**
-	 * @param array<string, mixed> $data
+	 * Overwrite one URL's dimensional series, every dimension in one value.
+	 *
+	 * @param string               $url_hash 12-char URL hash.
+	 * @param array<string, mixed> $data     Series keyed by dimension.
+	 * @return bool True when the set landed.
 	 */
 	public function set_url_dimensional( string $url_hash, array $data ): bool {
 		return $this->store( $this->key( self::NS_URL_DIM, $url_hash ), $data, $this->ttl(), self::NS_URL_DIM );
 	}
 
 	/**
-	 * @param array<string, mixed> $data
+	 * Overwrite the global category series.
+	 *
+	 * @param array<string, mixed> $data Series keyed by bucket.
+	 * @return bool True when the set landed.
 	 */
 	public function set_categories( array $data ): bool {
 		return $this->store( $this->key( self::NS_CATEGORIES ), $data, $this->ttl(), self::NS_CATEGORIES );
 	}
 
 	/**
-	 * @return array<string, mixed>
+	 * Read one server's category series. Same shape as `get_categories()`; the
+	 * server token extends the `categories` key rather than opening a namespace.
+	 *
+	 * @param string $server Server name; hashed into the key.
+	 * @return array<string, mixed> Series by bucket, [] on miss.
 	 */
 	public function get_server_categories( string $server ): array {
 		$val = Core::$memd?->get( $this->key( self::NS_CATEGORIES, self::server_key( $server ) ) );
@@ -338,14 +470,22 @@ class Stats_Store {
 	}
 
 	/**
-	 * @param array<string, mixed> $data
+	 * Overwrite one server's category series.
+	 *
+	 * @param string               $server Server name; hashed into the key.
+	 * @param array<string, mixed> $data   Series keyed by bucket.
+	 * @return bool True when the set landed.
 	 */
 	public function set_server_categories( string $server, array $data ): bool {
 		return $this->store( $this->key( self::NS_CATEGORIES, self::server_key( $server ) ), $data, $this->ttl(), self::NS_CATEGORIES );
 	}
 
 	/**
-	 * @param array<string, mixed> $data
+	 * Overwrite one URL's category series.
+	 *
+	 * @param string               $url_hash 12-char URL hash.
+	 * @param array<string, mixed> $data     Series keyed by bucket.
+	 * @return bool True when the set landed.
 	 */
 	public function set_url_categories( string $url_hash, array $data ): bool {
 		return $this->store( $this->key( self::NS_URL_CAT, $url_hash ), $data, $this->ttl(), self::NS_URL_CAT );
@@ -356,7 +496,13 @@ class Stats_Store {
 	 * ttl>0 and the current prefix (a rotated salt orphans the mirror, like it
 	 * orphans memcache).
 	 *
-	 * @param array<string, mixed> $data
+	 * The write bypasses the mirror seam: this restores what the mirror already
+	 * holds, and re-shadowing it would append a duplicate frame.
+	 *
+	 * @param string               $key  Full memcache key, prefix included.
+	 * @param array<string, mixed> $data Mirrored value.
+	 * @param int                  $ttl  Remaining seconds; <= 0 is refused.
+	 * @return bool True when the set landed.
 	 */
 	public function restore( string $key, array $data, int $ttl ): bool {
 		if ( $ttl <= 0 || ! \str_starts_with( $key, $this->prefix . ':' ) ) {
@@ -365,6 +511,7 @@ class Stats_Store {
 		return (bool) Core::$memd?->set( $key, $data, $ttl );
 	}
 
+	/** Partition this store reads and writes. */
 	public function partition(): int {
 		return $this->partition;
 	}
@@ -417,14 +564,16 @@ class Stats_Store {
 		}
 	}
 
-	// Sums-to-display helper (dashboards render bucket-merged data).
-
 	/**
 	 * Convert summed leaderboard data to the display shape expected by the frontend.
 	 *
 	 *  - 'time'    = sum_time  / total_count — avg exclusive cat time per request.
 	 *  - 'count'   = sum_count / total_count — avg invocation count per request.
 	 *  - entries   are per-appearance averages (sum / samples).
+	 *
+	 * An entry whose sample count is zero is dropped rather than divided. Past a
+	 * hundred entries a category keeps only its fifty slowest, ranked by average
+	 * exclusive time, so one pathological category cannot flood a payload.
 	 *
 	 * @param int                   $total_count  Total profiled requests.
 	 * @param float                 $sum_req_time Sum of per-request $req_time values.
@@ -473,8 +622,16 @@ class Stats_Store {
 		];
 	}
 
-	// Schema migration: salt rotation.
-
+	/**
+	 * Rotate the salt, orphaning every existing key at once — the schema migration
+	 * and the emergency flush share this one mechanism. Nothing is deleted; the
+	 * orphans age out on their own TTLs.
+	 *
+	 * This store picks up the new prefix immediately, but a worker that built its
+	 * store earlier keeps writing the old one until it restarts.
+	 *
+	 * @return bool Always true; the rotation cannot fail short of a fatal.
+	 */
 	public function flush_all(): bool {
 		$salt = \bin2hex( \random_bytes( 4 ) );
 		if ( \function_exists( 'update_option' ) ) {

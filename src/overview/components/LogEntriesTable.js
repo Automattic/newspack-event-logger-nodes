@@ -1,9 +1,20 @@
 /* global requestAnimationFrame */
 /**
- * Log Entries Table Component
+ * Log Entries Table
  *
- * Displays log entries with indentation, collapsible start/complete pairs,
- * and click-to-highlight for pair matching.
+ * Renders one request's log entries as an indented, foldable table in the
+ * request-detail modal. Entries arrive already indented and pair-tagged from
+ * `computeIndentedEntries()`; this component owns only view state — which
+ * pairs are unfolded, which rows the search matched, and which range the pair
+ * swatch highlights.
+ *
+ * Folding a `(start)`/`(complete)` pair replaces both rows and everything
+ * between them with one merged row, computed by `computeVisibleEntries()`.
+ * The outermost `process` pair never folds.
+ *
+ * Search is debounced, counts a start/complete pair once, and answers to
+ * `/`, `n`, `p`, and Escape. `revealRef` hands `revealPath()` back to the
+ * parent so the flame graph can unfold and scroll to a clicked span.
  */
 
 import {
@@ -59,6 +70,10 @@ const isStartOrComplete = ( keyword ) =>
 /**
  * Collect all descendant pairIds between a start entry and its matching complete.
  *
+ * Empty pairs — a start immediately followed by its own complete — are left
+ * out: they always render as a single merged row, so unfolding them changes
+ * nothing.
+ *
  * @param {Array}  entries  Full indented entries array.
  * @param {number} startIdx Index of the (start) entry.
  * @param {number} pairId   The pairId of the start entry.
@@ -93,8 +108,9 @@ const collectDescendantPairIds = ( entries, startIdx, pairId ) => {
 };
 
 /**
- * Active highlight state — tracks the currently highlighted cells and the
- * clear timer so navigating to a new match immediately clears the old one.
+ * Active highlight state — the currently highlighted cells and the timer that
+ * clears them, so navigating to a new match drops the old highlight at once.
+ * Module-scoped, so exactly one highlight exists across every mounted table.
  */
 let activeHighlight = { cells: [], timer: null };
 
@@ -112,6 +128,10 @@ const clearHighlight = () => {
 /**
  * Scroll to a table row by data-pair-id or data-entry-idx and flash-highlight it.
  * Highlights individual <td> cells since <tr> doesn't support box-shadow reliably.
+ *
+ * The lookup runs inside `requestAnimationFrame` so the row an expand just
+ * revealed exists in the DOM by the time we query for it. The highlight
+ * clears itself after two seconds, or sooner if another call preempts it.
  *
  * @param {Object} tableRef React ref to the table element.
  * @param {Object} selector Either { pairId: number } or { entryIdx: number }.
@@ -167,10 +187,13 @@ const scrollToAndHighlight = ( tableRef, selector ) => {
 /**
  * Log Entries Table component.
  *
+ * Every pair starts folded: `expandedSet` holds the pairIds the reader has
+ * opened, and an empty set means everything is collapsed.
+ *
  * @param {Object} props           Component props.
  * @param {Array}  props.entries   Array of indented log entries (from computeIndentedEntries).
- * @param {number} props.realCount Count of real (non-placeholder) entries.
- * @param {Object} props.revealRef Ref to expose revealPath function for flame graph integration.
+ * @param {number} props.realCount Count of real (non-placeholder) entries; the heading falls back to entries.length.
+ * @param {Object} props.revealRef Ref the component fills with `revealPath( path )`, the flame graph's way in.
  * @return {import('react').ReactElement|null} Rendered component or null if no entries.
  */
 export default function LogEntriesTable( { entries, realCount, revealRef } ) {
@@ -186,7 +209,17 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 	const preSearchExpandedRef = useRef( null );
 	const searchTimerRef = useRef( null );
 
-	// Recompute matches when search query changes (debounced).
+	/**
+	 * Recompute matches 150ms after the query settles.
+	 *
+	 * A match is a case-insensitive substring hit on the keyword or on the
+	 * message (objects are matched against their JSON). One start/complete
+	 * pair counts once: when the query matched the start's keyword, the
+	 * complete's identical keyword is skipped unless its own message also
+	 * matched. Keywords are tested suffix-anchored, like the parser, so a
+	 * truncated tail such as `foo (start` opts out of the pairing rule.
+	 * Placeholder gap rows never match.
+	 */
 	useEffect( () => {
 		if ( searchTimerRef.current ) {
 			clearTimeout( searchTimerRef.current );
@@ -222,12 +255,11 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 				if ( ! keywordHit && ! messageHit ) {
 					continue;
 				}
-				// Suffix-anchored like the parser: truncated tails opt out.
 				const paired = e.pairId !== null && e.pairId !== undefined;
 				if ( keywordHit && paired && keyword.endsWith( '(start)' ) ) {
 					startKeywordHits.add( e.pairId );
 				}
-				// Keyword-only hit its start already made: duplicate stop.
+				// The pair's start already matched — count the pair once.
 				if (
 					! messageHit &&
 					paired &&
@@ -250,7 +282,12 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 		};
 	}, [ searchQuery, entries ] );
 
-	// Collect pairIds with content; empty pairs aren't unfoldable.
+	/**
+	 * Every pairId that can be unfolded — the set "Unfold All" applies and
+	 * search navigation checks before expanding an ancestor. Empty pairs and
+	 * any pair whose keyword begins with `process ` (the outermost pair, which
+	 * never folds) are excluded; neither has anything to reveal.
+	 */
 	const allPairIds = useMemo( () => {
 		const ids = new Set();
 		for ( let i = 0; i < entries.length; i++ ) {
@@ -276,7 +313,16 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 		return ids;
 	}, [ entries ] );
 
-	// Navigate to a specific match index: unfold ancestors, scroll, highlight.
+	/**
+	 * Jump to one search match: unfold its ancestors, scroll, and highlight.
+	 *
+	 * The first navigation of a search snapshots the reader's fold state so
+	 * `clearSearch()` can restore it. A match that is itself half of an empty
+	 * pair owns no row — the merged row stands in for both halves — so it is
+	 * addressed by pairId; every other match by entry index.
+	 *
+	 * @param {number} matchIdx Index into matchedIndices; out-of-range is ignored.
+	 */
 	const navigateToMatch = useCallback(
 		( matchIdx ) => {
 			if ( matchIdx < 0 || matchIdx >= matchedIndices.length ) {
@@ -332,7 +378,9 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 		[ matchedIndices, entries, expandedSet, allPairIds ]
 	);
 
-	// Clear search and restore pre-search fold state.
+	/**
+	 * Clear the search and restore the fold state the search expanded past.
+	 */
 	const clearSearch = useCallback( () => {
 		setSearchQuery( '' );
 		setMatchedIndices( [] );
@@ -343,7 +391,12 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 		}
 	}, [] );
 
-	// Keyboard navigation: n = next, p = previous, Escape = clear.
+	/**
+	 * Document-level search keybindings, captured before other handlers see
+	 * them: `/` focuses the input, `n` and `p` (or `N`) walk the matches
+	 * wrapping at both ends, and Escape clears the search. Typing in an input
+	 * suppresses `n`/`p`; Enter navigates from inside the field instead.
+	 */
 	useEffect( () => {
 		const handleKeyDown = ( e ) => {
 			// Escape: clear search, refocus so next Escape closes modal.
@@ -424,7 +477,15 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 		[ entries, expandedSet ]
 	);
 
-	// Build path→pairId map (flame "name: message" keys, base-name fallback).
+	/**
+	 * Map flame-graph paths to pairIds, so `revealPath()` can resolve a
+	 * clicked span to a row.
+	 *
+	 * Each open pair contributes two keys along the current spine: the detail
+	 * path (`name: message` per segment), which the flame graph prefers, and
+	 * the base-name path as a fallback. Base-name keys are first-wins, so
+	 * repeated spans resolve to their earliest occurrence.
+	 */
 	const pathToPairId = useMemo( () => {
 		const map = {};
 		const stack = [];
@@ -444,10 +505,8 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 					typeof entry.m === 'string' && entry.m ? entry.m : '';
 				const detail = msg ? `${ name }: ${ msg }` : name;
 				stack.push( { name, detail } );
-				// Detail path for precise matching.
 				const detailKey = stack.map( ( s ) => s.detail ).join( '/' );
 				map[ detailKey ] = entry.pairId;
-				// Base-name path as fallback (first occurrence wins).
 				const baseKey = stack.map( ( s ) => s.name ).join( '/' );
 				if ( ! ( baseKey in map ) ) {
 					map[ baseKey ] = entry.pairId;
@@ -464,7 +523,12 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 		return map;
 	}, [ entries ] );
 
-	// Reveal a specific entry by path: expand ancestors, scroll into view.
+	/**
+	 * Reveal the row for a flame-graph path: expand its ancestors and scroll
+	 * to it. An unresolvable path is a no-op.
+	 *
+	 * @param {Array} path Segment names from the flame root down to the span.
+	 */
 	const revealPath = useCallback(
 		( path ) => {
 			// Flame graph paths have an extra "request" root — strip it.
@@ -491,7 +555,6 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 					( e.k || '' ).includes( '(start)' )
 			);
 
-			// Compute ancestors using shared helper.
 			const ancestorIds =
 				targetIdx >= 0
 					? getAncestorPairIds( targetIdx, entries )
@@ -511,7 +574,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 		[ pathToPairId, entries ]
 	);
 
-	// Expose revealPath via ref so parent components can call it.
+	// Hand revealPath to the parent; the flame graph calls it on Cmd-click.
 	useEffect( () => {
 		if ( revealRef ) {
 			revealRef.current = revealPath;
@@ -520,6 +583,9 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 
 	/**
 	 * Toggle fold for a single pair. Folding also removes all descendant pairIds.
+	 *
+	 * `recursive` — a Cmd/Ctrl-click — only ever unfolds: an already-open pair
+	 * stays open and its descendants open with it.
 	 *
 	 * @param {number}  pairId    The pairId to toggle.
 	 * @param {number}  entryIdx  Index in the full entries array.
@@ -560,16 +626,21 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 		[ entries ]
 	);
 
+	/** Collapse every pair. */
 	const foldAll = useCallback( () => {
 		setExpandedSet( new Set() );
 	}, [] );
 
+	/** Expand every pair that has children; empty pairs stay merged. */
 	const unfoldAll = useCallback( () => {
 		setExpandedSet( new Set( allPairIds ) );
 	}, [ allPairIds ] );
 
 	/**
 	 * Find matching start/complete pair range in the visible entries for highlighting.
+	 *
+	 * A merged row spans itself alone. A complete whose start is folded away
+	 * anchors on the merged row standing in for it.
 	 *
 	 * @param {number} idx Index in visibleEntries.
 	 * @return {Object|null} Range with {start, end} indices, or null.
@@ -620,7 +691,8 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 	);
 
 	/**
-	 * Handle swatch click for pair highlighting.
+	 * Handle swatch click for pair highlighting. Clicking the highlighted
+	 * range again clears it; the click never reaches the row's fold handler.
 	 *
 	 * @param {Object} entry The entry.
 	 * @param {number} idx   Index in visibleEntries.
@@ -652,7 +724,9 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 	);
 
 	/**
-	 * Handle row click for fold/unfold.
+	 * Handle row click for fold/unfold. Merged and `(start)` rows toggle;
+	 * everything else, including the outermost `process` pair, ignores the
+	 * click. Cmd/Ctrl-click unfolds the whole subtree.
 	 *
 	 * @param {Object} entry Visible entry.
 	 * @param {number} idx   Index in visibleEntries.
@@ -707,6 +781,10 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 	/**
 	 * Get row style based on highlight state and entry type.
 	 *
+	 * Rows tint with the keyword's state color, alternating opacity for
+	 * zebra striping; a highlighted pair range takes the blue tint instead.
+	 * Foldable rows get a pointer cursor.
+	 *
 	 * @param {Object} entry Entry object.
 	 * @param {number} idx   Index in visibleEntries.
 	 * @return {Object} Style object.
@@ -740,6 +818,11 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 
 	/**
 	 * Format message content for display.
+	 *
+	 * Objects pretty-print with keys sorted; strings fall back to the stable
+	 * label `l` when the volatile message `m` is empty. A row that already
+	 * carries its own stats — merged, complete, or duration-bearing — shows
+	 * nothing rather than a placeholder dash.
 	 *
 	 * @param {Object} entry Log entry object.
 	 * @return {string} Formatted message.
@@ -784,10 +867,11 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 	};
 
 	/**
-	 * Render the keyword cell content.
+	 * Render the keyword cell content. Foldable rows lead with a disclosure
+	 * triangle: right when merged, down when unfolded.
 	 *
 	 * @param {Object} entry Entry object.
-	 * @return {import('react').ReactElement} Keyword content.
+	 * @return {import('react').ReactNode} Keyword content.
 	 */
 	const renderKeyword = ( entry ) => {
 		if ( entry.isPlaceholder ) {
@@ -837,7 +921,8 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 	};
 
 	/**
-	 * Render duration + peak_mb stats line.
+	 * Render duration + peak_mb stats line, or nothing when the entry carries
+	 * neither.
 	 *
 	 * @param {Object} entry Entry with duration_ms and peak_mb.
 	 * @return {import('react').ReactElement|null} Stats span or null.
@@ -866,7 +951,8 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 
 	/**
 	 * Render message cell for merged (collapsed) rows.
-	 * Shows start message + complete message, then stats on new line.
+	 * Shows start message + complete message, then stats on new line,
+	 * followed by a badge counting the entries the fold hides.
 	 *
 	 * @param {Object} entry Merged entry.
 	 * @return {import('react').ReactElement} Message content.
@@ -919,10 +1005,11 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 
 	/**
 	 * Render message cell for non-merged entries.
-	 * Complete entries show duration/peak on a new line after content.
+	 * Complete entries show duration/peak on a new line after content;
+	 * everything else keeps them inline.
 	 *
 	 * @param {Object} entry Entry object.
-	 * @return {import('react').ReactElement} Message content.
+	 * @return {import('react').ReactNode} Message content.
 	 */
 	const renderEntryMessage = ( entry ) => {
 		if ( entry.isPlaceholder ) {
@@ -1214,7 +1301,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 														formatTimestamp(
 															entry.ts
 														);
-													// Diff tenth → 2 stamps.
+													// Two tenths: both ends.
 													const startTenth =
 														Math.floor(
 															Math.round(
@@ -1241,7 +1328,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 															</>
 														);
 													}
-													// Same tenth → 10ms dots.
+													// One tenth: dot per 10ms.
 													const startH = Math.round(
 														( entry.startTs || 0 ) *
 															100

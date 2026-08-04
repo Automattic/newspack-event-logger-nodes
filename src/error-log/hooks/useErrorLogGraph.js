@@ -1,22 +1,23 @@
 /**
  * useErrorLogGraph — mounts the Error Log dashboard node graph onto the
  * canonical rule-#2 backbone (`_command_interpreter → _router`) using a SINGLE
- * substrate `RemoteLink` node instead of hand-wiring three I/O boundary nodes:
+ * substrate `RemoteLink` node instead of hand-wiring the I/O boundary. Three
+ * soft nodes hang off that backbone:
  *
- *   perferrors:link  (RemoteLink — composes + registers three children:
- *                     `perferrors:link:sse-in` (SseIn — EventSource ingress),
- *                     `perferrors:link:http` (HttpOut — POST /command boundary),
- *                     `perferrors:link:heartbeat` (Heartbeat — slot keep-alive),
- *                     and wires the `connected → slot` bridge to its own
- *                     heartbeat. `.client` is the injected transport.)
+ *   perferrors:link    RemoteLink — the full-duplex SSE+HTTP channel. It owns
+ *                      an UNNAMED SseIn child (the EventSource ingress) and
+ *                      shares the backbone singletons `_http` (the POST
+ *                      /command boundary) and `_heartbeat` (slot keep-alive),
+ *                      bridging `connected → slot` between them. `.client` is
+ *                      the injected transport.
+ *   perferrors:stream  Tee — the inspectable stream edge. It earns its keep by
+ *                      letting the debug overlay watch live frames through a
+ *                      second target; today it fans to the view alone.
+ *   perferrors:view    PerfErrorsView — the view-model the React view reads.
  *
- * Plus the single dashboard node — the view-model:
- *
- *   perferrors:view  (the view-model node the React view reads)
- *
- * The link targets the view directly; the view's `shapeRow()` shapes envelopes
- * into rows inline. Display filtering lives in the chrome (`LogStreamViewer`
- * matchRow), not the view node.
+ * The link targets the Tee, the Tee fans to the view, and the view's
+ * `shapeRow()` shapes raw envelopes into rows inline. Display filtering lives
+ * in the chrome (`LogStreamViewer` matchRow), not the view node.
  *
  * Every node sinks into the interpreter; flow is steered by each node's `target`. The
  * graph + connection lifecycle are handed to the shared `useVisibilityGatedLink` hook:
@@ -25,9 +26,10 @@
  * and RECONNECTS from the last seen offset on refocus. The `connected → slot` bridge
  * and slot keep-alive live inside RemoteLink.
  *
- * Returns the thin control callbacks the view calls — `setPaused` and `clear`.
- * These are dispatched HOOK-DIRECT to the view node (`viewRef.current.fill`),
- * an external bridge: they are NOT routed through the graph.
+ * Returns `setPaused` and `clear` — the thin control callbacks — plus the
+ * `browse` model `useGlobBrowse` builds. The two callbacks are dispatched
+ * HOOK-DIRECT to the view node (`viewRef.current.fill`), an external bridge:
+ * they are NOT routed through the graph.
  */
 
 import { useRef, useState, useCallback } from '@wordpress/element';
@@ -59,12 +61,19 @@ const controlMsg = ( value ) => {
 };
 
 /**
- * @param {Object} [opts]            Options.
- * @param {number} [opts.maxEntries] View ring cap (default 5000).
+ * Mount the Error Log graph and return the React view's controls.
+ *
+ * @param {Object} [opts]               Options.
+ * @param {number} [opts.maxEntries]    View ring cap (default 5000).
+ * @param {Object} [opts.commandClient] Transport seam assigned to `_http.client`
+ *                                      and to the link; tests inject a double,
+ *                                      and omitting it leaves HttpOut to
+ *                                      default to the localized transport.
  * @return {{ setPaused: Function, clear: Function, browse: Object }}
- *   Control callbacks for the thin React view (the view's own state is read via
- *   useNodeState). Reset Graph is driven by a `Core.bumpGraphGeneration()`
- *   bump — mountExospine subscribes this reused mount's rebuild to it.
+ *   Control callbacks plus the browse model for the thin React view (the view's
+ *   own state is read via useNodeState). Reset Graph is driven by a
+ *   `Core.bumpGraphGeneration()` bump — mountExospine subscribes this mount's
+ *   rebuild to it.
  */
 export function useErrorLogGraph( opts = {} ) {
 	const optsRef = useRef( opts );
@@ -94,22 +103,23 @@ export function useErrorLogGraph( opts = {} ) {
 	const { viewRef } = useVisibilityGatedLink( {
 		mountNodes: ( interpreter ) => {
 			const { maxEntries } = optsRef.current;
-			// Subscribe topic is the only ctor token now.
+			// The subscription is RemoteLink's only positional ctor token.
 			const link = interpreter.makeNode( 'RemoteLink', LINK, [ GLOB ] );
-			// Pass-through Tee on the stream edge; copies each frame to view.
+			// Frames land on the Tee, which fans them to the view.
 			link.target = TEE;
-			// The shared `_http` carries every command out; both ride it.
+			// One egress: the link's commands and browse's verbs ride `_http`.
 			const client = optsRef.current.commandClient;
 			Core.node( '_http' ).client = client;
 			link.client = client;
 
+			// A second target here taps the raw stream (the debug overlay).
 			const tee = interpreter.makeNode( 'Tee', TEE );
 			tee.connectNode( VIEW );
 
 			// The view-model — shapes raw envelopes into rows inline.
 			const view = interpreter.makeNode( 'PerfErrorsView', VIEW );
 			if ( maxEntries ) {
-				// Safe pre-stream: the base ring caps writes against maxLines.
+				// Pre-stream only: the ring indexes modulo maxLines.
 				view.maxLines = maxEntries;
 			}
 

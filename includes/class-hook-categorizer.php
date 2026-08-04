@@ -2,7 +2,12 @@
 /**
  * Hook Categorizer
  *
- * Auto-categorizes WordPress hooks using patterns.
+ * Sorts WordPress hook names into human-readable, colored categories so the
+ * settings page's hook picker can offer thousands of hooks as labeled sections
+ * instead of one flat list. The categories, their colors, and the regular
+ * expressions that assign hooks to them ship in `hook_categories.json` at the
+ * plugin root; a site adds to or overrides any of it through the
+ * `newspack_event_logger_nodes_hook_customizations` option.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -19,16 +24,40 @@ if ( ! \defined( 'ABSPATH' ) ) {
 
 /**
  * Hook Categorizer class.
+ *
+ * Static throughout, with both configuration sources memoized for the life of
+ * the process: the JSON file and the customizations option each load once, and
+ * `clear_cache()` drops both.
+ *
+ * The hook list it reports is a union of three sources — hooks WordPress
+ * currently has callbacks on, hooks the durable ruleset instruments, and hooks
+ * a spoke reported through discovery — so a hook that fires only inside a
+ * worker, or only on another site, still reaches the picker.
+ *
+ * Patterns arrive from a database option rather than from code, so
+ * `categorize()` treats them as untrusted: it caps their length, rejects nested
+ * quantifiers, and lowers `pcre.backtrack_limit` while they run.
+ *
+ * Consumers: the `hooks_registered` verb of `App\Performance_CI_Node`, which
+ * feeds the settings page's `HookSelectorModal`, and
+ * `App\Core::bind_current_scope()`, which calls `is_internal()`.
  */
 class Hook_Categorizer {
 
 	/**
 	 * Maximum pattern length to prevent ReDoS attacks.
+	 *
+	 * A longer pattern is skipped whole, never truncated — half a regex is not
+	 * the operator's intent.
 	 */
 	const MAX_PATTERN_LENGTH = 100;
 
 	/**
 	 * Option name for user customizations.
+	 *
+	 * Nothing in the plugin writes this row; it exists for a site that wants
+	 * categories, patterns, or per-hook assignments of its own. Uninstall
+	 * clears it along with every other `newspack_event_logger_nodes_` option.
 	 */
 	const OPTION_NAME = 'newspack_event_logger_nodes_hook_customizations';
 
@@ -44,14 +73,16 @@ class Hook_Categorizer {
 	public static ?\Closure $read_file = null;
 
 	/**
-	 * Cached base config from JSON file.
+	 * Cached base config from JSON file. Every failure path caches the empty
+	 * shape too, so a missing or unreadable file costs one read per process.
 	 *
 	 * @var array<string, mixed>|null
 	 */
 	private static ?array $base_config = null;
 
 	/**
-	 * Cached merged config (base + user customizations).
+	 * Cached merged config (base + user customizations). Null until the first
+	 * `get_merged_config()`, and `clear_cache()` puts it back there.
 	 *
 	 * @var array{colors: array<string, mixed>, patterns: array<string, mixed>, overrides: array<string, mixed>}|null
 	 */
@@ -60,13 +91,15 @@ class Hook_Categorizer {
 	/**
 	 * Get registered hooks grouped by category.
 	 *
+	 * Drops the plugin's own hooks, sends anything matching no pattern to
+	 * `Other`, and omits the categories that ended up empty.
+	 *
 	 * @return array<string, mixed> Associative array of category => [hooks...].
 	 */
 	public static function get_registered_hooks_by_category(): array {
 		$hooks      = self::get_registered_hooks();
 		$categories = self::get_categories();
 
-		// Initialize all categories.
 		$grouped = [];
 		foreach ( \array_keys( $categories ) as $category ) {
 			$grouped[ $category ] = [];
@@ -88,7 +121,13 @@ class Hook_Categorizer {
 	/**
 	 * Get all registered hooks from WordPress.
 	 *
-	 * @return array<int, string> Array of hook names that have callbacks attached.
+	 * Three sources, deduplicated and sorted: hooks with callbacks in
+	 * `$wp_filter`, hooks the durable ruleset instruments, and hooks a spoke
+	 * reported into `Config::OPTION_DISCOVERED_HOOKS`. The last two matter
+	 * because a hook bound only inside a worker — or only on another site —
+	 * never appears in this request's `$wp_filter`.
+	 *
+	 * @return array<int, string> Sorted, deduplicated hook names.
 	 */
 	public static function get_registered_hooks(): array {
 		/** @var array<string, \WP_Hook> $wp_filter WordPress global. */
@@ -137,7 +176,8 @@ class Hook_Categorizer {
 	/**
 	 * Get all categories with their colors.
 	 *
-	 * @return array<string, mixed> Associative array of category => color.
+	 * @return array<string, mixed> Associative array of category => color, base
+	 *                              colors with the user's merged over them.
 	 */
 	public static function get_categories(): array {
 		$config = self::get_merged_config();
@@ -146,6 +186,12 @@ class Hook_Categorizer {
 
 	/**
 	 * Get merged configuration (base + user customizations).
+	 *
+	 * Colors merge with the user's winning. Patterns only ever accumulate: a
+	 * user pattern appends to its category and displaces nothing. Since
+	 * `categorize()` returns on the first match and walks categories in JSON
+	 * order, a base pattern in an earlier category still beats a user pattern
+	 * in a later one — `overrides` is the way to pin a specific hook.
 	 *
 	 * @return array{colors: array<string, mixed>, patterns: array<string, mixed>, overrides: array<string, mixed>} Merged configuration.
 	 */
@@ -194,6 +240,11 @@ class Hook_Categorizer {
 	/**
 	 * Load base configuration from hook_categories.json.
 	 *
+	 * The file sits at the plugin root, beside `includes/`. A missing file, an
+	 * unreadable one, and JSON decoding to anything but an array all yield the
+	 * empty `_colors` / `_patterns` shape: categorization degrades to `Other`
+	 * instead of failing the request.
+	 *
 	 * @return array<string, mixed> Base configuration.
 	 */
 	public static function get_base_config(): array {
@@ -223,6 +274,10 @@ class Hook_Categorizer {
 	/**
 	 * Get user customizations from database.
 	 *
+	 * `wp_parse_args()` accepts an array, an object, or a query string; a
+	 * stored value of any other type is discarded before the merge, so the
+	 * three default keys are always present.
+	 *
 	 * @return array<string, mixed> User customizations with keys: patterns, overrides, colors.
 	 */
 	public static function get_user_customizations(): array {
@@ -244,8 +299,9 @@ class Hook_Categorizer {
 	/**
 	 * Is this hook one of our own internal filters/actions?
 	 *
-	 * Used everywhere a list of hooks is presented to the operator or
-	 * instrumented by `Core::hook_start`. Nodes uses two naming styles —
+	 * Used everywhere a list of hooks is presented to the operator, and by
+	 * `App\Core::bind_current_scope()` before it binds `hook_start` /
+	 * `hook_complete` to a hook. Nodes uses two naming styles —
 	 * slash for actions (`newspack_nodes/spawn_worker`,
 	 * `newspack_event_logger_nodes/sse_connected`) and underscore for
 	 * schema/option filters (`newspack_nodes_option_schema_core`) — so the
@@ -276,8 +332,21 @@ class Hook_Categorizer {
 	/**
 	 * Categorize a single hook.
 	 *
+	 * An explicit override wins outright. Otherwise the first pattern that
+	 * matches decides, in merged-config order, and a hook matching nothing
+	 * lands in `Other`.
+	 *
+	 * Patterns come from the database, so three guards bound the work: one
+	 * longer than MAX_PATTERN_LENGTH is skipped, one carrying a nested
+	 * quantifier is skipped and logged, and `pcre.backtrack_limit` drops to
+	 * 10000 for the scan — restored in `finally`, including on a throw. A
+	 * pattern PCRE refuses to compile is skipped rather than aborting the scan.
+	 * Both rejections report through `Core::print_less_often`, whose throttle
+	 * key is the message prefix alone, so one rejected pattern per window
+	 * prints and the rest stay silent.
+	 *
 	 * @param string $hook_name Hook name.
-	 * @return string Category name.
+	 * @return string Category name, or `Other` when nothing matches.
 	 */
 	public static function categorize( string $hook_name ): string {
 		$config = self::get_merged_config();
@@ -287,7 +356,7 @@ class Hook_Categorizer {
 			return $config['overrides'][ $hook_name ];
 		}
 
-		// Check patterns.
+		// Cap backtracking for the scan; finally restores the old limit.
 		$prev_backtrack_limit = \ini_get( 'pcre.backtrack_limit' );
 		\ini_set( 'pcre.backtrack_limit', 10000 ); // phpcs:ignore WordPress.PHP.IniSet.Risky
 
@@ -327,7 +396,8 @@ class Hook_Categorizer {
 	}
 
 	/**
-	 * Clear cached configuration.
+	 * Clear cached configuration: the next read reloads the JSON file and the
+	 * customizations option.
 	 *
 	 * @api Used by tests.
 	 */

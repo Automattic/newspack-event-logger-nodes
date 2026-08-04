@@ -2,7 +2,30 @@
 /**
  * Request Builder
  *
- * Node that builds request profiles from firehose entries.
+ * Assembles the firehose's per-line stream back into whole requests. Every
+ * PHP request writes a numbered sequence of small JSON lines (`process
+ * (start)`, `request`, `environment_v3`, one pair per instrumented hook,
+ * `process (complete)`) tagged with its request id; nothing on disk holds a
+ * request as a unit. This node is where that unit exists: it keys an
+ * in-flight `\stdClass` envelope per rid in an `LRU_Cache`, folds each
+ * arriving line into it, and emits the finished envelope downstream.
+ *
+ * Four streams leave here, all optional but the first:
+ *
+ * - the full completed-request doc to the primary sink (`requests.p{N}`);
+ * - a compact one-line summary to `completed_target`;
+ * - `error` / `warning` / `stderr` lines to `errors_target`, and `alert`
+ *   lines to `alerts_target`;
+ * - periodic in-flight snapshots, emitted by the hidden `Request_Flight_Node`
+ *   sibling this node constructs and wires.
+ *
+ * Requests that never complete are not lost: the cache's timed bucket
+ * rotation evicts them, and eviction writes them out with `error_status='T'`.
+ *
+ * The two static index helpers, `format_index_entry()` and
+ * `parse_request_index()`, are a matched pair — a fixed-width companion-index
+ * line writer and its reader. They are registered as the `request-index`
+ * formatter and used by the `performance` CI's lookup verbs.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -21,14 +44,20 @@ if ( ! \defined( 'ABSPATH' ) ) {
 }
 
 /**
- * Request builder node class.
+ * Folds firehose lines into per-request envelopes and emits them when complete.
+ *
+ * A `Timer_Node` rather than a plain `Node`: the router tick drives the idle
+ * bucket rotation that times out stalled requests, so a partition receiving no
+ * traffic still flushes what it is holding.
  */
 class Request_Builder_Node extends Timer_Node {
 	use \Newspack_Nodes\Schema_Reflection;
 	use \Newspack_Nodes\Deferred_Clean_Stop;
 
-	/** Default LRU cache capacity. */
+	/** Default in-flight requests held per LRU bucket. */
 	public const DEFAULT_BUCKET_SIZE = 100;
+
+	/** Default number of rotating LRU buckets. */
 	public const DEFAULT_NUM_BUCKETS = 3;
 
 	/**
@@ -36,9 +65,11 @@ class Request_Builder_Node extends Timer_Node {
 	 * 3 buckets x 200s = 600s (10 min) before oldest bucket is evicted.
 	 */
 	private const BUCKET_ROTATION_S = 200;
+
+	/** Longest keyword the intern table accepts; longer ones pass through. */
 	private const INTERN_MAX_KEY_LENGTH  = 256;
 
-	/** String-intern table: cap on entries and max keyword length to intern. */
+	/** Cap on intern-table entries; past it, keywords pass through uninterned. */
 	private const INTERN_TABLE_LIMIT     = 50000;
 
 	/**
@@ -69,7 +100,10 @@ class Request_Builder_Node extends Timer_Node {
 	/** @var Request_Flight_Node|null Hidden sibling — periodic in-flight snapshots. */
 	public ?Request_Flight_Node $flight = null;
 
+	/** @var int Positional arg 0 — in-flight requests per LRU bucket. */
 	protected int $bucket_size = self::DEFAULT_BUCKET_SIZE;
+
+	/** @var int Positional arg 1 — rotating LRU buckets; oldest is evicted. */
 	protected int $num_buckets = self::DEFAULT_NUM_BUCKETS;
 
 	/** @var string Named target for compact-summary completed lines (empty = disabled). */
@@ -118,13 +152,16 @@ class Request_Builder_Node extends Timer_Node {
 	}
 
 	/**
-	 * Store the raw string, parse positional tokens via parse_schema_args()
+	 * Store and parse the positional token array via parse_schema_args()
 	 * (bucket_size / num_buckets), then rebuild the LRU_Cache with the new
 	 * dimensions (here — not the ctor — because it depends on the positional args).
 	 *
+	 * Calling this also arms the router-tick timer, so a node constructed but
+	 * never given arguments never fires.
+	 *
 	 * @api Used by substrate.
-	 * @param list<string>|null $args
-	 * @return list<string>
+	 * @param list<string>|null $args Positional tokens, or null to read them back.
+	 * @return list<string> The tokens as given.
 	 */
 	public function arguments( ?array $args = null ): array {
 		if ( null === $args ) {
@@ -137,7 +174,23 @@ class Request_Builder_Node extends Timer_Node {
 	}
 
 	/**
-	 * Node entry point: process a single line from firehose.log.
+	 * Node entry point: fold one firehose line into its request envelope.
+	 *
+	 * TM_REQUEST messages are commands and divert to `handle_request()`.
+	 * Everything else must be TM_STRUCT with a decoded entry in VALUE and the
+	 * request id in KEY; anything else is dropped silently.
+	 *
+	 * The line's `n` field is a per-request sequence number, and this method is
+	 * the only place it is checked. A line numbered below the expected value is
+	 * a duplicate, above it a gap; both are logged and dropped, so a request
+	 * whose middle is missing stops accumulating rather than reporting a
+	 * plausible-looking lie. A nested render (gyrobase via `proc_open`) restarts
+	 * numbering at 1 under the same rid, which `seq_stack` accommodates by
+	 * saving the parent's expected value across the subprocess.
+	 *
+	 * Completion is detected by the `process (complete)` callback setting
+	 * `state`; this method then emits and drops the envelope immediately, to get
+	 * the state back out of RAM rather than wait for eviction.
 	 *
 	 * @param array<int, mixed> $message Reference; not mutated.
 	 */
@@ -184,6 +237,7 @@ class Request_Builder_Node extends Timer_Node {
 		// get() returns the same object instance — mutations happen in place.
 		$request = $this->cache->get( $rid );
 		if ( null === $request ) {
+			// Only 'process (start)' opens a request; orphan lines drop.
 			if ( 'process (start)' !== $keyword ) {
 				return;
 			}
@@ -323,7 +377,15 @@ class Request_Builder_Node extends Timer_Node {
 		$this->cache->rotate_if_due();
 	}
 
-	/** @param array<int, mixed> $message Incoming command Message. */
+	/**
+	 * Answer a TM_REQUEST verb with a TM_STRUCT reply addressed back to FROM.
+	 *
+	 * `GET_CACHE` reports in-flight depth for the REPL and dashboards. An
+	 * unknown verb still gets a reply, carrying an `error` payload.
+	 *
+	 * @param array<int, mixed> $message Incoming command Message.
+	 * @throws \RuntimeException When no sink is wired to carry the reply.
+	 */
 	private function handle_request( array $message ): void {
 		if ( null === $this->sink ) {
 			throw new \RuntimeException( 'Request_Builder::fill requires a wired sink' );
@@ -378,11 +440,15 @@ class Request_Builder_Node extends Timer_Node {
 	/**
 	 * Emit an error/warning/alert entry via a named target partition.
 	 *
+	 * The entry's own `url` / `method` are discarded and restamped from the
+	 * request envelope: the envelope resolved them once, authoritatively, and a
+	 * stale copy on the line would disagree with the completed-request doc.
+	 *
 	 * @param array<string, mixed> $entry   Decoded entry.
 	 * @param string               $rid     Request id — propagated to Message::KEY so
 	 *                                      downstream readers can identify the request
 	 *                                      without re-parsing the entry payload.
-	 * @param \stdClass             $request Active request state supplying authoritative URL context.
+	 * @param \stdClass            $request Active request state supplying authoritative URL context.
 	 * @param string               $target  Destination node name ('' = skip).
 	 */
 	private function emit_entry( array $entry, string $rid, \stdClass $request, string $target ): void {
@@ -416,7 +482,13 @@ class Request_Builder_Node extends Timer_Node {
 	/**
 	 * Push state onto request stack.
 	 *
-	 * Stack frames are [ state, label ] pairs.
+	 * Stack frames are [ state, label ] pairs. Pushing also opens the state's
+	 * profile record, so a state that never closes still appears in the profile
+	 * with a zero duration instead of vanishing.
+	 *
+	 * Reaching MAX_STACK_DEPTH marks the request runaway rather than truncating
+	 * it: fill() keeps a runaway visible in the in-flight view (Perl gyroscope
+	 * parity) but stops storing entries for it, so memory stays bounded.
 	 *
 	 * @param \stdClass $request Request object.
 	 * @param string    $state   State name (e.g. "wp_head hook").
@@ -470,7 +542,19 @@ class Request_Builder_Node extends Timer_Node {
 	}
 
 	/**
-	 * Pop state from request stack.
+	 * Pop state from request stack and fold its duration into the profiles.
+	 *
+	 * Closes rarely misbehave, but when one does the frame it names may sit
+	 * below the top — an inner state that never closed. The slow path searches
+	 * backward for the matching frame and splices away everything above it,
+	 * discarding the unclosed inners rather than letting them shadow the stack
+	 * for the rest of the request. A close naming no frame at all is ignored.
+	 *
+	 * Profile time is EXCLUSIVE: after crediting the closing state, the same
+	 * duration is subtracted from its ancestors, so a hook's number is its own
+	 * work and not its children's. Callback states (" @N") are the exception in
+	 * both directions — they neither trigger the subtraction nor stop it, since
+	 * a callback's time is already part of the hook that dispatched it.
 	 *
 	 * @param \stdClass $request Request object.
 	 * @param string    $state   State name to match.
@@ -576,7 +660,10 @@ class Request_Builder_Node extends Timer_Node {
 	 * Construct the LRU_Cache with the current bucket_size / num_buckets,
 	 * wired with the eviction callback. Shared between the ctor (defaults)
 	 * and arguments() (post-schema-walk).
-	 * 
+	 *
+	 * The timed rotation is what makes a stalled request time out; its eviction
+	 * callback is `evict_request()`, which writes the request out as timed out.
+	 *
 	 * @return LRU_Cache The constructed cache instance.
 	 */
 	private function build_cache(): LRU_Cache {
@@ -594,7 +681,11 @@ class Request_Builder_Node extends Timer_Node {
 	 * `cmd {name}:config <verb> <value>` line per setting that differs from its
 	 * default, for dump_config introspection (REPL/GUI). No generic verb recording.
 	 *
+	 * The two `set_inflight_*` lines read from the Flight sibling, whose own
+	 * config would otherwise never round-trip — it is hidden from the editor.
+	 *
 	 * @api Used by substrate.
+	 * @return string Round-trippable TSL for this node and its Flight sibling.
 	 */
 	public function dump_config(): string {
 		$out = parent::dump_config();
@@ -617,6 +708,12 @@ class Request_Builder_Node extends Timer_Node {
 		return $out;
 	}
 
+	/**
+	 * The Flight sibling, narrowed to non-null for callers that require it.
+	 *
+	 * @return Request_Flight_Node The hidden in-flight snapshot sibling.
+	 * @throws \RuntimeException When the constructor did not build the sibling.
+	 */
 	public function flight(): Request_Flight_Node {
 		if ( null === $this->flight ) {
 			throw new \RuntimeException( 'flight sibling not constructed' );
@@ -624,7 +721,12 @@ class Request_Builder_Node extends Timer_Node {
 		return $this->flight;
 	}
 	/**
-	 * Build the state-callback table.
+	 * Build the state-callback table: keyword → mutator on the request envelope.
+	 *
+	 * These are the keywords with dedicated meaning. Any other keyword ending in
+	 * " (start)" or " (complete)" falls through to the generic stack push/pop in
+	 * fill(), which is how arbitrary instrumented hooks are profiled without
+	 * being enumerated here.
 	 *
 	 * @return array<string,callable>
 	 */
@@ -666,7 +768,7 @@ class Request_Builder_Node extends Timer_Node {
 				return;
 			}
 			if ( \strlen( $message ) < self::MAX_PAYLOAD_SCAN_LENGTH && \preg_match( '/^(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|CLI)\s+(.+)$/', $message, $m ) ) {
-				// Strip query string: hash ignores it; keeps URL table lean.
+				// Strip query: URL rows aggregate per path; '?' marks workers.
 				$request->url = \explode( '?', $m[1], 2 )[0];
 			}
 			$parts                   = \explode( ' ', $message, 2 );
@@ -740,6 +842,7 @@ class Request_Builder_Node extends Timer_Node {
 	 *
 	 * @param array<string, mixed> $env Curated env map from the environment_v3 entry.
 	 * @param string               $key Field name.
+	 * @return string The field value, or '' when absent or non-string.
 	 */
 	private static function env_str( array $env, string $key ): string {
 		$value = $env[ $key ] ?? '';
@@ -749,10 +852,14 @@ class Request_Builder_Node extends Timer_Node {
 	/**
 	 * Handle a single evicted request from LRU bucket rotation.
 	 *
-	 * Incomplete requests get written with error_status=T.
-	 * Called by the LruCache eviction callback — LruCache stores mixed
-	 * values, so the runtime type isn't guaranteed by the signature; the
-	 * instanceof gate is the real validation.
+	 * An incomplete request is written out with error_status='T' and a duration
+	 * measured to eviction time — a trace that stops mid-request is a finding,
+	 * not a gap. A request already marked complete, or one that never carried a
+	 * URL, is dropped instead.
+	 *
+	 * Called by the LRU_Cache eviction callback. LRU_Cache stores mixed values,
+	 * so the runtime type isn't guaranteed by the signature; the instanceof gate
+	 * is the real validation.
 	 *
 	 * @param string $rid     Request ID.
 	 * @param mixed  $request Request object (expected \stdClass).
@@ -782,13 +889,16 @@ class Request_Builder_Node extends Timer_Node {
 	 * Emit a completed request as a TM_STRUCT message to the main sink.
 	 *
 	 * KEY = rid so downstream readers / aggregator forwarders can identify
-	 * the request without decoding VALUE. RequestBuilder still stamps
+	 * the request without decoding VALUE. Request_Builder still stamps
 	 * `rid` into the request struct itself; KEY is the wire-level breadcrumb.
 	 *
 	 * Also fires the secondary compact-summary emit (no-op when
 	 * completed_target is unset) so a topology that wires both the full
 	 * doc and the one-line summary gets both with one source call.
-	 * 
+	 *
+	 * Both callers reach this method — the completion path in fill() and the
+	 * timeout path in evict_request().
+	 *
 	 * @param \stdClass $request Completed request envelope.
 	 */
 	public function emit_request( \stdClass $request ): void {
@@ -809,7 +919,16 @@ class Request_Builder_Node extends Timer_Node {
 		$this->emit_compact_summary( $request );
 	}
 
-	/** Resolve the URL exactly as completed-request outputs do. */
+	/**
+	 * Resolve the URL exactly as completed-request outputs do.
+	 *
+	 * A worker request gets its worker type appended as a bare query string, so
+	 * each worker type hashes to its own URL row instead of collapsing into the
+	 * endpoint they share.
+	 *
+	 * @param \stdClass $request Request envelope.
+	 * @return string The resolved URL, or '' when the envelope carries none.
+	 */
 	private static function resolved_request_url( \stdClass $request ): string {
 		$url         = \is_string( $request->url ?? null ) ? $request->url : '';
 		$worker_type = \is_string( $request->worker_type ?? null ) ? $request->worker_type : '';
@@ -851,8 +970,11 @@ class Request_Builder_Node extends Timer_Node {
 	 * request envelope. The schema is a fixed wire contract the request-log
 	 * dashboard consumes. URL clipped to 2000 chars + "..." suffix; UA to 500.
 	 *
+	 * Those clips are for display and are counted in characters, which only
+	 * approximates bytes; `Line_Fitter` does the byte-exact fit afterward.
+	 *
 	 * @param \stdClass $request Completed request envelope.
-	 * @return array<string,mixed>
+	 * @return array<string,mixed> The summary, keyed by the wire-contract fields.
 	 */
 	public function build_compact_summary( \stdClass $request ): array {
 		// Decoded request envelope: string-keyed map, mixed-by-design values.
@@ -889,12 +1011,22 @@ class Request_Builder_Node extends Timer_Node {
 		];
 	}
 
-	/** @param array<string, mixed> $request Completed request record. */
+	/**
+	 * The label of whatever the request is doing right now (stack-top slot 1).
+	 *
+	 * @param array<string, mixed> $request Request envelope as an array.
+	 * @return string The label, or '' when the stack carries none.
+	 */
 	public static function extract_what( array $request ): string {
 		return self::extract_stack_top_slot( $request, 1, 'what', '' );
 	}
 
-	/** @param array<string, mixed> $request Completed request record. */
+	/**
+	 * The state the request is in right now (stack-top slot 0).
+	 *
+	 * @param array<string, mixed> $request Request envelope as an array.
+	 * @return string The state name, defaulting to 'process'.
+	 */
 	public static function extract_state( array $request ): string {
 		return self::extract_stack_top_slot( $request, 0, 'state', 'process' );
 	}
@@ -907,10 +1039,11 @@ class Request_Builder_Node extends Timer_Node {
 	 * The fallback chain: stack-top slot → explicit named field (for test
 	 * seams that prime fields without driving the stack) → static default.
 	 *
-	 * @param array<string,mixed> $request   Request envelope as an array.
-	 * @param int                 $slot      Frame slot (0 = state, 1 = what).
+	 * @param array<string,mixed> $request        Request envelope as an array.
+	 * @param int                 $slot           Frame slot (0 = state, 1 = what).
 	 * @param string              $fallback_field Explicit field name to fall back on.
-	 * @param string              $default   Static default if neither source has a value.
+	 * @param string              $default        Static default if neither source has a value.
+	 * @return string The slot's value, the fallback field, or the default.
 	 */
 	private static function extract_stack_top_slot( array $request, int $slot, string $fallback_field, string $default ): string {
 		$stack = $request['stack'] ?? null;
@@ -928,6 +1061,17 @@ class Request_Builder_Node extends Timer_Node {
 
 	/**
 	 * Format index entry callback for Partition::with_index().
+	 *
+	 * Registered as the `request-index` formatter; `parse_request_index()` is
+	 * the reader for the lines this writes. The layout is fixed-width and
+	 * append-only — 97 columns as of v4 — so the reader slices each field by
+	 * constant offset and an older, shorter index still parses. Change a width
+	 * and every existing `.idx` on disk decodes as garbage.
+	 *
+	 * Two cases skip indexing, both by the substrate's null-or-'' contract: a
+	 * record with no URL, and a position too large for its column — an offset,
+	 * length, or segment that would overflow its width is dropped rather than
+	 * written truncated, which would decode as a valid but wrong seek.
 	 *
 	 * @param array<int, mixed>  $message  The unpacked message array; VALUE is index 6.
 	 * @param array<string, int> $position Position array.
@@ -1008,6 +1152,7 @@ class Request_Builder_Node extends Timer_Node {
 	 *
 	 * @api Used by substrate.
 	 * @param string $name Proposed new name for this node.
+	 * @throws \RuntimeException When `{name}:flight` is already registered.
 	 */
 	protected function check_name_availability( string $name ): void {
 		if ( null !== $this->flight && null !== Core::node( "{$name}:flight" ) ) {
@@ -1043,12 +1188,13 @@ class Request_Builder_Node extends Timer_Node {
 
 	/**
 	 * Override Node::sink() so the auto-sink wiring make_node performs on
-	 * RequestBuilder also reaches the hidden Flight sibling. Without this,
+	 * Request_Builder also reaches the hidden Flight sibling. Without this,
 	 * Flight's $this->sink stays null and its in-flight emits drop on the
 	 * floor.
 	 *
 	 * @api Used by substrate.
 	 * @param Node|null $node New sink node or null to get current sink.
+	 * @return Node|null The current sink.
 	 */
 	public function sink( ?Node $node = null ): ?Node {
 		if ( \func_num_args() > 0 ) {
@@ -1071,7 +1217,7 @@ class Request_Builder_Node extends Timer_Node {
 
 	/**
 	 * Set the named target for error/warning forwarding.
-	 * 
+	 *
 	 * @param string $target Target node name for error/warning forwarding.
 	 */
 	public function set_errors_target( string $target ): void {
@@ -1090,13 +1236,17 @@ class Request_Builder_Node extends Timer_Node {
 	/**
 	 * Expose every named destination this node actually writes to so the
 	 * console's TARGET column reflects the full fan-out: the primary target plus
-	 * the conditional errors_target / completed_target and the flight sibling's
-	 * target. Without this override those partitions render disconnected on the
-	 * topology console (no inbound edge) despite being written to.
+	 * the conditional errors_target / alerts_target / completed_target and the
+	 * Flight sibling's target. Without this override those partitions render
+	 * disconnected on the topology console (no inbound edge) despite being
+	 * written to.
+	 *
+	 * The getter alone widens; the setter still writes only the primary target,
+	 * so a round-trip through set-then-get does not fold the extras into it.
 	 *
 	 * @api Used by substrate.
 	 * @param array<int, string>|string|null $value New primary target or null to get current target.
-	 * @return array<int, string>|string
+	 * @return array<int, string>|string The primary target, or every destination when extras exist.
 	 */
 	public function target( $value = null ) {
 		if ( null !== $value ) {
@@ -1195,10 +1345,17 @@ class Request_Builder_Node extends Timer_Node {
 	}
 
 	/**
-	 * Parse request index entry.
+	 * Parse one fixed-width index line written by format_index_entry().
+	 *
+	 * Columns: rid(32) url_hash(12) timestamp(10) duration_ms(8) status_code(3)
+	 * segment(6) offset(10) length(8) — 89 bytes, the v1 line and the minimum
+	 * this accepts. Later versions only appended: peak_mb(6) at 89 (v2), method
+	 * code(1) at 95 (v3), error_status(1) at 96 (v4). Each tail field is read
+	 * only when the line is long enough to hold it, so an index written by an
+	 * older version parses without migration.
 	 *
 	 * @param string $line Index line.
-	 * @return array<string, mixed>|null Parsed entry or null.
+	 * @return array<string, mixed>|null Parsed entry, or null when too short.
 	 */
 	public static function parse_request_index( string $line ): ?array {
 		$line = \rtrim( $line, "\n" );
@@ -1251,7 +1408,16 @@ class Request_Builder_Node extends Timer_Node {
 		return null;
 	}
 
-	/** @api Used by the substrate to provide UI etc. */
+	/**
+	 * Declared arguments, `{name}:config` verbs, and TM_REQUEST verbs.
+	 *
+	 * The `set_inflight_*` verbs configure the Flight sibling, not this node —
+	 * Flight is hidden from the topology editor, so its configuration has to
+	 * surface on the patron's interpreter to be reachable at all.
+	 *
+	 * @api Used by the substrate to provide UI etc.
+	 * @return array<string, mixed> Schema consumed by `Command_Interpreter_Node`.
+	 */
 	public static function node_schema(): array {
 		return [
 			'category'    => 'Transform',

@@ -4,28 +4,44 @@
  * Error Log and Request Log trees so the wiring is written once.
  *
  * The browse model over a glob is a two-level pick:
- *   - selectedPartition '' → the glob, tailed live (positions=null) — today's
- *     byte-identical default; the caller renders no sidebar in this state.
- *   - selectedPartition 'errors.p3' → that ONE dir, with a segment sidebar and
+ *   - selectedPartition '' → the glob, tailed live (positions=null). The
+ *     sidebar shows the partition picker alone, with no segment rail.
+ *   - selectedPartition 'errors.p3' → that ONE dir, with a segment rail and
  *     Live / Replay / per-segment seeks (via the substrate's useLogPositions).
+ *
+ * A sole partition auto-selects, because one dir already IS the whole live glob.
  *
  * Seeks ride the existing `positions` transport (keyed by partition DIRECTORY,
  * the same key SseIn tracks resume offsets under), so no new server verb is
- * needed: `list_logs` catalogs the concrete dirs, `log_status` their segments —
- * both reached through the RemoteLink's own HttpOut (`link.send`) and settled via
+ * needed. The substrate's `raw-logs` CI answers all three reads: `list_logs`
+ * catalogs the concrete dirs, `log_status` one dir's segments, and
+ * `read_message` the single record a paused Step or `jumpTo` displays. Each verb
+ * gets its OWN `useRequestNode` node, so every reply lands on the node that
+ * asked for it and nothing needs correlating.
  *
  * Repositioning is imperative and gated on `isActive`: while the stream is closed
  * (paused / hidden) a browse action only records the target in `browseTargetRef`;
  * the graph hook's `onConnect` re-applies it on the next connect. That ref is the
  * single source of truth the graph hook reads for first-connect + refocus.
  *
- * @param {Object}  o
- * @param {string}  o.glob            The subscription glob (e.g. `errors.*`).
- * @param {string}  o.linkName        RemoteLink node name (HttpOut + SSE seek).
- * @param {boolean} o.isActive        Whether the stream is open right now.
- * @param {Object}  o.browseTargetRef `{ current: { subscribe, positions } }` the
- *                                    graph hook reads on (re)connect.
- * @return {Object} Browse state + actions for the LogBrowser + partition select.
+ * @param {Object}   o
+ * @param {string}   o.glob            The subscription glob (e.g. `errors.*`).
+ * @param {string}   o.linkName        RemoteLink node name; it takes the seeks
+ *                                     and holds the resume cursor.
+ * @param {string}   o.viewName        View node name, and the prefix this hook
+ *                                     names its own Request + Timer nodes with.
+ * @param {boolean}  o.isActive        Whether the stream is open right now.
+ * @param {Object}   o.browseTargetRef `{ current: { subscribe, positions,
+ *                                     explicit } }` the graph hook reads on
+ *                                     (re)connect.
+ * @param {Object}   [o.setPausedRef]  `{ current: setPaused }`; a time-travel
+ *                                     action pauses the stream through it.
+ * @param {Function} [o.isActiveNow]   Same-tick `isActive`, for a click that
+ *                                     pauses AND seeks in one tick.
+ * @return {Object} Browse state + actions for `SegmentBrowseSidebar`:
+ *   `partitions`, `selectedPartition`, `selectPartition`, `segments`, `mode`,
+ *   `lastReceivedSegment`, `segmentId`, `follow`, `replay`, `browseSegment`,
+ *   `step`, and `jumpTo`.
  */
 
 import { useState, useEffect, useRef, useCallback } from '@wordpress/element';
@@ -47,13 +63,25 @@ import { endPosition } from '@newspack-nodes/shared/nodes/seekTracker';
 import useRouterTick from '@newspack-nodes/shared/hooks/useRouterTick';
 import useRequestNode from '@newspack-nodes/shared/hooks/useRequestNode';
 
-// The substrate service CI that catalogs on-disk logs + segments.
+// The substrate service CI that catalogs and reads the on-disk logs.
 const RAW_LOGS = 'raw-logs';
 
 // Segment-rail maintenance cadence (rotation + size growth).
 const SEGMENTS_REFRESH_MS = 10000;
 
-// Reconnect positions: an explicit seek applies ONCE; else resume the tail.
+/**
+ * The `positions` a (re)connect should subscribe with.
+ *
+ * An EXPLICIT seek — one recorded while the stream was closed — applies ONCE and
+ * clears its own flag, so later reconnects resume the tail instead of re-running
+ * a seek the user has already left behind. Every other reconnect resumes at the
+ * last record SseIn saw; a first connect takes the recorded target as it stands.
+ *
+ * @param {Object}  target      `browseTargetRef.current`, the recorded target.
+ * @param {Object}  link        The RemoteLink, for its `resumePositions()`.
+ * @param {boolean} isReconnect True when reopening an already-seen stream.
+ * @return {?Object} The positions to subscribe with; null tails.
+ */
 export function connectPositions( target, link, isReconnect ) {
 	if ( target.explicit ) {
 		target.explicit = false;
@@ -64,7 +92,12 @@ export function connectPositions( target, link, isReconnect ) {
 		: target.positions;
 }
 
-// A TM_STRUCT control message routed by the view's fill() on its `action`.
+/**
+ * Build a control message the view's `fill()` routes on its `action`.
+ *
+ * @param {Object} value The control payload; `action` picks the view's verb.
+ * @return {Array} The 7-field TM_STRUCT message.
+ */
 function viewControl( value ) {
 	const m = newMessage();
 	m[ TYPE ] = TM_STRUCT;
@@ -87,7 +120,7 @@ export default function useGlobBrowse( {
 	const [ selectedPartition, setSelectedPartition ] = useState( '' );
 	const [ segments, setSegments ] = useState( [] );
 
-	// Read the latest selection + active flag + segments from the handlers.
+	// Latest selection / active flag / rail, readable from any async handler.
 	const selectedRef = useRef( selectedPartition );
 	selectedRef.current = selectedPartition;
 	const isActiveRef = useRef( isActive );
@@ -123,6 +156,13 @@ export default function useGlobBrowse( {
 	const statusNode = useRequestNode( `${ viewName }:status`, RAW_LOGS );
 	const readNode = useRequestNode( `${ viewName }:read`, RAW_LOGS );
 
+	/**
+	 * Send one `raw-logs` verb through the Request node that owns it.
+	 *
+	 * @param {string}   name The verb: list_logs, log_status, or read_message.
+	 * @param {string[]} args The verb's token array.
+	 * @return {Promise<*>} The reply payload.
+	 */
 	const fetchCatalog = useCallback(
 		( name, args ) => {
 			const request = {
@@ -162,19 +202,26 @@ export default function useGlobBrowse( {
 		};
 	}, [ fetchCatalog, globPrefix ] );
 
-	// @longform
-	// The selected partition's segment catalog (log_status); '' clears it.
-	// Keyed on the partition the reply BELONGS to (reusing selectedRef above),
-	// not a shared cancelled flag: React runs the old cleanup then the new
-	// effect body, so one boolean is un-set by the very re-run it should
-	// cancel, and a slow reply repopulates the rail for a partition the user
-	// already left. Both segment writers below go through this.
+	/**
+	 * Write a `log_status` reply into the rail, if the rail still wants it.
+	 *
+	 * The guard keys on the partition the reply BELONGS to (reusing
+	 * `selectedRef` above) rather than a shared cancelled flag: React runs the
+	 * old cleanup and then the new effect body, so one boolean is un-set by the
+	 * very re-run that should cancel it, and a slow reply repopulates the rail
+	 * for a partition the user already left. Both segment writers below go
+	 * through here.
+	 *
+	 * @param {string}  forPartition The dir the request was made for.
+	 * @param {?Object} status       The `log_status` reply, if one arrived.
+	 */
 	const applySegments = useCallback( ( forPartition, status ) => {
 		if ( selectedRef.current === forPartition ) {
 			setSegments( status?.segments ?? [] );
 		}
 	}, [] );
 
+	// Refetch the selected dir's rail; a no-op with the glob selected.
 	const refreshSegments = useCallback( () => {
 		const forPartition = selectedPartition;
 		if ( ! forPartition ) {
@@ -227,10 +274,16 @@ export default function useGlobBrowse( {
 		applySegments,
 	] );
 
-	// @longform Record the browse target; reposition the live stream only
-	// when active. A PAUSED-time seek records as EXPLICIT and reconnect
-	// applies it once (connectPositions); a live delivery consumes it, so
-	// later reconnects resume the tail instead of re-running the old seek.
+	/**
+	 * Record the browse target, and move the live stream only when it is open.
+	 *
+	 * A seek taken while the stream is closed records as EXPLICIT, which
+	 * `connectPositions` honors once on the next connect and then clears — so
+	 * later reconnects resume the tail rather than re-running the old seek.
+	 *
+	 * @param {string[]} subscribe The subscription: one dir, or the whole glob.
+	 * @param {?Object}  positions The seek, or null to tail.
+	 */
 	const reposition = useCallback(
 		( subscribe, positions ) => {
 			const active = isActiveNow ? isActiveNow() : isActiveRef.current;
@@ -303,11 +356,20 @@ export default function useGlobBrowse( {
 		[ lpBrowse, reposition, browseView, setPausedRef ]
 	);
 
-	// @longform Paused-only single-step: the stream stays OFFLINE; one record
-	// is fetched over the command channel (the raw-logs read_message verb,
-	// server-stamped by the real read model), admitted through the view's
-	// paused belt, and the recorded target advances to the post-step cursor
-	// so the next step continues from there and Play resumes streaming there.
+	/**
+	 * Advance one record while paused, over the command channel.
+	 *
+	 * The stream stays OFFLINE. `read_message` returns the single record at the
+	 * pending cursor, server-stamped by the real read model, and the view admits
+	 * it through its paused belt on a one-frame step budget. The recorded target
+	 * then advances to the post-step cursor, so the next Step continues from
+	 * there and Play resumes streaming from there.
+	 *
+	 * The paused gate is `isActiveNow`: a caller that omits it can step a stream
+	 * that is still open.
+	 *
+	 * @return {Promise<void>|undefined} Undefined when there is nothing to step.
+	 */
 	const step = useCallback( () => {
 		const sel = selectedRef.current;
 		const link = Core.node( linkName );

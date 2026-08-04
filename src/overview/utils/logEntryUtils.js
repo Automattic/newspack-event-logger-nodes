@@ -1,5 +1,25 @@
 /**
- * Utility functions for processing and displaying log entries.
+ * Log-entry view model for the request-detail table.
+ *
+ * A request arrives from `Request_Builder_Node` as a flat list of log
+ * entries — `n` line number, `k` keyword, `m` message, `ts` Unix timestamp
+ * with `duration_ms` and `peak_mb` on the ones that carry them. This module
+ * turns that list into the nested, foldable, time-ruled rows that
+ * `LogEntriesTable` renders, in two passes:
+ *
+ * 1. `computeIndentedEntries()` derives an indent level and a `pairId` for
+ *    every entry from its `(start)`/`(complete)` keyword, and spans time
+ *    gaps with placeholder rows.
+ * 2. `computeVisibleEntries()` applies the fold state, replacing each
+ *    collapsed pair with a single merged row, then rewrites the placeholder
+ *    runs and the `displayTime` column for the rows that survive.
+ *
+ * The split is what keeps folding cheap: the first pass is memoized on the
+ * request, the second on the fold set, which changes with every click.
+ *
+ * `displayTime` is a time ruler, not a per-row clock. A row shows a full
+ * timestamp at a 100ms mark and bullets for the 10ms ticks between marks,
+ * so scanning the column reads elapsed time down the request.
  */
 
 const START_REGEX = /^(.+?) \(start\)$/;

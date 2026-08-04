@@ -1,7 +1,16 @@
 /**
- * URL Navigation Hook
+ * useUrlNavigation — the Performance Dashboard's address bar.
  *
- * Manages URL/request selection state and browser history synchronization.
+ * The dashboard's selection lives here: which URL is open (`selectedUrl`) and
+ * which of its requests (`selectedRequest`). The hook keeps that selection and
+ * the query string (`?url=`, `?request=`, `?search=`) in step, so every view is
+ * a shareable link and Back/Forward walks the views the operator visited.
+ *
+ * Traffic runs both ways. Inbound, on mount, the query params seed the
+ * selection. Only the server can answer for a `?url=` hash outside the loaded
+ * page of the catalog, or for a `?request=` carrying no `?url=`, so the owner
+ * supplies the resolvers. Outbound, every later selection change pushes a
+ * history entry; popstate restores the selection without pushing one back.
  */
 
 import { useState, useEffect, useCallback, useRef } from '@wordpress/element';
@@ -16,6 +25,10 @@ const getUrlParams = () => new URLSearchParams( window.location.search );
 /**
  * Validate request ID format (alphanumeric, underscore, hyphen).
  *
+ * A request id read from the query string is echoed back into the address bar
+ * and sent to the server, so anything outside the id alphabet is rejected here
+ * rather than selected.
+ *
  * @param {string} id Request ID to validate.
  * @return {boolean} True if valid.
  */
@@ -23,9 +36,14 @@ const isValidRequestId = ( id ) =>
 	typeof id === 'string' && /^[a-zA-Z0-9_-]+$/.test( id );
 
 /**
- * Update the browser URL and push to history for back button support.
+ * Write query params into the browser URL and push a history entry.
  *
- * @param {Object} params Parameters to set.
+ * A falsy value deletes its key instead of writing an empty one, which is how
+ * a selection is cleared. An href that already matches pushes nothing, so a
+ * caller writing the same params twice never stacks duplicate history entries.
+ * Keys the caller omits are left alone.
+ *
+ * @param {Object} params Query params to set; a falsy value deletes the key.
  */
 const updateBrowserUrl = ( params ) => {
 	const url = new URL( window.location.href );
@@ -45,7 +63,16 @@ const updateBrowserUrl = ( params ) => {
 /**
  * Custom hook for URL navigation state and browser history management.
  *
- * @param {Array}    urls               Array of URL objects with hash property.
+ * The returned object carries the selection — `selectedUrl`, a `{hash, url}`
+ * object, and `selectedRequest`, a request id — with a setter for each. It also
+ * carries `initialSearchQuery`, the `?search=` value read once on mount: the
+ * owner runs that search and then clears the value through
+ * `setInitialSearchQuery`, or it runs on every render. `updateBrowserUrl` is the
+ * module helper, handed out for callers that must write a param this hook does
+ * not own, `search` being the only one.
+ *
+ * @param {Array}    urls               One page of the URL catalog; each entry
+ *                                      carries a `hash` and a `url`.
  * @param {Function} [resolveRequestId] Optional async (rid) -> boolean. Called
  *                                      when `?request=` is set but `?url=`
  *                                      isn't — owner resolves the URL hash and
@@ -85,12 +112,20 @@ export default function useUrlNavigation(
 	// One resolve in flight at a time; the effect re-runs on every urls tick.
 	const resolveInFlight = useRef( false );
 
-	// Wrapper to select URL.
+	/**
+	 * Open a URL, or close the selection.
+	 *
+	 * @param {Object|null} url URL object carrying a `hash`, or null to clear.
+	 */
 	const selectUrl = useCallback( ( url ) => {
 		setSelectedUrl( url );
 	}, [] );
 
-	// Wrapper to select request.
+	/**
+	 * Open a request within the selected URL, or close it.
+	 *
+	 * @param {string|null} rid Request id, or null to clear.
+	 */
 	const selectRequest = useCallback( ( rid ) => {
 		setSelectedRequest( rid );
 	}, [] );
@@ -190,7 +225,10 @@ export default function useUrlNavigation(
 		} );
 	}, [ selectedUrl, selectedRequest ] );
 
-	// Handle browser back/forward button.
+	// @longform Browser back/forward. Popstate resolves a hash against the
+	// loaded page only, never through resolveUrlHash, so stepping back to a
+	// hash that has paged out leaves selectedUrl on the previous URL while
+	// the address bar reads the new one. Only mount reaches the server.
 	useEffect( () => {
 		const handlePopState = () => {
 			const params = getUrlParams();

@@ -2,10 +2,14 @@
 /**
  * Current-Request overlay tab — server glue.
  *
- * Registers ELN's `current-request` bundle on the substrate's
- * `newspack_nodes/devtools_tab_bundles` filter (so it loads wherever the debug
- * overlay does) and injects THIS request's id into a distinct JS global the tab
- * reads. ELN owns this because it owns the request lifecycle (`Log_Manager`).
+ * The tab itself is JS (`src/current-request`), which registers into the
+ * substrate's window-singleton devtools registry. This class does the three
+ * server-side jobs that bundle needs: it contributes the bundle descriptor to
+ * the substrate's `newspack_nodes/devtools_tab_bundles` filter (which loads it
+ * on the Nodes hub page), enqueues it directly on the admin pages that mount
+ * `<DebugOverlay>` themselves, and injects THIS request's id and partition into
+ * a JS global the tab reads. ELN owns all of it because ELN owns the request
+ * lifecycle — `Log_Manager` is what mints the id.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -18,17 +22,21 @@ namespace Newspack_Event_Logger_Nodes;
 
 /**
  * Wires the Current-Request overlay tab's bundle + per-request data exposure.
+ *
+ * Every member is static: this is hook glue with no state of its own, so
+ * {@see init()} registers the callbacks and nothing is ever instantiated.
  */
 class Current_Request_Overlay {
 
-	/** Script handle for the overlay-tab bundle. */
+	/** Script handle for the tab bundle; also its style and inline-data anchor. */
 	private const HANDLE = 'newspack-eln-current-request';
 
 	/**
-	 * ELN admin pages that EMBED the debug overlay (so the tab must load there
-	 * too). The hub page is handled separately by the substrate's
-	 * `devtools_tab_bundles` filter; these are ELN's own pages where the overlay
-	 * is mounted directly (RequestStreamPage / GyroscopePage / overview).
+	 * ELN admin pages that mount `<DebugOverlay>` themselves, and so must load
+	 * the tab bundle themselves. The substrate's `devtools_tab_bundles` filter
+	 * covers the Nodes hub page and nothing else. All four ELN dashboard trees
+	 * render the overlay — overview, error-log, gyroscope, requests; the settings
+	 * page does not, and is absent.
 	 *
 	 * @var string[]
 	 */
@@ -40,9 +48,17 @@ class Current_Request_Overlay {
 	];
 
 	/**
-	 * Enqueue the tab bundle on the ELN pages that embed the overlay (the hub is
-	 * the substrate filter's job). Same window-singleton tab registry, so the tab
-	 * shows up beside the substrate's overlay tabs.
+	 * Enqueue the tab bundle on an overlay page this plugin is responsible for —
+	 * the hub is the substrate filter's job. Every bundle registers into the same
+	 * window-singleton tab registry, so the Request tab lands beside the
+	 * substrate's overlay tabs rather than in a second tab bar.
+	 *
+	 * Dependencies and version come from the build's `index.asset.php` manifest
+	 * (`{ dependencies, version }`), falling back to the plugin version when the
+	 * bundle was never built. The stylesheet cache-busts on its OWN content hash,
+	 * so a SCSS-only rebuild still lands behind a fresh `?ver=`.
+	 *
+	 * Hooked to `admin_enqueue_scripts`; returns silently off an overlay page.
 	 */
 	public static function enqueue_on_overlay_pages(): void {
 		if ( ! \function_exists( 'wp_enqueue_script' ) ) {
@@ -100,8 +116,16 @@ class Current_Request_Overlay {
 	}
 
 	/**
-	 * Inject the page's request id into the tab's global — but only once the
-	 * substrate has actually enqueued our handle on this page.
+	 * Inject this request's id, partition, and performance-dashboard URL into the
+	 * tab's global — but only once the handle is actually enqueued on this page,
+	 * by either path (the substrate's filter on the hub, ours everywhere else).
+	 * A page that never loaded the bundle gets no global and no inline script.
+	 *
+	 * `Log_Manager` leaves the request id empty when the request went unlogged —
+	 * logging disabled, running as root, or no matching `log` rule — and the tab
+	 * renders its empty state from that.
+	 *
+	 * Hooked to `admin_enqueue_scripts` at priority 20.
 	 */
 	public static function enqueue_inline_data(): void {
 		if ( ! \function_exists( 'wp_script_is' ) || ! \wp_script_is( self::HANDLE, 'enqueued' ) ) {
@@ -119,8 +143,10 @@ class Current_Request_Overlay {
 
 	/**
 	 * Build the inline script that sets the tab's data on a DISTINCT global —
-	 * not the shared `NewspackNodesData`, which every bundle localizes and would
-	 * overwrite at render time.
+	 * `window.NewspackEventLoggerNodes.currentRequest`, not the shared
+	 * `NewspackNodesData`, which every bundle localizes and would overwrite at
+	 * render time. The `Object.assign` merge preserves any sibling key another
+	 * ELN bundle already put on that global.
 	 *
 	 * @param string $rid       Current request id (empty when unlogged).
 	 * @param int    $partition The partition this request's lines hash to (request_detail needs it).
@@ -141,6 +167,8 @@ class Current_Request_Overlay {
 	/**
 	 * Hook the substrate's tab-bundle filter (hub) + our own enqueue on the ELN
 	 * pages that embed the overlay + the per-request data injection.
+	 *
+	 * Called from the plugin's deferred bootstrap, admin requests only.
 	 */
 	public static function init(): void {
 		\add_filter( 'newspack_nodes/devtools_tab_bundles', [ self::class, 'register_bundle' ] );
@@ -150,7 +178,11 @@ class Current_Request_Overlay {
 	}
 
 	/**
-	 * Append our bundle descriptor for the substrate to enqueue.
+	 * Append our bundle descriptor for the substrate to enqueue on the hub page.
+	 *
+	 * The descriptor carries no `lazy` flag, so the hub ships the tab up front
+	 * rather than on tab-click — {@see enqueue_inline_data()} depends on the
+	 * handle being enqueued by the time it runs at priority 20.
 	 *
 	 * @param array<int,array<string,mixed>> $bundles Existing descriptors.
 	 * @return array<int,array<string,mixed>>

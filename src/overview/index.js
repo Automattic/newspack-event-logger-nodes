@@ -1,7 +1,15 @@
 /**
- * Performance Dashboards Entry Point
+ * Performance Dashboard entry point — the `build/overview` bundle.
  *
- * Performance Dashboard page only. Settings UI moved to newspack-performance-logger.
+ * Registers this dashboard's node classes (`./nodes/register`), then mounts
+ * `AdminApp` into `#event-logger-admin`, the bare div the plugin's top-level
+ * "Event Logger → Performance" menu page prints. Without that container the
+ * module does nothing, so loading the bundle elsewhere is harmless.
+ *
+ * esbuild builds this as its own bundle; the error-log, gyroscope, requests,
+ * settings, and current-request trees are separate entries. `PerformanceDashboard`
+ * splits again at runtime, so the page chrome paints under `LoadingFallback`
+ * while that chunk resolves.
  */
 
 import {
@@ -18,13 +26,24 @@ import ThemedRoot from '../components/ThemedRoot';
 import LoadingFallback from '../components/LoadingFallback';
 import './nodes/register';
 
-// Lazy load heavy performance components for code splitting.
+// Code-split: the shell paints under LoadingFallback until this chunk lands.
 const PerformanceDashboard = lazy( () => import( './PerformanceDashboard' ) );
 
 import './styles/base.scss';
 
 /**
- * Admin App component for Performance Dashboard.
+ * Performance Dashboard page chrome: heading, error notice, the Suspense
+ * boundary around the lazy dashboard, and the debug overlay.
+ *
+ * `PerformanceDashboard` renders no failure banner of its own; it reports
+ * upward through `onError`. This component holds that message and clears it
+ * five seconds later, so a transient poll failure leaves no stuck notice. The
+ * reader can also dismiss it.
+ *
+ * `ThemedRoot` supplies the console-selected skin tokens and paints the
+ * surrounding WP-admin gutters to match. `DebugOverlay` carries this page's own
+ * `storageKey`, which keeps its panel layout separate from every sibling
+ * dashboard's.
  *
  * @return {import('react').ReactElement} Rendered component.
  */
@@ -32,9 +51,9 @@ export function AdminApp() {
 	const [ error, setError ] = useState( null );
 
 	/**
-	 * Handle errors.
+	 * Raise a dashboard failure into the page's error notice.
 	 *
-	 * @param {Error} err Error object.
+	 * @param {Error} err Error object; a blank message falls back to a generic string.
 	 */
 	const handleError = ( err ) => {
 		setError(
@@ -43,7 +62,6 @@ export function AdminApp() {
 		);
 	};
 
-	// Auto-clear errors after 5 seconds.
 	useEffect( () => {
 		if ( error ) {
 			const timer = setTimeout( () => {
@@ -93,7 +111,7 @@ export function AdminApp() {
 	);
 }
 
-// Mount the dashboard when DOM is ready (Error Log is its own bundle now).
+// Mount once the DOM is ready; no container means no render, and no error.
 document.addEventListener( 'DOMContentLoaded', () => {
 	const dashboardContainer = document.getElementById( 'event-logger-admin' );
 	if ( dashboardContainer ) {

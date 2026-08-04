@@ -1,20 +1,25 @@
 <?php
 /**
- * Discovery_CI: command-dispatch for the discovery surface.
+ * Discovery_CI: command-dispatch for the spoke-side discovery surface.
  *
- * Mounts at priority 11 alongside the rest of the M2 service CIs and
- * declares its verbs via the v0.6.0 schema-driven pattern — the inherited
- * Service_CI_Node ctor builds the commands table from node_schema(), so
- * there's no per-class ctor and the catalog scan picks the verb up
- * automatically.
+ * `newspack-event-logger-nodes.php` mounts this as the `discovery` node on the
+ * substrate's `newspack_nodes/request_graph_ready` action, beside the
+ * `performance` and `rules` service CIs. The hub's `Discovery_Collector_Node`
+ * fans a `discovery.get` command at every connected spoke and union-merges the
+ * replies into the hub's `discovered_*` staging options, which feed the ruleset
+ * editor's hook picker.
+ *
+ * The class declares no constructor: the inherited Service_CI_Node ctor builds
+ * the commands table from node_schema() and gates every verb behind
+ * manage_options, so the catalog scan picks the verb up automatically.
  *
  * Verbs:
  *   get — return registered_hooks + custom_events for this spoke.
  *
- * Sources the union of instrumented hooks + custom events across every LOG
- * rule in the durable ruleset (`Rule_Set::instrumented_union()`) and filters
- * custom event names out of registered_hooks to match the discovery payload
- * exactly.
+ * The payload is the union of instrumented hooks and custom events across every
+ * LOG rule in the durable ruleset (`Rule_Set::instrumented_union()`), with
+ * custom-event names filtered out of registered_hooks so the two lists stay
+ * disjoint.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -31,9 +36,10 @@ class Discovery_CI_Node extends Service_CI_Node {
 
 	/**
 	 * Pull a flat de-duplicated string list out of either an indexed-string
-	 * array or an `assoc[name => true]` shape.
+	 * array or an `assoc[name => true]` shape. Empty strings drop out; order of
+	 * first appearance survives.
 	 *
-	 * @param mixed $value Raw config value.
+	 * @param mixed $value Hook or custom-event list from the instrumented union.
 	 * @return array<int,string>
 	 */
 	private static function extract_string_list( mixed $value ): array {
@@ -51,7 +57,14 @@ class Discovery_CI_Node extends Service_CI_Node {
 		return \array_values( \array_unique( $out ) );
 	}
 
-	/** @api Used by the substrate to provide UI etc. */
+	/**
+	 * Verb declaration for the `discovery` service CI. The inherited
+	 * Service_CI_Node ctor turns this into the dispatch table, wrapping each
+	 * handler in the manage_options gate; the topology console reads it for the
+	 * palette entry.
+	 *
+	 * @api Used by the substrate to provide UI etc.
+	 */
 	public static function node_schema(): array {
 		return \array_merge( parent::node_schema(), [
 			'category'    => 'Service',

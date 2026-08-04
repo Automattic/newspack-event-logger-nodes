@@ -1,8 +1,25 @@
 <?php
 /**
- * Newspack Event Logger Nodes (application) configuration.
+ * Newspack Event Logger Nodes (application) configuration defaults.
  *
- * App-level overrides. Substrate keys live in newspack-nodes-config.php.
+ * The file layer beneath this plugin's settings. `Config::load_config_defaults()`
+ * requires this array; the file named by the `LOCAL_NEWSPACK_NODES_CONF`
+ * environment variable overlays it; and for the keys `Settings_Schema` declares
+ * — `enable_logging`, `log_memory`, `flush_every_line`, `allowed_users`,
+ * `rules`, `hook_start_priority` — a stored `newspack_event_logger_nodes_*`
+ * option beats both. The remaining keys (`custom_colors`, `stats_mirror_node`,
+ * `recommended_log_events`) carry no option and no settings field, so this file
+ * is the only place an operator sets them.
+ *
+ * Every key here is registered with the shared substrate registry by
+ * `Config::register_config_keys()`, and that registration is what lets
+ * `Config::value()` return it: an undeclared key throws instead of limping on a
+ * default. Adding a key to this array is therefore also declaring it.
+ *
+ * Substrate keys — `base_directory`, the partition geometry, `memcache_servers`,
+ * the active `topologies` list, the remote-spoke settings — belong to
+ * `newspack-nodes-config.php`, and `Config::load_config()` merges their
+ * effective values underneath these.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -10,13 +27,31 @@
 \defined( 'ABSPATH' ) || exit;
 
 return [
-	// Deployment override: restrict admin UI to these usernames.
+	// user_login allowlist narrowing manage_options; empty narrows nothing.
 	'allowed_users'               => [],
 
-	// Logging on/off (app-level; distinct from substrate's topologies list).
+	// Master switch: off leaves Log_Manager inert; workers still run.
 	'enable_logging'              => true,
 
-	// Per-URL ruleset seed; skips out-specify '/' (worker IPC + wp-cron).
+	/**
+	 * Seed for the per-URL logging ruleset: the read-time default
+	 * `Rule_Set::load()` falls back to while the
+	 * `newspack_event_logger_nodes_rules` option is absent. Once the rules
+	 * editor writes that option, this list stops being consulted — editing it
+	 * then changes nothing until the option is deleted.
+	 *
+	 * `Rule_Matcher` ranks query-bearing patterns above exact patterns (the
+	 * trailing `?`) above prefixes, so these five exact skips govern their
+	 * endpoints whatever the list order and whatever `/` says. The four
+	 * `/wp-json/newspack-nodes/v1/…` routes are the substrate's own command,
+	 * SSE, and worker-spawn endpoints; logging them would log the logger.
+	 *
+	 * No match means skip, and empty means empty: drop the `/` rule and the
+	 * site logs nothing. A `log` rule may also carry `hooks`, `custom_events`,
+	 * `significant_events`, `auto_disable_threshold`, and
+	 * `auto_protect_time_threshold` — see `Rule` for the full shape. A rule's
+	 * id is derived from its pattern, so declaring one here is pointless.
+	 */
 	'rules'                       => [
 		[ 'pattern' => '/wp-json/newspack-nodes/v1/command?', 'action' => 'skip' ],
 		[ 'pattern' => '/wp-json/newspack-nodes/v1/log/stream?', 'action' => 'skip' ],
@@ -26,18 +61,43 @@ return [
 		[ 'pattern' => '/', 'action' => 'log' ],
 	],
 
-	// Hook categorization colors.
+	/**
+	 * Custom-event name => hex swatch, offered by the settings custom-event
+	 * picker as `window.newspackNodesCustomColors`. `Config::get_custom_colors()`
+	 * reads it through the `newspack_event_logger_nodes_custom_colors` filter,
+	 * so a plugin loading after this one can still register its events, then
+	 * folds in the events spokes reported to the hub. Hook-category colors are
+	 * a different thing entirely: they come from `hook_categories.json`.
+	 */
 	'custom_colors'               => [],
 
-	// Mirror stats to a durable partition (off by default; set the node name).
+	/**
+	 * Name of the durable Partition that shadows memcache stats and rewarms
+	 * them on a cold boot. `flame-builder.tsl` resolves it as the
+	 * `<eln:stats_mirror_node>` token and hands it to
+	 * `Flame_Builder_Node::set_stats_target()`, which treats an empty name as
+	 * off. The topology already builds `flame-stats:partition` for the job.
+	 */
 	'stats_mirror_node'           => '',
 
-	// Debug.
+	// Append peak memory (MB) to every `complete` log entry.
 	'log_memory'                  => false,
+
+	// Flush the firehose Topic per line, so a crash keeps what it wrote.
 	'flush_every_line'            => false,
+
+	// Priority App\Core binds hook_start at; complete binds PHP_INT_MAX-1.
 	'hook_start_priority'         => -10000,
 
-	// Recommended hooks populated by the admin "Select Recommended" button.
+	/**
+	 * Hook names the settings hook picker stars and its "Recommended" button
+	 * selects — that button REPLACES the current selection with this list.
+	 * Exposed to JS as `window.newspackNodesRecommendedHooks`.
+	 *
+	 * Despite the key's name these are hooks, not custom events, and nothing
+	 * here binds anything: each rule's own `hooks` list decides what a request
+	 * instruments. This is a menu, not an instruction.
+	 */
 	'recommended_log_events'      => [
 		// Lifecycle.
 		'after_setup_theme',

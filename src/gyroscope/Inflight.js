@@ -1,21 +1,21 @@
 /* global localStorage */
 /**
- * Inflight Requests Component
+ * In-Flight Requests — the Gyroscope dashboard's live request table, modeled on
+ * Tachikoma's Gyroscope.
  *
- * Real-time view of active (in-flight) requests, similar to Tachikoma's Gyroscope.
- *
- * This is a THIN view over the `gyroscope:*` node graph (mounted by
- * `useGyroscopeGraph`). The graph owns all data: `gyroscope:stream` holds the SSE
- * connection feeding `gyroscope:view`, which dispatches inflight/complete
- * envelopes itself and holds the in-flight model (the rid-keyed map +
- * the reap/sort/cap snapshot + RPS). This component only renders.
+ * A THIN view over the `gyroscope:*` node graph (mounted by
+ * `useGyroscopeGraph`). The graph owns all data: `gyroscope:link` — a substrate
+ * `RemoteLink` — holds the SSE connection and targets the `gyroscope:stream`
+ * Tee, which copies every frame to `gyroscope:view`. That view node dispatches
+ * the inflight/complete envelopes itself and owns the model: the rid-keyed map,
+ * the reap/age-out/sort/cap snapshot, and RPS. This component only renders.
  *
  * The refresh-interval timer (user-controllable, 0-9 keys + dropdown) drives the
  * render cadence: each tick it calls `Core.node('gyroscope:view').snapshot(maxRows)`
- * — which reaps completed entries (shown one tick then dropped), sorts by est_ms
- * desc, caps to maxRows — and reads `.rps` off the node. A busy stream never
- * re-renders React per message; only the cheap snapshot is pushed at the
- * refresh cadence.
+ * — which reaps completed entries (shown one tick then dropped), drops in-flight
+ * rows unseen for 15 minutes, sorts by est_ms desc, caps to maxRows — and reads
+ * `.rps` off the node. A busy stream never re-renders React per message; only
+ * the cheap snapshot is pushed at the refresh cadence.
  *
  * The low-frequency `{ connectionError }` model (the reconnect banner) is read
  * separately via `useNodeState('gyroscope:view','view')`.
@@ -41,17 +41,32 @@ import './styles/request-stream.scss';
 
 // The view node the refresh tick reads the in-flight snapshot + rps off of.
 const VIEW_NODE = 'gyroscope:view';
-// The low-frequency view model before the view node publishes one.
+// Banner fallback for the window before the view node exists.
 const EMPTY_VIEW = { connectionError: false };
 
-// Hook-category colors are operator-editable, so the ink follows the chip.
+/**
+ * Inline style for a colored badge, ink and all.
+ *
+ * Hook-category colors are operator-editable and many are pale, so the
+ * foreground follows the chip rather than assuming white reads on it.
+ *
+ * @param {string} background Background hex color.
+ * @return {Object} Style object for the badge span.
+ */
 const badgeStyle = ( background ) => ( {
 	backgroundColor: background,
 	color: getTextColor( background ),
 } );
 
 /**
- * Column definitions with tooltips.
+ * Column definitions, keyed by the field each renders.
+ *
+ * `label` is the header text, `tooltip` the header's `title`, and `width` one
+ * track of the row's `grid-template-columns`. The key set doubles as the
+ * validation whitelist for the persisted `event-logger-columns` selection and
+ * as the column picker's contents, so a key added here becomes selectable at
+ * once. Only completion records carry `status_code`, so that column stays blank
+ * while a request is still running.
  */
 const COLUMNS = {
 	rid: {
@@ -154,15 +169,22 @@ const COLUMNS = {
 const urlHash = ( url ) => fnv1a( url || '' );
 
 /**
- * Default visible columns.
+ * Columns shown until the operator picks otherwise, and whenever the persisted
+ * selection is absent or fails validation.
  */
 const DEFAULT_COLUMNS = [ 'rid', 'url', 'status_code', 'state', 'what', 'est' ];
 
 /**
- * Inflight Requests Component.
+ * In-flight requests table.
+ *
+ * Renders the snapshot the `gyroscope:view` node hands over each refresh tick.
+ * Column selection and refresh interval persist in localStorage under
+ * `event-logger-columns` and `event-logger-inflight-refresh`; both are
+ * revalidated on load, since a stale or hand-edited value would otherwise
+ * render a header the picker cannot reach or a cadence the dropdown cannot show.
  *
  * @param {Object} props         Component props.
- * @param {number} props.maxRows Maximum rows to display.
+ * @param {number} props.maxRows Maximum rows to display; the cap `snapshot()` applies.
  * @return {import('react').ReactElement} Rendered component.
  */
 export default function Inflight( { maxRows = 20 } ) {
@@ -244,7 +266,7 @@ export default function Inflight( { maxRows = 20 } ) {
 		setRequestsPerSecond( node.rps );
 	}, [ maxRows ] );
 
-	// Keyboard shortcuts: 0-9 to set refresh interval.
+	// Keyboard 0-9 → refresh interval; every value must exist in the dropdown.
 	useEffect( () => {
 		const keyMap = {
 			0: 0.1,
@@ -641,6 +663,7 @@ export default function Inflight( { maxRows = 20 } ) {
 						</div>
 					) : (
 						requests.map( ( req, index ) => {
+							// last_log_ts is epoch seconds, not ms.
 							const nowSec = Date.now() / 1000;
 							const ageSec = req.last_log_ts
 								? Math.max( 0, nowSec - req.last_log_ts )

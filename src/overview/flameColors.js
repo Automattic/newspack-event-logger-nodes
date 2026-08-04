@@ -1,20 +1,39 @@
 /**
  * Theme-aware, depth-shaded flame graph palette.
  *
- * Each frame's fill is a shade of the active hub theme's accent, graduated by
- * stack depth: depth 0 (the request root at the base) is the pure accent, and
- * deeper frames mix toward the theme background without ever reaching it. Frame
- * labels get a contrasting color so they stay readable on every shade.
+ * Each frame's fill is a shade of the active skin's accent, graduated by stack
+ * depth: depth 0 (the request root, which d3-flame-graph draws at the base
+ * because the chart is never inverted) is the pure accent, and deeper frames
+ * mix toward the skin background without ever reaching it. Frame labels get a
+ * contrasting color so they stay readable on every shade.
+ *
+ * The accent and background themselves are resolved by `FlameGraph.js`, which
+ * reads the substrate skin tokens (`--cyan` / `--paper`) off the chart
+ * container, falls back to the standalone `--np-*` tokens, then to hardcoded
+ * defaults (CRT green on white). This module only mixes and measures the
+ * colors it is handed; it holds no theme knowledge of its own.
  */
 
-// Mix grows with depth, capped so deep frames keep accent vs background.
+// Mix grows with depth; the cap keeps the deepest frames off the background.
 const FRACTION_PER_DEPTH = 0.13;
 const MAX_FRACTION = 0.65;
 
-// Label text colors: near-black on bright shades, near-white on deep.
-/** @testonly Exported for FlameGraph-colors.test.js. */
+/**
+ * Label text for bright shades: near-black with a faint green cast.
+ *
+ * Both text colors are fixed, not skin-derived: they only have to clear the
+ * contrast threshold against a fill, which either end of the range does.
+ *
+ * @type {string}
+ * @testonly Exported for FlameGraph-colors.test.js.
+ */
 export const DARK_TEXT = '#0b140d';
-/** @testonly Exported for FlameGraph-colors.test.js. */
+/**
+ * Label text for deep shades: near-white with a faint green cast.
+ *
+ * @type {string}
+ * @testonly Exported for FlameGraph-colors.test.js.
+ */
 export const LIGHT_TEXT = '#eafff1';
 
 // Luminance threshold below which a shade needs light text.
@@ -23,9 +42,16 @@ const LUMINANCE_THRESHOLD = 0.5;
 /**
  * Parse a #rgb / #rrggbb hex or `rgb(r, g, b)` color into an {r, g, b} object.
  *
+ * Only those two syntaxes parse. Anything else — a named color, `color-mix()`,
+ * the space-separated `rgb(r g b / a)` form, an empty token — yields NaN or
+ * undefined channels rather than throwing, which is what `isColorParseable`
+ * tests for. Callers taking a color from a CSS custom property must screen it
+ * through that guard first, or the NaN silently reaches the fill string.
+ *
  * @param {string} color Hex (with or without leading #) or `rgb(...)` string.
  * @return {{r: number, g: number, b: number}} RGB channels (0-255).
- * @testonly Exported for FlameGraph-colors.test.js; callers use textOn().
+ * @testonly Exported for FlameGraph-colors.test.js; callers use
+ *           isColorParseable() and pickLabelColor().
  */
 export const parseColor = ( color ) => {
 	const str = String( color ).trim();
@@ -66,6 +92,10 @@ export const isColorParseable = ( color ) => {
 /**
  * Mix the accent toward the background by a depth-graduated fraction.
  *
+ * The fraction is `depth * FRACTION_PER_DEPTH`, capped at `MAX_FRACTION`, so
+ * every frame at depth 5 or deeper shares one shade — and that shade still
+ * stops short of the background.
+ *
  * @param {number} depth  Stack depth (0 = root at the base, brightest).
  * @param {string} accent Theme accent hex.
  * @param {string} bg     Theme background hex.
@@ -83,17 +113,26 @@ export const shadeForDepth = ( depth, accent, bg ) => {
 };
 
 /**
- * Relative luminance (0-1) of an {r, g, b} color via the sRGB coefficients.
+ * Perceived brightness (0-1) of an {r, g, b} color.
+ *
+ * The sRGB coefficients apply to the gamma-encoded channels directly, skipping
+ * the linearization WCAG's relative luminance specifies. That approximation is
+ * cheap and monotonic, which is all the label-contrast threshold needs; do not
+ * reuse this number for a WCAG contrast-ratio claim.
  *
  * @param {{r: number, g: number, b: number}} rgb RGB channels (0-255).
- * @return {number} Relative luminance, 0 (black) to 1 (white).
- * @testonly Exported for FlameGraph-colors.test.js; callers use textOn().
+ * @return {number} Brightness, 0 (black) to 1 (white).
+ * @testonly Exported for FlameGraph-colors.test.js; callers use
+ *           pickLabelColor().
  */
 export const relativeLuminance = ( { r, g, b } ) =>
 	( 0.2126 * r + 0.7152 * g + 0.0722 * b ) / 255;
 
 /**
  * Pick a readable label color for a frame fill.
+ *
+ * `FlameGraph.js` feeds this the `fill` attribute it reads back off each
+ * rendered `<rect>`, so the argument is whatever `shadeForDepth` produced.
  *
  * @param {string} color CSS color string (`rgb(...)` or hex).
  * @return {string} DARK_TEXT for bright fills, LIGHT_TEXT for dark fills.
