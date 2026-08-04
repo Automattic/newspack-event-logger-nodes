@@ -535,6 +535,7 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 				.sort( true )
 				.title( '' )
 				.getName( ( d ) => d.data?.detail || d.data?.name || '' )
+				// Keep the object: .tooltip(true) type-checks but 4.1.3 no-ops.
 				.tooltip( tip )
 				.selfValue( false )
 				.setColorMapper( colorMapper )

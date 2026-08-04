@@ -6,13 +6,21 @@
  *   _http     (HttpOutNode — POST /command boundary; .client = the transport)
  *   rules:in  (Tee) → rules:view (RulesViewNode) — list/save/upsert/delete
  *
- * Each CRUD op builds a TM_COMMAND (FROM = `rules:in`, TO = `_http/rules`, verb
- * in VALUE.name) with a correlator in `message[ID]`, stashes a `{ resolve,
- * reject }` in the view's `replies` map under that ID, and fills the message
- * into the interpreter via the `_shell` Tap (observable at `connect _shell`).
- * The router peels `_http`, HttpOutNode POSTs, the server replies TO=FROM
- * TO=FROM, the router peels the receiver Tee, the Tee fans to the view, and the
- * view settles the Promise (and refreshes its render model on a `list` reply).
+ * Nothing here is correlated, because the addressing already is the
+ * correlation. Each MUTATING verb owns its own node — `rules:save`,
+ * `rules:upsert`, `rules:delete`, one per verb via `useRequestNode` — and a
+ * node stamps FROM with its own name, so the server's TO=FROM reply lands back
+ * on exactly the node that minted it. There is no id in `message[ID]`, no
+ * `replies` map, and nothing keyed by one; batching several verbs in a tick
+ * would mean more nodes, never one node telling replies apart.
+ *
+ * `list` is the odd one out and deliberately so: it is a publish, not an await.
+ * It fills through the `_shell` Tap (observable at `connect _shell`) addressed
+ * to the `rules:in` Tee, whose reply fans into `rules:view`, which refreshes
+ * the render model every consumer reads.
+ *
+ * Either way the router peels `_http`, HttpOutNode POSTs, and the reply routes
+ * home by its TO.
  *
  * Wire contract mirrors Rules_CI_Node: `save`/`upsert` pass the RAW JSON as a
  * single arg token (the handler json_decodes `$args[0]`); `delete` passes the id
