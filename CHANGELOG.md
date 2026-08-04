@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A foreign option is no longer judged against this plugin's defaults.**
+  `skip_default_writes` is a `pre_update_option` filter, so it sees every
+  option WordPress writes, and it derived the short key by stripping 28
+  characters rather than matching the prefix. Another plugin's option whose
+  tail past that point equalled one of ours — and whose value equalled our
+  default — had its row deleted. It matches with `str_starts_with` now.
+
 ### Added
 
 - **Four lint gates, matching the substrate.** `npm run lint:types` runs

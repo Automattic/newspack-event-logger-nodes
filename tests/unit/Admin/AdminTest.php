@@ -761,6 +761,20 @@ class AdminTest extends TestCase {
 		$this->assertFalse( \get_option( 'newspack_event_logger_nodes_flush_every_line' ) );
 	}
 
+	public function test_skip_default_writes_ignores_a_foreign_option_whose_tail_matches_a_key(): void {
+		$this->use_base_dir( $this->base_dir, [ 'flush_every_line' => true ] );
+		// Exactly the prefix LENGTH of foreign characters, then a real key of
+		// ours. Stripping by length judges another plugin's option against our
+		// defaults, and deletes their row when the values happen to agree.
+		$foreign = \str_repeat( 'z', 28 ) . 'flush_every_line';
+		\update_option( $foreign, 0 );
+
+		$admin = new Admin();
+
+		$this->assertSame( 1, $admin->skip_default_writes( 1, $foreign, 0 ) );
+		$this->assertNotFalse( \get_option( $foreign ) );
+	}
+
 	public function test_skip_default_writes_returns_old_value_when_already_equal_to_default(): void {
 		// Default `true` → normalized to int 1.
 		$this->use_base_dir( $this->base_dir, [ 'flush_every_line' => true ] );
