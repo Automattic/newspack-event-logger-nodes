@@ -322,7 +322,7 @@ class Log_Manager {
 			: (string) \preg_replace( '/\.log$/', '', $log_path ) . '.p{partition}';
 		$count    = \max(
 			\count( $declared ),
-			\max( 1, Core::as_int( Config::value( 'num_partitions' ) ) )
+			\Newspack_Nodes\Bootstrap::global_num_partitions()
 		);
 		$dirs = [];
 		for ( $p = 0; $p < $count; $p++ ) {
@@ -351,8 +351,8 @@ class Log_Manager {
 		}
 
 		$dir_template        = self::firehose_dir_template();
-		$num_partitions      = Core::as_int( Config::value( 'num_partitions' ) );
-		$num_partitions      = $num_partitions > 0 ? $num_partitions : 1;
+		// THE accessor: past the cap no worker consumes, and the GC sweeps it.
+		$num_partitions      = \Newspack_Nodes\Bootstrap::global_num_partitions();
 		$this->partition_idx = Partition_Node::hash_to_partition( $this->request_id, $num_partitions );
 		$segment_size = Core::as_int( Config::value( 'segment_size' ) );
 		$min_segments = Core::as_int( Config::value( 'min_segments' ) );

@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`Log_Manager` reads the partition count through the substrate accessor.**
+  It clamped `num_partitions` with `max( 1, … )` and `> 0 ? … : 1` — two more
+  spellings, neither with an upper bound — so an option above `MAX_PARTITIONS`
+  had the firehose writing `firehose.p16`+ that no worker consumes and
+  `Log_Cleaner` then swept as orphans. Both sites now call
+  `Bootstrap::global_num_partitions()`. Requires a substrate that defines it;
+  bump the `release.yml` pin before releasing.
+
 - **The overview dashboard stops re-implementing the poll tick.** Three sites
   rebuilt the router's own `_http` lock/flush bracket by hand — each re-finding
   `_http` through a locally redeclared `const HTTP`. Two of them bracketed a
