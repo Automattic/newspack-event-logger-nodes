@@ -40,7 +40,7 @@ import useLogPositions, {
 	replayPositions,
 	stepPosition,
 } from '@newspack-nodes/shared/hooks/useLogPositions';
-import { endPosition } from '@newspack-nodes/shared/nodes/seekTracker';
+import { browseControl } from '@newspack-nodes/shared/nodes/seekTracker';
 import useRouterTick from '@newspack-nodes/shared/hooks/useRouterTick';
 import useRequestNode from '@newspack-nodes/shared/hooks/useRequestNode';
 
@@ -159,13 +159,8 @@ export default function useGlobBrowse( {
 
 	// Enter replay on the view, carrying the captured boundary for catch-up.
 	const browseView = useCallback( () => {
-		const end = endPosition( segmentsRef.current );
 		Core.node( viewName )?.fill(
-			viewControl( {
-				action: 'browse',
-				endSegment: end?.segment ?? null,
-				endOffset: end?.offset ?? 0,
-			} )
+			viewControl( browseControl( { segments: segmentsRef.current } ) )
 		);
 	}, [ viewName ] );
 
