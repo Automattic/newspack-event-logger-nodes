@@ -11,14 +11,14 @@ Application-side debugging. For substrate-level questions (workers stuck, REPL s
 ## When to Use
 
 - Dashboard panels show "no data" or stale data
-- A specific request's timeline isn't assembling correctly
+- A request's timeline isn't assembling correctly
 - SSE connections drop or fail
-- A job handler doesn't appear to fire
-- Hub/spoke aggregation is misbehaving (replicas seeing too few or too many entries)
+- A job handler doesn't fire
+- Hub/spoke aggregation misbehaves (replicas seeing too few or too many entries)
 
 ## Filter the firehose: `wp nodes reqgrep`
 
-The application-aware view of the substrate's firehose. Decodes the Message envelope, unwraps `Message::VALUE`, and renders one request at a time with timestamps, indentation, and process (start)/(complete) bracketing.
+The application-aware view of the substrate's firehose. It decodes the Message envelope, unwraps `Message::VALUE`, and renders one request at a time with timestamps, indentation, and process (start)/(complete) bracketing.
 
 ```bash
 # Most-recent segment forward (fast).
@@ -37,7 +37,7 @@ wp nodes reqgrep abc123def
 wp nodes reqgrep --follow
 ```
 
-The output handles multiple wire formats — both the new positional Message envelope (live) and legacy entry-shape JSON (archives, stdin pipes), so feeding it old captures still works.
+It handles both wire formats — the new positional Message envelope (live) and legacy entry-shape JSON (archives, stdin pipes) — so old captures still work.
 
 ## Inspecting via the REPL
 
@@ -47,7 +47,7 @@ Pivot into a worker to see node state. Worker ids follow `<topology>.p<N>`; the 
 wp nodes cli combined.p0
 ```
 
-Topology names come from the `.tsl` filename (no `name:` frontmatter): `combined`, `request-builder`, `job-router`, `flame-builder`, `performance`, `aggregator`, `hub-control`, plus the substrate stock `job-worker`. Which of these are actually live depends on the deployment's substrate `topologies` config list (the default ships just `combined`) — only spawned topologies show in `wp nodes status`. Don't hardcode names; `wp nodes types` is the authoritative list of what the deployment cataloged. (Worker-restart classification is unrelated to topology names: each `Settings_Schema` field's `restart:` key holds CONSUMER NODE TYPES — e.g. `Flame_Builder`, `Job_Worker`, `Partition` — or `'all'`, which `Restart_Planner` maps to the live topologies running a matching node.)
+Topology names come from the `.tsl` filename (no `name:` frontmatter): `combined`, `request-builder`, `job-router`, `flame-builder`, `performance`, `aggregator`, `hub-control`, plus the substrate stock `job-worker`. Which are live depends on the deployment's substrate `topologies` config list (the default ships just `combined`), and only spawned topologies show in `wp nodes status`. Don't hardcode names — `wp nodes types` is the authoritative catalog. (Worker-restart classification is unrelated: each `Settings_Schema` field's `restart:` key holds CONSUMER NODE TYPES — `Flame_Builder`, `Job_Worker`, `Partition` — or `'all'`, which `Restart_Planner` maps to the live topologies running a matching node.)
 
 From the prompt:
 
@@ -62,13 +62,13 @@ cd request-builder                      # change cwd so subsequent verbs route t
 command_node "" ping                    # dispatch a verb at the cwd without typing the path (aliases: command, cmd)
 ```
 
-Valid `ls` column flags are `-a`, `-c`, `-l`, `-s`, `-t` (combinable, e.g. `-alst`). There is no `-o` flag — substrate moved off the legacy `sink/owner` model to the rule-#2 `sink/target` model.
+Valid `ls` column flags are `-a`, `-c`, `-l`, `-s`, `-t`, combinable as `-alst`. There is no `-o` flag — substrate moved off the legacy `sink/owner` model to the rule-#2 `sink/target` model.
 
-For other pivots, use the matching reader id — the topology name plus partition, e.g. `job-worker.p0`, `request-builder.p0`, `aggregator.p0`. Run `wp nodes types` to see the topologies the substrate cataloged and `wp nodes status` to see what's actually live — those are authoritative; topology names vary per-deployment via the substrate `topologies` config.
+For other pivots, use the matching reader id — topology name plus partition, e.g. `job-worker.p0`, `request-builder.p0`, `aggregator.p0`.
 
-Typo a reader id and the cli fails fast: `Error: no worker '<id>' (run 'wp nodes status' to list active workers)` — no silent ghost-IPC creation. Run `wp nodes status` to see what's actually live.
+Typo a reader id and the cli fails fast: `Error: no worker '<id>' (run 'wp nodes status' to list active workers)` — no silent ghost-IPC creation.
 
-Scripted pivot sessions (`echo cmd | wp nodes cli foo.p0`) drain cleanly without a trailing `sleep` — substrate sends a TM_EOF on stdin close and waits for the worker's echo before exiting, so any in-flight response lands first.
+Scripted pivot sessions (`echo cmd | wp nodes cli foo.p0`) drain cleanly without a trailing `sleep`: substrate sends a TM_EOF on stdin close and waits for the worker's echo before exiting, so in-flight responses land first.
 
 ## Memcache stats schema
 
@@ -88,50 +88,50 @@ wp nodes restart combined   # pick up new salt (or `restart all`)
 
 **Caps to remember**: `MAX_DIM_VALUES=20`, `MAX_URL_DIM_VALUES=10`, `MAX_CAT_VALUES=50`. Overflow rolls into a synthetic "Other" bucket; the `total` pseudo-category survives capping.
 
-**Per-URL flame stats TTL** is `max(3600, max_lifespan/24)`. All other namespaces use the full `max_lifespan`. If a URL hasn't been seen in over an hour, its flame data is gone even if other stats remain.
+**Per-URL flame stats TTL** is `max(3600, max_lifespan/24)`. Every other namespace uses the full `max_lifespan`. A URL unseen for over an hour has lost its flame data even while other stats remain.
 
-**Separate memcache use — ruleset hooks (v0.28.0).** Heavy log-rules (hooks past `Rule_Set::INLINE_HOOK_LIMIT = 100`) tier their hook list out of the autoloaded option into `evlog:rules:hooks:<rule-id>` (TTL 3600, warmed on miss from the non-autoloaded `newspack_event_logger_nodes_rule_hooks_<id>` durable option). This is separate from the stats prefix; it's warm-cache, not system-of-record. Also separate: `evlog:sse:*` (SSE slot pool) and `np:pos:*` (worker positions).
+**Separate memcache use — ruleset hooks (v0.28.0).** Heavy log-rules (hooks past `Rule_Set::INLINE_HOOK_LIMIT = 100`) tier their hook list out of the autoloaded option into `evlog:rules:hooks:<rule-id>` (TTL 3600, warmed on miss from the non-autoloaded `newspack_event_logger_nodes_rule_hooks_<id>` durable option) — separate from the stats prefix, and warm-cache rather than system-of-record. Also separate: `evlog:sse:*` (SSE slot pool) and `np:pos:*` (worker positions).
 
 ## Dashboards
 
-Page slugs owned by this plugin (URL path: `/wp-admin/admin.php?page=<slug>`):
+Page slugs this plugin owns (URL path: `/wp-admin/admin.php?page=<slug>`):
 
 | Slug | What |
 |------|------|
-| `event-logger-overview` | Performance overview (URL leaderboard, breakdown by server / status / category) — also the top-level Event Logger menu landing page |
+| `event-logger-overview` | Performance overview (URL leaderboard, breakdown by server / status / category); also the top-level Event Logger menu landing page |
 | `event-logger-overview&request=<rid>` | URL drilldown with the request rendered inline |
 | `event-logger-errors` | Error log dashboard |
 | `event-logger-gyroscope` | In-flight request timeline visualization |
-| `event-logger-requests` | Request Log — recent completed requests + drilldown |
+| `event-logger-requests` | Request Log — recent completed requests plus drilldown |
 | `newspack-event-logger-nodes` (Settings menu) | Application settings — registered via `add_options_page` under Settings, not under the Event Logger menu |
 
-The hub-side aggregator status page (`newspack-nodes-aggregator`) is no longer routed by this plugin — it is substrate-owned (newspack-nodes), driven by whether the `aggregator` topology is active. There is no `enable_aggregator` gate (the key was retired).
+The hub-side aggregator status page (`newspack-nodes-aggregator`) is substrate-owned, driven by whether the `aggregator` topology is active. There is no `enable_aggregator` gate — the key was retired.
 
-Workers + Raw Logs are substrate-owned dashboards under the "Nodes" top-level menu — they register from `newspack-nodes/includes/admin/class-admin.php::register_event_dashboard_pages`. Don't look for them in this plugin.
+Workers + Raw Logs are substrate-owned dashboards under the "Nodes" top-level menu, registered from `newspack-nodes/includes/admin/class-admin.php::register_event_dashboard_pages`. Don't look for them here.
 
-If a dashboard says "Connection lost", check (in this order):
+If a dashboard says "Connection lost", check in this order:
 1. The page enqueues its build via the `page_to_tree` map in `newspack-event-logger-nodes.php` — does the slug match?
 2. `restUrl` in localized `NewspackNodesData` is bare `/wp-json/`, not pre-namespaced.
-3. The relevant service CI is mounted on `newspack_nodes/request_graph_ready` (not `rest_api_init` — service CIs replaced the per-plugin REST controllers).
-4. Browser DevTools network tab shows the actual REST URL it tried to hit (commands ride the unified `/wp-json/newspack-nodes/v1/command` endpoint; SSE rides `/wp-json/newspack-nodes/v1/messages/stream`).
+3. The relevant service CI is mounted on `newspack_nodes/request_graph_ready`, not `rest_api_init` — service CIs replaced the per-plugin REST controllers.
+4. Browser DevTools network tab shows the REST URL it tried to hit (commands ride the unified `/wp-json/newspack-nodes/v1/command` endpoint; SSE rides `/wp-json/newspack-nodes/v1/messages/stream`).
 
-If panels are blank but the page renders: verify memcache is actually running (`docker ps | grep memcache`). Stats path is fail-soft — empty results, not errors, when memcache is unreachable.
+If panels are blank but the page renders, verify memcache is running (`docker ps | grep memcache`). The stats path is fail-soft — empty results, not errors, when memcache is unreachable.
 
 ## SSE
 
-There is no per-plugin SSE controller layer anymore — `SSEControllerBase` was deleted in M6.10. The substrate's `SSE_Out` node serves the unified endpoint `/wp-json/newspack-nodes/v1/messages/stream`; clients subscribe to one or more `<log>.p<N>` partitions and receive a 7-field message envelope per line plus an idle `heartbeat` event.
+There is no per-plugin SSE controller layer — `SSEControllerBase` was deleted in M6.10. The substrate's `SSE_Out` node serves the unified endpoint `/wp-json/newspack-nodes/v1/messages/stream`; clients subscribe to one or more `<log>.p<N>` partitions and receive a 7-field message envelope per line plus an idle `heartbeat` event.
 
-The SSE slot pool is substrate-internal — this plugin does NOT call `SSE_Slot_Pool::wire()` (that wiring lives entirely in newspack-nodes). The unified SSE endpoint inherits the concurrency cap from the substrate — fail-CLOSED (HTTP 429 if memcache is down — slot pool IS the rate limit).
+The SSE slot pool is substrate-internal — this plugin does NOT call `SSE_Slot_Pool::wire()`; that wiring lives entirely in newspack-nodes. The endpoint inherits the substrate's concurrency cap and fails CLOSED: memcache down means HTTP 429, because the slot pool IS the rate limit.
 
-On the client side, every dashboard mounts the substrate's `SseIn` + `Heartbeat` JS nodes (`@newspack-nodes/runtime`) — `Heartbeat.target = '_http/workers'` keeps the slot alive via the `heartbeat` verb on the Workers CI (which internally calls `SSE_Slot_Pool::touch`). Per-line shape-mapping moved from server PHP to the browser, inlined into each dashboard view node's `fill()` (`request-log-view-node.js`, etc.) — the standalone transform helpers were deleted, so the view is now the single place that knows the envelope → render-entry mapping.
+Client-side, every dashboard mounts the substrate's `SseIn` + `Heartbeat` JS nodes (`@newspack-nodes/runtime`); `Heartbeat.target = '_http/workers'` keeps the slot alive via the `heartbeat` verb on the Workers CI, which calls `SSE_Slot_Pool::touch`. Per-line shape-mapping moved from server PHP to the browser, inlined into each dashboard view node's `fill()` (`request-log-view-node.js`, etc.); the standalone transform helpers were deleted, so the view is the single place that knows the envelope → render-entry mapping.
 
-If you're getting unexpected 429s: the slot pool is exhausted. Inspect `evlog:sse:*` keys in memcache.
+Unexpected 429s mean the slot pool is exhausted. Inspect `evlog:sse:*` keys in memcache.
 
-If clients reconnect every few seconds: the SSE slot might be expiring. The slot TTL must outlive the client's heartbeat interval (server `check_slot` is check-only, NEVER refresh-on-check).
+Clients reconnecting every few seconds mean the SSE slot is expiring. The slot TTL must outlive the client's heartbeat interval (server `check_slot` is check-only, NEVER refresh-on-check).
 
 ## Hub / spoke routing
 
-A node is a hub when the `aggregator` topology is in the substrate's active `topologies` list (no operator toggle — `enable_aggregator` was retired). Every node dispatches its own `k:"job"` entries against `newspack_nodes/job_handlers`. The hub additionally runs the `aggregator` topology: per-spoke substrate `Remote_Source_Node`s pull each spoke's firehose, and ELN's `Remote_Job_Rewrite_Node` (wired between the sources and the firehose `Topic`) rewrites those ingested `k:"job"` lines to `k:"remote_job"`, which the hub's JobWorker dispatches against the separate `newspack_nodes/remote_job_handlers` map. Spoke credentials live in the substrate **Vault**.
+A node is a hub when the `aggregator` topology is in the substrate's active `topologies` list; there is no operator toggle, since `enable_aggregator` was retired. Every node dispatches its own `k:"job"` entries against `newspack_nodes/job_handlers`. The hub additionally runs the `aggregator` topology: per-spoke substrate `Remote_Source_Node`s pull each spoke's firehose, and ELN's `Remote_Job_Rewrite_Node` (wired between the sources and the firehose `Topic`) rewrites those ingested `k:"job"` lines to `k:"remote_job"`, which the hub's JobWorker dispatches against the separate `newspack_nodes/remote_job_handlers` map. Spoke credentials live in the substrate **Vault**.
 
 Diagnostic flow:
 
@@ -151,21 +151,21 @@ curl -sk -X POST "<site>/wp-json/newspack-nodes/v1/command" \
 # Spoke credentials are managed through the substrate `vault` CI.
 ```
 
-If a hub is missing entries from a spoke: check the substrate `Remote_Source_Node`'s reconnect/backoff (it publishes a status snapshot to `np:remote:<node-name>:p<partition>`). A reconnecting cURL pull can drop a brief window of data on resume; if your spoke is bouncing frequently the hub will see gaps.
+If a hub is missing entries from a spoke, check the substrate `Remote_Source_Node`'s reconnect/backoff — it publishes a status snapshot to `np:remote:<node-name>:p<partition>`. A reconnecting cURL pull can drop a brief window of data on resume, so a frequently bouncing spoke shows up at the hub as gaps.
 
 ## Common failure modes
 
-**Dashboard rate-limit hit immediately.** The Service-CI verbs are NOT rate-limited at the CI layer — the only 429s you should see come from the substrate's SSE slot pool (concurrent `/messages/stream` connections, not commands). A 429 on a `/command` POST means something inside the substrate's `HTTP_In_Node` rejected it, not a per-CI throttle. There is no per-CI rate limit — the old REST controller layer (and its `includes/rest/` directory) was deleted in the Service-CI cutover.
+**Dashboard rate-limit hit immediately.** Service-CI verbs are NOT rate-limited — the only 429s you should see come from the substrate's SSE slot pool (concurrent `/messages/stream` connections, not commands). A 429 on a `/command` POST means the substrate's `HTTP_In_Node` rejected it, not a per-CI throttle; the old REST controller layer and its `includes/rest/` directory were deleted in the Service-CI cutover.
 
-**`reqgrep --recent` shows nothing but the firehose is being written.** Three possibilities: (1) the LogManager early-returned (e.g., running as root), so no entries are being written; (2) the firehose path doesn't match (check `Newspack_Event_Logger_Nodes\Config::get_logs_directory()`); OR (3) **no ruleset rule matches the URL** (v0.28.0). `Log_Manager` builds a `Rule_Matcher` from `Rule_Set::load()` and resolves the one governing rule per request — no match, or a `skip` rule, means nothing is written for that URL. "Empty means empty": an empty/absent ruleset logs nothing (there is no implicit `/` log-all baseline). Check the ruleset via the `rules` CI `list` verb or `wp option get newspack_event_logger_nodes_rules`; the shipped default config seeds a `/` log rule plus skips for the substrate's own worker IPC/SSE/spawn endpoints and `/wp-cron.php`.
+**`reqgrep --recent` shows nothing but the firehose is being written.** Three possibilities: (1) the LogManager early-returned (e.g. running as root), so nothing is being written; (2) the firehose path doesn't match (check `Newspack_Event_Logger_Nodes\Config::get_logs_directory()`); or (3) **no ruleset rule matches the URL** (v0.28.0). `Log_Manager` builds a `Rule_Matcher` from `Rule_Set::load()` and resolves the one governing rule per request — no match, or a `skip` rule, writes nothing for that URL. "Empty means empty": an absent ruleset logs nothing, since there is no implicit `/` log-all baseline. Check the ruleset via the `rules` CI `list` verb or `wp option get newspack_event_logger_nodes_rules`; the shipped default config seeds a `/` log rule plus skips for the substrate's own worker IPC/SSE/spawn endpoints and `/wp-cron.php`.
 
-**Worker positions are stale on the workers dashboard.** Consumer publishes its position to memcache every ~10 seconds via `np:pos:{host}:{source_base_dir}:p{N}`. If the dashboard shows old positions, either memcache is down (fail-soft, falls back to disk offsetlog) or the consumer process is wedged (heartbeat would also be stale).
+**Worker positions are stale on the workers dashboard.** Consumer publishes its position to memcache every ~10 seconds via `np:pos:{host}:{source_base_dir}:p{N}`. Old positions mean either memcache is down (fail-soft, falls back to disk offsetlog) or the consumer process is wedged, in which case the heartbeat is stale too.
 
-**Job handler appears not to fire.** Make sure you registered on the right filter for what you want: `newspack_nodes/job_handlers` for local-on-every-node dispatch of `k:"job"`, `newspack_nodes/remote_job_handlers` for hub-side dispatch of spoke-aggregated entries (now `k:"remote_job"`). Registering on the wrong one is a silent miss. Then check the JobRouter input — `firehose:job` (small) vs `jobintake:job` (large), distinguished by KEY tag. If the job is large and you used LogManager (firehose), it got truncated at `MAX_DATA_SIZE` (3840B) — category tagged `" (truncated)"`, data clipped to a 1000-char excerpt — so the handler never saw a parseable payload (an `error_log` notice marks it). Use `JobIntake::queue()` instead.
+**Job handler appears not to fire.** Register on the right filter for what you want: `newspack_nodes/job_handlers` for local-on-every-node dispatch of `k:"job"`, `newspack_nodes/remote_job_handlers` for hub-side dispatch of spoke-aggregated entries (now `k:"remote_job"`). The wrong one is a silent miss. Then check the JobRouter input — `firehose:job` (small) vs `jobintake:job` (large), distinguished by KEY tag. A large job sent through LogManager (firehose) got truncated at `MAX_DATA_SIZE` (3840B) — category tagged `" (truncated)"`, data clipped to a 1000-char excerpt, an `error_log` notice marking it — so the handler never saw a parseable payload. Use `JobIntake::queue()` instead.
 
-**Settings sync silently doing nothing.** Settings fan-out is the substrate `Settings_Sync_Node` graph in the `hub-control` topology. An option change always records a settings event (substrate `Settings_Event_Writer` → `settings.p0`); nothing fans it out unless `hub-control` is live and per-spoke `HTTP_Out` nodes are wired — that IS the structural gate. If you expected the sync to fire and it didn't, the producer ran fine; check `wp nodes status` for a live `hub-control.p0` and that the operator wired spoke `HTTP_Out` nodes. Both `enable_workers` (v0.5.0) and `enable_aggregator` were retired.
+**Settings sync silently doing nothing.** Settings fan-out is the substrate `Settings_Sync_Node` graph in the `hub-control` topology. An option change always records a settings event (substrate `Settings_Event_Writer` → `settings.p0`); nothing fans it out unless `hub-control` is live and per-spoke `HTTP_Out` nodes are wired — that IS the structural gate. If the sync didn't fire, the producer ran fine; check `wp nodes status` for a live `hub-control.p0` and confirm the operator wired spoke `HTTP_Out` nodes. Both `enable_workers` (v0.5.0) and `enable_aggregator` were retired.
 
-**Cache warmer.** The refresh-ahead cache warmer was extracted to its own plugin, `newspack-cache-cozy` (v0.15.0). It no longer lives here — debug it from that plugin's repo.
+**Cache warmer.** The refresh-ahead cache warmer was extracted to its own plugin, `newspack-cache-cozy` (v0.15.0). Debug it from that plugin's repo.
 
 ## Inspecting on disk
 
