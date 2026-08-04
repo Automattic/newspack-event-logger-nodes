@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The overview dashboard stops re-implementing the poll tick.** Three sites
+  rebuilt the router's own `_http` lock/flush bracket by hand — each re-finding
+  `_http` through a locally redeclared `const HTTP`. Two of them bracketed a
+  SINGLE command, which coalesces nothing; the third hand-sent copies of the
+  very verbs the tick already fans to, so it is now `pollNow()` from the
+  substrate. The `flushed()` helper is gone too: `_http` is locked only inside
+  a synchronous bracket, so an awaited handler can never observe it locked.
+  `armTimer` is gone with them — TimerNode hitchhikes at `>= 1000` and the
+  cadence floor is enforced upstream, so arming is a plain `setTimer()`.
+
 - **`useGlobBrowse` takes its replay boundary from the substrate's
   `browseControl()`** instead of re-deriving `end?.segment ?? null` /
   `end?.offset ?? 0` from the half-boundary `endPosition()` returned. One of

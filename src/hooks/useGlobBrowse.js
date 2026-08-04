@@ -36,8 +36,6 @@ import {
 } from '@newspack-nodes/runtime';
 
 import useLogPositions, {
-	segmentPositions,
-	replayPositions,
 	stepPosition,
 } from '@newspack-nodes/shared/hooks/useLogPositions';
 import { browseControl } from '@newspack-nodes/shared/nodes/seekTracker';
@@ -339,9 +337,8 @@ export default function useGlobBrowse( {
 		if ( ! sel ) {
 			return;
 		}
-		lpFollow();
 		Core.node( viewName )?.fill( viewControl( { action: 'follow' } ) );
-		reposition( [ sel ], null );
+		reposition( [ sel ], lpFollow() );
 	}, [ lpFollow, reposition, viewName ] );
 
 	const replay = useCallback( () => {
@@ -349,9 +346,8 @@ export default function useGlobBrowse( {
 		if ( ! sel ) {
 			return;
 		}
-		lpReplay();
 		browseView();
-		reposition( [ sel ], replayPositions( sel ) );
+		reposition( [ sel ], lpReplay() );
 	}, [ lpReplay, reposition, browseView ] );
 
 	const browseSegment = useCallback(
@@ -362,9 +358,8 @@ export default function useGlobBrowse( {
 			}
 			// Time-travel: a past segment pauses; Step walks it, Play streams.
 			setPausedRef?.current?.( true );
-			lpBrowse( segment.id );
 			browseView();
-			reposition( [ sel ], segmentPositions( sel, segment.id ) );
+			reposition( [ sel ], lpBrowse( segment.id ) );
 		},
 		[ lpBrowse, reposition, browseView, setPausedRef ]
 	);

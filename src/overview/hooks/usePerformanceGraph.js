@@ -71,20 +71,6 @@ const TARGET = `_shell/_http/${ SERVER }`;
 // The declared poll cadence; also the fallback for an unparseable setting.
 const DEFAULT_REFRESH_INTERVAL_MS = 15000;
 
-const HTTP = '_http';
-
-/**
- * Put the just-minted command on the wire NOW: these are event-driven, not
- * part of the batched poll tick that would otherwise carry them.
- *
- * @param {Promise} pending The request's promise, returned unchanged.
- * @return {Promise} `pending`.
- */
-function flushed( pending ) {
-	Core.node( HTTP )?.flush();
-	return pending;
-}
-
 // Default matched-request cap for requestGrep (server clamps to its own max).
 const GREP_RESULT_LIMIT = 20;
 
@@ -97,24 +83,6 @@ const URLDETAIL_MERGE = 'urldetail:merge';
 const URLDETAIL_TIMER = 'urldetail:timer';
 const URLDETAIL_FETCHER = 'fetch-urldetail';
 const REQUESTDETAIL_VIEW = 'requestdetail:view';
-
-/**
- * Arm the url_detail refresh Timer as a router hitchhike.
- *
- * Above 1000ms the Timer throttles itself to the interval; at or below it fires
- * on every router tick. Both stay inside the `_http` lock/flush bracket — an own
- * setInterval slot would fire outside it and cost a POST of its own.
- *
- * @param {Object} timer      The Timer node.
- * @param {number} intervalMs Requested cadence in ms.
- */
-function armTimer( timer, intervalMs ) {
-	if ( intervalMs > 1000 ) {
-		timer.setTimer( intervalMs );
-	} else {
-		timer.setTimer();
-	}
-}
 
 /**
  * `url_detail` args for the open modal. The auto-refresh tick and the
@@ -298,7 +266,7 @@ export function usePerformanceGraph( opts = {} ) {
 		parseInt( refreshInterval, 10 ) || DEFAULT_REFRESH_INTERVAL_MS;
 
 	// Poll graph: overview+urls on Timer; on-demand url/request detail views.
-	const { interpreterRef } = useBatchedPoll( {
+	const { interpreterRef, pollNow } = useBatchedPoll( {
 		build: ( { interpreter, tee } ) => {
 			addSliceFetcher( interpreter, {
 				fetcher: 'fetch-overview',
@@ -407,34 +375,9 @@ export function usePerformanceGraph( opts = {} ) {
 	const pokeOverviewUrls = useCallback( () => {
 		sendControl( OVERVIEW_VIEW, { action: 'loading' } );
 		sendControl( URLS_VIEW, { action: 'loading' } );
-		const interpreter = interpreterRef.current;
-		if ( ! interpreter ) {
-			return;
-		}
-		const http = Core.node( HTTP );
-		if ( http ) {
-			http.lock();
-		}
-		sendCommand(
-			'overview',
-			overviewArgs( {
-				serverFilter: serverFilterRef.current,
-				chartBreakdown: chartBreakdownRef.current,
-			} ),
-			'overviewIn'
-		);
-		sendCommand(
-			'urls',
-			urlsArgs( {
-				urlParams: urlParamsRef.current,
-				serverFilter: serverFilterRef.current,
-			} ),
-			'urlsIn'
-		);
-		if ( http ) {
-			http.flush();
-		}
-	}, [ sendCommand, sendControl, interpreterRef ] );
+		// The tick fans to both slices, whose argsFn read these same refs.
+		pollNow();
+	}, [ sendControl, pollNow ] );
 
 	// Re-poke overview+urls on filter/breakdown change (skip first run).
 	const firstFilterRun = useRef( true );
@@ -490,7 +433,7 @@ export function usePerformanceGraph( opts = {} ) {
 			! selectedRequest &&
 			isPageVisible
 		) {
-			armTimer( timer, intervalMs );
+			timer.setTimer( intervalMs );
 			return () => timer.stopTimer();
 		}
 		timer.stopTimer();
@@ -562,12 +505,9 @@ export function usePerformanceGraph( opts = {} ) {
 			if ( urlFetchTimerRef.current ) {
 				clearTimeout( urlFetchTimerRef.current );
 			}
+			// One command: a lock/flush bracket would coalesce nothing.
 			const doFetch = () => {
 				sendControl( URLS_VIEW, { action: 'loading' } );
-				const http = Core.node( HTTP );
-				if ( http ) {
-					http.lock();
-				}
 				sendCommand(
 					'urls',
 					urlsArgs( {
@@ -576,9 +516,6 @@ export function usePerformanceGraph( opts = {} ) {
 					} ),
 					'urlsIn'
 				);
-				if ( http ) {
-					http.flush();
-				}
 			};
 			if ( searchChanged ) {
 				urlFetchTimerRef.current = setTimeout( doFetch, 300 );
@@ -593,11 +530,9 @@ export function usePerformanceGraph( opts = {} ) {
 	const resolveRequest = useCallback(
 		async ( rid ) => {
 			try {
-				return await flushed(
-					requestSearch(
-						'request_search',
-						formatCommandArgs( [ rid ] )
-					)
+				return await requestSearch(
+					'request_search',
+					formatCommandArgs( [ rid ] )
 				);
 			} catch ( err ) {
 				return null;
@@ -613,8 +548,9 @@ export function usePerformanceGraph( opts = {} ) {
 				return null;
 			}
 			try {
-				const payload = await flushed(
-					urlDetail( 'url_detail', urlLookupArgs( hash ) )
+				const payload = await urlDetail(
+					'url_detail',
+					urlLookupArgs( hash )
 				);
 				// A reply settles the intent, even one that names no URL.
 				return { url: payload?.stats?.url || '' };
@@ -633,11 +569,9 @@ export function usePerformanceGraph( opts = {} ) {
 				return null;
 			}
 			try {
-				const payload = await flushed(
-					urlDetail(
-						'url_detail',
-						formatCommandArgs( [ hash ], { breakdown } )
-					)
+				const payload = await urlDetail(
+					'url_detail',
+					formatCommandArgs( [ hash ], { breakdown } )
 				);
 				return ( payload && payload.breakdown_time_series ) || null;
 			} catch ( err ) {
@@ -652,7 +586,7 @@ export function usePerformanceGraph( opts = {} ) {
 	const awaitReply = useCallback(
 		async ( request, verb, args ) => {
 			try {
-				return await flushed( request( verb, args ) );
+				return await request( verb, args );
 			} catch ( err ) {
 				onError?.( err );
 				return null;
