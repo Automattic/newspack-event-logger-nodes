@@ -512,11 +512,11 @@ class Admin {
 	 * file. Saving a field back to its default therefore DELETES the row and
 	 * returns the old value, short-circuiting WordPress's own write.
 	 *
-	 * Runs on every option WordPress updates, so it bails unless stripping the
-	 * prefix leaves a key the file defaults declare. Footgun: the prefix is
-	 * stripped by LENGTH, never matched with `str_starts_with`, so a foreign
-	 * option whose tail past character 29 happens to equal an application key
-	 * would be judged against this plugin's defaults.
+	 * Runs on every option WordPress updates, so it bails unless the name
+	 * actually carries our prefix and the remainder is a key the file defaults
+	 * declare — matched, not stripped by length, or another plugin's option
+	 * whose tail happened to equal one of our keys would be judged against our
+	 * defaults and deleted.
 	 *
 	 * @param mixed  $value     New option value about to be written.
 	 * @param string $option    Full option name.
@@ -524,8 +524,12 @@ class Admin {
 	 * @return mixed The value to persist, or $old_value when the row was deleted.
 	 */
 	public function skip_default_writes( mixed $value, string $option, mixed $old_value ): mixed {
-		$key = \substr( $option, \strlen( 'newspack_event_logger_nodes_' ) );
-		if ( $key === $option || '' === $key ) {
+		$prefix = 'newspack_event_logger_nodes_';
+		if ( ! \str_starts_with( $option, $prefix ) ) {
+			return $value;
+		}
+		$key = \substr( $option, \strlen( $prefix ) );
+		if ( '' === $key ) {
 			return $value;
 		}
 		$defaults = Config::load_config_defaults();
