@@ -7,8 +7,6 @@
  * Add / Edit open RuleEditModal (add = a blank log rule); Save → `upsert` (single
  * rule, so the editor never ships the whole list) and the table re-lists. Delete
  * opens a confirm dialog → `remove(id)`. Loading / error come from the model.
- *
- * @return {import('react').ReactElement} The rendered admin app.
  */
 
 import { useEffect, useRef, useState } from '@wordpress/element';
@@ -165,6 +163,18 @@ function RuleRow( { rule, onEdit, onDelete } ) {
 	);
 }
 
+/**
+ * Takes no props: `useRulesGraph` mounts the graph and supplies every datum, so
+ * the settings page mounts this bare.
+ *
+ * The table is sorted for SCANNING — log rules first, alphabetical within an
+ * action — which is deliberately not the order `Rule_Matcher` evaluates in
+ * (query-bearing patterns outrank exact ones, which outrank prefixes, and
+ * length only breaks ties within a rank). Row order says nothing about which
+ * rule wins a URL.
+ *
+ * @return {import('react').ReactElement} The rendered admin app.
+ */
 export default function RulesAdmin() {
 	const { rules, loading, error, upsert, remove } = useRulesGraph();
 
@@ -191,7 +201,7 @@ export default function RulesAdmin() {
 	if ( loading ) {
 		tableBody = (
 			<tr>
-				<td colSpan="6">
+				<td colSpan={ 6 }>
 					{ __( 'Loading rules…', 'newspack-event-logger-nodes' ) }
 				</td>
 			</tr>
@@ -214,7 +224,7 @@ export default function RulesAdmin() {
 	} else {
 		tableBody = (
 			<tr>
-				<td colSpan="6">
+				<td colSpan={ 6 }>
 					{ __(
 						'No rules configured.',
 						'newspack-event-logger-nodes'

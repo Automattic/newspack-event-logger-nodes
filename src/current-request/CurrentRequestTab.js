@@ -95,8 +95,11 @@ export default function CurrentRequestTab() {
 		'performance:request_detail',
 		'performance'
 	);
+	// The whole lifecycle in one type; `request` only lands in the found state.
 	const [ state, setState ] = useState(
-		rid ? { status: 'loading' } : { status: 'idle' }
+		/** @type {{status: string, request?: Object}} */ (
+			rid ? { status: 'loading' } : { status: 'idle' }
+		)
 	);
 	// @longform
 	// Throws rather than swallowing, so the reconcile loop keeps asking. That

@@ -57,8 +57,10 @@ const controlMsg = ( value ) => {
 };
 
 /**
- * @param {Object} [opts]            Options.
- * @param {number} [opts.maxEntries] View ring cap (default 1000).
+ * @param {Object} [opts]               Options.
+ * @param {number} [opts.maxEntries]    View ring cap (default 1000).
+ * @param {Object} [opts.commandClient] transport seam assigned to the link's
+ *                                      HttpOut; defaults (inside HttpOut) to the localized transport.
  * @return {{ setPaused: Function, clear: Function, browse: Object }}
  *   Control callbacks for the thin React view (the view's own state is read via
  *   useNodeState). Reset Graph is driven by a `Core.bumpGraphGeneration()`

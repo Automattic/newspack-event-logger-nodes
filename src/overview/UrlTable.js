@@ -34,116 +34,121 @@ const pct = ( part, total ) => {
 	return p > 0 ? `${ p }%` : '-';
 };
 
-/**
- * Memoized URL row component.
- *
- * @param {Object}   props            Component props.
- * @param {Object}   props.url        URL data object.
- * @param {boolean}  props.isSelected Whether this row is selected.
- * @param {Function} props.onSelect   Selection callback.
- * @param {Function} props.formatNum  Number formatting function.
- * @return {import('react').ReactElement} Rendered row.
- */
-const UrlRow = memo( function UrlRow( {
-	url,
-	isSelected,
-	onSelect,
-	formatNum,
-	maxAvg,
-	metric,
-} ) {
-	let barField = 'avg_ms';
-	if ( metric === 'memory' ) {
-		barField = 'avg_peak_mb';
-	} else if ( metric === 'volume' ) {
-		barField = 'count';
-	}
-	const barValue = url[ barField ] || 0;
-	const barPct = maxAvg > 0 ? ( barValue / maxAvg ) * 100 : 0;
-	const handleKeyDown = ( e ) => {
-		if ( e.key === 'Enter' || e.key === ' ' ) {
-			e.preventDefault();
-			onSelect( url );
+// JSDoc rides the inner function: on the const, memo() infers props as `{}`.
+const UrlRow = memo(
+	/**
+	 * Memoized URL row component.
+	 *
+	 * @param {Object}                       props            Component props.
+	 * @param {Object}                       props.url        URL data object.
+	 * @param {boolean}                      props.isSelected Whether this row is selected.
+	 * @param {(url: Object) => void}        props.onSelect   Selection callback.
+	 * @param {(n: number, s?: string) => *} props.formatNum  Number formatting function.
+	 * @param {number}                       props.maxAvg     Largest bar value, for scaling.
+	 * @param {string}                       props.metric     Which metric the bar shows.
+	 * @return {import('react').ReactElement} Rendered row.
+	 */
+	function UrlRow( {
+		url,
+		isSelected,
+		onSelect,
+		formatNum,
+		maxAvg,
+		metric,
+	} ) {
+		let barField = 'avg_ms';
+		if ( metric === 'memory' ) {
+			barField = 'avg_peak_mb';
+		} else if ( metric === 'volume' ) {
+			barField = 'count';
 		}
-	};
+		const barValue = url[ barField ] || 0;
+		const barPct = maxAvg > 0 ? ( barValue / maxAvg ) * 100 : 0;
+		const handleKeyDown = ( e ) => {
+			if ( e.key === 'Enter' || e.key === ' ' ) {
+				e.preventDefault();
+				onSelect( url );
+			}
+		};
 
-	return (
-		<div
-			role="button"
-			tabIndex={ 0 }
-			className={ `event-logger-table__row newspack-nodes-table__row${
-				isSelected ? ' is-selected' : ''
-			}` }
-			onClick={ () => onSelect( url ) }
-			onKeyDown={ handleKeyDown }
-			style={ { height: ROW_HEIGHT } }
-		>
-			<div className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--numeric">
-				{ formatNum( url.count ) }
-			</div>
+		return (
 			<div
-				className="event-logger-table__cell newspack-nodes-table__cell"
-				style={ {
-					background: `linear-gradient(to right, rgba(100, 181, 246, 0.15) ${ barPct }%, transparent ${ barPct }%)`,
-				} }
+				role="button"
+				tabIndex={ 0 }
+				className={ `event-logger-table__row newspack-nodes-table__row${
+					isSelected ? ' is-selected' : ''
+				}` }
+				onClick={ () => onSelect( url ) }
+				onKeyDown={ handleKeyDown }
+				style={ { height: ROW_HEIGHT } }
 			>
-				<code>{ url.url }</code>
+				<div className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--numeric">
+					{ formatNum( url.count ) }
+				</div>
+				<div
+					className="event-logger-table__cell newspack-nodes-table__cell"
+					style={ {
+						background: `linear-gradient(to right, rgba(100, 181, 246, 0.15) ${ barPct }%, transparent ${ barPct }%)`,
+					} }
+				>
+					<code>{ url.url }</code>
+				</div>
+				<div
+					className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--status entry-status"
+					data-status="218"
+				>
+					{ pct( url.count_2xx, url.count ) }
+				</div>
+				<div
+					className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--status entry-status"
+					data-status="307"
+				>
+					{ pct( url.count_3xx, url.count ) }
+				</div>
+				<div
+					className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--status entry-status"
+					data-status="418"
+				>
+					{ pct( url.count_4xx, url.count ) }
+				</div>
+				<div
+					className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--status entry-status"
+					data-status="599"
+				>
+					{ pct( url.count_5xx, url.count ) }
+				</div>
+				<div className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--numeric">
+					{ formatNum( url.avg_ms, 'ms' ) }
+				</div>
+				<div className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--numeric">
+					{ formatNum( url.min_ms, 'ms' ) }
+				</div>
+				<div className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--numeric">
+					{ formatNum( url.max_ms, 'ms' ) }
+				</div>
+				<div className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--numeric">
+					{ formatNum( url.p95_ms, 'ms' ) }
+				</div>
+				<div className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--numeric">
+					{ url.avg_peak_mb > 0
+						? formatNum( url.avg_peak_mb, 'MB' )
+						: '-' }
+				</div>
 			</div>
-			<div
-				className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--status entry-status"
-				data-status="218"
-			>
-				{ pct( url.count_2xx, url.count ) }
-			</div>
-			<div
-				className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--status entry-status"
-				data-status="307"
-			>
-				{ pct( url.count_3xx, url.count ) }
-			</div>
-			<div
-				className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--status entry-status"
-				data-status="418"
-			>
-				{ pct( url.count_4xx, url.count ) }
-			</div>
-			<div
-				className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--status entry-status"
-				data-status="599"
-			>
-				{ pct( url.count_5xx, url.count ) }
-			</div>
-			<div className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--numeric">
-				{ formatNum( url.avg_ms, 'ms' ) }
-			</div>
-			<div className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--numeric">
-				{ formatNum( url.min_ms, 'ms' ) }
-			</div>
-			<div className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--numeric">
-				{ formatNum( url.max_ms, 'ms' ) }
-			</div>
-			<div className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--numeric">
-				{ formatNum( url.p95_ms, 'ms' ) }
-			</div>
-			<div className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--numeric">
-				{ url.avg_peak_mb > 0
-					? formatNum( url.avg_peak_mb, 'MB' )
-					: '-' }
-			</div>
-		</div>
-	);
-} );
+		);
+	}
+);
 
 /**
  * URL Table component.
  *
- * @param {Object}   props                Component props.
- * @param {Array}    props.urls           URL data array.
- * @param {Object}   props.selectedUrl    Currently selected URL.
- * @param {Function} props.onSelect       Selection callback.
- * @param {Function} props.onParamsChange Callback when search/sort/page changes.
- * @param {number}   props.totalUrls      Total URL count from server (for pagination).
- * @param {string}   props.metric         Chart metric for bar backgrounds.
+ * @param {Object}                props                Component props.
+ * @param {Array}                 props.urls           URL data array.
+ * @param {Object}                props.selectedUrl    Currently selected URL.
+ * @param {(url: Object) => void} props.onSelect       Selection callback, forwarded to each row.
+ * @param {Function}              props.onParamsChange Callback when search/sort/page changes.
+ * @param {number}                props.totalUrls      Total URL count from server (for pagination).
+ * @param {string}                props.metric         Chart metric for bar backgrounds.
  * @return {import('react').ReactElement} Rendered component.
  */
 export default function UrlTable( {

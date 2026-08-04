@@ -202,6 +202,53 @@ function urlsArgs( { urlParams, serverFilter } ) {
 	return formatCommandArgs( [], options );
 }
 
+/**
+ * Every option is live UI state: the Fetchers read the filter/sort/breakdown
+ * refs at FIRE time, so a change rides the next tick without re-wiring, and the
+ * two selections arm or disarm the on-demand slices.
+ *
+ * The awaited callbacks never reject. `fetchUrlBreakdown` and the three rule
+ * verbs report through `onError` and resolve null; `resolveRequest` and
+ * `resolveUrlHash` swallow the failure entirely and resolve null, because a
+ * deep link that cannot be resolved is not the user's error to see.
+ *
+ * @param {Object}               [opts]                  Live dashboard state + seams.
+ * @param {string}               [opts.serverFilter]     Server scope; '' means every
+ *                                                       server.
+ * @param {string}               [opts.chartBreakdown]   The chart's active dimension.
+ * @param {string}               [opts.refreshInterval]  Poll cadence in ms, as a STRING
+ *                                                       (it comes straight off a select).
+ *                                                       Anything at or below 1000 — 0
+ *                                                       included, which is what an
+ *                                                       unparseable value becomes — fires
+ *                                                       on every router tick.
+ * @param {?number}              [opts.requestPartition] Partition of the selected request;
+ *                                                       null falls back to looking the rid
+ *                                                       up in `urlDetailData.requests`.
+ * @param {?Object}              [opts.selectedUrl]      `{ hash, url }` of the open URL
+ *                                                       detail modal; null closes and
+ *                                                       clears the slice.
+ * @param {?string}              [opts.selectedRequest]  Rid of the open request detail
+ *                                                       modal; null closes and clears it.
+ * @param {?Object}              [opts.urlDetailData]    The url_detail slice React holds,
+ *                                                       read only for its `requests` rows.
+ * @param {(err: Error) => void} [opts.onError]          Receives a failed awaited verb.
+ * @param {Object}               [opts.commandClient]    Transport seam handed to
+ *                                                       `useBatchedPoll`; production lets
+ *                                                       HttpOut default it.
+ * @return {{ handleUrlParamsChange: (params: Object) => void,
+ *   resolveRequest: (rid: string) => Promise<Object|null>,
+ *   resolveUrlHash: (hash: string) => Promise<{url: string}|null>,
+ *   fetchUrlBreakdown: (hash: string, breakdown: string) => Promise<Object|null>,
+ *   listRules: () => Promise<Object|null>,
+ *   upsertRule: (rule: Object) => Promise<Object|null>,
+ *   removeRule: (id: string) => Promise<Object|null>,
+ *   requestGrep: (pattern: string, limit?: number) => Promise<Object|null> }}
+ *   Control callbacks ONLY — no data. Every slice reaches React through its own
+ *   `useNodeState( '<slice>:view', 'view' )`. `handleUrlParamsChange` takes the
+ *   URL table's `{ search, sort, order, offset }` and debounces a search change
+ *   by 300ms while sending sort/page changes immediately.
+ */
 export function usePerformanceGraph( opts = {} ) {
 	const {
 		serverFilter = '',

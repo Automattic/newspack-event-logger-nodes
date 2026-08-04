@@ -143,7 +143,14 @@ export class GyroscopeViewNode extends Node {
 		}
 	}
 
-	// Reset the map + rps window; the graph clears before every (re)connect.
+	/**
+	 * Empty the request map and the RPS window.
+	 *
+	 * `useGyroscopeGraph` sends a `clear` before every (re)connect: a
+	 * reconnecting stream re-emits every live request from scratch, so anything
+	 * held from the previous connection would linger as a row no producer will
+	 * ever complete.
+	 */
 	_clear() {
 		this.requests.clear();
 		this.rpsBuckets = [];
@@ -151,7 +158,15 @@ export class GyroscopeViewNode extends Node {
 		this.rps = 0;
 	}
 
-	// Publish only the low-freq view model; requests/rps stay off setState.
+	/**
+	 * Publish the LOW-frequency view model — the reconnect banner, and nothing
+	 * else.
+	 *
+	 * The request map and the RPS readout deliberately stay off `setState`:
+	 * they change on every streamed record, and React reads them by calling
+	 * `snapshot()` on its own refresh tick instead. Widening this to carry the
+	 * requests would re-render the dashboard once per in-flight record.
+	 */
 	_publish() {
 		this.setState( 'view', { connectionError: this.connectionError } );
 	}

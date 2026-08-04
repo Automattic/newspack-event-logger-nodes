@@ -58,13 +58,13 @@ import './styles/charts.scss';
  * Renders a spinner until the `overview:view` slice resolves — until then the
  * graph may not even be mounted, and an empty dashboard would read as no data.
  *
- * @param {Object}   props                 Component props.
- * @param {Function} props.onError         Error handler callback. Reported
- *                                         failures surface as the page's
- *                                         dismissible notice.
- * @param {Object}   [props.commandClient] Optional transport (the graph
- *                                         lazily defaults it in production;
- *                                         tests inject a double).
+ * @param {Object}               props                 Component props.
+ * @param {(err: Error) => void} props.onError         Error handler callback. Reported
+ *                                                     failures surface as the page's
+ *                                                     dismissible notice.
+ * @param {Object}               [props.commandClient] Optional transport (the graph
+ *                                                     lazily defaults it in production;
+ *                                                     tests inject a double).
  * @return {import('react').ReactElement} Rendered component.
  */
 export default function PerformanceDashboard( { onError, commandClient } ) {
@@ -104,10 +104,16 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 	// Refs break the resolve/navigation ↔ selection cycle.
 	const commandResolveRef = useRef( null );
 	const commandResolveUrlRef = useRef( null );
-	const selectUrlRef = useRef( () => {} );
-	const selectRequestRef = useRef( () => {} );
+	const selectUrlRef = useRef(
+		/** @type {( url: Object|null ) => void} */ ( () => {} )
+	);
+	const selectRequestRef = useRef(
+		/** @type {( rid: string|null ) => void} */ ( () => {} )
+	);
 	const urlsRef = useRef( [] );
-	const setRequestPartitionRef = useRef( () => {} );
+	const setRequestPartitionRef = useRef(
+		/** @type {( partition: number|null ) => void} */ ( () => {} )
+	);
 
 	// Read each slice from its own per-slice view node (null until mounted).
 	const overviewSlice = useNodeState( 'overview:view', 'view' );

@@ -151,77 +151,87 @@ const renderCount = ( stats ) =>
 // Rate label matching that wording: entries/s, one decimal place.
 const renderRate = ( lps ) => `${ lps.toFixed( 1 ) } entries/s`;
 
-/**
- * One error-log row — the five fixed cells on a grid, memoized on `row`.
- *
- * @param {Object} props     Props.
- * @param {Object} props.row Row from `perferrors:view`. Its `shapeRow()`
- *                           supplies `ts`, `rid`, `k`, `m` — plus `method`,
- *                           `url`, and `urlHash` when the entry carried a URL;
- *                           the base view node stamps `id` and `isEven`.
- * @return {import('react').ReactElement} The rendered row.
- */
-const ErrorRow = memo( function ErrorRow( { row } ) {
-	return (
-		<div
-			role="row"
-			className={ `newspack-nodes-log-row newspack-nodes-table__row ${
-				row.isEven ? 'row-even' : 'row-odd'
-			}` }
-			style={ { gridTemplateColumns: GRID_TEMPLATE } }
-		>
-			<span role="cell" className="newspack-nodes-table__cell entry-time">
-				{ formatTime( row.ts ) }
-			</span>
-			<span role="cell" className="newspack-nodes-table__cell">
-				<a
-					className="entry-rid"
-					href={ `admin.php?page=event-logger-overview&request=${ encodeURIComponent(
-						row.rid
-					) }` }
-					title={ __(
-						'View request trace',
-						'newspack-event-logger-nodes'
-					) }
+// JSDoc rides the inner function: on the const, memo() infers props as `{}`.
+const ErrorRow = memo(
+	/**
+	 * One error-log row — the five fixed cells on a grid, memoized on `row`.
+	 *
+	 * @param {Object} props     Props.
+	 * @param {Object} props.row Row from `perferrors:view`. Its `shapeRow()`
+	 *                           supplies `ts`, `rid`, `k`, `m` — plus `method`,
+	 *                           `url`, and `urlHash` when the entry carried a
+	 *                           URL; the base view node stamps `id` and
+	 *                           `isEven`.
+	 * @return {import('react').ReactElement} The rendered row.
+	 */
+	function ErrorRow( { row } ) {
+		return (
+			<div
+				role="row"
+				className={ `newspack-nodes-log-row newspack-nodes-table__row ${
+					row.isEven ? 'row-even' : 'row-odd'
+				}` }
+				style={ { gridTemplateColumns: GRID_TEMPLATE } }
+			>
+				<span
+					role="cell"
+					className="newspack-nodes-table__cell entry-time"
 				>
-					{ row.rid }
-				</a>
-			</span>
-			<span role="cell" className="newspack-nodes-table__cell entry-url">
-				{ row.url && (
-					<>
-						<span className="entry-method">{ row.method }</span>{ ' ' }
-						<a
-							href={ `admin.php?page=event-logger-overview&url=${ row.urlHash }` }
-							className="entry-url-link"
-							title={ __(
-								'View URL stats',
-								'newspack-event-logger-nodes'
-							) }
-						>
-							{ row.url }
-						</a>
-					</>
-				) }
-			</span>
-			<span
-				role="cell"
-				className={ `newspack-nodes-table__cell entry-keyword entry-keyword--${ getKeywordClass(
-					row.k
-				) }` }
-			>
-				{ row.k }
-			</span>
-			<span
-				role="cell"
-				className="newspack-nodes-table__cell entry-message"
-				title={ row.m }
-			>
-				{ row.m }
-			</span>
-		</div>
-	);
-} );
+					{ formatTime( row.ts ) }
+				</span>
+				<span role="cell" className="newspack-nodes-table__cell">
+					<a
+						className="entry-rid"
+						href={ `admin.php?page=event-logger-overview&request=${ encodeURIComponent(
+							row.rid
+						) }` }
+						title={ __(
+							'View request trace',
+							'newspack-event-logger-nodes'
+						) }
+					>
+						{ row.rid }
+					</a>
+				</span>
+				<span
+					role="cell"
+					className="newspack-nodes-table__cell entry-url"
+				>
+					{ row.url && (
+						<>
+							<span className="entry-method">{ row.method }</span>{ ' ' }
+							<a
+								href={ `admin.php?page=event-logger-overview&url=${ row.urlHash }` }
+								className="entry-url-link"
+								title={ __(
+									'View URL stats',
+									'newspack-event-logger-nodes'
+								) }
+							>
+								{ row.url }
+							</a>
+						</>
+					) }
+				</span>
+				<span
+					role="cell"
+					className={ `newspack-nodes-table__cell entry-keyword entry-keyword--${ getKeywordClass(
+						row.k
+					) }` }
+				>
+					{ row.k }
+				</span>
+				<span
+					role="cell"
+					className="newspack-nodes-table__cell entry-message"
+					title={ row.m }
+				>
+					{ row.m }
+				</span>
+			</div>
+		);
+	}
+);
 
 // Module-scope: a stable identity keeps LogRowList's row memoization live.
 const renderRow = ( row ) => <ErrorRow key={ row.id } row={ row } />;

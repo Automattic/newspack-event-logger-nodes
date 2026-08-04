@@ -146,128 +146,133 @@ const renderCount = ( stats ) =>
 		  );
 const renderRate = ( lps ) => `${ lps.toFixed( 1 ) } req/s`;
 
-/**
- * Memoized row component - only re-renders when the row or columns change.
- */
-const StreamRow = memo( function StreamRow( {
-	row,
-	visibleColumns,
-	gridTemplate,
-} ) {
-	return (
-		<div
-			role="row"
-			className={ `newspack-nodes-log-row newspack-nodes-table__row ${
-				row.isEven ? 'row-even' : 'row-odd'
-			}` }
-			style={ { gridTemplateColumns: gridTemplate } }
-		>
-			{ visibleColumns.map( ( col ) => {
-				switch ( col ) {
-					case 'time':
-						return (
-							<span
-								key={ col }
-								role="cell"
-								className="newspack-nodes-table__cell entry-time"
-							>
-								{ formatTime( row.timestamp ) }
-							</span>
-						);
-					case 'duration':
-						return (
-							<span
-								key={ col }
-								role="cell"
-								className={ `newspack-nodes-table__cell entry-duration entry-duration--${ getDurationClass(
-									row.duration_ms
-								) }` }
-							>
-								{ formatDuration( row.duration_ms ) }
-							</span>
-						);
-					case 'status':
-						return (
-							<span
-								key={ col }
-								role="cell"
-								className="newspack-nodes-table__cell entry-status"
-								data-status={ row.status_code }
-							>
-								{ row.status_code }
-							</span>
-						);
-					case 'url':
-						return (
-							<span
-								key={ col }
-								role="cell"
-								className="newspack-nodes-table__cell entry-url"
-							>
-								<span className="entry-method">
-									{ row.method }
-								</span>{ ' ' }
-								<a
-									href={ `admin.php?page=event-logger-overview&url=${ row.urlHash }` }
-									className="entry-url-link"
-									title={ __(
-										'View URL stats',
-										'newspack-event-logger-nodes'
-									) }
+// JSDoc rides the inner function: on the const, memo() infers props as `{}`.
+const StreamRow = memo(
+	/**
+	 * Memoized row component - only re-renders when the row or columns change.
+	 *
+	 * @param {Object}   props                Component props.
+	 * @param {Object}   props.row            Row from `requestlog:view`: timestamp, rid, method, url, urlHash, status_code, remote_addr, user_agent, duration_ms, plus the base view node's `id` and `isEven`.
+	 * @param {string[]} props.visibleColumns Column keys to render, in display order.
+	 * @param {string}   props.gridTemplate   `grid-template-columns` value for the row.
+	 * @return {import('react').ReactElement} Rendered row.
+	 */
+	function StreamRow( { row, visibleColumns, gridTemplate } ) {
+		return (
+			<div
+				role="row"
+				className={ `newspack-nodes-log-row newspack-nodes-table__row ${
+					row.isEven ? 'row-even' : 'row-odd'
+				}` }
+				style={ { gridTemplateColumns: gridTemplate } }
+			>
+				{ visibleColumns.map( ( col ) => {
+					switch ( col ) {
+						case 'time':
+							return (
+								<span
+									key={ col }
+									role="cell"
+									className="newspack-nodes-table__cell entry-time"
 								>
-									{ row.url }
-								</a>
-							</span>
-						);
-					case 'rid':
-						return (
-							<span
-								key={ col }
-								role="cell"
-								className="newspack-nodes-table__cell"
-							>
-								<a
-									className="entry-rid"
-									href={ `admin.php?page=event-logger-overview&request=${ encodeURIComponent(
-										row.rid
+									{ formatTime( row.timestamp ) }
+								</span>
+							);
+						case 'duration':
+							return (
+								<span
+									key={ col }
+									role="cell"
+									className={ `newspack-nodes-table__cell entry-duration entry-duration--${ getDurationClass(
+										row.duration_ms
 									) }` }
-									title={ __(
-										'View request trace',
-										'newspack-event-logger-nodes'
-									) }
 								>
-									{ row.rid }
-								</a>
-							</span>
-						);
-					case 'remote_addr':
-						return (
-							<span
-								key={ col }
-								role="cell"
-								className="newspack-nodes-table__cell entry-ip"
-							>
-								{ row.remote_addr || '-' }
-							</span>
-						);
-					case 'user_agent':
-						return (
-							<span
-								key={ col }
-								role="cell"
-								className="newspack-nodes-table__cell entry-ua"
-								title={ row.user_agent }
-							>
-								{ row.user_agent || '-' }
-							</span>
-						);
-					default:
-						return null;
-				}
-			} ) }
-		</div>
-	);
-} );
+									{ formatDuration( row.duration_ms ) }
+								</span>
+							);
+						case 'status':
+							return (
+								<span
+									key={ col }
+									role="cell"
+									className="newspack-nodes-table__cell entry-status"
+									data-status={ row.status_code }
+								>
+									{ row.status_code }
+								</span>
+							);
+						case 'url':
+							return (
+								<span
+									key={ col }
+									role="cell"
+									className="newspack-nodes-table__cell entry-url"
+								>
+									<span className="entry-method">
+										{ row.method }
+									</span>{ ' ' }
+									<a
+										href={ `admin.php?page=event-logger-overview&url=${ row.urlHash }` }
+										className="entry-url-link"
+										title={ __(
+											'View URL stats',
+											'newspack-event-logger-nodes'
+										) }
+									>
+										{ row.url }
+									</a>
+								</span>
+							);
+						case 'rid':
+							return (
+								<span
+									key={ col }
+									role="cell"
+									className="newspack-nodes-table__cell"
+								>
+									<a
+										className="entry-rid"
+										href={ `admin.php?page=event-logger-overview&request=${ encodeURIComponent(
+											row.rid
+										) }` }
+										title={ __(
+											'View request trace',
+											'newspack-event-logger-nodes'
+										) }
+									>
+										{ row.rid }
+									</a>
+								</span>
+							);
+						case 'remote_addr':
+							return (
+								<span
+									key={ col }
+									role="cell"
+									className="newspack-nodes-table__cell entry-ip"
+								>
+									{ row.remote_addr || '-' }
+								</span>
+							);
+						case 'user_agent':
+							return (
+								<span
+									key={ col }
+									role="cell"
+									className="newspack-nodes-table__cell entry-ua"
+									title={ row.user_agent }
+								>
+									{ row.user_agent || '-' }
+								</span>
+							);
+						default:
+							return null;
+					}
+				} ) }
+			</div>
+		);
+	}
+);
 
 /**
  * Request Stream Component.

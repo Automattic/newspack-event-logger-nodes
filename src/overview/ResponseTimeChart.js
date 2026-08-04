@@ -78,7 +78,7 @@ export default function ResponseTimeChart( { requests, onRequestClick } ) {
 				rid: r.rid,
 				status: r.status_code || 0,
 			} ) )
-			.sort( ( a, b ) => a.time - b.time );
+			.sort( ( a, b ) => a.time.getTime() - b.time.getTime() );
 	}, [ requests ] );
 
 	// Build the SVG skeleton once; later effects only mutate it.

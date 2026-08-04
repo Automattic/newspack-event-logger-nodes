@@ -18,12 +18,12 @@ const CUSTOM_COLORS = window.newspackNodesCustomColors || {};
 /**
  * Custom Event Selector Modal component.
  *
- * @param {Object}   props             Component props.
- * @param {boolean}  props.isOpen      Whether the modal is open.
- * @param {Function} props.onClose     Close callback.
- * @param {Array}    props.selected    Currently selected events.
- * @param {Function} props.onSelect    Callback when events are selected.
- * @param {string}   [props.className] Extra classes for the modal frame (skin theming).
+ * @param {Object}                  props             Component props.
+ * @param {boolean}                 props.isOpen      Whether the modal is open.
+ * @param {() => void}              props.onClose     Close callback.
+ * @param {Array}                   props.selected    Currently selected events.
+ * @param {(events: Array) => void} props.onSelect    Called on Apply with the selected event names.
+ * @param {string}                  [props.className] Extra classes for the modal frame (skin theming).
  * @return {import('react').ReactElement|null} Rendered component.
  */
 export default function CustomEventSelectorModal( {

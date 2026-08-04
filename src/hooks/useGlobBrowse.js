@@ -23,25 +23,6 @@
  * (paused / hidden) a browse action only records the target in `browseTargetRef`;
  * the graph hook's `onConnect` re-applies it on the next connect. That ref is the
  * single source of truth the graph hook reads for first-connect + refocus.
- *
- * @param {Object}   o
- * @param {string}   o.glob            The subscription glob (e.g. `errors.*`).
- * @param {string}   o.linkName        RemoteLink node name; it takes the seeks
- *                                     and holds the resume cursor.
- * @param {string}   o.viewName        View node name, and the prefix this hook
- *                                     names its own Request + Timer nodes with.
- * @param {boolean}  o.isActive        Whether the stream is open right now.
- * @param {Object}   o.browseTargetRef `{ current: { subscribe, positions,
- *                                     explicit } }` the graph hook reads on
- *                                     (re)connect.
- * @param {Object}   [o.setPausedRef]  `{ current: setPaused }`; a time-travel
- *                                     action pauses the stream through it.
- * @param {Function} [o.isActiveNow]   Same-tick `isActive`, for a click that
- *                                     pauses AND seeks in one tick.
- * @return {Object} Browse state + actions for `SegmentBrowseSidebar`:
- *   `partitions`, `selectedPartition`, `selectPartition`, `segments`, `mode`,
- *   `lastReceivedSegment`, `segmentId`, `follow`, `replay`, `browseSegment`,
- *   `step`, and `jumpTo`.
  */
 
 import { useState, useEffect, useRef, useCallback } from '@wordpress/element';
@@ -105,6 +86,43 @@ function viewControl( value ) {
 	return m;
 }
 
+/**
+ * @param {Object}        o                 Hook options.
+ * @param {string}        o.glob            The subscription glob (e.g.
+ *                                          `errors.*`).
+ * @param {string}        o.linkName        RemoteLink node name; it takes the
+ *                                          seeks and holds the resume cursor.
+ * @param {string}        o.viewName        View node name, and the prefix this
+ *                                          hook names its own Request + Timer
+ *                                          nodes with.
+ * @param {boolean}       o.isActive        Whether the stream is open right
+ *                                          now.
+ * @param {Object}        o.browseTargetRef `{ current: { subscribe, positions,
+ *                                          explicit } }` the graph hook reads
+ *                                          on (re)connect.
+ * @param {Object}        [o.setPausedRef]  `{ current: setPaused }`; a
+ *                                          time-travel action pauses the
+ *                                          stream through it.
+ * @param {() => boolean} [o.isActiveNow]   Same-tick `isActive`, for a click
+ *                                          that pauses AND seeks in one tick.
+ *                                          `step` treats its absence as "not
+ *                                          paused", so a caller that omits it
+ *                                          can step an open stream.
+ * @return {{ partitions: Object[], selectedPartition: string,
+ *   selectPartition: (key: string) => void, segments: Object[], mode: string,
+ *   lastReceivedSegment: ?number, segmentId: (number|string|null),
+ *   follow: () => void, replay: () => void,
+ *   browseSegment: (segment: Object) => void,
+ *   step: () => (Promise<void>|undefined),
+ *   jumpTo: (position: Object) => (Promise<void>|undefined) }}
+ *   Browse state + actions for `SegmentBrowseSidebar`. `partitions` are the
+ *   `list_logs` rows (`{ key, label, … }`) narrowed to the glob; `mode` and
+ *   `lastReceivedSegment` are read off the view model, not held here.
+ *   `segmentId` is the CLICKED segment straight out of `useLogPositions`, so it
+ *   is not always a segment: Replay sets the literal `'start'` token and Live
+ *   sets null. The sidebar hands it to `LogBrowser` as `selectedKey`, which
+ *   compares against numeric segment ids — so neither of those highlights a row.
+ */
 export default function useGlobBrowse( {
 	glob,
 	linkName,

@@ -35,28 +35,28 @@ import RequestProfile from '../RequestProfile';
 /**
  * Overview Section component.
  *
- * @param {Object}      props                        Component props.
- * @param {Object|null} props.overview               Overview slice payload; null renders nothing.
- * @param {Object}      props.filteredStats          Headline stats, server-scoped when a filter is set.
- * @param {string}      props.serverFilter           Selected server name, or '' for all servers.
- * @param {Function}    props.setServerFilter        Server filter setter.
- * @param {string[]}    props.serverNames            Server names seen in the breakdown data.
- * @param {string}      props.searchQuery            Search box value.
- * @param {Function}    props.setSearchQuery         Search box setter.
- * @param {boolean}     props.searchLoading          True while a search is in flight.
- * @param {string|null} props.searchError            Search error message, or null.
- * @param {Function}    props.onSearch               Search submit handler, given the raw query.
- * @param {Array|null}  props.searchResults          Pattern-search result rows, or null.
- * @param {boolean}     props.searchResultsTruncated Whether the server capped the result set.
- * @param {Function}    props.onSelectResult         Row-click handler; deep-links by request id.
- * @param {string}      props.refreshInterval        Poll interval in milliseconds, as a string.
- * @param {Function}    props.setRefreshInterval     Refresh interval setter.
- * @param {string}      props.chartMetric            Aggregate chart metric, e.g. 'volume'.
- * @param {Function}    props.setChartMetric         Chart metric setter.
- * @param {string}      props.chartBreakdown         Aggregate chart breakdown dimension.
- * @param {Function}    props.setChartBreakdown      Breakdown dimension setter.
- * @param {Object|null} props.breakdownData          Time series for the selected breakdown dim.
- * @param {Object|null} props.categoryData           Category time series, or null.
+ * @param {Object}                  props                        Component props.
+ * @param {Object|null}             props.overview               Overview slice payload; null renders nothing.
+ * @param {Object}                  props.filteredStats          Headline stats, server-scoped when a filter is set.
+ * @param {string}                  props.serverFilter           Selected server name, or '' for all servers.
+ * @param {(value: string) => void} props.setServerFilter        Server filter setter.
+ * @param {string[]}                props.serverNames            Server names seen in the breakdown data.
+ * @param {string}                  props.searchQuery            Search box value.
+ * @param {(value: string) => void} props.setSearchQuery         Search box setter.
+ * @param {boolean}                 props.searchLoading          True while a search is in flight.
+ * @param {string|null}             props.searchError            Search error message, or null.
+ * @param {(query: string) => void} props.onSearch               Search submit handler, given the raw query.
+ * @param {Array|null}              props.searchResults          Pattern-search result rows, or null.
+ * @param {boolean}                 props.searchResultsTruncated Whether the server capped the result set.
+ * @param {(rid: string) => void}   props.onSelectResult         Row-click handler; deep-links by request id.
+ * @param {string}                  props.refreshInterval        Poll interval in milliseconds, as a string.
+ * @param {(value: string) => void} props.setRefreshInterval     Refresh interval setter.
+ * @param {string}                  props.chartMetric            Aggregate chart metric, e.g. 'volume'.
+ * @param {(value: string) => void} props.setChartMetric         Chart metric setter.
+ * @param {string}                  props.chartBreakdown         Aggregate chart breakdown dimension.
+ * @param {(value: string) => void} props.setChartBreakdown      Breakdown dimension setter.
+ * @param {Object|null}             props.breakdownData          Time series for the selected breakdown dim.
+ * @param {Object|null}             props.categoryData           Category time series, or null.
  * @return {import('react').ReactElement|null} Rendered section, or null without overview data.
  */
 export default function OverviewSection( {

@@ -63,102 +63,101 @@ import useRouterTick from '@newspack-nodes/shared/hooks/useRouterTick';
  */
 const ROW_HEIGHT = 40;
 
-/**
- * One row of the recent-requests table, memoized so scrolling re-renders only
- * the rows that entered the window.
- *
- * The row is a button: click or Enter/Space hands `req.rid` to `onSelect`. Its
- * request-id cell carries a bar background whose width is the row's value as a
- * fraction of `maxBar`, and its status cell reads `error_status` first — `F`
- * for a fatal, `T` for a timeout — falling back to the HTTP status code.
- *
- * @param {Object}   props          Component props.
- * @param {Object}   props.req      Request index entry: rid, timestamp, method, status_code, error_status, duration_ms, peak_mb.
- * @param {Function} props.onSelect Receives the row's rid on click or keyboard activation.
- * @param {number}   props.maxBar   Largest bar value across the filtered rows; 0 draws no bar.
- * @param {string}   props.metric   Chart metric; 'memory' bars peak_mb, every other value bars duration_ms.
- * @return {import('react').ReactElement} Rendered row.
- */
-const RequestRow = memo( function RequestRow( {
-	req,
-	onSelect,
-	maxBar,
-	metric,
-} ) {
-	const barField = metric === 'memory' ? 'peak_mb' : 'duration_ms';
-	const barValue = req[ barField ] || 0;
-	const barPct = maxBar > 0 ? ( barValue / maxBar ) * 100 : 0;
-	let statusRole = '';
-	if ( 'T' === req.error_status ) {
-		statusRole = ' newspack-nodes-status is-warning';
-	} else if ( 'F' === req.error_status ) {
-		statusRole = ' newspack-nodes-status is-error';
-	}
-	const handleKeyDown = ( e ) => {
-		if ( e.key === 'Enter' || e.key === ' ' ) {
-			e.preventDefault();
-			onSelect( req.rid );
+// JSDoc rides the inner function: on the const, memo() infers props as `{}`.
+const RequestRow = memo(
+	/**
+	 * One row of the recent-requests table, memoized so scrolling re-renders
+	 * only the rows that entered the window.
+	 *
+	 * The row is a button: click or Enter/Space hands `req.rid` to `onSelect`.
+	 * Its request-id cell carries a bar background whose width is the row's
+	 * value as a fraction of `maxBar`, and its status cell reads `error_status`
+	 * first — `F` for a fatal, `T` for a timeout — falling back to the HTTP
+	 * status code.
+	 *
+	 * @param {Object}                props          Component props.
+	 * @param {Object}                props.req      Request index entry: rid, timestamp, method, status_code, error_status, duration_ms, peak_mb.
+	 * @param {(rid: string) => void} props.onSelect Receives the row's rid on click or keyboard activation.
+	 * @param {number}                props.maxBar   Largest bar value across the filtered rows; 0 draws no bar.
+	 * @param {string}                props.metric   Chart metric; 'memory' bars peak_mb, every other value bars duration_ms.
+	 * @return {import('react').ReactElement} Rendered row.
+	 */
+	function RequestRow( { req, onSelect, maxBar, metric } ) {
+		const barField = metric === 'memory' ? 'peak_mb' : 'duration_ms';
+		const barValue = req[ barField ] || 0;
+		const barPct = maxBar > 0 ? ( barValue / maxBar ) * 100 : 0;
+		let statusRole = '';
+		if ( 'T' === req.error_status ) {
+			statusRole = ' newspack-nodes-status is-warning';
+		} else if ( 'F' === req.error_status ) {
+			statusRole = ' newspack-nodes-status is-error';
 		}
-	};
+		const handleKeyDown = ( e ) => {
+			if ( e.key === 'Enter' || e.key === ' ' ) {
+				e.preventDefault();
+				onSelect( req.rid );
+			}
+		};
 
-	return (
-		<div
-			role="button"
-			tabIndex={ 0 }
-			className="event-logger-table__row newspack-nodes-table__row"
-			style={ { height: ROW_HEIGHT } }
-			onClick={ () => onSelect( req.rid ) }
-			onKeyDown={ handleKeyDown }
-		>
-			<div className="event-logger-table__cell newspack-nodes-table__cell">
-				{ new Date( req.timestamp * 1000 ).toLocaleString() }
-			</div>
-			<div className="event-logger-table__cell newspack-nodes-table__cell">
-				{ req.method || '-' }
-			</div>
+		return (
 			<div
-				className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--mono"
-				style={ {
-					background: `linear-gradient(to right, rgba(100, 181, 246, 0.15) ${ barPct }%, transparent ${ barPct }%)`,
-				} }
+				role="button"
+				tabIndex={ 0 }
+				className="event-logger-table__row newspack-nodes-table__row"
+				style={ { height: ROW_HEIGHT } }
+				onClick={ () => onSelect( req.rid ) }
+				onKeyDown={ handleKeyDown }
 			>
-				<code>{ req.rid }</code>
+				<div className="event-logger-table__cell newspack-nodes-table__cell">
+					{ new Date( req.timestamp * 1000 ).toLocaleString() }
+				</div>
+				<div className="event-logger-table__cell newspack-nodes-table__cell">
+					{ req.method || '-' }
+				</div>
+				<div
+					className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--mono"
+					style={ {
+						background: `linear-gradient(to right, rgba(100, 181, 246, 0.15) ${ barPct }%, transparent ${ barPct }%)`,
+					} }
+				>
+					<code>{ req.rid }</code>
+				</div>
+				<div
+					className={ `event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--status entry-status${ statusRole }` }
+					data-status={ statusRole ? undefined : req.status_code }
+				>
+					{ req.error_status === 'F' && (
+						<span
+							title={ __(
+								'Fatal error',
+								'newspack-event-logger-nodes'
+							) }
+						>
+							F
+						</span>
+					) }
+					{ req.error_status === 'T' && (
+						<span
+							title={ __(
+								'Timed out',
+								'newspack-event-logger-nodes'
+							) }
+						>
+							T
+						</span>
+					) }
+					{ ! req.error_status && ( req.status_code || '-' ) }
+				</div>
+				<div className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--numeric">
+					{ req.duration_ms?.toFixed( 0 ) || 0 }ms
+				</div>
+				<div className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--numeric">
+					{ req.peak_mb > 0 ? `${ req.peak_mb }MB` : '-' }
+				</div>
 			</div>
-			<div
-				className={ `event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--status entry-status${ statusRole }` }
-				data-status={ statusRole ? undefined : req.status_code }
-			>
-				{ req.error_status === 'F' && (
-					<span
-						title={ __(
-							'Fatal error',
-							'newspack-event-logger-nodes'
-						) }
-					>
-						F
-					</span>
-				) }
-				{ req.error_status === 'T' && (
-					<span
-						title={ __(
-							'Timed out',
-							'newspack-event-logger-nodes'
-						) }
-					>
-						T
-					</span>
-				) }
-				{ ! req.error_status && ( req.status_code || '-' ) }
-			</div>
-			<div className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--numeric">
-				{ req.duration_ms?.toFixed( 0 ) || 0 }ms
-			</div>
-			<div className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--numeric">
-				{ req.peak_mb > 0 ? `${ req.peak_mb }MB` : '-' }
-			</div>
-		</div>
-	);
-} );
+		);
+	}
+);
 
 /**
  * URL Detail View component.
@@ -168,14 +167,14 @@ const RequestRow = memo( function RequestRow( {
  * the exception — "Errors Only" is local state and narrows the list, the
  * heading count, and the bar-scaling maximum alike.
  *
- * @param {Object}   props                   Component props.
- * @param {Object}   props.urlDetail         `url_detail` payload: stats (with time_series), requests, aggregate_flame, aggregate_profiles, last_modified, and optional category_time_series.
- * @param {Array}    props.sortedRequests    Recent requests, already sorted by the parent.
- * @param {Object}   props.requestSort       Current sort as `{ field, dir }`; drives the header arrows only.
- * @param {Function} props.onRequestSort     Receives a field name when a sortable header is clicked.
- * @param {Function} props.onSelectRequest   Receives a rid from a row click or a scatter-plot dot.
- * @param {Function} props.fetchUrlBreakdown Async `( urlHash, breakdown ) => series|null`; a falsy value clears the chart's breakdown.
- * @param {string}   props.urlHash           Hash identifying the URL, as passed to `fetchUrlBreakdown`.
+ * @param {Object}                                                       props                   Component props.
+ * @param {Object}                                                       props.urlDetail         `url_detail` payload: stats (with time_series), requests, aggregate_flame, aggregate_profiles, last_modified, and optional category_time_series.
+ * @param {Array}                                                        props.sortedRequests    Recent requests, already sorted by the parent.
+ * @param {Object}                                                       props.requestSort       Current sort as `{ field, dir }`; drives the header arrows only.
+ * @param {(field: string) => void}                                      props.onRequestSort     Receives a field name when a sortable header is clicked.
+ * @param {(rid: string) => void}                                        props.onSelectRequest   Receives a rid from a row click or a scatter-plot dot.
+ * @param {(urlHash: string, breakdown: string) => Promise<Object|null>} props.fetchUrlBreakdown Async; a falsy value clears the chart's breakdown.
+ * @param {string}                                                       props.urlHash           Hash identifying the URL, as passed to `fetchUrlBreakdown`.
  * @return {import('react').ReactElement} Rendered component.
  */
 export default function UrlDetailView( {

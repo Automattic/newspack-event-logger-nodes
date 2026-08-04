@@ -30,6 +30,13 @@ import { Node, VALUE, TYPE, TM_STRUCT } from '@newspack-nodes/runtime';
  * does NOT stamp FROM: a transform is an internal edge, not an I/O boundary.
  */
 export class UrlDetailMergeNode extends Node {
+	/**
+	 * Start with nothing retained, so the first reply through this edge counts
+	 * as fresh and forwards as-is.
+	 *
+	 * Nothing is published here: this node sits on the graph edge and owns no
+	 * view state — the model belongs to `urldetail:view` downstream.
+	 */
 	constructor() {
 		super();
 		// Last forwarded url_detail payload + last_modified (reset on clear).

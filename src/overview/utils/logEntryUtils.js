@@ -103,13 +103,26 @@ const formatTimeDisplay = ( ts, lastHundredth ) => {
 };
 
 /**
+ * Indented rows plus the pre-placeholder entry count.
+ *
+ * `entries` carries the gap placeholders this pass inserts, so its length is
+ * not the number of logged entries; `realCount` is, and the request-detail
+ * header reports it.
+ *
+ * @typedef {Object} IndentedEntries
+ * @property {Array<Object>} entries   Rows with `indent`, `pairId`, and the
+ *                                     inserted `isPlaceholder` gap rows.
+ * @property {number}        realCount Count of real (non-placeholder) entries.
+ */
+
+/**
  * Compute indentation levels for log entries based on (start)/(complete) pairs.
  * Uses LIFO name matching to handle improperly nested events.
  * Adds time display: timestamps at 100ms marks, bullets at 10ms marks.
  * Inserts placeholder rows with bullets to show time gaps.
  *
  * @param {Array} entries Log entries array.
- * @return {Array} Entries with indent level and displayTime added.
+ * @return {IndentedEntries} Indented rows and the real-entry count.
  */
 export const computeIndentedEntries = ( entries ) => {
 	if ( ! entries?.length ) {

@@ -13,21 +13,6 @@
  *
  * The component gates itself: an unmounted graph or an empty catalog renders
  * null, and the segment list appears only once a partition is selected.
- *
- * @param {Object}   props
- * @param {Object}   [props.browse]          The `useGlobBrowse` return — the
- *                                           partition catalog, the selection,
- *                                           the segments, the view-derived mode,
- *                                           and the seek actions (`follow`,
- *                                           `replay`, `browseSegment`).
- *                                           Undefined before the graph mounts →
- *                                           renders null.
- * @param {Function} props.onSelectPartition `(key) => void` — called with the
- *                                           chosen partition key, or '' for the
- *                                           whole glob. Both dashboards forward
- *                                           it to `browse.selectPartition`.
- * @return {import('react').ReactElement|null} The rail, or null when the browse
- *                                             model lists no partitions.
  */
 
 import { __, sprintf } from '@wordpress/i18n';
@@ -35,6 +20,28 @@ import LogBrowser from '@newspack-nodes/shared/components/LogBrowser';
 import formatBytes from '@newspack-nodes/shared/utils/formatBytes';
 import './SegmentBrowseSidebar.scss';
 
+/**
+ * @param {Object}                props                   Component props.
+ * @param {Object}                [props.browse]          The `useGlobBrowse`
+ *                                                        return — the partition
+ *                                                        catalog, the selection,
+ *                                                        the segments, the
+ *                                                        view-derived mode, and
+ *                                                        the seek actions
+ *                                                        (`follow`, `replay`,
+ *                                                        `browseSegment`).
+ *                                                        Undefined before the
+ *                                                        graph mounts → renders
+ *                                                        null.
+ * @param {(key: string) => void} props.onSelectPartition Receives the chosen
+ *                                                        partition key, or ''
+ *                                                        for the whole glob.
+ *                                                        Both dashboards forward
+ *                                                        it to
+ *                                                        `browse.selectPartition`.
+ * @return {import('react').ReactElement|null} The rail, or null when the browse
+ *                                             model lists no partitions.
+ */
 export default function SegmentBrowseSidebar( { browse, onSelectPartition } ) {
 	const partitions = browse?.partitions ?? [];
 	if ( 0 === partitions.length ) {

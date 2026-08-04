@@ -21,12 +21,6 @@
  *
  * The command boundary is injectable: tests pass `opts.commandClient` (assigned
  * to `_http.client`). Production lets HttpOut default it.
- *
- * @param {Object} [opts]               Options (testing seams).
- * @param {Object} [opts.commandClient] transport seam assigned to `_http.client`.
- * @return {{ rules: Array, loading: boolean, error: (string|null),
- *   list: Function, saveAll: Function, upsert: Function, remove: Function }}
- *   The render model plus CRUD callbacks.
  */
 
 import { useCallback, useEffect, useRef, useState } from '@wordpress/element';
@@ -61,6 +55,25 @@ function fireList( shell ) {
 	shell.fill( m );
 }
 
+/**
+ * The three mutations resolve their own CI reply, but the TABLE they repaint is
+ * refreshed by a separate `list` whose reply lands on `rules:in` — so an awaited
+ * mutation settles BEFORE `rules` reflects it. `list` itself resolves as soon as
+ * the command is on the wire, not when the table has repainted; read the table
+ * from the returned `rules`, never from a `list()` resolution.
+ *
+ * @param {Object} [opts]               Options (testing seams).
+ * @param {Object} [opts.commandClient] Transport seam assigned to `_http.client`.
+ * @return {{ rules: Object[], loading: boolean, error: (string|null),
+ *   list: () => Promise<void>,
+ *   saveAll: (rules: Object[]) => Promise<Object>,
+ *   upsert: (rule: Object) => Promise<Object>,
+ *   remove: (id: string) => Promise<Object> }}
+ *   The `rules:view` render model plus the CRUD callbacks. `loading` starts
+ *   true and clears on the first `list` reply; `error` carries a `list`
+ *   failure's banner — a mutation's failure REJECTS its own promise instead,
+ *   leaving the banner clean for the caller's catch to own.
+ */
 export function useRulesGraph( opts = {} ) {
 	const optsRef = useRef( opts );
 	optsRef.current = opts;

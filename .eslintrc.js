@@ -15,6 +15,66 @@ module.exports = {
 		// knip suppression tag: an export that exists for its unit test, not
 		// for callers. jsdoc/check-tag-names rejects unknown tags otherwise.
 		'jsdoc/check-tag-names': [ 'error', { definedTags: [ 'testonly' ] } ],
+		// The three rules below mirror the substrate's; see its .eslintrc.js
+		// for the incidents behind each. Baselines here were measured before
+		// gating: exhaustive-deps and no-restricted-paths were already at 0,
+		// require-jsdoc was 23 and is now 0.
+		//
+		// A bare `{Function}` in a docblock has no call signature, so it
+		// satisfies no specific handler type. require-jsdoc is what stops new
+		// ones appearing; it also catches a docblock orphaned from its subject.
+		'jsdoc/require-jsdoc': [
+			'error',
+			{
+				publicOnly: true,
+				require: {
+					FunctionDeclaration: true,
+					MethodDefinition: true,
+					ClassDeclaration: true,
+				},
+			},
+		],
+		// A stale closure is a bug, not a style note.
+		'react-hooks/exhaustive-deps': [
+			'error',
+			{ additionalHooks: '^(useSelect|useSuspenseSelect)$' },
+		],
+		// The runtime layer lives in the substrate, so the zone that means
+		// something HERE is the shared one: components/hooks/test-helpers are
+		// the bottom layer and cannot reach up into a dashboard. Dashboards
+		// importing each other is deliberate and stays allowed — settings
+		// mounts RulesAdmin, current-request reuses RequestProfile.
+		'import/no-restricted-paths': [
+			'error',
+			{
+				zones: [
+					{
+						target: './src/components',
+						from: './src',
+						except: [
+							'./components',
+							'./hooks',
+							'./styles',
+							'./test-helpers',
+						],
+						message:
+							'src/components is a bottom layer — it cannot import from a dashboard directory.',
+					},
+					{
+						target: './src/hooks',
+						from: './src',
+						except: [
+							'./components',
+							'./hooks',
+							'./styles',
+							'./test-helpers',
+						],
+						message:
+							'src/hooks is a bottom layer — it cannot import from a dashboard directory.',
+					},
+				],
+			},
+		],
 		'@wordpress/i18n-text-domain': [
 			'error',
 			{ allowedTextDomain: [ 'newspack-event-logger-nodes' ] },

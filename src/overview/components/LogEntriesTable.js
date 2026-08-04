@@ -404,8 +404,8 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 				e.preventDefault();
 				e.stopPropagation();
 				clearSearch();
-				const modal = document.querySelector(
-					'.components-modal__frame'
+				const modal = /** @type {HTMLElement|null} */ (
+					document.querySelector( '.components-modal__frame' )
 				);
 				if ( modal ) {
 					modal.focus();
@@ -1098,7 +1098,9 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 							) {
 								e.preventDefault();
 								// Blur so n/p keybindings work immediately.
-								e.target.blur();
+								/** @type {HTMLInputElement} */ (
+									e.target
+								).blur();
 								if ( currentMatchIndex < 0 ) {
 									navigateToMatch( 0 );
 									return;

@@ -44,6 +44,15 @@ import { errorMessage } from '@newspack-nodes/shared/errorMessage';
  * and `storeResult( payload )` (how a successful payload becomes the slice).
  */
 export class DecodedSliceViewNode extends Node {
+	/**
+	 * Publish the subclass's `emptySlice()` immediately, so the widget reading
+	 * `useNodeState` renders its shaped-but-empty state instead of undefined
+	 * while the first reply is still in flight.
+	 *
+	 * `emptySlice()` is called on the SUBCLASS here — the subclass's own
+	 * constructor body has not run yet, so an override must not depend on
+	 * fields it assigns after `super()`.
+	 */
 	constructor() {
 		super();
 		this.model = this.emptySlice();

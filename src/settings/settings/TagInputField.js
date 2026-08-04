@@ -26,15 +26,15 @@ import '../styles/tag-input.scss';
 /**
  * Tag Input Field component.
  *
- * @param {Object}   props                    Component props.
- * @param {string}   props.fieldName          The field name (used for hidden input ID).
- * @param {Array}    props.initialValues      Initial values array.
- * @param {Array}    props.defaultValues      Default values for reset.
- * @param {boolean}  props.horizontal         If true, tags flow horizontally (for short values).
- * @param {boolean}  props.showHookSelector   If true, show hook selector button (for events fields).
- * @param {string}   props.hookSelectorMode   'include' or 'exclude' for hook selector.
- * @param {boolean}  props.showCustomSelector If true, show custom event selector button.
- * @param {Function} [props.onChange]         Controlled-use callback fired with the values array on change.
+ * @param {Object}                     props                      Component props.
+ * @param {string}                     props.fieldName            The field name (used for hidden input ID).
+ * @param {Array}                      [props.initialValues]      Initial values array; defaults to empty.
+ * @param {Array}                      [props.defaultValues]      Default values for reset; defaults to empty.
+ * @param {boolean}                    [props.horizontal]         If true, tags flow horizontally (for short values).
+ * @param {boolean}                    [props.showHookSelector]   If true, show hook selector button (for events fields).
+ * @param {string}                     [props.hookSelectorMode]   'include' or 'exclude' for hook selector; defaults to 'exclude'.
+ * @param {boolean}                    [props.showCustomSelector] If true, show custom event selector button.
+ * @param {(values: string[]) => void} [props.onChange]           Controlled-use callback fired with the values array on change.
  * @return {import('react').ReactElement} Rendered component.
  */
 export default function TagInputField( {
@@ -62,7 +62,9 @@ export default function TagInputField( {
 
 	// On a real edit, drop any pending reset mark (hidden carrier auto-skip).
 	useEffect( () => {
-		const hiddenInput = document.getElementById( `${ fieldName }_json` );
+		const hiddenInput = /** @type {HTMLInputElement|null} */ (
+			document.getElementById( `${ fieldName }_json` )
+		);
 		if ( hiddenInput ) {
 			hiddenInput.value = JSON.stringify( values );
 		}
