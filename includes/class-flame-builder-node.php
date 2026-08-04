@@ -2246,12 +2246,12 @@ class Flame_Builder_Node extends Node {
 						[ 'name' => 'is_hub', 'type' => 'bool', 'required' => true, 'default' => '<eln:is_hub>' ],
 					],
 					'handler'     => static function ( Command_Interpreter_Node $interpreter, array $args ): string {
-						$arg = Core::as_string( $args[0] ?? '' );
-						$arg  = \strtolower( \trim( $arg ) );
-						$bool = ( 'true' === $arg || '1' === $arg );
 						/** @var self $patron */
 						$patron = $interpreter->patron();
-						$patron->set_is_hub( $bool );
+						// THE bool parse; a local one here rejected yes/on.
+						$patron->set_is_hub(
+							self::truthy( \trim( Core::as_string( $args[0] ?? '' ) ) )
+						);
 						return 'ok';
 					},
 				],
