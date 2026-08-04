@@ -3,22 +3,25 @@
  * Performance_CI: command-dispatch for the performance-dashboard surface.
  *
  * Verbs the live surfaces drive:
- *   - overview / urls / url_detail / request_search / request_detail
- *     — the de-godded performance dashboard (usePerformanceGraph) +
- *     the current-request tab.
- *   - hooks_registered — the Settings / hook-catalog tree.
+ *   - overview / urls / url_detail / request_search / request_grep /
+ *     request_detail — the performance dashboard's per-slice graph
+ *     (`src/overview/hooks/usePerformanceGraph.js`), plus the
+ *     current-request overlay tab, which fetches `request_detail`.
+ *   - hooks_registered — the Settings page's hook-catalog tree.
  *   - set — the spoke-side receiver of the substrate Settings_Sync_Node
- *     hub→spoke fanout (hub-control.tsl maps the nine perf-tuning options
- *     to this `performance` node).
+ *     hub→spoke fanout. `hub-control.tsl` maps three application options
+ *     (rules, log_memory, flush_every_line) to this `performance` node;
+ *     SETTINGS_OPTIONS is the matching whitelist.
  *
  * SSE-style stream surfaces (request-log, gyroscope, errors) consume the
  * substrate's `/messages/stream` EventSource directly — the
  * CommandInterpreter dispatch path doesn't stream.
  *
  * Cross-cutting design choices:
- *  - Auth: every verb requires `manage_options`.
- *  - Rate limit: none — interpreter dispatch fires verbs once-per-request
- *    through the worker, not from a fan-out of polling tabs.
+ *  - Auth: every verb opens with `require_manage_options()` — the substrate
+ *    `manage` role, which defaults to `manage_options`.
+ *  - Rate limit: none here. The substrate's `/command` endpoint already caps
+ *    POSTs per user per window, so a polling dashboard is bounded upstream.
  *  - Stats reads fail-soft (matches Stats_Store + dashboards "no data" UX).
  *  - Disk scans capped at MAX_INDEX_ENTRIES so a missing-rid lookup can't
  *    escalate into a partition-wide segment walk.
@@ -50,6 +53,20 @@ use Newspack_Nodes\Service_CI_Node;
 
 \defined( 'ABSPATH' ) || exit;
 
+/**
+ * Service CI mounted as `performance` on `newspack_nodes/request_graph_ready`.
+ *
+ * Every verb is declared once in `node_schema()['commands']`; the inherited
+ * Service_CI_Node constructor turns that schema into the dispatch table, so
+ * this class holds no commands table of its own.
+ *
+ * The static helpers below fall into three families:
+ *   - memcache readers, which fan a Stats_Store out per flame-builder worker
+ *     and sum-merge the per-partition buckets;
+ *   - disk walkers, which construct throwaway Partition/Consumer nodes over
+ *     the DECLARED node dirs and remove them again;
+ *   - `set` sanitizers, which bound the values arriving from the hub.
+ */
 class Performance_CI_Node extends Service_CI_Node {
 
 	/**
@@ -83,7 +100,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	/** `request_grep` first-match excerpt length (bounded for the reply). */
 	private const GREP_EXCERPT_LENGTH = 200;
 
-	/** `request_grep` in-flight LruCache geometry (100 × 3 = 300 concurrent rids). */
+	/** `request_grep` in-flight LRU_Cache geometry (100 × 3 = 300 concurrent rids). */
 	private const GREP_INFLIGHT_BUCKET_SIZE = 100;
 	private const GREP_INFLIGHT_NUM_BUCKETS = 3;
 
@@ -96,10 +113,13 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * typos fall through without surfacing arbitrary memcache reads.
 	 */
 	private const DIMENSIONS = [ 'status', 'method', 'server', 'country', 'from', 'ua', 'ja4' ];
+
+	/** Deepest nesting `set` accepts in an array option; deeper is rejected. */
 	private const SETTINGS_ARRAY_DEPTH = 5;
 
 	/**
-	 * Maximum array element count + nesting depth for `set`.
+	 * Maximum element count at any single array level for `set`; a wider level
+	 * rejects the whole option rather than truncating it.
 	 */
 	private const SETTINGS_ARRAY_MAX   = 10000;
 
@@ -116,8 +136,15 @@ class Performance_CI_Node extends Service_CI_Node {
 	private const SETTINGS_INT_MAX = 1073741824;
 
 	/**
-	 * `set` whitelist: WP option name → sanitization type.
-	 * 
+	 * `set` whitelist: WP option name → sanitization type. An option absent
+	 * here is refused outright, so this list and `hub-control.tsl`'s
+	 * `add_setting` lines must stay in step — a hub push naming anything else
+	 * comes back as "unknown option".
+	 *
+	 * The sanitizer also handles `int` and `float`; no entry claims those
+	 * types today, so SETTINGS_INT_MAX / SETTINGS_FLOAT_MAX bound nothing
+	 * until one does.
+	 *
 	 * @var array<string,string>
 	 */
 	private const SETTINGS_OPTIONS = [
@@ -149,8 +176,9 @@ class Performance_CI_Node extends Service_CI_Node {
 
 	/**
 	 * Per-request memo of the merged URL index; null until index() reads once.
-	 * Per-INSTANCE (one Performance_CI_Node == one request) so a long-lived
-	 * worker never serves a stale snapshot across requests.
+	 * Deliberately an instance property, never a static: the node is built per
+	 * request graph, so the memo dies with it and no long-lived worker can
+	 * serve a stale snapshot.
 	 *
 	 * @var array<int,array<array-key,mixed>>|null
 	 */
@@ -158,10 +186,10 @@ class Performance_CI_Node extends Service_CI_Node {
 
 	/**
 	 * Merged URL index for THIS request — read at most once and memoized, so the
-	 * slice handlers that each derive from it (overview, urls, url_detail's
-	 * lookup, dashboard's overview + urls) share a single memcache fan-out
-	 * instead of re-loading per slice. Resolves the `load_index` seam (the real
-	 * loader by default) on first call.
+	 * three verbs that derive from it (`overview`, `urls`, and `url_detail`'s
+	 * stats lookup) share a single memcache fan-out instead of re-loading per
+	 * verb. Resolves the `load_index` seam (the real loader by default) on the
+	 * first call.
 	 *
 	 * @return array<int,array<array-key,mixed>>
 	 */
@@ -182,11 +210,13 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * Type-coerce + bounds-check a single value for `set`. Mirrors
-	 * PerfSettingsController::sanitize_value — returns null when rejected.
+	 * Type-coerce + bounds-check a single value for `set`.
+	 *
+	 * Rejection is signalled by null, so a legitimately-null sanitized value is
+	 * not representable — every accepted type here returns a scalar or array.
 	 *
 	 * @param mixed  $value Raw input.
-	 * @param string $type  One of int|float|bool|array.
+	 * @param string $type  One of int|float|bool|array; anything else rejects.
 	 * @return mixed|null Sanitized value, or null to reject.
 	 */
 	private static function sanitize_settings_value( mixed $value, string $type ): mixed {
@@ -221,9 +251,13 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * Bounded-recursion array sanitizer for `set`. Mirrors
-	 * PerfSettingsController::sanitize_array — depth cap SETTINGS_ARRAY_DEPTH,
-	 * size cap SETTINGS_ARRAY_MAX, text fields run through sanitize_text_field.
+	 * Bounded-recursion array sanitizer for `set`: depth cap
+	 * SETTINGS_ARRAY_DEPTH, per-level size cap SETTINGS_ARRAY_MAX, string keys
+	 * and string values through `sanitize_text_field`.
+	 *
+	 * A value that is not a string, bool, int, float, or array is DROPPED
+	 * silently — null and objects simply do not survive into the sanitized
+	 * copy — while a too-deep or too-wide array rejects the whole option.
 	 *
 	 * @param array<mixed,mixed> $arr   Input array.
 	 * @param int                $depth Current recursion depth.
@@ -256,9 +290,16 @@ class Performance_CI_Node extends Service_CI_Node {
 
 	/**
 	 * Merged URL index across all partitions, shaped for dashboard display.
-	 * Mirrors PerfOverviewController::load_index — same field set, same
-	 * sort (count DESC), same fallback hashing for buckets that don't
-	 * carry an embedded URL.
+	 *
+	 * Rows are keyed by URL hash while merging, then flattened to a list sorted
+	 * by `count` DESC. That sort is load-bearing: `build_overview_payload` takes
+	 * the head of this list as `most_requested` without re-sorting, so a
+	 * replacement `$load_index` seam must sort the same way.
+	 *
+	 * Two bucket shapes coexist. Flame_Builder writes `sum_ms` directly;
+	 * older aggregator buckets carry `sum_req_time` in seconds, folded in at
+	 * ×1000. A bucket keyed by URL hash carries its URL in `url`; one keyed by
+	 * the URL string gets a hash derived here instead.
 	 *
 	 * @return array<int,array<string,mixed>>
 	 */
@@ -306,7 +347,7 @@ class Performance_CI_Node extends Service_CI_Node {
 					$entry['count_3xx'] += Core::as_int( $stat_arr['count_3xx'] ?? 0 );
 					$entry['count_4xx'] += Core::as_int( $stat_arr['count_4xx'] ?? 0 );
 					$entry['count_5xx'] += Core::as_int( $stat_arr['count_5xx'] ?? 0 );
-					// sum_ms (FlameBuilder) or sum_req_time secs (Aggregator).
+					// sum_ms is current; legacy sum_req_time is in seconds.
 					$entry['sum_ms']      += isset( $stat_arr['sum_ms'] )
 						? Core::as_float( $stat_arr['sum_ms'] )
 						: Core::as_float( $stat_arr['sum_req_time'] ?? 0 ) * 1000.0;
@@ -364,8 +405,10 @@ class Performance_CI_Node extends Service_CI_Node {
 
 	/**
 	 * Walk every recent URL bucket for the given hash and emit a per-bucket
-	 * `{count, sum_ms, sum_peak_mb}` time series. Mirrors
-	 * PerfUrlsController::build_url_time_series.
+	 * `{count, sum_ms, sum_peak_mb}` time series, keyed by bucket and sorted
+	 * ascending. Zero-count buckets are skipped, so the series is sparse.
+	 *
+	 * @param string $hash 12-char URL hash.
 	 * @return array<string, mixed>
 	 */
 	private static function build_url_time_series( string $hash ): array {
@@ -382,7 +425,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				if ( 0 === $count ) {
 					continue;
 				}
-				// sum_ms (FlameBuilder) or sum_req_time secs (Aggregator).
+				// sum_ms is current; legacy sum_req_time is in seconds.
 				$sum_ms = isset( $stats['sum_ms'] )
 					? Core::as_float( $stats['sum_ms'] )
 					: Core::as_float( $stats['sum_req_time'] ?? 0 ) * 1000.0;
@@ -398,7 +441,9 @@ class Performance_CI_Node extends Service_CI_Node {
 
 	/**
 	 * Build the merged global category leaderboard for the recent window.
-	 * Mirror of PerfOverviewController::build_global_leaderboard.
+	 * Sums stay raw across the merge; `Stats_Store::sums_to_display` computes
+	 * the means once at the end.
+	 *
 	 * @return array<string, mixed>
 	 */
 	private static function build_global_leaderboard(): array {
@@ -424,7 +469,8 @@ class Performance_CI_Node extends Service_CI_Node {
 
 	/**
 	 * Build the per-server category leaderboard for the recent window.
-	 * Mirror of PerfOverviewController::build_server_leaderboard.
+	 *
+	 * @param string $server Server name to scope to.
 	 * @return array<string, mixed>
 	 */
 	private static function build_server_leaderboard( string $server ): array {
@@ -449,9 +495,9 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * Build a list of recent 5-min bucket keys spanning the retention window.
-	 * Capped at 288 (24h × 12 buckets/h) so memcache get_multi stays bounded.
-	 * Matches PerfOverviewController::recent_url_buckets.
+	 * Build a list of recent 5-min bucket keys (`Y-m-d-H-MM`, UTC) walking
+	 * backwards from now. Capped at 288 (24h × 12 buckets/h) so memcache
+	 * get_multi stays bounded regardless of the configured retention.
 	 *
 	 * @return array<int,string>
 	 */
@@ -494,7 +540,9 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * The server dimension is the global routing index: Flame Builder deliberately
 	 * omits its redundant per-server copy, so keep that dimension global while a
 	 * server scope narrows every other dimension.
-	 * Mirror of PerfOverviewController::merge_dim_across_partitions.
+	 *
+	 * @param string $dimension One of DIMENSIONS.
+	 * @param string $server    Server scope; ignored for the `server` dimension.
 	 * @return array<array-key, mixed> Bucket keys derive from decoded memcache blobs.
 	 */
 	private static function merge_dim_across_partitions( string $dimension, string $server ): array {
@@ -509,7 +557,7 @@ class Performance_CI_Node extends Service_CI_Node {
 
 	/**
 	 * Sum-merge category buckets across all partitions (global scope).
-	 * Mirror of PerfOverviewController::merge_categories_across_partitions.
+	 *
 	 * @return array<string, mixed>
 	 */
 	private static function merge_categories_across_partitions(): array {
@@ -523,7 +571,8 @@ class Performance_CI_Node extends Service_CI_Node {
 
 	/**
 	 * Sum-merge per-server category buckets across all partitions.
-	 * Mirror of PerfOverviewController::merge_server_categories_across_partitions.
+	 *
+	 * @param string $server Server name to scope to.
 	 * @return array<string, mixed>
 	 */
 	private static function merge_server_categories_across_partitions( string $server ): array {
@@ -537,7 +586,9 @@ class Performance_CI_Node extends Service_CI_Node {
 
 	/**
 	 * Sum-merge per-URL dimensional buckets for one dim/hash.
-	 * Mirror of PerfUrlsController::merge_url_dim.
+	 *
+	 * @param string $hash      12-char URL hash.
+	 * @param string $dimension One of DIMENSIONS.
 	 * @return array<array-key, mixed> Bucket keys derive from decoded memcache blobs.
 	 */
 	private static function merge_url_dim( string $hash, string $dimension ): array {
@@ -555,7 +606,8 @@ class Performance_CI_Node extends Service_CI_Node {
 
 	/**
 	 * Sum-merge per-URL category buckets for one hash.
-	 * Mirror of PerfUrlsController::merge_url_categories.
+	 *
+	 * @param string $hash 12-char URL hash.
 	 * @return array<string, mixed>
 	 */
 	private static function merge_url_categories( string $hash ): array {
@@ -592,9 +644,9 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * Helper for the four category-merge variants (global / server / url + the
-	 * url_detail call). All four iterate `[bucket => [cat => {t,c,n}]]` shaped
-	 * blobs the exact same way.
+	 * Sum-merge category `[bucket => [cat => {t,c,n}]]` blobs into the running
+	 * totals. Shared by the three category-merge variants (global, per-server,
+	 * per-URL), which iterate identically and differ only in the store read.
 	 *
 	 * @param array<string,array<string,array{t:float,c:float,n:int}>> $merged Mutated.
 	 * @param array<string,mixed>                                       $rows   Inbound.
@@ -617,8 +669,11 @@ class Performance_CI_Node extends Service_CI_Node {
 
 	/**
 	 * Compose the overview payload shape from a pre-loaded URL index.
-	 * Shared by the `overview` and `dashboard` verbs — `dashboard` wraps
-	 * this alongside the same `$index` to avoid a second memcache fan-out.
+	 *
+	 * Takes the index as a parameter rather than calling index() itself so the
+	 * caller controls the single fan-out. `most_requested` is the head of
+	 * `$index` untouched, which assumes the count-DESC sort load_index_default
+	 * applies; `slowest_urls` re-sorts a copy by p95.
 	 *
 	 * @param array<int,array<array-key,mixed>> $index Output of the memoized index() (load_index_default).
 	 * @return array<string, mixed>
@@ -676,7 +731,10 @@ class Performance_CI_Node extends Service_CI_Node {
 
 	/**
 	 * Pull the per-URL aggregate stats blob (flame, profiles, last_modified).
-	 * First partition with a matching blob wins.
+	 * First partition with a matching blob wins — the blob is whole, not
+	 * summable, so there is nothing to merge across partitions.
+	 *
+	 * @param string $hash 12-char URL hash.
 	 * @return array<array-key, mixed>|null Decoded per-URL stats blob from get_url_stats().
 	 */
 	private static function find_url_aggregate( string $hash ): ?array {
@@ -697,6 +755,10 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * and nothing of it lands on disk — so the index space comes from the
 	 * declaring topology's count, not from a dir listing.
 	 *
+	 * With no memcache handle this returns an empty list, which is what makes
+	 * every stats reader above degrade to an empty or zeroed shape instead of
+	 * throwing. Each store's TTL comes from the substrate `min_lifetime` key.
+	 *
 	 * @return array<int,Stats_Store>
 	 */
 	private static function stats_stores(): array {
@@ -714,10 +776,12 @@ class Performance_CI_Node extends Service_CI_Node {
 	// Disk-walking helpers — recent requests + request body lookup + flame.
 
 	/**
-	 * Walk `requests.log` partitions and collect the 500 most-recent index
-	 * entries for the given url_hash. Mirror of
-	 * PerfUrlsController::find_recent_requests_for_url.
+	 * Walk the request partitions newest-first and collect up to 500 index
+	 * entries for the given url_hash, deduplicated by rid and sorted by
+	 * timestamp DESC. Stops early on either the 500-result cap or the shared
+	 * MAX_INDEX_ENTRIES scan budget, which spans all partitions.
 	 *
+	 * @param string $url_hash 12-char URL hash to match.
 	 * @return array<int,array<string,mixed>>
 	 */
 	private static function find_recent_requests_for_url( string $url_hash ): array {
@@ -781,30 +845,16 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * Request partitions to search for `$rid`, its own partition first.
+	 * Locate a single request index entry by rid in one partition and return the
+	 * search shape `{rid, partition, url_hash}` — enough for the dashboard to
+	 * then ask for `request_detail`; the request body is not read here.
 	 *
-	 * A rid rides the same hash the whole way: the firehose Topic routes it by
-	 * KEY, the worker on that partition consumes it, and Request_Builder writes
-	 * it to the request partition of the SAME index. So the hash names the
-	 * partition outright and the rest of the fan-out is a fallback — needed
-	 * because the guess uses the reader's partition count, which lags the
-	 * writer's across a re-partition.
-	 *
-	 * @return array<int,string> Partition index => dir, hashed partition first.
-	 */
-	private static function search_order( string $rid ): array {
-		$dirs = Bootstrap::node_dirs( self::NODE_REQUESTS );
-		$hit  = Partition_Node::hash_to_partition( $rid, \max( 1, \count( $dirs ) ) );
-		if ( ! isset( $dirs[ $hit ] ) ) {
-			return $dirs;
-		}
-		return [ $hit => $dirs[ $hit ] ] + $dirs;
-	}
-
-	/**
-	 * Locate a single request index entry by rid in one partition.
-	 * Returns the search shape `{rid, partition, url_hash}`.
-	 * @return array<string, mixed>
+	 * @param string $dir           Partition directory.
+	 * @param int    $partition     Partition index, echoed back in the result.
+	 * @param string $rid           Request id to match.
+	 * @param int    $entries_count Running scan budget, shared across partitions
+	 *                              by the caller and mutated here.
+	 * @return array<string, mixed>|null Search shape, or null when unmatched.
 	 */
 	private static function find_request_index_entry( string $dir, int $partition, string $rid, int &$entries_count ): ?array {
 		$result   = null;
@@ -840,9 +890,16 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * Read the full request body from a known partition + optionally merge
-	 * any matching flame_data. Mirror of
-	 * PerfRequestsController::find_request_in_partition.
+	 * Read the full request body from a known partition, then merge any matching
+	 * flame data in as `flame_data`. A missing flame is normal — flames are
+	 * built asynchronously — and leaves the body otherwise intact.
+	 *
+	 * Unlike find_request_index_entry, the scan budget here is per-call: this
+	 * walks exactly one partition.
+	 *
+	 * @param string $dir       Partition directory.
+	 * @param int    $partition Partition index (names the scratch node).
+	 * @param string $rid       Request id to match.
 	 * @return array<array-key, mixed>|null Decoded request body (keys come from the JSON envelope).
 	 */
 	private static function find_request_in_partition( string $dir, int $partition, string $rid ): ?array {
@@ -896,8 +953,10 @@ class Performance_CI_Node extends Service_CI_Node {
 
 	/**
 	 * Search every flame partition for a flame entry matching the rid; the
-	 * first hit wins. FlameBuilder writes to whatever partition it's wired
+	 * first hit wins. Flame_Builder writes to whatever partition it's wired
 	 * into, so a per-rid lookup has to fan out across all of them.
+	 *
+	 * @param string $rid Request id to match.
 	 * @return array<array-key, mixed>|null Decoded flame blob (keys come from the JSON envelope).
 	 */
 	private static function find_flame_for_rid( string $rid ): ?array {
@@ -974,6 +1033,8 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * per-request byte/line cap (in the engine), a global scan-line budget, and a
 	 * result cap — every limit is reported honestly in `truncated`.
 	 *
+	 * @param string $pattern Raw user pattern; matched case-insensitively.
+	 * @param int    $limit   Maximum matching requests to return.
 	 * @return array{pattern:string, scope:string, scanned_partitions:int, results:array<int,array<string,mixed>>, truncated:bool, result_count:int}
 	 */
 	private static function run_request_grep( string $pattern, int $limit ): array {
@@ -1115,6 +1176,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * Parse a firehose `request` entry's `m` ("METHOD full-url") into [method, url].
 	 * Mirrors Request_Builder_Node's request-line parse (query stripped from url).
 	 *
+	 * @param string $message The entry's `m` field.
 	 * @return array{0:string,1:string}
 	 */
 	private static function parse_request_line( string $message ): array {
@@ -1144,10 +1206,37 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
+	 * Request partitions to search for `$rid`, its own partition first.
+	 *
+	 * A rid rides the same hash the whole way: the firehose Topic routes it by
+	 * KEY, the worker on that partition consumes it, and Request_Builder writes
+	 * it to the request partition of the SAME index. So the hash names the
+	 * partition outright and the rest of the fan-out is a fallback — needed
+	 * because the guess uses the reader's partition count, which lags the
+	 * writer's across a re-partition.
+	 *
+	 * @param string $rid Request id whose hash names the first partition.
+	 * @return array<int,string> Partition index => dir, hashed partition first.
+	 */
+	private static function search_order( string $rid ): array {
+		$dirs = Bootstrap::node_dirs( self::NODE_REQUESTS );
+		$hit  = Partition_Node::hash_to_partition( $rid, \max( 1, \count( $dirs ) ) );
+		if ( ! isset( $dirs[ $hit ] ) ) {
+			return $dirs;
+		}
+		return [ $hit => $dirs[ $hit ] ] + $dirs;
+	}
+
+	/**
 	 * Decode a synced array-option value. Settings_Sync_Node::scalarize()
 	 * JSON-encodes arrays unconditionally, so the wire form is always JSON. A
 	 * non-JSON value is a contract violation: reject it explicitly to [] with a
 	 * rate-limited notice rather than silently mis-parsing it.
+	 *
+	 * Footgun: the empty array is not inert downstream. For the ruleset option
+	 * it reaches `Rule_Set::apply_synced( [] )`, which SAVES an empty ruleset —
+	 * so a malformed push clears the spoke's rules rather than leaving them be.
+	 * Watch the notice.
 	 *
 	 * @param string $raw The raw positional value off the wire.
 	 * @return array<array-key,mixed>
@@ -1162,10 +1251,11 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * Resolve a Command_Args boolean flag. A bare `--flag` parses to `true`;
-	 * A bare `--flag` and `--flag=1` / `--flag=true` are truthy; `--flag=0` /
-	 * `--flag=false` and an absent key are false. (These are the only tokens
-	 * formatCommandArgs / the forwarder ever emit for a boolean.)
+	 * Resolve a Command_Args boolean flag. A bare `--flag` and any value other
+	 * than `0` / `false` read as true; `--flag=0`, `--flag=false`, and an
+	 * absent key read as false. The JS `formatCommandArgs` only ever emits the
+	 * bare form or `--flag=false`, so the permissive middle is for hand-typed
+	 * commands.
 	 *
 	 * @param array<string,string|true> $options Parsed options.
 	 * @param string                    $key     Flag name.
@@ -1187,8 +1277,13 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * builds the commands table from this schema. Stats-reading verbs build
 	 * per-partition Stats_Store off the shared `Core::$memd` handle; a null
 	 * handle yields empty/zeroed shapes. Disk-walking verbs work regardless.
-	 * 
+	 *
+	 * Every handler opens with `require_manage_options()` and throws a
+	 * RuntimeException on bad input; the interpreter turns the throw into a
+	 * TM_COMMAND|TM_ERROR reply, so no handler returns an error shape.
+	 *
 	 * @api Used by substrate.
+	 * @return array<string, mixed>
 	 */
 	public static function node_schema(): array {
 		return \array_merge( parent::node_schema(), [
@@ -1493,7 +1588,7 @@ class Performance_CI_Node extends Service_CI_Node {
 					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
 				self::require_manage_options();
 
-				// Positional: one option per command; Settings_Sync fans out.
+				// One option per command; Settings_Sync_Node fans it out.
 				[ $option, $value_arg ] = \array_pad( Command_Args::parse( self::arg_strings( $args ) )['positional'], 2, null );
 
 				$option = Core::str( $option );

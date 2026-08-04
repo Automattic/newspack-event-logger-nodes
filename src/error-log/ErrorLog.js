@@ -1,16 +1,17 @@
 /**
- * Error Log Component — real-time scrolling log of errors and warnings from
- * errors.log.
+ * Error Log Component — real-time scrolling log of the errors, warnings, fleet
+ * alerts, and substrate stderr tailed across the `errors.*` partitions.
  *
  * A THIN wrapper over the shared `LogStreamViewer` chrome (toolbar, filter,
- * counts + rate, pause, Debug, Clear, banner, body split, virtualized
- * `LogRowList`). The `perferrors:*` node graph (mounted by `useErrorLogGraph`)
- * owns all data: the substrate's `perferrors:link` holds the EventSource and
- * streams envelopes into `perferrors:view` (a `LogStreamViewNode` subclass),
- * whose ring the list reads straight off the node each frame. This component
- * only supplies the differing pieces: the fixed column set, the grid
- * row/header renderers, the multi-field matchRow, and the
- * `SegmentBrowseSidebar` browse rail.
+ * counts + rate, pause, step, offset jump, Debug, Clear, banner, body split,
+ * virtualized `LogRowList`). The `perferrors:*` node graph (mounted by
+ * `useErrorLogGraph`) owns all data: `perferrors:link` (a substrate
+ * `RemoteLink`) holds the EventSource and fans its frames through the
+ * `perferrors:stream` Tee into `perferrors:view` (a `LogStreamViewNode`
+ * subclass), whose ring the list reads straight off the node each frame. This
+ * component only supplies the differing pieces: the fixed column set, the grid
+ * row/header renderers, the multi-field matchRow, the entry-count and rate
+ * labels, and the `SegmentBrowseSidebar` browse rail.
  *
  * Click any request ID to view its full trace in the Performance Dashboard.
  */
@@ -28,6 +29,7 @@ import './styles/error-log.scss';
 
 const ROW_HEIGHT = 33;
 const VIEW_NODE = 'perferrors:view';
+// View-model fallback until the view node publishes its first `view` state.
 const EMPTY_VIEW = { paused: false, connectionError: false };
 
 /**
@@ -64,6 +66,7 @@ const COLUMNS = {
 	},
 };
 
+// The fixed column ORDER; the rows and the header both render from it.
 const DEFAULT_COLUMNS = [ 'time', 'rid', 'url', 'keyword', 'message' ];
 
 const GRID_TEMPLATE = DEFAULT_COLUMNS.map(
@@ -92,7 +95,8 @@ const formatTime = ( ts ) => {
  * Get keyword severity class.
  *
  * @param {string} keyword Log keyword.
- * @return {string} CSS class suffix.
+ * @return {string} Suffix of the `entry-keyword--` accent class in
+ *                  `styles/error-log.scss`.
  */
 const getKeywordClass = ( keyword ) => {
 	if ( keyword === 'error' || keyword.endsWith( '(error)' ) ) {
@@ -119,7 +123,7 @@ const matchRow = ( row, filterLower ) =>
 			field.toLowerCase().includes( filterLower )
 	);
 
-// Count label for the shared toolbar stats (no rate label — errors are bursty).
+// Count label for the toolbar stats: entries, where the default says lines.
 const renderCount = ( stats ) =>
 	stats.visible !== stats.total
 		? sprintf(
@@ -144,11 +148,18 @@ const renderCount = ( stats ) =>
 				stats.visible
 		  );
 
-// translators note: entries/second readout, one decimal place.
+// Rate label matching that wording: entries/s, one decimal place.
 const renderRate = ( lps ) => `${ lps.toFixed( 1 ) } entries/s`;
 
 /**
- * Memoized row component.
+ * One error-log row — the five fixed cells on a grid, memoized on `row`.
+ *
+ * @param {Object} props     Props.
+ * @param {Object} props.row Row from `perferrors:view`. Its `shapeRow()`
+ *                           supplies `ts`, `rid`, `k`, `m` — plus `method`,
+ *                           `url`, and `urlHash` when the entry carried a URL;
+ *                           the base view node stamps `id` and `isEven`.
+ * @return {import('react').ReactElement} The rendered row.
  */
 const ErrorRow = memo( function ErrorRow( { row } ) {
 	return (
@@ -234,6 +245,14 @@ const listHeader = (
 /**
  * Error Log Component.
  *
+ * Mounts the `perferrors:*` graph, reads the low-frequency view model off
+ * `perferrors:view`, and hands `LogStreamViewer` the Error Log's own pieces.
+ *
+ * Step and the offset input appear only while one partition is selected: a
+ * seek addresses a segment within ONE directory, so it means nothing against
+ * the whole `errors.*` glob. A bare offset resolves against the last segment
+ * the view received, falling back to the browsed one.
+ *
  * @return {import('react').ReactElement} Rendered component.
  */
 export default function ErrorLog() {
@@ -244,7 +263,7 @@ export default function ErrorLog() {
 	const view = useNodeState( VIEW_NODE, 'view' ) ?? EMPTY_VIEW;
 	const { paused: isPaused, connectionError } = view;
 
-	// Re-read the live nodes each frame so a graph reinit is picked up.
+	// Re-read the live node each frame so a graph reinit is picked up.
 	const getViewNode = useCallback( () => Core.node( VIEW_NODE ), [] );
 
 	return (

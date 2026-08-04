@@ -7,18 +7,30 @@
  *            list via Rule_Set::hooks_for() and hooks_in normalized to
  *            'inline' — the editor never sees the storage tier.
  *   save   — whole-list replace. Arg `rules` is a JSON array of rule
- *            objects; each decodes via Rule::from_array() and the list goes
- *            through Rule_Set::save() so inline<->pointer tiering and orphan
- *            reconcile stay intact. Blank-id entries get a freshly minted id.
- *   upsert — single-rule add/replace. Arg `rule` is a JSON object. A rule
- *            with the same pattern is replaced IN PLACE, preserving its id;
- *            otherwise the rule is appended with a fresh id. This is the
- *            performance-dashboard "log this URL" path — no need to ship the
- *            whole list for one change.
- *   delete — arg `id`. Drops the matching rule (if any) and re-saves.
+ *            objects; each decodes via Rule::from_array(), the list is
+ *            rekeyed by Rule_Set::rekey_by_pattern() — every entry takes the
+ *            id its own pattern derives, and entries sharing a pattern
+ *            collapse to the last one — and Rule_Set::save() persists it, so
+ *            inline<->pointer tiering and orphan reconcile stay intact.
+ *   upsert — single-rule add/replace. Arg `rule` is a JSON object. The rule
+ *            carrying the incoming id, plus every rule sharing the incoming
+ *            pattern, drops out; the incoming rule is appended under the id
+ *            its pattern derives. A same-pattern edit therefore keeps its id,
+ *            and an edit that changes the pattern (round-tripping the old id)
+ *            rekeys the rule and drops the old-pattern entry. List position
+ *            carries no meaning — Rule_Matcher ranks by specificity, not
+ *            order. This is the performance-dashboard "log this URL" path —
+ *            no need to ship the whole list for one change.
+ *   delete — arg `id`. Drops the matching rule (if any), re-saves, and
+ *            reports whether anything matched.
  *
  * All four run through Rule_Set so the tiering/reconcile invariants in
  * Rule_Set::save() are never bypassed by a raw update_option().
+ *
+ * `save` and `upsert` take their JSON blob as the first raw token
+ * (`self::arg_strings( $args )[0]`) instead of through Command_Args::parse(),
+ * which would swallow a `--`-leading payload as an option. `delete` takes a
+ * plain positional id and parses normally.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -33,6 +45,11 @@ use Newspack_Nodes\Service_CI_Node;
 
 \defined( 'ABSPATH' ) || exit;
 
+/**
+ * The `rules` service CI. Verbs are declared once in node_schema(); the
+ * inherited Service_CI_Node constructor builds the dispatch table from it,
+ * so this class needs no constructor of its own.
+ */
 class Rules_CI_Node extends Service_CI_Node {
 
 	/** Hard cap on JSON payload size for `save`/`upsert` — a whole ruleset is small; this just bounds a runaway request. */
@@ -46,7 +63,9 @@ class Rules_CI_Node extends Service_CI_Node {
 	 * anything that doesn't decode to a PHP array (malformed JSON, or valid
 	 * JSON that isn't an object/array at the top level).
 	 *
+	 * @param string $raw Raw JSON token as it arrived on the command envelope.
 	 * @return array<array-key, mixed>
+	 * @throws \RuntimeException When the payload exceeds MAX_JSON_BYTES, or does not decode to an array.
 	 */
 	private static function decode_json_array( string $raw ): array {
 		if ( \strlen( $raw ) > self::MAX_JSON_BYTES ) {
@@ -64,6 +83,7 @@ class Rules_CI_Node extends Service_CI_Node {
 	 * resolved to the full list (pointer tier included) and hooks_in always
 	 * 'inline' — the storage tier is a Rule_Set implementation detail.
 	 *
+	 * @param Rule $rule Persisted rule, either tier.
 	 * @return array<string, mixed>
 	 */
 	private static function wire_shape( Rule $rule ): array {
@@ -73,7 +93,13 @@ class Rules_CI_Node extends Service_CI_Node {
 		return $shape;
 	}
 
-	/** @api Used by the substrate to provide UI etc. */
+	/**
+	 * Declare the `rules` CI: its category, description, and the four verbs
+	 * with their argument lists and handlers.
+	 *
+	 * @api Used by the substrate to provide UI etc.
+	 * @return array<string, mixed>
+	 */
 	public static function node_schema(): array {
 		return \array_merge( parent::node_schema(), [
 			'category'    => 'Service',
@@ -128,7 +154,7 @@ class Rules_CI_Node extends Service_CI_Node {
 						$set       = Rule_Set::load();
 						$remaining = [];
 						foreach ( $set->rules() as $r ) {
-							// Drop rule + pattern-mates (pattern = id).
+							// Drop the id match and any pattern match.
 							if ( ( '' !== $incoming->id && $r->id === $incoming->id ) || $r->pattern === $incoming->pattern ) {
 								continue;
 							}
@@ -137,6 +163,7 @@ class Rules_CI_Node extends Service_CI_Node {
 						$remaining[] = $incoming->with_id( $new_id );
 						$set->save( $remaining );
 
+						// save() re-tiers in memory; the append is found.
 						$persisted = $set->rule_by_id( $new_id );
 						\assert( null !== $persisted );
 						return [ 'rule' => self::wire_shape( $persisted ) ];

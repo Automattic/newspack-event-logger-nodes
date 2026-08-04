@@ -1,10 +1,14 @@
 /**
- * Error Log Dashboard entry point.
+ * Error Log dashboard entry point.
  *
- * Mounts the full-page dark Error Log view on its own admin page
- * (`#event-logger-errors`). Ships as an independent bundle from the perf
- * dashboard — the error log is structurally the request log for errors, not
- * part of the performance overview.
+ * Registers this dashboard's node classes (`./nodes/register`), then mounts the
+ * full-page Error Log view into `#event-logger-errors` once the DOM is ready.
+ * Nothing here paints: the surface takes its colors from the skin `ThemedRoot`
+ * applies, whichever one the console last persisted.
+ *
+ * esbuild builds it as its own bundle, separate from the performance overview
+ * (`src/overview`). The error log wears the same streaming chrome as the request
+ * log but tails the `errors.*` partitions, so it belongs to neither tree.
  */
 
 import { createRoot, lazy, Suspense } from '@wordpress/element';
@@ -15,10 +19,19 @@ import LoadingFallback from '../components/LoadingFallback';
 import './nodes/register';
 import './styles/base.scss';
 
+// Code-split: the shell paints under LoadingFallback until this chunk lands.
 const ErrorLog = lazy( () => import( './ErrorLog' ) );
 
 /**
- * Error Log page wrapper — full-page dark layout.
+ * Error Log page wrapper — a fixed, full-viewport shell.
+ *
+ * The shell is positioned, not flowed: `top: 32px` clears the desktop WP admin
+ * bar, and `left` tracks the admin menu's live width, so folding the menu slides
+ * the page instead of reflowing it. Both scroll axes stay hidden because the
+ * virtualized log body inside owns the scrolling.
+ *
+ * The debug overlay carries this page's own `storageKey`, which keeps its panel
+ * layout separate from every sibling dashboard's.
  *
  * @return {import('react').ReactElement} Rendered component.
  */
@@ -52,7 +65,6 @@ export function ErrorLogPage() {
 	);
 }
 
-// Mount the error log when DOM is ready.
 document.addEventListener( 'DOMContentLoaded', () => {
 	const errorsContainer = document.getElementById( 'event-logger-errors' );
 	if ( errorsContainer ) {

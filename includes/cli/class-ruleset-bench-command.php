@@ -1,10 +1,19 @@
 <?php
 /**
- * Phase-0 benchmark: autoloaded-inline vs memcache-pointer hook storage.
+ * Benchmark of the ruleset's two hook-storage tiers: autoloaded-inline against
+ * memcache-pointer.
  *
- * Populates the rules option across a sweep and measures, per grid cell, the
- * three per-request costs the ruleset design trades off. Run once, in-container,
- * to pick the INLINE_HOOK_LIMIT crossover N before the engine freezes it.
+ * `Rule_Set` keeps a rule's hooks inline in the autoloaded rules option up to
+ * `Rule_Set::INLINE_HOOK_LIMIT`, and behind a memcache-mirrored non-autoloaded
+ * option above it. This command measures the three per-request costs that
+ * crossover trades off — the alloptions unserialize tax, an inline read plus
+ * bind, and a memcache fetch plus bind — over a hooks-per-rule × rule-count
+ * grid, then prints the guidance for reading the table. The limit is already
+ * fixed at 100; rerun the sweep to re-validate it on new hardware.
+ *
+ * The sweep never touches the live ruleset. It builds synthetic hook lists in
+ * memory and writes only its own short-lived `evlog:bench:hooks:*` memcache
+ * keys, which it deletes per grid cell.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -17,14 +26,24 @@ namespace Newspack_Event_Logger_Nodes\CLI;
 
 /**
  * `wp nodes ruleset-bench` — measurement only. Not on the request hot path.
+ *
+ * Registered by `newspack-event-logger-nodes.php` under the substrate's `nodes`
+ * command namespace. The grid is `HOOKS_PER_RULE` × `RULE_COUNTS`.
  */
 class Ruleset_Bench_Command {
 
+	/** Hooks per rule, swept per row. `Rule_Set::INLINE_HOOK_LIMIT` (100) sits inside this range. */
 	private const HOOKS_PER_RULE = [ 50, 65, 100, 250, 500, 1000, 2500, 5000 ];
+
+	/** Rules in the autoloaded option. Only the autoload column varies with this. */
 	private const RULE_COUNTS    = [ 1, 10, 50 ];
 
 	/**
 	 * Run the sweep.
+	 *
+	 * Prints one row per grid cell — the median autoload, inline, and pointer
+	 * cost in microseconds — followed by the rule for reading the table. Higher
+	 * iteration counts buy a steadier median at the cost of runtime.
 	 *
 	 * ## OPTIONS
 	 *
@@ -38,7 +57,9 @@ class Ruleset_Bench_Command {
 	 * @when after_wp_load
 	 *
 	 * @param array<int, string>    $args       Positional (unused).
-	 * @param array<string, mixed>  $assoc_args Flags.
+	 * @param array<string, mixed>  $assoc_args Flags. A non-numeric or missing
+	 *                                          `iterations` falls back to 200;
+	 *                                          anything below 1 clamps to 1.
 	 * @return void
 	 */
 	public function __invoke( array $args, array $assoc_args ): void {
@@ -66,8 +87,22 @@ class Ruleset_Bench_Command {
 	}
 
 	/**
-	 * Measure one grid cell. Populates raw options + a memcache mirror, then
-	 * times the three access paths.
+	 * Measure one grid cell: time the three hook-access paths over a synthetic
+	 * hook list of $k names.
+	 *
+	 * - `autoload` — unserialize a blob of $k × $rule_count hook names, standing
+	 *   in for the alloptions cost every request pays for inline storage.
+	 * - `inline` — walk the already-in-memory list, standing in for the bind
+	 *   loop that inline storage runs per request.
+	 * - `pointer` — one memcache get plus the same bind loop.
+	 *
+	 * Only the pointer path touches memcache, under a bench-private key it sets
+	 * with a 300-second TTL and deletes afterwards. With no `Core::$memd` handle
+	 * the path degrades to the in-memory array, so the pointer column then
+	 * reports the bind loop alone and understates the real cost — read it as a
+	 * floor, not a measurement.
+	 *
+	 * Every path is summarized to median, p95, and n; the sweep prints medians.
 	 *
 	 * @param int $k          Hooks per rule.
 	 * @param int $rule_count Number of rules.
@@ -81,7 +116,7 @@ class Ruleset_Bench_Command {
 	private function measure_cell( int $k, int $rule_count, int $iterations ): array {
 		$hooks = self::synthetic_hooks( $k );
 
-		// Autoload tax: K×M inline hooks in one option; time unserialize.
+		// Autoload tax: one blob of K x M hook names; time the unserialize.
 		$inline_blob = [];
 		for ( $r = 0; $r < $rule_count; $r++ ) {
 			$inline_blob[ 'bench_rule_' . $r ] = $hooks;
@@ -94,7 +129,7 @@ class Ruleset_Bench_Command {
 			$autoload_samps[] = ( \hrtime( true ) - $t ) / 1000.0;
 		}
 
-		// Inline path: read array + bind loop (no add_filter; measure cost).
+		// Inline path: the bind loop alone, without real add_filter calls.
 		$inline_samps = [];
 		for ( $i = 0; $i < $iterations; $i++ ) {
 			$t = \hrtime( true );
@@ -139,7 +174,10 @@ class Ruleset_Bench_Command {
 	}
 
 	/**
-	 * Deterministic synthetic hook-name list.
+	 * Deterministic synthetic hook-name list: `bench_hook_0` … `bench_hook_N-1`.
+	 *
+	 * Names are unique and realistically sized, so repeated runs of the same
+	 * grid cell measure the same work.
 	 *
 	 * @param int $count How many.
 	 * @return string[]
@@ -154,6 +192,11 @@ class Ruleset_Bench_Command {
 
 	/**
 	 * Reduce a sample list (microseconds) to median / p95 / n.
+	 *
+	 * Both quantiles are nearest-rank picks from the sorted samples, never
+	 * interpolated: an even-sized list takes the lower of the two middles. An
+	 * empty list reports zeros rather than dividing by nothing. `$samples` is
+	 * taken by value, so the caller's order survives the sort.
 	 *
 	 * @param float[] $samples Raw timings.
 	 * @return array{median: float, p95: float, n: int}

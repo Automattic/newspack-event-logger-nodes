@@ -1,7 +1,15 @@
 /**
  * Overview Section Component
  *
- * Displays overview stats, search, refresh controls, aggregate chart, and global leaderboard.
+ * The top card of the Performance Dashboard: request-ID / pattern search, the
+ * refresh-interval picker, the headline stat grid, the aggregate time chart
+ * with its metric / breakdown / server selectors, the three category charts,
+ * and the global — or, under a server filter, per-server — time breakdown.
+ *
+ * The component is presentational. Every value and every setter arrives from
+ * `PerformanceDashboard`, which reads the per-slice view nodes and owns all
+ * fetching; nothing here talks to the command graph. Rendering short-circuits
+ * to null until the `overview:view` slice carries data.
  */
 
 import { useEffect, useMemo } from '@wordpress/element';
@@ -27,29 +35,29 @@ import RequestProfile from '../RequestProfile';
 /**
  * Overview Section component.
  *
- * @param {Object}     props                        Component props.
- * @param {Object}     props.overview               Overview data object.
- * @param {Object}     props.filteredStats          Filtered overview stats from parent.
- * @param {string}     props.serverFilter           Current server filter value.
- * @param {Function}   props.setServerFilter        Server filter setter.
- * @param {string[]}   props.serverNames            Available server names.
- * @param {string}     props.searchQuery            Search query state.
- * @param {Function}   props.setSearchQuery         Search query setter.
- * @param {boolean}    props.searchLoading          Search loading state.
- * @param {string}     props.searchError            Search error message.
- * @param {Function}   props.onSearch               Search handler callback.
- * @param {Array|null} props.searchResults          Pattern-search result rows, or null.
- * @param {boolean}    props.searchResultsTruncated Whether the result set was capped.
- * @param {Function}   props.onSelectResult         Row-click handler (deep-links by rid).
- * @param {string}     props.refreshInterval        Refresh interval state.
- * @param {Function}   props.setRefreshInterval     Refresh interval setter.
- * @param {string}     props.chartMetric            Selected chart metric (lifted from parent).
- * @param {Function}   props.setChartMetric         Chart metric setter.
- * @param {string}     props.chartBreakdown         Selected breakdown dim (lifted from parent).
- * @param {Function}   props.setChartBreakdown      Breakdown dim setter.
- * @param {Object}     props.breakdownData          Breakdown time series for current dim.
- * @param {Object}     props.categoryData           Category time series data.
- * @return {Object|null} Rendered component or null if no overview data.
+ * @param {Object}      props                        Component props.
+ * @param {Object|null} props.overview               Overview slice payload; null renders nothing.
+ * @param {Object}      props.filteredStats          Headline stats, server-scoped when a filter is set.
+ * @param {string}      props.serverFilter           Selected server name, or '' for all servers.
+ * @param {Function}    props.setServerFilter        Server filter setter.
+ * @param {string[]}    props.serverNames            Server names seen in the breakdown data.
+ * @param {string}      props.searchQuery            Search box value.
+ * @param {Function}    props.setSearchQuery         Search box setter.
+ * @param {boolean}     props.searchLoading          True while a search is in flight.
+ * @param {string|null} props.searchError            Search error message, or null.
+ * @param {Function}    props.onSearch               Search submit handler, given the raw query.
+ * @param {Array|null}  props.searchResults          Pattern-search result rows, or null.
+ * @param {boolean}     props.searchResultsTruncated Whether the server capped the result set.
+ * @param {Function}    props.onSelectResult         Row-click handler; deep-links by request id.
+ * @param {string}      props.refreshInterval        Poll interval in milliseconds, as a string.
+ * @param {Function}    props.setRefreshInterval     Refresh interval setter.
+ * @param {string}      props.chartMetric            Aggregate chart metric, e.g. 'volume'.
+ * @param {Function}    props.setChartMetric         Chart metric setter.
+ * @param {string}      props.chartBreakdown         Aggregate chart breakdown dimension.
+ * @param {Function}    props.setChartBreakdown      Breakdown dimension setter.
+ * @param {Object|null} props.breakdownData          Time series for the selected breakdown dim.
+ * @param {Object|null} props.categoryData           Category time series, or null.
+ * @return {import('react').ReactElement|null} Rendered section, or null without overview data.
  */
 export default function OverviewSection( {
 	overview,
@@ -74,13 +82,16 @@ export default function OverviewSection( {
 	breakdownData,
 	categoryData,
 } ) {
-	// breakdownData/chartBreakdown lifted so the dim rides combined /overview.
+	/**
+	 * The parent lifts `chartBreakdown` and passes the matching series down,
+	 * so the breakdown rides the combined overview payload. No separate fetch
+	 * remains to wait on, and the inline spinner below stays hidden.
+	 */
 	const breakdownLoading = false;
 
 	// Show server dropdown when 2+ servers detected (hub mode).
 	const isMultiServer = serverNames.length >= 2;
 
-	// Build server dropdown options.
 	const serverOptions = useMemo( () => {
 		if ( ! isMultiServer ) {
 			return [];

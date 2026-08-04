@@ -1,8 +1,17 @@
 /**
- * Response Time Chart Component
+ * Response Time Chart
  *
- * D3-based scatter plot showing individual request response times.
- * Uses D3 enter/update/exit pattern for efficient updates.
+ * D3 scatter plot of individual request response times, mounted by the
+ * overview dashboard's URL detail view. One dot per request, colored by HTTP
+ * status class and clickable to open that request; a monotone trend line and a
+ * dashed mean line sit behind them, and a legend lists the status classes
+ * actually present.
+ *
+ * D3 owns this SVG subtree, not React: the component renders one empty
+ * container div, then four effects build the skeleton once, join data keyed by
+ * `rid`, reposition everything on window resize, and tear the subtree down on
+ * unmount. Every DOM write belongs inside those effects — React never
+ * reconciles anything below the container.
  */
 
 import { useEffect, useRef, useMemo } from '@wordpress/element';
@@ -14,18 +23,28 @@ import {
 } from '@newspack-nodes/shared/utils/formatUtils';
 
 /**
- * Chart dimensions and margins.
+ * Chart margins, in pixels. The wide right margin is the gutter the status
+ * legend draws into; the tall bottom margin clears the rotated time labels.
  */
 const MARGIN = { top: 20, right: 160, bottom: 50, left: 60 };
+
+/**
+ * Plot-area height, in pixels, inside a fixed 250px SVG. Only the width
+ * responds to resize, so this never changes.
+ */
 const HEIGHT = 250 - MARGIN.top - MARGIN.bottom;
 
 /**
  * Response Time Chart component.
  *
+ * Renders null while `requests` is empty, which also withholds the container
+ * the skeleton effect needs. Mount this component only once data exists — the
+ * caller, `UrlDetailView`, gates on `urlDetail.requests?.length > 0`.
+ *
  * @param {Object}   props                Component props.
- * @param {Array}    props.requests       Individual request data [{ rid, timestamp, duration_ms }].
- * @param {Function} props.onRequestClick Callback when a request dot is clicked.
- * @return {import('react').ReactElement} Rendered component.
+ * @param {Array}    props.requests       Request index entries: { rid, timestamp (seconds), duration_ms, status_code }.
+ * @param {Function} props.onRequestClick Called with the clicked dot's rid.
+ * @return {import('react').ReactElement|null} The chart, or null without data.
  */
 export default function ResponseTimeChart( { requests, onRequestClick } ) {
 	const containerRef = useRef( null );
@@ -33,12 +52,20 @@ export default function ResponseTimeChart( { requests, onRequestClick } ) {
 	const scalesRef = useRef( null );
 	const onRequestClickRef = useRef( onRequestClick );
 
-	// Keep callback ref updated without causing re-renders.
+	// Ref-held so a new callback never re-runs the D3 effects.
 	useEffect( () => {
 		onRequestClickRef.current = onRequestClick;
 	}, [ onRequestClick ] );
 
-	// Process data into chart format.
+	/**
+	 * Plottable points, ascending by time.
+	 *
+	 * A request needs both a timestamp and a duration to place a dot; the
+	 * truthiness test also drops a `duration_ms` of exactly 0. Timestamps
+	 * arrive in seconds and become `Date` objects for the time scale.
+	 *
+	 * @type {Array<{time: Date, duration: number, rid: string, status: number}>}
+	 */
 	const chartData = useMemo( () => {
 		if ( ! requests || requests.length === 0 ) {
 			return [];
@@ -54,8 +81,9 @@ export default function ResponseTimeChart( { requests, onRequestClick } ) {
 			.sort( ( a, b ) => a.time - b.time );
 	}, [ requests ] );
 
-	// Initialize SVG structure once.
+	// Build the SVG skeleton once; later effects only mutate it.
 	useEffect( () => {
+		// Empty deps: no container at mount means no chart, ever.
 		if ( ! containerRef.current || svgRef.current ) {
 			return;
 		}
@@ -75,7 +103,7 @@ export default function ResponseTimeChart( { requests, onRequestClick } ) {
 			.append( 'g' )
 			.attr( 'transform', `translate(${ MARGIN.left },${ MARGIN.top })` );
 
-		// Create groups for different elements (order matters for z-index).
+		// Append order is paint order: axes, lines, then dots on top.
 		g.append( 'g' )
 			.attr( 'class', 'x-axis' )
 			.attr( 'transform', `translate(0,${ HEIGHT })` );
@@ -94,7 +122,7 @@ export default function ResponseTimeChart( { requests, onRequestClick } ) {
 		g.append( 'text' ).attr( 'class', 'avg-label' );
 		g.append( 'g' ).attr( 'class', 'dots' );
 
-		// Store refs.
+		// Scales outlive renders; the update effect mutates them in place.
 		svgRef.current = { svg, g, width };
 		scalesRef.current = {
 			x: d3.scaleTime().range( [ 0, width ] ),

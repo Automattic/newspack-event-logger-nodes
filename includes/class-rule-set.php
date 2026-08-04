@@ -1,6 +1,12 @@
 <?php
 /**
- * The durable ruleset: load/save + two-tier hook storage.
+ * The durable per-URL logging ruleset: load, save, two-tier hook storage.
+ *
+ * Every ruleset write lands here — the config seed, the `rules` CI editor
+ * verbs, `Auto_Tuner_Node`, and the hub→spoke settings sync — so the
+ * pattern-is-identity and inline↔pointer tiering invariants hold whoever
+ * writes. `Log_Manager` reads it once per request and hands the rules to a
+ * `Rule_Matcher`.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -16,7 +22,12 @@ use Newspack_Nodes\Core;
 /**
  * Rule LIST rides an autoloaded option. A heavy rule's hooks live in a
  * NON-autoloaded durable option (system of record) mirrored into memcache
- * (warm cache, warmed on miss). INLINE_HOOK_LIMIT is the crossover.
+ * (warm cache, warmed on miss). INLINE_HOOK_LIMIT is the crossover, measured
+ * by `wp nodes ruleset-bench`: the largest hook count whose inline read still
+ * beats a memcache fetch while the autoload tax stays negligible.
+ *
+ * An instance holds the rule list in the form it was last persisted in, so
+ * `rules()` after `save()` matches a fresh `load()`.
  */
 final class Rule_Set {
 	public const INLINE_HOOK_LIMIT     = 100; // crossover threshold; not below 65.
@@ -29,7 +40,7 @@ final class Rule_Set {
 	private array $rules;
 
 	/**
-	 * @param Rule[] $rules
+	 * @param Rule[] $rules Rules in persisted form; `load()` is the usual source.
 	 */
 	public function __construct( array $rules ) {
 		$this->rules = $rules;
@@ -39,6 +50,9 @@ final class Rule_Set {
 	 * A rule's id is the shared 12-char url_hash of its pattern. The pattern IS
 	 * the identity, so there is exactly one id per pattern — you can never end up
 	 * with two differently-configured rules for the same URL. See Log_Manager::url_hash.
+	 *
+	 * @param string $pattern Rule pattern: '/prefix', exact '/x?', or '/x?query'.
+	 * @return string 12-character hex id.
 	 */
 	public static function id_for( string $pattern ): string {
 		return Log_Manager::url_hash( $pattern );
@@ -49,12 +63,14 @@ final class Rule_Set {
 	 * with, and collapse duplicate patterns to one rule (last entry wins).
 	 *
 	 * The pattern IS the identity, so this is what makes "one rule per URL"
-	 * true rather than merely conventional. Every write path runs through it:
-	 * the config seed, the editor's save/upsert, and the hub→spoke sync. Two
-	 * entries that kept differing ids for one pattern would both persist and
-	 * race in the matcher; two that kept a SHARED id would alias one durable
-	 * hooks option, and the inline one's delete_option would wipe the pointer
-	 * one's list.
+	 * true rather than merely conventional. Every write path that accepts
+	 * outside rules runs through it: the config seed, the editor's `save` verb,
+	 * and `apply_synced()` off the wire. (The editor's `upsert` verb reaches the
+	 * same result by minting the id with `id_for()` and dropping the entry that
+	 * already holds that pattern.) Two entries that kept differing ids for one
+	 * pattern would both persist and race in the matcher; two that kept a SHARED
+	 * id would alias one durable hooks option, and the inline one's delete_option
+	 * would wipe the pointer one's list.
 	 *
 	 * @param Rule[] $rules Rules carrying arbitrary (or absent) ids.
 	 * @return Rule[]
@@ -76,7 +92,8 @@ final class Rule_Set {
 	 * static — Log_Manager already loaded the ruleset once per request; callers
 	 * must NOT re-`load()` a whole second Rule_Set just to reach this.
 	 *
-	 * @return string[]
+	 * @param Rule $rule Rule of either tier.
+	 * @return string[] Hook names; [] when a pointer rule's hooks are unresolvable.
 	 */
 	public static function hooks_for( Rule $rule ): array {
 		if ( Rule::HOOKS_INLINE === $rule->hooks_in ) {
@@ -102,14 +119,36 @@ final class Rule_Set {
 		return [];
 	}
 
+	/**
+	 * The memcache key mirroring a pointer rule's durable hooks option.
+	 *
+	 * @param string $id Rule id.
+	 * @return string Memcache key.
+	 */
 	public static function mc_key( string $id ): string {
 		return self::MC_HOOKS_PREFIX . $id;
 	}
 
+	/**
+	 * The non-autoloaded option holding a pointer rule's hooks — the system of
+	 * record for that tier. `reconcile_orphans()` sweeps this namespace, and
+	 * uninstall cleanup deletes it by the same prefix.
+	 *
+	 * @param string $id Rule id.
+	 * @return string Option name.
+	 */
 	public static function hooks_option_name( string $id ): string {
 		return self::OPTION_HOOKS_PREFIX . $id;
 	}
 
+	/**
+	 * Read the persisted ruleset, falling back to the file config.
+	 *
+	 * An absent option seeds from config; a corrupt (non-array) one seeds too,
+	 * after a stderr notice. Non-array entries are skipped. Stored ids stand as
+	 * written — only an entry stored without one gets an id minted — because
+	 * every write path already rekeyed by pattern. This is the read side.
+	 */
 	public static function load(): self {
 		$raw = \get_option( self::OPTION_RULES, null );
 		if ( null === $raw ) {
@@ -133,7 +172,9 @@ final class Rule_Set {
 
 	/**
 	 * Read-time default when the option is absent (or corrupt): build the ruleset
-	 * from the file config's `rules` list, minting ids for entries that omit one.
+	 * from the file config's `rules` list, rekeyed by pattern — a config entry's
+	 * own `id`, if it declares one, is ignored.
+	 *
 	 * Empty means empty — config `rules => []` (or no rules key) yields a zero-rule
 	 * set (log nothing), the same as a stored `[]`; there is no implicit log-all
 	 * baseline. Does NOT persist — the file value stands in until the editor writes
@@ -147,7 +188,7 @@ final class Rule_Set {
 	/**
 	 * Turn config rule maps into Rule objects, rekeyed by pattern.
 	 *
-	 * @param array<array-key, mixed> $entries
+	 * @param array<array-key, mixed> $entries Config `rules` list.
 	 * @return Rule[]
 	 */
 	private static function rules_from_config( array $entries ): array {
@@ -157,7 +198,7 @@ final class Rule_Set {
 	/**
 	 * Decode a list of stored/wire rule maps, skipping non-array junk.
 	 *
-	 * @param array<array-key, mixed> $entries
+	 * @param array<array-key, mixed> $entries Rule maps (Rule::to_array() shape).
 	 * @return Rule[]
 	 */
 	private static function rules_from_maps( array $entries ): array {
@@ -175,8 +216,9 @@ final class Rule_Set {
 	 * Inline every pointer entry's hooks in a stored/synced rule-map list, resolving
 	 * each from its durable option (or mc). The transport-safe form of a ruleset:
 	 * self-contained, no dangling durable-option references. Non-pointer entries
-	 * (and non-array junk) pass through untouched. Used by to_sync_array() and by
-	 * the settings-sync value filter so a hub's ruleset reaches spokes hook-complete.
+	 * (and non-array junk) pass through untouched. The settings-sync value filter
+	 * (`newspack_nodes/settings_sync/value`) runs the hub's rule list through this
+	 * so the ruleset reaches spokes hook-complete; `apply_synced()` is the inverse.
 	 *
 	 * @param array<int|string, mixed> $rules_array Stored rule maps (Rule::to_array()).
 	 * @return array<int, mixed>
@@ -226,7 +268,12 @@ final class Rule_Set {
 	 * Persist a rule list: apply the inline↔pointer threshold, write durable
 	 * options + warm mc for pointer rules, reconcile orphans, store the list.
 	 *
-	 * @param Rule[] $rules
+	 * Skip rules bypass tiering and persist exactly as given — they instrument
+	 * nothing. save() also takes ids as it finds them, which is what lets
+	 * `Auto_Tuner_Node` mutate one loaded rule in place; a caller handling
+	 * untrusted rules must run them through rekey_by_pattern() first.
+	 *
+	 * @param Rule[] $rules Replaces the whole list — anything omitted is deleted.
 	 */
 	public function save( array $rules ): void {
 		$tiered        = [];
@@ -286,9 +333,12 @@ final class Rule_Set {
 
 	/**
 	 * Delete every durable hook option whose id is not a currently-live pointer.
-	 * Covers rule deletes AND rules that shrank back inline.
+	 * Covers rule deletes AND rules that shrank back inline. No-ops without a
+	 * $wpdb, which is how the unit suite runs with no database.
 	 *
-	 * @param array<string, true> $live_pointer_ids
+	 * @global \wpdb $wpdb
+	 *
+	 * @param array<string, true> $live_pointer_ids Ids just written as pointers.
 	 */
 	private function reconcile_orphans( array $live_pointer_ids ): void {
 		global $wpdb;
@@ -314,7 +364,9 @@ final class Rule_Set {
 	 * Apply a synced (hydrated) ruleset on a spoke: rebuild Rule objects and
 	 * route them through save(), which RE-TIERS locally — heavy rules' inline
 	 * hooks are written back out to this site's own durable option + mc mirror,
-	 * keeping OPTION_RULES small. The inverse of to_sync_array().
+	 * keeping OPTION_RULES small. The inverse of hydrate_array(); the
+	 * `performance` CI's `settings_set` verb calls it for OPTION_RULES instead
+	 * of writing the option raw.
 	 *
 	 * @param array<int|string, mixed> $rules_array Hydrated rule maps off the wire.
 	 */
@@ -323,12 +375,18 @@ final class Rule_Set {
 	}
 
 	/**
+	 * The rule list in its last-persisted form.
+	 *
 	 * @return Rule[]
 	 */
 	public function rules(): array {
 		return $this->rules;
 	}
 
+	/**
+	 * @param string $id Rule id.
+	 * @return Rule|null The rule, or null when no rule carries that id.
+	 */
 	public function rule_by_id( string $id ): ?Rule {
 		foreach ( $this->rules as $rule ) {
 			if ( $id === $rule->id ) {
@@ -338,6 +396,7 @@ final class Rule_Set {
 		return null;
 	}
 
+	/** A matcher over these rules; Rule_Matcher owns the specificity order. */
 	public function matcher(): Rule_Matcher {
 		return new Rule_Matcher( $this->rules );
 	}

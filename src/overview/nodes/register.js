@@ -1,4 +1,20 @@
-// Register this dashboard's node classes so makeNode can build them.
+/**
+ * Performance Dashboard node-class registration.
+ *
+ * Imported for its side effect: it merges this dashboard's node classes into
+ * `CommandInterpreterNode.includeNodes`, the flat `make_node` type→class table
+ * the browser runtime resolves against. Both `src/overview/index.js` and
+ * `usePerformanceGraph` import it before building a graph, so every
+ * `interpreter.makeNode( '<Type>', … )` below finds its class.
+ *
+ * `usePerformanceGraph` builds one node per registered name:
+ *   - `OverviewView` → `overview:view`, and `UrlsView` → `urls:view`, both
+ *     created by `addSliceFetcher` from its `viewClass` slot (polled slices);
+ *   - `UrlDetailMerge` → `urldetail:merge`, the incremental-merge transform on
+ *     the `urldetailIn` Tee → `urldetail:view` edge;
+ *   - `UrlDetailView` → `urldetail:view` and `RequestDetailView` →
+ *     `requestdetail:view`, the two on-demand modal slices.
+ */
 import { CommandInterpreterNode } from '@newspack-nodes/runtime';
 import { OverviewViewNode } from './overview-view-node';
 import { UrlsViewNode } from './urls-view-node';
@@ -7,7 +23,6 @@ import { UrlDetailViewNode } from './url-detail-view-node';
 import { RequestDetailViewNode } from './request-detail-view-node';
 
 CommandInterpreterNode.registerNodeClasses( {
-	// Per-slice decoded views + url_detail merge, wired by usePerformanceGraph.
 	OverviewView: OverviewViewNode,
 	UrlsView: UrlsViewNode,
 	UrlDetailMerge: UrlDetailMergeNode,

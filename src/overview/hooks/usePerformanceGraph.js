@@ -1,35 +1,50 @@
 /**
- * usePerformanceGraph — the Performance Dashboard data graph as a GENUINE node
- * graph on the substrate batched-poll toolkit (useBatchedPoll + addSliceFetcher),
- * D1b de-god. Replaces the single `performance:command` god command-builder + the
- * 4-slice `performance:view` god view with independent per-slice graph paths:
+ * usePerformanceGraph — the Performance Dashboard's data layer, expressed as a
+ * node graph on the substrate batched-poll toolkit (`useBatchedPoll` +
+ * `addSliceFetcher`). This hook owns every fetch the dashboard makes;
+ * `PerformanceDashboard` reads each slice back through `useNodeState` and fetches
+ * nothing itself.
  *
- *   perf:timer (Timer) → perf:tee (Tee) → fetch-overview, fetch-urls (Fetchers,
- *     each given an argsFn fire-time getter reading the CURRENT React UI state) →
- *     _shell/_http/performance
+ * POLLED slices. `useBatchedPoll` owns the Timer, the Tee, `_shell`/`_http`, the
+ * lock/flush bracket that puts one tick into one POST, and the page-visibility
+ * gate:
+ *
+ *   perf:timer (Timer) → perf:tee (Tee) → fetch-overview, fetch-urls (Fetchers)
+ *                                       → _shell/_http/performance
  *   overviewIn (Tee) → overview:view (OverviewView)
  *   urlsIn     (Tee) → urls:view     (UrlsView)
  *
- * overview + urls are POLLED — useBatchedPoll owns the Timer/Tee/_shell/_http +
- * lock-flush batching + page-visibility gate, and each Fetcher's getter makes the
- * tick emit live filter/sort/page args (so the data tracks UI state with no
- * re-wiring). A serverFilter/breakdown change also fires an immediate poke.
+ * Each Fetcher carries an `argsFn` fire-time getter that reads the CURRENT React
+ * UI state, so a filter, sort, or page change rides the very next tick without
+ * re-wiring the graph. A `serverFilter` or `chartBreakdown` change also pokes an
+ * immediate out-of-band fetch instead of waiting out the tick.
  *
- * url_detail + request_detail are ON-DEMAND (modal-open → fetch), NOT on the
- * Timer. The url_detail reply rides through the committed UrlDetailMergeNode
- * (incremental merge + last_modified/500-cap dedup) on the receiver→view edge:
+ * ON-DEMAND slices. Opening a modal fetches; neither slice hangs off `perf:timer`,
+ * and the overview/urls poll pauses while either modal is open:
  *
  *   urldetailIn (Tee) → urldetail:merge (UrlDetailMerge) → urldetail:view (UrlDetailView)
- *   requestdetailIn (Tee) → requestdetail:view (RequestDetailView)
+ *   urldetail:timer (Timer) → fetch-urldetail (Fetcher) → _shell/_http/performance
+ *   requestdetail:view (RequestDetailView)
  *
- * resolveRequest (request_search, navigation) + fetchUrlBreakdown (url_detail
- * (the useHookCatalogGraph / hook-catalog-view-node pattern): the hook stashes a
- * resolver under message[ID], the server replies TO=FROM=that view, and the view's
+ * The url_detail reply rides through `UrlDetailMergeNode` on the receiver → view
+ * edge: it merges each reply into the last one (dedup by rid, newest first, 500
+ * rows) and DROPS a reply whose `last_modified` is unchanged, so an auto-refresh
+ * tick never re-renders the modal for nothing. `urldetail:timer` is armed only
+ * while URL detail is the visible modal and the tab is visible. `request_detail`
+ * needs no receiver Tee — its command is minted FROM the view node, so the reply
+ * lands there.
  *
- * The hook returns ONLY control callbacks (`handleUrlParamsChange`,
- * `resolveRequest`, `fetchUrlBreakdown`); React reads each slice via its own
- * useNodeState('<slice>:view','view'). The command boundary is injectable via
- * `opts.commandClient`.
+ * AWAITED verbs — `resolveRequest`, `resolveUrlHash`, `fetchUrlBreakdown`, the
+ * three `rules` verbs, and `requestGrep` — each go out through their OWN `Request`
+ * node (`useRequestNode`). A node holding one in-flight command cannot mistake
+ * whose reply arrived, so the addressing IS the correlation: no op-id, no table of
+ * pending replies.
+ *
+ * The hook returns control callbacks only — `handleUrlParamsChange`,
+ * `resolveRequest`, `resolveUrlHash`, `fetchUrlBreakdown`, `listRules`,
+ * `upsertRule`, `removeRule`, `requestGrep`. Data reaches React through each
+ * slice's own `useNodeState( '<slice>:view', 'view' )`. The command boundary is
+ * injectable via `opts.commandClient`.
  */
 
 import { useCallback, useEffect, useRef } from '@wordpress/element';
@@ -55,7 +70,6 @@ const SERVER = 'performance';
 const TARGET = `_shell/_http/${ SERVER }`;
 const HTTP = '_http';
 
-// Per-URL ruleset CI via the same exospine (the "Log this URL" affordance).
 /**
  * Put the just-minted command on the wire NOW: these are event-driven, not
  * part of the batched poll tick that would otherwise carry them.
@@ -81,7 +95,16 @@ const URLDETAIL_TIMER = 'urldetail:timer';
 const URLDETAIL_FETCHER = 'fetch-urldetail';
 const REQUESTDETAIL_VIEW = 'requestdetail:view';
 
-// Arm a Timer hitchhike at intervalMs: >1000 throttles, 0 fires each tick.
+/**
+ * Arm the url_detail refresh Timer as a router hitchhike.
+ *
+ * Above 1000ms the Timer throttles itself to the interval; at or below it fires
+ * on every router tick. Both stay inside the `_http` lock/flush bracket — an own
+ * setInterval slot would fire outside it and cost a POST of its own.
+ *
+ * @param {Object} timer      The Timer node.
+ * @param {number} intervalMs Requested cadence in ms.
+ */
 function armTimer( timer, intervalMs ) {
 	if ( intervalMs > 1000 ) {
 		timer.setTimer( intervalMs );
@@ -90,11 +113,25 @@ function armTimer( timer, intervalMs ) {
 	}
 }
 
-// url_detail args from selectedUrl; tick + open fetch must match byte-for-byte.
+/**
+ * `url_detail` args for the open modal. The auto-refresh tick and the
+ * selection fetch share this, so both ask for the same payload shape and the
+ * merge node compares like with like.
+ *
+ * @param {string} hash The URL hash.
+ * @return {string[]} The command token array.
+ */
 const urlDetailArgs = ( hash ) =>
 	formatCommandArgs( [ hash ], { categories: true } );
 
-// NOT urlDetailArgs: the resolver reads one string, and selecting refetches.
+/**
+ * `url_detail` args for a bare hash → URL lookup. Deliberately NOT
+ * `urlDetailArgs`: the resolver reads one string out of the reply, and
+ * selecting the URL refetches with the categories anyway.
+ *
+ * @param {string} hash The URL hash.
+ * @return {string[]} The command token array.
+ */
 const urlLookupArgs = ( hash ) => formatCommandArgs( [ hash ] );
 
 // Validation guards for command args.
@@ -103,7 +140,15 @@ const isValidRequestId = ( r ) =>
 	'string' === typeof r && /^[a-zA-Z0-9_-]+$/.test( r );
 const isValidPartition = ( p ) => Number.isInteger( p ) && p >= 0;
 
-// Dedup server + active chart dim into the breakdown list; pad with status.
+/**
+ * The dimension list `overview` asks for: always `server`, since the page's
+ * server filter is built from that breakdown, plus the chart's active
+ * dimension. A chart already on `server` leaves one dimension, so `status`
+ * pads it back to two.
+ *
+ * @param {string} currentBreakdown The chart's active dimension.
+ * @return {string[]} Deduped dimension names.
+ */
 const breakdownsFor = ( currentBreakdown ) => {
 	const set = new Set( [ 'server' ] );
 	if ( currentBreakdown ) {
@@ -115,7 +160,14 @@ const breakdownsFor = ( currentBreakdown ) => {
 	return Array.from( set );
 };
 
-// Build overview args from UI state (server + breakdown + categories).
+/**
+ * Build the `overview` args from live UI state.
+ *
+ * @param {Object} ui                UI state, read at fire time.
+ * @param {string} ui.serverFilter   Server scope; '' means every server.
+ * @param {string} ui.chartBreakdown The chart's active dimension.
+ * @return {string[]} The command token array.
+ */
 function overviewArgs( { serverFilter, chartBreakdown } ) {
 	const options = { categories: true };
 	if ( serverFilter ) {

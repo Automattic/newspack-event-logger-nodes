@@ -1,8 +1,19 @@
 /**
  * Category Time Chart Component
  *
- * D3-based overlaid area chart showing profile category breakdowns over time.
- * Three modes: "time" (seconds per second), "count" (events per second), "average" (ms per event).
+ * D3 overlaid-area chart of profile-category timings across the retention
+ * window. The series come from the `category_time_series` payload the
+ * `performance` CI merges out of `Stats_Store`'s per-bucket category blobs —
+ * site-wide (or per-server) on the overview, per-URL in the URL detail view.
+ *
+ * Each 5-minute bucket carries `{ t, c }` per category: `t` milliseconds of
+ * wall time, `c` events. The `mode` prop chooses what to plot — "time"
+ * (seconds of category time per second of clock), "count" (events per second),
+ * or "average" (milliseconds per event). Areas overlay rather than stack, so
+ * each band reads against the axis instead of against its neighbors.
+ *
+ * The sibling `AggregateTimeChart` plots request-level metrics; this one
+ * breaks the same window down by profile category.
  */
 
 import { useCallback, useMemo } from '@wordpress/element';
@@ -18,6 +29,17 @@ import {
 	useTimeChart,
 } from '@newspack-nodes/shared/hooks/useTimeChart';
 
+/**
+ * Format a Y-axis value in the unit its mode implies.
+ *
+ * The unit is mode-specific: "time" is a rate (µs/s, ms/s, s/s), "average" a
+ * duration (µs, ms, s), and "count" a frequency (/s, K/s). Serves both the
+ * axis ticks and the tooltip rows.
+ *
+ * @param {number} val  Value in the mode's native unit — seconds per second for 'time', milliseconds for 'average', events per second for 'count'.
+ * @param {string} mode One of 'time', 'average', or 'count'.
+ * @return {string} Formatted label.
+ */
 const formatYValue = ( val, mode ) => {
 	if ( val === 0 ) {
 		return '0';
@@ -46,8 +68,26 @@ const formatYValue = ( val, mode ) => {
 	return `${ val.toFixed( val >= 10 ? 0 : 1 ) }/s`;
 };
 
+/**
+ * Category time chart component.
+ *
+ * @param {Object} props       Component props.
+ * @param {Object} props.data  Category series keyed by bucket — `{ bucket: { category: { t, c } } }`, `t` in milliseconds.
+ * @param {string} props.mode  'time' | 'count' | 'average'.
+ * @param {string} props.title Heading rendered above the chart.
+ * @return {import('react').ReactElement|null} Rendered chart, or null when data is empty.
+ */
 export default function CategoryTimeChart( { data, mode, title } ) {
-	// Pre-compute chart data.
+	/**
+	 * Rank categories, then sample each one across the retention window.
+	 *
+	 * Ranking sums the whole window per category: event counts in "count"
+	 * mode, milliseconds otherwise — so "average" orders by total time, not by
+	 * its own plotted average. The rank drives both palette assignment and
+	 * legend order. The synthetic `total` category is dropped; buckets with no
+	 * sample for a category contribute a zero, which keeps every series the
+	 * same length as the slot list.
+	 */
 	const chartState = useMemo( () => {
 		if ( ! data ) {
 			return { series: [], slots: [] };
@@ -92,6 +132,15 @@ export default function CategoryTimeChart( { data, mode, title } ) {
 		return { series, slots };
 	}, [ data, mode ] );
 
+	/**
+	 * Draw the whole chart from scratch into the container.
+	 *
+	 * `useTimeChart` calls this on mount, on every data change, and on each
+	 * resize, so it tears the previous SVG down first and rebuilds. Memoizing
+	 * it is mandatory — an unstable callback re-renders forever.
+	 *
+	 * @param {Object} refs The refs `useTimeChart` owns: containerRef, tooltipRef, lastMouseXRef.
+	 */
 	const renderFn = useCallback(
 		( refs ) => {
 			if (
@@ -103,7 +152,6 @@ export default function CategoryTimeChart( { data, mode, title } ) {
 
 			const { series, slots } = chartState;
 
-			// Clear previous chart.
 			d3.select( refs.containerRef.current ).selectAll( '*' ).remove();
 
 			// Dimensions.
@@ -159,7 +207,7 @@ export default function CategoryTimeChart( { data, mode, title } ) {
 				.selectAll( 'text' )
 				.style( 'font-size', '10px' );
 
-			// Overlaid areas.
+			// Areas overlay rather than stack; the palette cycles past 20.
 			const area = d3
 				.area()
 				.x( ( d ) => x( d.date ) )
@@ -178,7 +226,7 @@ export default function CategoryTimeChart( { data, mode, title } ) {
 					.attr( 'd', area );
 			} );
 
-			// Interactive tooltip.
+			// Tooltip lists the 10 largest non-zero categories, first largest.
 			const dates = slots.map( ( s ) => s.date );
 			setupTooltip( g, {
 				innerW,
@@ -218,6 +266,7 @@ export default function CategoryTimeChart( { data, mode, title } ) {
 
 	const { containerRef, tooltipRef } = useTimeChart( renderFn );
 
+	// The empty check sits below every hook; hoisting it breaks hook order.
 	if ( ! data || Object.keys( data ).length === 0 ) {
 		return null;
 	}

@@ -1,8 +1,25 @@
 /**
- * URL Detail View Component
+ * URL Detail View — the body of the Performance dashboard's URL modal.
  *
- * Displays URL detail content including response time chart, aggregate flame graph,
- * aggregate profile breakdown, and virtualized recent requests table.
+ * `PerformanceDashboard` opens a modal for one URL and renders this view inside
+ * it. Everything here draws a payload the parent already fetched from the
+ * `performance` CI's `url_detail` verb; this component owns no slice and issues
+ * no command of its own. Top to bottom:
+ *
+ *   1. Aggregate time chart, with the Metric and Breakdown dropdowns that drive it.
+ *   2. Category time charts — time, count, and average per profile category.
+ *   3. Response-time scatter of the individual requests.
+ *   4. Aggregate flame graph, lazily imported because d3-flame-graph is heavy.
+ *   5. Aggregate profile breakdown, averaged across the profiled requests.
+ *   6. Virtualized recent-requests table with an "Errors Only" filter.
+ *
+ * The one piece of data it does fetch is the breakdown series: `fetchUrlBreakdown`
+ * runs whenever the Breakdown dropdown changes and again on a router-tick timer,
+ * because the breakdown is a separate round-trip from the `url_detail` payload.
+ *
+ * Footgun: the requests table virtualizes against the modal's scroll container
+ * (`.components-modal__content`). Mounted outside a `Modal`, `useVirtualization`
+ * finds no such ancestor and throws — which is why the tests mock that hook.
  */
 
 import {
@@ -19,7 +36,12 @@ import { __, _n, sprintf } from '@wordpress/i18n';
 import { SelectControl } from '@wordpress/components';
 import { CHART_METRIC_OPTIONS, CHART_BREAKDOWN_OPTIONS } from '../constants';
 
-// Breakdown series move slowly; five minutes keeps the charts current.
+/**
+ * How often the breakdown series is re-fetched, in milliseconds.
+ *
+ * The series aggregates a long retention window, so it moves slowly; five
+ * minutes keeps the chart current without a round-trip per router tick.
+ */
 const BREAKDOWN_REFRESH_MS = 300000;
 
 // Lazy load FlameGraph (heaviest component - uses d3-flame-graph).
@@ -32,14 +54,29 @@ import CategoryTimeChart from '../CategoryTimeChart';
 import useVirtualization from '@newspack-nodes/shared/hooks/useVirtualization';
 import useRouterTick from '@newspack-nodes/shared/hooks/useRouterTick';
 
+/**
+ * Request-row height in pixels.
+ *
+ * The virtualizer's arithmetic and each row's inline style both read this one
+ * constant. Let them disagree and the padding spacers mis-size the runway,
+ * which drifts the visible window away from the scroll position.
+ */
 const ROW_HEIGHT = 40;
 
 /**
- * Memoized request row component.
+ * One row of the recent-requests table, memoized so scrolling re-renders only
+ * the rows that entered the window.
+ *
+ * The row is a button: click or Enter/Space hands `req.rid` to `onSelect`. Its
+ * request-id cell carries a bar background whose width is the row's value as a
+ * fraction of `maxBar`, and its status cell reads `error_status` first — `F`
+ * for a fatal, `T` for a timeout — falling back to the HTTP status code.
  *
  * @param {Object}   props          Component props.
- * @param {Object}   props.req      Request data object.
- * @param {Function} props.onSelect Selection callback.
+ * @param {Object}   props.req      Request index entry: rid, timestamp, method, status_code, error_status, duration_ms, peak_mb.
+ * @param {Function} props.onSelect Receives the row's rid on click or keyboard activation.
+ * @param {number}   props.maxBar   Largest bar value across the filtered rows; 0 draws no bar.
+ * @param {string}   props.metric   Chart metric; 'memory' bars peak_mb, every other value bars duration_ms.
  * @return {import('react').ReactElement} Rendered row.
  */
 const RequestRow = memo( function RequestRow( {
@@ -126,14 +163,19 @@ const RequestRow = memo( function RequestRow( {
 /**
  * URL Detail View component.
  *
+ * Sorting lives upstream: the parent sorts and hands back `sortedRequests`,
+ * and `requestSort` only tells the headers which arrow to draw. The filter is
+ * the exception — "Errors Only" is local state and narrows the list, the
+ * heading count, and the bar-scaling maximum alike.
+ *
  * @param {Object}   props                   Component props.
- * @param {Object}   props.urlDetail         URL detail data object.
- * @param {Array}    props.sortedRequests    Sorted array of recent requests.
- * @param {Object}   props.requestSort       Current sort {field, dir}.
- * @param {Function} props.onRequestSort     Sort handler callback.
- * @param {Function} props.onSelectRequest   Request selection callback.
- * @param {Function} props.fetchUrlBreakdown Fetch per-URL breakdown data.
- * @param {string}   props.urlHash           URL hash identifier.
+ * @param {Object}   props.urlDetail         `url_detail` payload: stats (with time_series), requests, aggregate_flame, aggregate_profiles, last_modified, and optional category_time_series.
+ * @param {Array}    props.sortedRequests    Recent requests, already sorted by the parent.
+ * @param {Object}   props.requestSort       Current sort as `{ field, dir }`; drives the header arrows only.
+ * @param {Function} props.onRequestSort     Receives a field name when a sortable header is clicked.
+ * @param {Function} props.onSelectRequest   Receives a rid from a row click or a scatter-plot dot.
+ * @param {Function} props.fetchUrlBreakdown Async `( urlHash, breakdown ) => series|null`; a falsy value clears the chart's breakdown.
+ * @param {string}   props.urlHash           Hash identifying the URL, as passed to `fetchUrlBreakdown`.
  * @return {import('react').ReactElement} Rendered component.
  */
 export default function UrlDetailView( {
@@ -170,7 +212,7 @@ export default function UrlDetailView( {
 	// --- Breakdown chart controls ---
 	const [ chartMetric, setChartMetric ] = useState( 'volume' );
 
-	// Calculate max value for bar chart backgrounds (metric-aware).
+	// Row bars scale against the filtered rows, not the whole result set.
 	const maxBar = useMemo( () => {
 		const field = chartMetric === 'memory' ? 'peak_mb' : 'duration_ms';
 		return filteredRequests.reduce(
@@ -182,6 +224,14 @@ export default function UrlDetailView( {
 	const [ breakdownData, setBreakdownData ] = useState( null );
 	const [ breakdownLoading, setBreakdownLoading ] = useState( false );
 
+	/**
+	 * Fetch one breakdown dimension and hand it to the aggregate chart.
+	 *
+	 * Without a fetcher or a hash there is nothing to ask for, so the chart
+	 * falls back to the undifferentiated series the payload already carries.
+	 *
+	 * @param {string} breakdown Dimension to break the series down by.
+	 */
 	const loadBreakdown = useCallback(
 		async ( breakdown ) => {
 			if ( ! fetchUrlBreakdown || ! urlHash ) {
@@ -200,7 +250,7 @@ export default function UrlDetailView( {
 		loadBreakdown( chartBreakdown );
 	}, [ chartBreakdown, loadBreakdown ] );
 
-	// Re-fetch breakdown data every 5 minutes to keep charts current.
+	// The tick passes no arguments; bind the breakdown showing right now.
 	const reloadBreakdown = useCallback( () => {
 		loadBreakdown( chartBreakdown );
 	}, [ chartBreakdown, loadBreakdown ] );

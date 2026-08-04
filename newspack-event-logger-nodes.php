@@ -11,6 +11,27 @@
  * Text Domain: newspack-event-logger-nodes
  * Domain Path: /languages
  *
+ * Plugin entry point. Everything here is registration; nothing does work at
+ * load time.
+ *
+ * WordPress loads plugins alphabetically, so this plugin loads BEFORE
+ * `newspack-nodes` and no substrate class exists while this file runs. That
+ * splits registration three ways:
+ *
+ * 1. Callbacks the substrate PULLS — `newspack_nodes/declare_config_keys` —
+ *    hook with a literal action name, because the class holding the constant
+ *    is not loaded yet.
+ * 2. Everything that touches a substrate class waits inside
+ *    `$_newspack_event_logger_nodes_load`, run on `plugins_loaded` priority 11
+ *    and gated on the substrate being present AND new enough.
+ * 3. Hooks whose actions only ever fire from substrate code — the
+ *    `newspack_nodes/` stderr, vault-changed, request-graph-ready and
+ *    supervisor-run actions — register at file scope. Without the substrate the
+ *    action never fires, so a presence guard would be dead weight.
+ *
+ * The admin menu and dashboard enqueues also register at file scope, guarding
+ * only on the substrate class they call into.
+ *
  * @package Newspack_Event_Logger_Nodes
  */
 
@@ -37,6 +58,14 @@ if ( \function_exists( 'add_action' ) ) {
 	);
 }
 
+/**
+ * Deferred bootstrap: every registration that needs a substrate class.
+ *
+ * Runs on `plugins_loaded` priority 11, once both plugins are loaded. Don't
+ * lower the priority. A missing substrate returns silently; one below the
+ * version floor leaves an admin notice naming both versions and returns, so
+ * the plugin goes dormant instead of fataling on an API that isn't there.
+ */
 $_newspack_event_logger_nodes_load = static function (): void {
 	if ( ! \class_exists( '\\Newspack_Nodes\\Bootstrap' ) ) {
 		return;
@@ -52,26 +81,32 @@ $_newspack_event_logger_nodes_load = static function (): void {
 		\WP_CLI::add_command( 'nodes ruleset-bench', '\\Newspack_Event_Logger_Nodes\\CLI\\Ruleset_Bench_Command' );
 	}
 
+	// reset_local_cache, not reset(): reset() would re-enter the substrate.
 	\add_action(
 		\Newspack_Nodes\Config::RESET_ACTION,
 		[ \Newspack_Event_Logger_Nodes\Config::class, 'reset_local_cache' ]
 	);
 
+	// Give each substrate job its own /jobs/{handler}/{id} request context.
 	\add_action( 'newspack_nodes/job_worker/before_job', [ \Newspack_Event_Logger_Nodes\Log_Manager::class, 'begin_job_context' ], 10, 2 );
 	\add_action( 'newspack_nodes/job_worker/after_job', [ \Newspack_Event_Logger_Nodes\Log_Manager::class, 'end_job_context' ] );
 
+	// Prefix resolves node classes; the dir supplies stock topologies.
 	\Newspack_Nodes\Topology_Registry::register_plugin(
 		'Newspack_Event_Logger_Nodes\\',
 		NEWSPACK_EVENT_LOGGER_NODES_DIR . 'topologies'
 	);
 
+	// App\ only — the service CIs. Node classes resolve via the prefix above.
 	\Newspack_Nodes\Command_Interpreter_Node::register_namespace( 'Newspack_Event_Logger_Nodes\\App\\' );
 
+	// Resolves `<eln:KEY>` .tsl tokens; substrate keys use the `config` ns.
 	\Newspack_Nodes\Core::register_config_namespace(
 		'eln',
 		[ \Newspack_Event_Logger_Nodes\Config::class, 'resolve_eln_token' ]
 	);
 
+	// Named callables .tsl index legs reference; TSL has no closures.
 	\Newspack_Nodes\Formatters::register(
 		'request-index',
 		\Newspack_Event_Logger_Nodes\Request_Builder_Node::format_index_entry( ... )
@@ -99,9 +134,20 @@ $_newspack_event_logger_nodes_load = static function (): void {
 
 \add_action( 'plugins_loaded', $_newspack_event_logger_nodes_load, 11 );
 
+/**
+ * Log-dir basenames this plugin's request-scope producers write. The substrate
+ * expands each over the configured partition count into the `{basename}.p{N}`
+ * dirs its log GC declares and the Workers dashboard catalogs.
+ *
+ * `firehose` is `Log_Manager`'s. `jobintake` is the substrate's own `Job_Intake`
+ * ingress, which the substrate already declares — the merge below dedupes.
+ */
 const NEWSPACK_EVENT_LOGGER_NODES_RUNTIME_BASENAMES = [ 'firehose', 'jobintake' ];
 
 /**
+ * Add this plugin's producers to the substrate's registered-producer set, so
+ * the GC and the Workers catalog expect the dirs `Log_Manager` writes.
+ *
  * @param array<int, string> $producers Producers registered by prior contributors.
  * @return array<int, string>
  */
@@ -157,6 +203,15 @@ function newspack_event_logger_nodes_resolve_settings_sync_value( $value, string
 	return $value;
 }
 
+/**
+ * Give the supervisor tick its own request context, so everything the substrate
+ * logs during `Supervisor::run()` lands in a `/jobs/newspack-nodes` request
+ * instead of bleeding into whatever WP-Cron request happened to host it.
+ *
+ * The shared `$entered` flag keeps the pair honest: an `after` with no matching
+ * `before` would resume a context this never suspended, and pop a `$_SERVER`
+ * snapshot it never pushed.
+ */
 ( static function (): void {
 	$entered = false;
 	\add_action(
@@ -183,6 +238,19 @@ function newspack_event_logger_nodes_resolve_settings_sync_value( $value, string
 // presence guard is needed. See Diagnostics_Bridge.
 \add_action( 'newspack_nodes/stderr', [ \Newspack_Event_Logger_Nodes\Diagnostics_Bridge::class, 'on_stderr' ] );
 
+/**
+ * Mount the three application service CIs onto the request-scope command
+ * interpreter the substrate has just built.
+ *
+ * `HTTP_In_Node::dispatch()` lazy-builds `_router` / `_command_interpreter` /
+ * `_http` and then fires `newspack_nodes/request_graph_ready`, which is the
+ * first moment a base interpreter exists to hang these off. Each shell name
+ * resolves to `\Newspack_Event_Logger_Nodes\App\{name}_Node` through the `App\`
+ * namespace the deferred bootstrap registered; the second argument is the node
+ * name the dashboards address verbs to.
+ *
+ * @param \Newspack_Nodes\Command_Interpreter_Node $base_interpreter Request-scope CI.
+ */
 function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\Command_Interpreter_Node $base_interpreter ): void {
 	$base_interpreter->make_node( 'Discovery_CI',   'discovery' );
 	$base_interpreter->make_node( 'Performance_CI', 'performance' );
@@ -198,6 +266,9 @@ function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\Command_
  * fans the current settings to them. Decoupled from the Vault via the
  * `newspack_nodes/vault/changed` action. Best-effort (the mutation never fails
  * on it).
+ *
+ * Any mutation earns a restart, so neither parameter is read; they are the
+ * action's signature.
  *
  * @param string $id     Server id that changed.
  * @param string $action added | updated | removed.
@@ -215,6 +286,14 @@ function newspack_event_logger_nodes_on_vault_changed( string $id, string $actio
 }
 \add_action( 'newspack_nodes/vault/changed', 'newspack_event_logger_nodes_on_vault_changed', 10, 2 );
 
+/**
+ * Register the Event Logger admin menu: a top-level Performance page plus one
+ * submenu per React dashboard. Every callback prints a bare mount div; the tree
+ * that fills it comes from the `admin_enqueue_scripts` closure below, so a page
+ * whose bundle is missing renders empty rather than fataling.
+ *
+ * The settings page is not here — `Admin\Admin` adds it under Settings.
+ */
 \add_action(
 	'admin_menu',
 	static function (): void {
@@ -261,6 +340,22 @@ function newspack_event_logger_nodes_on_vault_changed( string $id, string $actio
 	}
 );
 
+/**
+ * Enqueue the React tree for whichever Event Logger page is rendering.
+ *
+ * `$page_to_tree` maps the admin page slug to its `build/{tree}` bundle and
+ * doubles as the page gate: an unlisted slug enqueues nothing. The four
+ * dashboards style against the substrate's graph sheet; the settings tree needs
+ * only the base UI sheet.
+ *
+ * The substrate's `enqueue_react_page()` performs the mechanics — bundle
+ * manifest, CSS sidecar, `NewspackNodesData` localize — and returns the script
+ * handle, or null when it declined (wrong page, or no built bundle). The
+ * `window.*` payloads below bind to that handle, so they only ship when the
+ * bundle did.
+ *
+ * @param string $hook Current admin page hook suffix; the slug gate is used instead.
+ */
 \add_action(
 	'admin_enqueue_scripts',
 	static function ( string $hook ): void {
@@ -314,6 +409,7 @@ function newspack_event_logger_nodes_on_vault_changed( string $id, string $actio
 			return;
 		}
 
+		// Dashboards size their time axis from the retention window.
 		$retention_seconds = 86400;
 		$substrate         = \Newspack_Nodes\Config::load_config();
 		/** @var int|float|string|bool|null $raw_lifespan */

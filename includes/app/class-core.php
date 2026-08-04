@@ -1,16 +1,23 @@
 <?php
 /**
- * Application Core - Tracks request lifecycle, hook timing, plugin performance.
+ * Application Core — WordPress hook instrumentation for the request log.
  *
- * Binds only the current request's governing rule's hooks (Log_Manager::governing_rule())
- * individually at priority 1 (start) and PHP_INT_MAX-1 (complete) to measure actual
- * execution time of callbacks registered between those priorities, plus a sacrificial
- * spacer at PHP_INT_MAX-2 (see hook_spacer) so a self-removing callback can't make
- * WP_Hook's iteration skip the complete. A skip rule or no match binds zero hooks.
+ * Binds hook_start / hook_spacer / hook_complete on only the hooks named by the
+ * current request's governing rule (Log_Manager::governing_rule()), so a skip rule
+ * or no match binds nothing at all. Each hook is bound individually: hook_start at
+ * the configured `hook_start_priority` and hook_complete at PHP_INT_MAX - 1, so the
+ * span measures the callbacks registered between them. The sacrificial hook_spacer
+ * at PHP_INT_MAX - 2 absorbs the priority WP_Hook skips when a callback removes
+ * itself mid-run (see hook_spacer).
  *
- * For significant events, wraps each individual callback with timing so the log shows
- * exactly which callback is slow (e.g. "photon_subsizes_filter_the_content (complete): 5000ms"
- * nested inside "the_content hook").
+ * A rule's significant events additionally get per-callback profiling: hook_start
+ * rewrites every callback on the hook into a timing wrapper, so the log names the
+ * slow one — "Image_CDN::filter_the_content @10 (complete)" nested inside the
+ * hook's own "the_content hook" span.
+ *
+ * Log_Manager fires `newspack_event_logger_nodes_scope_changed` whenever a job
+ * context begins or ends; rebind_for_current_scope() then rebinds for whichever
+ * rule governs next.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -28,7 +35,8 @@ if ( ! \defined( 'ABSPATH' ) ) {
 }
 
 /**
- * Core class - WordPress hook instrumentation.
+ * Times each bound hook — and each callback on a significant hook — into the
+ * current request's log.
  */
 class Core {
 
@@ -41,15 +49,21 @@ class Core {
 	/** @var array<string, true> Significant events that get per-callback profiling. */
 	private array $significant = [];
 
-	/** @var int Priority used for hook_start registration. */
+	/** @var int Priority hook_start registers at (config key `hook_start_priority`). */
 	private int $start_priority = 1;
 
 	/** @var array<int, true> spl_object_id of wrappers we created (prevents double-wrap). */
 	private array $wrapper_ids = [];
 
+	/**
+	 * Read the start priority from config, bind the current scope, and listen
+	 * for scope changes.
+	 *
+	 * No Log_Manager instance is cached here: every bound callback resolves
+	 * Log_Manager::instance() afresh, so a suspend/resume (job context) always
+	 * times against the live one.
+	 */
 	public function __construct() {
-		// Bind hooks unconditionally; check enabled per-call (no cached LM).
-
 		$this->start_priority = RuntimeCore::num_int( Config::value( 'hook_start_priority' ), 1 );
 
 		$this->bind_current_scope();
@@ -57,9 +71,14 @@ class Core {
 	}
 
 	/**
-	 * Bind hook_start/hook_spacer/hook_complete for only the current
-	 * request's governing rule — the hot-path win: skip/no-match binds
-	 * zero hooks instead of the entire global log_events list.
+	 * Bind hook_start/hook_spacer/hook_complete for the current request's
+	 * governing rule only — the hot-path win: a skip rule or no match binds
+	 * zero hooks instead of every hook the ruleset names.
+	 *
+	 * A significant event joins the bind list when it names a hook the rule
+	 * doesn't already cover. One that matches a custom event stays unbound:
+	 * custom events are categories the application logs itself, not do_action
+	 * names, so binding them would register a filter nothing ever fires.
 	 */
 	private function bind_current_scope(): void {
 		$rule = Log_Manager::instance()->governing_rule();
@@ -81,13 +100,11 @@ class Core {
 			}
 		}
 
-		// Plugin-load timing lives in the 00-newspack-profiler mu-plugin.
-
-		// Bind each hook individually for proper timing.
 		foreach ( $hooks as $hook_name ) {
 			if ( '' === $hook_name ) {
 				continue;
 			}
+			// Plugin-load timing lives in the 00-newspack-profiler mu-plugin.
 			if ( 'plugin_loaded' === $hook_name ) {
 				continue;
 			}
@@ -103,7 +120,14 @@ class Core {
 	}
 
 	/**
-	 * Start timing for a hook. Registered at start_priority.
+	 * Open the hook's timing span, wrapping its callbacks when it is significant.
+	 *
+	 * Registered as a filter at start_priority on every bound hook. The entry
+	 * records the filter value as 'm', a preview capped at 1024 bytes — strings
+	 * clipped, other scalars verbatim, anything else JSON-encoded to 16 levels
+	 * and dropped when the encoding overflows the cap. Its stable label 'l' is
+	 * deliberately empty, which keeps flame nodes aggregating on the hook name
+	 * rather than on the value.
 	 *
 	 * @param mixed $v Filter value (passed through).
 	 * @return mixed
@@ -118,7 +142,6 @@ class Core {
 		$hook_name = \current_filter() ?: '';
 		$category  = $hook_name . ' hook';
 
-		// Log filter value as 'm', truncated (preview; full value is filter).
 		$m = '';
 		if ( isset( $v ) && \is_string( $v ) ) {
 			$m = \strlen( $v ) > 1024 ? \substr( $v, 0, 1024 ) : $v;
@@ -145,11 +168,16 @@ class Core {
 	 * Wrap each callback on a hook with timing instrumentation.
 	 *
 	 * Replaces each callback's function with a closure that calls start/complete
-	 * around the original. Only wraps priorities > start_priority and < PHP_INT_MAX-2
-	 * (skips our own hook_start/hook_spacer/hook_complete).
+	 * around the original. Only priorities strictly between start_priority and
+	 * SPACER_PRIORITY are touched; everything at or above the spacer is ours.
 	 *
 	 * Safe to call during hook execution at start_priority — callbacks at higher
 	 * priorities haven't been iterated yet, so WordPress picks up the replacements.
+	 *
+	 * Each wrapper claims accepted_args = 99 so WP_Hook hands it every argument
+	 * apply_filters has, then slices back to the original's count before calling
+	 * it. Inflating the count on the wrapper preserves the original's contract;
+	 * the original never sees an argument it didn't ask for.
 	 *
 	 * @param string $hook_name Hook to wrap.
 	 */
@@ -287,8 +315,14 @@ class Core {
 
 	/**
 	 * Remove the currently-bound hook filters and bind the current request's
-	 * governing rule afresh. Used when a job context switch changes which
-	 * rule governs mid-request (JobWorker's begin/end_job_context).
+	 * governing rule afresh. Public because it is the listener for
+	 * `newspack_event_logger_nodes_scope_changed`, which Log_Manager fires when
+	 * a job context switch changes which rule governs mid-request
+	 * (begin_job_context / end_job_context).
+	 *
+	 * Only this class's own three filters come off. Callback wrappers already
+	 * installed by wrap_callbacks() stay in $wp_filter and keep timing, and
+	 * wrapper_ids keeps remembering them, so the new scope can't double-wrap.
 	 */
 	public function rebind_for_current_scope(): void {
 		foreach ( $this->bound_hooks as $hook_name ) {
@@ -318,7 +352,10 @@ class Core {
 	}
 
 	/**
-	 * Complete timing for a hook. Registered at PHP_INT_MAX - 1.
+	 * Close the hook's timing span. Registered at PHP_INT_MAX - 1.
+	 *
+	 * Needs no `enabled` check, unlike hook_start: Log_Manager::complete()
+	 * no-ops when no span under this label is open.
 	 *
 	 * @param mixed $v Filter value (passed through).
 	 * @return mixed

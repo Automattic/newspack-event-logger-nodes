@@ -2,8 +2,15 @@
 /**
  * Uninstall option-cleanup helpers.
  *
- * Loaded only from uninstall.php (plugin delete). Kept out of the autoloader so
+ * Loaded only from `uninstall.php`, which WordPress runs on plugin delete and
+ * which calls `uninstall_cleanup( 'newspack_event_logger_nodes_' )`. The file
+ * declares functions, not classes, so the classmap autoloader never maps it and
  * it costs nothing at runtime.
+ *
+ * The sweep is options-only by design. On-disk state — logs, locks, offsets,
+ * IPC — lives under the substrate's base directory, and the `newspack-nodes`
+ * uninstall removes that tree; memcache stats carry TTLs and expire on their
+ * own.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -15,11 +22,18 @@ namespace Newspack_Event_Logger_Nodes;
 \defined( 'ABSPATH' ) || exit;
 
 /**
- * Delete every option row for a prefix, plus its transient variants (all are
- * option rows, so this stays options-only). Prefix-based so it stays complete
- * as options come and go and catches autoload=off rows a hardcoded list misses.
+ * Delete every option row for a prefix, plus its transient variants.
  *
- * @param \wpdb  $wpdb   WordPress database handle.
+ * Transients are option rows too (`_transient_<name>` and
+ * `_transient_timeout_<name>`), so sweeping all three stubs stays options-only.
+ * Selecting by prefix keeps the cleanup complete as options come and go, and it
+ * catches the autoload=off rows a hardcoded list misses — the ruleset's
+ * per-rule `newspack_event_logger_nodes_rule_hooks_*` options among them.
+ * Rows go through `delete_option()` rather than one bulk DELETE, so the options
+ * cache and the `delete_option` hooks stay in step.
+ *
+ * @param \wpdb  $wpdb   WordPress database handle. Reads `$wpdb->options`, so
+ *                       the caller's current site decides which table.
  * @param string $prefix Option-name prefix, e.g. `newspack_event_logger_nodes_`.
  * @return int Number of option rows deleted.
  */
@@ -41,6 +55,11 @@ function delete_prefixed_options( $wpdb, string $prefix ): int {
 
 /**
  * Delete all prefixed options, iterating every site on multisite.
+ *
+ * `switch_to_blog()` repoints `$wpdb->options` at each site's table, so one pass
+ * per site sweeps the whole network; `'number' => 0` lifts the default 100-site
+ * cap that would otherwise leave the rest behind. Network-wide (`sitemeta`)
+ * options need no pass — this plugin stores none.
  *
  * @param string $prefix Option-name prefix.
  * @return void

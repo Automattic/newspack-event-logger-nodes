@@ -1,41 +1,37 @@
 <?php
 /**
- * ReqgrepCommand: WP-CLI subcommand for filtering firehose JSONL by request id
- * (or any pattern). Reads the firehose through the substrate's `Consumer_Node`
- * instead of hand-rolling `Partition::read_at()` + `json_decode()`:
+ * Reqgrep_Command: the `wp nodes reqgrep` subcommand — filter the firehose by
+ * request id, URL, or any text, and print each matching request as an indented
+ * lifecycle tree.
  *
- *  - cat / --recent: one `Consumer_Node` per partition, sink → a `Callback_Node`
- *    that hands each unpacked `Message` to `process_message()`, driven to EOF via
- *    the Consumer's synchronous `drain()`.
- *  - --follow: the same Consumer graph seeded at the partition tail, run under the
- *    `Event_Framework` drain loop (each Consumer's `fire_cb` polls for new bytes).
- *  - Every firehose line on disk is a 7-field positional `Message` envelope
- *    (`Message::packed`); the entry hash is at `Message::VALUE`, the rid at
- *    `Message::KEY`. There is no legacy entry-hash format.
- *  - Logs path: `Config::get_logs_directory() . '/firehose.log'`.
- *  - Namespace: `Newspack_Event_Logger_Nodes\CLI`. Uses the local LRU_Cache.
+ * This command owns reading and rendering; `Reqgrep_Core` owns grouping. Every
+ * read path funnels lines into `Reqgrep_Core::push()`, which decides which lines
+ * belong to which request and when one is complete, so the command and the
+ * `performance` CI's `request_grep` verb agree byte-for-byte. The caps on an
+ * in-progress request — bytes, lines, retained history lines — live there too.
  *
- * Behaviour preserved 1:1:
- *  - 300-slot 3-bucket × 100 LRU_Cache with 60-second timed rotation; on-evict
- *    callback prints `[incomplete]` and drops.
- *  - Per-rid byte cap MAX_BYTES_PER_REQUEST = 10MB.
- *  - Line caps MAX_LINES_PER_REQUEST = 20000, MAX_LINES_PER_REQUEST_IN_HISTORY = 10000.
- *  - Indent state machine: `(start)` increases indent by 4, `(complete)`
- *    decreases by 4 (clamped at 0).
- *  - 0.1-second timestamp resolution display.
- *  - Escalating-interval dot rows (1s, 10s, 100s, ...) so multi-day gaps don't
- *    blow up output.
- *  - peak_mb / duration_ms suffix on (complete) lines.
- *  - Multi-line message indentation aligned to the prefix width.
- *  - `#` separator on rid reset (when message number rewinds).
- *  - stdin pipe-mode (S_IFIFO + S_IFREG detection), read via the substrate's
- *    `Stdin_Node`; all output flows through a swappable `Stdout_Node` (which
- *    fwrites straight to STDOUT, bypassing PHP output buffers).
+ * Three read paths share one graph shape: a source node whose sink is a
+ * `Callback_Node` feeding `process_message()`.
  *
- * Capability: requires `manage_options` (the standard WP-CLI invariant —
- * WP-CLI calls run as root unless the user explicitly passes `--user=`, but
- * we keep the explicit check so future REST gateway integration shares one
- * authorization path).
+ *  - cat (the default) and `--recent`: one `Consumer_Node` per firehose
+ *    partition, driven to EOF by the Consumer's synchronous `drain()`.
+ *    `--recent` seeds the cursor at the second-to-last segment; the default
+ *    reads from the start.
+ *  - `--follow`: the same Consumers seeded at the tail, run under the
+ *    `Event_Framework` drain loop, where each Consumer's `fire_cb` polls for new
+ *    bytes until SIGINT.
+ *  - stdin: a `Stdin_Node` over a pipe or a redirected file, detected by fstat.
+ *
+ * Every firehose line is a 7-field positional `Message` envelope
+ * (`Message::packed`): the entry hash sits at `Message::VALUE`, the request id
+ * at `Message::KEY`. No legacy entry-hash format is read.
+ *
+ * The partition dirs come from `Log_Manager::firehose_dirs()`, which owns the
+ * layout; `--firehose` overrides the base and must resolve inside
+ * `Config::get_logs_directory()`.
+ *
+ * Output flows through `$stdout` — a `Stdout_Node` that fwrites straight to
+ * STDOUT, bypassing PHP's output buffers. Tests swap in a capturing node.
  *
  * @package Newspack_Event_Logger_Nodes
  * @phpcs:disable WordPress.Security.EscapeOutput.OutputNotEscaped -- CLI output, not web
@@ -57,6 +53,14 @@ use Newspack_Nodes\Message;
 use Newspack_Nodes\Stdin_Node;
 use Newspack_Nodes\Stdout_Node;
 
+/**
+ * `wp nodes reqgrep` — read the firehose and print the requests that match.
+ *
+ * One instance per invocation. `__invoke()` parses the flags, builds the
+ * in-flight cache and the `Reqgrep_Core` engine, then dispatches to stdin,
+ * follow, or cat mode. The `fmt_*` fields are per-request rendering state that
+ * `output_request()` resets before each tree.
+ */
 class Reqgrep_Command {
 
 	/**
@@ -65,6 +69,8 @@ class Reqgrep_Command {
 	 * bucket is printed as `[incomplete]`.
 	 */
 	private const INFLIGHT_BUCKET_SIZE = 100;
+
+	/** Live buckets in the in-flight cache; the oldest is evicted on rotation. */
 	private const INFLIGHT_NUM_BUCKETS = 3;
 
 	/** Seconds between in-flight cache rotations (60 × 3 = 180s idle ceiling). */
@@ -77,7 +83,7 @@ class Reqgrep_Command {
 	 */
 	public ?\Newspack_Nodes\Node $stdout = null;
 
-	/** Firehose base directory (resolved from Config or --path). */
+	/** Firehose base path — the `--firehose` override, else the configured logs dir. Reported by follow mode. */
 	private string $base_dir = '';
 
 	/** History bucket size (lines per bucket). */
@@ -104,7 +110,7 @@ class Reqgrep_Command {
 	/** True if --incomplete was passed. */
 	private bool $incomplete = false;
 
-	/** In-flight matched requests. Each value is stdClass {lines:array, bytes:int}. */
+	/** In-flight matched requests, shared with Reqgrep_Core. Each value is stdClass {lines:array, bytes:int, clipped?:bool}. */
 	private ?LRU_Cache $inflight = null;
 
 	/** History bucket count. */
@@ -126,6 +132,9 @@ class Reqgrep_Command {
 	 * matches the pattern, then prints them in chronological order with
 	 * indentation reflecting the (start)/(complete) tree.
 	 *
+	 * Piped or redirected stdin wins over every other source: with data on
+	 * stdin the command reads that and ignores --follow and --recent.
+	 *
 	 * ## OPTIONS
 	 *
 	 * [<pattern>]
@@ -144,13 +153,13 @@ class Reqgrep_Command {
 	 * : Show requests that never reached `process (complete)`.
 	 *
 	 * [--bucket-size=<size>]
-	 * : Lines per bucket for the history buffer.
+	 * : Lines per bucket for the history buffer. Clamped to 1-10000.
 	 * ---
 	 * default: 250
 	 * ---
 	 *
 	 * [--num-buckets=<count>]
-	 * : Number of history buckets retained.
+	 * : Number of history buckets retained. Clamped to 1-100.
 	 * ---
 	 * default: 10
 	 * ---
@@ -275,7 +284,13 @@ class Reqgrep_Command {
 		$this->emit( '' );
 	}
 
-	/** Emit one line to the output node (Stdout_Node appends the trailing newline). */
+	/**
+	 * Emit one line to the output node — `$stdout`, lazily a `Stdout_Node` unless
+	 * a test swapped it. `Stdout_Node::fill()` fwrites the VALUE verbatim and
+	 * appends nothing, so `$text` carries whatever layout the caller wants.
+	 *
+	 * @param string $text Text to write.
+	 */
 	private function emit( string $text ): void {
 		$message                   = Message::new_message();
 		$message[ Message::TYPE ]  = Message::TM_BYTESTREAM;
@@ -284,8 +299,22 @@ class Reqgrep_Command {
 	}
 
 	/**
-	 * Format a log entry for display with indentation, dot rows for elapsed
-	 * seconds, and (start)/(complete) bookkeeping.
+	 * Format one log entry as a display line and advance the rendering state.
+	 *
+	 * The rules, in the order the code applies them:
+	 *
+	 *  - Indent: `(complete)` dedents by 4 BEFORE the line so it aligns with its
+	 *    `(start)`; `(start)` indents by 4 AFTER, for the entries it encloses.
+	 *    The indent clamps at 0.
+	 *  - Reset: an entry number lower than the previous one means a new request
+	 *    began, so the indent and clock reset behind a `#` separator row.
+	 *  - Clock: the timestamp column prints only when it advances at 0.1-second
+	 *    resolution, keeping repeated same-tick entries readable.
+	 *  - Gaps: elapsed whole seconds render as dot rows at escalating intervals
+	 *    (1s, then 10s, then 100s, …) so a multi-day gap costs O(log gap) rows.
+	 *  - Body: an array `m` pretty-prints as JSON, and every continuation line of
+	 *    a multi-line body is padded to the message column.
+	 *  - Suffix: `duration_ms` and `peak_mb` trail the line when present.
 	 *
 	 * @param array<int|string, mixed> $entry Decoded JSON entry.
 	 * @return string Formatted output line.
@@ -393,8 +422,9 @@ class Reqgrep_Command {
 	}
 
 	/**
-	 * Narrow a stdClass `->lines` value (always built from string appends in
-	 * append_to_state) to a list of strings for output_request.
+	 * Narrow a state object's `->lines` value to a list of strings for
+	 * output_request. `Reqgrep_Core::append_to_state()` only ever appends
+	 * strings, so this is a type narrowing, not a filter that drops real data.
 	 *
 	 * @param mixed $value Decoded value.
 	 * @return array<int, string>
@@ -415,7 +445,6 @@ class Reqgrep_Command {
 	 */
 	private function init_core(): void {
 		$on_complete = function ( array $lines, string $rid ): void {
-			// to_lines narrows the engine's lines to strings for output.
 			if ( ! $this->incomplete ) {
 				$this->output_request( self::to_lines( $lines ), $rid );
 			}
@@ -437,6 +466,8 @@ class Reqgrep_Command {
 	 * Narrow the run-setup-assigned `$inflight` cache to non-null. The cache is
 	 * built in the command's setup before any line processing; a null here means
 	 * a caller invoked a processing method before setup, which is a bug.
+	 *
+	 * @throws \RuntimeException If the cache has not been built yet.
 	 */
 	private function require_inflight(): LRU_Cache {
 		if ( null === $this->inflight ) {
@@ -454,6 +485,7 @@ class Reqgrep_Command {
 	 * decision is observable without a real STDIN pipe.
 	 *
 	 * @param resource|null $stream Stream to inspect (defaults to STDIN).
+	 * @return bool True when the stream is a pipe or a regular file.
 	 */
 	private function stdin_has_data( $stream = null ): bool {
 		if ( null === $stream ) {
@@ -512,9 +544,12 @@ class Reqgrep_Command {
 
 	/**
 	 * Process one unpacked firehose Message: the entry hash sits at
-	 * Message::VALUE, the routing rid at Message::KEY. Re-pack the envelope (the
-	 * accepted minimal bridge — raw mode echoes it, formatted mode unpacks it) and
-	 * hand it to the shared rid-grouping engine.
+	 * Message::VALUE, the request id at Message::KEY. An entry that is not an
+	 * array, or one with no rid, is dropped.
+	 *
+	 * The envelope is re-packed before it reaches the engine, because the packed
+	 * line is what the pattern matches and what the engine hands back — raw mode
+	 * echoes it verbatim, formatted mode unpacks it again.
 	 *
 	 * @param array<int, mixed> $message The 7-field positional Message array.
 	 */
@@ -527,7 +562,12 @@ class Reqgrep_Command {
 		$this->require_core()->push( $entry, $rid, Message::packed( $message ) );
 	}
 
-	/** Narrow the setup-assigned engine to non-null; null means a read ran before init_core(). */
+	/**
+	 * Narrow the setup-assigned engine to non-null; null means a read ran before
+	 * init_core().
+	 *
+	 * @throws \RuntimeException If init_core() has not run yet.
+	 */
 	private function require_core(): Reqgrep_Core {
 		if ( null === $this->core ) {
 			throw new \RuntimeException( 'reqgrep core not initialized' );
@@ -536,7 +576,9 @@ class Reqgrep_Command {
 	}
 
 	/**
-	 * Print every still-in-flight request as `[incomplete]`.
+	 * Print every still-in-flight request as `[incomplete]`. Cat and stdin modes
+	 * call this once their sources are exhausted, so a request whose
+	 * `process (complete)` never arrived is still shown rather than dropped.
 	 */
 	private function output_remaining(): void {
 		foreach ( $this->require_inflight()->iterate() as $rid => $state ) {
@@ -555,8 +597,12 @@ class Reqgrep_Command {
 	 * fire_cb polls its source for new bytes and forwards them to
 	 * process_message.
 	 *
-	 * `$max_iterations` defaults to PHP_INT_MAX (production: tail forever until
-	 * SIGINT). Tests pass a small number to bound the drain loop.
+	 * Signal handlers are installed first, so Ctrl+C ends the drain loop instead
+	 * of killing the process mid-write.
+	 *
+	 * @param int $max_iterations Drain-loop iteration budget. PHP_INT_MAX in
+	 *                            production (tail until SIGINT); tests pass a
+	 *                            small number to bound the loop.
 	 */
 	private function follow_mode( int $max_iterations = \PHP_INT_MAX ): void {
 		foreach ( $this->partition_dirs as $dir ) {
@@ -583,7 +629,11 @@ class Reqgrep_Command {
 	 * Callback_Node that routes each unpacked Message to process_message. No
 	 * offsetlog — a reqgrep run keeps no durable cursor.
 	 *
+	 * The sink must be attached before `arguments()`, which is where the Consumer
+	 * builds its source Partition and hands the sink down to it.
+	 *
 	 * @param string $source_dir Concrete partition dir.
+	 * @return Consumer_Node The wired Consumer, ready for next_offset() or drain().
 	 */
 	private function build_consumer( string $source_dir ): Consumer_Node {
 		$sink = new Callback_Node( $this->process_message( ... ) );

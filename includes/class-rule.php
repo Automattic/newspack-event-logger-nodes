@@ -1,6 +1,12 @@
 <?php
 /**
- * One per-URL logging rule.
+ * One per-URL logging rule: a URL pattern, its log/skip verdict, and the
+ * instrumentation a log verdict carries.
+ *
+ * The ruleset replaced the seven global logging options. Three classes divide
+ * the work: `Rule` is this immutable row, `Rule_Set` persists the list and
+ * resolves pointer-tier hooks, and `Rule_Matcher` picks the one rule that
+ * governs a request.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -14,9 +20,10 @@ use Newspack_Nodes\Core;
 \defined( 'ABSPATH' ) || exit;
 
 /**
- * Immutable value object. Hooks are either inlined (small rules) or held in
- * memcache behind a durable option (heavy rules) — this object only records
- * which tier via `hooks_in`; Rule_Set resolves the actual list.
+ * Immutable value object. A light rule's hooks ride inline in the autoloaded
+ * rule list; a heavy rule's live in a per-rule durable option mirrored into
+ * memcache. This object records only which tier, via `hooks_in` —
+ * `Rule_Set::hooks_for()` resolves the actual list.
  */
 final class Rule {
 
@@ -26,14 +33,18 @@ final class Rule {
 	public const HOOKS_MC     = 'mc';
 
 	/**
-	 * @param string        $id                          Stable short id (keys durable option + mc mirror). '' for the synthetic baseline.
-	 * @param string        $pattern                     '/prefix' or exact '/x?'.
+	 * Every property is readonly; `with_id()` is the only derivation this class
+	 * offers, and Rule_Set / Auto_Tuner_Node build a fresh Rule for any other
+	 * change.
+	 *
+	 * @param string        $id                          Stable short id, the pattern's Log_Manager::url_hash(); keys the durable hooks option and its mc mirror. '' when the source map carried none — Rule_Set mints it from the pattern.
+	 * @param string        $pattern                     '/prefix', exact '/path?', or exact path plus query prefix '/path?query'.
 	 * @param string        $action                      self::ACTION_LOG | self::ACTION_SKIP.
-	 * @param int           $auto_disable_threshold      Count; 0 = off.
-	 * @param float         $auto_protect_time_threshold Ms; 0.0 = off.
-	 * @param string[]      $significant_events          Tag list.
-	 * @param string[]      $custom_events               Category list.
-	 * @param string[]|null $hooks                       Inline list when hooks_in=inline; null when hooks_in=mc.
+	 * @param int           $auto_disable_threshold      Per-request occurrence count above which auto-tune proposes disabling a hook or custom event; 0 = off.
+	 * @param float         $auto_protect_time_threshold Average ms per call at or above which auto-tune promotes a hook to significant; 0.0 = off.
+	 * @param string[]      $significant_events          Hook names (a trailing ' hook' is stripped) that get per-callback profiling and are exempt from auto-disable.
+	 * @param string[]      $custom_events               Categories the application logs itself; never bound as do_action hooks.
+	 * @param string[]|null $hooks                       Inline list when hooks_in=inline; null when hooks_in=mc, meaning unresolved.
 	 * @param string        $hooks_in                    self::HOOKS_INLINE | self::HOOKS_MC.
 	 */
 	public function __construct(
@@ -49,7 +60,16 @@ final class Rule {
 	) {}
 
 	/**
-	 * @param array<string, mixed> $a Stored rule shape.
+	 * Decode a stored, config-seeded, or wire rule map. Every field is coerced,
+	 * never rejected: anything but 'log' reads as skip, a missing pattern reads
+	 * as '/', and scalars cast through Core::as_*.
+	 *
+	 * The `hooks` key carries the tier. Absent, it means an inline rule with no
+	 * hooks; present but not an array (`null` on the wire), it means the hooks
+	 * are unresolved and `hooks_in` decides where to find them.
+	 *
+	 * @param array<string, mixed> $a Stored rule shape, as produced by to_array().
+	 * @return self
 	 */
 	public static function from_array( array $a ): self {
 		$action = ( self::ACTION_LOG === ( $a['action'] ?? '' ) ) ? self::ACTION_LOG : self::ACTION_SKIP;
@@ -68,6 +88,10 @@ final class Rule {
 	}
 
 	/**
+	 * Coerce a mixed field into a list of strings, discarding keys. Non-arrays
+	 * yield [].
+	 *
+	 * @param mixed $v Candidate list.
 	 * @return string[]
 	 */
 	private static function to_string_list( mixed $v ): array {
@@ -77,15 +101,32 @@ final class Rule {
 		return \array_values( \array_map( static fn ( mixed $item ): string => Core::as_string( $item, '' ), $v ) );
 	}
 
+	/**
+	 * Whether this rule suppresses logging. Every action but ACTION_LOG skips.
+	 *
+	 * @return bool
+	 */
 	public function is_skip(): bool {
 		return ! $this->is_log();
 	}
 
+	/**
+	 * Whether this rule logs.
+	 *
+	 * @return bool
+	 */
 	public function is_log(): bool {
 		return self::ACTION_LOG === $this->action;
 	}
 
-	/** A copy of this rule under a different id (immutable — the id is a pure function of the pattern; see Rule_Set::id_for). */
+	/**
+	 * A copy of this rule under a different id, the object being immutable. The
+	 * id is a pure function of the pattern, so callers pass what
+	 * `Rule_Set::id_for()` derives rather than an id of their own choosing.
+	 *
+	 * @param string $id Pattern-derived id.
+	 * @return self
+	 */
 	public function with_id( string $id ): self {
 		return new self(
 			$id, $this->pattern, $this->action,
@@ -95,11 +136,24 @@ final class Rule {
 		);
 	}
 
+	/**
+	 * Whether the pattern matches a path exactly rather than as a prefix — the
+	 * trailing '?' says "path ends here".
+	 *
+	 * A query-bearing pattern such as '/jobs/x?job-work' also matches its path
+	 * exactly, yet answers false here because the '?' is not last;
+	 * `Rule_Matcher` ranks that form on its query part instead.
+	 *
+	 * @return bool
+	 */
 	public function is_exact(): bool {
 		return \str_ends_with( $this->pattern, '?' );
 	}
 
 	/**
+	 * The persisted and wire shape: what `Rule_Set::save()` stores, what the
+	 * hub syncs to spokes, and what `from_array()` reads back.
+	 *
 	 * @return array<string, mixed>
 	 */
 	public function to_array(): array {

@@ -8,31 +8,40 @@ import {
 import { errorMessage } from '@newspack-nodes/shared/errorMessage';
 
 /**
- * DecodedSliceViewNode — the focused custom slice-view base for the Performance
- * Dashboard's always-on poll slices (D1b de-god). Each subclass owns ONE slice
- * `{ data, loading, error }` and publishes it via setState('view', …) for one
- * small React widget (useNodeState).
+ * DecodedSliceViewNode — the slice-view base every Performance Dashboard slice
+ * extends. Each subclass owns ONE slice `{ data, loading, error }` and
+ * publishes it via `setState('view', …)` for one small React widget
+ * (`useNodeState`). Four subclasses exist: the polled `overview:view` and
+ * `urls:view`, and the on-demand modal slices `urldetail:view` and
+ * `requestdetail:view`.
  *
- * This is the D4 "decoded-object" pattern, deliberately NOT the substrate's
- * SliceViewNode: the Performance verbs return LIVE array/object payloads (the
- * server kept array returns — the D1 server half preserved them), so the wire
- * payload arrives ALREADY decoded as `value.payload`. SliceViewNode._parse
- * expects a JSON STRING and would JSON.parse a live object — forcing it here is
- * false symmetry. So this base reads `value.payload` as an object directly.
+ * It is deliberately NOT the substrate's `SliceViewNode`. The `performance` CI
+ * verbs return live PHP arrays, so a reply's payload arrives here ALREADY
+ * decoded as `value.payload`; `SliceViewNode._parse` expects a JSON STRING and
+ * would `JSON.parse` a live object. This base reads `value.payload` as an
+ * object directly.
  *
- * `fill()` handles these message kinds (per-slice):
- *   - TM_STRUCT { action:'loading' }         → loading:true, error:null (data kept);
- *   - TM_STRUCT { action:'clear' }           → reset to emptySlice() (modal close);
- *   - a command reply (VALUE = {name,payload}) → store the payload (subclass shapes
- *                                                it via storeResult), clear loading/error;
- *   - a TM_ERROR reply                        → error string, clear loading, KEEP prior data.
+ * `fill()` handles these message kinds, in the order it tests them:
+ *   - TM_STRUCT `{ action:'loading' }` → loading:true, error cleared, data kept;
+ *   - TM_STRUCT `{ action:'clear' }`   → reset to `emptySlice()` (modal close);
+ *   - TM_STRUCT `{ action:'error' }`   → a client-side validation failure:
+ *     error set, loading cleared, prior data kept;
+ *   - a TM_ERROR reply                 → error string, loading cleared, prior
+ *     data KEPT;
+ *   - a command reply (VALUE = `{ name, payload }`) → `storeResult( payload )`
+ *     shapes the slice. A non-object VALUE is transport garbage and keeps the
+ *     prior slice rather than blanking the widget.
  *
- * An awaited verb is minted from its OWN Request node and its reply is
- * addressed there, so what lands here is only ever this slice's.
+ * `usePerformanceGraph` mints both halves. `sendControl()` fills the TM_STRUCT
+ * controls straight into the view. A command stamps FROM with the node the
+ * reply should land on — a receiver Tee that forwards here for `overview`,
+ * `urls`, and `url_detail`, the view itself for `request_detail` — and the
+ * server replies TO=FROM. An AWAITED verb is minted from its own Request node
+ * and its reply is addressed there, so what lands here is only this slice's.
  *
- * Subclasses supply `emptySlice()` (the shaped-but-empty initial model) and
- * `storeResult(payload)` (how a successful payload becomes the slice). A
- * non-object reply payload (transport garbage) keeps the prior slice.
+ * `fill()` consumes and publishes; it never forwards, so the node needs no
+ * sink. Subclasses supply `emptySlice()` (the shaped-but-empty initial model)
+ * and `storeResult( payload )` (how a successful payload becomes the slice).
  */
 export class DecodedSliceViewNode extends Node {
 	constructor() {
@@ -41,9 +50,12 @@ export class DecodedSliceViewNode extends Node {
 		this.setState( 'view', this.model );
 	}
 
+	/**
+	 * Apply one control or reply message to the slice, then publish it.
+	 *
+	 * @param {Array} message The 7-field envelope.
+	 */
 	fill( message ) {
-		// Awaited-verb path: a settled reply is consumed here, not slice logic.
-
 		const value = message[ VALUE ];
 		const type = message[ TYPE ] || 0;
 
@@ -105,21 +117,44 @@ export class DecodedSliceViewNode extends Node {
 		this.setState( 'view', this.model );
 	}
 
-	// The shaped-but-empty slice; subclass override.
+	/**
+	 * The shaped-but-empty slice — published before the first reply lands, and
+	 * what a `clear` control resets to. An override keeps `loading` and
+	 * `error`, which `fill()` spreads over. Subclass override.
+	 *
+	 * @return {Object} The empty slice model.
+	 */
 	emptySlice() {
 		return { data: null, loading: false, error: null };
 	}
 
-	// Map a successful decoded payload onto the slice model; subclass override.
+	/**
+	 * Map a successful decoded payload onto the slice model. Subclass override.
+	 *
+	 * An override ASSIGNS `this.model`; its return value is ignored, and
+	 * `fill()` publishes whatever the assignment left behind.
+	 *
+	 * @param {*} payload The reply's decoded `VALUE.payload`.
+	 */
 	storeResult( payload ) {
 		this.model = { data: payload, loading: false, error: null };
 	}
 
+	/**
+	 * Publish the current model to the `view` subscribers — the hook for a
+	 * subclass that mutates `this.model` outside `fill()`. No subclass here
+	 * does; the sibling dashboards' view nodes each carry their own copy.
+	 */
 	_publish() {
 		this.setState( 'view', this.model );
 	}
 
-	// Consume-and-publish terminal: fill() mutates + publishes, never forwards.
+	/**
+	 * The console-palette schema. Hidden, argument-less, verb-less, and
+	 * target-less: `fill()` mutates and publishes, never forwards.
+	 *
+	 * @return {Object} The node schema.
+	 */
 	static nodeSchema() {
 		return {
 			category: 'Hidden',

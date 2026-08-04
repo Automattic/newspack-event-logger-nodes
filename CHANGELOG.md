@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Documentation refresh across the PHP and JS sources — docblocks brought back
+  in line with what the code does. No behavior change.
+- The newspaper-order method gate (`reorder-node-methods --check`) now runs in
+  lint-staged for both PHP and JS, matching the substrate.
+
 ## [0.44.8] - 2026-08-03
 
 ### Fixed

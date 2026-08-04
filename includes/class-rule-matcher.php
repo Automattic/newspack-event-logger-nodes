@@ -2,6 +2,10 @@
 /**
  * Most-specific-first rule matcher: query-bearing, then exact, then prefix.
  *
+ * `Log_Manager` resolves exactly one governing `Rule` per request through this
+ * class, and that rule's action decides whether the request is logged at all.
+ * List order must therefore never sway the outcome — specificity alone does.
+ *
  * @package Newspack_Event_Logger_Nodes
  */
 
@@ -14,10 +18,12 @@ namespace Newspack_Event_Logger_Nodes;
 /**
  * Built once per request from the autoloaded rule list. Matching is
  * order-independent (specificity governs) and cached per normalized URL.
+ * An empty rule set matches nothing, and nothing matched means skip: there is
+ * no implicit log-all baseline.
  */
 final class Rule_Matcher {
 
-	/** @var array<string, Rule|null> Normalized-URL => match cache. */
+	/** @var array<string, Rule|null> Normalized-URL => match cache; a miss caches null. */
 	private array $cache = [];
 
 	/** @var Rule[] Sorted most-specific first. */
@@ -25,7 +31,9 @@ final class Rule_Matcher {
 
 	/**
 	 * Most-specific-first: query-bearing patterns (exact path + query prefix)
-	 * outrank exact paths, which outrank prefixes; length breaks ties.
+	 * outrank exact paths, which outrank prefixes; length breaks ties. Length
+	 * only ever settles a tie WITHIN a rank, so this is not longest-prefix-wins.
+	 * Sorting once here is what lets `match()` stop at its first hit.
 	 *
 	 * @param Rule[] $rules Unsorted rule list.
 	 */
@@ -55,6 +63,8 @@ final class Rule_Matcher {
 	/**
 	 * Split a URL or pattern into lowercased [path, query] ('' = no query).
 	 *
+	 * A trailing `?` — the exact-path marker — therefore yields an empty query.
+	 *
 	 * @return array{0: string, 1: string}
 	 */
 	private static function split( string $url ): array {
@@ -69,6 +79,13 @@ final class Rule_Matcher {
 	 *  - `/blog`            — path prefix (query ignored)
 	 *  - `/about?`          — exact path (query ignored)
 	 *  - `/jobs/x?job-work` — exact path AND query prefix (worker URLs)
+	 *
+	 * The rule list is already sorted most-specific-first, so the first pattern
+	 * that matches governs. Results cache under the normalized `path?query`,
+	 * misses included.
+	 *
+	 * @param string $url Request URI; the query string is optional.
+	 * @return Rule|null The governing rule, or null when no pattern matches.
 	 */
 	public function match( string $url ): ?Rule {
 		[ $t_path, $t_query ] = self::split( $url );

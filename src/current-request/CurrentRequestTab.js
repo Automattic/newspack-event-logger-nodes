@@ -28,7 +28,15 @@ import RequestProfile from '../overview/RequestProfile';
 
 const FlameGraph = lazy( () => import( '../overview/FlameGraph' ) );
 
-// Page-injected anchor: rendering rid + perf base URL for the deep link.
+/**
+ * The page-injected anchor for THIS request.
+ *
+ * `Current_Request_Overlay::enqueue_inline_data()` writes it, and only on a
+ * page that enqueued this bundle, so an empty object is a normal miss — as is
+ * an empty `rid`, which is what an unlogged request leaves behind.
+ *
+ * @return {{rid?: string, partition?: number, perfUrl?: string}} The blob, or {}.
+ */
 function currentRequestData() {
 	return (
 		( typeof window !== 'undefined' &&
@@ -38,7 +46,15 @@ function currentRequestData() {
 	);
 }
 
-// error_status codes the request-builder stamps; '-' / '' means a clean finish.
+/**
+ * Label the `error_status` code `Request_Builder_Node` stamps on the record.
+ *
+ * `-` and `''` both mean a clean finish. An unrecognized code passes through
+ * unchanged rather than being flattened into "ok" and hidden.
+ *
+ * @param {string} errorStatus The stamped code — `F`, `T`, `-`, or ''.
+ * @return {string} The label to render.
+ */
 function statusLabel( errorStatus ) {
 	switch ( errorStatus ) {
 		case 'F':
@@ -54,6 +70,22 @@ function statusLabel( errorStatus ) {
 }
 
 /**
+ * The overlay's "Request" tab.
+ *
+ * Four states, in the order they render: `idle` when the page localized no rid
+ * (logging off, running as root, or no matching `log` rule), `loading` for the
+ * first paint, `processing` while the request-builder has yet to write the
+ * record, and `found` once `request_detail` answers.
+ *
+ * The load is desired state rather than an event. `useReconcile` keeps
+ * attempting on a doubling backoff until it succeeds, so a record written a
+ * second after the page rendered — or a session refused and later renewed —
+ * converges on its own; Refresh only collapses the backoff.
+ *
+ * `flame_data` is a separate write: the verb merges it in only once
+ * `Flame_Builder_Node` has produced it, and the loop settles on the record
+ * alone, so a request found ahead of its flame renders without one.
+ *
  * @return {import('react').ReactElement} The tab.
  */
 export default function CurrentRequestTab() {

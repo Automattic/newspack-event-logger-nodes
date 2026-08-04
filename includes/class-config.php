@@ -11,6 +11,10 @@
  * having to know which Config to ask. Path-resolution helpers delegate to the
  * substrate Config — only one place owns the realpath/symlink check.
  *
+ * `value()` is the accessor callers should reach for: it validates the key
+ * against the shared substrate registry and throws on an undeclared one, so a
+ * renamed or typo'd key fails loud instead of limping on a `?? default`.
+ *
  * @package Newspack_Event_Logger_Nodes
  */
 
@@ -26,14 +30,16 @@ if ( ! \defined( 'ABSPATH' ) ) {
 }
 
 /**
- * Configuration management class.
+ * Application configuration: file defaults, the WordPress-option overlay on top
+ * of them, and the substrate's effective values merged underneath. Every read
+ * goes through the memoized `load_config()`; `reset()` drops both layers.
  */
 class Config {
 
-	/** Staging option: custom-event names discovered across spokes (admin/health-check only). */
+	/** Staging option: custom-event names spokes reported to the hub; read by the admin UI. */
 	public const OPTION_DISCOVERED_EVENTS = 'newspack_event_logger_nodes_discovered_events';
 
-	/** Staging option: hook names discovered across spokes (admin/health-check only). */
+	/** Staging option: hook names spokes reported to the hub; read by the admin UI. */
 	public const OPTION_DISCOVERED_HOOKS = 'newspack_event_logger_nodes_discovered_hooks';
 
 	/**
@@ -51,15 +57,13 @@ class Config {
 	private static $config_defaults = null;
 
 	/**
-	 * Fully-qualified option names that must NOT autoload. Single source of
-	 * truth for the autoload policy every write path consults via
-	 * `autoload_for()`. These are read on every request by `load_config()`,
-	 * but their values can grow unbounded (full instrumented-hook maps), so
-	 * keeping them out of the per-request `alloptions` blob is the right
-	 * trade — one targeted read each beats bloating every frontend request.
-	 * `discovered_events` / `discovered_hooks` are admin/health-check-only (not
-	 * even in the schema) and are listed here so their writers route through the
-	 * same helper.
+	 * Fully-qualified option names that must NOT autoload — the single source of
+	 * truth `autoload_for()` answers from. Both are discovery staging options:
+	 * they sit outside `Settings_Schema`, so `load_config()` never reads them,
+	 * and only admin-facing paths do. Their values grow with the fleet (every
+	 * custom event and hook name any spoke reports), so keeping them out of the
+	 * per-request `alloptions` blob is the right trade — one targeted read from
+	 * the admin beats bloating every frontend request.
 	 *
 	 * @var array<string, bool>
 	 */
@@ -71,8 +75,10 @@ class Config {
 	/**
 	 * Get custom colors with filter applied (for admin UI).
 	 *
-	 * This method applies the newspack_event_logger_nodes_custom_colors filter lazily,
-	 * allowing plugins that load after Event Logger to register their events.
+	 * Applies the `newspack_event_logger_nodes_custom_colors` filter lazily, so
+	 * plugins that load after Event Logger can still register their events, then
+	 * folds in the events spokes reported to the hub — offered to the operator,
+	 * not selected — and sorts the map for the picker.
 	 *
 	 * @return array<string, mixed> Associative array of event_name => hex_color.
 	 */
@@ -80,7 +86,6 @@ class Config {
 		/** @var array<string, mixed> $colors */
 		$colors = Core::arr( self::value( 'custom_colors' ) );
 
-		// Apply filter to allow plugins to register custom events.
 		if ( \function_exists( 'apply_filters' ) ) {
 			$filtered = \apply_filters( 'newspack_event_logger_nodes_custom_colors', $colors );
 			// Validate filter return (any type); color maps are string-keyed.
@@ -115,6 +120,7 @@ class Config {
 	 * declared-but-unset returns null.
 	 *
 	 * @api
+	 * @param string $key Config key, declared by this plugin or the substrate.
 	 * @return mixed
 	 * @throws \RuntimeException If $key is not declared by any registered schema.
 	 */
@@ -134,7 +140,11 @@ class Config {
 	 * Merges the substrate config (`Newspack_Nodes\Config::load_config`) so
 	 * callers that read substrate keys (`base_directory`, `num_partitions`,
 	 * `memcache_servers`, etc.) keep working without having to know about
-	 * the layering split.
+	 * the layering split. Substrate values lose to this plugin's own schema
+	 * keys, so a name collision resolves in favor of the owner.
+	 *
+	 * The result is memoized for the process; `reset()` clears it. Returns an
+	 * empty array when the substrate is absent — nothing to layer onto.
 	 *
 	 * @return array<string, mixed> Configuration array.
 	 * @throws \RuntimeException If an explicit local config path or value tree is invalid.
@@ -169,6 +179,11 @@ class Config {
 
 	/**
 	 * Load configuration defaults from file only (no WordPress options).
+	 *
+	 * Reads the bundled `newspack-event-logger-nodes-config.php`, then overlays
+	 * the file named by the `LOCAL_NEWSPACK_NODES_CONF` environment variable
+	 * when one is set. That path is validated before it is `require`d, and an
+	 * unusable path throws rather than silently leaving the site on defaults.
 	 *
 	 * @return array<string, mixed> Configuration defaults from file.
 	 * @throws \RuntimeException If an explicit local config path or value tree is invalid.
@@ -215,10 +230,13 @@ class Config {
 	 * derivation. Used both by the plugin's `register_config_namespace`
 	 * call and by `tests/bootstrap.php` so both paths resolve identically.
 	 *
-	 * Returns null for keys this plugin doesn't own (substrate keys fall
-	 * back to the `<config:KEY>` namespace). The substrate wraps the
-	 * return in `(string) ($value ?? '')`, so bools surface as '1' / ''
-	 * and arrays must be flattened here (no `(string) array`).
+	 * Returns null for keys this plugin doesn't own; substrate keys are
+	 * addressed under the `<config:KEY>` namespace instead. Null is not a
+	 * value — `Core::resolve_config_token()` treats it as unresolvable and
+	 * throws in strict mode (schema-arg defaults) or warns and yields '' in
+	 * non-strict mode. A scalar return is cast with `(string)`, so bools
+	 * surface as '1' / ''; a non-scalar is unresolvable too, so an
+	 * array-valued key must be flattened to a scalar here.
 	 *
 	 * @param string $key Token key after the `eln:` prefix.
 	 * @return mixed|null Resolved value, or null if not owned by `eln`.
@@ -266,11 +284,15 @@ class Config {
 	}
 
 	/**
-	 * Whether a given option should be written with `autoload=true`. Every
-	 * `update_option()` call for an application option routes through this so
-	 * the hot-path scalars stay on the single alloptions query and the large
-	 * list options stay off it — consistently, regardless of which write path
-	 * (admin save, Performance_CI verbs, AutoTuner, health-check) fires.
+	 * Whether a given option should be written with `autoload=true`. The write
+	 * paths that touch settings options — `Performance_CI_Node`'s `set_setting`
+	 * verb and `Discovery_Collector_Node`'s staging writes — ask here instead of
+	 * passing a literal, so hot-path scalars stay on the single alloptions query
+	 * and the fleet-sized staging options stay off it. The ruleset options are
+	 * not covered: `Rule_Set` owns its own inline/pointer tiering.
+	 *
+	 * @param string $option Fully-qualified option name.
+	 * @return bool True to autoload.
 	 */
 	public static function autoload_for( string $option ): bool {
 		return ! isset( self::$non_autoloaded_options[ $option ] );
@@ -280,10 +302,10 @@ class Config {
 	 * Reset cached config - call before load_config() to get fresh values.
 	 *
 	 * Resets the substrate Config too so the layered view rebuilds from
-	 * scratch. The substrate fires `newspack_nodes/config_reset`, which our
-	 * listener (registered at plugin load) catches to invalidate THIS class
-	 * via `reset_local_cache()` — calling `reset()` directly from inside
-	 * that listener would loop back into the substrate.
+	 * scratch. The substrate fires `Newspack_Nodes\Config::RESET_ACTION`, which
+	 * the listener the deferred loader registers catches to invalidate THIS
+	 * class via `reset_local_cache()` — calling `reset()` from inside that
+	 * listener would loop back into the substrate.
 	 */
 	public static function reset(): void {
 		self::reset_local_cache();
@@ -293,7 +315,9 @@ class Config {
 	}
 
 	/**
-	 * Clear this class's static cache only — no fan-out.
+	 * Clear this class's static cache only — no fan-out. This is what the
+	 * substrate's reset listener calls; call `reset()` instead when the
+	 * substrate's own cache should go with it.
 	 */
 	public static function reset_local_cache(): void {
 		self::$config          = null;
@@ -305,6 +329,7 @@ class Config {
 	 *
 	 * @api
 	 * @return string Validated absolute path to logs directory.
+	 * @throws \RuntimeException If the directory cannot be created or fails the substrate's canonical-path check.
 	 */
 	public static function get_logs_directory(): string {
 		return RuntimeConfig::get_logs_directory();
@@ -315,6 +340,7 @@ class Config {
 	 *
 	 * @api
 	 * @return string Validated absolute path to locks directory.
+	 * @throws \RuntimeException If the directory cannot be created or fails the substrate's canonical-path check.
 	 */
 	public static function get_locks_directory(): string {
 		return RuntimeConfig::get_locks_directory();
@@ -325,6 +351,7 @@ class Config {
 	 *
 	 * @api
 	 * @return string Validated absolute path to offsets directory.
+	 * @throws \RuntimeException If the directory cannot be created or fails the substrate's canonical-path check.
 	 */
 	public static function get_offsets_directory(): string {
 		return RuntimeConfig::get_offsets_directory();

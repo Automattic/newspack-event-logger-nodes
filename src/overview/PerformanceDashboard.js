@@ -1,15 +1,19 @@
 /* global localStorage, requestAnimationFrame */
 /**
- * Performance Dashboard Component
+ * Performance Dashboard — the orchestrator over the dashboard's node graph.
  *
- * Main container for performance monitoring UI.
+ * `usePerformanceGraph` mounts the graph and owns every fetch; this component
+ * owns none. The graph publishes its data through FOUR independent per-slice
+ * view nodes — `overview:view`, `urls:view`, `urldetail:view`,
+ * `requestdetail:view`. This component reads each slice with its own
+ * `useNodeState`, derives the render-time values, and drives control through the
+ * callbacks the hook returns.
  *
- * This is the orchestrator over the Performance Dashboard node graph (mounted by
- * `usePerformanceGraph`, built on the substrate batched-poll toolkit). The graph
- * owns all data across FOUR independent per-slice view nodes — `overview:view`,
- * `urls:view`, `urldetail:view`, `requestdetail:view`. This component reads each
- * slice via its own `useNodeState`, derives its render-time values, and dispatches
- * control through the hook's returned callbacks. It owns no fetching.
+ * What it does own is the UI state those callbacks read at fire time: the server
+ * filter, the chart metric and breakdown dimension, the refresh cadence, the
+ * search box and its results, the request-table sort, and the inline "Log this
+ * URL" rule editor. It renders the URL / request detail modal too, and preserves
+ * the modal's scroll position across the URL-detail ↔ request-detail switch.
  */
 
 import {
@@ -51,15 +55,20 @@ import './styles/charts.scss';
 /**
  * Performance Dashboard component.
  *
+ * Renders a spinner until the `overview:view` slice resolves — until then the
+ * graph may not even be mounted, and an empty dashboard would read as no data.
+ *
  * @param {Object}   props                 Component props.
- * @param {Function} props.onError         Error handler callback.
+ * @param {Function} props.onError         Error handler callback. Reported
+ *                                         failures surface as the page's
+ *                                         dismissible notice.
  * @param {Object}   [props.commandClient] Optional transport (the graph
  *                                         lazily defaults it in production;
  *                                         tests inject a double).
  * @return {import('react').ReactElement} Rendered component.
  */
 export default function PerformanceDashboard( { onError, commandClient } ) {
-	// UI / control state (no data state — data comes from the view model).
+	// UI and control state only; the four view-node slices own every datum.
 	const [ requestSort, setRequestSort ] = useState( {
 		field: 'timestamp',
 		dir: 'desc',
