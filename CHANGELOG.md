@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The "outermost pair never folds" rule had five non-equivalent spellings.**
+  `logEntryUtils` and `LogEntriesTable` each re-derived it, and they disagreed on
+  real input: `startsWith( 'process ' )` also matched `process queue (start)`, so
+  "Unfold All" and search-ancestor expansion skipped a row that the table still
+  drew with a disclosure triangle and a pointer cursor and still toggled on
+  click. The rule now has one owner, `isFoldablePairStart()`, and all five sites
+  read through it.
+
 - **`GET_CACHE` always answered "nothing is stalled".** Its `oldest_rid` and
   `oldest_age_s` were computed inside an `is_array( $request )` branch, but the
   in-flight cache only ever holds `stdClass` — `fill()` stores one and
