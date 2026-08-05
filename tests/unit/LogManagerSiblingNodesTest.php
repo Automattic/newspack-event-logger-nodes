@@ -12,6 +12,7 @@
 
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
+use PHPUnit\Framework\Attributes\CoversClass;
 use Newspack_Event_Logger_Nodes\Config;
 use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
@@ -19,7 +20,6 @@ use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Node_Names;
 use Newspack_Nodes\Topic_Node;
-use PHPUnit\Framework\Attributes\CoversClass;
 
 #[CoversClass( Log_Manager::class )]
 class LogManagerSiblingNodesTest extends TestCase {

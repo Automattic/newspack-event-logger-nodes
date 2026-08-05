@@ -9,12 +9,12 @@
 
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
+use PHPUnit\Framework\Attributes\CoversClass;
 use Newspack_Event_Logger_Nodes\Remote_Job_Rewrite_Node;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Partition_Node;
 use Newspack_Nodes\Tests\Capture_Sink_Node;
-use PHPUnit\Framework\Attributes\CoversClass;
 
 #[CoversClass( Remote_Job_Rewrite_Node::class )]
 class RemoteJobRewriteTest extends TestCase {

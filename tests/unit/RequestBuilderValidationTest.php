@@ -1,6 +1,7 @@
 <?php
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
+use PHPUnit\Framework\Attributes\CoversClass;
 use Newspack_Event_Logger_Nodes\Request_Builder_Node;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
@@ -8,7 +9,6 @@ use Newspack_Nodes\Node_Names;
 use Newspack_Nodes\Router_Node;
 use Newspack_Nodes\Tests\Capture_Sink_Node;
 use Newspack_Nodes\Tests\TestCase;
-use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
  * Per-request `n`-sequence validation, plus the timed-out-trace log signal on

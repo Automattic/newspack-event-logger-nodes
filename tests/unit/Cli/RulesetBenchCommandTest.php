@@ -3,11 +3,11 @@ declare( strict_types=1 );
 
 namespace Newspack_Event_Logger_Nodes\Tests\Unit\Cli;
 
+use PHPUnit\Framework\Attributes\Medium;
+use PHPUnit\Framework\TestCase;
 use Newspack_Event_Logger_Nodes\CLI\Ruleset_Bench_Command;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Tests\Helpers\InMemoryMemcached;
-use PHPUnit\Framework\Attributes\Medium;
-use PHPUnit\Framework\TestCase;
 
 require_once \dirname( __DIR__, 4 ) . '/newspack-nodes/tests/Helpers/WPCLIStub.php';
 

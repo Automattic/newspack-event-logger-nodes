@@ -20,6 +20,7 @@ namespace {
 
 namespace Newspack_Event_Logger_Nodes\Tests\Unit\Admin {
 
+use PHPUnit\Framework\Attributes\CoversClass;
 use Newspack_Event_Logger_Nodes\Admin\Admin;
 use Newspack_Event_Logger_Nodes\Config;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\RedirectException;
@@ -29,7 +30,6 @@ use Newspack_Nodes\Config_System\Field_Reset_Assets;
 use Newspack_Nodes\Config_System\Reset_Gate;
 use Newspack_Nodes\Lock_Node;
 use Newspack_Nodes\Topology_Registry;
-use PHPUnit\Framework\Attributes\CoversClass;
 
 #[CoversClass( Admin::class )]
 class AdminTest extends TestCase {
