@@ -34,6 +34,7 @@ import {
 	computeVisibleEntries,
 	formatDots,
 	getAncestorPairIds,
+	isFoldablePairStart,
 } from '../utils/logEntryUtils';
 
 const TIME_FORMAT_OPTIONS = { hour12: false };
@@ -295,8 +296,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 			if (
 				entry.pairId !== null &&
 				entry.pairId !== undefined &&
-				( entry.k || '' ).match( /\(start\)$/ ) &&
-				! ( entry.k || '' ).startsWith( 'process ' )
+				isFoldablePairStart( entry.k )
 			) {
 				// Next entry is the matching complete (nothing between).
 				const next = entries[ i + 1 ];
@@ -757,9 +757,8 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 				entry.pairId !== null &&
 				entry.pairId !== undefined
 			) {
-				const baseName = keyword.replace( / \(start\)$/, '' );
-				if ( baseName === 'process' ) {
-					return; // Outermost pair not foldable.
+				if ( ! isFoldablePairStart( keyword ) ) {
+					return;
 				}
 				const fullIdx = entries.findIndex(
 					( e ) =>
@@ -792,10 +791,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 	const getRowStyle = useCallback(
 		( entry, idx ) => {
 			const keyword = entry.k || '';
-			const isFoldable =
-				entry.isMerged ||
-				( keyword.includes( '(start)' ) &&
-					! keyword.startsWith( 'process (start)' ) );
+			const isFoldable = entry.isMerged || isFoldablePairStart( keyword );
 			const isHighlighted =
 				highlightRange &&
 				idx >= highlightRange.start &&
@@ -897,10 +893,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 			);
 		}
 
-		if (
-			keyword.includes( '(start)' ) &&
-			! keyword.startsWith( 'process (start)' )
-		) {
+		if ( isFoldablePairStart( keyword ) ) {
 			return (
 				<>
 					<span

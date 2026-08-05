@@ -15,7 +15,32 @@ import {
 	computeIndentedEntries,
 	computeVisibleEntries,
 	getAncestorPairIds,
+	isFoldablePairStart,
 } from '../logEntryUtils';
+
+describe( 'isFoldablePairStart', () => {
+	it( 'is false for the outermost pair, which is the request itself', () => {
+		expect( isFoldablePairStart( 'process (start)' ) ).toBe( false );
+	} );
+
+	it( 'is true for any other pair start', () => {
+		expect( isFoldablePairStart( 'db (start)' ) ).toBe( true );
+		expect( isFoldablePairStart( 'render (start)' ) ).toBe( true );
+	} );
+
+	it( 'is true for a base name that merely begins with "process"', () => {
+		// A startsWith( 'process ' ) spelling excluded this from Unfold All
+		// while the table still drew it foldable and toggled it on click.
+		expect( isFoldablePairStart( 'process queue (start)' ) ).toBe( true );
+	} );
+
+	it( 'is false for anything that is not a pair start', () => {
+		expect( isFoldablePairStart( 'db (complete)' ) ).toBe( false );
+		expect( isFoldablePairStart( 'plain message' ) ).toBe( false );
+		expect( isFoldablePairStart( '' ) ).toBe( false );
+		expect( isFoldablePairStart( undefined ) ).toBe( false );
+	} );
+} );
 
 describe( 'formatDots', () => {
 	it( 'returns empty string for zero or negative counts', () => {

@@ -32,6 +32,40 @@ const TIME_FORMAT_OPTIONS = { hour12: false };
  * @param {number} count Number of dots.
  * @return {string} Formatted dot string (e.g. "••• ••• •••").
  */
+/**
+ * The base name of the outermost pair — the request itself, which never folds.
+ */
+const OUTERMOST_PAIR = 'process';
+
+/**
+ * The base name of the pair a `<name> (start)` keyword opens, or null when the
+ * keyword does not open one.
+ *
+ * @param {string} keyword Entry keyword.
+ * @return {?string} Base name, or null.
+ */
+const pairBaseName = ( keyword ) => {
+	const match = ( keyword || '' ).match( /^(.+?) \(start\)$/ );
+	return match ? match[ 1 ] : null;
+};
+
+/**
+ * Whether a keyword opens a pair the reader may fold.
+ *
+ * THE rule, in one place. It previously had five spellings across this file
+ * and LogEntriesTable, and they disagreed on real input: a
+ * `startsWith( 'process ' )` test excluded `process queue (start)` from
+ * "Unfold All" while the same row still got a disclosure triangle, a pointer
+ * cursor, and a working click handler.
+ *
+ * @param {string} keyword Entry keyword.
+ * @return {boolean} True when the pair is foldable.
+ */
+export const isFoldablePairStart = ( keyword ) => {
+	const base = pairBaseName( keyword );
+	return null !== base && base !== OUTERMOST_PAIR;
+};
+
 export const formatDots = ( count ) => {
 	if ( count <= 0 ) {
 		return '';
@@ -258,9 +292,11 @@ export const computeVisibleEntries = ( entries, expandedSet ) => {
 			entry.pairId !== undefined
 		) {
 			const baseName = startMatch[ 1 ];
-			const isOutermost = baseName === 'process';
 
-			if ( ! isOutermost && ! expandedSet.has( entry.pairId ) ) {
+			if (
+				isFoldablePairStart( keyword ) &&
+				! expandedSet.has( entry.pairId )
+			) {
 				// Collapsed: scan forward for complete, emit merged row.
 				let childCount = 0;
 				let completeEntry = null;
