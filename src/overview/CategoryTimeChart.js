@@ -28,6 +28,7 @@ import {
 	setupTooltip,
 	useTimeChart,
 } from '@newspack-nodes/shared/hooks/useTimeChart';
+import { RETENTION_SECONDS } from './retention';
 
 /**
  * Format a Y-axis value in the unit its mode implies.
@@ -107,7 +108,7 @@ export default function CategoryTimeChart( { data, mode, title } ) {
 			( a, b ) => totals[ b ] - totals[ a ]
 		);
 
-		const slots = buildTimeSlots();
+		const slots = buildTimeSlots( RETENTION_SECONDS );
 
 		const series = categories.map( ( cat ) => ( {
 			cat,

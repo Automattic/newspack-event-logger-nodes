@@ -18,7 +18,6 @@ import { __, sprintf } from '@wordpress/i18n';
 import * as d3 from 'd3';
 import { STATUS_COLORS } from '@newspack-nodes/shared/utils/formatUtils';
 import {
-	RETENTION_SECONDS,
 	MARGIN,
 	PALETTE,
 	buildTimeSlots,
@@ -27,6 +26,7 @@ import {
 	setupTooltip,
 	useTimeChart,
 } from '@newspack-nodes/shared/hooks/useTimeChart';
+import { RETENTION_SECONDS } from './retention';
 
 /**
  * Format a duration in seconds for the cumulative axis and its tooltip.
@@ -81,7 +81,7 @@ export default function AggregateTimeChart( {
 		// isLine: averages don't add up, so they overlay instead of stacking.
 		const isLine = metric === 'avg' || metric === 'memory';
 		const effectiveBreakdown = breakdownData;
-		const slots = buildTimeSlots();
+		const slots = buildTimeSlots( RETENTION_SECONDS );
 
 		if ( ! effectiveBreakdown ) {
 			// No dimensional data — single-series "Total" chart.
