@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.44.10] - 2026-08-04
+
 ### Fixed
 
 - **A control is recognised by WHO SENT IT, never by what its payload looks
@@ -110,17 +112,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   populated subtree with it, rendering a normal-looking but shorter graph. The
   invariant now has one owner, `cover_children()`, applied on both paths.
 
-### Changed
-
-- **`AGGREGATE_EXPIRY_SEC` had two private copies held equal by a comment.**
-  `Flame_Tree` expires merged flame children on it and `Flame_Builder_Node`
-  expired that same aggregate's profile categories on its own copy, so changing
-  one gave a dashboard whose halves aged out on different clocks with nothing
-  failing loudly. `Flame_Tree` now owns it publicly and the builder reads it,
-  matching the norm AGENTS.md states for `Job_Intake::MAX_JOB_SIZE`.
-
-### Fixed
-
 - **`GET_STATS` reported a constant 10 for `pending_url_count`.** It counted
   `$pending` itself — ten fixed accumulator keys — instead of the URL-keyed map
   one level down at `$pending['url_stats']`. The one introspection verb the node
@@ -143,7 +134,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and skewed eviction. The key is now the reserved `TOTAL_KEY`, and a colliding
   category is stored as `total (event)`.
 
+- **An unparseable refresh setting no longer polls at 1Hz.** `usePerformanceGraph`
+  derived its cadence with `parseInt( refreshInterval, 10 ) || 0`, and 0 meant
+  "every router tick" to `useBatchedPoll` — so a bad setting silently produced
+  the most expensive poll available while looking configured. It now falls back
+  to the declared 15s default, which the parameter default also references
+  instead of repeating the literal.
+
+- **Job retry and batch fan-in work again.** `Job_Router_Node` normalized an
+  entry by REBUILDING a fixed record — `k`, `handler`, `parameters`, `ts`, and
+  `id` — instead of overlaying onto the body, so it silently dropped every
+  field it had not heard of. Four of those are load-bearing:
+  `Job_Worker_Node::schedule_retry()` reads `retries`/`attempt` to decide a
+  retry, `settle_batch()` reads `batch`, and `key` re-hashes the partition on
+  requeue. `Job_Intake::write_job()` writes all four, and this plugin owns the
+  jobintake → jobs.log leg wherever it is active — so a job that opted into
+  retries re-entered with `retries` absent, read as 0, and went to the poison
+  path on its next throw. Every configured retry budget was capped at one
+  attempt, and a batch never settled. The router now carries
+  `Job_Intake::DISPATCH_FIELDS`, the substrate's canonical list, rather than a
+  fifth hand-maintained copy of it.
+
+  Requires newspack-nodes with `Job_Intake::DISPATCH_FIELDS` (unreleased at
+  time of writing) — bump the `release.yml` substrate pin before releasing.
+
 ### Changed
+
+- **`AGGREGATE_EXPIRY_SEC` had two private copies held equal by a comment.**
+  `Flame_Tree` expires merged flame children on it and `Flame_Builder_Node`
+  expired that same aggregate's profile categories on its own copy, so changing
+  one gave a dashboard whose halves aged out on different clocks with nothing
+  failing loudly. `Flame_Tree` now owns it publicly and the builder reads it,
+  matching the norm AGENTS.md states for `Job_Intake::MAX_JOB_SIZE`.
 
 - **`accumulate_all_stats()` was 470 lines of hand-numbered sections.** Its
   banners (`--- 1.`, `--- 2b.`, `--- 3b.` …) were load-bearing navigation rather
@@ -158,8 +180,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `accumulate_dimensions`, `accumulate_profiles`. `status_category()` also
   replaces the two independent derivations of the `Nxx` bucket — one of which
   reached the other by mutating `$request` across sections.
-
-### Changed
 
 - **`set_is_hub` uses the substrate's bool parse.** Its handler re-spelled the
   rule locally as `'true' === $arg || '1' === $arg`, so it accepted `true`/`1`
@@ -192,32 +212,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   empty source consequently FOLLOWS rather than entering a replay that can
   never catch up. Requires newspack-nodes with `browseControl` — bump the
   `release.yml` substrate pin before releasing.
-
-### Fixed
-
-- **An unparseable refresh setting no longer polls at 1Hz.** `usePerformanceGraph`
-  derived its cadence with `parseInt( refreshInterval, 10 ) || 0`, and 0 meant
-  "every router tick" to `useBatchedPoll` — so a bad setting silently produced
-  the most expensive poll available while looking configured. It now falls back
-  to the declared 15s default, which the parameter default also references
-  instead of repeating the literal.
-
-- **Job retry and batch fan-in work again.** `Job_Router_Node` normalized an
-  entry by REBUILDING a fixed record — `k`, `handler`, `parameters`, `ts`, and
-  `id` — instead of overlaying onto the body, so it silently dropped every
-  field it had not heard of. Four of those are load-bearing:
-  `Job_Worker_Node::schedule_retry()` reads `retries`/`attempt` to decide a
-  retry, `settle_batch()` reads `batch`, and `key` re-hashes the partition on
-  requeue. `Job_Intake::write_job()` writes all four, and this plugin owns the
-  jobintake → jobs.log leg wherever it is active — so a job that opted into
-  retries re-entered with `retries` absent, read as 0, and went to the poison
-  path on its next throw. Every configured retry budget was capped at one
-  attempt, and a batch never settled. The router now carries
-  `Job_Intake::DISPATCH_FIELDS`, the substrate's canonical list, rather than a
-  fifth hand-maintained copy of it.
-
-  Requires newspack-nodes with `Job_Intake::DISPATCH_FIELDS` (unreleased at
-  time of writing) — bump the `release.yml` substrate pin before releasing.
 
 ## [0.44.9] - 2026-08-04
 
