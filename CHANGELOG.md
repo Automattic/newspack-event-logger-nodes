@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`GET_STATS` reported a constant 10 for `pending_url_count`.** It counted
+  `$pending` itself — ten fixed accumulator keys — instead of the URL-keyed map
+  one level down at `$pending['url_stats']`. The one introspection verb the node
+  exposes told every operator debugging bucket growth the same number.
+
+- **The intern-table cap was not applied at the two highest-cardinality sites.**
+  `INTERN_TABLE_LIMIT` is documented as freezing the table, and the dimension and
+  category sites honored it — but the two ENTRY-name sites, which see by far the
+  most distinct strings, interned with no freeze check at all. So the one table
+  the cap exists to bound was the one that grew without limit in a long-running
+  worker. All four sites now go through a single `intern()` helper that owns the
+  rule, and `GET_STATS` reports `intern_count`.
+
+- **A category named `total` corrupted the rollup row it collided with.** The
+  category time series reserves `total` for the per-bucket rollup — `n` requests,
+  `t` their summed wall time, `c` every category's summed calls — and
+  `mirror_traffic_rank()` sums `n` to decide which record to evict when the
+  mirror buffer overflows. Category names come from the ruleset, where a custom
+  event may be named anything, so a colliding name inflated `n` by one per sample
+  and skewed eviction. The key is now the reserved `TOTAL_KEY`, and a colliding
+  category is stored as `total (event)`.
+
+### Changed
+
+- **`accumulate_all_stats()` was 470 lines of hand-numbered sections.** Its
+  banners (`--- 1.`, `--- 2b.`, `--- 3b.` …) were load-bearing navigation rather
+  than structure, and the same accumulate shapes were written out twelve times —
+  the `c/s/m` triple three times, `t/c/n` six times, the leaderboard-category
+  block twice, the entries-then-trim loop twice. Each copy had to re-decide the
+  `$count_global` / `$record_timing` gate pair correctly, which the method's own
+  docblock calls "the classic bug here". The five repeated shapes now have one
+  owner each (`add_dim`, `add_cat`, `add_category`, `add_entry`, `trim_entries`,
+  all pure), and every banner became a method: `accumulate_url_aggregate`,
+  `rotate_pending_bucket`, `accumulate_url_stats`, `accumulate_hourly`,
+  `accumulate_dimensions`, `accumulate_profiles`. `status_category()` also
+  replaces the two independent derivations of the `Nxx` bucket — one of which
+  reached the other by mutating `$request` across sections.
+
 ### Changed
 
 - **`set_is_hub` uses the substrate's bool parse.** Its handler re-spelled the
