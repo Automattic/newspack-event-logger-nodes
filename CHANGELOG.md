@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The ruleset's sole writer swallowed its own write failures.** `useRulesGraph`
+  documents that a mutation REJECTS rather than filling the `error` banner, which
+  carries `list` failures only — and `RulesAdmin` owned no catch. Delete was the
+  worse of the two: it closed the confirm dialog BEFORE awaiting `remove()`, so a
+  rejection left the dialog closed, the row present, the banner clean, and an
+  unhandled promise rejection as the only trace. Both handlers now report the
+  failure and keep their context open.
+
+- **`RuleEditModal` took a required layout class through an optional prop.**
+  `rule-edit-modal.scss` gates a whole layout block on `.newspack-nodes-skin-root`
+  — flex column, 600px, scrolling content — but the modal hardcoded only the
+  other three skin classes and left that one to `className`. The Performance
+  dashboard passed it and the rules admin did not, so the same modal rendered two
+  different layouts. The modal owns all four now, and `className` is extras only.
+
 - **Firehose Topic args follow the substrate's new retention order.**
   `max_segments` moved ahead of `min_lifetime` in Partition/Log/Topic's
   positional constructor, so `Log_Manager` and the `gyroscope`/`completed`

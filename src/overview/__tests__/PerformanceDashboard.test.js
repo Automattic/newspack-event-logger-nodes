@@ -1246,9 +1246,8 @@ describe( 'PerformanceDashboard', () => {
 			expect( globalThis.__ruleEditProps.rule.pattern ).toBe( '/foo?' );
 			expect( globalThis.__ruleEditProps.rule.action ).toBe( 'log' );
 			expect( globalThis.__ruleEditProps.rule.id ).toBe( '' );
-			expect( globalThis.__ruleEditProps.className ).toBe(
-				'newspack-nodes-skin-root'
-			);
+			// The modal owns its own skin classes; callers pass none.
+			expect( globalThis.__ruleEditProps.className ).toBeUndefined();
 			unmount();
 		} );
 
