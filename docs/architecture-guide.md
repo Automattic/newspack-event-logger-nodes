@@ -244,7 +244,7 @@ secure
 
 Four things in that file are load-bearing.
 
-**Partition arguments are positional and optional.** The full signature is `make_node Partition <name> <dir> [segment_size] [min_segments] [num_segments] [min_lifetime] [lifetime] [max_segments]`. `Partition::node_schema()` defaults each retention argument to its matching `<config:…>` token, so `alerts:partition`, `errors:partition`, and `requests:partition` — which pass a directory and nothing else — resolve to exactly the values an explicit tail used to spell out. `gyroscope:partition` and `completed:partition` DO carry a tail because they pin a non-default 1 MiB segment size and disable both lifetime rules.
+**Partition arguments are positional and optional.** The full signature is `make_node Partition <name> <dir> [segment_size] [min_segments] [num_segments] [max_segments] [min_lifetime] [lifetime]`. `Partition::node_schema()` defaults each retention argument to its matching `<config:…>` token, so `alerts:partition`, `errors:partition`, and `requests:partition` — which pass a directory and nothing else — resolve to exactly the values an explicit tail used to spell out. `gyroscope:partition` and `completed:partition` DO carry a tail because they pin a non-default 1 MiB segment size and disable both lifetime rules.
 
 **Four of the five output partitions are `.p0`, not `.p<partition>`.** Every partition's request-builder appends to the same `alerts.p0`, `errors.p0`, `gyroscope.p0`, and `completed.p0`. That is safe precisely because none of them lifts the PIPE_BUF cap: each write stays a single atomic append, which is what makes a shared multi-writer log correct. `requests:partition` is the one per-partition output, and it is the one that runs `void_warranty`.
 

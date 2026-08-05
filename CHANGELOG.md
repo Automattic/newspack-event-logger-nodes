@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Firehose Topic args follow the substrate's new retention order.**
+  `max_segments` moved ahead of `min_lifetime` in Partition/Log/Topic's
+  positional constructor, so `Log_Manager` and the `gyroscope`/`completed`
+  partitions in `request-builder.tsl` were updated in lockstep.
+
 - **The dashboards' retention window is owned here now, not in the substrate.**
   `newspack-nodes`' shared `useTimeChart` used to read
   `window.eventLoggerDashboards.retentionSeconds` itself. `src/overview/retention.js`

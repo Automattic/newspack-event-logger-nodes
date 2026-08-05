@@ -324,7 +324,7 @@ class Log_Manager {
 		} else {
 			$this->topic = new Topic_Node();
 			$this->topic->name( '_firehose:topic' );
-			$this->topic->arguments( [ $dir_template, (string) $num_partitions, (string) $segment_size, (string) $min_segments, (string) $num_segments, (string) $min_lifetime, (string) $lifetime, (string) $max_segments ] );
+			$this->topic->arguments( [ $dir_template, (string) $num_partitions, (string) $segment_size, (string) $min_segments, (string) $num_segments, (string) $max_segments, (string) $min_lifetime, (string) $lifetime ] );
 			$this->topic->patron( $this->topic );
 			$ci = Core::node( Node_Names::COMMAND_INTERPRETER );
 			if ( null !== $ci ) {
