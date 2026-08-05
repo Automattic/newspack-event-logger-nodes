@@ -22,6 +22,7 @@
 import {
 	VALUE,
 	TYPE,
+	FROM,
 	TM_COMMAND,
 	TM_RESPONSE,
 	TM_STRUCT,
@@ -49,6 +50,8 @@ beforeEach( () => Core.reset() );
 function makeMerge() {
 	const node = new UrlDetailMergeNode();
 	node.name = 'urlDetail:merge';
+	// What the graph does: the dashboard drives controls under the node's name.
+	node.controlFrom = 'urlDetail:merge';
 	const sink = new RecordingSink();
 	sink.name = '_recv';
 	node.sink = sink;
@@ -193,6 +196,7 @@ describe( 'UrlDetailMergeNode — clear resets retained state', () => {
 
 		const clear = newMessage();
 		clear[ TYPE ] = TM_STRUCT;
+		clear[ FROM ] = 'urlDetail:merge';
 		clear[ VALUE ] = { action: 'clear' };
 		node.fill( clear );
 
@@ -200,4 +204,38 @@ describe( 'UrlDetailMergeNode — clear resets retained state', () => {
 		node.fill( reply( { last_modified: 7, requests: [ { rid: 'a' } ] } ) );
 		expect( sink.received ).toHaveLength( 2 );
 	} );
+} );
+
+// A control is recognised by its FROM; an `action` field means nothing.
+describe( 'UrlDetailMergeNode — control origin', () => {
+	test( 'a reply from another origin is never applied as a clear', () => {
+		const { node, sink } = makeMerge();
+		node.fill( reply( { last_modified: 7, requests: [ { rid: 'a' } ] } ) );
+
+		const impostor = newMessage();
+		impostor[ TYPE ] = TM_STRUCT;
+		impostor[ FROM ] = 'urldetailIn';
+		impostor[ VALUE ] = { action: 'clear' };
+		node.fill( impostor );
+
+		// The retained last_modified survived: an unchanged reply still drops.
+		node.fill( reply( { last_modified: 7, requests: [ { rid: 'a' } ] } ) );
+		expect( sink.received ).toHaveLength( 1 );
+	} );
+} );
+
+// A control is routed by origin alone; `action` picks the verb once inside.
+// ANDing the origin with a shape test let an unknown verb from the trusted
+// origin fall through and be merged as if it were a reply.
+test( 'an unknown verb from the control origin is never merged as a reply', () => {
+	const { node, sink } = makeMerge();
+	node.fill( reply( { last_modified: 7, requests: [ { rid: 'a' } ] } ) );
+
+	const unknown = newMessage();
+	unknown[ TYPE ] = TM_STRUCT;
+	unknown[ FROM ] = 'urlDetail:merge';
+	unknown[ VALUE ] = { action: 'refresh' };
+	node.fill( unknown );
+
+	expect( sink.received ).toHaveLength( 1 );
 } );

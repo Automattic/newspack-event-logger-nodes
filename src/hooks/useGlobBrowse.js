@@ -31,6 +31,7 @@ import {
 	useNodeState,
 	newMessage,
 	TYPE,
+	FROM,
 	VALUE,
 	TM_STRUCT,
 } from '@newspack-nodes/runtime';
@@ -72,14 +73,18 @@ export function connectPositions( target, link, isReconnect ) {
 }
 
 /**
- * Build a control message the view's `fill()` routes on its `action`.
+ * Build a control message the view applies because it came FROM the dashboard
+ * driving it; `action` picks the verb once inside. A control is recognised by
+ * WHO SENT IT, never by what its payload looks like.
  *
+ * @param {string} from  The view's `controlFrom` — its own name.
  * @param {Object} value The control payload; `action` picks the view's verb.
  * @return {Array} The 7-field TM_STRUCT message.
  */
-function viewControl( value ) {
+function viewControl( from, value ) {
 	const m = newMessage();
 	m[ TYPE ] = TM_STRUCT;
+	m[ FROM ] = from;
 	m[ VALUE ] = value;
 	return m;
 }
@@ -158,7 +163,10 @@ export default function useGlobBrowse( {
 	// Enter replay on the view, carrying the captured boundary for catch-up.
 	const browseView = useCallback( () => {
 		Core.node( viewName )?.fill(
-			viewControl( browseControl( { segments: segmentsRef.current } ) )
+			viewControl(
+				viewName,
+				browseControl( { segments: segmentsRef.current } )
+			)
 		);
 	}, [ viewName ] );
 
@@ -315,7 +323,7 @@ export default function useGlobBrowse( {
 		( key ) => {
 			setSelectedPartition( key );
 			Core.node( viewName )?.fill(
-				viewControl( { action: 'select', dir: key } )
+				viewControl( viewName, { action: 'select', dir: key } )
 			);
 			reposition( key ? [ key ] : [ glob ], null );
 		},
@@ -337,7 +345,9 @@ export default function useGlobBrowse( {
 		if ( ! sel ) {
 			return;
 		}
-		Core.node( viewName )?.fill( viewControl( { action: 'follow' } ) );
+		Core.node( viewName )?.fill(
+			viewControl( viewName, { action: 'follow' } )
+		);
 		reposition( [ sel ], lpFollow() );
 	}, [ lpFollow, reposition, viewName ] );
 
@@ -398,7 +408,9 @@ export default function useGlobBrowse( {
 				if ( ! result?.message || ! view ) {
 					return;
 				}
-				view.fill( viewControl( { action: 'step', frames: 1 } ) );
+				view.fill(
+					viewControl( viewName, { action: 'step', frames: 1 } )
+				);
 				view.fill( result.message );
 				browseTargetRef.current = {
 					subscribe: [ sel ],

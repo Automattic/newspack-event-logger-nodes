@@ -31,7 +31,13 @@
  * clears the view's request map first, because rows that predate a gap are stale.
  */
 
-import { TYPE, VALUE, TM_STRUCT, newMessage } from '@newspack-nodes/runtime';
+import {
+	TYPE,
+	FROM,
+	VALUE,
+	TM_STRUCT,
+	newMessage,
+} from '@newspack-nodes/runtime';
 import '../nodes/register';
 import usePageVisibility from '@newspack-nodes/shared/hooks/usePageVisibility';
 import { useVisibilityGatedLink } from '@newspack-nodes/shared/hooks/useVisibilityGatedLink';
@@ -42,7 +48,9 @@ const TEE = 'gyroscope:stream';
 const VIEW = 'gyroscope:view';
 
 /**
- * Build a local control message the view's `fill()` routes on `value.action`.
+ * Build a control the view applies because it came FROM the dashboard driving
+ * it; `action` picks the verb once inside. A control is recognised by WHO SENT
+ * IT, never by what its payload looks like.
  *
  * @param {Object} value Control payload; `action` selects the view's branch.
  * @return {Array} A 7-field TM_STRUCT message.
@@ -50,6 +58,7 @@ const VIEW = 'gyroscope:view';
 const controlMsg = ( value ) => {
 	const m = newMessage();
 	m[ TYPE ] = TM_STRUCT;
+	m[ FROM ] = VIEW;
 	m[ VALUE ] = value;
 	return m;
 };
@@ -79,6 +88,8 @@ export function useGyroscopeGraph() {
 
 			// Dashboard view — consumes wire envelopes directly.
 			const view = interpreter.makeNode( 'GyroscopeView', VIEW );
+			// The view applies controls from this FROM; records never match.
+			view.controlFrom = VIEW;
 
 			return { link, view };
 		},

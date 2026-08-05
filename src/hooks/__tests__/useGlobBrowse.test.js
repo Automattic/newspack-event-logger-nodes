@@ -55,11 +55,14 @@ class FakeCatalogView extends Node {
 		super();
 		this.controls = [];
 		this.rows = [];
+		// Set from `name` on registration, as the real graph wires it.
+		this.controlFrom = '';
 	}
+	// Routes on ORIGIN, like the node it stands in for. Sniffing the payload
+	// here made every viewControl() call site pass with no FROM at all.
 	fill( message ) {
-		const value = message[ VALUE ];
-		if ( value && value.action ) {
-			this.controls.push( value );
+		if ( '' !== this.controlFrom && message[ FROM ] === this.controlFrom ) {
+			this.controls.push( message[ VALUE ] );
 		} else {
 			this.rows.push( message );
 		}
@@ -131,6 +134,7 @@ function buildGraph( payloadByVerb, errorVerbs ) {
 	Core.node( '_http' ).client = client;
 	link.client = client;
 	const view = interpreter.makeNode( 'FakeCatalogView', VIEW );
+	view.controlFrom = VIEW;
 	const browseTargetRef = {
 		current: { subscribe: [ GLOB ], positions: null },
 	};

@@ -3,7 +3,7 @@
  *
  * The shared base owns the ring (`lines`/`lineAt`/`linesCount`), the monotonic
  * `id` + `isEven` stamps, the paused belt + step budget, the decaying `lps`,
- * seek tracking, reply settling, and the shared control verbs; those have their
+ * seek tracking, and the shared control verbs; those have their
  * own suite in the substrate. Here we pin the subclass surface: `shapeRow`'s
  * envelope validation + enrichment (KEY=rid, VALUE={ts, k, m, n, method, url},
  * plus the shared debug trio), the `select` seek arming, and the published
@@ -13,6 +13,7 @@
 import fnv1a from '@newspack-nodes/shared/utils/fnv1a';
 import {
 	KEY,
+	FROM,
 	VALUE,
 	TYPE,
 	ID,
@@ -30,6 +31,8 @@ beforeEach( () => Core.reset() );
 function makeView( name, opts = {} ) {
 	const node = new PerfErrorsViewNode( opts.maxLines );
 	node.name = name;
+	// What the graph does: the dashboard drives controls under the view's name.
+	node.controlFrom = name;
 	return node;
 }
 
@@ -42,10 +45,11 @@ const envMsg = ( rid, value ) => {
 	return m;
 };
 
-// A control message: VALUE = { action, … }, KEY left empty.
+// A control from the dashboard; recognised by FROM, not by payload shape.
 const controlMsg = ( payload ) => {
 	const m = newMessage();
 	m[ TYPE ] = TM_STRUCT;
+	m[ FROM ] = 'perferrors:view';
 	m[ VALUE ] = payload;
 	return m;
 };

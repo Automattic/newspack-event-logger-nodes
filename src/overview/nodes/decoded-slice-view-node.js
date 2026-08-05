@@ -1,10 +1,4 @@
-import {
-	Node,
-	VALUE,
-	TYPE,
-	TM_ERROR,
-	TM_STRUCT,
-} from '@newspack-nodes/runtime';
+import { Node, VALUE, TYPE, FROM, TM_ERROR } from '@newspack-nodes/runtime';
 import { errorMessage } from '@newspack-nodes/shared/errorMessage';
 
 /**
@@ -21,16 +15,17 @@ import { errorMessage } from '@newspack-nodes/shared/errorMessage';
  * would `JSON.parse` a live object. This base reads `value.payload` as an
  * object directly.
  *
- * `fill()` handles these message kinds, in the order it tests them:
- *   - TM_STRUCT `{ action:'loading' }` → loading:true, error cleared, data kept;
- *   - TM_STRUCT `{ action:'clear' }`   → reset to `emptySlice()` (modal close);
- *   - TM_STRUCT `{ action:'error' }`   → a client-side validation failure:
- *     error set, loading cleared, prior data kept;
- *   - a TM_ERROR reply                 → error string, loading cleared, prior
- *     data KEPT;
+ * `fill()` tests the ORIGIN first: a message from `controlFrom` is a control,
+ * and its `action` picks the verb — `loading` (loading:true, error cleared,
+ * data kept), `clear` (reset to `emptySlice()`, the modal close) or `error` (a
+ * client-side validation failure: error set, loading cleared, prior data kept).
+ * A control is never recognised by what its payload looks like; a reply shaped
+ * that way is still a reply. Everything else is one:
+ *   - a TM_ERROR reply → error string, loading cleared, prior data KEPT;
  *   - a command reply (VALUE = `{ name, payload }`) → `storeResult( payload )`
- *     shapes the slice. A non-object VALUE is transport garbage and keeps the
- *     prior slice rather than blanking the widget.
+ *     shapes the slice. A VALUE that is not an object, or carries no payload,
+ *     is transport garbage and keeps the prior slice rather than blanking the
+ *     widget.
  *
  * `usePerformanceGraph` mints both halves. `sendControl()` fills the TM_STRUCT
  * controls straight into the view. A command stamps FROM with the node the
@@ -56,11 +51,17 @@ export class DecodedSliceViewNode extends Node {
 	constructor() {
 		super();
 		this.model = this.emptySlice();
+		// FROM of controls; unset loses them silently (see LogStreamViewNode).
+		this.controlFrom = '';
 		this.setState( 'view', this.model );
 	}
 
 	/**
 	 * Apply one control or reply message to the slice, then publish it.
+	 *
+	 * A control is recognised by WHO SENT IT, never by what its payload looks
+	 * like — a reply whose payload happens to carry an `action` field is a
+	 * reply, and must still decode into the slice.
 	 *
 	 * @param {Array} message The 7-field envelope.
 	 */
@@ -68,39 +69,8 @@ export class DecodedSliceViewNode extends Node {
 		const value = message[ VALUE ];
 		const type = message[ TYPE ] || 0;
 
-		// Loading control: flip loading, clear error, keep data + siblings.
-		if (
-			TM_STRUCT === ( type & TM_STRUCT ) &&
-			value &&
-			'loading' === value.action
-		) {
-			this.model = { ...this.model, loading: true, error: null };
-			this.setState( 'view', this.model );
-			return;
-		}
-
-		// Clear control: reset to empty slice (modal close → next open fresh).
-		if (
-			TM_STRUCT === ( type & TM_STRUCT ) &&
-			value &&
-			'clear' === value.action
-		) {
-			this.model = this.emptySlice();
-			this.setState( 'view', this.model );
-			return;
-		}
-
-		// Client validation failure: surface error, clear loading, keep data.
-		if (
-			TM_STRUCT === ( type & TM_STRUCT ) &&
-			value &&
-			'error' === value.action
-		) {
-			this.model = {
-				...this.model,
-				loading: false,
-				error: value.error || errorMessage( null ),
-			};
+		if ( '' !== this.controlFrom && message[ FROM ] === this.controlFrom ) {
+			this._control( value?.action, value );
 			this.setState( 'view', this.model );
 			return;
 		}
@@ -118,12 +88,39 @@ export class DecodedSliceViewNode extends Node {
 			return;
 		}
 
-		// Success reply: only an object VALUE decodes; else keep prior slice.
-		if ( ! value || 'object' !== typeof value ) {
+		// A payload decodes; anything else keeps the prior slice.
+		if (
+			! value ||
+			'object' !== typeof value ||
+			undefined === value.payload
+		) {
 			return;
 		}
 		this.storeResult( value.payload );
 		this.setState( 'view', this.model );
+	}
+
+	/**
+	 * Apply one control verb to the model: `loading` flips the spinner and
+	 * clears the error (keeping data and siblings), `clear` resets to the empty
+	 * slice (modal close → next open fresh), and `error` surfaces a client-side
+	 * validation failure while keeping the data already on screen.
+	 *
+	 * @param {?string} action The verb; anything else leaves the model alone.
+	 * @param {?Object} value  The control payload (`error` carries `error`).
+	 */
+	_control( action, value ) {
+		if ( 'loading' === action ) {
+			this.model = { ...this.model, loading: true, error: null };
+		} else if ( 'clear' === action ) {
+			this.model = this.emptySlice();
+		} else if ( 'error' === action ) {
+			this.model = {
+				...this.model,
+				loading: false,
+				error: value.error || errorMessage( null ),
+			};
+		}
 	}
 
 	/**

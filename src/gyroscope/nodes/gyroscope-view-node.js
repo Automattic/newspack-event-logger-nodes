@@ -1,4 +1,4 @@
-import { KEY, Node, VALUE } from '@newspack-nodes/runtime';
+import { FROM, KEY, Node, VALUE } from '@newspack-nodes/runtime';
 
 // Averaging window for the requests/second readout, in seconds.
 const RPS_WINDOW_SEC = 10;
@@ -27,7 +27,11 @@ const INFLIGHT_STALE_MS = 15 * 60 * 1000;
  * the request identity (never duplicated in VALUE), and the server-built `state`
  * field alone says what a record IS. This view is therefore written ONCE,
  * correct under BOTH producer modes (full per-tick re-emit / delta) with NO mode
- * awareness:
+ * awareness. It tests the ORIGIN first — a message from `controlFrom` is a
+ * control the React layer filled in locally, whose `action` picks the verb, and
+ * it republishes (the low-frequency path; `useGyroscopeGraph` sends `clear`
+ * before every (re)connect). A control is never recognised by what its payload
+ * looks like: a record carrying an `action` is a record. Everything else is one:
  * - object VALUE with `state` `complete` and a non-empty KEY: a completion — the
  *   source of RETIREMENT under both modes. Merge, derive time_ms/est_ms.
  * - object VALUE with any other `state` and a non-empty KEY: an in-flight upsert
@@ -36,9 +40,6 @@ const INFLIGHT_STALE_MS = 15 * 60 * 1000;
  *   Under full re-emit this refreshes every row each tick; delta only advanced.
  * - keyless or state-less shapes are dropped, which is what discards the
  *   substrate `connected` sentinel and any verb reply.
- * - object VALUE carrying an `action`: a control message the React layer fills
- *   in locally as TM_STRUCT; dispatched, then published (low-frequency path).
- *   `useGyroscopeGraph` sends `clear` before every (re)connect.
  *
  * `snapshot()` reaps completed entries (shown one tick), ages out in-flight rows
  * past INFLIGHT_STALE_MS, sorts by est_ms descending, and caps — plus the
@@ -57,11 +58,15 @@ export class GyroscopeViewNode extends Node {
 		this.rpsWindowTotal = 0;
 		this.rps = 0;
 		this.connectionError = false;
+		// FROM of controls; unset loses them silently (see LogStreamViewNode).
+		this.controlFrom = '';
 		this._publish();
 	}
 
 	/**
-	 * Dispatch one envelope: a gyroscope record, a control message, or neither.
+	 * Dispatch one envelope: a control from `controlFrom`, else a gyroscope
+	 * record. A control is recognised by WHO SENT IT, never by what its
+	 * payload looks like — a record carrying an `action` field is a record.
 	 *
 	 * Terminal node — nothing is ever forwarded, so no sink is required.
 	 *
@@ -70,6 +75,12 @@ export class GyroscopeViewNode extends Node {
 	fill( message ) {
 		const value = message[ VALUE ];
 		if ( ! value ) {
+			return;
+		}
+		// Local control — LOW-freq path; publish.
+		if ( '' !== this.controlFrom && message[ FROM ] === this.controlFrom ) {
+			this._control( value );
+			this._publish();
 			return;
 		}
 		// Gyroscope record: rid rides KEY; `state` says what the record IS.
@@ -86,12 +97,6 @@ export class GyroscopeViewNode extends Node {
 			} else {
 				this._inflight( req );
 			}
-			return;
-		}
-		// Local control (TM_STRUCT { action, … }) — LOW-freq path; publish.
-		if ( value.action ) {
-			this._control( value );
-			this._publish();
 		}
 	}
 

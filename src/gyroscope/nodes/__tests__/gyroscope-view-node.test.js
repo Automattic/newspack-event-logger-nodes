@@ -20,6 +20,7 @@
 
 import {
 	KEY,
+	FROM,
 	VALUE,
 	TYPE,
 	TM_STRUCT,
@@ -34,6 +35,8 @@ beforeEach( () => Core.reset() );
 function makeView( name ) {
 	const node = new GyroscopeViewNode();
 	node.name = name;
+	// What the graph does: the dashboard drives controls under the view's name.
+	node.controlFrom = name;
 	return node;
 }
 
@@ -63,13 +66,28 @@ function connectedEnvelope( payload = { pid: 1, slot: 0, partition: 0 } ) {
 	return m;
 }
 
-// A local TM_STRUCT control message from the React layer (action ride).
+// A control from the dashboard; recognised by FROM, not by payload shape.
 function controlMsg( payload ) {
 	const m = newMessage();
 	m[ TYPE ] = TM_STRUCT;
+	m[ FROM ] = 'gyroscope:view';
 	m[ VALUE ] = payload;
 	return m;
 }
+
+// A control is recognised by its FROM; an `action` field means nothing.
+test( 'a record from another origin is never applied as a control', () => {
+	const v = makeView( 'gyroscope:view' );
+	v.fill( inflightEnvelope( { rid: 'a', url: '/a', state: 'process' } ) );
+
+	const record = newMessage();
+	record[ TYPE ] = TM_STRUCT;
+	record[ FROM ] = 'gyroscope.p0';
+	record[ VALUE ] = { action: 'clear' };
+	v.fill( record );
+
+	expect( v.requests.size ).toBe( 1 );
+} );
 
 test( 'upserts a per-record inflight envelope into node.requests keyed by rid', () => {
 	const v = makeView( 'gyroscope:view' );

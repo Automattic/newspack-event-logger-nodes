@@ -14,6 +14,7 @@
 import {
 	VALUE,
 	TYPE,
+	FROM,
 	ID,
 	TM_COMMAND,
 	TM_RESPONSE,
@@ -29,6 +30,8 @@ beforeEach( () => Core.reset() );
 function makeView() {
 	const node = new UrlDetailViewNode();
 	node.name = 'urldetail:view';
+	// What the graph does: controls ride under the view's own name.
+	node.controlFrom = 'urldetail:view';
 	return node;
 }
 
@@ -49,6 +52,7 @@ const reply = ( payload, { isError = false, id = '' } = {} ) => {
 const ctrl = ( value ) => {
 	const m = newMessage();
 	m[ TYPE ] = TM_STRUCT;
+	m[ FROM ] = 'urldetail:view';
 	m[ VALUE ] = value;
 	return m;
 };
@@ -99,6 +103,41 @@ test( 'a TM_ERROR reply keeps prior data + surfaces the error', () => {
 	expect( view().error ).toBe( 'boom' );
 	expect( view().data ).toEqual( {
 		last_modified: 1,
+		requests: [ { rid: 'a' } ],
+	} );
+} );
+
+// A control is recognised by its FROM; an `action` field means nothing.
+test( 'a reply from another origin is never applied as a clear', () => {
+	const v = makeView();
+	v.fill( reply( { last_modified: 3, requests: [ { rid: 'a' } ] } ) );
+
+	const impostor = newMessage();
+	impostor[ TYPE ] = TM_STRUCT;
+	impostor[ FROM ] = 'urldetail:merge';
+	impostor[ VALUE ] = { action: 'clear' };
+	v.fill( impostor );
+
+	expect( view().data ).toEqual( {
+		last_modified: 3,
+		requests: [ { rid: 'a' } ],
+	} );
+} );
+
+// The docblock promises transport garbage keeps the prior slice. An object
+// VALUE with no `payload` is garbage too — storeResult( undefined ) blanked
+// the widget while `.not.toBeNull()` happily accepted `undefined`.
+test( 'a reply carrying no payload keeps the slice already on screen', () => {
+	const v = makeView();
+	v.fill( reply( { last_modified: 3, requests: [ { rid: 'a' } ] } ) );
+
+	const empty = newMessage();
+	empty[ TYPE ] = TM_COMMAND | TM_RESPONSE;
+	empty[ VALUE ] = { name: 'url_detail' };
+	v.fill( empty );
+
+	expect( view().data ).toEqual( {
+		last_modified: 3,
 		requests: [ { rid: 'a' } ],
 	} );
 } );

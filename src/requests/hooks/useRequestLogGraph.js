@@ -32,6 +32,7 @@ import { useRef, useState, useCallback } from '@wordpress/element';
 import {
 	Core,
 	TYPE,
+	FROM,
 	VALUE,
 	TM_STRUCT,
 	newMessage,
@@ -48,10 +49,11 @@ const VIEW = 'requestlog:view';
 // The glob this dashboard tails across partitions.
 const GLOB = 'completed.*';
 
-// Build a TM_STRUCT control message the view's fill() routes on its `action`.
+// A control the view applies because of its FROM, never its payload shape.
 const controlMsg = ( value ) => {
 	const m = newMessage();
 	m[ TYPE ] = TM_STRUCT;
+	m[ FROM ] = VIEW;
 	m[ VALUE ] = value;
 	return m;
 };
@@ -109,6 +111,8 @@ export function useRequestLogGraph( opts = {} ) {
 
 			// The view node — the single dashboard consumer of the stream.
 			const view = interpreter.makeNode( 'RequestLogView', VIEW );
+			// The view applies controls from this FROM; records never match.
+			view.controlFrom = VIEW;
 			if ( maxEntries ) {
 				// Safe pre-stream: the base ring caps writes against maxLines.
 				view.maxLines = maxEntries;

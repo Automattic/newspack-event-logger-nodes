@@ -52,6 +52,7 @@ import {
 	Core,
 	newMessage,
 	TYPE,
+	FROM,
 	TO,
 	ID,
 	VALUE,
@@ -277,6 +278,7 @@ export function usePerformanceGraph( opts = {} ) {
 				command: 'overview',
 				view: OVERVIEW_VIEW,
 				viewClass: 'OverviewView',
+				controlFrom: OVERVIEW_VIEW,
 				tee,
 				target: TARGET,
 				argsFn: () =>
@@ -291,6 +293,7 @@ export function usePerformanceGraph( opts = {} ) {
 				command: 'urls',
 				view: URLS_VIEW,
 				viewClass: 'UrlsView',
+				controlFrom: URLS_VIEW,
 				tee,
 				target: TARGET,
 				argsFn: () =>
@@ -306,9 +309,13 @@ export function usePerformanceGraph( opts = {} ) {
 				'UrlDetailMerge',
 				URLDETAIL_MERGE
 			);
+			merge.controlFrom = URLDETAIL_MERGE;
 			merge.connectNode( URLDETAIL_VIEW );
 			urldetailIn.connectNode( URLDETAIL_MERGE );
-			interpreter.makeNode( 'UrlDetailView', URLDETAIL_VIEW );
+			interpreter.makeNode(
+				'UrlDetailView',
+				URLDETAIL_VIEW
+			).controlFrom = URLDETAIL_VIEW;
 
 			// url_detail auto-refresh Timer → Fetcher; armed by selection.
 			const udFetcher = interpreter.makeNode(
@@ -324,7 +331,10 @@ export function usePerformanceGraph( opts = {} ) {
 				.connectNode( URLDETAIL_FETCHER );
 
 			// On-demand request_detail: its view receives replies directly.
-			interpreter.makeNode( 'RequestDetailView', REQUESTDETAIL_VIEW );
+			interpreter.makeNode(
+				'RequestDetailView',
+				REQUESTDETAIL_VIEW
+			).controlFrom = REQUESTDETAIL_VIEW;
 
 			return () => {
 				if ( urlFetchTimerRef.current ) {
@@ -362,14 +372,22 @@ export function usePerformanceGraph( opts = {} ) {
 		[ interpreterRef ]
 	);
 
-	// Fire a TM_STRUCT control (loading/clear) directly into a view's fill.
+	// @longform Fire a control into a view's fill, stamped with the origin
+	// that view was told to trust — it applies on FROM, never on payload
+	// shape. A view with no controlFrom is a wiring bug that throws here:
+	// the alternative is a FROM matching nothing, so the control falls
+	// through to the reply branch and blanks the slice, saying nothing.
 	const sendControl = useCallback( ( viewName, value ) => {
 		const view = Core.node( viewName );
 		if ( ! view ) {
 			return;
 		}
+		if ( ! view.controlFrom ) {
+			throw new Error( `${ viewName } declares no controlFrom` );
+		}
 		const m = newMessage();
 		m[ TYPE ] = TM_STRUCT;
+		m[ FROM ] = view.controlFrom;
 		m[ VALUE ] = value;
 		view.fill( m );
 	}, [] );

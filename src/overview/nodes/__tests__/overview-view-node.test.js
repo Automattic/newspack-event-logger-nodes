@@ -17,6 +17,7 @@
 import {
 	VALUE,
 	TYPE,
+	FROM,
 	TM_COMMAND,
 	TM_RESPONSE,
 	TM_ERROR,
@@ -32,6 +33,8 @@ beforeEach( () => Core.reset() );
 function makeView() {
 	const node = new OverviewViewNode();
 	node.name = 'overview:view';
+	// What the graph does: controls ride under the view's own name.
+	node.controlFrom = 'overview:view';
 	return node;
 }
 
@@ -49,6 +52,7 @@ const reply = ( payload, isError = false ) => {
 const loading = () => {
 	const m = newMessage();
 	m[ TYPE ] = TM_STRUCT;
+	m[ FROM ] = 'overview:view';
 	m[ VALUE ] = { action: 'loading' };
 	return m;
 };
