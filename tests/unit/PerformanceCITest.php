@@ -1346,6 +1346,26 @@ class PerformanceCITest extends TestCase {
 		$this->assertArrayHasKey( 'hooks_by_category', $result );
 	}
 
+	public function test_hooks_registered_ships_category_descriptions(): void {
+		// The descriptions used to be a hand-written map in HookSelectorModal.js
+		// covering 24 of the 63 categories this config declares — and users can
+		// add more. They travel with the taxonomy that owns them now.
+		$this->seed_wp_filter_with_known_hooks();
+
+		$interpreter = new Performance_CI_Node();
+		$result      = VerbHarness::fire( $interpreter, 'performance', 'hooks_registered' );
+
+		$this->assertArrayHasKey( 'category_descriptions', $result );
+		$this->assertSame(
+			'Core request lifecycle',
+			$result['category_descriptions']['Lifecycle'] ?? null
+		);
+		// Every described category is a real one.
+		foreach ( \array_keys( $result['category_descriptions'] ) as $category ) {
+			$this->assertArrayHasKey( $category, $result['categories'] );
+		}
+	}
+
 	public function test_hooks_registered_verb_total_matches_summed_buckets(): void {
 		$this->seed_wp_filter_with_known_hooks();
 

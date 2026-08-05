@@ -95,6 +95,26 @@ describe( 'HookSelectorModal', () => {
 		expect( global.__hookcatalogLastIsOpen ).toBe( true );
 	} );
 
+	it( 'renders the description the server ships for a category', () => {
+		// These used to be a hand-written JS map covering 24 of the 63
+		// categories the server declares, so the rest rendered blank.
+		global.__hookcatalogMockModel = {
+			hooksByCategory: HOOKS,
+			descriptions: { Lifecycle: 'Core request lifecycle' },
+			loading: false,
+		};
+		mount( {
+			isOpen: true,
+			onClose: jest.fn(),
+			selected: [],
+			onSelect: jest.fn(),
+		} );
+		// The modal renders through a portal, not into `container`.
+		expect( document.body.textContent ).toContain(
+			'Core request lifecycle'
+		);
+	} );
+
 	it( 'uses the exact standalone product modal root classes', () => {
 		mount( {
 			isOpen: true,

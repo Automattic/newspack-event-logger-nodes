@@ -35,7 +35,7 @@ import useRequestNode from '@newspack-nodes/shared/hooks/useRequestNode';
  * @param {boolean} [opts.isOpen]        When true, fires one hook-catalog fetch.
  * @param {Object}  [opts.commandClient] transport seam assigned to `_http.client`;
  *                                       defaults (inside HttpOut) to the localized transport.
- * @return {{ hooksByCategory: Object, loading: boolean }} The render model.
+ * @return {{ hooksByCategory: Object, descriptions: Object, loading: boolean }} The render model.
  */
 export function useHookCatalogGraph( opts = {} ) {
 	const { isOpen } = opts;
@@ -44,6 +44,8 @@ export function useHookCatalogGraph( opts = {} ) {
 	optsRef.current = opts;
 
 	const [ hooksByCategory, setHooksByCategory ] = useState( {} );
+	// Category one-liners travel with the taxonomy that owns them.
+	const [ descriptions, setDescriptions ] = useState( {} );
 
 	// Mount the backbone once and give `_http` its client.
 	useEffect( () => {
@@ -60,9 +62,11 @@ export function useHookCatalogGraph( opts = {} ) {
 		try {
 			const payload = await request( 'hooks_registered' );
 			setHooksByCategory( payload?.hooks_by_category ?? {} );
+			setDescriptions( payload?.category_descriptions ?? {} );
 		} catch ( e ) {
 			// Clear the spinner with an empty catalog; the loop keeps asking.
 			setHooksByCategory( {} );
+			setDescriptions( {} );
 			throw e;
 		}
 	}, [ request ] );
@@ -76,6 +80,7 @@ export function useHookCatalogGraph( opts = {} ) {
 
 	return {
 		hooksByCategory,
+		descriptions,
 		loading: Boolean( isOpen ) && ! settled && ! error,
 	};
 }

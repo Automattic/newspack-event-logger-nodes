@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The hook picker's category descriptions were a stale JS copy of a
+  server-owned taxonomy.** `CATEGORY_META` hand-listed 24 categories while
+  `hook_categories.json` declares 63 — and a user can add more — so
+  `CATEGORY_META[ category ] || {}` silently rendered nothing for the other 39.
+  The descriptions moved into `hook_categories.json` beside the colors they
+  describe, merge with user config the same way, and ride the
+  `hooks_registered` payload as `category_descriptions`.
+
+- **The hook-picker modal declared its width twice.** An inline
+  `style={{ width: '800px' }}` beat `hook-selector.scss`'s `1100px`, so the
+  stylesheet's copy — which also sets the height, max-height and flex layout —
+  was dead for the one property it shared. Geometry belongs to the stylesheet.
+
 - **The ruleset's sole writer swallowed its own write failures.** `useRulesGraph`
   documents that a mutation REJECTS rather than filling the `error` banner, which
   carries `list` failures only — and `RulesAdmin` owned no catch. Delete was the
