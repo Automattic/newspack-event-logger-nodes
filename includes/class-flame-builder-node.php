@@ -102,13 +102,6 @@ class Flame_Builder_Node extends Node {
 	/** Minimum seconds between flush() runs; fill() enforces the throttle. */
 	const FLUSH_INTERVAL_SEC = 5;
 
-	/**
-	 * A per-URL profile category unseen for this many seconds is dropped from the
-	 * aggregate (1 hour). Keep in sync with `Flame_Tree`, which expires merged
-	 * flame children on the same window.
-	 */
-	private const AGGREGATE_EXPIRY_SEC = 3600;
-
 	/** Minutes per time-series bucket; the bucket key is `Y-m-d-H-<floor>`. */
 	private const BUCKET_MINUTES = 5;
 
@@ -966,7 +959,7 @@ class Flame_Builder_Node extends Node {
 		}
 
 		// Expire old per-URL categories.
-		$cutoff = $now - self::AGGREGATE_EXPIRY_SEC;
+		$cutoff = $now - Flame_Tree::AGGREGATE_EXPIRY_SEC;
 		foreach ( $prof['categories'] as $cat => $cd ) {
 			if ( ( $cd['ts'] ?? 0 ) < $cutoff ) {
 				unset( $prof['categories'][ $cat ] );

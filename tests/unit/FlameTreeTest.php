@@ -22,6 +22,39 @@ class FlameTreeTest extends TestCase {
 
 	// ----- build_flame_data -----
 
+	public function test_the_expiry_window_has_exactly_one_owner(): void {
+		// Flame nodes and the profile categories of the same aggregate must age
+		// out on one clock; two private copies could only be held equal by hand.
+		$this->assertSame( 3600, Flame_Tree::AGGREGATE_EXPIRY_SEC );
+		$this->assertFalse(
+			( new \ReflectionClass( \Newspack_Event_Logger_Nodes\Flame_Builder_Node::class ) )
+				->hasConstant( 'AGGREGATE_EXPIRY_SEC' ),
+			'Flame_Builder_Node must read the window, not keep a copy of it'
+		);
+	}
+
+	public function test_an_unclosed_span_still_covers_its_completed_children(): void {
+		// The request died before `render (complete)` was logged, but the two
+		// spans beneath it did finish.
+		$tree = Flame_Tree::build_flame_data(
+			[
+				$this->entry( 'render (start)' ),
+				$this->entry( 'db (start)' ),
+				$this->entry( 'db (complete)', [ 'duration_ms' => 300, 'ts' => self::NOW ] ),
+				$this->entry( 'tpl (start)' ),
+				$this->entry( 'tpl (complete)', [ 'duration_ms' => 450, 'ts' => self::NOW ] ),
+			],
+			self::NOW
+		);
+
+		$render = $tree['children'][0];
+		$this->assertSame( 'render', $render['name'] );
+		// The browser prunes on a single value cutoff and assumes a child never
+		// exceeds its parent; a 0 here deletes both children with it.
+		$this->assertEqualsWithDelta( 750.0, $render['value'], 1e-6 );
+		$this->assertEqualsWithDelta( 750.0, $tree['value'], 1e-6 );
+	}
+
 	public function test_build_matches_start_and_complete_into_a_span(): void {
 		$tree = Flame_Tree::build_flame_data(
 			[
