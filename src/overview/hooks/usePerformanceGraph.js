@@ -151,7 +151,7 @@ function overviewArgs( { serverFilter, chartBreakdown } ) {
 	return formatCommandArgs( [], options );
 }
 
-// Build urls args from UI state (sort/order/limit/offset/search/server).
+// Build urls args; the server is the sole filter/sort/page authority.
 function urlsArgs( { urlParams, serverFilter } ) {
 	const options = {};
 	if ( urlParams.sort ) {
@@ -169,6 +169,9 @@ function urlsArgs( { urlParams, serverFilter } ) {
 	}
 	if ( serverFilter ) {
 		options.server = serverFilter;
+	}
+	if ( urlParams.errorsOnly ) {
+		options.errors_only = '1';
 	}
 	return formatCommandArgs( [], options );
 }

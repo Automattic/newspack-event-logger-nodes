@@ -212,7 +212,14 @@ export default function UrlTable( {
 		setCurrentPage( 1 );
 	};
 
-	// Notify parent on param change (server-side filter/sort/paginate).
+	/**
+	 * Report the params; the server filters, sorts and paginates.
+	 *
+	 * Re-doing any of it here made the footer's `total` describe a different
+	 * population than the rows, and `localeCompare` re-ordered a page the
+	 * server had already cut with PHP's byte-order `<=>`, so rows could skip
+	 * or repeat across pages.
+	 */
 	useEffect( () => {
 		const offset = ( currentPage - 1 ) * URLS_PER_PAGE;
 		onParamsChange?.( {
@@ -220,58 +227,18 @@ export default function UrlTable( {
 			sort: sortField,
 			order: sortOrder,
 			offset,
+			errorsOnly,
 		} );
-	}, [ searchTerm, sortField, sortOrder, currentPage, onParamsChange ] );
+	}, [
+		searchTerm,
+		sortField,
+		sortOrder,
+		currentPage,
+		errorsOnly,
+		onParamsChange,
+	] );
 
-	/**
-	 * Get filtered and sorted URLs.
-	 */
-	const filteredUrls = useMemo( () => {
-		// Filter by search term.
-		let filtered = urls;
-		if ( searchTerm.trim() ) {
-			const term = searchTerm.toLowerCase().trim();
-			filtered = filtered.filter( ( u ) =>
-				u.url?.toLowerCase().includes( term )
-			);
-		}
-
-		// "Errors" = timeouts (T) + fatals (F); 5xx is a response.
-		if ( errorsOnly ) {
-			filtered = filtered.filter( ( u ) => {
-				const classified =
-					( u.count_2xx || 0 ) +
-					( u.count_3xx || 0 ) +
-					( u.count_4xx || 0 ) +
-					( u.count_5xx || 0 );
-				return classified < ( u.count || 0 );
-			} );
-		}
-
-		// Sort the filtered results.
-		return [ ...filtered ].sort( ( a, b ) => {
-			const aVal = a[ sortField ];
-			const bVal = b[ sortField ];
-
-			// Handle string comparison (for 'url' field).
-			if ( sortField === 'url' ) {
-				const aStr = aVal || '';
-				const bStr = bVal || '';
-				if ( sortOrder === 'asc' ) {
-					return aStr.localeCompare( bStr );
-				}
-				return bStr.localeCompare( aStr );
-			}
-
-			// Numeric comparison for stats fields.
-			const aNum = aVal || 0;
-			const bNum = bVal || 0;
-			if ( sortOrder === 'asc' ) {
-				return aNum - bNum;
-			}
-			return bNum - aNum;
-		} );
-	}, [ urls, searchTerm, errorsOnly, sortField, sortOrder ] );
+	const filteredUrls = urls;
 
 	// Bar-background max uses p95 so outliers don't blow out the scale.
 	const maxAvg = useMemo( () => {

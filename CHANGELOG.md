@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`UrlTable` and the `urls` verb both filtered, sorted and paginated the same
+  rows.** The server already applied `search`, `sort`/`order` and the page slice,
+  and the client re-applied all three to the returned page. Three costs: the URL
+  comparators disagreed (PHP `<=>` byte order server-side, `localeCompare`
+  client-side), so a page cut under one ordering was re-ordered under another and
+  rows could skip or repeat across pages; between a keystroke and the reply the
+  STALE page was filtered by the NEW term, transiently showing "No URLs match"
+  for data that does; and `errorsOnly` existed only on the client, so the footer
+  read the server's unfiltered total — "1-100 of 5,000" above three rows. The
+  server is now the sole authority: `urls` takes `errors_only`, and the table
+  renders the page it is given.
+
 - **The "outermost pair never folds" rule had five non-equivalent spellings.**
   `logEntryUtils` and `LogEntriesTable` each re-derived it, and they disagreed on
   real input: `startsWith( 'process ' )` also matched `process queue (start)`, so
