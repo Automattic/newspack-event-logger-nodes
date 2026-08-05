@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The dashboards' retention window is owned here now, not in the substrate.**
+  `newspack-nodes`' shared `useTimeChart` used to read
+  `window.eventLoggerDashboards.retentionSeconds` itself. `src/overview/retention.js`
+  reads this plugin's own global and passes it to `buildTimeSlots()`.
+
 - **`UrlTable` and the `urls` verb both filtered, sorted and paginated the same
   rows.** The server already applied `search`, `sort`/`order` and the page slice,
   and the client re-applied all three to the returned page. Three costs: the URL
