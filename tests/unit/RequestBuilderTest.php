@@ -1309,6 +1309,27 @@ class RequestBuilderTest extends TestCase {
 		$this->assertSame( [], $payload['data']['sample'] );
 	}
 
+	public function test_handle_request_get_cache_reports_the_oldest_pending_request(): void {
+		$rb      = new Request_Builder_Node();
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+		$rb->name( 'rb' );
+
+		// Distinct from Core::$now and from each other, so neither the clock
+		// nor the fallback can stand in for a real read.
+		// `n` is a per-request sequence, so each opener is that request's n=1.
+		Core::$now = 1_700_000_900;
+		$this->fill( $rb, 1, 'rid-new', 'process (start)', [ 'ts' => 1_700_000_800 ] );
+		$this->fill( $rb, 1, 'rid-old', 'process (start)', [ 'ts' => 1_700_000_600 ] );
+
+		$rb->fill( $this->request_msg( 'GET_CACHE' ) );
+
+		$payload = $capture->captured[0][ Message::VALUE ];
+		$this->assertSame( 2, $payload['data']['pending_count'] );
+		$this->assertSame( 'rid-old', $payload['data']['oldest_rid'] );
+		$this->assertSame( 300, $payload['data']['oldest_age_s'] );
+	}
+
 	public function test_handle_request_get_cache_reports_pending_count_and_sample(): void {
 		$rb      = new Request_Builder_Node();
 		$capture = new Capture_Sink_Node();

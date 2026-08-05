@@ -402,12 +402,10 @@ class Request_Builder_Node extends Timer_Node {
 			$count      = 0;
 			foreach ( $this->cache->iterate() as $rid => $request ) {
 				++$count;
-				$created = 0;
-				if ( \is_array( $request ) ) {
-					$proc      = $request['process'] ?? null;
-					$created_v = ( \is_array( $proc ) ? ( $proc['ts_start'] ?? null ) : null ) ?? ( $request['ts'] ?? 0 );
-					$created   = Core::as_int( $created_v );
-				}
+				// Cache holds stdClass; an is_array test read as "no stall".
+				$created = $request instanceof \stdClass
+					? Core::as_int( $request->timestamp ?? 0 )
+					: 0;
 				if ( $created > 0 && $created < $oldest_ts ) {
 					$oldest_ts  = $created;
 					$oldest_rid = $rid;
