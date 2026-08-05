@@ -1115,3 +1115,40 @@ describe( 'usePerformanceGraph — no-graph fallbacks & awaited rejections', () 
 		).not.toThrow();
 	} );
 } );
+
+// Every node here that takes a local control must declare the origin it
+// trusts. Drop one assignment and sendControl throws rather than minting a
+// FROM that matches nothing — which used to blank the slice in silence.
+describe( 'usePerformanceGraph — control origins', () => {
+	test( 'wires controlFrom on every control-taking node', () => {
+		renderHook( () =>
+			usePerformanceGraph( { commandClient: makeFakeClient() } )
+		);
+		for ( const name of [
+			'overview:view',
+			'urls:view',
+			'urldetail:view',
+			'urldetail:merge',
+			'requestdetail:view',
+		] ) {
+			expect( Core.node( name ).controlFrom ).toBe( name );
+		}
+	} );
+
+	test( 'closing the url modal clears the slice through the control path', () => {
+		let selectedUrl = { hash: 'a'.repeat( 32 ) };
+		const { rerender } = renderHook( () =>
+			usePerformanceGraph( {
+				commandClient: makeFakeClient(),
+				selectedUrl,
+			} )
+		);
+		const view = Core.node( 'urldetail:view' );
+		view.storeResult( { last_modified: 9, requests: [ { rid: 'a' } ] } );
+		expect( view.model.data ).not.toBeNull();
+
+		selectedUrl = null;
+		act( () => rerender() );
+		expect( view.model.data ).toBeNull();
+	} );
+} );

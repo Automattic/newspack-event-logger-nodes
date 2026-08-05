@@ -1,4 +1,4 @@
-import { Node, VALUE, TYPE, TM_STRUCT } from '@newspack-nodes/runtime';
+import { Node, VALUE, FROM } from '@newspack-nodes/runtime';
 
 /**
  * `urldetail:merge` — the url_detail incremental merge and `last_modified`
@@ -21,7 +21,7 @@ import { Node, VALUE, TYPE, TM_STRUCT } from '@newspack-nodes/runtime';
  *                                       retained, sort the union newest-first
  *                                       by timestamp, cap at 500, forward.
  *
- * A TM_STRUCT `{ action:'clear' }` control resets the retained state so the next
+ * A `clear` control from `controlFrom` resets the retained state so the next
  * reply counts as fresh. `usePerformanceGraph` sends one when the modal closes,
  * which is what lets a reopened modal republish an unchanged `last_modified`.
  *
@@ -42,27 +42,24 @@ export class UrlDetailMergeNode extends Node {
 		// Last forwarded url_detail payload + last_modified (reset on clear).
 		this._merged = null;
 		this._lastModified = null;
+		// FROM of controls; unset loses them silently (see LogStreamViewNode).
+		this.controlFrom = '';
 	}
 
 	/**
 	 * Merge this reply's payload into the retained one and forward the result,
 	 * or consume the message when it carries nothing new.
 	 *
-	 * @param {Array} message Positional Message — either a TM_STRUCT clear
-	 *                        control or a command reply whose VALUE is
+	 * @param {Array} message Positional Message — a control from `controlFrom`,
+	 *                        or a command reply whose VALUE is
 	 *                        `{ name, payload }`.
 	 */
 	fill( message ) {
 		const value = message[ VALUE ];
 
-		// Clear control: reset retained state, do not forward.
-		if (
-			TM_STRUCT === ( ( message[ TYPE ] || 0 ) & TM_STRUCT ) &&
-			value &&
-			'clear' === value.action
-		) {
-			this._merged = null;
-			this._lastModified = null;
+		// A control never forwards; `action` picks the verb once inside.
+		if ( '' !== this.controlFrom && message[ FROM ] === this.controlFrom ) {
+			this._control( value?.action );
 			return;
 		}
 
@@ -76,6 +73,19 @@ export class UrlDetailMergeNode extends Node {
 		// Forward merged payload to the view via sink (TO stamped from target).
 		message[ VALUE ] = { ...value, payload: next };
 		super.fill( message );
+	}
+
+	/**
+	 * Apply one control verb: `clear` drops the retained payload so the next
+	 * reply counts as fresh. An unrecognised verb is a no-op.
+	 *
+	 * @param {?string} action The verb.
+	 */
+	_control( action ) {
+		if ( 'clear' === action ) {
+			this._merged = null;
+			this._lastModified = null;
+		}
 	}
 
 	/**

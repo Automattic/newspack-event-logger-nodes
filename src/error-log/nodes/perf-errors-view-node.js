@@ -38,7 +38,7 @@ const clip = ( value, max ) => {
  * `perferrors:view` — owns the Error Log view model.
  *
  * A `LogStreamViewNode` subclass: the ring, paused belt + step budget,
- * decaying lps, seek tracking, reply settling, and the shared control verbs
+ * decaying lps, seek tracking, and the shared control verbs
  * all live in the shared base. This class adds the Error Log's specifics:
  * - the `select` control (partition switch: reset the tracker, arm
  *   `seekActive` — breadcrumbs only mean anything within ONE dir; a glob
@@ -72,7 +72,7 @@ export class PerfErrorsViewNode extends LogStreamViewNode {
 	 * @param {Object} value Control payload; `action` picks the verb.
 	 */
 	_control( value ) {
-		if ( 'select' === value.action ) {
+		if ( 'select' === value?.action ) {
 			this.seekActive = !! value.dir;
 			this.seek.select();
 			this._clear();

@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A control is recognised by WHO SENT IT, never by what its payload looks
+  like.** Every view node here classified control-versus-record by sniffing the
+  VALUE for an `action` field, so a record shaped that way ran the view's verbs
+  instead of rendering — in `GyroscopeViewNode` an inbound `{action:'clear'}`
+  emptied the whole in-flight request map. Each node that takes local controls
+  now declares `controlFrom`, the FROM its dashboard mints them under, and
+  applies a control only on that origin; `action` picks the verb once inside,
+  where the message is already known to be a control. Covers
+  `GyroscopeViewNode`, `DecodedSliceViewNode` (Overview, Urls, Url Detail,
+  Request Detail) and `UrlDetailMergeNode`, plus the Request Log and Error Log
+  views through the substrate's `LogStreamViewNode`. The graph hooks and
+  `useGlobBrowse` stamp the FROM their views expect, and `sendControl` throws
+  rather than mint a control with no origin — an origin that matches nothing
+  falls through to the reply branch and blanks the slice in silence.
+
+- **A url_detail reply carrying no payload blanked the widget.**
+  `DecodedSliceViewNode`'s docblock promises that transport garbage keeps the
+  slice already on screen, but the guard only caught a non-object VALUE: an
+  object with no `payload` key reached `storeResult( undefined )` and emptied
+  the panel. The test that should have caught it asserted `not.toBeNull()`,
+  which `undefined` satisfies.
+
 - **The hook picker's category descriptions were a stale JS copy of a
   server-owned taxonomy.** `CATEGORY_META` hand-listed 24 categories while
   `hook_categories.json` declares 63 — and a user can add more — so

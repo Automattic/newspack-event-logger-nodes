@@ -36,6 +36,7 @@ import { useRef, useState, useCallback } from '@wordpress/element';
 import {
 	Core,
 	TYPE,
+	FROM,
 	VALUE,
 	TM_STRUCT,
 	newMessage,
@@ -52,10 +53,11 @@ const VIEW = 'perferrors:view';
 // The glob this dashboard tails across partitions.
 const GLOB = 'errors.*';
 
-// Build a TM_STRUCT control message the view's fill() routes on its `action`.
+// A control the view applies because of its FROM, never its payload shape.
 const controlMsg = ( value ) => {
 	const m = newMessage();
 	m[ TYPE ] = TM_STRUCT;
+	m[ FROM ] = VIEW;
 	m[ VALUE ] = value;
 	return m;
 };
@@ -118,6 +120,8 @@ export function useErrorLogGraph( opts = {} ) {
 
 			// The view-model — shapes raw envelopes into rows inline.
 			const view = interpreter.makeNode( 'PerfErrorsView', VIEW );
+			// The view applies controls from this FROM; records never match.
+			view.controlFrom = VIEW;
 			if ( maxEntries ) {
 				// Pre-stream only: the ring indexes modulo maxLines.
 				view.maxLines = maxEntries;

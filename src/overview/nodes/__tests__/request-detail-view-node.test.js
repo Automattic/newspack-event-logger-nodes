@@ -10,6 +10,7 @@
 import {
 	VALUE,
 	TYPE,
+	FROM,
 	ID,
 	TM_COMMAND,
 	TM_RESPONSE,
@@ -25,6 +26,8 @@ beforeEach( () => Core.reset() );
 function makeView() {
 	const node = new RequestDetailViewNode();
 	node.name = 'requestdetail:view';
+	// What the graph does: controls ride under the view's own name.
+	node.controlFrom = 'requestdetail:view';
 	return node;
 }
 
@@ -48,6 +51,7 @@ const reply = (
 const ctrl = ( value ) => {
 	const m = newMessage();
 	m[ TYPE ] = TM_STRUCT;
+	m[ FROM ] = 'requestdetail:view';
 	m[ VALUE ] = value;
 	return m;
 };

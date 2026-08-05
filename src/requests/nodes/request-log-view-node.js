@@ -33,7 +33,7 @@ const urlHash = ( url ) => fnv1a( url || '' );
  * `requestlog:view` — owns the Request Log view model.
  *
  * A `LogStreamViewNode` subclass: the ring, paused belt + step budget,
- * decaying lps, seek tracking, reply settling, and the shared control verbs
+ * decaying lps, seek tracking, and the shared control verbs
  * all live in the shared base. This class adds the Request Log's specifics:
  * - the `select` control (partition switch: reset the tracker, arm
  *   `seekActive` — breadcrumbs only mean anything within ONE dir; a glob
@@ -77,7 +77,7 @@ export class RequestLogViewNode extends LogStreamViewNode {
 	 *                                               directory, `''` for the glob.
 	 */
 	_control( value ) {
-		if ( 'select' === value.action ) {
+		if ( 'select' === value?.action ) {
 			// Partition switch: reset the tracker; arm only for a single dir.
 			this.seekActive = !! value.dir;
 			this.seek.select();
