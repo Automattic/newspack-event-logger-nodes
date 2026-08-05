@@ -16,8 +16,8 @@
 
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
-use Newspack_Nodes\Tests\Helpers\TopologyDurability;
 use PHPUnit\Framework\TestCase;
+use Newspack_Nodes\Tests\Helpers\TopologyDurability;
 
 class TopologyDurabilityTest extends TestCase {
 

@@ -1,11 +1,11 @@
 <?php
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
+use PHPUnit\Framework\Attributes\CoversClass;
 use Newspack_Event_Logger_Nodes\Stats_Store;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Tests\Helpers\InMemoryMemcached;
-use PHPUnit\Framework\Attributes\CoversClass;
 
 #[CoversClass( Stats_Store::class )]
 class StatsStoreTest extends TestCase {

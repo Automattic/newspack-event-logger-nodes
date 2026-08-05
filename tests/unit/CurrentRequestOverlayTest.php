@@ -3,9 +3,9 @@ declare(strict_types=1);
 
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
+use PHPUnit\Framework\Attributes\CoversClass;
 use Newspack_Event_Logger_Nodes\Current_Request_Overlay;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
-use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
  * The Current-Request overlay tab's enqueue glue: it registers an ELN bundle on

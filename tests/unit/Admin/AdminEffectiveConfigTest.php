@@ -15,6 +15,7 @@
 
 namespace Newspack_Event_Logger_Nodes\Tests\Unit\Admin {
 
+use PHPUnit\Framework\Attributes\CoversClass;
 use Newspack_Event_Logger_Nodes\Admin\Admin;
 use Newspack_Event_Logger_Nodes\Config;
 use Newspack_Event_Logger_Nodes\Settings_Schema;
@@ -22,7 +23,6 @@ use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Config as RuntimeConfig;
 use Newspack_Nodes\Config_System\Settings_Renderer;
 use Newspack_Nodes\Topology_Registry;
-use PHPUnit\Framework\Attributes\CoversClass;
 
 #[CoversClass( Admin::class )]
 class AdminEffectiveConfigTest extends TestCase {

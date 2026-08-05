@@ -14,6 +14,7 @@
 
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
+use PHPUnit\Framework\Attributes\CoversClass;
 use Newspack_Event_Logger_Nodes\App\Performance_CI_Node;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\VerbHarness;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
@@ -21,7 +22,6 @@ use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Node_Names;
 use Newspack_Nodes\Partition_Node;
-use PHPUnit\Framework\Attributes\CoversClass;
 
 #[CoversClass( Performance_CI_Node::class )]
 class PerformanceCISiblingNodesTest extends TestCase {

@@ -3,8 +3,8 @@ declare( strict_types=1 );
 
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
-use Newspack_Event_Logger_Nodes\Rule;
 use PHPUnit\Framework\TestCase;
+use Newspack_Event_Logger_Nodes\Rule;
 
 final class RuleTest extends TestCase {
 

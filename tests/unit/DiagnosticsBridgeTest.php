@@ -8,12 +8,12 @@
 
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
+use PHPUnit\Framework\Attributes\CoversClass;
 use Newspack_Event_Logger_Nodes\Config;
 use Newspack_Event_Logger_Nodes\Diagnostics_Bridge;
 use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Message;
-use PHPUnit\Framework\Attributes\CoversClass;
 
 #[CoversClass( Diagnostics_Bridge::class )]
 class DiagnosticsBridgeTest extends TestCase {

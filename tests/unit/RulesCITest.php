@@ -10,6 +10,7 @@ declare( strict_types=1 );
 
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
+use PHPUnit\Framework\Attributes\CoversClass;
 use Newspack_Event_Logger_Nodes\App\Rules_CI_Node;
 use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Rule;
@@ -18,7 +19,6 @@ use Newspack_Event_Logger_Nodes\Tests\Helpers\VerbHarness;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Tests\Helpers\InMemoryMemcached;
-use PHPUnit\Framework\Attributes\CoversClass;
 
 #[CoversClass( Rules_CI_Node::class )]
 class RulesCITest extends TestCase {

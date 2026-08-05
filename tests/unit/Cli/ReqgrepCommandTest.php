@@ -22,12 +22,12 @@
 
 namespace Newspack_Event_Logger_Nodes\Tests\Unit\CLI;
 
+use PHPUnit\Framework\Attributes\CoversClass;
 use Newspack_Event_Logger_Nodes\Config;
 use Newspack_Event_Logger_Nodes\LRU_Cache;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Event_Framework;
 use Newspack_Nodes\Message;
-use PHPUnit\Framework\Attributes\CoversClass;
 
 require_once \dirname( __DIR__, 3 ) . '/includes/cli/class-reqgrep-command.php';
 require_once \dirname( __DIR__, 4 ) . '/newspack-nodes/tests/Helpers/WPCLIStub.php';

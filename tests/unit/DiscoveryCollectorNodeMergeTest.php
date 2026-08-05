@@ -12,13 +12,13 @@
 
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
+use PHPUnit\Framework\Attributes\CoversClass;
 use Newspack_Nodes\Core;
 use Newspack_Event_Logger_Nodes\Discovery_Collector_Node;
 use Newspack_Event_Logger_Nodes\Rule_Set;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Tests\Capture_Sink_Node;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
-use PHPUnit\Framework\Attributes\CoversClass;
 
 #[CoversClass( Discovery_Collector_Node::class )]
 class DiscoveryCollectorNodeMergeTest extends TestCase {

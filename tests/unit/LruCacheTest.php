@@ -10,10 +10,10 @@
 
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
+use PHPUnit\Framework\Attributes\CoversClass;
 use Newspack_Event_Logger_Nodes\LRU_Cache;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Core;
-use PHPUnit\Framework\Attributes\CoversClass;
 
 #[CoversClass( LRU_Cache::class )]
 class LruCacheTest extends TestCase {
