@@ -23,6 +23,7 @@ namespace Newspack_Event_Logger_Nodes;
 use Newspack_Nodes\Config as RuntimeConfig;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Config_Utils;
+use Newspack_Nodes\Topology_Analyzer;
 use Newspack_Nodes\Topology_Registry;
 
 if ( ! \defined( 'ABSPATH' ) ) {
@@ -256,7 +257,7 @@ class Config {
 			// A hub RUNS `aggregator` — directly, or via a local wrapper.
 			foreach ( \array_keys( \Newspack_Nodes\Bootstrap::get_topologies() ) as $active ) {
 				if ( 'aggregator' === $active
-					|| \in_array( 'aggregator', Topology_Registry::includes( $active ), true ) ) {
+					|| \in_array( 'aggregator', Topology_Analyzer::includes( $active ), true ) ) {
 					return true;
 				}
 			}
@@ -284,21 +285,6 @@ class Config {
 	}
 
 	/**
-	 * Whether a given option should be written with `autoload=true`. The write
-	 * paths that touch settings options — `Performance_CI_Node`'s `set_setting`
-	 * verb and `Discovery_Collector_Node`'s staging writes — ask here instead of
-	 * passing a literal, so hot-path scalars stay on the single alloptions query
-	 * and the fleet-sized staging options stay off it. The ruleset options are
-	 * not covered: `Rule_Set` owns its own inline/pointer tiering.
-	 *
-	 * @param string $option Fully-qualified option name.
-	 * @return bool True to autoload.
-	 */
-	public static function autoload_for( string $option ): bool {
-		return ! isset( self::$non_autoloaded_options[ $option ] );
-	}
-
-	/**
 	 * Reset cached config - call before load_config() to get fresh values.
 	 *
 	 * Resets the substrate Config too so the layered view rebuilds from
@@ -322,6 +308,21 @@ class Config {
 	public static function reset_local_cache(): void {
 		self::$config          = null;
 		self::$config_defaults = null;
+	}
+
+	/**
+	 * Whether a given option should be written with `autoload=true`. The write
+	 * paths that touch settings options — `Performance_CI_Node`'s `set_setting`
+	 * verb and `Discovery_Collector_Node`'s staging writes — ask here instead of
+	 * passing a literal, so hot-path scalars stay on the single alloptions query
+	 * and the fleet-sized staging options stay off it. The ruleset options are
+	 * not covered: `Rule_Set` owns its own inline/pointer tiering.
+	 *
+	 * @param string $option Fully-qualified option name.
+	 * @return bool True to autoload.
+	 */
+	public static function autoload_for( string $option ): bool {
+		return ! isset( self::$non_autoloaded_options[ $option ] );
 	}
 
 	/**

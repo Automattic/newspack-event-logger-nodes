@@ -91,7 +91,7 @@ class TopologyShapeTest extends TestCase {
 		);
 
 		foreach ( [ 'combined', 'performance', 'flame-builder' ] as $topology ) {
-			$edges = \Newspack_Nodes\Topology_Registry::graph_for( $topology )['edges'];
+			$edges = \Newspack_Nodes\Topology_Analyzer::graph_for( $topology )['edges'];
 			$this->assertContains(
 				[ 'flame-builder', 'flame-stats:partition' ],
 				$edges,
@@ -127,7 +127,7 @@ class TopologyShapeTest extends TestCase {
 	public function test_job_router_topologies_sieve_by_age_before_disk(): void {
 		foreach ( [ 'job-router', 'combined' ] as $topology ) {
 			$statements = \array_column(
-				\Newspack_Nodes\Topology_Registry::statements( $topology )['statements'],
+				\Newspack_Nodes\Topology_Analyzer::statements( $topology )['statements'],
 				'line'
 			);
 			$this->assertContains( 'make_node Job_Router job-router', $statements, "$topology: Job_Router takes no stale timeout" );
@@ -271,7 +271,7 @@ class TopologyShapeTest extends TestCase {
 		// must be checked against the graph it actually builds.
 		$name  = \basename( $path, '.tsl' );
 		$lines = \array_column(
-			\Newspack_Nodes\Topology_Registry::statements( $name )['statements'],
+			\Newspack_Nodes\Topology_Analyzer::statements( $name )['statements'],
 			'line'
 		);
 
