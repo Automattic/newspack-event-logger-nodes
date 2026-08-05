@@ -584,6 +584,39 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( '/articles/123', $result['data'][0]['url'] );
 	}
 
+	public function test_urls_verb_filters_errors_only_and_totals_match(): void {
+		// "Errors" = requests no status bucket classified: timeouts and fatals.
+		$store  = new Stats_Store( 0, 86400 );
+		$bucket = $this->current_url_bucket();
+		$store->set_url_index_hourly( $bucket, [
+			'aaaaaaaaaaaa' => [
+				'url' => '/clean', 'count' => 9, 'sum_ms' => 90.0, 'last_seen' => 1700000001,
+				'count_2xx' => 7, 'count_3xx' => 1, 'count_4xx' => 1, 'count_5xx' => 0,
+			],
+			'bbbbbbbbbbbb' => [
+				'url' => '/timeouts', 'count' => 6, 'sum_ms' => 60.0, 'last_seen' => 1700000002,
+				'count_2xx' => 2, 'count_3xx' => 0, 'count_4xx' => 0, 'count_5xx' => 0,
+			],
+			'cccccccccccc' => [
+				'url' => '/also-clean', 'count' => 4, 'sum_ms' => 40.0, 'last_seen' => 1700000003,
+				'count_2xx' => 4, 'count_3xx' => 0, 'count_4xx' => 0, 'count_5xx' => 0,
+			],
+		] );
+
+		$interpreter = new Performance_CI_Node();
+		$result      = VerbHarness::fire(
+			$interpreter,
+			'performance',
+			'urls',
+			'--errors_only=1'
+		);
+
+		// The footer reads `total`; it must count what is actually rendered.
+		$this->assertSame( 1, $result['total'] );
+		$this->assertCount( 1, $result['data'] );
+		$this->assertSame( '/timeouts', $result['data'][0]['url'] );
+	}
+
 	public function test_urls_verb_heals_poisoned_min_ms_sentinel(): void {
 		// A URL whose every persisted bucket is untimed carries the
 		// PHP_INT_MAX sentinel as min_ms (worker / timed-out requests). The
@@ -1737,12 +1770,13 @@ class PerformanceCITest extends TestCase {
 	}
 
 	public function test_urls_verb_declares_sort_paging_filter_args(): void {
-		// urls reads sort/order/limit/offset/search/server — all optional.
+		// urls reads sort/order/limit/offset/search/server/errors_only — all optional.
 		$args = self::args_by_name( 'urls' );
 		$this->assertSame(
-			[ 'sort', 'order', 'limit', 'offset', 'search', 'server' ],
+			[ 'sort', 'order', 'limit', 'offset', 'search', 'server', 'errors_only' ],
 			\array_keys( $args )
 		);
+		$this->assertSame( 'bool', $args['errors_only']['type'] );
 		$this->assertSame( 'string', $args['sort']['type'] );
 		$this->assertSame( 'string', $args['order']['type'] );
 		$this->assertSame( 'int', $args['limit']['type'] );

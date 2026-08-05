@@ -1206,6 +1206,25 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
+	 * Whether a URL row saw requests no status bucket accounted for — that is
+	 * what the dashboard's "Errors" filter means: timeouts (T) and fatals (F),
+	 * not 5xx, which IS a response.
+	 *
+	 * Server-side so `total` counts what is actually rendered; the client used
+	 * to apply this filter alone, leaving the footer reading an unfiltered
+	 * count ("1-100 of 5,000" above three rows).
+	 *
+	 * @param array<string, mixed> $row A URL index row.
+	 */
+	private static function has_unclassified_requests( array $row ): bool {
+		$classified = Core::num_int( $row['count_2xx'] ?? 0 )
+			+ Core::num_int( $row['count_3xx'] ?? 0 )
+			+ Core::num_int( $row['count_4xx'] ?? 0 )
+			+ Core::num_int( $row['count_5xx'] ?? 0 );
+		return $classified < Core::num_int( $row['count'] ?? 0 );
+	}
+
+	/**
 	 * Request partitions to search for `$rid`, its own partition first.
 	 *
 	 * A rid rides the same hash the whole way: the firehose Topic routes it by
@@ -1350,6 +1369,7 @@ class Performance_CI_Node extends Service_CI_Node {
 						[ 'name' => 'offset', 'type' => 'int', 'required' => false, 'default' => 0 ],
 						[ 'name' => 'search', 'type' => 'string', 'required' => false ],
 						[ 'name' => 'server', 'type' => 'string', 'required' => false ],
+						[ 'name' => 'errors_only', 'type' => 'bool', 'required' => false, 'default' => false ],
 					],
 					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
 				self::require_manage_options();
@@ -1361,6 +1381,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				$offset  = \min( 10000, \max( 0, (int) ( $opts['offset'] ?? 0 ) ) );
 				$search  = (string) ( $opts['search'] ?? '' );
 				$server  = (string) ( $opts['server'] ?? '' );
+				$errors  = self::flag( $opts, 'errors_only' );
 
 				if ( ! \in_array( $sort, self::URL_SORTS, true ) ) {
 					$sort = 'count';
@@ -1385,6 +1406,10 @@ class Performance_CI_Node extends Service_CI_Node {
 						$index,
 						static fn ( $e ) => false !== \strpos( \strtolower( Core::as_string( $e['url'] ?? '' ) ), $term )
 					) );
+				}
+
+				if ( $errors ) {
+					$index = \array_values( \array_filter( $index, [ self::class, 'has_unclassified_requests' ] ) );
 				}
 
 				$total = \count( $index );

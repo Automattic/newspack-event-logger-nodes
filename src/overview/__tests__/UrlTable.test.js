@@ -145,54 +145,54 @@ describe( 'UrlTable', () => {
 		unmount();
 	} );
 
-	it( 'sorts rows by count desc by default', () => {
+	it( 'renders the server page in the order it arrived', () => {
+		// The server sorts and cuts the page; re-sorting here re-ordered a page
+		// that had already been cut under a different comparator.
 		const { container, unmount } = mount();
 		const rows = Array.from(
 			container.querySelectorAll( '.event-logger-table__row' )
 		);
-		// Default sort = count desc → /baz (200), /foo (100), /bar (50).
-		expect( rows[ 0 ].textContent ).toContain( '/baz' );
-		expect( rows[ 1 ].textContent ).toContain( '/foo' );
-		expect( rows[ 2 ].textContent ).toContain( '/bar' );
-		unmount();
-	} );
-
-	it( 'toggles direction when clicking the active sort header', () => {
-		const { container, unmount } = mount();
-		const reqsHeader = Array.from(
-			container.querySelectorAll( 'button' )
-		).find( ( b ) => b.textContent.includes( 'Reqs' ) );
-		// First click on already-active 'count' → flips to asc.
-		act( () => {
-			reqsHeader.click();
-		} );
-		const rows = Array.from(
-			container.querySelectorAll( '.event-logger-table__row' )
-		);
-		expect( rows[ 0 ].textContent ).toContain( '/bar' );
+		expect( rows[ 0 ].textContent ).toContain( '/foo' );
+		expect( rows[ 1 ].textContent ).toContain( '/bar' );
 		expect( rows[ 2 ].textContent ).toContain( '/baz' );
 		unmount();
 	} );
 
-	it( 'switches sort field to URL when URL header clicked', () => {
-		const { container, unmount } = mount();
+	it( 'asks the server for asc when the active sort header is clicked', () => {
+		const onParamsChange = jest.fn();
+		const { container, unmount } = mount( { onParamsChange } );
+		const reqsHeader = Array.from(
+			container.querySelectorAll( 'button' )
+		).find( ( b ) => b.textContent.includes( 'Reqs' ) );
+		act( () => {
+			reqsHeader.click();
+		} );
+		expect( onParamsChange ).toHaveBeenLastCalledWith(
+			expect.objectContaining( { sort: 'count', order: 'asc' } )
+		);
+		unmount();
+	} );
+
+	it( 'asks the server to sort by URL when the URL header is clicked', () => {
+		const onParamsChange = jest.fn();
+		const { container, unmount } = mount( { onParamsChange } );
 		const urlHeader = Array.from(
 			container.querySelectorAll( 'button' )
 		).find( ( b ) => /^URL/.test( b.textContent ) );
 		act( () => {
 			urlHeader.click();
 		} );
-		const rows = Array.from(
-			container.querySelectorAll( '.event-logger-table__row' )
+		expect( onParamsChange ).toHaveBeenLastCalledWith(
+			expect.objectContaining( { sort: 'url' } )
 		);
-		// URL desc: /foo, /baz, /bar.
-		expect( rows[ 0 ].textContent ).toContain( '/foo' );
-		expect( rows[ 2 ].textContent ).toContain( '/bar' );
 		unmount();
 	} );
 
-	it( 'filters by search term', () => {
-		const { container, unmount } = mount();
+	it( 'sends the search term to the server instead of filtering locally', () => {
+		// Filtering the STALE page by the NEW term emptied the table between
+		// keystroke and reply, showing "No URLs match" for data that does.
+		const onParamsChange = jest.fn();
+		const { container, unmount } = mount( { onParamsChange } );
 		const input = container.querySelector( 'input[type="text"]' );
 		const setter = Object.getOwnPropertyDescriptor(
 			window.HTMLInputElement.prototype,
@@ -202,16 +202,18 @@ describe( 'UrlTable', () => {
 			setter.call( input, 'baz' );
 			input.dispatchEvent( new Event( 'input', { bubbles: true } ) );
 		} );
+		expect( onParamsChange ).toHaveBeenLastCalledWith(
+			expect.objectContaining( { search: 'baz' } )
+		);
 		const rows = Array.from(
 			container.querySelectorAll( '.event-logger-table__row' )
 		);
-		expect( rows.length ).toBe( 1 );
-		expect( rows[ 0 ].textContent ).toContain( '/baz' );
+		expect( rows.length ).toBe( 3 );
 		unmount();
 	} );
 
-	it( 'shows the search empty state when nothing matches', () => {
-		const { container, unmount } = mount();
+	it( 'shows the search empty state when the server returns no rows', () => {
+		const { container, unmount } = mount( { urls: [], totalUrls: 0 } );
 		const input = container.querySelector( 'input[type="text"]' );
 		const setter = Object.getOwnPropertyDescriptor(
 			window.HTMLInputElement.prototype,
@@ -225,20 +227,20 @@ describe( 'UrlTable', () => {
 		unmount();
 	} );
 
-	it( '"Errors Only" toggle keeps only rows with unclassified requests', () => {
-		const { container, unmount } = mount();
+	it( '"Errors Only" asks the server, so the footer total matches the rows', () => {
+		// Filtering only here left the footer reading the server's UNFILTERED
+		// count — "1-100 of 5,000" printed above three visible rows.
+		const onParamsChange = jest.fn();
+		const { container, unmount } = mount( { onParamsChange } );
 		const btn = Array.from( container.querySelectorAll( 'button' ) ).find(
 			( b ) => b.textContent === 'Errors Only'
 		);
 		act( () => {
 			btn.click();
 		} );
-		const rows = Array.from(
-			container.querySelectorAll( '.event-logger-table__row' )
+		expect( onParamsChange ).toHaveBeenLastCalledWith(
+			expect.objectContaining( { errorsOnly: true } )
 		);
-		// /baz has 100 unclassified → kept; /foo, /bar classified → dropped.
-		expect( rows.length ).toBe( 1 );
-		expect( rows[ 0 ].textContent ).toContain( '/baz' );
 		unmount();
 	} );
 
@@ -318,6 +320,7 @@ describe( 'UrlTable', () => {
 			sort: 'count',
 			order: 'desc',
 			offset: 0,
+			errorsOnly: false,
 		} );
 		unmount();
 	} );
