@@ -39,8 +39,12 @@ final class Flame_Tree {
 	/** Keyword an opening span logs: `<label> (start)`. Capture 1 is the base name. */
 	const PATTERN_START = '/^(.+?) \(start\)$/';
 
-	/** Expire aggregate children not seen within this window. Keep in sync with Flame_Builder_Node's copy. */
-	private const AGGREGATE_EXPIRY_SEC = 3600;
+	/**
+	 * Expire anything on a per-URL aggregate not seen within this window —
+	 * merged flame children here, profile categories in `Flame_Builder_Node`.
+	 * They are one window, so this class owns it and the builder reads it.
+	 */
+	public const AGGREGATE_EXPIRY_SEC = 3600;
 
 	/** Recursion ceiling for the tree walks; deeper subtrees are left alone. */
 	private const MAX_RECURSION_DEPTH = 50;
@@ -149,6 +153,8 @@ final class Flame_Tree {
 
 		// Number duplicate sibling names to prevent collapse on aggregation.
 		self::number_duplicate_siblings( $root );
+		// An unclosed span must still cover the children that did finish.
+		self::cover_children_deep( $root );
 
 		// Restore $root's string-keyed contract widened by the by-ref helpers.
 		/** @var array<string, mixed> $result */
@@ -197,6 +203,104 @@ final class Flame_Tree {
 			}
 			self::number_duplicate_siblings( $child, $depth + 1 );
 		}
+	}
+
+	/**
+	 * Apply `cover_children()` to a whole tree, deepest first.
+	 *
+	 * @param array<array-key, mixed> $node  Node to normalize, by reference.
+	 * @param int                     $depth Current recursion depth.
+	 */
+	private static function cover_children_deep( array &$node, int $depth = 0 ): void {
+		if ( $depth > self::MAX_RECURSION_DEPTH ) {
+			return;
+		}
+		if ( ! empty( $node['children'] ) && \is_array( $node['children'] ) ) {
+			foreach ( $node['children'] as &$child ) {
+				if ( \is_array( $child ) ) {
+					self::cover_children_deep( $child, $depth + 1 );
+				}
+			}
+			unset( $child );
+		}
+		self::cover_children( $node );
+	}
+
+	/**
+	 * Raise a node's `value` to the sum of its children's when it falls short.
+	 *
+	 * The browser's `pruneFlameGraph` prunes on a single value cutoff and takes
+	 * a whole subtree with the node it drops, which is only safe because a
+	 * child never exceeds its parent. `build_flame_data()` stamps each span's
+	 * value from its own `(complete)` entry, so a span whose complete never
+	 * arrived — request died, log truncated, entry dropped — keeps a 0 while
+	 * its finished children keep real durations. Past 1000 nodes that 0 falls
+	 * below the cutoff and silently deletes exactly the frames a viewer opened
+	 * the graph to see.
+	 *
+	 * Children are assumed already covered, so callers walk bottom-up.
+	 *
+	 * @param array<array-key, mixed> $node Node to normalize, by reference.
+	 */
+	private static function cover_children( array &$node ): void {
+		if ( empty( $node['children'] ) || ! \is_array( $node['children'] ) ) {
+			return;
+		}
+		$children_sum = 0;
+		foreach ( $node['children'] as $child ) {
+			$children_sum += \is_array( $child ) && \is_numeric( $child['value'] ?? null ) ? $child['value'] : 0;
+		}
+		$node_value = \is_numeric( $node['value'] ?? null ) ? $node['value'] : 0;
+		if ( $children_sum > $node_value ) {
+			$node['value'] = $children_sum;
+		}
+	}
+
+	/**
+	 * Finalize a flame node for display: convert sums to averages, strip
+	 * suffixes, normalize parent ≥ children, and remove internal fields.
+	 *
+	 * The divisor is the aggregate's own request count, not the node's
+	 * `seen_count`, so a node appearing in a minority of requests averages
+	 * down — the flame shows mean cost per request, not per appearance.
+	 *
+	 * @param array<array-key, mixed> $node        Flame node (modified by reference).
+	 * @param int                     $total_count Requests the aggregate covers; 0 skips the averaging.
+	 * @param int                     $depth       Current recursion depth.
+	 */
+	public static function finalize_flame_node( array &$node, int $total_count, int $depth = 0 ): void {
+		if ( $depth > self::MAX_RECURSION_DEPTH ) {
+			return;
+		}
+
+		// Strip hidden sequence suffix (\x00N) for duplicate sibling tracking.
+		$name     = \is_string( $node['name'] ?? null ) ? $node['name'] : 'unknown';
+		$null_pos = \strpos( $name, "\x00" );
+		if ( false !== $null_pos ) {
+			$node['name'] = \substr( $name, 0, $null_pos );
+		}
+
+		// Convert sum to average across all requests for this URL.
+		if ( $total_count > 0 && isset( $node['sum_value'] ) ) {
+			$node['value'] = ( \is_numeric( $node['sum_value'] ) ? $node['sum_value'] : 0 ) / $total_count;
+		} elseif ( ! isset( $node['value'] ) ) {
+			$node['value'] = 0;
+		}
+
+		if ( ! empty( $node['children'] ) && \is_array( $node['children'] ) ) {
+			foreach ( $node['children'] as &$child ) {
+				if ( \is_array( $child ) ) {
+					/** @var array<string, mixed> $child */
+					self::finalize_flame_node( $child, $total_count, $depth + 1 );
+				}
+			}
+			unset( $child );
+			self::cover_children( $node );
+		}
+
+		unset( $node['ts'] );
+		unset( $node['sum_value'] );
+		unset( $node['seen_count'] );
 	}
 
 	/**
@@ -309,61 +413,5 @@ final class Flame_Tree {
 		}
 
 		return \array_values( $indexed );
-	}
-
-	/**
-	 * Finalize a flame node for display: convert sums to averages, strip
-	 * suffixes, normalize parent ≥ children, and remove internal fields.
-	 *
-	 * The divisor is the aggregate's own request count, not the node's
-	 * `seen_count`, so a node appearing in a minority of requests averages
-	 * down — the flame shows mean cost per request, not per appearance.
-	 *
-	 * @param array<array-key, mixed> $node        Flame node (modified by reference).
-	 * @param int                     $total_count Requests the aggregate covers; 0 skips the averaging.
-	 * @param int                     $depth       Current recursion depth.
-	 */
-	public static function finalize_flame_node( array &$node, int $total_count, int $depth = 0 ): void {
-		if ( $depth > self::MAX_RECURSION_DEPTH ) {
-			return;
-		}
-
-		// Strip hidden sequence suffix (\x00N) for duplicate sibling tracking.
-		$name     = \is_string( $node['name'] ?? null ) ? $node['name'] : 'unknown';
-		$null_pos = \strpos( $name, "\x00" );
-		if ( false !== $null_pos ) {
-			$node['name'] = \substr( $name, 0, $null_pos );
-		}
-
-		// Convert sum to average across all requests for this URL.
-		if ( $total_count > 0 && isset( $node['sum_value'] ) ) {
-			$node['value'] = ( \is_numeric( $node['sum_value'] ) ? $node['sum_value'] : 0 ) / $total_count;
-		} elseif ( ! isset( $node['value'] ) ) {
-			$node['value'] = 0;
-		}
-
-		if ( ! empty( $node['children'] ) && \is_array( $node['children'] ) ) {
-			foreach ( $node['children'] as &$child ) {
-				if ( \is_array( $child ) ) {
-					/** @var array<string, mixed> $child */
-					self::finalize_flame_node( $child, $total_count, $depth + 1 );
-				}
-			}
-			unset( $child );
-
-			// Normalize: ensure parent value >= sum of children.
-			$children_sum = 0;
-			foreach ( $node['children'] as $child ) {
-				$children_sum += \is_array( $child ) && \is_numeric( $child['value'] ?? null ) ? $child['value'] : 0;
-			}
-			$node_value = \is_numeric( $node['value'] ) ? $node['value'] : 0;
-			if ( $children_sum > $node_value ) {
-				$node['value'] = $children_sum;
-			}
-		}
-
-		unset( $node['ts'] );
-		unset( $node['sum_value'] );
-		unset( $node['seen_count'] );
 	}
 }

@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A per-request flame graph could silently delete the frames a viewer opened
+  it to see.** `FlameGraph.js` prunes on a single value cutoff and drops a
+  node's whole subtree with it, which is only safe because a child never exceeds
+  its parent — a guarantee its docblock attributes to `Flame_Tree`. Only the
+  AGGREGATE path enforced it. `build_flame_data()` stamps each span's value from
+  its own `(complete)` entry, so a span whose complete never arrived — request
+  died, log truncated, entry dropped — kept a 0 while its finished children kept
+  real durations. Past 1000 nodes that 0 fell below the cutoff and took the
+  populated subtree with it, rendering a normal-looking but shorter graph. The
+  invariant now has one owner, `cover_children()`, applied on both paths.
+
+### Changed
+
+- **`AGGREGATE_EXPIRY_SEC` had two private copies held equal by a comment.**
+  `Flame_Tree` expires merged flame children on it and `Flame_Builder_Node`
+  expired that same aggregate's profile categories on its own copy, so changing
+  one gave a dashboard whose halves aged out on different clocks with nothing
+  failing loudly. `Flame_Tree` now owns it publicly and the builder reads it,
+  matching the norm AGENTS.md states for `Job_Intake::MAX_JOB_SIZE`.
+
+### Fixed
+
 - **`GET_STATS` reported a constant 10 for `pending_url_count`.** It counted
   `$pending` itself — ten fixed accumulator keys — instead of the URL-keyed map
   one level down at `$pending['url_stats']`. The one introspection verb the node
