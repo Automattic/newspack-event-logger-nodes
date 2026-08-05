@@ -53,6 +53,23 @@ class Flame_Builder_Node extends Node {
 	 * Every axis is accumulated three ways — globally, per server (hub only), and
 	 * per URL. A missing or empty field value becomes the literal 'Unknown'.
 	 */
+	/**
+	 * Reserved key of the category time series: the per-bucket ROLLUP row, not a
+	 * category. It carries `n` = requests in the bucket, `t` = their summed wall
+	 * time, and `c` = the summed call count of every category in them.
+	 *
+	 * Only `n` has a reader — `mirror_traffic_rank()` sums it across buckets to
+	 * rank a URL when the mirror buffer overflows. The dashboard's
+	 * `CategoryTimeChart` skips the row outright, so `t` and `c` are published
+	 * but unread today.
+	 *
+	 * Category names come from the ruleset, where a custom event may be called
+	 * anything — including this. A colliding name is renamed on the way in
+	 * (`collision_free_category()`), because otherwise its samples land in the
+	 * rollup and inflate the request count that drives mirror eviction.
+	 */
+	private const TOTAL_KEY = 'total';
+
 	const DIM_FIELDS = [
 		'status'  => 'status_category',
 		'method'  => 'request_method',
@@ -100,8 +117,11 @@ class Flame_Builder_Node extends Node {
 	 * name, and entry name is looked up in that table so repeated names across
 	 * requests share one zval instead of one per json_decode. Past the cap the
 	 * table freezes — new names are used as-is rather than growing it unbounded.
+	 *
+	 * Protected so a test double can reach the freeze without pushing 50000
+	 * distinct strings through the node.
 	 */
-	private const INTERN_TABLE_LIMIT = 50000;
+	protected const INTERN_TABLE_LIMIT = 50000;
 
 
 	/**
@@ -199,6 +219,17 @@ class Flame_Builder_Node extends Node {
 	 * }
 	 */
 	private $pending = [];
+
+	/**
+	 * The per-PROCESS string-intern table, shared by every Flame_Builder in the
+	 * process — that sharing is the point, and is why this is static.
+	 *
+	 * @var array<string, string>
+	 */
+	private static array $intern = [];
+
+	/** Whether `$intern` reached INTERN_TABLE_LIMIT and stopped growing. */
+	private static bool $intern_full = false;
 
 	/**
 	 * Bucket key `$pending` is accumulating into; '' until the first request.
@@ -355,7 +386,8 @@ class Flame_Builder_Node extends Node {
 			$now = ( Core::$now ?: Core::right_now() );
 			$payload = [
 				'stats_count'              => $stats_count,
-				'pending_url_count'        => \count( $this->pending ),
+				'pending_url_count'        => \count( Core::arr( $this->pending['url_stats'] ?? [] ) ),
+				'intern_count'             => \count( self::$intern ),
 				'pending_bucket'           => $this->pending_bucket,
 				'last_flush_age_s'         => $this->last_flush_time > 0 ? (int) ( $now - $this->last_flush_time ) : null,
 				'auto_tune_pending_count'  => self::map_total( $this->hooks_to_disable ) + self::map_total( $this->custom_events_to_disable ) + self::map_total( $this->new_significant_events ),
@@ -414,9 +446,10 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
-	 * Total leaf entries across a per-rule-id keyed map.
+	 * Total entries across a rule_id => {name => true} map of pending actions.
 	 *
-	 * @param array<string, array<string, bool>> $map rule_id => {name => true}.
+	 * @param array<string, array<string, bool>> $map Pending actions by rule.
+	 * @return int Entries summed across every rule.
 	 */
 	private static function map_total( array $map ): int {
 		$total = 0;
@@ -453,13 +486,6 @@ class Flame_Builder_Node extends Node {
 	 * @param array<array-key, mixed> $request    Full request record.
 	 */
 	private function accumulate_all_stats( string $url_hash, array $flame_data, array $profiles, array $request ): void {
-		// Resolve the request's governing rule once; no match = tune inert.
-		$rule             = $this->rule_for_request( $request );
-		$count_threshold  = null !== $rule ? $rule->auto_disable_threshold : 0;
-		$time_threshold   = null !== $rule ? $rule->auto_protect_time_threshold : 0.0;
-		$rule_id          = null !== $rule ? $rule->id : '';
-		$auto_tune_active = null !== $rule && $rule->is_log() && '' !== $rule_id;
-
 		$duration_val = $flame_data['value'] ?? 0;
 		$duration_ms  = Core::num_float( $duration_val );
 		$error_status = $request['error_status'] ?? '-';
@@ -470,7 +496,45 @@ class Flame_Builder_Node extends Node {
 		$count_global  = ! $is_worker;
 		$now           = $this->now_ts();
 
-		// --- 1. Per-URL aggregate (LRU, sums-not-means) ---
+		$timestamp_raw = $request['timestamp'] ?? $now;
+		$timestamp     = Core::num_int( $timestamp_raw, $now );
+		$server_raw    = $request['server_name'] ?? '';
+		$server_name   = Core::str( $server_raw );
+
+		$aggregate = $this->accumulate_url_aggregate( $url_hash, $flame_data, $duration_ms, $record_timing, $now );
+		$this->rotate_pending_bucket( $timestamp );
+		$this->accumulate_url_stats( $url_hash, $request, $duration_ms, $record_timing, $timestamp );
+		$this->accumulate_hourly( $request, $duration_ms, $record_timing, $count_global );
+		$this->accumulate_dimensions( $url_hash, $request, $server_name, $duration_ms, $record_timing, $count_global );
+
+		if ( ! empty( $profiles ) && $record_timing ) {
+			$this->accumulate_profiles(
+				$url_hash,
+				$profiles,
+				$request,
+				$aggregate,
+				$server_name,
+				$duration_ms,
+				$count_global,
+				$now
+			);
+		}
+
+		$this->stats_cache->set( $url_hash, $aggregate );
+	}
+
+	/**
+	 * Fold the request into the per-URL aggregate: one more request, its timing,
+	 * and its flame tree merged into the running one. Sums, never means.
+	 *
+	 * @param string                  $url_hash       URL hash of the request.
+	 * @param array<string, mixed>    $flame_data     Per-request flame tree.
+	 * @param float                   $duration_ms    Request duration.
+	 * @param bool                    $record_timing  Whether timing counts.
+	 * @param int                     $now            Clock read for this request.
+	 * @return array<array-key, mixed> The updated aggregate.
+	 */
+	private function accumulate_url_aggregate( string $url_hash, array $flame_data, float $duration_ms, bool $record_timing, int $now ): array {
 		$cached    = $this->stats_cache->get( $url_hash );
 		$aggregate = \is_array( $cached ) ? $cached : null;
 		if ( null === $aggregate ) {
@@ -504,78 +568,106 @@ class Flame_Builder_Node extends Node {
 			$flame['children']  = Flame_Tree::merge_flame_children_incremental( $flame_children, $incoming_children, $now );
 		}
 		$aggregate['flame'] = $flame;
+		return $aggregate;
+	}
 
-		// --- 2. Bucket key + rotation ---
-		$timestamp_raw = $request['timestamp'] ?? $now;
-		$timestamp     = Core::num_int( $timestamp_raw, $now );
-		$bucket_key    = $this->bucket_key( $timestamp );
-		if ( $bucket_key !== $this->pending_bucket ) {
-			if ( '' !== $this->pending_bucket ) {
-				$this->promote_pending_bucket();
-			}
-			$this->pending_bucket = $bucket_key;
+	/**
+	 * Adopt the bucket this request belongs to, promoting the outgoing one first.
+	 *
+	 * @param int $timestamp The request's timestamp.
+	 */
+	private function rotate_pending_bucket( int $timestamp ): void {
+		$bucket_key = $this->bucket_key( $timestamp );
+		if ( $bucket_key === $this->pending_bucket ) {
+			return;
 		}
+		if ( '' !== $this->pending_bucket ) {
+			$this->promote_pending_bucket();
+		}
+		$this->pending_bucket = $bucket_key;
+	}
 
-		// --- 2b. URL stats (pending bucket) ---
+	/**
+	 * Fold the request into its per-URL row in the pending bucket: counts, timing
+	 * extremes, status buckets, sampled durations and peak memory.
+	 *
+	 * @param string                  $url_hash      URL hash of the request.
+	 * @param array<array-key, mixed> $request       Full request record.
+	 * @param float                   $duration_ms   Request duration.
+	 * @param bool                    $record_timing Whether timing counts.
+	 * @param int                     $timestamp     The request's timestamp.
+	 */
+	private function accumulate_url_stats( string $url_hash, array $request, float $duration_ms, bool $record_timing, int $timestamp ): void {
 		$url_val = $request['url'] ?? '';
 		$url     = Core::str( $url_val );
-		if ( '' !== $url ) {
-			if ( ! isset( $this->pending['url_stats'][ $url_hash ] ) ) {
-				$this->pending['url_stats'][ $url_hash ] = [
-					'url'         => $url,
-					'count'       => 0,
-					'timed_count' => 0,
-					'sum_ms'      => 0,
-					'min_ms'      => PHP_INT_MAX,
-					'max_ms'      => 0,
-					'last_seen'   => 0,
-					'durations'   => [],
-					'count_2xx'   => 0,
-					'count_3xx'   => 0,
-					'count_4xx'   => 0,
-					'count_5xx'   => 0,
-					'sum_peak_mb' => 0,
-					'max_peak_mb' => 0,
-				];
-			}
-			/** @var array{url: string, count: int, timed_count: int, sum_ms: float|int, min_ms: float|int, max_ms: float|int, last_seen: int, durations: array<int, float|int>, count_2xx: int, count_3xx: int, count_4xx: int, count_5xx: int, sum_peak_mb: float|int, max_peak_mb: float|int} $us */
-			$us = $this->pending['url_stats'][ $url_hash ];
-			++$us['count'];
-			// Per-URL: workers keep timing on their own row.
-			if ( $record_timing ) {
-				++$us['timed_count'];
-				$us['sum_ms'] += $duration_ms;
-				$us['max_ms']  = \max( $us['max_ms'], $duration_ms );
-			}
-			$us['last_seen']      = \max( $us['last_seen'], $timestamp );
-			$status_code          = $request['status_code'] ?? 0;
-			$status_category      = (int) \floor( Core::num_float( $status_code ) / 100 );
-			if ( $status_category >= 2 && $status_category <= 5 ) {
-				++$us[ "count_{$status_category}xx" ];
-			}
-			// Raw durations feed the percentiles; past the cap, Algorithm R.
-			if ( $record_timing ) {
-				$max_dur     = Stats_Store::MAX_DURATIONS_PER_BUCKET;
-				$us['min_ms'] = \min( $us['min_ms'], $duration_ms );
-				if ( \count( $us['durations'] ) < $max_dur ) {
-					$us['durations'][] = $duration_ms;
-				} else {
-					$idx = \random_int( 0, \max( 1, $us['timed_count'] ) - 1 );
-					if ( $idx < $max_dur ) {
-						$us['durations'][ $idx ] = $duration_ms;
-					}
+		if ( '' === $url ) {
+			return;
+		}
+		if ( ! isset( $this->pending['url_stats'][ $url_hash ] ) ) {
+			$this->pending['url_stats'][ $url_hash ] = [
+				'url'         => $url,
+				'count'       => 0,
+				'timed_count' => 0,
+				'sum_ms'      => 0,
+				'min_ms'      => PHP_INT_MAX,
+				'max_ms'      => 0,
+				'last_seen'   => 0,
+				'durations'   => [],
+				'count_2xx'   => 0,
+				'count_3xx'   => 0,
+				'count_4xx'   => 0,
+				'count_5xx'   => 0,
+				'sum_peak_mb' => 0,
+				'max_peak_mb' => 0,
+			];
+		}
+		/** @var array{url: string, count: int, timed_count: int, sum_ms: float|int, min_ms: float|int, max_ms: float|int, last_seen: int, durations: array<int, float|int>, count_2xx: int, count_3xx: int, count_4xx: int, count_5xx: int, sum_peak_mb: float|int, max_peak_mb: float|int} $us */
+		$us = $this->pending['url_stats'][ $url_hash ];
+		++$us['count'];
+		// Per-URL: workers keep timing on their own row.
+		if ( $record_timing ) {
+			++$us['timed_count'];
+			$us['sum_ms'] += $duration_ms;
+			$us['max_ms']  = \max( $us['max_ms'], $duration_ms );
+		}
+		$us['last_seen'] = \max( $us['last_seen'], $timestamp );
+		$status_category = self::status_category( $request );
+		if ( null !== $status_category ) {
+			++$us[ "count_{$status_category}xx" ];
+		}
+		// Raw durations feed the percentiles; past the cap, Algorithm R.
+		if ( $record_timing ) {
+			$max_dur      = Stats_Store::MAX_DURATIONS_PER_BUCKET;
+			$us['min_ms'] = \min( $us['min_ms'], $duration_ms );
+			if ( \count( $us['durations'] ) < $max_dur ) {
+				$us['durations'][] = $duration_ms;
+			} else {
+				$idx = \random_int( 0, \max( 1, $us['timed_count'] ) - 1 );
+				if ( $idx < $max_dur ) {
+					$us['durations'][ $idx ] = $duration_ms;
 				}
 			}
-			$peak_raw = $request['peak_mb'] ?? 0;
-			$peak_mb  = Core::num_float( $peak_raw );
-			if ( $peak_mb > 0 ) {
-				$us['sum_peak_mb'] += $peak_mb;
-				$us['max_peak_mb']  = \max( $us['max_peak_mb'], $peak_mb );
-			}
-			$this->pending['url_stats'][ $url_hash ] = $us;
 		}
+		$peak_raw = $request['peak_mb'] ?? 0;
+		$peak_mb  = Core::num_float( $peak_raw );
+		if ( $peak_mb > 0 ) {
+			$us['sum_peak_mb'] += $peak_mb;
+			$us['max_peak_mb']  = \max( $us['max_peak_mb'], $peak_mb );
+		}
+		$this->pending['url_stats'][ $url_hash ] = $us;
+	}
 
-		// --- 3. Hourly stats (pending bucket) ---
+	/**
+	 * Fold the request into the pending bucket's site-wide totals. Workers
+	 * contribute nothing here — not count, not timing, not peak memory —
+	 * or one long-running worker would dominate the site-wide averages.
+	 *
+	 * @param array<array-key, mixed> $request       Full request record.
+	 * @param float                   $duration_ms   Request duration.
+	 * @param bool                    $record_timing Whether timing counts.
+	 * @param bool                    $count_global  Whether this feeds global stats.
+	 */
+	private function accumulate_hourly( array $request, float $duration_ms, bool $record_timing, bool $count_global ): void {
 		$hourly_peak     = $request['peak_mb'] ?? 0;
 		$hourly_peak_num = \is_numeric( $hourly_peak ) ? $hourly_peak + 0 : 0;
 		$hourly          = $this->pending['hourly'] ?? [];
@@ -584,7 +676,7 @@ class Flame_Builder_Node extends Node {
 			'sum_ms'      => \is_numeric( $hourly['sum_ms'] ?? null ) ? $hourly['sum_ms'] : 0,
 			'sum_peak_mb' => \is_numeric( $hourly['sum_peak_mb'] ?? null ) ? $hourly['sum_peak_mb'] : 0,
 		];
-		// Global: workers contribute nothing — count, timing, AND peak.
+		// The bucket is seeded either way; only its contents are gated.
 		if ( $count_global ) {
 			if ( $record_timing ) {
 				++$hourly['count'];
@@ -593,22 +685,28 @@ class Flame_Builder_Node extends Node {
 			$hourly['sum_peak_mb'] += $hourly_peak_num;
 		}
 		$this->pending['hourly'] = $hourly;
-		// Derives the 'status' dimension the DIM_FIELDS loop below reads.
-		$status_code_raw = $request['status_code'] ?? 0;
-		$status_cat      = (int) \floor( Core::num_float( $status_code_raw ) / 100 );
-		if ( $status_cat >= 2 && $status_cat <= 5 ) {
-			$request['status_category'] = "{$status_cat}xx";
-		}
+	}
 
-		// --- 3b. Dimensional stats; $intern is per-process, not per node ---
-		/** @var array<string, string> $intern */
-		static $intern      = [];
-		static $intern_full = false;
-		$server_raw     = $request['server_name'] ?? '';
-		$server_name    = Core::str( $server_raw );
-		$dim_peak_raw   = $request['peak_mb'] ?? 0;
-		$dim_peak_mb    = Core::num_float( $dim_peak_raw );
-		$dim_duration   = $record_timing ? $duration_ms : 0;
+	/**
+	 * Fold the request into each of the seven dimensional axes, three ways:
+	 * globally, per reporting server (hub only), and per URL.
+	 *
+	 * @param string                  $url_hash      URL hash of the request.
+	 * @param array<array-key, mixed> $request       Full request record.
+	 * @param string                  $server_name   Reporting server, '' when unknown.
+	 * @param float                   $duration_ms   Request duration.
+	 * @param bool                    $record_timing Whether timing counts.
+	 * @param bool                    $count_global  Whether this feeds global stats.
+	 */
+	private function accumulate_dimensions( string $url_hash, array $request, string $server_name, float $duration_ms, bool $record_timing, bool $count_global ): void {
+		$status_category = self::status_category( $request );
+		if ( null !== $status_category ) {
+			// The 'status' axis reads this field; nothing else does.
+			$request['status_category'] = "{$status_category}xx";
+		}
+		$dim_peak_raw = $request['peak_mb'] ?? 0;
+		$dim_peak_mb  = Core::num_float( $dim_peak_raw );
+		$dim_duration = $record_timing ? $duration_ms : 0;
 
 		foreach ( self::DIM_FIELDS as $dim => $field ) {
 			$field_raw = $request[ $field ] ?? '';
@@ -616,313 +714,371 @@ class Flame_Builder_Node extends Node {
 			if ( '' === $val ) {
 				$val = 'Unknown';
 			}
-			if ( ! $intern_full ) {
-				$val = $intern[ $val ] ??= $val;
-				if ( \count( $intern ) >= self::INTERN_TABLE_LIMIT ) {
-					$intern_full = true;
-				}
-			}
+			$val = self::intern( $val );
 			// Global: workers contribute nothing — count, timing, AND peak.
 			if ( $count_global ) {
-				if ( ! isset( $this->pending['dim'][ $dim ][ $val ] ) ) {
-					$this->pending['dim'][ $dim ][ $val ] = [ 'c' => 0, 's' => 0, 'm' => 0 ];
-				}
-				++$this->pending['dim'][ $dim ][ $val ]['c'];
-				$this->pending['dim'][ $dim ][ $val ]['s'] += $dim_duration;
-				$this->pending['dim'][ $dim ][ $val ]['m'] += $dim_peak_mb;
+				$this->pending['dim'][ $dim ][ $val ] = self::add_dim( $this->pending['dim'][ $dim ][ $val ] ?? null, $dim_duration, $dim_peak_mb );
 			}
 
 			// Per-server (hub only; skip redundant dim); global drops workers.
 			if ( $this->is_hub && '' !== $server_name && 'server' !== $dim && $count_global ) {
-				if ( ! isset( $this->pending['dim_by_server'][ $server_name ][ $dim ][ $val ] ) ) {
-					$this->pending['dim_by_server'][ $server_name ][ $dim ][ $val ] = [ 'c' => 0, 's' => 0, 'm' => 0 ];
-				}
-				++$this->pending['dim_by_server'][ $server_name ][ $dim ][ $val ]['c'];
-				$this->pending['dim_by_server'][ $server_name ][ $dim ][ $val ]['s'] += $dim_duration;
-				$this->pending['dim_by_server'][ $server_name ][ $dim ][ $val ]['m'] += $dim_peak_mb;
+				$this->pending['dim_by_server'][ $server_name ][ $dim ][ $val ] = self::add_dim( $this->pending['dim_by_server'][ $server_name ][ $dim ][ $val ] ?? null, $dim_duration, $dim_peak_mb );
 			}
 
 			// Per-URL.
-			if ( ! isset( $this->pending['url_dim'][ $url_hash ][ $dim ][ $val ] ) ) {
-				$this->pending['url_dim'][ $url_hash ][ $dim ][ $val ] = [ 'c' => 0, 's' => 0, 'm' => 0 ];
-			}
-			++$this->pending['url_dim'][ $url_hash ][ $dim ][ $val ]['c'];
-			$this->pending['url_dim'][ $url_hash ][ $dim ][ $val ]['s'] += $dim_duration;
-			$this->pending['url_dim'][ $url_hash ][ $dim ][ $val ]['m'] += $dim_peak_mb;
+			$this->pending['url_dim'][ $url_hash ][ $dim ][ $val ] = self::add_dim( $this->pending['url_dim'][ $url_hash ][ $dim ][ $val ] ?? null, $dim_duration, $dim_peak_mb );
+		}
+	}
+
+	/**
+	 * Fold a request into a dimensional bucket: one more request, its timing,
+	 * its peak memory. Seeds the bucket if this is the first.
+	 *
+	 * @param array{c: int, s: float|int, m: float|int}|null $slot     Bucket, null on first use.
+	 * @param float                                          $duration Timing to add, 0 when untimed.
+	 * @param float                                          $peak     Peak MB to add.
+	 * @return array{c: int, s: float|int, m: float|int} The updated bucket.
+	 */
+	private static function add_dim( ?array $slot, float $duration, float $peak ): array {
+		$slot ??= [ 'c' => 0, 's' => 0, 'm' => 0 ];
+		++$slot['c'];
+		$slot['s'] += $duration;
+		$slot['m'] += $peak;
+		return $slot;
+	}
+
+	/**
+	 * The `Nxx` status bucket a request falls in, or 0 when it has no usable
+	 * status code. Both the per-URL `count_Nxx` counters and the `status`
+	 * dimension key off this, and they used to derive it separately.
+	 *
+	 * @param array<array-key, mixed> $request Full request record.
+	 * @return int<2, 5>|null Null when the status code is outside 200-599.
+	 */
+	private static function status_category( array $request ): ?int {
+		$status_code = $request['status_code'] ?? 0;
+		$category    = (int) \floor( Core::num_float( $status_code ) / 100 );
+		return ( $category >= 2 && $category <= 5 ) ? $category : null;
+	}
+
+	/**
+	 * Fold a request's profile categories into the per-URL aggregate, the two
+	 * leaderboards, the three category time series, and the auto-tune signals.
+	 *
+	 * Split out of `accumulate_all_stats()`, which had grown to 470 lines of
+	 * hand-numbered sections. The auto-tune thresholds resolve here because this
+	 * is the only section that reads them.
+	 *
+	 * Only ever called for a timed request, so `$duration_ms` is positive. The
+	 * `$count_global` gate is passed in rather than re-derived, since deciding it
+	 * independently at each accumulate site is the classic bug in this class.
+	 *
+	 * @param string                    $url_hash     URL hash of the request.
+	 * @param array<array-key, mixed>   $profiles     `profiles{}` from the request record.
+	 * @param array<array-key, mixed>   $request      Full request record.
+	 * @param array<array-key, mixed>   $aggregate    Per-URL aggregate, by reference.
+	 * @param string                    $server_name  Reporting server, '' when unknown.
+	 * @param float                     $duration_ms  Request duration.
+	 * @param bool                      $count_global Whether this request feeds global stats.
+	 * @param int                       $now          Clock read for this request.
+	 */
+	private function accumulate_profiles(
+		string $url_hash,
+		array $profiles,
+		array $request,
+		array &$aggregate,
+		string $server_name,
+		float $duration_ms,
+		bool $count_global,
+		int $now
+	): void {
+		// Resolve the request's governing rule once; no match = tune inert.
+		$rule             = $this->rule_for_request( $request );
+		$count_threshold  = null !== $rule ? $rule->auto_disable_threshold : 0;
+		$time_threshold   = null !== $rule ? $rule->auto_protect_time_threshold : 0.0;
+		$rule_id          = null !== $rule ? $rule->id : '';
+		$auto_tune_active = null !== $rule && $rule->is_log() && '' !== $rule_id;
+
+		$aggregate_profiles = \is_array( $aggregate['profiles'] ?? null ) ? $aggregate['profiles'] : [];
+		$prof_cats          = $aggregate_profiles['categories'] ?? [];
+		$aggregate_profiles['categories'] = Core::arr( $prof_cats );
+		/** @var array{count?: int, sum_req_time?: float|int, categories: array<string, array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<string, array<int, float|int>>}>} $prof */
+		$prof = $aggregate_profiles;
+		/** @var array{count?: int, sum_req_time?: float|int, categories: array<string, array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<string, array<int, float|int>>}>} $lb */
+		$lb   = &$this->pending['leaderboard'];
+
+		$req_time = 0.0;
+
+		// Global: workers excluded from the "total" pseudo-category.
+		if ( $count_global ) {
+			$this->pending['cat'][ self::TOTAL_KEY ] = self::add_cat( $this->pending['cat'][ self::TOTAL_KEY ] ?? null, $duration_ms, 0 );
 		}
 
-		// --- 4. Profile loop (timed requests only); global drops workers ---
-		if ( ! empty( $profiles ) && $record_timing ) {
-			$aggregate_profiles = \is_array( $aggregate['profiles'] ?? null ) ? $aggregate['profiles'] : [];
-			$prof_cats          = $aggregate_profiles['categories'] ?? [];
-			$aggregate_profiles['categories'] = Core::arr( $prof_cats );
-			/** @var array{count?: int, sum_req_time?: float|int, categories: array<string, array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<string, array<int, float|int>>}>} $prof */
-			$prof = $aggregate_profiles;
-			/** @var array{count?: int, sum_req_time?: float|int, categories: array<string, array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<string, array<int, float|int>>}>} $lb */
-			$lb   = &$this->pending['leaderboard'];
+		// Global per-server: drop workers.
+		if ( $this->is_hub && '' !== $server_name && $count_global ) {
+			$this->pending['cat_by_server'][ $server_name ][ self::TOTAL_KEY ] = self::add_cat( $this->pending['cat_by_server'][ $server_name ][ self::TOTAL_KEY ] ?? null, $duration_ms, 0 );
+		}
 
-			$req_time = 0.0;
+		$this->pending['cat_by_url'][ $url_hash ][ self::TOTAL_KEY ] = self::add_cat( $this->pending['cat_by_url'][ $url_hash ][ self::TOTAL_KEY ] ?? null, $duration_ms, 0 );
 
-			// Global: workers excluded from the "total" pseudo-category.
+		// Per-server leaderboard (hub mode only). Global: drop workers.
+		$slb = null;
+		if ( $this->is_hub && '' !== $server_name && $count_global ) {
+			if ( ! isset( $this->pending['leaderboard_by_server'][ $server_name ] ) ) {
+				$this->pending['leaderboard_by_server'][ $server_name ] = [
+					'count'        => 0,
+					'sum_req_time' => 0.0,
+					'categories'   => [],
+				];
+			}
+			/** @var array{count?: int, sum_req_time?: float|int, categories: array<string, array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<string, array<int, float|int>>}>} $slb */
+			$slb = &$this->pending['leaderboard_by_server'][ $server_name ];
+		}
+
+		foreach ( $profiles as $category => $data ) {
+			if ( ! \is_string( $category ) || ! \is_array( $data ) ) {
+				continue;
+			}
+			$category = self::collision_free_category( self::intern( $category ) );
+
+			// Callback and plugin rows are views auto-tune can't act on.
+			$is_callback = (bool) \preg_match( '/ @-?\d+$/', $category );
+			$is_plugin   = (bool) \preg_match( '/ plugin$/', $category );
+
+			$time_raw  = $data['time'] ?? 0;
+			$count_raw = $data['count'] ?? 0;
+			$ts_raw    = $data['ts'] ?? 0;
+			$cat_time  = Core::num_float( $time_raw );
+			$cat_count = Core::num_int( $count_raw );
+			$cat_ts    = Core::num_int( $ts_raw );
+			// Callback time already counts inside its hook's time.
+			if ( ! $is_callback ) {
+				$req_time += $cat_time;
+			}
+
+			// Per-URL category.
+			$prof['categories'][ $category ] = self::add_category( $prof['categories'][ $category ] ?? null, $cat_time, $cat_count );
+			/** @var array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<string, array<int, float|int>>} $pcat */
+			$pcat       = &$prof['categories'][ $category ];
+			$pcat['ts'] = \max( $pcat['ts'] ?? 0, $cat_ts );
+
+			// Global leaderboard category: workers excluded.
+			$lcat = null;
 			if ( $count_global ) {
-				if ( ! isset( $this->pending['cat']['total'] ) ) {
-					$this->pending['cat']['total'] = [ 't' => 0, 'c' => 0, 'n' => 0 ];
-				}
-				$this->pending['cat']['total']['t'] += $duration_ms;
-				++$this->pending['cat']['total']['n'];
+				$lb['categories'][ $category ] = self::add_category( $lb['categories'][ $category ] ?? null, $cat_time, $cat_count );
+				/** @var array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<string, array<int, float|int>>} $lcat */
+				$lcat = &$lb['categories'][ $category ];
 			}
 
-			// Global per-server: drop workers.
-			if ( $this->is_hub && '' !== $server_name && $count_global ) {
-				if ( ! isset( $this->pending['cat_by_server'][ $server_name ]['total'] ) ) {
-					$this->pending['cat_by_server'][ $server_name ]['total'] = [ 't' => 0, 'c' => 0, 'n' => 0 ];
-				}
-				$this->pending['cat_by_server'][ $server_name ]['total']['t'] += $duration_ms;
-				++$this->pending['cat_by_server'][ $server_name ]['total']['n'];
-			}
-
-			if ( ! isset( $this->pending['cat_by_url'][ $url_hash ]['total'] ) ) {
-				$this->pending['cat_by_url'][ $url_hash ]['total'] = [ 't' => 0, 'c' => 0, 'n' => 0 ];
-			}
-			$this->pending['cat_by_url'][ $url_hash ]['total']['t'] += $duration_ms;
-			++$this->pending['cat_by_url'][ $url_hash ]['total']['n'];
-
-			// Per-server leaderboard (hub mode only). Global: drop workers.
-			$slb = null;
-			if ( $this->is_hub && '' !== $server_name && $count_global ) {
-				if ( ! isset( $this->pending['leaderboard_by_server'][ $server_name ] ) ) {
-					$this->pending['leaderboard_by_server'][ $server_name ] = [
-						'count'        => 0,
-						'sum_req_time' => 0.0,
-						'categories'   => [],
-					];
-				}
-				/** @var array{count?: int, sum_req_time?: float|int, categories: array<string, array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<string, array<int, float|int>>}>} $slb */
-				$slb = &$this->pending['leaderboard_by_server'][ $server_name ];
-			}
-
-			foreach ( $profiles as $category => $data ) {
-				if ( ! \is_string( $category ) || ! \is_array( $data ) ) {
-					continue;
-				}
-				if ( ! $intern_full ) {
-					$interned = $intern[ $category ] ??= $category;
-					$category = Core::str( $interned, $category );
-					if ( \count( $intern ) >= self::INTERN_TABLE_LIMIT ) {
-						$intern_full = true;
-					}
-				}
-
-				// Callback and plugin rows are views auto-tune can't act on.
-				$is_callback = (bool) \preg_match( '/ @-?\d+$/', $category );
-				$is_plugin   = (bool) \preg_match( '/ plugin$/', $category );
-
-				$time_raw  = $data['time'] ?? 0;
-				$count_raw = $data['count'] ?? 0;
-				$ts_raw    = $data['ts'] ?? 0;
-				$cat_time  = Core::num_float( $time_raw );
-				$cat_count = Core::num_int( $count_raw );
-				$cat_ts    = Core::num_int( $ts_raw );
-				// Callback time already counts inside its hook's time.
-				if ( ! $is_callback ) {
-					$req_time += $cat_time;
-				}
-
-				// Per-URL category.
-				if ( ! isset( $prof['categories'][ $category ] ) ) {
-					$prof['categories'][ $category ] = [
-						'samples'   => 0,
-						'sum_time'  => 0.0,
-						'sum_count' => 0.0,
-						'ts'        => $cat_ts,
-						'entries'   => [],
-					];
-				}
-				/** @var array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<string, array<int, float|int>>} $pcat */
-				$pcat              = &$prof['categories'][ $category ];
-				++$pcat['samples'];
-				$pcat['sum_time']  += $cat_time;
-				$pcat['sum_count'] += $cat_count;
-				$pcat['ts']        = \max( $pcat['ts'] ?? 0, $cat_ts );
-
-				// Global leaderboard category: workers excluded.
-				$lcat = null;
-				if ( $count_global ) {
-					if ( ! isset( $lb['categories'][ $category ] ) ) {
-						$lb['categories'][ $category ] = [
-							'samples'   => 0,
-							'sum_time'  => 0.0,
-							'sum_count' => 0.0,
-							'entries'   => [],
-						];
-					}
-					/** @var array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<string, array<int, float|int>>} $lcat */
-					$lcat              = &$lb['categories'][ $category ];
-					++$lcat['samples'];
-					$lcat['sum_time']  += $cat_time;
-					$lcat['sum_count'] += $cat_count;
-				}
-
-				// Per-server leaderboard.
-				if ( null !== $slb ) {
-					if ( ! isset( $slb['categories'][ $category ] ) ) {
-						$slb['categories'][ $category ] = [
-							'samples'   => 0,
-							'sum_time'  => 0.0,
-							'sum_count' => 0.0,
-							'entries'   => [],
-						];
-					}
-					/** @var array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<string, array<int, float|int>>} $scat */
-					$scat              = &$slb['categories'][ $category ];
-					++$scat['samples'];
-					$scat['sum_time']  += $cat_time;
-					$scat['sum_count'] += $cat_count;
-
-					$s_entries = $data['entries'] ?? null;
-					if ( ! empty( $s_entries ) && \is_array( $s_entries ) ) {
-						foreach ( $s_entries as $s_name => $s_entry_data ) {
-							$s_name_interned = $intern[ $s_name ] ??= $s_name;
-							$s_name  = Core::str( $s_name_interned, (string) $s_name );
-							$s_time  = \is_array( $s_entry_data ) && \is_numeric( $s_entry_data[0] ?? null ) ? (float) $s_entry_data[0] : 0.0;
-							$s_count = \is_array( $s_entry_data ) && \is_numeric( $s_entry_data[1] ?? null ) ? (float) $s_entry_data[1] : 0.0;
-							// Entry triple: [ sum_time, sum_count, samples ].
-							if ( ! isset( $scat['entries'][ $s_name ] ) ) {
-								$scat['entries'][ $s_name ] = [ 0.0, 0.0, 0 ];
-							}
-							$scat['entries'][ $s_name ][0] += $s_time;
-							$scat['entries'][ $s_name ][1] += $s_count;
-							++$scat['entries'][ $s_name ][2];
-						}
-						if ( \count( $scat['entries'] ) > self::ENTRY_LIMIT_GLOBAL_UPPER ) {
-							\uasort( $scat['entries'], fn( $a, $b ) => ( $b[0] ?? 0 ) <=> ( $a[0] ?? 0 ) );
-							$scat['entries'] = \array_slice( $scat['entries'], 0, self::ENTRY_LIMIT_GLOBAL_LOWER, true );
-						}
-					}
-					unset( $scat );
-				}
-
-				// Global category time series (pending): workers excluded.
-				if ( $count_global ) {
-					$cat_bucket   = $this->pending['cat'][ $category ] ?? [ 't' => 0, 'c' => 0, 'n' => 0 ];
-					$cat_total    = $this->pending['cat']['total'] ?? [ 't' => 0, 'c' => 0, 'n' => 0 ];
-					$cat_bucket['t'] += $cat_time;
-					$cat_bucket['c'] += $cat_count;
-					++$cat_bucket['n'];
-					$cat_total['c']  += $cat_count;
-					$this->pending['cat'][ $category ] = $cat_bucket;
-					$this->pending['cat']['total']      = $cat_total;
-				}
-
-				// Global per-server category series: drop workers.
-				if ( $this->is_hub && '' !== $server_name && $count_global ) {
-					if ( ! isset( $this->pending['cat_by_server'][ $server_name ][ $category ] ) ) {
-						$this->pending['cat_by_server'][ $server_name ][ $category ] = [ 't' => 0, 'c' => 0, 'n' => 0 ];
-					}
-					$this->pending['cat_by_server'][ $server_name ][ $category ]['t'] += $cat_time;
-					$this->pending['cat_by_server'][ $server_name ][ $category ]['c'] += $cat_count;
-					++$this->pending['cat_by_server'][ $server_name ][ $category ]['n'];
-					$this->pending['cat_by_server'][ $server_name ]['total']['c'] += $cat_count;
-				}
-
-				if ( ! isset( $this->pending['cat_by_url'][ $url_hash ][ $category ] ) ) {
-					$this->pending['cat_by_url'][ $url_hash ][ $category ] = [ 't' => 0, 'c' => 0, 'n' => 0 ];
-				}
-				$this->pending['cat_by_url'][ $url_hash ][ $category ]['t'] += $cat_time;
-				$this->pending['cat_by_url'][ $url_hash ][ $category ]['c'] += $cat_count;
-				++$this->pending['cat_by_url'][ $url_hash ][ $category ]['n'];
-				$this->pending['cat_by_url'][ $url_hash ]['total']['c'] += $cat_count;
-
-				// Significant-event: avg/call > threshold; workers excluded.
-				if ( $auto_tune_active && null !== $lcat && ! $is_callback && ! $is_plugin && $time_threshold > 0 && $lcat['sum_count'] > 0 ) {
-					$avg_per_call = $lcat['sum_time'] / $lcat['sum_count'];
-					if ( $avg_per_call >= $time_threshold ) {
-						$base_name = \explode( ' ', $category, 2 )[0];
-						if ( ! isset( $this->significant_events[ $rule_id ][ $base_name ] ) && ! $this->rule_significant( $rule, $base_name ) ) {
-							$this->significant_events[ $rule_id ][ $base_name ]     = true;
-							$this->new_significant_events[ $rule_id ][ $base_name ] = true;
-						}
-					}
-				}
-
-				// Entry loop (per-URL + global).
-				$entries = $data['entries'] ?? null;
-				if ( ! empty( $entries ) && \is_array( $entries ) ) {
-					foreach ( $entries as $name => $entry_data ) {
-						$name_interned = $intern[ $name ] ??= $name;
-						$name        = Core::str( $name_interned, (string) $name );
-						$entry_time  = \is_array( $entry_data ) && \is_numeric( $entry_data[0] ?? null ) ? (float) $entry_data[0] : 0.0;
-						$entry_count = \is_array( $entry_data ) && \is_numeric( $entry_data[1] ?? null ) ? (float) $entry_data[1] : 0.0;
-
-						if ( ! isset( $pcat['entries'][ $name ] ) ) {
-							$pcat['entries'][ $name ] = [ 0.0, 0.0, 0 ];
-						}
-						$pcat['entries'][ $name ][0] += $entry_time;
-						$pcat['entries'][ $name ][1] += $entry_count;
-						++$pcat['entries'][ $name ][2];
-
-						// Global entries skipped for workers (ref null).
-						if ( null !== $lcat ) {
-							if ( ! isset( $lcat['entries'][ $name ] ) ) {
-								$lcat['entries'][ $name ] = [ 0.0, 0.0, 0 ];
-							}
-							$lcat['entries'][ $name ][0] += $entry_time;
-							$lcat['entries'][ $name ][1] += $entry_count;
-							++$lcat['entries'][ $name ][2];
-						}
-					}
-
-					// Trim with hysteresis (cap by sum_time).
-					if ( \count( $pcat['entries'] ) > self::ENTRY_LIMIT_URL_UPPER ) {
-						\uasort( $pcat['entries'], fn( $a, $b ) => ( $b[0] ?? 0 ) <=> ( $a[0] ?? 0 ) );
-						$pcat['entries'] = \array_slice( $pcat['entries'], 0, self::ENTRY_LIMIT_URL_LOWER, true );
-					}
-					// Global cap: skipped for workers (ref stays null).
-					if ( null !== $lcat && \count( $lcat['entries'] ) > self::ENTRY_LIMIT_GLOBAL_UPPER ) {
-						\uasort( $lcat['entries'], fn( $a, $b ) => ( $b[0] ?? 0 ) <=> ( $a[0] ?? 0 ) );
-						$lcat['entries'] = \array_slice( $lcat['entries'], 0, self::ENTRY_LIMIT_GLOBAL_LOWER, true );
-					}
-				}
-
-				// Noisy detection (global auto-tune signal); workers excluded.
-				if ( $auto_tune_active && $count_global && ! $is_callback && ! $is_plugin && $count_threshold > 0 && $cat_count > $count_threshold ) {
-					$base_name = \explode( ' ', $category, 2 )[0];
-					if ( isset( $this->custom_event_names[ $base_name ] ) ) {
-						$this->custom_events_to_disable[ $rule_id ][ $base_name ] = true;
-					} else {
-						$this->hooks_to_disable[ $rule_id ][ $base_name ] = true;
-					}
-				}
-				unset( $pcat );
-				unset( $lcat );
-			}
-
-			// Top-level sums: per-URL kept; global leaderboard drops workers.
-			$prof['count']        = ( $prof['count']        ?? 0 ) + 1;
-			$prof['sum_req_time'] = ( $prof['sum_req_time'] ?? 0 ) + $req_time;
-			if ( $count_global ) {
-				$lb['count']        = ( $lb['count']        ?? 0 ) + 1;
-				$lb['sum_req_time'] = ( $lb['sum_req_time'] ?? 0 ) + $req_time;
-			}
-
+			// Per-server leaderboard.
 			if ( null !== $slb ) {
-				$slb['count']        = ( $slb['count']        ?? 0 ) + 1;
-				$slb['sum_req_time'] = ( $slb['sum_req_time'] ?? 0 ) + $req_time;
-				unset( $slb );
+				$slb['categories'][ $category ] = self::add_category( $slb['categories'][ $category ] ?? null, $cat_time, $cat_count );
+				/** @var array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<string, array<int, float|int>>} $scat */
+				$scat = &$slb['categories'][ $category ];
+
+				$s_entries = $data['entries'] ?? null;
+				if ( ! empty( $s_entries ) && \is_array( $s_entries ) ) {
+					foreach ( $s_entries as $s_name => $s_entry_data ) {
+						$s_name  = self::intern( (string) $s_name );
+						$s_time  = \is_array( $s_entry_data ) && \is_numeric( $s_entry_data[0] ?? null ) ? (float) $s_entry_data[0] : 0.0;
+						$s_count = \is_array( $s_entry_data ) && \is_numeric( $s_entry_data[1] ?? null ) ? (float) $s_entry_data[1] : 0.0;
+						$scat['entries'][ $s_name ] = self::add_entry( $scat['entries'][ $s_name ] ?? null, $s_time, $s_count );
+					}
+					self::trim_entries( $scat['entries'], self::ENTRY_LIMIT_GLOBAL_UPPER, self::ENTRY_LIMIT_GLOBAL_LOWER );
+				}
+				unset( $scat );
 			}
 
-			// Expire old per-URL categories.
-			$cutoff = $now - self::AGGREGATE_EXPIRY_SEC;
-			foreach ( $prof['categories'] as $cat => $cd ) {
-				if ( ( $cd['ts'] ?? 0 ) < $cutoff ) {
-					unset( $prof['categories'][ $cat ] );
+			// Global category time series (pending): workers excluded.
+			if ( $count_global ) {
+				$this->pending['cat'][ $category ] = self::add_cat( $this->pending['cat'][ $category ] ?? null, $cat_time, $cat_count );
+				$this->pending['cat'][ self::TOTAL_KEY ]['c'] += $cat_count;
+			}
+
+			// Global per-server category series: drop workers.
+			if ( $this->is_hub && '' !== $server_name && $count_global ) {
+				$this->pending['cat_by_server'][ $server_name ][ $category ] = self::add_cat( $this->pending['cat_by_server'][ $server_name ][ $category ] ?? null, $cat_time, $cat_count );
+				$this->pending['cat_by_server'][ $server_name ][ self::TOTAL_KEY ]['c'] += $cat_count;
+			}
+
+			$this->pending['cat_by_url'][ $url_hash ][ $category ] = self::add_cat( $this->pending['cat_by_url'][ $url_hash ][ $category ] ?? null, $cat_time, $cat_count );
+			$this->pending['cat_by_url'][ $url_hash ][ self::TOTAL_KEY ]['c'] += $cat_count;
+
+			// Significant-event: avg/call > threshold; workers excluded.
+			if ( $auto_tune_active && null !== $lcat && ! $is_callback && ! $is_plugin && $time_threshold > 0 && $lcat['sum_count'] > 0 ) {
+				$avg_per_call = $lcat['sum_time'] / $lcat['sum_count'];
+				if ( $avg_per_call >= $time_threshold ) {
+					$base_name = \explode( ' ', $category, 2 )[0];
+					if ( ! isset( $this->significant_events[ $rule_id ][ $base_name ] ) && ! $this->rule_significant( $rule, $base_name ) ) {
+						$this->significant_events[ $rule_id ][ $base_name ]     = true;
+						$this->new_significant_events[ $rule_id ][ $base_name ] = true;
+					}
 				}
 			}
-			$aggregate['profiles'] = $prof;
-			unset( $lb );
+
+			// Entry loop (per-URL + global).
+			$entries = $data['entries'] ?? null;
+			if ( ! empty( $entries ) && \is_array( $entries ) ) {
+				foreach ( $entries as $name => $entry_data ) {
+					$name        = self::intern( (string) $name );
+					$entry_time  = \is_array( $entry_data ) && \is_numeric( $entry_data[0] ?? null ) ? (float) $entry_data[0] : 0.0;
+					$entry_count = \is_array( $entry_data ) && \is_numeric( $entry_data[1] ?? null ) ? (float) $entry_data[1] : 0.0;
+
+					$pcat['entries'][ $name ] = self::add_entry( $pcat['entries'][ $name ] ?? null, $entry_time, $entry_count );
+					// Global entries skipped for workers (ref null).
+					if ( null !== $lcat ) {
+						$lcat['entries'][ $name ] = self::add_entry( $lcat['entries'][ $name ] ?? null, $entry_time, $entry_count );
+					}
+				}
+
+				self::trim_entries( $pcat['entries'], self::ENTRY_LIMIT_URL_UPPER, self::ENTRY_LIMIT_URL_LOWER );
+				// Global cap: skipped for workers (ref stays null).
+				if ( null !== $lcat ) {
+					self::trim_entries( $lcat['entries'], self::ENTRY_LIMIT_GLOBAL_UPPER, self::ENTRY_LIMIT_GLOBAL_LOWER );
+				}
+			}
+
+			// Noisy detection (global auto-tune signal); workers excluded.
+			if ( $auto_tune_active && $count_global && ! $is_callback && ! $is_plugin && $count_threshold > 0 && $cat_count > $count_threshold ) {
+				$base_name = \explode( ' ', $category, 2 )[0];
+				if ( isset( $this->custom_event_names[ $base_name ] ) ) {
+					$this->custom_events_to_disable[ $rule_id ][ $base_name ] = true;
+				} else {
+					$this->hooks_to_disable[ $rule_id ][ $base_name ] = true;
+				}
+			}
+			unset( $pcat );
+			unset( $lcat );
 		}
 
-		$this->stats_cache->set( $url_hash, $aggregate );
+		// Top-level sums: per-URL kept; global leaderboard drops workers.
+		$prof['count']        = ( $prof['count']        ?? 0 ) + 1;
+		$prof['sum_req_time'] = ( $prof['sum_req_time'] ?? 0 ) + $req_time;
+		if ( $count_global ) {
+			$lb['count']        = ( $lb['count']        ?? 0 ) + 1;
+			$lb['sum_req_time'] = ( $lb['sum_req_time'] ?? 0 ) + $req_time;
+		}
+
+		if ( null !== $slb ) {
+			$slb['count']        = ( $slb['count']        ?? 0 ) + 1;
+			$slb['sum_req_time'] = ( $slb['sum_req_time'] ?? 0 ) + $req_time;
+			unset( $slb );
+		}
+
+		// Expire old per-URL categories.
+		$cutoff = $now - self::AGGREGATE_EXPIRY_SEC;
+		foreach ( $prof['categories'] as $cat => $cd ) {
+			if ( ( $cd['ts'] ?? 0 ) < $cutoff ) {
+				unset( $prof['categories'][ $cat ] );
+			}
+		}
+		$aggregate['profiles'] = $prof;
+		unset( $lb );
+	}
+
+	/**
+	 * Total leaf entries across a per-rule-id keyed map.
+	 *
+	 * @param array<string, array<string, bool>> $map rule_id => {name => true}.
+	 */
+	/**
+	 * Keep a real category out of the reserved rollup slot.
+	 *
+	 * @param string $category Incoming category name.
+	 * @return string The name to store it under.
+	 */
+	private static function collision_free_category( string $category ): string {
+		return self::TOTAL_KEY === $category ? self::TOTAL_KEY . ' (event)' : $category;
+	}
+
+	/**
+	 * Fold a category sample into a time-series bucket: time, call count, and
+	 * one more sample. The `total` pseudo-category passes 0 for `$count` and
+	 * takes its count from the per-category sites instead.
+	 *
+	 * @param array{t: float|int, c: float|int, n: int}|null $slot  Bucket, null on first use.
+	 * @param float                                          $time  Time to add.
+	 * @param float                                          $count Call count to add.
+	 * @return array{t: float|int, c: float|int, n: int} The updated bucket.
+	 */
+	private static function add_cat( ?array $slot, float $time, float $count ): array {
+		$slot ??= [ 't' => 0, 'c' => 0, 'n' => 0 ];
+		$slot['t'] += $time;
+		$slot['c'] += $count;
+		++$slot['n'];
+		return $slot;
+	}
+
+	/**
+	 * Fold a category sample into a leaderboard bucket (sums, never means —
+	 * AGENTS.md decision 2). The per-URL caller stamps `ts` afterwards.
+	 *
+	 * @param array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<string, array<int, float|int>>}|null $slot Bucket, null on first use.
+	 * @param float $time  Time to add.
+	 * @param float $count Call count to add.
+	 * @return array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<string, array<int, float|int>>} The updated bucket.
+	 */
+	private static function add_category( ?array $slot, float $time, float $count ): array {
+		$slot ??= [ 'samples' => 0, 'sum_time' => 0.0, 'sum_count' => 0.0, 'entries' => [] ];
+		++$slot['samples'];
+		$slot['sum_time']  += $time;
+		$slot['sum_count'] += $count;
+		return $slot;
+	}
+
+	/**
+	 * Fold one named entry into its triple `[ sum_time, sum_count, samples ]`.
+	 *
+	 * @param array<int, float|int>|null $slot  Entry triple, null on first use.
+	 * @param float                      $time  Time to add.
+	 * @param float                      $count Call count to add.
+	 * @return array<int, float|int> The updated triple.
+	 */
+	private static function add_entry( ?array $slot, float $time, float $count ): array {
+		$slot ??= [ 0.0, 0.0, 0 ];
+		$slot[0] += $time;
+		$slot[1] += $count;
+		++$slot[2];
+		return $slot;
+	}
+
+	/**
+	 * Trim an entry map back to `$lower` once it passes `$upper`, keeping the
+	 * slowest by `sum_time`. The gap between the two bounds is the hysteresis
+	 * that stops a busy category re-sorting on every request.
+	 *
+	 * @param array<string, array<int, float|int>> $entries Entry map, by reference.
+	 * @param int                                  $upper   Count that triggers a trim.
+	 * @param int                                  $lower   Count to trim back to.
+	 */
+	private static function trim_entries( array &$entries, int $upper, int $lower ): void {
+		if ( \count( $entries ) <= $upper ) {
+			return;
+		}
+		\uasort( $entries, fn ( $a, $b ) => ( $b[0] ?? 0 ) <=> ( $a[0] ?? 0 ) );
+		$entries = \array_slice( $entries, 0, $lower, true );
+	}
+
+	/**
+	 * Share one zval for a repeated name, until the table freezes at the cap.
+	 *
+	 * Every dimension value, category name and entry name goes through here.
+	 * Entry names are by far the highest-cardinality strings the node sees, and
+	 * they used to intern with no freeze check at all — so the one table the cap
+	 * exists to bound was the one table that grew without limit.
+	 *
+	 * @param string $name The name to intern.
+	 * @return string The shared instance, or `$name` once the table is frozen.
+	 */
+	private static function intern( string $name ): string {
+		if ( self::$intern_full ) {
+			return $name;
+		}
+		$shared = self::$intern[ $name ] ??= $name;
+		if ( \count( self::$intern ) >= static::INTERN_TABLE_LIMIT ) {
+			self::$intern_full = true;
+		}
+		return $shared;
 	}
 
 	/**
@@ -1488,8 +1644,8 @@ class Flame_Builder_Node extends Node {
 		if ( \count( $cats ) <= $max_values ) {
 			return $cats;
 		}
-		$total = $cats['total'] ?? null;
-		unset( $cats['total'] );
+		$total = $cats[ self::TOTAL_KEY ] ?? null;
+		unset( $cats[ self::TOTAL_KEY ] );
 		\uasort( $cats, fn( $a, $b ) => ( \is_array( $b ) ? ( $b['t'] ?? 0 ) : 0 ) <=> ( \is_array( $a ) ? ( $a['t'] ?? 0 ) : 0 ) );
 		$top    = \array_slice( $cats, 0, $max_values - 2, true );
 		$rest_t = $rest_c = $rest_n = 0;
@@ -1505,7 +1661,7 @@ class Flame_Builder_Node extends Node {
 			$top['Other'] = [ 't' => $rest_t, 'c' => $rest_c, 'n' => $rest_n ];
 		}
 		if ( $total ) {
-			$top['total'] = $total;
+			$top[ self::TOTAL_KEY ] = $total;
 		}
 		return $top;
 	}
@@ -1744,7 +1900,7 @@ class Flame_Builder_Node extends Node {
 			// Sum the per-bucket category totals.
 			$sum = 0;
 			foreach ( $data as $bucket ) {
-				$total = \is_array( $bucket ) ? ( $bucket['total'] ?? null ) : null;
+				$total = \is_array( $bucket ) ? ( $bucket[ self::TOTAL_KEY ] ?? null ) : null;
 				$sum  += \is_array( $total ) && \is_numeric( $total['n'] ?? null ) ? (int) $total['n'] : 0;
 			}
 			return $sum;

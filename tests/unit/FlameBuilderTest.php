@@ -181,10 +181,12 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	/**
-	 * Read the in-flight per-URL accumulator count via the production
-	 * GET_STATS request verb (the same path the dashboard reads).
+	 * Read the node's introspection payload through the production GET_STATS
+	 * request verb — the same path the dashboard and the REPL read.
+	 *
+	 * @return array<string, mixed>
 	 */
-	private function stats_count( Flame_Builder_Node $fb ): int {
+	private function get_stats( Flame_Builder_Node $fb ): array {
 		$prev    = $fb->sink();
 		$capture = new Capture_Sink_Node();
 		$fb->sink( $capture );
@@ -200,10 +202,14 @@ class FlameBuilderTest extends TestCase {
 		foreach ( $capture->captured as $captured ) {
 			$type = $captured[ Message::TYPE ];
 			if ( ( $type & Message::TM_RESPONSE ) && ( $type & Message::TM_STRUCT ) ) {
-				return (int) $captured[ Message::VALUE ]['data']['stats_count'];
+				return $captured[ Message::VALUE ]['data'];
 			}
 		}
 		$this->fail( 'GET_STATS reply not captured' );
+	}
+
+	private function stats_count( Flame_Builder_Node $fb ): int {
+		return (int) $this->get_stats( $fb )['stats_count'];
 	}
 
 	public function test_constructor_initializes_empty(): void {
@@ -1230,6 +1236,87 @@ class FlameBuilderTest extends TestCase {
 		$this->assertArrayHasKey( 'auto_tune_pending_count', $payload['data'] );
 		$this->assertTrue( $payload['data']['is_hub'] );
 		$this->assertSame( 2, $payload['data']['significant_events_count'] );
+	}
+
+	public function test_pending_url_count_reports_distinct_urls(): void {
+		$this->set_rule();
+		$fb = new Flame_Builder_Node();
+		$fb->name( 'fb' );
+		$fb->sink( new Capture_Sink_Node() );
+
+		foreach ( [ '/alpha', '/beta', '/gamma' ] as $url ) {
+			$this->fill_request( $fb, $this->completed_request( [ 'url' => $url ] ) );
+		}
+
+		// Three distinct URLs — not the ten fixed accumulator keys.
+		$this->assertSame( 3, $this->get_stats( $fb )['pending_url_count'] );
+	}
+
+	public function test_intern_table_freezes_for_entry_names_at_the_cap(): void {
+		$this->set_rule();
+		$fb = new TinyInternFlameBuilder();
+		$fb->name( 'fb' );
+		$fb->sink( new Capture_Sink_Node() );
+
+		// One request is enough to reach a cap of three and freeze the table.
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/warm' ] ) );
+		$stats = $this->get_stats( $fb );
+		$this->assertArrayHasKey( 'intern_count', $stats );
+		$frozen_at = $stats['intern_count'];
+
+		$entries = [];
+		for ( $i = 0; $i < 20; $i++ ) {
+			$entries[ "hook_number_{$i}" ] = [ 1.5, 1 ];
+		}
+		$this->fill_request(
+			$fb,
+			$this->completed_request(
+				[ 'profiles' => [ 'plugins_loaded' => [ 'entries' => $entries, 'count' => 1, 'time' => 30.0 ] ] ]
+			)
+		);
+
+		// Entry names are the highest-cardinality strings; a frozen table takes none.
+		$this->assertSame( $frozen_at, $this->get_stats( $fb )['intern_count'] );
+	}
+
+	public function test_a_custom_event_named_total_does_not_corrupt_the_rollup_row(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$this->set_rule();
+		$fb = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+
+		// 'total' is the reserved rollup key; a custom event may be named anything.
+		$this->fill_request(
+			$fb,
+			$this->completed_request(
+				[
+					'duration_ms' => 250.0,
+					'profiles'    => [
+						'total'  => [ 'entries' => [], 'count' => 7, 'time' => 40.0 ],
+						'wpdb'   => [ 'entries' => [], 'count' => 3, 'time' => 10.0 ],
+					],
+				]
+			)
+		);
+		$fb->flush();
+
+		$buckets = $store->get_categories();
+		$this->assertNotEmpty( $buckets, 'category series written' );
+		$bucket = \reset( $buckets );
+
+		// One request in the bucket, whatever the incoming categories are called.
+		$this->assertSame( 1, $bucket['total']['n'], 'rollup counts requests, not categories' );
+		$this->assertEqualsWithDelta( 250.0, $bucket['total']['t'], 1e-6, 'rollup time is request wall time' );
+		$this->assertEqualsWithDelta( 10.0, $bucket['total']['c'], 1e-6, 'rollup counts every category call' );
+
+		// The colliding event still gets its own row, under a distinct key.
+		$this->assertArrayHasKey( 'wpdb', $bucket );
+		$rows = \array_diff( \array_keys( $bucket ), [ 'total', 'wpdb' ] );
+		$this->assertCount( 1, $rows, 'the colliding event keeps a row of its own' );
+		$own = $bucket[ \reset( $rows ) ];
+		$this->assertEqualsWithDelta( 40.0, $own['t'], 1e-6 );
+		$this->assertEqualsWithDelta( 7.0, $own['c'], 1e-6 );
 	}
 
 	public function test_handle_request_unknown_verb_returns_error(): void {
@@ -2344,4 +2431,12 @@ class FlameBuilderTest extends TestCase {
 
 		$this->assertArrayHasKey( 'evlog:p0:hourly', $this->read_mirror_frames( $p ), 'forward-referenced stats partition resolved lazily at flush' );
 	}
+}
+
+/**
+ * A Flame_Builder whose intern table fills after three names, so a test can
+ * reach the freeze without pushing 50000 distinct strings through it.
+ */
+class TinyInternFlameBuilder extends Flame_Builder_Node {
+	protected const INTERN_TABLE_LIMIT = 3;
 }
