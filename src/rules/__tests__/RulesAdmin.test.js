@@ -333,6 +333,73 @@ describe( 'RulesAdmin', () => {
 		).not.toBeNull();
 	} );
 
+	// The backdrop is a dismiss target; the dialog body inside it is not.
+	test( 'clicking the confirm backdrop cancels, clicking the dialog does not', () => {
+		const { container } = mount();
+		const row = container.querySelector( 'tr[data-rule-id="r1"]' );
+		click(
+			Array.from( row.querySelectorAll( 'button' ) ).find(
+				( b ) => b.textContent.trim() === 'Delete'
+			)
+		);
+		const backdrop = document.querySelector(
+			'.rules-admin__confirm-backdrop'
+		);
+		const down = ( target ) =>
+			act( () => {
+				target.dispatchEvent(
+					new Event( 'mousedown', { bubbles: true } )
+				);
+			} );
+
+		down( document.querySelector( '.rules-admin__confirm' ) );
+		expect(
+			document.querySelector( '.rules-admin__confirm' )
+		).not.toBeNull();
+
+		down( backdrop );
+		expect( document.querySelector( '.rules-admin__confirm' ) ).toBeNull();
+		expect( remove ).not.toHaveBeenCalled();
+	} );
+
+	// A rejection need not be an Error: the banner still has to say something.
+	test( 'a non-Error rejection still reports readable text', async () => {
+		setGraph( { remove: jest.fn().mockRejectedValue( 'plain string' ) } );
+		const { container } = mount();
+		const row = container.querySelector( 'tr[data-rule-id="r1"]' );
+		click(
+			Array.from( row.querySelectorAll( 'button' ) ).find(
+				( b ) => b.textContent.trim() === 'Delete'
+			)
+		);
+		const confirm = Array.from(
+			document
+				.querySelector( '.rules-admin__confirm' )
+				.querySelectorAll( 'button' )
+		).find( ( b ) => b.textContent.trim() === 'Delete' );
+		await act( async () => {
+			confirm.dispatchEvent( new Event( 'click', { bubbles: true } ) );
+		} );
+
+		expect( container.textContent ).toContain( 'plain string' );
+	} );
+
+	test( 'cancelling the editor closes it without writing', () => {
+		const { container } = mount();
+		const row = container.querySelector( 'tr[data-rule-id="r1"]' );
+		click(
+			Array.from( row.querySelectorAll( 'button' ) ).find(
+				( b ) => b.textContent.trim() === 'Edit'
+			)
+		);
+		expect( dialogButton( 'rule-edit' ) ).not.toBeNull();
+
+		click( dialogButton( 'modal-cancel' ) );
+
+		expect( dialogButton( 'rule-edit' ) ).toBeNull();
+		expect( upsert ).not.toHaveBeenCalled();
+	} );
+
 	test( 'a failed save reports it and keeps the editor open', async () => {
 		setGraph( {
 			upsert: jest.fn().mockRejectedValue( new Error( 'nope' ) ),
