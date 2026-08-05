@@ -175,6 +175,26 @@ function RuleRow( { rule, onEdit, onDelete } ) {
  *
  * @return {import('react').ReactElement} The rendered admin app.
  */
+/**
+ * A mutation rejection as a displayable string. The graph rejects with an
+ * Error, but a TM_ERROR reply can surface as a bare string too.
+ *
+ * @param {*} e The rejection value.
+ * @return {string} Message for the error banner.
+ */
+function messageOf( e ) {
+	if ( e && 'string' === typeof e.message && '' !== e.message ) {
+		return e.message;
+	}
+	const text = String( e ?? '' );
+	return '' !== text
+		? text
+		: __( 'The change could not be saved.', 'newspack-event-logger-nodes' );
+}
+
+/**
+ *
+ */
 export default function RulesAdmin() {
 	const { rules, loading, error, upsert, remove } = useRulesGraph();
 
@@ -182,18 +202,34 @@ export default function RulesAdmin() {
 	const [ editing, setEditing ] = useState( null );
 	// The rule pending delete confirmation.
 	const [ deleting, setDeleting ] = useState( null );
+	// A mutation's failure; useRulesGraph rejects rather than filling `error`.
+	const [ mutationError, setMutationError ] = useState( null );
 
 	const handleSave = async ( draft ) => {
-		await upsert( draft );
+		setMutationError( null );
+		try {
+			await upsert( draft );
+		} catch ( e ) {
+			setMutationError( messageOf( e ) );
+			return; // Keep the editor open, with the draft intact.
+		}
 		setEditing( null );
 	};
 
 	const confirmDelete = async () => {
 		const target = deleting;
-		setDeleting( null );
-		if ( target ) {
-			await remove( target.id );
+		if ( ! target ) {
+			return;
 		}
+		setMutationError( null );
+		try {
+			await remove( target.id );
+		} catch ( e ) {
+			// Closing first left the row, a clean banner, and no other trace.
+			setMutationError( messageOf( e ) );
+			return;
+		}
+		setDeleting( null );
 	};
 
 	// Resolve the table body once (avoids a nested ternary in JSX).
@@ -236,9 +272,9 @@ export default function RulesAdmin() {
 
 	return (
 		<div className="rules-admin">
-			{ error && (
+			{ ( error || mutationError ) && (
 				<div className="notice notice-error">
-					<p>{ error }</p>
+					<p>{ error || mutationError }</p>
 				</div>
 			) }
 

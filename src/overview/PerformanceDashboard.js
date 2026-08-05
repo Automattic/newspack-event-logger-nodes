@@ -837,7 +837,6 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 					onSave={ saveRule }
 					onCancel={ () => setRuleDraft( null ) }
 					onDelete={ ruleDraft.id ? deleteRule : undefined }
-					className="newspack-nodes-skin-root"
 				/>
 			) }
 		</div>

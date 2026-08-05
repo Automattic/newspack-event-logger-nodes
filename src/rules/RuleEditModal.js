@@ -23,6 +23,18 @@ import {
 } from '@wordpress/components';
 
 import HookSelectorModal from '../settings/settings/HookSelectorModal';
+
+/**
+ * Every skin class this modal's own stylesheet needs.
+ *
+ * `rule-edit-modal.scss` gates a whole layout block on
+ * `.newspack-nodes-skin-root` — flex column, 600px wide, scrolling content —
+ * so it is not decoration a caller opts into. Leaving that one class to an
+ * optional `className` gave the same modal two layouts: the Performance
+ * dashboard passed it, the rules admin did not.
+ */
+const SKIN_CLASSES =
+	'event-logger-rule-edit-modal newspack-nodes-modal newspack-nodes-theme newspack-nodes-ui newspack-nodes-skin-root';
 import CustomEventSelectorModal from '../settings/settings/CustomEventSelectorModal';
 import TagInputField from '../settings/settings/TagInputField';
 
@@ -46,7 +58,7 @@ function toNumber( value, parse ) {
  * @param {(draft: Object) => void} props.onSave      Called with the edited draft on Save.
  * @param {() => void}              props.onCancel    Dismiss handler (Cancel / ESC / backdrop).
  * @param {(() => void)|undefined}  [props.onDelete]  Delete handler; omitted hides the delete button.
- * @param {string}                  [props.className] Extra class names for the modal and its child modals.
+ * @param {string}                  [props.className] EXTRA class names; the skin classes are the modal's own.
  * @return {import('react').ReactElement} The modal.
  */
 export default function RuleEditModal( {
@@ -117,7 +129,7 @@ export default function RuleEditModal( {
 					: __( 'Add rule', 'newspack-event-logger-nodes' )
 			}
 			onRequestClose={ onCancel }
-			className={ `event-logger-rule-edit-modal newspack-nodes-modal newspack-nodes-theme newspack-nodes-ui ${ className }`.trim() }
+			className={ `${ SKIN_CLASSES } ${ className }`.trim() }
 		>
 			<div className="rule-edit-body">
 				<TextControl
@@ -319,14 +331,14 @@ export default function RuleEditModal( {
 				selected={ hooks }
 				onSelect={ setHooks }
 				mode="include"
-				className={ className }
+				className={ `newspack-nodes-skin-root ${ className }`.trim() }
 			/>
 			<CustomEventSelectorModal
 				isOpen={ isCustomOpen }
 				onClose={ () => setIsCustomOpen( false ) }
 				selected={ customEvents }
 				onSelect={ setCustomEvents }
-				className={ className }
+				className={ `newspack-nodes-skin-root ${ className }`.trim() }
 			/>
 		</Modal>
 	);

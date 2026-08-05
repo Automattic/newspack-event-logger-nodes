@@ -140,7 +140,11 @@ describe( 'RuleEditModal — log rule fields', () => {
 		return r;
 	}
 
-	test( 'uses the exact standalone product modal root classes', () => {
+	test( 'owns every skin class its own stylesheet needs', () => {
+		// rule-edit-modal.scss gates a whole layout block on
+		// `.newspack-nodes-skin-root` — flex column, 600px, scrolling content.
+		// Leaving that one class to an optional `className` meant the modal
+		// rendered two different layouts depending on which caller opened it.
 		mount( LOG_RULE );
 		const frame = document.querySelector( '.event-logger-rule-edit-modal' );
 		expect( frame ).toBeTruthy();
@@ -148,30 +152,29 @@ describe( 'RuleEditModal — log rule fields', () => {
 			'newspack-nodes-modal',
 			'newspack-nodes-theme',
 			'newspack-nodes-ui',
+			'newspack-nodes-skin-root',
 		] );
+		expect( globalThis.__hookSelectorClassName ).toContain(
+			'newspack-nodes-skin-root'
+		);
+		expect( globalThis.__customSelectorClassName ).toContain(
+			'newspack-nodes-skin-root'
+		);
 	} );
 
-	test( 'adds the skinned portal root only when the caller requests it', () => {
+	test( 'still appends a caller class without dropping its own', () => {
 		const r = renderComponent(
 			<RuleEditModal
 				rule={ LOG_RULE }
 				onSave={ onSave }
 				onCancel={ onCancel }
-				className="newspack-nodes-skin-root"
+				className="extra-thing"
 			/>
 		);
 		mounted.push( r );
 		const frame = document.querySelector( '.event-logger-rule-edit-modal' );
-		expect( productRootClasses( frame ) ).toEqual( [
-			'newspack-nodes-modal',
-			'newspack-nodes-theme',
-			'newspack-nodes-ui',
-			'newspack-nodes-skin-root',
-		] );
-		expect( globalThis.__hookSelectorClassName ).toBe(
-			'newspack-nodes-skin-root'
-		);
-		expect( globalThis.__customSelectorClassName ).toBe(
+		expect( Array.from( frame.classList ) ).toContain( 'extra-thing' );
+		expect( productRootClasses( frame ) ).toContain(
 			'newspack-nodes-skin-root'
 		);
 	} );

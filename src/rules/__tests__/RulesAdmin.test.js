@@ -304,6 +304,55 @@ describe( 'RulesAdmin', () => {
 		expect( remove ).toHaveBeenCalledWith( 'r1' );
 	} );
 
+	test( 'a failed delete reports it and keeps the confirm open', async () => {
+		// useRulesGraph's contract: a mutation REJECTS its own promise and
+		// leaves the `error` banner clean for the caller's catch. RulesAdmin is
+		// the sole writer of the ruleset; with no catch the dialog closed, the
+		// row stayed, and the only trace was an unhandled rejection.
+		setGraph( {
+			remove: jest.fn().mockRejectedValue( new Error( 'gone' ) ),
+		} );
+		const { container } = mount();
+		const row = container.querySelector( 'tr[data-rule-id="r1"]' );
+		const del = Array.from( row.querySelectorAll( 'button' ) ).find(
+			( b ) => b.textContent.trim() === 'Delete'
+		);
+		click( del );
+		const confirm = Array.from(
+			document
+				.querySelector( '.rules-admin__confirm' )
+				.querySelectorAll( 'button' )
+		).find( ( b ) => b.textContent.trim() === 'Delete' );
+		await act( async () => {
+			confirm.dispatchEvent( new Event( 'click', { bubbles: true } ) );
+		} );
+
+		expect( container.textContent ).toContain( 'gone' );
+		expect(
+			document.querySelector( '.rules-admin__confirm' )
+		).not.toBeNull();
+	} );
+
+	test( 'a failed save reports it and keeps the editor open', async () => {
+		setGraph( {
+			upsert: jest.fn().mockRejectedValue( new Error( 'nope' ) ),
+		} );
+		const { container } = mount();
+		const row = container.querySelector( 'tr[data-rule-id="r1"]' );
+		const edit = Array.from( row.querySelectorAll( 'button' ) ).find(
+			( b ) => b.textContent.trim() === 'Edit'
+		);
+		click( edit );
+		await act( async () => {
+			dialogButton( 'modal-save' ).dispatchEvent(
+				new Event( 'click', { bubbles: true } )
+			);
+		} );
+
+		expect( container.textContent ).toContain( 'nope' );
+		expect( dialogButton( 'modal-save' ) ).not.toBeNull();
+	} );
+
 	test( 'cancelling the confirm does not remove', () => {
 		const { container } = mount();
 		const row = container.querySelector( 'tr[data-rule-id="r1"]' );
