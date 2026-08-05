@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`GET_CACHE` always answered "nothing is stalled".** Its `oldest_rid` and
+  `oldest_age_s` were computed inside an `is_array( $request )` branch, but the
+  in-flight cache only ever holds `stdClass` — `fill()` stores one and
+  `restore_state()` casts every persisted entry back to one. So the branch never
+  ran: `oldest_rid` was permanently null and `oldest_age_s` permanently 0, the
+  exact reading an operator takes as "nothing is stuck", which is the one
+  question the verb exists to answer. The dead branch was stale twice over,
+  reading `process.ts_start`/`ts` keys this node never writes. It now reads
+  `$request->timestamp`, matching `Request_Flight_Node::inflight_snapshot()`.
+
 - **A per-request flame graph could silently delete the frames a viewer opened
   it to see.** `FlameGraph.js` prunes on a single value cutoff and drops a
   node's whole subtree with it, which is only safe because a child never exceeds
