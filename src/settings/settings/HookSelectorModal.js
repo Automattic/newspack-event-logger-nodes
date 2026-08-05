@@ -23,123 +23,6 @@ import '../styles/hook-selector.scss';
 const RECOMMENDED_HOOKS = new Set( window.newspackNodesRecommendedHooks || [] );
 
 /**
- * Category metadata with descriptions.
- */
-const CATEGORY_META = {
-	Lifecycle: {
-		description: __(
-			'Core request lifecycle',
-			'newspack-event-logger-nodes'
-		),
-	},
-	'Content Rendering': {
-		description: __(
-			'Block & content output',
-			'newspack-event-logger-nodes'
-		),
-	},
-	'Query & Posts': {
-		description: __(
-			'Database queries & post ops',
-			'newspack-event-logger-nodes'
-		),
-	},
-	'Taxonomies & Terms': {
-		description: __( 'Categories & tags', 'newspack-event-logger-nodes' ),
-	},
-	'Users & Auth': {
-		description: __(
-			'Authentication & caps',
-			'newspack-event-logger-nodes'
-		),
-	},
-	'Options & Settings': {
-		description: __(
-			'Options API (high volume)',
-			'newspack-event-logger-nodes'
-		),
-	},
-	'REST API': {
-		description: __( 'REST endpoints', 'newspack-event-logger-nodes' ),
-	},
-	Admin: {
-		description: __(
-			'Admin screens & updates',
-			'newspack-event-logger-nodes'
-		),
-	},
-	'Scripts & Styles': {
-		description: __( 'Asset loading', 'newspack-event-logger-nodes' ),
-	},
-	Media: {
-		description: __(
-			'Uploads & attachments',
-			'newspack-event-logger-nodes'
-		),
-	},
-	Comments: {
-		description: __(
-			'Comments & pingbacks',
-			'newspack-event-logger-nodes'
-		),
-	},
-	URLs: {
-		description: __(
-			'URL generation & links',
-			'newspack-event-logger-nodes'
-		),
-	},
-	Cron: {
-		description: __(
-			'Scheduled & future posts',
-			'newspack-event-logger-nodes'
-		),
-	},
-	Widgets: {
-		description: __( 'Widget areas', 'newspack-event-logger-nodes' ),
-	},
-	Theme: {
-		description: __( 'Theme & customizer', 'newspack-event-logger-nodes' ),
-	},
-	Localization: {
-		description: __(
-			'Translations (noisy)',
-			'newspack-event-logger-nodes'
-		),
-	},
-	Sanitization: {
-		description: __(
-			'Input escaping (noisy)',
-			'newspack-event-logger-nodes'
-		),
-	},
-	HTTP: {
-		description: __(
-			'Remote requests & mail',
-			'newspack-event-logger-nodes'
-		),
-	},
-	AJAX: {
-		description: __( 'AJAX & heartbeat', 'newspack-event-logger-nodes' ),
-	},
-	'Block Editor': {
-		description: __( 'Blocks & TinyMCE', 'newspack-event-logger-nodes' ),
-	},
-	Metadata: {
-		description: __( 'Meta operations', 'newspack-event-logger-nodes' ),
-	},
-	Feeds: {
-		description: __( 'RSS, Atom, RDF', 'newspack-event-logger-nodes' ),
-	},
-	Menus: {
-		description: __( 'Navigation menus', 'newspack-event-logger-nodes' ),
-	},
-	Other: {
-		description: __( 'Uncategorized hooks', 'newspack-event-logger-nodes' ),
-	},
-};
-
-/**
  * Hook Selector Modal component.
  *
  * @param {Object}                 props             Component props.
@@ -164,7 +47,11 @@ export default function HookSelectorModal( {
 	const [ localSelected, setLocalSelected ] = useState( new Set( selected ) );
 
 	// The hook-catalog fetch runs in a JS-node graph; hook fires it on open.
-	const { hooksByCategory, loading } = useHookCatalogGraph( { isOpen } );
+	const {
+		hooksByCategory,
+		descriptions = {},
+		loading,
+	} = useHookCatalogGraph( { isOpen } );
 
 	// Reset local state when modal opens.
 	useEffect( () => {
@@ -333,7 +220,6 @@ export default function HookSelectorModal( {
 			}
 			onRequestClose={ onClose }
 			className={ `event-logger-hook-selector-modal newspack-nodes-modal newspack-nodes-theme newspack-nodes-ui ${ className }`.trim() }
-			style={ { width: '800px', maxWidth: '90vw' } }
 		>
 			<div className="hook-selector-header">
 				<SearchControl
@@ -423,7 +309,7 @@ export default function HookSelectorModal( {
 					.filter( ( cat ) => filteredCategories[ cat ] )
 					.map( ( category ) => {
 						const hooks = filteredCategories[ category ];
-						const meta = CATEGORY_META[ category ] || {};
+						const description = descriptions[ category ] || '';
 						const counts = categoryCounts[ category ] || {
 							selected: 0,
 							total: 0,
@@ -479,7 +365,7 @@ export default function HookSelectorModal( {
 										) }
 									</span>
 									<span className="hook-selector-category-desc">
-										{ meta.description }
+										{ description }
 									</span>
 									<span className="hook-selector-category-count newspack-nodes-badge">
 										{ counts.selected }/{ counts.total }

@@ -1597,9 +1597,10 @@ class Performance_CI_Node extends Service_CI_Node {
 					$total += \is_array( $list ) ? \count( $list ) : 0;
 				}
 				return [
-					'total_hooks'       => $total,
-					'categories'        => Hook_Categorizer::get_categories(),
-					'hooks_by_category' => $by_category,
+					'total_hooks'           => $total,
+					'categories'            => Hook_Categorizer::get_categories(),
+					'category_descriptions' => Hook_Categorizer::get_descriptions(),
+					'hooks_by_category'     => $by_category,
 				];
 					},
 				],

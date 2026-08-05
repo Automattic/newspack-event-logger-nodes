@@ -84,7 +84,7 @@ class Hook_Categorizer {
 	 * Cached merged config (base + user customizations). Null until the first
 	 * `get_merged_config()`, and `clear_cache()` puts it back there.
 	 *
-	 * @var array{colors: array<string, mixed>, patterns: array<string, mixed>, overrides: array<string, mixed>}|null
+	 * @var array{colors: array<string, mixed>, descriptions: array<string, mixed>, patterns: array<string, mixed>, overrides: array<string, mixed>}|null
 	 */
 	private static ?array $merged_config = null;
 
@@ -193,7 +193,7 @@ class Hook_Categorizer {
 	 * order, a base pattern in an earlier category still beats a user pattern
 	 * in a later one — `overrides` is the way to pin a specific hook.
 	 *
-	 * @return array{colors: array<string, mixed>, patterns: array<string, mixed>, overrides: array<string, mixed>} Merged configuration.
+	 * @return array{colors: array<string, mixed>, descriptions: array<string, mixed>, patterns: array<string, mixed>, overrides: array<string, mixed>} Merged configuration.
 	 */
 	public static function get_merged_config(): array {
 		if ( null !== self::$merged_config ) {
@@ -205,6 +205,8 @@ class Hook_Categorizer {
 
 		$base_colors    = $base['_colors'] ?? [];
 		$user_colors    = $customizations['colors'] ?? [];
+		$base_descs     = $base['_descriptions'] ?? [];
+		$user_descs     = $customizations['descriptions'] ?? [];
 		$base_patterns  = $base['_patterns'] ?? [];
 		$user_patterns_all = $customizations['patterns'] ?? [];
 		$overrides      = $customizations['overrides'] ?? [];
@@ -212,6 +214,10 @@ class Hook_Categorizer {
 		// Merge colors (user overrides base).
 		/** @var array<string, mixed> $colors config dynamic output. */
 		$colors = \array_merge( Core::arr( $base_colors ), Core::arr( $user_colors ) );
+
+		// Same precedence as colors: a user description wins.
+		/** @var array<string, mixed> $descriptions config dynamic output. */
+		$descriptions = \array_merge( Core::arr( $base_descs ), Core::arr( $user_descs ) );
 
 		// Merge patterns (user patterns added to base).
 		/** @var array<string, mixed> $patterns config dynamic output. */
@@ -229,9 +235,10 @@ class Hook_Categorizer {
 		/** @var array<string, mixed> $overrides_map config dynamic output. */
 		$overrides_map       = Core::arr( $overrides );
 		self::$merged_config = [
-			'colors'    => $colors,
-			'patterns'  => $patterns,
-			'overrides' => $overrides_map,
+			'colors'       => $colors,
+			'descriptions' => $descriptions,
+			'patterns'     => $patterns,
+			'overrides'    => $overrides_map,
 		];
 
 		return self::$merged_config;
@@ -278,13 +285,14 @@ class Hook_Categorizer {
 	 * stored value of any other type is discarded before the merge, so the
 	 * three default keys are always present.
 	 *
-	 * @return array<string, mixed> User customizations with keys: patterns, overrides, colors.
+	 * @return array<string, mixed> User customizations: patterns, overrides, colors, descriptions.
 	 */
 	public static function get_user_customizations(): array {
 		$defaults = [
-			'patterns'  => [],  // category => [patterns...] - merged with base.
-			'overrides' => [],  // hook_name => category - explicit assignments.
-			'colors'    => [],  // category => color - merged with base.
+			'patterns'     => [],  // category => [patterns...] - merged with base.
+			'overrides'    => [],  // hook_name => category - explicit assignments.
+			'colors'       => [],  // category => color - merged with base.
+			'descriptions' => [],  // category => one-liner - merged with base.
 		];
 
 		$saved = \get_option( self::OPTION_NAME, [] );
@@ -393,6 +401,21 @@ class Hook_Categorizer {
 		}
 
 		return 'Other';
+	}
+
+	/**
+	 * One-line descriptions for the categories, keyed by category name.
+	 *
+	 * These live beside the taxonomy they describe. The hook picker used to
+	 * carry its own hand-written map covering 24 of the 63 categories this
+	 * config declares — and a user can add more — so the rest silently rendered
+	 * blank.
+	 *
+	 * @return array<string, mixed> Category name => description.
+	 */
+	public static function get_descriptions(): array {
+		$config = self::get_merged_config();
+		return $config['descriptions'];
 	}
 
 	/**
