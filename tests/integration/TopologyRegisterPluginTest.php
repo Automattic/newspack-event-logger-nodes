@@ -52,17 +52,27 @@ class TopologyRegisterPluginTest extends TestCase {
 	/** @return array<string,mixed> */
 	private function snapshot_registry(): array {
 		$out = [];
-		foreach ( [ 'stock_dirs', 'user_dir', 'segment_size_overrides_cache', 'registered_plugins' ] as $prop ) {
+		foreach ( [ 'stock_dirs', 'user_dir', 'registered_plugins' ] as $prop ) {
 			$ref = new \ReflectionProperty( Topology_Registry::class, $prop );
 			$out[ $prop ] = $ref->getValue();
 		}
+		// The parse caches moved to Topology_Analyzer with the analysis.
+		$ref = new \ReflectionProperty(
+			\Newspack_Nodes\Topology_Analyzer::class,
+			'segment_size_overrides_cache'
+		);
+		$out['segment_size_overrides_cache'] = $ref->getValue();
 		return $out;
 	}
 
 	/** @param array<string,mixed> $state */
 	private function restore_registry( array $state ): void {
 		foreach ( $state as $prop => $value ) {
-			$ref = new \ReflectionProperty( Topology_Registry::class, $prop );
+			// The parse caches moved to Topology_Analyzer with the analysis.
+			$owner = 'segment_size_overrides_cache' === $prop
+				? \Newspack_Nodes\Topology_Analyzer::class
+				: Topology_Registry::class;
+			$ref = new \ReflectionProperty( $owner, $prop );
 			$ref->setValue( null, $value );
 		}
 	}

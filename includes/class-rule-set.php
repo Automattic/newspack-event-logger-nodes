@@ -47,15 +47,57 @@ final class Rule_Set {
 	}
 
 	/**
-	 * A rule's id is the shared 12-char url_hash of its pattern. The pattern IS
-	 * the identity, so there is exactly one id per pattern — you can never end up
-	 * with two differently-configured rules for the same URL. See Log_Manager::url_hash.
+	 * Read the persisted ruleset, falling back to the file config.
 	 *
-	 * @param string $pattern Rule pattern: '/prefix', exact '/x?', or '/x?query'.
-	 * @return string 12-character hex id.
+	 * An absent option seeds from config; a corrupt (non-array) one seeds too,
+	 * after a stderr notice. Non-array entries are skipped. Stored ids stand as
+	 * written — only an entry stored without one gets an id minted — because
+	 * every write path already rekeyed by pattern. This is the read side.
 	 */
-	public static function id_for( string $pattern ): string {
-		return Log_Manager::url_hash( $pattern );
+	public static function load(): self {
+		$raw = \get_option( self::OPTION_RULES, null );
+		if ( null === $raw ) {
+			return self::seed_from_config();
+		}
+		if ( ! \is_array( $raw ) ) {
+			Core::stderr( 'Newspack ELN: corrupt rules option; seeding from config.' );
+			return self::seed_from_config();
+		}
+		$rules = [];
+		foreach ( $raw as $entry ) {
+			if ( \is_array( $entry ) ) {
+				/** @var array<string, mixed> $entry stored rule shape (Rule::to_array()). */
+				$rule = Rule::from_array( $entry );
+				// Mint id for idless stored rule; avoids collision on '' key.
+				$rules[] = '' === $rule->id ? $rule->with_id( self::id_for( $rule->pattern ) ) : $rule;
+			}
+		}
+		return new self( $rules );
+	}
+
+	/**
+	 * Read-time default when the option is absent (or corrupt): build the ruleset
+	 * from the file config's `rules` list, rekeyed by pattern — a config entry's
+	 * own `id`, if it declares one, is ignored.
+	 *
+	 * Empty means empty — config `rules => []` (or no rules key) yields a zero-rule
+	 * set (log nothing), the same as a stored `[]`; there is no implicit log-all
+	 * baseline. Does NOT persist — the file value stands in until the editor writes
+	 * the option.
+	 */
+	private static function seed_from_config(): self {
+		$raw = Config::value( 'rules' );
+		return new self( \is_array( $raw ) ? self::rules_from_config( $raw ) : [] );
+	}
+
+	/**
+	 * Turn config rule maps into Rule objects, rekeyed by pattern.
+	 *
+	 * @param array<array-key, mixed> $entries Config `rules` list.
+	 * @return Rule[]
+	 */
+	private static function rules_from_config( array $entries ): array {
+		return self::rekey_by_pattern( self::rules_from_maps( $entries ) );
 	}
 
 	/**
@@ -82,6 +124,63 @@ final class Rule_Set {
 			$by_id[ $id ] = $rule->with_id( $id );
 		}
 		return \array_values( $by_id );
+	}
+
+	/**
+	 * A rule's id is the shared 12-char url_hash of its pattern. The pattern IS
+	 * the identity, so there is exactly one id per pattern — you can never end up
+	 * with two differently-configured rules for the same URL. See Log_Manager::url_hash.
+	 *
+	 * @param string $pattern Rule pattern: '/prefix', exact '/x?', or '/x?query'.
+	 * @return string 12-character hex id.
+	 */
+	public static function id_for( string $pattern ): string {
+		return Log_Manager::url_hash( $pattern );
+	}
+
+	/**
+	 * Decode a list of stored/wire rule maps, skipping non-array junk.
+	 *
+	 * @param array<array-key, mixed> $entries Rule maps (Rule::to_array() shape).
+	 * @return Rule[]
+	 */
+	private static function rules_from_maps( array $entries ): array {
+		$rules = [];
+		foreach ( $entries as $entry ) {
+			if ( \is_array( $entry ) ) {
+				/** @var array<string, mixed> $entry rule shape (Rule::to_array()). */
+				$rules[] = Rule::from_array( $entry );
+			}
+		}
+		return $rules;
+	}
+
+	/**
+	 * Inline every pointer entry's hooks in a stored/synced rule-map list, resolving
+	 * each from its durable option (or mc). The transport-safe form of a ruleset:
+	 * self-contained, no dangling durable-option references. Non-pointer entries
+	 * (and non-array junk) pass through untouched. The settings-sync value filter
+	 * (`newspack_nodes/settings_sync/value`) runs the hub's rule list through this
+	 * so the ruleset reaches spokes hook-complete; `apply_synced()` is the inverse.
+	 *
+	 * @param array<int|string, mixed> $rules_array Stored rule maps (Rule::to_array()).
+	 * @return array<int, mixed>
+	 */
+	public static function hydrate_array( array $rules_array ): array {
+		$out = [];
+		foreach ( $rules_array as $entry ) {
+			if ( \is_array( $entry ) && Rule::HOOKS_MC === ( $entry['hooks_in'] ?? '' ) ) {
+				/** @var array<string, mixed> $entry pointer rule map. */
+				$hooks = self::hooks_for( Rule::from_array( $entry ) );
+				// Stay a pointer on []: inlining empty wipes the spoke's hooks.
+				if ( [] !== $hooks ) {
+					$entry['hooks']    = $hooks;
+					$entry['hooks_in'] = Rule::HOOKS_INLINE;
+				}
+			}
+			$out[] = $entry;
+		}
+		return $out;
 	}
 
 	/**
@@ -139,105 +238,6 @@ final class Rule_Set {
 	 */
 	public static function hooks_option_name( string $id ): string {
 		return self::OPTION_HOOKS_PREFIX . $id;
-	}
-
-	/**
-	 * Read the persisted ruleset, falling back to the file config.
-	 *
-	 * An absent option seeds from config; a corrupt (non-array) one seeds too,
-	 * after a stderr notice. Non-array entries are skipped. Stored ids stand as
-	 * written — only an entry stored without one gets an id minted — because
-	 * every write path already rekeyed by pattern. This is the read side.
-	 */
-	public static function load(): self {
-		$raw = \get_option( self::OPTION_RULES, null );
-		if ( null === $raw ) {
-			return self::seed_from_config();
-		}
-		if ( ! \is_array( $raw ) ) {
-			Core::stderr( 'Newspack ELN: corrupt rules option; seeding from config.' );
-			return self::seed_from_config();
-		}
-		$rules = [];
-		foreach ( $raw as $entry ) {
-			if ( \is_array( $entry ) ) {
-				/** @var array<string, mixed> $entry stored rule shape (Rule::to_array()). */
-				$rule = Rule::from_array( $entry );
-				// Mint id for idless stored rule; avoids collision on '' key.
-				$rules[] = '' === $rule->id ? $rule->with_id( self::id_for( $rule->pattern ) ) : $rule;
-			}
-		}
-		return new self( $rules );
-	}
-
-	/**
-	 * Read-time default when the option is absent (or corrupt): build the ruleset
-	 * from the file config's `rules` list, rekeyed by pattern — a config entry's
-	 * own `id`, if it declares one, is ignored.
-	 *
-	 * Empty means empty — config `rules => []` (or no rules key) yields a zero-rule
-	 * set (log nothing), the same as a stored `[]`; there is no implicit log-all
-	 * baseline. Does NOT persist — the file value stands in until the editor writes
-	 * the option.
-	 */
-	private static function seed_from_config(): self {
-		$raw = Config::value( 'rules' );
-		return new self( \is_array( $raw ) ? self::rules_from_config( $raw ) : [] );
-	}
-
-	/**
-	 * Turn config rule maps into Rule objects, rekeyed by pattern.
-	 *
-	 * @param array<array-key, mixed> $entries Config `rules` list.
-	 * @return Rule[]
-	 */
-	private static function rules_from_config( array $entries ): array {
-		return self::rekey_by_pattern( self::rules_from_maps( $entries ) );
-	}
-
-	/**
-	 * Decode a list of stored/wire rule maps, skipping non-array junk.
-	 *
-	 * @param array<array-key, mixed> $entries Rule maps (Rule::to_array() shape).
-	 * @return Rule[]
-	 */
-	private static function rules_from_maps( array $entries ): array {
-		$rules = [];
-		foreach ( $entries as $entry ) {
-			if ( \is_array( $entry ) ) {
-				/** @var array<string, mixed> $entry rule shape (Rule::to_array()). */
-				$rules[] = Rule::from_array( $entry );
-			}
-		}
-		return $rules;
-	}
-
-	/**
-	 * Inline every pointer entry's hooks in a stored/synced rule-map list, resolving
-	 * each from its durable option (or mc). The transport-safe form of a ruleset:
-	 * self-contained, no dangling durable-option references. Non-pointer entries
-	 * (and non-array junk) pass through untouched. The settings-sync value filter
-	 * (`newspack_nodes/settings_sync/value`) runs the hub's rule list through this
-	 * so the ruleset reaches spokes hook-complete; `apply_synced()` is the inverse.
-	 *
-	 * @param array<int|string, mixed> $rules_array Stored rule maps (Rule::to_array()).
-	 * @return array<int, mixed>
-	 */
-	public static function hydrate_array( array $rules_array ): array {
-		$out = [];
-		foreach ( $rules_array as $entry ) {
-			if ( \is_array( $entry ) && Rule::HOOKS_MC === ( $entry['hooks_in'] ?? '' ) ) {
-				/** @var array<string, mixed> $entry pointer rule map. */
-				$hooks = self::hooks_for( Rule::from_array( $entry ) );
-				// Stay a pointer on []: inlining empty wipes the spoke's hooks.
-				if ( [] !== $hooks ) {
-					$entry['hooks']    = $hooks;
-					$entry['hooks_in'] = Rule::HOOKS_INLINE;
-				}
-			}
-			$out[] = $entry;
-		}
-		return $out;
 	}
 
 	/**

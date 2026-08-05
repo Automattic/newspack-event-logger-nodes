@@ -289,48 +289,6 @@ class Log_Manager {
 		return true;
 	}
 
-	/** Dir template for the firehose Topic. The one place its layout is written. */
-	private static function firehose_dir_template(): string {
-		return Config::get_logs_directory() . '/firehose.p{partition}';
-	}
-
-	/**
-	 * Firehose dirs indexed by partition, for readers (dashboard grep, reqgrep).
-	 *
-	 * The UNION of two spans, never one replacing the other. init_firehose()
-	 * builds this Topic in REQUEST scope and hashes the rid over the GLOBAL
-	 * count on every request, so that span always holds data. An aggregator hub
-	 * additionally declares a `firehose:topic`, whose own count may sit above
-	 * the global (fan-in) or below it (a pinned `var num_partitions`) — widening
-	 * the reader either way, narrowing it never. A dir that holds nothing costs
-	 * a scan of nothing; a dir left out is data the dashboard cannot see.
-	 *
-	 * Readers only. The writer stays on the cheap config read — it runs on
-	 * every request and must not parse topologies to log a line.
-	 *
-	 * `$log_path` is `reqgrep --firehose`'s override: a log base whose partitions
-	 * are its `.p{N}` siblings. An explicit path answers only for itself, so no
-	 * declaration joins that span.
-	 *
-	 * @param string $log_path Log base overriding the configured layout; '' uses the config.
-	 * @return array<int,string> Partition index => directory.
-	 */
-	public static function firehose_dirs( string $log_path = '' ): array {
-		$declared = '' === $log_path ? Bootstrap::node_dirs( self::FIREHOSE_NODE ) : [];
-		$template = '' === $log_path
-			? self::firehose_dir_template()
-			: (string) \preg_replace( '/\.log$/', '', $log_path ) . '.p{partition}';
-		$count    = \max(
-			\count( $declared ),
-			\Newspack_Nodes\Bootstrap::global_num_partitions()
-		);
-		$dirs = [];
-		for ( $p = 0; $p < $count; $p++ ) {
-			$dirs[ $p ] = $declared[ $p ] ?? Core::resolve_partition_template( $template, $p );
-		}
-		return $dirs;
-	}
-
 	/**
 	 * Mint the request id, pick its partition, and attach the firehose Topic.
 	 *
@@ -389,6 +347,11 @@ class Log_Manager {
 			$rid .= \base_convert( \bin2hex( \random_bytes( 5 ) ), 16, 36 );
 		}
 		return \substr( $rid, 0, 32 );
+	}
+
+	/** Dir template for the firehose Topic. The one place its layout is written. */
+	private static function firehose_dir_template(): string {
+		return Config::get_logs_directory() . '/firehose.p{partition}';
 	}
 
 	/**
@@ -781,6 +744,43 @@ class Log_Manager {
 			$entry['m'] = $data['m'];
 		}
 		$this->times[] = $entry;
+	}
+
+	/**
+	 * Firehose dirs indexed by partition, for readers (dashboard grep, reqgrep).
+	 *
+	 * The UNION of two spans, never one replacing the other. init_firehose()
+	 * builds this Topic in REQUEST scope and hashes the rid over the GLOBAL
+	 * count on every request, so that span always holds data. An aggregator hub
+	 * additionally declares a `firehose:topic`, whose own count may sit above
+	 * the global (fan-in) or below it (a pinned `var num_partitions`) — widening
+	 * the reader either way, narrowing it never. A dir that holds nothing costs
+	 * a scan of nothing; a dir left out is data the dashboard cannot see.
+	 *
+	 * Readers only. The writer stays on the cheap config read — it runs on
+	 * every request and must not parse topologies to log a line.
+	 *
+	 * `$log_path` is `reqgrep --firehose`'s override: a log base whose partitions
+	 * are its `.p{N}` siblings. An explicit path answers only for itself, so no
+	 * declaration joins that span.
+	 *
+	 * @param string $log_path Log base overriding the configured layout; '' uses the config.
+	 * @return array<int,string> Partition index => directory.
+	 */
+	public static function firehose_dirs( string $log_path = '' ): array {
+		$declared = '' === $log_path ? Bootstrap::node_dirs( self::FIREHOSE_NODE ) : [];
+		$template = '' === $log_path
+			? self::firehose_dir_template()
+			: (string) \preg_replace( '/\.log$/', '', $log_path ) . '.p{partition}';
+		$count    = \max(
+			\count( $declared ),
+			\Newspack_Nodes\Bootstrap::global_num_partitions()
+		);
+		$dirs = [];
+		for ( $p = 0; $p < $count; $p++ ) {
+			$dirs[ $p ] = $declared[ $p ] ?? Core::resolve_partition_template( $template, $p );
+		}
+		return $dirs;
 	}
 
 	/**

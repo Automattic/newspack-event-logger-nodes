@@ -24,6 +24,7 @@ use Newspack_Nodes\Router_Node;
 use Newspack_Nodes\Settings_Sync_Node;
 use Newspack_Nodes\Tee_Node;
 use Newspack_Nodes\Topology_Loader;
+use Newspack_Nodes\Topology_Analyzer;
 use Newspack_Nodes\Topology_Registry;
 
 class HubControlTopologyTest extends TestCase {
@@ -62,7 +63,7 @@ class HubControlTopologyTest extends TestCase {
 	}
 
 	public function test_hub_control_is_single_instance(): void {
-		$front = Topology_Registry::frontmatter( 'hub-control' );
+		$front = Topology_Analyzer::frontmatter( 'hub-control' );
 		$this->assertArrayHasKey( 'num_partitions', $front );
 		$this->assertSame( '1', $front['num_partitions'] );
 	}
