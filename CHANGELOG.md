@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.44.13] - 2026-08-06
+
+### Changed
+
+- Dependencies: `fast-uri` 3.1.4 -> 3.1.5 (the high-severity advisory) and the
+  `softprops/action-gh-release` pin 3.0.1 -> 3.0.2. Substrate pin moves to
+  `v2.11.1`.
+
 ## [0.44.12] - 2026-08-06
 
 ### Changed
