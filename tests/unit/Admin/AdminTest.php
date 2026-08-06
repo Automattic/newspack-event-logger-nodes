@@ -263,6 +263,21 @@ class AdminTest extends TestCase {
 		$this->assertRestartNotFlagged( 'combined', 0 );
 	}
 
+	public function test_saving_a_restartless_setting_still_asks_every_worker_to_re_read(): void {
+		// log_urls restarts nothing, and a running worker's option cache is
+		// frozen at boot — so with no reload signal the new value waits out a
+		// whole ~595s worker lifetime instead of landing on the next 15s window.
+		$this->register_topologies();
+		$this->prepare_topology_lock_dir( 'combined', 0 );
+		$this->prepare_topology_lock_dir( 'aggregator', 0 );
+
+		( new Admin() )->maybe_request_worker_restart( 'newspack_event_logger_nodes_log_urls' );
+
+		$this->assertFileExists( $this->base_dir . '/locks/combined.p0.lock.d/' . Lock_Node::RELOAD_FLAG );
+		$this->assertFileExists( $this->base_dir . '/locks/aggregator.p0.lock.d/' . Lock_Node::RELOAD_FLAG );
+		$this->assertRestartNotFlagged( 'combined', 0 );
+	}
+
 	public function test_maybe_request_worker_restart_supervisor_only_enable_logging_restarts_all_live_topologies(): void {
 		$this->register_topologies();
 		$this->prepare_topology_lock_dir( 'combined', 0 );

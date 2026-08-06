@@ -296,7 +296,7 @@ class HookCategorizerTest extends TestCase {
 			// Slash-style (actions, fanout filters).
 			'newspack_event_logger_nodes/sse_connected'        => (object) [ 'callbacks' => [ 'cb' ] ],
 			'newspack_nodes/spawn_worker'                    => (object) [ 'callbacks' => [ 'cb' ] ],
-			'newspack_nodes/supervisor_periodic'             => (object) [ 'callbacks' => [ 'cb' ] ],
+			'newspack_nodes/periodic'                        => (object) [ 'callbacks' => [ 'cb' ] ],
 			// Real WP hooks — must survive the filter.
 			'wp_ajax_my_action'                              => (object) [ 'callbacks' => [ 'cb' ] ],
 			'admin_init'                                     => (object) [ 'callbacks' => [ 'cb' ] ],
@@ -314,7 +314,7 @@ class HookCategorizerTest extends TestCase {
 		$this->assertNotContains( 'newspack_nodes_option_schema_core', $all_hooks );
 		$this->assertNotContains( 'newspack_event_logger_nodes/sse_connected', $all_hooks );
 		$this->assertNotContains( 'newspack_nodes/spawn_worker', $all_hooks );
-		$this->assertNotContains( 'newspack_nodes/supervisor_periodic', $all_hooks );
+		$this->assertNotContains( 'newspack_nodes/periodic', $all_hooks );
 		$this->assertContains( 'wp_ajax_my_action', $all_hooks );
 		$this->assertContains( 'admin_init', $all_hooks );
 
