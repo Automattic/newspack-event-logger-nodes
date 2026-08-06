@@ -31,7 +31,8 @@ use Newspack_Nodes\Core;
  * `rules()` after `save()` matches a fresh `load()`.
  */
 final class Rule_Set {
-	public const INLINE_HOOK_LIMIT     = 100; // crossover threshold; not below 65.
+	/** Inline-hook crossover threshold; do not set below 65. */
+	public const INLINE_HOOK_LIMIT     = 100;
 	public const MC_HOOKS_PREFIX       = 'evlog:rules:hooks:';
 	public const MC_TTL                = 3600;
 	public const OPTION_HOOKS_PREFIX   = 'newspack_event_logger_nodes_rule_hooks_';
