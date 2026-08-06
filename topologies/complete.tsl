@@ -1,8 +1,8 @@
-# Combined topology: one worker runs request-builder, flame-builder, and
-# job-router together.
+# Complete topology: one worker runs request-builder, flame-builder,
+# job-router, and job-worker together.
 
 include performance
-include job-router
+include jobs
 make_node Tee firehose:tee
 disconnect_node firehose:consumer
 connect_node firehose:consumer firehose:tee
