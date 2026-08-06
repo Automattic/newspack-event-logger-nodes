@@ -1661,6 +1661,19 @@ class Performance_CI_Node extends Service_CI_Node {
 					];
 				}
 
+				// @longform A set to a value already in place is
+				// a no-op, not a save. The hub re-pushes every
+				// synced option on its sweep whether or not it
+				// moved, and a reload is not free: it fires
+				// Config::RESET_ACTION on every worker, which
+				// re-parses every .tsl for the same answer.
+				if ( \get_option( $option, null ) === $sanitized ) {
+					return [
+						'option'  => $option,
+						'updated' => false,
+					];
+				}
+
 				// Autoload per Config::autoload_for; emits settings event.
 				$ok = \update_option( $option, $sanitized, AppConfig::autoload_for( $option ) );
 				AppConfig::reset();

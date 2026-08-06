@@ -269,7 +269,7 @@ class AdminTest extends TestCase {
 		$this->assertRestartNotFlagged( 'combined', 0 );
 	}
 
-	public function test_maybe_request_worker_restart_supervisor_only_enable_logging_restarts_all_live_topologies(): void {
+	public function test_maybe_request_worker_restart_enable_logging_restarts_all_live_topologies(): void {
 		$this->register_topologies();
 		$this->prepare_lock_dir( 'combined', 0 );
 		$this->prepare_lock_dir( 'aggregator', 0 );

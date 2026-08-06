@@ -160,7 +160,7 @@ const COLUMNS = {
  * URL hash for deep-linking to URL detail — must match PHP
  * `Log_Manager::url_hash`, which hashes the FULL url. The real query is
  * already stripped upstream, so the only `?` left is the intentional
- * `?worker_type` marker on nodes/ELN URLs (e.g. `/jobs/x?supervisor`); keeping
+ * `?worker_type` marker on nodes/ELN URLs (e.g. `/jobs/x?reconcile`); keeping
  * it is what makes those URLs deep-link correctly.
  *
  * @param {string} url URL to hash.

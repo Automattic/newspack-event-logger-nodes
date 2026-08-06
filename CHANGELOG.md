@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A `performance set` that changed nothing still reloaded the whole fleet.**
+  The verb wrote and then signalled unconditionally, so a hub's settings-sync
+  sweep — which re-pushes every synced option on its interval whether or not it
+  moved — fired `Config::RESET_ACTION` on every worker once per sweep, each one
+  re-globbing and re-parsing every `.tsl` to reach the answer it already had. It
+  now returns `updated: false` and signals nothing when the stored value matches.
+  Same fix as the substrate's `Settings_CI::cmd_set`. `Rule_Set::save()` still
+  signals unconditionally: it has side effects beyond the rules option (durable
+  hook options, the memcache mirror, orphan reconciliation) that can change while
+  the option does not, so gating it needs more than a value comparison.
+
+- **Documentation named a supervisor that has not existed since substrate
+  2.11.0.** The architecture guide claimed the job-context pair also bracketed
+  the reconcile pass via `newspack_nodes/{before,after}_supervisor_run` — hooks
+  renamed to `{before,after}_reconcile` and, in this plugin, no longer wired at
+  all. Removed the stale claim and the remaining supervisor-era vocabulary from
+  the guide, the admin docblock's restart-classification list (the
+  `'supervisor_only'` token is gone from the substrate), and the worker-type
+  fixtures, which now use the `reconcile` label the substrate actually emits.
+
 ## [0.44.13] - 2026-08-06
 
 ### Changed

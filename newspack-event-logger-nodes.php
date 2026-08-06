@@ -26,7 +26,7 @@
  *    and gated on the substrate being present AND new enough.
  * 3. Hooks whose actions only ever fire from substrate code — the
  *    `newspack_nodes/` stderr, request-graph-ready and
- *    supervisor-run actions — register at file scope. Without the substrate the
+ *    reconcile-run actions — register at file scope. Without the substrate the
  *    action never fires, so a presence guard would be dead weight.
  *
  * The admin menu and dashboard enqueues also register at file scope, guarding

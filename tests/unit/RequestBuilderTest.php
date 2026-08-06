@@ -431,7 +431,7 @@ class RequestBuilderTest extends TestCase {
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
 		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
-		$this->fill( $rb, 3, 'r1', 'worker_type', [ 'm' => 'supervisor' ] );
+		$this->fill( $rb, 3, 'r1', 'worker_type', [ 'm' => 'reconcile' ] );
 		$this->fill( $rb, 4, 'r1', 'process (complete)' );
 
 		$req = $this->captured_request( $capture );
@@ -446,7 +446,7 @@ class RequestBuilderTest extends TestCase {
 		$req = (object) [
 			'state'       => 'complete',
 			'url'         => 'https://x.test/',
-			'worker_type' => 'supervisor',
+			'worker_type' => 'reconcile',
 			'rid'         => 'r1',
 			'timestamp'   => 1,
 			'duration_ms' => 5,
@@ -454,7 +454,7 @@ class RequestBuilderTest extends TestCase {
 		$rb->emit_request( $req );
 
 		$value = $capture->captured[0][ Message::VALUE ];
-		$this->assertSame( 'https://x.test/?supervisor', $value['url'] );
+		$this->assertSame( 'https://x.test/?reconcile', $value['url'] );
 	}
 
 	public function test_emit_request_leaves_non_worker_url(): void {
@@ -482,7 +482,7 @@ class RequestBuilderTest extends TestCase {
 		$req = (object) [
 			'state'       => 'complete',
 			'url'         => 'https://x.test/?already',
-			'worker_type' => 'supervisor',
+			'worker_type' => 'reconcile',
 			'rid'         => 'r3',
 			'timestamp'   => 1,
 			'duration_ms' => 5,
@@ -501,7 +501,7 @@ class RequestBuilderTest extends TestCase {
 		$req = (object) [
 			'state'       => 'complete',
 			'url'         => 'https://x.test/',
-			'worker_type' => 'supervisor',
+			'worker_type' => 'reconcile',
 			'rid'         => 'r4',
 			'timestamp'   => 1,
 			'duration_ms' => 5,
@@ -514,7 +514,7 @@ class RequestBuilderTest extends TestCase {
 			$capture->captured
 		);
 		foreach ( $urls as $url ) {
-			$this->assertSame( 'https://x.test/?supervisor', $url );
+			$this->assertSame( 'https://x.test/?reconcile', $url );
 		}
 		$this->assertGreaterThanOrEqual( 2, \count( $urls ) );
 	}

@@ -1,6 +1,6 @@
 # Newspack Event Logger Nodes Architecture
 
-Event-logger application built on the [`newspack-nodes`](../../newspack-nodes/) runtime substrate. This document describes the *application* graph: which Nodes, what they do, how they wire together. For the underlying substrate (Node, Message, Router, Topic, Partition, Worker, Supervisor, REPL), see `../../newspack-nodes/docs/architecture-guide.md`.
+Event-logger application built on the [`newspack-nodes`](../../newspack-nodes/) runtime substrate. This document describes the *application* graph: which Nodes, what they do, how they wire together. For the underlying substrate (Node, Message, Router, Topic, Partition, Worker, Fleet, REPL), see `../../newspack-nodes/docs/architecture-guide.md`.
 
 This plugin replaced the legacy `newspack-event-logger-plugins` monorepo wholesale. That monorepo has since been removed from the tree ("the museum"); this plugin plus the `newspack-nodes` substrate is the sole event-logger stack, writing to `/tmp/newspack-nodes` by default.
 
@@ -140,7 +140,7 @@ Every URL written to the firehose (REQUEST_URI, HTTP_REFERER, redirect targets) 
 
 ### Worker-traffic exclusion
 
-When workers spawn via the HMAC endpoint, the substrate sets `NEWSPACK_NODES_WORKER_TYPE=<worker>` in `$_SERVER`. Two things keep that traffic out of the stats. First, the shipped config seeds SKIP rules for the substrate worker endpoints (`/wp-json/newspack-nodes/v1/{command,log/stream,messages/stream,workers/spawn}`) and `/wp-cron.php`, so the matcher resolves those URLs to `skip` and the firehose never sees them. Second, for any worker request that IS logged, `NEWSPACK_NODES_WORKER_TYPE` rides the `environment_v3` entry; `Request_Builder_Node` reads it, sets `is_worker`, and appends `?<worker_type>` to the request URL so worker traffic gets its own URL rows instead of polluting the real ones. Without that exclusion, the supervisor's spawn cycle would dominate every leaderboard.
+When workers spawn via the HMAC endpoint, the substrate sets `NEWSPACK_NODES_WORKER_TYPE=<worker>` in `$_SERVER`. Two things keep that traffic out of the stats. First, the shipped config seeds SKIP rules for the substrate worker endpoints (`/wp-json/newspack-nodes/v1/{command,log/stream,messages/stream,workers/spawn}`) and `/wp-cron.php`, so the matcher resolves those URLs to `skip` and the firehose never sees them. Second, for any worker request that IS logged, `NEWSPACK_NODES_WORKER_TYPE` rides the `environment_v3` entry; `Request_Builder_Node` reads it, sets `is_worker`, and appends `?<worker_type>` to the request URL so worker traffic gets its own URL rows instead of polluting the real ones. Without that exclusion, the fleet's spawn cycle would dominate every leaderboard.
 
 ### PIPE_BUF and truncation
 
@@ -199,7 +199,7 @@ Each worker group is one declarative `.tsl` file in `topologies/`. A TSL file is
 | `disconnect_node <from> [to]` | Drop an edge an included topology declared. |
 | `cmd <node>:config <verb> [args…]` | Run a config verb on the node's `:config` interpreter. |
 | `include <topology>` | Splice another registered `.tsl` in at this point, once per file per load. |
-| `var <key> = <value>;` | Declare frontmatter the supervisor reads via `Topology_Registry::frontmatter()`. |
+| `var <key> = <value>;` | Declare frontmatter the runtime reads via `Topology_Registry::frontmatter()`. |
 | `secure` | Climb the interpreter's secure ratchet one level, retiring management verbs. |
 
 `<partition>` and `<topology>` are bound by `Topology_Loader`; `<config:logs_dir>`, `<config:num_segments>`, and friends resolve against the substrate Config; `<eln:stats_mirror_node>` and `<eln:is_hub>` resolve against the application Config (the v0.4.0 namespace split). `<topology>` names the FLEET, which is why every offsetlog and dead-letter path carries it: an offsetlog is a reader's cursor and the reader is the fleet, so a `request-builder` fleet and a `combined` fleet tailing the same `firehose.pN` keep separate cursors instead of stealing each other's position. That is also what lets several topologies share one byte-identical Consumer line.
@@ -381,9 +381,9 @@ The included `settings-sync` supplies `settings:consumer` (tailing the `settings
 
 ### Topology resolution
 
-As of v0.5.0, the `topologies` key lives on the substrate — `newspack-event-logger-nodes-config.php` no longer owns it. The plugin only **publishes its catalog**: at boot, it calls `Topology_Registry::register_plugin( 'Newspack_Event_Logger_Nodes\\', NEWSPACK_EVENT_LOGGER_NODES_DIR . 'topologies' )` — one call that registers the application namespace prefix (for `make_node` short-name resolution) AND the stock-topology dir together — so anyone calling `Topology_Registry::resolve()` (admin, REST, tests, CLI, supervisor) finds the stock `.tsl` files. Which catalog entries actually spawn workers is decided downstream by the substrate's Topologies multi-select option (`newspack_nodes_topologies`) — this plugin only publishes the "what topologies exist" set; the substrate filters it by what the operator has checked. `num_partitions` defaults also come from the substrate config, so one setting drives both `Log_Manager` (write side) and the worker fleet (read side); hardcoding diverges them.
+As of v0.5.0, the `topologies` key lives on the substrate — `newspack-event-logger-nodes-config.php` no longer owns it. The plugin only **publishes its catalog**: at boot, it calls `Topology_Registry::register_plugin( 'Newspack_Event_Logger_Nodes\\', NEWSPACK_EVENT_LOGGER_NODES_DIR . 'topologies' )` — one call that registers the application namespace prefix (for `make_node` short-name resolution) AND the stock-topology dir together — so anyone calling `Topology_Registry::resolve()` (admin, REST, tests, CLI, workers) finds the stock `.tsl` files. Which catalog entries actually spawn workers is decided downstream by the substrate's Topologies multi-select option (`newspack_nodes_topologies`) — this plugin only publishes the "what topologies exist" set; the substrate filters it by what the operator has checked. `num_partitions` defaults also come from the substrate config, so one setting drives both `Log_Manager` (write side) and the worker fleet (read side); hardcoding diverges them.
 
-Cost on regular WP requests is one array append at boot — the `.tsl` files themselves aren't parsed yet. Actual resolution and parsing happen in three places, none on the page-render hot path: the supervisor's `check_config()` tick (every 15s), worker bootstrap (once per spawn), and REST workers/dashboard reads.
+Cost on regular WP requests is one array append at boot — the `.tsl` files themselves aren't parsed yet. Actual resolution and parsing happen in three places, none on the page-render hot path: the fleet's config-check tick (every 15s), worker bootstrap (once per spawn), and REST workers/dashboard reads.
 
 ## Application Nodes
 
@@ -527,7 +527,7 @@ Invalid handler names and non-array parameters emit a drop audit. Router-level s
 
 > **Lives in the `newspack-nodes` substrate** (`\Newspack_Nodes\Job_Worker_Node`), not this plugin. Generic async-job dispatch — per-job try/catch isolation, the `gc_collect_cycles()`-after-every-job discipline, the object-cache flush cadence, and the memory-watermark self-restart — is runtime plumbing; see its row in [`../../newspack-nodes/AGENTS.md`](../../newspack-nodes/AGENTS.md). Two things are THIS plugin's concern:
 
-**Per-job request context.** The worker fires `newspack_nodes/job_worker/{before,after}_job` around each handler, passing `( $handler, $id )` on the before-action; the after-action runs even on throw. ELN hooks `Log_Manager::begin_job_context` / `end_job_context` onto them to suspend the request logger and stand up a synthetic `/jobs/{handler}/{id}` `$_SERVER` (plain `/jobs/{handler}` when the id is empty), so a job's own logging never bleeds into the request that enqueued it. Both are stack-based: `begin_job_context()` snapshots `$_SERVER` onto a LIFO before touching anything, so an unpaired or throwing begin still leaves `end_job_context()` a snapshot to restore. The same pair brackets the supervisor via `newspack_nodes/{before,after}_supervisor_run`.
+**Per-job request context.** The worker fires `newspack_nodes/job_worker/{before,after}_job` around each handler, passing `( $handler, $id )` on the before-action; the after-action runs even on throw. ELN hooks `Log_Manager::begin_job_context` / `end_job_context` onto them to suspend the request logger and stand up a synthetic `/jobs/{handler}/{id}` `$_SERVER` (plain `/jobs/{handler}` when the id is empty), so a job's own logging never bleeds into the request that enqueued it. Both are stack-based: `begin_job_context()` snapshots `$_SERVER` onto a LIFO before touching anything, so an unpaired or throwing begin still leaves `end_job_context()` a snapshot to restore.
 
 **Handler registration + `k`-routing.** The worker reads each `jobs.pN` entry's kind under `k` — `'job'` or `'remote_job'`, carried end-to-end (never `type`) — and dispatches against the matching filter: `k:"job"` → `newspack_nodes/job_handlers`, `k:"remote_job"` → `newspack_nodes/remote_job_handlers`. Registration is filter-only (no programmatic setters); a job type registers under whichever side(s) should handle it — see [Hub vs Spoke Topology](#hub-vs-spoke-topology).
 

@@ -693,7 +693,7 @@ class Admin {
 	 * `\Newspack_Nodes\Admin\Admin::maybe_request_worker_restart()`.
 	 *
 	 * The save's restart classification is by CONSUMER NODE TYPE (the Field's
-	 * `restart:` key — 'supervisor_only', [], 'all', or node-type tokens like
+	 * `restart:` key — [], 'all', or node-type tokens like
 	 * `Flame_Builder` / `Discovery_Collector`), which `Restart_Planner` resolves
 	 * to the set of live topologies whose graphs instantiate that node and touches
 	 * each one's per-partition lock dir. A worker sees the flag on its next
