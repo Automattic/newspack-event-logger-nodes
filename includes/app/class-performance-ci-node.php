@@ -44,6 +44,7 @@ use Newspack_Nodes\Bootstrap;
 use Newspack_Nodes\Callback_Node;
 use Newspack_Nodes\Command_Args;
 use Newspack_Nodes\Command_Interpreter_Node;
+use Newspack_Nodes\Config_System\Restart_Planner;
 use Newspack_Nodes\Consumer_Node;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
@@ -1270,6 +1271,25 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
+	 * Ask every live worker to re-read its boot-frozen option cache.
+	 *
+	 * This is the hub→spoke settings-sync RECEIVE path, and it runs outside
+	 * `is_admin()`, so the settings form's `updated_option` signal never fires
+	 * for it — without this the spoke's workers serve the old value until they
+	 * recycle. The ruleset branch signals through `Rule_Set::save()` instead.
+	 *
+	 * Best-effort: the next worker generation loads the new value regardless, so
+	 * an unresolvable locks directory must not fail the write or the response.
+	 */
+	private static function request_reloads(): void {
+		try {
+			Restart_Planner::request_reloads( AppConfig::get_locks_directory() );
+		} catch ( \Throwable $e ) {
+			Core::print_less_often( 'PerformanceCI: reload signalling failed: ', $e->getMessage() );
+		}
+	}
+
+	/**
 	 * Resolve a Command_Args boolean flag. A bare `--flag` and any value other
 	 * than `0` / `false` read as true; `--flag=0`, `--flag=false`, and an
 	 * absent key read as false. The JS `formatCommandArgs` only ever emits the
@@ -1635,7 +1655,7 @@ class Performance_CI_Node extends Service_CI_Node {
 					throw new \RuntimeException( 'invalid value for option' );
 				}
 
-				// Re-tier the synced ruleset locally, not a raw update_option.
+				// Re-tier via Rule_Set::save(); it signals the fleet itself.
 				if ( Rule_Set::OPTION_RULES === $option && \is_array( $sanitized ) ) {
 					Rule_Set::apply_synced( $sanitized );
 					AppConfig::reset();
@@ -1648,6 +1668,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				// Autoload per Config::autoload_for; emits settings event.
 				$ok = \update_option( $option, $sanitized, AppConfig::autoload_for( $option ) );
 				AppConfig::reset();
+				self::request_reloads();
 
 				return [
 					'option'  => $option,

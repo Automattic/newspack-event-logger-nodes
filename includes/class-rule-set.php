@@ -17,6 +17,7 @@ namespace Newspack_Event_Logger_Nodes;
 
 \defined( 'ABSPATH' ) || exit;
 
+use Newspack_Nodes\Config_System\Restart_Planner;
 use Newspack_Nodes\Core;
 
 /**
@@ -273,6 +274,8 @@ final class Rule_Set {
 	 * `Auto_Tuner_Node` mutate one loaded rule in place; a caller handling
 	 * untrusted rules must run them through rekey_by_pattern() first.
 	 *
+	 * Closes by asking the live fleet to re-read; see `request_reloads()`.
+	 *
 	 * @param Rule[] $rules Replaces the whole list — anything omitted is deleted.
 	 */
 	public function save( array $rules ): void {
@@ -329,6 +332,7 @@ final class Rule_Set {
 		\update_option( self::OPTION_RULES, $stored, true );
 		// Keep in-memory list in persisted re-tiered form so rules()==load().
 		$this->rules = $tiered;
+		self::request_reloads();
 	}
 
 	/**
@@ -357,6 +361,27 @@ final class Rule_Set {
 			if ( ! isset( $live_pointer_ids[ $id ] ) ) {
 				\delete_option( $name );
 			}
+		}
+	}
+
+	/**
+	 * Ask every live worker to re-read its boot-frozen option cache.
+	 *
+	 * Signalled from `save()` rather than its callers because save() is the one
+	 * origin every ruleset write passes through — `Rules_CI_Node`, the synced
+	 * `Rule_Set::apply_synced()` receive path and `Auto_Tuner_Node` — so a fourth
+	 * caller cannot forget it. Two of those run INSIDE a worker, so that worker
+	 * signals itself along with its peers; intended, because a reload also purges
+	 * the option cache its own later reads go through.
+	 *
+	 * Best-effort: the next worker generation loads the new ruleset regardless,
+	 * so an unresolvable locks directory must not fail the write.
+	 */
+	private static function request_reloads(): void {
+		try {
+			Restart_Planner::request_reloads( Config::get_locks_directory() );
+		} catch ( \Throwable $e ) {
+			Core::print_less_often( 'rules: reload signalling failed: ', $e->getMessage() );
 		}
 	}
 

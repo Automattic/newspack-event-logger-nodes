@@ -24,20 +24,18 @@ use PHPUnit\Framework\Attributes\CoversClass;
 use Newspack_Event_Logger_Nodes\Admin\Admin;
 use Newspack_Event_Logger_Nodes\Config;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\RedirectException;
+use Newspack_Event_Logger_Nodes\Tests\Helpers\TopologyLockHarness;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Config as RuntimeConfig;
 use Newspack_Nodes\Config_System\Field_Reset_Assets;
 use Newspack_Nodes\Config_System\Reset_Gate;
 use Newspack_Nodes\Lock_Node;
-use Newspack_Nodes\Topology_Registry;
 
 #[CoversClass( Admin::class )]
 class AdminTest extends TestCase {
+	use TopologyLockHarness;
 
 	private string $base_dir;
-
-	/** Temp dir holding the per-test topology `.tsl` fixtures (null until register_topologies()). */
-	private ?string $tsl_dir = null;
 
 	protected function setUp(): void {
 		parent::setUp();
@@ -62,14 +60,7 @@ class AdminTest extends TestCase {
 
 	protected function tearDown(): void {
 		Config::reset();
-		if ( null !== $this->tsl_dir ) {
-			\delete_option( 'newspack_nodes_topologies' );
-			\delete_option( 'newspack_nodes_num_partitions' );
-			RuntimeConfig::reset();
-			Topology_Registry::reset();
-			$this->rmdir_recursive( $this->tsl_dir );
-			$this->tsl_dir = null;
-		}
+		$this->reset_topology_fixtures();
 		$this->rmdir_recursive( $this->base_dir );
 		parent::tearDown();
 	}
@@ -253,7 +244,7 @@ class AdminTest extends TestCase {
 
 	public function test_maybe_request_worker_restart_no_op_for_no_impact_options(): void {
 		$this->register_topologies();
-		$this->prepare_topology_lock_dir( 'combined', 0 );
+		$this->prepare_lock_dir( 'combined', 0 );
 		$admin = new Admin();
 		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_log_urls' );
 		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_skip_urls' );
@@ -268,8 +259,8 @@ class AdminTest extends TestCase {
 		// frozen at boot — so with no reload signal the new value waits out a
 		// whole ~595s worker lifetime instead of landing on the next 15s window.
 		$this->register_topologies();
-		$this->prepare_topology_lock_dir( 'combined', 0 );
-		$this->prepare_topology_lock_dir( 'aggregator', 0 );
+		$this->prepare_lock_dir( 'combined', 0 );
+		$this->prepare_lock_dir( 'aggregator', 0 );
 
 		( new Admin() )->maybe_request_worker_restart( 'newspack_event_logger_nodes_log_urls' );
 
@@ -280,8 +271,8 @@ class AdminTest extends TestCase {
 
 	public function test_maybe_request_worker_restart_supervisor_only_enable_logging_restarts_all_live_topologies(): void {
 		$this->register_topologies();
-		$this->prepare_topology_lock_dir( 'combined', 0 );
-		$this->prepare_topology_lock_dir( 'aggregator', 0 );
+		$this->prepare_lock_dir( 'combined', 0 );
+		$this->prepare_lock_dir( 'aggregator', 0 );
 		$admin = new Admin();
 		// enable_logging is cached in the Log_Manager per-process singleton,
 		// which every long-lived worker holds → 'all' → restart every live topology.
@@ -292,8 +283,8 @@ class AdminTest extends TestCase {
 
 	public function test_maybe_request_worker_restart_all_class_restarts_all_live_topologies(): void {
 		$this->register_topologies();
-		$this->prepare_topology_lock_dir( 'combined', 0 );
-		$this->prepare_topology_lock_dir( 'aggregator', 0 );
+		$this->prepare_lock_dir( 'combined', 0 );
+		$this->prepare_lock_dir( 'aggregator', 0 );
 		// Phantom worker-group lock dir that matches NO live topology — the bug
 		// touched this and silently restarted nothing real.
 		$this->prepare_lock_dir( 'request-workers', 0 );
@@ -317,7 +308,7 @@ class AdminTest extends TestCase {
 		Config::reset();
 		RuntimeConfig::reset();
 		for ( $p = 0; $p < 4; $p++ ) {
-			$this->prepare_topology_lock_dir( 'flame-builder', $p );
+			$this->prepare_lock_dir( 'flame-builder', $p );
 		}
 
 		$admin = new Admin();
@@ -684,8 +675,8 @@ class AdminTest extends TestCase {
 
 	public function test_maybe_request_worker_restart_log_memory_restarts_all_live_topologies(): void {
 		$this->register_topologies();
-		$this->prepare_topology_lock_dir( 'combined', 0 );
-		$this->prepare_topology_lock_dir( 'aggregator', 0 );
+		$this->prepare_lock_dir( 'combined', 0 );
+		$this->prepare_lock_dir( 'aggregator', 0 );
 		$admin = new Admin();
 		// log_memory is cached in the Log_Manager singleton → 'all'.
 		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_log_memory' );
@@ -695,8 +686,8 @@ class AdminTest extends TestCase {
 
 	public function test_maybe_request_worker_restart_flush_every_line_restarts_all_live_topologies(): void {
 		$this->register_topologies();
-		$this->prepare_topology_lock_dir( 'combined', 0 );
-		$this->prepare_topology_lock_dir( 'aggregator', 0 );
+		$this->prepare_lock_dir( 'combined', 0 );
+		$this->prepare_lock_dir( 'aggregator', 0 );
 		$admin = new Admin();
 		// flush_every_line is cached in the Log_Manager singleton → 'all'.
 		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_flush_every_line' );
@@ -706,8 +697,8 @@ class AdminTest extends TestCase {
 
 	public function test_maybe_request_worker_restart_stats_salt_targets_flame_builder(): void {
 		$this->register_topologies();
-		$this->prepare_topology_lock_dir( 'combined', 0 );
-		$this->prepare_topology_lock_dir( 'aggregator', 0 );
+		$this->prepare_lock_dir( 'combined', 0 );
+		$this->prepare_lock_dir( 'aggregator', 0 );
 		$admin = new Admin();
 		// stats_salt is rotated by the flush handler (not a settings Field); its
 		// stats producer is Stats_Store, which runs inside Flame_Builder.
@@ -718,7 +709,7 @@ class AdminTest extends TestCase {
 
 	public function test_maybe_request_worker_restart_skips_unknown_application_option(): void {
 		$this->register_topologies();
-		$this->prepare_topology_lock_dir( 'combined', 0 );
+		$this->prepare_lock_dir( 'combined', 0 );
 		$admin = new Admin();
 		// An option in the prefix but not in any Field — must be a no-op.
 		$admin->maybe_request_worker_restart( 'newspack_event_logger_nodes_unknown_option' );
@@ -1193,56 +1184,6 @@ class AdminTest extends TestCase {
 		}
 	}
 
-	// ---- helpers ----------------------------------------------------------
-
-	private function prepare_lock_dir( string $group, int $partition ): string {
-		$dir = "{$this->base_dir}/locks/{$group}.p{$partition}.lock.d";
-		\mkdir( $dir, 0755, true );
-		// Lock::request_restart_at() requires the dir to already exist; we
-		// don't create the heartbeat file because the restart channel doesn't
-		// require an active holder.
-		return $dir;
-	}
-
-	/**
-	 * Register a stock-topology dir of minimal `.tsl` fixtures that mirror the
-	 * real ELN topologies' node CONSUMERS, and mark the named set active. This is
-	 * what lets resolve_class('Flame_Builder') map a save to a live topology's
-	 * lock dirs (combined/flame-builder have Flame_Builder; hub-control has
-	 * Discovery_Collector; aggregator has neither).
-	 *
-	 * @param array<int,string> $active Active topology names (default: all fixtures).
-	 */
-	private function register_topologies( array $active = [ 'combined', 'aggregator', 'hub-control', 'flame-builder', 'job-router' ] ): void {
-		Topology_Registry::reset();
-		$this->tsl_dir = $this->make_temp_dir( 'eln-admin-topologies-' );
-		Topology_Registry::register_stock_dir( $this->tsl_dir );
-		\file_put_contents( "{$this->tsl_dir}/combined.tsl", "make_node Flame_Builder flame-builder\n" );
-		\file_put_contents( "{$this->tsl_dir}/flame-builder.tsl", "make_node Flame_Builder flame-builder\n" );
-		\file_put_contents( "{$this->tsl_dir}/hub-control.tsl", "make_node Discovery_Collector discovery-collector 300\n" );
-		\file_put_contents( "{$this->tsl_dir}/aggregator.tsl", "make_node Remote_Job_Rewrite remote-job-rewrite\n" );
-		// A topology with no event-list / Flame_Builder consumer at all, so an
-		// 'all' classification is the only thing that reaches it.
-		\file_put_contents( "{$this->tsl_dir}/job-router.tsl", "make_node Job_Router job-router\n" );
-		\update_option( 'newspack_nodes_topologies', $active );
-		Config::reset();
-		RuntimeConfig::reset();
-	}
-
-	/** Create the partition lock dir for a live topology under the configured locks dir. */
-	private function prepare_topology_lock_dir( string $topology, int $partition ): string {
-		$dir = "{$this->base_dir}/locks/{$topology}.p{$partition}.lock.d";
-		\mkdir( $dir, 0755, true );
-		return $dir;
-	}
-
-	private function assertRestartFlagged( string $topology, int $partition ): void {
-		$this->assertFileExists( "{$this->base_dir}/locks/{$topology}.p{$partition}.lock.d/" . Lock_Node::RESTART_FLAG );
-	}
-
-	private function assertRestartNotFlagged( string $topology, int $partition ): void {
-		$this->assertFileDoesNotExist( "{$this->base_dir}/locks/{$topology}.p{$partition}.lock.d/" . Lock_Node::RESTART_FLAG );
-	}
 }
 
 } // close namespace Newspack_Event_Logger_Nodes\Tests\Unit\Admin

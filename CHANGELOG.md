@@ -17,6 +17,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ≤15s. It now also calls the substrate's `Restart_Planner::request_reloads()`,
   which touches the reload watermark in every partition of every active
   topology. Requires newspack-nodes 2.11.0.
+- **The other two config writers now signal too.** The settings page was the
+  only one, and it only hooks `updated_option` under `is_admin()` — so neither
+  of these reached a live worker. `Rule_Set::save()` signals a reload after
+  persisting the ruleset: it is the single origin every ruleset write passes
+  through (`Rules_CI_Node`, `Auto_Tuner_Node`, and the synced `apply_synced()`
+  receive path), so no caller can forget it. The `performance` CI's `set` verb
+  — the hub→spoke settings-sync receive path, which runs over REST and never
+  under `is_admin()` — signals after its `update_option`; its ruleset branch
+  inherits the signal from `Rule_Set::save()`. Both are best-effort: an
+  unresolvable locks directory leaves the option write and the verb's response
+  untouched.
 
 ### Removed
 

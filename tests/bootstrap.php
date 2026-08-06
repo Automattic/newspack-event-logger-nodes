@@ -513,4 +513,5 @@ $GLOBALS['_eln_boot_actions'] = $GLOBALS['_wp_actions'];
 require_once __DIR__ . '/Helpers/TestCase.php';
 require_once __DIR__ . '/Helpers/SseFrameFactory.php';
 require_once __DIR__ . '/Helpers/VerbHarness.php';
+require_once __DIR__ . '/Helpers/TopologyLockHarness.php';
 require_once __DIR__ . '/Helpers/RedirectException.php';
