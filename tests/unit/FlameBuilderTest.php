@@ -547,12 +547,12 @@ class FlameBuilderTest extends TestCase {
 
 		// Workers now keep per-URL timing on their own ?worker_type row.
 		$now = \time();
-		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/w?supervisor', 'duration_ms' => 100.0, 'is_worker' => true, 'timestamp' => $now ] ) );
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/w?reconcile', 'duration_ms' => 100.0, 'is_worker' => true, 'timestamp' => $now ] ) );
 		$fb->flush();
 
 		$bucket   = $this->bucket_key_for( $now );
 		$index    = $store->get_url_index_hourly( $bucket );
-		$url_hash = Log_Manager::url_hash( '/w?supervisor' );
+		$url_hash = Log_Manager::url_hash( '/w?reconcile' );
 		$this->assertArrayHasKey( $url_hash, $index );
 		$this->assertSame( 1, $index[ $url_hash ]['count'] );
 		$this->assertSame( 1, $index[ $url_hash ]['timed_count'] );

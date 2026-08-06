@@ -90,6 +90,15 @@ final class ConfigReloadSignalTest extends TestCase {
 		}
 	}
 
+	private function assertFleetNotAskedToReload(): void {
+		foreach ( self::TOPOLOGIES as $topology ) {
+			for ( $p = 0; $p < self::NUM_PARTITIONS; $p++ ) {
+				$this->assertReloadNotFlagged( $topology, $p );
+				$this->assertRestartNotFlagged( $topology, $p );
+			}
+		}
+	}
+
 	/**
 	 * Repoint Config at a base directory holding a null byte, which
 	 * `Config::ensure_path()` rejects — so `get_locks_directory()` throws and the
@@ -150,6 +159,25 @@ final class ConfigReloadSignalTest extends TestCase {
 		VerbHarness::fire( $interpreter, 'performance', 'set', $args );
 
 		$this->assertFleetAskedToReload();
+	}
+
+	public function test_settings_set_verb_to_the_value_already_stored_signals_nothing(): void {
+		// The hub re-pushes every synced option on its sweep whether or not it
+		// changed, and a reload is not free: it fires Config::RESET_ACTION on
+		// every worker, which re-globs and re-parses every .tsl to reach the
+		// identical answer. Once per sweep, per worker, forever.
+		$GLOBALS['_wp_options']['newspack_event_logger_nodes_log_memory'] = true;
+
+		$interpreter = new Performance_CI_Node();
+		$result      = VerbHarness::fire(
+			$interpreter,
+			'performance',
+			'set',
+			'newspack_event_logger_nodes_log_memory 1'
+		);
+
+		$this->assertSame( [ 'option' => 'newspack_event_logger_nodes_log_memory', 'updated' => false ], $result );
+		$this->assertFleetNotAskedToReload();
 	}
 
 	public function test_settings_set_verb_still_writes_the_option_with_an_unresolvable_locks_directory(): void {

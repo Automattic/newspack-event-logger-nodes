@@ -6,7 +6,7 @@ argument-hint: "[handler / endpoint / dashboard / node]"
 
 # Event Logger Nodes Workflow
 
-The application built on the newspack-nodes runtime. For substrate changes (Node, Router, Topic, Partition, Worker, Supervisor, REPL, Tee, Tail, Consumer), use the `nodes-workflow` skill in newspack-nodes instead.
+The application built on the newspack-nodes runtime. For substrate changes (Node, Router, Topic, Partition, Worker, Fleet, REPL, Tee, Tail, Consumer), use the `nodes-workflow` skill in newspack-nodes instead.
 
 AGENTS.md carries the architecture decisions and key files; this skill is the procedural companion.
 

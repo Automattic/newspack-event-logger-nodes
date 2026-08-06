@@ -1300,7 +1300,7 @@ describe( 'PerformanceDashboard', () => {
 
 		it( 'does not append a second ? on a nodes/ELN URL that already has one', async () => {
 			mockGraph.listRules.mockResolvedValue( { rules: [] } );
-			mockView = urlModalView( '/jobs/x?supervisor' );
+			mockView = urlModalView( '/jobs/x?reconcile' );
 			const { container, unmount } = renderComponent(
 				React.createElement( PerformanceDashboard, {
 					onError: jest.fn(),
@@ -1315,7 +1315,7 @@ describe( 'PerformanceDashboard', () => {
 			} );
 			// ?worker already terminates the URL — no second '?' appended.
 			expect( globalThis.__ruleEditProps.rule.pattern ).toBe(
-				'/jobs/x?supervisor'
+				'/jobs/x?reconcile'
 			);
 			unmount();
 		} );

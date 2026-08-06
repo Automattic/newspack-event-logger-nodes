@@ -4,7 +4,6 @@
 #                            ├──→ Job_Router ──→ Age_Sieve ──→ Partition (jobs:partition)
 #   Tail (jobintake.log) ────┘
 
-include topic-probe
 include job-intake
 
 make_node Consumer firehose:consumer <config:logs_dir>/firehose.p<partition> <config:offsets_dir>/<topology>.firehose.p<partition> <config:deadletter_dir>/<topology>.firehose.p<partition>

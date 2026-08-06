@@ -9,7 +9,7 @@
  * completed-summary and inflight-snapshot outputs at those targets.
  *
  * Loads each affected TSL file in-process via Topology_Loader against a
- * real CommandInterpreter sink (the same path supervisor + worker take
+ * real CommandInterpreter sink (the same path the reconcile pass + worker take
  * at spawn time), then asserts on Core's node registry and on the
  * patron state the :config verbs mutated.
  *

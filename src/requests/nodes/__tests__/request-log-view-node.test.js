@@ -102,10 +102,10 @@ test( 'caps the ring at maxLines (newest kept)', () => {
 test( 'urlHash keeps the ?worker marker so nodes/ELN URLs deep-link (matches PHP url_hash)', () => {
 	const v = makeView( 'requestlog:view' );
 	v.fill(
-		rowMsg( row( { rid: 'w', url: '/jobs/x?supervisor', end_time: 1 } ) )
+		rowMsg( row( { rid: 'w', url: '/jobs/x?reconcile', end_time: 1 } ) )
 	);
 	// PHP url_hash hashes the full string incl. ?worker; don't strip at '?'.
-	expect( v.lines[ 0 ].urlHash ).toBe( fnv1a( '/jobs/x?supervisor' ) );
+	expect( v.lines[ 0 ].urlHash ).toBe( fnv1a( '/jobs/x?reconcile' ) );
 	expect( v.lines[ 0 ].urlHash ).not.toBe( fnv1a( '/jobs/x' ) );
 } );
 

@@ -21,7 +21,7 @@ const clip = ( s, max ) => {
  * URL hash for deep-linking to URL detail. Hashes the FULL url — matching PHP
  * `Log_Manager::url_hash`. The real query is already stripped upstream,
  * so the only `?` left is the intentional `?worker_type` marker on nodes/ELN
- * URLs (e.g. `/jobs/x?supervisor`), which MUST be kept or the hash won't match
+ * URLs (e.g. `/jobs/x?reconcile`), which MUST be kept or the hash won't match
  * that URL's row.
  *
  * @param {string} url URL to hash.
