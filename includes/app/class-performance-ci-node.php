@@ -748,8 +748,6 @@ class Performance_CI_Node extends Service_CI_Node {
 		return null;
 	}
 
-	// Stats_Store helpers — fan out across partitions and merge.
-
 	/**
 	 * One Stats_Store per flame-builder worker over the shared `Core::$memd`
 	 * handle. `configure_stats <partition>` keys each store by the WORKER index,
@@ -773,8 +771,6 @@ class Performance_CI_Node extends Service_CI_Node {
 		}
 		return $stores;
 	}
-
-	// Disk-walking helpers — recent requests + request body lookup + flame.
 
 	/**
 	 * Walk the request partitions newest-first and collect up to 500 index

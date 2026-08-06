@@ -48,12 +48,6 @@ class Flame_Builder_Node extends Node {
 	use \Newspack_Nodes\Deferred_Clean_Stop;
 
 	/**
-	 * Dimensional-stats axes: short dim key => the request-record field it reads.
-	 *
-	 * Every axis is accumulated three ways — globally, per server (hub only), and
-	 * per URL. A missing or empty field value becomes the literal 'Unknown'.
-	 */
-	/**
 	 * Reserved key of the category time series: the per-bucket ROLLUP row, not a
 	 * category. It carries `n` = requests in the bucket, `t` = their summed wall
 	 * time, and `c` = the summed call count of every category in them.
@@ -969,11 +963,6 @@ class Flame_Builder_Node extends Node {
 		unset( $lb );
 	}
 
-	/**
-	 * Total leaf entries across a per-rule-id keyed map.
-	 *
-	 * @param array<string, array<string, bool>> $map rule_id => {name => true}.
-	 */
 	/**
 	 * Keep a real category out of the reserved rollup slot.
 	 *

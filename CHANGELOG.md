@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The shared comment gate is now `scripts/lint-comments.{php,mjs}`** (was
+  `lint-comment-length`), because the PHP half no longer checks only length: at
+  class-body level the only comment allowed is a docblock immediately preceding
+  its declaration. Section headers, `//` notes where a docblock belongs, and
+  docblocks whose method was deleted are all rejected. Comments inside a
+  class-level initializer annotate their entry and stay exempt. Existing
+  violations in this plugin are cleaned up here; no behavior changes.
+
 ### Fixed
 
 - **A settings save now asks every live worker to re-read.** The settings page

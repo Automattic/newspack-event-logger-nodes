@@ -15,8 +15,8 @@
 		"fix:scss": "stylelint --customSyntax postcss-scss --fix 'src/**/*.scss'",
 		"format": "prettier --write 'src/**/*.{js,jsx,scss,json}'",
 		"format:js": "prettier --write 'src/**/*.{js,jsx}'",
-		"lint:js": "eslint 'src/**/*.{js,jsx}' 'scripts/**/*.mjs' && node scripts/lint-comment-length.mjs .",
-		"lint:php": "phpcs && php scripts/lint-comment-length.php .",
+		"lint:js": "eslint 'src/**/*.{js,jsx}' 'scripts/**/*.mjs' && node scripts/lint-comments.mjs .",
+		"lint:php": "phpcs && php scripts/lint-comments.php .",
 		"lint:phpstan": "vendor/bin/phpstan analyse -c phpstan-deadcode.neon --memory-limit=2G --no-progress",
 		"lint:deadcode": "npm run lint:phpstan",
 		"lint:deadcode:js": "knip --no-progress",
@@ -68,7 +68,7 @@
 		"*.{js,jsx}": [
 			"eslint",
 			"node scripts/reorder-node-methods.js --check",
-			"node scripts/lint-comment-length.mjs",
+			"node scripts/lint-comments.mjs",
 			"sh -c 'npm run lint:deadcode:js --silent'",
 			"sh -c 'npm run lint:types --silent'"
 		],
@@ -83,7 +83,7 @@
 			"./vendor/bin/phpcs",
 			"php scripts/reorder-node-methods.php --check",
 			"sh -c 'npm run lint:phpstan --silent'",
-			"php scripts/lint-comment-length.php"
+			"php scripts/lint-comments.php"
 		],
 		"*.sh": "shellcheck",
 		"scripts/pre-push": "shellcheck"

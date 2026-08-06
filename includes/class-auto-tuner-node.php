@@ -100,8 +100,6 @@ class Auto_Tuner_Node extends Node {
 		return false;
 	}
 
-	// --- Apply --------------------------------------------------------------
-
 	/**
 	 * Drop the named hooks from the rule's instrumented list.
 	 *

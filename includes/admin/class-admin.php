@@ -176,8 +176,6 @@ class Admin {
 		\add_filter( 'pre_update_option', [ $this, 'skip_default_writes' ], 10, 3 );
 	}
 
-	// -- Field callbacks ----------------------------------------------------
-
 	/**
 	 * The master logging switch. Ships on in the config file, and passes a hard
 	 * default of 1 so it still renders checked without one.
@@ -189,8 +187,6 @@ class Admin {
 			1
 		);
 	}
-
-	// -- Private renderers --------------------------------------------------
 
 	/**
 	 * Echo a boolean checkbox via the shared Settings_Renderer: checked from the
@@ -268,8 +264,6 @@ class Admin {
 	private static function reset_mark_name( string $field ): string {
 		return Reset_Gate::mark_name( self::RESET_MARK_FIELD, self::OPTION_PREFIX . $field );
 	}
-
-	// ---- Debugging field callbacks ---------------------------------------
 
 	/** Peak-memory annotation on every completed request. Ships off. */
 	public static function log_memory_callback(): void {
@@ -600,8 +594,6 @@ class Admin {
 
 		$schema->register_sections_and_fields( self::SETTINGS_PAGE );
 	}
-
-	// -- Section callbacks --------------------------------------------------
 
 	/**
 	 * Intro for the General section, which holds `enable_logging`.
