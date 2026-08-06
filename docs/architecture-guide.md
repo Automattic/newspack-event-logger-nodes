@@ -210,7 +210,7 @@ The `make_node` first argument is a **shell name** the substrate resolves to a f
 
 Seven `.tsl` files ship: `request-builder`, `flame-builder`, `job-router`, `performance`, `combined`, `aggregator`, and `hub-control`. The last four are composed from the first three plus substrate stock topologies, so the primitive files are the ones to read. Job *dispatch* (`Job_Worker_Node` tailing `jobs.log`) is NOT shipped here — it comes from the substrate's stock `job-worker` topology (the local `job-worker.tsl` was deleted in v0.12.0 when `Job_Worker_Node` moved to the substrate).
 
-Every file ends with `secure`, and every one pulls in the substrate's stock `topic-probe` — directly, or through a file it includes. That probe mounts a 15s `TopicProbe` sweep writing per-worker Consumer stats to `topicprobe.p0`.
+Every file ends with `secure`, and every one pulls in the substrate's stock `topic-probe` — directly, or through a file it includes. That probe mounts a 15s `Topic_Probe` sweep writing per-worker Consumer stats to `topicprobe.p0`.
 
 ### `topologies/request-builder.tsl`
 
