@@ -328,7 +328,7 @@ class HookCategorizerTest extends TestCase {
 		$this->assertTrue( Hook_Categorizer::is_internal( 'newspack_event_logger_nodes/sse_connected' ) );
 		$this->assertTrue( Hook_Categorizer::is_internal( 'newspack_nodes_option_schema_core' ) );
 		$this->assertTrue( Hook_Categorizer::is_internal( 'newspack_nodes/spawn_worker' ) );
-		$this->assertTrue( Hook_Categorizer::is_internal( 'newspack_nodes/supervisor' ) );
+		$this->assertTrue( Hook_Categorizer::is_internal( 'newspack_nodes/reconcile' ) );
 		$this->assertTrue( Hook_Categorizer::is_internal( 'newspack_nodes/topologies' ) );
 
 		// Real WP hooks — false.

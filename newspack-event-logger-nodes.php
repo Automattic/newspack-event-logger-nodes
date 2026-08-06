@@ -204,9 +204,11 @@ function newspack_event_logger_nodes_resolve_settings_sync_value( $value, string
 }
 
 /**
- * Give the supervisor tick its own request context, so everything the substrate
- * logs during `Supervisor::run()` lands in a `/jobs/newspack-nodes` request
- * instead of bleeding into whatever WP-Cron request happened to host it.
+ * Give the substrate's minute-cadence reconciliation pass its own request
+ * context, so everything it logs during `Bootstrap::reconcile_fleet()` — spawn,
+ * lock reconcile, retention, orphan-IPC reaping and every
+ * `newspack_nodes/periodic` subscriber — lands in a `/jobs/newspack-nodes`
+ * request instead of bleeding into whatever WP-Cron request happened to host it.
  *
  * The shared `$entered` flag keeps the pair honest: an `after` with no matching
  * `before` would resume a context this never suspended, and pop a `$_SERVER`
@@ -215,14 +217,14 @@ function newspack_event_logger_nodes_resolve_settings_sync_value( $value, string
 ( static function (): void {
 	$entered = false;
 	\add_action(
-		'newspack_nodes/before_supervisor_run',
+		'newspack_nodes/before_reconcile',
 		static function () use ( &$entered ): void {
 			\Newspack_Event_Logger_Nodes\Log_Manager::begin_job_context( 'newspack-nodes' );
 			$entered = true;
 		}
 	);
 	\add_action(
-		'newspack_nodes/after_supervisor_run',
+		'newspack_nodes/after_reconcile',
 		static function () use ( &$entered ): void {
 			if ( ! $entered ) {
 				return;
