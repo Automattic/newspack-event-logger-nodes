@@ -386,7 +386,7 @@ class Admin {
 	 * `Stats_Store` computes `prefix` in its constructor: a live
 	 * `Flame_Builder_Node` holds a store built under the OLD salt and would keep
 	 * writing there, defeating the flush. The restart is best-effort — a failure
-	 * only delays the new salt until the next supervisor spawn, so it is logged,
+	 * only delays the new salt until the next worker spawn, so it is logged,
 	 * not surfaced.
 	 *
 	 * Redirects back to the settings page with `flushed=1` and the restart count,
@@ -407,7 +407,7 @@ class Admin {
 			$base_dir  = RuntimeConfig::get_base_directory();
 			$restarted = ( new CLI( $base_dir ) )->restart_workers( $workers, [], -1 );
 		} catch ( \Throwable $e ) {
-			// Best-effort; next supervisor spawn picks up the salt regardless.
+			// Best-effort; the next worker spawn picks up the salt regardless.
 			\Newspack_Nodes\Core::print_less_often(
 				'Stats flush: restart_workers failed — ',
 				$e->getMessage()
@@ -705,13 +705,13 @@ class Admin {
 	 * `Flame_Builder` / `Discovery_Collector`), which `Restart_Planner` resolves
 	 * to the set of live topologies whose graphs instantiate that node and touches
 	 * each one's per-partition lock dir. A worker sees the flag on its next
-	 * `Worker_Base::should_continue()` check and exits for the supervisor to
+	 * `Worker_Base::should_continue()` check and exits for a peer's scan to
 	 * respawn. `stats_salt` is rotated by the flush handler and is not a settings
 	 * Field, so `restart_for()` would return `[]` for it; it is classified inline
 	 * here instead, against `Flame_Builder` — the node its `Stats_Store` runs in.
 	 *
 	 * Best-effort throughout: a planner failure is swallowed because the next
-	 * supervisor pass loads the new config regardless.
+	 * worker loads the new config regardless.
 	 *
 	 * @param string $option Option name (full WP option key).
 	 */
@@ -732,8 +732,11 @@ class Admin {
 		try {
 			$locks_dir = Config::get_locks_directory();
 			Restart_Planner::request_restarts( $restart, $locks_dir );
+			// @longform Every live worker's option cache is frozen at boot, so
+			// the ones this save does not recycle must be told to re-read.
+			Restart_Planner::request_reloads( $locks_dir );
 		} catch ( \Throwable $e ) {
-			// Best-effort: the next supervisor pass picks up the new config.
+			// Best-effort: the next worker generation loads the new config.
 			return;
 		}
 	}

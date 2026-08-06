@@ -84,7 +84,7 @@ class Auto_Tuner_Node extends Node {
 	 *
 	 * Auto-tune fires from inside a worker running FlameBuilder. Workers
 	 * populate `NEWSPACK_NODES_WORKER_TYPE` only after the substrate has
-	 * authorized the spawn (`Spawn_Controller::spawn()`, `Supervisor::run()`),
+	 * authorized the spawn (`Spawn_Controller::spawn()`),
 	 * so its presence stands in for that check; an ordinary admin request
 	 * qualifies on `manage_options` instead. Tests clear both to exercise the
 	 * early return.

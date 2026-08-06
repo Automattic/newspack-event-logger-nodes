@@ -25,7 +25,7 @@
  *    `$_newspack_event_logger_nodes_load`, run on `plugins_loaded` priority 11
  *    and gated on the substrate being present AND new enough.
  * 3. Hooks whose actions only ever fire from substrate code — the
- *    `newspack_nodes/` stderr, vault-changed, request-graph-ready and
+ *    `newspack_nodes/` stderr, request-graph-ready and
  *    supervisor-run actions — register at file scope. Without the substrate the
  *    action never fires, so a presence guard would be dead weight.
  *
@@ -257,34 +257,6 @@ function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\Command_
 	$base_interpreter->make_node( 'Rules_CI',       'rules' );
 }
 \add_action( 'newspack_nodes/request_graph_ready', 'newspack_event_logger_nodes_mount_service_cis' );
-
-/**
- * React to a substrate Vault mutation by flagging a supervisor restart so a
- * new/changed server is picked up without waiting for the worker's ~10-minute
- * respawn — the restarted hub-control worker re-loads remotes from the Vault
- * and the settings-sync node graph (Settings_Sync_Node + Discovery_Collector_Node)
- * fans the current settings to them. Decoupled from the Vault via the
- * `newspack_nodes/vault/changed` action. Best-effort (the mutation never fails
- * on it).
- *
- * Any mutation earns a restart, so neither parameter is read; they are the
- * action's signature.
- *
- * @param string $id     Server id that changed.
- * @param string $action added | updated | removed.
- */
-function newspack_event_logger_nodes_on_vault_changed( string $id, string $action ): void {
-	try {
-		$base_dir = \Newspack_Nodes\Config::get_base_directory();
-		$lock_dir = $base_dir . '/locks/supervisor.lock.d';
-		if ( \is_dir( $lock_dir ) ) {
-			\Newspack_Nodes\Lock_Node::request_restart_at( $lock_dir );
-		}
-	} catch ( \Throwable $e ) {
-		// Best-effort.
-	}
-}
-\add_action( 'newspack_nodes/vault/changed', 'newspack_event_logger_nodes_on_vault_changed', 10, 2 );
 
 /**
  * Register the Event Logger admin menu: a top-level Performance page plus one

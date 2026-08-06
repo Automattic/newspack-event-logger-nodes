@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A settings save now asks every live worker to re-read.** The settings page
+  called `Restart_Planner::request_restarts()` alone, and a restart
+  classification only says which workers must RECYCLE — every worker alive holds
+  an option cache frozen at boot. A field classified `restart: []` (`log_urls`,
+  `skip_urls`) therefore took a full ~595s worker lifetime to land instead of
+  ≤15s. It now also calls the substrate's `Restart_Planner::request_reloads()`,
+  which touches the reload watermark in every partition of every active
+  topology. Requires newspack-nodes 2.11.0.
+
+### Removed
+
+- **The `newspack_nodes/vault/changed` listener moved to the substrate.**
+  `newspack_event_logger_nodes_on_vault_changed` restarted the `hub-control`
+  fleet so its workers would reload remotes from the Vault. Every part of that
+  belongs to newspack-nodes — the `Vault`, the action, and the `Remote_Link` /
+  `Remote_Source` nodes that actually read the credentials — and naming an ELN
+  topology in the listener meant every future consumer would grow its own copy.
+  The substrate now signals a config RELOAD to the active topologies whose graph
+  declares a vault-consuming node — derived rather than named, and a re-read
+  rather than a process recycle — so this plugin holds no vault-driven restart
+  logic at all.
+
 ## [0.44.11] - 2026-08-05
 
 ### Changed
