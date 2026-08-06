@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.44.14] - 2026-08-06
+
 ### Fixed
 
 - **A `performance set` that changed nothing still reloaded the whole fleet.**
@@ -16,9 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   re-globbing and re-parsing every `.tsl` to reach the answer it already had. It
   now returns `updated: false` and signals nothing when the stored value matches.
   Same fix as the substrate's `Settings_CI::cmd_set`. `Rule_Set::save()` still
-  signals unconditionally: it has side effects beyond the rules option (durable
-  hook options, the memcache mirror, orphan reconciliation) that can change while
-  the option does not, so gating it needs more than a value comparison.
+  signals a reload — never a restart — on every write, including one that changed
+  nothing: it has side effects beyond the rules option (durable hook options, the
+  memcache mirror, orphan reconciliation) that can move while the option does
+  not, so gating it needs more than a value comparison. The cost is the wasted
+  re-parse, not a process recycle.
 
 - **Documentation named a supervisor that has not existed since substrate
   2.11.0.** The architecture guide claimed the job-context pair also bracketed
