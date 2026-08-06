@@ -17,7 +17,7 @@ global $newspack_profiler;
 $newspack_profiler = [
 	// hrtime: nanosecond counter, monotonic, used downstream for delta math.
 	'request_time' => \hrtime( true ),
-	// microtime: wall-clock equivalent of the same moment. Consumed by
+	// @longform microtime: wall-clock equivalent of the same moment. Consumed by
 	// Log_Manager to stamp the firehose `process (start)` ts (so
 	// RequestBuilder's inflight_snapshot.start_time reflects the real
 	// PHP-request start, not the Log_Manager-emit time deep in WP bootstrap).
@@ -25,14 +25,14 @@ $newspack_profiler = [
 	'plugins'      => [],
 ];
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Plugin load timing with class and file snapshots
-// ──────────────────────────────────────────────────────────────────────────────
+/**
+ * Plugin load timing with class and file snapshots
+ */
 
 /**
  * State for tracking between plugin_loaded calls.
  */
-// Capture one microtime/hrtime pair at init. Derive all future wall-clock
+// @longform Capture one microtime/hrtime pair at init. Derive all future wall-clock
 // timestamps from hrtime deltas to avoid extra syscalls.
 $newspack_profiler_state = [
 	'hr'       => null,
@@ -92,16 +92,16 @@ $newspack_profiler_state = [
 	1
 );
 
-// The option_active_plugins filter initializes the baseline when WordPress
+// @longform The option_active_plugins filter initializes the baseline when WordPress
 // calls get_option('active_plugins') inside wp_get_active_and_valid_plugins(),
 // right before the plugin loading loop. No need to trigger it early here —
 // that would attribute WordPress bootstrap overhead to the first plugin.
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Flush to Event Logger Nodes
-// ──────────────────────────────────────────────────────────────────────────────
+/**
+ * Flush to Event Logger Nodes
+ */
 
-// Flush deferred plugin load events BEFORE hook_start's callback wrapping.
+// @longform Flush deferred plugin load events BEFORE hook_start's callback wrapping.
 // App\Core registers at start_priority (default 1, configurable down to e.g.
 // -10000); we flush at -10001 so plugin load events appear in the log before
 // any plugins_loaded callbacks, matching reality. Requires that
