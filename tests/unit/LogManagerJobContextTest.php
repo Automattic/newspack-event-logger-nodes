@@ -19,7 +19,25 @@ class LogManagerJobContextTest extends TestCase {
 		// Listeners registered via `\add_action` in a test leak across tests
 		// through the bootstrap's global `_wp_actions` shim otherwise.
 		$GLOBALS['_wp_actions'] = [];
+		\putenv( 'LOCAL_NEWSPACK_NODES_CONF' );
+		Log_Manager::reset();
+		\Newspack_Event_Logger_Nodes\Config::reset();
 		parent::tearDown();
+	}
+
+	/**
+	 * Turn logging on against the shared test base dir. This file otherwise
+	 * inherits whatever the previous test left, which is fine for the scope
+	 * assertions but not for anything reading the firehose off disk.
+	 */
+	private function arrange_logging(): void {
+		@\mkdir( '/tmp/event-logger-nodes-test/logs', 0755, true );
+		foreach ( \glob( '/tmp/event-logger-nodes-test/logs/firehose.p*/*.log' ) ?: [] as $stale ) {
+			@\unlink( $stale );
+		}
+		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . \dirname( __DIR__ ) . '/configs/logging-enabled.php' );
+		Log_Manager::reset();
+		\Newspack_Event_Logger_Nodes\Config::reset();
 	}
 
 	public function test_scope_change_action_fires_on_begin_and_end_job_context(): void {
@@ -137,5 +155,51 @@ class LogManagerJobContextTest extends TestCase {
 		$this->assertSame( 'inherited-id', $_SERVER['HTTP_X_A8C_REQUEST_ID'] );
 
 		unset( $_SERVER['CONTENT_TYPE'], $_SERVER['CONTENT_LENGTH'], $_SERVER['HTTP_X_A8C_REQUEST_ID'] );
+	}
+
+	/**
+	 * A cooperative stop rethrows without ever setting `$outcome`, so a null
+	 * outcome at `after_job` means the job did NOT finish. Emitting the usual
+	 * `process (complete)` there marks a killed job as a clean one — the
+	 * duration is a fragment, and Flame_Builder would count it as a real
+	 * sample. `process (aborted)` is terminal for Request_Builder just the same,
+	 * so the half-built request still leaves the cache at once.
+	 */
+	public function test_a_job_that_did_not_complete_logs_process_aborted(): void {
+		$this->arrange_logging();
+		Log_Manager::begin_job_context( 'slow_handler' );
+		Log_Manager::instance()->message( 'work', [ 'm' => 'partway' ] );
+
+		Log_Manager::end_job_context( 'slow_handler', null );
+
+		$lines = $this->firehose_lines();
+		$this->assertNotEmpty( $lines, 'the job context wrote to the firehose' );
+		$this->assertStringContainsString( 'process (aborted)', $lines );
+		$this->assertStringNotContainsString( 'process (complete)', $lines );
+	}
+
+	/** A job that finished keeps the ordinary completion line. */
+	public function test_a_completed_job_still_logs_process_complete(): void {
+		$this->arrange_logging();
+		Log_Manager::begin_job_context( 'quick_handler' );
+		Log_Manager::instance()->message( 'work', [ 'm' => 'done' ] );
+
+		Log_Manager::end_job_context(
+			'quick_handler',
+			[ 'status' => 'ok', 'message' => '', 'items_ok' => 1, 'items_err' => 0 ]
+		);
+
+		$lines = $this->firehose_lines();
+		$this->assertStringContainsString( 'process (complete)', $lines );
+		$this->assertStringNotContainsString( 'process (aborted)', $lines );
+	}
+
+	/** Every firehose segment under the test base dir, concatenated. */
+	private function firehose_lines(): string {
+		$out = '';
+		foreach ( \glob( '/tmp/event-logger-nodes-test/logs/firehose.p*/*.log' ) ?: [] as $path ) {
+			$out .= (string) \file_get_contents( $path );
+		}
+		return $out;
 	}
 }

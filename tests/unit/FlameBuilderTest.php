@@ -700,6 +700,27 @@ class FlameBuilderTest extends TestCase {
 		}
 	}
 
+	/**
+	 * An ABORTED request was killed partway — a worker cut off mid-job, or a
+	 * gyrobase render whose lease was stolen — so its duration is a fragment of
+	 * the real one. Counting it drags every percentile down and invents fast
+	 * requests that never happened, exactly like the timed-out case above.
+	 */
+	public function test_aborted_excluded_from_timing(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+
+		$this->fill_request( $fb, $this->completed_request( [ 'duration_ms' => 12.0, 'error_status' => 'A' ] ) );
+		$fb->flush();
+
+		foreach ( $store->get_hourly() as $stats ) {
+			$this->assertSame( 0, $stats['count'], 'aborted excluded from count' );
+			$this->assertSame( 0, $stats['sum_ms'], 'aborted excluded from sum_ms' );
+		}
+	}
+
 	public function test_workers_excluded_from_timing(): void {
 				Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );

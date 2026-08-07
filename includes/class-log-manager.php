@@ -183,6 +183,9 @@ class Log_Manager {
 	/** @var bool finish() has run; nothing more will be written. */
 	private $finished        = false;
 
+	/** @var bool This context ended without its job completing (cooperative stop). */
+	private bool $aborted = false;
+
 	/** @var bool Flush write buffer after every log line (survives OOM/crash). */
 	private $flush_every_line = false;
 	/** @var bool Past MAX_LOG_LINES; start()/complete() pairs go quiet. */
@@ -584,7 +587,15 @@ class Log_Manager {
 			$complete_extra['error_status'] = 'F';
 		}
 
-		$this->complete( 'process', \array_merge( [ 'status_code' => \http_response_code() ?: 0 ], $complete_extra ) );
+		// A killed job's duration is a fragment: say aborted, never complete.
+		if ( $this->aborted ) {
+			$complete_extra['error_status'] = 'A';
+		}
+		$this->complete(
+			'process',
+			\array_merge( [ 'status_code' => \http_response_code() ?: 0 ], $complete_extra ),
+			$this->aborted ? 'aborted' : 'complete'
+		);
 		$this->topic?->flush();
 		$this->started = false;
 	}
@@ -639,7 +650,7 @@ class Log_Manager {
 	 * @param string $label Label that was passed to start().
 	 * @param array<string, mixed>  $data  Additional data to include in the complete event.
 	 */
-	public function complete( string $label, array $data = [] ): void {
+	public function complete( string $label, array $data = [], string $suffix = 'complete' ): void {
 		if ( \count( $this->times ) < 1 ) {
 			return;
 		}
@@ -665,7 +676,7 @@ class Log_Manager {
 				$data['peak_mb'] = \round( \memory_get_peak_usage( true ) / self::BYTES_PER_MB, 2 );
 			}
 			if ( empty( $match['muted'] ) ) {
-				$this->message( "{$label} (complete)", $data );
+				$this->message( "{$label} ({$suffix})", $data );
 			}
 		}
 	}
@@ -826,8 +837,16 @@ class Log_Manager {
 	 *
 	 * Fires `newspack_event_logger_nodes_scope_changed`, which `App\Core` uses to
 	 * rebind its hook instrumentation to the restored scope's rule.
+	 *
+	 * @param string                    $handler Handler name; unused, but the action passes it first.
+	 * @param array<string, mixed>|null $outcome Job_Worker_Node's classified outcome; null when the job did not finish.
 	 */
-	public static function end_job_context(): void {
+	public static function end_job_context( string $handler = '', ?array $outcome = null ): void {
+		unset( $handler );
+		// Null outcome = a cooperative stop rethrew before classification.
+		if ( null === $outcome && null !== self::$instance ) {
+			self::$instance->aborted = true;
+		}
 		self::resume();
 		if ( ! empty( self::$job_server_stack ) ) {
 			// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- restoring saved value.

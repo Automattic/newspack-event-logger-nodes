@@ -474,7 +474,8 @@ class Flame_Builder_Node extends Node {
 		$duration_val = $flame_data['value'] ?? 0;
 		$duration_ms  = Core::num_float( $duration_val );
 		$error_status = $request['error_status'] ?? '-';
-		$is_timed_out = 'T' === $error_status;
+		// Both durations are fictions and would skew every percentile.
+		$is_timed_out = \in_array( $error_status, [ 'T', 'A' ], true );
 		$is_worker    = ! empty( $request['is_worker'] );
 		// Two gates: per-URL rows keep worker timing; global drops workers.
 		$record_timing = $duration_ms > 0 && ! $is_timed_out;
