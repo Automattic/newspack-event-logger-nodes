@@ -168,6 +168,7 @@ test( 'renders an idle hint when no request id is localized', async () => {
 test.each( [
 	[ 'F', 'fatal error' ],
 	[ 'T', 'timed out' ],
+	[ 'A', 'aborted' ], // killed mid-flight: a worker stop, or a stolen lease
 	[ 'weird', 'weird' ], // an unrecognized code passes through unchanged
 ] )(
 	'labels error_status %s as "%s" in the status card',
