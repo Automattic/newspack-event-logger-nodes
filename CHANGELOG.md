@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.44.21] - 2026-08-07
+
+### Fixed
+
+- **Substrate pin moves to newspack-nodes v2.14.2**, which stops an on-demand
+  job worker being pinned awake by a source log that has never been written.
+  This plugin's `jobs` topology mounts `jobintake:consumer` against
+  `jobintake.p0`, and a site that has never taken a large-ingress job has no
+  such log — so its job worker ran full 10-minute lifetimes and respawned
+  instead of scaling to zero, on every spoke.
+
 ## [0.44.20] - 2026-08-07
 
 ### Changed
