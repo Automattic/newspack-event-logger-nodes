@@ -87,7 +87,8 @@ const RequestRow = memo(
 		const barValue = req[ barField ] || 0;
 		const barPct = maxBar > 0 ? ( barValue / maxBar ) * 100 : 0;
 		let statusRole = '';
-		if ( 'T' === req.error_status ) {
+		if ( 'T' === req.error_status || 'A' === req.error_status ) {
+			// Aborted warns like a timeout: truncated, not a failure.
 			statusRole = ' newspack-nodes-status is-warning';
 		} else if ( 'F' === req.error_status ) {
 			statusRole = ' newspack-nodes-status is-error';
@@ -146,6 +147,16 @@ const RequestRow = memo(
 							T
 						</span>
 					) }
+					{ req.error_status === 'A' && (
+						<span
+							title={ __(
+								'Aborted — the worker stopped before this request finished',
+								'newspack-event-logger-nodes'
+							) }
+						>
+							A
+						</span>
+					) }
 					{ ! req.error_status && ( req.status_code || '-' ) }
 				</div>
 				<div className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--numeric">
@@ -193,8 +204,9 @@ export default function UrlDetailView( {
 		if ( ! errorsOnly ) {
 			return sortedRequests;
 		}
-		return sortedRequests.filter(
-			( r ) => r.error_status === 'F' || r.error_status === 'T'
+		// Mirrors Request_Builder_Node::ERROR_STATUSES.
+		return sortedRequests.filter( ( r ) =>
+			[ 'F', 'T', 'A' ].includes( r.error_status )
 		);
 	}, [ sortedRequests, errorsOnly ] );
 

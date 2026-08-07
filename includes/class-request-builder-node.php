@@ -54,6 +54,13 @@ class Request_Builder_Node extends Timer_Node {
 	use \Newspack_Nodes\Schema_Reflection;
 	use \Newspack_Nodes\Deferred_Clean_Stop;
 
+	/**
+	 * Every non-nominal terminal marker: fatal, timed out, aborted. The index
+	 * writer, its reader and the `process (complete)` validator all read this —
+	 * three parallel lists is how `A` shipped writable but unreadable.
+	 */
+	public const ERROR_STATUSES = [ 'F', 'T', 'A' ];
+
 	/** Default in-flight requests held per LRU bucket. */
 	public const DEFAULT_BUCKET_SIZE = 100;
 
@@ -753,7 +760,8 @@ class Request_Builder_Node extends Timer_Node {
 			$request->duration_ms = $entry['duration_ms'] ?? 0;
 			$request->status_code = $entry['status_code'] ?? 0;
 			$error_status         = $entry['error_status'] ?? '-';
-			if ( ! \is_string( $error_status ) || 1 !== \strlen( $error_status ) || ! \in_array( $error_status, [ '-', 'F', 'T' ], true ) ) {
+			$allowed = \array_merge( [ '-' ], self::ERROR_STATUSES );
+			if ( ! \is_string( $error_status ) || ! \in_array( $error_status, $allowed, true ) ) {
 				$error_status = '-';
 			}
 			$request->error_status = $error_status;
@@ -1409,7 +1417,7 @@ class Request_Builder_Node extends Timer_Node {
 			// error_status field appended in v4 format (position 96, 1 char).
 			if ( $len >= 97 ) {
 				$c = \substr( $line, 96, 1 );
-				if ( 'F' === $c || 'T' === $c ) {
+				if ( \in_array( $c, self::ERROR_STATUSES, true ) ) {
 					$entry['error_status'] = $c;
 				}
 			}

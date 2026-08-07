@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.44.22] - 2026-08-07
+
+### Fixed
+
+- **The URL table's "Show Errors" button filtered nothing.**
+  `handleUrlParamsChange` early-returned unless `search`, `sort`, `order` or
+  `offset` changed, and `errorsOnly` was not among them — so toggling the
+  filter, which changes nothing else, returned before sending a command. The
+  button flipped to "Showing Errors" and the table never refetched.
+  `urlsArgs()` had been building `--errors_only=1` correctly the whole time; it
+  was never called. The URL DETAIL view's button was unaffected because it
+  filters client-side and never crosses that path.
+
+- **Aborted requests were invisible: `error_status = 'A'` did not survive the
+  request index.** The fixed-width index writer emitted `A`, but the reader
+  accepted only `F` and `T`, so every aborted request came back with no
+  `error_status` at all — excluded from the errors filter, no badge, and
+  indistinguishable from a clean request. Three independent `F`/`T` lists (the
+  `process (complete)` validator, the index reader, the JS filter) are now one
+  `Request_Builder_Node::ERROR_STATUSES` constant plus its JS mirror, which is
+  what let them drift. `A` also gains a badge and the warning row style a
+  timeout gets — a truncated duration, not a failure the request caused.
+
+- **Substrate pin moves to newspack-nodes v2.14.3**, which stops an on-demand
+  worker respawning itself at exit. This plugin's `jobs` topology is the shape
+  that triggered it: `job-router` writes `jobs.p0` and `jobs:consumer` tails
+  it, so the worker marked a wake for itself on every run and came back on an
+  exact `on_demand_idle` cadence instead of scaling to zero.
+
 ## [0.44.21] - 2026-08-07
 
 ### Fixed
