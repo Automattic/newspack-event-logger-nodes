@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Blank-line runs are collapsed on commit.** `scripts/fix-blank-lines.php`
+  joins the shared tooling and runs in `lint-staged` after the comment gate. It
+  is token-aware: heredoc and string bodies keep their blank lines.
+
 ## [0.44.15] - 2026-08-06
 
 ### Fixed
