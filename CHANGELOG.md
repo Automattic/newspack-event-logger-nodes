@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.44.17] - 2026-08-07
+
+### Fixed
+
+- **Re-pinned to newspack-nodes 2.13.1** for the shared log-browser header
+  alignment. `LogRowList` is inlined at build time, so 0.44.16 shipped the
+  pre-fix copy in the error-log and requests bundles even though the substrate
+  fix existed — a re-pin is the only way a consumer picks it up.
+
 ## [0.44.16] - 2026-08-07
 
 ### Changed
