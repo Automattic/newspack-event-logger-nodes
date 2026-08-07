@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.44.15] - 2026-08-06
+
 ### Fixed
 
 - **Gyroscope's request-stream columns sat left of their own headers.** The
