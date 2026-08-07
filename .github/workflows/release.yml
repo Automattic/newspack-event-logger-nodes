@@ -38,7 +38,7 @@ jobs:
         with:
           repository: Automattic/newspack-nodes
           # Pinned substrate tag — bump when adopting a newer substrate.
-          ref: v2.14.1
+          ref: v2.14.2
           path: .newspack-nodes
 
       - name: Setup PHP
