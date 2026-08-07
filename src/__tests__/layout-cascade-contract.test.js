@@ -227,9 +227,12 @@ describe( 'Event Logger layout cascade', () => {
 			{ padding: '24px' },
 		],
 		[
+			// No padding here: the row carries `is-quiet`, which is the shared
+			// variant for an empty state that should read as a quiet note
+			// rather than a boxed panel, so it takes the shared padding.
 			'gyroscope/styles/request-stream.scss',
 			'.event-logger-request-stream-empty',
-			{ display: 'flex', height: '100%', padding: '0' },
+			{ display: 'flex', height: '100%' },
 		],
 	] )(
 		'keeps compact empty-state geometry in %s',

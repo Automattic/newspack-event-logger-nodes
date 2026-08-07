@@ -655,7 +655,7 @@ export default function Inflight( { maxRows = 20 } ) {
 			>
 				<div className="event-logger-request-stream-content">
 					{ requests.length === 0 ? (
-						<div className="event-logger-request-stream-empty newspack-nodes-empty-state">
+						<div className="event-logger-request-stream-empty is-quiet newspack-nodes-empty-state">
 							{ __(
 								'No active requests.',
 								'newspack-event-logger-nodes'
