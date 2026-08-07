@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.44.20] - 2026-08-07
+
+### Changed
+
+- **Substrate pin moves to newspack-nodes v2.14.1**, a performance release on
+  paths this plugin sits squarely on: `Router_Node::fill()` (~1427ns → ~1020ns
+  per routed message), `Message::packed()` (~754ns → ~593ns, on every firehose
+  write), and `SSE_In_Node`'s read parser, which was quadratic in the line count
+  and is now flat — the aggregator's inbound streams are the heaviest user of
+  it. All figures measured in the arm64 dev container; treat them as ratios.
+
 ## [0.44.19] - 2026-08-07
 
 ### Changed
