@@ -260,6 +260,7 @@ export function usePerformanceGraph( opts = {} ) {
 		sort: 'count',
 		order: 'desc',
 		offset: 0,
+		errorsOnly: false,
 	} );
 	const urlFetchTimerRef = useRef( null );
 
@@ -517,7 +518,8 @@ export function usePerformanceGraph( opts = {} ) {
 				prev.search === params.search &&
 				prev.sort === params.sort &&
 				prev.order === params.order &&
-				prev.offset === params.offset
+				prev.offset === params.offset &&
+				!! prev.errorsOnly === !! params.errorsOnly
 			) {
 				return;
 			}

@@ -1002,6 +1002,47 @@ class RequestBuilderTest extends TestCase {
 		$this->assertSame( 'GET', $parsed['method'] );
 	}
 
+	/**
+	 * `A` (aborted) must survive the index round trip. The writer emitted it but
+	 * the reader accepted only F/T, so every aborted request came back with no
+	 * error_status at all — invisible to the URL detail view's errors filter and
+	 * to anything else reading the index.
+	 *
+	 * @dataProvider error_status_provider
+	 */
+	public function test_format_index_entry_round_trips_every_error_status( string $status ): void {
+		$req = [
+			'rid'            => 'abcdef',
+			'url'            => '/post/123',
+			'timestamp'      => 1_700_000_000,
+			'duration_ms'    => 50,
+			'status_code'    => 0,
+			'peak_mb'        => 32,
+			'request_method' => 'GET',
+			'error_status'   => $status,
+		];
+		$message                   = Message::new_message();
+		$message[ Message::TYPE ]  = Message::TM_STRUCT;
+		$message[ Message::VALUE ] = $req;
+
+		$entry = Request_Builder_Node::format_index_entry(
+			$message,
+			[ 'segment' => 5, 'offset' => 1024, 'length' => 100 ]
+		);
+		$parsed = Request_Builder_Node::parse_request_index( (string) $entry );
+
+		$this->assertSame( $status, $parsed['error_status'] ?? '-' );
+	}
+
+	/** @return array<string, array{0:string}> */
+	public static function error_status_provider(): array {
+		return [
+			'fatal'   => [ 'F' ],
+			'timeout' => [ 'T' ],
+			'aborted' => [ 'A' ],
+		];
+	}
+
 	public function test_format_index_entry_returns_null_for_missing_url(): void {
 		$message                       = Message::new_message();
 		$message[ Message::TYPE ]      = Message::TM_STRUCT;

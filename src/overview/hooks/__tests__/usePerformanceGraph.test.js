@@ -364,6 +364,36 @@ describe( 'usePerformanceGraph — handleUrlParamsChange', () => {
 		unmount();
 		jest.useRealTimers();
 	} );
+
+	test( 'refetches when only errorsOnly changes', async () => {
+		// The early-return compared search/sort/order/offset only, so toggling
+		// the errors filter — which changes nothing else — returned before
+		// sending anything. The button flipped to "Showing Errors" and the
+		// table kept showing every URL.
+		const client = makeFakeClient( { urls: { data: [], total: 0 } } );
+		let api;
+		renderHook(
+			( p ) => {
+				api = usePerformanceGraph( p );
+				return api;
+			},
+			{ initialProps: { commandClient: client } }
+		);
+		await act( async () => {} );
+		const base = { search: '', sort: 'count', order: 'desc', offset: 0 };
+		api.handleUrlParamsChange( base );
+		const before = countVerbs( client.batches, 'urls' );
+
+		api.handleUrlParamsChange( { ...base, errorsOnly: true } );
+
+		expect( countVerbs( client.batches, 'urls' ) ).toBe( before + 1 );
+		const sent = client.batches
+			.flat()
+			.filter( ( m ) => m[ VALUE ]?.name === 'urls' );
+		expect( sent[ sent.length - 1 ][ VALUE ].arguments ).toContain(
+			'--errors_only=1'
+		);
+	} );
 } );
 
 describe( 'usePerformanceGraph — resolveRequest & fetchUrlBreakdown (awaited)', () => {
