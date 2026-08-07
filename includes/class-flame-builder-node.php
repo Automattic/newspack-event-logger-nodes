@@ -110,7 +110,6 @@ class Flame_Builder_Node extends Node {
 	 */
 	protected const INTERN_TABLE_LIMIT = 50000;
 
-
 	/**
 	 * Max URLs kept per bucket in the URL index, ranked by request count.
 	 *
@@ -146,7 +145,6 @@ class Flame_Builder_Node extends Node {
 	private $cat_stats                   = [];
 	/** @var array<string, array<string, array<string, mixed>>> Server → bucket → category accumulator. */
 	private $cat_stats_by_server         = [];
-
 
 	/** @var (callable(): int)|null Test seam: clock function for bucket-key derivation. */
 	private $clock_fn = null;

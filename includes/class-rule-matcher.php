@@ -54,7 +54,6 @@ final class Rule_Matcher {
 		$this->rules = $rules;
 	}
 
-
 	/** A pattern's query part ('' for prefix/exact forms), lowercased. */
 	private static function pattern_query( string $pattern ): string {
 		return self::split( $pattern )[1];

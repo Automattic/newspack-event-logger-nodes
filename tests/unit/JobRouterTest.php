@@ -323,10 +323,6 @@ class JobRouterTest extends TestCase {
 		$this->assertSame( $entry_timestamp, $this->sink->captured[0][ Message::VALUE ]['ts'] );
 	}
 
-
-
-
-
 	public function test_garbage_body_timestamps_route_through_as_data(): void {
 		// The envelope TIMESTAMP (Age_Sieve's criterion) gates age; a garbage
 		// body ts is just data for downstream coercion to zero out.
