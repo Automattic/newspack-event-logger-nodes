@@ -11,6 +11,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A request killed mid-flight is closed out as `process (aborted)`, not left
+  for the LRU.** The jobs most likely to be cut off are the longest and
+  chattiest, which are also the ones holding the most of `Request_Builder`'s
+  cache — and a cut-off left the half-built request sitting there until the
+  timed bucket rotated it, while the successor had already restarted the same
+  job and was building a second entry for it.
+
+  `Log_Manager::end_job_context()` now reads the outcome the `after_job` action
+  already passes: `Job_Worker_Node` rethrows a cooperative stop without ever
+  classifying one, so a null outcome means the job did not finish. That context
+  emits `process (aborted)` with `error_status` `A` instead of the usual
+  completion line — which it WAS writing, marking a killed job as clean.
+
+  `Request_Builder_Node` treats the new keyword as terminal exactly like
+  `process (complete)`, so the entry is emitted and evicted at once.
+  `Flame_Builder` excludes `A` from timing samples alongside `T`: an abort's
+  duration is a fragment of the real one and would drag every percentile down.
+  The current-request tab labels it `aborted` rather than printing the raw code.
+
 - **Re-pinned to newspack-nodes 2.13.1** for the shared log-browser header
   alignment. `LogRowList` is inlined at build time, so 0.44.16 shipped the
   pre-fix copy in the error-log and requests bundles even though the substrate

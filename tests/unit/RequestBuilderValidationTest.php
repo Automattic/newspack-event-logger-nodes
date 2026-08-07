@@ -137,4 +137,35 @@ class RequestBuilderValidationTest extends TestCase {
 
 		$this->assertStringContainsString( 'WARNING: trace timed out on r_to', $this->log );
 	}
+
+	/**
+	 * A worker cut off mid-job (or a gyrobase render whose lease was stolen)
+	 * leaves a half-built request in the cache. Without a terminal marker it
+	 * sits until the LRU rotates it out — and meanwhile the successor has
+	 * restarted the same job and is building a SECOND entry for it. The abort
+	 * line is terminal like `process (complete)`, so the entry is emitted and
+	 * evicted at once, but stamped `A` so nothing reads it as a clean finish.
+	 */
+	public function test_process_aborted_is_terminal_and_stamps_error_status_a(): void {
+		$sink = new Capture_Sink_Node();
+		$rb   = new Request_Builder_Node();
+		$rb->name( 'request-builder' );
+		$rb->sink( $sink );
+
+		$this->fill( $rb, 1, 'killed', 'process (start)', [ 'm' => '1 on h', 'l' => '' ] );
+		$this->fill( $rb, 2, 'killed', 'request', [ 'm' => 'GET /slow' ] );
+		$this->fill( $rb, 3, 'killed', 'process (aborted)', [ 'duration_ms' => 900.0, 'status_code' => 0 ] );
+
+		$docs = [];
+		foreach ( $sink->captured as $m ) {
+			$value = $m[ Message::VALUE ];
+			if ( \is_array( $value ) && isset( $value['error_status'] ) ) {
+				$docs[] = $value;
+			}
+		}
+
+		$this->assertNotEmpty( $docs, 'an aborted request is emitted, not left for the LRU' );
+		$this->assertSame( 'A', $docs[0]['error_status'] );
+		$this->assertSame( '/slow', $docs[0]['url'] );
+	}
 }

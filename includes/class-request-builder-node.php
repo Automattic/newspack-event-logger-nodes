@@ -760,6 +760,20 @@ class Request_Builder_Node extends Timer_Node {
 			$request->state        = 'complete';
 		};
 
+		// @longform Terminal like `process (complete)`, so the emit-and-evict
+		// path fires at once — a worker cut off mid-job, or a gyrobase render
+		// whose lease was stolen, otherwise leaves its half-built request in
+		// the cache until the LRU rotates it out, while the successor is
+		// already building a second entry for the restarted job. Stamped `A`
+		// rather than reusing complete's `-`: the duration is truncated, and
+		// Flame_Builder must not count it as a real sample.
+		$s['process (aborted)'] = function ( \stdClass $request, array $entry ): void {
+			$request->duration_ms  = $entry['duration_ms'] ?? 0;
+			$request->status_code  = $entry['status_code'] ?? 0;
+			$request->error_status = 'A';
+			$request->state        = 'complete';
+		};
+
 		$s['request'] = function ( \stdClass $request, array $entry ): void {
 			$message = $entry['m'] ?? '';
 			if ( ! \is_string( $message ) ) {

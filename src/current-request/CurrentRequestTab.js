@@ -52,7 +52,7 @@ function currentRequestData() {
  * `-` and `''` both mean a clean finish. An unrecognized code passes through
  * unchanged rather than being flattened into "ok" and hidden.
  *
- * @param {string} errorStatus The stamped code — `F`, `T`, `-`, or ''.
+ * @param {string} errorStatus The stamped code — `F`, `T`, `A`, `-`, or ''.
  * @return {string} The label to render.
  */
 function statusLabel( errorStatus ) {
@@ -61,6 +61,8 @@ function statusLabel( errorStatus ) {
 			return __( 'fatal error', 'newspack-event-logger-nodes' );
 		case 'T':
 			return __( 'timed out', 'newspack-event-logger-nodes' );
+		case 'A':
+			return __( 'aborted', 'newspack-event-logger-nodes' );
 		case '-':
 		case '':
 			return __( 'ok', 'newspack-event-logger-nodes' );
