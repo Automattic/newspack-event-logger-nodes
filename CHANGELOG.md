@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.44.19] - 2026-08-07
+
+### Changed
+
+- **Substrate pin moves to newspack-nodes v2.14.0**, which adds the
+  `wp nodes stop` / `wp nodes start` deploy hold. That is the fix for the torn
+  deploys that were quarantining good `requests:consumer` and
+  `firehose:consumer` records as poison — a plugin update swapping `includes/`
+  under a live worker makes its autoloader fail on this plugin's own classes.
+  Take the fleet down around the deploy:
+  `wp nodes stop && ./deploy.sh && wp nodes start`.
+
+  The same substrate release reworks `dl_requeue` to redeliver a quarantined
+  record to the reader's sink instead of appending it back into the source log,
+  so the Triage modal's REQUEUE button now works on the oversized records a
+  torn deploy stranded.
+
 ## [0.44.18] - 2026-08-07
 
 ## [0.44.17] - 2026-08-07
