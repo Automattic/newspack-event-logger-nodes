@@ -93,9 +93,12 @@ describe( 'useHookCatalogGraph — exospine + I/O boundary wiring', () => {
 		expect( interpreter ).toBeTruthy();
 		expect( Core.node( ROUTER ) ).toBeTruthy();
 		expect( Core.node( HTTP ).sink ).toBe( interpreter );
-		// A Request node routes through `_shell`, the Tap every command does.
-		expect( Core.node( REQUEST ).sink ).toBe( Core.node( '_shell' ) );
-		expect( Core.node( REQUEST ).target ).toBe( `${ HTTP }/performance` );
+		// A Request node reaches `_shell` — the Tap every command passes — as a
+		// TARGET hop, like the Fetchers; it sinks into the interpreter.
+		expect( Core.node( REQUEST ).sink ).toBe( interpreter );
+		expect( Core.node( REQUEST ).target ).toBe(
+			`_shell/${ HTTP }/performance`
+		);
 	} );
 
 	/** Opening the modal must not mint before /auth has landed. */
