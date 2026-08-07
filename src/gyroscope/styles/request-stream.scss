@@ -6,13 +6,9 @@
 
 @use "base";
 
-// The header and the rows are two SEPARATE grids sharing one
-// `grid-template-columns` (Inflight.js `gridTemplate`). Identical tracks only
-// line up if the boxes around them do, so horizontal padding and gap live here
-// once and both rules use them — they drifted 8px vs 12px, which walked every
-// column off its own label. Vertical padding is free to differ.
 $stream-gap: 12px;
 $stream-padding-x: 12px;
+$stream-scrollbar: 17px;
 
 .event-logger-request-stream {
 	padding: 16px 20px;
@@ -30,19 +26,15 @@ $stream-padding-x: 12px;
 	overflow-y: scroll;
 	overflow-x: hidden;
 	padding: 0;
-	-webkit-overflow-scrolling: touch;
 	display: flex;
 	flex-direction: column;
-
-	&::-webkit-scrollbar {
-		width: 8px;
-	}
 }
 
 .event-logger-request-stream-header-row {
 	display: grid;
 	gap: $stream-gap;
 	padding: 6px $stream-padding-x;
+	margin-right: $stream-scrollbar;
 	flex-shrink: 0;
 }
 
@@ -61,7 +53,6 @@ $stream-padding-x: 12px;
 	align-items: center;
 	justify-content: center;
 	height: 100%;
-	padding: 0;
 	font-size: 14px;
 
 	&::before {
