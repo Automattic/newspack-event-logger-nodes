@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Gyroscope's request-stream columns sat left of their own headers.** The
+  header and the rows are two separate grids sharing one
+  `grid-template-columns`, so identical tracks only line up if the boxes around
+  them do — and their horizontal padding had drifted to `8px` vs `12px`, with the
+  gap diverging again below 1200px. Both metrics now come from one pair of
+  variables, and the breakpoint moves both grids or neither.
+
 ## [0.44.14] - 2026-08-06
 
 ### Fixed
