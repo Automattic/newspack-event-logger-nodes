@@ -340,6 +340,57 @@ class LruCacheTest extends TestCase {
 		$this->assertContains( 'stalled', $evicted, '600s of wall clock must age an entry out' );
 	}
 
+	/**
+	 * The grid fixes the PHASE, but a boundary crossed while no worker was
+	 * alive still has to be repaid. `next_window` was left out of get_state(),
+	 * so each generation re-derived it from its own start and skipped every
+	 * window the gap covered — with 30s generations against a 200s window that
+	 * is most of them, and the catch-up loop never fired in the restart path.
+	 */
+	public function test_windows_missed_while_no_process_was_alive_are_repaid(): void {
+		$evicted  = [];
+		$on_evict = function ( $k ) use ( &$evicted ) {
+			$evicted[] = $k;
+		};
+
+		Core::$now = 1000000.0;
+		$cache     = ( new LRU_Cache( 100, 3 ) )->with_timed_rotation( 200.0, $on_evict );
+		$cache->set( 'stalled', 'req' );
+		$state = $cache->get_state();
+
+		// The successor starts 700s later: three boundaries went by unattended.
+		Core::$now = 1000700.0;
+		$cache     = ( new LRU_Cache( 100, 3 ) )->with_timed_rotation( 200.0, $on_evict );
+		$cache->restore_state( $state );
+		$cache->rotate_if_due();
+
+		$this->assertContains( 'stalled', $evicted );
+	}
+
+	/**
+	 * Bucket indices are monotonic and persisted, so `current` climbs forever
+	 * across generations while only num_buckets indices ever exist. Scanning it
+	 * down to zero made every MISS — and Request_Builder takes one per firehose
+	 * line that opens a request — cost a walk proportional to the cache's whole
+	 * history. A live worker was already at index 2053 holding three buckets.
+	 */
+	public function test_a_miss_does_not_scan_the_whole_index_history(): void {
+		$cache = new LRU_Cache( 100, 3 );
+		$cache->restore_state( [
+			'buckets' => [ 4999998 => [ 'a' => 1 ], 4999999 => [], 5000000 => [] ],
+			'current' => 5000000,
+		] );
+
+		$started = \microtime( true );
+		for ( $i = 0; $i < 20; $i++ ) {
+			$this->assertNull( $cache->get( 'absent' ) );
+		}
+		$elapsed = \microtime( true ) - $started;
+
+		$this->assertSame( 1, $cache->get( 'a' ), 'live buckets still resolve' );
+		$this->assertLessThan( 1.0, $elapsed, '20 misses must not walk 5M dead indices each' );
+	}
+
 	public function test_rotate_if_due_does_not_rotate_before_interval(): void {
 		$cache = new LRU_Cache( 100, 2 );
 		$cache->with_timed_rotation( 10.0, function () {} );

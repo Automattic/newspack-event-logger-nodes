@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The LRU's catch-up never ran in the restart path, which is the only path
+  that matters.** v0.45.0 put the rotation boundary on an absolute grid so a
+  restored cache keeps its predecessor's phase, and had `rotate_if_due()` repay
+  every elapsed window — but `next_window` stayed out of `get_state()`, so each
+  generation re-derived it from its own start and skipped every window the gap
+  covered. With 30s generations against a 200s window that is most of them, and
+  the repayment loop was dead code. The boundary now rides in the snapshot; a
+  snapshot without one predates this and keeps the fresh grid.
+
+- **`get()` / `delete()` / `iterate()` scanned the cache's whole index
+  history.** Bucket indices are monotonic and persisted, so `current` only ever
+  climbs while `num_buckets` buckets exist; counting down from it meant a MISS
+  — one per firehose line that opens a request — walked every dead index. A
+  live worker was at 2053, which measures ~13µs per miss; the defect is that it
+  grows without bound (~630µs at 100k). They now walk the live bucket keys, so
+  the cost is `num_buckets`.
+
+- **`purge` was declared as a configuration verb**, so the topology editor
+  offered it as a checkbox whose tick serializes into the `.tsl` and re-runs on
+  every worker boot, silently discarding in-flight requests. It is now marked
+  `'action' => true` (newspack-nodes ≥ 2.14.6) — still a verb, still invocable
+  on a live node, no longer persistable as a setting.
+
 ## [0.45.0] - 2026-08-08
 
 ### Fixed

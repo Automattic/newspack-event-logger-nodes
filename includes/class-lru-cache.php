@@ -92,8 +92,8 @@ class LRU_Cache {
 	 * @return mixed|null Value, or null when the key is absent.
 	 */
 	public function get( string $key ) {
-		for ( $i = $this->current; $i >= 0; $i-- ) {
-			if ( isset( $this->buckets[ $i ] ) && \array_key_exists( $key, $this->buckets[ $i ] ) ) {
+		foreach ( $this->live_indices() as $i ) {
+			if ( \array_key_exists( $key, $this->buckets[ $i ] ) ) {
 				$value = $this->buckets[ $i ][ $key ];
 
 				if ( $i < $this->current ) {
@@ -107,6 +107,22 @@ class LRU_Cache {
 		}
 
 		return null;
+	}
+
+	/**
+	 * Live bucket indices, newest first.
+	 *
+	 * Indices are monotonic and ride through get_state(), so `current` climbs
+	 * for the life of the log while only num_buckets buckets exist. Counting
+	 * down from it made a miss cost the whole history — a live worker sat at
+	 * index 2053 holding three buckets.
+	 *
+	 * @return list<int>
+	 */
+	private function live_indices(): array {
+		$indices = \array_keys( $this->buckets );
+		\rsort( $indices );
+		return $indices;
 	}
 
 	/**
@@ -251,8 +267,8 @@ class LRU_Cache {
 	 * @param string $key Cache key.
 	 */
 	public function delete( string $key ): void {
-		for ( $i = $this->current; $i >= 0; $i-- ) {
-			if ( isset( $this->buckets[ $i ] ) && \array_key_exists( $key, $this->buckets[ $i ] ) ) {
+		foreach ( $this->live_indices() as $i ) {
+			if ( \array_key_exists( $key, $this->buckets[ $i ] ) ) {
 				unset( $this->buckets[ $i ][ $key ] );
 				return;
 			}
@@ -271,11 +287,9 @@ class LRU_Cache {
 	 * @return \Generator<array-key, mixed> Yields value keyed by cache key.
 	 */
 	public function iterate(): \Generator {
-		for ( $i = $this->current; $i >= 0; $i-- ) {
-			if ( isset( $this->buckets[ $i ] ) ) {
-				foreach ( $this->buckets[ $i ] as $key => $value ) {
-					yield $key => $value;
-				}
+		foreach ( $this->live_indices() as $i ) {
+			foreach ( $this->buckets[ $i ] as $key => $value ) {
+				yield $key => $value;
 			}
 		}
 	}
@@ -293,15 +307,18 @@ class LRU_Cache {
 	 *
 	 * `Request_Builder_Node::save_state()` persists this so in-flight requests
 	 * survive a worker restart. Rotation settings and on_evict stay out — the
-	 * restoring instance supplies its own, and the window boundary needs no
-	 * carrying because the grid recomputes it from the clock.
+	 * restoring instance supplies its own. The window boundary DOES ride along:
+	 * the grid gives a fresh cache the right phase, but only the boundary the
+	 * predecessor was actually waiting on tells the successor how many windows
+	 * went by unattended, and those are exactly the ones to repay.
 	 *
-	 * @return array<string, mixed> Keys `buckets` and `current`.
+	 * @return array<string, mixed> Keys `buckets`, `current` and `next_window`.
 	 */
 	public function get_state(): array {
 		return [
-			'buckets' => $this->buckets,
-			'current' => $this->current,
+			'buckets'     => $this->buckets,
+			'current'     => $this->current,
+			'next_window' => $this->next_window,
 		];
 	}
 
@@ -334,5 +351,11 @@ class LRU_Cache {
 		/** @var array<int, array<string, mixed>> $buckets */
 		$this->buckets = $buckets;
 		$this->current = (int) \max( 0, \min( $current, $max_key ) );
+
+		// Adopt the predecessor's boundary so rotate_if_due() repays the gap.
+		$carried = $state['next_window'] ?? null;
+		if ( \is_float( $carried ) || \is_int( $carried ) ) {
+			$this->next_window = (float) $carried;
+		}
 	}
 }
