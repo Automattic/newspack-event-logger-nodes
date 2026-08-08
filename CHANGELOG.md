@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.46.0] - 2026-08-08
+
 ### Fixed
 
 - **Every job logged as `POST /jobs/{handler}`, whatever it actually ran.**
