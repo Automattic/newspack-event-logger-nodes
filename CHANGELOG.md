@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Every job logged as `POST /jobs/{handler}`, whatever it actually ran.**
+  `begin_job_context()` writes the synthetic `$_SERVER` and then fires
+  `newspack_event_logger_nodes_scope_changed`; `App\Core` answers by calling
+  `Log_Manager::instance()`, whose constructor picks the governing rule off
+  `REQUEST_URI` and writes the `request` line from `REQUEST_METHOD`. So a
+  caller describing a different request — pyrobase rendering a template as
+  `GET /Admin/Foo.html?a=1` — assigned `$_SERVER` one statement too late and
+  was silently ignored: 22,939 job request lines locally, not one of them
+  `GET`. The query string was lost outright, since it is omitted from
+  `ENV_ALLOWLIST` on the grounds that the `request` line carries it, and that
+  line carries only `REQUEST_URI`. `begin_job_context()` now takes an optional
+  `$server` overlay applied before the action fires; the hook binding keeps its
+  two `accepted_args`.
+
+### Changed
+
+- **`Log_Manager::$enabled` and `ensure_started()` are gone; `is_started()`
+  replaces them.** Since matched requests start eagerly at construction,
+  `ensure_started()` could only ever report the state the constructor had
+  already decided, and `enabled` duplicated `started` — except after
+  `finish()`, where `enabled` stayed true and `started` went false. Callers
+  that instrument their own work (`App\Core::hook_start`, the profiler
+  drop-in) gate on `is_started()` now, so a hook firing during shutdown no
+  longer gets wrapped for a log nobody will write.
+- **Update `00-newspack-profiler.php` with the plugin.** `$enabled` was public,
+  and the drop-in ships as a separate release asset installed into
+  `mu-plugins/` on its own — so a site that updates one and not the other
+  leaves the old drop-in reading a property that no longer exists. It resolves
+  to null, reads as "not enabled", and the profiler stops contributing its
+  request-start readings without erroring. Nothing else in the tree read
+  `$enabled`.
+
 ## [0.45.1] - 2026-08-08
 
 ### Fixed

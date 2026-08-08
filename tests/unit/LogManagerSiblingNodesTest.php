@@ -86,7 +86,7 @@ class LogManagerSiblingNodesTest extends TestCase {
 	public function test_firehose_topic_is_named(): void {
 		$this->require_config_or_skip();
 		$lm = Log_Manager::instance();
-		$lm->start( 'init' ); // triggers ensure_started -> init_firehose.
+		$lm->start( 'init' );
 
 		$topic = $this->topic( $lm );
 		$this->assertInstanceOf( Topic_Node::class, $topic );

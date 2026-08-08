@@ -135,7 +135,7 @@ class Core {
 	public function hook_start( $v = null ) {
 		// Resolve LM fresh per-call so suspend/resume gets the current scope.
 		$lm = Log_Manager::instance();
-		if ( ! $lm->enabled ) {
+		if ( ! $lm->is_started() ) {
 			return $v;
 		}
 
@@ -354,7 +354,7 @@ class Core {
 	/**
 	 * Close the hook's timing span. Registered at PHP_INT_MAX - 1.
 	 *
-	 * Needs no `enabled` check, unlike hook_start: Log_Manager::complete()
+	 * Needs no is_started() check, unlike hook_start: Log_Manager::complete()
 	 * no-ops when no span under this label is open.
 	 *
 	 * @param mixed $v Filter value (passed through).

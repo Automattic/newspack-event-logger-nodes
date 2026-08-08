@@ -119,7 +119,7 @@ $newspack_profiler_state = [
 		}
 
 		$lm = \Newspack_Event_Logger_Nodes\Log_Manager::instance();
-		if ( ! $lm->enabled ) {
+		if ( ! $lm->is_started() ) {
 			return;
 		}
 

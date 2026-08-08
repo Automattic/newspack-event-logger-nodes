@@ -136,7 +136,7 @@ Every URL written to the firehose (REQUEST_URI, HTTP_REFERER, redirect targets) 
 
 ### Refuse-root
 
-`Log_Manager::__construct()` calls `\posix_getuid()` early. UID 0 means the request is running as root — almost certainly a misconfigured wp-cli invocation — and writes would create files with root ownership that PHP-FPM (running as `bend` / `www-data` / etc.) couldn't subsequently append to. Construction returns before the matcher is built, so `enabled` stays false and every `message()` no-ops for the rest of the request.
+`Log_Manager::__construct()` calls `\posix_getuid()` early. UID 0 means the request is running as root — almost certainly a misconfigured wp-cli invocation — and writes would create files with root ownership that PHP-FPM (running as `bend` / `www-data` / etc.) couldn't subsequently append to. Construction returns before the matcher is built, so nothing ever starts — `is_started()` stays false and every `message()` no-ops for the rest of the request.
 
 ### Worker-traffic exclusion
 
@@ -158,7 +158,7 @@ hook_complete (priority MAX-1) App\Core::hook_complete( hook_name )
 shutdown                       ::finish() — closes orphaned starts, emits process (complete)
 ```
 
-`Log_Manager::instance()` constructs on first use and registers its `shutdown` hook from `ensure_started()`. The shipped start priority is `-10000` (`hook_start_priority` in `newspack-event-logger-nodes-config.php`); `App\Core` falls back to `1` only when the key resolves to a non-integer. The `hook_spacer` at `PHP_INT_MAX-2` (`App\Core::SPACER_PRIORITY`) is a sacrificial no-op registered on every instrumented hook so a self-removing filter (e.g. es-wp-query) that unhooks itself mid-run can't shift the WP filter pointer past `hook_complete` and skip the matching close.
+`Log_Manager::instance()` constructs on first use and registers its `shutdown` hook. The shipped start priority is `-10000` (`hook_start_priority` in `newspack-event-logger-nodes-config.php`); `App\Core` falls back to `1` only when the key resolves to a non-integer. The `hook_spacer` at `PHP_INT_MAX-2` (`App\Core::SPACER_PRIORITY`) is a sacrificial no-op registered on every instrumented hook so a self-removing filter (e.g. es-wp-query) that unhooks itself mid-run can't shift the WP filter pointer past `hook_complete` and skip the matching close.
 
 `App\Core` binds ONLY the hooks the current request's governing rule names — a skip rule or no match binds zero hooks, which is the hot-path win. `newspack_event_logger_nodes_scope_changed` (fired by `begin_job_context` / `end_job_context`) triggers `rebind_for_current_scope()`, so a job's synthetic `/jobs/{handler}/{id}` request gets its own rule's hooks.
 

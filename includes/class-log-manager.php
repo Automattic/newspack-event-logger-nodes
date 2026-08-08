@@ -175,9 +175,6 @@ class Log_Manager {
 		'_URL',
 	];
 
-	/** @var bool The governing rule says log this request. */
-	public $enabled          = false;
-
 	/** @var array<string, mixed> Cached config (loaded once at construction). */
 	private $config = [];
 	/** @var bool finish() has run; nothing more will be written. */
@@ -214,7 +211,7 @@ class Log_Manager {
 
 	/** Saved UNIQUE_ID for suspend/resume. */
 	private ?string $saved_unique_id = null;
-	/** @var bool|null True while logging, false after finish(), null before the first ensure_started(). */
+	/** @var bool|null True while logging, false after finish(), null when no rule started it. */
 	private $started         = null;
 	/** @var array<int, array{label: string, ts: int|float, muted?: bool, m?: mixed}> Timer-frame stack. */
 	private $times           = [];
@@ -224,12 +221,12 @@ class Log_Manager {
 	/**
 	 * Resolve this request's context and start logging when a rule allows it.
 	 *
-	 * Bails inert — leaving `enabled` false — when `enable_logging` is off or the
-	 * process runs as root, whose writes would leave root-owned segment files the
-	 * web user could never append to. Otherwise it builds the rule matcher,
-	 * adopts the profiler drop-in's request-start readings (consuming them from
-	 * the `$newspack_profiler` global so a nested context cannot claim them
-	 * twice), and starts eagerly when the governing rule says `log`.
+	 * Bails inert — never starting — when `enable_logging` is off or the process
+	 * runs as root, whose writes would leave root-owned segment files the web
+	 * user could never append to. Otherwise it builds the rule matcher, adopts
+	 * the profiler drop-in's request-start readings (consuming them from the
+	 * `$newspack_profiler` global so a nested context cannot claim them twice),
+	 * and starts eagerly when the governing rule says `log`.
 	 */
 	public function __construct() {
 		// Assign self FIRST: load_config() re-enters instance(); null recurses.
@@ -256,40 +253,23 @@ class Log_Manager {
 		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
 		$this->request_url = isset( $_SERVER['REQUEST_URI'] ) ? \sanitize_text_field( \wp_unslash( Core::as_string( $_SERVER['REQUEST_URI'] ) ) ) : '/unknown';
 		if ( $this->matches_url_filter( $this->request_url ) ) {
-			$this->ensure_started();
+			$this->started = true;
+			\register_shutdown_function( [ $this, 'finish' ] );
+			$this->init_firehose();
+			$this->log_process();
 		}
 	}
 
 	/**
-	 * Resolve the governing rule for a URL, storing it and setting `enabled`
-	 * accordingly. No rule matched means skip — there is no log-all baseline.
+	 * Resolve the governing rule for a URL, storing it accordingly.
+	 * No rule matched means skip — there is no log-all baseline.
 	 *
 	 * @param string $url URL to check.
 	 * @return bool True if URL should be logged.
 	 */
 	public function matches_url_filter( string $url ): bool {
 		$this->matched_rule = $this->matcher?->match( $url );
-		$this->enabled      = null !== $this->matched_rule && $this->matched_rule->is_log();
-		return $this->enabled;
-	}
-
-	/**
-	 * Ensure that full logging has started: register finish() as a shutdown
-	 * function, attach the firehose Topic, and open the request. Idempotent, and
-	 * a no-op once the rule declined this request or finish() has already run.
-	 *
-	 * @return bool True if logging is started.
-	 */
-	private function ensure_started(): bool {
-		if ( $this->started || ! $this->enabled || $this->finished ) {
-			return $this->started ?? false;
-		}
-		// started=true first: init_firehose re-enters ensure_started().
-		$this->started = true;
-		\register_shutdown_function( [ $this, 'finish' ] );
-		$this->init_firehose();
-		$this->log_process();
-		return true;
+		return null !== $this->matched_rule && $this->matched_rule->is_log();
 	}
 
 	/**
@@ -420,7 +400,7 @@ class Log_Manager {
 	 * @return bool True when the line was written; false when logging never started or the Topic is missing.
 	 */
 	public function message( string $category, array $data = [] ): bool {
-		if ( ! $this->ensure_started() ) {
+		if ( ! $this->started ) {
 			return false;
 		}
 		if ( isset( $data['m'] ) && \is_string( $data['m'] ) && false !== \strpos( $data['m'], '?' ) ) {
@@ -552,7 +532,7 @@ class Log_Manager {
 	 * Close the request: drain the timer stack, then log memory, resources, and
 	 * the final `process (complete)` line before flushing the Topic.
 	 *
-	 * Registered as a shutdown function by ensure_started(), so it also runs
+	 * Registered as a shutdown function by the constructor, so it also runs
 	 * after a fatal. When error_get_last() reports one of FATAL_TYPES, the
 	 * completion line carries the message, file, line, type, offending plugin
 	 * slug, and `error_status` = `F`.
@@ -903,10 +883,20 @@ class Log_Manager {
 	 * `newspack_event_logger_nodes_scope_changed` so `App\Core` rebinds its hook
 	 * instrumentation to whichever rule now governs.
 	 *
-	 * @param string $handler Job handler name.
-	 * @param string $id      First-class job identity ('' ⇒ no id segment).
+	 * A handler running something other than a POST against /jobs/{handler} —
+	 * a template rendered as GET with its own URI and query string — passes
+	 * $server. Those keys are applied over the defaults BEFORE the action
+	 * fires, because the listener builds the LogManager that reads them.
+	 *
+	 * @param string               $handler Job handler name.
+	 * @param string               $id      First-class job identity ('' ⇒ no id segment).
+	 * @param array<string, string> $server $_SERVER keys overriding the synthetic
+	 *                                     defaults. Describes the request only —
+	 *                                     overriding UNIQUE_ID or
+	 *                                     HTTP_X_A8C_REQUEST_ID would defeat the
+	 *                                     fresh per-job request identity above.
 	 */
-	public static function begin_job_context( string $handler, string $id = '' ): void {
+	public static function begin_job_context( string $handler, string $id = '', array $server = [] ): void {
 		// $_SERVER is string-keyed (superglobal snapshot for restore).
 		/** @var array<string, mixed> $snapshot */
 		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- snapshot for restore.
@@ -930,6 +920,9 @@ class Log_Manager {
 			$_SERVER['CONTENT_LENGTH'],
 			$_SERVER['HTTP_X_A8C_REQUEST_ID']
 		);
+		foreach ( $server as $key => $value ) {
+			$_SERVER[ $key ] = $value;
+		}
 		\do_action( 'newspack_event_logger_nodes_scope_changed' );
 	}
 
@@ -955,6 +948,17 @@ class Log_Manager {
 	}
 
 	/**
+	 * This context's logging window is open: the governing rule said `log` and
+	 * finish() has not run yet. The gate every caller that instruments its own
+	 * work — rather than just writing a line — should check first.
+	 *
+	 * @api Used by App\Core and the profiler drop-in.
+	 */
+	public function is_started(): bool {
+		return true === $this->started;
+	}
+
+	/**
 	 * The active instance IFF it has already started logging — the bridge's seam
 	 * for "is there somewhere to log this line?". Never creates or starts an
 	 * instance (unlike instance()), so an unmatched / rule-gated / root context
@@ -963,7 +967,7 @@ class Log_Manager {
 	 * @api Used by the substrate-diagnostics bridge.
 	 */
 	public static function started_instance(): ?self {
-		return ( null !== self::$instance && true === self::$instance->started ) ? self::$instance : null;
+		return ( null !== self::$instance && self::$instance->is_started() ) ? self::$instance : null;
 	}
 
 	/**

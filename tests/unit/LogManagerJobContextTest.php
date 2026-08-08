@@ -50,6 +50,40 @@ class LogManagerJobContextTest extends TestCase {
 		$this->assertSame( 2, $fired );
 	}
 
+	/**
+	 * A caller describing a synthetic request other than POST /jobs/{handler}
+	 * has to be heard before the scope action fires: App\Core answers it by
+	 * calling Log_Manager::instance(), whose constructor picks the governing
+	 * rule off REQUEST_URI and writes the `request` line from REQUEST_METHOD.
+	 * Overrides applied after begin_job_context() returns are already too late.
+	 */
+	public function test_server_overrides_land_before_the_scope_action_fires(): void {
+		$seen = [];
+		// First firing only; end_job_context() fires it again on the restore.
+		\add_action( 'newspack_event_logger_nodes_scope_changed', function () use ( &$seen ): void {
+			if ( [] !== $seen ) {
+				return;
+			}
+			// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- test observation.
+			$seen = [
+				'method' => $_SERVER['REQUEST_METHOD'] ?? '',
+				'uri'    => $_SERVER['REQUEST_URI'] ?? '',
+				'query'  => $_SERVER['QUERY_STRING'] ?? '',
+			];
+		} );
+
+		Log_Manager::begin_job_context( 'relay', '', [
+			'REQUEST_METHOD' => 'GET',
+			'REQUEST_URI'    => '/Admin/Zarquon.html',
+			'QUERY_STRING'   => 'Site=7391&Action=Refresh',
+		] );
+		Log_Manager::end_job_context();
+
+		$this->assertSame( 'GET', $seen['method'] );
+		$this->assertSame( '/Admin/Zarquon.html', $seen['uri'] );
+		$this->assertSame( 'Site=7391&Action=Refresh', $seen['query'] );
+	}
+
 	public function test_begin_rewrites_server_and_end_restores(): void {
 		$_SERVER['ORIGINAL_KEY'] = 'original';
 		$_SERVER['REQUEST_URI']  = '/original';
