@@ -186,13 +186,43 @@ class ReqgrepCommandTest extends TestCase {
 		return $lines;
 	}
 
-	/** Reproduce the old echo byte-stream: each captured VALUE + a trailing "\n" if absent (Stdout_Node's rule). */
+	/**
+	 * The byte-stream exactly as `Stdout_Node` would write it: VALUEs
+	 * concatenated, nothing added. This used to append a "\n" when one was
+	 * absent, attributed to "Stdout_Node's rule" — but `Stdout_Node::fill()`
+	 * writes the VALUE verbatim, so the harness was manufacturing the very
+	 * byte under test and every assertion here passed either way.
+	 */
 	private static function joined( \ArrayObject $lines ): string {
 		$out = '';
 		foreach ( $lines as $text ) {
-			$out .= \str_ends_with( $text, "\n" ) ? $text : $text . "\n";
+			$out .= $text;
 		}
 		return $out;
+	}
+
+	/**
+	 * Every emitted line terminates itself. Nothing downstream adds one —
+	 * `Stdout_Node::fill()` writes the VALUE verbatim — so an unterminated line
+	 * runs straight into the next entry's number column
+	 * (`…LIMIT 1 OFFSET 019991:`), and a multi-line SQL value makes the whole
+	 * dump unreadable.
+	 */
+	public function test_every_emitted_line_is_newline_terminated(): void {
+		$cmd      = $this->make_cmd( '/sql' );
+		$captured = $this->capture_output( $cmd );
+
+		$rid = 'termR';
+		$ts  = 1700000000.0;
+		$this->feed( $cmd, [ 'n' => 1, 'rid' => $rid, 'k' => 'process (start)', 'm' => '/sql', 'ts' => $ts ] );
+		$this->feed( $cmd, [ 'n' => 2, 'rid' => $rid, 'k' => 'query_sql (start)', 'm' => "SELECT 1\n  FROM t\n LIMIT 1 OFFSET 0", 'ts' => $ts + 0.1 ] );
+		$this->feed( $cmd, [ 'n' => 3, 'rid' => $rid, 'k' => 'process (complete)', 'm' => '/sql', 'ts' => $ts + 0.5 ] );
+
+		$this->assertGreaterThan( 0, \count( $captured ) );
+		foreach ( $captured as $i => $text ) {
+			$this->assertStringEndsWith( "\n", (string) $text, "emitted line {$i} must terminate itself" );
+		}
+		$this->assertStringNotContainsString( 'OFFSET 0   3:', self::joined( $captured ) );
 	}
 
 	// -------------------------------------------------------------------------
