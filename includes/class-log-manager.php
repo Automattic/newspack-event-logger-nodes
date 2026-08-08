@@ -176,9 +176,11 @@ class Log_Manager {
 	];
 
 	/**
-	 * Deprecated; superseded by is_started(). Kept because a profiler drop-in
-	 * installed before v0.46.0 still reads it, and it ships as a separate
-	 * release asset that can lag the plugin.
+	 * Deprecated; superseded by is_started(). Still here because the profiler
+	 * drop-in on Atomic is served from a read-only /wordpress/mu-plugins with no
+	 * override — a regular plugin can be shadowed from
+	 * /srv/htdocs/wp-content/plugins, an mu-plugin cannot — so the copy running
+	 * there still reads this until their deploy replaces it (2026-08-10).
 	 *
 	 * @api Read by pre-0.46.0 copies of 00-newspack-profiler.php.
 	 * @var bool
