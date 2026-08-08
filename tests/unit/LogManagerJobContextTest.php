@@ -194,6 +194,52 @@ class LogManagerJobContextTest extends TestCase {
 		$this->assertStringNotContainsString( 'process (aborted)', $lines );
 	}
 
+	/**
+	 * The abort marker is per-request. It was set and never cleared, so one
+	 * unfinished job latched the shared instance and every LATER request in that
+	 * worker process reported `process (aborted)` — including ones that plainly
+	 * succeeded. Observed live: one pid completed its first job, then marked
+	 * every subsequent render aborted despite the render logging "It works!".
+	 */
+	public function test_an_abort_does_not_leak_into_the_next_request(): void {
+		$this->arrange_logging();
+		Log_Manager::begin_job_context( 'stopped_handler' );
+		Log_Manager::instance()->message( 'work', [ 'm' => 'partway' ] );
+		Log_Manager::end_job_context( 'stopped_handler', null );
+
+		// A fresh, entirely successful job in the same process.
+		Log_Manager::begin_job_context( 'good_handler' );
+		Log_Manager::instance()->message( 'work', [ 'm' => 'fine' ] );
+		Log_Manager::end_job_context(
+			'good_handler',
+			[ 'status' => 'ok', 'message' => '', 'items_ok' => 3, 'items_err' => 0 ]
+		);
+
+		$lines = $this->firehose_lines();
+		$this->assertSame(
+			1,
+			\substr_count( $lines, 'process (aborted)' ),
+			'only the job that did not finish may be aborted'
+		);
+		$this->assertStringContainsString( 'process (complete)', $lines );
+	}
+
+	/**
+	 * A bare `end_job_context()` is a context RESTORE, not an abort signal. The
+	 * reconcile bridge calls it with no arguments around every WP-Cron pass, so
+	 * treating the defaulted null outcome as "the job died" marked the whole
+	 * process aborted once a minute.
+	 */
+	public function test_a_bare_end_job_context_is_not_an_abort(): void {
+		$this->arrange_logging();
+		Log_Manager::begin_job_context( 'newspack-nodes' );
+		Log_Manager::instance()->message( 'work', [ 'm' => 'reconciled' ] );
+
+		Log_Manager::end_job_context();
+
+		$this->assertStringNotContainsString( 'process (aborted)', $this->firehose_lines() );
+	}
+
 	/** Every firehose segment under the test base dir, concatenated. */
 	private function firehose_lines(): string {
 		$out = '';

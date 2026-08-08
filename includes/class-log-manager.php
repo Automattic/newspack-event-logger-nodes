@@ -598,6 +598,8 @@ class Log_Manager {
 		);
 		$this->topic?->flush();
 		$this->started = false;
+		// Per-request: a latched flag marks every later request in the process.
+		$this->aborted = false;
 	}
 
 	/**
@@ -838,13 +840,19 @@ class Log_Manager {
 	 * Fires `newspack_event_logger_nodes_scope_changed`, which `App\Core` uses to
 	 * rebind its hook instrumentation to the restored scope's rule.
 	 *
+	 * A null $outcome means the job did not finish — but ONLY when the caller
+	 * actually supplied one. A bare `end_job_context()` is a context restore
+	 * (the reconcile bridge does exactly that around every WP-Cron pass) and
+	 * must not read as an abort, so the arity is the discriminator: the
+	 * `after_job` hook is registered with accepted_args 2 and always passes it.
+	 *
 	 * @param string                    $handler Handler name; unused, but the action passes it first.
 	 * @param array<string, mixed>|null $outcome Job_Worker_Node's classified outcome; null when the job did not finish.
 	 */
 	public static function end_job_context( string $handler = '', ?array $outcome = null ): void {
 		unset( $handler );
-		// Null outcome = a cooperative stop rethrew before classification.
-		if ( null === $outcome && null !== self::$instance ) {
+		$reported = \func_num_args() >= 2;
+		if ( $reported && null === $outcome && null !== self::$instance ) {
 			self::$instance->aborted = true;
 		}
 		self::resume();

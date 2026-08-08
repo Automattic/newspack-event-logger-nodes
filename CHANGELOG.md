@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.44.23] - 2026-08-07
+
+### Fixed
+
+- **One unfinished job marked every later request in that process aborted.**
+  `Log_Manager`'s `aborted` flag is per-request, but `finish()` never cleared
+  it, so once a job ended without an outcome the shared instance stayed latched
+  and every subsequent render in that worker logged `process (aborted)` — some
+  of them while plainly logging "It works!". `finish()` now resets it alongside
+  `started`.
+- **A bare `end_job_context()` read as an abort.** The null outcome that means
+  "the job did not finish" is also the parameter default, and the reconcile
+  bridge restores context with no arguments around every WP-Cron pass — so the
+  whole process was marked aborted once a minute. Arity is now the
+  discriminator: `func_num_args()` distinguishes a caller that reported no
+  outcome from one that reported none, and the `after_job` hook is registered
+  with `accepted_args` 2, so it always reports.
+
 ## [0.44.22] - 2026-08-07
 
 ### Fixed
