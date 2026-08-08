@@ -294,7 +294,8 @@ class Reqgrep_Command {
 	private function emit( string $text ): void {
 		$message                   = Message::new_message();
 		$message[ Message::TYPE ]  = Message::TM_BYTESTREAM;
-		$message[ Message::VALUE ] = $text;
+		// Stdout_Node writes the VALUE verbatim; nothing else terminates.
+		$message[ Message::VALUE ] = \rtrim( $text, "\n" ) . "\n";
 		( $this->stdout ??= new Stdout_Node() )->fill( $message );
 	}
 
