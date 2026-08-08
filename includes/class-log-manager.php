@@ -176,11 +176,13 @@ class Log_Manager {
 	];
 
 	/**
-	 * Deprecated; superseded by is_started(). Still here because the profiler
-	 * drop-in on Atomic is served from a read-only /wordpress/mu-plugins with no
-	 * override — a regular plugin can be shadowed from
+	 * Deprecated mirror of is_started(), set with it at construction. The
+	 * profiler drop-in on Atomic is served from a read-only /wordpress/mu-plugins
+	 * with no override — a regular plugin can be shadowed from
 	 * /srv/htdocs/wp-content/plugins, an mu-plugin cannot — so the copy running
-	 * there still reads this until their deploy replaces it (2026-08-10).
+	 * there gates on this. Left false it never contributes; mirroring restores
+	 * it without instrumenting requests the ruleset declined. Removable once
+	 * their deploy replaces the drop-in (2026-08-10).
 	 *
 	 * @api Read by pre-0.46.0 copies of 00-newspack-profiler.php.
 	 * @var bool
@@ -266,6 +268,7 @@ class Log_Manager {
 		$this->request_url = isset( $_SERVER['REQUEST_URI'] ) ? \sanitize_text_field( \wp_unslash( Core::as_string( $_SERVER['REQUEST_URI'] ) ) ) : '/unknown';
 		if ( $this->matches_url_filter( $this->request_url ) ) {
 			$this->started = true;
+			$this->enabled = true; // deprecated mirror; see the property.
 			\register_shutdown_function( [ $this, 'finish' ] );
 			$this->init_firehose();
 			$this->log_process();
