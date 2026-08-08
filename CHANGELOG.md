@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.45.1] - 2026-08-08
+
 ### Fixed
 
 - **The LRU's catch-up never ran in the restart path, which is the only path
