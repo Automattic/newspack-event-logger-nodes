@@ -209,7 +209,7 @@ class Reqgrep_Command {
 			}
 			$override = $real_path;
 		}
-		$this->base_dir       = '' !== $override ? $override : Config::get_logs_directory() . '/firehose.log';
+		$this->base_dir       = '' !== $override ? $override : Config::get_logs_directory() . '/firehose.p0';
 		$this->partition_dirs = Log_Manager::firehose_dirs( $override );
 
 		// LRU_Cache: 300 slots, 60s rotation, on-evict prints [incomplete].

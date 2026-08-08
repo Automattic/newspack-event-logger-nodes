@@ -3,7 +3,7 @@
  * Job Router
  *
  * Pure router: it extracts job-shaped entries from the two ingress logs —
- * firehose.log (small runtime jobs, body nested under `m`) and jobintake.log
+ * firehose.p0 (small runtime jobs, body nested under `m`) and jobintake.log
  * (large jobs written by `\Newspack_Nodes\Job_Intake`, body flat) — normalizes
  * both to one shape, and forwards them to its target. Handler dispatch happens
  * later, in the substrate's `\Newspack_Nodes\Job_Worker_Node`, which consumes
@@ -45,7 +45,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
 }
 
 /**
- * Normalizes job entries from firehose.log and jobintake.log onto jobs.log.
+ * Normalizes job entries from firehose.p0 and jobintake.log onto jobs.log.
  *
  * Stateless and argument-free: every message is judged on its own contents, and
  * the sending node's name never gates the decision. Anything that is not a

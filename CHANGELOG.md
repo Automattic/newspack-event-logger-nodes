@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`job-feed`, `job-spoke` and `job-hub` topologies — a spoke stops waking for
+  every web request.** `job-router` tails the firehose to find `k:"job"`
+  entries, so on a spoke every logged request woke the worker pool. `job-feed`
+  is the same graph reading `jobfeed.p<N>` instead, the substrate's small-job
+  log (`Job_Intake::feed()`), and `job-spoke` composes it with `job-worker`.
+  `job-hub` keeps the firehose leg, because that is where an aggregator's
+  rewritten `remote_job` entries arrive. `complete` now includes `job-hub`;
+  `jobs` stays until the hub is migrated.
+
+### Changed
+
+- `gyroscope:partition` and `completed:partition` take their segment size and
+  let every retention argument default, instead of restating `min_segments` /
+  `num_segments` and pinning the rest to `0`.
+
 ## [0.46.0] - 2026-08-08
 
 ### Fixed

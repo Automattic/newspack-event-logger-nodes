@@ -2,7 +2,7 @@
 # job-router, and job-worker together.
 
 include performance
-include jobs
+include job-hub
 make_node Tee firehose:tee
 disconnect_node firehose:consumer
 connect_node firehose:consumer firehose:tee

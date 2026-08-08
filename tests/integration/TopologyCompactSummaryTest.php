@@ -246,8 +246,8 @@ class TopologyCompactSummaryTest extends TestCase {
 		$this->assertInstanceOf( Partition_Node::class, $completed );
 		$this->assertSame( 3, $this->partition_geometry( $completed, 'min_segments' ) );
 		$this->assertSame( 5, $this->partition_geometry( $completed, 'num_segments' ) );
-		$this->assertSame( 0, $this->partition_geometry( $completed, 'min_lifetime' ) );
-		$this->assertSame( 0, $this->partition_geometry( $completed, 'lifetime' ) );
+		$this->assertSame( 120, $this->partition_geometry( $completed, 'min_lifetime' ) );
+		$this->assertSame( 7200, $this->partition_geometry( $completed, 'lifetime' ) );
 	}
 
 	private function partition_geometry( Partition_Node $partition, string $prop ): int {
