@@ -88,7 +88,7 @@ This plugin replaced the legacy `newspack-event-logger-plugins` monorepo wholesa
 |     k:"job"  ->  k:"remote_job"   (separate handler map on the hub)      |
 |     |                                                                    |
 |     v                                                                    |
-|  Topic(local firehose.log)  -- KEY-routed ->  Partition pN               |
+|  Topic(local firehose)  -- KEY-routed ->  Partition pN                   |
 +--------------------------------------------------------------------------+
 ```
 
@@ -898,7 +898,7 @@ wp nodes reqgrep pattern --incomplete
 wp nodes reqgrep pattern --bucket-size=1000 --num-buckets=20
 
 # Read a specific firehose dir (must sit inside the configured logs dir).
-wp nodes reqgrep pattern --firehose=/tmp/newspack-nodes/logs/firehose.log
+wp nodes reqgrep pattern --firehose=/tmp/newspack-nodes/logs/firehose.p0
 
 # Pipe stdin instead of firehose files.
 cat archived.log | wp nodes reqgrep pattern

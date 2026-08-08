@@ -2349,12 +2349,25 @@ class LogManagerTest extends TestCase {
 	public function test_firehose_dirs_override_strips_the_log_suffix(): void {
 		$this->use_base_dir( self::TEST_DIR, [ 'num_partitions' => 2 ] );
 
-		$dirs = Log_Manager::firehose_dirs( '/somewhere/else/firehose.log' );
+		$dirs = Log_Manager::firehose_dirs( '/somewhere/else/firehose' );
 
 		$this->assertSame(
 			[ '/somewhere/else/firehose.p0', '/somewhere/else/firehose.p1' ],
 			\array_values( $dirs )
 		);
+	}
+
+	/**
+	 * A bare base is a hint about where the logs live, so it spans. A path that
+	 * already names a partition is an instruction, and answers for that
+	 * partition alone — keyed by the index it names, not re-based to 0.
+	 */
+	public function test_firehose_dirs_override_naming_a_partition_answers_for_it_alone(): void {
+		$this->use_base_dir( self::TEST_DIR, [ 'num_partitions' => 4 ] );
+
+		$dirs = Log_Manager::firehose_dirs( '/somewhere/else/firehose.p2' );
+
+		$this->assertSame( [ 2 => '/somewhere/else/firehose.p2' ], $dirs );
 	}
 
 	public function test_extract_plugin_slug_strips_php_suffix_for_single_file_plugin(): void {

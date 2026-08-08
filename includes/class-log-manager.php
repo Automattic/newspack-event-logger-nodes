@@ -175,10 +175,20 @@ class Log_Manager {
 		'_URL',
 	];
 
+	/**
+	 * Deprecated; superseded by is_started(). Kept because a profiler drop-in
+	 * installed before v0.46.0 still reads it, and it ships as a separate
+	 * release asset that can lag the plugin.
+	 *
+	 * @api Read by pre-0.46.0 copies of 00-newspack-profiler.php.
+	 * @var bool
+	 */
+	public $enabled = false;
+
 	/** @var array<string, mixed> Cached config (loaded once at construction). */
 	private $config = [];
 	/** @var bool finish() has run; nothing more will be written. */
-	private $finished        = false;
+	private $finished = false;
 
 	/** @var bool This context ended without its job completing (cooperative stop). */
 	private bool $aborted = false;
@@ -186,9 +196,9 @@ class Log_Manager {
 	/** @var bool Flush write buffer after every log line (survives OOM/crash). */
 	private $flush_every_line = false;
 	/** @var bool Past MAX_LOG_LINES; start()/complete() pairs go quiet. */
-	private $line_limited    = false;
+	private $line_limited = false;
 	/** @var int The next line's `n` field, 1-based. */
-	private $line_number     = 1;
+	private $line_number = 1;
 
 	/** @var bool Append peak_mb to every complete() entry for memory profiling. */
 	private $log_memory = false;
@@ -199,24 +209,24 @@ class Log_Manager {
 	/** @var Rule_Matcher|null Built once per request from the autoloaded rule list. */
 	private ?Rule_Matcher $matcher = null;
 	/** @var int Firehose partition this request's id hashes to. */
-	private $partition_idx   = 0;
+	private $partition_idx = 0;
 	/** @var string This request's id — the KEY every Message carries. */
-	private $request_id      = '';
+	private $request_id = '';
 	/** @var float|null hrtime() reading the profiler drop-in took at request start. */
-	private $request_time    = null;
+	private $request_time = null;
 	/** @var int|float|null Wall-clock request start, from the profiler drop-in. */
-	private $request_ts      = null;
+	private $request_ts = null;
 	/** @var string Sanitized REQUEST_URI, or '/unknown' when there is none. */
-	private $request_url     = '';
+	private $request_url = '';
 
 	/** Saved UNIQUE_ID for suspend/resume. */
 	private ?string $saved_unique_id = null;
 	/** @var bool|null True while logging, false after finish(), null when no rule started it. */
-	private $started         = null;
+	private $started = null;
 	/** @var array<int, array{label: string, ts: int|float, muted?: bool, m?: mixed}> Timer-frame stack. */
-	private $times           = [];
+	private $times = [];
 	/** @var \Newspack_Nodes\Topic_Node|null The firehose Topic; null until init_firehose() runs. */
-	private $topic           = null;
+	private $topic = null;
 
 	/**
 	 * Resolve this request's context and start logging when a rule allows it.
@@ -753,18 +763,23 @@ class Log_Manager {
 	 * Readers only. The writer stays on the cheap config read — it runs on
 	 * every request and must not parse topologies to log a line.
 	 *
-	 * `$log_path` is `reqgrep --firehose`'s override: a log base whose partitions
-	 * are its `.p{N}` siblings. An explicit path answers only for itself, so no
-	 * declaration joins that span.
+	 * `$log_path` is `reqgrep --firehose`'s override. A path that already names
+	 * a partition is an instruction: it answers for that partition alone, keyed
+	 * by the index it names. A bare base is a hint about where the logs live,
+	 * so the `.p{N}` span is derived from it here — the one place that knows
+	 * the layout. Either way no declaration joins an explicit path's span.
 	 *
-	 * @param string $log_path Log base overriding the configured layout; '' uses the config.
+	 * @param string $log_path Partition dir or log base overriding the configured layout; '' uses the config.
 	 * @return array<int,string> Partition index => directory.
 	 */
 	public static function firehose_dirs( string $log_path = '' ): array {
+		if ( '' !== $log_path && \preg_match( '/\.p(\d+)$/', $log_path, $named ) ) {
+			return [ (int) $named[1] => $log_path ];
+		}
 		$declared = '' === $log_path ? Bootstrap::node_dirs( self::FIREHOSE_NODE ) : [];
 		$template = '' === $log_path
 			? self::firehose_dir_template()
-			: (string) \preg_replace( '/\.log$/', '', $log_path ) . '.p{partition}';
+			: $log_path . '.p{partition}';
 		$count    = \max(
 			\count( $declared ),
 			\Newspack_Nodes\Bootstrap::global_num_partitions()

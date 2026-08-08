@@ -1,8 +1,8 @@
 # Job_Router topology
 #
-#   Tail (firehose.log)  ────┐
-#                            ├──→ Job_Router ──→ Age_Sieve ──→ Partition (jobs:partition)
-#   Tail (jobintake.log) ────┘
+#   Tail (firehose.p0)  ────┐
+#                           ├──→ Job_Router ──→ Age_Sieve ──→ Partition (jobs:partition)
+#   Tail (jobintake.p0) ────┘
 
 include job-intake
 

@@ -1004,7 +1004,7 @@ class ReqgrepCommandTest extends TestCase {
 
 		try {
 			$logs = \Newspack_Nodes\Config::get_base_directory() . '/logs';
-			$this->seed_partition( "{$logs}/firehose.log", 2, [
+			$this->seed_partition( "{$logs}/firehose", 2, [
 				[ 'n' => 1, 'rid' => 'wide-rid', 'k' => 'process (start)',    'm' => '/calendar/today', 'ts' => 1700000000.0 ],
 				[ 'n' => 5, 'rid' => 'wide-rid', 'k' => 'process (complete)', 'm' => '/calendar/today', 'ts' => 1700000000.5 ],
 			] );
@@ -1145,7 +1145,6 @@ class ReqgrepCommandTest extends TestCase {
 		// routes to cat_mode.
 		$base_dir = \Newspack_Nodes\Config::get_base_directory() . '/reqgrep-invoke-' . \uniqid();
 		\mkdir( "{$base_dir}/logs/firehose.p0", 0755, true );
-		\mkdir( "{$base_dir}/logs/firehose.log", 0755, true );
 		try {
 			// Seed one matching request line so cat_mode has something to do.
 			\file_put_contents(
@@ -1163,7 +1162,7 @@ class ReqgrepCommandTest extends TestCase {
 			$cmd = new \Newspack_Event_Logger_Nodes\CLI\Reqgrep_Command();
 
 			// Path must be inside the logs directory the Config resolves.
-			$path = "{$base_dir}/logs/firehose.log";
+			$path = "{$base_dir}/logs/firehose.p0";
 			$captured = $this->capture_output( $cmd );
 			$cmd->__invoke(
 				[ 'invoke-rid' ],
@@ -1188,7 +1187,7 @@ class ReqgrepCommandTest extends TestCase {
 		// check governs only whether the command aborts.
 		$base_dir = \Newspack_Nodes\Config::get_base_directory() . '/reqgrep-canon-' . \uniqid();
 		\mkdir( "{$base_dir}/logs/real", 0755, true );
-		\file_put_contents( "{$base_dir}/logs/real/firehose.log", '' );
+		\file_put_contents( "{$base_dir}/logs/real/firehose.p0", '' );
 		\symlink( "{$base_dir}/logs/real", "{$base_dir}/logs/link" );
 		try {
 			$GLOBALS['_wp_options']['newspack_nodes_base_directory'] = $base_dir;
@@ -1197,7 +1196,7 @@ class ReqgrepCommandTest extends TestCase {
 
 			$cmd = new \Newspack_Event_Logger_Nodes\CLI\Reqgrep_Command();
 			$this->capture_output( $cmd );
-			$cmd->__invoke( [ '.' ], [ 'firehose' => "{$base_dir}/logs/link/firehose.log" ] );
+			$cmd->__invoke( [ '.' ], [ 'firehose' => "{$base_dir}/logs/link/firehose.p0" ] );
 
 			$dirs = ( new \ReflectionProperty( $cmd, 'partition_dirs' ) )->getValue( $cmd );
 			$real = \realpath( "{$base_dir}/logs/real" );
@@ -1275,7 +1274,6 @@ class ReqgrepCommandTest extends TestCase {
 		// bucket-size >10000 must clamp to 10000.
 		$base_dir = \Newspack_Nodes\Config::get_base_directory() . '/reqgrep-invoke-clamp-' . \uniqid();
 		\mkdir( "{$base_dir}/logs/firehose.p0", 0755, true );
-		\mkdir( "{$base_dir}/logs/firehose.log", 0755, true );
 		try {
 			$GLOBALS['_wp_options']['newspack_nodes_base_directory'] = $base_dir;
 			$this->use_base_dir( $base_dir );
@@ -1287,7 +1285,7 @@ class ReqgrepCommandTest extends TestCase {
 			$cmd->__invoke(
 				[ '.' ],
 				[
-					'firehose'        => "{$base_dir}/logs/firehose.log",
+					'firehose'    => "{$base_dir}/logs/firehose.p0",
 					'bucket-size' => '99999', // > 10000 cap.
 					'num-buckets' => '99999', // > 100 cap.
 				]
@@ -1309,7 +1307,6 @@ class ReqgrepCommandTest extends TestCase {
 		// bucket-size <1 must clamp to 1.
 		$base_dir = \Newspack_Nodes\Config::get_base_directory() . '/reqgrep-invoke-clamp-min-' . \uniqid();
 		\mkdir( "{$base_dir}/logs/firehose.p0", 0755, true );
-		\mkdir( "{$base_dir}/logs/firehose.log", 0755, true );
 		try {
 			$GLOBALS['_wp_options']['newspack_nodes_base_directory'] = $base_dir;
 			$this->use_base_dir( $base_dir );
@@ -1321,7 +1318,7 @@ class ReqgrepCommandTest extends TestCase {
 			$cmd->__invoke(
 				[ '.' ],
 				[
-					'firehose'        => "{$base_dir}/logs/firehose.log",
+					'firehose'    => "{$base_dir}/logs/firehose.p0",
 					'bucket-size' => '0',  // Below min 1.
 					'num-buckets' => '0',  // Below min 1.
 				]
@@ -1343,7 +1340,6 @@ class ReqgrepCommandTest extends TestCase {
 		// --recent must propagate to the cat_offset property which cat_mode reads.
 		$base_dir = \Newspack_Nodes\Config::get_base_directory() . '/reqgrep-invoke-recent-' . \uniqid();
 		\mkdir( "{$base_dir}/logs/firehose.p0", 0755, true );
-		\mkdir( "{$base_dir}/logs/firehose.log", 0755, true );
 		try {
 			\file_put_contents(
 				"{$base_dir}/logs/firehose.p0/0.log",
@@ -1362,7 +1358,7 @@ class ReqgrepCommandTest extends TestCase {
 			$cmd->__invoke(
 				[ '.' ],
 				[
-					'firehose'   => "{$base_dir}/logs/firehose.log",
+					'firehose'   => "{$base_dir}/logs/firehose.p0",
 					'recent' => true,
 				]
 			);
@@ -1380,7 +1376,6 @@ class ReqgrepCommandTest extends TestCase {
 	public function test_invoke_propagates_raw_flag(): void {
 		$base_dir = \Newspack_Nodes\Config::get_base_directory() . '/reqgrep-invoke-raw-' . \uniqid();
 		\mkdir( "{$base_dir}/logs/firehose.p0", 0755, true );
-		\mkdir( "{$base_dir}/logs/firehose.log", 0755, true );
 		try {
 			$GLOBALS['_wp_options']['newspack_nodes_base_directory'] = $base_dir;
 			$this->use_base_dir( $base_dir );
@@ -1392,7 +1387,7 @@ class ReqgrepCommandTest extends TestCase {
 			$cmd->__invoke(
 				[ '.' ],
 				[
-					'firehose' => "{$base_dir}/logs/firehose.log",
+					'firehose' => "{$base_dir}/logs/firehose.p0",
 					'raw'  => true,
 				]
 			);
@@ -1410,7 +1405,6 @@ class ReqgrepCommandTest extends TestCase {
 	public function test_invoke_propagates_incomplete_flag(): void {
 		$base_dir = \Newspack_Nodes\Config::get_base_directory() . '/reqgrep-invoke-incomplete-' . \uniqid();
 		\mkdir( "{$base_dir}/logs/firehose.p0", 0755, true );
-		\mkdir( "{$base_dir}/logs/firehose.log", 0755, true );
 		try {
 			$GLOBALS['_wp_options']['newspack_nodes_base_directory'] = $base_dir;
 			$this->use_base_dir( $base_dir );
@@ -1422,7 +1416,7 @@ class ReqgrepCommandTest extends TestCase {
 			$cmd->__invoke(
 				[ '.' ],
 				[
-					'firehose'       => "{$base_dir}/logs/firehose.log",
+					'firehose'       => "{$base_dir}/logs/firehose.p0",
 					'incomplete' => true,
 				]
 			);
