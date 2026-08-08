@@ -119,225 +119,6 @@ class Hook_Categorizer {
 	}
 
 	/**
-	 * Get all registered hooks from WordPress.
-	 *
-	 * Three sources, deduplicated and sorted: hooks with callbacks in
-	 * `$wp_filter`, hooks the durable ruleset instruments, and hooks a spoke
-	 * reported into `Config::OPTION_DISCOVERED_HOOKS`. The last two matter
-	 * because a hook bound only inside a worker — or only on another site —
-	 * never appears in this request's `$wp_filter`.
-	 *
-	 * @return array<int, string> Sorted, deduplicated hook names.
-	 */
-	public static function get_registered_hooks(): array {
-		/** @var array<string, \WP_Hook> $wp_filter WordPress global. */
-		global $wp_filter;
-
-		$hooks = [];
-		foreach ( $wp_filter as $hook_name => $hook_obj ) {
-			if ( ! empty( $hook_obj->callbacks ) ) {
-				$hooks[ $hook_name ] = true;
-			}
-		}
-
-		// Include already-selected hooks so worker-only ones still show.
-		foreach ( self::selected_hooks() as $hook ) {
-			if ( '' !== $hook ) {
-				$hooks[ $hook ] = true;
-			}
-		}
-
-		// Include spoke-discovered hooks even if not registered locally.
-		$discovered = \get_option( Config::OPTION_DISCOVERED_HOOKS, [] );
-		if ( \is_array( $discovered ) ) {
-			foreach ( \array_keys( $discovered ) as $hook ) {
-				$hook = (string) $hook;
-				if ( '' !== $hook ) {
-					$hooks[ $hook ] = true;
-				}
-			}
-		}
-
-		$result = \array_keys( $hooks );
-		\sort( $result );
-		return $result;
-	}
-
-	/**
-	 * The instrumented-hook set the operator has selected: the union of hooks
-	 * across every LOG rule in the durable ruleset.
-	 *
-	 * @return string[]
-	 */
-	public static function selected_hooks(): array {
-		return Rule_Set::load()->instrumented_union()['hooks'];
-	}
-
-	/**
-	 * Get all categories with their colors.
-	 *
-	 * @return array<string, mixed> Associative array of category => color, base
-	 *                              colors with the user's merged over them.
-	 */
-	public static function get_categories(): array {
-		$config = self::get_merged_config();
-		return $config['colors'];
-	}
-
-	/**
-	 * Get merged configuration (base + user customizations).
-	 *
-	 * Colors merge with the user's winning. Patterns only ever accumulate: a
-	 * user pattern appends to its category and displaces nothing. Since
-	 * `categorize()` returns on the first match and walks categories in JSON
-	 * order, a base pattern in an earlier category still beats a user pattern
-	 * in a later one — `overrides` is the way to pin a specific hook.
-	 *
-	 * @return array{colors: array<string, mixed>, descriptions: array<string, mixed>, patterns: array<string, mixed>, overrides: array<string, mixed>} Merged configuration.
-	 */
-	public static function get_merged_config(): array {
-		if ( null !== self::$merged_config ) {
-			return self::$merged_config;
-		}
-
-		$base          = self::get_base_config();
-		$customizations = self::get_user_customizations();
-
-		$base_colors    = $base['_colors'] ?? [];
-		$user_colors    = $customizations['colors'] ?? [];
-		$base_descs     = $base['_descriptions'] ?? [];
-		$user_descs     = $customizations['descriptions'] ?? [];
-		$base_patterns  = $base['_patterns'] ?? [];
-		$user_patterns_all = $customizations['patterns'] ?? [];
-		$overrides      = $customizations['overrides'] ?? [];
-
-		// Merge colors (user overrides base).
-		/** @var array<string, mixed> $colors config dynamic output. */
-		$colors = \array_merge( Core::arr( $base_colors ), Core::arr( $user_colors ) );
-
-		// Same precedence as colors: a user description wins.
-		/** @var array<string, mixed> $descriptions config dynamic output. */
-		$descriptions = \array_merge( Core::arr( $base_descs ), Core::arr( $user_descs ) );
-
-		// Merge patterns (user patterns added to base).
-		/** @var array<string, mixed> $patterns config dynamic output. */
-		$patterns = Core::arr( $base_patterns );
-		if ( \is_array( $user_patterns_all ) ) {
-			foreach ( $user_patterns_all as $raw_category => $user_patterns ) {
-				$category = (string) $raw_category;
-				if ( ! isset( $patterns[ $category ] ) || ! \is_array( $patterns[ $category ] ) ) {
-					$patterns[ $category ] = [];
-				}
-				$patterns[ $category ] = \array_merge( $patterns[ $category ], Core::arr( $user_patterns ) );
-			}
-		}
-
-		/** @var array<string, mixed> $overrides_map config dynamic output. */
-		$overrides_map       = Core::arr( $overrides );
-		self::$merged_config = [
-			'colors'       => $colors,
-			'descriptions' => $descriptions,
-			'patterns'     => $patterns,
-			'overrides'    => $overrides_map,
-		];
-
-		return self::$merged_config;
-	}
-
-	/**
-	 * Load base configuration from hook_categories.json.
-	 *
-	 * The file sits at the plugin root, beside `includes/`. A missing file, an
-	 * unreadable one, and JSON decoding to anything but an array all yield the
-	 * empty `_colors` / `_patterns` shape: categorization degrades to `Other`
-	 * instead of failing the request.
-	 *
-	 * @return array<string, mixed> Base configuration.
-	 */
-	public static function get_base_config(): array {
-		if ( null !== self::$base_config ) {
-			return self::$base_config;
-		}
-
-		$json_path = \dirname( __DIR__ ) . '/hook_categories.json';
-		if ( ! \file_exists( $json_path ) ) {
-			self::$base_config = [ '_colors' => [], '_patterns' => [] ];
-			return self::$base_config;
-		}
-
-		$read = self::$read_file ?? static fn( string $path ) => \file_get_contents( $path ); // phpcs:ignore WordPressVIPMinimum.Performance.FetchingRemoteData.FileGetContentsUnknown -- Local file.
-		$json = $read( $json_path );
-		if ( false === $json ) {
-			self::$base_config = [ '_colors' => [], '_patterns' => [] ];
-			return self::$base_config;
-		}
-		$decoded = \json_decode( $json, true, 64 );
-		/** @var array<string, mixed> $config json_decode dynamic output. */
-		$config            = Core::arr( $decoded, [ '_colors' => [], '_patterns' => [] ] );
-		self::$base_config = $config;
-		return self::$base_config;
-	}
-
-	/**
-	 * Get user customizations from database.
-	 *
-	 * `wp_parse_args()` accepts an array, an object, or a query string; a
-	 * stored value of any other type is discarded before the merge, so the
-	 * three default keys are always present.
-	 *
-	 * @return array<string, mixed> User customizations: patterns, overrides, colors, descriptions.
-	 */
-	public static function get_user_customizations(): array {
-		$defaults = [
-			'patterns'     => [],  // category => [patterns...] - merged with base.
-			'overrides'    => [],  // hook_name => category - explicit assignments.
-			'colors'       => [],  // category => color - merged with base.
-			'descriptions' => [],  // category => one-liner - merged with base.
-		];
-
-		$saved = \get_option( self::OPTION_NAME, [] );
-		if ( ! \is_array( $saved ) && ! \is_object( $saved ) && ! \is_string( $saved ) ) {
-			$saved = [];
-		}
-		/** @var array<string, mixed> $merged wp_parse_args boundary output. */
-		$merged = \wp_parse_args( $saved, $defaults );
-		return $merged;
-	}
-
-	/**
-	 * Is this hook one of our own internal filters/actions?
-	 *
-	 * Used everywhere a list of hooks is presented to the operator, and by
-	 * `App\Core::bind_current_scope()` before it binds `hook_start` /
-	 * `hook_complete` to a hook. Nodes uses two naming styles —
-	 * slash for actions (`newspack_nodes/spawn_worker`,
-	 * `newspack_event_logger_nodes/sse_connected`) and underscore for
-	 * schema/option filters (`newspack_nodes_option_schema_core`) — so the
-	 * prefix list covers both. Instrumenting our own filters is never an
-	 * answer to a real "where is time going" question, and binding
-	 * `hook_start`/`hook_complete` to substrate filters can loop via
-	 * `Config::load_config` during LogManager bootstrap.
-	 *
-	 * @param string $hook_name Hook to test.
-	 * @return bool True if the hook belongs to Event Logger / Nodes itself.
-	 */
-	public static function is_internal( string $hook_name ): bool {
-		/** @var array<int, string> $prefixes */
-		static $prefixes = [
-			'newspack_event_logger_nodes_',
-			'newspack_event_logger_nodes/',
-			'newspack_nodes_',
-			'newspack_nodes/',
-		];
-		foreach ( $prefixes as $prefix ) {
-			if ( \str_starts_with( $hook_name, $prefix ) ) {
-				return true;
-			}
-		}
-		return false;
-	}
-
-	/**
 	 * Categorize a single hook.
 	 *
 	 * An explicit override wins outright. Otherwise the first pattern that
@@ -404,6 +185,105 @@ class Hook_Categorizer {
 	}
 
 	/**
+	 * Is this hook one of our own internal filters/actions?
+	 *
+	 * Used everywhere a list of hooks is presented to the operator, and by
+	 * `App\Core::bind_current_scope()` before it binds `hook_start` /
+	 * `hook_complete` to a hook. Nodes uses two naming styles —
+	 * slash for actions (`newspack_nodes/spawn_worker`,
+	 * `newspack_event_logger_nodes/sse_connected`) and underscore for
+	 * schema/option filters (`newspack_nodes_option_schema_core`) — so the
+	 * prefix list covers both. Instrumenting our own filters is never an
+	 * answer to a real "where is time going" question, and binding
+	 * `hook_start`/`hook_complete` to substrate filters can loop via
+	 * `Config::load_config` during LogManager bootstrap.
+	 *
+	 * @param string $hook_name Hook to test.
+	 * @return bool True if the hook belongs to Event Logger / Nodes itself.
+	 */
+	public static function is_internal( string $hook_name ): bool {
+		/** @var array<int, string> $prefixes */
+		static $prefixes = [
+			'newspack_event_logger_nodes_',
+			'newspack_event_logger_nodes/',
+			'newspack_nodes_',
+			'newspack_nodes/',
+		];
+		foreach ( $prefixes as $prefix ) {
+			if ( \str_starts_with( $hook_name, $prefix ) ) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Get all categories with their colors.
+	 *
+	 * @return array<string, mixed> Associative array of category => color, base
+	 *                              colors with the user's merged over them.
+	 */
+	public static function get_categories(): array {
+		$config = self::get_merged_config();
+		return $config['colors'];
+	}
+
+	/**
+	 * Get all registered hooks from WordPress.
+	 *
+	 * Three sources, deduplicated and sorted: hooks with callbacks in
+	 * `$wp_filter`, hooks the durable ruleset instruments, and hooks a spoke
+	 * reported into `Config::OPTION_DISCOVERED_HOOKS`. The last two matter
+	 * because a hook bound only inside a worker — or only on another site —
+	 * never appears in this request's `$wp_filter`.
+	 *
+	 * @return array<int, string> Sorted, deduplicated hook names.
+	 */
+	public static function get_registered_hooks(): array {
+		/** @var array<string, \WP_Hook> $wp_filter WordPress global. */
+		global $wp_filter;
+
+		$hooks = [];
+		foreach ( $wp_filter as $hook_name => $hook_obj ) {
+			if ( ! empty( $hook_obj->callbacks ) ) {
+				$hooks[ $hook_name ] = true;
+			}
+		}
+
+		// Include already-selected hooks so worker-only ones still show.
+		foreach ( self::selected_hooks() as $hook ) {
+			if ( '' !== $hook ) {
+				$hooks[ $hook ] = true;
+			}
+		}
+
+		// Include spoke-discovered hooks even if not registered locally.
+		$discovered = \get_option( Config::OPTION_DISCOVERED_HOOKS, [] );
+		if ( \is_array( $discovered ) ) {
+			foreach ( \array_keys( $discovered ) as $hook ) {
+				$hook = (string) $hook;
+				if ( '' !== $hook ) {
+					$hooks[ $hook ] = true;
+				}
+			}
+		}
+
+		$result = \array_keys( $hooks );
+		\sort( $result );
+		return $result;
+	}
+
+	/**
+	 * The instrumented-hook set the operator has selected: the union of hooks
+	 * across every LOG rule in the durable ruleset.
+	 *
+	 * @return string[]
+	 */
+	public static function selected_hooks(): array {
+		return Rule_Set::load()->instrumented_union()['hooks'];
+	}
+
+	/**
 	 * One-line descriptions for the categories, keyed by category name.
 	 *
 	 * These live beside the taxonomy they describe. The hook picker used to
@@ -416,6 +296,126 @@ class Hook_Categorizer {
 	public static function get_descriptions(): array {
 		$config = self::get_merged_config();
 		return $config['descriptions'];
+	}
+
+	/**
+	 * Get merged configuration (base + user customizations).
+	 *
+	 * Colors merge with the user's winning. Patterns only ever accumulate: a
+	 * user pattern appends to its category and displaces nothing. Since
+	 * `categorize()` returns on the first match and walks categories in JSON
+	 * order, a base pattern in an earlier category still beats a user pattern
+	 * in a later one — `overrides` is the way to pin a specific hook.
+	 *
+	 * @return array{colors: array<string, mixed>, descriptions: array<string, mixed>, patterns: array<string, mixed>, overrides: array<string, mixed>} Merged configuration.
+	 */
+	public static function get_merged_config(): array {
+		if ( null !== self::$merged_config ) {
+			return self::$merged_config;
+		}
+
+		$base          = self::get_base_config();
+		$customizations = self::get_user_customizations();
+
+		$base_colors    = $base['_colors'] ?? [];
+		$user_colors    = $customizations['colors'] ?? [];
+		$base_descs     = $base['_descriptions'] ?? [];
+		$user_descs     = $customizations['descriptions'] ?? [];
+		$base_patterns  = $base['_patterns'] ?? [];
+		$user_patterns_all = $customizations['patterns'] ?? [];
+		$overrides      = $customizations['overrides'] ?? [];
+
+		// Merge colors (user overrides base).
+		/** @var array<string, mixed> $colors config dynamic output. */
+		$colors = \array_merge( Core::arr( $base_colors ), Core::arr( $user_colors ) );
+
+		// Same precedence as colors: a user description wins.
+		/** @var array<string, mixed> $descriptions config dynamic output. */
+		$descriptions = \array_merge( Core::arr( $base_descs ), Core::arr( $user_descs ) );
+
+		// Merge patterns (user patterns added to base).
+		/** @var array<string, mixed> $patterns config dynamic output. */
+		$patterns = Core::arr( $base_patterns );
+		if ( \is_array( $user_patterns_all ) ) {
+			foreach ( $user_patterns_all as $raw_category => $user_patterns ) {
+				$category = (string) $raw_category;
+				if ( ! isset( $patterns[ $category ] ) || ! \is_array( $patterns[ $category ] ) ) {
+					$patterns[ $category ] = [];
+				}
+				$patterns[ $category ] = \array_merge( $patterns[ $category ], Core::arr( $user_patterns ) );
+			}
+		}
+
+		/** @var array<string, mixed> $overrides_map config dynamic output. */
+		$overrides_map       = Core::arr( $overrides );
+		self::$merged_config = [
+			'colors'       => $colors,
+			'descriptions' => $descriptions,
+			'patterns'     => $patterns,
+			'overrides'    => $overrides_map,
+		];
+
+		return self::$merged_config;
+	}
+
+	/**
+	 * Get user customizations from database.
+	 *
+	 * `wp_parse_args()` accepts an array, an object, or a query string; a
+	 * stored value of any other type is discarded before the merge, so the
+	 * three default keys are always present.
+	 *
+	 * @return array<string, mixed> User customizations: patterns, overrides, colors, descriptions.
+	 */
+	public static function get_user_customizations(): array {
+		$defaults = [
+			'patterns'     => [],  // category => [patterns...] - merged with base.
+			'overrides'    => [],  // hook_name => category - explicit assignments.
+			'colors'       => [],  // category => color - merged with base.
+			'descriptions' => [],  // category => one-liner - merged with base.
+		];
+
+		$saved = \get_option( self::OPTION_NAME, [] );
+		if ( ! \is_array( $saved ) && ! \is_object( $saved ) && ! \is_string( $saved ) ) {
+			$saved = [];
+		}
+		/** @var array<string, mixed> $merged wp_parse_args boundary output. */
+		$merged = \wp_parse_args( $saved, $defaults );
+		return $merged;
+	}
+
+	/**
+	 * Load base configuration from hook_categories.json.
+	 *
+	 * The file sits at the plugin root, beside `includes/`. A missing file, an
+	 * unreadable one, and JSON decoding to anything but an array all yield the
+	 * empty `_colors` / `_patterns` shape: categorization degrades to `Other`
+	 * instead of failing the request.
+	 *
+	 * @return array<string, mixed> Base configuration.
+	 */
+	public static function get_base_config(): array {
+		if ( null !== self::$base_config ) {
+			return self::$base_config;
+		}
+
+		$json_path = \dirname( __DIR__ ) . '/hook_categories.json';
+		if ( ! \file_exists( $json_path ) ) {
+			self::$base_config = [ '_colors' => [], '_patterns' => [] ];
+			return self::$base_config;
+		}
+
+		$read = self::$read_file ?? static fn( string $path ) => \file_get_contents( $path ); // phpcs:ignore WordPressVIPMinimum.Performance.FetchingRemoteData.FileGetContentsUnknown -- Local file.
+		$json = $read( $json_path );
+		if ( false === $json ) {
+			self::$base_config = [ '_colors' => [], '_patterns' => [] ];
+			return self::$base_config;
+		}
+		$decoded = \json_decode( $json, true, 64 );
+		/** @var array<string, mixed> $config json_decode dynamic output. */
+		$config            = Core::arr( $decoded, [ '_colors' => [], '_patterns' => [] ] );
+		self::$base_config = $config;
+		return self::$base_config;
 	}
 
 	/**

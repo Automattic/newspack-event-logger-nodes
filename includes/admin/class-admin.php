@@ -188,6 +188,22 @@ class Admin {
 		);
 	}
 
+	/** Peak-memory annotation on every completed request. Ships off. */
+	public static function log_memory_callback(): void {
+		self::render_checkbox(
+			'log_memory',
+			\__( 'Append peak_mb to every complete() log entry so memory growth is visible across the request timeline.', 'newspack-event-logger-nodes' )
+		);
+	}
+
+	/** Unbuffered firehose writes — crash survivability over throughput. Ships off. */
+	public static function flush_every_line_callback(): void {
+		self::render_checkbox(
+			'flush_every_line',
+			\__( 'Flush write buffer after every log line. Survives OOM kills — last line before crash is preserved on disk. Trades throughput for crash survivability.', 'newspack-event-logger-nodes' )
+		);
+	}
+
 	/**
 	 * Echo a boolean checkbox via the shared Settings_Renderer: checked from the
 	 * stored option (file-default fallback), the `data-nn-reset-default` hint from
@@ -207,6 +223,11 @@ class Admin {
 			self::reset_mark_name( $field )
 		);
 		echo $html; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- Settings_Renderer escapes every field.
+	}
+
+	/** Hidden-input name that flags $field for per-field reset (deleted on Save). */
+	private static function reset_mark_name( string $field ): string {
+		return Reset_Gate::mark_name( self::RESET_MARK_FIELD, self::OPTION_PREFIX . $field );
 	}
 
 	/**
@@ -250,38 +271,6 @@ class Admin {
 	}
 
 	/**
-	 * The single bool→int 0/1 coercion shared by the checkbox render path
-	 * (`bool_file_default`) and the default-write skip (`skip_default_writes`).
-	 *
-	 * @param mixed $value Any value (only bools are coerced; numerics pass via (int)(bool)).
-	 * @return int 0 or 1.
-	 */
-	private static function bool_to_int( $value ): int {
-		return (int) (bool) $value;
-	}
-
-	/** Hidden-input name that flags $field for per-field reset (deleted on Save). */
-	private static function reset_mark_name( string $field ): string {
-		return Reset_Gate::mark_name( self::RESET_MARK_FIELD, self::OPTION_PREFIX . $field );
-	}
-
-	/** Peak-memory annotation on every completed request. Ships off. */
-	public static function log_memory_callback(): void {
-		self::render_checkbox(
-			'log_memory',
-			\__( 'Append peak_mb to every complete() log entry so memory growth is visible across the request timeline.', 'newspack-event-logger-nodes' )
-		);
-	}
-
-	/** Unbuffered firehose writes — crash survivability over throughput. Ships off. */
-	public static function flush_every_line_callback(): void {
-		self::render_checkbox(
-			'flush_every_line',
-			\__( 'Flush write buffer after every log line. Survives OOM kills — last line before crash is preserved on disk. Trades throughput for crash survivability.', 'newspack-event-logger-nodes' )
-		);
-	}
-
-	/**
 	 * Reset-to-defaults handler — the `admin_post_{RESET_ACTION}` target.
 	 *
 	 * Nonce + permission checks first, then delete every application settings
@@ -318,57 +307,6 @@ class Admin {
 			exit;
 		}
 		exit;
-	}
-
-	/**
-	 * Shared admin-post gate: verify the POSTed nonce (read from $nonce_field
-	 * against $action) and the caller's capability, `wp_die`-ing on either
-	 * failure. Both admin-post handlers run this identical check first.
-	 *
-	 * @param string $nonce_field POST key carrying the nonce.
-	 * @param string $action      Nonce action to verify against.
-	 */
-	private static function verify_admin_post( string $nonce_field, string $action ): void {
-		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
-		$nonce = isset( $_POST[ $nonce_field ] ) && \is_string( $_POST[ $nonce_field ] ) ? \sanitize_text_field( \wp_unslash( $_POST[ $nonce_field ] ) ) : '';
-		if ( '' === $nonce || ! \wp_verify_nonce( $nonce, $action ) ) {
-			\wp_die( \esc_html__( 'Security check failed.', 'newspack-event-logger-nodes' ) );
-		}
-		if ( ! self::current_user_allowed() ) {
-			\wp_die( \esc_html__( 'You do not have permission to perform this action.', 'newspack-event-logger-nodes' ) );
-		}
-	}
-
-	/**
-	 * Permission gate: `manage_options` baseline + optional `allowed_users`
-	 * whitelist from Config.
-	 *
-	 * Empty `allowed_users` means "all users with manage_options". When the
-	 * whitelist is populated, the current user's `user_login` must be a member.
-	 * This is intentional — manage_options is required even for whitelisted
-	 * users, so a demoted account loses access immediately without needing the
-	 * whitelist updated.
-	 *
-	 * With no user API available — a CLI context — the whitelist is skipped
-	 * rather than enforced against a nonexistent login, so `wp` stays usable.
-	 *
-	 * @return bool True if user is allowed.
-	 */
-	public static function current_user_allowed(): bool {
-		if ( ! \current_user_can( 'manage_options' ) ) {
-			return false;
-		}
-
-		$allowed_users = Config::value( 'allowed_users' );
-		if ( empty( $allowed_users ) || ! \is_array( $allowed_users ) ) {
-			return true;
-		}
-
-		if ( ! \function_exists( 'wp_get_current_user' ) ) {
-			return true; // CLI / no user context — don't lock out CLI admins.
-		}
-		$current_user = \wp_get_current_user();
-		return \in_array( $current_user->user_login, $allowed_users, true );
 	}
 
 	/**
@@ -423,6 +361,25 @@ class Admin {
 			exit;
 		}
 		exit;
+	}
+
+	/**
+	 * Shared admin-post gate: verify the POSTed nonce (read from $nonce_field
+	 * against $action) and the caller's capability, `wp_die`-ing on either
+	 * failure. Both admin-post handlers run this identical check first.
+	 *
+	 * @param string $nonce_field POST key carrying the nonce.
+	 * @param string $action      Nonce action to verify against.
+	 */
+	private static function verify_admin_post( string $nonce_field, string $action ): void {
+		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+		$nonce = isset( $_POST[ $nonce_field ] ) && \is_string( $_POST[ $nonce_field ] ) ? \sanitize_text_field( \wp_unslash( $_POST[ $nonce_field ] ) ) : '';
+		if ( '' === $nonce || ! \wp_verify_nonce( $nonce, $action ) ) {
+			\wp_die( \esc_html__( 'Security check failed.', 'newspack-event-logger-nodes' ) );
+		}
+		if ( ! self::current_user_allowed() ) {
+			\wp_die( \esc_html__( 'You do not have permission to perform this action.', 'newspack-event-logger-nodes' ) );
+		}
 	}
 
 	/**
@@ -546,6 +503,17 @@ class Admin {
 	}
 
 	/**
+	 * The single bool→int 0/1 coercion shared by the checkbox render path
+	 * (`bool_file_default`) and the default-write skip (`skip_default_writes`).
+	 *
+	 * @param mixed $value Any value (only bools are coerced; numerics pass via (int)(bool)).
+	 * @return int 0 or 1.
+	 */
+	private static function bool_to_int( $value ): int {
+		return (int) (bool) $value;
+	}
+
+	/**
 	 * Add the "Event Logger" entry under the standard Settings menu.
 	 *
 	 * ONLY that entry. The top-level "Event Logger" menu and its dashboard
@@ -566,6 +534,38 @@ class Admin {
 			self::MENU_SLUG,
 			[ $this, 'render_settings_page' ]
 		);
+	}
+
+	/**
+	 * Permission gate: `manage_options` baseline + optional `allowed_users`
+	 * whitelist from Config.
+	 *
+	 * Empty `allowed_users` means "all users with manage_options". When the
+	 * whitelist is populated, the current user's `user_login` must be a member.
+	 * This is intentional — manage_options is required even for whitelisted
+	 * users, so a demoted account loses access immediately without needing the
+	 * whitelist updated.
+	 *
+	 * With no user API available — a CLI context — the whitelist is skipped
+	 * rather than enforced against a nonexistent login, so `wp` stays usable.
+	 *
+	 * @return bool True if user is allowed.
+	 */
+	public static function current_user_allowed(): bool {
+		if ( ! \current_user_can( 'manage_options' ) ) {
+			return false;
+		}
+
+		$allowed_users = Config::value( 'allowed_users' );
+		if ( empty( $allowed_users ) || ! \is_array( $allowed_users ) ) {
+			return true;
+		}
+
+		if ( ! \function_exists( 'wp_get_current_user' ) ) {
+			return true; // CLI / no user context — don't lock out CLI admins.
+		}
+		$current_user = \wp_get_current_user();
+		return \in_array( $current_user->user_login, $allowed_users, true );
 	}
 
 	/**

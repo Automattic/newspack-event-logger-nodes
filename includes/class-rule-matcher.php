@@ -54,23 +54,6 @@ final class Rule_Matcher {
 		$this->rules = $rules;
 	}
 
-	/** A pattern's query part ('' for prefix/exact forms), lowercased. */
-	private static function pattern_query( string $pattern ): string {
-		return self::split( $pattern )[1];
-	}
-
-	/**
-	 * Split a URL or pattern into lowercased [path, query] ('' = no query).
-	 *
-	 * A trailing `?` — the exact-path marker — therefore yields an empty query.
-	 *
-	 * @return array{0: string, 1: string}
-	 */
-	private static function split( string $url ): array {
-		$parts = \explode( '?', $url, 2 );
-		return [ \strtolower( $parts[0] ), \strtolower( $parts[1] ?? '' ) ];
-	}
-
 	/**
 	 * The governing rule for a URL, or null when nothing matches (⇒ skip).
 	 * Matching is case-insensitive (target + patterns are compared lowercased).
@@ -116,5 +99,22 @@ final class Rule_Matcher {
 		}
 		$this->cache[ $key ] = $hit;
 		return $hit;
+	}
+
+	/** A pattern's query part ('' for prefix/exact forms), lowercased. */
+	private static function pattern_query( string $pattern ): string {
+		return self::split( $pattern )[1];
+	}
+
+	/**
+	 * Split a URL or pattern into lowercased [path, query] ('' = no query).
+	 *
+	 * A trailing `?` — the exact-path marker — therefore yields an empty query.
+	 *
+	 * @return array{0: string, 1: string}
+	 */
+	private static function split( string $url ): array {
+		$parts = \explode( '?', $url, 2 );
+		return [ \strtolower( $parts[0] ), \strtolower( $parts[1] ?? '' ) ];
 	}
 }

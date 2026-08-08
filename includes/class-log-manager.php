@@ -271,274 +271,6 @@ class Log_Manager {
 	}
 
 	/**
-	 * Resolve the governing rule for a URL, storing it accordingly.
-	 * No rule matched means skip — there is no log-all baseline.
-	 *
-	 * @param string $url URL to check.
-	 * @return bool True if URL should be logged.
-	 */
-	public function matches_url_filter( string $url ): bool {
-		$this->matched_rule = $this->matcher?->match( $url );
-		return null !== $this->matched_rule && $this->matched_rule->is_log();
-	}
-
-	/**
-	 * Mint the request id, pick its partition, and attach the firehose Topic.
-	 *
-	 * The id comes from the edge (`HTTP_X_A8C_REQUEST_ID`), else from `UNIQUE_ID`,
-	 * else it is generated and published back into `$_SERVER['UNIQUE_ID']` so a
-	 * subprocess inherits the same identity. `_firehose:topic` is built once per
-	 * process and adopted by every later context.
-	 */
-	private function init_firehose(): void {
-		// request_id FIRST: Topic ctor re-enters message(), which needs a rid.
-		if ( ! empty( $_SERVER['HTTP_X_A8C_REQUEST_ID'] ) && \is_string( $_SERVER['HTTP_X_A8C_REQUEST_ID'] ) ) {
-			$this->request_id = \substr( \sanitize_text_field( \wp_unslash( $_SERVER['HTTP_X_A8C_REQUEST_ID'] ) ), 0, 64 );
-		} elseif ( ! empty( $_SERVER['UNIQUE_ID'] ) && \is_string( $_SERVER['UNIQUE_ID'] ) ) {
-			$this->request_id = \substr( \sanitize_text_field( \wp_unslash( $_SERVER['UNIQUE_ID'] ) ), 0, 64 );
-		} else {
-			$this->request_id     = self::generate_request_id();
-			$_SERVER['UNIQUE_ID'] = $this->request_id;
-		}
-
-		$dir_template        = self::firehose_dir_template();
-		// THE accessor: past the cap no worker consumes, and the GC sweeps it.
-		$num_partitions      = \Newspack_Nodes\Bootstrap::global_num_partitions();
-		$this->partition_idx = Partition_Node::hash_to_partition( $this->request_id, $num_partitions );
-		$segment_size = Core::as_int( Config::value( 'segment_size' ) );
-		$min_segments = Core::as_int( Config::value( 'min_segments' ) );
-		$num_segments = Core::as_int( Config::value( 'num_segments' ) );
-		$min_lifetime = Core::as_int( Config::value( 'min_lifetime' ) );
-		$lifetime     = Core::as_int( Config::value( 'lifetime' ) );
-		$max_segments = Core::as_int( Config::value( 'max_segments' ) );
-		$existing = Core::node( '_firehose:topic' );
-		if ( $existing instanceof Topic_Node ) {
-			$this->topic = $existing;
-		} else {
-			$this->topic = new Topic_Node();
-			$this->topic->name( '_firehose:topic' );
-			$this->topic->arguments( [ $dir_template, (string) $num_partitions, (string) $segment_size, (string) $min_segments, (string) $num_segments, (string) $max_segments, (string) $min_lifetime, (string) $lifetime ] );
-			$this->topic->patron( $this->topic );
-			$ci = Core::node( Node_Names::COMMAND_INTERPRETER );
-			if ( null !== $ci ) {
-				$this->topic->sink( $ci );
-			} else {
-				// CI not built yet (load order): relay hooks Topic to CI later.
-				$this->topic->sink( new Callback_Node( [ $this, 'relay_topic_to_ci' ] ) );
-			}
-		}
-	}
-
-	/**
-	 * Generate a new request ID: 32 base-36 characters over 25 random bytes.
-	 *
-	 * @return string
-	 */
-	public static function generate_request_id(): string {
-		$rid = '';
-		for ( $i = 0; $i < 5; $i++ ) {
-			$rid .= \base_convert( \bin2hex( \random_bytes( 5 ) ), 16, 36 );
-		}
-		return \substr( $rid, 0, 32 );
-	}
-
-	/** Dir template for the firehose Topic. The one place its layout is written. */
-	private static function firehose_dir_template(): string {
-		return Config::get_logs_directory() . '/firehose.p{partition}';
-	}
-
-	/**
-	 * Open the request: `process (start)`, `request`, environment, resources.
-	 *
-	 * The `process` frame this pushes is the root of the timer stack — finish()
-	 * closes it last, and every orphaned frame above it drains first.
-	 *
-	 * @return void
-	 */
-	private function log_process(): void {
-		$process_hr   = $this->request_time ?? \hrtime( true );
-		$process_data = [ 'm' => \getmypid() . ' on ' . \gethostname(), 'l' => '' ];
-
-		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Sanitized immediately below.
-		$worker_type = \sanitize_text_field( Core::as_string( $_SERVER['NEWSPACK_NODES_WORKER_TYPE'] ?? '' ) );
-		if ( '' !== $worker_type ) {
-			$process_data['worker_type'] = $worker_type;
-		}
-		if ( null !== $this->request_ts ) {
-			$process_data['ts'] = $this->request_ts;
-		}
-		$process_data['rule'] = $this->governing_rule_id();
-
-		$this->message( 'process (start)', $process_data );
-		$this->times[] = [ 'label' => 'process', 'ts' => $process_hr ];
-
-		$method       = \is_string( $_SERVER['REQUEST_METHOD'] ?? null ) ? \sanitize_text_field( \wp_unslash( $_SERVER['REQUEST_METHOD'] ) ) : 'CLI';
-		$server_name  = \is_string( $_SERVER['SERVER_NAME'] ?? null ) ? \sanitize_text_field( \wp_unslash( $_SERVER['SERVER_NAME'] ) ) : '';
-		$scheme       = ! empty( $_SERVER['HTTPS'] ) && 'off' !== $_SERVER['HTTPS'] ? 'https' : 'http';
-		$redacted_url = self::redact_url( $this->request_url );
-		$full_url     = $server_name ? "{$scheme}://{$server_name}{$redacted_url}" : $redacted_url;
-		$this->message( 'request', [ 'm' => "{$method} {$full_url}" ] );
-
-		$this->log_environment();
-		$this->log_resources();
-	}
-
-	/**
-	 * The governing rule's id, or '' when nothing matched. Rides the
-	 * `process (start)` line as `rule`, which is how a reader attributes a
-	 * request to the rule that admitted it.
-	 *
-	 * @api Public accessor.
-	 */
-	public function governing_rule_id(): string {
-		return $this->matched_rule->id ?? '';
-	}
-
-	/**
-	 * Write one firehose line: a TM_STRUCT Message keyed by the request id.
-	 *
-	 * The entry carries the line number as `n`, the category as `k`, the caller's
-	 * data, and a `ts` timestamp. Data encoding over MAX_DATA_SIZE is NOT chunked
-	 * — the category gains `" (truncated)"` and the data collapses to a
-	 * 1000-character excerpt, so anything larger belongs in
-	 * `\Newspack_Nodes\Job_Intake::queue()` instead. A caller-supplied `rid` is
-	 * dropped: the real one is the Message KEY, and honoring the caller's would
-	 * let it forge another request's identity.
-	 *
-	 * @param string $category Event category/keyword.
-	 * @param array<string, mixed>  $data     Additional data to include.
-	 * @return bool True when the line was written; false when logging never started or the Topic is missing.
-	 */
-	public function message( string $category, array $data = [] ): bool {
-		if ( ! $this->started ) {
-			return false;
-		}
-		if ( isset( $data['m'] ) && \is_string( $data['m'] ) && false !== \strpos( $data['m'], '?' ) ) {
-			$data['m'] = self::redact_url( $data['m'] );
-		}
-		// @longform Substitute-on-error: invalid-UTF8 data still yields a
-		// string sized like Message::packed()'s output (same flag) — else
-		// the guard skips truncating and the Partition drops the record.
-		$data_json = \wp_json_encode( $data, \JSON_INVALID_UTF8_SUBSTITUTE | \JSON_PARTIAL_OUTPUT_ON_ERROR );
-		if ( false !== $data_json && \strlen( $data_json ) > self::MAX_DATA_SIZE ) {
-			Core::print_less_often( "LogManager: data truncated for category \"{$category}\", size=", (string) \strlen( $data_json ), \sprintf( ' (limit=%d).', self::MAX_DATA_SIZE ) );
-			$category .= ' (truncated)';
-			$data = [ 'm' => \substr( $data_json, 0, 1000 ) . '...' ];
-		}
-		if ( null === $this->topic ) {
-			return false;
-		}
-		// Strip caller rid (real one is Message::KEY); blocks a forged rid.
-		unset( $data['rid'] );
-
-		// Request-scope hot: cache frozen; one fresh read, threaded to both.
-		$now                                           = Core::right_now();
-		$entry = [ 'n' => $this->line_number, 'k' => $category ] + $data + [ 'ts' => $now ];
-		$message                                       = \Newspack_Nodes\Message::new_message();
-		$message[ \Newspack_Nodes\Message::TYPE ]      = \Newspack_Nodes\Message::TM_STRUCT;
-		$message[ \Newspack_Nodes\Message::TIMESTAMP ] = $now;
-		$message[ \Newspack_Nodes\Message::KEY ]       = $this->request_id;
-		$message[ \Newspack_Nodes\Message::VALUE ]     = $entry;
-		$this->topic->fill( $message );
-		++$this->line_number;
-
-		if ( $this->flush_every_line ) {
-			$this->topic->flush();
-		}
-
-		if ( $this->line_number > self::MAX_LOG_LINES && ! $this->line_limited ) {
-			$this->line_limited = true;
-		}
-		return true;
-	}
-
-	/**
-	 * Redact sensitive query parameters from a URL.
-	 *
-	 * @param string $url URL to redact.
-	 * @return string Redacted URL.
-	 */
-	private static function redact_url( string $url ): string {
-		return \preg_replace( self::URL_REDACT_PATTERN, '$1$2=[REDACTED]', $url ) ?? $url;
-	}
-
-	/**
-	 * Emit the curated `environment_v3` map for this request.
-	 *
-	 * Every value is stripped of control characters, redacted where it carries a
-	 * query string, and capped at ENV_VALUE_MAX bytes — in that order, so a cut
-	 * can never expose the tail of a secret the redaction would have covered.
-	 * Sensitive and array-valued keys are dropped outright.
-	 */
-	private function log_environment(): void {
-		$env = [];
-		foreach ( self::ENV_ALLOWLIST as $key ) {
-			if ( ! isset( $_SERVER[ $key ] ) ) {
-				continue;
-			}
-			// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Sanitized below with preg_replace.
-			$value = $_SERVER[ $key ];
-			if ( \is_array( $value ) || self::is_sensitive_key( $key ) ) {
-				continue;
-			}
-			$sanitized = \preg_replace( '/[\x00-\x1F\x7F]/', '', Core::as_string( $value ) ) ?? '';
-			// Redact URL secrets in values with a query, not just HTTP_REFERER.
-			if ( false !== \strpos( $sanitized, '?' ) ) {
-				$sanitized = self::redact_url( $sanitized );
-			}
-			// Cap AFTER redaction so truncation can't hide a secret's boundary.
-			if ( \strlen( $sanitized ) > self::ENV_VALUE_MAX ) {
-				$sanitized = \substr( $sanitized, 0, self::ENV_VALUE_MAX ) . '…';
-			}
-			$env[ $key ] = $sanitized;
-		}
-		if ( ! empty( $env ) ) {
-			$this->message( 'environment_v3', [ 'm' => $env ] );
-		}
-	}
-
-	/**
-	 * Check if a $_SERVER key should be redacted.
-	 *
-	 * @param string $key Server variable key.
-	 * @return bool True if sensitive.
-	 */
-	private static function is_sensitive_key( string $key ): bool {
-		if ( isset( self::$sensitive_keys[ $key ] ) ) {
-			return true;
-		}
-		$key_upper = \strtoupper( $key );
-		foreach ( self::$sensitive_substrings as $pattern ) {
-			if ( false !== \strpos( $key_upper, $pattern ) ) {
-				return true;
-			}
-		}
-		return false;
-	}
-
-	/**
-	 * Emit a `resources` line from getrusage(): CPU time, faults, I/O blocks,
-	 * signals, context switches. Called at request open and again at finish, so
-	 * a reader can difference the two. Silent when getrusage() is unavailable.
-	 */
-	private function log_resources(): void {
-		$r = \getrusage();
-		if ( ! $r ) {
-			return;
-		}
-		$info = [
-			\sprintf( 'utime => %f',  ( $r['ru_utime.tv_sec'] ?? 0 ) + ( $r['ru_utime.tv_usec'] ?? 0 ) / 1000000 ),
-			\sprintf( 'stime => %f',  ( $r['ru_stime.tv_sec'] ?? 0 ) + ( $r['ru_stime.tv_usec'] ?? 0 ) / 1000000 ),
-			\sprintf( 'maxrss => %d',   $r['ru_maxrss']   ?? 0 ),
-			\sprintf( 'minflt => %d',   $r['ru_minflt']   ?? 0 ), \sprintf( 'majflt => %d',  $r['ru_majflt']  ?? 0 ),
-			\sprintf( 'inblock => %d',  $r['ru_inblock']  ?? 0 ), \sprintf( 'oublock => %d', $r['ru_oublock'] ?? 0 ),
-			\sprintf( 'nsignals => %d', $r['ru_nsignals'] ?? 0 ),
-			\sprintf( 'nvcsw => %d',    $r['ru_nvcsw']    ?? 0 ), \sprintf( 'nivcsw => %d',  $r['ru_nivcsw']  ?? 0 ),
-		];
-		$this->message( 'resources', [ 'm' => \implode( ', ', $info ) ] );
-	}
-
-	/**
 	 * Close the request: drain the timer stack, then log memory, resources, and
 	 * the final `process (complete)` line before flushing the Topic.
 	 *
@@ -593,44 +325,6 @@ class Log_Manager {
 	}
 
 	/**
-	 * Emit a single orphaned `(complete)` line for an unclosed timer-stack
-	 * frame. Shared by complete()'s mismatched-close drain and finish()'s
-	 * end-of-request stack close; muted frames are skipped.
-	 *
-	 * @param array{label: string, ts: int|float, muted?: bool, m?: mixed} $entry Timer-stack frame.
-	 * @param int|float $now Reference hrtime() reading.
-	 */
-	private function emit_orphaned_complete( array $entry, $now ): void {
-		if ( ! empty( $entry['muted'] ) ) {
-			return;
-		}
-		$duration_ms = ( $now - $entry['ts'] ) / self::NS_PER_MS;
-		$this->message( "{$entry['label']} (complete)", [ 'm' => '(orphaned)', 'duration_ms' => $duration_ms ] );
-	}
-
-	/**
-	 * Extract plugin slug from a file path.
-	 *
-	 * @param string $file File path from error_get_last().
-	 * @return string|null Plugin slug or null if not in plugins dir.
-	 */
-	private static function extract_plugin_slug( string $file ): ?string {
-		if ( ! \defined( 'WP_PLUGIN_DIR' ) ) {
-			return null;
-		}
-		$plugins_dir = \trailingslashit( WP_PLUGIN_DIR );
-		if ( 0 !== \strpos( $file, $plugins_dir ) ) {
-			return null;
-		}
-		$relative = \substr( $file, \strlen( $plugins_dir ) );
-		$slug     = \explode( '/', $relative )[0];
-		if ( '.php' === \substr( $slug, -4 ) ) {
-			$slug = \substr( $slug, 0, -4 );
-		}
-		return $slug;
-	}
-
-	/**
 	 * Close a labeled operation and log its duration.
 	 *
 	 * Search runs from the top of the timer stack down to the first frame with
@@ -671,6 +365,44 @@ class Log_Manager {
 				$this->message( "{$label} ({$suffix})", $data );
 			}
 		}
+	}
+
+	/**
+	 * Emit a single orphaned `(complete)` line for an unclosed timer-stack
+	 * frame. Shared by complete()'s mismatched-close drain and finish()'s
+	 * end-of-request stack close; muted frames are skipped.
+	 *
+	 * @param array{label: string, ts: int|float, muted?: bool, m?: mixed} $entry Timer-stack frame.
+	 * @param int|float $now Reference hrtime() reading.
+	 */
+	private function emit_orphaned_complete( array $entry, $now ): void {
+		if ( ! empty( $entry['muted'] ) ) {
+			return;
+		}
+		$duration_ms = ( $now - $entry['ts'] ) / self::NS_PER_MS;
+		$this->message( "{$entry['label']} (complete)", [ 'm' => '(orphaned)', 'duration_ms' => $duration_ms ] );
+	}
+
+	/**
+	 * Extract plugin slug from a file path.
+	 *
+	 * @param string $file File path from error_get_last().
+	 * @return string|null Plugin slug or null if not in plugins dir.
+	 */
+	private static function extract_plugin_slug( string $file ): ?string {
+		if ( ! \defined( 'WP_PLUGIN_DIR' ) ) {
+			return null;
+		}
+		$plugins_dir = \trailingslashit( WP_PLUGIN_DIR );
+		if ( 0 !== \strpos( $file, $plugins_dir ) ) {
+			return null;
+		}
+		$relative = \substr( $file, \strlen( $plugins_dir ) );
+		$slug     = \explode( '/', $relative )[0];
+		if ( '.php' === \substr( $slug, -4 ) ) {
+			$slug = \substr( $slug, 0, -4 );
+		}
+		return $slug;
 	}
 
 	/**
@@ -963,6 +695,18 @@ class Log_Manager {
 	}
 
 	/**
+	 * Resolve the governing rule for a URL, storing it accordingly.
+	 * No rule matched means skip — there is no log-all baseline.
+	 *
+	 * @param string $url URL to check.
+	 * @return bool True if URL should be logged.
+	 */
+	public function matches_url_filter( string $url ): bool {
+		$this->matched_rule = $this->matcher?->match( $url );
+		return null !== $this->matched_rule && $this->matched_rule->is_log();
+	}
+
+	/**
 	 * This context's logging window is open: the governing rule said `log` and
 	 * finish() has not run yet. The gate every caller that instruments its own
 	 * work — rather than just writing a line — should check first.
@@ -1096,6 +840,262 @@ class Log_Manager {
 
 		$ref_init = new \ReflectionMethod( Partition_Node::class, 'init_current_segment' );
 		$ref_init->invoke( $partition );
+	}
+
+	/**
+	 * Mint the request id, pick its partition, and attach the firehose Topic.
+	 *
+	 * The id comes from the edge (`HTTP_X_A8C_REQUEST_ID`), else from `UNIQUE_ID`,
+	 * else it is generated and published back into `$_SERVER['UNIQUE_ID']` so a
+	 * subprocess inherits the same identity. `_firehose:topic` is built once per
+	 * process and adopted by every later context.
+	 */
+	private function init_firehose(): void {
+		// request_id FIRST: Topic ctor re-enters message(), which needs a rid.
+		if ( ! empty( $_SERVER['HTTP_X_A8C_REQUEST_ID'] ) && \is_string( $_SERVER['HTTP_X_A8C_REQUEST_ID'] ) ) {
+			$this->request_id = \substr( \sanitize_text_field( \wp_unslash( $_SERVER['HTTP_X_A8C_REQUEST_ID'] ) ), 0, 64 );
+		} elseif ( ! empty( $_SERVER['UNIQUE_ID'] ) && \is_string( $_SERVER['UNIQUE_ID'] ) ) {
+			$this->request_id = \substr( \sanitize_text_field( \wp_unslash( $_SERVER['UNIQUE_ID'] ) ), 0, 64 );
+		} else {
+			$this->request_id     = self::generate_request_id();
+			$_SERVER['UNIQUE_ID'] = $this->request_id;
+		}
+
+		$dir_template        = self::firehose_dir_template();
+		// THE accessor: past the cap no worker consumes, and the GC sweeps it.
+		$num_partitions      = \Newspack_Nodes\Bootstrap::global_num_partitions();
+		$this->partition_idx = Partition_Node::hash_to_partition( $this->request_id, $num_partitions );
+		$segment_size = Core::as_int( Config::value( 'segment_size' ) );
+		$min_segments = Core::as_int( Config::value( 'min_segments' ) );
+		$num_segments = Core::as_int( Config::value( 'num_segments' ) );
+		$min_lifetime = Core::as_int( Config::value( 'min_lifetime' ) );
+		$lifetime     = Core::as_int( Config::value( 'lifetime' ) );
+		$max_segments = Core::as_int( Config::value( 'max_segments' ) );
+		$existing = Core::node( '_firehose:topic' );
+		if ( $existing instanceof Topic_Node ) {
+			$this->topic = $existing;
+		} else {
+			$this->topic = new Topic_Node();
+			$this->topic->name( '_firehose:topic' );
+			$this->topic->arguments( [ $dir_template, (string) $num_partitions, (string) $segment_size, (string) $min_segments, (string) $num_segments, (string) $max_segments, (string) $min_lifetime, (string) $lifetime ] );
+			$this->topic->patron( $this->topic );
+			$ci = Core::node( Node_Names::COMMAND_INTERPRETER );
+			if ( null !== $ci ) {
+				$this->topic->sink( $ci );
+			} else {
+				// CI not built yet (load order): relay hooks Topic to CI later.
+				$this->topic->sink( new Callback_Node( [ $this, 'relay_topic_to_ci' ] ) );
+			}
+		}
+	}
+
+	/** Dir template for the firehose Topic. The one place its layout is written. */
+	private static function firehose_dir_template(): string {
+		return Config::get_logs_directory() . '/firehose.p{partition}';
+	}
+
+	/**
+	 * Generate a new request ID: 32 base-36 characters over 25 random bytes.
+	 *
+	 * @return string
+	 */
+	public static function generate_request_id(): string {
+		$rid = '';
+		for ( $i = 0; $i < 5; $i++ ) {
+			$rid .= \base_convert( \bin2hex( \random_bytes( 5 ) ), 16, 36 );
+		}
+		return \substr( $rid, 0, 32 );
+	}
+
+	/**
+	 * Open the request: `process (start)`, `request`, environment, resources.
+	 *
+	 * The `process` frame this pushes is the root of the timer stack — finish()
+	 * closes it last, and every orphaned frame above it drains first.
+	 *
+	 * @return void
+	 */
+	private function log_process(): void {
+		$process_hr   = $this->request_time ?? \hrtime( true );
+		$process_data = [ 'm' => \getmypid() . ' on ' . \gethostname(), 'l' => '' ];
+
+		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Sanitized immediately below.
+		$worker_type = \sanitize_text_field( Core::as_string( $_SERVER['NEWSPACK_NODES_WORKER_TYPE'] ?? '' ) );
+		if ( '' !== $worker_type ) {
+			$process_data['worker_type'] = $worker_type;
+		}
+		if ( null !== $this->request_ts ) {
+			$process_data['ts'] = $this->request_ts;
+		}
+		$process_data['rule'] = $this->governing_rule_id();
+
+		$this->message( 'process (start)', $process_data );
+		$this->times[] = [ 'label' => 'process', 'ts' => $process_hr ];
+
+		$method       = \is_string( $_SERVER['REQUEST_METHOD'] ?? null ) ? \sanitize_text_field( \wp_unslash( $_SERVER['REQUEST_METHOD'] ) ) : 'CLI';
+		$server_name  = \is_string( $_SERVER['SERVER_NAME'] ?? null ) ? \sanitize_text_field( \wp_unslash( $_SERVER['SERVER_NAME'] ) ) : '';
+		$scheme       = ! empty( $_SERVER['HTTPS'] ) && 'off' !== $_SERVER['HTTPS'] ? 'https' : 'http';
+		$redacted_url = self::redact_url( $this->request_url );
+		$full_url     = $server_name ? "{$scheme}://{$server_name}{$redacted_url}" : $redacted_url;
+		$this->message( 'request', [ 'm' => "{$method} {$full_url}" ] );
+
+		$this->log_environment();
+		$this->log_resources();
+	}
+
+	/**
+	 * Emit a `resources` line from getrusage(): CPU time, faults, I/O blocks,
+	 * signals, context switches. Called at request open and again at finish, so
+	 * a reader can difference the two. Silent when getrusage() is unavailable.
+	 */
+	private function log_resources(): void {
+		$r = \getrusage();
+		if ( ! $r ) {
+			return;
+		}
+		$info = [
+			\sprintf( 'utime => %f',  ( $r['ru_utime.tv_sec'] ?? 0 ) + ( $r['ru_utime.tv_usec'] ?? 0 ) / 1000000 ),
+			\sprintf( 'stime => %f',  ( $r['ru_stime.tv_sec'] ?? 0 ) + ( $r['ru_stime.tv_usec'] ?? 0 ) / 1000000 ),
+			\sprintf( 'maxrss => %d',   $r['ru_maxrss']   ?? 0 ),
+			\sprintf( 'minflt => %d',   $r['ru_minflt']   ?? 0 ), \sprintf( 'majflt => %d',  $r['ru_majflt']  ?? 0 ),
+			\sprintf( 'inblock => %d',  $r['ru_inblock']  ?? 0 ), \sprintf( 'oublock => %d', $r['ru_oublock'] ?? 0 ),
+			\sprintf( 'nsignals => %d', $r['ru_nsignals'] ?? 0 ),
+			\sprintf( 'nvcsw => %d',    $r['ru_nvcsw']    ?? 0 ), \sprintf( 'nivcsw => %d',  $r['ru_nivcsw']  ?? 0 ),
+		];
+		$this->message( 'resources', [ 'm' => \implode( ', ', $info ) ] );
+	}
+
+	/**
+	 * Emit the curated `environment_v3` map for this request.
+	 *
+	 * Every value is stripped of control characters, redacted where it carries a
+	 * query string, and capped at ENV_VALUE_MAX bytes — in that order, so a cut
+	 * can never expose the tail of a secret the redaction would have covered.
+	 * Sensitive and array-valued keys are dropped outright.
+	 */
+	private function log_environment(): void {
+		$env = [];
+		foreach ( self::ENV_ALLOWLIST as $key ) {
+			if ( ! isset( $_SERVER[ $key ] ) ) {
+				continue;
+			}
+			// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Sanitized below with preg_replace.
+			$value = $_SERVER[ $key ];
+			if ( \is_array( $value ) || self::is_sensitive_key( $key ) ) {
+				continue;
+			}
+			$sanitized = \preg_replace( '/[\x00-\x1F\x7F]/', '', Core::as_string( $value ) ) ?? '';
+			// Redact URL secrets in values with a query, not just HTTP_REFERER.
+			if ( false !== \strpos( $sanitized, '?' ) ) {
+				$sanitized = self::redact_url( $sanitized );
+			}
+			// Cap AFTER redaction so truncation can't hide a secret's boundary.
+			if ( \strlen( $sanitized ) > self::ENV_VALUE_MAX ) {
+				$sanitized = \substr( $sanitized, 0, self::ENV_VALUE_MAX ) . '…';
+			}
+			$env[ $key ] = $sanitized;
+		}
+		if ( ! empty( $env ) ) {
+			$this->message( 'environment_v3', [ 'm' => $env ] );
+		}
+	}
+
+	/**
+	 * Write one firehose line: a TM_STRUCT Message keyed by the request id.
+	 *
+	 * The entry carries the line number as `n`, the category as `k`, the caller's
+	 * data, and a `ts` timestamp. Data encoding over MAX_DATA_SIZE is NOT chunked
+	 * — the category gains `" (truncated)"` and the data collapses to a
+	 * 1000-character excerpt, so anything larger belongs in
+	 * `\Newspack_Nodes\Job_Intake::queue()` instead. A caller-supplied `rid` is
+	 * dropped: the real one is the Message KEY, and honoring the caller's would
+	 * let it forge another request's identity.
+	 *
+	 * @param string $category Event category/keyword.
+	 * @param array<string, mixed>  $data     Additional data to include.
+	 * @return bool True when the line was written; false when logging never started or the Topic is missing.
+	 */
+	public function message( string $category, array $data = [] ): bool {
+		if ( ! $this->started ) {
+			return false;
+		}
+		if ( isset( $data['m'] ) && \is_string( $data['m'] ) && false !== \strpos( $data['m'], '?' ) ) {
+			$data['m'] = self::redact_url( $data['m'] );
+		}
+		// @longform Substitute-on-error: invalid-UTF8 data still yields a
+		// string sized like Message::packed()'s output (same flag) — else
+		// the guard skips truncating and the Partition drops the record.
+		$data_json = \wp_json_encode( $data, \JSON_INVALID_UTF8_SUBSTITUTE | \JSON_PARTIAL_OUTPUT_ON_ERROR );
+		if ( false !== $data_json && \strlen( $data_json ) > self::MAX_DATA_SIZE ) {
+			Core::print_less_often( "LogManager: data truncated for category \"{$category}\", size=", (string) \strlen( $data_json ), \sprintf( ' (limit=%d).', self::MAX_DATA_SIZE ) );
+			$category .= ' (truncated)';
+			$data = [ 'm' => \substr( $data_json, 0, 1000 ) . '...' ];
+		}
+		if ( null === $this->topic ) {
+			return false;
+		}
+		// Strip caller rid (real one is Message::KEY); blocks a forged rid.
+		unset( $data['rid'] );
+
+		// Request-scope hot: cache frozen; one fresh read, threaded to both.
+		$now                                           = Core::right_now();
+		$entry = [ 'n' => $this->line_number, 'k' => $category ] + $data + [ 'ts' => $now ];
+		$message                                       = \Newspack_Nodes\Message::new_message();
+		$message[ \Newspack_Nodes\Message::TYPE ]      = \Newspack_Nodes\Message::TM_STRUCT;
+		$message[ \Newspack_Nodes\Message::TIMESTAMP ] = $now;
+		$message[ \Newspack_Nodes\Message::KEY ]       = $this->request_id;
+		$message[ \Newspack_Nodes\Message::VALUE ]     = $entry;
+		$this->topic->fill( $message );
+		++$this->line_number;
+
+		if ( $this->flush_every_line ) {
+			$this->topic->flush();
+		}
+
+		if ( $this->line_number > self::MAX_LOG_LINES && ! $this->line_limited ) {
+			$this->line_limited = true;
+		}
+		return true;
+	}
+
+	/**
+	 * Redact sensitive query parameters from a URL.
+	 *
+	 * @param string $url URL to redact.
+	 * @return string Redacted URL.
+	 */
+	private static function redact_url( string $url ): string {
+		return \preg_replace( self::URL_REDACT_PATTERN, '$1$2=[REDACTED]', $url ) ?? $url;
+	}
+
+	/**
+	 * Check if a $_SERVER key should be redacted.
+	 *
+	 * @param string $key Server variable key.
+	 * @return bool True if sensitive.
+	 */
+	private static function is_sensitive_key( string $key ): bool {
+		if ( isset( self::$sensitive_keys[ $key ] ) ) {
+			return true;
+		}
+		$key_upper = \strtoupper( $key );
+		foreach ( self::$sensitive_substrings as $pattern ) {
+			if ( false !== \strpos( $key_upper, $pattern ) ) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * The governing rule's id, or '' when nothing matched. Rides the
+	 * `process (start)` line as `rule`, which is how a reader attributes a
+	 * request to the rule that admitted it.
+	 *
+	 * @api Public accessor.
+	 */
+	public function governing_rule_id(): string {
+		return $this->matched_rule->id ?? '';
 	}
 
 }
