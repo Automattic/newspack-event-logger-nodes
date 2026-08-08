@@ -49,6 +49,52 @@ final class Rule_Set {
 	}
 
 	/**
+	 * Discard the stored ruleset so the file config seeds again, and hand back
+	 * the set that read now returns.
+	 *
+	 * DELETES the option rather than saving an empty list: presence is the
+	 * override, so a stored `[]` is an explicit "log nothing" that would pin
+	 * itself over the config seed forever.
+	 *
+	 * The row goes FIRST. Sweeping the pointer tier ahead of it would, on any
+	 * failure in between, leave the ruleset live with every heavy rule's hooks
+	 * gone — instrumenting nothing behind a rate-limited notice. Reversed, the
+	 * same failure leaves orphan hook options the next `save()` sweeps.
+	 *
+	 * Config is memoized per process with the stored option already folded in,
+	 * so it must be invalidated before the read-back or this returns the very
+	 * ruleset it discarded (the `settings_set` verb resets it for this reason).
+	 */
+	public static function reset(): self {
+		\delete_option( self::OPTION_RULES );
+		( new self( [] ) )->reconcile_orphans( [] );
+		Config::reset();
+		self::request_reloads();
+		return self::load();
+	}
+
+	/**
+	 * Ask every live worker to re-read its boot-frozen option cache.
+	 *
+	 * Signalled from `save()` rather than its callers because save() is the one
+	 * origin every ruleset write passes through — `Rules_CI_Node`, the synced
+	 * `Rule_Set::apply_synced()` receive path and `Auto_Tuner_Node` — so a fourth
+	 * caller cannot forget it. Two of those run INSIDE a worker, so that worker
+	 * signals itself along with its peers; intended, because a reload also purges
+	 * the option cache its own later reads go through.
+	 *
+	 * Best-effort: the next worker generation loads the new ruleset regardless,
+	 * so an unresolvable locks directory must not fail the write.
+	 */
+	private static function request_reloads(): void {
+		try {
+			Restart_Planner::request_reloads( Config::get_locks_directory() );
+		} catch ( \Throwable $e ) {
+			Core::print_less_often( 'rules: reload signalling failed: ', $e->getMessage() );
+		}
+	}
+
+	/**
 	 * Read the persisted ruleset, falling back to the file config.
 	 *
 	 * An absent option seeds from config; a corrupt (non-array) one seeds too,
@@ -362,27 +408,6 @@ final class Rule_Set {
 			if ( ! isset( $live_pointer_ids[ $id ] ) ) {
 				\delete_option( $name );
 			}
-		}
-	}
-
-	/**
-	 * Ask every live worker to re-read its boot-frozen option cache.
-	 *
-	 * Signalled from `save()` rather than its callers because save() is the one
-	 * origin every ruleset write passes through — `Rules_CI_Node`, the synced
-	 * `Rule_Set::apply_synced()` receive path and `Auto_Tuner_Node` — so a fourth
-	 * caller cannot forget it. Two of those run INSIDE a worker, so that worker
-	 * signals itself along with its peers; intended, because a reload also purges
-	 * the option cache its own later reads go through.
-	 *
-	 * Best-effort: the next worker generation loads the new ruleset regardless,
-	 * so an unresolvable locks directory must not fail the write.
-	 */
-	private static function request_reloads(): void {
-		try {
-			Restart_Planner::request_reloads( Config::get_locks_directory() );
-		} catch ( \Throwable $e ) {
-			Core::print_less_often( 'rules: reload signalling failed: ', $e->getMessage() );
 		}
 	}
 

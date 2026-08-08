@@ -1080,6 +1080,24 @@ class Request_Builder_Node extends Timer_Node {
 	}
 
 	/**
+	 * Drop every in-flight request, returning how many went.
+	 *
+	 * Recovery, not eviction: the entries are DISCARDED, not emitted as timed
+	 * out. A cache that needs this is holding requests that will never complete,
+	 * potentially thousands of them carrying up to MAX_ENTRIES_PER_REQUEST
+	 * entries each — answering a wedged fleet with that write storm is worse
+	 * than losing docs for requests already known to be dead. Ordinary ageing
+	 * still runs through eviction, which does emit.
+	 *
+	 * @return int Requests dropped.
+	 */
+	public function purge_cache(): int {
+		$dropped = \iterator_count( $this->cache->iterate() );
+		$this->cache->flush();
+		return $dropped;
+	}
+
+	/**
 	 * Format index entry callback for Partition::with_index().
 	 *
 	 * Registered as the `request-index` formatter; `parse_request_index()` is
@@ -1520,6 +1538,16 @@ class Request_Builder_Node extends Timer_Node {
 						$patron = $interpreter->patron();
 						$patron->flight()->set_delta( '' !== $arg && '0' !== $arg );
 						return 'ok';
+					},
+				],
+				[
+					'name'        => 'purge',
+					'description' => 'Drop every in-flight request. Operator recovery for a wedged cache — the requests are discarded, NOT emitted as timed out; ordinary ageing still emits.',
+					'args'        => [],
+					'handler'     => static function ( Command_Interpreter_Node $interpreter, array $args ): string {
+						/** @var self $patron */
+						$patron = $interpreter->patron();
+						return \sprintf( 'purged %d in-flight requests', $patron->purge_cache() );
 					},
 				],
 			],

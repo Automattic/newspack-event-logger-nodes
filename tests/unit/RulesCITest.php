@@ -57,7 +57,21 @@ class RulesCITest extends TestCase {
 		Core::$memd = null;
 		global $wpdb;
 		$wpdb = null;
+		\Newspack_Event_Logger_Nodes\Config::reset();
 		parent::tearDown();
+	}
+
+	/**
+	 * Put a `rules` seed in the config FILE layer, the way production has one.
+	 *
+	 * Deliberately not a reflection pin on the memoized array: `reset()`
+	 * invalidates that memo, so a pinned one both hides the staleness the memo
+	 * causes and evaporates the moment the fix lands.
+	 *
+	 * @param array<int, array<string, mixed>> $rules Config `rules` entries.
+	 */
+	private function set_config_rules( array $rules ): void {
+		$this->use_base_dir( $this->make_temp_dir(), [ 'rules' => $rules ] );
 	}
 
 	private function fire( string $verb, string $args = '' ): mixed {
@@ -322,6 +336,63 @@ class RulesCITest extends TestCase {
 
 		$this->assertSame( 'Service', $schema['category'] );
 		$names = \array_column( $schema['commands'], 'name' );
-		$this->assertEqualsCanonicalizing( [ 'list', 'save', 'upsert', 'delete' ], $names );
+		$this->assertEqualsCanonicalizing( [ 'list', 'save', 'upsert', 'delete', 'reset' ], $names );
+	}
+
+	// -------------------------------------------------------------------------
+	// reset
+	// -------------------------------------------------------------------------
+
+	/**
+	 * Config is memoized per process WITH the stored option folded in by the
+	 * presence overlay, and `App\Core` warms it at `plugins_loaded:11` — so by
+	 * the time a verb runs, `Config::value('rules')` already answers with the
+	 * ruleset we are about to discard. Every reset test reproduces that.
+	 */
+	private function warm_stale_config(): void {
+		\Newspack_Event_Logger_Nodes\Config::value( 'rules' );
+	}
+
+	public function test_reset_drops_the_stored_ruleset_and_reports_the_seeded_count(): void {
+		$this->set_config_rules( [
+			[ 'pattern' => '/seeded-a/', 'action' => 'log' ],
+			[ 'pattern' => '/seeded-b/', 'action' => 'skip' ],
+		] );
+		( new Rule_Set( [] ) )->save( [ new Rule( 'stored', '/stored-only/', Rule::ACTION_SKIP ) ] );
+		$this->warm_stale_config();
+
+		$result = $this->fire( 'reset' );
+
+		$this->assertSame( [ 'reset' => 2 ], $result, 'the count is the FILE seed, not the discarded ruleset' );
+		$this->assertArrayNotHasKey( Rule_Set::OPTION_RULES, $GLOBALS['_wp_options'] );
+	}
+
+	public function test_reset_answers_with_the_config_seed_not_the_discarded_ruleset(): void {
+		$this->set_config_rules( [ [ 'pattern' => '/seeded-only/', 'action' => 'log' ] ] );
+		( new Rule_Set( [] ) )->save( [ new Rule( 'stored', '/stored-only/', Rule::ACTION_SKIP ) ] );
+		$this->warm_stale_config();
+
+		$seeded = Rule_Set::reset();
+
+		$this->assertSame(
+			[ '/seeded-only/' ],
+			\array_map( static fn ( Rule $r ): string => $r->pattern, $seeded->rules() )
+		);
+	}
+
+	public function test_reset_then_list_answers_with_the_config_seed(): void {
+		$this->set_config_rules( [ [ 'pattern' => '/seeded-only/', 'action' => 'log' ] ] );
+		( new Rule_Set( [] ) )->save( [ new Rule( 'stored', '/stored-only/', Rule::ACTION_SKIP ) ] );
+		$this->warm_stale_config();
+
+		$this->fire( 'reset' );
+		VerbHarness::reset();
+		$listed = $this->fire( 'list' );
+
+		$this->assertIsArray( $listed );
+		$this->assertSame(
+			[ '/seeded-only/' ],
+			\array_column( $listed['rules'], 'pattern' )
+		);
 	}
 }

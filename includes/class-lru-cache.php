@@ -3,10 +3,18 @@
  * LRU Cache
  *
  * Bucket-based LRU cache for in-memory data. Writes land in the newest
- * bucket; a full bucket (or an elapsed rotation interval) opens a fresh one
+ * bucket; a full bucket (or a closed rotation window) opens a fresh one
  * and drops the oldest once the bucket count exceeds capacity. Reading an
  * entry promotes it to the newest bucket, so anything touched regularly
  * outlives the rotation window and only idle keys age out.
+ *
+ * Timed rotation runs on an ABSOLUTE grid — see next_boundary(). The boundary
+ * is derived from the wall clock rather than from when this instance was
+ * built, so a cache restored into a fresh process keeps its predecessor's
+ * phase; and rotate_if_due() rolls once per elapsed window rather than once
+ * per call, so a gap is repaid in one pass. Both come from Table.pm, and
+ * without them a fleet whose workers recycle faster than the window (idle
+ * exit at 30s against a 200s window) never aged anything out at all.
  *
  * `Request_Builder_Node` holds in-flight requests here keyed by request id,
  * and `Reqgrep_Command` does the same for the CLI; in both, eviction is the
@@ -50,8 +58,8 @@ class LRU_Cache {
 	/** @var int Newest bucket index; monotonic, so an index is never reused. */
 	private int $current = 0;
 
-	/** @var float Last rotation timestamp. */
-	private float $last_rotation = 0;
+	/** @var float Absolute-grid instant the next timed rotation comes due. */
+	private float $next_window = 0;
 
 	/** @var int Max number of buckets. */
 	private int $num_buckets;
@@ -114,11 +122,11 @@ class LRU_Cache {
 	/**
 	 * Open a fresh newest bucket, evicting the oldest one past capacity.
 	 *
-	 * Also stamps the rotation clock, so a capacity rotation restarts the
-	 * timed-rotation interval.
+	 * Leaves the time grid alone — a capacity rotation is not a window, and
+	 * pushing the boundary each time one fires let a busy cache defer the timed
+	 * roll indefinitely.
 	 */
 	private function force_rotate(): void {
-		$this->last_rotation = Core::$now ?: Core::right_now();
 		++$this->current;
 		$this->buckets[ $this->current ] = [];
 
@@ -169,20 +177,49 @@ class LRU_Cache {
 	}
 
 	/**
-	 * Rotate when the configured interval has elapsed.
+	 * Roll every window that has closed since the last call.
 	 *
 	 * Call this periodically from the processing loop — nothing ages out on a
 	 * quiet cache otherwise, since capacity rotation needs writes. A no-op
 	 * until with_timed_rotation() sets an interval.
+	 *
+	 * Rolls once PER elapsed window, not once per call: a gap — a process that
+	 * was down, or a stretch with no ticks — is repaid in one pass, so a stalled
+	 * entry ages out on wall-clock time rather than on how often we looked.
+	 * num_buckets rolls already empty the cache, so a longer gap has nothing
+	 * left to drop and the count caps there.
 	 */
 	public function rotate_if_due(): void {
 		if ( $this->rotate_interval <= 0 ) {
 			return;
 		}
-		$now = Core::$now ?: Core::right_now();
-		if ( $now - $this->last_rotation >= $this->rotate_interval ) {
+		$now = $this->clock();
+		if ( $now < $this->next_window ) {
+			return;
+		}
+		$elapsed = 1 + (int) \floor( ( $now - $this->next_window ) / $this->rotate_interval );
+		for ( $roll = \min( $elapsed, $this->num_buckets ); $roll > 0; $roll-- ) {
 			$this->force_rotate();
 		}
+		$this->next_window = $this->next_boundary( $now );
+	}
+
+	/** The per-tick cached clock, falling back to a live read. */
+	private function clock(): float {
+		return Core::$now ?: Core::right_now();
+	}
+
+	/**
+	 * The first grid boundary strictly after $after.
+	 *
+	 * The grid is a pure function of the wall clock, so a process that replaces
+	 * another lands on the boundary its predecessor would have used. That is
+	 * what makes the phase survive a restart with nothing persisted. Table.pm
+	 * snaps to localtime components; the epoch grid is the same idea without a
+	 * DST discontinuity, and nothing here reads a boundary as a label.
+	 */
+	private function next_boundary( float $after ): float {
+		return ( \floor( $after / $this->rotate_interval ) + 1 ) * $this->rotate_interval;
 	}
 
 	/**
@@ -199,7 +236,9 @@ class LRU_Cache {
 	public function with_timed_rotation( float $seconds, callable $on_evict ): self {
 		$this->rotate_interval = $seconds;
 		$this->on_evict        = $on_evict;
-		$this->last_rotation   = Core::$now ?: Core::right_now();
+		if ( $seconds > 0 ) {
+			$this->next_window = $this->next_boundary( $this->clock() );
+		}
 		return $this;
 	}
 
@@ -254,7 +293,8 @@ class LRU_Cache {
 	 *
 	 * `Request_Builder_Node::save_state()` persists this so in-flight requests
 	 * survive a worker restart. Rotation settings and on_evict stay out — the
-	 * restoring instance supplies its own.
+	 * restoring instance supplies its own, and the window boundary needs no
+	 * carrying because the grid recomputes it from the clock.
 	 *
 	 * @return array<string, mixed> Keys `buckets` and `current`.
 	 */

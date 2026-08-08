@@ -4,13 +4,13 @@
  * substrate's HTTP I/O boundary node. Modeled on useVaultGraph, single-concern:
  *
  *   _http     (HttpOutNode — POST /command boundary; .client = the transport)
- *   rules:in  (Tee) → rules:view (RulesViewNode) — list/save/upsert/delete
+ *   rules:in  (Tee) → rules:view (RulesViewNode) — list/save/upsert/delete/reset
  *
  * Nothing here is correlated, because the addressing already is the
  * correlation. Each MUTATING verb owns its own node — `rules:save`,
- * `rules:upsert`, `rules:delete`, one per verb via `useRequestNode` — and a
- * node stamps FROM with its own name, so the server's TO=FROM reply lands back
- * on exactly the node that minted it. There is no id in `message[ID]`, no
+ * `rules:upsert`, `rules:delete`, `rules:reset`, one per verb via
+ * `useRequestNode` — and a node stamps FROM with its own name, so the server's
+ * TO=FROM reply lands back on exactly the node that minted it. There is no id in `message[ID]`, no
  * `replies` map, and nothing keyed by one; batching several verbs in a tick
  * would mean more nodes, never one node telling replies apart.
  *
@@ -24,8 +24,8 @@
  *
  * Wire contract mirrors Rules_CI_Node: `save`/`upsert` pass the RAW JSON as a
  * single arg token (the handler json_decodes `$args[0]`); `delete` passes the id
- * as a positional token; `list` takes no args (`[]`). Mutations re-`list()` to
- * refresh the table.
+ * as a positional token; `list` and `reset` take no args (`[]`). Mutations
+ * re-`list()` to refresh the table.
  *
  * The command boundary is injectable: tests pass `opts.commandClient` (assigned
  * to `_http.client`). Production lets HttpOut default it.
@@ -64,7 +64,7 @@ function fireList( shell ) {
 }
 
 /**
- * The three mutations resolve their own CI reply, but the TABLE they repaint is
+ * The four mutations resolve their own CI reply, but the TABLE they repaint is
  * refreshed by a separate `list` whose reply lands on `rules:in` — so an awaited
  * mutation settles BEFORE `rules` reflects it. `list` itself resolves as soon as
  * the command is on the wire, not when the table has repainted; read the table
@@ -76,7 +76,8 @@ function fireList( shell ) {
  *   list: () => Promise<void>,
  *   saveAll: (rules: Object[]) => Promise<Object>,
  *   upsert: (rule: Object) => Promise<Object>,
- *   remove: (id: string) => Promise<Object> }}
+ *   remove: (id: string) => Promise<Object>,
+ *   reset: () => Promise<Object> }}
  *   The `rules:view` render model plus the CRUD callbacks. `loading` starts
  *   true and clears on the first `list` reply; `error` carries a `list`
  *   failure's banner — a mutation's failure REJECTS its own promise instead,
@@ -129,6 +130,7 @@ export function useRulesGraph( opts = {} ) {
 	const saveNode = useRequestNode( 'rules:save', 'rules' );
 	const upsertNode = useRequestNode( 'rules:upsert', 'rules' );
 	const deleteNode = useRequestNode( 'rules:delete', 'rules' );
+	const resetNode = useRequestNode( 'rules:reset', 'rules' );
 
 	const list = useCallback( () => {
 		if ( ! shellRef.current ) {
@@ -166,6 +168,11 @@ export function useRulesGraph( opts = {} ) {
 		[ deleteNode, runMutation ]
 	);
 
+	const reset = useCallback(
+		() => runMutation( resetNode, 'reset', [] ),
+		[ resetNode, runMutation ]
+	);
+
 	const model = useNodeState( VIEW, 'view' );
 	return {
 		rules: model?.rules ?? [],
@@ -175,5 +182,6 @@ export function useRulesGraph( opts = {} ) {
 		saveAll,
 		upsert,
 		remove,
+		reset,
 	};
 }

@@ -7,6 +7,11 @@
  * Add / Edit open RuleEditModal (add = a blank log rule); Save → `upsert` (single
  * rule, so the editor never ships the whole list) and the table re-lists. Delete
  * opens a confirm dialog → `remove(id)`. Loading / error come from the model.
+ *
+ * The `↺` beside "+ Add Rule" is the section's reset-to-defaults, matching the
+ * per-field toggle every other setting carries. It applies at once behind a
+ * confirm rather than marking-then-Save: this editor writes through the `rules`
+ * CI, so there is no form submission to defer a mark to.
  */
 
 import { useEffect, useRef, useState } from '@wordpress/element';
@@ -40,8 +45,14 @@ function autoTuneSummary( rule ) {
 	return parts.length ? parts.join( ', ' ) : '—';
 }
 
-// Minimal confirm dialog for delete. The confirm button focuses on mount.
-function ConfirmDeleteModal( { pattern, onCancel, onConfirm } ) {
+// Minimal confirm dialog; the confirm button focuses on mount.
+function ConfirmModal( {
+	label,
+	question,
+	confirmLabel,
+	onCancel,
+	onConfirm,
+} ) {
 	const confirmRef = useRef( null );
 	useEffect( () => {
 		confirmRef.current?.focus();
@@ -61,21 +72,9 @@ function ConfirmDeleteModal( { pattern, onCancel, onConfirm } ) {
 				className="rules-admin__confirm newspack-nodes-modal"
 				role="dialog"
 				aria-modal="true"
-				aria-label={ __(
-					'Delete rule',
-					'newspack-event-logger-nodes'
-				) }
+				aria-label={ label }
 			>
-				<p>
-					{ sprintf(
-						// translators: %s: the rule's URL pattern.
-						__(
-							'Are you sure you want to delete the rule for %s?',
-							'newspack-event-logger-nodes'
-						),
-						pattern
-					) }
-				</p>
+				<p>{ question }</p>
 				<div className="rules-admin__confirm-actions">
 					<button
 						type="button"
@@ -90,7 +89,7 @@ function ConfirmDeleteModal( { pattern, onCancel, onConfirm } ) {
 						className="button button-link-delete"
 						onClick={ onConfirm }
 					>
-						{ __( 'Delete', 'newspack-event-logger-nodes' ) }
+						{ confirmLabel }
 					</button>
 				</div>
 			</div>
@@ -196,12 +195,14 @@ function messageOf( e ) {
  *
  */
 export default function RulesAdmin() {
-	const { rules, loading, error, upsert, remove } = useRulesGraph();
+	const { rules, loading, error, upsert, remove, reset } = useRulesGraph();
 
 	// Rule open in the editor: null = closed, object = editing/adding.
 	const [ editing, setEditing ] = useState( null );
 	// The rule pending delete confirmation.
 	const [ deleting, setDeleting ] = useState( null );
+	// Whether the reset-to-defaults confirmation is open.
+	const [ resetting, setResetting ] = useState( false );
 	// A mutation's failure; useRulesGraph rejects rather than filling `error`.
 	const [ mutationError, setMutationError ] = useState( null );
 
@@ -230,6 +231,17 @@ export default function RulesAdmin() {
 			return;
 		}
 		setDeleting( null );
+	};
+
+	const confirmReset = async () => {
+		setMutationError( null );
+		try {
+			await reset();
+		} catch ( e ) {
+			setMutationError( messageOf( e ) );
+			return;
+		}
+		setResetting( false );
 	};
 
 	// Resolve the table body once (avoids a nested ternary in JSX).
@@ -278,13 +290,29 @@ export default function RulesAdmin() {
 				</div>
 			) }
 
-			<p>
+			<p className="rules-admin__actions">
 				<button
 					type="button"
 					className="rules-admin__add button button-primary"
 					onClick={ () => setEditing( { ...BLANK_RULE } ) }
 				>
 					{ __( '+ Add Rule', 'newspack-event-logger-nodes' ) }
+				</button>
+				<button
+					type="button"
+					className="rules-admin__reset button button-secondary"
+					// Contents beat title for the accessible name — "↺" alone.
+					aria-label={ __(
+						'Reset rules to defaults',
+						'newspack-event-logger-nodes'
+					) }
+					title={ __(
+						'Reset rules to defaults',
+						'newspack-event-logger-nodes'
+					) }
+					onClick={ () => setResetting( true ) }
+				>
+					↺
 				</button>
 			</p>
 
@@ -323,10 +351,38 @@ export default function RulesAdmin() {
 			) }
 
 			{ deleting && (
-				<ConfirmDeleteModal
-					pattern={ deleting.pattern }
+				<ConfirmModal
+					label={ __( 'Delete rule', 'newspack-event-logger-nodes' ) }
+					question={ sprintf(
+						// translators: %s: the rule's URL pattern.
+						__(
+							'Are you sure you want to delete the rule for %s?',
+							'newspack-event-logger-nodes'
+						),
+						deleting.pattern
+					) }
+					confirmLabel={ __(
+						'Delete',
+						'newspack-event-logger-nodes'
+					) }
 					onCancel={ () => setDeleting( null ) }
 					onConfirm={ confirmDelete }
+				/>
+			) }
+
+			{ resetting && (
+				<ConfirmModal
+					label={ __( 'Reset rules', 'newspack-event-logger-nodes' ) }
+					question={ __(
+						'Are you sure you want to discard every rule you have configured and go back to the shipped defaults? This cannot be undone.',
+						'newspack-event-logger-nodes'
+					) }
+					confirmLabel={ __(
+						'Reset',
+						'newspack-event-logger-nodes'
+					) }
+					onCancel={ () => setResetting( false ) }
+					onConfirm={ confirmReset }
 				/>
 			) }
 		</div>

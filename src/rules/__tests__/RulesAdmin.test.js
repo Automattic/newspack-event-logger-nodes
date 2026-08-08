@@ -92,6 +92,7 @@ describe( 'RulesAdmin', () => {
 	let remove;
 	let saveAll;
 	let list;
+	let reset;
 	const mounted = [];
 
 	function setGraph( overrides = {} ) {
@@ -99,6 +100,7 @@ describe( 'RulesAdmin', () => {
 		remove = jest.fn().mockResolvedValue( { deleted: true } );
 		saveAll = jest.fn().mockResolvedValue( { saved: 2 } );
 		list = jest.fn().mockResolvedValue( { rules: SAMPLE_RULES } );
+		reset = jest.fn().mockResolvedValue( { reset: 2 } );
 		useRulesGraph.mockReturnValue( {
 			rules: SAMPLE_RULES,
 			loading: false,
@@ -107,6 +109,7 @@ describe( 'RulesAdmin', () => {
 			saveAll,
 			upsert,
 			remove,
+			reset,
 			...overrides,
 		} );
 	}
@@ -487,6 +490,87 @@ describe( 'RulesAdmin', () => {
 		expect( confirmDel.classList.contains( 'button-link-delete' ) ).toBe(
 			true
 		);
+	} );
+
+	// The section-level ↺: same glyph and stock secondary button as the per-field
+	// reset toggle on every other setting, but it applies at once — the ruleset
+	// editor has no Save to defer a mark to.
+	test( 'the reset toggle is the stock secondary button carrying the ↺ glyph', () => {
+		const { container } = mount();
+		const toggle = container.querySelector( '.rules-admin__reset' );
+		expect( toggle ).not.toBeNull();
+		expect( toggle.textContent.trim() ).toBe( '↺' );
+		expect( toggle.classList.contains( 'button' ) ).toBe( true );
+		expect( toggle.classList.contains( 'button-secondary' ) ).toBe( true );
+		expect( toggle.getAttribute( 'title' ) ).toContain( 'default' );
+	} );
+
+	// The accessible name comes from contents before title, so a title-only
+	// glyph button announces "anticlockwise open circle arrow".
+	test( 'the reset toggle names itself for assistive tech', () => {
+		const { container } = mount();
+		expect(
+			container
+				.querySelector( '.rules-admin__reset' )
+				.getAttribute( 'aria-label' )
+		).toBe( 'Reset rules to defaults' );
+	} );
+
+	test( 'the reset toggle opens a confirm dialog (does not reset immediately)', () => {
+		const { container } = mount();
+		click( container.querySelector( '.rules-admin__reset' ) );
+		expect( document.body.textContent ).toContain( 'Are you sure' );
+		expect( reset ).not.toHaveBeenCalled();
+	} );
+
+	test( 'confirming the reset calls reset()', async () => {
+		const { container } = mount();
+		click( container.querySelector( '.rules-admin__reset' ) );
+		const confirm = Array.from(
+			document
+				.querySelector( '.rules-admin__confirm' )
+				.querySelectorAll( 'button' )
+		).find( ( b ) => b.textContent.trim() === 'Reset' );
+		await act( async () => {
+			confirm.dispatchEvent( new Event( 'click', { bubbles: true } ) );
+		} );
+		expect( reset ).toHaveBeenCalledTimes( 1 );
+		expect( document.querySelector( '.rules-admin__confirm' ) ).toBeNull();
+	} );
+
+	test( 'a failed reset reports it and keeps the confirm open', async () => {
+		setGraph( {
+			reset: jest.fn().mockRejectedValue( new Error( 'option locked' ) ),
+		} );
+		const { container } = mount();
+		click( container.querySelector( '.rules-admin__reset' ) );
+		const confirm = Array.from(
+			document
+				.querySelector( '.rules-admin__confirm' )
+				.querySelectorAll( 'button' )
+		).find( ( b ) => b.textContent.trim() === 'Reset' );
+		await act( async () => {
+			confirm.dispatchEvent( new Event( 'click', { bubbles: true } ) );
+		} );
+
+		expect( container.textContent ).toContain( 'option locked' );
+		expect(
+			document.querySelector( '.rules-admin__confirm' )
+		).not.toBeNull();
+	} );
+
+	test( 'cancelling the reset confirm does not reset', () => {
+		const { container } = mount();
+		click( container.querySelector( '.rules-admin__reset' ) );
+		click(
+			Array.from(
+				document
+					.querySelector( '.rules-admin__confirm' )
+					.querySelectorAll( 'button' )
+			).find( ( b ) => b.textContent.trim() === 'Cancel' )
+		);
+		expect( reset ).not.toHaveBeenCalled();
+		expect( document.querySelector( '.rules-admin__confirm' ) ).toBeNull();
 	} );
 
 	test( 'the inline confirm dialog adds only the canonical modal appearance class', () => {

@@ -186,7 +186,7 @@ Matching is case-insensitive (target and pattern are compared lowercased) and ca
 
 **Transport.** `hydrate_array()` inlines every pointer rule's hooks so a synced ruleset reaches a spoke hook-complete; `apply_synced()` re-tiers it locally on arrival, writing heavy hooks back out to the spoke's own durable option. The settings-sync value filter calls `hydrate_array()` on the way out.
 
-**Editing.** The `rules` service CI (`Rules_CI_Node`, verbs `list`/`save`/`upsert`/`delete`) backs the "Logging Rules" editor mounted on the settings page (`src/rules/RulesAdmin`, mounted by `src/settings`). Every verb routes through `Rule_Set` so the tiering/reconcile invariants are never bypassed. `instrumented_union()` (the union across all LOG rules of hooks + custom events) feeds Discovery's spoke payload and the editor's selected-set browse modal.
+**Editing.** The `rules` service CI (`Rules_CI_Node`, verbs `list`/`save`/`upsert`/`delete`/`reset`) backs the "Logging Rules" editor mounted on the settings page (`src/rules/RulesAdmin`, mounted by `src/settings`). Every verb routes through `Rule_Set` so the tiering/reconcile invariants are never bypassed. `instrumented_union()` (the union across all LOG rules of hooks + custom events) feeds Discovery's spoke payload and the editor's selected-set browse modal.
 
 ## Topologies
 

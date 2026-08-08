@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.45.0] - 2026-08-08
+
+### Fixed
+
+- **In-flight requests never aged out, so nothing ever timed out.** `LRU_Cache`
+  anchored its rotation clock at construction and left it out of `get_state()`,
+  so every worker generation restarted the 200s window from zero. With
+  `on_demand_idle` at 30 the worker recycles long before a window closes, and a
+  stalled request sat in the cache indefinitely — the Gyroscope dashboard showed
+  requests still in `process` at 7871s, and the offsetlog re-serialized their
+  entry lists into every commit (7.6–15 MB segments). Capacity rotation still
+  fired under load, so the timeout worked when the partition was busy and failed
+  when it was quiet, which is exactly when a request stalls.
+
+  Both halves of the fix come from Tachikoma's `Table.pm`. The window boundary
+  now sits on an ABSOLUTE grid derived from the wall clock, so a cache restored
+  into a fresh process keeps its predecessor's phase and nothing has to be
+  persisted; and `rotate_if_due()` rolls once per ELAPSED window rather than
+  once per call, capped at `num_buckets` (which already empties the cache), so a
+  gap is repaid in a single pass.
+
+### Added
+
+- **`purge` verb on `request-builder`.** Operator recovery for a wedged cache:
+  drops every in-flight request and reports the count. The requests are
+  discarded, NOT emitted as timed out — a cache needing this can hold thousands
+  of entries carrying up to `MAX_ENTRIES_PER_REQUEST` lines each, and answering
+  a stuck fleet with that write storm is worse than losing docs for requests
+  already known dead. Ordinary ageing still runs through eviction, which emits.
+
+- **Reset to defaults for the Logging Rules section.** Every other setting on
+  the page carries a `↺` toggle; the ruleset — the one field the editor writes
+  through the `rules` CI instead of the settings form — had none, so backing out
+  of a bad ruleset meant `wp option delete newspack_event_logger_nodes_rules`.
+  The section now carries the same glyph and the same stock secondary button,
+  behind a confirm. It applies at once rather than marking-then-Save, because
+  this editor has no form submission to defer a mark to.
+- **`rules.reset` verb.** DELETES the stored ruleset option so the file config
+  seeds again, sweeps every pointer rule's durable hooks option, invalidates the
+  memoized config, signals the fleet to re-read, and reports the seeded rule
+  count. Backed by `Rule_Set::reset()`, so it is the fifth write path through
+  `Rule_Set` and cannot bypass the tiering and orphan-reconcile invariants.
+  Deleting the row is the point: presence is the override, so a stored `[]`
+  would pin an explicit "log nothing" over the config seed forever. Two ordering
+  details are load-bearing — the row is deleted BEFORE the pointer sweep, so a
+  failure between them leaves harmless orphan hook options rather than a live
+  ruleset whose heavy rules instrument nothing; and `Config::reset()` runs
+  before the read-back, because the per-process config memo has the stored
+  option folded in and would otherwise answer with the ruleset just discarded.
+
 ## [0.44.23] - 2026-08-07
 
 ### Fixed
