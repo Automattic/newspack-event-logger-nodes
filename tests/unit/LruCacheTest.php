@@ -18,6 +18,19 @@ use Newspack_Nodes\Core;
 #[CoversClass( LRU_Cache::class )]
 class LruCacheTest extends TestCase {
 
+	/** @var float Core::$now as this suite found it; Core::reset() does not clear it. */
+	private float $saved_now = 0.0;
+
+	protected function setUp(): void {
+		parent::setUp();
+		$this->saved_now = Core::$now;
+	}
+
+	protected function tearDown(): void {
+		Core::$now = $this->saved_now;
+		parent::tearDown();
+	}
+
 	// ── Basic get/set/delete ───────────────────────────────────────────────
 
 	public function test_get_set_basic(): void {
@@ -254,6 +267,77 @@ class LruCacheTest extends TestCase {
 
 		$this->assertArrayHasKey( 'a', $evicted );
 		$this->assertArrayHasKey( 'b', $evicted );
+	}
+
+	/**
+	 * The window boundary belongs to the CLOCK, not to the process. Anchoring it
+	 * at construction meant a cache built 150s into a 200s window waited another
+	 * 200s, and every worker generation restarted the wait.
+	 */
+	public function test_the_window_boundary_sits_on_an_absolute_grid(): void {
+		// 1_000_000 is an exact multiple of 200, so the next boundary is 1_000_200.
+		Core::$now = 1000150.0;
+		$cache     = ( new LRU_Cache( 100, 3 ) )->with_timed_rotation( 200.0, static fn() => null );
+		$cache->set( 'a', 1 );
+
+		Core::$now = 1000200.0;
+		$cache->rotate_if_due();
+
+		$this->assertSame( 1, $cache->get_state()['current'], 'rolls on the grid boundary, 50s in' );
+	}
+
+	/**
+	 * One `rotate_if_due()` per elapsed window, not one per call — otherwise a
+	 * process that was down (or quiet) through several windows repays only one
+	 * of them and stale entries outlive the retention span.
+	 */
+	public function test_a_gap_of_several_windows_rolls_each_of_them_at_once(): void {
+		$evicted   = [];
+		Core::$now = 1000000.0;
+		$cache     = ( new LRU_Cache( 100, 3 ) )->with_timed_rotation(
+			200.0,
+			function ( $k ) use ( &$evicted ) {
+				$evicted[] = $k;
+			}
+		);
+		$cache->set( 'stalled', 'req' );
+
+		Core::$now = 1001000.0; // five windows later, a single call
+		$cache->rotate_if_due();
+
+		$this->assertContains( 'stalled', $evicted );
+	}
+
+	/**
+	 * The reported failure. `on_demand_idle` is 30, so the worker recycles long
+	 * before a 200s window elapses; with the clock anchored at construction and
+	 * absent from get_state(), the wait restarted every generation and a stalled
+	 * request was never evicted — never emitted as timed out.
+	 */
+	public function test_entries_age_out_across_short_lived_worker_generations(): void {
+		$window   = 200.0;
+		$evicted  = [];
+		$on_evict = function ( $k ) use ( &$evicted ) {
+			$evicted[] = $k;
+		};
+
+		Core::$now = 1000000.0;
+		$cache     = ( new LRU_Cache( 100, 3 ) )->with_timed_rotation( $window, $on_evict );
+		$cache->set( 'stalled', 'req' );
+		$state = $cache->get_state();
+
+		// 21 generations x 30s = 630s of wall clock, no generation over 30s.
+		for ( $generation = 0; $generation < 21; $generation++ ) {
+			$cache = ( new LRU_Cache( 100, 3 ) )->with_timed_rotation( $window, $on_evict );
+			$cache->restore_state( $state );
+			for ( $tick = 0; $tick < 30; $tick++ ) {
+				Core::$now += 1.0;
+				$cache->rotate_if_due();
+			}
+			$state = $cache->get_state();
+		}
+
+		$this->assertContains( 'stalled', $evicted, '600s of wall clock must age an entry out' );
 	}
 
 	public function test_rotate_if_due_does_not_rotate_before_interval(): void {

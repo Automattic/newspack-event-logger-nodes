@@ -37,9 +37,18 @@ class RequestBuilderTest extends TestCase {
 	 * tests follow the production name -> arguments -> sink lifecycle. Core::reset()
 	 * in the parent setUp clears it between tests.
 	 */
+	/** @var float Core::$now as found; Core::reset() does not clear it. */
+	private float $saved_now = 0.0;
+
 	protected function setUp(): void {
 		parent::setUp();
+		$this->saved_now = Core::$now;
 		( new Router_Node() )->name( Node_Names::ROUTER );
+	}
+
+	protected function tearDown(): void {
+		Core::$now = $this->saved_now;
+		parent::tearDown();
 	}
 
 	/**
@@ -813,14 +822,18 @@ class RequestBuilderTest extends TestCase {
 	// --- Idle timeout via the builder's own Router-hitchhike timer --------
 
 	/**
-	 * Age the cache's rotation clock so the next rotate_if_due() fires a rotation,
-	 * letting a test drive timed (idle) rotation deterministically without sleeping.
+	 * Put the clock exactly on the boundary this cache is waiting for, so the
+	 * next rotate_if_due() rolls exactly once — timed (idle) rotation driven
+	 * deterministically without sleeping.
+	 *
+	 * An absolute jump, not a relative bump: `Core::right_now()` ASSIGNS
+	 * `Core::$now`, so any production call between two bumps rewinds a
+	 * fabricated clock and the second rotation silently never comes due.
+	 * Landing on the boundary also keeps it to one roll — the catch-up is
+	 * capped at num_buckets, and these tests count rotations.
 	 */
 	private function force_rotation_due( \Newspack_Event_Logger_Nodes\LRU_Cache $cache ): void {
-		$ro       = new \ReflectionObject( $cache );
-		$interval = $ro->getProperty( 'rotate_interval' );
-		$last = $ro->getProperty( 'last_rotation' );
-		$last->setValue( $cache, \microtime( true ) - (float) $interval->getValue( $cache ) - 1.0 );
+		Core::$now = (float) ( new \ReflectionObject( $cache ) )->getProperty( 'next_window' )->getValue( $cache );
 	}
 
 	public function test_builder_timer_times_out_stalled_request_with_no_traffic(): void {
@@ -1131,6 +1144,50 @@ class RequestBuilderTest extends TestCase {
 		$this->assertSame( 'Transform', $schema['category'] );
 		$verb_names = \array_column( $schema['commands'], 'name' );
 		$this->assertContains( 'set_errors_target', $verb_names );
+		$this->assertContains( 'purge', $verb_names );
+	}
+
+	public function test_purge_verb_drops_every_in_flight_request_and_reports_the_count(): void {
+		$rb = new Request_Builder_Node();
+		$rb->name( 'req_builder' );
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+
+		$this->fill( $rb, 1, 'r1', 'process (start)' );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /a' ] );
+		$this->fill( $rb, 1, 'r2', 'process (start)' );
+
+		$result = $this->read_private( $rb, 'interpreter' )->dispatch( 'purge' );
+
+		$this->assertSame( 'purged 2 in-flight requests', $result );
+		$this->assertNull( $rb->cache->get( 'r1' ) );
+		$this->assertNull( $rb->cache->get( 'r2' ) );
+	}
+
+	public function test_purge_drops_without_emitting_the_timed_out_docs(): void {
+		// Recovery, not eviction: a wedged cache can hold thousands of requests
+		// carrying up to MAX_ENTRIES_PER_REQUEST entries each, and emitting them
+		// all would answer a stuck fleet with a write storm.
+		$rb = new Request_Builder_Node();
+		$rb->name( 'req_builder' );
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+
+		$this->fill( $rb, 1, 'r1', 'process (start)' );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /a' ] );
+		$before = \count( $capture->captured );
+
+		$this->read_private( $rb, 'interpreter' )->dispatch( 'purge' );
+
+		$this->assertCount( $before, $capture->captured );
+	}
+
+	public function test_purge_on_an_empty_cache_is_a_no_op(): void {
+		$rb = new Request_Builder_Node();
+		$rb->name( 'req_builder' );
+		$rb->sink( new Capture_Sink_Node() );
+
+		$this->assertSame( 'purged 0 in-flight requests', $this->read_private( $rb, 'interpreter' )->dispatch( 'purge' ) );
 	}
 
 	// --- target() override fan-out ----------------------------------------

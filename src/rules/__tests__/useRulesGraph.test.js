@@ -244,6 +244,7 @@ describe( 'useRulesGraph — exospine + receiver wiring', () => {
 		expect( typeof result.current.saveAll ).toBe( 'function' );
 		expect( typeof result.current.upsert ).toBe( 'function' );
 		expect( typeof result.current.remove ).toBe( 'function' );
+		expect( typeof result.current.reset ).toBe( 'function' );
 	} );
 } );
 
@@ -351,6 +352,33 @@ describe( 'useRulesGraph — mutations dispatch the verb then re-list', () => {
 		expect( del[ VALUE ].arguments ).toEqual(
 			formatCommandArgs( [ 'r1' ] )
 		);
+		expect( countVerbs( client.batches, 'list' ) ).toBeGreaterThan(
+			listsBefore
+		);
+	} );
+
+	test( 'reset sends the nullary verb from its own node then re-lists', async () => {
+		const client = makeFakeClient( {
+			list: { rules: SAMPLE_RULES },
+			reset: { reset: 3 },
+		} );
+		const { result } = renderHook( () =>
+			useRulesGraph( { commandClient: client } )
+		);
+		await act( async () => {} );
+		const listsBefore = countVerbs( client.batches, 'list' );
+
+		let returned;
+		await act( async () => {
+			returned = await result.current.reset();
+		} );
+		expect( returned ).toEqual( { reset: 3 } );
+
+		const reset = findVerb( client.batches, 'reset' );
+		expect( reset ).toBeTruthy();
+		expect( reset[ TO ] ).toBe( 'rules' );
+		expect( reset[ FROM ] ).toBe( 'rules:reset' );
+		expect( reset[ VALUE ].arguments ).toEqual( [] );
 		expect( countVerbs( client.batches, 'list' ) ).toBeGreaterThan(
 			listsBefore
 		);

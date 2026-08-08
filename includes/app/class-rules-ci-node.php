@@ -23,8 +23,10 @@
  *            no need to ship the whole list for one change.
  *   delete — arg `id`. Drops the matching rule (if any), re-saves, and
  *            reports whether anything matched.
+ *   reset  — no args. Discards the stored option so the file config seeds
+ *            again; reports the seeded rule count.
  *
- * All four run through Rule_Set so the tiering/reconcile invariants in
+ * All five run through Rule_Set so the tiering/reconcile invariants in
  * Rule_Set::save() are never bypassed by a raw update_option().
  *
  * `save` and `upsert` take their JSON blob as the first raw token
@@ -94,7 +96,7 @@ class Rules_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * Declare the `rules` CI: its category, description, and the four verbs
+	 * Declare the `rules` CI: its category, description, and the five verbs
 	 * with their argument lists and handlers.
 	 *
 	 * @api Used by the substrate to provide UI etc.
@@ -103,7 +105,7 @@ class Rules_CI_Node extends Service_CI_Node {
 	public static function node_schema(): array {
 		return \array_merge( parent::node_schema(), [
 			'category'    => 'Service',
-			'description' => 'Per-URL logging ruleset CRUD: list / save / upsert / delete, backed by Rule_Set.',
+			'description' => 'Per-URL logging ruleset CRUD: list / save / upsert / delete / reset, backed by Rule_Set.',
 			'arguments'   => [],
 			'commands'    => [
 				[
@@ -193,6 +195,14 @@ class Rules_CI_Node extends Service_CI_Node {
 						}
 						$set->save( $remaining );
 						return [ 'deleted' => $found ];
+					},
+				],
+				[
+					'name'        => 'reset',
+					'description' => 'Discard the stored ruleset so the file config seeds again. Reports the seeded rule count.',
+					'args'        => [],
+					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
+						return [ 'reset' => \count( Rule_Set::reset()->rules() ) ];
 					},
 				],
 			],

@@ -63,7 +63,7 @@ Moved to the substrate `settings` CI (newspack-nodes). It owns a seven-key integ
 
 ### `rules` — per-URL logging ruleset CRUD
 
-Backs the "Logging Rules" editor on the settings page. All four verbs route through `Rule_Set` so the inline↔pointer hook-tiering and orphan-reconcile invariants are never bypassed by a raw `update_option`. A rule's id is derived from its URL pattern (`Rule_Set::id_for` = the pattern's `url_hash`) — the pattern is the identity, so the ruleset can never hold two differently-configured rules for one URL; a client-supplied id is ignored.
+Backs the "Logging Rules" editor on the settings page. All five verbs route through `Rule_Set` so the inline↔pointer hook-tiering and orphan-reconcile invariants are never bypassed by a raw `update_option`. A rule's id is derived from its URL pattern (`Rule_Set::id_for` = the pattern's `url_hash`) — the pattern is the identity, so the ruleset can never hold two differently-configured rules for one URL; a client-supplied id is ignored.
 
 | Verb | Args | Returns |
 |------|------|---------|
@@ -71,6 +71,7 @@ Backs the "Logging Rules" editor on the settings page. All four verbs route thro
 | `save` | `{ rules (required, JSON array of rule objects) }` | `{ saved: int }` — whole-list replace. Each entry decodes via `Rule::from_array`; ids are re-derived from patterns and duplicate patterns collapse to one. Payload capped at 64KB, decode depth 12. |
 | `upsert` | `{ rule (required, JSON rule object) }` | `{ rule: {...} }` — single add/replace keyed by pattern. A same-pattern rule is replaced in place (preserving its id); an edit that carries the old id and changes the pattern rekeys and drops the old-pattern entry. This is the performance-dashboard "log this URL" path. |
 | `delete` | `{ id (required) }` | `{ deleted: bool }` — drop the matching rule and re-save. |
+| `reset` | — | `{ reset: int }` — DELETE the stored ruleset option so the file config seeds again, and report the seeded rule count. Storing `[]` instead would pin an explicit "log nothing" over the config seed; only an absent row reseeds. Sweeps every pointer rule's durable hooks option on the way out. |
 
 ### `servers` — remote-spoke registry CRUD (replaced by the substrate `vault` CI)
 

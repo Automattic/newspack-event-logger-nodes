@@ -71,7 +71,7 @@ Every dashboard sends TM_COMMAND envelopes to a service CI via the substrate's s
 | **Errors** | — | `subscribe=errors.pN` | Tail of `errors.log` |
 | **Workers** (substrate-owned) | `workers.{list, restart, …}` | — | Substrate's `Workers_CI` (lock-dir scan + offsetlog cursors) |
 | **Performance Logger settings** | `performance.{hooks_registered, set}`, `discovery.get` | — | WP options |
-| **Logging Rules editor** (on the settings page) | `rules.{list, save, upsert, delete}` | — | `Rule_Set` (autoloaded ruleset option + per-rule hook options) |
+| **Logging Rules editor** (on the settings page) | `rules.{list, save, upsert, delete, reset}` | — | `Rule_Set` (autoloaded ruleset option + per-rule hook options) |
 | **Aggregator Admin (hub-only, substrate-owned)** | substrate `aggregator.*` + `vault.*` CIs | — | Substrate `Remote_Source_Node` per-spoke state + Vault |
 | **Status probe** (substrate-owned) | substrate `status.get` | — | Version, partitions, active topologies, cache reachability |
 

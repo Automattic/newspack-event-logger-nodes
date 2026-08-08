@@ -175,6 +175,28 @@ final class RuleSetTest extends TestCase {
 		$this->assertArrayNotHasKey( Rule_Set::hooks_option_name( 'gone' ), $GLOBALS['_wp_options'] );
 	}
 
+	public function test_reset_deletes_the_stored_option_rather_than_storing_an_empty_list(): void {
+		// Storing `[]` would read as "log nothing"; only an ABSENT row reseeds.
+		// What the seed then resolves to is RulesCITest's, over a real config file.
+		$GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ] = [
+			[ 'id' => 'stored', 'pattern' => '/stored-only/', 'action' => 'skip' ],
+		];
+
+		Rule_Set::reset();
+
+		$this->assertArrayNotHasKey( Rule_Set::OPTION_RULES, $GLOBALS['_wp_options'] );
+	}
+
+	public function test_reset_drops_every_pointer_rules_durable_hooks_option(): void {
+		$big = \array_map( fn( $i ) => "hook_$i", \range( 1, Rule_Set::INLINE_HOOK_LIMIT + 1 ) );
+		( new Rule_Set( [] ) )->save( [ new Rule( 'heavy', '/heavy/', Rule::ACTION_LOG, hooks: $big ) ] );
+		$this->assertArrayHasKey( Rule_Set::hooks_option_name( 'heavy' ), $GLOBALS['_wp_options'] );
+
+		Rule_Set::reset();
+
+		$this->assertArrayNotHasKey( Rule_Set::hooks_option_name( 'heavy' ), $GLOBALS['_wp_options'] );
+	}
+
 	public function test_save_scrubs_durable_option_when_a_rule_shrinks_back_inline(): void {
 		$GLOBALS['_wp_options'][ Rule_Set::hooks_option_name( 'c3' ) ] = \range( 1, 200 );
 		$rule = new Rule( 'c3', '/x/', Rule::ACTION_LOG, hooks: [ 'init' ] ); // now small -> inline
