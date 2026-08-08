@@ -240,6 +240,244 @@ class Reqgrep_Command {
 	}
 
 	/**
+	 * Cat mode: one Consumer per partition, drained synchronously to EOF. `--recent`
+	 * seeds the Consumer at the second-to-last segment; the default reads from the
+	 * start. Flush incomplete requests once every partition is exhausted.
+	 */
+	private function cat_mode(): void {
+		foreach ( $this->partition_dirs as $dir ) {
+			$consumer = $this->build_consumer( $dir );
+			if ( 'recent' === $this->cat_offset ) {
+				$consumer->next_offset( 'recent' );
+			}
+			$consumer->drain();
+		}
+		$this->output_remaining();
+	}
+
+	/**
+	 * Follow mode: one Consumer per partition seeded at the tail (no history
+	 * replay), then run under the Event_Framework drain loop — each Consumer's
+	 * fire_cb polls its source for new bytes and forwards them to
+	 * process_message.
+	 *
+	 * Signal handlers are installed first, so Ctrl+C ends the drain loop instead
+	 * of killing the process mid-write.
+	 *
+	 * @param int $max_iterations Drain-loop iteration budget. PHP_INT_MAX in
+	 *                            production (tail until SIGINT); tests pass a
+	 *                            small number to bound the loop.
+	 */
+	private function follow_mode( int $max_iterations = \PHP_INT_MAX ): void {
+		foreach ( $this->partition_dirs as $dir ) {
+			$consumer = $this->build_consumer( $dir );
+			$consumer->next_offset( 'end' ); // Tail — don't replay history on attach.
+		}
+
+		\WP_CLI::log( 'Base dir: ' . $this->base_dir );
+		\WP_CLI::log( 'Following ' . \count( $this->partition_dirs ) . ' partition(s)... (Ctrl+C to stop)' );
+
+		$framework = Event_Framework::instance();
+		$framework->install_signal_handlers();
+		$iterations = 0;
+		$framework->drain(
+			static function () use ( &$iterations, $max_iterations ): bool {
+				return $iterations++ < $max_iterations;
+			}
+		);
+	}
+
+	/**
+	 * Build an ephemeral Consumer over one firehose partition dir (resolved by
+	 * Log_Manager::firehose_dirs, which owns the layout). The sink is a
+	 * Callback_Node that routes each unpacked Message to process_message. No
+	 * offsetlog — a reqgrep run keeps no durable cursor.
+	 *
+	 * The sink must be attached before `arguments()`, which is where the Consumer
+	 * builds its source Partition and hands the sink down to it.
+	 *
+	 * @param string $source_dir Concrete partition dir.
+	 * @return Consumer_Node The wired Consumer, ready for next_offset() or drain().
+	 */
+	private function build_consumer( string $source_dir ): Consumer_Node {
+		$sink = new Callback_Node( $this->process_message( ... ) );
+		$consumer = new Consumer_Node();
+		$consumer->sink( $sink );
+		$consumer->arguments( [ $source_dir ] );
+		return $consumer;
+	}
+
+	/**
+	 * Process one unpacked firehose Message: the entry hash sits at
+	 * Message::VALUE, the request id at Message::KEY. An entry that is not an
+	 * array, or one with no rid, is dropped.
+	 *
+	 * The envelope is re-packed before it reaches the engine, because the packed
+	 * line is what the pattern matches and what the engine hands back — raw mode
+	 * echoes it verbatim, formatted mode unpacks it again.
+	 *
+	 * @param array<int, mixed> $message The 7-field positional Message array.
+	 */
+	private function process_message( array $message ): void {
+		$entry = $message[ Message::VALUE ];
+		$rid   = Core::as_string( $message[ Message::KEY ] ?? '' );
+		if ( ! \is_array( $entry ) || '' === $rid ) {
+			return;
+		}
+		$this->require_core()->push( $entry, $rid, Message::packed( $message ) );
+	}
+
+	/**
+	 * Narrow the setup-assigned engine to non-null; null means a read ran before
+	 * init_core().
+	 *
+	 * @throws \RuntimeException If init_core() has not run yet.
+	 */
+	private function require_core(): Reqgrep_Core {
+		if ( null === $this->core ) {
+			throw new \RuntimeException( 'reqgrep core not initialized' );
+		}
+		return $this->core;
+	}
+
+	/**
+	 * Stdin pipe mode: drive a `Stdin_Node` over `$stream` into a `Callback_Node`
+	 * that unpacks each packed Message envelope and runs it through
+	 * process_message, then flush incomplete requests so the operator can see
+	 * partial state. eof_deadline 0 → the reader self-exits immediately after the
+	 * stream's TM_EOF (no lingering post-EOF poll).
+	 *
+	 * Defaults to STDIN; tests inject a `fopen('php://memory', 'r+')` filled with
+	 * fixture lines to drive the loop deterministically.
+	 *
+	 * @param resource|null $stream Source stream (defaults to STDIN).
+	 */
+	private function process_stdin( $stream = null ): void {
+		$stream = $stream ?? ( \defined( 'STDIN' ) ? \STDIN : null );
+		if ( null === $stream ) {
+			return;
+		}
+		$src = new Stdin_Node( $stream, 0.0 );
+		$src->sink( new Callback_Node( function ( array $message ): void {
+			$line = \trim( Core::as_string( $message[ Message::VALUE ] ) );
+			if ( '' === $line ) {
+				return;
+			}
+			try {
+				$unpacked = Message::unpacked( $line );
+			} catch ( \InvalidArgumentException $e ) {
+				return; // Not a packed envelope — skip.
+			}
+			$this->process_message( $unpacked );
+		} ) );
+		while ( ! $src->exit ) {
+			$src->fire();
+		}
+		$this->output_remaining();
+	}
+
+	/**
+	 * Print every still-in-flight request as `[incomplete]`. Cat and stdin modes
+	 * call this once their sources are exhausted, so a request whose
+	 * `process (complete)` never arrived is still shown rather than dropped.
+	 */
+	private function output_remaining(): void {
+		foreach ( $this->require_inflight()->iterate() as $rid => $state ) {
+			if ( ! $state instanceof \stdClass ) {
+				continue;
+			}
+			$this->output_request( self::to_lines( $state->lines ), Core::as_string( $rid ) );
+			$this->emit( '[incomplete]' );
+			$this->emit( '' );
+		}
+	}
+
+	/**
+	 * Detect whether `$stream` has piped data attached. fstat() reports the
+	 * type bits — S_IFIFO (pipe) or S_IFREG (file) means data; everything
+	 * else (tty, /dev/null, sockets) is "no piped data, use cat mode."
+	 *
+	 * Defaults to STDIN; tests pass a php://memory resource so the dispatch
+	 * decision is observable without a real STDIN pipe.
+	 *
+	 * @param resource|null $stream Stream to inspect (defaults to STDIN).
+	 * @return bool True when the stream is a pipe or a regular file.
+	 */
+	private function stdin_has_data( $stream = null ): bool {
+		if ( null === $stream ) {
+			if ( ! \defined( 'STDIN' ) ) {
+				return false;
+			}
+			$stream = STDIN;
+		}
+		// Closed / non-resource → not piped data.
+		if ( ! \is_resource( $stream ) ) {
+			return false;
+		}
+		$stat = @\fstat( $stream );
+		if ( ! $stat ) {
+			return false;
+		}
+		$file_type = $stat['mode'] & 0170000;
+		return 0010000 === $file_type || 0100000 === $file_type;
+	}
+
+	/**
+	 * Build the shared grouping/matching engine from the parsed run config. Its
+	 * on_complete emits the assembled request (unless --incomplete suppresses
+	 * completed output); on_history_miss surfaces the tune-your-buckets warning.
+	 * The engine shares the LRU_Cache the on-evict callback drives, so output_remaining
+	 * still walks $this->inflight for the [incomplete] tail.
+	 */
+	private function init_core(): void {
+		$on_complete = function ( array $lines, string $rid ): void {
+			if ( ! $this->incomplete ) {
+				$this->output_request( self::to_lines( $lines ), $rid );
+			}
+		};
+		$on_miss = static function (): void {
+			\WP_CLI::warning( "Couldn't find request start in history - try increasing --bucket-size or --num-buckets" );
+		};
+		$this->core = new Reqgrep_Core(
+			$this->pattern,
+			$this->require_inflight(),
+			$this->bucket_size,
+			$this->num_buckets,
+			$on_complete,
+			$on_miss
+		);
+	}
+
+	/**
+	 * Narrow the run-setup-assigned `$inflight` cache to non-null. The cache is
+	 * built in the command's setup before any line processing; a null here means
+	 * a caller invoked a processing method before setup, which is a bug.
+	 *
+	 * @throws \RuntimeException If the cache has not been built yet.
+	 */
+	private function require_inflight(): LRU_Cache {
+		if ( null === $this->inflight ) {
+			throw new \RuntimeException( 'in-flight cache not initialized' );
+		}
+		return $this->inflight;
+	}
+
+	/**
+	 * Narrow a state object's `->lines` value to a list of strings for
+	 * output_request. `Reqgrep_Core::append_to_state()` only ever appends
+	 * strings, so this is a type narrowing, not a filter that drops real data.
+	 *
+	 * @param mixed $value Decoded value.
+	 * @return array<int, string>
+	 */
+	private static function to_lines( $value ): array {
+		if ( ! \is_array( $value ) ) {
+			return [];
+		}
+		return \array_values( \array_filter( $value, 'is_string' ) );
+	}
+
+	/**
 	 * Output a completed request — either the raw JSON lines (raw mode) or the
 	 * formatted indented tree.
 	 *
@@ -282,21 +520,6 @@ class Reqgrep_Command {
 			$this->emit( $this->format_entry( $entry ) );
 		}
 		$this->emit( '' );
-	}
-
-	/**
-	 * Emit one line to the output node — `$stdout`, lazily a `Stdout_Node` unless
-	 * a test swapped it. `Stdout_Node::fill()` fwrites the VALUE verbatim and
-	 * appends nothing, so `$text` carries whatever layout the caller wants.
-	 *
-	 * @param string $text Text to write.
-	 */
-	private function emit( string $text ): void {
-		$message                   = Message::new_message();
-		$message[ Message::TYPE ]  = Message::TM_BYTESTREAM;
-		// Stdout_Node writes the VALUE verbatim; nothing else terminates.
-		$message[ Message::VALUE ] = \rtrim( $text, "\n" ) . "\n";
-		( $this->stdout ??= new Stdout_Node() )->fill( $message );
 	}
 
 	/**
@@ -423,240 +646,17 @@ class Reqgrep_Command {
 	}
 
 	/**
-	 * Narrow a state object's `->lines` value to a list of strings for
-	 * output_request. `Reqgrep_Core::append_to_state()` only ever appends
-	 * strings, so this is a type narrowing, not a filter that drops real data.
+	 * Emit one line to the output node — `$stdout`, lazily a `Stdout_Node` unless
+	 * a test swapped it. `Stdout_Node::fill()` fwrites the VALUE verbatim and
+	 * appends nothing, so `$text` carries whatever layout the caller wants.
 	 *
-	 * @param mixed $value Decoded value.
-	 * @return array<int, string>
+	 * @param string $text Text to write.
 	 */
-	private static function to_lines( $value ): array {
-		if ( ! \is_array( $value ) ) {
-			return [];
-		}
-		return \array_values( \array_filter( $value, 'is_string' ) );
-	}
-
-	/**
-	 * Build the shared grouping/matching engine from the parsed run config. Its
-	 * on_complete emits the assembled request (unless --incomplete suppresses
-	 * completed output); on_history_miss surfaces the tune-your-buckets warning.
-	 * The engine shares the LRU_Cache the on-evict callback drives, so output_remaining
-	 * still walks $this->inflight for the [incomplete] tail.
-	 */
-	private function init_core(): void {
-		$on_complete = function ( array $lines, string $rid ): void {
-			if ( ! $this->incomplete ) {
-				$this->output_request( self::to_lines( $lines ), $rid );
-			}
-		};
-		$on_miss = static function (): void {
-			\WP_CLI::warning( "Couldn't find request start in history - try increasing --bucket-size or --num-buckets" );
-		};
-		$this->core = new Reqgrep_Core(
-			$this->pattern,
-			$this->require_inflight(),
-			$this->bucket_size,
-			$this->num_buckets,
-			$on_complete,
-			$on_miss
-		);
-	}
-
-	/**
-	 * Narrow the run-setup-assigned `$inflight` cache to non-null. The cache is
-	 * built in the command's setup before any line processing; a null here means
-	 * a caller invoked a processing method before setup, which is a bug.
-	 *
-	 * @throws \RuntimeException If the cache has not been built yet.
-	 */
-	private function require_inflight(): LRU_Cache {
-		if ( null === $this->inflight ) {
-			throw new \RuntimeException( 'in-flight cache not initialized' );
-		}
-		return $this->inflight;
-	}
-
-	/**
-	 * Detect whether `$stream` has piped data attached. fstat() reports the
-	 * type bits — S_IFIFO (pipe) or S_IFREG (file) means data; everything
-	 * else (tty, /dev/null, sockets) is "no piped data, use cat mode."
-	 *
-	 * Defaults to STDIN; tests pass a php://memory resource so the dispatch
-	 * decision is observable without a real STDIN pipe.
-	 *
-	 * @param resource|null $stream Stream to inspect (defaults to STDIN).
-	 * @return bool True when the stream is a pipe or a regular file.
-	 */
-	private function stdin_has_data( $stream = null ): bool {
-		if ( null === $stream ) {
-			if ( ! \defined( 'STDIN' ) ) {
-				return false;
-			}
-			$stream = STDIN;
-		}
-		// Closed / non-resource → not piped data.
-		if ( ! \is_resource( $stream ) ) {
-			return false;
-		}
-		$stat = @\fstat( $stream );
-		if ( ! $stat ) {
-			return false;
-		}
-		$file_type = $stat['mode'] & 0170000;
-		return 0010000 === $file_type || 0100000 === $file_type;
-	}
-
-	/**
-	 * Stdin pipe mode: drive a `Stdin_Node` over `$stream` into a `Callback_Node`
-	 * that unpacks each packed Message envelope and runs it through
-	 * process_message, then flush incomplete requests so the operator can see
-	 * partial state. eof_deadline 0 → the reader self-exits immediately after the
-	 * stream's TM_EOF (no lingering post-EOF poll).
-	 *
-	 * Defaults to STDIN; tests inject a `fopen('php://memory', 'r+')` filled with
-	 * fixture lines to drive the loop deterministically.
-	 *
-	 * @param resource|null $stream Source stream (defaults to STDIN).
-	 */
-	private function process_stdin( $stream = null ): void {
-		$stream = $stream ?? ( \defined( 'STDIN' ) ? \STDIN : null );
-		if ( null === $stream ) {
-			return;
-		}
-		$src = new Stdin_Node( $stream, 0.0 );
-		$src->sink( new Callback_Node( function ( array $message ): void {
-			$line = \trim( Core::as_string( $message[ Message::VALUE ] ) );
-			if ( '' === $line ) {
-				return;
-			}
-			try {
-				$unpacked = Message::unpacked( $line );
-			} catch ( \InvalidArgumentException $e ) {
-				return; // Not a packed envelope — skip.
-			}
-			$this->process_message( $unpacked );
-		} ) );
-		while ( ! $src->exit ) {
-			$src->fire();
-		}
-		$this->output_remaining();
-	}
-
-	/**
-	 * Process one unpacked firehose Message: the entry hash sits at
-	 * Message::VALUE, the request id at Message::KEY. An entry that is not an
-	 * array, or one with no rid, is dropped.
-	 *
-	 * The envelope is re-packed before it reaches the engine, because the packed
-	 * line is what the pattern matches and what the engine hands back — raw mode
-	 * echoes it verbatim, formatted mode unpacks it again.
-	 *
-	 * @param array<int, mixed> $message The 7-field positional Message array.
-	 */
-	private function process_message( array $message ): void {
-		$entry = $message[ Message::VALUE ];
-		$rid   = Core::as_string( $message[ Message::KEY ] ?? '' );
-		if ( ! \is_array( $entry ) || '' === $rid ) {
-			return;
-		}
-		$this->require_core()->push( $entry, $rid, Message::packed( $message ) );
-	}
-
-	/**
-	 * Narrow the setup-assigned engine to non-null; null means a read ran before
-	 * init_core().
-	 *
-	 * @throws \RuntimeException If init_core() has not run yet.
-	 */
-	private function require_core(): Reqgrep_Core {
-		if ( null === $this->core ) {
-			throw new \RuntimeException( 'reqgrep core not initialized' );
-		}
-		return $this->core;
-	}
-
-	/**
-	 * Print every still-in-flight request as `[incomplete]`. Cat and stdin modes
-	 * call this once their sources are exhausted, so a request whose
-	 * `process (complete)` never arrived is still shown rather than dropped.
-	 */
-	private function output_remaining(): void {
-		foreach ( $this->require_inflight()->iterate() as $rid => $state ) {
-			if ( ! $state instanceof \stdClass ) {
-				continue;
-			}
-			$this->output_request( self::to_lines( $state->lines ), Core::as_string( $rid ) );
-			$this->emit( '[incomplete]' );
-			$this->emit( '' );
-		}
-	}
-
-	/**
-	 * Follow mode: one Consumer per partition seeded at the tail (no history
-	 * replay), then run under the Event_Framework drain loop — each Consumer's
-	 * fire_cb polls its source for new bytes and forwards them to
-	 * process_message.
-	 *
-	 * Signal handlers are installed first, so Ctrl+C ends the drain loop instead
-	 * of killing the process mid-write.
-	 *
-	 * @param int $max_iterations Drain-loop iteration budget. PHP_INT_MAX in
-	 *                            production (tail until SIGINT); tests pass a
-	 *                            small number to bound the loop.
-	 */
-	private function follow_mode( int $max_iterations = \PHP_INT_MAX ): void {
-		foreach ( $this->partition_dirs as $dir ) {
-			$consumer = $this->build_consumer( $dir );
-			$consumer->next_offset( 'end' ); // Tail — don't replay history on attach.
-		}
-
-		\WP_CLI::log( 'Base dir: ' . $this->base_dir );
-		\WP_CLI::log( 'Following ' . \count( $this->partition_dirs ) . ' partition(s)... (Ctrl+C to stop)' );
-
-		$framework = Event_Framework::instance();
-		$framework->install_signal_handlers();
-		$iterations = 0;
-		$framework->drain(
-			static function () use ( &$iterations, $max_iterations ): bool {
-				return $iterations++ < $max_iterations;
-			}
-		);
-	}
-
-	/**
-	 * Build an ephemeral Consumer over one firehose partition dir (resolved by
-	 * Log_Manager::firehose_dirs, which owns the layout). The sink is a
-	 * Callback_Node that routes each unpacked Message to process_message. No
-	 * offsetlog — a reqgrep run keeps no durable cursor.
-	 *
-	 * The sink must be attached before `arguments()`, which is where the Consumer
-	 * builds its source Partition and hands the sink down to it.
-	 *
-	 * @param string $source_dir Concrete partition dir.
-	 * @return Consumer_Node The wired Consumer, ready for next_offset() or drain().
-	 */
-	private function build_consumer( string $source_dir ): Consumer_Node {
-		$sink = new Callback_Node( $this->process_message( ... ) );
-		$consumer = new Consumer_Node();
-		$consumer->sink( $sink );
-		$consumer->arguments( [ $source_dir ] );
-		return $consumer;
-	}
-
-	/**
-	 * Cat mode: one Consumer per partition, drained synchronously to EOF. `--recent`
-	 * seeds the Consumer at the second-to-last segment; the default reads from the
-	 * start. Flush incomplete requests once every partition is exhausted.
-	 */
-	private function cat_mode(): void {
-		foreach ( $this->partition_dirs as $dir ) {
-			$consumer = $this->build_consumer( $dir );
-			if ( 'recent' === $this->cat_offset ) {
-				$consumer->next_offset( 'recent' );
-			}
-			$consumer->drain();
-		}
-		$this->output_remaining();
+	private function emit( string $text ): void {
+		$message                   = Message::new_message();
+		$message[ Message::TYPE ]  = Message::TM_BYTESTREAM;
+		// Stdout_Node writes the VALUE verbatim; nothing else terminates.
+		$message[ Message::VALUE ] = \rtrim( $text, "\n" ) . "\n";
+		( $this->stdout ??= new Stdout_Node() )->fill( $message );
 	}
 }

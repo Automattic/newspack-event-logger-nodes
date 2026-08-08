@@ -118,21 +118,6 @@ class Reqgrep_Core {
 	}
 
 	/**
-	 * Compile a user pattern into the case-insensitive regex a line is matched
-	 * against. The pattern is quoted, never interpreted as a regex.
-	 *
-	 * A consumer that re-matches lines afterwards — the dashboard derives its
-	 * match count and excerpt that way — must compile through here, or its answer
-	 * disagrees with the grouping that produced the lines.
-	 *
-	 * @param string $pattern Search pattern (rid, URL, or any text).
-	 * @return string PCRE pattern.
-	 */
-	public static function compile( string $pattern ): string {
-		return '/' . \preg_quote( $pattern, '/' ) . '/i';
-	}
-
-	/**
 	 * Rid-grouping state machine — the shared tail of every read path.
 	 *
 	 *  - Already-tracked rid: append; fire on_complete on `process (complete)`.
@@ -203,6 +188,27 @@ class Reqgrep_Core {
 	}
 
 	/**
+	 * Fire on_complete once a tracked rid's `process (complete)` arrives, then
+	 * evict it from the in-flight cache.
+	 *
+	 * @param \stdClass $state The rid's accumulated state.
+	 * @param string    $rid   Request id.
+	 * @param string    $key   This entry's `k` field.
+	 */
+	private function finalize_if_complete( \stdClass $state, string $rid, string $key ): void {
+		if ( 'process (complete)' !== $key ) {
+			return;
+		}
+		// 3rd arg = clipped-by-caps; extra closure args are dropped (CLI).
+		( $this->on_complete )(
+			\array_values( \array_filter( Core::arr( $state->lines ), 'is_string' ) ),
+			$rid,
+			true === ( $state->clipped ?? false )
+		);
+		$this->inflight->delete( $rid );
+	}
+
+	/**
 	 * Append a line to the in-flight request state, respecting line + byte caps.
 	 *
 	 * Tripping either cap sets `->clipped`, which finalize_if_complete forwards to
@@ -236,23 +242,17 @@ class Reqgrep_Core {
 	}
 
 	/**
-	 * Fire on_complete once a tracked rid's `process (complete)` arrives, then
-	 * evict it from the in-flight cache.
+	 * Compile a user pattern into the case-insensitive regex a line is matched
+	 * against. The pattern is quoted, never interpreted as a regex.
 	 *
-	 * @param \stdClass $state The rid's accumulated state.
-	 * @param string    $rid   Request id.
-	 * @param string    $key   This entry's `k` field.
+	 * A consumer that re-matches lines afterwards — the dashboard derives its
+	 * match count and excerpt that way — must compile through here, or its answer
+	 * disagrees with the grouping that produced the lines.
+	 *
+	 * @param string $pattern Search pattern (rid, URL, or any text).
+	 * @return string PCRE pattern.
 	 */
-	private function finalize_if_complete( \stdClass $state, string $rid, string $key ): void {
-		if ( 'process (complete)' !== $key ) {
-			return;
-		}
-		// 3rd arg = clipped-by-caps; extra closure args are dropped (CLI).
-		( $this->on_complete )(
-			\array_values( \array_filter( Core::arr( $state->lines ), 'is_string' ) ),
-			$rid,
-			true === ( $state->clipped ?? false )
-		);
-		$this->inflight->delete( $rid );
+	public static function compile( string $pattern ): string {
+		return '/' . \preg_quote( $pattern, '/' ) . '/i';
 	}
 }

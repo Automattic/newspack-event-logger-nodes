@@ -186,31 +186,6 @@ class Performance_CI_Node extends Service_CI_Node {
 	private ?array $index_cache = null;
 
 	/**
-	 * Merged URL index for THIS request — read at most once and memoized, so the
-	 * three verbs that derive from it (`overview`, `urls`, and `url_detail`'s
-	 * stats lookup) share a single memcache fan-out instead of re-loading per
-	 * verb. Resolves the `load_index` seam (the real loader by default) on the
-	 * first call.
-	 *
-	 * @return array<int,array<array-key,mixed>>
-	 */
-	private function index(): array {
-		if ( null !== $this->index_cache ) {
-			return $this->index_cache;
-		}
-		$read = self::$load_index ?? static fn (): array => self::load_index_default();
-		$raw  = $read();
-		$rows = [];
-		foreach ( Core::arr( $raw ) as $row ) {
-			if ( \is_array( $row ) ) {
-				$rows[] = $row;
-			}
-		}
-		$this->index_cache = $rows;
-		return $this->index_cache;
-	}
-
-	/**
 	 * Type-coerce + bounds-check a single value for `set`.
 	 *
 	 * Rejection is signalled by null, so a legitimately-null sanitized value is
@@ -1200,6 +1175,31 @@ class Performance_CI_Node extends Service_CI_Node {
 	private static function name_scratch_consumer( Consumer_Node $consumer, int $index ): void {
 		$token = \getmypid() . '-' . \spl_object_id( $consumer );
 		$consumer->name( "firehose-grep.{$token}.p{$index}" );
+	}
+
+	/**
+	 * Merged URL index for THIS request — read at most once and memoized, so the
+	 * three verbs that derive from it (`overview`, `urls`, and `url_detail`'s
+	 * stats lookup) share a single memcache fan-out instead of re-loading per
+	 * verb. Resolves the `load_index` seam (the real loader by default) on the
+	 * first call.
+	 *
+	 * @return array<int,array<array-key,mixed>>
+	 */
+	private function index(): array {
+		if ( null !== $this->index_cache ) {
+			return $this->index_cache;
+		}
+		$read = self::$load_index ?? static fn (): array => self::load_index_default();
+		$raw  = $read();
+		$rows = [];
+		foreach ( Core::arr( $raw ) as $row ) {
+			if ( \is_array( $row ) ) {
+				$rows[] = $row;
+			}
+		}
+		$this->index_cache = $rows;
+		return $this->index_cache;
 	}
 
 	/**

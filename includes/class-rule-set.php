@@ -74,27 +74,6 @@ final class Rule_Set {
 	}
 
 	/**
-	 * Ask every live worker to re-read its boot-frozen option cache.
-	 *
-	 * Signalled from `save()` rather than its callers because save() is the one
-	 * origin every ruleset write passes through — `Rules_CI_Node`, the synced
-	 * `Rule_Set::apply_synced()` receive path and `Auto_Tuner_Node` — so a fourth
-	 * caller cannot forget it. Two of those run INSIDE a worker, so that worker
-	 * signals itself along with its peers; intended, because a reload also purges
-	 * the option cache its own later reads go through.
-	 *
-	 * Best-effort: the next worker generation loads the new ruleset regardless,
-	 * so an unresolvable locks directory must not fail the write.
-	 */
-	private static function request_reloads(): void {
-		try {
-			Restart_Planner::request_reloads( Config::get_locks_directory() );
-		} catch ( \Throwable $e ) {
-			Core::print_less_often( 'rules: reload signalling failed: ', $e->getMessage() );
-		}
-	}
-
-	/**
 	 * Read the persisted ruleset, falling back to the file config.
 	 *
 	 * An absent option seeds from config; a corrupt (non-array) one seeds too,
@@ -149,61 +128,6 @@ final class Rule_Set {
 	}
 
 	/**
-	 * Rekey every rule to its pattern-derived id, ignoring any id it arrived
-	 * with, and collapse duplicate patterns to one rule (last entry wins).
-	 *
-	 * The pattern IS the identity, so this is what makes "one rule per URL"
-	 * true rather than merely conventional. Every write path that accepts
-	 * outside rules runs through it: the config seed, the editor's `save` verb,
-	 * and `apply_synced()` off the wire. (The editor's `upsert` verb reaches the
-	 * same result by minting the id with `id_for()` and dropping the entry that
-	 * already holds that pattern.) Two entries that kept differing ids for one
-	 * pattern would both persist and race in the matcher; two that kept a SHARED
-	 * id would alias one durable hooks option, and the inline one's delete_option
-	 * would wipe the pointer one's list.
-	 *
-	 * @param Rule[] $rules Rules carrying arbitrary (or absent) ids.
-	 * @return Rule[]
-	 */
-	public static function rekey_by_pattern( array $rules ): array {
-		$by_id = [];
-		foreach ( $rules as $rule ) {
-			$id           = self::id_for( $rule->pattern );
-			$by_id[ $id ] = $rule->with_id( $id );
-		}
-		return \array_values( $by_id );
-	}
-
-	/**
-	 * A rule's id is the shared 12-char url_hash of its pattern. The pattern IS
-	 * the identity, so there is exactly one id per pattern — you can never end up
-	 * with two differently-configured rules for the same URL. See Log_Manager::url_hash.
-	 *
-	 * @param string $pattern Rule pattern: '/prefix', exact '/x?', or '/x?query'.
-	 * @return string 12-character hex id.
-	 */
-	public static function id_for( string $pattern ): string {
-		return Log_Manager::url_hash( $pattern );
-	}
-
-	/**
-	 * Decode a list of stored/wire rule maps, skipping non-array junk.
-	 *
-	 * @param array<array-key, mixed> $entries Rule maps (Rule::to_array() shape).
-	 * @return Rule[]
-	 */
-	private static function rules_from_maps( array $entries ): array {
-		$rules = [];
-		foreach ( $entries as $entry ) {
-			if ( \is_array( $entry ) ) {
-				/** @var array<string, mixed> $entry rule shape (Rule::to_array()). */
-				$rules[] = Rule::from_array( $entry );
-			}
-		}
-		return $rules;
-	}
-
-	/**
 	 * Inline every pointer entry's hooks in a stored/synced rule-map list, resolving
 	 * each from its durable option (or mc). The transport-safe form of a ruleset:
 	 * self-contained, no dangling durable-option references. Non-pointer entries
@@ -229,63 +153,6 @@ final class Rule_Set {
 			$out[] = $entry;
 		}
 		return $out;
-	}
-
-	/**
-	 * Resolve a rule's hooks. Inline is free; pointer reads mc, then the durable
-	 * option (warming mc), then gives up to [] with a single notice.
-	 *
-	 * Stateless (consults only $rule + Core::$memd + the durable option), so it's
-	 * static — Log_Manager already loaded the ruleset once per request; callers
-	 * must NOT re-`load()` a whole second Rule_Set just to reach this.
-	 *
-	 * @param Rule $rule Rule of either tier.
-	 * @return string[] Hook names; [] when a pointer rule's hooks are unresolvable.
-	 */
-	public static function hooks_for( Rule $rule ): array {
-		if ( Rule::HOOKS_INLINE === $rule->hooks_in ) {
-			return $rule->hooks ?? [];
-		}
-		$memd = Core::$memd ?? null;
-		if ( null !== $memd ) {
-			$cached = $memd->get( self::mc_key( $rule->id ) );
-			if ( \is_array( $cached ) ) {
-				/** @var string[] $cached mc mirror of a durable hooks option. */
-				return $cached;
-			}
-		}
-		$durable = \get_option( self::hooks_option_name( $rule->id ), null );
-		if ( \is_array( $durable ) ) {
-			if ( null !== $memd ) {
-				$memd->set( self::mc_key( $rule->id ), $durable, self::MC_TTL );
-			}
-			/** @var string[] $durable hooks list persisted by save(). */
-			return $durable;
-		}
-		Core::print_less_often( 'Newspack ELN: hooks missing for pointer rule "', $rule->id, '" (mc + durable option both absent).' );
-		return [];
-	}
-
-	/**
-	 * The memcache key mirroring a pointer rule's durable hooks option.
-	 *
-	 * @param string $id Rule id.
-	 * @return string Memcache key.
-	 */
-	public static function mc_key( string $id ): string {
-		return self::MC_HOOKS_PREFIX . $id;
-	}
-
-	/**
-	 * The non-autoloaded option holding a pointer rule's hooks — the system of
-	 * record for that tier. `reconcile_orphans()` sweeps this namespace, and
-	 * uninstall cleanup deletes it by the same prefix.
-	 *
-	 * @param string $id Rule id.
-	 * @return string Option name.
-	 */
-	public static function hooks_option_name( string $id ): string {
-		return self::OPTION_HOOKS_PREFIX . $id;
 	}
 
 	/**
@@ -383,6 +250,27 @@ final class Rule_Set {
 	}
 
 	/**
+	 * Ask every live worker to re-read its boot-frozen option cache.
+	 *
+	 * Signalled from `save()` rather than its callers because save() is the one
+	 * origin every ruleset write passes through — `Rules_CI_Node`, the synced
+	 * `Rule_Set::apply_synced()` receive path and `Auto_Tuner_Node` — so a fourth
+	 * caller cannot forget it. Two of those run INSIDE a worker, so that worker
+	 * signals itself along with its peers; intended, because a reload also purges
+	 * the option cache its own later reads go through.
+	 *
+	 * Best-effort: the next worker generation loads the new ruleset regardless,
+	 * so an unresolvable locks directory must not fail the write.
+	 */
+	private static function request_reloads(): void {
+		try {
+			Restart_Planner::request_reloads( Config::get_locks_directory() );
+		} catch ( \Throwable $e ) {
+			Core::print_less_often( 'rules: reload signalling failed: ', $e->getMessage() );
+		}
+	}
+
+	/**
 	 * Delete every durable hook option whose id is not a currently-live pointer.
 	 * Covers rule deletes AND rules that shrank back inline. No-ops without a
 	 * $wpdb, which is how the unit suite runs with no database.
@@ -412,6 +300,63 @@ final class Rule_Set {
 	}
 
 	/**
+	 * Resolve a rule's hooks. Inline is free; pointer reads mc, then the durable
+	 * option (warming mc), then gives up to [] with a single notice.
+	 *
+	 * Stateless (consults only $rule + Core::$memd + the durable option), so it's
+	 * static — Log_Manager already loaded the ruleset once per request; callers
+	 * must NOT re-`load()` a whole second Rule_Set just to reach this.
+	 *
+	 * @param Rule $rule Rule of either tier.
+	 * @return string[] Hook names; [] when a pointer rule's hooks are unresolvable.
+	 */
+	public static function hooks_for( Rule $rule ): array {
+		if ( Rule::HOOKS_INLINE === $rule->hooks_in ) {
+			return $rule->hooks ?? [];
+		}
+		$memd = Core::$memd ?? null;
+		if ( null !== $memd ) {
+			$cached = $memd->get( self::mc_key( $rule->id ) );
+			if ( \is_array( $cached ) ) {
+				/** @var string[] $cached mc mirror of a durable hooks option. */
+				return $cached;
+			}
+		}
+		$durable = \get_option( self::hooks_option_name( $rule->id ), null );
+		if ( \is_array( $durable ) ) {
+			if ( null !== $memd ) {
+				$memd->set( self::mc_key( $rule->id ), $durable, self::MC_TTL );
+			}
+			/** @var string[] $durable hooks list persisted by save(). */
+			return $durable;
+		}
+		Core::print_less_often( 'Newspack ELN: hooks missing for pointer rule "', $rule->id, '" (mc + durable option both absent).' );
+		return [];
+	}
+
+	/**
+	 * The non-autoloaded option holding a pointer rule's hooks — the system of
+	 * record for that tier. `reconcile_orphans()` sweeps this namespace, and
+	 * uninstall cleanup deletes it by the same prefix.
+	 *
+	 * @param string $id Rule id.
+	 * @return string Option name.
+	 */
+	public static function hooks_option_name( string $id ): string {
+		return self::OPTION_HOOKS_PREFIX . $id;
+	}
+
+	/**
+	 * The memcache key mirroring a pointer rule's durable hooks option.
+	 *
+	 * @param string $id Rule id.
+	 * @return string Memcache key.
+	 */
+	public static function mc_key( string $id ): string {
+		return self::MC_HOOKS_PREFIX . $id;
+	}
+
+	/**
 	 * Apply a synced (hydrated) ruleset on a spoke: rebuild Rule objects and
 	 * route them through save(), which RE-TIERS locally — heavy rules' inline
 	 * hooks are written back out to this site's own durable option + mc mirror,
@@ -423,6 +368,61 @@ final class Rule_Set {
 	 */
 	public static function apply_synced( array $rules_array ): void {
 		( new self( [] ) )->save( self::rekey_by_pattern( self::rules_from_maps( $rules_array ) ) );
+	}
+
+	/**
+	 * Decode a list of stored/wire rule maps, skipping non-array junk.
+	 *
+	 * @param array<array-key, mixed> $entries Rule maps (Rule::to_array() shape).
+	 * @return Rule[]
+	 */
+	private static function rules_from_maps( array $entries ): array {
+		$rules = [];
+		foreach ( $entries as $entry ) {
+			if ( \is_array( $entry ) ) {
+				/** @var array<string, mixed> $entry rule shape (Rule::to_array()). */
+				$rules[] = Rule::from_array( $entry );
+			}
+		}
+		return $rules;
+	}
+
+	/**
+	 * Rekey every rule to its pattern-derived id, ignoring any id it arrived
+	 * with, and collapse duplicate patterns to one rule (last entry wins).
+	 *
+	 * The pattern IS the identity, so this is what makes "one rule per URL"
+	 * true rather than merely conventional. Every write path that accepts
+	 * outside rules runs through it: the config seed, the editor's `save` verb,
+	 * and `apply_synced()` off the wire. (The editor's `upsert` verb reaches the
+	 * same result by minting the id with `id_for()` and dropping the entry that
+	 * already holds that pattern.) Two entries that kept differing ids for one
+	 * pattern would both persist and race in the matcher; two that kept a SHARED
+	 * id would alias one durable hooks option, and the inline one's delete_option
+	 * would wipe the pointer one's list.
+	 *
+	 * @param Rule[] $rules Rules carrying arbitrary (or absent) ids.
+	 * @return Rule[]
+	 */
+	public static function rekey_by_pattern( array $rules ): array {
+		$by_id = [];
+		foreach ( $rules as $rule ) {
+			$id           = self::id_for( $rule->pattern );
+			$by_id[ $id ] = $rule->with_id( $id );
+		}
+		return \array_values( $by_id );
+	}
+
+	/**
+	 * A rule's id is the shared 12-char url_hash of its pattern. The pattern IS
+	 * the identity, so there is exactly one id per pattern — you can never end up
+	 * with two differently-configured rules for the same URL. See Log_Manager::url_hash.
+	 *
+	 * @param string $pattern Rule pattern: '/prefix', exact '/x?', or '/x?query'.
+	 * @return string 12-character hex id.
+	 */
+	public static function id_for( string $pattern ): string {
+		return Log_Manager::url_hash( $pattern );
 	}
 
 	/**

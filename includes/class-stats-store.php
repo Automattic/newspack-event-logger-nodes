@@ -117,20 +117,6 @@ class Stats_Store {
 	}
 
 	/**
-	 * Build the key prefix from the current salt. Outside WordPress — CLI and
-	 * unit tests, where `get_option` is absent — the prefix stays unsalted, which
-	 * keeps every such caller on one keyspace.
-	 */
-	private function compute_prefix(): string {
-		$salt = '';
-		if ( \function_exists( 'get_option' ) ) {
-			$opt  = \get_option( self::SALT_OPTION, '' );
-			$salt = Core::as_string( $opt );
-		}
-		return '' === $salt ? self::PREFIX_BASE : self::PREFIX_BASE . ':' . $salt;
-	}
-
-	/**
 	 * Read one `urls` bucket. Identical to `get_url_bucket()`, under the name
 	 * `Flame_Builder_Node` writes and reads through.
 	 *
@@ -152,37 +138,6 @@ class Stats_Store {
 	public function get_url_bucket( string $bucket ): array {
 		$val = Core::$memd?->get( $this->key( self::NS_URLS, $bucket ) );
 		return self::map_or_empty( $val );
-	}
-
-	/**
-	 * Join a memcache key from the prefix, the partition, and the caller's parts.
-	 *
-	 * @param string ...$parts Namespace token first, then any sub-keys.
-	 * @return string Full key.
-	 */
-	private function key( string ...$parts ): string {
-		\array_unshift( $parts, $this->prefix, 'p' . $this->partition );
-		return \implode( ':', $parts );
-	}
-
-	/**
-	 * Coerce a memcache get() result (mixed) to a string-keyed map, [] on miss.
-	 *
-	 * Every namespace stores a string-keyed map; re-key with (string) casts so
-	 * the static type is array<string, mixed> (is_array alone leaves keys mixed).
-	 *
-	 * @param mixed $val
-	 * @return array<string, mixed>
-	 */
-	private static function map_or_empty( $val ): array {
-		if ( ! \is_array( $val ) ) {
-			return [];
-		}
-		$out = [];
-		foreach ( $val as $k => $v ) {
-			$out[ (string) $k ] = $v;
-		}
-		return $out;
 	}
 
 	/**
@@ -222,26 +177,6 @@ class Stats_Store {
 	public function get_server_leaderboard_bucket( string $server, string $bucket ): array {
 		$val = Core::$memd?->get( $this->key( self::NS_LB_S, self::server_key( $server ), $bucket ) );
 		return self::map_or_empty( $val );
-	}
-
-	/**
-	 * Hash a server name to a key-safe ASCII token (FNV-1a 32-bit hex).
-	 * Used for `lb_s` / `dim:_:srv` keys so server names don't break colons.
-	 *
-	 * @param string $server Server name; '' hashes to ''.
-	 * @return string Eight hex digits, or ''.
-	 */
-	public static function server_key( string $server ): string {
-		if ( '' === $server ) {
-			return '';
-		}
-		$hash = 2166136261;
-		$len  = \strlen( $server );
-		for ( $i = 0; $i < $len; $i++ ) {
-			$hash ^= \ord( $server[ $i ] );
-			$hash  = ( $hash * 16777619 ) & 0xFFFFFFFF;
-		}
-		return \sprintf( '%08x', $hash );
 	}
 
 	/**
@@ -303,30 +238,6 @@ class Stats_Store {
 	 */
 	public function set_hourly( array $data ): bool {
 		return $this->store( $this->key( self::NS_HOURLY ), $data, $this->ttl(), self::NS_HOURLY );
-	}
-
-	/**
-	 * Write to memcache, then (if wired AND the set landed) shadow the same write
-	 * to the mirror seam — a rejected/failed set must not be durably recorded and
-	 * resurrected on cold boot.
-	 *
-	 * @param string               $key  Full memcache key.
-	 * @param array<string, mixed> $data Value to store.
-	 * @param int                  $ttl  Expiry in seconds.
-	 * @param string               $ns   Namespace routing hint for the mirror.
-	 * @return bool True when the set landed.
-	 */
-	private function store( string $key, array $data, int $ttl, string $ns ): bool {
-		$ok = (bool) Core::$memd?->set( $key, $data, $ttl );
-		if ( $ok && null !== $this->mirror ) {
-			( $this->mirror )( $key, $data, $ttl, $ns );
-		}
-		return $ok;
-	}
-
-	/** Retention window, in seconds, for every namespace but `url`. */
-	public function ttl(): int {
-		return $this->max_lifespan;
 	}
 
 	/**
@@ -470,6 +381,26 @@ class Stats_Store {
 	}
 
 	/**
+	 * Coerce a memcache get() result (mixed) to a string-keyed map, [] on miss.
+	 *
+	 * Every namespace stores a string-keyed map; re-key with (string) casts so
+	 * the static type is array<string, mixed> (is_array alone leaves keys mixed).
+	 *
+	 * @param mixed $val
+	 * @return array<string, mixed>
+	 */
+	private static function map_or_empty( $val ): array {
+		if ( ! \is_array( $val ) ) {
+			return [];
+		}
+		$out = [];
+		foreach ( $val as $k => $v ) {
+			$out[ (string) $k ] = $v;
+		}
+		return $out;
+	}
+
+	/**
 	 * Overwrite one server's category series.
 	 *
 	 * @param string               $server Server name; hashed into the key.
@@ -481,6 +412,26 @@ class Stats_Store {
 	}
 
 	/**
+	 * Hash a server name to a key-safe ASCII token (FNV-1a 32-bit hex).
+	 * Used for `lb_s` / `dim:_:srv` keys so server names don't break colons.
+	 *
+	 * @param string $server Server name; '' hashes to ''.
+	 * @return string Eight hex digits, or ''.
+	 */
+	public static function server_key( string $server ): string {
+		if ( '' === $server ) {
+			return '';
+		}
+		$hash = 2166136261;
+		$len  = \strlen( $server );
+		for ( $i = 0; $i < $len; $i++ ) {
+			$hash ^= \ord( $server[ $i ] );
+			$hash  = ( $hash * 16777619 ) & 0xFFFFFFFF;
+		}
+		return \sprintf( '%08x', $hash );
+	}
+
+	/**
 	 * Overwrite one URL's category series.
 	 *
 	 * @param string               $url_hash 12-char URL hash.
@@ -489,6 +440,41 @@ class Stats_Store {
 	 */
 	public function set_url_categories( string $url_hash, array $data ): bool {
 		return $this->store( $this->key( self::NS_URL_CAT, $url_hash ), $data, $this->ttl(), self::NS_URL_CAT );
+	}
+
+	/** Retention window, in seconds, for every namespace but `url`. */
+	public function ttl(): int {
+		return $this->max_lifespan;
+	}
+
+	/**
+	 * Join a memcache key from the prefix, the partition, and the caller's parts.
+	 *
+	 * @param string ...$parts Namespace token first, then any sub-keys.
+	 * @return string Full key.
+	 */
+	private function key( string ...$parts ): string {
+		\array_unshift( $parts, $this->prefix, 'p' . $this->partition );
+		return \implode( ':', $parts );
+	}
+
+	/**
+	 * Write to memcache, then (if wired AND the set landed) shadow the same write
+	 * to the mirror seam — a rejected/failed set must not be durably recorded and
+	 * resurrected on cold boot.
+	 *
+	 * @param string               $key  Full memcache key.
+	 * @param array<string, mixed> $data Value to store.
+	 * @param int                  $ttl  Expiry in seconds.
+	 * @param string               $ns   Namespace routing hint for the mirror.
+	 * @return bool True when the set landed.
+	 */
+	private function store( string $key, array $data, int $ttl, string $ns ): bool {
+		$ok = (bool) Core::$memd?->set( $key, $data, $ttl );
+		if ( $ok && null !== $this->mirror ) {
+			( $this->mirror )( $key, $data, $ttl, $ns );
+		}
+		return $ok;
 	}
 
 	/**
@@ -639,5 +625,19 @@ class Stats_Store {
 		}
 		$this->prefix = self::PREFIX_BASE . ':' . $salt;
 		return true;
+	}
+
+	/**
+	 * Build the key prefix from the current salt. Outside WordPress — CLI and
+	 * unit tests, where `get_option` is absent — the prefix stays unsalted, which
+	 * keeps every such caller on one keyspace.
+	 */
+	private function compute_prefix(): string {
+		$salt = '';
+		if ( \function_exists( 'get_option' ) ) {
+			$opt  = \get_option( self::SALT_OPTION, '' );
+			$salt = Core::as_string( $opt );
+		}
+		return '' === $salt ? self::PREFIX_BASE : self::PREFIX_BASE . ':' . $salt;
 	}
 }

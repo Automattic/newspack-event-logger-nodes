@@ -110,19 +110,23 @@ class LRU_Cache {
 	}
 
 	/**
-	 * Live bucket indices, newest first.
+	 * Store an item in the newest bucket, rotating once that bucket fills.
 	 *
-	 * Indices are monotonic and ride through get_state(), so `current` climbs
-	 * for the life of the log while only num_buckets buckets exist. Counting
-	 * down from it made a miss cost the whole history — a live worker sat at
-	 * index 2053 holding three buckets.
+	 * Re-setting a key that still sits in an older bucket leaves that copy in
+	 * place, shadowed by this newer one. get() returns the newer copy, but
+	 * delete() removes only that copy and the shadowed one resurfaces.
 	 *
-	 * @return list<int>
+	 * @param string $key   Cache key.
+	 * @param mixed  $value Value to store.
 	 */
-	private function live_indices(): array {
-		$indices = \array_keys( $this->buckets );
-		\rsort( $indices );
-		return $indices;
+	public function set( string $key, $value ): void {
+		if ( empty( $this->buckets ) ) {
+			$this->buckets[0] = [];
+			$this->current    = 0;
+		}
+
+		$this->buckets[ $this->current ][ $key ] = $value;
+		$this->maybe_rotate();
 	}
 
 	/**
@@ -133,6 +137,34 @@ class LRU_Cache {
 			return;
 		}
 		$this->force_rotate();
+	}
+
+	/**
+	 * Roll every window that has closed since the last call.
+	 *
+	 * Call this periodically from the processing loop — nothing ages out on a
+	 * quiet cache otherwise, since capacity rotation needs writes. A no-op
+	 * until with_timed_rotation() sets an interval.
+	 *
+	 * Rolls once PER elapsed window, not once per call: a gap — a process that
+	 * was down, or a stretch with no ticks — is repaid in one pass, so a stalled
+	 * entry ages out on wall-clock time rather than on how often we looked.
+	 * num_buckets rolls already empty the cache, so a longer gap has nothing
+	 * left to drop and the count caps there.
+	 */
+	public function rotate_if_due(): void {
+		if ( $this->rotate_interval <= 0 ) {
+			return;
+		}
+		$now = $this->clock();
+		if ( $now < $this->next_window ) {
+			return;
+		}
+		$elapsed = 1 + (int) \floor( ( $now - $this->next_window ) / $this->rotate_interval );
+		for ( $roll = \min( $elapsed, $this->num_buckets ); $roll > 0; $roll-- ) {
+			$this->force_rotate();
+		}
+		$this->next_window = $this->next_boundary( $now );
 	}
 
 	/**
@@ -173,51 +205,23 @@ class LRU_Cache {
 	}
 
 	/**
-	 * Store an item in the newest bucket, rotating once that bucket fills.
+	 * Set the time-based rotation interval and the eviction callback.
 	 *
-	 * Re-setting a key that still sits in an older bucket leaves that copy in
-	 * place, shadowed by this newer one. get() returns the newer copy, but
-	 * delete() removes only that copy and the shadowed one resurfaces.
+	 * This is the only way to register on_evict, and the callback fires for
+	 * capacity evictions too — pass a large interval to get the callback
+	 * without timed rotation.
 	 *
-	 * @param string $key   Cache key.
-	 * @param mixed  $value Value to store.
+	 * @param float    $seconds  Seconds between rotations.
+	 * @param callable $on_evict Called with (key, value) for each evicted item.
+	 * @return self This cache, for chaining onto the constructor.
 	 */
-	public function set( string $key, $value ): void {
-		if ( empty( $this->buckets ) ) {
-			$this->buckets[0] = [];
-			$this->current    = 0;
+	public function with_timed_rotation( float $seconds, callable $on_evict ): self {
+		$this->rotate_interval = $seconds;
+		$this->on_evict        = $on_evict;
+		if ( $seconds > 0 ) {
+			$this->next_window = $this->next_boundary( $this->clock() );
 		}
-
-		$this->buckets[ $this->current ][ $key ] = $value;
-		$this->maybe_rotate();
-	}
-
-	/**
-	 * Roll every window that has closed since the last call.
-	 *
-	 * Call this periodically from the processing loop — nothing ages out on a
-	 * quiet cache otherwise, since capacity rotation needs writes. A no-op
-	 * until with_timed_rotation() sets an interval.
-	 *
-	 * Rolls once PER elapsed window, not once per call: a gap — a process that
-	 * was down, or a stretch with no ticks — is repaid in one pass, so a stalled
-	 * entry ages out on wall-clock time rather than on how often we looked.
-	 * num_buckets rolls already empty the cache, so a longer gap has nothing
-	 * left to drop and the count caps there.
-	 */
-	public function rotate_if_due(): void {
-		if ( $this->rotate_interval <= 0 ) {
-			return;
-		}
-		$now = $this->clock();
-		if ( $now < $this->next_window ) {
-			return;
-		}
-		$elapsed = 1 + (int) \floor( ( $now - $this->next_window ) / $this->rotate_interval );
-		for ( $roll = \min( $elapsed, $this->num_buckets ); $roll > 0; $roll-- ) {
-			$this->force_rotate();
-		}
-		$this->next_window = $this->next_boundary( $now );
+		return $this;
 	}
 
 	/** The per-tick cached clock, falling back to a live read. */
@@ -236,26 +240,6 @@ class LRU_Cache {
 	 */
 	private function next_boundary( float $after ): float {
 		return ( \floor( $after / $this->rotate_interval ) + 1 ) * $this->rotate_interval;
-	}
-
-	/**
-	 * Set the time-based rotation interval and the eviction callback.
-	 *
-	 * This is the only way to register on_evict, and the callback fires for
-	 * capacity evictions too — pass a large interval to get the callback
-	 * without timed rotation.
-	 *
-	 * @param float    $seconds  Seconds between rotations.
-	 * @param callable $on_evict Called with (key, value) for each evicted item.
-	 * @return self This cache, for chaining onto the constructor.
-	 */
-	public function with_timed_rotation( float $seconds, callable $on_evict ): self {
-		$this->rotate_interval = $seconds;
-		$this->on_evict        = $on_evict;
-		if ( $seconds > 0 ) {
-			$this->next_window = $this->next_boundary( $this->clock() );
-		}
-		return $this;
 	}
 
 	/**
@@ -292,6 +276,22 @@ class LRU_Cache {
 				yield $key => $value;
 			}
 		}
+	}
+
+	/**
+	 * Live bucket indices, newest first.
+	 *
+	 * Indices are monotonic and ride through get_state(), so `current` climbs
+	 * for the life of the log while only num_buckets buckets exist. Counting
+	 * down from it made a miss cost the whole history — a live worker sat at
+	 * index 2053 holding three buckets.
+	 *
+	 * @return list<int>
+	 */
+	private function live_indices(): array {
+		$indices = \array_keys( $this->buckets );
+		\rsort( $indices );
+		return $indices;
 	}
 
 	/**

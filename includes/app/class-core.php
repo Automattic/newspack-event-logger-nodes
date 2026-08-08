@@ -71,55 +71,6 @@ class Core {
 	}
 
 	/**
-	 * Bind hook_start/hook_spacer/hook_complete for the current request's
-	 * governing rule only — the hot-path win: a skip rule or no match binds
-	 * zero hooks instead of every hook the ruleset names.
-	 *
-	 * A significant event joins the bind list when it names a hook the rule
-	 * doesn't already cover. One that matches a custom event stays unbound:
-	 * custom events are categories the application logs itself, not do_action
-	 * names, so binding them would register a filter nothing ever fires.
-	 */
-	private function bind_current_scope(): void {
-		$rule = Log_Manager::instance()->governing_rule();
-		if ( null === $rule || ! $rule->is_log() ) {
-			return;
-		}
-
-		// Instrument real hooks; custom events (not do_action) are excluded.
-		$hooks          = Rule_Set::hooks_for( $rule );
-		$custom_set     = \array_flip( \array_filter( $rule->custom_events, 'is_string' ) );
-		$log_events_set = \array_flip( \array_filter( $hooks, 'is_string' ) );
-
-		// Significant events get per-callback profiling.
-		foreach ( $rule->significant_events as $event ) {
-			$hook = \str_ends_with( $event, ' hook' ) ? \substr( $event, 0, -5 ) : $event;
-			$this->significant[ $hook ] = true;
-			if ( ! isset( $log_events_set[ $hook ] ) && ! isset( $custom_set[ $hook ] ) ) {
-				$hooks[] = $hook;
-			}
-		}
-
-		foreach ( $hooks as $hook_name ) {
-			if ( '' === $hook_name ) {
-				continue;
-			}
-			// Plugin-load timing lives in the 00-newspack-profiler mu-plugin.
-			if ( 'plugin_loaded' === $hook_name ) {
-				continue;
-			}
-			// Skip internal filters: instrumenting re-enters LM bootstrap.
-			if ( Hook_Categorizer::is_internal( $hook_name ) ) {
-				continue;
-			}
-			\add_filter( $hook_name, [ $this, 'hook_start' ], $this->start_priority );
-			\add_filter( $hook_name, [ $this, 'hook_spacer' ], self::SPACER_PRIORITY );
-			\add_filter( $hook_name, [ $this, 'hook_complete' ], PHP_INT_MAX - 1 );
-			$this->bound_hooks[] = $hook_name;
-		}
-	}
-
-	/**
 	 * Open the hook's timing span, wrapping its callbacks when it is significant.
 	 *
 	 * Registered as a filter at start_priority on every bound hook. The entry
@@ -236,44 +187,6 @@ class Core {
 	}
 
 	/**
-	 * Short name for a callback (no namespace, no priority).
-	 *
-	 * @param mixed $function Callback.
-	 * @return string e.g. "do_blocks" or "Image_CDN::filter_the_content".
-	 */
-	private static function short_name( $function ): string {
-		if ( \is_string( $function ) ) {
-			$pos = \strrpos( $function, '\\' );
-			return false !== $pos ? \substr( $function, $pos + 1 ) : $function;
-		}
-		if ( \is_array( $function ) && \count( $function ) === 2 ) {
-			$class  = \is_object( $function[0] ) ? \get_class( $function[0] ) : RuntimeCore::str( $function[0] );
-			$method = RuntimeCore::str( $function[1] );
-			$pos    = \strrpos( $class, '\\' );
-			if ( false !== $pos ) {
-				$class = \substr( $class, $pos + 1 );
-			}
-			return "{$class}::{$method}";
-		}
-		if ( $function instanceof \Closure ) {
-			$ref  = new \ReflectionFunction( $function );
-			$file = $ref->getFileName();
-			$line = $ref->getStartLine();
-			if ( $file ) {
-				$file = \basename( $file );
-				return "{closure}:{$file}:{$line}";
-			}
-			return '{closure}';
-		}
-		if ( \is_object( $function ) ) {
-			$class = \get_class( $function );
-			$pos   = \strrpos( $class, '\\' );
-			return ( false !== $pos ? \substr( $class, $pos + 1 ) : $class ) . '::__invoke';
-		}
-		return '{unknown}';
-	}
-
-	/**
 	 * Whether a callback declares a by-reference parameter.
 	 *
 	 * Such a callback can't be timing-wrapped: the wrapper passes args via
@@ -314,6 +227,44 @@ class Core {
 	}
 
 	/**
+	 * Short name for a callback (no namespace, no priority).
+	 *
+	 * @param mixed $function Callback.
+	 * @return string e.g. "do_blocks" or "Image_CDN::filter_the_content".
+	 */
+	private static function short_name( $function ): string {
+		if ( \is_string( $function ) ) {
+			$pos = \strrpos( $function, '\\' );
+			return false !== $pos ? \substr( $function, $pos + 1 ) : $function;
+		}
+		if ( \is_array( $function ) && \count( $function ) === 2 ) {
+			$class  = \is_object( $function[0] ) ? \get_class( $function[0] ) : RuntimeCore::str( $function[0] );
+			$method = RuntimeCore::str( $function[1] );
+			$pos    = \strrpos( $class, '\\' );
+			if ( false !== $pos ) {
+				$class = \substr( $class, $pos + 1 );
+			}
+			return "{$class}::{$method}";
+		}
+		if ( $function instanceof \Closure ) {
+			$ref  = new \ReflectionFunction( $function );
+			$file = $ref->getFileName();
+			$line = $ref->getStartLine();
+			if ( $file ) {
+				$file = \basename( $file );
+				return "{closure}:{$file}:{$line}";
+			}
+			return '{closure}';
+		}
+		if ( \is_object( $function ) ) {
+			$class = \get_class( $function );
+			$pos   = \strrpos( $class, '\\' );
+			return ( false !== $pos ? \substr( $class, $pos + 1 ) : $class ) . '::__invoke';
+		}
+		return '{unknown}';
+	}
+
+	/**
 	 * Remove the currently-bound hook filters and bind the current request's
 	 * governing rule afresh. Public because it is the listener for
 	 * `newspack_event_logger_nodes_scope_changed`, which Log_Manager fires when
@@ -333,6 +284,55 @@ class Core {
 		$this->bound_hooks = [];
 		$this->significant = [];
 		$this->bind_current_scope();
+	}
+
+	/**
+	 * Bind hook_start/hook_spacer/hook_complete for the current request's
+	 * governing rule only — the hot-path win: a skip rule or no match binds
+	 * zero hooks instead of every hook the ruleset names.
+	 *
+	 * A significant event joins the bind list when it names a hook the rule
+	 * doesn't already cover. One that matches a custom event stays unbound:
+	 * custom events are categories the application logs itself, not do_action
+	 * names, so binding them would register a filter nothing ever fires.
+	 */
+	private function bind_current_scope(): void {
+		$rule = Log_Manager::instance()->governing_rule();
+		if ( null === $rule || ! $rule->is_log() ) {
+			return;
+		}
+
+		// Instrument real hooks; custom events (not do_action) are excluded.
+		$hooks          = Rule_Set::hooks_for( $rule );
+		$custom_set     = \array_flip( \array_filter( $rule->custom_events, 'is_string' ) );
+		$log_events_set = \array_flip( \array_filter( $hooks, 'is_string' ) );
+
+		// Significant events get per-callback profiling.
+		foreach ( $rule->significant_events as $event ) {
+			$hook = \str_ends_with( $event, ' hook' ) ? \substr( $event, 0, -5 ) : $event;
+			$this->significant[ $hook ] = true;
+			if ( ! isset( $log_events_set[ $hook ] ) && ! isset( $custom_set[ $hook ] ) ) {
+				$hooks[] = $hook;
+			}
+		}
+
+		foreach ( $hooks as $hook_name ) {
+			if ( '' === $hook_name ) {
+				continue;
+			}
+			// Plugin-load timing lives in the 00-newspack-profiler mu-plugin.
+			if ( 'plugin_loaded' === $hook_name ) {
+				continue;
+			}
+			// Skip internal filters: instrumenting re-enters LM bootstrap.
+			if ( Hook_Categorizer::is_internal( $hook_name ) ) {
+				continue;
+			}
+			\add_filter( $hook_name, [ $this, 'hook_start' ], $this->start_priority );
+			\add_filter( $hook_name, [ $this, 'hook_spacer' ], self::SPACER_PRIORITY );
+			\add_filter( $hook_name, [ $this, 'hook_complete' ], PHP_INT_MAX - 1 );
+			$this->bound_hooks[] = $hook_name;
+		}
 	}
 
 	/**

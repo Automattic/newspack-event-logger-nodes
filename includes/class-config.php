@@ -136,6 +136,47 @@ class Config {
 	}
 
 	/**
+	 * `<eln:KEY>` topology-token resolver — owned-keys list + per-key
+	 * derivation. Used both by the plugin's `register_config_namespace`
+	 * call and by `tests/bootstrap.php` so both paths resolve identically.
+	 *
+	 * Returns null for keys this plugin doesn't own; substrate keys are
+	 * addressed under the `<config:KEY>` namespace instead. Null is not a
+	 * value — `Core::resolve_config_token()` treats it as unresolvable and
+	 * throws in strict mode (schema-arg defaults) or warns and yields '' in
+	 * non-strict mode. A scalar return is cast with `(string)`, so bools
+	 * surface as '1' / ''; a non-scalar is unresolvable too, so an
+	 * array-valued key must be flattened to a scalar here.
+	 *
+	 * @param string $key Token key after the `eln:` prefix.
+	 * @return mixed|null Resolved value, or null if not owned by `eln`.
+	 */
+	public static function resolve_eln_token( string $key ) {
+		/** @var array<string, bool> $own */
+		static $own = [
+			'is_hub'            => true,
+			'stats_mirror_node' => true,
+		];
+		if ( ! isset( $own[ $key ] ) ) {
+			return null;
+		}
+		$config = self::load_config();
+
+		if ( 'is_hub' === $key ) {
+			// A hub RUNS `aggregator` — directly, or via a local wrapper.
+			foreach ( \array_keys( \Newspack_Nodes\Bootstrap::get_topologies() ) as $active ) {
+				if ( 'aggregator' === $active
+					|| \in_array( 'aggregator', Topology_Analyzer::includes( $active ), true ) ) {
+					return true;
+				}
+			}
+			return false;
+		}
+
+		return $config[ $key ] ?? null;
+	}
+
+	/**
 	 * Load configuration from disk + WordPress options.
 	 *
 	 * Merges the substrate config (`Newspack_Nodes\Config::load_config`) so
@@ -176,6 +217,23 @@ class Config {
 		self::$config = $config;
 
 		return $config;
+	}
+
+	/**
+	 * Declare this plugin's config keys (schema overlay keys ∪ config-file default
+	 * keys) with the shared substrate registry. Hooked to the substrate's
+	 * DECLARE_ACTION from the plugin file, so the substrate PULLS the declaration
+	 * whenever it derives its declared set — including after a Config::reset(),
+	 * which wipes the registry. Declaring once at boot instead would lose these on
+	 * the next reload, and would come too late for the profiler's first log line
+	 * (plugins_loaded:-10001, ahead of this plugin's loader).
+	 */
+	public static function register_config_keys(): void {
+		if ( ! \class_exists( RuntimeConfig::class ) ) {
+			return;
+		}
+		RuntimeConfig::register_keys( Settings_Schema::get()->overlay_keys() );
+		RuntimeConfig::register_keys( \array_keys( self::load_config_defaults() ) );
 	}
 
 	/**
@@ -224,64 +282,6 @@ class Config {
 		self::$config_defaults = $config;
 
 		return self::$config_defaults;
-	}
-
-	/**
-	 * `<eln:KEY>` topology-token resolver — owned-keys list + per-key
-	 * derivation. Used both by the plugin's `register_config_namespace`
-	 * call and by `tests/bootstrap.php` so both paths resolve identically.
-	 *
-	 * Returns null for keys this plugin doesn't own; substrate keys are
-	 * addressed under the `<config:KEY>` namespace instead. Null is not a
-	 * value — `Core::resolve_config_token()` treats it as unresolvable and
-	 * throws in strict mode (schema-arg defaults) or warns and yields '' in
-	 * non-strict mode. A scalar return is cast with `(string)`, so bools
-	 * surface as '1' / ''; a non-scalar is unresolvable too, so an
-	 * array-valued key must be flattened to a scalar here.
-	 *
-	 * @param string $key Token key after the `eln:` prefix.
-	 * @return mixed|null Resolved value, or null if not owned by `eln`.
-	 */
-	public static function resolve_eln_token( string $key ) {
-		/** @var array<string, bool> $own */
-		static $own = [
-			'is_hub'            => true,
-			'stats_mirror_node' => true,
-		];
-		if ( ! isset( $own[ $key ] ) ) {
-			return null;
-		}
-		$config = self::load_config();
-
-		if ( 'is_hub' === $key ) {
-			// A hub RUNS `aggregator` — directly, or via a local wrapper.
-			foreach ( \array_keys( \Newspack_Nodes\Bootstrap::get_topologies() ) as $active ) {
-				if ( 'aggregator' === $active
-					|| \in_array( 'aggregator', Topology_Analyzer::includes( $active ), true ) ) {
-					return true;
-				}
-			}
-			return false;
-		}
-
-		return $config[ $key ] ?? null;
-	}
-
-	/**
-	 * Declare this plugin's config keys (schema overlay keys ∪ config-file default
-	 * keys) with the shared substrate registry. Hooked to the substrate's
-	 * DECLARE_ACTION from the plugin file, so the substrate PULLS the declaration
-	 * whenever it derives its declared set — including after a Config::reset(),
-	 * which wipes the registry. Declaring once at boot instead would lose these on
-	 * the next reload, and would come too late for the profiler's first log line
-	 * (plugins_loaded:-10001, ahead of this plugin's loader).
-	 */
-	public static function register_config_keys(): void {
-		if ( ! \class_exists( RuntimeConfig::class ) ) {
-			return;
-		}
-		RuntimeConfig::register_keys( Settings_Schema::get()->overlay_keys() );
-		RuntimeConfig::register_keys( \array_keys( self::load_config_defaults() ) );
 	}
 
 	/**

@@ -174,23 +174,6 @@ class Ruleset_Bench_Command {
 	}
 
 	/**
-	 * Deterministic synthetic hook-name list: `bench_hook_0` … `bench_hook_N-1`.
-	 *
-	 * Names are unique and realistically sized, so repeated runs of the same
-	 * grid cell measure the same work.
-	 *
-	 * @param int $count How many.
-	 * @return string[]
-	 */
-	public static function synthetic_hooks( int $count ): array {
-		$hooks = [];
-		for ( $i = 0; $i < $count; $i++ ) {
-			$hooks[] = 'bench_hook_' . $i;
-		}
-		return $hooks;
-	}
-
-	/**
 	 * Reduce a sample list (microseconds) to median / p95 / n.
 	 *
 	 * Both quantiles are nearest-rank picks from the sorted samples, never
@@ -210,5 +193,22 @@ class Ruleset_Bench_Command {
 		$median = $samples[ (int) \floor( ( $n - 1 ) / 2 ) ];
 		$p95    = $samples[ (int) \ceil( 0.95 * ( $n - 1 ) ) ];
 		return [ 'median' => $median, 'p95' => $p95, 'n' => $n ];
+	}
+
+	/**
+	 * Deterministic synthetic hook-name list: `bench_hook_0` … `bench_hook_N-1`.
+	 *
+	 * Names are unique and realistically sized, so repeated runs of the same
+	 * grid cell measure the same work.
+	 *
+	 * @param int $count How many.
+	 * @return string[]
+	 */
+	public static function synthetic_hooks( int $count ): array {
+		$hooks = [];
+		for ( $i = 0; $i < $count; $i++ ) {
+			$hooks[] = 'bench_hook_' . $i;
+		}
+		return $hooks;
 	}
 }
