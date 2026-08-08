@@ -1542,6 +1542,7 @@ class Request_Builder_Node extends Timer_Node {
 				],
 				[
 					'name'        => 'purge',
+					'action'      => true,
 					'description' => 'Drop every in-flight request. Operator recovery for a wedged cache — the requests are discarded, NOT emitted as timed out; ordinary ageing still emits.',
 					'args'        => [],
 					'handler'     => static function ( Command_Interpreter_Node $interpreter, array $args ): string {
