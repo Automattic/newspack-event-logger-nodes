@@ -915,15 +915,36 @@ class AppCoreTest extends TestCase {
 
 	// ── hook_start disabled short-circuit ──────────────────────────────
 
-	public function test_hook_start_returns_early_when_log_manager_disabled(): void {
-		// When the LogManager is disabled, hook_start must return the filter value
-		// untouched WITHOUT calling start() / wrap_callbacks (the hot-path guard).
-		$this->require_config_or_skip();
+	public function test_hook_start_returns_early_when_log_manager_never_started(): void {
+		// No rule matched this request, so the LogManager never started:
+		// hook_start must return the filter value untouched WITHOUT calling
+		// start() / wrap_callbacks (the hot-path guard).
+		$this->set_governing_rule( null );
 		$core = new Core();
 		$GLOBALS['_wp_test_current_filter'] = 'the_content';
 
-		Log_Manager::instance()->enabled = false;
+		$this->assertFalse( Log_Manager::instance()->is_started(), 'precondition: nothing matched' );
 		$this->assertSame( 'passthrough', $core->hook_start( 'passthrough' ) );
+	}
+
+	public function test_hook_start_stops_instrumenting_after_finish(): void {
+		// finish() closes the logging window; a hook firing during shutdown
+		// must not be wrapped, even though the governing rule still says log.
+		$core     = $this->significant_core();
+		$original = function ( $v ) { return $v . ' LATE'; };
+		$hook     = new \WP_Hook();
+		$hook->callbacks = [ 10 => [ 'late' => [ 'function' => $original, 'accepted_args' => 1 ] ] ];
+		global $wp_filter;
+		$wp_filter['the_content'] = $hook;
+
+		Log_Manager::instance()->finish();
+
+		$this->assertSame( 'shutting-down', $core->hook_start( 'shutting-down' ) );
+		$this->assertSame(
+			$original,
+			$wp_filter['the_content']->callbacks[10]['late']['function'],
+			'a finished context must not wrap callbacks'
+		);
 	}
 
 	// ── wrap_callbacks: real wrap path (governing rule populates `significant`) ──

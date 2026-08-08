@@ -196,13 +196,13 @@ class LogManagerTest extends TestCase {
 		}
 	}
 
-	public function test_constructor_sets_enabled_when_logging_enabled(): void {
+	public function test_constructor_starts_when_logging_enabled(): void {
 		$this->require_config_or_skip();
 		$lm = Log_Manager::instance();
-		$this->assertTrue( $lm->enabled );
+		$this->assertTrue( $lm->is_started() );
 	}
 
-	public function test_constructor_disabled_when_config_disables_logging(): void {
+	public function test_constructor_does_not_start_when_config_disables_logging(): void {
 		$this->require_config_or_skip();
 		Log_Manager::reset();
 		Config::reset();
@@ -211,7 +211,7 @@ class LogManagerTest extends TestCase {
 		Config::reset();
 
 		$lm = Log_Manager::instance();
-		$this->assertFalse( $lm->enabled );
+		$this->assertFalse( $lm->is_started() );
 	}
 
 	// ── Request ID ─────────────────────────────────────────────────────────
@@ -472,8 +472,22 @@ class LogManagerTest extends TestCase {
 		// left matched-but-quiet requests invisible.
 		$this->require_config_or_skip();
 		$lm = $this->fresh_log_manager();
-		$this->assertTrue( $lm->enabled, 'precondition: this request is logged' );
+		$this->assertTrue( $lm->is_started(), 'precondition: this request is logged' );
 		$this->assertSame( $lm, Log_Manager::started_instance(), 'matched => started at construction' );
+	}
+
+	public function test_is_started_goes_false_after_finish(): void {
+		// The window closes at finish(): callers that gate instrumentation on
+		// is_started() must stop instrumenting once the request is closed out,
+		// even though the governing rule still says `log`.
+		$this->require_config_or_skip();
+		$lm = $this->fresh_log_manager();
+		$this->assertTrue( $lm->is_started(), 'precondition: this request is logged' );
+
+		$lm->finish();
+
+		$this->assertFalse( $lm->is_started(), 'finish() closes the logging window' );
+		$this->assertTrue( $lm->governing_rule()->is_log(), 'the governing rule still says log' );
 	}
 
 	public function test_started_instance_returns_the_started_instance(): void {
@@ -497,7 +511,7 @@ class LogManagerTest extends TestCase {
 		$this->require_config_or_skip();
 		$lm = Log_Manager::instance();
 
-		// start() requires ensure_started(), which sets up the firehose Topic.
+		// Construction already attached the firehose Topic start() writes to.
 		$lm->start( 'test_op', [ 'm' => 'starting operation' ] );
 		\usleep( 10000 ); // 10ms
 		$lm->complete( 'test_op' );
@@ -546,7 +560,6 @@ class LogManagerTest extends TestCase {
 	public function test_get_request_id_returns_string(): void {
 		$this->require_config_or_skip();
 		$lm = Log_Manager::instance();
-		// Force initialization by calling start (triggers ensure_started/init_firehose).
 		$lm->start( 'init' );
 		$rid = $lm->get_request_id();
 		$this->assertIsString( $rid );
@@ -578,7 +591,7 @@ class LogManagerTest extends TestCase {
 		] );
 		$_SERVER['REQUEST_URI'] = '/shop/cart';
 		$lm = $this->fresh_log_manager();
-		$this->assertTrue( $lm->enabled );
+		$this->assertTrue( $lm->is_started() );
 		$this->assertSame( 'shop', $lm->governing_rule()->id );
 		$this->assertSame( 'shop', $lm->governing_rule_id() );
 	}
@@ -591,7 +604,7 @@ class LogManagerTest extends TestCase {
 		] );
 		$_SERVER['REQUEST_URI'] = '/wp-cron.php';
 		$lm = $this->fresh_log_manager();
-		$this->assertFalse( $lm->enabled );
+		$this->assertFalse( $lm->is_started() );
 		$this->assertTrue( $lm->governing_rule()->is_skip() );
 	}
 
@@ -600,7 +613,7 @@ class LogManagerTest extends TestCase {
 		$this->set_rules_option( [ [ 'id' => 'shop', 'pattern' => '/shop/', 'action' => 'log' ] ] );
 		$_SERVER['REQUEST_URI'] = '/about';
 		$lm = $this->fresh_log_manager();
-		$this->assertFalse( $lm->enabled );
+		$this->assertFalse( $lm->is_started() );
 		$this->assertNull( $lm->governing_rule() );
 		$this->assertSame( '', $lm->governing_rule_id() );
 	}
@@ -635,11 +648,11 @@ class LogManagerTest extends TestCase {
 
 		$_SERVER['REQUEST_URI'] = '/health';
 		$lm = $this->fresh_log_manager();
-		$this->assertFalse( $lm->enabled, 'Skip rule should disable logging' );
+		$this->assertFalse( $lm->is_started(), 'Skip rule should disable logging' );
 
 		// Skip rule patterns are prefixes (no trailing '?'), so a sub-path is skipped too.
 		$_SERVER['REQUEST_URI'] = '/health/check';
-		$this->assertFalse( $this->fresh_log_manager()->enabled, 'a sub-path of a skip prefix is skipped' );
+		$this->assertFalse( $this->fresh_log_manager()->is_started(), 'a sub-path of a skip prefix is skipped' );
 	}
 
 	public function test_matches_url_filter_with_log_urls(): void {
@@ -648,7 +661,7 @@ class LogManagerTest extends TestCase {
 
 		$_SERVER['REQUEST_URI'] = '/other/page';
 		$lm = $this->fresh_log_manager();
-		$this->assertFalse( $lm->enabled, 'Non-matching URL should be disabled when a log rule is set' );
+		$this->assertFalse( $lm->is_started(), 'Non-matching URL should be disabled when a log rule is set' );
 	}
 
 	public function test_matches_url_filter_accepts_matching_url(): void {
@@ -658,7 +671,7 @@ class LogManagerTest extends TestCase {
 		// A prefix rule (no trailing '?'); a matching path enables logging.
 		$_SERVER['REQUEST_URI'] = '/api/';
 		$lm = $this->fresh_log_manager();
-		$this->assertTrue( $lm->enabled, 'Matching URL should be enabled' );
+		$this->assertTrue( $lm->is_started(), 'Matching URL should be enabled' );
 	}
 
 	// ── No emission gate: rule selections drive instrumentation at the ──
@@ -669,7 +682,7 @@ class LogManagerTest extends TestCase {
 		$this->set_rules_option( [ [ 'id' => 'jobs', 'pattern' => '/jobs/', 'action' => 'log' ] ] );
 		$_SERVER['REQUEST_URI'] = '/jobs/image-to-wordpress?job-worker';
 		$lm                     = $this->fresh_log_manager();
-		$this->assertTrue( $lm->enabled );
+		$this->assertTrue( $lm->is_started() );
 		$this->assertTrue( $lm->message( 'pyrobase (start)', [ 'm' => '/x.html' ] ) );
 		$this->assertTrue( $lm->message( 'metadatacache', [ 'm' => '731 l1, 25 apcu' ] ) );
 		$this->assertTrue( $lm->message( 'query hook', [ 'm' => 'q-9021' ] ) );
@@ -700,11 +713,11 @@ class LogManagerTest extends TestCase {
 
 		// A rule pattern (no trailing '?') matches anything starting with it.
 		$_SERVER['REQUEST_URI'] = '/api/data';
-		$this->assertTrue( $this->fresh_log_manager()->enabled, 'a path under the prefix matches' );
+		$this->assertTrue( $this->fresh_log_manager()->is_started(), 'a path under the prefix matches' );
 
 		// ...but only at the START, not a pattern appearing mid-URL.
 		$_SERVER['REQUEST_URI'] = '/v2/api/';
-		$this->assertFalse( $this->fresh_log_manager()->enabled, 'the prefix must match at the start, not mid-URL' );
+		$this->assertFalse( $this->fresh_log_manager()->is_started(), 'the prefix must match at the start, not mid-URL' );
 	}
 
 	public function test_matches_url_filter_log_urls_trailing_question_mark_is_exact(): void {
@@ -713,13 +726,13 @@ class LogManagerTest extends TestCase {
 
 		// The trailing '?' makes the pattern match ONLY '/news'.
 		$_SERVER['REQUEST_URI'] = '/news';
-		$this->assertTrue( $this->fresh_log_manager()->enabled, "'/news?' matches '/news' exactly" );
+		$this->assertTrue( $this->fresh_log_manager()->is_started(), "'/news?' matches '/news' exactly" );
 
 		$_SERVER['REQUEST_URI'] = '/news/123';
-		$this->assertFalse( $this->fresh_log_manager()->enabled, "'/news?' must not match a sub-path" );
+		$this->assertFalse( $this->fresh_log_manager()->is_started(), "'/news?' must not match a sub-path" );
 
 		$_SERVER['REQUEST_URI'] = '/newsletter';
-		$this->assertFalse( $this->fresh_log_manager()->enabled, "'/news?' must not match a longer sibling" );
+		$this->assertFalse( $this->fresh_log_manager()->is_started(), "'/news?' must not match a longer sibling" );
 	}
 
 	public function test_matches_url_filter_log_urls_home_page(): void {
@@ -728,10 +741,10 @@ class LogManagerTest extends TestCase {
 
 		// '/?' logs ONLY the home page.
 		$_SERVER['REQUEST_URI'] = '/';
-		$this->assertTrue( $this->fresh_log_manager()->enabled, "'/?' matches the home page" );
+		$this->assertTrue( $this->fresh_log_manager()->is_started(), "'/?' matches the home page" );
 
 		$_SERVER['REQUEST_URI'] = '/about';
-		$this->assertFalse( $this->fresh_log_manager()->enabled, "'/?' must not match any other page" );
+		$this->assertFalse( $this->fresh_log_manager()->is_started(), "'/?' must not match any other page" );
 	}
 
 	public function test_matches_url_filter_log_urls_strips_query_string(): void {
@@ -740,7 +753,7 @@ class LogManagerTest extends TestCase {
 
 		// The query string is removed before matching, so '/news?…' still matches '/news?'.
 		$_SERVER['REQUEST_URI'] = '/news?ref=newsletter';
-		$this->assertTrue( $this->fresh_log_manager()->enabled, 'the query string is stripped before matching' );
+		$this->assertTrue( $this->fresh_log_manager()->is_started(), 'the query string is stripped before matching' );
 	}
 
 	public function test_matches_url_filter_log_urls_multi_pattern_grouped(): void {
@@ -751,13 +764,13 @@ class LogManagerTest extends TestCase {
 		] );
 
 		$_SERVER['REQUEST_URI'] = '/foo/x';
-		$this->assertTrue( $this->fresh_log_manager()->enabled, 'the first rule matches' );
+		$this->assertTrue( $this->fresh_log_manager()->is_started(), 'the first rule matches' );
 
 		$_SERVER['REQUEST_URI'] = '/bar/x';
-		$this->assertTrue( $this->fresh_log_manager()->enabled, 'the second rule matches' );
+		$this->assertTrue( $this->fresh_log_manager()->is_started(), 'the second rule matches' );
 
 		$_SERVER['REQUEST_URI'] = '/other';
-		$this->assertFalse( $this->fresh_log_manager()->enabled, 'a non-matching URL is disabled' );
+		$this->assertFalse( $this->fresh_log_manager()->is_started(), 'a non-matching URL is disabled' );
 	}
 
 	public function test_matches_url_filter_skip_urls_use_the_same_scheme(): void {
@@ -769,11 +782,11 @@ class LogManagerTest extends TestCase {
 
 		// The trailing '?' skip rule matches ONLY '/health' exactly.
 		$_SERVER['REQUEST_URI'] = '/health';
-		$this->assertFalse( $this->fresh_log_manager()->enabled, "skip '/health?' skips '/health' exactly" );
+		$this->assertFalse( $this->fresh_log_manager()->is_started(), "skip '/health?' skips '/health' exactly" );
 
 		// A sub-path is NOT matched by the exact skip rule, so the '/' log rule governs.
 		$_SERVER['REQUEST_URI'] = '/health/check';
-		$this->assertTrue( $this->fresh_log_manager()->enabled, "skip '/health?' must not skip a sub-path" );
+		$this->assertTrue( $this->fresh_log_manager()->is_started(), "skip '/health?' must not skip a sub-path" );
 	}
 
 	// ── Line limiting ──────────────────────────────────────────────────────
@@ -827,7 +840,7 @@ class LogManagerTest extends TestCase {
 		Config::reset();
 
 		$lm = Log_Manager::instance();
-		$this->assertTrue( $lm->enabled );
+		$this->assertTrue( $lm->is_started() );
 
 		// Verify log_memory flag is set via reflection.
 		$ref = new \ReflectionProperty( Log_Manager::class, 'log_memory' );
@@ -1224,7 +1237,6 @@ class LogManagerTest extends TestCase {
 		$_SERVER['UNIQUE_ID'] = 'parent-rid-abc';
 
 		$parent = Log_Manager::instance();
-		// ensure_started populates request_id from UNIQUE_ID; trigger it.
 		$parent->start( 'init' );
 		$this->assertSame( 'parent-rid-abc', $parent->get_request_id() );
 
@@ -1270,12 +1282,22 @@ class LogManagerTest extends TestCase {
 
 	// -- flush() / refresh_firehose() ----------------------------------------
 
-	public function test_flush_no_topic_is_noop(): void {
+	public function test_flush_before_any_start_does_not_throw(): void {
 		$this->require_config_or_skip();
 
-		// Brand-new LogManager — topic isn't created until ensure_started().
 		$lm = Log_Manager::instance();
-		// No exception should fire from flush() before any start/message.
+		$lm->flush();
+		$this->assertTrue( true );
+	}
+
+	public function test_flush_no_topic_is_noop(): void {
+		$this->require_config_or_skip();
+		// A declined request never ran init_firehose, so there is no Topic.
+		$this->set_rules_option( [ [ 'id' => 'api', 'pattern' => '/api/', 'action' => 'log' ] ] );
+		$_SERVER['REQUEST_URI'] = '/test/page';
+		$lm                     = $this->fresh_log_manager();
+		$this->assertFalse( $lm->is_started(), 'precondition: nothing matched' );
+
 		$lm->flush();
 		$this->assertTrue( true );
 	}
@@ -1771,8 +1793,8 @@ class LogManagerTest extends TestCase {
 		Config::reset();
 
 		$lm = Log_Manager::instance();
-		$this->assertFalse( $lm->enabled );
-		// message() routes through ensure_started; with enabled=false it
+		$this->assertFalse( $lm->is_started() );
+		// message() is gated on `started`; a context that never started
 		// returns false without writing.
 		$this->assertFalse( $lm->message( 'never', [ 'm' => 'no-go' ] ) );
 	}
@@ -1856,14 +1878,13 @@ class LogManagerTest extends TestCase {
 		$this->assertStringEndsWith( '...', (string) $truncated_entry['m'] );
 	}
 
-	// ── ensure_started: re-entry safety ────────────────────────────────────
+	// ── message(): started without a topic ─────────────────────────────────
 
 	/**
-	 * `ensure_started()` is private but its re-entry guard is observable:
-	 * setting `started=true` via reflection short-circuits a subsequent
-	 * `message()` call without rerunning init_firehose. Confirms the
-	 * `if ( $this->started || ! $this->enabled || $this->finished )` early-out
-	 * doesn't try to write through a null topic.
+	 * `started` and the Topic are set together at construction, so the only
+	 * way to reach the topic-null guard is to force `started=true` by
+	 * reflection on a context the ruleset declined. message() must return
+	 * false there rather than write through a null topic.
 	 */
 	public function test_message_short_circuits_when_started_set_externally(): void {
 		$this->require_config_or_skip();
@@ -1898,11 +1919,6 @@ class LogManagerTest extends TestCase {
 		$cap     = (int) $cap_ref->getValue();
 
 		$lm  = Log_Manager::instance();
-		// Trigger ensure_started + log_process so the stack root is in place;
-		// otherwise the first start() ALSO calls log_process which pushes its
-		// own 'process' entry, racing with our seeded values.
-		$lm->start( 'priming_start' );
-
 		$ref = new \ReflectionProperty( Log_Manager::class, 'times' );
 
 		// Now overwrite to exactly cap entries (well past the seeded root).
@@ -1978,7 +1994,7 @@ class LogManagerTest extends TestCase {
 		] );
 		$_SERVER['REQUEST_URI'] = '/health';
 		$this->assertFalse(
-			$this->fresh_log_manager()->enabled,
+			$this->fresh_log_manager()->is_started(),
 			'the more specific skip rule wins over the shorter log rule'
 		);
 
@@ -1989,15 +2005,15 @@ class LogManagerTest extends TestCase {
 		] );
 		$_SERVER['REQUEST_URI'] = '/wp-admin/edit';
 		$this->assertTrue(
-			$this->fresh_log_manager()->enabled,
+			$this->fresh_log_manager()->is_started(),
 			'the more specific log rule wins over the shorter skip rule'
 		);
 	}
 
 	/**
 	 * URL with an explicit log rule and a NON-matching request —
-	 * `matches_url_filter` returns false AND sets enabled=false (no rule
-	 * matches ⇒ skip).
+	 * `matches_url_filter` returns false and leaves no governing rule
+	 * behind (no rule matches ⇒ skip).
 	 */
 	public function test_matches_url_filter_returns_false_when_no_rule_matches(): void {
 		$this->require_config_or_skip();
@@ -2006,7 +2022,7 @@ class LogManagerTest extends TestCase {
 		$lm     = $this->fresh_log_manager();
 		$result = $lm->matches_url_filter( '/totally/not/matching' );
 		$this->assertFalse( $result );
-		$this->assertFalse( $lm->enabled );
+		$this->assertNull( $lm->governing_rule() );
 	}
 
 	// ── refresh_firehose: post-init delegation via reflection ───────────────
