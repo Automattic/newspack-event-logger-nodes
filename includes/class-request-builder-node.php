@@ -59,7 +59,10 @@ class Request_Builder_Node extends Timer_Node {
 	 * writer, its reader and the `process (complete)` validator all read this —
 	 * three parallel lists is how `A` shipped writable but unreadable.
 	 */
-	public const ERROR_STATUSES = [ 'F', 'T', 'A' ];
+	public const ERROR_STATUSES = [ 'F', 'T', 'A', 'I' ];
+
+	/** Markers that close a request. They land even when the sequence broke. */
+	private const TERMINAL_KEYWORDS = [ 'process (complete)' => true, 'process (aborted)' => true ];
 
 	/** Default in-flight requests held per LRU bucket. */
 	public const DEFAULT_BUCKET_SIZE = 100;
@@ -279,7 +282,19 @@ class Request_Builder_Node extends Timer_Node {
 		}
 		if ( $seq_n > $expected ) {
 			$this->print_less_often( 'WARNING: missing message: expected #', (string) $expected, ', got #', (string) $seq_n, ' on ', $rid );
-			return;
+			// @longform The FIRST hole is the one worth naming: it is where a
+			// re-read starts. Re-stamping would name the last thing dropped,
+			// not the last thing kept. Terminal markers still land, or the
+			// request strands in the LRU and later reads as a timeout it never
+			// had. Resyncing is deliberately not done: entries behind a hole
+			// are out of order, so the trace and its flame graph are unusable
+			// regardless, and Job_Router does not read `n` at all.
+			if ( 0 === Core::int( $request->gap_after ?? 0, 0 ) ) {
+				$request->gap_after = $expected - 1;
+			}
+			if ( ! isset( self::TERMINAL_KEYWORDS[ $keyword ] ) ) {
+				return;
+			}
 		}
 		$request->expected_n = $seq_n + 1;
 
@@ -753,6 +768,7 @@ class Request_Builder_Node extends Timer_Node {
 			$request->entries     = [];
 			$request->state       = 'process';
 			$request->initialized = true;
+			$request->gap_after   = 0;
 			$request->rule_id     = \is_string( $entry['rule'] ?? null ) ? $entry['rule'] : '';
 		};
 
@@ -764,7 +780,8 @@ class Request_Builder_Node extends Timer_Node {
 			if ( ! \is_string( $error_status ) || ! \in_array( $error_status, $allowed, true ) ) {
 				$error_status = '-';
 			}
-			$request->error_status = $error_status;
+			// A hole outranks a nominal finish: the trace is partial, say so.
+			$request->error_status = Core::int( $request->gap_after ?? 0, 0 ) > 0 ? 'I' : $error_status;
 			$request->state        = 'complete';
 		};
 
