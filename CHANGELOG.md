@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.49.0] - 2026-08-09
+
 ### Added
 
 - A request running in job context logs a `message` line naming the record that
