@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.48.0] - 2026-08-09
+
+### Changed
+
+- Substrate pin moves to newspack-nodes v2.16.1 → v2.17.1.
+
+- One spelling for a generic type in docblocks: `array<string,mixed>`, no space
+  after the comma. Both parse identically; only that one highlights as a single
+  type in the editor. `lint-comments.php` carries the rule now, so it holds.
+
 ### Fixed
 
 - A request whose entry sequence broke now closes on `process (complete)`
