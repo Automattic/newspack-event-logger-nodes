@@ -127,25 +127,6 @@ class StatsStoreTest extends TestCase {
 		}
 		$this->assertTrue( $found_urls_ns, "Expected ':urls:' namespace in key: " . \implode( ',', $keys ) );
 	}
-
-	public function test_flush_all_rotates_salt_and_orphans_keys(): void {
-		$mc    = $this->seed_memd();
-		$store = $this->make_store();
-		$store->set_url_index_hourly( '2026-01-01-00-00', [ 'x' => [ 'url' => '/x' ] ] );
-		$old_keys = $mc->keys();
-		$this->assertNotEmpty( $old_keys );
-
-		$store->flush_all();
-		$store->set_url_index_hourly( '2026-01-01-00-00', [ 'y' => [ 'url' => '/y' ] ] );
-		$new_keys = $mc->keys();
-
-		$this->assertNotEquals( $old_keys, $new_keys, 'salt rotation should change keys' );
-		// The new bump should NOT find the old data because the prefix is different.
-		$stats = $store->get_url_bucket( '2026-01-01-00-00' );
-		$this->assertArrayNotHasKey( 'x', $stats );
-		$this->assertArrayHasKey( 'y', $stats );
-	}
-
 	public function test_fail_soft_get_returns_empty_when_memd_null(): void {
 		Core::$memd = null;
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );

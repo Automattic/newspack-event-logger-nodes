@@ -64,15 +64,6 @@ use Newspack_Nodes\Config_System\Settings_Renderer;
 class Admin {
 
 	/**
-	 * Nonce action for the flush-memcache-stats form. Doubles as the
-	 * `admin_post_{$action}` suffix routing that POST to `handle_flush_stats`.
-	 */
-	public const FLUSH_STATS_ACTION = 'newspack_event_logger_nodes_flush_stats';
-
-	/** POST field carrying the flush-memcache-stats nonce. */
-	public const FLUSH_STATS_NONCE  = 'newspack_event_logger_nodes_flush_stats_nonce';
-
-	/**
 	 * Menu page slug used by `add_options_page()` (the URL fragment after
 	 * `?page=`).
 	 */
@@ -163,7 +154,6 @@ class Admin {
 		\add_action( 'admin_menu', [ $this, 'add_admin_menu' ] );
 		\add_action( 'admin_init', [ $this, 'register_settings' ] );
 		\add_action( 'admin_post_' . self::RESET_ACTION, [ $this, 'handle_reset_settings' ] );
-		\add_action( 'admin_post_' . self::FLUSH_STATS_ACTION, [ $this, 'handle_flush_stats' ] );
 		\add_action( 'newspack_event_logger_nodes/settings_after_form', [ $this, 'render_rules_editor_section' ], 5 );
 		\add_action( 'newspack_event_logger_nodes/settings_after_form', [ $this, 'render_effective_config_section' ] );
 		\add_action( 'newspack_event_logger_nodes/settings_after_form', [ $this, 'render_maintenance_section' ] );
@@ -298,60 +288,6 @@ class Admin {
 				[
 					'page'  => self::MENU_SLUG,
 					'reset' => '1',
-				],
-				\admin_url( 'options-general.php' )
-			)
-			: '';
-		if ( '' !== $redirect ) {
-			\wp_safe_redirect( $redirect );
-			exit;
-		}
-		exit;
-	}
-
-	/**
-	 * Flush memcache stats by rotating the schema salt — the
-	 * `admin_post_{FLUSH_STATS_ACTION}` target. Every existing
-	 * `evlog[:salt]:p{N}:…` key orphans instantly and ages out by TTL.
-	 *
-	 * Every worker of every active topology is then flagged for restart, because
-	 * `Stats_Store` computes `prefix` in its constructor: a live
-	 * `Flame_Builder_Node` holds a store built under the OLD salt and would keep
-	 * writing there, defeating the flush. The restart is best-effort — a failure
-	 * only delays the new salt until the next worker spawn, so it is logged,
-	 * not surfaced.
-	 *
-	 * Redirects back to the settings page with `flushed=1` and the restart count,
-	 * and exits either way.
-	 */
-	public function handle_flush_stats(): void {
-		self::verify_admin_post( self::FLUSH_STATS_NONCE, self::FLUSH_STATS_ACTION );
-
-		// flush_all() only rotates the salt option; no memcache handle needed.
-		$max_lifespan = Config::value( 'min_lifetime' );
-		$stats        = new Stats_Store( 0, Core::num_int( $max_lifespan ) );
-		$stats->flush_all();
-
-		// Restart all workers: they cache the salt prefix at construction.
-		$restarted = 0;
-		try {
-			$workers   = Bootstrap::expand_workers();
-			$base_dir  = RuntimeConfig::get_base_directory();
-			$restarted = ( new CLI( $base_dir ) )->restart_workers( $workers, [], -1 );
-		} catch ( \Throwable $e ) {
-			// Best-effort; the next worker spawn picks up the salt regardless.
-			\Newspack_Nodes\Core::print_less_often(
-				'Stats flush: restart_workers failed — ',
-				$e->getMessage()
-			);
-		}
-
-		$redirect = \function_exists( 'admin_url' )
-			? \add_query_arg(
-				[
-					'page'      => self::MENU_SLUG,
-					'flushed'   => '1',
-					'restarted' => $restarted,
 				],
 				\admin_url( 'options-general.php' )
 			)
@@ -666,22 +602,19 @@ class Admin {
 	 * `handle_flush_stats`.
 	 */
 	public function render_maintenance_section(): void {
-		$flush_url = \function_exists( 'admin_url' ) ? \admin_url( 'admin-post.php' ) : '';
+		$settings_url = \function_exists( 'admin_url' ) ? \admin_url( 'admin.php?page=newspack-nodes' ) : '';
 		?>
 		<hr style="margin: 30px 0;">
 		<h2><?php \esc_html_e( 'Maintenance', 'newspack-event-logger-nodes' ); ?></h2>
-		<p>
-			<input type="button" class="button button-secondary"
-				value="<?php \esc_attr_e( 'Flush Cache', 'newspack-event-logger-nodes' ); ?>"
-				onclick="if ( confirm( '<?php echo \esc_js( \__( 'Flush all performance stats from memcache? Hourly stats, leaderboards, and URL data will be orphaned (TTL handles cleanup). request-workers will restart so the new salt takes effect immediately. This cannot be undone.', 'newspack-event-logger-nodes' ) ); ?>' ) ) { document.getElementById( 'newspack-event-logger-nodes-flush-form' ).submit(); }" />
-			<span class="description" style="margin-left: 10px;">
-				<?php \esc_html_e( 'Rotates the stats-salt so every existing stats key in memcache orphans instantly. Per-URL flame data expires via TTL.', 'newspack-event-logger-nodes' ); ?>
-			</span>
+		<p class="description">
+			<?php
+			\printf(
+				/* translators: %s: link to the Newspack Nodes settings page. */
+				\esc_html__( 'Flushing caches is a substrate-wide action: %s rotates this install\'s cache salt, orphaning every plugin\'s cached values at once.', 'newspack-event-logger-nodes' ),
+				'<a href="' . \esc_url( $settings_url ) . '">' . \esc_html__( 'Newspack Nodes settings', 'newspack-event-logger-nodes' ) . '</a>'
+			);
+			?>
 		</p>
-		<form id="newspack-event-logger-nodes-flush-form" method="post" action="<?php echo \esc_url( $flush_url ); ?>" style="display:none;">
-			<input type="hidden" name="action" value="<?php echo \esc_attr( self::FLUSH_STATS_ACTION ); ?>">
-			<?php \wp_nonce_field( self::FLUSH_STATS_ACTION, self::FLUSH_STATS_NONCE ); ?>
-		</form>
 		<?php
 	}
 
