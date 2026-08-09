@@ -15,10 +15,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   surface as `T`, telling the reader it timed out when it had not. One
   unparseable line cost a 12-minute phantom request in production.
 
-  It closes flagged, not clean: a new `I` error status says the render finished
-  but the trace has a hole, and `gap_after` carries the last entry that arrived
-  in order, which is where a re-read of the firehose starts. The detail view
-  renders both rather than leaving a reader to wonder why the trace stops.
+  It closes flagged, not clean. The hole is a line in the trace — an
+  `entries (lost)` row in the missing entry's own slot, naming both the entry
+  that broke the sequence and the last one that arrived in order, which is
+  where a re-read of the firehose starts — with that entry's
+  `segment:offset:length`, the ID `Consumer` stamps, so the line that broke the
+  sequence is one seek away. It does not claim the rest went
+  unsent: they generally did arrive and were discarded for being out of
+  sequence, which is the difference between re-reading the log and hunting for
+  a writer that died. With no resync there is exactly one hole and it is always
+  at the tail, so the row sits between the last good entry and the terminal
+  one. The list view, having no trace to put a line in, carries a new `I` error
+  status.
 
   Resyncing past the hole is deliberately not done. The entries behind it are
   out of order, so the trace and its flame graph are unusable regardless, and

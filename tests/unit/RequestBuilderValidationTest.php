@@ -29,11 +29,13 @@ class RequestBuilderValidationTest extends TestCase {
 		} );
 	}
 
-	private function fill( Request_Builder_Node $rb, int $n, string $rid, string $k, array $extra = [] ): void {
+	private function fill( Request_Builder_Node $rb, int $n, string $rid, string $k, array $extra = [], string $position = '' ): void {
 		$entry                     = \array_merge( [ 'n' => $n, 'rid' => $rid, 'k' => $k, 'ts' => 1_700_000_000 ], $extra );
 		$message                   = Message::new_message();
 		$message[ Message::TYPE ]  = Message::TM_STRUCT;
 		$message[ Message::KEY ]   = $rid;
+		// Consumer stamps segment:offset:length here; '' if nothing durable read it.
+		$message[ Message::ID ]    = $position;
 		$message[ Message::VALUE ] = $entry;
 		$rb->fill( $message );
 	}
@@ -108,33 +110,74 @@ class RequestBuilderValidationTest extends TestCase {
 	}
 
 	/**
-	 * ...and says so, rather than reading as a clean 200.
+	 * The hole is a line in the trace, at the point the entries went missing.
 	 *
-	 * `I` is its own marker: the render finished, but the trace has a hole, so
-	 * a reader knows the detail is partial without having to infer it.
+	 * With no resync there is exactly one hole and it is always at the tail, so
+	 * the marker sits between the last in-order entry and the terminal one —
+	 * where a reader scrolling the trace meets it, rather than as a header
+	 * badge they have to correlate against a number.
 	 */
-	public function test_a_gapped_request_is_flagged_incomplete_with_its_last_good_entry(): void {
+	public function test_a_gapped_request_carries_a_marker_where_the_entries_went_missing(): void {
 		$rb = $this->builder();
 		$this->fill( $rb, 1, 'seq_flag', 'process (start)', [ 'm' => '1 on h', 'l' => '' ] );
 		$this->fill( $rb, 2, 'seq_flag', 'request', [ 'm' => 'GET /d' ] );
 		$this->fill( $rb, 7, 'seq_flag', 'info', [ 'm' => 'past the gap' ] );
 		$this->fill( $rb, 8, 'seq_flag', 'process (complete)', [ 'duration_ms' => 9.0, 'status_code' => 200 ] );
 
-		$summary = $this->last_emitted( $rb );
-		$this->assertSame( 'I', $summary['error_status'], 'flagged incomplete, not a clean finish' );
-		$this->assertSame( 2, $summary['gap_after'], 'names the last entry that arrived in order' );
+		$emitted  = $this->last_emitted( $rb );
+		$keywords = \array_column( $emitted['entries'], 'k' );
+		$this->assertSame(
+			[ 'process (start)', 'request', 'entries (lost)', 'process (complete)' ],
+			$keywords,
+			'the marker sits between the last good entry and the terminal one'
+		);
+
+		// #3 is the one that broke the sequence; #2 is the last that arrived in
+		// order, and so where a re-read of the firehose starts.
+		$marker = $emitted['entries'][2];
+		$this->assertSame( 3, $marker['n'], 'it occupies the missing entry\'s slot, not a used one' );
+		$this->assertSame(
+			'discarded entries after #2',
+			$marker['m'],
+			'names the resume point, and does not claim the rest went unsent'
+		);
+
+		// The list view has no trace to put a line in, so it still needs the flag.
+		$this->assertSame( 'I', $emitted['error_status'], 'flagged incomplete, not a clean finish' );
 	}
 
-	/** An intact request keeps its nominal status and reports no hole. */
-	public function test_an_intact_request_is_not_flagged(): void {
+	/**
+	 * The marker carries where the last good entry sits on disk.
+	 *
+	 * Consumer stamps Message::ID as segment:offset:length, so naming the last
+	 * in-order entry's ID puts the line that broke the sequence one seek away —
+	 * the same coordinates the dead-letter log prints.
+	 */
+	public function test_the_marker_names_the_position_of_the_last_good_entry(): void {
+		$rb = $this->builder();
+		$this->fill( $rb, 1, 'seq_at', 'process (start)', [ 'm' => '1 on h', 'l' => '' ], '0:58746100:120' );
+		$this->fill( $rb, 2, 'seq_at', 'request', [ 'm' => 'GET /f' ], '0:58746220:127' );
+		$this->fill( $rb, 9, 'seq_at', 'info', [ 'm' => 'past the gap' ], '0:58746600:110' );
+		$this->fill( $rb, 10, 'seq_at', 'process (complete)', [ 'duration_ms' => 3.0, 'status_code' => 200 ], '0:58746710:99' );
+
+		$marker = $this->last_emitted( $rb )['entries'][2];
+		$this->assertSame(
+			'discarded entries after #2 at 0:58746220:127',
+			$marker['m'],
+			'the position is #2 — the last in order — not the out-of-sequence line that followed'
+		);
+	}
+
+	/** An intact request gets no marker and keeps its nominal status. */
+	public function test_an_intact_request_is_not_marked(): void {
 		$rb = $this->builder();
 		$this->fill( $rb, 1, 'seq_clean', 'process (start)', [ 'm' => '1 on h', 'l' => '' ] );
 		$this->fill( $rb, 2, 'seq_clean', 'request', [ 'm' => 'GET /e' ] );
 		$this->fill( $rb, 3, 'seq_clean', 'process (complete)', [ 'duration_ms' => 4.0, 'status_code' => 200 ] );
 
-		$summary = $this->last_emitted( $rb );
-		$this->assertSame( '-', $summary['error_status'] );
-		$this->assertSame( 0, $summary['gap_after'] );
+		$emitted = $this->last_emitted( $rb );
+		$this->assertNotContains( 'entries (lost)', \array_column( $emitted['entries'], 'k' ) );
+		$this->assertSame( '-', $emitted['error_status'] );
 	}
 
 	public function test_regressed_n_emits_duplicate_info(): void {

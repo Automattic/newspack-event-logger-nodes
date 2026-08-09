@@ -18,7 +18,7 @@
  */
 
 import { lazy, Suspense, useRef } from '@wordpress/element';
-import { __, sprintf } from '@wordpress/i18n';
+import { __ } from '@wordpress/i18n';
 
 /**
  * The flame graph drags in d3 and d3-flame-graph, the heaviest dependency in
@@ -63,9 +63,6 @@ export default function RequestDetailView( {
 	const revealRef = useRef( null );
 	const isTimedOut = requestDetail.error_status === 'T';
 	const isFatal = requestDetail.error_status === 'F';
-	// gap_after names the last in-order entry: where a re-read starts.
-	const isIncomplete = requestDetail.error_status === 'I';
-	const gapAfter = Number( requestDetail.gap_after ) || 0;
 	const hasEntries = indentedEntries.length > 0;
 	const hasFlame = flameData && flameData.children?.length > 0;
 	const hasProfiles = !! requestDetail.profiles;
@@ -112,28 +109,6 @@ export default function RequestDetailView( {
 							{ __( 'Status:', 'newspack-event-logger-nodes' ) }
 						</strong>{ ' ' }
 						{ requestDetail.status_code }
-					</p>
-				) }
-				{ isIncomplete && (
-					<p>
-						<strong>
-							{ __( 'Error:', 'newspack-event-logger-nodes' ) }
-						</strong>{ ' ' }
-						<span className="newspack-nodes-badge newspack-nodes-status is-warning">
-							{ gapAfter > 0
-								? sprintf(
-										/* translators: %d: sequence number of the last entry received in order. */
-										__(
-											'Incomplete trace (entries lost after #%d)',
-											'newspack-event-logger-nodes'
-										),
-										gapAfter
-								  )
-								: __(
-										'Incomplete trace (entries lost)',
-										'newspack-event-logger-nodes'
-								  ) }
-						</span>
 					</p>
 				) }
 				{ ( isTimedOut || isFatal ) && (
