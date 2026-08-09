@@ -24,6 +24,34 @@ class StatsStoreTest extends TestCase {
 		return new Stats_Store( partition: $partition, max_lifespan: $max_lifespan );
 	}
 
+	public function test_stats_keys_are_scoped_to_this_install(): void {
+		// Stats live in memcache alone, and two installs share one server on
+		// Atomic. Unscoped, `evlog:p0:hourly` is the SAME key for both, so a
+		// co-tenant's request volume lands in this install's dashboard.
+		$mc = $this->seed_memd();
+		// The suite nulls globals between tests; own the shim here.
+		$GLOBALS['wpdb'] = new class() {
+			public string $prefix      = 'wp_';
+			public string $base_prefix = 'wp_';
+		};
+		\Newspack_Nodes\Cache_Backend::$site = '';
+
+		$this->make_store()->set_hourly( [ "count" => 7719 ] );
+		$mine = $mc->keys();
+
+		$GLOBALS['wpdb']->base_prefix       = 'wpco_tenant_';
+		\Newspack_Nodes\Cache_Backend::$site = '';
+		$this->make_store()->set_hourly( [ "count" => 1 ] );
+
+		\Newspack_Nodes\Cache_Backend::$site = '';
+
+		$this->assertNotEmpty( $mine );
+		$this->assertSame( [], \array_intersect( $mine, \array_diff( $mc->keys(), $mine ) ) );
+		foreach ( $mc->keys() as $key ) {
+			$this->assertStringStartsWith( 'newspack_nodes:', $key );
+		}
+	}
+
 	public function test_namespace_constants_exist(): void {
 		$this->assertSame( 'hourly', Stats_Store::NS_HOURLY );
 		$this->assertSame( 'lb', Stats_Store::NS_LB );
@@ -286,7 +314,7 @@ class StatsStoreTest extends TestCase {
 		$store->set_hourly( $data );
 
 		$this->assertCount( 1, $captured );
-		$this->assertSame( 'evlog:p0:hourly', $captured[0][0] );
+		$this->assertSame( self::scoped( 'evlog:p0:hourly' ), $captured[0][0] );
 		$this->assertSame( $data, $captured[0][1] );
 		$this->assertSame( 86400, $captured[0][2] );
 		$this->assertSame( Stats_Store::NS_HOURLY, $captured[0][3] );
@@ -303,7 +331,7 @@ class StatsStoreTest extends TestCase {
 		$store->set_url_stats( 'abc', $data );
 
 		$this->assertCount( 1, $captured );
-		$this->assertSame( 'evlog:p0:url:abc', $captured[0][0] );
+		$this->assertSame( self::scoped( 'evlog:p0:url:abc' ), $captured[0][0] );
 		$this->assertSame( $data, $captured[0][1] );
 		$this->assertSame( $store->ttl_url_stats(), $captured[0][2] );
 		$this->assertSame( Stats_Store::NS_URL, $captured[0][3] );
@@ -368,13 +396,13 @@ class StatsStoreTest extends TestCase {
 	public function test_restore_writes_into_memcache_under_positive_ttl(): void {
 		$store = $this->make_store();
 		$data  = [ '2026-01-01-00' => [ 'count' => 9 ] ];
-		$this->assertTrue( $store->restore( 'evlog:p0:hourly', $data, 100 ) );
+		$this->assertTrue( $store->restore( self::scoped( 'evlog:p0:hourly' ), $data, 100 ) );
 		$this->assertSame( $data, $store->get_hourly() );
 	}
 
 	public function test_restore_returns_false_for_non_positive_ttl(): void {
 		$store = $this->make_store();
-		$this->assertFalse( $store->restore( 'evlog:p0:hourly', [ 'x' => 1 ], 0 ) );
+		$this->assertFalse( $store->restore( self::scoped( 'evlog:p0:hourly' ), [ 'x' => 1 ], 0 ) );
 		$this->assertSame( [], $store->get_hourly() );
 	}
 

@@ -5,7 +5,8 @@
  * The memcache schema for performance stats, expressed as one small key/value
  * API. Nine namespaces (`hourly`, `lb`, `lb_s`, `urls`, `url`, `dim`,
  * `url_dim`, `categories`, `url_cat`) live under the per-partition prefix
- * `evlog[:salt]:p{N}:`. `Flame_Builder_Node` produces every value;
+ * `evlog[:salt]:p{N}:`, under the install scope Cache_Backend owns.
+ * `Flame_Builder_Node` produces every value;
  * `App\Performance_CI_Node` and the admin flush button consume them.
  *
  * Stats live in memcache alone — the only durable state this file writes is the
@@ -448,14 +449,21 @@ class Stats_Store {
 	}
 
 	/**
-	 * Join a memcache key from the prefix, the partition, and the caller's parts.
+	 * Join a memcache key from the prefix, the partition, and the caller's parts,
+	 * scoped to this INSTALL by the substrate.
+	 *
+	 * @longform Stats live in memcache alone and two installs share one server
+	 * on Atomic, so the bare `evlog:p0:hourly` was the same key for both — a
+	 * co-tenant's request volume landing in this install's dashboard. The
+	 * rotatable salt stays inside the logical part, so `flush_all()` still
+	 * orphans this plugin's keys alone without touching the shared scope.
 	 *
 	 * @param string ...$parts Namespace token first, then any sub-keys.
 	 * @return string Full key.
 	 */
 	private function key( string ...$parts ): string {
 		\array_unshift( $parts, $this->prefix, 'p' . $this->partition );
-		return \implode( ':', $parts );
+		return \Newspack_Nodes\Cache_Backend::site_key( \implode( ':', $parts ) );
 	}
 
 	/**
@@ -491,7 +499,8 @@ class Stats_Store {
 	 * @return bool True when the set landed.
 	 */
 	public function restore( string $key, array $data, int $ttl ): bool {
-		if ( $ttl <= 0 || ! \str_starts_with( $key, $this->prefix . ':' ) ) {
+		// The guard is namespace membership, so it moves with the scope.
+		if ( $ttl <= 0 || ! \str_starts_with( $key, \Newspack_Nodes\Cache_Backend::site_key( $this->prefix ) . ':' ) ) {
 			return false;
 		}
 		return (bool) Core::$memd?->set( $key, $data, $ttl );

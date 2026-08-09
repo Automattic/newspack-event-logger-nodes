@@ -118,7 +118,7 @@ class FlameBuilderTest extends TestCase {
 		return \array_values(
 			\array_filter(
 				\array_keys( $this->read_mirror_frames( $p ) ),
-				static fn ( string $k ): bool => \str_starts_with( $k, 'evlog:p0:url:' )
+				static fn ( string $k ): bool => \str_starts_with( $k, self::scoped( 'evlog:p0:url:' ) )
 			)
 		);
 	}
@@ -1422,7 +1422,7 @@ class FlameBuilderTest extends TestCase {
 		$fb->flush();
 
 		// Lock should have been added and released (no leftover entry under that key).
-		$this->assertNotContains( 'evlog:auto_disable_lock', $mc->keys() );
+		$this->assertNotContains( self::scoped( 'evlog:auto_disable_lock' ), $mc->keys() );
 
 		// And the emit fired through to sink.
 		$auto_tune_msgs = \array_filter(
@@ -1436,7 +1436,7 @@ class FlameBuilderTest extends TestCase {
 		$mc         = new InMemoryMemcached();
 		Core::$memd = $mc;
 		// Pre-occupy the lock as if a sibling worker holds it.
-		$mc->add( 'evlog:auto_disable_lock', 'someone-else', 60 );
+		$mc->add( self::scoped( 'evlog:auto_disable_lock' ), 'someone-else', 60 );
 		$store = new Stats_Store( partition: 0, max_lifespan: 86400 );
 
 		$fb      = new Flame_Builder_Node();
@@ -2115,10 +2115,10 @@ class FlameBuilderTest extends TestCase {
 		$p->flush();
 
 		$frames = $this->read_mirror_frames( $p );
-		$this->assertArrayHasKey( 'evlog:p0:hourly', $frames, 'hourly aggregate landed' );
-		$this->assertSame( [ '2026-01-01-00' => [ 'count' => 7 ] ], $frames['evlog:p0:hourly']['data'] );
-		$this->assertSame( 86400, $frames['evlog:p0:hourly']['ttl'] );
-		$this->assertArrayHasKey( 'evlog:p0:lb:2026-01-01-00-05', $frames, 'leaderboard aggregate landed' );
+		$this->assertArrayHasKey( self::scoped( 'evlog:p0:hourly' ), $frames, 'hourly aggregate landed' );
+		$this->assertSame( [ '2026-01-01-00' => [ 'count' => 7 ] ], $frames[self::scoped( 'evlog:p0:hourly' )]['data'] );
+		$this->assertSame( 86400, $frames[self::scoped( 'evlog:p0:hourly' )]['ttl'] );
+		$this->assertArrayHasKey( self::scoped( 'evlog:p0:lb:2026-01-01-00-05' ), $frames, 'leaderboard aggregate landed' );
 	}
 
 	public function test_mirror_buffers_until_save_state(): void {
@@ -2133,11 +2133,11 @@ class FlameBuilderTest extends TestCase {
 
 		$store->set_hourly( [ '2026-01-01-00' => [ 'count' => 7 ] ] );
 		$p->flush();
-		$this->assertArrayNotHasKey( 'evlog:p0:hourly', $this->read_mirror_frames( $p ), 'not flushed before save_state' );
+		$this->assertArrayNotHasKey( self::scoped( 'evlog:p0:hourly' ), $this->read_mirror_frames( $p ), 'not flushed before save_state' );
 
 		$fb->save_state();
 		$p->flush();
-		$this->assertArrayHasKey( 'evlog:p0:hourly', $this->read_mirror_frames( $p ), 'flushed on save_state' );
+		$this->assertArrayHasKey( self::scoped( 'evlog:p0:hourly' ), $this->read_mirror_frames( $p ), 'flushed on save_state' );
 	}
 
 	public function test_uncommitted_writes_absent_from_partition(): void {
@@ -2209,9 +2209,9 @@ class FlameBuilderTest extends TestCase {
 		$url_keys = $this->url_flame_keys( $p );
 		$this->assertCount( $topn, $url_keys, 'exactly the configured top-N flame profiles persisted' );
 		for ( $i = 16 - $topn; $i <= 15; $i++ ) {
-			$this->assertContains( "evlog:p0:url:h{$i}", $url_keys );
+			$this->assertContains( self::scoped( "evlog:p0:url:h{$i}" ), $url_keys );
 		}
-		$this->assertNotContains( 'evlog:p0:url:h5', $url_keys, 'lowest-traffic URL evicted' );
+		$this->assertNotContains( self::scoped( 'evlog:p0:url:h5' ), $url_keys, 'lowest-traffic URL evicted' );
 	}
 
 	public function test_url_dim_and_url_cat_bounded_to_top_100(): void {
@@ -2238,14 +2238,14 @@ class FlameBuilderTest extends TestCase {
 		$p->flush();
 
 		$frames    = \array_keys( $this->read_mirror_frames( $p ) );
-		$dim_keys  = \array_filter( $frames, static fn ( string $k ): bool => \str_starts_with( $k, 'evlog:p0:url_dim:' ) );
-		$cat_keys  = \array_filter( $frames, static fn ( string $k ): bool => \str_starts_with( $k, 'evlog:p0:url_cat:' ) );
+		$dim_keys  = \array_filter( $frames, static fn ( string $k ): bool => \str_starts_with( $k, self::scoped( 'evlog:p0:url_dim:' ) ) );
+		$cat_keys  = \array_filter( $frames, static fn ( string $k ): bool => \str_starts_with( $k, self::scoped( 'evlog:p0:url_cat:' ) ) );
 		$this->assertCount( 100, $dim_keys, 'top-100 url_dim retained' );
 		$this->assertCount( 100, $cat_keys, 'top-100 url_cat retained' );
-		$this->assertContains( 'evlog:p0:url_dim:h1', $dim_keys, 'busiest url_dim retained' );
-		$this->assertNotContains( 'evlog:p0:url_dim:h105', $dim_keys, 'quietest url_dim evicted' );
-		$this->assertContains( 'evlog:p0:url_cat:h1', $cat_keys, 'busiest url_cat retained' );
-		$this->assertNotContains( 'evlog:p0:url_cat:h105', $cat_keys, 'quietest url_cat evicted' );
+		$this->assertContains( self::scoped( 'evlog:p0:url_dim:h1' ), $dim_keys, 'busiest url_dim retained' );
+		$this->assertNotContains( self::scoped( 'evlog:p0:url_dim:h105' ), $dim_keys, 'quietest url_dim evicted' );
+		$this->assertContains( self::scoped( 'evlog:p0:url_cat:h1' ), $cat_keys, 'busiest url_cat retained' );
+		$this->assertNotContains( self::scoped( 'evlog:p0:url_cat:h105' ), $cat_keys, 'quietest url_cat evicted' );
 	}
 
 	public function test_flame_requires_profiling_detail(): void {
@@ -2267,8 +2267,8 @@ class FlameBuilderTest extends TestCase {
 		$p->flush();
 
 		$frames = $this->read_mirror_frames( $p );
-		$this->assertArrayNotHasKey( 'evlog:p0:url:empty', $frames, 'un-profiled URL not mirrored' );
-		$this->assertArrayHasKey( 'evlog:p0:url:filled', $frames, 'profiled URL mirrored' );
+		$this->assertArrayNotHasKey( self::scoped( 'evlog:p0:url:empty' ), $frames, 'un-profiled URL not mirrored' );
+		$this->assertArrayHasKey( self::scoped( 'evlog:p0:url:filled' ), $frames, 'profiled URL mirrored' );
 	}
 
 	public function test_warm_memcache_skips_partition_reload(): void {
@@ -2277,7 +2277,7 @@ class FlameBuilderTest extends TestCase {
 		$p          = $this->make_partition( 'flames-stats' );
 
 		$now = \time();
-		$this->fill_partition_entry( $p, 'evlog:p0:hourly', [ 'from-partition' => [ 'count' => 99 ] ], 100, $now );
+		$this->fill_partition_entry( $p, self::scoped( 'evlog:p0:hourly' ), [ 'from-partition' => [ 'count' => 99 ] ], 100, $now );
 		$p->flush();
 
 		// Memcache already warm — reload must not clobber it.
@@ -2299,7 +2299,7 @@ class FlameBuilderTest extends TestCase {
 
 		// ttl=100 but the entry is 200s old → age >= ttl → decayed out.
 		$old = \time() - 200;
-		$this->fill_partition_entry( $p, 'evlog:p0:hourly', [ 'x' => [ 'count' => 5 ] ], 100, $old );
+		$this->fill_partition_entry( $p, self::scoped( 'evlog:p0:hourly' ), [ 'x' => [ 'count' => 5 ] ], 100, $old );
 		$p->flush();
 
 		$fb = new Flame_Builder_Node();
@@ -2347,8 +2347,8 @@ class FlameBuilderTest extends TestCase {
 		$p->flush();
 
 		$frames = $this->read_mirror_frames( $p );
-		$this->assertArrayHasKey( 'evlog:p0:url:abc', $frames, 'large mirror write survived (partition cap lifted in topology)' );
-		$this->assertSame( $data, $frames['evlog:p0:url:abc']['data'] );
+		$this->assertArrayHasKey( self::scoped( 'evlog:p0:url:abc' ), $frames, 'large mirror write survived (partition cap lifted in topology)' );
+		$this->assertSame( $data, $frames[self::scoped( 'evlog:p0:url:abc' )]['data'] );
 	}
 
 	public function test_save_state_without_partition_does_not_throw(): void {
@@ -2363,8 +2363,8 @@ class FlameBuilderTest extends TestCase {
 		$p          = $this->make_partition( 'flames-stats' );
 
 		$now = \time();
-		$this->fill_partition_entry( $p, 'evlog:p0:hourly', [ 'v1' => [ 'count' => 1 ] ], 100, $now );
-		$this->fill_partition_entry( $p, 'evlog:p0:hourly', [ 'v2' => [ 'count' => 2 ] ], 100, $now );
+		$this->fill_partition_entry( $p, self::scoped( 'evlog:p0:hourly' ), [ 'v1' => [ 'count' => 1 ] ], 100, $now );
+		$this->fill_partition_entry( $p, self::scoped( 'evlog:p0:hourly' ), [ 'v2' => [ 'count' => 2 ] ], 100, $now );
 		$p->flush();
 
 		$fb = new Flame_Builder_Node();
@@ -2428,7 +2428,7 @@ class FlameBuilderTest extends TestCase {
 		$fb->save_state();
 		$p->flush();
 
-		$this->assertArrayHasKey( 'evlog:p0:hourly', $this->read_mirror_frames( $p ), 'set_stats_store arms the mirror when a partition name is already set' );
+		$this->assertArrayHasKey( self::scoped( 'evlog:p0:hourly' ), $this->read_mirror_frames( $p ), 'set_stats_store arms the mirror when a partition name is already set' );
 	}
 
 	public function test_set_stats_target_verb_late_binds_a_forward_referenced_node(): void {
@@ -2450,7 +2450,7 @@ class FlameBuilderTest extends TestCase {
 		$fb->save_state();
 		$p->flush();
 
-		$this->assertArrayHasKey( 'evlog:p0:hourly', $this->read_mirror_frames( $p ), 'forward-referenced stats partition resolved lazily at flush' );
+		$this->assertArrayHasKey( self::scoped( 'evlog:p0:hourly' ), $this->read_mirror_frames( $p ), 'forward-referenced stats partition resolved lazily at flush' );
 	}
 }
 

@@ -31,6 +31,7 @@
 
 namespace Newspack_Event_Logger_Nodes;
 
+use Newspack_Nodes\Cache_Backend;
 use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
@@ -1676,7 +1677,7 @@ class Flame_Builder_Node extends Node {
 		}
 
 		$cache        = Core::$memd;
-		$lock_key     = 'evlog:auto_disable_lock';
+		$lock_key     = Cache_Backend::site_key( 'evlog:auto_disable_lock' );
 		$lock_timeout = 5;
 		$lock_value   = \bin2hex( \random_bytes( 8 ) );
 

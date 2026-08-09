@@ -92,4 +92,16 @@ abstract class TestCase extends RuntimeTestCase {
 			\Newspack_Event_Logger_Nodes\Config::reset();
 		}
 	}
+
+	/**
+	 * The install-scoped address of a logical memcache key.
+	 *
+	 * Tests assert on real keys, and the scope is not theirs to spell — deriving
+	 * it here is what stops a prefix change from needing 30 edits, and what
+	 * keeps a test from passing on a prefix mismatch instead of the thing it
+	 * means to check.
+	 */
+	protected static function scoped( string $logical ): string {
+		return \Newspack_Nodes\Cache_Backend::site_key( $logical );
+	}
 }
