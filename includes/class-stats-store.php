@@ -5,12 +5,11 @@
  * The memcache schema for performance stats, expressed as one small key/value
  * API. Nine namespaces (`hourly`, `lb`, `lb_s`, `urls`, `url`, `dim`,
  * `url_dim`, `categories`, `url_cat`) live under the per-partition prefix
- * `evlog[:salt]:p{N}:`, under the install scope Cache_Backend owns.
+ * `evlog:p{N}:`, under the install scope Cache_Backend owns.
  * `Flame_Builder_Node` produces every value;
  * `App\Performance_CI_Node` and the admin flush button consume them.
  *
- * Stats live in memcache alone — the only durable state this file writes is the
- * salt option that prefixes the keys.
+ * Stats live in memcache alone; this file writes no durable state.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -26,7 +25,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
 /**
  * Stats storage using memcache.
  *
- * Keys are `evlog[:salt]:p{N}:{namespace}[:...]`, so every flame-builder
+ * Keys are `evlog:p{N}:{namespace}[:...]`, so every flame-builder
  * partition owns a disjoint keyspace and readers fan one store out per
  * partition. Values are plain arrays, always keyed by string.
  *
@@ -44,8 +43,10 @@ if ( ! \defined( 'ABSPATH' ) ) {
  * data" instead of an error. Keep it that way — the SSE slot pool is
  * deliberately the opposite, and unifying the two breaks its rate limit.
  *
- * The prefix is computed once, in the constructor. A `flush_all()` salt
- * rotation therefore reaches a long-running worker only when it restarts.
+ * Flushing is the substrate's one button (`Cache_Backend::rotate_salt()`),
+ * which moves the install scope for every plugin at once; this keeps no salt
+ * of its own. The scope is memoized per process, so a long-running worker
+ * picks up a rotation when it restarts — which the flush handler triggers.
  */
 class Stats_Store {
 
@@ -77,12 +78,10 @@ class Stats_Store {
 	/** Per-URL dimensional time series. */
 	public const NS_URL_DIM     = 'url_dim';
 
-	/** Key prefix ahead of the salt. */
+	/** Key prefix under the install scope. */
 	private const PREFIX_BASE  = 'evlog';
 	/** Floor, in seconds, under both `ttl()` and `ttl_url_stats()`. */
 	private const PREFIX_FLOOR = 3600;
-	/** Option holding the rotatable salt; rotating it orphans every key. */
-	private const SALT_OPTION  = 'newspack_event_logger_nodes_stats_salt';
 
 	/**
 	 * Mirror seam — when set, invoked `(string $key, array $data, int $ttl, string $ns)`
@@ -114,7 +113,7 @@ class Stats_Store {
 	) {
 		$this->partition    = $partition;
 		$this->max_lifespan = \max( self::PREFIX_FLOOR, $max_lifespan );
-		$this->prefix       = $this->compute_prefix();
+		$this->prefix       = self::PREFIX_BASE;
 	}
 
 	/**
@@ -454,9 +453,7 @@ class Stats_Store {
 	 *
 	 * @longform Stats live in memcache alone and two installs share one server
 	 * on Atomic, so the bare `evlog:p0:hourly` was the same key for both — a
-	 * co-tenant's request volume landing in this install's dashboard. The
-	 * rotatable salt stays inside the logical part, so `flush_all()` still
-	 * orphans this plugin's keys alone without touching the shared scope.
+	 * co-tenant's request volume landing in this install's dashboard.
 	 *
 	 * @param string ...$parts Namespace token first, then any sub-keys.
 	 * @return string Full key.
@@ -487,7 +484,7 @@ class Stats_Store {
 
 	/**
 	 * Replay a mirrored write straight into memcache under a (decayed) TTL. Guards
-	 * ttl>0 and the current prefix (a rotated salt orphans the mirror, like it
+	 * ttl>0 and the current prefix (a rotated scope orphans the mirror, like it
 	 * orphans memcache).
 	 *
 	 * The write bypasses the mirror seam: this restores what the mirror already
@@ -617,36 +614,4 @@ class Stats_Store {
 		];
 	}
 
-	/**
-	 * Rotate the salt, orphaning every existing key at once — the schema migration
-	 * and the emergency flush share this one mechanism. Nothing is deleted; the
-	 * orphans age out on their own TTLs.
-	 *
-	 * This store picks up the new prefix immediately, but a worker that built its
-	 * store earlier keeps writing the old one until it restarts.
-	 *
-	 * @return bool Always true; the rotation cannot fail short of a fatal.
-	 */
-	public function flush_all(): bool {
-		$salt = \bin2hex( \random_bytes( 4 ) );
-		if ( \function_exists( 'update_option' ) ) {
-			\update_option( self::SALT_OPTION, $salt );
-		}
-		$this->prefix = self::PREFIX_BASE . ':' . $salt;
-		return true;
-	}
-
-	/**
-	 * Build the key prefix from the current salt. Outside WordPress — CLI and
-	 * unit tests, where `get_option` is absent — the prefix stays unsalted, which
-	 * keeps every such caller on one keyspace.
-	 */
-	private function compute_prefix(): string {
-		$salt = '';
-		if ( \function_exists( 'get_option' ) ) {
-			$opt  = \get_option( self::SALT_OPTION, '' );
-			$salt = Core::as_string( $opt );
-		}
-		return '' === $salt ? self::PREFIX_BASE : self::PREFIX_BASE . ':' . $salt;
-	}
 }

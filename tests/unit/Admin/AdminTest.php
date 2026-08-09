@@ -964,118 +964,6 @@ class AdminTest extends TestCase {
 
 		$this->assertStringContainsString( Field_Reset_Assets::highlight_style(), $html );
 	}
-
-	// ---- render_maintenance_section --------------------------------------
-
-	public function test_render_maintenance_section_outputs_flush_form(): void {
-		$admin = new Admin();
-		\ob_start();
-		$admin->render_maintenance_section();
-		$out = \ob_get_clean();
-
-		// Maintenance header.
-		$this->assertStringContainsString( 'Maintenance', $out );
-		// Flush button + hidden form posting back to admin-post with nonce.
-		$this->assertStringContainsString( 'Flush Cache', $out );
-		$this->assertStringContainsString( 'newspack-event-logger-nodes-flush-form', $out );
-		$this->assertStringContainsString( Admin::FLUSH_STATS_ACTION, $out );
-		$this->assertStringContainsString( Admin::FLUSH_STATS_NONCE, $out );
-		// The confirm() message references key copy.
-		$this->assertStringContainsString( 'Flush all performance stats', $out );
-	}
-
-	// ---- handle_flush_stats ----------------------------------------------
-
-	public function test_handle_flush_stats_rejects_missing_nonce(): void {
-		$_POST = [];
-		$admin = new Admin();
-		$this->expectException( \RuntimeException::class );
-		$this->expectExceptionMessage( 'Security check failed' );
-		$admin->handle_flush_stats();
-	}
-
-	public function test_handle_flush_stats_rejects_invalid_nonce(): void {
-		$_POST = [ Admin::FLUSH_STATS_NONCE => 'bogus' ];
-		$admin = new Admin();
-		$this->expectException( \RuntimeException::class );
-		$this->expectExceptionMessage( 'Security check failed' );
-		$admin->handle_flush_stats();
-	}
-
-	public function test_handle_flush_stats_rejects_unauthorized_user(): void {
-		$_POST                        = [ Admin::FLUSH_STATS_NONCE => wp_create_nonce( Admin::FLUSH_STATS_ACTION ) ];
-		$GLOBALS['_current_user_can'] = false;
-		$admin                        = new Admin();
-		$this->expectException( \RuntimeException::class );
-		$this->expectExceptionMessage( 'You do not have permission' );
-		$admin->handle_flush_stats();
-	}
-
-	public function test_handle_flush_stats_rotates_salt_and_redirects(): void {
-		$_POST = [ Admin::FLUSH_STATS_NONCE => wp_create_nonce( Admin::FLUSH_STATS_ACTION ) ];
-		// Seed an old salt — flush_all() must overwrite it.
-		\update_option( 'newspack_event_logger_nodes_stats_salt', 'old_salt' );
-
-		$admin = new Admin();
-		try {
-			$admin->handle_flush_stats();
-			$this->fail( 'expected RedirectException from wp_safe_redirect()' );
-		} catch ( RedirectException $e ) {
-			// Expected: handler completes via redirect.
-		}
-
-		// A new salt was written (Stats_Store::flush_all overwrites unconditionally).
-		$new_salt = \get_option( 'newspack_event_logger_nodes_stats_salt' );
-		$this->assertNotSame( 'old_salt', $new_salt );
-		$this->assertIsString( $new_salt );
-
-		// Redirect URL carries the flushed flag + restart count.
-		$this->assertNotNull( $GLOBALS['_last_redirect'] );
-		$this->assertStringContainsString( 'flushed=1', $GLOBALS['_last_redirect'] );
-		$this->assertStringContainsString( 'restarted=', $GLOBALS['_last_redirect'] );
-		$this->assertStringContainsString( Admin::MENU_SLUG, $GLOBALS['_last_redirect'] );
-	}
-
-	public function test_handle_flush_stats_swallows_restart_throwable(): void {
-		// The worker-restart step is best-effort: if expand_workers / restart_workers
-		// throws (here forced via an uncreatable base_directory so the locks path
-		// blows up), the catch swallows it and the handler still redirects.
-		$this->use_base_dir( $this->base_dir, [ 'base_directory' => '/proc/this/cannot/be/created' ] );
-		$_POST = [ Admin::FLUSH_STATS_NONCE => wp_create_nonce( Admin::FLUSH_STATS_ACTION ) ];
-
-		$admin = new Admin();
-		try {
-			$admin->handle_flush_stats();
-			$this->fail( 'expected RedirectException even when the restart step throws' );
-		} catch ( RedirectException $e ) {
-			// Expected — the catch swallowed the restart failure and redirected.
-		}
-
-		// The salt still rotated (flush_all runs before the restart attempt).
-		$this->assertNotNull( \get_option( 'newspack_event_logger_nodes_stats_salt' ) );
-		$this->assertNotNull( $GLOBALS['_last_redirect'] );
-		$this->assertStringContainsString( 'flushed=1', $GLOBALS['_last_redirect'] );
-	}
-
-	public function test_handle_flush_stats_rotates_salt(): void {
-		// flush_all() only rotates the salt option — it doesn't touch memcache,
-		// so the handler runs regardless of memcache configuration.
-		$this->use_base_dir(
-			$this->base_dir,
-			[ 'memcache_servers' => [ '127.0.0.1:11211', '127.0.0.1:11212' ] ]
-		);
-		$_POST = [ Admin::FLUSH_STATS_NONCE => wp_create_nonce( Admin::FLUSH_STATS_ACTION ) ];
-
-		$admin = new Admin();
-		try {
-			$admin->handle_flush_stats();
-			$this->fail( 'expected RedirectException' );
-		} catch ( RedirectException $e ) {
-			// Expected.
-		}
-		$this->assertNotNull( \get_option( 'newspack_event_logger_nodes_stats_salt' ) );
-	}
-
 	public function test_maybe_request_worker_restart_swallows_throwables_in_worker_groups_path(): void {
 		// Same defensive path on the regular (request-workers / job-workers)
 		// branch — Config::load_config() failing is caught and the handler
@@ -1111,48 +999,6 @@ class AdminTest extends TestCase {
 		);
 		$this->assertSame( [ 'init', 'other' ], $result );
 	}
-
-	public function test_handle_flush_stats_with_default_memcache_when_unset(): void {
-		// No memcache_servers configured — handler falls back to DEFAULT_SERVERS.
-		$this->use_base_dir( $this->base_dir, [] );
-		$_POST = [ Admin::FLUSH_STATS_NONCE => wp_create_nonce( Admin::FLUSH_STATS_ACTION ) ];
-
-		$admin = new Admin();
-		try {
-			$admin->handle_flush_stats();
-			$this->fail( 'expected RedirectException' );
-		} catch ( RedirectException $e ) {
-			// Expected.
-		}
-		$this->assertNotNull( \get_option( 'newspack_event_logger_nodes_stats_salt' ) );
-	}
-
-	public function test_constructor_registers_admin_post_flush_action(): void {
-		$GLOBALS['_wp_actions'] = [];
-		$admin                  = new Admin();
-		$this->assertNotEmpty(
-			$GLOBALS['_wp_actions']['admin_post_' . Admin::FLUSH_STATS_ACTION] ?? [],
-			'admin_post hook for flush_stats must be wired'
-		);
-		$this->assertNotEmpty(
-			$GLOBALS['_wp_actions']['newspack_event_logger_nodes/settings_after_form'] ?? [],
-			'settings_after_form hook must be wired'
-		);
-		$this->assertNotEmpty(
-			$GLOBALS['_wp_actions']['pre_update_option'] ?? [],
-			'pre_update_option filter must be wired (skip_default_writes)'
-		);
-	}
-
-	public function test_render_maintenance_section_contains_flush_button(): void {
-		$admin = new Admin();
-		\ob_start();
-		$admin->render_maintenance_section();
-		$out = \ob_get_clean();
-		// The "Rotates the stats-salt" description string is present below the button.
-		$this->assertStringContainsString( 'stats-salt', $out );
-	}
-
 	public function test_register_settings_does_not_register_remote_settings(): void {
 		// The three remote-spoke geometry settings moved to the substrate; ELN
 		// no longer registers the options, the section, or the fields.
@@ -1184,6 +1030,16 @@ class AdminTest extends TestCase {
 		}
 	}
 
-}
+	public function test_maintenance_section_points_at_the_substrate_flush(): void {
+		// This plugin keeps no salt and no flush of its own: three independent
+		// rotations meant flushing one left the other two serving stale values.
+		// The section has to say where the one button lives.
+		\ob_start();
+		( new Admin() )->render_maintenance_section();
+		$out = (string) \ob_get_clean();
 
-} // close namespace Newspack_Event_Logger_Nodes\Tests\Unit\Admin
+		$this->assertStringContainsString( 'page=newspack-nodes', $out );
+		$this->assertStringNotContainsString( 'admin-post.php', $out, 'no flush form of its own' );
+	}
+}
+}
