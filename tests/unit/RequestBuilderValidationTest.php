@@ -48,6 +48,22 @@ class RequestBuilderValidationTest extends TestCase {
 		return $rb;
 	}
 
+	/**
+	 * The last request the builder actually finished, or null when it finished
+	 * none — which is the interesting case for a broken sequence.
+	 *
+	 * @param Request_Builder_Node $rb The builder under test.
+	 * @return array<string, mixed>|null
+	 */
+	private function last_emitted( Request_Builder_Node $rb ): ?array {
+		$captured = $rb->sink()->captured;
+		if ( [] === $captured ) {
+			return null;
+		}
+		$value = \end( $captured )[ Message::VALUE ];
+		return \is_array( $value ) ? $value : null;
+	}
+
 	public function test_in_order_sequence_emits_no_validation_log(): void {
 		$rb = $this->builder();
 		$this->fill( $rb, 1, 'seq_ok', 'process (start)', [ 'm' => '1 on h', 'l' => '' ] );
@@ -69,6 +85,56 @@ class RequestBuilderValidationTest extends TestCase {
 		// The skipped line did not advance expected: the real #2 still lands.
 		$this->fill( $rb, 2, 'seq_gap', 'request', [ 'm' => 'GET /b' ] );
 		$this->assertStringNotContainsString( 'expected #3, got #2', $this->log, '#2 arriving after the gap is in-order, not a dup' );
+	}
+
+	/**
+	 * A request whose sequence broke still closes on `process (complete)`.
+	 *
+	 * Holding it back leaves a half-built request in the LRU until a bucket
+	 * rotates it out — minutes of memory for something already finished, and it
+	 * surfaces as `T`, telling the reader it timed out when it did not.
+	 */
+	public function test_a_gapped_request_still_completes(): void {
+		$rb = $this->builder();
+		$this->fill( $rb, 1, 'seq_end', 'process (start)', [ 'm' => '1 on h', 'l' => '' ] );
+		$this->fill( $rb, 2, 'seq_end', 'request', [ 'm' => 'GET /c' ] );
+		// #3 never arrives; everything after it is out of sequence for good.
+		$this->fill( $rb, 4, 'seq_end', 'info', [ 'm' => 'past the gap' ] );
+		$this->fill( $rb, 5, 'seq_end', 'process (complete)', [ 'duration_ms' => 9.0, 'status_code' => 200 ] );
+
+		$summary = $this->last_emitted( $rb );
+		$this->assertNotNull( $summary, 'the request was emitted rather than left in the cache' );
+		$this->assertSame( 'complete', $summary['state'] );
+	}
+
+	/**
+	 * ...and says so, rather than reading as a clean 200.
+	 *
+	 * `I` is its own marker: the render finished, but the trace has a hole, so
+	 * a reader knows the detail is partial without having to infer it.
+	 */
+	public function test_a_gapped_request_is_flagged_incomplete_with_its_last_good_entry(): void {
+		$rb = $this->builder();
+		$this->fill( $rb, 1, 'seq_flag', 'process (start)', [ 'm' => '1 on h', 'l' => '' ] );
+		$this->fill( $rb, 2, 'seq_flag', 'request', [ 'm' => 'GET /d' ] );
+		$this->fill( $rb, 7, 'seq_flag', 'info', [ 'm' => 'past the gap' ] );
+		$this->fill( $rb, 8, 'seq_flag', 'process (complete)', [ 'duration_ms' => 9.0, 'status_code' => 200 ] );
+
+		$summary = $this->last_emitted( $rb );
+		$this->assertSame( 'I', $summary['error_status'], 'flagged incomplete, not a clean finish' );
+		$this->assertSame( 2, $summary['gap_after'], 'names the last entry that arrived in order' );
+	}
+
+	/** An intact request keeps its nominal status and reports no hole. */
+	public function test_an_intact_request_is_not_flagged(): void {
+		$rb = $this->builder();
+		$this->fill( $rb, 1, 'seq_clean', 'process (start)', [ 'm' => '1 on h', 'l' => '' ] );
+		$this->fill( $rb, 2, 'seq_clean', 'request', [ 'm' => 'GET /e' ] );
+		$this->fill( $rb, 3, 'seq_clean', 'process (complete)', [ 'duration_ms' => 4.0, 'status_code' => 200 ] );
+
+		$summary = $this->last_emitted( $rb );
+		$this->assertSame( '-', $summary['error_status'] );
+		$this->assertSame( 0, $summary['gap_after'] );
 	}
 
 	public function test_regressed_n_emits_duplicate_info(): void {

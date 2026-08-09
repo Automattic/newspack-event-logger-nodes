@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- A request whose entry sequence broke now closes on `process (complete)`
+  instead of being held back. It used to sit in the LRU until a bucket rotated
+  it out — minutes of memory for a render that had already finished — and then
+  surface as `T`, telling the reader it timed out when it had not. One
+  unparseable line cost a 12-minute phantom request in production.
+
+  It closes flagged, not clean: a new `I` error status says the render finished
+  but the trace has a hole, and `gap_after` carries the last entry that arrived
+  in order, which is where a re-read of the firehose starts. The detail view
+  renders both rather than leaving a reader to wonder why the trace stops.
+
+  Resyncing past the hole is deliberately not done. The entries behind it are
+  out of order, so the trace and its flame graph are unusable regardless, and
+  `Job_Router` never reads `n` — it forwards every job request either way.
+
 ## [0.47.1] - 2026-08-09
 
 ### Fixed
