@@ -282,16 +282,11 @@ class Request_Builder_Node extends Timer_Node {
 		}
 		if ( $seq_n > $expected ) {
 			$this->print_less_often( 'WARNING: missing message: expected #', (string) $expected, ', got #', (string) $seq_n, ' on ', $rid );
-			// @longform The FIRST hole is the one worth naming: it is where a
-			// re-read starts. Re-stamping would name the last thing dropped,
-			// not the last thing kept. Terminal markers still land, or the
-			// request strands in the LRU and later reads as a timeout it never
-			// had. Resyncing is deliberately not done: entries behind a hole
-			// are out of order, so the trace and its flame graph are unusable
-			// regardless, and Job_Router does not read `n` at all.
+			// First hole only: a later one names the last line dropped.
 			if ( 0 === Core::int( $request->gap_after ?? 0, 0 ) ) {
 				$request->gap_after = $expected - 1;
 			}
+			// Terminal markers still land, or the request strands in the LRU.
 			if ( ! isset( self::TERMINAL_KEYWORDS[ $keyword ] ) ) {
 				return;
 			}
