@@ -1,4 +1,4 @@
-var stale_timeout = 60
+var stale_timeout = 600
 include job-feed
 include job-worker
 secure
