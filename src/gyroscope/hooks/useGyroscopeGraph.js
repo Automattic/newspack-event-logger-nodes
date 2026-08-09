@@ -4,7 +4,7 @@
  * substrate `RemoteLink` node instead of hand-wiring the I/O boundary:
  *
  *   gyroscope:link    RemoteLink — the `gyroscope.*` subscription. It composes an
- *                     UNNAMED SseIn (the EventSource ingress) and reuses the
+ *                     patron-owned `:sse-in` (EventSource ingress) and reuses the
  *                     backbone singletons `_http` (the POST /command boundary)
  *                     and `_heartbeat` (slot keep-alive), bridging the SseIn's
  *                     `connected` handshake to the heartbeat's slot lease. This

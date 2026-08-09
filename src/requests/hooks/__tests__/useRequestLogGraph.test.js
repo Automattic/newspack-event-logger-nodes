@@ -88,7 +88,7 @@ function makeFakeClient( payloadByVerb = {} ) {
 const INTERPRETER = '_command_interpreter';
 const ROUTER = '_router';
 const LINK = 'requestlog:link';
-// RemoteLink: unnamed SseIn + shared reserved _http/_heartbeat singletons.
+// RemoteLink: a patron-owned `:sse-in` + shared _http/_heartbeat singletons.
 const HTTP = '_http';
 const HEARTBEAT = '_heartbeat';
 const VIEW = 'requestlog:view';
@@ -130,17 +130,19 @@ describe( 'useRequestLogGraph — exospine + RemoteLink wiring', () => {
 		// The view sinks into the interpreter.
 		expect( Core.node( VIEW ) ).toBeTruthy();
 		expect( Core.node( VIEW ).sink ).toBe( interpreter );
-		// Shared _http/_heartbeat sink into the interpreter (SseIn unnamed).
+		// Shared _http/_heartbeat sink into the interpreter.
 		for ( const name of COMPOSED_NAMES ) {
 			const node = Core.node( name );
 			expect( node ).toBeTruthy();
 			expect( node.sink ).toBe( interpreter );
 		}
-		// The per-link SseIn name is no longer registered.
-		expect( Core.node( 'requestlog:link:sse-in' ) ).toBeNull();
+		// Registered so `trace` reaches it; patron keeps it off the canvas.
+		expect( Core.node( 'requestlog:link:sse-in' ) ).toBe(
+			Core.node( 'requestlog:link' ).sseIn
+		);
 	} );
 
-	test( 'steers flow with targets: the unnamed sse-in subscribes on `completed` and routes to view (and heartbeat → _http/workers)', () => {
+	test( 'steers flow with targets: the `:sse-in` subscribes on `completed` and routes to view (and heartbeat → _http/workers)', () => {
 		renderHook( () => useRequestLogGraph() );
 		// Unnamed SseIn opened on the `completed` subscribe topic.
 		expect( FakeEventSource.last.url ).toContain( 'subscribe=completed.*' );
@@ -624,7 +626,7 @@ describe( 'useRequestLogGraph — graphGeneration Reset Graph', () => {
 		// Soft nodes rebuild fresh; the backbone (incl. shared _http) survives.
 		expect( Core.node( VIEW ) ).not.toBe( firstView );
 		expect( Core.node( HTTP ) ).toBe( firstHttp );
-		// The rebuilt link reopened the unnamed SseIn on the `completed` topic.
+		// The rebuilt link reopened the SseIn on the `completed` topic.
 		expect( FakeEventSource.last.url ).toContain( 'subscribe=completed.*' );
 		expect( Core.node( VIEW ).sink ).toBe( Core.node( INTERPRETER ) );
 		expect( Core.node( INTERPRETER ) ).toBe( backbone );

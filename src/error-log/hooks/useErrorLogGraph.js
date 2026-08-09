@@ -5,7 +5,7 @@
  * soft nodes hang off that backbone:
  *
  *   perferrors:link    RemoteLink — the full-duplex SSE+HTTP channel. It owns
- *                      an UNNAMED SseIn child (the EventSource ingress) and
+ *                      a patron-owned `:sse-in` (EventSource ingress) and
  *                      shares the backbone singletons `_http` (the POST
  *                      /command boundary) and `_heartbeat` (slot keep-alive),
  *                      bridging `connected → slot` between them. `.client` is

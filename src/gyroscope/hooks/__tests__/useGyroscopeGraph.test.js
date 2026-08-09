@@ -75,7 +75,7 @@ beforeEach( () => {
 const INTERPRETER = '_command_interpreter';
 const ROUTER = '_router';
 const LINK = 'gyroscope:link';
-// RemoteLink has an unnamed SseIn + shares the reserved _http/_heartbeat.
+// RemoteLink owns a `:sse-in` + shares the reserved _http/_heartbeat.
 const HTTP = '_http';
 const HEARTBEAT = '_heartbeat';
 const VIEW = 'gyroscope:view';
@@ -123,13 +123,15 @@ describe( 'useGyroscopeGraph — exospine + RemoteLink wiring', () => {
 			expect( node ).toBeTruthy();
 			expect( node.sink ).toBe( interpreter );
 		}
-		// The per-link SseIn name is no longer registered.
-		expect( Core.node( 'gyroscope:link:sse-in' ) ).toBeNull();
+		// Registered so `trace` reaches it; patron keeps it off the canvas.
+		expect( Core.node( 'gyroscope:link:sse-in' ) ).toBe(
+			Core.node( 'gyroscope:link' ).sseIn
+		);
 	} );
 
-	test( 'steers flow with targets: the unnamed sse-in subscribes on `gyroscope` and routes to view; heartbeat → _http/workers', () => {
+	test( 'steers flow with targets: the `:sse-in` subscribes on `gyroscope` and routes to view; heartbeat → _http/workers', () => {
 		renderHook( () => useGyroscopeGraph() );
-		// The unnamed SseIn opened against the `gyroscope` subscribe topic.
+		// The the SseIn opened against the `gyroscope` subscribe topic.
 		expect( FakeEventSource.last.url ).toContain( 'subscribe=gyroscope.*' );
 		expect( Core.node( HEARTBEAT ).target ).toBe( `${ HTTP }/workers` );
 	} );
@@ -430,7 +432,7 @@ describe( 'useGyroscopeGraph — graphGeneration Reset Graph', () => {
 		// Soft nodes rebuild fresh; backbone (incl shared `_http`) survives.
 		expect( Core.node( VIEW ) ).not.toBe( firstView );
 		expect( Core.node( HTTP ) ).toBe( firstHttp );
-		// The rebuilt link reopened the unnamed SseIn on the `gyroscope` topic.
+		// The rebuilt link reopened the SseIn on the `gyroscope` topic.
 		expect( FakeEventSource.last.url ).toContain( 'subscribe=gyroscope.*' );
 		expect( Core.node( VIEW ).sink ).toBe( Core.node( INTERPRETER ) );
 		expect( Core.node( INTERPRETER ) ).toBe( backbone );
