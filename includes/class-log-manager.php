@@ -515,7 +515,7 @@ class Log_Manager {
 		}
 		$declared = '' === $log_path ? Bootstrap::node_dirs( self::FIREHOSE_NODE ) : [];
 		$template = '' === $log_path
-			? self::firehose_dir_template()
+			? self::firehose_dir_template( Config::get_logs_directory() )
 			: $log_path . '.p{partition}';
 		$count    = \max(
 			\count( $declared ),
@@ -866,7 +866,7 @@ class Log_Manager {
 			$_SERVER['UNIQUE_ID'] = $this->request_id;
 		}
 
-		$dir_template        = self::firehose_dir_template();
+		$dir_template        = self::firehose_dir_template( Config::get_logs_directory() );
 		// THE accessor: past the cap no worker consumes, and the GC sweeps it.
 		$num_partitions      = \Newspack_Nodes\Bootstrap::global_num_partitions();
 		$this->partition_idx = Partition_Node::hash_to_partition( $this->request_id, $num_partitions );
@@ -894,9 +894,18 @@ class Log_Manager {
 		}
 	}
 
-	/** Dir template for the firehose Topic. The one place its layout is written. */
-	private static function firehose_dir_template(): string {
-		return Config::get_logs_directory() . '/firehose.p{partition}';
+	/**
+	 * Dir template for the firehose Topic — the one place its layout is written.
+	 * The Topic writes through it and the plugin registers it with the substrate's
+	 * log GC, so the dirs written and the dirs declared are one statement. The
+	 * default root is the `<config:logs_dir>` token: registration runs inside the
+	 * GC sweep and must not touch the filesystem.
+	 *
+	 * The `{partition}` spelling is load-bearing — `Topic_Node` substitutes only
+	 * that one, while the GC accepts either.
+	 */
+	public static function firehose_dir_template( string $logs_dir = '<config:logs_dir>' ): string {
+		return \rtrim( $logs_dir, '/' ) . '/firehose.p{partition}';
 	}
 
 	/**

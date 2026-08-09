@@ -70,9 +70,12 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	if ( ! \class_exists( '\\Newspack_Nodes\\Bootstrap' ) ) {
 		return;
 	}
-	// Dormant when too old; 2.5.0 = the unguarded Bootstrap::node_dirs floor.
+	// @longform Dormant when too old; 2.18.0 = the log-producer TEMPLATE
+	// contract. Below it the substrate reads our template as a literal dir
+	// NAME, leaves every live firehose.p{N} undeclared, and its GC deletes
+	// what it cannot see. WordPress does not order plugin updates.
 	if ( ! \method_exists( '\\Newspack_Nodes\\Bootstrap', 'version_at_least' )
-		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.5.0', 'Newspack Event Logger Nodes' ) ) {
+		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.18.0', 'Newspack Event Logger Nodes' ) ) {
 		return;
 	}
 
@@ -135,26 +138,22 @@ $_newspack_event_logger_nodes_load = static function (): void {
 \add_action( 'plugins_loaded', $_newspack_event_logger_nodes_load, 11 );
 
 /**
- * Log-dir basenames this plugin's request-scope producers write. The substrate
- * expands each over the configured partition count into the `{basename}.p{N}`
- * dirs its log GC declares and the Workers dashboard catalogs.
+ * Add this plugin's request-scope producers to the substrate's registered set,
+ * so the log GC declares — and the Workers dashboard catalogs — the dirs
+ * `Log_Manager` writes with no topology Partition node behind them.
  *
- * `firehose` is `Log_Manager`'s. `jobintake` is the substrate's own `Job_Intake`
- * ingress, which the substrate already declares — the merge below dedupes.
- */
-const NEWSPACK_EVENT_LOGGER_NODES_RUNTIME_BASENAMES = [ 'firehose', 'jobintake' ];
-
-/**
- * Add this plugin's producers to the substrate's registered-producer set, so
- * the GC and the Workers catalog expect the dirs `Log_Manager` writes.
+ * The registered value is the writer's own dir template, expanded by the
+ * substrate over the configured partition count. `jobintake` is `Job_Intake`'s,
+ * substrate code that registers itself.
  *
  * @param array<int,string> $producers Producers registered by prior contributors.
  * @return array<int,string>
  */
 function newspack_event_logger_nodes_register_log_producers( array $producers ): array {
-	return \array_values( \array_unique(
-		\array_merge( $producers, NEWSPACK_EVENT_LOGGER_NODES_RUNTIME_BASENAMES )
-	) );
+	return \array_values( \array_unique( \array_merge(
+		$producers,
+		[ \Newspack_Event_Logger_Nodes\Log_Manager::firehose_dir_template() ]
+	) ) );
 }
 \add_filter(
 	'newspack_nodes/registered_log_producers',

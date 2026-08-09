@@ -4,13 +4,13 @@ namespace Newspack_Event_Logger_Nodes\Tests\Integration;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 
 /**
- * Verify the application registers its request-scope log producers
- * (`firehose`, `jobintake`) on the substrate's
- * `newspack_nodes/registered_log_producers` filter. Read by
- * `Newspack_Nodes\Log_Cleaner` to protect `{base}/logs/firehose.p{N}/` and
- * `{base}/logs/jobintake.p{N}/` from the flat-layout log GC — these dirs are
- * written from request scope (LogManager / JobIntake) and declared in no
- * `.tsl`, so without this registration the GC would orphan them.
+ * Verify the application registers the firehose on the substrate's
+ * `newspack_nodes/registered_log_producers` filter, as the dir template
+ * `Log_Manager` itself writes through. Read by `Newspack_Nodes\Log_Cleaner` to
+ * protect `{base}/logs/firehose.p{N}/` from the flat-layout log GC — those dirs
+ * are written from request scope and declared in no `.tsl`, so without this
+ * registration the GC would orphan them. `jobintake` is `Job_Intake`'s,
+ * substrate code that registers itself.
  */
 class RegisteredLogProducersTest extends TestCase {
 	private string $tmp;
@@ -34,14 +34,13 @@ class RegisteredLogProducersTest extends TestCase {
 		parent::tearDown();
 	}
 
-	public function test_registers_runtime_producers(): void {
-		// LogManager (firehose) + JobIntake (jobintake) write directly from
-		// request code without any topology Partition node. They MUST be
-		// registered as producers whenever the plugin is loaded — otherwise
-		// Log_Cleaner would orphan the very logs the plugin always writes to.
+	public function test_registers_the_template_the_firehose_writer_uses(): void {
+		// LogManager writes the firehose directly from request code, with no
+		// topology Partition node — without this registration Log_Cleaner would
+		// orphan the very log the plugin always writes to. The registered value is
+		// the writer's OWN dir template, so the two cannot drift.
 		$producers = \apply_filters( 'newspack_nodes/registered_log_producers', [] );
-		$this->assertContains( 'firehose', $producers );
-		$this->assertContains( 'jobintake', $producers );
+		$this->assertContains( \Newspack_Event_Logger_Nodes\Log_Manager::firehose_dir_template(), $producers );
 	}
 
 	public function test_registration_is_additive(): void {
@@ -51,28 +50,30 @@ class RegisteredLogProducersTest extends TestCase {
 			[ 'someoneelse' ]
 		);
 		$this->assertContains( 'someoneelse', $producers );
-		$this->assertContains( 'firehose', $producers );
-		$this->assertContains( 'jobintake', $producers );
+		$this->assertContains( \Newspack_Event_Logger_Nodes\Log_Manager::firehose_dir_template(), $producers );
 	}
 
 	public function test_registration_does_not_duplicate(): void {
-		// Re-passing a runtime basename must not produce a duplicate entry.
-		$producers = \apply_filters(
-			'newspack_nodes/registered_log_producers',
-			[ 'firehose' ]
-		);
+		// Re-passing a registered template must not produce a duplicate entry.
+		$template  = \Newspack_Event_Logger_Nodes\Log_Manager::firehose_dir_template();
+		$producers = \apply_filters( 'newspack_nodes/registered_log_producers', [ $template ] );
 		$this->assertSame(
-			[ 'firehose' ],
-			\array_values( \array_filter( $producers, static fn ( $p ) => 'firehose' === $p ) )
+			[ $template ],
+			\array_values( \array_filter( $producers, static fn ( $p ) => $template === $p ) )
 		);
 	}
 
 	public function test_declared_log_dirs_protects_runtime_producer_partitions(): void {
-		// End-to-end: the substrate's config-derived declared-set must include
-		// firehose/jobintake partition dirs across the configured partition
-		// count, so the log GC keeps them.
+		// End-to-end: the substrate's config-derived declared-set must include the
+		// firehose partition dirs across the configured partition count, so the log
+		// GC keeps them. jobintake rides along from the substrate's own
+		// registration — Job_Intake is its code, not this plugin's.
 		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 2 ] );
 		$GLOBALS['_wp_options']['newspack_nodes_topologies'] = [];
+		\add_filter(
+			'newspack_nodes/registered_log_producers',
+			[ \Newspack_Nodes\Bootstrap::class, 'register_log_producers' ]
+		);
 
 		$declared = \Newspack_Nodes\Log_Cleaner::declared_log_dirs();
 		$this->assertContains( 'firehose.p0', $declared );
