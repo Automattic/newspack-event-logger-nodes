@@ -385,7 +385,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * ascending. Zero-count buckets are skipped, so the series is sparse.
 	 *
 	 * @param string $hash 12-char URL hash.
-	 * @return array<string, mixed>
+	 * @return array<string,mixed>
 	 */
 	private static function build_url_time_series( string $hash ): array {
 		$buckets = self::recent_url_buckets();
@@ -420,7 +420,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * Sums stay raw across the merge; `Stats_Store::sums_to_display` computes
 	 * the means once at the end.
 	 *
-	 * @return array<string, mixed>
+	 * @return array<string,mixed>
 	 */
 	private static function build_global_leaderboard(): array {
 		$count        = 0;
@@ -447,7 +447,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * Build the per-server category leaderboard for the recent window.
 	 *
 	 * @param string $server Server name to scope to.
-	 * @return array<string, mixed>
+	 * @return array<string,mixed>
 	 */
 	private static function build_server_leaderboard( string $server ): array {
 		$count        = 0;
@@ -493,7 +493,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * Sum-merge a single leaderboard bucket's categories into the running totals.
 	 * Used by both global + server leaderboard builders.
 	 *
-	 * @param array<string,array{samples:int,sum_time:float,sum_count:float,entries:array<int, mixed>}> $sums       Running totals (mutated).
+	 * @param array<string,array{samples:int,sum_time:float,sum_count:float,entries:array<int,mixed>}> $sums       Running totals (mutated).
 	 * @param array<string,mixed>                                                             $categories Inbound categories.
 	 */
 	private static function accumulate_leaderboard_categories( array &$sums, array $categories ): void {
@@ -519,7 +519,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 *
 	 * @param string $dimension One of DIMENSIONS.
 	 * @param string $server    Server scope; ignored for the `server` dimension.
-	 * @return array<array-key, mixed> Bucket keys derive from decoded memcache blobs.
+	 * @return array<array-key,mixed> Bucket keys derive from decoded memcache blobs.
 	 */
 	private static function merge_dim_across_partitions( string $dimension, string $server ): array {
 		$store_server = 'server' === $dimension ? '' : $server;
@@ -534,7 +534,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	/**
 	 * Sum-merge category buckets across all partitions (global scope).
 	 *
-	 * @return array<string, mixed>
+	 * @return array<string,mixed>
 	 */
 	private static function merge_categories_across_partitions(): array {
 		$merged = [];
@@ -549,7 +549,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * Sum-merge per-server category buckets across all partitions.
 	 *
 	 * @param string $server Server name to scope to.
-	 * @return array<string, mixed>
+	 * @return array<string,mixed>
 	 */
 	private static function merge_server_categories_across_partitions( string $server ): array {
 		$merged = [];
@@ -565,7 +565,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 *
 	 * @param string $hash      12-char URL hash.
 	 * @param string $dimension One of DIMENSIONS.
-	 * @return array<array-key, mixed> Bucket keys derive from decoded memcache blobs.
+	 * @return array<array-key,mixed> Bucket keys derive from decoded memcache blobs.
 	 */
 	private static function merge_url_dim( string $hash, string $dimension ): array {
 		$merged = [];
@@ -584,7 +584,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * Sum-merge per-URL category buckets for one hash.
 	 *
 	 * @param string $hash 12-char URL hash.
-	 * @return array<string, mixed>
+	 * @return array<string,mixed>
 	 */
 	private static function merge_url_categories( string $hash ): array {
 		$merged = [];
@@ -652,7 +652,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * applies; `slowest_urls` re-sorts a copy by p95.
 	 *
 	 * @param array<int,array<array-key,mixed>> $index Output of the memoized index() (load_index_default).
-	 * @return array<string, mixed>
+	 * @return array<string,mixed>
 	 */
 	private static function build_overview_payload( array $index ): array {
 		$time_series       = self::merge_hourly_across_partitions();
@@ -683,7 +683,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	/**
 	 * Sum-merge per-partition hourly buckets into one sorted time_series.
 	 *
-	 * @return array<int, mixed>
+	 * @return array<int,mixed>
 	 */
 	private static function merge_hourly_across_partitions(): array {
 		$merged = [];
@@ -711,7 +711,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * summable, so there is nothing to merge across partitions.
 	 *
 	 * @param string $hash 12-char URL hash.
-	 * @return array<array-key, mixed>|null Decoded per-URL stats blob from get_url_stats().
+	 * @return array<array-key,mixed>|null Decoded per-URL stats blob from get_url_stats().
 	 */
 	private static function find_url_aggregate( string $hash ): ?array {
 		foreach ( self::stats_stores() as $store ) {
@@ -826,7 +826,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param string $rid           Request id to match.
 	 * @param int    $entries_count Running scan budget, shared across partitions
 	 *                              by the caller and mutated here.
-	 * @return array<string, mixed>|null Search shape, or null when unmatched.
+	 * @return array<string,mixed>|null Search shape, or null when unmatched.
 	 */
 	private static function find_request_index_entry( string $dir, int $partition, string $rid, int &$entries_count ): ?array {
 		$result   = null;
@@ -872,7 +872,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param string $dir       Partition directory.
 	 * @param int    $partition Partition index (names the scratch node).
 	 * @param string $rid       Request id to match.
-	 * @return array<array-key, mixed>|null Decoded request body (keys come from the JSON envelope).
+	 * @return array<array-key,mixed>|null Decoded request body (keys come from the JSON envelope).
 	 */
 	private static function find_request_in_partition( string $dir, int $partition, string $rid ): ?array {
 		$result        = null;
@@ -929,7 +929,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * into, so a per-rid lookup has to fan out across all of them.
 	 *
 	 * @param string $rid Request id to match.
-	 * @return array<array-key, mixed>|null Decoded flame blob (keys come from the JSON envelope).
+	 * @return array<array-key,mixed>|null Decoded flame blob (keys come from the JSON envelope).
 	 */
 	private static function find_flame_for_rid( string $rid ): ?array {
 		$entries_count = 0;
@@ -1211,7 +1211,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * to apply this filter alone, leaving the footer reading an unfiltered
 	 * count ("1-100 of 5,000" above three rows).
 	 *
-	 * @param array<string, mixed> $row A URL index row.
+	 * @param array<string,mixed> $row A URL index row.
 	 */
 	private static function has_unclassified_requests( array $row ): bool {
 		$classified = Core::num_int( $row['count_2xx'] ?? 0 )
@@ -1318,7 +1318,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * TM_COMMAND|TM_ERROR reply, so no handler returns an error shape.
 	 *
 	 * @api Used by substrate.
-	 * @return array<string, mixed>
+	 * @return array<string,mixed>
 	 */
 	public static function node_schema(): array {
 		return \array_merge( parent::node_schema(), [

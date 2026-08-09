@@ -46,14 +46,14 @@ class Config {
 	/**
 	 * Cached config (file defaults + WordPress options + substrate values).
 	 *
-	 * @var array<string, mixed>|null
+	 * @var array<string,mixed>|null
 	 */
 	private static $config = null;
 
 	/**
 	 * Cached config defaults from files.
 	 *
-	 * @var array<string, mixed>|null
+	 * @var array<string,mixed>|null
 	 */
 	private static $config_defaults = null;
 
@@ -66,7 +66,7 @@ class Config {
 	 * per-request `alloptions` blob is the right trade — one targeted read from
 	 * the admin beats bloating every frontend request.
 	 *
-	 * @var array<string, bool>
+	 * @var array<string,bool>
 	 */
 	private static $non_autoloaded_options = [
 		self::OPTION_DISCOVERED_EVENTS => true,
@@ -81,16 +81,16 @@ class Config {
 	 * folds in the events spokes reported to the hub — offered to the operator,
 	 * not selected — and sorts the map for the picker.
 	 *
-	 * @return array<string, mixed> Associative array of event_name => hex_color.
+	 * @return array<string,mixed> Associative array of event_name => hex_color.
 	 */
 	public static function get_custom_colors(): array {
-		/** @var array<string, mixed> $colors */
+		/** @var array<string,mixed> $colors */
 		$colors = Core::arr( self::value( 'custom_colors' ) );
 
 		if ( \function_exists( 'apply_filters' ) ) {
 			$filtered = \apply_filters( 'newspack_event_logger_nodes_custom_colors', $colors );
 			// Validate filter return (any type); color maps are string-keyed.
-			/** @var array<string, mixed> $colors */
+			/** @var array<string,mixed> $colors */
 			$colors = Core::arr( $filtered );
 		}
 
@@ -152,7 +152,7 @@ class Config {
 	 * @return mixed|null Resolved value, or null if not owned by `eln`.
 	 */
 	public static function resolve_eln_token( string $key ) {
-		/** @var array<string, bool> $own */
+		/** @var array<string,bool> $own */
 		static $own = [
 			'is_hub'            => true,
 			'stats_mirror_node' => true,
@@ -188,7 +188,7 @@ class Config {
 	 * The result is memoized for the process; `reset()` clears it. Returns an
 	 * empty array when the substrate is absent — nothing to layer onto.
 	 *
-	 * @return array<string, mixed> Configuration array.
+	 * @return array<string,mixed> Configuration array.
 	 * @throws \RuntimeException If an explicit local config path or value tree is invalid.
 	 */
 	public static function load_config(): array {
@@ -244,7 +244,7 @@ class Config {
 	 * when one is set. That path is validated before it is `require`d, and an
 	 * unusable path throws rather than silently leaving the site on defaults.
 	 *
-	 * @return array<string, mixed> Configuration defaults from file.
+	 * @return array<string,mixed> Configuration defaults from file.
 	 * @throws \RuntimeException If an explicit local config path or value tree is invalid.
 	 */
 	public static function load_config_defaults(): array {

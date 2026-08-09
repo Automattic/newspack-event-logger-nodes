@@ -81,7 +81,7 @@ class Job_Router_Node extends Node {
 	 * through as data for the downstream reader to zero out.
 	 *
 	 * @api Entry point invoked by the substrate Router / upstream sink.
-	 * @param array<int, mixed> $message Message whose VALUE is the ingress entry array.
+	 * @param array<int,mixed> $message Message whose VALUE is the ingress entry array.
 	 */
 	public function fill( array $message ): void {
 		++$this->counter;
@@ -150,7 +150,7 @@ class Job_Router_Node extends Node {
 	 * is load-bearing — a stale-timeout argument here would be a regression.
 	 *
 	 * @api Used by the substrate to resolve the node + provide UI.
-	 * @return array<string, mixed> Schema consumed by `Command_Interpreter_Node`.
+	 * @return array<string,mixed> Schema consumed by `Command_Interpreter_Node`.
 	 */
 	public static function node_schema(): array {
 		return [

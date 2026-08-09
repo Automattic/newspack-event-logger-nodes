@@ -52,7 +52,7 @@ class LRU_Cache {
 	/** @var int Max items per bucket. */
 	private int $bucket_size;
 
-	/** @var array<int, array<string, mixed>> Live buckets, keyed by bucket index. */
+	/** @var array<int,array<string,mixed>> Live buckets, keyed by bucket index. */
 	private array $buckets = [];
 
 	/** @var int Newest bucket index; monotonic, so an index is never reused. */
@@ -268,7 +268,7 @@ class LRU_Cache {
 	 * which is all-digits roughly one time in 290 — callers must handle both,
 	 * and narrowing this to `string` makes those guards look like dead code.
 	 *
-	 * @return \Generator<array-key, mixed> Yields value keyed by cache key.
+	 * @return \Generator<array-key,mixed> Yields value keyed by cache key.
 	 */
 	public function iterate(): \Generator {
 		foreach ( $this->live_indices() as $i ) {
@@ -312,7 +312,7 @@ class LRU_Cache {
 	 * predecessor was actually waiting on tells the successor how many windows
 	 * went by unattended, and those are exactly the ones to repay.
 	 *
-	 * @return array<string, mixed> Keys `buckets`, `current` and `next_window`.
+	 * @return array<string,mixed> Keys `buckets`, `current` and `next_window`.
 	 */
 	public function get_state(): array {
 		return [
@@ -331,7 +331,7 @@ class LRU_Cache {
 	 * fuller ones than bucket_size, stays oversized until successive
 	 * rotations trim it one bucket at a time.
 	 *
-	 * @param array<string, mixed> $state State array from get_state().
+	 * @param array<string,mixed> $state State array from get_state().
 	 */
 	public function restore_state( array $state ): void {
 		$buckets = $state['buckets'] ?? [];
@@ -348,7 +348,7 @@ class LRU_Cache {
 		}
 
 		$max_key = \max( \array_keys( $buckets ) );
-		/** @var array<int, array<string, mixed>> $buckets */
+		/** @var array<int,array<string,mixed>> $buckets */
 		$this->buckets = $buckets;
 		$this->current = (int) \max( 0, \min( $current, $max_key ) );
 

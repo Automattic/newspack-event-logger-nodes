@@ -125,7 +125,7 @@ class Admin {
 	 * settings fields are all bools today, so the list is empty; it stays wired
 	 * because the first non-bool Field must behave correctly the day it lands.
 	 *
-	 * @var array<int, string>
+	 * @var array<int,string>
 	 */
 	private static array $delete_on_blank_options = [];
 
@@ -147,7 +147,7 @@ class Admin {
 	 * keeps this exact name because `tests/unit/Admin/AdminTest.php` reads it by
 	 * reflection to assert the reset set covers every registered setting.
 	 *
-	 * @var array<int, string>
+	 * @var array<int,string>
 	 */
 	private static array $option_names = [];
 

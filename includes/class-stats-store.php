@@ -121,7 +121,7 @@ class Stats_Store {
 	 * `Flame_Builder_Node` writes and reads through.
 	 *
 	 * @param string $bucket Bucket key.
-	 * @return array<string, mixed> Bucket contents, [] on miss.
+	 * @return array<string,mixed> Bucket contents, [] on miss.
 	 */
 	public function get_url_index_hourly( string $bucket ): array {
 		return $this->get_url_bucket( $bucket );
@@ -133,7 +133,7 @@ class Stats_Store {
 	 * count_3xx, count_4xx, count_5xx, sum_peak_mb, max_peak_mb, last_seen } }`.
 	 *
 	 * @param string $bucket Bucket key.
-	 * @return array<string, mixed> Bucket contents, [] on miss.
+	 * @return array<string,mixed> Bucket contents, [] on miss.
 	 */
 	public function get_url_bucket( string $bucket ): array {
 		$val = Core::$memd?->get( $this->key( self::NS_URLS, $bucket ) );
@@ -145,7 +145,7 @@ class Stats_Store {
 	 * sum_peak_mb } }`. One key holds the whole retention window, so a dashboard
 	 * gets every bucket in a single round-trip.
 	 *
-	 * @return array<string, mixed> Totals by bucket, [] on miss.
+	 * @return array<string,mixed> Totals by bucket, [] on miss.
 	 */
 	public function get_hourly(): array {
 		$val = Core::$memd?->get( $this->key( self::NS_HOURLY ) );
@@ -159,7 +159,7 @@ class Stats_Store {
 	 * cross-partition merges stay exact addition.
 	 *
 	 * @param string $bucket Bucket key.
-	 * @return array<string, mixed> Bucket sums, [] on miss.
+	 * @return array<string,mixed> Bucket sums, [] on miss.
 	 */
 	public function get_leaderboard_bucket( string $bucket ): array {
 		$val = Core::$memd?->get( $this->key( self::NS_LB, $bucket ) );
@@ -172,7 +172,7 @@ class Stats_Store {
 	 *
 	 * @param string $server Server name; hashed into the key.
 	 * @param string $bucket Bucket key.
-	 * @return array<string, mixed> Bucket sums, [] on miss.
+	 * @return array<string,mixed> Bucket sums, [] on miss.
 	 */
 	public function get_server_leaderboard_bucket( string $server, string $bucket ): array {
 		$val = Core::$memd?->get( $this->key( self::NS_LB_S, self::server_key( $server ), $bucket ) );
@@ -185,7 +185,7 @@ class Stats_Store {
 	 *
 	 * @param string $dimension Dimension name, e.g. `ua`.
 	 * @param string $server    Reporting server; '' reads the global series.
-	 * @return array<string, mixed> Series by bucket, [] on miss.
+	 * @return array<string,mixed> Series by bucket, [] on miss.
 	 */
 	public function get_dimensional( string $dimension, string $server = '' ): array {
 		$parts = [ self::NS_DIM, $dimension ];
@@ -201,7 +201,7 @@ class Stats_Store {
 	 * `{ dim => { bucket => { value => { c, s, m } } } }`.
 	 *
 	 * @param string $url_hash 12-char URL hash.
-	 * @return array<string, mixed> Series by dimension, [] on miss.
+	 * @return array<string,mixed> Series by dimension, [] on miss.
 	 */
 	public function get_url_dimensional( string $url_hash ): array {
 		$val = Core::$memd?->get( $this->key( self::NS_URL_DIM, $url_hash ) );
@@ -212,7 +212,7 @@ class Stats_Store {
 	 * Read the global category series: `{ bucket => { cat => { t, c, n } } }` —
 	 * summed time in ms, summed invocation count, and requests sampled.
 	 *
-	 * @return array<string, mixed> Series by bucket, [] on miss.
+	 * @return array<string,mixed> Series by bucket, [] on miss.
 	 */
 	public function get_categories(): array {
 		$val = Core::$memd?->get( $this->key( self::NS_CATEGORIES ) );
@@ -223,7 +223,7 @@ class Stats_Store {
 	 * Read one URL's category series. Same shape as `get_categories()`.
 	 *
 	 * @param string $url_hash 12-char URL hash.
-	 * @return array<string, mixed> Series by bucket, [] on miss.
+	 * @return array<string,mixed> Series by bucket, [] on miss.
 	 */
 	public function get_url_categories( string $url_hash ): array {
 		$val = Core::$memd?->get( $this->key( self::NS_URL_CAT, $url_hash ) );
@@ -233,7 +233,7 @@ class Stats_Store {
 	/**
 	 * Overwrite the partition's request totals.
 	 *
-	 * @param array<string, mixed> $data Totals keyed by bucket.
+	 * @param array<string,mixed> $data Totals keyed by bucket.
 	 * @return bool True when the set landed.
 	 */
 	public function set_hourly( array $data ): bool {
@@ -244,8 +244,8 @@ class Stats_Store {
 	 * Read many `urls` buckets in one round-trip. Per-key gets across a retention
 	 * window are a latency cliff on the dashboards; this is the path they use.
 	 *
-	 * @param array<int, string> $buckets Bucket keys.
-	 * @return array<string, mixed> Bucket contents keyed by bucket; misses absent.
+	 * @param array<int,string> $buckets Bucket keys.
+	 * @return array<string,mixed> Bucket contents keyed by bucket; misses absent.
 	 */
 	public function get_url_buckets( array $buckets ): array {
 		if ( empty( $buckets ) ) {
@@ -273,7 +273,7 @@ class Stats_Store {
 	 * Explicit bucket setter (FlameBuilder's full-bucket overwrite path).
 	 *
 	 * @param string               $bucket Bucket key.
-	 * @param array<string, mixed> $data   Whole bucket, replacing what is stored.
+	 * @param array<string,mixed> $data   Whole bucket, replacing what is stored.
 	 * @return bool True when the set landed.
 	 */
 	public function set_url_index_hourly( string $bucket, array $data ): bool {
@@ -285,7 +285,7 @@ class Stats_Store {
 	 * summable: readers take the first partition that has it rather than merging.
 	 *
 	 * @param string $url_hash 12-char URL hash.
-	 * @return array<array-key, mixed>|null Blob, or null on miss.
+	 * @return array<array-key,mixed>|null Blob, or null on miss.
 	 */
 	public function get_url_stats( string $url_hash ): ?array {
 		$val = Core::$memd?->get( $this->key( self::NS_URL, $url_hash ) );
@@ -296,7 +296,7 @@ class Stats_Store {
 	 * Overwrite one URL's stats blob, under the shorter per-URL TTL.
 	 *
 	 * @param string               $url_hash 12-char URL hash.
-	 * @param array<string, mixed> $data     Whole blob.
+	 * @param array<string,mixed> $data     Whole blob.
 	 * @return bool True when the set landed.
 	 */
 	public function set_url_stats( string $url_hash, array $data ): bool {
@@ -312,7 +312,7 @@ class Stats_Store {
 	 * Overwrite one global leaderboard bucket.
 	 *
 	 * @param string               $bucket Bucket key.
-	 * @param array<string, mixed> $data   Merged bucket sums.
+	 * @param array<string,mixed> $data   Merged bucket sums.
 	 * @return bool True when the set landed.
 	 */
 	public function set_leaderboard_bucket( string $bucket, array $data ): bool {
@@ -324,7 +324,7 @@ class Stats_Store {
 	 *
 	 * @param string               $server Server name; hashed into the key.
 	 * @param string               $bucket Bucket key.
-	 * @param array<string, mixed> $data   Merged bucket sums.
+	 * @param array<string,mixed> $data   Merged bucket sums.
 	 * @return bool True when the set landed.
 	 */
 	public function set_server_leaderboard_bucket( string $server, string $bucket, array $data ): bool {
@@ -335,7 +335,7 @@ class Stats_Store {
 	 * Overwrite one dimension's series, global or per server.
 	 *
 	 * @param string               $dimension Dimension name.
-	 * @param array<string, mixed> $data      Series keyed by bucket.
+	 * @param array<string,mixed> $data      Series keyed by bucket.
 	 * @param string               $server    Reporting server; '' writes the global series.
 	 * @return bool True when the set landed.
 	 */
@@ -351,7 +351,7 @@ class Stats_Store {
 	 * Overwrite one URL's dimensional series, every dimension in one value.
 	 *
 	 * @param string               $url_hash 12-char URL hash.
-	 * @param array<string, mixed> $data     Series keyed by dimension.
+	 * @param array<string,mixed> $data     Series keyed by dimension.
 	 * @return bool True when the set landed.
 	 */
 	public function set_url_dimensional( string $url_hash, array $data ): bool {
@@ -361,7 +361,7 @@ class Stats_Store {
 	/**
 	 * Overwrite the global category series.
 	 *
-	 * @param array<string, mixed> $data Series keyed by bucket.
+	 * @param array<string,mixed> $data Series keyed by bucket.
 	 * @return bool True when the set landed.
 	 */
 	public function set_categories( array $data ): bool {
@@ -373,7 +373,7 @@ class Stats_Store {
 	 * server token extends the `categories` key rather than opening a namespace.
 	 *
 	 * @param string $server Server name; hashed into the key.
-	 * @return array<string, mixed> Series by bucket, [] on miss.
+	 * @return array<string,mixed> Series by bucket, [] on miss.
 	 */
 	public function get_server_categories( string $server ): array {
 		$val = Core::$memd?->get( $this->key( self::NS_CATEGORIES, self::server_key( $server ) ) );
@@ -384,10 +384,10 @@ class Stats_Store {
 	 * Coerce a memcache get() result (mixed) to a string-keyed map, [] on miss.
 	 *
 	 * Every namespace stores a string-keyed map; re-key with (string) casts so
-	 * the static type is array<string, mixed> (is_array alone leaves keys mixed).
+	 * the static type is array<string,mixed> (is_array alone leaves keys mixed).
 	 *
 	 * @param mixed $val
-	 * @return array<string, mixed>
+	 * @return array<string,mixed>
 	 */
 	private static function map_or_empty( $val ): array {
 		if ( ! \is_array( $val ) ) {
@@ -404,7 +404,7 @@ class Stats_Store {
 	 * Overwrite one server's category series.
 	 *
 	 * @param string               $server Server name; hashed into the key.
-	 * @param array<string, mixed> $data   Series keyed by bucket.
+	 * @param array<string,mixed> $data   Series keyed by bucket.
 	 * @return bool True when the set landed.
 	 */
 	public function set_server_categories( string $server, array $data ): bool {
@@ -435,7 +435,7 @@ class Stats_Store {
 	 * Overwrite one URL's category series.
 	 *
 	 * @param string               $url_hash 12-char URL hash.
-	 * @param array<string, mixed> $data     Series keyed by bucket.
+	 * @param array<string,mixed> $data     Series keyed by bucket.
 	 * @return bool True when the set landed.
 	 */
 	public function set_url_categories( string $url_hash, array $data ): bool {
@@ -464,7 +464,7 @@ class Stats_Store {
 	 * resurrected on cold boot.
 	 *
 	 * @param string               $key  Full memcache key.
-	 * @param array<string, mixed> $data Value to store.
+	 * @param array<string,mixed> $data Value to store.
 	 * @param int                  $ttl  Expiry in seconds.
 	 * @param string               $ns   Namespace routing hint for the mirror.
 	 * @return bool True when the set landed.
@@ -486,7 +486,7 @@ class Stats_Store {
 	 * holds, and re-shadowing it would append a duplicate frame.
 	 *
 	 * @param string               $key  Full memcache key, prefix included.
-	 * @param array<string, mixed> $data Mirrored value.
+	 * @param array<string,mixed> $data Mirrored value.
 	 * @param int                  $ttl  Remaining seconds; <= 0 is refused.
 	 * @return bool True when the set landed.
 	 */
@@ -508,8 +508,8 @@ class Stats_Store {
 	 * Used by FlameBuilder at persist time to combine the current flush's bucket
 	 * with the already-persisted bucket of the same key. Static so callers can
 	 * use it without an instance.
-	 * @param array<string, mixed> $dst
-	 * @param array<string, mixed> $src
+	 * @param array<string,mixed> $dst
+	 * @param array<string,mixed> $src
 	 */
 	public static function merge_leaderboard_bucket( array &$dst, array $src ): void {
 		$dst['count']        = Core::num_int( $dst['count'] ?? null ) + Core::num_int( $src['count'] ?? null );
@@ -528,7 +528,7 @@ class Stats_Store {
 					'entries'   => [],
 				];
 			}
-			/** @var array{samples:int, sum_time:float, sum_count:float, entries:array<array-key, mixed>} $c */
+			/** @var array{samples:int, sum_time:float, sum_count:float, entries:array<array-key,mixed>} $c */
 			$c               = &$dst['categories'][ $cat ];
 			$c['samples']   += Core::num_int( $data['samples'] ?? null );
 			$c['sum_time']  += Core::num_float( $data['sum_time'] ?? null );
@@ -563,8 +563,8 @@ class Stats_Store {
 	 *
 	 * @param int                   $total_count  Total profiled requests.
 	 * @param float                 $sum_req_time Sum of per-request $req_time values.
-	 * @param array<string, mixed>  $sums         Per-category sums keyed by category name.
-	 * @return array<string, mixed> Display-shaped leaderboard data.
+	 * @param array<string,mixed>  $sums         Per-category sums keyed by category name.
+	 * @return array<string,mixed> Display-shaped leaderboard data.
 	 */
 	public static function sums_to_display( int $total_count, float $sum_req_time, array $sums ): array {
 		$display_cats = [];

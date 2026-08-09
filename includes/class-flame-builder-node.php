@@ -141,20 +141,20 @@ class Flame_Builder_Node extends Node {
 
 	/** @var Auto_Tuner_Node|null Owned sibling — receives auto-tune decisions. */
 	private ?Auto_Tuner_Node $auto_tuner = null;
-	/** @var array<string, array<string, mixed>> Bucket → category accumulator. */
+	/** @var array<string,array<string,mixed>> Bucket → category accumulator. */
 	private $cat_stats                   = [];
-	/** @var array<string, array<string, array<string, mixed>>> Server → bucket → category accumulator. */
+	/** @var array<string,array<string,array<string,mixed>>> Server → bucket → category accumulator. */
 	private $cat_stats_by_server         = [];
 
 	/** @var (callable(): int)|null Test seam: clock function for bucket-key derivation. */
 	private $clock_fn = null;
-	/** @var array<string, bool> Custom-event-name set ({name => true}). */
+	/** @var array<string,bool> Custom-event-name set ({name => true}). */
 	private array $custom_event_names       = [];
-	/** @var array<string, array<string, bool>> rule_id => {event => true} disable decisions. */
+	/** @var array<string,array<string,bool>> rule_id => {event => true} disable decisions. */
 	private array $custom_events_to_disable = [];
-	/** @var array<string, array<string, array<string, array{c: int, s: float|int, m: float|int}>>> Dim → bucket → value accumulator. */
+	/** @var array<string,array<string,array<string,array{c: int,s: float|int,m: float|int}>>> Dim → bucket → value accumulator. */
 	private $dim_stats                   = [];
-	/** @var array<string, array<string, array<string, array<string, array{c: int, s: float|int, m: float|int}>>>> Server → dim → bucket → value accumulator. */
+	/** @var array<string,array<string,array<string,array<string,array{c: int,s: float|int,m: float|int}>>>> Server → dim → bucket → value accumulator. */
 	private $dim_stats_by_server         = [];
 
 	/**
@@ -168,10 +168,10 @@ class Flame_Builder_Node extends Node {
 	 * tests do that to exercise the persisted-profile shape at a non-zero cap.
 	 */
 	private int $flame_topn = 0;
-	/** @var array<string, array<string, bool>> rule_id => {hook => true} disable decisions. */
+	/** @var array<string,array<string,bool>> rule_id => {hook => true} disable decisions. */
 	private array $hooks_to_disable         = [];
 
-	/** @var array<string, array<string, mixed>> Bucket-keyed hourly accumulator. */
+	/** @var array<string,array<string,mixed>> Bucket-keyed hourly accumulator. */
 	private $hourly_stats                = [];
 
 	/** Hub mode: also accumulate the per-server namespaces. Derived from `<eln:is_hub>`. */
@@ -179,11 +179,11 @@ class Flame_Builder_Node extends Node {
 
 	/** Unix time of the last flush(); fill() compares it against FLUSH_INTERVAL_SEC. */
 	private float $last_flush_time          = 0.0;
-	/** @var array<string, array<string, array<string, mixed>>> Server → bucket leaderboard accumulator. */
+	/** @var array<string,array<string,array<string,mixed>>> Server → bucket leaderboard accumulator. */
 	private $leaderboard_by_server_stats = [];
-	/** @var array<string, array<string, mixed>> Bucket-keyed leaderboard accumulator. */
+	/** @var array<string,array<string,mixed>> Bucket-keyed leaderboard accumulator. */
 	private $leaderboard_stats           = [];
-	/** @var array<string, array<string, bool>> rule_id => {event => true} newly promoted. */
+	/** @var array<string,array<string,bool>> rule_id => {event => true} newly promoted. */
 	private array $new_significant_events   = [];
 
 	/**
@@ -191,16 +191,16 @@ class Flame_Builder_Node extends Node {
 	 * reset_pending() both type-check; leaf shapes drive the deep-offset narrowing.
 	 *
 	 * @var array{
-	 *   hourly?: array<string, mixed>,
-	 *   dim?: array<string, array<string, array{c: int, s: float|int, m: float|int}>>,
-	 *   dim_by_server?: array<string, array<string, array<string, array{c: int, s: float|int, m: float|int}>>>,
-	 *   url_dim?: array<string, array<string, array<string, array{c: int, s: float|int, m: float|int}>>>,
-	 *   url_stats?: array<string, mixed>,
-	 *   cat?: array<string, array{t: float|int, c: float|int, n: int}>,
-	 *   cat_by_server?: array<string, array<string, array{t: float|int, c: float|int, n: int}>>,
-	 *   cat_by_url?: array<string, array<string, array{t: float|int, c: float|int, n: int}>>,
-	 *   leaderboard?: array{count?: int, sum_req_time?: float|int, categories: array<string, array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<string, array<int, float|int>>}>},
-	 *   leaderboard_by_server?: array<string, array{count?: int, sum_req_time?: float|int, categories: array<string, array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<string, array<int, float|int>>}>}>
+	 *   hourly?: array<string,mixed>,
+	 *   dim?: array<string,array<string,array{c: int,s: float|int,m: float|int}>>,
+	 *   dim_by_server?: array<string,array<string,array<string,array{c: int,s: float|int,m: float|int}>>>,
+	 *   url_dim?: array<string,array<string,array<string,array{c: int,s: float|int,m: float|int}>>>,
+	 *   url_stats?: array<string,mixed>,
+	 *   cat?: array<string,array{t: float|int,c: float|int,n: int}>,
+	 *   cat_by_server?: array<string,array<string,array{t: float|int,c: float|int,n: int}>>,
+	 *   cat_by_url?: array<string,array<string,array{t: float|int,c: float|int,n: int}>>,
+	 *   leaderboard?: array{count?: int, sum_req_time?: float|int, categories: array<string,array{samples: int,sum_time: float|int,sum_count: float|int,ts?: int,entries: array<string,array<int,float|int>>}>},
+	 *   leaderboard_by_server?: array<string,array{count?: int,sum_req_time?: float|int,categories: array<string,array{samples: int,sum_time: float|int,sum_count: float|int,ts?: int,entries: array<string,array<int,float|int>>}>}>
 	 * }
 	 */
 	private $pending = [];
@@ -209,7 +209,7 @@ class Flame_Builder_Node extends Node {
 	 * The per-PROCESS string-intern table, shared by every Flame_Builder in the
 	 * process — that sharing is the point, and is why this is static.
 	 *
-	 * @var array<string, string>
+	 * @var array<string,string>
 	 */
 	private static array $intern = [];
 
@@ -224,16 +224,16 @@ class Flame_Builder_Node extends Node {
 
 	/** @var Rule_Set|null Lazily-loaded per-worker ruleset (thresholds are per-rule). */
 	private ?Rule_Set $rule_set = null;
-	/** @var array<string, array<string, bool>> rule_id => {event => true} known-significant dedupe cache. */
+	/** @var array<string,array<string,bool>> rule_id => {event => true} known-significant dedupe cache. */
 	private array $significant_events       = [];
 
 	/** @var LRU_Cache Per-URL aggregate accumulator. */
 	private $stats_cache;
 
-	/** @var array<string, array{0: array<array-key, mixed>, 1: int}> Aggregate mirror writes (kept in full): key => [data, ttl]. */
+	/** @var array<string,array{0: array<array-key,mixed>,1: int}> Aggregate mirror writes (kept in full): key => [data, ttl]. */
 	private array $stats_mirror_buffer = [];
 
-	/** @var array<string, array<string, array{0: array<array-key, mixed>, 1: int, 2: int}>> Per-URL top-N: ns => key => [data, ttl, rank]. */
+	/** @var array<string,array<string,array{0: array<array-key,mixed>,1: int,2: int}>> Per-URL top-N: ns => key => [data, ttl, rank]. */
 	private array $stats_mirror_topn = [];
 
 	/**
@@ -253,11 +253,11 @@ class Flame_Builder_Node extends Node {
 
 	/** @var Stats_Store|null Memcache-backed stats store; null until `configure_stats` runs. */
 	private $stats_store = null;
-	/** @var array<string, array<string, array<string, mixed>>> Url-hash → bucket → category accumulator. */
+	/** @var array<string,array<string,array<string,mixed>>> Url-hash → bucket → category accumulator. */
 	private $url_cat_stats               = [];
-	/** @var array<string, array<string, array<string, array<string, array{c: int, s: float|int, m: float|int}>>>> Url-hash → dim → bucket → value accumulator. */
+	/** @var array<string,array<string,array<string,array<string,array{c: int,s: float|int,m: float|int}>>>> Url-hash → dim → bucket → value accumulator. */
 	private $url_dim_stats               = [];
-	/** @var array<string, array<string, mixed>> Bucket → url-hash URL stats accumulator. */
+	/** @var array<string,array<string,mixed>> Bucket → url-hash URL stats accumulator. */
 	private $url_stats                   = [];
 
 	/**
@@ -295,7 +295,7 @@ class Flame_Builder_Node extends Node {
 	 * downstream forward until this message's own bookkeeping is finished, so the
 	 * Consumer commits past it rather than replaying it.
 	 *
-	 * @param array<int, mixed> $message Positional Message array.
+	 * @param array<int,mixed> $message Positional Message array.
 	 */
 	public function fill( array $message ): void {
 		++$this->counter;
@@ -355,7 +355,7 @@ class Flame_Builder_Node extends Node {
 	 * rather than throwing. The reply is addressed TO the request's FROM — the
 	 * addressing is the correlation — and echoes back ID and KEY.
 	 *
-	 * @param array<int, mixed> $message Incoming request Message.
+	 * @param array<int,mixed> $message Incoming request Message.
 	 * @throws \RuntimeException When no sink is wired, leaving nowhere to reply.
 	 */
 	private function handle_request( array $message ): void {
@@ -405,7 +405,7 @@ class Flame_Builder_Node extends Node {
 	 *
 	 * @param string               $rid        Request ID.
 	 * @param string               $url_hash   URL hash.
-	 * @param array<string, mixed> $flame_data Flame tree; mutated locally, not by reference.
+	 * @param array<string,mixed> $flame_data Flame tree; mutated locally, not by reference.
 	 * @return bool Always true — aggregation proceeds whether or not a flame was written.
 	 */
 	private function store_flame( string $rid, string $url_hash, array $flame_data ): bool {
@@ -433,7 +433,7 @@ class Flame_Builder_Node extends Node {
 	/**
 	 * Total entries across a rule_id => {name => true} map of pending actions.
 	 *
-	 * @param array<string, array<string, bool>> $map Pending actions by rule.
+	 * @param array<string,array<string,bool>> $map Pending actions by rule.
 	 * @return int Entries summed across every rule.
 	 */
 	private static function map_total( array $map ): int {
@@ -466,9 +466,9 @@ class Flame_Builder_Node extends Node {
 	 * display layer divides at read time so cross-bucket merges stay exact.
 	 *
 	 * @param string                  $url_hash   URL hash of the request.
-	 * @param array<string, mixed>    $flame_data Per-request flame tree; `value` is the duration in ms.
-	 * @param array<array-key, mixed> $profiles   `profiles{}` from the request record.
-	 * @param array<array-key, mixed> $request    Full request record.
+	 * @param array<string,mixed>    $flame_data Per-request flame tree; `value` is the duration in ms.
+	 * @param array<array-key,mixed> $profiles   `profiles{}` from the request record.
+	 * @param array<array-key,mixed> $request    Full request record.
 	 */
 	private function accumulate_all_stats( string $url_hash, array $flame_data, array $profiles, array $request ): void {
 		$duration_val = $flame_data['value'] ?? 0;
@@ -514,11 +514,11 @@ class Flame_Builder_Node extends Node {
 	 * and its flame tree merged into the running one. Sums, never means.
 	 *
 	 * @param string                  $url_hash       URL hash of the request.
-	 * @param array<string, mixed>    $flame_data     Per-request flame tree.
+	 * @param array<string,mixed>    $flame_data     Per-request flame tree.
 	 * @param float                   $duration_ms    Request duration.
 	 * @param bool                    $record_timing  Whether timing counts.
 	 * @param int                     $now            Clock read for this request.
-	 * @return array<array-key, mixed> The updated aggregate.
+	 * @return array<array-key,mixed> The updated aggregate.
 	 */
 	private function accumulate_url_aggregate( string $url_hash, array $flame_data, float $duration_ms, bool $record_timing, int $now ): array {
 		$cached    = $this->stats_cache->get( $url_hash );
@@ -578,7 +578,7 @@ class Flame_Builder_Node extends Node {
 	 * extremes, status buckets, sampled durations and peak memory.
 	 *
 	 * @param string                  $url_hash      URL hash of the request.
-	 * @param array<array-key, mixed> $request       Full request record.
+	 * @param array<array-key,mixed> $request       Full request record.
 	 * @param float                   $duration_ms   Request duration.
 	 * @param bool                    $record_timing Whether timing counts.
 	 * @param int                     $timestamp     The request's timestamp.
@@ -607,7 +607,7 @@ class Flame_Builder_Node extends Node {
 				'max_peak_mb' => 0,
 			];
 		}
-		/** @var array{url: string, count: int, timed_count: int, sum_ms: float|int, min_ms: float|int, max_ms: float|int, last_seen: int, durations: array<int, float|int>, count_2xx: int, count_3xx: int, count_4xx: int, count_5xx: int, sum_peak_mb: float|int, max_peak_mb: float|int} $us */
+		/** @var array{url: string, count: int, timed_count: int, sum_ms: float|int, min_ms: float|int, max_ms: float|int, last_seen: int, durations: array<int,float|int>, count_2xx: int, count_3xx: int, count_4xx: int, count_5xx: int, sum_peak_mb: float|int, max_peak_mb: float|int} $us */
 		$us = $this->pending['url_stats'][ $url_hash ];
 		++$us['count'];
 		// Per-URL: workers keep timing on their own row.
@@ -648,7 +648,7 @@ class Flame_Builder_Node extends Node {
 	 * contribute nothing here — not count, not timing, not peak memory —
 	 * or one long-running worker would dominate the site-wide averages.
 	 *
-	 * @param array<array-key, mixed> $request       Full request record.
+	 * @param array<array-key,mixed> $request       Full request record.
 	 * @param float                   $duration_ms   Request duration.
 	 * @param bool                    $record_timing Whether timing counts.
 	 * @param bool                    $count_global  Whether this feeds global stats.
@@ -678,7 +678,7 @@ class Flame_Builder_Node extends Node {
 	 * globally, per reporting server (hub only), and per URL.
 	 *
 	 * @param string                  $url_hash      URL hash of the request.
-	 * @param array<array-key, mixed> $request       Full request record.
+	 * @param array<array-key,mixed> $request       Full request record.
 	 * @param string                  $server_name   Reporting server, '' when unknown.
 	 * @param float                   $duration_ms   Request duration.
 	 * @param bool                    $record_timing Whether timing counts.
@@ -738,8 +738,8 @@ class Flame_Builder_Node extends Node {
 	 * status code. Both the per-URL `count_Nxx` counters and the `status`
 	 * dimension key off this, and they used to derive it separately.
 	 *
-	 * @param array<array-key, mixed> $request Full request record.
-	 * @return int<2, 5>|null Null when the status code is outside 200-599.
+	 * @param array<array-key,mixed> $request Full request record.
+	 * @return int<2,5>|null Null when the status code is outside 200-599.
 	 */
 	private static function status_category( array $request ): ?int {
 		$status_code = $request['status_code'] ?? 0;
@@ -760,9 +760,9 @@ class Flame_Builder_Node extends Node {
 	 * independently at each accumulate site is the classic bug in this class.
 	 *
 	 * @param string                    $url_hash     URL hash of the request.
-	 * @param array<array-key, mixed>   $profiles     `profiles{}` from the request record.
-	 * @param array<array-key, mixed>   $request      Full request record.
-	 * @param array<array-key, mixed>   $aggregate    Per-URL aggregate, by reference.
+	 * @param array<array-key,mixed>   $profiles     `profiles{}` from the request record.
+	 * @param array<array-key,mixed>   $request      Full request record.
+	 * @param array<array-key,mixed>   $aggregate    Per-URL aggregate, by reference.
 	 * @param string                    $server_name  Reporting server, '' when unknown.
 	 * @param float                     $duration_ms  Request duration.
 	 * @param bool                      $count_global Whether this request feeds global stats.
@@ -788,9 +788,9 @@ class Flame_Builder_Node extends Node {
 		$aggregate_profiles = \is_array( $aggregate['profiles'] ?? null ) ? $aggregate['profiles'] : [];
 		$prof_cats          = $aggregate_profiles['categories'] ?? [];
 		$aggregate_profiles['categories'] = Core::arr( $prof_cats );
-		/** @var array{count?: int, sum_req_time?: float|int, categories: array<string, array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<string, array<int, float|int>>}>} $prof */
+		/** @var array{count?: int, sum_req_time?: float|int, categories: array<string,array{samples: int,sum_time: float|int,sum_count: float|int,ts?: int,entries: array<string,array<int,float|int>>}>} $prof */
 		$prof = $aggregate_profiles;
-		/** @var array{count?: int, sum_req_time?: float|int, categories: array<string, array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<string, array<int, float|int>>}>} $lb */
+		/** @var array{count?: int, sum_req_time?: float|int, categories: array<string,array{samples: int,sum_time: float|int,sum_count: float|int,ts?: int,entries: array<string,array<int,float|int>>}>} $lb */
 		$lb   = &$this->pending['leaderboard'];
 
 		$req_time = 0.0;
@@ -817,7 +817,7 @@ class Flame_Builder_Node extends Node {
 					'categories'   => [],
 				];
 			}
-			/** @var array{count?: int, sum_req_time?: float|int, categories: array<string, array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<string, array<int, float|int>>}>} $slb */
+			/** @var array{count?: int, sum_req_time?: float|int, categories: array<string,array{samples: int,sum_time: float|int,sum_count: float|int,ts?: int,entries: array<string,array<int,float|int>>}>} $slb */
 			$slb = &$this->pending['leaderboard_by_server'][ $server_name ];
 		}
 
@@ -844,7 +844,7 @@ class Flame_Builder_Node extends Node {
 
 			// Per-URL category.
 			$prof['categories'][ $category ] = self::add_category( $prof['categories'][ $category ] ?? null, $cat_time, $cat_count );
-			/** @var array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<string, array<int, float|int>>} $pcat */
+			/** @var array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<string,array<int,float|int>>} $pcat */
 			$pcat       = &$prof['categories'][ $category ];
 			$pcat['ts'] = \max( $pcat['ts'] ?? 0, $cat_ts );
 
@@ -852,14 +852,14 @@ class Flame_Builder_Node extends Node {
 			$lcat = null;
 			if ( $count_global ) {
 				$lb['categories'][ $category ] = self::add_category( $lb['categories'][ $category ] ?? null, $cat_time, $cat_count );
-				/** @var array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<string, array<int, float|int>>} $lcat */
+				/** @var array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<string,array<int,float|int>>} $lcat */
 				$lcat = &$lb['categories'][ $category ];
 			}
 
 			// Per-server leaderboard.
 			if ( null !== $slb ) {
 				$slb['categories'][ $category ] = self::add_category( $slb['categories'][ $category ] ?? null, $cat_time, $cat_count );
-				/** @var array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<string, array<int, float|int>>} $scat */
+				/** @var array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<string,array<int,float|int>>} $scat */
 				$scat = &$slb['categories'][ $category ];
 
 				$s_entries = $data['entries'] ?? null;
@@ -994,10 +994,10 @@ class Flame_Builder_Node extends Node {
 	 * Fold a category sample into a leaderboard bucket (sums, never means —
 	 * AGENTS.md decision 2). The per-URL caller stamps `ts` afterwards.
 	 *
-	 * @param array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<string, array<int, float|int>>}|null $slot Bucket, null on first use.
+	 * @param array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<string,array<int,float|int>>}|null $slot Bucket, null on first use.
 	 * @param float $time  Time to add.
 	 * @param float $count Call count to add.
-	 * @return array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<string, array<int, float|int>>} The updated bucket.
+	 * @return array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<string,array<int,float|int>>} The updated bucket.
 	 */
 	private static function add_category( ?array $slot, float $time, float $count ): array {
 		$slot ??= [ 'samples' => 0, 'sum_time' => 0.0, 'sum_count' => 0.0, 'entries' => [] ];
@@ -1010,10 +1010,10 @@ class Flame_Builder_Node extends Node {
 	/**
 	 * Fold one named entry into its triple `[ sum_time, sum_count, samples ]`.
 	 *
-	 * @param array<int, float|int>|null $slot  Entry triple, null on first use.
+	 * @param array<int,float|int>|null $slot  Entry triple, null on first use.
 	 * @param float                      $time  Time to add.
 	 * @param float                      $count Call count to add.
-	 * @return array<int, float|int> The updated triple.
+	 * @return array<int,float|int> The updated triple.
 	 */
 	private static function add_entry( ?array $slot, float $time, float $count ): array {
 		$slot ??= [ 0.0, 0.0, 0 ];
@@ -1028,7 +1028,7 @@ class Flame_Builder_Node extends Node {
 	 * slowest by `sum_time`. The gap between the two bounds is the hysteresis
 	 * that stops a busy category re-sorting on every request.
 	 *
-	 * @param array<string, array<int, float|int>> $entries Entry map, by reference.
+	 * @param array<string,array<int,float|int>> $entries Entry map, by reference.
 	 * @param int                                  $upper   Count that triggers a trim.
 	 * @param int                                  $lower   Count to trim back to.
 	 */
@@ -1069,7 +1069,7 @@ class Flame_Builder_Node extends Node {
 	 * A stamped `rule_id` can name a rule the operator has since deleted, so the
 	 * URL rematch is a fallback, not an alternative path.
 	 *
-	 * @param array<array-key, mixed> $request Full request record.
+	 * @param array<array-key,mixed> $request Full request record.
 	 * @return Rule|null Null when nothing matches, which leaves auto-tune inert.
 	 */
 	private function rule_for_request( array $request ): ?Rule {
@@ -1282,7 +1282,7 @@ class Flame_Builder_Node extends Node {
 
 		// --- Hourly ---
 		if ( ! empty( $this->hourly_stats ) ) {
-			/** @var array<string, array{count: int, sum_ms: float|int, sum_peak_mb: float|int}> $existing_hourly */
+			/** @var array<string,array{count: int,sum_ms: float|int,sum_peak_mb: float|int}> $existing_hourly */
 			$existing_hourly = $stats_store->get_hourly();
 
 			foreach ( $this->hourly_stats as $bucket_key => $stats ) {
@@ -1337,7 +1337,7 @@ class Flame_Builder_Node extends Node {
 		// --- URL index (bucketed; "hourly" is legacy store naming) ---
 		if ( ! empty( $this->url_stats ) ) {
 			foreach ( $this->url_stats as $bucket_key => $hour_data ) {
-				/** @var array<string, array<string, mixed>> $existing_urls */
+				/** @var array<string,array<string,mixed>> $existing_urls */
 				$existing_urls = $stats_store->get_url_index_hourly( $bucket_key );
 
 				foreach ( $hour_data as $hash => $stats_raw ) {
@@ -1360,7 +1360,7 @@ class Flame_Builder_Node extends Node {
 							'max_peak_mb' => 0,
 						];
 					}
-					/** @var array{url: string, count: int, timed_count: int, sum_ms: float|int, min_ms: float|int, max_ms: float|int, last_seen: int, durations: array<int, float|int>, count_2xx: int, count_3xx: int, count_4xx: int, count_5xx: int, sum_peak_mb: float|int, max_peak_mb: float|int} $e */
+					/** @var array{url: string, count: int, timed_count: int, sum_ms: float|int, min_ms: float|int, max_ms: float|int, last_seen: int, durations: array<int,float|int>, count_2xx: int, count_3xx: int, count_4xx: int, count_5xx: int, sum_peak_mb: float|int, max_peak_mb: float|int} $e */
 					$e               = &$existing_urls[ $hash ];
 					$e['count']      += \is_numeric( $stats['count'] ?? null ) ? $stats['count'] : 0;
 					$e['timed_count'] += \is_numeric( $stats['timed_count'] ?? null ) ? $stats['timed_count'] : 0;
@@ -1424,14 +1424,14 @@ class Flame_Builder_Node extends Node {
 			$existing = $stats_store->get_dimensional( $dim );
 			$this->merge_and_cap_dimensional( $existing, $buckets, $cutoff );
 			// Restore string bucket keys widened by by-ref merge, for store.
-			/** @var array<string, mixed> $existing */
+			/** @var array<string,mixed> $existing */
 			$stats_store->set_dimensional( $dim, $existing );
 		}
 		foreach ( $this->dim_stats_by_server as $server => $dims ) {
 			foreach ( $dims as $dim => $buckets ) {
 				$existing = $stats_store->get_dimensional( $dim, $server );
 				$this->merge_and_cap_dimensional( $existing, $buckets, $cutoff );
-				/** @var array<string, mixed> $existing */
+				/** @var array<string,mixed> $existing */
 				$stats_store->set_dimensional( $dim, $existing, $server );
 			}
 		}
@@ -1481,7 +1481,7 @@ class Flame_Builder_Node extends Node {
 	 *
 	 * Same hysteresis as accumulation: trim only past UPPER, and trim to LOWER.
 	 *
-	 * @param array<string, mixed> $bucket Leaderboard bucket, modified in place.
+	 * @param array<string,mixed> $bucket Leaderboard bucket, modified in place.
 	 */
 	private function cap_leaderboard_entries( array &$bucket ): void {
 		$categories = $bucket['categories'] ?? null;
@@ -1508,8 +1508,8 @@ class Flame_Builder_Node extends Node {
 	 * Values overflowing the cap are summed into a synthetic 'Other' entry, so
 	 * bucket totals survive the trim even though the individual values do not.
 	 *
-	 * @param array<array-key, mixed> $existing   Existing buckets, modified in place.
-	 * @param array<string, mixed>    $buckets    Incoming buckets to merge.
+	 * @param array<array-key,mixed> $existing   Existing buckets, modified in place.
+	 * @param array<string,mixed>    $buckets    Incoming buckets to merge.
 	 * @param string                  $cutoff     Bucket key below which buckets expire.
 	 * @param int                     $max_values Values kept per bucket; 0 means MAX_DIM_VALUES.
 	 */
@@ -1568,8 +1568,8 @@ class Flame_Builder_Node extends Node {
 	 *
 	 * 'total' pseudo-category preserved before sort; overflow rolls into 'Other'.
 	 *
-	 * @param array<string, mixed> $existing   Existing buckets, modified in place.
-	 * @param array<string, mixed> $buckets    Incoming buckets to merge.
+	 * @param array<string,mixed> $existing   Existing buckets, modified in place.
+	 * @param array<string,mixed> $buckets    Incoming buckets to merge.
 	 * @param string               $cutoff     Bucket key below which buckets expire.
 	 * @param int                  $max_values Categories kept per bucket; 0 means MAX_CAT_VALUES.
 	 */
@@ -1617,9 +1617,9 @@ class Flame_Builder_Node extends Node {
 	 * keys (numeric category names); the body only names 'total'/'Other'.
 	 *
 	 * @template TKey of array-key
-	 * @param array<TKey, mixed> $cats       Category buckets.
+	 * @param array<TKey,mixed> $cats       Category buckets.
 	 * @param int                $max_values Categories kept, synthetic slots included.
-	 * @return array<TKey|string, mixed>
+	 * @return array<TKey|string,mixed>
 	 */
 	private static function cap_single_bucket( array $cats, int $max_values ): array {
 		if ( \count( $cats ) <= $max_values ) {
@@ -1735,7 +1735,7 @@ class Flame_Builder_Node extends Node {
 	 *
 	 * @param string             $key     'disable_hooks' | 'disable_custom_events' | 'add_significant_events'
 	 * @param string             $rule_id The rule these items were proposed under.
-	 * @param array<int, string> $items   Hook/event names — already deduped at the caller.
+	 * @param array<int,string> $items   Hook/event names — already deduped at the caller.
 	 */
 	private function emit_auto_tune( string $key, string $rule_id, array $items ): void {
 		$sink = $this->sink;
@@ -1821,7 +1821,7 @@ class Flame_Builder_Node extends Node {
 	 * one; only the last state of the checkpoint is written.
 	 *
 	 * @param string                  $key  Memcache key being shadowed.
-	 * @param array<array-key, mixed> $data Value written.
+	 * @param array<array-key,mixed> $data Value written.
 	 * @param int                     $ttl  TTL the memcache write used.
 	 * @param string                  $ns   Stats_Store namespace the key belongs to.
 	 */
@@ -1856,7 +1856,7 @@ class Flame_Builder_Node extends Node {
 	 * Whether a per-URL aggregate carries a flame tree worth mirroring. A URL
 	 * with no merged requests would spend a top-N slot on nothing.
 	 *
-	 * @param array<array-key, mixed> $data Per-URL aggregate value.
+	 * @param array<array-key,mixed> $data Per-URL aggregate value.
 	 */
 	private function has_profiling_detail( array $data ): bool {
 		$flame = $data['flame'] ?? null;
@@ -1869,7 +1869,7 @@ class Flame_Builder_Node extends Node {
 	 * Each namespace stores a different shape, so each derives the count its own
 	 * way. The result only has to order URLs against each other.
 	 *
-	 * @param array<array-key, mixed> $data Value being mirrored.
+	 * @param array<array-key,mixed> $data Value being mirrored.
 	 * @param string                  $ns   Namespace it belongs to.
 	 */
 	private function mirror_traffic_rank( array $data, string $ns ): int {
@@ -1932,7 +1932,7 @@ class Flame_Builder_Node extends Node {
 	 * FLUSH_INTERVAL_SEC cadence — is what makes that commit whole.
 	 *
 	 * @api Used by substrate.
-	 * @return array<string, mixed>
+	 * @return array<string,mixed>
 	 */
 	public function save_state(): array {
 		// Co-commit the current flame trees with the cursor, like pending.
@@ -1963,7 +1963,7 @@ class Flame_Builder_Node extends Node {
 			}
 			// An all-digit url_hash comes back an int from the array key.
 			$url_hash = (string) $url_hash;
-			/** @var array<string, mixed> $aggregate */
+			/** @var array<string,mixed> $aggregate */
 			// Finalized flame for display; keep flame_raw for merging.
 			$flame                  = \is_array( $aggregate['flame'] ?? null ) ? $aggregate['flame'] : [];
 			$count_raw              = $flame['count'] ?? 0;
@@ -2034,7 +2034,7 @@ class Flame_Builder_Node extends Node {
 		if ( ! empty( $store->get_hourly() ) ) {
 			return; // Warm — skip replay.
 		}
-		/** @var array<string, array{0: array<string, mixed>, 1: int, 2: float}> $latest */
+		/** @var array<string,array{0: array<string,mixed>,1: int,2: float}> $latest */
 		$latest = [];
 		foreach ( $partition->get_segments() as $seg ) {
 			$bytes = $partition->read_at( $seg['id'], 0, $seg['size'] );
@@ -2089,7 +2089,7 @@ class Flame_Builder_Node extends Node {
 	 *
 	 * @param \Newspack_Nodes\Partition_Node $partition Resolved stats partition.
 	 * @param string                         $key       Memcache key being shadowed.
-	 * @param array<array-key, mixed>        $data      Value written.
+	 * @param array<array-key,mixed>        $data      Value written.
 	 * @param int                            $ttl       TTL the memcache write used.
 	 */
 	private function write_mirror_frame( \Newspack_Nodes\Partition_Node $partition, string $key, array $data, int $ttl ): void {
@@ -2194,7 +2194,7 @@ class Flame_Builder_Node extends Node {
 	 * noisy category is queued as a hook.
 	 *
 	 * @api Used by tests.
-	 * @param array<int, string> $names Custom-event names.
+	 * @param array<int,string> $names Custom-event names.
 	 */
 	public function set_custom_event_names( array $names ): void {
 		$this->custom_event_names = [];
@@ -2217,7 +2217,7 @@ class Flame_Builder_Node extends Node {
 	 * The queued auto-tune decisions, keyed per rule id.
 	 *
 	 * @api Used by tests.
-	 * @return array<string, array<string, list<string>>> Keys 'hooks', 'custom_events', 'new_significant'.
+	 * @return array<string,array<string,list<string>>> Keys 'hooks', 'custom_events', 'new_significant'.
 	 */
 	public function get_auto_tune_state(): array {
 		$names = static fn( array $set ): array => \array_keys( $set );
@@ -2235,7 +2235,7 @@ class Flame_Builder_Node extends Node {
 	 * lacks a key keeps that key's empty default instead of leaving it unset.
 	 *
 	 * @api Used by substrate.
-	 * @param array<string, mixed> $saved A prior `save_state()` return value.
+	 * @param array<string,mixed> $saved A prior `save_state()` return value.
 	 */
 	public function restore_state( array $saved ): void {
 		if ( isset( $saved['pending_bucket'] ) && \is_string( $saved['pending_bucket'] ) ) {
@@ -2243,7 +2243,7 @@ class Flame_Builder_Node extends Node {
 		}
 		if ( isset( $saved['pending'] ) && \is_array( $saved['pending'] ) ) {
 			$merged = \array_merge( $this->pending, $saved['pending'] );
-			/** @var array{hourly?: array<string, mixed>, dim?: array<string, array<string, array{c: int, s: float|int, m: float|int}>>, dim_by_server?: array<string, array<string, array<string, array{c: int, s: float|int, m: float|int}>>>, url_dim?: array<string, array<string, array<string, array{c: int, s: float|int, m: float|int}>>>, url_stats?: array<string, mixed>, cat?: array<string, array{t: float|int, c: float|int, n: int}>, cat_by_server?: array<string, array<string, array{t: float|int, c: float|int, n: int}>>, cat_by_url?: array<string, array<string, array{t: float|int, c: float|int, n: int}>>, leaderboard?: array{count?: int, sum_req_time?: float|int, categories: array<string, array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<string, array<int, float|int>>}>}, leaderboard_by_server?: array<string, array{count?: int, sum_req_time?: float|int, categories: array<string, array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<string, array<int, float|int>>}>}>} $merged */
+			/** @var array{hourly?: array<string,mixed>, dim?: array<string,array<string,array{c: int,s: float|int,m: float|int}>>, dim_by_server?: array<string,array<string,array<string,array{c: int,s: float|int,m: float|int}>>>, url_dim?: array<string,array<string,array<string,array{c: int,s: float|int,m: float|int}>>>, url_stats?: array<string,mixed>, cat?: array<string,array{t: float|int,c: float|int,n: int}>, cat_by_server?: array<string,array<string,array{t: float|int,c: float|int,n: int}>>, cat_by_url?: array<string,array<string,array{t: float|int,c: float|int,n: int}>>, leaderboard?: array{count?: int, sum_req_time?: float|int, categories: array<string,array{samples: int,sum_time: float|int,sum_count: float|int,ts?: int,entries: array<string,array<int,float|int>>}>}, leaderboard_by_server?: array<string,array{count?: int,sum_req_time?: float|int,categories: array<string,array{samples: int,sum_time: float|int,sum_count: float|int,ts?: int,entries: array<string,array<int,float|int>>}>}>} $merged */
 			$this->pending = $merged;
 		}
 	}
@@ -2257,8 +2257,8 @@ class Flame_Builder_Node extends Node {
 	 * set_stats_target, not by this method.
 	 *
 	 * @api Used by substrate.
-	 * @param array<int, string>|string|null $value New primary target, or null to read.
-	 * @return array<int, string>|string The primary target, plus the stats partition when set.
+	 * @param array<int,string>|string|null $value New primary target, or null to read.
+	 * @return array<int,string>|string The primary target, plus the stats partition when set.
 	 */
 	public function target( $value = null ) {
 		if ( null !== $value ) {
@@ -2320,8 +2320,8 @@ class Flame_Builder_Node extends Node {
 	 * rid(32) url_hash(12) segment(6) offset(10) length(8) = 68 bytes. Changing a
 	 * width here means changing both the parser and every existing index file.
 	 *
-	 * @param array<int, mixed>  $message  The unpacked positional message array.
-	 * @param array<string, int> $position Position array with segment, offset, length.
+	 * @param array<int,mixed>  $message  The unpacked positional message array.
+	 * @param array<string,int> $position Position array with segment, offset, length.
 	 * @return string|null Index entry, or null to skip a record with no rid.
 	 */
 	public static function format_index_entry( array $message, array $position ): ?string {
@@ -2368,7 +2368,7 @@ class Flame_Builder_Node extends Node {
 	 * line, or it will not survive a serialize → replay round trip.
 	 *
 	 * @api Used by the substrate to provide UI etc.
-	 * @return array<string, mixed>
+	 * @return array<string,mixed>
 	 */
 	public static function node_schema(): array {
 		return [

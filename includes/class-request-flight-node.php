@@ -175,8 +175,8 @@ class Request_Flight_Node extends Timer_Node {
 	 * no separate interval knob. The hitchhike preconditions (named sibling +
 	 * live _router) are the worker's job, same as Request_Builder's arguments().
 	 *
-	 * @param array<int, string>|string|null $value New target; null reads it.
-	 * @return array<int, string>|string The target after the call.
+	 * @param array<int,string>|string|null $value New target; null reads it.
+	 * @return array<int,string>|string The target after the call.
 	 */
 	public function target( $value = null ) {
 		if ( null === $value ) {
@@ -199,7 +199,7 @@ class Request_Flight_Node extends Timer_Node {
 	 * live registry).
 	 *
 	 * @api Used by substrate.
-	 * @return array<string, mixed>
+	 * @return array<string,mixed>
 	 */
 	public static function node_schema(): array {
 		return \array_merge( parent::node_schema(), [

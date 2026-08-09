@@ -180,8 +180,8 @@ class Reqgrep_Command {
 	 *
 	 * @when after_wp_load
 	 *
-	 * @param array<int, string>   $args       Positional arguments.
-	 * @param array<string, mixed> $assoc_args Associative arguments.
+	 * @param array<int,string>   $args       Positional arguments.
+	 * @param array<string,mixed> $assoc_args Associative arguments.
 	 */
 	public function __invoke( array $args, array $assoc_args ): void {
 		$this->pattern       = $args[0] ?? '.';
@@ -316,7 +316,7 @@ class Reqgrep_Command {
 	 * line is what the pattern matches and what the engine hands back — raw mode
 	 * echoes it verbatim, formatted mode unpacks it again.
 	 *
-	 * @param array<int, mixed> $message The 7-field positional Message array.
+	 * @param array<int,mixed> $message The 7-field positional Message array.
 	 */
 	private function process_message( array $message ): void {
 		$entry = $message[ Message::VALUE ];
@@ -468,7 +468,7 @@ class Reqgrep_Command {
 	 * strings, so this is a type narrowing, not a filter that drops real data.
 	 *
 	 * @param mixed $value Decoded value.
-	 * @return array<int, string>
+	 * @return array<int,string>
 	 */
 	private static function to_lines( $value ): array {
 		if ( ! \is_array( $value ) ) {
@@ -540,7 +540,7 @@ class Reqgrep_Command {
 	 *    a multi-line body is padded to the message column.
 	 *  - Suffix: `duration_ms` and `peak_mb` trail the line when present.
 	 *
-	 * @param array<int|string, mixed> $entry Decoded JSON entry.
+	 * @param array<int|string,mixed> $entry Decoded JSON entry.
 	 * @return string Formatted output line.
 	 */
 	private function format_entry( array $entry ): string {

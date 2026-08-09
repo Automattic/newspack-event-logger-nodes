@@ -73,9 +73,9 @@ final class Flame_Tree {
 	 * The root's own value is left at 0; the caller overwrites it with the
 	 * request's measured duration.
 	 *
-	 * @param array<array-key, mixed> $entries Log entries.
+	 * @param array<array-key,mixed> $entries Log entries.
 	 * @param int                     $now_ts  Reference timestamp for un-stamped completes.
-	 * @return array<string, mixed> Flame graph data.
+	 * @return array<string,mixed> Flame graph data.
 	 */
 	public static function build_flame_data( array $entries, int $now_ts ): array {
 		$root = [
@@ -85,7 +85,7 @@ final class Flame_Tree {
 		];
 
 		// Stack of open nodes. Each entry: [ 'node' => &node, 'name' => base ].
-		/** @var array<int, array{node: array{name?: string, value?: mixed, children?: array<int, mixed>, ts?: int, detail?: string}, name: string}> $stack */
+		/** @var array<int,array{node: array{name?: string,value?: mixed,children?: array<int,mixed>,ts?: int,detail?: string},name: string}> $stack */
 		$stack   = [];
 		$stack[] = [
 			'node' => &$root,
@@ -157,7 +157,7 @@ final class Flame_Tree {
 		self::cover_children_deep( $root );
 
 		// Restore $root's string-keyed contract widened by the by-ref helpers.
-		/** @var array<string, mixed> $result */
+		/** @var array<string,mixed> $result */
 		$result = $root;
 		return $result;
 	}
@@ -165,7 +165,7 @@ final class Flame_Tree {
 	/**
 	 * Apply `cover_children()` to a whole tree, deepest first.
 	 *
-	 * @param array<array-key, mixed> $node  Node to normalize, by reference.
+	 * @param array<array-key,mixed> $node  Node to normalize, by reference.
 	 * @param int                     $depth Current recursion depth.
 	 */
 	private static function cover_children_deep( array &$node, int $depth = 0 ): void {
@@ -190,7 +190,7 @@ final class Flame_Tree {
 	 * a single aggregate node. Appending \x00{N} keeps them apart; every read
 	 * path strips the suffix again before storage or display.
 	 *
-	 * @param array<array-key, mixed> $node  Flame node (modified by reference).
+	 * @param array<array-key,mixed> $node  Flame node (modified by reference).
 	 * @param int                     $depth Current recursion depth.
 	 */
 	private static function number_duplicate_siblings( array &$node, int $depth = 0 ): void {
@@ -234,7 +234,7 @@ final class Flame_Tree {
 	 * `seen_count`, so a node appearing in a minority of requests averages
 	 * down — the flame shows mean cost per request, not per appearance.
 	 *
-	 * @param array<array-key, mixed> $node        Flame node (modified by reference).
+	 * @param array<array-key,mixed> $node        Flame node (modified by reference).
 	 * @param int                     $total_count Requests the aggregate covers; 0 skips the averaging.
 	 * @param int                     $depth       Current recursion depth.
 	 */
@@ -260,7 +260,7 @@ final class Flame_Tree {
 		if ( ! empty( $node['children'] ) && \is_array( $node['children'] ) ) {
 			foreach ( $node['children'] as &$child ) {
 				if ( \is_array( $child ) ) {
-					/** @var array<string, mixed> $child */
+					/** @var array<string,mixed> $child */
 					self::finalize_flame_node( $child, $total_count, $depth + 1 );
 				}
 			}
@@ -287,7 +287,7 @@ final class Flame_Tree {
 	 *
 	 * Children are assumed already covered, so callers walk bottom-up.
 	 *
-	 * @param array<array-key, mixed> $node Node to normalize, by reference.
+	 * @param array<array-key,mixed> $node Node to normalize, by reference.
 	 */
 	private static function cover_children( array &$node ): void {
 		if ( empty( $node['children'] ) || ! \is_array( $node['children'] ) ) {
@@ -310,7 +310,7 @@ final class Flame_Tree {
 	 * trees keep their suffixes until finalize_flame_node() strips them, since
 	 * the suffix is what holds duplicate siblings apart across merges.
 	 *
-	 * @param array<string, mixed> $node  Flame node (modified in place).
+	 * @param array<string,mixed> $node  Flame node (modified in place).
 	 * @param int                  $depth Current recursion depth.
 	 */
 	public static function strip_name_suffixes( array &$node, int $depth = 0 ): void {
@@ -326,7 +326,7 @@ final class Flame_Tree {
 		if ( ! empty( $node['children'] ) && \is_array( $node['children'] ) ) {
 			foreach ( $node['children'] as &$child ) {
 				if ( \is_array( $child ) ) {
-					/** @var array<string, mixed> $child */
+					/** @var array<string,mixed> $child */
 					self::strip_name_suffixes( $child, $depth + 1 );
 				}
 			}
@@ -350,18 +350,18 @@ final class Flame_Tree {
 	 * `seen_count` is bookkeeping — finalize divides by the aggregate's own
 	 * request count and drops it, so nothing reads it back today.
 	 *
-	 * @param array<array-key, mixed> $existing Existing aggregate children (list).
-	 * @param array<array-key, mixed> $incoming Incoming per-request children (list).
+	 * @param array<array-key,mixed> $existing Existing aggregate children (list).
+	 * @param array<array-key,mixed> $incoming Incoming per-request children (list).
 	 * @param int                     $now_ts   Timestamp for un-stamped nodes and the expiry cutoff.
 	 * @param int                     $depth    Current recursion depth.
-	 * @return array<int, mixed>
+	 * @return array<int,mixed>
 	 */
 	public static function merge_flame_children_incremental( array $existing, array $incoming, int $now_ts, int $depth = 0 ): array {
 		if ( $depth > self::MAX_RECURSION_DEPTH ) {
 			return \array_values( $existing );
 		}
 
-		/** @var array<string, array<string, mixed>> $indexed */
+		/** @var array<string,array<string,mixed>> $indexed */
 		$indexed = [];
 		foreach ( $existing as $child ) {
 			if ( ! \is_array( $child ) ) {

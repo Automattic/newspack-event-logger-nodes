@@ -248,7 +248,7 @@ class Discovery_Collector_Node extends Timer_Node {
 	 * Topology console manifest: palette entry — interval is positional via arguments().
 	 *
 	 * @api Used by the substrate to resolve the node + provide UI.
-	 * @return array<string, mixed>
+	 * @return array<string,mixed>
 	 */
 	public static function node_schema(): array {
 		return \array_merge( parent::node_schema(), [

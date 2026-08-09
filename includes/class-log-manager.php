@@ -60,7 +60,7 @@ class Log_Manager {
 	 * intentionally omitted. Perl mirrors this list in Gyrobase::Log — keep the
 	 * two IDENTICAL and in sync.
 	 *
-	 * @var array<int, string>
+	 * @var array<int,string>
 	 */
 	private const ENV_ALLOWLIST = [
 		'A8C_PROXIED_REQUEST',
@@ -126,16 +126,16 @@ class Log_Manager {
 	/** @var string Regex for sensitive URL query parameters. */
 	private const URL_REDACT_PATTERN = '/([?&])(key|api_key|apikey|token|access_token|auth_token|refresh_token|password|passwd|pwd|secret|api_secret|client_secret|private_key|subscription[_-]?key|bearer|authorization|auth|session|sessionid|credentials)=[^&]*/i';
 
-	/** @var array<int, self> Stack of suspended parent LogManager instances. */
+	/** @var array<int,self> Stack of suspended parent LogManager instances. */
 	private static $context_stack = [];
 
 	/** @var self|null The active instance; instance() creates it on demand. */
 	private static ?self $instance = null;
 
-	/** @var array<int, array<string, mixed>> LIFO $_SERVER snapshots for begin/end_job_context. */
+	/** @var array<int,array<string,mixed>> LIFO $_SERVER snapshots for begin/end_job_context. */
 	private static array $job_server_stack = [];
 
-	/** @var array<string, bool> Hash set for fast sensitive key lookup. */
+	/** @var array<string,bool> Hash set for fast sensitive key lookup. */
 	private static array $sensitive_keys = [
 		'AUTH_KEY'                 => true,
 		'AUTH_SALT'                => true,
@@ -157,7 +157,7 @@ class Log_Manager {
 		'TERMCAP'                  => true,
 	];
 
-	/** @var array<int, string> Sensitive substrings to check in keys. */
+	/** @var array<int,string> Sensitive substrings to check in keys. */
 	private static array $sensitive_substrings = [
 		'AUTH',
 		'BEARER',
@@ -189,7 +189,7 @@ class Log_Manager {
 	 */
 	public $enabled = false;
 
-	/** @var array<string, mixed> Cached config (loaded once at construction). */
+	/** @var array<string,mixed> Cached config (loaded once at construction). */
 	private $config = [];
 	/** @var bool finish() has run; nothing more will be written. */
 	private $finished = false;
@@ -227,7 +227,7 @@ class Log_Manager {
 	private ?string $saved_unique_id = null;
 	/** @var bool|null True while logging, false after finish(), null when no rule started it. */
 	private $started = null;
-	/** @var array<int, array{label: string, ts: int|float, muted?: bool, m?: mixed}> Timer-frame stack. */
+	/** @var array<int,array{label: string,ts: int|float,muted?: bool,m?: mixed}> Timer-frame stack. */
 	private $times = [];
 	/** @var \Newspack_Nodes\Topic_Node|null The firehose Topic; null until init_firehose() runs. */
 	private $topic = null;
@@ -339,7 +339,7 @@ class Log_Manager {
 	 * leaves the stack untouched. A muted frame closes silently.
 	 *
 	 * @param string $label Label that was passed to start().
-	 * @param array<string, mixed>  $data  Additional data to include in the complete event.
+	 * @param array<string,mixed>  $data  Additional data to include in the complete event.
 	 */
 	public function complete( string $label, array $data = [], string $suffix = 'complete' ): void {
 		if ( \count( $this->times ) < 1 ) {
@@ -467,7 +467,7 @@ class Log_Manager {
 	 * start() with a complete() carrying the same label.
 	 *
 	 * @param string $label Label for the timer (e.g., 'query', 'template').
-	 * @param array<string, mixed>  $data  Additional data to include in the start event.
+	 * @param array<string,mixed>  $data  Additional data to include in the start event.
 	 */
 	public function start( string $label, array $data = [] ): void {
 		if ( \count( $this->times ) >= self::MAX_TIMER_DEPTH ) {
@@ -579,7 +579,7 @@ class Log_Manager {
 	 * `after_job` hook is registered with accepted_args 2 and always passes it.
 	 *
 	 * @param string                    $handler Handler name; unused, but the action passes it first.
-	 * @param array<string, mixed>|null $outcome Job_Worker_Node's classified outcome; null when the job did not finish.
+	 * @param array<string,mixed>|null $outcome Job_Worker_Node's classified outcome; null when the job did not finish.
 	 */
 	public static function end_job_context( string $handler = '', ?array $outcome = null ): void {
 		unset( $handler );
@@ -642,7 +642,7 @@ class Log_Manager {
 	 *
 	 * @param string               $handler Job handler name.
 	 * @param string               $id      First-class job identity ('' ⇒ no id segment).
-	 * @param array<string, string> $server $_SERVER keys overriding the synthetic
+	 * @param array<string,string> $server $_SERVER keys overriding the synthetic
 	 *                                     defaults. Describes the request only —
 	 *                                     overriding UNIQUE_ID or
 	 *                                     HTTP_X_A8C_REQUEST_ID would defeat the
@@ -650,7 +650,7 @@ class Log_Manager {
 	 */
 	public static function begin_job_context( string $handler, string $id = '', array $server = [] ): void {
 		// $_SERVER is string-keyed (superglobal snapshot for restore).
-		/** @var array<string, mixed> $snapshot */
+		/** @var array<string,mixed> $snapshot */
 		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- snapshot for restore.
 		$snapshot                 = $_SERVER;
 		self::$job_server_stack[] = $snapshot;
@@ -749,7 +749,7 @@ class Log_Manager {
 	 * to the now-built interpreter on the first message and forward — so an
 	 * early-wired Topic never fills into a missing sink.
 	 *
-	 * @param array<int, mixed> $message The positional Message array.
+	 * @param array<int,mixed> $message The positional Message array.
 	 */
 	public function relay_topic_to_ci( array $message ): void {
 		$ci = Core::node( Node_Names::COMMAND_INTERPRETER );
@@ -1017,7 +1017,7 @@ class Log_Manager {
 	 * let it forge another request's identity.
 	 *
 	 * @param string $category Event category/keyword.
-	 * @param array<string, mixed>  $data     Additional data to include.
+	 * @param array<string,mixed>  $data     Additional data to include.
 	 * @return bool True when the line was written; false when logging never started or the Topic is missing.
 	 */
 	public function message( string $category, array $data = [] ): bool {

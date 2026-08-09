@@ -51,9 +51,9 @@ final class Line_Fitter {
 	 * also returns null, even for a message already under the cap; every caller
 	 * passes a non-empty list.
 	 *
-	 * @param array<int, mixed> $message The minted message.
+	 * @param array<int,mixed> $message The minted message.
 	 * @param list<string>      $fields  Trimmable VALUE keys, in halving order.
-	 * @return array<int, mixed>|null The fitting message, or null to drop.
+	 * @return array<int,mixed>|null The fitting message, or null to drop.
 	 */
 	public static function fit( array $message, array $fields ): ?array {
 		foreach ( $fields as $field ) {

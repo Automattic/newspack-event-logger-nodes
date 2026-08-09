@@ -93,7 +93,7 @@ final class Rule_Set {
 		$rules = [];
 		foreach ( $raw as $entry ) {
 			if ( \is_array( $entry ) ) {
-				/** @var array<string, mixed> $entry stored rule shape (Rule::to_array()). */
+				/** @var array<string,mixed> $entry stored rule shape (Rule::to_array()). */
 				$rule = Rule::from_array( $entry );
 				// Mint id for idless stored rule; avoids collision on '' key.
 				$rules[] = '' === $rule->id ? $rule->with_id( self::id_for( $rule->pattern ) ) : $rule;
@@ -120,7 +120,7 @@ final class Rule_Set {
 	/**
 	 * Turn config rule maps into Rule objects, rekeyed by pattern.
 	 *
-	 * @param array<array-key, mixed> $entries Config `rules` list.
+	 * @param array<array-key,mixed> $entries Config `rules` list.
 	 * @return Rule[]
 	 */
 	private static function rules_from_config( array $entries ): array {
@@ -135,14 +135,14 @@ final class Rule_Set {
 	 * (`newspack_nodes/settings_sync/value`) runs the hub's rule list through this
 	 * so the ruleset reaches spokes hook-complete; `apply_synced()` is the inverse.
 	 *
-	 * @param array<int|string, mixed> $rules_array Stored rule maps (Rule::to_array()).
-	 * @return array<int, mixed>
+	 * @param array<int|string,mixed> $rules_array Stored rule maps (Rule::to_array()).
+	 * @return array<int,mixed>
 	 */
 	public static function hydrate_array( array $rules_array ): array {
 		$out = [];
 		foreach ( $rules_array as $entry ) {
 			if ( \is_array( $entry ) && Rule::HOOKS_MC === ( $entry['hooks_in'] ?? '' ) ) {
-				/** @var array<string, mixed> $entry pointer rule map. */
+				/** @var array<string,mixed> $entry pointer rule map. */
 				$hooks = self::hooks_for( Rule::from_array( $entry ) );
 				// Stay a pointer on []: inlining empty wipes the spoke's hooks.
 				if ( [] !== $hooks ) {
@@ -277,7 +277,7 @@ final class Rule_Set {
 	 *
 	 * @global \wpdb $wpdb
 	 *
-	 * @param array<string, true> $live_pointer_ids Ids just written as pointers.
+	 * @param array<string,true> $live_pointer_ids Ids just written as pointers.
 	 */
 	private function reconcile_orphans( array $live_pointer_ids ): void {
 		global $wpdb;
@@ -364,7 +364,7 @@ final class Rule_Set {
 	 * `performance` CI's `settings_set` verb calls it for OPTION_RULES instead
 	 * of writing the option raw.
 	 *
-	 * @param array<int|string, mixed> $rules_array Hydrated rule maps off the wire.
+	 * @param array<int|string,mixed> $rules_array Hydrated rule maps off the wire.
 	 */
 	public static function apply_synced( array $rules_array ): void {
 		( new self( [] ) )->save( self::rekey_by_pattern( self::rules_from_maps( $rules_array ) ) );
@@ -373,14 +373,14 @@ final class Rule_Set {
 	/**
 	 * Decode a list of stored/wire rule maps, skipping non-array junk.
 	 *
-	 * @param array<array-key, mixed> $entries Rule maps (Rule::to_array() shape).
+	 * @param array<array-key,mixed> $entries Rule maps (Rule::to_array() shape).
 	 * @return Rule[]
 	 */
 	private static function rules_from_maps( array $entries ): array {
 		$rules = [];
 		foreach ( $entries as $entry ) {
 			if ( \is_array( $entry ) ) {
-				/** @var array<string, mixed> $entry rule shape (Rule::to_array()). */
+				/** @var array<string,mixed> $entry rule shape (Rule::to_array()). */
 				$rules[] = Rule::from_array( $entry );
 			}
 		}

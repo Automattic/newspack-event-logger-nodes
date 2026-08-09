@@ -43,7 +43,7 @@ class Remote_Job_Rewrite_Node extends Node {
 	 * when no sink is wired, so an unwired rewrite fails loudly on first entry.
 	 *
 	 * @api Entry point invoked by the substrate Router / upstream sink.
-	 * @param array<int, mixed> $message Message reference; VALUE is the entry array.
+	 * @param array<int,mixed> $message Message reference; VALUE is the entry array.
 	 */
 	public function fill( array $message ): void {
 		$value = $message[ Message::VALUE ];
@@ -60,7 +60,7 @@ class Remote_Job_Rewrite_Node extends Node {
 	 * Merging over the base keeps `registrations` and `accepts_fill` inherited.
 	 *
 	 * @api Used by the substrate to resolve the node + provide UI.
-	 * @return array<string, mixed> Palette entry and node configuration form.
+	 * @return array<string,mixed> Palette entry and node configuration form.
 	 */
 	public static function node_schema(): array {
 		return \array_merge( parent::node_schema(), [
