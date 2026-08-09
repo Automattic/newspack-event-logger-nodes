@@ -295,8 +295,11 @@ class Request_Builder_Node extends Timer_Node {
 			if ( ! isset( self::TERMINAL_KEYWORDS[ $keyword ] ) ) {
 				return;
 			}
+			$this->store_gap_entry( $request, $entry );
 		}
 		$request->expected_n = $seq_n + 1;
+		// Consumer stamps ID seg:offset:length — the seek back onto the log.
+		$request->last_position = Core::as_string( $message[ Message::ID ] ?? '' );
 
 		// End of nested subprocess sequence: pop back to parent's expected n.
 		if ( 'gyrobase (complete)' === $keyword && \is_array( $request->seq_stack ?? null ) && [] !== $request->seq_stack ) {
@@ -455,6 +458,36 @@ class Request_Builder_Node extends Timer_Node {
 		$reply[ Message::KEY ]   = $message[ Message::KEY ];
 		$reply[ Message::VALUE ] = [ 'verb' => $verb, 'data' => $payload ];
 		$this->sink->fill( $reply );
+	}
+
+	/**
+	 * Mark the hole in the trace itself, where a reader will meet it.
+	 *
+	 * With no resync there is exactly one hole and it is always at the tail:
+	 * entries run 1..gap_after, everything after is dropped, and the terminal
+	 * marker lands last. So this row sits between the two — the point the
+	 * entries actually went missing.
+	 *
+	 * @param \stdClass            $request Request being closed.
+	 * @param array<string, mixed> $entry   The terminal entry, for its timestamp.
+	 */
+	private function store_gap_entry( \stdClass $request, array $entry ): void {
+		/** @var list<array<string, mixed>> $entries */
+		$entries = \is_array( $request->entries ?? null ) ? $request->entries : [];
+		if ( \count( $entries ) >= self::MAX_ENTRIES_PER_REQUEST ) {
+			return;
+		}
+		$gap       = Core::int( $request->gap_after ?? 0, 0 );
+		$offset    = Core::as_string( $request->last_position ?? '' );
+		$entries[] = [
+			'n'  => $gap + 1,
+			'ts' => $entry['ts'] ?? 0,
+			'k'  => 'entries (lost)',
+			'm'  => '' !== $offset
+				? "discarded entries after #{$gap} at {$offset}"
+				: "discarded entries after #{$gap}",
+		];
+		$request->entries = $entries;
 	}
 
 	/**
