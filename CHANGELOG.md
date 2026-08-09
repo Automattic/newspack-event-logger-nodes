@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The firehose registers the dir template `Log_Manager` actually writes.**
+  `newspack_nodes/registered_log_producers` now carries a path template rather
+  than a basename, so `Log_Manager::firehose_dir_template()` — already "the one
+  place its layout is written" for the Topic — is what the substrate's log GC
+  and the Workers catalog expand. The plugin no longer registers `jobintake`:
+  that is `Job_Intake`, substrate code, which registers itself. Requires a
+  newspack-nodes carrying the producer-template contract — the two deploy
+  together, so the filter's old bare-basename form is gone rather than shimmed.
+
+- `reqgrep`'s default partition dir comes from `Log_Manager::firehose_dirs()`
+  rather than a second hand-spelled `firehose.p0`, so the firehose layout is
+  written in one place as its docblock claims.
+
 ## [0.48.0] - 2026-08-09
 
 ### Changed
