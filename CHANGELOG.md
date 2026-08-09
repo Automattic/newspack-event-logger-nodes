@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.47.1] - 2026-08-09
+
+### Fixed
+
+- **Substrate pin moves to newspack-nodes v2.16.1.** The bundled runtime and
+  debug overlay carry its fixes: a log stream that resumes at EOF closes on the
+  first tick instead of holding a worker for the whole idle window, the
+  browser's SSE node is named `<link>:sse-in` so `trace` can reach it, a
+  `set_state` transition is traced like the PHP twin's, the heartbeat's
+  expected `slot_released` no longer counts as an error, a CONNECTED state no
+  longer publishes the lease owner into the transcript, and "reset stats"
+  clears the overlay's message list rather than leaving it on screen.
+
 ## [0.47.0] - 2026-08-08
 
 ### Added
