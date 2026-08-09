@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A request running in job context logs a `message` line naming the record that
+  caused it — FROM, ID and KEY off the job message the substrate now hands to
+  `before_job`. ID is the `segment:offset:length` the Consumer stamped, so a
+  trace seeks straight onto the log instead of leaving you to find it.
+
+  The message is stashed unstacked on purpose: a nested context — evTemplate
+  rendering inside a job — passes none and inherits the enclosing job's, which
+  is what makes the causing record reachable from the innermost trace.
+  `begin_job_context()` takes it as its third parameter, ahead of `$server`, so
+  the action's positional arguments line up; the one caller that passed
+  `$server` positionally now names it.
+
 ### Changed
 
 - **The firehose registers the dir template `Log_Manager` actually writes.**

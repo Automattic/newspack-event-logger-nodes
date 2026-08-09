@@ -135,6 +135,19 @@ class Log_Manager {
 	/** @var array<int,array<string,mixed>> LIFO $_SERVER snapshots for begin/end_job_context. */
 	private static array $job_server_stack = [];
 
+	/**
+	 * The job message the innermost job context was entered with.
+	 *
+	 * @longform Deliberately NOT stacked. A nested context — evTemplate
+	 * rendering inside a job — passes none and inherits this one, which is what
+	 * makes the causing record reachable from the innermost trace. The next job
+	 * overwrites it rather than exit clearing it, and every job in a worker
+	 * enters through before_job, so there is nothing for it to go stale against.
+	 *
+	 * @var array<int,mixed>
+	 */
+	private static array $job_message = [];
+
 	/** @var array<string,bool> Hash set for fast sensitive key lookup. */
 	private static array $sensitive_keys = [
 		'AUTH_KEY'                 => true,
@@ -642,13 +655,22 @@ class Log_Manager {
 	 *
 	 * @param string               $handler Job handler name.
 	 * @param string               $id      First-class job identity ('' ⇒ no id segment).
+	 * @param array<int,mixed>     $message The job message, as the substrate's
+	 *                                     before_job passes it. Empty KEEPS the
+	 *                                     enclosing job's, so a nested context
+	 *                                     (evTemplate rendering inside a job)
+	 *                                     still names the causing record.
 	 * @param array<string,string> $server $_SERVER keys overriding the synthetic
 	 *                                     defaults. Describes the request only —
 	 *                                     overriding UNIQUE_ID or
 	 *                                     HTTP_X_A8C_REQUEST_ID would defeat the
 	 *                                     fresh per-job request identity above.
 	 */
-	public static function begin_job_context( string $handler, string $id = '', array $server = [] ): void {
+	public static function begin_job_context( string $handler, string $id = '', array $message = [], array $server = [] ): void {
+		// Before the scope action, which builds the LogManager that reads it.
+		if ( [] !== $message ) {
+			self::$job_message = $message;
+		}
 		// $_SERVER is string-keyed (superglobal snapshot for restore).
 		/** @var array<string,mixed> $snapshot */
 		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- snapshot for restore.
@@ -952,6 +974,20 @@ class Log_Manager {
 		$redacted_url = self::redact_url( $this->request_url );
 		$full_url     = $server_name ? "{$scheme}://{$server_name}{$redacted_url}" : $redacted_url;
 		$this->message( 'request', [ 'm' => "{$method} {$full_url}" ] );
+
+		// The record that caused this request; ID seeks onto the log.
+		if ( [] !== self::$job_message ) {
+			$this->message(
+				'message',
+				[
+					'm' => [
+						'FROM' => Core::as_string( self::$job_message[ \Newspack_Nodes\Message::FROM ] ?? '', '' ),
+						'ID'   => Core::as_string( self::$job_message[ \Newspack_Nodes\Message::ID ] ?? '', '' ),
+						'KEY'  => Core::as_string( self::$job_message[ \Newspack_Nodes\Message::KEY ] ?? '', '' ),
+					],
+				]
+			);
+		}
 
 		$this->log_environment();
 		$this->log_resources();

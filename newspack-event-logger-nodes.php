@@ -91,7 +91,7 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	);
 
 	// Give each substrate job its own /jobs/{handler}/{id} request context.
-	\add_action( 'newspack_nodes/job_worker/before_job', [ \Newspack_Event_Logger_Nodes\Log_Manager::class, 'begin_job_context' ], 10, 2 );
+	\add_action( 'newspack_nodes/job_worker/before_job', [ \Newspack_Event_Logger_Nodes\Log_Manager::class, 'begin_job_context' ], 10, 3 );
 	\add_action( 'newspack_nodes/job_worker/after_job', [ \Newspack_Event_Logger_Nodes\Log_Manager::class, 'end_job_context' ], 10, 2 );
 
 	// Prefix resolves node classes; the dir supplies stock topologies.

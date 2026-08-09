@@ -16,7 +16,7 @@ class JobWorkerContextWiringTest extends TestCase {
 	protected function setUp(): void {
 		parent::setUp();
 		$GLOBALS['_wp_actions'] = [];
-		\add_action( 'newspack_nodes/job_worker/before_job', [ Log_Manager::class, 'begin_job_context' ] );
+		\add_action( 'newspack_nodes/job_worker/before_job', [ Log_Manager::class, 'begin_job_context' ], 10, 3 );
 		\add_action( 'newspack_nodes/job_worker/after_job', [ Log_Manager::class, 'end_job_context' ] );
 	}
 
@@ -76,5 +76,34 @@ class JobWorkerContextWiringTest extends TestCase {
 		}
 
 		$this->assertSame( '/outer', $_SERVER['REQUEST_URI'], '$_SERVER restored by after_job even on a throw' );
+	}
+	/**
+	 * The seam between the two plugins: the substrate hands the job MESSAGE to
+	 * before_job, and ELN's listener has to bind it as the message rather than
+	 * as the $_SERVER overrides that share the argument list. A wrong arity here
+	 * writes the message into REQUEST_METHOD and friends.
+	 */
+	public function test_the_job_message_reaches_the_request_context(): void {
+		$jw     = new Job_Worker_Node();
+		$during = null;
+		$this->register_job_handler(
+			$jw,
+			'traced',
+			function () use ( &$during ) {
+				// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- test observation.
+				$during = $_SERVER['REQUEST_METHOD'] ?? '';
+			}
+		);
+
+		$message                  = $this->job_message( 'traced' );
+		$message[ Message::FROM ] = 'jobs.p2';
+		$message[ Message::ID ]   = '7:4242:88';
+		$message[ Message::KEY ]  = 'affinity-7719';
+		$jw->fill( $message );
+
+		$this->assertSame( 'POST', $during, 'the message did not land in $_SERVER' );
+
+		$stashed = ( new \ReflectionProperty( Log_Manager::class, 'job_message' ) )->getValue();
+		$this->assertSame( '7:4242:88', $stashed[ Message::ID ] ?? null );
 	}
 }
