@@ -14,6 +14,15 @@ if ( \function_exists( 'posix_getuid' ) && 0 === \posix_getuid() ) {
 \putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . __DIR__ . '/newspack-event-logger-nodes-test-config.php' );
 \define( 'NONCE_SALT', 'newspack-nodes-test-nonce-salt' );
 \define( 'ABSPATH', '/' );
+// Cache_Backend::site() scopes every memcache key by database + base prefix.
+// Without these the suite resolves to the shared 'unscoped' namespace, which
+// proves nothing about isolation and would collide with any other install in
+// the same state the moment a real server is configured.
+\define( 'DB_NAME', 'newspack_event_logger_nodes_test' );
+$GLOBALS['wpdb'] = new class() {
+	public string $prefix      = 'wp_';
+	public string $base_prefix = 'wp_';
+};
 
 if ( ! function_exists( 'plugin_dir_url' ) ) {
 	function plugin_dir_url( string $file ): string {
