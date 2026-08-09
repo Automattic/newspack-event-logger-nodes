@@ -23,7 +23,7 @@ namespace Newspack_Event_Logger_Nodes;
  */
 final class Rule_Matcher {
 
-	/** @var array<string, Rule|null> Normalized-URL => match cache; a miss caches null. */
+	/** @var array<string,Rule|null> Normalized-URL => match cache; a miss caches null. */
 	private array $cache = [];
 
 	/** @var Rule[] Sorted most-specific first. */

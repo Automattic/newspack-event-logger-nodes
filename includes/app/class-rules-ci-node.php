@@ -66,7 +66,7 @@ class Rules_CI_Node extends Service_CI_Node {
 	 * JSON that isn't an object/array at the top level).
 	 *
 	 * @param string $raw Raw JSON token as it arrived on the command envelope.
-	 * @return array<array-key, mixed>
+	 * @return array<array-key,mixed>
 	 * @throws \RuntimeException When the payload exceeds MAX_JSON_BYTES, or does not decode to an array.
 	 */
 	private static function decode_json_array( string $raw ): array {
@@ -86,7 +86,7 @@ class Rules_CI_Node extends Service_CI_Node {
 	 * 'inline' — the storage tier is a Rule_Set implementation detail.
 	 *
 	 * @param Rule $rule Persisted rule, either tier.
-	 * @return array<string, mixed>
+	 * @return array<string,mixed>
 	 */
 	private static function wire_shape( Rule $rule ): array {
 		$shape             = $rule->to_array();
@@ -100,7 +100,7 @@ class Rules_CI_Node extends Service_CI_Node {
 	 * with their argument lists and handlers.
 	 *
 	 * @api Used by the substrate to provide UI etc.
-	 * @return array<string, mixed>
+	 * @return array<string,mixed>
 	 */
 	public static function node_schema(): array {
 		return \array_merge( parent::node_schema(), [
@@ -133,7 +133,7 @@ class Rules_CI_Node extends Service_CI_Node {
 							if ( ! \is_array( $entry ) ) {
 								throw new \RuntimeException( 'invalid rule entry: expected an object' );
 							}
-							/** @var array<string, mixed> $entry decoded rule object (Rule::to_array() shape). */
+							/** @var array<string,mixed> $entry decoded rule object (Rule::to_array() shape). */
 							$rules[] = Rule::from_array( $entry );
 						}
 						$rules = Rule_Set::rekey_by_pattern( $rules );
@@ -149,7 +149,7 @@ class Rules_CI_Node extends Service_CI_Node {
 					],
 					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
 						$decoded = self::decode_json_array( self::arg_strings( $args )[0] ?? '' );
-						/** @var array<string, mixed> $decoded decoded rule object (Rule::to_array() shape). */
+						/** @var array<string,mixed> $decoded decoded rule object (Rule::to_array() shape). */
 						$incoming = Rule::from_array( $decoded );
 						$new_id   = Rule_Set::id_for( $incoming->pattern );
 

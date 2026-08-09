@@ -68,7 +68,7 @@ final class Rule {
 	 * hooks; present but not an array (`null` on the wire), it means the hooks
 	 * are unresolved and `hooks_in` decides where to find them.
 	 *
-	 * @param array<string, mixed> $a Stored rule shape, as produced by to_array().
+	 * @param array<string,mixed> $a Stored rule shape, as produced by to_array().
 	 * @return self
 	 */
 	public static function from_array( array $a ): self {
@@ -154,7 +154,7 @@ final class Rule {
 	 * The persisted and wire shape: what `Rule_Set::save()` stores, what the
 	 * hub syncs to spokes, and what `from_array()` reads back.
 	 *
-	 * @return array<string, mixed>
+	 * @return array<string,mixed>
 	 */
 	public function to_array(): array {
 		return [

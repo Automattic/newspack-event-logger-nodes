@@ -148,8 +148,8 @@ const NEWSPACK_EVENT_LOGGER_NODES_RUNTIME_BASENAMES = [ 'firehose', 'jobintake' 
  * Add this plugin's producers to the substrate's registered-producer set, so
  * the GC and the Workers catalog expect the dirs `Log_Manager` writes.
  *
- * @param array<int, string> $producers Producers registered by prior contributors.
- * @return array<int, string>
+ * @param array<int,string> $producers Producers registered by prior contributors.
+ * @return array<int,string>
  */
 function newspack_event_logger_nodes_register_log_producers( array $producers ): array {
 	return \array_values( \array_unique(

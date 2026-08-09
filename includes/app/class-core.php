@@ -46,13 +46,13 @@ class Core {
 	/** @var string[] Hook names currently bound (tracked for rebind_for_current_scope). */
 	private array $bound_hooks = [];
 
-	/** @var array<string, true> Significant events that get per-callback profiling. */
+	/** @var array<string,true> Significant events that get per-callback profiling. */
 	private array $significant = [];
 
 	/** @var int Priority hook_start registers at (config key `hook_start_priority`). */
 	private int $start_priority = 1;
 
-	/** @var array<int, true> spl_object_id of wrappers we created (prevents double-wrap). */
+	/** @var array<int,true> spl_object_id of wrappers we created (prevents double-wrap). */
 	private array $wrapper_ids = [];
 
 	/**
@@ -141,7 +141,7 @@ class Core {
 
 		$min = $this->start_priority;
 
-		/** @var array<int, array<string, array{function: callable, accepted_args: int|string}>> $wp_filter_callbacks WP_Hook::$callbacks is stubbed as bare array; this annotates the by-ref iterand, not a copy. */
+		/** @var array<int,array<string,array{function: callable,accepted_args: int|string}>> $wp_filter_callbacks WP_Hook::$callbacks is stubbed as bare array; this annotates the by-ref iterand, not a copy. */
 		$wp_filter_callbacks = &$wp_filter[ $hook_name ]->callbacks;
 		foreach ( $wp_filter_callbacks as $priority => &$priority_callbacks ) {
 			if ( $priority <= $min || $priority >= self::SPACER_PRIORITY ) {

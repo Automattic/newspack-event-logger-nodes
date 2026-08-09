@@ -66,7 +66,7 @@ class Reqgrep_Core {
 	 * rid => lines. The last bucket is the write bucket, and the ring always
 	 * holds at least one, so `count( $history ) - 1` is always a valid index.
 	 *
-	 * @var array<int, array<string, array<int, string>>>
+	 * @var array<int,array<string,array<int,string>>>
 	 */
 	private array $history = [ [] ];
 
@@ -128,7 +128,7 @@ class Reqgrep_Core {
 	 * Feed every line, matching or not. Skipping the misses starves the history
 	 * the second branch reassembles a late match from.
 	 *
-	 * @param array<int|string, mixed> $entry Decoded entry hash (the Message VALUE).
+	 * @param array<int|string,mixed> $entry Decoded entry hash (the Message VALUE).
 	 * @param string                   $rid   Request id (the Message KEY).
 	 * @param string                   $line  Packed Message envelope; what the pattern matches and what on_complete receives.
 	 */

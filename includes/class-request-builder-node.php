@@ -202,7 +202,7 @@ class Request_Builder_Node extends Timer_Node {
 	 * `state`; this method then emits and drops the envelope immediately, to get
 	 * the state back out of RAM rather than wait for eviction.
 	 *
-	 * @param array<int, mixed> $message Reference; not mutated.
+	 * @param array<int,mixed> $message Reference; not mutated.
 	 */
 	public function fill( array $message ): void {
 		++$this->counter;
@@ -223,7 +223,7 @@ class Request_Builder_Node extends Timer_Node {
 			return;
 		}
 		// Decoded firehose entry: string-keyed payload (json_decode assoc map).
-		/** @var array<string, mixed> $entry */
+		/** @var array<string,mixed> $entry */
 
 		$key_raw = $message[ Message::KEY ] ?? '';
 		$rid     = Core::as_string( $key_raw );
@@ -232,7 +232,7 @@ class Request_Builder_Node extends Timer_Node {
 		}
 
 		// Intern keywords: dedupe json_decode's per-entry strings to one zval.
-		/** @var array<string, string> $intern */
+		/** @var array<string,string> $intern */
 		static $intern = [];
 		$keyword       = $entry['k'] ?? '';
 		if ( ! \is_string( $keyword ) ) {
@@ -343,7 +343,7 @@ class Request_Builder_Node extends Timer_Node {
 		}
 
 		// Dynamic \stdClass property: list of stored per-entry records.
-		/** @var list<array<string, mixed>> $entries */
+		/** @var list<array<string,mixed>> $entries */
 		$entries = \is_array( $request->entries ?? null ) ? $request->entries : [];
 		if ( isset( $request->entries ) && \count( $entries ) < self::MAX_ENTRIES_PER_REQUEST ) {
 			$stored = [
@@ -403,7 +403,7 @@ class Request_Builder_Node extends Timer_Node {
 	 * `GET_CACHE` reports in-flight depth for the REPL and dashboards. An
 	 * unknown verb still gets a reply, carrying an `error` payload.
 	 *
-	 * @param array<int, mixed> $message Incoming command Message.
+	 * @param array<int,mixed> $message Incoming command Message.
 	 * @throws \RuntimeException When no sink is wired to carry the reply.
 	 */
 	private function handle_request( array $message ): void {
@@ -464,10 +464,10 @@ class Request_Builder_Node extends Timer_Node {
 	 * entries actually went missing.
 	 *
 	 * @param \stdClass            $request Request being closed.
-	 * @param array<string, mixed> $entry   The terminal entry, for its timestamp.
+	 * @param array<string,mixed> $entry   The terminal entry, for its timestamp.
 	 */
 	private function store_gap_entry( \stdClass $request, array $entry ): void {
-		/** @var list<array<string, mixed>> $entries */
+		/** @var list<array<string,mixed>> $entries */
 		$entries = \is_array( $request->entries ?? null ) ? $request->entries : [];
 		if ( \count( $entries ) >= self::MAX_ENTRIES_PER_REQUEST ) {
 			return;
@@ -492,7 +492,7 @@ class Request_Builder_Node extends Timer_Node {
 	 * request envelope: the envelope resolved them once, authoritatively, and a
 	 * stale copy on the line would disagree with the completed-request doc.
 	 *
-	 * @param array<string, mixed> $entry   Decoded entry.
+	 * @param array<string,mixed> $entry   Decoded entry.
 	 * @param string               $rid     Request id — propagated to Message::KEY so
 	 *                                      downstream readers can identify the request
 	 *                                      without re-parsing the entry payload.
@@ -555,10 +555,10 @@ class Request_Builder_Node extends Timer_Node {
 		}
 
 		// References, not copies: mutate \stdClass arrays in place (avoid COW).
-		/** @var list<array{0: string, 1: string}> $stack */
+		/** @var list<array{0: string,1: string}> $stack */
 		$stack = &$request->stack;
 		// Dynamic \stdClass property: per-state profile records keyed by state.
-		/** @var array<string, array{entries: array<string, array{0: float, 1: int}>, count: int, time: float, ts: float}> $profiles */
+		/** @var array<string,array{entries: array<string,array{0: float,1: int}>,count: int,time: float,ts: float}> $profiles */
 		$profiles = &$request->profiles;
 
 		// Stop at stack-depth cap: bound memory for runaways kept visible.
@@ -625,9 +625,9 @@ class Request_Builder_Node extends Timer_Node {
 		}
 
 		// References, not copies: mutate \stdClass arrays in place (avoid COW).
-		/** @var list<array{0: string, 1: string}> $stack */
+		/** @var list<array{0: string,1: string}> $stack */
 		$stack = &$request->stack;
-		/** @var array<string, array{entries: array<string, array{0: float, 1: int}>, count: int, time: float, ts: float}> $profiles */
+		/** @var array<string,array{entries: array<string,array{0: float,1: int}>,count: int,time: float,ts: float}> $profiles */
 		$profiles = &$request->profiles;
 
 		$last_idx = \count( $stack ) - 1;
@@ -905,7 +905,7 @@ class Request_Builder_Node extends Timer_Node {
 	/**
 	 * Read a curated environment_v3 field as a string ('' when absent or non-string).
 	 *
-	 * @param array<string, mixed> $env Curated env map from the environment_v3 entry.
+	 * @param array<string,mixed> $env Curated env map from the environment_v3 entry.
 	 * @param string               $key Field name.
 	 * @return string The field value, or '' when absent or non-string.
 	 */
@@ -1043,7 +1043,7 @@ class Request_Builder_Node extends Timer_Node {
 	 */
 	public function build_compact_summary( \stdClass $request ): array {
 		// Decoded request envelope: string-keyed map, mixed-by-design values.
-		/** @var array<string, mixed> $r */
+		/** @var array<string,mixed> $r */
 		$r = (array) $request;
 		// Mixed-by-design (array)/stdClass reads; string casts intentional.
 		/** @var int|float|string|bool|null $url_raw */
@@ -1079,7 +1079,7 @@ class Request_Builder_Node extends Timer_Node {
 	/**
 	 * The label of whatever the request is doing right now (stack-top slot 1).
 	 *
-	 * @param array<string, mixed> $request Request envelope as an array.
+	 * @param array<string,mixed> $request Request envelope as an array.
 	 * @return string The label, or '' when the stack carries none.
 	 */
 	public static function extract_what( array $request ): string {
@@ -1089,7 +1089,7 @@ class Request_Builder_Node extends Timer_Node {
 	/**
 	 * The state the request is in right now (stack-top slot 0).
 	 *
-	 * @param array<string, mixed> $request Request envelope as an array.
+	 * @param array<string,mixed> $request Request envelope as an array.
 	 * @return string The state name, defaulting to 'process'.
 	 */
 	public static function extract_state( array $request ): string {
@@ -1156,8 +1156,8 @@ class Request_Builder_Node extends Timer_Node {
 	 * length, or segment that would overflow its width is dropped rather than
 	 * written truncated, which would decode as a valid but wrong seek.
 	 *
-	 * @param array<int, mixed>  $message  The unpacked message array; VALUE is index 6.
-	 * @param array<string, int> $position Position array.
+	 * @param array<int,mixed>  $message  The unpacked message array; VALUE is index 6.
+	 * @param array<string,int> $position Position array.
 	 * @return string|null Index entry or null.
 	 */
 	public static function format_index_entry( array $message, array $position ): ?string {
@@ -1166,7 +1166,7 @@ class Request_Builder_Node extends Timer_Node {
 			return null;
 		}
 		// Decoded request envelope: string-keyed map, mixed-by-design values.
-		/** @var array<string, mixed> $value */
+		/** @var array<string,mixed> $value */
 		$request = (object) $value;
 
 		// Dynamic \stdClass reads mixed by design; casts intentional.
@@ -1201,7 +1201,7 @@ class Request_Builder_Node extends Timer_Node {
 		$peak_mb_int = \min( (int) \round( $peak_mb ), 999999 );
 
 		// method: 1 char code for HTTP method.
-		/** @var array<string, string> $method_codes */
+		/** @var array<string,string> $method_codes */
 		static $method_codes = [
 			'GET'     => 'G',
 			'POST'    => 'P',
@@ -1328,8 +1328,8 @@ class Request_Builder_Node extends Timer_Node {
 	 * so a round-trip through set-then-get does not fold the extras into it.
 	 *
 	 * @api Used by substrate.
-	 * @param array<int, string>|string|null $value New primary target or null to get current target.
-	 * @return array<int, string>|string The primary target, or every destination when extras exist.
+	 * @param array<int,string>|string|null $value New primary target or null to get current target.
+	 * @return array<int,string>|string The primary target, or every destination when extras exist.
 	 */
 	public function target( $value = null ) {
 		if ( null !== $value ) {
@@ -1374,7 +1374,7 @@ class Request_Builder_Node extends Timer_Node {
 	 * Orphan eviction is handled by LRU bucket rotation.
 	 *
 	 * @api Used by substrate.
-	 * @return array<string, mixed> State to persist.
+	 * @return array<string,mixed> State to persist.
 	 */
 	public function save_state(): array {
 		// Convert objects to arrays for serialization.
@@ -1399,7 +1399,7 @@ class Request_Builder_Node extends Timer_Node {
 	 * Restore state from save_state(). Rehydrates arrays back into stdClass.
 	 *
 	 * @api Used by substrate.
-	 * @param array<string, mixed> $saved Saved state from save_state().
+	 * @param array<string,mixed> $saved Saved state from save_state().
 	 */
 	public function restore_state( array $saved ): void {
 		if ( ! isset( $saved['request_cache'] ) ) {
@@ -1410,7 +1410,7 @@ class Request_Builder_Node extends Timer_Node {
 			return;
 		}
 		// Persisted cache snapshot: string-keyed by design (LRU_Cache state).
-		/** @var array<string, mixed> $cache_state */
+		/** @var array<string,mixed> $cache_state */
 		if ( isset( $cache_state['buckets'] ) && \is_array( $cache_state['buckets'] ) ) {
 			foreach ( $cache_state['buckets'] as &$bucket ) {
 				if ( \is_array( $bucket ) ) {
@@ -1438,7 +1438,7 @@ class Request_Builder_Node extends Timer_Node {
 	 * older version parses without migration.
 	 *
 	 * @param string $line Index line.
-	 * @return array<string, mixed>|null Parsed entry, or null when too short.
+	 * @return array<string,mixed>|null Parsed entry, or null when too short.
 	 */
 	public static function parse_request_index( string $line ): ?array {
 		$line = \rtrim( $line, "\n" );
@@ -1463,7 +1463,7 @@ class Request_Builder_Node extends Timer_Node {
 
 			// method field appended in v3 format (position 95, 1 char).
 			if ( $len >= 96 ) {
-				/** @var array<string, string> $methods */
+				/** @var array<string,string> $methods */
 				static $methods = [
 					'G' => 'GET',
 					'P' => 'POST',
@@ -1499,7 +1499,7 @@ class Request_Builder_Node extends Timer_Node {
 	 * surface on the patron's interpreter to be reachable at all.
 	 *
 	 * @api Used by the substrate to provide UI etc.
-	 * @return array<string, mixed> Schema consumed by `Command_Interpreter_Node`.
+	 * @return array<string,mixed> Schema consumed by `Command_Interpreter_Node`.
 	 */
 	public static function node_schema(): array {
 		return [

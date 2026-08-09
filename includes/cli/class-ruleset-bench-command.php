@@ -56,8 +56,8 @@ class Ruleset_Bench_Command {
 	 *
 	 * @when after_wp_load
 	 *
-	 * @param array<int, string>    $args       Positional (unused).
-	 * @param array<string, mixed>  $assoc_args Flags. A non-numeric or missing
+	 * @param array<int,string>    $args       Positional (unused).
+	 * @param array<string,mixed>  $assoc_args Flags. A non-numeric or missing
 	 *                                          `iterations` falls back to 200;
 	 *                                          anything below 1 clamps to 1.
 	 * @return void

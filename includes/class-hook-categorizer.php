@@ -76,7 +76,7 @@ class Hook_Categorizer {
 	 * Cached base config from JSON file. Every failure path caches the empty
 	 * shape too, so a missing or unreadable file costs one read per process.
 	 *
-	 * @var array<string, mixed>|null
+	 * @var array<string,mixed>|null
 	 */
 	private static ?array $base_config = null;
 
@@ -84,7 +84,7 @@ class Hook_Categorizer {
 	 * Cached merged config (base + user customizations). Null until the first
 	 * `get_merged_config()`, and `clear_cache()` puts it back there.
 	 *
-	 * @var array{colors: array<string, mixed>, descriptions: array<string, mixed>, patterns: array<string, mixed>, overrides: array<string, mixed>}|null
+	 * @var array{colors: array<string,mixed>, descriptions: array<string,mixed>, patterns: array<string,mixed>, overrides: array<string,mixed>}|null
 	 */
 	private static ?array $merged_config = null;
 
@@ -94,7 +94,7 @@ class Hook_Categorizer {
 	 * Drops the plugin's own hooks, sends anything matching no pattern to
 	 * `Other`, and omits the categories that ended up empty.
 	 *
-	 * @return array<string, mixed> Associative array of category => [hooks...].
+	 * @return array<string,mixed> Associative array of category => [hooks...].
 	 */
 	public static function get_registered_hooks_by_category(): array {
 		$hooks      = self::get_registered_hooks();
@@ -202,7 +202,7 @@ class Hook_Categorizer {
 	 * @return bool True if the hook belongs to Event Logger / Nodes itself.
 	 */
 	public static function is_internal( string $hook_name ): bool {
-		/** @var array<int, string> $prefixes */
+		/** @var array<int,string> $prefixes */
 		static $prefixes = [
 			'newspack_event_logger_nodes_',
 			'newspack_event_logger_nodes/',
@@ -220,7 +220,7 @@ class Hook_Categorizer {
 	/**
 	 * Get all categories with their colors.
 	 *
-	 * @return array<string, mixed> Associative array of category => color, base
+	 * @return array<string,mixed> Associative array of category => color, base
 	 *                              colors with the user's merged over them.
 	 */
 	public static function get_categories(): array {
@@ -237,10 +237,10 @@ class Hook_Categorizer {
 	 * because a hook bound only inside a worker — or only on another site —
 	 * never appears in this request's `$wp_filter`.
 	 *
-	 * @return array<int, string> Sorted, deduplicated hook names.
+	 * @return array<int,string> Sorted, deduplicated hook names.
 	 */
 	public static function get_registered_hooks(): array {
-		/** @var array<string, \WP_Hook> $wp_filter WordPress global. */
+		/** @var array<string,\WP_Hook> $wp_filter WordPress global. */
 		global $wp_filter;
 
 		$hooks = [];
@@ -291,7 +291,7 @@ class Hook_Categorizer {
 	 * config declares — and a user can add more — so the rest silently rendered
 	 * blank.
 	 *
-	 * @return array<string, mixed> Category name => description.
+	 * @return array<string,mixed> Category name => description.
 	 */
 	public static function get_descriptions(): array {
 		$config = self::get_merged_config();
@@ -307,7 +307,7 @@ class Hook_Categorizer {
 	 * order, a base pattern in an earlier category still beats a user pattern
 	 * in a later one — `overrides` is the way to pin a specific hook.
 	 *
-	 * @return array{colors: array<string, mixed>, descriptions: array<string, mixed>, patterns: array<string, mixed>, overrides: array<string, mixed>} Merged configuration.
+	 * @return array{colors: array<string,mixed>, descriptions: array<string,mixed>, patterns: array<string,mixed>, overrides: array<string,mixed>} Merged configuration.
 	 */
 	public static function get_merged_config(): array {
 		if ( null !== self::$merged_config ) {
@@ -326,15 +326,15 @@ class Hook_Categorizer {
 		$overrides      = $customizations['overrides'] ?? [];
 
 		// Merge colors (user overrides base).
-		/** @var array<string, mixed> $colors config dynamic output. */
+		/** @var array<string,mixed> $colors config dynamic output. */
 		$colors = \array_merge( Core::arr( $base_colors ), Core::arr( $user_colors ) );
 
 		// Same precedence as colors: a user description wins.
-		/** @var array<string, mixed> $descriptions config dynamic output. */
+		/** @var array<string,mixed> $descriptions config dynamic output. */
 		$descriptions = \array_merge( Core::arr( $base_descs ), Core::arr( $user_descs ) );
 
 		// Merge patterns (user patterns added to base).
-		/** @var array<string, mixed> $patterns config dynamic output. */
+		/** @var array<string,mixed> $patterns config dynamic output. */
 		$patterns = Core::arr( $base_patterns );
 		if ( \is_array( $user_patterns_all ) ) {
 			foreach ( $user_patterns_all as $raw_category => $user_patterns ) {
@@ -346,7 +346,7 @@ class Hook_Categorizer {
 			}
 		}
 
-		/** @var array<string, mixed> $overrides_map config dynamic output. */
+		/** @var array<string,mixed> $overrides_map config dynamic output. */
 		$overrides_map       = Core::arr( $overrides );
 		self::$merged_config = [
 			'colors'       => $colors,
@@ -365,7 +365,7 @@ class Hook_Categorizer {
 	 * stored value of any other type is discarded before the merge, so the
 	 * three default keys are always present.
 	 *
-	 * @return array<string, mixed> User customizations: patterns, overrides, colors, descriptions.
+	 * @return array<string,mixed> User customizations: patterns, overrides, colors, descriptions.
 	 */
 	public static function get_user_customizations(): array {
 		$defaults = [
@@ -379,7 +379,7 @@ class Hook_Categorizer {
 		if ( ! \is_array( $saved ) && ! \is_object( $saved ) && ! \is_string( $saved ) ) {
 			$saved = [];
 		}
-		/** @var array<string, mixed> $merged wp_parse_args boundary output. */
+		/** @var array<string,mixed> $merged wp_parse_args boundary output. */
 		$merged = \wp_parse_args( $saved, $defaults );
 		return $merged;
 	}
@@ -392,7 +392,7 @@ class Hook_Categorizer {
 	 * empty `_colors` / `_patterns` shape: categorization degrades to `Other`
 	 * instead of failing the request.
 	 *
-	 * @return array<string, mixed> Base configuration.
+	 * @return array<string,mixed> Base configuration.
 	 */
 	public static function get_base_config(): array {
 		if ( null !== self::$base_config ) {
@@ -412,7 +412,7 @@ class Hook_Categorizer {
 			return self::$base_config;
 		}
 		$decoded = \json_decode( $json, true, 64 );
-		/** @var array<string, mixed> $config json_decode dynamic output. */
+		/** @var array<string,mixed> $config json_decode dynamic output. */
 		$config            = Core::arr( $decoded, [ '_colors' => [], '_patterns' => [] ] );
 		self::$base_config = $config;
 		return self::$base_config;

@@ -45,7 +45,7 @@ class Auto_Tuner_Node extends Node {
 	 * switch. Every rejection is silent — a malformed decision costs the caller
 	 * nothing, and FlameBuilder emits these from its periodic flush.
 	 *
-	 * @param array<int, mixed> $message Positional Message array.
+	 * @param array<int,mixed> $message Positional Message array.
 	 */
 	public function fill( array $message ): void {
 		/** @var int $type_flags */
@@ -228,7 +228,7 @@ class Auto_Tuner_Node extends Node {
 	 * regardless of storage tier.
 	 *
 	 * @param Rule $rule Rule to flatten.
-	 * @return array<string, mixed>
+	 * @return array<string,mixed>
 	 */
 	private static function resolved_shape( Rule $rule ): array {
 		$shape             = $rule->to_array();
@@ -243,7 +243,7 @@ class Auto_Tuner_Node extends Node {
 	 * no constructor arguments and exposes no verbs.
 	 *
 	 * @api Used by the substrate to provide UI etc.
-	 * @return array<string, mixed>
+	 * @return array<string,mixed>
 	 */
 	public static function node_schema(): array {
 		return [
