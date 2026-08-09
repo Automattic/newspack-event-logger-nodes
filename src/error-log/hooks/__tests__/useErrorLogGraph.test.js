@@ -86,7 +86,7 @@ afterEach( () => jest.restoreAllMocks() );
 const INTERPRETER = '_command_interpreter';
 const ROUTER = '_router';
 const LINK = 'perferrors:link';
-// RemoteLink has an unnamed SseIn + shares the reserved _http/_heartbeat.
+// RemoteLink has an the SseIn + shares the reserved _http/_heartbeat.
 const HTTP = '_http';
 const HEARTBEAT = '_heartbeat';
 const VIEW = 'perferrors:view';
@@ -141,8 +141,10 @@ describe( 'useErrorLogGraph — exospine + RemoteLink wiring', () => {
 			expect( node ).toBeTruthy();
 			expect( node.sink ).toBe( interpreter );
 		}
-		// The per-link SseIn name is no longer registered.
-		expect( Core.node( 'perferrors:link:sse-in' ) ).toBeNull();
+		// Registered so `trace` reaches it; patron keeps it off the canvas.
+		expect( Core.node( 'perferrors:link:sse-in' ) ).toBe(
+			Core.node( 'perferrors:link' ).sseIn
+		);
 	} );
 
 	test( 'does not mount the retired perferrors:route / perferrors:transform nodes', () => {
@@ -185,9 +187,9 @@ describe( 'useErrorLogGraph — exospine + RemoteLink wiring', () => {
 		expect( Core.node( VIEW ).lines[ 0 ].rid ).toBe( 'r-watch' );
 	} );
 
-	test( 'steers flow with targets: the unnamed sse-in subscribes on `errors` and routes to view; heartbeat → _http/workers', () => {
+	test( 'steers flow with targets: the `:sse-in` subscribes on `errors` and routes to view; heartbeat → _http/workers', () => {
 		renderHook( () => useErrorLogGraph() );
-		// The unnamed SseIn opened against the `errors` subscribe topic.
+		// The the SseIn opened against the `errors` subscribe topic.
 		expect( FakeEventSource.last.url ).toContain( 'subscribe=errors.*' );
 		expect( Core.node( HEARTBEAT ).target ).toBe( `${ HTTP }/workers` );
 	} );
@@ -509,7 +511,7 @@ describe( 'useErrorLogGraph — graphGeneration Reset Graph', () => {
 		// Soft nodes rebuild fresh; backbone (incl shared `_http`) survives.
 		expect( Core.node( VIEW ) ).not.toBe( firstView );
 		expect( Core.node( HTTP ) ).toBe( firstHttp );
-		// The rebuilt link reopened the unnamed SseIn on the `errors` topic.
+		// The rebuilt link reopened the SseIn on the `errors` topic.
 		expect( FakeEventSource.last.url ).toContain( 'subscribe=errors.*' );
 		expect( Core.node( VIEW ).sink ).toBe( Core.node( INTERPRETER ) );
 		expect( Core.node( INTERPRETER ) ).toBe( backbone );
