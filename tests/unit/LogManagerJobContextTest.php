@@ -72,7 +72,7 @@ class LogManagerJobContextTest extends TestCase {
 			];
 		} );
 
-		Log_Manager::begin_job_context( 'relay', '', [
+		Log_Manager::begin_job_context( 'relay', '', server: [
 			'REQUEST_METHOD' => 'GET',
 			'REQUEST_URI'    => '/Admin/Zarquon.html',
 			'QUERY_STRING'   => 'Site=7391&Action=Refresh',
@@ -210,6 +210,62 @@ class LogManagerJobContextTest extends TestCase {
 		$this->assertNotEmpty( $lines, 'the job context wrote to the firehose' );
 		$this->assertStringContainsString( 'process (aborted)', $lines );
 		$this->assertStringNotContainsString( 'process (complete)', $lines );
+	}
+
+	/**
+	 * A job's trace has no way back to the record that caused it unless the
+	 * message travels with the context: FROM names the producer, ID is the
+	 * `segment:offset:length` the Consumer stamped, KEY the partition key. That
+	 * ID is what turns "this job misbehaved" into a seek onto the log.
+	 */
+	public function test_a_job_context_logs_the_message_that_caused_it(): void {
+		$this->arrange_logging();
+		Log_Manager::begin_job_context(
+			'traced_handler',
+			'run-7719',
+			[
+				\Newspack_Nodes\Message::FROM => 'jobs.p3',
+				\Newspack_Nodes\Message::ID   => '0:58746220:127',
+				\Newspack_Nodes\Message::KEY  => 'affinity-8842',
+			]
+		);
+		Log_Manager::instance()->message( 'work', [ 'm' => 'traced' ] );
+		Log_Manager::end_job_context();
+
+		$lines = $this->firehose_lines();
+		$this->assertStringContainsString( 'jobs.p3', $lines );
+		$this->assertStringContainsString( '0:58746220:127', $lines );
+		$this->assertStringContainsString( 'affinity-8842', $lines );
+	}
+
+	/**
+	 * A nested context — evTemplate rendering inside a job — names no message
+	 * of its own, and must not lose the outer job's. That is what makes the
+	 * causing record reachable from the innermost trace.
+	 */
+	public function test_a_nested_context_keeps_the_outer_jobs_message(): void {
+		$this->arrange_logging();
+		Log_Manager::begin_job_context(
+			'outer_handler',
+			'',
+			[
+				\Newspack_Nodes\Message::FROM => 'jobs.p1',
+				\Newspack_Nodes\Message::ID   => '4:117:63',
+				\Newspack_Nodes\Message::KEY  => 'affinity-9001',
+			]
+		);
+		Log_Manager::instance()->message( 'work', [ 'm' => 'outer' ] );
+		Log_Manager::begin_job_context( 'inner_template' );
+		Log_Manager::instance()->message( 'work', [ 'm' => 'inner' ] );
+		Log_Manager::end_job_context();
+		Log_Manager::end_job_context();
+
+		$lines = $this->firehose_lines();
+		$this->assertSame(
+			2,
+			\substr_count( $lines, '4:117:63' ),
+			'both the outer job and the nested render name the causing record'
+		);
 	}
 
 	/** A job that finished keeps the ordinary completion line. */
