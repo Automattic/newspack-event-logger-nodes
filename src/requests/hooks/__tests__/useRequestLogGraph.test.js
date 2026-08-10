@@ -39,7 +39,6 @@ jest.mock( '@newspack-nodes/shared/hooks/usePageVisibility', () => ( {
 	default: () => mockPageVisible,
 } ) );
 
-import { makeFakeCommandClient } from '@newspack-nodes/shared/test-utils/fakeCommandClient';
 import { installFakeCommandWire } from '@newspack-nodes/shared/test-utils/fakeCommandWire';
 import { useRequestLogGraph } from '../useRequestLogGraph';
 
@@ -63,6 +62,14 @@ class FakeEventSource {
 	}
 }
 
+// The seam is the WIRE: the graph packs, POSTs and unpacks for real, so
+// HttpOut, the router and the interpreter all run.
+function installWire( payloadByVerb = {} ) {
+	return installFakeCommandWire(
+		( m ) => payloadByVerb[ m[ VALUE ]?.name ] ?? null
+	);
+}
+
 beforeEach( () => {
 	Core.reset();
 	mockPageVisible = true;
@@ -79,12 +86,6 @@ beforeEach( () => {
 afterEach( () => jest.restoreAllMocks() );
 
 // Transport double keyed by verb, built on the shared HttpOut-seam helper.
-function makeFakeClient( payloadByVerb = {} ) {
-	return makeFakeCommandClient(
-		( m ) => payloadByVerb[ m[ VALUE ]?.name ] ?? null
-	);
-}
-
 const INTERPRETER = '_command_interpreter';
 const ROUTER = '_router';
 const LINK = 'requestlog:link';
@@ -391,16 +392,14 @@ describe( 'useRequestLogGraph — page visibility / pause lifecycle', () => {
 
 describe( 'useRequestLogGraph — glob browse', () => {
 	test( 'exposes a browse model cataloging the `completed.*` partitions', async () => {
-		const client = makeFakeClient( {
+		installWire( {
 			list_logs: [
 				{ key: 'completed.p0', label: 'completed.p0' },
 				{ key: 'completed.p2', label: 'completed.p2' },
 				{ key: 'errors.p0', label: 'errors.p0' },
 			],
 		} );
-		const { result } = renderHook( () =>
-			useRequestLogGraph( { commandClient: client } )
-		);
+		const { result } = renderHook( () => useRequestLogGraph() );
 		await act( async () => {} );
 		expect(
 			result.current.browse.partitions.map( ( p ) => p.key )
@@ -408,15 +407,13 @@ describe( 'useRequestLogGraph — glob browse', () => {
 	} );
 
 	test( 'selecting a partition narrows the live SSE subscription to that dir', async () => {
-		const client = makeFakeClient( {
+		installWire( {
 			list_logs: [
 				{ key: 'completed.p2', label: 'completed.p2' },
 				{ key: 'completed.p3', label: 'completed.p3' },
 			],
 		} );
-		const { result } = renderHook( () =>
-			useRequestLogGraph( { commandClient: client } )
-		);
+		const { result } = renderHook( () => useRequestLogGraph() );
 		await act( async () => {} );
 		expect( FakeEventSource.last.url ).toContain( 'subscribe=completed.*' );
 		await act( async () =>
@@ -431,16 +428,14 @@ describe( 'useRequestLogGraph — glob browse', () => {
 	} );
 
 	test( 'a segment browse PAUSES (stream closes); Play reopens at the seek', async () => {
-		const client = makeFakeClient( {
+		installWire( {
 			list_logs: [
 				{ key: 'completed.p2', label: 'completed.p2' },
 				{ key: 'completed.p3', label: 'completed.p3' },
 			],
 			log_status: { segments: [ { id: 7, size: 4096 } ] },
 		} );
-		const { result } = renderHook( () =>
-			useRequestLogGraph( { commandClient: client } )
-		);
+		const { result } = renderHook( () => useRequestLogGraph() );
 		await act( async () => {} );
 		await act( async () =>
 			result.current.browse.selectPartition( 'completed.p2' )
@@ -491,7 +486,7 @@ describe( 'useRequestLogGraph — pause vs visibility precedence + replay surviv
 	} );
 
 	test( 'a paused replay resumes mid-replay and still flips to Live at the boundary', async () => {
-		const client = makeFakeClient( {
+		installWire( {
 			list_logs: [
 				{ key: 'completed.p0', label: 'completed.p0' },
 				{ key: 'completed.p1', label: 'completed.p1' },
@@ -499,9 +494,7 @@ describe( 'useRequestLogGraph — pause vs visibility precedence + replay surviv
 			// Newest segment 9 is 500 bytes — the replay catch-up boundary.
 			log_status: { segments: [ { id: 9, size: 500 } ] },
 		} );
-		const { result } = renderHook( () =>
-			useRequestLogGraph( { commandClient: client } )
-		);
+		const { result } = renderHook( () => useRequestLogGraph() );
 		await act( async () => {} );
 		await act( async () =>
 			result.current.browse.selectPartition( 'completed.p0' )

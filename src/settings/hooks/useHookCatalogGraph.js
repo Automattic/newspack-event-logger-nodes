@@ -20,7 +20,8 @@
  * HookSelectorModal has no error UI — while `useReconcile` keeps asking, so a
  * refused session re-establishes itself instead of showing "no hooks" forever.
  *
- * The command boundary is injectable: tests pass `opts.commandClient` (assigned
+ * Nothing is injected: HttpOut lazily defaults its own client, and tests seam
+ * at `fetch` (`installFakeCommandWire`) so the whole egress runs for real.
  * to `_http.client`) so the hook never touches the network. Production lazily
  * defaults (inside HttpOut) to the localized transport.
  */
@@ -31,10 +32,8 @@ import useReconcile from '@newspack-nodes/shared/hooks/useReconcile';
 import useRequestNode from '@newspack-nodes/shared/hooks/useRequestNode';
 
 /**
- * @param {Object}  [opts]               Options.
- * @param {boolean} [opts.isOpen]        When true, fires one hook-catalog fetch.
- * @param {Object}  [opts.commandClient] transport seam assigned to `_http.client`;
- *                                       defaults (inside HttpOut) to the localized transport.
+ * @param {Object}  [opts]        Options.
+ * @param {boolean} [opts.isOpen] When true, fires one hook-catalog fetch.
  * @return {{ hooksByCategory: Object, descriptions: Object, loading: boolean }} The render model.
  */
 export function useHookCatalogGraph( opts = {} ) {
@@ -47,14 +46,8 @@ export function useHookCatalogGraph( opts = {} ) {
 	// Category one-liners travel with the taxonomy that owns them.
 	const [ descriptions, setDescriptions ] = useState( {} );
 
-	// Mount the backbone once and give `_http` its client.
-	useEffect( () => {
-		const { http, teardown } = mountExospine();
-		if ( optsRef.current.commandClient ) {
-			http.client = optsRef.current.commandClient;
-		}
-		return teardown;
-	}, [] );
+	// Mount the backbone once; HttpOut defaults its own transport.
+	useEffect( () => mountExospine().teardown, [] );
 
 	const request = useRequestNode( 'hookcatalog:request', 'performance' );
 

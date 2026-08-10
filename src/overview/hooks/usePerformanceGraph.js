@@ -44,7 +44,6 @@
  * `resolveRequest`, `resolveUrlHash`, `fetchUrlBreakdown`, `listRules`,
  * `upsertRule`, `removeRule`, `requestGrep`. Data reaches React through each
  * slice's own `useNodeState( '<slice>:view', 'view' )`. The command boundary is
- * injectable via `opts.commandClient`.
  */
 
 import { useCallback, useEffect, useRef } from '@wordpress/element';
@@ -208,21 +207,6 @@ function urlsArgs( { urlParams, serverFilter } ) {
  * @param {?Object}              [opts.urlDetailData]    The url_detail slice React holds,
  *                                                       read only for its `requests` rows.
  * @param {(err: Error) => void} [opts.onError]          Receives a failed awaited verb.
- * @param {Object}               [opts.commandClient]    Transport seam handed to
- *                                                       `useBatchedPoll`; production lets
- *                                                       HttpOut default it.
- * @return {{ handleUrlParamsChange: (params: Object) => void,
- *   resolveRequest: (rid: string) => Promise<Object|null>,
- *   resolveUrlHash: (hash: string) => Promise<{url: string}|null>,
- *   fetchUrlBreakdown: (hash: string, breakdown: string) => Promise<Object|null>,
- *   listRules: () => Promise<Object|null>,
- *   upsertRule: (rule: Object) => Promise<Object|null>,
- *   removeRule: (id: string) => Promise<Object|null>,
- *   requestGrep: (pattern: string, limit?: number) => Promise<Object|null> }}
- *   Control callbacks ONLY — no data. Every slice reaches React through its own
- *   `useNodeState( '<slice>:view', 'view' )`. `handleUrlParamsChange` takes the
- *   URL table's `{ search, sort, order, offset }` and debounces a search change
- *   by 300ms while sending sort/page changes immediately.
  */
 export function usePerformanceGraph( opts = {} ) {
 	const {
@@ -347,7 +331,6 @@ export function usePerformanceGraph( opts = {} ) {
 		teeName: 'perf:tee',
 		// Suspend offscreen overview/urls poll while any detail modal is open.
 		paused: !! ( selectedUrl || selectedRequest ),
-		commandClient: opts.commandClient,
 		intervalMs,
 	} );
 

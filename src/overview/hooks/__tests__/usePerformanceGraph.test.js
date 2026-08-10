@@ -17,18 +17,14 @@
  */
 
 import { renderHook, act } from '../../../test-helpers/renderHook';
+import { installFakeCommandWire } from '@newspack-nodes/shared/test-utils/fakeCommandWire';
 import {
 	Core,
-	newMessage,
-	TYPE,
 	ID,
 	TO,
 	FROM,
 	KEY,
 	VALUE,
-	TM_COMMAND,
-	TM_RESPONSE,
-	TM_ERROR,
 	parseCommandArgs,
 	forgetSession,
 	__setAuthFetch,
@@ -40,51 +36,19 @@ const ROUTER = '_router';
 const HTTP = '_http';
 
 // Fake transport: postBatch returns TO=FROM replies keyed by verb.
-function makeFakeClient( payloadByVerb = {}, opts = {} ) {
-	const client = {
-		batches: [],
-		buildMessage( { to, verb, args = '', payload = null } ) {
-			const m = newMessage();
-			m[ TYPE ] = TM_COMMAND;
-			m[ TO ] = to;
-			m[ VALUE ] = { name: verb, arguments: args, payload };
-			return m;
-		},
-		postBatch( messages ) {
-			client.batches.push( messages );
-			const replies = messages.map( ( m ) => {
-				const reply = newMessage();
-				reply[ TYPE ] =
-					opts.errorVerbs &&
-					opts.errorVerbs.includes( m[ VALUE ]?.name )
-						? TM_COMMAND | TM_RESPONSE | TM_ERROR
-						: TM_COMMAND | TM_RESPONSE;
-				reply[ TO ] = m[ FROM ];
-				reply[ ID ] = m[ ID ];
-				reply[ VALUE ] = {
-					name: m[ VALUE ]?.name,
-					payload:
-						payloadByVerb[ m[ VALUE ]?.name ] ??
-						payloadByVerb._default ??
-						null,
-				};
-				return reply;
-			} );
-			return Promise.resolve( replies );
-		},
-		// One-shot send seam for resolveRequest's no-graph fallback path.
-		send: jest.fn( ( { verb } ) => {
-			const reply = newMessage();
-			reply[ TYPE ] = TM_COMMAND | TM_RESPONSE;
-			reply[ VALUE ] = {
-				name: verb,
-				payload:
-					payloadByVerb[ verb ] ?? payloadByVerb._default ?? null,
-			};
-			return Promise.resolve( reply );
-		} ),
-	};
-	return client;
+// The seam is the WIRE: the graph packs, POSTs and unpacks for real, so
+// HttpOut, the router and the interpreter all run. `wire.batches` is what was
+// posted; a verb in `errorVerbs` answers TM_ERROR carrying its payload.
+function installWire( payloadByVerb = {}, opts = {} ) {
+	return installFakeCommandWire( ( m ) => {
+		const name = m[ VALUE ]?.name;
+		const payload = payloadByVerb[ name ] ?? payloadByVerb._default ?? null;
+		if ( ! opts.errorVerbs?.includes( name ) ) {
+			return payload;
+		}
+		// answerBatch ships an Error as its `.message`, so unwrap first.
+		return new Error( payload?.message ?? payload ?? name );
+	} );
 }
 
 beforeEach( () => Core.reset() );
@@ -131,13 +95,12 @@ afterEach( () => {
 
 describe( 'usePerformanceGraph — toolkit wiring', () => {
 	test( 'mounts the backbone + _http + the slice views, each sinking into the interpreter', () => {
-		const client = makeFakeClient();
-		renderHook( () => usePerformanceGraph( { commandClient: client } ) );
+		installWire();
+		renderHook( () => usePerformanceGraph() );
 		const interpreter = Core.node( INTERPRETER );
 		expect( interpreter ).toBeTruthy();
 		expect( Core.node( ROUTER ) ).toBeTruthy();
 		expect( Core.node( HTTP ) ).toBeTruthy();
-		expect( Core.node( HTTP ).client ).toBe( client );
 		for ( const name of [
 			'overview:view',
 			'urls:view',
@@ -153,18 +116,16 @@ describe( 'usePerformanceGraph — toolkit wiring', () => {
 	} );
 
 	test( 'does NOT mount _output / _completion / _uptime / _cwd (dashboards are not REPLs)', () => {
-		const client = makeFakeClient();
-		renderHook( () => usePerformanceGraph( { commandClient: client } ) );
+		installWire();
+		renderHook( () => usePerformanceGraph() );
 		for ( const name of [ '_output', '_completion', '_uptime', '_cwd' ] ) {
 			expect( Core.node( name ) ).toBeNull();
 		}
 	} );
 
 	test( 'returns the three control callbacks', () => {
-		const client = makeFakeClient();
-		const { result } = renderHook( () =>
-			usePerformanceGraph( { commandClient: client } )
-		);
+		installWire();
+		const { result } = renderHook( () => usePerformanceGraph() );
 		expect( typeof result.current.handleUrlParamsChange ).toBe(
 			'function'
 		);
@@ -175,26 +136,26 @@ describe( 'usePerformanceGraph — toolkit wiring', () => {
 
 describe( 'usePerformanceGraph — poll slices fire live args', () => {
 	test( 'fires overview + urls on the first poll, TO=performance via the egress', async () => {
-		const client = makeFakeClient();
-		renderHook( () => usePerformanceGraph( { commandClient: client } ) );
+		const wire = installWire();
+		renderHook( () => usePerformanceGraph() );
 		await act( async () => {} );
-		const overview = findVerb( client.batches, 'overview' );
+		const overview = findVerb( wire.batches, 'overview' );
 		expect( overview ).toBeTruthy();
 		expect( overview[ TO ] ).toBe( 'performance' );
-		const urls = findVerb( client.batches, 'urls' );
+		const urls = findVerb( wire.batches, 'urls' );
 		expect( urls ).toBeTruthy();
 	} );
 
 	test( 'the overview Fetcher emits the CURRENT serverFilter as a live arg', async () => {
-		const client = makeFakeClient();
+		const wire = installWire();
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
-			initialProps: { commandClient: client },
+			initialProps: {},
 		} );
 		await act( async () => {} );
 		await act( async () => {
-			rerender( { commandClient: client, serverFilter: 'web1' } );
+			rerender( { serverFilter: 'web1' } );
 		} );
-		const overview = client.batches
+		const overview = wire.batches
 			.flat()
 			.find(
 				( m ) =>
@@ -206,18 +167,18 @@ describe( 'usePerformanceGraph — poll slices fire live args', () => {
 	} );
 
 	test( 'an overview reply lands in the overview:view slice', async () => {
-		const client = makeFakeClient( { overview: { total_requests: 7 } } );
-		renderHook( () => usePerformanceGraph( { commandClient: client } ) );
+		installWire( { overview: { total_requests: 7 } } );
+		renderHook( () => usePerformanceGraph() );
 		await act( async () => {} );
 		const view = Core.node( 'overview:view' );
 		expect( view.setStateCache.view.data ).toEqual( { total_requests: 7 } );
 	} );
 
 	test( 'a urls reply lands in the urls:view slice (data + total)', async () => {
-		const client = makeFakeClient( {
+		installWire( {
 			urls: { data: [ { hash: 'a' } ], total: 12, limit: 100, offset: 0 },
 		} );
-		renderHook( () => usePerformanceGraph( { commandClient: client } ) );
+		renderHook( () => usePerformanceGraph() );
 		await act( async () => {} );
 		const view = Core.node( 'urls:view' );
 		expect( view.setStateCache.view ).toEqual( {
@@ -229,16 +190,16 @@ describe( 'usePerformanceGraph — poll slices fire live args', () => {
 	} );
 
 	test( 'a serverFilter change fires an immediate poke (not just next tick)', async () => {
-		const client = makeFakeClient();
+		const wire = installWire();
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
-			initialProps: { commandClient: client },
+			initialProps: {},
 		} );
 		await act( async () => {} );
-		const before = countVerbs( client.batches, 'overview' );
+		const before = countVerbs( wire.batches, 'overview' );
 		await act( async () => {
-			rerender( { commandClient: client, serverFilter: 'web2' } );
+			rerender( { serverFilter: 'web2' } );
 		} );
-		expect( countVerbs( client.batches, 'overview' ) ).toBeGreaterThan(
+		expect( countVerbs( wire.batches, 'overview' ) ).toBeGreaterThan(
 			before
 		);
 	} );
@@ -249,27 +210,28 @@ describe( 'usePerformanceGraph — poll slices fire live args', () => {
 	 * poll tick. Holding is what keeps a dead session from becoming a flood.
 	 */
 	test( 'sends nothing while unauthenticated', async () => {
+		const wire = installWire();
+		// AFTER installWire: it installs a valid auth stub of its own, and an
+		// absent session is this test's whole subject.
 		forgetSession();
 		__setAuthFetch( async () => null );
-		const client = makeFakeClient();
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
-			initialProps: { commandClient: client },
+			initialProps: {},
 		} );
 		await act( async () => {} );
 		await act( async () => {
-			rerender( { commandClient: client, serverFilter: 'web7' } );
+			rerender( { serverFilter: 'web7' } );
 		} );
 
-		expect( countVerbs( client.batches, 'overview' ) ).toBe( 0 );
+		expect( countVerbs( wire.batches, 'overview' ) ).toBe( 0 );
 	} );
 } );
 
 describe( 'usePerformanceGraph — refresh interval wiring', () => {
 	test( 'arms the poll Timer at the selected refreshInterval (hitchhike + throttle)', () => {
-		const client = makeFakeClient();
+		installWire();
 		renderHook( () =>
 			usePerformanceGraph( {
-				commandClient: client,
 				refreshInterval: '30000',
 			} )
 		);
@@ -279,15 +241,15 @@ describe( 'usePerformanceGraph — refresh interval wiring', () => {
 	} );
 
 	test( 'changing refreshInterval re-arms the poll Timer to the new cadence', async () => {
-		const client = makeFakeClient();
+		installWire();
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
-			initialProps: { commandClient: client, refreshInterval: '5000' },
+			initialProps: { refreshInterval: '5000' },
 		} );
 		await act( async () => {} );
 		expect( Core.node( 'perf:timer' ).interval_ms ).toBe( 5000 );
 
 		await act( async () => {
-			rerender( { commandClient: client, refreshInterval: '60000' } );
+			rerender( { refreshInterval: '60000' } );
 		} );
 		expect( Core.node( 'perf:timer' ).interval_ms ).toBe( 60000 );
 	} );
@@ -295,17 +257,17 @@ describe( 'usePerformanceGraph — refresh interval wiring', () => {
 
 describe( 'usePerformanceGraph — on-demand url_detail / request_detail', () => {
 	test( 'selecting a URL fires url_detail with the hash, routes the reply to urldetail:view', async () => {
-		const client = makeFakeClient( {
+		const wire = installWire( {
 			url_detail: { last_modified: 1, requests: [] },
 		} );
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
-			initialProps: { commandClient: client },
+			initialProps: {},
 		} );
 		await act( async () => {} );
 		await act( async () => {
-			rerender( { commandClient: client, selectedUrl: { hash: 'abc' } } );
+			rerender( { selectedUrl: { hash: 'abc' } } );
 		} );
-		const detail = findVerb( client.batches, 'url_detail' );
+		const detail = findVerb( wire.batches, 'url_detail' );
 		expect( detail ).toBeTruthy();
 		expect(
 			parseCommandArgs( detail[ VALUE ].arguments ).positional[ 0 ]
@@ -318,19 +280,18 @@ describe( 'usePerformanceGraph — on-demand url_detail / request_detail', () =>
 	} );
 
 	test( 'selecting a request fires request_detail with the partition', async () => {
-		const client = makeFakeClient( { request_detail: { rid: 'r1' } } );
+		const wire = installWire( { request_detail: { rid: 'r1' } } );
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
-			initialProps: { commandClient: client },
+			initialProps: {},
 		} );
 		await act( async () => {} );
 		await act( async () => {
 			rerender( {
-				commandClient: client,
 				selectedRequest: 'r1',
 				requestPartition: 2,
 			} );
 		} );
-		const req = findVerb( client.batches, 'request_detail' );
+		const req = findVerb( wire.batches, 'request_detail' );
 		expect( req ).toBeTruthy();
 		expect(
 			parseCommandArgs( req[ VALUE ].arguments ).options.partition
@@ -341,26 +302,26 @@ describe( 'usePerformanceGraph — on-demand url_detail / request_detail', () =>
 describe( 'usePerformanceGraph — handleUrlParamsChange', () => {
 	test( 'debounces a search change (300ms)', async () => {
 		jest.useFakeTimers();
-		const client = makeFakeClient( { urls: { data: [], total: 0 } } );
+		const wire = installWire( { urls: { data: [], total: 0 } } );
 		let api;
 		const { unmount } = renderHook(
 			( p ) => {
 				api = usePerformanceGraph( p );
 				return api;
 			},
-			{ initialProps: { commandClient: client } }
+			{ initialProps: {} }
 		);
 		await act( async () => {} );
-		const before = countVerbs( client.batches, 'urls' );
+		const before = countVerbs( wire.batches, 'urls' );
 		api.handleUrlParamsChange( {
 			search: 'x',
 			sort: 'count',
 			order: 'desc',
 			offset: 0,
 		} );
-		expect( countVerbs( client.batches, 'urls' ) ).toBe( before );
+		expect( countVerbs( wire.batches, 'urls' ) ).toBe( before );
 		jest.advanceTimersByTime( 300 );
-		expect( countVerbs( client.batches, 'urls' ) ).toBe( before + 1 );
+		expect( countVerbs( wire.batches, 'urls' ) ).toBe( before + 1 );
 		unmount();
 		jest.useRealTimers();
 	} );
@@ -370,24 +331,24 @@ describe( 'usePerformanceGraph — handleUrlParamsChange', () => {
 		// the errors filter — which changes nothing else — returned before
 		// sending anything. The button flipped to "Showing Errors" and the
 		// table kept showing every URL.
-		const client = makeFakeClient( { urls: { data: [], total: 0 } } );
+		const wire = installWire( { urls: { data: [], total: 0 } } );
 		let api;
 		renderHook(
 			( p ) => {
 				api = usePerformanceGraph( p );
 				return api;
 			},
-			{ initialProps: { commandClient: client } }
+			{ initialProps: {} }
 		);
 		await act( async () => {} );
 		const base = { search: '', sort: 'count', order: 'desc', offset: 0 };
 		api.handleUrlParamsChange( base );
-		const before = countVerbs( client.batches, 'urls' );
+		const before = countVerbs( wire.batches, 'urls' );
 
 		api.handleUrlParamsChange( { ...base, errorsOnly: true } );
 
-		expect( countVerbs( client.batches, 'urls' ) ).toBe( before + 1 );
-		const sent = client.batches
+		expect( countVerbs( wire.batches, 'urls' ) ).toBe( before + 1 );
+		const sent = wire.batches
 			.flat()
 			.filter( ( m ) => m[ VALUE ]?.name === 'urls' );
 		expect( sent[ sent.length - 1 ][ VALUE ].arguments ).toContain(
@@ -398,7 +359,7 @@ describe( 'usePerformanceGraph — handleUrlParamsChange', () => {
 
 describe( 'usePerformanceGraph — resolveRequest & fetchUrlBreakdown (awaited)', () => {
 	test( 'resolveRequest returns the unwrapped reply payload', async () => {
-		const client = makeFakeClient( {
+		installWire( {
 			request_search: { url_hash: 'h', partition: 1 },
 		} );
 		let api;
@@ -407,7 +368,7 @@ describe( 'usePerformanceGraph — resolveRequest & fetchUrlBreakdown (awaited)'
 				api = usePerformanceGraph( p );
 				return api;
 			},
-			{ initialProps: { commandClient: client } }
+			{ initialProps: {} }
 		);
 		await act( async () => {} );
 		let resolved;
@@ -418,7 +379,7 @@ describe( 'usePerformanceGraph — resolveRequest & fetchUrlBreakdown (awaited)'
 	} );
 
 	test( 'fetchUrlBreakdown returns breakdown_time_series via the transform', async () => {
-		const client = makeFakeClient( {
+		installWire( {
 			url_detail: { breakdown_time_series: { a: 1 } },
 		} );
 		let api;
@@ -427,7 +388,7 @@ describe( 'usePerformanceGraph — resolveRequest & fetchUrlBreakdown (awaited)'
 				api = usePerformanceGraph( p );
 				return api;
 			},
-			{ initialProps: { commandClient: client } }
+			{ initialProps: {} }
 		);
 		await act( async () => {} );
 		let result;
@@ -438,23 +399,23 @@ describe( 'usePerformanceGraph — resolveRequest & fetchUrlBreakdown (awaited)'
 	} );
 
 	test( 'fetchUrlBreakdown returns null on invalid hash without sending a breakdown command', async () => {
-		const client = makeFakeClient();
+		const wire = installWire();
 		let api;
 		renderHook(
 			( p ) => {
 				api = usePerformanceGraph( p );
 				return api;
 			},
-			{ initialProps: { commandClient: client } }
+			{ initialProps: {} }
 		);
 		await act( async () => {} );
-		const before = client.batches.flat().length;
+		const before = wire.batches.flat().length;
 		let result;
 		await act( async () => {
 			result = await api.fetchUrlBreakdown( 'NO', 'method' );
 		} );
 		expect( result ).toBeNull();
-		const breakdowns = client.batches
+		const breakdowns = wire.batches
 			.flat()
 			.filter(
 				( m ) =>
@@ -462,14 +423,14 @@ describe( 'usePerformanceGraph — resolveRequest & fetchUrlBreakdown (awaited)'
 					parseCommandArgs( m[ VALUE ]?.arguments ).options.breakdown
 			);
 		expect( breakdowns ).toHaveLength( 0 );
-		expect( client.batches.flat().length ).toBe( before );
+		expect( wire.batches.flat().length ).toBe( before );
 	} );
 
 	test( 'resolveUrlHash returns the URL, which url_detail nests under stats', async () => {
 		// useUrlNavigation reads `.url` and falls back to the hash, so a raw
 		// payload here titles the modal with the hash. The URL below must not
 		// equal that fallback, or the bug passes.
-		const client = makeFakeClient( {
+		installWire( {
 			url_detail: {
 				stats: { hash: 'b4dc0ffee', url: '/quokka/census-2026' },
 				requests: [],
@@ -481,7 +442,7 @@ describe( 'usePerformanceGraph — resolveRequest & fetchUrlBreakdown (awaited)'
 				api = usePerformanceGraph( p );
 				return api;
 			},
-			{ initialProps: { commandClient: client } }
+			{ initialProps: {} }
 		);
 		await act( async () => {} );
 		let resolved;
@@ -494,7 +455,7 @@ describe( 'usePerformanceGraph — resolveRequest & fetchUrlBreakdown (awaited)'
 	test( 'resolveUrlHash settles on a known-empty URL instead of retrying forever', async () => {
 		// An indexed entry whose url is '' is answerable — null here would
 		// re-issue url_detail every refresh tick and never open the modal.
-		const client = makeFakeClient( {
+		installWire( {
 			url_detail: { stats: { hash: 'b4dc0ffee', url: '' } },
 		} );
 		let api;
@@ -503,7 +464,7 @@ describe( 'usePerformanceGraph — resolveRequest & fetchUrlBreakdown (awaited)'
 				api = usePerformanceGraph( p );
 				return api;
 			},
-			{ initialProps: { commandClient: client } }
+			{ initialProps: {} }
 		);
 		await act( async () => {} );
 		let resolved;
@@ -516,7 +477,7 @@ describe( 'usePerformanceGraph — resolveRequest & fetchUrlBreakdown (awaited)'
 	test( 'resolveUrlHash does not ask for the category series it throws away', async () => {
 		// It reads one string. Selecting the URL immediately refetches with
 		// the full arg set, so asking for categories here pays for it twice.
-		const client = makeFakeClient( {
+		const wire = installWire( {
 			url_detail: { stats: { hash: 'b4dc0ffee', url: '/x' } },
 		} );
 		let api;
@@ -525,13 +486,13 @@ describe( 'usePerformanceGraph — resolveRequest & fetchUrlBreakdown (awaited)'
 				api = usePerformanceGraph( p );
 				return api;
 			},
-			{ initialProps: { commandClient: client } }
+			{ initialProps: {} }
 		);
 		await act( async () => {} );
 		await act( async () => {
 			await api.resolveUrlHash( 'b4dc0ffee' );
 		} );
-		const detail = findVerb( client.batches, 'url_detail' );
+		const detail = findVerb( wire.batches, 'url_detail' );
 		expect(
 			parseCommandArgs( detail[ VALUE ].arguments ).options.categories
 		).toBeUndefined();
@@ -540,14 +501,14 @@ describe( 'usePerformanceGraph — resolveRequest & fetchUrlBreakdown (awaited)'
 	test( 'resolveUrlHash settles when the server says the hash is unknown', async () => {
 		// A bookmarked hash aged out of the index makes url_detail THROW.
 		// Holding the intent there re-polls every tick and never opens.
-		const client = makeFakeClient( {}, { errorVerbs: [ 'url_detail' ] } );
+		installWire( {}, { errorVerbs: [ 'url_detail' ] } );
 		let api;
 		renderHook(
 			( p ) => {
 				api = usePerformanceGraph( p );
 				return api;
 			},
-			{ initialProps: { commandClient: client } }
+			{ initialProps: {} }
 		);
 		await act( async () => {} );
 
@@ -562,14 +523,14 @@ describe( 'usePerformanceGraph — resolveRequest & fetchUrlBreakdown (awaited)'
 	test( 'resolveUrlHash holds the intent when no reply arrives at all', async () => {
 		// Torn-down graph: the request rejects without ever reaching a server,
 		// which is the case the ?url= intent is SUPPOSED to outlive.
-		const client = makeFakeClient();
+		installWire();
 		let api;
 		renderHook(
 			( p ) => {
 				api = usePerformanceGraph( p );
 				return api;
 			},
-			{ initialProps: { commandClient: client } }
+			{ initialProps: {} }
 		);
 		await act( async () => {} );
 		Core.reset();
@@ -585,52 +546,50 @@ describe( 'usePerformanceGraph — resolveRequest & fetchUrlBreakdown (awaited)'
 
 describe( 'usePerformanceGraph — rules commands (_http/rules)', () => {
 	test( 'exposes listRules + upsertRule callbacks', () => {
-		const client = makeFakeClient();
-		const { result } = renderHook( () =>
-			usePerformanceGraph( { commandClient: client } )
-		);
+		installWire();
+		const { result } = renderHook( () => usePerformanceGraph() );
 		expect( typeof result.current.listRules ).toBe( 'function' );
 		expect( typeof result.current.upsertRule ).toBe( 'function' );
 	} );
 
 	test( 'listRules sends the list verb to the rules CI and resolves { rules }', async () => {
 		const rules = [ { id: 'a', pattern: '/x?', action: 'log' } ];
-		const client = makeFakeClient( { list: { rules } } );
+		const wire = installWire( { list: { rules } } );
 		let api;
 		renderHook(
 			( p ) => {
 				api = usePerformanceGraph( p );
 				return api;
 			},
-			{ initialProps: { commandClient: client } }
+			{ initialProps: {} }
 		);
 		await act( async () => {} );
 		let result;
 		await act( async () => {
 			result = await api.listRules();
 		} );
-		const list = findVerb( client.batches, 'list' );
+		const list = findVerb( wire.batches, 'list' );
 		expect( list ).toBeTruthy();
 		expect( list[ TO ] ).toBe( 'rules' );
 		expect( result ).toEqual( { rules } );
 	} );
 
 	test( 'removeRule sends the delete verb with the rule id and resolves', async () => {
-		const client = makeFakeClient( { delete: { deleted: true } } );
+		const wire = installWire( { delete: { deleted: true } } );
 		let api;
 		renderHook(
 			( p ) => {
 				api = usePerformanceGraph( p );
 				return api;
 			},
-			{ initialProps: { commandClient: client } }
+			{ initialProps: {} }
 		);
 		await act( async () => {} );
 		let result;
 		await act( async () => {
 			result = await api.removeRule( 'r-del-42' );
 		} );
-		const del = findVerb( client.batches, 'delete' );
+		const del = findVerb( wire.batches, 'delete' );
 		expect( del ).toBeTruthy();
 		expect( del[ TO ] ).toBe( 'rules' );
 		expect( del[ VALUE ].arguments ).toEqual( [ 'r-del-42' ] );
@@ -639,14 +598,14 @@ describe( 'usePerformanceGraph — rules commands (_http/rules)', () => {
 
 	test( 'upsertRule sends the upsert verb with the RAW JSON rule as arguments and resolves { rule }', async () => {
 		const saved = { id: 'abc', pattern: '/blog?', action: 'log' };
-		const client = makeFakeClient( { upsert: { rule: saved } } );
+		const wire = installWire( { upsert: { rule: saved } } );
 		let api;
 		renderHook(
 			( p ) => {
 				api = usePerformanceGraph( p );
 				return api;
 			},
-			{ initialProps: { commandClient: client } }
+			{ initialProps: {} }
 		);
 		await act( async () => {} );
 		const input = { id: '', pattern: '/blog?', action: 'log' };
@@ -654,7 +613,7 @@ describe( 'usePerformanceGraph — rules commands (_http/rules)', () => {
 		await act( async () => {
 			result = await api.upsertRule( input );
 		} );
-		const upsert = findVerb( client.batches, 'upsert' );
+		const upsert = findVerb( wire.batches, 'upsert' );
 		expect( upsert ).toBeTruthy();
 		expect( upsert[ TO ] ).toBe( 'rules' );
 		expect( upsert[ VALUE ].arguments ).toEqual( [
@@ -664,14 +623,14 @@ describe( 'usePerformanceGraph — rules commands (_http/rules)', () => {
 	} );
 
 	test( 'listRules returns null after teardown (no graph)', async () => {
-		const client = makeFakeClient( { list: { rules: [] } } );
+		installWire( { list: { rules: [] } } );
 		let api;
 		const { unmount } = renderHook(
 			( p ) => {
 				api = usePerformanceGraph( p );
 				return api;
 			},
-			{ initialProps: { commandClient: client } }
+			{ initialProps: {} }
 		);
 		await act( async () => {} );
 		unmount();
@@ -684,17 +643,14 @@ describe( 'usePerformanceGraph — rules commands (_http/rules)', () => {
 
 	test( 'upsertRule reports the error and returns null when the reply rejects', async () => {
 		const onError = jest.fn();
-		const client = makeFakeClient(
-			{ upsert: { rule: {} } },
-			{ errorVerbs: [ 'upsert' ] }
-		);
+		installWire( { upsert: { rule: {} } }, { errorVerbs: [ 'upsert' ] } );
 		let api;
 		renderHook(
 			( p ) => {
 				api = usePerformanceGraph( p );
 				return api;
 			},
-			{ initialProps: { commandClient: client, onError } }
+			{ initialProps: { onError } }
 		);
 		await act( async () => {} );
 		let result;
@@ -708,10 +664,8 @@ describe( 'usePerformanceGraph — rules commands (_http/rules)', () => {
 
 describe( 'usePerformanceGraph — requestGrep (recent-firehose pattern search)', () => {
 	test( 'exposes the requestGrep callback', () => {
-		const client = makeFakeClient();
-		const { result } = renderHook( () =>
-			usePerformanceGraph( { commandClient: client } )
-		);
+		installWire();
+		const { result } = renderHook( () => usePerformanceGraph() );
 		expect( typeof result.current.requestGrep ).toBe( 'function' );
 	} );
 
@@ -724,21 +678,21 @@ describe( 'usePerformanceGraph — requestGrep (recent-firehose pattern search)'
 				{ rid: 'r1', url: '/calendar', method: 'GET', match_count: 2 },
 			],
 		};
-		const client = makeFakeClient( { request_grep: payload } );
+		const wire = installWire( { request_grep: payload } );
 		let api;
 		renderHook(
 			( p ) => {
 				api = usePerformanceGraph( p );
 				return api;
 			},
-			{ initialProps: { commandClient: client } }
+			{ initialProps: {} }
 		);
 		await act( async () => {} );
 		let result;
 		await act( async () => {
 			result = await api.requestGrep( '/calendar', 25 );
 		} );
-		const grep = findVerb( client.batches, 'request_grep' );
+		const grep = findVerb( wire.batches, 'request_grep' );
 		expect( grep ).toBeTruthy();
 		expect( grep[ TO ] ).toBe( 'performance' );
 		expect( grep[ VALUE ].arguments ).toContain( '/calendar' );
@@ -749,39 +703,38 @@ describe( 'usePerformanceGraph — requestGrep (recent-firehose pattern search)'
 
 describe( 'usePerformanceGraph — timer suspension on modal open / tab visibility', () => {
 	test( 'pauses perf:timer while a URL detail is open, re-arms when it closes', async () => {
-		const client = makeFakeClient( {
+		installWire( {
 			url_detail: { last_modified: 1, requests: [] },
 		} );
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
-			initialProps: { commandClient: client },
+			initialProps: {},
 		} );
 		await act( async () => {} );
 		expect( Core.node( 'perf:timer' ).mode ).toBe( 'router' );
 
 		// Open the URL detail modal — the overview/urls poll must suspend.
 		await act( async () => {
-			rerender( { commandClient: client, selectedUrl: { hash: 'abc' } } );
+			rerender( { selectedUrl: { hash: 'abc' } } );
 		} );
 		expect( Core.node( 'perf:timer' ).mode ).toBe( 'inactive' );
 
 		// Close it — the overview/urls poll resumes.
 		await act( async () => {
-			rerender( { commandClient: client, selectedUrl: null } );
+			rerender( { selectedUrl: null } );
 		} );
 		expect( Core.node( 'perf:timer' ).mode ).toBe( 'router' );
 	} );
 
 	test( 'url_detail auto-refresh rides a urldetail:timer + fetch-urldetail Fetcher (a router tick re-fires url_detail with the hash)', async () => {
-		const client = makeFakeClient( {
+		const wire = installWire( {
 			url_detail: { last_modified: 1, requests: [] },
 		} );
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
-			initialProps: { commandClient: client, refreshInterval: '0' },
+			initialProps: { refreshInterval: '0' },
 		} );
 		await act( async () => {} );
 		await act( async () => {
 			rerender( {
-				commandClient: client,
 				refreshInterval: '0',
 				selectedUrl: { hash: 'abc' },
 			} );
@@ -791,11 +744,11 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 		expect( Core.node( 'urldetail:timer' ).mode ).toBe( 'router' );
 		expect( Core.node( 'fetch-urldetail' ) ).toBeTruthy();
 
-		client.batches.length = 0;
+		wire.batches.length = 0;
 		await act( async () => {
 			Core.node( ROUTER ).fireCb();
 		} );
-		const detail = findVerb( client.batches, 'url_detail' );
+		const detail = findVerb( wire.batches, 'url_detail' );
 		expect( detail ).toBeTruthy();
 		expect(
 			parseCommandArgs( detail[ VALUE ].arguments ).positional[ 0 ]
@@ -803,23 +756,22 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 	} );
 
 	test( 'stops the urldetail:timer when a request detail opens, re-arms when it closes', async () => {
-		const client = makeFakeClient( {
+		installWire( {
 			url_detail: { last_modified: 1, requests: [] },
 			request_detail: { rid: 'r1' },
 		} );
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
-			initialProps: { commandClient: client },
+			initialProps: {},
 		} );
 		await act( async () => {} );
 		await act( async () => {
-			rerender( { commandClient: client, selectedUrl: { hash: 'abc' } } );
+			rerender( { selectedUrl: { hash: 'abc' } } );
 		} );
 		expect( Core.node( 'urldetail:timer' ).mode ).toBe( 'router' );
 
 		// Drill into a request — the url_detail poll must stop.
 		await act( async () => {
 			rerender( {
-				commandClient: client,
 				selectedUrl: { hash: 'abc' },
 				selectedRequest: 'r1',
 				requestPartition: 0,
@@ -830,7 +782,6 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 		// Back out to the URL detail — the url_detail poll resumes.
 		await act( async () => {
 			rerender( {
-				commandClient: client,
 				selectedUrl: { hash: 'abc' },
 				selectedRequest: null,
 			} );
@@ -839,37 +790,37 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 	} );
 
 	test( 'closing the last detail modal immediately re-fetches overview + urls (perf:timer was paused)', async () => {
-		const client = makeFakeClient( {
+		const wire = installWire( {
 			url_detail: { last_modified: 1, requests: [] },
 		} );
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
-			initialProps: { commandClient: client },
+			initialProps: {},
 		} );
 		await act( async () => {} );
 		await act( async () => {
-			rerender( { commandClient: client, selectedUrl: { hash: 'abc' } } );
+			rerender( { selectedUrl: { hash: 'abc' } } );
 		} );
 		// While the modal is open the overview/urls poll is suspended.
-		client.batches.length = 0;
+		wire.batches.length = 0;
 
 		// Closing must refresh the now-visible overview at once.
 		await act( async () => {
-			rerender( { commandClient: client, selectedUrl: null } );
+			rerender( { selectedUrl: null } );
 		} );
-		expect( findVerb( client.batches, 'overview' ) ).toBeTruthy();
-		expect( findVerb( client.batches, 'urls' ) ).toBeTruthy();
+		expect( findVerb( wire.batches, 'overview' ) ).toBeTruthy();
+		expect( findVerb( wire.batches, 'urls' ) ).toBeTruthy();
 	} );
 
 	test( 'a hidden tab stops the urldetail:timer; returning to visible re-arms it', async () => {
-		const client = makeFakeClient( {
+		installWire( {
 			url_detail: { last_modified: 1, requests: [] },
 		} );
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
-			initialProps: { commandClient: client },
+			initialProps: {},
 		} );
 		await act( async () => {} );
 		await act( async () => {
-			rerender( { commandClient: client, selectedUrl: { hash: 'abc' } } );
+			rerender( { selectedUrl: { hash: 'abc' } } );
 		} );
 		expect( Core.node( 'urldetail:timer' ).mode ).toBe( 'router' );
 
@@ -883,10 +834,8 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 
 describe( 'usePerformanceGraph — teardown', () => {
 	test( 'unmount unregisters every graph node + the backbone', () => {
-		const client = makeFakeClient();
-		const { unmount } = renderHook( () =>
-			usePerformanceGraph( { commandClient: client } )
-		);
+		installWire();
+		const { unmount } = renderHook( () => usePerformanceGraph() );
 		unmount();
 		for ( const name of [
 			HTTP,
@@ -917,25 +866,24 @@ function renderGraph( props = {} ) {
 
 describe( 'usePerformanceGraph — overview/urls arg edge cases', () => {
 	test( 'an empty chartBreakdown pads the overview breakdown list with status', async () => {
-		const client = makeFakeClient();
+		const wire = installWire();
 		renderHook( () =>
 			usePerformanceGraph( {
-				commandClient: client,
 				chartBreakdown: '',
 			} )
 		);
 		await act( async () => {} );
-		const overview = findVerb( client.batches, 'overview' );
+		const overview = findVerb( wire.batches, 'overview' );
 		expect(
 			parseCommandArgs( overview[ VALUE ].arguments ).options.breakdown
 		).toBe( 'server,status' );
 	} );
 
 	test( 'a non-zero offset is emitted in the urls args (immediate fetch on a page change)', async () => {
-		const client = makeFakeClient( { urls: { data: [], total: 0 } } );
-		const { getApi } = renderGraph( { commandClient: client } );
+		const wire = installWire( { urls: { data: [], total: 0 } } );
+		const { getApi } = renderGraph( {} );
 		await act( async () => {} );
-		const before = countVerbs( client.batches, 'urls' );
+		const before = countVerbs( wire.batches, 'urls' );
 		await act( async () => {
 			getApi().handleUrlParamsChange( {
 				search: '',
@@ -945,8 +893,8 @@ describe( 'usePerformanceGraph — overview/urls arg edge cases', () => {
 			} );
 		} );
 		// A non-search change fetches immediately (no debounce).
-		expect( countVerbs( client.batches, 'urls' ) ).toBe( before + 1 );
-		const urls = client.batches
+		expect( countVerbs( wire.batches, 'urls' ) ).toBe( before + 1 );
+		const urls = wire.batches
 			.flat()
 			.reverse()
 			.find( ( m ) => m[ VALUE ]?.name === 'urls' );
@@ -956,10 +904,10 @@ describe( 'usePerformanceGraph — overview/urls arg edge cases', () => {
 	} );
 
 	test( 'an unchanged params object is a no-op (no extra urls fetch)', async () => {
-		const client = makeFakeClient( { urls: { data: [], total: 0 } } );
-		const { getApi } = renderGraph( { commandClient: client } );
+		const wire = installWire( { urls: { data: [], total: 0 } } );
+		const { getApi } = renderGraph( {} );
 		await act( async () => {} );
-		const before = countVerbs( client.batches, 'urls' );
+		const before = countVerbs( wire.batches, 'urls' );
 		await act( async () => {
 			getApi().handleUrlParamsChange( {
 				search: '',
@@ -968,15 +916,15 @@ describe( 'usePerformanceGraph — overview/urls arg edge cases', () => {
 				offset: 0,
 			} );
 		} );
-		expect( countVerbs( client.batches, 'urls' ) ).toBe( before );
+		expect( countVerbs( wire.batches, 'urls' ) ).toBe( before );
 	} );
 
 	test( 'a second search change clears the first pending debounce timer', async () => {
 		jest.useFakeTimers();
-		const client = makeFakeClient( { urls: { data: [], total: 0 } } );
-		const { getApi, unmount } = renderGraph( { commandClient: client } );
+		const wire = installWire( { urls: { data: [], total: 0 } } );
+		const { getApi, unmount } = renderGraph( {} );
 		await act( async () => {} );
-		const before = countVerbs( client.batches, 'urls' );
+		const before = countVerbs( wire.batches, 'urls' );
 		getApi().handleUrlParamsChange( {
 			search: 'a',
 			sort: 'count',
@@ -992,7 +940,7 @@ describe( 'usePerformanceGraph — overview/urls arg edge cases', () => {
 		} );
 		jest.advanceTimersByTime( 300 );
 		// Exactly one fetch despite two changes — the first was cancelled.
-		expect( countVerbs( client.batches, 'urls' ) ).toBe( before + 1 );
+		expect( countVerbs( wire.batches, 'urls' ) ).toBe( before + 1 );
 		unmount();
 		jest.useRealTimers();
 	} );
@@ -1000,68 +948,64 @@ describe( 'usePerformanceGraph — overview/urls arg edge cases', () => {
 
 describe( 'usePerformanceGraph — invalid selection guards', () => {
 	test( 'an invalid URL hash sends no url_detail command', async () => {
-		const client = makeFakeClient();
+		const wire = installWire();
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
-			initialProps: { commandClient: client },
+			initialProps: {},
 		} );
 		await act( async () => {} );
-		const before = countVerbs( client.batches, 'url_detail' );
+		const before = countVerbs( wire.batches, 'url_detail' );
 		await act( async () => {
 			rerender( {
-				commandClient: client,
 				selectedUrl: { hash: 'NOT-HEX!' },
 			} );
 		} );
-		expect( countVerbs( client.batches, 'url_detail' ) ).toBe( before );
+		expect( countVerbs( wire.batches, 'url_detail' ) ).toBe( before );
 		expect( Core.node( 'urldetail:view' ).setStateCache.view.error ).toBe(
 			'Invalid URL hash format'
 		);
 	} );
 
 	test( 'an invalid request id sends no request_detail command', async () => {
-		const client = makeFakeClient();
+		const wire = installWire();
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
-			initialProps: { commandClient: client },
+			initialProps: {},
 		} );
 		await act( async () => {} );
 		await act( async () => {
 			rerender( {
-				commandClient: client,
 				selectedRequest: 'bad id!',
 			} );
 		} );
-		expect( findVerb( client.batches, 'request_detail' ) ).toBeNull();
+		expect( findVerb( wire.batches, 'request_detail' ) ).toBeNull();
 		expect(
 			Core.node( 'requestdetail:view' ).setStateCache.view.error
 		).toBe( 'Invalid request ID format' );
 	} );
 
 	test( 'a valid request with no resolvable partition sends no request_detail command', async () => {
-		const client = makeFakeClient();
+		const wire = installWire();
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
-			initialProps: { commandClient: client },
+			initialProps: {},
 		} );
 		await act( async () => {} );
 		await act( async () => {
 			rerender( {
-				commandClient: client,
 				selectedRequest: 'r1',
 				requestPartition: null,
 				urlDetailData: { requests: [] },
 			} );
 		} );
-		expect( findVerb( client.batches, 'request_detail' ) ).toBeNull();
+		expect( findVerb( wire.batches, 'request_detail' ) ).toBeNull();
 	} );
 
 	test( 'resolves the partition from urlDetailData.requests when requestPartition is null', async () => {
-		const client = makeFakeClient( { request_detail: { rid: 'r1' } } );
+		const wire = installWire( { request_detail: { rid: 'r1' } } );
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
-			initialProps: { commandClient: client },
+			initialProps: {},
 		} );
 		await act( async () => {} );
 		await act( async () => {
 			rerender( {
-				commandClient: client,
 				selectedRequest: 'r1',
 				requestPartition: null,
 				urlDetailData: {
@@ -1069,7 +1013,7 @@ describe( 'usePerformanceGraph — invalid selection guards', () => {
 				},
 			} );
 		} );
-		const req = findVerb( client.batches, 'request_detail' );
+		const req = findVerb( wire.batches, 'request_detail' );
 		expect( req ).toBeTruthy();
 		expect(
 			parseCommandArgs( req[ VALUE ].arguments ).options.partition
@@ -1079,10 +1023,10 @@ describe( 'usePerformanceGraph — invalid selection guards', () => {
 
 describe( 'usePerformanceGraph — no-graph fallbacks & awaited rejections', () => {
 	test( 'resolveRequest falls back to its own Request node when the detail view is gone', async () => {
-		const client = makeFakeClient( {
+		const wire = installWire( {
 			request_search: { url_hash: 'h', partition: 1 },
 		} );
-		const { getApi } = renderGraph( { commandClient: client } );
+		const { getApi } = renderGraph( {} );
 		await act( async () => {} );
 		// Drop the view the primary path needs; the fallback verb remains.
 		Core.node( 'requestdetail:view' ).removeNode();
@@ -1090,7 +1034,7 @@ describe( 'usePerformanceGraph — no-graph fallbacks & awaited rejections', () 
 		await act( async () => {
 			resolved = await getApi().resolveRequest( 'r9' );
 		} );
-		const sent = client.batches
+		const sent = wire.batches
 			.flat()
 			.find( ( m ) => 'request_search' === m[ VALUE ]?.name );
 		expect( sent ).toBeTruthy();
@@ -1102,8 +1046,8 @@ describe( 'usePerformanceGraph — no-graph fallbacks & awaited rejections', () 
 	} );
 
 	test( 'fetchUrlBreakdown returns null when the graph is gone', async () => {
-		const client = makeFakeClient();
-		const { getApi, unmount } = renderGraph( { commandClient: client } );
+		installWire();
+		const { getApi, unmount } = renderGraph( {} );
 		await act( async () => {} );
 		unmount();
 		let result;
@@ -1115,11 +1059,11 @@ describe( 'usePerformanceGraph — no-graph fallbacks & awaited rejections', () 
 
 	test( 'fetchUrlBreakdown reports the error and returns null when the reply rejects', async () => {
 		const onError = jest.fn();
-		const client = makeFakeClient(
+		installWire(
 			{ url_detail: { breakdown_time_series: { a: 1 } } },
 			{ errorVerbs: [ 'url_detail' ] }
 		);
-		const { getApi } = renderGraph( { commandClient: client, onError } );
+		const { getApi } = renderGraph( { onError } );
 		await act( async () => {} );
 		let result;
 		await act( async () => {
@@ -1130,8 +1074,8 @@ describe( 'usePerformanceGraph — no-graph fallbacks & awaited rejections', () 
 	} );
 
 	test( 'control callbacks no-op after unmount (interpreter detached)', async () => {
-		const client = makeFakeClient( { urls: { data: [], total: 0 } } );
-		const { getApi, unmount } = renderGraph( { commandClient: client } );
+		installWire( { urls: { data: [], total: 0 } } );
+		const { getApi, unmount } = renderGraph( {} );
 		await act( async () => {} );
 		unmount();
 		// Param change after unmount must not throw (detached interpreter).
@@ -1151,9 +1095,7 @@ describe( 'usePerformanceGraph — no-graph fallbacks & awaited rejections', () 
 // FROM that matches nothing — which used to blank the slice in silence.
 describe( 'usePerformanceGraph — control origins', () => {
 	test( 'wires controlFrom on every control-taking node', () => {
-		renderHook( () =>
-			usePerformanceGraph( { commandClient: makeFakeClient() } )
-		);
+		renderHook( () => usePerformanceGraph( {} ) );
 		for ( const name of [
 			'overview:view',
 			'urls:view',
@@ -1169,7 +1111,6 @@ describe( 'usePerformanceGraph — control origins', () => {
 		let selectedUrl = { hash: 'a'.repeat( 32 ) };
 		const { rerender } = renderHook( () =>
 			usePerformanceGraph( {
-				commandClient: makeFakeClient(),
 				selectedUrl,
 			} )
 		);

@@ -14,18 +14,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > green while the seam is silently dead. (`reservedNames` and `LIVE` both
 > exist at 2.21.0, so the other edits below are pin-safe.)
 
-### Fixed
+### Changed
 
-- **The transport seam is the shared link hook's job, not each dashboard's.**
-  The Request Log and Error Log graphs each stamped `commandClient` onto their
-  link and then onto `_http` by hardcoded name, unguarded — so in production,
-  where no client is supplied, both wrote `undefined` over the backbone and
-  relied on HttpOut re-defaulting underneath them. `useVisibilityGatedLink`
-  now takes `commandClient` and does it once, guarded. The `Core` import goes
-  with it, and the ruleset graph's local `const HTTP = '_http'` becomes
-  `reservedNames.HTTP` — the substrate has always exported that name.
-  `useGlobBrowse`'s `?? 'live'` fallback reads the substrate's `LIVE` for the
-  same reason.
+- **The `commandClient` seam is gone.** Every dashboard hook that accepted it
+  — Request Log, Error Log, Performance, Rules, Hook Catalog — no longer does,
+  and `PerformanceDashboard` drops the pass-through prop. Injecting a
+  transport replaced the whole subsystem, so a hook test never ran HttpOut,
+  pack/unpack, the router or the interpreter; the suites now seam at `fetch`
+  via the substrate's `installFakeCommandWire`, which four of them already
+  used. Five tests whose SUBJECT was the injection now assert the graph
+  reaches the wire with nothing injected.
+
+  The two link hooks had also been stamping `_http` by hardcoded name,
+  unguarded — writing `undefined` over the backbone in production and
+  surviving only because HttpOut re-defaults. That goes with the seam. The
+  ruleset graph's local `const HTTP = '_http'` becomes `reservedNames.HTTP`,
+  and `useGlobBrowse`'s `?? 'live'` fallback reads the substrate's `LIVE`.
 
 ## [0.50.0] - 2026-08-10
 

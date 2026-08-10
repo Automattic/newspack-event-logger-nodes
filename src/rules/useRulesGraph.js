@@ -27,7 +27,8 @@
  * as a positional token; `list` and `reset` take no args (`[]`). Mutations
  * re-`list()` to refresh the table.
  *
- * The command boundary is injectable: tests pass `opts.commandClient` (assigned
+ * Nothing is injected: HttpOut lazily defaults its own client, and tests seam
+ * at `fetch` (`installFakeCommandWire`) so the whole egress runs for real.
  * to `_http.client`). Production lets HttpOut default it.
  */
 
@@ -70,8 +71,7 @@ function fireList( shell ) {
  * the command is on the wire, not when the table has repainted; read the table
  * from the returned `rules`, never from a `list()` resolution.
  *
- * @param {Object} [opts]               Options (testing seams).
- * @param {Object} [opts.commandClient] Transport seam assigned to `_http.client`.
+ * @param {Object} [opts] Options (testing seams).
  * @return {{ rules: Object[], loading: boolean, error: (string|null),
  *   list: () => Promise<void>,
  *   saveAll: (rules: Object[]) => Promise<Object>,
@@ -94,11 +94,7 @@ export function useRulesGraph( opts = {} ) {
 	const [ , bumpBuild ] = useState( 0 );
 
 	useEffect( () => {
-		const build = ( { interpreter, shell, http } ) => {
-			if ( optsRef.current.commandClient ) {
-				http.client = optsRef.current.commandClient;
-			}
-
+		const build = ( { interpreter, shell } ) => {
 			const recv = interpreter.makeNode( 'Tee', RECV );
 			interpreter.makeNode( 'RulesView', VIEW );
 			recv.connectNode( VIEW );

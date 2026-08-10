@@ -8,8 +8,8 @@
  *                          ctor token `[ 'completed.*' ]`; restUrl/nonce from the global),
  *                          and shares the backbone singletons `_http` (POST /command)
  *                          and `_heartbeat` (slot keep-alive), wiring the
- *                          `connected → slot` bridge between them. `.client` is the
- *                          injected transport, stamped by the shared link hook.)
+ *                          `connected → slot` bridge between them, and defaulting
+ *                          its own transport.)
  *
  * Plus the single view node:
  *
@@ -58,10 +58,8 @@ const controlMsg = ( value ) => {
 };
 
 /**
- * @param {Object} [opts]               Options.
- * @param {number} [opts.maxEntries]    View ring cap (default 1000).
- * @param {Object} [opts.commandClient] transport seam; `useVisibilityGatedLink` stamps it
- *                                      on the link and on `_http`, and HttpOut defaults it when absent.
+ * @param {Object} [opts]            Options.
+ * @param {number} [opts.maxEntries] View ring cap (default 1000).
  * @return {{ setPaused: Function, clear: Function, browse: Object }}
  *   Control callbacks for the thin React view (the view's own state is read via
  *   useNodeState). Reset Graph is driven by a `Core.bumpGraphGeneration()`
@@ -121,7 +119,6 @@ export function useRequestLogGraph( opts = {} ) {
 			return { link, view };
 		},
 		isActive,
-		commandClient: opts.commandClient,
 		onConnect: ( link, { isReconnect } ) => {
 			const target = browseTargetRef.current;
 			link.setSubscribe(

@@ -5,8 +5,8 @@
  * useVaultGraph: each verb dispatches a TM_COMMAND through the interpreter
  * (the table's list FROM = `rules:in`, each mutation FROM its own Request node,
  * TO = `_http/rules`, verb in VALUE.name); the reply routes
- * TO=FROM back into the Tee, which fans it to the view. `_http.client` is
- * injected via `opts.commandClient` so the hook never touches the network.
+ * TO=FROM back into the Tee, which fans it to the view. Nothing is injected:
+ * the seam is `fetch`, so the hook never touches the real network.
  *
  * The wire contract mirrors Rules_CI_Node: `save`/`upsert` take the RAW JSON as
  * the command arguments string (the handler json_decodes the whole arg);
@@ -14,16 +14,12 @@
  */
 
 import { renderHook, act } from '../../test-helpers/renderHook';
+import { installFakeCommandWire } from '@newspack-nodes/shared/test-utils/fakeCommandWire';
 import {
-	newMessage,
 	ID,
 	TO,
 	FROM,
 	VALUE,
-	TYPE,
-	TM_COMMAND,
-	TM_RESPONSE,
-	TM_ERROR,
 	Core,
 	formatCommandArgs,
 	forgetSession,
@@ -64,42 +60,6 @@ const SAMPLE_RULES = [
 ];
 
 // A fake transport (HttpOutNode seam): postBatch echoes TO=FROM replies.
-function makeFakeClient( payloadByVerb = {}, opts = {} ) {
-	const client = {
-		batches: [],
-		buildMessage( { to, verb, args = '' } ) {
-			const m = newMessage();
-			m[ TYPE ] = TM_COMMAND;
-			m[ TO ] = to;
-			m[ VALUE ] = { name: verb, arguments: args };
-			return m;
-		},
-		postBatch( messages ) {
-			client.batches.push( messages );
-			const replies = messages.map( ( m ) => {
-				const reply = newMessage();
-				reply[ TYPE ] =
-					opts.errorVerbs &&
-					opts.errorVerbs.includes( m[ VALUE ]?.name )
-						? TM_COMMAND | TM_RESPONSE | TM_ERROR
-						: TM_COMMAND | TM_RESPONSE;
-				reply[ TO ] = m[ FROM ];
-				reply[ ID ] = m[ ID ];
-				reply[ VALUE ] = {
-					name: m[ VALUE ]?.name,
-					payload:
-						payloadByVerb[ m[ VALUE ]?.name ] ??
-						payloadByVerb._default ??
-						null,
-				};
-				return reply;
-			} );
-			return Promise.resolve( replies );
-		},
-	};
-	return client;
-}
-
 function findVerb( batches, verb ) {
 	for ( const batch of batches ) {
 		for ( const m of batch ) {
@@ -123,14 +83,29 @@ function countVerbs( batches, verb ) {
 	return count;
 }
 
+// The seam is the WIRE: the graph packs, POSTs and unpacks for real, so
+// HttpOut, the router and the interpreter all run. `wire.batches` is what was
+// posted; a verb in `errorVerbs` answers TM_ERROR carrying its payload.
+function installWire( payloadByVerb = {}, opts = {} ) {
+	return installFakeCommandWire( ( m ) => {
+		const name = m[ VALUE ]?.name;
+		const payload = payloadByVerb[ name ] ?? payloadByVerb._default ?? null;
+		if ( ! opts.errorVerbs?.includes( name ) ) {
+			return payload;
+		}
+		// answerBatch ships an Error as its `.message`, so unwrap first.
+		return new Error( payload?.message ?? payload ?? name );
+	} );
+}
+
 beforeEach( () => {
 	Core.reset();
 } );
 
 describe( 'useRulesGraph — exospine + receiver wiring', () => {
 	test( 'mounts the backbone + _http + the receiver Tee + the view, each sinking into the interpreter', async () => {
-		const client = makeFakeClient();
-		renderHook( () => useRulesGraph( { commandClient: client } ) );
+		installWire();
+		renderHook( () => useRulesGraph() );
 		await act( async () => {} );
 		const interpreter = Core.node( INTERPRETER );
 		expect( interpreter ).toBeTruthy();
@@ -143,34 +118,35 @@ describe( 'useRulesGraph — exospine + receiver wiring', () => {
 	} );
 
 	test( 'the receiver Tee fans to exactly the view', async () => {
-		const client = makeFakeClient();
-		renderHook( () => useRulesGraph( { commandClient: client } ) );
+		installWire();
+		renderHook( () => useRulesGraph() );
 		await act( async () => {} );
 		expect( Core.node( RECV ).target ).toEqual( [ VIEW ] );
 	} );
 
 	test( 'does NOT mount the REPL-only nodes', async () => {
-		const client = makeFakeClient();
-		renderHook( () => useRulesGraph( { commandClient: client } ) );
+		installWire();
+		renderHook( () => useRulesGraph() );
 		await act( async () => {} );
 		for ( const name of [ '_output', '_completion', '_uptime', '_cwd' ] ) {
 			expect( Core.node( name ) ).toBeNull();
 		}
 	} );
 
-	test( '_http has the injected transport as its client', async () => {
-		const client = makeFakeClient();
-		renderHook( () => useRulesGraph( { commandClient: client } ) );
+	test( '_http reaches the wire with nothing injected', async () => {
+		const wire = installWire();
+		renderHook( () => useRulesGraph() );
 		await act( async () => {} );
-		expect( Core.node( HTTP ).client ).toBe( client );
+		// HttpOut defaults its own client lazily, at the first post.
+		expect( wire.batches.flat() ).not.toHaveLength( 0 );
 	} );
 
 	test( 'fires one immediate list() on mount, FROM the receiver, TO _http/rules', async () => {
-		const client = makeFakeClient();
-		renderHook( () => useRulesGraph( { commandClient: client } ) );
+		const wire = installWire();
+		renderHook( () => useRulesGraph() );
 		await act( async () => {} );
-		expect( client.batches.length ).toBeGreaterThanOrEqual( 1 );
-		const msg = client.batches[ 0 ][ 0 ];
+		expect( wire.batches.length ).toBeGreaterThanOrEqual( 1 );
+		const msg = wire.batches[ 0 ][ 0 ];
 		expect( msg[ TO ] ).toBe( 'rules' );
 		expect( msg[ FROM ] ).toBe( RECV );
 		expect( msg[ VALUE ].name ).toBe( 'list' );
@@ -190,13 +166,13 @@ describe( 'useRulesGraph — exospine + receiver wiring', () => {
 			expires_in: 3600,
 			now: 1771000000,
 		} ) );
-		const client = makeFakeClient();
+		const wire = installWire();
 
-		renderHook( () => useRulesGraph( { commandClient: client } ) );
+		renderHook( () => useRulesGraph() );
 		await act( async () => {} );
 
-		expect( client.batches.length ).toBeGreaterThanOrEqual( 1 );
-		expect( client.batches[ 0 ][ 0 ][ VALUE ].auth ).toBeDefined();
+		expect( wire.batches.length ).toBeGreaterThanOrEqual( 1 );
+		expect( wire.batches[ 0 ][ 0 ][ VALUE ].auth ).toBeDefined();
 	} );
 
 	/** A click during the /auth round trip must still mint a signed command. */
@@ -214,10 +190,8 @@ describe( 'useRulesGraph — exospine + receiver wiring', () => {
 				now: 1771000000,
 			} ) )
 		);
-		const client = makeFakeClient( { list: { rules: [] } } );
-		const { result } = renderHook( () =>
-			useRulesGraph( { commandClient: client } )
-		);
+		const wire = installWire( { list: { rules: [] } } );
+		const { result } = renderHook( () => useRulesGraph() );
 		await act( async () => {} );
 
 		await act( async () => {
@@ -226,7 +200,7 @@ describe( 'useRulesGraph — exospine + receiver wiring', () => {
 			await pending;
 		} );
 
-		const listed = client.batches
+		const listed = wire.batches
 			.flat()
 			.filter( ( m ) => 'list' === m[ VALUE ]?.name );
 		expect( listed.length ).toBeGreaterThanOrEqual( 1 );
@@ -234,10 +208,8 @@ describe( 'useRulesGraph — exospine + receiver wiring', () => {
 	} );
 
 	test( 'exposes the model + CRUD callbacks', async () => {
-		const client = makeFakeClient();
-		const { result } = renderHook( () =>
-			useRulesGraph( { commandClient: client } )
-		);
+		installWire();
+		const { result } = renderHook( () => useRulesGraph() );
 		await act( async () => {} );
 		expect( Array.isArray( result.current.rules ) ).toBe( true );
 		expect( typeof result.current.list ).toBe( 'function' );
@@ -250,10 +222,8 @@ describe( 'useRulesGraph — exospine + receiver wiring', () => {
 
 describe( 'useRulesGraph — list populates rules', () => {
 	test( 'an immediate list reply lands in the view model and the hook return', async () => {
-		const client = makeFakeClient( { list: { rules: SAMPLE_RULES } } );
-		const { result } = renderHook( () =>
-			useRulesGraph( { commandClient: client } )
-		);
+		installWire( { list: { rules: SAMPLE_RULES } } );
+		const { result } = renderHook( () => useRulesGraph() );
 		await act( async () => {} );
 
 		const view = Core.node( VIEW );
@@ -270,15 +240,13 @@ describe( 'useRulesGraph — list populates rules', () => {
 
 describe( 'useRulesGraph — mutations dispatch the verb then re-list', () => {
 	test( 'upsert sends the raw-JSON rule as arguments then re-lists', async () => {
-		const client = makeFakeClient( {
+		const wire = installWire( {
 			list: { rules: [] },
 			upsert: { rule: SAMPLE_RULES[ 0 ] },
 		} );
-		const { result } = renderHook( () =>
-			useRulesGraph( { commandClient: client } )
-		);
+		const { result } = renderHook( () => useRulesGraph() );
 		await act( async () => {} );
-		const listsBefore = countVerbs( client.batches, 'list' );
+		const listsBefore = countVerbs( wire.batches, 'list' );
 
 		let returned;
 		await act( async () => {
@@ -286,7 +254,7 @@ describe( 'useRulesGraph — mutations dispatch the verb then re-list', () => {
 		} );
 		expect( returned ).toEqual( { rule: SAMPLE_RULES[ 0 ] } );
 
-		const up = findVerb( client.batches, 'upsert' );
+		const up = findVerb( wire.batches, 'upsert' );
 		expect( up ).toBeTruthy();
 		expect( up[ TO ] ).toBe( 'rules' );
 		// Each mutation mints from its OWN node; the reply lands there.
@@ -300,73 +268,67 @@ describe( 'useRulesGraph — mutations dispatch the verb then re-list', () => {
 			'/blog'
 		);
 
-		expect( countVerbs( client.batches, 'list' ) ).toBeGreaterThan(
+		expect( countVerbs( wire.batches, 'list' ) ).toBeGreaterThan(
 			listsBefore
 		);
 	} );
 
 	test( 'saveAll sends the whole-list raw JSON then re-lists', async () => {
-		const client = makeFakeClient( {
+		const wire = installWire( {
 			list: { rules: SAMPLE_RULES },
 			save: { saved: 2 },
 		} );
-		const { result } = renderHook( () =>
-			useRulesGraph( { commandClient: client } )
-		);
+		const { result } = renderHook( () => useRulesGraph() );
 		await act( async () => {} );
-		const listsBefore = countVerbs( client.batches, 'list' );
+		const listsBefore = countVerbs( wire.batches, 'list' );
 
 		await act( async () => {
 			await result.current.saveAll( SAMPLE_RULES );
 		} );
 
-		const save = findVerb( client.batches, 'save' );
+		const save = findVerb( wire.batches, 'save' );
 		expect( save ).toBeTruthy();
 		expect( save[ VALUE ].arguments ).toEqual( [
 			JSON.stringify( SAMPLE_RULES ),
 		] );
-		expect( countVerbs( client.batches, 'list' ) ).toBeGreaterThan(
+		expect( countVerbs( wire.batches, 'list' ) ).toBeGreaterThan(
 			listsBefore
 		);
 	} );
 
 	test( 'remove sends delete with the id as a positional token then re-lists', async () => {
-		const client = makeFakeClient( {
+		const wire = installWire( {
 			list: { rules: [] },
 			delete: { deleted: true },
 		} );
-		const { result } = renderHook( () =>
-			useRulesGraph( { commandClient: client } )
-		);
+		const { result } = renderHook( () => useRulesGraph() );
 		await act( async () => {} );
-		const listsBefore = countVerbs( client.batches, 'list' );
+		const listsBefore = countVerbs( wire.batches, 'list' );
 
 		await act( async () => {
 			await result.current.remove( 'r1' );
 		} );
 
-		const del = findVerb( client.batches, 'delete' );
+		const del = findVerb( wire.batches, 'delete' );
 		expect( del ).toBeTruthy();
 		expect( del[ FROM ] ).toBe( 'rules:delete' );
 		expect( del[ ID ] ).toBe( '' );
 		expect( del[ VALUE ].arguments ).toEqual(
 			formatCommandArgs( [ 'r1' ] )
 		);
-		expect( countVerbs( client.batches, 'list' ) ).toBeGreaterThan(
+		expect( countVerbs( wire.batches, 'list' ) ).toBeGreaterThan(
 			listsBefore
 		);
 	} );
 
 	test( 'reset sends the nullary verb from its own node then re-lists', async () => {
-		const client = makeFakeClient( {
+		const wire = installWire( {
 			list: { rules: SAMPLE_RULES },
 			reset: { reset: 3 },
 		} );
-		const { result } = renderHook( () =>
-			useRulesGraph( { commandClient: client } )
-		);
+		const { result } = renderHook( () => useRulesGraph() );
 		await act( async () => {} );
-		const listsBefore = countVerbs( client.batches, 'list' );
+		const listsBefore = countVerbs( wire.batches, 'list' );
 
 		let returned;
 		await act( async () => {
@@ -374,12 +336,12 @@ describe( 'useRulesGraph — mutations dispatch the verb then re-list', () => {
 		} );
 		expect( returned ).toEqual( { reset: 3 } );
 
-		const reset = findVerb( client.batches, 'reset' );
+		const reset = findVerb( wire.batches, 'reset' );
 		expect( reset ).toBeTruthy();
 		expect( reset[ TO ] ).toBe( 'rules' );
 		expect( reset[ FROM ] ).toBe( 'rules:reset' );
 		expect( reset[ VALUE ].arguments ).toEqual( [] );
-		expect( countVerbs( client.batches, 'list' ) ).toBeGreaterThan(
+		expect( countVerbs( wire.batches, 'list' ) ).toBeGreaterThan(
 			listsBefore
 		);
 	} );
@@ -387,26 +349,22 @@ describe( 'useRulesGraph — mutations dispatch the verb then re-list', () => {
 
 describe( 'useRulesGraph — errors', () => {
 	test( 'an uncorrelated list error surfaces as view.error without throwing', async () => {
-		const client = makeFakeClient(
+		installWire(
 			{ list: 'ruleset unavailable' },
 			{ errorVerbs: [ 'list' ] }
 		);
-		const { result } = renderHook( () =>
-			useRulesGraph( { commandClient: client } )
-		);
+		const { result } = renderHook( () => useRulesGraph() );
 		await act( async () => {} );
 		expect( result.current.error ).toBe( 'ruleset unavailable' );
 		expect( result.current.loading ).toBe( false );
 	} );
 
 	test( 'a failed upsert rejects to the caller without polluting the table banner', async () => {
-		const client = makeFakeClient(
+		installWire(
 			{ list: { rules: [] }, upsert: 'invalid rule' },
 			{ errorVerbs: [ 'upsert' ] }
 		);
-		const { result } = renderHook( () =>
-			useRulesGraph( { commandClient: client } )
-		);
+		const { result } = renderHook( () => useRulesGraph() );
 		await act( async () => {} );
 
 		await act( async () => {
@@ -420,10 +378,8 @@ describe( 'useRulesGraph — errors', () => {
 
 describe( 'useRulesGraph — teardown', () => {
 	test( 'unmount unregisters every graph node + the backbone', () => {
-		const client = makeFakeClient();
-		const { unmount } = renderHook( () =>
-			useRulesGraph( { commandClient: client } )
-		);
+		installWire();
+		const { unmount } = renderHook( () => useRulesGraph() );
 		unmount();
 		for ( const name of [ ...ALL_GRAPH_NAMES, INTERPRETER, ROUTER ] ) {
 			expect( Core.node( name ) ).toBeNull();

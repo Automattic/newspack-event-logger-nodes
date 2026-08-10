@@ -44,7 +44,6 @@ jest.mock( '@newspack-nodes/shared/hooks/usePageVisibility', () => ( {
 	default: () => mockPageVisible,
 } ) );
 
-import { makeFakeCommandClient } from '@newspack-nodes/shared/test-utils/fakeCommandClient';
 import { installFakeCommandWire } from '@newspack-nodes/shared/test-utils/fakeCommandWire';
 import { useErrorLogGraph } from '../useErrorLogGraph';
 
@@ -66,6 +65,14 @@ class FakeEventSource {
 	dispatch( name, data ) {
 		( this.listeners[ name ] || [] ).forEach( ( cb ) => cb( { data } ) );
 	}
+}
+
+// The seam is the WIRE: the graph packs, POSTs and unpacks for real, so
+// HttpOut, the router and the interpreter all run.
+function installWire( payloadByVerb = {} ) {
+	return installFakeCommandWire(
+		( m ) => payloadByVerb[ m[ VALUE ]?.name ] ?? null
+	);
 }
 
 beforeEach( () => {
@@ -120,12 +127,6 @@ function errorEnvelope( rid, value ) {
 }
 
 // Transport double keyed by verb, built on the shared HttpOut-seam helper.
-function makeFakeClient( payloadByVerb = {} ) {
-	return makeFakeCommandClient(
-		( m ) => payloadByVerb[ m[ VALUE ]?.name ] ?? null
-	);
-}
-
 describe( 'useErrorLogGraph — exospine + RemoteLink wiring', () => {
 	test( 'mounts the backbone + one RemoteLink (sharing the reserved _http/_heartbeat) + the view', () => {
 		renderHook( () => useErrorLogGraph() );
@@ -399,16 +400,14 @@ describe( 'useErrorLogGraph — page visibility / pause lifecycle', () => {
 
 describe( 'useErrorLogGraph — glob browse', () => {
 	test( 'exposes a browse model cataloging the `errors.*` partitions', async () => {
-		const client = makeFakeClient( {
+		installWire( {
 			list_logs: [
 				{ key: 'errors.p0', label: 'errors.p0' },
 				{ key: 'errors.p5', label: 'errors.p5' },
 				{ key: 'completed.p0', label: 'completed.p0' },
 			],
 		} );
-		const { result } = renderHook( () =>
-			useErrorLogGraph( { commandClient: client } )
-		);
+		const { result } = renderHook( () => useErrorLogGraph() );
 		await act( async () => {} );
 		expect(
 			result.current.browse.partitions.map( ( p ) => p.key )
@@ -416,15 +415,13 @@ describe( 'useErrorLogGraph — glob browse', () => {
 	} );
 
 	test( 'selecting a partition narrows the live SSE subscription to that dir', async () => {
-		const client = makeFakeClient( {
+		installWire( {
 			list_logs: [
 				{ key: 'errors.p5', label: 'errors.p5' },
 				{ key: 'errors.p6', label: 'errors.p6' },
 			],
 		} );
-		const { result } = renderHook( () =>
-			useErrorLogGraph( { commandClient: client } )
-		);
+		const { result } = renderHook( () => useErrorLogGraph() );
 		await act( async () => {} );
 		// Default tail is the glob; the URL is byte-identical to today.
 		expect( FakeEventSource.last.url ).toContain( 'subscribe=errors.*' );
@@ -438,15 +435,13 @@ describe( 'useErrorLogGraph — glob browse', () => {
 	} );
 
 	test( 'refocus resumes the browsed partition, not the glob', async () => {
-		const client = makeFakeClient( {
+		installWire( {
 			list_logs: [
 				{ key: 'errors.p5', label: 'errors.p5' },
 				{ key: 'errors.p6', label: 'errors.p6' },
 			],
 		} );
-		const { result, rerender } = renderHook( () =>
-			useErrorLogGraph( { commandClient: client } )
-		);
+		const { result, rerender } = renderHook( () => useErrorLogGraph() );
 		await act( async () => {} );
 		await act( async () =>
 			result.current.browse.selectPartition( 'errors.p5' )
