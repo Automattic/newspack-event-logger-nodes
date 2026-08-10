@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.49.1] - 2026-08-09
+
 ### Changed
 
 - **`jobs` and `job-hub` declare `stale_timeout = 600`**, matching `job-spoke`.
