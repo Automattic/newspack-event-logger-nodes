@@ -29,11 +29,11 @@
 	},
 	"dependencies": {
 		"@noble/hashes": "^2.2.0",
-		"@wordpress/api-fetch": "^7.0.0",
-		"@wordpress/components": "^28.0.0",
-		"@wordpress/element": "^6.0.0",
-		"@wordpress/i18n": "^6.18.0",
-		"@wordpress/icons": "^10.0.0",
+		"@wordpress/api-fetch": "^7.40.1",
+		"@wordpress/components": "^32.2.1",
+		"@wordpress/element": "^6.40.1",
+		"@wordpress/i18n": "^6.13.1",
+		"@wordpress/icons": "^11.7.1",
 		"d3": "^7.8.5",
 		"d3-flame-graph": "^4.1.3"
 	},
