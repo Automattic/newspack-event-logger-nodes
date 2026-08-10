@@ -3,9 +3,9 @@
  * Flame_Tree — the pure flame-graph algorithm split out of Flame_Builder_Node.
  *
  * The node owns the state, the I/O, and the clock; this file owns the math.
- * Every function here is static, takes its reference timestamp as an argument,
- * and touches nothing outside the tree it was handed — which is what makes the
- * algorithm testable without a running graph.
+ * Every function here is static, takes any clock reading it needs as an
+ * argument, and touches nothing outside the tree it was handed — which is what
+ * makes the algorithm testable without a running graph.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -60,32 +60,43 @@ final class Flame_Tree {
 	 * that aggregation groups on, `m` the volatile message, and a complete
 	 * additionally carries `duration_ms` and `ts`.
 	 *
-	 * A start pushes a node; a complete matches the nearest open node of the
-	 * same base name — LIFO, as `Log_Manager::complete()` itself matches —
-	 * stamps its duration and timestamp, then pops it along with everything
-	 * above it. Children that outlive their parent therefore survive in the
-	 * tree with a value of 0, and a complete matching nothing is dropped.
+	 * A start pushes a node, stamped with `t` — the span's offset in
+	 * milliseconds from the request's own start, which is what positions it on
+	 * the graph's x-axis. A complete matches the nearest open node of the same
+	 * base name — LIFO, as `Log_Manager::complete()` itself matches — stamps
+	 * its duration, then pops it along with everything above it. A frame's
+	 * extent is therefore `[ t, t + value ]`. Children that outlive their
+	 * parent survive in the tree with a value of 0, and a complete matching
+	 * nothing is dropped.
+	 *
+	 * `t` is absent, never zero, wherever the offset is unknown: an entry with
+	 * no usable `ts`, or a whole request logged without one. Zero is a real
+	 * position and cannot double as "unknown".
 	 *
 	 * Spans nested beyond MAX_STACK_DEPTH are attached to the tree but never
 	 * pushed, so their completes match nothing — or, when an ancestor shares
-	 * the base name, the wrong node — and their own value stays 0.
+	 * the base name, the wrong node — and their own value stays 0. Their `t`
+	 * is still honest, and `cover_children()` gives them an extent.
 	 *
 	 * The root's own value is left at 0; the caller overwrites it with the
 	 * request's measured duration.
 	 *
 	 * @param array<array-key,mixed> $entries Log entries.
-	 * @param int                     $now_ts  Reference timestamp for un-stamped completes.
 	 * @return array<string,mixed> Flame graph data.
 	 */
-	public static function build_flame_data( array $entries, int $now_ts ): array {
-		$root = [
+	public static function build_flame_data( array $entries ): array {
+		$origin = self::request_origin( $entries );
+		$root   = [
 			'name'     => 'request',
 			'value'    => 0,
 			'children' => [],
 		];
+		if ( null !== $origin ) {
+			$root['t'] = 0.0;
+		}
 
 		// Stack of open nodes. Each entry: [ 'node' => &node, 'name' => base ].
-		/** @var array<int,array{node: array{name?: string,value?: mixed,children?: array<int,mixed>,ts?: int,detail?: string},name: string}> $stack */
+		/** @var array<int,array{node: array{name?: string,value?: mixed,children?: array<int,mixed>,t?: float,detail?: string},name: string}> $stack */
 		$stack   = [];
 		$stack[] = [
 			'node' => &$root,
@@ -112,6 +123,10 @@ final class Flame_Tree {
 				if ( $detail && $detail !== $label ) {
 					$new_node['detail'] = "{$base_name}: {$detail}";
 				}
+				$offset = self::offset_ms( $entry['ts'] ?? null, $origin );
+				if ( null !== $offset ) {
+					$new_node['t'] = $offset;
+				}
 
 				// Attach by reference so the complete can stamp it in place.
 				$top_idx                                 = \count( $stack ) - 1;
@@ -129,7 +144,6 @@ final class Flame_Tree {
 			} elseif ( \preg_match( self::PATTERN_COMPLETE, $keyword, $m ) ) {
 				$base_name   = $m[1];
 				$duration_ms = $entry['duration_ms'] ?? 0;
-				$ts_raw      = $entry['ts'] ?? $now_ts;
 
 				// Search stack from top (LIFO) for matching name.
 				$found_idx = -1;
@@ -142,7 +156,6 @@ final class Flame_Tree {
 
 				if ( $found_idx >= 1 ) {
 					$stack[ $found_idx ]['node']['value'] = $duration_ms;
-					$stack[ $found_idx ]['node']['ts']    = Core::num_int( $ts_raw, $now_ts );
 
 					// Pop found_idx..top; orphans outlive parent (value=0).
 					\array_splice( $stack, $found_idx );
@@ -227,6 +240,50 @@ final class Flame_Tree {
 	}
 
 	/**
+	 * Offset in milliseconds from the request's start, to microsecond
+	 * precision. Null — not zero — when either end is unknown, because zero is
+	 * where the request itself begins.
+	 *
+	 * @param mixed      $ts     Entry timestamp, unix seconds.
+	 * @param float|null $origin Request start, unix seconds.
+	 * @return float|null Milliseconds elapsed, or null when unknown.
+	 */
+	private static function offset_ms( mixed $ts, ?float $origin ): ?float {
+		if ( null === $origin || ! \is_numeric( $ts ) || (float) $ts <= 0 ) {
+			return null;
+		}
+		return \round( ( (float) $ts - $origin ) * 1000, 3 );
+	}
+
+	/**
+	 * The instant the request opened: the EARLIEST timestamp among its
+	 * entries. `Log_Manager` writes `process (start)` first, so that is
+	 * normally entry zero — but taking the minimum makes the ordering an
+	 * enforced property rather than an assumed one, and one out-of-order
+	 * entry would otherwise push every earlier span to a negative offset.
+	 *
+	 * `Core::right_now()` stamps every firehose line, so this is unix seconds
+	 * with a microsecond fraction. The fraction is the whole point: it is what
+	 * separates two spans inside the same second.
+	 *
+	 * @param array<array-key,mixed> $entries Log entries.
+	 * @return float|null Unix seconds, or null when nothing was timestamped.
+	 */
+	private static function request_origin( array $entries ): ?float {
+		$origin = null;
+		foreach ( $entries as $entry ) {
+			if ( ! \is_array( $entry ) ) {
+				continue;
+			}
+			$ts = $entry['ts'] ?? null;
+			if ( \is_numeric( $ts ) && (float) $ts > 0 ) {
+				$origin = null === $origin ? (float) $ts : \min( $origin, (float) $ts );
+			}
+		}
+		return $origin;
+	}
+
+	/**
 	 * Finalize a flame node for display: convert sums to averages, strip
 	 * suffixes, normalize parent ≥ children, and remove internal fields.
 	 *
@@ -285,6 +342,19 @@ final class Flame_Tree {
 	 * below the cutoff and silently deletes exactly the frames a viewer opened
 	 * the graph to see.
 	 *
+	 * Where the whole family is positioned, the coverage a parent needs is its
+	 * children's time EXTENT — last end minus its own start — not their sum.
+	 * The two agree only when the children are contiguous; the gap between two
+	 * spans is precisely what a viewer opens a 10-minute request to find, and
+	 * summing hides it by widening the spans either side. Aggregate trees carry
+	 * no `t`, having merged many requests, so they keep the sum.
+	 *
+	 * The sum stays the floor. Where two spans OVERLAP the extent is smaller
+	 * than their combined width, and `treemapDice` scales children by the
+	 * parent's value — so covering by the extent alone would paint them past
+	 * its right edge. Overlap has no honest side-by-side layout anyway, and
+	 * `withTimeSpacers` declines to position such a family for that reason.
+	 *
 	 * Children are assumed already covered, so callers walk bottom-up.
 	 *
 	 * @param array<array-key,mixed> $node Node to normalize, by reference.
@@ -294,12 +364,29 @@ final class Flame_Tree {
 			return;
 		}
 		$children_sum = 0;
+		$extent       = null;
+		// Own start; null once any child is unpositioned: no honest extent.
+		$start = \is_numeric( $node['t'] ?? null ) ? (float) $node['t'] : null;
 		foreach ( $node['children'] as $child ) {
-			$children_sum += \is_array( $child ) && \is_numeric( $child['value'] ?? null ) ? $child['value'] : 0;
+			if ( ! \is_array( $child ) ) {
+				$start = null;
+				continue;
+			}
+			$value         = \is_numeric( $child['value'] ?? null ) ? $child['value'] : 0;
+			$children_sum += $value;
+			if ( null === $start || ! \is_numeric( $child['t'] ?? null ) ) {
+				$start = null;
+				continue;
+			}
+			$extent = \max( $extent ?? 0.0, (float) $child['t'] + (float) $value );
 		}
+		$needed = null !== $start && null !== $extent
+			? \max( $extent - $start, $children_sum )
+			: $children_sum;
+
 		$node_value = \is_numeric( $node['value'] ?? null ) ? $node['value'] : 0;
-		if ( $children_sum > $node_value ) {
-			$node['value'] = $children_sum;
+		if ( $needed > $node_value ) {
+			$node['value'] = $needed;
 		}
 	}
 
@@ -342,10 +429,11 @@ final class Flame_Tree {
 	 * finalize at flush time (sum_value / total_count).
 	 *
 	 * Node `name` is the merge key, which is why build_flame_data numbers
-	 * duplicate siblings first. `ts` records the last request to touch a node;
-	 * anything older than AGGREGATE_EXPIRY_SEC is dropped, and an aggregate
-	 * node carrying no `ts` at all expires on the next merge. An incoming
-	 * node's `detail` never reaches the aggregate: a merged node holds `name`,
+	 * duplicate siblings first. `ts` records when a node was last touched —
+	 * `$now_ts`, since per-request trees carry no timestamp of their own —
+	 * and anything older than AGGREGATE_EXPIRY_SEC is dropped. An incoming
+	 * node's `detail` and `t` never reach the aggregate, which has merged many
+	 * requests and so has no single position: a merged node holds `name`,
 	 * `sum_value`, `seen_count`, `ts`, and `children`, nothing else. Of those,
 	 * `seen_count` is bookkeeping — finalize divides by the aggregate's own
 	 * request count and drops it, so nothing reads it back today.

@@ -36,6 +36,15 @@ use Newspack_Nodes\Core;
  * The engine neither formats nor writes. It reports through two closures:
  * `on_complete` when a tracked rid's `process (complete)` entry arrives, and
  * `on_history_miss` when a late match arrives too late to be reassembled.
+ *
+ * Deliberately NOT folded the way `Request_Builder_Node` is. Both hold the same
+ * shape of state and both bound it per request rather than in total, but a fold
+ * merges repeated spans into one node — and this engine's whole product is the
+ * raw line stream, so merging would leave it nothing to print. Its own bound
+ * would have to be a total-bytes ceiling that stops tracking new rids: a
+ * different mechanism for a different process, since this runs in the
+ * foreground of a short-lived CLI over a bounded window rather than in a
+ * ten-minute worker holding twenty envelopes at once.
  */
 class Reqgrep_Core {
 

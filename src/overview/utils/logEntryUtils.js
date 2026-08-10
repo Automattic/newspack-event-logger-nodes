@@ -38,6 +38,15 @@ const TIME_FORMAT_OPTIONS = { hour12: false };
 const OUTERMOST_PAIR = 'process';
 
 /**
+ * Keywords that announce a break in the record: entries were dropped, or merged
+ * away by the pressure fold. Nothing before one of these can contain anything
+ * after it, so they close every span still open — except the request itself,
+ * which does span the break.
+ */
+const FOLD_MARKER = 'entries (aggregated)';
+const SEQUENCE_BREAK_KEYWORDS = new Set( [ 'entries (lost)', FOLD_MARKER ] );
+
+/**
  * The base name of the pair a `<name> (start)` keyword opens, or null when the
  * keyword does not open one.
  *
@@ -190,6 +199,15 @@ export const computeIndentedEntries = ( entries ) => {
 			}
 		}
 
+		// Left open, a severed span adopts every row after it.
+		if ( SEQUENCE_BREAK_KEYWORDS.has( keyword ) ) {
+			const outermost =
+				pairStack.length > 0 && pairStack[ 0 ].name === OUTERMOST_PAIR
+					? 1
+					: 0;
+			pairStack.length = outermost;
+		}
+
 		// Current indent is stack depth.
 		const indent = pairStack.length;
 
@@ -267,6 +285,206 @@ export const computeIndentedEntries = ( entries ) => {
 };
 
 /**
+ * The spans still open at a given index — the head's unclosed `(start)` chain,
+ * innermost last.
+ *
+ * @param {Array}  entries Stored entries.
+ * @param {number} upto    Exclusive index to stop at.
+ * @return {Array} Base names of the spans still open.
+ */
+const openSpansAt = ( entries, upto ) => {
+	const stack = [];
+	for ( let i = 0; i < upto; i++ ) {
+		const keyword = entries[ i ].k || '';
+		const opened = keyword.match( START_REGEX );
+		if ( opened ) {
+			stack.push( opened[ 1 ] );
+			continue;
+		}
+		const closed = keyword.match( COMPLETE_REGEX );
+		if ( ! closed ) {
+			continue;
+		}
+		const at = stack.lastIndexOf( closed[ 1 ] );
+		if ( at >= 0 ) {
+			stack.length = at;
+		}
+	}
+	return stack;
+};
+
+/**
+ * Base names the kept TAIL closes without having opened — spans that began in
+ * the folded middle and end after it.
+ *
+ * @param {Array}  entries Stored entries.
+ * @param {number} from    Index to start at (the marker).
+ * @return {Set} Base names whose `(complete)` the tail supplies.
+ */
+const tailClosedNames = ( entries, from ) => {
+	const opened = [];
+	const closed = new Set();
+	for ( let i = from; i < entries.length; i++ ) {
+		const keyword = entries[ i ].k || '';
+		const starts = keyword.match( START_REGEX );
+		if ( starts ) {
+			opened.push( starts[ 1 ] );
+			continue;
+		}
+		const completes = keyword.match( COMPLETE_REGEX );
+		if ( ! completes ) {
+			continue;
+		}
+		const at = opened.lastIndexOf( completes[ 1 ] );
+		if ( at >= 0 ) {
+			opened.length = at;
+			continue;
+		}
+		closed.add( completes[ 1 ] );
+	}
+	return closed;
+};
+
+/**
+ * How many complete pairs of each base name the KEPT rows already show.
+ *
+ * The fold replays the kept head into its tree and adds every tail entry to it,
+ * so those instances are counted in the merged nodes as well. A node whose
+ * whole count is already on screen is a ghost of rows the reader can see.
+ *
+ * @param {Array} entries Stored entries — kept head, marker, kept tail.
+ * @return {Map} Base name to the number of complete pairs kept.
+ */
+const keptPairCounts = ( entries ) => {
+	const counts = new Map();
+	const opened = [];
+	entries.forEach( ( entry ) => {
+		const keyword = entry.k || '';
+		const starts = keyword.match( START_REGEX );
+		if ( starts ) {
+			opened.push( starts[ 1 ] );
+			return;
+		}
+		const completes = keyword.match( COMPLETE_REGEX );
+		if ( ! completes ) {
+			return;
+		}
+		const at = opened.lastIndexOf( completes[ 1 ] );
+		if ( at < 0 ) {
+			return;
+		}
+		opened.length = at;
+		counts.set( completes[ 1 ], ( counts.get( completes[ 1 ] ) || 0 ) + 1 );
+	} );
+	return counts;
+};
+
+/**
+ * Expand a folded request's merged tree into log rows.
+ *
+ * The fold replaces thousands of entries with one node per distinct path. Those
+ * nodes are already a tree, and the log table already renders a tree, so they
+ * go in the log as ordinary `(start)`/`(complete)` pairs rather than a separate
+ * flat table that stringifies the nesting into `a / b / c`. The existing
+ * fold/unfold interaction then works on them unchanged.
+ *
+ * Rows carry a real `ts`, derived from the node's own start offset against the
+ * request origin, so the view rules and gaps them like any other row.
+ *
+ * Spans that STRADDLE a boundary are not emitted twice. One already open when
+ * the head ended is skipped whole — that row exists. One the tail CLOSES but
+ * never opened began in the middle: the tree opens it and the tail's real
+ * `(complete)` closes it, so the merged half is left off.
+ *
+ * Durations stay INCLUSIVE, as every other duration in the log is.
+ *
+ * @testonly Exported for logEntryUtils.test.js; callers use spliceFoldedSpans().
+ * @param {?Object} flame    Merged tree from Flame_Fold::tree().
+ * @param {Array}   openPath Base names the kept head left open, outermost first.
+ * @param {Set}     tailEnds Base names the kept tail closes on the tree's behalf.
+ * @param {Map}     kept     Base name to complete pairs the kept rows already show.
+ * @param {number}  originTs Unix seconds the request started at.
+ * @return {Array} Synthetic log entries.
+ */
+export const foldedSpanEntries = (
+	flame,
+	openPath,
+	tailEnds,
+	kept,
+	originTs
+) => {
+	const rows = [];
+	const stampOf = ( node ) =>
+		Number.isFinite( node.t ) && Number.isFinite( originTs )
+			? originTs + node.t / 1000
+			: 0;
+
+	const walk = ( nodes, depth ) => {
+		( nodes || [] ).forEach( ( node ) => {
+			const base = String( node.name ).split( ': ' )[ 0 ];
+			if ( openPath[ depth ] === base ) {
+				walk( node.children, depth + 1 );
+				return;
+			}
+			// Already on screen: re-emitting shows a "1 merged" ghost of it.
+			const shown = kept.get( base ) || 0;
+			const merged = Number( node.count ) - shown;
+			if ( merged < 1 && ! node.children?.length ) {
+				return;
+			}
+			const ts = stampOf( node );
+			rows.push( { n: '', k: `${ node.name } (start)`, m: '', ts } );
+			walk( node.children, depth + 1 );
+			if ( tailEnds.has( base ) ) {
+				return;
+			}
+			rows.push( {
+				n: '',
+				k: `${ node.name } (complete)`,
+				m: `${ merged.toLocaleString() } merged`,
+				ts,
+				duration_ms: node.value,
+			} );
+		} );
+	};
+
+	walk( flame?.children, 0 );
+	return rows;
+};
+
+/**
+ * Put a folded request's merged spans back where its entries were: directly
+ * after the `entries (aggregated)` marker, which is the boundary the fold left.
+ *
+ * A no-op for an unfolded request, which has no marker and no tree.
+ *
+ * @param {?Array}  entries Stored entries — kept head, marker, kept tail.
+ * @param {?Object} flame   Merged tree from Flame_Fold::tree().
+ * @return {?Array} Entries with the merged spans spliced in.
+ */
+export const spliceFoldedSpans = ( entries, flame ) => {
+	if ( ! entries?.length || ! flame ) {
+		return entries;
+	}
+	const at = entries.findIndex( ( e ) => FOLD_MARKER === ( e.k || '' ) );
+	if ( at < 0 ) {
+		return entries;
+	}
+	const origin = entries.find( ( e ) => e.ts > 0 )?.ts ?? 0;
+	return [
+		...entries.slice( 0, at + 1 ),
+		...foldedSpanEntries(
+			flame,
+			openSpansAt( entries, at ),
+			tailClosedNames( entries, at ),
+			keptPairCounts( entries ),
+			origin
+		),
+		...entries.slice( at + 1 ),
+	];
+};
+
+/**
  * Filter indented entries by fold state, emitting merged rows for collapsed pairs.
  *
  * @param {Array} entries     Output of computeIndentedEntries().entries.
@@ -310,6 +528,13 @@ export const computeVisibleEntries = ( entries, expandedSet ) => {
 						completeEntry = inner;
 						break;
 					}
+					// At or above its own level is a sibling, not a child.
+					if (
+						! inner.isPlaceholder &&
+						inner.indent <= entry.indent
+					) {
+						break;
+					}
 					if ( ! inner.isPlaceholder ) {
 						childCount++;
 					}
@@ -328,8 +553,8 @@ export const computeVisibleEntries = ( entries, expandedSet ) => {
 					isMerged: true,
 					originalIdx: i,
 				} );
-				// Skip past the complete entry.
-				i = j + 1;
+				// Past the complete, or up to the sibling that ended the scan.
+				i = null !== completeEntry ? j + 1 : j;
 				continue;
 			}
 

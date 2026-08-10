@@ -49,6 +49,8 @@ if ( ! \defined( 'ABSPATH' ) ) {
  * A `Timer_Node` rather than a plain `Node`: the router tick drives the idle
  * bucket rotation that times out stalled requests, so a partition receiving no
  * traffic still flushes what it is holding.
+ *
+ * @phpstan-import-type Fold_State from Flame_Fold
  */
 class Request_Builder_Node extends Timer_Node {
 	use \Newspack_Nodes\Schema_Reflection;
@@ -80,12 +82,34 @@ class Request_Builder_Node extends Timer_Node {
 	private const INTERN_MAX_KEY_LENGTH  = 256;
 
 	/** Cap on intern-table entries; past it, keywords pass through uninterned. */
-	private const INTERN_TABLE_LIMIT     = 50000;
+	private const INTERN_TABLE_LIMIT = 50000;
 
 	/**
-	 * Maximum entries stored per request (for the detail view Log Entries table).
+	 * Default maximum entries stored per REQUEST before it folds on its own.
+	 * A faster trigger than the pool budget for the single-runaway case: it
+	 * stops one pathological request dominating the envelope pool without
+	 * waiting for the next pressure check.
 	 */
-	private const MAX_ENTRIES_PER_REQUEST = 50000;
+	public const DEFAULT_MAX_ENTRIES_PER_REQUEST = 20000;
+
+	/**
+	 * Default ceiling on entries stored across ALL in-flight requests.
+	 *
+	 * The per-request cap constrained the wrong quantity: at 50,000 entries an
+	 * envelope measures ~18MB, which is fine once and fatal twenty times over
+	 * — and twenty concurrent is the workload a long template render creates.
+	 * Crossing this folds envelopes (see `relieve_pressure()`) rather than
+	 * letting the worker blow past its memory limit unbounded.
+	 */
+	public const DEFAULT_ENTRY_BUDGET = 50000;
+
+	/**
+	 * Appends between pressure checks once folding can no longer help.
+	 *
+	 * `$appended` only ever climbs, so a check that finds the true total still
+	 * over budget would otherwise re-scan on every single entry.
+	 */
+	private const PRESSURE_CHECK_STRIDE = 1000;
 
 	/**
 	 * Max stored message length per entry. Truncate long values (filter args,
@@ -115,6 +139,33 @@ class Request_Builder_Node extends Timer_Node {
 
 	/** @var int Positional arg 1 — rotating LRU buckets; oldest is evicted. */
 	protected int $num_buckets = self::DEFAULT_NUM_BUCKETS;
+
+	/** @var int Positional arg 2 — entries held across ALL in-flight requests. */
+	protected int $entry_budget = self::DEFAULT_ENTRY_BUDGET;
+
+	/** @var int Entries one request holds before folding itself. */
+	protected int $max_entries_per_request = self::DEFAULT_MAX_ENTRIES_PER_REQUEST;
+
+	/**
+	 * @var int Entries held across every in-flight request. An estimate, and
+	 *          deliberately one that only over-counts — a request that
+	 *          completes takes its entries with it and nothing decrements
+	 *          here. The check replaces it with the truth, so drift costs a
+	 *          scan and never a missed fold.
+	 */
+	private int $appended = 0;
+
+	/**
+	 * Raw entries a folded request keeps from each end. The head is how a
+	 * request identifies itself (process start, request line, environment) and
+	 * the tail is how it ends (stats flush, memory, process complete); both are
+	 * bounded, and it is the repetitive middle that costs memory.
+	 */
+	private const FOLD_KEEP_HEAD = 10;
+	private const FOLD_KEEP_TAIL = 10;
+
+	/** @var int `$appended` value that triggers the next pressure check. */
+	private int $next_check = self::DEFAULT_ENTRY_BUDGET + 1;
 
 	/** @var string Named target for compact-summary completed lines (empty = disabled). */
 	private string $completed_target = '';
@@ -178,7 +229,10 @@ class Request_Builder_Node extends Timer_Node {
 			return parent::arguments();
 		}
 		$this->parse_schema_args( $args );
-		$this->cache = $this->build_cache();
+		$this->entry_budget            = \max( 1, $this->entry_budget );
+		$this->max_entries_per_request = \max( 1, $this->max_entries_per_request );
+		$this->cache        = $this->build_cache();
+		$this->next_check   = $this->entry_budget + 1;
 		$this->set_timer();
 		return $args;
 	}
@@ -345,7 +399,7 @@ class Request_Builder_Node extends Timer_Node {
 		// Dynamic \stdClass property: list of stored per-entry records.
 		/** @var list<array<string,mixed>> $entries */
 		$entries = \is_array( $request->entries ?? null ) ? $request->entries : [];
-		if ( isset( $request->entries ) && \count( $entries ) < self::MAX_ENTRIES_PER_REQUEST ) {
+		if ( isset( $request->entries ) ) {
 			$stored = [
 				'n'  => $n,
 				'ts' => $entry['ts'] ?? 0,
@@ -369,10 +423,24 @@ class Request_Builder_Node extends Timer_Node {
 				$stored['peak_mb'] = $entry['peak_mb'];
 			}
 
-			$entries[]          = $stored;
-			$request->entries   = $entries;
-		} elseif ( isset( $request->entries ) && empty( $request->truncated ) ) {
-			$request->truncated = true;
+			// Folded stays folded: into the path map, never back onto the list.
+			$fold = $request->fold ?? null;
+			if ( \is_array( $fold ) ) {
+				/** @var Fold_State $fold */
+				Flame_Fold::add( $fold, $stored );
+				$request->fold = $fold;
+				$request->tail = self::ring( $request->tail ?? null, $stored );
+			} else {
+				$entries[]        = $stored;
+				$request->entries = $entries;
+				++$this->appended;
+				if ( \count( $entries ) >= $this->max_entries_per_request ) {
+					// This one is the runaway; fold IT, not the pool's largest.
+					$this->appended -= $this->fold_request( $request );
+				} elseif ( $this->appended >= $this->next_check ) {
+					$this->relieve_pressure();
+				}
+			}
 		}
 
 		if ( 'complete' === ( $request->state ?? '' ) ) {
@@ -467,9 +535,13 @@ class Request_Builder_Node extends Timer_Node {
 	 * @param array<string,mixed> $entry   The terminal entry, for its timestamp.
 	 */
 	private function store_gap_entry( \stdClass $request, array $entry ): void {
+		// Entries is the kept HEAD; the tail is where the request ended.
+		$folded = \is_array( $request->tail ?? null );
 		/** @var list<array<string,mixed>> $entries */
-		$entries = \is_array( $request->entries ?? null ) ? $request->entries : [];
-		if ( \count( $entries ) >= self::MAX_ENTRIES_PER_REQUEST ) {
+		$entries = $folded
+			? $request->tail
+			: ( \is_array( $request->entries ?? null ) ? $request->entries : [] );
+		if ( ! $folded && \count( $entries ) >= $this->max_entries_per_request ) {
 			return;
 		}
 		$gap       = Core::int( $request->gap_after ?? 0, 0 );
@@ -482,6 +554,10 @@ class Request_Builder_Node extends Timer_Node {
 				? "discarded entries after #{$gap} at {$offset}"
 				: "discarded entries after #{$gap}",
 		];
+		if ( $folded ) {
+			$request->tail = $entries;
+			return;
+		}
 		$request->entries = $entries;
 	}
 
@@ -797,6 +873,8 @@ class Request_Builder_Node extends Timer_Node {
 			$request->state       = 'process';
 			$request->initialized = true;
 			$request->gap_after   = 0;
+			// Handle operator time-travel gracefully.
+			unset( $request->fold, $request->folded, $request->tail );
 			$request->rule_id     = \is_string( $entry['rule'] ?? null ) ? $entry['rule'] : '';
 		};
 
@@ -813,13 +891,7 @@ class Request_Builder_Node extends Timer_Node {
 			$request->state        = 'complete';
 		};
 
-		// @longform Terminal like `process (complete)`, so the emit-and-evict
-		// path fires at once — a worker cut off mid-job, or a gyrobase render
-		// whose lease was stolen, otherwise leaves its half-built request in
-		// the cache until the LRU rotates it out, while the successor is
-		// already building a second entry for the restarted job. Stamped `A`
-		// rather than reusing complete's `-`: the duration is truncated, and
-		// Flame_Builder must not count it as a real sample.
+		// Duration stops at the abort: not a real sample of the URL's cost.
 		$s['process (aborted)'] = function ( \stdClass $request, array $entry ): void {
 			$request->duration_ms  = $entry['duration_ms'] ?? 0;
 			$request->status_code  = $entry['status_code'] ?? 0;
@@ -951,6 +1023,94 @@ class Request_Builder_Node extends Timer_Node {
 	}
 
 	/**
+	 * Fold in-flight envelopes until the entries held across all of them are
+	 * back under budget.
+	 *
+	 * Runs off an estimate that only ever over-counts, so this is where the
+	 * truth gets recomputed: one pass over the LRU sums what is actually held,
+	 * which both corrects the drift and finds the envelope to fold. That pass
+	 * is O(in-flight requests) — a few hundred `count()` calls — and it only
+	 * happens at the budget, so its cost does not matter.
+	 *
+	 * The LARGEST envelope folds, not all of them: a short request keeps full
+	 * chronology while the long template render pays for the pressure it
+	 * created. Folding reclaims rather than merely capping — 18MB of entries
+	 * becomes a path map of a few hundred nodes, immediately.
+	 */
+	private function relieve_pressure(): void {
+		$total = 0;
+		/** @var array<string,\stdClass> $live */
+		$live = [];
+		/** @var array<string,int> $sizes */
+		$sizes = [];
+		foreach ( $this->cache->iterate() as $rid => $request ) {
+			if ( ! $request instanceof \stdClass || ! \is_array( $request->entries ?? null ) ) {
+				continue;
+			}
+			$live[ $rid ]  = $request;
+			$sizes[ $rid ] = \count( $request->entries );
+			$total        += $sizes[ $rid ];
+		}
+
+		// @longform Mutate the handles iterate() just gave us. Going back
+		// through get() and set() would PROMOTE each envelope into the newest
+		// bucket and can rotate the cache, evicting an unrelated request and
+		// stamping it timed out — from inside an append, of all places.
+		while ( $total > $this->entry_budget && [] !== $sizes ) {
+			$rid = (string) \array_search( \max( $sizes ), $sizes, true );
+			unset( $sizes[ $rid ] );
+			$total -= $this->fold_request( $live[ $rid ] );
+		}
+
+		// Back off only when folding could not get us under the budget.
+		$this->appended   = $total;
+		$this->next_check = $total > $this->entry_budget
+			? $total + self::PRESSURE_CHECK_STRIDE
+			: $this->entry_budget + 1;
+	}
+
+	/**
+	 * Replay one envelope's stored entries through the merging stack machine
+	 * and drop the raw list. The request keeps logging; every later entry
+	 * folds straight into the same path map, so its cost stops tracking
+	 * message volume. A folded request cannot un-fold and must not try.
+	 *
+	 * @param \stdClass $request In-flight envelope, mutated in place.
+	 * @return int Entries reclaimed.
+	 */
+	private function fold_request( \stdClass $request ): int {
+		/** @var list<array<string,mixed>> $entries */
+		$entries = \is_array( $request->entries ?? null ) ? $request->entries : [];
+		$started = $request->timestamp ?? null;
+		$fold    = Flame_Fold::start( \is_numeric( $started ) ? (float) $started : null );
+		foreach ( $entries as $stored ) {
+			Flame_Fold::add( $fold, $stored );
+		}
+		$request->fold    = $fold;
+		$request->entries = \array_slice( $entries, 0, self::FOLD_KEEP_HEAD );
+		$request->tail    = [];
+		$request->folded  = true;
+		return \count( $entries ) - \count( $request->entries );
+	}
+
+	/**
+	 * Push onto a bounded ring, dropping the oldest past FOLD_KEEP_TAIL.
+	 *
+	 * @param mixed                $ring  Existing ring, if any.
+	 * @param array<string,mixed> $entry Entry to append.
+	 * @return list<array<string,mixed>>
+	 */
+	private static function ring( mixed $ring, array $entry ): array {
+		/** @var list<array<string,mixed>> $tail */
+		$tail   = \is_array( $ring ) ? $ring : [];
+		$tail[] = $entry;
+		if ( \count( $tail ) > self::FOLD_KEEP_TAIL ) {
+			\array_shift( $tail );
+		}
+		return $tail;
+	}
+
+	/**
 	 * Emit a completed request as a TM_STRUCT message to the main sink.
 	 *
 	 * KEY = rid so downstream readers / aggregator forwarders can identify
@@ -979,9 +1139,83 @@ class Request_Builder_Node extends Timer_Node {
 		/** @var int|float|string $rid_raw */
 		$rid_raw                   = $request->rid ?? '';
 		$message[ Message::KEY ]       = (string) $rid_raw;
-		$message[ Message::VALUE ]     = (array) $request;
+		$message[ Message::VALUE ]     = self::record_of( $request );
 		$this->guarded( fn () => parent::fill( $message ) );
 		$this->emit_compact_summary( $request );
+	}
+
+	/**
+	 * The wire record for one completed envelope.
+	 *
+	 * An unfolded request ships its raw `entries` and nothing changes — which
+	 * is also what every record already written to `requests.p*` looks like,
+	 * so accepting both shapes downstream is what makes this migration free.
+	 *
+	 * A folded one ships the merged tree in `flame`, its kept head and tail
+	 * rejoined around an `entries (aggregated)` marker. Each merged node
+	 * carries its instance `count`, summed `value` and the offset `t` it first
+	 * started at, which is what lets the detail view render them as log rows
+	 * on a real clock. The live fold state never goes on the wire — it is
+	 * scaffolding, and several times the size of its result.
+	 *
+	 * @param \stdClass $request Completed request envelope.
+	 * @return array<string,mixed> The record.
+	 */
+	private static function record_of( \stdClass $request ): array {
+		/** @var array<string,mixed> $record */
+		$record = (array) $request;
+		$fold   = $record['fold'] ?? null;
+		if ( ! \is_array( $fold ) ) {
+			return $record;
+		}
+		/** @var Fold_State $fold */
+		$record['flame']   = Flame_Fold::tree( $fold );
+		$record['entries'] = self::head_marker_tail( $record );
+		unset( $record['fold'], $record['tail'] );
+		// @longform `entries` is NOT cleared here: the fold already emptied it,
+		// and what lands in it afterwards is the `entries (lost)` marker, which
+		// announces a gap in the very requests whose trace is least worth
+		// trusting. Wiping the list would delete exactly that warning.
+		return $record;
+	}
+
+	/**
+	 * Rejoin a folded request's kept ends around a marker for the middle.
+	 *
+	 * Without the marker a head running straight into a tail reads as a short
+	 * request that simply did little — the opposite of what happened.
+	 *
+	 * @param array<string,mixed> $record Folded record, `fold` still present.
+	 * @return list<array<string,mixed>>
+	 */
+	private static function head_marker_tail( array $record ): array {
+		/** @var list<array<string,mixed>> $head */
+		$head = \is_array( $record['entries'] ?? null ) ? $record['entries'] : [];
+		/** @var list<array<string,mixed>> $tail */
+		$tail = \is_array( $record['tail'] ?? null ) ? $record['tail'] : [];
+		/** @var Fold_State $fold */
+		$fold = $record['fold'];
+		// Synthetic rows never folded, so they are not in the fold's count.
+		$folded_tail = \count(
+			\array_filter( $tail, static fn ( array $e ): bool => 'entries (lost)' !== ( $e['k'] ?? '' ) )
+		);
+		$dropped = $fold['count'] - \count( $head ) - $folded_tail;
+		if ( $dropped < 1 ) {
+			return \array_merge( $head, $tail );
+		}
+		$last = $head[ \count( $head ) - 1 ] ?? null;
+		return \array_merge(
+			$head,
+			[
+				[
+					'n'  => Core::int( $last['n'] ?? 0, 0 ) + 1,
+					'ts' => $last['ts'] ?? 0,
+					'k'  => 'entries (aggregated)',
+					'm'  => "{$dropped} entries merged into the flame graph under memory pressure",
+				],
+			],
+			$tail
+		);
 	}
 
 	/**
@@ -991,10 +1225,14 @@ class Request_Builder_Node extends Timer_Node {
 	 * each worker type hashes to its own URL row instead of collapsing into the
 	 * endpoint they share.
 	 *
+	 * @api `Request_Flight_Node` resolves in-flight URLs through this too — the
+	 *      completed record and the gyroscope row MUST agree, or a job's
+	 *      execution and the request that enqueued it (same `/jobs/{handler}/{id}`
+	 *      URI) collapse onto one URL row.
 	 * @param \stdClass $request Request envelope.
 	 * @return string The resolved URL, or '' when the envelope carries none.
 	 */
-	private static function resolved_request_url( \stdClass $request ): string {
+	public static function resolved_request_url( \stdClass $request ): string {
 		$url         = \is_string( $request->url ?? null ) ? $request->url : '';
 		$worker_type = \is_string( $request->worker_type ?? null ) ? $request->worker_type : '';
 		if ( '' !== $worker_type && '' !== $url && ! \str_contains( $url, '?' ) ) {
@@ -1129,7 +1367,7 @@ class Request_Builder_Node extends Timer_Node {
 	 *
 	 * Recovery, not eviction: the entries are DISCARDED, not emitted as timed
 	 * out. A cache that needs this is holding requests that will never complete,
-	 * potentially thousands of them carrying up to MAX_ENTRIES_PER_REQUEST
+	 * potentially thousands of them carrying up to max_entries_per_request
 	 * entries each — answering a wedged fleet with that write storm is worse
 	 * than losing docs for requests already known to be dead. Ordinary ageing
 	 * still runs through eviction, which does emit.
@@ -1508,6 +1746,8 @@ class Request_Builder_Node extends Timer_Node {
 			'arguments'        => [
 				[ 'name' => 'bucket_size', 'type' => 'int', 'default' => self::DEFAULT_BUCKET_SIZE, 'description' => 'Max in-flight requests held per LRU bucket before rotating to a fresh one (default 100).' ],
 				[ 'name' => 'num_buckets', 'type' => 'int', 'default' => self::DEFAULT_NUM_BUCKETS, 'description' => 'Number of rotating LRU buckets for in-flight requests; the oldest is evicted when full (capacity ~ bucket_size x num_buckets, default 3).' ],
+				[ 'name' => 'entry_budget', 'type' => 'int', 'default' => self::DEFAULT_ENTRY_BUDGET, 'description' => 'Log entries held across ALL in-flight requests before the largest is folded to aggregated paths (default 50000, ~18MB).' ],
+				[ 'name' => 'max_entries_per_request', 'type' => 'int', 'default' => self::DEFAULT_MAX_ENTRIES_PER_REQUEST, 'description' => 'Entries ONE request holds before it folds itself — a faster trigger than the pool budget for a single runaway (default 20000).' ],
 			],
 			'commands'       => [
 				[

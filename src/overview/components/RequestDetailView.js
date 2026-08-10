@@ -63,10 +63,12 @@ export default function RequestDetailView( {
 	const revealRef = useRef( null );
 	const isTimedOut = requestDetail.error_status === 'T';
 	const isFatal = requestDetail.error_status === 'F';
+	const isFolded = !! requestDetail.folded;
 	const hasEntries = indentedEntries.length > 0;
 	const hasFlame = flameData && flameData.children?.length > 0;
 	const hasProfiles = !! requestDetail.profiles;
-	const hasNoDetail = ! hasEntries && ! hasFlame && ! hasProfiles;
+	const hasNoDetail =
+		! hasEntries && ! hasFlame && ! hasProfiles && ! isFolded;
 
 	return (
 		<div className="event-logger-request-detail">
@@ -144,6 +146,15 @@ export default function RequestDetailView( {
 				</p>
 			) }
 
+			{ isFolded && (
+				<p className="newspack-nodes-banner is-warning">
+					{ __(
+						'Aggregated under load. This request logged more than the worker could hold alongside the others in flight, so repeated spans were merged into one frame each — counts and totals are exact, the sequence is not. Its opening and closing entries are kept in full, and the merged spans sit between them in the log, each showing how many instances it stands for.',
+						'newspack-event-logger-nodes'
+					) }
+				</p>
+			) }
+
 			{ /* Request Flame Graph (built by Flame_Builder_Node, read here) */ }
 			{ hasFlame && (
 				<div
@@ -185,7 +196,7 @@ export default function RequestDetailView( {
 				</div>
 			) }
 
-			{ /* Log Entries Table */ }
+			{ /* Log Entries Table, or what a folded request kept instead */ }
 			{ hasEntries && (
 				<LogEntriesTable
 					entries={ indentedEntries }

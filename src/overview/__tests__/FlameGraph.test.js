@@ -93,7 +93,7 @@ jest.mock( 'd3-flame-graph/dist/d3-flamegraph.css', () => ( {} ), {
 
 import * as React from 'react';
 import * as d3 from 'd3';
-import FlameGraph, { pruneFlameGraph } from '../FlameGraph';
+import FlameGraph, { pruneFlameGraph, withTimeSpacers } from '../FlameGraph';
 import { renderComponent } from '../../test-helpers/renderHook';
 
 const d3Mock = d3.__chain;
@@ -289,6 +289,21 @@ describe( 'FlameGraph', () => {
 		expect( tooltip.hasState() ).toBe( false );
 		// Re-call .show again, then destroy to cover that branch.
 		tooltip.show( node );
+		tooltip.destroy();
+		unmount();
+	} );
+
+	it( 'tooltip.show says nothing at all over a spacer', () => {
+		const { unmount } = renderComponent(
+			React.createElement( FlameGraph, { data: SAMPLE_DATA } )
+		);
+		const tooltip = flamegraphState.tooltip;
+		tooltip.show( {
+			data: { name: '', value: 100, t: 0, spacer: true },
+			parent: { data: { name: 'process', value: 1000 }, parent: null },
+		} );
+		// Nothing to replay: a gap must not leave a tip behind on refresh.
+		expect( tooltip.hasState() ).toBe( false );
 		tooltip.destroy();
 		unmount();
 	} );
@@ -663,5 +678,204 @@ describe( 'pruneFlameGraph', () => {
 		};
 		pruneFlameGraph( root, { softMaxNodes: 1 } );
 		expect( root.children ).toHaveLength( 2 );
+	} );
+} );
+
+describe( 'withTimeSpacers', () => {
+	// A 1000ms parent whose two children leave a 100ms hole in the middle and
+	// 40ms of dead air at the front. Every number here is distinct, so a
+	// transform that ignored `t` and packed flush would show up immediately.
+	const TIMED = {
+		name: 'process',
+		value: 1000,
+		t: 0,
+		children: [
+			{ name: 'db', value: 260, t: 40, children: [] },
+			{ name: 'render', value: 300, t: 400, children: [] },
+		],
+	};
+
+	const widths = ( node ) =>
+		node.children.map( ( c ) => [ c.spacer === true, c.value ] );
+
+	it( 'opens with a spacer covering the parent time before the first child', () => {
+		expect( widths( withTimeSpacers( TIMED ) )[ 0 ] ).toEqual( [
+			true,
+			40,
+		] );
+	} );
+
+	it( 'fills the hole between two children with a spacer of exactly its width', () => {
+		// db ends at 300, render starts at 400.
+		expect( widths( withTimeSpacers( TIMED ) ) ).toEqual( [
+			[ true, 40 ],
+			[ false, 260 ],
+			[ true, 100 ],
+			[ false, 300 ],
+		] );
+	} );
+
+	it( 'leaves the tail alone — d3 scales by the parent value, not the sum', () => {
+		const out = withTimeSpacers( TIMED );
+		expect(
+			out.children[ out.children.length - 1 ].spacer
+		).toBeUndefined();
+	} );
+
+	it( 'orders children by start time, not by the order they arrived', () => {
+		const scrambled = {
+			name: 'process',
+			value: 100,
+			t: 0,
+			children: [
+				{ name: 'late', value: 10, t: 80, children: [] },
+				{ name: 'early', value: 10, t: 0, children: [] },
+			],
+		};
+		expect(
+			withTimeSpacers( scrambled )
+				.children.filter( ( c ) => ! c.spacer )
+				.map( ( c ) => c.name )
+		).toEqual( [ 'early', 'late' ] );
+	} );
+
+	it( 'spends a fixed spacer budget on the widest gaps', () => {
+		// Spacers are inserted after pruning, so an unbounded count would blow
+		// straight through the node ceiling pruning exists to enforce.
+		const three = {
+			name: 'process',
+			value: 1000,
+			t: 0,
+			children: [
+				{ name: 'a', value: 10, t: 5, children: [] },
+				{ name: 'b', value: 10, t: 100, children: [] },
+				{ name: 'c', value: 10, t: 500, children: [] },
+			],
+		};
+		// Gaps are 5, 85 and 390; a budget of one keeps only the widest.
+		expect( widths( withTimeSpacers( three, 1 ) ) ).toEqual( [
+			[ false, 10 ],
+			[ false, 10 ],
+			[ true, 390 ],
+			[ false, 10 ],
+		] );
+	} );
+
+	it( 'declines to position a family whose spans overlap', () => {
+		// Two spans running at once have no honest side-by-side layout, and
+		// their combined width already exceeds the interval they cover.
+		const overlapping = {
+			name: 'process',
+			value: 1000,
+			t: 0,
+			children: [
+				{ name: 'outer', value: 500, t: 0, children: [] },
+				{ name: 'orphan', value: 200, t: 100, children: [] },
+			],
+		};
+		expect( withTimeSpacers( overlapping ) ).toEqual( overlapping );
+	} );
+
+	it( 'recurses: a nested parent gets its own spacers', () => {
+		const nested = {
+			name: 'process',
+			value: 1000,
+			t: 0,
+			children: [
+				{
+					name: 'outer',
+					value: 900,
+					t: 0,
+					children: [
+						{ name: 'inner', value: 100, t: 250, children: [] },
+					],
+				},
+			],
+		};
+		expect( widths( withTimeSpacers( nested ).children[ 0 ] ) ).toEqual( [
+			[ true, 250 ],
+			[ false, 100 ],
+		] );
+	} );
+
+	it( 'leaves an aggregate tree — no start times anywhere — untouched', () => {
+		const aggregate = {
+			name: 'aggregate',
+			value: 1000,
+			children: [
+				{ name: 'db', value: 260, children: [] },
+				{ name: 'render', value: 300, children: [] },
+			],
+		};
+		expect( withTimeSpacers( aggregate ) ).toEqual( aggregate );
+	} );
+
+	it( 'leaves a parent alone when only some of its children are positioned', () => {
+		const partial = {
+			name: 'process',
+			value: 1000,
+			t: 0,
+			children: [
+				{ name: 'db', value: 260, t: 40, children: [] },
+				{ name: 'mystery', value: 300, children: [] },
+			],
+		};
+		expect( withTimeSpacers( partial ).children ).toHaveLength( 2 );
+	} );
+
+	it( 'does not mutate the input tree', () => {
+		withTimeSpacers( TIMED );
+		expect( TIMED.children ).toHaveLength( 2 );
+	} );
+} );
+
+describe( 'frame ordering', () => {
+	beforeEach( () => {
+		flamegraphState.options = {};
+	} );
+
+	it( 'orders positioned frames by start time', () => {
+		renderComponent(
+			React.createElement( FlameGraph, { data: SAMPLE_DATA } )
+		);
+		const sort = flamegraphState.options.sort;
+		expect( typeof sort ).toBe( 'function' );
+		expect(
+			sort( { data: { t: 40 } }, { data: { t: 5 } } )
+		).toBeGreaterThan( 0 );
+	} );
+
+	it( 'puts positioned frames ahead of unpositioned ones', () => {
+		// Mixing the two keys in one comparison is intransitive — A before B by
+		// time, C before A by name, B before C by name — and an intransitive
+		// comparator makes Array.prototype.sort emit an arbitrary order.
+		renderComponent(
+			React.createElement( FlameGraph, { data: SAMPLE_DATA } )
+		);
+		const sort = flamegraphState.options.sort;
+		expect(
+			sort( { data: { t: 10, name: 'z' } }, { data: { name: 'm' } } )
+		).toBeLessThan( 0 );
+		expect(
+			sort( { data: { name: 'm' } }, { data: { t: 20, name: 'a' } } )
+		).toBeGreaterThan( 0 );
+	} );
+
+	it( 'falls back to the displayed name where there is no start time', () => {
+		renderComponent(
+			React.createElement( FlameGraph, { data: SAMPLE_DATA } )
+		);
+		const sort = flamegraphState.options.sort;
+		// 'zzz' after 'aaa' — the aggregate view's only ordering.
+		expect(
+			sort( { data: { name: 'zzz' } }, { data: { name: 'aaa' } } )
+		).toBeGreaterThan( 0 );
+		// A frame with a message sorts on the message, as getName reads it.
+		expect(
+			sort(
+				{ data: { name: 'zzz', detail: 'aaa' } },
+				{ data: { name: 'aaa', detail: 'zzz' } }
+			)
+		).toBeLessThan( 0 );
 	} );
 } );

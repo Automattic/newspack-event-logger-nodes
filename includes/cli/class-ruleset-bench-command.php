@@ -1,18 +1,18 @@
 <?php
 /**
  * Benchmark of the ruleset's two hook-storage tiers: autoloaded-inline against
- * memcache-pointer.
+ * Table-pointer.
  *
  * `Rule_Set` keeps a rule's hooks inline in the autoloaded rules option up to
- * `Rule_Set::INLINE_HOOK_LIMIT`, and behind a memcache-mirrored non-autoloaded
+ * `Rule_Set::INLINE_HOOK_LIMIT`, and behind a Table-mirrored non-autoloaded
  * option above it. This command measures the three per-request costs that
  * crossover trades off — the alloptions unserialize tax, an inline read plus
- * bind, and a memcache fetch plus bind — over a hooks-per-rule × rule-count
+ * bind, and a table fetch plus bind — over a hooks-per-rule × rule-count
  * grid, then prints the guidance for reading the table. The limit is already
  * fixed at 100; rerun the sweep to re-validate it on new hardware.
  *
  * The sweep never touches the live ruleset. It builds synthetic hook lists in
- * memory and writes only its own short-lived `evlog:bench:hooks:*` memcache
+ * memory and writes only its own short-lived, bench-private Table
  * keys, which it deletes per grid cell.
  *
  * @package Newspack_Event_Logger_Nodes
@@ -21,6 +21,9 @@
 declare( strict_types=1 );
 
 namespace Newspack_Event_Logger_Nodes\CLI;
+
+use Newspack_Event_Logger_Nodes\Rule_Set;
+use Newspack_Nodes\Table_Node;
 
 \defined( 'ABSPATH' ) || exit;
 
@@ -94,13 +97,13 @@ class Ruleset_Bench_Command {
 	 *   in for the alloptions cost every request pays for inline storage.
 	 * - `inline` — walk the already-in-memory list, standing in for the bind
 	 *   loop that inline storage runs per request.
-	 * - `pointer` — one memcache get plus the same bind loop.
+	 * - `pointer` — one Table lookup plus the same bind loop.
 	 *
-	 * Only the pointer path touches memcache, under a bench-private key it sets
-	 * with a 300-second TTL and deletes afterwards. With no `Core::$memd` handle
-	 * the path degrades to the in-memory array, so the pointer column then
-	 * reports the bind loop alone and understates the real cost — read it as a
-	 * floor, not a measurement.
+	 * Only the pointer path touches the cache, under a bench-private key it sets
+	 * with a 300-second TTL and deletes afterwards. With no backend it still
+	 * runs, but WARNS: the pointer column then reports the bind loop alone,
+	 * which is a floor and not a measurement, and INLINE_HOOK_LIMIT is read
+	 * off that column.
 	 *
 	 * Every path is summarized to median, p95, and n; the sweep prints medians.
 	 *
@@ -142,16 +145,18 @@ class Ruleset_Bench_Command {
 			$inline_samps[] = ( \hrtime( true ) - $t ) / 1000.0;
 		}
 
-		// Pointer path: memcache get + bind.
-		$memd    = \Newspack_Nodes\Core::$memd ?? null;
-		$mc_key  = 'evlog:bench:hooks:' . $k;
-		if ( null !== $memd ) {
-			$memd->set( $mc_key, $hooks, 300 );
+		// Pointer path: the same Table_Node read hooks_for() makes.
+		$bench_key = "bench-{$k}";
+		Table_Node::store( Rule_Set::TABLE_HOOKS, $bench_key, $hooks, 300 );
+		// Say so rather than time an assignment as if it were a fetch.
+		$measurable = null !== Table_Node::lookup( Rule_Set::TABLE_HOOKS, $bench_key );
+		if ( ! $measurable ) {
+			\WP_CLI::warning( 'no cache backend: the pointer column is the bind loop alone, a floor rather than a measurement.' );
 		}
 		$pointer_samps = [];
 		for ( $i = 0; $i < $iterations; $i++ ) {
-			$t = \hrtime( true );
-			$fetched = null !== $memd ? $memd->get( $mc_key ) : $hooks;
+			$t       = \hrtime( true );
+			$fetched = $measurable ? Table_Node::lookup( Rule_Set::TABLE_HOOKS, $bench_key ) : $hooks;
 			if ( \is_array( $fetched ) ) {
 				// phpcs:disable VariableAnalysis.CodeAnalysis.VariableAnalysis.UnusedVariable -- the accumulator IS the measurement; dropping it empties the loop.
 				$bound = 0;
@@ -162,9 +167,7 @@ class Ruleset_Bench_Command {
 			}
 			$pointer_samps[] = ( \hrtime( true ) - $t ) / 1000.0;
 		}
-		if ( null !== $memd ) {
-			$memd->delete( $mc_key );
-		}
+		Table_Node::forget( Rule_Set::TABLE_HOOKS, $bench_key );
 
 		return [
 			'autoload' => self::summarize( $autoload_samps ),

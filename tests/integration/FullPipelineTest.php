@@ -75,6 +75,7 @@ class FullPipelineTest extends TestCase {
 			'm'   => [
 				'type'       => 'job',
 				'handler'    => 'echo_job',
+				'id'         => 'echo-4471',
 				'parameters' => [ 'val' => 42 ],
 			],
 			'ts'  => $job_timestamp,
@@ -109,8 +110,8 @@ class FullPipelineTest extends TestCase {
 		$job_executions = [];
 		$jw             = new Job_Worker_Node();
 		$jw->name( 'job-worker' );
-		$this->register_job_handler( $jw, 'echo_job', function ( $params ) use ( &$job_executions ) {
-			$job_executions[] = $params;
+		$this->register_job_handler( $jw, 'echo_job', function ( $id, $params ) use ( &$job_executions ) {
+			$job_executions[] = [ 'id' => $id, 'params' => $params ];
 		} );
 
 		$jr = new Job_Router_Node();
@@ -129,9 +130,11 @@ class FullPipelineTest extends TestCase {
 		$consumer->sink( $tee );
 		$this->pump_consumer( $consumer );
 
-		// 1. JobRouter forwarded → JobWorker dispatched 'echo_job' with parameters.
+		// 1. JobRouter forwarded → JobWorker dispatched 'echo_job' with its id
+		// and parameters, in that order.
 		$this->assertCount( 1, $job_executions );
-		$this->assertSame( [ 'val' => 42 ], $job_executions[0] );
+		$this->assertSame( 'echo-4471', $job_executions[0]['id'] );
+		$this->assertSame( [ 'val' => 42 ], $job_executions[0]['params'] );
 
 		// 2. RequestBuilder assembled r1 → FlameBuilder wrote a flame.
 		$this->assertCount( 1, $flame_capture->captured );

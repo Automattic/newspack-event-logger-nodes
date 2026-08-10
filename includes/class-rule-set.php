@@ -19,24 +19,30 @@ namespace Newspack_Event_Logger_Nodes;
 
 use Newspack_Nodes\Config_System\Restart_Planner;
 use Newspack_Nodes\Core;
+use Newspack_Nodes\Table_Node;
 
 /**
  * Rule LIST rides an autoloaded option. A heavy rule's hooks live in a
- * NON-autoloaded durable option (system of record) mirrored into memcache
- * (warm cache, warmed on miss). INLINE_HOOK_LIMIT is the crossover, measured
- * by `wp nodes ruleset-bench`: the largest hook count whose inline read still
- * beats a memcache fetch while the autoload tax stays negligible.
+ * NON-autoloaded durable option (system of record) mirrored into the
+ * substrate's `Table` (warm cache, warmed on miss), which scopes its keys per
+ * install — two sites sharing one memcached derive the SAME rule id for the
+ * same pattern, so an unscoped key would hand one site the other's hooks.
+ * INLINE_HOOK_LIMIT is the crossover, measured by `wp nodes ruleset-bench`:
+ * the largest hook count whose inline read still beats a table fetch while
+ * the autoload tax stays negligible.
  *
  * An instance holds the rule list in the form it was last persisted in, so
  * `rules()` after `save()` matches a fresh `load()`.
  */
 final class Rule_Set {
 	/** Inline-hook crossover threshold; do not set below 65. */
-	public const INLINE_HOOK_LIMIT     = 100;
-	public const MC_HOOKS_PREFIX       = 'evlog:rules:hooks:';
-	public const MC_TTL                = 3600;
-	public const OPTION_HOOKS_PREFIX   = 'newspack_event_logger_nodes_rule_hooks_';
-	public const OPTION_RULES          = 'newspack_event_logger_nodes_rules';
+	public const INLINE_HOOK_LIMIT   = 100;
+	/** Substrate Table namespace mirroring the pointer tier's durable options. */
+	public const TABLE_HOOKS         = 'eln-rule-hooks';
+	/** Warm-mirror lifetime; the durable option outlives it and rewarms it. */
+	public const TABLE_TTL           = 3600;
+	public const OPTION_HOOKS_PREFIX = 'newspack_event_logger_nodes_rule_hooks_';
+	public const OPTION_RULES        = 'newspack_event_logger_nodes_rules';
 
 	/** @var Rule[] */
 	private array $rules;
@@ -129,7 +135,7 @@ final class Rule_Set {
 
 	/**
 	 * Inline every pointer entry's hooks in a stored/synced rule-map list, resolving
-	 * each from its durable option (or mc). The transport-safe form of a ruleset:
+	 * each from its durable option (or the table). The transport-safe form of a ruleset:
 	 * self-contained, no dangling durable-option references. Non-pointer entries
 	 * (and non-array junk) pass through untouched. The settings-sync value filter
 	 * (`newspack_nodes/settings_sync/value`) runs the hub's rule list through this
@@ -181,7 +187,7 @@ final class Rule_Set {
 
 	/**
 	 * Persist a rule list: apply the inline↔pointer threshold, write durable
-	 * options + warm mc for pointer rules, reconcile orphans, store the list.
+	 * options + warm the table for pointer rules, reconcile orphans, store the list.
 	 *
 	 * Skip rules bypass tiering and persist exactly as given — they instrument
 	 * nothing. save() also takes ids as it finds them, which is what lets
@@ -196,7 +202,6 @@ final class Rule_Set {
 		$tiered        = [];
 		$stored        = [];
 		$live_pointers = [];
-		$memd          = Core::$memd ?? null;
 
 		foreach ( $rules as $rule ) {
 			if ( $rule->is_skip() ) {
@@ -211,11 +216,9 @@ final class Rule_Set {
 			}
 			$hooks = $hooks ?? [];
 			if ( \count( $hooks ) <= self::INLINE_HOOK_LIMIT ) {
-				// Inline: strip any prior durable/mc footprint.
+				// Inline: strip any prior durable/table footprint.
 				\delete_option( self::hooks_option_name( $rule->id ) );
-				if ( null !== $memd ) {
-					$memd->delete( self::mc_key( $rule->id ) );
-				}
+				Table_Node::forget( self::TABLE_HOOKS, $rule->id );
 				$inline   = new Rule(
 					$rule->id, $rule->pattern, $rule->action,
 					$rule->auto_disable_threshold, $rule->auto_protect_time_threshold,
@@ -226,11 +229,9 @@ final class Rule_Set {
 				$stored[] = $inline->to_array();
 				continue;
 			}
-			// Pointer: durable option is source of record; mc is warm mirror.
+			// Pointer: the option is the record; the table is a warm mirror.
 			\update_option( self::hooks_option_name( $rule->id ), \array_values( $hooks ), false );
-			if ( null !== $memd ) {
-				$memd->set( self::mc_key( $rule->id ), \array_values( $hooks ), self::MC_TTL );
-			}
+			Table_Node::store( self::TABLE_HOOKS, $rule->id, \array_values( $hooks ), self::TABLE_TTL );
 			$live_pointers[ $rule->id ] = true;
 			$pointer                    = new Rule(
 				$rule->id, $rule->pattern, $rule->action,
@@ -300,10 +301,10 @@ final class Rule_Set {
 	}
 
 	/**
-	 * Resolve a rule's hooks. Inline is free; pointer reads mc, then the durable
-	 * option (warming mc), then gives up to [] with a single notice.
+	 * Resolve a rule's hooks. Inline is free; pointer reads the table, then the
+	 * durable option (warming the table), then gives up to [] with a notice.
 	 *
-	 * Stateless (consults only $rule + Core::$memd + the durable option), so it's
+	 * Stateless (consults only $rule + the table + the durable option), so it's
 	 * static — Log_Manager already loaded the ruleset once per request; callers
 	 * must NOT re-`load()` a whole second Rule_Set just to reach this.
 	 *
@@ -314,23 +315,18 @@ final class Rule_Set {
 		if ( Rule::HOOKS_INLINE === $rule->hooks_in ) {
 			return $rule->hooks ?? [];
 		}
-		$memd = Core::$memd ?? null;
-		if ( null !== $memd ) {
-			$cached = $memd->get( self::mc_key( $rule->id ) );
-			if ( \is_array( $cached ) ) {
-				/** @var string[] $cached mc mirror of a durable hooks option. */
-				return $cached;
-			}
+		$cached = Table_Node::lookup( self::TABLE_HOOKS, $rule->id );
+		if ( \is_array( $cached ) ) {
+			/** @var string[] $cached Table mirror of a durable hooks option. */
+			return $cached;
 		}
 		$durable = \get_option( self::hooks_option_name( $rule->id ), null );
 		if ( \is_array( $durable ) ) {
-			if ( null !== $memd ) {
-				$memd->set( self::mc_key( $rule->id ), $durable, self::MC_TTL );
-			}
+			Table_Node::store( self::TABLE_HOOKS, $rule->id, $durable, self::TABLE_TTL );
 			/** @var string[] $durable hooks list persisted by save(). */
 			return $durable;
 		}
-		Core::print_less_often( 'Newspack ELN: hooks missing for pointer rule "', $rule->id, '" (mc + durable option both absent).' );
+		Core::print_less_often( 'Newspack ELN: hooks missing for pointer rule "', $rule->id, '" (table + durable option both absent).' );
 		return [];
 	}
 
@@ -347,19 +343,9 @@ final class Rule_Set {
 	}
 
 	/**
-	 * The memcache key mirroring a pointer rule's durable hooks option.
-	 *
-	 * @param string $id Rule id.
-	 * @return string Memcache key.
-	 */
-	public static function mc_key( string $id ): string {
-		return self::MC_HOOKS_PREFIX . $id;
-	}
-
-	/**
 	 * Apply a synced (hydrated) ruleset on a spoke: rebuild Rule objects and
 	 * route them through save(), which RE-TIERS locally — heavy rules' inline
-	 * hooks are written back out to this site's own durable option + mc mirror,
+	 * hooks are written back out to this site's own durable option + table mirror,
 	 * keeping OPTION_RULES small. The inverse of hydrate_array(); the
 	 * `performance` CI's `settings_set` verb calls it for OPTION_RULES instead
 	 * of writing the option raw.

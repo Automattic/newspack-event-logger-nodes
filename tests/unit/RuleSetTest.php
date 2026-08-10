@@ -12,7 +12,9 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 use PHPUnit\Framework\TestCase;
 use Newspack_Event_Logger_Nodes\Rule;
 use Newspack_Event_Logger_Nodes\Rule_Set;
+use Newspack_Nodes\Cache_Backend;
 use Newspack_Nodes\Core;
+use Newspack_Nodes\Table_Node;
 use Newspack_Nodes\Tests\Helpers\InMemoryMemcached;
 
 final class RuleSetTest extends TestCase {
@@ -325,8 +327,8 @@ final class RuleSetTest extends TestCase {
 
 	public function test_hooks_for_pointer_returns_mc_value_without_touching_durable_option(): void {
 		$mc = new InMemoryMemcached();
-		$mc->set( Rule_Set::mc_key( 'g7' ), [ 'from', 'mc' ] );
 		Core::$memd = $mc;
+		Table_Node::store( Rule_Set::TABLE_HOOKS, 'g7', [ 'from', 'mc' ], Rule_Set::TABLE_TTL );
 		// No durable option seeded at all: if this returned anything, it could
 		// only have come from the mc mirror.
 		$rule = new Rule( 'g7', '/heavy/', Rule::ACTION_LOG, hooks: null, hooks_in: Rule::HOOKS_MC );
@@ -343,7 +345,45 @@ final class RuleSetTest extends TestCase {
 		$result = Rule_Set::hooks_for( $rule );
 
 		$this->assertSame( [ 'from', 'durable' ], $result );
-		$this->assertSame( [ 'from', 'durable' ], $mc->get( Rule_Set::mc_key( 'h8' ) ) );
+		$this->assertSame( [ 'from', 'durable' ], Table_Node::lookup( Rule_Set::TABLE_HOOKS, 'h8' ) );
+	}
+
+	public function test_pointer_hooks_ride_the_substrate_table(): void {
+		Core::$memd = new InMemoryMemcached();
+		Table_Node::store( Rule_Set::TABLE_HOOKS, 'j9', [ 'wp_loaded', 'shutdown' ], Rule_Set::TABLE_TTL );
+
+		$rule = new Rule( 'j9', '/heavy/', Rule::ACTION_LOG, hooks: null, hooks_in: Rule::HOOKS_MC );
+		// No durable option seeded: only the table can have answered.
+		$this->assertSame( [ 'wp_loaded', 'shutdown' ], Rule_Set::hooks_for( $rule ) );
+	}
+
+	public function test_a_co_tenant_install_does_not_read_our_hooks(): void {
+		// A rule id is the url_hash of its pattern, so every install that logs
+		// `/` derives the SAME id. Two installs sharing one memcached — which
+		// the eve stack is — must still not share a hook list.
+		Core::$memd = new InMemoryMemcached();
+		Table_Node::store( Rule_Set::TABLE_HOOKS, 'k1', [ 'ours', 'only' ], Rule_Set::TABLE_TTL );
+
+		$rule = new Rule( 'k1', '/heavy/', Rule::ACTION_LOG, hooks: null, hooks_in: Rule::HOOKS_MC );
+		$this->assertSame( [ 'ours', 'only' ], Rule_Set::hooks_for( $rule ) );
+
+		$ours = Cache_Backend::$site;
+		try {
+			Cache_Backend::$site = 'a-different-install';
+			$this->assertSame( [], Rule_Set::hooks_for( $rule ) );
+		} finally {
+			Cache_Backend::$site = $ours;
+		}
+	}
+
+	public function test_saving_a_heavy_rule_mirrors_its_hooks_into_the_table(): void {
+		Core::$memd = new InMemoryMemcached();
+		$hooks      = \array_map( static fn ( int $i ): string => "heavy_hook_{$i}", \range( 1, Rule_Set::INLINE_HOOK_LIMIT + 7 ) );
+		$id         = Rule_Set::id_for( '/heavy/' );
+
+		( new Rule_Set( [] ) )->save( [ new Rule( $id, '/heavy/', Rule::ACTION_LOG, hooks: $hooks ) ] );
+
+		$this->assertSame( $hooks, Table_Node::lookup( Rule_Set::TABLE_HOOKS, $id ) );
 	}
 
 	public function test_id_for_hashes_the_pattern_via_the_shared_url_hash(): void {
