@@ -3,13 +3,13 @@
  * canonical rule-#2 backbone (`_command_interpreter → _router`) using a SINGLE
  * substrate `RemoteLink` node instead of hand-wiring three I/O boundary nodes:
  *
- *   requestlog:link        (RemoteLink — composes + registers three children:
+ *   requestlog:link        (RemoteLink — composes + registers one child,
  *                          `requestlog:link:sse-in` (SseIn — EventSource ingress,
  *                          ctor token `[ 'completed.*' ]`; restUrl/nonce from the global),
- *                          `requestlog:link:http` (HttpOut — POST /command boundary),
- *                          `requestlog:link:heartbeat` (Heartbeat — slot keep-alive),
- *                          and wires the `connected → slot` bridge to its own
- *                          heartbeat. `.client` is the injected transport.)
+ *                          and shares the backbone singletons `_http` (POST /command)
+ *                          and `_heartbeat` (slot keep-alive), wiring the
+ *                          `connected → slot` bridge between them. `.client` is the
+ *                          injected transport, stamped by the shared link hook.)
  *
  * Plus the single view node:
  *
@@ -30,7 +30,6 @@
 
 import { useRef, useState, useCallback } from '@wordpress/element';
 import {
-	Core,
 	TYPE,
 	FROM,
 	VALUE,
@@ -61,8 +60,8 @@ const controlMsg = ( value ) => {
 /**
  * @param {Object} [opts]               Options.
  * @param {number} [opts.maxEntries]    View ring cap (default 1000).
- * @param {Object} [opts.commandClient] transport seam assigned to the link's
- *                                      HttpOut; defaults (inside HttpOut) to the localized transport.
+ * @param {Object} [opts.commandClient] transport seam; `useVisibilityGatedLink` stamps it
+ *                                      on the link and on `_http`, and HttpOut defaults it when absent.
  * @return {{ setPaused: Function, clear: Function, browse: Object }}
  *   Control callbacks for the thin React view (the view's own state is read via
  *   useNodeState). Reset Graph is driven by a `Core.bumpGraphGeneration()`
@@ -101,10 +100,6 @@ export function useRequestLogGraph( opts = {} ) {
 			const link = interpreter.makeNode( 'RemoteLink', LINK, [ GLOB ] );
 			// Pass-through Tee on the stream edge; copies each frame to view.
 			link.target = TEE;
-			// The shared `_http` carries every command out; both ride it.
-			const client = optsRef.current.commandClient;
-			Core.node( '_http' ).client = client;
-			link.client = client;
 
 			const tee = interpreter.makeNode( 'Tee', TEE );
 			tee.connectNode( VIEW );
@@ -126,6 +121,7 @@ export function useRequestLogGraph( opts = {} ) {
 			return { link, view };
 		},
 		isActive,
+		commandClient: opts.commandClient,
 		onConnect: ( link, { isReconnect } ) => {
 			const target = browseTargetRef.current;
 			link.setSubscribe(

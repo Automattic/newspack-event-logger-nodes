@@ -39,12 +39,12 @@ import {
 	TO,
 	formatCommandArgs,
 	ensureSession,
+	reservedNames as names,
 } from '@newspack-nodes/runtime';
 
 import './nodes/register';
 import useRequestNode from '@newspack-nodes/shared/hooks/useRequestNode';
 
-const HTTP = '_http';
 const RECV = 'rules:in';
 const VIEW = 'rules:view';
 
@@ -59,7 +59,7 @@ function fireList( shell ) {
 	if ( null === m ) {
 		return; // unauthenticated; re-auth is under way
 	}
-	m[ TO ] = `${ HTTP }/rules`;
+	m[ TO ] = `${ names.HTTP }/rules`;
 	shell.fill( m );
 }
 

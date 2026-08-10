@@ -9,7 +9,8 @@
  *                      shares the backbone singletons `_http` (the POST
  *                      /command boundary) and `_heartbeat` (slot keep-alive),
  *                      bridging `connected → slot` between them. `.client` is
- *                      the injected transport.
+ *                      the injected transport, which the shared link hook
+ *                      stamps — early enough for the pre-connect browse verbs.
  *   perferrors:stream  Tee — the inspectable stream edge. It earns its keep by
  *                      letting the debug overlay watch live frames through a
  *                      second target; today it fans to the view alone.
@@ -34,7 +35,6 @@
 
 import { useRef, useState, useCallback } from '@wordpress/element';
 import {
-	Core,
 	TYPE,
 	FROM,
 	VALUE,
@@ -67,8 +67,8 @@ const controlMsg = ( value ) => {
  *
  * @param {Object} [opts]               Options.
  * @param {number} [opts.maxEntries]    View ring cap (default 5000).
- * @param {Object} [opts.commandClient] Transport seam assigned to `_http.client`
- *                                      and to the link; tests inject a double,
+ * @param {Object} [opts.commandClient] Transport seam; `useVisibilityGatedLink`
+ *                                      stamps it on the link and on `_http`,
  *                                      and omitting it leaves HttpOut to
  *                                      default to the localized transport.
  * @return {{ setPaused: Function, clear: Function, browse: Object }}
@@ -109,10 +109,6 @@ export function useErrorLogGraph( opts = {} ) {
 			const link = interpreter.makeNode( 'RemoteLink', LINK, [ GLOB ] );
 			// Frames land on the Tee, which fans them to the view.
 			link.target = TEE;
-			// One egress: the link's commands and browse's verbs ride `_http`.
-			const client = optsRef.current.commandClient;
-			Core.node( '_http' ).client = client;
-			link.client = client;
 
 			// A second target here taps the raw stream (the debug overlay).
 			const tee = interpreter.makeNode( 'Tee', TEE );
@@ -135,6 +131,7 @@ export function useErrorLogGraph( opts = {} ) {
 			return { link, view };
 		},
 		isActive,
+		commandClient: opts.commandClient,
 		onConnect: ( link, { isReconnect } ) => {
 			const target = browseTargetRef.current;
 			link.setSubscribe(
