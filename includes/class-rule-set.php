@@ -17,6 +17,7 @@ namespace Newspack_Event_Logger_Nodes;
 
 \defined( 'ABSPATH' ) || exit;
 
+use Newspack_Nodes\Cache_Backend;
 use Newspack_Nodes\Config_System\Restart_Planner;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Table_Node;
@@ -46,6 +47,18 @@ final class Rule_Set {
 
 	/** @var Rule[] */
 	private array $rules;
+
+	/**
+	 * The warm-mirror table, built once per process.
+	 *
+	 * Built once because a `Table_Node` constructor builds its `:config`
+	 * interpreter, which realizes the whole node schema — real work to repeat
+	 * per pointer rule per request when the namespace never changes. Null when
+	 * this host has no cache backend at all: then there is no warm mirror and
+	 * the durable option answers alone, which is what every read here already
+	 * falls back to.
+	 */
+	private static ?Table_Node $hooks_table = null;
 
 	/**
 	 * @param Rule[] $rules Rules in persisted form; `load()` is the usual source.
@@ -218,7 +231,7 @@ final class Rule_Set {
 			if ( \count( $hooks ) <= self::INLINE_HOOK_LIMIT ) {
 				// Inline: strip any prior durable/table footprint.
 				\delete_option( self::hooks_option_name( $rule->id ) );
-				Table_Node::forget( self::TABLE_HOOKS, $rule->id );
+				self::hooks_table()?->forget( $rule->id );
 				$inline   = new Rule(
 					$rule->id, $rule->pattern, $rule->action,
 					$rule->auto_disable_threshold, $rule->auto_protect_time_threshold,
@@ -231,7 +244,7 @@ final class Rule_Set {
 			}
 			// Pointer: the option is the record; the table is a warm mirror.
 			\update_option( self::hooks_option_name( $rule->id ), \array_values( $hooks ), false );
-			Table_Node::store( self::TABLE_HOOKS, $rule->id, \array_values( $hooks ), self::TABLE_TTL );
+			self::hooks_table()?->store( $rule->id, \array_values( $hooks ) );
 			$live_pointers[ $rule->id ] = true;
 			$pointer                    = new Rule(
 				$rule->id, $rule->pattern, $rule->action,
@@ -315,14 +328,14 @@ final class Rule_Set {
 		if ( Rule::HOOKS_INLINE === $rule->hooks_in ) {
 			return $rule->hooks ?? [];
 		}
-		$cached = Table_Node::lookup( self::TABLE_HOOKS, $rule->id );
+		$cached = self::hooks_table()?->lookup( $rule->id );
 		if ( \is_array( $cached ) ) {
 			/** @var string[] $cached Table mirror of a durable hooks option. */
 			return $cached;
 		}
 		$durable = \get_option( self::hooks_option_name( $rule->id ), null );
 		if ( \is_array( $durable ) ) {
-			Table_Node::store( self::TABLE_HOOKS, $rule->id, $durable, self::TABLE_TTL );
+			self::hooks_table()?->store( $rule->id, $durable );
 			/** @var string[] $durable hooks list persisted by save(). */
 			return $durable;
 		}
@@ -340,6 +353,14 @@ final class Rule_Set {
 	 */
 	public static function hooks_option_name( string $id ): string {
 		return self::OPTION_HOOKS_PREFIX . $id;
+	}
+
+	/** The warm-mirror table, or null on a host with no cache backend at all. */
+	private static function hooks_table(): ?Table_Node {
+		if ( null === self::$hooks_table && null !== Cache_Backend::shared_first() ) {
+			self::$hooks_table = Table_Node::table( self::TABLE_HOOKS, self::TABLE_TTL );
+		}
+		return self::$hooks_table;
 	}
 
 	/**

@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`LRU_Cache` moved to the substrate** as `Newspack_Nodes\LRU_Cache`.
+  `Table_Node` uses it as an L1, and the substrate cannot depend on a
+  consumer. Behaviour is unchanged and every holder here — the in-flight
+  request maps in `Request_Builder_Node` and `Reqgrep_Command`, the per-URL
+  accumulator in `Flame_Builder_Node` — keeps promotion on, which is what
+  makes eviction mean "this request never completed".
+
+- **`Rule_Set` reaches the hooks table through an instance**, following the
+  substrate's `lookup()` / `store()` / `forget()` becoming instance methods.
+  The table is memoized per process and is null on a host with no cache
+  backend at all — then there is no warm mirror and the durable option
+  answers alone, which is exactly what every read here already fell back to.
+  It keeps its read-through semantics: no L1, because a ruleset saved from
+  wp-admin must reach a worker on its next read, not at the end of a window.
+  - **The substrate floor must rise** to the release carrying the instance
+    methods before this ships; against 2.21.0 every heavy rule's save fatals
+    on a static call to a non-static method. Raise both the `version_at_least`
+    gate in the loader and the prose in `AGENTS.md` at release time.
+
 - **A folded request keeps its head and tail, and its merged spans read as log
   rows.** Folding used to reclaim the whole entry list, which took the request
   line, the environment map and the closing stats block along with the

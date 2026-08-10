@@ -21,6 +21,7 @@
 namespace Newspack_Event_Logger_Nodes;
 
 use Newspack_Nodes\Core;
+use Newspack_Nodes\LRU_Cache;
 
 \defined( 'ABSPATH' ) || exit;
 
