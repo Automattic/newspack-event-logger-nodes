@@ -67,13 +67,13 @@ The v0.8.0 substrate-canonical pattern: every dashboard mounts the substrate's e
 
 1. Source under `src/{tree-name}/`. Build via wp-scripts (`npm run build`).
 2. The plugin's main file maps `?page=<slug>` to a React tree; add the slug to the `page_to_tree` map.
-3. Use `@wordpress/element` (not direct React) and `@newspack-nodes/runtime` for substrate JS nodes (`mountExospine`, `SseIn`, `HttpOut`, `Heartbeat`, `CommandClient`).
+3. Use `@wordpress/element` (not direct React) and `@newspack-nodes/runtime` for substrate JS nodes (`mountExospine`, `SseIn`, `HttpOut`, `Heartbeat`, `RemoteLink`).
 4. Hook layout per dashboard. Two valid `mountExospine` call forms:
    - **Bare** — `const { interpreter, teardown: teardownSpine } = mountExospine();` returns the request-scope interpreter and a teardown directly. Use only when the tree has no overlay/reinit (`useHookCatalogGraph` is the one current example).
    - **Build-callback** — `const { teardown } = mountExospine( build );` where `build` receives `{ interpreter }`, wires the graph, and returns `{ teardown }`. The substrate snapshots Core and rebuilds via `Core.reinit()` on "Reset Graph". Every reinit-capable dashboard (request-log, performance, gyroscope, error-log) uses this form.
    - Mount only the substrate boundary nodes the dashboard needs:
      - `_sse` (`SseIn` — EventSource ingress) — required for live-stream dashboards (request log, gyroscope, error log).
-     - `_http` (`HttpOut` — POST /command boundary; `http.client = new CommandClient({ baseUrl: data.restUrl, nonce: data.nonce })`) — required for any command-fanout dashboard.
+     - `_http` (`HttpOut` — POST /command boundary; it lazily defaults its own transport from the localized `NewspackNodesData`, so nothing is injected) — required for any command-fanout dashboard.
      - `_heartbeat` (`Heartbeat` — SSE slot keep-alive; `target = '_http/workers'` — pokes the substrate's `workers/heartbeat` verb, which calls `SSE_Slot_Pool::touch`). Required whenever `_sse` is mounted.
    - A command/reply dashboard with no live stream — e.g. `overview`/performance, which polls and issues on-demand commands — needs only `_http` plus the view node(s). A pure live-stream dashboard needs `_sse` + `_heartbeat` + a transform/view chain.
    - All mounted nodes set `sink = interpreter`. Steer flow with `target` / `TO` — no bespoke `nodeA.sink = nodeB` chains.
