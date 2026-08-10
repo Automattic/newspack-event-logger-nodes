@@ -39,7 +39,7 @@ import {
 import useLogPositions, {
 	stepPosition,
 } from '@newspack-nodes/shared/hooks/useLogPositions';
-import { browseControl } from '@newspack-nodes/shared/nodes/seekTracker';
+import { browseControl, LIVE } from '@newspack-nodes/shared/nodes/seekTracker';
 import useRouterTick from '@newspack-nodes/shared/hooks/useRouterTick';
 import useRequestNode from '@newspack-nodes/shared/hooks/useRequestNode';
 
@@ -442,7 +442,7 @@ export default function useGlobBrowse( {
 		selectedPartition,
 		selectPartition,
 		segments,
-		mode: viewModel?.mode ?? 'live',
+		mode: viewModel?.mode ?? LIVE,
 		lastReceivedSegment: viewModel?.lastReceivedSegment ?? null,
 		segmentId,
 		follow,

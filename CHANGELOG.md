@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+> **Requires a substrate newer than 2.21.0** — the `commandClient` parameter on
+> `useVisibilityGatedLink`. Tag `newspack-nodes` FIRST, then bump here so
+> `bump-version.sh` repins `release.yml`; releasing against the current
+> `ref: v2.21.0` ships a hook that ignores the option, and the workflow stays
+> green while the seam is silently dead. (`reservedNames` and `LIVE` both
+> exist at 2.21.0, so the other edits below are pin-safe.)
+
+### Fixed
+
+- **The transport seam is the shared link hook's job, not each dashboard's.**
+  The Request Log and Error Log graphs each stamped `commandClient` onto their
+  link and then onto `_http` by hardcoded name, unguarded — so in production,
+  where no client is supplied, both wrote `undefined` over the backbone and
+  relied on HttpOut re-defaulting underneath them. `useVisibilityGatedLink`
+  now takes `commandClient` and does it once, guarded. The `Core` import goes
+  with it, and the ruleset graph's local `const HTTP = '_http'` becomes
+  `reservedNames.HTTP` — the substrate has always exported that name.
+  `useGlobBrowse`'s `?? 'live'` fallback reads the substrate's `LIVE` for the
+  same reason.
+
 ## [0.50.0] - 2026-08-10
 
 ### Changed
