@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`jobs` and `job-hub` declare `stale_timeout = 600`**, matching `job-spoke`.
+  They sat at 60 on the assumption that a blocking handler pumps the
+  continue-predicate at its fetch point — true of the handlers that do, and
+  silently underwritten by the substrate's SIGALRM for every handler that does
+  not. With that alarm removed (newspack-nodes), a handler working past the
+  window without reaching `should_continue()` stops heartbeating and a peer
+  steals its lock mid-job, replaying the job to die again.
+
 ## [0.49.0] - 2026-08-09
 
 ### Added
