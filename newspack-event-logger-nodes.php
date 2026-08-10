@@ -4,10 +4,12 @@
  * Description: Event-logger application built on newspack-nodes runtime.
  * Version: 0.49.1
  * Author: Automattic
+ * Author URI: https://newspack.com/
  * License: GPL-2.0-or-later
- * Requires Plugins: newspack-nodes
+ * License URI: https://www.gnu.org/licenses/gpl-2.0.html
  * Requires at least: 6.5
  * Requires PHP: 8.2
+ * Requires Plugins: newspack-nodes
  * Text Domain: newspack-event-logger-nodes
  * Domain Path: /languages
  *
