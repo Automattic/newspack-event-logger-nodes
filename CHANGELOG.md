@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.50.0] - 2026-08-10
+
 ### Changed
 
 - **`LRU_Cache` moved to the substrate** as `Newspack_Nodes\LRU_Cache`.
