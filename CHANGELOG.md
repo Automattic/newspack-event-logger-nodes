@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.49.2] - 2026-08-10
+
+### Changed
+
+- **Dependencies updated within range** — phpstan 2.2.8, vipwpcs 3.1.0,
+  dead-code-detector 1.3.3, phpunit 10.5.64, esbuild, knip, babel presets.
+- **The `@wordpress/*` packages now follow the `wp-7.0` dist tag** rather than
+  npm `latest`: they are build externals mapped to `window.wp.*`, so core
+  supplies the code and the npm copy is only the API contract we compile
+  against. `react`/`react-dom` are pinned to the major WP 7.0 bundles, which
+  also resolves a duplicate React that broke every hook under test.
+- Plugin header now carries the same fields, in the same order, as its siblings.
+
 ## [0.49.1] - 2026-08-09
 
 ### Changed
