@@ -23,10 +23,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   answers alone, which is exactly what every read here already fell back to.
   It keeps its read-through semantics: no L1, because a ruleset saved from
   wp-admin must reach a worker on its next read, not at the end of a window.
-  - **The substrate floor must rise** to the release carrying the instance
-    methods before this ships; against 2.21.0 every heavy rule's save fatals
-    on a static call to a non-static method. Raise both the `version_at_least`
-    gate in the loader and the prose in `AGENTS.md` at release time.
 
 - **A folded request keeps its head and tail, and its merged spans read as log
   rows.** Folding used to reclaim the whole entry list, which took the request
