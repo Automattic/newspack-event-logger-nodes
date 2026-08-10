@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **The `MAX_LOG_LINES` line-limiter is gone.** Past 40000 lines a request's
+  `start()` pushed a MUTED timer frame — still timing the operation, emitting
+  neither its start nor its complete line — and `complete()` and the orphan
+  drain skipped it. Folding bounds a request's entries now (`entry_budget`
+  and `max_entries_per_request`), so a second volume guard that silently
+  holed the span stream earned nothing. `line_limited`, the frames' `muted`
+  flag and the four tests over them go with it.
+
 > **Requires a substrate newer than 2.21.0** — the `commandClient` parameter on
 > `useVisibilityGatedLink`. Tag `newspack-nodes` FIRST, then bump here so
 > `bump-version.sh` repins `release.yml`; releasing against the current

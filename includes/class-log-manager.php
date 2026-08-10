@@ -114,9 +114,6 @@ class Log_Manager {
 	 * \Newspack_Nodes\Job_Intake::queue(), not here — message() truncates. */
 	private const MAX_DATA_SIZE = 3840;
 
-	/** @var int Mute start/complete after this many lines, leaving room for messages + finish. */
-	private const MAX_LOG_LINES = 40000;
-
 	/** @var int Maximum timer stack depth to prevent unbounded growth. */
 	private const MAX_TIMER_DEPTH = 100;
 
@@ -212,8 +209,6 @@ class Log_Manager {
 
 	/** @var bool Flush write buffer after every log line (survives OOM/crash). */
 	private $flush_every_line = false;
-	/** @var bool Past MAX_LOG_LINES; start()/complete() pairs go quiet. */
-	private $line_limited = false;
 	/** @var int The next line's `n` field, 1-based. */
 	private $line_number = 1;
 
@@ -240,7 +235,7 @@ class Log_Manager {
 	private ?string $saved_unique_id = null;
 	/** @var bool|null True while logging, false after finish(), null when no rule started it. */
 	private $started = null;
-	/** @var array<int,array{label: string,ts: int|float,muted?: bool,m?: mixed}> Timer-frame stack. */
+	/** @var array<int,array{label: string,ts: int|float,m?: mixed}> Timer-frame stack. */
 	private $times = [];
 	/** @var \Newspack_Nodes\Topic_Node|null The firehose Topic; null until init_firehose() runs. */
 	private $topic = null;
@@ -349,7 +344,7 @@ class Log_Manager {
 	 * this label. Frames above it never got their own complete() — they drain as
 	 * `(orphaned)` lines, innermost first, so an unbalanced caller costs its own
 	 * frames and not the enclosing ones. An unknown label matches nothing and
-	 * leaves the stack untouched. A muted frame closes silently.
+	 * leaves the stack untouched.
 	 *
 	 * @param string $label Label that was passed to start().
 	 * @param array<string,mixed>  $data  Additional data to include in the complete event.
@@ -379,24 +374,19 @@ class Log_Manager {
 			if ( $this->log_memory ) {
 				$data['peak_mb'] = \round( \memory_get_peak_usage( true ) / self::BYTES_PER_MB, 2 );
 			}
-			if ( empty( $match['muted'] ) ) {
-				$this->message( "{$label} ({$suffix})", $data );
-			}
+			$this->message( "{$label} ({$suffix})", $data );
 		}
 	}
 
 	/**
 	 * Emit a single orphaned `(complete)` line for an unclosed timer-stack
 	 * frame. Shared by complete()'s mismatched-close drain and finish()'s
-	 * end-of-request stack close; muted frames are skipped.
+	 * end-of-request stack close.
 	 *
-	 * @param array{label: string, ts: int|float, muted?: bool, m?: mixed} $entry Timer-stack frame.
+	 * @param array{label: string, ts: int|float, m?: mixed} $entry Timer-stack frame.
 	 * @param int|float $now Reference hrtime() reading.
 	 */
 	private function emit_orphaned_complete( array $entry, $now ): void {
-		if ( ! empty( $entry['muted'] ) ) {
-			return;
-		}
 		$duration_ms = ( $now - $entry['ts'] ) / self::NS_PER_MS;
 		$this->message( "{$entry['label']} (complete)", [ 'm' => '(orphaned)', 'duration_ms' => $duration_ms ] );
 	}
@@ -474,10 +464,8 @@ class Log_Manager {
 	 * Start timing a labeled operation and push its frame on the timer stack.
 	 *
 	 * Two budgets guard the stack. Past MAX_TIMER_DEPTH the call is dropped
-	 * entirely; past MAX_LOG_LINES the frame is pushed muted, so it still times
-	 * the operation but emits neither its start nor its complete line. A frame is
-	 * also dropped when the start line itself could not be written — pair every
-	 * start() with a complete() carrying the same label.
+	 * entirely. A frame is also dropped when the start line itself could not
+	 * be written — pair every start() with a complete() carrying the same label.
 	 *
 	 * @param string $label Label for the timer (e.g., 'query', 'template').
 	 * @param array<string,mixed>  $data  Additional data to include in the start event.
@@ -486,13 +474,10 @@ class Log_Manager {
 		if ( \count( $this->times ) >= self::MAX_TIMER_DEPTH ) {
 			return;
 		}
-		$muted = $this->line_limited;
-		if ( ! $muted ) {
-			if ( false === $this->message( "{$label} (start)", $data ) ) {
-				return;
-			}
+		if ( false === $this->message( "{$label} (start)", $data ) ) {
+			return;
 		}
-		$entry = [ 'label' => $label, 'ts' => \hrtime( true ), 'muted' => $muted ];
+		$entry = [ 'label' => $label, 'ts' => \hrtime( true ) ];
 		if ( ! empty( $data['m'] ) ) {
 			$entry['m'] = $data['m'];
 		}
@@ -1102,9 +1087,6 @@ class Log_Manager {
 			$this->topic->flush();
 		}
 
-		if ( $this->line_number > self::MAX_LOG_LINES && ! $this->line_limited ) {
-			$this->line_limited = true;
-		}
 		return true;
 	}
 
