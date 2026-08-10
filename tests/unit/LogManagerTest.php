@@ -789,36 +789,6 @@ class LogManagerTest extends TestCase {
 		$this->assertTrue( $this->fresh_log_manager()->is_started(), "skip '/health?' must not skip a sub-path" );
 	}
 
-	// ── Line limiting ──────────────────────────────────────────────────────
-
-	public function test_line_limiting_mutes_after_max(): void {
-		$this->require_config_or_skip();
-		$lm = Log_Manager::instance();
-
-		// Verify the mechanism works by calling message — well below MAX_LOG_LINES.
-		$lm->message( 'line1' );
-		$lm->message( 'line2' );
-		$lm->message( 'line3' );
-		$this->assertTrue( true );
-	}
-
-	public function test_start_complete_muted_when_line_limited(): void {
-		$this->require_config_or_skip();
-		$lm = Log_Manager::instance();
-
-		// Use reflection to set line_limited to true.
-		$ref = new \ReflectionProperty( Log_Manager::class, 'line_limited' );
-		$ref->setValue( $lm, true );
-
-		// start() and complete() should not throw when line_limited.
-		$lm->start( 'muted_op' );
-		$lm->complete( 'muted_op' );
-		$this->assertTrue( true );
-
-		// Reset for subsequent tests.
-		$ref->setValue( $lm, false );
-	}
-
 	public function test_complete_with_mismatched_label(): void {
 		$this->require_config_or_skip();
 		$lm = Log_Manager::instance();
@@ -1126,11 +1096,6 @@ class LogManagerTest extends TestCase {
 	public function test_max_data_size_constant_preserved(): void {
 		$ref = new \ReflectionClassConstant( Log_Manager::class, 'MAX_DATA_SIZE' );
 		$this->assertSame( 3840, $ref->getValue() );
-	}
-
-	public function test_max_log_lines_constant_preserved(): void {
-		$ref = new \ReflectionClassConstant( Log_Manager::class, 'MAX_LOG_LINES' );
-		$this->assertSame( 40000, $ref->getValue() );
 	}
 
 	public function test_fatal_types_constant_preserved(): void {
@@ -1827,7 +1792,7 @@ class LogManagerTest extends TestCase {
 		$ref = new \ReflectionProperty( Log_Manager::class, 'times' );
 		$seeded = [];
 		for ( $i = 0; $i < $cap; $i++ ) {
-			$seeded[] = [ 'label' => "seed_$i", 'ts' => \hrtime( true ), 'muted' => false ];
+			$seeded[] = [ 'label' => "seed_$i", 'ts' => \hrtime( true ) ];
 		}
 		$ref->setValue( $lm, $seeded );
 
@@ -1924,7 +1889,7 @@ class LogManagerTest extends TestCase {
 		// Now overwrite to exactly cap entries (well past the seeded root).
 		$seeded = [];
 		for ( $i = 0; $i < $cap; $i++ ) {
-			$seeded[] = [ 'label' => "fill_$i", 'ts' => \hrtime( true ), 'muted' => false ];
+			$seeded[] = [ 'label' => "fill_$i", 'ts' => \hrtime( true ) ];
 		}
 		$ref->setValue( $lm, $seeded );
 		$this->assertCount( $cap, $ref->getValue( $lm ), 'pre-condition: stack at cap' );
@@ -2198,39 +2163,6 @@ class LogManagerTest extends TestCase {
 		$this->assertNotNull( $process_entry );
 		// status_code is always present; fatal-specific keys are not.
 		$this->assertArrayHasKey( 'status_code', $process_entry );
-	}
-
-	// ── line-limited gating on message() ────────────────────────────────────
-
-	/**
-	 * Once `$line_number > MAX_LOG_LINES`, `$line_limited` latches true and
-	 * `start()` mutes its emit. We exercise this through reflection: set
-	 * line_limited=true, then call start() — it must NOT emit, but it MUST
-	 * still push onto the timer stack with `muted=true`.
-	 */
-	public function test_start_marks_muted_when_line_limited_but_still_tracks(): void {
-		$this->require_config_or_skip();
-		$lm = Log_Manager::instance();
-
-		// Force line_limited true.
-		$ref = new \ReflectionProperty( Log_Manager::class, 'line_limited' );
-		$ref->setValue( $lm, true );
-
-		// times-stack snapshot.
-		$tref = new \ReflectionProperty( Log_Manager::class, 'times' );
-		$before = $tref->getValue( $lm );
-
-		$lm->start( 'muted_label' );
-
-		$after = $tref->getValue( $lm );
-		$this->assertCount( \count( $before ) + 1, $after );
-		$pushed = \end( $after );
-		$this->assertSame( 'muted_label', $pushed['label'] );
-		$this->assertTrue( $pushed['muted'], 'line_limited starts push with muted=true' );
-
-		// Cleanup.
-		$ref->setValue( $lm, false );
-		$tref->setValue( $lm, [] );
 	}
 
 	// ── instance(): re-entrant call returns the SAME partial $this ──────────
