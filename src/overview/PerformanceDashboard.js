@@ -61,16 +61,13 @@ import './styles/charts.scss';
  * Renders a spinner until the `overview:view` slice resolves — until then the
  * graph may not even be mounted, and an empty dashboard would read as no data.
  *
- * @param {Object}               props                 Component props.
- * @param {(err: Error) => void} props.onError         Error handler callback. Reported
- *                                                     failures surface as the page's
- *                                                     dismissible notice.
- * @param {Object}               [props.commandClient] Optional transport (the graph
- *                                                     lazily defaults it in production;
- *                                                     tests inject a double).
+ * @param {Object}               props         Component props.
+ * @param {(err: Error) => void} props.onError Error handler callback. Reported
+ *                                             failures surface as the page's
+ *                                             dismissible notice.
  * @return {import('react').ReactElement} Rendered component.
  */
-export default function PerformanceDashboard( { onError, commandClient } ) {
+export default function PerformanceDashboard( { onError } ) {
 	// UI and control state only; the four view-node slices own every datum.
 	const [ requestSort, setRequestSort ] = useState( {
 		field: 'timestamp',
@@ -226,7 +223,6 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 		selectedRequest,
 		urlDetailData: urlDetail,
 		onError,
-		commandClient,
 	} );
 	commandResolveRef.current = resolveRequest;
 	commandResolveUrlRef.current = graphResolveUrlHash;

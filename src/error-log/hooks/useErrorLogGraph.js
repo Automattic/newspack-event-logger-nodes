@@ -8,9 +8,8 @@
  *                      a patron-owned `:sse-in` (EventSource ingress) and
  *                      shares the backbone singletons `_http` (the POST
  *                      /command boundary) and `_heartbeat` (slot keep-alive),
- *                      bridging `connected → slot` between them. `.client` is
- *                      the injected transport, which the shared link hook
- *                      stamps — early enough for the pre-connect browse verbs.
+ *                      bridging `connected → slot` between them, and
+ *                      defaulting its own transport.
  *   perferrors:stream  Tee — the inspectable stream edge. It earns its keep by
  *                      letting the debug overlay watch live frames through a
  *                      second target; today it fans to the view alone.
@@ -65,12 +64,8 @@ const controlMsg = ( value ) => {
 /**
  * Mount the Error Log graph and return the React view's controls.
  *
- * @param {Object} [opts]               Options.
- * @param {number} [opts.maxEntries]    View ring cap (default 5000).
- * @param {Object} [opts.commandClient] Transport seam; `useVisibilityGatedLink`
- *                                      stamps it on the link and on `_http`,
- *                                      and omitting it leaves HttpOut to
- *                                      default to the localized transport.
+ * @param {Object} [opts]            Options.
+ * @param {number} [opts.maxEntries] View ring cap (default 5000).
  * @return {{ setPaused: Function, clear: Function, browse: Object }}
  *   Control callbacks plus the browse model for the thin React view (the view's
  *   own state is read via useNodeState). Reset Graph is driven by a
@@ -131,7 +126,6 @@ export function useErrorLogGraph( opts = {} ) {
 			return { link, view };
 		},
 		isActive,
-		commandClient: opts.commandClient,
 		onConnect: ( link, { isReconnect } ) => {
 			const target = browseTargetRef.current;
 			link.setSubscribe(

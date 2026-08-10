@@ -9,16 +9,16 @@
  * routes via TO=FROM back into the view, which extracts hooks_by_category.
  *
  * Every node sinks into the interpreter (rule #2); flow is steered ONLY by each node's
- * `target`. _http.client is injected via `opts.commandClient` so the hook never
+ * `target`. Nothing is injected: the seam is `fetch`, so the hook never
  * touches the network. The trigger is fire-on-open: flipping `isOpen` true
  * dispatches one fetch (re-fetches on every re-open). Mirrors
  * useAggregatorAdminGraph (real graph, faked command boundary).
  */
 
 import { renderHook, act } from '../../../test-helpers/renderHook';
+import { installFakeCommandWire } from '@newspack-nodes/shared/test-utils/fakeCommandWire';
 import {
 	newMessage,
-	TIMESTAMP,
 	ID,
 	TO,
 	FROM,
@@ -26,7 +26,6 @@ import {
 	TYPE,
 	TM_COMMAND,
 	TM_RESPONSE,
-	TM_ERROR,
 	Core,
 	forgetSession,
 	__setAuthFetch,
@@ -40,43 +39,19 @@ const REQUEST = 'hookcatalog:request';
 const ALL_GRAPH_NAMES = [ HTTP, REQUEST ];
 
 // A fake transport (HttpOutNode seam): postBatch returns TO=FROM replies.
-function makeFakeClient( payloadByVerb = {}, opts = {} ) {
-	const client = {
-		batches: [],
-		buildMessage( { to, verb, args = '' } ) {
-			const m = newMessage();
-			m[ TYPE ] = TM_COMMAND;
-			m[ TO ] = to;
-			m[ VALUE ] = { name: verb, arguments: args };
-			return m;
-		},
-		postBatch( messages ) {
-			client.batches.push( messages );
-			const replies = messages.map( ( m ) => {
-				const reply = newMessage();
-				reply[ TYPE ] =
-					opts.errorVerbs &&
-					opts.errorVerbs.includes( m[ VALUE ]?.name )
-						? TM_COMMAND | TM_RESPONSE | TM_ERROR
-						: TM_COMMAND | TM_RESPONSE;
-				reply[ TO ] = m[ FROM ];
-				reply[ ID ] = m[ ID ];
-				reply[ VALUE ] = {
-					name: m[ VALUE ]?.name,
-					payload:
-						payloadByVerb[ m[ VALUE ]?.name ] ??
-						payloadByVerb._default ??
-						null,
-				};
-				if ( opts.now ) {
-					reply[ TIMESTAMP ] = opts.now;
-				}
-				return reply;
-			} );
-			return Promise.resolve( replies );
-		},
-	};
-	return client;
+// The seam is the WIRE: the graph packs, POSTs and unpacks for real, so
+// HttpOut, the router and the interpreter all run. `wire.batches` is what was
+// posted; a verb in `errorVerbs` answers TM_ERROR carrying its payload.
+function installWire( payloadByVerb = {}, opts = {} ) {
+	return installFakeCommandWire( ( m ) => {
+		const name = m[ VALUE ]?.name;
+		const payload = payloadByVerb[ name ] ?? payloadByVerb._default ?? null;
+		if ( ! opts.errorVerbs?.includes( name ) ) {
+			return payload;
+		}
+		// answerBatch ships an Error as its `.message`, so unwrap first.
+		return new Error( payload?.message ?? payload ?? name );
+	} );
 }
 
 beforeEach( () => {
@@ -85,10 +60,8 @@ beforeEach( () => {
 
 describe( 'useHookCatalogGraph — exospine + I/O boundary wiring', () => {
 	test( 'mounts the backbone + _http + the request node', () => {
-		const client = makeFakeClient();
-		renderHook( () =>
-			useHookCatalogGraph( { isOpen: false, commandClient: client } )
-		);
+		installWire();
+		renderHook( () => useHookCatalogGraph( { isOpen: false } ) );
 		const interpreter = Core.node( INTERPRETER );
 		expect( interpreter ).toBeTruthy();
 		expect( Core.node( ROUTER ) ).toBeTruthy();
@@ -110,48 +83,41 @@ describe( 'useHookCatalogGraph — exospine + I/O boundary wiring', () => {
 			expires_in: 3600,
 			now: 1771000000,
 		} ) );
-		const client = makeFakeClient();
+		const wire = installWire();
 
-		renderHook( () =>
-			useHookCatalogGraph( { isOpen: true, commandClient: client } )
-		);
+		renderHook( () => useHookCatalogGraph( { isOpen: true } ) );
 		await act( async () => {} );
 
-		expect( client.batches.length ).toBeGreaterThanOrEqual( 1 );
-		expect( client.batches[ 0 ][ 0 ][ VALUE ].auth ).toBeDefined();
+		expect( wire.batches.length ).toBeGreaterThanOrEqual( 1 );
+		expect( wire.batches[ 0 ][ 0 ][ VALUE ].auth ).toBeDefined();
 	} );
 
 	test( 'does NOT mount _output / _completion / _uptime / _cwd (dashboards are not REPLs)', () => {
-		const client = makeFakeClient();
-		renderHook( () =>
-			useHookCatalogGraph( { isOpen: false, commandClient: client } )
-		);
+		installWire();
+		renderHook( () => useHookCatalogGraph( { isOpen: false } ) );
 		for ( const name of [ '_output', '_completion', '_uptime', '_cwd' ] ) {
 			expect( Core.node( name ) ).toBeNull();
 		}
 	} );
 
-	test( '_http has the injected transport as its client', () => {
-		const client = makeFakeClient();
-		renderHook( () =>
-			useHookCatalogGraph( { isOpen: false, commandClient: client } )
-		);
-		expect( Core.node( HTTP ).client ).toBe( client );
+	test( 'mounts _http without injecting anything into it', () => {
+		installWire();
+		renderHook( () => useHookCatalogGraph( { isOpen: false } ) );
+		// Closed, so nothing has posted yet — HttpOut defaults at first post.
+		expect( Core.node( HTTP ) ).toBeTruthy();
 	} );
 
 	test( 'does NOT fire any command while isOpen is false', () => {
-		const client = makeFakeClient();
-		renderHook( () =>
-			useHookCatalogGraph( { isOpen: false, commandClient: client } )
-		);
-		expect( client.batches.length ).toBe( 0 );
+		const wire = installWire();
+		renderHook( () => useHookCatalogGraph( { isOpen: false } ) );
+		expect( wire.batches.length ).toBe( 0 );
 	} );
 
 	// Closed means nothing is being asked for, so nothing is loading.
 	test( 'returns the default render model before any fetch', () => {
-		const client = makeFakeClient();
+		installWire();
 		const { result } = renderHook( () =>
-			useHookCatalogGraph( { isOpen: false, commandClient: client } )
+			useHookCatalogGraph( { isOpen: false } )
 		);
 		expect( result.current.hooksByCategory ).toEqual( {} );
 		expect( result.current.loading ).toBe( false );
@@ -160,19 +126,19 @@ describe( 'useHookCatalogGraph — exospine + I/O boundary wiring', () => {
 
 describe( 'useHookCatalogGraph — fire on open routes through the exospine', () => {
 	test( 'flipping isOpen true dispatches a hooks_registered command via _http', async () => {
-		const client = makeFakeClient( {
+		const wire = installWire( {
 			hooks_registered: { hooks_by_category: {} },
 		} );
 		const { rerender } = renderHook(
 			( props ) => useHookCatalogGraph( props ),
-			{ initialProps: { isOpen: false, commandClient: client } }
+			{ initialProps: { isOpen: false } }
 		);
-		expect( client.batches.length ).toBe( 0 );
+		expect( wire.batches.length ).toBe( 0 );
 		await act( async () => {
-			rerender( { isOpen: true, commandClient: client } );
+			rerender( { isOpen: true } );
 		} );
-		expect( client.batches.length ).toBeGreaterThanOrEqual( 1 );
-		const msg = client.batches[ 0 ][ 0 ];
+		expect( wire.batches.length ).toBeGreaterThanOrEqual( 1 );
+		const msg = wire.batches[ 0 ][ 0 ];
 		expect( msg[ TO ] ).toBe( 'performance' );
 		expect( msg[ FROM ] ).toBe( REQUEST );
 		// Addressed, not correlated.
@@ -188,81 +154,68 @@ describe( 'useHookCatalogGraph — fire on open routes through the exospine', ()
 			Lifecycle: [ 'init' ],
 			'REST API': [ 'rest_api_init' ],
 		};
-		const client = makeFakeClient( {
+		installWire( {
 			hooks_registered: { hooks_by_category: hooks, total_hooks: 2 },
 		} );
 		const { result, rerender } = renderHook(
 			( props ) => useHookCatalogGraph( props ),
-			{ initialProps: { isOpen: false, commandClient: client } }
+			{ initialProps: { isOpen: false } }
 		);
 		await act( async () => {
-			rerender( { isOpen: true, commandClient: client } );
+			rerender( { isOpen: true } );
 		} );
 		expect( result.current.hooksByCategory ).toEqual( hooks );
 		expect( result.current.loading ).toBe( false );
 	} );
 
 	test( 'loading is true between dispatch and resolve', async () => {
-		// A client whose postBatch never resolves: loading stays true.
-		const client = {
-			batches: [],
-			buildMessage( { to, verb, args = '' } ) {
-				const m = newMessage();
-				m[ TYPE ] = TM_COMMAND;
-				m[ TO ] = to;
-				m[ VALUE ] = { name: verb, arguments: args };
-				return m;
-			},
-			postBatch( messages ) {
-				client.batches.push( messages );
-				return new Promise( () => {} );
-			},
-		};
+		// A wire that never answers: loading stays true.
+		installFakeCommandWire( () => new Promise( () => {} ) );
 		const { result, rerender } = renderHook(
 			( props ) => useHookCatalogGraph( props ),
-			{ initialProps: { isOpen: false, commandClient: client } }
+			{ initialProps: { isOpen: false } }
 		);
 		await act( async () => {
-			rerender( { isOpen: true, commandClient: client } );
+			rerender( { isOpen: true } );
 		} );
 		expect( result.current.loading ).toBe( true );
 	} );
 
 	test( 're-opening fires a fresh fetch on every isOpen flip', async () => {
-		const client = makeFakeClient( {
+		const wire = installWire( {
 			hooks_registered: { hooks_by_category: {} },
 		} );
 		const { rerender } = renderHook(
 			( props ) => useHookCatalogGraph( props ),
-			{ initialProps: { isOpen: false, commandClient: client } }
+			{ initialProps: { isOpen: false } }
 		);
 		await act( async () => {
-			rerender( { isOpen: true, commandClient: client } );
+			rerender( { isOpen: true } );
 		} );
-		const afterFirst = client.batches.length;
+		const afterFirst = wire.batches.length;
 		await act( async () => {
-			rerender( { isOpen: false, commandClient: client } );
+			rerender( { isOpen: false } );
 		} );
 		await act( async () => {
-			rerender( { isOpen: true, commandClient: client } );
+			rerender( { isOpen: true } );
 		} );
-		expect( client.batches.length ).toBeGreaterThan( afterFirst );
+		expect( wire.batches.length ).toBeGreaterThan( afterFirst );
 	} );
 } );
 
 describe( 'useHookCatalogGraph — fetch errors fall back to an empty map (mirrors old modal)', () => {
 	// A fetch failure clears loading + empties the catalog (no error UI).
 	test( 'an error reply clears loading without throwing', async () => {
-		const client = makeFakeClient(
+		installWire(
 			{ hooks_registered: 'capability check failed' },
 			{ errorVerbs: [ 'hooks_registered' ] }
 		);
 		const { result, rerender } = renderHook(
 			( props ) => useHookCatalogGraph( props ),
-			{ initialProps: { isOpen: false, commandClient: client } }
+			{ initialProps: { isOpen: false } }
 		);
 		await act( async () => {
-			rerender( { isOpen: true, commandClient: client } );
+			rerender( { isOpen: true } );
 		} );
 		expect( result.current.loading ).toBe( false );
 		// Caller's catch handled it; hooksByCategory stays its empty map.
@@ -272,9 +225,9 @@ describe( 'useHookCatalogGraph — fetch errors fall back to an empty map (mirro
 
 describe( 'useHookCatalogGraph — teardown', () => {
 	test( 'unmount unregisters every graph node + the backbone', () => {
-		const client = makeFakeClient();
+		installWire();
 		const { unmount } = renderHook( () =>
-			useHookCatalogGraph( { isOpen: false, commandClient: client } )
+			useHookCatalogGraph( { isOpen: false } )
 		);
 		unmount();
 		for ( const name of [ ...ALL_GRAPH_NAMES, INTERPRETER, ROUTER ] ) {
@@ -284,28 +237,17 @@ describe( 'useHookCatalogGraph — teardown', () => {
 
 	test( 'a reply resolving after unmount does not throw (sink may be gone)', async () => {
 		let resolveReply;
-		const client = {
-			batches: [],
-			buildMessage: ( { to, verb } ) => {
-				const m = newMessage();
-				m[ TYPE ] = TM_COMMAND;
-				m[ TO ] = to;
-				m[ VALUE ] = { name: verb, arguments: '' };
-				return m;
-			},
-			postBatch( messages ) {
-				client.batches.push( messages );
-				return new Promise( ( res ) => {
-					resolveReply = ( replies ) => res( replies );
-				} );
-			},
-		};
+		// replyFor may return a promise, and answerBatch awaits it — so the
+		// reply lands whenever this resolves, which here is after unmount.
+		installFakeCommandWire(
+			() => new Promise( ( res ) => ( resolveReply = res ) )
+		);
 		const { unmount, rerender } = renderHook(
 			( props ) => useHookCatalogGraph( props ),
-			{ initialProps: { isOpen: false, commandClient: client } }
+			{ initialProps: { isOpen: false } }
 		);
 		await act( async () => {
-			rerender( { isOpen: true, commandClient: client } );
+			rerender( { isOpen: true } );
 		} );
 		unmount();
 		expect( () => {
