@@ -309,6 +309,11 @@ final class RuleSetTest extends TestCase {
 		);
 	}
 
+	/** The same warm-mirror table Rule_Set builds, reached without its private accessor. */
+	private function hooks_table(): Table_Node {
+		return Table_Node::table( Rule_Set::TABLE_HOOKS, Rule_Set::TABLE_TTL );
+	}
+
 	public function test_hooks_for_inline_returns_inline_list(): void {
 		$rule = new Rule( 'd4', '/x/', Rule::ACTION_LOG, hooks: [ 'a', 'b' ] );
 		$this->assertSame( [ 'a', 'b' ], Rule_Set::hooks_for( $rule ) );
@@ -328,7 +333,7 @@ final class RuleSetTest extends TestCase {
 	public function test_hooks_for_pointer_returns_mc_value_without_touching_durable_option(): void {
 		$mc = new InMemoryMemcached();
 		Core::$memd = $mc;
-		Table_Node::store( Rule_Set::TABLE_HOOKS, 'g7', [ 'from', 'mc' ], Rule_Set::TABLE_TTL );
+		$this->hooks_table()->store( 'g7', [ 'from', 'mc' ] );
 		// No durable option seeded at all: if this returned anything, it could
 		// only have come from the mc mirror.
 		$rule = new Rule( 'g7', '/heavy/', Rule::ACTION_LOG, hooks: null, hooks_in: Rule::HOOKS_MC );
@@ -345,12 +350,12 @@ final class RuleSetTest extends TestCase {
 		$result = Rule_Set::hooks_for( $rule );
 
 		$this->assertSame( [ 'from', 'durable' ], $result );
-		$this->assertSame( [ 'from', 'durable' ], Table_Node::lookup( Rule_Set::TABLE_HOOKS, 'h8' ) );
+		$this->assertSame( [ 'from', 'durable' ], $this->hooks_table()->lookup( 'h8' ) );
 	}
 
 	public function test_pointer_hooks_ride_the_substrate_table(): void {
 		Core::$memd = new InMemoryMemcached();
-		Table_Node::store( Rule_Set::TABLE_HOOKS, 'j9', [ 'wp_loaded', 'shutdown' ], Rule_Set::TABLE_TTL );
+		$this->hooks_table()->store( 'j9', [ 'wp_loaded', 'shutdown' ] );
 
 		$rule = new Rule( 'j9', '/heavy/', Rule::ACTION_LOG, hooks: null, hooks_in: Rule::HOOKS_MC );
 		// No durable option seeded: only the table can have answered.
@@ -362,7 +367,7 @@ final class RuleSetTest extends TestCase {
 		// `/` derives the SAME id. Two installs sharing one memcached — which
 		// the eve stack is — must still not share a hook list.
 		Core::$memd = new InMemoryMemcached();
-		Table_Node::store( Rule_Set::TABLE_HOOKS, 'k1', [ 'ours', 'only' ], Rule_Set::TABLE_TTL );
+		$this->hooks_table()->store( 'k1', [ 'ours', 'only' ] );
 
 		$rule = new Rule( 'k1', '/heavy/', Rule::ACTION_LOG, hooks: null, hooks_in: Rule::HOOKS_MC );
 		$this->assertSame( [ 'ours', 'only' ], Rule_Set::hooks_for( $rule ) );
@@ -383,7 +388,7 @@ final class RuleSetTest extends TestCase {
 
 		( new Rule_Set( [] ) )->save( [ new Rule( $id, '/heavy/', Rule::ACTION_LOG, hooks: $hooks ) ] );
 
-		$this->assertSame( $hooks, Table_Node::lookup( Rule_Set::TABLE_HOOKS, $id ) );
+		$this->assertSame( $hooks, $this->hooks_table()->lookup( $id ) );
 	}
 
 	public function test_id_for_hashes_the_pattern_via_the_shared_url_hash(): void {

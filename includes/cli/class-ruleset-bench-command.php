@@ -23,6 +23,7 @@ declare( strict_types=1 );
 namespace Newspack_Event_Logger_Nodes\CLI;
 
 use Newspack_Event_Logger_Nodes\Rule_Set;
+use Newspack_Nodes\Cache_Backend;
 use Newspack_Nodes\Table_Node;
 
 \defined( 'ABSPATH' ) || exit;
@@ -145,18 +146,23 @@ class Ruleset_Bench_Command {
 			$inline_samps[] = ( \hrtime( true ) - $t ) / 1000.0;
 		}
 
-		// Pointer path: the same Table_Node read hooks_for() makes.
+		// Pointer path: the same table read hooks_for() makes, L1-free.
 		$bench_key = "bench-{$k}";
-		Table_Node::store( Rule_Set::TABLE_HOOKS, $bench_key, $hooks, 300 );
-		// Say so rather than time an assignment as if it were a fetch.
-		$measurable = null !== Table_Node::lookup( Rule_Set::TABLE_HOOKS, $bench_key );
-		if ( ! $measurable ) {
-			\WP_CLI::warning( 'no cache backend: the pointer column is the bind loop alone, a floor rather than a measurement.' );
+		$table     = null === Cache_Backend::shared_first() ? null : Table_Node::table( Rule_Set::TABLE_HOOKS, 300 );
+		$table?->store( $bench_key, $hooks );
+		// Untimeable without a round trip; drop it, and its key with it.
+		if ( null !== $table && null === $table->lookup( $bench_key ) ) {
+			$table->forget( $bench_key );
+			$table = null;
+		}
+		if ( null === $table ) {
+			// Say so rather than time an assignment as if it were a fetch.
+			\WP_CLI::warning( 'no cache round trip: the pointer column is the bind loop alone, a floor rather than a measurement.' );
 		}
 		$pointer_samps = [];
 		for ( $i = 0; $i < $iterations; $i++ ) {
 			$t       = \hrtime( true );
-			$fetched = $measurable ? Table_Node::lookup( Rule_Set::TABLE_HOOKS, $bench_key ) : $hooks;
+			$fetched = null !== $table ? $table->lookup( $bench_key ) : $hooks;
 			if ( \is_array( $fetched ) ) {
 				// phpcs:disable VariableAnalysis.CodeAnalysis.VariableAnalysis.UnusedVariable -- the accumulator IS the measurement; dropping it empties the loop.
 				$bound = 0;
@@ -167,7 +173,7 @@ class Ruleset_Bench_Command {
 			}
 			$pointer_samps[] = ( \hrtime( true ) - $t ) / 1000.0;
 		}
-		Table_Node::forget( Rule_Set::TABLE_HOOKS, $bench_key );
+		$table?->forget( $bench_key );
 
 		return [
 			'autoload' => self::summarize( $autoload_samps ),

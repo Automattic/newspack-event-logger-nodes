@@ -42,13 +42,13 @@ namespace Newspack_Event_Logger_Nodes\CLI;
 \defined( 'ABSPATH' ) || exit;
 
 use Newspack_Event_Logger_Nodes\Config;
-use Newspack_Nodes\Core;
-use Newspack_Event_Logger_Nodes\LRU_Cache;
 use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Reqgrep_Core;
 use Newspack_Nodes\Callback_Node;
 use Newspack_Nodes\Consumer_Node;
+use Newspack_Nodes\Core;
 use Newspack_Nodes\Event_Framework;
+use Newspack_Nodes\LRU_Cache;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Stdin_Node;
 use Newspack_Nodes\Stdout_Node;

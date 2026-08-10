@@ -832,7 +832,7 @@ class RequestBuilderTest extends TestCase {
 	 * Landing on the boundary also keeps it to one roll — the catch-up is
 	 * capped at num_buckets, and these tests count rotations.
 	 */
-	private function force_rotation_due( \Newspack_Event_Logger_Nodes\LRU_Cache $cache ): void {
+	private function force_rotation_due( \Newspack_Nodes\LRU_Cache $cache ): void {
 		Core::$now = (float) ( new \ReflectionObject( $cache ) )->getProperty( 'next_window' )->getValue( $cache );
 	}
 
@@ -1994,7 +1994,7 @@ class RequestBuilderTest extends TestCase {
 		$this->assertSame( 5, $ref->getProperty( 'num_buckets' )->getValue( $rb ) );
 		// Cache rebuilt with the new dimensions.
 		$cache = $rb->cache;
-		$this->assertInstanceOf( \Newspack_Event_Logger_Nodes\LRU_Cache::class, $cache );
+		$this->assertInstanceOf( \Newspack_Nodes\LRU_Cache::class, $cache );
 		$cref = new \ReflectionClass( $cache );
 		$this->assertSame( 7, $cref->getProperty( 'bucket_size' )->getValue( $cache ) );
 		$this->assertSame( 5, $cref->getProperty( 'num_buckets' )->getValue( $cache ) );
@@ -2007,7 +2007,7 @@ class RequestBuilderTest extends TestCase {
 	 */
 	public function test_no_arg_ctor_builds_cache_with_defaults_and_mounts_flight(): void {
 		$rb = new Request_Builder_Node();
-		$this->assertInstanceOf( \Newspack_Event_Logger_Nodes\LRU_Cache::class, $rb->cache );
+		$this->assertInstanceOf( \Newspack_Nodes\LRU_Cache::class, $rb->cache );
 		$this->assertInstanceOf( \Newspack_Event_Logger_Nodes\Request_Flight_Node::class, $rb->flight );
 	}
 
