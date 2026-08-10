@@ -72,12 +72,15 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	if ( ! \class_exists( '\\Newspack_Nodes\\Bootstrap' ) ) {
 		return;
 	}
-	// @longform Dormant when too old; 2.18.0 = the log-producer TEMPLATE
-	// contract. Below it the substrate reads our template as a literal dir
-	// NAME, leaves every live firehose.p{N} undeclared, and its GC deletes
-	// what it cannot see. WordPress does not order plugin updates.
+	// @longform Dormant when too old; 2.21.0 = Table_Node::store()/forget(),
+	// which Rule_Set writes its pointer-tier hooks mirror through. Below it
+	// every heavy rule's save fatals on an undefined method. (2.18.0 was the
+	// prior floor: the log-producer TEMPLATE contract, below which the
+	// substrate reads our template as a literal dir NAME, leaves every live
+	// firehose.p{N} undeclared, and its GC deletes what it cannot see.)
+	// WordPress does not order plugin updates.
 	if ( ! \method_exists( '\\Newspack_Nodes\\Bootstrap', 'version_at_least' )
-		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.18.0', 'Newspack Event Logger Nodes' ) ) {
+		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.21.0', 'Newspack Event Logger Nodes' ) ) {
 		return;
 	}
 

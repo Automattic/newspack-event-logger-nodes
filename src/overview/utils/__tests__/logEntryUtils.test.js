@@ -16,6 +16,7 @@ import {
 	computeVisibleEntries,
 	getAncestorPairIds,
 	isFoldablePairStart,
+	spliceFoldedSpans,
 } from '../logEntryUtils';
 
 describe( 'isFoldablePairStart', () => {
@@ -57,7 +58,64 @@ describe( 'formatDots', () => {
 	} );
 } );
 
+describe( 'an unclosed pair', () => {
+	it( 'collapses only its own children, not the rest of the request', () => {
+		// A folded request's head is cut positionally, so it routinely ends on
+		// a `(start)` whose `(complete)` went with the middle. Scanning forward
+		// for a complete that never comes swallowed every remaining row — the
+		// marker and the whole kept tail — into one collapsed group.
+		const { entries } = computeIndentedEntries( [
+			{ n: 1, k: 'process (start)', ts: 1 },
+			{ n: 2, k: 'query hook (start)', ts: 1 },
+			{ n: 3, k: 'entries (aggregated)', m: '63 merged', ts: 1 },
+			{ n: 4, k: 'metadatacache', ts: 2 },
+			{ n: 5, k: 'process (complete)', ts: 2 },
+		] );
+		const visible = computeVisibleEntries( entries, new Set() )
+			.filter( ( e ) => e.k )
+			.map( ( e ) => e.k );
+
+		expect( visible ).toContain( 'entries (aggregated)' );
+		expect( visible ).toContain( 'metadatacache' );
+		expect( visible ).toContain( 'process (complete)' );
+	} );
+} );
+
 describe( 'computeIndentedEntries', () => {
+	it( 'closes spans the fold cut open, so the kept tail is not nested under them', () => {
+		// A folded request keeps its first and last entries. The head ends
+		// wherever the cut fell — often on an unclosed `(start)` — and without
+		// a barrier every kept tail row becomes that span's child, so folding
+		// it swallows the end of the request into a single collapsed row.
+		const { entries: out } = computeIndentedEntries( [
+			{ n: 1, k: 'process (start)', ts: 1 },
+			{ n: 2, k: 'query hook (start)', ts: 1 },
+			{ n: 3, k: 'entries (aggregated)', ts: 1 },
+			{ n: 4, k: 'resources', ts: 1 },
+			{ n: 5, k: 'process (complete)', ts: 1 },
+		] );
+
+		// Inside the request, but no longer inside the severed `query hook`.
+		expect( out[ 2 ].indent ).toBe( 1 );
+		expect( out[ 3 ].indent ).toBe( 1 );
+		expect( out[ 3 ].pairId ).toBe( out[ 0 ].pairId );
+		// The request's own pair still matches across the break.
+		expect( out[ 4 ].indent ).toBe( 0 );
+		expect( out[ 4 ].pairId ).toBe( out[ 0 ].pairId );
+	} );
+
+	it( 'treats a lost-entries marker as the same kind of break', () => {
+		const { entries: out } = computeIndentedEntries( [
+			{ n: 1, k: 'process (start)', ts: 1 },
+			{ n: 2, k: 'loop (start)', ts: 1 },
+			{ n: 3, k: 'entries (lost)', ts: 1 },
+			{ n: 4, k: 'process (complete)', ts: 1 },
+		] );
+
+		expect( out[ 2 ].indent ).toBe( 1 );
+		expect( out[ 3 ].indent ).toBe( 0 );
+	} );
+
 	it( 'returns empty result for null/empty input', () => {
 		expect( computeIndentedEntries( null ) ).toEqual( {
 			entries: [],
@@ -274,5 +332,160 @@ describe( 'getAncestorPairIds', () => {
 			{ k: 'a (start)', ts: 1 },
 		] );
 		expect( getAncestorPairIds( 100, entries ).size ).toBe( 0 );
+	} );
+} );
+
+describe( 'spliceFoldedSpans', () => {
+	const FLAME = {
+		name: 'request',
+		t: null,
+		children: [
+			{
+				name: 'process',
+				count: 1,
+				value: 900,
+				t: 0,
+				children: [
+					{
+						name: 'pyrobase',
+						count: 1,
+						value: 880,
+						t: 8.7,
+						children: [
+							{
+								name: 'function',
+								count: 200,
+								value: 56,
+								t: 1373.3,
+								children: [],
+							},
+						],
+					},
+				],
+			},
+		],
+	};
+
+	// A head cut mid-request: `process` and `pyrobase` are both still open when
+	// the fold takes over, and the tail closes them.
+	const STRADDLING = [
+		{ n: 1, k: 'process (start)', ts: 1000 },
+		{ n: 2, k: 'pyrobase (start)', ts: 1000.01 },
+		{ n: 3, k: 'entries (aggregated)', m: '63 merged', ts: 1000.01 },
+		{ n: 4, k: 'pyrobase (complete)', ts: 1002 },
+		{ n: 5, k: 'process (complete)', ts: 1002 },
+	];
+
+	it( 'emits no second pair for a span the head already opened', () => {
+		// `pyrobase` straddles the gap: opened in the kept head, closed in the
+		// kept tail. Emitting it again from the tree showed it twice.
+		const out = spliceFoldedSpans( STRADDLING, FLAME );
+		const keywords = out.map( ( e ) => e.k );
+
+		expect(
+			keywords.filter( ( k ) => 'pyrobase (complete)' === k )
+		).toHaveLength( 1 );
+		expect(
+			keywords.filter( ( k ) => 'pyrobase (start)' === k )
+		).toHaveLength( 1 );
+		// Its merged child is what the gap actually contributes.
+		expect( keywords ).toContain( 'function (start)' );
+	} );
+
+	it( 'emits no complete for a span the kept tail closes', () => {
+		// `pyrobase` opens in the FOLDED MIDDLE and closes in the kept tail, so
+		// the tree supplied a merged pair AND the tail supplied a real complete
+		// — two `pyrobase (complete)` rows for one span. The tail's is the real
+		// one; the tree contributes only the opening.
+		const straddlesFooter = [
+			{ n: 1, k: 'process (start)', ts: 1000 },
+			{ n: 2, k: 'query hook (start)', ts: 1000.01 },
+			{ n: 3, k: 'entries (aggregated)', m: '40249 merged', ts: 1000.01 },
+			{ n: 40266, k: 'pyrobase (complete)', ts: 1044 },
+			{ n: 40269, k: 'process (complete)', ts: 1044 },
+		];
+
+		const out = spliceFoldedSpans( straddlesFooter, FLAME );
+		const keywords = out.map( ( e ) => e.k );
+
+		expect(
+			keywords.filter( ( k ) => 'pyrobase (complete)' === k )
+		).toHaveLength( 1 );
+		expect( keywords ).toContain( 'pyrobase (start)' );
+		// Its wholly-inside-the-gap child keeps both halves.
+		expect(
+			keywords.filter( ( k ) => 'function (complete)' === k )
+		).toHaveLength( 1 );
+	} );
+
+	it( 'does not re-emit a span that lives wholly inside the kept head', () => {
+		// The fold replays the kept head into the tree and adds every tail
+		// entry to it, so a pair that opens AND closes inside either end is in
+		// the merged tree too — shown once for real and once as a "1 merged"
+		// ghost of itself.
+		const flame = {
+			name: 'request',
+			t: null,
+			children: [
+				{
+					name: 'process',
+					count: 1,
+					value: 900,
+					t: 0,
+					children: [
+						{
+							name: 'locale hook',
+							count: 1,
+							value: 0.005,
+							t: 1,
+							children: [],
+						},
+						{
+							name: 'loop',
+							count: 5674,
+							value: 27,
+							t: 500,
+							children: [],
+						},
+					],
+				},
+			],
+		};
+		const entries = [
+			{ n: 1, k: 'process (start)', ts: 1000 },
+			{ n: 2, k: 'locale hook (start)', ts: 1000.001 },
+			{ n: 3, k: 'locale hook (complete)', ts: 1000.001 },
+			{
+				n: 4,
+				k: 'entries (aggregated)',
+				m: '40249 merged',
+				ts: 1000.001,
+			},
+			{ n: 40269, k: 'process (complete)', ts: 1044 },
+		];
+
+		const keywords = spliceFoldedSpans( entries, flame ).map(
+			( e ) => e.k
+		);
+
+		expect(
+			keywords.filter( ( k ) => 'locale hook (complete)' === k )
+		).toHaveLength( 1 );
+		// The one that really is in the gap still comes through.
+		expect( keywords ).toContain( 'loop (complete)' );
+	} );
+
+	it( 'stamps merged rows with a real timestamp off the request origin', () => {
+		// Not a "+1373.3ms" caption: a ts the view can gap and rule like any
+		// other row. Origin is the first kept entry, so 1000 + 1.3733s.
+		const out = spliceFoldedSpans( STRADDLING, FLAME );
+		const opened = out.find( ( e ) => 'function (start)' === e.k );
+
+		expect( opened.ts ).toBeCloseTo( 1001.3733, 4 );
+	} );
+
+	it( 'leaves an unfolded request alone', () => {
+		const plain = [ { n: 1, k: 'process (start)', ts: 1000 } ];
+		expect( spliceFoldedSpans( plain, null ) ).toBe( plain );
 	} );
 } );

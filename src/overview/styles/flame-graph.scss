@@ -18,6 +18,17 @@
 	line-height: 1.4;
 }
 
+// @longform Spacers stand for time nothing was logged in, and the vendored
+// stylesheet gives every rect a border and a hover cursor a gap must not have.
+// Keyed on the fill rather than a class we add: d3-flame-graph re-renders
+// frames itself on zoom and search, dropping any class a post-render pass
+// applied, but it re-runs the color mapper every time — and only a spacer is
+// ever mapped to `transparent`.
+.d3-flame-graph rect[fill="transparent"] {
+	stroke: none;
+	pointer-events: none;
+}
+
 .event-logger-flame-empty {
 	padding: 24px;
 

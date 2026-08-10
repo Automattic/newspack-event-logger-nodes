@@ -133,11 +133,10 @@ class Request_Flight_Node extends Timer_Node {
 			$time_ms       = ( $last_log_ts - $start_time ) * 1000;
 			$age_ms        = ( $now - $tracker_ts ) * 1000;
 			$method_v      = $r['request_method'] ?? 'GET';
-			$url_v         = $r['url'] ?? '';
 			$remote_addr_v = $r['remote_addr'] ?? '';
 			$user_agent_v  = $r['user_agent'] ?? '';
 			// Display clips identical to build_compact_summary (byte-based).
-			$url        = Core::as_string( $url_v );
+			$url        = Request_Builder_Node::resolved_request_url( $request );
 			$url        = \strlen( $url ) > self::MAX_URL_LENGTH ? \substr( $url, 0, self::MAX_URL_LENGTH ) . '...' : $url;
 			$user_agent = Core::as_string( $user_agent_v );
 			$user_agent = \strlen( $user_agent ) > self::MAX_USER_AGENT_LENGTH ? \substr( $user_agent, 0, self::MAX_USER_AGENT_LENGTH ) . '...' : $user_agent;

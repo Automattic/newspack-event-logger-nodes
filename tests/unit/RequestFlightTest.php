@@ -90,6 +90,40 @@ class RequestFlightTest extends TestCase {
 		$this->assertSame( '/a', $inflight[0][ Message::VALUE ]['url'] );
 	}
 
+	public function test_a_worker_request_carries_its_worker_type_in_flight(): void {
+		// The completed record appends the worker type so each worker gets its
+		// own URL row. In-flight rows read the RAW url and did not, so a job's
+		// execution and the admin request that ENQUEUED it — which log the same
+		// /jobs/{handler}/{id} URI — collapsed onto one row, and the gyroscope
+		// link resolved to whichever came first.
+		$rb = new Request_Builder_Node();
+		$rb->name( 'rb-worker-url' );
+
+		$got = [];
+		$rb->sink( $this->capture_sink( $got ) );
+
+		$rb->cache->set(
+			'w-1',
+			(object) [
+				'url'            => '/jobs/pyrobase-cron/periodical-cron',
+				'request_method' => 'POST',
+				'timestamp'      => 1.0,
+				'is_worker'      => true,
+				'worker_type'    => 'job-worker',
+			]
+		);
+
+		$flight = $rb->flight();
+		$flight->target( 'gyroscope_partition' );
+		$flight->fire_cb();
+
+		$inflight = $this->inflight_messages( $got );
+		$this->assertSame(
+			'/jobs/pyrobase-cron/periodical-cron?job-worker',
+			$inflight[0][ Message::VALUE ]['url']
+		);
+	}
+
 	public function test_fire_stamps_a_string_key_for_an_all_digits_rid(): void {
 		// PHP coerces the all-digits map key to int; the wire KEY must come
 		// back as the STRING rid regardless.

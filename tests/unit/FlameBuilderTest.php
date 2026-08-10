@@ -3,6 +3,7 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use PHPUnit\Framework\Attributes\CoversClass;
 use Newspack_Event_Logger_Nodes\Flame_Builder_Node;
+use Newspack_Event_Logger_Nodes\Flame_Fold;
 use Newspack_Event_Logger_Nodes\Flame_Tree;
 use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Stats_Store;
@@ -638,6 +639,79 @@ class FlameBuilderTest extends TestCase {
 		$bucket = \array_keys( $dim )[0];
 		$this->assertSame( 1, $dim[ $bucket ]['2xx']['c'] );
 		$this->assertSame( 1, $dim[ $bucket ]['5xx']['c'] );
+	}
+
+	/**
+	 * The stats a request contributes must not depend on whether
+	 * Request_Builder happened to fold it. This is the highest-risk part of the
+	 * pressure fold: a leaderboard that shifts under load is worse than one that
+	 * stops.
+	 */
+	public function test_a_folded_request_contributes_the_same_stats_as_an_unfolded_one(): void {
+		$now     = \time();
+		$origin  = (float) $now;
+		$entries = [
+			[ 'k' => 'process (start)', 'ts' => $origin ],
+		];
+		// Three `save` spans and a `db` — the breadth-at-depth-3 shape that
+		// makes an envelope big enough to fold in the first place.
+		foreach ( [ 7.0, 13.0, 5.0 ] as $i => $ms ) {
+			$entries[] = [ 'k' => 'save (start)', 'ts' => $origin + ( $i * 0.05 ) ];
+			$entries[] = [ 'k' => 'save (complete)', 'ts' => $origin + ( $i * 0.05 ) + $ms / 1000, 'duration_ms' => $ms ];
+		}
+		$entries[] = [ 'k' => 'db (start)', 'ts' => $origin + 0.2 ];
+		$entries[] = [ 'k' => 'db (complete)', 'ts' => $origin + 0.24, 'duration_ms' => 40.0 ];
+		$entries[] = [ 'k' => 'process (complete)', 'ts' => $origin + 0.3, 'duration_ms' => 300.0 ];
+
+		$fold = Flame_Fold::start( $origin );
+		foreach ( $entries as $entry ) {
+			Flame_Fold::add( $fold, $entry );
+		}
+
+		$base = [
+			'duration_ms' => 300.0,
+			'timestamp'   => $now,
+			'profiles'    => [ 'wpdb' => [ 'time' => 0.4, 'count' => 12, 'ts' => $now, 'entries' => [] ] ],
+		];
+
+		$plain = $this->stats_for( \array_replace( $base, [ 'entries' => $entries ] ) );
+		$rolled = $this->stats_for(
+			\array_replace(
+				$base,
+				[
+					'entries' => [],
+					'flame'   => Flame_Fold::tree( $fold ),
+					'folded'  => true,
+				]
+			)
+		);
+
+		$this->assertSame( $plain, $rolled );
+	}
+
+	/**
+	 * Every stats namespace one request writes, for the parity comparison
+	 * above. Same URL and clock both runs, so any difference is the fold's.
+	 *
+	 * @param array<string,mixed> $request Completed-request record.
+	 * @return array<string,mixed> The persisted stats.
+	 */
+	private function stats_for( array $request ): array {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+		$this->fill_request( $fb, $this->completed_request( $request ) );
+		$fb->flush();
+
+		$timestamp = $request['timestamp'];
+		$bucket    = $this->bucket_key_for( \is_int( $timestamp ) ? $timestamp : \time() );
+		return [
+			'leaderboard' => $store->get_leaderboard_bucket( $bucket ),
+			'categories'  => $store->get_categories(),
+			'hourly'      => $store->get_hourly(),
+			'urls'        => $store->get_url_bucket( $bucket ),
+		];
 	}
 
 	public function test_flush_persists_categories_and_leaderboard(): void {

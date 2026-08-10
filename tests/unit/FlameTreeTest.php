@@ -16,8 +16,117 @@ class FlameTreeTest extends TestCase {
 
 	private const NOW = 1_700_000_000;
 
+	/**
+	 * Request start as the firehose actually carries it: `microtime( true )`,
+	 * unix seconds with a fraction. The fraction is the point — a whole second
+	 * here would pass against the truncating `num_int()` this replaced.
+	 */
+	private const ORIGIN = 1_700_000_000.125;
+
 	private function entry( string $k, array $extra = [] ): array {
 		return \array_merge( [ 'k' => $k ], $extra );
+	}
+
+	/** An entry stamped $offset_ms into the request, as Log_Manager stamps it. */
+	private function at( string $k, float $offset_ms, array $extra = [] ): array {
+		return $this->entry( $k, [ 'ts' => self::ORIGIN + $offset_ms / 1000 ] + $extra );
+	}
+
+	// ----- build_flame_data: request-relative start times -----
+
+	public function test_build_stamps_each_span_with_its_offset_from_the_request_start(): void {
+		$tree = Flame_Tree::build_flame_data(
+			[
+				$this->at( 'process (start)', 0 ),
+				$this->at( 'db (start)', 250.5 ),
+				$this->at( 'db (complete)', 300.5, [ 'duration_ms' => 50 ] ),
+			]
+		);
+
+		$this->assertSame( 0.0, $tree['t'] );
+		$process = $tree['children'][0];
+		$this->assertSame( 0.0, $process['t'] );
+		// Sub-second, and not a multiple of anything: truncation shows up here.
+		$this->assertSame( 250.5, $process['children'][0]['t'] );
+	}
+
+	public function test_build_omits_the_offset_entirely_when_no_entry_is_timestamped(): void {
+		$tree = Flame_Tree::build_flame_data(
+			[ $this->entry( 'db (start)' ), $this->entry( 'db (complete)', [ 'duration_ms' => 7 ] ) ]
+		);
+		$this->assertArrayNotHasKey( 't', $tree );
+		$this->assertArrayNotHasKey( 't', $tree['children'][0] );
+	}
+
+	public function test_build_omits_the_offset_for_an_untimed_span_in_a_timed_request(): void {
+		// An absent timestamp is unknown, never a negative offset from the origin.
+		$tree = Flame_Tree::build_flame_data(
+			[ $this->at( 'process (start)', 0 ), $this->entry( 'ghost (start)' ) ]
+		);
+		$this->assertSame( 0.0, $tree['t'] );
+		$this->assertArrayNotHasKey( 't', $tree['children'][0]['children'][0] );
+	}
+
+	public function test_an_unclosed_span_covers_to_its_last_childs_end_not_their_sum(): void {
+		// 20ms and 50ms of work either side of a 70ms hole: the sum is 70, the
+		// extent is 150. Covering by the sum hides exactly the hole a viewer
+		// opened the graph to find.
+		$tree = Flame_Tree::build_flame_data(
+			[
+				$this->at( 'process (start)', 0 ),
+				$this->at( 'render (start)', 0 ),
+				$this->at( 'db (start)', 10 ),
+				$this->at( 'db (complete)', 30, [ 'duration_ms' => 20 ] ),
+				$this->at( 'tpl (start)', 100 ),
+				$this->at( 'tpl (complete)', 150, [ 'duration_ms' => 50 ] ),
+			]
+		);
+		$render = $tree['children'][0]['children'][0];
+		$this->assertSame( 'render', $render['name'] );
+		$this->assertEqualsWithDelta( 150.0, $render['value'], 1e-6 );
+	}
+
+	public function test_overlapping_children_still_fit_inside_their_parent(): void {
+		// Two spans that overlap have no honest side-by-side layout, and their
+		// extent (300) is SMALLER than their combined width (500). d3 scales
+		// children by the parent's value, so covering by the extent would paint
+		// them past its right edge.
+		$tree = Flame_Tree::build_flame_data(
+			[
+				$this->at( 'process (start)', 0 ),
+				$this->at( 'render (start)', 0 ),
+				$this->at( 'outer (start)', 0 ),
+				$this->at( 'outer (complete)', 300, [ 'duration_ms' => 300 ] ),
+				$this->at( 'orphan (start)', 100 ),
+				$this->at( 'orphan (complete)', 300, [ 'duration_ms' => 200 ] ),
+			]
+		);
+		$render = $tree['children'][0]['children'][0];
+		$this->assertEqualsWithDelta( 500.0, $render['value'], 1e-6 );
+	}
+
+	public function test_the_origin_is_the_earliest_entry_not_the_first_listed(): void {
+		// One out-of-order entry must not push every earlier span to a negative
+		// offset — there is no such thing as before the request started.
+		$tree = Flame_Tree::build_flame_data(
+			[
+				$this->at( 'late (start)', 900 ),
+				$this->at( 'early (start)', 0 ),
+			]
+		);
+		$this->assertSame( 900.0, $tree['children'][0]['t'] );
+		$this->assertSame( 0.0, $tree['children'][0]['children'][0]['t'] );
+	}
+
+	public function test_merge_never_carries_a_start_offset_into_the_aggregate(): void {
+		// Merged siblings span many requests, so no single offset is true of them.
+		$merged = Flame_Tree::merge_flame_children_incremental(
+			[],
+			[ [ 'name' => 'db', 'value' => 5, 't' => 250.5 ] ],
+			self::NOW
+		);
+		$this->assertArrayNotHasKey( 't', $merged[0] );
+		$this->assertSame( self::NOW, $merged[0]['ts'] );
 	}
 
 	// ----- build_flame_data -----
@@ -43,8 +152,7 @@ class FlameTreeTest extends TestCase {
 				$this->entry( 'db (complete)', [ 'duration_ms' => 300, 'ts' => self::NOW ] ),
 				$this->entry( 'tpl (start)' ),
 				$this->entry( 'tpl (complete)', [ 'duration_ms' => 450, 'ts' => self::NOW ] ),
-			],
-			self::NOW
+			]
 		);
 
 		$render = $tree['children'][0];
@@ -60,8 +168,7 @@ class FlameTreeTest extends TestCase {
 			[
 				$this->entry( 'db (start)' ),
 				$this->entry( 'db (complete)', [ 'duration_ms' => 42, 'ts' => self::NOW ] ),
-			],
-			self::NOW
+			]
 		);
 		$this->assertSame( 'request', $tree['name'] );
 		$this->assertSame( 'db', $tree['children'][0]['name'] );
@@ -70,22 +177,20 @@ class FlameTreeTest extends TestCase {
 
 	public function test_build_uses_label_and_detail(): void {
 		$tree = Flame_Tree::build_flame_data(
-			[ $this->entry( 'hook (start)', [ 'l' => 'init', 'm' => 'the_content' ] ) ],
-			self::NOW
+			[ $this->entry( 'hook (start)', [ 'l' => 'init', 'm' => 'the_content' ] ) ]
 		);
 		$this->assertSame( 'hook: init', $tree['children'][0]['name'] );
 		$this->assertSame( 'hook: the_content', $tree['children'][0]['detail'] );
 	}
 
 	public function test_build_skips_non_array_entries(): void {
-		$tree = Flame_Tree::build_flame_data( [ 'not-an-array', 42, $this->entry( 'x (start)' ) ], self::NOW );
+		$tree = Flame_Tree::build_flame_data( [ 'not-an-array', 42, $this->entry( 'x (start)' ) ] );
 		$this->assertCount( 1, $tree['children'] );
 	}
 
 	public function test_build_ignores_an_orphan_complete(): void {
 		$tree = Flame_Tree::build_flame_data(
-			[ $this->entry( 'ghost (complete)', [ 'duration_ms' => 9 ] ) ],
-			self::NOW
+			[ $this->entry( 'ghost (complete)', [ 'duration_ms' => 9 ] ) ]
 		);
 		$this->assertSame( [], $tree['children'] );
 	}
@@ -97,8 +202,7 @@ class FlameTreeTest extends TestCase {
 				$this->entry( 'parent (start)' ),
 				$this->entry( 'child (start)' ),
 				$this->entry( 'parent (complete)', [ 'duration_ms' => 5 ] ),
-			],
-			self::NOW
+			]
 		);
 		$this->assertSame( 'parent', $tree['children'][0]['name'] );
 		$this->assertSame( 'child', $tree['children'][0]['children'][0]['name'] );
@@ -111,7 +215,7 @@ class FlameTreeTest extends TestCase {
 		for ( $i = 0; $i < 60; $i++ ) {
 			$entries[] = $this->entry( "span{$i} (start)" );
 		}
-		$tree = Flame_Tree::build_flame_data( $entries, self::NOW );
+		$tree = Flame_Tree::build_flame_data( $entries );
 		$depth = 0;
 		$node  = $tree;
 		while ( ! empty( $node['children'] ) ) {
@@ -129,8 +233,7 @@ class FlameTreeTest extends TestCase {
 				$this->entry( 'q (complete)', [ 'duration_ms' => 1 ] ),
 				$this->entry( 'q (start)' ),
 				$this->entry( 'q (complete)', [ 'duration_ms' => 2 ] ),
-			],
-			self::NOW
+			]
 		);
 		$names = \array_map( static fn ( $c ) => $c['name'], $tree['children'] );
 		$this->assertSame( [ "q\x001", "q\x002" ], $names );

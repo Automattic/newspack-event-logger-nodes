@@ -326,9 +326,22 @@ class Flame_Builder_Node extends Node {
 			$entries = [];
 		}
 
-		$duration_raw        = $request['duration_ms'] ?? 0;
-		$flame_data          = Flame_Tree::build_flame_data( $entries, $this->now_ts() );
-		$flame_data['value'] = Core::num_float( $duration_raw );
+		$duration_raw = $request['duration_ms'] ?? 0;
+		// @longform A record carries EITHER raw entries or — when
+		// Request_Builder folded it under memory pressure — the merged tree it
+		// built instead. Every record already on disk carries entries, so
+		// accepting both shapes is what makes the fold cost no rewrite of
+		// history and no dual-write window.
+		$prebuilt = $request['flame'] ?? null;
+		/** @var array<string,mixed> $flame_data */
+		$flame_data          = \is_array( $prebuilt ) && [] !== $prebuilt
+			? $prebuilt
+			: Flame_Tree::build_flame_data( $entries );
+		// Never less than the extent covering already gave its children.
+		$flame_data['value'] = \max(
+			Core::num_float( $duration_raw ),
+			Core::num_float( $flame_data['value'] ?? 0 )
+		);
 
 		$profiles = $request['profiles'] ?? [];
 		if ( ! \is_array( $profiles ) ) {

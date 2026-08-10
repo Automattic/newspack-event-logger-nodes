@@ -7,6 +7,134 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **A folded request keeps its head and tail, and its merged spans read as log
+  rows.** Folding used to reclaim the whole entry list, which took the request
+  line, the environment map and the closing stats block along with the
+  repetitive middle — the ten rows at each end that are worth most. Both ends
+  survive now, rejoined around an `entries (aggregated)` marker, and the merged
+  tree is spliced in between them as nested `(start)`/`(complete)` pairs rather
+  than tabled separately: the log already renders a tree, and a flat table
+  stringified the nesting into `a / b / c`. Each merged row carries the
+  instances it stands for, a real timestamp derived from the node's own start
+  offset, and an INCLUSIVE duration like every other duration in the log.
+  - Spans straddling either seam are not shown twice. One still open when the
+    head ended is skipped whole; one the tail closes but never opened is
+    opened by the tree and closed by the tail's own row.
+  - Instances already visible in the kept ends are subtracted from a merged
+    row's count, so nothing appears once for real and again as a ghost.
+  - `entries (lost)` and `entries (aggregated)` now close every span open
+    across them, except the request itself. Left open, a severed span adopted
+    every row after it and folding it swallowed the end of the request.
+- **`max_entries_per_request` folds instead of truncating.** Past the cap it
+  stopped appending and set a `truncated` flag nothing read, losing every entry
+  after it silently. It now folds that one request — a faster trigger than the
+  pool budget for a single runaway rather than a worse one — and is a
+  positional argument so it can be sized per deployment.
+- **`Flame_Fold` nodes carry `t`, and `spans` is gone.** Each merged node holds
+  the offset its earliest instance started at, which is what lets the log stamp
+  its rows and the graph position the frame. That made the parallel path-keyed
+  `spans` map redundant; it held nothing the tree did not.
+
+### Fixed
+
+- **The gyroscope and the completed record disagreed about a worker's URL.**
+  `Request_Flight_Node` read the raw `url` while completed records went through
+  `Request_Builder_Node::resolved_request_url()`, which appends the worker
+  type. A job's execution and the request that enqueued it — both logging
+  `/jobs/{handler}/{id}` — collapsed onto one URL row, so the gyroscope link
+  resolved to whichever came first. Both now use the one resolver.
+- **Folded trees overflowed their own frames.** `Flame_Fold::flatten()` sized a
+  parent to `max( own, Σchildren )` while positions make the browser fill gaps
+  with spacers, so children reach the EXTENT, not their sum. It now mirrors
+  `Flame_Tree::cover_children()`. `Flame_Builder_Node` no longer lets the
+  request duration overwrite a root that covering had already raised, which an
+  aborted request's truncated duration could undercut.
+- **The `entries (lost)` marker landed in a folded request's kept HEAD**, filing
+  the loss chronologically ahead of the middle it announces. It goes to the
+  tail, where the request actually stopped, and no longer skews the count of
+  what was merged away.
+
+### Added
+
+- **Request_Builder bounds the memory it holds across ALL in-flight requests.**
+  `MAX_ENTRIES_PER_REQUEST` capped the wrong quantity: one envelope at 50,000
+  entries measures ~18MB, which is fine once and fatal twenty times over — and
+  twenty concurrent is what a long template render produces. A new
+  `entry_budget` argument (default 50,000, ~18MB) bounds the sum; crossing it
+  folds the LARGEST envelope through `Flame_Fold`, the merging variant of the
+  flame stack machine, and drops its raw entry list. Cost becomes O(distinct
+  paths) instead of O(messages), so a fifty-minute request costs what a
+  five-minute one does. The per-request cap stays as a secondary guard.
+  - **Folding is a pressure valve, not the normal path.** Under budget the
+    cost is one integer compare per entry and the record is byte-for-byte what
+    shipped before — full chronology, raw entries, no flag.
+  - **A folded request stays folded**, merging later entries straight into its
+    path map, and cannot un-fold.
+  - **Pair balance is inherent**, because the fold is the same stack machine.
+    That is what disqualified dropping every Nth entry: an orphaned complete or
+    an unclosed span yields a plausible-looking, quietly wrong graph.
+  - **Records carry either shape.** `Flame_Builder_Node` accepts raw `entries`
+    or a pre-built `flame`, so nothing already on disk needs rewriting and
+    there is no dual-write window.
+  - **What folding costs is the sequence.** A folded record keeps its first and
+    last ten entries verbatim — the block that identifies a request and the
+    block that ends it — rejoined around an `entries (aggregated)` marker, and
+    the merged tree is spliced in between them as ordinary nested
+    `(start)`/`(complete)` rows carrying each path's instance count. The detail
+    view says the request was aggregated rather than leaving an empty table
+    that reads as "nothing happened".
+  - **The stats a request contributes are unchanged by folding** — leaderboard,
+    categories, hourly and per-URL are identical either way, and a test asserts
+    it. The per-URL aggregate FLAME is the exception and cannot be otherwise:
+    unfolded, forty `save` siblings merge in as forty numbered nodes; folded,
+    as one node holding their total. Same time attributed, different shape.
+  - `Reqgrep_Core` holds the same shape of state and is deliberately left
+    alone — its product IS the raw line stream, so merging would leave it
+    nothing to print.
+- **The flame graph's x-axis is now chronological.** Frames were positioned
+  left to right in alphabetical order, so the graph looked like a trace and was
+  not one: widths were honest, positions were not. `Flame_Tree` now stamps each
+  span with `t`, its start in milliseconds from the request's own, and
+  `FlameGraph` orders and positions frames by it. Time no frame accounts for
+  renders as empty space instead of being smeared into the spans either side —
+  which is the thing you are hunting in a ten-minute request.
+
+### Changed
+
+- **`Flame_Tree` stamps `t` in place of the old per-node `ts`.** That field held
+  each span's completion time, put through `Core::num_int()` — which truncated
+  a microsecond-resolution `microtime()` reading to whole seconds. Nothing
+  displayed it (`finalize_flame_node()` stripped it before display; its only
+  reader was the aggregate's hour-granularity expiry cutoff), so nothing was
+  visibly wrong — but it could not have carried an axis, which is why the
+  feature above needed a new field rather than the existing one.
+  `build_flame_data()` sheds the `$now_ts` parameter that fed its fallback, and
+  aggregate nodes take their expiry timestamp from the merge clock, which is
+  what it always meant.
+- **An unclosed span is covered by its children's time extent**, not their sum,
+  so a gap between two of them no longer vanishes into the spans either side.
+  The sum stays the floor: where two spans overlap, the extent is the smaller
+  of the two and covering by it alone would paint them past the parent's edge.
+  Aggregates, which carry no positions, are unchanged.
+- **A pointer rule's hooks mirror rides the substrate's `Table`** rather than a
+  hand-rolled memcache key, through `Table_Node::store()` / `lookup()` /
+  `forget()`. Requires newspack-nodes **2.21.0**, and the loader's floor moves
+  with it. Existing `evlog:rules:hooks:*` entries are orphaned and expire on
+  their own hour TTL; the durable option is the record and rewarms the table on
+  the next read, so no rule loses its hooks.
+
+### Fixed
+
+- **Two installs sharing one memcached could read each other's rule hooks.** A
+  rule's id is the `url_hash` of its pattern, so every install that logs `/`
+  derives the same id — and the old mirror key carried no install scope, only a
+  fixed `evlog:rules:hooks:` prefix. `Table_Node::entry_key()` goes through
+  `Cache_Backend::site_key()`, which scopes by database, table prefix and salt.
+  Reachable wherever co-tenant installs share a memcached, which the local dev
+  stack does.
+
 ## [0.49.2] - 2026-08-10
 
 ### Changed

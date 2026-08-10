@@ -12,9 +12,18 @@
  * D3 owns the SVG; React owns only the container element and two auxiliary
  * pointer handlers.
  *
- * Frames arrive from `Flame_Tree` as `{ name, value, children[], detail? }`,
+ * Frames arrive from `Flame_Tree` as `{ name, value, children[], detail?, t? }`,
  * where `value` is milliseconds and a child's value never exceeds its
- * parent's.
+ * parent's. `t` is the frame's start, in milliseconds from the request's — so
+ * a frame occupies `[ t, t + value ]`. Per-request trees carry it; aggregates,
+ * having merged many requests, do not.
+ *
+ * Where every frame is positioned, `withTimeSpacers` turns the x-axis into a
+ * real chronological one: d3-flame-graph packs children flush, so the dead
+ * time between two spans has to be handed to it as a transparent frame of its
+ * own or it gets smeared into the widths either side. Without `t` the graph
+ * falls back to what it has always done — proportional widths, alphabetical
+ * order.
  */
 
 import { useEffect, useRef, useMemo } from '@wordpress/element';
@@ -24,6 +33,44 @@ import { flamegraph } from 'd3-flame-graph';
 import 'd3-flame-graph/dist/d3-flamegraph.css';
 import './styles/flame-graph.scss';
 import { shadeForDepth, pickLabelColor, isColorParseable } from './flameColors';
+
+/**
+ * The label d3-flame-graph shows for a frame, and the key it sorts on when no
+ * start time is available. Spacers carry an empty name and no detail.
+ *
+ * @param {Object} d D3 hierarchy node.
+ * @return {string} Displayed name.
+ */
+const frameName = ( d ) => d.data?.detail || d.data?.name || '';
+
+/**
+ * Order two sibling frames: by when they started, or — for an aggregate, whose
+ * frames span many requests and so have no single start — by displayed name,
+ * which is what `.sort( true )` did for every graph before positions existed.
+ *
+ * @param {Object} a D3 hierarchy node.
+ * @param {Object} b D3 hierarchy node.
+ * @return {number} Negative, zero or positive, per the comparator contract.
+ */
+const compareFrames = ( a, b ) => {
+	const at = a.data?.t;
+	const bt = b.data?.t;
+	const aPositioned = typeof at === 'number';
+	const bPositioned = typeof bt === 'number';
+	if ( aPositioned && bPositioned ) {
+		return at - bt;
+	}
+	// Tiered, not mixed: mixing the two keys is intransitive.
+	if ( aPositioned !== bPositioned ) {
+		return aPositioned ? -1 : 1;
+	}
+	const an = frameName( a );
+	const bn = frameName( b );
+	if ( an < bn ) {
+		return -1;
+	}
+	return an > bn ? 1 : 0;
+};
 
 /**
  * Build the tooltip text for a frame: name, shares of parent and total, duration.
@@ -128,6 +175,11 @@ const createTooltip = () => {
 	 * @param {Object} d D3 hierarchy node under the pointer.
 	 */
 	tip.show = function ( d ) {
+		// A gap has no name; calling it "unknown" is worse than saying nothing.
+		if ( d?.data?.spacer ) {
+			tip.hide();
+			return;
+		}
 		if ( ! tooltipEl ) {
 			tip();
 		}
@@ -259,7 +311,7 @@ const readThemeTokens = ( container ) => {
  * @return {(d: Object) => string} d3-flame-graph color mapper: (d) => 'rgb(...)'.
  */
 const createColorMapper = ( accent, bg ) => ( d ) =>
-	shadeForDepth( d.depth, accent, bg );
+	d.data?.spacer ? 'transparent' : shadeForDepth( d.depth, accent, bg );
 
 /**
  * Set each frame's label color for contrast against its (depth-shaded) fill.
@@ -267,6 +319,9 @@ const createColorMapper = ( accent, bg ) => ( d ) =>
  * d3-flame-graph renders the label as a `div.d3-flame-graph-label` inside the
  * frame's `<foreignObject>`; the fill lives on the frame's `<rect>`. Re-run
  * after every chart render/update since the labels are recreated.
+ *
+ * A spacer's fill is `transparent`, which no contrast can be read against —
+ * and it has no label to read anyway.
  *
  * @param {Element} container Flame graph container element.
  */
@@ -276,7 +331,7 @@ const applyLabelContrast = ( container ) => {
 		.each( function () {
 			const frame = d3.select( this );
 			const fill = frame.select( 'rect' ).attr( 'fill' );
-			if ( ! fill ) {
+			if ( ! isColorParseable( fill ) ) {
 				return;
 			}
 			frame
@@ -446,6 +501,131 @@ export const pruneFlameGraph = ( root, options = {} ) => {
 };
 
 /**
+ * Order a parent's children by start time and measure the time it leaves
+ * uncovered, or null when the family cannot honestly be laid out flat.
+ *
+ * Two cases decline: a parent or child with no `t` — the whole aggregate view
+ * — and children that OVERLAP, which have no side-by-side arrangement and
+ * whose combined width already exceeds the interval they span.
+ *
+ * @param {Object} node Flame node whose children are being placed.
+ * @return {{ordered: Array, gaps: number[]}|null} Ordered children and the gap before each, or null.
+ */
+const placeChildren = ( node ) => {
+	const children = node.children || [];
+	if (
+		typeof node.t !== 'number' ||
+		! children.every( ( child ) => typeof child.t === 'number' )
+	) {
+		return null;
+	}
+	const ordered = [ ...children ].sort( ( a, b ) => a.t - b.t );
+	const gaps = [];
+	let cursor = node.t;
+	for ( const child of ordered ) {
+		const gap = child.t - cursor;
+		if ( gap < 0 ) {
+			return null;
+		}
+		gaps.push( gap );
+		cursor = child.t + ( child.value || 0 );
+	}
+	return { ordered, gaps };
+};
+
+/**
+ * Collect every gap width in the tree, so a budget can be spent on the widest.
+ *
+ * @param {Object}   node Flame node.
+ * @param {number[]} out  Accumulator.
+ */
+const collectGaps = ( node, out ) => {
+	const placed = placeChildren( node );
+	if ( placed ) {
+		out.push( ...placed.gaps );
+	}
+	( node.children || [] ).forEach( ( child ) => collectGaps( child, out ) );
+};
+
+/**
+ * Rebuild the tree with a spacer wherever a gap clears the cutoff.
+ *
+ * @param {Object} node   Flame node.
+ * @param {number} cutoff Gaps must exceed this to earn a spacer.
+ * @return {Object} New node.
+ */
+const insertSpacers = ( node, cutoff ) => {
+	if ( ! node?.children?.length ) {
+		return node;
+	}
+	let changed = false;
+	const children = node.children.map( ( child ) => {
+		const next = insertSpacers( child, cutoff );
+		changed = changed || next !== child;
+		return next;
+	} );
+	const placed = placeChildren( { ...node, children } );
+	if ( ! placed ) {
+		// Unchanged below too: never rebuild a tree to reproduce itself.
+		return changed ? { ...node, children } : node;
+	}
+	const packed = [];
+	let cursor = node.t;
+	placed.ordered.forEach( ( child, i ) => {
+		if ( placed.gaps[ i ] > cutoff ) {
+			packed.push( {
+				name: '',
+				value: placed.gaps[ i ],
+				t: cursor,
+				spacer: true,
+				children: [],
+			} );
+		}
+		packed.push( child );
+		cursor = child.t + ( child.value || 0 );
+	} );
+	return { ...node, children: packed };
+};
+
+/**
+ * Insert transparent spacer children so proportional packing lands every frame
+ * at its true chronological position.
+ *
+ * `treemapDice` scales a parent's children by `parentWidth / parent.value`, so
+ * a frame's width is already honest and any shortfall renders as empty space
+ * on the right. What it cannot express is a start offset: children pack flush
+ * from the left, and the dead time before or between two spans is smeared into
+ * them. Handing that time over as a frame of its own is what makes the axis
+ * mean something. `reappraiseNode` computes a parent as `raw - Σ children +
+ * Σ children`, so the spacers cancel and no node's value changes.
+ *
+ * Runs AFTER pruning, deliberately: the prune cutoff and node count must be
+ * computed on real frames. That is also why `maxSpacers` exists — pruning caps
+ * the rendered frame count, and an unbounded spacer pass would walk straight
+ * back through that ceiling, since real spans are almost never contiguous. The
+ * budget goes to the WIDEST gaps, which are the ones worth seeing; children
+ * after a skipped gap shift left by its width.
+ *
+ * @param {Object} root         Flame graph root.
+ * @param {number} [maxSpacers] Spacers to emit at most (default 5000).
+ * @return {Object} New tree; the input is not mutated.
+ * @testonly Exported for FlameGraph.test.js; the component applies it internally.
+ */
+export const withTimeSpacers = ( root, maxSpacers = PRUNE_HARD_MAX_NODES ) => {
+	if ( ! root ) {
+		return root;
+	}
+	const gaps = [];
+	collectGaps( root, gaps );
+	let cutoff = 0;
+	if ( gaps.length > maxSpacers ) {
+		gaps.sort( ( a, b ) => b - a );
+		cutoff = gaps[ maxSpacers ];
+	}
+	return insertSpacers( root, cutoff );
+};
+
+/**
  * Flame graph component.
  *
  * The chart is built once and updated in place afterwards, so an auto-refresh
@@ -468,10 +648,21 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 	const lastChangeKeyRef = useRef( '' ); // last rendered lastModified.
 
 	const prunedData = useMemo( () => pruneFlameGraph( data ), [ data ] );
+	// Spacers ride the same ceiling pruning enforces.
+	const framedData = useMemo( () => {
+		if ( ! prunedData ) {
+			return prunedData;
+		}
+		const room = Math.max(
+			0,
+			PRUNE_HARD_MAX_NODES - countNodes( prunedData )
+		);
+		return withTimeSpacers( prunedData, room );
+	}, [ prunedData ] );
 
 	// Build the chart on first run; update it in place on every later one.
 	useEffect( () => {
-		if ( ! prunedData || ! containerRef.current ) {
+		if ( ! framedData || ! containerRef.current ) {
 			return;
 		}
 
@@ -499,7 +690,7 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 					.width( width )
 					.setColorMapper( colorMapper )
 					.transitionDuration( 0 );
-				chartRef.current.update( prunedData );
+				chartRef.current.update( framedData );
 				applyLabelContrast( container );
 
 				// Re-zoom to where the viewer was before the data changed.
@@ -532,15 +723,18 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 				.cellHeight( 20 )
 				.transitionDuration( 0 ) // no transitions for auto-refresh.
 				.minFrameSize( 0 )
-				.sort( true )
+				.sort( compareFrames )
 				.title( '' )
-				.getName( ( d ) => d.data?.detail || d.data?.name || '' )
+				.getName( frameName )
 				// Keep the object: .tooltip(true) type-checks but 4.1.3 no-ops.
 				.tooltip( tip )
 				.selfValue( false )
 				.setColorMapper( colorMapper )
 				.onClick( ( d ) => {
 					// Cmd/Ctrl+Click: reveal in log table.
+					if ( d?.data?.spacer ) {
+						return;
+					}
 					if ( onRevealEntry && d && metaClickRef.current ) {
 						metaClickRef.current = false;
 						onRevealEntry( getNodePath( d ) );
@@ -559,7 +753,7 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 				} );
 
 			chartRef.current = chart;
-			d3.select( container ).datum( prunedData ).call( chart );
+			d3.select( container ).datum( framedData ).call( chart );
 			applyLabelContrast( container );
 
 			// Track Cmd/Ctrl on mousedown (more reliable than click on Mac).
@@ -567,7 +761,7 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 				metaClickRef.current = e.metaKey || e.ctrlKey;
 			} );
 		}
-	}, [ prunedData, lastModified, onRevealEntry ] );
+	}, [ framedData, lastModified, onRevealEntry ] );
 
 	// Tear down on unmount; tooltips live on <body>, outside React's reach.
 	useEffect( () => {
@@ -601,11 +795,11 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 				clearTimeout( timer );
 			}
 			timer = setTimeout( () => {
-				if ( chartRef.current && containerRef.current && prunedData ) {
+				if ( chartRef.current && containerRef.current && framedData ) {
 					const width = containerRef.current.clientWidth || 800;
 					chartRef.current.width( width );
 					d3.select( containerRef.current )
-						.datum( prunedData )
+						.datum( framedData )
 						.call( chartRef.current );
 					applyLabelContrast( containerRef.current );
 				}
@@ -618,7 +812,7 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 			}
 			ro.disconnect();
 		};
-	}, [ prunedData ] );
+	}, [ framedData ] );
 
 	// Gate the empty state on original data; pruning must not fake "no data".
 	if ( ! data || ! data.children || data.children.length === 0 ) {

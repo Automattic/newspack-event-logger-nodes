@@ -33,7 +33,10 @@ import {
 import { __, sprintf } from '@wordpress/i18n';
 
 import { useNodeState } from '@newspack-nodes/runtime';
-import { computeIndentedEntries } from './utils/logEntryUtils';
+import {
+	computeIndentedEntries,
+	spliceFoldedSpans,
+} from './utils/logEntryUtils';
 import { DASHBOARD_REFRESH_OPTIONS } from './constants';
 import { usePerformanceGraph } from './hooks/usePerformanceGraph';
 import useUrlNavigation from './hooks/useUrlNavigation';
@@ -395,10 +398,16 @@ export default function PerformanceDashboard( { onError, commandClient } ) {
 	// Use server-built flame_data from Flame Builder.
 	const requestFlameData = requestDetail?.flame_data ?? null;
 
-	// Compute indented log entries for display.
+	// A folded request's merged tree splices in where its entries were.
 	const { entries: indentedEntries, realCount: realEntryCount } = useMemo(
-		() => computeIndentedEntries( requestDetail?.entries ),
-		[ requestDetail?.entries ]
+		() =>
+			computeIndentedEntries(
+				spliceFoldedSpans(
+					requestDetail?.entries,
+					requestDetail?.flame
+				)
+			),
+		[ requestDetail?.entries, requestDetail?.flame ]
 	);
 
 	// Requests/sec from the last hour of complete 5-minute buckets.
