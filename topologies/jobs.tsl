@@ -1,4 +1,0 @@
-var stale_timeout = 600
-include job-router
-include job-worker
-secure
