@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A hub whose topology isn't named `aggregator` now counts as a hub.**
+  `<eln:is_hub>` matched the active topology's NAME, so a deployment that
+  forks stock `aggregator.tsl` to change one argument — and therefore renames
+  it — read as a spoke. `Flame_Builder` gates every per-server namespace write
+  on that flag while the global `server` dimension is not gated, so the
+  Performance Dashboard listed servers it then had no data for: the volume
+  chart flat, the breakdown "across 0 requests", for every server picked.
+  The derivation now also walks each active topology's graph for a
+  `Remote_Source` node — the same question the Aggregator dashboard already
+  answers correctly. Both signals are kept: stock `aggregator.tsl` ships no
+  readers (the operator wires them on the canvas), so it is recognisable only
+  by name, and a fork is recognisable only by its wired readers. This fixes
+  new traffic; already-recorded requests need replaying to backfill.
+
 ## [0.51.0] - 2026-08-10
 
 ### Removed
