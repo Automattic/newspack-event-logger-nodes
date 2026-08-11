@@ -67,7 +67,7 @@ class PerformanceCITest extends TestCase {
 		// declaration, so the tests need one active. One worker keeps every
 		// existing partition-0 assertion true. AFTER the $wp_filter reset above
 		// — it registers the catalog filter.
-		$this->activate_shipped_topology( 'combined', 1 );
+		$this->activate_shipped_topology( 'performance', 1 );
 	}
 
 	protected function tearDown(): void {
@@ -938,9 +938,9 @@ class PerformanceCITest extends TestCase {
 	}
 
 	public function test_request_search_spans_the_topologys_own_worker_count(): void {
-		// Global num_partitions stays 1; combined runs 4. A rid living in p2 is
+		// Global num_partitions stays 1; performance runs 4. A rid living in p2 is
 		// invisible to a reader that loops to the global.
-		$this->activate_shipped_topology( 'combined', 4 );
+		$this->activate_shipped_topology( 'performance', 4 );
 		$rid = $this->write_request(
 			[
 				'rid'            => 'rid-high-partition-000000000001',
@@ -963,7 +963,7 @@ class PerformanceCITest extends TestCase {
 	public function test_request_search_tries_the_rids_own_partition_first(): void {
 		// This rid hashes to 3 of 4. Seeded in BOTH 3 and 0, an ascending scan
 		// returns 0 — only hash-first returns 3.
-		$this->activate_shipped_topology( 'combined', 4 );
+		$this->activate_shipped_topology( 'performance', 4 );
 		$body = [
 			'rid'            => 'rid-hash-order-0000000000000001',
 			'url'            => '/hashed',
@@ -999,7 +999,7 @@ class PerformanceCITest extends TestCase {
 	public function test_stats_stores_span_the_topologys_own_worker_count(): void {
 		// flame-builder writes its stats to memcache keyed by worker index, so
 		// the store fan-out has to follow the topology count, not the global.
-		$this->activate_shipped_topology( 'combined', 3 );
+		$this->activate_shipped_topology( 'performance', 3 );
 
 		$method = new \ReflectionMethod( Performance_CI_Node::class, 'stats_stores' );
 		/** @var array<int,Stats_Store> $stores */

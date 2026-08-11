@@ -101,7 +101,7 @@ class TopologyCompactSummaryTest extends TestCase {
 	}
 
 	public function test_firehose_workers_and_jobs_registers_compact_summary_fanout(): void {
-		$this->load_topology( 'combined' );
+		$this->load_topology( 'complete' );
 
 		$this->assertNotNull( Core::node( 'completed:tee' ), 'completed:tee should be registered' );
 		$this->assertNotNull( Core::node( 'completed:partition' ), 'completed:partition should be registered' );
@@ -109,7 +109,7 @@ class TopologyCompactSummaryTest extends TestCase {
 	}
 
 	public function test_firehose_workers_only_registers_compact_summary_fanout(): void {
-		$this->load_topology( 'combined' );
+		$this->load_topology( 'complete' );
 
 		$this->assertNotNull( Core::node( 'completed:tee' ), 'completed:tee should be registered' );
 		$this->assertNotNull( Core::node( 'completed:partition' ), 'completed:partition should be registered' );
@@ -117,7 +117,7 @@ class TopologyCompactSummaryTest extends TestCase {
 	}
 
 	public function test_completed_tee_fans_out_to_both_partitions(): void {
-		$this->load_topology( 'combined' );
+		$this->load_topology( 'complete' );
 
 		$tee = Core::node( 'completed:tee' );
 		$this->assertNotNull( $tee );
@@ -128,7 +128,7 @@ class TopologyCompactSummaryTest extends TestCase {
 	}
 
 	public function test_request_builder_completed_target_set_to_completed_tee(): void {
-		$this->load_topology( 'combined' );
+		$this->load_topology( 'complete' );
 
 		$rb = Core::node( 'request-builder' );
 		$this->assertInstanceOf( Request_Builder_Node::class, $rb );
@@ -138,7 +138,7 @@ class TopologyCompactSummaryTest extends TestCase {
 	}
 
 	public function test_request_builder_flight_target_set_to_gyroscope_partition(): void {
-		$this->load_topology( 'combined' );
+		$this->load_topology( 'complete' );
 
 		$rb = Core::node( 'request-builder' );
 		$this->assertInstanceOf( Request_Builder_Node::class, $rb );
@@ -146,7 +146,7 @@ class TopologyCompactSummaryTest extends TestCase {
 	}
 
 	public function test_dump_config_round_trips_topology_targets(): void {
-		$this->load_topology( 'combined' );
+		$this->load_topology( 'complete' );
 
 		$rb = Core::node( 'request-builder' );
 		$this->assertInstanceOf( Request_Builder_Node::class, $rb );
@@ -168,7 +168,7 @@ class TopologyCompactSummaryTest extends TestCase {
 	 * line must resolve all new retention tokens from config in the new order.
 	 */
 	public function test_config_token_partition_carries_new_retention_geometry(): void {
-		$this->load_topology( 'combined' );
+		$this->load_topology( 'complete' );
 
 		$errors = Core::node( 'errors:partition' );
 		$this->assertInstanceOf( Partition_Node::class, $errors );
@@ -220,17 +220,17 @@ class TopologyCompactSummaryTest extends TestCase {
 	}
 
 	public function test_errors_partition_enforces_the_pipe_buf_cap(): void {
-		$this->load_topology( 'combined' );
+		$this->load_topology( 'complete' );
 		$this->assert_partition_enforces_pipe_buf_cap( 'errors:partition' );
 	}
 
 	public function test_completed_partition_enforces_the_pipe_buf_cap(): void {
-		$this->load_topology( 'combined' );
+		$this->load_topology( 'complete' );
 		$this->assert_partition_enforces_pipe_buf_cap( 'completed:partition' );
 	}
 
 	public function test_gyroscope_partition_enforces_the_pipe_buf_cap(): void {
-		$this->load_topology( 'combined' );
+		$this->load_topology( 'complete' );
 		$this->assert_partition_enforces_pipe_buf_cap( 'gyroscope:partition' );
 	}
 
@@ -240,7 +240,7 @@ class TopologyCompactSummaryTest extends TestCase {
 	 * segment counts from config.
 	 */
 	public function test_literal_zero_partition_carries_new_retention_geometry(): void {
-		$this->load_topology( 'combined' );
+		$this->load_topology( 'complete' );
 
 		$completed = Core::node( 'completed:partition' );
 		$this->assertInstanceOf( Partition_Node::class, $completed );
