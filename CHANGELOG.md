@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.51.2] - 2026-08-11
+
+### Fixed
+
+- **Rebuilt against substrate v2.23.0, whose SSE client fixes the resume.**
+  Every dashboard stream here inlines `SseInNode`, which used to depend on the
+  browser's `Last-Event-ID` header — a header a freshly-constructed
+  `EventSource` never sends. So switching back to a tab of viewers tail-seeked
+  past exactly the window you returned to read. The client now owns its
+  reconnect and carries its own `positions`.
+
 ## [0.51.1] - 2026-08-10
 
 ### Fixed
