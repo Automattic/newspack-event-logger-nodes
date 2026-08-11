@@ -3,12 +3,7 @@
  * Guard test: structural invariants of the stock `.tsl` topologies.
  *
  * These assert the SHAPE the topologies must keep so a hand-assembled graph
- * can't silently drop a load-bearing wire. The motivating miss: `combined.tsl`
- * fed `requests:consumer → flame-builder` but never ran
- * `add_snapshot_node flame-builder`, so the Consumer's checkpoint skipped
- * flame-builder's `save_state()` — the stats mirror never flushed and the
- * in-flight leaderboard state never resumed on respawn. Its siblings
- * (`flame-builder.tsl`, `performance.tsl`) had the line; combined didn't.
+ * can't silently drop a load-bearing wire.
  *
  * The invariants derive from the topologies themselves (glob + parse), so a new
  * topology or a new stateful node is covered automatically.
@@ -90,7 +85,7 @@ class TopologyShapeTest extends TestCase {
 			\dirname( __DIR__, 3 ) . '/newspack-nodes/topologies'
 		);
 
-		foreach ( [ 'combined', 'performance', 'flame-builder' ] as $topology ) {
+		foreach ( [ 'complete', 'performance', 'flame-builder' ] as $topology ) {
 			$edges = \Newspack_Nodes\Topology_Analyzer::graph_for( $topology )['edges'];
 			$this->assertContains(
 				[ 'flame-builder', 'flame-stats:partition' ],
@@ -125,7 +120,7 @@ class TopologyShapeTest extends TestCase {
 
 	/** Staleness lives in the Age_Sieve between job-router and disk, not in Job_Router. */
 	public function test_job_router_topologies_sieve_by_age_before_disk(): void {
-		foreach ( [ 'job-router', 'combined' ] as $topology ) {
+		foreach ( [ 'job-router', 'complete' ] as $topology ) {
 			$statements = \array_column(
 				\Newspack_Nodes\Topology_Analyzer::statements( $topology )['statements'],
 				'line'
