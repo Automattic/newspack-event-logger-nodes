@@ -58,6 +58,21 @@ class Config {
 	private static $config_defaults = null;
 
 	/**
+	 * Memoized `is_hub`. A process-lifetime constant, but deriving it walks
+	 * every active topology's graph — cleared by `reset_local_cache()`.
+	 *
+	 * @var bool|null
+	 */
+	private static ?bool $is_hub = null;
+
+	/**
+	 * Set while `has_hub_topology()` is deriving, to break re-entrancy.
+	 *
+	 * @var bool
+	 */
+	private static bool $deriving_is_hub = false;
+
+	/**
 	 * Fully-qualified option names that must NOT autoload — the single source of
 	 * truth `autoload_for()` answers from. Both are discovery staging options:
 	 * they sit outside `Settings_Schema`, so `load_config()` never reads them,
@@ -163,17 +178,74 @@ class Config {
 		$config = self::load_config();
 
 		if ( 'is_hub' === $key ) {
-			// A hub RUNS `aggregator` — directly, or via a local wrapper.
-			foreach ( \array_keys( \Newspack_Nodes\Bootstrap::get_topologies() ) as $active ) {
-				if ( 'aggregator' === $active
-					|| \in_array( 'aggregator', Topology_Analyzer::includes( $active ), true ) ) {
-					return true;
-				}
-			}
-			return false;
+			return self::has_hub_topology();
 		}
 
 		return $config[ $key ] ?? null;
+	}
+
+	/**
+	 * Whether any active topology makes this install a hub.
+	 *
+	 * Two signals, because neither covers both shapes. The stock `aggregator`
+	 * ships NO `Remote_Source` nodes — the operator wires them on the console
+	 * canvas — so it is only recognisable by name. A deployment that forks the
+	 * stock file to change an argument renames it, so its include chain never
+	 * says `aggregator`, and only its wired readers give it away.
+	 *
+	 * Name-matching alone is what silently turned per-server stats off on a
+	 * hub running `aggregator-hub` → `aggregator-fdn` → `aggregator-fanout`.
+	 *
+	 * @return bool True when an active topology aggregates from spokes.
+	 */
+	private static function has_hub_topology(): bool {
+		if ( null !== self::$is_hub ) {
+			return self::$is_hub;
+		}
+		// @longform
+		// Re-entrancy, not just caching: graph_for() resolves the config
+		// tokens in a `set_*target` line, so a topology naming <eln:is_hub>
+		// there would recurse through here until PHP died. flame-builder.tsl
+		// already carries `set_is_hub <eln:is_hub>`, spared only because that
+		// verb misses the analyzer's `^set_\w*target$` match — one rename
+		// away. Claiming "not a hub" while deriving breaks the cycle.
+		if ( self::$deriving_is_hub ) {
+			return false;
+		}
+		self::$deriving_is_hub = true;
+		try {
+			self::$is_hub = self::derive_hub_topology();
+		} finally {
+			self::$deriving_is_hub = false;
+		}
+		return self::$is_hub;
+	}
+
+	/**
+	 * The uncached derivation. Two signals, because neither covers both
+	 * shapes — see {@see has_hub_topology()}.
+	 *
+	 * @return bool True when an active topology aggregates from spokes.
+	 */
+	private static function derive_hub_topology(): bool {
+		foreach ( \array_keys( \Newspack_Nodes\Bootstrap::get_topologies() ) as $active ) {
+			$name = \Newspack_Nodes\Core::as_string( $active );
+			try {
+				// includes() THROWS on a bad .tsl; token resolution must not.
+				if ( 'aggregator' === $name
+					|| \in_array( 'aggregator', Topology_Analyzer::includes( $name ), true ) ) {
+					return true;
+				}
+				foreach ( Topology_Analyzer::graph_for( $name )['nodes'] as $node ) {
+					if ( 'Remote_Source' === ( $node['type'] ?? '' ) ) {
+						return true;
+					}
+				}
+			} catch ( \RuntimeException $e ) {
+				continue;
+			}
+		}
+		return false;
 	}
 
 	/**
@@ -308,6 +380,7 @@ class Config {
 	public static function reset_local_cache(): void {
 		self::$config          = null;
 		self::$config_defaults = null;
+		self::$is_hub          = null;
 	}
 
 	/**

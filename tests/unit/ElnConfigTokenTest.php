@@ -84,6 +84,25 @@ class ElnConfigTokenTest extends TestCase {
 		$this->assertSame( '1', Core::resolve_config_token( 'eln', 'is_hub' ) );
 	}
 
+	public function test_is_hub_true_when_an_active_topology_wires_remote_sources(): void {
+		// A deployment that FORKS the stock aggregator to change one argument
+		// renames it, so no name in the include chain is `aggregator` — but the
+		// graph still reads from spokes, which is what makes a site a hub.
+		$dir = $this->make_temp_dir( 'eln-hub-fork-' );
+		\file_put_contents(
+			"{$dir}/okapi-fanout.tsl",
+			"make_node Remote_Source firehose:okapi okapi firehose.p<partition>\n"
+		);
+		\file_put_contents( "{$dir}/okapi-hub.tsl", "include okapi-fanout\n" );
+		Topology_Registry::register_user_dir( $dir );
+
+		$GLOBALS['_wp_options']['newspack_nodes_topologies'] = [ 'combined', 'okapi-hub' ];
+		\Newspack_Nodes\Config::reset();
+		Config::reset();
+
+		$this->assertSame( '1', Core::resolve_config_token( 'eln', 'is_hub' ) );
+	}
+
 	// --- schema-token / owned-empty guards ----------------------------------
 
 	public function test_stats_mirror_node_unset_is_owned_empty_under_strict(): void {
