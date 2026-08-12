@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`dump_config` quotes every name it emits.** Each `command_node <name>:config`
+  line was built by interpolating the node name raw, so a node whose name held a
+  space emitted a line with one token too many and replayed as a different graph.
+  The lines now go through the substrate's `Node::config_line()`, which serializes
+  the whole token list (substrate v-next). Dump output uses the canonical
+  `command_node` verb; `cmd` remains a valid input alias.
+
 ## [0.51.4] - 2026-08-11
 
 ### Fixed

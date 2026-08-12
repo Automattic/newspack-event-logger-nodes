@@ -803,7 +803,7 @@ class Request_Builder_Node extends Timer_Node {
 
 	/**
 	 * Emit the base config plus this node's verb-config, from STATE — one
-	 * `cmd {name}:config <verb> <value>` line per setting that differs from its
+	 * `command_node {name}:config <verb> <value>` line per setting that differs from its
 	 * default, for dump_config introspection (REPL/GUI). No generic verb recording.
 	 *
 	 * The two `set_inflight_*` lines read from the Flight sibling, whose own
@@ -815,20 +815,20 @@ class Request_Builder_Node extends Timer_Node {
 	public function dump_config(): string {
 		$out = parent::dump_config();
 		if ( '' !== $this->errors_target ) {
-			$out .= "cmd {$this->name}:config set_errors_target {$this->errors_target}\n";
+			$out .= $this->config_line( 'set_errors_target', $this->errors_target );
 		}
 		if ( '' !== $this->alerts_target ) {
-			$out .= "cmd {$this->name}:config set_alerts_target {$this->alerts_target}\n";
+			$out .= $this->config_line( 'set_alerts_target', $this->alerts_target );
 		}
 		if ( '' !== $this->completed_target ) {
-			$out .= "cmd {$this->name}:config set_completed_target {$this->completed_target}\n";
+			$out .= $this->config_line( 'set_completed_target', $this->completed_target );
 		}
 		$inflight_target = $this->flight()->target();
 		if ( \is_string( $inflight_target ) && '' !== $inflight_target ) {
-			$out .= "cmd {$this->name}:config set_inflight_target {$inflight_target}\n";
+			$out .= $this->config_line( 'set_inflight_target', $inflight_target );
 		}
 		if ( $this->flight()->delta() ) {
-			$out .= "cmd {$this->name}:config set_inflight_delta 1\n";
+			$out .= $this->config_line( 'set_inflight_delta', '1' );
 		}
 		return $out;
 	}

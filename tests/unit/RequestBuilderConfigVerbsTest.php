@@ -7,8 +7,8 @@
  * and the hidden Flight sibling (in-flight snapshot target + interval),
  * without needing PHP glue in the topology. They're invoked via:
  *
- *     cmd request-builder:config set_completed_target completed:tee
- *     cmd request-builder:config set_inflight_target  gyroscope:partition
+ *     command_node request-builder:config set_completed_target completed:tee
+ *     command_node request-builder:config set_inflight_target  gyroscope:partition
  *
  * The Flight verbs proxy through `$patron->flight()` (the hidden sibling
  * attached in RequestBuilder's ctor) rather than touching $patron state
@@ -114,7 +114,7 @@ class RequestBuilderConfigVerbsTest extends TestCase {
 		$this->assertStringNotContainsString( 'set_inflight_delta', $rb->dump_config() );
 		$rb->flight()->set_delta( true );
 		$this->assertStringContainsString(
-			'cmd rb-delta-dump:config set_inflight_delta 1',
+			'command_node rb-delta-dump:config set_inflight_delta 1',
 			$rb->dump_config()
 		);
 	}
@@ -151,7 +151,7 @@ class RequestBuilderConfigVerbsTest extends TestCase {
 		$this->assertStringNotContainsString( 'set_alerts_target', $rb->dump_config() );
 		$rb->set_alerts_target( 'alerts:partition' );
 		$this->assertStringContainsString(
-			'cmd rb-alerts-dump:config set_alerts_target alerts:partition',
+			'command_node rb-alerts-dump:config set_alerts_target alerts:partition',
 			$rb->dump_config()
 		);
 	}
