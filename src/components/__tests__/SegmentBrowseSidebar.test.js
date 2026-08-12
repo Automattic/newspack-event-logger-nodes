@@ -136,8 +136,8 @@ test( 'renders the segment sidebar with formatted sizes + Live/Replay when a par
 	expect( sidebar ).toBeTruthy();
 	expect( sidebar.textContent ).toContain( 'Segment 9' );
 	expect( sidebar.textContent ).toContain( 'Segment 8' );
-	// formatBytes: 2048 → 2.0 KB, 512 → 512 B.
-	expect( sidebar.textContent ).toContain( '2.0 KB' );
+	// formatBytes: 2048 → 2 KB, 512 → 512 B (the ladder drops a bare .0).
+	expect( sidebar.textContent ).toContain( '2 KB' );
 	expect( sidebar.textContent ).toContain( '512 B' );
 	expect( sidebar.textContent ).toMatch( /Live/ );
 	expect( sidebar.textContent ).toMatch( /Replay/ );
@@ -234,5 +234,5 @@ test( 'formats a megabyte-scale segment size', () => {
 	} );
 	expect(
 		container.querySelector( '.newspack-nodes-log-browser' ).textContent
-	).toContain( '5.0 MB' );
+	).toContain( '5 MB' );
 } );

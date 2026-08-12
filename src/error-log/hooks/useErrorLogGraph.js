@@ -33,17 +33,11 @@
  */
 
 import { useRef, useState, useCallback } from '@wordpress/element';
-import {
-	TYPE,
-	FROM,
-	VALUE,
-	TM_STRUCT,
-	newMessage,
-} from '@newspack-nodes/runtime';
 import '../nodes/register';
 import usePageVisibility from '@newspack-nodes/shared/hooks/usePageVisibility';
 import { useVisibilityGatedLink } from '@newspack-nodes/shared/hooks/useVisibilityGatedLink';
 import useGlobBrowse, { connectPositions } from '../../hooks/useGlobBrowse';
+import { controlMsg } from '@newspack-nodes/shared/helpers/controlMsg';
 
 // The RemoteLink node, the inspectable stream Tee, and the view-model node.
 const LINK = 'perferrors:link';
@@ -52,21 +46,12 @@ const VIEW = 'perferrors:view';
 // The glob this dashboard tails across partitions.
 const GLOB = 'errors.*';
 
-// A control the view applies because of its FROM, never its payload shape.
-const controlMsg = ( value ) => {
-	const m = newMessage();
-	m[ TYPE ] = TM_STRUCT;
-	m[ FROM ] = VIEW;
-	m[ VALUE ] = value;
-	return m;
-};
-
 /**
  * Mount the Error Log graph and return the React view's controls.
  *
  * @param {Object} [opts]            Options.
  * @param {number} [opts.maxEntries] View ring cap (default 5000).
- * @return {{ setPaused: Function, clear: Function, browse: Object }}
+ * @return {{ setPaused: Function, clear: () => void, browse: Object }}
  *   Control callbacks plus the browse model for the thin React view (the view's
  *   own state is read via useNodeState). Reset Graph is driven by a
  *   `Core.bumpGraphGeneration()` bump — mountExospine subscribes this mount's
@@ -120,7 +105,9 @@ export function useErrorLogGraph( opts = {} ) {
 
 			// Re-publish a surviving pause to the fresh view on reinit.
 			if ( isPausedRef.current ) {
-				view.fill( controlMsg( { action: 'pause', paused: true } ) );
+				view.fill(
+					controlMsg( view, { action: 'pause', paused: true } )
+				);
 			}
 
 			return { link, view };
@@ -152,7 +139,9 @@ export function useErrorLogGraph( opts = {} ) {
 		isPausedRef.current = paused;
 		setIsPaused( paused );
 		if ( viewRef.current ) {
-			viewRef.current.fill( controlMsg( { action: 'pause', paused } ) );
+			viewRef.current.fill(
+				controlMsg( viewRef.current, { action: 'pause', paused } )
+			);
 		}
 	};
 	setPausedRef.current = setPaused;
@@ -160,7 +149,9 @@ export function useErrorLogGraph( opts = {} ) {
 	// clear: empty the view ring (counter + rate reset ride along).
 	const clear = () => {
 		if ( viewRef.current ) {
-			viewRef.current.fill( controlMsg( { action: 'clear' } ) );
+			viewRef.current.fill(
+				controlMsg( viewRef.current, { action: 'clear' } )
+			);
 		}
 	};
 

@@ -17,7 +17,7 @@
 
 import { __, sprintf } from '@wordpress/i18n';
 import LogBrowser from '@newspack-nodes/shared/components/LogBrowser';
-import formatBytes from '@newspack-nodes/shared/utils/formatBytes';
+import { formatBytes } from '@newspack-nodes/shared/utils/formatters';
 import './SegmentBrowseSidebar.scss';
 
 /**

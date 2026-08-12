@@ -9,12 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Clear sends the view's control instead of relying on a fallback.** The Error Log
+  and Request Stream passed no `onClear`, so the shared `LogStreamViewer` reached
+  past the graph and assigned `node.lines = []` directly. Both now pass the `clear`
+  their graph hooks already returned, and the substrate's fallback is deleted.
+
+
 - **`dump_config` quotes every name it emits.** Each `command_node <name>:config`
   line was built by interpolating the node name raw, so a node whose name held a
   space emitted a line with one token too many and replayed as a different graph.
   The lines now go through the substrate's `Node::config_line()`, which serializes
   the whole token list (substrate v-next). Dump output uses the canonical
   `command_node` verb; `cmd` remains a valid input alias.
+
+### Changed
+
+- **Segment sizes render through the shared formatter ladder.** `SegmentBrowseSidebar`
+  imported the substrate's one-decimal `formatBytes` shim, which capped at MB; it now
+  imports `{ formatBytes }` from `shared/utils/formatters`, which guards both ends and
+  carries GB/TB. Visible change: a size on an exact rung loses its trailing `.0`
+  (`2.0 KB` → `2 KB`), and a GB-scale segment no longer renders as thousands of MB.
+
+- **The three dashboard graph hooks share the substrate's `controlMsg`.** Each carried
+  a private copy that closed over its own `VIEW` constant; the shared one reads
+  `view.controlFrom` and throws when a view declares none.
 
 ## [0.51.4] - 2026-08-11
 

@@ -283,7 +283,7 @@ const StreamRow = memo(
  */
 export default function RequestStream( { maxEntries = 500 } ) {
 	// Mount the graph; returns the control callbacks + the browse model.
-	const { setPaused, browse } = useRequestLogGraph( { maxEntries } );
+	const { setPaused, clear, browse } = useRequestLogGraph( { maxEntries } );
 
 	// Low-freq view model (pause button, empty-state label, reconnect banner).
 	const view = useNodeState( VIEW_NODE, 'view' ) ?? EMPTY_VIEW;
@@ -414,6 +414,7 @@ export default function RequestStream( { maxEntries = 500 } ) {
 					: undefined
 			}
 			getViewNode={ getViewNode }
+			onClear={ clear }
 			sidebar={
 				<SegmentBrowseSidebar
 					browse={ browse }
