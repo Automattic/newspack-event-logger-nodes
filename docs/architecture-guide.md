@@ -48,7 +48,7 @@ This plugin replaced the legacy `newspack-event-logger-plugins` monorepo wholesa
 +---------------------------------------------------------------------------------+
 |                READ PATH (Worker, ~10 min substrate-controlled lifespan)        |
 |                                                                                 |
-|  topology combined.pN (= request-builder + flame-builder + job-router):         |
+|  topology complete.pN (= request-builder + flame-builder + job-hub):            |
 |                                                                                 |
 |    Consumer(firehose.pN)  ----> Tee ----> Request_Builder ----> requests.pN     |
 |                                  |               +---> errors.p0                |
@@ -202,13 +202,13 @@ Each worker group is one declarative `.tsl` file in `topologies/`. A TSL file is
 | `var <key> = <value>;` | Declare frontmatter the runtime reads via `Topology_Registry::frontmatter()`. |
 | `secure` | Climb the interpreter's secure ratchet one level, retiring management verbs. |
 
-`<partition>` and `<topology>` are bound by `Topology_Loader`; `<config:logs_dir>`, `<config:num_segments>`, and friends resolve against the substrate Config; `<eln:stats_mirror_node>` and `<eln:is_hub>` resolve against the application Config (the v0.4.0 namespace split). `<topology>` names the FLEET, which is why every offsetlog and dead-letter path carries it: an offsetlog is a reader's cursor and the reader is the fleet, so a `request-builder` fleet and a `combined` fleet tailing the same `firehose.pN` keep separate cursors instead of stealing each other's position. That is also what lets several topologies share one byte-identical Consumer line.
+`<partition>` and `<topology>` are bound by `Topology_Loader`; `<config:logs_dir>`, `<config:num_segments>`, and friends resolve against the substrate Config; `<eln:stats_mirror_node>` and `<eln:is_hub>` resolve against the application Config (the v0.4.0 namespace split). `<topology>` names the FLEET, which is why every offsetlog and dead-letter path carries it: an offsetlog is a reader's cursor and the reader is the fleet, so a `request-builder` fleet and a `complete` fleet tailing the same `firehose.pN` keep separate cursors instead of stealing each other's position. That is also what lets several topologies share one byte-identical Consumer line.
 
-Two things about `include` are easy to trip over. Frontmatter is read from the TOP-LEVEL file only, so a `var` inside an included file is skipped. And the Shell tracks included files, so a file pulled in twice by two different parents runs once — which is what lets `performance` and `combined` each include several files that all include `topic-probe`. A `secure` line inside an included file is skipped too; only the top-level one ratchets.
+Two things about `include` are easy to trip over. Frontmatter is read from the TOP-LEVEL file only, so a `var` inside an included file is skipped. And the Shell tracks included files, so a file pulled in twice by two different parents runs once — which is what lets `performance` and `complete` each include several files that all include `topic-probe`. A `secure` line inside an included file is skipped too; only the top-level one ratchets.
 
 The `make_node` first argument is a **shell name** the substrate resolves to a fully-qualified class by scanning the registered namespace prefixes (`make_node Request_Builder` → `\Newspack_Event_Logger_Nodes\Request_Builder_Node`); the single-word substrate types (`Consumer`, `Partition`, `Tee`, `Topic`, `Age_Sieve`, `Remote_Source`) resolve under the substrate's own prefix.
 
-Seven `.tsl` files ship: `request-builder`, `flame-builder`, `job-router`, `performance`, `combined`, `aggregator`, and `hub-control`. The last four are composed from the first three plus substrate stock topologies, so the primitive files are the ones to read. Job *dispatch* (`Job_Worker_Node` tailing `jobs.log`) is NOT shipped here — it comes from the substrate's stock `job-worker` topology (the local `job-worker.tsl` was deleted in v0.12.0 when `Job_Worker_Node` moved to the substrate).
+Ten `.tsl` files ship: `request-builder`, `flame-builder`, `job-router`, `job-feed`, `job-spoke`, `job-hub`, `performance`, `complete`, `aggregator`, and `hub-control`. The last five are composed from the others plus substrate stock topologies, so the primitive files are the ones to read. Job *dispatch* (`Job_Worker_Node` tailing `jobs.log`) is NOT shipped here — it comes from the substrate's stock `job-worker` topology (the local `job-worker.tsl` was deleted in v0.12.0 when `Job_Worker_Node` moved to the substrate).
 
 Every file ends with `secure`, and every one pulls in the substrate's stock `topic-probe` — directly, or through a file it includes. That probe mounts a 15s `Topic_Probe` sweep writing per-worker Consumer stats to `topicprobe.p0`.
 
@@ -313,14 +313,13 @@ secure
 
 Both included files include `topic-probe`, so the composition mounts one probe and two Consumers. Use it where job dispatch lives in a separate fleet (or the substrate stock `job-worker`) and you want request assembly plus flame stats in one worker group.
 
-### `topologies/combined.tsl`
+### `topologies/complete.tsl`
 
-The everything-in-one worker: request assembly, flame stats, and job routing in one process.
+The everything-in-one worker: request assembly, flame stats, job routing and job dispatch in one process.
 
 ```tsl
-include request-builder
-include flame-builder
-include job-router
+include performance
+include job-hub
 make_node Tee firehose:tee
 disconnect_node firehose:consumer
 connect_node firehose:consumer firehose:tee
@@ -436,7 +435,7 @@ class Request_Flight_Node extends Timer_Node {
 }
 ```
 
-It has no `set_interval()` / `interval()` / `fire_cb()` — those were removed in v0.16.0. Snapshots hitchhike the Router's 1s TIMER via `fire()` (the `Timer_Node` contract); a non-empty `target()` is the sole enable switch, and clearing it stops the timer. The node is hidden from the topology console by the substrate's patron filter in `dump_metadata`, and from the palette by its own `node_schema()` category. Its configuration surfaces on the patron's `:config` interpreter as `set_inflight_target` and `set_inflight_delta` — the `request-builder` topology (and therefore `performance` and `combined`) wires it with `cmd request-builder:config set_inflight_target gyroscope:partition`. Delta mode is off by default, so every tick re-emits every row and a fresh subscriber sees the whole cache in one tick; turning it on emits only rows whose activity advanced since the previous fire.
+It has no `set_interval()` / `interval()` / `fire_cb()` — those were removed in v0.16.0. Snapshots hitchhike the Router's 1s TIMER via `fire()` (the `Timer_Node` contract); a non-empty `target()` is the sole enable switch, and clearing it stops the timer. The node is hidden from the topology console by the substrate's patron filter in `dump_metadata`, and from the palette by its own `node_schema()` category. Its configuration surfaces on the patron's `:config` interpreter as `set_inflight_target` and `set_inflight_delta` — the `request-builder` topology (and therefore `performance` and `complete`) wires it with `cmd request-builder:config set_inflight_target gyroscope:partition`. Delta mode is off by default, so every tick re-emits every row and a fresh subscriber sees the whole cache in one tick; turning it on emits only rows whose activity advanced since the previous fire.
 
 Because the snapshot rides `Request_Builder_Node`'s own in-flight map (the same `LRU_Cache` buckets it already maintains for request assembly), there's no second tracker to keep coherent — the previous standalone `InflightTracker` class (deleted in the M6 consolidation, along with the legacy per-stream SSE controllers) was a separate in-memory copy of state the builder already held.
 
@@ -561,7 +560,7 @@ Hub-side periodic discovery fan-out. A `Timer_Node` the `hub-control` topology m
 
 ### Stats production (owned by Flame_Builder_Node)
 
-There is no separate stats Node. The standalone `StatsAggregator` Node — the variant for topologies that wanted memcache stats without flame data — was removed in the M6 consolidation; `Flame_Builder_Node` is the single stats producer, owning flame generation AND the 9-namespace memcache fan-out via its injected `Stats_Store`. The `flame-builder` topology (and therefore `performance` and `combined`) wires the store with `cmd flame-builder:config configure_stats <partition>`.
+There is no separate stats Node. The standalone `StatsAggregator` Node — the variant for topologies that wanted memcache stats without flame data — was removed in the M6 consolidation; `Flame_Builder_Node` is the single stats producer, owning flame generation AND the 9-namespace memcache fan-out via its injected `Stats_Store`. The `flame-builder` topology (and therefore `performance` and `complete`) wires the store with `cmd flame-builder:config configure_stats <partition>`.
 
 Each completed request is folded into `Flame_Builder_Node`'s in-memory pending stats across the same dimension set the reader paths whitelist — `DIM_FIELDS`, listed under [Flame_Builder_Node](#flame_builder_node).
 
