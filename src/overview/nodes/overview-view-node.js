@@ -8,7 +8,7 @@ import { DecodedSliceViewNode } from './decoded-slice-view-node';
  * and this subclass adds nothing but a name.
  *
  * `usePerformanceGraph` builds it through `addSliceFetcher` under the registered
- * class name `OverviewView`, on the polled `fetch-overview` → `overviewIn` →
+ * class name `OverviewView`, on the polled `overview:fetch` → `overview:in` →
  * `overview:view` path. `PerformanceDashboard` reads the slice with
  * useNodeState('overview:view','view') and passes the data down to the
  * presentational <OverviewSection>.

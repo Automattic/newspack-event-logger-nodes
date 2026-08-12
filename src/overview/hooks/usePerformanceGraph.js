@@ -9,10 +9,10 @@
  * lock/flush bracket that puts one tick into one POST, and the page-visibility
  * gate:
  *
- *   perf:timer (Timer) → perf:tee (Tee) → fetch-overview, fetch-urls (Fetchers)
+ *   perf:timer (Timer) → perf:tee (Tee) → overview:fetch, urls:fetch (Fetchers)
  *                                       → _shell/_http/performance
- *   overviewIn (Tee) → overview:view (OverviewView)
- *   urlsIn     (Tee) → urls:view     (UrlsView)
+ *   overview:in (Tee) → overview:view (OverviewView)
+ *   urls:in     (Tee) → urls:view     (UrlsView)
  *
  * Each Fetcher carries an `argsFn` fire-time getter that reads the CURRENT React
  * UI state, so a filter, sort, or page change rides the very next tick without
@@ -22,17 +22,17 @@
  * ON-DEMAND slices. Opening a modal fetches; neither slice hangs off `perf:timer`,
  * and the overview/urls poll pauses while either modal is open:
  *
- *   urldetailIn (Tee) → urldetail:merge (UrlDetailMerge) → urldetail:view (UrlDetailView)
- *   urldetail:timer (Timer) → fetch-urldetail (Fetcher) → _shell/_http/performance
- *   requestdetail:view (RequestDetailView)
+ *   urldetail:in (Tee) → urldetail:merge (UrlDetailMerge) → urldetail:view (UrlDetailView)
+ *   urldetail:timer (Timer) → urldetail:fetch (Fetcher) → _shell/_http/performance
+ *   requestdetail:in (Tee) → requestdetail:view (RequestDetailView)
  *
  * The url_detail reply rides through `UrlDetailMergeNode` on the receiver → view
  * edge: it merges each reply into the last one (dedup by rid, newest first, 500
  * rows) and DROPS a reply whose `last_modified` is unchanged, so an auto-refresh
  * tick never re-renders the modal for nothing. `urldetail:timer` is armed only
  * while URL detail is the visible modal and the tab is visible. `request_detail`
- * needs no receiver Tee — its command is minted FROM the view node, so the reply
- * lands there.
+ * mints from its own receiver Tee like every other slice: a view that is also the
+ * reply address carries two protocols at once.
  *
  * AWAITED verbs — `resolveRequest`, `resolveUrlHash`, `fetchUrlBreakdown`, the
  * three `rules` verbs, and `requestGrep` — each go out through their OWN `Request`
@@ -76,13 +76,18 @@ const GREP_RESULT_LIMIT = 20;
 
 // Slice view + receiver names.
 const OVERVIEW_VIEW = 'overview:view';
+const OVERVIEW_RECV = 'overview:in';
+const OVERVIEW_FETCHER = 'overview:fetch';
 const URLS_VIEW = 'urls:view';
+const URLS_RECV = 'urls:in';
+const URLS_FETCHER = 'urls:fetch';
 const URLDETAIL_VIEW = 'urldetail:view';
-const URLDETAIL_RECV = 'urldetailIn';
+const URLDETAIL_RECV = 'urldetail:in';
 const URLDETAIL_MERGE = 'urldetail:merge';
 const URLDETAIL_TIMER = 'urldetail:timer';
-const URLDETAIL_FETCHER = 'fetch-urldetail';
+const URLDETAIL_FETCHER = 'urldetail:fetch';
 const REQUESTDETAIL_VIEW = 'requestdetail:view';
+const REQUESTDETAIL_RECV = 'requestdetail:in';
 
 /**
  * `url_detail` args for the open modal. The auto-refresh tick and the
@@ -258,8 +263,8 @@ export function usePerformanceGraph( opts = {} ) {
 	const { interpreterRef, pollNow } = useBatchedPoll( {
 		build: ( { interpreter, tee } ) => {
 			addSliceFetcher( interpreter, {
-				fetcher: 'fetch-overview',
-				receiver: 'overviewIn',
+				fetcher: OVERVIEW_FETCHER,
+				receiver: OVERVIEW_RECV,
 				command: 'overview',
 				view: OVERVIEW_VIEW,
 				viewClass: 'OverviewView',
@@ -273,8 +278,8 @@ export function usePerformanceGraph( opts = {} ) {
 					} ),
 			} );
 			addSliceFetcher( interpreter, {
-				fetcher: 'fetch-urls',
-				receiver: 'urlsIn',
+				fetcher: URLS_FETCHER,
+				receiver: URLS_RECV,
 				command: 'urls',
 				view: URLS_VIEW,
 				viewClass: 'UrlsView',
@@ -289,14 +294,14 @@ export function usePerformanceGraph( opts = {} ) {
 			} );
 
 			// On-demand url_detail: Tee → merge → view; merge lives on edge.
-			const urldetailIn = interpreter.makeNode( 'Tee', URLDETAIL_RECV );
+			const urlDetailRecv = interpreter.makeNode( 'Tee', URLDETAIL_RECV );
 			const merge = interpreter.makeNode(
 				'UrlDetailMerge',
 				URLDETAIL_MERGE
 			);
 			merge.controlFrom = URLDETAIL_MERGE;
 			merge.connectNode( URLDETAIL_VIEW );
-			urldetailIn.connectNode( URLDETAIL_MERGE );
+			urlDetailRecv.connectNode( URLDETAIL_MERGE );
 			interpreter.makeNode(
 				'UrlDetailView',
 				URLDETAIL_VIEW
@@ -315,11 +320,14 @@ export function usePerformanceGraph( opts = {} ) {
 				.makeNode( 'Timer', URLDETAIL_TIMER )
 				.connectNode( URLDETAIL_FETCHER );
 
-			// On-demand request_detail: its view receives replies directly.
+			// On-demand request_detail: Tee → view, like every other slice.
 			interpreter.makeNode(
 				'RequestDetailView',
 				REQUESTDETAIL_VIEW
 			).controlFrom = REQUESTDETAIL_VIEW;
+			interpreter
+				.makeNode( 'Tee', REQUESTDETAIL_RECV )
+				.connectNode( REQUESTDETAIL_VIEW );
 
 			return () => {
 				if ( urlFetchTimerRef.current ) {
@@ -483,7 +491,7 @@ export function usePerformanceGraph( opts = {} ) {
 		sendCommand(
 			'request_detail',
 			formatCommandArgs( [ selectedRequest ], options ),
-			REQUESTDETAIL_VIEW
+			REQUESTDETAIL_RECV
 		);
 	}, [
 		selectedRequest,
@@ -520,7 +528,7 @@ export function usePerformanceGraph( opts = {} ) {
 						urlParams: urlParamsRef.current,
 						serverFilter: serverFilterRef.current,
 					} ),
-					'urlsIn'
+					URLS_RECV
 				);
 			};
 			if ( searchChanged ) {

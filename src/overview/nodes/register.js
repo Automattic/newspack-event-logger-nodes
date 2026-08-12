@@ -11,7 +11,7 @@
  *   - `OverviewView` → `overview:view`, and `UrlsView` → `urls:view`, both
  *     created by `addSliceFetcher` from its `viewClass` slot (polled slices);
  *   - `UrlDetailMerge` → `urldetail:merge`, the incremental-merge transform on
- *     the `urldetailIn` Tee → `urldetail:view` edge;
+ *     the `urldetail:in` Tee → `urldetail:view` edge;
  *   - `UrlDetailView` → `urldetail:view` and `RequestDetailView` →
  *     `requestdetail:view`, the two on-demand modal slices.
  */

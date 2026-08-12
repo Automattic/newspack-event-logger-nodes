@@ -4,12 +4,12 @@ import { DecodedSliceViewNode } from './decoded-slice-view-node';
  * `urldetail:view` — owns the on-demand `url_detail` slice behind the URL modal.
  *
  * The slice is fetched when the modal opens, then refreshed by its own
- * `urldetail:timer` → `fetch-urldetail` Fetcher, which `usePerformanceGraph`
+ * `urldetail:timer` → `urldetail:fetch` Fetcher, which `usePerformanceGraph`
  * arms only while a valid URL is selected, no request modal covers it, and the
  * tab is visible. It never rides the shared `perf:timer` poll that drives the
  * overview and urls slices.
  *
- * Replies land here already merged. The graph edge runs `urldetailIn` (Tee) →
+ * Replies land here already merged. The graph edge runs `urldetail:in` (Tee) →
  * `urldetail:merge` (UrlDetailMergeNode) → this node, and the merge node does
  * the incremental request-list merge, the `last_modified` dedup, and the
  * 500-request cap. So this subclass adds nothing to DecodedSliceViewNode: the

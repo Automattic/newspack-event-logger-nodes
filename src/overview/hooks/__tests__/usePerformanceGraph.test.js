@@ -3,10 +3,10 @@
  * substrate batched-poll toolkit (useBatchedPoll + addSliceFetcher), D1b.
  *
  * The graph:
- *   perf:timer (Timer) → perf:tee (Tee) → fetch-overview, fetch-urls (Fetchers,
+ *   perf:timer (Timer) → perf:tee (Tee) → overview:fetch, urls:fetch (Fetchers,
  *     each with an argsFn getter reading current React UI state) → _shell/_http/performance
- *   overviewIn (Tee) → overview:view (OverviewView)
- *   urlsIn     (Tee) → urls:view     (UrlsView)
+ *   overview:in (Tee) → overview:view (OverviewView)
+ *   urls:in     (Tee) → urls:view     (UrlsView)
  *   urldetail:merge (UrlDetailMerge) → urldetail:view (UrlDetailView)   [on-demand]
  *   requestdetail:view (RequestDetailView)                             [on-demand]
  *
@@ -277,6 +277,33 @@ describe( 'usePerformanceGraph — on-demand url_detail / request_detail', () =>
 			last_modified: 1,
 			requests: [],
 		} );
+	} );
+
+	// The view was BOTH the minter and the reply sink: request_detail went out
+	// FROM `requestdetail:view`, so one node carried two protocols — its own
+	// controls and a command reply. Every other slice mints from a receiver and
+	// forwards to its view; this one now does too.
+	test( 'request_detail is minted from the receiver, not from the view', async () => {
+		const wire = installWire( { request_detail: { rid: 'r1' } } );
+		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
+			initialProps: {},
+		} );
+		await act( async () => {} );
+		await act( async () => {
+			rerender( { selectedRequest: 'r1', requestPartition: 2 } );
+		} );
+
+		const req = findVerb( wire.batches, 'request_detail' );
+		expect( req[ FROM ] ).toBe( 'requestdetail:in' );
+		expect( req[ FROM ] ).not.toBe( 'requestdetail:view' );
+
+		const receiver = Core.node( 'requestdetail:in' );
+		expect( receiver ).toBeTruthy();
+		expect( receiver.target ).toContain( 'requestdetail:view' );
+		// The reply still reaches the view, through the receiver.
+		expect(
+			Core.node( 'requestdetail:view' ).setStateCache.view.data
+		).toEqual( { rid: 'r1' } );
 	} );
 
 	test( 'selecting a request fires request_detail with the partition', async () => {
@@ -725,7 +752,7 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 		expect( Core.node( 'perf:timer' ).mode ).toBe( 'router' );
 	} );
 
-	test( 'url_detail auto-refresh rides a urldetail:timer + fetch-urldetail Fetcher (a router tick re-fires url_detail with the hash)', async () => {
+	test( 'url_detail auto-refresh rides a urldetail:timer + urldetail:fetch Fetcher (a router tick re-fires url_detail with the hash)', async () => {
 		const wire = installWire( {
 			url_detail: { last_modified: 1, requests: [] },
 		} );
@@ -742,7 +769,7 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 		// On-demand slice runs on a real Timer + Fetcher, not setInterval.
 		expect( Core.node( 'urldetail:timer' ) ).toBeTruthy();
 		expect( Core.node( 'urldetail:timer' ).mode ).toBe( 'router' );
-		expect( Core.node( 'fetch-urldetail' ) ).toBeTruthy();
+		expect( Core.node( 'urldetail:fetch' ) ).toBeTruthy();
 
 		wire.batches.length = 0;
 		await act( async () => {

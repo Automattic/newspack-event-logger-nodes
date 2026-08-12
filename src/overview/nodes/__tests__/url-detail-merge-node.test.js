@@ -214,7 +214,7 @@ describe( 'UrlDetailMergeNode — control origin', () => {
 
 		const impostor = newMessage();
 		impostor[ TYPE ] = TM_STRUCT;
-		impostor[ FROM ] = 'urldetailIn';
+		impostor[ FROM ] = 'urldetail:in';
 		impostor[ VALUE ] = { action: 'clear' };
 		node.fill( impostor );
 
