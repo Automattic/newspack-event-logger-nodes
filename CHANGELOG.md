@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.51.4] - 2026-08-11
+
+### Fixed
+
+- **The URL detail chart's filter row sat flush against the header above it.**
+  Its wrapper carries no top margin, so the Metric / breakdown selects had
+  nothing separating them. The aggregate chart's matching row takes the same
+  `margin: 12px 0`, though there it changes nothing — that wrapper already has
+  `marginTop: 20px` — so the two rows now read as one rule rather than two
+  spacings that happened to agree.
+
+
 ## [0.51.3] - 2026-08-11
 
 ### Removed
