@@ -110,6 +110,7 @@ function browseMock( overrides = {} ) {
 
 describe( 'RequestStream', () => {
 	let setPaused;
+	let clearGraph;
 	const mounted = [];
 
 	beforeEach( () => {
@@ -119,9 +120,10 @@ describe( 'RequestStream', () => {
 		logBrowserProps = undefined;
 		setPaused = jest.fn();
 		useRequestLogGraph.mockClear();
+		clearGraph = jest.fn();
 		useRequestLogGraph.mockReturnValue( {
 			setPaused,
-			clear: jest.fn(),
+			clear: clearGraph,
 			browse: browseMock(),
 		} );
 	} );
@@ -252,12 +254,15 @@ describe( 'RequestStream', () => {
 		} );
 		const { container } = mount();
 		const before = logRowListProps.resetSignal;
+		const kept = node.lines;
 		const buttons = container.querySelectorAll( '.button' );
 		const clearBtn = Array.from( buttons ).find(
 			( b ) => b.textContent === 'Clear'
 		);
 		act( () => clearBtn.click() );
-		expect( node.lines ).toEqual( [] );
+		// Clear travels as the view's control; the viewer never blanks `lines`.
+		expect( clearGraph ).toHaveBeenCalledTimes( 1 );
+		expect( node.lines ).toBe( kept );
 		expect( logRowListProps.resetSignal ).toBe( before + 1 );
 	} );
 

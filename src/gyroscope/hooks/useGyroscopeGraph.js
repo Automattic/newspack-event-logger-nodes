@@ -31,16 +31,10 @@
  * clears the view's request map first, because rows that predate a gap are stale.
  */
 
-import {
-	TYPE,
-	FROM,
-	VALUE,
-	TM_STRUCT,
-	newMessage,
-} from '@newspack-nodes/runtime';
 import '../nodes/register';
 import usePageVisibility from '@newspack-nodes/shared/hooks/usePageVisibility';
 import { useVisibilityGatedLink } from '@newspack-nodes/shared/hooks/useVisibilityGatedLink';
+import { controlMsg } from '@newspack-nodes/shared/helpers/controlMsg';
 
 // The RemoteLink node, the inspectable stream Tee, and the view-model node.
 const LINK = 'gyroscope:link';
@@ -55,13 +49,6 @@ const VIEW = 'gyroscope:view';
  * @param {Object} value Control payload; `action` selects the view's branch.
  * @return {Array} A 7-field TM_STRUCT message.
  */
-const controlMsg = ( value ) => {
-	const m = newMessage();
-	m[ TYPE ] = TM_STRUCT;
-	m[ FROM ] = VIEW;
-	m[ VALUE ] = value;
-	return m;
-};
 
 /**
  * Mount the Gyroscope graph and own its SSE connection while the page is visible.
@@ -96,7 +83,7 @@ export function useGyroscopeGraph() {
 		isActive: isPageVisible,
 		onConnect: ( link, { isReconnect, view } ) => {
 			if ( view ) {
-				view.fill( controlMsg( { action: 'clear' } ) );
+				view.fill( controlMsg( view, { action: 'clear' } ) );
 			}
 			// A null seed tails; a reconnect resumes the last seen offsets.
 			link.connect( isReconnect ? link.resumePositions() : null );

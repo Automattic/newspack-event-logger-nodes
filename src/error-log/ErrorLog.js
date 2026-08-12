@@ -267,7 +267,7 @@ const listHeader = (
  */
 export default function ErrorLog() {
 	// Mount the graph; returns the control callbacks + the browse model.
-	const { setPaused, browse } = useErrorLogGraph();
+	const { setPaused, clear, browse } = useErrorLogGraph();
 
 	// Low-frequency view model (pause button + reconnect banner + empty-state).
 	const view = useNodeState( VIEW_NODE, 'view' ) ?? EMPTY_VIEW;
@@ -303,6 +303,7 @@ export default function ErrorLog() {
 					: undefined
 			}
 			getViewNode={ getViewNode }
+			onClear={ clear }
 			sidebar={
 				<SegmentBrowseSidebar
 					browse={ browse }
