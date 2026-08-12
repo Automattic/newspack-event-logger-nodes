@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+> **Release note — raise the substrate floor.** `Line_Fitter` moved into
+> `newspack-nodes`; this plugin now hard-requires it. The loader gate in
+> `newspack-event-logger-nodes.php` still names 2.21.0 and MUST be raised to the
+> substrate version that ships `\Newspack_Nodes\Line_Fitter` (the next release
+> after 2.24.0) as part of this plugin's release commit. It is deliberately not
+> raised yet: naming an untagged version would make this plugin dormant against
+> the substrate currently in the tree.
+
+### Changed
+
+- **`Line_Fitter` is the substrate's.** The PIPE_BUF fitting loop was this
+  plugin's, but the substrate hand-rolled the same measure-and-halve in two of
+  its own nodes. It now lives at `\Newspack_Nodes\Line_Fitter`; the three call
+  sites here are unchanged apart from the import.
+
 ### Fixed
 
 - **Clear sends the view's control instead of relying on a fallback.** The Error Log
