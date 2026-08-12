@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.51.3] - 2026-08-11
+
+### Removed
+
+- **`topologies/combined.tsl` and `topologies/jobs.tsl`.** Both were dead
+  duplicates: `complete.tsl` replaced `combined` when the topologies were
+  reorganized (v0.44.12), and it includes `job-hub` rather than `job-router`,
+  so it dispatches jobs as well as routing them. An install still naming
+  `combined` or `jobs` in the substrate's `topologies` config key must switch
+  to `complete`. The docs kept describing `combined` after the reorganize —
+  the architecture guide's read-path diagram, its per-topology section and the
+  README topology list all say `complete` now.
+
+### Changed
+
+- **Substrate pin moves to newspack-nodes v2.24.0.** The browser Shell now has
+  one entry point, `fill( message )`, and the debug overlay this plugin embeds
+  mounts a `_stdout` node for builtin output. Nothing here called the retired
+  `ShellNode.sendCommand()` / `parse()`+`dispatch()` pair, so no source change
+  was needed — but the inlined overlay is only rebuilt against the new
+  substrate by a release, which is what this one is for.
+
+
 ## [0.51.2] - 2026-08-11
 
 ### Fixed

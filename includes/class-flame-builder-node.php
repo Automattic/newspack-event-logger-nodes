@@ -23,7 +23,7 @@
  * newly significant events accumulate here and are emitted as messages to the
  * owned `Auto_Tuner_Node` sibling, which rewrites the rule.
  *
- * Worker context: this node runs inside the `flame-builder` (or `combined`)
+ * Worker context: this node runs inside the `flame-builder` (or `complete`)
  * topology. See `topologies/flame-builder.tsl` for the wiring.
  *
  * @package Newspack_Event_Logger_Nodes
