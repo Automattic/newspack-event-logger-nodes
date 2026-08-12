@@ -12,7 +12,7 @@ import { DecodedSliceViewNode } from './decoded-slice-view-node';
  * them, since its args produced them.
  *
  * `usePerformanceGraph` builds it through `addSliceFetcher` under the
- * registered class name `UrlsView`, on the polled `fetch-urls` → `urlsIn` →
+ * registered class name `UrlsView`, on the polled `urls:fetch` → `urls:in` →
  * `urls:view` path. `PerformanceDashboard` reads the slice with
  * useNodeState('urls:view','view') and passes `data` and `total` down to the
  * presentational <UrlTable> as its `urls` and `totalUrls` props.

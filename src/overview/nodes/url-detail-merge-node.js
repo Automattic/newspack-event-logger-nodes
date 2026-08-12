@@ -3,7 +3,7 @@ import { Node, VALUE, FROM } from '@newspack-nodes/runtime';
 /**
  * `urldetail:merge` — the url_detail incremental merge and `last_modified`
  * dedup, hosted on the receiver-Tee → view graph EDGE rather than inside the
- * view (D1b de-god). `usePerformanceGraph` wires it by hand as `urldetailIn`
+ * view (D1b de-god). `usePerformanceGraph` wires it by hand as `urldetail:in`
  * (Tee) → `urldetail:merge` → `urldetail:view`, the edge shape
  * `addSliceFetcher` standardizes in its optional `transform` slot.
  *

@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`request_detail` mints from its own receiver, not from the view.** Its
+  command went out `FROM requestdetail:view`, so that one node was both the
+  minter and the reply sink — carrying its own controls and a command reply on
+  the same `fill()`. Every other slice mints from a receiver Tee and forwards to
+  its view; `requestdetail:in` now does the same, leaving the view a view.
+
+### Changed
+
+- **Performance-dashboard node names follow `<slice>:<role>`.** The polled
+  fetchers and receiver Tees were the only nodes in the graph named another way —
+  `fetch-overview` / `overviewIn` beside `overview:view`, `urldetail:merge` and
+  `urldetail:timer`. They become `overview:fetch` / `overview:in`,
+  `urls:fetch` / `urls:in` and `urldetail:fetch` / `urldetail:in`, and the two
+  that were inline strings gain constants like the rest. Canvas layouts persisted
+  against the old names will not match and re-lay-out once.
+
 > **Release note — raise the substrate floor.** `Line_Fitter` moved into
 > `newspack-nodes`; this plugin now hard-requires it. The loader gate in
 > `newspack-event-logger-nodes.php` still names 2.21.0 and MUST be raised to the
