@@ -357,7 +357,7 @@ export default function OverviewSection( {
 									style={ {
 										display: 'flex',
 										gap: '16px',
-										marginBottom: '12px',
+										margin: '12px 0',
 										alignItems: 'flex-end',
 										flexWrap: 'wrap',
 									} }
