@@ -82,7 +82,7 @@ class TopologyCompactSummaryTest extends TestCase {
 	 *
 	 *   _command_interpreter --sink--> _router
 	 *
-	 * The `cmd request-builder:config set_completed_target completed:tee`
+	 * The `command_node request-builder:config set_completed_target completed:tee`
 	 * lines in the TSL emit TM_COMMAND messages addressed to
 	 * `request-builder:config` — without the Router wiring, those land
 	 * back in `_command_interpreter` (which doesn't know about sibling
@@ -156,9 +156,9 @@ class TopologyCompactSummaryTest extends TestCase {
 		// interval is left at its 1000ms default, so it is deliberately NOT
 		// emitted (only non-default settings dump).
 		$dump = $rb->dump_config();
-		$this->assertStringContainsString( 'cmd request-builder:config set_errors_target errors:partition', $dump );
-		$this->assertStringContainsString( 'cmd request-builder:config set_completed_target completed:tee', $dump );
-		$this->assertStringContainsString( 'cmd request-builder:config set_inflight_target gyroscope:partition', $dump );
+		$this->assertStringContainsString( 'command_node request-builder:config set_errors_target errors:partition', $dump );
+		$this->assertStringContainsString( 'command_node request-builder:config set_completed_target completed:tee', $dump );
+		$this->assertStringContainsString( 'command_node request-builder:config set_inflight_target gyroscope:partition', $dump );
 		$this->assertStringNotContainsString( 'set_inflight_interval', $dump );
 	}
 

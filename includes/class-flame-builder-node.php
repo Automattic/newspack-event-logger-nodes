@@ -1793,7 +1793,7 @@ class Flame_Builder_Node extends Node {
 	 * Stores the name only — the node is resolved by name lazily at flush/reload
 	 * (like add_snapshot_node), so this verb can't fail on a not-yet-built node
 	 * whose make_node comes later in a console-serialized override. The partition
-	 * lifts its own 4KB PIPE_BUF cap via `cmd <name>:config void_warranty` in the
+	 * lifts its own 4KB PIPE_BUF cap via `command_node <name>:config void_warranty` in the
 	 * topology, alongside its make_node.
 	 *
 	 * The mirror buffers writes in memory and flushes them to the partition once
@@ -2300,7 +2300,7 @@ class Flame_Builder_Node extends Node {
 
 	/**
 	 * Emit the base config plus this node's verb-config, from STATE — one
-	 * `cmd {name}:config <verb> <value>` line per setting that differs from its
+	 * `command_node {name}:config <verb> <value>` line per setting that differs from its
 	 * default, for dump_config introspection (REPL/GUI). No generic verb recording.
 	 *
 	 * A verb missing here silently drops its setting on a console serialize →
@@ -2312,16 +2312,16 @@ class Flame_Builder_Node extends Node {
 	public function dump_config(): string {
 		$out = parent::dump_config();
 		if ( $this->is_hub ) {
-			$out .= "cmd {$this->name}:config set_is_hub true\n";
+			$out .= $this->config_line( 'set_is_hub', 'true' );
 		}
 		if ( null !== $this->stats_store ) {
-			$out .= "cmd {$this->name}:config configure_stats {$this->stats_store->partition()}\n";
+			$out .= $this->config_line( 'configure_stats', (string) $this->stats_store->partition() );
 		}
 		if ( '' !== $this->stats_partition ) {
-			$out .= "cmd {$this->name}:config set_stats_target {$this->stats_partition}\n";
+			$out .= $this->config_line( 'set_stats_target', $this->stats_partition );
 		}
 		if ( 0 !== $this->flame_topn ) {
-			$out .= "cmd {$this->name}:config set_flame_topn {$this->flame_topn}\n";
+			$out .= $this->config_line( 'set_flame_topn', (string) $this->flame_topn );
 		}
 		return $out;
 	}
@@ -2330,7 +2330,7 @@ class Flame_Builder_Node extends Node {
 	 * Format one companion-index line for the flames partition.
 	 *
 	 * Registered as the `flame-index` formatter in the plugin entry point and
-	 * installed by `cmd flames:partition:config with_index flame-index`. The
+	 * installed by `command_node flames:partition:config with_index flame-index`. The
 	 * layout is fixed-width so `parse_flame_index()` can slice it by offset:
 	 * rid(32) url_hash(12) segment(6) offset(10) length(8) = 68 bytes. Changing a
 	 * width here means changing both the parser and every existing index file.

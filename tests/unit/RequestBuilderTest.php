@@ -1123,7 +1123,7 @@ class RequestBuilderTest extends TestCase {
 		$this->assertSame( 'ok', $result );
 
 		$dump = $rb->dump_config();
-		$this->assertStringContainsString( 'cmd req_builder:config set_errors_target errors:partition', $dump );
+		$this->assertStringContainsString( 'command_node req_builder:config set_errors_target errors:partition', $dump );
 	}
 
 	public function test_request_builder_set_errors_target_verb_empty_clears_target(): void {

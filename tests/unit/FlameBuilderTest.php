@@ -1145,7 +1145,7 @@ class FlameBuilderTest extends TestCase {
 		$fb->name( 'fb' );
 		$this->assertSame( 'ok', $this->read_private( $fb, 'interpreter' )->dispatch( 'set_is_hub', [ 'true' ] ) );
 		$dump = $fb->dump_config();
-		$this->assertStringContainsString( 'cmd fb:config set_is_hub true', $dump );
+		$this->assertStringContainsString( 'command_node fb:config set_is_hub true', $dump );
 	}
 
 	public function test_flame_builder_node_schema_declares_verbs(): void {
@@ -2464,7 +2464,7 @@ class FlameBuilderTest extends TestCase {
 		$fb->set_stats_store( new Stats_Store( partition: 0, max_lifespan: 86400 ) );
 		$this->assertSame( 'ok', $this->read_private( $fb, 'interpreter' )->dispatch( 'set_stats_target', [ 'flames-stats' ] ) );
 		$dump = $fb->dump_config();
-		$this->assertStringContainsString( 'cmd fb:config set_stats_target flames-stats', $dump );
+		$this->assertStringContainsString( 'command_node fb:config set_stats_target flames-stats', $dump );
 	}
 
 	public function test_configure_stats_rejects_a_non_numeric_partition(): void {
@@ -2483,7 +2483,7 @@ class FlameBuilderTest extends TestCase {
 		$result = $this->read_private( $fb, 'interpreter' )
 			->dispatch( 'configure_stats', [ '3' ] );
 		$this->assertSame( 'ok', $result );
-		$this->assertStringContainsString( 'cmd fb:config configure_stats 3', $fb->dump_config() );
+		$this->assertStringContainsString( 'command_node fb:config configure_stats 3', $fb->dump_config() );
 	}
 
 	public function test_set_stats_store_after_partition_arms_the_mirror(): void {

@@ -249,7 +249,7 @@ class RequestBuilderCompactSummaryTest extends TestCase {
 
 		$dump = $rb->dump_config();
 
-		$this->assertStringContainsString( 'cmd rb:config set_completed_target completed:tee', $dump );
-		$this->assertStringContainsString( 'cmd rb:config set_inflight_target gyroscope:partition', $dump );
+		$this->assertStringContainsString( 'command_node rb:config set_completed_target completed:tee', $dump );
+		$this->assertStringContainsString( 'command_node rb:config set_inflight_target gyroscope:partition', $dump );
 	}
 }
