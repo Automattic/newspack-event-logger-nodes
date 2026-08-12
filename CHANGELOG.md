@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.52.0] - 2026-08-12
+
 ### Fixed
 
 - **`request_detail` mints from its own receiver, not from the view.** Its
@@ -25,17 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that were inline strings gain constants like the rest. Canvas layouts persisted
   against the old names will not match and re-lay-out once.
 
-> **Release note — raise the substrate floor.** `Line_Fitter` moved into
-> `newspack-nodes`; this plugin now hard-requires it. The loader gate in
-> `newspack-event-logger-nodes.php` still names 2.21.0 and MUST be raised to the
-> substrate version that ships `\Newspack_Nodes\Line_Fitter` (the next release
-> after 2.24.0) as part of this plugin's release commit. It is deliberately not
-> raised yet: naming an untagged version would make this plugin dormant against
-> the substrate currently in the tree.
-
 ### Changed
 
-- **`Line_Fitter` is the substrate's.** The PIPE_BUF fitting loop was this
+- **`Line_Fitter` is the substrate's, and the floor rises to 2.25.0.** The PIPE_BUF fitting loop was this
   plugin's, but the substrate hand-rolled the same measure-and-halve in two of
   its own nodes. It now lives at `\Newspack_Nodes\Line_Fitter`; the three call
   sites here are unchanged apart from the import.

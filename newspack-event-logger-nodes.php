@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Newspack Event Logger Nodes
  * Description: Event-logger application built on newspack-nodes runtime.
- * Version: 0.51.4
+ * Version: 0.52.0
  * Author: Automattic
  * Author URI: https://newspack.com/
  * License: GPL-2.0-or-later
@@ -40,7 +40,7 @@
 \defined( 'ABSPATH' ) || exit;
 
 if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION' ) ) {
-	\define( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION', '0.51.4' );
+	\define( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION', '0.52.0' );
 }
 if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_NODES_DIR' ) ) {
 	\define( 'NEWSPACK_EVENT_LOGGER_NODES_DIR', \plugin_dir_path( __FILE__ ) );
@@ -72,15 +72,15 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	if ( ! \class_exists( '\\Newspack_Nodes\\Bootstrap' ) ) {
 		return;
 	}
-	// @longform Dormant when too old; 2.21.0 = Table_Node::store()/forget(),
-	// which Rule_Set writes its pointer-tier hooks mirror through. Below it
-	// every heavy rule's save fatals on an undefined method. (2.18.0 was the
-	// prior floor: the log-producer TEMPLATE contract, below which the
-	// substrate reads our template as a literal dir NAME, leaves every live
-	// firehose.p{N} undeclared, and its GC deletes what it cannot see.)
+	// @longform Dormant when too old; 2.25.0 = \Newspack_Nodes\Line_Fitter,
+	// which Request_Builder and Request_Flight fit their emits through. Below
+	// it every oversize-line fit fatals on a missing class. (2.21.0 was the
+	// prior floor: Table_Node::store()/forget(), which Rule_Set writes its
+	// pointer-tier hooks mirror through, and below which every heavy rule's
+	// save fatals on an undefined method.)
 	// WordPress does not order plugin updates.
 	if ( ! \method_exists( '\\Newspack_Nodes\\Bootstrap', 'version_at_least' )
-		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.21.0', 'Newspack Event Logger Nodes' ) ) {
+		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.25.0', 'Newspack Event Logger Nodes' ) ) {
 		return;
 	}
 
