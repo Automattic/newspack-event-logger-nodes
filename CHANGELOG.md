@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+
+- **`aggregator.tsl`'s per-spoke recipe carries `cmd spoke-<id>:config
+  set_multi_writer true`.** Every firehose spoke wants it: the log is appended by
+  every request process there, and the verb (new on the substrate's
+  `Remote_Source_Node`) asks the SPOKE's reader to hold a superseded segment for the
+  seal grace. Without it a
+  straggler's last line — typically the request's terminal `process (complete)` — is
+  orphaned, and the request never finalizes on the hub.
+
 ## [0.52.0] - 2026-08-12
 
 ### Fixed
