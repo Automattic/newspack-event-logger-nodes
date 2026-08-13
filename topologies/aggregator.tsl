@@ -13,6 +13,13 @@
 #       <config:offsets_dir>/spoke-<id>.<topology>.p<partition> \
 #       <config:deadletter_dir>/spoke-<id>.p<partition>
 #   connect_node spoke-<id> remote-job-rewrite
+#   cmd spoke-<id>:config set_multi_writer true
+#
+# set_multi_writer belongs on every firehose spoke: the log is appended by every
+# request process there, and it asks the SPOKE's reader to hold a superseded
+# segment for the seal grace. Without it a straggler's last line — typically the
+# request's terminal `process (complete)` — is orphaned, and the request never
+# finalizes on the hub.
 #
 # The offsetlog + deadletter dirs are ARGUMENTS (it reads like the Consumer it
 # is). Scope the cursor with `<topology>`: an offsetlog is a reader's cursor and
