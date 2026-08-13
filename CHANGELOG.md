@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.52.1] - 2026-08-13
+
 ### Documentation
 
 - **`aggregator.tsl`'s per-spoke recipe carries `cmd spoke-<id>:config
