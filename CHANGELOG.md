@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.54.0] - 2026-08-14
+
 ### Fixed
 - A folded request keeps every entry its producer marked `keep`, however far from the end it landed. Measured on a live 124k-entry render, pyrobase's stats summaries sit 11-15 entries from the end — behind `pyrobase (complete)` and six WordPress shutdown hooks — so the bounded tail dropped all of them, silently, and they are the only place a request's cache hit rates appear. The mark travels on the log line rather than in config, because the builder runs in a worker and the producer in a web request; the keep bucket is unbounded, since capping it would reintroduce the loss the mark exists to prevent. `FOLD_KEEP_TAIL` is unchanged at 10.
 
