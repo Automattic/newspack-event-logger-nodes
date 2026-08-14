@@ -550,6 +550,29 @@ class ReqgrepCommandTest extends TestCase {
 		$this->assertStringContainsString( 'line three', $out );
 	}
 
+	public function test_consecutive_requests_are_separated_by_a_rule(): void {
+		// The rule used to ride the rewind heuristic, so it marked the one place that was never
+		// a boundary and never marked the places that were. It belongs on the real boundary: the
+		// rid changing, which is what output_request already iterates. Leading rule on the first
+		// request would be a rule against nothing.
+		$cmd      = $this->make_cmd();
+		$captured = $this->capture_output( $cmd );
+
+		$ts = 1700000000.0;
+		foreach ( [ 'reqA', 'reqB' ] as $i => $rid ) {
+			$this->feed( $cmd, [ 'n' => 1, 'rid' => $rid, 'k' => 'process (start)', 'm' => '/a', 'ts' => $ts + $i ] );
+			$this->feed( $cmd, [ 'n' => 2, 'rid' => $rid, 'k' => 'process (complete)', 'm' => '/a', 'ts' => $ts + $i + 0.1 ] );
+		}
+
+		$out = self::joined( $captured );
+		$this->assertSame( 1, \substr_count( $out, \str_repeat( '#', 60 ) ), 'one rule between two requests, none before the first' );
+		$this->assertLessThan(
+			\strpos( $out, 'request_id:reqB' ),
+			\strpos( $out, \str_repeat( '#', 60 ) ),
+			'and it precedes the request it introduces'
+		);
+	}
+
 	public function test_a_rewound_entry_number_is_not_a_request_boundary(): void {
 		// It used to be read as one. Requests are grouped by rid before they are ever formatted,
 		// so a rewind INSIDE a group can only be a second source numbering from its own counter —
