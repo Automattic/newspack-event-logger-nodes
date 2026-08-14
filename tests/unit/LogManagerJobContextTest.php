@@ -157,6 +157,38 @@ class LogManagerJobContextTest extends TestCase {
 		Log_Manager::end_job_context();
 	}
 
+	public function test_absolute_url_job_id_folds_to_its_template_path(): void {
+		// evtemplate ids carry the target host so the worker can route on it.
+		// Spliced raw, that nests a URL inside a path and reads as though the
+		// executing host served it; log_request_details() already supplies the
+		// real host, so only the template path belongs here.
+		Log_Manager::begin_job_context( 'evtemplate', 'https://hub/Tools/UpdateSite.html' );
+		$this->assertSame( '/jobs/evtemplate/Tools/UpdateSite.html', $_SERVER['REQUEST_URI'] );
+		Log_Manager::end_job_context();
+	}
+
+	public function test_pathless_url_job_id_names_no_template_segment(): void {
+		// Nothing left to name a template with, and the handler returns early on
+		// exactly this input — so the URI is the bare handler, not a hostname
+		// sitting where a template path goes, and not a dangling slash.
+		Log_Manager::begin_job_context( 'evtemplate', 'https://hub' );
+		$this->assertSame( '/jobs/evtemplate', $_SERVER['REQUEST_URI'] );
+		Log_Manager::end_job_context();
+	}
+
+	public function test_url_job_id_with_only_a_root_path_names_no_template_segment(): void {
+		Log_Manager::begin_job_context( 'evtemplate', 'https://hub/' );
+		$this->assertSame( '/jobs/evtemplate', $_SERVER['REQUEST_URI'] );
+		Log_Manager::end_job_context();
+	}
+
+	public function test_relative_job_id_is_left_alone(): void {
+		// The common shape: Job_Intake producers already pass a bare path.
+		Log_Manager::begin_job_context( 'evtemplate', 'Tools/ImportFilmTimes.html' );
+		$this->assertSame( '/jobs/evtemplate/Tools/ImportFilmTimes.html', $_SERVER['REQUEST_URI'] );
+		Log_Manager::end_job_context();
+	}
+
 	public function test_empty_job_id_yields_plain_handler_uri(): void {
 		Log_Manager::begin_job_context( 'films_import', '' );
 		$this->assertSame( '/jobs/films_import', $_SERVER['REQUEST_URI'] );
@@ -204,7 +236,7 @@ class LogManagerJobContextTest extends TestCase {
 		Log_Manager::begin_job_context( 'slow_handler' );
 		Log_Manager::instance()->message( 'work', [ 'm' => 'partway' ] );
 
-		Log_Manager::end_job_context( 'slow_handler', null );
+		Log_Manager::end_job_context( 'slow_handler', '', null );
 
 		$lines = $this->firehose_lines();
 		$this->assertNotEmpty( $lines, 'the job context wrote to the firehose' );
@@ -276,6 +308,7 @@ class LogManagerJobContextTest extends TestCase {
 
 		Log_Manager::end_job_context(
 			'quick_handler',
+			'',
 			[ 'status' => 'ok', 'message' => '', 'items_ok' => 1, 'items_err' => 0 ]
 		);
 
@@ -295,13 +328,14 @@ class LogManagerJobContextTest extends TestCase {
 		$this->arrange_logging();
 		Log_Manager::begin_job_context( 'stopped_handler' );
 		Log_Manager::instance()->message( 'work', [ 'm' => 'partway' ] );
-		Log_Manager::end_job_context( 'stopped_handler', null );
+		Log_Manager::end_job_context( 'stopped_handler', '', null );
 
 		// A fresh, entirely successful job in the same process.
 		Log_Manager::begin_job_context( 'good_handler' );
 		Log_Manager::instance()->message( 'work', [ 'm' => 'fine' ] );
 		Log_Manager::end_job_context(
 			'good_handler',
+			'',
 			[ 'status' => 'ok', 'message' => '', 'items_ok' => 3, 'items_err' => 0 ]
 		);
 
