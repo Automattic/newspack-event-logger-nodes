@@ -101,6 +101,9 @@ class Reqgrep_Command {
 	/** Keys announcing dropped or merged entries — nothing before one can contain anything after. */
 	private const SEQUENCE_BREAK_KEYS = [ 'entries (lost)', 'entries (aggregated)' ];
 
+	/** True once a request has been printed, so the rule falls BETWEEN requests only. */
+	private bool $fmt_printed_request = false;
+
 	/** Formatting state — current indent column. */
 	private int $fmt_indent = 0;
 
@@ -511,6 +514,13 @@ class Reqgrep_Command {
 		$this->fmt_indent         = 0;
 		$this->fmt_pairs          = [];
 		$this->fmt_last_timestamp = 0;
+
+		// The rule marks the real boundary: one request ends, another begins.
+		if ( $this->fmt_printed_request ) {
+			$this->emit( '    ' . \str_repeat( '#', 60 ) );
+			$this->emit( '' );
+		}
+		$this->fmt_printed_request = true;
 
 		if ( '' !== $rid ) {
 			$this->emit( \sprintf( '      %22s request_id:%s', '', $rid ) );

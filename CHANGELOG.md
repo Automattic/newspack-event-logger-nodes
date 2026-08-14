@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The `#` rule in `wp nodes reqgrep` marks the boundary between requests.** It only ever fired
+  from the entry-number rewind heuristic — and since requests are grouped by rid before they are
+  formatted, and the number counter resets per request, a rewind could never happen at a genuine
+  boundary. The rule marked the one place that was never one, and never marked the places that
+  were. It now comes from the rid changing, with no leading rule before the first request.
+
 ## [0.52.3] - 2026-08-14
 
 ### Fixed
