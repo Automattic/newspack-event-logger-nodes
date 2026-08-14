@@ -424,6 +424,10 @@ class Request_Builder_Node extends Timer_Node {
 			if ( isset( $entry['peak_mb'] ) ) {
 				$stored['peak_mb'] = $entry['peak_mb'];
 			}
+			// The producer's fold exemption; see is_kept().
+			if ( ! empty( $entry['keep'] ) ) {
+				$stored['keep'] = 1;
+			}
 
 			// Folded stays folded: into the path map, never back onto the list.
 			$fold = $request->fold ?? null;
@@ -431,7 +435,11 @@ class Request_Builder_Node extends Timer_Node {
 				/** @var Fold_State $fold */
 				Flame_Fold::add( $fold, $stored );
 				$request->fold = $fold;
-				$request->tail = self::ring( $request->tail ?? null, $stored );
+				if ( self::is_kept( $stored ) ) {
+					$request->keep = self::kept( $request->keep ?? null, $stored );
+				} else {
+					$request->tail = self::ring( $request->tail ?? null, $stored );
+				}
 			} else {
 				$entries[]        = $stored;
 				$request->entries = $entries;
@@ -876,7 +884,7 @@ class Request_Builder_Node extends Timer_Node {
 			$request->initialized = true;
 			$request->gap_after   = 0;
 			// Handle operator time-travel gracefully.
-			unset( $request->fold, $request->folded, $request->tail );
+			unset( $request->fold, $request->folded, $request->tail, $request->keep );
 			$request->rule_id     = \is_string( $entry['rule'] ?? null ) ? $entry['rule'] : '';
 		};
 
@@ -1090,9 +1098,49 @@ class Request_Builder_Node extends Timer_Node {
 		}
 		$request->fold    = $fold;
 		$request->entries = \array_slice( $entries, 0, self::FOLD_KEEP_HEAD );
+		$kept             = \array_values( \array_filter(
+			\array_slice( $entries, self::FOLD_KEEP_HEAD ),
+			static fn ( array $e ): bool => self::is_kept( $e )
+		) );
+		$request->keep    = $kept;
 		$request->tail    = [];
 		$request->folded  = true;
-		return \count( $entries ) - \count( $request->entries );
+		return \count( $entries ) - \count( $request->entries ) - \count( $kept );
+	}
+
+	/**
+	 * Whether an entry is exempt from folding because its producer said so.
+	 *
+	 * @longform A summary line is not repetitive middle: a render's stats flush
+	 * carries the request's cache hit rates and nothing else does, and on a real
+	 * render it lands 11-15 entries from the end — past any tail worth keeping.
+	 * Sizing the tail around it would be a guess about someone else's shutdown
+	 * sequence, and both halves of that guess belong to the producer: how many
+	 * stats groups were active, and which hooks fired after them. So the
+	 * producer marks the line instead, and the fold honours the mark.
+	 *
+	 * @param array<string,mixed> $entry Stored entry.
+	 */
+	private static function is_kept( array $entry ): bool {
+		return ! empty( $entry['keep'] );
+	}
+
+	/**
+	 * Append to the unbounded keep bucket.
+	 *
+	 * Unbounded on purpose: a producer marks summaries, and a producer that
+	 * marks everything has made its own envelope large. Capping it here would
+	 * reintroduce the silent loss the mark exists to prevent.
+	 *
+	 * @param mixed                $kept  Existing bucket, if any.
+	 * @param array<string,mixed> $entry Entry to keep.
+	 * @return list<array<string,mixed>>
+	 */
+	private static function kept( mixed $kept, array $entry ): array {
+		/** @var list<array<string,mixed>> $bucket */
+		$bucket   = \is_array( $kept ) ? $kept : [];
+		$bucket[] = $entry;
+		return $bucket;
 	}
 
 	/**
@@ -1201,9 +1249,11 @@ class Request_Builder_Node extends Timer_Node {
 		$folded_tail = \count(
 			\array_filter( $tail, static fn ( array $e ): bool => 'entries (lost)' !== ( $e['k'] ?? '' ) )
 		);
-		$dropped = $fold['count'] - \count( $head ) - $folded_tail;
+		/** @var list<array<string,mixed>> $kept */
+		$kept    = \is_array( $record['keep'] ?? null ) ? $record['keep'] : [];
+		$dropped = $fold['count'] - \count( $head ) - $folded_tail - \count( $kept );
 		if ( $dropped < 1 ) {
-			return \array_merge( $head, $tail );
+			return \array_merge( $head, $kept, $tail );
 		}
 		$last = $head[ \count( $head ) - 1 ] ?? null;
 		return \array_merge(
@@ -1216,6 +1266,7 @@ class Request_Builder_Node extends Timer_Node {
 					'm'  => "{$dropped} entries merged into the flame graph under memory pressure",
 				],
 			],
+			$kept,
 			$tail
 		);
 	}

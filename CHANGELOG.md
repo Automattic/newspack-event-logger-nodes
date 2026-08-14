@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- A folded request keeps every entry its producer marked `keep`, however far from the end it landed. Measured on a live 124k-entry render, pyrobase's stats summaries sit 11-15 entries from the end — behind `pyrobase (complete)` and six WordPress shutdown hooks — so the bounded tail dropped all of them, silently, and they are the only place a request's cache hit rates appear. The mark travels on the log line rather than in config, because the builder runs in a worker and the producer in a web request; the keep bucket is unbounded, since capping it would reintroduce the loss the mark exists to prevent. `FOLD_KEEP_TAIL` is unchanged at 10.
+
 ### Changed
 - `Stats_Store` reads and writes through `Table_Node` instead of the raw memcache handle, closing the last non-goal of the 2026-08-10 two-tier-cache spec. Two Tables over one `evlog:p{N}` namespace carry the two TTLs, so no per-call TTL was needed; the mirror seam stays here and now gates on `Table_Node::store()`'s new boolean. **Stats keys change shape** (`…:evlog:p0:hourly` → `…:table:evlog:p0:hourly`), so existing stats and any pre-port mirror frames orphan on deploy — one cold window, cleaned up by TTL, exactly as a salt rotation does.
 - `Flame_Builder_Node` drops its own `LRU_Cache` and accumulates through the store's Table instead (`Stats_Store::accumulate_url_stats()` / `accumulated_url_stats()` / `accumulating_url_stats()` / `reset_url_stats()`). It was already an in-memory tier in front of a Table lookup, hand-rolled one layer up; there is one tier now. Geometry (1000 × 5) moved to `Stats_Store`, and `STATS_CACHE_BUCKET_SIZE` / `STATS_CACHE_NUM_BUCKETS` are gone.
