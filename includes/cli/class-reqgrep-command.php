@@ -95,11 +95,22 @@ class Reqgrep_Command {
 	 */
 	private string $cat_offset = 'start';
 
+	/** The outermost pair: the request itself, which spans any break in the record. */
+	private const OUTERMOST_PAIR = 'process';
+
+	/** Keys announcing dropped or merged entries — nothing before one can contain anything after. */
+	private const SEQUENCE_BREAK_KEYS = [ 'entries (lost)', 'entries (aggregated)' ];
+
 	/** Formatting state — current indent column. */
 	private int $fmt_indent = 0;
 
-	/** Formatting state — last seen entry number. */
-	private int $fmt_last_number = 0;
+	/**
+	 * Open `(start)` spans, innermost last, as base names — the LIFO a `(complete)` matches
+	 * against BY NAME. Depth is what indents, so this is the indent, not a counter.
+	 *
+	 * @var list<string>
+	 */
+	private array $fmt_pairs = [];
 
 	/** Formatting state — last seen timestamp. */
 	private float $fmt_last_timestamp = 0;
@@ -498,7 +509,7 @@ class Reqgrep_Command {
 		}
 
 		$this->fmt_indent         = 0;
-		$this->fmt_last_number    = 0;
+		$this->fmt_pairs          = [];
 		$this->fmt_last_timestamp = 0;
 
 		if ( '' !== $rid ) {
@@ -527,11 +538,7 @@ class Reqgrep_Command {
 	 *
 	 * The rules, in the order the code applies them:
 	 *
-	 *  - Indent: `(complete)` dedents by 4 BEFORE the line so it aligns with its
-	 *    `(start)`; `(start)` indents by 4 AFTER, for the entries it encloses.
-	 *    The indent clamps at 0.
-	 *  - Reset: an entry number lower than the previous one means a new request
-	 *    began, so the indent and clock reset behind a `#` separator row.
+	 *  - Indent: indent_for() places the line against the open-span stack.
 	 *  - Clock: the timestamp column prints only when it advances at 0.1-second
 	 *    resolution, keeping repeated same-tick entries readable.
 	 *  - Gaps: elapsed whole seconds render as dot rows at escalating intervals
@@ -548,22 +555,9 @@ class Reqgrep_Command {
 		$ts     = Core::num_float( $entry['ts'] ?? 0 );
 		$key    = Core::as_string( $entry['k'] ?? '' );
 
-		// Dedent BEFORE the (complete) line so its key aligns with (start).
-		if ( false !== \strpos( $key, '(complete)' ) ) {
-			$this->fmt_indent -= 4;
-		}
-		if ( $this->fmt_indent < 0 ) {
-			$this->fmt_indent = 0;
-		}
+		$this->fmt_indent = $this->indent_for( $key );
 
 		$output = '';
-
-		// New-request separator when the entry number rewinds (rid reset).
-		if ( $number < $this->fmt_last_number ) {
-			$this->fmt_indent         = 0;
-			$this->fmt_last_timestamp = 0;
-			$output                  .= "\n    " . \str_repeat( '#', 60 ) . "\n\n";
-		}
 
 		// Timestamp column — only print when it advances at 0.1s resolution.
 		$time_str = '';
@@ -634,15 +628,42 @@ class Reqgrep_Command {
 
 		$output .= $prefix . $message . $suffix;
 
-		// Indent AFTER the (start) line so the next entry is one column deeper.
-		if ( false !== \strpos( $key, '(start)' ) ) {
-			$this->fmt_indent += 4;
-		}
-
-		$this->fmt_last_number    = $number;
 		$this->fmt_last_timestamp = $ts;
 
 		return \rtrim( $output, "\n" );
+	}
+
+	/**
+	 * The indent column for one entry, and the pair-stack move that goes with it — the CLI half
+	 * of the dashboard's `computeIndentedEntries()` (`src/overview/utils/logEntryUtils.js`), which
+	 * is the canonical reading of this log. Both must agree, or the same request reads two ways.
+	 *
+	 * A `(complete)` matches the nearest open `(start)` OF THE SAME NAME and closes only that one,
+	 * leaving children that outlived their parent where they are; with no match it is orphaned and
+	 * prints at the top column. Names, not arithmetic, are what let a request survive an embedded
+	 * engine trace whose spans are numbered from 1 and share names with the request's own.
+	 *
+	 * A break keyword closes every span but the request itself, which does span the break.
+	 */
+	private function indent_for( string $key ): int {
+		if ( \in_array( $key, self::SEQUENCE_BREAK_KEYS, true ) ) {
+			$outermost       = ( [] !== $this->fmt_pairs && self::OUTERMOST_PAIR === $this->fmt_pairs[0] ) ? 1 : 0;
+			$this->fmt_pairs = \array_slice( $this->fmt_pairs, 0, $outermost );
+		}
+		if ( \preg_match( '/^(.+?) \(complete\)$/', $key, $matches ) ) {
+			$found = \array_keys( $this->fmt_pairs, $matches[1], true );
+			if ( [] === $found ) {
+				return 0; // Orphaned: its (start) is not in this request.
+			}
+			$at = \end( $found );
+			\array_splice( $this->fmt_pairs, $at, 1 );
+			return $at * 4;
+		}
+		$indent = \count( $this->fmt_pairs ) * 4;
+		if ( \preg_match( '/^(.+?) \(start\)$/', $key, $matches ) ) {
+			$this->fmt_pairs[] = $matches[1];
+		}
+		return $indent;
 	}
 
 	/**

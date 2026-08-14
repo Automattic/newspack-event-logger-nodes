@@ -170,6 +170,7 @@ class ReqgrepCommandTest extends TestCase {
 		$message[ Message::TYPE ]       = Message::TM_STRUCT;
 		$message[ Message::TIMESTAMP ]  = (float) ( $entry['ts'] ?? 0 );
 		$message[ Message::KEY ]        = (string) ( $entry['rid'] ?? '' );
+		$message[ Message::FROM ]       = (string) ( $entry['from'] ?? '' );
 		$message[ Message::VALUE ]      = $entry;
 		return $message;
 	}
@@ -307,6 +308,55 @@ class ReqgrepCommandTest extends TestCase {
 		$this->assertSame( 4, $find_indent( 'wp_loaded (complete)', $out ), 'wp_loaded (complete) drops then prints' );
 		$this->assertSame( 4, $find_indent( 'init:', $out ), 'init within wp_loaded body sits at depth 4' );
 		$this->assertSame( 0, $find_indent( 'process (complete)', $out ), 'process (complete) drops back to 0' );
+	}
+
+	public function test_an_embedded_engine_trace_does_not_split_the_request(): void {
+		// Nuclear-gyrobase renders through the Perl engine, which logs under the SAME rid with
+		// its OWN entry numbering restarting at 1. Inferring a new request from that numbering
+		// split one request in two and orphaned every PHP span still open across the trace.
+		// Matching each `(complete)` to the nearest open `(start)` of the same NAME is what
+		// carries the enclosing spans across the nested trace — the rule the dashboard's
+		// computeIndentedEntries() already used, now shared.
+		$cmd      = $this->make_cmd();
+		$captured = $this->capture_output( $cmd );
+
+		$rid = 'nukeR';
+		$ts  = 1700000000.0;
+		foreach ( [
+			[ 'n' => 1, 'k' => 'process (start)', 'm' => '/e' ],
+			[ 'n' => 2, 'k' => 'template_redirect hook (start)', 'm' => '' ],
+			[ 'n' => 1, 'k' => 'gyrobase (start)', 'm' => '', 'from' => 'gyrobase' ],
+			[ 'n' => 2, 'k' => 'include (start)', 'm' => '/Shell/PageFooter.html', 'from' => 'gyrobase' ],
+			[ 'n' => 3, 'k' => 'include (complete)', 'm' => '0.001750 seconds.', 'from' => 'gyrobase' ],
+			[ 'n' => 4, 'k' => 'gyrobase (complete)', 'm' => 'logged 4 messages', 'from' => 'gyrobase' ],
+			[ 'n' => 3, 'k' => 'template_redirect hook (complete)', 'm' => '' ],
+			[ 'n' => 4, 'k' => 'process (complete)', 'm' => '/e' ],
+		] as $i => $entry ) {
+			$this->feed( $cmd, $entry + [ 'rid' => $rid, 'ts' => $ts + ( $i / 100 ) ] );
+		}
+
+		$out = self::joined( $captured );
+
+		$this->assertStringNotContainsString( '####', $out, 'the engine trace is not a new request' );
+		$this->assertSame( 4, $this->indent_of( 'template_redirect hook (complete)', $out ), 'the PHP span closes at its own start, across the embedded trace' );
+		$this->assertSame( 8, $this->indent_of( 'gyrobase (complete)', $out ), "the engine's own span closes inside the PHP span that launched it" );
+		$this->assertSame( 0, $this->indent_of( 'process (complete):/e', $out ), 'and the request closes last, at the top column' );
+	}
+
+	/**
+	 * The indent column of the first output line containing $key_substring, or -1.
+	 * Output format `"%4d: %22s %s KEY"` puts a fixed 29 characters before the indent.
+	 */
+	private function indent_of( string $key_substring, string $output ): int {
+		foreach ( \array_filter( \explode( "\n", $output ) ) as $line ) {
+			if ( ! \str_contains( $line, $key_substring ) ) {
+				continue;
+			}
+			if ( \preg_match( '/^.{29}( *)/', $line, $m ) ) {
+				return \strlen( $m[1] );
+			}
+		}
+		return -1;
 	}
 
 	public function test_indent_clamped_at_zero_on_unbalanced_complete(): void {
@@ -500,22 +550,25 @@ class ReqgrepCommandTest extends TestCase {
 		$this->assertStringContainsString( 'line three', $out );
 	}
 
-	public function test_format_entry_emits_separator_when_number_rewinds(): void {
-		$cmd = $this->make_cmd( 'sepR' );
+	public function test_a_rewound_entry_number_is_not_a_request_boundary(): void {
+		// It used to be read as one. Requests are grouped by rid before they are ever formatted,
+		// so a rewind INSIDE a group can only be a second source numbering from its own counter —
+		// the Perl engine nuclear-gyrobase renders through does exactly that. Splitting there
+		// severed every span still open and orphaned its `(complete)`.
+		$cmd      = $this->make_cmd( 'sepR' );
 		$captured = $this->capture_output( $cmd );
 
 		$rid = 'sepR';
 		$ts  = 1700000000.0;
-		// First request (sequence: 1, 2, 3).
 		$this->feed( $cmd, [ 'n' => 1, 'rid' => $rid, 'k' => 'process (start)', 'm' => '/s', 'ts' => $ts ] );
 		$this->feed( $cmd, [ 'n' => 2, 'rid' => $rid, 'k' => 'init', 'm' => 'middle', 'ts' => $ts + 0.1 ] );
-		// Number rewinds to 1 (rid reset case mid-stream).
 		$this->feed( $cmd, [ 'n' => 1, 'rid' => $rid, 'k' => 'shutdown', 'm' => 'reset', 'ts' => $ts + 0.2 ] );
 		$this->feed( $cmd, [ 'n' => 2, 'rid' => $rid, 'k' => 'process (complete)', 'm' => '/s', 'ts' => $ts + 0.3 ] );
 
 		$out = self::joined( $captured );
-		// Separator (60 hash chars) should appear when number rewinds.
-		$this->assertStringContainsString( \str_repeat( '#', 60 ), $out );
+		$this->assertStringNotContainsString( '####', $out, 'one rid is one request, however its sources number themselves' );
+		$this->assertSame( 4, $this->indent_of( 'shutdown:reset', $out ), 'the renumbered entry stays inside the open request span' );
+		$this->assertSame( 0, $this->indent_of( 'process (complete)', $out ), 'which still closes at the top column' );
 	}
 
 	// -------------------------------------------------------------------------
