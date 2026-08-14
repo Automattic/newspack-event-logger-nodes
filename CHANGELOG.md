@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`wp nodes reqgrep` reads a nested engine trace the way the dashboard does.** A request that
+  renders through nuclear-gyrobase carries a second source under the same rid, numbering its
+  entries from 1. reqgrep read that rewind as a new request and split one request in two behind
+  a `#` separator, resetting the indent and orphaning every span still open across the trace.
+  Requests are grouped by rid before they are ever formatted, so a rewind inside a group can
+  only be a second source — never a boundary. Indentation now matches each `(complete)` to the
+  nearest open `(start)` of the same NAME, which is what carries the enclosing spans across the
+  nested trace: the same rule the request-detail dashboard's `computeIndentedEntries()` already
+  used, so the two surfaces no longer read the same request differently.
+
 ## [0.52.2] - 2026-08-14
 
 ### Fixed
