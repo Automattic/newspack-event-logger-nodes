@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `Stats_Store` reads and writes through `Table_Node` instead of the raw memcache handle, closing the last non-goal of the 2026-08-10 two-tier-cache spec. Two Tables over one `evlog:p{N}` namespace carry the two TTLs, so no per-call TTL was needed; the mirror seam stays here and now gates on `Table_Node::store()`'s new boolean. **Stats keys change shape** (`…:evlog:p0:hourly` → `…:table:evlog:p0:hourly`), so existing stats and any pre-port mirror frames orphan on deploy — one cold window, cleaned up by TTL, exactly as a salt rotation does.
+- `Flame_Builder_Node` drops its own `LRU_Cache` and accumulates through the store's Table instead (`Stats_Store::accumulate_url_stats()` / `accumulated_url_stats()` / `accumulating_url_stats()` / `reset_url_stats()`). It was already an in-memory tier in front of a Table lookup, hand-rolled one layer up; there is one tier now. Geometry (1000 × 5) moved to `Stats_Store`, and `STATS_CACHE_BUCKET_SIZE` / `STATS_CACHE_NUM_BUCKETS` are gone.
+- With no `Stats_Store` wired, per-URL aggregates are no longer accumulated at all. They never could be persisted — `mirror_url_stats()` returns early without a store — so this only stops the wasted memory.
+
 ## [0.53.0] - 2026-08-14
 
 ### Fixed

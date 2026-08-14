@@ -17,6 +17,7 @@
 namespace Newspack_Event_Logger_Nodes;
 
 use Newspack_Nodes\Core;
+use Newspack_Nodes\Table_Node;
 
 if ( ! \defined( 'ABSPATH' ) ) {
 	exit;
@@ -38,10 +39,19 @@ if ( ! \defined( 'ABSPATH' ) ) {
  * five-minute keys of the form `Y-m-d-H-ii`, so the `hourly` namespace and the
  * `get_url_index_hourly()` name are historical rather than descriptive.
  *
- * Reads and writes fail soft: `Core::$memd` is reached through `?->`, so a
- * missing handle yields `[]`, `null`, or `false` and the dashboards render "no
- * data" instead of an error. Keep it that way — the SSE slot pool is
- * deliberately the opposite, and unifying the two breaks its rate limit.
+ * Storage is a `Table_Node` per TTL over one namespace (`evlog:p{N}`), so the
+ * substrate owns key scoping and the backend handle. Reads and writes fail soft:
+ * `Table_Node::table()` throws without a backing store, so the table is built
+ * lazily behind that check and a missing backend yields `[]`, `null`, or `false`
+ * — the dashboards render "no data" instead of an error. Keep it that way; the
+ * SSE slot pool is deliberately the opposite, and unifying the two breaks its
+ * rate limit.
+ *
+ * No L1 (`l1_ttl` 0): the one hot reader, `Flame_Builder_Node`, already holds an
+ * `LRU_Cache` in front of `get_url_stats()` — and that LRU is an accumulator
+ * holding state not yet persisted, not a cache of what is stored, so the Table's
+ * write-through L1 cannot replace it. Enabling one here would just add a second
+ * cache underneath the first.
  *
  * Flushing is the substrate's one button (`Cache_Backend::rotate_salt()`),
  * which moves the install scope for every plugin at once; this keeps no salt
@@ -80,6 +90,10 @@ class Stats_Store {
 
 	/** Key prefix under the install scope. */
 	private const PREFIX_BASE  = 'evlog';
+	/** Per-URL accumulator geometry; capacity is roughly the product. */
+	private const URL_ACCUMULATOR_SIZE    = 1000;
+	private const URL_ACCUMULATOR_BUCKETS = 5;
+
 	/** Floor, in seconds, under both `ttl()` and `ttl_url_stats()`. */
 	private const PREFIX_FLOOR = 3600;
 
@@ -97,11 +111,11 @@ class Stats_Store {
 	/** @var int Retention window in seconds, floored at PREFIX_FLOOR. */
 	private int $max_lifespan;
 
+	/** @var array<int,Table_Node> Table per TTL, over one namespace. */
+	private array $tables = [];
+
 	/** @var int Flame-builder partition whose keyspace this store owns. */
 	private int $partition;
-	/** @var string Key prefix, frozen at construction. */
-	private string $prefix;
-
 	/**
 	 * @param int $partition    Flame-builder partition to read and write.
 	 * @param int $max_lifespan Retention window in seconds, seeded from the
@@ -113,7 +127,6 @@ class Stats_Store {
 	) {
 		$this->partition    = $partition;
 		$this->max_lifespan = \max( self::PREFIX_FLOOR, $max_lifespan );
-		$this->prefix       = self::PREFIX_BASE;
 	}
 
 	/**
@@ -136,7 +149,7 @@ class Stats_Store {
 	 * @return array<string,mixed> Bucket contents, [] on miss.
 	 */
 	public function get_url_bucket( string $bucket ): array {
-		$val = Core::$memd?->get( $this->key( self::NS_URLS, $bucket ) );
+		$val = $this->lookup( $this->key( self::NS_URLS, $bucket ) );
 		return self::map_or_empty( $val );
 	}
 
@@ -148,7 +161,7 @@ class Stats_Store {
 	 * @return array<string,mixed> Totals by bucket, [] on miss.
 	 */
 	public function get_hourly(): array {
-		$val = Core::$memd?->get( $this->key( self::NS_HOURLY ) );
+		$val = $this->lookup( $this->key( self::NS_HOURLY ) );
 		return self::map_or_empty( $val );
 	}
 
@@ -162,7 +175,7 @@ class Stats_Store {
 	 * @return array<string,mixed> Bucket sums, [] on miss.
 	 */
 	public function get_leaderboard_bucket( string $bucket ): array {
-		$val = Core::$memd?->get( $this->key( self::NS_LB, $bucket ) );
+		$val = $this->lookup( $this->key( self::NS_LB, $bucket ) );
 		return self::map_or_empty( $val );
 	}
 
@@ -175,7 +188,7 @@ class Stats_Store {
 	 * @return array<string,mixed> Bucket sums, [] on miss.
 	 */
 	public function get_server_leaderboard_bucket( string $server, string $bucket ): array {
-		$val = Core::$memd?->get( $this->key( self::NS_LB_S, self::server_key( $server ), $bucket ) );
+		$val = $this->lookup( $this->key( self::NS_LB_S, self::server_key( $server ), $bucket ) );
 		return self::map_or_empty( $val );
 	}
 
@@ -192,7 +205,7 @@ class Stats_Store {
 		if ( '' !== $server ) {
 			$parts[] = self::server_key( $server );
 		}
-		$val = Core::$memd?->get( $this->key( ...$parts ) );
+		$val = $this->lookup( $this->key( ...$parts ) );
 		return self::map_or_empty( $val );
 	}
 
@@ -204,7 +217,7 @@ class Stats_Store {
 	 * @return array<string,mixed> Series by dimension, [] on miss.
 	 */
 	public function get_url_dimensional( string $url_hash ): array {
-		$val = Core::$memd?->get( $this->key( self::NS_URL_DIM, $url_hash ) );
+		$val = $this->lookup( $this->key( self::NS_URL_DIM, $url_hash ) );
 		return self::map_or_empty( $val );
 	}
 
@@ -215,7 +228,7 @@ class Stats_Store {
 	 * @return array<string,mixed> Series by bucket, [] on miss.
 	 */
 	public function get_categories(): array {
-		$val = Core::$memd?->get( $this->key( self::NS_CATEGORIES ) );
+		$val = $this->lookup( $this->key( self::NS_CATEGORIES ) );
 		return self::map_or_empty( $val );
 	}
 
@@ -226,7 +239,7 @@ class Stats_Store {
 	 * @return array<string,mixed> Series by bucket, [] on miss.
 	 */
 	public function get_url_categories( string $url_hash ): array {
-		$val = Core::$memd?->get( $this->key( self::NS_URL_CAT, $url_hash ) );
+		$val = $this->lookup( $this->key( self::NS_URL_CAT, $url_hash ) );
 		return self::map_or_empty( $val );
 	}
 
@@ -258,8 +271,8 @@ class Stats_Store {
 			$keys[]    = $k;
 			$map[ $k ] = $b;
 		}
-		// `?->` null (no handle); getMulti false on miss — both → [].
-		$results = Core::$memd?->getMulti( $keys ) ?: [];
+		// No table (no backend) reads as empty, like a miss.
+		$results = $this->table( $this->ttl() )?->lookup_multi( $keys ) ?? [];
 		$out     = [];
 		foreach ( $results as $k => $v ) {
 			if ( \is_array( $v ) && isset( $map[ $k ] ) ) {
@@ -288,7 +301,7 @@ class Stats_Store {
 	 * @return array<array-key,mixed>|null Blob, or null on miss.
 	 */
 	public function get_url_stats( string $url_hash ): ?array {
-		$val = Core::$memd?->get( $this->key( self::NS_URL, $url_hash ) );
+		$val = $this->lookup( $this->key( self::NS_URL, $url_hash ) );
 		return \is_array( $val ) ? $val : null;
 	}
 
@@ -301,11 +314,6 @@ class Stats_Store {
 	 */
 	public function set_url_stats( string $url_hash, array $data ): bool {
 		return $this->store( $this->key( self::NS_URL, $url_hash ), $data, $this->ttl_url_stats(), self::NS_URL );
-	}
-
-	/** Retention for the high-volume `url` namespace: a day's worth cut to a 24th, floored at an hour. */
-	public function ttl_url_stats(): int {
-		return \max( self::PREFIX_FLOOR, (int) ( $this->max_lifespan / 24 ) );
 	}
 
 	/**
@@ -376,7 +384,7 @@ class Stats_Store {
 	 * @return array<string,mixed> Series by bucket, [] on miss.
 	 */
 	public function get_server_categories( string $server ): array {
-		$val = Core::$memd?->get( $this->key( self::NS_CATEGORIES, self::server_key( $server ) ) );
+		$val = $this->lookup( $this->key( self::NS_CATEGORIES, self::server_key( $server ) ) );
 		return self::map_or_empty( $val );
 	}
 
@@ -398,6 +406,11 @@ class Stats_Store {
 			$out[ (string) $k ] = $v;
 		}
 		return $out;
+	}
+
+	/** Read one key through the table; null (no backend) and miss both read empty. */
+	private function lookup( string $key ): mixed {
+		return $this->table( $this->ttl() )?->lookup( $key );
 	}
 
 	/**
@@ -448,22 +461,6 @@ class Stats_Store {
 	}
 
 	/**
-	 * Join a memcache key from the prefix, the partition, and the caller's parts,
-	 * scoped to this INSTALL by the substrate.
-	 *
-	 * @longform Stats live in memcache alone and two installs share one server
-	 * on Atomic, so the bare `evlog:p0:hourly` was the same key for both — a
-	 * co-tenant's request volume landing in this install's dashboard.
-	 *
-	 * @param string ...$parts Namespace token first, then any sub-keys.
-	 * @return string Full key.
-	 */
-	private function key( string ...$parts ): string {
-		\array_unshift( $parts, $this->prefix, 'p' . $this->partition );
-		return \Newspack_Nodes\Cache_Backend::site_key( \implode( ':', $parts ) );
-	}
-
-	/**
 	 * Write to memcache, then (if wired AND the set landed) shadow the same write
 	 * to the mirror seam — a rejected/failed set must not be durably recorded and
 	 * resurrected on cold boot.
@@ -475,11 +472,108 @@ class Stats_Store {
 	 * @return bool True when the set landed.
 	 */
 	private function store( string $key, array $data, int $ttl, string $ns ): bool {
-		$ok = (bool) Core::$memd?->set( $key, $data, $ttl );
+		$ok = (bool) $this->table( $ttl )?->store( $key, $data );
 		if ( $ok && null !== $this->mirror ) {
-			( $this->mirror )( $key, $data, $ttl, $ns );
+			// The mirror records the full backend key, which is the Table's.
+			( $this->mirror )( self::entry_key( $this->partition, $key ), $data, $ttl, $ns );
 		}
 		return $ok;
+	}
+
+	/**
+	 * Per-URL aggregate accumulator: the un-drained value for a url_hash, or what
+	 * was last persisted when none is held.
+	 *
+	 * Flame_Builder folds every request into this and drains it through
+	 * `set_url_stats()` on its own cadence, so the tier holds state that is not
+	 * yet stored — which is why the Table's accumulator, and not a read cache,
+	 * is what it wants.
+	 *
+	 * @api Flame_Builder_Node's per-URL accumulation.
+	 * @param string $url_hash URL hash.
+	 */
+	public function accumulated_url_stats( string $url_hash ): mixed {
+		return $this->table( $this->ttl_url_stats() )?->accumulated( $this->key( self::NS_URL, $url_hash ) );
+	}
+
+	/**
+	 * Fold a per-URL aggregate into the accumulator, without persisting it.
+	 *
+	 * @param string              $url_hash URL hash.
+	 * @param array<string,mixed> $data     Aggregate to hold.
+	 */
+	public function accumulate_url_stats( string $url_hash, array $data ): void {
+		$this->table( $this->ttl_url_stats() )?->accumulate( $this->key( self::NS_URL, $url_hash ), $data );
+	}
+
+	/**
+	 * Join a memcache key from the prefix, the partition, and the caller's parts,
+	 * scoped to this INSTALL by the substrate.
+	 *
+	 * @longform Stats live in memcache alone and two installs share one server
+	 * on Atomic, so the bare `evlog:p0:hourly` was the same key for both — a
+	 * co-tenant's request volume landing in this install's dashboard.
+	 *
+	 * @param string ...$parts Namespace token first, then any sub-keys.
+	 * @return string Full key.
+	 */
+	private function key( string ...$parts ): string {
+		return \implode( ':', $parts );
+	}
+
+	/**
+	 * Walk the accumulating per-URL aggregates, keyed by url_hash, for a drain.
+	 *
+	 * @return iterable<string,mixed>
+	 */
+	public function accumulating_url_stats(): iterable {
+		$table = $this->table( $this->ttl_url_stats() );
+		if ( null === $table ) {
+			return;
+		}
+		$prefix = self::NS_URL . ':';
+		foreach ( $table->accumulating() as $key => $value ) {
+			yield \substr( $key, \strlen( $prefix ) ) => $value;
+		}
+	}
+
+	/** Drop the per-URL accumulator. */
+	public function reset_url_stats(): void {
+		$this->table( $this->ttl_url_stats() )?->reset();
+	}
+
+	/**
+	 * The Table this store reads and writes, memoized per TTL.
+	 *
+	 * Two TTLs are in play — `ttl()` for the aggregates and `ttl_url_stats()` for
+	 * the bounded per-URL blobs — and a Table's TTL is fixed at construction, so
+	 * each gets its own instance over the SAME namespace. Built lazily behind the
+	 * backend check because `Table_Node::table()` throws without one, and every
+	 * method here has to fail soft instead.
+	 *
+	 * No L1: Flame_Builder already caches `get_url_stats()` behind its own
+	 * `LRU_Cache`, so one here would sit redundantly underneath it.
+	 *
+	 * @param int $ttl Entry TTL for writes through this handle.
+	 */
+	private function table( int $ttl ): ?Table_Node {
+		if ( null === \Newspack_Nodes\Cache_Backend::shared_first() ) {
+			return null;
+		}
+		if ( ! isset( $this->tables[ $ttl ] ) ) {
+			$table = Table_Node::table( self::namespace_for( $this->partition ), $ttl );
+			// Armed here: set_url_stats() memoizes this handle first, unarmed.
+			if ( $ttl === $this->ttl_url_stats() ) {
+				$table->accumulator( self::URL_ACCUMULATOR_SIZE, self::URL_ACCUMULATOR_BUCKETS );
+			}
+			$this->tables[ $ttl ] = $table;
+		}
+		return $this->tables[ $ttl ];
+	}
+
+	/** Retention for the high-volume `url` namespace: a day's worth cut to a 24th, floored at an hour. */
+	public function ttl_url_stats(): int {
+		return \max( self::PREFIX_FLOOR, (int) ( $this->max_lifespan / 24 ) );
 	}
 
 	/**
@@ -497,10 +591,32 @@ class Stats_Store {
 	 */
 	public function restore( string $key, array $data, int $ttl ): bool {
 		// The guard is namespace membership, so it moves with the scope.
-		if ( $ttl <= 0 || ! \str_starts_with( $key, \Newspack_Nodes\Cache_Backend::site_key( $this->prefix ) . ':' ) ) {
+		if ( $ttl <= 0 || ! \str_starts_with( $key, self::entry_key( $this->partition, '' ) ) ) {
 			return false;
 		}
-		return (bool) Core::$memd?->set( $key, $data, $ttl );
+		// Straight to the backend: the mirror holds this key whole already.
+		return true === \Newspack_Nodes\Cache_Backend::shared_first()?->set( $key, $data, $ttl );
+	}
+
+	/**
+	 * Full backend key for one entry — what the mirror records and `restore()`
+	 * guards on.
+	 *
+	 * @param int    $partition Flame-builder partition.
+	 * @param string $key       Entry key within the namespace.
+	 */
+	public static function entry_key( int $partition, string $key ): string {
+		return Table_Node::entry_key( self::namespace_for( $partition ), $key );
+	}
+
+	/**
+	 * Table namespace owning one partition's keyspace.
+	 *
+	 * @api Tests and the mirror derive backend keys from it.
+	 * @param int $partition Flame-builder partition.
+	 */
+	public static function namespace_for( int $partition ): string {
+		return self::PREFIX_BASE . ':p' . $partition;
 	}
 
 	/** Partition this store reads and writes. */

@@ -34,7 +34,6 @@ namespace Newspack_Event_Logger_Nodes;
 use Newspack_Nodes\Cache_Backend;
 use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Core;
-use Newspack_Nodes\LRU_Cache;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Node;
 
@@ -119,12 +118,6 @@ class Flame_Builder_Node extends Node {
 	 * the same BUCKET_MINUTES bucket key everything else uses.
 	 */
 	private const MAX_URLS_PER_BUCKET = 500;
-
-	/** Entries per LRU bucket in the per-URL aggregate cache. */
-	private const STATS_CACHE_BUCKET_SIZE = 1000;
-
-	/** LRU buckets in the per-URL aggregate cache; the oldest is evicted on rotation. */
-	private const STATS_CACHE_NUM_BUCKETS = 5;
 
 	/**
 	 * Per-URL namespaces bounded to top-N by traffic when mirrored to the durable
@@ -229,9 +222,6 @@ class Flame_Builder_Node extends Node {
 	/** @var array<string,array<string,bool>> rule_id => {event => true} known-significant dedupe cache. */
 	private array $significant_events       = [];
 
-	/** @var LRU_Cache Per-URL aggregate accumulator. */
-	private $stats_cache;
-
 	/** @var array<string,array{0: array<array-key,mixed>,1: int}> Aggregate mirror writes (kept in full): key => [data, ttl]. */
 	private array $stats_mirror_buffer = [];
 
@@ -271,7 +261,6 @@ class Flame_Builder_Node extends Node {
 	 * @api Used by substrate
 	 */
 	public function __construct() {
-		$this->stats_cache     = new LRU_Cache( self::STATS_CACHE_BUCKET_SIZE, self::STATS_CACHE_NUM_BUCKETS );
 		$this->last_flush_time = Core::$now ?: Core::right_now();
 		$this->reset_pending();
 
@@ -382,7 +371,7 @@ class Flame_Builder_Node extends Node {
 		$verb      = \strtoupper( \explode( ' ', \trim( $value ), 2 )[0] );
 
 		if ( 'GET_STATS' === $verb ) {
-			$stats_count = \iterator_count( $this->stats_cache->iterate() );
+			$stats_count = \iterator_count( $this->stats_store?->accumulating_url_stats() ?? new \EmptyIterator() );
 			$now = ( Core::$now ?: Core::right_now() );
 			$payload = [
 				'stats_count'              => $stats_count,
@@ -521,7 +510,8 @@ class Flame_Builder_Node extends Node {
 			);
 		}
 
-		$this->stats_cache->set( $url_hash, $aggregate );
+		/** @var array<string,mixed> $aggregate */
+		$this->stats_store?->accumulate_url_stats( $url_hash, $aggregate );
 	}
 
 	/**
@@ -536,10 +526,11 @@ class Flame_Builder_Node extends Node {
 	 * @return array<array-key,mixed> The updated aggregate.
 	 */
 	private function accumulate_url_aggregate( string $url_hash, array $flame_data, float $duration_ms, bool $record_timing, int $now ): array {
-		$cached    = $this->stats_cache->get( $url_hash );
+		// Un-drained if held, else what was last persisted for a cold key.
+		$cached    = $this->stats_store?->accumulated_url_stats( $url_hash );
 		$aggregate = \is_array( $cached ) ? $cached : null;
 		if ( null === $aggregate ) {
-			$aggregate = $this->stats_store?->get_url_stats( $url_hash ) ?? [
+			$aggregate = [
 				'flame'    => [
 					'name'      => 'aggregate',
 					'sum_value' => 0.0,
@@ -552,11 +543,11 @@ class Flame_Builder_Node extends Node {
 					'categories'   => [],
 				],
 			];
-			// Merging resumes from the un-finalized tree, not the display one.
-			if ( isset( $aggregate['flame_raw'] ) ) {
-				$aggregate['flame'] = $aggregate['flame_raw'];
-				unset( $aggregate['flame_raw'] );
-			}
+		}
+		// Merging resumes from the un-finalized tree, not the display one.
+		if ( isset( $aggregate['flame_raw'] ) ) {
+			$aggregate['flame'] = $aggregate['flame_raw'];
+			unset( $aggregate['flame_raw'] );
 		}
 
 		$flame = \is_array( $aggregate['flame'] ?? null ) ? $aggregate['flame'] : [];
@@ -1141,7 +1132,7 @@ class Flame_Builder_Node extends Node {
 		$this->persist_aggregate_stats();
 		$this->apply_auto_tune();
 
-		$this->stats_cache->flush();
+		$this->stats_store?->reset_url_stats();
 		$this->url_stats                   = [];
 		$this->hourly_stats                = [];
 		$this->leaderboard_stats           = [];
@@ -1972,12 +1963,10 @@ class Flame_Builder_Node extends Node {
 			return;
 		}
 		$now = $this->now_ts();
-		foreach ( $this->stats_cache->iterate() as $url_hash => $aggregate ) {
+		foreach ( $stats_store->accumulating_url_stats() as $url_hash => $aggregate ) {
 			if ( ! \is_array( $aggregate ) ) {
 				continue;
 			}
-			// An all-digit url_hash comes back an int from the array key.
-			$url_hash = (string) $url_hash;
 			/** @var array<string,mixed> $aggregate */
 			// Finalized flame for display; keep flame_raw for merging.
 			$flame                  = \is_array( $aggregate['flame'] ?? null ) ? $aggregate['flame'] : [];
