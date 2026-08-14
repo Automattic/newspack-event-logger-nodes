@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.52.2] - 2026-08-14
+
+### Fixed
+
+- **Bundles substrate 2.26.1, which stops an aggregator re-delivering the last record it
+  read.** A `Remote_Source` committed its cursor at each record's START rather than past it,
+  so every resume — a worker recycle, a reconnect, a restart after a checkpoint — replayed
+  that record. The hub saw one duplicate per resume, adjacent to its twin and carrying an
+  identical breadcrumb, while the spoke it pulled from showed none.
+
 ## [0.52.1] - 2026-08-13
 
 ### Documentation
