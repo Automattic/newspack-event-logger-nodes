@@ -56,6 +56,16 @@ class RequestBuilderPressureFoldTest extends TestCase {
 	 *
 	 * @param array<string,mixed> $extra Additional entry fields.
 	 */
+	/** The fold's kept-head bound, read from the node rather than restated. */
+	private function fold_head(): int {
+		return (int) ( new \ReflectionClassConstant( Request_Builder_Node::class, 'FOLD_KEEP_HEAD' ) )->getValue();
+	}
+
+	/** The fold's kept-tail bound; sized for a producer-defined stats flush. */
+	private function fold_tail(): int {
+		return (int) ( new \ReflectionClassConstant( Request_Builder_Node::class, 'FOLD_KEEP_TAIL' ) )->getValue();
+	}
+
 	private function fill( Request_Builder_Node $rb, int $n, string $rid, string $k, array $extra = [] ): void {
 		$message                   = Message::new_message();
 		$message[ Message::TYPE ]  = Message::TM_STRUCT;
@@ -157,7 +167,12 @@ class RequestBuilderPressureFoldTest extends TestCase {
 
 		$record = $this->record_for( $sink, 'long' );
 		// Still bounded after 30 more pairs: the ends are kept, not the middle.
-		$this->assertLessThan( 25, \count( $record['entries'] ) );
+		// The bound is the geometry itself — head + marker + tail — not a
+		// number that has to be re-guessed whenever either end is resized.
+		$this->assertLessThanOrEqual(
+			$this->fold_head() + 1 + $this->fold_tail(),
+			\count( $record['entries'] )
+		);
 		$save = $record['flame']['children'][0]['children'][0];
 		$this->assertSame( 70, $save['count'] );
 		$this->assertEqualsWithDelta( 3820.0, $save['value'], 1e-6 );
@@ -225,6 +240,40 @@ class RequestBuilderPressureFoldTest extends TestCase {
 		$this->assertSame( 'process (complete)', \end( $keys ), 'the tail must survive the fold' );
 	}
 
+	public function test_a_marked_entry_never_folds_however_far_from_the_end(): void {
+		// The stats flush is the only place a reader sees a request's cache hit
+		// rates, and it lands 11-15 entries from the end of a real render — past
+		// any tail worth keeping. Sizing the tail around it is guesswork about a
+		// producer's shutdown sequence; the producer marking the line is not.
+		$sink = new Capture_Sink_Node();
+		$rb   = $this->builder( $sink );
+		$n    = $this->run_request( $rb, 'long', 40 );
+
+		$groups = [ 'metadatacache', 'combinedcache', 'requestcache', 'memcached', 'validation' ];
+		foreach ( $groups as $group ) {
+			$this->fill( $rb, $n++, 'long', $group, [ 'm' => '4020 l1, 39 apcu, 0 miss', 'keep' => 1 ] );
+		}
+		// The real closing sequence that pushes them out of reach: pyrobase's
+		// own completion, six WordPress shutdown hooks, then the terminals.
+		$this->fill( $rb, $n++, 'long', 'pyrobase (complete)', [ 'duration_ms' => 900 ] );
+		foreach ( [ 'update_option', 'query', 'updated_option' ] as $hook ) {
+			$this->fill( $rb, $n++, 'long', "{$hook} hook (start)" );
+			$this->fill( $rb, $n++, 'long', "{$hook} hook (complete)", [ 'duration_ms' => 1 ] );
+		}
+		$this->fill( $rb, $n++, 'long', 'memory', [ 'm' => '62MB' ] );
+		$this->fill( $rb, $n++, 'long', 'resources', [ 'm' => 'utime => 1' ] );
+		$this->fill( $rb, $n, 'long', 'process (complete)', [ 'duration_ms' => 900, 'status_code' => 200 ] );
+
+		$record = $this->record_for( $sink, 'long' );
+		$this->assertTrue( $record['folded'] ?? false, 'the request must have folded' );
+		$keys = \array_column( $record['entries'], 'k' );
+
+		foreach ( $groups as $group ) {
+			$this->assertContains( $group, $keys, "the {$group} summary must survive the fold" );
+		}
+		$this->assertSame( 'process (complete)', \end( $keys ), 'and the tail still ends the record' );
+	}
+
 	public function test_a_folded_record_marks_the_middle_it_aggregated_away(): void {
 		// A head running straight into a tail would read as a short request.
 		// The marker says how many lines are missing and where they went.
@@ -239,8 +288,9 @@ class RequestBuilderPressureFoldTest extends TestCase {
 		);
 
 		$this->assertCount( 1, $markers );
-		// 2 opening + 80 save + 1 terminal = 83 merged, less the 10 + 10 kept.
-		$this->assertStringContainsString( '63 entries', $markers[0]['m'] );
+		// 2 opening + 80 save + 1 terminal = 83 raw, less whichever ends survive.
+		$merged = 83 - $this->fold_head() - $this->fold_tail();
+		$this->assertStringContainsString( "{$merged} entries", $markers[0]['m'] );
 		// It sits between them, never at either end.
 		$position = \array_search( $markers[0], $entries, true );
 		$this->assertGreaterThan( 0, $position );
