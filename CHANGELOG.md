@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `end_job_context()` no longer tears down the enclosing request context when a job was DECLINED before any context was opened. `resume()` ran unconditionally — the empty-stack guard only covered the `$_SERVER` restore — so on a spoke, every foreign template both marked the worker's own request aborted and finished it. The `$job_server_stack` depth is now the pairing record. The arity discriminator also moved from `>= 2` to `>= 3` with the inserted `$id`.
+
+### Changed
+- `Log_Manager::end_job_context()` takes `( $handler, $id, $outcome )`, following the substrate's reordered `after_job` action; it is registered with `accepted_args` 3. A bare `end_job_context()` is still a plain context restore — the outcome remains the last parameter, so arity stays the discriminator.
+
+### Added
+- `Log_Manager::begin_job_context_filter()`, the `newspack_nodes/job_worker/before_job` listener for the substrate's new filter contract (requires newspack-nodes with the filter). It opens the job context unless an earlier listener declined, and passes the decision through untouched — whether a job belongs to this host is the owning plugin's question.
+
+### Fixed
+- A job id that is an absolute URL no longer nests a second scheme and host inside the synthetic request URI. `/jobs/evtemplate/https://hub/Tools/UpdateSite.html` — which read as though the executing host served it — is now `/jobs/evtemplate/Tools/UpdateSite.html`, with the real host still supplied by `SERVER_NAME`.
+
 ## [0.52.4] - 2026-08-14
 
 ### Fixed

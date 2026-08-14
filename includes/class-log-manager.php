@@ -574,14 +574,22 @@ class Log_Manager {
 	 * actually supplied one. A bare `end_job_context()` is a context restore
 	 * (the reconcile bridge does exactly that around every WP-Cron pass) and
 	 * must not read as an abort, so the arity is the discriminator: the
-	 * `after_job` hook is registered with accepted_args 2 and always passes it.
+	 * `after_job` hook is registered with accepted_args 3 and always passes it.
 	 *
 	 * @param string                    $handler Handler name; unused, but the action passes it first.
+	 * @param string                    $id      Job identity; unused, but follows $handler everywhere.
 	 * @param array<string,mixed>|null $outcome Job_Worker_Node's classified outcome; null when the job did not finish.
 	 */
-	public static function end_job_context( string $handler = '', ?array $outcome = null ): void {
-		unset( $handler );
-		$reported = \func_num_args() >= 2;
+	public static function end_job_context( string $handler = '', string $id = '', ?array $outcome = null ): void {
+		unset( $handler, $id );
+		// @longform Unpaired: a before_job listener declined the job, so no
+		// context was opened. resume() would finish the ENCLOSING context — the
+		// worker's own request — and pop an empty stack. begin_job_context()
+		// pushes its $_SERVER snapshot first: the stack IS the pairing record.
+		if ( [] === self::$job_server_stack ) {
+			return;
+		}
+		$reported = \func_num_args() >= 3;
 		if ( $reported && null === $outcome && null !== self::$instance ) {
 			self::$instance->aborted = true;
 		}
@@ -610,6 +618,29 @@ class Log_Manager {
 		if ( null !== self::$instance && isset( self::$instance->saved_unique_id ) ) {
 			$_SERVER['UNIQUE_ID'] = self::$instance->saved_unique_id;
 		}
+	}
+
+	/**
+	 * `newspack_nodes/job_worker/before_job` listener — the substrate runs it as
+	 * a FILTER so a listener can decline a job outright.
+	 *
+	 * Opens the job's context unless an earlier listener already declined, in
+	 * which case opening one would write the record the decline exists to
+	 * prevent. The decision passes through untouched: whether a job belongs to
+	 * this host is the owning plugin's question, and this plugin never answers
+	 * it — it has no notion of a publication, only of a request.
+	 *
+	 * @param mixed                $run     False once any listener has declined.
+	 * @param string               $handler Job handler name.
+	 * @param string               $id      First-class job identity.
+	 * @param array<int,mixed>     $message The job message.
+	 * @return mixed The decision, unchanged.
+	 */
+	public static function begin_job_context_filter( mixed $run, string $handler, string $id = '', array $message = [] ): mixed {
+		if ( false !== $run ) {
+			self::begin_job_context( $handler, $id, $message );
+		}
+		return $run;
 	}
 
 	/**
@@ -666,8 +697,9 @@ class Log_Manager {
 		self::suspend();
 
 		$request_uri = '/jobs/' . \ltrim( $handler, '/' );
-		if ( '' !== $id ) {
-			$request_uri .= '/' . \ltrim( $id, '/' );
+		$id_path     = self::job_id_path( $id );
+		if ( '' !== $id_path ) {
+			$request_uri .= '/' . \ltrim( $id_path, '/' );
 		}
 		$_SERVER['UNIQUE_ID']      = self::generate_request_id();
 		$_SERVER['REQUEST_URI']    = $request_uri;
@@ -683,6 +715,30 @@ class Log_Manager {
 			$_SERVER[ $key ] = $value;
 		}
 		\do_action( 'newspack_event_logger_nodes_scope_changed' );
+	}
+
+	/**
+	 * The path portion of a job id, for the synthetic request URI.
+	 *
+	 * A job id addressed to another host is an absolute URL, so that the worker
+	 * can route on it. Spliced into the URI whole, it nests a second scheme and
+	 * host inside the path and reads as though the executing host served it —
+	 * `https://www.spoke.com/jobs/evtemplate/https://hub/Tools/UpdateSite.html`.
+	 * log_request_details() supplies the real host from SERVER_NAME, so only the
+	 * path belongs here. A URL carrying no path names no template — the handler
+	 * returns early on exactly that input — so it yields '' and the caller drops
+	 * the segment, giving the bare `/jobs/{handler}` an id-less job already has.
+	 *
+	 * @param string $id Job id, absolute URL or bare path.
+	 * @return string Path naming the job without scheme or host, '' if it names none.
+	 */
+	private static function job_id_path( string $id ): string {
+		$host = \wp_parse_url( $id, PHP_URL_HOST );
+		if ( ! \is_string( $host ) || '' === $host ) {
+			return $id;
+		}
+		$path = \wp_parse_url( $id, PHP_URL_PATH );
+		return \is_string( $path ) && '' !== \trim( $path, '/' ) ? $path : '';
 	}
 
 	/**

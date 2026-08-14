@@ -16,8 +16,42 @@ class JobWorkerContextWiringTest extends TestCase {
 	protected function setUp(): void {
 		parent::setUp();
 		$GLOBALS['_wp_actions'] = [];
-		\add_action( 'newspack_nodes/job_worker/before_job', [ Log_Manager::class, 'begin_job_context' ], 10, 3 );
-		\add_action( 'newspack_nodes/job_worker/after_job', [ Log_Manager::class, 'end_job_context' ] );
+		\add_filter( 'newspack_nodes/job_worker/before_job', [ Log_Manager::class, 'begin_job_context_filter' ], 10, 4 );
+		\add_action( 'newspack_nodes/job_worker/after_job', [ Log_Manager::class, 'end_job_context' ], 10, 3 );
+	}
+
+	public function test_a_job_declined_upstream_opens_no_context(): void {
+		// The owning plugin declines at an earlier priority; ELN must not open
+		// a context for work that will not run — that record is the whole point.
+		$_SERVER['REQUEST_URI'] = '/outer';
+		$parent = Log_Manager::instance();
+
+		// The bootstrap's add_filter shim ignores $priority and dispatches in
+		// registration order, so re-register both in the order production's
+		// priorities give them: the owning plugin declines at 5, ELN opens at 10.
+		$GLOBALS['_wp_actions'] = [];
+		\add_filter( 'newspack_nodes/job_worker/before_job', function () { return false; }, 5 );
+		\add_filter( 'newspack_nodes/job_worker/before_job', [ Log_Manager::class, 'begin_job_context_filter' ], 10, 4 );
+		\add_action( 'newspack_nodes/job_worker/after_job', [ Log_Manager::class, 'end_job_context' ], 10, 3 );
+
+		$jw  = new Job_Worker_Node();
+		$ran = false;
+		$this->register_job_handler( $jw, 'evtemplate', function () use ( &$ran ) { $ran = true; } );
+
+		$message                   = Message::new_message();
+		$message[ Message::TYPE ]  = Message::TM_STRUCT;
+		$message[ Message::VALUE ] = [ 'k' => 'job', 'handler' => 'evtemplate', 'parameters' => [], 'id' => 'https://hub/Tools/UpdateSite.html' ];
+		$jw->fill( $message );
+
+		$this->assertFalse( $ran, 'a declined job must not run' );
+		$this->assertSame( '/outer', $_SERVER['REQUEST_URI'], 'no job context may be opened for a declined job' );
+		$this->assertSame(
+			$parent,
+			Log_Manager::instance(),
+			'the worker\'s own context must survive a declined job'
+		);
+		$finished = new \ReflectionProperty( Log_Manager::class, 'finished' );
+		$this->assertFalse( $finished->getValue( $parent ), 'and must not be finished by an unpaired end' );
 	}
 
 	private function job_message( string $handler ): array {
