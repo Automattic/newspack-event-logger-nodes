@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.53.0] - 2026-08-14
+
 ### Fixed
 - `end_job_context()` no longer tears down the enclosing request context when a job was DECLINED before any context was opened. `resume()` ran unconditionally — the empty-stack guard only covered the `$_SERVER` restore — so on a spoke, every foreign template both marked the worker's own request aborted and finished it. The `$job_server_stack` depth is now the pairing record. The arity discriminator also moved from `>= 2` to `>= 3` with the inserted `$id`.
 
