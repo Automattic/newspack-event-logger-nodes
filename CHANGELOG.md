@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.55.1] - 2026-08-14
+
+### Fixed
+- Repinned to newspack-nodes v2.30.1, which stops the log viewers double-compensating their scroll position: scrolled into history, new rows shifted the list by more than the rows that arrived. Request Log and Error Log inherit the fix through the shared `LogRowList`.
+
+
 ## [0.55.0] - 2026-08-14
 
 ### Fixed
