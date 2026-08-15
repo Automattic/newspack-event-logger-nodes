@@ -4,7 +4,7 @@ Event-logger application built on the [`newspack-nodes`](../../newspack-nodes/) 
 
 This plugin replaced the legacy `newspack-event-logger-plugins` monorepo wholesale. That monorepo has since been removed from the tree ("the museum"); this plugin plus the `newspack-nodes` substrate is the sole event-logger stack, writing to `/tmp/newspack-nodes` by default.
 
-**Substrate presence.** The deferred bootstrap (run on `plugins_loaded` priority 11) returns early unless `\Newspack_Nodes\Bootstrap` exists AND `Bootstrap::version_at_least( '2.25.0', 'Newspack Event Logger Nodes' )` passes: it wires the event logger against a new-enough substrate and lies dormant otherwise. `Requires Plugins: newspack-nodes` keeps the runtime active on WordPress 6.5+; the version handshake is the graceful fallback. One thing is wired outside the deferred closure — `Config::register_config_keys()` hooks `newspack_nodes/declare_config_keys` at file load, because the substrate pulls that declaration from inside any config read, ahead of `plugins_loaded`.
+**Substrate presence.** The deferred bootstrap (run on `plugins_loaded` priority 11) returns early unless `\Newspack_Nodes\Bootstrap` exists AND `Bootstrap::version_at_least( '2.31.0', 'Newspack Event Logger Nodes' )` passes: it wires the event logger against a new-enough substrate and lies dormant otherwise. `Requires Plugins: newspack-nodes` keeps the runtime active on WordPress 6.5+; the version handshake is the graceful fallback. One thing is wired outside the deferred closure — `Config::register_config_keys()` hooks `newspack_nodes/declare_config_keys` at file load, because the substrate pulls that declaration from inside any config read, ahead of `plugins_loaded`.
 
 ## Table of Contents
 

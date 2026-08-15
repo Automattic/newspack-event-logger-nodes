@@ -341,6 +341,24 @@ const applyLabelContrast = ( container ) => {
 };
 
 /**
+ * Stamp each frame with its `span:` descriptor so the `?` picker can ask about
+ * it. The span alone is not addressable — the picker resolves the request from
+ * the containing `[data-ask]`, which is why nothing here carries a rid.
+ *
+ * Re-run after every render: d3 recreates the frames.
+ *
+ * @param {Element} container Flame graph container element.
+ */
+const applyAskDescriptors = ( container ) => {
+	d3.select( container )
+		.selectAll( 'g.frame' )
+		.attr( 'data-ask', ( d ) => {
+			const name = d?.data?.name;
+			return name ? `span:${ name }` : null;
+		} );
+};
+
+/**
  * Build the root-to-node path, one segment per frame.
  *
  * Segments prefer `detail` ("name: message") over `name`, which is what
@@ -692,6 +710,7 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 					.transitionDuration( 0 );
 				chartRef.current.update( framedData );
 				applyLabelContrast( container );
+				applyAskDescriptors( container );
 
 				// Re-zoom to where the viewer was before the data changed.
 				if ( zoomedNodeRef.current ) {
@@ -755,6 +774,7 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 			chartRef.current = chart;
 			d3.select( container ).datum( framedData ).call( chart );
 			applyLabelContrast( container );
+			applyAskDescriptors( container );
 
 			// Track Cmd/Ctrl on mousedown (more reliable than click on Mac).
 			container.addEventListener( 'mousedown', ( e ) => {

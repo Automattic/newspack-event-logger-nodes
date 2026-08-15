@@ -18,3 +18,27 @@
 .event-logger-admin-wrap {
 	padding: 16px 0;
 }
+
+// The `?` picker's brief. Findings first, the raw payload behind a disclosure —
+// a picker click is not consent to send, so the operator sees what leaves.
+.event-logger-ask__findings {
+	margin: 0 0 12px;
+	padding: 0;
+	list-style: none;
+}
+
+.event-logger-ask__finding {
+	margin-bottom: 16px;
+}
+
+.event-logger-ask__measured,
+.event-logger-ask__proposal {
+	font-size: 12px;
+	margin: 4px 0 0;
+}
+
+.event-logger-ask__raw pre {
+	max-height: 40vh;
+	overflow: auto;
+	white-space: pre-wrap;
+}

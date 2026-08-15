@@ -40,6 +40,11 @@ jest.mock( '@newspack-nodes/runtime', () => ( {
 	},
 } ) );
 
+// AskPanel mounts its own Request node onto the exospine, which this suite's
+// runtime mock has no graph for. Its behaviour is covered by useAskPicker and
+// askBrief; here it is a button.
+jest.mock( '../components/AskPanel', () => () => null );
+
 // The graph control callbacks usePerformanceGraph hands back.
 const mockGraph = {
 	handleUrlParamsChange: jest.fn(),

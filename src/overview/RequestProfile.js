@@ -169,6 +169,7 @@ export default function RequestProfile( {
 							return (
 								<Fragment key={ state }>
 									<tr
+										data-ask={ `category:${ state }` }
 										style={ {
 											cursor: hasEntries
 												? 'pointer'

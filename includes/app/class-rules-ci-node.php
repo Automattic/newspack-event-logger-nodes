@@ -41,6 +41,7 @@ namespace Newspack_Event_Logger_Nodes\App;
 
 use Newspack_Event_Logger_Nodes\Rule;
 use Newspack_Event_Logger_Nodes\Rule_Set;
+use Newspack_Nodes\Capabilities;
 use Newspack_Nodes\Command_Args;
 use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Service_CI_Node;
@@ -110,6 +111,7 @@ class Rules_CI_Node extends Service_CI_Node {
 			'commands'    => [
 				[
 					'name'        => 'list',
+					'capability'  => Capabilities::READ,
 					'description' => 'All rules, with pointer-tier hooks resolved to the full list.',
 					'args'        => [],
 					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
@@ -122,6 +124,7 @@ class Rules_CI_Node extends Service_CI_Node {
 				],
 				[
 					'name'        => 'save',
+					'capability'  => Capabilities::TUNE,
 					'description' => 'Whole-list replace. Arg is a JSON array of rule objects.',
 					'args'        => [
 						[ 'name' => 'rules', 'type' => 'string', 'required' => true ],
@@ -143,6 +146,7 @@ class Rules_CI_Node extends Service_CI_Node {
 				],
 				[
 					'name'        => 'upsert',
+					'capability'  => Capabilities::TUNE,
 					'description' => 'Add/replace a single rule, keyed by pattern hash. Arg is a JSON rule object; a same-pattern add replaces in place, and an edit that changes the pattern (its old-pattern id round-trips) rekeys the rule and drops the old-pattern entry.',
 					'args'        => [
 						[ 'name' => 'rule', 'type' => 'string', 'required' => true ],
@@ -173,6 +177,7 @@ class Rules_CI_Node extends Service_CI_Node {
 				],
 				[
 					'name'        => 'delete',
+					'capability'  => Capabilities::TUNE,
 					'description' => 'Remove a rule by id.',
 					'args'        => [
 						[ 'name' => 'id', 'type' => 'string', 'required' => true ],
@@ -199,6 +204,7 @@ class Rules_CI_Node extends Service_CI_Node {
 				],
 				[
 					'name'        => 'reset',
+					'capability'  => Capabilities::TUNE,
 					'description' => 'Discard the stored ruleset so the file config seeds again. Reports the seeded rule count.',
 					'args'        => [],
 					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {

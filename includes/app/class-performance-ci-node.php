@@ -18,8 +18,10 @@
  * CommandInterpreter dispatch path doesn't stream.
  *
  * Cross-cutting design choices:
- *  - Auth: every verb opens with `require_manage_options()` — the substrate
- *    `manage` role, which defaults to `manage_options`.
+ *  - Auth: each verb DECLARES its role in node_schema() — `read` for the
+ *    dashboard slices, `tune` for the settings receiver — and Service_CI_Node
+ *    gates every handler with it. No handler re-gates itself; a hard-coded
+ *    gate would silently override the declaration.
  *  - Rate limit: none here. The substrate's `/command` endpoint already caps
  *    POSTs per user per window, so a polling dashboard is bounded upstream.
  *  - Stats reads fail-soft (matches Stats_Store + dashboards "no data" UX).
@@ -37,9 +39,11 @@ use Newspack_Event_Logger_Nodes\Hook_Categorizer;
 use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Reqgrep_Core;
 use Newspack_Event_Logger_Nodes\Request_Builder_Node;
+use Newspack_Event_Logger_Nodes\Rule;
 use Newspack_Event_Logger_Nodes\Rule_Set;
 use Newspack_Event_Logger_Nodes\Stats_Store;
 use Newspack_Nodes\Bootstrap;
+use Newspack_Nodes\Capabilities;
 use Newspack_Nodes\Callback_Node;
 use Newspack_Nodes\Command_Args;
 use Newspack_Nodes\Command_Interpreter_Node;
@@ -265,121 +269,6 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * Merged URL index across all partitions, shaped for dashboard display.
-	 *
-	 * Rows are keyed by URL hash while merging, then flattened to a list sorted
-	 * by `count` DESC. That sort is load-bearing: `build_overview_payload` takes
-	 * the head of this list as `most_requested` without re-sorting, so a
-	 * replacement `$load_index` seam must sort the same way.
-	 *
-	 * Two bucket shapes coexist. Flame_Builder writes `sum_ms` directly;
-	 * older aggregator buckets carry `sum_req_time` in seconds, folded in at
-	 * ×1000. A bucket keyed by URL hash carries its URL in `url`; one keyed by
-	 * the URL string gets a hash derived here instead.
-	 *
-	 * @return array<int,array<string,mixed>>
-	 */
-	public static function load_index_default(): array {
-		$buckets = self::recent_url_buckets();
-		$result  = [];
-		foreach ( self::stats_stores() as $store ) {
-			$rows = $store->get_url_buckets( $buckets );
-			foreach ( $rows as $bucket_data ) {
-				if ( ! \is_array( $bucket_data ) ) {
-					continue;
-				}
-				foreach ( $bucket_data as $hash_or_url => $stats ) {
-					// Inner key is URL hash; derive one if keyed by URL string.
-					$stat_arr = Core::arr( $stats );
-					if ( isset( $stat_arr['url'] ) ) {
-						$url  = Core::as_string( $stat_arr['url'] );
-						$hash = (string) $hash_or_url;
-					} else {
-						$url  = (string) $hash_or_url;
-						$hash = \substr( \hash( 'sha256', $url ), 0, 12 );
-					}
-					if ( ! isset( $result[ $hash ] ) ) {
-						$result[ $hash ] = [
-							'hash'        => $hash,
-							'url'         => $url,
-							'count'       => 0,
-							'count_2xx'   => 0,
-							'count_3xx'   => 0,
-							'count_4xx'   => 0,
-							'count_5xx'   => 0,
-							'sum_ms'      => 0.0,
-							'max_ms'      => 0.0,
-							'p50_ms'      => 0.0,
-							'p95_ms'      => 0.0,
-							'p99_ms'      => 0.0,
-							'sum_peak_mb' => 0.0,
-							'max_peak_mb' => 0.0,
-							'last_seen'   => 0,
-						];
-					}
-					$entry              = $result[ $hash ];
-					$entry['count']     += Core::as_int( $stat_arr['count']     ?? 0 );
-					$entry['count_2xx'] += Core::as_int( $stat_arr['count_2xx'] ?? 0 );
-					$entry['count_3xx'] += Core::as_int( $stat_arr['count_3xx'] ?? 0 );
-					$entry['count_4xx'] += Core::as_int( $stat_arr['count_4xx'] ?? 0 );
-					$entry['count_5xx'] += Core::as_int( $stat_arr['count_5xx'] ?? 0 );
-					// sum_ms is current; legacy sum_req_time is in seconds.
-					$entry['sum_ms']      += isset( $stat_arr['sum_ms'] )
-						? Core::as_float( $stat_arr['sum_ms'] )
-						: Core::as_float( $stat_arr['sum_req_time'] ?? 0 ) * 1000.0;
-					$entry['sum_peak_mb'] += Core::as_float( $stat_arr['sum_peak_mb'] ?? 0 );
-					// Fold min_ms only from timed buckets; skip sentinels.
-					if ( isset( $stat_arr['min_ms'] ) && ( $stat_arr['timed_count'] ?? 0 ) > 0 ) {
-						$stat_min        = Core::as_float( $stat_arr['min_ms'] );
-						$entry['min_ms'] = isset( $entry['min_ms'] )
-							? \min( Core::as_float( $entry['min_ms'] ), $stat_min )
-							: $stat_min;
-					}
-					$entry['max_ms']      = \max( Core::as_float( $entry['max_ms'] ),      Core::as_float( $stat_arr['max_ms']      ?? 0 ) );
-					$entry['max_peak_mb'] = \max( Core::as_float( $entry['max_peak_mb'] ), Core::as_float( $stat_arr['max_peak_mb'] ?? 0 ) );
-					foreach ( [ 'p50_ms', 'p95_ms', 'p99_ms' ] as $k ) {
-						if ( ! empty( $stat_arr[ $k ] ) ) {
-							$entry[ $k ] = Core::as_float( $stat_arr[ $k ] );
-						}
-					}
-					$entry['last_seen'] = \max(
-						Core::as_int( $entry['last_seen'] ),
-						Core::as_int( $stat_arr['last_seen'] ?? 0 )
-					);
-					$result[ $hash ] = $entry;
-				}
-			}
-		}
-
-		// Convert into the display shape the React tree expects.
-		$out = [];
-		foreach ( $result as $entry ) {
-			$count = $entry['count'];
-			$denom = \max( 1, $count );
-			$out[] = [
-				'hash'         => $entry['hash'],
-				'url'          => $entry['url'],
-				'count'        => $count,
-				'count_2xx'    => $entry['count_2xx'],
-				'count_3xx'    => $entry['count_3xx'],
-				'count_4xx'    => $entry['count_4xx'],
-				'count_5xx'    => $entry['count_5xx'],
-				'avg_ms'       => $entry['sum_ms'] / $denom,
-				'min_ms'       => (float) ( $entry['min_ms'] ?? 0 ),
-				'max_ms'       => $entry['max_ms'],
-				'p50_ms'       => $entry['p50_ms'],
-				'p95_ms'       => $entry['p95_ms'],
-				'p99_ms'       => $entry['p99_ms'],
-				'avg_peak_mb'  => $entry['sum_peak_mb'] / $denom,
-				'max_peak_mb'  => $entry['max_peak_mb'],
-				'last_updated' => $entry['last_seen'],
-			];
-		}
-		\usort( $out, static fn ( $a, $b ) => $b['count'] <=> $a['count'] );
-		return $out;
-	}
-
-	/**
 	 * Walk every recent URL bucket for the given hash and emit a per-bucket
 	 * `{count, sum_ms, sum_peak_mb}` time series, keyed by bucket and sorted
 	 * ascending. Zero-count buckets are skipped, so the series is sparse.
@@ -416,34 +305,6 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * Build the merged global category leaderboard for the recent window.
-	 * Sums stay raw across the merge; `Stats_Store::sums_to_display` computes
-	 * the means once at the end.
-	 *
-	 * @return array<string,mixed>
-	 */
-	private static function build_global_leaderboard(): array {
-		$count        = 0;
-		$sum_req_time = 0.0;
-		$sums         = [];
-		$buckets      = self::recent_url_buckets();
-		foreach ( self::stats_stores() as $store ) {
-			foreach ( $buckets as $b ) {
-				$row = $store->get_leaderboard_bucket( $b );
-				if ( empty( $row ) ) {
-					continue;
-				}
-				$count        += Core::as_int( $row['count'] ?? 0 );
-				$sum_req_time += Core::as_float( $row['sum_req_time'] ?? 0 );
-				/** @var array<string,mixed> $categories -- decoded memcache leaderboard blob, keyed by category name. */
-				$categories    = \is_array( $row['categories'] ?? null ) ? $row['categories'] : [];
-				self::accumulate_leaderboard_categories( $sums, $categories );
-			}
-		}
-		return Stats_Store::sums_to_display( $count, $sum_req_time, $sums );
-	}
-
-	/**
 	 * Build the per-server category leaderboard for the recent window.
 	 *
 	 * @param string $server Server name to scope to.
@@ -468,47 +329,6 @@ class Performance_CI_Node extends Service_CI_Node {
 			}
 		}
 		return Stats_Store::sums_to_display( $count, $sum_req_time, $sums );
-	}
-
-	/**
-	 * Build a list of recent 5-min bucket keys (`Y-m-d-H-MM`, UTC) walking
-	 * backwards from now. Capped at 288 (24h × 12 buckets/h) so memcache
-	 * get_multi stays bounded regardless of the configured retention.
-	 *
-	 * @return array<int,string>
-	 */
-	private static function recent_url_buckets(): array {
-		$now = \time();
-		$out = [];
-		for ( $i = 0; $i < 288; $i++ ) {
-			$ts         = $now - ( $i * 300 );
-			$min        = (int) \gmdate( 'i', $ts );
-			$bucket_min = \str_pad( (string) ( (int) \floor( $min / 5 ) * 5 ), 2, '0', \STR_PAD_LEFT );
-			$out[]      = \gmdate( 'Y-m-d-H', $ts ) . '-' . $bucket_min;
-		}
-		return \array_unique( $out );
-	}
-
-	/**
-	 * Sum-merge a single leaderboard bucket's categories into the running totals.
-	 * Used by both global + server leaderboard builders.
-	 *
-	 * @param array<string,array{samples:int,sum_time:float,sum_count:float,entries:array<int,mixed>}> $sums       Running totals (mutated).
-	 * @param array<string,mixed>                                                             $categories Inbound categories.
-	 */
-	private static function accumulate_leaderboard_categories( array &$sums, array $categories ): void {
-		foreach ( $categories as $cat => $data ) {
-			$data_arr = Core::arr( $data );
-			$sums[ $cat ] ??= [
-				'samples'   => 0,
-				'sum_time'  => 0.0,
-				'sum_count' => 0.0,
-				'entries'   => [],
-			];
-			$sums[ $cat ]['samples']   += Core::as_int( $data_arr['samples'] ?? 0 );
-			$sums[ $cat ]['sum_time']  += Core::as_float( $data_arr['sum_time'] ?? 0 );
-			$sums[ $cat ]['sum_count'] += Core::as_float( $data_arr['sum_count'] ?? 0 );
-		}
 	}
 
 	/**
@@ -561,26 +381,6 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * Sum-merge per-URL dimensional buckets for one dim/hash.
-	 *
-	 * @param string $hash      12-char URL hash.
-	 * @param string $dimension One of DIMENSIONS.
-	 * @return array<array-key,mixed> Bucket keys derive from decoded memcache blobs.
-	 */
-	private static function merge_url_dim( string $hash, string $dimension ): array {
-		$merged = [];
-		foreach ( self::stats_stores() as $store ) {
-			$rows = $store->get_url_dimensional( $hash );
-			$dim  = $rows[ $dimension ] ?? [];
-			if ( \is_array( $dim ) ) {
-				self::merge_dim_buckets_into( $merged, $dim );
-			}
-		}
-		\ksort( $merged );
-		return $merged;
-	}
-
-	/**
 	 * Sum-merge per-URL category buckets for one hash.
 	 *
 	 * @param string $hash 12-char URL hash.
@@ -593,30 +393,6 @@ class Performance_CI_Node extends Service_CI_Node {
 		}
 		\ksort( $merged );
 		return $merged;
-	}
-
-	/**
-	 * Sum-merge dimensional `[bucket => [name => {c,s,m}]]` blobs into the running
-	 * totals. Shared by the global (merge_dim_across_partitions) and per-URL
-	 * (merge_url_dim) breakdown builders — the two iterate identically.
-	 *
-	 * @param array<array-key,array<array-key,array{c:int,s:float,m:float}>> $merged Mutated.
-	 * @param array<array-key,mixed>                                         $rows   Inbound (key-agnostic).
-	 */
-	private static function merge_dim_buckets_into( array &$merged, array $rows ): void {
-		foreach ( $rows as $bucket => $values ) {
-			$merged[ $bucket ] ??= [];
-			if ( ! \is_array( $values ) ) {
-				continue;
-			}
-			foreach ( $values as $name => $entry ) {
-				$entry_arr = Core::arr( $entry );
-				$merged[ $bucket ][ $name ] ??= [ 'c' => 0, 's' => 0.0, 'm' => 0.0 ];
-				$merged[ $bucket ][ $name ]['c'] += Core::as_int( $entry_arr['c'] ?? 0 );
-				$merged[ $bucket ][ $name ]['s'] += Core::as_float( $entry_arr['s'] ?? 0 );
-				$merged[ $bucket ][ $name ]['m'] += Core::as_float( $entry_arr['m'] ?? 0 );
-			}
-		}
 	}
 
 	/**
@@ -724,99 +500,6 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * One Stats_Store per flame-builder worker over the shared `Core::$memd`
-	 * handle. `configure_stats <partition>` keys each store by the WORKER index,
-	 * and nothing of it lands on disk — so the index space comes from the
-	 * declaring topology's count, not from a dir listing.
-	 *
-	 * With no memcache handle this returns an empty list, which is what makes
-	 * every stats reader above degrade to an empty or zeroed shape instead of
-	 * throwing. Each store's TTL comes from the substrate `min_lifetime` key.
-	 *
-	 * @return array<int,Stats_Store>
-	 */
-	private static function stats_stores(): array {
-		if ( null === Core::$memd ) {
-			return [];
-		}
-		$max_lifespan = Core::as_int( AppConfig::value( 'min_lifetime' ), 86400 );
-		$stores       = [];
-		foreach ( Bootstrap::node_partitions( self::NODE_FLAME_BUILDER ) as $p ) {
-			$stores[] = new Stats_Store( $p, $max_lifespan );
-		}
-		return $stores;
-	}
-
-	/**
-	 * Walk the request partitions newest-first and collect up to 500 index
-	 * entries for the given url_hash, deduplicated by rid and sorted by
-	 * timestamp DESC. Stops early on either the 500-result cap or the shared
-	 * MAX_INDEX_ENTRIES scan budget, which spans all partitions.
-	 *
-	 * @param string $url_hash 12-char URL hash to match.
-	 * @return array<int,array<string,mixed>>
-	 */
-	private static function find_recent_requests_for_url( string $url_hash ): array {
-		$requests      = [];
-		$entries_count = 0;
-		foreach ( Bootstrap::node_dirs( self::NODE_REQUESTS ) as $p => $dir ) {
-			$partition = new Partition_Node();
-			self::name_scratch_partition( $partition, 'requests', $p );
-			$partition->arguments( [ $dir ] );
-			$partition->with_index(
-				static function ( array $message, array $position ): ?string {
-					return Request_Builder_Node::format_index_entry( $message, $position );
-				}
-			);
-			$partition->scan_index(
-				static function ( string $line, int $segment ) use ( &$requests, &$entries_count, $url_hash, $p ): ?bool {
-					++$entries_count;
-					if ( $entries_count > self::MAX_INDEX_ENTRIES ) {
-						return false;
-					}
-					$entry = Request_Builder_Node::parse_request_index( $line );
-					if ( ! \is_array( $entry ) || \trim( Core::as_string( $entry['url_hash'] ) ) !== $url_hash ) {
-						return null;
-					}
-					$requests[] = [
-						'rid'          => \trim( Core::as_string( $entry['rid'] ) ),
-						'timestamp'    => $entry['timestamp'] ?? 0,
-						'duration_ms'  => $entry['duration_ms'] ?? 0,
-						'status_code'  => $entry['status_code'] ?? 0,
-						'peak_mb'      => $entry['peak_mb'] ?? 0,
-						'method'       => $entry['method'] ?? '',
-						'error_status' => $entry['error_status'] ?? null,
-						'segment'   => $entry['segment'] ?? $segment,
-						'offset'       => $entry['offset'] ?? 0,
-						'length'       => $entry['length'] ?? 0,
-						'partition'    => $p,
-					];
-					return \count( $requests ) >= 500 ? false : null;
-				},
-				true
-			);
-			$partition->remove_node();
-			if ( \count( $requests ) >= 500 || $entries_count > self::MAX_INDEX_ENTRIES ) {
-				break;
-			}
-		}
-
-		\usort( $requests, static fn ( $a, $b ) => $b['timestamp'] <=> $a['timestamp'] );
-		$seen   = [];
-		$unique = [];
-		foreach ( $requests as $r ) {
-			if ( ! isset( $seen[ $r['rid'] ] ) ) {
-				$seen[ $r['rid'] ] = true;
-				$unique[]          = $r;
-				if ( \count( $unique ) >= 500 ) {
-					break;
-				}
-			}
-		}
-		return $unique;
-	}
-
-	/**
 	 * Locate a single request index entry by rid in one partition and return the
 	 * search shape `{rid, partition, url_hash}` — enough for the dashboard to
 	 * then ask for `request_detail`; the request body is not read here.
@@ -859,140 +542,6 @@ class Performance_CI_Node extends Service_CI_Node {
 		);
 		$requests->remove_node();
 		return $result;
-	}
-
-	/**
-	 * Read the full request body from a known partition, then merge any matching
-	 * flame data in as `flame_data`. A missing flame is normal — flames are
-	 * built asynchronously — and leaves the body otherwise intact.
-	 *
-	 * Unlike find_request_index_entry, the scan budget here is per-call: this
-	 * walks exactly one partition.
-	 *
-	 * @param string $dir       Partition directory.
-	 * @param int    $partition Partition index (names the scratch node).
-	 * @param string $rid       Request id to match.
-	 * @return array<array-key,mixed>|null Decoded request body (keys come from the JSON envelope).
-	 */
-	private static function find_request_in_partition( string $dir, int $partition, string $rid ): ?array {
-		$result        = null;
-		$entries_count = 0;
-		$requests = new Partition_Node();
-		self::name_scratch_partition( $requests, 'requests', $partition );
-		$requests->arguments( [ $dir ] );
-		$requests->with_index(
-			static function ( array $message, array $position ): ?string {
-				return Request_Builder_Node::format_index_entry( $message, $position );
-			}
-		);
-		$requests->scan_index(
-			static function ( string $line ) use ( &$result, &$entries_count, $requests, $rid ): ?bool {
-				++$entries_count;
-				if ( $entries_count > self::MAX_INDEX_ENTRIES ) {
-					return false;
-				}
-				$entry = Request_Builder_Node::parse_request_index( $line );
-				if ( ! \is_array( $entry ) || \trim( Core::as_string( $entry['rid'] ) ) !== $rid ) {
-					return null;
-				}
-				$message = $requests->read_message_at(
-					Core::as_int( $entry['segment'] ?? 0 ),
-					Core::as_int( $entry['offset'] ?? 0 ),
-					Core::as_int( $entry['length'] ?? 0 )
-				);
-				$req = \is_array( $message ) ? ( $message[ Message::VALUE ] ?? null ) : null;
-				if ( ! \is_array( $req ) ) {
-					return false;
-				}
-				$req['url_hash'] = \trim( Core::as_string( $entry['url_hash'] ) );
-				$result          = $req;
-				return false;
-			},
-			true
-		);
-		$requests->remove_node();
-
-		if ( null === $result ) {
-			return null;
-		}
-
-		$flame = self::find_flame_for_rid( $rid );
-		if ( null !== $flame ) {
-			$result['flame_data'] = $flame;
-		}
-		return $result;
-	}
-
-	/**
-	 * Search every flame partition for a flame entry matching the rid; the
-	 * first hit wins. Flame_Builder writes to whatever partition it's wired
-	 * into, so a per-rid lookup has to fan out across all of them.
-	 *
-	 * @param string $rid Request id to match.
-	 * @return array<array-key,mixed>|null Decoded flame blob (keys come from the JSON envelope).
-	 */
-	private static function find_flame_for_rid( string $rid ): ?array {
-		$entries_count = 0;
-		foreach ( Bootstrap::node_dirs( self::NODE_FLAMES ) as $p => $dir ) {
-			$flames = new Partition_Node();
-			self::name_scratch_partition( $flames, 'flames', $p );
-			$flames->arguments( [ $dir ] );
-			$flames->with_index(
-				static function ( array $message, array $position ): ?string {
-					return Flame_Builder_Node::format_index_entry( $message, $position );
-				}
-			);
-			$result = null;
-			$flames->scan_index(
-				static function ( string $line ) use ( &$result, &$entries_count, $flames, $rid ): ?bool {
-					++$entries_count;
-					if ( $entries_count > self::MAX_INDEX_ENTRIES ) {
-						return false;
-					}
-					$entry = Flame_Builder_Node::parse_flame_index( $line );
-					if ( ! \is_array( $entry ) || \trim( $entry['rid'] ) !== $rid ) {
-						return null;
-					}
-					$message = $flames->read_message_at(
-						$entry['segment'],
-						$entry['offset'],
-						$entry['length']
-					);
-					$flame = \is_array( $message ) ? ( $message[ Message::VALUE ] ?? null ) : null;
-					if ( \is_array( $flame ) ) {
-						$result = $flame;
-					}
-					return false;
-				},
-				true
-			);
-			$flames->remove_node();
-			if ( null !== $result ) {
-				return $result;
-			}
-			if ( $entries_count > self::MAX_INDEX_ENTRIES ) {
-				break;
-			}
-		}
-		return null;
-	}
-
-	/**
-	 * Name (`{log}.{token}.p{N}`, unique per scan), self-patron, and Rule-4 interpreter-sink
-	 * a transient scratch Partition. Callers remove_node() it after use.
-	 *
-	 * @param Partition_Node $partition Freshly-constructed scratch Partition.
-	 * @param string         $log       Log basename ('requests' | 'flames').
-	 * @param int            $index     Partition index.
-	 */
-	private static function name_scratch_partition( Partition_Node $partition, string $log, int $index ): void {
-		$token = \getmypid() . '-' . \spl_object_id( $partition );
-		$partition->name( "{$log}.{$token}.p{$index}" );
-		$partition->patron( $partition );
-		$ci = Core::node( Node_Names::COMMAND_INTERPRETER );
-		if ( null === $partition->sink() && null !== $ci ) {
-			$partition->sink( $ci );
-		}
 	}
 
 	/**
@@ -1178,6 +727,719 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
+	 * Assemble the brief for a descriptor CHAIN — the clicked element first,
+	 * then each `[data-ask]` ancestor, outermost last.
+	 *
+	 * The chain is what makes the small descriptor vocabulary self-sufficient:
+	 * `span:wp_loaded` names a span but not which request's, and DOM nesting
+	 * already expresses that containment, so the picker sends it rather than
+	 * inventing a second attribute for scope.
+	 *
+	 * @param list<string> $descriptors Target first, containers after.
+	 * @return array<string,mixed>
+	 * @throws \RuntimeException On an unknown descriptor or a missing context.
+	 */
+	private static function assemble_ask( array $descriptors ): array {
+		$target = Ask_Assembler::parse_descriptor( Core::as_string( $descriptors[0] ?? '' ) );
+		if ( null === $target ) {
+			throw new \RuntimeException(
+				'' === Core::as_string( $descriptors[0] ?? '' )
+					? 'descriptor required'
+					: \esc_html( 'unknown descriptor: ' . Core::as_string( $descriptors[0] ) )
+			);
+		}
+		$context = \array_slice( $descriptors, 1 );
+
+		switch ( $target['type'] ) {
+			case 'url':
+				return self::ask_url( $target['id'] );
+			case 'request':
+				return self::ask_request( $target['id'], (int) $target['qualifier'] );
+			case 'span':
+				return self::ask_span( $target['id'], $context );
+			case 'entry':
+				return self::ask_entry( (int) $target['id'], $context );
+			case 'category':
+				return self::ask_category( $target['id'], $context );
+		}
+		throw new \RuntimeException( \esc_html( 'unknown descriptor: ' . $target['type'] ) );
+	}
+
+	/**
+	 * The `url:` brief — stats, breakdown, worst recent requests, and the
+	 * cold-start finding when nothing governs it.
+	 *
+	 * @return array<string,mixed>
+	 * @throws \RuntimeException When no URL row carries that hash.
+	 */
+	private static function ask_url( string $hash ): array {
+		$stats = null;
+		foreach ( self::load_index_default() as $row ) {
+			if ( Core::as_string( $row['hash'] ?? '' ) === $hash ) {
+				$stats = $row;
+				break;
+			}
+		}
+		if ( null === $stats ) {
+			throw new \RuntimeException( \esc_html( "URL not found: {$hash}" ) );
+		}
+		return Ask_Assembler::for_url(
+			$stats,
+			self::find_recent_requests_for_url( $hash ),
+			self::merge_url_dim( $hash, 'status' ),
+			self::rule_for_url( Core::as_string( $stats['url'] ?? '' ) )
+		);
+	}
+
+	/**
+	 * Merged URL index across all partitions, shaped for dashboard display.
+	 *
+	 * Rows are keyed by URL hash while merging, then flattened to a list sorted
+	 * by `count` DESC. That sort is load-bearing: `build_overview_payload` takes
+	 * the head of this list as `most_requested` without re-sorting, so a
+	 * replacement `$load_index` seam must sort the same way.
+	 *
+	 * Two bucket shapes coexist. Flame_Builder writes `sum_ms` directly;
+	 * older aggregator buckets carry `sum_req_time` in seconds, folded in at
+	 * ×1000. A bucket keyed by URL hash carries its URL in `url`; one keyed by
+	 * the URL string gets a hash derived here instead.
+	 *
+	 * @return array<int,array<string,mixed>>
+	 */
+	public static function load_index_default(): array {
+		$buckets = self::recent_url_buckets();
+		$result  = [];
+		foreach ( self::stats_stores() as $store ) {
+			$rows = $store->get_url_buckets( $buckets );
+			foreach ( $rows as $bucket_data ) {
+				if ( ! \is_array( $bucket_data ) ) {
+					continue;
+				}
+				foreach ( $bucket_data as $hash_or_url => $stats ) {
+					// Inner key is URL hash; derive one if keyed by URL string.
+					$stat_arr = Core::arr( $stats );
+					if ( isset( $stat_arr['url'] ) ) {
+						$url  = Core::as_string( $stat_arr['url'] );
+						$hash = (string) $hash_or_url;
+					} else {
+						$url  = (string) $hash_or_url;
+						$hash = \substr( \hash( 'sha256', $url ), 0, 12 );
+					}
+					if ( ! isset( $result[ $hash ] ) ) {
+						$result[ $hash ] = [
+							'hash'        => $hash,
+							'url'         => $url,
+							'count'       => 0,
+							'count_2xx'   => 0,
+							'count_3xx'   => 0,
+							'count_4xx'   => 0,
+							'count_5xx'   => 0,
+							'sum_ms'      => 0.0,
+							'max_ms'      => 0.0,
+							'p50_ms'      => 0.0,
+							'p95_ms'      => 0.0,
+							'p99_ms'      => 0.0,
+							'sum_peak_mb' => 0.0,
+							'max_peak_mb' => 0.0,
+							'last_seen'   => 0,
+						];
+					}
+					$entry              = $result[ $hash ];
+					$entry['count']     += Core::as_int( $stat_arr['count']     ?? 0 );
+					$entry['count_2xx'] += Core::as_int( $stat_arr['count_2xx'] ?? 0 );
+					$entry['count_3xx'] += Core::as_int( $stat_arr['count_3xx'] ?? 0 );
+					$entry['count_4xx'] += Core::as_int( $stat_arr['count_4xx'] ?? 0 );
+					$entry['count_5xx'] += Core::as_int( $stat_arr['count_5xx'] ?? 0 );
+					// sum_ms is current; legacy sum_req_time is in seconds.
+					$entry['sum_ms']      += isset( $stat_arr['sum_ms'] )
+						? Core::as_float( $stat_arr['sum_ms'] )
+						: Core::as_float( $stat_arr['sum_req_time'] ?? 0 ) * 1000.0;
+					$entry['sum_peak_mb'] += Core::as_float( $stat_arr['sum_peak_mb'] ?? 0 );
+					// Fold min_ms only from timed buckets; skip sentinels.
+					if ( isset( $stat_arr['min_ms'] ) && ( $stat_arr['timed_count'] ?? 0 ) > 0 ) {
+						$stat_min        = Core::as_float( $stat_arr['min_ms'] );
+						$entry['min_ms'] = isset( $entry['min_ms'] )
+							? \min( Core::as_float( $entry['min_ms'] ), $stat_min )
+							: $stat_min;
+					}
+					$entry['max_ms']      = \max( Core::as_float( $entry['max_ms'] ),      Core::as_float( $stat_arr['max_ms']      ?? 0 ) );
+					$entry['max_peak_mb'] = \max( Core::as_float( $entry['max_peak_mb'] ), Core::as_float( $stat_arr['max_peak_mb'] ?? 0 ) );
+					foreach ( [ 'p50_ms', 'p95_ms', 'p99_ms' ] as $k ) {
+						if ( ! empty( $stat_arr[ $k ] ) ) {
+							$entry[ $k ] = Core::as_float( $stat_arr[ $k ] );
+						}
+					}
+					$entry['last_seen'] = \max(
+						Core::as_int( $entry['last_seen'] ),
+						Core::as_int( $stat_arr['last_seen'] ?? 0 )
+					);
+					$result[ $hash ] = $entry;
+				}
+			}
+		}
+
+		// Convert into the display shape the React tree expects.
+		$out = [];
+		foreach ( $result as $entry ) {
+			$count = $entry['count'];
+			$denom = \max( 1, $count );
+			$out[] = [
+				'hash'         => $entry['hash'],
+				'url'          => $entry['url'],
+				'count'        => $count,
+				'count_2xx'    => $entry['count_2xx'],
+				'count_3xx'    => $entry['count_3xx'],
+				'count_4xx'    => $entry['count_4xx'],
+				'count_5xx'    => $entry['count_5xx'],
+				'avg_ms'       => $entry['sum_ms'] / $denom,
+				'min_ms'       => (float) ( $entry['min_ms'] ?? 0 ),
+				'max_ms'       => $entry['max_ms'],
+				'p50_ms'       => $entry['p50_ms'],
+				'p95_ms'       => $entry['p95_ms'],
+				'p99_ms'       => $entry['p99_ms'],
+				'avg_peak_mb'  => $entry['sum_peak_mb'] / $denom,
+				'max_peak_mb'  => $entry['max_peak_mb'],
+				'last_updated' => $entry['last_seen'],
+			];
+		}
+		\usort( $out, static fn ( $a, $b ) => $b['count'] <=> $a['count'] );
+		return $out;
+	}
+
+	/**
+	 * Sum-merge per-URL dimensional buckets for one dim/hash.
+	 *
+	 * @param string $hash      12-char URL hash.
+	 * @param string $dimension One of DIMENSIONS.
+	 * @return array<array-key,mixed> Bucket keys derive from decoded memcache blobs.
+	 */
+	private static function merge_url_dim( string $hash, string $dimension ): array {
+		$merged = [];
+		foreach ( self::stats_stores() as $store ) {
+			$rows = $store->get_url_dimensional( $hash );
+			$dim  = $rows[ $dimension ] ?? [];
+			if ( \is_array( $dim ) ) {
+				self::merge_dim_buckets_into( $merged, $dim );
+			}
+		}
+		\ksort( $merged );
+		return $merged;
+	}
+
+	/**
+	 * Sum-merge dimensional `[bucket => [name => {c,s,m}]]` blobs into the running
+	 * totals. Shared by the global (merge_dim_across_partitions) and per-URL
+	 * (merge_url_dim) breakdown builders — the two iterate identically.
+	 *
+	 * @param array<array-key,array<array-key,array{c:int,s:float,m:float}>> $merged Mutated.
+	 * @param array<array-key,mixed>                                         $rows   Inbound (key-agnostic).
+	 */
+	private static function merge_dim_buckets_into( array &$merged, array $rows ): void {
+		foreach ( $rows as $bucket => $values ) {
+			$merged[ $bucket ] ??= [];
+			if ( ! \is_array( $values ) ) {
+				continue;
+			}
+			foreach ( $values as $name => $entry ) {
+				$entry_arr = Core::arr( $entry );
+				$merged[ $bucket ][ $name ] ??= [ 'c' => 0, 's' => 0.0, 'm' => 0.0 ];
+				$merged[ $bucket ][ $name ]['c'] += Core::as_int( $entry_arr['c'] ?? 0 );
+				$merged[ $bucket ][ $name ]['s'] += Core::as_float( $entry_arr['s'] ?? 0 );
+				$merged[ $bucket ][ $name ]['m'] += Core::as_float( $entry_arr['m'] ?? 0 );
+			}
+		}
+	}
+
+	/**
+	 * Walk the request partitions newest-first and collect up to 500 index
+	 * entries for the given url_hash, deduplicated by rid and sorted by
+	 * timestamp DESC. Stops early on either the 500-result cap or the shared
+	 * MAX_INDEX_ENTRIES scan budget, which spans all partitions.
+	 *
+	 * @param string $url_hash 12-char URL hash to match.
+	 * @return array<int,array<string,mixed>>
+	 */
+	private static function find_recent_requests_for_url( string $url_hash ): array {
+		$requests      = [];
+		$entries_count = 0;
+		foreach ( Bootstrap::node_dirs( self::NODE_REQUESTS ) as $p => $dir ) {
+			$partition = new Partition_Node();
+			self::name_scratch_partition( $partition, 'requests', $p );
+			$partition->arguments( [ $dir ] );
+			$partition->with_index(
+				static function ( array $message, array $position ): ?string {
+					return Request_Builder_Node::format_index_entry( $message, $position );
+				}
+			);
+			$partition->scan_index(
+				static function ( string $line, int $segment ) use ( &$requests, &$entries_count, $url_hash, $p ): ?bool {
+					++$entries_count;
+					if ( $entries_count > self::MAX_INDEX_ENTRIES ) {
+						return false;
+					}
+					$entry = Request_Builder_Node::parse_request_index( $line );
+					if ( ! \is_array( $entry ) || \trim( Core::as_string( $entry['url_hash'] ) ) !== $url_hash ) {
+						return null;
+					}
+					$requests[] = [
+						'rid'          => \trim( Core::as_string( $entry['rid'] ) ),
+						'timestamp'    => $entry['timestamp'] ?? 0,
+						'duration_ms'  => $entry['duration_ms'] ?? 0,
+						'status_code'  => $entry['status_code'] ?? 0,
+						'peak_mb'      => $entry['peak_mb'] ?? 0,
+						'method'       => $entry['method'] ?? '',
+						'error_status' => $entry['error_status'] ?? null,
+						'segment'   => $entry['segment'] ?? $segment,
+						'offset'       => $entry['offset'] ?? 0,
+						'length'       => $entry['length'] ?? 0,
+						'partition'    => $p,
+					];
+					return \count( $requests ) >= 500 ? false : null;
+				},
+				true
+			);
+			$partition->remove_node();
+			if ( \count( $requests ) >= 500 || $entries_count > self::MAX_INDEX_ENTRIES ) {
+				break;
+			}
+		}
+
+		\usort( $requests, static fn ( $a, $b ) => $b['timestamp'] <=> $a['timestamp'] );
+		$seen   = [];
+		$unique = [];
+		foreach ( $requests as $r ) {
+			if ( ! isset( $seen[ $r['rid'] ] ) ) {
+				$seen[ $r['rid'] ] = true;
+				$unique[]          = $r;
+				if ( \count( $unique ) >= 500 ) {
+					break;
+				}
+			}
+		}
+		return $unique;
+	}
+
+	/**
+	 * The rule governing a URL, for the surfaces that hold no record — the
+	 * `url:` brief works from an index row. Matching takes the PATH: a stored
+	 * url is absolute, and `Rule_Matcher` compares against patterns like `/`.
+	 */
+	private static function rule_for_url( string $url ): ?Rule {
+		if ( '' === $url ) {
+			return null;
+		}
+		$path = Core::as_string( \wp_parse_url( $url, \PHP_URL_PATH ), '' );
+		if ( '' === $path ) {
+			$path = \str_starts_with( $url, '/' ) ? $url : '/';
+		}
+		$query = Core::as_string( \wp_parse_url( $url, \PHP_URL_QUERY ), '' );
+		return Rule_Set::load()->matcher()->match( '' === $query ? $path : "{$path}?{$query}" );
+	}
+
+	/**
+	 * The `request:` brief.
+	 *
+	 * @return array<string,mixed>
+	 * @throws \RuntimeException When the rid resolves nowhere.
+	 */
+	private static function ask_request( string $rid, int $partition ): array {
+		$record = self::load_request( $rid, $partition );
+		return Ask_Assembler::for_request( $record, self::rule_for_record( $record ) );
+	}
+
+	/**
+	 * The `span:` brief. A span is not addressable on its own — it needs the
+	 * request it ran in, which the descriptor chain supplies.
+	 *
+	 * @param list<string> $context Container descriptors, outermost last.
+	 * @return array<string,mixed>
+	 * @throws \RuntimeException With no request context, or an absent span.
+	 */
+	private static function ask_span( string $name, array $context ): array {
+		$record = self::request_from_context( $context, 'span' );
+		$brief  = Ask_Assembler::for_span( $record, $name, self::rule_for_record( $record ) );
+		if ( null === $brief ) {
+			throw new \RuntimeException( \esc_html( "no span '{$name}' in this request" ) );
+		}
+		return $brief;
+	}
+
+	/**
+	 * The rule this request ran under. Findings about a span or an entry are
+	 * actionable only through the rule governing THAT request's URL — the
+	 * finest grain a rule has is a URL pattern, and there is no such thing as a
+	 * rule about a hook.
+	 *
+	 * The RECORD answers this: `Request_Builder_Node` stamps `rule_id` from the
+	 * match the request itself made. Re-deriving it here found nothing, because
+	 * a stored `url` is absolute and query-stripped (`https://host/path`) while
+	 * rules are path patterns — so not even a catch-all `/` matched, and every
+	 * brief reported "no rule governs this URL" and proposed creating one whose
+	 * pattern could never match anything.
+	 *
+	 * @param array<array-key,mixed> $record A stored request record.
+	 */
+	private static function rule_for_record( array $record ): ?Rule {
+		$id = Core::as_string( $record['rule_id'] ?? '' );
+		return '' === $id ? null : Rule_Set::load()->rule_by_id( $id );
+	}
+
+	/**
+	 * The `entry:` brief.
+	 *
+	 * @param list<string> $context Container descriptors, outermost last.
+	 * @return array<string,mixed>
+	 * @throws \RuntimeException With no request context, or an absent entry.
+	 */
+	private static function ask_entry( int $n, array $context ): array {
+		$brief = Ask_Assembler::for_entry( self::request_from_context( $context, 'entry' ), $n );
+		if ( null === $brief ) {
+			throw new \RuntimeException( \esc_html( "no entry {$n} in this request" ) );
+		}
+		return $brief;
+	}
+
+	/**
+	 * The `category:` brief. A breakdown row inside a request shows THAT
+	 * request's profile, so the context chain decides which board answers —
+	 * the global leaderboard describes a different thing entirely.
+	 *
+	 * @param list<string> $context Container descriptors, outermost last.
+	 * @return array<string,mixed>
+	 * @throws \RuntimeException When neither board holds the category.
+	 */
+	private static function ask_category( string $name, array $context ): array {
+		$record = self::request_in_context( $context );
+		if ( null !== $record ) {
+			$brief = Ask_Assembler::for_request_category( $record, $name );
+			if ( null !== $brief ) {
+				return $brief;
+			}
+		}
+		$board      = self::build_global_leaderboard();
+		$categories = \is_array( $board['categories'] ?? null ) ? $board['categories'] : [];
+		$brief      = Ask_Assembler::for_category( $categories, $name );
+		if ( null === $brief ) {
+			throw new \RuntimeException( \esc_html( "no category '{$name}' in this request or the recent window" ) );
+		}
+		return $brief;
+	}
+
+	/**
+	 * Build the merged global category leaderboard for the recent window.
+	 * Sums stay raw across the merge; `Stats_Store::sums_to_display` computes
+	 * the means once at the end.
+	 *
+	 * @return array<string,mixed>
+	 */
+	private static function build_global_leaderboard(): array {
+		$count        = 0;
+		$sum_req_time = 0.0;
+		$sums         = [];
+		$buckets      = self::recent_url_buckets();
+		foreach ( self::stats_stores() as $store ) {
+			foreach ( $buckets as $b ) {
+				$row = $store->get_leaderboard_bucket( $b );
+				if ( empty( $row ) ) {
+					continue;
+				}
+				$count        += Core::as_int( $row['count'] ?? 0 );
+				$sum_req_time += Core::as_float( $row['sum_req_time'] ?? 0 );
+				/** @var array<string,mixed> $categories -- decoded memcache leaderboard blob, keyed by category name. */
+				$categories    = \is_array( $row['categories'] ?? null ) ? $row['categories'] : [];
+				self::accumulate_leaderboard_categories( $sums, $categories );
+			}
+		}
+		return Stats_Store::sums_to_display( $count, $sum_req_time, $sums );
+	}
+
+	/**
+	 * Build a list of recent 5-min bucket keys (`Y-m-d-H-MM`, UTC) walking
+	 * backwards from now. Capped at 288 (24h × 12 buckets/h) so memcache
+	 * get_multi stays bounded regardless of the configured retention.
+	 *
+	 * @return array<int,string>
+	 */
+	private static function recent_url_buckets(): array {
+		$now = \time();
+		$out = [];
+		for ( $i = 0; $i < 288; $i++ ) {
+			$ts         = $now - ( $i * 300 );
+			$min        = (int) \gmdate( 'i', $ts );
+			$bucket_min = \str_pad( (string) ( (int) \floor( $min / 5 ) * 5 ), 2, '0', \STR_PAD_LEFT );
+			$out[]      = \gmdate( 'Y-m-d-H', $ts ) . '-' . $bucket_min;
+		}
+		return \array_unique( $out );
+	}
+
+	/**
+	 * Sum-merge a single leaderboard bucket's categories into the running totals.
+	 * Used by both global + server leaderboard builders.
+	 *
+	 * @param array<string,array{samples:int,sum_time:float,sum_count:float,entries:array<int,mixed>}> $sums       Running totals (mutated).
+	 * @param array<string,mixed>                                                             $categories Inbound categories.
+	 */
+	private static function accumulate_leaderboard_categories( array &$sums, array $categories ): void {
+		foreach ( $categories as $cat => $data ) {
+			$data_arr = Core::arr( $data );
+			$sums[ $cat ] ??= [
+				'samples'   => 0,
+				'sum_time'  => 0.0,
+				'sum_count' => 0.0,
+				'entries'   => [],
+			];
+			$sums[ $cat ]['samples']   += Core::as_int( $data_arr['samples'] ?? 0 );
+			$sums[ $cat ]['sum_time']  += Core::as_float( $data_arr['sum_time'] ?? 0 );
+			$sums[ $cat ]['sum_count'] += Core::as_float( $data_arr['sum_count'] ?? 0 );
+		}
+	}
+
+	/**
+	 * One Stats_Store per flame-builder worker over the shared `Core::$memd`
+	 * handle. `configure_stats <partition>` keys each store by the WORKER index,
+	 * and nothing of it lands on disk — so the index space comes from the
+	 * declaring topology's count, not from a dir listing.
+	 *
+	 * With no memcache handle this returns an empty list, which is what makes
+	 * every stats reader above degrade to an empty or zeroed shape instead of
+	 * throwing. Each store's TTL comes from the substrate `min_lifetime` key.
+	 *
+	 * @return array<int,Stats_Store>
+	 */
+	private static function stats_stores(): array {
+		if ( null === Core::$memd ) {
+			return [];
+		}
+		$max_lifespan = Core::as_int( AppConfig::value( 'min_lifetime' ), 86400 );
+		$stores       = [];
+		foreach ( Bootstrap::node_partitions( self::NODE_FLAME_BUILDER ) as $p ) {
+			$stores[] = new Stats_Store( $p, $max_lifespan );
+		}
+		return $stores;
+	}
+
+	/**
+	 * The request record named by the first `request:` descriptor in a context
+	 * chain.
+	 *
+	 * @param list<string> $context Container descriptors.
+	 * @param string       $subject What was clicked, for the refusal text.
+	 * @return array<array-key,mixed>
+	 * @throws \RuntimeException When the chain carries no request.
+	 */
+	private static function request_from_context( array $context, string $subject ): array {
+		$record = self::request_in_context( $context );
+		if ( null === $record ) {
+			throw new \RuntimeException( \esc_html( "a {$subject} needs its request for context" ) );
+		}
+		return $record;
+	}
+
+	/**
+	 * The request a context chain names, or null when it names none. Separate
+	 * from `request_from_context()` because a category is answerable either
+	 * way, and only a span or an entry is not.
+	 *
+	 * @param list<string> $context Container descriptors.
+	 * @return array<array-key,mixed>|null
+	 */
+	private static function request_in_context( array $context ): ?array {
+		foreach ( $context as $descriptor ) {
+			$parsed = Ask_Assembler::parse_descriptor( Core::as_string( $descriptor ) );
+			if ( null !== $parsed && 'request' === $parsed['type'] ) {
+				return self::load_request( $parsed['id'], (int) $parsed['qualifier'] );
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * One request record by rid, searching its hashed partition first.
+	 *
+	 * @return array<array-key,mixed>
+	 * @throws \RuntimeException When the rid resolves nowhere.
+	 */
+	private static function load_request( string $rid, int $partition ): array {
+		$dirs    = Bootstrap::node_dirs( self::NODE_REQUESTS );
+		$scanned = [];
+		if ( isset( $dirs[ $partition ] ) ) {
+			$record            = self::find_request_in_partition( $dirs[ $partition ], $partition, $rid );
+			$scanned[ $partition ] = true;
+			if ( null !== $record ) {
+				return $record;
+			}
+		}
+		foreach ( self::search_order( $rid ) as $p => $dir ) {
+			// search_order() repeats every partition after the hashed one.
+			if ( isset( $scanned[ $p ] ) ) {
+				continue;
+			}
+			$scanned[ $p ] = true;
+			$record        = self::find_request_in_partition( $dir, $p, $rid );
+			if ( null !== $record ) {
+				return $record;
+			}
+		}
+		throw new \RuntimeException( \esc_html( "Request not found: rid={$rid}" ) );
+	}
+
+	/**
+	 * Read the full request body from a known partition, then merge any matching
+	 * flame data in as `flame_data`. A missing flame is normal — flames are
+	 * built asynchronously — and leaves the body otherwise intact.
+	 *
+	 * Unlike find_request_index_entry, the scan budget here is per-call: this
+	 * walks exactly one partition.
+	 *
+	 * @param string $dir       Partition directory.
+	 * @param int    $partition Partition index (names the scratch node).
+	 * @param string $rid       Request id to match.
+	 * @return array<array-key,mixed>|null Decoded request body (keys come from the JSON envelope).
+	 */
+	private static function find_request_in_partition( string $dir, int $partition, string $rid ): ?array {
+		$result        = null;
+		$entries_count = 0;
+		$requests = new Partition_Node();
+		self::name_scratch_partition( $requests, 'requests', $partition );
+		$requests->arguments( [ $dir ] );
+		$requests->with_index(
+			static function ( array $message, array $position ): ?string {
+				return Request_Builder_Node::format_index_entry( $message, $position );
+			}
+		);
+		$requests->scan_index(
+			static function ( string $line ) use ( &$result, &$entries_count, $requests, $rid ): ?bool {
+				++$entries_count;
+				if ( $entries_count > self::MAX_INDEX_ENTRIES ) {
+					return false;
+				}
+				$entry = Request_Builder_Node::parse_request_index( $line );
+				if ( ! \is_array( $entry ) || \trim( Core::as_string( $entry['rid'] ) ) !== $rid ) {
+					return null;
+				}
+				$message = $requests->read_message_at(
+					Core::as_int( $entry['segment'] ?? 0 ),
+					Core::as_int( $entry['offset'] ?? 0 ),
+					Core::as_int( $entry['length'] ?? 0 )
+				);
+				$req = \is_array( $message ) ? ( $message[ Message::VALUE ] ?? null ) : null;
+				if ( ! \is_array( $req ) ) {
+					return false;
+				}
+				$req['url_hash'] = \trim( Core::as_string( $entry['url_hash'] ) );
+				$result          = $req;
+				return false;
+			},
+			true
+		);
+		$requests->remove_node();
+
+		if ( null === $result ) {
+			return null;
+		}
+
+		$flame = self::find_flame_for_rid( $rid );
+		if ( null !== $flame ) {
+			$result['flame_data'] = $flame;
+		}
+		return $result;
+	}
+
+	/**
+	 * Search every flame partition for a flame entry matching the rid; the
+	 * first hit wins. Flame_Builder writes to whatever partition it's wired
+	 * into, so a per-rid lookup has to fan out across all of them.
+	 *
+	 * @param string $rid Request id to match.
+	 * @return array<array-key,mixed>|null Decoded flame blob (keys come from the JSON envelope).
+	 */
+	private static function find_flame_for_rid( string $rid ): ?array {
+		$entries_count = 0;
+		foreach ( Bootstrap::node_dirs( self::NODE_FLAMES ) as $p => $dir ) {
+			$flames = new Partition_Node();
+			self::name_scratch_partition( $flames, 'flames', $p );
+			$flames->arguments( [ $dir ] );
+			$flames->with_index(
+				static function ( array $message, array $position ): ?string {
+					return Flame_Builder_Node::format_index_entry( $message, $position );
+				}
+			);
+			$result = null;
+			$flames->scan_index(
+				static function ( string $line ) use ( &$result, &$entries_count, $flames, $rid ): ?bool {
+					++$entries_count;
+					if ( $entries_count > self::MAX_INDEX_ENTRIES ) {
+						return false;
+					}
+					$entry = Flame_Builder_Node::parse_flame_index( $line );
+					if ( ! \is_array( $entry ) || \trim( $entry['rid'] ) !== $rid ) {
+						return null;
+					}
+					$message = $flames->read_message_at(
+						$entry['segment'],
+						$entry['offset'],
+						$entry['length']
+					);
+					$flame = \is_array( $message ) ? ( $message[ Message::VALUE ] ?? null ) : null;
+					if ( \is_array( $flame ) ) {
+						$result = $flame;
+					}
+					return false;
+				},
+				true
+			);
+			$flames->remove_node();
+			if ( null !== $result ) {
+				return $result;
+			}
+			if ( $entries_count > self::MAX_INDEX_ENTRIES ) {
+				break;
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * Name (`{log}.{token}.p{N}`, unique per scan), self-patron, and Rule-4 interpreter-sink
+	 * a transient scratch Partition. Callers remove_node() it after use.
+	 *
+	 * @param Partition_Node $partition Freshly-constructed scratch Partition.
+	 * @param string         $log       Log basename ('requests' | 'flames').
+	 * @param int            $index     Partition index.
+	 */
+	private static function name_scratch_partition( Partition_Node $partition, string $log, int $index ): void {
+		$token = \getmypid() . '-' . \spl_object_id( $partition );
+		$partition->name( "{$log}.{$token}.p{$index}" );
+		$partition->patron( $partition );
+		$ci = Core::node( Node_Names::COMMAND_INTERPRETER );
+		if ( null === $partition->sink() && null !== $ci ) {
+			$partition->sink( $ci );
+		}
+	}
+
+	/**
+	 * Request partitions to search for `$rid`, its own partition first.
+	 *
+	 * A rid rides the same hash the whole way: the firehose Topic routes it by
+	 * KEY, the worker on that partition consumes it, and Request_Builder writes
+	 * it to the request partition of the SAME index. So the hash names the
+	 * partition outright and the rest of the fan-out is a fallback — needed
+	 * because the guess uses the reader's partition count, which lags the
+	 * writer's across a re-partition.
+	 *
+	 * @param string $rid Request id whose hash names the first partition.
+	 * @return array<int,string> Partition index => dir, hashed partition first.
+	 */
+	private static function search_order( string $rid ): array {
+		$dirs = Bootstrap::node_dirs( self::NODE_REQUESTS );
+		$hit  = Partition_Node::hash_to_partition( $rid, \max( 1, \count( $dirs ) ) );
+		if ( ! isset( $dirs[ $hit ] ) ) {
+			return $dirs;
+		}
+		return [ $hit => $dirs[ $hit ] ] + $dirs;
+	}
+
+	/**
 	 * Merged URL index for THIS request — read at most once and memoized, so the
 	 * three verbs that derive from it (`overview`, `urls`, and `url_detail`'s
 	 * stats lookup) share a single memcache fan-out instead of re-loading per
@@ -1219,28 +1481,6 @@ class Performance_CI_Node extends Service_CI_Node {
 			+ Core::num_int( $row['count_4xx'] ?? 0 )
 			+ Core::num_int( $row['count_5xx'] ?? 0 );
 		return $classified < Core::num_int( $row['count'] ?? 0 );
-	}
-
-	/**
-	 * Request partitions to search for `$rid`, its own partition first.
-	 *
-	 * A rid rides the same hash the whole way: the firehose Topic routes it by
-	 * KEY, the worker on that partition consumes it, and Request_Builder writes
-	 * it to the request partition of the SAME index. So the hash names the
-	 * partition outright and the rest of the fan-out is a fallback — needed
-	 * because the guess uses the reader's partition count, which lags the
-	 * writer's across a re-partition.
-	 *
-	 * @param string $rid Request id whose hash names the first partition.
-	 * @return array<int,string> Partition index => dir, hashed partition first.
-	 */
-	private static function search_order( string $rid ): array {
-		$dirs = Bootstrap::node_dirs( self::NODE_REQUESTS );
-		$hit  = Partition_Node::hash_to_partition( $rid, \max( 1, \count( $dirs ) ) );
-		if ( ! isset( $dirs[ $hit ] ) ) {
-			return $dirs;
-		}
-		return [ $hit => $dirs[ $hit ] ] + $dirs;
 	}
 
 	/**
@@ -1313,9 +1553,9 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * per-partition Stats_Store off the shared `Core::$memd` handle; a null
 	 * handle yields empty/zeroed shapes. Disk-walking verbs work regardless.
 	 *
-	 * Every handler opens with `require_manage_options()` and throws a
-	 * RuntimeException on bad input; the interpreter turns the throw into a
-	 * TM_COMMAND|TM_ERROR reply, so no handler returns an error shape.
+	 * Every handler throws a RuntimeException on bad input; the interpreter
+	 * turns the throw into a TM_COMMAND|TM_ERROR reply, so no handler returns
+	 * an error shape.
 	 *
 	 * @api Used by substrate.
 	 * @return array<string,mixed>
@@ -1328,6 +1568,7 @@ class Performance_CI_Node extends Service_CI_Node {
 			'commands'    => [
 				[
 					'name'        => 'overview',
+					'capability'  => Capabilities::READ,
 					'description' => 'High-level performance stats across all partitions.',
 					'args'        => [
 						[ 'name' => 'server', 'type' => 'string', 'required' => false ],
@@ -1335,8 +1576,6 @@ class Performance_CI_Node extends Service_CI_Node {
 						[ 'name' => 'categories', 'type' => 'bool', 'required' => false ],
 					],
 					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
-				self::require_manage_options();
-
 				// Optional args: server scopes; breakdown = comma-sep dim list.
 				$opts       = Command_Args::parse( self::arg_strings( $args ) )['options'];
 				$server     = (string) ( $opts['server'] ?? '' );
@@ -1377,6 +1616,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				],
 				[
 					'name'        => 'urls',
+					'capability'  => Capabilities::READ,
 					'description' => 'Paginated/sortable URL leaderboard.',
 					'args'        => [
 						[ 'name' => 'sort', 'type' => 'string', 'required' => false, 'default' => 'count' ],
@@ -1388,8 +1628,6 @@ class Performance_CI_Node extends Service_CI_Node {
 						[ 'name' => 'errors_only', 'type' => 'bool', 'required' => false, 'default' => false ],
 					],
 					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
-				self::require_manage_options();
-
 				$opts    = Command_Args::parse( self::arg_strings( $args ) )['options'];
 				$sort    = (string) ( $opts['sort']   ?? 'count' );
 				$order   = (string) ( $opts['order']  ?? 'desc' );
@@ -1447,6 +1685,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				],
 				[
 					'name'        => 'url_detail',
+					'capability'  => Capabilities::READ,
 					'description' => 'Single-URL detail incl. aggregate flame data.',
 					'args'        => [
 						[ 'name' => 'hash', 'type' => 'string', 'required' => true ],
@@ -1454,8 +1693,6 @@ class Performance_CI_Node extends Service_CI_Node {
 						[ 'name' => 'categories', 'type' => 'bool', 'required' => false ],
 					],
 					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
-				self::require_manage_options();
-
 				$parsed = Command_Args::parse( self::arg_strings( $args ) );
 				$opts   = $parsed['options'];
 				$hash   = $parsed['positional'][0] ?? '';
@@ -1517,13 +1754,12 @@ class Performance_CI_Node extends Service_CI_Node {
 				],
 				[
 					'name'        => 'request_search',
+					'capability'  => Capabilities::READ,
 					'description' => 'Locate a request by rid across partitions.',
 					'args'        => [
 						[ 'name' => 'rid', 'type' => 'string', 'required' => true ],
 					],
 					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
-				self::require_manage_options();
-
 				$rid = Command_Args::parse( self::arg_strings( $args ) )['positional'][0] ?? '';
 				if ( '' === $rid ) {
 					throw new \RuntimeException( 'rid required' );
@@ -1545,14 +1781,13 @@ class Performance_CI_Node extends Service_CI_Node {
 				],
 				[
 					'name'        => 'request_grep',
+					'capability'  => Capabilities::READ,
 					'description' => 'Pattern-search recent firehose traffic; returns a bounded summary of matching requests (rid, url, method, ts, match_count).',
 					'args'        => [
 						[ 'name' => 'pattern', 'type' => 'string', 'required' => true ],
 						[ 'name' => 'limit', 'type' => 'int', 'required' => false, 'default' => self::GREP_RESULT_LIMIT_DEFAULT ],
 					],
 					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
-				self::require_manage_options();
-
 				$parsed  = Command_Args::parse( self::arg_strings( $args ) );
 				$pattern = Core::as_string( $parsed['positional'][0] ?? '' );
 				if ( '' === \trim( $pattern ) ) {
@@ -1568,14 +1803,13 @@ class Performance_CI_Node extends Service_CI_Node {
 				],
 				[
 					'name'        => 'request_detail',
+					'capability'  => Capabilities::READ,
 					'description' => 'Full request + flame data for a known {rid, partition}.',
 					'args'        => [
 						[ 'name' => 'rid', 'type' => 'string', 'required' => true ],
 						[ 'name' => 'partition', 'type' => 'int', 'required' => false, 'default' => 0 ],
 					],
 					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
-				self::require_manage_options();
-
 				$parsed = Command_Args::parse( self::arg_strings( $args ) );
 				$rid    = $parsed['positional'][0] ?? '';
 				if ( '' === $rid ) {
@@ -1596,16 +1830,30 @@ class Performance_CI_Node extends Service_CI_Node {
 				if ( null === $result ) {
 					throw new \RuntimeException( \esc_html( "Request not found: rid={$rid}" ) );
 				}
+				// Findings ride the record; no model is involved in them.
+				$rule               = self::rule_for_record( $result );
+				$result['findings'] = Findings::for_request( $result, $rule );
+				$result['caveat']   = Findings::caveat();
 				return $result;
 					},
 				],
 				[
+					'name'        => 'ask',
+					'capability'  => Capabilities::READ,
+					'description' => 'Assemble the brief for one picker descriptor: `ask <descriptor> [<context-descriptor>…]`, outermost context last.',
+					'args'        => [
+						[ 'name' => 'descriptor', 'type' => 'string', 'required' => true ],
+					],
+					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
+				return self::assemble_ask( Command_Args::parse( self::arg_strings( $args ) )['positional'] );
+					},
+				],
+				[
 					'name'        => 'hooks_registered',
+					'capability'  => Capabilities::READ,
 					'description' => 'Registered hooks grouped by category.',
 					'args'        => [],
 					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
-				self::require_manage_options();
-
 				// Recompute total_hooks so the response contract stays stable.
 				$by_category = Hook_Categorizer::get_registered_hooks_by_category();
 				$total       = 0;
@@ -1622,14 +1870,13 @@ class Performance_CI_Node extends Service_CI_Node {
 				],
 				[
 					'name'        => 'set',
+					'capability'  => Capabilities::TUNE,
 					'description' => 'Normalized positional single-option perf setting write with sync guard.',
 					'args'        => [
 						[ 'name' => 'option', 'type' => 'string', 'required' => true ],
 						[ 'name' => 'value', 'type' => 'string', 'required' => true ],
 					],
 					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
-				self::require_manage_options();
-
 				// One option per command; Settings_Sync_Node fans it out.
 				[ $option, $value_arg ] = \array_pad( Command_Args::parse( self::arg_strings( $args ) )['positional'], 2, null );
 

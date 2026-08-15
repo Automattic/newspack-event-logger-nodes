@@ -1,0 +1,344 @@
+<?php
+namespace Newspack_Event_Logger_Nodes\Tests\Unit;
+
+use PHPUnit\Framework\Attributes\CoversClass;
+use Newspack_Event_Logger_Nodes\App\Findings;
+use Newspack_Event_Logger_Nodes\Rule;
+use Newspack_Event_Logger_Nodes\Tests\TestCase;
+
+/**
+ * The findings detector: arithmetic over a stored record, not inference.
+ *
+ * Every threshold here is seeded with a value distinct from the constant it
+ * tests against, so a detector that ignored its own threshold would still be
+ * caught.
+ */
+#[CoversClass( Findings::class )]
+class FindingsTest extends TestCase {
+
+	/** A rule with hooks, so "insufficient instrumentation" does not fire. */
+	private function instrumented_rule(): Rule {
+		return new Rule( 'a1b2c3d4e5f6', '/calendar/today', Rule::ACTION_LOG, 0, 0.0, [], [], [ 'init', 'wp_loaded' ] );
+	}
+
+	/** A record whose profiled time accounts for its duration and holds no findings. */
+	private function healthy_record(): array {
+		return [
+			'url'         => '/calendar/today',
+			'duration_ms' => 400.0,
+			'status_code' => 200,
+			'entries'     => [
+				[ 'n' => 1, 'ts' => 1000.000, 'k' => 'process (start)', 'm' => '' ],
+				[ 'n' => 2, 'ts' => 1000.100, 'k' => 'init hook', 'm' => '' ],
+				[ 'n' => 3, 'ts' => 1000.200, 'k' => 'wp_loaded hook', 'm' => '' ],
+			],
+			'flame'       => [
+				'name'     => 'request',
+				'value'    => 400.0,
+				'children' => [
+					[ 'name' => 'init', 'value' => 190.0, 'children' => [] ],
+					[ 'name' => 'wp_loaded', 'value' => 180.0, 'children' => [] ],
+				],
+			],
+		];
+	}
+
+	/**
+	 * The PRODUCTION record shape: a loaded request carries its tree at
+	 * `flame_data` (Performance_CI merges the flames partition in under that
+	 * key), and only a FOLDED record ever carries `flame`. Seeding `flame`
+	 * alone is what let a detector reading the wrong key look correct.
+	 */
+	private function loaded_record(): array {
+		$record               = $this->healthy_record();
+		$record['flame_data'] = $record['flame'];
+		unset( $record['flame'] );
+		return $record;
+	}
+
+	public function test_a_loaded_record_carries_its_tree_at_flame_data(): void {
+		$record = $this->loaded_record();
+		$record['flame_data']['children'] = [
+			[ 'name' => 'init', 'value' => 12.0, 'children' => [] ],
+			[ 'name' => 'wp_loaded', 'value' => 372.0, 'children' => [] ],
+		];
+
+		$kinds = $this->kinds( Findings::for_request( $record, $this->instrumented_rule() ) );
+
+		$this->assertContains( 'dominant_span', $kinds );
+		$this->assertNotContains(
+			'unattributed',
+			$kinds,
+			'reading the wrong key made every ordinary request look wholly unmeasured'
+		);
+		$this->assertNotContains( 'insufficient_instrumentation', $kinds );
+	}
+
+	/** @param list<array<string,mixed>> $findings */
+	private function kinds( array $findings ): array {
+		return \array_column( $findings, 'kind' );
+	}
+
+	private function of_kind( array $findings, string $kind ): ?array {
+		foreach ( $findings as $finding ) {
+			if ( $kind === $finding['kind'] ) {
+				return $finding;
+			}
+		}
+		return null;
+	}
+
+	public function test_a_healthy_record_yields_nothing(): void {
+		$this->assertSame(
+			[],
+			Findings::for_request( $this->healthy_record(), $this->instrumented_rule() )
+		);
+	}
+
+	public function test_a_dominant_span_is_named_with_its_share(): void {
+		$record = $this->healthy_record();
+		$record['flame']['children'] = [
+			[ 'name' => 'init', 'value' => 12.0, 'children' => [] ],
+			[
+				'name'     => 'wp_loaded',
+				'value'    => 372.0,
+				'children' => [ [ 'name' => 'render_block', 'value' => 366.0, 'children' => [] ] ],
+			],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'dominant_span' );
+
+		$this->assertNotNull( $found );
+		$this->assertSame( 'render_block', $found['metric']['name'] );
+		$this->assertEqualsWithDelta( 0.915, $found['metric']['share'], 0.001 );
+		$this->assertSame( 'flame', $found['measured'] );
+		$this->assertSame( 'a1b2c3d4e5f6', $found['rule_id'] );
+	}
+
+	/** The proposal for a span you cannot see inside adds detail, never removes it. */
+	public function test_a_dominant_span_proposes_more_visibility(): void {
+		$record = $this->healthy_record();
+		$record['flame']['children'] = [
+			[ 'name' => 'init', 'value' => 12.0, 'children' => [] ],
+			[ 'name' => 'wp_loaded', 'value' => 372.0, 'children' => [] ],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'dominant_span' );
+
+		$this->assertSame( 'more', $found['proposal']['direction'] );
+		$this->assertSame( 'significant_events', $found['proposal']['field'] );
+		$this->assertSame( 'wp_loaded', $found['proposal']['value'] );
+	}
+
+	public function test_repetition_reports_the_call_count(): void {
+		$record = $this->healthy_record();
+		$record['flame']['children'][] = [
+			'name'     => 'the_content',
+			'value'    => 30.0,
+			'count'    => 340,
+			'children' => [],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'repetition' );
+
+		$this->assertNotNull( $found );
+		$this->assertSame( 340, $found['metric']['count'] );
+		$this->assertSame( 'the_content', $found['metric']['name'] );
+	}
+
+	public function test_a_span_below_the_repetition_threshold_is_quiet(): void {
+		$record = $this->healthy_record();
+		$record['flame']['children'][] = [
+			'name'     => 'the_content',
+			'value'    => 30.0,
+			'count'    => Findings::REPETITION_COUNT - 1,
+			'children' => [],
+		];
+
+		$this->assertNotContains(
+			'repetition',
+			$this->kinds( Findings::for_request( $record, $this->instrumented_rule() ) )
+		);
+	}
+
+	/** The live case: 175.6ms profiled against a 420-second request. */
+	public function test_unattributed_time_is_subtraction(): void {
+		$record                = $this->healthy_record();
+		$record['duration_ms'] = 420000.0;
+		$record['flame']       = [
+			'name'     => 'request',
+			'value'    => 175.6,
+			'children' => [ [ 'name' => 'init', 'value' => 175.6, 'children' => [] ] ],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'unattributed' );
+
+		$this->assertNotNull( $found );
+		$this->assertEqualsWithDelta( 419824.4, $found['metric']['missing_ms'], 0.1 );
+		$this->assertEqualsWithDelta( 175.6, $found['metric']['profiled_ms'], 0.1 );
+		$this->assertSame( 'subtraction', $found['measured'] );
+	}
+
+	public function test_an_entry_gap_reports_where_it_opened(): void {
+		$record            = $this->healthy_record();
+		$record['entries'] = [
+			[ 'n' => 1, 'ts' => 2000.000, 'k' => 'process (start)', 'm' => '' ],
+			[ 'n' => 2, 'ts' => 2000.050, 'k' => 'init hook', 'm' => '' ],
+			[ 'n' => 3, 'ts' => 2003.700, 'k' => 'wp_loaded hook', 'm' => '' ],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'entry_gap' );
+
+		$this->assertNotNull( $found );
+		$this->assertEqualsWithDelta( 3650.0, $found['metric']['gap_ms'], 0.1 );
+		$this->assertSame( 'init hook', $found['metric']['after'] );
+		$this->assertSame( 'wp_loaded hook', $found['metric']['before'] );
+	}
+
+	public function test_a_gap_below_the_threshold_is_quiet(): void {
+		$record            = $this->healthy_record();
+		$record['entries'] = [
+			[ 'n' => 1, 'ts' => 2000.000, 'k' => 'process (start)', 'm' => '' ],
+			[ 'n' => 2, 'ts' => 2000.100, 'k' => 'init hook', 'm' => '' ],
+		];
+
+		$this->assertNotContains(
+			'entry_gap',
+			$this->kinds( Findings::for_request( $record, $this->instrumented_rule() ) )
+		);
+	}
+
+	public function test_a_folded_record_says_so(): void {
+		$record            = $this->healthy_record();
+		$record['folded']  = true;
+		$record['entries'] = [
+			[ 'n' => 1, 'ts' => 1000.000, 'k' => 'process (start)', 'm' => '' ],
+			[ 'n' => 2, 'ts' => 1000.010, 'k' => 'entries (aggregated)', 'm' => '812 entries merged into the flame graph under memory pressure' ],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'truncation' );
+
+		$this->assertNotNull( $found );
+		$this->assertStringContainsString( 'absence of evidence', $found['detail'] );
+	}
+
+	public function test_no_rule_at_all_is_the_first_class_cold_start_finding(): void {
+		$found = $this->of_kind( Findings::for_request( $this->healthy_record(), null ), 'insufficient_instrumentation' );
+
+		$this->assertNotNull( $found );
+		$this->assertNull( $found['rule_id'] );
+		$this->assertSame( 'create_rule', $found['proposal']['action'] );
+		$this->assertSame( '/calendar/today', $found['proposal']['pattern'] );
+	}
+
+	/**
+	 * A well-instrumented rule against a request that produced no spans — a
+	 * fast 404, a request that bailed early — is NOT a rule registering no
+	 * hooks, and saying so at severity high is a factual falsehood that
+	 * proposes adding hooks the rule already has.
+	 */
+	public function test_a_rule_with_hooks_and_no_spans_is_not_called_hookless(): void {
+		$record          = $this->loaded_record();
+		$record['flame_data'] = [ 'name' => 'request', 'value' => 0.0, 'children' => [] ];
+
+		$found = $this->of_kind(
+			Findings::for_request( $record, $this->instrumented_rule() ),
+			'insufficient_instrumentation'
+		);
+
+		$this->assertNotNull( $found );
+		$this->assertStringNotContainsString( 'registers no hooks', $found['title'] );
+		$this->assertStringNotContainsString( 'registers no hooks', $found['proposal']['why'] );
+		$this->assertSame( 2, $found['metric']['hooks'], 'the rule it names has two' );
+	}
+
+	public function test_a_rule_registering_no_hooks_proposes_the_lifecycle_bracket(): void {
+		$bare = new Rule( 'ffff11112222', '/calendar/today', Rule::ACTION_LOG );
+
+		$found = $this->of_kind( Findings::for_request( $this->healthy_record(), $bare ), 'insufficient_instrumentation' );
+
+		$this->assertNotNull( $found );
+		$this->assertStringContainsString( 'registers no hooks', $found['title'] );
+		$this->assertSame( 'ffff11112222', $found['rule_id'] );
+		$this->assertSame( 'add_hooks', $found['proposal']['action'] );
+		$this->assertSame( Findings::LIFECYCLE_BRACKET, $found['proposal']['hooks'] );
+		$this->assertSame( 'more', $found['proposal']['direction'] );
+	}
+
+	/**
+	 * The bisect subdivides only the phase that held the time — proposing forty
+	 * hooks is what this exists to avoid.
+	 */
+	public function test_the_next_round_narrows_on_the_phase_that_held_the_time(): void {
+		$record = $this->healthy_record();
+		$bracket = new Rule(
+			'ffff11112222',
+			'/calendar/today',
+			Rule::ACTION_LOG,
+			0,
+			0.0,
+			[],
+			[],
+			Findings::LIFECYCLE_BRACKET
+		);
+		$record['flame']['children'] = [
+			[ 'name' => 'init', 'value' => 12.0, 'children' => [] ],
+			[ 'name' => 'wp_loaded', 'value' => 372.0, 'children' => [] ],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $bracket ), 'dominant_span' );
+
+		$this->assertSame( 'wp_loaded', $found['proposal']['value'] );
+		$this->assertStringContainsString( 'wp_loaded', $found['proposal']['why'] );
+	}
+
+	/** Every proposal that adds instrumentation names what removes it again. */
+	public function test_an_adding_proposal_names_its_own_removal(): void {
+		$found = $this->of_kind(
+			Findings::for_request( $this->healthy_record(), new Rule( 'ffff11112222', '/calendar/today', Rule::ACTION_LOG ) ),
+			'insufficient_instrumentation'
+		);
+
+		$this->assertNotSame( '', $found['proposal']['undo'] );
+	}
+
+	public function test_a_url_with_no_rule_reports_what_is_known(): void {
+		$found = $this->of_kind(
+			Findings::for_url(
+				[ 'url' => '/calendar/today', 'count' => 4210, 'avg_ms' => 812.0, 'p95_ms' => 2600.0, 'max_peak_mb' => 96.0 ],
+				null
+			),
+			'insufficient_instrumentation'
+		);
+
+		$this->assertNotNull( $found );
+		$this->assertSame( 4210, $found['metric']['count'] );
+		$this->assertSame( 2600.0, $found['metric']['p95_ms'] );
+		$this->assertSame( 'create_rule', $found['proposal']['action'] );
+	}
+
+	/** A model handed a profiled/duration ratio with no caveat will invent a cause. */
+	public function test_the_caveat_names_what_is_not_measured(): void {
+		$caveat = Findings::caveat();
+
+		$this->assertStringContainsString( 'SQL', $caveat );
+		$this->assertStringContainsString( 'outbound', $caveat );
+	}
+
+	public function test_findings_come_back_worst_first(): void {
+		$record                = $this->healthy_record();
+		$record['duration_ms'] = 420000.0;
+		$record['folded']      = true;
+		$record['flame']       = [
+			'name'     => 'request',
+			'value'    => 175.6,
+			'children' => [ [ 'name' => 'init', 'value' => 175.6, 'count' => 900, 'children' => [] ] ],
+		];
+
+		$kinds = $this->kinds( Findings::for_request( $record, $this->instrumented_rule() ) );
+
+		$this->assertSame( 'unattributed', $kinds[0], 'the biggest unexplained number leads' );
+		$this->assertContains( 'truncation', $kinds );
+		$this->assertContains( 'repetition', $kinds );
+	}
+}

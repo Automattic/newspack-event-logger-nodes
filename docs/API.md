@@ -134,3 +134,34 @@ POST /wp-json/newspack-nodes/v1/workers/spawn
 ```
 
 Not for public callers. This path is owned/defined by the **substrate** (`newspack-nodes`); nothing in this plugin registers or constrains it. Treat [`../newspack-nodes/API.md`](../newspack-nodes/API.md) as authoritative for its exact request/response shape and HMAC authentication details.
+
+## MCP
+
+```
+POST /wp-json/newspack-event-logger-nodes/v1/mcp
+```
+
+A JSON-RPC MCP server over verbs this plugin already answers — `initialize`,
+`tools/list`, `tools/call`, one tool per verb, replies returned verbatim. It
+adds no runtime surface: `tools/call` mounts the same request graph `/command`
+does and dispatches through the same interpreter.
+
+**Permission**: `Authorization: Bearer <handle>.<key>`, naming a live command
+session (issue one under Nodes → Sessions, or `POST /newspack-nodes/v1/auth`).
+The request then BECOMES that session's minting user and applies its scope as a
+ceiling — so authority is the user's and the scope only ever subtracts, and
+`tools/list` offers only the tools that scope covers. A `read` session sees the
+performance tools and `rules list`; `tune` additionally sees `rules upsert` and
+`rules delete`.
+
+Every tool description carries the measurement caveat, because a model handed
+`175.6ms profiled / 420000ms duration` with nothing saying what is unmeasured
+will invent a cause for the difference — and the invented cause reads exactly
+like a finding. The same caveat is `initialize`'s `instructions`.
+
+A verb refusal comes back as an MCP tool error (`result.isError`), not a
+transport error: the call reached the server and was answered.
+
+Nothing here assumes an agent will act on instructions found in a page. Wiring
+a client up is a deliberate act by the operator; the endpoint advertises itself
+in prose aimed at a human, and refuses everything without a credential.

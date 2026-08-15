@@ -19,14 +19,46 @@ if ( \function_exists( 'posix_getuid' ) && 0 === \posix_getuid() ) {
 // proves nothing about isolation and would collide with any other install in
 // the same state the moment a real server is configured.
 \define( 'DB_NAME', 'newspack_event_logger_nodes_test' );
+// esc_like / get_col / $options are here because Rule_Set's orphan reconcile
+// uses all three: without them a run fails with "undefined method", which reads
+// as a Rule_Set bug rather than a harness gap. get_col answers from the stubbed
+// options store so the reconcile actually reconciles.
 $GLOBALS['wpdb'] = new class() {
 	public string $prefix      = 'wp_';
 	public string $base_prefix = 'wp_';
+	public string $options     = 'wp_options';
+	public function esc_like( string $text ): string {
+		return \addcslashes( $text, '_%\\' );
+	}
+	public function get_col( string $sql ): array {
+		if ( ! \preg_match( "/LIKE '(.*)%'/", $sql, $m ) ) {
+			return [];
+		}
+		$prefix = \stripslashes( $m[1] );
+		return \array_values(
+			\array_filter(
+				\array_keys( $GLOBALS['_wp_options'] ?? [] ),
+				static fn ( $name ): bool => \str_starts_with( (string) $name, $prefix )
+			)
+		);
+	}
 };
 
 if ( ! function_exists( 'plugin_dir_url' ) ) {
 	function plugin_dir_url( string $file ): string {
 		return 'http://localhost/wp-content/plugins/' . basename( dirname( $file ) ) . '/';
+	}
+}
+
+// The substrate's copies of these sit inside its `do_action` guard, which this
+// file wins, so they would never be defined at all — and Bootstrap::fleet_gate()
+// would silently pass on every multisite test.
+if ( ! function_exists( 'is_multisite' ) ) {
+	function is_multisite(): bool {
+		return (bool) ( $GLOBALS['_wp_test_is_multisite'] ?? false );
+	}
+	function is_main_site(): bool {
+		return (bool) ( $GLOBALS['_wp_test_is_main_site'] ?? true );
 	}
 }
 
@@ -110,10 +142,21 @@ if ( ! class_exists( '\WP_Hook' ) ) {
 // Overrides shared shims: array-params request + public-prop responses.
 if ( ! class_exists( '\WP_REST_Request' ) ) {
 	class WP_REST_Request {
-		private array $params = [];
+		private array $params  = [];
+		private array $headers = [];
+		private string $body   = '';
 		public function __construct( array $params = [] ) { $this->params = $params; }
 		public function get_param( string $key ): mixed { return $this->params[ $key ] ?? null; }
 		public function set_param( string $key, mixed $value ): void { $this->params[ $key ] = $value; }
+		public function set_body( string $body ): void { $this->body = $body; }
+		public function get_body(): string { return $this->body; }
+		// Real WP_REST_Request underscores and lowercases header lookups.
+		public function set_header( string $name, string $value ): void {
+			$this->headers[ \strtolower( \str_replace( '-', '_', $name ) ) ] = $value;
+		}
+		public function get_header( string $name ): ?string {
+			return $this->headers[ \strtolower( \str_replace( '-', '_', $name ) ) ] ?? null;
+		}
 	}
 	class WP_REST_Response {
 		public mixed $data;
@@ -145,9 +188,15 @@ if ( ! function_exists( 'register_rest_route' ) ) {
 		$GLOBALS['_rest_routes'][ $namespace . $route ] = $args;
 	}
 }
-// Overrides shared shim: single _current_user_can bool, not per-cap map.
+// Overrides shared shim: a single _current_user_can bool answers every cap,
+// which is all most tests need. A test that has to tell the substrate's roles
+// apart (read vs tune vs manage) seeds the per-cap map instead, and that wins.
 if ( ! function_exists( 'current_user_can' ) ) {
 	function current_user_can( string $cap ): bool {
+		$map = $GLOBALS['_wp_test_current_user_can'] ?? null;
+		if ( is_array( $map ) && [] !== $map ) {
+			return $map[ $cap ] ?? false;
+		}
 		return $GLOBALS['_current_user_can'] ?? false;
 	}
 }

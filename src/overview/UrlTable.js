@@ -75,6 +75,7 @@ const UrlRow = memo(
 			<div
 				role="button"
 				tabIndex={ 0 }
+				data-ask={ `url:${ url.hash }` }
 				className={ `event-logger-table__row newspack-nodes-table__row${
 					isSelected ? ' is-selected' : ''
 				}` }
