@@ -1009,23 +1009,25 @@ describe( 'usePerformanceGraph — invalid selection guards', () => {
 		).toBe( 'Invalid request ID format' );
 	} );
 
-	test( 'a valid request with no resolvable partition sends no request_detail command', async () => {
-		const wire = installWire();
+	test( 'an unresolved partition reports an error instead of doing nothing', async () => {
+		// Silence here was the whole bug: no fetch, no loading state, no error,
+		// so the modal rendered neither the request nor the URL sections.
+		const wire = installWire( { request_detail: { rid: 'r1' } } );
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
 			initialProps: {},
 		} );
 		await act( async () => {} );
 		await act( async () => {
-			rerender( {
-				selectedRequest: 'r1',
-				requestPartition: null,
-				urlDetailData: { requests: [] },
-			} );
+			rerender( { selectedRequest: 'r1', requestPartition: null } );
 		} );
+
 		expect( findVerb( wire.batches, 'request_detail' ) ).toBeNull();
+		expect( Core.node( 'requestdetail:view' ).model.error ).toBeTruthy();
 	} );
 
-	test( 'resolves the partition from urlDetailData.requests when requestPartition is null', async () => {
+	test( 'never reconstructs the partition from the recent-request window', async () => {
+		// That window is a page of recent requests, not a source of truth about
+		// one request: a deep link to an older rid simply is not in it.
 		const wire = installWire( { request_detail: { rid: 'r1' } } );
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
 			initialProps: {},
@@ -1035,16 +1037,11 @@ describe( 'usePerformanceGraph — invalid selection guards', () => {
 			rerender( {
 				selectedRequest: 'r1',
 				requestPartition: null,
-				urlDetailData: {
-					requests: [ { rid: 'r1', partition: 3 } ],
-				},
+				urlDetailData: { requests: [ { rid: 'r1', partition: 3 } ] },
 			} );
 		} );
-		const req = findVerb( wire.batches, 'request_detail' );
-		expect( req ).toBeTruthy();
-		expect(
-			parseCommandArgs( req[ VALUE ].arguments ).options.partition
-		).toBe( '3' );
+
+		expect( findVerb( wire.batches, 'request_detail' ) ).toBeNull();
 	} );
 } );
 

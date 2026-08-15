@@ -361,3 +361,24 @@ describe( 'perferrors:view — nodeSchema', () => {
 		expect( schema.commands ).toEqual( [] );
 	} );
 } );
+
+describe( 'ingest filter', () => {
+	it( 'matches the fields the toolbar placeholder promises', () => {
+		const v = new PerfErrorsViewNode();
+
+		expect( v.matchesFilter( { m: 'db timeout' }, 'timeout' ) ).toBe(
+			true
+		);
+		expect( v.matchesFilter( { m: 'all good' }, 'timeout' ) ).toBe( false );
+	} );
+
+	it( 'does not fall back to the base content match', () => {
+		const v = new PerfErrorsViewNode();
+
+		// `content` is the base's field; a hit there must not admit a row
+		// whose searchable fields miss, or the filter lies about its scope.
+		expect( v.matchesFilter( { content: 'db timeout' }, 'timeout' ) ).toBe(
+			false
+		);
+	} );
+} );

@@ -407,3 +407,26 @@ describe( 'requestlog:view — nodeSchema', () => {
 		expect( schema.commands ).toEqual( [] );
 	} );
 } );
+
+describe( 'ingest filter', () => {
+	it( 'matches the fields the toolbar placeholder promises', () => {
+		const v = new RequestLogViewNode();
+
+		expect( v.matchesFilter( { url: '/checkout/cart' }, 'checkout' ) ).toBe(
+			true
+		);
+		expect( v.matchesFilter( { url: '/about' }, 'checkout' ) ).toBe(
+			false
+		);
+	} );
+
+	it( 'does not fall back to the base content match', () => {
+		const v = new RequestLogViewNode();
+
+		// `content` is the base's field; a hit there must not admit a row
+		// whose searchable fields miss, or the filter lies about its scope.
+		expect(
+			v.matchesFilter( { content: '/checkout/cart' }, 'checkout' )
+		).toBe( false );
+	} );
+} );

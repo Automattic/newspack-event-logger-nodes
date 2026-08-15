@@ -173,9 +173,9 @@ describe( 'ResponseTimeChart', () => {
 		const click = calls.find( ( call ) => call[ 0 ] === 'click' )[ 1 ];
 		expect( () => mouseover.call( {} ) ).not.toThrow();
 		expect( () => mouseout.call( {} ) ).not.toThrow();
-		click( null, { rid: 'r2' } );
+		click( null, { rid: 'r2', partition: 4 } );
 		click( null, { rid: '' } );
-		expect( onClick ).toHaveBeenCalledWith( 'r2' );
+		expect( onClick ).toHaveBeenCalledWith( 'r2', 4 );
 		expect( onClick ).toHaveBeenCalledTimes( 1 );
 		unmount();
 	} );

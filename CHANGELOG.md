@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **A deep link carrying both `?url=` and `?request=` opened an empty modal.** Resolution branched on the URL hash first and returned, so the rid — the more specific key, which answers both the URL hash AND the partition — was never resolved. The partition was then reconstructed from `urlDetailData.requests`, a page of RECENT requests, which cannot answer for an older rid; `request_detail` was never sent, and both modal sections gate on `selectedRequest`, so neither rendered. One resolver now runs for any deep link, keyed on the rid when present.
+- The hand-rolled retry (an in-flight ref re-running on every `urls` tick) is replaced by `useReconcile`: while unsettled it keeps attempting, on success it stops. Graph not built, no command session, a reply that lost its race, a hash outside the loaded page — five silent failure paths became one retry with backoff. A rid the index cannot find falls through to the URL hash instead of retrying forever.
+- **The partition travels WITH the selection** from every entry point — deep link, request row, scatter-plot dot — instead of being reconstructed downstream. `onSelectRequest` now receives `( rid, partition )`.
+- A selected request whose detail has not arrived renders a pending or error state instead of a blank panel, and the Back button survives a request that failed to load. An unresolvable partition reports an error rather than returning before even the loading state.
+- Request Log and Error Log inherit the substrate's ingest-gate filtering; their match predicates moved onto their view nodes as `matchesFilter()` overrides.
+
+
 ## [0.54.0] - 2026-08-14
 
 ### Fixed

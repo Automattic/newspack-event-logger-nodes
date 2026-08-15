@@ -122,6 +122,12 @@ describe( 'RequestStream', () => {
 		useRequestLogGraph.mockClear();
 		clearGraph = jest.fn();
 		useRequestLogGraph.mockReturnValue( {
+			setFilter: ( term ) => {
+				const view = Core.nodes.get( 'requestlog:view' );
+				if ( view ) {
+					view.filter = String( term ).toLowerCase();
+				}
+			},
 			setPaused,
 			clear: clearGraph,
 			browse: browseMock(),
@@ -195,8 +201,8 @@ describe( 'RequestStream', () => {
 		).toBeNull();
 	} );
 
-	it( 'passes the URL filter text and placeholder down to LogRowList', () => {
-		registerViewFixture();
+	it( 'sends the URL filter to the view node, and honours the placeholder', () => {
+		const node = registerViewFixture();
 		const { container } = mount();
 		const input = container.querySelector( '.newspack-nodes-search-input' );
 		expect( input.placeholder ).toBe( 'Filter by URL…' );
@@ -204,29 +210,16 @@ describe( 'RequestStream', () => {
 			window.HTMLInputElement.prototype,
 			'value'
 		).set;
+
 		act( () => {
 			setter.call( input, 'needle-317' );
 			input.dispatchEvent( new Event( 'input', { bubbles: true } ) );
 		} );
-		expect( logRowListProps.filter ).toBe( 'needle-317' );
-	} );
 
-	it( 'matchRow matches on the row URL only (not rid or user agent)', () => {
-		registerViewFixture();
-		mount();
-		const { matchRow } = logRowListProps;
-		expect(
-			matchRow(
-				row( { url: '/NEEDLE-317/x', rid: 'r-a' } ),
-				'needle-317'
-			)
-		).toBe( true );
-		expect(
-			matchRow(
-				row( { url: '/other', rid: 'needle-317', user_agent: 'x' } ),
-				'needle-317'
-			)
-		).toBe( false );
+		// Gating at ingest is what keeps a rare match from ageing out of the
+		// ring; the list is never handed a filter to re-apply.
+		expect( node.filter ).toBe( 'needle-317' );
+		expect( logRowListProps.filter ).toBeUndefined();
 	} );
 
 	it( 'reflects the counts LogRowList reports up as requests + req/s', () => {
@@ -235,6 +228,7 @@ describe( 'RequestStream', () => {
 		act( () =>
 			logRowListProps.onStats( { total: 40, visible: 12, lps: 3.5 } )
 		);
+		// The split now means the DEBUG cap, not a filter.
 		expect( container.textContent ).toContain( '12 / 40 requests' );
 		expect( container.textContent ).toContain( '3.5 req/s' );
 	} );
@@ -418,6 +412,12 @@ describe( 'RequestStream', () => {
 		it( 'renders a partition selector (All + each dir) once partitions are cataloged', () => {
 			registerViewFixture();
 			useRequestLogGraph.mockReturnValue( {
+				setFilter: ( term ) => {
+					const view = Core.nodes.get( 'requestlog:view' );
+					if ( view ) {
+						view.filter = String( term ).toLowerCase();
+					}
+				},
 				setPaused,
 				clear: jest.fn(),
 				browse: browseMock( {
@@ -441,6 +441,12 @@ describe( 'RequestStream', () => {
 			registerViewFixture();
 			const selectPartition = jest.fn();
 			useRequestLogGraph.mockReturnValue( {
+				setFilter: ( term ) => {
+					const view = Core.nodes.get( 'requestlog:view' );
+					if ( view ) {
+						view.filter = String( term ).toLowerCase();
+					}
+				},
 				setPaused,
 				clear: jest.fn(),
 				browse: browseMock( {
@@ -478,6 +484,12 @@ describe( 'RequestStream', () => {
 				segmentId: 6,
 			} );
 			useRequestLogGraph.mockReturnValue( {
+				setFilter: ( term ) => {
+					const view = Core.nodes.get( 'requestlog:view' );
+					if ( view ) {
+						view.filter = String( term ).toLowerCase();
+					}
+				},
 				setPaused,
 				clear: jest.fn(),
 				browse,

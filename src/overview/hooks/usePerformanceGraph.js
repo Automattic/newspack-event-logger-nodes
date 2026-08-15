@@ -201,16 +201,14 @@ function urlsArgs( { urlParams, serverFilter } ) {
  *                                                       included, which is what an
  *                                                       unparseable value becomes — fires
  *                                                       on every router tick.
- * @param {?number}              [opts.requestPartition] Partition of the selected request;
- *                                                       null falls back to looking the rid
- *                                                       up in `urlDetailData.requests`.
+ * @param {?number}              [opts.requestPartition] Partition of the selected request,
+ *                                                       supplied WITH the selection; null
+ *                                                       is reported, never reconstructed.
  * @param {?Object}              [opts.selectedUrl]      `{ hash, url }` of the open URL
  *                                                       detail modal; null closes and
  *                                                       clears the slice.
  * @param {?string}              [opts.selectedRequest]  Rid of the open request detail
  *                                                       modal; null closes and clears it.
- * @param {?Object}              [opts.urlDetailData]    The url_detail slice React holds,
- *                                                       read only for its `requests` rows.
  * @param {(err: Error) => void} [opts.onError]          Receives a failed awaited verb.
  */
 export function usePerformanceGraph( opts = {} ) {
@@ -221,7 +219,6 @@ export function usePerformanceGraph( opts = {} ) {
 		requestPartition = null,
 		selectedUrl = null,
 		selectedRequest = null,
-		urlDetailData = null,
 		onError,
 	} = opts;
 
@@ -466,21 +463,21 @@ export function usePerformanceGraph( opts = {} ) {
 			} );
 			return;
 		}
-		let partition = requestPartition;
-		if (
-			( partition === null || partition === undefined ) &&
-			urlDetailData?.requests
-		) {
-			const reqInfo = urlDetailData.requests.find(
-				( r ) => r.rid === selectedRequest
-			);
-			partition = reqInfo?.partition;
-		}
+		// @longform The partition arrives WITH the selection — the deep-link
+		// resolver and a clicked row both supply it. It was also reconstructed
+		// here from `urlDetailData.requests`, a page of RECENT requests, which
+		// silently answered nothing for an older rid and returned before even
+		// the loading state: the modal then rendered neither section.
+		const partition = requestPartition;
 		if (
 			partition === undefined ||
 			partition === null ||
 			! isValidPartition( partition )
 		) {
+			sendControl( REQUESTDETAIL_VIEW, {
+				action: 'error',
+				error: 'Could not determine the partition for this request',
+			} );
 			return;
 		}
 		sendControl( REQUESTDETAIL_VIEW, { action: 'loading' } );
@@ -493,13 +490,7 @@ export function usePerformanceGraph( opts = {} ) {
 			formatCommandArgs( [ selectedRequest ], options ),
 			REQUESTDETAIL_RECV
 		);
-	}, [
-		selectedRequest,
-		requestPartition,
-		urlDetailData,
-		sendCommand,
-		sendControl,
-	] );
+	}, [ selectedRequest, requestPartition, sendCommand, sendControl ] );
 
 	// Debounced URL-table fetch (search 300ms; sort/page immediate).
 	const handleUrlParamsChange = useCallback(

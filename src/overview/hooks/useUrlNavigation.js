@@ -15,6 +15,8 @@
 
 import { useState, useEffect, useCallback, useRef } from '@wordpress/element';
 
+import useReconcile from '@newspack-nodes/shared/hooks/useReconcile';
+
 /**
  * Get URL parameters from the current page URL.
  *
@@ -109,8 +111,6 @@ export default function useUrlNavigation(
 	// Refs for navigation state tracking.
 	const isPopstateNavigation = useRef( false );
 	const isInitialMount = useRef( true );
-	// One resolve in flight at a time; the effect re-runs on every urls tick.
-	const resolveInFlight = useRef( false );
 
 	/**
 	 * Open a URL, or close the selection.
@@ -130,71 +130,59 @@ export default function useUrlNavigation(
 		setSelectedRequest( rid );
 	}, [] );
 
-	// @longform Restore selection from ?url= / ?request=.
+	// @longform Restore selection from ?url= / ?request=, through ONE resolver.
 	//
-	// The intent is held until a resolve SETTLES, never cleared on the way in.
-	// Clearing early made one failed attempt permanent and silent: the graph
-	// may not be connected on the first pass, and `urls` is one page of the
-	// catalog, so a deep-linked low-traffic hash is never in it. The effect
-	// re-runs on each urls tick, which is the retry.
-	useEffect( () => {
+	// The rid is the more specific key — it answers the url hash AND the
+	// partition — so a link carrying one resolves by it, and `?url=` is a hint
+	// rather than a second path. Branching on the hash first left the partition
+	// unresolved whenever the rid had aged out of the URL's recent-request
+	// window, and the request detail then never fetched at all.
+	//
+	// `useReconcile` owns the convergence: while unsettled it keeps
+	// attempting, on success it stops. A throw means "not yet" — graph not
+	// built, no command session, a reply that lost its race, a hash outside
+	// the loaded page — one retry instead of five silent failure paths.
+	const deepLinkLoad = useCallback( async () => {
 		if ( ! initialUrlHash && ! initialRequestId ) {
 			return;
 		}
-		if ( resolveInFlight.current ) {
-			return;
+
+		// A miss falls THROUGH to the hash rather than retrying forever.
+		if ( initialRequestId && resolveRequestId ) {
+			if ( false !== ( await resolveRequestId( initialRequestId ) ) ) {
+				setInitialUrlHash( null );
+				setInitialRequestId( null );
+				return;
+			}
+			if ( ! initialUrlHash ) {
+				throw new Error( 'request id not resolved yet' );
+			}
 		}
 
-		const settle = () => {
+		const urlObj = urls.find( ( u ) => u.hash === initialUrlHash );
+		if ( urlObj ) {
+			selectUrl( urlObj );
+			if ( initialRequestId ) {
+				selectRequest( initialRequestId );
+			}
 			setInitialUrlHash( null );
 			setInitialRequestId( null );
-		};
-
-		if ( initialUrlHash ) {
-			const urlObj = urls.find( ( u ) => u.hash === initialUrlHash );
-			if ( urlObj ) {
-				selectUrl( urlObj );
-				if ( initialRequestId ) {
-					selectRequest( initialRequestId );
-				}
-				settle();
-				return;
-			}
-			// Outside the loaded page: only the server can answer.
-			if ( ! resolveUrlHash ) {
-				return;
-			}
-			resolveInFlight.current = true;
-			Promise.resolve( resolveUrlHash( initialUrlHash ) )
-				.then( ( data ) => {
-					if ( ! data ) {
-						return; // Keep the intent; the next tick retries.
-					}
-					selectUrl( { hash: initialUrlHash, url: data.url } );
-					if ( initialRequestId ) {
-						selectRequest( initialRequestId );
-					}
-					settle();
-				} )
-				.finally( () => {
-					resolveInFlight.current = false;
-				} );
 			return;
 		}
-
-		// ?request= without ?url=: the resolver finds the URL and selects both.
-		if ( resolveRequestId ) {
-			resolveInFlight.current = true;
-			Promise.resolve( resolveRequestId( initialRequestId ) )
-				.then( ( ok ) => {
-					if ( false !== ok ) {
-						setInitialRequestId( null );
-					}
-				} )
-				.finally( () => {
-					resolveInFlight.current = false;
-				} );
+		// Outside the loaded page: only the server can answer.
+		if ( ! resolveUrlHash ) {
+			return;
 		}
+		const data = await resolveUrlHash( initialUrlHash );
+		if ( ! data ) {
+			throw new Error( 'url hash not resolved yet' );
+		}
+		selectUrl( { hash: initialUrlHash, url: data.url } );
+		if ( initialRequestId ) {
+			selectRequest( initialRequestId );
+		}
+		setInitialUrlHash( null );
+		setInitialRequestId( null );
 	}, [
 		urls,
 		initialUrlHash,
@@ -204,6 +192,12 @@ export default function useUrlNavigation(
 		resolveRequestId,
 		resolveUrlHash,
 	] );
+
+	useReconcile( {
+		load: deepLinkLoad,
+		enabled: !! ( initialUrlHash || initialRequestId ),
+		deps: [ initialUrlHash, initialRequestId ],
+	} );
 
 	// Update browser URL when selection changes.
 	useEffect( () => {

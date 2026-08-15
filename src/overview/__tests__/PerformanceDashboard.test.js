@@ -53,9 +53,14 @@ const mockGraph = {
 		.fn()
 		.mockResolvedValue( { results: [], truncated: false } ),
 };
+// Records what the dashboard hands the graph — the partition rides here.
+let mockGraphOpts = null;
 jest.mock( '../hooks/usePerformanceGraph', () => ( {
 	__esModule: true,
-	usePerformanceGraph: () => mockGraph,
+	usePerformanceGraph: ( opts ) => {
+		mockGraphOpts = opts;
+		return mockGraph;
+	},
 } ) );
 
 // `mock` prefix permits cross-scope reference in jest.mock factories.
@@ -611,6 +616,84 @@ describe( 'PerformanceDashboard', () => {
 			).toBe( true );
 			expect( stat.querySelector( ':scope > small' ) ).not.toBeNull();
 		}
+		unmount();
+	} );
+
+	it( 'carries the partition with a selected request, not just the rid', async () => {
+		// The partition travels WITH the selection from every entry point. Any
+		// caller that hands over only a rid leaves the detail unable to fetch,
+		// and reconstructing it downstream is what this refactor removed.
+		mockNavState.selectedUrl = { hash: 'h1', url: '/foo' };
+		mockNavState.selectedRequest = null;
+		mockView = loadedView( {
+			urlDetail: {
+				data: { last_modified: 1, stats: {}, requests: [] },
+				loading: false,
+				error: null,
+			},
+		} );
+
+		const { unmount } = renderComponent(
+			React.createElement( PerformanceDashboard, { onError: jest.fn() } )
+		);
+		await act( async () => {} );
+
+		await act( async () => {
+			globalThis.__urlDetailProps.onSelectRequest( 'r1', 7 );
+		} );
+
+		expect( mockNavState.selectRequest ).toHaveBeenCalledWith( 'r1' );
+		expect( mockGraphOpts.requestPartition ).toBe( 7 );
+		unmount();
+	} );
+
+	it( 'never renders an empty modal for a request that has not loaded', async () => {
+		// Both body sections gate on `selectedRequest`: one needs it set AND
+		// the detail present, the other needs it unset. A selected request
+		// whose detail never arrived fell between them, and the modal showed
+		// the URL as its title over a blank panel.
+		mockNavState.selectedUrl = { hash: 'h1', url: '/foo' };
+		mockNavState.selectedRequest = 'r1';
+		mockView = loadedView( {
+			urlDetail: {
+				data: { last_modified: 1, stats: {}, requests: [] },
+				loading: false,
+				error: null,
+			},
+			requestDetail: { data: null, loading: false, error: null },
+		} );
+
+		const { container, unmount } = renderComponent(
+			React.createElement( PerformanceDashboard, { onError: jest.fn() } )
+		);
+		await act( async () => {} );
+
+		expect( container.textContent ).toMatch( /Loading request/ );
+		unmount();
+	} );
+
+	it( 'surfaces the reason a request detail failed', async () => {
+		mockNavState.selectedUrl = { hash: 'h1', url: '/foo' };
+		mockNavState.selectedRequest = 'r1';
+		mockView = loadedView( {
+			urlDetail: {
+				data: { last_modified: 1, stats: {}, requests: [] },
+				loading: false,
+				error: null,
+			},
+			requestDetail: {
+				data: null,
+				loading: false,
+				error: 'Could not determine the partition for this request',
+			},
+		} );
+
+		const { container, unmount } = renderComponent(
+			React.createElement( PerformanceDashboard, { onError: jest.fn() } )
+		);
+		await act( async () => {} );
+
+		expect( container.textContent ).toMatch( /partition for this request/ );
 		unmount();
 	} );
 

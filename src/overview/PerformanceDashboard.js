@@ -221,7 +221,6 @@ export default function PerformanceDashboard( { onError } ) {
 		requestPartition,
 		selectedUrl,
 		selectedRequest,
-		urlDetailData: urlDetail,
 		onError,
 	} );
 	commandResolveRef.current = resolveRequest;
@@ -237,7 +236,7 @@ export default function PerformanceDashboard( { onError } ) {
 	const urlDetailScrollRef = useRef( 0 );
 
 	const selectRequest = useCallback(
-		( rid ) => {
+		( rid, partition ) => {
 			if ( rid ) {
 				// Entering request detail — save current scroll position.
 				const modalContent = document.querySelector(
@@ -246,6 +245,10 @@ export default function PerformanceDashboard( { onError } ) {
 				if ( modalContent ) {
 					urlDetailScrollRef.current = modalContent.scrollTop;
 				}
+			}
+			// The partition rides WITH the selection, never recovered later.
+			if ( undefined !== partition ) {
+				setRequestPartition( partition );
 			}
 			baseSelectRequest( rid );
 		},
@@ -796,7 +799,7 @@ export default function PerformanceDashboard( { onError } ) {
 					}
 				>
 					{ /* Back button for request view */ }
-					{ selectedRequest && requestDetail && (
+					{ selectedRequest && (
 						<button
 							type="button"
 							className="button is-plain event-logger-modal-back-button"
@@ -831,6 +834,30 @@ export default function PerformanceDashboard( { onError } ) {
 							indentedEntries={ indentedEntries }
 							realEntryCount={ realEntryCount }
 						/>
+					) }
+
+					{ /* A selected request with nothing to show is a state,
+					     never a blank panel: both sections gate on the pair. */ }
+					{ selectedRequest && ! requestDetail && (
+						<p
+							className={ `newspack-nodes-status${
+								requestDetailSlice?.error ? ' is-error' : ''
+							}` }
+						>
+							{ requestDetailSlice?.error
+								? sprintf(
+										// translators: %s: the error message.
+										__(
+											'Could not load this request: %s',
+											'newspack-event-logger-nodes'
+										),
+										requestDetailSlice.error
+								  )
+								: __(
+										'Loading request…',
+										'newspack-event-logger-nodes'
+								  ) }
+						</p>
 					) }
 				</Modal>
 			) }

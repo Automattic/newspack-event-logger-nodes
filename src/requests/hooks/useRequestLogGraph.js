@@ -19,7 +19,7 @@
  * The graph is a direct sse-in → requestlog:view. The view's `shapeRow()` does
  * the defensive shaping (drop missing-url, clip url@2000 + UA@500, default-fill) —
  * the single place that knows envelope → render-row mapping. Display filtering
- * lives in the chrome (`LogStreamViewer` matchRow), not the view node.
+ * is an INGEST gate on the view node, not a render-time scan.
  *
  * The graph + connection lifecycle are handed to the shared
  * `useVisibilityGatedLink` hook: it mounts via `mountExospine` (snapshotting Core so
@@ -45,7 +45,7 @@ const GLOB = 'completed.*';
 /**
  * @param {Object} [opts]            Options.
  * @param {number} [opts.maxEntries] View ring cap (default 1000).
- * @return {{ setPaused: Function, clear: () => void, browse: Object }}
+ * @return {{ setPaused: Function, clear: () => void, browse: Object, setFilter: (term: string) => void }}
  *   Control callbacks for the thin React view (the view's own state is read via
  *   useNodeState). Reset Graph is driven by a `Core.bumpGraphGeneration()`
  *   bump — mountExospine subscribes this reused mount's rebuild to it.
@@ -139,6 +139,15 @@ export function useRequestLogGraph( opts = {} ) {
 	};
 	setPausedRef.current = setPaused;
 
+	// Ingest gate: only matching rows enter the ring from here on.
+	const setFilter = ( term ) => {
+		if ( viewRef.current ) {
+			viewRef.current.fill(
+				controlMsg( viewRef.current, { action: 'filter', term } )
+			);
+		}
+	};
+
 	// clear: empty the view ring (counter + rate reset ride along).
 	const clear = () => {
 		if ( viewRef.current ) {
@@ -148,5 +157,5 @@ export function useRequestLogGraph( opts = {} ) {
 		}
 	};
 
-	return { setPaused, clear, browse };
+	return { setPaused, clear, browse, setFilter };
 }
