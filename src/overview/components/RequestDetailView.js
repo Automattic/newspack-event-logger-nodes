@@ -52,6 +52,8 @@ const SECTION_STYLE = { marginBottom: '20px' };
  * @param {Object} props.flameData       Server-built flame tree, or null.
  * @param {Array}  props.indentedEntries Log entries from computeIndentedEntries().
  * @param {number} props.realEntryCount  Count of real (non-placeholder) log entries.
+ * @param {string} [props.rid]           Request id, so the picker can scope what is inside.
+ * @param {number} [props.partition]     Its partition; nothing downstream can recover it.
  * @return {import('react').ReactElement} Request detail view.
  */
 export default function RequestDetailView( {
@@ -59,6 +61,8 @@ export default function RequestDetailView( {
 	flameData,
 	indentedEntries,
 	realEntryCount,
+	rid,
+	partition,
 } ) {
 	const revealRef = useRef( null );
 	const isTimedOut = requestDetail.error_status === 'T';
@@ -71,7 +75,13 @@ export default function RequestDetailView( {
 		! hasEntries && ! hasFlame && ! hasProfiles && ! isFolded;
 
 	return (
-		<div className="event-logger-request-detail">
+		// The picker chain: DOM nesting says which request this belongs to.
+		<div
+			className="event-logger-request-detail"
+			data-ask={
+				rid ? `request:${ rid }:${ partition ?? 0 }` : undefined
+			}
+		>
 			<div className="event-logger-request-info" style={ SECTION_STYLE }>
 				<p>
 					<strong>

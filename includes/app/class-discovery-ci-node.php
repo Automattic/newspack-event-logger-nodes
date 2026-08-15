@@ -27,6 +27,7 @@
 namespace Newspack_Event_Logger_Nodes\App;
 
 use Newspack_Event_Logger_Nodes\Rule_Set;
+use Newspack_Nodes\Capabilities;
 use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Service_CI_Node;
 
@@ -73,6 +74,7 @@ class Discovery_CI_Node extends Service_CI_Node {
 			'commands'    => [
 				[
 					'name'        => 'get',
+					'capability'  => Capabilities::READ,
 					'description' => 'Return registered_hooks + custom_events for this spoke.',
 					'args'        => [],
 					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {

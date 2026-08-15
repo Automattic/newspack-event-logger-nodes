@@ -1235,6 +1235,11 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 							return (
 								<tr
 									key={ idx }
+									data-ask={
+										undefined !== entry.n
+											? `entry:${ entry.n }`
+											: undefined
+									}
 									data-pair-id={
 										entry.pairId !== null &&
 										entry.pairId !== undefined

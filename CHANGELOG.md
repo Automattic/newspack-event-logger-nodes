@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`Findings`** — the problem area, computed rather than inferred. Dominant span, repetition, unattributed time, entry gaps and truncation are all arithmetic over data already on disk, and `request_detail` now carries them, so the detail view can name what is wrong with no model involved at all. Each finding says WHERE it was measured (`flame` and `subtraction` warrant different confidence) and what rule edit would act on it.
+- **"Insufficient instrumentation" is a first-class finding.** The common first ask is about a slow URL that no rule covers, where there is no flame graph and no entries — only a total. The useful answer there is not an explanation but WHICH INSTRUMENTATION TO SWITCH ON, so the proposal is a coarse lifecycle bracket (six hooks) and the next round subdivides only the phase that held the time. Every proposal that adds instrumentation names what removes it again.
+- **The `?` picker.** One "Ask AI" button; the cursor becomes a `?` and the next click decides everything — a slow URL, a request, a flame span, a log line, a breakdown row. THE TARGET IS THE SCOPE, so there is no per-surface branching: any element becomes askable by carrying one `data-ask` attribute, and DOM nesting supplies the context. Cmd/Ctrl-click adds to the selection, matching the modifier already shipping on those same elements. Keyboard-reachable; a picker click is not consent to send, and the assembled brief is shown before anything is copied.
+- **`ask` verb + `Ask_Assembler`** — the brief for one thing, and nothing else: a span brief is a subtree, its siblings and its parent's total, not 47 entries in the hope the model finds the part you were looking at. URLs go through the firehose's own `redact_url()`, the environment is allowlisted rather than filtered, and the measurement caveat rides on every payload.
+- **An MCP server** at `POST /newspack-event-logger-nodes/v1/mcp`, wrapping verbs that already exist. Authenticated by a scoped session presented as a Bearer credential: the request becomes the session's minting user and the scope is applied as a CEILING, so `tools/list` offers only what that session can actually reach. An in-plugin LLM call would have shipped faster and bought a dashboard that summarises itself to one model behind one proxy publishers cannot reach — and that could not see a Linear issue at all.
+
+### Changed
+- **Requires substrate 2.31.0.** Every verb here declares a capability role, and the MCP controller builds its request graph with `Bootstrap::mount_request_graph()` — below that version the `tune` verbs throw "unknown capability role" and every MCP call fatals on an undefined method.
+- Every application verb now DECLARES its capability role instead of defaulting to manage by omission: the dashboard slices are `read`, the ruleset writes and the settings receiver are `tune`. The hard-coded `require_manage_options()` at the top of every performance handler is gone — it silently overrode the declaration — and a test asserts it stays gone.
+- `Log_Manager::redact_url()` is public: it is the ONE redaction path, and anything sending a URL somewhere it was not already written goes through it rather than a second pattern that would drift.
+
+### Fixed
+- **The findings detector read the wrong key.** A LOADED request carries its flame tree at `flame_data` — `Performance_CI` merges the flames partition in under that name — while only a FOLDED record ever carries `flame`. Reading `flame` alone made every ordinary request report "nothing is measured" plus a bogus "N of N went unmeasured", and made every flame-span click a dead end. `Findings::flame_of()` is the one reader.
+- **The governing rule was re-derived, and could never match.** A stored record's `url` is absolute and query-stripped (`https://host/path`) while rules are path patterns, so not even a catch-all `/` matched: every brief said "no rule governs this URL" and proposed creating one whose pattern could never match anything. The record already carries the answer the request itself resolved (`rule_id`); the `url:` brief, which has no record, matches on the PATH.
+- **The page-facts block could be escaped out of.** `JSON.stringify` does not escape `<`, so a `</script>` in a logged URL or entry payload ended the element and the rest parsed as HTML — in wp-admin, from attacker-controlled input. `factsJson()` escapes `<`, U+2028 and U+2029.
+- A category clicked inside a request answered from the site-wide leaderboard, describing something else entirely and dead-clicking on any category absent from the recent global window. The context chain decides which board answers, and the brief says which (`scope`).
+- "Insufficient instrumentation" claimed "the governing rule registers no hooks" for a well-instrumented rule whose request simply produced no spans — a factual falsehood at severity `high` that proposed adding hooks the rule already had.
+- The MCP door lacked `Bootstrap::fleet_gate()` (a subsite reached the main site's fleet) and any rate limit (MCP bypasses `/command`, and `request_grep` walks every partition's index). Both added; the listing now checks the minting user's capability, not the scope alone.
+- A JSON-RPC notification got a response, which the spec forbids. Byte-wise `substr` on an entry payload could split a codepoint, making `wp_json_encode` return false and the whole MCP reply come back empty rather than as an error.
+- A request-detail lookup that missed re-walked the caller's partition, costing N+1 index scans rather than N.
+
 ## [0.55.1] - 2026-08-14
 
 ### Fixed

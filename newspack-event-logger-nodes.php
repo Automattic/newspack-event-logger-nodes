@@ -72,15 +72,16 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	if ( ! \class_exists( '\\Newspack_Nodes\\Bootstrap' ) ) {
 		return;
 	}
-	// @longform Dormant when too old; 2.25.0 = \Newspack_Nodes\Line_Fitter,
-	// which Request_Builder and Request_Flight fit their emits through. Below
-	// it every oversize-line fit fatals on a missing class. (2.21.0 was the
-	// prior floor: Table_Node::store()/forget(), which Rule_Set writes its
-	// pointer-tier hooks mirror through, and below which every heavy rule's
-	// save fatals on an undefined method.)
+	// @longform Dormant when too old; 2.31.0 = Capabilities::TUNE (every verb
+	// here declares a role) plus Bootstrap::mount_request_graph(), which the
+	// MCP controller builds its graph with — below it every MCP call fatals on
+	// an undefined method and every `tune` verb throws "unknown capability
+	// role". (2.25.0 was the prior floor: \Newspack_Nodes\Line_Fitter, which
+	// Request_Builder and Request_Flight fit their emits through; 2.21.0 before
+	// that, for Table_Node::store()/forget().)
 	// WordPress does not order plugin updates.
 	if ( ! \method_exists( '\\Newspack_Nodes\\Bootstrap', 'version_at_least' )
-		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.25.0', 'Newspack Event Logger Nodes' ) ) {
+		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.31.0', 'Newspack Event Logger Nodes' ) ) {
 		return;
 	}
 
@@ -130,6 +131,14 @@ $_newspack_event_logger_nodes_load = static function (): void {
 		'newspack_event_logger_nodes_resolve_settings_sync_value',
 		10,
 		2
+	);
+
+	// The MCP surface; reaching it takes a scoped session credential.
+	\add_action(
+		'rest_api_init',
+		static function (): void {
+			( new \Newspack_Event_Logger_Nodes\App\MCP_Controller() )->register_routes();
+		}
 	);
 
 	new \Newspack_Event_Logger_Nodes\App\Core();

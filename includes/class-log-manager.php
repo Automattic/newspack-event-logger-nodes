@@ -1138,12 +1138,15 @@ class Log_Manager {
 	}
 
 	/**
-	 * Redact sensitive query parameters from a URL.
+	 * Redact sensitive query parameters from a URL. Public because it is the
+	 * ONE redaction path: anything that sends a URL somewhere it was not
+	 * already written — the Ask brief, an agent surface — goes through here,
+	 * not through a second pattern that would drift from this one.
 	 *
 	 * @param string $url URL to redact.
 	 * @return string Redacted URL.
 	 */
-	private static function redact_url( string $url ): string {
+	public static function redact_url( string $url ): string {
 		return \preg_replace( self::URL_REDACT_PATTERN, '$1$2=[REDACTED]', $url ) ?? $url;
 	}
 

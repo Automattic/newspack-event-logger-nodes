@@ -1218,6 +1218,163 @@ class PerformanceCITest extends TestCase {
 		$this->assertCount( 1, $result['events'] );
 	}
 
+	public function test_request_detail_carries_the_findings_for_that_record(): void {
+		$rid = $this->write_request( [
+			'rid'            => 'rid-findings-1234567890123456789',
+			'url'            => '/slow-thing',
+			'timestamp'      => 1700000700,
+			'duration_ms'    => 9000,
+			'status_code'    => 200,
+			'peak_mb'        => 4,
+			'request_method' => 'GET',
+			'flame'          => [
+				'name'     => 'request',
+				'value'    => 40.0,
+				'children' => [ [ 'name' => 'init', 'value' => 40.0, 'children' => [] ] ],
+			],
+		] );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'request_detail', $rid );
+
+		$this->assertIsArray( $result );
+		$this->assertContains(
+			'unattributed',
+			\array_column( $result['findings'], 'kind' ),
+			'40ms profiled of a 9-second request is subtraction, not inference'
+		);
+		$this->assertStringContainsString( 'SQL', $result['caveat'] );
+	}
+
+	// -------------------------------------------------------------------------
+	// ask verb
+	// -------------------------------------------------------------------------
+
+	public function test_ask_refuses_a_descriptor_outside_the_vocabulary(): void {
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', 'wizard:x' );
+
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( 'unknown descriptor', \strtolower( $result ) );
+	}
+
+	public function test_ask_requires_a_descriptor(): void {
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', '' );
+
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( 'descriptor required', \strtolower( $result ) );
+	}
+
+	/**
+	 * A stored record's url is ABSOLUTE and query-stripped, while rules are
+	 * path patterns — so re-deriving the rule by matching that url found
+	 * nothing, not even a catch-all `/`. The record already carries the answer
+	 * the request itself resolved.
+	 */
+	public function test_request_detail_resolves_the_rule_the_record_recorded(): void {
+		\update_option(
+			Rule_Set::OPTION_RULES,
+			[
+				[
+					'id'      => Rule_Set::id_for( '/' ),
+					'pattern' => '/',
+					'action'  => 'log',
+					'hooks'   => [ 'init' ],
+				],
+			]
+		);
+		Rule_Set::reset();
+
+		$rid = $this->write_request( [
+			'rid'            => 'rid-rule-12345678901234567890123',
+			'url'            => 'https://example.test/some/path',
+			'rule_id'        => Rule_Set::id_for( '/' ),
+			'timestamp'      => 1700001000,
+			'duration_ms'    => 90,
+			'status_code'    => 200,
+			'peak_mb'        => 2,
+			'request_method' => 'GET',
+		] );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', "request:{$rid}:0" );
+
+		$this->assertIsArray( $result, \is_string( $result ) ? $result : '' );
+		$this->assertNotNull( $result['rule'], 'the record named its rule; nothing had to be re-derived' );
+		$this->assertSame( '/', $result['rule']['pattern'] );
+	}
+
+	public function test_ask_assembles_a_request_brief(): void {
+		$rid = $this->write_request( [
+			'rid'            => 'rid-ask-req-123456789012345678',
+			'url'            => '/asked-about',
+			'timestamp'      => 1700000800,
+			'duration_ms'    => 120,
+			'status_code'    => 200,
+			'peak_mb'        => 2,
+			'request_method' => 'GET',
+		] );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', "request:{$rid}:0" );
+
+		$this->assertIsArray( $result );
+		$this->assertSame( 'request', $result['subject'] );
+		$this->assertSame( '/asked-about', $result['url'] );
+		$this->assertEquals( 120.0, $result['duration_ms'] );
+	}
+
+	public function test_ask_resolves_a_span_through_its_request_context(): void {
+		$rid = $this->write_request( [
+			'rid'            => 'rid-ask-span-12345678901234567',
+			'url'            => '/asked-span',
+			'timestamp'      => 1700000900,
+			'duration_ms'    => 500,
+			'status_code'    => 200,
+			'peak_mb'        => 2,
+			'request_method' => 'GET',
+			'flame'          => [
+				'name'     => 'request',
+				'value'    => 500.0,
+				'children' => [ [ 'name' => 'wp_loaded', 'value' => 480.0, 'children' => [] ] ],
+			],
+		] );
+
+		$result = VerbHarness::fire(
+			new Performance_CI_Node(),
+			'performance',
+			'ask',
+			[ 'span:wp_loaded', "request:{$rid}:0" ]
+		);
+
+		$this->assertIsArray( $result );
+		$this->assertSame( 'span', $result['subject'] );
+		$this->assertSame( 'wp_loaded', $result['name'] );
+		$this->assertEquals( 480.0, $result['ms'] );
+	}
+
+	public function test_a_span_without_its_request_context_is_refused(): void {
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', 'span:wp_loaded' );
+
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( 'needs its request', \strtolower( $result ) );
+	}
+
+	public function test_ask_assembles_a_url_brief(): void {
+		$hash  = Log_Manager::url_hash( '/asked-url' );
+		$store = new Stats_Store( 0, 86400 );
+		$store->set_url_index_hourly( $this->current_url_bucket(), [
+			$hash => [
+				'url'       => '/asked-url',
+				'count'     => 7,
+				'sum_ms'    => 6300.0,
+				'last_seen' => 1700000000,
+			],
+		] );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', "url:{$hash}" );
+
+		$this->assertIsArray( $result );
+		$this->assertSame( 'url', $result['subject'] );
+		$this->assertSame( '/asked-url', $result['url'] );
+	}
+
 	public function test_request_detail_verb_merges_flame_data_when_present(): void {
 		// Rid must be ≤32 chars (fixed-width .idx field) so the lookup matches.
 		$rid = $this->write_request( [

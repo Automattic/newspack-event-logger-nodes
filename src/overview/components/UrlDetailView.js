@@ -104,6 +104,7 @@ const RequestRow = memo(
 			<div
 				role="button"
 				tabIndex={ 0 }
+				data-ask={ `request:${ req.rid }:${ req.partition ?? 0 }` }
 				className="event-logger-table__row newspack-nodes-table__row"
 				style={ { height: ROW_HEIGHT } }
 				onClick={ () => onSelect( req.rid, req.partition ) }

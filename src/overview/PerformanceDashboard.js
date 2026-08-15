@@ -43,6 +43,8 @@ import useUrlNavigation from './hooks/useUrlNavigation';
 import OverviewSection from './components/OverviewSection';
 import UrlDetailView from './components/UrlDetailView';
 import RequestDetailView from './components/RequestDetailView';
+import AskPanel from './components/AskPanel';
+import { pageFacts, factsJson } from './pageFacts';
 import RuleEditModal from '../rules/RuleEditModal';
 import { BLANK_RULE } from '../rules/constants';
 
@@ -636,6 +638,30 @@ export default function PerformanceDashboard( { onError } ) {
 
 	return (
 		<div className="event-logger-performance-dashboard">
+			{ /* The `?` picker. One button; what you click next is the scope. */ }
+			<AskPanel onError={ onError } />
+
+			{ /* Facts only, no instructions: anything reading this page gets
+			     clean numbers instead of a scraped table. Rendered only for
+			     someone who can already see the dashboard. */ }
+			<script
+				type="application/json"
+				id="newspack-nodes-page-facts"
+				// eslint-disable-next-line react/no-danger
+				dangerouslySetInnerHTML={ {
+					__html: factsJson(
+						pageFacts( {
+							overview,
+							selectedUrl,
+							urlDetail,
+							selectedRequest,
+							requestPartition,
+							requestDetail,
+						} )
+					),
+				} }
+			/>
+
 			{ /* Overview Stats */ }
 			<OverviewSection
 				overview={ overview }
@@ -833,6 +859,8 @@ export default function PerformanceDashboard( { onError } ) {
 							flameData={ requestFlameData }
 							indentedEntries={ indentedEntries }
 							realEntryCount={ realEntryCount }
+							rid={ selectedRequest }
+							partition={ requestPartition }
 						/>
 					) }
 
