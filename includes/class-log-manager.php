@@ -105,9 +105,6 @@ class Log_Manager {
 	 * several oversized values — comfortably under MAX_DATA_SIZE. */
 	private const ENV_VALUE_MAX = 256;
 
-	/** TSL node name an aggregator hub declares its firehose Topic under. */
-	private const FIREHOSE_NODE = 'firehose:topic';
-
 	/** @var int Encoded-data cap in bytes. Headroom under PIPE_BUF (4096), which
 	 * is what keeps a lock-free append atomic against every other writer on this
 	 * multi-writer log. Payloads that can exceed it belong in
@@ -487,22 +484,20 @@ class Log_Manager {
 	/**
 	 * Firehose dirs indexed by partition, for readers (dashboard grep, reqgrep).
 	 *
-	 * The UNION of two spans, never one replacing the other. init_firehose()
-	 * builds this Topic in REQUEST scope and hashes the rid over the GLOBAL
-	 * count on every request, so that span always holds data. An aggregator hub
-	 * additionally declares a `firehose:topic`, whose own count may sit above
-	 * the global (fan-in) or below it (a pinned `var num_partitions`) — widening
-	 * the reader either way, narrowing it never. A dir that holds nothing costs
-	 * a scan of nothing; a dir left out is data the dashboard cannot see.
+	 * ONE number answers this, for readers and writers alike: the config's
+	 * `num_partitions`. `init_firehose()` hashes the rid over it on every
+	 * request, so it is exactly the span that can hold data.
 	 *
-	 * Readers only. The writer stays on the cheap config read — it runs on
-	 * every request and must not parse topologies to log a line.
+	 * A topology's `var num_partitions` is its WORKER count and says nothing
+	 * about the firehose. Unioning the two let a pinned topology — `hub-control`
+	 * pins 1 — argue with the writer about a layout it does not own, and made
+	 * every reader parse TSL to ask.
 	 *
 	 * `$log_path` is `reqgrep --firehose`'s override. A path that already names
 	 * a partition is an instruction: it answers for that partition alone, keyed
 	 * by the index it names. A bare base is a hint about where the logs live,
 	 * so the `.p{N}` span is derived from it here — the one place that knows
-	 * the layout. Either way no declaration joins an explicit path's span.
+	 * the layout.
 	 *
 	 * @param string $log_path Partition dir or log base overriding the configured layout; '' uses the config.
 	 * @return array<int,string> Partition index => directory.
@@ -511,17 +506,13 @@ class Log_Manager {
 		if ( '' !== $log_path && \preg_match( '/\.p(\d+)$/', $log_path, $named ) ) {
 			return [ (int) $named[1] => $log_path ];
 		}
-		$declared = '' === $log_path ? Bootstrap::node_dirs( self::FIREHOSE_NODE ) : [];
 		$template = '' === $log_path
 			? self::firehose_dir_template( Config::get_logs_directory() )
 			: $log_path . '.p{partition}';
-		$count    = \max(
-			\count( $declared ),
-			\Newspack_Nodes\Bootstrap::global_num_partitions()
-		);
-		$dirs = [];
+		$count = Bootstrap::global_num_partitions();
+		$dirs  = [];
 		for ( $p = 0; $p < $count; $p++ ) {
-			$dirs[ $p ] = $declared[ $p ] ?? Core::resolve_partition_template( $template, $p );
+			$dirs[ $p ] = Core::resolve_partition_template( $template, $p );
 		}
 		return $dirs;
 	}
@@ -931,7 +922,7 @@ class Log_Manager {
 
 		$dir_template        = self::firehose_dir_template( Config::get_logs_directory() );
 		// THE accessor: past the cap no worker consumes, and the GC sweeps it.
-		$num_partitions      = \Newspack_Nodes\Bootstrap::global_num_partitions();
+		$num_partitions      = Bootstrap::global_num_partitions();
 		$this->partition_idx = Partition_Node::hash_to_partition( $this->request_id, $num_partitions );
 		$segment_size = Core::as_int( Config::value( 'segment_size' ) );
 		$min_segments = Core::as_int( Config::value( 'min_segments' ) );

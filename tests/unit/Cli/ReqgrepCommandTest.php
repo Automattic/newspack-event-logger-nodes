@@ -1055,27 +1055,12 @@ class ReqgrepCommandTest extends TestCase {
 		}
 	}
 
-	public function test_cat_mode_spans_the_declared_topic_partition_count(): void {
-		// The firehose Topic re-partitions above the global count on an
-		// aggregator hub. Global stays 1; the Topic declares 4, and the request
-		// lives in p2 — invisible to a reader looping to the global.
-		$stock = $this->tmp . '/tsl';
-		\mkdir( $stock, 0755, true );
-		\file_put_contents(
-			"{$stock}/agg-wide.tsl",
-			"make_node Topic firehose:topic <config:logs_dir>/firehose.p{partition} 4\n"
-		);
-		\Newspack_Nodes\Topology_Registry::reset_basename_cache();
-		\Newspack_Nodes\Topology_Registry::register_stock_dir( $stock );
-		\add_filter(
-			'newspack_nodes/topologies',
-			static function ( array $topologies ): array {
-				$topologies['agg-wide'] = [ 'topology' => 'agg-wide', 'num_partitions' => 1, 'stale_timeout' => 60 ];
-				return $topologies;
-			}
-		);
-		\update_option( 'newspack_nodes_topologies', [ 'agg-wide' ] );
-		Config::reset();
+	public function test_cat_mode_spans_the_configured_partition_count(): void {
+		// A hub that fans four spokes into its firehose says so ONCE, in
+		// `num_partitions`. The writer hashes over it and the reader spans it;
+		// a topology's `var num_partitions` is its worker count and has no say
+		// in the layout, so a request in p2 is visible because config says 4.
+		\update_option( 'newspack_nodes_num_partitions', 4 );
 		\Newspack_Nodes\Config::reset();
 
 		try {
@@ -1095,8 +1080,7 @@ class ReqgrepCommandTest extends TestCase {
 
 			$this->assertStringContainsString( 'wide-rid', self::joined( $captured ) );
 		} finally {
-			\Newspack_Nodes\Topology_Registry::reset_basename_cache();
-			\delete_option( 'newspack_nodes_topologies' );
+			\update_option( 'newspack_nodes_num_partitions', 1 );
 			Config::reset();
 			\Newspack_Nodes\Config::reset();
 		}
