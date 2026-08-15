@@ -16,7 +16,7 @@
  * controllable value so the visibility effect is deterministic under jsdom.
  */
 
-import { renderHook, act } from '../../../test-helpers/renderHook';
+import { renderHook, act, waitFor } from '../../../test-helpers/renderHook';
 import {
 	newMessage,
 	pack,
@@ -401,9 +401,12 @@ describe( 'useRequestLogGraph — glob browse', () => {
 		} );
 		const { result } = renderHook( () => useRequestLogGraph() );
 		await act( async () => {} );
-		expect(
-			result.current.browse.partitions.map( ( p ) => p.key )
-		).toEqual( [ 'completed.p0', 'completed.p2' ] );
+		// The catalog rides the router tick, so it is a wait.
+		await waitFor( () =>
+			expect(
+				result.current.browse.partitions.map( ( p ) => p.key )
+			).toEqual( [ 'completed.p0', 'completed.p2' ] )
+		);
 	} );
 
 	test( 'selecting a partition narrows the live SSE subscription to that dir', async () => {
@@ -499,6 +502,10 @@ describe( 'useRequestLogGraph — pause vs visibility precedence + replay surviv
 		await act( async () =>
 			result.current.browse.selectPartition( 'completed.p0' )
 		);
+		// The rail is a tick away, and the replay boundary comes from it.
+		await waitFor( () =>
+			expect( result.current.browse.segments.length ).toBeGreaterThan( 0 )
+		);
 		await act( async () =>
 			result.current.browse.browseSegment( { id: 9, size: 500 } )
 		);
@@ -573,13 +580,8 @@ describe( 'useRequestLogGraph — teardown', () => {
 		const { unmount } = renderHook( () => useRequestLogGraph() );
 		const sourceAtMount = FakeEventSource.last;
 		unmount();
-		for ( const name of [
-			...COMPOSED_NAMES,
-			LINK,
-			VIEW,
-			INTERPRETER,
-			ROUTER,
-		] ) {
+		// The ROUTER is the page's heartbeat and is never torn down.
+		for ( const name of [ ...COMPOSED_NAMES, LINK, VIEW, INTERPRETER ] ) {
 			expect( Core.node( name ) ).toBeNull();
 		}
 		expect( sourceAtMount.closed ).toBe( true );

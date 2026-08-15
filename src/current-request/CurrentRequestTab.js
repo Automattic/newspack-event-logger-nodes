@@ -9,22 +9,23 @@
  * and profile breakdown are fetched from the `performance` CI's `request_detail`
  * verb (by rid + partition). The request-builder processes the firehose
  * asynchronously, so a just-loaded page won't be in the log for a beat — that's
- * the "still processing" state, with a Refresh to re-poll.
+ * the "still processing" state. There is no Refresh: the tab asks again every
+ * tick, so the only thing a button could do is what is already happening.
  */
 
-import {
-	useState,
-	useEffect,
-	useCallback,
-	lazy,
-	Suspense,
-} from '@wordpress/element';
+import { useState, useEffect, lazy, Suspense } from '@wordpress/element';
 import { __ } from '@wordpress/i18n';
-import { formatCommandArgs } from '@newspack-nodes/runtime';
-import useReconcile from '@newspack-nodes/shared/hooks/useReconcile';
-import useRequestNode from '@newspack-nodes/shared/hooks/useRequestNode';
+import { formatCommandArgs, useNodeState } from '@newspack-nodes/runtime';
+import { useBatchedPoll } from '@newspack-nodes/shared/hooks/useBatchedPoll';
+import { addSliceFetcher } from '@newspack-nodes/shared/helpers/addSliceFetcher';
+import './nodes/register';
 // Reuse the perf dashboard's flame + profile; FlameGraph is d3-heavy (lazy).
 import RequestProfile from '../overview/RequestProfile';
+
+const VIEW = 'currentrequest:view';
+
+/** Every router tick: the record lands the moment the worker writes it. */
+const POLL_INTERVAL_MS = 1000;
 
 const FlameGraph = lazy( () => import( '../overview/FlameGraph' ) );
 
@@ -79,10 +80,10 @@ function statusLabel( errorStatus ) {
  * first paint, `processing` while the request-builder has yet to write the
  * record, and `found` once `request_detail` answers.
  *
- * The load is desired state rather than an event. `useReconcile` keeps
- * attempting on a doubling backoff until it succeeds, so a record written a
- * second after the page rendered — or a session refused and later renewed —
- * converges on its own; Refresh only collapses the backoff.
+ * The load is desired state rather than an event: the tab POLLS for its own
+ * record until one arrives, so a record written a second after the page
+ * rendered — or a session refused and later renewed — converges on its own,
+ * and the ask rides the same tick as everything else on the page.
  *
  * `flame_data` is a separate write: the verb merges it in only once
  * `Flame_Builder_Node` has produced it, and the loop settles on the record
@@ -92,50 +93,51 @@ function statusLabel( errorStatus ) {
  */
 export default function CurrentRequestTab() {
 	const { rid = '', partition = 0, perfUrl = '' } = currentRequestData();
-	// One node, one job — its reply is addressed back to it.
-	const requestDetail = useRequestNode(
-		'performance:request_detail',
-		'performance'
-	);
 	// The whole lifecycle in one type; `request` only lands in the found state.
 	const [ state, setState ] = useState(
 		/** @type {{status: string, request?: Object}} */ (
 			rid ? { status: 'loading' } : { status: 'idle' }
 		)
 	);
-	// @longform
-	// Throws rather than swallowing, so the reconcile loop keeps asking. That
-	// serves both failure modes at once: request_detail legitimately throws
-	// until requests.log has the record, and a refused command threw the same
-	// way — the old catch collapsed both into a permanent "processing" that
-	// never retried, so an expired session looked exactly like a slow write.
-	const load = useCallback( async () => {
-		if ( ! rid ) {
-			return;
-		}
-		// No mounted-guard: unmounting removes the node, which rejects.
-		const request = await requestDetail(
-			'request_detail',
-			formatCommandArgs( [ rid ], { partition } )
-		);
-		if ( ! request ) {
-			throw new Error( 'request not written yet' );
-		}
-		setState( { status: 'found', request } );
-	}, [ rid, partition, requestDetail ] );
 
-	const { settled, reconcileNow } = useReconcile( {
-		load,
-		enabled: !! rid,
-		deps: [ rid, partition ],
+	// @longform
+	// The ask keeps going until the record exists. That serves both failure
+	// modes at once: request_detail legitimately answers nothing until
+	// requests.log has the record, and a refused command answered the same way
+	// — the old catch collapsed both into a permanent "processing" that never
+	// retried, so an expired session looked exactly like a slow write.
+	useBatchedPoll( {
+		build: ( { interpreter, tee } ) =>
+			addSliceFetcher( interpreter, {
+				fetcher: 'currentrequest:fetch',
+				receiver: 'currentrequest:in',
+				command: 'request_detail',
+				argsFn: () => formatCommandArgs( [ rid ], { partition } ),
+				view: VIEW,
+				viewClass: 'CurrentRequestView',
+				tee,
+				target: '_shell/_http/performance',
+			} ),
+		timerName: 'currentrequest:timer',
+		teeName: 'currentrequest:tee',
+		enabled: Boolean( rid ) && 'found' !== state.status,
+		intervalMs: POLL_INTERVAL_MS,
 	} );
+
+	const model = useNodeState( VIEW, 'view' );
+
+	useEffect( () => {
+		if ( model?.request ) {
+			setState( { status: 'found', request: model.request } );
+		}
+	}, [ model ] );
 
 	// Anything short of found, with a rid in hand, is still on its way.
 	useEffect( () => {
-		if ( rid && ! settled ) {
+		if ( rid && ! model?.request ) {
 			setState( { status: 'processing' } );
 		}
-	}, [ rid, settled ] );
+	}, [ rid, model ] );
 
 	if ( 'idle' === state.status ) {
 		return (
@@ -167,13 +169,6 @@ export default function CurrentRequestTab() {
 						'newspack-event-logger-nodes'
 					) }
 				</p>
-				<button
-					type="button"
-					className="button"
-					onClick={ reconcileNow }
-				>
-					{ __( 'Refresh', 'newspack-event-logger-nodes' ) }
-				</button>
 			</div>
 		);
 	}

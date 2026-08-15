@@ -35,10 +35,10 @@
  * reply address carries two protocols at once.
  *
  * AWAITED verbs — `resolveRequest`, `resolveUrlHash`, `fetchUrlBreakdown`, the
- * three `rules` verbs, and `requestGrep` — each go out through their OWN `Request`
- * node (`useRequestNode`). A node holding one in-flight command cannot mistake
- * whose reply arrived, so the addressing IS the correlation: no op-id, no table of
- * pending replies.
+ * three `rules` verbs, and `requestGrep` — each go out through their OWN node
+ * (`useAwaitableCommand`), on the same batched tick as the polls. A node
+ * holding one in-flight command cannot mistake whose reply arrived, so the
+ * addressing IS the correlation: no op-id, no table of pending replies.
  *
  * The hook returns control callbacks only — `handleUrlParamsChange`,
  * `resolveRequest`, `resolveUrlHash`, `fetchUrlBreakdown`, `listRules`,
@@ -62,12 +62,15 @@ import {
 import { useBatchedPoll } from '@newspack-nodes/shared/hooks/useBatchedPoll';
 import { addSliceFetcher } from '@newspack-nodes/shared/helpers/addSliceFetcher';
 import usePageVisibility from '@newspack-nodes/shared/hooks/usePageVisibility';
-import useRequestNode from '@newspack-nodes/shared/hooks/useRequestNode';
+import { useAwaitableCommand } from '@newspack-nodes/shared/hooks/useAwaitableCommand';
 import '../nodes/register';
 
 // The server CI mount + the egress path the Fetchers/on-demand commands target.
 const SERVER = 'performance';
 const TARGET = `_shell/_http/${ SERVER }`;
+
+// The ruleset CI the two rule-editing verbs reach.
+const RULES_TARGET = '_shell/_http/rules';
 // The declared poll cadence; also the fallback for an unparseable setting.
 const DEFAULT_REFRESH_INTERVAL_MS = 15000;
 
@@ -225,16 +228,37 @@ export function usePerformanceGraph( opts = {} ) {
 	const optsRef = useRef( opts );
 	optsRef.current = opts;
 
-	// One node per awaited verb; each reply is addressed back to it.
-	const requestSearch = useRequestNode(
-		`${ SERVER }:request_search`,
-		SERVER
-	);
-	const urlDetail = useRequestNode( `${ SERVER }:url_detail`, SERVER );
-	const grep = useRequestNode( `${ SERVER }:request_grep`, SERVER );
-	const rulesList = useRequestNode( 'rules:list', 'rules' );
-	const rulesUpsert = useRequestNode( 'rules:upsert', 'rules' );
-	const rulesDelete = useRequestNode( 'rules:delete', 'rules' );
+	// One node per awaited verb, each riding the same tick as the polls.
+	const requestSearch = useAwaitableCommand( {
+		scope: `${ SERVER }:request_search`,
+		target: TARGET,
+		command: 'request_search',
+	} );
+	const urlDetail = useAwaitableCommand( {
+		scope: `${ SERVER }:url_detail:lookup`,
+		target: TARGET,
+		command: 'url_detail',
+	} );
+	const grep = useAwaitableCommand( {
+		scope: `${ SERVER }:request_grep`,
+		target: TARGET,
+		command: 'request_grep',
+	} );
+	const rulesList = useAwaitableCommand( {
+		scope: 'rules:list',
+		target: RULES_TARGET,
+		command: 'list',
+	} );
+	const rulesUpsert = useAwaitableCommand( {
+		scope: 'rules:upsert',
+		target: RULES_TARGET,
+		command: 'upsert',
+	} );
+	const rulesDelete = useAwaitableCommand( {
+		scope: 'rules:delete',
+		target: RULES_TARGET,
+		command: 'delete',
+	} );
 
 	// Live UI state the Fetcher getters + on-demand fetches read at fire time.
 	const serverFilterRef = useRef( serverFilter );
@@ -310,8 +334,15 @@ export function usePerformanceGraph( opts = {} ) {
 				URLDETAIL_FETCHER,
 				[ URLDETAIL_RECV, 'url_detail' ]
 			);
-			udFetcher.command_args = () =>
-				urlDetailArgs( optsRef.current.selectedUrl?.hash );
+			// @longform
+			// No hash, nothing to ask: a null return sends nothing at all.
+			// The Timer is armed by default when `make_node Timer` takes no
+			// interval, so a tick can reach this before the effect that owns
+			// the arming has disarmed it.
+			udFetcher.command_args = () => {
+				const hash = optsRef.current.selectedUrl?.hash;
+				return isValidHash( hash ) ? urlDetailArgs( hash ) : null;
+			};
 			udFetcher.connectNode( TARGET );
 			interpreter
 				.makeNode( 'Timer', URLDETAIL_TIMER )
@@ -535,10 +566,7 @@ export function usePerformanceGraph( opts = {} ) {
 	const resolveRequest = useCallback(
 		async ( rid ) => {
 			try {
-				return await requestSearch(
-					'request_search',
-					formatCommandArgs( [ rid ] )
-				);
+				return await requestSearch( formatCommandArgs( [ rid ] ) );
 			} catch ( err ) {
 				return null;
 			}
@@ -553,10 +581,7 @@ export function usePerformanceGraph( opts = {} ) {
 				return null;
 			}
 			try {
-				const payload = await urlDetail(
-					'url_detail',
-					urlLookupArgs( hash )
-				);
+				const payload = await urlDetail( urlLookupArgs( hash ) );
 				// A reply settles the intent, even one that names no URL.
 				return { url: payload?.stats?.url || '' };
 			} catch ( err ) {
@@ -575,7 +600,6 @@ export function usePerformanceGraph( opts = {} ) {
 			}
 			try {
 				const payload = await urlDetail(
-					'url_detail',
 					formatCommandArgs( [ hash ], { breakdown } )
 				);
 				return ( payload && payload.breakdown_time_series ) || null;
@@ -589,9 +613,9 @@ export function usePerformanceGraph( opts = {} ) {
 
 	// Await one verb through its own node; a failure is reported, not thrown.
 	const awaitReply = useCallback(
-		async ( request, verb, args ) => {
+		async ( send, args ) => {
 			try {
-				return await request( verb, args );
+				return await send( args );
 			} catch ( err ) {
 				onError?.( err );
 				return null;
@@ -602,33 +626,27 @@ export function usePerformanceGraph( opts = {} ) {
 
 	// listRules — current ruleset for the modal; resolves { rules }.
 	const listRules = useCallback(
-		() => awaitReply( rulesList, 'list', [] ),
+		() => awaitReply( rulesList, [] ),
 		[ awaitReply, rulesList ]
 	);
 
 	// upsertRule: whole raw JSON is one arg token (CI json_decodes $args[0]).
 	const upsertRule = useCallback(
 		( ruleObject ) =>
-			awaitReply( rulesUpsert, 'upsert', [
-				JSON.stringify( ruleObject ),
-			] ),
+			awaitReply( rulesUpsert, [ JSON.stringify( ruleObject ) ] ),
 		[ awaitReply, rulesUpsert ]
 	);
 
 	// removeRule — delete by rule id; resolves the CI's { deleted } reply.
 	const removeRule = useCallback(
-		( id ) => awaitReply( rulesDelete, 'delete', [ id ] ),
+		( id ) => awaitReply( rulesDelete, [ id ] ),
 		[ awaitReply, rulesDelete ]
 	);
 
 	// requestGrep: pattern-search recent firehose; resolves the grep summary.
 	const requestGrep = useCallback(
 		( pattern, limit = GREP_RESULT_LIMIT ) =>
-			awaitReply(
-				grep,
-				'request_grep',
-				formatCommandArgs( [ pattern ], { limit } )
-			),
+			awaitReply( grep, formatCommandArgs( [ pattern ], { limit } ) ),
 		[ awaitReply, grep ]
 	);
 

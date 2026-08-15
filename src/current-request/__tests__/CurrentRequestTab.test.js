@@ -113,7 +113,7 @@ test( 'renders the request summary cards + full-trace deep link when found', asy
 	expect( sent[ VALUE ].name ).toBe( 'request_detail' );
 	expect( sent[ VALUE ].arguments ).toEqual( [ 'abc123', '--partition=2' ] );
 	// Addressed, not correlated: the reply routes back on FROM alone.
-	expect( sent[ FROM ] ).toBe( 'performance:request_detail' );
+	expect( sent[ FROM ] ).toBe( 'currentrequest:in' );
 	expect( sent[ ID ] ).toBe( '' );
 	expect( sent[ KEY ] ).toBe( '' );
 	const text = view.container.textContent;
@@ -137,7 +137,9 @@ test( 'renders the request summary cards + full-trace deep link when found', asy
 	).toBe( 'eln-current-request' );
 } );
 
-test( 'shows a still-processing state (with retry) when the request is not in the log yet', async () => {
+// No Refresh button: the tab asks again every tick, so the only thing one
+// could do is what is already happening.
+test( 'shows a still-processing state when the request is not in the log yet', async () => {
 	setBlob( { rid: 'pending9', perfUrl: 'admin.php?page=x' } );
 	answerWith( 'Request not found: rid=pending9', {
 		error: true,
@@ -151,7 +153,7 @@ test( 'shows a still-processing state (with retry) when the request is not in th
 	expect( view.container.textContent.toLowerCase() ).toContain(
 		'still processing'
 	);
-	expect( view.container.querySelector( 'button' ) ).not.toBeNull();
+	expect( view.container.querySelector( 'button' ) ).toBeNull();
 } );
 
 test( 'renders an idle hint when no request id is localized', async () => {

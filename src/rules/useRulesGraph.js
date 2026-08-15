@@ -9,7 +9,7 @@
  * Nothing here is correlated, because the addressing already is the
  * correlation. Each MUTATING verb owns its own node — `rules:save`,
  * `rules:upsert`, `rules:delete`, `rules:reset`, one per verb via
- * `useRequestNode` — and a node stamps FROM with its own name, so the server's
+ * `useCommandOnce` — and a node stamps FROM with its own name, so the server's
  * TO=FROM reply lands back on exactly the node that minted it. There is no id in `message[ID]`, no
  * `replies` map, and nothing keyed by one; batching several verbs in a tick
  * would mean more nodes, never one node telling replies apart.
@@ -44,7 +44,7 @@ import {
 } from '@newspack-nodes/runtime';
 
 import './nodes/register';
-import useRequestNode from '@newspack-nodes/shared/hooks/useRequestNode';
+import { useCommandOnce } from '@newspack-nodes/shared/hooks/useCommandOnce';
 
 const RECV = 'rules:in';
 const VIEW = 'rules:view';
@@ -65,25 +65,29 @@ function fireList( shell ) {
 }
 
 /**
- * The four mutations resolve their own CI reply, but the TABLE they repaint is
- * refreshed by a separate `list` whose reply lands on `rules:in` — so an awaited
- * mutation settles BEFORE `rules` reflects it. `list` itself resolves as soon as
- * the command is on the wire, not when the table has repainted; read the table
- * from the returned `rules`, never from a `list()` resolution.
+ * Each mutation's answer lands on the node that asked, and re-lists — so the
+ * TABLE repaints one round trip after the mutation settles. Read the table from
+ * the returned `rules`, never from a mutation's outcome.
  *
- * @param {Object} [opts] Options (testing seams).
+ * @param {Object}   [opts]            Options (testing seams).
+ * @param {Function} [opts.onMutation] `( { verb, error } ) => void`, fired once
+ *                                     per mutation reply. A refusal arrives
+ *                                     here rather than as a rejected promise:
+ *                                     the answer lands a tick later, on the
+ *                                     node that asked for it.
  * @return {{ rules: Object[], loading: boolean, error: (string|null),
- *   list: () => Promise<void>,
- *   saveAll: (rules: Object[]) => Promise<Object>,
- *   upsert: (rule: Object) => Promise<Object>,
- *   remove: (id: string) => Promise<Object>,
- *   reset: () => Promise<Object> }}
+ *   list: () => void,
+ *   saveAll: (rules: Object[]) => void,
+ *   upsert: (rule: Object) => void,
+ *   remove: (id: string) => void,
+ *   reset: () => void }}
  *   The `rules:view` render model plus the CRUD callbacks. `loading` starts
  *   true and clears on the first `list` reply; `error` carries a `list`
- *   failure's banner — a mutation's failure REJECTS its own promise instead,
- *   leaving the banner clean for the caller's catch to own.
+ *   failure's banner — a mutation's failure goes to `onMutation` instead,
+ *   leaving the banner clean for the caller to own.
  */
 export function useRulesGraph( opts = {} ) {
+	const { onMutation } = opts;
 	const optsRef = useRef( opts );
 	optsRef.current = opts;
 
@@ -122,51 +126,71 @@ export function useRulesGraph( opts = {} ) {
 		return teardown;
 	}, [] );
 
-	// A node per mutating verb; the table refresh is a publish, not an await.
-	const saveNode = useRequestNode( 'rules:save', 'rules' );
-	const upsertNode = useRequestNode( 'rules:upsert', 'rules' );
-	const deleteNode = useRequestNode( 'rules:delete', 'rules' );
-	const resetNode = useRequestNode( 'rules:reset', 'rules' );
+	// One one-shot per verb; each re-lists on its own answer.
+	const onMutationRef = useRef( onMutation );
+	onMutationRef.current = onMutation;
+	const settle = useCallback(
+		( verb ) =>
+			( { error } ) => {
+				if ( ! error && shellRef.current ) {
+					fireList( shellRef.current );
+				}
+				onMutationRef.current?.( { verb, error } );
+			},
+		[]
+	);
+
+	const target = '_shell/_http/rules';
+	const saveOnce = useCommandOnce( {
+		scope: 'rules:save',
+		target,
+		command: 'save',
+		onDone: settle( 'save' ),
+	} );
+	const upsertOnce = useCommandOnce( {
+		scope: 'rules:upsert',
+		target,
+		command: 'upsert',
+		onDone: settle( 'upsert' ),
+	} );
+	const deleteOnce = useCommandOnce( {
+		scope: 'rules:delete',
+		target,
+		command: 'delete',
+		onDone: settle( 'delete' ),
+	} );
+	const resetOnce = useCommandOnce( {
+		scope: 'rules:reset',
+		target,
+		command: 'reset',
+		onDone: settle( 'reset' ),
+	} );
 
 	const list = useCallback( () => {
-		if ( ! shellRef.current ) {
-			return Promise.reject( new Error( 'graph not mounted' ) );
-		}
-		fireList( shellRef.current );
-		return Promise.resolve();
-	}, [] );
-
-	// Run a mutating verb, then re-list to refresh the table; failure rejects.
-	const runMutation = useCallback( async ( request, verb, args ) => {
-		const result = await request( verb, args );
 		if ( shellRef.current ) {
 			fireList( shellRef.current );
 		}
-		return result;
 	}, [] );
 
 	// save/upsert: raw JSON is ONE arg token (CI json_decodes $args[0]).
 	const saveAll = useCallback(
-		( rules ) =>
-			runMutation( saveNode, 'save', [ JSON.stringify( rules ) ] ),
-		[ saveNode, runMutation ]
+		( rules ) => saveOnce.run( [ JSON.stringify( rules ) ] ),
+		[ saveOnce.run ] // eslint-disable-line react-hooks/exhaustive-deps
 	);
 
 	const upsert = useCallback(
-		( rule ) =>
-			runMutation( upsertNode, 'upsert', [ JSON.stringify( rule ) ] ),
-		[ upsertNode, runMutation ]
+		( rule ) => upsertOnce.run( [ JSON.stringify( rule ) ] ),
+		[ upsertOnce.run ] // eslint-disable-line react-hooks/exhaustive-deps
 	);
 
 	const remove = useCallback(
-		( id ) =>
-			runMutation( deleteNode, 'delete', formatCommandArgs( [ id ] ) ),
-		[ deleteNode, runMutation ]
+		( id ) => deleteOnce.run( formatCommandArgs( [ id ] ) ),
+		[ deleteOnce.run ] // eslint-disable-line react-hooks/exhaustive-deps
 	);
 
 	const reset = useCallback(
-		() => runMutation( resetNode, 'reset', [] ),
-		[ resetNode, runMutation ]
+		() => resetOnce.run( [] ),
+		[ resetOnce.run ] // eslint-disable-line react-hooks/exhaustive-deps
 	);
 
 	const model = useNodeState( VIEW, 'view' );

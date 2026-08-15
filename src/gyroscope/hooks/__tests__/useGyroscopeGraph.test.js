@@ -381,13 +381,8 @@ describe( 'useGyroscopeGraph — teardown', () => {
 		const { unmount } = renderHook( () => useGyroscopeGraph() );
 		const sourceAtMount = FakeEventSource.last;
 		unmount();
-		for ( const name of [
-			...COMPOSED_NAMES,
-			LINK,
-			VIEW,
-			INTERPRETER,
-			ROUTER,
-		] ) {
+		// The ROUTER is the page's heartbeat and is never torn down.
+		for ( const name of [ ...COMPOSED_NAMES, LINK, VIEW, INTERPRETER ] ) {
 			expect( Core.node( name ) ).toBeNull();
 		}
 		expect( sourceAtMount.closed ).toBe( true );

@@ -13,7 +13,7 @@
  * `delete` takes the id as a positional token; `list` takes no args.
  */
 
-import { renderHook, act } from '../../test-helpers/renderHook';
+import { renderHook, act, waitFor } from '../../test-helpers/renderHook';
 import { installFakeCommandWire } from '@newspack-nodes/shared/test-utils/fakeCommandWire';
 import {
 	ID,
@@ -248,17 +248,17 @@ describe( 'useRulesGraph — mutations dispatch the verb then re-list', () => {
 		await act( async () => {} );
 		const listsBefore = countVerbs( wire.batches, 'list' );
 
-		let returned;
-		await act( async () => {
-			returned = await result.current.upsert( SAMPLE_RULES[ 0 ] );
-		} );
-		expect( returned ).toEqual( { rule: SAMPLE_RULES[ 0 ] } );
+		act( () => result.current.upsert( SAMPLE_RULES[ 0 ] ) );
 
+		await waitFor( () =>
+			expect( countVerbs( wire.batches, 'list' ) ).toBeGreaterThan(
+				listsBefore
+			)
+		);
 		const up = findVerb( wire.batches, 'upsert' );
-		expect( up ).toBeTruthy();
 		expect( up[ TO ] ).toBe( 'rules' );
 		// Each mutation mints from its OWN node; the reply lands there.
-		expect( up[ FROM ] ).toBe( 'rules:upsert' );
+		expect( up[ FROM ] ).toBe( 'rules:upsert:in' );
 		expect( up[ ID ] ).toBe( '' );
 		// The whole raw JSON is one arg token the CI json_decodes ($args[0]).
 		expect( up[ VALUE ].arguments ).toEqual( [
@@ -267,11 +267,7 @@ describe( 'useRulesGraph — mutations dispatch the verb then re-list', () => {
 		expect( JSON.parse( up[ VALUE ].arguments[ 0 ] ).pattern ).toBe(
 			'/blog'
 		);
-
-		expect( countVerbs( wire.batches, 'list' ) ).toBeGreaterThan(
-			listsBefore
-		);
-	} );
+	}, 15000 );
 
 	test( 'saveAll sends the whole-list raw JSON then re-lists', async () => {
 		const wire = installWire( {
@@ -282,19 +278,19 @@ describe( 'useRulesGraph — mutations dispatch the verb then re-list', () => {
 		await act( async () => {} );
 		const listsBefore = countVerbs( wire.batches, 'list' );
 
-		await act( async () => {
-			await result.current.saveAll( SAMPLE_RULES );
-		} );
+		act( () => result.current.saveAll( SAMPLE_RULES ) );
 
+		// The verb rides the router tick, and the re-list follows its answer.
+		await waitFor( () =>
+			expect( countVerbs( wire.batches, 'list' ) ).toBeGreaterThan(
+				listsBefore
+			)
+		);
 		const save = findVerb( wire.batches, 'save' );
-		expect( save ).toBeTruthy();
 		expect( save[ VALUE ].arguments ).toEqual( [
 			JSON.stringify( SAMPLE_RULES ),
 		] );
-		expect( countVerbs( wire.batches, 'list' ) ).toBeGreaterThan(
-			listsBefore
-		);
-	} );
+	}, 15000 );
 
 	test( 'remove sends delete with the id as a positional token then re-lists', async () => {
 		const wire = installWire( {
@@ -305,21 +301,20 @@ describe( 'useRulesGraph — mutations dispatch the verb then re-list', () => {
 		await act( async () => {} );
 		const listsBefore = countVerbs( wire.batches, 'list' );
 
-		await act( async () => {
-			await result.current.remove( 'r1' );
-		} );
+		act( () => result.current.remove( 'r1' ) );
 
+		await waitFor( () =>
+			expect( countVerbs( wire.batches, 'list' ) ).toBeGreaterThan(
+				listsBefore
+			)
+		);
 		const del = findVerb( wire.batches, 'delete' );
-		expect( del ).toBeTruthy();
-		expect( del[ FROM ] ).toBe( 'rules:delete' );
+		expect( del[ FROM ] ).toBe( 'rules:delete:in' );
 		expect( del[ ID ] ).toBe( '' );
 		expect( del[ VALUE ].arguments ).toEqual(
 			formatCommandArgs( [ 'r1' ] )
 		);
-		expect( countVerbs( wire.batches, 'list' ) ).toBeGreaterThan(
-			listsBefore
-		);
-	} );
+	}, 15000 );
 
 	test( 'reset sends the nullary verb from its own node then re-lists', async () => {
 		const wire = installWire( {
@@ -330,21 +325,18 @@ describe( 'useRulesGraph — mutations dispatch the verb then re-list', () => {
 		await act( async () => {} );
 		const listsBefore = countVerbs( wire.batches, 'list' );
 
-		let returned;
-		await act( async () => {
-			returned = await result.current.reset();
-		} );
-		expect( returned ).toEqual( { reset: 3 } );
+		act( () => result.current.reset() );
 
-		const reset = findVerb( wire.batches, 'reset' );
-		expect( reset ).toBeTruthy();
-		expect( reset[ TO ] ).toBe( 'rules' );
-		expect( reset[ FROM ] ).toBe( 'rules:reset' );
-		expect( reset[ VALUE ].arguments ).toEqual( [] );
-		expect( countVerbs( wire.batches, 'list' ) ).toBeGreaterThan(
-			listsBefore
+		await waitFor( () =>
+			expect( countVerbs( wire.batches, 'list' ) ).toBeGreaterThan(
+				listsBefore
+			)
 		);
-	} );
+		const reset = findVerb( wire.batches, 'reset' );
+		expect( reset[ TO ] ).toBe( 'rules' );
+		expect( reset[ FROM ] ).toBe( 'rules:reset:in' );
+		expect( reset[ VALUE ].arguments ).toEqual( [] );
+	}, 15000 );
 } );
 
 describe( 'useRulesGraph — errors', () => {
@@ -359,21 +351,24 @@ describe( 'useRulesGraph — errors', () => {
 		expect( result.current.loading ).toBe( false );
 	} );
 
-	test( 'a failed upsert rejects to the caller without polluting the table banner', async () => {
+	test( 'a refused upsert reaches onMutation, not the table banner', async () => {
 		installWire(
 			{ list: { rules: [] }, upsert: 'invalid rule' },
 			{ errorVerbs: [ 'upsert' ] }
 		);
-		const { result } = renderHook( () => useRulesGraph() );
+		const onMutation = jest.fn();
+		const { result } = renderHook( () => useRulesGraph( { onMutation } ) );
 		await act( async () => {} );
 
-		await act( async () => {
-			await expect(
-				result.current.upsert( SAMPLE_RULES[ 0 ] )
-			).rejects.toThrow( 'invalid rule' );
-		} );
+		act( () => result.current.upsert( SAMPLE_RULES[ 0 ] ) );
+
+		await waitFor( () => expect( onMutation ).toHaveBeenCalledTimes( 1 ) );
+		expect( onMutation.mock.calls[ 0 ][ 0 ].verb ).toBe( 'upsert' );
+		expect( onMutation.mock.calls[ 0 ][ 0 ].error ).toContain(
+			'invalid rule'
+		);
 		expect( Core.node( VIEW ).setStateCache.view.error ).toBeNull();
-	} );
+	}, 15000 );
 } );
 
 describe( 'useRulesGraph — teardown', () => {
@@ -381,7 +376,8 @@ describe( 'useRulesGraph — teardown', () => {
 		installWire();
 		const { unmount } = renderHook( () => useRulesGraph() );
 		unmount();
-		for ( const name of [ ...ALL_GRAPH_NAMES, INTERPRETER, ROUTER ] ) {
+		// The ROUTER is the page's heartbeat and is never torn down.
+		for ( const name of [ ...ALL_GRAPH_NAMES, INTERPRETER ] ) {
 			expect( Core.node( name ) ).toBeNull();
 		}
 	} );

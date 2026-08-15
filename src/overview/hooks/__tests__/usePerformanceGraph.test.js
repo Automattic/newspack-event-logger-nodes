@@ -16,7 +16,13 @@
  * via its own useNodeState.
  */
 
-import { renderHook, act } from '../../../test-helpers/renderHook';
+import {
+	renderHook,
+	act,
+	settleCommand,
+	settledWithin,
+	cleanupMounts,
+} from '../../../test-helpers/renderHook';
 import { installFakeCommandWire } from '@newspack-nodes/shared/test-utils/fakeCommandWire';
 import {
 	Core,
@@ -51,7 +57,22 @@ function installWire( payloadByVerb = {}, opts = {} ) {
 	} );
 }
 
-beforeEach( () => Core.reset() );
+// Every verb here rides the router tick, so a dispatch takes a second rather
+// than a microtask; jest's 5s default is not enough for a test that awaits
+// more than a couple of them.
+jest.setTimeout( 20000 );
+
+// The graph POSTS on mount, so every test needs a wire — a test that wants a
+// specific reply installs its own over this one.
+beforeEach( () => {
+	Core.reset();
+	installWire();
+} );
+
+// A component left mounted keeps its graph effects live across the
+// `Core.reset()` that opens the next test, and its next rebuild lands in THAT
+// test's registry.
+afterEach( () => cleanupMounts() );
 
 function findVerb( batches, verb ) {
 	for ( const batch of batches ) {
@@ -398,10 +419,7 @@ describe( 'usePerformanceGraph — resolveRequest & fetchUrlBreakdown (awaited)'
 			{ initialProps: {} }
 		);
 		await act( async () => {} );
-		let resolved;
-		await act( async () => {
-			resolved = await api.resolveRequest( 'r' );
-		} );
+		const resolved = await settleCommand( () => api.resolveRequest( 'r' ) );
 		expect( resolved ).toEqual( { url_hash: 'h', partition: 1 } );
 	} );
 
@@ -418,10 +436,9 @@ describe( 'usePerformanceGraph — resolveRequest & fetchUrlBreakdown (awaited)'
 			{ initialProps: {} }
 		);
 		await act( async () => {} );
-		let result;
-		await act( async () => {
-			result = await api.fetchUrlBreakdown( 'abc123', 'method' );
-		} );
+		const result = await settleCommand( () =>
+			api.fetchUrlBreakdown( 'abc123', 'method' )
+		);
 		expect( result ).toEqual( { a: 1 } );
 	} );
 
@@ -437,10 +454,9 @@ describe( 'usePerformanceGraph — resolveRequest & fetchUrlBreakdown (awaited)'
 		);
 		await act( async () => {} );
 		const before = wire.batches.flat().length;
-		let result;
-		await act( async () => {
-			result = await api.fetchUrlBreakdown( 'NO', 'method' );
-		} );
+		const result = await settleCommand( () =>
+			api.fetchUrlBreakdown( 'NO', 'method' )
+		);
 		expect( result ).toBeNull();
 		const breakdowns = wire.batches
 			.flat()
@@ -472,10 +488,9 @@ describe( 'usePerformanceGraph — resolveRequest & fetchUrlBreakdown (awaited)'
 			{ initialProps: {} }
 		);
 		await act( async () => {} );
-		let resolved;
-		await act( async () => {
-			resolved = await api.resolveUrlHash( 'b4dc0ffee' );
-		} );
+		const resolved = await settleCommand( () =>
+			api.resolveUrlHash( 'b4dc0ffee' )
+		);
 		expect( resolved.url ).toBe( '/quokka/census-2026' );
 	} );
 
@@ -494,10 +509,9 @@ describe( 'usePerformanceGraph — resolveRequest & fetchUrlBreakdown (awaited)'
 			{ initialProps: {} }
 		);
 		await act( async () => {} );
-		let resolved;
-		await act( async () => {
-			resolved = await api.resolveUrlHash( 'b4dc0ffee' );
-		} );
+		const resolved = await settleCommand( () =>
+			api.resolveUrlHash( 'b4dc0ffee' )
+		);
 		expect( resolved ).toEqual( { url: '' } );
 	} );
 
@@ -516,9 +530,7 @@ describe( 'usePerformanceGraph — resolveRequest & fetchUrlBreakdown (awaited)'
 			{ initialProps: {} }
 		);
 		await act( async () => {} );
-		await act( async () => {
-			await api.resolveUrlHash( 'b4dc0ffee' );
-		} );
+		await settleCommand( () => api.resolveUrlHash( 'b4dc0ffee' ) );
 		const detail = findVerb( wire.batches, 'url_detail' );
 		expect(
 			parseCommandArgs( detail[ VALUE ].arguments ).options.categories
@@ -539,16 +551,15 @@ describe( 'usePerformanceGraph — resolveRequest & fetchUrlBreakdown (awaited)'
 		);
 		await act( async () => {} );
 
-		let resolved;
-		await act( async () => {
-			resolved = await api.resolveUrlHash( 'b4dc0ffee' );
-		} );
+		const resolved = await settleCommand( () =>
+			api.resolveUrlHash( 'b4dc0ffee' )
+		);
 
 		expect( resolved ).toEqual( { url: '' } );
 	} );
 
 	test( 'resolveUrlHash holds the intent when no reply arrives at all', async () => {
-		// Torn-down graph: the request rejects without ever reaching a server,
+		// Torn-down graph: the ask never reaches a server, and never settles —
 		// which is the case the ?url= intent is SUPPOSED to outlive.
 		installWire();
 		let api;
@@ -562,12 +573,9 @@ describe( 'usePerformanceGraph — resolveRequest & fetchUrlBreakdown (awaited)'
 		await act( async () => {} );
 		Core.reset();
 
-		let resolved;
-		await act( async () => {
-			resolved = await api.resolveUrlHash( 'b4dc0ffee' );
-		} );
-
-		expect( resolved ).toBeNull();
+		expect(
+			await settledWithin( () => api.resolveUrlHash( 'b4dc0ffee' ) )
+		).toBe( false );
 	} );
 } );
 
@@ -591,10 +599,7 @@ describe( 'usePerformanceGraph — rules commands (_http/rules)', () => {
 			{ initialProps: {} }
 		);
 		await act( async () => {} );
-		let result;
-		await act( async () => {
-			result = await api.listRules();
-		} );
+		const result = await settleCommand( () => api.listRules() );
 		const list = findVerb( wire.batches, 'list' );
 		expect( list ).toBeTruthy();
 		expect( list[ TO ] ).toBe( 'rules' );
@@ -612,10 +617,9 @@ describe( 'usePerformanceGraph — rules commands (_http/rules)', () => {
 			{ initialProps: {} }
 		);
 		await act( async () => {} );
-		let result;
-		await act( async () => {
-			result = await api.removeRule( 'r-del-42' );
-		} );
+		const result = await settleCommand( () =>
+			api.removeRule( 'r-del-42' )
+		);
 		const del = findVerb( wire.batches, 'delete' );
 		expect( del ).toBeTruthy();
 		expect( del[ TO ] ).toBe( 'rules' );
@@ -636,10 +640,7 @@ describe( 'usePerformanceGraph — rules commands (_http/rules)', () => {
 		);
 		await act( async () => {} );
 		const input = { id: '', pattern: '/blog?', action: 'log' };
-		let result;
-		await act( async () => {
-			result = await api.upsertRule( input );
-		} );
+		const result = await settleCommand( () => api.upsertRule( input ) );
 		const upsert = findVerb( wire.batches, 'upsert' );
 		expect( upsert ).toBeTruthy();
 		expect( upsert[ TO ] ).toBe( 'rules' );
@@ -649,7 +650,7 @@ describe( 'usePerformanceGraph — rules commands (_http/rules)', () => {
 		expect( result ).toEqual( { rule: saved } );
 	} );
 
-	test( 'listRules returns null after teardown (no graph)', async () => {
+	test( 'listRules never answers after teardown (no graph)', async () => {
 		installWire( { list: { rules: [] } } );
 		let api;
 		const { unmount } = renderHook(
@@ -661,11 +662,7 @@ describe( 'usePerformanceGraph — rules commands (_http/rules)', () => {
 		);
 		await act( async () => {} );
 		unmount();
-		let result;
-		await act( async () => {
-			result = await api.listRules();
-		} );
-		expect( result ).toBeNull();
+		expect( await settledWithin( () => api.listRules() ) ).toBe( false );
 	} );
 
 	test( 'upsertRule reports the error and returns null when the reply rejects', async () => {
@@ -680,10 +677,9 @@ describe( 'usePerformanceGraph — rules commands (_http/rules)', () => {
 			{ initialProps: { onError } }
 		);
 		await act( async () => {} );
-		let result;
-		await act( async () => {
-			result = await api.upsertRule( { id: '', pattern: '/x?' } );
-		} );
+		const result = await settleCommand( () =>
+			api.upsertRule( { id: '', pattern: '/x?' } )
+		);
 		expect( result ).toBeNull();
 		expect( onError ).toHaveBeenCalled();
 	} );
@@ -715,10 +711,9 @@ describe( 'usePerformanceGraph — requestGrep (recent-firehose pattern search)'
 			{ initialProps: {} }
 		);
 		await act( async () => {} );
-		let result;
-		await act( async () => {
-			result = await api.requestGrep( '/calendar', 25 );
-		} );
+		const result = await settleCommand( () =>
+			api.requestGrep( '/calendar', 25 )
+		);
 		const grep = findVerb( wire.batches, 'request_grep' );
 		expect( grep ).toBeTruthy();
 		expect( grep[ TO ] ).toBe( 'performance' );
@@ -871,7 +866,6 @@ describe( 'usePerformanceGraph — teardown', () => {
 			'urldetail:view',
 			'requestdetail:view',
 			INTERPRETER,
-			ROUTER,
 		] ) {
 			expect( Core.node( name ) ).toBeNull();
 		}
@@ -1054,31 +1048,32 @@ describe( 'usePerformanceGraph — no-graph fallbacks & awaited rejections', () 
 		await act( async () => {} );
 		// Drop the view the primary path needs; the fallback verb remains.
 		Core.node( 'requestdetail:view' ).removeNode();
-		let resolved;
-		await act( async () => {
-			resolved = await getApi().resolveRequest( 'r9' );
-		} );
+		const resolved = await settleCommand( () =>
+			getApi().resolveRequest( 'r9' )
+		);
 		const sent = wire.batches
 			.flat()
 			.find( ( m ) => 'request_search' === m[ VALUE ]?.name );
 		expect( sent ).toBeTruthy();
 		// Addressed, not correlated: FROM is the node, ID and KEY stay empty.
-		expect( sent[ FROM ] ).toBe( 'performance:request_search' );
+		expect( sent[ FROM ] ).toBe( 'performance:request_search:in' );
 		expect( sent[ ID ] ).toBe( '' );
 		expect( sent[ KEY ] ).toBe( '' );
 		expect( resolved ).toEqual( { url_hash: 'h', partition: 1 } );
 	} );
 
-	test( 'fetchUrlBreakdown returns null when the graph is gone', async () => {
+	// With the graph gone there is nothing to send on, so the ask never
+	// settles — and nobody is waiting: the component that asked is unmounted.
+	test( 'fetchUrlBreakdown never answers once the graph is gone', async () => {
 		installWire();
 		const { getApi, unmount } = renderGraph( {} );
 		await act( async () => {} );
 		unmount();
-		let result;
-		await act( async () => {
-			result = await getApi().fetchUrlBreakdown( 'abc123', 'method' );
-		} );
-		expect( result ).toBeNull();
+		expect(
+			await settledWithin( () =>
+				getApi().fetchUrlBreakdown( 'abc123', 'method' )
+			)
+		).toBe( false );
 	} );
 
 	test( 'fetchUrlBreakdown reports the error and returns null when the reply rejects', async () => {
@@ -1089,10 +1084,9 @@ describe( 'usePerformanceGraph — no-graph fallbacks & awaited rejections', () 
 		);
 		const { getApi } = renderGraph( { onError } );
 		await act( async () => {} );
-		let result;
-		await act( async () => {
-			result = await getApi().fetchUrlBreakdown( 'abc123', 'method' );
-		} );
+		const result = await settleCommand( () =>
+			getApi().fetchUrlBreakdown( 'abc123', 'method' )
+		);
 		expect( result ).toBeNull();
 		expect( onError ).toHaveBeenCalled();
 	} );
