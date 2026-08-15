@@ -116,6 +116,12 @@ describe( 'ErrorLog', () => {
 		useErrorLogGraph.mockClear();
 		clearGraph = jest.fn();
 		useErrorLogGraph.mockReturnValue( {
+			setFilter: ( term ) => {
+				const view = Core.nodes.get( 'perferrors:view' );
+				if ( view ) {
+					view.filter = String( term ).toLowerCase();
+				}
+			},
 			setPaused,
 			clear: clearGraph,
 			browse: browseMock(),
@@ -186,8 +192,8 @@ describe( 'ErrorLog', () => {
 		).toBeNull();
 	} );
 
-	it( 'passes the filter text and placeholder down to LogRowList', () => {
-		registerViewFixture();
+	it( 'sends the filter to the view node, and honours the placeholder', () => {
+		const node = registerViewFixture();
 		const { container } = mount();
 		const input = container.querySelector( '.newspack-nodes-search-input' );
 		expect( input.placeholder ).toBe(
@@ -197,35 +203,16 @@ describe( 'ErrorLog', () => {
 			window.HTMLInputElement.prototype,
 			'value'
 		).set;
+
 		act( () => {
 			setter.call( input, 'needle-317' );
 			input.dispatchEvent( new Event( 'input', { bubbles: true } ) );
 		} );
-		expect( logRowListProps.filter ).toBe( 'needle-317' );
-	} );
 
-	it( 'matchRow matches on url, keyword, message, or rid', () => {
-		registerViewFixture();
-		mount();
-		const { matchRow } = logRowListProps;
-		expect(
-			matchRow( row( { rid: 'needle-317-rid' } ), 'needle-317' )
-		).toBe( true );
-		expect( matchRow( row( { k: 'NEEDLE-317' } ), 'needle-317' ) ).toBe(
-			true
-		);
-		expect(
-			matchRow( row( { m: 'a needle-317 text' } ), 'needle-317' )
-		).toBe( true );
-		expect(
-			matchRow( row( { url: '/NEEDLE-317/path' } ), 'needle-317' )
-		).toBe( true );
-		expect(
-			matchRow(
-				row( { rid: 'other', k: 'other', m: 'other' } ),
-				'needle-317'
-			)
-		).toBe( false );
+		// Gating at ingest is what keeps a rare match from ageing out of the
+		// ring; the list is never handed a filter to re-apply.
+		expect( node.filter ).toBe( 'needle-317' );
+		expect( logRowListProps.filter ).toBeUndefined();
 	} );
 
 	it( 'reflects the counts LogRowList reports up as entries (no rate label)', () => {
@@ -234,6 +221,7 @@ describe( 'ErrorLog', () => {
 		act( () =>
 			logRowListProps.onStats( { total: 40, visible: 12, lps: 3.5 } )
 		);
+		// The split now means the DEBUG cap, not a filter.
 		expect( container.textContent ).toContain( '12 / 40 entries' );
 		// No renderRate: the default lines/s phrasing appears instead.
 		expect( container.textContent ).not.toContain( 'req/s' );
@@ -370,6 +358,12 @@ describe( 'ErrorLog', () => {
 		it( 'renders a partition selector (All + each dir) once partitions are cataloged', () => {
 			registerViewFixture();
 			useErrorLogGraph.mockReturnValue( {
+				setFilter: ( term ) => {
+					const view = Core.nodes.get( 'perferrors:view' );
+					if ( view ) {
+						view.filter = String( term ).toLowerCase();
+					}
+				},
 				setPaused,
 				clear: jest.fn(),
 				browse: browseMock( {
@@ -393,6 +387,12 @@ describe( 'ErrorLog', () => {
 			registerViewFixture();
 			const selectPartition = jest.fn();
 			useErrorLogGraph.mockReturnValue( {
+				setFilter: ( term ) => {
+					const view = Core.nodes.get( 'perferrors:view' );
+					if ( view ) {
+						view.filter = String( term ).toLowerCase();
+					}
+				},
 				setPaused,
 				clear: jest.fn(),
 				browse: browseMock( {
@@ -430,6 +430,12 @@ describe( 'ErrorLog', () => {
 				segmentId: 9,
 			} );
 			useErrorLogGraph.mockReturnValue( {
+				setFilter: ( term ) => {
+					const view = Core.nodes.get( 'perferrors:view' );
+					if ( view ) {
+						view.filter = String( term ).toLowerCase();
+					}
+				},
 				setPaused,
 				clear: jest.fn(),
 				browse,

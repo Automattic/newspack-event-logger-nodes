@@ -98,6 +98,21 @@ export class RequestLogViewNode extends LogStreamViewNode {
 	}
 
 	/**
+	 * Ingest gate: the toolbar promises "Filter by URL…", so only the URL is
+	 * searched — never the base's `content`, which would widen the scope the
+	 * placeholder advertises.
+	 *
+	 * @param {Object} fields      Shaped row fields.
+	 * @param {string} filterLower The active filter, already lowercased.
+	 * @return {boolean} True to admit the row.
+	 */
+	matchesFilter( fields, filterLower ) {
+		return String( fields.url ?? '' )
+			.toLowerCase()
+			.includes( filterLower );
+	}
+
+	/**
 	 * Shape one completed-request envelope into a table row, or decline it.
 	 *
 	 * VALUE is the request summary `Request_Builder_Node` wrote to

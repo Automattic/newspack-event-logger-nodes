@@ -43,7 +43,7 @@ const HEIGHT = 250 - MARGIN.top - MARGIN.bottom;
  *
  * @param {Object}   props                Component props.
  * @param {Array}    props.requests       Request index entries: { rid, timestamp (seconds), duration_ms, status_code }.
- * @param {Function} props.onRequestClick Called with the clicked dot's rid.
+ * @param {Function} props.onRequestClick Called with the clicked dot's rid and partition.
  * @return {import('react').ReactElement|null} The chart, or null without data.
  */
 export default function ResponseTimeChart( { requests, onRequestClick } ) {
@@ -64,7 +64,7 @@ export default function ResponseTimeChart( { requests, onRequestClick } ) {
 	 * truthiness test also drops a `duration_ms` of exactly 0. Timestamps
 	 * arrive in seconds and become `Date` objects for the time scale.
 	 *
-	 * @type {Array<{time: Date, duration: number, rid: string, status: number}>}
+	 * @type {Array<{time: Date, duration: number, rid: string, partition: number, status: number}>}
 	 */
 	const chartData = useMemo( () => {
 		if ( ! requests || requests.length === 0 ) {
@@ -76,6 +76,7 @@ export default function ResponseTimeChart( { requests, onRequestClick } ) {
 				time: new Date( r.timestamp * 1000 ),
 				duration: r.duration_ms,
 				rid: r.rid,
+				partition: r.partition,
 				status: r.status_code || 0,
 			} ) )
 			.sort( ( a, b ) => a.time.getTime() - b.time.getTime() );
@@ -238,7 +239,7 @@ export default function ResponseTimeChart( { requests, onRequestClick } ) {
 			} )
 			.on( 'click', ( _, d ) => {
 				if ( onRequestClickRef.current && d.rid ) {
-					onRequestClickRef.current( d.rid );
+					onRequestClickRef.current( d.rid, d.partition );
 				}
 			} );
 

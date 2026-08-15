@@ -73,18 +73,17 @@ describe( 'useUrlNavigation', () => {
 			.mockResolvedValueOnce( null )
 			.mockResolvedValue( { url: '/late/arrival' } );
 
-		// Each poll tick hands the hook a FRESH array — that is the retry
-		// signal in production, where urls arrives via useNodeState.
-		let tick = [ ...URLS ];
-		const { result, rerender, unmount } = renderHook( () =>
-			useUrlNavigation( tick, undefined, resolveUrlHash )
+		// The retry is `useReconcile`'s own timer + backoff, not a urls tick:
+		// a deep link converges even on a dashboard whose catalog never moves.
+		jest.useFakeTimers();
+		const { result, unmount } = renderHook( () =>
+			useUrlNavigation( URLS, undefined, resolveUrlHash )
 		);
 		await act( async () => {} );
 		expect( result.current.selectedUrl ).toBeNull();
 
 		await act( async () => {
-			tick = [ ...URLS ];
-			rerender();
+			jest.advanceTimersByTime( 5000 );
 		} );
 		await act( async () => {} );
 
@@ -93,6 +92,7 @@ describe( 'useUrlNavigation', () => {
 			hash: 'notinpage',
 			url: '/late/arrival',
 		} );
+		jest.useRealTimers();
 		unmount();
 	} );
 
@@ -103,19 +103,20 @@ describe( 'useUrlNavigation', () => {
 			.mockResolvedValueOnce( false )
 			.mockResolvedValue( true );
 
-		let tick = [ ...URLS ];
-		const { rerender, unmount } = renderHook( () =>
-			useUrlNavigation( tick, resolveRequestId )
+		// A reported miss keeps the intent; the reconcile clock is the retry.
+		jest.useFakeTimers();
+		const { unmount } = renderHook( () =>
+			useUrlNavigation( URLS, resolveRequestId )
 		);
 		await act( async () => {} );
 
 		await act( async () => {
-			tick = [ ...URLS ];
-			rerender();
+			jest.advanceTimersByTime( 5000 );
 		} );
 		await act( async () => {} );
 
 		expect( resolveRequestId.mock.calls.length ).toBeGreaterThan( 1 );
+		jest.useRealTimers();
 		unmount();
 	} );
 
@@ -156,6 +157,24 @@ describe( 'useUrlNavigation', () => {
 			useUrlNavigation( URLS )
 		);
 		expect( result.current.selectedRequest ).toBeNull();
+		unmount();
+	} );
+
+	it( 'resolves by request id even when ?url= is also present', () => {
+		// The rid is the more specific key: it answers BOTH the url hash and
+		// the partition. Trusting ?url= alone left the partition unresolved,
+		// so the request detail never fetched and the modal rendered empty.
+		setLocation(
+			'http://localhost/wp-admin/?url=aaa&request=c6x0zgr0903wgw6lcylyvxm47ov7fwem'
+		);
+		const resolve = jest.fn().mockResolvedValue( true );
+		const { unmount } = renderHook( () =>
+			useUrlNavigation( URLS, resolve )
+		);
+
+		expect( resolve ).toHaveBeenCalledWith(
+			'c6x0zgr0903wgw6lcylyvxm47ov7fwem'
+		);
 		unmount();
 	} );
 

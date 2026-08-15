@@ -10,7 +10,7 @@
  * `perferrors:stream` Tee into `perferrors:view` (a `LogStreamViewNode`
  * subclass), whose ring the list reads straight off the node each frame. This
  * component only supplies the differing pieces: the fixed column set, the grid
- * row/header renderers, the multi-field matchRow, the entry-count and rate
+ * row/header renderers, the multi-field ingest gate, the entry-count and rate
  * labels, and the `SegmentBrowseSidebar` browse rail.
  *
  * Click any request ID to view its full trace in the Performance Dashboard.
@@ -115,19 +115,11 @@ const getKeywordClass = ( keyword ) => {
 	return 'info';
 };
 
-// Filter matches url, keyword, message, or request ID (per the placeholder).
-const matchRow = ( row, filterLower ) =>
-	[ row.rid, row.k, row.m, row.url ].some(
-		( field ) =>
-			'string' === typeof field &&
-			field.toLowerCase().includes( filterLower )
-	);
-
 // Count label for the toolbar stats: entries, where the default says lines.
 const renderCount = ( stats ) =>
 	stats.visible !== stats.total
 		? sprintf(
-				// translators: 1: number of entries shown, 2: total entries.
+				// translators: 1: rows shown, 2: rows the ring holds.
 				_n(
 					'%1$d / %2$d entry',
 					'%1$d / %2$d entries',
@@ -138,14 +130,14 @@ const renderCount = ( stats ) =>
 				stats.total
 		  )
 		: sprintf(
-				// translators: %d: number of error-log entries shown.
+				// translators: %d: number of rows the ring holds.
 				_n(
 					'%d entry',
 					'%d entries',
-					stats.visible,
+					stats.total,
 					'newspack-event-logger-nodes'
 				),
-				stats.visible
+				stats.total
 		  );
 
 // Rate label matching that wording: entries/s, one decimal place.
@@ -267,7 +259,7 @@ const listHeader = (
  */
 export default function ErrorLog() {
 	// Mount the graph; returns the control callbacks + the browse model.
-	const { setPaused, clear, browse } = useErrorLogGraph();
+	const { setPaused, clear, browse, setFilter } = useErrorLogGraph();
 
 	// Low-frequency view model (pause button + reconnect banner + empty-state).
 	const view = useNodeState( VIEW_NODE, 'view' ) ?? EMPTY_VIEW;
@@ -304,6 +296,7 @@ export default function ErrorLog() {
 			}
 			getViewNode={ getViewNode }
 			onClear={ clear }
+			onFilter={ setFilter }
 			sidebar={
 				<SegmentBrowseSidebar
 					browse={ browse }
@@ -314,7 +307,6 @@ export default function ErrorLog() {
 			}
 			renderRow={ renderRow }
 			rowHeight={ ROW_HEIGHT }
-			matchRow={ matchRow }
 			filterPlaceholder={ __(
 				'Filter by URL, keyword, message, or request ID…',
 				'newspack-event-logger-nodes'

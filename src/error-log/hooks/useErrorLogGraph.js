@@ -17,7 +17,7 @@
  *
  * The link targets the Tee, the Tee fans to the view, and the view's
  * `shapeRow()` shapes raw envelopes into rows inline. Display filtering lives
- * in the chrome (`LogStreamViewer` matchRow), not the view node.
+ * an INGEST gate on the view node, not a render-time scan.
  *
  * Every node sinks into the interpreter; flow is steered by each node's `target`. The
  * graph + connection lifecycle are handed to the shared `useVisibilityGatedLink` hook:
@@ -51,7 +51,7 @@ const GLOB = 'errors.*';
  *
  * @param {Object} [opts]            Options.
  * @param {number} [opts.maxEntries] View ring cap (default 5000).
- * @return {{ setPaused: Function, clear: () => void, browse: Object }}
+ * @return {{ setPaused: Function, clear: () => void, browse: Object, setFilter: (term: string) => void }}
  *   Control callbacks plus the browse model for the thin React view (the view's
  *   own state is read via useNodeState). Reset Graph is driven by a
  *   `Core.bumpGraphGeneration()` bump — mountExospine subscribes this mount's
@@ -146,6 +146,15 @@ export function useErrorLogGraph( opts = {} ) {
 	};
 	setPausedRef.current = setPaused;
 
+	// Ingest gate: only matching rows enter the ring from here on.
+	const setFilter = ( term ) => {
+		if ( viewRef.current ) {
+			viewRef.current.fill(
+				controlMsg( viewRef.current, { action: 'filter', term } )
+			);
+		}
+	};
+
 	// clear: empty the view ring (counter + rate reset ride along).
 	const clear = () => {
 		if ( viewRef.current ) {
@@ -155,5 +164,5 @@ export function useErrorLogGraph( opts = {} ) {
 		}
 	};
 
-	return { setPaused, clear, browse };
+	return { setPaused, clear, browse, setFilter };
 }

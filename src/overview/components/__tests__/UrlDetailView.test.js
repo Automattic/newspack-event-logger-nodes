@@ -58,6 +58,7 @@ const baseUrlDetail = {
 const REQUESTS = [
 	{
 		rid: 'r1',
+		partition: 5,
 		timestamp: 1748960000,
 		method: 'GET',
 		duration_ms: 100,
@@ -281,7 +282,8 @@ describe( 'UrlDetailView', () => {
 		act( () => {
 			r1Row.click();
 		} );
-		expect( onSelectRequest ).toHaveBeenCalledWith( 'r1' );
+		// The partition rides with the rid; the detail cannot recover it.
+		expect( onSelectRequest ).toHaveBeenCalledWith( 'r1', 5 );
 		unmount();
 	} );
 
@@ -299,7 +301,8 @@ describe( 'UrlDetailView', () => {
 				} )
 			);
 		} );
-		expect( onSelectRequest ).toHaveBeenCalledWith( 'r1' );
+		// The partition rides with the rid; the detail cannot recover it.
+		expect( onSelectRequest ).toHaveBeenCalledWith( 'r1', 5 );
 		unmount();
 	} );
 

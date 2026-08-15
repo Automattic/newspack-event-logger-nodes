@@ -69,17 +69,17 @@ const RequestRow = memo(
 	 * One row of the recent-requests table, memoized so scrolling re-renders
 	 * only the rows that entered the window.
 	 *
-	 * The row is a button: click or Enter/Space hands `req.rid` to `onSelect`.
+	 * The row is a button: click or Enter/Space hands rid + partition to `onSelect`.
 	 * Its request-id cell carries a bar background whose width is the row's
 	 * value as a fraction of `maxBar`, and its status cell reads `error_status`
 	 * first — `F` for a fatal, `T` for a timeout — falling back to the HTTP
 	 * status code.
 	 *
-	 * @param {Object}                props          Component props.
-	 * @param {Object}                props.req      Request index entry: rid, timestamp, method, status_code, error_status, duration_ms, peak_mb.
-	 * @param {(rid: string) => void} props.onSelect Receives the row's rid on click or keyboard activation.
-	 * @param {number}                props.maxBar   Largest bar value across the filtered rows; 0 draws no bar.
-	 * @param {string}                props.metric   Chart metric; 'memory' bars peak_mb, every other value bars duration_ms.
+	 * @param {Object}                                   props          Component props.
+	 * @param {Object}                                   props.req      Request index entry: rid, timestamp, method, status_code, error_status, duration_ms, peak_mb.
+	 * @param {(rid: string, partition: number) => void} props.onSelect Receives the row's rid and partition on click or keyboard activation.
+	 * @param {number}                                   props.maxBar   Largest bar value across the filtered rows; 0 draws no bar.
+	 * @param {string}                                   props.metric   Chart metric; 'memory' bars peak_mb, every other value bars duration_ms.
 	 * @return {import('react').ReactElement} Rendered row.
 	 */
 	function RequestRow( { req, onSelect, maxBar, metric } ) {
@@ -96,7 +96,7 @@ const RequestRow = memo(
 		const handleKeyDown = ( e ) => {
 			if ( e.key === 'Enter' || e.key === ' ' ) {
 				e.preventDefault();
-				onSelect( req.rid );
+				onSelect( req.rid, req.partition );
 			}
 		};
 
@@ -106,7 +106,7 @@ const RequestRow = memo(
 				tabIndex={ 0 }
 				className="event-logger-table__row newspack-nodes-table__row"
 				style={ { height: ROW_HEIGHT } }
-				onClick={ () => onSelect( req.rid ) }
+				onClick={ () => onSelect( req.rid, req.partition ) }
 				onKeyDown={ handleKeyDown }
 			>
 				<div className="event-logger-table__cell newspack-nodes-table__cell">
@@ -183,7 +183,7 @@ const RequestRow = memo(
  * @param {Array}                                                        props.sortedRequests    Recent requests, already sorted by the parent.
  * @param {Object}                                                       props.requestSort       Current sort as `{ field, dir }`; drives the header arrows only.
  * @param {(field: string) => void}                                      props.onRequestSort     Receives a field name when a sortable header is clicked.
- * @param {(rid: string) => void}                                        props.onSelectRequest   Receives a rid from a row click or a scatter-plot dot.
+ * @param {(rid: string, partition: number) => void}                     props.onSelectRequest   Receives a rid AND its partition from a row click or a scatter-plot dot.
  * @param {(urlHash: string, breakdown: string) => Promise<Object|null>} props.fetchUrlBreakdown Async; a falsy value clears the chart's breakdown.
  * @param {string}                                                       props.urlHash           Hash identifying the URL, as passed to `fetchUrlBreakdown`.
  * @return {import('react').ReactElement} Rendered component.

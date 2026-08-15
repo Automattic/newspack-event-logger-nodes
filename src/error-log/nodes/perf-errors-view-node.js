@@ -91,6 +91,22 @@ export class PerfErrorsViewNode extends LogStreamViewNode {
 	}
 
 	/**
+	 * Ingest gate over the four fields the placeholder names — request id,
+	 * keyword, message, url — and not the base's `content`.
+	 *
+	 * @param {Object} fields      Shaped row fields.
+	 * @param {string} filterLower The active filter, already lowercased.
+	 * @return {boolean} True to admit the row.
+	 */
+	matchesFilter( fields, filterLower ) {
+		return [ fields.rid, fields.k, fields.m, fields.url ].some(
+			( field ) =>
+				'string' === typeof field &&
+				field.toLowerCase().includes( filterLower )
+		);
+	}
+
+	/**
 	 * Validate and enrich one raw errors envelope into a row.
 	 *
 	 * Drops an empty rid, the `connected` sentinel, and any VALUE that is not

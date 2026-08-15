@@ -9,7 +9,7 @@
  * to `requestlog:view` (a `LogStreamViewNode` subclass), whose ring the list
  * reads straight off the node each frame. This component only supplies the
  * differing pieces: the column set + picker, the grid row/header renderers,
- * the URL matchRow, and the `SegmentBrowseSidebar` browse rail.
+ * the URL ingest gate, and the `SegmentBrowseSidebar` browse rail.
  *
  * Click any request to view its full trace in the Performance Dashboard.
  */
@@ -114,17 +114,13 @@ const formatTime = ( ts ) => {
 	return `${ h }:${ m }:${ s }.${ ms }`;
 };
 
-// Filter matches the row URL only (the toolbar promises "Filter by URL…").
-const matchRow = ( row, filterLower ) =>
-	String( row.url ?? '' )
-		.toLowerCase()
-		.includes( filterLower );
-
 // Count + rate labels for the shared toolbar stats.
+const renderRate = ( lps ) => `${ lps.toFixed( 1 ) } req/s`;
+
 const renderCount = ( stats ) =>
 	stats.visible !== stats.total
 		? sprintf(
-				// translators: 1: number of requests shown, 2: total requests.
+				// translators: 1: rows shown, 2: rows the ring holds.
 				_n(
 					'%1$d / %2$d request',
 					'%1$d / %2$d requests',
@@ -135,16 +131,15 @@ const renderCount = ( stats ) =>
 				stats.total
 		  )
 		: sprintf(
-				// translators: %d: number of requests shown in the log.
+				// translators: %d: number of rows the ring holds.
 				_n(
 					'%d request',
 					'%d requests',
-					stats.visible,
+					stats.total,
 					'newspack-event-logger-nodes'
 				),
-				stats.visible
+				stats.total
 		  );
-const renderRate = ( lps ) => `${ lps.toFixed( 1 ) } req/s`;
 
 // JSDoc rides the inner function: on the const, memo() infers props as `{}`.
 const StreamRow = memo(
@@ -283,7 +278,9 @@ const StreamRow = memo(
  */
 export default function RequestStream( { maxEntries = 500 } ) {
 	// Mount the graph; returns the control callbacks + the browse model.
-	const { setPaused, clear, browse } = useRequestLogGraph( { maxEntries } );
+	const { setPaused, clear, browse, setFilter } = useRequestLogGraph( {
+		maxEntries,
+	} );
 
 	// Low-freq view model (pause button, empty-state label, reconnect banner).
 	const view = useNodeState( VIEW_NODE, 'view' ) ?? EMPTY_VIEW;
@@ -415,6 +412,7 @@ export default function RequestStream( { maxEntries = 500 } ) {
 			}
 			getViewNode={ getViewNode }
 			onClear={ clear }
+			onFilter={ setFilter }
 			sidebar={
 				<SegmentBrowseSidebar
 					browse={ browse }
@@ -425,7 +423,6 @@ export default function RequestStream( { maxEntries = 500 } ) {
 			}
 			renderRow={ renderRow }
 			rowHeight={ ROW_HEIGHT }
-			matchRow={ matchRow }
 			filterPlaceholder={ __(
 				'Filter by URL…',
 				'newspack-event-logger-nodes'
