@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Every dashboard command rides the router tick.** The substrate retired `useRequestNode` and `useReconcile`, and the seven consumers here moved with them: the hook catalog and the partition/source catalogs are POLLED slices, the ruleset's four writes and the Ask verb are one-shots, and the awaited reads a sequence genuinely needs (`resolveRequest`, `resolveUrlHash`, `fetchUrlBreakdown`, `requestGrep`, the rules verbs, the glob-browse catalog) go through `useAwaitableCommand` — still one node per verb, still addressed rather than correlated, but batched with everything else that tick.
+- **A mutation's outcome arrives as an answer, not a rejected promise.** `useRulesGraph` takes an `onMutation( { verb, error } )` and `RulesAdmin` closes the surface the verb names — the editor on an upsert, the dialog on a delete or a reset — so a refusal leaves the draft intact with the banner filled rather than a closed dialog and no trace. `useTopologyManager`'s refusals reach `onError` the same way, which is why `TopologyControls` has nothing left to await or swallow.
+- The Current Request tab polls for its own record instead of reconciling toward it, so a record written a second after the page rendered and a session that expired overnight converge through the same path.
+- The deep-link resolver's convergence rides the ROUTER tick rather than a private backoff, so a `?url=` intent still resolves on a dashboard whose catalog never moves.
+
+### Fixed
+- **The `?url=` / `?request=` deep link asks once at a time, and slower each miss.** Moving off `useReconcile` dropped both its in-flight guard and its backoff, so an intent that never resolves — a hash that has paged out, a request id from another environment — sent a command every second for the life of the page, each one queueing another waiter behind a reply that was never coming. Backoff runs 1s to 30s and resets when the intent resolves.
+- **`url_detail undefined` no longer reaches the server.** `make_node Timer` with no interval arms on the router immediately, so the auto-refresh Fetcher could fire before the effect that owns its arming had disarmed it. Its fire-time getter returns `null` — nothing to ask — unless it holds a valid hash.
+
 ### Added
 - **`Findings`** — the problem area, computed rather than inferred. Dominant span, repetition, unattributed time, entry gaps and truncation are all arithmetic over data already on disk, and `request_detail` now carries them, so the detail view can name what is wrong with no model involved at all. Each finding says WHERE it was measured (`flame` and `subtraction` warrant different confidence) and what rule edit would act on it.
 - **"Insufficient instrumentation" is a first-class finding.** The common first ask is about a slow URL that no rule covers, where there is no flame graph and no entries — only a total. The useful answer there is not an explanation but WHICH INSTRUMENTATION TO SWITCH ON, so the proposal is a coarse lifecycle bracket (six hooks) and the next round subdivides only the phase that held the time. Every proposal that adds instrumentation names what removes it again.

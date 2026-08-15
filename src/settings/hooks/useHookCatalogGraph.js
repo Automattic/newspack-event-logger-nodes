@@ -1,79 +1,68 @@
 /**
- * useHookCatalogGraph — the Performance Logger hook catalog for the fire-on-OPEN
- * selector modal, fetched through one node on the canonical rule-#2 backbone
- * (`_command_interpreter → _router`).
+ * useHookCatalogGraph — the registered-hook taxonomy behind the hook picker, as
+ * a batched-poll slice.
  *
- *   _http                (HttpOutNode — POST /command boundary)
- *   hookcatalog:request  (Request — mints `hooks_registered`, holds the reply)
+ * It used to be a reconciled load over its own Request node: one POST per open,
+ * minted from a React effect and outside the router's lock/flush bracket. The
+ * ask rides the tick now, so it travels in the same request as everything else
+ * that tick, and `enabled` means a picker that is never opened costs nothing.
  *
- * There is nothing to correlate: the command is minted FROM that node, the
- * server replies TO = FROM, and the reply lands there. The catalog it carries
- * IS the model, so it is held here rather than published into a node the modal
- * would then have to read back.
- *
- * Dashboards aren't REPLs: no transcript window, no tab-completion input, no
- * uptime display, no `cd` navigation. So `_output` / `_completion` / `_uptime` /
- * `_cwd` are NOT mounted here — they'd be dead weight and would collide with
- * the debug-overlay's REPL when it opens on this page.
- *
- * Error contract: a failure clears the spinner with an empty catalog —
- * HookSelectorModal has no error UI — while `useReconcile` keeps asking, so a
- * refused session re-establishes itself instead of showing "no hooks" forever.
- *
- * Nothing is injected: HttpOut lazily defaults its own client, and tests seam
- * at `fetch` (`installFakeCommandWire`) so the whole egress runs for real.
- * to `_http.client`) so the hook never touches the network. Production lazily
- * defaults (inside HttpOut) to the localized transport.
+ * HookSelectorModal has no error UI, which is why a refusal must not be the end
+ * of the story: it is one tick that published nothing, and the next fills the
+ * picker.
  */
 
-import { useCallback, useEffect, useRef, useState } from '@wordpress/element';
-import { mountExospine } from '@newspack-nodes/runtime';
-import useReconcile from '@newspack-nodes/shared/hooks/useReconcile';
-import useRequestNode from '@newspack-nodes/shared/hooks/useRequestNode';
+import { useNodeState } from '@newspack-nodes/runtime';
+import { useBatchedPoll } from '@newspack-nodes/shared/hooks/useBatchedPoll';
+import { addSliceFetcher } from '@newspack-nodes/shared/helpers/addSliceFetcher';
+import '../nodes/register';
+
+const FETCHER = 'hookcatalog:fetch';
+const RECEIVER = 'hookcatalog:in';
+const VIEW = 'hookcatalog:view';
+
+/** The taxonomy is near-static; the picker does not need every tick. */
+const POLL_INTERVAL_MS = 10000;
+
+const EMPTY = { hooksByCategory: null, descriptions: {}, error: null };
 
 /**
  * @param {Object}  [opts]        Options.
- * @param {boolean} [opts.isOpen] When true, fires one hook-catalog fetch.
- * @return {{ hooksByCategory: Object, descriptions: Object, loading: boolean }} The render model.
+ * @param {boolean} [opts.isOpen] Gate — a picker that is never opened asks for
+ *                                nothing at all.
+ * @return {{hooksByCategory: Object, descriptions: Object, loading: boolean}}
+ *   The taxonomy for the picker, its category one-liners, and whether the first
+ *   reply is still outstanding.
  */
 export function useHookCatalogGraph( opts = {} ) {
 	const { isOpen } = opts;
 
-	const optsRef = useRef( opts );
-	optsRef.current = opts;
-
-	const [ hooksByCategory, setHooksByCategory ] = useState( {} );
-	// Category one-liners travel with the taxonomy that owns them.
-	const [ descriptions, setDescriptions ] = useState( {} );
-
-	// Mount the backbone once; HttpOut defaults its own transport.
-	useEffect( () => mountExospine().teardown, [] );
-
-	const request = useRequestNode( 'hookcatalog:request', 'performance' );
-
-	const load = useCallback( async () => {
-		try {
-			const payload = await request( 'hooks_registered' );
-			setHooksByCategory( payload?.hooks_by_category ?? {} );
-			setDescriptions( payload?.category_descriptions ?? {} );
-		} catch ( e ) {
-			// Clear the spinner with an empty catalog; the loop keeps asking.
-			setHooksByCategory( {} );
-			setDescriptions( {} );
-			throw e;
-		}
-	}, [ request ] );
-
-	// isOpen is a DEP too: re-opening the modal is a fresh ask.
-	const { settled, error } = useReconcile( {
-		load,
-		enabled: isOpen,
-		deps: [ isOpen ],
+	useBatchedPoll( {
+		build: ( { interpreter, tee } ) =>
+			addSliceFetcher( interpreter, {
+				fetcher: FETCHER,
+				receiver: RECEIVER,
+				command: 'hooks_registered',
+				view: VIEW,
+				viewClass: 'HookCatalogView',
+				tee,
+				target: '_shell/_http/performance',
+			} ),
+		timerName: 'hookcatalog:timer',
+		teeName: 'hookcatalog:tee',
+		enabled: Boolean( isOpen ),
+		intervalMs: POLL_INTERVAL_MS,
 	} );
 
+	const model = useNodeState( VIEW, 'view' ) ?? EMPTY;
+
 	return {
-		hooksByCategory,
-		descriptions,
-		loading: Boolean( isOpen ) && ! settled && ! error,
+		hooksByCategory: model.hooksByCategory ?? {},
+		descriptions: model.descriptions,
+		// A refusal is an answer too: clear the spinner, keep asking.
+		loading:
+			Boolean( isOpen ) &&
+			null === model.hooksByCategory &&
+			! model.error,
 	};
 }

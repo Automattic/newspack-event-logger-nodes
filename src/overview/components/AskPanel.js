@@ -11,10 +11,10 @@
  * assembled brief is shown here first, and copying it is a separate act.
  */
 
-import { useCallback, useState } from '@wordpress/element';
+import { useCallback, useRef, useState } from '@wordpress/element';
 import { __, sprintf } from '@wordpress/i18n';
 import { useAskPicker } from '@newspack-nodes/shared/hooks/useAskPicker';
-import useRequestNode from '@newspack-nodes/shared/hooks/useRequestNode';
+import { useCommandOnce } from '@newspack-nodes/shared/hooks/useCommandOnce';
 import Modal from '@newspack-nodes/shared/components/Modal';
 import { formatCommandArgs, nodesData } from '@newspack-nodes/runtime';
 import { briefToMarkdown } from '../askBrief';
@@ -77,27 +77,42 @@ function Finding( { finding } ) {
  * @return {import('react').ReactElement} The panel.
  */
 export default function AskPanel( { onError } ) {
-	const askVerb = useRequestNode( 'performance:ask', 'performance' );
 	const [ briefs, setBriefs ] = useState( [] );
 	const [ open, setOpen ] = useState( false );
 	const [ copied, setCopied ] = useState( false );
 
+	// A property of the PICK; a click cannot beat the answer to the last one.
+	const additiveRef = useRef( false );
+	const onErrorRef = useRef( onError );
+	onErrorRef.current = onError;
+
+	const { run: ask } = useCommandOnce( {
+		scope: 'performance:ask',
+		target: '_shell/_http/performance',
+		command: 'ask',
+		retry: true,
+		onDone: ( { result, error } ) => {
+			if ( error ) {
+				onErrorRef.current?.( error );
+				return;
+			}
+			if ( ! result || 'object' !== typeof result ) {
+				return;
+			}
+			setBriefs( ( prior ) =>
+				additiveRef.current ? [ ...prior, result ] : [ result ]
+			);
+			setCopied( false );
+			setOpen( true );
+		},
+	} );
+
 	const handlePick = useCallback(
 		( descriptors, { additive } ) => {
-			askVerb( 'ask', formatCommandArgs( descriptors ) )
-				.then( ( brief ) => {
-					if ( ! brief || 'object' !== typeof brief ) {
-						return;
-					}
-					setBriefs( ( prior ) =>
-						additive ? [ ...prior, brief ] : [ brief ]
-					);
-					setCopied( false );
-					setOpen( true );
-				} )
-				.catch( ( err ) => onError?.( err?.message ?? String( err ) ) );
+			additiveRef.current = additive;
+			ask( formatCommandArgs( descriptors ) );
 		},
-		[ askVerb, onError ]
+		[ ask ]
 	);
 
 	const { active, start, cancel } = useAskPicker( { onPick: handlePick } );

@@ -14,8 +14,13 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from '@wordpress/element';
+import useRouterTick from '@newspack-nodes/shared/hooks/useRouterTick';
 
-import useReconcile from '@newspack-nodes/shared/hooks/useReconcile';
+/** First retry, on the next router tick: usually the data has just landed. */
+const DEEP_LINK_RETRY_MS = 1000;
+
+/** Ceiling for the backoff — a page left open asks twice a minute, not 60x. */
+const DEEP_LINK_MAX_RETRY_MS = 30000;
 
 /**
  * Get URL parameters from the current page URL.
@@ -138,10 +143,11 @@ export default function useUrlNavigation(
 	// unresolved whenever the rid had aged out of the URL's recent-request
 	// window, and the request detail then never fetched at all.
 	//
-	// `useReconcile` owns the convergence: while unsettled it keeps
-	// attempting, on success it stops. A throw means "not yet" — graph not
-	// built, no command session, a reply that lost its race, a hash outside
-	// the loaded page — one retry instead of five silent failure paths.
+	// The ROUTER TICK owns the convergence: while the intent is held, each
+	// tick attempts again, so a deep link converges even on a dashboard whose
+	// catalog never moves. A throw means "not yet" — graph not built, no
+	// command session, a reply that lost its race, a hash outside the loaded
+	// page — one retry path instead of five silent failure paths.
 	const deepLinkLoad = useCallback( async () => {
 		if ( ! initialUrlHash && ! initialRequestId ) {
 			return;
@@ -193,10 +199,38 @@ export default function useUrlNavigation(
 		resolveUrlHash,
 	] );
 
-	useReconcile( {
-		load: deepLinkLoad,
-		enabled: !! ( initialUrlHash || initialRequestId ),
-		deps: [ initialUrlHash, initialRequestId ],
+	// @longform
+	// "Not yet" is the common case, so the next tick tries again — ONE attempt
+	// at a time, and slower after each miss. A second attempt over an
+	// outstanding one asks for an answer already on its way and leaves another
+	// waiter behind it, and a fixed 1s retry puts a command per second on the
+	// wire for the whole life of a page whose intent never resolves.
+	const attemptingRef = useRef( false );
+	const [ retryMs, setRetryMs ] = useState( DEEP_LINK_RETRY_MS );
+	const attempt = useCallback( () => {
+		if (
+			! ( initialUrlHash || initialRequestId ) ||
+			attemptingRef.current
+		) {
+			return;
+		}
+		attemptingRef.current = true;
+		deepLinkLoad()
+			.then( () => setRetryMs( DEEP_LINK_RETRY_MS ) )
+			.catch( () =>
+				setRetryMs( ( ms ) =>
+					Math.min( ms * 2, DEEP_LINK_MAX_RETRY_MS )
+				)
+			)
+			.finally( () => {
+				attemptingRef.current = false;
+			} );
+	}, [ deepLinkLoad, initialUrlHash, initialRequestId ] );
+	useEffect( attempt, [ attempt ] );
+	useRouterTick( {
+		name: 'urlnav:deeplink',
+		onTick: attempt,
+		intervalMs: retryMs,
 	} );
 
 	// Update browser URL when selection changes.

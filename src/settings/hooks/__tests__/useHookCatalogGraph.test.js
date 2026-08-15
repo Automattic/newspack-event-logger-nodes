@@ -1,21 +1,18 @@
 /**
- * useHookCatalogGraph tests — the Performance Logger hook-catalog graph clipped
- * onto the substrate's I/O boundary node (exospine + `_http`), plus the
- * `hookcatalog:request` node that holds the awaited catalog.
+ * useHookCatalogGraph tests — the Performance Logger hook-catalog slice clipped
+ * onto the substrate's batched-poll toolkit (exospine + `_http` + a tick).
  *
- * Migrated from the bespoke `hookcatalog:command` Node to the substrate's
- * HttpOutNode: the hook dispatches the `hooks_registered` verb as a TM_COMMAND
- * through the interpreter (FROM=`hookcatalog:request`, TO=`_http/performance`); the reply
- * routes via TO=FROM back into the view, which extracts hooks_by_category.
+ * The hook emits `hooks_registered` as a TM_COMMAND through the interpreter
+ * (FROM=`hookcatalog:in`, TO=`_shell/_http/performance`); the reply routes via
+ * TO=FROM back into `hookcatalog:view`, which extracts hooks_by_category.
  *
- * Every node sinks into the interpreter (rule #2); flow is steered ONLY by each node's
- * `target`. Nothing is injected: the seam is `fetch`, so the hook never
- * touches the network. The trigger is fire-on-open: flipping `isOpen` true
- * dispatches one fetch (re-fetches on every re-open). Mirrors
- * useAggregatorAdminGraph (real graph, faked command boundary).
+ * Every node sinks into the interpreter (rule #2); flow is steered ONLY by each
+ * node's `target`. Nothing is injected: the seam is `fetch`, so the hook never
+ * touches the network. `isOpen` is the gate: a picker that is never opened asks
+ * for nothing, and an opened one asks on the tick until it is closed again.
  */
 
-import { renderHook, act } from '../../../test-helpers/renderHook';
+import { renderHook, act, waitFor } from '../../../test-helpers/renderHook';
 import { installFakeCommandWire } from '@newspack-nodes/shared/test-utils/fakeCommandWire';
 import {
 	newMessage,
@@ -35,8 +32,19 @@ import { useHookCatalogGraph } from '../useHookCatalogGraph';
 const INTERPRETER = '_command_interpreter';
 const ROUTER = '_router';
 const HTTP = '_http';
-const REQUEST = 'hookcatalog:request';
-const ALL_GRAPH_NAMES = [ HTTP, REQUEST ];
+const RECEIVER = 'hookcatalog:in';
+const FETCHER = 'hookcatalog:fetch';
+const VIEW = 'hookcatalog:view';
+const ALL_GRAPH_NAMES = [ HTTP, RECEIVER, VIEW ];
+
+// The ask rides the router tick, so a dispatch is a wait, not a flush.
+const waitForBatch = ( wire, atLeast = 1 ) =>
+	waitFor(
+		() => expect( wire.batches.length ).toBeGreaterThanOrEqual( atLeast ),
+		{
+			timeout: 6000,
+		}
+	);
 
 // A fake transport (HttpOutNode seam): postBatch returns TO=FROM replies.
 // The seam is the WIRE: the graph packs, POSTs and unpacks for real, so
@@ -59,17 +67,17 @@ beforeEach( () => {
 } );
 
 describe( 'useHookCatalogGraph — exospine + I/O boundary wiring', () => {
-	test( 'mounts the backbone + _http + the request node', () => {
+	test( 'mounts the backbone + _http + the slice', () => {
 		installWire();
 		renderHook( () => useHookCatalogGraph( { isOpen: false } ) );
 		const interpreter = Core.node( INTERPRETER );
 		expect( interpreter ).toBeTruthy();
 		expect( Core.node( ROUTER ) ).toBeTruthy();
 		expect( Core.node( HTTP ).sink ).toBe( interpreter );
-		// A Request node reaches `_shell` — the Tap every command passes — as a
-		// TARGET hop, like the Fetchers; it sinks into the interpreter.
-		expect( Core.node( REQUEST ).sink ).toBe( interpreter );
-		expect( Core.node( REQUEST ).target ).toBe(
+		// The Fetcher reaches `_shell` — the Tap every command passes — as a
+		// TARGET hop; it sinks into the interpreter.
+		expect( Core.node( RECEIVER ).sink ).toBe( interpreter );
+		expect( Core.node( FETCHER ).target ).toBe(
 			`_shell/${ HTTP }/performance`
 		);
 	} );
@@ -86,11 +94,10 @@ describe( 'useHookCatalogGraph — exospine + I/O boundary wiring', () => {
 		const wire = installWire();
 
 		renderHook( () => useHookCatalogGraph( { isOpen: true } ) );
-		await act( async () => {} );
 
-		expect( wire.batches.length ).toBeGreaterThanOrEqual( 1 );
+		await waitForBatch( wire );
 		expect( wire.batches[ 0 ][ 0 ][ VALUE ].auth ).toBeDefined();
-	} );
+	}, 15000 );
 
 	test( 'does NOT mount _output / _completion / _uptime / _cwd (dashboards are not REPLs)', () => {
 		installWire();
@@ -137,17 +144,17 @@ describe( 'useHookCatalogGraph — fire on open routes through the exospine', ()
 		await act( async () => {
 			rerender( { isOpen: true } );
 		} );
-		expect( wire.batches.length ).toBeGreaterThanOrEqual( 1 );
+		await waitForBatch( wire );
 		const msg = wire.batches[ 0 ][ 0 ];
 		expect( msg[ TO ] ).toBe( 'performance' );
-		expect( msg[ FROM ] ).toBe( REQUEST );
+		expect( msg[ FROM ] ).toBe( RECEIVER );
 		// Addressed, not correlated.
 		expect( msg[ ID ] ).toBe( '' );
 		expect( msg[ VALUE ].name ).toBe( 'hooks_registered' );
 		// hooks_registered takes no args; empty token array, no payload.
 		expect( msg[ VALUE ].arguments ).toEqual( [] );
 		expect( msg[ VALUE ].payload ).toBeUndefined();
-	} );
+	}, 15000 );
 
 	test( 'the resolved catalog routes back to the node that asked, into the model', async () => {
 		const hooks = {
@@ -161,12 +168,15 @@ describe( 'useHookCatalogGraph — fire on open routes through the exospine', ()
 			( props ) => useHookCatalogGraph( props ),
 			{ initialProps: { isOpen: false } }
 		);
-		await act( async () => {
+		act( () => {
 			rerender( { isOpen: true } );
 		} );
-		expect( result.current.hooksByCategory ).toEqual( hooks );
+		await waitFor(
+			() => expect( result.current.hooksByCategory ).toEqual( hooks ),
+			{ timeout: 6000 }
+		);
 		expect( result.current.loading ).toBe( false );
-	} );
+	}, 15000 );
 
 	test( 'loading is true between dispatch and resolve', async () => {
 		// A wire that never answers: loading stays true.
@@ -181,26 +191,21 @@ describe( 'useHookCatalogGraph — fire on open routes through the exospine', ()
 		expect( result.current.loading ).toBe( true );
 	} );
 
-	test( 're-opening fires a fresh fetch on every isOpen flip', async () => {
+	// An open picker keeps asking; the taxonomy tracks a plugin activated
+	// while it is on screen, and a refusal recovers without a re-open.
+	test( 'keeps asking while the picker stays open', async () => {
 		const wire = installWire( {
 			hooks_registered: { hooks_by_category: {} },
 		} );
-		const { rerender } = renderHook(
-			( props ) => useHookCatalogGraph( props ),
-			{ initialProps: { isOpen: false } }
-		);
-		await act( async () => {
-			rerender( { isOpen: true } );
-		} );
+		renderHook( () => useHookCatalogGraph( { isOpen: true } ) );
+
+		await waitForBatch( wire );
 		const afterFirst = wire.batches.length;
-		await act( async () => {
-			rerender( { isOpen: false } );
-		} );
-		await act( async () => {
-			rerender( { isOpen: true } );
-		} );
-		expect( wire.batches.length ).toBeGreaterThan( afterFirst );
-	} );
+		await waitFor(
+			() => expect( wire.batches.length ).toBeGreaterThan( afterFirst ),
+			{ timeout: 15000 }
+		);
+	}, 25000 );
 } );
 
 describe( 'useHookCatalogGraph — fetch errors fall back to an empty map (mirrors old modal)', () => {
@@ -217,10 +222,12 @@ describe( 'useHookCatalogGraph — fetch errors fall back to an empty map (mirro
 		await act( async () => {
 			rerender( { isOpen: true } );
 		} );
-		expect( result.current.loading ).toBe( false );
-		// Caller's catch handled it; hooksByCategory stays its empty map.
+		// The refusal publishes as the slice's error, clearing the spinner.
+		await waitFor( () => expect( result.current.loading ).toBe( false ), {
+			timeout: 6000,
+		} );
 		expect( result.current.hooksByCategory ).toEqual( {} );
-	} );
+	}, 15000 );
 } );
 
 describe( 'useHookCatalogGraph — teardown', () => {
@@ -230,7 +237,8 @@ describe( 'useHookCatalogGraph — teardown', () => {
 			useHookCatalogGraph( { isOpen: false } )
 		);
 		unmount();
-		for ( const name of [ ...ALL_GRAPH_NAMES, INTERPRETER, ROUTER ] ) {
+		// The ROUTER is the page's heartbeat and is never torn down.
+		for ( const name of [ ...ALL_GRAPH_NAMES, INTERPRETER ] ) {
 			expect( Core.node( name ) ).toBeNull();
 		}
 	} );

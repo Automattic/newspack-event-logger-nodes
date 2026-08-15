@@ -14,7 +14,7 @@
  * CI, so there is no form submission to defer a mark to.
  */
 
-import { useEffect, useRef, useState } from '@wordpress/element';
+import { useCallback, useEffect, useRef, useState } from '@wordpress/element';
 import { __, _n, sprintf } from '@wordpress/i18n';
 
 import { useRulesGraph } from './useRulesGraph';
@@ -174,74 +174,52 @@ function RuleRow( { rule, onEdit, onDelete } ) {
  *
  * @return {import('react').ReactElement} The rendered admin app.
  */
-/**
- * A mutation rejection as a displayable string. The graph rejects with an
- * Error, but a TM_ERROR reply can surface as a bare string too.
- *
- * @param {*} e The rejection value.
- * @return {string} Message for the error banner.
- */
-function messageOf( e ) {
-	if ( e && 'string' === typeof e.message && '' !== e.message ) {
-		return e.message;
-	}
-	const text = String( e ?? '' );
-	return '' !== text
-		? text
-		: __( 'The change could not be saved.', 'newspack-event-logger-nodes' );
-}
-
-/**
- *
- */
 export default function RulesAdmin() {
-	const { rules, loading, error, upsert, remove, reset } = useRulesGraph();
-
 	// Rule open in the editor: null = closed, object = editing/adding.
 	const [ editing, setEditing ] = useState( null );
 	// The rule pending delete confirmation.
 	const [ deleting, setDeleting ] = useState( null );
 	// Whether the reset-to-defaults confirmation is open.
 	const [ resetting, setResetting ] = useState( false );
-	// A mutation's failure; useRulesGraph rejects rather than filling `error`.
+	// A mutation's failure; `error` belongs to the table's own `list`.
 	const [ mutationError, setMutationError ] = useState( null );
 
-	const handleSave = async ( draft ) => {
-		setMutationError( null );
-		try {
-			await upsert( draft );
-		} catch ( e ) {
-			setMutationError( messageOf( e ) );
-			return; // Keep the editor open, with the draft intact.
+	// The answer names its verb, so the right surface is the one that closes.
+	const onMutation = useCallback( ( { verb, error: refusal } ) => {
+		if ( refusal ) {
+			setMutationError( refusal );
+			return;
 		}
-		setEditing( null );
+		if ( 'upsert' === verb ) {
+			setEditing( null );
+		} else if ( 'delete' === verb ) {
+			setDeleting( null );
+		} else if ( 'reset' === verb ) {
+			setResetting( false );
+		}
+	}, [] );
+
+	const { rules, loading, error, upsert, remove, reset } = useRulesGraph( {
+		onMutation,
+	} );
+
+	// Each leaves its surface OPEN; the answer is what closes it.
+	const handleSave = ( draft ) => {
+		setMutationError( null );
+		upsert( draft );
 	};
 
-	const confirmDelete = async () => {
-		const target = deleting;
-		if ( ! target ) {
+	const confirmDelete = () => {
+		if ( ! deleting ) {
 			return;
 		}
 		setMutationError( null );
-		try {
-			await remove( target.id );
-		} catch ( e ) {
-			// Closing first left the row, a clean banner, and no other trace.
-			setMutationError( messageOf( e ) );
-			return;
-		}
-		setDeleting( null );
+		remove( deleting.id );
 	};
 
-	const confirmReset = async () => {
+	const confirmReset = () => {
 		setMutationError( null );
-		try {
-			await reset();
-		} catch ( e ) {
-			setMutationError( messageOf( e ) );
-			return;
-		}
-		setResetting( false );
+		reset();
 	};
 
 	// Resolve the table body once (avoids a nested ternary in JSX).

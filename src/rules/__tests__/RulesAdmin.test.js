@@ -95,24 +95,35 @@ describe( 'RulesAdmin', () => {
 	let reset;
 	const mounted = [];
 
+	// The verb answers are published, not awaited: the graph hands the
+	// component an `onMutation` handler and calls it when a reply lands.
+	let onMutation;
+
 	function setGraph( overrides = {} ) {
-		upsert = jest.fn().mockResolvedValue( { rule: SAMPLE_RULES[ 0 ] } );
-		remove = jest.fn().mockResolvedValue( { deleted: true } );
-		saveAll = jest.fn().mockResolvedValue( { saved: 2 } );
-		list = jest.fn().mockResolvedValue( { rules: SAMPLE_RULES } );
-		reset = jest.fn().mockResolvedValue( { reset: 2 } );
-		useRulesGraph.mockReturnValue( {
-			rules: SAMPLE_RULES,
-			loading: false,
-			error: null,
-			list,
-			saveAll,
-			upsert,
-			remove,
-			reset,
-			...overrides,
+		upsert = jest.fn();
+		remove = jest.fn();
+		saveAll = jest.fn();
+		list = jest.fn();
+		reset = jest.fn();
+		useRulesGraph.mockImplementation( ( opts = {} ) => {
+			onMutation = opts.onMutation;
+			return {
+				rules: SAMPLE_RULES,
+				loading: false,
+				error: null,
+				list,
+				saveAll,
+				upsert,
+				remove,
+				reset,
+				...overrides,
+			};
 		} );
 	}
+
+	// Publish a verb's answer, as a reply landing on its node would.
+	const answer = ( verb, error = null ) =>
+		act( () => onMutation( { verb, error } ) );
 
 	beforeEach( () => {
 		useRulesGraph.mockClear();
@@ -246,6 +257,8 @@ describe( 'RulesAdmin', () => {
 			);
 		} );
 		expect( upsert ).toHaveBeenCalledTimes( 1 );
+		// The modal closes on the ANSWER, not on the click.
+		await answer( 'upsert' );
 		expect( dialogButton( 'rule-edit' ) ).toBeNull();
 	} );
 
@@ -308,13 +321,10 @@ describe( 'RulesAdmin', () => {
 	} );
 
 	test( 'a failed delete reports it and keeps the confirm open', async () => {
-		// useRulesGraph's contract: a mutation REJECTS its own promise and
-		// leaves the `error` banner clean for the caller's catch. RulesAdmin is
-		// the sole writer of the ruleset; with no catch the dialog closed, the
-		// row stayed, and the only trace was an unhandled rejection.
-		setGraph( {
-			remove: jest.fn().mockRejectedValue( new Error( 'gone' ) ),
-		} );
+		// useRulesGraph's contract: a mutation's refusal arrives on
+		// `onMutation` and leaves the `error` banner clean. RulesAdmin is the
+		// sole writer of the ruleset; closing on the click left the dialog
+		// gone, the row present, and no trace of the failure at all.
 		const { container } = mount();
 		const row = container.querySelector( 'tr[data-rule-id="r1"]' );
 		const del = Array.from( row.querySelectorAll( 'button' ) ).find(
@@ -329,6 +339,7 @@ describe( 'RulesAdmin', () => {
 		await act( async () => {
 			confirm.dispatchEvent( new Event( 'click', { bubbles: true } ) );
 		} );
+		await answer( 'delete', 'gone' );
 
 		expect( container.textContent ).toContain( 'gone' );
 		expect(
@@ -366,8 +377,7 @@ describe( 'RulesAdmin', () => {
 	} );
 
 	// A rejection need not be an Error: the banner still has to say something.
-	test( 'a non-Error rejection still reports readable text', async () => {
-		setGraph( { remove: jest.fn().mockRejectedValue( 'plain string' ) } );
+	test( 'a bare-string refusal still reports readable text', async () => {
 		const { container } = mount();
 		const row = container.querySelector( 'tr[data-rule-id="r1"]' );
 		click(
@@ -383,6 +393,7 @@ describe( 'RulesAdmin', () => {
 		await act( async () => {
 			confirm.dispatchEvent( new Event( 'click', { bubbles: true } ) );
 		} );
+		await answer( 'delete', 'plain string' );
 
 		expect( container.textContent ).toContain( 'plain string' );
 	} );
@@ -404,9 +415,6 @@ describe( 'RulesAdmin', () => {
 	} );
 
 	test( 'a failed save reports it and keeps the editor open', async () => {
-		setGraph( {
-			upsert: jest.fn().mockRejectedValue( new Error( 'nope' ) ),
-		} );
 		const { container } = mount();
 		const row = container.querySelector( 'tr[data-rule-id="r1"]' );
 		const edit = Array.from( row.querySelectorAll( 'button' ) ).find(
@@ -418,6 +426,7 @@ describe( 'RulesAdmin', () => {
 				new Event( 'click', { bubbles: true } )
 			);
 		} );
+		await answer( 'upsert', 'nope' );
 
 		expect( container.textContent ).toContain( 'nope' );
 		expect( dialogButton( 'modal-save' ) ).not.toBeNull();
@@ -535,13 +544,11 @@ describe( 'RulesAdmin', () => {
 			confirm.dispatchEvent( new Event( 'click', { bubbles: true } ) );
 		} );
 		expect( reset ).toHaveBeenCalledTimes( 1 );
+		await answer( 'reset' );
 		expect( document.querySelector( '.rules-admin__confirm' ) ).toBeNull();
 	} );
 
 	test( 'a failed reset reports it and keeps the confirm open', async () => {
-		setGraph( {
-			reset: jest.fn().mockRejectedValue( new Error( 'option locked' ) ),
-		} );
 		const { container } = mount();
 		click( container.querySelector( '.rules-admin__reset' ) );
 		const confirm = Array.from(
@@ -552,6 +559,7 @@ describe( 'RulesAdmin', () => {
 		await act( async () => {
 			confirm.dispatchEvent( new Event( 'click', { bubbles: true } ) );
 		} );
+		await answer( 'reset', 'option locked' );
 
 		expect( container.textContent ).toContain( 'option locked' );
 		expect(

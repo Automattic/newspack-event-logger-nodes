@@ -11,6 +11,7 @@
  */
 
 import useUrlNavigation from '../useUrlNavigation';
+import { Core, mountExospine } from '@newspack-nodes/runtime';
 import { renderHook, act } from '../../../test-helpers/renderHook';
 
 const URLS = [
@@ -27,6 +28,7 @@ describe( 'useUrlNavigation', () => {
 	let pushSpy;
 
 	beforeEach( () => {
+		Core.reset();
 		setLocation( 'http://localhost/wp-admin/' );
 		pushSpy = jest
 			.spyOn( window.history, 'pushState' )
@@ -73,9 +75,12 @@ describe( 'useUrlNavigation', () => {
 			.mockResolvedValueOnce( null )
 			.mockResolvedValue( { url: '/late/arrival' } );
 
-		// The retry is `useReconcile`'s own timer + backoff, not a urls tick:
-		// a deep link converges even on a dashboard whose catalog never moves.
+		// The retry rides the ROUTER TICK, not a urls tick: a deep link
+		// converges even on a dashboard whose catalog never moves.
+		// Arm the graph AFTER the fake clock, or its 1s slot stays on the real
+		// one and `advanceTimersByTime` never reaches the tick.
 		jest.useFakeTimers();
+		mountExospine();
 		const { result, unmount } = renderHook( () =>
 			useUrlNavigation( URLS, undefined, resolveUrlHash )
 		);
@@ -96,6 +101,44 @@ describe( 'useUrlNavigation', () => {
 		unmount();
 	} );
 
+	// One attempt at a time, and slower each time it misses. Asking every
+	// second forever puts a command per second on the wire for the life of the
+	// page, and each ask that overtakes the last one queues another waiter on
+	// a reply that is never coming.
+	it( 'never has two attempts outstanding, and backs off between them', async () => {
+		setLocation( 'http://localhost/wp-admin/?url=notinpage' );
+		let outstanding = 0;
+		let concurrent = 0;
+		const resolveUrlHash = jest.fn( () => {
+			outstanding += 1;
+			concurrent = Math.max( concurrent, outstanding );
+			return new Promise( ( resolve ) =>
+				setTimeout( () => {
+					outstanding -= 1;
+					resolve( null );
+				}, 2500 )
+			);
+		} );
+
+		jest.useFakeTimers();
+		mountExospine();
+		const { unmount } = renderHook( () =>
+			useUrlNavigation( URLS, undefined, resolveUrlHash )
+		);
+		await act( async () => {} );
+
+		for ( let i = 0; i < 30; i++ ) {
+			await act( async () => {
+				jest.advanceTimersByTime( 1000 );
+			} );
+		}
+		expect( concurrent ).toBe( 1 );
+		// 30s of misses at a growing interval is a handful of asks, not 30.
+		expect( resolveUrlHash.mock.calls.length ).toBeLessThan( 8 );
+		jest.useRealTimers();
+		unmount();
+	} );
+
 	it( 'keeps the ?request= intent when the resolver reports failure', async () => {
 		setLocation( 'http://localhost/wp-admin/?request=abc123def4567890' );
 		const resolveRequestId = jest
@@ -104,7 +147,9 @@ describe( 'useUrlNavigation', () => {
 			.mockResolvedValue( true );
 
 		// A reported miss keeps the intent; the reconcile clock is the retry.
+		// Arm the graph AFTER the fake clock; see above.
 		jest.useFakeTimers();
+		mountExospine();
 		const { unmount } = renderHook( () =>
 			useUrlNavigation( URLS, resolveRequestId )
 		);

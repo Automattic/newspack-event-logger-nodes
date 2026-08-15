@@ -10,7 +10,12 @@
  * back along FROM so it routes interpreter → router → the Request node that asked.
  */
 
-import { renderHook, act } from '../../test-helpers/renderHook';
+import {
+	renderHook,
+	act,
+	waitFor,
+	settleCommand,
+} from '../../test-helpers/renderHook';
 import {
 	Core,
 	Node,
@@ -161,8 +166,24 @@ async function renderBrowse( {
 			},
 		} );
 	} );
+	// The catalog rides the router tick, so it is a wait rather than a flush.
+	// A refused or empty catalog never fills, so nothing waits on those.
+	const fills =
+		isActive &&
+		payloadByVerb.list_logs?.length &&
+		! errorVerbs.includes( 'list_logs' );
+	if ( fills ) {
+		await waitFor( () => {
+			if ( ! hook.result.current.partitions.length ) {
+				throw new Error( 'catalog not in yet' );
+			}
+		} );
+	}
 	return { ...graph, ...hook };
 }
+
+// Every verb here rides the router tick; jest's 5s default is not enough.
+jest.setTimeout( 20000 );
 
 beforeEach( () => {
 	Core.reset();
@@ -192,7 +213,9 @@ describe( 'useGlobBrowse — authentication', () => {
 			payloadByVerb: { list_logs: [] },
 		} );
 
-		expect( client.batches.length ).toBeGreaterThanOrEqual( 1 );
+		await waitFor( () =>
+			expect( client.batches.length ).toBeGreaterThanOrEqual( 1 )
+		);
 		expect( client.batches[ 0 ][ VALUE ].auth ).toBeDefined();
 	} );
 } );
@@ -221,8 +244,10 @@ describe( 'useGlobBrowse — partition catalog', () => {
 				list_logs: [ { key: 'errors.p0' }, { key: 'errors.p1' } ],
 			},
 		} );
-		expect( result.current.selectedPartition ).toBe( '' );
-		expect( result.current.segments ).toEqual( [] );
+		await waitFor( () =>
+			expect( result.current.selectedPartition ).toBe( '' )
+		);
+		await waitFor( () => expect( result.current.segments ).toEqual( [] ) );
 		expect( result.current.mode ).toBe( 'live' );
 	} );
 
@@ -238,8 +263,12 @@ describe( 'useGlobBrowse — partition catalog', () => {
 				},
 			},
 		} );
-		expect( result.current.selectedPartition ).toBe( 'errors.p0' );
-		expect( result.current.segments ).toEqual( [ { id: 4, size: 96 } ] );
+		await waitFor( () =>
+			expect( result.current.selectedPartition ).toBe( 'errors.p0' )
+		);
+		await waitFor( () =>
+			expect( result.current.segments ).toEqual( [ { id: 4, size: 96 } ] )
+		);
 	} );
 
 	// The catalog fetch has its own node, which raises a backbone if absent.
@@ -280,14 +309,21 @@ describe( 'useGlobBrowse — segment catalog', () => {
 		await act( async () => {
 			result.current.selectPartition( 'errors.p3' );
 		} );
-		expect( result.current.selectedPartition ).toBe( 'errors.p3' );
-		expect( result.current.segments ).toEqual( [
-			{ id: 2, size: 100 },
-			{ id: 1, size: 50 },
-		] );
-		expect(
-			sentCommands( client ).find( ( c ) => 'log_status' === c.name ).args
-		).toEqual( [ 'errors.p3' ] );
+		await waitFor( () =>
+			expect( result.current.selectedPartition ).toBe( 'errors.p3' )
+		);
+		await waitFor( () =>
+			expect( result.current.segments ).toEqual( [
+				{ id: 2, size: 100 },
+				{ id: 1, size: 50 },
+			] )
+		);
+		await waitFor( () =>
+			expect(
+				sentCommands( client ).find( ( c ) => 'log_status' === c.name )
+					.args
+			).toEqual( [ 'errors.p3' ] )
+		);
 	} );
 
 	test( 'returning to All partitions clears the segment list', async () => {
@@ -298,9 +334,11 @@ describe( 'useGlobBrowse — segment catalog', () => {
 			},
 		} );
 		await act( async () => result.current.selectPartition( 'errors.p3' ) );
-		expect( result.current.segments ).toHaveLength( 1 );
+		await waitFor( () =>
+			expect( result.current.segments ).toHaveLength( 1 )
+		);
 		await act( async () => result.current.selectPartition( '' ) );
-		expect( result.current.segments ).toEqual( [] );
+		await waitFor( () => expect( result.current.segments ).toEqual( [] ) );
 	} );
 } );
 
@@ -320,10 +358,12 @@ describe( 'useGlobBrowse — reposition seeks', () => {
 			explicit: false,
 		} );
 		// The switch arms single-dir seek tracking on the view (dir carried).
-		expect( view.lastControl( 'select' ) ).toEqual( {
-			action: 'select',
-			dir: 'errors.p3',
-		} );
+		await waitFor( () =>
+			expect( view.lastControl( 'select' ) ).toEqual( {
+				action: 'select',
+				dir: 'errors.p3',
+			} )
+		);
 	} );
 
 	test( 'selecting All partitions resubscribes the glob live', async () => {
@@ -418,14 +458,18 @@ describe( 'useGlobBrowse — guards', () => {
 			payloadByVerb: { list_logs: [ { key: 'errors.p0' } ] },
 			errorVerbs: [ 'list_logs' ],
 		} );
-		expect( result.current.partitions ).toEqual( [] );
+		await waitFor( () =>
+			expect( result.current.partitions ).toEqual( [] )
+		);
 	} );
 
 	test( 'a non-array list_logs reply leaves the partition list empty', async () => {
 		const { result } = await renderBrowse( {
 			payloadByVerb: { list_logs: { not: 'an array' } },
 		} );
-		expect( result.current.partitions ).toEqual( [] );
+		await waitFor( () =>
+			expect( result.current.partitions ).toEqual( [] )
+		);
 	} );
 
 	test( 'a failed log_status clears the segment list', async () => {
@@ -437,7 +481,7 @@ describe( 'useGlobBrowse — guards', () => {
 			errorVerbs: [ 'log_status' ],
 		} );
 		await act( async () => result.current.selectPartition( 'errors.p3' ) );
-		expect( result.current.segments ).toEqual( [] );
+		await waitFor( () => expect( result.current.segments ).toEqual( [] ) );
 	} );
 
 	test( 'Live / Replay / segment seeks are no-ops with no partition selected', async () => {
@@ -473,13 +517,19 @@ describe( 'useGlobBrowse — seek feedback wiring', () => {
 			},
 		} );
 		await act( async () => result.current.selectPartition( 'errors.p3' ) );
+		// The rail is a tick away, and the boundary comes from it.
+		await waitFor( () =>
+			expect( result.current.segments.length ).toBeGreaterThan( 0 )
+		);
 		await act( async () => result.current.replay() );
 		// Newest segment 105 @ 1200 bytes is the boundary carried to the view.
-		expect( view.lastControl( 'browse' ) ).toEqual( {
-			action: 'browse',
-			endSegment: 105,
-			endOffset: 1200,
-		} );
+		await waitFor( () =>
+			expect( view.lastControl( 'browse' ) ).toEqual( {
+				action: 'browse',
+				endSegment: 105,
+				endOffset: 1200,
+			} )
+		);
 	} );
 
 	test( 'browseSegment carries the captured live boundary into the view', async () => {
@@ -495,14 +545,20 @@ describe( 'useGlobBrowse — seek feedback wiring', () => {
 			},
 		} );
 		await act( async () => result.current.selectPartition( 'errors.p3' ) );
+		// The rail is a tick away, and the boundary comes from it.
+		await waitFor( () =>
+			expect( result.current.segments.length ).toBeGreaterThan( 0 )
+		);
 		await act( async () =>
 			result.current.browseSegment( { id: 98, size: 700 } )
 		);
-		expect( view.lastControl( 'browse' ) ).toEqual( {
-			action: 'browse',
-			endSegment: 105,
-			endOffset: 1200,
-		} );
+		await waitFor( () =>
+			expect( view.lastControl( 'browse' ) ).toEqual( {
+				action: 'browse',
+				endSegment: 105,
+				endOffset: 1200,
+			} )
+		);
 	} );
 
 	test( 'follow sends a follow control into the view', async () => {
@@ -517,7 +573,11 @@ describe( 'useGlobBrowse — seek feedback wiring', () => {
 			result.current.browseSegment( { id: 105, size: 1200 } )
 		);
 		await act( async () => result.current.follow() );
-		expect( view.lastControl( 'follow' ) ).toEqual( { action: 'follow' } );
+		await waitFor( () =>
+			expect( view.lastControl( 'follow' ) ).toEqual( {
+				action: 'follow',
+			} )
+		);
 	} );
 
 	test( 'surfaces the view-derived mode + lastReceivedSegment (not the click)', async () => {
@@ -607,9 +667,7 @@ describe( 'useGlobBrowse — time travel (pause / step / jump)', () => {
 		await act( async () => {
 			result.current.replay();
 		} );
-		await act( async () => {
-			await result.current.step();
-		} );
+		await settleCommand( () => result.current.step() );
 
 		expect( sentCommands( client ) ).toContainEqual( {
 			name: 'read_message',
@@ -623,18 +681,18 @@ describe( 'useGlobBrowse — time travel (pause / step / jump)', () => {
 		await act( async () => {
 			result.current.browseSegment( { id: 3 } );
 		} );
-		await act( async () => {
-			await result.current.step();
-		} );
+		await settleCommand( () => result.current.step() );
 		expect( sentCommands( client ) ).toContainEqual( {
 			name: 'read_message',
 			args: [ 'errors.p2', '3:0' ],
 		} );
 		// The record was admitted through the paused belt…
-		expect( view.lastControl( 'step' ) ).toEqual( {
-			action: 'step',
-			frames: 1,
-		} );
+		await waitFor( () =>
+			expect( view.lastControl( 'step' ) ).toEqual( {
+				action: 'step',
+				frames: 1,
+			} )
+		);
 		expect( view.rows.map( ( m ) => m[ VALUE ] ) ).toContain(
 			'stepped-row'
 		);
@@ -647,9 +705,9 @@ describe( 'useGlobBrowse — time travel (pause / step / jump)', () => {
 
 	it( 'jumpTo pauses, seeks the position, and steps it', async () => {
 		const { result, client, setPausedRef } = await renderTimeTravel();
-		await act( async () => {
-			await result.current.jumpTo( { segment: 5, offset: 44 } );
-		} );
+		await settleCommand( () =>
+			result.current.jumpTo( { segment: 5, offset: 44 } )
+		);
 		expect( setPausedRef.current ).toHaveBeenCalledWith( true );
 		expect( sentCommands( client ) ).toContainEqual( {
 			name: 'read_message',
@@ -716,10 +774,14 @@ describe( 'useGlobBrowse — segment-rail maintenance', () => {
 		await act( async () => {
 			hook.result.current.selectPartition( 'errors.p2' );
 		} );
+		// The log_status ask rides the tick the fake timers now drive.
+		await act( async () => {
+			jest.advanceTimersByTime( 1000 );
+		} );
 		const before = statusCalls( graph.client );
 		expect( before ).toBeGreaterThan( 0 );
 		await act( async () => {
-			jest.advanceTimersByTime( 10000 );
+			jest.advanceTimersByTime( 11000 );
 		} );
 		expect( statusCalls( graph.client ) ).toBe( before + 1 );
 		jest.useRealTimers();
@@ -742,6 +804,9 @@ describe( 'useGlobBrowse — segment-rail maintenance', () => {
 		await act( async () => {
 			hook.result.current.selectPartition( 'errors.p2' );
 		} );
+		await waitFor( () =>
+			expect( statusCalls( graph.client ) ).toBeGreaterThan( 0 )
+		);
 		const before = statusCalls( graph.client );
 		// A rotation: the view reports a segment the rail doesn't know.
 		await act( async () => {
@@ -750,13 +815,16 @@ describe( 'useGlobBrowse — segment-rail maintenance', () => {
 				lastReceivedSegment: 8,
 			} );
 		} );
-		expect( statusCalls( graph.client ) ).toBe( before + 1 );
+		await waitFor( () =>
+			expect( statusCalls( graph.client ) ).toBe( before + 1 )
+		);
 		// The SAME unknown segment must not refetch again (no loop).
 		await act( async () => {
 			graph.view.publishView( {
 				mode: 'live',
 				lastReceivedSegment: 8,
 			} );
+			await new Promise( ( r ) => setTimeout( r, 1500 ) );
 		} );
 		expect( statusCalls( graph.client ) ).toBe( before + 1 );
 	} );

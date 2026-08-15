@@ -6,6 +6,8 @@
  * via `rerender()` and unmount via `unmount()`.
  */
 
+/* eslint-env jest */
+
 // Mark a concurrent-act test env to silence the act() unmount warning.
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -28,6 +30,23 @@ import { createRoot } from 'react-dom/client';
 import { act } from 'react';
 
 export { act };
+
+// Every root this module mounts, so a suite can tear them all down.
+const mountedRoots = [];
+
+/**
+ * Unmount everything `renderHook` mounted. A suite whose components own graph
+ * nodes calls this in its own afterEach; a test may still unmount its own.
+ *
+ * @return {void}
+ */
+export function cleanupMounts() {
+	while ( mountedRoots.length ) {
+		const { root, container } = mountedRoots.pop();
+		act( () => root.unmount() );
+		container.remove();
+	}
+}
 
 /**
  * Mount a React element into a real DOM container under jsdom. Returns
@@ -100,6 +119,7 @@ export function renderHook( useHook, { initialProps = {} } = {} ) {
 	act( () => {
 		root.render( React.createElement( Wrapper ) );
 	} );
+	mountedRoots.push( { root, container } );
 
 	return {
 		result,
@@ -115,4 +135,106 @@ export function renderHook( useHook, { initialProps = {} } = {} ) {
 			container.remove();
 		},
 	};
+}
+
+/**
+ * Poll an assertion until it passes, flushing React work between attempts.
+ *
+ * Commands ride the router tick now, so most things a test waits for are a
+ * second away rather than a microtask. This is @testing-library's `waitFor`
+ * in miniature, which this package has no dependency on.
+ *
+ * @param {Function} check              Throws until the condition holds.
+ * @param {Object}   [options]
+ * @param {number}   [options.timeout]  Give up after this many ms (default 6000).
+ * @param {number}   [options.interval] Time between attempts (default 50).
+ * @return {Promise<void>} Resolves once `check` passes; rejects with its last throw.
+ */
+export async function waitFor( check, { timeout = 6000, interval = 50 } = {} ) {
+	const deadline = Date.now() + timeout;
+	let lastError;
+	for (;;) {
+		try {
+			check();
+			return;
+		} catch ( e ) {
+			lastError = e;
+		}
+		if ( Date.now() >= deadline ) {
+			throw lastError;
+		}
+		// eslint-disable-next-line no-await-in-loop
+		await act(
+			async () =>
+				await new Promise( ( resolve ) =>
+					setTimeout( resolve, interval )
+				)
+		);
+	}
+}
+
+/**
+ * Start an awaited graph verb and settle it.
+ *
+ * The send rides the router tick, so the promise must be STARTED inside act
+ * and awaited outside one: awaiting inside act deadlocks, because act will not
+ * let the timers that carry the tick run while it waits. The polling happens
+ * through `waitFor`, so the reply's render is absorbed too.
+ *
+ * @param {Function} start       Returns the promise to settle.
+ * @param {Object}   [o]
+ * @param {number}   [o.timeout] Give up after this many ms.
+ * @return {Promise<*>} The resolved value, or the rejection as a value.
+ */
+export async function settleCommand( start, { timeout = 8000 } = {} ) {
+	let outcome;
+	let done = false;
+	act( () => {
+		start().then(
+			( value ) => {
+				outcome = value;
+				done = true;
+			},
+			( error ) => {
+				outcome = error;
+				done = true;
+			}
+		);
+	} );
+	await waitFor(
+		() => {
+			if ( ! done ) {
+				throw new Error( 'command has not settled yet' );
+			}
+		},
+		{ timeout }
+	);
+	return outcome;
+}
+
+/**
+ * Whether an awaited graph verb settles within a window.
+ *
+ * After a teardown there is no graph to send on, so the promise stays pending
+ * — which is what "the deep-link intent is held" means, and the opposite of
+ * resolving to null.
+ *
+ * @param {Function} start      Returns the promise to watch.
+ * @param {Object}   [o]
+ * @param {number}   [o.within] How long to watch, in ms.
+ * @return {Promise<boolean>} True if it settled inside the window.
+ */
+export async function settledWithin( start, { within = 2500 } = {} ) {
+	let settled = false;
+	act( () => {
+		start().then(
+			() => ( settled = true ),
+			() => ( settled = true )
+		);
+	} );
+	await act(
+		async () =>
+			await new Promise( ( resolve ) => setTimeout( resolve, within ) )
+	);
+	return settled;
 }

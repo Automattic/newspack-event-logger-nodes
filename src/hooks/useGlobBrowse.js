@@ -16,7 +16,7 @@
  * needed. The substrate's `raw-logs` CI answers all three reads: `list_logs`
  * catalogs the concrete dirs, `log_status` one dir's segments, and
  * `read_message` the single record a paused Step or `jumpTo` displays. Each verb
- * gets its OWN `useRequestNode` node, so every reply lands on the node that
+ * gets its OWN awaitable node, so every reply lands on the node that
  * asked for it and nothing needs correlating.
  *
  * Repositioning is imperative and gated on `isActive`: while the stream is closed
@@ -41,7 +41,7 @@ import useLogPositions, {
 } from '@newspack-nodes/shared/hooks/useLogPositions';
 import { browseControl, LIVE } from '@newspack-nodes/shared/nodes/seekTracker';
 import useRouterTick from '@newspack-nodes/shared/hooks/useRouterTick';
-import useRequestNode from '@newspack-nodes/shared/hooks/useRequestNode';
+import { useAwaitableCommand } from '@newspack-nodes/shared/hooks/useAwaitableCommand';
 
 // The substrate service CI that catalogs and reads the on-disk logs.
 const RAW_LOGS = 'raw-logs';
@@ -170,10 +170,23 @@ export default function useGlobBrowse( {
 		);
 	}, [ viewName ] );
 
-	// A node per catalog verb; each reply lands on the one that asked.
-	const listNode = useRequestNode( `${ viewName }:list`, RAW_LOGS );
-	const statusNode = useRequestNode( `${ viewName }:status`, RAW_LOGS );
-	const readNode = useRequestNode( `${ viewName }:read`, RAW_LOGS );
+	// A node per catalog verb, each riding the same tick as everything else.
+	const target = `_shell/_http/${ RAW_LOGS }`;
+	const listNode = useAwaitableCommand( {
+		scope: `${ viewName }:list`,
+		target,
+		command: 'list_logs',
+	} );
+	const statusNode = useAwaitableCommand( {
+		scope: `${ viewName }:status`,
+		target,
+		command: 'log_status',
+	} );
+	const readNode = useAwaitableCommand( {
+		scope: `${ viewName }:read`,
+		target,
+		command: 'read_message',
+	} );
 
 	/**
 	 * Send one `raw-logs` verb through the Request node that owns it.
@@ -194,7 +207,7 @@ export default function useGlobBrowse( {
 					new Error( `no request node for ${ name }` )
 				);
 			}
-			return request( name, args );
+			return request( args );
 		},
 		[ listNode, statusNode, readNode ]
 	);

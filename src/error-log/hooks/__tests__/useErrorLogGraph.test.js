@@ -21,7 +21,7 @@
  * is deterministic under jsdom.
  */
 
-import { renderHook, act } from '../../../test-helpers/renderHook';
+import { renderHook, act, waitFor } from '../../../test-helpers/renderHook';
 import {
 	newMessage,
 	pack,
@@ -409,9 +409,12 @@ describe( 'useErrorLogGraph — glob browse', () => {
 		} );
 		const { result } = renderHook( () => useErrorLogGraph() );
 		await act( async () => {} );
-		expect(
-			result.current.browse.partitions.map( ( p ) => p.key )
-		).toEqual( [ 'errors.p0', 'errors.p5' ] );
+		// The catalog rides the router tick, so it is a wait.
+		await waitFor( () =>
+			expect(
+				result.current.browse.partitions.map( ( p ) => p.key )
+			).toEqual( [ 'errors.p0', 'errors.p5' ] )
+		);
 	} );
 
 	test( 'selecting a partition narrows the live SSE subscription to that dir', async () => {
@@ -461,13 +464,8 @@ describe( 'useErrorLogGraph — teardown', () => {
 		const { unmount } = renderHook( () => useErrorLogGraph() );
 		const sourceAtMount = FakeEventSource.last;
 		unmount();
-		for ( const name of [
-			...COMPOSED_NAMES,
-			LINK,
-			VIEW,
-			INTERPRETER,
-			ROUTER,
-		] ) {
+		// The ROUTER is the page's heartbeat and is never torn down.
+		for ( const name of [ ...COMPOSED_NAMES, LINK, VIEW, INTERPRETER ] ) {
 			expect( Core.node( name ) ).toBeNull();
 		}
 		expect( sourceAtMount.closed ).toBe( true );
