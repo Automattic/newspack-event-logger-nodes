@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.55.0] - 2026-08-14
+
 ### Fixed
 - **One number answers "how many firehose partitions?": the config's `num_partitions`.** `firehose_dirs()` unioned that with whatever partition count the active topologies declared, so a topology's `var num_partitions` — its WORKER count, and legitimately pinned to 1 by `hub-control` — argued with the writer about a layout it does not own. `init_firehose()` has always hashed the rid over the config count alone, so that is exactly the span that can hold data; readers now span it and nothing else. A hub fanning in more spokes raises `num_partitions`, in one place. Readers also stop parsing TSL to ask, which takes the topology parse off every dashboard query.
 
