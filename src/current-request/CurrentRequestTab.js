@@ -21,6 +21,7 @@ import { addSliceFetcher } from '@newspack-nodes/shared/helpers/addSliceFetcher'
 import './nodes/register';
 // Reuse the perf dashboard's flame + profile; FlameGraph is d3-heavy (lazy).
 import RequestProfile from '../overview/RequestProfile';
+import { egressPath } from '@newspack-nodes/shared/helpers/egressPath';
 
 const VIEW = 'currentrequest:view';
 
@@ -116,7 +117,7 @@ export default function CurrentRequestTab() {
 				view: VIEW,
 				viewClass: 'CurrentRequestView',
 				tee,
-				target: '_shell/_http/performance',
+				target: egressPath( 'performance' ),
 			} ),
 		timerName: 'currentrequest:timer',
 		teeName: 'currentrequest:tee',

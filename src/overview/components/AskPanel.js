@@ -87,8 +87,7 @@ export default function AskPanel( { onError } ) {
 	onErrorRef.current = onError;
 
 	const { run: ask } = useCommandOnce( {
-		scope: 'performance:ask',
-		target: '_shell/_http/performance',
+		ci: 'performance',
 		command: 'ask',
 		retry: true,
 		onDone: ( { result, error } ) => {

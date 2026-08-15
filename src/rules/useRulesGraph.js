@@ -46,6 +46,7 @@ import {
 import './nodes/register';
 import { useCommandOnce } from '@newspack-nodes/shared/hooks/useCommandOnce';
 
+const RULES_CI = 'rules';
 const RECV = 'rules:in';
 const VIEW = 'rules:view';
 
@@ -140,28 +141,23 @@ export function useRulesGraph( opts = {} ) {
 		[]
 	);
 
-	const target = '_shell/_http/rules';
 	const saveOnce = useCommandOnce( {
-		scope: 'rules:save',
-		target,
+		ci: RULES_CI,
 		command: 'save',
 		onDone: settle( 'save' ),
 	} );
 	const upsertOnce = useCommandOnce( {
-		scope: 'rules:upsert',
-		target,
+		ci: RULES_CI,
 		command: 'upsert',
 		onDone: settle( 'upsert' ),
 	} );
 	const deleteOnce = useCommandOnce( {
-		scope: 'rules:delete',
-		target,
+		ci: RULES_CI,
 		command: 'delete',
 		onDone: settle( 'delete' ),
 	} );
 	const resetOnce = useCommandOnce( {
-		scope: 'rules:reset',
-		target,
+		ci: RULES_CI,
 		command: 'reset',
 		onDone: settle( 'reset' ),
 	} );

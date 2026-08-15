@@ -171,21 +171,20 @@ export default function useGlobBrowse( {
 	}, [ viewName ] );
 
 	// A node per catalog verb, each riding the same tick as everything else.
-	const target = `_shell/_http/${ RAW_LOGS }`;
 	const listNode = useAwaitableCommand( {
-		scope: `${ viewName }:list`,
-		target,
+		ci: RAW_LOGS,
 		command: 'list_logs',
+		scope: `${ viewName }:list`,
 	} );
 	const statusNode = useAwaitableCommand( {
-		scope: `${ viewName }:status`,
-		target,
+		ci: RAW_LOGS,
 		command: 'log_status',
+		scope: `${ viewName }:status`,
 	} );
 	const readNode = useAwaitableCommand( {
-		scope: `${ viewName }:read`,
-		target,
+		ci: RAW_LOGS,
 		command: 'read_message',
+		scope: `${ viewName }:read`,
 	} );
 
 	/**

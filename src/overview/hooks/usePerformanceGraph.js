@@ -64,13 +64,14 @@ import { addSliceFetcher } from '@newspack-nodes/shared/helpers/addSliceFetcher'
 import usePageVisibility from '@newspack-nodes/shared/hooks/usePageVisibility';
 import { useAwaitableCommand } from '@newspack-nodes/shared/hooks/useAwaitableCommand';
 import '../nodes/register';
+import { egressPath } from '@newspack-nodes/shared/helpers/egressPath';
 
 // The server CI mount + the egress path the Fetchers/on-demand commands target.
 const SERVER = 'performance';
-const TARGET = `_shell/_http/${ SERVER }`;
+const TARGET = egressPath( SERVER );
 
 // The ruleset CI the two rule-editing verbs reach.
-const RULES_TARGET = '_shell/_http/rules';
+const RULES_CI = 'rules';
 // The declared poll cadence; also the fallback for an unparseable setting.
 const DEFAULT_REFRESH_INTERVAL_MS = 15000;
 
@@ -230,33 +231,26 @@ export function usePerformanceGraph( opts = {} ) {
 
 	// One node per awaited verb, each riding the same tick as the polls.
 	const requestSearch = useAwaitableCommand( {
-		scope: `${ SERVER }:request_search`,
-		target: TARGET,
+		ci: SERVER,
 		command: 'request_search',
 	} );
+	// Its own scope: the poll owns `<SERVER>:url_detail`.
 	const urlDetail = useAwaitableCommand( {
-		scope: `${ SERVER }:url_detail:lookup`,
-		target: TARGET,
+		ci: SERVER,
 		command: 'url_detail',
+		scope: `${ SERVER }:url_detail:lookup`,
 	} );
 	const grep = useAwaitableCommand( {
-		scope: `${ SERVER }:request_grep`,
-		target: TARGET,
+		ci: SERVER,
 		command: 'request_grep',
 	} );
-	const rulesList = useAwaitableCommand( {
-		scope: 'rules:list',
-		target: RULES_TARGET,
-		command: 'list',
-	} );
+	const rulesList = useAwaitableCommand( { ci: RULES_CI, command: 'list' } );
 	const rulesUpsert = useAwaitableCommand( {
-		scope: 'rules:upsert',
-		target: RULES_TARGET,
+		ci: RULES_CI,
 		command: 'upsert',
 	} );
 	const rulesDelete = useAwaitableCommand( {
-		scope: 'rules:delete',
-		target: RULES_TARGET,
+		ci: RULES_CI,
 		command: 'delete',
 	} );
 
