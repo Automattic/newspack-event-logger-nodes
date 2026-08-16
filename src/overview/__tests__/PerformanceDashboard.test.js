@@ -38,34 +38,95 @@ jest.mock( '@newspack-nodes/runtime', () => ( {
 		const key = sliceByNode[ nodeName ];
 		return key ? mockView[ key ] : undefined;
 	},
-	formatCommandArgs: ( args ) => args,
+	// Faithful enough to assert on: positionals then `--key=value`, as the
+	// real one emits, so a test sees the tokens the server would.
+	formatCommandArgs: ( args, options = {} ) => [
+		...args,
+		...Object.entries( options ).map( ( [ k, v ] ) => `--${ k }=${ v }` ),
+	],
 } ) );
 
-// The ask command rides a Request node this suite's runtime mock has no graph
-// for; everything else about the picker is real, and where its trigger sits in
-// each header is what these tests cover.
+// @longform Every on-demand verb this page drives is a one-shot, and this
+// suite has no graph for them. The double records each by scope and hands the
+// test `answerCommand`, which fires that verb's own `onDone` — the same
+// callback the real reply would land in, so the paths under test are the real
+// ones and only the wire is stood in for.
+const mockCommands = {};
 jest.mock( '@newspack-nodes/shared/hooks/useCommandOnce', () => ( {
 	__esModule: true,
-	useCommandOnce: () => ( { run: jest.fn() } ),
+	useCommandOnce: ( opts ) => {
+		const key =
+			opts.scope ||
+			`${ opts.ci ? `${ opts.ci }:` : '' }${ opts.command }`;
+		// `run` must be STABLE across renders, as the real useCallback one is:
+		// an unstable identity re-runs every effect that lists it as a dep.
+		const entry = ( mockCommands[ key ] ??= {
+			sent: [],
+			api: {
+				run: ( args ) => mockCommands[ key ].sent.push( args ),
+				result: null,
+				error: null,
+				errorData: null,
+				answeredArgs: null,
+				answerFor: () => null,
+				pending: false,
+			},
+		} );
+		entry.opts = opts;
+		return entry.api;
+	},
 } ) );
 
+/**
+ * Deliver a reply to the verb registered under `key`.
+ *
+ * @param {string} key    Scope, or `<ci>:<command>`.
+ * @param {Object} answer `{ result, error, args }`, as `onDone` receives it.
+ */
+function answerCommand( key, answer ) {
+	const entry = mockCommands[ key ];
+	if ( ! entry ) {
+		throw new Error( `no command registered for ${ key }` );
+	}
+	act( () =>
+		entry.opts.onDone?.( {
+			result: null,
+			error: null,
+			errorData: null,
+			args: [],
+			...answer,
+		} )
+	);
+}
+
+/**
+ * What a verb was asked, most recent last.
+ *
+ * @param {string} key Scope, or `<ci>:<command>`.
+ * @return {Array[]} The argument arrays it was run with.
+ */
+const sentTo = ( key ) => mockCommands[ key ]?.sent ?? [];
+
+// The scopes this page registers, spelled once.
+const SEARCH = 'performance:request_search:search';
+const LOOKUP = 'performance:url_detail:lookup';
+const DEEP_REQUEST = 'performance:request_search:deeplink';
+const DEEP_URL = 'performance:url_detail:deeplink';
+const GREP = 'performance:request_grep';
+const RULES_LIST = 'rules:list';
+const RULES_UPSERT = 'rules:upsert';
+const RULES_DELETE = 'rules:delete';
+
 // The graph control callbacks usePerformanceGraph hands back.
-const mockGraph = {
-	handleUrlParamsChange: jest.fn(),
-	resolveRequest: jest.fn().mockResolvedValue( null ),
-	resolveUrlHash: jest.fn().mockResolvedValue( null ),
-	fetchUrlBreakdown: jest.fn().mockResolvedValue( null ),
-	listRules: jest.fn().mockResolvedValue( { rules: [] } ),
-	upsertRule: jest.fn().mockResolvedValue( { rule: {} } ),
-	removeRule: jest.fn().mockResolvedValue( { deleted: true } ),
-	requestGrep: jest
-		.fn()
-		.mockResolvedValue( { results: [], truncated: false } ),
-};
+const mockGraph = { handleUrlParamsChange: jest.fn() };
 // Records what the dashboard hands the graph — the partition rides here.
 let mockGraphOpts = null;
 jest.mock( '../hooks/usePerformanceGraph', () => ( {
 	__esModule: true,
+	// The CI mounts are real: the scopes below are built from them.
+	SERVER: 'performance',
+	RULES_CI: 'rules',
+	GREP_RESULT_LIMIT: 20,
 	usePerformanceGraph: ( opts ) => {
 		mockGraphOpts = opts;
 		return mockGraph;
@@ -81,6 +142,8 @@ const mockNavState = {
 	initialSearchQuery: '',
 	setInitialSearchQuery: jest.fn(),
 	updateBrowserUrl: jest.fn(),
+	deepLink: { requestId: null, urlHash: null },
+	clearDeepLink: jest.fn(),
 };
 jest.mock( '../hooks/useUrlNavigation', () => ( {
 	__esModule: true,
@@ -263,23 +326,11 @@ describe( 'PerformanceDashboard', () => {
 
 	afterEach( () => {
 		mockGraph.handleUrlParamsChange.mockClear();
-		mockGraph.resolveRequest.mockReset();
-		mockGraph.resolveRequest.mockResolvedValue( null );
-		mockGraph.resolveUrlHash.mockReset();
-		mockGraph.resolveUrlHash.mockResolvedValue( null );
-		mockGraph.fetchUrlBreakdown.mockClear();
-		mockGraph.listRules.mockReset();
-		mockGraph.listRules.mockResolvedValue( { rules: [] } );
-		mockGraph.upsertRule.mockReset();
-		mockGraph.removeRule.mockReset();
-		mockGraph.removeRule.mockResolvedValue( { deleted: true } );
-		mockGraph.upsertRule.mockResolvedValue( { rule: {} } );
-		mockGraph.requestGrep.mockReset();
-		mockGraph.requestGrep.mockResolvedValue( {
-			results: [],
-			truncated: false,
-		} );
+		Object.keys( mockCommands ).forEach(
+			( k ) => delete mockCommands[ k ]
+		);
 		globalThis.__ruleEditProps = null;
+		mockNavState.deepLink = { requestId: null, urlHash: null };
 		mockNavState.selectedUrl = null;
 		mockNavState.selectedRequest = null;
 		mockNavState.initialSearchQuery = '';
@@ -767,11 +818,7 @@ describe( 'PerformanceDashboard', () => {
 		unmount();
 	} );
 
-	it( 'searchRequest resolves a request via the graph and selects it', async () => {
-		mockGraph.resolveRequest.mockResolvedValue( {
-			url_hash: 'h1',
-			partition: 0,
-		} );
+	it( 'searchRequest asks request_search and selects what it answers', async () => {
 		mockView = loadedView();
 		const { unmount } = renderComponent(
 			React.createElement( PerformanceDashboard, {
@@ -782,7 +829,12 @@ describe( 'PerformanceDashboard', () => {
 		await act( async () => {
 			await globalThis.__overviewProps.onSearch( 'r1' );
 		} );
-		expect( mockGraph.resolveRequest ).toHaveBeenCalledWith( 'r1' );
+		expect( sentTo( SEARCH ) ).toContainEqual( [ 'r1' ] );
+
+		answerCommand( SEARCH, {
+			result: { url_hash: 'h1', partition: 0 },
+			args: [ 'r1' ],
+		} );
 		expect( mockNavState.selectUrl ).toHaveBeenCalledWith(
 			expect.objectContaining( { hash: 'h1' } )
 		);
@@ -793,7 +845,6 @@ describe( 'PerformanceDashboard', () => {
 	it( 'a rid-shaped miss hints at the /pattern syntax', async () => {
 		// 'checkout' is rid-shaped so it routes to exact lookup; the miss must
 		// teach the text-searcher the escape hatch instead of dead-ending.
-		mockGraph.resolveRequest.mockResolvedValue( null );
 		mockView = loadedView();
 		const { unmount } = renderComponent(
 			React.createElement( PerformanceDashboard, { onError: jest.fn() } )
@@ -802,17 +853,17 @@ describe( 'PerformanceDashboard', () => {
 		await act( async () => {
 			await globalThis.__overviewProps.onSearch( 'checkout' );
 		} );
+		answerCommand( SEARCH, { result: null, args: [ 'checkout' ] } );
 		expect( globalThis.__overviewProps.searchError ).toContain(
 			'prefix with / to search recent traffic'
 		);
 		unmount();
 	} );
 
-	it( 'resolveRequestId from URL navigation selects the resolved URL and request', async () => {
-		mockGraph.resolveRequest.mockResolvedValue( {
-			url_hash: 'h-known',
-			partition: 2,
-		} );
+	// A ?request= deep link asks on its OWN node, and its reply carries the
+	// partition — the whole reason the rid outranks the ?url= hash.
+	it( 'a ?request= deep link selects the URL, the request and the partition', async () => {
+		mockNavState.deepLink = { requestId: 'rid-deep', urlHash: null };
 		mockView = loadedView( {
 			urls: {
 				data: [ { hash: 'h-known', url: '/known' } ],
@@ -827,28 +878,25 @@ describe( 'PerformanceDashboard', () => {
 			} )
 		);
 		await flushEffects();
-		await act( async () => {
-			await globalThis.__resolveRequestId( 'rid-deep' );
+		expect( sentTo( DEEP_REQUEST ) ).toContainEqual( [ 'rid-deep' ] );
+
+		answerCommand( DEEP_REQUEST, {
+			result: { url_hash: 'h-known', partition: 2 },
+			args: [ 'rid-deep' ],
 		} );
-		expect( mockGraph.resolveRequest ).toHaveBeenCalledWith( 'rid-deep' );
 		expect( mockNavState.selectUrl ).toHaveBeenCalledWith(
 			expect.objectContaining( { hash: 'h-known' } )
 		);
 		expect( mockNavState.selectRequest ).toHaveBeenCalledWith( 'rid-deep' );
+		expect( mockNavState.clearDeepLink ).toHaveBeenCalled();
 		unmount();
 	} );
 
-	it( 'resolveRequestId asks url_detail for a hash outside the loaded page', async () => {
-		// request_search answers {rid, partition, url_hash} — never a url. A
-		// deep-linked request whose URL is off the loaded page therefore has
-		// no title unless the hash is resolved, which is what this asserts.
-		mockGraph.resolveRequest.mockResolvedValue( {
-			url_hash: 'h-offpage',
-			partition: 3,
-		} );
-		mockGraph.resolveUrlHash.mockResolvedValue( {
-			url: '/quokka/census-2026',
-		} );
+	// request_search answers {rid, partition, url_hash} — never a url. A
+	// deep-linked request whose URL is off the loaded page therefore has no
+	// title until the hash is looked up, which is what this asserts.
+	it( 'a deep link asks url_detail for a hash outside the loaded page', async () => {
+		mockNavState.deepLink = { requestId: 'rid-offpage', urlHash: null };
 		mockView = loadedView( {
 			urls: {
 				data: [ { hash: 'h-known', url: '/known' } ],
@@ -863,26 +911,28 @@ describe( 'PerformanceDashboard', () => {
 			} )
 		);
 		await flushEffects();
-		await act( async () => {
-			await globalThis.__resolveRequestId( 'rid-offpage' );
+		answerCommand( DEEP_REQUEST, {
+			result: { url_hash: 'h-offpage', partition: 3 },
+			args: [ 'rid-offpage' ],
 		} );
-		expect( mockGraph.resolveUrlHash ).toHaveBeenCalledWith( 'h-offpage' );
-		expect( mockNavState.selectUrl ).toHaveBeenCalledWith( {
+		expect( sentTo( LOOKUP ) ).toContainEqual( [ 'h-offpage' ] );
+
+		answerCommand( LOOKUP, {
+			result: { stats: { url: '/quokka/census-2026' } },
+			args: [ 'h-offpage' ],
+		} );
+		expect( mockNavState.selectUrl ).toHaveBeenLastCalledWith( {
 			hash: 'h-offpage',
 			url: '/quokka/census-2026',
 		} );
 		unmount();
 	} );
 
-	it( 'resolveRequestId keeps the Unknown URL sentinel when the hash will not resolve', async () => {
-		// The sentinel is load-bearing: canLogUrl compares against it to
-		// disable "Log this URL". Titling with the raw hash would re-enable
-		// the button and offer to write a rule whose pattern is a hash.
-		mockGraph.resolveRequest.mockResolvedValue( {
-			url_hash: 'h-offpage',
-			partition: 3,
-		} );
-		mockGraph.resolveUrlHash.mockResolvedValue( null );
+	// The sentinel is load-bearing: canLogUrl compares against it to disable
+	// "Log this URL". Titling with the raw hash would re-enable the button and
+	// offer to write a rule whose pattern is a hash.
+	it( 'keeps the Unknown URL sentinel when the hash will not resolve', async () => {
+		mockNavState.deepLink = { requestId: 'rid-offpage', urlHash: null };
 		mockView = loadedView();
 		const { unmount } = renderComponent(
 			React.createElement( PerformanceDashboard, {
@@ -890,22 +940,28 @@ describe( 'PerformanceDashboard', () => {
 			} )
 		);
 		await flushEffects();
-		await act( async () => {
-			await globalThis.__resolveRequestId( 'rid-offpage' );
+		answerCommand( DEEP_REQUEST, {
+			result: { url_hash: 'h-offpage', partition: 3 },
+			args: [ 'rid-offpage' ],
 		} );
 		expect( mockNavState.selectUrl ).toHaveBeenCalledWith( {
+			hash: 'h-offpage',
+			url: 'Unknown URL',
+		} );
+
+		// A lookup that answers no url leaves the sentinel standing.
+		answerCommand( LOOKUP, { result: null, args: [ 'h-offpage' ] } );
+		expect( mockNavState.selectUrl ).toHaveBeenLastCalledWith( {
 			hash: 'h-offpage',
 			url: 'Unknown URL',
 		} );
 		unmount();
 	} );
 
-	it( 'runs and clears the initial search query from URL navigation', async () => {
-		mockNavState.initialSearchQuery = 'rid-initial';
-		mockGraph.resolveRequest.mockResolvedValue( {
-			url_hash: 'missing-hash',
-			partition: 0,
-		} );
+	// A hash title is not merely ugly: canLogUrl only rejects the sentinel, so
+	// a hash would offer to write a rule keyed on `<hash>?`.
+	it( 'a ?url= deep link applies the sentinel, never a hash title', async () => {
+		mockNavState.deepLink = { requestId: null, urlHash: 'h-empty' };
 		mockView = loadedView();
 		const { unmount } = renderComponent(
 			React.createElement( PerformanceDashboard, {
@@ -913,64 +969,20 @@ describe( 'PerformanceDashboard', () => {
 			} )
 		);
 		await flushEffects();
-		expect( mockGraph.resolveRequest ).toHaveBeenCalledWith(
-			'rid-initial'
-		);
-		expect( mockNavState.setInitialSearchQuery ).toHaveBeenCalledWith(
-			null
-		);
-		unmount();
-	} );
+		expect( sentTo( DEEP_URL ) ).toContainEqual( [ 'h-empty' ] );
 
-	it( 'searchRequest resolves an off-page hash the same way the deep link does', async () => {
-		// The search box is the third caller of this block. It had the same
-		// always-undefined `data.url` the ?request= path did.
-		mockGraph.resolveRequest.mockResolvedValue( {
-			url_hash: 'h-offpage',
-			partition: 1,
+		answerCommand( DEEP_URL, {
+			result: { stats: { url: '' } },
+			args: [ 'h-empty' ],
 		} );
-		mockGraph.resolveUrlHash.mockResolvedValue( {
-			url: '/quokka/census-2026',
-		} );
-		mockView = loadedView();
-		const { unmount } = renderComponent(
-			React.createElement( PerformanceDashboard, {
-				onError: jest.fn(),
-			} )
-		);
-		await flushEffects();
-		await act( async () => {
-			await globalThis.__overviewProps.onSearch( 'rid-search' );
-		} );
-		expect( mockGraph.resolveUrlHash ).toHaveBeenCalledWith( 'h-offpage' );
 		expect( mockNavState.selectUrl ).toHaveBeenCalledWith( {
-			hash: 'h-offpage',
-			url: '/quokka/census-2026',
+			hash: 'h-empty',
+			url: 'Unknown URL',
 		} );
 		unmount();
 	} );
 
-	it( 'the ?url= resolver applies the sentinel, never a hash title', async () => {
-		// A hash title is not merely ugly: canLogUrl only rejects the
-		// sentinel, so a hash would offer to write a rule keyed on `<hash>?`.
-		mockGraph.resolveUrlHash.mockResolvedValue( { url: '' } );
-		mockView = loadedView();
-		const { unmount } = renderComponent(
-			React.createElement( PerformanceDashboard, {
-				onError: jest.fn(),
-			} )
-		);
-		await flushEffects();
-		let resolved;
-		await act( async () => {
-			resolved = await globalThis.__resolveUrlHash( 'h-empty' );
-		} );
-		expect( resolved ).toEqual( { url: 'Unknown URL' } );
-		unmount();
-	} );
-
-	it( 'searchRequest with an unresolved request does not throw', async () => {
-		mockGraph.resolveRequest.mockResolvedValue( null );
+	it( 'searchRequest selects nothing when the request is not found', async () => {
 		mockView = loadedView();
 		const { unmount } = renderComponent(
 			React.createElement( PerformanceDashboard, {
@@ -984,17 +996,12 @@ describe( 'PerformanceDashboard', () => {
 			await globalThis.__overviewProps.onSearch( '   ' );
 			await globalThis.__overviewProps.onSearch( 'r1' );
 		} );
+		answerCommand( SEARCH, { result: null, args: [ 'r1' ] } );
 		expect( mockNavState.selectRequest ).not.toHaveBeenCalled();
 		unmount();
 	} );
 
 	it( 'a /url-pattern search runs request_grep and renders the result list', async () => {
-		mockGraph.requestGrep.mockResolvedValue( {
-			results: [
-				{ rid: 'r1', url: '/calendar', method: 'GET', match_count: 2 },
-			],
-			truncated: true,
-		} );
 		mockView = loadedView();
 		const { unmount } = renderComponent(
 			React.createElement( PerformanceDashboard, {
@@ -1005,9 +1012,27 @@ describe( 'PerformanceDashboard', () => {
 		await act( async () => {
 			await globalThis.__overviewProps.onSearch( '/calendar' );
 		} );
-		// Pattern (has '/') → grep, NOT the exact-rid resolveRequest.
-		expect( mockGraph.requestGrep ).toHaveBeenCalledWith( '/calendar' );
-		expect( mockGraph.resolveRequest ).not.toHaveBeenCalled();
+		// Pattern (has '/') → grep, NOT the exact-rid request_search.
+		expect( sentTo( GREP ) ).toContainEqual( [
+			'/calendar',
+			'--limit=20',
+		] );
+		expect( sentTo( SEARCH ) ).toEqual( [] );
+
+		answerCommand( GREP, {
+			result: {
+				results: [
+					{
+						rid: 'r1',
+						url: '/calendar',
+						method: 'GET',
+						match_count: 2,
+					},
+				],
+				truncated: true,
+			},
+			args: [ '/calendar' ],
+		} );
 		expect( globalThis.__overviewProps.searchResults ).toEqual( [
 			{ rid: 'r1', url: '/calendar', method: 'GET', match_count: 2 },
 		] );
@@ -1018,10 +1043,6 @@ describe( 'PerformanceDashboard', () => {
 	} );
 
 	it( 'an empty grep result surfaces the no-matches message', async () => {
-		mockGraph.requestGrep.mockResolvedValue( {
-			results: [],
-			truncated: false,
-		} );
 		mockView = loadedView();
 		const { unmount } = renderComponent(
 			React.createElement( PerformanceDashboard, {
@@ -1032,6 +1053,10 @@ describe( 'PerformanceDashboard', () => {
 		await act( async () => {
 			await globalThis.__overviewProps.onSearch( '/nope' );
 		} );
+		answerCommand( GREP, {
+			result: { results: [], truncated: false },
+			args: [ '/nope' ],
+		} );
 		expect( globalThis.__overviewProps.searchResults ).toBeNull();
 		expect(
 			( globalThis.__overviewProps.searchError || '' ).toLowerCase()
@@ -1040,17 +1065,6 @@ describe( 'PerformanceDashboard', () => {
 	} );
 
 	it( 'selecting a grep result deep-links via the exact-rid path', async () => {
-		mockGraph.requestGrep.mockResolvedValue( {
-			results: [
-				{ rid: 'grep-rid', url: '/x', method: 'GET', match_count: 1 },
-			],
-			truncated: false,
-		} );
-		mockGraph.resolveRequest.mockResolvedValue( {
-			url_hash: 'h9',
-			partition: 0,
-			url: '/x',
-		} );
 		mockView = loadedView();
 		const { unmount } = renderComponent(
 			React.createElement( PerformanceDashboard, {
@@ -1061,10 +1075,29 @@ describe( 'PerformanceDashboard', () => {
 		await act( async () => {
 			await globalThis.__overviewProps.onSearch( '/x' );
 		} );
+		answerCommand( GREP, {
+			result: {
+				results: [
+					{
+						rid: 'grep-rid',
+						url: '/x',
+						method: 'GET',
+						match_count: 1,
+					},
+				],
+				truncated: false,
+			},
+			args: [ '/x' ],
+		} );
 		await act( async () => {
 			await globalThis.__overviewProps.onSelectResult( 'grep-rid' );
 		} );
-		expect( mockGraph.resolveRequest ).toHaveBeenCalledWith( 'grep-rid' );
+		expect( sentTo( SEARCH ) ).toContainEqual( [ 'grep-rid' ] );
+
+		answerCommand( SEARCH, {
+			result: { url_hash: 'h9', partition: 0 },
+			args: [ 'grep-rid' ],
+		} );
 		expect( mockNavState.selectRequest ).toHaveBeenCalledWith( 'grep-rid' );
 		unmount();
 	} );
@@ -1348,7 +1381,6 @@ describe( 'PerformanceDashboard', () => {
 				action: 'log',
 				hooks: [ 'template_redirect' ],
 			};
-			mockGraph.listRules.mockResolvedValue( { rules: [ existing ] } );
 			mockView = urlModalView( '/foo' );
 			const { container, unmount } = renderComponent(
 				React.createElement( PerformanceDashboard, {
@@ -1356,7 +1388,8 @@ describe( 'PerformanceDashboard', () => {
 				} )
 			);
 			await flushEffects();
-			expect( mockGraph.listRules ).toHaveBeenCalled();
+			answerCommand( RULES_LIST, { result: { rules: [ existing ] } } );
+			expect( sentTo( RULES_LIST ) ).not.toEqual( [] );
 			const btn = container.querySelector(
 				'.event-logger-rule-control button'
 			);
@@ -1372,7 +1405,6 @@ describe( 'PerformanceDashboard', () => {
 		} );
 
 		it( 'opens a blank exact-pattern rule when none exists', async () => {
-			mockGraph.listRules.mockResolvedValue( { rules: [] } );
 			mockView = urlModalView( '/foo' );
 			const { container, unmount } = renderComponent(
 				React.createElement( PerformanceDashboard, {
@@ -1380,6 +1412,7 @@ describe( 'PerformanceDashboard', () => {
 				} )
 			);
 			await flushEffects();
+			answerCommand( RULES_LIST, { result: { rules: [] } } );
 			const btn = container.querySelector(
 				'.event-logger-rule-control button'
 			);
@@ -1397,7 +1430,6 @@ describe( 'PerformanceDashboard', () => {
 
 		it( 'editing an existing rule exposes onDelete: it removes and closes the editor', async () => {
 			const existing = { id: 'r-77', pattern: '/foo?', action: 'log' };
-			mockGraph.listRules.mockResolvedValue( { rules: [ existing ] } );
 			mockView = urlModalView( '/foo' );
 			const { container, unmount } = renderComponent(
 				React.createElement( PerformanceDashboard, {
@@ -1405,6 +1437,7 @@ describe( 'PerformanceDashboard', () => {
 				} )
 			);
 			await flushEffects();
+			answerCommand( RULES_LIST, { result: { rules: [ existing ] } } );
 			await act( async () => {
 				container
 					.querySelector( '.event-logger-rule-control button' )
@@ -1416,7 +1449,8 @@ describe( 'PerformanceDashboard', () => {
 			await act( async () => {
 				await globalThis.__ruleEditProps.onDelete();
 			} );
-			expect( mockGraph.removeRule ).toHaveBeenCalledWith( 'r-77' );
+			expect( sentTo( RULES_DELETE ) ).toContainEqual( [ 'r-77' ] );
+			answerCommand( RULES_DELETE, { result: { deleted: true } } );
 			// The URL modal stays open; only the RuleEditModal closed.
 			expect(
 				container.querySelector( '[data-testid="rule-edit-modal"]' )
@@ -1425,7 +1459,6 @@ describe( 'PerformanceDashboard', () => {
 		} );
 
 		it( 'a blank add draft gets no onDelete', async () => {
-			mockGraph.listRules.mockResolvedValue( { rules: [] } );
 			mockView = urlModalView( '/foo' );
 			const { container, unmount } = renderComponent(
 				React.createElement( PerformanceDashboard, {
@@ -1433,6 +1466,7 @@ describe( 'PerformanceDashboard', () => {
 				} )
 			);
 			await flushEffects();
+			answerCommand( RULES_LIST, { result: { rules: [] } } );
 			await act( async () => {
 				container
 					.querySelector( '.event-logger-rule-control button' )
@@ -1443,7 +1477,6 @@ describe( 'PerformanceDashboard', () => {
 		} );
 
 		it( 'does not append a second ? on a nodes/ELN URL that already has one', async () => {
-			mockGraph.listRules.mockResolvedValue( { rules: [] } );
 			mockView = urlModalView( '/jobs/x?reconcile' );
 			const { container, unmount } = renderComponent(
 				React.createElement( PerformanceDashboard, {
@@ -1451,6 +1484,7 @@ describe( 'PerformanceDashboard', () => {
 				} )
 			);
 			await flushEffects();
+			answerCommand( RULES_LIST, { result: { rules: [] } } );
 			const btn = container.querySelector(
 				'.event-logger-rule-control button'
 			);
@@ -1465,10 +1499,6 @@ describe( 'PerformanceDashboard', () => {
 		} );
 
 		it( 'saving upserts the exact rule and flips the button label without closing the URL modal', async () => {
-			mockGraph.listRules.mockResolvedValue( { rules: [] } );
-			mockGraph.upsertRule.mockResolvedValue( {
-				rule: { id: 'new-1', pattern: '/foo?', action: 'log' },
-			} );
 			mockView = urlModalView( '/foo' );
 			const { container, unmount } = renderComponent(
 				React.createElement( PerformanceDashboard, {
@@ -1476,6 +1506,7 @@ describe( 'PerformanceDashboard', () => {
 				} )
 			);
 			await flushEffects();
+			answerCommand( RULES_LIST, { result: { rules: [] } } );
 			await act( async () => {
 				container
 					.querySelector( '.event-logger-rule-control button' )
@@ -1489,7 +1520,18 @@ describe( 'PerformanceDashboard', () => {
 			await act( async () => {
 				await globalThis.__ruleEditProps.onSave( draft );
 			} );
-			expect( mockGraph.upsertRule ).toHaveBeenCalledWith( draft );
+			expect( sentTo( RULES_UPSERT ) ).toContainEqual( [
+				JSON.stringify( draft ),
+			] );
+			answerCommand( RULES_UPSERT, {
+				result: { rule: { id: 'new-1', pattern: '/foo?' } },
+			} );
+			// The ruleset re-reads, so the label follows the SERVER.
+			answerCommand( RULES_LIST, {
+				result: {
+					rules: [ { id: 'new-1', pattern: '/foo?', action: 'log' } ],
+				},
+			} );
 			// The URL modal stays open; only the RuleEditModal closed.
 			expect(
 				container.querySelector( '[data-testid="modal"]' )
@@ -1503,8 +1545,6 @@ describe( 'PerformanceDashboard', () => {
 		} );
 
 		it( 'shows an inline error and keeps the URL modal open when the upsert fails', async () => {
-			mockGraph.listRules.mockResolvedValue( { rules: [] } );
-			mockGraph.upsertRule.mockResolvedValue( null );
 			mockView = urlModalView( '/foo' );
 			const { container, unmount } = renderComponent(
 				React.createElement( PerformanceDashboard, {
@@ -1512,6 +1552,7 @@ describe( 'PerformanceDashboard', () => {
 				} )
 			);
 			await flushEffects();
+			answerCommand( RULES_LIST, { result: { rules: [] } } );
 			await act( async () => {
 				container
 					.querySelector( '.event-logger-rule-control button' )
@@ -1523,6 +1564,12 @@ describe( 'PerformanceDashboard', () => {
 					pattern: '/foo?',
 					action: 'log',
 				} );
+			} );
+			// A REFUSAL is an answer; it fills the banner and closes only the
+			// rule editor.
+			answerCommand( RULES_UPSERT, {
+				result: null,
+				error: 'unparseable rule',
 			} );
 			expect(
 				container.querySelector( '[data-testid="modal"]' )

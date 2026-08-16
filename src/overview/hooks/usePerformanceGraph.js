@@ -34,16 +34,14 @@
  * mints from its own receiver Tee like every other slice: a view that is also the
  * reply address carries two protocols at once.
  *
- * AWAITED verbs — `resolveRequest`, `resolveUrlHash`, `fetchUrlBreakdown`, the
- * three `rules` verbs, and `requestGrep` — each go out through their OWN node
- * (`useAwaitableCommand`), on the same batched tick as the polls. A node
- * holding one in-flight command cannot mistake whose reply arrived, so the
- * addressing IS the correlation: no op-id, no table of pending replies.
+ * ON-DEMAND verbs are NOT here. The deep-link reads, the search box, the rules
+ * writes, the grep and the chart's breakdown each live beside the state their
+ * reply sets — in `PerformanceDashboard` or in `UrlDetailView` — because a
+ * command held one layer above the state it feeds has to hand its answer back
+ * down, and that hand-back is what a correlation table is made of.
  *
- * The hook returns control callbacks only — `handleUrlParamsChange`,
- * `resolveRequest`, `resolveUrlHash`, `fetchUrlBreakdown`, `listRules`,
- * `upsertRule`, `removeRule`, `requestGrep`. Data reaches React through each
- * slice's own `useNodeState( '<slice>:view', 'view' )`. The command boundary is
+ * This hook returns `handleUrlParamsChange` and nothing else; data reaches
+ * React through each slice's own `useNodeState( '<slice>:view', 'view' )`.
  */
 
 import { useCallback, useEffect, useRef } from '@wordpress/element';
@@ -61,21 +59,20 @@ import {
 import { useBatchedPoll } from '@newspack-nodes/shared/hooks/useBatchedPoll';
 import { addSliceFetcher } from '@newspack-nodes/shared/helpers/addSliceFetcher';
 import usePageVisibility from '@newspack-nodes/shared/hooks/usePageVisibility';
-import { useAwaitableCommand } from '@newspack-nodes/shared/hooks/useAwaitableCommand';
 import { views } from '../nodes/register';
 import { egressPath } from '@newspack-nodes/shared/helpers/egressPath';
 
 // The server CI mount + the egress path the Fetchers/on-demand commands target.
-const SERVER = 'performance';
+export const SERVER = 'performance';
 const TARGET = egressPath( SERVER );
 
 // The ruleset CI the two rule-editing verbs reach.
-const RULES_CI = 'rules';
+export const RULES_CI = 'rules';
 // The declared poll cadence; also the fallback for an unparseable setting.
 const DEFAULT_REFRESH_INTERVAL_MS = 15000;
 
 // Default matched-request cap for requestGrep (server clamps to its own max).
-const GREP_RESULT_LIMIT = 20;
+export const GREP_RESULT_LIMIT = 20;
 
 // Slice view + receiver names.
 const OVERVIEW_VIEW = 'overview:view';
@@ -102,16 +99,6 @@ const REQUESTDETAIL_RECV = 'requestdetail:in';
  */
 const urlDetailArgs = ( hash ) =>
 	formatCommandArgs( [ hash ], { categories: true } );
-
-/**
- * `url_detail` args for a bare hash → URL lookup. Deliberately NOT
- * `urlDetailArgs`: the resolver reads one string out of the reply, and
- * selecting the URL refetches with the categories anyway.
- *
- * @param {string} hash The URL hash.
- * @return {string[]} The command token array.
- */
-const urlLookupArgs = ( hash ) => formatCommandArgs( [ hash ] );
 
 // Validation guards for command args.
 const isValidHash = ( h ) => 'string' === typeof h && /^[a-f0-9]+$/.test( h );
@@ -189,30 +176,24 @@ function urlsArgs( { urlParams, serverFilter } ) {
  * refs at FIRE time, so a change rides the next tick without re-wiring, and the
  * two selections arm or disarm the on-demand slices.
  *
- * The awaited callbacks never reject. `fetchUrlBreakdown` and the three rule
- * verbs report through `onError` and resolve null; `resolveRequest` and
- * `resolveUrlHash` swallow the failure entirely and resolve null, because a
- * deep link that cannot be resolved is not the user's error to see.
- *
- * @param {Object}               [opts]                  Live dashboard state + seams.
- * @param {string}               [opts.serverFilter]     Server scope; '' means every
- *                                                       server.
- * @param {string}               [opts.chartBreakdown]   The chart's active dimension.
- * @param {string}               [opts.refreshInterval]  Poll cadence in ms, as a STRING
- *                                                       (it comes straight off a select).
- *                                                       Anything at or below 1000 — 0
- *                                                       included, which is what an
- *                                                       unparseable value becomes — fires
- *                                                       on every router tick.
- * @param {?number}              [opts.requestPartition] Partition of the selected request,
- *                                                       supplied WITH the selection; null
- *                                                       is reported, never reconstructed.
- * @param {?Object}              [opts.selectedUrl]      `{ hash, url }` of the open URL
- *                                                       detail modal; null closes and
- *                                                       clears the slice.
- * @param {?string}              [opts.selectedRequest]  Rid of the open request detail
- *                                                       modal; null closes and clears it.
- * @param {(err: Error) => void} [opts.onError]          Receives a failed awaited verb.
+ * @param {Object}  [opts]                  Live dashboard state + seams.
+ * @param {string}  [opts.serverFilter]     Server scope; '' means every
+ *                                          server.
+ * @param {string}  [opts.chartBreakdown]   The chart's active dimension.
+ * @param {string}  [opts.refreshInterval]  Poll cadence in ms, as a STRING
+ *                                          (it comes straight off a select).
+ *                                          Anything at or below 1000 — 0
+ *                                          included, which is what an
+ *                                          unparseable value becomes — fires
+ *                                          on every router tick.
+ * @param {?number} [opts.requestPartition] Partition of the selected request,
+ *                                          supplied WITH the selection; null
+ *                                          is reported, never reconstructed.
+ * @param {?Object} [opts.selectedUrl]      `{ hash, url }` of the open URL
+ *                                          detail modal; null closes and
+ *                                          clears the slice.
+ * @param {?string} [opts.selectedRequest]  Rid of the open request detail
+ *                                          modal; null closes and clears it.
  */
 export function usePerformanceGraph( opts = {} ) {
 	const {
@@ -222,36 +203,10 @@ export function usePerformanceGraph( opts = {} ) {
 		requestPartition = null,
 		selectedUrl = null,
 		selectedRequest = null,
-		onError,
 	} = opts;
 
 	const optsRef = useRef( opts );
 	optsRef.current = opts;
-
-	// One node per awaited verb, each riding the same tick as the polls.
-	const requestSearch = useAwaitableCommand( {
-		ci: SERVER,
-		command: 'request_search',
-	} );
-	// Its own scope: the poll owns `<SERVER>:url_detail`.
-	const urlDetail = useAwaitableCommand( {
-		ci: SERVER,
-		command: 'url_detail',
-		scope: `${ SERVER }:url_detail:lookup`,
-	} );
-	const grep = useAwaitableCommand( {
-		ci: SERVER,
-		command: 'request_grep',
-	} );
-	const rulesList = useAwaitableCommand( { ci: RULES_CI, command: 'list' } );
-	const rulesUpsert = useAwaitableCommand( {
-		ci: RULES_CI,
-		command: 'upsert',
-	} );
-	const rulesDelete = useAwaitableCommand( {
-		ci: RULES_CI,
-		command: 'delete',
-	} );
 
 	// Live UI state the Fetcher getters + on-demand fetches read at fire time.
 	const serverFilterRef = useRef( serverFilter );
@@ -552,102 +507,5 @@ export function usePerformanceGraph( opts = {} ) {
 		[ sendCommand, sendControl ]
 	);
 
-	// resolveRequest — request_search for deep links.
-	const resolveRequest = useCallback(
-		async ( rid ) => {
-			try {
-				return await requestSearch( formatCommandArgs( [ rid ] ) );
-			} catch ( err ) {
-				return null;
-			}
-		},
-		[ requestSearch ]
-	);
-
-	// resolveUrlHash — url_detail for a ?url= hash outside the loaded page.
-	const resolveUrlHash = useCallback(
-		async ( hash ) => {
-			if ( ! isValidHash( hash ) ) {
-				return null;
-			}
-			try {
-				const payload = await urlDetail( urlLookupArgs( hash ) );
-				// A reply settles the intent, even one that names no URL.
-				return { url: payload?.stats?.url || '' };
-			} catch ( err ) {
-				// A TM_ERROR is a reply too, and a final one.
-				return err?.fromServer ? { url: '' } : null;
-			}
-		},
-		[ urlDetail ]
-	);
-
-	// fetchUrlBreakdown — per-URL dimensional series; null on bad hash/error.
-	const fetchUrlBreakdown = useCallback(
-		async ( hash, breakdown ) => {
-			if ( ! isValidHash( hash ) ) {
-				return null;
-			}
-			try {
-				const payload = await urlDetail(
-					formatCommandArgs( [ hash ], { breakdown } )
-				);
-				return ( payload && payload.breakdown_time_series ) || null;
-			} catch ( err ) {
-				onError?.( err );
-				return null;
-			}
-		},
-		[ urlDetail, onError ]
-	);
-
-	// Await one verb through its own node; a failure is reported, not thrown.
-	const awaitReply = useCallback(
-		async ( send, args ) => {
-			try {
-				return await send( args );
-			} catch ( err ) {
-				onError?.( err );
-				return null;
-			}
-		},
-		[ onError ]
-	);
-
-	// listRules — current ruleset for the modal; resolves { rules }.
-	const listRules = useCallback(
-		() => awaitReply( rulesList, [] ),
-		[ awaitReply, rulesList ]
-	);
-
-	// upsertRule: whole raw JSON is one arg token (CI json_decodes $args[0]).
-	const upsertRule = useCallback(
-		( ruleObject ) =>
-			awaitReply( rulesUpsert, [ JSON.stringify( ruleObject ) ] ),
-		[ awaitReply, rulesUpsert ]
-	);
-
-	// removeRule — delete by rule id; resolves the CI's { deleted } reply.
-	const removeRule = useCallback(
-		( id ) => awaitReply( rulesDelete, [ id ] ),
-		[ awaitReply, rulesDelete ]
-	);
-
-	// requestGrep: pattern-search recent firehose; resolves the grep summary.
-	const requestGrep = useCallback(
-		( pattern, limit = GREP_RESULT_LIMIT ) =>
-			awaitReply( grep, formatCommandArgs( [ pattern ], { limit } ) ),
-		[ awaitReply, grep ]
-	);
-
-	return {
-		handleUrlParamsChange,
-		resolveRequest,
-		resolveUrlHash,
-		fetchUrlBreakdown,
-		listRules,
-		upsertRule,
-		removeRule,
-		requestGrep,
-	};
+	return { handleUrlParamsChange };
 }

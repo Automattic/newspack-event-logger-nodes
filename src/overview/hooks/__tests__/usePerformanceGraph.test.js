@@ -10,26 +10,22 @@
  *   urldetail:merge (UrlDetailMerge) → urldetail:view (UrlDetailView)   [on-demand]
  *   requestdetail:view (RequestDetailView)                             [on-demand]
  *
- * overview + urls are POLLED (on the Timer, live args via the getters); url_detail
- * and request_detail are ON-DEMAND (modal-open → fetch); resolveRequest /
- * fetchUrlBreakdown are awaited Promises settled via the relevant view's
- * via its own useNodeState.
+ * overview + urls are POLLED (on the Timer, live args via the getters);
+ * url_detail and request_detail are ON-DEMAND (modal-open → fetch). The verbs a
+ * click drives are NOT here — they live beside the state their replies set, and
+ * are covered where they live.
  */
 
 import {
 	renderHook,
 	act,
-	settleCommand,
-	settledWithin,
 	cleanupMounts,
 } from '../../../test-helpers/renderHook';
 import { installFakeCommandWire } from '@newspack-nodes/shared/test-utils/fakeCommandWire';
 import {
 	Core,
-	ID,
 	TO,
 	FROM,
-	KEY,
 	VALUE,
 	parseCommandArgs,
 	forgetSession,
@@ -144,14 +140,14 @@ describe( 'usePerformanceGraph — toolkit wiring', () => {
 		}
 	} );
 
-	test( 'returns the three control callbacks', () => {
+	// The on-demand verbs live beside the state their replies set, so this
+	// hook hands back the one callback that is genuinely its own.
+	test( 'returns handleUrlParamsChange and nothing else', () => {
 		installWire();
 		const { result } = renderHook( () => usePerformanceGraph() );
-		expect( typeof result.current.handleUrlParamsChange ).toBe(
-			'function'
-		);
-		expect( typeof result.current.resolveRequest ).toBe( 'function' );
-		expect( typeof result.current.fetchUrlBreakdown ).toBe( 'function' );
+		expect( Object.keys( result.current ) ).toEqual( [
+			'handleUrlParamsChange',
+		] );
 	} );
 } );
 
@@ -402,324 +398,6 @@ describe( 'usePerformanceGraph — handleUrlParamsChange', () => {
 		expect( sent[ sent.length - 1 ][ VALUE ].arguments ).toContain(
 			'--errors_only=1'
 		);
-	} );
-} );
-
-describe( 'usePerformanceGraph — resolveRequest & fetchUrlBreakdown (awaited)', () => {
-	test( 'resolveRequest returns the unwrapped reply payload', async () => {
-		installWire( {
-			request_search: { url_hash: 'h', partition: 1 },
-		} );
-		let api;
-		renderHook(
-			( p ) => {
-				api = usePerformanceGraph( p );
-				return api;
-			},
-			{ initialProps: {} }
-		);
-		await act( async () => {} );
-		const resolved = await settleCommand( () => api.resolveRequest( 'r' ) );
-		expect( resolved ).toEqual( { url_hash: 'h', partition: 1 } );
-	} );
-
-	test( 'fetchUrlBreakdown returns breakdown_time_series via the transform', async () => {
-		installWire( {
-			url_detail: { breakdown_time_series: { a: 1 } },
-		} );
-		let api;
-		renderHook(
-			( p ) => {
-				api = usePerformanceGraph( p );
-				return api;
-			},
-			{ initialProps: {} }
-		);
-		await act( async () => {} );
-		const result = await settleCommand( () =>
-			api.fetchUrlBreakdown( 'abc123', 'method' )
-		);
-		expect( result ).toEqual( { a: 1 } );
-	} );
-
-	test( 'fetchUrlBreakdown returns null on invalid hash without sending a breakdown command', async () => {
-		const wire = installWire();
-		let api;
-		renderHook(
-			( p ) => {
-				api = usePerformanceGraph( p );
-				return api;
-			},
-			{ initialProps: {} }
-		);
-		await act( async () => {} );
-		const before = wire.batches.flat().length;
-		const result = await settleCommand( () =>
-			api.fetchUrlBreakdown( 'NO', 'method' )
-		);
-		expect( result ).toBeNull();
-		const breakdowns = wire.batches
-			.flat()
-			.filter(
-				( m ) =>
-					m[ VALUE ]?.name === 'url_detail' &&
-					parseCommandArgs( m[ VALUE ]?.arguments ).options.breakdown
-			);
-		expect( breakdowns ).toHaveLength( 0 );
-		expect( wire.batches.flat().length ).toBe( before );
-	} );
-
-	test( 'resolveUrlHash returns the URL, which url_detail nests under stats', async () => {
-		// useUrlNavigation reads `.url` and falls back to the hash, so a raw
-		// payload here titles the modal with the hash. The URL below must not
-		// equal that fallback, or the bug passes.
-		installWire( {
-			url_detail: {
-				stats: { hash: 'b4dc0ffee', url: '/quokka/census-2026' },
-				requests: [],
-			},
-		} );
-		let api;
-		renderHook(
-			( p ) => {
-				api = usePerformanceGraph( p );
-				return api;
-			},
-			{ initialProps: {} }
-		);
-		await act( async () => {} );
-		const resolved = await settleCommand( () =>
-			api.resolveUrlHash( 'b4dc0ffee' )
-		);
-		expect( resolved.url ).toBe( '/quokka/census-2026' );
-	} );
-
-	test( 'resolveUrlHash settles on a known-empty URL instead of retrying forever', async () => {
-		// An indexed entry whose url is '' is answerable — null here would
-		// re-issue url_detail every refresh tick and never open the modal.
-		installWire( {
-			url_detail: { stats: { hash: 'b4dc0ffee', url: '' } },
-		} );
-		let api;
-		renderHook(
-			( p ) => {
-				api = usePerformanceGraph( p );
-				return api;
-			},
-			{ initialProps: {} }
-		);
-		await act( async () => {} );
-		const resolved = await settleCommand( () =>
-			api.resolveUrlHash( 'b4dc0ffee' )
-		);
-		expect( resolved ).toEqual( { url: '' } );
-	} );
-
-	test( 'resolveUrlHash does not ask for the category series it throws away', async () => {
-		// It reads one string. Selecting the URL immediately refetches with
-		// the full arg set, so asking for categories here pays for it twice.
-		const wire = installWire( {
-			url_detail: { stats: { hash: 'b4dc0ffee', url: '/x' } },
-		} );
-		let api;
-		renderHook(
-			( p ) => {
-				api = usePerformanceGraph( p );
-				return api;
-			},
-			{ initialProps: {} }
-		);
-		await act( async () => {} );
-		await settleCommand( () => api.resolveUrlHash( 'b4dc0ffee' ) );
-		const detail = findVerb( wire.batches, 'url_detail' );
-		expect(
-			parseCommandArgs( detail[ VALUE ].arguments ).options.categories
-		).toBeUndefined();
-	} );
-
-	test( 'resolveUrlHash settles when the server says the hash is unknown', async () => {
-		// A bookmarked hash aged out of the index makes url_detail THROW.
-		// Holding the intent there re-polls every tick and never opens.
-		installWire( {}, { errorVerbs: [ 'url_detail' ] } );
-		let api;
-		renderHook(
-			( p ) => {
-				api = usePerformanceGraph( p );
-				return api;
-			},
-			{ initialProps: {} }
-		);
-		await act( async () => {} );
-
-		const resolved = await settleCommand( () =>
-			api.resolveUrlHash( 'b4dc0ffee' )
-		);
-
-		expect( resolved ).toEqual( { url: '' } );
-	} );
-
-	test( 'resolveUrlHash holds the intent when no reply arrives at all', async () => {
-		// Torn-down graph: the ask never reaches a server, and never settles —
-		// which is the case the ?url= intent is SUPPOSED to outlive.
-		installWire();
-		let api;
-		renderHook(
-			( p ) => {
-				api = usePerformanceGraph( p );
-				return api;
-			},
-			{ initialProps: {} }
-		);
-		await act( async () => {} );
-		Core.reset();
-
-		expect(
-			await settledWithin( () => api.resolveUrlHash( 'b4dc0ffee' ) )
-		).toBe( false );
-	} );
-} );
-
-describe( 'usePerformanceGraph — rules commands (_http/rules)', () => {
-	test( 'exposes listRules + upsertRule callbacks', () => {
-		installWire();
-		const { result } = renderHook( () => usePerformanceGraph() );
-		expect( typeof result.current.listRules ).toBe( 'function' );
-		expect( typeof result.current.upsertRule ).toBe( 'function' );
-	} );
-
-	test( 'listRules sends the list verb to the rules CI and resolves { rules }', async () => {
-		const rules = [ { id: 'a', pattern: '/x?', action: 'log' } ];
-		const wire = installWire( { list: { rules } } );
-		let api;
-		renderHook(
-			( p ) => {
-				api = usePerformanceGraph( p );
-				return api;
-			},
-			{ initialProps: {} }
-		);
-		await act( async () => {} );
-		const result = await settleCommand( () => api.listRules() );
-		const list = findVerb( wire.batches, 'list' );
-		expect( list ).toBeTruthy();
-		expect( list[ TO ] ).toBe( 'rules' );
-		expect( result ).toEqual( { rules } );
-	} );
-
-	test( 'removeRule sends the delete verb with the rule id and resolves', async () => {
-		const wire = installWire( { delete: { deleted: true } } );
-		let api;
-		renderHook(
-			( p ) => {
-				api = usePerformanceGraph( p );
-				return api;
-			},
-			{ initialProps: {} }
-		);
-		await act( async () => {} );
-		const result = await settleCommand( () =>
-			api.removeRule( 'r-del-42' )
-		);
-		const del = findVerb( wire.batches, 'delete' );
-		expect( del ).toBeTruthy();
-		expect( del[ TO ] ).toBe( 'rules' );
-		expect( del[ VALUE ].arguments ).toEqual( [ 'r-del-42' ] );
-		expect( result ).toEqual( { deleted: true } );
-	} );
-
-	test( 'upsertRule sends the upsert verb with the RAW JSON rule as arguments and resolves { rule }', async () => {
-		const saved = { id: 'abc', pattern: '/blog?', action: 'log' };
-		const wire = installWire( { upsert: { rule: saved } } );
-		let api;
-		renderHook(
-			( p ) => {
-				api = usePerformanceGraph( p );
-				return api;
-			},
-			{ initialProps: {} }
-		);
-		await act( async () => {} );
-		const input = { id: '', pattern: '/blog?', action: 'log' };
-		const result = await settleCommand( () => api.upsertRule( input ) );
-		const upsert = findVerb( wire.batches, 'upsert' );
-		expect( upsert ).toBeTruthy();
-		expect( upsert[ TO ] ).toBe( 'rules' );
-		expect( upsert[ VALUE ].arguments ).toEqual( [
-			JSON.stringify( input ),
-		] );
-		expect( result ).toEqual( { rule: saved } );
-	} );
-
-	test( 'listRules never answers after teardown (no graph)', async () => {
-		installWire( { list: { rules: [] } } );
-		let api;
-		const { unmount } = renderHook(
-			( p ) => {
-				api = usePerformanceGraph( p );
-				return api;
-			},
-			{ initialProps: {} }
-		);
-		await act( async () => {} );
-		unmount();
-		expect( await settledWithin( () => api.listRules() ) ).toBe( false );
-	} );
-
-	test( 'upsertRule reports the error and returns null when the reply rejects', async () => {
-		const onError = jest.fn();
-		installWire( { upsert: { rule: {} } }, { errorVerbs: [ 'upsert' ] } );
-		let api;
-		renderHook(
-			( p ) => {
-				api = usePerformanceGraph( p );
-				return api;
-			},
-			{ initialProps: { onError } }
-		);
-		await act( async () => {} );
-		const result = await settleCommand( () =>
-			api.upsertRule( { id: '', pattern: '/x?' } )
-		);
-		expect( result ).toBeNull();
-		expect( onError ).toHaveBeenCalled();
-	} );
-} );
-
-describe( 'usePerformanceGraph — requestGrep (recent-firehose pattern search)', () => {
-	test( 'exposes the requestGrep callback', () => {
-		installWire();
-		const { result } = renderHook( () => usePerformanceGraph() );
-		expect( typeof result.current.requestGrep ).toBe( 'function' );
-	} );
-
-	test( 'requestGrep sends request_grep to the performance CI and resolves the summary', async () => {
-		const payload = {
-			pattern: '/calendar',
-			scope: 'recent',
-			truncated: false,
-			results: [
-				{ rid: 'r1', url: '/calendar', method: 'GET', match_count: 2 },
-			],
-		};
-		const wire = installWire( { request_grep: payload } );
-		let api;
-		renderHook(
-			( p ) => {
-				api = usePerformanceGraph( p );
-				return api;
-			},
-			{ initialProps: {} }
-		);
-		await act( async () => {} );
-		const result = await settleCommand( () =>
-			api.requestGrep( '/calendar', 25 )
-		);
-		const grep = findVerb( wire.batches, 'request_grep' );
-		expect( grep ).toBeTruthy();
-		expect( grep[ TO ] ).toBe( 'performance' );
-		expect( grep[ VALUE ].arguments ).toContain( '/calendar' );
-		expect( grep[ VALUE ].arguments ).toContain( '--limit=25' );
-		expect( result ).toEqual( payload );
 	} );
 } );
 
@@ -1039,78 +717,6 @@ describe( 'usePerformanceGraph — invalid selection guards', () => {
 	} );
 } );
 
-describe( 'usePerformanceGraph — no-graph fallbacks & awaited rejections', () => {
-	test( 'resolveRequest falls back to its own Request node when the detail view is gone', async () => {
-		const wire = installWire( {
-			request_search: { url_hash: 'h', partition: 1 },
-		} );
-		const { getApi } = renderGraph( {} );
-		await act( async () => {} );
-		// Drop the view the primary path needs; the fallback verb remains.
-		Core.node( 'requestdetail:view' ).removeNode();
-		const resolved = await settleCommand( () =>
-			getApi().resolveRequest( 'r9' )
-		);
-		const sent = wire.batches
-			.flat()
-			.find( ( m ) => 'request_search' === m[ VALUE ]?.name );
-		expect( sent ).toBeTruthy();
-		// Addressed, not correlated: FROM is the node, ID and KEY stay empty.
-		expect( sent[ FROM ] ).toBe( 'performance:request_search:in' );
-		expect( sent[ ID ] ).toBe( '' );
-		expect( sent[ KEY ] ).toBe( '' );
-		expect( resolved ).toEqual( { url_hash: 'h', partition: 1 } );
-	} );
-
-	// With the graph gone there is nothing to send on, so the ask never
-	// settles — and nobody is waiting: the component that asked is unmounted.
-	test( 'fetchUrlBreakdown never answers once the graph is gone', async () => {
-		installWire();
-		const { getApi, unmount } = renderGraph( {} );
-		await act( async () => {} );
-		unmount();
-		expect(
-			await settledWithin( () =>
-				getApi().fetchUrlBreakdown( 'abc123', 'method' )
-			)
-		).toBe( false );
-	} );
-
-	test( 'fetchUrlBreakdown reports the error and returns null when the reply rejects', async () => {
-		const onError = jest.fn();
-		installWire(
-			{ url_detail: { breakdown_time_series: { a: 1 } } },
-			{ errorVerbs: [ 'url_detail' ] }
-		);
-		const { getApi } = renderGraph( { onError } );
-		await act( async () => {} );
-		const result = await settleCommand( () =>
-			getApi().fetchUrlBreakdown( 'abc123', 'method' )
-		);
-		expect( result ).toBeNull();
-		expect( onError ).toHaveBeenCalled();
-	} );
-
-	test( 'control callbacks no-op after unmount (interpreter detached)', async () => {
-		installWire( { urls: { data: [], total: 0 } } );
-		const { getApi, unmount } = renderGraph( {} );
-		await act( async () => {} );
-		unmount();
-		// Param change after unmount must not throw (detached interpreter).
-		expect( () =>
-			getApi().handleUrlParamsChange( {
-				search: '',
-				sort: 'count',
-				order: 'desc',
-				offset: 7,
-			} )
-		).not.toThrow();
-	} );
-} );
-
-// Every node here that takes a local control must declare the origin it
-// trusts. Drop one assignment and sendControl throws rather than minting a
-// FROM that matches nothing — which used to blank the slice in silence.
 describe( 'usePerformanceGraph — control origins', () => {
 	test( 'wires controlFrom on every control-taking node', () => {
 		renderHook( () => usePerformanceGraph( {} ) );

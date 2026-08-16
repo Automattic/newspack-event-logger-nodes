@@ -4,14 +4,14 @@
  *
  * Behaviour covered:
  *   - bootstraps selectedUrl/selectedRequest from ?url= / ?request= on mount
- *   - calls resolveRequestId when ?request= is present without ?url=
+ *   - reports a ?url= / ?request= it cannot answer from the loaded page
  *   - pushes history entries when selection changes after mount
  *   - reacts to popstate (back/forward) to restore selection
  *   - guards against invalid request IDs (rejected, never selected)
  */
 
 import useUrlNavigation from '../useUrlNavigation';
-import { Core, mountExospine } from '@newspack-nodes/runtime';
+import { Core } from '@newspack-nodes/runtime';
 import { renderHook, act } from '../../../test-helpers/renderHook';
 
 const URLS = [
@@ -39,129 +39,65 @@ describe( 'useUrlNavigation', () => {
 		pushSpy.mockRestore();
 	} );
 
-	// ── deep links must resolve hashes that are NOT in the loaded page ─────
+	// ── a deep link this hook can answer, and one it cannot ───────────────
 	//
-	// `urls` holds one page of the catalog (50 of ~1000). A deep link to a
-	// low-traffic URL — the case deep links are FOR — never appears in it, so
-	// searching the list silently opens nothing. Hash deliberately absent from
-	// URLS: a hash that happens to be loaded passes either way and proves
-	// nothing, which is exactly why this shipped.
+	// `urls` holds ONE page of the catalog (50 of ~1000), so a deep link to a
+	// low-traffic URL — the case deep links are FOR — is usually not in it.
+	// This hook answers what it can from the page and REPORTS the rest; asking
+	// the server is a command, and the retry, the one-at-a-time latch and the
+	// backoff that used to live here are what a retried read already does.
 
-	it( 'resolves a ?url= hash that is not in the loaded page', async () => {
-		setLocation( 'http://localhost/wp-admin/?url=notinpage' );
-		const resolveUrlHash = jest
-			.fn()
-			.mockResolvedValue( { url: '/deep/link/target.webp' } );
-
+	it( 'resolves a ?url= hash that IS in the loaded page, with no intent left over', async () => {
+		setLocation( 'http://localhost/wp-admin/?url=aaa' );
 		const { result, unmount } = renderHook( () =>
-			useUrlNavigation( URLS, undefined, resolveUrlHash )
+			useUrlNavigation( URLS )
 		);
 		await act( async () => {} );
 
-		expect( resolveUrlHash ).toHaveBeenCalledWith( 'notinpage' );
 		expect( result.current.selectedUrl ).toEqual( {
-			hash: 'notinpage',
-			url: '/deep/link/target.webp',
+			hash: 'aaa',
+			url: '/foo',
 		} );
+		expect( result.current.deepLink.urlHash ).toBeNull();
 		unmount();
 	} );
 
-	it( 'keeps the ?url= intent when a resolve attempt fails', async () => {
-		// The graph may not be connected on the first effect pass. Discarding
-		// the intent then makes the failure permanent and silent.
+	it( 'reports a ?url= hash that is NOT in the loaded page instead of selecting nothing', async () => {
 		setLocation( 'http://localhost/wp-admin/?url=notinpage' );
-		const resolveUrlHash = jest
-			.fn()
-			.mockResolvedValueOnce( null )
-			.mockResolvedValue( { url: '/late/arrival' } );
-
-		// The retry rides the ROUTER TICK, not a urls tick: a deep link
-		// converges even on a dashboard whose catalog never moves.
-		// Arm the graph AFTER the fake clock, or its 1s slot stays on the real
-		// one and `advanceTimersByTime` never reaches the tick.
-		jest.useFakeTimers();
-		mountExospine();
 		const { result, unmount } = renderHook( () =>
-			useUrlNavigation( URLS, undefined, resolveUrlHash )
+			useUrlNavigation( URLS )
 		);
 		await act( async () => {} );
+
 		expect( result.current.selectedUrl ).toBeNull();
-
-		await act( async () => {
-			jest.advanceTimersByTime( 5000 );
-		} );
-		await act( async () => {} );
-
-		expect( resolveUrlHash.mock.calls.length ).toBeGreaterThan( 1 );
-		expect( result.current.selectedUrl ).toEqual( {
-			hash: 'notinpage',
-			url: '/late/arrival',
-		} );
-		jest.useRealTimers();
+		expect( result.current.deepLink.urlHash ).toBe( 'notinpage' );
 		unmount();
 	} );
 
-	// One attempt at a time, and slower each time it misses. Asking every
-	// second forever puts a command per second on the wire for the life of the
-	// page, and each ask that overtakes the last one queues another waiter on
-	// a reply that is never coming.
-	it( 'never has two attempts outstanding, and backs off between them', async () => {
-		setLocation( 'http://localhost/wp-admin/?url=notinpage' );
-		let outstanding = 0;
-		let concurrent = 0;
-		const resolveUrlHash = jest.fn( () => {
-			outstanding += 1;
-			concurrent = Math.max( concurrent, outstanding );
-			return new Promise( ( resolve ) =>
-				setTimeout( () => {
-					outstanding -= 1;
-					resolve( null );
-				}, 2500 )
-			);
-		} );
-
-		jest.useFakeTimers();
-		mountExospine();
-		const { unmount } = renderHook( () =>
-			useUrlNavigation( URLS, undefined, resolveUrlHash )
-		);
-		await act( async () => {} );
-
-		for ( let i = 0; i < 30; i++ ) {
-			await act( async () => {
-				jest.advanceTimersByTime( 1000 );
-			} );
-		}
-		expect( concurrent ).toBe( 1 );
-		// 30s of misses at a growing interval is a handful of asks, not 30.
-		expect( resolveUrlHash.mock.calls.length ).toBeLessThan( 8 );
-		jest.useRealTimers();
-		unmount();
-	} );
-
-	it( 'keeps the ?request= intent when the resolver reports failure', async () => {
+	it( 'reports a ?request= with no ?url=, since the rid answers both', async () => {
 		setLocation( 'http://localhost/wp-admin/?request=abc123def4567890' );
-		const resolveRequestId = jest
-			.fn()
-			.mockResolvedValueOnce( false )
-			.mockResolvedValue( true );
-
-		// A reported miss keeps the intent; the reconcile clock is the retry.
-		// Arm the graph AFTER the fake clock; see above.
-		jest.useFakeTimers();
-		mountExospine();
-		const { unmount } = renderHook( () =>
-			useUrlNavigation( URLS, resolveRequestId )
+		const { result, unmount } = renderHook( () =>
+			useUrlNavigation( URLS )
 		);
 		await act( async () => {} );
 
-		await act( async () => {
-			jest.advanceTimersByTime( 5000 );
-		} );
-		await act( async () => {} );
+		expect( result.current.deepLink.requestId ).toBe( 'abc123def4567890' );
+		expect( result.current.deepLink.urlHash ).toBeNull();
+		unmount();
+	} );
 
-		expect( resolveRequestId.mock.calls.length ).toBeGreaterThan( 1 );
-		jest.useRealTimers();
+	// The intent is HELD until the caller says it is answered — a resolver
+	// that has not replied yet must not silently lose the link.
+	it( 'holds the reported intent until clearDeepLink', async () => {
+		setLocation( 'http://localhost/wp-admin/?url=notinpage' );
+		const { result, unmount } = renderHook( () =>
+			useUrlNavigation( URLS )
+		);
+		await act( async () => {} );
+		expect( result.current.deepLink.urlHash ).toBe( 'notinpage' );
+
+		act( () => result.current.clearDeepLink() );
+		expect( result.current.deepLink.urlHash ).toBeNull();
 		unmount();
 	} );
 
@@ -205,31 +141,33 @@ describe( 'useUrlNavigation', () => {
 		unmount();
 	} );
 
-	it( 'resolves by request id even when ?url= is also present', () => {
-		// The rid is the more specific key: it answers BOTH the url hash and
-		// the partition. Trusting ?url= alone left the partition unresolved,
-		// so the request detail never fetched and the modal rendered empty.
+	// The rid is the more specific key: it answers BOTH the url hash and the
+	// partition. Trusting ?url= alone left the partition unresolved, so the
+	// request detail never fetched and the modal rendered empty. A link
+	// carrying a rid therefore reports it EVEN when the hash is on this page.
+	it( 'reports the request id even when ?url= is one this page could answer', async () => {
 		setLocation(
 			'http://localhost/wp-admin/?url=aaa&request=c6x0zgr0903wgw6lcylyvxm47ov7fwem'
 		);
-		const resolve = jest.fn().mockResolvedValue( true );
-		const { unmount } = renderHook( () =>
-			useUrlNavigation( URLS, resolve )
+		const { result, unmount } = renderHook( () =>
+			useUrlNavigation( URLS )
 		);
+		await act( async () => {} );
 
-		expect( resolve ).toHaveBeenCalledWith(
+		expect( result.current.deepLink.requestId ).toBe(
 			'c6x0zgr0903wgw6lcylyvxm47ov7fwem'
 		);
 		unmount();
 	} );
 
-	it( 'calls resolveRequestId when only ?request= is set (no ?url=)', () => {
-		setLocation( 'http://localhost/wp-admin/?request=req_xyz' );
-		const resolve = jest.fn();
-		const { unmount } = renderHook( () =>
-			useUrlNavigation( URLS, resolve )
+	// An invalid rid is refused at the door, so nothing downstream asks.
+	it( 'reports no request id for one that is not rid-shaped', async () => {
+		setLocation( 'http://localhost/wp-admin/?request=not%20a%20rid%21' );
+		const { result, unmount } = renderHook( () =>
+			useUrlNavigation( URLS )
 		);
-		expect( resolve ).toHaveBeenCalledWith( 'req_xyz' );
+		await act( async () => {} );
+		expect( result.current.deepLink.requestId ).toBeNull();
 		unmount();
 	} );
 
