@@ -255,6 +255,53 @@ class McpControllerTest extends TestCase {
 		$this->assertSame( -32601, $reply['error']['code'] );
 	}
 
+	/** The route carries its own gate; a POST that skipped it would be unauthenticated. */
+	public function test_the_route_registers_with_its_own_permission_gate(): void {
+		$controller = new MCP_Controller();
+
+		$controller->register_routes();
+
+		$route = $GLOBALS['_rest_routes'][ MCP_Controller::REST_NAMESPACE . MCP_Controller::ROUTE ];
+		$this->assertSame( 'POST', $route['methods'] );
+		$this->assertSame( [ $controller, 'dispatch' ], $route['callback'] );
+		$this->assertSame( [ $controller, 'check_permission' ], $route['permission_callback'] );
+	}
+
+	public function test_a_body_that_is_not_jsonrpc_is_refused(): void {
+		[ , $bearer ] = $this->session( Capabilities::READ );
+		$controller   = new MCP_Controller();
+		$controller->check_permission( $this->request( [], $bearer ) );
+
+		$reply = $controller->dispatch( $this->request( [ 'hello' => 'there' ], $bearer ) );
+
+		$this->assertSame( -32600, $reply['error']['code'] );
+		$this->assertNull( $reply['id'], 'a request with no id cannot be answered with one' );
+	}
+
+	/**
+	 * The named-object → token-array mapping, which is the whole seam between
+	 * MCP and the command protocol: the descriptor keys are POSITIONAL in the
+	 * order the verbs read them, and everything else is `--key=value`.
+	 */
+	public function test_named_arguments_become_positionals_first_then_options(): void {
+		$tokens = new \ReflectionMethod( MCP_Controller::class, 'tokens' );
+
+		$this->assertSame(
+			[ 'span:wp_loaded hook', 'request:abc123', '--partition=3', '--limit=7' ],
+			$tokens->invoke(
+				null,
+				[
+					'partition'  => 3,
+					'descriptor' => 'span:wp_loaded hook',
+					'limit'      => 7,
+					'context'    => 'request:abc123',
+					'nested'     => [ 'not scalar' => 'dropped' ],
+				]
+			)
+		);
+		$this->assertSame( [], $tokens->invoke( null, 'not an object' ) );
+	}
+
 	public function test_a_verb_refusal_comes_back_as_a_tool_error_not_a_crash(): void {
 		[ , $bearer ] = $this->session( Capabilities::READ );
 		$controller   = new MCP_Controller();
