@@ -212,7 +212,7 @@ class AskAssemblerTest extends TestCase {
 			[ 'rid' => 'c', 'duration_ms' => 1400, 'status_code' => 200, 'partition' => 0 ],
 		];
 
-		$brief = Ask_Assembler::for_url( $stats, $requests, [ 'status' => [] ], $this->rule() );
+		$brief = Ask_Assembler::for_url( $stats, $requests, $this->rule() );
 
 		$this->assertSame( 'url', $brief['subject'] );
 		$this->assertStringContainsString( '[REDACTED]', $brief['url'] );
@@ -221,10 +221,179 @@ class AskAssemblerTest extends TestCase {
 		$this->assertSame( 'a1b2c3d4e5f6', $brief['rule']['id'] );
 	}
 
+	/**
+	 * A tree holds duplicate siblings apart with a hidden suffix, so four
+	 * `query hook` children render as four identical rows that say nothing.
+	 * Folded, the one row that carries signal is legible.
+	 */
+	public function test_a_span_brief_folds_repeated_children_into_one_row(): void {
+		$record = [
+			'flame' => [
+				'name'     => 'request',
+				'value'    => 100.0,
+				'children' => [
+					[
+						'name'     => 'component',
+						'value'    => 10.5,
+						'children' => [
+							[ 'name' => 'query hook', 'value' => 0.25, 'count' => 1, 'children' => [] ],
+							[ 'name' => 'query hook', 'value' => 0.75, 'count' => 1, 'children' => [] ],
+							[ 'name' => 'component_include', 'value' => 0.4, 'count' => 1, 'children' => [] ],
+						],
+					],
+				],
+			],
+		];
+
+		$brief = Ask_Assembler::for_span( $record, 'component', $this->rule() );
+
+		$this->assertSame(
+			[ 'query hook', 'component_include' ],
+			\array_column( $brief['subtree'], 'name' )
+		);
+		$this->assertSame( 1.0, $brief['subtree'][0]['ms'] );
+		$this->assertSame( 2, $brief['subtree'][0]['count'] );
+	}
+
+	/**
+	 * The request brief folds duplicate siblings, so a span brief that reports
+	 * only the first occurrence contradicts it — and the missing time lands
+	 * nowhere, which reads as "the sibling is the problem".
+	 */
+	public function test_a_span_brief_folds_the_span_it_is_about(): void {
+		$record = [
+			'flame' => [
+				'name'     => 'request',
+				'value'    => 100.0,
+				'children' => [
+					[ 'name' => 'query hook', 'value' => 10.0, 'count' => 1, 'children' => [ [ 'name' => 'sql', 'value' => 4.0, 'children' => [] ] ] ],
+					[ 'name' => 'query hook', 'value' => 20.0, 'count' => 2, 'children' => [ [ 'name' => 'sql', 'value' => 9.0, 'children' => [] ] ] ],
+					[ 'name' => 'render', 'value' => 50.0, 'children' => [] ],
+				],
+			],
+		];
+
+		$brief = Ask_Assembler::for_span( $record, 'query hook', $this->rule() );
+
+		$this->assertSame( 30.0, $brief['ms'], 'all three calls, as the request brief counts them' );
+		$this->assertSame( 3, $brief['count'] );
+		$this->assertSame( [ 'render' ], \array_column( $brief['siblings'], 'name' ) );
+		$this->assertSame( 13.0, $brief['subtree'][0]['ms'], 'the subtree spans every occurrence' );
+	}
+
+	public function test_a_span_brief_keeps_only_the_slowest_children(): void {
+		$children = [];
+		for ( $i = 1; $i <= 9; $i++ ) {
+			$children[] = [ 'name' => "child{$i}", 'value' => (float) $i, 'children' => [] ];
+		}
+		$record = [
+			'flame' => [
+				'name'     => 'request',
+				'value'    => 100.0,
+				'children' => [ [ 'name' => 'component', 'value' => 45.0, 'children' => $children ] ],
+			],
+		];
+
+		$brief = Ask_Assembler::for_span( $record, 'component', $this->rule() );
+
+		$this->assertCount( Ask_Assembler::TOP_SPANS, $brief['subtree'] );
+		$this->assertSame( 'child9', $brief['subtree'][0]['name'] );
+	}
+
+	/**
+	 * The series is what `url_detail` returns, and nothing renders it here —
+	 * it was the largest thing in the brief and the only unbounded one.
+	 */
+	public function test_a_url_brief_leaves_the_time_series_to_the_verb_that_owns_it(): void {
+		$brief = Ask_Assembler::for_url(
+			[ 'hash' => '25ecf5606840', 'url' => '/calendar', 'count' => 12 ],
+			[],
+			$this->rule()
+		);
+
+		$this->assertArrayNotHasKey( 'breakdown', $brief );
+		$this->assertSame(
+			[ 'performance_url_detail' ],
+			\array_column( $brief['fetch'], 'tool' )
+		);
+		$this->assertSame(
+			[ 'hash' => '25ecf5606840' ],
+			$brief['fetch'][0]['arguments']
+		);
+	}
+
+	public function test_worst_requests_name_themselves_without_their_storage_coordinates(): void {
+		$brief = Ask_Assembler::for_url(
+			[ 'hash' => 'ff00', 'url' => '/calendar', 'count' => 2 ],
+			[
+				[
+					'rid'          => 'w0rst1',
+					'duration_ms'  => 9100.4,
+					'status_code'  => 500,
+					'error_status' => 'F',
+					'partition'    => 3,
+					'segment'      => 10,
+					'offset'       => 11769941,
+					'length'       => 91551,
+				],
+			],
+			$this->rule()
+		);
+
+		$this->assertSame(
+			[ 'rid', 'partition', 'duration_ms', 'status_code', 'error_status' ],
+			\array_keys( $brief['worst_requests'][0] )
+		);
+	}
+
+	/**
+	 * A roster of every custom event the rule enables is the same mistake the
+	 * hook list already avoids: dozens of names nothing renders.
+	 */
+	public function test_a_rule_rides_as_counts_rather_than_rosters(): void {
+		$rule  = new Rule(
+			'a1b2c3d4e5f6',
+			'/calendar/today',
+			Rule::ACTION_LOG,
+			0,
+			0.0,
+			[ 'init' ],
+			[ 'loop', 'query_sql', 'component_include' ],
+			[ 'init', 'wp_loaded' ]
+		);
+		$brief = Ask_Assembler::for_request( $this->record(), $rule );
+
+		$this->assertArrayNotHasKey( 'custom_events', $brief['rule'] );
+		$this->assertSame( 3, $brief['rule']['custom_event_count'] );
+		$this->assertSame( [ 'init' ], $brief['rule']['significant_events'] );
+	}
+
+	/** The entry list is capped, so the record's own address rides along. */
+	public function test_a_request_brief_says_how_an_agent_fetches_it_again(): void {
+		$brief = Ask_Assembler::for_request(
+			[ 'rid' => 'c6x0zgrq1w9v', 'url' => '/x' ] + $this->record(),
+			$this->rule()
+		);
+
+		$this->assertSame(
+			[ [ 'tool' => 'performance_request_detail', 'arguments' => [ 'rid' => 'c6x0zgrq1w9v' ] ] ],
+			$brief['fetch']
+		);
+	}
+
+	public function test_a_span_brief_says_how_an_agent_fetches_it_again(): void {
+		$brief = Ask_Assembler::for_span( $this->record(), 'wp_loaded', $this->rule(), 'request:c6x0zgr:3' );
+
+		$this->assertSame( 'performance_ask', $brief['fetch'][0]['tool'] );
+		$this->assertSame(
+			[ 'descriptor' => 'span:wp_loaded', 'context' => 'request:c6x0zgr:3' ],
+			$brief['fetch'][0]['arguments']
+		);
+	}
+
 	public function test_a_url_with_no_rule_says_so_and_gets_the_cold_start_finding(): void {
 		$brief = Ask_Assembler::for_url(
 			[ 'hash' => 'ff00', 'url' => '/uncovered', 'count' => 12, 'p95_ms' => 4000.0 ],
-			[],
 			[],
 			null
 		);

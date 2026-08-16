@@ -59,6 +59,7 @@ function Harness( { onError } ) {
 					791ms
 				</span>
 			</div>
+			<p id="nothing">nothing askable here</p>
 			<AskPanel ask={ ask } />
 		</div>
 	);
@@ -70,12 +71,14 @@ const render = ( props = {} ) => {
 	return view;
 };
 
-// Arm the picker, then click the askable element — the picker reads the
-// modifier on mousedown, so both events are dispatched.
-const pick = ( { additive = false } = {} ) => {
+const arm = () =>
 	act( () => {
 		view.container.querySelector( '.event-logger-ask__trigger' ).click();
 	} );
+
+// Click the askable element — the picker reads the modifier on mousedown, so
+// both events are dispatched.
+const clickTarget = ( { additive = false } = {} ) => {
 	const target = view.container.querySelector( '#target' );
 	act( () => {
 		target.dispatchEvent(
@@ -92,6 +95,14 @@ const pick = ( { additive = false } = {} ) => {
 		);
 	} );
 };
+
+// Arm, then take one thing — what a single pick has always been.
+const pick = ( options = {} ) => {
+	arm();
+	clickTarget( options );
+};
+
+const dialog = () => view.container.querySelector( '[role="dialog"]' );
 
 const answer = ( payload ) => {
 	act( () => {
@@ -171,6 +182,82 @@ test( 'copy writes the markdown to the clipboard and says so', async () => {
 	expect( view.container.textContent ).toContain( 'Copied.' );
 } );
 
+test( 'the copy is agent-ready: the fetch call and the endpoint ride along', async () => {
+	const writeText = jest.fn( () => Promise.resolve() );
+	Object.defineProperty( window.navigator, 'clipboard', {
+		value: { writeText },
+		configurable: true,
+	} );
+	render();
+	pick();
+	answer( {
+		result: {
+			...BRIEF,
+			fetch: [
+				{
+					tool: 'performance_ask',
+					arguments: { descriptor: 'span:wp_loaded hook' },
+				},
+			],
+		},
+	} );
+
+	await act( async () => {
+		Array.from( view.container.querySelectorAll( 'button' ) )
+			.find( ( b ) => 'Copy brief' === b.textContent )
+			.click();
+	} );
+
+	const copied = writeText.mock.calls[ 0 ][ 0 ];
+	expect( copied ).toContain(
+		'performance_ask descriptor="span:wp_loaded hook"'
+	);
+	expect( copied ).toContain( '/wp-json/newspack-event-logger-nodes/v1/mcp' );
+} );
+
+// Worth having wherever the site is publicly reachable; on a local install the
+// chat can read the brief but cannot reach the endpoint it names.
+test( 'the panel offers a claude.ai link carrying the brief', () => {
+	render();
+	pick();
+	answer( { result: BRIEF } );
+
+	const link = view.container.querySelector(
+		'a[href^="https://claude.ai/new"]'
+	);
+	expect( link ).not.toBeNull();
+	expect( link.target ).toBe( '_blank' );
+	expect( link.rel ).toContain( 'noopener' );
+	expect( decodeURIComponent( link.href ) ).toContain( '## span' );
+} );
+
+/**
+ * Past the URL budget the link carries only the ask, so the brief has to be
+ * somewhere the user can paste from — otherwise "I will paste it next" is a
+ * promise the UI never kept.
+ */
+test( 'the Claude link also puts the brief on the clipboard', async () => {
+	const writeText = jest.fn( () => Promise.resolve() );
+	Object.defineProperty( window.navigator, 'clipboard', {
+		value: { writeText },
+		configurable: true,
+	} );
+	render();
+	pick();
+	answer( { result: BRIEF } );
+
+	await act( async () => {
+		view.container
+			.querySelector( 'a[href^="https://claude.ai/new"]' )
+			.dispatchEvent(
+				new window.MouseEvent( 'click', { bubbles: true } )
+			);
+	} );
+
+	expect( writeText ).toHaveBeenCalledTimes( 1 );
+	expect( writeText.mock.calls[ 0 ][ 0 ] ).toContain( '## span' );
+} );
+
 test( 'closing the panel leaves the briefs alone but takes the dialog away', () => {
 	render();
 	pick();
@@ -185,23 +272,62 @@ test( 'closing the panel leaves the briefs alone but takes the dialog away', () 
 	expect( view.container.querySelector( '[role="dialog"]' ) ).toBeNull();
 } );
 
-// Additive is what multi-select IS: the earlier brief is still wanted.
-test( 'a plain pick clears prior briefs; a modified one appends', () => {
+/**
+ * A modified click means "and this one too" — the selection is not finished,
+ * so the panel must not jump in front of the next thing being picked.
+ */
+test( 'a modified pick queues without opening the panel', () => {
 	render();
-	pick();
+	arm();
+
+	clickTarget( { additive: true } );
 	answer( { result: BRIEF } );
+
+	expect( dialog() ).toBeNull();
+} );
+
+test( 'the plain pick that ends the selection opens it with everything queued', () => {
+	render();
+	arm();
+	clickTarget( { additive: true } );
+	answer( { result: BRIEF } );
+
+	clickTarget();
 	answer( { result: { ...BRIEF, subject: 'entry', findings: [] } } );
+
 	expect( view.container.textContent ).toContain( 'About 2 selected things' );
+} );
+
+// Arming again is what starts a new selection; nothing else clears it.
+test( 'a fresh pick starts a fresh selection', () => {
+	render();
+	arm();
+	clickTarget( { additive: true } );
+	answer( { result: BRIEF } );
 
 	pick();
-
-	expect( view.container.textContent ).not.toContain( 'About 2' );
 	answer( { result: BRIEF } );
+
 	expect( view.container.textContent ).toContain( 'About this span' );
+	expect( view.container.textContent ).not.toContain( 'About 2' );
+} );
 
-	pick( { additive: true } );
-	answer( { result: { ...BRIEF, subject: 'entry', findings: [] } } );
-	expect( view.container.textContent ).toContain( 'About 2 selected things' );
+test( 'cancelling discards what was queued', () => {
+	render();
+	arm();
+	clickTarget( { additive: true } );
+	answer( { result: BRIEF } );
+
+	act( () => {
+		document.dispatchEvent(
+			new window.KeyboardEvent( 'keydown', {
+				key: 'Escape',
+				bubbles: true,
+			} )
+		);
+	} );
+
+	expect( dialog() ).toBeNull();
 } );
 
 test( 'a failed ask reaches onError and opens nothing', () => {
@@ -216,11 +342,37 @@ test( 'a failed ask reaches onError and opens nothing', () => {
 } );
 
 // A reply that is not a brief is not a brief; it must not open an empty panel.
-test( 'a non-object result is ignored', () => {
-	render();
+test( 'a reply carrying no brief says so rather than vanishing', () => {
+	const onError = jest.fn();
+	render( { onError } );
 	pick();
 
 	answer( { result: 'ok' } );
 
 	expect( view.container.querySelector( '[role="dialog"]' ) ).toBeNull();
+	expect( onError ).toHaveBeenCalledTimes( 1 );
+} );
+
+// A click that lands on nothing askable is the commonest way to get no brief —
+// a flame-graph frame whose descriptor has not been stamped yet.
+test( 'a pick that hits nothing askable says so and stays armed', () => {
+	const onError = jest.fn();
+	render( { onError } );
+
+	act( () => {
+		view.container.querySelector( '.event-logger-ask__trigger' ).click();
+	} );
+	act( () => {
+		view.container
+			.querySelector( '#nothing' )
+			.dispatchEvent(
+				new window.MouseEvent( 'click', { bubbles: true } )
+			);
+	} );
+
+	expect( sent ).toEqual( [] );
+	expect( onError ).toHaveBeenCalledTimes( 1 );
+	expect( document.body.classList.contains( 'newspack-nodes-asking' ) ).toBe(
+		true
+	);
 } );

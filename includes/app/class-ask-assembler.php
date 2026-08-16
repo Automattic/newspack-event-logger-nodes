@@ -44,6 +44,9 @@ class Ask_Assembler {
 	/** Worst recent requests a `url:` brief carries. */
 	public const WORST_REQUESTS = 5;
 
+	/** Spans a list carries. Beyond this the brief spends its budget on noise. */
+	public const TOP_SPANS = 6;
+
 	/** The descriptor vocabulary. Deliberately small: it is a contract. */
 	private const TYPES = [ 'url', 'request', 'span', 'entry', 'category' ];
 
@@ -79,6 +82,10 @@ class Ask_Assembler {
 			'entries_truncated' => $truncated,
 			'rule'              => self::rule_shape( $rule ),
 			'findings'          => Findings::for_request( $record, $rule ),
+			'fetch'             => self::fetch(
+				'performance_request_detail',
+				[ 'rid' => Core::as_string( $record['rid'] ?? '' ) ]
+			),
 			'caveat'            => Findings::caveat(),
 		];
 	}
@@ -91,18 +98,10 @@ class Ask_Assembler {
 	 * @return array<string,mixed>
 	 */
 	private static function flame_summary( array $record ): array {
-		$flame    = Findings::flame_of( $record );
-		$total    = Core::num_float( $flame['value'] ?? 0 );
-		$children = [];
-		foreach ( \is_array( $flame['children'] ?? null ) ? $flame['children'] : [] as $child ) {
-			if ( \is_array( $child ) ) {
-				$children[] = self::span_shape( $child );
-			}
-		}
-		\usort( $children, static fn ( array $a, array $b ): int => $b['ms'] <=> $a['ms'] );
+		$flame = Findings::flame_of( $record );
 		return [
-			'profiled_ms' => $total,
-			'top_level'   => $children,
+			'profiled_ms' => Core::num_float( $flame['value'] ?? 0 ),
+			'top_level'   => self::top_spans( $flame['children'] ?? null ),
 		];
 	}
 
@@ -133,47 +132,96 @@ class Ask_Assembler {
 	 * @param Rule|null           $rule   The rule an edit would land on.
 	 * @return array<string,mixed>|null Null when the tree holds no such span.
 	 */
-	public static function for_span( array $record, string $name, ?Rule $rule ): ?array {
+	public static function for_span( array $record, string $name, ?Rule $rule, string $context = '' ): ?array {
 		$flame = Findings::flame_of( $record );
 		$found = self::locate_span( $flame, $name, $flame );
 		if ( null === $found ) {
 			return null;
 		}
-		[ $node, $parent ] = $found;
+		[ , $parent ] = $found;
 
+		// @longform
+		// A tree holds duplicate siblings apart, so `query hook` can be three
+		// nodes under one parent. The request brief already folds them, and a
+		// span brief reporting only the first would contradict it — with the
+		// other two accounted for nowhere, which reads as the SIBLING being
+		// the problem. Fold the subject exactly as its list is folded.
+		$mine     = [];
 		$siblings = [];
-		foreach ( \is_array( $parent['children'] ?? null ) ? $parent['children'] : [] as $sibling ) {
-			if ( \is_array( $sibling ) && Core::as_string( $sibling['name'] ?? '' ) !== $name ) {
-				$siblings[] = self::span_shape( $sibling );
+		foreach ( \is_array( $parent['children'] ?? null ) ? $parent['children'] : [] as $child ) {
+			if ( ! \is_array( $child ) ) {
+				continue;
 			}
-		}
-		$subtree = [];
-		foreach ( \is_array( $node['children'] ?? null ) ? $node['children'] : [] as $child ) {
-			if ( \is_array( $child ) ) {
-				$subtree[] = self::span_shape( $child );
+			if ( Core::as_string( $child['name'] ?? '' ) === $name ) {
+				$mine[] = $child;
+				continue;
 			}
+			$siblings[] = $child;
 		}
+		$subject = self::top_spans( $mine )[0] ?? self::span_shape( [] );
+		$subtree = \array_merge(
+			...\array_map(
+				static fn ( array $node ): array =>
+					\is_array( $node['children'] ?? null ) ? $node['children'] : [],
+				$mine
+			)
+		);
 
 		return [
 			'subject'   => 'span',
 			'name'      => $name,
-			'ms'        => Core::num_float( $node['value'] ?? 0 ),
-			'count'     => Core::num_int( $node['count'] ?? 1, 1 ),
+			'ms'        => $subject['ms'],
+			'count'     => $subject['count'],
 			'parent'    => Core::as_string( $parent['name'] ?? 'request', 'request' ),
 			'parent_ms' => Core::num_float( $parent['value'] ?? 0 ),
-			'siblings'  => $siblings,
-			'subtree'   => $subtree,
+			'siblings'  => self::top_spans( $siblings ),
+			'subtree'   => self::top_spans( $subtree ),
 			'url'       => self::url_of( $record ),
 			'rule'      => self::rule_shape( $rule ),
+			'fetch'     => self::fetch(
+				'performance_ask',
+				[ 'descriptor' => "span:{$name}", 'context' => $context ]
+			),
 			'caveat'    => Findings::caveat(),
 		];
+	}
+
+	/**
+	 * A span list as a brief carries it: same-name spans folded into one row,
+	 * slowest first, capped.
+	 *
+	 * A tree holds duplicate siblings apart with a hidden suffix, so four
+	 * `query hook` children arrive as four rows saying nothing individually.
+	 * Folding is what makes the cap spend its slots on spans that took time.
+	 *
+	 * @param mixed $nodes Flame nodes, as the tree stores them.
+	 * @return list<array{name:string,ms:float,count:int}>
+	 */
+	private static function top_spans( mixed $nodes ): array {
+		$folded = [];
+		foreach ( \is_array( $nodes ) ? $nodes : [] as $node ) {
+			if ( ! \is_array( $node ) ) {
+				continue;
+			}
+			$span = self::span_shape( $node );
+			$name = $span['name'];
+			if ( isset( $folded[ $name ] ) ) {
+				$folded[ $name ]['ms']    += $span['ms'];
+				$folded[ $name ]['count'] += $span['count'];
+				continue;
+			}
+			$folded[ $name ] = $span;
+		}
+		$spans = \array_values( $folded );
+		\usort( $spans, static fn ( array $a, array $b ): int => $b['ms'] <=> $a['ms'] );
+		return \array_slice( $spans, 0, self::TOP_SPANS );
 	}
 
 	/**
 	 * One span, without its children — the shape siblings and subtree rows use.
 	 *
 	 * @param array<array-key,mixed> $node A flame node.
-	 * @return array<string,mixed>
+	 * @return array{name:string,ms:float,count:int}
 	 */
 	private static function span_shape( array $node ): array {
 		return [
@@ -287,17 +335,17 @@ class Ask_Assembler {
 	}
 
 	/**
-	 * One URL: its stats, its dimensional breakdown and its worst recent
-	 * requests — plus, when nothing governs it, the cold-start finding that
-	 * says which instrumentation to switch on.
+	 * One URL: its stats and its worst recent requests — plus, when nothing
+	 * governs it, the cold-start finding that says which instrumentation to
+	 * switch on. The dimensional breakdown is `url_detail`'s to return; a
+	 * brief names that verb rather than carrying an unbounded series.
 	 *
-	 * @param array<array-key,mixed>          $stats     A URL index row.
-	 * @param array<int,array<array-key,mixed>> $requests  Recent requests for that URL.
-	 * @param array<array-key,mixed>          $breakdown Dimensional breakdown, as loaded.
-	 * @param Rule|null                 $rule      The governing rule, or null.
+	 * @param array<array-key,mixed>          $stats    A URL index row.
+	 * @param array<int,array<array-key,mixed>> $requests Recent requests for that URL.
+	 * @param Rule|null                 $rule     The governing rule, or null.
 	 * @return array<string,mixed>
 	 */
-	public static function for_url( array $stats, array $requests, array $breakdown, ?Rule $rule ): array {
+	public static function for_url( array $stats, array $requests, ?Rule $rule ): array {
 		\usort(
 			$requests,
 			static fn ( array $a, array $b ): int =>
@@ -315,17 +363,41 @@ class Ask_Assembler {
 				'max_ms'      => Core::num_float( $stats['max_ms'] ?? 0 ),
 				'max_peak_mb' => Core::num_float( $stats['max_peak_mb'] ?? 0 ),
 			],
-			'breakdown'      => $breakdown,
-			'worst_requests' => \array_slice( $requests, 0, self::WORST_REQUESTS ),
+			'worst_requests' => \array_map(
+				[ self::class, 'worst_request_shape' ],
+				\array_slice( $requests, 0, self::WORST_REQUESTS )
+			),
 			'rule'           => self::rule_shape( $rule ),
 			'findings'       => Findings::for_url( $stats, $rule ),
+			'fetch'          => self::fetch(
+				'performance_url_detail',
+				[ 'hash' => Core::as_string( $stats['hash'] ?? '' ) ]
+			),
 			'caveat'         => Findings::caveat(),
 		];
 	}
 
 	/**
-	 * A rule as the brief carries it: what an edit would land on, never the
-	 * hook list itself (which can run to hundreds of names).
+	 * How an agent fetches this thing again, as an MCP tool call. What a brief
+	 * trims stays reachable: the pointer is the address of the rest.
+	 *
+	 * @param string               $tool      The MCP tool name.
+	 * @param array<string,string> $arguments Its named arguments, absent ones dropped.
+	 * @return list<array<string,mixed>>
+	 */
+	private static function fetch( string $tool, array $arguments ): array {
+		return [
+			[
+				'tool'      => $tool,
+				'arguments' => \array_filter( $arguments, static fn ( string $v ): bool => '' !== $v ),
+			],
+		];
+	}
+
+	/**
+	 * A rule as the brief carries it: what an edit would land on, never a
+	 * roster of names — neither the hooks (hundreds) nor the custom events
+	 * (dozens), which no consumer renders and a model cannot act on.
 	 *
 	 * @return array<string,mixed>|null
 	 */
@@ -338,8 +410,8 @@ class Ask_Assembler {
 			'pattern'            => $rule->pattern,
 			'action'             => $rule->action,
 			'hook_count'         => null === $rule->hooks ? null : \count( $rule->hooks ),
+			'custom_event_count' => \count( $rule->custom_events ),
 			'significant_events' => $rule->significant_events,
-			'custom_events'      => $rule->custom_events,
 		];
 	}
 
@@ -375,6 +447,7 @@ class Ask_Assembler {
 			}
 		}
 		\usort( $others, static fn ( array $a, array $b ): int => $b['avg_time_ms'] <=> $a['avg_time_ms'] );
+		$others = \array_slice( $others, 0, self::TOP_SPANS );
 
 		$mine = $profiles[ $name ];
 		$time = Core::num_float( $mine['time'] ?? 0 );
@@ -459,6 +532,24 @@ class Ask_Assembler {
 			'share'       => $total > 0.0 ? $time / $total : 0.0,
 			'others'      => $others,
 			'caveat'      => Findings::caveat(),
+		];
+	}
+
+	/**
+	 * One recent request, named rather than located: enough to ask about it
+	 * (`request:<rid>:<partition>`) and to see why it is on this list.
+	 *
+	 * @param mixed $request A stored index row.
+	 * @return array<string,mixed>
+	 */
+	private static function worst_request_shape( mixed $request ): array {
+		$request = \is_array( $request ) ? $request : [];
+		return [
+			'rid'          => Core::as_string( $request['rid'] ?? '' ),
+			'partition'    => Core::num_int( $request['partition'] ?? 0 ),
+			'duration_ms'  => Core::num_float( $request['duration_ms'] ?? 0 ),
+			'status_code'  => Core::num_int( $request['status_code'] ?? 0 ),
+			'error_status' => Core::as_string( $request['error_status'] ?? '' ),
 		];
 	}
 }

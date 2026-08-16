@@ -22,10 +22,13 @@
 import { useCallback, useEffect, useRef, useState } from '@wordpress/element';
 import { __, sprintf } from '@wordpress/i18n';
 import Modal from '@newspack-nodes/shared/components/Modal';
-import { useAskPicker } from '@newspack-nodes/shared/hooks/useAskPicker';
+import {
+	ASK_TRIGGER_ATTR,
+	useAskPicker,
+} from '@newspack-nodes/shared/hooks/useAskPicker';
 import { useCommandOnce } from '@newspack-nodes/shared/hooks/useCommandOnce';
 import { formatCommandArgs, nodesData } from '@newspack-nodes/runtime';
-import { briefToMarkdown } from '../askBrief';
+import { askClaudeUrl, briefToMarkdown } from '../askBrief';
 
 /**
  * The picker's state, held once for the whole dashboard.
@@ -36,7 +39,6 @@ import { briefToMarkdown } from '../askBrief';
  */
 export function useAsk( { onError } = {} ) {
 	const [ briefs, setBriefs ] = useState( [] );
-	const [ open, setOpen ] = useState( false );
 
 	const onErrorRef = useRef( onError );
 	onErrorRef.current = onError;
@@ -55,28 +57,66 @@ export function useAsk( { onError } = {} ) {
 				return;
 			}
 			if ( ! result || 'object' !== typeof result ) {
+				onErrorRef.current?.(
+					__(
+						'That answered with no brief. Nothing was assembled for what you picked.',
+						'newspack-event-logger-nodes'
+					)
+				);
 				return;
 			}
 			setBriefs( ( prior ) => [ ...prior, result ] );
-			setOpen( true );
 		},
 	} );
 
 	const handlePick = useCallback(
-		( descriptors, { additive } ) => {
-			// Clearing is the PICK's; at reply time this flag is stale.
-			if ( ! additive ) {
-				setBriefs( [] );
-			}
+		( descriptors ) => {
 			ask( formatCommandArgs( descriptors ) );
 		},
 		[ ask ]
 	);
 
-	const { active, start, cancel } = useAskPicker( { onPick: handlePick } );
-	const close = useCallback( () => setOpen( false ), [] );
+	const handleNothing = useCallback( () => {
+		onErrorRef.current?.(
+			__(
+				'Nothing to ask about there. Point at a URL, a request, a span, a log entry or a category — the picker is still on.',
+				'newspack-event-logger-nodes'
+			)
+		);
+	}, [] );
 
-	return { active, start, cancel, briefs, open, close };
+	const { active, start, cancel } = useAskPicker( {
+		onPick: handlePick,
+		onNothing: handleNothing,
+		onAbandon: () => setBriefs( [] ),
+	} );
+
+	// @longform
+	// The SELECTION belongs to one picker session: arming starts a fresh one,
+	// a modified click keeps it open, and the plain click that disarms the
+	// picker ends it. So the panel is not a separate piece of state — it is
+	// simply "the picker is done and something arrived". Opening on each reply
+	// instead put the brief in front of the next thing being Cmd-clicked, and
+	// a flag read at reply time would answer for whichever pick landed last.
+	const open = ! active && 0 < briefs.length;
+	const discard = useCallback( () => setBriefs( [] ), [] );
+	const startPicking = useCallback( () => {
+		discard();
+		start();
+	}, [ discard, start ] );
+	const cancelPicking = useCallback( () => {
+		discard();
+		cancel();
+	}, [ discard, cancel ] );
+
+	return {
+		active,
+		start: startPicking,
+		cancel: cancelPicking,
+		briefs,
+		open,
+		close: discard,
+	};
 }
 
 /**
@@ -94,6 +134,7 @@ export function AskButton( { ask } ) {
 			className={ `button event-logger-ask__trigger${
 				active ? ' is-active' : ''
 			}` }
+			{ ...{ [ ASK_TRIGGER_ATTR ]: '' } }
 			onClick={ active ? cancel : start }
 			aria-pressed={ active }
 		>
@@ -173,8 +214,12 @@ export default function AskPanel( { ask } ) {
 		setCopied( false );
 	}, [ briefs ] );
 
-	const markdown = briefToMarkdown( briefs );
+	const endpoint = `${
+		nodesData().restUrl
+	}newspack-event-logger-nodes/v1/mcp`;
+	const markdown = briefToMarkdown( briefs, endpoint );
 
+	// The Claude link's too: past the URL budget it only asks for a paste.
 	const copy = useCallback( () => {
 		window.navigator?.clipboard
 			?.writeText( markdown )
@@ -241,6 +286,13 @@ export default function AskPanel( { ask } ) {
 				</div>
 			) ) }
 
+			<p className="event-logger-ask__leaves-page">
+				{ __(
+					'Copying puts this on your clipboard; Ask Claude carries it in the link, which browser history and any URL-logging proxy will keep. Both are a deliberate act — the picker click was not.',
+					'newspack-event-logger-nodes'
+				) }
+			</p>
+
 			<p className="event-logger-ask__mcp">
 				{ sprintf(
 					// translators: %s: the MCP endpoint URL.
@@ -248,7 +300,7 @@ export default function AskPanel( { ask } ) {
 						'This site can also expose these numbers to an agent over MCP, at %s. Connecting one is a deliberate act: issue a scoped session under Nodes → Sessions and configure your client with it.',
 						'newspack-event-logger-nodes'
 					),
-					`${ nodesData().restUrl }newspack-event-logger-nodes/v1/mcp`
+					endpoint
 				) }
 			</p>
 
@@ -271,6 +323,15 @@ export default function AskPanel( { ask } ) {
 				<button type="button" className="button" onClick={ close }>
 					{ __( 'Close', 'newspack-event-logger-nodes' ) }
 				</button>
+				<a
+					className="button"
+					href={ askClaudeUrl( markdown ) }
+					target="_blank"
+					rel="noopener noreferrer"
+					onClick={ copy }
+				>
+					{ __( 'Ask Claude', 'newspack-event-logger-nodes' ) }
+				</a>
 				<button
 					type="button"
 					className="button button-primary"

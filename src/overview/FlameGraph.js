@@ -710,7 +710,6 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 					.transitionDuration( 0 );
 				chartRef.current.update( framedData );
 				applyLabelContrast( container );
-				applyAskDescriptors( container );
 
 				// Re-zoom to where the viewer was before the data changed.
 				if ( zoomedNodeRef.current ) {
@@ -723,6 +722,8 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 						chartRef.current.zoomTo( targetNode );
 					}
 				}
+				// After the re-zoom: it rebuilds the frames, unstamped.
+				applyAskDescriptors( container );
 
 				// Restore tooltip state (else it vanishes on refresh/zoom).
 				if ( tooltipHasState ) {
@@ -768,6 +769,8 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 						if ( chartRef.current ) {
 							chartRef.current.transitionDuration( 0 );
 						}
+						// New frames; unstamped, the picker cannot see them.
+						applyAskDescriptors( container );
 					}, 305 );
 				} );
 
@@ -822,6 +825,7 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 						.datum( framedData )
 						.call( chartRef.current );
 					applyLabelContrast( containerRef.current );
+					applyAskDescriptors( containerRef.current );
 				}
 			}, 150 );
 		} );

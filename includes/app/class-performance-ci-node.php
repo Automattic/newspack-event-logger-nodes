@@ -766,7 +766,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * The `url:` brief — stats, breakdown, worst recent requests, and the
+	 * The `url:` brief — stats, worst recent requests, and the
 	 * cold-start finding when nothing governs it.
 	 *
 	 * @return array<string,mixed>
@@ -786,7 +786,6 @@ class Performance_CI_Node extends Service_CI_Node {
 		return Ask_Assembler::for_url(
 			$stats,
 			self::find_recent_requests_for_url( $hash ),
-			self::merge_url_dim( $hash, 'status' ),
 			self::rule_for_url( Core::as_string( $stats['url'] ?? '' ) )
 		);
 	}
@@ -1057,7 +1056,12 @@ class Performance_CI_Node extends Service_CI_Node {
 	 */
 	private static function ask_span( string $name, array $context ): array {
 		$record = self::request_from_context( $context, 'span' );
-		$brief  = Ask_Assembler::for_span( $record, $name, self::rule_for_record( $record ) );
+		$brief  = Ask_Assembler::for_span(
+			$record,
+			$name,
+			self::rule_for_record( $record ),
+			self::descriptor_of( $context, 'request' )
+		);
 		if ( null === $brief ) {
 			throw new \RuntimeException( \esc_html( "no span '{$name}' in this request" ) );
 		}
@@ -1251,6 +1255,25 @@ class Performance_CI_Node extends Service_CI_Node {
 			}
 		}
 		return null;
+	}
+
+	/**
+	 * The descriptor of a given type in a context chain, verbatim. A brief's
+	 * `fetch` pointer has to name what an agent would ASK, which is the
+	 * descriptor as the picker wrote it — not the record it resolves to.
+	 *
+	 * @param list<string> $context Container descriptors.
+	 * @return string The descriptor, or '' when the chain names none.
+	 */
+	private static function descriptor_of( array $context, string $type ): string {
+		foreach ( $context as $descriptor ) {
+			$text   = Core::as_string( $descriptor );
+			$parsed = Ask_Assembler::parse_descriptor( $text );
+			if ( null !== $parsed && $type === $parsed['type'] ) {
+				return $text;
+			}
+		}
+		return '';
 	}
 
 	/**
