@@ -36,8 +36,8 @@ class FindingsTest extends TestCase {
 				'name'     => 'request',
 				'value'    => 400.0,
 				'children' => [
-					[ 'name' => 'init', 'value' => 190.0, 'children' => [] ],
-					[ 'name' => 'wp_loaded', 'value' => 180.0, 'children' => [] ],
+					[ 'name' => 'init hook', 'value' => 190.0, 'children' => [] ],
+					[ 'name' => 'wp_loaded hook', 'value' => 180.0, 'children' => [] ],
 				],
 			],
 		];
@@ -59,8 +59,8 @@ class FindingsTest extends TestCase {
 	public function test_a_loaded_record_carries_its_tree_at_flame_data(): void {
 		$record = $this->loaded_record();
 		$record['flame_data']['children'] = [
-			[ 'name' => 'init', 'value' => 12.0, 'children' => [] ],
-			[ 'name' => 'wp_loaded', 'value' => 372.0, 'children' => [] ],
+			[ 'name' => 'init hook', 'value' => 12.0, 'children' => [] ],
+			[ 'name' => 'wp_loaded hook', 'value' => 372.0, 'children' => [] ],
 		];
 
 		$kinds = $this->kinds( Findings::for_request( $record, $this->instrumented_rule() ) );
@@ -98,18 +98,18 @@ class FindingsTest extends TestCase {
 	public function test_a_dominant_span_is_named_with_its_share(): void {
 		$record = $this->healthy_record();
 		$record['flame']['children'] = [
-			[ 'name' => 'init', 'value' => 12.0, 'children' => [] ],
+			[ 'name' => 'init hook', 'value' => 12.0, 'children' => [] ],
 			[
-				'name'     => 'wp_loaded',
+				'name'     => 'wp_loaded hook',
 				'value'    => 372.0,
-				'children' => [ [ 'name' => 'render_block', 'value' => 366.0, 'children' => [] ] ],
+				'children' => [ [ 'name' => 'render_block hook', 'value' => 366.0, 'children' => [] ] ],
 			],
 		];
 
 		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'dominant_span' );
 
 		$this->assertNotNull( $found );
-		$this->assertSame( 'render_block', $found['metric']['name'] );
+		$this->assertSame( 'render_block hook', $found['metric']['name'] );
 		$this->assertEqualsWithDelta( 0.915, $found['metric']['share'], 0.001 );
 		$this->assertSame( 'flame', $found['measured'] );
 		$this->assertSame( 'a1b2c3d4e5f6', $found['rule_id'] );
@@ -119,21 +119,21 @@ class FindingsTest extends TestCase {
 	public function test_a_dominant_span_proposes_more_visibility(): void {
 		$record = $this->healthy_record();
 		$record['flame']['children'] = [
-			[ 'name' => 'init', 'value' => 12.0, 'children' => [] ],
-			[ 'name' => 'wp_loaded', 'value' => 372.0, 'children' => [] ],
+			[ 'name' => 'init hook', 'value' => 12.0, 'children' => [] ],
+			[ 'name' => 'wp_loaded hook', 'value' => 372.0, 'children' => [] ],
 		];
 
 		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'dominant_span' );
 
 		$this->assertSame( 'more', $found['proposal']['direction'] );
 		$this->assertSame( 'significant_events', $found['proposal']['field'] );
-		$this->assertSame( 'wp_loaded', $found['proposal']['value'] );
+		$this->assertSame( 'wp_loaded hook', $found['proposal']['value'] );
 	}
 
 	public function test_repetition_reports_the_call_count(): void {
 		$record = $this->healthy_record();
 		$record['flame']['children'][] = [
-			'name'     => 'the_content',
+			'name'     => 'the_content hook',
 			'value'    => 30.0,
 			'count'    => 340,
 			'children' => [],
@@ -143,13 +143,13 @@ class FindingsTest extends TestCase {
 
 		$this->assertNotNull( $found );
 		$this->assertSame( 340, $found['metric']['count'] );
-		$this->assertSame( 'the_content', $found['metric']['name'] );
+		$this->assertSame( 'the_content hook', $found['metric']['name'] );
 	}
 
 	public function test_a_span_below_the_repetition_threshold_is_quiet(): void {
 		$record = $this->healthy_record();
 		$record['flame']['children'][] = [
-			'name'     => 'the_content',
+			'name'     => 'the_content hook',
 			'value'    => 30.0,
 			'count'    => Findings::REPETITION_COUNT - 1,
 			'children' => [],
@@ -282,14 +282,14 @@ class FindingsTest extends TestCase {
 			Findings::LIFECYCLE_BRACKET
 		);
 		$record['flame']['children'] = [
-			[ 'name' => 'init', 'value' => 12.0, 'children' => [] ],
-			[ 'name' => 'wp_loaded', 'value' => 372.0, 'children' => [] ],
+			[ 'name' => 'init hook', 'value' => 12.0, 'children' => [] ],
+			[ 'name' => 'wp_loaded hook', 'value' => 372.0, 'children' => [] ],
 		];
 
 		$found = $this->of_kind( Findings::for_request( $record, $bracket ), 'dominant_span' );
 
-		$this->assertSame( 'wp_loaded', $found['proposal']['value'] );
-		$this->assertStringContainsString( 'wp_loaded', $found['proposal']['why'] );
+		$this->assertSame( 'wp_loaded hook', $found['proposal']['value'] );
+		$this->assertStringContainsString( 'wp_loaded hook', $found['proposal']['why'] );
 	}
 
 	/** Every proposal that adds instrumentation names what removes it again. */
@@ -317,6 +317,142 @@ class FindingsTest extends TestCase {
 		$this->assertSame( 'create_rule', $found['proposal']['action'] );
 	}
 
+	/**
+	 * A span is only a HOOK when it says so. `App\Core::hook_start()` names a
+	 * hook span `<hook> hook`; everything else on the flame is either a custom
+	 * event the application logged itself or a wrapped listener, and
+	 * `bind_current_scope()` leaves a significant event naming one of those
+	 * unbound. Proposing it anyway sends the reader to change a setting that
+	 * cannot do anything.
+	 */
+	public function test_a_dominant_custom_event_is_not_proposed_as_significant(): void {
+		$record = $this->healthy_record();
+		$record['flame']['children'] = [
+			[ 'name' => 'init hook', 'value' => 12.0, 'children' => [] ],
+			[
+				'name'     => 'include: /Responsive/Grids/Resp-One-Col-1.html',
+				'value'    => 372.0,
+				'children' => [],
+			],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'dominant_span' );
+
+		$this->assertNotSame( 'mark_significant', $found['proposal']['action'] );
+		$this->assertStringNotContainsString( 'listeners', $found['detail'] );
+		$this->assertStringContainsString( 'custom event', $found['proposal']['why'] );
+	}
+
+	public function test_a_dominant_hook_is_still_proposed_as_significant(): void {
+		$record = $this->healthy_record();
+		$record['flame']['children'] = [
+			[ 'name' => 'init hook', 'value' => 12.0, 'children' => [] ],
+			[ 'name' => 'wp_loaded hook', 'value' => 372.0, 'children' => [] ],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'dominant_span' );
+
+		$this->assertSame( 'mark_significant', $found['proposal']['action'] );
+	}
+
+	/**
+	 * A wrapped listener is the finest grain this logger has — it only exists
+	 * because its hook is ALREADY significant, so there is nothing left to
+	 * switch on.
+	 */
+	public function test_a_dominant_listener_span_proposes_nothing_to_enable(): void {
+		$record = $this->healthy_record();
+		$record['flame']['children'] = [
+			[ 'name' => 'init hook', 'value' => 12.0, 'children' => [] ],
+			[ 'name' => 'Image_CDN::filter_the_content @10', 'value' => 372.0, 'children' => [] ],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'dominant_span' );
+
+		$this->assertSame( 'none', $found['proposal']['action'] );
+	}
+
+	/**
+	 * A listener registered at a NEGATIVE priority is still a listener —
+	 * `add_action( 'init', $cb, -10 )` labels its span `Foo::bar @-10`. A
+	 * pattern without the sign reads it as a custom event and hands back advice
+	 * about enabling application logging for a WordPress callback.
+	 */
+	public function test_a_negative_priority_listener_is_still_a_listener(): void {
+		$record = $this->healthy_record();
+		$record['flame']['children'] = [
+			[ 'name' => 'init hook', 'value' => 12.0, 'children' => [] ],
+			[ 'name' => 'Image_CDN::filter_the_content @-10', 'value' => 372.0, 'children' => [] ],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'dominant_span' );
+
+		$this->assertSame( 'none', $found['proposal']['action'] );
+	}
+
+	/**
+	 * `bind_current_scope()` accepts a significant event with or without the
+	 * ` hook` suffix, so a rule listing `wp_loaded` already covers the span
+	 * named `wp_loaded hook` — proposing it again is advice to do nothing.
+	 */
+	public function test_a_hook_already_significant_without_the_suffix_is_recognised(): void {
+		$rule   = new Rule( 'a1b2c3d4e5f6', '/calendar/today', Rule::ACTION_LOG, 0, 0.0, [ 'wp_loaded' ], [], [ 'init', 'wp_loaded' ] );
+		$record = $this->healthy_record();
+		$record['flame']['children'] = [
+			[ 'name' => 'init hook', 'value' => 12.0, 'children' => [] ],
+			[ 'name' => 'wp_loaded hook', 'value' => 372.0, 'children' => [] ],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $rule ), 'dominant_span' );
+
+		$this->assertSame( 'none', $found['proposal']['action'] );
+	}
+
+	/**
+	 * A hook the rule ALREADY marks significant has its listeners in the
+	 * record — telling the reader to mark it again is advice to do nothing,
+	 * which `dominant_span` learned and `repetition` has to know too.
+	 */
+	public function test_repetition_of_an_already_significant_hook_proposes_nothing(): void {
+		$rule   = new Rule( 'a1b2c3d4e5f6', '/calendar/today', Rule::ACTION_LOG, 0, 0.0, [ 'the_content' ], [], [ 'init', 'wp_loaded' ] );
+		$record = $this->healthy_record();
+		$record['flame']['children'][] = [
+			'name'     => 'the_content hook',
+			'value'    => 30.0,
+			'count'    => 340,
+			'children' => [],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $rule ), 'repetition' );
+
+		$this->assertNotNull( $found );
+		$this->assertSame( 'none', $found['proposal']['action'] );
+	}
+
+	public function test_repetition_of_a_custom_event_is_not_proposed_as_significant(): void {
+		$record = $this->healthy_record();
+		$record['flame']['children'][] = [
+			'name'     => 'function: byline',
+			'value'    => 30.0,
+			'count'    => 340,
+			'children' => [],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'repetition' );
+
+		$this->assertNotSame( 'mark_significant', $found['proposal']['action'] );
+	}
+
+	/**
+	 * The logger binds ONLY the hooks the governing rule names. Claiming it
+	 * hooks `all` tells a model everything is instrumented, which turns every
+	 * absence into evidence — the opposite of what the caveat is for.
+	 */
+	public function test_the_caveat_does_not_claim_the_logger_hooks_all(): void {
+		$this->assertStringNotContainsString( '`all`', Findings::caveat() );
+		$this->assertStringContainsString( 'rule', Findings::caveat() );
+	}
+
 	/** A model handed a profiled/duration ratio with no caveat will invent a cause. */
 	public function test_the_caveat_names_what_is_not_measured(): void {
 		$caveat = Findings::caveat();
@@ -332,7 +468,7 @@ class FindingsTest extends TestCase {
 		$record['flame']       = [
 			'name'     => 'request',
 			'value'    => 175.6,
-			'children' => [ [ 'name' => 'init', 'value' => 175.6, 'count' => 900, 'children' => [] ] ],
+			'children' => [ [ 'name' => 'init hook', 'value' => 175.6, 'count' => 900, 'children' => [] ] ],
 		];
 
 		$kinds = $this->kinds( Findings::for_request( $record, $this->instrumented_rule() ) );

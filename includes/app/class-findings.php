@@ -24,6 +24,8 @@ namespace Newspack_Event_Logger_Nodes\App;
 
 use Newspack_Event_Logger_Nodes\Rule;
 use Newspack_Nodes\Core;
+// Both plugins have a `Core`; the hook instrumentation is THIS plugin's.
+use Newspack_Event_Logger_Nodes\App\Core as Hooks;
 
 \defined( 'ABSPATH' ) || exit;
 
@@ -92,7 +94,7 @@ class Findings {
 			[
 				self::unattributed( $profiled, $duration, $rule_id ),
 				self::dominant_span( $nodes, $profiled, $rule, $duration ),
-				self::repetition( $nodes, $rule_id ),
+				self::repetition( $nodes, $rule ),
 				self::entry_gap( $record, $rule_id ),
 				self::truncation( $record, $rule_id ),
 			] as $finding
@@ -218,7 +220,7 @@ class Findings {
 	 * @param list<array{name:string,value:float,count:int,depth:int}> $nodes Flattened flame nodes.
 	 * @return array<string,mixed>|null
 	 */
-	private static function repetition( array $nodes, ?string $rule_id ): ?array {
+	private static function repetition( array $nodes, ?Rule $rule ): ?array {
 		$worst = null;
 		foreach ( $nodes as $node ) {
 			if ( $node['count'] >= self::REPETITION_COUNT
@@ -241,16 +243,12 @@ class Findings {
 				'total_ms' => $worst['value'],
 				'each_ms'  => $worst['value'] / $worst['count'],
 			],
-			'rule_id'  => $rule_id,
-			'proposal' => [
-				'action'    => 'mark_significant',
-				'direction' => 'more',
-				'field'     => 'significant_events',
-				'value'     => $worst['name'],
-				'rule_id'   => $rule_id,
-				'why'       => 'Logging its listeners shows which one is being called per item.',
-				'undo'      => 'Unmark it once the caller is identified.',
-			],
+			'rule_id'  => $rule?->id,
+			'proposal' => self::visibility_proposal(
+				$worst['name'],
+				$rule,
+				'Unmark it once the caller is identified.'
+			),
 		];
 	}
 
@@ -280,8 +278,8 @@ class Findings {
 		if ( null === $best ) {
 			return null;
 		}
-		$share      = $best['value'] / $profiled;
-		$already    = null !== $rule && \in_array( $best['name'], $rule->significant_events, true );
+		$share   = $best['value'] / $profiled;
+		$already = self::is_significant( $best['name'], $rule );
 		return [
 			'kind'     => 'dominant_span',
 			'severity' => 'high',
@@ -290,9 +288,7 @@ class Findings {
 				$best['name'],
 				(int) \round( $share * 100 )
 			),
-			'detail'   => $already
-				? 'It is already a significant event, so its listeners are logged — read those next.'
-				: 'Its listeners are not logged, so what happens inside it is invisible.',
+			'detail'   => self::interior_detail( $best['name'], $already ),
 			'measured' => 'flame',
 			'metric'   => [
 				'name'  => $best['name'],
@@ -302,19 +298,125 @@ class Findings {
 				'depth' => $best['depth'],
 			],
 			'rule_id'  => $rule?->id,
-			'proposal' => [
-				'action'    => $already ? 'none' : 'mark_significant',
-				'direction' => $already ? 'none' : 'more',
+			'proposal' => self::visibility_proposal(
+				$best['name'],
+				$rule,
+				'Unmark it once the responsible listener is known; per-callback profiling is the expensive kind.'
+			),
+		];
+	}
+
+	/**
+	 * What would make this span's interior visible, said accurately for what
+	 * KIND of span it is. Only a hook has listeners to log; a custom event's
+	 * interior belongs to the application that logged it, and a wrapped
+	 * listener is already the finest grain there is.
+	 *
+	 * @param string    $span The span's name, as the flame carries it.
+	 * @param Rule|null $rule The governing rule, or null when none does.
+	 * @param string    $undo What removes the instrumentation again.
+	 * @return array<string,mixed> The proposal that is true for this kind of span.
+	 */
+	private static function visibility_proposal( string $span, ?Rule $rule, string $undo ): array {
+		$rule_id = $rule?->id;
+		// Already marked: its listeners are here, so there is nothing to add.
+		if ( self::is_significant( $span, $rule ) ) {
+			return [
+				'action'    => 'none',
+				'direction' => 'none',
+				'rule_id'   => $rule_id,
+				'why'       => 'It is already a significant event; its listeners are in this record.',
+				'undo'      => '',
+			];
+		}
+		if ( self::is_hook( $span ) ) {
+			return [
+				'action'    => 'mark_significant',
+				'direction' => 'more',
 				'field'     => 'significant_events',
-				'value'     => $best['name'],
-				'rule_id'   => $rule?->id,
+				'value'     => $span,
+				'rule_id'   => $rule_id,
 				'why'       => \sprintf(
 					'Marking %s a significant event logs its listeners, which is the only way to see which one is holding the time.',
-					$best['name']
+					$span
 				),
-				'undo'      => 'Unmark it once the responsible listener is known; per-callback profiling is the expensive kind.',
-			],
+				'undo'      => $undo,
+			];
+		}
+		if ( self::is_custom_event( $span ) ) {
+			return [
+				'action'    => 'add_custom_events',
+				'direction' => 'more',
+				'field'     => 'custom_events',
+				'value'     => $span,
+				'rule_id'   => $rule_id,
+				'why'       => \sprintf(
+					'%s is a custom event the application logs itself, not a WordPress hook — significant events reach hooks only, so marking it does nothing. Its interior shows only where the application logs further custom events, enabled on this rule.',
+					$span
+				),
+				'undo'      => 'Disable those custom events again once the interior is understood.',
+			];
+		}
+		return [
+			'action'    => 'none',
+			'direction' => 'none',
+			'rule_id'   => $rule_id,
+			'why'       => \sprintf(
+				'%s is a listener, logged because its hook is already a significant event — this is the finest grain the logger has, and the answer is inside that callback.',
+				$span
+			),
+			'undo'      => '',
 		];
+	}
+
+	/**
+	 * Whether the rule already marks this span significant. `bind_current_scope()`
+	 * accepts an event with or without the ` hook` suffix, so both spellings name
+	 * the same hook and a comparison that misses one proposes a no-op edit.
+	 */
+	private static function is_significant( string $span, ?Rule $rule ): bool {
+		if ( null === $rule ) {
+			return false;
+		}
+		$bare = \str_ends_with( $span, Hooks::HOOK_SUFFIX )
+			? \substr( $span, 0, -\strlen( Hooks::HOOK_SUFFIX ) )
+			: $span;
+		foreach ( $rule->significant_events as $event ) {
+			if ( $event === $span || $event === $bare ) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Why the inside of this span is or is not visible, in its own terms — only
+	 * a hook has listeners to speak of.
+	 */
+	private static function interior_detail( string $span, bool $already ): string {
+		if ( $already ) {
+			return 'It is already a significant event, so its listeners are logged — read those next.';
+		}
+		if ( self::is_hook( $span ) ) {
+			return 'Its listeners are not logged, so what happens inside it is invisible.';
+		}
+		if ( self::is_custom_event( $span ) ) {
+			return 'The application logs this span itself; what happens inside it appears only where the application logs it.';
+		}
+		return 'This is one listener on a significant hook — the time is inside this callback.';
+	}
+
+	/** A span the application logged itself — an include, a function, a query. */
+	private static function is_custom_event( string $span ): bool {
+		return ! self::is_hook( $span ) && ! Hooks::is_listener_span( $span );
+	}
+
+	/**
+	 * Whether a span is a WordPress hook, which is the only kind of span a
+	 * rule's significant events can reach.
+	 */
+	private static function is_hook( string $span ): bool {
+		return \str_ends_with( $span, Hooks::HOOK_SUFFIX );
 	}
 
 	/**
@@ -362,9 +464,10 @@ class Findings {
 	 * duration` with no caveat will invent a cause for the difference.
 	 */
 	public static function caveat(): string {
-		return 'The logger hooks `all` and times hooks. It does not see SQL — a query fired 400 times '
-			. 'inside one hook is invisible — nor outbound HTTP, nor time spent below PHP userland. '
-			. 'Unattributed time means unmeasured, not idle.';
+		return 'The logger times ONLY the hooks the URL\'s governing rule names, plus the custom events '
+			. 'the application logs itself — nothing else is instrumented, so an absence here is as often '
+			. 'an unbound hook as an idle one. It does not see SQL, outbound HTTP, or time spent below '
+			. 'PHP userland unless the application logs it. Unattributed time means unmeasured, not idle.';
 	}
 
 	/** A duration a human reads at a glance: ms under a second, else seconds. */

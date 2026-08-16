@@ -394,6 +394,8 @@ export default function PerformanceDashboard( { onError } ) {
 	const { run: requestGrep } = useCommandOnce( {
 		ci: SERVER,
 		command: 'request_grep',
+		// A search pattern is free text the operator typed, not an identity.
+		subjectOf: () => null,
 		onDone: ( { result, error } ) => {
 			setSearchLoading( false );
 			const results = result?.results ?? [];
@@ -637,6 +639,8 @@ export default function PerformanceDashboard( { onError } ) {
 	const { run: upsertRule } = useCommandOnce( {
 		ci: RULES_CI,
 		command: 'upsert',
+		// The rule DOCUMENT is the first token; the rule it names is the id.
+		subjectOf: ( [ rule ] ) => JSON.parse( rule ).id ?? null,
 		onDone: ( { result, error } ) => {
 			setRuleDraft( null );
 			if ( result ) {
@@ -727,9 +731,6 @@ export default function PerformanceDashboard( { onError } ) {
 
 	return (
 		<div className="event-logger-performance-dashboard">
-			{ /* The `?` picker's answer. Its triggers sit in the headers. */ }
-			<AskPanel ask={ ask } />
-
 			{ /* Facts only, no instructions: anything reading this page gets
 			     clean numbers instead of a scraped table. Rendered only for
 			     someone who can already see the dashboard. */ }
@@ -999,6 +1000,10 @@ export default function PerformanceDashboard( { onError } ) {
 					onDelete={ ruleDraft.id ? deleteRule : undefined }
 				/>
 			) }
+
+			{ /* The `?` picker's answer, last: it is summoned from the modals
+			     above and has to paint over whichever one is open. */ }
+			<AskPanel ask={ ask } />
 		</div>
 	);
 }

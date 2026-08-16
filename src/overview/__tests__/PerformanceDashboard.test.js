@@ -43,6 +43,8 @@ jest.mock( '@newspack-nodes/runtime', () => ( {
 		...args,
 		...Object.entries( options ).map( ( [ k, v ] ) => `--${ k }=${ v }` ),
 	],
+	// The Ask panel prints the MCP endpoint under this site's REST root.
+	nodesData: () => ( { restUrl: '/wp-json/', nonce: 'NONCE' } ),
 } ) );
 
 // @longform Every on-demand verb this page drives is a one-shot, and this
@@ -1212,6 +1214,51 @@ describe( 'PerformanceDashboard', () => {
 		} );
 		expect( mockNavState.selectRequest ).toHaveBeenCalledWith( null );
 		expect( mockNavState.selectUrl ).not.toHaveBeenCalledWith( null );
+		unmount();
+	} );
+
+	// @longform The brief is summoned FROM the request-detail modal, so it has
+	// to paint over it. That modal is a `@wordpress/components` one, portaled
+	// to the body on z-index 100000; this dialog renders inside the dashboard's
+	// own root, so document order can never win it and the backdrop — where the
+	// layer lives — carries the class that raises it.
+	it( 'raises the assembled brief above the modal that summoned it', async () => {
+		mockNavState.selectedUrl = { hash: 'h1', url: '/foo' };
+		mockNavState.selectedRequest = 'r1';
+		mockView = loadedView( {
+			urlDetail: {
+				data: {
+					last_modified: 1,
+					stats: { avg_ms: 50, time_series: {} },
+					requests: [],
+				},
+				loading: false,
+				error: null,
+			},
+			requestDetail: {
+				data: { rid: 'r1', entries: [] },
+				loading: false,
+				error: null,
+			},
+		} );
+		const { unmount } = renderComponent(
+			React.createElement( PerformanceDashboard, {
+				onError: jest.fn(),
+			} )
+		);
+		await flushEffects();
+		answerCommand( 'performance:ask', {
+			result: { subject: 'request', url: '/foo', findings: [] },
+		} );
+
+		expect(
+			document.querySelector( '.event-logger-performance-modal' )
+		).toBeTruthy();
+		const backdrop = document.querySelector(
+			'.newspack-nodes-modal__backdrop'
+		);
+		expect( backdrop ).toBeTruthy();
+		expect( backdrop.className ).toContain( 'event-logger-ask__backdrop' );
 		unmount();
 	} );
 

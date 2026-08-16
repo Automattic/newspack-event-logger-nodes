@@ -88,10 +88,13 @@ describe( 'Inflight', () => {
 		window.localStorage.clear();
 	} );
 
-	// Advance the default 2s refresh so renderRequests samples the node.
+	// Advance the default 2s refresh so renderRequests samples the node. The
+	// tick rides the substrate's wall-clock grid and the hook marks its window
+	// started (the caller loads once itself), so the first sample is a full
+	// interval out, counted from the next boundary — up to two of them.
 	const tickRefresh = () => {
 		act( () => {
-			jest.advanceTimersByTime( 2000 );
+			jest.advanceTimersByTime( 4000 );
 		} );
 	};
 

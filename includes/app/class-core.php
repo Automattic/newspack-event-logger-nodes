@@ -40,6 +40,21 @@ if ( ! \defined( 'ABSPATH' ) ) {
  */
 class Core {
 
+	/**
+	 * What a hook's span is called: `<hook> hook`. This class MINTS that name,
+	 * so it owns the word — `Findings` reads it to tell a hook span from a
+	 * custom event, and a significant event may be written either way.
+	 */
+	public const HOOK_SUFFIX = ' hook';
+
+	/**
+	 * What a wrapped listener's span is called: `<callable> @<priority>`. This
+	 * class mints that too (`wrap_callbacks()`), so it owns the shape — and the
+	 * priority may be NEGATIVE, which a pattern without the sign silently reads
+	 * as a custom event instead.
+	 */
+	public const LISTENER_PATTERN = '/ @-?\d+$/';
+
 	/** Priority of the sacrificial hook_spacer; wrap_callbacks treats everything at/above it as ours. */
 	private const SPACER_PRIORITY = PHP_INT_MAX - 2;
 
@@ -91,7 +106,7 @@ class Core {
 		}
 
 		$hook_name = \current_filter() ?: '';
-		$category  = $hook_name . ' hook';
+		$category  = $hook_name . self::HOOK_SUFFIX;
 
 		$m = '';
 		if ( isset( $v ) && \is_string( $v ) ) {
@@ -309,7 +324,9 @@ class Core {
 
 		// Significant events get per-callback profiling.
 		foreach ( $rule->significant_events as $event ) {
-			$hook = \str_ends_with( $event, ' hook' ) ? \substr( $event, 0, -5 ) : $event;
+			$hook = \str_ends_with( $event, self::HOOK_SUFFIX )
+				? \substr( $event, 0, -\strlen( self::HOOK_SUFFIX ) )
+				: $event;
 			$this->significant[ $hook ] = true;
 			if ( ! isset( $log_events_set[ $hook ] ) && ! isset( $custom_set[ $hook ] ) ) {
 				$hooks[] = $hook;
@@ -333,6 +350,16 @@ class Core {
 			\add_filter( $hook_name, [ $this, 'hook_complete' ], PHP_INT_MAX - 1 );
 			$this->bound_hooks[] = $hook_name;
 		}
+	}
+
+	/**
+	 * Whether a span name is a wrapped listener rather than a hook or one of
+	 * the application's own custom events.
+	 *
+	 * @param string $span A span name, as the flame carries it.
+	 */
+	public static function is_listener_span( string $span ): bool {
+		return 1 === \preg_match( self::LISTENER_PATTERN, $span );
 	}
 
 	/**
@@ -362,7 +389,7 @@ class Core {
 	 */
 	public function hook_complete( $v = null ) {
 		$hook_name = \current_filter();
-		Log_Manager::instance()->complete( $hook_name . ' hook' );
+		Log_Manager::instance()->complete( $hook_name . self::HOOK_SUFFIX );
 		return $v;
 	}
 }

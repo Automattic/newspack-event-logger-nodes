@@ -69,7 +69,7 @@ beforeEach( () => {
 describe( 'useHookCatalogGraph — exospine + I/O boundary wiring', () => {
 	test( 'mounts the backbone + _http + the slice', () => {
 		installWire();
-		renderHook( () => useHookCatalogGraph( { isOpen: false } ) );
+		renderHook( () => useHookCatalogGraph( { isOpen: true } ) );
 		const interpreter = Core.node( INTERPRETER );
 		expect( interpreter ).toBeTruthy();
 		expect( Core.node( ROUTER ) ).toBeTruthy();
@@ -101,7 +101,7 @@ describe( 'useHookCatalogGraph — exospine + I/O boundary wiring', () => {
 
 	test( 'does NOT mount _output / _completion / _uptime / _cwd (dashboards are not REPLs)', () => {
 		installWire();
-		renderHook( () => useHookCatalogGraph( { isOpen: false } ) );
+		renderHook( () => useHookCatalogGraph( { isOpen: true } ) );
 		for ( const name of [ '_output', '_completion', '_uptime', '_cwd' ] ) {
 			expect( Core.node( name ) ).toBeNull();
 		}
@@ -109,7 +109,7 @@ describe( 'useHookCatalogGraph — exospine + I/O boundary wiring', () => {
 
 	test( 'mounts _http without injecting anything into it', () => {
 		installWire();
-		renderHook( () => useHookCatalogGraph( { isOpen: false } ) );
+		renderHook( () => useHookCatalogGraph( { isOpen: true } ) );
 		// Closed, so nothing has posted yet — HttpOut defaults at first post.
 		expect( Core.node( HTTP ) ).toBeTruthy();
 	} );
