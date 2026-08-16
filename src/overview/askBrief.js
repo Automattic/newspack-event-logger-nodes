@@ -8,6 +8,40 @@
  * like a finding.
  */
 
+/** A prompt longer than this stops being a link and starts being a payload. */
+const PROMPT_MAX = 6000;
+
+/** What the brief is, for a chat that has no other context. */
+const PROMPT_INTRO =
+	'This is a performance brief from my site\u2019s event logger. Tell me what is actually slow and what to change:';
+
+/** When the brief will not fit in a URL, the link carries the ask instead. */
+const PROMPT_TOO_LONG =
+	'I have a performance brief from my site\u2019s event logger. I will paste it next — read it and tell me what is actually slow and what to change.';
+
+/**
+ * A claude.ai chat with the brief already in it.
+ *
+ * A link cannot connect an MCP server, so this carries the brief itself; where
+ * the site is reachable and its MCP server IS connected, the `fetch` lines in
+ * the brief let that chat pull the detail this one trimmed.
+ *
+ * @param {string} markdown The brief, as `briefToMarkdown` rendered it.
+ * @return {string} An absolute claude.ai URL.
+ */
+export function askClaudeUrl( markdown ) {
+	const full = `${ PROMPT_INTRO }\n\n${ markdown }`;
+	const prompt =
+		encodeURIComponent( full ).length <= PROMPT_MAX
+			? full
+			: PROMPT_TOO_LONG;
+	return `https://claude.ai/new?q=${ encodeURIComponent( prompt ) }`;
+}
+
+/** Where the `fetch` calls above are answered. Named once per document. */
+const MCP_NOTE =
+	'Run those with this site\u2019s MCP server at %s — it answers the same verbs this brief was built from.';
+
 /**
  * A number a reader can scan, without dragging a formatter in.
  *
@@ -54,6 +88,7 @@ function ruleLines( rule ) {
 			'hooks',
 			null === rule.hook_count ? 'stored out of line' : rule.hook_count,
 		],
+		[ 'custom events', rule.custom_event_count ],
 		[
 			'significant events',
 			( rule.significant_events ?? [] ).join( ', ' ),
@@ -244,18 +279,40 @@ function bodyLines( brief ) {
 }
 
 /**
+ * The tool call that fetches this thing again, as an agent would type it.
+ *
+ * A brief is deliberately trimmed — the time series, the rosters and the deep
+ * spans stay on the server. This is the address of the rest.
+ *
+ * @param {Object} brief An assembled brief.
+ * @return {string[]} Markdown list items.
+ */
+function fetchLines( brief ) {
+	return ( brief.fetch ?? [] ).map( ( call ) => {
+		const args = Object.entries( call.arguments ?? {} )
+			.map( ( [ key, value ] ) => ` ${ key }="${ value }"` )
+			.join( '' );
+		return `- **fetch:** \`${ call.tool }${ args }\``;
+	} );
+}
+
+/**
  * One brief, or several, as markdown.
  *
- * @param {Object|Object[]|null} briefs An assembled brief, or a list of them.
+ * @param {Object|Object[]|null} briefs     An assembled brief, or a list of them.
+ * @param {string}               [endpoint] This site's MCP endpoint, named once
+ *                                          at the end so the `fetch` lines above
+ *                                          are addressable.
  * @return {string} Markdown, or '' when there is nothing to say.
  */
-export function briefToMarkdown( briefs ) {
+export function briefToMarkdown( briefs, endpoint = '' ) {
 	const list = Array.isArray( briefs ) ? briefs : [ briefs ];
 	const sections = list.filter( Boolean ).map( ( brief ) => {
 		const lines = [
 			`## ${ brief.subject }`,
 			'',
 			...bodyLines( brief ),
+			...fetchLines( brief ),
 			'',
 		];
 		const findings = brief.findings ?? [];
@@ -271,5 +328,9 @@ export function briefToMarkdown( briefs ) {
 		return lines.join( '\n' );
 	} );
 
-	return sections.join( '\n' ).trim();
+	const document = sections.join( '\n' ).trim();
+	if ( '' === document || ! endpoint ) {
+		return document;
+	}
+	return `${ document }\n\n${ MCP_NOTE.replace( '%s', endpoint ) }`;
 }

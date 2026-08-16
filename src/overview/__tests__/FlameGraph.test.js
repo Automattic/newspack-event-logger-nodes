@@ -249,6 +249,34 @@ describe( 'FlameGraph', () => {
 		unmount();
 	} );
 
+	// A zoom rebuilds the frames, and d3 does not carry our attributes onto the
+	// new ones — so an unstamped frame is invisible to the `?` picker, which
+	// then finds nothing to ask about where a span plainly is.
+	it( 'restamps the ask descriptors once a zoom settles', () => {
+		jest.useFakeTimers();
+		const { unmount } = renderComponent(
+			React.createElement( FlameGraph, {
+				data: SAMPLE_DATA,
+				lastModified: 1,
+			} )
+		);
+		const stamps = () =>
+			d3.__chain.attr.mock.calls.filter(
+				( call ) => 'data-ask' === call[ 0 ]
+			).length;
+		const before = stamps();
+
+		flamegraphState.onClick( {
+			data: { name: 'db' },
+			parent: { data: { name: 'process' }, parent: null },
+		} );
+		jest.runAllTimers();
+
+		expect( stamps() ).toBeGreaterThan( before );
+		jest.useRealTimers();
+		unmount();
+	} );
+
 	it( 'onClick(null) clears the zoom path', () => {
 		jest.useFakeTimers();
 		const { unmount } = renderComponent(
@@ -476,6 +504,30 @@ describe( 'FlameGraph', () => {
 				} )
 			)
 		).not.toThrow();
+		unmount();
+	} );
+
+	// A resize re-renders the chart, so the frames are new — and an unstamped
+	// frame is invisible to the `?` picker on a graph that plainly shows it.
+	it( 'restamps the ask descriptors after a resize', () => {
+		jest.useFakeTimers();
+		const { unmount } = renderComponent(
+			React.createElement( FlameGraph, {
+				data: SAMPLE_DATA,
+				lastModified: 1,
+			} )
+		);
+		const stamps = () =>
+			d3.__chain.attr.mock.calls.filter( ( c ) => 'data-ask' === c[ 0 ] )
+				.length;
+		const before = stamps();
+
+		// The observer debounces by 150ms; the re-render is in the timer.
+		resizeObserverCb( [ { contentRect: { width: 500 } } ] );
+		jest.runAllTimers();
+
+		expect( stamps() ).toBeGreaterThan( before );
+		jest.useRealTimers();
 		unmount();
 	} );
 

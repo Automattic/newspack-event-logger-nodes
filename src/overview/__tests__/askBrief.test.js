@@ -4,7 +4,7 @@
  * caveat will invent a cause for the difference.
  */
 
-import { briefToMarkdown } from '../askBrief';
+import { briefToMarkdown, askClaudeUrl } from '../askBrief';
 
 const REQUEST_BRIEF = {
 	subject: 'request',
@@ -203,7 +203,103 @@ test( 'several briefs concatenate under one heading each', () => {
 	expect( md ).toContain( 'wp_loaded' );
 } );
 
+/**
+ * The brief is trimmed on purpose — the series, the rosters and the deep spans
+ * stay on the server. What replaces them is the address of the rest, so an
+ * agent handed this paste can go and get it.
+ */
+test( 'a brief carries the tool call that fetches it again', () => {
+	const md = briefToMarkdown(
+		{
+			subject: 'span',
+			name: 'wp_loaded hook',
+			ms: 791.5,
+			fetch: [
+				{
+					tool: 'performance_ask',
+					arguments: {
+						descriptor: 'span:wp_loaded hook',
+						context: 'request:c6x0zgr:3',
+					},
+				},
+			],
+			caveat: 'c',
+		},
+		'https://example.test/wp-json/newspack-event-logger-nodes/v1/mcp'
+	);
+
+	expect( md ).toContain(
+		'performance_ask descriptor="span:wp_loaded hook" context="request:c6x0zgr:3"'
+	);
+	expect( md ).toContain(
+		'https://example.test/wp-json/newspack-event-logger-nodes/v1/mcp'
+	);
+} );
+
+// The endpoint is a property of the site, not of each thing asked about.
+test( 'several briefs name the endpoint once', () => {
+	const md = briefToMarkdown(
+		[
+			{
+				subject: 'url',
+				fetch: [ { tool: 'a', arguments: {} } ],
+				caveat: 'c',
+			},
+			{
+				subject: 'span',
+				fetch: [ { tool: 'b', arguments: {} } ],
+				caveat: 'c',
+			},
+		],
+		'https://example.test/mcp'
+	);
+
+	expect( md.split( 'https://example.test/mcp' ) ).toHaveLength( 2 );
+} );
+
+test( 'a rule rides as counts, not rosters', () => {
+	const md = briefToMarkdown( {
+		subject: 'url',
+		url: '/calendar',
+		rule: {
+			id: 'a1b2c3',
+			pattern: '/calendar',
+			action: 'log',
+			hook_count: 64,
+			custom_event_count: 68,
+			significant_events: [ 'init' ],
+		},
+		caveat: 'c',
+	} );
+
+	expect( md ).toContain( '**hooks:** 64' );
+	expect( md ).toContain( '**custom events:** 68' );
+} );
+
 test( 'nothing to say is an empty string, not "undefined"', () => {
 	expect( briefToMarkdown( null ) ).toBe( '' );
 	expect( briefToMarkdown( [] ) ).toBe( '' );
+} );
+
+/**
+ * A brief is only useful where it lands. This opens a chat with the brief
+ * already in it — worth having wherever the site is publicly reachable, since
+ * an agent there can also call the `fetch` verbs itself.
+ */
+test( 'the Claude link carries the brief as a prefilled prompt', () => {
+	const url = new URL( askClaudeUrl( '## span\n\n- **ms:** 791.5' ) );
+
+	expect( url.origin + url.pathname ).toBe( 'https://claude.ai/new' );
+	expect( url.searchParams.get( 'q' ) ).toContain( '- **ms:** 791.5' );
+} );
+
+// A URL is not a document store: past the cap the brief is dropped and the
+// link carries the ask, so a too-long brief still opens something usable.
+test( 'an oversized brief falls back to a short prompt', () => {
+	const huge = '## span\n\n' + 'x'.repeat( 12000 );
+
+	const url = askClaudeUrl( huge );
+
+	expect( url.length ).toBeLessThan( 8000 );
+	expect( decodeURIComponent( url ) ).toContain( 'paste' );
 } );
