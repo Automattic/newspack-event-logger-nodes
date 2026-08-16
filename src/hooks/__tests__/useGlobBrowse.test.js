@@ -10,31 +10,24 @@
  * back along FROM so it routes interpreter → router → the Request node that asked.
  */
 
-import {
-	renderHook,
-	act,
-	waitFor,
-	settleCommand,
-} from '../../test-helpers/renderHook';
+import { renderHook, act, waitFor } from '../../test-helpers/renderHook';
 import {
 	Core,
 	Node,
 	CommandInterpreterNode,
 	mountExospine,
 	newMessage,
-	TYPE,
 	FROM,
-	TO,
-	ID,
 	VALUE,
-	TM_COMMAND,
 	TM_RESPONSE,
 	TM_ERROR,
-	TIMESTAMP,
 	forgetSession,
 	__setAuthFetch,
 } from '@newspack-nodes/runtime';
-import { installFakeCommandWire } from '@newspack-nodes/shared/test-utils/fakeCommandWire';
+import {
+	installFakeCommandWire,
+	commandReply,
+} from '@newspack-nodes/shared/test-utils/fakeCommandWire';
 import useGlobBrowse from '../useGlobBrowse';
 
 class FakeEventSource {
@@ -95,18 +88,11 @@ function makeFakeClient( payloadByVerb = {}, errorVerbs = [] ) {
 			return Promise.resolve(
 				messages.map( ( m ) => {
 					const verb = m[ VALUE ]?.name;
-					const reply = newMessage();
-					reply[ TYPE ] = errorVerbs.includes( verb )
-						? TM_COMMAND | TM_RESPONSE | TM_ERROR
-						: TM_COMMAND | TM_RESPONSE;
-					reply[ TO ] = m[ FROM ];
-					reply[ ID ] = m[ ID ];
-					reply[ TIMESTAMP ] = 0;
-					reply[ VALUE ] = {
-						name: verb,
-						payload: payloadByVerb[ verb ] ?? null,
-					};
-					return reply;
+					return commandReply(
+						m,
+						payloadByVerb[ verb ] ?? null,
+						errorVerbs.includes( verb ) ? TM_ERROR : TM_RESPONSE
+					);
 				} )
 			);
 		},
@@ -667,12 +653,16 @@ describe( 'useGlobBrowse — time travel (pause / step / jump)', () => {
 		await act( async () => {
 			result.current.replay();
 		} );
-		await settleCommand( () => result.current.step() );
-
-		expect( sentCommands( client ) ).toContainEqual( {
-			name: 'read_message',
-			args: [ 'errors.p2', 'start' ],
+		await act( async () => {
+			result.current.step();
 		} );
+
+		await waitFor( () =>
+			expect( sentCommands( client ) ).toContainEqual( {
+				name: 'read_message',
+				args: [ 'errors.p2', 'start' ],
+			} )
+		);
 	} );
 
 	it( 'step reads ONE message at the cursor and advances it', async () => {
@@ -681,11 +671,15 @@ describe( 'useGlobBrowse — time travel (pause / step / jump)', () => {
 		await act( async () => {
 			result.current.browseSegment( { id: 3 } );
 		} );
-		await settleCommand( () => result.current.step() );
-		expect( sentCommands( client ) ).toContainEqual( {
-			name: 'read_message',
-			args: [ 'errors.p2', '3:0' ],
+		await act( async () => {
+			result.current.step();
 		} );
+		await waitFor( () =>
+			expect( sentCommands( client ) ).toContainEqual( {
+				name: 'read_message',
+				args: [ 'errors.p2', '3:0' ],
+			} )
+		);
 		// The record was admitted through the paused belt…
 		await waitFor( () =>
 			expect( view.lastControl( 'step' ) ).toEqual( {
@@ -705,14 +699,16 @@ describe( 'useGlobBrowse — time travel (pause / step / jump)', () => {
 
 	it( 'jumpTo pauses, seeks the position, and steps it', async () => {
 		const { result, client, setPausedRef } = await renderTimeTravel();
-		await settleCommand( () =>
-			result.current.jumpTo( { segment: 5, offset: 44 } )
-		);
-		expect( setPausedRef.current ).toHaveBeenCalledWith( true );
-		expect( sentCommands( client ) ).toContainEqual( {
-			name: 'read_message',
-			args: [ 'errors.p2', '5:44' ],
+		await act( async () => {
+			result.current.jumpTo( { segment: 5, offset: 44 } );
 		} );
+		expect( setPausedRef.current ).toHaveBeenCalledWith( true );
+		await waitFor( () =>
+			expect( sentCommands( client ) ).toContainEqual( {
+				name: 'read_message',
+				args: [ 'errors.p2', '5:44' ],
+			} )
+		);
 	} );
 
 	it( 'connectPositions honors an explicit seek once on reconnect', () => {

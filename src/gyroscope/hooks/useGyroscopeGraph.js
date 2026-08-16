@@ -31,7 +31,7 @@
  * clears the view's request map first, because rows that predate a gap are stale.
  */
 
-import '../nodes/register';
+import { views } from '../nodes/register';
 import usePageVisibility from '@newspack-nodes/shared/hooks/usePageVisibility';
 import { useVisibilityGatedLink } from '@newspack-nodes/shared/hooks/useVisibilityGatedLink';
 import { controlMsg } from '@newspack-nodes/shared/helpers/controlMsg';
@@ -74,7 +74,7 @@ export function useGyroscopeGraph() {
 			tee.connectNode( VIEW );
 
 			// Dashboard view — consumes wire envelopes directly.
-			const view = interpreter.makeNode( 'GyroscopeView', VIEW );
+			const view = interpreter.makeNode( views.GyroscopeView, VIEW );
 			// The view applies controls from this FROM; records never match.
 			view.controlFrom = VIEW;
 

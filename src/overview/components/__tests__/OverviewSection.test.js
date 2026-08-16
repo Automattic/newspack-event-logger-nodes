@@ -1,4 +1,4 @@
-/* global KeyboardEvent */
+/* global KeyboardEvent, MouseEvent, Node */
 /**
  * Tests for OverviewSection — render-side branches.
  *
@@ -67,6 +67,7 @@ function mount( overview, overrides = {} ) {
 		setChartBreakdown: jest.fn(),
 		breakdownData: null,
 		categoryData: null,
+		ask: { active: false, start: jest.fn(), cancel: jest.fn() },
 		...overrides,
 	};
 	return renderComponent( React.createElement( OverviewSection, props ) );
@@ -76,6 +77,25 @@ describe( 'OverviewSection', () => {
 	it( 'returns null when overview is null', () => {
 		const { container, unmount } = mount( null );
 		expect( container.textContent ).toBe( '' );
+		unmount();
+	} );
+
+	it( 'renders the Ask trigger immediately before the search box', () => {
+		const start = jest.fn();
+		const { container, unmount } = mount(
+			{},
+			{ ask: { active: false, start, cancel: jest.fn() } }
+		);
+		const trigger = container.querySelector( '.event-logger-ask__trigger' );
+		const search = container.querySelector( 'input[type="text"]' );
+		expect( trigger ).toBeTruthy();
+		expect( search ).toBeTruthy();
+		expect(
+			trigger.compareDocumentPosition( search ) &
+				Node.DOCUMENT_POSITION_FOLLOWING
+		).toBeTruthy();
+		trigger.dispatchEvent( new MouseEvent( 'click', { bubbles: true } ) );
+		expect( start ).toHaveBeenCalled();
 		unmount();
 	} );
 

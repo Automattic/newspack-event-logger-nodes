@@ -29,7 +29,7 @@
  */
 
 import { useRef, useState, useCallback } from '@wordpress/element';
-import '../nodes/register';
+import { views } from '../nodes/register';
 import usePageVisibility from '@newspack-nodes/shared/hooks/usePageVisibility';
 import { useVisibilityGatedLink } from '@newspack-nodes/shared/hooks/useVisibilityGatedLink';
 import useGlobBrowse, { connectPositions } from '../../hooks/useGlobBrowse';
@@ -88,7 +88,7 @@ export function useRequestLogGraph( opts = {} ) {
 			tee.connectNode( VIEW );
 
 			// The view node — the single dashboard consumer of the stream.
-			const view = interpreter.makeNode( 'RequestLogView', VIEW );
+			const view = interpreter.makeNode( views.RequestLogView, VIEW );
 			// The view applies controls from this FROM; records never match.
 			view.controlFrom = VIEW;
 			if ( maxEntries ) {

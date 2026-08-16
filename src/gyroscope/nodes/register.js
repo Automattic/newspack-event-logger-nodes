@@ -1,15 +1,11 @@
 /**
- * Gyroscope node-class registration.
- *
- * Imported for its side effect: it merges this dashboard's view class into
+ * Gyroscope node-class registration — merged into
  * `CommandInterpreterNode.includeNodes`, the flat `make_node` type→class table
- * the browser runtime resolves against. Both `src/gyroscope/index.js` and
- * `useGyroscopeGraph` import it before building a graph, so the hook's
- * `interpreter.makeNode( 'GyroscopeView', … )` finds the class.
+ * TSL and the palette resolve names against.
  */
 import { CommandInterpreterNode } from '@newspack-nodes/runtime';
 import { GyroscopeViewNode } from './gyroscope-view-node';
 
-CommandInterpreterNode.registerNodeClasses( {
-	GyroscopeView: GyroscopeViewNode,
-} );
+/** The view classes, handed to `makeNode` — a name is per-bundle. */
+export const views = { GyroscopeView: GyroscopeViewNode };
+CommandInterpreterNode.registerNodeClasses( views );

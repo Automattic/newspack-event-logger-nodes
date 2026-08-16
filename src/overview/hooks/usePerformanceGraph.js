@@ -53,7 +53,6 @@ import {
 	TYPE,
 	FROM,
 	TO,
-	ID,
 	VALUE,
 	TM_STRUCT,
 	formatCommandArgs,
@@ -63,7 +62,7 @@ import { useBatchedPoll } from '@newspack-nodes/shared/hooks/useBatchedPoll';
 import { addSliceFetcher } from '@newspack-nodes/shared/helpers/addSliceFetcher';
 import usePageVisibility from '@newspack-nodes/shared/hooks/usePageVisibility';
 import { useAwaitableCommand } from '@newspack-nodes/shared/hooks/useAwaitableCommand';
-import '../nodes/register';
+import { views } from '../nodes/register';
 import { egressPath } from '@newspack-nodes/shared/helpers/egressPath';
 
 // The server CI mount + the egress path the Fetchers/on-demand commands target.
@@ -282,7 +281,7 @@ export function usePerformanceGraph( opts = {} ) {
 				receiver: OVERVIEW_RECV,
 				command: 'overview',
 				view: OVERVIEW_VIEW,
-				viewClass: 'OverviewView',
+				viewClass: views.OverviewView,
 				controlFrom: OVERVIEW_VIEW,
 				tee,
 				target: TARGET,
@@ -297,7 +296,7 @@ export function usePerformanceGraph( opts = {} ) {
 				receiver: URLS_RECV,
 				command: 'urls',
 				view: URLS_VIEW,
-				viewClass: 'UrlsView',
+				viewClass: views.UrlsView,
 				controlFrom: URLS_VIEW,
 				tee,
 				target: TARGET,
@@ -366,7 +365,7 @@ export function usePerformanceGraph( opts = {} ) {
 
 	// Fire a TM_COMMAND via interpreter; FROM = reply target, HttpOut POSTs.
 	const sendCommand = useCallback(
-		( verb, args, from, id, target = TARGET ) => {
+		( verb, args, from, target = TARGET ) => {
 			const interpreter = interpreterRef.current;
 			if ( ! interpreter ) {
 				return false;
@@ -377,9 +376,6 @@ export function usePerformanceGraph( opts = {} ) {
 				return false;
 			}
 			m[ TO ] = target;
-			if ( id ) {
-				m[ ID ] = id;
-			}
 			interpreter.fill( m );
 			return true;
 		},

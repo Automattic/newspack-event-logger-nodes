@@ -1,4 +1,11 @@
-import { Node, VALUE, TYPE, FROM, TM_ERROR } from '@newspack-nodes/runtime';
+import {
+	Node,
+	VALUE,
+	TYPE,
+	FROM,
+	TM_ERROR,
+	payloadOf,
+} from '@newspack-nodes/runtime';
 import { errorMessage } from '@newspack-nodes/shared/errorMessage';
 
 /**
@@ -77,8 +84,7 @@ export class DecodedSliceViewNode extends Node {
 
 		// TM_ERROR reply: surface the error, clear loading, KEEP prior data.
 		if ( 0 !== ( type & TM_ERROR ) ) {
-			const payload =
-				value && 'object' === typeof value ? value.payload : value;
+			const payload = payloadOf( value );
 			this.model = {
 				...this.model,
 				loading: false,
