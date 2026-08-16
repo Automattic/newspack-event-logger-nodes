@@ -156,6 +156,23 @@ test( 'shows a still-processing state when the request is not in the log yet', a
 	expect( view.container.querySelector( 'button' ) ).toBeNull();
 } );
 
+// The worker writes the record moments after the page rendered, so an early ask
+// answers with nothing at all. That is not a failure and must not blank the tab.
+test( 'keeps waiting when the reply carries no record yet', async () => {
+	setBlob( { rid: 'notyet7', perfUrl: 'admin.php?page=x' } );
+	answerWith( null );
+
+	let view;
+	await act( async () => {
+		view = render( <CurrentRequestTab /> );
+	} );
+
+	expect( view.container.textContent.toLowerCase() ).toContain(
+		'still processing'
+	);
+	expect( view.container.textContent ).not.toContain( 'Request:' );
+} );
+
 test( 'renders an idle hint when no request id is localized', async () => {
 	let view;
 	await act( async () => {
