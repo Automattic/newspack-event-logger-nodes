@@ -232,6 +232,15 @@ export default function PerformanceDashboard( { onError } ) {
 		[ baseSelectRequest ]
 	);
 
+	// Opening a URL leaves whatever request was open inside the previous one.
+	const openUrl = useCallback(
+		( url ) => {
+			selectRequest( null );
+			selectUrlNow( url );
+		},
+		[ selectRequest, selectUrlNow ]
+	);
+
 	/**
 	 * Handle sorting of request columns.
 	 *
@@ -795,7 +804,7 @@ export default function PerformanceDashboard( { onError } ) {
 							<UrlTable
 								urls={ urls }
 								selectedUrl={ selectedUrl }
-								onSelect={ selectUrl }
+								onSelect={ openUrl }
 								onParamsChange={ handleUrlParamsChange }
 								totalUrls={ totalUrls }
 								metric={ chartMetric }
@@ -806,7 +815,10 @@ export default function PerformanceDashboard( { onError } ) {
 			</div>
 
 			{ /* URL/Request Detail Modal */ }
-			{ selectedUrl && urlDetail && (
+			{ /* The SELECTION opens this, never a slice: each pane below owns
+			     its own empty state, and a modal that can close is the only way
+			     back out of one. */ }
+			{ selectedUrl && (
 				<Modal
 					title={
 						selectedRequest && requestDetail
@@ -847,62 +859,66 @@ export default function PerformanceDashboard( { onError } ) {
 							</>
 						) : (
 							<>
-								<div className="event-logger-header-stats newspack-nodes-stats-grid">
-									<span className="newspack-nodes-stat">
-										{ urlRequestsPerSecond.toFixed( 2 ) }
-										<small className="newspack-nodes-stat-label">
-											req/s
-										</small>
-									</span>
-									<span className="newspack-nodes-stat">
-										{ urlDetail.stats?.avg_ms?.toFixed(
-											0
-										) || 0 }
-										ms
-										<small className="newspack-nodes-stat-label">
-											avg
-										</small>
-									</span>
-									<span className="newspack-nodes-stat">
-										{ urlDetail.stats?.p50_ms?.toFixed(
-											0
-										) || 0 }
-										ms
-										<small className="newspack-nodes-stat-label">
-											p50
-										</small>
-									</span>
-									<span className="newspack-nodes-stat">
-										{ urlDetail.stats?.p95_ms?.toFixed(
-											0
-										) || 0 }
-										ms
-										<small className="newspack-nodes-stat-label">
-											p95
-										</small>
-									</span>
-									<span className="newspack-nodes-stat">
-										{ urlDetail.stats?.p99_ms?.toFixed(
-											0
-										) || 0 }
-										ms
-										<small className="newspack-nodes-stat-label">
-											p99
-										</small>
-									</span>
-									{ ( urlDetail.stats?.avg_peak_mb || 0 ) >
-										0 && (
+								{ urlDetail && (
+									<div className="event-logger-header-stats newspack-nodes-stats-grid">
 										<span className="newspack-nodes-stat">
-											{ urlDetail.stats?.avg_peak_mb?.toFixed(
-												1
-											) || 0 }
-											MB
+											{ urlRequestsPerSecond.toFixed(
+												2
+											) }
 											<small className="newspack-nodes-stat-label">
-												mem
+												req/s
 											</small>
 										</span>
-									) }
-								</div>
+										<span className="newspack-nodes-stat">
+											{ urlDetail.stats?.avg_ms?.toFixed(
+												0
+											) || 0 }
+											ms
+											<small className="newspack-nodes-stat-label">
+												avg
+											</small>
+										</span>
+										<span className="newspack-nodes-stat">
+											{ urlDetail.stats?.p50_ms?.toFixed(
+												0
+											) || 0 }
+											ms
+											<small className="newspack-nodes-stat-label">
+												p50
+											</small>
+										</span>
+										<span className="newspack-nodes-stat">
+											{ urlDetail.stats?.p95_ms?.toFixed(
+												0
+											) || 0 }
+											ms
+											<small className="newspack-nodes-stat-label">
+												p95
+											</small>
+										</span>
+										<span className="newspack-nodes-stat">
+											{ urlDetail.stats?.p99_ms?.toFixed(
+												0
+											) || 0 }
+											ms
+											<small className="newspack-nodes-stat-label">
+												p99
+											</small>
+										</span>
+										{ ( urlDetail.stats?.avg_peak_mb ||
+											0 ) > 0 && (
+											<span className="newspack-nodes-stat">
+												{ urlDetail.stats?.avg_peak_mb?.toFixed(
+													1
+												) || 0 }
+												MB
+												<small className="newspack-nodes-stat-label">
+													mem
+												</small>
+											</span>
+										) }
+									</div>
+								) }
 								<AskButton ask={ ask } />
 								<div className="event-logger-rule-control">
 									<button
@@ -942,7 +958,29 @@ export default function PerformanceDashboard( { onError } ) {
 					}
 				>
 					{ /* URL Details View */ }
-					{ ! selectedRequest && (
+					{ ! selectedRequest && ! urlDetail && (
+						<p
+							className={ `newspack-nodes-status${
+								urlDetailSlice?.error ? ' is-error' : ''
+							}` }
+						>
+							{ urlDetailSlice?.error
+								? sprintf(
+										// translators: %s: the error message.
+										__(
+											'Could not load this URL: %s',
+											'newspack-event-logger-nodes'
+										),
+										urlDetailSlice.error
+								  )
+								: __(
+										'Loading URL…',
+										'newspack-event-logger-nodes'
+								  ) }
+						</p>
+					) }
+
+					{ ! selectedRequest && urlDetail && (
 						<UrlDetailView
 							urlDetail={ urlDetail }
 							sortedRequests={ sortedRequests }
