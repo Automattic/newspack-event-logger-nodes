@@ -21,8 +21,8 @@ import { DecodedSliceViewNode } from './decoded-slice-view-node';
  * `useNodeState( 'urldetail:view', 'view' )` and hands `data` to
  * `<UrlDetailView>`.
  *
- * The awaited `url_detail` calls — `fetchUrlBreakdown` and `resolveUrlHash` —
- * are minted by the separate `performance:url_detail` Request node, so their
- * replies address that node and never disturb this slice.
+ * The other `url_detail` reads — the chart's breakdown series, and the two
+ * hash lookups — each have their OWN node under their own scope, so their
+ * replies address those nodes and never disturb this slice.
  */
 export class UrlDetailViewNode extends DecodedSliceViewNode {}

@@ -122,13 +122,18 @@ describe( 'useUrlNavigation', () => {
 		unmount();
 	} );
 
-	it( 'bootstraps selectedRequest along with selectedUrl', () => {
+	// @longform The hash it can answer, it answers; the RID it reports. The
+	// rid alone carries the PARTITION, and selecting a request without one
+	// renders "Could not determine the partition for this request" until the
+	// answer lands — so the caller selects it, with the partition, not here.
+	it( 'selects the ?url= it can answer and REPORTS the ?request=', () => {
 		setLocation( 'http://localhost/wp-admin/?url=aaa&request=req_123' );
 		const { result, unmount } = renderHook( () =>
 			useUrlNavigation( URLS )
 		);
 		expect( result.current.selectedUrl ).toEqual( URLS[ 0 ] );
-		expect( result.current.selectedRequest ).toBe( 'req_123' );
+		expect( result.current.selectedRequest ).toBeNull();
+		expect( result.current.deepLink.requestId ).toBe( 'req_123' );
 		unmount();
 	} );
 
@@ -203,10 +208,13 @@ describe( 'useUrlNavigation', () => {
 	} );
 
 	it( 'restores selectedRequest=null when popstate moves from request-detail to url-detail', () => {
-		setLocation( 'http://localhost/wp-admin/?url=aaa&request=r1' );
+		setLocation( 'http://localhost/wp-admin/?url=aaa' );
 		const { result, unmount } = renderHook( () =>
 			useUrlNavigation( URLS )
 		);
+		// Select as the caller does once it has the partition; the bootstrap
+		// only REPORTS a rid.
+		act( () => result.current.selectRequest( 'r1' ) );
 		expect( result.current.selectedRequest ).toBe( 'r1' );
 
 		setLocation( 'http://localhost/wp-admin/?url=aaa' );

@@ -13,9 +13,10 @@
  *   5. Aggregate profile breakdown, averaged across the profiled requests.
  *   6. Virtualized recent-requests table with an "Errors Only" filter.
  *
- * The one piece of data it does fetch is the breakdown series: `fetchUrlBreakdown`
- * runs whenever the Breakdown dropdown changes and again on a router-tick timer,
- * because the breakdown is a separate round-trip from the `url_detail` payload.
+ * The one piece of data it fetches is the breakdown series, which is its OWN
+ * read: it goes whenever the Breakdown dropdown changes and again on a
+ * router-tick timer, because the breakdown is a separate round trip from the
+ * `url_detail` payload.
  *
  * Footgun: the requests table virtualizes against the modal's scroll container
  * (`.components-modal__content`). Mounted outside a `Modal`, `useVirtualization`
@@ -245,11 +246,17 @@ export default function UrlDetailView( {
 	 *
 	 * @param {string} breakdown Dimension to break the series down by.
 	 */
-	// The chart's own read: the series lands here, not as a threaded promise.
+	// @longform The chart's own read, and a READ in the substrate's sense:
+	// idempotent, keyed on a subject the operator changes
+	// by flipping the dropdown. Queued, three fast flips are three commands
+	// answered in any order, so the chart can show one dimension's data under
+	// another's label — and a dropped reply leaves "Loading…" forever, since
+	// a write never re-asks. Retried, the newest pick supersedes.
 	const { run: fetchBreakdown } = useCommandOnce( {
 		ci: SERVER,
 		command: 'url_detail',
 		scope: `${ SERVER }:url_detail:breakdown`,
+		retry: true,
 		onDone: ( { result } ) => {
 			setBreakdownData( result?.breakdown_time_series ?? null );
 			setBreakdownLoading( false );

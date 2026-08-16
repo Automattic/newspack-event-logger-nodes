@@ -13,7 +13,13 @@
  * history entry; popstate restores the selection without pushing one back.
  */
 
-import { useState, useEffect, useCallback, useRef } from '@wordpress/element';
+import {
+	useState,
+	useEffect,
+	useCallback,
+	useMemo,
+	useRef,
+} from '@wordpress/element';
 
 /**
  * Get URL parameters from the current page URL.
@@ -137,10 +143,10 @@ export default function useUrlNavigation( urls ) {
 			return;
 		}
 		selectUrl( urlObj );
-		if ( initialRequestId ) {
-			selectRequest( initialRequestId );
-		}
-		// The RID alone carries the partition, so it stays reported.
+		// @longform The RID is REPORTED, not selected: it alone carries the
+		// partition, and selecting a request without one makes the detail
+		// modal render "Could not determine the partition for this request"
+		// until the answer lands. The caller selects it WITH the partition.
 		setInitialUrlHash( null );
 	}, [ urls, initialUrlHash, initialRequestId, selectUrl, selectRequest ] );
 
@@ -151,6 +157,11 @@ export default function useUrlNavigation( urls ) {
 	 *
 	 * @param {string} [part] `'request'` for the rid alone; omit for the link.
 	 */
+	const deepLink = useMemo(
+		() => ( { requestId: initialRequestId, urlHash: initialUrlHash } ),
+		[ initialRequestId, initialUrlHash ]
+	);
+
 	const clearDeepLink = useCallback( ( part ) => {
 		setInitialRequestId( null );
 		if ( 'request' !== part ) {
@@ -179,9 +190,9 @@ export default function useUrlNavigation( urls ) {
 	}, [ selectedUrl, selectedRequest ] );
 
 	// @longform Browser back/forward. Popstate resolves a hash against the
-	// loaded page only, never through resolveUrlHash, so stepping back to a
-	// hash that has paged out leaves selectedUrl on the previous URL while
-	// the address bar reads the new one. Only mount reaches the server.
+	// loaded page ONLY — it reports nothing, so stepping back to a hash that
+	// has paged out leaves selectedUrl on the previous URL while the address
+	// bar reads the new one. Only a mount asks the server.
 	useEffect( () => {
 		const handlePopState = () => {
 			const params = getUrlParams();
@@ -228,8 +239,10 @@ export default function useUrlNavigation( urls ) {
 		initialSearchQuery,
 		setInitialSearchQuery,
 		updateBrowserUrl,
-		// The part of the link this hook could not answer by itself.
-		deepLink: { requestId: initialRequestId, urlHash: initialUrlHash },
+		// @longform The part of the link this hook could not answer by
+		// itself. Memoized because callers key effects on it: a fresh
+		// literal each render re-fires whatever asks about it.
+		deepLink,
 		clearDeepLink,
 	};
 }
