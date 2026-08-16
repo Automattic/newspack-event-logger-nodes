@@ -34,7 +34,10 @@ import {
 } from '@wordpress/element';
 import { __, _n, sprintf } from '@wordpress/i18n';
 import { SelectControl } from '@wordpress/components';
+import { formatCommandArgs } from '@newspack-nodes/runtime';
+import { useCommandOnce } from '@newspack-nodes/shared/hooks/useCommandOnce';
 import { CHART_METRIC_OPTIONS, CHART_BREAKDOWN_OPTIONS } from '../constants';
+import { SERVER } from '../hooks/usePerformanceGraph';
 
 /**
  * How often the breakdown series is re-fetched, in milliseconds.
@@ -179,14 +182,13 @@ const RequestRow = memo(
  * the exception — "Errors Only" is local state and narrows the list, the
  * heading count, and the bar-scaling maximum alike.
  *
- * @param {Object}                                                       props                   Component props.
- * @param {Object}                                                       props.urlDetail         `url_detail` payload: stats (with time_series), requests, aggregate_flame, aggregate_profiles, last_modified, and optional category_time_series.
- * @param {Array}                                                        props.sortedRequests    Recent requests, already sorted by the parent.
- * @param {Object}                                                       props.requestSort       Current sort as `{ field, dir }`; drives the header arrows only.
- * @param {(field: string) => void}                                      props.onRequestSort     Receives a field name when a sortable header is clicked.
- * @param {(rid: string, partition: number) => void}                     props.onSelectRequest   Receives a rid AND its partition from a row click or a scatter-plot dot.
- * @param {(urlHash: string, breakdown: string) => Promise<Object|null>} props.fetchUrlBreakdown Async; a falsy value clears the chart's breakdown.
- * @param {string}                                                       props.urlHash           Hash identifying the URL, as passed to `fetchUrlBreakdown`.
+ * @param {Object}                                   props                 Component props.
+ * @param {Object}                                   props.urlDetail       `url_detail` payload: stats (with time_series), requests, aggregate_flame, aggregate_profiles, last_modified, and optional category_time_series.
+ * @param {Array}                                    props.sortedRequests  Recent requests, already sorted by the parent.
+ * @param {Object}                                   props.requestSort     Current sort as `{ field, dir }`; drives the header arrows only.
+ * @param {(field: string) => void}                  props.onRequestSort   Receives a field name when a sortable header is clicked.
+ * @param {(rid: string, partition: number) => void} props.onSelectRequest Receives a rid AND its partition from a row click or a scatter-plot dot.
+ * @param {string}                                   props.urlHash         Hash identifying the URL; the breakdown series is this view's own read.
  * @return {import('react').ReactElement} Rendered component.
  */
 export default function UrlDetailView( {
@@ -195,7 +197,6 @@ export default function UrlDetailView( {
 	requestSort,
 	onRequestSort,
 	onSelectRequest,
-	fetchUrlBreakdown,
 	urlHash,
 } ) {
 	const listRef = useRef( null );
@@ -244,18 +245,27 @@ export default function UrlDetailView( {
 	 *
 	 * @param {string} breakdown Dimension to break the series down by.
 	 */
+	// The chart's own read: the series lands here, not as a threaded promise.
+	const { run: fetchBreakdown } = useCommandOnce( {
+		ci: SERVER,
+		command: 'url_detail',
+		scope: `${ SERVER }:url_detail:breakdown`,
+		onDone: ( { result } ) => {
+			setBreakdownData( result?.breakdown_time_series ?? null );
+			setBreakdownLoading( false );
+		},
+	} );
+
 	const loadBreakdown = useCallback(
-		async ( breakdown ) => {
-			if ( ! fetchUrlBreakdown || ! urlHash ) {
+		( breakdown ) => {
+			if ( ! urlHash ) {
 				setBreakdownData( null );
 				return;
 			}
 			setBreakdownLoading( true );
-			const data = await fetchUrlBreakdown( urlHash, breakdown );
-			setBreakdownData( data );
-			setBreakdownLoading( false );
+			fetchBreakdown( formatCommandArgs( [ urlHash ], { breakdown } ) );
 		},
-		[ fetchUrlBreakdown, urlHash ]
+		[ fetchBreakdown, urlHash ]
 	);
 
 	useEffect( () => {

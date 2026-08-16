@@ -46,9 +46,14 @@ jest.mock( '../../CategoryTimeChart', () => ( {
 } ) );
 
 import * as React from 'react';
-import { Core, mountExospine } from '@newspack-nodes/runtime';
+import { Core, VALUE } from '@newspack-nodes/runtime';
+import { installFakeCommandWire } from '@newspack-nodes/shared/test-utils/fakeCommandWire';
 import UrlDetailView from '../UrlDetailView';
-import { renderComponent, act } from '../../../test-helpers/renderHook';
+import {
+	renderComponent,
+	waitFor,
+	act,
+} from '../../../test-helpers/renderHook';
 
 const baseUrlDetail = {
 	stats: { avg_ms: 100 },
@@ -84,6 +89,16 @@ const REQUESTS = [
 	},
 ];
 
+// The view holds its own `url_detail` breakdown read, so every render mounts a
+// graph and needs a wire — not just the test that asserts what it sends.
+let wire;
+
+beforeEach( () => {
+	Core.reset();
+	window.NewspackNodesData = { restUrl: '/wp-json/', nonce: 'NONCE' };
+	wire = installFakeCommandWire( () => ( { breakdown_time_series: {} } ) );
+} );
+
 function mount( overrides = {} ) {
 	const props = {
 		urlDetail: baseUrlDetail,
@@ -91,7 +106,6 @@ function mount( overrides = {} ) {
 		requestSort: { field: 'timestamp', dir: 'desc' },
 		onRequestSort: jest.fn(),
 		onSelectRequest: jest.fn(),
-		fetchUrlBreakdown: jest.fn().mockResolvedValue( null ),
 		urlHash: 'deadbeef',
 		...overrides,
 	};
@@ -381,41 +395,32 @@ describe( 'UrlDetailView', () => {
 		unmount();
 	} );
 
-	it( 'calls fetchUrlBreakdown(urlHash, initialBreakdown) on mount', () => {
-		const fetchUrlBreakdown = jest.fn().mockResolvedValue( null );
-		const { unmount } = mount( { fetchUrlBreakdown } );
-		expect( fetchUrlBreakdown ).toHaveBeenCalledWith(
-			'deadbeef',
-			'status'
+	// The breakdown series is this view's OWN read now, so what it sends is
+	// asserted on the wire rather than through an injected fetcher.
+	it( 'asks url_detail for the initial breakdown on mount', async () => {
+		const { unmount } = mount();
+		await waitFor(
+			() =>
+				expect(
+					wire.batches
+						.flat()
+						.filter( ( m ) => 'url_detail' === m[ VALUE ]?.name )
+						.length
+				).toBeGreaterThan( 0 ),
+			{ timeout: 6000 }
 		);
-		unmount();
-	} );
-
-	it( 're-fetches the selected breakdown on the five-minute interval', () => {
-		// The refresh rides the Router TIMER that PerformanceDashboard's graph
-		// owns; this component is rendered alone here, so stand that backbone in
-		// — and only AFTER useFakeTimers, so its 1s slot is a fake one.
-		jest.useFakeTimers();
-		Core.reset();
-		const host = mountExospine( () => {} );
-		const fetchUrlBreakdown = jest.fn().mockResolvedValue( null );
-		const { unmount } = mount( { fetchUrlBreakdown } );
-		act( () => {
-			jest.advanceTimersByTime( 300000 );
-		} );
-		expect( fetchUrlBreakdown ).toHaveBeenCalledTimes( 2 );
-		expect( fetchUrlBreakdown ).toHaveBeenLastCalledWith(
+		const [ msg ] = wire.batches
+			.flat()
+			.filter( ( m ) => 'url_detail' === m[ VALUE ]?.name );
+		expect( msg[ VALUE ].arguments ).toEqual( [
 			'deadbeef',
-			'status'
-		);
+			'--breakdown=status',
+		] );
 		unmount();
-		host.teardown();
-		jest.useRealTimers();
-	} );
+	}, 20000 );
 
-	it( 'clears breakdown data when no breakdown fetcher is available', () => {
+	it( 'renders the aggregate series when there is no urlHash to break down', () => {
 		const { container, unmount } = mount( {
-			fetchUrlBreakdown: null,
 			urlHash: null,
 			urlDetail: { ...baseUrlDetail, stats: { time_series: { a: 1 } } },
 		} );

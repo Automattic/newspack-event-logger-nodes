@@ -32,13 +32,19 @@ import {
 } from '@wordpress/components';
 import { __, sprintf } from '@wordpress/i18n';
 
-import { useNodeState } from '@newspack-nodes/runtime';
+import { useNodeState, formatCommandArgs } from '@newspack-nodes/runtime';
+import { useCommandOnce } from '@newspack-nodes/shared/hooks/useCommandOnce';
 import {
 	computeIndentedEntries,
 	spliceFoldedSpans,
 } from './utils/logEntryUtils';
 import { DASHBOARD_REFRESH_OPTIONS } from './constants';
-import { usePerformanceGraph } from './hooks/usePerformanceGraph';
+import {
+	usePerformanceGraph,
+	SERVER,
+	RULES_CI,
+	GREP_RESULT_LIMIT,
+} from './hooks/usePerformanceGraph';
 import useUrlNavigation from './hooks/useUrlNavigation';
 import OverviewSection from './components/OverviewSection';
 import UrlDetailView from './components/UrlDetailView';
@@ -104,8 +110,6 @@ export default function PerformanceDashboard( { onError } ) {
 	} );
 
 	// Refs break the resolve/navigation ↔ selection cycle.
-	const commandResolveRef = useRef( null );
-	const commandResolveUrlRef = useRef( null );
 	const selectUrlRef = useRef(
 		/** @type {( url: Object|null ) => void} */ ( () => {} )
 	);
@@ -160,38 +164,6 @@ export default function PerformanceDashboard( { onError } ) {
 		setServerNames( Array.from( names ).sort() );
 	}, [ serverBreakdownData, serverFilter ] );
 
-	// The one place a hash becomes a title; request_search sends no URL.
-	const urlObjForHash = useCallback( async ( hash ) => {
-		const known = urlsRef.current.find( ( u ) => u.hash === hash );
-		if ( known ) {
-			return known;
-		}
-		const resolved = await commandResolveUrlRef.current?.( hash );
-		return { hash, url: resolved?.url || UNKNOWN_URL() };
-	}, [] );
-
-	// resolveRequestId for ?request= deep links; reaches resolveRequest by ref.
-	const resolveRequestId = useCallback(
-		async ( rid ) => {
-			const data = await commandResolveRef.current?.( rid );
-			if ( ! data || ! data.url_hash || data.partition === undefined ) {
-				// Report the miss so the caller holds the intent to retry.
-				return false;
-			}
-			setRequestPartitionRef.current( data.partition );
-			selectUrlRef.current( await urlObjForHash( data.url_hash ) );
-			selectRequestRef.current( rid );
-			return true;
-		},
-		[ urlObjForHash ]
-	);
-
-	// ?url= deep links; null = no answer, so the caller holds the intent.
-	const resolveUrlHash = useCallback( async ( hash ) => {
-		const resolved = await commandResolveUrlRef.current?.( hash );
-		return resolved ? { url: resolved.url || UNKNOWN_URL() } : null;
-	}, [] );
-
 	const {
 		selectedUrl,
 		selectedRequest,
@@ -200,33 +172,23 @@ export default function PerformanceDashboard( { onError } ) {
 		initialSearchQuery,
 		setInitialSearchQuery,
 		updateBrowserUrl,
-	} = useUrlNavigation( urls, resolveRequestId, resolveUrlHash );
+		deepLink,
+		clearDeepLink,
+	} = useUrlNavigation( urls );
 
 	selectUrlRef.current = selectUrl;
 	selectRequestRef.current = baseSelectRequest;
 	setRequestPartitionRef.current = setRequestPartition;
 
-	// Mount the data graph + own all fetching.
-	const {
-		handleUrlParamsChange,
-		resolveRequest,
-		resolveUrlHash: graphResolveUrlHash,
-		fetchUrlBreakdown,
-		listRules,
-		upsertRule,
-		removeRule,
-		requestGrep,
-	} = usePerformanceGraph( {
+	// The graph polls and publishes; this page's own verbs are below.
+	const { handleUrlParamsChange } = usePerformanceGraph( {
 		serverFilter,
 		chartBreakdown,
 		refreshInterval,
 		requestPartition,
 		selectedUrl,
 		selectedRequest,
-		onError,
 	} );
-	commandResolveRef.current = resolveRequest;
-	commandResolveUrlRef.current = graphResolveUrlHash;
 
 	// One picker, several doors — the triggers live in each header below.
 	const ask = useAsk( { onError } );
@@ -277,27 +239,100 @@ export default function PerformanceDashboard( { onError } ) {
 	 *
 	 * @param {string} rid Request ID to search for.
 	 */
-	const searchRequest = useCallback(
-		async ( rid ) => {
-			if ( ! rid || ! rid.trim() ) {
+	// @longform A hash becomes a title here, in two steps that need no pairing:
+	// select what is already known, then ask `url_detail` for the title if the
+	// hash is off the loaded page. The lookup's reply names the hash it
+	// answered, so it upgrades that selection and no other.
+	const { run: lookupUrl } = useCommandOnce( {
+		ci: SERVER,
+		command: 'url_detail',
+		scope: `${ SERVER }:url_detail:lookup`,
+		retry: true,
+		onDone: ( { result, args } ) => {
+			const url = result?.stats?.url;
+			if ( url ) {
+				selectUrlRef.current( { hash: args[ 0 ], url } );
+			}
+		},
+	} );
+
+	// Show the request now; the title fills in when the lookup answers.
+	const applyFoundRequest = useCallback(
+		( rid, data ) => {
+			const known = urlsRef.current.find(
+				( u ) => u.hash === data.url_hash
+			);
+			setRequestPartitionRef.current( data.partition );
+			selectUrlRef.current(
+				known ?? { hash: data.url_hash, url: UNKNOWN_URL() }
+			);
+			selectRequestRef.current( rid );
+			if ( ! known ) {
+				lookupUrl( formatCommandArgs( [ data.url_hash ] ) );
+			}
+		},
+		[ lookupUrl ]
+	);
+
+	const found = ( data ) =>
+		data && data.url_hash && undefined !== data.partition;
+
+	// @longform The deep link is a RETRIED read: it keeps asking while the
+	// intent stands, so a link opened against a dashboard whose catalog has
+	// not moved still converges. That is the whole of the old one-at-a-time
+	// latch and its 1s-to-30s backoff — the substrate's read does both.
+	const { run: askDeepLinkRequest } = useCommandOnce( {
+		ci: SERVER,
+		command: 'request_search',
+		scope: `${ SERVER }:request_search:deeplink`,
+		retry: true,
+		onDone: ( { result, args } ) => {
+			if ( found( result ) ) {
+				applyFoundRequest( args[ 0 ], result );
+				clearDeepLinkRef.current();
 				return;
 			}
-			setSearchLoading( true );
-			setSearchError( null );
-			setSearchResults( null );
-			const data = await commandResolveRef.current?.( rid.trim() );
-			if ( data && data.url_hash && data.partition !== undefined ) {
-				const urlObj = await urlObjForHash( data.url_hash );
-				setRequestPartition( data.partition );
-				selectUrl( urlObj );
-				selectRequest( rid.trim() );
-				setSearchQuery( '' );
-				updateBrowserUrl( {
-					search: null,
-					url: urlObj.hash,
-					request: rid.trim(),
-				} );
-			} else {
+			// Not-found is an ANSWER; let the ?url= hash have its turn.
+			clearDeepLinkRef.current( 'request' );
+		},
+	} );
+
+	const { run: askDeepLinkUrl } = useCommandOnce( {
+		ci: SERVER,
+		command: 'url_detail',
+		scope: `${ SERVER }:url_detail:deeplink`,
+		retry: true,
+		onDone: ( { result, args } ) => {
+			selectUrlRef.current( {
+				hash: args[ 0 ],
+				url: result?.stats?.url || UNKNOWN_URL(),
+			} );
+			clearDeepLinkRef.current();
+		},
+	} );
+
+	const clearDeepLinkRef = useRef( clearDeepLink );
+	clearDeepLinkRef.current = clearDeepLink;
+
+	// The rid answers the hash AND the partition; `?url=` is the fallback.
+	useEffect( () => {
+		if ( deepLink.requestId ) {
+			askDeepLinkRequest( formatCommandArgs( [ deepLink.requestId ] ) );
+			return;
+		}
+		if ( deepLink.urlHash ) {
+			askDeepLinkUrl( formatCommandArgs( [ deepLink.urlHash ] ) );
+		}
+	}, [ deepLink, askDeepLinkRequest, askDeepLinkUrl ] );
+
+	// The search box: one ask per submit, and a miss is an answer.
+	const { run: searchForRequest } = useCommandOnce( {
+		ci: SERVER,
+		command: 'request_search',
+		scope: `${ SERVER }:request_search:search`,
+		onDone: ( { result, args } ) => {
+			setSearchLoading( false );
+			if ( ! found( result ) ) {
 				setSearchError(
 					sprintf(
 						// translators: %s: the request ID that was searched for.
@@ -305,13 +340,32 @@ export default function PerformanceDashboard( { onError } ) {
 							'Request "%s" not found — prefix with / to search recent traffic',
 							'newspack-event-logger-nodes'
 						),
-						rid
+						args[ 0 ]
 					)
 				);
+				return;
 			}
-			setSearchLoading( false );
+			applyFoundRequest( args[ 0 ], result );
+			setSearchQuery( '' );
+			updateBrowserUrl( {
+				search: null,
+				url: result.url_hash,
+				request: args[ 0 ],
+			} );
 		},
-		[ urlObjForHash, selectUrl, selectRequest, updateBrowserUrl ]
+	} );
+
+	const searchRequest = useCallback(
+		( rid ) => {
+			if ( ! rid || ! rid.trim() ) {
+				return;
+			}
+			setSearchLoading( true );
+			setSearchError( null );
+			setSearchResults( null );
+			searchForRequest( formatCommandArgs( [ rid.trim() ] ) );
+		},
+		[ searchForRequest ]
 	);
 
 	/**
@@ -319,26 +373,38 @@ export default function PerformanceDashboard( { onError } ) {
 	 *
 	 * @param {string} pattern The search pattern.
 	 */
-	const patternSearch = useCallback(
-		async ( pattern ) => {
-			setSearchLoading( true );
-			setSearchError( null );
-			setSearchResults( null );
-			setSearchResultsTruncated( false );
-			const data = await requestGrep( pattern.trim() );
-			const results = data?.results ?? [];
+	const { run: requestGrep } = useCommandOnce( {
+		ci: SERVER,
+		command: 'request_grep',
+		onDone: ( { result, error } ) => {
+			setSearchLoading( false );
+			const results = result?.results ?? [];
 			if ( results.length > 0 ) {
 				setSearchResults( results );
-				setSearchResultsTruncated( !! data?.truncated );
-			} else {
-				setSearchError(
+				setSearchResultsTruncated( !! result?.truncated );
+				return;
+			}
+			setSearchError(
+				error ||
 					__(
 						'No matches in recent traffic',
 						'newspack-event-logger-nodes'
 					)
-				);
-			}
-			setSearchLoading( false );
+			);
+		},
+	} );
+
+	const patternSearch = useCallback(
+		( pattern ) => {
+			setSearchLoading( true );
+			setSearchError( null );
+			setSearchResults( null );
+			setSearchResultsTruncated( false );
+			requestGrep(
+				formatCommandArgs( [ pattern.trim() ], {
+					limit: GREP_RESULT_LIMIT,
+				} )
+			);
 		},
 		[ requestGrep ]
 	);
@@ -502,7 +568,8 @@ export default function PerformanceDashboard( { onError } ) {
 
 	// Inline "Log this URL" state: ruleDraft = open rule, existingRule = label.
 	const [ ruleDraft, setRuleDraft ] = useState( null );
-	const [ existingRule, setExistingRule ] = useState( null );
+	// The whole ruleset as the server last reported it; null until it answers.
+	const [ rules, setRules ] = useState( null );
 	const [ ruleError, setRuleError ] = useState( null );
 
 	const ruleUrl = selectedUrl?.url;
@@ -513,34 +580,24 @@ export default function PerformanceDashboard( { onError } ) {
 	const needsSentinel = ruleUrl && ! rulePath.includes( '?' );
 	const exactPattern = needsSentinel ? `${ rulePath }?` : rulePath;
 
-	// On modal open, detect an existing exact rule (button label + prefill).
+	// A retried READ; this modal's rule is DERIVED from it, never a copy.
+	const { run: listRules } = useCommandOnce( {
+		ci: RULES_CI,
+		command: 'list',
+		retry: true,
+		onDone: ( { result } ) => setRules( result?.rules ?? null ),
+	} );
+	const existingRule =
+		canLogUrl && ! selectedRequest && rules
+			? rules.find( ( r ) => r.pattern === exactPattern ) ?? null
+			: null;
+
 	useEffect( () => {
 		setRuleError( null );
 		setRuleDraft( null );
-		if ( ! canLogUrl || selectedRequest ) {
-			setExistingRule( null );
-			return undefined;
+		if ( canLogUrl && ! selectedRequest ) {
+			listRules( [] );
 		}
-		let cancelled = false;
-		const pattern = exactPattern;
-		listRules()
-			.then( ( res ) => {
-				if ( cancelled ) {
-					return;
-				}
-				const found = ( res?.rules ?? [] ).find(
-					( r ) => r.pattern === pattern
-				);
-				setExistingRule( found ?? null );
-			} )
-			.catch( () => {
-				if ( ! cancelled ) {
-					setExistingRule( null );
-				}
-			} );
-		return () => {
-			cancelled = true;
-		};
 	}, [ ruleUrl, exactPattern, canLogUrl, selectedRequest, listRules ] );
 
 	// Open RuleEditModal on the exact rule (edit) or a blank seeded rule (add).
@@ -558,41 +615,52 @@ export default function PerformanceDashboard( { onError } ) {
 		);
 	}, [ canLogUrl, existingRule, exactPattern ] );
 
-	// Save: upsert exact rule, close only RuleEditModal, error inline on fail.
-	const saveRule = useCallback(
-		async ( draft ) => {
-			const res = await upsertRule( draft );
+	// The reply closes the editor or fills the banner; the ruleset re-reads.
+	const { run: upsertRule } = useCommandOnce( {
+		ci: RULES_CI,
+		command: 'upsert',
+		onDone: ( { result, error } ) => {
 			setRuleDraft( null );
-			if ( ! res ) {
-				setRuleError(
+			if ( result ) {
+				listRules( [] );
+				return;
+			}
+			setRuleError(
+				error ||
 					__(
 						'Could not save the logging rule.',
 						'newspack-event-logger-nodes'
 					)
-				);
-				return;
-			}
-			setExistingRule( res.rule ?? draft );
+			);
 		},
+	} );
+	const saveRule = useCallback(
+		( draft ) => upsertRule( [ JSON.stringify( draft ) ] ),
 		[ upsertRule ]
 	);
 
-	// Delete: remove the open rule, close only RuleEditModal, error inline.
-	const deleteRule = useCallback( async () => {
-		const id = ruleDraft?.id;
-		const res = await removeRule( id );
-		setRuleDraft( null );
-		if ( ! res ) {
+	const { run: removeRule } = useCommandOnce( {
+		ci: RULES_CI,
+		command: 'delete',
+		onDone: ( { result, error } ) => {
+			setRuleDraft( null );
+			if ( result ) {
+				listRules( [] );
+				return;
+			}
 			setRuleError(
-				__(
-					'Could not delete the logging rule.',
-					'newspack-event-logger-nodes'
-				)
+				error ||
+					__(
+						'Could not delete the logging rule.',
+						'newspack-event-logger-nodes'
+					)
 			);
-			return;
-		}
-		setExistingRule( null );
-	}, [ removeRule, ruleDraft ] );
+		},
+	} );
+	const deleteRule = useCallback(
+		() => removeRule( [ ruleDraft?.id ] ),
+		[ removeRule, ruleDraft ]
+	);
 
 	// Handle initial search query from URL parameter.
 	useEffect( () => {
@@ -852,7 +920,6 @@ export default function PerformanceDashboard( { onError } ) {
 							requestSort={ requestSort }
 							onRequestSort={ handleRequestSort }
 							onSelectRequest={ selectRequest }
-							fetchUrlBreakdown={ fetchUrlBreakdown }
 							urlHash={ selectedUrl.hash }
 						/>
 					) }

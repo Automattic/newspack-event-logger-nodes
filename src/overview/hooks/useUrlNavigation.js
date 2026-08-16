@@ -14,13 +14,6 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from '@wordpress/element';
-import useRouterTick from '@newspack-nodes/shared/hooks/useRouterTick';
-
-/** First retry, on the next router tick: usually the data has just landed. */
-const DEEP_LINK_RETRY_MS = 1000;
-
-/** Ceiling for the backoff — a page left open asks twice a minute, not 60x. */
-const DEEP_LINK_MAX_RETRY_MS = 30000;
 
 /**
  * Get URL parameters from the current page URL.
@@ -78,25 +71,17 @@ const updateBrowserUrl = ( params ) => {
  * module helper, handed out for callers that must write a param this hook does
  * not own, `search` being the only one.
  *
- * @param {Array}    urls               One page of the URL catalog; each entry
- *                                      carries a `hash` and a `url`.
- * @param {Function} [resolveRequestId] Optional async (rid) -> boolean. Called
- *                                      when `?request=` is set but `?url=`
- *                                      isn't — owner resolves the URL hash and
- *                                      selects both. Return false to report a
- *                                      miss so the intent is held for a retry.
- * @param {Function} [resolveUrlHash]   Optional async (hash) -> {url}|null. The
- *                                      url is display-ready: the resolver owns
- *                                      the unknown-URL fallback, not this hook.
- *                                      Answers for a hash outside the loaded
- *                                      page. Null holds the intent.
+ * A `?url=` / `?request=` deep link is an INTENT this hook holds and reports:
+ * it resolves one it can answer from the loaded page itself, and otherwise
+ * hands the caller `deepLink` — `{ requestId, urlHash }` — and `clearDeepLink`.
+ * The caller asks the server, because asking is a command and the commands
+ * belong beside the state their replies set.
+ *
+ * @param {Array} urls One page of the URL catalog; each entry carries a `hash`
+ *                     and a `url`.
  * @return {Object} Navigation state and callbacks.
  */
-export default function useUrlNavigation(
-	urls,
-	resolveRequestId,
-	resolveUrlHash
-) {
+export default function useUrlNavigation( urls ) {
 	// Selection state.
 	const [ selectedUrl, setSelectedUrl ] = useState( null );
 	const [ selectedRequest, setSelectedRequest ] = useState( null );
@@ -135,103 +120,43 @@ export default function useUrlNavigation(
 		setSelectedRequest( rid );
 	}, [] );
 
-	// @longform Restore selection from ?url= / ?request=, through ONE resolver.
+	// @longform Restore the selection a `?url=` / `?request=` link asks for.
 	//
-	// The rid is the more specific key — it answers the url hash AND the
-	// partition — so a link carrying one resolves by it, and `?url=` is a hint
-	// rather than a second path. Branching on the hash first left the partition
-	// unresolved whenever the rid had aged out of the URL's recent-request
-	// window, and the request detail then never fetched at all.
-	//
-	// The ROUTER TICK owns the convergence: while the intent is held, each
-	// tick attempts again, so a deep link converges even on a dashboard whose
-	// catalog never moves. A throw means "not yet" — graph not built, no
-	// command session, a reply that lost its race, a hash outside the loaded
-	// page — one retry path instead of five silent failure paths.
-	const deepLinkLoad = useCallback( async () => {
-		if ( ! initialUrlHash && ! initialRequestId ) {
+	// What this hook can answer, it answers: a hash already on the loaded page
+	// needs no round trip. Anything else is reported as an intent, because
+	// resolving it means asking the server, and a command belongs beside the
+	// state its reply sets — held here it would need a resolver threaded in,
+	// a one-at-a-time latch and a backoff, all of which a retried read already
+	// does.
+	useEffect( () => {
+		if ( ! initialUrlHash ) {
 			return;
 		}
-
-		// A miss falls THROUGH to the hash rather than retrying forever.
-		if ( initialRequestId && resolveRequestId ) {
-			if ( false !== ( await resolveRequestId( initialRequestId ) ) ) {
-				setInitialUrlHash( null );
-				setInitialRequestId( null );
-				return;
-			}
-			if ( ! initialUrlHash ) {
-				throw new Error( 'request id not resolved yet' );
-			}
-		}
-
 		const urlObj = urls.find( ( u ) => u.hash === initialUrlHash );
-		if ( urlObj ) {
-			selectUrl( urlObj );
-			if ( initialRequestId ) {
-				selectRequest( initialRequestId );
-			}
-			setInitialUrlHash( null );
-			setInitialRequestId( null );
+		if ( ! urlObj ) {
 			return;
 		}
-		// Outside the loaded page: only the server can answer.
-		if ( ! resolveUrlHash ) {
-			return;
-		}
-		const data = await resolveUrlHash( initialUrlHash );
-		if ( ! data ) {
-			throw new Error( 'url hash not resolved yet' );
-		}
-		selectUrl( { hash: initialUrlHash, url: data.url } );
+		selectUrl( urlObj );
 		if ( initialRequestId ) {
 			selectRequest( initialRequestId );
 		}
+		// The RID alone carries the partition, so it stays reported.
 		setInitialUrlHash( null );
-		setInitialRequestId( null );
-	}, [
-		urls,
-		initialUrlHash,
-		initialRequestId,
-		selectUrl,
-		selectRequest,
-		resolveRequestId,
-		resolveUrlHash,
-	] );
+	}, [ urls, initialUrlHash, initialRequestId, selectUrl, selectRequest ] );
 
-	// @longform
-	// "Not yet" is the common case, so the next tick tries again — ONE attempt
-	// at a time, and slower after each miss. A second attempt over an
-	// outstanding one asks for an answer already on its way and leaves another
-	// waiter behind it, and a fixed 1s retry puts a command per second on the
-	// wire for the whole life of a page whose intent never resolves.
-	const attemptingRef = useRef( false );
-	const [ retryMs, setRetryMs ] = useState( DEEP_LINK_RETRY_MS );
-	const attempt = useCallback( () => {
-		if (
-			! ( initialUrlHash || initialRequestId ) ||
-			attemptingRef.current
-		) {
-			return;
+	/**
+	 * Report the link as answered. `'request'` drops only the rid, which is
+	 * how a rid the server cannot find falls THROUGH to the `?url=` hash
+	 * instead of being re-asked forever.
+	 *
+	 * @param {string} [part] `'request'` for the rid alone; omit for the link.
+	 */
+	const clearDeepLink = useCallback( ( part ) => {
+		setInitialRequestId( null );
+		if ( 'request' !== part ) {
+			setInitialUrlHash( null );
 		}
-		attemptingRef.current = true;
-		deepLinkLoad()
-			.then( () => setRetryMs( DEEP_LINK_RETRY_MS ) )
-			.catch( () =>
-				setRetryMs( ( ms ) =>
-					Math.min( ms * 2, DEEP_LINK_MAX_RETRY_MS )
-				)
-			)
-			.finally( () => {
-				attemptingRef.current = false;
-			} );
-	}, [ deepLinkLoad, initialUrlHash, initialRequestId ] );
-	useEffect( attempt, [ attempt ] );
-	useRouterTick( {
-		name: 'urlnav:deeplink',
-		onTick: attempt,
-		intervalMs: retryMs,
-	} );
+	}, [] );
 
 	// Update browser URL when selection changes.
 	useEffect( () => {
@@ -303,5 +228,8 @@ export default function useUrlNavigation(
 		initialSearchQuery,
 		setInitialSearchQuery,
 		updateBrowserUrl,
+		// The part of the link this hook could not answer by itself.
+		deepLink: { requestId: initialRequestId, urlHash: initialUrlHash },
+		clearDeepLink,
 	};
 }
