@@ -18,7 +18,7 @@ import { __ } from '@wordpress/i18n';
 import { formatCommandArgs, useNodeState } from '@newspack-nodes/runtime';
 import { useBatchedPoll } from '@newspack-nodes/shared/hooks/useBatchedPoll';
 import { addSliceFetcher } from '@newspack-nodes/shared/helpers/addSliceFetcher';
-import './nodes/register';
+import { views } from './nodes/register';
 // Reuse the perf dashboard's flame + profile; FlameGraph is d3-heavy (lazy).
 import RequestProfile from '../overview/RequestProfile';
 import { egressPath } from '@newspack-nodes/shared/helpers/egressPath';
@@ -115,7 +115,7 @@ export default function CurrentRequestTab() {
 				command: 'request_detail',
 				argsFn: () => formatCommandArgs( [ rid ], { partition } ),
 				view: VIEW,
-				viewClass: 'CurrentRequestView',
+				viewClass: views.CurrentRequestView,
 				tee,
 				target: egressPath( 'performance' ),
 			} ),

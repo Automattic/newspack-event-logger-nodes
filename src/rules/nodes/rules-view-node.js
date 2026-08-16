@@ -1,4 +1,10 @@
-import { Node, TYPE, VALUE, TM_ERROR } from '@newspack-nodes/runtime';
+import {
+	Node,
+	TYPE,
+	VALUE,
+	TM_ERROR,
+	payloadOf,
+} from '@newspack-nodes/runtime';
 import { errorMessage } from '@newspack-nodes/shared/errorMessage';
 
 /**
@@ -93,8 +99,7 @@ export class RulesViewNode extends Node {
 	 *                  string, a `{ message }` object, or anything else to text.
 	 */
 	_applyError( value ) {
-		const payload =
-			value && 'object' === typeof value ? value.payload : value;
+		const payload = payloadOf( value );
 		this.model = {
 			...this.model,
 			error: errorMessage( payload ),

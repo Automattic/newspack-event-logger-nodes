@@ -1,4 +1,4 @@
-import { Node, VALUE, FROM } from '@newspack-nodes/runtime';
+import { Node, VALUE, FROM, payloadOf } from '@newspack-nodes/runtime';
 
 /**
  * `urldetail:merge` — the url_detail incremental merge and `last_modified`
@@ -63,8 +63,7 @@ export class UrlDetailMergeNode extends Node {
 			return;
 		}
 
-		const payload =
-			value && 'object' === typeof value ? value.payload : null;
+		const payload = payloadOf( value );
 		const next = this._merge( payload );
 		if ( null === next ) {
 			// No-op (empty or unchanged last_modified) — drop, no republish.

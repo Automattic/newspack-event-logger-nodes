@@ -15,7 +15,7 @@
 import { useNodeState } from '@newspack-nodes/runtime';
 import { useBatchedPoll } from '@newspack-nodes/shared/hooks/useBatchedPoll';
 import { addSliceFetcher } from '@newspack-nodes/shared/helpers/addSliceFetcher';
-import '../nodes/register';
+import { views } from '../nodes/register';
 import { egressPath } from '@newspack-nodes/shared/helpers/egressPath';
 
 const FETCHER = 'hookcatalog:fetch';
@@ -45,7 +45,7 @@ export function useHookCatalogGraph( opts = {} ) {
 				receiver: RECEIVER,
 				command: 'hooks_registered',
 				view: VIEW,
-				viewClass: 'HookCatalogView',
+				viewClass: views.HookCatalogView,
 				tee,
 				target: egressPath( 'performance' ),
 			} ),

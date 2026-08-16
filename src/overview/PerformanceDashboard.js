@@ -43,7 +43,7 @@ import useUrlNavigation from './hooks/useUrlNavigation';
 import OverviewSection from './components/OverviewSection';
 import UrlDetailView from './components/UrlDetailView';
 import RequestDetailView from './components/RequestDetailView';
-import AskPanel from './components/AskPanel';
+import AskPanel, { AskButton, useAsk } from './components/AskPanel';
 import { pageFacts, factsJson } from './pageFacts';
 import RuleEditModal from '../rules/RuleEditModal';
 import { BLANK_RULE } from '../rules/constants';
@@ -227,6 +227,9 @@ export default function PerformanceDashboard( { onError } ) {
 	} );
 	commandResolveRef.current = resolveRequest;
 	commandResolveUrlRef.current = graphResolveUrlHash;
+
+	// One picker, several doors — the triggers live in each header below.
+	const ask = useAsk( { onError } );
 
 	// Reset the search-sourced partition when leaving request detail.
 	useEffect( () => {
@@ -638,8 +641,8 @@ export default function PerformanceDashboard( { onError } ) {
 
 	return (
 		<div className="event-logger-performance-dashboard">
-			{ /* The `?` picker. One button; what you click next is the scope. */ }
-			<AskPanel onError={ onError } />
+			{ /* The `?` picker's answer. Its triggers sit in the headers. */ }
+			<AskPanel ask={ ask } />
 
 			{ /* Facts only, no instructions: anything reading this page gets
 			     clean numbers instead of a scraped table. Rendered only for
@@ -664,6 +667,7 @@ export default function PerformanceDashboard( { onError } ) {
 
 			{ /* Overview Stats */ }
 			<OverviewSection
+				ask={ ask }
 				overview={ overview }
 				filteredStats={ filteredOverviewStats }
 				serverFilter={ serverFilter }
@@ -739,7 +743,22 @@ export default function PerformanceDashboard( { onError } ) {
 					} }
 					className="event-logger-performance-modal newspack-nodes-modal newspack-nodes-skin-root newspack-nodes-theme newspack-nodes-ui"
 					headerActions={
-						! selectedRequest && (
+						selectedRequest ? (
+							<>
+								<AskButton ask={ ask } />
+								<button
+									type="button"
+									className="button is-plain event-logger-modal-back-button"
+									onClick={ () => selectRequest( null ) }
+									aria-label={ __(
+										'Back to URL details',
+										'newspack-event-logger-nodes'
+									) }
+								>
+									&larr;
+								</button>
+							</>
+						) : (
 							<>
 								<div className="event-logger-header-stats newspack-nodes-stats-grid">
 									<span className="newspack-nodes-stat">
@@ -797,6 +816,7 @@ export default function PerformanceDashboard( { onError } ) {
 										</span>
 									) }
 								</div>
+								<AskButton ask={ ask } />
 								<div className="event-logger-rule-control">
 									<button
 										type="button"
@@ -824,21 +844,6 @@ export default function PerformanceDashboard( { onError } ) {
 						)
 					}
 				>
-					{ /* Back button for request view */ }
-					{ selectedRequest && (
-						<button
-							type="button"
-							className="button is-plain event-logger-modal-back-button"
-							onClick={ () => selectRequest( null ) }
-							aria-label={ __(
-								'Back to URL details',
-								'newspack-event-logger-nodes'
-							) }
-						>
-							&larr;
-						</button>
-					) }
-
 					{ /* URL Details View */ }
 					{ ! selectedRequest && (
 						<UrlDetailView

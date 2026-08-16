@@ -31,6 +31,7 @@ import {
 import AggregateTimeChart from '../AggregateTimeChart';
 import CategoryTimeChart from '../CategoryTimeChart';
 import RequestProfile from '../RequestProfile';
+import { AskButton } from './AskPanel';
 
 /**
  * Overview Section component.
@@ -57,6 +58,7 @@ import RequestProfile from '../RequestProfile';
  * @param {(value: string) => void} props.setChartBreakdown      Breakdown dimension setter.
  * @param {Object|null}             props.breakdownData          Time series for the selected breakdown dim.
  * @param {Object|null}             props.categoryData           Category time series, or null.
+ * @param {Object}                  props.ask                    The `useAsk` state driving the Ask trigger.
  * @return {import('react').ReactElement|null} Rendered section, or null without overview data.
  */
 export default function OverviewSection( {
@@ -81,6 +83,7 @@ export default function OverviewSection( {
 	setChartBreakdown,
 	breakdownData,
 	categoryData,
+	ask,
 } ) {
 	/**
 	 * The parent lifts `chartBreakdown` and passes the matching series down,
@@ -142,6 +145,7 @@ export default function OverviewSection( {
 							gap: '16px',
 						} }
 					>
+						<AskButton ask={ ask } />
 						{ /* Request ID Search */ }
 						<div
 							style={ {

@@ -43,7 +43,7 @@ import {
 	reservedNames as names,
 } from '@newspack-nodes/runtime';
 
-import './nodes/register';
+import { views } from './nodes/register';
 import { useCommandOnce } from '@newspack-nodes/shared/hooks/useCommandOnce';
 
 const RULES_CI = 'rules';
@@ -101,7 +101,7 @@ export function useRulesGraph( opts = {} ) {
 	useEffect( () => {
 		const build = ( { interpreter, shell } ) => {
 			const recv = interpreter.makeNode( 'Tee', RECV );
-			interpreter.makeNode( 'RulesView', VIEW );
+			interpreter.makeNode( views.RulesView, VIEW );
 			recv.connectNode( VIEW );
 
 			interpreterRef.current = interpreter;

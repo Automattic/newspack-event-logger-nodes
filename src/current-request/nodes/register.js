@@ -2,6 +2,7 @@
 import { CommandInterpreterNode } from '@newspack-nodes/runtime';
 import { CurrentRequestViewNode } from './current-request-view-node';
 
-CommandInterpreterNode.registerNodeClasses( {
+/** The view classes, handed to `makeNode` — a name is per-bundle. */
+export const views = CommandInterpreterNode.registerNodeClasses( {
 	CurrentRequestView: CurrentRequestViewNode,
 } );

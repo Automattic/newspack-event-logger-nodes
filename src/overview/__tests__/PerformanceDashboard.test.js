@@ -38,12 +38,16 @@ jest.mock( '@newspack-nodes/runtime', () => ( {
 		const key = sliceByNode[ nodeName ];
 		return key ? mockView[ key ] : undefined;
 	},
+	formatCommandArgs: ( args ) => args,
 } ) );
 
-// AskPanel mounts its own Request node onto the exospine, which this suite's
-// runtime mock has no graph for. Its behaviour is covered by useAskPicker and
-// askBrief; here it is a button.
-jest.mock( '../components/AskPanel', () => () => null );
+// The ask command rides a Request node this suite's runtime mock has no graph
+// for; everything else about the picker is real, and where its trigger sits in
+// each header is what these tests cover.
+jest.mock( '@newspack-nodes/shared/hooks/useCommandOnce', () => ( {
+	__esModule: true,
+	useCommandOnce: () => ( { run: jest.fn() } ),
+} ) );
 
 // The graph control callbacks usePerformanceGraph hands back.
 const mockGraph = {
@@ -1202,6 +1206,39 @@ describe( 'PerformanceDashboard', () => {
 		unmount();
 	} );
 
+	it( 'renders the Ask trigger immediately before the request-detail back button', async () => {
+		mockNavState.selectedUrl = { hash: 'h1', url: '/foo' };
+		mockNavState.selectedRequest = 'r1';
+		mockView = loadedView( {
+			urlDetail: {
+				data: {
+					last_modified: 1,
+					stats: { avg_ms: 50, time_series: {} },
+					requests: [],
+				},
+				loading: false,
+				error: null,
+			},
+			requestDetail: {
+				data: { rid: 'r1', entries: [] },
+				loading: false,
+				error: null,
+			},
+		} );
+		const { container, unmount } = renderComponent(
+			React.createElement( PerformanceDashboard, {
+				onError: jest.fn(),
+			} )
+		);
+		await flushEffects();
+		const trigger = container.querySelector( '.event-logger-ask__trigger' );
+		expect( trigger ).toBeTruthy();
+		expect( trigger.nextElementSibling ).toBe(
+			container.querySelector( '.event-logger-modal-back-button' )
+		);
+		unmount();
+	} );
+
 	// URL modal inline "Log this URL" affordance (spec section C).
 	describe( 'Log this URL affordance', () => {
 		// A URL-detail-loaded view model with the modal open on `url`.
@@ -1235,6 +1272,25 @@ describe( 'PerformanceDashboard', () => {
 			expect( btn ).toBeTruthy();
 			expect( btn.textContent ).toContain( 'Log this URL' );
 			expect( btn.disabled ).toBe( false );
+			unmount();
+		} );
+
+		it( 'renders the Ask trigger immediately before the rule control', async () => {
+			mockView = urlModalView( '/foo' );
+			const { container, unmount } = renderComponent(
+				React.createElement( PerformanceDashboard, {
+					onError: jest.fn(),
+				} )
+			);
+			await flushEffects();
+			const trigger = container.querySelector(
+				'.event-logger-ask__trigger'
+			);
+			const control = container.querySelector(
+				'.event-logger-rule-control'
+			);
+			expect( trigger ).toBeTruthy();
+			expect( trigger.nextElementSibling ).toBe( control );
 			unmount();
 		} );
 

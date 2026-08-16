@@ -33,7 +33,7 @@
  */
 
 import { useRef, useState, useCallback } from '@wordpress/element';
-import '../nodes/register';
+import { views } from '../nodes/register';
 import usePageVisibility from '@newspack-nodes/shared/hooks/usePageVisibility';
 import { useVisibilityGatedLink } from '@newspack-nodes/shared/hooks/useVisibilityGatedLink';
 import useGlobBrowse, { connectPositions } from '../../hooks/useGlobBrowse';
@@ -95,7 +95,7 @@ export function useErrorLogGraph( opts = {} ) {
 			tee.connectNode( VIEW );
 
 			// The view-model — shapes raw envelopes into rows inline.
-			const view = interpreter.makeNode( 'PerfErrorsView', VIEW );
+			const view = interpreter.makeNode( views.PerfErrorsView, VIEW );
 			// The view applies controls from this FROM; records never match.
 			view.controlFrom = VIEW;
 			if ( maxEntries ) {

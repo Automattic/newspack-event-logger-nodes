@@ -7,9 +7,6 @@
 		margin: 2.5vh auto;
 
 		.event-logger-modal-back-button {
-			position: absolute;
-			top: 18px;
-			right: 64px;
 			width: 36px;
 			height: 36px;
 			min-height: 36px;
@@ -18,7 +15,6 @@
 			display: flex;
 			align-items: center;
 			justify-content: center;
-			z-index: 10;
 			font-size: 18px;
 			line-height: inherit;
 			white-space: normal;
@@ -36,11 +32,16 @@
 		gap: 16px;
 	}
 
+	// Request detail has no stat grid to carry the gap, so the Ask trigger
+	// is what pushes the header actions off the title.
+	.components-modal__header-heading-container + .event-logger-ask__trigger {
+		margin-left: auto;
+	}
+
 	.event-logger-header-stats {
 		display: flex;
 		gap: 16px;
 		margin-left: auto;
-		margin-right: 48px;
 		white-space: nowrap;
 		font-size: 14px;
 

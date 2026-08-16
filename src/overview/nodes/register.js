@@ -22,7 +22,8 @@ import { UrlDetailMergeNode } from './url-detail-merge-node';
 import { UrlDetailViewNode } from './url-detail-view-node';
 import { RequestDetailViewNode } from './request-detail-view-node';
 
-CommandInterpreterNode.registerNodeClasses( {
+/** The view classes, handed to `makeNode` — a name is per-bundle. */
+export const views = CommandInterpreterNode.registerNodeClasses( {
 	OverviewView: OverviewViewNode,
 	UrlsView: UrlsViewNode,
 	UrlDetailMerge: UrlDetailMergeNode,

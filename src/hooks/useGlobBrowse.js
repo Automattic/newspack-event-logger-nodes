@@ -41,7 +41,7 @@ import useLogPositions, {
 } from '@newspack-nodes/shared/hooks/useLogPositions';
 import { browseControl, LIVE } from '@newspack-nodes/shared/nodes/seekTracker';
 import useRouterTick from '@newspack-nodes/shared/hooks/useRouterTick';
-import { useAwaitableCommand } from '@newspack-nodes/shared/hooks/useAwaitableCommand';
+import { useCommandOnce } from '@newspack-nodes/shared/hooks/useCommandOnce';
 
 // The substrate service CI that catalogs and reads the on-disk logs.
 const RAW_LOGS = 'raw-logs';
@@ -115,9 +115,8 @@ function viewControl( from, value ) {
  *   selectPartition: (key: string) => void, segments: Object[], mode: string,
  *   lastReceivedSegment: ?number, segmentId: (number|string|null),
  *   follow: () => void, replay: () => void,
- *   browseSegment: (segment: Object) => void,
- *   step: () => (Promise<void>|undefined),
- *   jumpTo: (position: Object) => (Promise<void>|undefined) }}
+ *   browseSegment: (segment: Object) => void, step: () => void,
+ *   jumpTo: (position: Object) => void }}
  *   Browse state + actions for `SegmentBrowseSidebar`. `partitions` are the
  *   `list_logs` rows (`{ key, label, … }`) narrowed to the glob; `mode` and
  *   `lastReceivedSegment` are read off the view model, not held here.
@@ -170,98 +169,47 @@ export default function useGlobBrowse( {
 		);
 	}, [ viewName ] );
 
-	// A node per catalog verb, each riding the same tick as everything else.
-	const listNode = useAwaitableCommand( {
+	// A node per catalog verb; each reply names the dir it is about (`args`).
+	const { run: listLogs } = useCommandOnce( {
 		ci: RAW_LOGS,
 		command: 'list_logs',
 		scope: `${ viewName }:list`,
+		retry: true,
+		onDone: ( { result } ) => {
+			if ( ! Array.isArray( result ) ) {
+				return;
+			}
+			setPartitions(
+				result.filter(
+					( l ) =>
+						'string' === typeof l?.key &&
+						l.key.startsWith( globPrefix )
+				)
+			);
+		},
 	} );
-	const statusNode = useAwaitableCommand( {
+	const { run: fetchStatus } = useCommandOnce( {
 		ci: RAW_LOGS,
 		command: 'log_status',
 		scope: `${ viewName }:status`,
-	} );
-	const readNode = useAwaitableCommand( {
-		ci: RAW_LOGS,
-		command: 'read_message',
-		scope: `${ viewName }:read`,
-	} );
-
-	/**
-	 * Send one `raw-logs` verb through the Request node that owns it.
-	 *
-	 * @param {string}   name The verb: list_logs, log_status, or read_message.
-	 * @param {string[]} args The verb's token array.
-	 * @return {Promise<*>} The reply payload.
-	 */
-	const fetchCatalog = useCallback(
-		( name, args ) => {
-			const request = {
-				list_logs: listNode,
-				log_status: statusNode,
-				read_message: readNode,
-			}[ name ];
-			if ( ! request ) {
-				return Promise.reject(
-					new Error( `no request node for ${ name }` )
-				);
+		onDone: ( { result, args } ) => {
+			if ( selectedRef.current === args[ 0 ] ) {
+				setSegments( result?.segments ?? [] );
 			}
-			return request( args );
 		},
-		[ listNode, statusNode, readNode ]
-	);
+	} );
 
 	// One-shot list_logs → the glob's concrete partition dirs.
 	useEffect( () => {
-		let cancelled = false;
-		fetchCatalog( 'list_logs', [] )
-			.then( ( logs ) => {
-				if ( cancelled || ! Array.isArray( logs ) ) {
-					return;
-				}
-				setPartitions(
-					logs.filter(
-						( l ) =>
-							'string' === typeof l?.key &&
-							l.key.startsWith( globPrefix )
-					)
-				);
-			} )
-			.catch( () => {} );
-		return () => {
-			cancelled = true;
-		};
-	}, [ fetchCatalog, globPrefix ] );
-
-	/**
-	 * Write a `log_status` reply into the rail, if the rail still wants it.
-	 *
-	 * The guard keys on the partition the reply BELONGS to (reusing
-	 * `selectedRef` above) rather than a shared cancelled flag: React runs the
-	 * old cleanup and then the new effect body, so one boolean is un-set by the
-	 * very re-run that should cancel it, and a slow reply repopulates the rail
-	 * for a partition the user already left. Both segment writers below go
-	 * through here.
-	 *
-	 * @param {string}  forPartition The dir the request was made for.
-	 * @param {?Object} status       The `log_status` reply, if one arrived.
-	 */
-	const applySegments = useCallback( ( forPartition, status ) => {
-		if ( selectedRef.current === forPartition ) {
-			setSegments( status?.segments ?? [] );
-		}
-	}, [] );
+		listLogs( [] );
+	}, [ listLogs ] );
 
 	// Refetch the selected dir's rail; a no-op with the glob selected.
 	const refreshSegments = useCallback( () => {
-		const forPartition = selectedPartition;
-		if ( ! forPartition ) {
-			return;
+		if ( selectedPartition ) {
+			fetchStatus( [ selectedPartition ] );
 		}
-		fetchCatalog( 'log_status', [ forPartition ] )
-			.then( ( status ) => applySegments( forPartition, status ) )
-			.catch( () => {} );
-	}, [ selectedPartition, fetchCatalog, applySegments ] );
+	}, [ selectedPartition, fetchStatus ] );
 
 	useEffect( () => {
 		if ( ! selectedPartition ) {
@@ -293,17 +241,8 @@ export default function useGlobBrowse( {
 			return;
 		}
 		staleSegmentRef.current = lastReceivedSegment;
-		const forPartition = selectedPartition;
-		fetchCatalog( 'log_status', [ forPartition ] )
-			.then( ( status ) => applySegments( forPartition, status ) )
-			.catch( () => {} );
-	}, [
-		lastReceivedSegment,
-		segments,
-		selectedPartition,
-		fetchCatalog,
-		applySegments,
-	] );
+		refreshSegments();
+	}, [ lastReceivedSegment, segments, selectedPartition, refreshSegments ] );
 
 	/**
 	 * Record the browse target, and move the live stream only when it is open.
@@ -393,58 +332,59 @@ export default function useGlobBrowse( {
 	 * pending cursor, server-stamped by the real read model, and the view admits
 	 * it through its paused belt on a one-frame step budget. The recorded target
 	 * then advances to the post-step cursor, so the next Step continues from
-	 * there and Play resumes streaming from there.
+	 * there and Play resumes streaming from there. The reply names the dir it
+	 * read, so the target it advances is the one it was about.
 	 *
 	 * The paused gate is `isActiveNow`: a caller that omits it can step a stream
 	 * that is still open.
-	 *
-	 * @return {Promise<void>|undefined} Undefined when there is nothing to step.
 	 */
+	const { run: readMessage } = useCommandOnce( {
+		ci: RAW_LOGS,
+		command: 'read_message',
+		scope: `${ viewName }:read`,
+		onDone: ( { result, args } ) => {
+			const view = Core.node( viewName );
+			if ( ! result?.message || ! view ) {
+				return;
+			}
+			view.fill( viewControl( viewName, { action: 'step', frames: 1 } ) );
+			view.fill( result.message );
+			browseTargetRef.current = {
+				subscribe: [ args[ 0 ] ],
+				positions: { [ args[ 0 ] ]: { ...result.cursor } },
+				explicit: true,
+			};
+		},
+	} );
+
 	const step = useCallback( () => {
 		const sel = selectedRef.current;
 		const link = Core.node( linkName );
 		if ( ! sel || ! link || ( isActiveNow && isActiveNow() ) ) {
-			return undefined;
+			return;
 		}
 		const position = stepPosition(
 			link,
 			sel,
 			browseTargetRef.current.positions
 		);
-		if ( null === position ) {
-			return undefined;
+		if ( null !== position ) {
+			readMessage( [ sel, position ] );
 		}
-		return fetchCatalog( 'read_message', [ sel, position ] )
-			.then( ( result ) => {
-				const view = Core.node( viewName );
-				if ( ! result?.message || ! view ) {
-					return;
-				}
-				view.fill(
-					viewControl( viewName, { action: 'step', frames: 1 } )
-				);
-				view.fill( result.message );
-				browseTargetRef.current = {
-					subscribe: [ sel ],
-					positions: { [ sel ]: { ...result.cursor } },
-					explicit: true,
-				};
-			} )
-			.catch( () => {} );
-	}, [ linkName, viewName, fetchCatalog, browseTargetRef, isActiveNow ] );
+	}, [ linkName, readMessage, browseTargetRef, isActiveNow ] );
 
 	// Offset jump: pause, seek the pasted position, and step that message.
 	const jumpTo = useCallback(
 		( position ) => {
 			const sel = selectedRef.current;
 			if ( ! sel ) {
-				return undefined;
+				return;
 			}
 			setPausedRef?.current?.( true );
 			lpBrowse( position.segment );
 			browseView();
 			reposition( [ sel ], { [ sel ]: position } );
-			return step();
+			step();
 		},
 		[ lpBrowse, browseView, reposition, step, setPausedRef ]
 	);

@@ -1,7 +1,7 @@
-// Register this dashboard's node class so interpreter.makeNode can build it.
+// Registered for TSL and the palette; a hook hands `makeNode` the class.
 import { CommandInterpreterNode } from '@newspack-nodes/runtime';
 import { RequestLogViewNode } from './request-log-view-node';
 
-CommandInterpreterNode.registerNodeClasses( {
-	RequestLogView: RequestLogViewNode,
-} );
+/** The view classes, handed to `makeNode` — a name is per-bundle. */
+export const views = { RequestLogView: RequestLogViewNode };
+CommandInterpreterNode.registerNodeClasses( views );
