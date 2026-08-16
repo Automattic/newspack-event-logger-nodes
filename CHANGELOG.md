@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.57.0] - 2026-08-16
+
+### Changed
+- **The Ask brief spends its budget on signal, and its pointer on the rest.** The picker's payload is now also an MCP tool result, so the payload IS the product — but it was shaped for a renderer that caps its own lists. The curation moved into `Ask_Assembler`: same-name spans fold into one row (a request with four `query hook` children spent four of its six slots on four identical `0.0ms×1` rows), every list sorts by time and caps at `TOP_SPANS`, and a span brief folds the span it is ABOUT — it previously reported the first occurrence's `10ms×1` while the request brief reported the same span as `30ms×3`, leaving the missing time accounted for nowhere.
+- **A brief carries the tool call that fetches what it trimmed.** `url_detail` for the per-minute series, `request_detail` for the capped entry list, `ask` for a span with its request context. The markdown names the site's MCP endpoint once, "Copy brief" hands over that whole agent-ready document, and an "Ask Claude" link opens a chat with the brief prefilled (and on the clipboard, since past the URL budget the link can only ask for a paste).
+- **The brief modal waits for the selection to finish.** A Cmd-click queued another ask AND opened the panel, putting the brief in front of the next thing being picked. The selection now belongs to one picker session — arming starts it, a modified click continues it, the plain click that disarms the picker ends it — so `open` is derived from the picker rather than kept as its own flag, and Escape discards what was queued.
+
+- The substrate pin follows `newspack-nodes` v2.33.0, whose picker reports a miss instead of disarming and exports `ASK_TRIGGER_ATTR` — which this plugin's Ask button now carries.
+
+### Removed
+- **The URL brief's dimensional breakdown and the rule's custom-event roster.** Neither was rendered by any consumer: the breakdown was an unbounded per-minute series (23 buckets on a quiet local install, growing with traffic) and the roster ran to 68 names. The rule now carries `custom_event_count` beside `hook_count`, and dropping the breakdown parameter deletes a `merge_url_dim` memcache read per ask. Worst-request rows carry what names them — rid, partition, duration, status, error — rather than segment/offset/length storage coordinates.
+
+### Fixed
+- **A flame-graph span could not be picked after a zoom or a resize.** `data-ask` is stamped onto the frames after each render, but d3 rebuilds them on zoom and on the container resize, and the stamp ran before the re-zoom on the refresh path — so the `?` picker found nothing where a span plainly was. It now stamps after the re-zoom and after the resize re-render.
+- **A pick that answered with no brief vanished.** `useAsk` returned silently on a non-object reply; it reports it through `onError` like any other failure.
+
 ## [0.56.1] - 2026-08-16
 
 ### Changed
