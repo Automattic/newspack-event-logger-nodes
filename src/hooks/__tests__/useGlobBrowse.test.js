@@ -23,6 +23,7 @@ import {
 	TM_ERROR,
 	forgetSession,
 	__setAuthFetch,
+	GRID_PHASE_MS,
 } from '@newspack-nodes/runtime';
 import {
 	installFakeCommandWire,
@@ -752,6 +753,16 @@ describe( 'useGlobBrowse — segment-rail maintenance', () => {
 		// The rail rides the Router TIMER, and beforeEach armed that slot under
 		// REAL timers — re-mount the backbone so its 1s slot is a fake one.
 		jest.useFakeTimers();
+		// @longform The rail's 10s refresh rides the substrate's wall-clock
+		// GRID, so whether a window contains a boundary depends on the second
+		// the suite happens to start in. Pin the clock 10ms past one — forward,
+		// never back, which every watchdog would read as a stream gone silent.
+		jest.setSystemTime(
+			( Math.floor( ( Date.now() - GRID_PHASE_MS ) / 10000 ) + 1 ) *
+				10000 +
+				GRID_PHASE_MS +
+				10
+		);
 		// Core.reset() only swaps the node map; without this the beforeEach
 		// router keeps its real interval and ticks on beside the fake clock.
 		Core.node( '_router' )?.stopTimer();
@@ -779,11 +790,11 @@ describe( 'useGlobBrowse — segment-rail maintenance', () => {
 		} );
 		const before = statusCalls( graph.client );
 		expect( before ).toBeGreaterThan( 0 );
-		// The rail marks its window started (it just loaded), so the refresh
-		// is a full interval out, counted from the next grid boundary — two of
-		// them at the outside. Exactly ONE in that span is the cadence.
+		// The rail marks its window started (it just loaded), so the refresh is
+		// a full interval out, counted from the next boundary: with the clock
+		// pinned just past one, that is 20s exactly.
 		await act( async () => {
-			jest.advanceTimersByTime( 21000 );
+			jest.advanceTimersByTime( 20100 );
 		} );
 		expect( statusCalls( graph.client ) ).toBe( before + 1 );
 		jest.useRealTimers();
