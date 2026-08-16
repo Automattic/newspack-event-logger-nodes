@@ -1613,4 +1613,94 @@ describe( 'PerformanceDashboard', () => {
 			unmount();
 		} );
 	} );
+	// @longform A rid found by search carries its own record. Gating the modal
+	// on the URL slice made a found request render NOTHING when that URL had no
+	// stats to answer with — and left the rid selected, so the next URL the
+	// operator opened rendered the stale request instead of itself.
+	describe( 'a found request does not wait on the URL slice', () => {
+		it( 'opens the request detail when only the URL slice is missing', async () => {
+			mockNavState.selectedUrl = {
+				hash: '905b81442680',
+				url: 'https://tucsonweekly.example/jobs/filmtimes/import-film-times',
+			};
+			mockNavState.selectedRequest = 'bki3lhqsa3bkfvp63qw1ws1k2qx9sxp0';
+			mockView = loadedView( {
+				urlDetail: { data: null, loading: false, error: null },
+				requestDetail: {
+					data: {
+						rid: 'bki3lhqsa3bkfvp63qw1ws1k2qx9sxp0',
+						entries: [],
+					},
+					loading: false,
+					error: null,
+				},
+			} );
+			const { container, unmount } = renderComponent(
+				React.createElement( PerformanceDashboard, {
+					onError: jest.fn(),
+				} )
+			);
+			await flushEffects();
+			expect(
+				container.querySelector( '[data-testid="request-detail"]' )
+			).toBeTruthy();
+			unmount();
+		} );
+
+		// Back out of that request and the URL pane has nothing to show — but
+		// the modal must stay up, or the operator is left on a paused dashboard
+		// with the selection still set and no close button to clear it.
+		it( 'keeps the modal up when the request is closed and no URL slice came', async () => {
+			mockNavState.selectedUrl = {
+				hash: '905b81442680',
+				url: 'https://tucsonweekly.example/jobs/filmtimes/import-film-times',
+			};
+			mockNavState.selectedRequest = null;
+			// A REFUSAL, distinct from the empty default: the URL pane must say
+			// so inside a modal that is still there to be closed.
+			mockView = loadedView( {
+				urlDetail: {
+					data: null,
+					loading: false,
+					error: 'no stats for this url',
+				},
+			} );
+			const { container, unmount } = renderComponent(
+				React.createElement( PerformanceDashboard, {
+					onError: jest.fn(),
+				} )
+			);
+			await flushEffects();
+			expect(
+				container.querySelector( '[data-testid="modal"]' )
+			).toBeTruthy();
+			expect( container.textContent ).toContain(
+				'no stats for this url'
+			);
+			unmount();
+		} );
+
+		it( 'drops the open request when another URL is selected', async () => {
+			mockNavState.selectedRequest = 'bki3lhqsa3bkfvp63qw1ws1k2qx9sxp0';
+			mockView = loadedView();
+			const { unmount } = renderComponent(
+				React.createElement( PerformanceDashboard, {
+					onError: jest.fn(),
+				} )
+			);
+			await flushEffects();
+			act( () =>
+				globalThis.__urlTableProps.onSelect( {
+					hash: 'fac69dee1c14',
+					url: 'https://community.example/charlotte/MovieTimes',
+				} )
+			);
+			expect( mockNavState.selectRequest ).toHaveBeenCalledWith( null );
+			expect( mockNavState.selectUrl ).toHaveBeenCalledWith( {
+				hash: 'fac69dee1c14',
+				url: 'https://community.example/charlotte/MovieTimes',
+			} );
+			unmount();
+		} );
+	} );
 } );

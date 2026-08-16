@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Finding a request by id showed nothing, and then showed itself on the wrong URL.** The detail modal was gated on the `url_detail` slice, so a rid whose URL has no stats to answer with — a job POST, say — resolved, wrote `?url=&request=` and rendered nothing at all. The rid then stayed selected, so the next URL opened from the catalog rendered that stale request instead of itself. The modal now opens on the SELECTION and each pane owns its empty state, and opening a URL closes whatever request was open inside the previous one.
+
 ## [0.57.1] - 2026-08-16
 
 ### Fixed
