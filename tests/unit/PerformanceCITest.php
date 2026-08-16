@@ -1782,24 +1782,36 @@ class PerformanceCITest extends TestCase {
 		$this->assertArrayHasKey( 'category_time_series', $result );
 	}
 
-	// ── load_index StatsAggregator-shaped buckets ───────────────────────────
+	// ── load_index bucket contract ──────────────────────────────────────────
 
-	public function test_overview_handles_url_string_keyed_buckets_with_sum_req_time(): void {
-		// A StatsAggregator-style bucket keys by URL string directly (no embedded
-		// `url` field) and carries `sum_req_time` (seconds) instead of `sum_ms`.
+	/**
+	 * The bucket's inner key IS the hash `Log_Manager::url_hash()` stamped on
+	 * the record. Deriving a different one indexes the row under a hash no rid
+	 * lookup can ever produce, so `request_search` hands the dashboard a hash
+	 * `url_detail` refuses — the URL is in the index and unreachable anyway.
+	 */
+	public function test_index_keys_a_row_by_its_bucket_key_never_a_derived_hash(): void {
+		$url    = 'https://sevendaysvt.example/jobs/filmtimes/import-film-times';
+		$hash   = Log_Manager::url_hash( $url );
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
+		// No 'url' key — the shape the sha256 fallback existed to cover.
 		$store->set_url_index_hourly( $bucket, [
-			'/aggregator-style' => [ 'count' => 4, 'sum_req_time' => 0.8, 'last_seen' => 1700000000 ],
+			$hash => [ 'count' => 3, 'sum_req_time' => 0.9, 'last_seen' => 1700000000 ],
 		] );
 
-		$interpreter = new Performance_CI_Node();
-		$result      = VerbHarness::fire( $interpreter, 'performance', 'overview' );
+		$result = VerbHarness::fire(
+			new Performance_CI_Node(),
+			'performance',
+			'url_detail',
+			$hash
+		);
 
-		$this->assertSame( 1, $result['total_urls'] );
-		$this->assertSame( '/aggregator-style', $result['most_requested'][0]['url'] );
-		// sum_ms = sum_req_time*1000 = 800; avg over 4 = 200ms.
-		$this->assertEqualsWithDelta( 200.0, $result['most_requested'][0]['avg_ms'], 0.01 );
+		$this->assertSame( $hash, $result['stats']['hash'] );
+		// No `url` field in the row: blank, never the key standing in for one.
+		$this->assertSame( '', $result['stats']['url'] );
+		// Legacy `sum_req_time` is seconds: 0.9s over 3 = 300ms.
+		$this->assertEqualsWithDelta( 300.0, $result['stats']['avg_ms'], 0.01 );
 	}
 
 	public function test_urls_verb_folds_min_ms_across_two_timed_buckets(): void {
@@ -1821,6 +1833,37 @@ class PerformanceCITest extends TestCase {
 
 		$this->assertSame( 1, $result['total'] );
 		$this->assertSame( 30, $result['data'][0]['min_ms'] );
+	}
+
+	/**
+	 * Whichever bucket names the URL wins. Buckets merge in fan-out order, so
+	 * a row that reaches the merge first without a `url` must not pin the
+	 * catalog entry blank for every later bucket that does carry one.
+	 */
+	public function test_a_later_bucket_supplies_the_url_an_earlier_one_omitted(): void {
+		$url    = 'https://okgazette.example/jobs/filmtimes/import-film-times';
+		$hash   = Log_Manager::url_hash( $url );
+		$store  = new Stats_Store( 0, 86400 );
+		$older  = $this->bucket_key_for( \time() - 600 );
+		$newer  = $this->current_url_bucket();
+		// Buckets merge newest-first, so the one REACHED FIRST is the one
+		// without a URL — the order that pins the row blank.
+		$store->set_url_index_hourly( $newer, [
+			$hash => [ 'count' => 2, 'sum_ms' => 40.0, 'last_seen' => 2 ],
+		] );
+		$store->set_url_index_hourly( $older, [
+			$hash => [ 'url' => $url, 'count' => 5, 'sum_ms' => 100.0, 'last_seen' => 1 ],
+		] );
+
+		$result = VerbHarness::fire(
+			new Performance_CI_Node(),
+			'performance',
+			'url_detail',
+			$hash
+		);
+
+		$this->assertSame( $url, $result['stats']['url'] );
+		$this->assertSame( 7, $result['stats']['count'] );
 	}
 
 	// ── find_recent_requests_for_url (disk walk for a known URL) ─────────────

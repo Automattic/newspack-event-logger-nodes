@@ -7,7 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- **The URL index's second hash algorithm.** `load_index_default()` carried a fallback for buckets keyed by URL string, and it derived the row's hash with `substr( sha256( url ), 0, 12 )` — a different algorithm from the `Log_Manager::url_hash()` FNV-1a every record, rule id and lookup uses. Both emit 12 hex chars, so nothing downstream could tell them apart and `url_detail`'s own guard accepted either; a row that entered through it was indexed under a hash no rid lookup could ever produce. Nothing has written that shape since the legacy monorepo was retired — `Flame_Builder_Node` is the sole writer and keys by hash — so the branch and the test pinning it are both gone. The bucket key IS the hash.
+
 ### Fixed
+- **A URL row whose newest bucket omitted `url` rendered blank forever.** Buckets merge newest-first and the URL was read at first sight only, so an older bucket carrying the real URL could never supply it. Whichever bucket names the URL now wins.
 - **Finding a request by id showed nothing, and then showed itself on the wrong URL.** The detail modal was gated on the `url_detail` slice, so a rid whose URL has no stats to answer with — a job POST, say — resolved, wrote `?url=&request=` and rendered nothing at all. The rid then stayed selected, so the next URL opened from the catalog rendered that stale request instead of itself. The modal now opens on the SELECTION and each pane owns its empty state, and opening a URL closes whatever request was open inside the previous one.
 
 ## [0.57.1] - 2026-08-16

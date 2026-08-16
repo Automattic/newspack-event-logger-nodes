@@ -798,10 +798,10 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * the head of this list as `most_requested` without re-sorting, so a
 	 * replacement `$load_index` seam must sort the same way.
 	 *
-	 * Two bucket shapes coexist. Flame_Builder writes `sum_ms` directly;
-	 * older aggregator buckets carry `sum_req_time` in seconds, folded in at
-	 * ×1000. A bucket keyed by URL hash carries its URL in `url`; one keyed by
-	 * the URL string gets a hash derived here instead.
+	 * The bucket key IS the hash `Log_Manager::url_hash()` stamped on the
+	 * record — never derive another, or the row indexes under a hash no rid
+	 * lookup can produce. Flame_Builder writes `sum_ms` directly; older
+	 * aggregator buckets carry `sum_req_time` in seconds, folded in at ×1000.
 	 *
 	 * @return array<int,array<string,mixed>>
 	 */
@@ -814,20 +814,14 @@ class Performance_CI_Node extends Service_CI_Node {
 				if ( ! \is_array( $bucket_data ) ) {
 					continue;
 				}
-				foreach ( $bucket_data as $hash_or_url => $stats ) {
-					// Inner key is URL hash; derive one if keyed by URL string.
+				foreach ( $bucket_data as $key => $stats ) {
 					$stat_arr = Core::arr( $stats );
-					if ( isset( $stat_arr['url'] ) ) {
-						$url  = Core::as_string( $stat_arr['url'] );
-						$hash = (string) $hash_or_url;
-					} else {
-						$url  = (string) $hash_or_url;
-						$hash = \substr( \hash( 'sha256', $url ), 0, 12 );
-					}
+					// An all-digit hash arrives as an int array key; cast back.
+					$hash     = (string) $key;
 					if ( ! isset( $result[ $hash ] ) ) {
 						$result[ $hash ] = [
 							'hash'        => $hash,
-							'url'         => $url,
+							'url'         => Core::as_string( $stat_arr['url'] ?? '' ),
 							'count'       => 0,
 							'count_2xx'   => 0,
 							'count_3xx'   => 0,
@@ -843,7 +837,11 @@ class Performance_CI_Node extends Service_CI_Node {
 							'last_seen'   => 0,
 						];
 					}
-					$entry              = $result[ $hash ];
+					$entry = $result[ $hash ];
+					// Whichever bucket names the URL wins; merge order varies.
+					if ( '' === $entry['url'] ) {
+						$entry['url'] = Core::as_string( $stat_arr['url'] ?? '' );
+					}
 					$entry['count']     += Core::as_int( $stat_arr['count']     ?? 0 );
 					$entry['count_2xx'] += Core::as_int( $stat_arr['count_2xx'] ?? 0 );
 					$entry['count_3xx'] += Core::as_int( $stat_arr['count_3xx'] ?? 0 );
