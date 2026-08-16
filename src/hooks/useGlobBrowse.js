@@ -50,26 +50,26 @@ const RAW_LOGS = 'raw-logs';
 const SEGMENTS_REFRESH_MS = 10000;
 
 /**
- * The `positions` a (re)connect should subscribe with.
+ * Open the stream at the recorded target.
  *
  * An EXPLICIT seek — one recorded while the stream was closed — applies ONCE and
- * clears its own flag, so later reconnects resume the tail instead of re-running
- * a seek the user has already left behind. Every other reconnect resumes at the
- * last record SseIn saw; a first connect takes the recorded target as it stands.
+ * clears its own flag, so later reconnects resume instead of re-running a seek
+ * the user has already left behind. Every other reconnect states NO seek: the
+ * stream resumes where it read to, and keeps the seek it opened with when it
+ * read nothing at all.
  *
+ * @param {Object}  link        The RemoteLink to open.
  * @param {Object}  target      `browseTargetRef.current`, the recorded target.
- * @param {Object}  link        The RemoteLink, for its `resumePositions()`.
  * @param {boolean} isReconnect True when reopening an already-seen stream.
- * @return {?Object} The positions to subscribe with; null tails.
  */
-export function connectPositions( target, link, isReconnect ) {
-	if ( target.explicit ) {
-		target.explicit = false;
-		return target.positions;
+export function reopenStream( link, target, isReconnect ) {
+	const explicit = target.explicit;
+	target.explicit = false;
+	if ( isReconnect && ! explicit ) {
+		link.reconnect( target.subscribe );
+		return;
 	}
-	return isReconnect
-		? link.resumePositions() ?? target.positions
-		: target.positions;
+	link.setSubscribe( target.subscribe, target.positions );
 }
 
 /**
@@ -248,7 +248,7 @@ export default function useGlobBrowse( {
 	 * Record the browse target, and move the live stream only when it is open.
 	 *
 	 * A seek taken while the stream is closed records as EXPLICIT, which
-	 * `connectPositions` honors once on the next connect and then clears — so
+	 * `reopenStream` honors once on the next connect and then clears — so
 	 * later reconnects resume the tail rather than re-running the old seek.
 	 *
 	 * @param {string[]} subscribe The subscription: one dir, or the whole glob.

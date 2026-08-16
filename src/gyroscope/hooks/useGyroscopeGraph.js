@@ -85,8 +85,12 @@ export function useGyroscopeGraph() {
 			if ( view ) {
 				view.fill( controlMsg( view, { action: 'clear' } ) );
 			}
-			// A null seed tails; a reconnect resumes the last seen offsets.
-			link.connect( isReconnect ? link.resumePositions() : null );
+			// A null seed tails; a reopen states nothing and resumes itself.
+			if ( isReconnect ) {
+				link.reconnect();
+				return;
+			}
+			link.connect( null );
 		},
 	} );
 

@@ -8,7 +8,7 @@
 
 // Flame graph tooltip - ensure it appears above WordPress admin elements
 .d3-flame-graph-tip {
-	z-index: 100001 !important;
+	z-index: base.$layer-modal-tooltip !important;
 	white-space: pre-wrap !important;
 	word-wrap: break-word !important;
 	overflow-wrap: break-word !important;

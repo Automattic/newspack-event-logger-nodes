@@ -171,6 +171,12 @@ async function renderBrowse( {
 // Every verb here rides the router tick; jest's 5s default is not enough.
 jest.setTimeout( 20000 );
 
+// A test that freezes the substrate clock must not leave it frozen for the
+// next one — including when it fails before its own restore.
+afterEach( () => {
+	jest.restoreAllMocks();
+} );
+
 beforeEach( () => {
 	Core.reset();
 	FakeEventSource.last = null;
@@ -711,26 +717,23 @@ describe( 'useGlobBrowse — time travel (pause / step / jump)', () => {
 		);
 	} );
 
-	it( 'connectPositions honors an explicit seek once on reconnect', () => {
-		const { connectPositions } = require( '../useGlobBrowse' );
-		const link = {
-			resumePositions: () => ( {
-				'errors.p2': { segment: 9, offset: 7 },
-			} ),
-		};
+	it( 'reopenStream honors an explicit seek once on reconnect', () => {
+		const { reopenStream } = require( '../useGlobBrowse' );
+		const link = { setSubscribe: jest.fn(), reconnect: jest.fn() };
 		const target = {
 			subscribe: [ 'errors.p2' ],
 			positions: { 'errors.p2': { segment: 3, offset: 98 } },
 			explicit: true,
 		};
-		expect( connectPositions( target, link, true ) ).toEqual( {
+		reopenStream( link, target, true );
+		expect( link.setSubscribe ).toHaveBeenCalledWith( [ 'errors.p2' ], {
 			'errors.p2': { segment: 3, offset: 98 },
 		} );
-		// Single-use: the NEXT reconnect resumes live again.
+		// Single-use: the NEXT reconnect states no seek and resumes itself.
 		expect( target.explicit ).toBe( false );
-		expect( connectPositions( target, link, true ) ).toEqual( {
-			'errors.p2': { segment: 9, offset: 7 },
-		} );
+		reopenStream( link, target, true );
+		expect( link.reconnect ).toHaveBeenCalledWith( [ 'errors.p2' ] );
+		expect( link.setSubscribe ).toHaveBeenCalledTimes( 1 );
 	} );
 } );
 
@@ -776,8 +779,11 @@ describe( 'useGlobBrowse — segment-rail maintenance', () => {
 		} );
 		const before = statusCalls( graph.client );
 		expect( before ).toBeGreaterThan( 0 );
+		// The rail marks its window started (it just loaded), so the refresh
+		// is a full interval out, counted from the next grid boundary — two of
+		// them at the outside. Exactly ONE in that span is the cadence.
 		await act( async () => {
-			jest.advanceTimersByTime( 11000 );
+			jest.advanceTimersByTime( 21000 );
 		} );
 		expect( statusCalls( graph.client ) ).toBe( before + 1 );
 		jest.useRealTimers();
@@ -804,6 +810,12 @@ describe( 'useGlobBrowse — segment-rail maintenance', () => {
 			expect( statusCalls( graph.client ) ).toBeGreaterThan( 0 )
 		);
 		const before = statusCalls( graph.client );
+		// @longform Freeze the substrate clock for the rest of this test. The
+		// rail's own 10s refresh rides a wall-clock grid, so whether the 1500ms
+		// window below contains a boundary depends on the minute the suite is
+		// run in — and a cadence poll would read as the refetch loop this is
+		// asserting the absence of.
+		jest.spyOn( Core, 'now' ).mockReturnValue( Date.now() / 1000 );
 		// A rotation: the view reports a segment the rail doesn't know.
 		await act( async () => {
 			graph.view.publishView( {

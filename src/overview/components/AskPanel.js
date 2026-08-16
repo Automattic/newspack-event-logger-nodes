@@ -185,9 +185,15 @@ export default function AskPanel( { ask } ) {
 		return null;
 	}
 
+	// @longform Summoned FROM the URL and request detail views, which are
+	// `@wordpress/components` modals: those portal to the body on the same
+	// z-index layer, so document order decides and this one — rendered inside
+	// the dashboard's own root — loses however late it opens. The backdrop is
+	// where that layer lives, so it is raised there.
 	return (
 		<Modal
 			ariaLabel={ __( 'Assembled brief', 'newspack-event-logger-nodes' ) }
+			backdropClassName="event-logger-ask__backdrop"
 			onClose={ close }
 		>
 			<h4 className="newspack-nodes-modal__title">

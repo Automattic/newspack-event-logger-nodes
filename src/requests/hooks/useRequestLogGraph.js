@@ -32,7 +32,7 @@ import { useRef, useState, useCallback } from '@wordpress/element';
 import { views } from '../nodes/register';
 import usePageVisibility from '@newspack-nodes/shared/hooks/usePageVisibility';
 import { useVisibilityGatedLink } from '@newspack-nodes/shared/hooks/useVisibilityGatedLink';
-import useGlobBrowse, { connectPositions } from '../../hooks/useGlobBrowse';
+import useGlobBrowse, { reopenStream } from '../../hooks/useGlobBrowse';
 import { controlMsg } from '@newspack-nodes/shared/helpers/controlMsg';
 
 // The RemoteLink node, the inspectable stream Tee, and the view-model node.
@@ -106,13 +106,8 @@ export function useRequestLogGraph( opts = {} ) {
 			return { link, view };
 		},
 		isActive,
-		onConnect: ( link, { isReconnect } ) => {
-			const target = browseTargetRef.current;
-			link.setSubscribe(
-				target.subscribe,
-				connectPositions( target, link, isReconnect )
-			);
-		},
+		onConnect: ( link, { isReconnect } ) =>
+			reopenStream( link, browseTargetRef.current, isReconnect ),
 	} );
 
 	// Kafka-UI browse over the glob (partition select + segment seeks).

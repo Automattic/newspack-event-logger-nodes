@@ -257,8 +257,10 @@ describe( 'useRulesGraph — mutations dispatch the verb then re-list', () => {
 		);
 		const up = findVerb( wire.batches, 'upsert' );
 		expect( up[ TO ] ).toBe( 'rules' );
-		// Each mutation mints from its OWN node; the reply lands there.
-		expect( up[ FROM ] ).toBe( 'rules:upsert:in' );
+		// Each mutation mints from its OWN node, and names the rule it is
+		// about in the reply path — the document is the payload, never the
+		// address.
+		expect( up[ FROM ] ).toBe( 'rules:upsert:in/r1' );
 		expect( up[ ID ] ).toBe( '' );
 		// The whole raw JSON is one arg token the CI json_decodes ($args[0]).
 		expect( up[ VALUE ].arguments ).toEqual( [
@@ -309,7 +311,7 @@ describe( 'useRulesGraph — mutations dispatch the verb then re-list', () => {
 			)
 		);
 		const del = findVerb( wire.batches, 'delete' );
-		expect( del[ FROM ] ).toBe( 'rules:delete:in' );
+		expect( del[ FROM ] ).toBe( 'rules:delete:in/r1' );
 		expect( del[ ID ] ).toBe( '' );
 		expect( del[ VALUE ].arguments ).toEqual(
 			formatCommandArgs( [ 'r1' ] )

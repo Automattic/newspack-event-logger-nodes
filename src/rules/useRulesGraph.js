@@ -141,14 +141,17 @@ export function useRulesGraph( opts = {} ) {
 		[]
 	);
 
+	// save/upsert send a DOCUMENT first; neither can address a reply with it.
 	const saveOnce = useCommandOnce( {
 		ci: RULES_CI,
 		command: 'save',
+		subjectOf: () => null,
 		onDone: settle( 'save' ),
 	} );
 	const upsertOnce = useCommandOnce( {
 		ci: RULES_CI,
 		command: 'upsert',
+		subjectOf: ( [ rule ] ) => JSON.parse( rule ).id ?? null,
 		onDone: settle( 'upsert' ),
 	} );
 	const deleteOnce = useCommandOnce( {

@@ -21,6 +21,13 @@
 
 // The `?` picker's brief. Findings first, the raw payload behind a disclosure —
 // a picker click is not consent to send, so the operator sees what leaves.
+
+// The brief is summoned FROM those modals, so it paints over whichever is
+// open — including the flame tooltip that sits a rung above them.
+.event-logger-ask__backdrop {
+	z-index: base.$layer-modal-over;
+}
+
 .event-logger-ask__findings {
 	margin: 0 0 12px;
 	padding: 0;
