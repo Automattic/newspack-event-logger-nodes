@@ -7,9 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.56.0] - 2026-08-15
+## [0.56.1] - 2026-08-16
 
 ### Changed
+- The substrate pin follows `newspack-nodes` v2.32.1, which puts `GRID_PHASE_MS` on the runtime surface — the phase the segment-rail test pins its clock to.
 - **The Ask trigger sits where the question forms.** It left its lone spot under the dashboard title for the three headers a question actually starts from — beside the overview search, beside the URL's rule control, beside the request-detail back button. The picker is still ONE mode: `useAsk` holds it for the whole dashboard and `<AskButton>` is only a door, because two pickers would fight over the same body class and the same capture-phase click. The request-detail back button moved into the modal's `headerActions` with it, so it is a header item rather than an absolutely-positioned overlay.
 - **Every dashboard command rides the router tick.** The substrate retired `useRequestNode` and `useReconcile`, and the seven consumers here moved with them: the hook catalog and the partition/source catalogs are POLLED slices, the ruleset's four writes and the Ask verb are one-shots, and the awaited reads a sequence genuinely needs (`resolveRequest`, `resolveUrlHash`, `fetchUrlBreakdown`, `requestGrep`, the rules verbs) go through `useAwaitableCommand` — still one node per verb, still addressed rather than correlated, but batched with everything else that tick.
 - **The `?` picker no longer drops a brief when you pick several.** The ask was declared a retried read, and a retry supersedes — so a second Cmd-click replaced the first ask and its answer was discarded silently. Each ask queues and goes once; clearing belongs to the pick, since a flag read at reply time is the LAST pick's, not the one being answered.
