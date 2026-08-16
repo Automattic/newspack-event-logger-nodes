@@ -405,10 +405,15 @@ class AskAssemblerTest extends TestCase {
 		);
 	}
 
+	/**
+	 * The rows are `Stats_Store::sums_to_display()`'s — `time` and `count`,
+	 * already divided by the window's request count. Reading anything else
+	 * reports a category the dashboard shows at 90ms as 0ms.
+	 */
 	public function test_a_category_brief_carries_its_share_and_worst_contributors(): void {
 		$categories = [
-			'gyrobase' => [ 'avg_time' => 410.0, 'avg_count' => 12.0, 'samples' => 90 ],
-			'core'     => [ 'avg_time' => 90.0, 'avg_count' => 400.0, 'samples' => 90 ],
+			'gyrobase' => [ 'time' => 410.0, 'count' => 12.0, 'samples' => 90 ],
+			'core'     => [ 'time' => 90.0, 'count' => 400.0, 'samples' => 90 ],
 		];
 
 		$brief = Ask_Assembler::for_category( $categories, 'gyrobase' );
@@ -416,6 +421,7 @@ class AskAssemblerTest extends TestCase {
 		$this->assertSame( 'category', $brief['subject'] );
 		$this->assertSame( 'gyrobase', $brief['name'] );
 		$this->assertSame( 410.0, $brief['avg_time_ms'] );
+		$this->assertSame( 12.0, $brief['avg_count'] );
 		$this->assertEqualsWithDelta( 0.82, $brief['share'], 0.01 );
 		$this->assertSame( [ 'core' ], \array_column( $brief['others'], 'name' ) );
 	}

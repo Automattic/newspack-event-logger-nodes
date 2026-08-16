@@ -353,9 +353,9 @@ test( 'a reply carrying no brief says so rather than vanishing', () => {
 	expect( onError ).toHaveBeenCalledTimes( 1 );
 } );
 
-// A click that lands on nothing askable is the commonest way to get no brief —
-// a flame-graph frame whose descriptor has not been stamped yet.
-test( 'a pick that hits nothing askable says so and stays armed', () => {
+// Clicking nothing is not a failure: the picker stays armed and the `?` cursor
+// says so, so nothing goes to the error banner.
+test( 'a pick that hits nothing askable stays armed and stays quiet', () => {
 	const onError = jest.fn();
 	render( { onError } );
 
@@ -371,7 +371,7 @@ test( 'a pick that hits nothing askable says so and stays armed', () => {
 	} );
 
 	expect( sent ).toEqual( [] );
-	expect( onError ).toHaveBeenCalledTimes( 1 );
+	expect( onError ).not.toHaveBeenCalled();
 	expect( document.body.classList.contains( 'newspack-nodes-asking' ) ).toBe(
 		true
 	);

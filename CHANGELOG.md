@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.57.1] - 2026-08-16
+
+### Fixed
+- **A global `category:` brief reported zeros.** `Stats_Store::sums_to_display()` names its per-request means `time` and `count`; the assembler read `avg_time` and `avg_count`, so every field — the category's own time, its share, and every competitor — came back 0 while the dashboard beside it showed 90ms. Its unit test passed because the fixture invented the same wrong keys rather than using the producer's shape. The competitor list is capped like every other list now.
+- The substrate pin follows `newspack-nodes` v2.33.1: an armed toggle in a modal header keeps its own text colour, and WordPress's header `Spacer` no longer opens a gap beside the close button.
+
+### Removed
+- **The "nothing to ask about there" notice.** A click on nothing askable is not a failure, and the dashboard's error channel rendered it as a red banner. The picker stays armed and the `?` cursor says so.
+
 ## [0.57.0] - 2026-08-16
 
 ### Changed
