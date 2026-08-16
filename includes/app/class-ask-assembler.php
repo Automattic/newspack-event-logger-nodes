@@ -507,30 +507,31 @@ class Ask_Assembler {
 		$scope  = 'recent window';
 		$total  = 0.0;
 		$others = [];
+		// Stats_Store hands these over as per-request means: time and count.
 		foreach ( $categories as $key => $row ) {
-			$time   = \is_array( $row ) ? Core::num_float( $row['avg_time'] ?? 0 ) : 0.0;
+			$time   = \is_array( $row ) ? Core::num_float( $row['time'] ?? 0 ) : 0.0;
 			$total += $time;
 			if ( (string) $key !== $name ) {
 				$others[] = [
 					'name'        => (string) $key,
 					'avg_time_ms' => $time,
-					'avg_count'   => \is_array( $row ) ? Core::num_float( $row['avg_count'] ?? 0 ) : 0.0,
+					'avg_count'   => \is_array( $row ) ? Core::num_float( $row['count'] ?? 0 ) : 0.0,
 				];
 			}
 		}
 		\usort( $others, static fn ( array $a, array $b ): int => $b['avg_time_ms'] <=> $a['avg_time_ms'] );
 
 		$mine = $categories[ $name ];
-		$time = Core::num_float( $mine['avg_time'] ?? 0 );
+		$time = Core::num_float( $mine['time'] ?? 0 );
 		return [
 			'subject'     => 'category',
 			'scope'       => $scope,
 			'name'        => $name,
 			'avg_time_ms' => $time,
-			'avg_count'   => Core::num_float( $mine['avg_count'] ?? 0 ),
+			'avg_count'   => Core::num_float( $mine['count'] ?? 0 ),
 			'samples'     => Core::num_int( $mine['samples'] ?? 0 ),
 			'share'       => $total > 0.0 ? $time / $total : 0.0,
-			'others'      => $others,
+			'others'      => \array_slice( $others, 0, self::TOP_SPANS ),
 			'caveat'      => Findings::caveat(),
 		];
 	}

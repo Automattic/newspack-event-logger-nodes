@@ -76,18 +76,8 @@ export function useAsk( { onError } = {} ) {
 		[ ask ]
 	);
 
-	const handleNothing = useCallback( () => {
-		onErrorRef.current?.(
-			__(
-				'Nothing to ask about there. Point at a URL, a request, a span, a log entry or a category — the picker is still on.',
-				'newspack-event-logger-nodes'
-			)
-		);
-	}, [] );
-
 	const { active, start, cancel } = useAskPicker( {
 		onPick: handlePick,
-		onNothing: handleNothing,
 		onAbandon: () => setBriefs( [] ),
 	} );
 
