@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.56.0] - 2026-08-15
+
 ### Changed
 - **The Ask trigger sits where the question forms.** It left its lone spot under the dashboard title for the three headers a question actually starts from — beside the overview search, beside the URL's rule control, beside the request-detail back button. The picker is still ONE mode: `useAsk` holds it for the whole dashboard and `<AskButton>` is only a door, because two pickers would fight over the same body class and the same capture-phase click. The request-detail back button moved into the modal's `headerActions` with it, so it is a header item rather than an absolutely-positioned overlay.
 - **Every dashboard command rides the router tick.** The substrate retired `useRequestNode` and `useReconcile`, and the seven consumers here moved with them: the hook catalog and the partition/source catalogs are POLLED slices, the ruleset's four writes and the Ask verb are one-shots, and the awaited reads a sequence genuinely needs (`resolveRequest`, `resolveUrlHash`, `fetchUrlBreakdown`, `requestGrep`, the rules verbs) go through `useAwaitableCommand` — still one node per verb, still addressed rather than correlated, but batched with everything else that tick.
