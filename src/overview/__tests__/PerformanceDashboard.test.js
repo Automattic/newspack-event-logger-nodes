@@ -4,10 +4,9 @@
  *
  * Post-D1b de-god the orchestrator reads FOUR per-slice view nodes
  * (`overview:view` / `urls:view` / `urldetail:view` / `requestdetail:view`), each
- * via its own `useNodeState`, and dispatches every command through
- * `usePerformanceGraph` (which returns the control callbacks
- * `{ handleUrlParamsChange, resolveRequest, fetchUrlBreakdown }`). The orchestrator
- * fetches nothing itself.
+ * via its own `useNodeState`. `usePerformanceGraph` mounts the polls and hands
+ * back `handleUrlParamsChange` alone; the verbs a click drives are this
+ * component's own one-shots, held beside the state each reply sets.
  *
  * These tests cover the ORCHESTRATION contract only — which child renders given
  * which slice, what callbacks the children receive, how the orchestrator derives
@@ -137,8 +136,14 @@ jest.mock( '../hooks/usePerformanceGraph', () => ( {
 const mockNavState = {
 	selectedUrl: null,
 	selectedRequest: null,
-	selectUrl: jest.fn(),
-	selectRequest: jest.fn(),
+	// Faithful: the real hook HOLDS the selection, and the dashboard reads it
+	// back to decide whether a reply still belongs to what is open.
+	selectUrl: jest.fn( ( url ) => {
+		mockNavState.selectedUrl = url;
+	} ),
+	selectRequest: jest.fn( ( rid ) => {
+		mockNavState.selectedRequest = rid;
+	} ),
 	initialSearchQuery: '',
 	setInitialSearchQuery: jest.fn(),
 	updateBrowserUrl: jest.fn(),
@@ -147,11 +152,7 @@ const mockNavState = {
 };
 jest.mock( '../hooks/useUrlNavigation', () => ( {
 	__esModule: true,
-	default: ( _urls, resolveRequestId, resolveUrlHash ) => {
-		globalThis.__resolveRequestId = resolveRequestId;
-		globalThis.__resolveUrlHash = resolveUrlHash;
-		return mockNavState;
-	},
+	default: () => mockNavState,
 } ) );
 
 jest.mock( '@newspack-nodes/shared/hooks/usePageVisibility', () => ( {
@@ -1140,31 +1141,6 @@ describe( 'PerformanceDashboard', () => {
 		unmount();
 	} );
 
-	it( 'passes the graph fetchUrlBreakdown into UrlDetailView', async () => {
-		mockNavState.selectedUrl = { hash: 'h1', url: '/foo' };
-		mockView = loadedView( {
-			urlDetail: {
-				data: {
-					last_modified: 1,
-					stats: { time_series: {} },
-					requests: [],
-				},
-				loading: false,
-				error: null,
-			},
-		} );
-		const { unmount } = renderComponent(
-			React.createElement( PerformanceDashboard, {
-				onError: jest.fn(),
-			} )
-		);
-		await flushEffects();
-		expect( globalThis.__urlDetailProps.fetchUrlBreakdown ).toBe(
-			mockGraph.fetchUrlBreakdown
-		);
-		unmount();
-	} );
-
 	it( 'modal close clears both selected URL and selected request', async () => {
 		mockNavState.selectedUrl = { hash: 'h1', url: '/foo' };
 		mockNavState.selectedRequest = 'r1';
@@ -1291,7 +1267,11 @@ describe( 'PerformanceDashboard', () => {
 			} );
 		}
 
-		it( 'shows an enabled "Log this URL" button in the URL modal header', async () => {
+		// @longform It waits for the ruleset. Enabled before the `list` reply
+		// lands, the button reads "Log this URL" and opens a BLANK draft — and
+		// an id-less upsert matches by pattern, so saving it would replace a
+		// configured rule's hooks and thresholds with nothing.
+		it( 'enables "Log this URL" only once the ruleset is known', async () => {
 			mockView = urlModalView( '/foo' );
 			const { container, unmount } = renderComponent(
 				React.createElement( PerformanceDashboard, {
@@ -1303,6 +1283,9 @@ describe( 'PerformanceDashboard', () => {
 				'.event-logger-rule-control button'
 			);
 			expect( btn ).toBeTruthy();
+			expect( btn.disabled ).toBe( true );
+
+			answerCommand( RULES_LIST, { result: { rules: [] } } );
 			expect( btn.textContent ).toContain( 'Log this URL' );
 			expect( btn.disabled ).toBe( false );
 			unmount();

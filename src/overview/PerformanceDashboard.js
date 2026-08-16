@@ -179,6 +179,16 @@ export default function PerformanceDashboard( { onError } ) {
 	selectUrlRef.current = selectUrl;
 	selectRequestRef.current = baseSelectRequest;
 	setRequestPartitionRef.current = setRequestPartition;
+	// @longform What is open RIGHT NOW, for the reply handlers below: a reply
+	// must not yank the operator back to a URL they have already left. Written
+	// where the selection is MADE as well as on render, because a reply can
+	// land before React has re-rendered the selection that preceded it.
+	const selectedUrlRef = useRef( selectedUrl );
+	selectedUrlRef.current = selectedUrl;
+	const selectUrlNow = useCallback( ( urlObj ) => {
+		selectedUrlRef.current = urlObj;
+		selectUrlRef.current( urlObj );
+	}, [] );
 
 	// The graph polls and publishes; this page's own verbs are below.
 	const { handleUrlParamsChange } = usePerformanceGraph( {
@@ -250,8 +260,11 @@ export default function PerformanceDashboard( { onError } ) {
 		retry: true,
 		onDone: ( { result, args } ) => {
 			const url = result?.stats?.url;
-			if ( url ) {
-				selectUrlRef.current( { hash: args[ 0 ], url } );
+			// @longform Only the selection this answers: the operator may
+			// have opened another URL while it was in flight, and yanking
+			// them back to the one they left beats an untitled hash.
+			if ( url && selectedUrlRef.current?.hash === args[ 0 ] ) {
+				selectUrlNow( { hash: args[ 0 ], url } );
 			}
 		},
 	} );
@@ -263,7 +276,7 @@ export default function PerformanceDashboard( { onError } ) {
 				( u ) => u.hash === data.url_hash
 			);
 			setRequestPartitionRef.current( data.partition );
-			selectUrlRef.current(
+			selectUrlNow(
 				known ?? { hash: data.url_hash, url: UNKNOWN_URL() }
 			);
 			selectRequestRef.current( rid );
@@ -271,7 +284,7 @@ export default function PerformanceDashboard( { onError } ) {
 				lookupUrl( formatCommandArgs( [ data.url_hash ] ) );
 			}
 		},
-		[ lookupUrl ]
+		[ lookupUrl, selectUrlNow ]
 	);
 
 	const found = ( data ) =>
@@ -303,7 +316,12 @@ export default function PerformanceDashboard( { onError } ) {
 		scope: `${ SERVER }:url_detail:deeplink`,
 		retry: true,
 		onDone: ( { result, args } ) => {
-			selectUrlRef.current( {
+			// A deep link loses to whatever the operator opened while waiting.
+			if ( selectedUrlRef.current ) {
+				clearDeepLinkRef.current();
+				return;
+			}
+			selectUrlNow( {
 				hash: args[ 0 ],
 				url: result?.stats?.url || UNKNOWN_URL(),
 			} );
@@ -889,7 +907,17 @@ export default function PerformanceDashboard( { onError } ) {
 									<button
 										type="button"
 										className="button"
-										disabled={ ! canLogUrl }
+										// @longform Disabled until the
+										// ruleset is KNOWN: with `rules`
+										// still null the button reads "Log
+										// this URL" and opens a blank draft,
+										// and an id-less upsert matches by
+										// PATTERN — so saving it would
+										// replace a configured rule's hooks
+										// and thresholds with nothing.
+										disabled={
+											! canLogUrl || null === rules
+										}
 										onClick={ openRuleEditor }
 									>
 										{ existingRule

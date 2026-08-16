@@ -18,8 +18,8 @@ import { DecodedSliceViewNode } from './decoded-slice-view-node';
  * `useNodeState( 'requestdetail:view', 'view' )` and passes `data` down to
  * `<RequestDetailView>`, which renders its props and fetches nothing.
  *
- * The awaited `resolveRequest` (request_search) deep-link lookup belongs to a
- * different node — its reply is addressed to `performance:request_search` and
- * never reaches this slice.
+ * The `request_search` lookups — the search box and the deep link — belong to
+ * different nodes under their own scopes, so their replies address those and
+ * never reach this slice.
  */
 export class RequestDetailViewNode extends DecodedSliceViewNode {}
