@@ -4,7 +4,7 @@
  * The `errors.*` partitions carry one record per error, warning, or stderr
  * line that `Request_Builder_Node` split off the firehose. This file maps
  * those raw envelopes to the rows `ErrorLog.js` renders, and does nothing
- * else: the stream plumbing lives in `useErrorLogGraph`, the browse controls
+ * else: the stream plumbing lives in `useGlobStreamGraph`, the browse controls
  * in `useGlobBrowse`, and every generic log-stream behavior in the shared
  * `LogStreamViewNode` base.
  */

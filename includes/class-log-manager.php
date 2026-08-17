@@ -675,7 +675,7 @@ class Log_Manager {
 	 * can route on it. Spliced into the URI whole, it nests a second scheme and
 	 * host inside the path and reads as though the executing host served it —
 	 * `https://www.spoke.com/jobs/evtemplate/https://hub/Tools/UpdateSite.html`.
-	 * log_request_details() supplies the real host from SERVER_NAME, so only the
+	 * log_process() supplies the real host from SERVER_NAME, so only the
 	 * path belongs here. A URL carrying no path names no template — the handler
 	 * returns early on exactly that input — so it yields '' and the caller drops
 	 * the segment, giving the bare `/jobs/{handler}` an id-less job already has.
