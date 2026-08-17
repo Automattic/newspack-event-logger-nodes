@@ -93,59 +93,6 @@ final class Rule_Set {
 	}
 
 	/**
-	 * Read the persisted ruleset, falling back to the file config.
-	 *
-	 * An absent option seeds from config; a corrupt (non-array) one seeds too,
-	 * after a stderr notice. Non-array entries are skipped. Stored ids stand as
-	 * written — only an entry stored without one gets an id minted — because
-	 * every write path already rekeyed by pattern. This is the read side, so an
-	 * unrepresentable row is skipped with a notice rather than thrown: one
-	 * hand-edited option must not fatal every request that resolves a rule.
-	 */
-	public static function load(): self {
-		$raw = \get_option( self::OPTION_RULES, null );
-		if ( null === $raw ) {
-			return self::seed_from_config();
-		}
-		if ( ! \is_array( $raw ) ) {
-			Core::stderr( 'Newspack ELN: corrupt rules option; seeding from config.' );
-			return self::seed_from_config();
-		}
-		$rules = [];
-		foreach ( self::rules_from_maps( $raw, true ) as $rule ) {
-			// Mint id for idless stored rule; avoids collision on '' key.
-			$rules[] = '' === $rule->id ? $rule->with_id( self::id_for( $rule->pattern ) ) : $rule;
-		}
-		return new self( $rules );
-	}
-
-	/**
-	 * Read-time default when the option is absent (or corrupt): build the ruleset
-	 * from the file config's `rules` list, rekeyed by pattern — a config entry's
-	 * own `id`, if it declares one, is ignored.
-	 *
-	 * Empty means empty — config `rules => []` (or no rules key) yields a zero-rule
-	 * set (log nothing), the same as a stored `[]`; there is no implicit log-all
-	 * baseline. Does NOT persist — the file value stands in until the editor writes
-	 * the option.
-	 */
-	private static function seed_from_config(): self {
-		$raw = Config::value( 'rules' );
-		return new self( \is_array( $raw ) ? self::rules_from_config( $raw ) : [] );
-	}
-
-	/**
-	 * Turn config rule maps into Rule objects, rekeyed by pattern. An operator
-	 * typo skips that entry — a throw here would white-screen the site.
-	 *
-	 * @param array<array-key,mixed> $entries Config `rules` list.
-	 * @return Rule[]
-	 */
-	private static function rules_from_config( array $entries ): array {
-		return self::rekey_by_pattern( self::rules_from_maps( $entries, true ) );
-	}
-
-	/**
 	 * Inline every pointer entry's hooks in a stored/synced rule-map list, resolving
 	 * each from its durable option (or the table). The transport-safe form of a ruleset:
 	 * self-contained, no dangling durable-option references. Non-pointer entries
@@ -372,10 +319,76 @@ final class Rule_Set {
 	 * `performance` CI's `settings_set` verb calls it for OPTION_RULES instead
 	 * of writing the option raw.
 	 *
+	 * A push that changes nothing does nothing. The hub re-sends every synced
+	 * option on its periodic sweep whether or not it moved — that is what makes
+	 * a freshly-connected spoke converge — and `set` gates the other options on
+	 * a value comparison; this is the same gate for the one option that cannot
+	 * be compared raw. Re-saving is not free: it rewrites every pointer rule's
+	 * durable option and asks every worker to re-read its config.
+	 *
 	 * @param array<int|string,mixed> $rules_array Hydrated rule maps off the wire.
+	 * @return bool Whether the ruleset actually moved.
 	 */
-	public static function apply_synced( array $rules_array ): void {
-		( new self( [] ) )->save( self::rekey_by_pattern( self::rules_from_maps( $rules_array ) ) );
+	public static function apply_synced( array $rules_array ): bool {
+		$incoming = self::rekey_by_pattern( self::rules_from_maps( $rules_array ) );
+		if ( self::resolved_maps( $incoming ) === self::resolved_maps( self::load()->rules() ) ) {
+			return false;
+		}
+		( new self( [] ) )->save( $incoming );
+		return true;
+	}
+
+	/**
+	 * Read the persisted ruleset, falling back to the file config.
+	 *
+	 * An absent option seeds from config; a corrupt (non-array) one seeds too,
+	 * after a stderr notice. Non-array entries are skipped. Stored ids stand as
+	 * written — only an entry stored without one gets an id minted — because
+	 * every write path already rekeyed by pattern. This is the read side, so an
+	 * unrepresentable row is skipped with a notice rather than thrown: one
+	 * hand-edited option must not fatal every request that resolves a rule.
+	 */
+	public static function load(): self {
+		$raw = \get_option( self::OPTION_RULES, null );
+		if ( null === $raw ) {
+			return self::seed_from_config();
+		}
+		if ( ! \is_array( $raw ) ) {
+			Core::stderr( 'Newspack ELN: corrupt rules option; seeding from config.' );
+			return self::seed_from_config();
+		}
+		$rules = [];
+		foreach ( self::rules_from_maps( $raw, true ) as $rule ) {
+			// Mint id for idless stored rule; avoids collision on '' key.
+			$rules[] = '' === $rule->id ? $rule->with_id( self::id_for( $rule->pattern ) ) : $rule;
+		}
+		return new self( $rules );
+	}
+
+	/**
+	 * Read-time default when the option is absent (or corrupt): build the ruleset
+	 * from the file config's `rules` list, rekeyed by pattern — a config entry's
+	 * own `id`, if it declares one, is ignored.
+	 *
+	 * Empty means empty — config `rules => []` (or no rules key) yields a zero-rule
+	 * set (log nothing), the same as a stored `[]`; there is no implicit log-all
+	 * baseline. Does NOT persist — the file value stands in until the editor writes
+	 * the option.
+	 */
+	private static function seed_from_config(): self {
+		$raw = Config::value( 'rules' );
+		return new self( \is_array( $raw ) ? self::rules_from_config( $raw ) : [] );
+	}
+
+	/**
+	 * Turn config rule maps into Rule objects, rekeyed by pattern. An operator
+	 * typo skips that entry — a throw here would white-screen the site.
+	 *
+	 * @param array<array-key,mixed> $entries Config `rules` list.
+	 * @return Rule[]
+	 */
+	private static function rules_from_config( array $entries ): array {
+		return self::rekey_by_pattern( self::rules_from_maps( $entries, true ) );
 	}
 
 	/**
@@ -446,6 +459,27 @@ final class Rule_Set {
 	 */
 	public static function id_for( string $pattern ): string {
 		return Log_Manager::url_hash( $pattern );
+	}
+
+	/**
+	 * A rule list rendered comparable: every rule's stored map with its hooks
+	 * resolved inline and its TIER dropped. The tier is a local storage decision
+	 * — the hub sends a pointer, the spoke may hold the same rule inline — so
+	 * comparing the raw shapes would report a change on every sweep forever.
+	 *
+	 * @param Rule[] $rules Rules of either tier.
+	 * @return list<array<string,mixed>>
+	 */
+	private static function resolved_maps( array $rules ): array {
+		return \array_values( \array_map(
+			static function ( Rule $rule ): array {
+				$map = $rule->to_array();
+				unset( $map['hooks_in'] );
+				$map['hooks'] = self::hooks_for( $rule );
+				return $map;
+			},
+			$rules
+		) );
 	}
 
 	/**

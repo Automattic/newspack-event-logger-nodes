@@ -43,6 +43,9 @@ class Discovery_Collector_Node extends Timer_Node {
 	/** Cap on discovered names, applied per reply and again to each staging option. */
 	private const MAX_EVENTS = 10000;
 
+	/** Discovery sweep cadence in seconds; positional 0. */
+	protected int $interval_seconds = self::DEFAULT_INTERVAL_SECONDS;
+
 	/**
 	 * Arm the recurring discovery-fan-out timer. A Timer_Node subclass does not
 	 * self-schedule, so we explicitly call set_timer() here. A blank/absent
@@ -60,9 +63,8 @@ class Discovery_Collector_Node extends Timer_Node {
 		if ( null === $args ) {
 			return $this->arguments;
 		}
-		$this->arguments = $args;
-		$seconds         = $this->parse_interval( $args[0] ?? '', self::DEFAULT_INTERVAL_SECONDS, self::MIN_INTERVAL_S );
-		$this->set_timer( $seconds * 1000 );
+		$this->parse_schema_args( $args );
+		$this->set_timer( $this->cadence_ms( $this->interval_seconds ) );
 		return $this->arguments;
 	}
 
@@ -255,7 +257,7 @@ class Discovery_Collector_Node extends Timer_Node {
 			'category'    => 'Monitor',
 			'description' => 'Periodically fans discovery.get to every spoke and union-merges replies into the hub options.',
 			'arguments'   => [
-				[ 'name' => 'interval_seconds', 'type' => 'int', 'required' => false, 'default' => (string) self::DEFAULT_INTERVAL_SECONDS, 'description' => 'Interval in seconds between discovery sweeps of the connected spokes (digits only; default 300, floored at 1).' ],
+				[ 'name' => 'interval_seconds', 'type' => 'int', 'default' => self::DEFAULT_INTERVAL_SECONDS, 'description' => 'Interval in seconds between discovery sweeps of the connected spokes (digits only; default 300, floored at 1).' ],
 			],
 			'commands'    => [],
 			'has_target'  => true,

@@ -48,7 +48,7 @@ class RequestBuilderRoundTripTest extends TestCase {
 
 	public function test_topic_to_consumer_to_request_builder_assembles_request(): void {
 		$topic = new Topic_Node();
-		$topic->arguments( [ "{$this->tmp}/firehose.p{partition}", "{1}" ] );
+		$topic->arguments( [ "{$this->tmp}/firehose.p{partition}", "1" ] );
 		$this->topic_write( $topic, '/x', [ 'n' => 1, 'rid' => 'r1', 'k' => 'process (start)', 'm' => '99 on host', 'l' => '', 'ts' => 1 ] );
 		$this->topic_write( $topic, '/x', [ 'n' => 2, 'rid' => 'r1', 'k' => 'request', 'm' => 'GET /x', 'ts' => 1 ] );
 		$this->topic_write( $topic, '/x', [ 'n' => 3, 'rid' => 'r1', 'k' => 'process (complete)', 'duration_ms' => 50.0, 'status_code' => 200, 'ts' => 1 ] );
@@ -79,7 +79,7 @@ class RequestBuilderRoundTripTest extends TestCase {
 		// cache, the post-respawn `process (complete)` finds no r1, and the request
 		// vanishes (absent from requests.log, unclickable) — the original bug.
 		$topic = new Topic_Node();
-		$topic->arguments( [ "{$this->tmp}/firehose.p{partition}", "{1}" ] );
+		$topic->arguments( [ "{$this->tmp}/firehose.p{partition}", "1" ] );
 		$this->topic_write( $topic, '/x', [ 'n' => 1, 'rid' => 'r1', 'k' => 'process (start)', 'm' => '99 on host', 'l' => '', 'ts' => 1 ] );
 		$this->topic_write( $topic, '/x', [ 'n' => 2, 'rid' => 'r1', 'k' => 'request', 'm' => 'GET /x', 'ts' => 1 ] );
 

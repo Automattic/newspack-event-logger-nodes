@@ -79,7 +79,7 @@ final class RuleTest extends TestCase {
 	}
 
 	public function test_from_array_rejects_a_pointer_tier_whose_hooks_key_was_dropped(): void {
-		// What sanitize_settings_array() manufactures: it drops the wire's null.
+		// A pointer entry whose hooks key never arrived — truncated or hand-edited.
 		$this->expectException( \InvalidArgumentException::class );
 		Rule::from_array( [ 'id' => 'f6', 'pattern' => '/tarot/', 'action' => 'log', 'hooks_in' => 'mc' ] );
 	}
