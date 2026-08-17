@@ -61,7 +61,7 @@ class FullPipelineTest extends TestCase {
 		// Producer: write firehose lines mixing a request lifecycle and a job.
 		$topic         = new Topic_Node();
 		$job_timestamp = Core::$now - 14.75;
-		$topic->arguments( [ "{$this->tmp}/firehose.p{partition}", "{1}" ] );
+		$topic->arguments( [ "{$this->tmp}/firehose.p{partition}", "1" ] );
 		$this->topic_write( $topic, '/x', [ 'n' => 1, 'rid' => 'r1', 'k' => 'process (start)', 'm' => '99 on host', 'ts' => 1 ] );
 		$this->topic_write( $topic, '/x', [ 'n' => 2, 'rid' => 'r1', 'k' => 'request', 'm' => 'GET /x', 'ts' => 1 ] );
 		$this->topic_write( $topic, '/x', [ 'n' => 3, 'rid' => 'r1', 'k' => 'init (start)', 'l' => '', 'ts' => 1 ] );

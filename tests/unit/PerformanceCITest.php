@@ -1648,6 +1648,52 @@ class PerformanceCITest extends TestCase {
 		$this->assertNull( $stored['hooks'] );
 	}
 
+	public function test_set_verb_carries_a_pointer_rules_null_hooks_through_sanitizing(): void {
+		// A hub sends a heavy rule as a POINTER — `hooks: null`, `hooks_in: mc` —
+		// whenever hydrate_array() could not inline it. Dropping the null left a
+		// map Rule::from_array now refuses outright, so a normal settings push
+		// could only ever fail: the spoke kept its last-good ruleset and the hub
+		// never converged. Null is inert; it must survive the sanitizer.
+		$big = \array_map( fn( $i ) => "hook_dowser_$i", \range( 1, Rule_Set::INLINE_HOOK_LIMIT + 4 ) );
+		( new Rule_Set( [] ) )->save( [ new Rule( Rule_Set::id_for( '/dowser/' ), '/dowser/', Rule::ACTION_LOG, hooks: $big ) ] );
+		$option = Rule_Set::hooks_option_name( Rule_Set::id_for( '/dowser/' ) );
+
+		$pointer = [
+			'id'                     => Rule_Set::id_for( '/dowser/' ),
+			'pattern'                => '/dowser/',
+			'action'                 => 'log',
+			'auto_disable_threshold' => 7331,
+			'hooks'                  => null,
+			'hooks_in'               => 'mc',
+		];
+		$args = \Newspack_Nodes\Command_Args::format(
+			[ 'newspack_event_logger_nodes_rules', (string) \json_encode( [ $pointer ] ) ],
+			[]
+		);
+
+		VerbHarness::fire( new Performance_CI_Node(), 'performance', 'set', $args );
+
+		$stored = $GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ][0];
+		$this->assertSame( 7331, $stored['auto_disable_threshold'], 'the push must APPLY, not be refused' );
+		$this->assertSame( 'mc', $stored['hooks_in'] );
+		$this->assertSame( $big, $GLOBALS['_wp_options'][ $option ], 'and the spoke keeps its durable hooks' );
+	}
+
+	public function test_sanitize_settings_array_keeps_an_explicit_null(): void {
+		$ref = new \ReflectionMethod( Performance_CI_Node::class, 'sanitize_settings_array' );
+
+		$this->assertSame(
+			[ 'hooks' => null, 'pattern' => '/dowser/' ],
+			$ref->invoke( null, [ 'hooks' => null, 'pattern' => '/dowser/' ] )
+		);
+	}
+
+	public function test_sanitize_settings_array_still_drops_an_object(): void {
+		$ref = new \ReflectionMethod( Performance_CI_Node::class, 'sanitize_settings_array' );
+
+		$this->assertSame( [ 'pattern' => '/dowser/' ], $ref->invoke( null, [ 'blob' => new \stdClass(), 'pattern' => '/dowser/' ] ) );
+	}
+
 	public function test_sanitize_settings_value_float_bounds(): void {
 		// The `set` whitelist no longer maps any option to int/float (the
 		// auto-tune thresholds moved to per-rule fields), so the sanitizer's

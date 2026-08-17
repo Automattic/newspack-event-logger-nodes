@@ -453,10 +453,10 @@ final class RuleSetTest extends TestCase {
 	}
 
 	/**
-	 * `sanitize_settings_array()` drops the wire's null `hooks`, manufacturing a
-	 * pointer entry with no hooks key. Re-tiering that used to inline it to []
-	 * and delete the spoke's durable hooks option; the whole push must fail
-	 * instead, leaving the spoke's last-good ruleset in place.
+	 * A pointer entry that lost its `hooks` key — a truncated wire payload, a
+	 * hand-edited push. Re-tiering it used to inline it to [] and delete the
+	 * spoke's durable hooks option; the whole push must fail instead, leaving
+	 * the spoke's last-good ruleset in place.
 	 */
 	public function test_apply_synced_refuses_a_pointer_entry_whose_hooks_key_was_dropped(): void {
 		$big = \array_map( fn( $i ) => "hook_probe_$i", \range( 1, Rule_Set::INLINE_HOOK_LIMIT + 3 ) );
@@ -474,6 +474,43 @@ final class RuleSetTest extends TestCase {
 
 		$this->assertSame( $big, $GLOBALS['_wp_options'][ $option ], 'the spoke keeps its durable hooks' );
 		$this->assertSame( $big, Rule_Set::hooks_for( Rule_Set::load()->rules()[0] ) );
+	}
+
+	/**
+	 * The hub re-pushes every synced option on its sweep whether or not it
+	 * moved, and `set` gates that with a value comparison — except for the rules
+	 * branch, which returned before the gate. So every spoke re-saved its whole
+	 * ruleset every sweep: durable hook options rewritten, orphans reconciled,
+	 * and `request_reloads()` telling every worker to re-parse every .tsl.
+	 */
+	public function test_apply_synced_is_a_no_op_when_nothing_moved(): void {
+		$wire = [ [ 'pattern' => '/dowser/', 'action' => 'log', 'auto_disable_threshold' => 7331, 'hooks' => [ 'wp_loaded' ] ] ];
+
+		$this->assertTrue( Rule_Set::apply_synced( $wire ), 'the first push installs the ruleset' );
+		$this->assertFalse( Rule_Set::apply_synced( $wire ), 'an identical push must not re-save' );
+	}
+
+	public function test_apply_synced_saves_when_one_field_moved(): void {
+		$wire = [ [ 'pattern' => '/dowser/', 'action' => 'log', 'auto_disable_threshold' => 7331, 'hooks' => [ 'wp_loaded' ] ] ];
+		Rule_Set::apply_synced( $wire );
+
+		$wire[0]['auto_disable_threshold'] = 4219;
+
+		$this->assertTrue( Rule_Set::apply_synced( $wire ) );
+		$this->assertSame( 4219, Rule_Set::load()->rules()[0]->auto_disable_threshold );
+	}
+
+	public function test_apply_synced_is_a_no_op_for_an_unchanged_pointer_rule(): void {
+		// The tier is a LOCAL storage decision: the hub sends a pointer, the
+		// spoke stores a pointer, and comparing the two raw shapes would call
+		// that a change forever. Compare the hooks they resolve to.
+		$big  = \array_map( fn( $i ) => "hook_dowser_$i", \range( 1, Rule_Set::INLINE_HOOK_LIMIT + 4 ) );
+		$wire = [ [ 'pattern' => '/dowser/', 'action' => 'log', 'hooks' => $big ] ];
+		$this->assertTrue( Rule_Set::apply_synced( $wire ) );
+
+		$pointer = [ [ 'pattern' => '/dowser/', 'action' => 'log', 'hooks' => null, 'hooks_in' => 'mc' ] ];
+
+		$this->assertFalse( Rule_Set::apply_synced( $pointer ) );
 	}
 
 	public function test_load_skips_an_unrepresentable_stored_rule(): void {

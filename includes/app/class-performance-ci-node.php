@@ -235,9 +235,11 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * SETTINGS_ARRAY_DEPTH, per-level size cap SETTINGS_ARRAY_MAX, string keys
 	 * and string values through `sanitize_text_field`.
 	 *
-	 * A value that is not a string, bool, int, float, or array is DROPPED
-	 * silently — null and objects simply do not survive into the sanitized
-	 * copy — while a too-deep or too-wide array rejects the whole option.
+	 * An object is DROPPED silently; a too-deep or too-wide array rejects the
+	 * whole option. NULL survives: it is inert, and it is load-bearing on the
+	 * wire — a heavy rule syncs as a POINTER whose `hooks` key is an explicit
+	 * null, and dropping it produced a map `Rule::from_array()` refuses, so a
+	 * normal settings push could only ever fail.
 	 *
 	 * @param array<mixed,mixed> $arr   Input array.
 	 * @param int                $depth Current recursion depth.
@@ -255,7 +257,7 @@ class Performance_CI_Node extends Service_CI_Node {
 			$safe_key = \is_int( $key ) ? $key : \sanitize_text_field( $key );
 			if ( \is_string( $value ) ) {
 				$out[ $safe_key ] = \sanitize_text_field( $value );
-			} elseif ( \is_bool( $value ) || \is_int( $value ) || \is_float( $value ) ) {
+			} elseif ( null === $value || \is_bool( $value ) || \is_int( $value ) || \is_float( $value ) ) {
 				$out[ $safe_key ] = $value;
 			} elseif ( \is_array( $value ) ) {
 				$nested = self::sanitize_settings_array( $value, $depth + 1 );
@@ -1919,13 +1921,13 @@ class Performance_CI_Node extends Service_CI_Node {
 					throw new \RuntimeException( 'invalid value for option' );
 				}
 
-				// Re-tier via Rule_Set::save(); it signals the fleet itself.
+				// apply_synced re-tiers and holds its own no-op gate.
 				if ( Rule_Set::OPTION_RULES === $option && \is_array( $sanitized ) ) {
-					Rule_Set::apply_synced( $sanitized );
+					$changed = Rule_Set::apply_synced( $sanitized );
 					AppConfig::reset();
 					return [
 						'option'  => $option,
-						'updated' => true,
+						'updated' => $changed,
 					];
 				}
 
