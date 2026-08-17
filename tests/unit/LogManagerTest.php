@@ -1380,8 +1380,6 @@ class LogManagerTest extends TestCase {
 	 * reads, so this is the one place the "nothing sensitive is logged" invariant
 	 * can be enforced without a per-request check that would drop the key in
 	 * silence. Adding `HTTP_X_AUTH_TOKEN` to the allowlist fails here, by name.
-	 *
-	 * The patterns below are this test's oracle, not a copy of production data.
 	 */
 	public function test_no_allowlisted_environment_key_looks_like_a_secret(): void {
 		$allowlist = ( new \ReflectionClass( Log_Manager::class ) )->getConstant( 'ENV_ALLOWLIST' );

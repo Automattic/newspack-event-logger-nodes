@@ -139,7 +139,7 @@ class Config {
 	 * @return int Retention window in seconds, at least Stats_Store::PREFIX_FLOOR.
 	 */
 	public static function stats_retention_seconds(): int {
-		return \max( Stats_Store::PREFIX_FLOOR, Core::num_int( self::value( 'min_lifetime' ), 0 ) );
+		return \max( Stats_Store::PREFIX_FLOOR, Core::num_int( self::value( 'min_lifetime' ) ) );
 	}
 
 	/**

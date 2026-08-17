@@ -275,7 +275,7 @@ connect_node flame-builder flames:partition
 secure
 ```
 
-`configure_stats <partition>` constructs the per-partition `Stats_Store`, taking its retention window from the substrate's `min_lifetime` (default 86400). Auto-tune thresholds are no longer topology tokens — they moved onto each LOG rule (v0.26.0), so `set_auto_tune` / `set_significant_events` are gone; `Flame_Builder_Node` reads the governing rule's thresholds per completed request (see [Flame_Builder_Node](#flame_builder_node) and [Auto_Tuner_Node](#auto_tuner_node)). `set_stats_target <eln:stats_mirror_node>` optionally mirrors the memcache stats into the durable `flame-stats:partition` — off unless `stats_mirror_node` is set, since Atomic has durable memcache and local/docker opts in. The mirror keeps full aggregates plus a bounded top-N per URL (100 dimensional, 100 category, and flame profiles only when `set_flame_topn` raises the default 0).
+`configure_stats <partition>` constructs the per-partition `Stats_Store`, taking its retention window from `Config::stats_retention_seconds()`, the substrate's `min_lifetime` (default 43200) floored at 3600. Auto-tune thresholds are no longer topology tokens — they moved onto each LOG rule (v0.26.0), so `set_auto_tune` / `set_significant_events` are gone; `Flame_Builder_Node` reads the governing rule's thresholds per completed request (see [Flame_Builder_Node](#flame_builder_node) and [Auto_Tuner_Node](#auto_tuner_node)). `set_stats_target <eln:stats_mirror_node>` optionally mirrors the memcache stats into the durable `flame-stats:partition` — off unless `stats_mirror_node` is set, since Atomic has durable memcache and local/docker opts in. The mirror keeps full aggregates plus a bounded top-N per URL (100 dimensional, 100 category, and flame profiles only when `set_flame_topn` raises the default 0).
 
 ### `topologies/job-router.tsl`
 
@@ -572,11 +572,11 @@ When no `Stats_Store` is configured (`configure_stats` never called — e.g. in 
 
 Per-key prefix: `evlog[:salt]:p{N}:{namespace}:...`
 
-The retention window comes from the substrate's `min_lifetime` (default 86400), floored at 3600.
+The retention window comes from the substrate's `min_lifetime` (default 43200), floored at 3600.
 
 | Namespace | Use | TTL |
 |-----------|-----|-----|
-| `hourly` | `Y-m-d-H` buckets, count + sum_ms + sum_peak_mb | `min_lifetime` (default 86400) |
+| `hourly` | `Y-m-d-H` buckets, count + sum_ms + sum_peak_mb | `min_lifetime` (default 43200) |
 | `lb` | 5-min global leaderboard buckets, sums-not-means | `min_lifetime` |
 | `lb_s` | per-server leaderboard, keyed by server | `min_lifetime` |
 | `urls` | 5-min URL index, keyed by URL -> {count, sum_req_time, samples} | `min_lifetime` |

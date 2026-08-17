@@ -2410,7 +2410,7 @@ class Flame_Builder_Node extends Node {
 						}
 						$partition = (int) $arg;
 
-						// Substrate retention config; store uses Core::$memd.
+						// The store reads Core::$memd.
 						$stats_store = new \Newspack_Event_Logger_Nodes\Stats_Store(
 							$partition,
 							\Newspack_Event_Logger_Nodes\Config::stats_retention_seconds()
