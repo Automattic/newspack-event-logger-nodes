@@ -99,6 +99,16 @@ if [[ -f "$docslint" ]]; then
 	ok "lint-docs clean"
 fi
 
+# Log_Manager and Gyrobase::Log write the SAME environment_v3 line into one
+# firehose, and their allowlists are hand-maintained copies. Only the dndocker
+# tree sees both, so the check lives there and runs when it is checked out.
+parity="$(cd "$(git rev-parse --show-toplevel)/../../../.." 2>/dev/null && pwd || true)/tools/check-firehose-parity.py"
+if [[ -f "$parity" ]] && command -v python3 >/dev/null 2>&1; then
+	step "firehose parity (PHP vs Perl producer)"
+	python3 "$parity" >&2 || fail "firehose parity failed — the two producers would write different lines (see above)"
+	ok "firehose parity clean"
+fi
+
 # Classify the diff by file type. Exclude generated / vendored paths.
 changed="$(git diff --name-only "$range" 2>/dev/null || true)"
 php_changed="$(echo  "$changed" | grep -E '\.php$'           | grep -v -E '^(vendor/|release/)'          || true)"
