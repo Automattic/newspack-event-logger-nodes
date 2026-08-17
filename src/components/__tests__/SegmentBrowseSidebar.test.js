@@ -1,26 +1,21 @@
 /**
- * SegmentBrowseSidebar tests — the shared browse rail both the Error Log and
- * Request Log dashboards render from their `useGlobBrowse` model. It owns the
- * partition <select>, the LogBrowser segment list, and byte formatting so the
- * two dashboards don't copy-paste ~70 lines of presentation.
+ * SegmentBrowseSidebar tests — the partition PICKER both the Error Log and
+ * Request Log dashboards render above their segment rail. The rail itself is
+ * the substrate's, handed over ready-made on `browse.sidebar`; what is asserted
+ * here is the picker's two shapes and where the rail is placed.
  */
 
 import * as React from 'react';
 import SegmentBrowseSidebar from '../SegmentBrowseSidebar';
 import { renderComponent, act } from '../../test-helpers/renderHook';
 
-// A browse model shaped like useGlobBrowse's return.
+// A browse model shaped like useGlobBrowse's return; the rail stands in as a
+// marker element, because the substrate builds and tests the real one.
 function browseMock( overrides = {} ) {
 	return {
 		partitions: [],
 		selectedPartition: '',
-		segments: [],
-		mode: 'live',
-		segmentId: null,
-		lastReceivedSegment: null,
-		follow: jest.fn(),
-		replay: jest.fn(),
-		browseSegment: jest.fn(),
+		sidebar: React.createElement( 'div', { className: 'the-rail' } ),
 		...overrides,
 	};
 }
@@ -43,9 +38,7 @@ function mount( props ) {
 test( 'renders nothing when browse is undefined', () => {
 	const { container } = mount( { onSelectPartition: jest.fn() } );
 	expect( container.querySelector( '.newspack-nodes-select' ) ).toBeNull();
-	expect(
-		container.querySelector( '.newspack-nodes-log-browser' )
-	).toBeNull();
+	expect( container.querySelector( '.the-rail' ) ).toBeNull();
 } );
 
 test( 'renders nothing when there are no partitions', () => {
@@ -89,10 +82,8 @@ test( 'renders the partition select (All + each dir) when partitions exist', () 
 		'errors.p1',
 		'errors.p6',
 	] );
-	// No partition selected → no segment sidebar yet.
-	expect(
-		container.querySelector( '.newspack-nodes-log-browser' )
-	).toBeNull();
+	// No partition selected → no rail yet.
+	expect( container.querySelector( '.the-rail' ) ).toBeNull();
 } );
 
 test( 'a select change calls onSelectPartition with the chosen key', () => {
@@ -118,121 +109,13 @@ test( 'a select change calls onSelectPartition with the chosen key', () => {
 	expect( onSelectPartition ).toHaveBeenCalledWith( 'errors.p6' );
 } );
 
-test( 'renders the segment sidebar with formatted sizes + Live/Replay when a partition is selected', () => {
+test( 'a selected partition puts the rail under the picker', () => {
 	const { container } = mount( {
 		browse: browseMock( {
 			partitions: [ { key: 'errors.p6', label: 'errors.p6' } ],
 			selectedPartition: 'errors.p6',
-			segments: [
-				{ id: 9, size: 2048 },
-				{ id: 8, size: 512 },
-			],
-			mode: 'browse',
-			segmentId: 9,
 		} ),
 		onSelectPartition: jest.fn(),
 	} );
-	const sidebar = container.querySelector( '.newspack-nodes-log-browser' );
-	expect( sidebar ).toBeTruthy();
-	expect( sidebar.textContent ).toContain( 'Segment 9' );
-	expect( sidebar.textContent ).toContain( 'Segment 8' );
-	// formatBytes: 2048 → 2 KB, 512 → 512 B (the ladder drops a bare .0).
-	expect( sidebar.textContent ).toContain( '2 KB' );
-	expect( sidebar.textContent ).toContain( '512 B' );
-	expect( sidebar.textContent ).toMatch( /Live/ );
-	expect( sidebar.textContent ).toMatch( /Replay/ );
-} );
-
-test( 'clicking a segment calls browse.browseSegment; Live/Replay call follow/replay', () => {
-	const browse = browseMock( {
-		partitions: [ { key: 'errors.p6', label: 'errors.p6' } ],
-		selectedPartition: 'errors.p6',
-		segments: [ { id: 9, size: 2048 } ],
-	} );
-	const { container } = mount( {
-		browse,
-		onSelectPartition: jest.fn(),
-	} );
-	const sidebar = container.querySelector( '.newspack-nodes-log-browser' );
-	act( () =>
-		sidebar.querySelector( '.newspack-nodes-log-browser__item' ).click()
-	);
-	expect( browse.browseSegment ).toHaveBeenCalledWith( {
-		id: 9,
-		size: 2048,
-	} );
-	const buttons = Array.from( sidebar.querySelectorAll( 'button' ) );
-	act( () => buttons.find( ( b ) => /Live/.test( b.textContent ) ).click() );
-	expect( browse.follow ).toHaveBeenCalled();
-	act( () =>
-		buttons.find( ( b ) => /Replay/.test( b.textContent ) ).click()
-	);
-	expect( browse.replay ).toHaveBeenCalled();
-} );
-
-test( 'the rail highlights the last-received segment over the clicked one', () => {
-	const { container } = mount( {
-		browse: browseMock( {
-			partitions: [ { key: 'errors.p6', label: 'errors.p6' } ],
-			selectedPartition: 'errors.p6',
-			segments: [
-				{ id: 9, size: 2048 },
-				{ id: 8, size: 512 },
-			],
-			// Clicked segment 9, but records are arriving from segment 8.
-			segmentId: 9,
-			lastReceivedSegment: 8,
-		} ),
-		onSelectPartition: jest.fn(),
-	} );
-	const active = container.querySelector(
-		'.newspack-nodes-log-browser__item.is-active'
-	);
-	expect( active.textContent ).toContain( 'Segment 8' );
-} );
-
-test( 'a replay flips Live→Replay via the view-derived mode', () => {
-	const { container } = mount( {
-		browse: browseMock( {
-			partitions: [ { key: 'errors.p6', label: 'errors.p6' } ],
-			selectedPartition: 'errors.p6',
-			segments: [ { id: 9, size: 2048 } ],
-			mode: 'replay',
-		} ),
-		onSelectPartition: jest.fn(),
-	} );
-	const replay = Array.from(
-		container.querySelectorAll(
-			'.newspack-nodes-log-browser__controls button'
-		)
-	).find( ( b ) => /Replay/.test( b.textContent ) );
-	expect( replay.classList.contains( 'is-active' ) ).toBe( true );
-} );
-
-test( 'formats a zero-byte segment as "0 B"', () => {
-	const { container } = mount( {
-		browse: browseMock( {
-			partitions: [ { key: 'errors.p6', label: 'errors.p6' } ],
-			selectedPartition: 'errors.p6',
-			segments: [ { id: 0, size: 0 } ],
-		} ),
-		onSelectPartition: jest.fn(),
-	} );
-	expect(
-		container.querySelector( '.newspack-nodes-log-browser' ).textContent
-	).toContain( '0 B' );
-} );
-
-test( 'formats a megabyte-scale segment size', () => {
-	const { container } = mount( {
-		browse: browseMock( {
-			partitions: [ { key: 'errors.p6', label: 'errors.p6' } ],
-			selectedPartition: 'errors.p6',
-			segments: [ { id: 1, size: 5 * 1024 * 1024 } ],
-		} ),
-		onSelectPartition: jest.fn(),
-	} );
-	expect(
-		container.querySelector( '.newspack-nodes-log-browser' ).textContent
-	).toContain( '5 MB' );
+	expect( container.querySelector( '.the-rail' ) ).toBeTruthy();
 } );

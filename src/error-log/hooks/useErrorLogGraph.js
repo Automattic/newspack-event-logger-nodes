@@ -14,7 +14,7 @@ import { useGlobStreamGraph } from '../../hooks/useGlobStreamGraph';
  *
  * @param {Object} [opts]            Options.
  * @param {number} [opts.maxEntries] View ring cap (default 5000).
- * @return {{ setPaused: Function, clear: () => void, browse: Object, setFilter: (term: string) => void }}
+ * @return {{ setPaused: Function, clear: () => void, step: () => void, browse: Object, setFilter: (term: string) => void }}
  *   Control callbacks plus the browse model for the thin React view.
  */
 export function useErrorLogGraph( opts = {} ) {

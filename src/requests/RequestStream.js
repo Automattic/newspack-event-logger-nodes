@@ -28,7 +28,6 @@ import { useRequestLogGraph } from './hooks/useRequestLogGraph';
 import LogStreamViewer from '@newspack-nodes/shared/components/LogStreamViewer';
 import LogListHeader from '@newspack-nodes/shared/components/LogListHeader';
 import SegmentBrowseSidebar from '../components/SegmentBrowseSidebar';
-import parseOffsetJump from '@newspack-nodes/shared/utils/parseOffsetJump';
 import {
 	formatDuration,
 	getDurationClass,
@@ -278,7 +277,7 @@ const StreamRow = memo(
  */
 export default function RequestStream( { maxEntries = 500 } ) {
 	// Mount the graph; returns the control callbacks + the browse model.
-	const { setPaused, clear, browse, setFilter } = useRequestLogGraph( {
+	const { setPaused, clear, step, browse, setFilter } = useRequestLogGraph( {
 		maxEntries,
 	} );
 
@@ -393,23 +392,8 @@ export default function RequestStream( { maxEntries = 500 } ) {
 			isPaused={ isPaused }
 			connectionError={ connectionError }
 			onTogglePause={ () => setPaused( ! isPaused ) }
-			onStep={ browse?.selectedPartition ? browse.step : undefined }
-			onJump={
-				browse?.selectedPartition
-					? ( text ) => {
-							const position = parseOffsetJump(
-								text,
-								browse.lastReceivedSegment ??
-									( 'number' === typeof browse.segmentId
-										? browse.segmentId
-										: null )
-							);
-							if ( position ) {
-								browse.jumpTo( position );
-							}
-					  }
-					: undefined
-			}
+			onStep={ browse?.selectedPartition ? step : undefined }
+			onJump={ browse?.selectedPartition ? browse.jump : undefined }
 			getViewNode={ getViewNode }
 			onClear={ clear }
 			onFilter={ setFilter }

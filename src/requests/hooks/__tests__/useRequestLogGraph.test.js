@@ -16,7 +16,12 @@
  * controllable value so the visibility effect is deterministic under jsdom.
  */
 
-import { renderHook, act, waitFor } from '../../../test-helpers/renderHook';
+import {
+	renderHook,
+	renderComponent,
+	act,
+	waitFor,
+} from '../../../test-helpers/renderHook';
 import {
 	newMessage,
 	pack,
@@ -390,6 +395,25 @@ describe( 'useRequestLogGraph — page visibility / pause lifecycle', () => {
 	} );
 } );
 
+// The segment rail is the substrate's, handed over ready-made on
+// `browse.sidebar`; a browse is a CLICK on it, as the user makes it.
+function railItems( browse ) {
+	const rail = renderComponent( browse.sidebar );
+	const items = Array.from(
+		rail.container.querySelectorAll( '.newspack-nodes-log-browser__item' )
+	);
+	return { items, unmount: () => rail.unmount() };
+}
+
+async function clickSegment( browse, id ) {
+	const { items, unmount } = railItems( browse );
+	const item = items.find( ( el ) =>
+		el.textContent.includes( `Segment ${ id }` )
+	);
+	await act( async () => item.click() );
+	unmount();
+}
+
 describe( 'useRequestLogGraph — glob browse', () => {
 	test( 'exposes a browse model cataloging the `completed.*` partitions', async () => {
 		installWire( {
@@ -443,9 +467,12 @@ describe( 'useRequestLogGraph — glob browse', () => {
 		await act( async () =>
 			result.current.browse.selectPartition( 'completed.p2' )
 		);
-		await act( async () =>
-			result.current.browse.browseSegment( { id: 7, size: 4096 } )
+		await waitFor( () =>
+			expect(
+				railItems( result.current.browse ).items.length
+			).toBeGreaterThan( 0 )
 		);
+		await clickSegment( result.current.browse, 7 );
 		// Time-travel: the click pauses; the closed stream never saw the seek.
 		expect( FakeEventSource.last.closed ).toBe( true );
 		// Play streams from the browsed segment (the recorded explicit seek).
@@ -504,11 +531,11 @@ describe( 'useRequestLogGraph — pause vs visibility precedence + replay surviv
 		);
 		// The rail is a tick away, and the replay boundary comes from it.
 		await waitFor( () =>
-			expect( result.current.browse.segments.length ).toBeGreaterThan( 0 )
+			expect(
+				railItems( result.current.browse ).items.length
+			).toBeGreaterThan( 0 )
 		);
-		await act( async () =>
-			result.current.browse.browseSegment( { id: 9, size: 500 } )
-		);
+		await clickSegment( result.current.browse, 9 );
 		const view = Core.node( VIEW );
 		expect( view.mode ).toBe( 'replay' );
 

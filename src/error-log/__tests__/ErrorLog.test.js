@@ -92,13 +92,8 @@ function browseMock( overrides = {} ) {
 		partitions: [],
 		selectedPartition: '',
 		selectPartition: jest.fn(),
-		segments: [],
-		mode: 'live',
-		lastReceivedSegment: null,
-		segmentId: null,
-		follow: jest.fn(),
-		replay: jest.fn(),
-		browseSegment: jest.fn(),
+		jump: jest.fn(),
+		sidebar: <div data-testid="log-browser" />,
 		...overrides,
 	};
 }
@@ -420,14 +415,11 @@ describe( 'ErrorLog', () => {
 			expect( selectPartition ).toHaveBeenCalledWith( 'errors.p4' );
 		} );
 
-		it( 'renders the segment sidebar when a partition is selected', () => {
+		it( 'renders the segment rail when a partition is selected', () => {
 			registerViewFixture();
 			const browse = browseMock( {
 				partitions: [ { key: 'errors.p4', label: 'errors.p4' } ],
 				selectedPartition: 'errors.p4',
-				segments: [ { id: 9, size: 2048 } ],
-				mode: 'browse',
-				segmentId: 9,
 			} );
 			useErrorLogGraph.mockReturnValue( {
 				setFilter: ( term ) => {
@@ -440,16 +432,10 @@ describe( 'ErrorLog', () => {
 				clear: jest.fn(),
 				browse,
 			} );
-			mount();
-			expect( logBrowserProps.items ).toEqual( [
-				{ id: 9, size: 2048 },
-			] );
-			expect( logBrowserProps.mode ).toBe( 'browse' );
-			logBrowserProps.onSelectItem( { id: 9, size: 2048 } );
-			expect( browse.browseSegment ).toHaveBeenCalledWith( {
-				id: 9,
-				size: 2048,
-			} );
+			const { container } = mount();
+			expect(
+				container.querySelector( '[data-testid="log-browser"]' )
+			).toBeTruthy();
 		} );
 	} );
 
