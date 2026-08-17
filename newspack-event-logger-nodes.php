@@ -397,11 +397,7 @@ function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\Command_
 		}
 
 		// Dashboards size their time axis from the retention window.
-		$retention_seconds = 86400;
-		$substrate         = \Newspack_Nodes\Config::load_config();
-		/** @var int|float|string|bool|null $raw_lifespan */
-		$raw_lifespan      = $substrate['min_lifetime'] ?? 86400;
-		$retention_seconds = (int) $raw_lifespan;
+		$retention_seconds = \Newspack_Event_Logger_Nodes\Config::stats_retention_seconds();
 		$hook_categories = [ '_colors' => [], '_patterns' => [] ];
 		$hook_categories_path = NEWSPACK_EVENT_LOGGER_NODES_DIR . 'hook_categories.json';
 		if ( \file_exists( $hook_categories_path ) ) {

@@ -121,6 +121,36 @@ class ConfigTest extends TestCase {
 		$this->assertSame( 42423, $config['hook_start_priority'] );
 	}
 
+	// ── stats_retention_seconds: ONE derivation of the retention window ─────
+
+	/**
+	 * The window every stats consumer sizes itself by was derived in four
+	 * places, each seeded with a literal 86400 — which is the substrate default
+	 * for `lifetime`, NOT for `min_lifetime` (43200). A missing key therefore
+	 * did not merely fall back, it fell back to double the real window, and the
+	 * entry point read the key straight off the array with `??`, bypassing the
+	 * fail-loud accessor entirely. 5711 is distinct from 43200, 86400 and 3600.
+	 */
+	public function test_stats_retention_seconds_reads_the_configured_window(): void {
+		$override_path = $this->temp_dir . '/retention-5711.php';
+		\file_put_contents( $override_path, "<?php return [ 'min_lifetime' => 5711 ];\n" );
+		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $override_path );
+		Config::reset();
+
+		$this->assertSame( 5711, Config::stats_retention_seconds() );
+	}
+
+	public function test_stats_retention_seconds_floors_at_the_stats_prefix_floor(): void {
+		// A legal `min_lifetime` of 0 means "keep nothing extra", which is not a
+		// usable TTL or time axis; Stats_Store already floored it privately.
+		$override_path = $this->temp_dir . '/retention-97.php';
+		\file_put_contents( $override_path, "<?php return [ 'min_lifetime' => 97 ];\n" );
+		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $override_path );
+		Config::reset();
+
+		$this->assertSame( \Newspack_Event_Logger_Nodes\Stats_Store::PREFIX_FLOOR, Config::stats_retention_seconds() );
+	}
+
 	public function test_substrate_option_does_not_override_application_owned_key(): void {
 		$override_path = $this->temp_dir . '/overlapping-ownership-7319.php';
 		\file_put_contents(

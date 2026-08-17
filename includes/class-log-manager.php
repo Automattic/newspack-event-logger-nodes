@@ -142,46 +142,6 @@ class Log_Manager {
 	 */
 	private static array $job_message = [];
 
-	/** @var array<string,bool> Hash set for fast sensitive key lookup. */
-	private static array $sensitive_keys = [
-		'AUTH_KEY'                 => true,
-		'AUTH_SALT'                => true,
-		'DB_PASSWORD'              => true,
-		'DB_USER'                  => true,
-		'HTTP_AUTHORIZATION'       => true,
-		'HTTP_COOKIE'              => true,
-		'HTTP_PROXY_AUTHORIZATION' => true,
-		'HTTP_X_API_KEY'           => true,
-		'HTTP_X_AUTH_TOKEN'        => true,
-		'HTTP_X_CSRF_TOKEN'        => true,
-		'HTTP_X_XSRF_TOKEN'        => true,
-		'LOGGED_IN_KEY'            => true,
-		'LOGGED_IN_SALT'           => true,
-		'NONCE_KEY'                => true,
-		'NONCE_SALT'               => true,
-		'SECURE_AUTH_KEY'          => true,
-		'SECURE_AUTH_SALT'         => true,
-		'TERMCAP'                  => true,
-	];
-
-	/** @var array<int,string> Sensitive substrings to check in keys. */
-	private static array $sensitive_substrings = [
-		'AUTH',
-		'BEARER',
-		'CREDENTIAL',
-		'DSN',
-		'KEY',
-		'NONCE',
-		'PASS',
-		'PASSWD',
-		'PASSWORD',
-		'PRIVATE',
-		'SALT',
-		'SECRET',
-		'TOKEN',
-		'_URL',
-	];
-
 	/**
 	 * Deprecated mirror of is_started(), set with it at construction. The
 	 * profiler drop-in on Atomic is served from a read-only /wordpress/mu-plugins
@@ -1053,7 +1013,13 @@ class Log_Manager {
 	 * Every value is stripped of control characters, redacted where it carries a
 	 * query string, and capped at ENV_VALUE_MAX bytes — in that order, so a cut
 	 * can never expose the tail of a secret the redaction would have covered.
-	 * Sensitive and array-valued keys are dropped outright.
+	 * Array-valued keys are dropped outright.
+	 *
+	 * ENV_ALLOWLIST is the only key source, so nothing sensitive can arrive
+	 * here; a per-request re-check of a curated list could never fire, and
+	 * dropping the key would have been silent anyway. `LogManagerTest`'s
+	 * `test_no_allowlisted_environment_key_looks_like_a_secret` holds that
+	 * invariant where a bad addition fails the build instead.
 	 */
 	private function log_environment(): void {
 		$env = [];
@@ -1063,7 +1029,7 @@ class Log_Manager {
 			}
 			// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Sanitized below with preg_replace.
 			$value = $_SERVER[ $key ];
-			if ( \is_array( $value ) || self::is_sensitive_key( $key ) ) {
+			if ( \is_array( $value ) ) {
 				continue;
 			}
 			$sanitized = \preg_replace( '/[\x00-\x1F\x7F]/', '', Core::as_string( $value ) ) ?? '';
@@ -1148,25 +1114,6 @@ class Log_Manager {
 	 */
 	public static function redact_url( string $url ): string {
 		return \preg_replace( self::URL_REDACT_PATTERN, '$1$2=[REDACTED]', $url ) ?? $url;
-	}
-
-	/**
-	 * Check if a $_SERVER key should be redacted.
-	 *
-	 * @param string $key Server variable key.
-	 * @return bool True if sensitive.
-	 */
-	private static function is_sensitive_key( string $key ): bool {
-		if ( isset( self::$sensitive_keys[ $key ] ) ) {
-			return true;
-		}
-		$key_upper = \strtoupper( $key );
-		foreach ( self::$sensitive_substrings as $pattern ) {
-			if ( false !== \strpos( $key_upper, $pattern ) ) {
-				return true;
-			}
-		}
-		return false;
 	}
 
 	/**
