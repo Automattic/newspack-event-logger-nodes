@@ -4,7 +4,7 @@
  * substrate's HTTP I/O boundary node. Modeled on useVaultGraph, single-concern:
  *
  *   _http     (HttpOutNode — POST /command boundary; .client = the transport)
- *   rules:in  (Tee) → rules:view (RulesViewNode) — list/save/upsert/delete/reset
+ *   rules:in  (Tee) → rules:view (the RulesView slice) — repainted by `list`
  *
  * Nothing here is correlated, because the addressing already is the
  * correlation. Each MUTATING verb owns its own node — `rules:save`,

@@ -129,20 +129,11 @@ class Config {
 	}
 
 	/**
-	 * THE retention window every stats consumer sizes itself by: the substrate's
-	 * `min_lifetime`, floored at `Stats_Store::PREFIX_FLOOR`.
+	 * THE retention window every stats consumer sizes itself by — the memcache
+	 * TTLs and the dashboards' time axis both come from here.
 	 *
-	 * Four call sites derived this independently — two `Stats_Store`
-	 * constructions, the constructor's own parameter default, and the admin
-	 * entry point's time axis — and every one of them seeded it with a literal
-	 * `86400`. That is the substrate default for `lifetime`; `min_lifetime`
-	 * defaults to 43200, so a fallback did not merely stand in for the value, it
-	 * doubled it. The entry point additionally read the key straight off the
-	 * config array with `??`, the one reader the fail-loud migration missed.
-	 *
-	 * The floor is here rather than only inside `Stats_Store` because a legal
-	 * `min_lifetime` of 0 ("keep nothing extra") is neither a usable memcache
-	 * TTL nor a drawable time axis.
+	 * It is the substrate's `min_lifetime`, floored: a legal `min_lifetime` of 0
+	 * ("keep nothing extra") is neither a usable TTL nor a drawable axis.
 	 *
 	 * @api
 	 * @return int Retention window in seconds, at least Stats_Store::PREFIX_FLOOR.
