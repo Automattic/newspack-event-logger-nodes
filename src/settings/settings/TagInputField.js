@@ -97,7 +97,7 @@ export default function TagInputField( {
 					{ values.map( ( value, index ) => (
 						<div
 							key={ index }
-							className="event-logger-tag-token newspack-nodes-badge is-custom"
+							className="event-logger-tag-token newspack-nodes-badge"
 						>
 							<span className="event-logger-tag-text">
 								{ value }

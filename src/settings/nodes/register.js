@@ -1,5 +1,5 @@
 /**
- * The settings tree's slice view, declared rather than subclassed.
+ * The settings tree's slice view.
  */
 
 import { registerSliceViews } from '@newspack-nodes/shared/nodes/slice-view-node';

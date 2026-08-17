@@ -1,5 +1,5 @@
 /**
- * The rules editor's slice view, declared rather than subclassed.
+ * The rules editor's slice view.
  */
 
 import { registerSliceViews } from '@newspack-nodes/shared/nodes/slice-view-node';
@@ -15,6 +15,7 @@ export const views = registerSliceViews( {
 	 * complete ruleset, so a rule deleted on the server has to disappear.
 	 */
 	RulesView: {
+		description: 'Owns the per-URL logging-ruleset editor view model.',
 		empty: { rules: [], loading: true, error: null },
 		parse: ( payload ) => ( {
 			rules:

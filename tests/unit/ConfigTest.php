@@ -124,12 +124,9 @@ class ConfigTest extends TestCase {
 	// ── stats_retention_seconds: ONE derivation of the retention window ─────
 
 	/**
-	 * The window every stats consumer sizes itself by was derived in four
-	 * places, each seeded with a literal 86400 — which is the substrate default
-	 * for `lifetime`, NOT for `min_lifetime` (43200). A missing key therefore
-	 * did not merely fall back, it fell back to double the real window, and the
-	 * entry point read the key straight off the array with `??`, bypassing the
-	 * fail-loud accessor entirely. 5711 is distinct from 43200, 86400 and 3600.
+	 * The retention window is the substrate's `min_lifetime`. 5711 is distinct
+	 * from that key's default (43200), from `lifetime`'s (86400) and from the
+	 * floor (3600), so only the real value can produce it.
 	 */
 	public function test_stats_retention_seconds_reads_the_configured_window(): void {
 		$override_path = $this->temp_dir . '/retention-5711.php';
@@ -141,8 +138,8 @@ class ConfigTest extends TestCase {
 	}
 
 	public function test_stats_retention_seconds_floors_at_the_stats_prefix_floor(): void {
-		// A legal `min_lifetime` of 0 means "keep nothing extra", which is not a
-		// usable TTL or time axis; Stats_Store already floored it privately.
+		// A legal `min_lifetime` of 0 means "keep nothing extra", which is
+		// neither a usable memcache TTL nor a drawable time axis.
 		$override_path = $this->temp_dir . '/retention-97.php';
 		\file_put_contents( $override_path, "<?php return [ 'min_lifetime' => 97 ];\n" );
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $override_path );

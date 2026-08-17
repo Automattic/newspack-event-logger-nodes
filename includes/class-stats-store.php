@@ -94,7 +94,7 @@ class Stats_Store {
 	private const URL_ACCUMULATOR_SIZE    = 1000;
 	private const URL_ACCUMULATOR_BUCKETS = 5;
 
-	/** Floor, in seconds, under `ttl()`, `ttl_url_stats()` and `Config::stats_retention_seconds()`. */
+	/** Shortest retention window the stats keyspace works with, in seconds. */
 	public const PREFIX_FLOOR = 3600;
 
 	/**
@@ -108,7 +108,7 @@ class Stats_Store {
 	 * @var \Closure|null
 	 */
 	public ?\Closure $mirror = null;
-	/** @var int Retention window in seconds, floored at PREFIX_FLOOR. */
+	/** @var int Retention window in seconds, as Config::stats_retention_seconds() floored it. */
 	private int $max_lifespan;
 
 	/** @var array<int,Table_Node> Table per TTL, over one namespace. */
@@ -127,7 +127,7 @@ class Stats_Store {
 		int $max_lifespan
 	) {
 		$this->partition    = $partition;
-		$this->max_lifespan = \max( self::PREFIX_FLOOR, $max_lifespan );
+		$this->max_lifespan = $max_lifespan;
 	}
 
 	/**

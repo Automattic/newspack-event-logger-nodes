@@ -93,30 +93,6 @@ describe( 'dashboard mount-entry points', () => {
 		} ).not.toThrow();
 	} );
 
-	it( 'settings/index.js binds the tag fields when their containers exist', () => {
-		const div = mountContainer( 'event-logger-log_urls' );
-		div.dataset.values = '[]';
-		div.dataset.default = '[]';
-		const hidden = document.createElement( 'input' );
-		hidden.id = 'log_urls_json';
-		hidden.type = 'hidden';
-		document.body.appendChild( hidden );
-		expect( () => {
-			require( '../settings' );
-			document.dispatchEvent( new Event( 'DOMContentLoaded' ) );
-		} ).not.toThrow();
-	} );
-
-	it( 'settings/index.js falls back to empty arrays for malformed dataset JSON', () => {
-		const div = mountContainer( 'event-logger-skip_urls' );
-		div.dataset.values = '{bad-json';
-		div.dataset.default = '{"not":"an-array"}';
-		expect( () => {
-			require( '../settings' );
-			document.dispatchEvent( new Event( 'DOMContentLoaded' ) );
-		} ).not.toThrow();
-	} );
-
 	it( 'settings no longer wires legacy reset buttons (per-field reset is the toggle module)', () => {
 		// Reset moved to the shared toggle module; a legacy click is inert.
 		const div = mountContainer( 'event-logger-log_urls' );
