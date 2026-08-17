@@ -129,6 +129,29 @@ class Config {
 	}
 
 	/**
+	 * THE retention window every stats consumer sizes itself by: the substrate's
+	 * `min_lifetime`, floored at `Stats_Store::PREFIX_FLOOR`.
+	 *
+	 * Four call sites derived this independently — two `Stats_Store`
+	 * constructions, the constructor's own parameter default, and the admin
+	 * entry point's time axis — and every one of them seeded it with a literal
+	 * `86400`. That is the substrate default for `lifetime`; `min_lifetime`
+	 * defaults to 43200, so a fallback did not merely stand in for the value, it
+	 * doubled it. The entry point additionally read the key straight off the
+	 * config array with `??`, the one reader the fail-loud migration missed.
+	 *
+	 * The floor is here rather than only inside `Stats_Store` because a legal
+	 * `min_lifetime` of 0 ("keep nothing extra") is neither a usable memcache
+	 * TTL nor a drawable time axis.
+	 *
+	 * @api
+	 * @return int Retention window in seconds, at least Stats_Store::PREFIX_FLOOR.
+	 */
+	public static function stats_retention_seconds(): int {
+		return \max( Stats_Store::PREFIX_FLOOR, Core::num_int( self::value( 'min_lifetime' ), 0 ) );
+	}
+
+	/**
 	 * Fail-loud single-key read over THIS plugin's merged config, validated
 	 * against the shared substrate registry: an undeclared key throws instead of
 	 * limping on a `?? default`. A declared key resolves off the merged config

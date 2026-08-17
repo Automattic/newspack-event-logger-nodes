@@ -94,8 +94,8 @@ class Stats_Store {
 	private const URL_ACCUMULATOR_SIZE    = 1000;
 	private const URL_ACCUMULATOR_BUCKETS = 5;
 
-	/** Floor, in seconds, under both `ttl()` and `ttl_url_stats()`. */
-	private const PREFIX_FLOOR = 3600;
+	/** Floor, in seconds, under both `ttl()` and `ttl_url_stats()`; `Config::stats_retention_seconds()` applies the same one. */
+	public const PREFIX_FLOOR = 3600;
 
 	/**
 	 * Mirror seam — when set, invoked `(string $key, array $data, int $ttl, string $ns)`
@@ -118,12 +118,14 @@ class Stats_Store {
 	private int $partition;
 	/**
 	 * @param int $partition    Flame-builder partition to read and write.
-	 * @param int $max_lifespan Retention window in seconds, seeded from the
-	 *                          substrate `min_lifetime` config key.
+	 * @param int $max_lifespan Retention window in seconds; production callers
+	 *                          pass `Config::stats_retention_seconds()`. No
+	 *                          default — a literal here was a fourth copy of a
+	 *                          window the config already declares.
 	 */
 	public function __construct(
-		int $partition = 0,
-		int $max_lifespan = 86400
+		int $partition,
+		int $max_lifespan
 	) {
 		$this->partition    = $partition;
 		$this->max_lifespan = \max( self::PREFIX_FLOOR, $max_lifespan );
