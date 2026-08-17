@@ -27,6 +27,7 @@ import {
 	TO,
 	FROM,
 	VALUE,
+	newMessage,
 	parseCommandArgs,
 	forgetSession,
 	__setAuthFetch,
@@ -739,7 +740,13 @@ describe( 'usePerformanceGraph — control origins', () => {
 			} )
 		);
 		const view = Core.node( 'urldetail:view' );
-		view.storeResult( { last_modified: 9, requests: [ { rid: 'a' } ] } );
+		// Drive it the way the graph does: a reply, not a method call.
+		const landed = newMessage();
+		landed[ VALUE ] = {
+			name: 'url_detail',
+			payload: { last_modified: 9, requests: [ { rid: 'a' } ] },
+		};
+		view.fill( landed );
 		expect( view.model.data ).not.toBeNull();
 
 		selectedUrl = null;
