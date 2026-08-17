@@ -1015,11 +1015,9 @@ class Log_Manager {
 	 * can never expose the tail of a secret the redaction would have covered.
 	 * Array-valued keys are dropped outright.
 	 *
-	 * ENV_ALLOWLIST is the only key source, so nothing sensitive can arrive
-	 * here; a per-request re-check of a curated list could never fire, and
-	 * dropping the key would have been silent anyway. `LogManagerTest`'s
-	 * `test_no_allowlisted_environment_key_looks_like_a_secret` holds that
-	 * invariant where a bad addition fails the build instead.
+	 * ENV_ALLOWLIST is the only key source, and no entry in it may read as a
+	 * secret — `LogManagerTest::test_no_allowlisted_environment_key_looks_like_a_secret`
+	 * holds that, so a bad addition fails the build rather than this request.
 	 */
 	private function log_environment(): void {
 		$env = [];

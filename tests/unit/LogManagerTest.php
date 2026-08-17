@@ -1376,17 +1376,12 @@ class LogManagerTest extends TestCase {
 	/**
 	 * No ENV_ALLOWLIST entry may look like a secret.
 	 *
-	 * `log_environment()` used to re-check every allowlisted key against an
-	 * 18-entry sensitive-key list and a 14-entry substring list at RUN TIME,
-	 * once per request — a branch that could never fire, because the allowlist
-	 * is curated and its intersection with those patterns was empty. The guard
-	 * was worth keeping as an idea and worthless as code: it protected a list
-	 * humans edit, but it protected it SILENTLY, by dropping the key.
+	 * The allowlist is hand-edited and is the only key source `log_environment()`
+	 * reads, so this is the one place the "nothing sensitive is logged" invariant
+	 * can be enforced without a per-request check that would drop the key in
+	 * silence. Adding `HTTP_X_AUTH_TOKEN` to the allowlist fails here, by name.
 	 *
-	 * So the invariant moved here, where adding `HTTP_X_AUTH_TOKEN` to the
-	 * allowlist fails the build instead of quietly logging nothing. This test IS
-	 * the specification; the patterns below are its oracle, not a second copy of
-	 * production data.
+	 * The patterns below are this test's oracle, not a copy of production data.
 	 */
 	public function test_no_allowlisted_environment_key_looks_like_a_secret(): void {
 		$allowlist = ( new \ReflectionClass( Log_Manager::class ) )->getConstant( 'ENV_ALLOWLIST' );

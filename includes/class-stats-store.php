@@ -94,7 +94,7 @@ class Stats_Store {
 	private const URL_ACCUMULATOR_SIZE    = 1000;
 	private const URL_ACCUMULATOR_BUCKETS = 5;
 
-	/** Floor, in seconds, under both `ttl()` and `ttl_url_stats()`; `Config::stats_retention_seconds()` applies the same one. */
+	/** Floor, in seconds, under `ttl()`, `ttl_url_stats()` and `Config::stats_retention_seconds()`. */
 	public const PREFIX_FLOOR = 3600;
 
 	/**
@@ -118,10 +118,9 @@ class Stats_Store {
 	private int $partition;
 	/**
 	 * @param int $partition    Flame-builder partition to read and write.
-	 * @param int $max_lifespan Retention window in seconds; production callers
-	 *                          pass `Config::stats_retention_seconds()`. No
-	 *                          default — a literal here was a fourth copy of a
-	 *                          window the config already declares.
+	 * @param int $max_lifespan Retention window in seconds; callers pass
+	 *                          `Config::stats_retention_seconds()`, which is
+	 *                          where that window is declared.
 	 */
 	public function __construct(
 		int $partition,
