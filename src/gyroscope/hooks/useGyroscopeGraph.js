@@ -42,15 +42,6 @@ const TEE = 'gyroscope:stream';
 const VIEW = 'gyroscope:view';
 
 /**
- * Build a control the view applies because it came FROM the dashboard driving
- * it; `action` picks the verb once inside. A control is recognised by WHO SENT
- * IT, never by what its payload looks like.
- *
- * @param {Object} value Control payload; `action` selects the view's branch.
- * @return {Array} A 7-field TM_STRUCT message.
- */
-
-/**
  * Mount the Gyroscope graph and own its SSE connection while the page is visible.
  *
  * @return {Object} Empty — the view reads its model via useNodeState +
