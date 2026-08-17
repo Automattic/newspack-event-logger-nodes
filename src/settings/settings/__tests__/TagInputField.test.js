@@ -1,25 +1,10 @@
 /* global KeyboardEvent */
 /**
- * Tests for TagInputField — multi-value tag input with three modes:
- *   - standard (text input + tags)
- *   - hook selector (modal-driven)
- *   - custom event selector (modal-driven)
+ * Tests for TagInputField — the controlled multi-value tag input.
  *
- * The two selector children are mocked so we can drive their onSelect
- * callbacks directly to assert the parent updates its values.
+ * The component reports every change through `onChange`; the tag list it
+ * renders and the values it reports must not diverge.
  */
-
-jest.mock( '../HookSelectorModal', () => ( {
-	__esModule: true,
-	default: ( { isOpen } ) =>
-		isOpen ? 'HOOK_MODAL_OPEN' : 'HOOK_MODAL_CLOSED',
-} ) );
-jest.mock( '../CustomEventSelectorModal', () => ( {
-	__esModule: true,
-	default: ( { isOpen } ) =>
-		isOpen ? 'CUSTOM_MODAL_OPEN' : 'CUSTOM_MODAL_CLOSED',
-} ) );
-
 import * as React from 'react';
 import TagInputField from '../TagInputField';
 import { renderComponent, act } from '../../../test-helpers/renderHook';
@@ -31,6 +16,7 @@ import { renderComponent, act } from '../../../test-helpers/renderHook';
  * events when the cached value matches — assigning the property directly
  * leaves React in stale state. The standard workaround: write via the
  * native descriptor setter, then dispatch the input event.
+ *
  * @param {HTMLInputElement} input Input element to update.
  * @param {string}           value New value to assign.
  */
@@ -43,320 +29,197 @@ function setControlledValue( input, value ) {
 	input.dispatchEvent( new Event( 'input', { bubbles: true } ) );
 }
 
-function setUpHiddenInput( name ) {
-	const input = document.createElement( 'input' );
-	input.id = `${ name }_json`;
-	input.type = 'hidden';
-	document.body.appendChild( input );
-	return input;
-}
-
-function setUpContainer( name ) {
-	const div = document.createElement( 'div' );
-	div.id = `event-logger-${ name }`;
-	document.body.appendChild( div );
-	return div;
+/**
+ * Press a key on the tag input, the way the component listens for it.
+ *
+ * @param {HTMLInputElement} input Input element to key.
+ * @param {string}           key   KeyboardEvent key name.
+ */
+function pressKey( input, key ) {
+	act( () => {
+		input.dispatchEvent(
+			new KeyboardEvent( 'keydown', { key, bubbles: true } )
+		);
+	} );
 }
 
 describe( 'TagInputField', () => {
-	afterEach( () => {
-		document
-			.querySelectorAll(
-				'input, div[id^="event-logger-"], [data-nn-reset]'
-			)
-			.forEach( ( n ) => n.remove() );
-	} );
-
 	it( 'renders existing values as tags', () => {
 		const { container, unmount } = renderComponent(
 			React.createElement( TagInputField, {
-				fieldName: 'urls',
-				initialValues: [ '/foo', '/bar' ],
+				initialValues: [ '/alpha', '/beta' ],
 			} )
 		);
-		const text = container.textContent;
-		expect( text ).toContain( '/foo' );
-		expect( text ).toContain( '/bar' );
-		unmount();
-	} );
 
-	it( 'writes the JSON-encoded values to the hidden input on mount', () => {
-		const hidden = setUpHiddenInput( 'urls' );
-		const { unmount } = renderComponent(
-			React.createElement( TagInputField, {
-				fieldName: 'urls',
-				initialValues: [ '/foo' ],
-			} )
-		);
-		expect( hidden.value ).toBe( '["/foo"]' );
+		const tags = container.querySelectorAll( '.event-logger-tag-text' );
+		expect( Array.from( tags ).map( ( t ) => t.textContent ) ).toEqual( [
+			'/alpha',
+			'/beta',
+		] );
 		unmount();
 	} );
 
 	it( 'adds a value when Enter is pressed in the text input', () => {
-		const hidden = setUpHiddenInput( 'urls' );
+		const seen = [];
 		const { container, unmount } = renderComponent(
 			React.createElement( TagInputField, {
-				fieldName: 'urls',
 				initialValues: [],
+				onChange: ( v ) => seen.push( v ),
 			} )
 		);
+
 		const input = container.querySelector( 'input[type="text"]' );
-		act( () => {
-			setControlledValue( input, '/baz' );
-		} );
-		act( () => {
-			input.dispatchEvent(
-				new KeyboardEvent( 'keydown', { key: 'Enter', bubbles: true } )
-			);
-		} );
-		expect( hidden.value ).toBe( '["/baz"]' );
+		act( () => setControlledValue( input, '/gamma' ) );
+		pressKey( input, 'Enter' );
+
+		expect(
+			Array.from(
+				container.querySelectorAll( '.event-logger-tag-text' )
+			).map( ( t ) => t.textContent )
+		).toEqual( [ '/gamma' ] );
+		expect( seen[ seen.length - 1 ] ).toEqual( [ '/gamma' ] );
 		unmount();
 	} );
 
-	it( 'removes the last tag on Backspace when the input is empty', () => {
-		const hidden = setUpHiddenInput( 'urls' );
+	it( 'adds a value on blur, so a typed tag is not lost', () => {
 		const { container, unmount } = renderComponent(
-			React.createElement( TagInputField, {
-				fieldName: 'urls',
-				initialValues: [ '/a', '/b' ],
-			} )
+			React.createElement( TagInputField, { initialValues: [] } )
 		);
+
 		const input = container.querySelector( 'input[type="text"]' );
+		act( () => setControlledValue( input, '/delta' ) );
+		// React's onBlur listens for the bubbling focusout, not native blur.
 		act( () => {
-			input.dispatchEvent(
-				new KeyboardEvent( 'keydown', {
-					key: 'Backspace',
-					bubbles: true,
-				} )
-			);
+			input.dispatchEvent( new Event( 'focusout', { bubbles: true } ) );
 		} );
-		expect( hidden.value ).toBe( '["/a"]' );
+
+		expect(
+			container.querySelector( '.event-logger-tag-text' ).textContent
+		).toBe( '/delta' );
+		unmount();
+	} );
+
+	it( 'refuses a blank value', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( TagInputField, { initialValues: [] } )
+		);
+
+		const input = container.querySelector( 'input[type="text"]' );
+		act( () => setControlledValue( input, '   ' ) );
+		pressKey( input, 'Enter' );
+
+		expect(
+			container.querySelectorAll( '.event-logger-tag-text' )
+		).toHaveLength( 0 );
 		unmount();
 	} );
 
 	it( 'does not add duplicate values', () => {
-		const hidden = setUpHiddenInput( 'urls' );
 		const { container, unmount } = renderComponent(
 			React.createElement( TagInputField, {
-				fieldName: 'urls',
-				initialValues: [ '/foo' ],
+				initialValues: [ '/alpha' ],
 			} )
 		);
+
 		const input = container.querySelector( 'input[type="text"]' );
-		act( () => {
-			setControlledValue( input, '/foo' );
-		} );
-		act( () => {
-			input.dispatchEvent(
-				new KeyboardEvent( 'keydown', { key: 'Enter', bubbles: true } )
-			);
-		} );
-		expect( hidden.value ).toBe( '["/foo"]' );
+		act( () => setControlledValue( input, '/alpha' ) );
+		pressKey( input, 'Enter' );
+
+		expect(
+			container.querySelectorAll( '.event-logger-tag-text' )
+		).toHaveLength( 1 );
+		unmount();
+	} );
+
+	it( 'removes the last tag on Backspace when the input is empty', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( TagInputField, {
+				initialValues: [ '/alpha', '/beta' ],
+			} )
+		);
+
+		pressKey(
+			container.querySelector( 'input[type="text"]' ),
+			'Backspace'
+		);
+
+		expect(
+			Array.from(
+				container.querySelectorAll( '.event-logger-tag-text' )
+			).map( ( t ) => t.textContent )
+		).toEqual( [ '/alpha' ] );
+		unmount();
+	} );
+
+	it( 'leaves the tags alone on Backspace while the input has text', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( TagInputField, {
+				initialValues: [ '/alpha', '/beta' ],
+			} )
+		);
+
+		const input = container.querySelector( 'input[type="text"]' );
+		act( () => setControlledValue( input, 'x' ) );
+		pressKey( input, 'Backspace' );
+
+		expect(
+			container.querySelectorAll( '.event-logger-tag-text' )
+		).toHaveLength( 2 );
 		unmount();
 	} );
 
 	it( 'removes a clicked tag by index', () => {
-		const hidden = setUpHiddenInput( 'urls' );
+		const seen = [];
 		const { container, unmount } = renderComponent(
 			React.createElement( TagInputField, {
-				fieldName: 'urls',
-				initialValues: [ '/foo', '/bar' ],
+				initialValues: [ '/alpha', '/beta', '/gamma' ],
+				onChange: ( v ) => seen.push( v ),
 			} )
 		);
-		const removeButtons = container.querySelectorAll(
-			'.event-logger-tag-remove'
-		);
+
 		act( () => {
-			removeButtons[ 0 ].click();
+			container
+				.querySelectorAll( '.event-logger-tag-remove' )[ 1 ]
+				.click();
 		} );
-		expect( hidden.value ).toBe( '["/bar"]' );
+
+		expect( seen[ seen.length - 1 ] ).toEqual( [ '/alpha', '/gamma' ] );
 		unmount();
 	} );
 
-	it( 'ignores legacy event-logger-reset DOM events (per-field reset is now the toggle module)', () => {
-		// TagInputField no longer listens for `event-logger-reset` (legacy).
-		const hidden = setUpHiddenInput( 'urls' );
-		const containerDiv = setUpContainer( 'urls' );
+	it( 'does not report the initial render as an edit', () => {
+		const seen = [];
 		const { unmount } = renderComponent(
 			React.createElement( TagInputField, {
-				fieldName: 'urls',
-				initialValues: [ '/old' ],
-				defaultValues: [ '/default1', '/default2' ],
+				initialValues: [ '/alpha' ],
+				onChange: ( v ) => seen.push( v ),
 			} )
 		);
-		act( () => {
-			containerDiv.dispatchEvent(
-				new CustomEvent( 'event-logger-reset', {
-					detail: {
-						field: 'urls',
-						defaultValues: [ '/default1', '/default2' ],
-					},
-				} )
-			);
-		} );
-		expect( hidden.value ).toBe( '["/old"]' );
+
+		expect( seen ).toHaveLength( 0 );
 		unmount();
 	} );
 
-	it( 'renders hook-selector mode with a count and the modal closed initially', () => {
-		const { container, unmount } = renderComponent(
-			React.createElement( TagInputField, {
-				fieldName: 'hooks',
-				initialValues: [ 'init', 'wp_loaded' ],
-				showHookSelector: true,
-			} )
+	it( 'lays tags out horizontally only when asked', () => {
+		const vertical = renderComponent(
+			React.createElement( TagInputField, { initialValues: [ '/a' ] } )
 		);
-		expect( container.textContent ).toContain( '2 hooks selected' );
-		expect( container.textContent ).toContain( 'HOOK_MODAL_CLOSED' );
-		unmount();
-	} );
-
-	it( 'pluralizes correctly for one hook', () => {
-		const { container, unmount } = renderComponent(
-			React.createElement( TagInputField, {
-				fieldName: 'hooks',
-				initialValues: [ 'init' ],
-				showHookSelector: true,
-			} )
-		);
-		expect( container.textContent ).toContain( '1 hook selected' );
-		expect( container.textContent ).not.toContain( '1 hooks' );
-		unmount();
-	} );
-
-	it( 'opens the hook selector modal from selector mode', () => {
-		const { container, unmount } = renderComponent(
-			React.createElement( TagInputField, {
-				fieldName: 'hooks',
-				initialValues: [],
-				showHookSelector: true,
-			} )
-		);
-		const button = Array.from(
-			container.querySelectorAll( 'button' )
-		).find( ( b ) => b.textContent === 'Select Hooks' );
-		act( () => {
-			button.click();
-		} );
-		expect( container.textContent ).toContain( 'HOOK_MODAL_OPEN' );
-		unmount();
-	} );
-
-	it( 'renders the Select Hooks button as a stock button', () => {
-		const { container, unmount } = renderComponent(
-			React.createElement( TagInputField, {
-				fieldName: 'hooks',
-				initialValues: [],
-				showHookSelector: true,
-			} )
-		);
-		const button = Array.from(
-			container.querySelectorAll( 'button' )
-		).find( ( b ) => b.textContent === 'Select Hooks' );
-		expect( button.classList.contains( 'button' ) ).toBe( true );
-		unmount();
-	} );
-
-	it( 'renders custom-event-selector mode', () => {
-		const { container, unmount } = renderComponent(
-			React.createElement( TagInputField, {
-				fieldName: 'events',
-				initialValues: [],
-				showCustomSelector: true,
-			} )
-		);
-		expect( container.textContent ).toContain( '0 events selected' );
-		expect( container.textContent ).toContain( 'CUSTOM_MODAL_CLOSED' );
-		unmount();
-	} );
-
-	it( 'opens the custom event selector modal from selector mode', () => {
-		const { container, unmount } = renderComponent(
-			React.createElement( TagInputField, {
-				fieldName: 'events',
-				initialValues: [],
-				showCustomSelector: true,
-			} )
-		);
-		const button = Array.from(
-			container.querySelectorAll( 'button' )
-		).find( ( b ) => b.textContent === 'Select Events' );
-		act( () => {
-			button.click();
-		} );
-		expect( container.textContent ).toContain( 'CUSTOM_MODAL_OPEN' );
-		unmount();
-	} );
-
-	it( 'renders the Select Events button as a stock button', () => {
-		const { container, unmount } = renderComponent(
-			React.createElement( TagInputField, {
-				fieldName: 'events',
-				initialValues: [],
-				showCustomSelector: true,
-			} )
-		);
-		const button = Array.from(
-			container.querySelectorAll( 'button' )
-		).find( ( b ) => b.textContent === 'Select Events' );
-		expect( button.classList.contains( 'button' ) ).toBe( true );
-		unmount();
-	} );
-
-	// Build a reset-marked wrapper as the admin-field-reset toggle leaves it.
-	function setUpMarkedWrapper( name ) {
-		const wrapper = document.createElement( 'div' );
-		wrapper.setAttribute( 'data-nn-reset', `pfx_reset[pfx_${ name }]` );
-		wrapper.classList.add( 'is-marked' );
-		const hidden = document.createElement( 'input' );
-		hidden.id = `${ name }_json`;
-		hidden.type = 'hidden';
-		wrapper.appendChild( hidden );
-		const marker = document.createElement( 'input' );
-		marker.type = 'hidden';
-		marker.setAttribute( 'data-nn-reset-marker', '' );
-		wrapper.appendChild( marker );
-		document.body.appendChild( wrapper );
-		return { wrapper, hidden };
-	}
-
-	it( 'keeps a pending reset mark on mount (no edit yet)', () => {
-		const { wrapper } = setUpMarkedWrapper( 'urls' );
-		const { unmount } = renderComponent(
-			React.createElement( TagInputField, {
-				fieldName: 'urls',
-				initialValues: [ '/foo' ],
-			} )
-		);
-		// Mount syncs the hidden carrier but must NOT drop the mark.
-		expect( wrapper.classList.contains( 'is-marked' ) ).toBe( true );
 		expect(
-			wrapper.querySelector( '[data-nn-reset-marker]' )
-		).not.toBeNull();
-		unmount();
-	} );
+			vertical.container.querySelector( '.event-logger-tag-container' )
+				.className
+		).toContain( 'vertical' );
+		vertical.unmount();
 
-	it( 'drops the pending reset mark when the value is edited', () => {
-		// Editing must drop the mark here, else Reset_Gate deletes the option.
-		const { wrapper, hidden } = setUpMarkedWrapper( 'urls' );
-		const { container, unmount } = renderComponent(
+		const horizontal = renderComponent(
 			React.createElement( TagInputField, {
-				fieldName: 'urls',
-				initialValues: [],
+				initialValues: [ '/a' ],
+				horizontal: true,
 			} )
 		);
-		const input = container.querySelector( 'input[type="text"]' );
-		act( () => {
-			setControlledValue( input, '/baz' );
-		} );
-		act( () => {
-			input.dispatchEvent(
-				new KeyboardEvent( 'keydown', { key: 'Enter', bubbles: true } )
-			);
-		} );
-		expect( wrapper.classList.contains( 'is-marked' ) ).toBe( false );
-		expect( wrapper.querySelector( '[data-nn-reset-marker]' ) ).toBeNull();
-		expect( hidden.value ).toBe( '["/baz"]' );
-		unmount();
+		expect(
+			horizontal.container.querySelector( '.event-logger-tag-container' )
+				.className
+		).toContain( 'horizontal' );
+		horizontal.unmount();
 	} );
 } );

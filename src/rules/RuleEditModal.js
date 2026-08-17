@@ -233,7 +233,6 @@ export default function RuleEditModal( {
 								) }
 							</BaseControl.VisualLabel>
 							<TagInputField
-								fieldName="rule-significant"
 								initialValues={ significant }
 								onChange={ setSignificant }
 								horizontal
