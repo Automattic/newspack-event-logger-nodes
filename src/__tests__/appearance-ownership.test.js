@@ -143,10 +143,7 @@ const CANONICAL_CLASS_CONTRACTS = {
 		'newspack-nodes-status',
 		'newspack-nodes-modal',
 	],
-	'settings/settings/TagInputField.js': [
-		'newspack-nodes-badge',
-		'newspack-nodes-status',
-	],
+	'settings/settings/TagInputField.js': [ 'newspack-nodes-badge' ],
 	'rules/RuleEditModal.js': [
 		'newspack-nodes-error-banner',
 		'newspack-nodes-modal',
