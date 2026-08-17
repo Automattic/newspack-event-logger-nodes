@@ -97,13 +97,8 @@ function browseMock( overrides = {} ) {
 		partitions: [],
 		selectedPartition: '',
 		selectPartition: jest.fn(),
-		segments: [],
-		mode: 'live',
-		lastReceivedSegment: null,
-		segmentId: null,
-		follow: jest.fn(),
-		replay: jest.fn(),
-		browseSegment: jest.fn(),
+		jump: jest.fn(),
+		sidebar: <div data-testid="log-browser" />,
 		...overrides,
 	};
 }
@@ -474,14 +469,11 @@ describe( 'RequestStream', () => {
 			expect( selectPartition ).toHaveBeenCalledWith( 'completed.p3' );
 		} );
 
-		it( 'renders the segment sidebar when a partition is selected', () => {
+		it( 'renders the segment rail when a partition is selected', () => {
 			registerViewFixture();
 			const browse = browseMock( {
 				partitions: [ { key: 'completed.p3', label: 'completed.p3' } ],
 				selectedPartition: 'completed.p3',
-				segments: [ { id: 6, size: 4096 } ],
-				mode: 'browse',
-				segmentId: 6,
 			} );
 			useRequestLogGraph.mockReturnValue( {
 				setFilter: ( term ) => {
@@ -494,16 +486,10 @@ describe( 'RequestStream', () => {
 				clear: jest.fn(),
 				browse,
 			} );
-			mount();
-			expect( logBrowserProps.items ).toEqual( [
-				{ id: 6, size: 4096 },
-			] );
-			expect( logBrowserProps.mode ).toBe( 'browse' );
-			logBrowserProps.onSelectItem( { id: 6, size: 4096 } );
-			expect( browse.browseSegment ).toHaveBeenCalledWith( {
-				id: 6,
-				size: 4096,
-			} );
+			const { container } = mount();
+			expect(
+				container.querySelector( '[data-testid="log-browser"]' )
+			).toBeTruthy();
 		} );
 	} );
 

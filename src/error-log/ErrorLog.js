@@ -24,7 +24,6 @@ import { useErrorLogGraph } from './hooks/useErrorLogGraph';
 import LogStreamViewer from '@newspack-nodes/shared/components/LogStreamViewer';
 import LogListHeader from '@newspack-nodes/shared/components/LogListHeader';
 import SegmentBrowseSidebar from '../components/SegmentBrowseSidebar';
-import parseOffsetJump from '@newspack-nodes/shared/utils/parseOffsetJump';
 import './styles/error-log.scss';
 
 const ROW_HEIGHT = 33;
@@ -259,7 +258,7 @@ const listHeader = (
  */
 export default function ErrorLog() {
 	// Mount the graph; returns the control callbacks + the browse model.
-	const { setPaused, clear, browse, setFilter } = useErrorLogGraph();
+	const { setPaused, clear, step, browse, setFilter } = useErrorLogGraph();
 
 	// Low-frequency view model (pause button + reconnect banner + empty-state).
 	const view = useNodeState( VIEW_NODE, 'view' ) ?? EMPTY_VIEW;
@@ -277,23 +276,8 @@ export default function ErrorLog() {
 			isPaused={ isPaused }
 			connectionError={ connectionError }
 			onTogglePause={ () => setPaused( ! isPaused ) }
-			onStep={ browse?.selectedPartition ? browse.step : undefined }
-			onJump={
-				browse?.selectedPartition
-					? ( text ) => {
-							const position = parseOffsetJump(
-								text,
-								browse.lastReceivedSegment ??
-									( 'number' === typeof browse.segmentId
-										? browse.segmentId
-										: null )
-							);
-							if ( position ) {
-								browse.jumpTo( position );
-							}
-					  }
-					: undefined
-			}
+			onStep={ browse?.selectedPartition ? step : undefined }
+			onJump={ browse?.selectedPartition ? browse.jump : undefined }
 			getViewNode={ getViewNode }
 			onClear={ clear }
 			onFilter={ setFilter }
