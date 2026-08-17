@@ -46,6 +46,8 @@ final class Rule {
 	 * @param string[]      $custom_events               Categories the application logs itself; never bound as do_action hooks.
 	 * @param string[]|null $hooks                       Inline list when hooks_in=inline; null when hooks_in=mc, meaning unresolved.
 	 * @param string        $hooks_in                    self::HOOKS_INLINE | self::HOOKS_MC.
+	 *
+	 * @throws \InvalidArgumentException When the pattern is empty, or hooks and hooks_in contradict.
 	 */
 	public function __construct(
 		public readonly string $id,
@@ -57,32 +59,40 @@ final class Rule {
 		public readonly array $custom_events = [],
 		public readonly ?array $hooks = [],
 		public readonly string $hooks_in = self::HOOKS_INLINE
-	) {}
+	) {
+		if ( '' === $pattern ) {
+			throw new \InvalidArgumentException( 'rule pattern is required' );
+		}
+		if ( ( null === $hooks ) !== ( self::HOOKS_MC === $hooks_in ) ) {
+			throw new \InvalidArgumentException( 'rule hooks contradict hooks_in: null hooks means the mc tier, a list means inline' );
+		}
+	}
 
 	/**
-	 * Decode a stored, config-seeded, or wire rule map. Every field is coerced,
-	 * never rejected: anything but 'log' reads as skip, a missing pattern reads
-	 * as '/', and scalars cast through Core::as_*.
+	 * Decode a stored, config-seeded, or wire rule map. Scalars coerce through
+	 * Core::as_* and anything but 'log' reads as skip, but a map the rest of the
+	 * system cannot represent is REFUSED rather than aliased onto a shape it can.
 	 *
-	 * The `hooks` key carries the tier. Absent, it means an inline rule with no
-	 * hooks; present but not an array (`null` on the wire), it means the hooks
-	 * are unresolved and `hooks_in` decides where to find them.
+	 * The `hooks` key carries the tier, and only an EXPLICIT null names the
+	 * pointer tier — `hooks_in` must then say so. Absent, or any other non-list,
+	 * is an inline rule with no hooks. The constructor holds both invariants.
 	 *
 	 * @param array<string,mixed> $a Stored rule shape, as produced by to_array().
 	 * @return self
+	 * @throws \InvalidArgumentException When the map carries no pattern, or a contradictory hooks/hooks_in pair.
 	 */
 	public static function from_array( array $a ): self {
 		$action = ( self::ACTION_LOG === ( $a['action'] ?? '' ) ) ? self::ACTION_LOG : self::ACTION_SKIP;
 		$hooks  = \array_key_exists( 'hooks', $a ) ? $a['hooks'] : [];
 		return new self(
 			Core::as_string( $a['id'] ?? null, '' ),
-			Core::as_string( $a['pattern'] ?? null, '/' ),
+			Core::as_string( $a['pattern'] ?? null, '' ),
 			$action,
 			Core::as_int( $a['auto_disable_threshold'] ?? null ),
 			Core::as_float( $a['auto_protect_time_threshold'] ?? null ),
 			self::to_string_list( $a['significant_events'] ?? null ),
 			self::to_string_list( $a['custom_events'] ?? null ),
-			\is_array( $hooks ) ? self::to_string_list( $hooks ) : null,
+			null === $hooks ? null : self::to_string_list( $hooks ),
 			( self::HOOKS_MC === ( $a['hooks_in'] ?? '' ) ) ? self::HOOKS_MC : self::HOOKS_INLINE
 		);
 	}

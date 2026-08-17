@@ -1816,7 +1816,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				}
 				$limit = \min(
 					self::GREP_RESULT_LIMIT_MAX,
-					\max( 1, (int) ( $parsed['options']['limit'] ?? self::GREP_RESULT_LIMIT_DEFAULT ) )
+					\max( 1, self::require_option_int( $parsed['options'], 'limit', self::GREP_RESULT_LIMIT_DEFAULT ) )
 				);
 
 				return self::run_request_grep( $pattern, $limit );
@@ -1836,7 +1836,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				if ( '' === $rid ) {
 					throw new \RuntimeException( 'rid required' );
 				}
-				$partition = (int) ( $parsed['options']['partition'] ?? 0 );
+				$partition = self::require_option_int( $parsed['options'], 'partition', 0 );
 
 				$dirs = Bootstrap::node_dirs( self::NODE_REQUESTS );
 				// No declared set: unfindable rid, not a bad partition.

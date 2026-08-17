@@ -280,6 +280,23 @@ class RulesCITest extends TestCase {
 		$this->assertStringContainsString( 'invalid', \strtolower( $result ) );
 	}
 
+	public function test_upsert_refuses_a_pattern_less_rule_and_keeps_the_baseline(): void {
+		// A pattern-less rule used to coerce to '/', taking the log-all
+		// baseline's id and replacing it with a skip — logging off site-wide.
+		$baseline = new Rule( Log_Manager::url_hash( '/' ), '/', Rule::ACTION_LOG, hooks: [ 'wp_loaded' ] );
+		( new Rule_Set( [] ) )->save( [ $baseline ] );
+
+		$result = $this->fire( 'upsert', \wp_json_encode( [ 'action' => Rule::ACTION_SKIP ] ) );
+
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( 'pattern', \strtolower( $result ) );
+		$stored = $GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ];
+		$this->assertCount( 1, $stored );
+		$this->assertSame( '/', $stored[0]['pattern'] );
+		$this->assertSame( Rule::ACTION_LOG, $stored[0]['action'], 'the log-all baseline survives a pattern-less upsert' );
+		$this->assertSame( [ 'wp_loaded' ], $stored[0]['hooks'] );
+	}
+
 	// -------------------------------------------------------------------------
 	// delete
 	// -------------------------------------------------------------------------

@@ -61,6 +61,65 @@ final class RuleTest extends TestCase {
 		$this->assertSame( 'mc', $rule->hooks_in );
 	}
 
+	public function test_from_array_rejects_a_missing_pattern(): void {
+		// Coercing to '/' aliased the log-all baseline's id, so a pattern-less
+		// upsert replaced it with a skip rule and killed site-wide logging.
+		$this->expectException( \InvalidArgumentException::class );
+		Rule::from_array( [ 'id' => 'a1b2c3d4e5f6', 'action' => 'skip' ] );
+	}
+
+	public function test_from_array_rejects_an_empty_pattern(): void {
+		$this->expectException( \InvalidArgumentException::class );
+		Rule::from_array( [ 'id' => 'a1b2c3d4e5f6', 'pattern' => '', 'action' => 'log' ] );
+	}
+
+	public function test_from_array_rejects_a_pointer_tier_carrying_inline_hooks(): void {
+		$this->expectException( \InvalidArgumentException::class );
+		Rule::from_array( [ 'id' => 'f6', 'pattern' => '/tarot/', 'action' => 'log', 'hooks' => [ 'wp_loaded' ], 'hooks_in' => 'mc' ] );
+	}
+
+	public function test_from_array_rejects_a_pointer_tier_whose_hooks_key_was_dropped(): void {
+		// What sanitize_settings_array() manufactures: it drops the wire's null.
+		$this->expectException( \InvalidArgumentException::class );
+		Rule::from_array( [ 'id' => 'f6', 'pattern' => '/tarot/', 'action' => 'log', 'hooks_in' => 'mc' ] );
+	}
+
+	public function test_from_array_reads_scalar_hooks_as_an_empty_inline_list(): void {
+		// Only an explicit null names the pointer tier. A hand-edited '' (or any
+		// producer that encoded an empty array as one) is a rule with no hooks —
+		// reading it as unresolved contradicted inline and dropped the rule.
+		$rule = Rule::from_array( [
+			'id'                     => 'a1b2c3d4e5f6',
+			'pattern'                => '/tarot/',
+			'action'                 => 'log',
+			'auto_disable_threshold' => 7331,
+			'custom_events'          => [ 'tarot_draw' ],
+			'hooks'                  => '',
+			'hooks_in'               => 'inline',
+		] );
+
+		$this->assertSame( [], $rule->hooks );
+		$this->assertSame( 'inline', $rule->hooks_in );
+		$this->assertTrue( $rule->is_log() );
+		$this->assertSame( 7331, $rule->auto_disable_threshold );
+		$this->assertSame( [ 'tarot_draw' ], $rule->custom_events );
+	}
+
+	public function test_from_array_rejects_unresolved_hooks_on_the_inline_tier(): void {
+		$this->expectException( \InvalidArgumentException::class );
+		Rule::from_array( [ 'id' => 'f6', 'pattern' => '/tarot/', 'action' => 'log', 'hooks' => null ] );
+	}
+
+	public function test_constructor_rejects_an_empty_pattern(): void {
+		$this->expectException( \InvalidArgumentException::class );
+		new Rule( 'a1b2c3d4e5f6', '', Rule::ACTION_LOG );
+	}
+
+	public function test_constructor_rejects_a_pointer_tier_carrying_inline_hooks(): void {
+		$this->expectException( \InvalidArgumentException::class );
+		new Rule( 'a1b2c3d4e5f6', '/tarot/', Rule::ACTION_LOG, hooks: [ 'wp_loaded' ], hooks_in: Rule::HOOKS_MC );
+	}
+
 	public function test_with_id_copies_the_rule_with_a_new_id(): void {
 		$rule = Rule::from_array( [ 'id' => 'old', 'pattern' => '/heavy/', 'action' => 'log', 'hooks' => [ 'init', 'wp' ] ] );
 

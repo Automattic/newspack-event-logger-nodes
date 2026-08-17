@@ -54,14 +54,14 @@ class Discovery_Collector_Node extends Timer_Node {
 	 * @api Called by the substrate during make_node construction.
 	 * @param list<string>|null $args Interval in seconds (digits) at token 0, empty for the default, or null to read back.
 	 * @return list<string> Last-set argument tokens.
+	 * @throws \InvalidArgumentException When the interval token isn't a run of digits.
 	 */
 	public function arguments( ?array $args = null ): array {
 		if ( null === $args ) {
 			return $this->arguments;
 		}
 		$this->arguments = $args;
-		$first           = $args[0] ?? '';
-		$seconds         = '' === $first ? self::DEFAULT_INTERVAL_SECONDS : (int) $first;
+		$seconds         = $this->parse_interval( $args[0] ?? '', self::DEFAULT_INTERVAL_SECONDS, self::MIN_INTERVAL_S );
 		$this->set_timer( $seconds * 1000 );
 		return $this->arguments;
 	}
@@ -255,7 +255,7 @@ class Discovery_Collector_Node extends Timer_Node {
 			'category'    => 'Monitor',
 			'description' => 'Periodically fans discovery.get to every spoke and union-merges replies into the hub options.',
 			'arguments'   => [
-				[ 'name' => 'interval_seconds', 'type' => 'int', 'required' => false, 'default' => (string) self::DEFAULT_INTERVAL_SECONDS, 'description' => 'Interval in seconds between discovery sweeps of the connected spokes (default 300).' ],
+				[ 'name' => 'interval_seconds', 'type' => 'int', 'required' => false, 'default' => (string) self::DEFAULT_INTERVAL_SECONDS, 'description' => 'Interval in seconds between discovery sweeps of the connected spokes (digits only; default 300, floored at 1).' ],
 			],
 			'commands'    => [],
 			'has_target'  => true,

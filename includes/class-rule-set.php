@@ -98,7 +98,9 @@ final class Rule_Set {
 	 * An absent option seeds from config; a corrupt (non-array) one seeds too,
 	 * after a stderr notice. Non-array entries are skipped. Stored ids stand as
 	 * written — only an entry stored without one gets an id minted — because
-	 * every write path already rekeyed by pattern. This is the read side.
+	 * every write path already rekeyed by pattern. This is the read side, so an
+	 * unrepresentable row is skipped with a notice rather than thrown: one
+	 * hand-edited option must not fatal every request that resolves a rule.
 	 */
 	public static function load(): self {
 		$raw = \get_option( self::OPTION_RULES, null );
@@ -110,13 +112,9 @@ final class Rule_Set {
 			return self::seed_from_config();
 		}
 		$rules = [];
-		foreach ( $raw as $entry ) {
-			if ( \is_array( $entry ) ) {
-				/** @var array<string,mixed> $entry stored rule shape (Rule::to_array()). */
-				$rule = Rule::from_array( $entry );
-				// Mint id for idless stored rule; avoids collision on '' key.
-				$rules[] = '' === $rule->id ? $rule->with_id( self::id_for( $rule->pattern ) ) : $rule;
-			}
+		foreach ( self::rules_from_maps( $raw, true ) as $rule ) {
+			// Mint id for idless stored rule; avoids collision on '' key.
+			$rules[] = '' === $rule->id ? $rule->with_id( self::id_for( $rule->pattern ) ) : $rule;
 		}
 		return new self( $rules );
 	}
@@ -137,13 +135,14 @@ final class Rule_Set {
 	}
 
 	/**
-	 * Turn config rule maps into Rule objects, rekeyed by pattern.
+	 * Turn config rule maps into Rule objects, rekeyed by pattern. An operator
+	 * typo skips that entry — a throw here would white-screen the site.
 	 *
 	 * @param array<array-key,mixed> $entries Config `rules` list.
 	 * @return Rule[]
 	 */
 	private static function rules_from_config( array $entries ): array {
-		return self::rekey_by_pattern( self::rules_from_maps( $entries ) );
+		return self::rekey_by_pattern( self::rules_from_maps( $entries, true ) );
 	}
 
 	/**
@@ -161,8 +160,14 @@ final class Rule_Set {
 		$out = [];
 		foreach ( $rules_array as $entry ) {
 			if ( \is_array( $entry ) && Rule::HOOKS_MC === ( $entry['hooks_in'] ?? '' ) ) {
-				/** @var array<string,mixed> $entry pointer rule map. */
-				$hooks = self::hooks_for( Rule::from_array( $entry ) );
+				try {
+					/** @var array<string,mixed> $entry pointer rule map. */
+					$hooks = self::hooks_for( Rule::from_array( $entry ) );
+				} catch ( \InvalidArgumentException $e ) {
+					// Unrepresentable at rest — load() skips it; ship as found.
+					Core::print_less_often( 'Newspack ELN: cannot inline hooks for stored rule: ', $e->getMessage() );
+					$hooks = [];
+				}
 				// Stay a pointer on []: inlining empty wipes the spoke's hooks.
 				if ( [] !== $hooks ) {
 					$entry['hooks']    = $hooks;
@@ -222,12 +227,8 @@ final class Rule_Set {
 				$stored[] = $rule->to_array();
 				continue;
 			}
-			$hooks = $rule->hooks;
-			if ( null === $hooks && Rule::HOOKS_MC === $rule->hooks_in ) {
-				// Rehydrate hooks=null pointer rule so tiering keeps option.
-				$hooks = self::hooks_for( $rule );
-			}
-			$hooks = $hooks ?? [];
+			// Null hooks IS the pointer tier; rehydrate to count the real list.
+			$hooks = $rule->hooks ?? self::hooks_for( $rule );
 			if ( \count( $hooks ) <= self::INLINE_HOOK_LIMIT ) {
 				// Inline: strip any prior durable/table footprint.
 				\delete_option( self::hooks_option_name( $rule->id ) );
@@ -380,15 +381,30 @@ final class Rule_Set {
 	/**
 	 * Decode a list of stored/wire rule maps, skipping non-array junk.
 	 *
-	 * @param array<array-key,mixed> $entries Rule maps (Rule::to_array() shape).
+	 * `Rule::from_array()` refuses a map the rest of the system cannot represent.
+	 * A WRITE caller lets that throw, rejecting the whole push and leaving the
+	 * last-good ruleset in place; a READ caller (the stored option, the config
+	 * seed) passes $skip_invalid so one bad row costs only itself.
+	 *
+	 * @param array<array-key,mixed> $entries      Rule maps (Rule::to_array() shape).
+	 * @param bool                   $skip_invalid Skip an unrepresentable map with a notice.
 	 * @return Rule[]
+	 * @throws \InvalidArgumentException When a map is unrepresentable and $skip_invalid is false.
 	 */
-	private static function rules_from_maps( array $entries ): array {
+	private static function rules_from_maps( array $entries, bool $skip_invalid = false ): array {
 		$rules = [];
 		foreach ( $entries as $entry ) {
-			if ( \is_array( $entry ) ) {
+			if ( ! \is_array( $entry ) ) {
+				continue;
+			}
+			try {
 				/** @var array<string,mixed> $entry rule shape (Rule::to_array()). */
 				$rules[] = Rule::from_array( $entry );
+			} catch ( \InvalidArgumentException $e ) {
+				if ( ! $skip_invalid ) {
+					throw $e;
+				}
+				Core::print_less_often( 'Newspack ELN: skipping unrepresentable rule: ', $e->getMessage() );
 			}
 		}
 		return $rules;

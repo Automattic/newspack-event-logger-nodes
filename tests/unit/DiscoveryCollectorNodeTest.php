@@ -136,6 +136,31 @@ class DiscoveryCollectorNodeTest extends TestCase {
 		$this->assertFalse( $node->oneshot );
 	}
 
+	public function test_arguments_rejects_non_numeric_interval(): void {
+		$router = new \Newspack_Nodes\Router_Node();
+		$router->name( \Newspack_Nodes\Node_Names::ROUTER );
+		$node = new Discovery_Collector_Node();
+		$node->name( 'discovery-collector' );
+
+		$this->expectException( \InvalidArgumentException::class );
+
+		$node->arguments( [ 'abc' ] );
+	}
+
+	/** A zero interval must never take an own 0 ms slot: that free-spins the drain. */
+	public function test_arguments_floors_zero_interval_onto_the_router_hitchhike(): void {
+		$router = new \Newspack_Nodes\Router_Node();
+		$router->name( \Newspack_Nodes\Node_Names::ROUTER );
+		$node = new Discovery_Collector_Node();
+		$node->name( 'discovery-collector' );
+
+		$node->arguments( [ '0' ] );
+
+		$mode = ( new \ReflectionObject( $node ) )->getProperty( 'mode' );
+		$this->assertSame( 1000, $node->interval_ms );
+		$this->assertSame( 'router', $mode->getValue( $node ) );
+	}
+
 	public function test_fill_unions_registered_hooks_into_discovered_hooks(): void {
 		$sink = new Capture_Sink_Node();
 		$node = $this->wired_node( $sink );
