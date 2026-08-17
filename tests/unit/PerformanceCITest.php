@@ -1123,6 +1123,19 @@ class PerformanceCITest extends TestCase {
 		$this->assertTrue( $result['truncated'] );
 	}
 
+	/** `max(1, (int) 'abc')` answers one result and calls it the whole match set. */
+	public function test_request_grep_refuses_a_malformed_limit(): void {
+		$this->write_firehose( 0, [
+			[ 'rid' => 'lim1', 'k' => 'request', 'm' => 'GET /match/a', 'ts' => 1700000000.0, 'n' => 1 ],
+			[ 'rid' => 'lim1', 'k' => 'process (complete)', 'm' => '(done)', 'ts' => 1700000000.5, 'n' => 2 ],
+		] );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'request_grep', '/match --limit=abc' );
+
+		$this->assertIsString( $result, 'a malformed --limit must not silently return one row' );
+		$this->assertStringContainsString( 'limit', $result );
+	}
+
 	public function test_request_grep_empty_when_no_match(): void {
 		$this->write_firehose( 0, [
 			[ 'rid' => 'z1', 'k' => 'request', 'm' => 'GET /other', 'ts' => 1700000000.0, 'n' => 1 ],
@@ -1169,6 +1182,30 @@ class PerformanceCITest extends TestCase {
 
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'not found', \strtolower( $result ) );
+	}
+
+	/**
+	 * A malformed --partition casts to 0, so the verb answers for a partition
+	 * the operator never named — and where the rid is absent, blames the rid.
+	 */
+	public function test_request_detail_verb_refuses_a_malformed_partition(): void {
+		$rid = $this->write_request( [
+			'rid'         => 'rid-malformed-partition-flag',
+			'url'         => '/p0-only',
+			'timestamp'   => 1700000600,
+			'duration_ms' => 12,
+			'events'      => [ [ 'k' => 'process (start)', 'm' => '/p0-only', 'ts' => 1700000600.0 ] ],
+		] );
+
+		$result = VerbHarness::fire(
+			new Performance_CI_Node(),
+			'performance',
+			'request_detail',
+			$rid . ' --partition=abc'
+		);
+
+		$this->assertIsString( $result, 'a malformed --partition must not answer for p0' );
+		$this->assertStringContainsString( 'partition', \strtolower( $result ) );
 	}
 
 	public function test_request_detail_verb_rejects_invalid_partition(): void {

@@ -65,6 +65,15 @@ afterEach( () => {
 	delete global.fetch;
 } );
 
+// One router heartbeat — the tick the tab's poll rides — plus the microtask
+// turns the reply needs to cross the wire and land on the view node.
+const tick = async () => {
+	await act( async () => {
+		Core.node( '_router' ).fireCb();
+	} );
+	await act( async () => {} );
+};
+
 // Poll until `assert` holds; the reply crosses a real async wire.
 const waitFor = async ( assert ) => {
 	for ( let i = 0; i < 50; i++ ) {
@@ -135,6 +144,129 @@ test( 'renders the request summary cards + full-trace deep link when found', asy
 	expect(
 		view.container.querySelector( '.eln-current-request' ).className
 	).toBe( 'eln-current-request' );
+} );
+
+// The overlay host re-renders the tab on every drag and resize, and a found
+// request must survive every one of them — it lives on the view node, which
+// stays mounted for as long as the tab does.
+test( 'keeps the found request across a re-render from the host', async () => {
+	setBlob( {
+		rid: 'sticky77',
+		partition: 5,
+		perfUrl: 'admin.php?page=event-logger-overview',
+	} );
+	answerWith( {
+		rid: 'sticky77',
+		url: '/wp-admin/edit.php',
+		duration_ms: 987.65,
+		status_code: 503,
+		error_status: 'T',
+		peak_mb: 128,
+		timestamp: 1750000000,
+	} );
+
+	let view;
+	await act( async () => {
+		view = render( <CurrentRequestTab /> );
+	} );
+	await act( async () => {} );
+	expect( view.container.textContent ).toContain( 'sticky77' );
+	// The node that owns the answer is still there to answer with.
+	expect( Core.node( 'currentrequest:view' ) ).not.toBeNull();
+
+	// One re-render from the host — what a drag or a tab switch delivers.
+	view.rerender( <CurrentRequestTab /> );
+
+	const text = view.container.textContent;
+	expect( text.toLowerCase() ).not.toContain( 'still processing' );
+	expect( text ).toContain( 'sticky77' );
+	expect( text ).toContain( '987.65' );
+	expect( text ).toContain( '503' );
+} );
+
+// `Flame_Builder_Node` consumes requests.log AFTER `Request_Builder_Node` wrote
+// the record, so the reply that finds a request almost always predates its
+// flame. Settling on that first reply forfeits the trace until a reload.
+test( 'renders the flame graph written after the record was found', async () => {
+	setBlob( {
+		rid: 'lateflame42',
+		partition: 3,
+		perfUrl: 'admin.php?page=event-logger-overview',
+	} );
+	const record = {
+		rid: 'lateflame42',
+		url: '/wp-admin/upload.php',
+		duration_ms: 314.15,
+		status_code: 207,
+		error_status: '-',
+		peak_mb: 96,
+		timestamp: 1760000000,
+	};
+	// Nothing has folded a flame yet; the builder does that a beat later.
+	let flame = null;
+	installFakeCommandWire( () =>
+		flame ? { ...record, flame_data: flame } : record
+	);
+
+	let view;
+	await act( async () => {
+		view = render( <CurrentRequestTab /> );
+	} );
+	await act( async () => {} );
+	expect( view.container.textContent ).toContain( 'lateflame42' );
+	expect(
+		view.container.querySelector( '[data-testid="flame"]' )
+	).toBeNull();
+
+	flame = {
+		name: 'lateflame-root',
+		value: 314.15,
+		children: [ { name: 'wp_loaded' } ],
+	};
+	await tick();
+
+	await waitFor( () =>
+		expect(
+			view.container.querySelector( '[data-testid="flame"]' )
+		).not.toBeNull()
+	);
+	expect(
+		view.container.querySelector( '[data-testid="flame"]' ).textContent
+	).toBe( 'lateflame-root' );
+	expect( view.container.textContent ).toContain( 'Request Trace' );
+} );
+
+// A site running no `flame-builder` topology has no flame coming, so waiting on
+// one is waiting forever. The ask outlives the record by a few ticks, no more.
+test( 'stops asking a few ticks past the record when no flame arrives', async () => {
+	setBlob( { rid: 'noflame13', partition: 7, perfUrl: 'admin.php?page=x' } );
+	const wire = installFakeCommandWire( () => ( {
+		rid: 'noflame13',
+		url: '/wp-admin/themes.php',
+		duration_ms: 55.5,
+		status_code: 418,
+		error_status: '-',
+		timestamp: 1760000001,
+	} ) );
+
+	let view;
+	await act( async () => {
+		view = render( <CurrentRequestTab /> );
+	} );
+	await act( async () => {} );
+	expect( view.container.textContent ).toContain( 'noflame13' );
+
+	for ( let i = 0; i < 12; i++ ) {
+		await tick();
+	}
+	const asks = wire.batches.length;
+	await tick();
+	await tick();
+
+	// It kept asking past the record, and then it stopped.
+	expect( asks ).toBeGreaterThan( 1 );
+	expect( asks ).toBeLessThanOrEqual( 8 );
+	expect( wire.batches.length ).toBe( asks );
 } );
 
 // No Refresh button: the tab asks again every tick, so the only thing one

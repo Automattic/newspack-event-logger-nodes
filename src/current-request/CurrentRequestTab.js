@@ -28,6 +28,9 @@ const VIEW = 'currentrequest:view';
 /** Every router tick: the record lands the moment the worker writes it. */
 const POLL_INTERVAL_MS = 1000;
 
+/** Ticks the ask outlives the record by, waiting on the later flame write. */
+const FLAME_RETRY_TICKS = 5;
+
 const FlameGraph = lazy( () => import( '../overview/FlameGraph' ) );
 
 /**
@@ -76,37 +79,52 @@ function statusLabel( errorStatus ) {
 /**
  * The overlay's "Request" tab.
  *
- * Four states, in the order they render: `idle` when the page localized no rid
- * (logging off, running as root, or no matching `log` rule), `loading` for the
- * first paint, `processing` while the request-builder has yet to write the
- * record, and `found` once `request_detail` answers.
+ * Four states, in the order they render, all read off the view node: `idle`
+ * when the page localized no rid (logging off, running as root, or no matching
+ * `log` rule), `loading` before the graph is mounted, `processing` while the
+ * request-builder has yet to write the record, and `found` once
+ * `request_detail` answers with one.
  *
  * The load is desired state rather than an event: the tab POLLS for its own
  * record until one arrives, so a record written a second after the page
  * rendered — or a session refused and later renewed — converges on its own,
  * and the ask rides the same tick as everything else on the page.
  *
- * `flame_data` is a separate write: the verb merges it in only once
- * `Flame_Builder_Node` has produced it, and the loop settles on the record
- * alone, so a request found ahead of its flame renders without one.
+ * A found record then holds the poll open a few more ticks for `flame_data`,
+ * which `Flame_Builder_Node` writes after the record it is built from.
  *
  * @return {import('react').ReactElement} The tab.
  */
 export default function CurrentRequestTab() {
 	const { rid = '', partition = 0, perfUrl = '' } = currentRequestData();
-	// The whole lifecycle in one type; `request` only lands in the found state.
-	const [ state, setState ] = useState(
-		/** @type {{status: string, request?: Object}} */ (
-			rid ? { status: 'loading' } : { status: 'idle' }
-		)
-	);
+
+	// The record lives on the view node for as long as the tab is mounted.
+	const model = useNodeState( VIEW, 'view' );
+	const request = model?.request ?? null;
+	const flameData = request?.flame_data;
+	const hasFlame = !! ( flameData && flameData.children?.length > 0 );
+
+	// @longform
+	// The flame is a SECOND write: Flame_Builder consumes requests.log after
+	// Request_Builder wrote the record, so the reply that finds the request
+	// almost always predates its flame. Asking on past the record is what
+	// delivers the trace without a reload, and the tick bound is what keeps a
+	// site running no flame-builder topology from asking for one forever.
+	const [ asksSinceFound, setAsksSinceFound ] = useState( 0 );
+	useEffect( () => {
+		if ( model?.request ) {
+			setAsksSinceFound( ( n ) => n + 1 );
+		}
+	}, [ model ] );
 
 	// @longform
 	// The ask keeps going until the record exists. That serves both failure
 	// modes at once: request_detail legitimately answers nothing until
 	// requests.log has the record, and a refused command answered the same way
 	// — the old catch collapsed both into a permanent "processing" that never
-	// retried, so an expired session looked exactly like a slow write.
+	// retried, so an expired session looked exactly like a slow write. Settling
+	// PAUSES: `enabled` tears the graph down, taking the node that owns the
+	// answer with it, which is what once forced a mirror in component state.
 	useBatchedPoll( {
 		build: ( { interpreter, tee } ) =>
 			addSliceFetcher( interpreter, {
@@ -121,26 +139,12 @@ export default function CurrentRequestTab() {
 			} ),
 		timerName: 'currentrequest:timer',
 		teeName: 'currentrequest:tee',
-		enabled: Boolean( rid ) && 'found' !== state.status,
+		enabled: Boolean( rid ),
+		paused: hasFlame || asksSinceFound > FLAME_RETRY_TICKS,
 		intervalMs: POLL_INTERVAL_MS,
 	} );
 
-	const model = useNodeState( VIEW, 'view' );
-
-	useEffect( () => {
-		if ( model?.request ) {
-			setState( { status: 'found', request: model.request } );
-		}
-	}, [ model ] );
-
-	// Anything short of found, with a rid in hand, is still on its way.
-	useEffect( () => {
-		if ( rid && ! model?.request ) {
-			setState( { status: 'processing' } );
-		}
-	}, [ rid, model ] );
-
-	if ( 'idle' === state.status ) {
+	if ( ! rid ) {
 		return (
 			<div className="eln-current-request eln-current-request--empty newspack-nodes-empty-state">
 				<p>
@@ -153,7 +157,7 @@ export default function CurrentRequestTab() {
 		);
 	}
 
-	if ( 'loading' === state.status ) {
+	if ( undefined === model ) {
 		return (
 			<div className="eln-current-request eln-current-request--loading newspack-nodes-performance-loading">
 				<p>{ __( 'Loading…', 'newspack-event-logger-nodes' ) }</p>
@@ -161,7 +165,7 @@ export default function CurrentRequestTab() {
 		);
 	}
 
-	if ( 'processing' === state.status ) {
+	if ( ! request ) {
 		return (
 			<div className="eln-current-request eln-current-request--processing newspack-nodes-status">
 				<p>
@@ -174,13 +178,10 @@ export default function CurrentRequestTab() {
 		);
 	}
 
-	const { request } = state;
 	const errorStatus = request.error_status ?? '-';
 	const isError = '-' !== errorStatus && '' !== errorStatus;
 	const traceUrl = `${ perfUrl }&request=${ encodeURIComponent( rid ) }`;
 	const timestamp = Number( request.timestamp ) || 0;
-	const flameData = request.flame_data;
-	const hasFlame = !! ( flameData && flameData.children?.length > 0 );
 	const hasProfiles = !! request.profiles;
 
 	return (

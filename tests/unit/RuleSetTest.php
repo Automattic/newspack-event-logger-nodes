@@ -151,7 +151,7 @@ final class RuleSetTest extends TestCase {
 	}
 
 	public function test_save_inlines_small_hook_lists(): void {
-		$rule = new Rule( 'a1', '/shop/', Rule::ACTION_LOG, hooks: [ 'init', 'wp' ], hooks_in: Rule::HOOKS_MC );
+		$rule = new Rule( 'a1', '/shop/', Rule::ACTION_LOG, hooks: [ 'init', 'wp' ] );
 		( new Rule_Set( [] ) )->save( [ $rule ] );
 		$stored = $GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ][0];
 		$this->assertSame( 'inline', $stored['hooks_in'] );
@@ -450,5 +450,71 @@ final class RuleSetTest extends TestCase {
 		}
 		$this->assertSame( \count( $many ), $by_pattern['/heavy'] ?? -1 );
 		$this->assertSame( 1, $by_pattern['/light'] ?? -1 );
+	}
+
+	/**
+	 * `sanitize_settings_array()` drops the wire's null `hooks`, manufacturing a
+	 * pointer entry with no hooks key. Re-tiering that used to inline it to []
+	 * and delete the spoke's durable hooks option; the whole push must fail
+	 * instead, leaving the spoke's last-good ruleset in place.
+	 */
+	public function test_apply_synced_refuses_a_pointer_entry_whose_hooks_key_was_dropped(): void {
+		$big = \array_map( fn( $i ) => "hook_probe_$i", \range( 1, Rule_Set::INLINE_HOOK_LIMIT + 3 ) );
+		( new Rule_Set( [] ) )->save( [ new Rule( Rule_Set::id_for( '/tarot/' ), '/tarot/', Rule::ACTION_LOG, hooks: $big ) ] );
+		$option = Rule_Set::hooks_option_name( Rule_Set::id_for( '/tarot/' ) );
+
+		try {
+			Rule_Set::apply_synced( [
+				[ 'id' => Rule_Set::id_for( '/tarot/' ), 'pattern' => '/tarot/', 'action' => 'log', 'hooks_in' => 'mc' ],
+			] );
+			$this->fail( 'apply_synced must refuse an unrepresentable rule' );
+		} catch ( \InvalidArgumentException $e ) {
+			$this->assertStringContainsString( 'hooks', $e->getMessage() );
+		}
+
+		$this->assertSame( $big, $GLOBALS['_wp_options'][ $option ], 'the spoke keeps its durable hooks' );
+		$this->assertSame( $big, Rule_Set::hooks_for( Rule_Set::load()->rules()[0] ) );
+	}
+
+	public function test_load_skips_an_unrepresentable_stored_rule(): void {
+		// Read side stays tolerant: one hand-edited row must not fatal a request.
+		$GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ] = [
+			[ 'id' => 'junk', 'action' => 'skip' ],
+			[ 'id' => Rule_Set::id_for( '/tarot/' ), 'pattern' => '/tarot/', 'action' => 'log', 'hooks' => [ 'wp_loaded' ], 'hooks_in' => 'inline' ],
+		];
+
+		$rules = Rule_Set::load()->rules();
+
+		$this->assertCount( 1, $rules, 'the pattern-less row is skipped, the good one survives' );
+		$this->assertSame( '/tarot/', $rules[0]->pattern );
+	}
+
+	public function test_load_keeps_a_stored_rule_whose_hooks_are_a_scalar(): void {
+		// A hand-edited (or empty-array-as-'') hooks value is a rule with no
+		// hooks, not an unresolved pointer — reading it as one skipped the row
+		// and stopped logging '/' entirely.
+		$GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ] = [
+			[ 'id' => Rule_Set::id_for( '/' ), 'pattern' => '/', 'action' => 'log', 'hooks' => '', 'hooks_in' => 'inline' ],
+		];
+
+		$rules = Rule_Set::load()->rules();
+
+		$this->assertCount( 1, $rules );
+		$this->assertSame( '/', $rules[0]->pattern );
+		$this->assertTrue( $rules[0]->is_log(), 'the log-all baseline survives' );
+		$this->assertSame( [], $rules[0]->hooks );
+		$this->assertSame( [], Rule_Set::hooks_for( $rules[0] ) );
+	}
+
+	public function test_seed_from_config_skips_an_unrepresentable_rule(): void {
+		$this->set_config_rules( [
+			[ 'action' => 'skip' ],
+			[ 'pattern' => '/tarot/', 'action' => 'log' ],
+		] );
+
+		$rules = Rule_Set::load()->rules();
+
+		$this->assertCount( 1, $rules, 'a config typo must not white-screen the site' );
+		$this->assertSame( '/tarot/', $rules[0]->pattern );
 	}
 }
