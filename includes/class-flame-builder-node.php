@@ -236,13 +236,6 @@ class Flame_Builder_Node extends Node {
 	 */
 	private string $stats_partition = '';
 
-	/**
-	 * Guards reload_stats_from_partition() to one cold-boot replay per instance.
-	 * Set only once the store AND partition both resolve, so an early call before
-	 * the graph is built retries rather than burning the replay.
-	 */
-	private bool $stats_reloaded = false;
-
 	/** @var Stats_Store|null Memcache-backed stats store; null until `configure_stats` runs. */
 	private $stats_store = null;
 	/** @var array<string,array<string,array<string,mixed>>> Url-hash → bucket → category accumulator. */
@@ -292,7 +285,6 @@ class Flame_Builder_Node extends Node {
 		++$this->counter;
 		// Per-message deferral: clear a stale stop from a prior fill().
 		$this->clear_pending_stop();
-		$this->reload_stats_from_partition(); // cold-boot warm once ready.
 		$type_raw = $message[ Message::TYPE ];
 		$type     = Core::int( $type_raw );
 		if ( $type & Message::TM_REQUEST ) {
@@ -1810,11 +1802,189 @@ class Flame_Builder_Node extends Node {
 		if ( null === $store ) {
 			return;
 		}
-		$store->mirror = '' === $this->stats_partition
-			? null
-			: function ( string $key, array $data, int $ttl, string $ns ): void {
-				$this->buffer_mirror_write( $key, $data, $ttl, $ns );
-			};
+		if ( '' === $this->stats_partition ) {
+			$store->mirror    = null;
+			$store->rehydrate = null;
+			return;
+		}
+		$store->mirror    = function ( string $key, array $data, int $ttl, string $ns ): void {
+			$this->buffer_mirror_write( $key, $data, $ttl, $ns );
+		};
+		// Resolved per call: the node may be built after this one.
+		$store->rehydrate = self::rehydrate_seam( fn (): ?\Newspack_Nodes\Partition_Node => $this->resolve_stats_partition() );
+	}
+
+	/**
+	 * Arm `$store` to read the configured stats mirror without a live graph.
+	 *
+	 * The dashboard reads in a web request, where no Flame_Builder exists to arm
+	 * the seam — so the store resolves the mirror from the topology instead. An
+	 * unconfigured mirror leaves it memcache-only, exactly as before one existed.
+	 *
+	 * @api Readers building a Stats_Store outside the worker graph.
+	 */
+	public static function arm_stats_reader( Stats_Store $store ): void {
+		$name = \trim( Core::as_string( Config::value( 'stats_mirror_node' ), '' ) );
+		if ( '' === $name ) {
+			return;
+		}
+		// Resolved once: the topology walk behind it must not run per miss.
+		$node = self::mirror_partition( $name, $store->partition() );
+		if ( null === $node ) {
+			return;
+		}
+		$store->rehydrate = self::rehydrate_seam( static fn (): \Newspack_Nodes\Partition_Node => $node );
+	}
+
+	/**
+	 * The rehydrate closure over a partition resolver.
+	 *
+	 * The locator table is memoized in the closure, so a reader pays for ONE
+	 * index pass however many of its keys miss — which is what keeps a
+	 * leaderboard's hundreds of bucket misses off the retention window.
+	 *
+	 * @param \Closure(): ?\Newspack_Nodes\Partition_Node $resolve Where the mirror is.
+	 * @return \Closure(list<string>): array<string,array{data: array<string,mixed>, ttl: int, ts: float}>
+	 */
+	private static function rehydrate_seam( \Closure $resolve ): \Closure {
+		$locators = null;
+		return static function ( array $keys ) use ( $resolve, &$locators ): array {
+			$partition = $resolve();
+			if ( null === $partition ) {
+				return [];
+			}
+			$locators ??= self::mirror_locators( $partition );
+			return self::read_located_frames( $partition, $locators, $keys );
+		};
+	}
+
+	/**
+	 * The mirror partition for one flame-builder partition: the live node when
+	 * this process runs the graph, else a detached handle over the directory the
+	 * active topology declares for it.
+	 *
+	 * The dir comes from `Bootstrap::node_dirs()` rather than a rebuilt path
+	 * template — the partition token sits wherever the topology puts it, and a
+	 * reader that spells the layout itself goes blind the moment it moves.
+	 */
+	private static function mirror_partition( string $name, int $partition ): ?\Newspack_Nodes\Partition_Node {
+		$live = Core::node( $name );
+		if ( $live instanceof \Newspack_Nodes\Partition_Node ) {
+			return $live;
+		}
+		$dir = \Newspack_Nodes\Bootstrap::node_dirs( $name )[ $partition ] ?? '';
+		if ( '' === $dir ) {
+			return null;
+		}
+		$node = new \Newspack_Nodes\Partition_Node();
+		$node->arguments( [ $dir ] );
+		// The callable, not the name: the name is for the topology round trip.
+		$node->with_index( self::format_stats_index_entry( ... ) );
+		return $node;
+	}
+
+	/**
+	 * key_hash → the newest frame carrying it, as `[segment, offset, length]`.
+	 *
+	 * ONE pass over the index, newest-first so the first line for a hash IS its
+	 * last write, reused for the life of the reader that built it. Per-key
+	 * scanning was the cliff: a leaderboard render misses on hundreds of bucket
+	 * keys, and walking the whole index once per key is the retention window
+	 * re-read hundreds of times.
+	 *
+	 * A reader is one request; a worker holds one until it recycles, so a frame
+	 * written after the table was built is not seen. That degrades to the miss
+	 * the caller already had, never to a wrong value.
+	 *
+	 * @return array<string,array{0: int, 1: int, 2: int}>
+	 */
+	private static function mirror_locators( \Newspack_Nodes\Partition_Node $partition ): array {
+		$locators = [];
+		$partition->scan_index(
+			static function ( string $line, int $segment ) use ( &$locators ): bool {
+				$entry = self::parse_stats_index( $line );
+				if ( null !== $entry && ! isset( $locators[ $entry['key_hash'] ] ) ) {
+					$locators[ $entry['key_hash'] ] = [ $segment, $entry['offset'], $entry['length'] ];
+				}
+				return true;
+			},
+			true
+		);
+		return $locators;
+	}
+
+	/**
+	 * Read the mirrored frame for each wanted key through a prebuilt locator
+	 * table — one `read_at` per key that has one, and none for the rest.
+	 *
+	 * A frame is filed under the key it CARRIES and kept only when that key was
+	 * asked for, so a truncated-hash collision costs one wasted read and nothing
+	 * else.
+	 *
+	 * `$keys` arrives across the public `$rehydrate` seam, so it is whatever a
+	 * caller passed; only string entries name a key.
+	 *
+	 * @param array<string,array{0: int, 1: int, 2: int}> $locators key_hash → position.
+	 * @param array<array-key,mixed>                      $keys     Backend keys to look for.
+	 * @return array<string,array{data: array<string,mixed>, ttl: int, ts: float}>
+	 */
+	private static function read_located_frames( \Newspack_Nodes\Partition_Node $partition, array $locators, array $keys ): array {
+		$found = [];
+		foreach ( $keys as $key ) {
+			if ( ! \is_string( $key ) ) {
+				continue;
+			}
+			$at = $locators[ Log_Manager::url_hash( $key ) ] ?? null;
+			if ( null === $at ) {
+				continue;
+			}
+			$frame = self::read_mirror_frame( $partition, $at[0], [ 'offset' => $at[1], 'length' => $at[2] ] );
+			if ( null === $frame || $frame['key'] !== $key ) {
+				continue;
+			}
+			$found[ $key ] = [
+				'data' => $frame['data'],
+				'ttl'  => $frame['ttl'],
+				'ts'   => $frame['ts'],
+			];
+		}
+		return $found;
+	}
+
+	/**
+	 * Unpack one located mirror frame, or null when it is torn or malformed —
+	 * a partial write must skip, never abort the read that is repairing a hole.
+	 *
+	 * @param \Newspack_Nodes\Partition_Node    $partition Resolved stats partition.
+	 * @param int                               $segment   Segment the index located it in.
+	 * @param array{offset: int, length: int}  $entry     Where in that segment it sits.
+	 * @return array{key: string, data: array<string,mixed>, ttl: int, ts: float}|null
+	 */
+	private static function read_mirror_frame( \Newspack_Nodes\Partition_Node $partition, int $segment, array $entry ): ?array {
+		try {
+			$msg = Message::unpacked( $partition->read_at( $segment, $entry['offset'], $entry['length'] ) );
+		} catch ( \Throwable ) {
+			return null;
+		}
+		$value = $msg[ Message::VALUE ] ?? null;
+		if ( ! \is_array( $value )
+			|| ! \is_string( $value['key'] ?? null )
+			|| ! \is_array( $value['data'] ?? null )
+			|| ! \is_int( $value['ttl'] ?? null )
+		) {
+			return null;
+		}
+		// JSON object keys arrive int-cast when they are all digits.
+		$data = [];
+		foreach ( $value['data'] as $dk => $dv ) {
+			$data[ (string) $dk ] = $dv;
+		}
+		return [
+			'key'  => $value['key'],
+			'data' => $data,
+			'ttl'  => $value['ttl'],
+			'ts'   => Core::num_float( $msg[ Message::TIMESTAMP ] ?? null ),
+		];
 	}
 
 	/**
@@ -1996,7 +2166,6 @@ class Flame_Builder_Node extends Node {
 		if ( '' === $this->stats_partition ) {
 			return;
 		}
-		$this->reload_stats_from_partition(); // cold-boot warm before first write.
 		$partition = $this->resolve_stats_partition();
 		if ( null === $partition ) {
 			$this->print_less_often( "flame-builder: stats_partition '{$this->stats_partition}' not found at flush" );
@@ -2012,68 +2181,6 @@ class Flame_Builder_Node extends Node {
 		}
 		$this->stats_mirror_buffer = [];
 		$this->stats_mirror_topn   = [];
-	}
-
-	/**
-	 * Cold-boot replay: when memcache hourly is empty, read every mirrored write
-	 * from the partition oldest→newest, collapse to the latest frame per key
-	 * (frames are append-ordered, so last-wins), then restore each key ONCE under
-	 * a TTL decayed by its age. O(unique keys) memcache sets instead of O(all
-	 * appends). Core::$now is stale during the config phase, so Core::right_now()
-	 * gives the fresh "now" reference (and re-warms the cache as a side benefit).
-	 *
-	 * Every partition frame is committed — the un-committed buffer is never written
-	 * (it dies with a crash) — so recovery counts each request exactly once.
-	 */
-	private function reload_stats_from_partition(): void {
-		if ( $this->stats_reloaded ) {
-			return;
-		}
-		$store     = $this->stats_store;
-		$partition = $this->resolve_stats_partition();
-		if ( null === $store || null === $partition ) {
-			return; // disabled or not built yet — retry later; don't mark reloaded.
-		}
-		$this->stats_reloaded = true;
-		if ( ! empty( $store->get_hourly() ) ) {
-			return; // Warm — skip replay.
-		}
-		/** @var array<string,array{0: array<string,mixed>,1: int,2: float}> $latest */
-		$latest = [];
-		foreach ( $partition->get_segments() as $seg ) {
-			$bytes = $partition->read_at( $seg['id'], 0, $seg['size'] );
-			foreach ( \explode( "\n", $bytes ) as $line ) {
-				if ( '' === $line ) {
-					continue;
-				}
-				try {
-					$msg = Message::unpacked( $line );
-				} catch ( \Throwable ) {
-					continue; // Torn/corrupt frame — skip, don't crash the cold-boot replay.
-				}
-				$value = $msg[ Message::VALUE ] ?? null;
-				if ( ! \is_array( $value ) ) {
-					continue;
-				}
-				$key  = $value['key'] ?? null;
-				$data = $value['data'] ?? null;
-				$ttl  = $value['ttl'] ?? null;
-				if ( ! \is_string( $key ) || ! \is_array( $data ) || ! \is_int( $ttl ) ) {
-					continue;
-				}
-				$typed = [];
-				foreach ( $data as $dk => $dv ) {
-					$typed[ (string) $dk ] = $dv;
-				}
-				$ts             = $msg[ Message::TIMESTAMP ] ?? 0;
-				// last-wins
-				$latest[ $key ] = [ $typed, $ttl, Core::num_float( $ts ) ];
-			}
-		}
-		$now = Core::right_now();
-		foreach ( $latest as $key => [ $data, $ttl, $ts ] ) {
-			$store->restore( $key, $data, $ttl - (int) ( $now - $ts ) );
-		}
 	}
 
 	/** Resolve the named stats partition to its live node, or null when disabled / not-yet-built. */
@@ -2104,6 +2211,56 @@ class Flame_Builder_Node extends Node {
 		$msg[ Message::KEY ]       = $key;
 		$msg[ Message::VALUE ]     = [ 'key' => $key, 'data' => $data, 'ttl' => $ttl ];
 		$partition->fill( $msg );
+	}
+
+	/**
+	 * Format one companion-index line for the stats mirror.
+	 *
+	 * Registered as `stats-index` and installed by
+	 * `command_node flame-stats:partition:config with_index stats-index`. Fixed
+	 * width so `parse_stats_index()` can slice it by offset: key_hash(12)
+	 * segment(6) offset(10) length(8) = 36 bytes.
+	 *
+	 * The key is hashed because a backend key runs some seventy characters and a
+	 * fixed-width line needs a bound; `Log_Manager::url_hash()` is the house
+	 * 12-char digest rather than a second hashing convention. A reader files a
+	 * located frame under the key the FRAME carries, so a collision costs one
+	 * wasted read and can never file a value under a name that is not its own.
+	 *
+	 * @param array<int,mixed>  $message  The unpacked positional message array.
+	 * @param array<string,int> $position Position array with segment, offset, length.
+	 * @return string|null Index entry, or null for a frame carrying no key.
+	 */
+	public static function format_stats_index_entry( array $message, array $position ): ?string {
+		$value = $message[ Message::VALUE ] ?? null;
+		$key   = \is_array( $value ) ? ( $value['key'] ?? null ) : null;
+		if ( ! \is_string( $key ) || '' === $key ) {
+			return null;
+		}
+		return Log_Manager::url_hash( $key )
+			. \str_pad( (string) $position['segment'], 6, '0', STR_PAD_LEFT )
+			. \str_pad( (string) $position['offset'], 10, '0', STR_PAD_LEFT )
+			. \str_pad( (string) $position['length'], 8, '0', STR_PAD_LEFT );
+	}
+
+	/**
+	 * Parse one stats-index line back into its fields — the inverse of
+	 * `format_stats_index_entry()`, and bound to the same fixed widths.
+	 *
+	 * @param string $line Index line.
+	 * @return array{key_hash: string, segment: int, offset: int, length: int}|null Null when the line is short.
+	 */
+	public static function parse_stats_index( string $line ): ?array {
+		$line = \rtrim( $line, "\n" );
+		if ( \strlen( $line ) < 36 ) {
+			return null;
+		}
+		return [
+			'key_hash' => \substr( $line, 0, 12 ),
+			'segment'  => (int) \substr( $line, 12, 6 ),
+			'offset'   => (int) \substr( $line, 18, 10 ),
+			'length'   => (int) \substr( $line, 28, 8 ),
+		];
 	}
 
 	/**

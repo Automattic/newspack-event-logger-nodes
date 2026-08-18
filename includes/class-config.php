@@ -129,6 +129,46 @@ class Config {
 	}
 
 	/**
+	 * `<eln:KEY>` topology-token resolver — owned-keys list + per-key
+	 * derivation. Used both by the plugin's `register_config_namespace`
+	 * call and by `tests/bootstrap.php` so both paths resolve identically.
+	 *
+	 * Returns null for keys this plugin doesn't own; substrate keys are
+	 * addressed under the `<config:KEY>` namespace instead. Null is not a
+	 * value — `Core::resolve_config_token()` treats it as unresolvable and
+	 * throws in strict mode (schema-arg defaults) or warns and yields '' in
+	 * non-strict mode. A scalar return is cast with `(string)`, so bools
+	 * surface as '1' / ''; a non-scalar is unresolvable too, so an
+	 * array-valued key must be flattened to a scalar here.
+	 *
+	 * @param string $key Token key after the `eln:` prefix.
+	 * @return mixed|null Resolved value, or null if not owned by `eln`.
+	 */
+	public static function resolve_eln_token( string $key ) {
+		/** @var array<string,bool> $own */
+		static $own = [
+			'is_hub'                 => true,
+			'stats_mirror_node'      => true,
+			'stats_mirror_lifetime'  => true,
+		];
+		if ( ! isset( $own[ $key ] ) ) {
+			return null;
+		}
+		$config = self::load_config();
+
+		if ( 'is_hub' === $key ) {
+			return self::has_hub_topology();
+		}
+
+		// Derived, never a constant: a widened stats window widens this too.
+		if ( 'stats_mirror_lifetime' === $key ) {
+			return (string) ( 2 * self::stats_retention_seconds() );
+		}
+
+		return $config[ $key ] ?? null;
+	}
+
+	/**
 	 * THE retention window every stats consumer sizes itself by — the memcache
 	 * TTLs and the dashboards' time axis both come from here.
 	 *
@@ -165,37 +205,46 @@ class Config {
 	}
 
 	/**
-	 * `<eln:KEY>` topology-token resolver — owned-keys list + per-key
-	 * derivation. Used both by the plugin's `register_config_namespace`
-	 * call and by `tests/bootstrap.php` so both paths resolve identically.
+	 * Load configuration from disk + WordPress options.
 	 *
-	 * Returns null for keys this plugin doesn't own; substrate keys are
-	 * addressed under the `<config:KEY>` namespace instead. Null is not a
-	 * value — `Core::resolve_config_token()` treats it as unresolvable and
-	 * throws in strict mode (schema-arg defaults) or warns and yields '' in
-	 * non-strict mode. A scalar return is cast with `(string)`, so bools
-	 * surface as '1' / ''; a non-scalar is unresolvable too, so an
-	 * array-valued key must be flattened to a scalar here.
+	 * Merges the substrate config (`Newspack_Nodes\Config::load_config`) so
+	 * callers that read substrate keys (`base_directory`, `num_partitions`,
+	 * `memcache_servers`, etc.) keep working without having to know about
+	 * the layering split. Substrate values lose to this plugin's own schema
+	 * keys, so a name collision resolves in favor of the owner.
 	 *
-	 * @param string $key Token key after the `eln:` prefix.
-	 * @return mixed|null Resolved value, or null if not owned by `eln`.
+	 * The result is memoized for the process; `reset()` clears it. Returns an
+	 * empty array when the substrate is absent — nothing to layer onto.
+	 *
+	 * @return array<string,mixed> Configuration array.
+	 * @throws \RuntimeException If an explicit local config path or value tree is invalid.
 	 */
-	public static function resolve_eln_token( string $key ) {
-		/** @var array<string,bool> $own */
-		static $own = [
-			'is_hub'            => true,
-			'stats_mirror_node' => true,
-		];
-		if ( ! isset( $own[ $key ] ) ) {
-			return null;
-		}
-		$config = self::load_config();
-
-		if ( 'is_hub' === $key ) {
-			return self::has_hub_topology();
+	public static function load_config(): array {
+		if ( null !== self::$config ) {
+			return self::$config;
 		}
 
-		return $config[ $key ] ?? null;
+		if ( ! \class_exists( '\Newspack_Nodes\Config_Utils' ) ) {
+			return [];
+		}
+
+		// Import effective substrate values without overriding ELN-owned keys.
+		$schema           = Settings_Schema::get();
+		$application_keys = \array_fill_keys( $schema->overlay_keys(), true );
+		$substrate        = \class_exists( RuntimeConfig::class ) ? RuntimeConfig::load_config() : [];
+		$substrate        = \array_diff_key( $substrate, $application_keys );
+		$defaults         = \array_merge( self::load_config_defaults(), $substrate );
+
+		// Presence overlay: stored option (even ''/[]/false/0) beats default.
+		$config = \Newspack_Nodes\Config_System\Options_Overlay::apply(
+			$defaults,
+			$schema->overlay_keys(),
+			$schema->prefix()
+		);
+
+		self::$config = $config;
+
+		return $config;
 	}
 
 	/**
@@ -260,49 +309,6 @@ class Config {
 			}
 		}
 		return false;
-	}
-
-	/**
-	 * Load configuration from disk + WordPress options.
-	 *
-	 * Merges the substrate config (`Newspack_Nodes\Config::load_config`) so
-	 * callers that read substrate keys (`base_directory`, `num_partitions`,
-	 * `memcache_servers`, etc.) keep working without having to know about
-	 * the layering split. Substrate values lose to this plugin's own schema
-	 * keys, so a name collision resolves in favor of the owner.
-	 *
-	 * The result is memoized for the process; `reset()` clears it. Returns an
-	 * empty array when the substrate is absent — nothing to layer onto.
-	 *
-	 * @return array<string,mixed> Configuration array.
-	 * @throws \RuntimeException If an explicit local config path or value tree is invalid.
-	 */
-	public static function load_config(): array {
-		if ( null !== self::$config ) {
-			return self::$config;
-		}
-
-		if ( ! \class_exists( '\Newspack_Nodes\Config_Utils' ) ) {
-			return [];
-		}
-
-		// Import effective substrate values without overriding ELN-owned keys.
-		$schema           = Settings_Schema::get();
-		$application_keys = \array_fill_keys( $schema->overlay_keys(), true );
-		$substrate        = \class_exists( RuntimeConfig::class ) ? RuntimeConfig::load_config() : [];
-		$substrate        = \array_diff_key( $substrate, $application_keys );
-		$defaults         = \array_merge( self::load_config_defaults(), $substrate );
-
-		// Presence overlay: stored option (even ''/[]/false/0) beats default.
-		$config = \Newspack_Nodes\Config_System\Options_Overlay::apply(
-			$defaults,
-			$schema->overlay_keys(),
-			$schema->prefix()
-		);
-
-		self::$config = $config;
-
-		return $config;
 	}
 
 	/**

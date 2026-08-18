@@ -61,6 +61,15 @@ class TopologyShapeTest extends TestCase {
 					$this->first_cmd_index( $topo['cmds'], 'flame-stats:partition', 'void_warranty' ),
 					"$name: flame-stats:partition takes >4KB mirror writes but has no void_warranty — writes silently dropped at the PIPE_BUF cap"
 				);
+				$this->assertNotNull(
+					$this->first_cmd_index( $topo['cmds'], 'flame-stats:partition', 'with_index' ),
+					"$name: flame-stats:partition has no with_index — a memcache miss cannot locate its mirrored frame, so evicted stats never come back"
+				);
+				$this->assertStringContainsString(
+					'<eln:stats_mirror_lifetime>',
+					$topo['args']['flame-stats:partition'] ?? '',
+					"$name: flame-stats:partition keeps no derived lifetime — the mirror retains frames long past the window restore() can use them in"
+				);
 
 				$configure = $this->first_cmd_index( $topo['cmds'], $fb, 'configure_stats' );
 				$set_target = $this->first_cmd_index( $topo['cmds'], $fb, 'set_stats_target' );
@@ -253,10 +262,11 @@ class TopologyShapeTest extends TestCase {
 	 * Parse a .tsl into its structural elements. Comments (`#`), blank lines, and
 	 * directives other than make_node / connect_node / cmd are ignored.
 	 *
-	 * @return array{nodes: array<string,string>, consumers: array<string,string>, edges: list<array{0:string,1:string}>, cmds: list<array{node:string, verb:string, args:list<string>}>}
+	 * @return array{nodes: array<string,string>, args: array<string,string>, consumers: array<string,string>, edges: list<array{0:string,1:string}>, cmds: list<array{node:string, verb:string, args:list<string>}>}
 	 */
 	private function parse_topology( string $path ): array {
 		$nodes     = [];
+		$args      = [];
 		$consumers = [];
 		$edges     = [];
 		$cmds      = [];
@@ -282,6 +292,7 @@ class TopologyShapeTest extends TestCase {
 					$type                = $parts[1];
 					$node_name           = $parts[2];
 					$nodes[ $node_name ] = $type;
+					$args[ $node_name ]  = \implode( ' ', \array_slice( $parts, 3 ) );
 					if ( 'Consumer' === $type ) {
 						// make_node Consumer <name> <logpath> <offsetpath>
 						$consumers[ $node_name ] = $parts[4] ?? '';
@@ -301,7 +312,7 @@ class TopologyShapeTest extends TestCase {
 			}
 		}
 
-		return \compact( 'nodes', 'consumers', 'edges', 'cmds' );
+		return \compact( 'nodes', 'args', 'consumers', 'edges', 'cmds' );
 	}
 
 	/**

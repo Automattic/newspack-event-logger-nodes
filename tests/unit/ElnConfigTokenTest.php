@@ -52,6 +52,17 @@ class ElnConfigTokenTest extends TestCase {
 		$this->assertSame( '', Core::resolve_config_token( 'eln', 'logs_dir' ) );
 	}
 
+	// --- stats_mirror_lifetime resolver -------------------------------------
+
+	public function test_stats_mirror_lifetime_outlives_the_stats_window(): void {
+		// A window unlike every default, so a resolver ignoring it still fails.
+		$GLOBALS['_wp_options']['newspack_nodes_min_lifetime'] = 7200;
+		\Newspack_Nodes\Config::reset();
+		Config::reset();
+
+		$this->assertSame( '14400', Core::resolve_config_token( 'eln', 'stats_mirror_lifetime' ) );
+	}
+
 	// --- is_hub resolver ----------------------------------------------------
 
 	public function test_is_hub_false_when_aggregator_topology_inactive(): void {
@@ -105,10 +116,20 @@ class ElnConfigTokenTest extends TestCase {
 
 	// --- schema-token / owned-empty guards ----------------------------------
 
-	public function test_stats_mirror_node_unset_is_owned_empty_under_strict(): void {
-		// Unset stats_mirror_node ('stats mirror off') is owned-empty, NOT
-		// unresolvable — strict resolution must return '' and not throw.
-		$this->assertSame( '', Core::resolve_config_token( 'eln', 'stats_mirror_node', true ) );
+	public function test_an_owned_but_empty_token_is_resolved_not_unresolvable(): void {
+		// A spoke's is_hub is owned-empty, NOT unresolvable — strict resolution
+		// must return '' and not throw.
+		$GLOBALS['_wp_options']['newspack_nodes_topologies'] = [ 'combined' ];
+		\Newspack_Nodes\Config::reset();
+		Config::reset();
+
+		$this->assertSame( '', Core::resolve_config_token( 'eln', 'is_hub', true ) );
+	}
+
+	public function test_stats_mirror_node_ships_pointing_at_the_durable_mirror(): void {
+		// Shipped armed: the mirror is what a memcache miss reads back, and an
+		// empty default would leave every install's stats memcache-only.
+		$this->assertSame( 'flame-stats:partition', Core::resolve_config_token( 'eln', 'stats_mirror_node', true ) );
 	}
 
 	public function test_flame_builder_schema_token_defaults_are_owned(): void {
