@@ -1,10 +1,10 @@
 /**
  * RequestStream UI-surface tests — the thin wrapper over the shared
- * `LogStreamViewer` chrome. The virtualized list (LogRowList) and the browse
- * sidebar's LogBrowser are exercised by their own suites; here they are mocked
- * to markers that capture the props RequestStream wires into them, so these
- * tests cover the toolbar wiring, the column picker, the row/header renderers,
- * and the browse rail. Mirrors the substrate's PartitionViewer.test.js.
+ * `LogStreamViewer` chrome. The virtualized list has its own suite and is
+ * mocked to a marker capturing the props RequestStream wires into it; the
+ * segment rail arrives ready-made on the browse model. What is covered here is
+ * the toolbar wiring, the column picker, the row/header renderers, and the
+ * browse gates. Mirrors the substrate's PartitionViewer.test.js.
  */
 
 jest.mock( '../hooks/useRequestLogGraph', () => ( {
@@ -85,11 +85,12 @@ function row( overrides = {} ) {
 // A browse model the mocked graph hook hands back for the browse-UI tests.
 function browseMock( overrides = {} ) {
 	return {
-		pickerOptions: null,
+		pickerOptions: [],
+		pickerLabel: 'Browse a partition',
 		selectedPartition: '',
 		selectPartition: jest.fn(),
-		jump: jest.fn(),
-		sidebar: <div data-testid="log-browser" />,
+		jump: undefined,
+		sidebar: null,
 		...overrides,
 	};
 }
@@ -397,9 +398,10 @@ describe( 'RequestStream', () => {
 		} );
 
 		// An empty catalog is the state every cold load starts in — the reply
-		// rides the router tick — so a "no partitions" claim would be false
-		// for the first second on a machine that has them.
-		it( 'says nothing about partitions before the catalog answers', () => {
+		// rides the router tick — so this dashboard passes no empty label:
+		// "no partitions" would be false for the first second on a machine
+		// that has them. The Partition Viewer makes the opposite choice.
+		it( 'claims nothing about partitions it has not heard about', () => {
 			registerViewFixture();
 			const { container } = mount();
 			expect(
@@ -431,6 +433,10 @@ describe( 'RequestStream', () => {
 				'select.newspack-nodes-select'
 			);
 			expect( select ).toBeTruthy();
+			// The name a screen reader announces for it.
+			expect( select.getAttribute( 'aria-label' ) ).toBe(
+				'Browse a partition'
+			);
 			expect(
 				Array.from( select.options ).map( ( o ) => o.value )
 			).toEqual( [ '', 'completed.p0', 'completed.p3' ] );
@@ -474,6 +480,40 @@ describe( 'RequestStream', () => {
 			expect( selectPartition ).toHaveBeenCalledWith( 'completed.p3' );
 		} );
 
+		// Both controls only mean anything within a dir, so they arrive from
+		// the browse model — and both could vanish from the toolbar with no
+		// test noticing until one asserts they are wired.
+		it( 'wires step and the offset jump once a dir is selected', () => {
+			registerViewFixture();
+			useRequestLogGraph.mockReturnValue( {
+				setFilter: ( term ) => {
+					const view = Core.nodes.get( 'requestlog:view' );
+					if ( view ) {
+						view.filter = String( term ).toLowerCase();
+					}
+				},
+				setPaused,
+				clear: jest.fn(),
+				step: jest.fn(),
+				browse: browseMock( {
+					pickerOptions: [
+						{ key: 'completed.p3', label: 'completed.p3' },
+					],
+					selectedPartition: 'completed.p3',
+					jump: jest.fn(),
+				} ),
+			} );
+			const { container } = mount();
+			expect(
+				container.querySelector( '.newspack-nodes-offset-input' )
+			).toBeTruthy();
+			expect(
+				container.querySelector(
+					'button[aria-label="Step one message"]'
+				)
+			).toBeTruthy();
+		} );
+
 		it( 'renders the segment rail when a partition is selected', () => {
 			registerViewFixture();
 			const browse = browseMock( {
@@ -481,6 +521,7 @@ describe( 'RequestStream', () => {
 					{ key: 'completed.p3', label: 'completed.p3' },
 				],
 				selectedPartition: 'completed.p3',
+				sidebar: <div data-testid="log-browser" />,
 			} );
 			useRequestLogGraph.mockReturnValue( {
 				setFilter: ( term ) => {

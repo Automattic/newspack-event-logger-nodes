@@ -26,7 +26,7 @@ const RAW_LOGS = 'raw-logs';
  * @param {Function} spec.viewClass    View-model node class to mount.
  * @param {Object}   [opts]            Options.
  * @param {number}   [opts.maxEntries] View ring cap; the view class's own default when unset.
- * @return {{ setPaused: Function, clear: () => void, step: () => void, browse: Object, setFilter: (term: string) => void }}
+ * @return {{ setPaused: Function, clear: () => void, step: ?() => void, browse: Object, setFilter: (term: string) => void }}
  *   Control callbacks plus the browse model for the thin React view; the view's
  *   own state is read via useNodeState.
  */
@@ -45,5 +45,12 @@ export function useGlobStreamGraph( { prefix, glob, viewClass }, opts = {} ) {
 	const browse = useGlobBrowse( { glob, graph, step } );
 	const { setPaused, setFilter, clear } = graph;
 
-	return { setPaused, step, browse, setFilter, clear };
+	return {
+		setPaused,
+		// A step walks WITHIN a dir; there is none to walk across the glob.
+		step: browse.selectedPartition ? step : undefined,
+		browse,
+		setFilter,
+		clear,
+	};
 }
