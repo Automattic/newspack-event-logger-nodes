@@ -428,8 +428,8 @@ describe( 'useRequestLogGraph — glob browse', () => {
 		// The catalog rides the router tick, so it is a wait.
 		await waitFor( () =>
 			expect(
-				result.current.browse.partitions.map( ( p ) => p.key )
-			).toEqual( [ 'completed.p0', 'completed.p2' ] )
+				result.current.browse.pickerOptions.map( ( p ) => p.key )
+			).toEqual( [ '', 'completed.p0', 'completed.p2' ] )
 		);
 	} );
 

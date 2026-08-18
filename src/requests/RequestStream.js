@@ -9,7 +9,7 @@
  * to `requestlog:view` (a `LogStreamViewNode` subclass), whose ring the list
  * reads straight off the node each frame. This component only supplies the
  * differing pieces: the column set + picker, the grid row/header renderers,
- * the URL ingest gate, and the `SegmentBrowseSidebar` browse rail.
+ * the URL ingest gate, the toolbar partition picker, and the segment rail.
  *
  * Click any request to view its full trace in the Performance Dashboard.
  */
@@ -27,7 +27,6 @@ import { Core, useNodeState } from '@newspack-nodes/runtime';
 import { useRequestLogGraph } from './hooks/useRequestLogGraph';
 import LogStreamViewer from '@newspack-nodes/shared/components/LogStreamViewer';
 import LogListHeader from '@newspack-nodes/shared/components/LogListHeader';
-import SegmentBrowseSidebar from '../components/SegmentBrowseSidebar';
 import {
 	formatDuration,
 	getDurationClass,
@@ -388,23 +387,22 @@ export default function RequestStream( { maxEntries = 500 } ) {
 			className="event-logger-request-stream"
 			ariaLabel={ __( 'Request log', 'newspack-event-logger-nodes' ) }
 			title={ __( 'Request Log', 'newspack-event-logger-nodes' ) }
-			pickerOptions={ null }
+			pickerOptions={ browse.pickerOptions }
+			selectedKey={ browse.selectedPartition }
+			onPick={ browse.selectPartition }
+			pickerLabel={ __(
+				'Browse a partition',
+				'newspack-event-logger-nodes'
+			) }
 			isPaused={ isPaused }
 			connectionError={ connectionError }
 			onTogglePause={ () => setPaused( ! isPaused ) }
-			onStep={ browse?.selectedPartition ? step : undefined }
-			onJump={ browse?.selectedPartition ? browse.jump : undefined }
+			onStep={ browse.selectedPartition ? step : undefined }
+			onJump={ browse.selectedPartition ? browse.jump : undefined }
 			getViewNode={ getViewNode }
 			onClear={ clear }
 			onFilter={ setFilter }
-			sidebar={
-				<SegmentBrowseSidebar
-					browse={ browse }
-					onSelectPartition={ ( key ) =>
-						browse?.selectPartition( key )
-					}
-				/>
-			}
+			sidebar={ browse.selectedPartition ? browse.sidebar : null }
 			renderRow={ renderRow }
 			rowHeight={ ROW_HEIGHT }
 			filterPlaceholder={ __(

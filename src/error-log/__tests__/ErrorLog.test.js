@@ -21,15 +21,6 @@ jest.mock( '@newspack-nodes/shared/components/LogRowList', () => ( {
 	},
 } ) );
 
-let logBrowserProps;
-jest.mock( '@newspack-nodes/shared/components/LogBrowser', () => ( {
-	__esModule: true,
-	default: ( props ) => {
-		logBrowserProps = props;
-		return <div data-testid="log-browser" />;
-	},
-} ) );
-
 import * as React from 'react';
 import { Core } from '@newspack-nodes/runtime';
 import ErrorLog from '../ErrorLog';
@@ -89,7 +80,7 @@ function row( overrides = {} ) {
 // A browse model the mocked graph hook hands back for the browse-UI tests.
 function browseMock( overrides = {} ) {
 	return {
-		partitions: [],
+		pickerOptions: null,
 		selectedPartition: '',
 		selectPartition: jest.fn(),
 		jump: jest.fn(),
@@ -106,7 +97,6 @@ describe( 'ErrorLog', () => {
 	beforeEach( () => {
 		Core.reset();
 		logRowListProps = undefined;
-		logBrowserProps = undefined;
 		setPaused = jest.fn();
 		useErrorLogGraph.mockClear();
 		clearGraph = jest.fn();
@@ -347,7 +337,20 @@ describe( 'ErrorLog', () => {
 			expect(
 				container.querySelector( 'select.newspack-nodes-select' )
 			).toBeNull();
-			expect( logBrowserProps ).toBeUndefined();
+			expect(
+				container.querySelector( '[data-testid="log-browser"]' )
+			).toBeNull();
+		} );
+
+		// An empty catalog is the state every cold load starts in — the reply
+		// rides the router tick — so a "no partitions" claim would be false
+		// for the first second on a machine that has them.
+		it( 'says nothing about partitions before the catalog answers', () => {
+			registerViewFixture();
+			const { container } = mount();
+			expect(
+				container.querySelector( '.newspack-nodes-toolbar-status' )
+			).toBeNull();
 		} );
 
 		it( 'renders a partition selector (All + each dir) once partitions are cataloged', () => {
@@ -362,7 +365,8 @@ describe( 'ErrorLog', () => {
 				setPaused,
 				clear: jest.fn(),
 				browse: browseMock( {
-					partitions: [
+					pickerOptions: [
+						{ key: '', label: 'All partitions (live)' },
 						{ key: 'errors.p0', label: 'errors.p0' },
 						{ key: 'errors.p4', label: 'errors.p4' },
 					],
@@ -391,7 +395,8 @@ describe( 'ErrorLog', () => {
 				setPaused,
 				clear: jest.fn(),
 				browse: browseMock( {
-					partitions: [
+					pickerOptions: [
+						{ key: '', label: 'All partitions (live)' },
 						{ key: 'errors.p4', label: 'errors.p4' },
 						{ key: 'errors.p5', label: 'errors.p5' },
 					],
@@ -418,7 +423,7 @@ describe( 'ErrorLog', () => {
 		it( 'renders the segment rail when a partition is selected', () => {
 			registerViewFixture();
 			const browse = browseMock( {
-				partitions: [ { key: 'errors.p4', label: 'errors.p4' } ],
+				pickerOptions: [ { key: 'errors.p4', label: 'errors.p4' } ],
 				selectedPartition: 'errors.p4',
 			} );
 			useErrorLogGraph.mockReturnValue( {

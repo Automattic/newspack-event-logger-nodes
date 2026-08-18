@@ -11,7 +11,7 @@
  * subclass), whose ring the list reads straight off the node each frame. This
  * component only supplies the differing pieces: the fixed column set, the grid
  * row/header renderers, the multi-field ingest gate, the entry-count and rate
- * labels, and the `SegmentBrowseSidebar` browse rail.
+ * labels, the toolbar partition picker, and the segment rail.
  *
  * Click any request ID to view its full trace in the Performance Dashboard.
  */
@@ -23,7 +23,6 @@ import { Core, useNodeState } from '@newspack-nodes/runtime';
 import { useErrorLogGraph } from './hooks/useErrorLogGraph';
 import LogStreamViewer from '@newspack-nodes/shared/components/LogStreamViewer';
 import LogListHeader from '@newspack-nodes/shared/components/LogListHeader';
-import SegmentBrowseSidebar from '../components/SegmentBrowseSidebar';
 import './styles/error-log.scss';
 
 const ROW_HEIGHT = 33;
@@ -272,23 +271,22 @@ export default function ErrorLog() {
 			className="event-logger-error-log"
 			ariaLabel={ __( 'Error log', 'newspack-event-logger-nodes' ) }
 			title={ __( 'Error Log', 'newspack-event-logger-nodes' ) }
-			pickerOptions={ null }
+			pickerOptions={ browse.pickerOptions }
+			selectedKey={ browse.selectedPartition }
+			onPick={ browse.selectPartition }
+			pickerLabel={ __(
+				'Browse a partition',
+				'newspack-event-logger-nodes'
+			) }
 			isPaused={ isPaused }
 			connectionError={ connectionError }
 			onTogglePause={ () => setPaused( ! isPaused ) }
-			onStep={ browse?.selectedPartition ? step : undefined }
-			onJump={ browse?.selectedPartition ? browse.jump : undefined }
+			onStep={ browse.selectedPartition ? step : undefined }
+			onJump={ browse.selectedPartition ? browse.jump : undefined }
 			getViewNode={ getViewNode }
 			onClear={ clear }
 			onFilter={ setFilter }
-			sidebar={
-				<SegmentBrowseSidebar
-					browse={ browse }
-					onSelectPartition={ ( key ) =>
-						browse?.selectPartition( key )
-					}
-				/>
-			}
+			sidebar={ browse.selectedPartition ? browse.sidebar : null }
 			renderRow={ renderRow }
 			rowHeight={ ROW_HEIGHT }
 			filterPlaceholder={ __(

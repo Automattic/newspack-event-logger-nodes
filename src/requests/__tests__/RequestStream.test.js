@@ -21,15 +21,6 @@ jest.mock( '@newspack-nodes/shared/components/LogRowList', () => ( {
 	},
 } ) );
 
-let logBrowserProps;
-jest.mock( '@newspack-nodes/shared/components/LogBrowser', () => ( {
-	__esModule: true,
-	default: ( props ) => {
-		logBrowserProps = props;
-		return <div data-testid="log-browser" />;
-	},
-} ) );
-
 import * as React from 'react';
 import { Core } from '@newspack-nodes/runtime';
 import RequestStream from '../RequestStream';
@@ -94,7 +85,7 @@ function row( overrides = {} ) {
 // A browse model the mocked graph hook hands back for the browse-UI tests.
 function browseMock( overrides = {} ) {
 	return {
-		partitions: [],
+		pickerOptions: null,
 		selectedPartition: '',
 		selectPartition: jest.fn(),
 		jump: jest.fn(),
@@ -112,7 +103,6 @@ describe( 'RequestStream', () => {
 		Core.reset();
 		window.localStorage.clear();
 		logRowListProps = undefined;
-		logBrowserProps = undefined;
 		setPaused = jest.fn();
 		useRequestLogGraph.mockClear();
 		clearGraph = jest.fn();
@@ -401,7 +391,20 @@ describe( 'RequestStream', () => {
 			expect(
 				container.querySelector( 'select.newspack-nodes-select' )
 			).toBeNull();
-			expect( logBrowserProps ).toBeUndefined();
+			expect(
+				container.querySelector( '[data-testid="log-browser"]' )
+			).toBeNull();
+		} );
+
+		// An empty catalog is the state every cold load starts in — the reply
+		// rides the router tick — so a "no partitions" claim would be false
+		// for the first second on a machine that has them.
+		it( 'says nothing about partitions before the catalog answers', () => {
+			registerViewFixture();
+			const { container } = mount();
+			expect(
+				container.querySelector( '.newspack-nodes-toolbar-status' )
+			).toBeNull();
 		} );
 
 		it( 'renders a partition selector (All + each dir) once partitions are cataloged', () => {
@@ -416,7 +419,8 @@ describe( 'RequestStream', () => {
 				setPaused,
 				clear: jest.fn(),
 				browse: browseMock( {
-					partitions: [
+					pickerOptions: [
+						{ key: '', label: 'All partitions (live)' },
 						{ key: 'completed.p0', label: 'completed.p0' },
 						{ key: 'completed.p3', label: 'completed.p3' },
 					],
@@ -445,7 +449,8 @@ describe( 'RequestStream', () => {
 				setPaused,
 				clear: jest.fn(),
 				browse: browseMock( {
-					partitions: [
+					pickerOptions: [
+						{ key: '', label: 'All partitions (live)' },
 						{ key: 'completed.p3', label: 'completed.p3' },
 						{ key: 'completed.p4', label: 'completed.p4' },
 					],
@@ -472,7 +477,9 @@ describe( 'RequestStream', () => {
 		it( 'renders the segment rail when a partition is selected', () => {
 			registerViewFixture();
 			const browse = browseMock( {
-				partitions: [ { key: 'completed.p3', label: 'completed.p3' } ],
+				pickerOptions: [
+					{ key: 'completed.p3', label: 'completed.p3' },
+				],
 				selectedPartition: 'completed.p3',
 			} );
 			useRequestLogGraph.mockReturnValue( {

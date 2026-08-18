@@ -3,8 +3,8 @@
  * substrate's segment browsing.
  *
  * The browse model over a glob is two-level:
- *   - selectedPartition '' → the glob, tailed live. The sidebar shows the
- *     partition picker alone, with no segment rail.
+ *   - selectedPartition '' → the glob, tailed live: the toolbar picker's empty
+ *     row, and no segment rail.
  *   - selectedPartition 'errors.p3' → that ONE dir, with the rail and Live /
  *     Replay / per-segment seeks — which is exactly `useSegmentBrowse`.
  *
@@ -18,7 +18,14 @@
  * needs correlating.
  */
 
-import { useState, useEffect, useRef, useCallback } from '@wordpress/element';
+import {
+	useState,
+	useEffect,
+	useMemo,
+	useRef,
+	useCallback,
+} from '@wordpress/element';
+import { __ } from '@wordpress/i18n';
 import { useNodeState } from '@newspack-nodes/runtime';
 import {
 	useSegmentBrowse,
@@ -36,12 +43,11 @@ const RAW_LOGS = 'raw-logs';
  * @param {string}     o.glob  The subscription glob (e.g. `errors.*`).
  * @param {Object}     o.graph The `useStreamGraph` handle this browses.
  * @param {() => void} o.step  Deliver one record while paused.
- * @return {{ partitions: Object[], selectedPartition: string,
+ * @return {{ pickerOptions: ?Object[], selectedPartition: string,
  *   selectPartition: (key: string) => void, jump: (text: string) => void,
  *   sidebar: import('react').ReactElement }}
- *   The picker's rows and selection, the offset-jump handler, and the rail.
- *   `partitions` are the `list_logs` rows (`{ key, label, … }`) narrowed to the
- *   glob.
+ *   The toolbar picker's rows and selection, the offset-jump handler, and the
+ *   segment rail.
  */
 export default function useGlobBrowse( { glob, graph, step } ) {
 	const globPrefix = glob.endsWith( '*' ) ? glob.slice( 0, -1 ) : glob;
@@ -93,6 +99,29 @@ export default function useGlobBrowse( { glob, graph, step } ) {
 		}
 	}, [ partitions ] );
 
+	// The empty row widens back to the glob; a sole dir gets none.
+	const pickerOptions = useMemo( () => {
+		const rows = partitions.map( ( p ) => ( {
+			key: p.key,
+			label: p.label || p.key,
+		} ) );
+		if ( 0 === rows.length ) {
+			return null;
+		}
+		return rows.length > 1
+			? [
+					{
+						key: '',
+						label: __(
+							'All partitions (live)',
+							'newspack-event-logger-nodes'
+						),
+					},
+					...rows,
+			  ]
+			: rows;
+	}, [ partitions ] );
+
 	const { jump, sidebar } = useSegmentBrowse( {
 		sub: selectedPartition,
 		source,
@@ -105,5 +134,5 @@ export default function useGlobBrowse( { glob, graph, step } ) {
 		step,
 	} );
 
-	return { partitions, selectedPartition, selectPartition, jump, sidebar };
+	return { pickerOptions, selectedPartition, selectPartition, jump, sidebar };
 }

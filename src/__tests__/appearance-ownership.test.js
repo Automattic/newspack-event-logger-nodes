@@ -41,7 +41,6 @@ const DEAD_SELECTOR_NAMES = [
 ];
 const CANONICAL_CLASS_CONTRACTS = {
 	'components/LoadingFallback.js': [ 'newspack-nodes-performance-loading' ],
-	'components/SegmentBrowseSidebar.js': [ 'newspack-nodes-status' ],
 	'current-request/CurrentRequestTab.js': [
 		'newspack-nodes-empty-state',
 		'newspack-nodes-performance-loading',
