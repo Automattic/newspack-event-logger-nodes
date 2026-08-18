@@ -99,7 +99,7 @@ The v0.8.0 substrate-canonical pattern: every dashboard mounts the substrate's e
 #### Adding a CLI command (`wp nodes <verb>`)
 
 1. Live under `includes/cli/class-<verb>-command.php`. Register in `newspack-event-logger-nodes.php` inside the `WP_CLI` block.
-2. Validate inputs at the boundary; long-running commands should accept an `--allow-root` flag (WP-CLI convention).
+2. Validate inputs at the boundary, and refuse rather than coerce — `Command_Args::option_int()` returns null for a malformed flag so each layer can report it in its own voice.
 3. **Make blocking work injectable.** If the command reads stdin in a loop, calls `sleep` between iterations, or polls a file, take the resource or iteration-count as a parameter so tests can drive it deterministically. Two distinct seams in `Reqgrep_Command`:
    - `process_stdin( $stream = null )` — stream-injection seam; defaults to null (resolving STDIN inside), tests pass a `php://memory` resource.
    - `follow_mode( int $max_iterations = PHP_INT_MAX )` — iteration-cap seam; production passes the default, tests pass a small number.
