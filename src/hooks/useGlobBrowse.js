@@ -20,7 +20,7 @@
 
 import {
 	useState,
-	useEffect,
+	useLayoutEffect,
 	useMemo,
 	useRef,
 	useCallback,
@@ -43,11 +43,11 @@ const RAW_LOGS = 'raw-logs';
  * @param {string}     o.glob  The subscription glob (e.g. `errors.*`).
  * @param {Object}     o.graph The `useStreamGraph` handle this browses.
  * @param {() => void} o.step  Deliver one record while paused.
- * @return {{ pickerOptions: ?Object[], selectedPartition: string,
- *   selectPartition: (key: string) => void, jump: (text: string) => void,
- *   sidebar: import('react').ReactElement }}
- *   The toolbar picker's rows and selection, the offset-jump handler, and the
- *   segment rail.
+ * @return {{ pickerOptions: Object[], pickerLabel: string,
+ *   selectedPartition: string, selectPartition: (key: string) => void,
+ *   jump: ?(text: string) => void, sidebar: ?import('react').ReactElement }}
+ *   The toolbar picker, and — only once a dir is selected — the segment rail
+ *   and the offset jump into it.
  */
 export default function useGlobBrowse( { glob, graph, step } ) {
 	const globPrefix = glob.endsWith( '*' ) ? glob.slice( 0, -1 ) : glob;
@@ -56,7 +56,7 @@ export default function useGlobBrowse( { glob, graph, step } ) {
 
 	const [ selectedPartition, setSelectedPartition ] = useState( '' );
 
-	// The selection, read without re-arming the auto-select effect.
+	// The selection, kept out of the auto-select effect's dependencies.
 	const selectedRef = useRef( selectedPartition );
 	selectedRef.current = selectedPartition;
 
@@ -90,36 +90,30 @@ export default function useGlobBrowse( { glob, graph, step } ) {
 		[ glob, control, resubscribe ]
 	);
 
-	// A sole partition auto-selects: one dir IS the whole live glob.
-	const selectPartitionRef = useRef( selectPartition );
-	selectPartitionRef.current = selectPartition;
-	useEffect( () => {
+	// @longform
+	// A sole partition auto-selects, before paint: one dir IS the live glob,
+	// and a passive effect would paint the picker at a value matching no row
+	// first. Layout effects run before the graph's own mount effect, so this
+	// leans on the catalog never arriving populated on a first render — it
+	// only ever fills from a command reply, and a rebuild clears the node's
+	// state cache. A catalog hoisted above this dashboard would break that.
+	useLayoutEffect( () => {
 		if ( 1 === partitions.length && '' === selectedRef.current ) {
-			selectPartitionRef.current( partitions[ 0 ].key );
+			selectPartition( partitions[ 0 ].key );
 		}
-	}, [ partitions ] );
+	}, [ partitions, selectPartition ] );
 
 	// The empty row widens back to the glob; a sole dir gets none.
 	const pickerOptions = useMemo( () => {
-		const rows = partitions.map( ( p ) => ( {
-			key: p.key,
-			label: p.label || p.key,
-		} ) );
-		if ( 0 === rows.length ) {
-			return null;
+		if ( partitions.length < 2 ) {
+			return partitions;
 		}
-		return rows.length > 1
-			? [
-					{
-						key: '',
-						label: __(
-							'All partitions (live)',
-							'newspack-event-logger-nodes'
-						),
-					},
-					...rows,
-			  ]
-			: rows;
+		// Widens the subscription back to the whole glob.
+		const all = {
+			key: '',
+			label: __( 'All partitions (live)', 'newspack-event-logger-nodes' ),
+		};
+		return [ all, ...partitions ];
 	}, [ partitions ] );
 
 	const { jump, sidebar } = useSegmentBrowse( {
@@ -134,5 +128,13 @@ export default function useGlobBrowse( { glob, graph, step } ) {
 		step,
 	} );
 
-	return { pickerOptions, selectedPartition, selectPartition, jump, sidebar };
+	// No dir means nothing to browse WITHIN: no rail, and no jump into one.
+	return {
+		pickerOptions,
+		pickerLabel: __( 'Browse a partition', 'newspack-event-logger-nodes' ),
+		selectedPartition,
+		selectPartition,
+		jump: selectedPartition ? jump : undefined,
+		sidebar: selectedPartition ? sidebar : null,
+	};
 }

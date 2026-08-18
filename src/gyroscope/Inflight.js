@@ -577,6 +577,10 @@ export default function Inflight( { maxRows = 20 } ) {
 						onChange={ ( e ) =>
 							setRefreshInterval( parseFloat( e.target.value ) )
 						}
+						aria-label={ __(
+							'Refresh interval',
+							'newspack-event-logger-nodes'
+						) }
 						title={ __(
 							'Refresh interval (also press 0–9 keys)',
 							'newspack-event-logger-nodes'

@@ -390,19 +390,16 @@ export default function RequestStream( { maxEntries = 500 } ) {
 			pickerOptions={ browse.pickerOptions }
 			selectedKey={ browse.selectedPartition }
 			onPick={ browse.selectPartition }
-			pickerLabel={ __(
-				'Browse a partition',
-				'newspack-event-logger-nodes'
-			) }
+			pickerLabel={ browse.pickerLabel }
 			isPaused={ isPaused }
 			connectionError={ connectionError }
 			onTogglePause={ () => setPaused( ! isPaused ) }
-			onStep={ browse.selectedPartition ? step : undefined }
-			onJump={ browse.selectedPartition ? browse.jump : undefined }
+			onStep={ step }
+			onJump={ browse.jump }
 			getViewNode={ getViewNode }
 			onClear={ clear }
 			onFilter={ setFilter }
-			sidebar={ browse.selectedPartition ? browse.sidebar : null }
+			sidebar={ browse.sidebar }
 			renderRow={ renderRow }
 			rowHeight={ ROW_HEIGHT }
 			filterPlaceholder={ __(

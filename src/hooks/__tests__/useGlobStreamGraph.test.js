@@ -172,8 +172,7 @@ test( 'signs the mount-time catalog fetch', async () => {
 describe( 'the partition catalog', () => {
 	const MIXED = [
 		{ key: 'errors.p0', label: 'errors.p0' },
-		// A row the catalog left unlabelled falls back to its key.
-		{ key: 'errors.p3' },
+		{ key: 'errors.p3', label: 'errors.p3' },
 		{ key: 'completed.p0', label: 'completed.p0' },
 		{ key: 'jobs.log', label: 'jobs.log' },
 	];
@@ -253,7 +252,7 @@ describe( 'the partition catalog', () => {
 			payloadByVerb: { list_logs: MIXED },
 			errorVerbs: [ 'list_logs' ],
 		} );
-		expect( result.current.browse.pickerOptions ).toBeNull();
+		expect( result.current.browse.pickerOptions ).toEqual( [] );
 	} );
 
 	// A refusal is an ANSWER, so nothing retries it: the picker recovers only
@@ -280,7 +279,7 @@ describe( 'the partition catalog', () => {
 				} )
 			);
 		} );
-		expect( hook.result.current.browse.pickerOptions ).toBeNull();
+		expect( hook.result.current.browse.pickerOptions ).toEqual( [] );
 		await waitFor(
 			() =>
 				expect(
@@ -296,7 +295,7 @@ describe( 'the partition catalog', () => {
 		const { result } = await renderBrowse( {
 			payloadByVerb: { list_logs: { nope: true } },
 		} );
-		expect( result.current.browse.pickerOptions ).toBeNull();
+		expect( result.current.browse.pickerOptions ).toEqual( [] );
 	} );
 } );
 
@@ -390,6 +389,38 @@ describe( 'moving the selection', () => {
 		expect( railItems( result.current.browse )[ 0 ].textContent ).toContain(
 			'Segment 12'
 		);
+	} );
+} );
+
+// Without a dir there is nothing to browse WITHIN, so the rail, the offset
+// jump into it and the paused step do not exist. Ungate any one of them and
+// the whole-glob view grows an empty rail and two dead controls.
+describe( 'the two-level gate', () => {
+	const TWO = [
+		{ key: 'errors.p0', label: 'errors.p0' },
+		{ key: 'errors.p3', label: 'errors.p3' },
+	];
+	const WITH_RAIL = {
+		list_logs: TWO,
+		log_status: { segments: [ { id: 9, size: 12 } ] },
+	};
+
+	test( 'the whole-glob view has no rail, no jump and no step', async () => {
+		const { result } = await renderBrowse( { payloadByVerb: WITH_RAIL } );
+		expect( result.current.browse.selectedPartition ).toBe( '' );
+		expect( result.current.browse.sidebar ).toBeNull();
+		expect( result.current.browse.jump ).toBeUndefined();
+		expect( result.current.step ).toBeUndefined();
+	} );
+
+	test( 'picking a dir brings all three back', async () => {
+		const { result } = await renderBrowse( { payloadByVerb: WITH_RAIL } );
+		await act( async () =>
+			result.current.browse.selectPartition( 'errors.p3' )
+		);
+		expect( result.current.browse.sidebar ).not.toBeNull();
+		expect( typeof result.current.browse.jump ).toBe( 'function' );
+		expect( typeof result.current.step ).toBe( 'function' );
 	} );
 } );
 
