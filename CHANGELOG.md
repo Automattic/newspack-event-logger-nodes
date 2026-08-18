@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Stats evicted from memcache never came back, though the mirror held them.** `flame-stats:partition` has shadowed every stats write for months, but the only path back into memcache was a cold-boot replay gated on `! empty( $store->get_hourly() )` — and `hourly` is a SINGLE key holding the whole window, rewritten with a fresh TTL on every flush by any traffic at all, worker or not (`accumulate_hourly()` seeds its bucket either way). So the sentinel chosen to detect "memcache lost everything" was the one key that never goes, while the keys that actually get evicted — the hundreds of `urls:<bucket>`, `lb:<bucket>` and per-URL entries — vanished one at a time with nothing watching. On a busy host a URL simply dropped out of the leaderboard hours before its retention window closed, and only clearing the derived partitions and offsetlogs and reprocessing the firehose brought it back. A miss now reads the mirror: `flame-stats:partition` carries a `stats-index` companion (`key_hash(12) segment(6) offset(10) length(8)`), `Stats_Store` gained a `$rehydrate` seam beside `$mirror`, and a key found there is restored under a TTL decayed by the frame's age — so an eviction is repaired and a genuine expiry stays expired, `restore()` having always refused a frame older than its own TTL. **Only frames written after this deploy are indexed; earlier ones age out within the retention window.**
+- **The worker's own merge undercounted after an eviction.** `persist_aggregate_stats()` reads each bucket, adds this flush's delta and writes the sum, so an evicted bucket read as empty and the prior counts were silently dropped from the total. It reads through the mirror now.
+- **The dashboard could not reach the mirror at all.** `Performance_CI_Node` builds its stores in a web request, where no `Flame_Builder` exists to arm the seam; `Flame_Builder_Node::arm_stats_reader()` arms them from the topology instead, resolving the partition's concrete dir through `Bootstrap::node_dirs()` rather than rebuilding a path template.
+
+### Changed
+- **`stats_mirror_node` ships as `flame-stats:partition`.** It defaulted to `''`, which left the mirror — and therefore the recovery above — off on every install that had not hand-edited its config file. The topology already builds the node.
+- **The mirror's retention derives from the stats window.** `flame-stats:partition` took the 64 MiB default and no lifetime, so it kept frames for days past the point `restore()` could use them. It now takes `<eln:stats_mirror_lifetime>`, twice `Config::stats_retention_seconds()` — widening `min_lifetime` widens the mirror with it, rather than silently truncating it against a constant.
+
+### Removed
+- **`reload_stats_from_partition()` and its `$stats_reloaded` latch.** Read-through repairs holes as they are found, so a once-per-process bulk replay of the whole partition is cost without benefit. Its last-wins and TTL-decay behaviour is unchanged, now exercised through the miss path.
+
 ## [0.57.2] - 2026-08-17
 
 ### Removed

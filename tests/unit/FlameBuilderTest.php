@@ -61,11 +61,11 @@ class FlameBuilderTest extends TestCase {
 		@\rmdir( $dir );
 	}
 
-	private function make_partition( string $name ): \Newspack_Nodes\Partition_Node {
+	private function make_partition( string $name, string $class = \Newspack_Nodes\Partition_Node::class ): \Newspack_Nodes\Partition_Node {
 		// Inside the runtime tree: storage nodes refuse a path outside it.
 		$dir               = \Newspack_Nodes\Config::get_base_directory() . '/flamestats_' . \uniqid();
 		$this->temp_dirs[] = $dir;
-		$p = new \Newspack_Nodes\Partition_Node();
+		$p = new $class();
 		// Pin a 64 MiB segment so every mirror frame lands in one un-pruned segment.
 		// The `<config:segment_size>` default resolves via a process-global token
 		// resolver other tests mutate; leaving it unpinned makes this sink's
@@ -2350,44 +2350,33 @@ class FlameBuilderTest extends TestCase {
 		$this->assertArrayHasKey( Stats_Store::entry_key( 0, 'url:filled' ), $frames, 'profiled URL mirrored' );
 	}
 
-	public function test_warm_memcache_skips_partition_reload(): void {
+	public function test_a_present_key_is_never_overwritten_from_the_mirror(): void {
 		Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		$p          = $this->make_partition( 'flames-stats' );
+		/** @var CountingIndexPartition $p */
+		[ $fb, $p ] = $this->mirrored_builder( $store, 'flames-stats', CountingIndexPartition::class );
 
-		$now = \time();
-		$this->fill_partition_entry( $p, Stats_Store::entry_key( 0, 'hourly' ), [ 'from-partition' => [ 'count' => 99 ] ], 100, $now );
+		$store->set_hourly( [ 'from-mirror' => [ 'count' => 91 ] ] );
+		$fb->save_state();
 		$p->flush();
+		// Live memcache moves on; the mirror still holds the older frame.
+		$store->set_hourly( [ 'from-memcache' => [ 'count' => 17 ] ] );
+		$p->index_scans = 0;
 
-		// Memcache already warm — reload must not clobber it.
-		$store->set_hourly( [ 'from-memcache' => [ 'count' => 1 ] ] );
-
-		$fb = new Flame_Builder_Node();
-		$fb->name( 'fb' );
-		$fb->set_stats_store( $store );
-		$fb->set_stats_target( $p->name() );
-		$fb->save_state(); // Drive the lazy cold-boot reload.
-
-		$this->assertSame( [ 'from-memcache' => [ 'count' => 1 ] ], $store->get_hourly(), 'warm memcache preserved' );
+		$this->assertSame( [ 'from-memcache' => [ 'count' => 17 ] ], $store->get_hourly(), 'the live value wins' );
+		$this->assertSame( 0, $p->index_scans, 'a hit never consults the mirror' );
 	}
 
-	public function test_decayed_out_partition_entry_not_restored(): void {
+	public function test_a_decayed_out_frame_is_not_restored(): void {
 		Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		$p          = $this->make_partition( 'flames-stats' );
+		[ , $p ]    = $this->mirrored_builder( $store, 'flames-stats' );
 
-		// ttl=100 but the entry is 200s old → age >= ttl → decayed out.
-		$old = \time() - 200;
-		$this->fill_partition_entry( $p, Stats_Store::entry_key( 0, 'hourly' ), [ 'x' => [ 'count' => 5 ] ], 100, $old );
+		// ttl 100 but written 200s ago: age exceeds it, so restore() refuses.
+		$this->fill_partition_entry( $p, Stats_Store::entry_key( 0, 'hourly' ), [ 'x' => [ 'count' => 53 ] ], 100, \time() - 200 );
 		$p->flush();
 
-		$fb = new Flame_Builder_Node();
-		$fb->name( 'fb' );
-		$fb->set_stats_store( $store );
-		$fb->set_stats_target( $p->name() );
-		$fb->save_state(); // Drive the lazy cold-boot reload.
-
-		$this->assertSame( [], $store->get_hourly(), 'decayed-out entry not restored' );
+		$this->assertSame( [], $store->get_hourly(), 'a genuinely expired frame stays expired' );
 	}
 
 	public function test_set_stats_target_before_store_records_name_but_stays_inert(): void {
@@ -2436,23 +2425,17 @@ class FlameBuilderTest extends TestCase {
 		$this->assertIsArray( $fb->save_state() );
 	}
 
-	public function test_reload_restores_all_committed_frames_last_wins(): void {
+	public function test_the_newest_frame_for_a_key_wins(): void {
 		Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		$p          = $this->make_partition( 'flames-stats' );
+		[ , $p ]    = $this->mirrored_builder( $store, 'flames-stats' );
 
 		$now = \time();
-		$this->fill_partition_entry( $p, Stats_Store::entry_key( 0, 'hourly' ), [ 'v1' => [ 'count' => 1 ] ], 100, $now );
-		$this->fill_partition_entry( $p, Stats_Store::entry_key( 0, 'hourly' ), [ 'v2' => [ 'count' => 2 ] ], 100, $now );
+		$this->fill_partition_entry( $p, Stats_Store::entry_key( 0, 'hourly' ), [ 'v1' => [ 'count' => 29 ] ], 100, $now );
+		$this->fill_partition_entry( $p, Stats_Store::entry_key( 0, 'hourly' ), [ 'v2' => [ 'count' => 74 ] ], 100, $now );
 		$p->flush();
 
-		$fb = new Flame_Builder_Node();
-		$fb->name( 'fb' );
-		$fb->set_stats_store( $store );
-		$fb->set_stats_target( $p->name() );
-		$fb->save_state(); // Drive the lazy cold-boot reload.
-
-		$this->assertSame( [ 'v2' => [ 'count' => 2 ] ], $store->get_hourly(), 'last frame for a key wins; every frame is committed' );
+		$this->assertSame( [ 'v2' => [ 'count' => 74 ] ], $store->get_hourly(), 'the newest frame for a key wins' );
 	}
 
 	public function test_node_schema_declares_set_stats_target_as_a_node_reference(): void {
@@ -2531,6 +2514,103 @@ class FlameBuilderTest extends TestCase {
 
 		$this->assertArrayHasKey( Stats_Store::entry_key( 0, 'hourly' ), $this->read_mirror_frames( $p ), 'forward-referenced stats partition resolved lazily at flush' );
 	}
+
+	// --- Mirror companion index -------------------------------------------
+
+	public function test_stats_index_locates_a_mirrored_frame(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$p          = $this->make_partition( 'flames-stats' );
+		$p->with_index( Flame_Builder_Node::format_stats_index_entry( ... ) );
+
+		$fb = new Flame_Builder_Node();
+		$fb->name( 'fb' );
+		$fb->set_stats_store( $store );
+		$fb->set_stats_target( $p->name() );
+
+		// Values unlike any default: a bucket no other test uses, count 37.
+		$store->set_hourly( [ '2026-02-03-04-05' => [ 'count' => 37 ] ] );
+		$fb->save_state();
+		$p->flush();
+
+		$key   = Stats_Store::entry_key( 0, 'hourly' );
+		$found = null;
+		$p->scan_index(
+			function ( string $line, int $segment ) use ( &$found, $key, $p ): bool {
+				$entry = Flame_Builder_Node::parse_stats_index( $line );
+				if ( null === $entry || $entry['key_hash'] !== Log_Manager::url_hash( $key ) ) {
+					return true;
+				}
+				$found = Message::unpacked( $p->read_at( $segment, $entry['offset'], $entry['length'] ) )[ Message::VALUE ];
+				return false;
+			},
+			true
+		);
+
+		$this->assertIsArray( $found, 'the index located the hourly frame' );
+		$this->assertSame( $key, $found['key'] );
+		$this->assertSame( [ '2026-02-03-04-05' => [ 'count' => 37 ] ], $found['data'] );
+	}
+
+	/**
+	 * Arm a mirror over a fresh indexed partition and return both.
+	 *
+	 * @return array{0: Flame_Builder_Node, 1: \Newspack_Nodes\Partition_Node}
+	 */
+	private function mirrored_builder( Stats_Store $store, string $name, string $class = \Newspack_Nodes\Partition_Node::class ): array {
+		$p = $this->make_partition( $name, $class );
+		$p->with_index( Flame_Builder_Node::format_stats_index_entry( ... ) );
+		$fb = new Flame_Builder_Node();
+		$fb->name( 'fb' );
+		$fb->set_stats_store( $store );
+		$fb->set_stats_target( $p->name() );
+		return [ $fb, $p ];
+	}
+
+	public function test_evicted_url_bucket_is_restored_from_the_mirror(): void {
+		Core::$memd  = new InMemoryMemcached();
+		$store       = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		[ $fb, $p ]  = $this->mirrored_builder( $store, 'flames-stats' );
+
+		$bucket = '2026-02-03-04-05';
+		$rows   = [ 'ab12cd34ef56' => [ 'url' => 'https://example.test/jobs/import', 'count' => 639 ] ];
+		$store->set_url_index_hourly( $bucket, $rows );
+		// hourly stays warm: it is the sentinel the retired gate keyed on.
+		$store->set_hourly( [ $bucket => [ 'count' => 12 ] ] );
+		$fb->save_state();
+		$p->flush();
+
+		// Evict just the bucket, the way memcache does under pressure.
+		Core::$memd->delete( Stats_Store::entry_key( 0, 'urls:' . $bucket ) );
+		$this->assertFalse( Core::$memd->get( Stats_Store::entry_key( 0, 'urls:' . $bucket ) ), 'bucket evicted from memcache' );
+		$this->assertNotSame( [], $store->get_hourly(), 'memcache still warm by the old sentinel' );
+
+		$this->assertSame( [ $bucket => $rows ], $store->get_url_buckets( [ $bucket ] ) );
+	}
+
+	public function test_every_missing_bucket_is_recovered_in_one_index_pass(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		/** @var CountingIndexPartition $p */
+		[ $fb, $p ] = $this->mirrored_builder( $store, 'flames-stats', CountingIndexPartition::class );
+
+		$buckets = [ '2026-02-03-04-05', '2026-02-03-04-10', '2026-02-03-04-15' ];
+		foreach ( $buckets as $i => $bucket ) {
+			$store->set_url_index_hourly( $bucket, [ "hash{$i}" => [ 'url' => "/j{$i}", 'count' => 641 + $i ] ] );
+		}
+		$fb->save_state();
+		$p->flush();
+		foreach ( $buckets as $bucket ) {
+			Core::$memd->delete( Stats_Store::entry_key( 0, 'urls:' . $bucket ) );
+		}
+		$p->index_scans = 0;
+
+		$out = $store->get_url_buckets( $buckets );
+
+		$this->assertCount( 3, $out, 'every evicted bucket recovered' );
+		$this->assertSame( 641, $out['2026-02-03-04-05']['hash0']['count'] );
+		$this->assertSame( 1, $p->index_scans, 'one index pass for all three misses, not one per bucket' );
+	}
 }
 
 /**
@@ -2539,4 +2619,14 @@ class FlameBuilderTest extends TestCase {
  */
 class TinyInternFlameBuilder extends Flame_Builder_Node {
 	protected const INTERN_TABLE_LIMIT = 3;
+}
+
+/** Counts index scans, so a test can pin the batch path to ONE pass. */
+class CountingIndexPartition extends \Newspack_Nodes\Partition_Node {
+	public int $index_scans = 0;
+
+	public function scan_index( callable $cb, bool $newest_first = false ): void {
+		++$this->index_scans;
+		parent::scan_index( $cb, $newest_first );
+	}
 }

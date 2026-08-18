@@ -124,6 +124,10 @@ $_newspack_event_logger_nodes_load = static function (): void {
 		'flame-index',
 		\Newspack_Event_Logger_Nodes\Flame_Builder_Node::format_index_entry( ... )
 	);
+	\Newspack_Nodes\Formatters::register(
+		'stats-index',
+		\Newspack_Event_Logger_Nodes\Flame_Builder_Node::format_stats_index_entry( ... )
+	);
 
 	// Settings-sync value-resolver filter (writer now lives in the substrate).
 	\add_filter(

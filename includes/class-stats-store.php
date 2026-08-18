@@ -108,6 +108,17 @@ class Stats_Store {
 	 * @var \Closure|null
 	 */
 	public ?\Closure $mirror = null;
+
+	/**
+	 * Rehydrate seam — the read counterpart of `$mirror`, invoked with the
+	 * backend keys a read missed on and returning the mirrored frame for
+	 * whichever of them the durable partition still holds. Null (default) = no
+	 * durable fallback and a miss stays a miss.
+	 * `Flame_Builder_Node::arm_stats_mirror()` is the only wiring.
+	 *
+	 * @var (\Closure(list<string>): array<string,array{data: array<string,mixed>, ttl: int, ts: float}>)|null
+	 */
+	public ?\Closure $rehydrate = null;
 	/** @var int Retention window in seconds, as Config::stats_retention_seconds() floored it. */
 	private int $max_lifespan;
 
@@ -280,6 +291,16 @@ class Stats_Store {
 				$out[ $map[ $k ] ] = $v;
 			}
 		}
+		// ONE pass for every miss; per-key re-walks the window on each bucket.
+		$missed = [];
+		foreach ( $map as $k => $bucket ) {
+			if ( ! isset( $out[ $bucket ] ) ) {
+				$missed[ self::entry_key( $this->partition, $k ) ] = $bucket;
+			}
+		}
+		foreach ( $this->recover( \array_keys( $missed ) ) as $backend_key => $data ) {
+			$out[ $missed[ $backend_key ] ] = $data;
+		}
 		return $out;
 	}
 
@@ -409,9 +430,65 @@ class Stats_Store {
 		return $out;
 	}
 
-	/** Read one key through the table; null (no backend) and miss both read empty. */
+	/**
+	 * Read one key through the table, falling back to the mirror on a miss.
+	 * Null (no backend) and a miss the mirror cannot fill both read empty.
+	 */
 	private function lookup( string $key ): mixed {
-		return $this->table( $this->ttl() )?->lookup( $key );
+		$value = $this->table( $this->ttl() )?->lookup( $key );
+		if ( null !== $value ) {
+			return $value;
+		}
+		$backend_key = self::entry_key( $this->partition, $key );
+		return $this->recover( [ $backend_key ] )[ $backend_key ] ?? null;
+	}
+
+	/**
+	 * Fill missed keys from the mirror and restore each into memcache, so the
+	 * next read hits and the hole closes rather than being re-walked.
+	 *
+	 * A frame whose TTL has already elapsed is refused by `restore()`, which is
+	 * what keeps a genuine expiry expired: only a key that vanished EARLY — an
+	 * eviction — comes back.
+	 *
+	 * @param list<string> $keys Backend keys that missed.
+	 * @return array<string,array<string,mixed>> Recovered values, keyed by backend key.
+	 */
+	private function recover( array $keys ): array {
+		if ( [] === $keys || null === $this->rehydrate ) {
+			return [];
+		}
+		$now = Core::right_now();
+		$out = [];
+		foreach ( ( $this->rehydrate )( $keys ) as $key => $frame ) {
+			$age = (int) ( $now - $frame['ts'] );
+			if ( $this->restore( $key, $frame['data'], $frame['ttl'] - $age ) ) {
+				$out[ $key ] = $frame['data'];
+			}
+		}
+		return $out;
+	}
+
+	/**
+	 * Replay a mirrored write straight into memcache under a (decayed) TTL. Guards
+	 * ttl>0 and the current prefix (a rotated scope orphans the mirror, like it
+	 * orphans memcache).
+	 *
+	 * The write bypasses the mirror seam: this restores what the mirror already
+	 * holds, and re-shadowing it would append a duplicate frame.
+	 *
+	 * @param string               $key  Full memcache key, prefix included.
+	 * @param array<string,mixed> $data Mirrored value.
+	 * @param int                  $ttl  Remaining seconds; <= 0 is refused.
+	 * @return bool True when the set landed.
+	 */
+	public function restore( string $key, array $data, int $ttl ): bool {
+		// The guard is namespace membership, so it moves with the scope.
+		if ( $ttl <= 0 || ! \str_starts_with( $key, self::entry_key( $this->partition, '' ) ) ) {
+			return false;
+		}
+		// Straight to the backend: the mirror holds this key whole already.
+		return true === \Newspack_Nodes\Cache_Backend::shared_first()?->set( $key, $data, $ttl );
 	}
 
 	/**
@@ -479,6 +556,17 @@ class Stats_Store {
 			( $this->mirror )( self::entry_key( $this->partition, $key ), $data, $ttl, $ns );
 		}
 		return $ok;
+	}
+
+	/**
+	 * Full backend key for one entry — what the mirror records and `restore()`
+	 * guards on.
+	 *
+	 * @param int    $partition Flame-builder partition.
+	 * @param string $key       Entry key within the namespace.
+	 */
+	public static function entry_key( int $partition, string $key ): string {
+		return Table_Node::entry_key( self::namespace_for( $partition ), $key );
 	}
 
 	/**
@@ -575,39 +663,6 @@ class Stats_Store {
 	/** Retention for the high-volume `url` namespace: a day's worth cut to a 24th, floored at an hour. */
 	public function ttl_url_stats(): int {
 		return \max( self::PREFIX_FLOOR, (int) ( $this->max_lifespan / 24 ) );
-	}
-
-	/**
-	 * Replay a mirrored write straight into memcache under a (decayed) TTL. Guards
-	 * ttl>0 and the current prefix (a rotated scope orphans the mirror, like it
-	 * orphans memcache).
-	 *
-	 * The write bypasses the mirror seam: this restores what the mirror already
-	 * holds, and re-shadowing it would append a duplicate frame.
-	 *
-	 * @param string               $key  Full memcache key, prefix included.
-	 * @param array<string,mixed> $data Mirrored value.
-	 * @param int                  $ttl  Remaining seconds; <= 0 is refused.
-	 * @return bool True when the set landed.
-	 */
-	public function restore( string $key, array $data, int $ttl ): bool {
-		// The guard is namespace membership, so it moves with the scope.
-		if ( $ttl <= 0 || ! \str_starts_with( $key, self::entry_key( $this->partition, '' ) ) ) {
-			return false;
-		}
-		// Straight to the backend: the mirror holds this key whole already.
-		return true === \Newspack_Nodes\Cache_Backend::shared_first()?->set( $key, $data, $ttl );
-	}
-
-	/**
-	 * Full backend key for one entry — what the mirror records and `restore()`
-	 * guards on.
-	 *
-	 * @param int    $partition Flame-builder partition.
-	 * @param string $key       Entry key within the namespace.
-	 */
-	public static function entry_key( int $partition, string $key ): string {
-		return Table_Node::entry_key( self::namespace_for( $partition ), $key );
 	}
 
 	/**

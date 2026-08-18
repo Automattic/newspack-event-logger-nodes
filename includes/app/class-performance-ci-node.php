@@ -1217,7 +1217,10 @@ class Performance_CI_Node extends Service_CI_Node {
 		$max_lifespan = AppConfig::stats_retention_seconds();
 		$stores       = [];
 		foreach ( Bootstrap::node_partitions( self::NODE_FLAME_BUILDER ) as $p ) {
-			$stores[] = new Stats_Store( $p, $max_lifespan );
+			$store = new Stats_Store( $p, $max_lifespan );
+			// No worker here to arm it: a miss must still reach the mirror.
+			Flame_Builder_Node::arm_stats_reader( $store );
+			$stores[] = $store;
 		}
 		return $stores;
 	}

@@ -78,7 +78,7 @@ return [
 	 * `Flame_Builder_Node::set_stats_target()`, which treats an empty name as
 	 * off. The topology already builds `flame-stats:partition` for the job.
 	 */
-	'stats_mirror_node'           => '',
+	'stats_mirror_node'           => 'flame-stats:partition',
 
 	// Append peak memory (MB) to every `complete` log entry.
 	'log_memory'                  => false,

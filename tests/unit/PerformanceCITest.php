@@ -2161,4 +2161,39 @@ class PerformanceCITest extends TestCase {
 		}
 		return $out;
 	}
+
+	/**
+	 * The dashboard reads in a web request, where no Flame_Builder exists to arm
+	 * the mirror — so its stores must reach the durable frames on their own.
+	 */
+	public function test_the_leaderboard_recovers_an_evicted_bucket_from_the_mirror(): void {
+		$this->activate_shipped_topology( 'performance', 1 );
+		Core::$memd = new \Newspack_Nodes\Tests\Helpers\InMemoryMemcached();
+
+		$dir = \Newspack_Nodes\Bootstrap::node_dirs( 'flame-stats:partition' )[0] ?? '';
+		$this->assertNotSame( '', $dir, 'the shipped topology declares a mirror partition' );
+
+		$bucket = \gmdate( 'Y-m-d-H' ) . '-' . \str_pad( (string) ( (int) ( ( (int) \gmdate( 'i' ) ) / 5 ) * 5 ), 2, '0', STR_PAD_LEFT );
+		$key    = Stats_Store::entry_key( 0, 'urls:' . $bucket );
+		$rows   = [ 'ab12cd34ef56' => [ 'url' => 'https://example.test/jobs/import-film-times', 'count' => 2194 ] ];
+
+		$mirror = new \Newspack_Nodes\Partition_Node();
+		$mirror->arguments( [ $dir, '67108864' ] );
+		$mirror->void_warranty();
+		$mirror->with_index( Flame_Builder_Node::format_stats_index_entry( ... ) );
+		$msg                         = Message::new_message();
+		$msg[ Message::TYPE ]        = Message::TM_STRUCT;
+		$msg[ Message::TIMESTAMP ]   = \time();
+		$msg[ Message::KEY ]         = $key;
+		$msg[ Message::VALUE ]       = [ 'key' => $key, 'data' => $rows, 'ttl' => 43200 ];
+		$mirror->fill( $msg );
+		$mirror->flush();
+
+		// Nothing in memcache: the bucket was evicted, as on a busy host.
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' );
+
+		$this->assertIsArray( $result );
+		$urls = \array_column( $result['data'] ?? [], 'url' );
+		$this->assertContains( 'https://example.test/jobs/import-film-times', $urls );
+	}
 }
