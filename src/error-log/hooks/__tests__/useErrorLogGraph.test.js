@@ -412,8 +412,8 @@ describe( 'useErrorLogGraph — glob browse', () => {
 		// The catalog rides the router tick, so it is a wait.
 		await waitFor( () =>
 			expect(
-				result.current.browse.partitions.map( ( p ) => p.key )
-			).toEqual( [ 'errors.p0', 'errors.p5' ] )
+				result.current.browse.pickerOptions.map( ( p ) => p.key )
+			).toEqual( [ '', 'errors.p0', 'errors.p5' ] )
 		);
 	} );
 

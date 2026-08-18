@@ -122,7 +122,7 @@ async function renderBrowse( {
 		! errorVerbs.includes( 'list_logs' )
 	) {
 		await waitFor( () => {
-			if ( ! hook.result.current.browse.partitions.length ) {
+			if ( ! hook.result.current.browse.pickerOptions?.length ) {
 				throw new Error( 'catalog not in yet' );
 			}
 		} );
@@ -172,7 +172,8 @@ test( 'signs the mount-time catalog fetch', async () => {
 describe( 'the partition catalog', () => {
 	const MIXED = [
 		{ key: 'errors.p0', label: 'errors.p0' },
-		{ key: 'errors.p3', label: 'errors.p3' },
+		// A row the catalog left unlabelled falls back to its key.
+		{ key: 'errors.p3' },
 		{ key: 'completed.p0', label: 'completed.p0' },
 		{ key: 'jobs.log', label: 'jobs.log' },
 	];
@@ -182,8 +183,36 @@ describe( 'the partition catalog', () => {
 			payloadByVerb: { list_logs: MIXED },
 		} );
 		expect(
-			result.current.browse.partitions.map( ( p ) => p.key )
-		).toEqual( [ 'errors.p0', 'errors.p3' ] );
+			result.current.browse.pickerOptions.map( ( p ) => p.key )
+		).toEqual( [ '', 'errors.p0', 'errors.p3' ] );
+	} );
+
+	// The toolbar picker's rows, ready to render: the empty row widens the
+	// subscription back to the whole glob, and a sole dir gets none — "All
+	// partitions" would name the same thing twice.
+	test( 'several dirs offer an All row above them', async () => {
+		const { result } = await renderBrowse( {
+			payloadByVerb: { list_logs: MIXED },
+		} );
+		expect( result.current.browse.pickerOptions ).toEqual( [
+			{ key: '', label: 'All partitions (live)' },
+			{ key: 'errors.p0', label: 'errors.p0' },
+			{ key: 'errors.p3', label: 'errors.p3' },
+		] );
+	} );
+
+	test( 'a sole dir offers itself alone', async () => {
+		const { result } = await renderBrowse( {
+			payloadByVerb: {
+				list_logs: [ { key: 'errors.p0', label: 'errors.p0' } ],
+				log_status: { segments: [ { id: 4, size: 90 } ] },
+			},
+		} );
+		await waitFor( () =>
+			expect( result.current.browse.pickerOptions ).toEqual( [
+				{ key: 'errors.p0', label: 'errors.p0' },
+			] )
+		);
 	} );
 
 	test( 'a glob with no trailing * filters by the whole glob', async () => {
@@ -192,7 +221,7 @@ describe( 'the partition catalog', () => {
 			payloadByVerb: { list_logs: MIXED },
 		} );
 		expect(
-			result.current.browse.partitions.map( ( p ) => p.key )
+			result.current.browse.pickerOptions.map( ( p ) => p.key )
 		).toEqual( [ 'errors.p3' ] );
 	} );
 
@@ -224,7 +253,7 @@ describe( 'the partition catalog', () => {
 			payloadByVerb: { list_logs: MIXED },
 			errorVerbs: [ 'list_logs' ],
 		} );
-		expect( result.current.browse.partitions ).toEqual( [] );
+		expect( result.current.browse.pickerOptions ).toBeNull();
 	} );
 
 	// A refusal is an ANSWER, so nothing retries it: the picker recovers only
@@ -251,12 +280,14 @@ describe( 'the partition catalog', () => {
 				} )
 			);
 		} );
-		expect( hook.result.current.browse.partitions ).toEqual( [] );
+		expect( hook.result.current.browse.pickerOptions ).toBeNull();
 		await waitFor(
 			() =>
 				expect(
-					hook.result.current.browse.partitions.map( ( p ) => p.key )
-				).toEqual( [ 'errors.p0', 'errors.p3' ] ),
+					hook.result.current.browse.pickerOptions?.map(
+						( p ) => p.key
+					)
+				).toEqual( [ '', 'errors.p0', 'errors.p3' ] ),
 			{ timeout: 15000 }
 		);
 	} );
@@ -265,7 +296,7 @@ describe( 'the partition catalog', () => {
 		const { result } = await renderBrowse( {
 			payloadByVerb: { list_logs: { nope: true } },
 		} );
-		expect( result.current.browse.partitions ).toEqual( [] );
+		expect( result.current.browse.pickerOptions ).toBeNull();
 	} );
 } );
 
