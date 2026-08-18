@@ -167,7 +167,7 @@ The seven global logging settings (`log_urls`/`skip_urls`/`log_events`/`custom_e
 ## Tests
 
 - Unit tests under `tests/unit/`, mostly flat. ELN owns five Service-CI test files: `DiscoveryCITest.php`, `LoggerCITest.php`, `EventsCITest.php`, `PerformanceCITest.php`, `RulesCITest.php` (`AggregatorCITest` / `SettingsCITest` are substrate tests in newspack-nodes). The ruleset engine has its own suite: `RuleTest.php`, `RuleSetTest.php`, `RuleMatcherTest.php`. The only subdirs are `tests/unit/Admin/` and `tests/unit/Cli/`; integration tests live under `tests/integration/`. There is no `tests/unit/Rest/` subdirectory — per-plugin REST controllers retired with the Service CI cutover.
-- Coverage report lands under `/volumes/pyrobase/tmp/newspack-event-logger-nodes-coverage/` after running `tests/run-coverage.sh`. New code should add tests so coverage doesn't regress.
+- Coverage report lands under `$TEST_TMP/newspack-event-logger-nodes-coverage/` (default `/tmp`) after running `tests/run-coverage.sh`. New code should add tests so coverage doesn't regress.
 - Test fixtures use `Message::TM_STRUCT` for array-VALUE messages (it was `TM_BYTESTREAM` pre-rename; TM_BYTESTREAM in a fixture with array VALUE is a stale test needing an update).
 - New Service CI verbs need a happy-path test, an unauthorized-request test verifying `require_manage_options` throws for non-admins, and a memcache-failure test where the handler reads `Core::$memd`. Rate-limit tests don't apply — the SSE slot pool is the only structural backpressure.
 
