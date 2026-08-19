@@ -1185,7 +1185,8 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @return array<int,Stats_Store>
 	 */
 	private static function stats_stores(): array {
-		if ( null === Core::$memd ) {
+		// Not Core::$memd: an APCu-only pool reaches stats via the mirror.
+		if ( null === \Newspack_Nodes\Cache_Backend::shared_first() ) {
 			return [];
 		}
 		$max_lifespan = AppConfig::stats_retention_seconds();

@@ -97,6 +97,10 @@ class Stats_Store {
 	/** Shortest retention window the stats keyspace works with, in seconds. */
 	public const PREFIX_FLOOR = 3600;
 
+	/** The two tables this store keeps, by ROLE — their TTLs coincide at the floor. */
+	private const ROLE_AGGREGATE = 'aggregate';
+	private const ROLE_URL       = 'url';
+
 	/**
 	 * Mirror seam — when set, invoked `(string $key, array $data, int $ttl, string $ns)`
 	 * after each memcache write that landed, so a durable partition can shadow
@@ -122,7 +126,7 @@ class Stats_Store {
 	/** @var int Retention window in seconds, as Config::stats_retention_seconds() floored it. */
 	private int $max_lifespan;
 
-	/** @var array<int,Table_Node> Table per TTL, over one namespace. */
+	/** @var array<string,Table_Node> Table per ROLE, over one namespace. */
 	private array $tables = [];
 
 	/** @var int Flame-builder partition whose keyspace this store owns. */
@@ -289,7 +293,7 @@ class Stats_Store {
 			$map[ $key ] = $bucket;
 		}
 		$out = [];
-		foreach ( $this->table( $this->ttl() )?->lookup_multi( $keys ) ?? [] as $key => $value ) {
+		foreach ( $this->table( self::ROLE_AGGREGATE )?->lookup_multi( $keys ) ?? [] as $key => $value ) {
 			if ( \is_array( $value ) && isset( $map[ $key ] ) ) {
 				$out[ $map[ $key ] ] = $value;
 			}
@@ -316,7 +320,7 @@ class Stats_Store {
 			$map[ $k ] = $b;
 		}
 		// No table (no backend) reads as empty, like a miss.
-		$results = $this->table( $this->ttl() )?->lookup_multi( $keys ) ?? [];
+		$results = $this->table( self::ROLE_AGGREGATE )?->lookup_multi( $keys ) ?? [];
 		$out     = [];
 		foreach ( $results as $k => $v ) {
 			if ( \is_array( $v ) && isset( $map[ $k ] ) ) {
@@ -454,7 +458,7 @@ class Stats_Store {
 
 	/** Read one key through the table; null (no backend) and miss both read empty. */
 	private function lookup( string $key ): mixed {
-		return $this->table( $this->ttl() )?->lookup( $key );
+		return $this->table( self::ROLE_AGGREGATE )?->lookup( $key );
 	}
 
 	/**
@@ -499,11 +503,6 @@ class Stats_Store {
 		return $this->store( $this->key( self::NS_URL_CAT, $url_hash ), $data, $this->ttl(), self::NS_URL_CAT );
 	}
 
-	/** Retention window, in seconds, for every namespace but `url`. */
-	public function ttl(): int {
-		return $this->max_lifespan;
-	}
-
 	/**
 	 * Write to memcache, then (if wired AND the set landed) shadow the same write
 	 * to the mirror seam — a rejected/failed set must not be durably recorded and
@@ -516,7 +515,8 @@ class Stats_Store {
 	 * @return bool True when the set landed.
 	 */
 	private function store( string $key, array $data, int $ttl, string $ns ): bool {
-		$ok = (bool) $this->table( $ttl )?->store( $key, $data );
+		$role = $ttl === $this->ttl_url_stats() ? self::ROLE_URL : self::ROLE_AGGREGATE;
+		$ok   = (bool) $this->table( $role )?->store( $key, $data );
 		if ( $ok && null !== $this->mirror ) {
 			// The mirror records the full backend key, which is the Table's.
 			( $this->mirror )( self::entry_key( $this->partition, $key ), $data, $ttl, $ns );
@@ -547,7 +547,7 @@ class Stats_Store {
 	 * @param string $url_hash URL hash.
 	 */
 	public function accumulated_url_stats( string $url_hash ): mixed {
-		return $this->table( $this->ttl_url_stats() )?->accumulated( $this->key( self::NS_URL, $url_hash ) );
+		return $this->table( self::ROLE_URL )?->accumulated( $this->key( self::NS_URL, $url_hash ) );
 	}
 
 	/**
@@ -557,7 +557,7 @@ class Stats_Store {
 	 * @param array<string,mixed> $data     Aggregate to hold.
 	 */
 	public function accumulate_url_stats( string $url_hash, array $data ): void {
-		$this->table( $this->ttl_url_stats() )?->accumulate( $this->key( self::NS_URL, $url_hash ), $data );
+		$this->table( self::ROLE_URL )?->accumulate( $this->key( self::NS_URL, $url_hash ), $data );
 	}
 
 	/**
@@ -581,7 +581,7 @@ class Stats_Store {
 	 * @return iterable<string,mixed>
 	 */
 	public function accumulating_url_stats(): iterable {
-		$table = $this->table( $this->ttl_url_stats() );
+		$table = $this->table( self::ROLE_URL );
 		if ( null === $table ) {
 			return;
 		}
@@ -593,7 +593,7 @@ class Stats_Store {
 
 	/** Drop the per-URL accumulator. */
 	public function reset_url_stats(): void {
-		$this->table( $this->ttl_url_stats() )?->reset();
+		$this->table( self::ROLE_URL )?->reset();
 	}
 
 	/**
@@ -613,27 +613,36 @@ class Stats_Store {
 	 * production, so backing it would pay an index scan per cold URL for a
 	 * frame that is never written.
 	 *
-	 * @param int $ttl Entry TTL for writes through this handle.
+	 * @param string $role ROLE_AGGREGATE or ROLE_URL; each resolves its own TTL.
+	 *        Keyed by role, never by TTL: the two coincide at PREFIX_FLOOR, and a
+	 *        shared table would hand aggregate reads the deliberately unbacked one.
 	 */
-	private function table( int $ttl ): ?Table_Node {
+	private function table( string $role ): ?Table_Node {
 		if ( null === \Newspack_Nodes\Cache_Backend::shared_first() ) {
 			return null;
 		}
-		if ( ! isset( $this->tables[ $ttl ] ) ) {
-			$table = Table_Node::table( self::namespace_for( $this->partition ), $ttl );
-			// Indirection: the seam is re-armed after a table is memoized.
-			if ( $ttl !== $this->ttl_url_stats() ) {
+		if ( ! isset( $this->tables[ $role ] ) ) {
+			$is_url = self::ROLE_URL === $role;
+			$table  = Table_Node::table(
+				self::namespace_for( $this->partition ),
+				$is_url ? $this->ttl_url_stats() : $this->ttl()
+			);
+			if ( $is_url ) {
+				$table->accumulator( self::URL_ACCUMULATOR_SIZE, self::URL_ACCUMULATOR_BUCKETS );
+			} else {
+				// Indirection: the seam is re-armed after a table is memoized.
 				$table->backed_by(
 					fn ( array $keys ): array => null !== $this->rehydrate ? ( $this->rehydrate )( $keys ) : []
 				);
 			}
-			// Armed here: set_url_stats() memoizes this handle first, unarmed.
-			if ( $ttl === $this->ttl_url_stats() ) {
-				$table->accumulator( self::URL_ACCUMULATOR_SIZE, self::URL_ACCUMULATOR_BUCKETS );
-			}
-			$this->tables[ $ttl ] = $table;
+			$this->tables[ $role ] = $table;
 		}
-		return $this->tables[ $ttl ];
+		return $this->tables[ $role ];
+	}
+
+	/** Retention window, in seconds, for every namespace but `url`. */
+	public function ttl(): int {
+		return $this->max_lifespan;
 	}
 
 	/** Retention for the high-volume `url` namespace: a day's worth cut to a 24th, floored at an hour. */
