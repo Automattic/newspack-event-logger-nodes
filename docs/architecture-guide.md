@@ -463,8 +463,6 @@ class Flame_Builder_Node extends Node {
         'ua'      => 'user_agent',
         'ja4'     => 'ja4_hash',
     ];
-
-    private const BUCKET_MINUTES      = 5;      // time-series bucket width
     private const AGGREGATE_EXPIRY_SEC = 3600;  // unseen aggregate children expire
     private const MAX_URLS_PER_BUCKET  = 500;   // top-N per hourly URL-index bucket
 }
@@ -564,7 +562,7 @@ There is no separate stats Node. The standalone `StatsAggregator` Node — the v
 
 Each completed request is folded into `Flame_Builder_Node`'s in-memory pending stats across the same dimension set the reader paths whitelist — `DIM_FIELDS`, listed under [Flame_Builder_Node](#flame_builder_node).
 
-On flush, `Flame_Builder_Node` reads the existing `Stats_Store` buckets, merges the pending request data into those maps, applies the caps and pruning rules, and writes the whole updated bucket/map back through the explicit `set_*` methods (`set_hourly`, `set_url_index_hourly`, `set_leaderboard_bucket`, `set_dimensional`, …). `Stats_Store` is storage-only; it does not own per-request aggregation logic. Its one extension point is the `$mirror` closure, invoked after each successful memcache write so the durable `flame-stats` partition can shadow the same data, which a memcache miss then reads back.
+On flush, `Flame_Builder_Node` reads the existing `Stats_Store` buckets, merges the pending request data into those maps, applies the caps and pruning rules, and writes the whole updated bucket/map back through the explicit `set_*` methods (`set_hourly_bucket`, `set_url_index_hourly`, `set_leaderboard_bucket`, `set_dimensional`, …). `Stats_Store` is storage-only; it does not own per-request aggregation logic. Its one extension point is the `$mirror` closure, invoked after each successful memcache write so the durable `flame-stats` partition can shadow the same data, which a memcache miss then reads back.
 
 When no `Stats_Store` is configured (`configure_stats` never called — e.g. in unit tests), the builder still emits flame data without touching memcache.
 
@@ -576,7 +574,7 @@ The retention window comes from the substrate's `min_lifetime` (default 43200), 
 
 | Namespace | Use | TTL |
 |-----------|-----|-----|
-| `hourly` | `Y-m-d-H` buckets, count + sum_ms + sum_peak_mb | `min_lifetime` (default 43200) |
+| `hourly` | 5-min buckets, keyed per bucket, count + sum_ms + sum_peak_mb | `min_lifetime` (default 43200) |
 | `lb` | 5-min global leaderboard buckets, sums-not-means | `min_lifetime` |
 | `lb_s` | per-server leaderboard, keyed by server | `min_lifetime` |
 | `urls` | 5-min URL index, keyed by URL -> {count, sum_req_time, samples} | `min_lifetime` |

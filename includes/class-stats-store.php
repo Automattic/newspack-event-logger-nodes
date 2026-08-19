@@ -34,10 +34,11 @@ if ( ! \defined( 'ABSPATH' ) ) {
  * at `ttl_url_stats()` — a twenty-fourth of the lifespan, floored at an hour.
  * Every other namespace expires at `ttl()`.
  *
- * Bucketing belongs to the producer; this class stores whatever key it is
- * handed. `Flame_Builder_Node` buckets everything — `hourly` included — in
- * five-minute keys of the form `Y-m-d-H-ii`, so the `hourly` namespace and the
- * `get_url_index_hourly()` name are historical rather than descriptive.
+ * Bucketing is part of the key schema, so it lives here: `bucket_key()` is the
+ * five-minute `Y-m-d-H-ii` derivation every producer and reader shares, and
+ * `retention_buckets()` is the window a reader enumerates. The `hourly`
+ * namespace and the `get_url_index_hourly()` name are historical rather than
+ * descriptive — both are five-minute buckets.
  *
  * Storage is a `Table_Node` per TTL over one namespace (`evlog:p{N}`), so the
  * substrate owns key scoping and the backend handle. Reads and writes fail soft:
@@ -96,6 +97,12 @@ class Stats_Store {
 
 	/** Shortest retention window the stats keyspace works with, in seconds. */
 	public const PREFIX_FLOOR = 3600;
+
+	/** Bucket width in minutes — the granularity every bucketed namespace is keyed at. */
+	private const BUCKET_MINUTES = 5;
+
+	/** Ceiling on one reader's bucket enumeration, so get_multi stays bounded (24h). */
+	public const MAX_READ_BUCKETS = 288;
 
 	/** The two tables this store keeps, by ROLE — their TTLs coincide at the floor. */
 	private const ROLE_AGGREGATE = 'aggregate';
@@ -170,41 +177,28 @@ class Stats_Store {
 	}
 
 	/**
-	 * Read the partition's request totals: `{ bucket => { count, sum_ms,
-	 * sum_peak_mb } }`. One key holds the whole retention window, so a dashboard
-	 * gets every bucket in a single round-trip.
+	 * Read one request-total bucket: `{ count, sum_ms, sum_peak_mb }`.
 	 *
-	 * @return array<string,mixed> Totals by bucket, [] on miss.
+	 * @param string $bucket Bucket key.
+	 * @return array<string,mixed> Totals for the bucket, [] on miss.
 	 */
-	public function get_hourly(): array {
-		$val = $this->lookup( $this->key( self::NS_HOURLY ) );
+	public function get_hourly_bucket( string $bucket ): array {
+		$val = $this->lookup( $this->key( self::NS_HOURLY, $bucket ) );
 		return self::map_or_empty( $val );
 	}
 
 	/**
-	 * Read one global leaderboard bucket: `{ count, sum_req_time, categories: {
+	 * Read one leaderboard bucket: `{ count, sum_req_time, categories: {
 	 * cat => { samples, sum_time, sum_count, entries } } }`. Sums, never means —
 	 * `sums_to_display()` divides at read time so cross-bucket and
 	 * cross-partition merges stay exact addition.
 	 *
 	 * @param string $bucket Bucket key.
+	 * @param string $server Reporting server; '' reads the global series.
 	 * @return array<string,mixed> Bucket sums, [] on miss.
 	 */
-	public function get_leaderboard_bucket( string $bucket ): array {
-		$val = $this->lookup( $this->key( self::NS_LB, $bucket ) );
-		return self::map_or_empty( $val );
-	}
-
-	/**
-	 * Read one leaderboard bucket for a single reporting server. Same shape as
-	 * `get_leaderboard_bucket()`.
-	 *
-	 * @param string $server Server name; hashed into the key.
-	 * @param string $bucket Bucket key.
-	 * @return array<string,mixed> Bucket sums, [] on miss.
-	 */
-	public function get_server_leaderboard_bucket( string $server, string $bucket ): array {
-		$val = $this->lookup( $this->key( self::NS_LB_S, self::server_key( $server ), $bucket ) );
+	public function get_leaderboard_bucket( string $bucket, string $server = '' ): array {
+		$val = $this->lookup( $this->key( ...[ ...self::lb_parts( $server ), $bucket ] ) );
 		return self::map_or_empty( $val );
 	}
 
@@ -260,71 +254,102 @@ class Stats_Store {
 	}
 
 	/**
-	 * Overwrite the partition's request totals.
+	 * Overwrite one request-total bucket. Per-bucket, like the leaderboard: the
+	 * bucket is the unit that changes, so it is the unit that gets written.
 	 *
-	 * @param array<string,mixed> $data Totals keyed by bucket.
+	 * @param string              $bucket Bucket key.
+	 * @param array<string,mixed> $data   Totals for the bucket.
 	 * @return bool True when the set landed.
 	 */
-	public function set_hourly( array $data ): bool {
-		return $this->store( $this->key( self::NS_HOURLY ), $data, $this->ttl(), self::NS_HOURLY );
+	public function set_hourly_bucket( string $bucket, array $data ): bool {
+		return $this->store( $this->key( self::NS_HOURLY, $bucket ), $data, $this->ttl(), self::NS_HOURLY );
 	}
 
 	/**
-	 * Read many leaderboard buckets in one round-trip, global or per server.
+	 * Every bucket key inside a retention window, newest first — what a reader
+	 * enumerates to walk a bucketed namespace. Static because the window turns
+	 * on retention alone: asking an instance means building the whole store
+	 * fan-out to read one integer.
 	 *
-	 * A dashboard walks the whole retention window — hundreds of buckets — and
-	 * per-key gets across it are the latency cliff `get_url_buckets()` exists to
-	 * avoid; this is the same shape for the other bucketed namespace.
+	 * @param int $retention_seconds How far back to enumerate.
+	 * @param int $now               Clock, so a test window matches its writer's keys.
+	 * @return list<string>
+	 */
+	public static function retention_buckets( int $retention_seconds, int $now ): array {
+		$width = self::BUCKET_MINUTES * 60;
+		$count = \min( (int) \ceil( $retention_seconds / $width ) + 1, self::MAX_READ_BUCKETS );
+		$out   = [];
+		for ( $i = 0; $i < $count; $i++ ) {
+			$out[] = self::bucket_key( $now - ( $i * $width ) );
+		}
+		return $out;
+	}
+
+	/**
+	 * The bucket a timestamp falls in: `Y-m-d-H-mm` UTC, floored to
+	 * BUCKET_MINUTES (which must divide 60). Lexical order is chronological
+	 * order, which is what lets expiry compare keys with `<` against a cutoff.
+	 *
+	 * @param int $timestamp Unix timestamp.
+	 */
+	public static function bucket_key( int $timestamp ): string {
+		return \gmdate( 'Y-m-d-H-i', $timestamp - ( $timestamp % ( self::BUCKET_MINUTES * 60 ) ) );
+	}
+
+	/**
+	 * Read many request-total buckets: `{ bucket => { count, sum_ms, sum_peak_mb } }`.
+	 *
+	 * @param array<int,string> $buckets Bucket keys.
+	 * @return array<string,mixed> Totals keyed by bucket; misses absent.
+	 */
+	public function get_hourly_buckets( array $buckets ): array {
+		return $this->lookup_buckets( [ self::NS_HOURLY ], $buckets );
+	}
+
+	/**
+	 * Read many leaderboard buckets, global or per server.
 	 *
 	 * @param array<int,string> $buckets Bucket keys.
 	 * @param string            $server  Reporting server; '' reads the global series.
 	 * @return array<string,mixed> Bucket sums keyed by bucket; misses absent.
 	 */
 	public function get_leaderboard_buckets( array $buckets, string $server = '' ): array {
-		if ( empty( $buckets ) ) {
-			return [];
-		}
-		$parts = '' === $server ? [ self::NS_LB ] : [ self::NS_LB_S, self::server_key( $server ) ];
-		$keys  = [];
-		$map   = [];
-		foreach ( $buckets as $bucket ) {
-			$key         = $this->key( ...[ ...$parts, $bucket ] );
-			$keys[]      = $key;
-			$map[ $key ] = $bucket;
-		}
-		$out = [];
-		foreach ( $this->table( self::ROLE_AGGREGATE )?->lookup_multi( $keys ) ?? [] as $key => $value ) {
-			if ( \is_array( $value ) && isset( $map[ $key ] ) ) {
-				$out[ $map[ $key ] ] = $value;
-			}
-		}
-		return $out;
+		return $this->lookup_buckets( self::lb_parts( $server ), $buckets );
 	}
 
 	/**
-	 * Read many `urls` buckets in one round-trip. Per-key gets across a retention
-	 * window are a latency cliff on the dashboards; this is the path they use.
+	 * Read many `urls` buckets.
 	 *
 	 * @param array<int,string> $buckets Bucket keys.
 	 * @return array<string,mixed> Bucket contents keyed by bucket; misses absent.
 	 */
 	public function get_url_buckets( array $buckets ): array {
+		return $this->lookup_buckets( [ self::NS_URLS ], $buckets );
+	}
+
+	/**
+	 * Read many buckets of one namespace in a single round-trip.
+	 *
+	 * A dashboard walks the whole retention window — hundreds of buckets — and
+	 * per-key gets across it are the latency cliff this exists to avoid.
+	 *
+	 * @param array<int,string> $parts   Namespace prefix parts, before the bucket.
+	 * @param array<int,string> $buckets Bucket keys.
+	 * @return array<string,mixed> Values keyed by bucket; misses absent.
+	 */
+	private function lookup_buckets( array $parts, array $buckets ): array {
 		if ( empty( $buckets ) ) {
 			return [];
 		}
-		$keys = [];
-		$map  = [];
-		foreach ( $buckets as $b ) {
-			$k         = $this->key( self::NS_URLS, $b );
-			$keys[]    = $k;
-			$map[ $k ] = $b;
+		$map = [];
+		foreach ( $buckets as $bucket ) {
+			$map[ $this->key( ...[ ...$parts, $bucket ] ) ] = $bucket;
 		}
 		// No table (no backend) reads as empty, like a miss.
-		$results = $this->table( self::ROLE_AGGREGATE )?->lookup_multi( $keys ) ?? [];
-		$out     = [];
-		foreach ( $results as $k => $v ) {
-			if ( \is_array( $v ) && isset( $map[ $k ] ) ) {
-				$out[ $map[ $k ] ] = $v;
+		$out = [];
+		foreach ( $this->table( self::ROLE_AGGREGATE )?->lookup_multi( \array_keys( $map ) ) ?? [] as $key => $value ) {
+			if ( \is_array( $value ) && isset( $map[ $key ] ) ) {
+				$out[ $map[ $key ] ] = $value;
 			}
 		}
 		return $out;
@@ -365,26 +390,27 @@ class Stats_Store {
 	}
 
 	/**
-	 * Overwrite one global leaderboard bucket.
+	 * Overwrite one leaderboard bucket.
 	 *
-	 * @param string               $bucket Bucket key.
+	 * @param string              $bucket Bucket key.
 	 * @param array<string,mixed> $data   Merged bucket sums.
+	 * @param string              $server Reporting server; '' writes the global series.
 	 * @return bool True when the set landed.
 	 */
-	public function set_leaderboard_bucket( string $bucket, array $data ): bool {
-		return $this->store( $this->key( self::NS_LB, $bucket ), $data, $this->ttl(), self::NS_LB );
+	public function set_leaderboard_bucket( string $bucket, array $data, string $server = '' ): bool {
+		$parts = self::lb_parts( $server );
+		return $this->store( $this->key( ...[ ...$parts, $bucket ] ), $data, $this->ttl(), $parts[0] );
 	}
 
 	/**
-	 * Overwrite one leaderboard bucket for a single reporting server.
+	 * The namespace prefix for a leaderboard scope — the one place the global
+	 * and per-server keyspaces differ.
 	 *
-	 * @param string               $server Server name; hashed into the key.
-	 * @param string               $bucket Bucket key.
-	 * @param array<string,mixed> $data   Merged bucket sums.
-	 * @return bool True when the set landed.
+	 * @param string $server Reporting server; '' for the global series.
+	 * @return list<string>
 	 */
-	public function set_server_leaderboard_bucket( string $server, string $bucket, array $data ): bool {
-		return $this->store( $this->key( self::NS_LB_S, self::server_key( $server ), $bucket ), $data, $this->ttl(), self::NS_LB_S );
+	private static function lb_parts( string $server ): array {
+		return '' === $server ? [ self::NS_LB ] : [ self::NS_LB_S, self::server_key( $server ) ];
 	}
 
 	/**
@@ -658,6 +684,29 @@ class Stats_Store {
 	 */
 	public static function namespace_for( int $partition ): string {
 		return self::PREFIX_BASE . ':p' . $partition;
+	}
+
+	/**
+	 * Sum two `{count, sum_ms, sum_peak_mb}` totals. The write-side counterpart
+	 * of `sums_to_display()`: the schema owns the triple, so it owns the
+	 * arithmetic over it, and a non-numeric field on either side reads as zero.
+	 *
+	 * Fields outside the triple ride through from `$a`: the stored bucket is the
+	 * caller's, and rebuilding it here would drop a fourth field silently.
+	 *
+	 * @param array<string,mixed>    $a One side, and the shape that survives.
+	 * @param array<array-key,mixed> $b The other, read by name only.
+	 * @return array<string,mixed>
+	 */
+	public static function add_totals( array $a, array $b ): array {
+		return \array_merge(
+			$a,
+			[
+				'count'       => Core::num_int( $a['count'] ?? null ) + Core::num_int( $b['count'] ?? null ),
+				'sum_ms'      => Core::num_float( $a['sum_ms'] ?? null ) + Core::num_float( $b['sum_ms'] ?? null ),
+				'sum_peak_mb' => Core::num_float( $a['sum_peak_mb'] ?? null ) + Core::num_float( $b['sum_peak_mb'] ?? null ),
+			]
+		);
 	}
 
 	/** Partition this store reads and writes. */
