@@ -318,9 +318,10 @@ class Performance_CI_Node extends Service_CI_Node {
 	 */
 	private static function merge_dim_across_partitions( string $dimension, string $server ): array {
 		$store_server = 'server' === $dimension ? '' : $server;
-		$merged = [];
+		$merged       = [];
+		$buckets      = self::read_window();
 		foreach ( self::stats_stores() as $store ) {
-			self::merge_dim_buckets_into( $merged, $store->get_dimensional( $dimension, $store_server ) );
+			self::merge_dim_buckets_into( $merged, $store->get_dimensional_buckets( $dimension, $buckets, $store_server ) );
 		}
 		\ksort( $merged );
 		return $merged;
@@ -332,9 +333,10 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @return array<string,mixed>
 	 */
 	private static function merge_categories_across_partitions(): array {
-		$merged = [];
+		$merged  = [];
+		$buckets = self::read_window();
 		foreach ( self::stats_stores() as $store ) {
-			self::merge_category_buckets_into( $merged, $store->get_categories() );
+			self::merge_category_buckets_into( $merged, $store->get_category_buckets( $buckets ) );
 		}
 		\ksort( $merged );
 		return $merged;
@@ -347,9 +349,10 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @return array<string,mixed>
 	 */
 	private static function merge_server_categories_across_partitions( string $server ): array {
-		$merged = [];
+		$merged  = [];
+		$buckets = self::read_window();
 		foreach ( self::stats_stores() as $store ) {
-			self::merge_category_buckets_into( $merged, $store->get_server_categories( $server ) );
+			self::merge_category_buckets_into( $merged, $store->get_category_buckets( $buckets, $server ) );
 		}
 		\ksort( $merged );
 		return $merged;
@@ -362,9 +365,10 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @return array<string,mixed>
 	 */
 	private static function merge_url_categories( string $hash ): array {
-		$merged = [];
+		$merged  = [];
+		$buckets = self::read_window();
 		foreach ( self::stats_stores() as $store ) {
-			self::merge_category_buckets_into( $merged, $store->get_url_categories( $hash ) );
+			self::merge_category_buckets_into( $merged, $store->get_url_category_buckets( $hash, $buckets ) );
 		}
 		\ksort( $merged );
 		return $merged;
@@ -879,13 +883,19 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @return array<array-key,mixed> Bucket keys derive from decoded memcache blobs.
 	 */
 	private static function merge_url_dim( string $hash, string $dimension ): array {
-		$merged = [];
+		$merged  = [];
+		$buckets = self::read_window();
 		foreach ( self::stats_stores() as $store ) {
-			$rows = $store->get_url_dimensional( $hash );
-			$dim  = $rows[ $dimension ] ?? [];
-			if ( \is_array( $dim ) ) {
-				self::merge_dim_buckets_into( $merged, $dim );
+			$rows = $store->get_url_dimensional_buckets( $hash, $buckets );
+			// Bucket-major: pull the dimension asked for.
+			$series = [];
+			foreach ( $rows as $bucket_key => $dims ) {
+				$values = Core::arr( $dims )[ $dimension ] ?? null;
+				if ( \is_array( $values ) ) {
+					$series[ $bucket_key ] = $values;
+				}
 			}
+			self::merge_dim_buckets_into( $merged, $series );
 		}
 		\ksort( $merged );
 		return $merged;
