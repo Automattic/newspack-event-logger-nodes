@@ -4,7 +4,7 @@ Event-logger application built on the [`newspack-nodes`](../../newspack-nodes/) 
 
 This plugin replaced the legacy `newspack-event-logger-plugins` monorepo wholesale. That monorepo has since been removed from the tree ("the museum"); this plugin plus the `newspack-nodes` substrate is the sole event-logger stack, writing to `/tmp/newspack-nodes` by default.
 
-**Substrate presence.** The deferred bootstrap (run on `plugins_loaded` priority 11) returns early unless `\Newspack_Nodes\Bootstrap` exists AND `Bootstrap::version_at_least( '2.31.0', 'Newspack Event Logger Nodes' )` passes: it wires the event logger against a new-enough substrate and lies dormant otherwise. `Requires Plugins: newspack-nodes` keeps the runtime active on WordPress 6.5+; the version handshake is the graceful fallback. One thing is wired outside the deferred closure — `Config::register_config_keys()` hooks `newspack_nodes/declare_config_keys` at file load, because the substrate pulls that declaration from inside any config read, ahead of `plugins_loaded`.
+**Substrate presence.** The deferred bootstrap (run on `plugins_loaded` priority 11) returns early unless `\Newspack_Nodes\Bootstrap` exists AND `Bootstrap::version_at_least( '2.35.0', 'Newspack Event Logger Nodes' )` passes: it wires the event logger against a new-enough substrate and lies dormant otherwise. `Requires Plugins: newspack-nodes` keeps the runtime active on WordPress 6.5+; the version handshake is the graceful fallback. One thing is wired outside the deferred closure — `Config::register_config_keys()` hooks `newspack_nodes/declare_config_keys` at file load, because the substrate pulls that declaration from inside any config read, ahead of `plugins_loaded`.
 
 ## Table of Contents
 
@@ -275,7 +275,7 @@ connect_node flame-builder flames:partition
 secure
 ```
 
-`configure_stats <partition>` constructs the per-partition `Stats_Store`, taking its retention window from `Config::stats_retention_seconds()`, the substrate's `min_lifetime` (default 43200) floored at 3600. Auto-tune thresholds are no longer topology tokens — they moved onto each LOG rule (v0.26.0), so `set_auto_tune` / `set_significant_events` are gone; `Flame_Builder_Node` reads the governing rule's thresholds per completed request (see [Flame_Builder_Node](#flame_builder_node) and [Auto_Tuner_Node](#auto_tuner_node)). `set_stats_target <eln:stats_mirror_node>` optionally mirrors the memcache stats into the durable `flame-stats:partition` — off unless `stats_mirror_node` is set, since Atomic has durable memcache and local/docker opts in. The mirror keeps full aggregates plus a bounded top-N per URL (100 dimensional, 100 category, and flame profiles only when `set_flame_topn` raises the default 0).
+`configure_stats <partition>` constructs the per-partition `Stats_Store`, taking its retention window from `Config::stats_retention_seconds()`, the substrate's `min_lifetime` (default 43200) floored at 3600. Auto-tune thresholds are no longer topology tokens — they moved onto each LOG rule (v0.26.0), so `set_auto_tune` / `set_significant_events` are gone; `Flame_Builder_Node` reads the governing rule's thresholds per completed request (see [Flame_Builder_Node](#flame_builder_node) and [Auto_Tuner_Node](#auto_tuner_node)). `set_stats_target <eln:stats_mirror_node>` mirrors the memcache stats into the durable `flame-stats:partition`, which a memcache miss reads back through a `stats-index` companion index; set `stats_mirror_node` to `''` to disable it. The mirror keeps full aggregates plus a bounded top-N per URL (100 dimensional, 100 category, and flame profiles only when `set_flame_topn` raises the default 0).
 
 ### `topologies/job-router.tsl`
 
@@ -564,7 +564,7 @@ There is no separate stats Node. The standalone `StatsAggregator` Node — the v
 
 Each completed request is folded into `Flame_Builder_Node`'s in-memory pending stats across the same dimension set the reader paths whitelist — `DIM_FIELDS`, listed under [Flame_Builder_Node](#flame_builder_node).
 
-On flush, `Flame_Builder_Node` reads the existing `Stats_Store` buckets, merges the pending request data into those maps, applies the caps and pruning rules, and writes the whole updated bucket/map back through the explicit `set_*` methods (`set_hourly`, `set_url_index_hourly`, `set_leaderboard_bucket`, `set_dimensional`, …). `Stats_Store` is storage-only; it does not own per-request aggregation logic. Its one extension point is the `$mirror` closure, invoked after each successful memcache write so the durable `flame-stats` partition can shadow the same data for cold-boot replay.
+On flush, `Flame_Builder_Node` reads the existing `Stats_Store` buckets, merges the pending request data into those maps, applies the caps and pruning rules, and writes the whole updated bucket/map back through the explicit `set_*` methods (`set_hourly`, `set_url_index_hourly`, `set_leaderboard_bucket`, `set_dimensional`, …). `Stats_Store` is storage-only; it does not own per-request aggregation logic. Its one extension point is the `$mirror` closure, invoked after each successful memcache write so the durable `flame-stats` partition can shadow the same data, which a memcache miss then reads back.
 
 When no `Stats_Store` is configured (`configure_stats` never called — e.g. in unit tests), the builder still emits flame data without touching memcache.
 
@@ -779,7 +779,7 @@ Substrate keys (`base_directory`, partitioning, `memcache_servers`, `topologies`
 | `flush_every_line` | bool | `load_config()` | `false` | Debug: flush buffer after every line (survives OOM, slower) |
 | `allowed_users` | array of strings | `load_config()` (overlay-only) | `[]` | Deployment override: restrict admin UI to these usernames |
 | `hook_start_priority` | int | `load_config()` (overlay-only) | `-10000` | Action priority for the `hook_start` instrumentation hook |
-| `stats_mirror_node` | string | file-only | `''` (off) | Node name of the durable stats-mirror partition (`flame-stats:partition`); non-Atomic deployments set it to reload memcache stats on cold boot |
+| `stats_mirror_node` | string | file-only | `flame-stats:partition` | Node name of the durable stats-mirror partition; a memcache miss reads the frame back from it. `''` disables the mirror |
 | `custom_colors` | array | file-only | `[]` | Hook-categorization color overrides |
 | `recommended_log_events` | array of strings | file-only | curated list | Hook names the admin "Select Recommended" button offers |
 | `discovered_hooks` | array of strings | option-only (non-autoloaded) | `[]` | Hooks spoke-reported via Discovery, staged for the editor's hook picker (not auto-instrumented) |

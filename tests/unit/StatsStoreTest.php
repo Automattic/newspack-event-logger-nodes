@@ -424,22 +424,59 @@ class StatsStoreTest extends TestCase {
 		$this->assertFalse( $invoked, 'mirror must not fire when the memcache set failed' );
 	}
 
-	public function test_restore_writes_into_memcache_under_positive_ttl(): void {
-		$store = $this->make_store();
-		$data  = [ '2026-01-01-00' => [ 'count' => 9 ] ];
-		$this->assertTrue( $store->restore( Stats_Store::entry_key( 0, Stats_Store::NS_HOURLY ), $data, 100 ) );
-		$this->assertSame( $data, $store->get_hourly() );
+	/**
+	 * Arm the rehydrate seam with one canned entry, in the Table backing shape.
+	 *
+	 * @param array<string,mixed> $value Entry payload.
+	 */
+	private function arm_entry( Stats_Store $store, string $key, array $value, int $ttl ): void {
+		$store->rehydrate = static fn ( array $keys ): array => \in_array( $key, $keys, true )
+			? [ $key => [ 'value' => $value, 'ttl' => $ttl ] ]
+			: [];
 	}
 
-	public function test_restore_returns_false_for_non_positive_ttl(): void {
+	public function test_leaderboard_buckets_read_in_one_round_trip(): void {
 		$store = $this->make_store();
-		$this->assertFalse( $store->restore( Stats_Store::entry_key( 0, Stats_Store::NS_HOURLY ), [ 'x' => 1 ], 0 ) );
+		$store->set_leaderboard_bucket( 'b1', [ 'count' => 31, 'sum_req_time' => 1.5, 'categories' => [] ] );
+		$store->set_leaderboard_bucket( 'b3', [ 'count' => 74, 'sum_req_time' => 2.5, 'categories' => [] ] );
+
+		$rows = $store->get_leaderboard_buckets( [ 'b1', 'b2', 'b3' ] );
+
+		$this->assertSame( [ 'b1', 'b3' ], \array_keys( $rows ), 'absent buckets omitted, present ones keyed by bucket' );
+		$this->assertSame( 74, $rows['b3']['count'] );
+	}
+
+	public function test_leaderboard_buckets_scope_to_a_server_when_asked(): void {
+		$store = $this->make_store();
+		$store->set_leaderboard_bucket( 'b1', [ 'count' => 31, 'sum_req_time' => 1.5, 'categories' => [] ] );
+		$store->set_server_leaderboard_bucket( 'spoke-a', 'b1', [ 'count' => 88, 'sum_req_time' => 3.5, 'categories' => [] ] );
+
+		$this->assertSame( 88, $store->get_leaderboard_buckets( [ 'b1' ], 'spoke-a' )['b1']['count'] );
+		$this->assertSame( 31, $store->get_leaderboard_buckets( [ 'b1' ] )['b1']['count'] );
+	}
+
+	public function test_a_miss_is_filled_from_the_durable_backing(): void {
+		$store = $this->make_store();
+		$value = [ '2026-01-01-00' => [ 'count' => 9 ] ];
+		$this->arm_entry( $store, Stats_Store::NS_HOURLY, $value, 100 );
+
+		$this->assertSame( $value, $store->get_hourly() );
+	}
+
+	public function test_an_entry_whose_lifetime_ran_out_is_not_filled(): void {
+		$store = $this->make_store();
+		$this->arm_entry( $store, Stats_Store::NS_HOURLY, [ 'x' => 1 ], 0 );
+
 		$this->assertSame( [], $store->get_hourly() );
 	}
 
-	public function test_restore_returns_false_for_foreign_prefix(): void {
+	public function test_the_backing_answers_in_the_stores_own_keyspace(): void {
+		// The Table applies the namespace, so a backing cannot reach another
+		// scope — the guard the old full-key seam needed is gone by construction.
 		$store = $this->make_store();
-		$this->assertFalse( $store->restore( 'other:p0:hourly', [ 'x' => 1 ], 100 ) );
+		$this->arm_entry( $store, 'other:p0:hourly', [ 'x' => 1 ], 100 );
+
+		$this->assertSame( [], $store->get_hourly(), 'a key this store never asked for fills nothing' );
 	}
 
 	public function test_sums_to_display_converts_running_sums_to_avg(): void {

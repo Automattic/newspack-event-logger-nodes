@@ -100,7 +100,7 @@ class Stats_Store {
 	/**
 	 * Mirror seam — when set, invoked `(string $key, array $data, int $ttl, string $ns)`
 	 * after each memcache write that landed, so a durable partition can shadow
-	 * stats for cold-boot replay. The namespace lets the mirror route aggregates
+	 * stats for a later read-back. The namespace lets the mirror route aggregates
 	 * vs. the bounded per-URL namespaces. Null (default) = zero overhead.
 	 * `Flame_Builder_Node::arm_stats_mirror()` is the only wiring. Signature:
 	 * `function(string $key, array $data, int $ttl, string $ns): void`.
@@ -111,12 +111,12 @@ class Stats_Store {
 
 	/**
 	 * Rehydrate seam — the read counterpart of `$mirror`, invoked with the
-	 * backend keys a read missed on and returning the mirrored frame for
-	 * whichever of them the durable partition still holds. Null (default) = no
-	 * durable fallback and a miss stays a miss.
+	 * keys a read missed on. Handed to every Table as its durable backing, so a
+	 * miss falls through to the mirror and lands back in memcache without any
+	 * caller here knowing. Null (default) leaves the tables memcache-only.
 	 * `Flame_Builder_Node::arm_stats_mirror()` is the only wiring.
 	 *
-	 * @var (\Closure(list<string>): array<string,array{data: array<string,mixed>, ttl: int, ts: float}>)|null
+	 * @var (\Closure(list<string>): array<array-key,array{value: mixed, ttl?: int}>)|null
 	 */
 	public ?\Closure $rehydrate = null;
 	/** @var int Retention window in seconds, as Config::stats_retention_seconds() floored it. */
@@ -266,6 +266,38 @@ class Stats_Store {
 	}
 
 	/**
+	 * Read many leaderboard buckets in one round-trip, global or per server.
+	 *
+	 * A dashboard walks the whole retention window — hundreds of buckets — and
+	 * per-key gets across it are the latency cliff `get_url_buckets()` exists to
+	 * avoid; this is the same shape for the other bucketed namespace.
+	 *
+	 * @param array<int,string> $buckets Bucket keys.
+	 * @param string            $server  Reporting server; '' reads the global series.
+	 * @return array<string,mixed> Bucket sums keyed by bucket; misses absent.
+	 */
+	public function get_leaderboard_buckets( array $buckets, string $server = '' ): array {
+		if ( empty( $buckets ) ) {
+			return [];
+		}
+		$parts = '' === $server ? [ self::NS_LB ] : [ self::NS_LB_S, self::server_key( $server ) ];
+		$keys  = [];
+		$map   = [];
+		foreach ( $buckets as $bucket ) {
+			$key         = $this->key( ...[ ...$parts, $bucket ] );
+			$keys[]      = $key;
+			$map[ $key ] = $bucket;
+		}
+		$out = [];
+		foreach ( $this->table( $this->ttl() )?->lookup_multi( $keys ) ?? [] as $key => $value ) {
+			if ( \is_array( $value ) && isset( $map[ $key ] ) ) {
+				$out[ $map[ $key ] ] = $value;
+			}
+		}
+		return $out;
+	}
+
+	/**
 	 * Read many `urls` buckets in one round-trip. Per-key gets across a retention
 	 * window are a latency cliff on the dashboards; this is the path they use.
 	 *
@@ -290,16 +322,6 @@ class Stats_Store {
 			if ( \is_array( $v ) && isset( $map[ $k ] ) ) {
 				$out[ $map[ $k ] ] = $v;
 			}
-		}
-		// ONE pass for every miss; per-key re-walks the window on each bucket.
-		$missed = [];
-		foreach ( $map as $k => $bucket ) {
-			if ( ! isset( $out[ $bucket ] ) ) {
-				$missed[ self::entry_key( $this->partition, $k ) ] = $bucket;
-			}
-		}
-		foreach ( $this->recover( \array_keys( $missed ) ) as $backend_key => $data ) {
-			$out[ $missed[ $backend_key ] ] = $data;
 		}
 		return $out;
 	}
@@ -430,65 +452,9 @@ class Stats_Store {
 		return $out;
 	}
 
-	/**
-	 * Read one key through the table, falling back to the mirror on a miss.
-	 * Null (no backend) and a miss the mirror cannot fill both read empty.
-	 */
+	/** Read one key through the table; null (no backend) and miss both read empty. */
 	private function lookup( string $key ): mixed {
-		$value = $this->table( $this->ttl() )?->lookup( $key );
-		if ( null !== $value ) {
-			return $value;
-		}
-		$backend_key = self::entry_key( $this->partition, $key );
-		return $this->recover( [ $backend_key ] )[ $backend_key ] ?? null;
-	}
-
-	/**
-	 * Fill missed keys from the mirror and restore each into memcache, so the
-	 * next read hits and the hole closes rather than being re-walked.
-	 *
-	 * A frame whose TTL has already elapsed is refused by `restore()`, which is
-	 * what keeps a genuine expiry expired: only a key that vanished EARLY — an
-	 * eviction — comes back.
-	 *
-	 * @param list<string> $keys Backend keys that missed.
-	 * @return array<string,array<string,mixed>> Recovered values, keyed by backend key.
-	 */
-	private function recover( array $keys ): array {
-		if ( [] === $keys || null === $this->rehydrate ) {
-			return [];
-		}
-		$now = Core::right_now();
-		$out = [];
-		foreach ( ( $this->rehydrate )( $keys ) as $key => $frame ) {
-			$age = (int) ( $now - $frame['ts'] );
-			if ( $this->restore( $key, $frame['data'], $frame['ttl'] - $age ) ) {
-				$out[ $key ] = $frame['data'];
-			}
-		}
-		return $out;
-	}
-
-	/**
-	 * Replay a mirrored write straight into memcache under a (decayed) TTL. Guards
-	 * ttl>0 and the current prefix (a rotated scope orphans the mirror, like it
-	 * orphans memcache).
-	 *
-	 * The write bypasses the mirror seam: this restores what the mirror already
-	 * holds, and re-shadowing it would append a duplicate frame.
-	 *
-	 * @param string               $key  Full memcache key, prefix included.
-	 * @param array<string,mixed> $data Mirrored value.
-	 * @param int                  $ttl  Remaining seconds; <= 0 is refused.
-	 * @return bool True when the set landed.
-	 */
-	public function restore( string $key, array $data, int $ttl ): bool {
-		// The guard is namespace membership, so it moves with the scope.
-		if ( $ttl <= 0 || ! \str_starts_with( $key, self::entry_key( $this->partition, '' ) ) ) {
-			return false;
-		}
-		// Straight to the backend: the mirror holds this key whole already.
-		return true === \Newspack_Nodes\Cache_Backend::shared_first()?->set( $key, $data, $ttl );
+		return $this->table( $this->ttl() )?->lookup( $key );
 	}
 
 	/**
@@ -541,7 +507,7 @@ class Stats_Store {
 	/**
 	 * Write to memcache, then (if wired AND the set landed) shadow the same write
 	 * to the mirror seam — a rejected/failed set must not be durably recorded and
-	 * resurrected on cold boot.
+	 * resurrected by a later read-back.
 	 *
 	 * @param string               $key  Full memcache key.
 	 * @param array<string,mixed> $data Value to store.
@@ -559,8 +525,7 @@ class Stats_Store {
 	}
 
 	/**
-	 * Full backend key for one entry — what the mirror records and `restore()`
-	 * guards on.
+	 * Full backend key for one entry — what the mirror records its frames under.
 	 *
 	 * @param int    $partition Flame-builder partition.
 	 * @param string $key       Entry key within the namespace.
@@ -643,6 +608,11 @@ class Stats_Store {
 	 * No L1: Flame_Builder already caches `get_url_stats()` behind its own
 	 * `LRU_Cache`, so one here would sit redundantly underneath it.
 	 *
+	 * The per-URL table is deliberately NOT backed: `accumulated()` falls
+	 * through to `lookup()` on every request, and `flame_topn` is 0 in
+	 * production, so backing it would pay an index scan per cold URL for a
+	 * frame that is never written.
+	 *
 	 * @param int $ttl Entry TTL for writes through this handle.
 	 */
 	private function table( int $ttl ): ?Table_Node {
@@ -651,6 +621,12 @@ class Stats_Store {
 		}
 		if ( ! isset( $this->tables[ $ttl ] ) ) {
 			$table = Table_Node::table( self::namespace_for( $this->partition ), $ttl );
+			// Indirection: the seam is re-armed after a table is memoized.
+			if ( $ttl !== $this->ttl_url_stats() ) {
+				$table->backed_by(
+					fn ( array $keys ): array => null !== $this->rehydrate ? ( $this->rehydrate )( $keys ) : []
+				);
+			}
 			// Armed here: set_url_stats() memoizes this handle first, unarmed.
 			if ( $ttl === $this->ttl_url_stats() ) {
 				$table->accumulator( self::URL_ACCUMULATOR_SIZE, self::URL_ACCUMULATOR_BUCKETS );

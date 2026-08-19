@@ -276,19 +276,27 @@ final class Rule_Set {
 		if ( Rule::HOOKS_INLINE === $rule->hooks_in ) {
 			return $rule->hooks ?? [];
 		}
-		$cached = self::hooks_table()?->lookup( $rule->id );
-		if ( \is_array( $cached ) ) {
-			/** @var string[] $cached Table mirror of a durable hooks option. */
-			return $cached;
-		}
-		$durable = \get_option( self::hooks_option_name( $rule->id ), null );
-		if ( \is_array( $durable ) ) {
-			self::hooks_table()?->store( $rule->id, $durable );
-			/** @var string[] $durable hooks list persisted by save(). */
-			return $durable;
+		$table = self::hooks_table();
+		// No cache, no table to read through; the record still reads directly.
+		$hooks = null !== $table ? $table->lookup( $rule->id ) : self::durable_hooks( $rule->id );
+		if ( \is_array( $hooks ) ) {
+			/** @var string[] $hooks Warm mirror, or the durable option behind it. */
+			return $hooks;
 		}
 		Core::print_less_often( 'Newspack ELN: hooks missing for pointer rule "', $rule->id, '" (table + durable option both absent).' );
 		return [];
+	}
+
+	/**
+	 * A pointer rule's hooks straight from the system of record, or null when
+	 * that option is absent. The Table's backing and the no-cache path share it.
+	 *
+	 * @return string[]|null
+	 */
+	private static function durable_hooks( string $id ): ?array {
+		$hooks = \get_option( self::hooks_option_name( $id ), null );
+		/** @var string[]|null $hooks hooks list persisted by save(). */
+		return \is_array( $hooks ) ? $hooks : null;
 	}
 
 	/**
@@ -306,7 +314,20 @@ final class Rule_Set {
 	/** The warm-mirror table, or null on a host with no cache backend at all. */
 	private static function hooks_table(): ?Table_Node {
 		if ( null === self::$hooks_table && null !== Cache_Backend::shared_first() ) {
-			self::$hooks_table = Table_Node::table( self::TABLE_HOOKS, self::TABLE_TTL );
+			// The option is the system of record; the table is its warm mirror.
+			self::$hooks_table = Table_Node::table( self::TABLE_HOOKS, self::TABLE_TTL )
+				->backed_by(
+					static function ( array $ids ): array {
+						$found = [];
+						foreach ( $ids as $id ) {
+							$hooks = self::durable_hooks( Core::as_string( $id, '' ) );
+							if ( null !== $hooks ) {
+								$found[ $id ] = [ 'value' => $hooks ];
+							}
+						}
+						return $found;
+					}
+				);
 		}
 		return self::$hooks_table;
 	}

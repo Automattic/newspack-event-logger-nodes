@@ -72,8 +72,8 @@ return [
 	'custom_colors'               => [],
 
 	/**
-	 * Name of the durable Partition that shadows memcache stats and rewarms
-	 * them on a cold boot. `flame-builder.tsl` resolves it as the
+	 * Name of the durable Partition that shadows memcache stats and is read
+	 * back when memcache misses. `flame-builder.tsl` resolves it as the
 	 * `<eln:stats_mirror_node>` token and hands it to
 	 * `Flame_Builder_Node::set_stats_target()`, which treats an empty name as
 	 * off. The topology already builds `flame-stats:partition` for the job.
