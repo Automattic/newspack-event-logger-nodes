@@ -154,8 +154,6 @@ class Config {
 		if ( ! isset( $own[ $key ] ) ) {
 			return null;
 		}
-		$config = self::load_config();
-
 		if ( 'is_hub' === $key ) {
 			return self::has_hub_topology();
 		}
@@ -165,7 +163,7 @@ class Config {
 			return (string) ( 2 * self::stats_retention_seconds() );
 		}
 
-		return $config[ $key ] ?? null;
+		return self::load_config()[ $key ] ?? null;
 	}
 
 	/**

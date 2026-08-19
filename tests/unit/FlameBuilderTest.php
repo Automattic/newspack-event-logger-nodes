@@ -2588,6 +2588,34 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( [ $bucket => $rows ], $store->get_url_buckets( [ $bucket ] ) );
 	}
 
+	public function test_a_frame_mirrored_after_the_first_miss_is_still_found(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		[ $fb, $p ] = $this->mirrored_builder( $store, 'flames-stats' );
+
+		$bucket = '2026-02-03-04-05';
+		$key    = Stats_Store::entry_key( 0, 'urls:' . $bucket );
+
+		$store->set_url_index_hourly( $bucket, [ 'h' => [ 'url' => '/a', 'count' => 11 ] ] );
+		$fb->save_state();
+		$p->flush();
+		Core::$memd->delete( $key );
+		// This read builds the locator table.
+		$this->assertSame( 11, $store->get_url_bucket( $bucket )['h']['count'] );
+
+		// A newer frame for the same key, mirrored AFTER that table existed.
+		$store->set_url_index_hourly( $bucket, [ 'h' => [ 'url' => '/a', 'count' => 872 ] ] );
+		$fb->save_state();
+		$p->flush();
+		Core::$memd->delete( $key );
+
+		$this->assertSame(
+			872,
+			$store->get_url_bucket( $bucket )['h']['count'],
+			'the newest mirrored frame, not the one the locator table was built from'
+		);
+	}
+
 	public function test_every_missing_bucket_is_recovered_in_one_index_pass(): void {
 		Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );

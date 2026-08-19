@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`stats_mirror_node` ships as `flame-stats:partition`.** It defaulted to `''`, which left the mirror — and therefore the recovery above — off on every install that had not hand-edited its config file. The topology already builds the node.
 - **The mirror's retention derives from the stats window.** `flame-stats:partition` took the 64 MiB default and no lifetime, so it kept frames for days past the point `restore()` could use them. It now takes `<eln:stats_mirror_lifetime>`, twice `Config::stats_retention_seconds()` — widening `min_lifetime` widens the mirror with it, rather than silently truncating it against a constant.
 
+### Changed
+- **Read-through moved into the substrate, and the second copy of it in this plugin went with it.** `Stats_Store::recover()` / `restore()` and `Rule_Set::hooks_for()`'s cache branch were the same mechanism — table miss, durable source of record, store back — written twice. Both now hand `Table_Node::backed_by()` a closure and read one API; the stats mirror backs the aggregate tables, the hooks option backs the ruleset table. That deletes the hand-rolled miss loop in `get_url_buckets()`, the backend-key round trip on both read paths, and `restore()`'s `str_starts_with` scope guard — the Table applies its own namespace, so a backing cannot file a value outside this partition's keyspace by construction. **Requires substrate 2.35.0**; the loader floor moved with it.
+
 ### Removed
 - **`reload_stats_from_partition()` and its `$stats_reloaded` latch.** Read-through repairs holes as they are found, so a once-per-process bulk replay of the whole partition is cost without benefit. Its last-wins and TTL-decay behaviour is unchanged, now exercised through the miss path.
 

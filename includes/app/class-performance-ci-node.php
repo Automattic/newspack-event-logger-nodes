@@ -307,33 +307,6 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * Build the per-server category leaderboard for the recent window.
-	 *
-	 * @param string $server Server name to scope to.
-	 * @return array<string,mixed>
-	 */
-	private static function build_server_leaderboard( string $server ): array {
-		$count        = 0;
-		$sum_req_time = 0.0;
-		$sums         = [];
-		$buckets      = self::recent_url_buckets();
-		foreach ( self::stats_stores() as $store ) {
-			foreach ( $buckets as $b ) {
-				$row = $store->get_server_leaderboard_bucket( $server, $b );
-				if ( empty( $row ) ) {
-					continue;
-				}
-				$count        += Core::as_int( $row['count'] ?? 0 );
-				$sum_req_time += Core::as_float( $row['sum_req_time'] ?? 0 );
-				/** @var array<string,mixed> $categories -- decoded memcache leaderboard blob, keyed by category name. */
-				$categories    = \is_array( $row['categories'] ?? null ) ? $row['categories'] : [];
-				self::accumulate_leaderboard_categories( $sums, $categories );
-			}
-		}
-		return Stats_Store::sums_to_display( $count, $sum_req_time, $sums );
-	}
-
-	/**
 	 * Sum-merge dimensional buckets across all partitions for one dim/server.
 	 * The server dimension is the global routing index: Flame Builder deliberately
 	 * omits its redundant per-server copy, so keep that dimension global while a
@@ -1120,7 +1093,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				return $brief;
 			}
 		}
-		$board      = self::build_global_leaderboard();
+		$board      = self::build_leaderboard();
 		$categories = \is_array( $board['categories'] ?? null ) ? $board['categories'] : [];
 		$brief      = Ask_Assembler::for_category( $categories, $name );
 		if ( null === $brief ) {
@@ -1130,21 +1103,22 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * Build the merged global category leaderboard for the recent window.
-	 * Sums stay raw across the merge; `Stats_Store::sums_to_display` computes
-	 * the means once at the end.
+	 * Build the category leaderboard for the recent window, global or scoped to
+	 * one reporting server — the scope was the only thing the two ever differed
+	 * by, and the window is read in ONE round trip per store rather than one per
+	 * bucket across hundreds of them.
 	 *
+	 * @param string $server Server to scope to; '' builds the global board.
 	 * @return array<string,mixed>
 	 */
-	private static function build_global_leaderboard(): array {
+	private static function build_leaderboard( string $server = '' ): array {
 		$count        = 0;
 		$sum_req_time = 0.0;
 		$sums         = [];
 		$buckets      = self::recent_url_buckets();
 		foreach ( self::stats_stores() as $store ) {
-			foreach ( $buckets as $b ) {
-				$row = $store->get_leaderboard_bucket( $b );
-				if ( empty( $row ) ) {
+			foreach ( $store->get_leaderboard_buckets( $buckets, $server ) as $row ) {
+				if ( ! \is_array( $row ) ) {
 					continue;
 				}
 				$count        += Core::as_int( $row['count'] ?? 0 );
@@ -1611,8 +1585,8 @@ class Performance_CI_Node extends Service_CI_Node {
 				\assert( $self instanceof self );
 				$payload                       = self::build_overview_payload( $self->index() );
 				$payload['global_leaderboard'] = '' === $server
-					? self::build_global_leaderboard()
-					: self::build_server_leaderboard( $server );
+					? self::build_leaderboard()
+					: self::build_leaderboard( $server );
 
 				if ( '' !== $breakdown ) {
 					$dims = \array_values(

@@ -229,8 +229,8 @@ class Flame_Builder_Node extends Node {
 	private array $stats_mirror_topn = [];
 
 	/**
-	 * Name of the durable Partition shadowing the stats store, for cold-boot
-	 * replay on non-Atomic deployments; '' disables the mirror. Stored as a NAME
+	 * Name of the durable Partition shadowing the stats store, read back when
+	 * memcache misses; '' disables the mirror. Stored as a NAME
 	 * and resolved through `Core::node()` at use, so the partition may be built
 	 * after this node.
 	 */
@@ -1770,7 +1770,7 @@ class Flame_Builder_Node extends Node {
 
 	/**
 	 * Name the durable Partition that shadows stats writes (via the store's
-	 * mirror seam) and warms memcache on cold boot. For non-Atomic deployments
+	 * mirror seam) and is read back whenever memcache misses. For deployments
 	 * where memcache is volatile; disabled when the name is empty.
 	 *
 	 * Stores the name only — the node is resolved by name lazily at flush/reload
@@ -1802,16 +1802,12 @@ class Flame_Builder_Node extends Node {
 		if ( null === $store ) {
 			return;
 		}
-		if ( '' === $this->stats_partition ) {
-			$store->mirror    = null;
-			$store->rehydrate = null;
-			return;
-		}
-		$store->mirror    = function ( string $key, array $data, int $ttl, string $ns ): void {
-			$this->buffer_mirror_write( $key, $data, $ttl, $ns );
-		};
-		// Resolved per call: the node may be built after this one.
-		$store->rehydrate = self::rehydrate_seam( fn (): ?\Newspack_Nodes\Partition_Node => $this->resolve_stats_partition() );
+		$store->mirror = '' === $this->stats_partition
+			? null
+			: function ( string $key, array $data, int $ttl, string $ns ): void {
+				$this->buffer_mirror_write( $key, $data, $ttl, $ns );
+			};
+		self::arm_rehydrate( $store, $this->stats_partition );
 	}
 
 	/**
@@ -1824,16 +1820,26 @@ class Flame_Builder_Node extends Node {
 	 * @api Readers building a Stats_Store outside the worker graph.
 	 */
 	public static function arm_stats_reader( Stats_Store $store ): void {
-		$name = \trim( Core::as_string( Config::value( 'stats_mirror_node' ), '' ) );
-		if ( '' === $name ) {
-			return;
-		}
-		// Resolved once: the topology walk behind it must not run per miss.
-		$node = self::mirror_partition( $name, $store->partition() );
-		if ( null === $node ) {
-			return;
-		}
-		$store->rehydrate = self::rehydrate_seam( static fn (): \Newspack_Nodes\Partition_Node => $node );
+		self::arm_rehydrate( $store, \trim( Core::as_string( Config::value( 'stats_mirror_node' ), '' ) ) );
+	}
+
+	/**
+	 * Point `$store`'s read seam at the named mirror, or unarm it when unnamed.
+	 *
+	 * ONE body for both callers. The worker names the mirror through
+	 * `set_stats_target` and a reader through config, but it is the same key —
+	 * and `mirror_partition()` already prefers the live node — so both want the
+	 * same resolution rather than two. Reading through a detached handle before
+	 * the worker's own node exists is safe precisely because it is read-only;
+	 * the WRITE path keeps `resolve_stats_partition()`, which never falls back.
+	 */
+	private static function arm_rehydrate( Stats_Store $store, string $name ): void {
+		$store->rehydrate = '' === $name
+			? null
+			: self::rehydrate_seam(
+				static fn (): ?\Newspack_Nodes\Partition_Node => self::mirror_partition( $name, $store->partition() ),
+				$store->partition()
+			);
 	}
 
 	/**
@@ -1843,18 +1849,46 @@ class Flame_Builder_Node extends Node {
 	 * index pass however many of its keys miss — which is what keeps a
 	 * leaderboard's hundreds of bucket misses off the retention window.
 	 *
-	 * @param \Closure(): ?\Newspack_Nodes\Partition_Node $resolve Where the mirror is.
-	 * @return \Closure(list<string>): array<string,array{data: array<string,mixed>, ttl: int, ts: float}>
+	 * @param \Closure(): ?\Newspack_Nodes\Partition_Node $resolve         Where the mirror is.
+	 * @param int                                            $partition_index Keyspace the Table's keys sit in.
+	 * @return \Closure(list<string>): array<array-key,array{value: array<array-key,mixed>, ttl: int}>
 	 */
-	private static function rehydrate_seam( \Closure $resolve ): \Closure {
-		$locators = null;
-		return static function ( array $keys ) use ( $resolve, &$locators ): array {
-			$partition = $resolve();
+	private static function rehydrate_seam( \Closure $resolve, int $partition_index ): \Closure {
+		$partition = null;
+		return static function ( array $keys ) use ( $resolve, $partition_index, &$partition ): array {
+			// Retried while null: the node may be built after this one.
+			$partition ??= $resolve();
 			if ( null === $partition ) {
 				return [];
 			}
-			$locators ??= self::mirror_locators( $partition );
-			return self::read_located_frames( $partition, $locators, $keys );
+			$locators = $partition->locate_by( self::locate_stats_frame( ... ) );
+			$wanted   = [];
+			foreach ( $keys as $key ) {
+				// The seam is public and untyped; only strings name a key.
+				if ( ! \is_string( $key ) ) {
+					continue;
+				}
+				// Frames are filed under the FULL key; the Table asks relative.
+				$at = $locators[ Log_Manager::url_hash( Stats_Store::entry_key( $partition_index, $key ) ) ] ?? null;
+				if ( null !== $at ) {
+					$wanted[ $key ] = $at;
+				}
+			}
+			$now   = Core::right_now();
+			$found = [];
+			foreach ( $partition->read_many( $wanted ) as $key => $msg ) {
+				$frame = self::read_mirror_frame( $msg );
+				// A hash collision lands another key's frame; its key says so.
+				if ( null === $frame || $frame['key'] !== Stats_Store::entry_key( $partition_index, $key ) ) {
+					continue;
+				}
+				$found[ $key ] = [
+					'value' => $frame['data'],
+					// What is LEFT of its life, so an expiry stays expired.
+					'ttl'   => $frame['ttl'] - (int) ( $now - $frame['ts'] ),
+				];
+			}
+			return $found;
 		};
 	}
 
@@ -1876,6 +1910,7 @@ class Flame_Builder_Node extends Node {
 		if ( '' === $dir ) {
 			return null;
 		}
+		// Read-only: the topology, not this handle, owns the mirror's geometry.
 		$node = new \Newspack_Nodes\Partition_Node();
 		$node->arguments( [ $dir ] );
 		// The callable, not the name: the name is for the topology round trip.
@@ -1884,88 +1919,13 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
-	 * key_hash → the newest frame carrying it, as `[segment, offset, length]`.
+	 * One mirror frame's fields, or null when the envelope is not one — a
+	 * malformed frame must skip, never abort the read repairing a hole.
 	 *
-	 * ONE pass over the index, newest-first so the first line for a hash IS its
-	 * last write, reused for the life of the reader that built it. Per-key
-	 * scanning was the cliff: a leaderboard render misses on hundreds of bucket
-	 * keys, and walking the whole index once per key is the retention window
-	 * re-read hundreds of times.
-	 *
-	 * A reader is one request; a worker holds one until it recycles, so a frame
-	 * written after the table was built is not seen. That degrades to the miss
-	 * the caller already had, never to a wrong value.
-	 *
-	 * @return array<string,array{0: int, 1: int, 2: int}>
+	 * @param array<int,mixed> $msg Decoded frame envelope.
+	 * @return array{key: string, data: array<array-key,mixed>, ttl: int, ts: float}|null
 	 */
-	private static function mirror_locators( \Newspack_Nodes\Partition_Node $partition ): array {
-		$locators = [];
-		$partition->scan_index(
-			static function ( string $line, int $segment ) use ( &$locators ): bool {
-				$entry = self::parse_stats_index( $line );
-				if ( null !== $entry && ! isset( $locators[ $entry['key_hash'] ] ) ) {
-					$locators[ $entry['key_hash'] ] = [ $segment, $entry['offset'], $entry['length'] ];
-				}
-				return true;
-			},
-			true
-		);
-		return $locators;
-	}
-
-	/**
-	 * Read the mirrored frame for each wanted key through a prebuilt locator
-	 * table — one `read_at` per key that has one, and none for the rest.
-	 *
-	 * A frame is filed under the key it CARRIES and kept only when that key was
-	 * asked for, so a truncated-hash collision costs one wasted read and nothing
-	 * else.
-	 *
-	 * `$keys` arrives across the public `$rehydrate` seam, so it is whatever a
-	 * caller passed; only string entries name a key.
-	 *
-	 * @param array<string,array{0: int, 1: int, 2: int}> $locators key_hash → position.
-	 * @param array<array-key,mixed>                      $keys     Backend keys to look for.
-	 * @return array<string,array{data: array<string,mixed>, ttl: int, ts: float}>
-	 */
-	private static function read_located_frames( \Newspack_Nodes\Partition_Node $partition, array $locators, array $keys ): array {
-		$found = [];
-		foreach ( $keys as $key ) {
-			if ( ! \is_string( $key ) ) {
-				continue;
-			}
-			$at = $locators[ Log_Manager::url_hash( $key ) ] ?? null;
-			if ( null === $at ) {
-				continue;
-			}
-			$frame = self::read_mirror_frame( $partition, $at[0], [ 'offset' => $at[1], 'length' => $at[2] ] );
-			if ( null === $frame || $frame['key'] !== $key ) {
-				continue;
-			}
-			$found[ $key ] = [
-				'data' => $frame['data'],
-				'ttl'  => $frame['ttl'],
-				'ts'   => $frame['ts'],
-			];
-		}
-		return $found;
-	}
-
-	/**
-	 * Unpack one located mirror frame, or null when it is torn or malformed —
-	 * a partial write must skip, never abort the read that is repairing a hole.
-	 *
-	 * @param \Newspack_Nodes\Partition_Node    $partition Resolved stats partition.
-	 * @param int                               $segment   Segment the index located it in.
-	 * @param array{offset: int, length: int}  $entry     Where in that segment it sits.
-	 * @return array{key: string, data: array<string,mixed>, ttl: int, ts: float}|null
-	 */
-	private static function read_mirror_frame( \Newspack_Nodes\Partition_Node $partition, int $segment, array $entry ): ?array {
-		try {
-			$msg = Message::unpacked( $partition->read_at( $segment, $entry['offset'], $entry['length'] ) );
-		} catch ( \Throwable ) {
-			return null;
-		}
+	private static function read_mirror_frame( array $msg ): ?array {
 		$value = $msg[ Message::VALUE ] ?? null;
 		if ( ! \is_array( $value )
 			|| ! \is_string( $value['key'] ?? null )
@@ -1974,14 +1934,9 @@ class Flame_Builder_Node extends Node {
 		) {
 			return null;
 		}
-		// JSON object keys arrive int-cast when they are all digits.
-		$data = [];
-		foreach ( $value['data'] as $dk => $dv ) {
-			$data[ (string) $dk ] = $dv;
-		}
 		return [
 			'key'  => $value['key'],
-			'data' => $data,
+			'data' => $value['data'],
 			'ttl'  => $value['ttl'],
 			'ts'   => Core::num_float( $msg[ Message::TIMESTAMP ] ?? null ),
 		];
@@ -2244,6 +2199,22 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
+	 * The app's half of `locate_by()`: where the record for a stats-index line
+	 * sits, keyed by the hash that line carries.
+	 *
+	 * @param string $line Index line.
+	 * @return array{key: string, offset: int, length: int}|null
+	 */
+	private static function locate_stats_frame( string $line ): ?array {
+		$entry = self::parse_stats_index( $line );
+		return null === $entry ? null : [
+			'key'    => $entry['key_hash'],
+			'offset' => $entry['offset'],
+			'length' => $entry['length'],
+		];
+	}
+
+	/**
 	 * Parse one stats-index line back into its fields — the inverse of
 	 * `format_stats_index_entry()`, and bound to the same fixed widths.
 	 *
@@ -2269,8 +2240,7 @@ class Flame_Builder_Node extends Node {
 	 * production default, mirrors none. Memcache is unaffected either way.
 	 *
 	 * The `set_flame_topn` verb description calls the target "memcache"; the
-	 * target is the partition, and only a cold-boot replay puts it back in
-	 * memcache.
+	 * target is the partition, which a memcache miss then reads back.
 	 *
 	 * @param int $n Top-N cap; negatives clamp to 0.
 	 */
@@ -2581,7 +2551,7 @@ class Flame_Builder_Node extends Node {
 				],
 				[
 					'name'        => 'set_stats_target',
-					'description' => 'Mirror stats writes to a durable Partition and reload from it on cold boot (non-Atomic deployments).',
+					'description' => 'Mirror stats writes to a durable Partition and read them back when memcache misses.',
 					'args'        => [ [ 'name' => 'target', 'type' => 'node_name', 'required' => false, 'default' => '' ] ],
 					'handler'     => static function ( Command_Interpreter_Node $interpreter, array $args ): string {
 						$arg = Core::as_string( $args[0] ?? '' );

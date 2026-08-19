@@ -72,7 +72,9 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	if ( ! \class_exists( '\\Newspack_Nodes\\Bootstrap' ) ) {
 		return;
 	}
-	// @longform Dormant when too old; 2.31.0 = Capabilities::TUNE (every verb
+	// @longform Dormant when too old; 2.35.0 = Table_Node::backed_by(), which
+	// Stats_Store and Rule_Set both read their durable tier through; 2.31.0 was
+	// Capabilities::TUNE (every verb
 	// here declares a role) plus Bootstrap::mount_request_graph(), which the
 	// MCP controller builds its graph with — below it every MCP call fatals on
 	// an undefined method and every `tune` verb throws "unknown capability
@@ -81,7 +83,7 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	// that, for Table_Node::store()/forget().)
 	// WordPress does not order plugin updates.
 	if ( ! \method_exists( '\\Newspack_Nodes\\Bootstrap', 'version_at_least' )
-		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.31.0', 'Newspack Event Logger Nodes' ) ) {
+		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.35.0', 'Newspack Event Logger Nodes' ) ) {
 		return;
 	}
 
