@@ -290,6 +290,33 @@ final class Rule_Set {
 		return [];
 	}
 
+	/** The warm-mirror table, or null on a host with no cache backend at all. */
+	private static function hooks_table(): ?Table_Node {
+		if ( null === self::$hooks_table && null !== Cache_Backend::shared_first() ) {
+			// The option is the system of record; the table is its warm mirror.
+			$table             = Table_Node::table( self::TABLE_HOOKS, self::TABLE_TTL );
+			self::$hooks_table = $table->backed_by( self::read_durable_hooks( ... ) );
+		}
+		return self::$hooks_table;
+	}
+
+	/**
+	 * The Table's durable backing: the hooks each id's option still holds.
+	 *
+	 * @param list<string> $ids Rule ids the table missed on.
+	 * @return array<string,array{value: string[]}> Found ids only.
+	 */
+	private static function read_durable_hooks( array $ids ): array {
+		$found = [];
+		foreach ( $ids as $id ) {
+			$hooks = self::durable_hooks( Core::as_string( $id, '' ) );
+			if ( null !== $hooks ) {
+				$found[ $id ] = [ 'value' => $hooks ];
+			}
+		}
+		return $found;
+	}
+
 	/**
 	 * A pointer rule's hooks straight from the system of record, or null when
 	 * that option is absent. The Table's backing and the no-cache path share it.
@@ -312,27 +339,6 @@ final class Rule_Set {
 	 */
 	public static function hooks_option_name( string $id ): string {
 		return self::OPTION_HOOKS_PREFIX . $id;
-	}
-
-	/** The warm-mirror table, or null on a host with no cache backend at all. */
-	private static function hooks_table(): ?Table_Node {
-		if ( null === self::$hooks_table && null !== Cache_Backend::shared_first() ) {
-			// The option is the system of record; the table is its warm mirror.
-			self::$hooks_table = Table_Node::table( self::TABLE_HOOKS, self::TABLE_TTL )
-				->backed_by(
-					static function ( array $ids ): array {
-						$found = [];
-						foreach ( $ids as $id ) {
-							$hooks = self::durable_hooks( Core::as_string( $id, '' ) );
-							if ( null !== $hooks ) {
-								$found[ $id ] = [ 'value' => $hooks ];
-							}
-						}
-						return $found;
-					}
-				);
-		}
-		return self::$hooks_table;
 	}
 
 	/**
