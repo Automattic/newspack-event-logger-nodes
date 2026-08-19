@@ -257,13 +257,16 @@ final class Rule_Set {
 			$id = \substr( $name, \strlen( self::OPTION_HOOKS_PREFIX ) );
 			if ( ! isset( $live_pointer_ids[ $id ] ) ) {
 				\delete_option( $name );
+				// Both tiers, like the inline branch above.
+				self::hooks_table()?->forget( $id );
 			}
 		}
 	}
 
 	/**
-	 * Resolve a rule's hooks. Inline is free; pointer reads the table, then the
-	 * durable option (warming the table), then gives up to [] with a notice.
+	 * Resolve a rule's hooks. Inline is free; a pointer reads the table, which
+	 * reads through to the durable option and warms itself, then gives up to []
+	 * with a notice.
 	 *
 	 * Stateless (consults only $rule + the table + the durable option), so it's
 	 * static — Log_Manager already loaded the ruleset once per request; callers

@@ -455,6 +455,17 @@ class StatsStoreTest extends TestCase {
 		$this->assertSame( 31, $store->get_leaderboard_buckets( [ 'b1' ] )['b1']['count'] );
 	}
 
+	public function test_the_backing_survives_a_window_that_matches_the_per_url_one(): void {
+		// At min_lifetime <= 3600 the aggregate and per-URL TTLs are BOTH 3600.
+		// Memoizing a table by its TTL then hands the aggregate reads the
+		// per-URL table, which is deliberately unbacked — and the mirror goes
+		// silently unreadable on exactly the installs that shortened retention.
+		$store = $this->make_store( max_lifespan: 3600 );
+		$this->arm_entry( $store, Stats_Store::NS_HOURLY, [ '2026-02-03-04-05' => [ 'count' => 42 ] ], 900 );
+
+		$this->assertSame( [ '2026-02-03-04-05' => [ 'count' => 42 ] ], $store->get_hourly() );
+	}
+
 	public function test_a_miss_is_filled_from_the_durable_backing(): void {
 		$store = $this->make_store();
 		$value = [ '2026-01-01-00' => [ 'count' => 9 ] ];
