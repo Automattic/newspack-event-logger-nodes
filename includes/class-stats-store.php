@@ -98,6 +98,12 @@ class Stats_Store {
 	/** Shortest retention window the stats keyspace works with, in seconds. */
 	public const PREFIX_FLOOR = 3600;
 
+	/** Summed fields of one dimensional value => whether it is a whole count. */
+	public const DIM_SUMS = [ 'c' => true, 's' => false, 'm' => false ];
+
+	/** Summed fields of one category => whether it is a whole count. */
+	public const CAT_SUMS = [ 't' => false, 'c' => true, 'n' => true ];
+
 	/** Bucket width in minutes — the granularity every bucketed namespace is keyed at. */
 	private const BUCKET_MINUTES = 5;
 
@@ -172,8 +178,7 @@ class Stats_Store {
 	 * @return array<string,mixed> Bucket contents, [] on miss.
 	 */
 	public function get_url_bucket( string $bucket ): array {
-		$val = $this->lookup( $this->key( self::NS_URLS, $bucket ) );
-		return self::map_or_empty( $val );
+		return $this->bucket_get( [ self::NS_URLS ], $bucket );
 	}
 
 	/**
@@ -183,8 +188,7 @@ class Stats_Store {
 	 * @return array<string,mixed> Totals for the bucket, [] on miss.
 	 */
 	public function get_hourly_bucket( string $bucket ): array {
-		$val = $this->lookup( $this->key( self::NS_HOURLY, $bucket ) );
-		return self::map_or_empty( $val );
+		return $this->bucket_get( [ self::NS_HOURLY ], $bucket );
 	}
 
 	/**
@@ -198,59 +202,134 @@ class Stats_Store {
 	 * @return array<string,mixed> Bucket sums, [] on miss.
 	 */
 	public function get_leaderboard_bucket( string $bucket, string $server = '' ): array {
-		$val = $this->lookup( $this->key( ...[ ...self::lb_parts( $server ), $bucket ] ) );
-		return self::map_or_empty( $val );
+		return $this->bucket_get( self::lb_parts( $server ), $bucket );
 	}
 
 	/**
-	 * Read one dimension's series: `{ bucket => { value => { c, s, m } } }` —
-	 * request count, summed duration in ms, summed peak MB per distinct value.
+	 * Read one dimension's bucket: `{ value => { c, s, m } }` — request count,
+	 * summed duration in ms, summed peak MB per distinct value.
 	 *
 	 * @param string $dimension Dimension name, e.g. `ua`.
+	 * @param string $bucket    Bucket key.
 	 * @param string $server    Reporting server; '' reads the global series.
-	 * @return array<string,mixed> Series by bucket, [] on miss.
+	 * @return array<string,mixed> The bucket, [] on miss.
 	 */
-	public function get_dimensional( string $dimension, string $server = '' ): array {
-		$parts = [ self::NS_DIM, $dimension ];
-		if ( '' !== $server ) {
-			$parts[] = self::server_key( $server );
+	public function get_dimensional_bucket( string $dimension, string $bucket, string $server = '' ): array {
+		return $this->bucket_get( self::dim_parts( $dimension, $server ), $bucket );
+	}
+
+	/**
+	 * Read many of one dimension's buckets in a single round-trip.
+	 *
+	 * @param string            $dimension Dimension name.
+	 * @param array<int,string> $buckets   Bucket keys.
+	 * @param string            $server    Reporting server; '' reads the global series.
+	 * @return array<string,mixed> Value maps keyed by bucket; misses absent.
+	 */
+	public function get_dimensional_buckets( string $dimension, array $buckets, string $server = '' ): array {
+		return $this->lookup_buckets( self::dim_parts( $dimension, $server ), $buckets );
+	}
+
+	/**
+	 * Read one URL's dimensional bucket, every dimension in one value:
+	 * `{ dim => { value => { c, s, m } } }`. Transposed from dimension-major so
+	 * the bucket is last: 288 keys per URL rather than a dim-by-bucket product.
+	 *
+	 * @param string $url_hash 12-char URL hash.
+	 * @param string $bucket   Bucket key.
+	 * @return array<string,mixed> The bucket, [] on miss.
+	 */
+	public function get_url_dimensional_bucket( string $url_hash, string $bucket ): array {
+		return $this->bucket_get( [ self::NS_URL_DIM, $url_hash ], $bucket );
+	}
+
+	/**
+	 * Read many of one URL's dimensional buckets in a single round-trip.
+	 *
+	 * @param string            $url_hash 12-char URL hash.
+	 * @param array<int,string> $buckets  Bucket keys.
+	 * @return array<string,mixed> Dimension maps keyed by bucket; misses absent.
+	 */
+	public function get_url_dimensional_buckets( string $url_hash, array $buckets ): array {
+		return $this->lookup_buckets( [ self::NS_URL_DIM, $url_hash ], $buckets );
+	}
+
+	/**
+	 * Read one category bucket: `{ cat => { t, c, n } }` — summed time in ms,
+	 * summed invocation count, and requests sampled.
+	 *
+	 * @param string $bucket Bucket key.
+	 * @param string $server Reporting server; '' reads the global series.
+	 * @return array<string,mixed> The bucket, [] on miss.
+	 */
+	public function get_category_bucket( string $bucket, string $server = '' ): array {
+		return $this->bucket_get( self::cat_parts( $server ), $bucket );
+	}
+
+	/**
+	 * Read many category buckets in a single round-trip.
+	 *
+	 * @param array<int,string> $buckets Bucket keys.
+	 * @param string            $server  Reporting server; '' reads the global series.
+	 * @return array<string,mixed> Category maps keyed by bucket; misses absent.
+	 */
+	public function get_category_buckets( array $buckets, string $server = '' ): array {
+		return $this->lookup_buckets( self::cat_parts( $server ), $buckets );
+	}
+
+	/**
+	 * Read one URL's category bucket. Same shape as `get_category_bucket()`.
+	 *
+	 * @param string $url_hash 12-char URL hash.
+	 * @param string $bucket   Bucket key.
+	 * @return array<string,mixed> The bucket, [] on miss.
+	 */
+	public function get_url_category_bucket( string $url_hash, string $bucket ): array {
+		return $this->bucket_get( [ self::NS_URL_CAT, $url_hash ], $bucket );
+	}
+
+	/**
+	 * Read one bucket of a namespace. Every bucketed namespace puts the bucket
+	 * LAST, so scope (server, URL, dimension) is a key prefix and one batch read
+	 * serves them all.
+	 *
+	 * @param array<int,string> $parts  Namespace prefix parts, before the bucket.
+	 * @param string            $bucket Bucket key.
+	 * @return array<string,mixed> The bucket, [] on miss.
+	 */
+	private function bucket_get( array $parts, string $bucket ): array {
+		return self::map_or_empty( $this->lookup( $this->key( ...[ ...$parts, $bucket ] ) ) );
+	}
+
+	/**
+	 * Coerce a memcache get() result (mixed) to a string-keyed map, [] on miss.
+	 *
+	 * Every namespace stores a string-keyed map; re-key with (string) casts so
+	 * the static type is array<string,mixed> (is_array alone leaves keys mixed).
+	 *
+	 * @param mixed $val
+	 * @return array<string,mixed>
+	 */
+	private static function map_or_empty( $val ): array {
+		if ( ! \is_array( $val ) ) {
+			return [];
 		}
-		$val = $this->lookup( $this->key( ...$parts ) );
-		return self::map_or_empty( $val );
+		$out = [];
+		foreach ( $val as $k => $v ) {
+			$out[ (string) $k ] = $v;
+		}
+		return $out;
 	}
 
 	/**
-	 * Read one URL's dimensional series, every dimension in one value:
-	 * `{ dim => { bucket => { value => { c, s, m } } } }`.
+	 * Read many of one URL's category buckets in a single round-trip.
 	 *
-	 * @param string $url_hash 12-char URL hash.
-	 * @return array<string,mixed> Series by dimension, [] on miss.
+	 * @param string            $url_hash 12-char URL hash.
+	 * @param array<int,string> $buckets  Bucket keys.
+	 * @return array<string,mixed> Category maps keyed by bucket; misses absent.
 	 */
-	public function get_url_dimensional( string $url_hash ): array {
-		$val = $this->lookup( $this->key( self::NS_URL_DIM, $url_hash ) );
-		return self::map_or_empty( $val );
-	}
-
-	/**
-	 * Read the global category series: `{ bucket => { cat => { t, c, n } } }` —
-	 * summed time in ms, summed invocation count, and requests sampled.
-	 *
-	 * @return array<string,mixed> Series by bucket, [] on miss.
-	 */
-	public function get_categories(): array {
-		$val = $this->lookup( $this->key( self::NS_CATEGORIES ) );
-		return self::map_or_empty( $val );
-	}
-
-	/**
-	 * Read one URL's category series. Same shape as `get_categories()`.
-	 *
-	 * @param string $url_hash 12-char URL hash.
-	 * @return array<string,mixed> Series by bucket, [] on miss.
-	 */
-	public function get_url_categories( string $url_hash ): array {
-		$val = $this->lookup( $this->key( self::NS_URL_CAT, $url_hash ) );
-		return self::map_or_empty( $val );
+	public function get_url_category_buckets( string $url_hash, array $buckets ): array {
+		return $this->lookup_buckets( [ self::NS_URL_CAT, $url_hash ], $buckets );
 	}
 
 	/**
@@ -262,7 +341,7 @@ class Stats_Store {
 	 * @return bool True when the set landed.
 	 */
 	public function set_hourly_bucket( string $bucket, array $data ): bool {
-		return $this->store( $this->key( self::NS_HOURLY, $bucket ), $data, $this->ttl(), self::NS_HOURLY );
+		return $this->bucket_set( [ self::NS_HOURLY ], $bucket, $data );
 	}
 
 	/**
@@ -284,7 +363,6 @@ class Stats_Store {
 		}
 		return $out;
 	}
-
 	/**
 	 * The bucket a timestamp falls in: `Y-m-d-H-mm` UTC, floored to
 	 * BUCKET_MINUTES (which must divide 60). Lexical order is chronological
@@ -363,7 +441,7 @@ class Stats_Store {
 	 * @return bool True when the set landed.
 	 */
 	public function set_url_index_hourly( string $bucket, array $data ): bool {
-		return $this->store( $this->key( self::NS_URLS, $bucket ), $data, $this->ttl(), self::NS_URLS );
+		return $this->bucket_set( [ self::NS_URLS ], $bucket, $data );
 	}
 
 	/**
@@ -376,6 +454,11 @@ class Stats_Store {
 	public function get_url_stats( string $url_hash ): ?array {
 		$val = $this->lookup( $this->key( self::NS_URL, $url_hash ) );
 		return \is_array( $val ) ? $val : null;
+	}
+
+	/** Read one key through the table; null (no backend) and miss both read empty. */
+	private function lookup( string $key ): mixed {
+		return $this->table( self::ROLE_AGGREGATE )?->lookup( $key );
 	}
 
 	/**
@@ -398,8 +481,7 @@ class Stats_Store {
 	 * @return bool True when the set landed.
 	 */
 	public function set_leaderboard_bucket( string $bucket, array $data, string $server = '' ): bool {
-		$parts = self::lb_parts( $server );
-		return $this->store( $this->key( ...[ ...$parts, $bucket ] ), $data, $this->ttl(), $parts[0] );
+		return $this->bucket_set( self::lb_parts( $server ), $bucket, $data );
 	}
 
 	/**
@@ -416,86 +498,59 @@ class Stats_Store {
 	/**
 	 * Overwrite one dimension's series, global or per server.
 	 *
-	 * @param string               $dimension Dimension name.
-	 * @param array<string,mixed> $data      Series keyed by bucket.
-	 * @param string               $server    Reporting server; '' writes the global series.
+	 * @param string              $dimension Dimension name.
+	 * @param string              $bucket    Bucket key.
+	 * @param array<string,mixed> $data      The bucket's value map.
+	 * @param string              $server    Reporting server; '' writes the global series.
 	 * @return bool True when the set landed.
 	 */
-	public function set_dimensional( string $dimension, array $data, string $server = '' ): bool {
-		$parts = [ self::NS_DIM, $dimension ];
-		if ( '' !== $server ) {
-			$parts[] = self::server_key( $server );
-		}
-		return $this->store( $this->key( ...$parts ), $data, $this->ttl(), self::NS_DIM );
+	public function set_dimensional_bucket( string $dimension, string $bucket, array $data, string $server = '' ): bool {
+		return $this->bucket_set( self::dim_parts( $dimension, $server ), $bucket, $data );
 	}
 
 	/**
-	 * Overwrite one URL's dimensional series, every dimension in one value.
+	 * The namespace prefix for a dimensional scope.
 	 *
-	 * @param string               $url_hash 12-char URL hash.
-	 * @param array<string,mixed> $data     Series keyed by dimension.
+	 * @param string $dimension Dimension name, e.g. `ua`.
+	 * @param string $server    Reporting server; '' is the global series.
+	 * @return list<string>
+	 */
+	private static function dim_parts( string $dimension, string $server ): array {
+		return '' === $server ? [ self::NS_DIM, $dimension ] : [ self::NS_DIM, $dimension, self::server_key( $server ) ];
+	}
+
+	/**
+	 * Overwrite one URL's dimensional bucket, every dimension in one value.
+	 *
+	 * @param string              $url_hash 12-char URL hash.
+	 * @param string              $bucket   Bucket key.
+	 * @param array<string,mixed> $data     Value maps keyed by dimension.
 	 * @return bool True when the set landed.
 	 */
-	public function set_url_dimensional( string $url_hash, array $data ): bool {
-		return $this->store( $this->key( self::NS_URL_DIM, $url_hash ), $data, $this->ttl(), self::NS_URL_DIM );
+	public function set_url_dimensional_bucket( string $url_hash, string $bucket, array $data ): bool {
+		return $this->bucket_set( [ self::NS_URL_DIM, $url_hash ], $bucket, $data );
 	}
 
 	/**
-	 * Overwrite the global category series.
+	 * Overwrite one category bucket.
 	 *
-	 * @param array<string,mixed> $data Series keyed by bucket.
+	 * @param string              $bucket Bucket key.
+	 * @param array<string,mixed> $data   The bucket's category map.
+	 * @param string              $server Reporting server; '' writes the global series.
 	 * @return bool True when the set landed.
 	 */
-	public function set_categories( array $data ): bool {
-		return $this->store( $this->key( self::NS_CATEGORIES ), $data, $this->ttl(), self::NS_CATEGORIES );
+	public function set_category_bucket( string $bucket, array $data, string $server = '' ): bool {
+		return $this->bucket_set( self::cat_parts( $server ), $bucket, $data );
 	}
 
 	/**
-	 * Read one server's category series. Same shape as `get_categories()`; the
-	 * server token extends the `categories` key rather than opening a namespace.
+	 * The namespace prefix for a category scope.
 	 *
-	 * @param string $server Server name; hashed into the key.
-	 * @return array<string,mixed> Series by bucket, [] on miss.
+	 * @param string $server Reporting server; '' is the global series.
+	 * @return list<string>
 	 */
-	public function get_server_categories( string $server ): array {
-		$val = $this->lookup( $this->key( self::NS_CATEGORIES, self::server_key( $server ) ) );
-		return self::map_or_empty( $val );
-	}
-
-	/**
-	 * Coerce a memcache get() result (mixed) to a string-keyed map, [] on miss.
-	 *
-	 * Every namespace stores a string-keyed map; re-key with (string) casts so
-	 * the static type is array<string,mixed> (is_array alone leaves keys mixed).
-	 *
-	 * @param mixed $val
-	 * @return array<string,mixed>
-	 */
-	private static function map_or_empty( $val ): array {
-		if ( ! \is_array( $val ) ) {
-			return [];
-		}
-		$out = [];
-		foreach ( $val as $k => $v ) {
-			$out[ (string) $k ] = $v;
-		}
-		return $out;
-	}
-
-	/** Read one key through the table; null (no backend) and miss both read empty. */
-	private function lookup( string $key ): mixed {
-		return $this->table( self::ROLE_AGGREGATE )?->lookup( $key );
-	}
-
-	/**
-	 * Overwrite one server's category series.
-	 *
-	 * @param string               $server Server name; hashed into the key.
-	 * @param array<string,mixed> $data   Series keyed by bucket.
-	 * @return bool True when the set landed.
-	 */
-	public function set_server_categories( string $server, array $data ): bool {
-		return $this->store( $this->key( self::NS_CATEGORIES, self::server_key( $server ) ), $data, $this->ttl(), self::NS_CATEGORIES );
+	private static function cat_parts( string $server ): array {
+		return '' === $server ? [ self::NS_CATEGORIES ] : [ self::NS_CATEGORIES, self::server_key( $server ) ];
 	}
 
 	/**
@@ -519,14 +574,28 @@ class Stats_Store {
 	}
 
 	/**
-	 * Overwrite one URL's category series.
+	 * Overwrite one URL's category bucket.
 	 *
-	 * @param string               $url_hash 12-char URL hash.
-	 * @param array<string,mixed> $data     Series keyed by bucket.
+	 * @param string              $url_hash 12-char URL hash.
+	 * @param string              $bucket   Bucket key.
+	 * @param array<string,mixed> $data     The bucket's category map.
 	 * @return bool True when the set landed.
 	 */
-	public function set_url_categories( string $url_hash, array $data ): bool {
-		return $this->store( $this->key( self::NS_URL_CAT, $url_hash ), $data, $this->ttl(), self::NS_URL_CAT );
+	public function set_url_category_bucket( string $url_hash, string $bucket, array $data ): bool {
+		return $this->bucket_set( [ self::NS_URL_CAT, $url_hash ], $bucket, $data );
+	}
+
+	/**
+	 * Overwrite one bucket of a namespace. The namespace token leads `$parts`,
+	 * so it is also what routes the mirror.
+	 *
+	 * @param array<int,string>   $parts  Namespace prefix parts, before the bucket.
+	 * @param string              $bucket Bucket key.
+	 * @param array<string,mixed> $data   The bucket.
+	 * @return bool True when the set landed.
+	 */
+	private function bucket_set( array $parts, string $bucket, array $data ): bool {
+		return $this->store( $this->key( ...[ ...$parts, $bucket ] ), $data, $this->ttl(), $parts[0] );
 	}
 
 	/**
@@ -684,6 +753,35 @@ class Stats_Store {
 	 */
 	public static function namespace_for( int $partition ): string {
 		return self::PREFIX_BASE . ':p' . $partition;
+	}
+
+	/**
+	 * Sum `$fields` from `$incoming` into `$into`, entry by entry. The one merge
+	 * both the dimensional (`c,s,m`) and category (`t,c,n`) series share.
+	 *
+	 * @param array<array-key,mixed> $into     Running totals.
+	 * @param array<array-key,mixed> $incoming Inbound entries.
+	 * @param array<string,bool>     $fields   Field name => is a whole count.
+	 * @return array<string,mixed> The totals, string-keyed for the store.
+	 */
+	public static function sum_fields( array $into, array $incoming, array $fields ): array {
+		$out = [];
+		foreach ( $into as $key => $value ) {
+			$out[ (string) $key ] = $value;
+		}
+		foreach ( $incoming as $key => $stats ) {
+			if ( ! \is_array( $stats ) ) {
+				continue;
+			}
+			$cur = Core::arr( $out[ (string) $key ] ?? null );
+			foreach ( $fields as $field => $is_count ) {
+				$cur[ $field ] = $is_count
+					? Core::num_int( $cur[ $field ] ?? null ) + Core::num_int( $stats[ $field ] ?? null )
+					: Core::num_float( $cur[ $field ] ?? null ) + Core::num_float( $stats[ $field ] ?? null );
+			}
+			$out[ (string) $key ] = $cur;
+		}
+		return $out;
 	}
 
 	/**

@@ -342,10 +342,9 @@ class PerformanceCITest extends TestCase {
 		// response — global or server-scoped. The dashboard always passes
 		// `categories=1` (see usePerformanceApi.js L54) and reads
 		// `overviewData.category_time_series` (PerformanceDashboard.js L391).
-		$store = new Stats_Store( 0, 86400 );
-		$store->set_categories( [
-			'2026-05-17-10-00' => [ 'db' => [ 't' => 0.5, 'c' => 4, 'n' => 4 ] ],
-		] );
+		$store  = new Stats_Store( 0, 86400 );
+		$bucket = $this->current_url_bucket();
+		$store->set_category_bucket( $bucket, [ 'db' => [ 't' => 0.5, 'c' => 4, 'n' => 4 ] ] );
 
 		$interpreter     = new Performance_CI_Node();
 		$result = VerbHarness::fire(
@@ -356,20 +355,17 @@ class PerformanceCITest extends TestCase {
 		);
 
 		$this->assertArrayHasKey( 'category_time_series', $result );
-		$this->assertArrayHasKey( '2026-05-17-10-00', $result['category_time_series'] );
-		$this->assertSame( 0.5, $result['category_time_series']['2026-05-17-10-00']['db']['t'] );
+		$this->assertArrayHasKey( $bucket, $result['category_time_series'] );
+		$this->assertSame( 0.5, $result['category_time_series'][ $bucket ]['db']['t'] );
 	}
 
 	public function test_overview_verb_includes_breakdown_time_series_for_single_dim(): void {
 		// `?breakdown=server` returns `breakdown_time_series` flat (legacy L111-112).
 		// Used by fetchBreakdown (usePerformanceApi.js L186 reads
 		// `data.breakdown_time_series`).
-		$store = new Stats_Store( 0, 86400 );
-		$store->set_dimensional( 'server', [
-			'2026-05-17-10-00' => [
-				'web01' => [ 'c' => 5, 's' => 0.5, 'm' => 0.1 ],
-			],
-		] );
+		$store  = new Stats_Store( 0, 86400 );
+		$bucket = $this->current_url_bucket();
+		$store->set_dimensional_bucket( 'server', $bucket, [ 'web01' => [ 'c' => 5, 's' => 0.5, 'm' => 0.1 ] ] );
 
 		$interpreter     = new Performance_CI_Node();
 		$result = VerbHarness::fire(
@@ -380,7 +376,7 @@ class PerformanceCITest extends TestCase {
 		);
 
 		$this->assertArrayHasKey( 'breakdown_time_series', $result );
-		$this->assertSame( 5, $result['breakdown_time_series']['2026-05-17-10-00']['web01']['c'] );
+		$this->assertSame( 5, $result['breakdown_time_series'][ $bucket ]['web01']['c'] );
 	}
 
 	public function test_overview_verb_includes_breakdowns_map_for_multi_dim(): void {
@@ -388,13 +384,10 @@ class PerformanceCITest extends TestCase {
 		// (legacy L113-118). Used by the dashboard's `breakdownsFor` deduper
 		// (PerformanceDashboard.js L342-374), which always sends ≥2 dims so it
 		// can rely on the nested shape.
-		$store = new Stats_Store( 0, 86400 );
-		$store->set_dimensional( 'server', [
-			'2026-05-17-10-00' => [ 'web01' => [ 'c' => 5, 's' => 0.5, 'm' => 0.1 ] ],
-		] );
-		$store->set_dimensional( 'status', [
-			'2026-05-17-10-00' => [ '200' => [ 'c' => 4, 's' => 0.4, 'm' => 0.1 ] ],
-		] );
+		$store  = new Stats_Store( 0, 86400 );
+		$bucket = $this->current_url_bucket();
+		$store->set_dimensional_bucket( 'server', $bucket, [ 'web01' => [ 'c' => 5, 's' => 0.5, 'm' => 0.1 ] ] );
+		$store->set_dimensional_bucket( 'status', $bucket, [ '200' => [ 'c' => 4, 's' => 0.4, 'm' => 0.1 ] ] );
 
 		$interpreter     = new Performance_CI_Node();
 		$result = VerbHarness::fire(
@@ -407,27 +400,18 @@ class PerformanceCITest extends TestCase {
 		$this->assertArrayHasKey( 'breakdowns', $result );
 		$this->assertArrayHasKey( 'server', $result['breakdowns'] );
 		$this->assertArrayHasKey( 'status', $result['breakdowns'] );
-		$this->assertSame( 5, $result['breakdowns']['server']['2026-05-17-10-00']['web01']['c'] );
-		$this->assertSame( 4, $result['breakdowns']['status']['2026-05-17-10-00']['200']['c'] );
+		$this->assertSame( 5, $result['breakdowns']['server'][ $bucket ]['web01']['c'] );
+		$this->assertSame( 4, $result['breakdowns']['status'][ $bucket ]['200']['c'] );
 	}
 
 	public function test_overview_server_scope_keeps_the_global_server_dimension(): void {
-		$store = new Stats_Store( 0, 86400 );
-		$store->set_dimensional( 'server', [
-			'2026-05-17-10-00' => [
-				'edge-amber.example' => [ 'c' => 37, 's' => 3700.0, 'm' => 259.0 ],
-				'edge-violet.example' => [ 'c' => 11, 's' => 1430.0, 'm' => 99.0 ],
-			],
+		$store  = new Stats_Store( 0, 86400 );
+		$bucket = $this->current_url_bucket();
+		$store->set_dimensional_bucket( 'server', $bucket, [
+			'edge-amber.example'  => [ 'c' => 37, 's' => 3700.0, 'm' => 259.0 ],
+			'edge-violet.example' => [ 'c' => 11, 's' => 1430.0, 'm' => 99.0 ],
 		] );
-		$store->set_dimensional(
-			'status',
-			[
-				'2026-05-17-10-00' => [
-					'2xx' => [ 'c' => 37, 's' => 3700.0, 'm' => 259.0 ],
-				],
-			],
-			'edge-amber.example'
-		);
+		$store->set_dimensional_bucket( 'status', $bucket, [ '2xx' => [ 'c' => 37, 's' => 3700.0, 'm' => 259.0 ] ], 'edge-amber.example' );
 
 		$interpreter = new Performance_CI_Node();
 		$result      = VerbHarness::fire(
@@ -437,9 +421,9 @@ class PerformanceCITest extends TestCase {
 			'--server=edge-amber.example --breakdown=server,status'
 		);
 
-		$this->assertSame( 37, $result['breakdowns']['server']['2026-05-17-10-00']['edge-amber.example']['c'] );
-		$this->assertSame( 11, $result['breakdowns']['server']['2026-05-17-10-00']['edge-violet.example']['c'] );
-		$this->assertSame( 37, $result['breakdowns']['status']['2026-05-17-10-00']['2xx']['c'] );
+		$this->assertSame( 37, $result['breakdowns']['server'][ $bucket ]['edge-amber.example']['c'] );
+		$this->assertSame( 11, $result['breakdowns']['server'][ $bucket ]['edge-violet.example']['c'] );
+		$this->assertSame( 37, $result['breakdowns']['status'][ $bucket ]['2xx']['c'] );
 	}
 
 	public function test_overview_verb_breakdown_filters_unknown_dims(): void {
@@ -461,13 +445,10 @@ class PerformanceCITest extends TestCase {
 	public function test_overview_verb_server_scoped_categories_when_both_args(): void {
 		// `?server=X&categories=1` should use the per-server categories
 		// blob (legacy L122-124 `merge_server_categories_across_partitions`).
-		$store = new Stats_Store( 0, 86400 );
-		$store->set_server_categories( 'web01', [
-			'2026-05-17-10-00' => [ 'db' => [ 't' => 0.2, 'c' => 2, 'n' => 2 ] ],
-		] );
-		$store->set_categories( [
-			'2026-05-17-10-00' => [ 'db' => [ 't' => 9.9, 'c' => 99, 'n' => 99 ] ],
-		] );
+		$store  = new Stats_Store( 0, 86400 );
+		$bucket = $this->current_url_bucket();
+		$store->set_category_bucket( $bucket, [ 'db' => [ 't' => 0.2, 'c' => 2, 'n' => 2 ] ], 'web01' );
+		$store->set_category_bucket( $bucket, [ 'db' => [ 't' => 9.9, 'c' => 99, 'n' => 99 ] ] );
 
 		$interpreter     = new Performance_CI_Node();
 		$result = VerbHarness::fire(
@@ -478,7 +459,7 @@ class PerformanceCITest extends TestCase {
 		);
 
 		// Server-scoped data, not the global ones.
-		$this->assertSame( 0.2, $result['category_time_series']['2026-05-17-10-00']['db']['t'] );
+		$this->assertSame( 0.2, $result['category_time_series'][ $bucket ]['db']['t'] );
 	}
 
 	// -------------------------------------------------------------------------
@@ -824,11 +805,8 @@ class PerformanceCITest extends TestCase {
 				'last_seen' => 1700001000,
 			],
 		] );
-		$store->set_url_dimensional( 'abc123def456', [
-			'method' => [
-				'2026-05-17-10-00' => [ 'GET' => [ 'c' => 3, 's' => 0.3, 'm' => 0.1 ] ],
-			],
-		] );
+		$bucket = $this->current_url_bucket();
+		$store->set_url_dimensional_bucket( 'abc123def456', $bucket, [ 'method' => [ 'GET' => [ 'c' => 3, 's' => 0.3, 'm' => 0.1 ] ] ] );
 
 		$interpreter     = new Performance_CI_Node();
 		$result = VerbHarness::fire(
@@ -839,7 +817,7 @@ class PerformanceCITest extends TestCase {
 		);
 
 		$this->assertArrayHasKey( 'breakdown_time_series', $result );
-		$this->assertSame( 3, $result['breakdown_time_series']['2026-05-17-10-00']['GET']['c'] );
+		$this->assertSame( 3, $result['breakdown_time_series'][ $bucket ]['GET']['c'] );
 	}
 
 	public function test_url_detail_verb_includes_category_time_series_when_arg_set(): void {
@@ -856,9 +834,8 @@ class PerformanceCITest extends TestCase {
 				'last_seen' => 1700001000,
 			],
 		] );
-		$store->set_url_categories( 'abc123def456', [
-			'2026-05-17-10-00' => [ 'db' => [ 't' => 0.2, 'c' => 2, 'n' => 1 ] ],
-		] );
+		$bucket = $this->current_url_bucket();
+		$store->set_url_category_bucket( 'abc123def456', $bucket, [ 'db' => [ 't' => 0.2, 'c' => 2, 'n' => 1 ] ] );
 
 		$interpreter     = new Performance_CI_Node();
 		$result = VerbHarness::fire(
@@ -869,7 +846,7 @@ class PerformanceCITest extends TestCase {
 		);
 
 		$this->assertArrayHasKey( 'category_time_series', $result );
-		$this->assertSame( 0.2, $result['category_time_series']['2026-05-17-10-00']['db']['t'] );
+		$this->assertSame( 0.2, $result['category_time_series'][ $bucket ]['db']['t'] );
 	}
 
 	public function test_url_detail_verb_breakdown_filters_unknown_dims(): void {

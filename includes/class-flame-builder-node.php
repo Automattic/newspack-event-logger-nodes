@@ -53,8 +53,8 @@ class Flame_Builder_Node extends Node {
 	 * category. It carries `n` = requests in the bucket, `t` = their summed wall
 	 * time, and `c` = the summed call count of every category in them.
 	 *
-	 * Only `n` has a reader — `mirror_traffic_rank()` sums it across buckets to
-	 * rank a URL when the mirror buffer overflows. The dashboard's
+	 * Only `n` has a reader — `mirror_traffic_rank()` reads one bucket's to rank a
+	 * URL when the mirror buffer overflows. The dashboard's
 	 * `CategoryTimeChart` skips the row outright, so `t` and `c` are published
 	 * but unread today.
 	 *
@@ -127,8 +127,8 @@ class Flame_Builder_Node extends Node {
 	 */
 	private const STATS_MIRROR_TOPN = [
 		Stats_Store::NS_URL     => 0,    // flame profiles — see $flame_topn
-		Stats_Store::NS_URL_DIM => 100,  // per-URL dimensional
-		Stats_Store::NS_URL_CAT => 100,  // per-URL categories
+		Stats_Store::NS_URL_DIM => 100,  // per-URL dimensional frames
+		Stats_Store::NS_URL_CAT => 100,  // per-URL category frames
 	];
 
 	/** @var Auto_Tuner_Node|null Owned sibling — receives auto-tune decisions. */
@@ -1168,6 +1168,9 @@ class Flame_Builder_Node extends Node {
 
 		// Dimensional — per-server.
 		foreach ( $this->pending['dim_by_server'] ?? [] as $server => $dims ) {
+			if ( '' === $server ) {
+				continue;
+			}
 			foreach ( $dims as $dim => $values ) {
 				$this->dim_stats_by_server[ $server ][ $dim ][ $bk ] = $values;
 			}
@@ -1176,7 +1179,7 @@ class Flame_Builder_Node extends Node {
 		// Dimensional — per-URL.
 		foreach ( $this->pending['url_dim'] ?? [] as $url_hash => $dims ) {
 			foreach ( $dims as $dim => $values ) {
-				$this->url_dim_stats[ $url_hash ][ $dim ][ $bk ] = $values;
+				$this->url_dim_stats[ $url_hash ][ $bk ][ $dim ] = $values;
 			}
 		}
 
@@ -1187,6 +1190,9 @@ class Flame_Builder_Node extends Node {
 
 		// Category — per-server, capped.
 		foreach ( $this->pending['cat_by_server'] ?? [] as $server => $cats ) {
+			if ( '' === $server ) {
+				continue;
+			}
 			$this->cat_stats_by_server[ $server ][ $bk ] = self::cap_single_bucket( $cats, $max_cats );
 		}
 
@@ -1375,47 +1381,35 @@ class Flame_Builder_Node extends Node {
 		}
 
 		// --- Dimensional (global, per-server, per-URL) ---
-		$cutoff = Stats_Store::bucket_key( $this->now_ts() - $stats_store->ttl() );
 		foreach ( $this->dim_stats as $dim => $buckets ) {
-			$existing = $stats_store->get_dimensional( $dim );
-			$this->merge_and_cap_dimensional( $existing, $buckets, $cutoff );
-			// Restore string bucket keys widened by by-ref merge, for store.
-			/** @var array<string,mixed> $existing */
-			$stats_store->set_dimensional( $dim, $existing );
+			$this->persist_dimension( $stats_store, $dim, $buckets );
 		}
 		foreach ( $this->dim_stats_by_server as $server => $dims ) {
 			foreach ( $dims as $dim => $buckets ) {
-				$existing = $stats_store->get_dimensional( $dim, $server );
-				$this->merge_and_cap_dimensional( $existing, $buckets, $cutoff );
-				/** @var array<string,mixed> $existing */
-				$stats_store->set_dimensional( $dim, $existing, $server );
+				$this->persist_dimension( $stats_store, $dim, $buckets, $server );
 			}
 		}
-		foreach ( $this->url_dim_stats as $url_hash => $dims ) {
-			$existing = $stats_store->get_url_dimensional( $url_hash );
-			foreach ( $dims as $dim => $buckets ) {
-				$dim_existing = isset( $existing[ $dim ] ) && \is_array( $existing[ $dim ] ) ? $existing[ $dim ] : [];
-				$this->merge_and_cap_dimensional( $dim_existing, $buckets, $cutoff, Stats_Store::MAX_URL_DIM_VALUES );
-				$existing[ $dim ] = $dim_existing;
+		foreach ( $this->url_dim_stats as $url_hash => $buckets ) {
+			foreach ( $buckets as $bucket_key => $dims ) {
+				$existing = $stats_store->get_url_dimensional_bucket( $url_hash, $bucket_key );
+				foreach ( Core::arr( $dims ) as $dim => $values ) {
+					$cur = Stats_Store::sum_fields( Core::arr( $existing[ $dim ] ?? null ), Core::arr( $values ), Stats_Store::DIM_SUMS );
+					$existing[ (string) $dim ] = self::cap_dim_bucket( $cur, Stats_Store::MAX_URL_DIM_VALUES );
+				}
+				$stats_store->set_url_dimensional_bucket( $url_hash, $bucket_key, $existing );
 			}
-			$stats_store->set_url_dimensional( $url_hash, $existing );
 		}
 
 		// --- Category time series (global, per-server, per-URL) ---
-		if ( ! empty( $this->cat_stats ) ) {
-			$existing_cats = $stats_store->get_categories();
-			$this->merge_and_cap_categories( $existing_cats, $this->cat_stats, $cutoff );
-			$stats_store->set_categories( $existing_cats );
-		}
+		$this->persist_categories( $stats_store, $this->cat_stats );
 		foreach ( $this->cat_stats_by_server as $server => $buckets ) {
-			$existing = $stats_store->get_server_categories( $server );
-			$this->merge_and_cap_categories( $existing, $buckets, $cutoff );
-			$stats_store->set_server_categories( $server, $existing );
+			$this->persist_categories( $stats_store, $buckets, $server );
 		}
 		foreach ( $this->url_cat_stats as $url_hash => $buckets ) {
-			$existing_url_cats = $stats_store->get_url_categories( $url_hash );
-			$this->merge_and_cap_categories( $existing_url_cats, $buckets, $cutoff );
-			$stats_store->set_url_categories( $url_hash, $existing_url_cats );
+			foreach ( $buckets as $bucket_key => $cats ) {
+				$existing = Stats_Store::sum_fields( $stats_store->get_url_category_bucket( $url_hash, $bucket_key ), Core::arr( $cats ), Stats_Store::CAT_SUMS );
+				$stats_store->set_url_category_bucket( $url_hash, $bucket_key, self::cap_single_bucket( $existing, Stats_Store::MAX_CAT_VALUES ) );
+			}
 		}
 	}
 
@@ -1465,108 +1459,56 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
-	 * Merge incoming dimensional buckets into existing, expire old, and cap.
+	 * Merge one scope's dimensional buckets into the store, capped.
 	 *
-	 * Values overflowing the cap are summed into a synthetic 'Other' entry, so
-	 * bucket totals survive the trim even though the individual values do not.
-	 *
-	 * @param array<array-key,mixed> $existing   Existing buckets, modified in place.
-	 * @param array<string,mixed>    $buckets    Incoming buckets to merge.
-	 * @param string                  $cutoff     Bucket key below which buckets expire.
-	 * @param int                     $max_values Values kept per bucket; 0 means MAX_DIM_VALUES.
+	 * @param Stats_Store            $stats_store Destination.
+	 * @param string                 $dim         Dimension name.
+	 * @param array<array-key,mixed> $buckets     Accumulated values by bucket.
+	 * @param string                 $server      Reporting server; '' is the global series.
 	 */
-	private function merge_and_cap_dimensional( array &$existing, array $buckets, string $cutoff, int $max_values = 0 ): void {
-		if ( 0 === $max_values ) {
-			$max_values = Stats_Store::MAX_DIM_VALUES;
+	private function persist_dimension( Stats_Store $stats_store, string $dim, array $buckets, string $server = '' ): void {
+		foreach ( $buckets as $bucket_key => $values ) {
+			$existing = Stats_Store::sum_fields( $stats_store->get_dimensional_bucket( $dim, (string) $bucket_key, $server ), Core::arr( $values ), Stats_Store::DIM_SUMS );
+			$stats_store->set_dimensional_bucket( $dim, (string) $bucket_key, self::cap_dim_bucket( $existing, Stats_Store::MAX_DIM_VALUES ), $server );
 		}
-		foreach ( $buckets as $bk => $values ) {
-			if ( ! \is_array( $values ) ) {
-				continue;
-			}
-			$bucket = \is_array( $existing[ $bk ] ?? null ) ? $existing[ $bk ] : [];
-			foreach ( $values as $val => $stats ) {
-				if ( ! \is_array( $stats ) ) {
-					continue;
-				}
-				$cur          = \is_array( $bucket[ $val ] ?? null ) ? $bucket[ $val ] : [];
-				$cur['c']     = ( \is_numeric( $cur['c'] ?? null ) ? $cur['c'] : 0 ) + ( \is_numeric( $stats['c'] ?? null ) ? $stats['c'] : 0 );
-				$cur['s']     = ( \is_numeric( $cur['s'] ?? null ) ? $cur['s'] : 0 ) + ( \is_numeric( $stats['s'] ?? null ) ? $stats['s'] : 0 );
-				$cur['m']     = ( \is_numeric( $cur['m'] ?? null ) ? $cur['m'] : 0 ) + ( \is_numeric( $stats['m'] ?? null ) ? $stats['m'] : 0 );
-				$bucket[ $val ] = $cur;
-			}
-			$existing[ $bk ] = $bucket;
-		}
-		foreach ( \array_keys( $existing ) as $bk ) {
-			if ( $bk < $cutoff ) {
-				unset( $existing[ $bk ] );
-			}
-		}
-		foreach ( $existing as $bk => $bk_values_raw ) {
-			if ( ! \is_array( $bk_values_raw ) ) {
-				continue;
-			}
-			$bk_values = $bk_values_raw;
-			if ( \count( $bk_values ) > $max_values ) {
-				\uasort( $bk_values, fn( $a, $b ) => ( \is_array( $b ) && \is_numeric( $b['c'] ?? null ) ? $b['c'] : 0 ) <=> ( \is_array( $a ) && \is_numeric( $a['c'] ?? null ) ? $a['c'] : 0 ) );
-				$top    = \array_slice( $bk_values, 0, $max_values - 1, true );
-				$rest_c = $rest_s = $rest_m = 0;
-				foreach ( \array_slice( $bk_values, $max_values - 1 ) as $v ) {
-					if ( ! \is_array( $v ) ) {
-						continue;
-					}
-					$rest_c += \is_numeric( $v['c'] ?? null ) ? $v['c'] : 0;
-					$rest_s += \is_numeric( $v['s'] ?? null ) ? $v['s'] : 0;
-					$rest_m += \is_numeric( $v['m'] ?? null ) ? $v['m'] : 0;
-				}
-				$top['Other']      = [ 'c' => $rest_c, 's' => $rest_s, 'm' => $rest_m ];
-				$existing[ $bk ]   = $top;
-			}
-		}
-		\ksort( $existing );
 	}
 
 	/**
-	 * Merge incoming category buckets into existing, expire old, and cap.
+	 * Cap one dimensional bucket's value map to the top `$max_values` by count,
+	 * rolling the tail into a synthetic `Other`.
 	 *
-	 * 'total' pseudo-category preserved before sort; overflow rolls into 'Other'.
+	 * Not shared with `cap_single_bucket()`: that one sorts by time and reserves a
+	 * second slot for the `total` pseudo-category. Only the tail rollup is common.
 	 *
-	 * @param array<string,mixed> $existing   Existing buckets, modified in place.
-	 * @param array<string,mixed> $buckets    Incoming buckets to merge.
-	 * @param string               $cutoff     Bucket key below which buckets expire.
-	 * @param int                  $max_values Categories kept per bucket; 0 means MAX_CAT_VALUES.
+	 * @param array<string,mixed> $values One bucket's values.
+	 * @param int                 $max_values Ceiling on distinct values.
+	 * @return array<string,mixed>
 	 */
-	private function merge_and_cap_categories( array &$existing, array $buckets, string $cutoff, int $max_values = 0 ): void {
-		if ( 0 === $max_values ) {
-			$max_values = Stats_Store::MAX_CAT_VALUES;
+	private static function cap_dim_bucket( array $values, int $max_values ): array {
+		if ( \count( $values ) <= $max_values ) {
+			return $values;
 		}
-		foreach ( $buckets as $bk => $categories ) {
-			if ( ! \is_array( $categories ) ) {
-				continue;
-			}
-			$bucket = \is_array( $existing[ $bk ] ?? null ) ? $existing[ $bk ] : [];
-			foreach ( $categories as $cat => $stats ) {
-				if ( ! \is_array( $stats ) ) {
-					continue;
-				}
-				$cur          = \is_array( $bucket[ $cat ] ?? null ) ? $bucket[ $cat ] : [];
-				$cur['t']     = ( \is_numeric( $cur['t'] ?? null ) ? $cur['t'] : 0 ) + ( \is_numeric( $stats['t'] ?? null ) ? $stats['t'] : 0 );
-				$cur['c']     = ( \is_numeric( $cur['c'] ?? null ) ? $cur['c'] : 0 ) + ( \is_numeric( $stats['c'] ?? null ) ? $stats['c'] : 0 );
-				$cur['n']     = ( \is_numeric( $cur['n'] ?? null ) ? $cur['n'] : 0 ) + ( \is_numeric( $stats['n'] ?? null ) ? $stats['n'] : 0 );
-				$bucket[ $cat ] = $cur;
-			}
-			$existing[ $bk ] = $bucket;
+		\uasort( $values, fn( $a, $b ) => ( \is_array( $b ) && \is_numeric( $b['c'] ?? null ) ? $b['c'] : 0 ) <=> ( \is_array( $a ) && \is_numeric( $a['c'] ?? null ) ? $a['c'] : 0 ) );
+		$top  = \array_slice( $values, 0, $max_values - 1, true );
+		$rest = [];
+		foreach ( \array_slice( $values, $max_values - 1 ) as $v ) {
+			$rest = Stats_Store::sum_fields( $rest, [ 'Other' => Core::arr( $v ) ], Stats_Store::DIM_SUMS );
 		}
-		foreach ( \array_keys( $existing ) as $bk ) {
-			if ( $bk < $cutoff ) {
-				unset( $existing[ $bk ] );
-			}
+		return Stats_Store::sum_fields( $top, $rest, Stats_Store::DIM_SUMS );
+	}
+
+	/**
+	 * Merge one scope's category buckets into the store, capped.
+	 *
+	 * @param Stats_Store            $stats_store Destination.
+	 * @param array<array-key,mixed> $buckets     Accumulated categories by bucket.
+	 * @param string                 $server      Reporting server; '' is the global series.
+	 */
+	private function persist_categories( Stats_Store $stats_store, array $buckets, string $server = '' ): void {
+		foreach ( $buckets as $bucket_key => $cats ) {
+			$existing = Stats_Store::sum_fields( $stats_store->get_category_bucket( (string) $bucket_key, $server ), Core::arr( $cats ), Stats_Store::CAT_SUMS );
+			$stats_store->set_category_bucket( (string) $bucket_key, self::cap_single_bucket( $existing, Stats_Store::MAX_CAT_VALUES ), $server );
 		}
-		foreach ( $existing as $bk => $bk_cats_raw ) {
-			if ( \is_array( $bk_cats_raw ) ) {
-				$existing[ $bk ] = self::cap_single_bucket( $bk_cats_raw, $max_values );
-			}
-		}
-		\ksort( $existing );
 	}
 
 	/**
@@ -1590,18 +1532,13 @@ class Flame_Builder_Node extends Node {
 		$total = $cats[ self::TOTAL_KEY ] ?? null;
 		unset( $cats[ self::TOTAL_KEY ] );
 		\uasort( $cats, fn( $a, $b ) => ( \is_array( $b ) ? ( $b['t'] ?? 0 ) : 0 ) <=> ( \is_array( $a ) ? ( $a['t'] ?? 0 ) : 0 ) );
-		$top    = \array_slice( $cats, 0, $max_values - 2, true );
-		$rest_t = $rest_c = $rest_n = 0;
+		$top  = \array_slice( $cats, 0, $max_values - 2, true );
+		$rest = [];
 		foreach ( \array_slice( $cats, $max_values - 2 ) as $v ) {
-			if ( ! \is_array( $v ) ) {
-				continue;
-			}
-			$rest_t += \is_numeric( $v['t'] ?? null ) ? $v['t'] : 0;
-			$rest_c += \is_numeric( $v['c'] ?? null ) ? $v['c'] : 0;
-			$rest_n += \is_numeric( $v['n'] ?? null ) ? $v['n'] : 0;
+			$rest = Stats_Store::sum_fields( $rest, [ 'Other' => Core::arr( $v ) ], Stats_Store::CAT_SUMS );
 		}
-		if ( $rest_t > 0 || $rest_c > 0 ) {
-			$top['Other'] = [ 't' => $rest_t, 'c' => $rest_c, 'n' => $rest_n ];
+		if ( [] !== $rest ) {
+			$top = Stats_Store::sum_fields( $top, $rest, Stats_Store::CAT_SUMS );
 		}
 		if ( $total ) {
 			$top[ self::TOTAL_KEY ] = $total;
@@ -1910,10 +1847,13 @@ class Flame_Builder_Node extends Node {
 	 * Buffer a mirrored write until the next checkpoint.
 	 *
 	 * Aggregates are kept in full. The per-URL namespaces are bounded to top-N by
-	 * traffic (see STATS_MIRROR_TOPN and `mirror_topn()`), because there is one
-	 * key per URL and an unbounded buffer would grow with the site's URL space.
-	 * Re-keying on `$key` means the newest write for a URL replaces the older
-	 * one; only the last state of the checkpoint is written.
+	 * traffic (see STATS_MIRROR_TOPN and `mirror_topn()`), or the buffer would grow
+	 * with the site's URL space. The bound counts FRAMES, and a key is one
+	 * (URL, bucket) — so a checkpoint straddling a bucket boundary holds two for a
+	 * busy URL. That self-corrects: the fresh partial bucket ranks below the closed
+	 * one, so eviction takes the partial and the next checkpoint re-mirrors it.
+	 * Re-keying on `$key` means the newest write for a key replaces the older one;
+	 * only the last state of the checkpoint is written.
 	 *
 	 * @param string                  $key  Memcache key being shadowed.
 	 * @param array<array-key,mixed> $data Value written.
@@ -1973,25 +1913,16 @@ class Flame_Builder_Node extends Node {
 			return \is_array( $flame ) && \is_numeric( $flame['count'] ?? null ) ? (int) $flame['count'] : 0;
 		}
 		if ( Stats_Store::NS_URL_CAT === $ns ) {
-			// Sum the per-bucket category totals.
-			$sum = 0;
-			foreach ( $data as $bucket ) {
-				$total = \is_array( $bucket ) ? ( $bucket[ self::TOTAL_KEY ] ?? null ) : null;
-				$sum  += \is_array( $total ) && \is_numeric( $total['n'] ?? null ) ? (int) $total['n'] : 0;
-			}
-			return $sum;
+			// One bucket: the `total` pseudo-category's sampled requests.
+			$total = $data[ self::TOTAL_KEY ] ?? null;
+			return \is_array( $total ) && \is_numeric( $total['n'] ?? null ) ? (int) $total['n'] : 0;
 		}
-		// NS_URL_DIM: sum the first dimension's request counts.
+		// NS_URL_DIM: one bucket; take the first dimension's counts.
 		$sum   = 0;
 		$first = \reset( $data );
 		if ( \is_array( $first ) ) {
-			foreach ( $first as $bucket ) {
-				if ( ! \is_array( $bucket ) ) {
-					continue;
-				}
-				foreach ( $bucket as $vd ) {
-					$sum += \is_array( $vd ) && \is_numeric( $vd['c'] ?? null ) ? (int) $vd['c'] : 0;
-				}
+			foreach ( $first as $vd ) {
+				$sum += \is_array( $vd ) && \is_numeric( $vd['c'] ?? null ) ? (int) $vd['c'] : 0;
 			}
 		}
 		return $sum;

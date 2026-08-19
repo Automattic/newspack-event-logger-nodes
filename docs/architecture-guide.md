@@ -562,7 +562,7 @@ There is no separate stats Node. The standalone `StatsAggregator` Node — the v
 
 Each completed request is folded into `Flame_Builder_Node`'s in-memory pending stats across the same dimension set the reader paths whitelist — `DIM_FIELDS`, listed under [Flame_Builder_Node](#flame_builder_node).
 
-On flush, `Flame_Builder_Node` reads the existing `Stats_Store` buckets, merges the pending request data into those maps, applies the caps and pruning rules, and writes the whole updated bucket/map back through the explicit `set_*` methods (`set_hourly_bucket`, `set_url_index_hourly`, `set_leaderboard_bucket`, `set_dimensional`, …). `Stats_Store` is storage-only; it does not own per-request aggregation logic. Its one extension point is the `$mirror` closure, invoked after each successful memcache write so the durable `flame-stats` partition can shadow the same data, which a memcache miss then reads back.
+On flush, `Flame_Builder_Node` reads the existing `Stats_Store` buckets, merges the pending request data into those maps, applies the caps and pruning rules, and writes each touched bucket back through the explicit per-bucket `set_*` methods (`set_hourly_bucket`, `set_url_index_hourly`, `set_leaderboard_bucket`, `set_dimensional_bucket`, `set_category_bucket`, …). `Stats_Store` is storage-only; it does not own per-request aggregation logic. Its one extension point is the `$mirror` closure, invoked after each successful memcache write so the durable `flame-stats` partition can shadow the same data, which a memcache miss then reads back.
 
 When no `Stats_Store` is configured (`configure_stats` never called — e.g. in unit tests), the builder still emits flame data without touching memcache.
 
@@ -579,10 +579,10 @@ The retention window comes from the substrate's `min_lifetime` (default 43200), 
 | `lb_s` | per-server leaderboard, keyed by server | `min_lifetime` |
 | `urls` | 5-min URL index, keyed by URL -> {count, sum_req_time, samples} | `min_lifetime` |
 | `url` | per-URL flame/profile blob | `max(3600, min_lifetime/24)` |
-| `dim` | dimensional time series (status/method/server/…) | `min_lifetime` |
-| `url_dim` | per-URL dimensional time series | `min_lifetime` |
-| `categories` | global category time series | `min_lifetime` |
-| `url_cat` | per-URL category time series | `min_lifetime` |
+| `dim` | dimensional time series, keyed per bucket | `min_lifetime` |
+| `url_dim` | per-URL dimensional series, keyed per bucket, every dimension in the value | `min_lifetime` |
+| `categories` | category time series, keyed per bucket, `$server` scopes it | `min_lifetime` |
+| `url_cat` | per-URL category series, keyed per bucket | `min_lifetime` |
 
 **Caps prevent value-explosion** against memcache's 1MB/value limit:
 

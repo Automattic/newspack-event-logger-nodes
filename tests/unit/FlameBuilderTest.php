@@ -186,6 +186,27 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	/**
+	 * The buckets a just-now write can land in — two, so a fill straddling a
+	 * bucket boundary does not flake. The reader shape for every namespace.
+	 *
+	 * @return list<string>
+	 */
+	private function recent_buckets(): array {
+		$now = \time();
+		return [ Stats_Store::bucket_key( $now ), Stats_Store::bucket_key( $now - 300 ) ];
+	}
+
+	/** One dimension's recent series, keyed by bucket. */
+	private function dim_series( Stats_Store $store, string $dimension, string $server = '' ): array {
+		return $store->get_dimensional_buckets( $dimension, $this->recent_buckets(), $server );
+	}
+
+	/** The recent category series, keyed by bucket. */
+	private function cat_series( Stats_Store $store, string $server = '' ): array {
+		return $store->get_category_buckets( $this->recent_buckets(), $server );
+	}
+
+	/**
 	 * Stored request totals for the buckets a just-now request can land in —
 	 * two, so a fill straddling a bucket boundary does not flake.
 	 *
@@ -660,7 +681,7 @@ class FlameBuilderTest extends TestCase {
 		$this->fill_request( $fb, $this->completed_request( [ 'status_code' => 500 ] ) );
 		$fb->flush();
 
-		$dim = $store->get_dimensional( 'status' );
+		$dim = $this->dim_series( $store, 'status' );
 		$this->assertNotEmpty( $dim );
 		// Status normalized to "Nxx" form by accumulate_all_stats.
 		$bucket = \array_keys( $dim )[0];
@@ -735,7 +756,7 @@ class FlameBuilderTest extends TestCase {
 		$bucket    = Stats_Store::bucket_key( \is_int( $timestamp ) ? $timestamp : \time() );
 		return [
 			'leaderboard' => $store->get_leaderboard_bucket( $bucket ),
-			'categories'  => $store->get_categories(),
+			'categories'  => $store->get_category_buckets( [ $bucket ] ),
 			'hourly'      => $store->get_hourly_buckets( [ $bucket ] ),
 			'urls'        => $store->get_url_bucket( $bucket ),
 		];
@@ -764,7 +785,7 @@ class FlameBuilderTest extends TestCase {
 		$fb->flush();
 
 		// Global category time series.
-		$cats = $store->get_categories();
+		$cats = $this->cat_series( $store );
 		$this->assertNotEmpty( $cats );
 		$bucket = Stats_Store::bucket_key( $now );
 		$this->assertArrayHasKey( $bucket, $cats );
@@ -873,7 +894,7 @@ class FlameBuilderTest extends TestCase {
 		}
 
 		// Global dimensional: no count and no peak contribution.
-		$dim = $store->get_dimensional( 'status' );
+		$dim = $this->dim_series( $store, 'status' );
 		foreach ( $dim as $vals ) {
 			foreach ( $vals as $cell ) {
 				$this->assertSame( 0, $cell['c'], 'worker excluded from global dimensional count' );
@@ -883,7 +904,7 @@ class FlameBuilderTest extends TestCase {
 
 		// Global leaderboard + categories: untouched by the worker.
 		$this->assertEmpty( $store->get_leaderboard_bucket( $bucket ) );
-		$this->assertEmpty( $store->get_categories()[ $bucket ] ?? [] );
+		$this->assertEmpty( $store->get_category_bucket( $bucket ) );
 	}
 
 	public function test_non_worker_request_records_global_count_and_peak(): void {
@@ -1423,7 +1444,7 @@ class FlameBuilderTest extends TestCase {
 		);
 		$fb->flush();
 
-		$buckets = $store->get_categories();
+		$buckets = $this->cat_series( $store );
 		$this->assertNotEmpty( $buckets, 'category series written' );
 		$bucket = \reset( $buckets );
 
@@ -1691,7 +1712,7 @@ class FlameBuilderTest extends TestCase {
 		}
 		$fb->flush();
 
-		$dim    = $store->get_dimensional( 'ua' );
+		$dim    = $this->dim_series( $store, 'ua' );
 		$bucket = Stats_Store::bucket_key( $now );
 		$this->assertArrayHasKey( $bucket, $dim );
 		$this->assertLessThanOrEqual( Stats_Store::MAX_DIM_VALUES, \count( $dim[ $bucket ] ) );
@@ -1718,11 +1739,10 @@ class FlameBuilderTest extends TestCase {
 		$fb->flush();
 
 		$url_hash = Log_Manager::url_hash( '/shared' );
-		$url_dim  = $store->get_url_dimensional( $url_hash );
+		$bucket   = Stats_Store::bucket_key( $now );
+		$url_dim  = $store->get_url_dimensional_bucket( $url_hash, $bucket );
 		$this->assertArrayHasKey( 'ua', $url_dim );
-		$bucket = Stats_Store::bucket_key( $now );
-		$this->assertArrayHasKey( $bucket, $url_dim['ua'] );
-		$this->assertLessThanOrEqual( Stats_Store::MAX_URL_DIM_VALUES, \count( $url_dim['ua'][ $bucket ] ) );
+		$this->assertLessThanOrEqual( Stats_Store::MAX_URL_DIM_VALUES, \count( $url_dim['ua'] ) );
 	}
 
 	// --- merge_and_cap_categories: Other rollover + total preserved -------
@@ -1746,7 +1766,7 @@ class FlameBuilderTest extends TestCase {
 		] ) );
 		$fb->flush();
 
-		$cats   = $store->get_categories();
+		$cats   = $this->cat_series( $store );
 		$bucket = Stats_Store::bucket_key( $now );
 		$this->assertArrayHasKey( $bucket, $cats );
 		$this->assertLessThanOrEqual( Stats_Store::MAX_CAT_VALUES, \count( $cats[ $bucket ] ) );
@@ -1754,19 +1774,17 @@ class FlameBuilderTest extends TestCase {
 		$this->assertArrayHasKey( 'Other', $cats[ $bucket ], 'overflow rolls into Other' );
 	}
 
-	public function test_categories_expiration_drops_old_buckets(): void {
+	public function test_a_flush_leaves_category_buckets_it_did_not_fill_alone(): void {
 				Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 3600 );
 		$fb    = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
 
-		// Pre-seed an old bucket.
-		$store->set_categories( [
-			'1999-01-01-00-00' => [
-				'total' => [ 't' => 99, 'c' => 99, 'n' => 99 ],
-				'old'   => [ 't' => 99, 'c' => 99, 'n' => 99 ],
-			],
-		] );
+		$untouched = [
+			'total' => [ 't' => 99, 'c' => 99, 'n' => 99 ],
+			'old'   => [ 't' => 99, 'c' => 99, 'n' => 99 ],
+		];
+		$store->set_category_bucket( '1999-01-01-00-00', $untouched );
 
 		$now = \time();
 		$this->fill_request( $fb, $this->completed_request( [
@@ -1776,8 +1794,8 @@ class FlameBuilderTest extends TestCase {
 		] ) );
 		$fb->flush();
 
-		$cats = $store->get_categories();
-		$this->assertArrayNotHasKey( '1999-01-01-00-00', $cats, 'old category bucket expired' );
+		$this->assertSame( $untouched, $store->get_category_bucket( '1999-01-01-00-00' ) );
+		$this->assertNotSame( [], $this->cat_series( $store ), 'and the request it did fill landed' );
 	}
 
 	// --- Per-server leaderboard merge + cap (hub mode) --------------------
@@ -1833,7 +1851,7 @@ class FlameBuilderTest extends TestCase {
 		$fb->flush();
 
 		$bucket    = Stats_Store::bucket_key( $now );
-		$srv_cats  = $store->get_server_categories( 'srv-cat' );
+		$srv_cats  = $this->cat_series( $store, 'srv-cat' );
 		$this->assertArrayHasKey( $bucket, $srv_cats );
 		$this->assertArrayHasKey( 'wpdb', $srv_cats[ $bucket ] );
 		$this->assertArrayHasKey( 'total', $srv_cats[ $bucket ], 'per-server "total" present' );
@@ -1859,11 +1877,11 @@ class FlameBuilderTest extends TestCase {
 		$fb->flush();
 
 		// Per-server dim under 'method' should be populated.
-		$dim_method = $store->get_dimensional( 'method', 'srv-x' );
+		$dim_method = $this->dim_series( $store, 'method', 'srv-x' );
 		$this->assertNotEmpty( $dim_method );
 
 		// Per-server dim under 'server' should be EMPTY (skipped).
-		$dim_server = $store->get_dimensional( 'server', 'srv-x' );
+		$dim_server = $this->dim_series( $store, 'server', 'srv-x' );
 		$this->assertEmpty( $dim_server, "per-server 'server' dim is skipped" );
 	}
 
@@ -2177,6 +2195,137 @@ class FlameBuilderTest extends TestCase {
 		$fb->set_clock( null );
 	}
 
+	public function test_a_flush_writes_dim_and_cat_per_bucket_and_leaves_others_alone(): void {
+		// Bucket-keyed maps under one key meant every flush rewrote the whole
+		// series; retention is the key's own TTL now.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+
+		$stale_dim = [ '418' => [ 'c' => 83, 's' => 9.5, 'm' => 4.5 ] ];
+		$stale_cat = [ 'sabbath' => [ 't' => 7.5, 'c' => 61, 'n' => 3 ] ];
+		$store->set_dimensional_bucket( 'status', '1999-01-01-00-00', $stale_dim );
+		$store->set_category_bucket( '1999-01-01-00-00', $stale_cat );
+
+		$now = \time();
+		$fb->set_clock( static fn() => $now );
+		$this->fill_request( $fb, $this->completed_request( [
+			'duration_ms' => 27.0,
+			'timestamp'   => $now,
+			'profiles'    => [ 'wpdb' => [ 'time' => 0.25, 'count' => 3, 'entries' => [] ] ],
+		] ) );
+		$fb->flush();
+		$fb->set_clock( null );
+
+		$this->assertSame( $stale_dim, $store->get_dimensional_bucket( 'status', '1999-01-01-00-00' ) );
+		$this->assertSame( $stale_cat, $store->get_category_bucket( '1999-01-01-00-00' ) );
+		$this->assertNotSame( [], $store->get_dimensional_bucket( 'status', Stats_Store::bucket_key( $now ) ), 'this flush landed' );
+	}
+
+	public function test_one_url_dimensional_bucket_holds_every_dimension(): void {
+		// Transposed to [hash][bucket][dim]: keying the dimension too would be a
+		// 7-by-288 cross-product per URL.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+
+		$now = \time();
+		$fb->set_clock( static fn() => $now );
+		$this->fill_request( $fb, $this->completed_request( [
+			'url'         => '/dims',
+			'duration_ms' => 33.0,
+			'timestamp'   => $now,
+			'status'      => 503,
+			'method'      => 'POST',
+		] ) );
+		$fb->flush();
+		$fb->set_clock( null );
+
+		$hash   = Log_Manager::url_hash( '/dims' );
+		$bucket = $store->get_url_dimensional_bucket( $hash, Stats_Store::bucket_key( $now ) );
+		$this->assertArrayHasKey( 'status', $bucket );
+		$this->assertArrayHasKey( 'method', $bucket, 'every dimension shares the bucket key' );
+	}
+
+	public function test_an_unchanged_bucket_is_not_mirrored_twice_in_one_window(): void {
+		// The mirror buffer is filled by memcache writes alone, so a checkpoint
+		// with no traffic behind it must write nothing at all.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		[ $fb, $p ] = $this->mirrored_builder( $store, 'flames-stats' );
+
+		$now = \time();
+		$fb->set_clock( static fn() => $now );
+		$this->fill_request( $fb, $this->completed_request( [ 'duration_ms' => 64.0, 'timestamp' => $now ] ) );
+		$fb->flush();
+		$fb->save_state();
+		// Three more checkpoints with no traffic at all.
+		$fb->save_state();
+		$fb->save_state();
+		$fb->save_state();
+		$p->flush();
+		$fb->set_clock( null );
+
+		$key     = Stats_Store::entry_key( 0, Stats_Store::NS_HOURLY . ':' . Stats_Store::bucket_key( $now ) );
+		$written = \array_count_values( $this->raw_mirror_frame_keys( $p ) );
+		$this->assertSame( 1, $written[ $key ] ?? 0, 'an unchanged bucket is written once' );
+	}
+
+	public function test_a_nameless_server_in_a_restored_checkpoint_stays_out_of_the_global_series(): void {
+		// '' is the GLOBAL scope on every write path now, not just the
+		// leaderboard's — a per-server bucket carrying it would double-count.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+
+		$now    = \time();
+		$bucket = Stats_Store::bucket_key( $now );
+		$fb->set_clock( static fn() => $now );
+		$fb->restore_state( [
+			'pending_bucket' => $bucket,
+			'pending'        => [
+				'cat_by_server' => [ '' => [ 'db' => [ 't' => 4.5, 'c' => 71, 'n' => 3 ] ] ],
+				'dim_by_server' => [ '' => [ 'status' => [ '503' => [ 'c' => 67, 's' => 2.5, 'm' => 1.5 ] ] ] ],
+			],
+		] );
+		$fb->flush();
+		$fb->set_clock( null );
+
+		$this->assertSame( [], $store->get_category_bucket( $bucket ), 'global categories untouched' );
+		$this->assertSame( [], $store->get_dimensional_bucket( 'status', $bucket ), 'global dimension untouched' );
+	}
+
+	public function test_an_accumulated_other_is_not_clobbered_by_the_next_overflow(): void {
+		// `Other` sums the evicted tail, so it sorts HIGH and survives into the
+		// kept slice — assigning over it discards every earlier overflow.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+
+		$now    = \time();
+		$bucket = Stats_Store::bucket_key( $now );
+		$fb->set_clock( static fn() => $now );
+
+		// Seed a bucket already carrying a fat Other plus a full complement.
+		$seed = [ 'Other' => [ 'c' => 640, 's' => 0.0, 'm' => 0.0 ] ];
+		for ( $i = 0; $i < Stats_Store::MAX_DIM_VALUES; $i++ ) {
+			$seed[ "v{$i}" ] = [ 'c' => 100 + $i, 's' => 0.0, 'm' => 0.0 ];
+		}
+		$store->set_dimensional_bucket( 'status', $bucket, $seed );
+
+		// One more request pushes the map over the cap, forcing a re-cap.
+		$this->fill_request( $fb, $this->completed_request( [ 'duration_ms' => 9.0, 'timestamp' => $now, 'status' => 599 ] ) );
+		$fb->flush();
+		$fb->set_clock( null );
+
+		$after = $store->get_dimensional_bucket( 'status', $bucket );
+		$this->assertGreaterThanOrEqual( 640, $after['Other']['c'] ?? 0, 'the earlier overflow is still counted' );
+	}
+
 	// --- Save state after multiple flushes (idempotency) ------------------
 
 	public function test_double_flush_is_idempotent(): void {
@@ -2351,12 +2500,12 @@ class FlameBuilderTest extends TestCase {
 
 		// 105 distinct URLs, highest-traffic inserted FIRST (rank DESCENDING) so eviction
 		// order != insertion order — a rank that misreads the value shape would fall back to
-		// evict-by-insertion and keep the wrong 100. Real persisted shapes: url_dim is
-		// { dim => { bucket => { val => {c,s,m} } } }; url_cat is { bucket => { category => {t,c,n}, total => {t,c,n} } }.
+		// evict-by-insertion and keep the wrong 100. Persisted shapes, per bucket:
+		// url_dim is { dim => { val => {c,s,m} } }; url_cat is { category => {t,c,n} }.
 		for ( $i = 1; $i <= 105; $i++ ) {
 			$rank = 106 - $i; // h1 busiest (105), h105 quietest (1).
-			$store->set_url_dimensional( "h{$i}", [ 'status' => [ '1700000000' => [ '200' => [ 'c' => $rank, 's' => 0, 'm' => 0 ] ] ] ] );
-			$store->set_url_categories( "h{$i}", [ '1700000000' => [ 'db' => [ 't' => 0, 'c' => 0, 'n' => $rank ], 'total' => [ 't' => 0, 'c' => 0, 'n' => $rank ] ] ] );
+			$store->set_url_dimensional_bucket( "h{$i}", '1700000000', [ 'status' => [ '200' => [ 'c' => $rank, 's' => 0, 'm' => 0 ] ] ] );
+			$store->set_url_category_bucket( "h{$i}", '1700000000', [ 'db' => [ 't' => 0, 'c' => 0, 'n' => $rank ], 'total' => [ 't' => 0, 'c' => 0, 'n' => $rank ] ] );
 		}
 
 		$fb->save_state();
@@ -2367,10 +2516,10 @@ class FlameBuilderTest extends TestCase {
 		$cat_keys  = \array_filter( $frames, static fn ( string $k ): bool => \str_starts_with( $k, Stats_Store::entry_key( 0, 'url_cat:' ) ) );
 		$this->assertCount( 100, $dim_keys, 'top-100 url_dim retained' );
 		$this->assertCount( 100, $cat_keys, 'top-100 url_cat retained' );
-		$this->assertContains( Stats_Store::entry_key( 0, 'url_dim:h1' ), $dim_keys, 'busiest url_dim retained' );
-		$this->assertNotContains( Stats_Store::entry_key( 0, 'url_dim:h105' ), $dim_keys, 'quietest url_dim evicted' );
-		$this->assertContains( Stats_Store::entry_key( 0, 'url_cat:h1' ), $cat_keys, 'busiest url_cat retained' );
-		$this->assertNotContains( Stats_Store::entry_key( 0, 'url_cat:h105' ), $cat_keys, 'quietest url_cat evicted' );
+		$this->assertContains( Stats_Store::entry_key( 0, 'url_dim:h1:1700000000' ), $dim_keys, 'busiest url_dim retained' );
+		$this->assertNotContains( Stats_Store::entry_key( 0, 'url_dim:h105:1700000000' ), $dim_keys, 'quietest url_dim evicted' );
+		$this->assertContains( Stats_Store::entry_key( 0, 'url_cat:h1:1700000000' ), $cat_keys, 'busiest url_cat retained' );
+		$this->assertNotContains( Stats_Store::entry_key( 0, 'url_cat:h105:1700000000' ), $cat_keys, 'quietest url_cat evicted' );
 	}
 
 	public function test_flame_requires_profiling_detail(): void {
