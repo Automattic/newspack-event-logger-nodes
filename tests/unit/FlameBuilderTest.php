@@ -86,12 +86,11 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	/**
-	 * Read all mirror frames from a flushed partition, collapsed last-wins to
-	 * the latest VALUE per key.
+	 * Every mirror frame in a flushed partition, in write order.
 	 *
-	 * @return array<string, array<string, mixed>>
+	 * @return list<array<string,mixed>>
 	 */
-	private function read_mirror_frames( \Newspack_Nodes\Partition_Node $p ): array {
+	private function mirror_frames( \Newspack_Nodes\Partition_Node $p ): array {
 		$out = [];
 		foreach ( $p->get_segments( true ) as $seg ) {
 			$bytes = $p->read_at( (int) $seg['id'], 0, (int) $seg['size'] );
@@ -101,11 +100,29 @@ class FlameBuilderTest extends TestCase {
 				}
 				$val = Message::unpacked( $line )[ Message::VALUE ];
 				if ( \is_array( $val ) && \is_string( $val['key'] ?? null ) ) {
-					$out[ $val['key'] ] = $val;
+					$out[] = $val;
 				}
 			}
 		}
 		return $out;
+	}
+
+	/**
+	 * Those frames collapsed last-wins per key — what a rehydrate would see.
+	 *
+	 * @return array<string, array<string, mixed>>
+	 */
+	private function read_mirror_frames( \Newspack_Nodes\Partition_Node $p ): array {
+		$out = [];
+		foreach ( $this->mirror_frames( $p ) as $val ) {
+			$out[ $val['key'] ] = $val;
+		}
+		return $out;
+	}
+
+	/** Frame keys in write order, duplicates kept — rewrites are the thing under test. */
+	private function raw_mirror_frame_keys( \Newspack_Nodes\Partition_Node $p ): array {
+		return \array_column( $this->mirror_frames( $p ), 'key' );
 	}
 
 	/**
@@ -168,10 +185,15 @@ class FlameBuilderTest extends TestCase {
 		];
 	}
 
-	private function bucket_key_for( int $timestamp ): string {
-		$min        = (int) \gmdate( 'i', $timestamp );
-		$bucket_min = \str_pad( (string) ( (int) \floor( $min / 5 ) * 5 ), 2, '0', \STR_PAD_LEFT );
-		return \gmdate( 'Y-m-d-H', $timestamp ) . '-' . $bucket_min;
+	/**
+	 * Stored request totals for the buckets a just-now request can land in —
+	 * two, so a fill straddling a bucket boundary does not flake.
+	 *
+	 * @return array<string,mixed>
+	 */
+	private function recent_hourly( Stats_Store $store ): array {
+		$now = \time();
+		return $store->get_hourly_buckets( [ Stats_Store::bucket_key( $now ), Stats_Store::bucket_key( $now - 300 ) ] );
 	}
 
 	private function fill_request( Flame_Builder_Node $fb, array $request ): void {
@@ -536,7 +558,7 @@ class FlameBuilderTest extends TestCase {
 		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/w', 'duration_ms' => 0.0, 'timestamp' => $now ] ) );
 		$fb->flush();
 
-		$bucket   = $this->bucket_key_for( $now );
+		$bucket   = Stats_Store::bucket_key( $now );
 		$index    = $store->get_url_index_hourly( $bucket );
 		$url_hash = Log_Manager::url_hash( '/w' );
 		$this->assertArrayHasKey( $url_hash, $index );
@@ -556,7 +578,7 @@ class FlameBuilderTest extends TestCase {
 		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/w?reconcile', 'duration_ms' => 100.0, 'is_worker' => true, 'timestamp' => $now ] ) );
 		$fb->flush();
 
-		$bucket   = $this->bucket_key_for( $now );
+		$bucket   = Stats_Store::bucket_key( $now );
 		$index    = $store->get_url_index_hourly( $bucket );
 		$url_hash = Log_Manager::url_hash( '/w?reconcile' );
 		$this->assertArrayHasKey( $url_hash, $index );
@@ -578,7 +600,7 @@ class FlameBuilderTest extends TestCase {
 		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/m', 'duration_ms' => 42.0, 'timestamp' => $now ] ) );
 		$fb->flush();
 
-		$bucket   = $this->bucket_key_for( $now );
+		$bucket   = Stats_Store::bucket_key( $now );
 		$index    = $store->get_url_index_hourly( $bucket );
 		$url_hash = Log_Manager::url_hash( '/m' );
 		$this->assertArrayHasKey( $url_hash, $index );
@@ -602,7 +624,7 @@ class FlameBuilderTest extends TestCase {
 		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/p', 'duration_ms' => 100.0, 'is_worker' => true, 'timestamp' => $now ] ) );
 		$fb->flush();
 
-		$bucket   = $this->bucket_key_for( $now );
+		$bucket   = Stats_Store::bucket_key( $now );
 		$index    = $store->get_url_index_hourly( $bucket );
 		$url_hash = Log_Manager::url_hash( '/p' );
 		$this->assertArrayHasKey( $url_hash, $index );
@@ -619,7 +641,7 @@ class FlameBuilderTest extends TestCase {
 		$this->fill_request( $fb, $req );
 		$fb->flush();
 
-		$hourly = $store->get_hourly();
+		$hourly = $this->recent_hourly( $store );
 		$this->assertNotEmpty( $hourly );
 		// Some hour bucket has count=1, sum_ms=100, sum_peak_mb=32.
 		$bucket = \array_keys( $hourly )[0];
@@ -710,11 +732,11 @@ class FlameBuilderTest extends TestCase {
 		$fb->flush();
 
 		$timestamp = $request['timestamp'];
-		$bucket    = $this->bucket_key_for( \is_int( $timestamp ) ? $timestamp : \time() );
+		$bucket    = Stats_Store::bucket_key( \is_int( $timestamp ) ? $timestamp : \time() );
 		return [
 			'leaderboard' => $store->get_leaderboard_bucket( $bucket ),
 			'categories'  => $store->get_categories(),
-			'hourly'      => $store->get_hourly(),
+			'hourly'      => $store->get_hourly_buckets( [ $bucket ] ),
 			'urls'        => $store->get_url_bucket( $bucket ),
 		];
 	}
@@ -744,7 +766,7 @@ class FlameBuilderTest extends TestCase {
 		// Global category time series.
 		$cats = $store->get_categories();
 		$this->assertNotEmpty( $cats );
-		$bucket = $this->bucket_key_for( $now );
+		$bucket = Stats_Store::bucket_key( $now );
 		$this->assertArrayHasKey( $bucket, $cats );
 		$this->assertArrayHasKey( 'wpdb', $cats[ $bucket ] );
 		$this->assertArrayHasKey( 'total', $cats[ $bucket ] );
@@ -770,12 +792,12 @@ class FlameBuilderTest extends TestCase {
 		$this->fill_request( $fb, $this->completed_request( [ 'duration_ms' => 99999.0, 'error_status' => 'T' ] ) );
 		$fb->flush();
 
-		$hourly = $store->get_hourly();
+		$hourly = $this->recent_hourly( $store );
 		// hourly gets count++ and sum_ms is incremented only for has_timing requests.
 		// With T-status, count stays 0 (since has_timing is false).
 		foreach ( $hourly as $bucket => $stats ) {
 			$this->assertSame( 0, $stats['count'], 'timed-out excluded from count' );
-			$this->assertSame( 0, $stats['sum_ms'], 'timed-out excluded from sum_ms' );
+			$this->assertSame( 0.0, $stats['sum_ms'], 'timed-out excluded from sum_ms' );
 		}
 	}
 
@@ -794,9 +816,9 @@ class FlameBuilderTest extends TestCase {
 		$this->fill_request( $fb, $this->completed_request( [ 'duration_ms' => 12.0, 'error_status' => 'A' ] ) );
 		$fb->flush();
 
-		foreach ( $store->get_hourly() as $stats ) {
+		foreach ( $this->recent_hourly( $store ) as $stats ) {
 			$this->assertSame( 0, $stats['count'], 'aborted excluded from count' );
-			$this->assertSame( 0, $stats['sum_ms'], 'aborted excluded from sum_ms' );
+			$this->assertSame( 0.0, $stats['sum_ms'], 'aborted excluded from sum_ms' );
 		}
 	}
 
@@ -809,7 +831,7 @@ class FlameBuilderTest extends TestCase {
 		$this->fill_request( $fb, $this->completed_request( [ 'duration_ms' => 100.0, 'is_worker' => true ] ) );
 		$fb->flush();
 
-		$hourly = $store->get_hourly();
+		$hourly = $this->recent_hourly( $store );
 		foreach ( $hourly as $bucket => $stats ) {
 			$this->assertSame( 0, $stats['count'], 'workers excluded from timing count' );
 		}
@@ -833,7 +855,7 @@ class FlameBuilderTest extends TestCase {
 		$this->fill_request( $fb, $req );
 		$fb->flush();
 
-		$bucket   = $this->bucket_key_for( $now );
+		$bucket   = Stats_Store::bucket_key( $now );
 		$url_hash = Log_Manager::url_hash( '/?cache-cozy' );
 
 		// Per-URL timing IS kept for the synthetic worker row.
@@ -844,10 +866,10 @@ class FlameBuilderTest extends TestCase {
 		$this->assertEqualsWithDelta( 40.0, $index[ $url_hash ]['sum_ms'], 1e-6 );
 
 		// Global hourly: no count, no timing, and no peak (closed leak).
-		foreach ( $store->get_hourly() as $stats ) {
+		foreach ( $this->recent_hourly( $store ) as $stats ) {
 			$this->assertSame( 0, $stats['count'], 'worker excluded from global count' );
-			$this->assertSame( 0, $stats['sum_ms'], 'worker excluded from global timing' );
-			$this->assertSame( 0, $stats['sum_peak_mb'], 'worker peak leak closed' );
+			$this->assertSame( 0.0, $stats['sum_ms'], 'worker excluded from global timing' );
+			$this->assertSame( 0.0, $stats['sum_peak_mb'], 'worker peak leak closed' );
 		}
 
 		// Global dimensional: no count and no peak contribution.
@@ -874,7 +896,7 @@ class FlameBuilderTest extends TestCase {
 		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/x', 'duration_ms' => 40.0, 'peak_mb' => 12.0, 'timestamp' => $now ] ) );
 		$fb->flush();
 
-		$hourly = $store->get_hourly();
+		$hourly = $store->get_hourly_buckets( [ Stats_Store::bucket_key( $now ) ] );
 		$bucket = \array_keys( $hourly )[0];
 		$this->assertSame( 1, $hourly[ $bucket ]['count'] );
 		$this->assertEqualsWithDelta( 40.0, $hourly[ $bucket ]['sum_ms'], 1e-6 );
@@ -906,13 +928,13 @@ class FlameBuilderTest extends TestCase {
 		$fb_spoke->flush();
 
 		// Spoke: per-server bucket should be empty (no per-server tracking).
-		$bucket = $this->bucket_key_for( $now );
-		$this->assertEmpty( $store->get_server_leaderboard_bucket( 'srv-a', $bucket ) );
+		$bucket = Stats_Store::bucket_key( $now );
+		$this->assertEmpty( $store->get_leaderboard_bucket( $bucket, 'srv-a' ) );
 
 		// Hub: per-server bucket should be populated.
 		$this->fill_request( $fb_hub, $req );
 		$fb_hub->flush();
-		$lb_s = $store->get_server_leaderboard_bucket( 'srv-a', $bucket );
+		$lb_s = $store->get_leaderboard_bucket( $bucket, 'srv-a' );
 		$this->assertSame( 1, $lb_s['count'] ?? 0 );
 	}
 
@@ -1183,8 +1205,8 @@ class FlameBuilderTest extends TestCase {
 		$this->fill_request( $fb, $req );
 		$fb->flush();
 
-		$bucket = $this->bucket_key_for( $fixed );
-		$hourly = $store->get_hourly();
+		$bucket = Stats_Store::bucket_key( $fixed );
+		$hourly = $store->get_hourly_buckets( [ $bucket ] );
 		$this->assertArrayHasKey( $bucket, $hourly );
 		$this->assertSame( 1, $hourly[ $bucket ]['count'] );
 
@@ -1207,12 +1229,12 @@ class FlameBuilderTest extends TestCase {
 		$ref->setValue( $fb, \microtime( true ) - ( Flame_Builder_Node::FLUSH_INTERVAL_SEC + 1 ) );
 
 		// Confirm hourly is NOT yet persisted (last fill happened mid-window).
-		$hourly_before = $store->get_hourly();
+		$hourly_before = $this->recent_hourly( $store );
 
 		$this->fill_request( $fb, $this->completed_request( [ 'duration_ms' => 13.0 ] ) );
 
 		// After the interval-triggered fill: hourly persisted to store.
-		$hourly_after = $store->get_hourly();
+		$hourly_after = $this->recent_hourly( $store );
 		$this->assertNotEquals( $hourly_before, $hourly_after, 'fill flushed pending bucket' );
 		$this->assertNotEmpty( $hourly_after );
 	}
@@ -1582,28 +1604,22 @@ class FlameBuilderTest extends TestCase {
 
 	// --- persist_aggregate_stats internals: hourly expiration, percentiles --
 
-	public function test_hourly_expiration_drops_buckets_outside_retention(): void {
-		// Use a tight retention (1 hour) and seed an in-memory hourly entry with a far-past bucket.
+	public function test_a_flush_leaves_buckets_it_did_not_fill_alone(): void {
+		// Retention is the key's own TTL, so a flush has no reason to touch a
+		// bucket it did not fill.
 				Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 3600 );
 		$fb    = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
 
-		// Pre-populate hourly with a very old bucket via Stats_Store directly.
-		$store->set_hourly( [
-			'1999-01-01-00-00' => [ 'count' => 99, 'sum_ms' => 9900, 'sum_peak_mb' => 9 ],
-		] );
+		$untouched = [ 'count' => 99, 'sum_ms' => 9900, 'sum_peak_mb' => 9 ];
+		$store->set_hourly_bucket( '1999-01-01-00-00', $untouched );
 
-		// Run a fresh request — flush will merge, then prune.
 		$this->fill_request( $fb, $this->completed_request( [ 'duration_ms' => 5.0 ] ) );
 		$fb->flush();
 
-		$hourly = $store->get_hourly();
-		$this->assertArrayNotHasKey(
-			'1999-01-01-00-00',
-			$hourly,
-			'old bucket expired by retention cutoff'
-		);
+		$this->assertSame( $untouched, $store->get_hourly_bucket( '1999-01-01-00-00' ) );
+		$this->assertNotSame( [], $this->recent_hourly( $store ), 'and the request it did fill landed' );
 	}
 
 	public function test_url_index_computes_percentiles_from_durations(): void {
@@ -1623,7 +1639,7 @@ class FlameBuilderTest extends TestCase {
 		}
 		$fb->flush();
 
-		$bucket    = $this->bucket_key_for( $now );
+		$bucket    = Stats_Store::bucket_key( $now );
 		$index     = $store->get_url_index_hourly( $bucket );
 		$url_hash  = Log_Manager::url_hash( '/p50' );
 		$this->assertArrayHasKey( $url_hash, $index );
@@ -1651,7 +1667,7 @@ class FlameBuilderTest extends TestCase {
 		}
 		$fb->flush();
 
-		$bucket = $this->bucket_key_for( $now );
+		$bucket = Stats_Store::bucket_key( $now );
 		$index  = $store->get_url_index_hourly( $bucket );
 		$this->assertLessThanOrEqual( 500, \count( $index ) );
 	}
@@ -1676,7 +1692,7 @@ class FlameBuilderTest extends TestCase {
 		$fb->flush();
 
 		$dim    = $store->get_dimensional( 'ua' );
-		$bucket = $this->bucket_key_for( $now );
+		$bucket = Stats_Store::bucket_key( $now );
 		$this->assertArrayHasKey( $bucket, $dim );
 		$this->assertLessThanOrEqual( Stats_Store::MAX_DIM_VALUES, \count( $dim[ $bucket ] ) );
 		$this->assertArrayHasKey( 'Other', $dim[ $bucket ], 'low-frequency entries roll into Other' );
@@ -1704,7 +1720,7 @@ class FlameBuilderTest extends TestCase {
 		$url_hash = Log_Manager::url_hash( '/shared' );
 		$url_dim  = $store->get_url_dimensional( $url_hash );
 		$this->assertArrayHasKey( 'ua', $url_dim );
-		$bucket = $this->bucket_key_for( $now );
+		$bucket = Stats_Store::bucket_key( $now );
 		$this->assertArrayHasKey( $bucket, $url_dim['ua'] );
 		$this->assertLessThanOrEqual( Stats_Store::MAX_URL_DIM_VALUES, \count( $url_dim['ua'][ $bucket ] ) );
 	}
@@ -1731,7 +1747,7 @@ class FlameBuilderTest extends TestCase {
 		$fb->flush();
 
 		$cats   = $store->get_categories();
-		$bucket = $this->bucket_key_for( $now );
+		$bucket = Stats_Store::bucket_key( $now );
 		$this->assertArrayHasKey( $bucket, $cats );
 		$this->assertLessThanOrEqual( Stats_Store::MAX_CAT_VALUES, \count( $cats[ $bucket ] ) );
 		$this->assertArrayHasKey( 'total', $cats[ $bucket ], '"total" pseudo-category preserved' );
@@ -1789,8 +1805,8 @@ class FlameBuilderTest extends TestCase {
 		] ) );
 		$fb->flush();
 
-		$bucket = $this->bucket_key_for( $now );
-		$lb_s   = $store->get_server_leaderboard_bucket( 'srv-cap', $bucket );
+		$bucket = Stats_Store::bucket_key( $now );
+		$lb_s   = $store->get_leaderboard_bucket( $bucket, 'srv-cap' );
 		$this->assertArrayHasKey( 'wpdb', $lb_s['categories'] );
 		$this->assertLessThanOrEqual(
 			Flame_Builder_Node::ENTRY_LIMIT_GLOBAL_UPPER,
@@ -1816,7 +1832,7 @@ class FlameBuilderTest extends TestCase {
 		] ) );
 		$fb->flush();
 
-		$bucket    = $this->bucket_key_for( $now );
+		$bucket    = Stats_Store::bucket_key( $now );
 		$srv_cats  = $store->get_server_categories( 'srv-cat' );
 		$this->assertArrayHasKey( $bucket, $srv_cats );
 		$this->assertArrayHasKey( 'wpdb', $srv_cats[ $bucket ] );
@@ -1993,7 +2009,7 @@ class FlameBuilderTest extends TestCase {
 		$fb->flush();
 
 		// Hourly was still populated → aggregation occurred even without flame write.
-		$this->assertNotEmpty( $store->get_hourly() );
+		$this->assertNotEmpty( $this->recent_hourly( $store ) );
 	}
 
 	// --- Plugin-suffix and callback-suffix exclusions ---------------------
@@ -2127,8 +2143,38 @@ class FlameBuilderTest extends TestCase {
 		] ) );
 		$fb->flush();
 
-		$bucket = $this->bucket_key_for( $now );
-		$this->assertEmpty( $store->get_server_leaderboard_bucket( '', $bucket ) );
+		$bucket = Stats_Store::bucket_key( $now );
+		$this->assertNotEmpty( $store->get_leaderboard_bucket( $bucket ), 'it still counts globally' );
+		$this->assertSame(
+			[],
+			\array_filter( Core::$memd->keys(), static fn ( string $k ): bool => \str_contains( $k, ':' . Stats_Store::NS_LB_S . ':' ) ),
+			'but no per-server scope is created for a nameless server'
+		);
+	}
+
+	public function test_a_nameless_server_in_a_restored_checkpoint_stays_out_of_the_global_leaderboard(): void {
+		// '' is the GLOBAL scope on the write path, so a per-server bucket
+		// carrying it would merge a server's sums into the global series.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $fb_store = $store );
+
+		$now    = \time();
+		$bucket = Stats_Store::bucket_key( $now );
+		$fb->set_clock( static fn() => $now );
+		$fb->restore_state( [
+			'pending_bucket' => $bucket,
+			'pending'        => [
+				'leaderboard_by_server' => [
+					'' => [ 'count' => 63, 'sum_req_time' => 7.5, 'categories' => [] ],
+				],
+			],
+		] );
+		$fb->flush();
+
+		$this->assertSame( [], $store->get_leaderboard_bucket( $bucket ), 'the global series is untouched' );
+		$fb->set_clock( null );
 	}
 
 	// --- Save state after multiple flushes (idempotency) ------------------
@@ -2141,10 +2187,10 @@ class FlameBuilderTest extends TestCase {
 
 		$this->fill_request( $fb, $this->completed_request( [ 'duration_ms' => 100.0 ] ) );
 		$fb->flush();
-		$snap_a = $store->get_hourly();
+		$snap_a = $this->recent_hourly( $store );
 		// Second flush with nothing pending — should be a no-op for stats.
 		$fb->flush();
-		$snap_b = $store->get_hourly();
+		$snap_b = $this->recent_hourly( $store );
 		$this->assertSame( $snap_a, $snap_b, 'second flush does not double-count' );
 	}
 
@@ -2187,16 +2233,16 @@ class FlameBuilderTest extends TestCase {
 		$fb->set_stats_store( $store );
 		$fb->set_stats_target( $p->name() );
 
-		$store->set_hourly( [ '2026-01-01-00' => [ 'count' => 7 ] ] );
+		$store->set_hourly_bucket( '2026-01-01-00', [ 'count' => 7 ] );
 		$store->set_leaderboard_bucket( '2026-01-01-00-05', [ 'count' => 3, 'sum_req_time' => 1.5, 'categories' => [] ] );
 
 		$fb->save_state();
 		$p->flush();
 
 		$frames = $this->read_mirror_frames( $p );
-		$this->assertArrayHasKey( Stats_Store::entry_key( 0, 'hourly' ), $frames, 'hourly aggregate landed' );
-		$this->assertSame( [ '2026-01-01-00' => [ 'count' => 7 ] ], $frames[Stats_Store::entry_key( 0, 'hourly' )]['data'] );
-		$this->assertSame( 86400, $frames[Stats_Store::entry_key( 0, 'hourly' )]['ttl'] );
+		$this->assertArrayHasKey( Stats_Store::entry_key( 0, 'hourly:2026-01-01-00' ), $frames, 'hourly aggregate landed' );
+		$this->assertSame( [ 'count' => 7 ], $frames[Stats_Store::entry_key( 0, 'hourly:2026-01-01-00' )]['data'] );
+		$this->assertSame( 86400, $frames[Stats_Store::entry_key( 0, 'hourly:2026-01-01-00' )]['ttl'] );
 		$this->assertArrayHasKey( Stats_Store::entry_key( 0, 'lb:2026-01-01-00-05' ), $frames, 'leaderboard aggregate landed' );
 	}
 
@@ -2210,13 +2256,13 @@ class FlameBuilderTest extends TestCase {
 		$fb->set_stats_store( $store );
 		$fb->set_stats_target( $p->name() );
 
-		$store->set_hourly( [ '2026-01-01-00' => [ 'count' => 7 ] ] );
+		$store->set_hourly_bucket( '2026-01-01-00', [ 'count' => 7 ] );
 		$p->flush();
-		$this->assertArrayNotHasKey( Stats_Store::entry_key( 0, 'hourly' ), $this->read_mirror_frames( $p ), 'not flushed before save_state' );
+		$this->assertArrayNotHasKey( Stats_Store::entry_key( 0, 'hourly:2026-01-01-00' ), $this->read_mirror_frames( $p ), 'not flushed before save_state' );
 
 		$fb->save_state();
 		$p->flush();
-		$this->assertArrayHasKey( Stats_Store::entry_key( 0, 'hourly' ), $this->read_mirror_frames( $p ), 'flushed on save_state' );
+		$this->assertArrayHasKey( Stats_Store::entry_key( 0, 'hourly:2026-01-01-00' ), $this->read_mirror_frames( $p ), 'flushed on save_state' );
 	}
 
 	public function test_uncommitted_writes_absent_from_partition(): void {
@@ -2230,7 +2276,7 @@ class FlameBuilderTest extends TestCase {
 		$fb->set_stats_target( $p->name() );
 
 		// Buffer writes but never checkpoint — a crash loses them, no double-count.
-		$store->set_hourly( [ '2026-01-01-00' => [ 'count' => 7 ] ] );
+		$store->set_hourly_bucket( '2026-01-01-00', [ 'count' => 7 ] );
 		$store->set_leaderboard_bucket( 'b', [ 'count' => 3, 'sum_req_time' => 1.5, 'categories' => [] ] );
 		$p->flush();
 
@@ -2356,14 +2402,14 @@ class FlameBuilderTest extends TestCase {
 		/** @var CountingIndexPartition $p */
 		[ $fb, $p ] = $this->mirrored_builder( $store, 'flames-stats', CountingIndexPartition::class );
 
-		$store->set_hourly( [ 'from-mirror' => [ 'count' => 91 ] ] );
+		$store->set_hourly_bucket( '2026-01-01-00', [ 'count' => 91 ] );
 		$fb->save_state();
 		$p->flush();
 		// Live memcache moves on; the mirror still holds the older frame.
-		$store->set_hourly( [ 'from-memcache' => [ 'count' => 17 ] ] );
+		$store->set_hourly_bucket( '2026-01-01-00', [ 'count' => 17 ] );
 		$p->index_scans = 0;
 
-		$this->assertSame( [ 'from-memcache' => [ 'count' => 17 ] ], $store->get_hourly(), 'the live value wins' );
+		$this->assertSame( [ 'count' => 17 ], $store->get_hourly_bucket( '2026-01-01-00' ), 'the live value wins' );
 		$this->assertSame( 0, $p->index_scans, 'a hit never consults the mirror' );
 	}
 
@@ -2373,10 +2419,10 @@ class FlameBuilderTest extends TestCase {
 		[ , $p ]    = $this->mirrored_builder( $store, 'flames-stats' );
 
 		// ttl 100 but written 200s ago: age exceeds it, so restore() refuses.
-		$this->fill_partition_entry( $p, Stats_Store::entry_key( 0, 'hourly' ), [ 'x' => [ 'count' => 53 ] ], 100, \time() - 200 );
+		$this->fill_partition_entry( $p, Stats_Store::entry_key( 0, 'hourly:2026-01-01-00' ), [ 'count' => 53 ], 100, \time() - 200 );
 		$p->flush();
 
-		$this->assertSame( [], $store->get_hourly(), 'a genuinely expired frame stays expired' );
+		$this->assertSame( [], $store->get_hourly_bucket( '2026-01-01-00' ), 'a genuinely expired frame stays expired' );
 	}
 
 	public function test_set_stats_target_before_store_records_name_but_stays_inert(): void {
@@ -2431,11 +2477,11 @@ class FlameBuilderTest extends TestCase {
 		[ , $p ]    = $this->mirrored_builder( $store, 'flames-stats' );
 
 		$now = \time();
-		$this->fill_partition_entry( $p, Stats_Store::entry_key( 0, 'hourly' ), [ 'v1' => [ 'count' => 29 ] ], 100, $now );
-		$this->fill_partition_entry( $p, Stats_Store::entry_key( 0, 'hourly' ), [ 'v2' => [ 'count' => 74 ] ], 100, $now );
+		$this->fill_partition_entry( $p, Stats_Store::entry_key( 0, 'hourly:2026-01-01-00' ), [ 'count' => 29 ], 100, $now );
+		$this->fill_partition_entry( $p, Stats_Store::entry_key( 0, 'hourly:2026-01-01-00' ), [ 'count' => 74 ], 100, $now );
 		$p->flush();
 
-		$this->assertSame( [ 'v2' => [ 'count' => 74 ] ], $store->get_hourly(), 'the newest frame for a key wins' );
+		$this->assertSame( [ 'count' => 74 ], $store->get_hourly_bucket( '2026-01-01-00' ), 'the newest frame for a key wins' );
 	}
 
 	public function test_node_schema_declares_set_stats_target_as_a_node_reference(): void {
@@ -2486,11 +2532,11 @@ class FlameBuilderTest extends TestCase {
 		$store = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$fb->set_stats_store( $store );
 
-		$store->set_hourly( [ '2026-01-01-00' => [ 'count' => 7 ] ] );
+		$store->set_hourly_bucket( '2026-01-01-00', [ 'count' => 7 ] );
 		$fb->save_state();
 		$p->flush();
 
-		$this->assertArrayHasKey( Stats_Store::entry_key( 0, 'hourly' ), $this->read_mirror_frames( $p ), 'set_stats_store arms the mirror when a partition name is already set' );
+		$this->assertArrayHasKey( Stats_Store::entry_key( 0, 'hourly:2026-01-01-00' ), $this->read_mirror_frames( $p ), 'set_stats_store arms the mirror when a partition name is already set' );
 	}
 
 	public function test_set_stats_target_verb_late_binds_a_forward_referenced_node(): void {
@@ -2508,11 +2554,11 @@ class FlameBuilderTest extends TestCase {
 
 		// Partition created afterward, then a buffered aggregate + checkpoint.
 		$p = $this->make_partition( 'late:stats' );
-		$store->set_hourly( [ '2026-01-01-00' => [ 'count' => 5 ] ] );
+		$store->set_hourly_bucket( '2026-01-01-00', [ 'count' => 5 ] );
 		$fb->save_state();
 		$p->flush();
 
-		$this->assertArrayHasKey( Stats_Store::entry_key( 0, 'hourly' ), $this->read_mirror_frames( $p ), 'forward-referenced stats partition resolved lazily at flush' );
+		$this->assertArrayHasKey( Stats_Store::entry_key( 0, 'hourly:2026-01-01-00' ), $this->read_mirror_frames( $p ), 'forward-referenced stats partition resolved lazily at flush' );
 	}
 
 	// --- Mirror companion index -------------------------------------------
@@ -2529,11 +2575,11 @@ class FlameBuilderTest extends TestCase {
 		$fb->set_stats_target( $p->name() );
 
 		// Values unlike any default: a bucket no other test uses, count 37.
-		$store->set_hourly( [ '2026-02-03-04-05' => [ 'count' => 37 ] ] );
+		$store->set_hourly_bucket( '2026-02-03-04-05', [ 'count' => 37 ] );
 		$fb->save_state();
 		$p->flush();
 
-		$key   = Stats_Store::entry_key( 0, 'hourly' );
+		$key   = Stats_Store::entry_key( 0, 'hourly:2026-02-03-04-05' );
 		$found = null;
 		$p->scan_index(
 			function ( string $line, int $segment ) use ( &$found, $key, $p ): bool {
@@ -2549,7 +2595,7 @@ class FlameBuilderTest extends TestCase {
 
 		$this->assertIsArray( $found, 'the index located the hourly frame' );
 		$this->assertSame( $key, $found['key'] );
-		$this->assertSame( [ '2026-02-03-04-05' => [ 'count' => 37 ] ], $found['data'] );
+		$this->assertSame( [ 'count' => 37 ], $found['data'] );
 	}
 
 	/**
@@ -2567,6 +2613,35 @@ class FlameBuilderTest extends TestCase {
 		return [ $fb, $p ];
 	}
 
+	public function test_a_closed_bucket_is_not_re_mirrored_when_a_later_bucket_fills(): void {
+		// A bucket is written when it changes, so a closed one is written once.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		[ $fb, $p ] = $this->mirrored_builder( $store, 'flames-stats' );
+
+		$early = 1_700_000_000;          // floors to :05
+		$late  = $early + 600;           // two buckets later
+		$first = Stats_Store::bucket_key( $early );
+
+		$fb->set_clock( static fn() => $early );
+		$this->fill_request( $fb, $this->completed_request( [ 'duration_ms' => 41.0, 'timestamp' => $early ] ) );
+		$fb->flush();
+		$fb->save_state();
+
+		$fb->set_clock( static fn() => $late );
+		$this->fill_request( $fb, $this->completed_request( [ 'duration_ms' => 73.0, 'timestamp' => $late ] ) );
+		$fb->flush();
+		$fb->save_state();
+		$p->flush();
+
+		$written = \array_count_values( $this->raw_mirror_frame_keys( $p ) );
+		$this->assertSame(
+			1,
+			$written[ Stats_Store::entry_key( 0, Stats_Store::NS_HOURLY . ':' . $first ) ] ?? 0,
+			'a closed bucket is mirrored once and never rewritten'
+		);
+	}
+
 	public function test_evicted_url_bucket_is_restored_from_the_mirror(): void {
 		Core::$memd  = new InMemoryMemcached();
 		$store       = new Stats_Store( partition: 0, max_lifespan: 86400 );
@@ -2576,14 +2651,14 @@ class FlameBuilderTest extends TestCase {
 		$rows   = [ 'ab12cd34ef56' => [ 'url' => 'https://example.test/jobs/import', 'count' => 639 ] ];
 		$store->set_url_index_hourly( $bucket, $rows );
 		// hourly stays warm: it is the sentinel the retired gate keyed on.
-		$store->set_hourly( [ $bucket => [ 'count' => 12 ] ] );
+		$store->set_hourly_bucket( $bucket, [ 'count' => 12 ] );
 		$fb->save_state();
 		$p->flush();
 
 		// Evict just the bucket, the way memcache does under pressure.
 		Core::$memd->delete( Stats_Store::entry_key( 0, 'urls:' . $bucket ) );
 		$this->assertFalse( Core::$memd->get( Stats_Store::entry_key( 0, 'urls:' . $bucket ) ), 'bucket evicted from memcache' );
-		$this->assertNotSame( [], $store->get_hourly(), 'memcache still warm by the old sentinel' );
+		$this->assertNotSame( [], $store->get_hourly_bucket( $bucket ), 'memcache still warm by the old sentinel' );
 
 		$this->assertSame( [ $bucket => $rows ], $store->get_url_buckets( [ $bucket ] ) );
 	}

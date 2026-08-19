@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.57.5] - 2026-08-19
+
+### Changed
+- **`hourly` is keyed per bucket, like the leaderboard already was.** One key held the whole retention window, so every checkpoint re-mirrored all ~144 buckets to record the one that changed: measured on a real `flame-stats` log, 93% of the hourly bytes were buckets whose value had not moved, and 59% of its frames were byte-identical to the frame before. It is now `hourly:<bucket>`, read through the same `lookup_multi` batch the dashboards already use for `lb` and `urls` — so a write carries one bucket, and a single eviction costs one bucket instead of the window. `persist_aggregate_stats()` no longer reads, merges, prunes and rewrites the series on every flush; the retention cutoff is the key's own TTL. `get_hourly()` / `set_hourly()` are gone. **The old whole-window blob is not migrated:** nothing reads `evlog:p{N}:hourly` any more, so on deploy the Performance overview's `aggregate_time_series` starts empty and refills as new buckets accumulate, full again after one retention window. During a rolling deploy an un-restarted worker keeps writing the blob nobody reads — restart the flame-builder workers.
+- **Bucket geometry belongs to the key schema.** `Stats_Store::bucket_key()` and `retention_buckets()` replace six hand-rolled copies of the `Y-m-d-H-<floor 5>` derivation across the flame builder, the performance CI and the tests. The reader's window is derived from the store's own retention rather than fixed at 24h — a shorter retention no longer asks memcache for 288 keys to read the 24 that exist — still capped at `MAX_READ_BUCKETS` so one `get_multi` stays bounded.
+- **One leaderboard getter/setter pair with a `$server` scope**, matching the `get_leaderboard_buckets()` sibling that already took one, and one node-side merge replacing two byte-identical blocks. `''` now means the global series on the write path, so `promote_pending_bucket()` refuses a nameless server: a restored checkpoint carrying one used to write an inert `lb_s::<bucket>` key and would otherwise have merged that server's sums into the global leaderboard.
+- `Stats_Store::add_totals()` holds the `{count, sum_ms, sum_peak_mb}` arithmetic beside `sums_to_display()`, which already owns the read-time division. Fields outside the triple ride through, so the bucket stays extensible.
+- `get_leaderboard_buckets()` and `get_url_buckets()` now share one `lookup_buckets()` body with the new `get_hourly_buckets()`, replacing three near-identical multi-get implementations.
+
 ## [0.57.4] - 2026-08-18
 
 ### Fixed

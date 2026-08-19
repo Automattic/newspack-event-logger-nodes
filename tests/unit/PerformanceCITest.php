@@ -126,29 +126,8 @@ class PerformanceCITest extends TestCase {
 	// index layout so the verb's scan_index walk picks up our seeded data.
 	// -------------------------------------------------------------------------
 
-	/**
-	 * Mirror of Performance_CI::recent_url_buckets so tests can seed the
-	 * leaderboard / dim / category buckets the verb's fan-out scans.
-	 *
-	 * @return array<int,string>
-	 */
-	private function recent_url_buckets(): array {
-		$now = \time();
-		$out = [];
-		for ( $i = 0; $i < 288; $i++ ) {
-			$out[] = $this->bucket_key_for( $now - ( $i * 300 ) );
-		}
-		return \array_values( \array_unique( $out ) );
-	}
-
 	private function current_url_bucket(): string {
-		return $this->bucket_key_for( \time() );
-	}
-
-	private function bucket_key_for( int $timestamp ): string {
-		$min        = (int) \gmdate( 'i', $timestamp );
-		$bucket_min = \str_pad( (string) ( (int) \floor( $min / 5 ) * 5 ), 2, '0', \STR_PAD_LEFT );
-		return \gmdate( 'Y-m-d-H', $timestamp ) . '-' . $bucket_min;
+		return Stats_Store::bucket_key( \time() );
 	}
 
 	private function write_request( array $body, int $partition = 0 ): string {
@@ -260,9 +239,10 @@ class PerformanceCITest extends TestCase {
 		// Seed an hourly bucket — verb totals should add up across the
 		// merged time_series array.
 		$store = new Stats_Store( 0, 86400 );
-		$store->set_hourly( [
-			'2026-05-17-10' => [ 'count' => 4, 'sum_ms' => 2000.0, 'sum_peak_mb' => 40.0 ],
-		] );
+		// Inside the reader's enumerated window: buckets are keys now, not a blob.
+		$now = \time();
+		$bucket = Stats_Store::bucket_key( $now );
+		$store->set_hourly_bucket( $bucket, [ 'count' => 4, 'sum_ms' => 2000.0, 'sum_peak_mb' => 40.0 ] );
 
 		$interpreter     = new Performance_CI_Node();
 		$result = VerbHarness::fire( $interpreter, 'performance', 'overview' );
@@ -313,9 +293,8 @@ class PerformanceCITest extends TestCase {
 		// (see components/OverviewSection.js L330-358). Legacy PerfOverviewController::get_overview
 		// emits `global_leaderboard` unconditionally (L95-97). The interpreter verb must match.
 		$store   = new Stats_Store( 0, 86400 );
-		$buckets = $this->recent_url_buckets();
 		// Seed the most-recent bucket so the leaderboard fan-out picks it up.
-		$store->set_leaderboard_bucket( $buckets[0], [
+		$store->set_leaderboard_bucket( $this->current_url_bucket(), [
 			'count'        => 4,
 			'sum_req_time' => 0.8,
 			'categories'   => [
@@ -337,14 +316,13 @@ class PerformanceCITest extends TestCase {
 		// `server` arg scopes the leaderboard to that server (legacy L95-97
 		// switches to `build_server_leaderboard`). The interpreter verb must reroute.
 		$store   = new Stats_Store( 0, 86400 );
-		$buckets = $this->recent_url_buckets();
-		$store->set_server_leaderboard_bucket( 'web01', $buckets[0], [
+		$store->set_leaderboard_bucket( $this->current_url_bucket(), [
 			'count'        => 2,
 			'sum_req_time' => 0.2,
 			'categories'   => [
 				'db' => [ 'samples' => 2, 'sum_time' => 0.1, 'sum_count' => 4 ],
 			],
-		] );
+		], 'web01' );
 
 		$interpreter     = new Performance_CI_Node();
 		$result = VerbHarness::fire(
@@ -652,7 +630,7 @@ class PerformanceCITest extends TestCase {
 		// real minimum survives — an untimed-only sibling must not clamp it to 0.
 		$store    = new Stats_Store( 0, 86400 );
 		$bucket_b = $this->current_url_bucket();
-		$bucket_a = $this->bucket_key_for( \time() - 600 );
+		$bucket_a = Stats_Store::bucket_key( \time() - 600 );
 
 		$store->set_url_index_hourly( $bucket_a, [
 			'bbbbbbbbbbbb' => [
@@ -1902,7 +1880,7 @@ class PerformanceCITest extends TestCase {
 		// both bucket minima (the second fold hits the min() branch).
 		$store    = new Stats_Store( 0, 86400 );
 		$hash     = 'abcabcabc123';
-		$bucket_a = $this->bucket_key_for( \time() - 600 );
+		$bucket_a = Stats_Store::bucket_key( \time() - 600 );
 		$bucket_b = $this->current_url_bucket();
 		$store->set_url_index_hourly( $bucket_a, [
 			$hash => [ 'url' => '/m', 'count' => 2, 'timed_count' => 2, 'sum_ms' => 200.0, 'min_ms' => 80, 'max_ms' => 100.0, 'last_seen' => 1 ],
@@ -1927,7 +1905,7 @@ class PerformanceCITest extends TestCase {
 		$url    = 'https://okgazette.example/jobs/filmtimes/import-film-times';
 		$hash   = Log_Manager::url_hash( $url );
 		$store  = new Stats_Store( 0, 86400 );
-		$older  = $this->bucket_key_for( \time() - 600 );
+		$older  = Stats_Store::bucket_key( \time() - 600 );
 		$newer  = $this->current_url_bucket();
 		// Buckets merge newest-first, so the one REACHED FIRST is the one
 		// without a URL — the order that pins the row blank.
@@ -2173,7 +2151,7 @@ class PerformanceCITest extends TestCase {
 		$dir = \Newspack_Nodes\Bootstrap::node_dirs( 'flame-stats:partition' )[0] ?? '';
 		$this->assertNotSame( '', $dir, 'the shipped topology declares a mirror partition' );
 
-		$bucket = \gmdate( 'Y-m-d-H' ) . '-' . \str_pad( (string) ( (int) ( ( (int) \gmdate( 'i' ) ) / 5 ) * 5 ), 2, '0', STR_PAD_LEFT );
+		$bucket = Stats_Store::bucket_key( \time() );
 		$key    = Stats_Store::entry_key( 0, 'urls:' . $bucket );
 		$rows   = [ 'ab12cd34ef56' => [ 'url' => 'https://example.test/jobs/import-film-times', 'count' => 2194 ] ];
 

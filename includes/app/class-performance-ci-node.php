@@ -279,7 +279,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @return array<string,mixed>
 	 */
 	private static function build_url_time_series( string $hash ): array {
-		$buckets = self::recent_url_buckets();
+		$buckets = self::read_window();
 		$series  = [];
 		foreach ( self::stats_stores() as $store ) {
 			$rows = $store->get_url_buckets( $buckets );
@@ -437,19 +437,12 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @return array<int,mixed>
 	 */
 	private static function merge_hourly_across_partitions(): array {
-		$merged = [];
+		$merged  = [];
+		$buckets = self::read_window();
 		foreach ( self::stats_stores() as $store ) {
-			foreach ( $store->get_hourly() as $hour => $row ) {
+			foreach ( $store->get_hourly_buckets( $buckets ) as $hour => $row ) {
 				$row_arr = Core::arr( $row );
-				$merged[ $hour ] ??= [
-					'hour'        => $hour,
-					'count'       => 0,
-					'sum_ms'      => 0.0,
-					'sum_peak_mb' => 0.0,
-				];
-				$merged[ $hour ]['count']       += Core::as_int( $row_arr['count'] ?? 0 );
-				$merged[ $hour ]['sum_ms']      += Core::as_float( $row_arr['sum_ms'] ?? 0 );
-				$merged[ $hour ]['sum_peak_mb'] += Core::as_float( $row_arr['sum_peak_mb'] ?? 0 );
+				$merged[ $hour ] = Stats_Store::add_totals( $merged[ $hour ] ?? [ 'hour' => $hour ], $row_arr );
 			}
 		}
 		\ksort( $merged );
@@ -781,7 +774,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @return array<int,array<string,mixed>>
 	 */
 	public static function load_index_default(): array {
-		$buckets = self::recent_url_buckets();
+		$buckets = self::read_window();
 		$result  = [];
 		foreach ( self::stats_stores() as $store ) {
 			$rows = $store->get_url_buckets( $buckets );
@@ -1115,7 +1108,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		$count        = 0;
 		$sum_req_time = 0.0;
 		$sums         = [];
-		$buckets      = self::recent_url_buckets();
+		$buckets      = self::read_window();
 		foreach ( self::stats_stores() as $store ) {
 			foreach ( $store->get_leaderboard_buckets( $buckets, $server ) as $row ) {
 				if ( ! \is_array( $row ) ) {
@@ -1132,22 +1125,12 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * Build a list of recent 5-min bucket keys (`Y-m-d-H-MM`, UTC) walking
-	 * backwards from now. Capped at 288 (24h × 12 buckets/h) so memcache
-	 * get_multi stays bounded regardless of the configured retention.
+	 * The bucket keys a reader walks — the configured retention window.
 	 *
 	 * @return array<int,string>
 	 */
-	private static function recent_url_buckets(): array {
-		$now = \time();
-		$out = [];
-		for ( $i = 0; $i < 288; $i++ ) {
-			$ts         = $now - ( $i * 300 );
-			$min        = (int) \gmdate( 'i', $ts );
-			$bucket_min = \str_pad( (string) ( (int) \floor( $min / 5 ) * 5 ), 2, '0', \STR_PAD_LEFT );
-			$out[]      = \gmdate( 'Y-m-d-H', $ts ) . '-' . $bucket_min;
-		}
-		return \array_unique( $out );
+	private static function read_window(): array {
+		return Stats_Store::retention_buckets( AppConfig::stats_retention_seconds(), \time() );
 	}
 
 	/**

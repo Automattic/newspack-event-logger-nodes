@@ -97,9 +97,6 @@ class Flame_Builder_Node extends Node {
 	/** Minimum seconds between flush() runs; fill() enforces the throttle. */
 	const FLUSH_INTERVAL_SEC = 5;
 
-	/** Minutes per time-series bucket; the bucket key is `Y-m-d-H-<floor>`. */
-	private const BUCKET_MINUTES = 5;
-
 	/**
 	 * Cap on the per-process string-intern table. Every dimension value, category
 	 * name, and entry name is looked up in that table so repeated names across
@@ -115,7 +112,7 @@ class Flame_Builder_Node extends Node {
 	 * Max URLs kept per bucket in the URL index, ranked by request count.
 	 *
 	 * "Hourly" in the `Stats_Store` URL-index method names is legacy: the key is
-	 * the same BUCKET_MINUTES bucket key everything else uses.
+	 * the same bucket key everything else uses.
 	 */
 	private const MAX_URLS_PER_BUCKET = 500;
 
@@ -561,7 +558,7 @@ class Flame_Builder_Node extends Node {
 	 * @param int $timestamp The request's timestamp.
 	 */
 	private function rotate_pending_bucket( int $timestamp ): void {
-		$bucket_key = $this->bucket_key( $timestamp );
+		$bucket_key = Stats_Store::bucket_key( $timestamp );
 		if ( $bucket_key === $this->pending_bucket ) {
 			return;
 		}
@@ -1212,7 +1209,8 @@ class Flame_Builder_Node extends Node {
 
 		// Leaderboard (per-server).
 		foreach ( $this->pending['leaderboard_by_server'] ?? [] as $server => $slb_data ) {
-			if ( ( $slb_data['count'] ?? 0 ) <= 0 ) {
+			// '' is the global scope downstream; a nameless server is not one.
+			if ( '' === $server || ( $slb_data['count'] ?? 0 ) <= 0 ) {
 				continue;
 			}
 			if ( ! isset( $this->leaderboard_by_server_stats[ $server ][ $bk ] ) ) {
@@ -1278,58 +1276,18 @@ class Flame_Builder_Node extends Node {
 			return;
 		}
 
-		// --- Hourly ---
-		if ( ! empty( $this->hourly_stats ) ) {
-			/** @var array<string,array{count: int,sum_ms: float|int,sum_peak_mb: float|int}> $existing_hourly */
-			$existing_hourly = $stats_store->get_hourly();
-
-			foreach ( $this->hourly_stats as $bucket_key => $stats ) {
-				if ( ! isset( $existing_hourly[ $bucket_key ] ) ) {
-					$existing_hourly[ $bucket_key ] = [
-						'count'       => 0,
-						'sum_ms'      => 0,
-						'sum_peak_mb' => 0,
-					];
-				}
-				$existing_hourly[ $bucket_key ]['count']       += \is_numeric( $stats['count'] ?? null ) ? $stats['count'] : 0;
-				$existing_hourly[ $bucket_key ]['sum_ms']      += \is_numeric( $stats['sum_ms'] ?? null ) ? $stats['sum_ms'] : 0;
-				$existing_hourly[ $bucket_key ]['sum_peak_mb'] += \is_numeric( $stats['sum_peak_mb'] ?? null ) ? $stats['sum_peak_mb'] : 0;
-			}
-
-			// Expire bucket data older than the retention window.
-			$cutoff = $this->bucket_key( $this->now_ts() - $stats_store->ttl() );
-			foreach ( \array_keys( $existing_hourly ) as $bucket_key ) {
-				if ( $bucket_key < $cutoff ) {
-					unset( $existing_hourly[ $bucket_key ] );
-				}
-			}
-			\ksort( $existing_hourly );
-
-			$stats_store->set_hourly( $existing_hourly );
+		// --- Hourly (bucketed) ---
+		foreach ( $this->hourly_stats as $bucket_key => $stats ) {
+			$stats_store->set_hourly_bucket(
+				$bucket_key,
+				Stats_Store::add_totals( $stats_store->get_hourly_bucket( $bucket_key ), Core::arr( $stats ) )
+			);
 		}
 
-		// --- Leaderboard (bucketed, sums-based) ---
-		foreach ( $this->leaderboard_stats as $bucket_key => $bucket_sums ) {
-			$existing = $stats_store->get_leaderboard_bucket( $bucket_key );
-			if ( empty( $existing ) ) {
-				$existing = [ 'count' => 0, 'sum_req_time' => 0.0, 'categories' => [] ];
-			}
-			Stats_Store::merge_leaderboard_bucket( $existing, $bucket_sums );
-			$this->cap_leaderboard_entries( $existing );
-			$stats_store->set_leaderboard_bucket( $bucket_key, $existing );
-		}
-
-		// --- Per-server leaderboards ---
+		// --- Leaderboards (bucketed, sums-based), global then per server ---
+		$this->persist_leaderboard( $stats_store, $this->leaderboard_stats );
 		foreach ( $this->leaderboard_by_server_stats as $server => $buckets ) {
-			foreach ( $buckets as $bucket_key => $bucket_sums ) {
-				$existing = $stats_store->get_server_leaderboard_bucket( $server, $bucket_key );
-				if ( empty( $existing ) ) {
-					$existing = [ 'count' => 0, 'sum_req_time' => 0.0, 'categories' => [] ];
-				}
-				Stats_Store::merge_leaderboard_bucket( $existing, $bucket_sums );
-				$this->cap_leaderboard_entries( $existing );
-				$stats_store->set_server_leaderboard_bucket( $server, $bucket_key, $existing );
-			}
+			$this->persist_leaderboard( $stats_store, $buckets, $server );
 		}
 
 		// --- URL index (bucketed; "hourly" is legacy store naming) ---
@@ -1417,7 +1375,7 @@ class Flame_Builder_Node extends Node {
 		}
 
 		// --- Dimensional (global, per-server, per-URL) ---
-		$cutoff = $this->bucket_key( $this->now_ts() - $stats_store->ttl() );
+		$cutoff = Stats_Store::bucket_key( $this->now_ts() - $stats_store->ttl() );
 		foreach ( $this->dim_stats as $dim => $buckets ) {
 			$existing = $stats_store->get_dimensional( $dim );
 			$this->merge_and_cap_dimensional( $existing, $buckets, $cutoff );
@@ -1462,16 +1420,22 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
-	 * BUCKET_MINUTES bucket key for a Unix timestamp: `Y-m-d-H-mm` in UTC, the
-	 * minute floored to the bucket. Lexical order is chronological order, which
-	 * is what lets the expiry passes compare keys with `<` against a cutoff key.
+	 * Merge one scope's leaderboard buckets into the store, capped.
 	 *
-	 * @param int $timestamp Unix timestamp.
+	 * @param Stats_Store                       $stats_store Destination.
+	 * @param array<string,array<string,mixed>> $buckets     Accumulated sums by bucket.
+	 * @param string                            $server      Reporting server; '' is the global series.
 	 */
-	private function bucket_key( int $timestamp ): string {
-		$min        = (int) \gmdate( 'i', $timestamp );
-		$bucket_min = \str_pad( (string) ( (int) \floor( $min / self::BUCKET_MINUTES ) * self::BUCKET_MINUTES ), 2, '0', STR_PAD_LEFT );
-		return \gmdate( 'Y-m-d-H', $timestamp ) . '-' . $bucket_min;
+	private function persist_leaderboard( Stats_Store $stats_store, array $buckets, string $server = '' ): void {
+		foreach ( $buckets as $bucket_key => $bucket_sums ) {
+			$existing = $stats_store->get_leaderboard_bucket( $bucket_key, $server );
+			if ( empty( $existing ) ) {
+				$existing = [ 'count' => 0, 'sum_req_time' => 0.0, 'categories' => [] ];
+			}
+			Stats_Store::merge_leaderboard_bucket( $existing, $bucket_sums );
+			$this->cap_leaderboard_entries( $existing );
+			$stats_store->set_leaderboard_bucket( $bucket_key, $existing, $server );
+		}
 	}
 
 	/**
