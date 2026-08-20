@@ -59,6 +59,16 @@ class Request_Builder_Node extends Timer_Node {
 	use \Newspack_Nodes\Deferred_Clean_Stop;
 
 	/**
+	 * Entry keys standing in for entries this node removed — merged by the fold,
+	 * or discarded on overflow. Either way the interval one covers is missing
+	 * DETAIL, not idle time, so no consumer may reason across it. This node
+	 * mints them, so it owns the vocabulary.
+	 *
+	 * @var list<string>
+	 */
+	public const SEQUENCE_BREAK_KEYS = [ 'entries (lost)', 'entries (aggregated)' ];
+
+	/**
 	 * Every non-nominal terminal marker: fatal, timed out, aborted. The index
 	 * writer, its reader and the `process (complete)` validator all read this —
 	 * three parallel lists is how `A` shipped writable but unreadable.

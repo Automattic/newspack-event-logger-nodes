@@ -195,6 +195,43 @@ class FindingsTest extends TestCase {
 		$this->assertSame( 'wp_loaded hook', $found['metric']['before'] );
 	}
 
+	public function test_a_gap_across_the_fold_marker_is_not_a_gap(): void {
+		// The merged entries ARE that window. Reading it as idle time also had
+		// the record proposing MORE hooks while `truncation` proposed fewer.
+		$record            = $this->healthy_record();
+		$record['folded']  = true;
+		$record['entries'] = [
+			[ 'n' => 1, 'ts' => 2000.000, 'k' => 'process (start)', 'm' => '' ],
+			[ 'n' => 2, 'ts' => 2000.050, 'k' => 'entries (aggregated)', 'm' => '87074 entries merged into the flame graph under memory pressure' ],
+			[ 'n' => 3, 'ts' => 2355.940, 'k' => 'gyrobase (complete)', 'm' => 'logged 87080 messages' ],
+		];
+
+		$this->assertNotContains(
+			'entry_gap',
+			$this->kinds( Findings::for_request( $record, $this->instrumented_rule() ) ),
+			'the fold marker explains the window; truncation already reports it'
+		);
+	}
+
+	public function test_a_real_gap_still_reports_in_a_folded_record(): void {
+		// Only the window the marker covers is exempt, not the whole record.
+		$record            = $this->healthy_record();
+		$record['folded']  = true;
+		$record['entries'] = [
+			[ 'n' => 1, 'ts' => 2000.000, 'k' => 'process (start)', 'm' => '' ],
+			[ 'n' => 2, 'ts' => 2000.050, 'k' => 'entries (aggregated)', 'm' => 'merged' ],
+			// The marker's own gap is the WIDEST, so the old code reported it.
+			[ 'n' => 3, 'ts' => 2009.000, 'k' => 'init hook', 'm' => '' ],
+			[ 'n' => 4, 'ts' => 2013.800, 'k' => 'wp_loaded hook', 'm' => '' ],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'entry_gap' );
+
+		$this->assertNotNull( $found );
+		$this->assertSame( 'init hook', $found['metric']['after'], 'the 8950ms marker pair is skipped, not merely out-ranked' );
+		$this->assertEqualsWithDelta( 4800.0, $found['metric']['gap_ms'], 0.1 );
+	}
+
 	public function test_a_gap_below_the_threshold_is_quiet(): void {
 		$record            = $this->healthy_record();
 		$record['entries'] = [

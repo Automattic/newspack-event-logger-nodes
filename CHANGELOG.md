@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **A dashboard read a rendering width as a measurement, and doubled every stat on a covered request.** `accumulate_all_stats()` took its duration from `$flame_data['value']` — which `fill()` deliberately RAISES to `max( duration, flame value )` so a parent covers its positioned children, because the browser prunes on one cutoff and `treemapDice` scales children by the parent's value. Raising is right for drawing and wrong for counting. Measured on staging: a 356,312ms cron reached `avg_ms` as **724,662.87ms**, and the same inflation fed `hourly` and the leaderboards. Every stat now reads the record's own `duration_ms`; nothing measured reads a flame value. The flame the detail view renders is untouched.
+- **A folded record reported its merged window as idle time, and proposed the opposite of what the same record already advised.** `Findings::entry_gap()` measured across the `entries (aggregated)` marker and called 355.9s "nothing logged" — those 87,074 merged entries ARE that window — then proposed `add_hooks` while `truncation()` proposed `trim_hooks`. A gap either side of a sequence-break marker is now skipped; a genuine gap elsewhere in a folded record still reports.
+
+### Changed
+- **`Request_Builder_Node::SEQUENCE_BREAK_KEYS` owns the marker vocabulary**, replacing three hand-maintained PHP copies under two names. The node that mints the markers owns them; `Findings` and `Reqgrep_Command` read from it. The JS copy stays, being a separate deploy unit.
+
+### Known
+- **A merged flame node's `value` is still the extent its children span, not what it measured.** A live record shows `include` at `count: 3, max: 164ms` carrying `value: 355176ms` — the extent of a child whose only occurrence ran 355 seconds later. Merging same-name siblings destroys the "children lie inside one occurrence" invariant, so extent-minus-start stops being a bound. Removing the raise was tried and BACKED OUT: `Flame_Fold::flatten()` still emits `t` on merged nodes, and `FlameGraph.js`'s `placeChildren()` declines only on a missing or negative `t`, so the spacers stay extent-sized while the parent shrinks to the sum — children then dice at ~20,000× the parent's width, painting over every sibling. Two coherent fixes: drop `t` from a merged subtree (costs the detail view its clock stamps for merged spans), or guard `placeChildren()` on `count > 1`. Note also that `count` increments only on `(complete)`, so it under-detects a parent opened three times and closed once. Nothing measured reads this value now that stats read `duration_ms`.
+
 ## [0.58.0] - 2026-08-19
 
 ### Changed
