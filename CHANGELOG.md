@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Known
+
+- **A replay double-counts a bucket.** `persist_aggregate_stats()` adds each flush's delta to what memcache already holds, so a Consumer that starts without a checkpoint — cursor segment 0, replaying the retained log — adds those requests on top of totals that already counted them. Reproduced: two requests replayed against a warm bucket of two read back as four. Fixing it means writing the bucket's total rather than a delta, which requires `pending` to be keyed BY BUCKET (a single slot is reset on every bucket change, and bucket keys come from request start time while records emit at completion, so out-of-order buckets are routine — a timed-out trace is evicted up to 600s stale) AND a per-key adoption of whatever a previous process left. Attempted and backed out in this cycle: the naive form destroyed data, wiping both a closed and an open bucket to a single request and corrupting the durable mirror frame along with it.
+
 ### Changed
 - **Every bucketed namespace is keyed per bucket now, not just `hourly`.** `dim`, `dim`-by-server, `categories`, `categories`-by-server, `url_dim` and `url_cat` each held a whole bucket-keyed map under one key, so a checkpoint rewrote the entire retention window to record the one bucket that changed — measured on a real `flame-stats` log, 88.8% of the `url_dim` bytes, 87% of `url_cat`, and 68% each of `dim` and `categories` were buckets whose value had not moved. One rule everywhere: the bucket is the LAST key component and the value is whatever sat under it, so all eight namespaces read through the same `lookup_multi` batch and a single eviction costs one bucket instead of a window.
 - **`url_dim` is stored bucket-major.** Its accumulator was transposed from `[hash][dim][bucket]` to `[hash][bucket][dim]`; keying the dimension as well would have made a 7-by-288 cross-product per URL, where bucket-last keeps it at 288 with every dimension in the value.

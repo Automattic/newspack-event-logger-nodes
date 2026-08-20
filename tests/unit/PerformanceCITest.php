@@ -259,7 +259,7 @@ class PerformanceCITest extends TestCase {
 		// recent-bucket scan finds it.
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
-		$store->set_url_index_hourly( $bucket, [
+		$store->set_url_bucket( $bucket, [
 			'abc123def456' => [
 				'url'       => '/articles/123',
 				'count'     => 7,
@@ -502,7 +502,7 @@ class PerformanceCITest extends TestCase {
 	public function test_urls_verb_paginates_and_sorts(): void {
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
-		$store->set_url_index_hourly( $bucket, [
+		$store->set_url_bucket( $bucket, [
 			'aaaaaaaaaaaa' => [ 'url' => '/a', 'count' => 1, 'sum_ms' => 100.0, 'last_seen' => 1700000001 ],
 			'bbbbbbbbbbbb' => [ 'url' => '/b', 'count' => 5, 'sum_ms' => 500.0, 'last_seen' => 1700000002 ],
 			'cccccccccccc' => [ 'url' => '/c', 'count' => 3, 'sum_ms' => 300.0, 'last_seen' => 1700000003 ],
@@ -526,7 +526,7 @@ class PerformanceCITest extends TestCase {
 	public function test_urls_verb_filters_by_search_term(): void {
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
-		$store->set_url_index_hourly( $bucket, [
+		$store->set_url_bucket( $bucket, [
 			'aaaaaaaaaaaa' => [ 'url' => '/articles/123', 'count' => 1, 'sum_ms' => 50.0, 'last_seen' => 1700000001 ],
 			'bbbbbbbbbbbb' => [ 'url' => '/home', 'count' => 2, 'sum_ms' => 100.0, 'last_seen' => 1700000002 ],
 		] );
@@ -547,7 +547,7 @@ class PerformanceCITest extends TestCase {
 		// "Errors" = requests no status bucket classified: timeouts and fatals.
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
-		$store->set_url_index_hourly( $bucket, [
+		$store->set_url_bucket( $bucket, [
 			'aaaaaaaaaaaa' => [
 				'url' => '/clean', 'count' => 9, 'sum_ms' => 90.0, 'last_seen' => 1700000001,
 				'count_2xx' => 7, 'count_3xx' => 1, 'count_4xx' => 1, 'count_5xx' => 0,
@@ -582,7 +582,7 @@ class PerformanceCITest extends TestCase {
 		// display must never surface the sentinel — it heals to 0.
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
-		$store->set_url_index_hourly( $bucket, [
+		$store->set_url_bucket( $bucket, [
 			'aaaaaaaaaaaa' => [
 				'url'         => '/worker-only',
 				'count'       => 7,
@@ -613,7 +613,7 @@ class PerformanceCITest extends TestCase {
 		$bucket_b = $this->current_url_bucket();
 		$bucket_a = Stats_Store::bucket_key( \time() - 600 );
 
-		$store->set_url_index_hourly( $bucket_a, [
+		$store->set_url_bucket( $bucket_a, [
 			'bbbbbbbbbbbb' => [
 				'url'         => '/mixed',
 				'count'       => 3,
@@ -624,7 +624,7 @@ class PerformanceCITest extends TestCase {
 				'last_seen'   => 1700000001,
 			],
 		] );
-		$store->set_url_index_hourly( $bucket_b, [
+		$store->set_url_bucket( $bucket_b, [
 			'bbbbbbbbbbbb' => [
 				'url'         => '/mixed',
 				'count'       => 5,
@@ -689,7 +689,7 @@ class PerformanceCITest extends TestCase {
 	public function test_url_detail_verb_returns_stats_and_default_flame(): void {
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
-		$store->set_url_index_hourly( $bucket, [
+		$store->set_url_bucket( $bucket, [
 			'abc123def456' => [
 				'url'       => '/articles/777',
 				'count'     => 9,
@@ -723,7 +723,7 @@ class PerformanceCITest extends TestCase {
 	public function test_url_detail_verb_includes_aggregate_flame_when_seeded(): void {
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
-		$store->set_url_index_hourly( $bucket, [
+		$store->set_url_bucket( $bucket, [
 			'cafebabe1234' => [
 				'url'       => '/x',
 				'count'     => 1,
@@ -770,7 +770,7 @@ class PerformanceCITest extends TestCase {
 		// which walks the recent buckets keyed by hash. The interpreter verb must too.
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
-		$store->set_url_index_hourly( $bucket, [
+		$store->set_url_bucket( $bucket, [
 			'abc123def456' => [
 				'url'       => '/x',
 				'count'     => 3,
@@ -797,7 +797,7 @@ class PerformanceCITest extends TestCase {
 		// (legacy L195, L177-181). Consumed by fetchUrlBreakdown L213.
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
-		$store->set_url_index_hourly( $bucket, [
+		$store->set_url_bucket( $bucket, [
 			'abc123def456' => [
 				'url'       => '/x',
 				'count'     => 1,
@@ -826,7 +826,7 @@ class PerformanceCITest extends TestCase {
 		// fetchUrlCategories L237.
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
-		$store->set_url_index_hourly( $bucket, [
+		$store->set_url_bucket( $bucket, [
 			'abc123def456' => [
 				'url'       => '/x',
 				'count'     => 1,
@@ -854,7 +854,7 @@ class PerformanceCITest extends TestCase {
 		// `in_array(...,DIMENSIONS,true)` guard).
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
-		$store->set_url_index_hourly( $bucket, [
+		$store->set_url_bucket( $bucket, [
 			'abc123def456' => [ 'url' => '/x', 'count' => 1, 'sum_ms' => 10.0, 'last_seen' => 1700001000 ],
 		] );
 
@@ -1351,7 +1351,7 @@ class PerformanceCITest extends TestCase {
 	public function test_ask_assembles_a_url_brief(): void {
 		$hash  = Log_Manager::url_hash( '/asked-url' );
 		$store = new Stats_Store( 0, 86400 );
-		$store->set_url_index_hourly( $this->current_url_bucket(), [
+		$store->set_url_bucket( $this->current_url_bucket(), [
 			$hash => [
 				'url'       => '/asked-url',
 				'count'     => 7,
@@ -1766,7 +1766,7 @@ class PerformanceCITest extends TestCase {
 		// unmatched server filter empties the result.
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
-		$store->set_url_index_hourly( $bucket, [
+		$store->set_url_bucket( $bucket, [
 			'aaaaaaaaaaaa' => [ 'url' => '/only-host', 'count' => 3, 'sum_ms' => 30.0, 'last_seen' => 1700000001 ],
 		] );
 
@@ -1786,7 +1786,7 @@ class PerformanceCITest extends TestCase {
 	public function test_urls_verb_sorts_ascending(): void {
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
-		$store->set_url_index_hourly( $bucket, [
+		$store->set_url_bucket( $bucket, [
 			'aaaaaaaaaaaa' => [ 'url' => '/a', 'count' => 5, 'sum_ms' => 500.0, 'last_seen' => 1700000001 ],
 			'bbbbbbbbbbbb' => [ 'url' => '/b', 'count' => 1, 'sum_ms' => 100.0, 'last_seen' => 1700000002 ],
 		] );
@@ -1834,7 +1834,7 @@ class PerformanceCITest extends TestCase {
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
 		// No 'url' key — the shape the sha256 fallback existed to cover.
-		$store->set_url_index_hourly( $bucket, [
+		$store->set_url_bucket( $bucket, [
 			$hash => [ 'count' => 3, 'sum_req_time' => 0.9, 'last_seen' => 1700000000 ],
 		] );
 
@@ -1859,10 +1859,10 @@ class PerformanceCITest extends TestCase {
 		$hash     = 'abcabcabc123';
 		$bucket_a = Stats_Store::bucket_key( \time() - 600 );
 		$bucket_b = $this->current_url_bucket();
-		$store->set_url_index_hourly( $bucket_a, [
+		$store->set_url_bucket( $bucket_a, [
 			$hash => [ 'url' => '/m', 'count' => 2, 'timed_count' => 2, 'sum_ms' => 200.0, 'min_ms' => 80, 'max_ms' => 100.0, 'last_seen' => 1 ],
 		] );
-		$store->set_url_index_hourly( $bucket_b, [
+		$store->set_url_bucket( $bucket_b, [
 			$hash => [ 'url' => '/m', 'count' => 3, 'timed_count' => 3, 'sum_ms' => 300.0, 'min_ms' => 30, 'max_ms' => 120.0, 'last_seen' => 2 ],
 		] );
 
@@ -1886,10 +1886,10 @@ class PerformanceCITest extends TestCase {
 		$newer  = $this->current_url_bucket();
 		// Buckets merge newest-first, so the one REACHED FIRST is the one
 		// without a URL — the order that pins the row blank.
-		$store->set_url_index_hourly( $newer, [
+		$store->set_url_bucket( $newer, [
 			$hash => [ 'count' => 2, 'sum_ms' => 40.0, 'last_seen' => 2 ],
 		] );
-		$store->set_url_index_hourly( $older, [
+		$store->set_url_bucket( $older, [
 			$hash => [ 'url' => $url, 'count' => 5, 'sum_ms' => 100.0, 'last_seen' => 1 ],
 		] );
 
@@ -1914,7 +1914,7 @@ class PerformanceCITest extends TestCase {
 		$hash   = Log_Manager::url_hash( $url );
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
-		$store->set_url_index_hourly( $bucket, [
+		$store->set_url_bucket( $bucket, [
 			$hash => [ 'url' => $url, 'count' => 2, 'sum_ms' => 32.0, 'last_seen' => 1700002000 ],
 		] );
 		$this->write_request( [
@@ -1950,7 +1950,7 @@ class PerformanceCITest extends TestCase {
 		$hash   = 'deadbeef0001';
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
-		$store->set_url_index_hourly( $bucket, [
+		$store->set_url_bucket( $bucket, [
 			$hash => [ 'url' => '/agg-detail', 'count' => 2, 'sum_req_time' => 0.4, 'last_seen' => 1700000000 ],
 		] );
 
