@@ -48,9 +48,6 @@ class Findings {
 	/** Unexplained interval between consecutive entries, in milliseconds. */
 	public const GAP_MS = 250.0;
 
-	/** The interval one of these covers is missing DETAIL, never idle time. */
-	private const FOLD_MARKERS = Request_Builder_Node::SEQUENCE_BREAK_KEYS;
-
 	/**
 	 * Below this, a request is too short for any share to mean anything —
 	 * 90% of 3ms is not a finding.
@@ -138,7 +135,7 @@ class Findings {
 		$markers = [];
 		foreach ( \is_array( $record['entries'] ?? null ) ? $record['entries'] : [] as $entry ) {
 			$key = \is_array( $entry ) ? Core::as_string( $entry['k'] ?? '' ) : '';
-			if ( \in_array( $key, self::FOLD_MARKERS, true ) ) {
+			if ( \in_array( $key, Request_Builder_Node::SEQUENCE_BREAK_KEYS, true ) ) {
 				$markers[] = $key;
 			}
 		}
@@ -182,7 +179,7 @@ class Findings {
 			$from = Core::as_string( $prev['k'] ?? '' );
 			$to   = Core::as_string( $next['k'] ?? '' );
 			// The merged entries ARE this window; truncation() reports it.
-			if ( \in_array( $from, self::FOLD_MARKERS, true ) || \in_array( $to, self::FOLD_MARKERS, true ) ) {
+			if ( \in_array( $from, Request_Builder_Node::SEQUENCE_BREAK_KEYS, true ) || \in_array( $to, Request_Builder_Node::SEQUENCE_BREAK_KEYS, true ) ) {
 				continue;
 			}
 			$gap = ( Core::num_float( $next['ts'] ?? 0 ) - Core::num_float( $prev['ts'] ?? 0 ) ) * 1000.0;

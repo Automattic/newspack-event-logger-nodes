@@ -44,6 +44,7 @@ namespace Newspack_Event_Logger_Nodes\CLI;
 use Newspack_Event_Logger_Nodes\Config;
 use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Reqgrep_Core;
+use Newspack_Event_Logger_Nodes\Request_Builder_Node;
 use Newspack_Nodes\Callback_Node;
 use Newspack_Nodes\Consumer_Node;
 use Newspack_Nodes\Core;
@@ -97,9 +98,6 @@ class Reqgrep_Command {
 
 	/** The outermost pair: the request itself, which spans any break in the record. */
 	private const OUTERMOST_PAIR = 'process';
-
-	/** Keys announcing dropped or merged entries — nothing before one can contain anything after. */
-	private const SEQUENCE_BREAK_KEYS = \Newspack_Event_Logger_Nodes\Request_Builder_Node::SEQUENCE_BREAK_KEYS;
 
 	/** True once a request has been printed, so the rule falls BETWEEN requests only. */
 	private bool $fmt_printed_request = false;
@@ -656,7 +654,7 @@ class Reqgrep_Command {
 	 * A break keyword closes every span but the request itself, which does span the break.
 	 */
 	private function indent_for( string $key ): int {
-		if ( \in_array( $key, self::SEQUENCE_BREAK_KEYS, true ) ) {
+		if ( \in_array( $key, Request_Builder_Node::SEQUENCE_BREAK_KEYS, true ) ) {
 			$outermost       = ( [] !== $this->fmt_pairs && self::OUTERMOST_PAIR === $this->fmt_pairs[0] ) ? 1 : 0;
 			$this->fmt_pairs = \array_slice( $this->fmt_pairs, 0, $outermost );
 		}
