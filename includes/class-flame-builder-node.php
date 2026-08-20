@@ -448,13 +448,13 @@ class Flame_Builder_Node extends Node {
 	 * display layer divides at read time so cross-bucket merges stay exact.
 	 *
 	 * @param string                  $url_hash   URL hash of the request.
-	 * @param array<string,mixed>    $flame_data Per-request flame tree; `value` is the duration in ms.
+	 * @param array<string,mixed>    $flame_data Per-request flame tree; its `value` is a render width, not a measurement.
 	 * @param array<array-key,mixed> $profiles   `profiles{}` from the request record.
 	 * @param array<array-key,mixed> $request    Full request record.
 	 */
 	private function accumulate_all_stats( string $url_hash, array $flame_data, array $profiles, array $request ): void {
-		$duration_val = $flame_data['value'] ?? 0;
-		$duration_ms  = Core::num_float( $duration_val );
+		// The RECORD's duration; the flame's is raised to cover children.
+		$duration_ms  = Core::num_float( $request['duration_ms'] ?? 0 );
 		$error_status = $request['error_status'] ?? '-';
 		// Both durations are fictions and would skew every percentile.
 		$is_timed_out = \in_array( $error_status, [ 'T', 'A' ], true );

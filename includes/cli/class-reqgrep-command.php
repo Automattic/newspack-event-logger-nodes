@@ -99,7 +99,7 @@ class Reqgrep_Command {
 	private const OUTERMOST_PAIR = 'process';
 
 	/** Keys announcing dropped or merged entries — nothing before one can contain anything after. */
-	private const SEQUENCE_BREAK_KEYS = [ 'entries (lost)', 'entries (aggregated)' ];
+	private const SEQUENCE_BREAK_KEYS = \Newspack_Event_Logger_Nodes\Request_Builder_Node::SEQUENCE_BREAK_KEYS;
 
 	/** True once a request has been printed, so the rule falls BETWEEN requests only. */
 	private bool $fmt_printed_request = false;

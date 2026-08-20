@@ -2209,6 +2209,31 @@ class FlameBuilderTest extends TestCase {
 		$this->assertNotSame( [], $store->get_dimensional_buckets( 'status', [ Stats_Store::bucket_key( $now ) ] )[ Stats_Store::bucket_key( $now ) ] ?? [], 'this flush landed' );
 	}
 
+	public function test_stats_time_the_request_not_the_flame_that_covers_it(): void {
+		// The flame's value is raised to COVER its children so the treemap does
+		// not overflow. That is a rendering rule; a stat must stay measured.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+
+		$now = 1_700_000_000;
+		$this->fill_request( $fb, $this->completed_request( [
+			'duration_ms' => 137.0,
+			'timestamp'   => $now,
+			// A covering value far past the measured duration.
+			'flame'       => [ 'name' => 'request', 'value' => 911.0, 'children' => [] ],
+		] ) );
+		$fb->flush();
+
+		$this->assertEqualsWithDelta(
+			137.0,
+			$store->get_hourly_bucket( Stats_Store::bucket_key( $now ) )['sum_ms'] ?? 0.0,
+			1e-6,
+			'the request took 137ms; 911 is what the flame was stretched to'
+		);
+	}
+
 	public function test_a_bucket_revisited_before_the_flush_keeps_both_halves(): void {
 		// Bucket keys come from the request's START time and records arrive at
 		// COMPLETION, so an older bucket is revisited constantly around a boundary.

@@ -22,6 +22,7 @@
 
 namespace Newspack_Event_Logger_Nodes\App;
 
+use Newspack_Event_Logger_Nodes\Request_Builder_Node;
 use Newspack_Event_Logger_Nodes\Rule;
 use Newspack_Nodes\Core;
 // Both plugins have a `Core`; the hook instrumentation is THIS plugin's.
@@ -46,6 +47,9 @@ class Findings {
 
 	/** Unexplained interval between consecutive entries, in milliseconds. */
 	public const GAP_MS = 250.0;
+
+	/** The interval one of these covers is missing DETAIL, never idle time. */
+	private const FOLD_MARKERS = Request_Builder_Node::SEQUENCE_BREAK_KEYS;
 
 	/**
 	 * Below this, a request is too short for any share to mean anything —
@@ -134,7 +138,7 @@ class Findings {
 		$markers = [];
 		foreach ( \is_array( $record['entries'] ?? null ) ? $record['entries'] : [] as $entry ) {
 			$key = \is_array( $entry ) ? Core::as_string( $entry['k'] ?? '' ) : '';
-			if ( 'entries (aggregated)' === $key || 'entries (lost)' === $key ) {
+			if ( \in_array( $key, self::FOLD_MARKERS, true ) ) {
 				$markers[] = $key;
 			}
 		}
@@ -175,12 +179,18 @@ class Findings {
 		for ( $i = 1; $i < \count( $entries ); $i++ ) {
 			$prev = \is_array( $entries[ $i - 1 ] ) ? $entries[ $i - 1 ] : [];
 			$next = \is_array( $entries[ $i ] ) ? $entries[ $i ] : [];
-			$gap  = ( Core::num_float( $next['ts'] ?? 0 ) - Core::num_float( $prev['ts'] ?? 0 ) ) * 1000.0;
+			$from = Core::as_string( $prev['k'] ?? '' );
+			$to   = Core::as_string( $next['k'] ?? '' );
+			// The merged entries ARE this window; truncation() reports it.
+			if ( \in_array( $from, self::FOLD_MARKERS, true ) || \in_array( $to, self::FOLD_MARKERS, true ) ) {
+				continue;
+			}
+			$gap = ( Core::num_float( $next['ts'] ?? 0 ) - Core::num_float( $prev['ts'] ?? 0 ) ) * 1000.0;
 			if ( $gap >= self::GAP_MS && ( null === $worst || $gap > $worst['gap_ms'] ) ) {
 				$worst = [
 					'gap_ms' => $gap,
-					'after'  => Core::as_string( $prev['k'] ?? '' ),
-					'before' => Core::as_string( $next['k'] ?? '' ),
+					'after'  => $from,
+					'before' => $to,
 				];
 			}
 		}
