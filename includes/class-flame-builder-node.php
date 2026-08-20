@@ -1549,9 +1549,10 @@ class Flame_Builder_Node extends Node {
 	 *
 	 * The mirror buffers writes in memory; `flush_stats_mirror()` writes a bucket's
 	 * frames at the first save_state() checkpoint after that bucket CLOSES, and
-	 * holds the open one until then. So a crash loses the open bucket from the
-	 * durable copy — memcache still holds it — and anything buffered since the
-	 * last checkpoint, which the Consumer replays from its co-committed cursor.
+	 * holds the open one until then. The held frames ride the checkpoint into the
+	 * offsetlog, so a respawn resumes them; only writes made since the last
+	 * checkpoint die with a crash, and the Consumer replays those from its
+	 * co-committed cursor.
 	 *
 	 * @param string $name Partition node name; '' disables the mirror.
 	 */
@@ -1767,36 +1768,6 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
-	 * Traffic rank (~request count) for the per-URL namespaces.
-	 *
-	 * Each namespace stores a different shape, so each derives the count its own
-	 * way. The result only has to order URLs against each other.
-	 *
-	 * @param array<array-key,mixed> $data Value being mirrored.
-	 * @param string                  $ns   Namespace it belongs to.
-	 */
-	private function mirror_traffic_rank( array $data, string $ns ): int {
-		if ( Stats_Store::NS_URL === $ns ) {
-			$flame = $data['flame'] ?? null;
-			return \is_array( $flame ) && \is_numeric( $flame['count'] ?? null ) ? (int) $flame['count'] : 0;
-		}
-		if ( Stats_Store::NS_URL_CAT === $ns ) {
-			// One bucket: the `total` pseudo-category's sampled requests.
-			$total = $data[ self::TOTAL_KEY ] ?? null;
-			return \is_array( $total ) && \is_numeric( $total['n'] ?? null ) ? (int) $total['n'] : 0;
-		}
-		// NS_URL_DIM: one bucket; take the first dimension's counts.
-		$sum   = 0;
-		$first = \reset( $data );
-		if ( \is_array( $first ) ) {
-			foreach ( $first as $vd ) {
-				$sum += \is_array( $vd ) && \is_numeric( $vd['c'] ?? null ) ? (int) $vd['c'] : 0;
-			}
-		}
-		return $sum;
-	}
-
-	/**
 	 * Drop the lowest-ranked buffered write in a namespace. Linear scan — the
 	 * namespaces are capped in the low hundreds and this runs once per overflow.
 	 *
@@ -1825,6 +1796,13 @@ class Flame_Builder_Node extends Node {
 	 * flame trees and the closed buckets' mirror frames here — not only on the
 	 * FLUSH_INTERVAL_SEC cadence — is what makes that commit whole.
 	 *
+	 * The frames `flush_stats_mirror()` HELD — the open bucket, which by design
+	 * reaches no durable log until it closes — ride the frame too. That is what
+	 * backs the open window: the offsetlog is a bounded ring of at most 60
+	 * keyframes, so it costs fixed disk, where `flame-stats` retains for twice
+	 * the stats window. Their ranks are not carried; `mirror_traffic_rank()`
+	 * derives those from the data on the way back in.
+	 *
 	 * @api Used by substrate.
 	 * @return array<string,mixed>
 	 */
@@ -1832,7 +1810,19 @@ class Flame_Builder_Node extends Node {
 		// Co-commit the current flame trees with the cursor, like pending.
 		$this->mirror_url_stats();
 		$this->flush_stats_mirror();
-		return [ 'pending' => $this->pending ];
+		return [
+			'pending' => $this->pending,
+			'mirror'  => [
+				'buffer' => $this->stats_mirror_buffer,
+				'topn'   => \array_map(
+					static fn ( array $frames ): array => \array_map(
+						static fn ( array $frame ): array => [ $frame[0], $frame[1] ],
+						$frames
+					),
+					$this->stats_mirror_topn
+				),
+			],
+		];
 	}
 
 	/**
@@ -1874,11 +1864,10 @@ class Flame_Builder_Node extends Node {
 	 * A held key is re-keyed by every later write, so what finally lands is the
 	 * bucket's whole and final state, written once.
 	 *
-	 * The cost is durability of the open bucket: memcache holds it, but nothing
-	 * durable does until it closes, so losing BOTH the process and memcache
-	 * inside one bucket loses that bucket. The alternative — carrying the open
-	 * bucket in `save_state()` instead — moves the same bytes to the offsetlog
-	 * at the same cadence, and saves nothing.
+	 * The held frames are not undurable, just durable somewhere cheaper: they ride
+	 * `save_state()` into the offsetlog, a bounded ring of at most 60 keyframes,
+	 * where `flame-stats` retains for twice the stats window. A respawn restores
+	 * them and writes them when the bucket closes.
 	 *
 	 * Aggregates flush in full; the per-URL namespaces flush their bounded top-N.
 	 */
@@ -2037,6 +2026,14 @@ class Flame_Builder_Node extends Node {
 		if ( [] !== \array_intersect( \array_keys( $pending ), \array_keys( self::empty_bucket() ) ) ) {
 			$pending = [ Core::str( $saved['pending_bucket'] ?? '' ) => $pending ];
 		}
+		$mirror                    = Core::arr( $saved['mirror'] ?? null );
+		$this->stats_mirror_buffer = self::restore_frames( $mirror['buffer'] ?? null );
+		$topn                      = Core::arr( $mirror['topn'] ?? null );
+		foreach ( self::STATS_MIRROR_TOPN as $ns => $ignored_default ) {
+			foreach ( self::restore_frames( $topn[ $ns ] ?? null ) as $key => [ $data, $ttl ] ) {
+				$this->stats_mirror_topn[ $ns ][ $key ] = [ $data, $ttl, $this->mirror_traffic_rank( $data, $ns ) ];
+			}
+		}
 		foreach ( $pending as $bucket => $acc ) {
 			if ( '' !== $bucket && \is_array( $acc ) ) {
 				/** @var Bucket_Acc $merged */
@@ -2044,6 +2041,55 @@ class Flame_Builder_Node extends Node {
 				$this->pending[ (string) $bucket ] = $merged;
 			}
 		}
+	}
+
+	/**
+	 * Traffic rank (~request count) for the per-URL namespaces.
+	 *
+	 * Each namespace stores a different shape, so each derives the count its own
+	 * way. The result only has to order URLs against each other.
+	 *
+	 * @param array<array-key,mixed> $data Value being mirrored.
+	 * @param string                  $ns   Namespace it belongs to.
+	 */
+	private function mirror_traffic_rank( array $data, string $ns ): int {
+		if ( Stats_Store::NS_URL === $ns ) {
+			$flame = $data['flame'] ?? null;
+			return \is_array( $flame ) && \is_numeric( $flame['count'] ?? null ) ? (int) $flame['count'] : 0;
+		}
+		if ( Stats_Store::NS_URL_CAT === $ns ) {
+			// One bucket: the `total` pseudo-category's sampled requests.
+			$total = $data[ self::TOTAL_KEY ] ?? null;
+			return \is_array( $total ) && \is_numeric( $total['n'] ?? null ) ? (int) $total['n'] : 0;
+		}
+		// NS_URL_DIM: one bucket; take the first dimension's counts.
+		$sum   = 0;
+		$first = \reset( $data );
+		if ( \is_array( $first ) ) {
+			foreach ( $first as $vd ) {
+				$sum += \is_array( $vd ) && \is_numeric( $vd['c'] ?? null ) ? (int) $vd['c'] : 0;
+			}
+		}
+		return $sum;
+	}
+
+	/**
+	 * Held mirror frames from a checkpoint frame, coerced back to `[data, ttl]`.
+	 * A malformed entry is dropped rather than aborting the whole restore.
+	 *
+	 * @param mixed $saved One buffer out of the checkpoint's `mirror` map.
+	 * @return array<string,array{0: array<array-key,mixed>, 1: int}>
+	 */
+	private static function restore_frames( mixed $saved ): array {
+		$out = [];
+		foreach ( Core::arr( $saved ) as $key => $frame ) {
+			$frame = Core::arr( $frame );
+			$data  = $frame[0] ?? null;
+			if ( \is_string( $key ) && \is_array( $data ) ) {
+				$out[ $key ] = [ $data, Core::num_int( $frame[1] ?? null ) ];
+			}
+		}
+		return $out;
 	}
 
 	/**
