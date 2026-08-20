@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.58.0] - 2026-08-19
+
 ### Changed
 - **The reader stopped hand-rolling the writer's arithmetic.** `Performance_CI_Node` summed the dimensional and category series with `Core::as_float`/`as_int` — the PERMISSIVE family that casts any scalar — against values `Flame_Builder_Node` stored through the refusing `num_*` family, and with `c` as a float where `CAT_SUMS` declares it a whole count. Both hand-rolled merges collapse into one `merge_buckets_into()` over `Stats_Store::sum_fields()` and the same `DIM_SUMS` / `CAT_SUMS` tables the writer uses. The same release introduced those tables and converted only `merge_hourly_across_partitions()`; leaving two copies beside a new shared constant is how the two spellings drifted in the first place.
 - **One capping function, not two.** `cap_dim_bucket()` and `cap_single_bucket()` were the same body — rank, keep the head, roll the tail into `Other` — differing in sort field, field table and whether the `total` row is lifted clear of the ranking. Those are arguments: `cap_bucket()` takes them, and `cap_dim()` / `cap_categories()` name the two configurations. The docblock claiming the two were unrelated was mine and was wrong.
