@@ -2785,6 +2785,35 @@ class FlameBuilderTest extends TestCase {
 		return [ $fb, $p ];
 	}
 
+	public function test_the_open_bucket_is_held_back_until_it_closes(): void {
+		// flame-stats keeps only the last state of a bucket, so writing the open
+		// one at every checkpoint is ~ten redundant copies per bucket.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		[ $fb, $p ] = $this->mirrored_builder( $store, 'flames-stats' );
+
+		$open = 1_700_000_000;
+		$key  = Stats_Store::entry_key( 0, Stats_Store::NS_HOURLY . ':' . Stats_Store::bucket_key( $open ) );
+		$fb->set_clock( static fn() => $open );
+
+		foreach ( [ 61.0, 62.0, 63.0 ] as $duration_ms ) {
+			$this->fill_request( $fb, $this->completed_request( [ 'duration_ms' => $duration_ms, 'timestamp' => $open ] ) );
+			$fb->flush();
+			$fb->save_state();
+		}
+		$p->flush();
+		$this->assertNotContains( $key, $this->raw_mirror_frame_keys( $p ), 'the open bucket stays out of the mirror' );
+
+		// Closed: the next checkpoint writes it once, whole.
+		$fb->set_clock( static fn() => $open + 300 );
+		$fb->save_state();
+		$p->flush();
+		$fb->set_clock( null );
+
+		$this->assertSame( 1, \array_count_values( $this->raw_mirror_frame_keys( $p ) )[ $key ] ?? 0, 'written once, at close' );
+		$this->assertSame( 3, $this->read_mirror_frames( $p )[ $key ]['data']['count'], 'carrying the whole bucket' );
+	}
+
 	public function test_a_closed_bucket_is_not_re_mirrored_when_a_later_bucket_fills(): void {
 		// A bucket is written when it changes, so a closed one is written once.
 		Core::$memd = new InMemoryMemcached();

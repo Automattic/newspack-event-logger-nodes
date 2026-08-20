@@ -18,8 +18,8 @@
  * live in an `LRU_Cache` and drain through `mirror_url_stats()`.
  *
  * Two side channels hang off that pipeline. `set_stats_target` names a durable
- * Partition that shadows every memcache write, so a non-Atomic deployment can
- * replay stats after memcache loses them. And the request's governing `Rule`
+ * Partition that shadows each memcache write once its bucket closes, so a
+ * non-Atomic deployment can replay stats after memcache loses them. And the request's governing `Rule`
  * drives auto-tune: hooks that fire too often, custom events to disable, and
  * newly significant events accumulate here and are emitted as messages to the
  * owned `Auto_Tuner_Node` sibling, which rewrites the rule.
@@ -1547,10 +1547,11 @@ class Flame_Builder_Node extends Node {
 	 * lifts its own 4KB PIPE_BUF cap via `command_node <name>:config void_warranty` in the
 	 * topology, alongside its make_node.
 	 *
-	 * The mirror buffers writes in memory and flushes them to the partition once
-	 * per save_state() checkpoint (flush_stats_mirror). Writes made after the last
-	 * checkpoint die with a crash — every partition frame is already committed, so
-	 * recovery replays them exactly once with no double-count.
+	 * The mirror buffers writes in memory; `flush_stats_mirror()` writes a bucket's
+	 * frames at the first save_state() checkpoint after that bucket CLOSES, and
+	 * holds the open one until then. So a crash loses the open bucket from the
+	 * durable copy — memcache still holds it — and anything buffered since the
+	 * last checkpoint, which the Consumer replays from its co-committed cursor.
 	 *
 	 * @param string $name Partition node name; '' disables the mirror.
 	 */
@@ -1716,11 +1717,11 @@ class Flame_Builder_Node extends Node {
 	 * Aggregates are kept in full. The per-URL namespaces are bounded to top-N by
 	 * traffic (see STATS_MIRROR_TOPN and `mirror_topn()`), or the buffer would grow
 	 * with the site's URL space. The bound counts FRAMES, and a key is one
-	 * (URL, bucket) — so a checkpoint straddling a bucket boundary holds two for a
-	 * busy URL. That self-corrects: the fresh partial bucket ranks below the closed
-	 * one, so eviction takes the partial and the next checkpoint re-mirrors it.
-	 * Re-keying on `$key` means the newest write for a key replaces the older one;
-	 * only the last state of the checkpoint is written.
+	 * (URL, bucket) — so with the open bucket held back (`flush_stats_mirror()`)
+	 * the survivors are the busiest N URLs of the WHOLE bucket, ranked on its full
+	 * counts rather than one checkpoint's. Re-keying on `$key` means the newest
+	 * write for a key replaces the older one, so a held key carries the bucket's
+	 * latest state, and an evicted one is re-buffered by its next write.
 	 *
 	 * @param string                  $key  Memcache key being shadowed.
 	 * @param array<array-key,mixed> $data Value written.
@@ -1820,8 +1821,8 @@ class Flame_Builder_Node extends Node {
 	 *
 	 * The topology names this node in the requests-Consumer's `add_snapshot_node`,
 	 * so the returned array is co-committed with the read offset: a respawned
-	 * worker resumes the partial bucket instead of losing or double-counting it.
-	 * Draining the flame trees and the mirror buffer here — not only on the
+	 * worker resumes the partial buckets instead of losing them. Draining the
+	 * flame trees and the closed buckets' mirror frames here — not only on the
 	 * FLUSH_INTERVAL_SEC cadence — is what makes that commit whole.
 	 *
 	 * @api Used by substrate.
@@ -1864,17 +1865,22 @@ class Flame_Builder_Node extends Node {
 		}
 	}
 
-	/** Current Unix time, through the test clock seam when one is installed. */
-	private function now_ts(): int {
-		return null !== $this->clock_fn ? ( $this->clock_fn )() : \time();
-	}
-
 	/**
-	 * Flush the buffered mirror writes to the durable partition as one checkpoint.
-	 * save_state() is co-committed with the requests-Consumer's durable offset, so
-	 * every frame written here is committed: writes made after this die with a
-	 * crash and get reprocessed cleanly (no double-count). Aggregates flush in full;
-	 * the per-URL namespaces flush their bounded top-N. Both buffers reset after.
+	 * Write the buffered mirror frames whose bucket has CLOSED, and hold the rest.
+	 *
+	 * The partition keeps only the last frame for a key, so writing the bucket
+	 * currently being accumulated into — once per checkpoint, ten times over a
+	 * bucket's life — is nine redundant copies of a value that is still growing.
+	 * A held key is re-keyed by every later write, so what finally lands is the
+	 * bucket's whole and final state, written once.
+	 *
+	 * The cost is durability of the open bucket: memcache holds it, but nothing
+	 * durable does until it closes, so losing BOTH the process and memcache
+	 * inside one bucket loses that bucket. The alternative — carrying the open
+	 * bucket in `save_state()` instead — moves the same bytes to the offsetlog
+	 * at the same cadence, and saves nothing.
+	 *
+	 * Aggregates flush in full; the per-URL namespaces flush their bounded top-N.
 	 */
 	private function flush_stats_mirror(): void {
 		if ( '' === $this->stats_partition ) {
@@ -1885,16 +1891,37 @@ class Flame_Builder_Node extends Node {
 			$this->print_less_often( "flame-builder: stats_partition '{$this->stats_partition}' not found at flush" );
 			return; // Keep the buffer; retry next checkpoint once the node exists.
 		}
-		foreach ( $this->stats_mirror_buffer as $key => [ $data, $ttl ] ) {
-			$this->write_mirror_frame( $partition, $key, $data, $ttl );
+		$now = $this->now_ts();
+		$this->stats_mirror_buffer = $this->write_closed_frames( $partition, $this->stats_mirror_buffer, $now );
+		foreach ( $this->stats_mirror_topn as $ns => $entries ) {
+			$this->stats_mirror_topn[ $ns ] = $this->write_closed_frames( $partition, $entries, $now );
 		}
-		foreach ( $this->stats_mirror_topn as $entries ) {
-			foreach ( $entries as $key => [ $data, $ttl ] ) {
-				$this->write_mirror_frame( $partition, $key, $data, $ttl );
+	}
+
+	/**
+	 * Write every frame in one buffer whose bucket has closed, and return what is
+	 * still held.
+	 *
+	 * @template T of array{0: array<array-key,mixed>, 1: int}
+	 * @param \Newspack_Nodes\Partition_Node $partition Resolved stats partition.
+	 * @param array<string,T>                $buffer    Frames by key.
+	 * @param int                            $now       Clock deciding which bucket is open.
+	 * @return array<string,T> The frames whose bucket is still open.
+	 */
+	private function write_closed_frames( \Newspack_Nodes\Partition_Node $partition, array $buffer, int $now ): array {
+		foreach ( $buffer as $key => [ $data, $ttl ] ) {
+			if ( Stats_Store::is_open_bucket( $key, $now ) ) {
+				continue;
 			}
+			$this->write_mirror_frame( $partition, $key, $data, $ttl );
+			unset( $buffer[ $key ] );
 		}
-		$this->stats_mirror_buffer = [];
-		$this->stats_mirror_topn   = [];
+		return $buffer;
+	}
+
+	/** Current Unix time, through the test clock seam when one is installed. */
+	private function now_ts(): int {
+		return null !== $this->clock_fn ? ( $this->clock_fn )() : \time();
 	}
 
 	/** Resolve the named stats partition to its live node, or null when disabled / not-yet-built. */
