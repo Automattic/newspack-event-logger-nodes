@@ -1300,7 +1300,7 @@ class Flame_Builder_Node extends Node {
 		if ( ! empty( $this->url_stats ) ) {
 			foreach ( $this->url_stats as $bucket_key => $hour_data ) {
 				/** @var array<string,array<string,mixed>> $existing_urls */
-				$existing_urls = $stats_store->get_url_index_hourly( $bucket_key );
+				$existing_urls = $stats_store->get_url_bucket( $bucket_key );
 
 				foreach ( $hour_data as $hash => $stats_raw ) {
 					$stats = Core::arr( $stats_raw );
@@ -1376,7 +1376,7 @@ class Flame_Builder_Node extends Node {
 					$existing_urls = \array_slice( $existing_urls, 0, self::MAX_URLS_PER_BUCKET, true );
 				}
 
-				$stats_store->set_url_index_hourly( $bucket_key, $existing_urls );
+				$stats_store->set_url_bucket( $bucket_key, $existing_urls );
 			}
 		}
 
