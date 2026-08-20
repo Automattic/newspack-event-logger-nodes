@@ -158,6 +158,12 @@ class Performance_CI_Node extends Service_CI_Node {
 		'newspack_event_logger_nodes_flush_every_line' => 'bool',
 	];
 
+	/** @var array<int,string> Memoized `read_window()`, valid while its bucket is current. */
+	private static array $read_window = [];
+
+	/** @var string The bucket `$read_window` was built for; '' before the first build. */
+	private static string $read_window_at = '';
+
 	/**
 	 * Valid sort fields for the `urls` verb; anything outside falls back
 	 * to `count`.
@@ -321,7 +327,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		$merged       = [];
 		$buckets      = self::read_window();
 		foreach ( self::stats_stores() as $store ) {
-			self::merge_dim_buckets_into( $merged, $store->get_dimensional_buckets( $dimension, $buckets, $store_server ) );
+			self::merge_buckets_into( $merged, $store->get_dimensional_buckets( $dimension, $buckets, $store_server ), Stats_Store::DIM_SUMS );
 		}
 		\ksort( $merged );
 		return $merged;
@@ -336,7 +342,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		$merged  = [];
 		$buckets = self::read_window();
 		foreach ( self::stats_stores() as $store ) {
-			self::merge_category_buckets_into( $merged, $store->get_category_buckets( $buckets ) );
+			self::merge_buckets_into( $merged, $store->get_category_buckets( $buckets ), Stats_Store::CAT_SUMS );
 		}
 		\ksort( $merged );
 		return $merged;
@@ -352,7 +358,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		$merged  = [];
 		$buckets = self::read_window();
 		foreach ( self::stats_stores() as $store ) {
-			self::merge_category_buckets_into( $merged, $store->get_category_buckets( $buckets, $server ) );
+			self::merge_buckets_into( $merged, $store->get_category_buckets( $buckets, $server ), Stats_Store::CAT_SUMS );
 		}
 		\ksort( $merged );
 		return $merged;
@@ -368,34 +374,10 @@ class Performance_CI_Node extends Service_CI_Node {
 		$merged  = [];
 		$buckets = self::read_window();
 		foreach ( self::stats_stores() as $store ) {
-			self::merge_category_buckets_into( $merged, $store->get_url_category_buckets( $hash, $buckets ) );
+			self::merge_buckets_into( $merged, $store->get_url_category_buckets( $hash, $buckets ), Stats_Store::CAT_SUMS );
 		}
 		\ksort( $merged );
 		return $merged;
-	}
-
-	/**
-	 * Sum-merge category `[bucket => [cat => {t,c,n}]]` blobs into the running
-	 * totals. Shared by the three category-merge variants (global, per-server,
-	 * per-URL), which iterate identically and differ only in the store read.
-	 *
-	 * @param array<string,array<string,array{t:float,c:float,n:int}>> $merged Mutated.
-	 * @param array<string,mixed>                                       $rows   Inbound.
-	 */
-	private static function merge_category_buckets_into( array &$merged, array $rows ): void {
-		foreach ( $rows as $bucket => $values ) {
-			$merged[ $bucket ] ??= [];
-			if ( ! \is_array( $values ) ) {
-				continue;
-			}
-			foreach ( $values as $cat => $entry ) {
-				$entry_arr = Core::arr( $entry );
-				$merged[ $bucket ][ $cat ] ??= [ 't' => 0.0, 'c' => 0.0, 'n' => 0 ];
-				$merged[ $bucket ][ $cat ]['t'] += Core::as_float( $entry_arr['t'] ?? 0 );
-				$merged[ $bucket ][ $cat ]['c'] += Core::as_float( $entry_arr['c'] ?? 0 );
-				$merged[ $bucket ][ $cat ]['n'] += Core::as_int( $entry_arr['n'] ?? 0 );
-			}
-		}
 	}
 
 	/**
@@ -895,33 +877,28 @@ class Performance_CI_Node extends Service_CI_Node {
 					$series[ $bucket_key ] = $values;
 				}
 			}
-			self::merge_dim_buckets_into( $merged, $series );
+			self::merge_buckets_into( $merged, $series, Stats_Store::DIM_SUMS );
 		}
 		\ksort( $merged );
 		return $merged;
 	}
 
 	/**
-	 * Sum-merge dimensional `[bucket => [name => {c,s,m}]]` blobs into the running
-	 * totals. Shared by the global (merge_dim_across_partitions) and per-URL
-	 * (merge_url_dim) breakdown builders — the two iterate identically.
+	 * Sum-merge one namespace's buckets into the running totals, through the
+	 * SAME arithmetic and the same field table the writer used.
 	 *
-	 * @param array<array-key,array<array-key,array{c:int,s:float,m:float}>> $merged Mutated.
-	 * @param array<array-key,mixed>                                         $rows   Inbound (key-agnostic).
+	 * The reader used to hand-roll this per namespace with `Core::as_*`, the
+	 * permissive family that casts any scalar — against values the writer stored
+	 * through the refusing `num_*` family, and with `c` as a float where
+	 * `CAT_SUMS` calls it a whole count. One producer, one reader, one table.
+	 *
+	 * @param array<string,mixed> $merged Mutated.
+	 * @param array<string,mixed> $rows   Inbound, keyed by bucket.
+	 * @param array<string,bool>  $fields Field name => is a whole count.
 	 */
-	private static function merge_dim_buckets_into( array &$merged, array $rows ): void {
+	private static function merge_buckets_into( array &$merged, array $rows, array $fields ): void {
 		foreach ( $rows as $bucket => $values ) {
-			$merged[ $bucket ] ??= [];
-			if ( ! \is_array( $values ) ) {
-				continue;
-			}
-			foreach ( $values as $name => $entry ) {
-				$entry_arr = Core::arr( $entry );
-				$merged[ $bucket ][ $name ] ??= [ 'c' => 0, 's' => 0.0, 'm' => 0.0 ];
-				$merged[ $bucket ][ $name ]['c'] += Core::as_int( $entry_arr['c'] ?? 0 );
-				$merged[ $bucket ][ $name ]['s'] += Core::as_float( $entry_arr['s'] ?? 0 );
-				$merged[ $bucket ][ $name ]['m'] += Core::as_float( $entry_arr['m'] ?? 0 );
-			}
+			$merged[ $bucket ] = Stats_Store::sum_fields( Core::arr( $merged[ $bucket ] ?? null ), Core::arr( $values ), $fields );
 		}
 	}
 
@@ -1137,10 +1114,22 @@ class Performance_CI_Node extends Service_CI_Node {
 	/**
 	 * The bucket keys a reader walks — the configured retention window.
 	 *
+	 * Memoized for as long as the current bucket is current. One `overview` calls
+	 * this eleven times (seven dimensions, plus hourly, leaderboard, index and
+	 * categories), each otherwise rebuilding up to 288 keys with a `gmdate()`
+	 * apiece — and each re-reading the clock, so two panels of one response could
+	 * straddle a boundary and answer for different windows.
+	 *
 	 * @return array<int,string>
 	 */
 	private static function read_window(): array {
-		return Stats_Store::retention_buckets( AppConfig::stats_retention_seconds(), \time() );
+		$now = \time();
+		$at  = Stats_Store::bucket_key( $now );
+		if ( $at !== self::$read_window_at ) {
+			self::$read_window    = Stats_Store::retention_buckets( AppConfig::stats_retention_seconds(), $now );
+			self::$read_window_at = $at;
+		}
+		return self::$read_window;
 	}
 
 	/**

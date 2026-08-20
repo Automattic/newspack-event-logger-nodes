@@ -236,17 +236,25 @@ class Stats_Store {
 	}
 
 	/**
-	 * Whether a full entry key names the bucket still being accumulated into.
+	 * Whether a full entry key names a bucket that can still be written to.
 	 *
-	 * The bucket is the LAST key component in every bucketed namespace, so this
-	 * is a suffix test; the unbucketed `url` namespace ends in a URL hash and
-	 * never matches one.
+	 * The bucket is the LAST key component in every bucketed namespace, so the
+	 * bucket is read off the key; the unbucketed `url` namespace ends in a URL
+	 * hash, which is not bucket-shaped and is never open.
+	 *
+	 * The comparison is `>=`, not equality, because a producer's clock can run
+	 * ahead of ours — a hub takes each record's own timestamp — and a future
+	 * bucket is one that has not even started, let alone finished. Lexical order
+	 * IS chronological order here, which is what `bucket_key()` buys.
 	 *
 	 * @param string $key Full entry key, as the mirror seam receives it.
 	 * @param int    $now Clock, so a test window matches its writer's keys.
 	 */
 	public static function is_open_bucket( string $key, int $now ): bool {
-		return \str_ends_with( $key, ':' . self::bucket_key( $now ) );
+		$at     = \strrpos( $key, ':' );
+		$bucket = false === $at ? $key : \substr( $key, $at + 1 );
+		return 1 === \preg_match( '/^\d{4}-\d{2}-\d{2}-\d{2}-\d{2}$/', $bucket )
+			&& $bucket >= self::bucket_key( $now );
 	}
 
 	/**
@@ -407,22 +415,6 @@ class Stats_Store {
 		$val = $this->lookup( $this->key( ...[ ...$parts, $bucket ] ) );
 		return \is_array( $val ) ? self::string_keys( $val ) : [];
 	}
-	/**
-	 * Re-key a decoded map with string keys. PHP casts numeric-looking keys to
-	 * int on decode, so a value read back from the cache is `array-key` typed
-	 * even though every namespace stores a string-keyed map; the setters and the
-	 * merge helpers want that guarantee back.
-	 *
-	 * @param array<array-key,mixed> $map Decoded value.
-	 * @return array<string,mixed>
-	 */
-	public static function string_keys( array $map ): array {
-		$out = [];
-		foreach ( $map as $key => $value ) {
-			$out[ (string) $key ] = $value;
-		}
-		return $out;
-	}
 
 	/**
 	 * Explicit bucket setter (FlameBuilder's full-bucket overwrite path).
@@ -489,10 +481,10 @@ class Stats_Store {
 	/**
 	 * Overwrite one dimension's series, global or per server.
 	 *
-	 * @param string              $dimension Dimension name.
-	 * @param string              $bucket    Bucket key.
-	 * @param array<string,mixed> $data      The bucket's value map.
-	 * @param string              $server    Reporting server; '' writes the global series.
+	 * @param string                 $dimension Dimension name.
+	 * @param string                 $bucket    Bucket key.
+	 * @param array<array-key,mixed> $data      The bucket's value map.
+	 * @param string                 $server    Reporting server; '' writes the global series.
 	 * @return bool True when the set landed.
 	 */
 	public function set_dimensional_bucket( string $dimension, string $bucket, array $data, string $server = '' ): bool {
@@ -525,9 +517,9 @@ class Stats_Store {
 	/**
 	 * Overwrite one category bucket.
 	 *
-	 * @param string              $bucket Bucket key.
-	 * @param array<string,mixed> $data   The bucket's category map.
-	 * @param string              $server Reporting server; '' writes the global series.
+	 * @param string                 $bucket Bucket key.
+	 * @param array<array-key,mixed> $data   The bucket's category map.
+	 * @param string                 $server Reporting server; '' writes the global series.
 	 * @return bool True when the set landed.
 	 */
 	public function set_category_bucket( string $bucket, array $data, string $server = '' ): bool {
@@ -567,9 +559,9 @@ class Stats_Store {
 	/**
 	 * Overwrite one URL's category bucket.
 	 *
-	 * @param string              $url_hash 12-char URL hash.
-	 * @param string              $bucket   Bucket key.
-	 * @param array<string,mixed> $data     The bucket's category map.
+	 * @param string                 $url_hash 12-char URL hash.
+	 * @param string                 $bucket   Bucket key.
+	 * @param array<array-key,mixed> $data     The bucket's category map.
 	 * @return bool True when the set landed.
 	 */
 	public function set_url_category_bucket( string $url_hash, string $bucket, array $data ): bool {
@@ -580,9 +572,9 @@ class Stats_Store {
 	 * Overwrite one bucket of a namespace. The namespace token leads `$parts`,
 	 * so it is also what routes the mirror.
 	 *
-	 * @param array<int,string>   $parts  Namespace prefix parts, before the bucket.
-	 * @param string              $bucket Bucket key.
-	 * @param array<string,mixed> $data   The bucket.
+	 * @param array<int,string>      $parts  Namespace prefix parts, before the bucket.
+	 * @param string                 $bucket Bucket key.
+	 * @param array<array-key,mixed> $data   The bucket.
 	 * @return bool True when the set landed.
 	 */
 	private function bucket_set( array $parts, string $bucket, array $data ): bool {
@@ -594,8 +586,8 @@ class Stats_Store {
 	 * to the mirror seam — a rejected/failed set must not be durably recorded and
 	 * resurrected by a later read-back.
 	 *
-	 * @param string               $key  Full memcache key.
-	 * @param array<string,mixed> $data Value to store.
+	 * @param string                 $key  Full memcache key.
+	 * @param array<array-key,mixed> $data Value to store.
 	 * @param int                  $ttl  Expiry in seconds.
 	 * @param string               $ns   Namespace routing hint for the mirror.
 	 * @return bool True when the set landed.
@@ -756,10 +748,7 @@ class Stats_Store {
 	 * @return array<string,mixed> The totals, string-keyed for the store.
 	 */
 	public static function sum_fields( array $into, array $incoming, array $fields ): array {
-		$out = [];
-		foreach ( $into as $key => $value ) {
-			$out[ (string) $key ] = $value;
-		}
+		$out = self::string_keys( $into );
 		foreach ( $incoming as $key => $stats ) {
 			if ( ! \is_array( $stats ) ) {
 				continue;
@@ -771,6 +760,22 @@ class Stats_Store {
 					: Core::num_float( $cur[ $field ] ?? null ) + Core::num_float( $stats[ $field ] ?? null );
 			}
 			$out[ (string) $key ] = $cur;
+		}
+		return $out;
+	}
+	/**
+	 * Re-key a decoded map with string keys. PHP casts numeric-looking keys to
+	 * int on decode, so a value read back from the cache is `array-key` typed
+	 * even though every namespace stores a string-keyed map; the setters and the
+	 * merge helpers want that guarantee back.
+	 *
+	 * @param array<array-key,mixed> $map Decoded value.
+	 * @return array<string,mixed>
+	 */
+	public static function string_keys( array $map ): array {
+		$out = [];
+		foreach ( $map as $key => $value ) {
+			$out[ (string) $key ] = $value;
 		}
 		return $out;
 	}

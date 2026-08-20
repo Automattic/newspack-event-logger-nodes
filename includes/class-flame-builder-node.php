@@ -115,6 +115,18 @@ class Flame_Builder_Node extends Node {
 	const FLUSH_INTERVAL_SEC = 5;
 
 	/**
+	 * Byte ceiling on the held mirror frames a checkpoint frame carries.
+	 *
+	 * The offsetlog bounds keyframe COUNT (60), not size, and `add_snapshot_node`
+	 * lifts its PIPE_BUF cap — so nothing downstream would stop this from scaling
+	 * with an operational input. It would: the per-server aggregates grow with the
+	 * spoke count, and one server's leaderboard bucket measures ~27KB. Frames past
+	 * the budget still reach `flame-stats` when their bucket closes; they are only
+	 * absent from a respawn.
+	 */
+	private const MAX_CHECKPOINT_MIRROR_BYTES = 262144;
+
+	/**
 	 * Cap on the per-process string-intern table. Every dimension value, category
 	 * name, and entry name is looked up in that table so repeated names across
 	 * requests share one zval instead of one per json_decode. Past the cap the
@@ -180,7 +192,7 @@ class Flame_Builder_Node extends Node {
 	/** @var array<string,array<string,bool>> rule_id => {event => true} newly promoted. */
 	private array $new_significant_events   = [];
 
-	/** @var array<array-key,Bucket_Acc> Accumulators by bucket key, drained at flush(). */
+	/** @var array<array-key,Bucket_Acc> Accumulators by bucket key; PHP owns the key type. */
 	private array $pending = [];
 
 	/**
@@ -202,7 +214,7 @@ class Flame_Builder_Node extends Node {
 	/** @var array<string,array{0: array<array-key,mixed>,1: int}> Aggregate mirror writes (kept in full): key => [data, ttl]. */
 	private array $stats_mirror_buffer = [];
 
-	/** @var array<string,array<string,array{0: array<array-key,mixed>,1: int,2: int}>> Per-URL top-N: ns => key => [data, ttl, rank]. */
+	/** @var array<string,array<string,array{0: array<array-key,mixed>,1: int}>> Per-URL top-N: ns => key => [data, ttl]. */
 	private array $stats_mirror_topn = [];
 
 	/**
@@ -567,7 +579,7 @@ class Flame_Builder_Node extends Node {
 			];
 		}
 		/** @var array{url: string, count: int, timed_count: int, sum_ms: float|int, min_ms: float|int, max_ms: float|int, last_seen: int, durations: array<int,float|int>, count_2xx: int, count_3xx: int, count_4xx: int, count_5xx: int, sum_peak_mb: float|int, max_peak_mb: float|int} $us */
-		$us = $acc['url_stats'][ $url_hash ];
+		$us = &$acc['url_stats'][ $url_hash ];
 		++$us['count'];
 		// Per-URL: workers keep timing on their own row.
 		if ( $record_timing ) {
@@ -599,7 +611,7 @@ class Flame_Builder_Node extends Node {
 			$us['sum_peak_mb'] += $peak_mb;
 			$us['max_peak_mb']  = \max( $us['max_peak_mb'], $peak_mb );
 		}
-		$acc['url_stats'][ $url_hash ] = $us;
+		unset( $us );
 	}
 
 	/**
@@ -751,36 +763,21 @@ class Flame_Builder_Node extends Node {
 		$aggregate_profiles = \is_array( $aggregate['profiles'] ?? null ) ? $aggregate['profiles'] : [];
 		$prof_cats          = $aggregate_profiles['categories'] ?? [];
 		$aggregate_profiles['categories'] = Core::arr( $prof_cats );
-		/** @var array{count?: int, sum_req_time?: float|int, categories: array<string,array{samples: int,sum_time: float|int,sum_count: float|int,ts?: int,entries: array<string,array<int,float|int>>}>} $prof */
+		/** @var Leaderboard_Acc $prof */
 		$prof = $aggregate_profiles;
-		/** @var array{count?: int, sum_req_time?: float|int, categories: array<string,array{samples: int,sum_time: float|int,sum_count: float|int,ts?: int,entries: array<string,array<int,float|int>>}>} $lb */
+		/** @var Leaderboard_Acc $lb */
 		$lb   = &$acc['leaderboard'];
 
 		$req_time = 0.0;
 
-		// Global: workers excluded from the "total" pseudo-category.
-		if ( $count_global ) {
-			$acc['cat'][ self::TOTAL_KEY ] = self::add_cat( $acc['cat'][ self::TOTAL_KEY ] ?? null, $duration_ms, 0 );
-		}
-
-		// Global per-server: drop workers.
-		if ( $this->is_hub && '' !== $server_name && $count_global ) {
-			$acc['cat_by_server'][ $server_name ][ self::TOTAL_KEY ] = self::add_cat( $acc['cat_by_server'][ $server_name ][ self::TOTAL_KEY ] ?? null, $duration_ms, 0 );
-		}
-
-		$acc['cat_by_url'][ $url_hash ][ self::TOTAL_KEY ] = self::add_cat( $acc['cat_by_url'][ $url_hash ][ self::TOTAL_KEY ] ?? null, $duration_ms, 0 );
+		// The `total` rollup is folded in AFTER the loop, from $total_calls.
+		$total_calls = 0.0;
 
 		// Per-server leaderboard (hub mode only). Global: drop workers.
 		$slb = null;
 		if ( $this->is_hub && '' !== $server_name && $count_global ) {
-			if ( ! isset( $acc['leaderboard_by_server'][ $server_name ] ) ) {
-				$acc['leaderboard_by_server'][ $server_name ] = [
-					'count'        => 0,
-					'sum_req_time' => 0.0,
-					'categories'   => [],
-				];
-			}
-			/** @var array{count?: int, sum_req_time?: float|int, categories: array<string,array{samples: int,sum_time: float|int,sum_count: float|int,ts?: int,entries: array<string,array<int,float|int>>}>} $slb */
+			$acc['leaderboard_by_server'][ $server_name ] ??= self::empty_leaderboard();
+			/** @var Leaderboard_Acc $slb */
 			$slb = &$acc['leaderboard_by_server'][ $server_name ];
 		}
 
@@ -838,20 +835,19 @@ class Flame_Builder_Node extends Node {
 				unset( $scat );
 			}
 
+			$total_calls += $cat_count;
+
 			// Global category time series (pending): workers excluded.
 			if ( $count_global ) {
 				$acc['cat'][ $category ] = self::add_cat( $acc['cat'][ $category ] ?? null, $cat_time, $cat_count );
-				$acc['cat'][ self::TOTAL_KEY ] = self::add_cat( $acc['cat'][ self::TOTAL_KEY ], 0, $cat_count, sample: false );
 			}
 
 			// Global per-server category series: drop workers.
 			if ( $this->is_hub && '' !== $server_name && $count_global ) {
 				$acc['cat_by_server'][ $server_name ][ $category ] = self::add_cat( $acc['cat_by_server'][ $server_name ][ $category ] ?? null, $cat_time, $cat_count );
-				$acc['cat_by_server'][ $server_name ][ self::TOTAL_KEY ] = self::add_cat( $acc['cat_by_server'][ $server_name ][ self::TOTAL_KEY ], 0, $cat_count, sample: false );
 			}
 
 			$acc['cat_by_url'][ $url_hash ][ $category ] = self::add_cat( $acc['cat_by_url'][ $url_hash ][ $category ] ?? null, $cat_time, $cat_count );
-			$acc['cat_by_url'][ $url_hash ][ self::TOTAL_KEY ] = self::add_cat( $acc['cat_by_url'][ $url_hash ][ self::TOTAL_KEY ], 0, $cat_count, sample: false );
 
 			// Significant-event: avg/call > threshold; workers excluded.
 			if ( $auto_tune_active && null !== $lcat && ! $is_callback && ! $is_plugin && $time_threshold > 0 && $lcat['sum_count'] > 0 ) {
@@ -900,6 +896,15 @@ class Flame_Builder_Node extends Node {
 			unset( $lcat );
 		}
 
+		// One rollup fold per request, not one per category.
+		if ( $count_global ) {
+			$acc['cat'][ self::TOTAL_KEY ] = self::add_cat( $acc['cat'][ self::TOTAL_KEY ] ?? null, $duration_ms, $total_calls );
+		}
+		if ( $this->is_hub && '' !== $server_name && $count_global ) {
+			$acc['cat_by_server'][ $server_name ][ self::TOTAL_KEY ] = self::add_cat( $acc['cat_by_server'][ $server_name ][ self::TOTAL_KEY ] ?? null, $duration_ms, $total_calls );
+		}
+		$acc['cat_by_url'][ $url_hash ][ self::TOTAL_KEY ] = self::add_cat( $acc['cat_by_url'][ $url_hash ][ self::TOTAL_KEY ] ?? null, $duration_ms, $total_calls );
+
 		// Top-level sums: per-URL kept; global leaderboard drops workers.
 		$prof['count']        = ( $prof['count']        ?? 0 ) + 1;
 		$prof['sum_req_time'] = ( $prof['sum_req_time'] ?? 0 ) + $req_time;
@@ -939,21 +944,20 @@ class Flame_Builder_Node extends Node {
 	 * Fold a category sample into a time-series bucket: time, call count, and
 	 * one more sample.
 	 *
-	 * The `total` pseudo-category is sampled once per REQUEST (time, no calls)
-	 * and then fed each category's call count with `$sample` false, so the
-	 * rollup's `n` stays a request count.
+	 * The `total` pseudo-category folds once per REQUEST, carrying the request's
+	 * wall time and the summed call count of every category in it — so its `n`
+	 * stays a request count.
 	 *
-	 * @param array{t: float|int, c: float|int, n: int}|null $slot   Bucket, null on first use.
-	 * @param float                                          $time   Time to add.
-	 * @param float                                          $count  Call count to add.
-	 * @param bool                                           $sample Whether this is one more sample.
+	 * @param array{t: float|int, c: float|int, n: int}|null $slot  Bucket, null on first use.
+	 * @param float                                          $time  Time to add.
+	 * @param float                                          $count Call count to add.
 	 * @return array{t: float|int, c: float|int, n: int} The updated bucket.
 	 */
-	private static function add_cat( ?array $slot, float $time, float $count, bool $sample = true ): array {
+	private static function add_cat( ?array $slot, float $time, float $count ): array {
 		$slot ??= [ 't' => 0, 'c' => 0, 'n' => 0 ];
 		$slot['t'] += $time;
 		$slot['c'] += $count;
-		$slot['n'] += $sample ? 1 : 0;
+		++$slot['n'];
 		return $slot;
 	}
 
@@ -1074,11 +1078,13 @@ class Flame_Builder_Node extends Node {
 	/**
 	 * Drain every accumulator and start clean.
 	 *
-	 * `fill()` calls this at most once per FLUSH_INTERVAL_SEC. Nothing else does:
-	 * there is no shutdown hook, so a worker that dies between flushes loses the
-	 * un-persisted buckets. The durable half — per-URL flame trees and the
-	 * mirrored stats frames — is instead co-committed by `save_state()` at the
-	 * Consumer's checkpoint.
+	 * `fill()` calls this at most once per FLUSH_INTERVAL_SEC, and nothing else
+	 * does. The accumulators do not need it to survive: `save_state()` co-commits
+	 * `$pending` with the read cursor, so a graceful stop carries it across and a
+	 * fatal replays from the cursor that last committed it. What a fatal DOES
+	 * cost is a double-count — the deltas between the last checkpoint and the
+	 * crash are already in memcache and get replayed on top (see the CHANGELOG's
+	 * Known section).
 	 *
 	 * With no `Stats_Store` wired the drain is a no-op against storage: the
 	 * accumulators still reset, but nothing is written anywhere.
@@ -1097,9 +1103,10 @@ class Flame_Builder_Node extends Node {
 	 *
 	 * Each namespace follows the same read-merge-cap-write shape: pull the
 	 * existing value, add this worker's sums to it, cap, and set. Merging by
-	 * addition is what lets several partitions and several workers write the same
-	 * bucket without coordination — hence sums, never means. Retention is the
-	 * key's own TTL, so nothing expires buckets by hand.
+	 * addition is what lets several PARTITIONS write the same bucket without
+	 * coordination — hence sums, never means. Not several writers on one
+	 * partition: read-then-write is not atomic, and one partition has one worker.
+	 * Retention is the key's own TTL, so nothing expires buckets by hand.
 	 *
 	 * No store means no write: the accumulators are dropped by the caller.
 	 */
@@ -1262,7 +1269,7 @@ class Flame_Builder_Node extends Node {
 	private function persist_url_dimensions( Stats_Store $stats_store, string $bucket, string $url_hash, array $dims ): void {
 		$existing = $stats_store->get_url_dimensional_bucket( $url_hash, $bucket );
 		foreach ( $dims as $dim => $values ) {
-			$existing[ $dim ] = self::cap_dim_bucket(
+			$existing[ $dim ] = self::cap_dim(
 				Stats_Store::sum_fields( Core::arr( $existing[ $dim ] ?? null ), Core::arr( $values ), Stats_Store::DIM_SUMS ),
 				Stats_Store::MAX_URL_DIM_VALUES
 			);
@@ -1280,7 +1287,7 @@ class Flame_Builder_Node extends Node {
 	 */
 	private function persist_url_categories( Stats_Store $stats_store, string $bucket, string $url_hash, array $cats ): void {
 		$existing = Stats_Store::sum_fields( $stats_store->get_url_category_bucket( $url_hash, $bucket ), $cats, Stats_Store::CAT_SUMS );
-		$stats_store->set_url_category_bucket( $url_hash, $bucket, self::cap_single_bucket( $existing, Stats_Store::MAX_CAT_VALUES ) );
+		$stats_store->set_url_category_bucket( $url_hash, $bucket, self::cap_categories( $existing, Stats_Store::MAX_CAT_VALUES ) );
 	}
 
 	/**
@@ -1294,10 +1301,10 @@ class Flame_Builder_Node extends Node {
 	private function persist_leaderboard( Stats_Store $stats_store, string $bucket, array $sums, string $server = '' ): void {
 		$existing = $stats_store->get_leaderboard_bucket( $bucket, $server );
 		if ( empty( $existing ) ) {
-			$existing = [ 'count' => 0, 'sum_req_time' => 0.0, 'categories' => [] ];
+			$existing = self::empty_leaderboard();
 		}
 		Stats_Store::merge_leaderboard_bucket( $existing, $sums );
-		$this->cap_leaderboard_entries( $existing );
+		self::cap_leaderboard_entries( $existing );
 		$stats_store->set_leaderboard_bucket( $bucket, $existing, $server );
 	}
 
@@ -1308,7 +1315,7 @@ class Flame_Builder_Node extends Node {
 	 *
 	 * @param array<string,mixed> $bucket Leaderboard bucket, modified in place.
 	 */
-	private function cap_leaderboard_entries( array &$bucket ): void {
+	private static function cap_leaderboard_entries( array &$bucket ): void {
 		$categories = $bucket['categories'] ?? null;
 		if ( ! \is_array( $categories ) ) {
 			return;
@@ -1317,6 +1324,7 @@ class Flame_Builder_Node extends Node {
 			if ( ! \is_array( $cat_data ) ) {
 				continue;
 			}
+			// Not trim_entries(): decoded entries, not accumulator state.
 			$entries = $cat_data['entries'] ?? null;
 			if ( \is_array( $entries ) && \count( $entries ) > self::ENTRY_LIMIT_GLOBAL_UPPER ) {
 				\uasort( $entries, fn( $a, $b ) => ( \is_array( $b ) ? ( $b[0] ?? 0 ) : 0 ) <=> ( \is_array( $a ) ? ( $a[0] ?? 0 ) : 0 ) );
@@ -1338,31 +1346,7 @@ class Flame_Builder_Node extends Node {
 	 */
 	private function persist_dimension( Stats_Store $stats_store, string $bucket, string $dim, array $values, string $server = '' ): void {
 		$existing = Stats_Store::sum_fields( $stats_store->get_dimensional_bucket( $dim, $bucket, $server ), $values, Stats_Store::DIM_SUMS );
-		$stats_store->set_dimensional_bucket( $dim, $bucket, self::cap_dim_bucket( $existing, Stats_Store::MAX_DIM_VALUES ), $server );
-	}
-
-	/**
-	 * Cap one dimensional bucket's value map to the top `$max_values` by count,
-	 * rolling the tail into a synthetic `Other`.
-	 *
-	 * Not shared with `cap_single_bucket()`: that one sorts by time and reserves a
-	 * second slot for the `total` pseudo-category. Only the tail rollup is common.
-	 *
-	 * @param array<string,mixed> $values One bucket's values.
-	 * @param int                 $max_values Ceiling on distinct values.
-	 * @return array<string,mixed>
-	 */
-	private static function cap_dim_bucket( array $values, int $max_values ): array {
-		if ( \count( $values ) <= $max_values ) {
-			return $values;
-		}
-		\uasort( $values, fn( $a, $b ) => ( \is_array( $b ) && \is_numeric( $b['c'] ?? null ) ? $b['c'] : 0 ) <=> ( \is_array( $a ) && \is_numeric( $a['c'] ?? null ) ? $a['c'] : 0 ) );
-		$top  = \array_slice( $values, 0, $max_values - 1, true );
-		$rest = [];
-		foreach ( \array_slice( $values, $max_values - 1 ) as $v ) {
-			$rest = Stats_Store::sum_fields( $rest, [ 'Other' => Core::arr( $v ) ], Stats_Store::DIM_SUMS );
-		}
-		return Stats_Store::sum_fields( $top, $rest, Stats_Store::DIM_SUMS );
+		$stats_store->set_dimensional_bucket( $dim, $bucket, self::cap_dim( $existing, Stats_Store::MAX_DIM_VALUES ), $server );
 	}
 
 	/**
@@ -1375,40 +1359,74 @@ class Flame_Builder_Node extends Node {
 	 */
 	private function persist_categories( Stats_Store $stats_store, string $bucket, array $cats, string $server = '' ): void {
 		$existing = Stats_Store::sum_fields( $stats_store->get_category_bucket( $bucket, $server ), $cats, Stats_Store::CAT_SUMS );
-		$stats_store->set_category_bucket( $bucket, self::cap_single_bucket( $existing, Stats_Store::MAX_CAT_VALUES ), $server );
+		$stats_store->set_category_bucket( $bucket, self::cap_categories( $existing, Stats_Store::MAX_CAT_VALUES ), $server );
 	}
 
 	/**
-	 * Cap a single bucket's categories to top N by time, preserving 'total'.
+	 * Cap a dimensional bucket: ranked by request count, no reserved row.
 	 *
-	 * The `- 2` reserves the two synthetic slots, 'Other' and 'total', so the
-	 * result honors $max_values rather than overshooting it by two.
-	 *
-	 * Key-preserving and key-agnostic: decoded memcache buckets can carry int
-	 * keys (numeric category names); the body only names 'total'/'Other'.
-	 *
-	 * @template TKey of array-key
-	 * @param array<TKey,mixed> $cats       Category buckets.
-	 * @param int                $max_values Categories kept, synthetic slots included.
-	 * @return array<TKey|string,mixed>
+	 * @param array<array-key,mixed> $values     One bucket's values.
+	 * @param int                    $max_values Ceiling on distinct values.
+	 * @return array<array-key,mixed>
 	 */
-	private static function cap_single_bucket( array $cats, int $max_values ): array {
-		if ( \count( $cats ) <= $max_values ) {
-			return $cats;
+	private static function cap_dim( array $values, int $max_values ): array {
+		return self::cap_bucket( $values, $max_values, 'c', Stats_Store::DIM_SUMS );
+	}
+
+	/**
+	 * Cap a category bucket: ranked by time, with the `total` rollup lifted clear
+	 * of the ranking so it always survives.
+	 *
+	 * @param array<array-key,mixed> $cats       Category buckets.
+	 * @param int                    $max_values Categories kept, synthetic slots included.
+	 * @return array<array-key,mixed>
+	 */
+	private static function cap_categories( array $cats, int $max_values ): array {
+		return self::cap_bucket( $cats, $max_values, 't', Stats_Store::CAT_SUMS, self::TOTAL_KEY );
+	}
+
+	/**
+	 * Cap a bucket's value map to the top `$max_values`, rolling the tail into a
+	 * synthetic `Other`.
+	 *
+	 * The dimensional and category caps differ only in what they sort by, which
+	 * fields they sum, and whether a reserved row (`total`) is lifted clear of the
+	 * ranking — so they are arguments, not two functions.
+	 *
+	 * Key-agnostic: a decoded bucket can carry int keys (a numeric value name);
+	 * the body only ever names `Other` and the caller's reserved row.
+	 *
+	 * @param array<array-key,mixed> $values     One bucket's values.
+	 * @param int                    $max_values Ceiling on distinct values, synthetic slots included.
+	 * @param string                 $sort_field Field ranking survivors, descending.
+	 * @param array<string,bool>     $fields     Field name => is a whole count.
+	 * @param string|null            $reserved   Row held out of the ranking and restored after.
+	 * @return array<array-key,mixed>
+	 */
+	private static function cap_bucket( array $values, int $max_values, string $sort_field, array $fields, ?string $reserved = null ): array {
+		if ( \count( $values ) <= $max_values ) {
+			return $values;
 		}
-		$total = $cats[ self::TOTAL_KEY ] ?? null;
-		unset( $cats[ self::TOTAL_KEY ] );
-		\uasort( $cats, fn( $a, $b ) => ( \is_array( $b ) ? ( $b['t'] ?? 0 ) : 0 ) <=> ( \is_array( $a ) ? ( $a['t'] ?? 0 ) : 0 ) );
-		$top  = \array_slice( $cats, 0, $max_values - 2, true );
+		$held = null;
+		if ( null !== $reserved ) {
+			$held = $values[ $reserved ] ?? null;
+			unset( $values[ $reserved ] );
+		}
+		// One slot for `Other`, and one more when a reserved row rides along.
+		$keep = $max_values - ( null === $reserved ? 1 : 2 );
+		\uasort(
+			$values,
+			fn( $a, $b ) => ( \is_array( $b ) && \is_numeric( $b[ $sort_field ] ?? null ) ? $b[ $sort_field ] : 0 )
+				<=> ( \is_array( $a ) && \is_numeric( $a[ $sort_field ] ?? null ) ? $a[ $sort_field ] : 0 )
+		);
+		$top  = \array_slice( $values, 0, $keep, true );
 		$rest = [];
-		foreach ( \array_slice( $cats, $max_values - 2 ) as $v ) {
-			$rest = Stats_Store::sum_fields( $rest, [ 'Other' => Core::arr( $v ) ], Stats_Store::CAT_SUMS );
+		foreach ( \array_slice( $values, $keep ) as $v ) {
+			$rest = Stats_Store::sum_fields( $rest, [ 'Other' => Core::arr( $v ) ], $fields );
 		}
-		if ( [] !== $rest ) {
-			$top = Stats_Store::sum_fields( $top, $rest, Stats_Store::CAT_SUMS );
-		}
-		if ( $total ) {
-			$top[ self::TOTAL_KEY ] = $total;
+		$top = Stats_Store::sum_fields( $top, $rest, $fields );
+		if ( null !== $held ) {
+			$top[ $reserved ] = $held;
 		}
 		return $top;
 	}
@@ -1572,12 +1590,51 @@ class Flame_Builder_Node extends Node {
 		if ( null === $store ) {
 			return;
 		}
-		$store->mirror = '' === $this->stats_partition
-			? null
-			: function ( string $key, array $data, int $ttl, string $ns ): void {
-				$this->buffer_mirror_write( $key, $data, $ttl, $ns );
-			};
+		$store->mirror = '' === $this->stats_partition ? null : $this->buffer_mirror_write( ... );
 		self::arm_rehydrate( $store, $this->stats_partition );
+		$from_partition = $store->rehydrate;
+		if ( null !== $from_partition ) {
+			$partition        = $store->partition();
+			$store->rehydrate = function ( array $keys ) use ( $from_partition, $partition ): array {
+				$wanted = [];
+				foreach ( $keys as $key ) {
+					// The seam is public and untyped; only strings name a key.
+					if ( \is_string( $key ) ) {
+						$wanted[] = $key;
+					}
+				}
+				return $this->held_frames( $wanted, $partition ) + ( $from_partition )( $wanted );
+			};
+		}
+	}
+
+	/**
+	 * The buffered frames for `$keys` that no durable log holds yet.
+	 *
+	 * The open bucket is deliberately withheld from the mirror, so these buffers
+	 * are its ONLY copy besides memcache — and `persist_aggregate_stats()` reads
+	 * a bucket back before adding to it. Without this tier an eviction mid-bucket
+	 * reads as empty and the merge restarts the bucket from zero.
+	 *
+	 * Held frames win over the partition: they are what was written last.
+	 *
+	 * @param list<string> $keys      Keys the Table missed on, relative to its namespace.
+	 * @param int          $partition Keyspace those keys sit in; the buffers key absolutely.
+	 * @return array<string,array{value: array<array-key,mixed>, ttl: int}>
+	 */
+	private function held_frames( array $keys, int $partition ): array {
+		$found = [];
+		foreach ( $keys as $key ) {
+			$held  = Stats_Store::entry_key( $partition, $key );
+			$frame = $this->stats_mirror_buffer[ $held ] ?? null;
+			foreach ( $this->stats_mirror_topn as $entries ) {
+				$frame ??= $entries[ $held ] ?? null;
+			}
+			if ( null !== $frame ) {
+				$found[ $key ] = [ 'value' => $frame[0], 'ttl' => $frame[1] ];
+			}
+		}
+		return $found;
 	}
 
 	/**
@@ -1604,11 +1661,12 @@ class Flame_Builder_Node extends Node {
 	 * the WRITE path keeps `resolve_stats_partition()`, which never falls back.
 	 */
 	private static function arm_rehydrate( Stats_Store $store, string $name ): void {
+		$partition        = $store->partition();
 		$store->rehydrate = '' === $name
 			? null
 			: self::rehydrate_seam(
-				static fn (): ?\Newspack_Nodes\Partition_Node => self::mirror_partition( $name, $store->partition() ),
-				$store->partition()
+				static fn (): ?\Newspack_Nodes\Partition_Node => self::mirror_partition( $name, $partition ),
+				$partition
 			);
 	}
 
@@ -1734,26 +1792,18 @@ class Flame_Builder_Node extends Node {
 			$this->stats_mirror_buffer[ $key ] = [ $data, $ttl ]; // aggregate: keep all
 			return;
 		}
+		$cap = $this->mirror_topn( $ns );
+		if ( 0 === $cap ) {
+			return; // NS_URL's production default: rank nothing, keep nothing.
+		}
 		// Rank flame top-N only among URLs with profiling detail (fwd-compat).
-		if ( Stats_Store::NS_URL === $ns && ! $this->has_profiling_detail( $data ) ) {
+		if ( Stats_Store::NS_URL === $ns && ! self::has_profiling_detail( $data ) ) {
 			return;
 		}
-		$this->stats_mirror_topn[ $ns ][ $key ] = [ $data, $ttl, $this->mirror_traffic_rank( $data, $ns ) ];
-		if ( \count( $this->stats_mirror_topn[ $ns ] ) > $this->mirror_topn( $ns ) ) {
+		$this->stats_mirror_topn[ $ns ][ $key ] = [ $data, $ttl ];
+		if ( \count( $this->stats_mirror_topn[ $ns ] ) > $cap ) {
 			$this->evict_lowest_rank( $ns );
 		}
-	}
-
-	/**
-	 * The live top-N cap for a per-URL namespace: the configurable $flame_topn for
-	 * NS_URL (the flame profiles), the fixed STATS_MIRROR_TOPN default otherwise.
-	 *
-	 * @param string $ns One of the STATS_MIRROR_TOPN namespaces.
-	 */
-	private function mirror_topn( string $ns ): int {
-		return Stats_Store::NS_URL === $ns
-			? $this->flame_topn
-			: self::STATS_MIRROR_TOPN[ $ns ];
 	}
 
 	/**
@@ -1762,7 +1812,7 @@ class Flame_Builder_Node extends Node {
 	 *
 	 * @param array<array-key,mixed> $data Per-URL aggregate value.
 	 */
-	private function has_profiling_detail( array $data ): bool {
+	private static function has_profiling_detail( array $data ): bool {
 		$flame = $data['flame'] ?? null;
 		return \is_array( $flame ) && ( \is_numeric( $flame['count'] ?? null ) ? (int) $flame['count'] : 0 ) > 0;
 	}
@@ -1776,7 +1826,8 @@ class Flame_Builder_Node extends Node {
 	private function evict_lowest_rank( string $ns ): void {
 		$min_key  = null;
 		$min_rank = \PHP_INT_MAX;
-		foreach ( $this->stats_mirror_topn[ $ns ] as $k => [ , , $rank ] ) {
+		foreach ( $this->stats_mirror_topn[ $ns ] as $k => [ $data ] ) {
+			$rank = self::mirror_traffic_rank( $data, $ns );
 			if ( $rank < $min_rank ) {
 				$min_rank = $rank;
 				$min_key  = $k;
@@ -1803,6 +1854,11 @@ class Flame_Builder_Node extends Node {
 	 * the stats window. Their ranks are not carried; `mirror_traffic_rank()`
 	 * derives those from the data on the way back in.
 	 *
+	 * This also WRITES — it drains the per-URL LRU to memcache and appends to the
+	 * stats partition before returning. The substrate calls `save_state()` as a
+	 * pure reader; this node borrows it as the pre-commit hook the contract does
+	 * not otherwise offer, because the frames have to land before the cursor does.
+	 *
 	 * @api Used by substrate.
 	 * @return array<string,mixed>
 	 */
@@ -1812,17 +1868,57 @@ class Flame_Builder_Node extends Node {
 		$this->flush_stats_mirror();
 		return [
 			'pending' => $this->pending,
-			'mirror'  => [
-				'buffer' => $this->stats_mirror_buffer,
-				'topn'   => \array_map(
-					static fn ( array $frames ): array => \array_map(
-						static fn ( array $frame ): array => [ $frame[0], $frame[1] ],
-						$frames
-					),
-					$this->stats_mirror_topn
-				),
-			],
+			'mirror'  => $this->checkpoint_mirror(),
 		];
+	}
+
+	/**
+	 * The held frames a checkpoint carries, smallest first, under the byte budget.
+	 *
+	 * Smallest-first keeps the most keys recoverable per byte, and drops the
+	 * biggest — which are the per-server leaderboards, the one axis that grows
+	 * with an operator input. Rank is not stored at all — `evict_lowest_rank()`
+	 * derives it from the data it already holds.
+	 *
+	 * @return array{buffer: array<string,array{0: array<array-key,mixed>, 1: int}>, topn: array<string,array<string,array{0: array<array-key,mixed>, 1: int}>>}
+	 */
+	private function checkpoint_mirror(): array {
+		$held = [];
+		foreach ( $this->stats_mirror_buffer as $key => $frame ) {
+			$held[] = [ '', $key, $frame, self::frame_bytes( $frame ) ];
+		}
+		foreach ( $this->stats_mirror_topn as $ns => $frames ) {
+			foreach ( $frames as $key => $frame ) {
+				$held[] = [ $ns, $key, $frame, self::frame_bytes( $frame ) ];
+			}
+		}
+		\usort( $held, static fn ( array $a, array $b ): int => $a[3] <=> $b[3] );
+
+		$budget = self::MAX_CHECKPOINT_MIRROR_BYTES;
+		$out    = [ 'buffer' => [], 'topn' => [] ];
+		foreach ( $held as $i => [ $ns, $key, $frame, $size ] ) {
+			if ( $size > $budget ) {
+				$over = \count( $held ) - $i;
+				$this->print_less_often( "flame-builder: {$over} held stats frames over the checkpoint budget; they still reach the mirror at bucket close" );
+				break;
+			}
+			$budget -= $size;
+			if ( '' === $ns ) {
+				$out['buffer'][ $key ] = $frame;
+			} else {
+				$out['topn'][ $ns ][ $key ] = $frame;
+			}
+		}
+		return $out;
+	}
+
+	/**
+	 * Wire size of one held frame — what it will cost the checkpoint.
+	 *
+	 * @param array{0: array<array-key,mixed>, 1: int} $frame Buffered [data, ttl].
+	 */
+	private static function frame_bytes( array $frame ): int {
+		return \strlen( (string) \wp_json_encode( $frame ) );
 	}
 
 	/**
@@ -1862,7 +1958,9 @@ class Flame_Builder_Node extends Node {
 	 * currently being accumulated into — once per checkpoint, ten times over a
 	 * bucket's life — is nine redundant copies of a value that is still growing.
 	 * A held key is re-keyed by every later write, so what finally lands is the
-	 * bucket's whole and final state, written once.
+	 * bucket's whole and final state. Near-once rather than exactly-once: a
+	 * request that started before a boundary completes after it, and re-writes
+	 * the bucket it belongs to, which is by then closed.
 	 *
 	 * The held frames are not undurable, just durable somewhere cheaper: they ride
 	 * `save_state()` into the offsetlog, a bounded ring of at most 60 keyframes,
@@ -2014,25 +2112,26 @@ class Flame_Builder_Node extends Node {
 	 *
 	 * Each bucket is merged over an empty accumulator, so a save from an older
 	 * shape that lacks a key keeps that key's default instead of leaving it unset.
-	 * A pre-map frame held ONE flat accumulator beside its `pending_bucket`; it
-	 * comes back keyed under that bucket.
+	 * A frame an older worker wrote under a different shape is skipped, costing
+	 * one worker's un-flushed delta once — far less than the retention window the
+	 * same release already resets.
 	 *
 	 * @api Used by substrate.
 	 * @param array<string,mixed> $saved A prior `save_state()` return value.
 	 */
 	public function restore_state( array $saved ): void {
 		$pending = Core::arr( $saved['pending'] ?? null );
-		// Namespace names at the top level: the pre-map, one-bucket frame.
-		if ( [] !== \array_intersect( \array_keys( $pending ), \array_keys( self::empty_bucket() ) ) ) {
-			$pending = [ Core::str( $saved['pending_bucket'] ?? '' ) => $pending ];
-		}
 		$mirror                    = Core::arr( $saved['mirror'] ?? null );
 		$this->stats_mirror_buffer = self::restore_frames( $mirror['buffer'] ?? null );
 		$topn                      = Core::arr( $mirror['topn'] ?? null );
+		// Replaced, never merged: a lowered set_flame_topn must re-bound this.
 		foreach ( self::STATS_MIRROR_TOPN as $ns => $ignored_default ) {
-			foreach ( self::restore_frames( $topn[ $ns ] ?? null ) as $key => [ $data, $ttl ] ) {
-				$this->stats_mirror_topn[ $ns ][ $key ] = [ $data, $ttl, $this->mirror_traffic_rank( $data, $ns ) ];
-			}
+			$this->stats_mirror_topn[ $ns ] = \array_slice(
+				self::restore_frames( $topn[ $ns ] ?? null ),
+				0,
+				\max( 0, $this->mirror_topn( $ns ) ),
+				true
+			);
 		}
 		foreach ( $pending as $bucket => $acc ) {
 			if ( '' !== $bucket && \is_array( $acc ) ) {
@@ -2044,6 +2143,18 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
+	 * The live top-N cap for a per-URL namespace: the configurable $flame_topn for
+	 * NS_URL (the flame profiles), the fixed STATS_MIRROR_TOPN default otherwise.
+	 *
+	 * @param string $ns One of the STATS_MIRROR_TOPN namespaces.
+	 */
+	private function mirror_topn( string $ns ): int {
+		return Stats_Store::NS_URL === $ns
+			? $this->flame_topn
+			: self::STATS_MIRROR_TOPN[ $ns ];
+	}
+
+	/**
 	 * Traffic rank (~request count) for the per-URL namespaces.
 	 *
 	 * Each namespace stores a different shape, so each derives the count its own
@@ -2052,7 +2163,7 @@ class Flame_Builder_Node extends Node {
 	 * @param array<array-key,mixed> $data Value being mirrored.
 	 * @param string                  $ns   Namespace it belongs to.
 	 */
-	private function mirror_traffic_rank( array $data, string $ns ): int {
+	private static function mirror_traffic_rank( array $data, string $ns ): int {
 		if ( Stats_Store::NS_URL === $ns ) {
 			$flame = $data['flame'] ?? null;
 			return \is_array( $flame ) && \is_numeric( $flame['count'] ?? null ) ? (int) $flame['count'] : 0;
@@ -2108,9 +2219,19 @@ class Flame_Builder_Node extends Node {
 			'cat'                   => [],
 			'cat_by_server'         => [],
 			'cat_by_url'            => [],
-			'leaderboard'           => [ 'count' => 0, 'sum_req_time' => 0.0, 'categories' => [] ],
+			'leaderboard'           => self::empty_leaderboard(),
 			'leaderboard_by_server' => [],
 		];
+	}
+
+	/**
+	 * One leaderboard scope's empty sums. Four literals drifting apart is one
+	 * accumulator seeded differently from the value it merges into.
+	 *
+	 * @return Leaderboard_Acc
+	 */
+	private static function empty_leaderboard(): array {
+		return [ 'count' => 0, 'sum_req_time' => 0.0, 'categories' => [] ];
 	}
 
 	/**
@@ -2437,8 +2558,8 @@ class Flame_Builder_Node extends Node {
 			'requests'    => [
 				[
 					'name'        => 'GET_STATS',
-					'description' => 'Stats cache + pending bucket + auto-tune queue depth.',
-					'reply_shape' => '{ stats_count, pending_url_count, pending_buckets, last_flush_age_s, auto_tune_pending_count, is_hub, significant_events_count }',
+					'description' => 'Stats cache + pending buckets + auto-tune queue depth.',
+					'reply_shape' => '{ stats_count, pending_url_count, intern_count, pending_buckets, last_flush_age_s, auto_tune_pending_count, is_hub, significant_events_count }',
 				],
 			],
 		];

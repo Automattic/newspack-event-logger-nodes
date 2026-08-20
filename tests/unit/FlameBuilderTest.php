@@ -207,14 +207,12 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	/**
-	 * Stored request totals for the buckets a just-now request can land in —
-	 * two, so a fill straddling a bucket boundary does not flake.
+	 * Stored request totals for the buckets a just-now request can land in.
 	 *
 	 * @return array<string,mixed>
 	 */
 	private function recent_hourly( Stats_Store $store ): array {
-		$now = \time();
-		return $store->get_hourly_buckets( [ Stats_Store::bucket_key( $now ), Stats_Store::bucket_key( $now - 300 ) ] );
+		return $store->get_hourly_buckets( $this->recent_buckets() );
 	}
 
 	private function fill_request( Flame_Builder_Node $fb, array $request ): void {
@@ -1318,18 +1316,6 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( [ 'count' => 0, 'sum_req_time' => 0.0, 'categories' => [] ], $bucket['leaderboard'] );
 	}
 
-	public function test_restore_state_keys_a_pre_bucket_map_frame_under_its_bucket(): void {
-		// Pre-0.58: ONE flat accumulator beside a `pending_bucket` naming it.
-		$fb = new Flame_Builder_Node();
-		$fb->restore_state( [
-			'pending_bucket' => '2024-01-01-12-00',
-			'pending'        => [
-				'hourly' => [ 'count' => 7, 'sum_ms' => 700, 'sum_peak_mb' => 21 ],
-			],
-		] );
-		$this->assertSame( 7, $fb->save_state()['pending']['2024-01-01-12-00']['hourly']['count'] );
-	}
-
 	// --- handle_request (TM_REQUEST GET_STATS) ----------------------------
 
 	public function test_handle_request_get_stats_returns_payload(): void {
@@ -1744,7 +1730,7 @@ class FlameBuilderTest extends TestCase {
 		$this->assertLessThanOrEqual( Stats_Store::MAX_URL_DIM_VALUES, \count( $url_dim['ua'] ) );
 	}
 
-	// --- merge_and_cap_categories: Other rollover + total preserved -------
+	// --- category caps: Other rollover + total preserved ------------------
 
 	public function test_categories_other_rollover_preserves_total(): void {
 				Core::$memd = new InMemoryMemcached();
@@ -2326,29 +2312,6 @@ class FlameBuilderTest extends TestCase {
 		$this->assertGreaterThanOrEqual( 640, $after['Other']['c'] ?? 0, 'the earlier overflow is still counted' );
 	}
 
-	public function test_a_bucket_reaches_the_mirror_when_it_closes(): void {
-		Core::$memd = new InMemoryMemcached();
-		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		[ $fb, $p ] = $this->mirrored_builder( $store, 'flames-stats' );
-
-		$open = 1_700_000_000;
-		$fb->set_clock( static fn() => $open );
-		$this->fill_request( $fb, $this->completed_request( [ 'duration_ms' => 44.0, 'timestamp' => $open ] ) );
-		$fb->flush();
-
-		// A request two buckets later closes the first one.
-		$later = $open + 600;
-		$fb->set_clock( static fn() => $later );
-		$this->fill_request( $fb, $this->completed_request( [ 'duration_ms' => 51.0, 'timestamp' => $later ] ) );
-		$fb->flush();
-		$fb->save_state();
-		$p->flush();
-		$fb->set_clock( null );
-
-		$closed = Stats_Store::entry_key( 0, Stats_Store::NS_HOURLY . ':' . Stats_Store::bucket_key( $open ) );
-		$this->assertSame( 1, \array_count_values( $this->raw_mirror_frame_keys( $p ) )[ $closed ] ?? 0, 'a closed bucket is mirrored exactly once' );
-	}
-
 	// --- Save state after multiple flushes (idempotency) ------------------
 
 	public function test_double_flush_is_idempotent(): void {
@@ -2856,6 +2819,67 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( 2, $frames[ $url_dim ]['data']['method']['GET']['c'] ?? 0, 'and so did the per-URL top-N' );
 	}
 
+	public function test_an_evicted_open_bucket_is_repaired_from_the_held_frames(): void {
+		// The open bucket is in no durable log yet, so the HELD frames are the
+		// only copy a read-modify-write can recover it from.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		[ $fb, $p ] = $this->mirrored_builder( $store, 'flames-stats' );
+
+		$open   = 1_700_000_000;
+		$bucket = Stats_Store::bucket_key( $open );
+		$fb->set_clock( static fn() => $open );
+
+		foreach ( \range( 1, 9 ) as $ignored ) {
+			$this->fill_request( $fb, $this->completed_request( [ 'duration_ms' => 31.0, 'timestamp' => $open ] ) );
+		}
+		$fb->flush();
+		$fb->save_state();
+		$this->assertSame( 9, $store->get_hourly_bucket( $bucket )['count'] ?? 0, 'nine landed' );
+
+		// memcached evicts the open bucket under pressure.
+		Core::$memd->delete( Stats_Store::entry_key( 0, Stats_Store::NS_HOURLY . ':' . $bucket ) );
+
+		$this->fill_request( $fb, $this->completed_request( [ 'duration_ms' => 32.0, 'timestamp' => $open ] ) );
+		$fb->flush();
+		$fb->set_clock( null );
+
+		$this->assertSame(
+			10,
+			$store->get_hourly_bucket( $bucket )['count'] ?? 0,
+			'the merge read through the held frame instead of restarting from zero'
+		);
+	}
+
+	public function test_the_checkpoint_carries_held_frames_only_up_to_its_budget(): void {
+		// The offsetlog bounds keyframe COUNT, not bytes, and the per-server
+		// aggregates grow with the spoke count — so the carry bounds itself.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		[ $fb, $p ] = $this->mirrored_builder( $store, 'flames-stats' );
+
+		$open   = 1_700_000_000;
+		$bucket = Stats_Store::bucket_key( $open );
+		$fb->set_clock( static fn() => $open );
+
+		$store->set_hourly_bucket( $bucket, [ 'count' => 3 ] );
+		$store->set_leaderboard_bucket( $bucket, [ 'blob' => \str_repeat( 'x', 300000 ) ] );
+
+		$carried = $fb->save_state()['mirror']['buffer'];
+		$fb->set_clock( null );
+
+		$this->assertArrayHasKey(
+			Stats_Store::entry_key( 0, Stats_Store::NS_HOURLY . ':' . $bucket ),
+			$carried,
+			'the small frame rides the checkpoint'
+		);
+		$this->assertArrayNotHasKey(
+			Stats_Store::entry_key( 0, Stats_Store::NS_LB . ':' . $bucket ),
+			$carried,
+			'the one past the budget does not'
+		);
+	}
+
 	public function test_a_closed_bucket_is_not_re_mirrored_when_a_later_bucket_fills(): void {
 		// A bucket is written when it changes, so a closed one is written once.
 		Core::$memd = new InMemoryMemcached();
@@ -2867,9 +2891,12 @@ class FlameBuilderTest extends TestCase {
 		$first = Stats_Store::bucket_key( $early );
 
 		$fb->set_clock( static fn() => $early );
-		$this->fill_request( $fb, $this->completed_request( [ 'duration_ms' => 41.0, 'timestamp' => $early ] ) );
-		$fb->flush();
-		$fb->save_state();
+		// Two checkpoints while `early` is still open: the old code wrote it at both.
+		foreach ( [ 41.0, 43.0 ] as $duration_ms ) {
+			$this->fill_request( $fb, $this->completed_request( [ 'duration_ms' => $duration_ms, 'timestamp' => $early ] ) );
+			$fb->flush();
+			$fb->save_state();
+		}
 
 		$fb->set_clock( static fn() => $late );
 		$this->fill_request( $fb, $this->completed_request( [ 'duration_ms' => 73.0, 'timestamp' => $late ] ) );
