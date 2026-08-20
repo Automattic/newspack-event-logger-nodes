@@ -8,12 +8,13 @@
  * `flames:partition` Partition for the flame viewer, and folds the request into
  * every aggregate the dashboards read.
  *
- * Aggregation runs in two tiers. Per-request counters land in `$pending`, the
- * accumulator for the current incomplete 5-minute bucket; when the bucket key
- * rolls over — and on every `flush()` — `promote_pending_bucket()` moves them
- * into the per-namespace flush arrays, where caps apply. `flush()` then merges
- * those into memcache through `Stats_Store` (the 9-namespace schema) at most
- * once per FLUSH_INTERVAL_SEC. Per-URL flame trees take a different route: they
+ * Per-request counters land in `$pending`, one accumulator per 5-minute bucket,
+ * keyed by the bucket the request STARTED in. A record arrives at completion,
+ * so around a boundary it routinely lands in a bucket older than the newest one
+ * seen — which is why `$pending` is a map rather than one rotating slot.
+ * `flush()` merges each bucket into memcache through `Stats_Store` (the
+ * 9-namespace schema) at most once per FLUSH_INTERVAL_SEC, capping as it
+ * writes, then drops them. Per-URL flame trees take a different route: they
  * live in an `LRU_Cache` and drain through `mirror_url_stats()`.
  *
  * Two side channels hang off that pipeline. `set_stats_target` names a durable
@@ -43,6 +44,22 @@ if ( ! \defined( 'ABSPATH' ) ) {
 
 /**
  * Builds flame trees and the 9-namespace stats schema from completed requests.
+ *
+ * @phpstan-type Leaderboard_Acc array{count?: int, sum_req_time?: float|int, categories: array<string,array{samples: int,sum_time: float|int,sum_count: float|int,ts?: int,entries: array<string,array<int,float|int>>}>}
+ * @phpstan-type Dim_Values array<string,array{c: int,s: float|int,m: float|int}>
+ * @phpstan-type Cat_Values array<string,array{t: float|int,c: float|int,n: int}>
+ * @phpstan-type Bucket_Acc array{
+ *   hourly: array<string,mixed>,
+ *   dim: array<string,Dim_Values>,
+ *   dim_by_server: array<string,array<string,Dim_Values>>,
+ *   url_dim: array<string,array<string,Dim_Values>>,
+ *   url_stats: array<string,mixed>,
+ *   cat: Cat_Values,
+ *   cat_by_server: array<string,Cat_Values>,
+ *   cat_by_url: array<string,Cat_Values>,
+ *   leaderboard: Leaderboard_Acc,
+ *   leaderboard_by_server: array<string,Leaderboard_Acc>
+ * }
  */
 class Flame_Builder_Node extends Node {
 	use \Newspack_Nodes\Schema_Reflection;
@@ -133,10 +150,6 @@ class Flame_Builder_Node extends Node {
 
 	/** @var Auto_Tuner_Node|null Owned sibling — receives auto-tune decisions. */
 	private ?Auto_Tuner_Node $auto_tuner = null;
-	/** @var array<string,array<string,mixed>> Bucket → category accumulator. */
-	private $cat_stats                   = [];
-	/** @var array<string,array<string,array<string,mixed>>> Server → bucket → category accumulator. */
-	private $cat_stats_by_server         = [];
 
 	/** @var (callable(): int)|null Test seam: clock function for bucket-key derivation. */
 	private $clock_fn = null;
@@ -144,10 +157,6 @@ class Flame_Builder_Node extends Node {
 	private array $custom_event_names       = [];
 	/** @var array<string,array<string,bool>> rule_id => {event => true} disable decisions. */
 	private array $custom_events_to_disable = [];
-	/** @var array<string,array<string,array<string,array{c: int,s: float|int,m: float|int}>>> Dim → bucket → value accumulator. */
-	private $dim_stats                   = [];
-	/** @var array<string,array<string,array<string,array<string,array{c: int,s: float|int,m: float|int}>>>> Server → dim → bucket → value accumulator. */
-	private $dim_stats_by_server         = [];
 
 	/**
 	 * Live top-N cap for the per-URL flame-profile mirror (NS_URL) — how many
@@ -163,39 +172,16 @@ class Flame_Builder_Node extends Node {
 	/** @var array<string,array<string,bool>> rule_id => {hook => true} disable decisions. */
 	private array $hooks_to_disable         = [];
 
-	/** @var array<string,array<string,mixed>> Bucket-keyed hourly accumulator. */
-	private $hourly_stats                = [];
-
 	/** Hub mode: also accumulate the per-server namespaces. Derived from `<eln:is_hub>`. */
 	private bool $is_hub                    = false;
 
 	/** Unix time of the last flush(); fill() compares it against FLUSH_INTERVAL_SEC. */
 	private float $last_flush_time          = 0.0;
-	/** @var array<string,array<string,array<string,mixed>>> Server → bucket leaderboard accumulator. */
-	private $leaderboard_by_server_stats = [];
-	/** @var array<string,array<string,mixed>> Bucket-keyed leaderboard accumulator. */
-	private $leaderboard_stats           = [];
 	/** @var array<string,array<string,bool>> rule_id => {event => true} newly promoted. */
 	private array $new_significant_events   = [];
 
-	/**
-	 * Pending bucket accumulators. All keys optional so the empty default and
-	 * reset_pending() both type-check; leaf shapes drive the deep-offset narrowing.
-	 *
-	 * @var array{
-	 *   hourly?: array<string,mixed>,
-	 *   dim?: array<string,array<string,array{c: int,s: float|int,m: float|int}>>,
-	 *   dim_by_server?: array<string,array<string,array<string,array{c: int,s: float|int,m: float|int}>>>,
-	 *   url_dim?: array<string,array<string,array<string,array{c: int,s: float|int,m: float|int}>>>,
-	 *   url_stats?: array<string,mixed>,
-	 *   cat?: array<string,array{t: float|int,c: float|int,n: int}>,
-	 *   cat_by_server?: array<string,array<string,array{t: float|int,c: float|int,n: int}>>,
-	 *   cat_by_url?: array<string,array<string,array{t: float|int,c: float|int,n: int}>>,
-	 *   leaderboard?: array{count?: int, sum_req_time?: float|int, categories: array<string,array{samples: int,sum_time: float|int,sum_count: float|int,ts?: int,entries: array<string,array<int,float|int>>}>},
-	 *   leaderboard_by_server?: array<string,array{count?: int,sum_req_time?: float|int,categories: array<string,array{samples: int,sum_time: float|int,sum_count: float|int,ts?: int,entries: array<string,array<int,float|int>>}>}>
-	 * }
-	 */
-	private $pending = [];
+	/** @var array<array-key,Bucket_Acc> Accumulators by bucket key, drained at flush(). */
+	private array $pending = [];
 
 	/**
 	 * The per-PROCESS string-intern table, shared by every Flame_Builder in the
@@ -207,12 +193,6 @@ class Flame_Builder_Node extends Node {
 
 	/** Whether `$intern` reached INTERN_TABLE_LIMIT and stopped growing. */
 	private static bool $intern_full = false;
-
-	/**
-	 * Bucket key `$pending` is accumulating into; '' until the first request.
-	 * A request whose key differs promotes `$pending` and adopts the new key.
-	 */
-	private string $pending_bucket = '';
 
 	/** @var Rule_Set|null Lazily-loaded per-worker ruleset (thresholds are per-rule). */
 	private ?Rule_Set $rule_set = null;
@@ -235,15 +215,9 @@ class Flame_Builder_Node extends Node {
 
 	/** @var Stats_Store|null Memcache-backed stats store; null until `configure_stats` runs. */
 	private $stats_store = null;
-	/** @var array<string,array<string,array<string,mixed>>> Url-hash → bucket → category accumulator. */
-	private $url_cat_stats               = [];
-	/** @var array<string,array<string,array<string,array<string,array{c: int,s: float|int,m: float|int}>>>> Url-hash → dim → bucket → value accumulator. */
-	private $url_dim_stats               = [];
-	/** @var array<string,array<string,mixed>> Bucket → url-hash URL stats accumulator. */
-	private $url_stats                   = [];
 
 	/**
-	 * Build the per-URL LRU, the empty pending bucket, and the owned auto-tuner.
+	 * Build the per-URL LRU and the owned auto-tuner.
 	 *
 	 * The node is inert until `configure_stats` supplies a `Stats_Store`: it still
 	 * accumulates and still forwards flames, but nothing reaches memcache.
@@ -252,7 +226,6 @@ class Flame_Builder_Node extends Node {
 	 */
 	public function __construct() {
 		$this->last_flush_time = Core::$now ?: Core::right_now();
-		$this->reset_pending();
 
 		// Owned auto-tuner sibling (patron-linked; hidden from the canvas).
 		$this->auto_tuner = new Auto_Tuner_Node();
@@ -364,9 +337,9 @@ class Flame_Builder_Node extends Node {
 			$now = ( Core::$now ?: Core::right_now() );
 			$payload = [
 				'stats_count'              => $stats_count,
-				'pending_url_count'        => \count( Core::arr( $this->pending['url_stats'] ?? [] ) ),
+				'pending_url_count'        => \array_sum( \array_map( static fn ( array $acc ): int => \count( $acc['url_stats'] ), $this->pending ) ),
 				'intern_count'             => \count( self::$intern ),
-				'pending_bucket'           => $this->pending_bucket,
+				'pending_buckets'          => \array_keys( $this->pending ),
 				'last_flush_age_s'         => $this->last_flush_time > 0 ? (int) ( $now - $this->last_flush_time ) : null,
 				'auto_tune_pending_count'  => self::map_total( $this->hooks_to_disable ) + self::map_total( $this->custom_events_to_disable ) + self::map_total( $this->new_significant_events ),
 				'is_hub'                   => $this->is_hub,
@@ -481,13 +454,17 @@ class Flame_Builder_Node extends Node {
 		$server_name   = Core::str( $server_raw );
 
 		$aggregate = $this->accumulate_url_aggregate( $url_hash, $flame_data, $duration_ms, $record_timing, $now );
-		$this->rotate_pending_bucket( $timestamp );
-		$this->accumulate_url_stats( $url_hash, $request, $duration_ms, $record_timing, $timestamp );
-		$this->accumulate_hourly( $request, $duration_ms, $record_timing, $count_global );
-		$this->accumulate_dimensions( $url_hash, $request, $server_name, $duration_ms, $record_timing, $count_global );
+		// The request STARTED in this bucket; it is reaching us at completion.
+		$bucket                     = Stats_Store::bucket_key( $timestamp );
+		$this->pending[ $bucket ] ??= self::empty_bucket();
+		$acc                        = &$this->pending[ $bucket ];
+		$this->accumulate_url_stats( $acc, $url_hash, $request, $duration_ms, $record_timing, $timestamp );
+		$this->accumulate_hourly( $acc, $request, $duration_ms, $record_timing, $count_global );
+		$this->accumulate_dimensions( $acc, $url_hash, $request, $server_name, $duration_ms, $record_timing, $count_global );
 
 		if ( ! empty( $profiles ) && $record_timing ) {
 			$this->accumulate_profiles(
+				$acc,
 				$url_hash,
 				$profiles,
 				$request,
@@ -498,6 +475,8 @@ class Flame_Builder_Node extends Node {
 				$now
 			);
 		}
+
+		unset( $acc );
 
 		/** @var array<string,mixed> $aggregate */
 		$this->stats_store?->accumulate_url_stats( $url_hash, $aggregate );
@@ -553,39 +532,24 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
-	 * Adopt the bucket this request belongs to, promoting the outgoing one first.
-	 *
-	 * @param int $timestamp The request's timestamp.
-	 */
-	private function rotate_pending_bucket( int $timestamp ): void {
-		$bucket_key = Stats_Store::bucket_key( $timestamp );
-		if ( $bucket_key === $this->pending_bucket ) {
-			return;
-		}
-		if ( '' !== $this->pending_bucket ) {
-			$this->promote_pending_bucket();
-		}
-		$this->pending_bucket = $bucket_key;
-	}
-
-	/**
 	 * Fold the request into its per-URL row in the pending bucket: counts, timing
 	 * extremes, status buckets, sampled durations and peak memory.
 	 *
+	 * @param Bucket_Acc              $acc           The request's bucket accumulator.
 	 * @param string                  $url_hash      URL hash of the request.
 	 * @param array<array-key,mixed> $request       Full request record.
 	 * @param float                   $duration_ms   Request duration.
 	 * @param bool                    $record_timing Whether timing counts.
 	 * @param int                     $timestamp     The request's timestamp.
 	 */
-	private function accumulate_url_stats( string $url_hash, array $request, float $duration_ms, bool $record_timing, int $timestamp ): void {
+	private function accumulate_url_stats( array &$acc, string $url_hash, array $request, float $duration_ms, bool $record_timing, int $timestamp ): void {
 		$url_val = $request['url'] ?? '';
 		$url     = Core::str( $url_val );
 		if ( '' === $url ) {
 			return;
 		}
-		if ( ! isset( $this->pending['url_stats'][ $url_hash ] ) ) {
-			$this->pending['url_stats'][ $url_hash ] = [
+		if ( ! isset( $acc['url_stats'][ $url_hash ] ) ) {
+			$acc['url_stats'][ $url_hash ] = [
 				'url'         => $url,
 				'count'       => 0,
 				'timed_count' => 0,
@@ -603,7 +567,7 @@ class Flame_Builder_Node extends Node {
 			];
 		}
 		/** @var array{url: string, count: int, timed_count: int, sum_ms: float|int, min_ms: float|int, max_ms: float|int, last_seen: int, durations: array<int,float|int>, count_2xx: int, count_3xx: int, count_4xx: int, count_5xx: int, sum_peak_mb: float|int, max_peak_mb: float|int} $us */
-		$us = $this->pending['url_stats'][ $url_hash ];
+		$us = $acc['url_stats'][ $url_hash ];
 		++$us['count'];
 		// Per-URL: workers keep timing on their own row.
 		if ( $record_timing ) {
@@ -635,7 +599,7 @@ class Flame_Builder_Node extends Node {
 			$us['sum_peak_mb'] += $peak_mb;
 			$us['max_peak_mb']  = \max( $us['max_peak_mb'], $peak_mb );
 		}
-		$this->pending['url_stats'][ $url_hash ] = $us;
+		$acc['url_stats'][ $url_hash ] = $us;
 	}
 
 	/**
@@ -643,15 +607,16 @@ class Flame_Builder_Node extends Node {
 	 * contribute nothing here — not count, not timing, not peak memory —
 	 * or one long-running worker would dominate the site-wide averages.
 	 *
+	 * @param Bucket_Acc              $acc           The request's bucket accumulator.
 	 * @param array<array-key,mixed> $request       Full request record.
 	 * @param float                   $duration_ms   Request duration.
 	 * @param bool                    $record_timing Whether timing counts.
 	 * @param bool                    $count_global  Whether this feeds global stats.
 	 */
-	private function accumulate_hourly( array $request, float $duration_ms, bool $record_timing, bool $count_global ): void {
+	private function accumulate_hourly( array &$acc, array $request, float $duration_ms, bool $record_timing, bool $count_global ): void {
 		$hourly_peak     = $request['peak_mb'] ?? 0;
 		$hourly_peak_num = \is_numeric( $hourly_peak ) ? $hourly_peak + 0 : 0;
-		$hourly          = $this->pending['hourly'] ?? [];
+		$hourly          = $acc['hourly'];
 		$hourly          = [
 			'count'       => \is_numeric( $hourly['count'] ?? null ) ? $hourly['count'] : 0,
 			'sum_ms'      => \is_numeric( $hourly['sum_ms'] ?? null ) ? $hourly['sum_ms'] : 0,
@@ -665,13 +630,14 @@ class Flame_Builder_Node extends Node {
 			}
 			$hourly['sum_peak_mb'] += $hourly_peak_num;
 		}
-		$this->pending['hourly'] = $hourly;
+		$acc['hourly'] = $hourly;
 	}
 
 	/**
 	 * Fold the request into each of the seven dimensional axes, three ways:
 	 * globally, per reporting server (hub only), and per URL.
 	 *
+	 * @param Bucket_Acc              $acc           The request's bucket accumulator.
 	 * @param string                  $url_hash      URL hash of the request.
 	 * @param array<array-key,mixed> $request       Full request record.
 	 * @param string                  $server_name   Reporting server, '' when unknown.
@@ -679,7 +645,7 @@ class Flame_Builder_Node extends Node {
 	 * @param bool                    $record_timing Whether timing counts.
 	 * @param bool                    $count_global  Whether this feeds global stats.
 	 */
-	private function accumulate_dimensions( string $url_hash, array $request, string $server_name, float $duration_ms, bool $record_timing, bool $count_global ): void {
+	private function accumulate_dimensions( array &$acc, string $url_hash, array $request, string $server_name, float $duration_ms, bool $record_timing, bool $count_global ): void {
 		$status_category = self::status_category( $request );
 		if ( null !== $status_category ) {
 			// The 'status' axis reads this field; nothing else does.
@@ -698,16 +664,16 @@ class Flame_Builder_Node extends Node {
 			$val = self::intern( $val );
 			// Global: workers contribute nothing — count, timing, AND peak.
 			if ( $count_global ) {
-				$this->pending['dim'][ $dim ][ $val ] = self::add_dim( $this->pending['dim'][ $dim ][ $val ] ?? null, $dim_duration, $dim_peak_mb );
+				$acc['dim'][ $dim ][ $val ] = self::add_dim( $acc['dim'][ $dim ][ $val ] ?? null, $dim_duration, $dim_peak_mb );
 			}
 
 			// Per-server (hub only; skip redundant dim); global drops workers.
 			if ( $this->is_hub && '' !== $server_name && 'server' !== $dim && $count_global ) {
-				$this->pending['dim_by_server'][ $server_name ][ $dim ][ $val ] = self::add_dim( $this->pending['dim_by_server'][ $server_name ][ $dim ][ $val ] ?? null, $dim_duration, $dim_peak_mb );
+				$acc['dim_by_server'][ $server_name ][ $dim ][ $val ] = self::add_dim( $acc['dim_by_server'][ $server_name ][ $dim ][ $val ] ?? null, $dim_duration, $dim_peak_mb );
 			}
 
 			// Per-URL.
-			$this->pending['url_dim'][ $url_hash ][ $dim ][ $val ] = self::add_dim( $this->pending['url_dim'][ $url_hash ][ $dim ][ $val ] ?? null, $dim_duration, $dim_peak_mb );
+			$acc['url_dim'][ $url_hash ][ $dim ][ $val ] = self::add_dim( $acc['url_dim'][ $url_hash ][ $dim ][ $val ] ?? null, $dim_duration, $dim_peak_mb );
 		}
 	}
 
@@ -754,6 +720,7 @@ class Flame_Builder_Node extends Node {
 	 * `$count_global` gate is passed in rather than re-derived, since deciding it
 	 * independently at each accumulate site is the classic bug in this class.
 	 *
+	 * @param Bucket_Acc                $acc          The request's bucket accumulator.
 	 * @param string                    $url_hash     URL hash of the request.
 	 * @param array<array-key,mixed>   $profiles     `profiles{}` from the request record.
 	 * @param array<array-key,mixed>   $request      Full request record.
@@ -764,6 +731,7 @@ class Flame_Builder_Node extends Node {
 	 * @param int                       $now          Clock read for this request.
 	 */
 	private function accumulate_profiles(
+		array &$acc,
 		string $url_hash,
 		array $profiles,
 		array $request,
@@ -786,34 +754,34 @@ class Flame_Builder_Node extends Node {
 		/** @var array{count?: int, sum_req_time?: float|int, categories: array<string,array{samples: int,sum_time: float|int,sum_count: float|int,ts?: int,entries: array<string,array<int,float|int>>}>} $prof */
 		$prof = $aggregate_profiles;
 		/** @var array{count?: int, sum_req_time?: float|int, categories: array<string,array{samples: int,sum_time: float|int,sum_count: float|int,ts?: int,entries: array<string,array<int,float|int>>}>} $lb */
-		$lb   = &$this->pending['leaderboard'];
+		$lb   = &$acc['leaderboard'];
 
 		$req_time = 0.0;
 
 		// Global: workers excluded from the "total" pseudo-category.
 		if ( $count_global ) {
-			$this->pending['cat'][ self::TOTAL_KEY ] = self::add_cat( $this->pending['cat'][ self::TOTAL_KEY ] ?? null, $duration_ms, 0 );
+			$acc['cat'][ self::TOTAL_KEY ] = self::add_cat( $acc['cat'][ self::TOTAL_KEY ] ?? null, $duration_ms, 0 );
 		}
 
 		// Global per-server: drop workers.
 		if ( $this->is_hub && '' !== $server_name && $count_global ) {
-			$this->pending['cat_by_server'][ $server_name ][ self::TOTAL_KEY ] = self::add_cat( $this->pending['cat_by_server'][ $server_name ][ self::TOTAL_KEY ] ?? null, $duration_ms, 0 );
+			$acc['cat_by_server'][ $server_name ][ self::TOTAL_KEY ] = self::add_cat( $acc['cat_by_server'][ $server_name ][ self::TOTAL_KEY ] ?? null, $duration_ms, 0 );
 		}
 
-		$this->pending['cat_by_url'][ $url_hash ][ self::TOTAL_KEY ] = self::add_cat( $this->pending['cat_by_url'][ $url_hash ][ self::TOTAL_KEY ] ?? null, $duration_ms, 0 );
+		$acc['cat_by_url'][ $url_hash ][ self::TOTAL_KEY ] = self::add_cat( $acc['cat_by_url'][ $url_hash ][ self::TOTAL_KEY ] ?? null, $duration_ms, 0 );
 
 		// Per-server leaderboard (hub mode only). Global: drop workers.
 		$slb = null;
 		if ( $this->is_hub && '' !== $server_name && $count_global ) {
-			if ( ! isset( $this->pending['leaderboard_by_server'][ $server_name ] ) ) {
-				$this->pending['leaderboard_by_server'][ $server_name ] = [
+			if ( ! isset( $acc['leaderboard_by_server'][ $server_name ] ) ) {
+				$acc['leaderboard_by_server'][ $server_name ] = [
 					'count'        => 0,
 					'sum_req_time' => 0.0,
 					'categories'   => [],
 				];
 			}
 			/** @var array{count?: int, sum_req_time?: float|int, categories: array<string,array{samples: int,sum_time: float|int,sum_count: float|int,ts?: int,entries: array<string,array<int,float|int>>}>} $slb */
-			$slb = &$this->pending['leaderboard_by_server'][ $server_name ];
+			$slb = &$acc['leaderboard_by_server'][ $server_name ];
 		}
 
 		foreach ( $profiles as $category => $data ) {
@@ -872,18 +840,18 @@ class Flame_Builder_Node extends Node {
 
 			// Global category time series (pending): workers excluded.
 			if ( $count_global ) {
-				$this->pending['cat'][ $category ] = self::add_cat( $this->pending['cat'][ $category ] ?? null, $cat_time, $cat_count );
-				$this->pending['cat'][ self::TOTAL_KEY ]['c'] += $cat_count;
+				$acc['cat'][ $category ] = self::add_cat( $acc['cat'][ $category ] ?? null, $cat_time, $cat_count );
+				$acc['cat'][ self::TOTAL_KEY ] = self::add_cat( $acc['cat'][ self::TOTAL_KEY ], 0, $cat_count, sample: false );
 			}
 
 			// Global per-server category series: drop workers.
 			if ( $this->is_hub && '' !== $server_name && $count_global ) {
-				$this->pending['cat_by_server'][ $server_name ][ $category ] = self::add_cat( $this->pending['cat_by_server'][ $server_name ][ $category ] ?? null, $cat_time, $cat_count );
-				$this->pending['cat_by_server'][ $server_name ][ self::TOTAL_KEY ]['c'] += $cat_count;
+				$acc['cat_by_server'][ $server_name ][ $category ] = self::add_cat( $acc['cat_by_server'][ $server_name ][ $category ] ?? null, $cat_time, $cat_count );
+				$acc['cat_by_server'][ $server_name ][ self::TOTAL_KEY ] = self::add_cat( $acc['cat_by_server'][ $server_name ][ self::TOTAL_KEY ], 0, $cat_count, sample: false );
 			}
 
-			$this->pending['cat_by_url'][ $url_hash ][ $category ] = self::add_cat( $this->pending['cat_by_url'][ $url_hash ][ $category ] ?? null, $cat_time, $cat_count );
-			$this->pending['cat_by_url'][ $url_hash ][ self::TOTAL_KEY ]['c'] += $cat_count;
+			$acc['cat_by_url'][ $url_hash ][ $category ] = self::add_cat( $acc['cat_by_url'][ $url_hash ][ $category ] ?? null, $cat_time, $cat_count );
+			$acc['cat_by_url'][ $url_hash ][ self::TOTAL_KEY ] = self::add_cat( $acc['cat_by_url'][ $url_hash ][ self::TOTAL_KEY ], 0, $cat_count, sample: false );
 
 			// Significant-event: avg/call > threshold; workers excluded.
 			if ( $auto_tune_active && null !== $lcat && ! $is_callback && ! $is_plugin && $time_threshold > 0 && $lcat['sum_count'] > 0 ) {
@@ -969,19 +937,23 @@ class Flame_Builder_Node extends Node {
 
 	/**
 	 * Fold a category sample into a time-series bucket: time, call count, and
-	 * one more sample. The `total` pseudo-category passes 0 for `$count` and
-	 * takes its count from the per-category sites instead.
+	 * one more sample.
 	 *
-	 * @param array{t: float|int, c: float|int, n: int}|null $slot  Bucket, null on first use.
-	 * @param float                                          $time  Time to add.
-	 * @param float                                          $count Call count to add.
+	 * The `total` pseudo-category is sampled once per REQUEST (time, no calls)
+	 * and then fed each category's call count with `$sample` false, so the
+	 * rollup's `n` stays a request count.
+	 *
+	 * @param array{t: float|int, c: float|int, n: int}|null $slot   Bucket, null on first use.
+	 * @param float                                          $time   Time to add.
+	 * @param float                                          $count  Call count to add.
+	 * @param bool                                           $sample Whether this is one more sample.
 	 * @return array{t: float|int, c: float|int, n: int} The updated bucket.
 	 */
-	private static function add_cat( ?array $slot, float $time, float $count ): array {
+	private static function add_cat( ?array $slot, float $time, float $count, bool $sample = true ): array {
 		$slot ??= [ 't' => 0, 'c' => 0, 'n' => 0 ];
 		$slot['t'] += $time;
 		$slot['c'] += $count;
-		++$slot['n'];
+		$slot['n'] += $sample ? 1 : 0;
 		return $slot;
 	}
 
@@ -1104,7 +1076,7 @@ class Flame_Builder_Node extends Node {
 	 *
 	 * `fill()` calls this at most once per FLUSH_INTERVAL_SEC. Nothing else does:
 	 * there is no shutdown hook, so a worker that dies between flushes loses the
-	 * un-promoted pending bucket. The durable half — per-URL flame trees and the
+	 * un-persisted buckets. The durable half — per-URL flame trees and the
 	 * mirrored stats frames — is instead co-committed by `save_state()` at the
 	 * Consumer's checkpoint.
 	 *
@@ -1112,153 +1084,22 @@ class Flame_Builder_Node extends Node {
 	 * accumulators still reset, but nothing is written anywhere.
 	 */
 	public function flush(): void {
-		// Promote every flush so dashboards see the partial bucket promptly.
-		if ( '' !== $this->pending_bucket ) {
-			$this->promote_pending_bucket();
-		}
-
 		$this->mirror_url_stats();
 		$this->persist_aggregate_stats();
 		$this->apply_auto_tune();
 
 		$this->stats_store?->reset_url_stats();
-		$this->url_stats                   = [];
-		$this->hourly_stats                = [];
-		$this->leaderboard_stats           = [];
-		$this->leaderboard_by_server_stats = [];
-		$this->dim_stats                   = [];
-		$this->dim_stats_by_server         = [];
-		$this->url_dim_stats               = [];
-		$this->cat_stats                   = [];
-		$this->cat_stats_by_server         = [];
-		$this->url_cat_stats               = [];
+		$this->pending = [];
 	}
 
 	/**
-	 * Move the pending bucket's accumulators into the per-namespace flush arrays,
-	 * keyed by its bucket key, then reset pending.
+	 * Merge every pending bucket into memcache through `Stats_Store`.
 	 *
-	 * Category data is capped here rather than during accumulation: the bucket is
-	 * complete, so top-N is meaningful and the sort runs once instead of per
-	 * request.
-	 *
-	 * The flush arrays hold DELTAS, not totals — `flush()` empties them after
-	 * writing, and `persist_aggregate_stats()` adds them to whatever memcache
-	 * already holds. Leaderboards merge into their slot rather than overwrite it,
-	 * so a bucket promoted twice before a flush keeps both halves.
-	 */
-	private function promote_pending_bucket(): void {
-		$bk       = $this->pending_bucket;
-		$max_cats = Stats_Store::MAX_CAT_VALUES;
-
-		// Hourly.
-		if ( ! empty( $this->pending['hourly'] ) ) {
-			$this->hourly_stats[ $bk ] = $this->pending['hourly'];
-		}
-
-		// URL stats.
-		if ( ! empty( $this->pending['url_stats'] ) ) {
-			$this->url_stats[ $bk ] = $this->pending['url_stats'];
-		}
-
-		// Dimensional — global.
-		foreach ( $this->pending['dim'] ?? [] as $dim => $values ) {
-			$this->dim_stats[ $dim ][ $bk ] = $values;
-		}
-
-		// Dimensional — per-server.
-		foreach ( $this->pending['dim_by_server'] ?? [] as $server => $dims ) {
-			if ( '' === $server ) {
-				continue;
-			}
-			foreach ( $dims as $dim => $values ) {
-				$this->dim_stats_by_server[ $server ][ $dim ][ $bk ] = $values;
-			}
-		}
-
-		// Dimensional — per-URL.
-		foreach ( $this->pending['url_dim'] ?? [] as $url_hash => $dims ) {
-			foreach ( $dims as $dim => $values ) {
-				$this->url_dim_stats[ $url_hash ][ $bk ][ $dim ] = $values;
-			}
-		}
-
-		// Category — global, capped.
-		if ( ! empty( $this->pending['cat'] ) ) {
-			$this->cat_stats[ $bk ] = self::cap_single_bucket( $this->pending['cat'], $max_cats );
-		}
-
-		// Category — per-server, capped.
-		foreach ( $this->pending['cat_by_server'] ?? [] as $server => $cats ) {
-			if ( '' === $server ) {
-				continue;
-			}
-			$this->cat_stats_by_server[ $server ][ $bk ] = self::cap_single_bucket( $cats, $max_cats );
-		}
-
-		// Category — per-URL, capped.
-		foreach ( $this->pending['cat_by_url'] ?? [] as $url_hash => $cats ) {
-			$this->url_cat_stats[ $url_hash ][ $bk ] = self::cap_single_bucket( $cats, $max_cats );
-		}
-
-		// Leaderboard — global.
-		if ( ( $this->pending['leaderboard']['count'] ?? 0 ) > 0 ) {
-			if ( ! isset( $this->leaderboard_stats[ $bk ] ) ) {
-				$this->leaderboard_stats[ $bk ] = [
-					'count'        => 0,
-					'sum_req_time' => 0.0,
-					'categories'   => [],
-				];
-			}
-			Stats_Store::merge_leaderboard_bucket( $this->leaderboard_stats[ $bk ], $this->pending['leaderboard'] );
-		}
-
-		// Leaderboard (per-server).
-		foreach ( $this->pending['leaderboard_by_server'] ?? [] as $server => $slb_data ) {
-			// '' is the global scope downstream; a nameless server is not one.
-			if ( '' === $server || ( $slb_data['count'] ?? 0 ) <= 0 ) {
-				continue;
-			}
-			if ( ! isset( $this->leaderboard_by_server_stats[ $server ][ $bk ] ) ) {
-				$this->leaderboard_by_server_stats[ $server ][ $bk ] = [
-					'count'        => 0,
-					'sum_req_time' => 0.0,
-					'categories'   => [],
-				];
-			}
-			Stats_Store::merge_leaderboard_bucket( $this->leaderboard_by_server_stats[ $server ][ $bk ], $slb_data );
-		}
-
-		$this->reset_pending();
-	}
-
-	/** Re-seed every pending accumulator; the leaderboard needs its shape, not just []. */
-	private function reset_pending(): void {
-		$this->pending = [
-			'hourly'                => [],
-			'dim'                   => [],
-			'dim_by_server'         => [],
-			'url_dim'               => [],
-			'url_stats'             => [],
-			'cat'                   => [],
-			'cat_by_server'         => [],
-			'cat_by_url'            => [],
-			'leaderboard'           => [ 'count' => 0, 'sum_req_time' => 0.0, 'categories' => [] ],
-			'leaderboard_by_server' => [],
-		];
-	}
-
-	/**
-	 * Merge the promoted flush arrays into memcache through `Stats_Store`.
-	 *
-	 * Each namespace follows the same read-merge-expire-cap-write shape: pull the
-	 * existing value, add this worker's sums to it, drop buckets older than the
-	 * store's TTL, cap, and set. Merging by addition is what lets several
-	 * partitions and several workers write the same bucket without coordination —
-	 * hence sums, never means.
-	 *
-	 * The URL index additionally recomputes p50/p95/p99 and the mean from the
-	 * reservoir-sampled durations, since those cannot be merged.
+	 * Each namespace follows the same read-merge-cap-write shape: pull the
+	 * existing value, add this worker's sums to it, cap, and set. Merging by
+	 * addition is what lets several partitions and several workers write the same
+	 * bucket without coordination — hence sums, never means. Retention is the
+	 * key's own TTL, so nothing expires buckets by hand.
 	 *
 	 * No store means no write: the accumulators are dropped by the caller.
 	 */
@@ -1267,169 +1108,197 @@ class Flame_Builder_Node extends Node {
 		if ( null === $stats_store ) {
 			return;
 		}
-		if (
-			empty( $this->hourly_stats )
-			&& empty( $this->leaderboard_stats )
-			&& empty( $this->leaderboard_by_server_stats )
-			&& empty( $this->url_stats )
-			&& empty( $this->dim_stats )
-			&& empty( $this->dim_stats_by_server )
-			&& empty( $this->url_dim_stats )
-			&& empty( $this->cat_stats )
-			&& empty( $this->cat_stats_by_server )
-			&& empty( $this->url_cat_stats )
-		) {
-			return;
-		}
-
-		// --- Hourly (bucketed) ---
-		foreach ( $this->hourly_stats as $bucket_key => $stats ) {
-			$stats_store->set_hourly_bucket(
-				$bucket_key,
-				Stats_Store::add_totals( $stats_store->get_hourly_bucket( $bucket_key ), Core::arr( $stats ) )
-			);
-		}
-
-		// --- Leaderboards (bucketed, sums-based), global then per server ---
-		$this->persist_leaderboard( $stats_store, $this->leaderboard_stats );
-		foreach ( $this->leaderboard_by_server_stats as $server => $buckets ) {
-			$this->persist_leaderboard( $stats_store, $buckets, $server );
-		}
-
-		// --- URL index (bucketed; "hourly" is legacy store naming) ---
-		if ( ! empty( $this->url_stats ) ) {
-			foreach ( $this->url_stats as $bucket_key => $hour_data ) {
-				/** @var array<string,array<string,mixed>> $existing_urls */
-				$existing_urls = $stats_store->get_url_bucket( $bucket_key );
-
-				foreach ( $hour_data as $hash => $stats_raw ) {
-					$stats = Core::arr( $stats_raw );
-					if ( ! isset( $existing_urls[ $hash ] ) ) {
-						$existing_urls[ $hash ] = [
-							'url'         => $stats['url'] ?? '',
-							'count'       => 0,
-							'timed_count' => 0,
-							'sum_ms'      => 0,
-							'min_ms'      => 0,
-							'max_ms'      => 0,
-							'last_seen'   => 0,
-							'durations'   => [],
-							'count_2xx'   => 0,
-							'count_3xx'   => 0,
-							'count_4xx'   => 0,
-							'count_5xx'   => 0,
-							'sum_peak_mb' => 0,
-							'max_peak_mb' => 0,
-						];
-					}
-					/** @var array{url: string, count: int, timed_count: int, sum_ms: float|int, min_ms: float|int, max_ms: float|int, last_seen: int, durations: array<int,float|int>, count_2xx: int, count_3xx: int, count_4xx: int, count_5xx: int, sum_peak_mb: float|int, max_peak_mb: float|int} $e */
-					$e               = &$existing_urls[ $hash ];
-					$e['count']      += \is_numeric( $stats['count'] ?? null ) ? $stats['count'] : 0;
-					$e['timed_count'] += \is_numeric( $stats['timed_count'] ?? null ) ? $stats['timed_count'] : 0;
-					$e['sum_ms']     += \is_numeric( $stats['sum_ms'] ?? null ) ? $stats['sum_ms'] : 0;
-					// Fold min_ms from timed buckets only (skip PHP_INT_MAX).
-					$s_min_ms   = \is_numeric( $stats['min_ms'] ?? null ) ? $stats['min_ms'] : 0;
-					$s_max_ms   = \is_numeric( $stats['max_ms'] ?? null ) ? $stats['max_ms'] : 0;
-					$s_last     = \is_numeric( $stats['last_seen'] ?? null ) ? $stats['last_seen'] : 0;
-					if ( ( \is_numeric( $stats['timed_count'] ?? null ) ? $stats['timed_count'] : 0 ) > 0 ) {
-						$e['min_ms'] = ( 0 === $e['min_ms'] ) ? $s_min_ms : \min( $e['min_ms'], $s_min_ms );
-					}
-					$e['max_ms']     = \max( $e['max_ms'], $s_max_ms );
-					$e['last_seen']  = \max( $e['last_seen'], $s_last );
-					$e['count_2xx'] += \is_numeric( $stats['count_2xx'] ?? null ) ? $stats['count_2xx'] : 0;
-					$e['count_3xx'] += \is_numeric( $stats['count_3xx'] ?? null ) ? $stats['count_3xx'] : 0;
-					$e['count_4xx'] += \is_numeric( $stats['count_4xx'] ?? null ) ? $stats['count_4xx'] : 0;
-					$e['count_5xx'] += \is_numeric( $stats['count_5xx'] ?? null ) ? $stats['count_5xx'] : 0;
-					$e['sum_peak_mb'] += \is_numeric( $stats['sum_peak_mb'] ?? null ) ? $stats['sum_peak_mb'] : 0;
-					$e['max_peak_mb']  = \max( $e['max_peak_mb'], \is_numeric( $stats['max_peak_mb'] ?? null ) ? $stats['max_peak_mb'] : 0 );
-
-					$max_dur     = Stats_Store::MAX_DURATIONS_PER_BUCKET;
-					$s_durations = \is_array( $stats['durations'] ?? null ) ? $stats['durations'] : [];
-					$merged      = \array_merge( $e['durations'], $s_durations );
-					if ( \count( $merged ) > $max_dur ) {
-						\shuffle( $merged );
-						$merged = \array_slice( $merged, 0, $max_dur );
-					}
-					$e['durations'] = $merged;
-					unset( $e );
-				}
-
-				// Percentiles can't be merged, so recompute for every URL here.
-				foreach ( $existing_urls as &$url_stat ) {
-					if ( ! empty( $url_stat['durations'] ) && \is_array( $url_stat['durations'] ) ) {
-						$sorted = $url_stat['durations'];
-						\sort( $sorted );
-						$n = \count( $sorted );
-						$url_stat['p50_ms'] = $sorted[ (int) ( $n * 0.50 ) ] ?? 0;
-						$url_stat['p95_ms'] = $sorted[ (int) ( $n * 0.95 ) ] ?? 0;
-						$url_stat['p99_ms'] = $sorted[ (int) ( $n * 0.99 ) ] ?? 0;
-						$tc_raw = $url_stat['timed_count'] ?? $url_stat['count'] ?? 0;
-						$tc     = Core::num_float( $tc_raw );
-						$sum_ms = Core::num_float( $url_stat['sum_ms'] ?? null );
-						$url_stat['avg_ms'] = $tc > 0 ? $sum_ms / $tc : 0;
-					}
-				}
-				unset( $url_stat );
-
-				if ( \count( $existing_urls ) > self::MAX_URLS_PER_BUCKET ) {
-					\uasort( $existing_urls, fn( $a, $b ) => ( \is_numeric( $b['count'] ?? null ) ? $b['count'] : 0 ) <=> ( \is_numeric( $a['count'] ?? null ) ? $a['count'] : 0 ) );
-					$existing_urls = \array_slice( $existing_urls, 0, self::MAX_URLS_PER_BUCKET, true );
-				}
-
-				$stats_store->set_url_bucket( $bucket_key, $existing_urls );
+		foreach ( $this->pending as $bucket => $acc ) {
+			$bucket = (string) $bucket;
+			if ( ! empty( $acc['hourly'] ) ) {
+				$stats_store->set_hourly_bucket(
+					$bucket,
+					Stats_Store::add_totals( $stats_store->get_hourly_bucket( $bucket ), $acc['hourly'] )
+				);
 			}
-		}
-
-		// --- Dimensional (global, per-server, per-URL) ---
-		foreach ( $this->dim_stats as $dim => $buckets ) {
-			$this->persist_dimension( $stats_store, $dim, $buckets );
-		}
-		foreach ( $this->dim_stats_by_server as $server => $dims ) {
-			foreach ( $dims as $dim => $buckets ) {
-				$this->persist_dimension( $stats_store, $dim, $buckets, $server );
+			if ( ! empty( $acc['url_stats'] ) ) {
+				$this->persist_url_index( $stats_store, $bucket, $acc['url_stats'] );
 			}
-		}
-		foreach ( $this->url_dim_stats as $url_hash => $buckets ) {
-			foreach ( $buckets as $bucket_key => $dims ) {
-				$existing = $stats_store->get_url_dimensional_bucket( $url_hash, $bucket_key );
-				foreach ( Core::arr( $dims ) as $dim => $values ) {
-					$cur = Stats_Store::sum_fields( Core::arr( $existing[ $dim ] ?? null ), Core::arr( $values ), Stats_Store::DIM_SUMS );
-					$existing[ (string) $dim ] = self::cap_dim_bucket( $cur, Stats_Store::MAX_URL_DIM_VALUES );
+			foreach ( $acc['dim'] as $dim => $values ) {
+				$this->persist_dimension( $stats_store, $bucket, $dim, $values );
+			}
+			// '' is the GLOBAL scope downstream; a nameless server is not one.
+			foreach ( $acc['dim_by_server'] as $server => $dims ) {
+				if ( '' === $server ) {
+					continue;
 				}
-				$stats_store->set_url_dimensional_bucket( $url_hash, $bucket_key, $existing );
+				foreach ( $dims as $dim => $values ) {
+					$this->persist_dimension( $stats_store, $bucket, $dim, $values, $server );
+				}
 			}
-		}
-
-		// --- Category time series (global, per-server, per-URL) ---
-		$this->persist_categories( $stats_store, $this->cat_stats );
-		foreach ( $this->cat_stats_by_server as $server => $buckets ) {
-			$this->persist_categories( $stats_store, $buckets, $server );
-		}
-		foreach ( $this->url_cat_stats as $url_hash => $buckets ) {
-			foreach ( $buckets as $bucket_key => $cats ) {
-				$existing = Stats_Store::sum_fields( $stats_store->get_url_category_bucket( $url_hash, $bucket_key ), Core::arr( $cats ), Stats_Store::CAT_SUMS );
-				$stats_store->set_url_category_bucket( $url_hash, $bucket_key, self::cap_single_bucket( $existing, Stats_Store::MAX_CAT_VALUES ) );
+			foreach ( $acc['url_dim'] as $url_hash => $dims ) {
+				$this->persist_url_dimensions( $stats_store, $bucket, $url_hash, $dims );
+			}
+			if ( ! empty( $acc['cat'] ) ) {
+				$this->persist_categories( $stats_store, $bucket, $acc['cat'] );
+			}
+			foreach ( $acc['cat_by_server'] as $server => $cats ) {
+				if ( '' === $server ) {
+					continue;
+				}
+				$this->persist_categories( $stats_store, $bucket, $cats, $server );
+			}
+			foreach ( $acc['cat_by_url'] as $url_hash => $cats ) {
+				$this->persist_url_categories( $stats_store, $bucket, $url_hash, $cats );
+			}
+			if ( ( $acc['leaderboard']['count'] ?? 0 ) > 0 ) {
+				$this->persist_leaderboard( $stats_store, $bucket, $acc['leaderboard'] );
+			}
+			foreach ( $acc['leaderboard_by_server'] as $server => $sums ) {
+				if ( '' === $server || ( $sums['count'] ?? 0 ) <= 0 ) {
+					continue;
+				}
+				$this->persist_leaderboard( $stats_store, $bucket, $sums, $server );
 			}
 		}
 	}
 
 	/**
-	 * Merge one scope's leaderboard buckets into the store, capped.
+	 * Merge one bucket's per-URL rows into the URL index, capped to the busiest
+	 * `MAX_URLS_PER_BUCKET`.
 	 *
-	 * @param Stats_Store                       $stats_store Destination.
-	 * @param array<string,array<string,mixed>> $buckets     Accumulated sums by bucket.
-	 * @param string                            $server      Reporting server; '' is the global series.
+	 * Percentiles and the mean are recomputed rather than merged: they are
+	 * derived from the reservoir-sampled raw durations, which addition cannot
+	 * combine.
+	 *
+	 * @param Stats_Store         $stats_store Destination.
+	 * @param string              $bucket      Bucket key.
+	 * @param array<string,mixed> $rows        Accumulated rows by url_hash.
 	 */
-	private function persist_leaderboard( Stats_Store $stats_store, array $buckets, string $server = '' ): void {
-		foreach ( $buckets as $bucket_key => $bucket_sums ) {
-			$existing = $stats_store->get_leaderboard_bucket( $bucket_key, $server );
-			if ( empty( $existing ) ) {
-				$existing = [ 'count' => 0, 'sum_req_time' => 0.0, 'categories' => [] ];
+	private function persist_url_index( Stats_Store $stats_store, string $bucket, array $rows ): void {
+		/** @var array<string,array<string,mixed>> $existing_urls */
+		$existing_urls = $stats_store->get_url_bucket( $bucket );
+
+		foreach ( $rows as $hash => $stats_raw ) {
+			$stats = Core::arr( $stats_raw );
+			if ( ! isset( $existing_urls[ $hash ] ) ) {
+				$existing_urls[ $hash ] = [
+					'url'         => $stats['url'] ?? '',
+					'count'       => 0,
+					'timed_count' => 0,
+					'sum_ms'      => 0,
+					'min_ms'      => 0,
+					'max_ms'      => 0,
+					'last_seen'   => 0,
+					'durations'   => [],
+					'count_2xx'   => 0,
+					'count_3xx'   => 0,
+					'count_4xx'   => 0,
+					'count_5xx'   => 0,
+					'sum_peak_mb' => 0,
+					'max_peak_mb' => 0,
+				];
 			}
-			Stats_Store::merge_leaderboard_bucket( $existing, $bucket_sums );
-			$this->cap_leaderboard_entries( $existing );
-			$stats_store->set_leaderboard_bucket( $bucket_key, $existing, $server );
+			/** @var array{url: string, count: int, timed_count: int, sum_ms: float|int, min_ms: float|int, max_ms: float|int, last_seen: int, durations: array<int,float|int>, count_2xx: int, count_3xx: int, count_4xx: int, count_5xx: int, sum_peak_mb: float|int, max_peak_mb: float|int} $e */
+			$e                 = &$existing_urls[ $hash ];
+			$e['count']       += \is_numeric( $stats['count'] ?? null ) ? $stats['count'] : 0;
+			$e['timed_count'] += \is_numeric( $stats['timed_count'] ?? null ) ? $stats['timed_count'] : 0;
+			$e['sum_ms']      += \is_numeric( $stats['sum_ms'] ?? null ) ? $stats['sum_ms'] : 0;
+			// Fold min_ms from timed buckets only (skip PHP_INT_MAX).
+			$s_min_ms          = \is_numeric( $stats['min_ms'] ?? null ) ? $stats['min_ms'] : 0;
+			$s_max_ms          = \is_numeric( $stats['max_ms'] ?? null ) ? $stats['max_ms'] : 0;
+			$s_last            = \is_numeric( $stats['last_seen'] ?? null ) ? $stats['last_seen'] : 0;
+			if ( ( \is_numeric( $stats['timed_count'] ?? null ) ? $stats['timed_count'] : 0 ) > 0 ) {
+				$e['min_ms'] = ( 0 === $e['min_ms'] ) ? $s_min_ms : \min( $e['min_ms'], $s_min_ms );
+			}
+			$e['max_ms']       = \max( $e['max_ms'], $s_max_ms );
+			$e['last_seen']    = \max( $e['last_seen'], $s_last );
+			$e['count_2xx']   += \is_numeric( $stats['count_2xx'] ?? null ) ? $stats['count_2xx'] : 0;
+			$e['count_3xx']   += \is_numeric( $stats['count_3xx'] ?? null ) ? $stats['count_3xx'] : 0;
+			$e['count_4xx']   += \is_numeric( $stats['count_4xx'] ?? null ) ? $stats['count_4xx'] : 0;
+			$e['count_5xx']   += \is_numeric( $stats['count_5xx'] ?? null ) ? $stats['count_5xx'] : 0;
+			$e['sum_peak_mb'] += \is_numeric( $stats['sum_peak_mb'] ?? null ) ? $stats['sum_peak_mb'] : 0;
+			$e['max_peak_mb']  = \max( $e['max_peak_mb'], \is_numeric( $stats['max_peak_mb'] ?? null ) ? $stats['max_peak_mb'] : 0 );
+
+			$max_dur     = Stats_Store::MAX_DURATIONS_PER_BUCKET;
+			$s_durations = \is_array( $stats['durations'] ?? null ) ? $stats['durations'] : [];
+			$merged      = \array_merge( $e['durations'], $s_durations );
+			if ( \count( $merged ) > $max_dur ) {
+				\shuffle( $merged );
+				$merged = \array_slice( $merged, 0, $max_dur );
+			}
+			$e['durations'] = $merged;
+			unset( $e );
 		}
+
+		foreach ( $existing_urls as &$url_stat ) {
+			if ( ! empty( $url_stat['durations'] ) && \is_array( $url_stat['durations'] ) ) {
+				$sorted = $url_stat['durations'];
+				\sort( $sorted );
+				$n = \count( $sorted );
+				$url_stat['p50_ms'] = $sorted[ (int) ( $n * 0.50 ) ] ?? 0;
+				$url_stat['p95_ms'] = $sorted[ (int) ( $n * 0.95 ) ] ?? 0;
+				$url_stat['p99_ms'] = $sorted[ (int) ( $n * 0.99 ) ] ?? 0;
+				$tc_raw = $url_stat['timed_count'] ?? $url_stat['count'] ?? 0;
+				$tc     = Core::num_float( $tc_raw );
+				$sum_ms = Core::num_float( $url_stat['sum_ms'] ?? null );
+				$url_stat['avg_ms'] = $tc > 0 ? $sum_ms / $tc : 0;
+			}
+		}
+		unset( $url_stat );
+
+		if ( \count( $existing_urls ) > self::MAX_URLS_PER_BUCKET ) {
+			\uasort( $existing_urls, fn( $a, $b ) => ( \is_numeric( $b['count'] ?? null ) ? $b['count'] : 0 ) <=> ( \is_numeric( $a['count'] ?? null ) ? $a['count'] : 0 ) );
+			$existing_urls = \array_slice( $existing_urls, 0, self::MAX_URLS_PER_BUCKET, true );
+		}
+
+		$stats_store->set_url_bucket( $bucket, $existing_urls );
+	}
+
+	/**
+	 * Merge one URL's dimensional bucket — every dimension in one value, each
+	 * capped on its own.
+	 *
+	 * @param Stats_Store            $stats_store Destination.
+	 * @param string                 $bucket      Bucket key.
+	 * @param string                 $url_hash    12-char URL hash.
+	 * @param array<string,mixed>    $dims        Accumulated value maps by dimension.
+	 */
+	private function persist_url_dimensions( Stats_Store $stats_store, string $bucket, string $url_hash, array $dims ): void {
+		$existing = $stats_store->get_url_dimensional_bucket( $url_hash, $bucket );
+		foreach ( $dims as $dim => $values ) {
+			$existing[ $dim ] = self::cap_dim_bucket(
+				Stats_Store::sum_fields( Core::arr( $existing[ $dim ] ?? null ), Core::arr( $values ), Stats_Store::DIM_SUMS ),
+				Stats_Store::MAX_URL_DIM_VALUES
+			);
+		}
+		$stats_store->set_url_dimensional_bucket( $url_hash, $bucket, Stats_Store::string_keys( $existing ) );
+	}
+
+	/**
+	 * Merge one URL's category bucket into the store, capped.
+	 *
+	 * @param Stats_Store         $stats_store Destination.
+	 * @param string              $bucket      Bucket key.
+	 * @param string              $url_hash    12-char URL hash.
+	 * @param array<string,mixed> $cats        Accumulated categories.
+	 */
+	private function persist_url_categories( Stats_Store $stats_store, string $bucket, string $url_hash, array $cats ): void {
+		$existing = Stats_Store::sum_fields( $stats_store->get_url_category_bucket( $url_hash, $bucket ), $cats, Stats_Store::CAT_SUMS );
+		$stats_store->set_url_category_bucket( $url_hash, $bucket, self::cap_single_bucket( $existing, Stats_Store::MAX_CAT_VALUES ) );
+	}
+
+	/**
+	 * Merge one scope's leaderboard bucket into the store, capped.
+	 *
+	 * @param Stats_Store         $stats_store Destination.
+	 * @param string              $bucket      Bucket key.
+	 * @param array<string,mixed> $sums        Accumulated sums.
+	 * @param string              $server      Reporting server; '' is the global series.
+	 */
+	private function persist_leaderboard( Stats_Store $stats_store, string $bucket, array $sums, string $server = '' ): void {
+		$existing = $stats_store->get_leaderboard_bucket( $bucket, $server );
+		if ( empty( $existing ) ) {
+			$existing = [ 'count' => 0, 'sum_req_time' => 0.0, 'categories' => [] ];
+		}
+		Stats_Store::merge_leaderboard_bucket( $existing, $sums );
+		$this->cap_leaderboard_entries( $existing );
+		$stats_store->set_leaderboard_bucket( $bucket, $existing, $server );
 	}
 
 	/**
@@ -1459,18 +1328,17 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
-	 * Merge one scope's dimensional buckets into the store, capped.
+	 * Merge one scope's dimensional bucket into the store, capped.
 	 *
 	 * @param Stats_Store            $stats_store Destination.
+	 * @param string                 $bucket      Bucket key.
 	 * @param string                 $dim         Dimension name.
-	 * @param array<array-key,mixed> $buckets     Accumulated values by bucket.
+	 * @param array<array-key,mixed> $values      Accumulated value map.
 	 * @param string                 $server      Reporting server; '' is the global series.
 	 */
-	private function persist_dimension( Stats_Store $stats_store, string $dim, array $buckets, string $server = '' ): void {
-		foreach ( $buckets as $bucket_key => $values ) {
-			$existing = Stats_Store::sum_fields( $stats_store->get_dimensional_bucket( $dim, (string) $bucket_key, $server ), Core::arr( $values ), Stats_Store::DIM_SUMS );
-			$stats_store->set_dimensional_bucket( $dim, (string) $bucket_key, self::cap_dim_bucket( $existing, Stats_Store::MAX_DIM_VALUES ), $server );
-		}
+	private function persist_dimension( Stats_Store $stats_store, string $bucket, string $dim, array $values, string $server = '' ): void {
+		$existing = Stats_Store::sum_fields( $stats_store->get_dimensional_bucket( $dim, $bucket, $server ), $values, Stats_Store::DIM_SUMS );
+		$stats_store->set_dimensional_bucket( $dim, $bucket, self::cap_dim_bucket( $existing, Stats_Store::MAX_DIM_VALUES ), $server );
 	}
 
 	/**
@@ -1498,17 +1366,16 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
-	 * Merge one scope's category buckets into the store, capped.
+	 * Merge one scope's category bucket into the store, capped.
 	 *
 	 * @param Stats_Store            $stats_store Destination.
-	 * @param array<array-key,mixed> $buckets     Accumulated categories by bucket.
+	 * @param string                 $bucket      Bucket key.
+	 * @param array<array-key,mixed> $cats        Accumulated categories.
 	 * @param string                 $server      Reporting server; '' is the global series.
 	 */
-	private function persist_categories( Stats_Store $stats_store, array $buckets, string $server = '' ): void {
-		foreach ( $buckets as $bucket_key => $cats ) {
-			$existing = Stats_Store::sum_fields( $stats_store->get_category_bucket( (string) $bucket_key, $server ), Core::arr( $cats ), Stats_Store::CAT_SUMS );
-			$stats_store->set_category_bucket( (string) $bucket_key, self::cap_single_bucket( $existing, Stats_Store::MAX_CAT_VALUES ), $server );
-		}
+	private function persist_categories( Stats_Store $stats_store, string $bucket, array $cats, string $server = '' ): void {
+		$existing = Stats_Store::sum_fields( $stats_store->get_category_bucket( $bucket, $server ), $cats, Stats_Store::CAT_SUMS );
+		$stats_store->set_category_bucket( $bucket, self::cap_single_bucket( $existing, Stats_Store::MAX_CAT_VALUES ), $server );
 	}
 
 	/**
@@ -1964,10 +1831,7 @@ class Flame_Builder_Node extends Node {
 		// Co-commit the current flame trees with the cursor, like pending.
 		$this->mirror_url_stats();
 		$this->flush_stats_mirror();
-		return [
-			'pending_bucket' => $this->pending_bucket,
-			'pending'        => $this->pending,
-		];
+		return [ 'pending' => $this->pending ];
 	}
 
 	/**
@@ -2130,6 +1994,53 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
+	 * Restore the in-flight buckets a previous worker checkpointed.
+	 *
+	 * Each bucket is merged over an empty accumulator, so a save from an older
+	 * shape that lacks a key keeps that key's default instead of leaving it unset.
+	 * A pre-map frame held ONE flat accumulator beside its `pending_bucket`; it
+	 * comes back keyed under that bucket.
+	 *
+	 * @api Used by substrate.
+	 * @param array<string,mixed> $saved A prior `save_state()` return value.
+	 */
+	public function restore_state( array $saved ): void {
+		$pending = Core::arr( $saved['pending'] ?? null );
+		// Namespace names at the top level: the pre-map, one-bucket frame.
+		if ( [] !== \array_intersect( \array_keys( $pending ), \array_keys( self::empty_bucket() ) ) ) {
+			$pending = [ Core::str( $saved['pending_bucket'] ?? '' ) => $pending ];
+		}
+		foreach ( $pending as $bucket => $acc ) {
+			if ( '' !== $bucket && \is_array( $acc ) ) {
+				/** @var Bucket_Acc $merged */
+				$merged                            = \array_merge( self::empty_bucket(), $acc );
+				$this->pending[ (string) $bucket ] = $merged;
+			}
+		}
+	}
+
+	/**
+	 * One bucket's empty accumulator. Seeded whole so every accumulate site can
+	 * index straight in, and so the leaderboard has its shape rather than [].
+	 *
+	 * @return Bucket_Acc
+	 */
+	private static function empty_bucket(): array {
+		return [
+			'hourly'                => [],
+			'dim'                   => [],
+			'dim_by_server'         => [],
+			'url_dim'               => [],
+			'url_stats'             => [],
+			'cat'                   => [],
+			'cat_by_server'         => [],
+			'cat_by_url'            => [],
+			'leaderboard'           => [ 'count' => 0, 'sum_req_time' => 0.0, 'categories' => [] ],
+			'leaderboard_by_server' => [],
+		];
+	}
+
+	/**
 	 * Set the per-URL flame-profile mirror cap (NS_URL top-N): how many profiled
 	 * URLs are shadowed to the durable stats partition, ranked by traffic. 0, the
 	 * production default, mirrors none. Memcache is unaffected either way.
@@ -2252,26 +2163,6 @@ class Flame_Builder_Node extends Node {
 			'custom_events'   => \array_map( $names, $this->custom_events_to_disable ),
 			'new_significant' => \array_map( $names, $this->new_significant_events ),
 		];
-	}
-
-	/**
-	 * Restore the in-flight bucket a previous worker checkpointed.
-	 *
-	 * Merged over the freshly reset pending, so a save from an older shape that
-	 * lacks a key keeps that key's empty default instead of leaving it unset.
-	 *
-	 * @api Used by substrate.
-	 * @param array<string,mixed> $saved A prior `save_state()` return value.
-	 */
-	public function restore_state( array $saved ): void {
-		if ( isset( $saved['pending_bucket'] ) && \is_string( $saved['pending_bucket'] ) ) {
-			$this->pending_bucket = $saved['pending_bucket'];
-		}
-		if ( isset( $saved['pending'] ) && \is_array( $saved['pending'] ) ) {
-			$merged = \array_merge( $this->pending, $saved['pending'] );
-			/** @var array{hourly?: array<string,mixed>, dim?: array<string,array<string,array{c: int,s: float|int,m: float|int}>>, dim_by_server?: array<string,array<string,array<string,array{c: int,s: float|int,m: float|int}>>>, url_dim?: array<string,array<string,array<string,array{c: int,s: float|int,m: float|int}>>>, url_stats?: array<string,mixed>, cat?: array<string,array{t: float|int,c: float|int,n: int}>, cat_by_server?: array<string,array<string,array{t: float|int,c: float|int,n: int}>>, cat_by_url?: array<string,array<string,array{t: float|int,c: float|int,n: int}>>, leaderboard?: array{count?: int, sum_req_time?: float|int, categories: array<string,array{samples: int,sum_time: float|int,sum_count: float|int,ts?: int,entries: array<string,array<int,float|int>>}>}, leaderboard_by_server?: array<string,array{count?: int,sum_req_time?: float|int,categories: array<string,array{samples: int,sum_time: float|int,sum_count: float|int,ts?: int,entries: array<string,array<int,float|int>>}>}>} $merged */
-			$this->pending = $merged;
-		}
 	}
 
 	/**
@@ -2474,7 +2365,7 @@ class Flame_Builder_Node extends Node {
 				[
 					'name'        => 'GET_STATS',
 					'description' => 'Stats cache + pending bucket + auto-tune queue depth.',
-					'reply_shape' => '{ stats_count, pending_url_count, pending_bucket, last_flush_age_s, auto_tune_pending_count, is_hub, significant_events_count }',
+					'reply_shape' => '{ stats_count, pending_url_count, pending_buckets, last_flush_age_s, auto_tune_pending_count, is_hub, significant_events_count }',
 				],
 			],
 		];
