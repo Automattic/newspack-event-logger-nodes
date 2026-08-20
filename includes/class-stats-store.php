@@ -236,6 +236,20 @@ class Stats_Store {
 	}
 
 	/**
+	 * Whether a full entry key names the bucket still being accumulated into.
+	 *
+	 * The bucket is the LAST key component in every bucketed namespace, so this
+	 * is a suffix test; the unbucketed `url` namespace ends in a URL hash and
+	 * never matches one.
+	 *
+	 * @param string $key Full entry key, as the mirror seam receives it.
+	 * @param int    $now Clock, so a test window matches its writer's keys.
+	 */
+	public static function is_open_bucket( string $key, int $now ): bool {
+		return \str_ends_with( $key, ':' . self::bucket_key( $now ) );
+	}
+
+	/**
 	 * The bucket a timestamp falls in: `Y-m-d-H-mm` UTC, floored to
 	 * BUCKET_MINUTES (which must divide 60). Lexical order is chronological
 	 * order, which is what lets expiry compare keys with `<` against a cutoff.

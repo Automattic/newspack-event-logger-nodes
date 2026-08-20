@@ -581,6 +581,17 @@ class StatsStoreTest extends TestCase {
 		$this->assertSame( '2026-02-03-12-45', Stats_Store::bucket_key( \gmmktime( 12, 47, 33, 2, 3, 2026 ) ) );
 	}
 
+	public function test_the_open_bucket_is_recognised_by_its_key_suffix(): void {
+		// ADR-1 puts the bucket LAST in every bucketed key, which is what lets a
+		// caller decide openness from the key alone.
+		$now  = \gmmktime( 12, 47, 33, 2, 3, 2026 );
+		$open = Stats_Store::bucket_key( $now );
+
+		$this->assertTrue( Stats_Store::is_open_bucket( "evlog:p0:url_dim:9f21ab04cd77:{$open}", $now ) );
+		$this->assertFalse( Stats_Store::is_open_bucket( 'evlog:p0:url_dim:9f21ab04cd77:2026-02-03-12-40', $now ) );
+		$this->assertFalse( Stats_Store::is_open_bucket( 'evlog:p0:url:9f21ab04cd77', $now ), 'url is unbucketed' );
+	}
+
 	public function test_the_read_window_is_derived_from_retention(): void {
 		// The window is what retention can hold, not a fixed 24h.
 		$now     = \gmmktime( 12, 47, 33, 2, 3, 2026 );
