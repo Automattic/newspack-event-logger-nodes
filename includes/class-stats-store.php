@@ -107,6 +107,18 @@ class Stats_Store {
 	/** Bucket width in minutes — the granularity every bucketed namespace is keyed at. */
 	private const BUCKET_MINUTES = 5;
 
+	/**
+	 * How far ahead of our clock a producer's bucket still counts as open.
+	 *
+	 * A hub takes each record's own timestamp, so a spoke running slightly fast
+	 * writes a bucket we have not reached. Holding those is right. Holding them
+	 * without a ceiling is not: one corrupt timestamp would pin its frames until
+	 * that year arrives. Past this, a skewed producer pays redundant last-wins
+	 * copies instead — which is a cost, where the other is a leak. One
+	 * `Request_Builder` eviction window, the same lateness the pipeline tolerates.
+	 */
+	private const MAX_FUTURE_SKEW_SEC = 600;
+
 	/** Ceiling on one reader's bucket enumeration, so get_multi stays bounded (24h). */
 	public const MAX_READ_BUCKETS = 288;
 
@@ -133,7 +145,7 @@ class Stats_Store {
 	 * caller here knowing. Null (default) leaves the tables memcache-only.
 	 * `Flame_Builder_Node::arm_stats_mirror()` is the only wiring.
 	 *
-	 * @var (\Closure(list<string>): array<array-key,array{value: mixed, ttl?: int}>)|null
+	 * @var (\Closure(array<array-key,mixed>): array<array-key,array{value: mixed, ttl?: int}>)|null
 	 */
 	public ?\Closure $rehydrate = null;
 	/** @var int Retention window in seconds, as Config::stats_retention_seconds() floored it. */
@@ -242,19 +254,23 @@ class Stats_Store {
 	 * bucket is read off the key; the unbucketed `url` namespace ends in a URL
 	 * hash, which is not bucket-shaped and is never open.
 	 *
-	 * The comparison is `>=`, not equality, because a producer's clock can run
-	 * ahead of ours — a hub takes each record's own timestamp — and a future
-	 * bucket is one that has not even started, let alone finished. Lexical order
-	 * IS chronological order here, which is what `bucket_key()` buys.
+	 * The window is bounded at BOTH ends. Not equality, because a producer's
+	 * clock can run slightly ahead and a bucket we have not reached has not
+	 * finished either; not open-ended, because a broken clock would then pin its
+	 * frames in memory indefinitely (MAX_FUTURE_SKEW_SEC). Lexical order IS
+	 * chronological order here, which is what `bucket_key()` buys.
 	 *
 	 * @param string $key Full entry key, as the mirror seam receives it.
 	 * @param int    $now Clock, so a test window matches its writer's keys.
 	 */
 	public static function is_open_bucket( string $key, int $now ): bool {
-		$at     = \strrpos( $key, ':' );
-		$bucket = false === $at ? $key : \substr( $key, $at + 1 );
-		return 1 === \preg_match( '/^\d{4}-\d{2}-\d{2}-\d{2}-\d{2}$/', $bucket )
-			&& $bucket >= self::bucket_key( $now );
+		$at      = \strrpos( $key, ':' );
+		$bucket  = false === $at ? $key : \substr( $key, $at + 1 );
+		$opened  = self::bucket_key( $now );
+		// Shape comes from bucket_key() itself, never a second spelling of it.
+		return \strlen( $bucket ) === \strlen( $opened )
+			&& $bucket >= $opened
+			&& $bucket <= self::bucket_key( $now + self::MAX_FUTURE_SKEW_SEC );
 	}
 
 	/**
@@ -741,6 +757,11 @@ class Stats_Store {
 	/**
 	 * Sum `$fields` from `$incoming` into `$into`, entry by entry. The one merge
 	 * both the dimensional (`c,s,m`) and category (`t,c,n`) series share.
+	 *
+	 * Only `$fields` survive — unlike `add_totals()`, which lets a field outside
+	 * its triple ride through. Every shape here is closed (`{c,s,m}`, `{t,c,n}`),
+	 * so there is nothing to carry; a shape that grows a field adds it to the
+	 * table rather than relying on passthrough.
 	 *
 	 * @param array<array-key,mixed> $into     Running totals.
 	 * @param array<array-key,mixed> $incoming Inbound entries.

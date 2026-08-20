@@ -118,11 +118,15 @@ class Flame_Builder_Node extends Node {
 	 * Byte ceiling on the held mirror frames a checkpoint frame carries.
 	 *
 	 * The offsetlog bounds keyframe COUNT (60), not size, and `add_snapshot_node`
-	 * lifts its PIPE_BUF cap — so nothing downstream would stop this from scaling
-	 * with an operational input. It would: the per-server aggregates grow with the
-	 * spoke count, and one server's leaderboard bucket measures ~27KB. Frames past
-	 * the budget still reach `flame-stats` when their bucket closes; they are only
-	 * absent from a respawn.
+	 * lifts its PIPE_BUF cap to `MAX_LARGE_LINE_SIZE` — past which `Partition_Node`
+	 * DROPS the record, and the record is the whole checkpoint: the read cursor and
+	 * every snapshot node's state, not just these frames. Meanwhile the per-server
+	 * aggregates grow with the spoke count, one server's leaderboard bucket being
+	 * ~27KB. So this budget is what keeps a checkpoint far away from that cliff.
+	 *
+	 * A frame past the budget is re-merged from memcache by the next write to its
+	 * bucket, so it is lost only if the process AND memcache both fail before the
+	 * bucket closes — the same double failure the mirror exists for.
 	 */
 	private const MAX_CHECKPOINT_MIRROR_BYTES = 262144;
 
@@ -192,7 +196,7 @@ class Flame_Builder_Node extends Node {
 	/** @var array<string,array<string,bool>> rule_id => {event => true} newly promoted. */
 	private array $new_significant_events   = [];
 
-	/** @var array<array-key,Bucket_Acc> Accumulators by bucket key; PHP owns the key type. */
+	/** @var array<string,Bucket_Acc> Accumulators by bucket key, drained at flush(). */
 	private array $pending = [];
 
 	/**
@@ -995,23 +999,6 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
-	 * Trim an entry map back to `$lower` once it passes `$upper`, keeping the
-	 * slowest by `sum_time`. The gap between the two bounds is the hysteresis
-	 * that stops a busy category re-sorting on every request.
-	 *
-	 * @param array<string,array<int,float|int>> $entries Entry map, by reference.
-	 * @param int                                  $upper   Count that triggers a trim.
-	 * @param int                                  $lower   Count to trim back to.
-	 */
-	private static function trim_entries( array &$entries, int $upper, int $lower ): void {
-		if ( \count( $entries ) <= $upper ) {
-			return;
-		}
-		\uasort( $entries, fn ( $a, $b ) => ( $b[0] ?? 0 ) <=> ( $a[0] ?? 0 ) );
-		$entries = \array_slice( $entries, 0, $lower, true );
-	}
-
-	/**
 	 * Share one zval for a repeated name, until the table freezes at the cap.
 	 *
 	 * Every dimension value, category name and entry name goes through here.
@@ -1116,7 +1103,6 @@ class Flame_Builder_Node extends Node {
 			return;
 		}
 		foreach ( $this->pending as $bucket => $acc ) {
-			$bucket = (string) $bucket;
 			if ( ! empty( $acc['hourly'] ) ) {
 				$stats_store->set_hourly_bucket(
 					$bucket,
@@ -1324,15 +1310,38 @@ class Flame_Builder_Node extends Node {
 			if ( ! \is_array( $cat_data ) ) {
 				continue;
 			}
-			// Not trim_entries(): decoded entries, not accumulator state.
 			$entries = $cat_data['entries'] ?? null;
-			if ( \is_array( $entries ) && \count( $entries ) > self::ENTRY_LIMIT_GLOBAL_UPPER ) {
-				\uasort( $entries, fn( $a, $b ) => ( \is_array( $b ) ? ( $b[0] ?? 0 ) : 0 ) <=> ( \is_array( $a ) ? ( $a[0] ?? 0 ) : 0 ) );
-				$cat_data['entries'] = \array_slice( $entries, 0, self::ENTRY_LIMIT_GLOBAL_LOWER, true );
+			if ( \is_array( $entries ) ) {
+				self::trim_entries( $entries, self::ENTRY_LIMIT_GLOBAL_UPPER, self::ENTRY_LIMIT_GLOBAL_LOWER );
+				$cat_data['entries'] = $entries;
 			}
 		}
 		unset( $cat_data );
 		$bucket['categories'] = $categories;
+	}
+
+	/**
+	 * Trim an entry map back to `$lower` once it passes `$upper`, keeping the
+	 * slowest by `sum_time`. The gap between the two bounds is the hysteresis
+	 * that stops a busy category re-sorting on every request.
+	 *
+	 * Takes `array-key,mixed` because both callers are real: one holds accumulator
+	 * state, the other a bucket decoded from memcache whose entries can be any
+	 * shape. A non-array entry sorts as zero rather than warning.
+	 *
+	 * @param array<array-key,mixed> $entries Entry map, by reference.
+	 * @param int                    $upper   Count that triggers a trim.
+	 * @param int                    $lower   Count to trim back to.
+	 */
+	private static function trim_entries( array &$entries, int $upper, int $lower ): void {
+		if ( \count( $entries ) <= $upper ) {
+			return;
+		}
+		\uasort(
+			$entries,
+			fn ( $a, $b ) => ( \is_array( $b ) ? ( $b[0] ?? 0 ) : 0 ) <=> ( \is_array( $a ) ? ( $a[0] ?? 0 ) : 0 )
+		);
+		$entries = \array_slice( $entries, 0, $lower, true );
 	}
 
 	/**
@@ -1363,7 +1372,8 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
-	 * Cap a dimensional bucket: ranked by request count, no reserved row.
+	 * Cap a dimensional bucket: ranked by request count, no reserved row. Named
+	 * so the sort field and the field table cannot be paired wrongly at a call site.
 	 *
 	 * @param array<array-key,mixed> $values     One bucket's values.
 	 * @param int                    $max_values Ceiling on distinct values.
@@ -1374,8 +1384,7 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
-	 * Cap a category bucket: ranked by time, with the `total` rollup lifted clear
-	 * of the ranking so it always survives.
+	 * Cap a category bucket: ranked by time, `total` lifted clear of the ranking.
 	 *
 	 * @param array<array-key,mixed> $cats       Category buckets.
 	 * @param int                    $max_values Categories kept, synthetic slots included.
@@ -1412,8 +1421,8 @@ class Flame_Builder_Node extends Node {
 			$held = $values[ $reserved ] ?? null;
 			unset( $values[ $reserved ] );
 		}
-		// One slot for `Other`, and one more when a reserved row rides along.
-		$keep = $max_values - ( null === $reserved ? 1 : 2 );
+		// One slot for `Other`, one more when a reserved row is really there.
+		$keep = \max( 0, $max_values - ( null === $held ? 1 : 2 ) );
 		\uasort(
 			$values,
 			fn( $a, $b ) => ( \is_array( $b ) && \is_numeric( $b[ $sort_field ] ?? null ) ? $b[ $sort_field ] : 0 )
@@ -1595,46 +1604,10 @@ class Flame_Builder_Node extends Node {
 		$from_partition = $store->rehydrate;
 		if ( null !== $from_partition ) {
 			$partition        = $store->partition();
-			$store->rehydrate = function ( array $keys ) use ( $from_partition, $partition ): array {
-				$wanted = [];
-				foreach ( $keys as $key ) {
-					// The seam is public and untyped; only strings name a key.
-					if ( \is_string( $key ) ) {
-						$wanted[] = $key;
-					}
-				}
-				return $this->held_frames( $wanted, $partition ) + ( $from_partition )( $wanted );
-			};
+			// Both tiers drop non-string keys themselves; no guard needed here.
+			$store->rehydrate = fn ( array $keys ): array =>
+				$this->held_frames( $keys, $partition ) + ( $from_partition )( $keys );
 		}
-	}
-
-	/**
-	 * The buffered frames for `$keys` that no durable log holds yet.
-	 *
-	 * The open bucket is deliberately withheld from the mirror, so these buffers
-	 * are its ONLY copy besides memcache — and `persist_aggregate_stats()` reads
-	 * a bucket back before adding to it. Without this tier an eviction mid-bucket
-	 * reads as empty and the merge restarts the bucket from zero.
-	 *
-	 * Held frames win over the partition: they are what was written last.
-	 *
-	 * @param list<string> $keys      Keys the Table missed on, relative to its namespace.
-	 * @param int          $partition Keyspace those keys sit in; the buffers key absolutely.
-	 * @return array<string,array{value: array<array-key,mixed>, ttl: int}>
-	 */
-	private function held_frames( array $keys, int $partition ): array {
-		$found = [];
-		foreach ( $keys as $key ) {
-			$held  = Stats_Store::entry_key( $partition, $key );
-			$frame = $this->stats_mirror_buffer[ $held ] ?? null;
-			foreach ( $this->stats_mirror_topn as $entries ) {
-				$frame ??= $entries[ $held ] ?? null;
-			}
-			if ( null !== $frame ) {
-				$found[ $key ] = [ 'value' => $frame[0], 'ttl' => $frame[1] ];
-			}
-		}
-		return $found;
 	}
 
 	/**
@@ -1679,7 +1652,7 @@ class Flame_Builder_Node extends Node {
 	 *
 	 * @param \Closure(): ?\Newspack_Nodes\Partition_Node $resolve         Where the mirror is.
 	 * @param int                                            $partition_index Keyspace the Table's keys sit in.
-	 * @return \Closure(list<string>): array<array-key,array{value: array<array-key,mixed>, ttl: int}>
+	 * @return \Closure(array<array-key,mixed>): array<array-key,array{value: array<array-key,mixed>, ttl: int}>
 	 */
 	private static function rehydrate_seam( \Closure $resolve, int $partition_index ): \Closure {
 		$partition = null;
@@ -1880,7 +1853,7 @@ class Flame_Builder_Node extends Node {
 	 * with an operator input. Rank is not stored at all — `evict_lowest_rank()`
 	 * derives it from the data it already holds.
 	 *
-	 * @return array{buffer: array<string,array{0: array<array-key,mixed>, 1: int}>, topn: array<string,array<string,array{0: array<array-key,mixed>, 1: int}>>}
+	 * @return array{at: int, buffer: array<string,array{0: array<array-key,mixed>, 1: int}>, topn: array<string,array<string,array{0: array<array-key,mixed>, 1: int}>>}
 	 */
 	private function checkpoint_mirror(): array {
 		$held = [];
@@ -1895,7 +1868,7 @@ class Flame_Builder_Node extends Node {
 		\usort( $held, static fn ( array $a, array $b ): int => $a[3] <=> $b[3] );
 
 		$budget = self::MAX_CHECKPOINT_MIRROR_BYTES;
-		$out    = [ 'buffer' => [], 'topn' => [] ];
+		$out    = [ 'at' => $this->now_ts(), 'buffer' => [], 'topn' => [] ];
 		foreach ( $held as $i => [ $ns, $key, $frame, $size ] ) {
 			if ( $size > $budget ) {
 				$over = \count( $held ) - $i;
@@ -1913,12 +1886,14 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
-	 * Wire size of one held frame — what it will cost the checkpoint.
+	 * What one held frame will cost the checkpoint. An unencodable frame reads as
+	 * unbounded, not as zero — zero would sort it first and always carry it.
 	 *
 	 * @param array{0: array<array-key,mixed>, 1: int} $frame Buffered [data, ttl].
 	 */
 	private static function frame_bytes( array $frame ): int {
-		return \strlen( (string) \wp_json_encode( $frame ) );
+		$json = \wp_json_encode( $frame );
+		return false === $json ? \PHP_INT_MAX : \strlen( $json );
 	}
 
 	/**
@@ -2004,11 +1979,6 @@ class Flame_Builder_Node extends Node {
 			unset( $buffer[ $key ] );
 		}
 		return $buffer;
-	}
-
-	/** Current Unix time, through the test clock seam when one is installed. */
-	private function now_ts(): int {
-		return null !== $this->clock_fn ? ( $this->clock_fn )() : \time();
 	}
 
 	/** Resolve the named stats partition to its live node, or null when disabled / not-yet-built. */
@@ -2121,25 +2091,34 @@ class Flame_Builder_Node extends Node {
 	 */
 	public function restore_state( array $saved ): void {
 		$pending = Core::arr( $saved['pending'] ?? null );
-		$mirror                    = Core::arr( $saved['mirror'] ?? null );
-		$this->stats_mirror_buffer = self::restore_frames( $mirror['buffer'] ?? null );
+		$mirror = Core::arr( $saved['mirror'] ?? null );
+		// ADR-18: a lifetime that ran out is a miss, not a resurrection.
+		$elapsed                   = \max( 0, $this->now_ts() - Core::num_int( $mirror['at'] ?? null ) );
+		$this->stats_mirror_buffer = self::restore_frames( $mirror['buffer'] ?? null, $elapsed );
 		$topn                      = Core::arr( $mirror['topn'] ?? null );
-		// Replaced, never merged: a lowered set_flame_topn must re-bound this.
+		// Re-bound by TRAFFIC; the carry's own order is smallest-first.
 		foreach ( self::STATS_MIRROR_TOPN as $ns => $ignored_default ) {
-			$this->stats_mirror_topn[ $ns ] = \array_slice(
-				self::restore_frames( $topn[ $ns ] ?? null ),
-				0,
-				\max( 0, $this->mirror_topn( $ns ) ),
-				true
+			$restored = self::restore_frames( $topn[ $ns ] ?? null, $elapsed );
+			\uasort(
+				$restored,
+				static fn ( array $a, array $b ): int =>
+					self::mirror_traffic_rank( $b[0], $ns ) <=> self::mirror_traffic_rank( $a[0], $ns )
 			);
+			$this->stats_mirror_topn[ $ns ] = \array_slice( $restored, 0, \max( 0, $this->mirror_topn( $ns ) ), true );
 		}
 		foreach ( $pending as $bucket => $acc ) {
-			if ( '' !== $bucket && \is_array( $acc ) ) {
+			// `Y-m-d-H-i` is a string PHP never re-types to int.
+			if ( \is_string( $bucket ) && '' !== $bucket && \is_array( $acc ) ) {
 				/** @var Bucket_Acc $merged */
-				$merged                            = \array_merge( self::empty_bucket(), $acc );
-				$this->pending[ (string) $bucket ] = $merged;
+				$merged                   = \array_merge( self::empty_bucket(), $acc );
+				$this->pending[ $bucket ] = $merged;
 			}
 		}
+	}
+
+	/** Current Unix time, through the test clock seam when one is installed. */
+	private function now_ts(): int {
+		return null !== $this->clock_fn ? ( $this->clock_fn )() : \time();
 	}
 
 	/**
@@ -2188,16 +2167,18 @@ class Flame_Builder_Node extends Node {
 	 * Held mirror frames from a checkpoint frame, coerced back to `[data, ttl]`.
 	 * A malformed entry is dropped rather than aborting the whole restore.
 	 *
-	 * @param mixed $saved One buffer out of the checkpoint's `mirror` map.
+	 * @param mixed $saved   One buffer out of the checkpoint's `mirror` map.
+	 * @param int   $elapsed Seconds since the checkpoint was written, taken off each TTL.
 	 * @return array<string,array{0: array<array-key,mixed>, 1: int}>
 	 */
-	private static function restore_frames( mixed $saved ): array {
+	private static function restore_frames( mixed $saved, int $elapsed ): array {
 		$out = [];
 		foreach ( Core::arr( $saved ) as $key => $frame ) {
 			$frame = Core::arr( $frame );
 			$data  = $frame[0] ?? null;
-			if ( \is_string( $key ) && \is_array( $data ) ) {
-				$out[ $key ] = [ $data, Core::num_int( $frame[1] ?? null ) ];
+			$ttl   = Core::num_int( $frame[1] ?? null ) - $elapsed;
+			if ( \is_string( $key ) && \is_array( $data ) && $ttl > 0 ) {
+				$out[ $key ] = [ $data, $ttl ];
 			}
 		}
 		return $out;
@@ -2225,13 +2206,46 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
-	 * One leaderboard scope's empty sums. Four literals drifting apart is one
-	 * accumulator seeded differently from the value it merges into.
+	 * One leaderboard scope's empty sums, so an accumulator cannot be seeded
+	 * differently from the value it merges into.
 	 *
 	 * @return Leaderboard_Acc
 	 */
 	private static function empty_leaderboard(): array {
 		return [ 'count' => 0, 'sum_req_time' => 0.0, 'categories' => [] ];
+	}
+
+	/**
+	 * The buffered frames for `$keys` that no durable log holds yet.
+	 *
+	 * The open bucket is deliberately withheld from the mirror, so these buffers
+	 * are its ONLY copy besides memcache — and `persist_aggregate_stats()` reads
+	 * a bucket back before adding to it. Without this tier an eviction mid-bucket
+	 * reads as empty and the merge restarts the bucket from zero.
+	 *
+	 * Held frames win over the partition: they are what was written last.
+	 *
+	 * @param array<array-key,mixed> $keys      Keys the Table missed on, relative to its namespace.
+	 * @param int                    $partition Keyspace those keys sit in; the buffers key absolutely.
+	 * @return array<string,array{value: array<array-key,mixed>, ttl: int}>
+	 */
+	private function held_frames( array $keys, int $partition ): array {
+		$found = [];
+		foreach ( $keys as $key ) {
+			// The seam is public and untyped; only strings name a key.
+			if ( ! \is_string( $key ) ) {
+				continue;
+			}
+			$held = Stats_Store::entry_key( $partition, $key );
+			$frame = $this->stats_mirror_buffer[ $held ] ?? null;
+			foreach ( $this->stats_mirror_topn as $entries ) {
+				$frame ??= $entries[ $held ] ?? null;
+			}
+			if ( null !== $frame ) {
+				$found[ $key ] = [ 'value' => $frame[0], 'ttl' => $frame[1] ];
+			}
+		}
+		return $found;
 	}
 
 	/**
