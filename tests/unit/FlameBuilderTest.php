@@ -1122,21 +1122,21 @@ class FlameBuilderTest extends TestCase {
 	// --- save/restore state -----------------------------------------------
 
 	public function test_save_and_restore_pending_state_round_trip(): void {
-		$fb = new Flame_Builder_Node();
+		$now = 1_700_000_000;
+		$fb  = new Flame_Builder_Node();
 		$this->fill_request( $fb, $this->completed_request( [
 			'duration_ms' => 50.0,
+			'timestamp'   => $now,
 			'profiles'    => [ 'wpdb' => [ 'time' => 0.1, 'count' => 1, 'entries' => [] ] ],
 		] ) );
 
-		$saved = $fb->save_state();
-		$this->assertArrayHasKey( 'pending_bucket', $saved );
-		$this->assertArrayHasKey( 'pending', $saved );
+		$saved  = $fb->save_state();
+		$bucket = Stats_Store::bucket_key( $now );
+		$this->assertArrayHasKey( $bucket, $saved['pending'] );
 
 		$fb2 = new Flame_Builder_Node();
 		$fb2->restore_state( $saved );
-		$saved2 = $fb2->save_state();
-		$this->assertSame( $saved['pending_bucket'], $saved2['pending_bucket'] );
-		$this->assertSame( $saved['pending']['hourly'], $saved2['pending']['hourly'] );
+		$this->assertSame( $saved['pending'], $fb2->save_state()['pending'] );
 	}
 
 	// --- finalize_flame_node ----------------------------------------------
@@ -1300,35 +1300,34 @@ class FlameBuilderTest extends TestCase {
 
 	// --- restore_state edge cases -----------------------------------------
 
-	public function test_restore_state_ignores_non_string_pending_bucket(): void {
-		$fb = new Flame_Builder_Node();
-		$fb->restore_state( [ 'pending_bucket' => 12345 ] );
-		$saved = $fb->save_state();
-		// Default is empty string.
-		$this->assertSame( '', $saved['pending_bucket'] );
-	}
-
 	public function test_restore_state_ignores_non_array_pending(): void {
 		$fb = new Flame_Builder_Node();
 		$fb->restore_state( [ 'pending' => 'not-an-array' ] );
-		$saved = $fb->save_state();
-		// Pending keeps its initialized shape.
-		$this->assertIsArray( $saved['pending'] );
-		$this->assertArrayHasKey( 'hourly', $saved['pending'] );
+		$this->assertSame( [], $fb->save_state()['pending'] );
 	}
 
-	public function test_restore_state_merges_pending_array(): void {
+	public function test_restore_state_seeds_every_key_a_partial_bucket_omits(): void {
 		$fb = new Flame_Builder_Node();
-		// Manually craft pending payload.
+		$fb->restore_state( [
+			'pending' => [
+				'2024-01-01-12-00' => [ 'hourly' => [ 'count' => 7, 'sum_ms' => 700, 'sum_peak_mb' => 21 ] ],
+			],
+		] );
+		$bucket = $fb->save_state()['pending']['2024-01-01-12-00'];
+		$this->assertSame( 7, $bucket['hourly']['count'] );
+		$this->assertSame( [ 'count' => 0, 'sum_req_time' => 0.0, 'categories' => [] ], $bucket['leaderboard'] );
+	}
+
+	public function test_restore_state_keys_a_pre_bucket_map_frame_under_its_bucket(): void {
+		// Pre-0.58: ONE flat accumulator beside a `pending_bucket` naming it.
+		$fb = new Flame_Builder_Node();
 		$fb->restore_state( [
 			'pending_bucket' => '2024-01-01-12-00',
 			'pending'        => [
 				'hourly' => [ 'count' => 7, 'sum_ms' => 700, 'sum_peak_mb' => 21 ],
 			],
 		] );
-		$saved = $fb->save_state();
-		$this->assertSame( '2024-01-01-12-00', $saved['pending_bucket'] );
-		$this->assertSame( 7, $saved['pending']['hourly']['count'] );
+		$this->assertSame( 7, $fb->save_state()['pending']['2024-01-01-12-00']['hourly']['count'] );
 	}
 
 	// --- handle_request (TM_REQUEST GET_STATS) ----------------------------
@@ -2182,10 +2181,11 @@ class FlameBuilderTest extends TestCase {
 		$bucket = Stats_Store::bucket_key( $now );
 		$fb->set_clock( static fn() => $now );
 		$fb->restore_state( [
-			'pending_bucket' => $bucket,
-			'pending'        => [
-				'leaderboard_by_server' => [
-					'' => [ 'count' => 63, 'sum_req_time' => 7.5, 'categories' => [] ],
+			'pending' => [
+				$bucket => [
+					'leaderboard_by_server' => [
+						'' => [ 'count' => 63, 'sum_req_time' => 7.5, 'categories' => [] ],
+					],
 				],
 			],
 		] );
@@ -2221,6 +2221,28 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( $stale_dim, $store->get_dimensional_buckets( 'status', [ '1999-01-01-00-00' ] )[ '1999-01-01-00-00' ] ?? [] );
 		$this->assertSame( $stale_cat, $store->get_category_bucket( '1999-01-01-00-00' ) );
 		$this->assertNotSame( [], $store->get_dimensional_buckets( 'status', [ Stats_Store::bucket_key( $now ) ] )[ Stats_Store::bucket_key( $now ) ] ?? [], 'this flush landed' );
+	}
+
+	public function test_a_bucket_revisited_before_the_flush_keeps_both_halves(): void {
+		// Bucket keys come from the request's START time and records arrive at
+		// COMPLETION, so an older bucket is revisited constantly around a boundary.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+
+		$early = 1_700_000_000;
+		$late  = $early + 300;
+		foreach ( [ $early, $late, $early ] as $ts ) {
+			$this->fill_request( $fb, $this->completed_request( [ 'duration_ms' => 23.0, 'timestamp' => $ts ] ) );
+		}
+		$fb->flush();
+
+		$this->assertSame(
+			2,
+			$store->get_hourly_bucket( Stats_Store::bucket_key( $early ) )['count'] ?? 0,
+			'both of the early bucket\'s requests counted'
+		);
 	}
 
 	public function test_one_url_dimensional_bucket_holds_every_dimension(): void {
@@ -2261,10 +2283,11 @@ class FlameBuilderTest extends TestCase {
 		$bucket = Stats_Store::bucket_key( $now );
 		$fb->set_clock( static fn() => $now );
 		$fb->restore_state( [
-			'pending_bucket' => $bucket,
-			'pending'        => [
-				'cat_by_server' => [ '' => [ 'db' => [ 't' => 4.5, 'c' => 71, 'n' => 3 ] ] ],
-				'dim_by_server' => [ '' => [ 'status' => [ '503' => [ 'c' => 67, 's' => 2.5, 'm' => 1.5 ] ] ] ],
+			'pending' => [
+				$bucket => [
+					'cat_by_server' => [ '' => [ 'db' => [ 't' => 4.5, 'c' => 71, 'n' => 3 ] ] ],
+					'dim_by_server' => [ '' => [ 'status' => [ '503' => [ 'c' => 67, 's' => 2.5, 'm' => 1.5 ] ] ] ],
+				],
 			],
 		] );
 		$fb->flush();
@@ -2293,8 +2316,7 @@ class FlameBuilderTest extends TestCase {
 		}
 		$fb->set_clock( static fn() => $open );
 		$fb->restore_state( [
-			'pending_bucket' => $bucket,
-			'pending'        => [ 'dim' => [ 'status' => $values ] ],
+			'pending' => [ $bucket => [ 'dim' => [ 'status' => $values ] ] ],
 		] );
 		$fb->flush();
 		$fb->set_clock( null );
