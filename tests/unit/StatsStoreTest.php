@@ -590,6 +590,8 @@ class StatsStoreTest extends TestCase {
 		$this->assertTrue( Stats_Store::is_open_bucket( "evlog:p0:url_dim:9f21ab04cd77:{$open}", $now ) );
 		$this->assertFalse( Stats_Store::is_open_bucket( 'evlog:p0:url_dim:9f21ab04cd77:2026-02-03-12-40', $now ) );
 		$this->assertFalse( Stats_Store::is_open_bucket( 'evlog:p0:url:9f21ab04cd77', $now ), 'url is unbucketed' );
+		// A producer whose clock runs ahead writes a bucket that has not started.
+		$this->assertTrue( Stats_Store::is_open_bucket( 'evlog:p0:hourly:2026-02-03-13-20', $now ), 'a future bucket is open' );
 	}
 
 	public function test_the_read_window_is_derived_from_retention(): void {
