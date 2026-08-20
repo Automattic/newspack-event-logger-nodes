@@ -2814,6 +2814,48 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( 3, $this->read_mirror_frames( $p )[ $key ]['data']['count'], 'carrying the whole bucket' );
 	}
 
+	public function test_the_held_open_bucket_survives_a_respawn_through_the_checkpoint(): void {
+		// The open bucket is not in flame-stats, so the offsetlog is what backs
+		// it: save_state() carries the held frames, restore_state() takes them on.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		[ $fb, $p ] = $this->mirrored_builder( $store, 'flames-stats' );
+
+		$open = 1_700_000_000;
+		$key  = Stats_Store::entry_key( 0, Stats_Store::NS_HOURLY . ':' . Stats_Store::bucket_key( $open ) );
+		$fb->set_clock( static fn() => $open );
+		foreach ( [ 71.0, 72.0 ] as $duration_ms ) {
+			$this->fill_request( $fb, $this->completed_request( [ 'duration_ms' => $duration_ms, 'timestamp' => $open ] ) );
+			$fb->flush();
+		}
+		$checkpoint = $fb->save_state();
+		$fb->remove_node();
+
+		// The respawn: a fresh builder resuming from that frame alone.
+		$successor = new Flame_Builder_Node();
+		$successor->name( 'fb' );
+		$successor->set_stats_store( new Stats_Store( partition: 0, max_lifespan: 86400 ) );
+		$successor->set_stats_target( $p->name() );
+		$successor->restore_state( $checkpoint );
+		$successor->set_clock( static fn() => $open + 300 );
+		$successor->save_state();
+		$p->flush();
+		$successor->set_clock( null );
+
+		$frames = $this->read_mirror_frames( $p );
+		$this->assertSame(
+			2,
+			$frames[ $key ]['data']['count'] ?? 0,
+			'the bucket the predecessor held reached the mirror when it closed'
+		);
+		// The bounded per-URL buffers ride the same frame; their ranks re-derive.
+		$url_dim = Stats_Store::entry_key(
+			0,
+			Stats_Store::NS_URL_DIM . ':' . Log_Manager::url_hash( '/post/123' ) . ':' . Stats_Store::bucket_key( $open )
+		);
+		$this->assertSame( 2, $frames[ $url_dim ]['data']['method']['GET']['c'] ?? 0, 'and so did the per-URL top-N' );
+	}
+
 	public function test_a_closed_bucket_is_not_re_mirrored_when_a_later_bucket_fills(): void {
 		// A bucket is written when it changes, so a closed one is written once.
 		Core::$memd = new InMemoryMemcached();
