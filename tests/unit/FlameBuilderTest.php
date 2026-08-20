@@ -2799,6 +2799,9 @@ class FlameBuilderTest extends TestCase {
 		$successor->name( 'fb' );
 		$successor->set_stats_store( new Stats_Store( partition: 0, max_lifespan: 86400 ) );
 		$successor->set_stats_target( $p->name() );
+		// The successor's clock is its own from the start: restore decays a held
+		// frame's TTL by how long the checkpoint sat, so the two must agree.
+		$successor->set_clock( static fn() => $open + 60 );
 		$successor->restore_state( $checkpoint );
 		$successor->set_clock( static fn() => $open + 300 );
 		$successor->save_state();
@@ -2848,6 +2851,57 @@ class FlameBuilderTest extends TestCase {
 			10,
 			$store->get_hourly_bucket( $bucket )['count'] ?? 0,
 			'the merge read through the held frame instead of restarting from zero'
+		);
+	}
+
+	public function test_a_held_frame_whose_life_ran_out_is_not_restored(): void {
+		// ADR-18: a stated lifetime that has run out is a miss, not a resurrection.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 7200 );
+		[ $fb, $p ] = $this->mirrored_builder( $store, 'flames-stats' );
+
+		$open   = 1_700_000_000;
+		$bucket = Stats_Store::bucket_key( $open );
+		$fb->set_clock( static fn() => $open );
+		$store->set_hourly_bucket( $bucket, [ 'count' => 47 ] );
+		$checkpoint = $fb->save_state();
+		$fb->set_clock( null );
+
+		$successor = new Flame_Builder_Node();
+		// Resumed a day later: the frame's 2h life is long gone.
+		$successor->set_clock( static fn() => $open + 86400 );
+		$successor->restore_state( $checkpoint );
+
+		$this->assertSame( [], $successor->save_state()['mirror']['buffer'], 'the expired frame did not come back' );
+		$successor->set_clock( null );
+	}
+
+	public function test_an_evicted_per_url_bucket_is_repaired_from_the_held_top_n(): void {
+		// The per-URL namespaces are held in a different buffer; it reads too.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		[ $fb, $p ] = $this->mirrored_builder( $store, 'flames-stats' );
+
+		$open   = 1_700_000_000;
+		$bucket = Stats_Store::bucket_key( $open );
+		$hash   = Log_Manager::url_hash( '/post/123' );
+		$fb->set_clock( static fn() => $open );
+
+		foreach ( \range( 1, 6 ) as $ignored ) {
+			$this->fill_request( $fb, $this->completed_request( [ 'duration_ms' => 29.0, 'timestamp' => $open ] ) );
+		}
+		$fb->flush();
+		$this->assertSame( 6, $store->get_url_dimensional_bucket( $hash, $bucket )['method']['GET']['c'] ?? 0 );
+
+		Core::$memd->delete( Stats_Store::entry_key( 0, Stats_Store::NS_URL_DIM . ':' . $hash . ':' . $bucket ) );
+		$this->fill_request( $fb, $this->completed_request( [ 'duration_ms' => 30.0, 'timestamp' => $open ] ) );
+		$fb->flush();
+		$fb->set_clock( null );
+
+		$this->assertSame(
+			7,
+			$store->get_url_dimensional_bucket( $hash, $bucket )['method']['GET']['c'] ?? 0,
+			'the per-URL merge read through its held frame'
 		);
 	}
 

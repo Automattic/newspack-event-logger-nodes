@@ -161,7 +161,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	/** @var array<int,string> Memoized `read_window()`, valid while its bucket is current. */
 	private static array $read_window = [];
 
-	/** @var string The bucket `$read_window` was built for; '' before the first build. */
+	/** @var string What `$read_window` was built for: its bucket AND its retention. */
 	private static string $read_window_at = '';
 
 	/**
@@ -1123,10 +1123,12 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @return array<int,string>
 	 */
 	private static function read_window(): array {
-		$now = \time();
-		$at  = Stats_Store::bucket_key( $now );
+		$now       = \time();
+		$retention = AppConfig::stats_retention_seconds();
+		// Keyed on retention too, or a settings change goes unnoticed.
+		$at = Stats_Store::bucket_key( $now ) . ':' . $retention;
 		if ( $at !== self::$read_window_at ) {
-			self::$read_window    = Stats_Store::retention_buckets( AppConfig::stats_retention_seconds(), $now );
+			self::$read_window    = Stats_Store::retention_buckets( $retention, $now );
 			self::$read_window_at = $at;
 		}
 		return self::$read_window;
