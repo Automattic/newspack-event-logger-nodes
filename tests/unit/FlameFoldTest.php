@@ -121,6 +121,108 @@ class FlameFoldTest extends TestCase {
 		$this->assertEqualsWithDelta( 8050.0, $outer['value'], 1e-6 );
 	}
 
+	public function test_a_merged_parent_is_not_stretched_to_a_later_instance_child(): void {
+		// `t` is the EARLIEST instance's start; `value` is EVERY instance's
+		// time. Pairing one instance's start with another's child measures the
+		// gap between two runs and calls it work. Sum, the rule aggregate
+		// trees already follow, is the only honest width for a merged node.
+		$entries = [
+			$this->at( 'outer (start)', 0 ),
+			$this->at( 'outer (complete)', 7.375, [ 'duration_ms' => 7.375 ] ),
+			// Same path, four minutes later, and this one has a child.
+			$this->at( 'outer (start)', 240_000 ),
+			$this->at( 'inner (start)', 240_002 ),
+			$this->at( 'inner (complete)', 240_005.625, [ 'duration_ms' => 3.625 ] ),
+			$this->at( 'outer (complete)', 240_011.125, [ 'duration_ms' => 11.125 ] ),
+		];
+
+		$outer = Flame_Fold::tree( $this->fold( $entries ) )['children'][0];
+		$this->assertSame( 'outer', $outer['name'] );
+		$this->assertSame( 2, $outer['count'] );
+		$this->assertEqualsWithDelta( 0.0, $outer['t'], 1e-6 );
+		// 7.375 + 11.125, not 240_002 + 3.625 - 0.
+		$this->assertEqualsWithDelta( 18.5, $outer['value'], 1e-6 );
+	}
+
+	public function test_a_merged_child_does_not_stretch_its_parent(): void {
+		// The parent runs once, so its own extent is honest; the merged CHILD
+		// is what has no end, and reading one off it reaches past the request.
+		$entries = [
+			$this->at( 'outer (start)', 0 ),
+			$this->at( 'leaf (start)', 4.25 ),
+			$this->at( 'leaf (complete)', 10.5, [ 'duration_ms' => 6.25 ] ),
+			$this->at( 'leaf (start)', 180_000 ),
+			$this->at( 'leaf (complete)', 180_013.75, [ 'duration_ms' => 13.75 ] ),
+			$this->at( 'outer (complete)', 180_020, [ 'duration_ms' => 21.5 ] ),
+		];
+
+		$outer = Flame_Fold::tree( $this->fold( $entries ) )['children'][0];
+		$this->assertSame( 2, $outer['children'][0]['count'] );
+		// Its own 21.5 stands; 4.25 + 20.0 reads the first instance's start
+		// against a total spanning both, and overstates the parent by 2.75.
+		$this->assertEqualsWithDelta( 21.5, $outer['value'], 1e-6 );
+	}
+
+	public function test_a_span_opened_twice_but_closed_once_is_still_merged(): void {
+		// `count` rises only on (complete), so two starts and one complete read
+		// as a single instance while `t` already holds the FIRST start's offset.
+		// close() manufactures that state itself: it splices off every frame
+		// above the one it matches, so a span outliving its parent is left
+		// open — and free to be opened again later.
+		$entries = [
+			$this->at( 'p (start)', 10 ),
+			$this->at( 'p (complete)', 23.25, [ 'duration_ms' => 13.25 ] ),
+			// Second run four minutes on, and only this one has a child.
+			$this->at( 'p (start)', 240_000 ),
+			$this->at( 'c (start)', 240_002 ),
+			$this->at( 'c (complete)', 240_008.75, [ 'duration_ms' => 6.75 ] ),
+		];
+
+		$p = Flame_Fold::tree( $this->fold( $entries ) )['children'][0];
+		$this->assertSame( 'p', $p['name'] );
+		$this->assertSame( 1, $p['count'], 'one of the two runs completed' );
+		// Its own 13.25 stands; 240_002 + 6.75 - 10 is the gap between runs.
+		$this->assertEqualsWithDelta( 13.25, $p['value'], 1e-6 );
+		$this->assertTrue( $p['merged'], 'two starts is merged, whatever count says' );
+	}
+
+	public function test_a_state_restored_from_before_starts_existed_is_not_stretched(): void {
+		// A checkpoint written by an older worker carries no `starts`, and a
+		// missing key reading as 0 would say "one span" — the old extent bug,
+		// back for every in-flight request across a deploy. Completions are the
+		// floor: a path can never close more often than it opened.
+		$state         = Flame_Fold::start( self::ORIGIN );
+		$state['root'] = [
+			'value'    => 0.0,
+			'count'    => 0,
+			'max'      => 0.0,
+			't'        => null,
+			'children' => [
+				'outer' => [
+					'value'    => 812.5,
+					'count'    => 4,
+					'max'      => 406.25,
+					't'        => 60.25,
+					'children' => [
+						'inner' => [
+							'value'    => 9.5,
+							'count'    => 1,
+							'max'      => 9.5,
+							't'        => 300_000.75,
+							'children' => [],
+						],
+					],
+				],
+			],
+		];
+
+		$outer = Flame_Fold::tree( $state )['children'][0];
+		$this->assertSame( 'outer', $outer['name'] );
+		$this->assertTrue( $outer['merged'], 'four completions is four spans' );
+		// 812.5 stands; 300_000.75 + 9.5 - 60.25 is the gap between two runs.
+		$this->assertEqualsWithDelta( 812.5, $outer['value'], 1e-6 );
+	}
+
 	public function test_a_merged_node_carries_the_offset_it_first_started_at(): void {
 		// The log renders these nodes as rows and needs a real clock position
 		// for each; without one the view cannot gap them and a "+Xms" caption

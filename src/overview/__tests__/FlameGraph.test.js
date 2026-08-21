@@ -862,6 +862,58 @@ describe( 'withTimeSpacers', () => {
 		expect( withTimeSpacers( aggregate ) ).toEqual( aggregate );
 	} );
 
+	it( 'leaves a folded tree alone — a merged node has no end to gap against', () => {
+		// `merged` means `t` is the EARLIEST span's start while `value` totals
+		// them all, so `t + value` lands where no span ran and every gap
+		// measured from it is fiction. Flame_Fold decides; the browser reads.
+		const folded = {
+			name: 'process',
+			value: 4200,
+			t: 0,
+			merged: false,
+			children: [
+				{ name: 'db', value: 275, t: 60, merged: true, children: [] },
+				{
+					name: 'render',
+					value: 310,
+					t: 3400,
+					merged: false,
+					children: [],
+				},
+			],
+		};
+		expect( withTimeSpacers( folded ) ).toEqual( folded );
+	} );
+
+	it( 'leaves a merged PARENT alone even where every child is positioned', () => {
+		// The parent is the half a children-only guard would miss: its own `t`
+		// is the earliest of several spans, so the gap to the first child is
+		// measured between two different runs.
+		const mergedParent = {
+			name: 'save',
+			value: 615,
+			t: 45,
+			merged: true,
+			children: [
+				{
+					name: 'db',
+					value: 130,
+					t: 2600,
+					merged: false,
+					children: [],
+				},
+				{
+					name: 'render',
+					value: 240,
+					t: 4100,
+					merged: false,
+					children: [],
+				},
+			],
+		};
+		expect( withTimeSpacers( mergedParent ) ).toEqual( mergedParent );
+	} );
+
 	it( 'leaves a parent alone when only some of its children are positioned', () => {
 		const partial = {
 			name: 'process',

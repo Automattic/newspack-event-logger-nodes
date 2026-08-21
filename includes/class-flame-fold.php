@@ -13,9 +13,13 @@
  *
  * One consequence to know about: a folded tree reaches the per-URL aggregate as
  * ONE node per path where an unfolded one reaches it as N numbered siblings, so
- * that aggregate's shape depends on whether a request folded. The time it
- * attributes is the same, and every other stat — leaderboard, categories,
- * hourly, per-URL — is identical either way.
+ * that aggregate's shape depends on whether a request folded. A merged node
+ * also declines the extent covering `Flame_Tree` gives a positioned family —
+ * `t` is one instance's and `value` is every instance's, so it keeps the sum
+ * instead, and can read lower than the unfolded tree by the gaps it no longer
+ * paints. Every stat outside the flame — leaderboard, categories, hourly,
+ * per-URL — reads the record's own duration and `profiles`, so those are
+ * identical either way.
  *
  * Because it is the same stack machine, pair balance is inherent: there is no
  * way to emit an orphaned complete or an unclosed span, which is exactly what
@@ -40,7 +44,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
 /**
  * One in-flight request's entries, merged by path as they arrive.
  *
- * @phpstan-type Fold_Frame array{name: string, path: list<string>, t: float|null}
+ * @phpstan-type Fold_Frame array{name: string, path: list<string>}
  * @phpstan-type Fold_State array{root: array<array-key,mixed>, stack: list<Fold_Frame>, count: int, origin: float|null}
  */
 final class Flame_Fold {
@@ -136,10 +140,10 @@ final class Flame_Fold {
 		self::record( $state['root'], $path, null, $offset );
 
 		if ( \count( $state['stack'] ) < self::MAX_STACK_DEPTH ) {
+			// No `t`: the node keeps the earliest, and frames ride checkpoints.
 			$state['stack'][] = [
 				'name' => $base,
 				'path' => $path,
-				't'    => $offset,
 			];
 		}
 	}
@@ -163,11 +167,13 @@ final class Flame_Fold {
 				$node['t'] = \is_numeric( $seen ) ? \min( (float) $seen, $t ) : $t;
 			}
 			if ( null === $duration ) {
+				// Starts, not completions: see positioned().
+				$node['starts'] = Core::num_int( $node['starts'] ?? null ) + 1;
 				return;
 			}
 			$node['value'] = ( \is_numeric( $node['value'] ?? null ) ? (float) $node['value'] : 0.0 ) + $duration;
 			$node['max']   = \max( \is_numeric( $node['max'] ?? null ) ? (float) $node['max'] : 0.0, $duration );
-			$node['count'] = ( \is_numeric( $node['count'] ?? null ) ? (int) $node['count'] : 0 ) + 1;
+			$node['count'] = Core::num_int( $node['count'] ?? null ) + 1;
 			return;
 		}
 		$name     = \array_shift( $path );
@@ -188,6 +194,7 @@ final class Flame_Fold {
 		return [
 			'value'    => 0.0,
 			'count'    => 0,
+			'starts'   => 0,
 			'max'      => 0.0,
 			't'        => null,
 			'children' => [],
@@ -246,22 +253,22 @@ final class Flame_Fold {
 		$children     = [];
 		$sum          = 0.0;
 		$extent       = null;
-		// Own start; null once any child is unpositioned: no honest extent.
-		$start        = \is_numeric( $node['t'] ?? null ) ? (float) $node['t'] : null;
+		$start        = self::positioned( $node );
 		$raw_children = \is_array( $node['children'] ?? null ) ? $node['children'] : [];
 		foreach ( $raw_children as $child_name => $child ) {
 			if ( ! \is_array( $child ) ) {
 				continue;
 			}
-			$flat       = self::flatten( (string) $child_name, $child );
-			$value      = \is_numeric( $flat['value'] ) ? (float) $flat['value'] : 0.0;
-			$sum       += $value;
-			$children[] = $flat;
-			if ( null === $start || ! \is_numeric( $flat['t'] ?? null ) ) {
+			$flat        = self::flatten( (string) $child_name, $child );
+			$value       = \is_numeric( $flat['value'] ) ? (float) $flat['value'] : 0.0;
+			$sum        += $value;
+			$children[]  = $flat;
+			$child_start = self::positioned( $child );
+			if ( null === $start || null === $child_start ) {
 				$start = null;
 				continue;
 			}
-			$extent = \max( $extent ?? 0.0, (float) $flat['t'] + $value );
+			$extent = \max( $extent ?? 0.0, $child_start + $value );
 		}
 		// Spacers fill the gaps, so children reach the EXTENT, not their sum.
 		$needed = null !== $start && null !== $extent
@@ -271,9 +278,50 @@ final class Flame_Fold {
 			'name'     => $name,
 			'value'    => \max( \is_numeric( $node['value'] ?? null ) ? (float) $node['value'] : 0.0, $needed ),
 			'count'    => \is_numeric( $node['count'] ?? null ) ? (int) $node['count'] : 0,
+			'merged'   => self::merged( $node ),
 			'max'      => \is_numeric( $node['max'] ?? null ) ? (float) $node['max'] : 0.0,
 			't'        => \is_numeric( $node['t'] ?? null ) ? (float) $node['t'] : null,
 			'children' => $children,
 		];
+	}
+
+	/**
+	 * The offset a node can be laid out from, or null when it stands for no
+	 * single span. A merged node's `t` is its earliest instance's start while
+	 * `value` totals them all, so `t + value` is no instance's end and a gap
+	 * measured from it is fiction — the sum is its only honest width.
+	 *
+	 * @param array<array-key,mixed> $node Folded node.
+	 * @return float|null Offset in milliseconds, or null.
+	 */
+	private static function positioned( array $node ): ?float {
+		if ( self::merged( $node ) ) {
+			return null;
+		}
+		return \is_numeric( $node['t'] ?? null ) ? (float) $node['t'] : null;
+	}
+
+	/**
+	 * Whether a node folded more than one span in. STARTS, not completions:
+	 * `close()` splices off every frame above the one it matches, so a span
+	 * outliving its parent is left open and never reaches `count` — while its
+	 * `t` is already stamped and its path free to be opened again.
+	 *
+	 * Completions are the FLOOR, for the state a worker restores from a
+	 * checkpoint written before `starts` existed: a missing key reads as 0,
+	 * which would claim one span and hand every such node back to the extent
+	 * rule. A path can never close more often than it opened, so the max is
+	 * the identity on anything this version wrote. One case stays wrong there
+	 * — two starts and a single completion — until that path completes again
+	 * or opens twice more; a single further open leaves both counters at 1.
+	 *
+	 * @param array<array-key,mixed> $node Folded node.
+	 * @return bool True when the node stands for two or more spans.
+	 */
+	private static function merged( array $node ): bool {
+		return 1 < \max(
+			Core::num_int( $node['starts'] ?? null ),
+			Core::num_int( $node['count'] ?? null )
+		);
 	}
 }

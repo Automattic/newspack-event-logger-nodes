@@ -355,6 +355,14 @@ final class Flame_Tree {
 	 * its right edge. Overlap has no honest side-by-side layout anyway, and
 	 * `withTimeSpacers` declines to position such a family for that reason.
 	 *
+	 * There is no merged case here because no merged node reaches this: every
+	 * node `build_flame_data()` makes is one span, and
+	 * `merge_flame_children_incremental()` drops `t` on the way into the
+	 * aggregate, so `$start` is null and the sum stands. Restoring `t` there
+	 * would need the guard `Flame_Fold::positioned()` carries for the folded
+	 * path — an extent read off a node standing for several spans measures
+	 * from one of them to another's child.
+	 *
 	 * Children are assumed already covered, so callers walk bottom-up.
 	 *
 	 * @param array<array-key,mixed> $node Node to normalize, by reference.
