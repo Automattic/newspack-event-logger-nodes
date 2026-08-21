@@ -95,7 +95,7 @@ class Findings {
 			[
 				self::unattributed( $profiled, $duration, $rule_id ),
 				self::dominant_span( $nodes, $profiled, $rule, $duration ),
-				self::repetition( $nodes, $rule ),
+				self::repetition( $record, $rule ),
 				self::entry_gap( $record, $rule_id ),
 				self::truncation( $record, $rule_id ),
 			] as $finding
@@ -221,19 +221,38 @@ class Findings {
 	/**
 	 * A span fired hundreds of times in one request — the N+1 shape, and the
 	 * same family as Query Monitor's duplicate queries and hooks-by-count.
-	 * `Flame_Fold` already collapses same-name siblings with a `count`, so this
-	 * is a read rather than a scan.
 	 *
-	 * @param list<array{name:string,value:float,count:int,depth:int}> $nodes Flattened flame nodes.
+	 * Counted from `profiles`, which is exclusive by construction and present
+	 * whether or not the record folded; the flame's `count` is written only by
+	 * `Flame_Fold`, so an unfolded tree reports every span as a single call.
+	 * `Request_Builder_Node` subtracts a state's NON-CALLBACK children only, so
+	 * a significant hook's number carries its listeners' — the right charge for
+	 * a repeat, since dispatching them is what the repetition costs.
+	 *
+	 * @param array<array-key,mixed> $record The request record.
 	 * @return array<string,mixed>|null
 	 */
-	private static function repetition( array $nodes, ?Rule $rule ): ?array {
-		$worst = null;
-		foreach ( $nodes as $node ) {
-			if ( $node['count'] >= self::REPETITION_COUNT
-					&& ( null === $worst || $node['count'] > $worst['count'] ) ) {
-				$worst = $node;
+	private static function repetition( array $record, ?Rule $rule ): ?array {
+		$profiles = \is_array( $record['profiles'] ?? null ) ? $record['profiles'] : [];
+		$worst    = null;
+		foreach ( $profiles as $name => $profile ) {
+			if ( ! \is_array( $profile ) ) {
+				continue;
 			}
+			$count = Core::num_int( $profile['count'] ?? 0 );
+			if ( $count < self::REPETITION_COUNT ) {
+				continue;
+			}
+			$self = Core::num_float( $profile['time'] ?? 0 );
+			// Non-positive is a record whose spans do not add up, not a cost.
+			if ( $self <= 0.0 || ( null !== $worst && $self <= $worst['self_ms'] ) ) {
+				continue;
+			}
+			$worst = [
+				'name'    => Core::as_string( $name, 'unknown' ),
+				'count'   => $count,
+				'self_ms' => $self,
+			];
 		}
 		if ( null === $worst ) {
 			return null;
@@ -241,15 +260,15 @@ class Findings {
 		return [
 			'kind'     => 'repetition',
 			'severity' => 'medium',
-			'title'    => \sprintf( '%s fired %d times in one request', $worst['name'], $worst['count'] ),
+			'title'    => \sprintf(
+				'%s fired %d times in one request, holding %s',
+				$worst['name'],
+				$worst['count'],
+				self::ms( $worst['self_ms'] )
+			),
 			'detail'   => 'A count this high usually means the work inside is being repeated per item rather than done once.',
-			'measured' => 'flame',
-			'metric'   => [
-				'name'     => $worst['name'],
-				'count'    => $worst['count'],
-				'total_ms' => $worst['value'],
-				'each_ms'  => $worst['value'] / $worst['count'],
-			],
+			'measured' => 'profiles',
+			'metric'   => [ ...$worst, 'each_ms' => $worst['self_ms'] / $worst['count'] ],
 			'rule_id'  => $rule?->id,
 			'proposal' => self::visibility_proposal(
 				$worst['name'],
@@ -264,7 +283,7 @@ class Findings {
 	 * wins: it is the most specific thing that still dominates, and therefore
 	 * the one worth being able to see inside.
 	 *
-	 * @param list<array{name:string,value:float,count:int,depth:int}> $nodes Flattened flame nodes.
+	 * @param list<array{name:string,value:float,self_ms:float,depth:int}> $nodes Flattened flame nodes.
 	 * @return array<string,mixed>|null
 	 */
 	private static function dominant_span( array $nodes, float $profiled, ?Rule $rule, float $duration ): ?array {
@@ -285,8 +304,8 @@ class Findings {
 		if ( null === $best ) {
 			return null;
 		}
-		$share   = $best['value'] / $profiled;
-		$already = self::is_significant( $best['name'], $rule );
+		$share      = $best['value'] / $profiled;
+		$self_share = $best['self_ms'] / $profiled;
 		return [
 			'kind'     => 'dominant_span',
 			'severity' => 'high',
@@ -295,14 +314,21 @@ class Findings {
 				$best['name'],
 				(int) \round( $share * 100 )
 			),
-			'detail'   => self::interior_detail( $best['name'], $already ),
+			'detail'   => \implode(
+				' ',
+				\array_filter(
+					[ self::spent_detail( $best, $self_share ), self::interior_detail( $best['name'], $rule ) ],
+					static fn ( string $sentence ): bool => '' !== $sentence
+				)
+			),
 			'measured' => 'flame',
 			'metric'   => [
-				'name'  => $best['name'],
-				'ms'    => $best['value'],
-				'share' => $share,
-				'count' => $best['count'],
-				'depth' => $best['depth'],
+				'name'       => $best['name'],
+				'ms'         => $best['value'],
+				'share'      => $share,
+				'self_ms'    => $best['self_ms'],
+				'self_share' => $self_share,
+				'depth'      => $best['depth'],
 			],
 			'rule_id'  => $rule?->id,
 			'proposal' => self::visibility_proposal(
@@ -326,17 +352,20 @@ class Findings {
 	 */
 	private static function visibility_proposal( string $span, ?Rule $rule, string $undo ): array {
 		$rule_id = $rule?->id;
-		// Already marked: its listeners are here, so there is nothing to add.
+		$kind    = self::span_kind( $span );
+		// Already marked; nothing to add, but what that bought differs by kind.
 		if ( self::is_significant( $span, $rule ) ) {
 			return [
 				'action'    => 'none',
 				'direction' => 'none',
 				'rule_id'   => $rule_id,
-				'why'       => 'It is already a significant event; its listeners are in this record.',
+				'why'       => 'hook' === $kind
+					? 'It is already a significant event; its listeners are in this record.'
+					: 'It is already a significant event, which for a custom event only keeps it from being auto-disabled; the application decides what it logs inside.',
 				'undo'      => '',
 			];
 		}
-		if ( self::is_hook( $span ) ) {
+		if ( 'hook' === $kind ) {
 			return [
 				'action'    => 'mark_significant',
 				'direction' => 'more',
@@ -350,7 +379,7 @@ class Findings {
 				'undo'      => $undo,
 			];
 		}
-		if ( self::is_custom_event( $span ) ) {
+		if ( 'custom' === $kind ) {
 			return [
 				'action'    => 'add_custom_events',
 				'direction' => 'more',
@@ -377,6 +406,31 @@ class Findings {
 	}
 
 	/**
+	 * Why the inside of this span is or is not visible, in its own terms — only
+	 * a hook has listeners to speak of. Arms in the order `visibility_proposal`
+	 * uses, so the pair can be read side by side.
+	 *
+	 * @param string    $span The span's name, as the flame carries it.
+	 * @param Rule|null $rule The governing rule, or null when none does.
+	 * @return string One sentence, true for this kind of span.
+	 */
+	private static function interior_detail( string $span, ?Rule $rule ): string {
+		$kind = self::span_kind( $span );
+		if ( self::is_significant( $span, $rule ) ) {
+			return 'hook' === $kind
+				? 'It is already a significant event, so its listeners are logged — read those next.'
+				: 'The application logs this span itself, and marking it significant only keeps it from being auto-disabled — nothing about its interior follows from that.';
+		}
+		if ( 'hook' === $kind ) {
+			return 'Its listeners are not logged, so what happens inside it is invisible.';
+		}
+		if ( 'custom' === $kind ) {
+			return 'The application logs this span itself; what happens inside it appears only where the application logs it.';
+		}
+		return 'This is one listener on a significant hook — the time is inside this callback.';
+	}
+
+	/**
 	 * Whether the rule already marks this span significant. `bind_current_scope()`
 	 * accepts an event with or without the ` hook` suffix, so both spellings name
 	 * the same hook and a comparison that misses one proposes a no-op edit.
@@ -397,33 +451,39 @@ class Findings {
 	}
 
 	/**
-	 * Why the inside of this span is or is not visible, in its own terms — only
-	 * a hook has listeners to speak of.
+	 * The only three kinds of span the flame carries, classified once so the
+	 * two prose ladders below cannot drift apart — which is how both came to
+	 * credit a custom event with listeners it never had.
+	 *
+	 * @param string $span The span's name, as the flame carries it.
+	 * @return string `hook`, `listener` or `custom`.
 	 */
-	private static function interior_detail( string $span, bool $already ): string {
-		if ( $already ) {
-			return 'It is already a significant event, so its listeners are logged — read those next.';
+	private static function span_kind( string $span ): string {
+		if ( \str_ends_with( $span, Hooks::HOOK_SUFFIX ) ) {
+			return 'hook';
 		}
-		if ( self::is_hook( $span ) ) {
-			return 'Its listeners are not logged, so what happens inside it is invisible.';
-		}
-		if ( self::is_custom_event( $span ) ) {
-			return 'The application logs this span itself; what happens inside it appears only where the application logs it.';
-		}
-		return 'This is one listener on a significant hook — the time is inside this callback.';
-	}
-
-	/** A span the application logged itself — an include, a function, a query. */
-	private static function is_custom_event( string $span ): bool {
-		return ! self::is_hook( $span ) && ! Hooks::is_listener_span( $span );
+		return Hooks::is_listener_span( $span ) ? 'listener' : 'custom';
 	}
 
 	/**
-	 * Whether a span is a WordPress hook, which is the only kind of span a
-	 * rule's significant events can reach.
+	 * How much of the time a span holds it actually SPENDS, said only where it
+	 * has children to hide behind. A wrapper reads as 100% and sends a reader
+	 * looking inside the one span guaranteed to contain everything; the live
+	 * case was `pyrobase` at 100% holding 9.5% in its own body.
+	 *
+	 * @param array{name:string,value:float,self_ms:float,depth:int} $node       The dominant node.
+	 * @param float                                                            $self_share Its own body's share of profiled time.
+	 * @return string A leading sentence, or '' where nothing is contained.
 	 */
-	private static function is_hook( string $span ): bool {
-		return \str_ends_with( $span, Hooks::HOOK_SUFFIX );
+	private static function spent_detail( array $node, float $self_share ): string {
+		$contained = $node['value'] - $node['self_ms'];
+		if ( $contained <= 0.0 ) {
+			return '';
+		}
+		return \sprintf(
+			'It spends %d%% of the profiled time in its own body; the rest is inside what it contains.',
+			(int) \round( $self_share * 100 )
+		);
 	}
 
 	/**
@@ -491,7 +551,7 @@ class Findings {
 	 *
 	 * @param array<array-key,mixed>    $record   The request record.
 	 * @param Rule|null                 $rule     The governing rule.
-	 * @param list<array{name:string,value:float,count:int,depth:int}> $nodes    Flattened flame nodes.
+	 * @param list<array{name:string,value:float,self_ms:float,depth:int}> $nodes    Flattened flame nodes.
 	 * @param float                     $profiled Profiled milliseconds.
 	 * @param float                     $duration Request duration in milliseconds.
 	 * @return array<string,mixed>|null
@@ -522,7 +582,7 @@ class Findings {
 	 * one assembled span-by-span may not.
 	 *
 	 * @param array<array-key,mixed>    $flame The flame tree root.
-	 * @param list<array{name:string,value:float,count:int,depth:int}> $nodes Flattened nodes.
+	 * @param list<array{name:string,value:float,self_ms:float,depth:int}> $nodes Flattened nodes.
 	 */
 	private static function profiled_ms( array $flame, array $nodes ): float {
 		$root = Core::num_float( $flame['value'] ?? 0 );
@@ -539,12 +599,24 @@ class Findings {
 	}
 
 	/**
-	 * Flatten a flame tree into a list of `{name, value, count, depth}`, root
-	 * excluded — the root IS the request, so it can never be the span holding
-	 * most of the request.
+	 * Flatten a flame tree into a list of `{name, value, count, self_ms, depth}`,
+	 * root excluded — the root IS the request, so it can never be the span
+	 * holding most of the request.
+	 *
+	 * `self_ms` is what the span spent in its OWN body: its value less what its
+	 * children hold. That is the number that separates a span doing work from
+	 * one merely containing it, and summed by name it reproduces `profiles`
+	 * exactly wherever no callback state exists: `profiles` does not subtract a
+	 * callback (` @N`) from its parent hook, and this subtracts every child.
+	 *
+	 * It stays non-negative on the raise every producer applies — a parent
+	 * covers at least its children's sum, through `max( value, needed )` in
+	 * `Flame_Tree::cover_children()` and `Flame_Fold::flatten()`. Where that
+	 * raise is what SET the value, for a span that never reported a duration,
+	 * `self_ms` is the gaps between its children.
 	 *
 	 * @param array<array-key,mixed> $flame The flame tree root.
-	 * @return list<array{name:string,value:float,count:int,depth:int}>
+	 * @return list<array{name:string,value:float,self_ms:float,depth:int}>
 	 */
 	private static function flatten( array $flame, int $depth = 0 ): array {
 		$out      = [];
@@ -553,15 +625,33 @@ class Findings {
 			if ( ! \is_array( $child ) ) {
 				continue;
 			}
+			$value = Core::num_float( $child['value'] ?? 0 );
 			$out[] = [
-				'name'  => Core::as_string( $child['name'] ?? 'unknown', 'unknown' ),
-				'value' => Core::num_float( $child['value'] ?? 0 ),
-				'count' => Core::num_int( $child['count'] ?? 1, 1 ),
-				'depth' => $depth + 1,
+				'name'    => Core::as_string( $child['name'] ?? 'unknown', 'unknown' ),
+				'value'   => $value,
+				'self_ms' => $value - self::children_value( $child ),
+				'depth'   => $depth + 1,
 			];
 			$out = \array_merge( $out, self::flatten( $child, $depth + 1 ) );
 		}
 		return $out;
+	}
+
+	/**
+	 * What a node's direct children hold between them.
+	 *
+	 * @param array<array-key,mixed> $node A flame node.
+	 * @return float Milliseconds.
+	 */
+	private static function children_value( array $node ): float {
+		$total    = 0.0;
+		$children = \is_array( $node['children'] ?? null ) ? $node['children'] : [];
+		foreach ( $children as $child ) {
+			if ( \is_array( $child ) ) {
+				$total += Core::num_float( $child['value'] ?? 0 );
+			}
+		}
+		return $total;
 	}
 
 	/**

@@ -39,6 +39,27 @@ const REQUEST_BRIEF = {
 	entries_truncated: false,
 };
 
+test( 'a ratio below a tenth keeps its digits', () => {
+	// `toFixed( 1 )` rendered self_share 0.095 as `0.1` and 0.04 as `0.0` —
+	// flatly contradicting the finding's own "spends 4% in its own body", and
+	// flattening a real 0.0113ms-per-call to `0.0` besides.
+	const brief = {
+		...REQUEST_BRIEF,
+		findings: [
+			{
+				...REQUEST_BRIEF.findings[ 0 ],
+				metric: { self_share: 0.0409, each_ms: 0.0113, share: 0.9998 },
+			},
+		],
+	};
+
+	const md = briefToMarkdown( brief );
+
+	expect( md ).toContain( 'self_share=0.041' );
+	expect( md ).toContain( 'each_ms=0.011' );
+	expect( md ).toContain( 'share=1.000' );
+} );
+
 test( 'a request brief leads with what it is and what it took', () => {
 	const md = briefToMarkdown( REQUEST_BRIEF );
 

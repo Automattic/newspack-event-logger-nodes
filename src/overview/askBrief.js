@@ -45,6 +45,9 @@ const MCP_NOTE =
 /**
  * A number a reader can scan, without dragging a formatter in.
  *
+ * Below 1 the tenth is not enough: shares and per-call costs live there, and
+ * one decimal rendered a 4% self share as `0.0` beside a finding saying 4%.
+ *
  * @param {*} value Anything numeric-ish.
  * @return {string} The rendered number.
  */
@@ -52,7 +55,10 @@ function num( value ) {
 	if ( 'number' !== typeof value || ! Number.isFinite( value ) ) {
 		return String( value ?? '—' );
 	}
-	return Number.isInteger( value ) ? String( value ) : value.toFixed( 1 );
+	if ( Number.isInteger( value ) ) {
+		return String( value );
+	}
+	return value.toFixed( Math.abs( value ) < 1 ? 3 : 1 );
 }
 
 /**
