@@ -12,11 +12,14 @@
  * D3 owns the SVG; React owns only the container element and two auxiliary
  * pointer handlers.
  *
- * Frames arrive from `Flame_Tree` as `{ name, value, children[], detail?, t? }`,
- * where `value` is milliseconds and a child's value never exceeds its
- * parent's. `t` is the frame's start, in milliseconds from the request's — so
- * a frame occupies `[ t, t + value ]`. Per-request trees carry it; aggregates,
- * having merged many requests, do not.
+ * Frames arrive from `Flame_Tree` as `{ name, value, children[], detail?, t?,
+ * count?, merged? }`, where `value` is milliseconds and a child's value never
+ * exceeds its parent's. `t` is the frame's start, in milliseconds from the
+ * request's, so a frame occupies `[ t, t + value ]` — but only while it stands
+ * for ONE span. `merged` is the marker for those that do not: `Flame_Fold`
+ * sets it where it folded repeats together, and there `t` is the earliest
+ * span's start while `value` totals them all. Per-request trees carry `t`;
+ * aggregates, having merged many requests, do not.
  *
  * Where every frame is positioned, `withTimeSpacers` turns the x-axis into a
  * real chronological one: d3-flame-graph packs children flush, so the dead
@@ -47,6 +50,10 @@ const frameName = ( d ) => d.data?.detail || d.data?.name || '';
  * Order two sibling frames: by when they started, or — for an aggregate, whose
  * frames span many requests and so have no single start — by displayed name,
  * which is what `.sort( true )` did for every graph before positions existed.
+ *
+ * A `merged` frame sorts by `t` like any other, so this deliberately does not
+ * use `isPositioned`: ordering needs a start, not a single span, and a merged
+ * node's earliest start is a true one. Only extent arithmetic needs more.
  *
  * @param {Object} a D3 hierarchy node.
  * @param {Object} b D3 hierarchy node.
@@ -519,22 +526,32 @@ export const pruneFlameGraph = ( root, options = {} ) => {
 };
 
 /**
+ * Whether a frame sits at one honest place on the axis: it must know its start,
+ * and it must stand for a single span. `Flame_Fold` marks a node it folded
+ * several spans into `merged`, and there `t` is the earliest span's start while
+ * `value` totals them all — `t + value` is then no span's end, and a gap
+ * measured from it is fiction. The fold decides; this only reads the verdict.
+ *
+ * @param {Object} node Flame node.
+ * @return {boolean} True when the frame can be laid out from its own `t`.
+ */
+const isPositioned = ( node ) => typeof node.t === 'number' && ! node.merged;
+
+/**
  * Order a parent's children by start time and measure the time it leaves
  * uncovered, or null when the family cannot honestly be laid out flat.
  *
- * Two cases decline: a parent or child with no `t` — the whole aggregate view
- * — and children that OVERLAP, which have no side-by-side arrangement and
- * whose combined width already exceeds the interval they span.
+ * Three cases decline: a parent or child with no `t` — the whole aggregate view
+ * — a MERGED parent or child, which stands for several spans and so for no one
+ * interval, and children that OVERLAP, which have no side-by-side arrangement
+ * and whose combined width already exceeds the interval they span.
  *
  * @param {Object} node Flame node whose children are being placed.
  * @return {{ordered: Array, gaps: number[]}|null} Ordered children and the gap before each, or null.
  */
 const placeChildren = ( node ) => {
 	const children = node.children || [];
-	if (
-		typeof node.t !== 'number' ||
-		! children.every( ( child ) => typeof child.t === 'number' )
-	) {
+	if ( ! isPositioned( node ) || ! children.every( isPositioned ) ) {
 		return null;
 	}
 	const ordered = [ ...children ].sort( ( a, b ) => a.t - b.t );
