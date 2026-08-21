@@ -131,12 +131,9 @@ class FindingsTest extends TestCase {
 	}
 
 	public function test_repetition_reports_the_call_count(): void {
-		$record = $this->healthy_record();
-		$record['flame']['children'][] = [
-			'name'     => 'the_content hook',
-			'value'    => 30.0,
-			'count'    => 340,
-			'children' => [],
+		$record             = $this->healthy_record();
+		$record['profiles'] = [
+			'the_content hook' => [ 'count' => 340, 'time' => 30.0, 'entries' => [] ],
 		];
 
 		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'repetition' );
@@ -146,13 +143,116 @@ class FindingsTest extends TestCase {
 		$this->assertSame( 'the_content hook', $found['metric']['name'] );
 	}
 
+	public function test_repetition_reads_the_records_own_exclusive_time(): void {
+		// `Flame_Tree` never writes `count` — only `Flame_Fold` does — so on an
+		// UNFOLDED record every node defaulted to 1 and this finding could not
+		// fire at all. 3,997 of 4,000 sampled records are unfolded, and all but
+		// three carry `profiles`, where the builder already subtracted each
+		// state's children from it. No flame counts here, deliberately.
+		$record             = $this->healthy_record();
+		$record['profiles'] = [
+			'query hook' => [ 'count' => 9_400, 'time' => 1.75, 'entries' => [] ],
+			'restapi'    => [ 'count' => 88, 'time' => 246.5, 'entries' => [] ],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'repetition' );
+
+		$this->assertNotNull( $found );
+		$this->assertSame( 'restapi', $found['metric']['name'] );
+		$this->assertSame( 88, $found['metric']['count'] );
+		$this->assertEqualsWithDelta( 246.5, $found['metric']['self_ms'], 1e-6 );
+		// Pin the source and the divisor: inverting them would ship green.
+		$this->assertSame( 'profiles', $found['measured'] );
+		$this->assertEqualsWithDelta( 2.801, $found['metric']['each_ms'], 1e-3 );
+	}
+
+	public function test_a_dominant_span_reports_what_it_spends_in_its_own_body(): void {
+		// A wrapper holds ~all of the time and spends almost none of it. The
+		// inclusive share alone named the engine and sent the reader nowhere.
+		$record                      = $this->healthy_record();
+		$record['flame']['children'] = [
+			[
+				'name'     => 'pyrobase',
+				'value'    => 396.0,
+				'count'    => 1,
+				'children' => [
+					[
+						'name'     => 'restapi',
+						'value'    => 198.0,
+						'count'    => 62,
+						'children' => [],
+					],
+					[
+						'name'     => 'query_sql',
+						'value'    => 182.0,
+						'count'    => 120,
+						'children' => [],
+					],
+				],
+			],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'dominant_span' );
+
+		$this->assertNotNull( $found );
+		$this->assertSame( 'pyrobase', $found['metric']['name'] );
+		// 396.0 held, 380.0 of it inside its two children.
+		$this->assertEqualsWithDelta( 16.0, $found['metric']['self_ms'], 1e-6 );
+		$this->assertEqualsWithDelta( 0.04, $found['metric']['self_share'], 1e-6 );
+		$this->assertStringContainsString( '4%', $found['detail'] );
+	}
+
+	public function test_an_already_significant_custom_event_is_not_credited_with_listeners(): void {
+		// Marking a CUSTOM event significant does nothing but keep it from
+		// being auto-disabled — the application logs the span itself, so there
+		// are no listeners to go and read.
+		// Position 6 is significant_events; position 8 is hooks.
+		$rule                        = new Rule( 'c0ffeeba5e12', '/calendar/today', Rule::ACTION_LOG, 0, 0.0, [ 'pyrobase' ], [], [ 'init' ] );
+		$record                      = $this->healthy_record();
+		$record['flame']['children'] = [
+			[
+				'name'     => 'pyrobase',
+				'value'    => 372.5,
+				'count'    => 1,
+				'children' => [],
+			],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $rule ), 'dominant_span' );
+
+		$this->assertNotNull( $found );
+		$this->assertStringNotContainsString( 'listener', $found['detail'] );
+		$this->assertStringContainsString( 'auto-disabled', $found['detail'] );
+		// The proposal says the same thing twice over, and was wrong twice.
+		$this->assertSame( 'none', $found['proposal']['action'] );
+		$this->assertStringNotContainsString( 'listener', $found['proposal']['why'] );
+	}
+
+	public function test_a_repeat_that_spends_nothing_is_not_the_finding(): void {
+		// Exclusive time can go negative when a record's spans do not add up:
+		// 1 of 20,844 live profile states is, `include` at -336,176ms across
+		// 11,349 calls. A repeat holding nothing is not a cost, and a negative
+		// is a broken record rather than a slow one.
+		$record             = $this->healthy_record();
+		$record['profiles'] = [
+			'include'    => [ 'count' => 11_349, 'time' => -336_176.5, 'entries' => [] ],
+			'query hook' => [ 'count' => 240, 'time' => 0.0, 'entries' => [] ],
+		];
+
+		$this->assertNotContains(
+			'repetition',
+			$this->kinds( Findings::for_request( $record, $this->instrumented_rule() ) )
+		);
+	}
+
 	public function test_a_span_below_the_repetition_threshold_is_quiet(): void {
-		$record = $this->healthy_record();
-		$record['flame']['children'][] = [
-			'name'     => 'the_content hook',
-			'value'    => 30.0,
-			'count'    => Findings::REPETITION_COUNT - 1,
-			'children' => [],
+		$record             = $this->healthy_record();
+		$record['profiles'] = [
+			'the_content hook' => [
+				'count' => Findings::REPETITION_COUNT - 1,
+				'time'  => 30.0,
+				'entries' => [],
+			],
 		];
 
 		$this->assertNotContains(
@@ -452,12 +552,9 @@ class FindingsTest extends TestCase {
 	 */
 	public function test_repetition_of_an_already_significant_hook_proposes_nothing(): void {
 		$rule   = new Rule( 'a1b2c3d4e5f6', '/calendar/today', Rule::ACTION_LOG, 0, 0.0, [ 'the_content' ], [], [ 'init', 'wp_loaded' ] );
-		$record = $this->healthy_record();
-		$record['flame']['children'][] = [
-			'name'     => 'the_content hook',
-			'value'    => 30.0,
-			'count'    => 340,
-			'children' => [],
+		$record             = $this->healthy_record();
+		$record['profiles'] = [
+			'the_content hook' => [ 'count' => 340, 'time' => 30.0, 'entries' => [] ],
 		];
 
 		$found = $this->of_kind( Findings::for_request( $record, $rule ), 'repetition' );
@@ -467,16 +564,15 @@ class FindingsTest extends TestCase {
 	}
 
 	public function test_repetition_of_a_custom_event_is_not_proposed_as_significant(): void {
-		$record = $this->healthy_record();
-		$record['flame']['children'][] = [
-			'name'     => 'function: byline',
-			'value'    => 30.0,
-			'count'    => 340,
-			'children' => [],
+		$record             = $this->healthy_record();
+		$record['profiles'] = [
+			'function: byline' => [ 'count' => 340, 'time' => 30.0, 'entries' => [] ],
 		];
 
 		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'repetition' );
 
+		// Without this the assertion below passes on a null finding.
+		$this->assertNotNull( $found );
 		$this->assertNotSame( 'mark_significant', $found['proposal']['action'] );
 	}
 
@@ -506,6 +602,9 @@ class FindingsTest extends TestCase {
 			'name'     => 'request',
 			'value'    => 175.6,
 			'children' => [ [ 'name' => 'init hook', 'value' => 175.6, 'count' => 900, 'children' => [] ] ],
+		];
+		$record['profiles']    = [
+			'init hook' => [ 'count' => 900, 'time' => 175.6, 'entries' => [] ],
 		];
 
 		$kinds = $this->kinds( Findings::for_request( $record, $this->instrumented_rule() ) );

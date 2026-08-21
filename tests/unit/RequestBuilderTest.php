@@ -589,6 +589,30 @@ class RequestBuilderTest extends TestCase {
 		$this->assertSame( 1, $req['profiles']['wp_head hook']['count'] );
 	}
 
+	public function test_a_nested_non_callback_child_is_subtracted_from_its_parent(): void {
+		// The positive case of the rule the callback test states negatively,
+		// and the invariant `Findings::repetition()` now ranks on: a profile's
+		// time is EXCLUSIVE, so the repeat is charged what it spends. Only the
+		// negative case was pinned, so deleting the subtraction loop left every
+		// suite green while the finding silently reverted to contained time.
+		$rb      = new Request_Builder_Node();
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+
+		$this->fill( $rb, 1, 'r1', 'process (start)' );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$this->fill( $rb, 3, 'r1', 'outer (start)', [ 'l' => '' ] );
+		$this->fill( $rb, 4, 'r1', 'inner (start)', [ 'l' => '' ] );
+		$this->fill( $rb, 5, 'r1', 'inner (complete)', [ 'duration_ms' => 6.25 ] );
+		$this->fill( $rb, 6, 'r1', 'outer (complete)', [ 'duration_ms' => 10.75 ] );
+		$this->fill( $rb, 7, 'r1', 'process (complete)' );
+
+		$req = $this->captured_request( $capture );
+		// 10.75 held, 6.25 of it inside `inner`.
+		$this->assertEqualsWithDelta( 4.5, $req['profiles']['outer']['time'], 1e-9 );
+		$this->assertEqualsWithDelta( 6.25, $req['profiles']['inner']['time'], 1e-9 );
+	}
+
 	public function test_callback_completion_does_not_subtract_from_parent_hook(): void {
 		// Callback frames (' @N') represent breakdowns of their parent hook's
 		// time. So complete-of-callback must not subtract from the parent hook.
