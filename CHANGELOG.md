@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.58.3] - 2026-08-21
+
+### Changed
+- **Substrate pin moved to v2.36.1**, which drops the hardcoded 17px scrollbar inset from the shared log header. The shared stylesheet is INLINED at build time, so 0.58.2 — pinned to v2.36.0 — still carries the inset in its `error-log` and `requests` bundles, and only a rebuild against the newer pin removes it. Caught by diffing the published `build/` against a local one: four CSS files differed by exactly that one declaration.
+
 ## [0.58.2] - 2026-08-21
 
 ### Fixed
