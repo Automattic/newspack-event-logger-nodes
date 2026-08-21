@@ -8,7 +8,6 @@
 
 $stream-gap: 12px;
 $stream-padding-x: 12px;
-$stream-scrollbar: 17px;
 
 .event-logger-request-stream {
 	padding: 16px 20px;
@@ -34,7 +33,6 @@ $stream-scrollbar: 17px;
 	display: grid;
 	gap: $stream-gap;
 	padding: 6px $stream-padding-x;
-	margin-right: $stream-scrollbar;
 	flex-shrink: 0;
 }
 
