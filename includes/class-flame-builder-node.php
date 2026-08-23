@@ -127,6 +127,10 @@ class Flame_Builder_Node extends Node {
 	 * A frame past the budget is re-merged from memcache by the next write to its
 	 * bucket, so it is lost only if the process AND memcache both fail before the
 	 * bucket closes — the same double failure the mirror exists for.
+	 *
+	 * It is a policy cap on FRAME bytes, not a measurement of the record: keys,
+	 * nesting and `pending` ride the same checkpoint uncounted. At 0.8% of the
+	 * drop cliff that slack cannot reach it.
 	 */
 	private const MAX_CHECKPOINT_MIRROR_BYTES = 262144;
 
@@ -350,6 +354,7 @@ class Flame_Builder_Node extends Node {
 
 		if ( 'GET_STATS' === $verb ) {
 			$stats_count = \iterator_count( $this->stats_store?->accumulating_url_stats() ?? new \EmptyIterator() );
+			$mirror      = $this->mirror_frames();
 			$now = ( Core::$now ?: Core::right_now() );
 			$payload = [
 				'stats_count'              => $stats_count,
@@ -360,6 +365,8 @@ class Flame_Builder_Node extends Node {
 				'auto_tune_pending_count'  => self::map_total( $this->hooks_to_disable ) + self::map_total( $this->custom_events_to_disable ) + self::map_total( $this->new_significant_events ),
 				'is_hub'                   => $this->is_hub,
 				'significant_events_count' => self::map_total( $this->significant_events ),
+				'mirror_held_frames'       => \count( $mirror ),
+				'mirror_held_bytes'        => \array_sum( \array_column( $mirror, 'size' ) ),
 			];
 		} else {
 			$payload = [ 'error' => "unknown request verb: {$verb}" ];
@@ -1856,26 +1863,30 @@ class Flame_Builder_Node extends Node {
 	 * @return array{at: int, buffer: array<string,array{0: array<array-key,mixed>, 1: int}>, topn: array<string,array<string,array{0: array<array-key,mixed>, 1: int}>>}
 	 */
 	private function checkpoint_mirror(): array {
-		$held = [];
-		foreach ( $this->stats_mirror_buffer as $key => $frame ) {
-			$held[] = [ '', $key, $frame, self::frame_bytes( $frame ) ];
-		}
-		foreach ( $this->stats_mirror_topn as $ns => $frames ) {
-			foreach ( $frames as $key => $frame ) {
-				$held[] = [ $ns, $key, $frame, self::frame_bytes( $frame ) ];
-			}
-		}
-		\usort( $held, static fn ( array $a, array $b ): int => $a[3] <=> $b[3] );
+		$held = $this->mirror_frames();
+		\usort( $held, static fn ( array $a, array $b ): int => $a['size'] <=> $b['size'] );
 
-		$budget = self::MAX_CHECKPOINT_MIRROR_BYTES;
+		$remaining = self::MAX_CHECKPOINT_MIRROR_BYTES;
 		$out    = [ 'at' => $this->now_ts(), 'buffer' => [], 'topn' => [] ];
-		foreach ( $held as $i => [ $ns, $key, $frame, $size ] ) {
-			if ( $size > $budget ) {
-				$over = \count( $held ) - $i;
-				$this->print_less_often( "flame-builder: {$over} held stats frames over the checkpoint budget; they still reach the mirror at bucket close" );
+		foreach ( $held as $i => [ 'ns' => $ns, 'key' => $key, 'frame' => $frame, 'size' => $size ] ) {
+			if ( $size > $remaining ) {
+				// Ascending, so we stop on the SMALLEST that would not fit.
+				$largest = $held[ \count( $held ) - 1 ];
+				$this->print_less_often(
+					'flame-builder: held stats frames over the checkpoint budget; they still reach the mirror at bucket close',
+					\sprintf(
+						' — %d of %d frames dropped; budget %d bytes, held total %d bytes; largest dropped %s at %d bytes',
+						\count( $held ) - $i,
+						\count( $held ),
+						self::MAX_CHECKPOINT_MIRROR_BYTES,
+						\array_sum( \array_column( $held, 'size' ) ),
+						$largest['key'],
+						$largest['size']
+					)
+				);
 				break;
 			}
-			$budget -= $size;
+			$remaining -= $size;
 			if ( '' === $ns ) {
 				$out['buffer'][ $key ] = $frame;
 			} else {
@@ -1883,6 +1894,28 @@ class Flame_Builder_Node extends Node {
 			}
 		}
 		return $out;
+	}
+
+	/**
+	 * The mirror frames being held, each with what it would cost a checkpoint.
+	 *
+	 * One builder, two readers: the pack below, and the introspection payload —
+	 * which needs the total BEFORE the pack goes over, since a threshold you can
+	 * only observe after it trips is not a signal.
+	 *
+	 * @return list<array{ns: string, key: string, frame: array{0: array<array-key,mixed>, 1: int}, size: int}>
+	 */
+	private function mirror_frames(): array {
+		$held = [];
+		foreach ( $this->stats_mirror_buffer as $key => $frame ) {
+			$held[] = [ 'ns' => '', 'key' => $key, 'frame' => $frame, 'size' => self::frame_bytes( $frame ) ];
+		}
+		foreach ( $this->stats_mirror_topn as $ns => $frames ) {
+			foreach ( $frames as $key => $frame ) {
+				$held[] = [ 'ns' => $ns, 'key' => $key, 'frame' => $frame, 'size' => self::frame_bytes( $frame ) ];
+			}
+		}
+		return $held;
 	}
 
 	/**

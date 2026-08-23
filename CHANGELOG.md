@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **The checkpoint-budget tripwire now says what did not fit.** ADR-11 calls this log "the only tripwire that can tell you" the carry budget is set wrong, and it reported a bare count — so a hub firing it seventeen times in three hours still could not say which frame overflowed, how big it was, or how far over the budget it sat. It now names the largest dropped frame, its size, the budget and the held total — the two numbers a budget is actually set from. The count moved into `print_less_often`'s `$extra`, which is printed but not keyed: with it in the message text, "1 over" and "2 over" were two separate rate-limit timers, so the alternating counts minted two timers where one was intended. The observed volume was well inside the allowance either way; the fix stands on correctness, not on noise.
+- **ADR-11's reopen condition was permanently satisfied, which is the same as having none.** It said to revisit when this log fires routinely. But the largest frames are the per-server leaderboards and that axis grows with an operator input, so on any multi-spoke hub it fires as a matter of course — a staging hub with ~25 spokes trips it a few times an hour, dropping one or two frames, and a dropped frame is re-merged from memcache on the next write anyway. Decision 11 now records that dropping the biggest IS the design, and states a reopen condition the enriched log can actually answer: when the held total runs at a MULTIPLE of the budget rather than just past it, or when the largest dropped frame is not a per-server leaderboard. `mirror_held_bytes` / `mirror_held_frames` join the GET_STATS payload so the total is readable BEFORE it trips — a threshold you can only observe after the fact is not a signal. The budget stays at 262144 until a measurement moves it, and decision 11 now also records what actually bounds it from above (the offsetlog ring, not the record cliff) and that the real lever is upstream: the per-server namespaces have no rank cap, so the held set grows O(servers) and any fixed budget eventually loses to fleet size.
+
+
 ## [0.58.4] - 2026-08-22
 
 ### Fixed
