@@ -146,8 +146,8 @@ function overviewArgs( { serverFilter, chartBreakdown } ) {
 	return formatCommandArgs( [], options );
 }
 
-// Build urls args; the server is the sole filter/sort/page authority.
-function urlsArgs( { urlParams, serverFilter } ) {
+// Build urls args. No server scope: a URL row carries none to scope by.
+function urlsArgs( { urlParams } ) {
 	const options = {};
 	if ( urlParams.sort ) {
 		options.sort = urlParams.sort;
@@ -161,9 +161,6 @@ function urlsArgs( { urlParams, serverFilter } ) {
 	}
 	if ( urlParams.search ) {
 		options.search = urlParams.search;
-	}
-	if ( serverFilter ) {
-		options.server = serverFilter;
 	}
 	if ( urlParams.errorsOnly ) {
 		options.errors_only = '1';
@@ -255,11 +252,7 @@ export function usePerformanceGraph( opts = {} ) {
 				controlFrom: URLS_VIEW,
 				tee,
 				target: TARGET,
-				argsFn: () =>
-					urlsArgs( {
-						urlParams: urlParamsRef.current,
-						serverFilter: serverFilterRef.current,
-					} ),
+				argsFn: () => urlsArgs( { urlParams: urlParamsRef.current } ),
 			} );
 
 			// On-demand url_detail: Tee → merge → view; merge lives on edge.
@@ -491,10 +484,7 @@ export function usePerformanceGraph( opts = {} ) {
 				sendControl( URLS_VIEW, { action: 'loading' } );
 				sendCommand(
 					'urls',
-					urlsArgs( {
-						urlParams: urlParamsRef.current,
-						serverFilter: serverFilterRef.current,
-					} ),
+					urlsArgs( { urlParams: urlParamsRef.current } ),
 					URLS_RECV
 				);
 			};

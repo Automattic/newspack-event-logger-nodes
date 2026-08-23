@@ -38,7 +38,7 @@ import OverviewSection from '../OverviewSection';
 import { renderComponent, act } from '../../../test-helpers/renderHook';
 
 const baseStats = {
-	totalUrls: 7,
+	siteUrlCount: 7,
 	totalRequests: 1500,
 	globalAvgMs: 42,
 	requestsPerSecond: 1.25,
@@ -109,6 +109,63 @@ describe( 'OverviewSection', () => {
 		expect( text ).toContain( 'Unique URLs' );
 		expect( text ).toContain( 'Total Requests' );
 		unmount();
+	} );
+
+	it( "divides a server-scoped breakdown by that server's average", () => {
+		// The card's heading is "Time Breakdown (edge-01)" and its categories
+		// come from build_leaderboard( server ), but the denominator was the
+		// SITE's average — so every bar and row percentage was computed against
+		// the wrong wall clock, and could exceed 100% with nothing to show it.
+		const { container } = mount(
+			{
+				total_requests: 33049,
+				global_avg_ms: 42,
+				global_leaderboard: {
+					categories: { db: { total_ms: 10 } },
+					total_time: 10,
+					count: 1,
+				},
+			},
+			{
+				serverFilter: 'edge-01',
+				filteredStats: {
+					...baseStats,
+					isFiltered: true,
+					globalAvgMs: 317,
+				},
+			}
+		);
+
+		expect( container.textContent ).toContain( 'PROFILE[total=317]' );
+	} );
+
+	it( 'says an absent site URL count is absent, not zero', () => {
+		// A plausible zero is how the original bug hid: `0 Unique URLs` beside
+		// 33,049 requests read as a fact. Past the overview gate the field is
+		// either there or the payload changed under us.
+		const { container } = mount(
+			{ total_requests: 33049 },
+			{ filteredStats: { ...baseStats, siteUrlCount: undefined } }
+		);
+
+		expect( container.textContent ).toContain( '—' );
+		expect( container.textContent ).not.toContain( '0Unique URLs' );
+	} );
+
+	it( 'says the URL count is site-wide while the rest is server-scoped', () => {
+		// Under a server filter every neighbouring stat is that server's; this
+		// one cannot be, because a URL row carries no server to group by.
+		const { container } = mount(
+			{ total_requests: 33049 },
+			{
+				serverFilter: 'edge-01',
+				filteredStats: { ...baseStats, isFiltered: true },
+			}
+		);
+
+		expect( container.textContent ).toContain(
+			'Unique URLs (all servers)'
+		);
 	} );
 
 	it( 'shows the peak-memory stat only when the displayed stats include it', () => {

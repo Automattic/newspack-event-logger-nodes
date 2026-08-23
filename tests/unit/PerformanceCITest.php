@@ -543,6 +543,30 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( '/articles/123', $result['data'][0]['url'] );
 	}
 
+	public function test_urls_verb_ignores_a_server_scope_it_cannot_apply(): void {
+		// The URL index is keyed by url_hash and carries no server, which is
+		// why the Overview tile says "(all servers)". The verb used to honour
+		// `--server` by substring-matching the SERVER NAME against the URL
+		// text, so picking a server emptied the table for every site whose
+		// URLs do not contain their own host name.
+		$store  = new Stats_Store( 0, 86400 );
+		$bucket = $this->current_url_bucket();
+		$store->set_url_bucket( $bucket, [
+			'cccccccccccc' => [ 'url' => '/reviews/941', 'count' => 7, 'sum_ms' => 311.0, 'last_seen' => 1700000003 ],
+			'dddddddddddd' => [ 'url' => '/events/88', 'count' => 4, 'sum_ms' => 122.0, 'last_seen' => 1700000004 ],
+		] );
+
+		$interpreter = new Performance_CI_Node();
+		$result      = VerbHarness::fire(
+			$interpreter,
+			'performance',
+			'urls',
+			'--server=edge-01'
+		);
+
+		$this->assertSame( 2, $result['total'] );
+	}
+
 	public function test_urls_verb_filters_errors_only_and_totals_match(): void {
 		// "Errors" = requests no status bucket classified: timeouts and fatals.
 		$store  = new Stats_Store( 0, 86400 );
@@ -1762,8 +1786,7 @@ class PerformanceCITest extends TestCase {
 	// ── urls verb fallbacks + server filter ─────────────────────────────────
 
 	public function test_urls_verb_falls_back_to_defaults_on_invalid_sort_and_order(): void {
-		// Out-of-whitelist sort/order silently fall back to count/desc; an
-		// unmatched server filter empties the result.
+		// Out-of-whitelist sort/order silently fall back to count/desc.
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
 		$store->set_url_bucket( $bucket, [
@@ -1775,12 +1798,11 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'urls',
-			'--sort=bogus --order=bogus --server=nomatchhost'
+			'--sort=bogus --order=bogus'
 		);
 
-		// Server filter removed the only row.
-		$this->assertSame( 0, $result['total'] );
-		$this->assertSame( [], $result['data'] );
+		$this->assertSame( 1, $result['total'] );
+		$this->assertSame( '/only-host', $result['data'][0]['url'] );
 	}
 
 	public function test_urls_verb_sorts_ascending(): void {
@@ -2028,10 +2050,11 @@ class PerformanceCITest extends TestCase {
 	}
 
 	public function test_urls_verb_declares_sort_paging_filter_args(): void {
-		// urls reads sort/order/limit/offset/search/server/errors_only — all optional.
+		// urls reads sort/order/limit/offset/search/errors_only — all optional.
+		// No `server`: the index carries none, so it cannot be scoped by one.
 		$args = self::args_by_name( 'urls' );
 		$this->assertSame(
-			[ 'sort', 'order', 'limit', 'offset', 'search', 'server', 'errors_only' ],
+			[ 'sort', 'order', 'limit', 'offset', 'search', 'errors_only' ],
 			\array_keys( $args )
 		);
 		$this->assertSame( 'bool', $args['errors_only']['type'] );
@@ -2042,7 +2065,6 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( 'int', $args['offset']['type'] );
 		$this->assertSame( 0, $args['offset']['default'] );
 		$this->assertSame( 'string', $args['search']['type'] );
-		$this->assertSame( 'string', $args['server']['type'] );
 		foreach ( $args as $arg ) {
 			$this->assertFalse( $arg['required'] );
 		}

@@ -1609,7 +1609,6 @@ class Performance_CI_Node extends Service_CI_Node {
 						[ 'name' => 'limit', 'type' => 'int', 'required' => false, 'default' => 50 ],
 						[ 'name' => 'offset', 'type' => 'int', 'required' => false, 'default' => 0 ],
 						[ 'name' => 'search', 'type' => 'string', 'required' => false ],
-						[ 'name' => 'server', 'type' => 'string', 'required' => false ],
 						[ 'name' => 'errors_only', 'type' => 'bool', 'required' => false, 'default' => false ],
 					],
 					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
@@ -1619,7 +1618,6 @@ class Performance_CI_Node extends Service_CI_Node {
 				$limit   = \min( 1000, \max( 1, (int) ( $opts['limit']  ?? 50 ) ) );
 				$offset  = \min( 10000, \max( 0, (int) ( $opts['offset'] ?? 0 ) ) );
 				$search  = (string) ( $opts['search'] ?? '' );
-				$server  = (string) ( $opts['server'] ?? '' );
 				$errors  = self::flag( $opts, 'errors_only' );
 
 				if ( ! \in_array( $sort, self::URL_SORTS, true ) ) {
@@ -1632,13 +1630,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				\assert( $self instanceof self );
 				$index = $self->index();
 
-				if ( '' !== $server ) {
-					$srv   = \strtolower( $server );
-					$index = \array_values( \array_filter(
-						$index,
-						static fn ( $e ) => false !== \strpos( \strtolower( Core::as_string( $e['url'] ?? '' ) ), $srv )
-					) );
-				}
+				// No server scope: a URL row carries none to scope by.
 				if ( '' !== $search ) {
 					$term  = \strtolower( $search );
 					$index = \array_values( \array_filter(

@@ -38,7 +38,7 @@ import { AskButton } from './AskPanel';
  *
  * @param {Object}                  props                        Component props.
  * @param {Object|null}             props.overview               Overview slice payload; null renders nothing.
- * @param {Object}                  props.filteredStats          Headline stats, server-scoped when a filter is set.
+ * @param {Object}                  props.filteredStats          Headline stats: server-scoped when `isFiltered`, except `siteUrlCount`, which cannot be — a URL row carries no server.
  * @param {string}                  props.serverFilter           Selected server name, or '' for all servers.
  * @param {(value: string) => void} props.setServerFilter        Server filter setter.
  * @param {string[]}                props.serverNames            Server names seen in the breakdown data.
@@ -288,13 +288,20 @@ export default function OverviewSection( {
 					<div className="newspack-nodes-stats-grid event-logger-overview-stats">
 						<div className="newspack-nodes-stat">
 							<span className="newspack-nodes-stat-value">
-								{ filteredStats.totalUrls }
+								{ 'number' === typeof filteredStats.siteUrlCount
+									? filteredStats.siteUrlCount.toLocaleString()
+									: '—' }
 							</span>
 							<span className="newspack-nodes-stat-label">
-								{ __(
-									'Unique URLs',
-									'newspack-event-logger-nodes'
-								) }
+								{ filteredStats.isFiltered
+									? __(
+											'Unique URLs (all servers)',
+											'newspack-event-logger-nodes'
+									  )
+									: __(
+											'Unique URLs',
+											'newspack-event-logger-nodes'
+									  ) }
 							</span>
 						</div>
 						<div className="newspack-nodes-stat">
@@ -483,7 +490,7 @@ export default function OverviewSection( {
 								profiles={
 									overview.global_leaderboard.categories
 								}
-								totalMs={ overview.global_avg_ms || 0 }
+								totalMs={ filteredStats.globalAvgMs }
 								totalProfiledTime={
 									overview.global_leaderboard.total_time
 								}
