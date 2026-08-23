@@ -1137,6 +1137,75 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( $saved['pending'], $fb2->save_state()['pending'] );
 	}
 
+	public function test_held_mirror_size_is_readable_before_it_overflows(): void {
+		// ADR-11's reopen condition asks whether the held total is running at a
+		// multiple of the budget. The tripwire only speaks once it is ALREADY
+		// over, so the number has to exist on the introspection payload too —
+		// a threshold you can only observe after it trips is not a signal.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		[ $fb ]     = $this->mirrored_builder( $store, 'flames-stats' );
+
+		$open   = 1_700_000_000;
+		$bucket = Stats_Store::bucket_key( $open );
+		$fb->set_clock( static fn() => $open );
+		$store->set_hourly_bucket( $bucket, [ 'count' => 5 ] );
+		$store->set_leaderboard_bucket( $bucket, [ 'blob' => \str_repeat( 'z', 9000 ) ] );
+		$fb->save_state();
+		$fb->set_clock( null );
+
+		$stats = $this->get_stats( $fb );
+		$this->assertSame( 2, $stats['mirror_held_frames'], 'both frames are held' );
+		$this->assertGreaterThan( 9000, $stats['mirror_held_bytes'], 'and their bytes are reported' );
+	}
+
+	public function test_the_over_budget_tripwire_names_what_did_not_fit(): void {
+		// ADR-11 calls this log the only tripwire that can tell you the budget
+		// is set wrong. It reported a bare count, so a hub firing it seventeen
+		// times in three hours still could not say WHICH frame overflowed or
+		// how big it was. The pack is sorted ascending and breaks at the first
+		// that will not fit, so the frame it stops on is the SMALLEST of the
+		// dropped set — the largest is the one a budget is set from.
+		$err = '';
+		Core::set_stderr_handler( static function ( $text ) use ( &$err ) {
+			$err .= $text;
+		} );
+
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		[ $fb ]     = $this->mirrored_builder( $store, 'flames-stats' );
+
+		$open   = 1_700_000_000;
+		$bucket = Stats_Store::bucket_key( $open );
+		$fb->set_clock( static fn() => $open );
+
+		// One that fits and TWO that do not, the leaderboard the larger.
+		$store->set_hourly_bucket( $bucket, [ 'count' => 3 ] );
+		$store->set_category_bucket( $bucket, [ 'blob' => \str_repeat( 'c', 300000 ) ] );
+		$store->set_leaderboard_bucket( $bucket, [ 'blob' => \str_repeat( 'x', 400000 ) ] );
+
+		$fb->save_state();
+		$fb->set_clock( null );
+
+		$hit = $err;
+		$this->assertStringContainsString( 'over the checkpoint budget', $hit, 'the tripwire fired' );
+		$this->assertStringContainsString(
+			Stats_Store::entry_key( 0, Stats_Store::NS_LB . ':' . $bucket ),
+			$hit,
+			'names the LARGEST dropped frame'
+		);
+		// The stopped-on key appears nowhere in the line, so assert its absence
+		// outright rather than against a format fragment that can be reworded.
+		$this->assertStringNotContainsString(
+			Stats_Store::entry_key( 0, Stats_Store::NS_CATEGORIES . ':' . $bucket ),
+			$hit,
+			'not the one the loop stopped on'
+		);
+		$this->assertStringContainsString( '262144', $hit, 'names the budget' );
+		// Makes the third bucket load-bearing: without it the counts go unasserted.
+		$this->assertStringContainsString( '2 of 3 frames dropped', $hit, 'counts what fell out' );
+	}
+
 	// --- finalize_flame_node ----------------------------------------------
 
 	public function test_finalize_normalizes_parent_value_to_at_least_children_sum(): void {
