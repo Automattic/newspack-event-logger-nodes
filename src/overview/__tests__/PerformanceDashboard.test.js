@@ -592,6 +592,7 @@ describe( 'PerformanceDashboard', () => {
 			overview: {
 				data: {
 					total_requests: 2000,
+					total_urls: 264,
 					global_avg_ms: 91,
 					global_avg_peak_mb: 12.3,
 					aggregate_time_series: {},
@@ -600,6 +601,7 @@ describe( 'PerformanceDashboard', () => {
 				loading: false,
 				error: null,
 			},
+			// The TABLE's filtered total; distinct from the site's 264.
 			urls: { data: [], total: 37, loading: false, error: null },
 		} );
 		const { unmount } = renderComponent(
@@ -616,11 +618,45 @@ describe( 'PerformanceDashboard', () => {
 		expect( stats ).toMatchObject( {
 			totalRequests: 780,
 			requestsPerSecond: 468 / 3600,
-			totalUrls: 37,
+			// The site's count. A server filter scopes the request totals it
+			// has a breakdown for; it does not make the site smaller.
+			siteUrlCount: 264,
 			isFiltered: true,
 		} );
 		expect( stats.globalAvgMs ).toBeCloseTo( 86200 / 780 );
 		expect( stats.globalAvgPeakMb ).toBeCloseTo( 5870 / 780 );
+		unmount();
+	} );
+
+	it( "counts the site's URLs, not the ones a table filter left", async () => {
+		// "Unique URLs" read the URL TABLE's total, which the server filters by
+		// search/errors/server — so a filter matching nothing rendered
+		// `0 Unique URLs` beside a global, unfiltered request count. The
+		// unfiltered figure is in the overview payload all along.
+		mockView = loadedView( {
+			overview: {
+				data: {
+					total_urls: 412,
+					total_requests: 33049,
+					aggregate_time_series: {},
+					breakdowns: { server: {}, status: {} },
+				},
+				loading: false,
+				error: null,
+			},
+			urls: { data: [], total: 0, loading: false, error: null },
+		} );
+		const { unmount } = renderComponent(
+			React.createElement( PerformanceDashboard, {
+				onError: jest.fn(),
+			} )
+		);
+		await flushEffects();
+
+		expect( globalThis.__overviewProps.filteredStats ).toMatchObject( {
+			siteUrlCount: 412,
+			totalRequests: 33049,
+		} );
 		unmount();
 	} );
 

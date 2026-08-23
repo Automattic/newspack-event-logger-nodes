@@ -127,10 +127,12 @@ export default function PerformanceDashboard( { onError } ) {
 	const urlDetailSlice = useNodeState( 'urldetail:view', 'view' );
 	const requestDetailSlice = useNodeState( 'requestdetail:view', 'view' );
 
-	// Derive the locals the orchestrator renders from (same names as before).
 	const overview = overviewSlice?.data ?? null;
 	const urls = useMemo( () => urlsSlice?.data ?? [], [ urlsSlice?.data ] );
-	const totalUrls = urlsSlice?.total ?? 0;
+	// The TABLE's count: filtered, which is what its pagination pages through.
+	const tableTotalUrls = urlsSlice?.total ?? 0;
+	// The SITE's count: the one overview stat a server filter cannot scope.
+	const siteUrlCount = overview?.total_urls;
 	const urlDetail = urlDetailSlice?.data ?? null;
 	const requestDetail = requestDetailSlice?.data ?? null;
 	urlsRef.current = urls;
@@ -527,7 +529,17 @@ export default function PerformanceDashboard( { onError } ) {
 		return total / ( complete.length * 300 );
 	}, [ overview?.aggregate_time_series ] );
 
-	// Compute filtered overview stats when a server is selected.
+	/**
+	 * Overview stats, scoped to the selected server where a breakdown exists.
+	 *
+	 * Nothing here may read `urlsSlice`: it is the URL TABLE's slice, filtered
+	 * by that table's search and paging, and the dashboard renders before it
+	 * resolves. Reading its `total` here is what put `0 Unique URLs` beside a
+	 * global request count.
+	 *
+	 * `siteUrlCount` is deliberately NOT server-scoped — a URL row carries no
+	 * server to group by — so the label says so when a filter is on.
+	 */
 	const filteredOverviewStats = useMemo( () => {
 		if ( ! serverFilter || ! serverBreakdownData ) {
 			return {
@@ -535,7 +547,7 @@ export default function PerformanceDashboard( { onError } ) {
 				globalAvgMs: overview?.global_avg_ms ?? 0,
 				globalAvgPeakMb: overview?.global_avg_peak_mb ?? 0,
 				requestsPerSecond: globalRequestsPerSecond,
-				totalUrls,
+				siteUrlCount,
 				isFiltered: false,
 			};
 		}
@@ -566,7 +578,7 @@ export default function PerformanceDashboard( { onError } ) {
 			globalAvgMs: totalC > 0 ? totalS / totalC : 0,
 			globalAvgPeakMb: totalC > 0 ? totalM / totalC : 0,
 			requestsPerSecond: reqPerSec,
-			totalUrls,
+			siteUrlCount,
 			isFiltered: true,
 		};
 	}, [
@@ -574,7 +586,7 @@ export default function PerformanceDashboard( { onError } ) {
 		serverBreakdownData,
 		overview,
 		globalRequestsPerSecond,
-		totalUrls,
+		siteUrlCount,
 	] );
 
 	// Calculate requests per second for the selected URL.
@@ -806,7 +818,7 @@ export default function PerformanceDashboard( { onError } ) {
 								selectedUrl={ selectedUrl }
 								onSelect={ openUrl }
 								onParamsChange={ handleUrlParamsChange }
-								totalUrls={ totalUrls }
+								totalUrls={ tableTotalUrls }
 								metric={ chartMetric }
 							/>
 						</CardBody>
