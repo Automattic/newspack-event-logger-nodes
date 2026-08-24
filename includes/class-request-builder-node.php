@@ -1106,10 +1106,10 @@ class Request_Builder_Node extends Timer_Node {
 	}
 
 	/**
-	 * @longform A summary line is not repetitive middle: a render's stats flush
-	 * carries the request's cache hit rates and nothing else does, and on a real
-	 * render it lands 11-15 entries from the end — past any tail worth keeping.
-	 * Sizing the tail around it would be a guess about someone else's shutdown
+	 * A summary line is not repetitive middle: a render's stats flush carries
+	 * the request's cache hit rates and nothing else does, and on a real render
+	 * it lands 11-15 entries from the end — past any tail worth keeping. Sizing
+	 * the tail around it would be a guess about someone else's shutdown
 	 * sequence, and both halves of that guess belong to the producer: how many
 	 * stats groups were active, and which hooks fired after them. So the
 	 * producer marks the line instead, and the fold honours the mark.

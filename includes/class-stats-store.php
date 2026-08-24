@@ -174,12 +174,12 @@ class Stats_Store {
 	/**
 	 * Ceiling on one reader's bucket enumeration (24h at the 300s width).
 	 *
-	 * @longform This bounds BUCKETS, not keys: the URL index asks for one key
-	 * per shard per bucket, so a full read costs `URL_SHARDS x` this — 4,608
-	 * keys in one `lookup_multi` at the ceiling. That is the trade sharding
-	 * makes, and it is the right way round: a point read for one URL costs a
-	 * single shard, and no item approaches memcached's 1MB limit, where the
-	 * unsharded blob exceeded it outright once rows carried a `srv` split.
+	 * This bounds BUCKETS, not keys: the URL index asks for one key per shard
+	 * per bucket, so a full read costs `URL_SHARDS x` this — 4,608 keys in one
+	 * `lookup_multi` at the ceiling. That is the trade sharding makes, and it
+	 * is the right way round: a point read for one URL costs a single shard,
+	 * and no item approaches memcached's 1MB limit, where the unsharded blob
+	 * exceeded it outright once rows carried a `srv` split.
 	 */
 	public const MAX_READ_BUCKETS = 288;
 
@@ -787,9 +787,9 @@ class Stats_Store {
 	 * Join a memcache key from the prefix, the partition, and the caller's parts,
 	 * scoped to this INSTALL by the substrate.
 	 *
-	 * @longform Stats live in memcache alone and two installs share one server
-	 * on Atomic, so the bare `evlog:p0:hourly` was the same key for both — a
-	 * co-tenant's request volume landing in this install's dashboard.
+	 * Stats live in memcache alone and two installs share one server on Atomic,
+	 * so the bare `evlog:p0:hourly` was the same key for both — a co-tenant's
+	 * request volume landing in this install's dashboard.
 	 *
 	 * @param string ...$parts Namespace token first, then any sub-keys.
 	 * @return string Full key.
