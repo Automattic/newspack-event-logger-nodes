@@ -132,11 +132,12 @@ class Log_Manager {
 	/**
 	 * The job message the innermost job context was entered with.
 	 *
-	 * @longform Deliberately NOT stacked. A nested context — evTemplate
-	 * rendering inside a job — passes none and inherits this one, which is what
-	 * makes the causing record reachable from the innermost trace. The next job
+	 * Deliberately NOT stacked. A nested context — evTemplate rendering inside
+	 * a job — passes none and inherits this one, which is what makes the
+	 * causing record reachable from the innermost trace. The next job
 	 * overwrites it rather than exit clearing it, and every job in a worker
-	 * enters through before_job, so there is nothing for it to go stale against.
+	 * enters through before_job, so there is nothing for it to go stale
+	 * against.
 	 *
 	 * @var array<int,mixed>
 	 */
