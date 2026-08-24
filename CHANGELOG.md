@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.59.0] - 2026-08-24
+
 ### Added
 - **The URL index carries a per-server split, so the URL table can be scoped by server.** Each `urls` bucket row gains `srv`: its SUMMED fields — count, timed count, sum_ms, sum_peak_mb and the four status counters — per reporting server, capped at `Stats_Store::MAX_SERVER_VALUES` by the same ranked `Other` fold the `server` dimension takes, applied once after the row cap has folded its tail — the fold rows are what mix hosts, since a stored `url` is absolute. It is not new measurement; `url_dim`'s `server` dimension already held it, keyed per URL, where scoping a 12,000-URL index by server would have cost 12,000 gets. Co-locating it with the row makes the scope readable in the multi-get the reader already issues. Extremes and percentiles are deliberately absent from the split: `min_ms`, `max_ms` and p50/p95/p99 come from a sampled reservoir and do not add, so a scoped row keeps the URL's own across every server. A `urls_s` namespace — the shape decision 1 would otherwise imply — was rejected because `MAX_URLS_PER_SHARD` applies per KEY, growing a namespace that is mirrored in FULL by O(servers × 500) rows per bucket, on the exact axis decision 11 names as the one that outgrows any fixed checkpoint budget. Recorded as architecture decision 14.
 
