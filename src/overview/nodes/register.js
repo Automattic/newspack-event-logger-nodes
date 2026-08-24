@@ -47,21 +47,38 @@ export const views = {
 		/**
 		 * `urls:view` — the always-on URL leaderboard.
 		 *
-		 * The `urls` verb answers an envelope, `{ data, total, limit, offset }`,
-		 * so the payload is not the slice: `total` is the unpaginated match
-		 * count `<UrlTable>` paginates on, and `limit` / `offset` are dropped
-		 * because the fetcher's own args produced them. A malformed envelope
-		 * publishes an empty table rather than throwing.
+		 * The `urls` verb answers an envelope, `{ data, totals, slowest, filters,
+		 * limit, offset }`, so the payload is not the slice: `totals` describes
+		 * the whole filtered set — the count `<UrlTable>` paginates on and the
+		 * numbers the Overview header renders — `slowest` is the same set sorted
+		 * by p95 for the Ask brief, and `limit` / `offset` are dropped because
+		 * the fetcher's own args produced them. `filters` says what the totals
+		 * are OF, echoed by the verb rather than read back off the client, so it
+		 * describes the data in hand and not what was typed since. A malformed
+		 * envelope publishes an empty table rather than throwing, and no totals
+		 * rather than zeroes: a zero here reads as a measurement.
 		 */
 		UrlsView: {
 			description: 'Owns the URL leaderboard slice for its React widget.',
-			empty: { data: [], total: 0, loading: false, error: null },
+			empty: {
+				data: [],
+				totals: null,
+				rows: 0,
+				slowest: [],
+				filters: null,
+				loading: false,
+				error: null,
+			},
 			parse: ( payload ) =>
 				undefined === payload
 					? null
 					: {
 							data: ( payload && payload.data ) || [],
-							total: ( payload && payload.total ) || 0,
+							totals: ( payload && payload.totals ) || null,
+							// What the pager slices; `totals.urls` is another.
+							rows: ( payload && payload.rows ) || 0,
+							slowest: ( payload && payload.slowest ) || [],
+							filters: ( payload && payload.filters ) || null,
 					  },
 		},
 

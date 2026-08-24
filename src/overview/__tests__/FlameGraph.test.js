@@ -104,7 +104,10 @@ global.ResizeObserver = class {
 	constructor( cb ) {
 		resizeObserverCb = cb;
 	}
-	observe() {}
+	observe() {
+		// The spec seeds lastReportedSize to 0x0 and jsdom lays nothing
+		// out, so a real observer would deliver nothing here.
+	}
 	disconnect() {}
 };
 
@@ -123,6 +126,8 @@ const SAMPLE_DATA = {
 
 describe( 'FlameGraph', () => {
 	beforeEach( () => {
+		// Or a test with no observer of its own fires a previous test's.
+		resizeObserverCb = null;
 		flamegraphState.options = {};
 		flamegraphState.onClick = null;
 		flamegraphState.tooltip = null;
@@ -175,7 +180,9 @@ describe( 'FlameGraph', () => {
 		// Clear the width recorded by the initial create, then fire a resize.
 		flamegraphState.options.width = undefined;
 		act( () => {
-			resizeObserverCb();
+			resizeObserverCb( [
+				{ contentRect: { width: 620, height: 300 } },
+			] );
 			jest.advanceTimersByTime( 300 );
 		} );
 		// Debounced re-fit ran: the chart width was set again.
@@ -531,27 +538,13 @@ describe( 'FlameGraph', () => {
 		unmount();
 	} );
 
-	it( 'resize handler re-renders the chart when data is present', () => {
-		const { unmount } = renderComponent(
-			React.createElement( FlameGraph, {
-				data: SAMPLE_DATA,
-				lastModified: 1,
-			} )
-		);
-		expect( () =>
-			window.dispatchEvent( new Event( 'resize' ) )
-		).not.toThrow();
-		unmount();
-	} );
-
-	it( 'resize handler is a no-op when chart is not yet mounted (no data)', () => {
+	it( 'observes nothing when no chart was ever built (no data)', () => {
+		// The empty state renders before the container ref, so there is no
+		// element to observe — asserting no-throw on a resize proved nothing.
 		const { unmount } = renderComponent(
 			React.createElement( FlameGraph, { data: null } )
 		);
-		// Listener still registered briefly; ensure no throw.
-		expect( () =>
-			window.dispatchEvent( new Event( 'resize' ) )
-		).not.toThrow();
+		expect( resizeObserverCb ).toBeNull();
 		unmount();
 	} );
 

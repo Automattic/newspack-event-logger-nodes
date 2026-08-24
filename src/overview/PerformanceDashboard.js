@@ -1,4 +1,4 @@
-/* global localStorage, requestAnimationFrame */
+/* global requestAnimationFrame */
 /**
  * Performance Dashboard — the orchestrator over the dashboard's node graph.
  *
@@ -46,6 +46,7 @@ import {
 	GREP_RESULT_LIMIT,
 } from './hooks/usePerformanceGraph';
 import useUrlNavigation from './hooks/useUrlNavigation';
+import { usePersistedChoice } from '@newspack-nodes/shared/hooks/usePersistedState';
 import OverviewSection from './components/OverviewSection';
 import UrlDetailView from './components/UrlDetailView';
 import RequestDetailView from './components/RequestDetailView';
@@ -58,6 +59,24 @@ import UrlTable from './UrlTable';
 
 // No URL to name. canLogUrl tests for it — a hash here would offer a rule.
 const UNKNOWN_URL = () => __( 'Unknown URL', 'newspack-event-logger-nodes' );
+
+/**
+ * The URL modal's header stats as `[ text, label ]` pairs, in display order.
+ * Memory comes last and only when something measured a peak.
+ *
+ * @param {?Object} stats The URL detail's stats block.
+ * @return {Array<Array<string>>} Each stat's rendered text and its label.
+ */
+const headerStats = ( stats ) => [
+	[ ( stats?.requests_per_second ?? 0 ).toFixed( 2 ), 'req/s' ],
+	[ `${ stats?.avg_ms?.toFixed( 0 ) || 0 }ms`, 'avg' ],
+	[ `${ stats?.p50_ms?.toFixed( 0 ) || 0 }ms`, 'p50' ],
+	[ `${ stats?.p95_ms?.toFixed( 0 ) || 0 }ms`, 'p95' ],
+	[ `${ stats?.p99_ms?.toFixed( 0 ) || 0 }ms`, 'p99' ],
+	...( ( stats?.avg_peak_mb || 0 ) > 0
+		? [ [ `${ stats.avg_peak_mb.toFixed( 1 ) }MB`, 'mem' ] ]
+		: [] ),
+];
 
 import './styles/modal.scss';
 import './styles/tables.scss';
@@ -97,17 +116,11 @@ export default function PerformanceDashboard( { onError } ) {
 	const [ searchResultsTruncated, setSearchResultsTruncated ] =
 		useState( false );
 	const [ requestPartition, setRequestPartition ] = useState( null );
-	const [ refreshInterval, setRefreshInterval ] = useState( () => {
-		// Load from localStorage, validated against allowed dropdown values.
-		const validValues = DASHBOARD_REFRESH_OPTIONS.map(
-			( opt ) => opt.value
-		);
-		const saved = localStorage.getItem( 'event-logger-refresh-interval' );
-		if ( saved && validValues.includes( saved ) ) {
-			return saved;
-		}
-		return '15000';
-	} );
+	const [ refreshInterval, setRefreshInterval ] = usePersistedChoice(
+		'event-logger-refresh-interval',
+		DASHBOARD_REFRESH_OPTIONS,
+		'15000'
+	);
 
 	// Refs break the resolve/navigation ↔ selection cycle.
 	const selectUrlRef = useRef(
@@ -117,9 +130,6 @@ export default function PerformanceDashboard( { onError } ) {
 		/** @type {( rid: string|null ) => void} */ ( () => {} )
 	);
 	const urlsRef = useRef( [] );
-	const setRequestPartitionRef = useRef(
-		/** @type {( partition: number|null ) => void} */ ( () => {} )
-	);
 
 	// Read each slice from its own per-slice view node (null until mounted).
 	const overviewSlice = useNodeState( 'overview:view', 'view' );
@@ -129,10 +139,11 @@ export default function PerformanceDashboard( { onError } ) {
 
 	const overview = overviewSlice?.data ?? null;
 	const urls = useMemo( () => urlsSlice?.data ?? [], [ urlsSlice?.data ] );
-	// The TABLE's count: filtered, which is what its pagination pages through.
-	const tableTotalUrls = urlsSlice?.total ?? 0;
-	// The SITE's count: the one overview stat a server filter cannot scope.
-	const siteUrlCount = overview?.total_urls;
+	// The filtered set's own numbers, computed once, server-side.
+	const urlTotals = urlsSlice?.totals ?? null;
+	// The same set's slowest, and what the set is, as the server applied it.
+	const urlSlowest = urlsSlice?.slowest ?? null;
+	const urlFilters = urlsSlice?.filters ?? null;
 	const urlDetail = urlDetailSlice?.data ?? null;
 	const requestDetail = requestDetailSlice?.data ?? null;
 	urlsRef.current = urls;
@@ -163,6 +174,8 @@ export default function PerformanceDashboard( { onError } ) {
 		Object.values( serverBreakdownData ).forEach( ( bucket ) =>
 			Object.keys( bucket ).forEach( ( n ) => names.add( n ) )
 		);
+		// The schema's overflow key, not a server: pre-deploy buckets carry it.
+		names.delete( 'Other' );
 		setServerNames( Array.from( names ).sort() );
 	}, [ serverBreakdownData, serverFilter ] );
 
@@ -180,7 +193,6 @@ export default function PerformanceDashboard( { onError } ) {
 
 	selectUrlRef.current = selectUrl;
 	selectRequestRef.current = baseSelectRequest;
-	setRequestPartitionRef.current = setRequestPartition;
 	// @longform What is open RIGHT NOW, for the reply handlers below: a reply
 	// must not yank the operator back to a URL they have already left. Written
 	// where the selection is MADE as well as on render, because a reply can
@@ -202,8 +214,11 @@ export default function PerformanceDashboard( { onError } ) {
 		selectedRequest,
 	} );
 
-	// One picker, several doors — the triggers live in each header below.
-	const ask = useAsk( { onError } );
+	// @longform One picker, several doors. Live scope, like every other FETCH:
+	// `urls` and `url_detail` both ask for what is selected now, and a brief
+	// assembled for the previous one would contradict the modal it was asked
+	// from. The echoed `urlFilters` labels what is on screen, never steers.
+	const ask = useAsk( { onError, serverFilter } );
 
 	// Reset the search-sourced partition when leaving request detail.
 	useEffect( () => {
@@ -286,7 +301,13 @@ export default function PerformanceDashboard( { onError } ) {
 			const known = urlsRef.current.find(
 				( u ) => u.hash === data.url_hash
 			);
-			setRequestPartitionRef.current( data.partition );
+			// @longform A rid names ONE request; the server filter is a
+			// browsing scope, and `url_detail` honours it. A search landing
+			// outside it would ask for a row the scope excludes and answer
+			// "URL not found" for a URL plainly on screen. The navigation
+			// wins, and the select resets so nothing is hidden.
+			setServerFilter( '' );
+			setRequestPartition( data.partition );
 			selectUrlNow(
 				known ?? { hash: data.url_hash, url: UNKNOWN_URL() }
 			);
@@ -295,7 +316,7 @@ export default function PerformanceDashboard( { onError } ) {
 				lookupUrl( formatCommandArgs( [ data.url_hash ] ) );
 			}
 		},
-		[ lookupUrl, selectUrlNow ]
+		[ lookupUrl, selectUrlNow, setServerFilter ]
 	);
 
 	const found = ( data ) =>
@@ -471,14 +492,6 @@ export default function PerformanceDashboard( { onError } ) {
 		[ searchRequest ]
 	);
 
-	// Save refresh interval to localStorage.
-	useEffect( () => {
-		localStorage.setItem(
-			'event-logger-refresh-interval',
-			refreshInterval
-		);
-	}, [ refreshInterval ] );
-
 	// Sort recent requests.
 	const sortedRequests = useMemo( () => {
 		if ( ! urlDetail?.requests ) {
@@ -511,101 +524,29 @@ export default function PerformanceDashboard( { onError } ) {
 		[ requestDetail?.entries, requestDetail?.flame ]
 	);
 
-	// Requests/sec from the last hour of complete 5-minute buckets.
-	const globalRequestsPerSecond = useMemo( () => {
-		if ( ! overview?.aggregate_time_series ) {
-			return 0;
-		}
-		const buckets = Object.keys( overview.aggregate_time_series ).sort();
-		if ( buckets.length < 2 ) {
-			return 0;
-		}
-		// Skip the accumulating bucket; use up to 12 complete buckets (1 hour).
-		const complete = buckets.slice( -13, -1 );
-		let total = 0;
-		for ( const key of complete ) {
-			total += overview.aggregate_time_series[ key ]?.count || 0;
-		}
-		return total / ( complete.length * 300 );
-	}, [ overview?.aggregate_time_series ] );
-
 	/**
-	 * Overview stats, scoped to the selected server where a breakdown exists.
+	 * The wall clock the Time Breakdown divides by.
 	 *
-	 * Nothing here may read `urlsSlice`: it is the URL TABLE's slice, filtered
-	 * by that table's search and paging, and the dashboard renders before it
-	 * resolves. Reading its `total` here is what put `0 Unique URLs` beside a
-	 * global request count.
-	 *
-	 * `siteUrlCount` is deliberately NOT server-scoped — a URL row carries no
-	 * server to group by — so the label says so when a filter is on.
+	 * Its categories come from `build_leaderboard( server )`, so the average has
+	 * to be that server's — not the site's, which is the wider question, and not
+	 * the filtered URL set's, which is a narrower one. Unfiltered the first two
+	 * are the same number.
 	 */
-	const filteredOverviewStats = useMemo( () => {
+	const breakdownAvgMs = useMemo( () => {
 		if ( ! serverFilter || ! serverBreakdownData ) {
-			return {
-				totalRequests: overview?.total_requests ?? 0,
-				globalAvgMs: overview?.global_avg_ms ?? 0,
-				globalAvgPeakMb: overview?.global_avg_peak_mb ?? 0,
-				requestsPerSecond: globalRequestsPerSecond,
-				siteUrlCount,
-				isFiltered: false,
-			};
+			return overview?.global_avg_ms ?? 0;
 		}
-		const buckets = Object.keys( serverBreakdownData ).sort();
 		let totalC = 0;
 		let totalS = 0;
-		let totalM = 0;
-		for ( const key of buckets ) {
-			const entry = serverBreakdownData[ key ]?.[ serverFilter ];
+		for ( const bucket of Object.values( serverBreakdownData ) ) {
+			const entry = bucket?.[ serverFilter ];
 			if ( entry ) {
 				totalC += entry.c || 0;
 				totalS += entry.s || 0;
-				totalM += entry.m || 0;
 			}
 		}
-		// Req/s: use up to 12 complete buckets, skip the most recent.
-		let reqPerSec = 0;
-		if ( buckets.length >= 2 ) {
-			const complete = buckets.slice( -13, -1 );
-			let recent = 0;
-			for ( const key of complete ) {
-				recent += serverBreakdownData[ key ]?.[ serverFilter ]?.c || 0;
-			}
-			reqPerSec = recent / ( complete.length * 300 );
-		}
-		return {
-			totalRequests: totalC,
-			globalAvgMs: totalC > 0 ? totalS / totalC : 0,
-			globalAvgPeakMb: totalC > 0 ? totalM / totalC : 0,
-			requestsPerSecond: reqPerSec,
-			siteUrlCount,
-			isFiltered: true,
-		};
-	}, [
-		serverFilter,
-		serverBreakdownData,
-		overview,
-		globalRequestsPerSecond,
-		siteUrlCount,
-	] );
-
-	// Calculate requests per second for the selected URL.
-	const urlRequestsPerSecond = useMemo( () => {
-		if ( ! urlDetail?.stats?.time_series ) {
-			return 0;
-		}
-		const buckets = Object.keys( urlDetail.stats.time_series ).sort();
-		if ( buckets.length < 2 ) {
-			return 0;
-		}
-		// Skip the accumulating bucket; use up to 12 complete buckets (1 hour).
-		const complete = buckets.slice( -13, -1 );
-		let total = 0;
-		for ( const key of complete ) {
-			total += urlDetail.stats.time_series[ key ]?.count || 0;
-		}
-		return total / ( complete.length * 300 );
-	}, [ urlDetail?.stats?.time_series ] );
+		return totalC > 0 ? totalS / totalC : 0;
+	}, [ serverFilter, serverBreakdownData, overview?.global_avg_ms ] );
 
 	// Inline "Log this URL" state: ruleDraft = open rule, existingRule = label.
 	const [ ruleDraft, setRuleDraft ] = useState( null );
@@ -762,7 +703,9 @@ export default function PerformanceDashboard( { onError } ) {
 				dangerouslySetInnerHTML={ {
 					__html: factsJson(
 						pageFacts( {
-							overview,
+							urlTotals,
+							urlSlowest,
+							urlFilters,
 							selectedUrl,
 							urlDetail,
 							selectedRequest,
@@ -777,7 +720,9 @@ export default function PerformanceDashboard( { onError } ) {
 			<OverviewSection
 				ask={ ask }
 				overview={ overview }
-				filteredStats={ filteredOverviewStats }
+				urlTotals={ urlTotals }
+				urlFilters={ urlFilters }
+				breakdownAvgMs={ breakdownAvgMs }
 				serverFilter={ serverFilter }
 				setServerFilter={ setServerFilter }
 				serverNames={ serverNames }
@@ -818,7 +763,7 @@ export default function PerformanceDashboard( { onError } ) {
 								selectedUrl={ selectedUrl }
 								onSelect={ openUrl }
 								onParamsChange={ handleUrlParamsChange }
-								totalUrls={ tableTotalUrls }
+								totalUrls={ urlsSlice?.rows ?? 0 }
 								metric={ chartMetric }
 							/>
 						</CardBody>
@@ -873,61 +818,18 @@ export default function PerformanceDashboard( { onError } ) {
 							<>
 								{ urlDetail && (
 									<div className="event-logger-header-stats newspack-nodes-stats-grid">
-										<span className="newspack-nodes-stat">
-											{ urlRequestsPerSecond.toFixed(
-												2
-											) }
-											<small className="newspack-nodes-stat-label">
-												req/s
-											</small>
-										</span>
-										<span className="newspack-nodes-stat">
-											{ urlDetail.stats?.avg_ms?.toFixed(
-												0
-											) || 0 }
-											ms
-											<small className="newspack-nodes-stat-label">
-												avg
-											</small>
-										</span>
-										<span className="newspack-nodes-stat">
-											{ urlDetail.stats?.p50_ms?.toFixed(
-												0
-											) || 0 }
-											ms
-											<small className="newspack-nodes-stat-label">
-												p50
-											</small>
-										</span>
-										<span className="newspack-nodes-stat">
-											{ urlDetail.stats?.p95_ms?.toFixed(
-												0
-											) || 0 }
-											ms
-											<small className="newspack-nodes-stat-label">
-												p95
-											</small>
-										</span>
-										<span className="newspack-nodes-stat">
-											{ urlDetail.stats?.p99_ms?.toFixed(
-												0
-											) || 0 }
-											ms
-											<small className="newspack-nodes-stat-label">
-												p99
-											</small>
-										</span>
-										{ ( urlDetail.stats?.avg_peak_mb ||
-											0 ) > 0 && (
-											<span className="newspack-nodes-stat">
-												{ urlDetail.stats?.avg_peak_mb?.toFixed(
-													1
-												) || 0 }
-												MB
-												<small className="newspack-nodes-stat-label">
-													mem
-												</small>
-											</span>
+										{ headerStats( urlDetail.stats ).map(
+											( [ text, label ] ) => (
+												<span
+													key={ label }
+													className="newspack-nodes-stat"
+												>
+													{ text }
+													<small className="newspack-nodes-stat-label">
+														{ label }
+													</small>
+												</span>
+											)
 										) }
 									</div>
 								) }

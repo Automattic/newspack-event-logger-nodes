@@ -86,7 +86,7 @@ wp option update newspack_event_logger_nodes_stats_salt $(openssl rand -hex 4)
 wp nodes restart combined   # pick up new salt (or `restart all`)
 ```
 
-**Caps to remember**: `MAX_DIM_VALUES=20`, `MAX_URL_DIM_VALUES=10`, `MAX_CAT_VALUES=50`. Overflow rolls into a synthetic "Other" bucket; the `total` pseudo-category survives capping.
+**Caps to remember**: `MAX_DIM_VALUES=20`, `MAX_SERVER_VALUES=128` (the `server` axis, substituted by `Stats_Store::dim_cap()`), `MAX_URL_DIM_VALUES=10`, `MAX_CAT_VALUES=50`. Overflow rolls into a synthetic "Other" bucket; the `total` pseudo-category survives capping.
 
 **Per-URL flame stats TTL** is `max(3600, max_lifespan/24)`. Every other namespace uses the full `max_lifespan`. A URL unseen for over an hour has lost its flame data even while other stats remain.
 

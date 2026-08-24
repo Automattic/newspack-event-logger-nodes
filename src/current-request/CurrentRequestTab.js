@@ -13,13 +13,16 @@
  * tick, so the only thing a button could do is what is already happening.
  */
 
-import { useState, useEffect, lazy, Suspense } from '@wordpress/element';
+import { useState, useEffect } from '@wordpress/element';
 import { __ } from '@wordpress/i18n';
 import { formatCommandArgs, useNodeState } from '@newspack-nodes/runtime';
 import { useBatchedPoll } from '@newspack-nodes/shared/hooks/useBatchedPoll';
 import { addSliceFetcher } from '@newspack-nodes/shared/helpers/addSliceFetcher';
 import { views } from './nodes/register';
-// Reuse the perf dashboard's flame + profile; FlameGraph is d3-heavy (lazy).
+import RequestSummary from '../components/RequestSummary';
+import { errorStatus } from '../components/errorStatus';
+// Reuse the perf dashboard's trace + profile; its flame graph is lazy.
+import RequestTrace from '../overview/components/RequestTrace';
 import RequestProfile from '../overview/RequestProfile';
 import { egressPath } from '@newspack-nodes/shared/helpers/egressPath';
 
@@ -30,8 +33,6 @@ const POLL_INTERVAL_MS = 1000;
 
 /** Ticks the ask outlives the record by, waiting on the later flame write. */
 const FLAME_RETRY_TICKS = 5;
-
-const FlameGraph = lazy( () => import( '../overview/FlameGraph' ) );
 
 /**
  * The page-injected anchor for THIS request.
@@ -49,31 +50,6 @@ function currentRequestData() {
 			window.NewspackEventLoggerNodes.currentRequest ) ||
 		{}
 	);
-}
-
-/**
- * Label the `error_status` code `Request_Builder_Node` stamps on the record.
- *
- * `-` and `''` both mean a clean finish. An unrecognized code passes through
- * unchanged rather than being flattened into "ok" and hidden.
- *
- * @param {string} errorStatus The stamped code — `F`, `T`, `A`, `-`, or ''.
- * @return {string} The label to render.
- */
-function statusLabel( errorStatus ) {
-	switch ( errorStatus ) {
-		case 'F':
-			return __( 'fatal error', 'newspack-event-logger-nodes' );
-		case 'T':
-			return __( 'timed out', 'newspack-event-logger-nodes' );
-		case 'A':
-			return __( 'aborted', 'newspack-event-logger-nodes' );
-		case '-':
-		case '':
-			return __( 'ok', 'newspack-event-logger-nodes' );
-		default:
-			return errorStatus;
-	}
 }
 
 /**
@@ -178,10 +154,11 @@ export default function CurrentRequestTab() {
 		);
 	}
 
-	const errorStatus = request.error_status ?? '-';
-	const isError = '-' !== errorStatus && '' !== errorStatus;
+	const stamped = request.error_status ?? '-';
+	const status = errorStatus( stamped );
+	// An unrecognized code shows itself rather than being hidden as "ok".
+	const isError = '-' !== stamped && '' !== stamped;
 	const traceUrl = `${ perfUrl }&request=${ encodeURIComponent( rid ) }`;
-	const timestamp = Number( request.timestamp ) || 0;
 	const hasProfiles = !! request.profiles;
 
 	return (
@@ -198,68 +175,12 @@ export default function CurrentRequestTab() {
 				</a>
 			</div>
 			<div className="eln-current-request__info">
-				<p>
-					<strong>
-						{ __( 'URL:', 'newspack-event-logger-nodes' ) }
-					</strong>{ ' ' }
-					{ request.request_method || request.method || '' }{ ' ' }
-					{ request.url }
-				</p>
-				<p>
-					<strong>
-						{ __( 'Time:', 'newspack-event-logger-nodes' ) }
-					</strong>{ ' ' }
-					{ timestamp
-						? new Date( timestamp * 1000 ).toLocaleString()
-						: '—' }
-				</p>
-				<p>
-					<strong>
-						{ __( 'Duration:', 'newspack-event-logger-nodes' ) }
-					</strong>{ ' ' }
-					{ ( Number( request.duration_ms ) || 0 ).toFixed( 2 ) } ms
-				</p>
-				{ Number( request.peak_mb ) > 0 && (
-					<p>
-						<strong>
-							{ __( 'Memory:', 'newspack-event-logger-nodes' ) }
-						</strong>{ ' ' }
-						{ Number( request.peak_mb ) } MB
-					</p>
-				) }
-				{ Number( request.status_code ) > 0 && (
-					<p
-						className={ `newspack-nodes-status${
-							isError ? ' is-error' : ''
-						}` }
-					>
-						<strong>
-							{ __( 'Status:', 'newspack-event-logger-nodes' ) }
-						</strong>{ ' ' }
-						{ Number( request.status_code ) }
-						{ isError ? ` — ${ statusLabel( errorStatus ) }` : '' }
-					</p>
-				) }
+				<RequestSummary
+					request={ request }
+					statusNote={ isError ? status?.label ?? stamped : '' }
+				/>
 			</div>
-			{ hasFlame && (
-				<div className="eln-current-request__flame">
-					<h3 className="newspack-nodes-section-heading">
-						{ __( 'Request Trace', 'newspack-event-logger-nodes' ) }
-					</h3>
-					<Suspense
-						fallback={
-							<p className="eln-current-request__chart-loading newspack-nodes-performance-loading">
-								{ __(
-									'Loading chart…',
-									'newspack-event-logger-nodes'
-								) }
-							</p>
-						}
-					>
-						<FlameGraph data={ flameData } />
-					</Suspense>
-				</div>
-			) }
+			{ hasFlame && <RequestTrace flameData={ flameData } /> }
 			{ hasProfiles && (
 				<div className="eln-current-request__profiles">
 					<RequestProfile

@@ -27,12 +27,6 @@ const COMPLETE_REGEX = /^(.+?) \(complete\)$/;
 const TIME_FORMAT_OPTIONS = { hour12: false };
 
 /**
- * Format a count of 10ms dots with a space every 3 for readability.
- *
- * @param {number} count Number of dots.
- * @return {string} Formatted dot string (e.g. "••• ••• •••").
- */
-/**
  * The base name of the outermost pair — the request itself, which never folds.
  */
 const OUTERMOST_PAIR = 'process';
@@ -75,6 +69,42 @@ export const isFoldablePairStart = ( keyword ) => {
 	return null !== base && base !== OUTERMOST_PAIR;
 };
 
+/**
+ * Whether an entry belongs to a `(start)`/`(complete)` pair.
+ *
+ * @param {Object} entry Log entry.
+ * @return {boolean} True when the entry carries a pairId.
+ */
+export const hasPair = ( entry ) =>
+	null !== entry?.pairId && undefined !== entry?.pairId;
+
+/**
+ * Whether the entry at `idx` opens a pair its own `(complete)` closes on the
+ * very next row. Such a pair renders as one merged row however the fold state
+ * reads, so unfolding it reveals nothing.
+ *
+ * @param {Array}  entries Indented entries.
+ * @param {number} idx     Index of the candidate `(start)`.
+ * @return {boolean} True when the pair is empty.
+ */
+export const isEmptyPairStart = ( entries, idx ) => {
+	const entry = entries[ idx ];
+	const next = entries[ idx + 1 ];
+	return (
+		!! next &&
+		hasPair( entry ) &&
+		( entry.k || '' ).includes( '(start)' ) &&
+		next.pairId === entry.pairId &&
+		( next.k || '' ).includes( '(complete)' )
+	);
+};
+
+/**
+ * Format a count of 10ms dots with a space every 3 for readability.
+ *
+ * @param {number} count Number of dots.
+ * @return {string} Formatted dot string (e.g. "••• ••• •••").
+ */
 export const formatDots = ( count ) => {
 	if ( count <= 0 ) {
 		return '';
@@ -90,9 +120,12 @@ export const formatDots = ( count ) => {
  * Format a full timestamp string from a Unix ts.
  *
  * @param {number} ts Unix timestamp.
- * @return {string} Formatted time "HH:MM:SS.TH" (2 decimal places, 10ms precision).
+ * @return {string} Formatted time "HH:MM:SS.TH" (2 decimal places, 10ms precision), or empty without a ts.
  */
-const formatFullTimestamp = ( ts ) => {
+export const formatFullTimestamp = ( ts ) => {
+	if ( ! ts ) {
+		return '';
+	}
 	const hundredth = Math.round( ts * 100 );
 	const centis = hundredth % 100;
 	const date = new Date( ts * 1000 );
@@ -398,7 +431,6 @@ const keptPairCounts = ( entries ) => {
  *
  * Durations stay INCLUSIVE, as every other duration in the log is.
  *
- * @testonly Exported for logEntryUtils.test.js; callers use spliceFoldedSpans().
  * @param {?Object} flame    Merged tree from Flame_Fold::tree().
  * @param {Array}   openPath Base names the kept head left open, outermost first.
  * @param {Set}     tailEnds Base names the kept tail closes on the tree's behalf.
@@ -406,13 +438,7 @@ const keptPairCounts = ( entries ) => {
  * @param {number}  originTs Unix seconds the request started at.
  * @return {Array} Synthetic log entries.
  */
-export const foldedSpanEntries = (
-	flame,
-	openPath,
-	tailEnds,
-	kept,
-	originTs
-) => {
+const foldedSpanEntries = ( flame, openPath, tailEnds, kept, originTs ) => {
 	const rows = [];
 	const stampOf = ( node ) =>
 		Number.isFinite( node.t ) && Number.isFinite( originTs )
@@ -504,11 +530,7 @@ export const computeVisibleEntries = ( entries, expandedSet ) => {
 		const keyword = entry.k || '';
 		const startMatch = keyword.match( /^(.+?) \(start\)$/ );
 
-		if (
-			startMatch &&
-			entry.pairId !== null &&
-			entry.pairId !== undefined
-		) {
+		if ( startMatch && hasPair( entry ) ) {
 			const baseName = startMatch[ 1 ];
 
 			if (
@@ -719,11 +741,7 @@ export const getAncestorPairIds = ( targetIdx, indentedEntries ) => {
 	const isStart = keyword.includes( '(start)' );
 	const isComplete = keyword.includes( '(complete)' );
 
-	if (
-		isStart &&
-		targetEntry.pairId !== null &&
-		targetEntry.pairId !== undefined
-	) {
+	if ( isStart && hasPair( targetEntry ) ) {
 		ids.add( targetEntry.pairId );
 	}
 
@@ -733,8 +751,7 @@ export const getAncestorPairIds = ( targetIdx, indentedEntries ) => {
 		const e = indentedEntries[ i ];
 		if (
 			e.indent === needIndent &&
-			e.pairId !== null &&
-			e.pairId !== undefined &&
+			hasPair( e ) &&
 			( e.k || '' ).includes( '(start)' )
 		) {
 			ids.add( e.pairId );

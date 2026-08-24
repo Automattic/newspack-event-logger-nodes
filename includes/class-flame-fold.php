@@ -49,9 +49,6 @@ if ( ! \defined( 'ABSPATH' ) ) {
  */
 final class Flame_Fold {
 
-	/** Open-span ceiling, matching `Flame_Tree::MAX_STACK_DEPTH`. */
-	private const MAX_STACK_DEPTH = 50;
-
 	/**
 	 * A fresh fold state.
 	 *
@@ -136,10 +133,10 @@ final class Flame_Fold {
 		$name   = '' !== $label ? "{$base}: {$label}" : $base;
 		$parent = $state['stack'][ \count( $state['stack'] ) - 1 ]['path'] ?? [];
 		$path   = [ ...$parent, $name ];
-		$offset = self::offset_ms( $state['origin'], $ts );
+		$offset = Flame_Tree::offset_ms( $state['origin'], $ts );
 		self::record( $state['root'], $path, null, $offset );
 
-		if ( \count( $state['stack'] ) < self::MAX_STACK_DEPTH ) {
+		if ( \count( $state['stack'] ) < Flame_Tree::MAX_STACK_DEPTH ) {
 			// No `t`: the node keeps the earliest, and frames ride checkpoints.
 			$state['stack'][] = [
 				'name' => $base,
@@ -199,26 +196,6 @@ final class Flame_Fold {
 			't'        => null,
 			'children' => [],
 		];
-	}
-
-	/**
-	 * A span's start as milliseconds from the request's own, or null when
-	 * either end is missing.
-	 *
-	 * Negative offsets are null, not clamped: a line stamped before the frozen
-	 * origin means the clock moved, and a 0 would place it at the request's
-	 * start as if that were measured.
-	 *
-	 * @param float|null $origin Frozen request origin, unix seconds.
-	 * @param mixed      $ts     Entry timestamp, unix seconds.
-	 * @return float|null Offset in milliseconds.
-	 */
-	private static function offset_ms( ?float $origin, mixed $ts ): ?float {
-		if ( null === $origin || ! \is_numeric( $ts ) || (float) $ts <= 0 ) {
-			return null;
-		}
-		$offset = \round( ( (float) $ts - $origin ) * 1000, 3 );
-		return $offset < 0 ? null : $offset;
 	}
 
 	/**

@@ -546,19 +546,29 @@ describe( 'PerformanceDashboard', () => {
 		unmount();
 	} );
 
-	it( 'computes globalRequestsPerSecond from aggregate_time_series', async () => {
-		const aggregate = {};
-		for ( let i = 0; i < 20; i++ ) {
-			aggregate[ `b${ String( i ).padStart( 2, '0' ) }` ] = {
-				count: 100,
-			};
-		}
+	it( "hands the panel the filtered set's own totals", async () => {
+		// Every headline number comes from the `urls` reply, so all five answer
+		// for one set — the one the table lists. Assembling them from separate
+		// namespaces is what put `0 Unique URLs` beside 33,049 requests.
 		mockView = loadedView( {
 			overview: {
 				data: {
-					total_requests: 2000,
-					aggregate_time_series: aggregate,
+					total_requests: 33049,
+					total_urls: 412,
+					aggregate_time_series: {},
 					breakdowns: { server: {}, status: {} },
+				},
+				loading: false,
+				error: null,
+			},
+			urls: {
+				data: [],
+				totals: {
+					urls: 313,
+					requests: 9001,
+					avg_ms: 70,
+					avg_peak_mb: 3.3,
+					requests_per_second: 2.5,
 				},
 				loading: false,
 				error: null,
@@ -570,17 +580,51 @@ describe( 'PerformanceDashboard', () => {
 			} )
 		);
 		await flushEffects();
-		expect(
-			globalThis.__overviewProps.filteredStats.requestsPerSecond
-		).toBeGreaterThan( 0 );
+
+		expect( globalThis.__overviewProps.urlTotals ).toEqual( {
+			urls: 313,
+			requests: 9001,
+			avg_ms: 70,
+			avg_peak_mb: 3.3,
+			requests_per_second: 2.5,
+		} );
 		unmount();
 	} );
 
-	it( 'computes every server-filtered stat from the server breakdown', async () => {
+	it( 'never offers the overflow key as a server', () => {
+		// `Other` is the schema's synthetic overflow key. The axis is no longer
+		// capped, but buckets written before that change carry it for a whole
+		// retention window, and selecting it scopes the table to nothing.
+		const serverBuckets = {
+			b01: { 'edge-01': { c: 5 }, Other: { c: 9 } },
+		};
+		mockView = loadedView( {
+			overview: {
+				data: {
+					total_requests: 100,
+					aggregate_time_series: {},
+					breakdowns: { server: serverBuckets, status: {} },
+				},
+				loading: false,
+				error: null,
+			},
+		} );
+		const { unmount } = renderComponent(
+			React.createElement( PerformanceDashboard, { onError: jest.fn() } )
+		);
+
+		expect( globalThis.__overviewProps.serverNames ).toEqual( [
+			'edge-01',
+		] );
+		unmount();
+	} );
+
+	it( "divides the Time Breakdown by the selected server's average", async () => {
+		// The breakdown's categories are that server's, so its denominator has
+		// to be too: 86,200ms over 780 requests, not the site's 91.
 		const serverBuckets = {};
 		for ( let i = 0; i < 20; i++ ) {
-			const k = `b${ String( i ).padStart( 2, '0' ) }`;
-			serverBuckets[ k ] = {
+			serverBuckets[ `b${ String( i ).padStart( 2, '0' ) }` ] = {
 				'edge-01':
 					i % 2 === 0
 						? { c: 37, s: 3700, m: 259 }
@@ -592,17 +636,13 @@ describe( 'PerformanceDashboard', () => {
 			overview: {
 				data: {
 					total_requests: 2000,
-					total_urls: 264,
 					global_avg_ms: 91,
-					global_avg_peak_mb: 12.3,
 					aggregate_time_series: {},
 					breakdowns: { server: serverBuckets, status: {} },
 				},
 				loading: false,
 				error: null,
 			},
-			// The TABLE's filtered total; distinct from the site's 264.
-			urls: { data: [], total: 37, loading: false, error: null },
 		} );
 		const { unmount } = renderComponent(
 			React.createElement( PerformanceDashboard, {
@@ -610,55 +650,79 @@ describe( 'PerformanceDashboard', () => {
 			} )
 		);
 		await flushEffects();
+		expect( globalThis.__overviewProps.breakdownAvgMs ).toBe( 91 );
+
 		act( () => {
 			globalThis.__overviewProps.setServerFilter( 'edge-01' );
 		} );
 		await flushEffects();
-		const stats = globalThis.__overviewProps.filteredStats;
-		expect( stats ).toMatchObject( {
-			totalRequests: 780,
-			requestsPerSecond: 468 / 3600,
-			// The site's count. A server filter scopes the request totals it
-			// has a breakdown for; it does not make the site smaller.
-			siteUrlCount: 264,
-			isFiltered: true,
-		} );
-		expect( stats.globalAvgMs ).toBeCloseTo( 86200 / 780 );
-		expect( stats.globalAvgPeakMb ).toBeCloseTo( 5870 / 780 );
+		expect( globalThis.__overviewProps.breakdownAvgMs ).toBeCloseTo(
+			86200 / 780
+		);
 		unmount();
 	} );
 
-	it( "counts the site's URLs, not the ones a table filter left", async () => {
-		// "Unique URLs" read the URL TABLE's total, which the server filters by
-		// search/errors/server — so a filter matching nothing rendered
-		// `0 Unique URLs` beside a global, unfiltered request count. The
-		// unfiltered figure is in the overview payload all along.
+	it( "renders the modal's rate from the payload, not a second derivation", async () => {
+		// The client used to sum this URL's series and divide by the buckets it
+		// had, while the header divided by the fixed hour — so a URL seen in two
+		// of twelve buckets read six times its rate under the same "req/s"
+		// label. One owner, one window, one divisor.
+		mockNavState.selectedUrl = { hash: 'h1', url: '/foo' };
+		mockNavState.selectedRequest = null;
 		mockView = loadedView( {
-			overview: {
+			urlDetail: {
 				data: {
-					total_urls: 412,
-					total_requests: 33049,
-					aggregate_time_series: {},
-					breakdowns: { server: {}, status: {} },
+					last_modified: 1,
+					stats: {
+						requests_per_second: 3.75,
+						time_series: { a: { count: 900 }, b: { count: 900 } },
+					},
+					requests: [],
 				},
 				loading: false,
 				error: null,
 			},
-			urls: { data: [], total: 0, loading: false, error: null },
 		} );
-		const { unmount } = renderComponent(
+		const { container, unmount } = renderComponent(
 			React.createElement( PerformanceDashboard, {
 				onError: jest.fn(),
 			} )
 		);
 		await flushEffects();
 
-		expect( globalThis.__overviewProps.filteredStats ).toMatchObject( {
-			siteUrlCount: 412,
-			totalRequests: 33049,
-		} );
+		expect( container.textContent ).toContain( '3.75' );
 		unmount();
 	} );
+
+	it.each( [
+		[ 'url', null, null, 'Loading URL…' ],
+		[ 'url', 'nope', null, 'Could not load this URL: nope' ],
+		[ 'request', null, 'r7', 'Loading request…' ],
+		[ 'request', 'gone', 'r7', 'Could not load this request: gone' ],
+	] )(
+		'a selected %s with no detail is a state, never a blank panel',
+		async ( which, error, request, expected ) => {
+			// Both panels answer the same two questions — is it still coming,
+			// or did it fail — so neither may render empty.
+			mockNavState.selectedUrl = { hash: 'h1', url: '/foo' };
+			mockNavState.selectedRequest = request;
+			const slice = { data: null, loading: null === error, error };
+			mockView = loadedView(
+				'url' === which
+					? { urlDetail: slice }
+					: { urlDetail: null, requestDetail: slice }
+			);
+			const { container, unmount } = renderComponent(
+				React.createElement( PerformanceDashboard, {
+					onError: jest.fn(),
+				} )
+			);
+			await flushEffects();
+
+			expect( container.textContent ).toContain( expected );
+			unmount();
+		}
+	);
 
 	it( 'renders the URL modal when a URL is selected and detail is present', async () => {
 		mockNavState.selectedUrl = { hash: 'h1', url: '/foo' };
@@ -715,6 +779,77 @@ describe( 'PerformanceDashboard', () => {
 			).toBe( true );
 			expect( stat.querySelector( ':scope > small' ) ).not.toBeNull();
 		}
+		unmount();
+	} );
+
+	it.each( [
+		[
+			'renders each header stat as its own text, unit and label',
+			{
+				requests_per_second: 7.125,
+				avg_ms: 412.6,
+				p50_ms: 318.2,
+				p95_ms: 904.7,
+				p99_ms: 1503.4,
+				avg_peak_mb: 26.45,
+			},
+			[
+				[ '7.13', 'req/s' ],
+				[ '413ms', 'avg' ],
+				[ '318ms', 'p50' ],
+				[ '905ms', 'p95' ],
+				[ '1503ms', 'p99' ],
+				[ '26.4MB', 'mem' ],
+			],
+		],
+		[
+			'drops the memory stat when nothing measured a peak',
+			{
+				requests_per_second: 2.5,
+				avg_ms: 77,
+				p50_ms: 61,
+				p95_ms: 140,
+				p99_ms: 209,
+				avg_peak_mb: 0,
+			},
+			[
+				[ '2.50', 'req/s' ],
+				[ '77ms', 'avg' ],
+				[ '61ms', 'p50' ],
+				[ '140ms', 'p95' ],
+				[ '209ms', 'p99' ],
+			],
+		],
+	] )( '%s', async ( _name, stats, expected ) => {
+		mockNavState.selectedUrl = { hash: 'h1', url: '/foo' };
+		mockNavState.selectedRequest = null;
+		mockView = loadedView( {
+			urlDetail: {
+				data: { last_modified: 1, stats, requests: [] },
+				loading: false,
+				error: null,
+			},
+		} );
+		const { container, unmount } = renderComponent(
+			React.createElement( PerformanceDashboard, {
+				onError: jest.fn(),
+			} )
+		);
+		await flushEffects();
+
+		const stat = Array.from(
+			container.querySelectorAll(
+				'.event-logger-header-stats > .newspack-nodes-stat'
+			)
+		).map( ( node ) => [
+			node.textContent.replace(
+				node.querySelector( ':scope > small' ).textContent,
+				''
+			),
+			node.querySelector( ':scope > small' ).textContent,
+		] );
+
+		expect( stat ).toEqual( expected );
 		unmount();
 	} );
 
@@ -878,6 +1013,37 @@ describe( 'PerformanceDashboard', () => {
 			expect.objectContaining( { hash: 'h1' } )
 		);
 		expect( mockNavState.selectRequest ).toHaveBeenCalledWith( 'r1' );
+		unmount();
+	} );
+
+	it( 'landing on a request leaves the server filter behind', async () => {
+		// A rid names one request; the server filter is a browsing scope. Now
+		// that url_detail honours that scope, a search landing on a URL outside
+		// it would ask for a row the scope excludes and answer "URL not found"
+		// for a URL plainly on screen. The navigation wins, visibly.
+		mockView = loadedView();
+		const { unmount } = renderComponent(
+			React.createElement( PerformanceDashboard, {
+				onError: jest.fn(),
+			} )
+		);
+		await flushEffects();
+		act( () => {
+			globalThis.__overviewProps.setServerFilter( 'edge-01' );
+		} );
+		await flushEffects();
+		expect( globalThis.__overviewProps.serverFilter ).toBe( 'edge-01' );
+
+		await act( async () => {
+			await globalThis.__overviewProps.onSearch( 'r1' );
+		} );
+		answerCommand( SEARCH, {
+			result: { url_hash: 'h1', partition: 0 },
+			args: [ 'r1' ],
+		} );
+		await flushEffects();
+
+		expect( globalThis.__overviewProps.serverFilter ).toBe( '' );
 		unmount();
 	} );
 

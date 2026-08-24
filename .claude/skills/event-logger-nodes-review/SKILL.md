@@ -58,6 +58,8 @@ Long-running workers cache the prefix at construction, so they keep writing to t
 Per-namespace caps prevent value-explosion against memcache's 1MB/value limit:
 
 - `MAX_DIM_VALUES = 20`
+- `MAX_SERVER_VALUES = 128` — the `server` axis everywhere it is stored, larger
+  because 20 folded real spokes; `Stats_Store::dim_cap()` substitutes it
 - `MAX_URL_DIM_VALUES = 10`
 - `MAX_CAT_VALUES = 50`
 

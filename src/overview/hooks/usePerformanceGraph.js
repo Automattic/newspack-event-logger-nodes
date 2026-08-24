@@ -94,11 +94,20 @@ const REQUESTDETAIL_RECV = 'requestdetail:in';
  * selection fetch share this, so both ask for the same payload shape and the
  * merge node compares like with like.
  *
- * @param {string} hash The URL hash.
+ * The server rides along for the same reason it rides on `urls`: this modal
+ * opens from a row that filter scoped, and the two have to answer alike.
+ *
+ * @param {string} hash         The URL hash.
+ * @param {string} serverFilter Server scope; '' means every server.
  * @return {string[]} The command token array.
  */
-const urlDetailArgs = ( hash ) =>
-	formatCommandArgs( [ hash ], { categories: true } );
+const urlDetailArgs = ( hash, serverFilter ) =>
+	formatCommandArgs(
+		[ hash ],
+		serverFilter
+			? { categories: true, server: serverFilter }
+			: { categories: true }
+	);
 
 // Validation guards for command args.
 const isValidHash = ( h ) => 'string' === typeof h && /^[a-f0-9]+$/.test( h );
@@ -146,8 +155,8 @@ function overviewArgs( { serverFilter, chartBreakdown } ) {
 	return formatCommandArgs( [], options );
 }
 
-// Build urls args. No server scope: a URL row carries none to scope by.
-function urlsArgs( { urlParams } ) {
+// Build urls args; the server scopes the table the header now counts.
+function urlsArgs( { urlParams, serverFilter } ) {
 	const options = {};
 	if ( urlParams.sort ) {
 		options.sort = urlParams.sort;
@@ -162,8 +171,14 @@ function urlsArgs( { urlParams } ) {
 	if ( urlParams.search ) {
 		options.search = urlParams.search;
 	}
+	if ( serverFilter ) {
+		options.server = serverFilter;
+	}
 	if ( urlParams.errorsOnly ) {
 		options.errors_only = '1';
+	}
+	if ( urlParams.includeWorkers ) {
+		options.include_workers = '1';
 	}
 	return formatCommandArgs( [], options );
 }
@@ -216,6 +231,7 @@ export function usePerformanceGraph( opts = {} ) {
 		order: 'desc',
 		offset: 0,
 		errorsOnly: false,
+		includeWorkers: false,
 	} );
 	const urlFetchTimerRef = useRef( null );
 
@@ -252,7 +268,11 @@ export function usePerformanceGraph( opts = {} ) {
 				controlFrom: URLS_VIEW,
 				tee,
 				target: TARGET,
-				argsFn: () => urlsArgs( { urlParams: urlParamsRef.current } ),
+				argsFn: () =>
+					urlsArgs( {
+						urlParams: urlParamsRef.current,
+						serverFilter: serverFilterRef.current,
+					} ),
 			} );
 
 			// On-demand url_detail: Tee → merge → view; merge lives on edge.
@@ -282,7 +302,9 @@ export function usePerformanceGraph( opts = {} ) {
 			// the arming has disarmed it.
 			udFetcher.command_args = () => {
 				const hash = optsRef.current.selectedUrl?.hash;
-				return isValidHash( hash ) ? urlDetailArgs( hash ) : null;
+				return isValidHash( hash )
+					? urlDetailArgs( hash, serverFilterRef.current )
+					: null;
 			};
 			udFetcher.connectNode( TARGET );
 			interpreter
@@ -378,7 +400,7 @@ export function usePerformanceGraph( opts = {} ) {
 		modalWasOpen.current = modalOpen;
 	}, [ selectedUrl, selectedRequest, isPageVisible, pokeOverviewUrls ] );
 
-	// Selection-driven url_detail fetch on open; keyed on selectedUrl only.
+	// Selection-driven url_detail fetch on open, and on a change of scope.
 	useEffect( () => {
 		if ( ! selectedUrl ) {
 			sendControl( URLDETAIL_VIEW, { action: 'clear' } );
@@ -393,12 +415,17 @@ export function usePerformanceGraph( opts = {} ) {
 			return;
 		}
 		sendControl( URLDETAIL_VIEW, { action: 'loading' } );
+		// @longform The merge node drops a reply whose `last_modified` matches
+		// the one it holds, and that stamp is the URL's flame mtime — the same
+		// for every scope. Uncleared, a rescoped reply is discarded and
+		// the modal keeps the previous server's numbers.
+		sendControl( URLDETAIL_MERGE, { action: 'clear' } );
 		sendCommand(
 			'url_detail',
-			urlDetailArgs( selectedUrl.hash ),
+			urlDetailArgs( selectedUrl.hash, serverFilter ),
 			URLDETAIL_RECV
 		);
-	}, [ selectedUrl, sendCommand, sendControl ] );
+	}, [ selectedUrl, serverFilter, sendCommand, sendControl ] );
 
 	// Arm url_detail refresh Timer only while URL detail is the visible view.
 	useEffect( () => {
@@ -470,7 +497,8 @@ export function usePerformanceGraph( opts = {} ) {
 				prev.sort === params.sort &&
 				prev.order === params.order &&
 				prev.offset === params.offset &&
-				!! prev.errorsOnly === !! params.errorsOnly
+				!! prev.errorsOnly === !! params.errorsOnly &&
+				!! prev.includeWorkers === !! params.includeWorkers
 			) {
 				return;
 			}
@@ -484,7 +512,10 @@ export function usePerformanceGraph( opts = {} ) {
 				sendControl( URLS_VIEW, { action: 'loading' } );
 				sendCommand(
 					'urls',
-					urlsArgs( { urlParams: urlParamsRef.current } ),
+					urlsArgs( {
+						urlParams: urlParamsRef.current,
+						serverFilter: serverFilterRef.current,
+					} ),
 					URLS_RECV
 				);
 			};

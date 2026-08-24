@@ -33,40 +33,59 @@ import {
 import {
 	computeVisibleEntries,
 	formatDots,
+	formatFullTimestamp,
 	getAncestorPairIds,
+	hasPair,
+	isEmptyPairStart,
 	isFoldablePairStart,
 } from '../utils/logEntryUtils';
 
-const TIME_FORMAT_OPTIONS = { hour12: false };
+/**
+ * Whether an entry carries its own duration stat.
+ *
+ * @param {Object} entry Log entry.
+ * @return {boolean} True when duration_ms is set.
+ */
+const hasDuration = ( entry ) =>
+	null !== entry.duration_ms && undefined !== entry.duration_ms;
 
 /**
- * Format a timestamp to HH:MM:SS.TH (2 decimal places, 10ms precision).
+ * Index of a pair's `(start)` row in the full entries array, or -1.
  *
- * @param {number} ts Unix timestamp.
- * @return {string} Formatted time string, or empty if no ts.
+ * @param {Array}  entries Full indented entries array.
+ * @param {number} pairId  The pair to look up.
+ * @return {number} Index of the start row, or -1.
  */
-const formatTimestamp = ( ts ) => {
-	if ( ! ts ) {
-		return '';
-	}
-	const hundredth = Math.round( ts * 100 );
-	const centis = hundredth % 100;
-	const date = new Date( ts * 1000 );
-	return (
-		date.toLocaleTimeString( 'en-US', TIME_FORMAT_OPTIONS ) +
-		'.' +
-		String( centis ).padStart( 2, '0' )
+const findStartIdx = ( entries, pairId ) =>
+	entries.findIndex(
+		( e ) => e.pairId === pairId && ( e.k || '' ).includes( '(start)' )
 	);
-};
 
 /**
- * Check if a keyword represents a start or complete entry.
+ * Render a merged row's time cell: both ends when they fall in different
+ * tenths, a dot per 10ms tick when they share one, else the row's ruler time.
  *
- * @param {string} keyword Log entry keyword.
- * @return {boolean} True if keyword contains (start) or (complete).
+ * @param {Object} entry Merged entry.
+ * @return {import('react').ReactNode} Time cell content.
  */
-const isStartOrComplete = ( keyword ) =>
-	keyword.includes( '(start)' ) || keyword.includes( '(complete)' );
+const renderMergedTime = ( entry ) => {
+	const startTime = formatFullTimestamp( entry.startTs );
+	const endTime = formatFullTimestamp( entry.ts );
+	const startH = Math.round( ( entry.startTs || 0 ) * 100 );
+	const endH = Math.round( ( entry.ts || 0 ) * 100 );
+	const dots = endH - startH;
+	const spansTenths = Math.floor( startH / 10 ) !== Math.floor( endH / 10 );
+	if ( ( startTime && endTime && spansTenths ) || dots > 9 ) {
+		return (
+			<>
+				{ startTime }
+				<br />
+				{ endTime }
+			</>
+		);
+	}
+	return dots > 0 ? formatDots( dots ) : entry.displayTime;
+};
 
 /**
  * Collect all descendant pairIds between a start entry and its matching complete.
@@ -88,20 +107,11 @@ const collectDescendantPairIds = ( entries, startIdx, pairId ) => {
 			break;
 		}
 		if (
-			e.pairId !== null &&
-			e.pairId !== undefined &&
+			hasPair( e ) &&
 			e.pairId !== pairId &&
-			( e.k || '' ).match( /\(start\)$/ )
+			( e.k || '' ).match( /\(start\)$/ ) &&
+			! isEmptyPairStart( entries, i )
 		) {
-			// Skip empty pairs (start immediately followed by complete).
-			const next = entries[ i + 1 ];
-			if (
-				next &&
-				next.pairId === e.pairId &&
-				( next.k || '' ).includes( '(complete)' )
-			) {
-				continue;
-			}
 			ids.push( e.pairId );
 		}
 	}
@@ -256,7 +266,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 				if ( ! keywordHit && ! messageHit ) {
 					continue;
 				}
-				const paired = e.pairId !== null && e.pairId !== undefined;
+				const paired = hasPair( e );
 				if ( keywordHit && paired && keyword.endsWith( '(start)' ) ) {
 					startKeywordHits.add( e.pairId );
 				}
@@ -294,19 +304,10 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 		for ( let i = 0; i < entries.length; i++ ) {
 			const entry = entries[ i ];
 			if (
-				entry.pairId !== null &&
-				entry.pairId !== undefined &&
-				isFoldablePairStart( entry.k )
+				hasPair( entry ) &&
+				isFoldablePairStart( entry.k ) &&
+				! isEmptyPairStart( entries, i )
 			) {
-				// Next entry is the matching complete (nothing between).
-				const next = entries[ i + 1 ];
-				if (
-					next &&
-					next.pairId === entry.pairId &&
-					( next.k || '' ).includes( '(complete)' )
-				) {
-					continue; // Empty pair — skip.
-				}
 				ids.add( entry.pairId );
 			}
 		}
@@ -351,25 +352,10 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 			setCurrentMatchIndex( matchIdx );
 
 			// Empty-pair match: scroll by pairId (row carries start idx).
-			const matchEntry = entries[ entryIdx ];
-			const ownPairId = matchEntry?.pairId;
-			const keyword = matchEntry?.k || '';
-			let staysFolded = false;
-			if ( ownPairId !== null && ownPairId !== undefined ) {
-				if ( keyword.includes( '(start)' ) ) {
-					const next = entries[ entryIdx + 1 ];
-					staysFolded =
-						!! next &&
-						next.pairId === ownPairId &&
-						( next.k || '' ).includes( '(complete)' );
-				} else if ( keyword.includes( '(complete)' ) ) {
-					const prev = entries[ entryIdx - 1 ];
-					staysFolded =
-						!! prev &&
-						prev.pairId === ownPairId &&
-						( prev.k || '' ).includes( '(start)' );
-				}
-			}
+			const ownPairId = entries[ entryIdx ]?.pairId;
+			const staysFolded =
+				isEmptyPairStart( entries, entryIdx ) ||
+				isEmptyPairStart( entries, entryIdx - 1 );
 			scrollToAndHighlight(
 				tableRef,
 				staysFolded ? { pairId: ownPairId } : { entryIdx }
@@ -377,6 +363,24 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 		},
 		[ matchedIndices, entries, expandedSet, allPairIds ]
 	);
+
+	/** Step to the next match, wrapping past the last one. */
+	const gotoNext = useCallback( () => {
+		navigateToMatch(
+			currentMatchIndex + 1 >= matchedIndices.length
+				? 0
+				: currentMatchIndex + 1
+		);
+	}, [ navigateToMatch, currentMatchIndex, matchedIndices ] );
+
+	/** Step to the previous match, wrapping past the first one. */
+	const gotoPrev = useCallback( () => {
+		navigateToMatch(
+			currentMatchIndex - 1 < 0
+				? matchedIndices.length - 1
+				: currentMatchIndex - 1
+		);
+	}, [ navigateToMatch, currentMatchIndex, matchedIndices ] );
 
 	/**
 	 * Clear the search and restore the fold state the search expanded past.
@@ -437,39 +441,17 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 
 			if ( e.key === 'n' && ! e.shiftKey ) {
 				e.preventDefault();
-				if ( currentMatchIndex < 0 ) {
-					navigateToMatch( 0 );
-				} else {
-					navigateToMatch(
-						currentMatchIndex + 1 >= matchedIndices.length
-							? 0
-							: currentMatchIndex + 1
-					);
-				}
+				gotoNext();
 			} else if ( e.key === 'p' || e.key === 'N' ) {
 				e.preventDefault();
-				if ( currentMatchIndex < 0 ) {
-					navigateToMatch( matchedIndices.length - 1 );
-				} else {
-					navigateToMatch(
-						currentMatchIndex - 1 < 0
-							? matchedIndices.length - 1
-							: currentMatchIndex - 1
-					);
-				}
+				gotoPrev();
 			}
 		};
 
 		document.addEventListener( 'keydown', handleKeyDown, true );
 		return () =>
 			document.removeEventListener( 'keydown', handleKeyDown, true );
-	}, [
-		searchQuery,
-		matchedIndices,
-		currentMatchIndex,
-		navigateToMatch,
-		clearSearch,
-	] );
+	}, [ searchQuery, matchedIndices, gotoNext, gotoPrev, clearSearch ] );
 
 	// Compute visible entries from fold state.
 	const visibleEntries = useMemo(
@@ -495,11 +477,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 			const startMatch = keyword.match( /^(.+?) \(start\)$/ );
 			const completeMatch = keyword.match( /^(.+?) \(complete\)$/ );
 
-			if (
-				startMatch &&
-				entry.pairId !== null &&
-				entry.pairId !== undefined
-			) {
+			if ( startMatch && hasPair( entry ) ) {
 				const name = startMatch[ 1 ];
 				const msg =
 					typeof entry.m === 'string' && entry.m ? entry.m : '';
@@ -548,12 +526,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 				return;
 			}
 
-			// Find the target entry's index in the full entries array.
-			const targetIdx = entries.findIndex(
-				( e ) =>
-					e.pairId === targetPairId &&
-					( e.k || '' ).includes( '(start)' )
-			);
+			const targetIdx = findStartIdx( entries, targetPairId );
 
 			const ancestorIds =
 				targetIdx >= 0
@@ -701,22 +674,16 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 	const handleSwatchClick = useCallback(
 		( entry, idx, event ) => {
 			event.stopPropagation();
-			const keyword = entry.k || '';
-			if (
-				isStartOrComplete( keyword ) ||
-				entry.isMerged ||
-				( entry.pairId !== null && entry.pairId !== undefined )
-			) {
-				const range = findPairRange( idx );
-				if ( range ) {
-					if (
-						highlightRange?.start === range.start &&
-						highlightRange?.end === range.end
-					) {
-						setHighlightRange( null );
-					} else {
-						setHighlightRange( range );
-					}
+			// No guard: `findPairRange` already refuses a row with no pairId.
+			const range = findPairRange( idx );
+			if ( range ) {
+				if (
+					highlightRange?.start === range.start &&
+					highlightRange?.end === range.end
+				) {
+					setHighlightRange( null );
+				} else {
+					setHighlightRange( range );
 				}
 			}
 		},
@@ -734,44 +701,18 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 	 */
 	const handleRowClick = useCallback(
 		( entry, idx, event ) => {
-			if ( entry.isMerged ) {
-				// Find index of this entry's start in the full entries array.
-				const fullIdx = entries.findIndex(
-					( e ) =>
-						e.pairId === entry.pairId &&
-						( e.k || '' ).includes( '(start)' )
+			const foldable =
+				entry.isMerged ||
+				( hasPair( entry ) && isFoldablePairStart( entry.k ) );
+			const fullIdx = foldable
+				? findStartIdx( entries, entry.pairId )
+				: -1;
+			if ( fullIdx >= 0 ) {
+				toggleFold(
+					entry.pairId,
+					fullIdx,
+					event.metaKey || event.ctrlKey
 				);
-				if ( fullIdx >= 0 ) {
-					toggleFold(
-						entry.pairId,
-						fullIdx,
-						event.metaKey || event.ctrlKey
-					);
-				}
-				return;
-			}
-
-			const keyword = entry.k || '';
-			if (
-				keyword.includes( '(start)' ) &&
-				entry.pairId !== null &&
-				entry.pairId !== undefined
-			) {
-				if ( ! isFoldablePairStart( keyword ) ) {
-					return;
-				}
-				const fullIdx = entries.findIndex(
-					( e ) =>
-						e.pairId === entry.pairId &&
-						( e.k || '' ).includes( '(start)' )
-				);
-				if ( fullIdx >= 0 ) {
-					toggleFold(
-						entry.pairId,
-						fullIdx,
-						event.metaKey || event.ctrlKey
-					);
-				}
 			}
 		},
 		[ entries, toggleFold ]
@@ -840,23 +781,12 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 			return JSON.stringify( value, null, 2 );
 		}
 		const msg = entry.m || entry.l || '';
-		// Suppress bare '-' for merged/complete rows and duration-stat entries.
-		const hasDuration =
-			entry.duration_ms !== null && entry.duration_ms !== undefined;
-		if (
-			! msg &&
-			( entry.isMerged ||
-				( entry.k || '' ).includes( '(complete)' ) ||
-				hasDuration )
-		) {
-			return '';
-		}
-		if (
-			msg === '-' &&
-			( entry.isMerged ||
-				( entry.k || '' ).includes( '(complete)' ) ||
-				hasDuration )
-		) {
+		// Merged/complete rows and duration-stat entries carry their own stats.
+		const carriesStats =
+			entry.isMerged ||
+			( entry.k || '' ).includes( '(complete)' ) ||
+			hasDuration( entry );
+		if ( carriesStats && ( ! msg || '-' === msg ) ) {
 			return '';
 		}
 		return msg || '-';
@@ -876,41 +806,24 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 
 		const keyword = entry.k || '';
 
-		if ( entry.isMerged ) {
-			return (
-				<>
-					<span
-						className="newspack-nodes-status is-info"
-						style={ {
-							fontSize: '10px',
-							marginRight: '4px',
-						} }
-					>
-						&#9654;
-					</span>
-					{ entry.k }
-				</>
-			);
+		if ( ! entry.isMerged && ! isFoldablePairStart( keyword ) ) {
+			return keyword || '-';
 		}
 
-		if ( isFoldablePairStart( keyword ) ) {
-			return (
-				<>
-					<span
-						className="newspack-nodes-status is-info"
-						style={ {
-							fontSize: '10px',
-							marginRight: '4px',
-						} }
-					>
-						&#9660;
-					</span>
-					{ keyword }
-				</>
-			);
-		}
-
-		return keyword || '-';
+		return (
+			<>
+				<span
+					className="newspack-nodes-status is-info"
+					style={ {
+						fontSize: '10px',
+						marginRight: '4px',
+					} }
+				>
+					{ entry.isMerged ? '▶' : '▼' }
+				</span>
+				{ keyword }
+			</>
+		);
 	};
 
 	/**
@@ -921,15 +834,14 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 	 * @return {import('react').ReactElement|null} Stats span or null.
 	 */
 	const renderStats = ( entry ) => {
-		const hasDuration =
-			entry.duration_ms !== null && entry.duration_ms !== undefined;
 		const hasPeak = entry.peak_mb > 0;
-		if ( ! hasDuration && ! hasPeak ) {
+		if ( ! hasDuration( entry ) && ! hasPeak ) {
 			return null;
 		}
 		return (
 			<span className="newspack-nodes-status">
-				{ hasDuration && `(${ entry.duration_ms.toFixed( 3 ) }ms)` }
+				{ hasDuration( entry ) &&
+					`(${ entry.duration_ms.toFixed( 3 ) }ms)` }
 				{ hasPeak && (
 					<span
 						className="newspack-nodes-status is-warning"
@@ -1094,24 +1006,11 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 								/** @type {HTMLInputElement} */ (
 									e.target
 								).blur();
-								if ( currentMatchIndex < 0 ) {
-									navigateToMatch( 0 );
-									return;
-								}
-								let next;
 								if ( e.shiftKey ) {
-									next =
-										currentMatchIndex - 1 < 0
-											? matchedIndices.length - 1
-											: currentMatchIndex - 1;
+									gotoPrev();
 								} else {
-									next =
-										currentMatchIndex + 1 >=
-										matchedIndices.length
-											? 0
-											: currentMatchIndex + 1;
+									gotoNext();
 								}
-								navigateToMatch( next );
 							}
 						} }
 						__nextHasNoMarginBottom
@@ -1146,17 +1045,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 						<button
 							type="button"
 							className="button button-small log-entries-search__nav"
-							onClick={ () => {
-								if ( currentMatchIndex < 0 ) {
-									navigateToMatch( 0 );
-									return;
-								}
-								const prev =
-									currentMatchIndex - 1 < 0
-										? matchedIndices.length - 1
-										: currentMatchIndex - 1;
-								navigateToMatch( prev );
-							} }
+							onClick={ gotoPrev }
 							disabled={ matchedIndices.length === 0 }
 							title={ __(
 								'Previous match (p)',
@@ -1168,18 +1057,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 						<button
 							type="button"
 							className="button button-small log-entries-search__nav"
-							onClick={ () => {
-								if ( currentMatchIndex < 0 ) {
-									navigateToMatch( 0 );
-									return;
-								}
-								const next =
-									currentMatchIndex + 1 >=
-									matchedIndices.length
-										? 0
-										: currentMatchIndex + 1;
-								navigateToMatch( next );
-							} }
+							onClick={ gotoNext }
 							disabled={ matchedIndices.length === 0 }
 							title={ __(
 								'Next match (n)',
@@ -1241,8 +1119,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 											: undefined
 									}
 									data-pair-id={
-										entry.pairId !== null &&
-										entry.pairId !== undefined
+										hasPair( entry )
 											? entry.pairId
 											: undefined
 									}
@@ -1267,15 +1144,12 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 												eventColor,
 												0.45
 											),
-											cursor:
-												entry.pairId !== null &&
-												entry.pairId !== undefined
-													? 'pointer'
-													: undefined,
+											cursor: hasPair( entry )
+												? 'pointer'
+												: undefined,
 										} }
 										title={
-											entry.pairId !== null &&
-											entry.pairId !== undefined
+											hasPair( entry )
 												? __(
 														'Click to highlight pair',
 														'newspack-event-logger-nodes'
@@ -1292,71 +1166,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 										} }
 									>
 										{ entry.isMerged
-											? ( () => {
-													const startTime =
-														formatTimestamp(
-															entry.startTs
-														);
-													const endTime =
-														formatTimestamp(
-															entry.ts
-														);
-													// Two tenths: both ends.
-													const startTenth =
-														Math.floor(
-															Math.round(
-																( entry.startTs ||
-																	0 ) * 100
-															) / 10
-														);
-													const endTenth = Math.floor(
-														Math.round(
-															( entry.ts || 0 ) *
-																100
-														) / 10
-													);
-													if (
-														startTime &&
-														endTime &&
-														startTenth !== endTenth
-													) {
-														return (
-															<>
-																{ startTime }
-																<br />
-																{ endTime }
-															</>
-														);
-													}
-													// One tenth: dot per 10ms.
-													const startH = Math.round(
-														( entry.startTs || 0 ) *
-															100
-													);
-													const endH = Math.round(
-														( entry.ts || 0 ) * 100
-													);
-													const dots = endH - startH;
-													if ( dots > 9 ) {
-														return (
-															<>
-																{ formatTimestamp(
-																	entry.startTs
-																) }
-																<br />
-																{ formatTimestamp(
-																	entry.ts
-																) }
-															</>
-														);
-													}
-													if ( dots > 0 ) {
-														return formatDots(
-															dots
-														);
-													}
-													return entry.displayTime;
-											  } )()
+											? renderMergedTime( entry )
 											: entry.displayTime }
 									</td>
 									<td

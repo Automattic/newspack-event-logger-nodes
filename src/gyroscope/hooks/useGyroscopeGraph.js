@@ -11,16 +11,16 @@
  * cleared before every open.
  */
 
-import { views } from '../nodes/register';
+import { views } from '../nodes/gyroscope-view-node';
 import { useStreamGraph } from '@newspack-nodes/shared/hooks/useStreamGraph';
 
 /**
  * Mount the Gyroscope graph and own its SSE connection while the page is visible.
  *
- * @return {Object} Empty — the view reads its model via useNodeState +
- *   Core.node(VIEW).snapshot(); the gyroscope dashboard has no control callbacks.
- *   Reset Graph is driven by a `Core.bumpGraphGeneration()` bump — mountExospine
- *   subscribes this reused mount's rebuild to it.
+ * Returns nothing: the view reads its model via useNodeState +
+ * Core.node(VIEW).snapshot(), and the gyroscope dashboard has no control
+ * callbacks. Reset Graph is driven by a `Core.bumpGraphGeneration()` bump —
+ * mountExospine subscribes this reused mount's rebuild to it.
  */
 export function useGyroscopeGraph() {
 	useStreamGraph( {
@@ -30,6 +30,4 @@ export function useGyroscopeGraph() {
 		// Rows that predate a connection gap are stale.
 		clearOnOpen: true,
 	} );
-
-	return {};
 }

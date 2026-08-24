@@ -17,21 +17,14 @@
  * row.
  */
 
-import { lazy, Suspense, useRef } from '@wordpress/element';
+import { useRef } from '@wordpress/element';
 import { __ } from '@wordpress/i18n';
 
-/**
- * The flame graph drags in d3 and d3-flame-graph, the heaviest dependency in
- * this bundle, so it loads only when a request that has flame data is open.
- *
- * knip cannot parse JSX in a `.js` file and so never sees this `import()`;
- * `FlameGraph.js` is therefore listed as an entry in `knip.json` to keep the
- * dead-code audit from claiming it.
- */
-const FlameGraph = lazy( () => import( '../FlameGraph' ) );
-
+import RequestSummary from '../../components/RequestSummary';
 import RequestProfile from '../RequestProfile';
+import RequestTrace from './RequestTrace';
 import LogEntriesTable from './LogEntriesTable';
+import { errorStatus } from '../../components/errorStatus';
 
 /** Vertical rhythm between the detail's sections. */
 const SECTION_STYLE = { marginBottom: '20px' };
@@ -42,8 +35,8 @@ const SECTION_STYLE = { marginBottom: '20px' };
  * `requestDetail` is the decoded request body: `url`, `timestamp` (seconds),
  * `duration_ms`, `peak_mb`, `status_code`, `profiles`, and `error_status`.
  * `Request_Builder_Node` stamps `error_status` as one character — `-` for a
- * clean request, `T` for one evicted before it completed, `F` for a fatal — and
- * only the last two get a badge. The durable body names the HTTP verb
+ * clean request, and one of the shared `ERROR_STATUSES` codes for anything
+ * else, which is what gets the badge. The durable body names the HTTP verb
  * `request_method`; the compact summary that `build_compact_summary()` writes
  * names it `method`, so both are read.
  *
@@ -65,14 +58,23 @@ export default function RequestDetailView( {
 	partition,
 } ) {
 	const revealRef = useRef( null );
-	const isTimedOut = requestDetail.error_status === 'T';
-	const isFatal = requestDetail.error_status === 'F';
+	const status = errorStatus( requestDetail.error_status );
 	const isFolded = !! requestDetail.folded;
 	const hasEntries = indentedEntries.length > 0;
 	const hasFlame = flameData && flameData.children?.length > 0;
 	const hasProfiles = !! requestDetail.profiles;
 	const hasNoDetail =
 		! hasEntries && ! hasFlame && ! hasProfiles && ! isFolded;
+	const errorRow = status && (
+		<p>
+			<strong>{ __( 'Error:', 'newspack-event-logger-nodes' ) }</strong>{ ' ' }
+			<span
+				className={ `newspack-nodes-badge newspack-nodes-status ${ status.tone }` }
+			>
+				{ status.label }
+			</span>
+		</p>
+	);
 
 	return (
 		// The picker chain: DOM nesting says which request this belongs to.
@@ -83,68 +85,10 @@ export default function RequestDetailView( {
 			}
 		>
 			<div className="event-logger-request-info" style={ SECTION_STYLE }>
-				<p>
-					<strong>
-						{ __( 'URL:', 'newspack-event-logger-nodes' ) }
-					</strong>{ ' ' }
-					{ requestDetail.request_method ||
-						requestDetail.method ||
-						'' }{ ' ' }
-					{ requestDetail.url }
-				</p>
-				<p>
-					<strong>
-						{ __( 'Time:', 'newspack-event-logger-nodes' ) }
-					</strong>{ ' ' }
-					{ new Date(
-						requestDetail.timestamp * 1000
-					).toLocaleString() }
-				</p>
-				<p>
-					<strong>
-						{ __( 'Duration:', 'newspack-event-logger-nodes' ) }
-					</strong>{ ' ' }
-					{ requestDetail.duration_ms?.toFixed( 2 ) }
-					ms
-				</p>
-				{ requestDetail.peak_mb > 0 && (
-					<p>
-						<strong>
-							{ __( 'Memory:', 'newspack-event-logger-nodes' ) }
-						</strong>{ ' ' }
-						{ requestDetail.peak_mb } MB
-					</p>
-				) }
-				{ requestDetail.status_code > 0 && (
-					<p>
-						<strong>
-							{ __( 'Status:', 'newspack-event-logger-nodes' ) }
-						</strong>{ ' ' }
-						{ requestDetail.status_code }
-					</p>
-				) }
-				{ ( isTimedOut || isFatal ) && (
-					<p>
-						<strong>
-							{ __( 'Error:', 'newspack-event-logger-nodes' ) }
-						</strong>{ ' ' }
-						<span
-							className={ `newspack-nodes-badge newspack-nodes-status ${
-								isTimedOut ? 'is-warning' : 'is-error'
-							}` }
-						>
-							{ isTimedOut
-								? __(
-										'Timed out (orphaned request)',
-										'newspack-event-logger-nodes'
-								  )
-								: __(
-										'Fatal error',
-										'newspack-event-logger-nodes'
-								  ) }
-						</span>
-					</p>
-				) }
+				<RequestSummary
+					request={ requestDetail }
+					errorRow={ errorRow }
+				/>
 			</div>
 
 			{ hasNoDetail && (
@@ -167,32 +111,13 @@ export default function RequestDetailView( {
 
 			{ /* Request Flame Graph (built by Flame_Builder_Node, read here) */ }
 			{ hasFlame && (
-				<div
-					className="event-logger-flame-container"
-					style={ SECTION_STYLE }
-				>
-					<h3 className="newspack-nodes-section-heading">
-						{ __( 'Request Trace', 'newspack-event-logger-nodes' ) }
-					</h3>
-					<Suspense
-						fallback={
-							<div className="event-logger-detail-loading newspack-nodes-performance-loading">
-								{ __(
-									'Loading chart…',
-									'newspack-event-logger-nodes'
-								) }
-							</div>
+				<div style={ SECTION_STYLE }>
+					<RequestTrace
+						flameData={ flameData }
+						onRevealEntry={ ( path ) =>
+							revealRef.current?.( path )
 						}
-					>
-						<FlameGraph
-							data={ flameData }
-							onRevealEntry={ ( path ) => {
-								if ( revealRef.current ) {
-									revealRef.current( path );
-								}
-							} }
-						/>
-					</Suspense>
+					/>
 				</div>
 			) }
 

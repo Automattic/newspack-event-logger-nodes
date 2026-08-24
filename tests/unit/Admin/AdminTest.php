@@ -345,45 +345,6 @@ class AdminTest extends TestCase {
 		$this->assertStringContainsString( '.is-marked [data-nn-reset-toggle]', $html );
 	}
 
-	public function test_render_settings_page_shows_flush_success_notice(): void {
-		// The `?flushed=1&restarted=N` query params render the "Cache flushed"
-		// admin notice with the pluralized worker-restart count.
-		$_GET['flushed']   = '1';
-		$_GET['restarted'] = '3';
-		try {
-			$admin = new Admin();
-			$admin->register_settings();
-			\ob_start();
-			$admin->render_settings_page();
-			$html = \ob_get_clean();
-		} finally {
-			unset( $_GET['flushed'], $_GET['restarted'] );
-		}
-
-		$this->assertStringContainsString( 'notice notice-success', $html );
-		$this->assertStringContainsString( 'Cache flushed.', $html );
-		// restarted=3 → plural form ("workers"), with the count substituted.
-		$this->assertStringContainsString( '3 workers restart requested', $html );
-	}
-
-	public function test_render_settings_page_flush_notice_defaults_restarted_to_zero(): void {
-		// `flushed` present but `restarted` absent → the count coerces to 0
-		// (plural branch of the notice), proving the is_numeric guard fallback.
-		$_GET['flushed'] = '1';
-		try {
-			$admin = new Admin();
-			$admin->register_settings();
-			\ob_start();
-			$admin->render_settings_page();
-			$html = \ob_get_clean();
-		} finally {
-			unset( $_GET['flushed'] );
-		}
-
-		$this->assertStringContainsString( 'Cache flushed.', $html );
-		$this->assertStringContainsString( '0 workers restart requested', $html );
-	}
-
 	public function test_render_settings_page_shows_reset_success_notice(): void {
 		// The `?reset=1` query param renders the "Settings reset to defaults" notice.
 		$_GET['reset'] = '1';
@@ -492,23 +453,6 @@ class AdminTest extends TestCase {
 		$this->assertStringContainsString( 'logging', $out );
 	}
 
-	public function test_instrumentation_section_callback_mentions_filters_and_events(): void {
-		$admin = new Admin();
-		\ob_start();
-		$admin->instrumentation_section_callback();
-		$out = \ob_get_clean();
-		$this->assertStringContainsString( '<p>', $out );
-		$this->assertStringContainsString( 'URL', $out );
-	}
-
-	public function test_workers_section_callback_describes_workers(): void {
-		$admin = new Admin();
-		\ob_start();
-		$admin->workers_section_callback();
-		$out = \ob_get_clean();
-		$this->assertStringContainsString( '<p>', $out );
-	}
-
 	public function test_debugging_section_callback_warns_about_overhead(): void {
 		$admin = new Admin();
 		\ob_start();
@@ -553,8 +497,7 @@ class AdminTest extends TestCase {
 		$admin = new Admin();
 		$admin->register_settings();
 
-		$ref = new \ReflectionProperty( Admin::class, 'option_names' );
-		$reset_list = $ref->getValue();
+		$reset_list = \Newspack_Event_Logger_Nodes\Settings_Schema::get()->setting_option_names();
 
 		foreach ( \array_keys( $GLOBALS['_registered_settings'] ) as $registered ) {
 			$this->assertContains(

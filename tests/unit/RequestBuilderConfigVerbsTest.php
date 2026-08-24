@@ -4,17 +4,18 @@
  *
  * These verbs let TSL topology files declaratively wire the secondary
  * outputs RequestBuilder owns (errors target, completed-summary target)
- * and the hidden Flight sibling (in-flight snapshot target + interval),
- * without needing PHP glue in the topology. They're invoked via:
+ * and the hidden Flight sibling (in-flight snapshot target + delta toggle;
+ * the snapshot cadence is the Router's tick, not a knob), without needing
+ * PHP glue in the topology. They're invoked via:
  *
  *     command_node request-builder:config set_completed_target completed:tee
  *     command_node request-builder:config set_inflight_target  gyroscope:partition
  *
- * The Flight verbs proxy through `$patron->flight()` (the hidden sibling
- * attached in RequestBuilder's ctor) rather than touching $patron state
- * directly — that keeps the Timer's interval as the single source of
- * truth, and `dump_config` round-trips each setting straight from that
- * state (no generic verb recording).
+ * `set_inflight_target` proxies through `$patron->flight()` (the hidden
+ * sibling attached in RequestBuilder's ctor), the target being a base Node
+ * property whose setter arms the Timer. `set_inflight_delta` is a declared
+ * toggle on the patron itself, which is what Flight reads at fire time and
+ * what `dump_config` round-trips.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -24,6 +25,7 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 use PHPUnit\Framework\Attributes\CoversClass;
 use Newspack_Event_Logger_Nodes\Request_Builder_Node;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
+use Newspack_Nodes\Core;
 use Newspack_Nodes\Node_Names;
 use Newspack_Nodes\Router_Node;
 
@@ -42,7 +44,7 @@ class RequestBuilderConfigVerbsTest extends TestCase {
 		$interpreter    = $this->read_private( $rb, 'interpreter' );
 		$verbs = $interpreter->commands();
 		$this->assertArrayHasKey( 'set_completed_target', $verbs );
-		$this->assertSame( 'ok', $verbs['set_completed_target']( $interpreter, [ 'completed:tee' ] ) );
+		$this->assertSame( "ok\n", $verbs['set_completed_target']( $interpreter, [ 'completed:tee' ] ) );
 		$this->assertSame( 'completed:tee', $this->read_private( $rb, 'completed_target' ) );
 	}
 
@@ -52,10 +54,10 @@ class RequestBuilderConfigVerbsTest extends TestCase {
 		$interpreter    = $this->read_private( $rb, 'interpreter' );
 		$verbs = $interpreter->commands();
 		// Seed a non-empty target.
-		$this->assertSame( 'ok', $verbs['set_completed_target']( $interpreter, [ 'completed:tee' ] ) );
+		$this->assertSame( "ok\n", $verbs['set_completed_target']( $interpreter, [ 'completed:tee' ] ) );
 		$this->assertSame( 'completed:tee', $this->read_private( $rb, 'completed_target' ) );
 		// Empty arg clears the target (returns 'ok', not 'usage:').
-		$this->assertSame( 'ok', $verbs['set_completed_target']( $interpreter, [] ) );
+		$this->assertSame( "ok\n", $verbs['set_completed_target']( $interpreter, [] ) );
 		$this->assertSame( '', $this->read_private( $rb, 'completed_target' ) );
 	}
 
@@ -82,15 +84,15 @@ class RequestBuilderConfigVerbsTest extends TestCase {
 		$this->assertSame( '', $rb->flight()->target() );
 	}
 
-	public function test_set_inflight_delta_verb_writes_to_flight(): void {
+	public function test_set_inflight_delta_verb_writes_the_builders_toggle(): void {
 		$rb = new Request_Builder_Node();
 		$rb->name( 'rb' );
 		$interpreter = $this->read_private( $rb, 'interpreter' );
 		$verbs       = $interpreter->commands();
 		$this->assertArrayHasKey( 'set_inflight_delta', $verbs );
-		$this->assertFalse( $rb->flight()->delta(), 'delta defaults off' );
-		$this->assertSame( 'ok', $verbs['set_inflight_delta']( $interpreter, [ '1' ] ) );
-		$this->assertTrue( $rb->flight()->delta() );
+		$this->assertFalse( $rb->inflight_delta(), 'delta defaults off' );
+		$this->assertSame( "ok\n", $verbs['set_inflight_delta']( $interpreter, [ '1' ] ) );
+		$this->assertTrue( $rb->inflight_delta() );
 	}
 
 	public function test_set_inflight_delta_bare_or_zero_arg_disables(): void {
@@ -99,12 +101,12 @@ class RequestBuilderConfigVerbsTest extends TestCase {
 		$interpreter = $this->read_private( $rb, 'interpreter' );
 		$verbs       = $interpreter->commands();
 		$verbs['set_inflight_delta']( $interpreter, [ '1' ] );
-		$this->assertTrue( $rb->flight()->delta() );
-		$this->assertSame( 'ok', $verbs['set_inflight_delta']( $interpreter, [ '0' ] ) );
-		$this->assertFalse( $rb->flight()->delta(), '0 disables' );
+		$this->assertTrue( $rb->inflight_delta() );
+		$this->assertSame( "ok\n", $verbs['set_inflight_delta']( $interpreter, [ '0' ] ) );
+		$this->assertFalse( $rb->inflight_delta(), '0 disables' );
 		$verbs['set_inflight_delta']( $interpreter, [ '1' ] );
-		$this->assertSame( 'ok', $verbs['set_inflight_delta']( $interpreter, [] ) );
-		$this->assertFalse( $rb->flight()->delta(), 'bare arg disables' );
+		$this->assertSame( "ok\n", $verbs['set_inflight_delta']( $interpreter, [] ) );
+		$this->assertFalse( $rb->inflight_delta(), 'bare arg disables' );
 	}
 
 	public function test_dump_config_round_trips_the_inflight_delta_knob(): void {
@@ -112,11 +114,31 @@ class RequestBuilderConfigVerbsTest extends TestCase {
 		$rb->name( 'rb-delta-dump' );
 		// Default off — dump_config emits only non-default settings, so no knob.
 		$this->assertStringNotContainsString( 'set_inflight_delta', $rb->dump_config() );
-		$rb->flight()->set_delta( true );
+		$rb->set_inflight_delta( true );
 		$this->assertStringContainsString(
-			'command_node rb-delta-dump:config set_inflight_delta 1',
+			'command_node rb-delta-dump:config set_inflight_delta true',
 			$rb->dump_config()
 		);
+	}
+
+	/**
+	 * The verb declares a `bool` arg, so it takes the substrate's canonical
+	 * `truthy()` spellings. A `false` or `off` argument disables it, rather
+	 * than reading as "a non-empty string that is not 0, therefore on".
+	 */
+	public function test_set_inflight_delta_takes_the_canonical_bool_spellings(): void {
+		$rb = new Request_Builder_Node();
+		$rb->name( 'rb-delta-words' );
+		$interpreter = $this->read_private( $rb, 'interpreter' );
+		$verbs       = $interpreter->commands();
+		$verbs['set_inflight_delta']( $interpreter, [ 'yes' ] );
+		$this->assertStringContainsString( 'set_inflight_delta', $rb->dump_config(), 'yes enables' );
+		$verbs['set_inflight_delta']( $interpreter, [ 'false' ] );
+		$this->assertStringNotContainsString( 'set_inflight_delta', $rb->dump_config(), 'false disables' );
+		$verbs['set_inflight_delta']( $interpreter, [ 'on' ] );
+		$this->assertStringContainsString( 'set_inflight_delta', $rb->dump_config(), 'on enables' );
+		$verbs['set_inflight_delta']( $interpreter, [ 'off' ] );
+		$this->assertStringNotContainsString( 'set_inflight_delta', $rb->dump_config(), 'off disables' );
 	}
 
 	public function test_set_errors_target_empty_args_clears_target(): void {
@@ -125,10 +147,10 @@ class RequestBuilderConfigVerbsTest extends TestCase {
 		$interpreter    = $this->read_private( $rb, 'interpreter' );
 		$verbs = $interpreter->commands();
 		// Seed a non-empty errors target.
-		$this->assertSame( 'ok', $verbs['set_errors_target']( $interpreter, [ 'errors:partition' ] ) );
+		$this->assertSame( "ok\n", $verbs['set_errors_target']( $interpreter, [ 'errors:partition' ] ) );
 		$this->assertSame( 'errors:partition', $this->read_private( $rb, 'errors_target' ) );
 		// Empty arg clears the errors target.
-		$this->assertSame( 'ok', $verbs['set_errors_target']( $interpreter, [] ) );
+		$this->assertSame( "ok\n", $verbs['set_errors_target']( $interpreter, [] ) );
 		$this->assertSame( '', $this->read_private( $rb, 'errors_target' ) );
 	}
 
@@ -138,10 +160,10 @@ class RequestBuilderConfigVerbsTest extends TestCase {
 		$interpreter = $this->read_private( $rb, 'interpreter' );
 		$verbs       = $interpreter->commands();
 		$this->assertArrayHasKey( 'set_alerts_target', $verbs );
-		$this->assertSame( 'ok', $verbs['set_alerts_target']( $interpreter, [ 'alerts:partition' ] ) );
+		$this->assertSame( "ok\n", $verbs['set_alerts_target']( $interpreter, [ 'alerts:partition' ] ) );
 		$this->assertSame( 'alerts:partition', $this->read_private( $rb, 'alerts_target' ) );
 		// Empty arg clears the target.
-		$this->assertSame( 'ok', $verbs['set_alerts_target']( $interpreter, [] ) );
+		$this->assertSame( "ok\n", $verbs['set_alerts_target']( $interpreter, [] ) );
 		$this->assertSame( '', $this->read_private( $rb, 'alerts_target' ) );
 	}
 
@@ -154,5 +176,32 @@ class RequestBuilderConfigVerbsTest extends TestCase {
 			'command_node rb-alerts-dump:config set_alerts_target alerts:partition',
 			$rb->dump_config()
 		);
+	}
+
+	/**
+	 * A torn-down builder refuses the two Flight verbs rather than reporting
+	 * `ok` for a setting nothing can hold. It is refused one step BEFORE
+	 * `flight()`, at the patron link every verb handler reads, and teardown
+	 * unregisters the `:config` interpreter with it, so no addressed command
+	 * reaches the table at all.
+	 */
+	public function test_a_torn_down_builder_refuses_the_inflight_verbs(): void {
+		$rb = new Request_Builder_Node();
+		$rb->name( 'anemometer' );
+		$interpreter = $this->read_private( $rb, 'interpreter' );
+		$verbs       = $interpreter->commands();
+
+		$rb->remove_node();
+
+		$this->assertNull( Core::node( 'anemometer:config' ), 'no addressed command can reach the table' );
+		$this->assertNull( $interpreter->patron(), 'the handler is refused at the patron link' );
+		foreach ( [ 'set_inflight_target' => 'gyroscope.p9', 'set_inflight_delta' => '1' ] as $verb => $arg ) {
+			try {
+				$verbs[ $verb ]( $interpreter, [ $arg ] );
+				$this->fail( "expected {$verb} to refuse a torn-down builder" );
+			} catch ( \Throwable $e ) {
+				$this->assertNotSame( 'ok', $e->getMessage() );
+			}
+		}
 	}
 }

@@ -100,6 +100,10 @@ import { renderComponent } from '../../test-helpers/renderHook';
 
 const d3Mock = d3.__chain;
 
+// The panel's views, in render order: time, count, average.
+const [ TIME_VIEW, COUNT_VIEW, AVERAGE_VIEW ] = [ 0, 1, 2 ];
+const VIEW_COUNT = 3;
+
 describe( 'CategoryTimeChart', () => {
 	beforeEach( () => {
 		globalThis.__lastRenderFn = null;
@@ -111,13 +115,26 @@ describe( 'CategoryTimeChart', () => {
 		} );
 	} );
 
-	it( 'returns null when data is null', () => {
+	it( 'draws exactly one chart per declared view, in render order', () => {
 		const { container, unmount } = renderComponent(
 			React.createElement( CategoryTimeChart, {
-				data: null,
-				mode: 'time',
-				title: 'X',
+				data: { '2019-07-04-13-45': { redis: { c: 419, t: 8123 } } },
 			} )
+		);
+		const headings = [ ...container.querySelectorAll( 'h3' ) ].map(
+			( heading ) => heading.textContent
+		);
+		expect( headings ).toEqual( [
+			'Time by Category',
+			'Events by Category',
+			'Average Time per Event',
+		] );
+		unmount();
+	} );
+
+	it( 'returns null when data is null', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( CategoryTimeChart, { data: null } )
 		);
 		expect( container.textContent ).toBe( '' );
 		unmount();
@@ -125,122 +142,37 @@ describe( 'CategoryTimeChart', () => {
 
 	it( 'returns null when data is empty object', () => {
 		const { container, unmount } = renderComponent(
-			React.createElement( CategoryTimeChart, {
-				data: {},
-				mode: 'time',
-				title: 'X',
-			} )
+			React.createElement( CategoryTimeChart, { data: {} } )
 		);
 		expect( container.textContent ).toBe( '' );
 		unmount();
 	} );
 
-	it( 'renders title + container divs when data has categories', () => {
-		// Compute today's UTC bucket key so the chart finds a matching bucket.
-		const now = new Date();
-		now.setMinutes( Math.floor( now.getMinutes() / 5 ) * 5, 0, 0 );
-		const bucketKey = [
-			now.getUTCFullYear(),
-			String( now.getUTCMonth() + 1 ).padStart( 2, '0' ),
-			String( now.getUTCDate() ).padStart( 2, '0' ),
-			String( now.getUTCHours() ).padStart( 2, '0' ),
-			String( Math.floor( now.getUTCMinutes() / 5 ) * 5 ).padStart(
-				2,
-				'0'
-			),
-		].join( '-' );
-
+	it( 'gives every view its own chart frame and tooltip', () => {
 		const data = {
-			[ bucketKey ]: {
+			[ bucketKeyNow() ]: {
 				total: { c: 100, t: 5000 },
 				db: { c: 30, t: 1500 },
 				render: { c: 70, t: 3500 },
+				// count=0 drives the average-mode divide-by-zero path.
+				cache: { c: 0, t: 0 },
 			},
 		};
 
 		const { container, unmount } = renderComponent(
-			React.createElement( CategoryTimeChart, {
-				data,
-				mode: 'time',
-				title: 'Time per second',
-			} )
+			React.createElement( CategoryTimeChart, { data } )
 		);
 
-		expect( container.textContent ).toContain( 'Time per second' );
 		// renderFn must have been wired up by useTimeChart.
 		expect( globalThis.__lastRenderFn ).toEqual( expect.any( Function ) );
 		// d3.select must have been called (chart actually rendered).
 		expect( d3Mock.select ).toHaveBeenCalled();
-		const tooltip = container.querySelector(
+		const tooltips = container.querySelectorAll(
 			'.event-logger-chart-tooltip'
 		);
-		expect( tooltip ).not.toBeNull();
-		expect( tooltip.className ).toBe( 'event-logger-chart-tooltip' );
-		expect( tooltip.getAttribute( 'style' ) ).toBeNull();
-		unmount();
-	} );
-
-	it( 'covers mode=count (counts per second branch)', () => {
-		const now = new Date();
-		now.setMinutes( Math.floor( now.getMinutes() / 5 ) * 5, 0, 0 );
-		const bucketKey = [
-			now.getUTCFullYear(),
-			String( now.getUTCMonth() + 1 ).padStart( 2, '0' ),
-			String( now.getUTCDate() ).padStart( 2, '0' ),
-			String( now.getUTCHours() ).padStart( 2, '0' ),
-			String( Math.floor( now.getUTCMinutes() / 5 ) * 5 ).padStart(
-				2,
-				'0'
-			),
-		].join( '-' );
-
-		const data = {
-			[ bucketKey ]: {
-				total: { c: 100, t: 5000 },
-				db: { c: 30, t: 1500 },
-			},
-		};
-
-		const { unmount } = renderComponent(
-			React.createElement( CategoryTimeChart, {
-				data,
-				mode: 'count',
-				title: 'Counts per second',
-			} )
-		);
-		expect( d3Mock.select ).toHaveBeenCalled();
-		unmount();
-	} );
-
-	it( 'covers mode=average (ms per event branch)', () => {
-		const now = new Date();
-		now.setMinutes( Math.floor( now.getMinutes() / 5 ) * 5, 0, 0 );
-		const bucketKey = [
-			now.getUTCFullYear(),
-			String( now.getUTCMonth() + 1 ).padStart( 2, '0' ),
-			String( now.getUTCDate() ).padStart( 2, '0' ),
-			String( now.getUTCHours() ).padStart( 2, '0' ),
-			String( Math.floor( now.getUTCMinutes() / 5 ) * 5 ).padStart(
-				2,
-				'0'
-			),
-		].join( '-' );
-
-		const data = {
-			[ bucketKey ]: {
-				db: { c: 30, t: 1500 },
-				cache: { c: 0, t: 0 }, // edge: count=0 path → value=0
-			},
-		};
-
-		const { unmount } = renderComponent(
-			React.createElement( CategoryTimeChart, {
-				data,
-				mode: 'average',
-				title: 'Avg ms',
-			} )
-		);
-		expect( d3Mock.select ).toHaveBeenCalled();
+		expect( tooltips ).toHaveLength( VIEW_COUNT );
+		expect( tooltips[ 0 ].className ).toBe( 'event-logger-chart-tooltip' );
+		expect( tooltips[ 0 ].getAttribute( 'style' ) ).toBeNull();
 		unmount();
 	} );
 
@@ -253,29 +185,28 @@ describe( 'CategoryTimeChart', () => {
 		};
 
 		const { unmount } = renderComponent(
-			React.createElement( CategoryTimeChart, {
-				data,
-				mode: 'time',
-				title: 'Stale',
-			} )
+			React.createElement( CategoryTimeChart, { data } )
 		);
 		expect( d3Mock.select ).toHaveBeenCalled();
 		unmount();
 	} );
 
 	/**
-	 * Capture the formatEntry callback handed to setupTooltip on the most
-	 * recent render — that's the function that calls formatYValue (the
-	 * top-level helper) for each series value, so invoking it drives
-	 * coverage of formatYValue's branches without exporting it.
+	 * Capture one view's formatEntry callback from the most recent render —
+	 * that's the function that calls formatYValue (the top-level helper) for
+	 * each series value, so invoking it drives coverage of formatYValue's
+	 * branches without exporting it. The render mounts every view in order, so
+	 * the last VIEW_COUNT calls are this render's, indexed the same way.
+	 *
+	 * @param {number} view Index into the panel's views: time, count, average.
+	 * @return {Function} That view's formatEntry callback.
 	 */
-	function getFormatEntry() {
+	function getFormatEntry( view ) {
 		const {
 			setupTooltip,
 		} = require( '@newspack-nodes/shared/hooks/useTimeChart' );
 		const calls = setupTooltip.mock.calls;
-		const last = calls[ calls.length - 1 ];
-		return last[ 1 ].formatEntry;
+		return calls[ calls.length - VIEW_COUNT + view ][ 1 ].formatEntry;
 	}
 
 	function bucketKeyNow() {
@@ -306,25 +237,18 @@ describe( 'CategoryTimeChart', () => {
 	}
 
 	it( 'formatYValue covers all branches via tooltip formatEntry callback', () => {
-		const bucketKey = bucketKeyNow();
 		// varying magnitudes drive the <0.001 / <1 / >=1 time-mode branches.
 		const data = {
-			[ bucketKey ]: {
+			[ bucketKeyNow() ]: {
 				tiny: { c: 1, t: 0.0001 },
 				mid: { c: 1, t: 150000 },
 				big: { c: 1, t: 900000 },
 			},
 		};
 		const { unmount } = renderComponent(
-			React.createElement( CategoryTimeChart, {
-				data,
-				mode: 'time',
-				title: 'time',
-			} )
+			React.createElement( CategoryTimeChart, { data } )
 		);
-		const formatEntry = getFormatEntry();
-		// invoke formatEntry at the latest slot index (where data lives).
-		const entries = formatEntry( lastSlotIndex() );
+		const entries = getFormatEntry( TIME_VIEW )( lastSlotIndex() );
 		expect( Array.isArray( entries ) ).toBe( true );
 		// All three categories had positive values → all are kept.
 		expect( entries.length ).toBeGreaterThan( 0 );
@@ -332,69 +256,44 @@ describe( 'CategoryTimeChart', () => {
 	} );
 
 	it( 'formatYValue covers average-mode microsecond / second / ms branches', () => {
-		const bucketKey = bucketKeyNow();
 		// average mode: value = t/c (in same units).
 		const data = {
-			[ bucketKey ]: {
+			[ bucketKeyNow() ]: {
 				submicro: { c: 1000, t: 0.5 }, // 0.0005ms → microsecond
 				bigsec: { c: 1, t: 2000 }, // value=2000ms → s branch
 				normal: { c: 1, t: 5 }, // value=5ms → ms branch
 			},
 		};
 		const { unmount } = renderComponent(
-			React.createElement( CategoryTimeChart, {
-				data,
-				mode: 'average',
-				title: 'avg',
-			} )
+			React.createElement( CategoryTimeChart, { data } )
 		);
-		const formatEntry = getFormatEntry();
+		const formatEntry = getFormatEntry( AVERAGE_VIEW );
 		expect( Array.isArray( formatEntry( lastSlotIndex() ) ) ).toBe( true );
 		unmount();
 	} );
 
 	it( 'formatYValue covers count-mode K/s and per-second branches', () => {
-		const bucketKey = bucketKeyNow();
 		// count mode: value = c/BUCKET_SECONDS.
 		const data = {
-			[ bucketKey ]: {
+			[ bucketKeyNow() ]: {
 				high: { c: 1_000_000, t: 1 }, // → K/s branch (~3333/s)
 				low: { c: 5, t: 1 }, // → per-second branch
 				zero: { c: 0, t: 0 }, // → '0' branch
 			},
 		};
 		const { unmount } = renderComponent(
-			React.createElement( CategoryTimeChart, {
-				data,
-				mode: 'count',
-				title: 'count',
-			} )
+			React.createElement( CategoryTimeChart, { data } )
 		);
-		const formatEntry = getFormatEntry();
+		const formatEntry = getFormatEntry( COUNT_VIEW );
 		expect( Array.isArray( formatEntry( lastSlotIndex() ) ) ).toBe( true );
 		unmount();
 	} );
 
 	it( 'renderFn no-ops when containerRef is null', () => {
 		// Re-invoke captured renderFn with null containerRef → early return.
-		const now = new Date();
-		now.setMinutes( Math.floor( now.getMinutes() / 5 ) * 5, 0, 0 );
-		const bucketKey = [
-			now.getUTCFullYear(),
-			String( now.getUTCMonth() + 1 ).padStart( 2, '0' ),
-			String( now.getUTCDate() ).padStart( 2, '0' ),
-			String( now.getUTCHours() ).padStart( 2, '0' ),
-			String( Math.floor( now.getUTCMinutes() / 5 ) * 5 ).padStart(
-				2,
-				'0'
-			),
-		].join( '-' );
-
 		const { unmount } = renderComponent(
 			React.createElement( CategoryTimeChart, {
-				data: { [ bucketKey ]: { foo: { c: 1, t: 10 } } },
-				mode: 'time',
-				title: 'X',
+				data: { [ bucketKeyNow() ]: { foo: { c: 1, t: 10 } } },
 			} )
 		);
 

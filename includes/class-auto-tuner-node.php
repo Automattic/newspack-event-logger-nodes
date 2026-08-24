@@ -129,7 +129,7 @@ class Auto_Tuner_Node extends Node {
 					static fn( $hook ) => \in_array( $hook, $significant, true ) || ! \in_array( $hook, $items, true )
 				) );
 				// Give save() resolved list + inline marker; re-tiers by count.
-				return new Rule( $rule->id, $rule->pattern, $rule->action, $rule->auto_disable_threshold, $rule->auto_protect_time_threshold, $significant, $rule->custom_events, $kept, Rule::HOOKS_INLINE );
+				return $rule->with( [ 'significant_events' => $significant, 'hooks' => $kept, 'hooks_in' => Rule::HOOKS_INLINE ] );
 			}
 		);
 	}
@@ -152,7 +152,7 @@ class Auto_Tuner_Node extends Node {
 				$disable     = \array_flip( \array_filter( $items, static fn( $event ) => ! \in_array( $event, $significant, true ) ) );
 				$kept        = \array_values( \array_filter( $rule->custom_events, static fn( $event ) => ! isset( $disable[ $event ] ) ) );
 				// Resolved hooks, never the pointer rule's null.
-				return new Rule( $rule->id, $rule->pattern, $rule->action, $rule->auto_disable_threshold, $rule->auto_protect_time_threshold, $significant, $kept, Rule_Set::hooks_for( $rule ), Rule::HOOKS_INLINE );
+				return $rule->with( [ 'significant_events' => $significant, 'custom_events' => $kept, 'hooks' => Rule_Set::hooks_for( $rule ), 'hooks_in' => Rule::HOOKS_INLINE ] );
 			}
 		);
 	}
@@ -172,7 +172,7 @@ class Auto_Tuner_Node extends Node {
 			static function ( Rule $rule ) use ( $items ): Rule {
 				$merged = \array_values( \array_unique( \array_merge( $rule->significant_events, $items ) ) );
 				// Resolved hooks, never the pointer rule's null.
-				return new Rule( $rule->id, $rule->pattern, $rule->action, $rule->auto_disable_threshold, $rule->auto_protect_time_threshold, $merged, $rule->custom_events, Rule_Set::hooks_for( $rule ), Rule::HOOKS_INLINE );
+				return $rule->with( [ 'significant_events' => $merged, 'hooks' => Rule_Set::hooks_for( $rule ), 'hooks_in' => Rule::HOOKS_INLINE ] );
 			}
 		);
 	}
@@ -219,22 +219,7 @@ class Auto_Tuner_Node extends Node {
 	 * @param Rule $updated  Rule as returned by the mutation.
 	 */
 	private static function unchanged( Rule $original, Rule $updated ): bool {
-		return self::resolved_shape( $original ) === self::resolved_shape( $updated );
-	}
-
-	/**
-	 * The rule's to_array() with hooks resolved to their concrete list (a pointer
-	 * rule's null replaced by Rule_Set::hooks_for) so two rules are comparable
-	 * regardless of storage tier.
-	 *
-	 * @param Rule $rule Rule to flatten.
-	 * @return array<string,mixed>
-	 */
-	private static function resolved_shape( Rule $rule ): array {
-		$shape             = $rule->to_array();
-		$shape['hooks']    = Rule_Set::hooks_for( $rule );
-		$shape['hooks_in'] = Rule::HOOKS_INLINE;
-		return $shape;
+		return Rule_Set::resolved_map( $original ) === Rule_Set::resolved_map( $updated );
 	}
 
 	/**

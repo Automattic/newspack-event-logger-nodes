@@ -34,10 +34,11 @@ import { askClaudeUrl, briefToMarkdown } from '../askBrief';
  * The picker's state, held once for the whole dashboard.
  *
  * @param {Object}   options
- * @param {Function} [options.onError] Called with a message when an ask fails.
+ * @param {Function} [options.onError]      Called with a message when an ask fails.
+ * @param {string}   [options.serverFilter] Server scope a `url:` brief answers for; '' is every server.
  * @return {{ active: boolean, start: Function, cancel: Function, briefs: Array, open: boolean, close: Function }} Ask state.
  */
-export function useAsk( { onError } = {} ) {
+export function useAsk( { onError, serverFilter = '' } = {} ) {
 	const [ briefs, setBriefs ] = useState( [] );
 
 	const onErrorRef = useRef( onError );
@@ -71,9 +72,15 @@ export function useAsk( { onError } = {} ) {
 
 	const handlePick = useCallback(
 		( descriptors ) => {
-			ask( formatCommandArgs( descriptors ) );
+			// Scoped: the facts block stamps the filters onto each surface.
+			ask(
+				formatCommandArgs(
+					descriptors,
+					serverFilter ? { server: serverFilter } : {}
+				)
+			);
 		},
-		[ ask ]
+		[ ask, serverFilter ]
 	);
 
 	const { active, start, cancel } = useAskPicker( {

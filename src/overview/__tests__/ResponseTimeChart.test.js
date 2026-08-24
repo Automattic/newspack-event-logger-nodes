@@ -1,12 +1,12 @@
 /**
- * Tests for ResponseTimeChart — D3 scatter plot with enter/update/exit.
+ * Tests for ResponseTimeChart — D3 scatter plot on the shared useTimeChart.
  *
- * Mocks d3 with a chainable so all useEffect bodies execute against the
- * mock chain instead of real SVG. Tests focus on:
+ * Mocks d3 with a chainable so the render function executes against the mock
+ * chain instead of real SVG. Tests focus on:
  *  - chart returns null when no requests
  *  - data transform (filter + map + sort) works
- *  - effect runs (d3.select called) when requests are present
- *  - resize handler is registered and unregisters on unmount
+ *  - the render runs, and redraws from an emptied container
+ *  - a container resize re-runs it
  */
 
 jest.mock( 'd3', () => {
@@ -77,19 +77,34 @@ jest.mock( 'd3', () => {
 	return new Proxy( {}, topHandler );
 } );
 
+import { readFileSync } from 'fs';
+import { resolve as resolvePath } from 'path';
 import * as React from 'react';
 import * as d3 from 'd3';
 import ResponseTimeChart from '../ResponseTimeChart';
-import { renderComponent } from '../../test-helpers/renderHook';
+import { renderComponent, act } from '../../test-helpers/renderHook';
 
 const d3Mock = d3.__chain;
+
+// jsdom has no ResizeObserver; capture the callback to fire a container resize.
+let resizeObserverCb = null;
+global.ResizeObserver = class {
+	constructor( cb ) {
+		resizeObserverCb = cb;
+	}
+	observe() {
+		// The spec seeds lastReportedSize to 0x0 and jsdom lays nothing
+		// out, so a real observer would deliver nothing here.
+	}
+	disconnect() {}
+};
 
 const REQUESTS = [
 	{ rid: 'r1', timestamp: 1700000000, duration_ms: 50, status_code: 200 },
 	{ rid: 'r2', timestamp: 1700000100, duration_ms: 100, status_code: 404 },
 	{ rid: 'r3', timestamp: 1700000200, duration_ms: 75, status_code: 500 },
 	{ rid: 'r4', timestamp: 1700000300, duration_ms: 25, status_code: 301 },
-	// status 600 → unknown bucket.
+	// Out of range; shares the 5xx color and the 5xx legend entry.
 	{ rid: 'r5', timestamp: 1700000400, duration_ms: 200, status_code: 600 },
 	// Filtered out — no timestamp:
 	{ rid: 'r6', duration_ms: 100, status_code: 200 },
@@ -138,7 +153,7 @@ describe( 'ResponseTimeChart', () => {
 			} )
 		);
 		expect( container.textContent ).toContain( 'Response Times' );
-		expect( d3Mock.select ).toHaveBeenCalled();
+		expect( d3Mock.append ).toHaveBeenCalledWith( 'svg' );
 		unmount();
 	} );
 
@@ -150,8 +165,27 @@ describe( 'ResponseTimeChart', () => {
 				onRequestClick: onClick,
 			} )
 		);
-		// Both init-effect and data-effect must have run.
-		expect( d3Mock.append ).toHaveBeenCalled();
+		// The trend line is the only mark bound with datum().
+		expect( d3Mock.datum ).toHaveBeenCalled();
+		unmount();
+	} );
+
+	it( 'legends an out-of-range status as the class its dot is painted', () => {
+		const { unmount } = renderComponent(
+			React.createElement( ResponseTimeChart, {
+				requests: [
+					{
+						rid: 'r9',
+						timestamp: 1700000600,
+						duration_ms: 40,
+						status_code: 601,
+					},
+				],
+				onRequestClick: jest.fn(),
+			} )
+		);
+		// getStatusColor paints 601 with the 5xx swatch; the legend must agree.
+		expect( d3Mock.text ).toHaveBeenCalledWith( '5xx' );
 		unmount();
 	} );
 
@@ -188,32 +222,22 @@ describe( 'ResponseTimeChart', () => {
 				onRequestClick: jest.fn(),
 			} )
 		);
-		expect( d3Mock.select ).toHaveBeenCalled();
-		unmount();
-	} );
-
-	it( 'fires the resize handler and re-runs the d3 chain', () => {
-		const { unmount } = renderComponent(
-			React.createElement( ResponseTimeChart, {
-				requests: REQUESTS,
-				onRequestClick: jest.fn(),
-			} )
-		);
-		const before = d3Mock.attr.mock.calls.length;
-		// Trigger resize — the listener body should run.
-		window.dispatchEvent( new Event( 'resize' ) );
-		expect( d3Mock.attr.mock.calls.length ).toBeGreaterThan( before );
+		expect( d3Mock.append ).toHaveBeenCalledWith( 'svg' );
+		expect( d3Mock.datum ).not.toHaveBeenCalled();
 		unmount();
 	} );
 
 	it( 'resize handler is a no-op when there is no data on the next tick', () => {
+		jest.useFakeTimers();
+		resizeObserverCb = null;
 		const { unmount, rerender } = renderComponent(
 			React.createElement( ResponseTimeChart, {
 				requests: REQUESTS,
 				onRequestClick: jest.fn(),
 			} )
 		);
-		// Empty requests → null render; stale resize listener must not throw.
+		const observed = resizeObserverCb;
+		// Empty requests → null render; a stale observer must not throw.
 		rerender(
 			React.createElement( ResponseTimeChart, {
 				requests: [],
@@ -221,20 +245,75 @@ describe( 'ResponseTimeChart', () => {
 			} )
 		);
 		expect( () =>
-			window.dispatchEvent( new Event( 'resize' ) )
+			act( () => {
+				observed();
+				jest.advanceTimersByTime( 300 );
+			} )
 		).not.toThrow();
 		unmount();
+		jest.useRealTimers();
 	} );
 
-	it( 'unmount triggers cleanup effect', () => {
+	it( 're-fits when its own container resizes, not just the window', () => {
+		// The chart sits inside the URL detail panel, which resizes without the
+		// window ever doing so — opening the panel, or the flame graph above it
+		// growing, left the plot drawn to a width that no longer existed.
+		jest.useFakeTimers();
+		resizeObserverCb = null;
 		const { unmount } = renderComponent(
 			React.createElement( ResponseTimeChart, {
 				requests: REQUESTS,
 				onRequestClick: jest.fn(),
 			} )
 		);
-		// d3.select(...).selectAll('*').remove() in cleanup.
+		expect( resizeObserverCb ).toEqual( expect.any( Function ) );
+
+		const before = d3Mock.attr.mock.calls.length;
+		act( () => {
+			resizeObserverCb( [
+				{ contentRect: { width: 700, height: 220 } },
+			] );
+			jest.advanceTimersByTime( 300 );
+		} );
+
+		expect( d3Mock.attr.mock.calls.length ).toBeGreaterThan( before );
 		unmount();
+		jest.useRealTimers();
+	} );
+
+	it( 'clears the container before each redraw', () => {
+		// One render path draws everything, so it must start from an empty
+		// container: leaving the last pass in place stacked a second <svg>
+		// under the first on every data refresh.
+		const { rerender, unmount } = renderComponent(
+			React.createElement( ResponseTimeChart, {
+				requests: REQUESTS,
+				onRequestClick: jest.fn(),
+			} )
+		);
+		d3Mock.remove.mockClear();
+
+		rerender(
+			React.createElement( ResponseTimeChart, {
+				requests: REQUESTS.slice( 0, 3 ),
+				onRequestClick: jest.fn(),
+			} )
+		);
+
+		expect( d3Mock.selectAll ).toHaveBeenCalledWith( '*' );
 		expect( d3Mock.remove ).toHaveBeenCalled();
+		unmount();
+	} );
+} );
+
+describe( 'ResponseTimeChart frame', () => {
+	it( 'draws its axes through the shared frame, not a private copy', () => {
+		const source = readFileSync(
+			resolvePath( __dirname, '../ResponseTimeChart.js' ),
+			'utf8'
+		);
+		expect( source ).toContain( 'drawAxes' );
+		expect( source ).not.toContain( 'axisBottom' );
+		expect( source ).not.toContain( 'axisLeft' );
 	} );
 } );

@@ -1,0 +1,80 @@
+/**
+ * Picker-modal chrome: the frame, the header over its actions row, the
+ * scrolling body and the footer. Shared modal/button/badge classes own paint;
+ * each picker's own stylesheet owns what it lists.
+ *
+ * This is the ONLY owner of the picker frame. A second stylesheet declaring
+ * `.event-logger-selector-modal` geometry gives the one SelectorModal two
+ * dialog layouts, decided by whichever the bundle emits second — which is what
+ * `rule-edit-modal.scss` did while the rules editor opened both pickers under
+ * the dashboard skin.
+ */
+
+.event-logger-selector-modal.event-logger-selector-modal {
+	&.components-modal__frame {
+		width: 680px;
+		max-width: 95vw;
+		height: auto;
+		max-height: 85vh;
+		display: flex;
+		flex-direction: column;
+		grid-template: none;
+		gap: 0;
+	}
+
+	// The hook catalog is a multi-column tree; it needs the wider frame.
+	&.event-logger-hook-selector-modal.components-modal__frame {
+		width: 1100px;
+		max-height: 70vh;
+	}
+
+	.components-modal__header {
+		padding: 16px 20px;
+	}
+
+	.components-modal__header-heading {
+		font-size: 15px;
+	}
+
+	.components-modal__content,
+	.components-modal__children-container {
+		display: flex;
+		flex-direction: column;
+		flex: 1 1 auto;
+		min-height: 0;
+		padding: 0;
+		overflow: hidden;
+	}
+
+	.event-logger-selector-modal__header {
+		flex: 0 0 auto;
+		padding: 16px 20px;
+
+		.components-search-control {
+			margin-bottom: 12px;
+		}
+	}
+
+	.event-logger-selector-modal__actions {
+		display: flex;
+		gap: 8px;
+		align-items: center;
+	}
+
+	.event-logger-selector-modal__body {
+		flex: 1 1 auto;
+		min-height: 0;
+		overflow-y: auto;
+
+		&::-webkit-scrollbar {
+			width: 8px;
+		}
+	}
+
+	.event-logger-selector-modal__footer {
+		flex: 0 0 auto;
+		padding: 12px 20px;
+		display: flex;
+		justify-content: flex-end;
+	}
+}

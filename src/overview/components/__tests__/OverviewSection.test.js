@@ -3,7 +3,8 @@
  * Tests for OverviewSection — render-side branches.
  *
  * Children mocked at the module boundary:
- *   - AggregateTimeChart / CategoryTimeChart / RequestProfile (heavy D3).
+ *   - AggregateTimeChart / CategoryTimeChart (heavy D3). RequestProfile is
+ *     real: it owns the captioned wrapper this section renders.
  *   - @wordpress/components: lightweight stubs so we can drive state from
  *     the test without pulling in the full component library's CSS-in-JS.
  *
@@ -26,28 +27,26 @@ jest.mock( '../../AggregateTimeChart', () => ( {
 } ) );
 jest.mock( '../../CategoryTimeChart', () => ( {
 	__esModule: true,
-	default: ( { title, mode } ) => `CATEGORY[${ title }:${ mode }]`,
-} ) );
-jest.mock( '../../RequestProfile', () => ( {
-	__esModule: true,
-	default: ( { totalMs } ) => `PROFILE[total=${ totalMs }]`,
+	default: () => 'CATEGORY',
 } ) );
 
 import * as React from 'react';
 import OverviewSection from '../OverviewSection';
 import { renderComponent, act } from '../../../test-helpers/renderHook';
 
-const baseStats = {
-	siteUrlCount: 7,
-	totalRequests: 1500,
-	globalAvgMs: 42,
-	requestsPerSecond: 1.25,
+const baseTotals = {
+	urls: 7,
+	requests: 1500,
+	avg_ms: 42,
+	avg_peak_mb: 0,
+	requests_per_second: 1.25,
 };
 
 function mount( overview, overrides = {} ) {
 	const props = {
 		overview,
-		filteredStats: baseStats,
+		urlTotals: baseTotals,
+		breakdownAvgMs: 42,
 		serverFilter: '',
 		setServerFilter: jest.fn(),
 		serverNames: [],
@@ -113,59 +112,71 @@ describe( 'OverviewSection', () => {
 
 	it( "divides a server-scoped breakdown by that server's average", () => {
 		// The card's heading is "Time Breakdown (edge-01)" and its categories
-		// come from build_leaderboard( server ), but the denominator was the
-		// SITE's average — so every bar and row percentage was computed against
-		// the wrong wall clock, and could exceed 100% with nothing to show it.
+		// come from build_leaderboard( server ), so the denominator has to be
+		// that server's average — not the site's, and not the filtered URL
+		// set's, which is a narrower question than the card is asking.
 		const { container } = mount(
 			{
 				total_requests: 33049,
 				global_avg_ms: 42,
 				global_leaderboard: {
-					categories: { db: { total_ms: 10 } },
-					total_time: 10,
+					categories: { db: { time: 95.1, count: 3 } },
+					total_time: 95.1,
 					count: 1,
 				},
 			},
+			{ serverFilter: 'edge-01', breakdownAvgMs: 317 }
+		);
+
+		// 95.1ms of db time against a 317ms average reads as 30.0%.
+		expect( container.textContent ).toContain( '30.0%' );
+	} );
+
+	it( 'says the charts cannot follow the worker toggle', () => {
+		// `$count_global` keeps worker traffic out of `hourly`, `dim` and the
+		// leaderboards entirely, so with Include Workers ON the header counts
+		// requests the chart and the Time Breakdown beneath it structurally
+		// cannot. The panel says so rather than letting the two disagree in
+		// silence — which is the defect the toggle was built to remove.
+		const { container } = mount(
+			{
+				total_requests: 33049,
+				aggregate_time_series: { b1: { count: 5 } },
+			},
+			{ urlFilters: { include_workers: true } }
+		);
+
+		expect( container.textContent ).toContain( 'excludes worker' );
+	} );
+
+	it( 'counts the URLs the filters actually selected', () => {
+		// Every headline number describes the set the table below lists, so a
+		// server filter narrows this count instead of standing apart from it.
+		const { container } = mount(
+			{ total_requests: 33049 },
 			{
 				serverFilter: 'edge-01',
-				filteredStats: {
-					...baseStats,
-					isFiltered: true,
-					globalAvgMs: 317,
-				},
+				urlTotals: { ...baseTotals, urls: 313, requests: 9001 },
 			}
 		);
 
-		expect( container.textContent ).toContain( 'PROFILE[total=317]' );
+		expect( container.textContent ).toContain( '313' );
+		expect( container.textContent ).toContain( '9,001' );
+		expect( container.textContent ).toContain( 'Unique URLs' );
+		expect( container.textContent ).not.toContain( 'all servers' );
 	} );
 
-	it( 'says an absent site URL count is absent, not zero', () => {
+	it( 'says an absent total is absent, not zero', () => {
 		// A plausible zero is how the original bug hid: `0 Unique URLs` beside
-		// 33,049 requests read as a fact. Past the overview gate the field is
-		// either there or the payload changed under us.
+		// 33,049 requests read as a fact. Before the first reply lands there is
+		// no answer yet, and saying so is the honest render.
 		const { container } = mount(
 			{ total_requests: 33049 },
-			{ filteredStats: { ...baseStats, siteUrlCount: undefined } }
+			{ urlTotals: null }
 		);
 
 		expect( container.textContent ).toContain( '—' );
 		expect( container.textContent ).not.toContain( '0Unique URLs' );
-	} );
-
-	it( 'says the URL count is site-wide while the rest is server-scoped', () => {
-		// Under a server filter every neighbouring stat is that server's; this
-		// one cannot be, because a URL row carries no server to group by.
-		const { container } = mount(
-			{ total_requests: 33049 },
-			{
-				serverFilter: 'edge-01',
-				filteredStats: { ...baseStats, isFiltered: true },
-			}
-		);
-
-		expect( container.textContent ).toContain(
-			'Unique URLs (all servers)'
-		);
 	} );
 
 	it( 'shows the peak-memory stat only when the displayed stats include it', () => {
@@ -175,12 +186,7 @@ describe( 'OverviewSection', () => {
 
 		const { container: b, unmount: ub } = mount(
 			{ global_avg_peak_mb: 12.3 },
-			{
-				filteredStats: {
-					...baseStats,
-					globalAvgPeakMb: 4.7,
-				},
-			}
+			{ urlTotals: { ...baseTotals, avg_peak_mb: 4.7 } }
 		);
 		expect( b.textContent ).toContain( 'Avg Peak Memory' );
 		expect( b.textContent ).toContain( '4.7' );
@@ -203,13 +209,13 @@ describe( 'OverviewSection', () => {
 	it( 'mounts the global-leaderboard section when global_leaderboard.categories is present', () => {
 		const { container, unmount } = mount( {
 			global_leaderboard: {
-				categories: { hooks: 1 },
+				categories: { hooks: { time: 10, count: 4 } },
 				total_time: 10,
 				count: 50,
 			},
 			global_avg_ms: 30,
 		} );
-		expect( container.textContent ).toContain( 'PROFILE' );
+		expect( container.textContent ).toContain( 'Total Profiled' );
 		expect( container.textContent ).toContain( 'Average breakdown' );
 		expect( container.textContent ).toContain( '50' );
 		unmount();

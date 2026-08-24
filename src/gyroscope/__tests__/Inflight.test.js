@@ -17,6 +17,13 @@ jest.mock( '../hooks/useGyroscopeGraph', () => ( {
 import * as React from 'react';
 import { Core, mountExospine } from '@newspack-nodes/runtime';
 import Inflight from '../Inflight';
+import {
+	countLabel,
+	logColumns,
+	logListHeader,
+	rateLabel,
+} from '../../log-table/logTable';
+import { gridTemplate } from '@newspack-nodes/shared/hooks/useColumnPicker';
 import { renderComponent, act } from '../../test-helpers/renderHook';
 
 const { useGyroscopeGraph } = require( '../hooks/useGyroscopeGraph' );
@@ -125,7 +132,8 @@ describe( 'Inflight', () => {
 		expect( rowgroup.classList.contains( 'newspack-nodes-table' ) ).toBe(
 			true
 		);
-		expect( rowgroup.previousElementSibling ).toBe( header );
+		// The header rides in the display:contents columns wrapper.
+		expect( rowgroup.previousElementSibling ).toBe( header.parentElement );
 	} );
 
 	it( 'mounts the gyroscope graph via useGyroscopeGraph', () => {
@@ -210,6 +218,72 @@ describe( 'Inflight', () => {
 		);
 		expect( rps ).not.toBeNull();
 		expect( rps.textContent ).toMatch( /4\.2 req\/s/ );
+	} );
+
+	it( 'labels the toolbar count and rate through the shared helpers', () => {
+		registerViewFixture( {
+			rows: Array.from( { length: 7 }, ( _, i ) => ( {
+				rid: `r-${ i }`,
+				url: '/x',
+				state: 'process',
+			} ) ),
+			rps: 5.8,
+		} );
+		const { container } = mount();
+		tickRefresh();
+
+		expect(
+			container.querySelector( '.newspack-nodes-toolbar-stats__count' )
+				.textContent
+		).toBe( countLabel( { total: 7 }, '%d requests' ) );
+		expect(
+			container.querySelector( '.newspack-nodes-toolbar-stats__rps' )
+				.textContent
+		).toBe( rateLabel( '%s req/s' )( 5.8 ) );
+	} );
+
+	it( 'heads its table through the shared log-table header', () => {
+		const order = [ 'rid', 'remote_addr', 'user_agent' ];
+		window.localStorage.setItem(
+			'event-logger-columns',
+			JSON.stringify( order )
+		);
+		registerViewFixture();
+		const { container } = mount();
+		const shared = renderComponent(
+			logListHeader( {
+				className: 'quixote-columns',
+				columns: logColumns( {
+					rid: {},
+					remote_addr: {},
+					user_agent: {},
+				} ),
+				order,
+			} )
+		);
+		const read = ( root ) =>
+			[ ...root.querySelectorAll( '[role="columnheader"]' ) ].map(
+				( th ) => [
+					th.textContent,
+					th.getAttribute( 'title' ),
+					th.className,
+				]
+			);
+
+		expect( read( container ) ).toEqual( read( shared.container ) );
+		expect(
+			container
+				.querySelector( '.newspack-nodes-log-header' )
+				.parentElement.style.getPropertyValue(
+					'--stream-grid-template'
+				)
+		).toBe(
+			gridTemplate(
+				logColumns( { rid: {}, remote_addr: {}, user_agent: {} } ),
+				order
+			)
+		);
+		shared.unmount();
 	} );
 
 	it( 'renders persisted non-default columns from the sampled row model', () => {
@@ -360,6 +434,19 @@ describe( 'Inflight', () => {
 			window.localStorage.getItem( 'event-logger-inflight-refresh' )
 		).toBe( original );
 		input.remove();
+	} );
+
+	it( 'keeps the known columns of a saved selection naming a removed one', () => {
+		window.localStorage.setItem(
+			'event-logger-columns',
+			JSON.stringify( [ 'user_agent', 'retired_column', 'lag' ] )
+		);
+		registerViewFixture();
+		const { container } = mount();
+		const ths = [
+			...container.querySelectorAll( '[role="columnheader"]' ),
+		].map( ( el ) => el.textContent );
+		expect( ths ).toEqual( [ 'UA', 'Lag' ] );
 	} );
 
 	it( 'toggles the column picker on Cols button click', () => {

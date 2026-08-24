@@ -26,8 +26,9 @@ import {
 	TM_STRUCT,
 	newMessage,
 	Core,
+	CommandInterpreterNode,
 } from '@newspack-nodes/runtime';
-import { GyroscopeViewNode } from '../gyroscope-view-node';
+import { GyroscopeViewNode, views } from '../gyroscope-view-node';
 
 // Naming registers in the per-process Core registry; clear it between tests.
 beforeEach( () => Core.reset() );
@@ -357,5 +358,16 @@ describe( 'gyroscope:view — nodeSchema', () => {
 		expect( schema.description.length ).toBeGreaterThan( 0 );
 		expect( schema.arguments ).toEqual( [] );
 		expect( schema.commands ).toEqual( [] );
+	} );
+} );
+
+// Importing the view registers it: the class table `make_node` and the palette
+// resolve names against is what the dashboard's TSL reaches this class through.
+describe( 'registration', () => {
+	it( 'registers GyroscopeView for make_node', () => {
+		expect( views ).toEqual( { GyroscopeView: GyroscopeViewNode } );
+		expect( CommandInterpreterNode.includeNodes.GyroscopeView ).toBe(
+			GyroscopeViewNode
+		);
 	} );
 } );

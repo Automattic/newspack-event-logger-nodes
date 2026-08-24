@@ -25,7 +25,7 @@ jest.mock( '@newspack-nodes/shared/hooks/useCommandOnce', () => ( {
 
 jest.mock( '@newspack-nodes/runtime', () => ( {
 	__esModule: true,
-	formatCommandArgs: ( args ) => args,
+	formatCommandArgs: ( args, options ) => [ ...args, options ?? {} ],
 	nodesData: () => ( { restUrl: '/wp-json/', nonce: 'NONCE' } ),
 } ) );
 
@@ -49,8 +49,8 @@ const BRIEF = {
 };
 
 // The dashboard shape: one picker, one panel, and something askable.
-function Harness( { onError } ) {
-	const ask = useAsk( { onError } );
+function Harness( { onError, serverFilter = '' } ) {
+	const ask = useAsk( { onError, serverFilter } );
 	return (
 		<div>
 			<AskButton ask={ ask } />
@@ -125,7 +125,9 @@ test( 'a pick sends the innermost descriptor chain to the ask verb', () => {
 
 	pick();
 
-	expect( sent ).toEqual( [ [ 'request:abc123', 'span:wp_loaded hook' ] ] );
+	expect( sent ).toEqual( [
+		[ 'request:abc123', 'span:wp_loaded hook', {} ],
+	] );
 } );
 
 test( 'the panel shows the finding, where it was measured, and the proposal', () => {
@@ -158,6 +160,35 @@ test( 'a brief with no findings says so rather than rendering an empty list', ()
 	expect(
 		view.container.querySelector( '.event-logger-ask__findings' )
 	).toBeNull();
+} );
+
+test( 'a pick under a server filter asks about that server', () => {
+	// The facts block stamps the active filters onto every surface, so a brief
+	// answered site-wide would be unscoped numbers under a server's name —
+	// quotable, and wrong.
+	sent.length = 0;
+	const { container, unmount } = renderComponent(
+		<Harness onError={ jest.fn() } serverFilter="edge-01" />
+	);
+	act( () => {
+		container
+			.querySelector( '.event-logger-ask__trigger' )
+			.dispatchEvent(
+				new window.MouseEvent( 'click', { bubbles: true } )
+			);
+	} );
+	act( () => {
+		container
+			.querySelector( '#target' )
+			.dispatchEvent(
+				new window.MouseEvent( 'click', { bubbles: true } )
+			);
+	} );
+
+	expect( sent[ 0 ][ sent[ 0 ].length - 1 ] ).toEqual( {
+		server: 'edge-01',
+	} );
+	unmount();
 } );
 
 // A pick is not consent to send: the brief is shown, and copying is its own act.

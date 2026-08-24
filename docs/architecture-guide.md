@@ -431,11 +431,10 @@ Backs the Gyroscope dashboard's live in-flight view. It's a hidden `Timer_Node` 
 class Request_Flight_Node extends Timer_Node {
     protected function fire(): void;          // one row per in-flight request, on the Router's 1s TIMER
     public function inflight_snapshot(): array;
-    public function set_delta( bool $on ): void;
 }
 ```
 
-It has no `set_interval()` / `interval()` / `fire_cb()` — those were removed in v0.16.0. Snapshots hitchhike the Router's 1s TIMER via `fire()` (the `Timer_Node` contract); a non-empty `target()` is the sole enable switch, and clearing it stops the timer. The node is hidden from the topology console by the substrate's patron filter in `dump_metadata`, and from the palette by its own `node_schema()` category. Its configuration surfaces on the patron's `:config` interpreter as `set_inflight_target` and `set_inflight_delta` — the `request-builder` topology (and therefore `performance` and `complete`) wires it with `cmd request-builder:config set_inflight_target gyroscope:partition`. Delta mode is off by default, so every tick re-emits every row and a fresh subscriber sees the whole cache in one tick; turning it on emits only rows whose activity advanced since the previous fire.
+It has no `set_interval()` / `interval()` / `fire_cb()` — those were removed in v0.16.0. Snapshots hitchhike the Router's 1s TIMER via `fire()` (the `Timer_Node` contract); a non-empty `target()` is the sole enable switch, and clearing it stops the timer. The node is hidden from the topology console by the substrate's patron filter in `dump_metadata`, and from the palette by its own `node_schema()` category. Its configuration surfaces on the patron's `:config` interpreter as `set_inflight_target` and `set_inflight_delta` — the `request-builder` topology (and therefore `performance` and `complete`) wires it with `cmd request-builder:config set_inflight_target gyroscope:partition`. Delta mode is off by default, so every tick re-emits every row and a fresh subscriber sees the whole cache in one tick; turning it on emits only rows whose activity advanced since the previous fire. The delta flag itself lives on the patron as a declared `toggle`, read live at fire time — Flight keeps no copy, exactly as it keeps no copy of the in-flight map.
 
 Because the snapshot rides `Request_Builder_Node`'s own in-flight map (the same `LRU_Cache` buckets it already maintains for request assembly), there's no second tracker to keep coherent — the previous standalone `InflightTracker` class (deleted in the M6 consolidation, along with the legacy per-stream SSE controllers) was a separate in-memory copy of state the builder already held.
 
@@ -464,7 +463,7 @@ class Flame_Builder_Node extends Node {
         'ja4'     => 'ja4_hash',
     ];
     private const AGGREGATE_EXPIRY_SEC = 3600;  // unseen aggregate children expire
-    private const MAX_URLS_PER_BUCKET  = 500;   // top-N per hourly URL-index bucket
+    private const MAX_URLS_PER_SHARD   = 500;   // top-N per URL-index SHARD (x16)
 }
 ```
 
@@ -577,7 +576,7 @@ The retention window comes from the substrate's `min_lifetime` (default 43200), 
 | `hourly` | 5-min buckets, keyed per bucket, count + sum_ms + sum_peak_mb | `min_lifetime` (default 43200) |
 | `lb` | 5-min global leaderboard buckets, sums-not-means | `min_lifetime` |
 | `lb_s` | per-server leaderboard, keyed by server | `min_lifetime` |
-| `urls` | 5-min URL index, keyed by URL -> {count, sum_req_time, samples} | `min_lifetime` |
+| `urls` | 5-min URL index, SHARDED `urls:{shard}:{bucket}` by the first hex digit of the url_hash, keyed by URL -> {count, sum_req_time, samples, `srv`} | `min_lifetime` |
 | `url` | per-URL flame/profile blob | `max(3600, min_lifetime/24)` |
 | `dim` | dimensional time series, keyed per bucket | `min_lifetime` |
 | `url_dim` | per-URL dimensional series, keyed per bucket, every dimension in the value | `min_lifetime` |
@@ -586,12 +585,27 @@ The retention window comes from the substrate's `min_lifetime` (default 43200), 
 
 **Caps prevent value-explosion** against memcache's 1MB/value limit:
 
-- `MAX_DIM_VALUES = 20`
+- `MAX_DIM_VALUES = 20` — the `server` axis takes `MAX_SERVER_VALUES = 128`
+  instead (`Stats_Store::dim_cap()`): `server_name` is `SERVER_NAME`, which under
+  Apache's default `UseCanonicalName Off` is the client's Host header, so it needs
+  a ceiling. It sits far above `MAX_DIM_VALUES` because 20 folded real spokes out
+  of a 24-spoke fleet's own picker. See architecture decision 14 for when to raise
+  it
 - `MAX_URL_DIM_VALUES = 10`
 - `MAX_CAT_VALUES = 50`
 - `MAX_DURATIONS_PER_BUCKET = 100`
 
-Overflow rolls into a synthetic `Other` bucket. The `total` pseudo-category is preserved before sorting — see the existing `Flame_Builder_Node` implementation; do not regress when porting.
+`srv` splits a URL row's SUMMED fields by reporting server and is capped by
+`MAX_SERVER_VALUES`, the same ceiling the `server` dimension takes — it is the
+`server` dimension of `url_dim`, co-located with the row so one `lookup_multi`
+scopes the whole index instead of one get per URL. Extremes and percentiles are absent from
+it: they do not add, and splitting them would need a reservoir per server, so a
+server-scoped row keeps the URL's own across every server. Because every split
+field adds, the scope is applied as a projection over the merged row
+(`Stats_Store::swap_url_server_sums()`), which is what lets one unscoped read serve
+every scope a request asks for. See architecture decision 14.
+
+Overflow rolls into a synthetic `Other` bucket — including the URL index itself, whose `MAX_URLS_PER_SHARD` tail folds into an `Other` ROW rather than dropping, so a total summed from the index is exact. The `total` pseudo-category is preserved before sorting — see the existing `Flame_Builder_Node` implementation; do not regress when porting.
 
 **`get_multi` batching is essential.** Reader paths multi-get across all retention buckets per partition in one round-trip (`Stats_Store::get_url_buckets()`). Per-key `get` is a latency cliff. The shared `Core::$memd` (`\Memcached`) provides `getMulti` natively; the in-memory test double mirrors it.
 
@@ -866,7 +880,7 @@ See the v0.7.0 / v0.8.0 entries in `CHANGELOG.md` for the dashboard cutover hist
 
 ## CLI: wp nodes reqgrep
 
-Application-side firehose filter. The substrate ships `wp nodes status` / `wp nodes cli` (worker introspection); this plugin adds `wp nodes reqgrep` for searching the live firehose by URL pattern, request ID, or arbitrary content match, plus `wp nodes ruleset-bench` for benchmarking the rule matcher.
+Application-side firehose filter. The substrate ships `wp nodes status` / `wp nodes cli` (worker introspection); this plugin adds `wp nodes reqgrep` for searching the live firehose by URL pattern, request ID, or arbitrary content match, plus `wp nodes ruleset-bench`, which measures the ruleset's two hook-storage tiers — inline against Table-pointer — and is what `Rule_Set::INLINE_HOOK_LIMIT` is calibrated from.
 
 ```bash
 # Every segment, no filter.

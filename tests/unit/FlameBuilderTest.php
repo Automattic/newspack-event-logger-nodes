@@ -578,7 +578,7 @@ class FlameBuilderTest extends TestCase {
 		$fb->flush();
 
 		$bucket   = Stats_Store::bucket_key( $now );
-		$index    = $store->get_url_bucket( $bucket );
+		$index    = $this->url_bucket_rows( $store, $bucket );
 		$url_hash = Log_Manager::url_hash( '/w' );
 		$this->assertArrayHasKey( $url_hash, $index );
 		$this->assertSame( 1, $index[ $url_hash ]['count'] );
@@ -598,7 +598,7 @@ class FlameBuilderTest extends TestCase {
 		$fb->flush();
 
 		$bucket   = Stats_Store::bucket_key( $now );
-		$index    = $store->get_url_bucket( $bucket );
+		$index    = $this->url_bucket_rows( $store, $bucket );
 		$url_hash = Log_Manager::url_hash( '/w?reconcile' );
 		$this->assertArrayHasKey( $url_hash, $index );
 		$this->assertSame( 1, $index[ $url_hash ]['count'] );
@@ -620,10 +620,478 @@ class FlameBuilderTest extends TestCase {
 		$fb->flush();
 
 		$bucket   = Stats_Store::bucket_key( $now );
-		$index    = $store->get_url_bucket( $bucket );
+		$index    = $this->url_bucket_rows( $store, $bucket );
 		$url_hash = Log_Manager::url_hash( '/m' );
 		$this->assertArrayHasKey( $url_hash, $index );
 		$this->assertEqualsWithDelta( 42.0, $index[ $url_hash ]['min_ms'], 1e-6 );
+	}
+
+	public function test_url_index_row_carries_the_per_server_split(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+
+		// One URL, two reporting servers. The index row is keyed by url_hash and
+		// so carries no server of its own; without this split the dashboard
+		// cannot scope the URL table, and every header stat beside it can.
+		// `srv` is the per-URL `server` dimension co-located with the row so one
+		// get answers for the whole index instead of one get per URL.
+		$now = \time();
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/split', 'server_name' => 'alpha.example', 'duration_ms' => 30.0, 'timestamp' => $now ] ) );
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/split', 'server_name' => 'beta.example', 'duration_ms' => 70.0, 'timestamp' => $now ] ) );
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/split', 'server_name' => 'beta.example', 'duration_ms' => 90.0, 'timestamp' => $now ] ) );
+		$fb->flush();
+
+		$bucket   = Stats_Store::bucket_key( $now );
+		$url_hash = Log_Manager::url_hash( '/split' );
+		$row      = $this->url_bucket_rows( $store, $bucket )[ $url_hash ];
+
+		$this->assertSame( 1, $row['srv']['alpha.example']['count'] );
+		$this->assertSame( 2, $row['srv']['beta.example']['count'] );
+		$this->assertEqualsWithDelta( 30.0, $row['srv']['alpha.example']['sum_ms'], 1e-6 );
+		$this->assertEqualsWithDelta( 160.0, $row['srv']['beta.example']['sum_ms'], 1e-6 );
+	}
+
+	public function test_a_refused_url_index_write_is_reported(): void {
+		// memcached refuses an item over 1MB, and this blob is the largest the
+		// schema writes — up to 500 rows, each now carrying its per-server
+		// split. A discarded return means the whole bucket's URL index is lost
+		// for that partition, and every later read-modify-write of it fails the
+		// same way, with nothing said.
+		$err = '';
+		Core::set_stderr_handler( static function ( $text ) use ( &$err ) {
+			$err .= $text;
+		} );
+
+		Core::$memd = new InMemoryMemcached();
+		$refused    = new class( 0, 86400 ) extends Stats_Store {
+			public function set_url_shard( string $bucket, string $shard, array $rows ): bool {
+				return false;
+			}
+		};
+		$fb = new Flame_Builder_Node();
+		$fb->set_stats_store( $refused );
+
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/too-big', 'duration_ms' => 5.0, 'timestamp' => \time() ] ) );
+		$fb->flush();
+
+		$this->assertStringContainsString( 'URL index write refused', $err );
+	}
+
+	public function test_the_server_axis_holds_more_names_than_the_generic_cap(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+		$fb->set_is_hub( true );
+
+		// The server picker is built from this axis, and the fleet is an
+		// operator input — production runs 24 spokes. Capped with the generic
+		// MAX_DIM_VALUES (20) four of them roll into a synthetic `Other` and
+		// become unselectable, and which four varies by bucket, so even a
+		// listed site loses the buckets it fell out of. Unlike `country` or
+		// `ua`, this axis is bounded by the fleet, so it gets its own ceiling.
+		$now = \time();
+		for ( $i = 0; $i < 24; $i++ ) {
+			$this->fill_request( $fb, $this->completed_request( [
+				'url'         => "/s{$i}",
+				'server_name' => \sprintf( 'spoke%02d.example', $i ),
+				'duration_ms' => 5.0,
+				'timestamp'   => $now,
+			] ) );
+		}
+		$fb->flush();
+
+		$servers = $store->get_dimensional_bucket( 'server', Stats_Store::bucket_key( $now ) );
+
+		$this->assertArrayNotHasKey( Stats_Store::OTHER_KEY, $servers );
+		$this->assertCount( 24, $servers );
+	}
+
+	public function test_the_cap_counts_the_overflow_rows_it_writes(): void {
+		// At EXACTLY the cap no fold runs, and the two overflow rows are added
+		// back afterwards regardless — so the item ships at MAX + 2 and the
+		// constant stops meaning what its name says.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+
+		$now    = \time();
+		$bucket = Stats_Store::bucket_key( $now );
+		$seed   = [
+			Stats_Store::OTHER_KEY        => [ 'count' => 9, 'timed_count' => 9, 'sum_ms' => 18.0, 'worker' => false, 'last_seen' => $now ],
+			Stats_Store::OTHER_WORKER_KEY => [ 'count' => 7, 'timed_count' => 7, 'sum_ms' => 14.0, 'worker' => true, 'last_seen' => $now ],
+		];
+		// 499 seeded plus the one this flush adds lands EXACTLY on the cap.
+		for ( $i = 0; $i < 499; $i++ ) {
+			$seed[ \sprintf( 'a%011x', $i ) ] = [
+				'url' => "/cap{$i}", 'count' => 1000 - $i, 'timed_count' => 1000 - $i,
+				'sum_ms' => 2.0 * ( 1000 - $i ), 'min_ms' => 2.0, 'max_ms' => 2.0,
+				'sum_peak_mb' => 0, 'max_peak_mb' => 0, 'count_2xx' => 1000 - $i,
+				'count_3xx' => 0, 'count_4xx' => 0, 'count_5xx' => 0,
+				'worker' => false, 'last_seen' => $now, 'durations' => [],
+			];
+		}
+		// Straight into the shard: an overflow key is not hex, so routing it
+		// through the bucket writer would file it under shard '0' instead of
+		// the shard whose own tail produced it.
+		$store->set_url_shard( $bucket, 'a', $seed );
+
+		$url = '';
+		for ( $i = 0; '' === $url; $i++ ) {
+			if ( 'a' === Stats_Store::url_shard( Log_Manager::url_hash( "/in-a-{$i}" ) ) ) {
+				$url = "/in-a-{$i}";
+			}
+		}
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => $url, 'duration_ms' => 2.0, 'timestamp' => $now ] ) );
+		$fb->flush();
+
+		$this->assertLessThanOrEqual( 500, \count( $store->get_url_shard( $bucket, 'a' ) ) );
+	}
+
+	public function test_the_overflow_row_keeps_worker_traffic_separate(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+
+		// The capped tail mixes both kinds, and one synthetic row cannot answer
+		// a filter about them — the worker share would ride silently into a
+		// header that excludes every other worker request.
+		$now    = \time();
+		$bucket = Stats_Store::bucket_key( $now );
+		$seed   = [];
+		for ( $i = 0; $i < 600; $i++ ) {
+			$seed[ \sprintf( 'a%011x', $i ) ] = [
+				'url' => "/u{$i}", 'count' => 1000 - $i, 'timed_count' => 1000 - $i,
+				'sum_ms' => 2.0 * ( 1000 - $i ), 'min_ms' => 2.0, 'max_ms' => 2.0,
+				'sum_peak_mb' => 0, 'max_peak_mb' => 0, 'count_2xx' => 1000 - $i,
+				'count_3xx' => 0, 'count_4xx' => 0, 'count_5xx' => 0,
+				'worker' => 0 === $i % 2, 'last_seen' => $now, 'durations' => [],
+			];
+		}
+		$this->set_url_bucket( $store, $bucket, $seed );
+
+		$url = '';
+		for ( $i = 0; '' === $url; $i++ ) {
+			if ( 'a' === Stats_Store::url_shard( Log_Manager::url_hash( "/in-a-{$i}" ) ) ) {
+				$url = "/in-a-{$i}";
+			}
+		}
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => $url, 'duration_ms' => 2.0, 'timestamp' => $now ] ) );
+		$fb->flush();
+
+		$shard = $store->get_url_shard( $bucket, 'a' );
+
+		$this->assertTrue( $shard[ Stats_Store::other_key( true ) ]['worker'] );
+		$this->assertFalse( $shard[ Stats_Store::other_key( false ) ]['worker'] );
+		// Two overflow rows means two reserved slots, not one — the cap is a
+		// ceiling on the ITEM, and reserving for one row while emitting two
+		// puts it over by exactly the row that was supposed to bound it.
+		$this->assertLessThanOrEqual( 500, \count( $shard ) );
+	}
+
+	public function test_a_url_row_records_whether_its_traffic_was_a_worker(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+
+		// `$count_global` keeps workers out of every site-wide aggregate — "one
+		// long-running worker would dominate the site-wide averages" — but the
+		// per-URL row deliberately keeps their timing, so a header summed from
+		// the index inherits them. The row has to say which it is; deriving it
+		// from `?worker_type` in the URL text is the substring guess that made
+		// `--server` empty the table.
+		$now = \time();
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/w?reconcile', 'duration_ms' => 90000.0, 'is_worker' => true, 'timestamp' => $now ] ) );
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/reader', 'duration_ms' => 12.0, 'timestamp' => $now ] ) );
+		$fb->flush();
+
+		$bucket = Stats_Store::bucket_key( $now );
+		$rows   = $this->url_bucket_rows( $store, $bucket );
+
+		$this->assertTrue( $rows[ Log_Manager::url_hash( '/w?reconcile' ) ]['worker'] );
+		$this->assertFalse( $rows[ Log_Manager::url_hash( '/reader' ) ]['worker'] );
+	}
+
+	public function test_a_busy_url_keeps_every_server_that_served_it(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+		$fb->set_is_hub( true );
+
+		// A cap that binds on a real fleet recreates, one layer down, the defect
+		// `dim_cap()` removes from the picker: the folded server's scoped read
+		// matches nothing, and the URL leaves the filtered table AND its totals
+		// with nothing said. So `MAX_SERVER_VALUES` sits far above any fleet —
+		// 40 servers on one URL, and the split still keeps every one.
+		$now = \time();
+		for ( $i = 0; $i < 40; $i++ ) {
+			$this->fill_request( $fb, $this->completed_request( [
+				'url'         => '/shared',
+				'server_name' => \sprintf( 'edge%02d.example', $i ),
+				'duration_ms' => 3.0,
+				'timestamp'   => $now,
+			] ) );
+		}
+		$fb->flush();
+
+		$hash = Log_Manager::url_hash( '/shared' );
+		$row  = $store->get_url_shard( Stats_Store::bucket_key( $now ), Stats_Store::url_shard( $hash ) )[ $hash ];
+		$srv  = $row[ Stats_Store::URL_SRV_FIELD ];
+
+		$this->assertArrayNotHasKey( Stats_Store::OTHER_KEY, $srv );
+		$this->assertCount( 40, $srv );
+		$this->assertSame( 1, $srv['edge39.example']['count'] );
+	}
+
+	public function test_a_host_header_spray_folds_instead_of_growing_the_axis(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+		$fb->set_is_hub( true );
+
+		// @longform `server_name` is `SERVER_NAME`, which under Apache's default
+		// `UseCanonicalName Off` is the CLIENT'S Host header — so on a
+		// domain-mapped multisite or any catch-all vhost this axis is visitor
+		// input, not the fleet. Uncapped, the global `dim:server` item and every
+		// row's split grow without limit until memcached refuses the write, and
+		// a refusal discards the WHOLE merged shard-bucket.
+		$now   = \time();
+		$spray = 300;
+		for ( $i = 0; $i < $spray; $i++ ) {
+			$this->fill_request( $fb, $this->completed_request( [
+				'url'         => '/xmlrpc.php',
+				'server_name' => \sprintf( 'spray%03d.probe.test', $i ),
+				'duration_ms' => 4.0,
+				'timestamp'   => $now,
+			] ) );
+		}
+		$fb->flush();
+
+		$bucket  = Stats_Store::bucket_key( $now );
+		$servers = $store->get_dimensional_bucket( 'server', $bucket );
+		$hash    = Log_Manager::url_hash( '/xmlrpc.php' );
+		$row     = $store->get_url_shard( $bucket, Stats_Store::url_shard( $hash ) )[ $hash ];
+		$srv     = $row[ Stats_Store::URL_SRV_FIELD ];
+
+		$this->assertLessThanOrEqual( Stats_Store::MAX_SERVER_VALUES, \count( $servers ) );
+		$this->assertLessThanOrEqual( Stats_Store::MAX_SERVER_VALUES, \count( $srv ) );
+		$this->assertArrayHasKey( Stats_Store::OTHER_KEY, $servers );
+		$this->assertArrayHasKey( Stats_Store::OTHER_KEY, $srv );
+		// Folded, not dropped: every request is still counted on both axes.
+		$this->assertSame( $spray, \array_sum( \array_column( $servers, 'c' ) ) );
+		$this->assertSame( $spray, \array_sum( \array_column( $srv, 'count' ) ) );
+		$this->assertSame( $spray, $row['count'] );
+	}
+
+	public function test_url_index_split_names_a_nameless_producer_unknown(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+
+		// `accumulate_dimensions()` maps an empty server to the literal
+		// 'Unknown' on the `server` axis, and the dashboard builds its picker
+		// from THAT axis — so WP-CLI and cron traffic put 'Unknown' in the
+		// dropdown. Writing no split for it made choosing it empty the table.
+		// The two axes have to agree on the name.
+		$now = \time();
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/cron', 'server_name' => '', 'duration_ms' => 12.0, 'timestamp' => $now ] ) );
+		$fb->flush();
+
+		$row = $this->url_bucket_rows( $store, Stats_Store::bucket_key( $now ) )[ Log_Manager::url_hash( '/cron' ) ];
+
+		$this->assertSame( 1, $row[ Stats_Store::URL_SRV_FIELD ]['Unknown']['count'] );
+	}
+
+	public function test_no_single_index_item_holds_the_whole_bucket(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+
+		// @longform What sharding actually buys, and it is NOT write
+		// amplification: with 16 shards a flush carrying k distinct hashes
+		// touches 16 * (1 - (15/16)^k) of them — 7.6 at k=10, 16 at k=100 — so
+		// at any real flush width every shard is written and the total bytes
+		// are unchanged. What changes is the ITEM: memcached refuses one over
+		// its limit and the refused write loses that whole item, so a bucket
+		// that lives in one blob is one blob away from losing every URL in it.
+		$now = \time();
+		for ( $i = 0; $i < 320; $i++ ) {
+			$this->fill_request( $fb, $this->completed_request( [
+				'url' => "/wide-{$i}", 'duration_ms' => 5.0, 'timestamp' => $now,
+			] ) );
+		}
+		$fb->flush();
+
+		$bucket  = Stats_Store::bucket_key( $now );
+		$largest = 0;
+		$whole   = 0;
+		foreach ( Stats_Store::url_shards() as $shard ) {
+			$bytes    = \strlen( \serialize( $store->get_url_shard( $bucket, $shard ) ) );
+			$whole   += $bytes;
+			$largest  = \max( $largest, $bytes );
+		}
+
+		$this->assertGreaterThan( 0, $largest );
+		$this->assertLessThan(
+			(int) ( $whole / 4 ),
+			$largest,
+			"the busiest item holds {$largest} of {$whole} bytes — the bucket is not split"
+		);
+	}
+
+	public function test_a_flush_writes_only_the_shards_its_rows_land_in(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+
+		// Routing, not a saving: at production flush width every shard is
+		// touched anyway (see the test above). This pins that a row goes to the
+		// shard its hash names and nowhere else, which is what makes a point
+		// read able to skip the other fifteen.
+		$now    = \time();
+		$bucket = Stats_Store::bucket_key( $now );
+
+		$written       = [];
+		$store->mirror = static function ( string $key ) use ( &$written ): void {
+			if ( false !== \strpos( $key, ':' . Stats_Store::NS_URLS . ':' ) ) {
+				$written[] = $key;
+			}
+		};
+
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/one', 'duration_ms' => 5.0, 'timestamp' => $now ] ) );
+		$fb->flush();
+
+		$this->assertCount( 1, $written, \implode( ', ', $written ) );
+		$this->assertStringEndsWith(
+			Stats_Store::url_shard( Log_Manager::url_hash( '/one' ) ) . ':' . $bucket,
+			$written[0] ?? ''
+		);
+	}
+
+	public function test_the_capped_tail_folds_into_one_other_row(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+
+		// Past MAX_URLS_PER_BUCKET the tail used to be DROPPED, so every total
+		// summed from this index was a lower bound by however much traffic fell
+		// off. Folding it into one row keeps the bucket bounded and the totals
+		// exact — including per server, since the splits fold with it.
+		$now    = \time();
+		$bucket = Stats_Store::bucket_key( $now );
+		$seed   = [];
+		for ( $i = 0; $i < 600; $i++ ) {
+			// All in one shard, which is where the cap now applies.
+			$seed[ \sprintf( 'a%011x', $i ) ] = [
+				'url'         => "/u{$i}",
+				// Descending, so the last 101 are the ones that fall off.
+				'count'       => 1000 - $i,
+				'timed_count' => 1000 - $i,
+				'sum_ms'      => 2.0 * ( 1000 - $i ),
+				'count_2xx'   => 1000 - $i,
+				'count_3xx'   => 0,
+				'count_4xx'   => 0,
+				'count_5xx'   => 0,
+				'min_ms'      => 2.0,
+				'max_ms'      => 2.0,
+				'sum_peak_mb' => 0,
+				'max_peak_mb' => 0,
+				'last_seen'   => $now,
+				'durations'   => [],
+				'srv'         => [ 'alpha.example' => [ 'count' => 1000 - $i, 'timed_count' => 1000 - $i, 'sum_ms' => 2.0 * ( 1000 - $i ), 'count_2xx' => 1000 - $i ] ],
+			];
+		}
+		$this->set_url_bucket( $store, $bucket, $seed );
+
+		// A shard is capped when it is WRITTEN, so the flush has to land in it.
+		$url = '';
+		for ( $i = 0; '' === $url; $i++ ) {
+			if ( 'a' === Stats_Store::url_shard( Log_Manager::url_hash( "/in-a-{$i}" ) ) ) {
+				$url = "/in-a-{$i}";
+			}
+		}
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => $url, 'server_name' => 'alpha.example', 'duration_ms' => 2.0, 'timestamp' => $now ] ) );
+		$fb->flush();
+
+		$shard = $store->get_url_shard( $bucket, 'a' );
+		$other = $shard[ Stats_Store::OTHER_KEY ] ?? null;
+
+		$this->assertNotNull( $other, 'the tail folds into one row' );
+		// 498 kept plus both overflow rows: a slot is reserved for each the fold
+		// can emit, whether or not this tail fills them.
+		$this->assertLessThanOrEqual( 500, \count( $shard ) );
+		$this->assertArrayHasKey( Stats_Store::OTHER_KEY, $shard );
+		// 601 rows in the shard (600 seeded plus the one just written, count 1),
+		// keep 498 — a slot reserved for each overflow row the fold can emit —
+		// so the 103 smallest fold: counts 502 down to 401, and the 1.
+		$expected = \array_sum( \range( 401, 502 ) ) + 1;
+		$this->assertSame( $expected, $other['count'] );
+		$this->assertSame( $expected, $other['srv']['alpha.example']['count'] );
+	}
+
+	public function test_url_index_split_is_written_on_a_spoke_too(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+		$fb->set_is_hub( false );
+
+		// The three per-server AGGREGATES are hub-only, and this one looks like
+		// it forgot the gate. It did not: the server filter is offered wherever
+		// the `server` dimension has values, which is everywhere, and a scoped
+		// read of a row with no split returns nothing — so gating this would
+		// empty the URL table on every spoke rather than save it anything.
+		$now = \time();
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/spoke', 'server_name' => 'lone.example', 'duration_ms' => 12.0, 'timestamp' => $now ] ) );
+		$fb->flush();
+
+		$row = $this->url_bucket_rows( $store, Stats_Store::bucket_key( $now ) )[ Log_Manager::url_hash( '/spoke' ) ];
+
+		$this->assertSame( 1, $row[ Stats_Store::URL_SRV_FIELD ]['lone.example']['count'] );
+	}
+
+	public function test_url_index_split_carries_exactly_the_summed_fields(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+
+		// The accumulator builds the split from its own literal field list while
+		// the persist merge builds it from `URL_SRV_SUMS`. A field added to one
+		// and not the other is dropped or invented silently, so the two are held
+		// to the same set here rather than by a comment asking them to agree.
+		$now = \time();
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/fields', 'server_name' => 'alpha.example', 'duration_ms' => 30.0, 'peak_mb' => 4.0, 'timestamp' => $now ] ) );
+		$fb->flush();
+
+		$row = $this->url_bucket_rows( $store, Stats_Store::bucket_key( $now ) )[ Log_Manager::url_hash( '/fields' ) ];
+
+		// Values, not keys: `sum_fields()` materializes all eight at persist, so a
+		// field the accumulator forgot arrives as a plausible 0.
+		$this->assertSame(
+			[
+				'count'       => 1,
+				'timed_count' => 1,
+				'sum_ms'      => 30.0,
+				'sum_peak_mb' => 4.0,
+				'count_2xx'   => 1,
+				'count_3xx'   => 0,
+				'count_4xx'   => 0,
+				'count_5xx'   => 0,
+			],
+			$row[ Stats_Store::URL_SRV_FIELD ]['alpha.example']
+		);
 	}
 
 	public function test_url_index_min_ms_persisted_real_survives_later_untimed_flush(): void {
@@ -644,7 +1112,7 @@ class FlameBuilderTest extends TestCase {
 		$fb->flush();
 
 		$bucket   = Stats_Store::bucket_key( $now );
-		$index    = $store->get_url_bucket( $bucket );
+		$index    = $this->url_bucket_rows( $store, $bucket );
 		$url_hash = Log_Manager::url_hash( '/p' );
 		$this->assertArrayHasKey( $url_hash, $index );
 		$this->assertEqualsWithDelta( 42.0, $index[ $url_hash ]['min_ms'], 1e-6 );
@@ -736,6 +1204,21 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	/**
+	 * Arm a mirror over a fresh indexed partition and return both.
+	 *
+	 * @return array{0: Flame_Builder_Node, 1: \Newspack_Nodes\Partition_Node}
+	 */
+	private function mirrored_builder( Stats_Store $store, string $name, string $class = \Newspack_Nodes\Partition_Node::class ): array {
+		$p = $this->make_partition( $name, $class );
+		$p->with_index( Flame_Builder_Node::format_stats_index_entry( ... ) );
+		$fb = new Flame_Builder_Node();
+		$fb->name( 'fb' );
+		$fb->set_stats_store( $store );
+		$fb->set_stats_target( $p->name() );
+		return [ $fb, $p ];
+	}
+
+	/**
 	 * Every stats namespace one request writes, for the parity comparison
 	 * above. Same URL and clock both runs, so any difference is the fold's.
 	 *
@@ -756,7 +1239,7 @@ class FlameBuilderTest extends TestCase {
 			'leaderboard' => $store->get_leaderboard_bucket( $bucket ),
 			'categories'  => $store->get_category_buckets( [ $bucket ] ),
 			'hourly'      => $store->get_hourly_buckets( [ $bucket ] ),
-			'urls'        => $store->get_url_bucket( $bucket ),
+			'urls'        => $this->url_bucket_rows( $store, $bucket ),
 		];
 	}
 
@@ -818,323 +1301,6 @@ class FlameBuilderTest extends TestCase {
 			$this->assertSame( 0, $stats['count'], 'timed-out excluded from count' );
 			$this->assertSame( 0.0, $stats['sum_ms'], 'timed-out excluded from sum_ms' );
 		}
-	}
-
-	/**
-	 * An ABORTED request was killed partway — a worker cut off mid-job, or a
-	 * gyrobase render whose lease was stolen — so its duration is a fragment of
-	 * the real one. Counting it drags every percentile down and invents fast
-	 * requests that never happened, exactly like the timed-out case above.
-	 */
-	public function test_aborted_excluded_from_timing(): void {
-		Core::$memd = new InMemoryMemcached();
-		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		$fb         = new Flame_Builder_Node();
-		$fb->set_stats_store( $store );
-
-		$this->fill_request( $fb, $this->completed_request( [ 'duration_ms' => 12.0, 'error_status' => 'A' ] ) );
-		$fb->flush();
-
-		foreach ( $this->recent_hourly( $store ) as $stats ) {
-			$this->assertSame( 0, $stats['count'], 'aborted excluded from count' );
-			$this->assertSame( 0.0, $stats['sum_ms'], 'aborted excluded from sum_ms' );
-		}
-	}
-
-	public function test_workers_excluded_from_timing(): void {
-				Core::$memd = new InMemoryMemcached();
-		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		$fb    = new Flame_Builder_Node();
-		$fb->set_stats_store( $store );
-
-		$this->fill_request( $fb, $this->completed_request( [ 'duration_ms' => 100.0, 'is_worker' => true ] ) );
-		$fb->flush();
-
-		$hourly = $this->recent_hourly( $store );
-		foreach ( $hourly as $bucket => $stats ) {
-			$this->assertSame( 0, $stats['count'], 'workers excluded from timing count' );
-		}
-	}
-
-	public function test_worker_request_records_url_timing_but_no_global(): void {
-		Core::$memd = new InMemoryMemcached();
-		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		$fb         = new Flame_Builder_Node();
-		$fb->set_stats_store( $store );
-
-		$now = \time();
-		$req = $this->completed_request( [
-			'url'         => '/?cache-cozy',
-			'duration_ms' => 40.0,
-			'is_worker'   => true,
-			'peak_mb'     => 12.0,
-			'timestamp'   => $now,
-			'profiles'    => [ 'wpdb' => [ 'time' => 0.2, 'count' => 3, 'ts' => $now, 'entries' => [] ] ],
-		] );
-		$this->fill_request( $fb, $req );
-		$fb->flush();
-
-		$bucket   = Stats_Store::bucket_key( $now );
-		$url_hash = Log_Manager::url_hash( '/?cache-cozy' );
-
-		// Per-URL timing IS kept for the synthetic worker row.
-		$index = $store->get_url_bucket( $bucket );
-		$this->assertArrayHasKey( $url_hash, $index );
-		$this->assertSame( 1, $index[ $url_hash ]['count'] );
-		$this->assertSame( 1, $index[ $url_hash ]['timed_count'] );
-		$this->assertEqualsWithDelta( 40.0, $index[ $url_hash ]['sum_ms'], 1e-6 );
-
-		// Global hourly: no count, no timing, and no peak (closed leak).
-		foreach ( $this->recent_hourly( $store ) as $stats ) {
-			$this->assertSame( 0, $stats['count'], 'worker excluded from global count' );
-			$this->assertSame( 0.0, $stats['sum_ms'], 'worker excluded from global timing' );
-			$this->assertSame( 0.0, $stats['sum_peak_mb'], 'worker peak leak closed' );
-		}
-
-		// Global dimensional: no count and no peak contribution.
-		$dim = $this->dim_series( $store, 'status' );
-		foreach ( $dim as $vals ) {
-			foreach ( $vals as $cell ) {
-				$this->assertSame( 0, $cell['c'], 'worker excluded from global dimensional count' );
-				$this->assertSame( 0, $cell['m'], 'worker excluded from global dimensional peak' );
-			}
-		}
-
-		// Global leaderboard + categories: untouched by the worker.
-		$this->assertEmpty( $store->get_leaderboard_bucket( $bucket ) );
-		$this->assertEmpty( $store->get_category_bucket( $bucket ) );
-	}
-
-	public function test_non_worker_request_records_global_count_and_peak(): void {
-		Core::$memd = new InMemoryMemcached();
-		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		$fb         = new Flame_Builder_Node();
-		$fb->set_stats_store( $store );
-
-		$now = \time();
-		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/x', 'duration_ms' => 40.0, 'peak_mb' => 12.0, 'timestamp' => $now ] ) );
-		$fb->flush();
-
-		$hourly = $store->get_hourly_buckets( [ Stats_Store::bucket_key( $now ) ] );
-		$bucket = \array_keys( $hourly )[0];
-		$this->assertSame( 1, $hourly[ $bucket ]['count'] );
-		$this->assertEqualsWithDelta( 40.0, $hourly[ $bucket ]['sum_ms'], 1e-6 );
-		$this->assertEqualsWithDelta( 12.0, $hourly[ $bucket ]['sum_peak_mb'], 1e-6 );
-	}
-
-	public function test_per_server_tracking_only_when_hub(): void {
-				Core::$memd = new InMemoryMemcached();
-		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-
-		$fb_spoke = new Flame_Builder_Node();
-		$fb_spoke->set_stats_store( $store );
-		$fb_spoke->set_is_hub( false );
-
-		$fb_hub = new Flame_Builder_Node();
-		$fb_hub->set_stats_store( $store );
-		$fb_hub->set_is_hub( true );
-
-		// Use current time so the bucket alignment between fill and assertion is exact.
-		$now = \time();
-		$req = $this->completed_request( [
-			'server_name' => 'srv-a',
-			'duration_ms' => 50.0,
-			'timestamp'   => $now,
-			'profiles'    => [ 'wpdb' => [ 'time' => 0.1, 'count' => 1, 'entries' => [] ] ],
-		] );
-
-		$this->fill_request( $fb_spoke, $req );
-		$fb_spoke->flush();
-
-		// Spoke: per-server bucket should be empty (no per-server tracking).
-		$bucket = Stats_Store::bucket_key( $now );
-		$this->assertEmpty( $store->get_leaderboard_bucket( $bucket, 'srv-a' ) );
-
-		// Hub: per-server bucket should be populated.
-		$this->fill_request( $fb_hub, $req );
-		$fb_hub->flush();
-		$lb_s = $store->get_leaderboard_bucket( $bucket, 'srv-a' );
-		$this->assertSame( 1, $lb_s['count'] ?? 0 );
-	}
-
-	// --- Auto-tune --------------------------------------------------------
-
-	public function test_disable_uses_the_stamped_rules_threshold(): void {
-		// The governing rule's threshold — resolved by the request's stamped
-		// rule_id — decides, and the proposal is keyed under that rule id.
-		$this->set_rule( [ 'id' => 'loud', 'pattern' => '/loud/', 'auto_disable_threshold' => 100 ] );
-		$fb  = new Flame_Builder_Node();
-		$req = $this->completed_request( [
-			'rule_id'  => 'loud',
-			'url'      => '/loud/x',
-			'profiles' => [ 'noisy_hook hook' => [ 'time' => 0.1, 'count' => 200, 'entries' => [] ] ],
-		] );
-		$this->fill_request( $fb, $req );
-		$state = $fb->get_auto_tune_state();
-		$this->assertSame( [ 'noisy_hook' ], $state['hooks']['loud'] );
-	}
-
-	public function test_no_stamped_rule_applies_no_auto_tune(): void {
-		// Stale stamped id + a url that matches no rule ⇒ null rule ⇒ no tuning.
-		$this->set_rule( [ 'id' => 'quiet', 'pattern' => '/q/' ] );
-		$fb  = new Flame_Builder_Node();
-		$req = $this->completed_request( [
-			'rule_id'  => 'ghost',
-			'url'      => '/unmatched',
-			'profiles' => [ 'h hook' => [ 'time' => 0.1, 'count' => 999, 'entries' => [] ] ],
-		] );
-		$this->fill_request( $fb, $req );
-		$state = $fb->get_auto_tune_state();
-		$this->assertEmpty( $state['hooks'] );
-	}
-
-	public function test_noisy_hook_detection_threshold_zero_disables_check(): void {
-		// With threshold 0, no hook ever gets proposed.
-		$this->set_rule( [ 'auto_disable_threshold' => 0 ] );
-		$fb = new Flame_Builder_Node();
-
-		$req = $this->completed_request( [
-			'profiles' => [
-				'wpdb' => [ 'time' => 0.4, 'count' => 99999, 'entries' => [] ],
-			],
-		] );
-		$this->fill_request( $fb, $req );
-		$state = $fb->get_auto_tune_state();
-		$this->assertEmpty( $state['hooks'] );
-	}
-
-	public function test_noisy_hook_detection_proposes_when_count_exceeds_threshold(): void {
-		$this->set_rule( [ 'auto_disable_threshold' => 100 ] );
-		$fb = new Flame_Builder_Node();
-
-		$req = $this->completed_request( [
-			'profiles' => [
-				// "wpdb" with count > 100 → base name "wpdb" proposed for disable.
-				'wpdb hook' => [ 'time' => 0.1, 'count' => 200, 'entries' => [] ],
-			],
-		] );
-		$this->fill_request( $fb, $req );
-		$state = $fb->get_auto_tune_state();
-		$this->assertSame( [ 'wpdb' ], $state['hooks']['r'] );
-	}
-
-	public function test_noisy_hook_detection_excludes_worker_requests(): void {
-		// Auto-disable is a global signal: worker traffic feeds only its own
-		// per-URL row, never the plugin-wide hooks_to_disable decision.
-		$this->set_rule( [ 'auto_disable_threshold' => 100 ] );
-		$fb = new Flame_Builder_Node();
-
-		$req = $this->completed_request( [
-			'is_worker' => true,
-			'profiles'  => [
-				'wpdb hook' => [ 'time' => 0.1, 'count' => 200, 'entries' => [] ],
-			],
-		] );
-		$this->fill_request( $fb, $req );
-		$state = $fb->get_auto_tune_state();
-		$this->assertEmpty( $state['hooks'], 'worker traffic must not drive global hook auto-disable' );
-	}
-
-	public function test_callback_categories_skipped_from_auto_tune(): void {
-		$this->set_rule( [ 'auto_disable_threshold' => 100 ] );
-		$fb = new Flame_Builder_Node();
-
-		$req = $this->completed_request( [
-			'profiles' => [
-				// callback frames end with " @N" — not independent events.
-				'wpdb @10' => [ 'time' => 0.1, 'count' => 200, 'entries' => [] ],
-			],
-		] );
-		$this->fill_request( $fb, $req );
-		$state = $fb->get_auto_tune_state();
-		$this->assertEmpty( $state['hooks'], 'callback categories never proposed' );
-	}
-
-	public function test_significant_event_detection_picks_up_slow_avg(): void {
-		$this->set_rule( [ 'auto_protect_time_threshold' => 0.05 ] ); // 50ms threshold
-		$fb = new Flame_Builder_Node();
-
-		// avg_per_call = sum_time / sum_count = 0.4/2 = 0.2 ≥ 0.05 → significant.
-		$req = $this->completed_request( [
-			'profiles' => [
-				'slow_hook' => [ 'time' => 0.4, 'count' => 2, 'entries' => [] ],
-			],
-		] );
-		$this->fill_request( $fb, $req );
-		$state = $fb->get_auto_tune_state();
-		$this->assertSame( [ 'slow_hook' ], $state['new_significant']['r'] );
-	}
-
-	// --- Index format -----------------------------------------------------
-
-	public function test_format_and_parse_flame_index_round_trip(): void {
-		// The formatter receives the unpacked message array; VALUE at index 6.
-		$message                       = Message::new_message();
-		$message[ Message::TYPE ]      = Message::TM_STRUCT;
-		$message[ Message::VALUE ]     = [ 'rid' => 'abc', 'url_hash' => 'deadbeef0001' ];
-		$position = [ 'segment' => 5, 'offset' => 1024, 'length' => 100 ];
-		$entry    = Flame_Builder_Node::format_index_entry( $message, $position );
-		$this->assertNotNull( $entry );
-		$this->assertSame( 68, \strlen( $entry ) );
-
-		$parsed = Flame_Builder_Node::parse_flame_index( $entry );
-		$this->assertSame( 'abc', $parsed['rid'] );
-		$this->assertSame( 'deadbeef0001', $parsed['url_hash'] );
-		$this->assertSame( 5, $parsed['segment'] );
-		$this->assertSame( 1024, $parsed['offset'] );
-		$this->assertSame( 100, $parsed['length'] );
-	}
-
-	public function test_format_index_entry_returns_null_when_rid_missing(): void {
-		$message                       = Message::new_message();
-		$message[ Message::TYPE ]      = Message::TM_STRUCT;
-		$message[ Message::VALUE ]     = [ 'url_hash' => 'abc' ];
-		$position = [ 'segment' => 0, 'offset' => 0, 'length' => 0 ];
-		$this->assertNull( Flame_Builder_Node::format_index_entry( $message, $position ) );
-	}
-
-	public function test_parse_flame_index_returns_null_for_short_lines(): void {
-		$this->assertNull( Flame_Builder_Node::parse_flame_index( 'too-short' ) );
-	}
-
-	public function test_format_index_entry_handles_deeply_nested_flame(): void {
-		// A MAX_STACK_DEPTH (50) deeply-nested flame VALUE: the formatter reads the
-		// already-unpacked message array, so there is no json_decode depth to exceed.
-		$flame = [ 'name' => 'leaf', 'value' => 1, 'children' => [] ];
-		for ( $i = 0; $i < 49; $i++ ) {
-			$flame = [ 'name' => "level{$i}", 'value' => 1, 'children' => [ $flame ] ];
-		}
-		$flame['rid']      = 'deep-rid';
-		$flame['url_hash'] = 'deadbeef0001';
-
-		$message                   = Message::new_message();
-		$message[ Message::TYPE ]  = Message::TM_STRUCT;
-		$message[ Message::VALUE ] = $flame;
-
-		$position = [ 'segment' => 0, 'offset' => 0, 'length' => 100 ];
-		$entry    = Flame_Builder_Node::format_index_entry( $message, $position );
-		$this->assertNotNull( $entry );
-		$this->assertSame( 'deep-rid', Flame_Builder_Node::parse_flame_index( $entry )['rid'] );
-	}
-
-	// --- save/restore state -----------------------------------------------
-
-	public function test_save_and_restore_pending_state_round_trip(): void {
-		$now = 1_700_000_000;
-		$fb  = new Flame_Builder_Node();
-		$this->fill_request( $fb, $this->completed_request( [
-			'duration_ms' => 50.0,
-			'timestamp'   => $now,
-			'profiles'    => [ 'wpdb' => [ 'time' => 0.1, 'count' => 1, 'entries' => [] ] ],
-		] ) );
-
-		$saved  = $fb->save_state();
-		$bucket = Stats_Store::bucket_key( $now );
-		$this->assertArrayHasKey( $bucket, $saved['pending'] );
-
-		$fb2 = new Flame_Builder_Node();
-		$fb2->restore_state( $saved );
-		$this->assertSame( $saved['pending'], $fb2->save_state()['pending'] );
 	}
 
 	public function test_held_mirror_size_is_readable_before_it_overflows(): void {
@@ -1206,6 +1372,38 @@ class FlameBuilderTest extends TestCase {
 		$this->assertStringContainsString( '2 of 3 frames dropped', $hit, 'counts what fell out' );
 	}
 
+	public function test_the_over_budget_tripwire_names_the_dropped_frames_namespace(): void {
+		// ADR-11 and ADR-14 both ask the operator whether the largest dropped
+		// frame is a per-server leaderboard or a `urls` shard — a question
+		// about the NAMESPACE. Sharding made both an opaque key, so the line
+		// has to name the namespace in its own right.
+		$err = '';
+		Core::set_stderr_handler( static function ( $text ) use ( &$err ) {
+			$err .= $text;
+		} );
+
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		[ $fb ]     = $this->mirrored_builder( $store, 'flames-stats' );
+
+		$open   = 1_700_000_000;
+		$bucket = Stats_Store::bucket_key( $open );
+		$fb->set_clock( static fn() => $open );
+
+		$store->set_hourly_bucket( $bucket, [ 'count' => 7 ] );
+		$store->set_category_bucket( $bucket, [ 'blob' => \str_repeat( 'c', 300000 ) ] );
+		$store->set_leaderboard_bucket( $bucket, [ 'blob' => \str_repeat( 'x', 400000 ) ] );
+
+		$fb->save_state();
+		$fb->set_clock( null );
+
+		$this->assertStringContainsString(
+			Stats_Store::NS_LB . '/' . Stats_Store::entry_key( 0, Stats_Store::NS_LB . ':' . $bucket ),
+			$err,
+			'the namespace is printed beside the key it belongs to'
+		);
+	}
+
 	// --- finalize_flame_node ----------------------------------------------
 
 	public function test_finalize_normalizes_parent_value_to_at_least_children_sum(): void {
@@ -1256,11 +1454,20 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_flame_builder_set_is_hub_verb_round_trips(): void {
+		// What a dump owes is REPLAY, not a literal: the argument it emits has
+		// to come back through the same verb as the same state.
 		$fb = new Flame_Builder_Node();
 		$fb->name( 'fb' );
-		$this->assertSame( 'ok', $this->read_private( $fb, 'interpreter' )->dispatch( 'set_is_hub', [ 'true' ] ) );
+		// The substrate's synthesized toggle handler answers "ok\n".
+		$this->assertSame( "ok\n", $this->read_private( $fb, 'interpreter' )->dispatch( 'set_is_hub', [ 'true' ] ) );
 		$dump = $fb->dump_config();
-		$this->assertStringContainsString( 'command_node fb:config set_is_hub true', $dump );
+		$this->assertMatchesRegularExpression( '/command_node fb:config set_is_hub (\S+)/', $dump );
+
+		\preg_match( '/command_node fb:config set_is_hub (\S+)/', $dump, $m );
+		$replayed = new Flame_Builder_Node();
+		$replayed->name( 'fb2' );
+		$this->read_private( $replayed, 'interpreter' )->dispatch( 'set_is_hub', [ $m[1] ] );
+		$this->assertTrue( $this->read_private( $replayed, 'is_hub' ), 'the dumped argument replays as ON' );
 	}
 
 	public function test_flame_builder_node_schema_declares_verbs(): void {
@@ -1334,17 +1541,17 @@ class FlameBuilderTest extends TestCase {
 
 		$req = $this->completed_request( [
 			'profiles' => [
-				// "mything" is in custom event names — should route to custom_events_to_disable.
+				// "mything" is in custom event names — routes to disable_custom_events.
 				'mything hook' => [ 'time' => 0.1, 'count' => 200, 'entries' => [] ],
-				// "wp_init" is NOT a custom event — should route to hooks_to_disable.
+				// "wp_init" is NOT a custom event — routes to disable_hooks.
 				'wp_init hook' => [ 'time' => 0.1, 'count' => 200, 'entries' => [] ],
 			],
 		] );
 		$this->fill_request( $fb, $req );
 
 		$state = $fb->get_auto_tune_state();
-		$this->assertSame( [ 'mything' ], $state['custom_events']['r'] );
-		$this->assertSame( [ 'wp_init' ], $state['hooks']['r'] );
+		$this->assertSame( [ 'mything' ], $state['disable_custom_events']['r'] );
+		$this->assertSame( [ 'wp_init' ], $state['disable_hooks']['r'] );
 	}
 
 	public function test_rule_significant_events_suppress_redundant_proposals(): void {
@@ -1362,7 +1569,7 @@ class FlameBuilderTest extends TestCase {
 		$this->fill_request( $fb, $req );
 
 		$state = $fb->get_auto_tune_state();
-		$this->assertEmpty( $state['new_significant'], 'already-significant event not re-flagged' );
+		$this->assertEmpty( $state['add_significant_events'], 'already-significant event not re-flagged' );
 	}
 
 	// --- restore_state edge cases -----------------------------------------
@@ -1636,7 +1843,7 @@ class FlameBuilderTest extends TestCase {
 
 		// And the pending queue is still loaded — proves we early-returned, not consumed.
 		$state = $fb->get_auto_tune_state();
-		$this->assertSame( [ 'spammy' ], $state['hooks']['r'] );
+		$this->assertSame( [ 'spammy' ], $state['disable_hooks']['r'] );
 	}
 
 	public function test_apply_auto_tune_no_op_when_queues_empty(): void {
@@ -1674,7 +1881,7 @@ class FlameBuilderTest extends TestCase {
 		$fb->flush();
 		// Auto-tune queues drained after flush.
 		$state = $fb->get_auto_tune_state();
-		$this->assertSame( [], $state['hooks'] );
+		$this->assertSame( [], $state['disable_hooks'] );
 	}
 
 	// --- persist_aggregate_stats internals: hourly expiration, percentiles --
@@ -1715,14 +1922,17 @@ class FlameBuilderTest extends TestCase {
 		$fb->flush();
 
 		$bucket    = Stats_Store::bucket_key( $now );
-		$index     = $store->get_url_bucket( $bucket );
+		$index     = $this->url_bucket_rows( $store, $bucket );
 		$url_hash  = Log_Manager::url_hash( '/p50' );
 		$this->assertArrayHasKey( $url_hash, $index );
 		$stats     = $index[ $url_hash ];
 		$this->assertGreaterThan( 0, $stats['p50_ms'] );
 		$this->assertGreaterThanOrEqual( $stats['p50_ms'], $stats['p95_ms'] );
 		$this->assertGreaterThanOrEqual( $stats['p95_ms'], $stats['p99_ms'] );
-		$this->assertGreaterThan( 0, $stats['avg_ms'] );
+		// The mean is NOT stored: it divides by `timed_count`, and the reader
+		// owns that rule (`Performance_CI_Node::mean_ms`). A second copy here
+		// wrote a field nothing read into the largest blob the schema keeps.
+		$this->assertArrayNotHasKey( 'avg_ms', $stats );
 	}
 
 	public function test_url_index_caps_at_500_keeps_top_by_count(): void {
@@ -1732,7 +1942,10 @@ class FlameBuilderTest extends TestCase {
 		$fb->set_stats_store( $store );
 
 		$now = \time();
-		// Use 510 distinct URLs to trigger the 500-entry cap.
+		// 510 distinct URLs in one bucket. They all survive now: the cap is a
+		// per-SHARD backstop against an oversized item, not a ceiling on how
+		// many URLs a site may have in five minutes — which is what it was when
+		// the whole bucket lived in one blob.
 		for ( $i = 0; $i < 510; $i++ ) {
 			$this->fill_request( $fb, $this->completed_request( [
 				'url'         => "/path-$i",
@@ -1743,8 +1956,11 @@ class FlameBuilderTest extends TestCase {
 		$fb->flush();
 
 		$bucket = Stats_Store::bucket_key( $now );
-		$index  = $store->get_url_bucket( $bucket );
-		$this->assertLessThanOrEqual( 500, \count( $index ) );
+		$index  = $this->url_bucket_rows( $store, $bucket );
+		$this->assertCount( 510, $index );
+		foreach ( Stats_Store::url_shards() as $shard ) {
+			$this->assertLessThanOrEqual( 500, \count( $store->get_url_shard( $bucket, $shard ) ) );
+		}
 	}
 
 	// --- merge_and_cap_dimensional Other rollover -------------------------
@@ -2099,8 +2315,8 @@ class FlameBuilderTest extends TestCase {
 		$this->fill_request( $fb, $req );
 
 		$state = $fb->get_auto_tune_state();
-		$this->assertEmpty( $state['hooks'], 'plugin-suffix categories never proposed' );
-		$this->assertEmpty( $state['new_significant'], 'plugin-suffix never significant' );
+		$this->assertEmpty( $state['disable_hooks'], 'plugin-suffix categories never proposed' );
+		$this->assertEmpty( $state['add_significant_events'], 'plugin-suffix never significant' );
 	}
 
 	public function test_finalize_handles_missing_value_field(): void {
@@ -2174,8 +2390,8 @@ class FlameBuilderTest extends TestCase {
 
 		// Pre-fill queues — confirm via state.
 		$state = $fb->get_auto_tune_state();
-		$this->assertNotEmpty( $state['hooks'] );
-		$this->assertNotEmpty( $state['new_significant'] );
+		$this->assertNotEmpty( $state['disable_hooks'] );
+		$this->assertNotEmpty( $state['add_significant_events'] );
 
 		$message                       = Message::new_message();
 		$message[ Message::TYPE ]      = Message::TM_REQUEST;
@@ -2827,19 +3043,424 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( [ 'count' => 37 ], $found['data'] );
 	}
 
+	public function test_a_closed_bucket_is_not_re_mirrored_when_a_later_bucket_fills(): void {
+		// A bucket is written when it changes, so a closed one is written once.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		[ $fb, $p ] = $this->mirrored_builder( $store, 'flames-stats' );
+
+		$early = 1_700_000_000;          // floors to :05
+		$late  = $early + 600;           // two buckets later
+		$first = Stats_Store::bucket_key( $early );
+
+		$fb->set_clock( static fn() => $early );
+		// Two checkpoints while `early` is still open: the old code wrote it at both.
+		foreach ( [ 41.0, 43.0 ] as $duration_ms ) {
+			$this->fill_request( $fb, $this->completed_request( [ 'duration_ms' => $duration_ms, 'timestamp' => $early ] ) );
+			$fb->flush();
+			$fb->save_state();
+		}
+
+		$fb->set_clock( static fn() => $late );
+		$this->fill_request( $fb, $this->completed_request( [ 'duration_ms' => 73.0, 'timestamp' => $late ] ) );
+		$fb->flush();
+		$fb->save_state();
+		$p->flush();
+
+		$written = \array_count_values( $this->raw_mirror_frame_keys( $p ) );
+		$this->assertSame(
+			1,
+			$written[ Stats_Store::entry_key( 0, Stats_Store::NS_HOURLY . ':' . $first ) ] ?? 0,
+			'a closed bucket is mirrored once and never rewritten'
+		);
+	}
+
+	public function test_evicted_url_bucket_is_restored_from_the_mirror(): void {
+		Core::$memd  = new InMemoryMemcached();
+		$store       = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		[ $fb, $p ]  = $this->mirrored_builder( $store, 'flames-stats' );
+
+		$bucket = '2026-02-03-04-05';
+		$rows   = [ 'ab12cd34ef56' => [ 'url' => 'https://example.test/jobs/import', 'count' => 639 ] ];
+		$this->set_url_bucket( $store, $bucket, $rows );
+		// hourly stays warm: it is the sentinel the retired gate keyed on.
+		$store->set_hourly_bucket( $bucket, [ 'count' => 12 ] );
+		$fb->save_state();
+		$p->flush();
+
+		// Evict just that row's shard, the way memcache does under pressure.
+		$shard = Stats_Store::url_shard( 'ab12cd34ef56' );
+		$key   = Stats_Store::entry_key( 0, "urls:{$shard}:{$bucket}" );
+		Core::$memd->delete( $key );
+		$this->assertFalse( Core::$memd->get( $key ), 'the shard holding it is evicted' );
+		$this->assertNotSame( [], $store->get_hourly_bucket( $bucket ), 'memcache still warm by the old sentinel' );
+
+		$this->assertSame( [ $bucket => $rows ], $this->url_rows_by_bucket( $store, [ $bucket ] ) );
+	}
+
+	public function test_a_frame_mirrored_after_the_first_miss_is_still_found(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		[ $fb, $p ] = $this->mirrored_builder( $store, 'flames-stats' );
+
+		$bucket = '2026-02-03-04-05';
+		$key    = Stats_Store::entry_key( 0, 'urls:' . Stats_Store::url_shard( 'h' ) . ':' . $bucket );
+
+		$this->set_url_bucket( $store, $bucket, [ 'h' => [ 'url' => '/a', 'count' => 11 ] ] );
+		$fb->save_state();
+		$p->flush();
+		Core::$memd->delete( $key );
+		// This read builds the locator table.
+		$this->assertSame( 11, ( $this->url_bucket_rows( $store, $bucket ) )['h']['count'] );
+
+		// A newer frame for the same key, mirrored AFTER that table existed.
+		$this->set_url_bucket( $store, $bucket, [ 'h' => [ 'url' => '/a', 'count' => 872 ] ] );
+		$fb->save_state();
+		$p->flush();
+		Core::$memd->delete( $key );
+
+		$this->assertSame(
+			872,
+			( $this->url_bucket_rows( $store, $bucket ) )['h']['count'],
+			'the newest mirrored frame, not the one the locator table was built from'
+		);
+	}
+
+	public function test_every_missing_bucket_is_recovered_in_one_index_pass(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		/** @var CountingIndexPartition $p */
+		[ $fb, $p ] = $this->mirrored_builder( $store, 'flames-stats', CountingIndexPartition::class );
+
+		$buckets = [ '2026-02-03-04-05', '2026-02-03-04-10', '2026-02-03-04-15' ];
+		foreach ( $buckets as $i => $bucket ) {
+			$this->set_url_bucket( $store, $bucket, [ "hash{$i}" => [ 'url' => "/j{$i}", 'count' => 641 + $i ] ] );
+		}
+		$fb->save_state();
+		$p->flush();
+		foreach ( $buckets as $bucket ) {
+			foreach ( Stats_Store::url_shards() as $shard ) {
+				Core::$memd->delete( Stats_Store::entry_key( 0, "urls:{$shard}:{$bucket}" ) );
+			}
+		}
+		$p->index_scans = 0;
+
+		$out = $this->url_rows_by_bucket( $store, $buckets );
+
+		$this->assertCount( 3, $out, 'every evicted bucket recovered' );
+		$this->assertSame( 641, $out['2026-02-03-04-05']['hash0']['count'] );
+		$this->assertSame( 1, $p->index_scans, 'one index pass for all three misses, not one per bucket' );
+	}
+
 	/**
-	 * Arm a mirror over a fresh indexed partition and return both.
-	 *
-	 * @return array{0: Flame_Builder_Node, 1: \Newspack_Nodes\Partition_Node}
+	 * An ABORTED request was killed partway — a worker cut off mid-job, or a
+	 * gyrobase render whose lease was stolen — so its duration is a fragment of
+	 * the real one. Counting it drags every percentile down and invents fast
+	 * requests that never happened, exactly like the timed-out case above.
 	 */
-	private function mirrored_builder( Stats_Store $store, string $name, string $class = \Newspack_Nodes\Partition_Node::class ): array {
-		$p = $this->make_partition( $name, $class );
-		$p->with_index( Flame_Builder_Node::format_stats_index_entry( ... ) );
-		$fb = new Flame_Builder_Node();
-		$fb->name( 'fb' );
+	public function test_aborted_excluded_from_timing(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
-		$fb->set_stats_target( $p->name() );
-		return [ $fb, $p ];
+
+		$this->fill_request( $fb, $this->completed_request( [ 'duration_ms' => 12.0, 'error_status' => 'A' ] ) );
+		$fb->flush();
+
+		foreach ( $this->recent_hourly( $store ) as $stats ) {
+			$this->assertSame( 0, $stats['count'], 'aborted excluded from count' );
+			$this->assertSame( 0.0, $stats['sum_ms'], 'aborted excluded from sum_ms' );
+		}
+	}
+
+	public function test_workers_excluded_from_timing(): void {
+				Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb    = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+
+		$this->fill_request( $fb, $this->completed_request( [ 'duration_ms' => 100.0, 'is_worker' => true ] ) );
+		$fb->flush();
+
+		$hourly = $this->recent_hourly( $store );
+		foreach ( $hourly as $bucket => $stats ) {
+			$this->assertSame( 0, $stats['count'], 'workers excluded from timing count' );
+		}
+	}
+
+	public function test_worker_request_records_url_timing_but_no_global(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+
+		$now = \time();
+		$req = $this->completed_request( [
+			'url'         => '/?cache-cozy',
+			'duration_ms' => 40.0,
+			'is_worker'   => true,
+			'peak_mb'     => 12.0,
+			'timestamp'   => $now,
+			'profiles'    => [ 'wpdb' => [ 'time' => 0.2, 'count' => 3, 'ts' => $now, 'entries' => [] ] ],
+		] );
+		$this->fill_request( $fb, $req );
+		$fb->flush();
+
+		$bucket   = Stats_Store::bucket_key( $now );
+		$url_hash = Log_Manager::url_hash( '/?cache-cozy' );
+
+		// Per-URL timing IS kept for the synthetic worker row.
+		$index = $this->url_bucket_rows( $store, $bucket );
+		$this->assertArrayHasKey( $url_hash, $index );
+		$this->assertSame( 1, $index[ $url_hash ]['count'] );
+		$this->assertSame( 1, $index[ $url_hash ]['timed_count'] );
+		$this->assertEqualsWithDelta( 40.0, $index[ $url_hash ]['sum_ms'], 1e-6 );
+
+		// Global hourly: no count, no timing, and no peak (closed leak).
+		foreach ( $this->recent_hourly( $store ) as $stats ) {
+			$this->assertSame( 0, $stats['count'], 'worker excluded from global count' );
+			$this->assertSame( 0.0, $stats['sum_ms'], 'worker excluded from global timing' );
+			$this->assertSame( 0.0, $stats['sum_peak_mb'], 'worker peak leak closed' );
+		}
+
+		// Global dimensional: no count and no peak contribution.
+		$dim = $this->dim_series( $store, 'status' );
+		foreach ( $dim as $vals ) {
+			foreach ( $vals as $cell ) {
+				$this->assertSame( 0, $cell['c'], 'worker excluded from global dimensional count' );
+				$this->assertSame( 0, $cell['m'], 'worker excluded from global dimensional peak' );
+			}
+		}
+
+		// Global leaderboard + categories: untouched by the worker.
+		$this->assertEmpty( $store->get_leaderboard_bucket( $bucket ) );
+		$this->assertEmpty( $store->get_category_bucket( $bucket ) );
+	}
+
+	public function test_non_worker_request_records_global_count_and_peak(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+
+		$now = \time();
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/x', 'duration_ms' => 40.0, 'peak_mb' => 12.0, 'timestamp' => $now ] ) );
+		$fb->flush();
+
+		$hourly = $store->get_hourly_buckets( [ Stats_Store::bucket_key( $now ) ] );
+		$bucket = \array_keys( $hourly )[0];
+		$this->assertSame( 1, $hourly[ $bucket ]['count'] );
+		$this->assertEqualsWithDelta( 40.0, $hourly[ $bucket ]['sum_ms'], 1e-6 );
+		$this->assertEqualsWithDelta( 12.0, $hourly[ $bucket ]['sum_peak_mb'], 1e-6 );
+	}
+
+	public function test_per_server_tracking_only_when_hub(): void {
+				Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+
+		$fb_spoke = new Flame_Builder_Node();
+		$fb_spoke->set_stats_store( $store );
+		$fb_spoke->set_is_hub( false );
+
+		$fb_hub = new Flame_Builder_Node();
+		$fb_hub->set_stats_store( $store );
+		$fb_hub->set_is_hub( true );
+
+		// Use current time so the bucket alignment between fill and assertion is exact.
+		$now = \time();
+		$req = $this->completed_request( [
+			'server_name' => 'srv-a',
+			'duration_ms' => 50.0,
+			'timestamp'   => $now,
+			'profiles'    => [ 'wpdb' => [ 'time' => 0.1, 'count' => 1, 'entries' => [] ] ],
+		] );
+
+		$this->fill_request( $fb_spoke, $req );
+		$fb_spoke->flush();
+
+		// Spoke: per-server bucket should be empty (no per-server tracking).
+		$bucket = Stats_Store::bucket_key( $now );
+		$this->assertEmpty( $store->get_leaderboard_bucket( $bucket, 'srv-a' ) );
+
+		// Hub: per-server bucket should be populated.
+		$this->fill_request( $fb_hub, $req );
+		$fb_hub->flush();
+		$lb_s = $store->get_leaderboard_bucket( $bucket, 'srv-a' );
+		$this->assertSame( 1, $lb_s['count'] ?? 0 );
+	}
+
+	public function test_disable_uses_the_stamped_rules_threshold(): void {
+		// The governing rule's threshold — resolved by the request's stamped
+		// rule_id — decides, and the proposal is keyed under that rule id.
+		$this->set_rule( [ 'id' => 'loud', 'pattern' => '/loud/', 'auto_disable_threshold' => 100 ] );
+		$fb  = new Flame_Builder_Node();
+		$req = $this->completed_request( [
+			'rule_id'  => 'loud',
+			'url'      => '/loud/x',
+			'profiles' => [ 'noisy_hook hook' => [ 'time' => 0.1, 'count' => 200, 'entries' => [] ] ],
+		] );
+		$this->fill_request( $fb, $req );
+		$state = $fb->get_auto_tune_state();
+		$this->assertSame( [ 'noisy_hook' ], $state['disable_hooks']['loud'] );
+	}
+
+	public function test_no_stamped_rule_applies_no_auto_tune(): void {
+		// Stale stamped id + a url that matches no rule ⇒ null rule ⇒ no tuning.
+		$this->set_rule( [ 'id' => 'quiet', 'pattern' => '/q/' ] );
+		$fb  = new Flame_Builder_Node();
+		$req = $this->completed_request( [
+			'rule_id'  => 'ghost',
+			'url'      => '/unmatched',
+			'profiles' => [ 'h hook' => [ 'time' => 0.1, 'count' => 999, 'entries' => [] ] ],
+		] );
+		$this->fill_request( $fb, $req );
+		$state = $fb->get_auto_tune_state();
+		$this->assertEmpty( $state['disable_hooks'] );
+	}
+
+	public function test_noisy_hook_detection_threshold_zero_disables_check(): void {
+		// With threshold 0, no hook ever gets proposed.
+		$this->set_rule( [ 'auto_disable_threshold' => 0 ] );
+		$fb = new Flame_Builder_Node();
+
+		$req = $this->completed_request( [
+			'profiles' => [
+				'wpdb' => [ 'time' => 0.4, 'count' => 99999, 'entries' => [] ],
+			],
+		] );
+		$this->fill_request( $fb, $req );
+		$state = $fb->get_auto_tune_state();
+		$this->assertEmpty( $state['disable_hooks'] );
+	}
+
+	public function test_noisy_hook_detection_proposes_when_count_exceeds_threshold(): void {
+		$this->set_rule( [ 'auto_disable_threshold' => 100 ] );
+		$fb = new Flame_Builder_Node();
+
+		$req = $this->completed_request( [
+			'profiles' => [
+				// "wpdb" with count > 100 → base name "wpdb" proposed for disable.
+				'wpdb hook' => [ 'time' => 0.1, 'count' => 200, 'entries' => [] ],
+			],
+		] );
+		$this->fill_request( $fb, $req );
+		$state = $fb->get_auto_tune_state();
+		$this->assertSame( [ 'wpdb' ], $state['disable_hooks']['r'] );
+	}
+
+	public function test_noisy_hook_detection_excludes_worker_requests(): void {
+		// Auto-disable is a global signal: worker traffic feeds only its own
+		// per-URL row, never the plugin-wide hooks_to_disable decision.
+		$this->set_rule( [ 'auto_disable_threshold' => 100 ] );
+		$fb = new Flame_Builder_Node();
+
+		$req = $this->completed_request( [
+			'is_worker' => true,
+			'profiles'  => [
+				'wpdb hook' => [ 'time' => 0.1, 'count' => 200, 'entries' => [] ],
+			],
+		] );
+		$this->fill_request( $fb, $req );
+		$state = $fb->get_auto_tune_state();
+		$this->assertEmpty( $state['disable_hooks'], 'worker traffic must not drive global hook auto-disable' );
+	}
+
+	public function test_callback_categories_skipped_from_auto_tune(): void {
+		$this->set_rule( [ 'auto_disable_threshold' => 100 ] );
+		$fb = new Flame_Builder_Node();
+
+		$req = $this->completed_request( [
+			'profiles' => [
+				// callback frames end with " @N" — not independent events.
+				'wpdb @10' => [ 'time' => 0.1, 'count' => 200, 'entries' => [] ],
+			],
+		] );
+		$this->fill_request( $fb, $req );
+		$state = $fb->get_auto_tune_state();
+		$this->assertEmpty( $state['disable_hooks'], 'callback categories never proposed' );
+	}
+
+	public function test_significant_event_detection_picks_up_slow_avg(): void {
+		$this->set_rule( [ 'auto_protect_time_threshold' => 0.05 ] ); // 50ms threshold
+		$fb = new Flame_Builder_Node();
+
+		// avg_per_call = sum_time / sum_count = 0.4/2 = 0.2 ≥ 0.05 → significant.
+		$req = $this->completed_request( [
+			'profiles' => [
+				'slow_hook' => [ 'time' => 0.4, 'count' => 2, 'entries' => [] ],
+			],
+		] );
+		$this->fill_request( $fb, $req );
+		$state = $fb->get_auto_tune_state();
+		$this->assertSame( [ 'slow_hook' ], $state['add_significant_events']['r'] );
+	}
+
+	public function test_format_and_parse_flame_index_round_trip(): void {
+		// The formatter receives the unpacked message array; VALUE at index 6.
+		$message                       = Message::new_message();
+		$message[ Message::TYPE ]      = Message::TM_STRUCT;
+		$message[ Message::VALUE ]     = [ 'rid' => 'abc', 'url_hash' => 'deadbeef0001' ];
+		$position = [ 'segment' => 5, 'offset' => 1024, 'length' => 100 ];
+		$entry    = Flame_Builder_Node::format_index_entry( $message, $position );
+		$this->assertNotNull( $entry );
+		$this->assertSame( 68, \strlen( $entry ) );
+
+		$parsed = Flame_Builder_Node::parse_flame_index( $entry );
+		$this->assertSame( 'abc', $parsed['rid'] );
+		$this->assertSame( 'deadbeef0001', $parsed['url_hash'] );
+		$this->assertSame( 5, $parsed['segment'] );
+		$this->assertSame( 1024, $parsed['offset'] );
+		$this->assertSame( 100, $parsed['length'] );
+	}
+
+	public function test_format_index_entry_returns_null_when_rid_missing(): void {
+		$message                       = Message::new_message();
+		$message[ Message::TYPE ]      = Message::TM_STRUCT;
+		$message[ Message::VALUE ]     = [ 'url_hash' => 'abc' ];
+		$position = [ 'segment' => 0, 'offset' => 0, 'length' => 0 ];
+		$this->assertNull( Flame_Builder_Node::format_index_entry( $message, $position ) );
+	}
+
+	public function test_parse_flame_index_returns_null_for_short_lines(): void {
+		$this->assertNull( Flame_Builder_Node::parse_flame_index( 'too-short' ) );
+	}
+
+	public function test_format_index_entry_handles_deeply_nested_flame(): void {
+		// A MAX_STACK_DEPTH (50) deeply-nested flame VALUE: the formatter reads the
+		// already-unpacked message array, so there is no json_decode depth to exceed.
+		$flame = [ 'name' => 'leaf', 'value' => 1, 'children' => [] ];
+		for ( $i = 0; $i < 49; $i++ ) {
+			$flame = [ 'name' => "level{$i}", 'value' => 1, 'children' => [ $flame ] ];
+		}
+		$flame['rid']      = 'deep-rid';
+		$flame['url_hash'] = 'deadbeef0001';
+
+		$message                   = Message::new_message();
+		$message[ Message::TYPE ]  = Message::TM_STRUCT;
+		$message[ Message::VALUE ] = $flame;
+
+		$position = [ 'segment' => 0, 'offset' => 0, 'length' => 100 ];
+		$entry    = Flame_Builder_Node::format_index_entry( $message, $position );
+		$this->assertNotNull( $entry );
+		$this->assertSame( 'deep-rid', Flame_Builder_Node::parse_flame_index( $entry )['rid'] );
+	}
+
+	public function test_save_and_restore_pending_state_round_trip(): void {
+		$now = 1_700_000_000;
+		$fb  = new Flame_Builder_Node();
+		$this->fill_request( $fb, $this->completed_request( [
+			'duration_ms' => 50.0,
+			'timestamp'   => $now,
+			'profiles'    => [ 'wpdb' => [ 'time' => 0.1, 'count' => 1, 'entries' => [] ] ],
+		] ) );
+
+		$saved  = $fb->save_state();
+		$bucket = Stats_Store::bucket_key( $now );
+		$this->assertArrayHasKey( $bucket, $saved['pending'] );
+
+		$fb2 = new Flame_Builder_Node();
+		$fb2->restore_state( $saved );
+		$this->assertSame( $saved['pending'], $fb2->save_state()['pending'] );
 	}
 
 	public function test_the_open_bucket_is_held_back_until_it_closes(): void {
@@ -2966,7 +3587,11 @@ class FlameBuilderTest extends TestCase {
 		$successor->set_clock( static fn() => $open + 86400 );
 		$successor->restore_state( $checkpoint );
 
-		$this->assertSame( [], $successor->save_state()['mirror']['buffer'], 'the expired frame did not come back' );
+		$this->assertSame(
+			[],
+			$successor->save_state()['mirror']['frames'][''] ?? [],
+			'the expired frame did not come back'
+		);
 		$successor->set_clock( null );
 	}
 
@@ -3013,7 +3638,12 @@ class FlameBuilderTest extends TestCase {
 		$store->set_hourly_bucket( $bucket, [ 'count' => 3 ] );
 		$store->set_leaderboard_bucket( $bucket, [ 'blob' => \str_repeat( 'x', 300000 ) ] );
 
-		$carried = $fb->save_state()['mirror']['buffer'];
+		// One namespaced space now: flatten it, the assertions are about WHICH
+		// frames rode, not which namespace they sat under.
+		$carried = [];
+		foreach ( $fb->save_state()['mirror']['frames'] ?? [] as $frames ) {
+			$carried += \is_array( $frames ) ? $frames : [];
+		}
 		$fb->set_clock( null );
 
 		$this->assertArrayHasKey(
@@ -3028,109 +3658,35 @@ class FlameBuilderTest extends TestCase {
 		);
 	}
 
-	public function test_a_closed_bucket_is_not_re_mirrored_when_a_later_bucket_fills(): void {
-		// A bucket is written when it changes, so a closed one is written once.
-		Core::$memd = new InMemoryMemcached();
-		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		[ $fb, $p ] = $this->mirrored_builder( $store, 'flames-stats' );
+	public function test_a_restored_row_missing_a_field_does_not_fault_the_accumulator(): void {
+		// `restore_state()` merges the BUCKET over `empty_bucket()` and stops,
+		// so the per-URL rows inside arrive exactly as the checkpoint held
+		// them. The accumulator must not fault on a key one of them lacks —
+		// `count( null )` is fatal, not a warning.
+		$now    = 1_700_000_000;
+		$bucket = Stats_Store::bucket_key( $now );
+		$url    = '/restored/partial';
+		$hash   = Log_Manager::url_hash( $url );
 
-		$early = 1_700_000_000;          // floors to :05
-		$late  = $early + 600;           // two buckets later
-		$first = Stats_Store::bucket_key( $early );
+		$fb = new Flame_Builder_Node();
+		$fb->restore_state( [
+			'pending' => [
+				$bucket => [
+					'url_stats' => [
+						$hash => [ 'url' => $url, 'count' => 6, 'timed_count' => 6, 'sum_ms' => 300.0 ],
+					],
+				],
+			],
+		] );
 
-		$fb->set_clock( static fn() => $early );
-		// Two checkpoints while `early` is still open: the old code wrote it at both.
-		foreach ( [ 41.0, 43.0 ] as $duration_ms ) {
-			$this->fill_request( $fb, $this->completed_request( [ 'duration_ms' => $duration_ms, 'timestamp' => $early ] ) );
-			$fb->flush();
-			$fb->save_state();
-		}
+		$this->fill_request( $fb, $this->completed_request( [
+			'url'         => $url,
+			'duration_ms' => 41.0,
+			'timestamp'   => $now,
+		] ) );
 
-		$fb->set_clock( static fn() => $late );
-		$this->fill_request( $fb, $this->completed_request( [ 'duration_ms' => 73.0, 'timestamp' => $late ] ) );
-		$fb->flush();
-		$fb->save_state();
-		$p->flush();
-
-		$written = \array_count_values( $this->raw_mirror_frame_keys( $p ) );
-		$this->assertSame(
-			1,
-			$written[ Stats_Store::entry_key( 0, Stats_Store::NS_HOURLY . ':' . $first ) ] ?? 0,
-			'a closed bucket is mirrored once and never rewritten'
-		);
-	}
-
-	public function test_evicted_url_bucket_is_restored_from_the_mirror(): void {
-		Core::$memd  = new InMemoryMemcached();
-		$store       = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		[ $fb, $p ]  = $this->mirrored_builder( $store, 'flames-stats' );
-
-		$bucket = '2026-02-03-04-05';
-		$rows   = [ 'ab12cd34ef56' => [ 'url' => 'https://example.test/jobs/import', 'count' => 639 ] ];
-		$store->set_url_bucket( $bucket, $rows );
-		// hourly stays warm: it is the sentinel the retired gate keyed on.
-		$store->set_hourly_bucket( $bucket, [ 'count' => 12 ] );
-		$fb->save_state();
-		$p->flush();
-
-		// Evict just the bucket, the way memcache does under pressure.
-		Core::$memd->delete( Stats_Store::entry_key( 0, 'urls:' . $bucket ) );
-		$this->assertFalse( Core::$memd->get( Stats_Store::entry_key( 0, 'urls:' . $bucket ) ), 'bucket evicted from memcache' );
-		$this->assertNotSame( [], $store->get_hourly_bucket( $bucket ), 'memcache still warm by the old sentinel' );
-
-		$this->assertSame( [ $bucket => $rows ], $store->get_url_buckets( [ $bucket ] ) );
-	}
-
-	public function test_a_frame_mirrored_after_the_first_miss_is_still_found(): void {
-		Core::$memd = new InMemoryMemcached();
-		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		[ $fb, $p ] = $this->mirrored_builder( $store, 'flames-stats' );
-
-		$bucket = '2026-02-03-04-05';
-		$key    = Stats_Store::entry_key( 0, 'urls:' . $bucket );
-
-		$store->set_url_bucket( $bucket, [ 'h' => [ 'url' => '/a', 'count' => 11 ] ] );
-		$fb->save_state();
-		$p->flush();
-		Core::$memd->delete( $key );
-		// This read builds the locator table.
-		$this->assertSame( 11, ( $store->get_url_bucket( $bucket ) )['h']['count'] );
-
-		// A newer frame for the same key, mirrored AFTER that table existed.
-		$store->set_url_bucket( $bucket, [ 'h' => [ 'url' => '/a', 'count' => 872 ] ] );
-		$fb->save_state();
-		$p->flush();
-		Core::$memd->delete( $key );
-
-		$this->assertSame(
-			872,
-			( $store->get_url_bucket( $bucket ) )['h']['count'],
-			'the newest mirrored frame, not the one the locator table was built from'
-		);
-	}
-
-	public function test_every_missing_bucket_is_recovered_in_one_index_pass(): void {
-		Core::$memd = new InMemoryMemcached();
-		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		/** @var CountingIndexPartition $p */
-		[ $fb, $p ] = $this->mirrored_builder( $store, 'flames-stats', CountingIndexPartition::class );
-
-		$buckets = [ '2026-02-03-04-05', '2026-02-03-04-10', '2026-02-03-04-15' ];
-		foreach ( $buckets as $i => $bucket ) {
-			$store->set_url_bucket( $bucket, [ "hash{$i}" => [ 'url' => "/j{$i}", 'count' => 641 + $i ] ] );
-		}
-		$fb->save_state();
-		$p->flush();
-		foreach ( $buckets as $bucket ) {
-			Core::$memd->delete( Stats_Store::entry_key( 0, 'urls:' . $bucket ) );
-		}
-		$p->index_scans = 0;
-
-		$out = $store->get_url_buckets( $buckets );
-
-		$this->assertCount( 3, $out, 'every evicted bucket recovered' );
-		$this->assertSame( 641, $out['2026-02-03-04-05']['hash0']['count'] );
-		$this->assertSame( 1, $p->index_scans, 'one index pass for all three misses, not one per bucket' );
+		$rows = $fb->save_state()['pending'][ $bucket ]['url_stats'] ?? [];
+		$this->assertSame( 7, $rows[ $hash ]['count'] ?? 0 );
 	}
 }
 
@@ -3150,4 +3706,5 @@ class CountingIndexPartition extends \Newspack_Nodes\Partition_Node {
 		++$this->index_scans;
 		parent::scan_index( $cb, $newest_first );
 	}
+
 }

@@ -692,6 +692,112 @@ describe( 'LogEntriesTable', () => {
 		unmount();
 	} );
 
+	it( 'renders both ends of a merged row that spans two tenths', () => {
+		const entries = [
+			{
+				n: 1,
+				ts: 1700000000.11,
+				k: 'db (start)',
+				m: 'SELECT',
+				pairId: 4,
+				indent: 0,
+				originalIdx: 0,
+			},
+			{
+				n: 2,
+				ts: 1700000000.37,
+				k: 'db (complete)',
+				m: '-',
+				pairId: 4,
+				indent: 0,
+				originalIdx: 1,
+			},
+		];
+		const { container, unmount } = renderComponent(
+			React.createElement( LogEntriesTable, { entries } )
+		);
+		const timeCell = container.querySelectorAll( 'tbody td' )[ 2 ];
+		expect( timeCell.querySelector( 'br' ) ).not.toBeNull();
+		expect( timeCell.textContent ).toMatch(
+			/^\d{2}:\d{2}:\d{2}\.11\d{2}:\d{2}:\d{2}\.37$/
+		);
+		unmount();
+	} );
+
+	it( 'leaves the start blank on a merged row with no start timestamp', () => {
+		const entries = [
+			{
+				n: 1,
+				ts: 0,
+				k: 'db (start)',
+				m: 'SELECT',
+				pairId: 4,
+				indent: 0,
+				originalIdx: 0,
+			},
+			{
+				n: 2,
+				ts: 1700000000.37,
+				k: 'db (complete)',
+				m: '-',
+				pairId: 4,
+				indent: 0,
+				originalIdx: 1,
+			},
+		];
+		const { container, unmount } = renderComponent(
+			React.createElement( LogEntriesTable, { entries } )
+		);
+		const timeCell = container.querySelectorAll( 'tbody td' )[ 2 ];
+		expect( timeCell.textContent ).toMatch( /^\d{2}:\d{2}:\d{2}\.37$/ );
+		unmount();
+	} );
+
+	it( 'falls back to the ruler time when a merged row spans no ticks', () => {
+		const entries = [
+			{
+				n: 1,
+				ts: 1700000000.11,
+				k: 'db (start)',
+				m: 'SELECT',
+				pairId: 4,
+				indent: 0,
+				originalIdx: 0,
+			},
+			{
+				n: 2,
+				ts: 1700000000.11,
+				k: 'db (complete)',
+				m: '-',
+				pairId: 4,
+				indent: 0,
+				originalIdx: 1,
+			},
+		];
+		const { container, unmount } = renderComponent(
+			React.createElement( LogEntriesTable, { entries } )
+		);
+		const timeCell = container.querySelectorAll( 'tbody td' )[ 2 ];
+		expect( timeCell.querySelector( 'br' ) ).toBeNull();
+		expect( timeCell.textContent ).toMatch( /^\d{2}:\d{2}:\d{2}\.11$/ );
+		unmount();
+	} );
+
+	it( 'marks a merged row with ▶ and an unfolded start with ▼', () => {
+		const entries = makeEntries();
+		const { container, unmount } = renderComponent(
+			React.createElement( LogEntriesTable, { entries } )
+		);
+		// Everything starts folded, so `db` is merged.
+		expect( container.textContent ).toContain( '▶' );
+		const unfoldBtn = Array.from(
+			container.querySelectorAll( 'button' )
+		).find( ( b ) => b.textContent.includes( 'Unfold All' ) );
+		act( () => unfoldBtn.click() );
+		expect( container.textContent ).toContain( '▼' );
+		unmount();
+	} );
+
 	it( 'placeholder entries render an empty keyword / message', () => {
 		// Inject a placeholder entry (isPlaceholder: true).
 		const entries = [
@@ -745,6 +851,65 @@ describe( 'LogEntriesTable', () => {
 		expect(
 			container.querySelectorAll( '.log-entries-search__nav' ).length
 		).toBe( 0 );
+		jest.useRealTimers();
+		unmount();
+	} );
+
+	it( 'previous-match with nothing selected wraps to the LAST match', () => {
+		// The `p` key already wrapped; the button and Shift+Enter jumped to
+		// the first match instead, so one command answered two ways.
+		const entries = [
+			{
+				n: 1,
+				ts: 1700000000,
+				k: 'process (start)',
+				m: '/zebra',
+				pairId: 1,
+				indent: 0,
+				originalIdx: 0,
+			},
+			{
+				n: 2,
+				ts: 1700000001,
+				k: 'alpha',
+				m: 'zebra one',
+				pairId: 1,
+				indent: 1,
+				originalIdx: 1,
+			},
+			{
+				n: 3,
+				ts: 1700000002,
+				k: 'beta',
+				m: 'zebra two',
+				pairId: 1,
+				indent: 1,
+				originalIdx: 2,
+			},
+			{
+				n: 4,
+				ts: 1700000003,
+				k: 'process (complete)',
+				m: '',
+				pairId: 1,
+				indent: 0,
+				originalIdx: 3,
+			},
+		];
+		jest.useFakeTimers();
+		const { container, unmount } = renderComponent(
+			React.createElement( LogEntriesTable, { entries } )
+		);
+		const input = container.querySelector( 'input' );
+		searchFor( container, input, 'zebra' );
+		expect( container.textContent ).toContain( '3 matches' );
+		const prevButton = container.querySelectorAll(
+			'.log-entries-search__nav'
+		)[ 0 ];
+		act( () => prevButton.click() );
+		flushRAF();
+
+		expect( container.textContent ).toContain( '3/3' );
 		jest.useRealTimers();
 		unmount();
 	} );

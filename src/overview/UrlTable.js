@@ -34,6 +34,85 @@ const pct = ( part, total ) => {
 	return p > 0 ? `${ p }%` : '-';
 };
 
+/**
+ * The one column list; the header and every row are two renderings of it.
+ *
+ * `kind` defaults to `numeric` — a sortable right-aligned header over a
+ * numeric cell. `status` is an unsortable HTTP-class heading over a `pct()`
+ * share, `code` the sortable URL heading over the bar-backed `<code>` cell.
+ * `render` overrides the default `formatNum( url[ field ], 'ms' )`.
+ *
+ * @type {Array<{field: string, label: string, kind: string, status?: string, render?: Function}>}
+ */
+const COLUMNS = [
+	{
+		field: 'count',
+		label: __( 'Reqs', 'newspack-event-logger-nodes' ),
+		render: ( url, formatNum ) => formatNum( url.count ),
+	},
+	{
+		field: 'url',
+		label: __( 'URL', 'newspack-event-logger-nodes' ),
+		kind: 'code',
+		render: ( url ) => (
+			<code>
+				{ url.aggregate
+					? __(
+							'other URLs beyond the per-bucket cap',
+							'newspack-event-logger-nodes'
+					  )
+					: url.url }
+			</code>
+		),
+	},
+	{ field: 'count_2xx', label: '2xx', kind: 'status', status: '218' },
+	{ field: 'count_3xx', label: '3xx', kind: 'status', status: '307' },
+	{ field: 'count_4xx', label: '4xx', kind: 'status', status: '418' },
+	{ field: 'count_5xx', label: '5xx', kind: 'status', status: '599' },
+	{ field: 'avg_ms', label: __( 'Avg', 'newspack-event-logger-nodes' ) },
+	{ field: 'min_ms', label: __( 'Min', 'newspack-event-logger-nodes' ) },
+	{ field: 'max_ms', label: __( 'Max', 'newspack-event-logger-nodes' ) },
+	{ field: 'p95_ms', label: 'p95' },
+	{
+		field: 'avg_peak_mb',
+		label: __( 'Mem', 'newspack-event-logger-nodes' ),
+		render: ( url, formatNum ) =>
+			url.avg_peak_mb > 0 ? formatNum( url.avg_peak_mb, 'MB' ) : '-',
+	},
+].map( ( col ) => ( { kind: 'numeric', ...col } ) );
+
+// Per-kind class modifiers; `code` adds none to either mark.
+const CELL_CLASS = {
+	code: '',
+	numeric: ' event-logger-table__cell--numeric',
+	status: ' event-logger-table__cell--status entry-status',
+};
+const HEADER_CLASS = {
+	code: '',
+	numeric: ' event-logger-table__header-btn--numeric',
+};
+const cellClass = ( col ) =>
+	`event-logger-table__cell newspack-nodes-table__cell${
+		CELL_CLASS[ col.kind ]
+	}`;
+
+/**
+ * Render one column's cell for one URL.
+ *
+ * @param {Object}   col       Column declaration from COLUMNS.
+ * @param {Object}   url       URL data object.
+ * @param {Function} formatNum Number formatting function.
+ * @return {*} Cell content.
+ */
+const renderCell = ( col, url, formatNum ) => {
+	if ( 'status' === col.kind ) {
+		return pct( url[ col.field ], url.count );
+	}
+	return col.render
+		? col.render( url, formatNum )
+		: formatNum( url[ col.field ], 'ms' );
+};
+
 // JSDoc rides the inner function: on the const, memo() infers props as `{}`.
 const UrlRow = memo(
 	/**
@@ -64,6 +143,9 @@ const UrlRow = memo(
 		}
 		const barValue = url[ barField ] || 0;
 		const barPct = maxAvg > 0 ? ( barValue / maxAvg ) * 100 : 0;
+		const barStyle = {
+			background: `linear-gradient(to right, rgba(100, 181, 246, 0.15) ${ barPct }%, transparent ${ barPct }%)`,
+		};
 		const handleKeyDown = ( e ) => {
 			if ( e.key === 'Enter' || e.key === ' ' ) {
 				e.preventDefault();
@@ -71,70 +153,36 @@ const UrlRow = memo(
 			}
 		};
 
+		// Stands for many URLs; its key is no url_hash, so nothing to open.
+		const selectable = ! url.aggregate;
+
 		return (
 			<div
-				role="button"
-				tabIndex={ 0 }
-				data-ask={ `url:${ url.hash }` }
+				{ ...( selectable
+					? {
+							role: 'button',
+							tabIndex: 0,
+							'data-ask': `url:${ url.hash }`,
+							onClick: () => onSelect( url ),
+							onKeyDown: handleKeyDown,
+					  }
+					: {} ) }
 				className={ `event-logger-table__row newspack-nodes-table__row${
 					isSelected ? ' is-selected' : ''
-				}` }
-				onClick={ () => onSelect( url ) }
-				onKeyDown={ handleKeyDown }
+				}${ selectable ? '' : ' is-aggregate' }` }
 				style={ { height: ROW_HEIGHT } }
 			>
-				<div className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--numeric">
-					{ formatNum( url.count ) }
-				</div>
-				<div
-					className="event-logger-table__cell newspack-nodes-table__cell"
-					style={ {
-						background: `linear-gradient(to right, rgba(100, 181, 246, 0.15) ${ barPct }%, transparent ${ barPct }%)`,
-					} }
-				>
-					<code>{ url.url }</code>
-				</div>
-				<div
-					className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--status entry-status"
-					data-status="218"
-				>
-					{ pct( url.count_2xx, url.count ) }
-				</div>
-				<div
-					className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--status entry-status"
-					data-status="307"
-				>
-					{ pct( url.count_3xx, url.count ) }
-				</div>
-				<div
-					className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--status entry-status"
-					data-status="418"
-				>
-					{ pct( url.count_4xx, url.count ) }
-				</div>
-				<div
-					className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--status entry-status"
-					data-status="599"
-				>
-					{ pct( url.count_5xx, url.count ) }
-				</div>
-				<div className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--numeric">
-					{ formatNum( url.avg_ms, 'ms' ) }
-				</div>
-				<div className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--numeric">
-					{ formatNum( url.min_ms, 'ms' ) }
-				</div>
-				<div className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--numeric">
-					{ formatNum( url.max_ms, 'ms' ) }
-				</div>
-				<div className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--numeric">
-					{ formatNum( url.p95_ms, 'ms' ) }
-				</div>
-				<div className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--numeric">
-					{ url.avg_peak_mb > 0
-						? formatNum( url.avg_peak_mb, 'MB' )
-						: '-' }
-				</div>
+				{ COLUMNS.map( ( col ) => (
+					<div
+						key={ col.field }
+						data-field={ col.field }
+						data-status={ col.status }
+						className={ cellClass( col ) }
+						style={ 'code' === col.kind ? barStyle : undefined }
+					>
+						{ renderCell( col, url, formatNum ) }
+					</div>
+				) ) }
 			</div>
 		);
 	}
@@ -164,6 +212,8 @@ export default function UrlTable( {
 	const [ sortOrder, setSortOrder ] = useState( 'desc' );
 	const [ searchTerm, setSearchTerm ] = useState( '' );
 	const [ errorsOnly, setErrorsOnly ] = useState( false );
+	// Opts IN, where Errors opts in to narrow; workers are out by default.
+	const [ includeWorkers, setIncludeWorkers ] = useState( false );
 	const [ currentPage, setCurrentPage ] = useState( 1 );
 	const listRef = useRef( null );
 	const searchContainerRef = useRef( null );
@@ -221,21 +271,35 @@ export default function UrlTable( {
 	 * server had already cut with PHP's byte-order `<=>`, so rows could skip
 	 * or repeat across pages.
 	 */
+	// Clamped on READ: a shrinking set strands the page, pager and all.
+	const total = totalUrls || 0;
+	const totalPages = Math.max( 1, Math.ceil( total / URLS_PER_PAGE ) );
+	const page = Math.min( currentPage, totalPages );
+	const offset = ( page - 1 ) * URLS_PER_PAGE;
+	// Move the state too, or a growing set springs the page back.
 	useEffect( () => {
-		const offset = ( currentPage - 1 ) * URLS_PER_PAGE;
+		if ( currentPage !== page ) {
+			setCurrentPage( page );
+		}
+	}, [ currentPage, page ] );
+
+	useEffect( () => {
 		onParamsChange?.( {
 			search: searchTerm,
 			sort: sortField,
 			order: sortOrder,
 			offset,
 			errorsOnly,
+			includeWorkers,
 		} );
 	}, [
 		searchTerm,
 		sortField,
 		sortOrder,
-		currentPage,
+		page,
+		offset,
 		errorsOnly,
+		includeWorkers,
 		onParamsChange,
 	] );
 
@@ -323,6 +387,18 @@ export default function UrlTable( {
 						? __( 'Showing Errors', 'newspack-event-logger-nodes' )
 						: __( 'Errors Only', 'newspack-event-logger-nodes' ) }
 				</button>
+				<button
+					type="button"
+					className={ includeWorkers ? 'button is-active' : 'button' }
+					onClick={ () => setIncludeWorkers( ! includeWorkers ) }
+				>
+					{ includeWorkers
+						? __( 'Showing Workers', 'newspack-event-logger-nodes' )
+						: __(
+								'Include Workers',
+								'newspack-event-logger-nodes'
+						  ) }
+				</button>
 			</div>
 
 			{ /* Scroll container for header + list */ }
@@ -331,85 +407,31 @@ export default function UrlTable( {
 					className="event-logger-table__header newspack-nodes-table__header"
 					role="row"
 				>
-					<button
-						type="button"
-						className="newspack-nodes-sortable-header-button event-logger-table__header-btn newspack-nodes-table__cell event-logger-table__header-btn--numeric"
-						onClick={ () => handleSort( 'count' ) }
-					>
-						{ __( 'Reqs', 'newspack-event-logger-nodes' ) }
-						{ sortIndicator( 'count' ) }
-					</button>
-					<button
-						type="button"
-						className="newspack-nodes-sortable-header-button event-logger-table__header-btn newspack-nodes-table__cell"
-						onClick={ () => handleSort( 'url' ) }
-					>
-						{ __( 'URL', 'newspack-event-logger-nodes' ) }
-						{ sortIndicator( 'url' ) }
-					</button>
-					<span
-						className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--status entry-status"
-						data-status="218"
-					>
-						2xx
-					</span>
-					<span
-						className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--status entry-status"
-						data-status="307"
-					>
-						3xx
-					</span>
-					<span
-						className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--status entry-status"
-						data-status="418"
-					>
-						4xx
-					</span>
-					<span
-						className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--status entry-status"
-						data-status="599"
-					>
-						5xx
-					</span>
-					<button
-						type="button"
-						className="newspack-nodes-sortable-header-button event-logger-table__header-btn newspack-nodes-table__cell event-logger-table__header-btn--numeric"
-						onClick={ () => handleSort( 'avg_ms' ) }
-					>
-						{ __( 'Avg', 'newspack-event-logger-nodes' ) }
-						{ sortIndicator( 'avg_ms' ) }
-					</button>
-					<button
-						type="button"
-						className="newspack-nodes-sortable-header-button event-logger-table__header-btn newspack-nodes-table__cell event-logger-table__header-btn--numeric"
-						onClick={ () => handleSort( 'min_ms' ) }
-					>
-						{ __( 'Min', 'newspack-event-logger-nodes' ) }
-						{ sortIndicator( 'min_ms' ) }
-					</button>
-					<button
-						type="button"
-						className="newspack-nodes-sortable-header-button event-logger-table__header-btn newspack-nodes-table__cell event-logger-table__header-btn--numeric"
-						onClick={ () => handleSort( 'max_ms' ) }
-					>
-						{ __( 'Max', 'newspack-event-logger-nodes' ) }
-						{ sortIndicator( 'max_ms' ) }
-					</button>
-					<button
-						type="button"
-						className="newspack-nodes-sortable-header-button event-logger-table__header-btn newspack-nodes-table__cell event-logger-table__header-btn--numeric"
-						onClick={ () => handleSort( 'p95_ms' ) }
-					>
-						p95{ sortIndicator( 'p95_ms' ) }
-					</button>
-					<button
-						type="button"
-						className="newspack-nodes-sortable-header-button event-logger-table__header-btn newspack-nodes-table__cell event-logger-table__header-btn--numeric"
-						onClick={ () => handleSort( 'avg_peak_mb' ) }
-					>
-						{ __( 'Mem', 'newspack-event-logger-nodes' ) }
-						{ sortIndicator( 'avg_peak_mb' ) }
-					</button>
+					{ COLUMNS.map( ( col ) =>
+						'status' === col.kind ? (
+							<span
+								key={ col.field }
+								data-field={ col.field }
+								data-status={ col.status }
+								className={ cellClass( col ) }
+							>
+								{ col.label }
+							</span>
+						) : (
+							<button
+								key={ col.field }
+								type="button"
+								data-field={ col.field }
+								className={ `newspack-nodes-sortable-header-button event-logger-table__header-btn newspack-nodes-table__cell${
+									HEADER_CLASS[ col.kind ]
+								}` }
+								onClick={ () => handleSort( col.field ) }
+							>
+								{ col.label }
+								{ sortIndicator( col.field ) }
+							</button>
+						)
+					) }
 				</div>
 
 				<div
@@ -450,90 +472,67 @@ export default function UrlTable( {
 			</div>
 
 			{ /* Pagination */ }
-			{ ( () => {
-				const total = totalUrls || 0;
-				const totalPages = Math.max(
-					1,
-					Math.ceil( total / URLS_PER_PAGE )
-				);
-				const offset = ( currentPage - 1 ) * URLS_PER_PAGE;
-
-				if ( total <= URLS_PER_PAGE ) {
-					return (
-						<div className="event-logger-table__pagination">
-							<span className="event-logger-table__pagination-info newspack-nodes-status">
-								{ total > 0
-									? sprintf(
-											// translators: %s: total number of URLs.
-											_n(
-												'%s URL',
-												'%s URLs',
-												total,
-												'newspack-event-logger-nodes'
-											),
-											total.toLocaleString()
-									  )
-									: '' }
-							</span>
-						</div>
-					);
-				}
-
-				return (
-					<div className="event-logger-table__pagination">
-						<span className="event-logger-table__pagination-info newspack-nodes-status">
+			<div className="event-logger-table__pagination">
+				<span className="event-logger-table__pagination-info newspack-nodes-status">
+					{ total > URLS_PER_PAGE &&
+						sprintf(
+							// translators: 1: first row number on the page, 2: last row number on the page, 3: total number of rows.
+							__(
+								'%1$s–%2$s of %3$s rows',
+								'newspack-event-logger-nodes'
+							),
+							( offset + 1 ).toLocaleString(),
+							Math.min(
+								offset + URLS_PER_PAGE,
+								total
+							).toLocaleString(),
+							total.toLocaleString()
+						) }
+					{ total > 0 &&
+						total <= URLS_PER_PAGE &&
+						sprintf(
+							// translators: %s: number of rows in the table.
+							_n(
+								'%s row',
+								'%s rows',
+								total,
+								'newspack-event-logger-nodes'
+							),
+							total.toLocaleString()
+						) }
+				</span>
+				{ total > URLS_PER_PAGE && (
+					<div className="event-logger-table__pagination-controls">
+						<button
+							type="button"
+							className="event-logger-table__pagination-btn button button-small"
+							disabled={ page <= 1 }
+							onClick={ () => setCurrentPage( page - 1 ) }
+						>
+							‹ { __( 'Prev', 'newspack-event-logger-nodes' ) }
+						</button>
+						<span className="event-logger-table__pagination-page">
 							{ sprintf(
-								// translators: 1: first row number on the page, 2: last row number on the page, 3: total number of URLs.
+								// translators: 1: current page number, 2: total number of pages.
 								__(
-									'%1$s–%2$s of %3$s',
+									'Page %1$d of %2$d',
 									'newspack-event-logger-nodes'
 								),
-								( offset + 1 ).toLocaleString(),
-								Math.min(
-									offset + URLS_PER_PAGE,
-									total
-								).toLocaleString(),
-								total.toLocaleString()
+								page,
+								totalPages
 							) }
 						</span>
-						<div className="event-logger-table__pagination-controls">
-							<button
-								type="button"
-								className="event-logger-table__pagination-btn button button-small"
-								disabled={ currentPage <= 1 }
-								onClick={ () =>
-									setCurrentPage( ( p ) => p - 1 )
-								}
-							>
-								‹{ ' ' }
-								{ __( 'Prev', 'newspack-event-logger-nodes' ) }
-							</button>
-							<span className="event-logger-table__pagination-page">
-								{ sprintf(
-									// translators: 1: current page number, 2: total number of pages.
-									__(
-										'Page %1$d of %2$d',
-										'newspack-event-logger-nodes'
-									),
-									currentPage,
-									totalPages
-								) }
-							</span>
-							<button
-								type="button"
-								className="event-logger-table__pagination-btn button button-small"
-								disabled={ currentPage >= totalPages }
-								onClick={ () =>
-									setCurrentPage( ( p ) => p + 1 )
-								}
-							>
-								{ __( 'Next', 'newspack-event-logger-nodes' ) }{ ' ' }
-								›
-							</button>
-						</div>
+						<button
+							type="button"
+							className="event-logger-table__pagination-btn button button-small"
+							disabled={ page >= totalPages }
+							onClick={ () => setCurrentPage( page + 1 ) }
+						>
+							{ __( 'Next', 'newspack-event-logger-nodes' ) } ›
+						</button>
 					</div>
-				);
-			} )() }
+				) }
+			</div>
 		</div>
 	);
 }

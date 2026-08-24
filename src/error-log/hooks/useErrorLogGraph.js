@@ -6,7 +6,7 @@
  * and the view-model class its React view reads.
  */
 
-import { views } from '../nodes/register';
+import { views } from '../nodes/perf-errors-view-node';
 import { useGlobStreamGraph } from '../../hooks/useGlobStreamGraph';
 
 /**

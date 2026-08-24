@@ -50,7 +50,7 @@ final class Flame_Tree {
 	private const MAX_RECURSION_DEPTH = 50;
 
 	/** Open-span ceiling; spans nested deeper are recorded but never matched. */
-	private const MAX_STACK_DEPTH = 50;
+	public const MAX_STACK_DEPTH = 50;
 
 	/**
 	 * Build a flame graph from one request's log entries.
@@ -123,7 +123,7 @@ final class Flame_Tree {
 				if ( $detail && $detail !== $label ) {
 					$new_node['detail'] = "{$base_name}: {$detail}";
 				}
-				$offset = self::offset_ms( $entry['ts'] ?? null, $origin );
+				$offset = self::offset_ms( $origin, $entry['ts'] ?? null );
 				if ( null !== $offset ) {
 					$new_node['t'] = $offset;
 				}
@@ -242,17 +242,19 @@ final class Flame_Tree {
 	/**
 	 * Offset in milliseconds from the request's start, to microsecond
 	 * precision. Null — not zero — when either end is unknown, because zero is
-	 * where the request itself begins.
+	 * where the request itself begins, and null for a negative offset, which
+	 * only a clock running backwards can produce.
 	 *
-	 * @param mixed      $ts     Entry timestamp, unix seconds.
 	 * @param float|null $origin Request start, unix seconds.
+	 * @param mixed      $ts     Entry timestamp, unix seconds.
 	 * @return float|null Milliseconds elapsed, or null when unknown.
 	 */
-	private static function offset_ms( mixed $ts, ?float $origin ): ?float {
+	public static function offset_ms( ?float $origin, mixed $ts ): ?float {
 		if ( null === $origin || ! \is_numeric( $ts ) || (float) $ts <= 0 ) {
 			return null;
 		}
-		return \round( ( (float) $ts - $origin ) * 1000, 3 );
+		$offset = \round( ( (float) $ts - $origin ) * 1000, 3 );
+		return $offset < 0 ? null : $offset;
 	}
 
 	/**
@@ -301,11 +303,7 @@ final class Flame_Tree {
 		}
 
 		// Strip hidden sequence suffix (\x00N) for duplicate sibling tracking.
-		$name     = \is_string( $node['name'] ?? null ) ? $node['name'] : 'unknown';
-		$null_pos = \strpos( $name, "\x00" );
-		if ( false !== $null_pos ) {
-			$node['name'] = \substr( $name, 0, $null_pos );
-		}
+		$node['name'] = self::strip_suffix( \is_string( $node['name'] ?? null ) ? $node['name'] : 'unknown' );
 
 		// Convert sum to average across all requests for this URL.
 		if ( $total_count > 0 && isset( $node['sum_value'] ) ) {
@@ -412,12 +410,7 @@ final class Flame_Tree {
 		if ( $depth > self::MAX_RECURSION_DEPTH ) {
 			return;
 		}
-		$name     = $node['name'] ?? '';
-		$name     = Core::str( $name );
-		$null_pos = \strpos( $name, "\x00" );
-		if ( false !== $null_pos ) {
-			$node['name'] = \substr( $name, 0, $null_pos );
-		}
+		$node['name'] = self::strip_suffix( Core::str( $node['name'] ?? '' ) );
 		if ( ! empty( $node['children'] ) && \is_array( $node['children'] ) ) {
 			foreach ( $node['children'] as &$child ) {
 				if ( \is_array( $child ) ) {
@@ -430,10 +423,23 @@ final class Flame_Tree {
 	}
 
 	/**
+	 * A node name without its duplicate-sibling suffix.
+	 *
+	 * `number_duplicate_siblings()` appends `\x00N` so a merge cannot collapse
+	 * two siblings of the same name; nothing downstream should ever see it.
+	 *
+	 * @param string $name The stored name.
+	 */
+	private static function strip_suffix( string $name ): string {
+		$null_pos = \strpos( $name, "\x00" );
+		return false === $null_pos ? $name : \substr( $name, 0, $null_pos );
+	}
+
+	/**
 	 * Merge child nodes from a per-request flame into the per-URL aggregate
 	 * children additively (sums-not-means). Each node carries `sum_value` (sum
 	 * of inclusive durations across every request the node was seen in) and
-	 * `seen_count` (true count of those requests). Display values come from
+	 * the aggregate's own request count. Display values come from
 	 * finalize at flush time (sum_value / total_count).
 	 *
 	 * Node `name` is the merge key, which is why build_flame_data numbers
@@ -442,9 +448,8 @@ final class Flame_Tree {
 	 * and anything older than AGGREGATE_EXPIRY_SEC is dropped. An incoming
 	 * node's `detail` and `t` never reach the aggregate, which has merged many
 	 * requests and so has no single position: a merged node holds `name`,
-	 * `sum_value`, `seen_count`, `ts`, and `children`, nothing else. Of those,
-	 * `seen_count` is bookkeeping — finalize divides by the aggregate's own
-	 * request count and drops it, so nothing reads it back today.
+	 * `sum_value`, `ts` and `children`, nothing else. Finalize divides by the
+	 * aggregate's own request count, so no per-node tally is kept.
 	 *
 	 * @param array<array-key,mixed> $existing Existing aggregate children (list).
 	 * @param array<array-key,mixed> $incoming Incoming per-request children (list).
@@ -476,16 +481,14 @@ final class Flame_Tree {
 			$incoming_value = \is_numeric( $child['value'] ?? null ) ? (float) $child['value'] : 0.0;
 			if ( ! isset( $indexed[ $name ] ) ) {
 				$indexed[ $name ] = [
-					'name'       => $name,
-					'sum_value'  => $incoming_value,
-					'seen_count' => 1,
-					'ts'         => $child_ts,
-					'children'   => [],
+					'name'      => $name,
+					'sum_value' => $incoming_value,
+					'ts'        => $child_ts,
+					'children'  => [],
 				];
 			} else {
-				$indexed[ $name ]['seen_count'] = ( \is_numeric( $indexed[ $name ]['seen_count'] ?? null ) ? $indexed[ $name ]['seen_count'] : 0 ) + 1;
-				$indexed[ $name ]['ts']         = $child_ts;
-				$indexed[ $name ]['sum_value']  = ( \is_numeric( $indexed[ $name ]['sum_value'] ?? null ) ? $indexed[ $name ]['sum_value'] : 0 ) + $incoming_value;
+				$indexed[ $name ]['ts']        = $child_ts;
+				$indexed[ $name ]['sum_value'] = Core::num_float( $indexed[ $name ]['sum_value'] ?? null ) + $incoming_value;
 			}
 
 			$child_children   = $child['children'] ?? null;

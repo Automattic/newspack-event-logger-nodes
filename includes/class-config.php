@@ -283,10 +283,12 @@ class Config {
 	}
 
 	/**
-	 * The uncached derivation. Two signals, because neither covers both
-	 * shapes — see {@see has_hub_topology()}.
+	 * Whether any active topology makes this install a hub.
 	 *
-	 * @return bool True when an active topology aggregates from spokes.
+	 * Two signals, because neither covers both shapes: an `aggregator` topology
+	 * by name or include, and any graph carrying a `Remote_Source` node.
+	 *
+	 * @return bool True when one of the two signals fires.
 	 */
 	private static function derive_hub_topology(): bool {
 		foreach ( \array_keys( \Newspack_Nodes\Bootstrap::get_topologies() ) as $active ) {
@@ -436,17 +438,6 @@ class Config {
 	 */
 	public static function get_locks_directory(): string {
 		return RuntimeConfig::get_locks_directory();
-	}
-
-	/**
-	 * Get the offsets directory path ({base}/offsets).
-	 *
-	 * @api
-	 * @return string Validated absolute path to offsets directory.
-	 * @throws \RuntimeException If the directory cannot be created or fails the substrate's canonical-path check.
-	 */
-	public static function get_offsets_directory(): string {
-		return RuntimeConfig::get_offsets_directory();
 	}
 
 }

@@ -19,7 +19,7 @@ use Newspack_Nodes\Tests\Capture_Sink_Node;
  *   { "n": int, "rid": str, "k": str, "m": mixed, "l": str, "duration_ms": float, "ts": float }
  *
  * State callbacks fill top-level fields on the in-flight request:
- *  - `process (start)` — initializes the request, populates timestamp/process_id/host
+ *  - `process (start)` — initializes the request, populates the timestamp
  *  - `process (complete)` — terminal: emits the assembled doc downstream
  *  - `request` — extracts URL + method
  *  - `environment_v3` — extracts REMOTE_ADDR / SERVER_NAME / GEOIP_COUNTRY_CODE / NEWSPACK_NODES_WORKER_TYPE / etc.
@@ -387,6 +387,44 @@ class RequestBuilderTest extends TestCase {
 		$this->assertSame( 'from@example', $req['http_from'] );
 	}
 
+	public function test_emitting_leaves_the_envelope_alone(): void {
+		// The resolved URL is a DERIVED value. Writing it back onto the source
+		// field made the resolver re-read its own output — the reason it once
+		// needed a suffix guard to recognise itself — and two other nodes read
+		// the same live object. It is stamped on each record instead.
+		$rb      = new Request_Builder_Node();
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+
+		$req = (object) [
+			'state'       => 'complete',
+			'url'         => 'https://x.test/feed',
+			'worker_type' => 'reconcile',
+			'rid'         => 'r9',
+			'timestamp'   => 1,
+			'duration_ms' => 5,
+		];
+		$rb->emit_request( $req );
+
+		$this->assertSame( 'https://x.test/feed', $req->url );
+		$this->assertSame( 'https://x.test/feed?reconcile', $capture->captured[0][ Message::VALUE ]['url'] );
+	}
+
+	public function test_worker_marker_survives_a_url_that_already_has_a_query(): void {
+		// Skipping the marker when a query string is already there hands the
+		// worker the VISITOR's URL row. One sticky `worker` flag per row then
+		// takes that URL's visitor traffic out of every header number the
+		// default filter governs — far more than the worker's own requests.
+		$request              = new \stdClass();
+		$request->url         = '/feed/?post_type=event';
+		$request->worker_type = 'cache-cozy';
+
+		$this->assertSame(
+			'/feed/?post_type=event&cache-cozy',
+			Request_Builder_Node::resolved_request_url( $request )
+		);
+	}
+
 	public function test_worker_type_marks_request_as_worker(): void {
 		$rb      = new Request_Builder_Node();
 		$capture = new Capture_Sink_Node();
@@ -483,24 +521,6 @@ class RequestBuilderTest extends TestCase {
 		$this->assertSame( 'https://x.test/', $capture->captured[0][ Message::VALUE ]['url'] );
 	}
 
-	public function test_emit_request_does_not_double_append_when_url_has_query(): void {
-		$rb      = new Request_Builder_Node();
-		$capture = new Capture_Sink_Node();
-		$rb->sink( $capture );
-
-		$req = (object) [
-			'state'       => 'complete',
-			'url'         => 'https://x.test/?already',
-			'worker_type' => 'reconcile',
-			'rid'         => 'r3',
-			'timestamp'   => 1,
-			'duration_ms' => 5,
-		];
-		$rb->emit_request( $req );
-
-		$this->assertSame( 'https://x.test/?already', $capture->captured[0][ Message::VALUE ]['url'] );
-	}
-
 	public function test_emit_request_worker_url_reaches_compact_summary(): void {
 		$rb      = new Request_Builder_Node();
 		$capture = new Capture_Sink_Node();
@@ -555,7 +575,10 @@ class RequestBuilderTest extends TestCase {
 		$this->assertSame( '/post/123', $req['url'] );
 	}
 
-	public function test_process_start_extracts_process_id_and_host(): void {
+	public function test_the_record_carries_no_process_id_or_host(): void {
+		// Parsed off `process (start)` by a `preg_match` per request. The Ask
+		// brief's env block named `host`; it names `server_name` now, which is
+		// the axis every other surface scopes by.
 		$rb      = new Request_Builder_Node();
 		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
@@ -565,8 +588,8 @@ class RequestBuilderTest extends TestCase {
 		$this->fill( $rb, 3, 'r1', 'process (complete)' );
 
 		$req = $this->captured_request( $capture );
-		$this->assertSame( '12345', $req['process_id'] );
-		$this->assertSame( 'test-host.lan', $req['host'] );
+		$this->assertArrayNotHasKey( 'process_id', $req );
+		$this->assertArrayNotHasKey( 'host', $req );
 	}
 
 	// --- Stack / profiles -------------------------------------------------
@@ -1088,35 +1111,6 @@ class RequestBuilderTest extends TestCase {
 		$this->assertNull( Request_Builder_Node::format_index_entry( $message, $position ) );
 	}
 
-	public function test_parse_request_index_handles_v2_v3_v4_field_lengths(): void {
-		// 89-char minimum (v1).
-		$v1 = \str_pad( 'rid_only', 32 ) . \str_pad( 'urlh', 12 ) . \str_pad( '0', 10, '0', \STR_PAD_LEFT )
-			. \str_pad( '0', 8, '0', \STR_PAD_LEFT ) . \str_pad( '0', 3, '0', \STR_PAD_LEFT )
-			. \str_pad( '0', 6, '0', \STR_PAD_LEFT ) . \str_pad( '0', 10, '0', \STR_PAD_LEFT )
-			. \str_pad( '0', 8, '0', \STR_PAD_LEFT );
-		$this->assertSame( 89, \strlen( $v1 ) );
-		$parsed = Request_Builder_Node::parse_request_index( $v1 );
-		$this->assertNotNull( $parsed );
-		$this->assertArrayNotHasKey( 'peak_mb', $parsed );
-
-		// v2 adds 6 chars peak_mb.
-		$v2 = $v1 . \str_pad( '32', 6, '0', \STR_PAD_LEFT );
-		$parsed_v2 = Request_Builder_Node::parse_request_index( $v2 );
-		$this->assertSame( 32, $parsed_v2['peak_mb'] );
-		$this->assertArrayNotHasKey( 'method', $parsed_v2 );
-
-		// v3 adds 1-char method code.
-		$v3 = $v2 . 'G';
-		$parsed_v3 = Request_Builder_Node::parse_request_index( $v3 );
-		$this->assertSame( 'GET', $parsed_v3['method'] );
-		$this->assertArrayNotHasKey( 'error_status', $parsed_v3 );
-
-		// v4 adds 1-char error status.
-		$v4 = $v3 . 'F';
-		$parsed_v4 = Request_Builder_Node::parse_request_index( $v4 );
-		$this->assertSame( 'F', $parsed_v4['error_status'] );
-	}
-
 	// --- Maintenance ------------------------------------------------------
 
 	public function test_timer_tick_drives_cache_rotation(): void {
@@ -1144,7 +1138,7 @@ class RequestBuilderTest extends TestCase {
 		$rb->name( 'req_builder' );
 
 		$result = $this->read_private( $rb, 'interpreter' )->dispatch( 'set_errors_target', [ 'errors:partition' ] );
-		$this->assertSame( 'ok', $result );
+		$this->assertSame( "ok\n", $result );
 
 		$dump = $rb->dump_config();
 		$this->assertStringContainsString( 'command_node req_builder:config set_errors_target errors:partition', $dump );
@@ -1155,10 +1149,10 @@ class RequestBuilderTest extends TestCase {
 		$rb->name( 'req_builder' );
 
 		// Seed.
-		$this->assertSame( 'ok', $this->read_private( $rb, 'interpreter' )->dispatch( 'set_errors_target', [ 'errors:partition' ] ) );
+		$this->assertSame( "ok\n", $this->read_private( $rb, 'interpreter' )->dispatch( 'set_errors_target', [ 'errors:partition' ] ) );
 		// Empty arg now clears the target instead of rejecting (live reconfiguration).
 		$result = $this->read_private( $rb, 'interpreter' )->dispatch( 'set_errors_target' );
-		$this->assertSame( 'ok', $result );
+		$this->assertSame( "ok\n", $result );
 		$p = ( new \ReflectionObject( $rb ) )->getProperty( 'errors_target' );
 		$this->assertSame( '', $p->getValue( $rb ) );
 	}
@@ -1223,48 +1217,44 @@ class RequestBuilderTest extends TestCase {
 		$this->assertSame( 'main:target', $rb->target() );
 	}
 
-	public function test_target_appends_errors_target_when_primary_is_string(): void {
+	public function test_display_targets_appends_errors_target_when_primary_is_string(): void {
 		$rb = new Request_Builder_Node();
 		$rb->connect_node( 'main:target' );
 		$rb->set_errors_target( 'errors:target' );
 
-		$result = $rb->target();
-		$this->assertIsArray( $result );
+		$result = $rb->display_targets();
+		$this->assertSame( 'main:target', $rb->target(), 'routing target stays scalar' );
 		$this->assertContains( 'main:target', $result );
 		$this->assertContains( 'errors:target', $result );
 	}
 
-	public function test_target_appends_errors_target_when_primary_is_empty(): void {
+	public function test_display_targets_appends_errors_target_when_primary_is_empty(): void {
 		// Primary target unset, errors_target set → result is just [errors_target].
 		$rb = new Request_Builder_Node();
 		$rb->set_errors_target( 'errors:target' );
 
-		$result = $rb->target();
-		$this->assertIsArray( $result );
-		$this->assertSame( [ 'errors:target' ], $result );
+		$this->assertSame( [ 'errors:target' ], $rb->display_targets() );
 	}
 
-	public function test_target_appends_alerts_target_alongside_errors_target(): void {
+	public function test_display_targets_appends_alerts_target_alongside_errors_target(): void {
 		$rb = new Request_Builder_Node();
 		$rb->connect_node( 'main:target' );
 		$rb->set_errors_target( 'errors:target' );
 		$rb->set_alerts_target( 'alerts:target' );
 
-		$result = $rb->target();
-		$this->assertIsArray( $result );
+		$result = $rb->display_targets();
 		$this->assertContains( 'main:target', $result );
 		$this->assertContains( 'errors:target', $result );
 		$this->assertContains( 'alerts:target', $result );
 	}
 
-	public function test_target_does_not_duplicate_errors_target_already_in_array(): void {
+	public function test_display_targets_does_not_duplicate_errors_target_already_in_array(): void {
 		// Primary is already an array containing errors_target — must not duplicate.
 		$rb = new Request_Builder_Node();
 		$rb->target( [ 'main:target', 'errors:target' ] );
 		$rb->set_errors_target( 'errors:target' );
 
-		$result = $rb->target();
-		$this->assertSame( [ 'main:target', 'errors:target' ], $result );
+		$this->assertSame( [ 'main:target', 'errors:target' ], $rb->display_targets() );
 	}
 
 	public function test_inflight_snapshot_start_time_uses_process_start_not_request_bind(): void {
@@ -1286,7 +1276,7 @@ class RequestBuilderTest extends TestCase {
 		$this->assertSame( 1700000000.000, $snap['r1']['start_time'] );
 	}
 
-	public function test_target_appends_flight_inflight_target(): void {
+	public function test_display_targets_appends_flight_inflight_target(): void {
 		// `set_inflight_target` stores the target on the hidden RequestFlight
 		// sibling (`$patron->flight()->target($args)`), not on RequestBuilder
 		// directly. Without surfacing it through target(), the topology
@@ -1298,14 +1288,13 @@ class RequestBuilderTest extends TestCase {
 		$rb->set_errors_target( 'errors:target' );
 		$rb->flight()->target( 'gyroscope:partition' );
 
-		$result = $rb->target();
-		$this->assertIsArray( $result );
+		$result = $rb->display_targets();
 		$this->assertContains( 'main:target', $result );
 		$this->assertContains( 'errors:target', $result );
 		$this->assertContains( 'gyroscope:partition', $result );
 	}
 
-	public function test_target_does_not_duplicate_flight_target_already_in_array(): void {
+	public function test_display_targets_does_not_duplicate_flight_target_already_in_array(): void {
 		// If the flight sibling's target is already in the primary array,
 		// don't duplicate it in the union.
 		$rb = new Request_Builder_Node();
@@ -1313,16 +1302,16 @@ class RequestBuilderTest extends TestCase {
 		$rb->target( [ 'main:target', 'gyroscope:partition' ] );
 		$rb->flight()->target( 'gyroscope:partition' );
 
-		$this->assertSame( [ 'main:target', 'gyroscope:partition' ], $rb->target() );
+		$this->assertSame( [ 'main:target', 'gyroscope:partition' ], $rb->display_targets() );
 	}
 
-	public function test_target_omits_flight_target_when_unset(): void {
+	public function test_display_targets_omits_flight_target_when_unset(): void {
 		// Empty flight target — no contribution to the union.
 		$rb = new Request_Builder_Node();
 		$rb->connect_node( 'main:target' );
 		$rb->flight()->target( '' );
 
-		$this->assertSame( 'main:target', $rb->target() );
+		$this->assertSame( [ 'main:target' ], $rb->display_targets() );
 	}
 
 	public function test_target_setter_passes_through_to_parent(): void {
@@ -1826,6 +1815,45 @@ class RequestBuilderTest extends TestCase {
 		}
 	}
 
+	/**
+	 * The writer's codes and the reader's names are one table read in both
+	 * directions, so a method added to it round-trips by construction. Reading
+	 * the declaration rather than a copied list is the point: a ninth method
+	 * that only half the pair knew about decoded as a bare letter.
+	 */
+	public function test_index_round_trips_every_declared_method(): void {
+		$codes = ( new \ReflectionClassConstant( Request_Builder_Node::class, 'METHOD_CODES' ) )->getValue();
+		$this->assertNotEmpty( $codes );
+
+		foreach ( $codes as $method => $code ) {
+			$line = $this->format_index_for(
+				[ 'rid' => 'r1', 'url' => '/x', 'request_method' => $method ],
+				[ 'segment' => 0, 'offset' => 0, 'length' => 0 ]
+			);
+			$this->assertNotNull( $line, "method=$method produces a line" );
+			$this->assertSame( $code, \substr( $line, 95, 1 ), "method=$method writes code=$code" );
+			$parsed = Request_Builder_Node::parse_request_index( $line );
+			$this->assertSame( $method, $parsed['method'], "code=$code reads back as $method" );
+		}
+	}
+
+	/**
+	 * `initialized` was stamped onto every envelope and read by nothing, so it
+	 * rode the wire record into requests.p{N} as pure weight.
+	 */
+	public function test_completed_record_carries_no_initialized_flag(): void {
+		$rb      = new Request_Builder_Node();
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+
+		$this->fill( $rb, 1, 'r1', 'process (start)' );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$this->fill( $rb, 3, 'r1', 'process (complete)' );
+
+		$req = $this->captured_request( $capture );
+		$this->assertArrayNotHasKey( 'initialized', $req );
+	}
+
 	public function test_format_index_entry_unknown_method_falls_back_to_get_code(): void {
 		$line = $this->format_index_for(
 			[ 'rid' => 'r1', 'url' => '/x', 'request_method' => 'WEIRDVERB' ],
@@ -1852,20 +1880,6 @@ class RequestBuilderTest extends TestCase {
 		$this->assertNull( Request_Builder_Node::parse_request_index( \str_repeat( 'x', 88 ) ) );
 	}
 
-	public function test_parse_request_index_v3_unknown_method_code_falls_back_to_literal_char(): void {
-		// v3 layout with an unknown 1-char method code: parse should fall back
-		// to the raw character (per the static $methods table's `?? \substr(...)`).
-		$base = \str_pad( 'rid', 32 ) . \str_pad( 'urlh', 12 ) . \str_pad( '0', 10, '0', \STR_PAD_LEFT )
-			. \str_pad( '0', 8, '0', \STR_PAD_LEFT ) . \str_pad( '0', 3, '0', \STR_PAD_LEFT )
-			. \str_pad( '0', 6, '0', \STR_PAD_LEFT ) . \str_pad( '0', 10, '0', \STR_PAD_LEFT )
-			. \str_pad( '0', 8, '0', \STR_PAD_LEFT ) . \str_pad( '0', 6, '0', \STR_PAD_LEFT );
-		$v3   = $base . 'Z';
-		$this->assertSame( 96, \strlen( $v3 ) );
-		$parsed = Request_Builder_Node::parse_request_index( $v3 );
-		$this->assertNotNull( $parsed );
-		$this->assertSame( 'Z', $parsed['method'] );
-	}
-
 	public function test_parse_request_index_v4_invalid_error_status_dropped(): void {
 		// v4-length line but error_status char is neither 'F' nor 'T' → field
 		// is omitted from the parsed array.
@@ -1882,12 +1896,12 @@ class RequestBuilderTest extends TestCase {
 	}
 
 	public function test_parse_request_index_strips_trailing_newline(): void {
-		// Lines on disk are JSONL — newline-terminated. parse_request_index
-		// should rtrim before measuring length.
+		// Lines on disk are newline-terminated: rtrim before measuring length,
+		// or every line on disk reads one byte short and is refused.
 		$base = \str_pad( 'rid_nl', 32 ) . \str_pad( 'urlh', 12 ) . \str_pad( '0', 10, '0', \STR_PAD_LEFT )
 			. \str_pad( '0', 8, '0', \STR_PAD_LEFT ) . \str_pad( '0', 3, '0', \STR_PAD_LEFT )
 			. \str_pad( '0', 6, '0', \STR_PAD_LEFT ) . \str_pad( '0', 10, '0', \STR_PAD_LEFT )
-			. \str_pad( '0', 8, '0', \STR_PAD_LEFT );
+			. \str_pad( '0', 8, '0', \STR_PAD_LEFT ) . \str_pad( '0', 6, '0', \STR_PAD_LEFT ) . 'G' . '-';
 		$parsed = Request_Builder_Node::parse_request_index( $base . "\n" );
 		$this->assertNotNull( $parsed );
 		$this->assertSame( 'rid_nl', $parsed['rid'] );
@@ -2118,4 +2132,52 @@ class RequestBuilderTest extends TestCase {
 			$this->assertSame( $blocker, Core::node( 'taken:flight' ) );
 		}
 	}
+	public function test_the_index_parser_takes_the_current_line_only(): void {
+		// The writer emits one width. Accepting the four shorter historical
+		// widths meant every truncated or half-written line parsed as an older
+		// version instead of being refused.
+		$request              = new \stdClass();
+		$request->rid         = 'r5nyq83m4v1p';
+		$request->url         = 'https://x.test/reviews/8813';
+		$request->timestamp   = 1700000123;
+		$request->duration_ms = 417;
+		$request->status_code = 503;
+		$request->peak_mb     = 91;
+		$request->error_status = 'T';
+		$message              = Message::new_message();
+		$message[ Message::VALUE ] = (array) $request;
+
+		$line = Request_Builder_Node::format_index_entry(
+			$message,
+			[ 'segment' => 4, 'offset' => 71, 'length' => 908 ]
+		);
+		$this->assertIsString( $line );
+
+		$this->assertIsArray( Request_Builder_Node::parse_request_index( $line ) );
+		$this->assertNull(
+			Request_Builder_Node::parse_request_index( \substr( $line, 0, -1 ) ),
+			'a line one byte short is refused, not read as an older version'
+		);
+	}
+
+	public function test_the_target_setter_verbs_round_trip_through_dump_config(): void {
+		// Each is one trim-and-assign; the dump has to replay every one of them
+		// or a serialized topology comes back with its secondary emits dark.
+		$rb = new Request_Builder_Node();
+		$rb->name( 'rb' );
+		$interpreter = $this->read_private( $rb, 'interpreter' );
+
+		$interpreter->dispatch( 'set_errors_target', [ '  errors:partition  ' ] );
+		$interpreter->dispatch( 'set_alerts_target', [ 'alerts:partition' ] );
+		$interpreter->dispatch( 'set_completed_target', [ 'completed:tee' ] );
+
+		$dump = $rb->dump_config();
+		$this->assertStringContainsString( 'command_node rb:config set_errors_target errors:partition', $dump );
+		$this->assertStringContainsString( 'command_node rb:config set_alerts_target alerts:partition', $dump );
+		$this->assertStringContainsString( 'command_node rb:config set_completed_target completed:tee', $dump );
+
+		$interpreter->dispatch( 'set_errors_target', [ '' ] );
+		$this->assertStringNotContainsString( 'set_errors_target', $rb->dump_config(), 'a cleared target dumps nothing' );
+	}
+
 }

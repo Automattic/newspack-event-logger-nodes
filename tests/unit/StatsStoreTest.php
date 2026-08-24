@@ -24,6 +24,107 @@ class StatsStoreTest extends TestCase {
 		return new Stats_Store( partition: $partition, max_lifespan: $max_lifespan );
 	}
 
+	public function test_the_url_index_is_sharded_by_url_hash(): void {
+		// One blob per bucket was what every cap in this schema was defending:
+		// the whole thing is read-modify-written on each five-second flush and
+		// unserialized whole on each poll, so rows, durations and splits all
+		// competed for one item's budget. The bucket stays LAST in the key, so
+		// `is_open_bucket()` and the durable read-through are untouched.
+		$this->seed_memd();
+		$store = $this->make_store( partition: 2 );
+		$hash  = 'a1b2c3d4e5f6';
+		$other = '0f0f0f0f0f0f';
+
+		$this->set_url_bucket( $store, '2026-08-14-12-05', [
+			$hash  => [ 'url' => '/a', 'count' => 3 ],
+			$other => [ 'url' => '/b', 'count' => 5 ],
+		] );
+
+		$table = \Newspack_Nodes\Table_Node::table( Stats_Store::namespace_for( 2 ), 60 );
+		$this->assertSame(
+			[ $hash => [ 'url' => '/a', 'count' => 3 ] ],
+			$table->lookup( Stats_Store::NS_URLS . ':a:2026-08-14-12-05' ),
+			'a row lands in the shard its hash names'
+		);
+		$this->assertSame(
+			[ $other => [ 'url' => '/b', 'count' => 5 ] ],
+			$table->lookup( Stats_Store::NS_URLS . ':0:2026-08-14-12-05' )
+		);
+	}
+
+	public function test_the_whole_window_is_still_one_round_trip(): void {
+		// Decision 1: "one `lookup_multi` serves them all"; decision 6: per-key
+		// gets are the latency cliff a dashboard read exists to avoid. Sharding
+		// multiplies KEYS, which memcached is built for — it must not multiply
+		// ROUND TRIPS, which is what a loop of multi-gets per shard would do.
+		$mc    = $this->seed_memd();
+		$store = $this->make_store();
+		$this->set_url_bucket( $store, '2026-08-14-12-05', [
+			'a1b2c3d4e5f6' => [ 'url' => '/a', 'count' => 3 ],
+			'0f0f0f0f0f0f' => [ 'url' => '/b', 'count' => 5 ],
+		] );
+
+		$mc->multi_calls = 0;
+		$sources         = $store->url_row_sources( [ '2026-08-14-12-05', '2026-08-14-12-00' ] );
+
+		$this->assertSame( 1, $mc->multi_calls, 'every shard in one round trip' );
+		$this->assertNotEmpty( $sources );
+	}
+
+	public function test_writing_a_whole_bucket_replaces_the_whole_bucket(): void {
+		// "Whole bucket, replacing what is stored" has to mean every shard, not
+		// only the ones the new data names — otherwise a second seed leaves the
+		// first one's rows live in a shard it never mentioned, and a test reads
+		// both as if they arrived together.
+		$this->seed_memd();
+		$store = $this->make_store();
+		$this->set_url_bucket( $store, '2026-08-14-12-05', [ 'a1b2c3d4e5f6' => [ 'url' => '/a', 'count' => 3 ] ] );
+
+		$this->set_url_bucket( $store, '2026-08-14-12-05', [ '0f0f0f0f0f0f' => [ 'url' => '/b', 'count' => 5 ] ] );
+
+		$this->assertSame( [], $store->get_url_shard( '2026-08-14-12-05', 'a' ) );
+		$this->assertSame(
+			[ '0f0f0f0f0f0f' => [ 'url' => '/b', 'count' => 5 ] ],
+			$store->get_url_shard( '2026-08-14-12-05', '0' )
+		);
+	}
+
+	public function test_a_point_read_touches_one_shard(): void {
+		// `url_detail`, `ask` and the per-URL chart want ONE hash. Reading every
+		// row of the window to find it is what the shard removes.
+		$this->seed_memd();
+		$store = $this->make_store();
+		$this->set_url_bucket( $store, '2026-08-14-12-05', [
+			'a1b2c3d4e5f6' => [ 'url' => '/a', 'count' => 3 ],
+			'0f0f0f0f0f0f' => [ 'url' => '/b', 'count' => 5 ],
+		] );
+
+		$mc  = Core::$memd;
+		$one = $store->url_row_sources( [ '2026-08-14-12-05' ], 'a1b2c3d4e5f6' );
+
+		$rows = [];
+		foreach ( $one as [ , $bucket_rows ] ) {
+			$rows += $bucket_rows;
+		}
+		$this->assertSame( [ 'a1b2c3d4e5f6' => [ 'url' => '/a', 'count' => 3 ] ], $rows );
+		$this->assertInstanceOf( InMemoryMemcached::class, $mc );
+	}
+
+	public function test_reading_the_whole_index_merges_every_shard(): void {
+		$this->seed_memd();
+		$store = $this->make_store();
+		$this->set_url_bucket( $store, '2026-08-14-12-05', [
+			'a1b2c3d4e5f6' => [ 'url' => '/a', 'count' => 3 ],
+			'0f0f0f0f0f0f' => [ 'url' => '/b', 'count' => 5 ],
+		] );
+
+		$rows = $this->url_rows_by_bucket( $store, [ '2026-08-14-12-05' ] )['2026-08-14-12-05'];
+
+		$this->assertCount( 2, $rows );
+		$this->assertSame( 3, $rows['a1b2c3d4e5f6']['count'] );
+		$this->assertSame( 5, $rows['0f0f0f0f0f0f']['count'] );
+	}
+
 	public function test_reads_and_writes_go_through_a_table(): void {
 		// The port: Stats_Store is a Table_Node consumer, not a second raw-handle
 		// cache. A value it writes must be readable through a Table on the same
@@ -69,7 +170,7 @@ class StatsStoreTest extends TestCase {
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 
 		$this->assertSame( [], $store->get_hourly_bucket( 'x' ) );
-		$this->assertSame( [], $store->get_url_buckets( [ 'b1', 'b2' ] ) );
+		$this->assertSame( [], $this->url_rows_by_bucket( $store, [ 'b1', 'b2' ] ) );
 		$this->assertNull( $store->get_url_stats( 'abc' ) );
 		$this->assertFalse( $store->set_hourly_bucket( 'x', [ 'count' => 1 ] ), 'a write with no backend reports false' );
 	}
@@ -147,8 +248,8 @@ class StatsStoreTest extends TestCase {
 		$mc       = $this->seed_memd();
 		$store_p0 = $this->make_store( partition: 0 );
 		$store_p1 = $this->make_store( partition: 1 );
-		$store_p0->set_url_bucket( '2026-01-01-00-00', [ 'x' => [ 'url' => '/x' ] ] );
-		$store_p1->set_url_bucket( '2026-01-01-00-00', [ 'x' => [ 'url' => '/x' ] ] );
+		$this->set_url_bucket( $store_p0, '2026-01-01-00-00', [ 'x' => [ 'url' => '/x' ] ] );
+		$this->set_url_bucket( $store_p1, '2026-01-01-00-00', [ 'x' => [ 'url' => '/x' ] ] );
 		$keys   = $mc->keys();
 		$has_p0 = false;
 		$has_p1 = false;
@@ -166,7 +267,7 @@ class StatsStoreTest extends TestCase {
 	public function test_keys_include_namespace(): void {
 		$mc    = $this->seed_memd();
 		$store = $this->make_store();
-		$store->set_url_bucket( '2026-01-01-00-00', [ 'x' => [ 'url' => '/x' ] ] );
+		$this->set_url_bucket( $store, '2026-01-01-00-00', [ 'x' => [ 'url' => '/x' ] ] );
 		$keys          = $mc->keys();
 		$found_urls_ns = false;
 		foreach ( $keys as $k ) {
@@ -180,7 +281,7 @@ class StatsStoreTest extends TestCase {
 	public function test_fail_soft_get_returns_empty_when_memd_null(): void {
 		Core::$memd = null;
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		$this->assertSame( [], $store->get_url_bucket( 'any' ) );
+		$this->assertSame( [], $this->url_bucket_rows( $store, 'any' ) );
 		$this->assertNull( $store->get_url_stats( 'any' ) );
 		$this->assertSame( [], $store->get_hourly_bucket( 'any' ) );
 		$this->assertSame( [], $store->get_dimensional_bucket( 'status', 'b1' ) );
@@ -189,7 +290,7 @@ class StatsStoreTest extends TestCase {
 	public function test_fail_soft_set_returns_false_when_memd_null(): void {
 		Core::$memd = null;
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		$this->assertFalse( $store->set_url_bucket( '2026-01-01-00-00', [] ) );
+		$this->assertFalse( $this->set_url_bucket( $store, '2026-01-01-00-00', [] ) );
 		$this->assertFalse( $store->set_leaderboard_bucket( '2026-01-01-00-00', [] ) );
 		$this->assertFalse( $store->set_dimensional_bucket( 'status', 'b1', [] ) );
 		$this->assertNull( Core::$memd );
@@ -198,13 +299,13 @@ class StatsStoreTest extends TestCase {
 	public function test_get_multi_url_buckets_batches_lookups(): void {
 		$store = $this->make_store();
 		$bucket = '2026-01-01-00-00';
-		$store->set_url_bucket( $bucket, [
+		$this->set_url_bucket( $store, $bucket, [
 			'/x' => [ 'url' => '/x' ],
 			'/y' => [ 'url' => '/y' ],
 		] );
 
 		// get_url_buckets should accept a list and return a map.
-		$results = $store->get_url_buckets( [ $bucket, 'nonexistent-bucket' ] );
+		$results = $this->url_rows_by_bucket( $store, [ $bucket, 'nonexistent-bucket' ] );
 		$this->assertArrayHasKey( $bucket, $results );
 		$this->assertArrayHasKey( '/x', $results[ $bucket ] );
 		$this->assertArrayHasKey( '/y', $results[ $bucket ] );
@@ -215,7 +316,7 @@ class StatsStoreTest extends TestCase {
 	public function test_get_url_buckets_returns_empty_when_memd_null(): void {
 		Core::$memd = null;
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		$this->assertSame( [], $store->get_url_buckets( [ 'a', 'b' ] ) );
+		$this->assertSame( [], $this->url_rows_by_bucket( $store, [ 'a', 'b' ] ) );
 	}
 
 	// --- New explicit-bucket setter API (FlameBuilder uses these) ---------
@@ -244,8 +345,8 @@ class StatsStoreTest extends TestCase {
 
 	public function test_set_and_get_url_bucket_round_trip(): void {
 		$store = $this->make_store();
-		$store->set_url_bucket( '2026-01-01-00-00', [ 'hash1' => [ 'url' => '/x', 'count' => 1 ] ] );
-		$urls = $store->get_url_bucket( '2026-01-01-00-00' );
+		$this->set_url_bucket( $store, '2026-01-01-00-00', [ 'hash1' => [ 'url' => '/x', 'count' => 1 ] ] );
+		$urls = $this->url_bucket_rows( $store, '2026-01-01-00-00' );
 		$this->assertArrayHasKey( 'hash1', $urls );
 	}
 
@@ -330,7 +431,7 @@ class StatsStoreTest extends TestCase {
 		};
 
 		$store->set_hourly_bucket( 'x', [ 'count' => 1 ] );
-		$store->set_url_bucket( 'b', [ 'x' => [ 'url' => '/x' ] ] );
+		$store->set_url_shard( 'b', '0', [ 'x' => [ 'url' => '/x' ] ] );
 		$store->set_url_stats( 'h', [ 'flame' => [ 'count' => 1 ] ] );
 		$store->set_leaderboard_bucket( 'b', [ 'count' => 1 ] );
 		$store->set_leaderboard_bucket( 'b', [ 'count' => 1 ], 'srv' );
@@ -562,7 +663,7 @@ class StatsStoreTest extends TestCase {
 		$store->set_hourly_bucket( 'b1', [ 'count' => 3 ] );
 		$store->set_leaderboard_bucket( 'b1', [ 'count' => 3 ] );
 		$store->set_leaderboard_bucket( 'b1', [ 'count' => 3 ], 'web07' );
-		$store->set_url_bucket( 'b1', [ 'h' => [ 'count' => 3 ] ] );
+		$store->set_url_shard( 'b1', '0', [ 'h' => [ 'count' => 3 ] ] );
 		$store->set_dimensional_bucket( 'status', 'b1', [ '503' => [ 'c' => 3 ] ] );
 		$store->set_dimensional_bucket( 'status', 'b1', [ '503' => [ 'c' => 3 ] ], 'web07' );
 		$store->set_category_bucket( 'b1', [ 'db' => [ 'n' => 3 ] ] );
@@ -680,6 +781,59 @@ class StatsStoreTest extends TestCase {
 		$this->assertArrayNotHasKey( 'ZERO', $display['categories']['wpdb']['entries'] );
 		$this->assertEqualsWithDelta( 0.0, $display['categories']['wpdb']['entries']['NAN'][0], 1e-9 );
 		$this->assertSame( 3, $display['categories']['wpdb']['entries']['NAN'][2] );
+	}
+
+	public function test_a_url_read_asks_only_for_shard_keys(): void {
+		// The unsharded shape a pre-sharding release wrote is no longer read.
+		// A read that still asks for it burns a key per bucket per poll,
+		// forever, for a namespace nothing writes.
+		Core::$memd = new class() extends InMemoryMemcached {
+			/** @var array<int,string> */
+			public array $asked = [];
+
+			public function getMulti( array $keys, int $get_flags = 0 ): array|false {
+				foreach ( $keys as $key ) {
+					$this->asked[] = (string) $key;
+				}
+				return parent::getMulti( $keys, $get_flags );
+			}
+		};
+		$store  = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$bucket = Stats_Store::bucket_key( 1_700_000_000 );
+
+		$store->url_row_sources( [ $bucket ] );
+
+		$unsharded = Stats_Store::entry_key( 0, 'urls:' . $bucket );
+		/** @var array<int,string> $asked */
+		$asked = Core::$memd->asked;
+		$this->assertNotContains( $unsharded, $asked, 'the unsharded key is never asked for' );
+		$this->assertContains(
+			Stats_Store::entry_key( 0, 'urls:a:' . $bucket ),
+			$asked,
+			'every shard is'
+		);
+	}
+
+	public function test_folding_keeps_the_newest_last_seen(): void {
+		// `sum_entry()` returns `$into` PLUS the summed fields, so merging it
+		// over the computed head puts `$into`'s own `last_seen` back — pinning
+		// the overflow row's timestamp to whichever row folded first.
+		$first  = [ 'count' => 3, 'last_seen' => 1700000100 ];
+		$second = [ 'count' => 4, 'last_seen' => 1700000900 ];
+
+		$folded = Stats_Store::fold_url_rows( $first, $second );
+
+		$this->assertSame( 1700000900, $folded['last_seen'] );
+		$this->assertSame( 7, $folded['count'] );
+	}
+
+	public function test_folding_keeps_worker_true_once_either_side_is(): void {
+		$folded = Stats_Store::fold_url_rows(
+			[ 'count' => 1, 'worker' => true ],
+			[ 'count' => 1 ]
+		);
+
+		$this->assertTrue( $folded['worker'] );
 	}
 
 }

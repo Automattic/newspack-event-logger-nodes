@@ -32,11 +32,6 @@
 		flex: 0 0 auto;
 	}
 
-	&__chart-loading {
-		display: block;
-		min-height: 0;
-	}
-
 	&--empty,
 	&--loading {
 		padding: 16px;

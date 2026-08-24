@@ -63,16 +63,28 @@ class Stats_Store {
 
 	/** Distinct category values kept per bucket; `Flame_Builder_Node` rolls the overflow into "Other". */
 	public const MAX_CAT_VALUES           = 50;
-	/** Distinct values kept per global dimension bucket. */
+	/** Distinct values kept per global dimension bucket; see `dim_cap()`. */
 	public const MAX_DIM_VALUES           = 20;
+
 	/** Raw durations sampled per URL bucket for percentiles; Algorithm R past the cap. */
 	public const MAX_DURATIONS_PER_BUCKET = 100;
 	/** Distinct values kept per per-URL dimension bucket. */
 	public const MAX_URL_DIM_VALUES       = 10;
+	/**
+	 * Distinct reporting servers kept wherever the `server` axis is stored — the
+	 * global dimension bucket, a URL's dimension bucket, and a URL row's `srv`
+	 * split alike. Set far above any fleet — five times the largest hub in
+	 * evidence, three times the widest per-URL split any test asserts — so no
+	 * real server folds; what it guards is `SERVER_NAME` under Apache's default
+	 * `UseCanonicalName Off`, where the value is the client's Host header.
+	 */
+	public const MAX_SERVER_VALUES        = 128;
 	/** Category time series, global or per server. */
 	public const NS_CATEGORIES  = 'categories';
 	/** Dimensional time series, global or per server. */
 	public const NS_DIM         = 'dim';
+	/** The dimension naming the reporting server — the axis the picker is built from. */
+	public const DIM_SERVER     = 'server';
 
 	/** Request totals per bucket; one key per partition. */
 	public const NS_HOURLY      = 'hourly';
@@ -82,7 +94,11 @@ class Stats_Store {
 	public const NS_LB_S        = 'lb_s';
 	/** Per-URL stats blob: flame tree and profiles. */
 	public const NS_URL         = 'url';
-	/** URL index bucket. */
+	/**
+	 * URL index bucket, sharded by the first hex digit of the url_hash:
+	 * `urls:{shard}:{bucket}`. The bucket stays LAST, so `is_open_bucket()`,
+	 * expiry and the durable read-through are untouched. Decision 1.
+	 */
 	public const NS_URLS        = 'urls';
 	/** Per-URL category time series. */
 	public const NS_URL_CAT     = 'url_cat';
@@ -104,8 +120,44 @@ class Stats_Store {
 	/** Summed fields of one category => whether it is a whole count. */
 	public const CAT_SUMS = [ 't' => false, 'c' => true, 'n' => true ];
 
+	/**
+	 * The synthetic key every capped namespace rolls its overflow into.
+	 *
+	 * Decision 1. Safe as a URL row key: a url_hash is 12 hex characters.
+	 */
+	public const OTHER_KEY = 'Other';
+
+	/** The overflow row's worker half — see `other_key()`. */
+	public const OTHER_WORKER_KEY = 'Other:worker';
+
+	/** Shards the URL index is spread across — one per hex digit of the hash. */
+	public const URL_SHARDS     = 16;
+
+	/** The URL row field holding its per-server split. */
+	public const URL_SRV_FIELD = 'srv';
+
+	/**
+	 * Summed fields of one URL row's per-server split => whether it is a whole
+	 * count. These are the row's OWN field names, because the split is that row
+	 * restricted to one server. Only fields that ADD: the extremes and the
+	 * percentiles come off a sampled reservoir, so a scoped row keeps the URL's.
+	 */
+	public const URL_SRV_SUMS = [
+		'count'       => true,
+		'timed_count' => true,
+		'sum_ms'      => false,
+		'sum_peak_mb' => false,
+		'count_2xx'   => true,
+		'count_3xx'   => true,
+		'count_4xx'   => true,
+		'count_5xx'   => true,
+	];
+
 	/** Bucket width in minutes — the granularity every bucketed namespace is keyed at. */
 	private const BUCKET_MINUTES = 5;
+
+	/** The same width in seconds — the geometry every rate over these buckets divides by. */
+	public const BUCKET_SECONDS = self::BUCKET_MINUTES * 60;
 
 	/**
 	 * How far ahead of our clock a producer's bucket still counts as open.
@@ -119,7 +171,16 @@ class Stats_Store {
 	 */
 	private const MAX_FUTURE_SKEW_SEC = 600;
 
-	/** Ceiling on one reader's bucket enumeration, so get_multi stays bounded (24h). */
+	/**
+	 * Ceiling on one reader's bucket enumeration (24h at the 300s width).
+	 *
+	 * @longform This bounds BUCKETS, not keys: the URL index asks for one key
+	 * per shard per bucket, so a full read costs `URL_SHARDS x` this — 4,608
+	 * keys in one `lookup_multi` at the ceiling. That is the trade sharding
+	 * makes, and it is the right way round: a point read for one URL costs a
+	 * single shard, and no item approaches memcached's 1MB limit, where the
+	 * unsharded blob exceeded it outright once rows carried a `srv` split.
+	 */
 	public const MAX_READ_BUCKETS = 288;
 
 	/** The two tables this store keeps, by ROLE — their TTLs coincide at the floor. */
@@ -156,6 +217,18 @@ class Stats_Store {
 
 	/** @var int Flame-builder partition whose keyspace this store owns. */
 	private int $partition;
+
+	/** The hourly bucket's summed fields; anything else rides through. */
+	private const HOURLY_SUMS = [ 'count' => true, 'sum_ms' => false, 'sum_peak_mb' => false ];
+
+	/** The leaderboard bucket's own summed fields. */
+	private const LB_SUMS = [ 'count' => true, 'sum_req_time' => false ];
+
+	/** One leaderboard category's summed fields. */
+	public const LB_CAT_SUMS = [ 'samples' => true, 'sum_time' => false, 'sum_count' => false ];
+
+	/** One category entry's positional triple: time, count, samples. */
+	private const LB_ENTRY_SUMS = [ 0 => false, 1 => false, 2 => true ];
 	/**
 	 * @param int $partition    Flame-builder partition to read and write.
 	 * @param int $max_lifespan Retention window in seconds; callers pass
@@ -238,7 +311,7 @@ class Stats_Store {
 	 * @return list<string>
 	 */
 	public static function retention_buckets( int $retention_seconds, int $now ): array {
-		$width = self::BUCKET_MINUTES * 60;
+		$width = self::BUCKET_SECONDS;
 		$count = \min( (int) \ceil( $retention_seconds / $width ) + 1, self::MAX_READ_BUCKETS );
 		$out   = [];
 		for ( $i = 0; $i < $count; $i++ ) {
@@ -281,7 +354,7 @@ class Stats_Store {
 	 * @param int $timestamp Unix timestamp.
 	 */
 	public static function bucket_key( int $timestamp ): string {
-		return \gmdate( 'Y-m-d-H-i', $timestamp - ( $timestamp % ( self::BUCKET_MINUTES * 60 ) ) );
+		return \gmdate( 'Y-m-d-H-i', $timestamp - ( $timestamp % self::BUCKET_SECONDS ) );
 	}
 
 	/**
@@ -306,16 +379,6 @@ class Stats_Store {
 	}
 
 	/**
-	 * Read many `urls` buckets.
-	 *
-	 * @param array<int,string> $buckets Bucket keys.
-	 * @return array<string,mixed> Bucket contents keyed by bucket; misses absent.
-	 */
-	public function get_url_buckets( array $buckets ): array {
-		return $this->lookup_buckets( [ self::NS_URLS ], $buckets );
-	}
-
-	/**
 	 * Read many buckets of one namespace in a single round-trip.
 	 *
 	 * A dashboard walks the whole retention window — hundreds of buckets — and
@@ -326,52 +389,79 @@ class Stats_Store {
 	 * @return array<string,mixed> Values keyed by bucket; misses absent.
 	 */
 	private function lookup_buckets( array $parts, array $buckets ): array {
-		if ( empty( $buckets ) ) {
+		$out = [];
+		foreach ( $this->lookup_bucket_sets( [ $parts ], $buckets ) as [ $bucket, $value ] ) {
+			$out[ $bucket ] = $value;
+		}
+		return $out;
+	}
+
+	/**
+	 * Every source of URL rows for a window, as `[bucket, rows]` pairs.
+	 *
+	 * Pairs rather than a merged map: one shard's rows are complete for the
+	 * hashes they cover, and the caller owns how it combines shards. A point
+	 * read costs one shard; a full read costs all sixteen, in one round-trip.
+	 *
+	 * @param array<int,string> $buckets  Bucket keys.
+	 * @param string            $url_hash Read only this hash's shard; '' reads all.
+	 * @return list<array{0: string, 1: array<array-key,mixed>}>
+	 */
+	public function url_row_sources( array $buckets, string $url_hash = '' ): array {
+		$prefixes = [];
+		foreach ( '' === $url_hash ? self::url_shards() : [ self::url_shard( $url_hash ) ] as $shard ) {
+			$prefixes[] = [ self::NS_URLS, $shard ];
+		}
+		return $this->lookup_bucket_sets( $prefixes, $buckets );
+	}
+
+	/**
+	 * Read several namespace prefixes across the same buckets in ONE round-trip.
+	 *
+	 * Decisions 1 and 6. Pairs, not a map: two prefixes can hold one bucket.
+	 *
+	 * @param array<int,array<int,string>> $prefix_sets Namespace prefix parts, before the bucket.
+	 * @param array<int,string>            $buckets     Bucket keys.
+	 * @return list<array{0: string, 1: array<array-key,mixed>}>
+	 */
+	private function lookup_bucket_sets( array $prefix_sets, array $buckets ): array {
+		if ( empty( $buckets ) || empty( $prefix_sets ) ) {
 			return [];
 		}
 		$map = [];
-		foreach ( $buckets as $bucket ) {
-			$map[ $this->key( ...[ ...$parts, $bucket ] ) ] = $bucket;
+		foreach ( $prefix_sets as $parts ) {
+			foreach ( $buckets as $bucket ) {
+				$map[ $this->key( ...[ ...$parts, $bucket ] ) ] = $bucket;
+			}
 		}
 		// No table (no backend) reads as empty, like a miss.
 		$out = [];
 		foreach ( $this->table( self::ROLE_AGGREGATE )?->lookup_multi( \array_keys( $map ) ) ?? [] as $key => $value ) {
 			if ( \is_array( $value ) && isset( $map[ $key ] ) ) {
-				$out[ $map[ $key ] ] = $value;
+				$out[] = [ $map[ $key ], $value ];
 			}
 		}
 		return $out;
 	}
 
 	/**
-	 * Read one request-total bucket: `{ count, sum_ms, sum_peak_mb }`.
+	 * Every shard the URL index is spread across.
 	 *
-	 * @param string $bucket Bucket key.
-	 * @return array<string,mixed> Totals for the bucket, [] on miss.
+	 * @return list<string>
 	 */
-	public function get_hourly_bucket( string $bucket ): array {
-		return $this->bucket_get( [ self::NS_HOURLY ], $bucket );
+	public static function url_shards(): array {
+		return \array_map( 'dechex', \range( 0, self::URL_SHARDS - 1 ) );
 	}
 
 	/**
-	 * Read one `urls` index bucket.
-	 *
-	 * @param string $bucket Bucket key.
-	 * @return array<string,mixed> Bucket contents, [] on miss.
-	 */
-	public function get_url_bucket( string $bucket ): array {
-		return $this->bucket_get( [ self::NS_URLS ], $bucket );
-	}
-
-	/**
-	 * Read one leaderboard bucket, global or per server.
+	 * Read one category bucket: `{ cat => { t, c, n } }`.
 	 *
 	 * @param string $bucket Bucket key.
 	 * @param string $server Reporting server; '' reads the global series.
-	 * @return array<string,mixed> Bucket sums, [] on miss.
+	 * @return array<string,mixed> The bucket, [] on miss.
 	 */
-	public function get_leaderboard_bucket( string $bucket, string $server = '' ): array {
-		return $this->bucket_get( self::lb_parts( $server ), $bucket );
+	public function get_category_bucket( string $bucket, string $server = '' ): array {
+		return $this->bucket_get( self::cat_parts( $server ), $bucket );
 	}
 
 	/**
@@ -387,25 +477,14 @@ class Stats_Store {
 	}
 
 	/**
-	 * Read one URL's dimensional bucket: `{ dim => { value => { c, s, m } } }`.
-	 *
-	 * @param string $url_hash 12-char URL hash.
-	 * @param string $bucket   Bucket key.
-	 * @return array<string,mixed> The bucket, [] on miss.
-	 */
-	public function get_url_dimensional_bucket( string $url_hash, string $bucket ): array {
-		return $this->bucket_get( [ self::NS_URL_DIM, $url_hash ], $bucket );
-	}
-
-	/**
-	 * Read one category bucket: `{ cat => { t, c, n } }`.
+	 * Read one leaderboard bucket, global or per server.
 	 *
 	 * @param string $bucket Bucket key.
 	 * @param string $server Reporting server; '' reads the global series.
-	 * @return array<string,mixed> The bucket, [] on miss.
+	 * @return array<string,mixed> Bucket sums, [] on miss.
 	 */
-	public function get_category_bucket( string $bucket, string $server = '' ): array {
-		return $this->bucket_get( self::cat_parts( $server ), $bucket );
+	public function get_leaderboard_bucket( string $bucket, string $server = '' ): array {
+		return $this->bucket_get( self::lb_parts( $server ), $bucket );
 	}
 
 	/**
@@ -420,6 +499,78 @@ class Stats_Store {
 	}
 
 	/**
+	 * Read one URL's dimensional bucket: `{ dim => { value => { c, s, m } } }`.
+	 *
+	 * @param string $url_hash 12-char URL hash.
+	 * @param string $bucket   Bucket key.
+	 * @return array<string,mixed> The bucket, [] on miss.
+	 */
+	public function get_url_dimensional_bucket( string $url_hash, string $bucket ): array {
+		return $this->bucket_get( [ self::NS_URL_DIM, $url_hash ], $bucket );
+	}
+
+	/**
+	 * Read one shard of one bucket — what a writer read-modify-writes.
+	 *
+	 * @param string $bucket Bucket key.
+	 * @param string $shard  Shard name from `url_shard()`.
+	 * @return array<string,mixed>
+	 */
+	public function get_url_shard( string $bucket, string $shard ): array {
+		return $this->bucket_get( [ self::NS_URLS, $shard ], $bucket );
+	}
+
+	/**
+	 * Write one shard of one bucket.
+	 *
+	 * @param string                 $bucket Bucket key.
+	 * @param string                 $shard  Shard name from `url_shard()`.
+	 * @param array<array-key,mixed> $rows   That shard's rows.
+	 */
+	public function set_url_shard( string $bucket, string $shard, array $rows ): bool {
+		return $this->bucket_set( [ self::NS_URLS, $shard ], $bucket, $rows );
+	}
+
+	/**
+	 * Group URL rows by the shard their hash names.
+	 *
+	 * The routing rule in one place.
+	 *
+	 * @param array<array-key,mixed> $rows Rows by url_hash.
+	 * @return array<array-key,array<array-key,mixed>>
+	 */
+	public static function rows_by_shard( array $rows ): array {
+		$by_shard = [];
+		foreach ( $rows as $hash => $row ) {
+			$by_shard[ self::url_shard( (string) $hash ) ][ $hash ] = $row;
+		}
+		return $by_shard;
+	}
+
+	/**
+	 * The shard a URL row lives in.
+	 *
+	 * The first hex digit of the hash, which `Log_Manager::url_hash()` makes
+	 * uniform — so a point read knows its shard without consulting anything.
+	 *
+	 * @param string $url_hash 12-char URL hash.
+	 */
+	public static function url_shard( string $url_hash ): string {
+		$first = \strtolower( \substr( $url_hash, 0, 1 ) );
+		return \ctype_xdigit( $first ) ? $first : '0';
+	}
+
+	/**
+	 * Read one request-total bucket: `{ count, sum_ms, sum_peak_mb }`.
+	 *
+	 * @param string $bucket Bucket key.
+	 * @return array<string,mixed> Totals for the bucket, [] on miss.
+	 */
+	public function get_hourly_bucket( string $bucket ): array {
+		return $this->bucket_get( [ self::NS_HOURLY ], $bucket );
+	}
+
+	/**
 	 * Read one bucket of a namespace. Every bucketed namespace puts the bucket
 	 * LAST, so scope (server, URL, dimension) is a key prefix.
 	 *
@@ -430,17 +581,6 @@ class Stats_Store {
 	private function bucket_get( array $parts, string $bucket ): array {
 		$val = $this->lookup( $this->key( ...[ ...$parts, $bucket ] ) );
 		return \is_array( $val ) ? self::string_keys( $val ) : [];
-	}
-
-	/**
-	 * Explicit bucket setter (FlameBuilder's full-bucket overwrite path).
-	 *
-	 * @param string               $bucket Bucket key.
-	 * @param array<string,mixed> $data   Whole bucket, replacing what is stored.
-	 * @return bool True when the set landed.
-	 */
-	public function set_url_bucket( string $bucket, array $data ): bool {
-		return $this->bucket_set( [ self::NS_URLS ], $bucket, $data );
 	}
 
 	/**
@@ -563,13 +703,7 @@ class Stats_Store {
 		if ( '' === $server ) {
 			return '';
 		}
-		$hash = 2166136261;
-		$len  = \strlen( $server );
-		for ( $i = 0; $i < $len; $i++ ) {
-			$hash ^= \ord( $server[ $i ] );
-			$hash  = ( $hash * 16777619 ) & 0xFFFFFFFF;
-		}
-		return \sprintf( '%08x', $hash );
+		return \sprintf( '%08x', Log_Manager::fnv1a32( $server ) );
 	}
 
 	/**
@@ -631,11 +765,6 @@ class Stats_Store {
 	/**
 	 * Per-URL aggregate accumulator: the un-drained value for a url_hash, or what
 	 * was last persisted when none is held.
-	 *
-	 * Flame_Builder folds every request into this and drains it through
-	 * `set_url_stats()` on its own cadence, so the tier holds state that is not
-	 * yet stored — which is why the Table's accumulator, and not a read cache,
-	 * is what it wants.
 	 *
 	 * @api Flame_Builder_Node's per-URL accumulation.
 	 * @param string $url_hash URL hash.
@@ -755,6 +884,34 @@ class Stats_Store {
 	}
 
 	/**
+	 * Add one URL row into another, for the synthetic overflow row only.
+	 *
+	 * Only the fields that ADD (`URL_SRV_SUMS`) plus `last_seen`: a percentile
+	 * over unrelated URLs describes nothing. The split folds with it, so a
+	 * scoped total is exact for the same reason the site's is.
+	 *
+	 * @param array<array-key,mixed> $into The row so far, [] on first fold.
+	 * @param array<array-key,mixed> $row  The row being folded in.
+	 * @return array<string,mixed>
+	 */
+	public static function fold_url_rows( array $into, array $row ): array {
+		// AFTER the sum: it returns `$into`, which carries its own `last_seen`.
+		$out              = self::string_keys( self::sum_entry( $into, $row, self::URL_SRV_SUMS ) );
+		$out['worker']    = ! empty( $into['worker'] ) || ! empty( $row['worker'] );
+		$out['last_seen'] = \max(
+			Core::num_int( $into['last_seen'] ?? null ),
+			Core::num_int( $row['last_seen'] ?? null )
+		);
+
+		$out[ self::URL_SRV_FIELD ] = self::sum_fields(
+			Core::arr( $into[ self::URL_SRV_FIELD ] ?? null ),
+			Core::arr( $row[ self::URL_SRV_FIELD ] ?? null ),
+			self::URL_SRV_SUMS
+		);
+		return $out;
+	}
+
+	/**
 	 * Sum `$fields` from `$incoming` into `$into`, entry by entry. The one merge
 	 * both the dimensional (`c,s,m`) and category (`t,c,n`) series share.
 	 *
@@ -771,19 +928,104 @@ class Stats_Store {
 	public static function sum_fields( array $into, array $incoming, array $fields ): array {
 		$out = self::string_keys( $into );
 		foreach ( $incoming as $key => $stats ) {
-			if ( ! \is_array( $stats ) ) {
-				continue;
+			if ( \is_array( $stats ) ) {
+				$out[ (string) $key ] = self::sum_entry( Core::arr( $out[ (string) $key ] ?? null ), $stats, $fields );
 			}
-			$cur = Core::arr( $out[ (string) $key ] ?? null );
-			foreach ( $fields as $field => $is_count ) {
-				$cur[ $field ] = $is_count
-					? Core::num_int( $cur[ $field ] ?? null ) + Core::num_int( $stats[ $field ] ?? null )
-					: Core::num_float( $cur[ $field ] ?? null ) + Core::num_float( $stats[ $field ] ?? null );
-			}
-			$out[ (string) $key ] = $cur;
 		}
 		return $out;
 	}
+
+	/**
+	 * Swap a URL row's SUMMED fields for one server's, or null when that server
+	 * never served the URL. `''` strips the split and returns the row as it
+	 * stands, so one call covers the unscoped case too.
+	 *
+	 * The row it returns is not yet in one scope: its means and its recent-window
+	 * share are still the site's, and `Performance_CI_Node::project_row()`
+	 * finishes it. WHICH fields swap is the schema's; the division is the
+	 * reader's (decision 2).
+	 *
+	 * @param array<array-key,mixed> $row    A merged URL row carrying its split.
+	 * @param string                 $server Reporting server; '' scopes to none.
+	 * @return array<array-key,mixed>|null
+	 */
+	public static function swap_url_server_sums( array $row, string $server ): ?array {
+		$split = Core::arr( $row[ self::URL_SRV_FIELD ] ?? null );
+		unset( $row[ self::URL_SRV_FIELD ] );
+		if ( '' === $server ) {
+			return $row;
+		}
+		// `is_array`: a non-array leaves the swap empty and widens the row.
+		if ( ! \is_array( $split[ $server ] ?? null ) ) {
+			return null;
+		}
+		return \array_merge( $row, self::sum_entry( [], $split[ $server ], self::URL_SRV_SUMS ) );
+	}
+
+	/**
+	 * Sum two `{count, sum_ms, sum_peak_mb}` totals. The write-side counterpart
+	 * of `sums_to_display()`: the schema owns the triple, so it owns the
+	 * arithmetic over it, and a non-numeric field on either side reads as zero.
+	 *
+	 * Fields outside the triple ride through from `$a`: the stored bucket is the
+	 * caller's, and rebuilding it here would drop a fourth field silently.
+	 *
+	 * @param array<string,mixed>    $a One side, and the shape that survives.
+	 * @param array<array-key,mixed> $b The other, read by name only.
+	 * @return array<string,mixed>
+	 */
+	public static function add_totals( array $a, array $b ): array {
+		return self::string_keys( self::sum_entry( $a, $b, self::HOURLY_SUMS ) );
+	}
+
+	/**
+	 * Additive merge of one leaderboard bucket's sums into another (modifying $dst).
+	 *
+	 * Used by FlameBuilder at persist time to combine the current flush's bucket
+	 * with the already-persisted bucket of the same key. Static so callers can
+	 * use it without an instance.
+	 * @param array<string,mixed> $dst
+	 * @param array<string,mixed> $src
+	 */
+	public static function merge_leaderboard_bucket( array &$dst, array $src ): void {
+		$dst  = self::string_keys( self::sum_entry( $dst, $src, self::LB_SUMS ) );
+		$cats = Core::arr( $dst['categories'] ?? null );
+		foreach ( Core::arr( $src['categories'] ?? null ) as $cat => $data ) {
+			$data    = Core::arr( $data );
+			$current = Core::arr( $cats[ $cat ] ?? null );
+			$entries = Core::arr( $current['entries'] ?? null );
+			foreach ( Core::arr( $data['entries'] ?? null ) as $name => $entry ) {
+				$entries[ $name ] = self::sum_entry(
+					Core::arr( $entries[ $name ] ?? null ),
+					Core::arr( $entry ),
+					self::LB_ENTRY_SUMS
+				);
+			}
+			$cats[ $cat ]            = self::sum_entry( $current, $data, self::LB_CAT_SUMS );
+			$cats[ $cat ]['entries'] = $entries;
+		}
+		$dst['categories'] = $cats;
+	}
+
+	/**
+	 * Sum `$fields` from one entry into another. What `sum_fields()` does per
+	 * key, reachable directly by the callers holding a single row — those were
+	 * inventing a throwaway map key to get at it, then unwrapping the result.
+	 *
+	 * @param array<array-key,mixed>  $into    The entry so far.
+	 * @param array<array-key,mixed>  $from    The entry being added.
+	 * @param array<array-key,bool>   $fields  Field => whether it is a whole count.
+	 * @return array<array-key,mixed>
+	 */
+	public static function sum_entry( array $into, array $from, array $fields ): array {
+		foreach ( $fields as $field => $is_count ) {
+			$into[ $field ] = $is_count
+				? Core::num_int( $into[ $field ] ?? null ) + Core::num_int( $from[ $field ] ?? null )
+				: Core::num_float( $into[ $field ] ?? null ) + Core::num_float( $from[ $field ] ?? null );
+		}
+		return $into;
+	}
+
 	/**
 	 * Re-key a decoded map with string keys. PHP casts numeric-looking keys to
 	 * int on decode, so a value read back from the cache is `array-key` typed
@@ -802,79 +1044,42 @@ class Stats_Store {
 	}
 
 	/**
-	 * Sum two `{count, sum_ms, sum_peak_mb}` totals. The write-side counterpart
-	 * of `sums_to_display()`: the schema owns the triple, so it owns the
-	 * arithmetic over it, and a non-numeric field on either side reads as zero.
+	 * The overflow key a row folds into.
 	 *
-	 * Fields outside the triple ride through from `$a`: the stored bucket is the
-	 * caller's, and rebuilding it here would drop a fourth field silently.
-	 *
-	 * @param array<string,mixed>    $a One side, and the shape that survives.
-	 * @param array<array-key,mixed> $b The other, read by name only.
-	 * @return array<string,mixed>
+	 * @param bool $worker Whether the folded row is worker traffic.
 	 */
-	public static function add_totals( array $a, array $b ): array {
-		return \array_merge(
-			$a,
-			[
-				'count'       => Core::num_int( $a['count'] ?? null ) + Core::num_int( $b['count'] ?? null ),
-				'sum_ms'      => Core::num_float( $a['sum_ms'] ?? null ) + Core::num_float( $b['sum_ms'] ?? null ),
-				'sum_peak_mb' => Core::num_float( $a['sum_peak_mb'] ?? null ) + Core::num_float( $b['sum_peak_mb'] ?? null ),
-			]
-		);
+	public static function other_key( bool $worker ): string {
+		return $worker ? self::OTHER_WORKER_KEY : self::OTHER_KEY;
+	}
+
+	/**
+	 * Whether a row key is one of the overflow rows — either of them.
+	 *
+	 * @param string $hash A URL row key.
+	 */
+	public static function is_other_key( string $hash ): bool {
+		return self::OTHER_KEY === $hash || self::OTHER_WORKER_KEY === $hash;
+	}
+
+	/**
+	 * Values kept in one dimension's bucket.
+	 *
+	 * The server axis gets `MAX_SERVER_VALUES` rather than the caller's generic
+	 * cap: it is the picker's contents, so a fleet-sized axis must survive whole.
+	 * It is capped all the same — `SERVER_NAME` is the client's Host header under
+	 * Apache's default `UseCanonicalName Off`, so it is visitor input like any
+	 * other axis, just one no real fleet reaches the ceiling of.
+	 *
+	 * @param string $dimension The dimension being capped.
+	 * @param int    $cap       Ceiling for every other axis.
+	 */
+	public static function dim_cap( string $dimension, int $cap ): int {
+		return self::DIM_SERVER === $dimension ? self::MAX_SERVER_VALUES : $cap;
 	}
 
 	/** Partition this store reads and writes. */
 	public function partition(): int {
 		return $this->partition;
-	}
-
-	/**
-	 * Additive merge of one leaderboard bucket's sums into another (modifying $dst).
-	 *
-	 * Used by FlameBuilder at persist time to combine the current flush's bucket
-	 * with the already-persisted bucket of the same key. Static so callers can
-	 * use it without an instance.
-	 * @param array<string,mixed> $dst
-	 * @param array<string,mixed> $src
-	 */
-	public static function merge_leaderboard_bucket( array &$dst, array $src ): void {
-		$dst['count']        = Core::num_int( $dst['count'] ?? null ) + Core::num_int( $src['count'] ?? null );
-		$dst['sum_req_time'] = Core::num_float( $dst['sum_req_time'] ?? null ) + Core::num_float( $src['sum_req_time'] ?? null );
-		if ( ! isset( $dst['categories'] ) || ! \is_array( $dst['categories'] ) ) {
-			$dst['categories'] = [];
-		}
-		$src_cats = ( isset( $src['categories'] ) && \is_array( $src['categories'] ) ) ? $src['categories'] : [];
-		foreach ( $src_cats as $cat => $data ) {
-			$data = Core::arr( $data );
-			if ( ! isset( $dst['categories'][ $cat ] ) ) {
-				$dst['categories'][ $cat ] = [
-					'samples'   => 0,
-					'sum_time'  => 0.0,
-					'sum_count' => 0.0,
-					'entries'   => [],
-				];
-			}
-			/** @var array{samples:int, sum_time:float, sum_count:float, entries:array<array-key,mixed>} $c */
-			$c               = &$dst['categories'][ $cat ];
-			$c['samples']   += Core::num_int( $data['samples'] ?? null );
-			$c['sum_time']  += Core::num_float( $data['sum_time'] ?? null );
-			$c['sum_count'] += Core::num_float( $data['sum_count'] ?? null );
-			$entries         = ( isset( $data['entries'] ) && \is_array( $data['entries'] ) ) ? $data['entries'] : [];
-			foreach ( $entries as $name => $entry ) {
-				$entry = Core::arr( $entry );
-				if ( ! isset( $c['entries'][ $name ] ) ) {
-					$c['entries'][ $name ] = [ 0.0, 0.0, 0 ];
-				}
-				/** @var array{0:float, 1:float, 2:int} $dst_entry */
-				$dst_entry      = &$c['entries'][ $name ];
-				$dst_entry[0]  += Core::num_float( $entry[0] ?? null );
-				$dst_entry[1]  += Core::num_float( $entry[1] ?? null );
-				$dst_entry[2]  += Core::num_int( $entry[2] ?? null );
-				unset( $dst_entry );
-			}
-			unset( $c );
-		}
 	}
 
 	/**

@@ -216,6 +216,30 @@ class TopologyShapeTest extends TestCase {
 	}
 
 	/**
+	 * `cmd {partition}:config with_index <name>` resolves the name through the
+	 * substrate's Formatters registry. An unregistered name leaves the partition
+	 * with no index at all — writes still land, but every index-driven read
+	 * (request search, flame lookup) then scans nothing and reports not-found.
+	 */
+	public function test_every_with_index_name_resolves_to_a_registered_formatter(): void {
+		$referenced = [];
+		foreach ( $this->topology_files() as $path ) {
+			foreach ( $this->parse_topology( $path )['cmds'] as $cmd ) {
+				if ( 'with_index' === $cmd['verb'] && isset( $cmd['args'][0] ) ) {
+					$referenced[ $cmd['args'][0] ] = \basename( $path );
+				}
+			}
+		}
+		$this->assertNotEmpty( $referenced, 'no with_index cmds — a rename silently disabled this guard' );
+		foreach ( $referenced as $formatter => $topology ) {
+			$this->assertNotNull(
+				\Newspack_Nodes\Formatters::resolve( $formatter ),
+				"$topology: with_index '$formatter' names no registered formatter — the partition writes no index"
+			);
+		}
+	}
+
+	/**
 	 * Anchor the shape guards to the current corpus: a renamed node-type or verb
 	 * token must not silently disable a guard by matching nothing (and a stale
 	 * classmap must not make every node look non-stateful).

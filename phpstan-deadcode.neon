@@ -25,3 +25,12 @@ parameters:
     # bootstrapFiles. See the bootstrap for the full rationale.
     bootstrapFiles:
         - .phpstan/load-substrate.php
+    ignoreErrors:
+        # A verb declared `toggle` or `setter` in node_schema() has no handler
+        # of its own: the substrate's Schema_Reflection synthesizes one that
+        # calls `$patron->{"set_{$prop}"}( … )`. That dynamic dispatch is the
+        # documented blind spot above, so the setter reads as dead. Each one
+        # IS the verb's implementation — deleting it silently disables the verb.
+        -
+            identifier: shipmonk.deadMethod
+            message: '#::set_(is_hub|completed_target|errors_target|alerts_target|inflight_delta)$#'

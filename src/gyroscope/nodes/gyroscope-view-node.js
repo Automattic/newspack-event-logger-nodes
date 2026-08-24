@@ -1,4 +1,10 @@
-import { FROM, KEY, Node, VALUE } from '@newspack-nodes/runtime';
+import {
+	FROM,
+	KEY,
+	Node,
+	VALUE,
+	CommandInterpreterNode,
+} from '@newspack-nodes/runtime';
 
 // Averaging window for the requests/second readout, in seconds.
 const RPS_WINDOW_SEC = 10;
@@ -44,6 +50,9 @@ const INFLIGHT_STALE_MS = 15 * 60 * 1000;
  * `snapshot()` reaps completed entries (shown one tick), ages out in-flight rows
  * past INFLIGHT_STALE_MS, sorts by est_ms descending, and caps — plus the
  * 10s-window RPS.
+ *
+ * @testonly The class is exported for its suite; production reaches it
+ *           through the `views` map registered at the foot of this file.
  */
 export class GyroscopeViewNode extends Node {
 	/**
@@ -259,3 +268,8 @@ export class GyroscopeViewNode extends Node {
 		};
 	}
 }
+
+/** The view classes, handed to `makeNode` — a name is per-bundle. */
+export const views = CommandInterpreterNode.registerNodeClasses( {
+	GyroscopeView: GyroscopeViewNode,
+} );

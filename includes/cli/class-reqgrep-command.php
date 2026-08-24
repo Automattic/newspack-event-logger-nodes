@@ -141,11 +141,9 @@ class Reqgrep_Command {
 	 * Filter firehose JSONL logs by request id or pattern.
 	 *
 	 * Collects every entry sharing a request id once any line for that rid
-	 * matches the pattern, then prints them in chronological order with
-	 * indentation reflecting the (start)/(complete) tree.
-	 *
-	 * Piped or redirected stdin wins over every other source: with data on
-	 * stdin the command reads that and ignores --follow and --recent.
+	 * matches, then prints them in order, indented by the (start)/(complete)
+	 * tree. Stdin wins over every other source: with data on it, --follow and
+	 * --recent are ignored.
 	 *
 	 * ## OPTIONS
 	 *

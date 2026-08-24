@@ -12,22 +12,30 @@
  */
 
 /**
- * A number, or 0 — never undefined, so a reader can index without guarding.
+ * The number, or the fallback. Pass `null` where "no answer yet" has to stay
+ * distinguishable from "measured zero" — the distinction the headline stats
+ * already render; the default floors a missing measurement so a reader can
+ * index without guarding.
  *
- * @param {*} value Anything numeric-ish.
- * @return {number} The number, or 0.
+ * @param {*}       value      Anything numeric-ish.
+ * @param {?number} [fallback] What an absent measurement reads as.
+ * @return {?number} The finite number, or the fallback.
  */
-function num( value ) {
-	return 'number' === typeof value && Number.isFinite( value ) ? value : 0;
+function num( value, fallback = 0 ) {
+	return 'number' === typeof value && Number.isFinite( value )
+		? value
+		: fallback;
 }
 
 /**
  * What the dashboard is currently showing, innermost selection first: a
  * selected request describes the page better than the URL it sits under, and
- * that better than the site-wide totals.
+ * that better than the totals of the URL set on screen.
  *
  * @param {Object}  state                    The dashboard's current selection.
- * @param {?Object} [state.overview]         The overview slice.
+ * @param {?Object} [state.urlTotals]        Totals for the URL set the filters selected.
+ * @param {?Array}  [state.urlSlowest]       The slowest URLs of that same set.
+ * @param {?Object} [state.urlFilters]       The filters both are of.
  * @param {?Object} [state.selectedUrl]      The selected URL row.
  * @param {?Object} [state.urlDetail]        Its detail payload.
  * @param {?string} [state.selectedRequest]  The selected request id.
@@ -36,16 +44,22 @@ function num( value ) {
  * @return {Object} The facts block.
  */
 export function pageFacts( {
-	overview,
+	urlTotals,
+	urlSlowest,
+	urlFilters,
 	selectedUrl,
 	urlDetail,
 	selectedRequest,
 	requestPartition,
 	requestDetail,
 } = {} ) {
+	// What the numbers are OF: the verb's echo, absent until it answers.
+	const filters = urlFilters ?? null;
+
 	if ( selectedRequest && requestDetail ) {
 		return {
 			surface: 'request',
+			filters,
 			request: { rid: selectedRequest, partition: requestPartition ?? 0 },
 			url: selectedUrl
 				? { hash: selectedUrl.hash, url: selectedUrl.url }
@@ -61,6 +75,7 @@ export function pageFacts( {
 		const stats = urlDetail?.stats ?? {};
 		return {
 			surface: 'url',
+			filters,
 			url: { hash: selectedUrl.hash, url: selectedUrl.url },
 			stats: {
 				count: num( stats.count ),
@@ -73,20 +88,24 @@ export function pageFacts( {
 
 	return {
 		surface: 'overview',
+		filters,
+		// @longform The panel's own numbers, so the brief describes the page
+		// as shown, under whatever the operator applied. Absent reads as
+		// absent: the header renders an em dash for these, and a reader
+		// handed 0 during first paint would report an idle site.
 		totals: {
-			urls: num( overview?.total_urls ),
-			requests: num( overview?.total_requests ),
-			avg_ms: num( overview?.global_avg_ms ),
-			avg_peak_mb: num( overview?.global_avg_peak_mb ),
+			urls: num( urlTotals?.urls, null ),
+			requests: num( urlTotals?.requests, null ),
+			avg_ms: num( urlTotals?.avg_ms, null ),
+			avg_peak_mb: num( urlTotals?.avg_peak_mb, null ),
 		},
-		slowest: ( overview?.slowest_urls ?? [] )
-			.slice( 0, 10 )
-			.map( ( u ) => ( {
-				hash: u.hash,
-				url: u.url,
-				p95_ms: num( u.p95_ms ),
-				count: num( u.count ),
-			} ) ),
+		// The slowest of the SAME set, sorted by the verb that filtered it.
+		slowest: ( urlSlowest ?? [] ).slice( 0, 10 ).map( ( u ) => ( {
+			hash: u.hash,
+			url: u.url,
+			p95_ms: num( u.p95_ms ),
+			count: num( u.count ),
+		} ) ),
 	};
 }
 

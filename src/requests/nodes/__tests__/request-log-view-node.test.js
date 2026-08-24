@@ -19,9 +19,10 @@ import {
 	TM_STRUCT,
 	newMessage,
 	Core,
+	CommandInterpreterNode,
 } from '@newspack-nodes/runtime';
 import { LogStreamViewNode } from '@newspack-nodes/shared/nodes/log-stream-view-node';
-import { RequestLogViewNode } from '../request-log-view-node';
+import { RequestLogViewNode, views } from '../request-log-view-node';
 
 // Naming registers in the per-process Core registry; clear it between tests.
 beforeEach( () => Core.reset() );
@@ -107,6 +108,19 @@ test( 'urlHash keeps the ?worker marker so nodes/ELN URLs deep-link (matches PHP
 	// PHP url_hash hashes the full string incl. ?worker; don't strip at '?'.
 	expect( v.lines[ 0 ].urlHash ).toBe( fnv1a( '/jobs/x?reconcile' ) );
 	expect( v.lines[ 0 ].urlHash ).not.toBe( fnv1a( '/jobs/x' ) );
+} );
+
+test( 'urlHash keys the FULL url, not the display clip', () => {
+	// The display clip is a display decision; `urlHash` is an identity. PHP's
+	// `Log_Manager::url_hash()` hashes the whole string, and the Error Log's
+	// view node says so in its own docblock — so a URL past the clip must not
+	// deep-link to a hash the Overview has never heard of.
+	const long = '/reports/' + 'q'.repeat( 2600 );
+	const v = makeView( 'requestlog:view' );
+	v.fill( rowMsg( row( { rid: 'long', url: long, end_time: 1 } ) ) );
+
+	expect( v.lines[ 0 ].urlHash ).toBe( fnv1a( long ) );
+	expect( v.lines[ 0 ].url.endsWith( '...' ) ).toBe( true );
 } );
 
 test( 'stamps each row with the base monotonic id + isEven stripe', () => {
@@ -428,5 +442,16 @@ describe( 'ingest filter', () => {
 		expect(
 			v.matchesFilter( { content: '/checkout/cart' }, 'checkout' )
 		).toBe( false );
+	} );
+} );
+
+// Importing the view registers it: the class table `make_node` and the palette
+// resolve names against is what the dashboard's TSL reaches this class through.
+describe( 'registration', () => {
+	it( 'registers RequestLogView for make_node', () => {
+		expect( views ).toEqual( { RequestLogView: RequestLogViewNode } );
+		expect( CommandInterpreterNode.includeNodes.RequestLogView ).toBe(
+			RequestLogViewNode
+		);
 	} );
 } );

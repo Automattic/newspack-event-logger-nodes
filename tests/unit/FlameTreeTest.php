@@ -260,7 +260,7 @@ class FlameTreeTest extends TestCase {
 	// ----- merge_flame_children_incremental -----
 
 	public function test_merge_adds_new_children_and_sums_existing(): void {
-		$existing = [ [ 'name' => 'db', 'sum_value' => 10.0, 'seen_count' => 1, 'ts' => self::NOW, 'children' => [] ] ];
+		$existing = [ [ 'name' => 'db', 'sum_value' => 10.0, 'ts' => self::NOW, 'children' => [] ] ];
 		$incoming = [
 			[ 'name' => 'db', 'value' => 5, 'ts' => self::NOW ],
 			[ 'name' => 'cache', 'value' => 3, 'ts' => self::NOW ],
@@ -271,9 +271,9 @@ class FlameTreeTest extends TestCase {
 			$by[ $c['name'] ] = $c;
 		}
 		$this->assertSame( 15.0, $by['db']['sum_value'] );
-		$this->assertSame( 2, $by['db']['seen_count'] );
 		$this->assertSame( 3.0, $by['cache']['sum_value'] );
-		$this->assertSame( 1, $by['cache']['seen_count'] );
+		// No per-node tally: finalize divides by the aggregate's request count.
+		$this->assertArrayNotHasKey( 'seen_count', $by['db'] );
 	}
 
 	public function test_merge_recurses_into_children(): void {

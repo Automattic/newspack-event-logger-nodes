@@ -55,7 +55,7 @@ class Ask_Assembler {
 	 * than filtered, so a new field on the record does not silently start
 	 * leaving the site.
 	 */
-	private const ENV_ALLOWLIST = [ 'method', 'request_method', 'status_code', 'worker_type', 'partition', 'host' ];
+	private const ENV_ALLOWLIST = [ 'method', 'request_method', 'status_code', 'worker_type', 'partition', 'server_name' ];
 
 	/**
 	 * One request: what it did, how long it took, what the detector found.
@@ -345,7 +345,7 @@ class Ask_Assembler {
 	 * @param Rule|null                 $rule     The governing rule, or null.
 	 * @return array<string,mixed>
 	 */
-	public static function for_url( array $stats, array $requests, ?Rule $rule ): array {
+	public static function for_url( array $stats, array $requests, ?Rule $rule, string $server = '' ): array {
 		\usort(
 			$requests,
 			static fn ( array $a, array $b ): int =>
@@ -356,6 +356,8 @@ class Ask_Assembler {
 			'subject'        => 'url',
 			'url'            => Log_Manager::redact_url( Core::as_string( $stats['url'] ?? '' ) ),
 			'hash'           => Core::as_string( $stats['hash'] ?? '' ),
+			// What these numbers are OF; the pointer below carries it too.
+			'server'         => $server,
 			'stats'          => [
 				'count'       => Core::num_int( $stats['count'] ?? 0 ),
 				'avg_ms'      => Core::num_float( $stats['avg_ms'] ?? 0 ),
@@ -371,7 +373,7 @@ class Ask_Assembler {
 			'findings'       => Findings::for_url( $stats, $rule ),
 			'fetch'          => self::fetch(
 				'performance_url_detail',
-				[ 'hash' => Core::as_string( $stats['hash'] ?? '' ) ]
+				[ 'hash' => Core::as_string( $stats['hash'] ?? '' ), 'server' => $server ]
 			),
 			'caveat'         => Findings::caveat(),
 		];
@@ -433,9 +435,51 @@ class Ask_Assembler {
 		if ( ! isset( $profiles[ $name ] ) || ! \is_array( $profiles[ $name ] ) ) {
 			return null;
 		}
+		return self::category_brief( $profiles, $name, 'request', 1, [ 'url' => self::url_of( $record ) ] );
+	}
+
+	/**
+	 * The record's URL, redacted through the one path the firehose uses.
+	 *
+	 * @param array<array-key,mixed> $record A stored request record.
+	 */
+	private static function url_of( array $record ): string {
+		return Log_Manager::redact_url( Core::as_string( $record['url'] ?? '' ) );
+	}
+
+	/**
+	 * One breakdown row: its own numbers, its share, and what it is competing
+	 * with — a category means nothing without the rest of the board.
+	 *
+	 * @param array<array-key,mixed> $categories The display-shaped category map.
+	 * @param string              $name       The category clicked.
+	 * @return array<string,mixed>|null Null when the board holds no such row.
+	 */
+	public static function for_category( array $categories, string $name, string $server = '' ): ?array {
+		if ( ! isset( $categories[ $name ] ) || ! \is_array( $categories[ $name ] ) ) {
+			return null;
+		}
+		// Stats_Store hands these over as per-request means: time and count.
+		$scope = '' === $server ? 'recent window' : "recent window on {$server}";
+		$mine  = Core::arr( $categories[ $name ] );
+		return self::category_brief( $categories, $name, $scope, Core::num_int( $mine['samples'] ?? 0 ) );
+	}
+
+	/**
+	 * The shape both category briefs return: this row's numbers, its share of
+	 * the board, and the rest of the board sorted against it.
+	 *
+	 * @param array<array-key,mixed> $rows    Every row of the board, this one included.
+	 * @param string                 $name    The row asked about.
+	 * @param string                 $scope   Names the set these means were taken over.
+	 * @param int                    $samples Requests behind them.
+	 * @param array<string,mixed>    $extra   Keys only one caller carries.
+	 * @return array<string,mixed>
+	 */
+	private static function category_brief( array $rows, string $name, string $scope, int $samples, array $extra = [] ): array {
 		$total  = 0.0;
 		$others = [];
-		foreach ( $profiles as $key => $row ) {
+		foreach ( $rows as $key => $row ) {
 			$time   = \is_array( $row ) ? Core::num_float( $row['time'] ?? 0 ) : 0.0;
 			$total += $time;
 			if ( (string) $key !== $name ) {
@@ -447,31 +491,23 @@ class Ask_Assembler {
 			}
 		}
 		\usort( $others, static fn ( array $a, array $b ): int => $b['avg_time_ms'] <=> $a['avg_time_ms'] );
-		$others = \array_slice( $others, 0, self::TOP_SPANS );
 
-		$mine = $profiles[ $name ];
+		$mine = Core::arr( $rows[ $name ] ?? null );
 		$time = Core::num_float( $mine['time'] ?? 0 );
-		return [
-			'subject'     => 'category',
-			'scope'       => 'request',
-			'name'        => $name,
-			'avg_time_ms' => $time,
-			'avg_count'   => Core::num_float( $mine['count'] ?? 0 ),
-			'samples'     => 1,
-			'share'       => $total > 0.0 ? $time / $total : 0.0,
-			'others'      => $others,
-			'url'         => self::url_of( $record ),
-			'caveat'      => Findings::caveat(),
-		];
-	}
-
-	/**
-	 * The record's URL, redacted through the one path the firehose uses.
-	 *
-	 * @param array<array-key,mixed> $record A stored request record.
-	 */
-	private static function url_of( array $record ): string {
-		return Log_Manager::redact_url( Core::as_string( $record['url'] ?? '' ) );
+		return \array_merge(
+			[
+				'subject'     => 'category',
+				'scope'       => $scope,
+				'name'        => $name,
+				'avg_time_ms' => $time,
+				'avg_count'   => Core::num_float( $mine['count'] ?? 0 ),
+				'samples'     => $samples,
+				'share'       => $total > 0.0 ? $time / $total : 0.0,
+				'others'      => \array_slice( $others, 0, self::TOP_SPANS ),
+				'caveat'      => Findings::caveat(),
+			],
+			$extra
+		);
 	}
 
 	/**
@@ -489,50 +525,6 @@ class Ask_Assembler {
 			'type'      => $parts[0],
 			'id'        => $parts[1],
 			'qualifier' => $parts[2] ?? '',
-		];
-	}
-
-	/**
-	 * One breakdown row: its own numbers, its share, and what it is competing
-	 * with — a category means nothing without the rest of the board.
-	 *
-	 * @param array<array-key,mixed> $categories The display-shaped category map.
-	 * @param string              $name       The category clicked.
-	 * @return array<string,mixed>|null Null when the board holds no such row.
-	 */
-	public static function for_category( array $categories, string $name ): ?array {
-		if ( ! isset( $categories[ $name ] ) || ! \is_array( $categories[ $name ] ) ) {
-			return null;
-		}
-		$scope  = 'recent window';
-		$total  = 0.0;
-		$others = [];
-		// Stats_Store hands these over as per-request means: time and count.
-		foreach ( $categories as $key => $row ) {
-			$time   = \is_array( $row ) ? Core::num_float( $row['time'] ?? 0 ) : 0.0;
-			$total += $time;
-			if ( (string) $key !== $name ) {
-				$others[] = [
-					'name'        => (string) $key,
-					'avg_time_ms' => $time,
-					'avg_count'   => \is_array( $row ) ? Core::num_float( $row['count'] ?? 0 ) : 0.0,
-				];
-			}
-		}
-		\usort( $others, static fn ( array $a, array $b ): int => $b['avg_time_ms'] <=> $a['avg_time_ms'] );
-
-		$mine = $categories[ $name ];
-		$time = Core::num_float( $mine['time'] ?? 0 );
-		return [
-			'subject'     => 'category',
-			'scope'       => $scope,
-			'name'        => $name,
-			'avg_time_ms' => $time,
-			'avg_count'   => Core::num_float( $mine['count'] ?? 0 ),
-			'samples'     => Core::num_int( $mine['samples'] ?? 0 ),
-			'share'       => $total > 0.0 ? $time / $total : 0.0,
-			'others'      => \array_slice( $others, 0, self::TOP_SPANS ),
-			'caveat'      => Findings::caveat(),
 		];
 	}
 

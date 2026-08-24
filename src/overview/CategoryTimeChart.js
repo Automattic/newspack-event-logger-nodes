@@ -7,28 +7,45 @@
  * site-wide (or per-server) on the overview, per-URL in the URL detail view.
  *
  * Each 5-minute bucket carries `{ t, c }` per category: `t` milliseconds of
- * wall time, `c` events. The `mode` prop chooses what to plot — "time"
- * (seconds of category time per second of clock), "count" (events per second),
- * or "average" (milliseconds per event). Areas overlay rather than stack, so
- * each band reads against the axis instead of against its neighbors.
+ * wall time, `c` events. One payload answers three questions, so the panel
+ * draws all three — "time" (seconds of category time per second of clock),
+ * "count" (events per second), and "average" (milliseconds per event). Areas
+ * overlay rather than stack, so each band reads against the axis instead of
+ * against its neighbors.
  *
- * The sibling `AggregateTimeChart` plots request-level metrics; this one
- * breaks the same window down by profile category.
+ * The sibling `AggregateTimeChart` plots request-level metrics on the same
+ * `AreaTimeChart` frame; this one breaks the window down by profile category.
  */
 
 import { useCallback, useMemo } from '@wordpress/element';
-import * as d3 from 'd3';
+import { __ } from '@wordpress/i18n';
 import {
 	BUCKET_SECONDS,
-	MARGIN,
 	PALETTE,
 	buildTimeSlots,
-	drawLegend,
-	formatXTick,
-	setupTooltip,
-	useTimeChart,
 } from '@newspack-nodes/shared/hooks/useTimeChart';
+import AreaTimeChart from './components/AreaTimeChart';
 import { RETENTION_SECONDS } from './retention';
+
+const CHART_HEIGHT = 200;
+
+/**
+ * The three views the panel takes of one series, in render order.
+ */
+const CATEGORY_VIEWS = [
+	{
+		mode: 'time',
+		title: __( 'Time by Category', 'newspack-event-logger-nodes' ),
+	},
+	{
+		mode: 'count',
+		title: __( 'Events by Category', 'newspack-event-logger-nodes' ),
+	},
+	{
+		mode: 'average',
+		title: __( 'Average Time per Event', 'newspack-event-logger-nodes' ),
+	},
+];
 
 /**
  * Format a Y-axis value in the unit its mode implies.
@@ -47,7 +64,7 @@ const formatYValue = ( val, mode ) => {
 	}
 	if ( mode === 'time' ) {
 		if ( val < 0.001 ) {
-			return `${ ( val * 1000000 ).toFixed( 0 ) }\u00B5s/s`;
+			return `${ ( val * 1000000 ).toFixed( 0 ) }µs/s`;
 		}
 		if ( val < 1 ) {
 			return `${ ( val * 1000 ).toFixed( 0 ) }ms/s`;
@@ -56,7 +73,7 @@ const formatYValue = ( val, mode ) => {
 	}
 	if ( mode === 'average' ) {
 		if ( val < 1 ) {
-			return `${ ( val * 1000 ).toFixed( 0 ) }\u00B5s`;
+			return `${ ( val * 1000 ).toFixed( 0 ) }µs`;
 		}
 		if ( val >= 1000 ) {
 			return `${ ( val / 1000 ).toFixed( 1 ) }s`;
@@ -70,216 +87,94 @@ const formatYValue = ( val, mode ) => {
 };
 
 /**
- * Category time chart component.
+ * Rank categories by their whole-window total, then sample each across it.
  *
- * @param {Object} props       Component props.
- * @param {Object} props.data  Category series keyed by bucket — `{ bucket: { category: { t, c } } }`, `t` in milliseconds.
- * @param {string} props.mode  'time' | 'count' | 'average'.
- * @param {string} props.title Heading rendered above the chart.
- * @return {import('react').ReactElement|null} Rendered chart, or null when data is empty.
+ * @param {Object} data Category series keyed by bucket.
+ * @param {string} mode 'time' | 'count' | 'average'.
+ * @return {Array} Series in rank order, each `{ label, values }`.
  */
-export default function CategoryTimeChart( { data, mode, title } ) {
-	/**
-	 * Rank categories, then sample each one across the retention window.
-	 *
-	 * Ranking sums the whole window per category: event counts in "count"
-	 * mode, milliseconds otherwise — so "average" orders by total time, not by
-	 * its own plotted average. The rank drives both palette assignment and
-	 * legend order. The synthetic `total` category is dropped; buckets with no
-	 * sample for a category contribute a zero, which keeps every series the
-	 * same length as the slot list.
-	 */
-	const chartState = useMemo( () => {
-		if ( ! data ) {
-			return { series: [], slots: [] };
-		}
-
-		const totals = {};
-		Object.values( data ).forEach( ( bucket ) => {
-			Object.entries( bucket ).forEach( ( [ cat, stats ] ) => {
-				if ( 'total' === cat ) {
-					return;
-				}
-				const val = mode === 'count' ? stats.c || 0 : stats.t || 0;
-				totals[ cat ] = ( totals[ cat ] || 0 ) + val;
-			} );
-		} );
-		const categories = Object.keys( totals ).sort(
-			( a, b ) => totals[ b ] - totals[ a ]
-		);
-
-		const slots = buildTimeSlots( RETENTION_SECONDS );
-
-		const series = categories.map( ( cat ) => ( {
-			cat,
-			values: slots.map( ( slot ) => {
-				const bucket = data[ slot.bucketKey ];
-				const stats = bucket?.[ cat ];
-				if ( ! stats ) {
-					return { date: slot.date, value: 0 };
-				}
-				let value;
-				if ( mode === 'average' ) {
-					value = stats.c > 0 ? stats.t / stats.c : 0;
-				} else if ( mode === 'time' ) {
-					value = stats.t / 1000 / BUCKET_SECONDS;
-				} else {
-					value = stats.c / BUCKET_SECONDS;
-				}
-				return { date: slot.date, value };
-			} ),
-		} ) );
-
-		return { series, slots };
-	}, [ data, mode ] );
-
-	/**
-	 * Draw the whole chart from scratch into the container.
-	 *
-	 * `useTimeChart` calls this on mount, on every data change, and on each
-	 * resize, so it tears the previous SVG down first and rebuilds. Memoizing
-	 * it is mandatory — an unstable callback re-renders forever.
-	 *
-	 * @param {Object} refs The refs `useTimeChart` owns: containerRef, tooltipRef, lastMouseXRef.
-	 */
-	const renderFn = useCallback(
-		( refs ) => {
-			if (
-				! refs.containerRef.current ||
-				chartState.series.length === 0
-			) {
+const buildSeries = ( data, mode ) => {
+	const totals = {};
+	Object.values( data ).forEach( ( bucket ) => {
+		Object.entries( bucket ).forEach( ( [ cat, stats ] ) => {
+			if ( 'total' === cat ) {
 				return;
 			}
+			const val = mode === 'count' ? stats.c || 0 : stats.t || 0;
+			totals[ cat ] = ( totals[ cat ] || 0 ) + val;
+		} );
+	} );
+	const categories = Object.keys( totals ).sort(
+		( a, b ) => totals[ b ] - totals[ a ]
+	);
+	const slots = buildTimeSlots( RETENTION_SECONDS );
 
-			const { series, slots } = chartState;
+	return categories.map( ( cat ) => ( {
+		label: cat,
+		values: slots.map( ( slot ) => {
+			const stats = data[ slot.bucketKey ]?.[ cat ];
+			if ( ! stats ) {
+				return { date: slot.date, value: 0 };
+			}
+			let value;
+			if ( mode === 'average' ) {
+				value = stats.c > 0 ? stats.t / stats.c : 0;
+			} else if ( mode === 'time' ) {
+				value = stats.t / 1000 / BUCKET_SECONDS;
+			} else {
+				value = stats.c / BUCKET_SECONDS;
+			}
+			return { date: slot.date, value };
+		} ),
+	} ) );
+};
 
-			d3.select( refs.containerRef.current ).selectAll( '*' ).remove();
-
-			// Dimensions.
-			const width = refs.containerRef.current.clientWidth || 800;
-			const height = 200;
-			const innerW = width - MARGIN.left - MARGIN.right;
-			const innerH = height - MARGIN.top - MARGIN.bottom;
-
-			const svg = d3
-				.select( refs.containerRef.current )
-				.append( 'svg' )
-				.attr( 'width', width )
-				.attr( 'height', height );
-
-			const g = svg
-				.append( 'g' )
-				.attr(
-					'transform',
-					`translate(${ MARGIN.left },${ MARGIN.top })`
-				);
-
-			const x = d3
-				.scaleTime()
-				.domain( d3.extent( slots, ( s ) => s.date ) )
-				.range( [ 0, innerW ] );
-
-			const maxVal =
-				d3.max( series, ( s ) =>
-					d3.max( s.values, ( v ) => v.value )
-				) || 1;
-
-			const y = d3
-				.scaleLinear()
-				.domain( [ 0, maxVal * 1.1 ] )
-				.range( [ innerH, 0 ] );
-
-			// X axis.
-			g.append( 'g' )
-				.attr( 'transform', `translate(0,${ innerH })` )
-				.call( d3.axisBottom( x ).ticks( 8 ).tickFormat( formatXTick ) )
-				.selectAll( 'text' )
-				.attr( 'transform', 'rotate(-45)' )
-				.style( 'text-anchor', 'end' );
-
-			// Y axis.
-			g.append( 'g' )
-				.call(
-					d3
-						.axisLeft( y )
-						.ticks( 5 )
-						.tickFormat( ( v ) => formatYValue( v, mode ) )
-				)
-				.selectAll( 'text' )
-				.style( 'font-size', '10px' );
-
-			// Areas overlay rather than stack; the palette cycles past 20.
-			const area = d3
-				.area()
-				.x( ( d ) => x( d.date ) )
-				.y0( innerH )
-				.y1( ( d ) => y( d.value ) )
-				.curve( d3.curveMonotoneX );
-
-			series.forEach( ( s, i ) => {
-				const color = PALETTE[ i % PALETTE.length ];
-				g.append( 'path' )
-					.datum( s.values )
-					.attr( 'fill', color )
-					.attr( 'fill-opacity', 0.5 )
-					.attr( 'stroke', color )
-					.attr( 'stroke-width', 1 )
-					.attr( 'd', area );
-			} );
-
-			// Tooltip lists the 10 largest non-zero categories, first largest.
-			const dates = slots.map( ( s ) => s.date );
-			setupTooltip( g, {
-				innerW,
-				innerH,
-				dates,
-				x,
-				formatEntry: ( idx ) =>
-					series
-						.map( ( s ) => ( {
-							label: s.cat,
-							value: formatYValue(
-								s.values[ idx ]?.value || 0,
-								mode
-							),
-							raw: s.values[ idx ]?.value || 0,
-						} ) )
-						.filter( ( e ) => e.raw > 0 )
-						.sort( ( a, b ) => b.raw - a.raw )
-						.slice( 0, 10 ),
-				tooltipRef: refs.tooltipRef,
-				lastMouseXRef: refs.lastMouseXRef,
-				containerRef: refs.containerRef,
-			} );
-
-			// Legend.
-			drawLegend(
-				svg,
-				series.map( ( s, i ) => ( {
-					color: PALETTE[ i % PALETTE.length ],
-					label: s.cat,
-				} ) ),
-				width
-			);
-		},
-		[ chartState, mode ]
+/**
+ * Category time charts — one per view over the same category series.
+ *
+ * @param {Object}      props      Component props.
+ * @param {Object|null} props.data Category series keyed by bucket — `{ bucket: { category: { t, c } } }`, `t` in milliseconds.
+ * @return {import('react').ReactElement[]|null} One chart per view, or null when data is empty.
+ */
+export default function CategoryTimeChart( { data } ) {
+	// Ranking sums the whole window, so it drives palette and legend order.
+	const series = useMemo(
+		() =>
+			CATEGORY_VIEWS.map( ( { mode } ) =>
+				data ? buildSeries( data, mode ) : []
+			),
+		[ data ]
 	);
 
-	const { containerRef, tooltipRef } = useTimeChart( renderFn );
+	const yFormats = useMemo(
+		() =>
+			CATEGORY_VIEWS.map(
+				( { mode } ) =>
+					( val ) =>
+						formatYValue( val, mode )
+			),
+		[]
+	);
+
+	// The palette cycles past 20 categories.
+	const colorAt = useCallback(
+		( _label, index ) => PALETTE[ index % PALETTE.length ],
+		[]
+	);
 
 	// The empty check sits below every hook; hoisting it breaks hook order.
 	if ( ! data || Object.keys( data ).length === 0 ) {
 		return null;
 	}
 
-	return (
-		<div style={ { position: 'relative' } }>
-			<h3>{ title }</h3>
-			<div
-				ref={ containerRef }
-				style={ { width: '100%', minHeight: '200px' } }
-			/>
-			<div ref={ tooltipRef } className="event-logger-chart-tooltip" />
-		</div>
-	);
+	return CATEGORY_VIEWS.map( ( { mode, title }, index ) => (
+		<AreaTimeChart
+			key={ mode }
+			series={ series[ index ] }
+			colorAt={ colorAt }
+			yFormat={ yFormats[ index ] }
+			title={ title }
+			height={ CHART_HEIGHT }
+		/>
+	) );
 }

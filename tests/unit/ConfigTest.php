@@ -322,18 +322,15 @@ class ConfigTest extends TestCase {
 
 	// ── Path/directory accessors ───────────────────────────────────────────
 
-	public function test_get_logs_locks_offsets_dirs(): void {
+	public function test_get_logs_and_locks_dirs(): void {
 		\update_option( 'newspack_nodes_base_directory', $this->temp_dir . '/base2' );
 		Config::reset();
-		$logs    = Config::get_logs_directory();
-		$locks   = Config::get_locks_directory();
-		$offsets = Config::get_offsets_directory();
+		$logs  = Config::get_logs_directory();
+		$locks = Config::get_locks_directory();
 		$this->assertSame( $this->temp_dir . '/base2/logs', $logs );
 		$this->assertSame( $this->temp_dir . '/base2/locks', $locks );
-		$this->assertSame( $this->temp_dir . '/base2/offsets', $offsets );
 		$this->assertDirectoryExists( $logs );
 		$this->assertDirectoryExists( $locks );
-		$this->assertDirectoryExists( $offsets );
 	}
 
 	public function test_directories_are_cached(): void {

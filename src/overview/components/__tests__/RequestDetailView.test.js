@@ -124,6 +124,23 @@ describe( 'RequestDetailView', () => {
 		unmount();
 	} );
 
+	it( 'shows an "Incomplete" error for error_status=I', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( RequestDetailView, {
+				requestDetail: { ...baseRequest, error_status: 'I' },
+				flameData: null,
+				indentedEntries: [],
+				realEntryCount: 0,
+			} )
+		);
+		expect( container.textContent ).toContain( 'Incomplete' );
+		const badge = container.querySelector( '.newspack-nodes-badge' );
+		expect( badge.className ).toBe(
+			'newspack-nodes-badge newspack-nodes-status is-warning'
+		);
+		unmount();
+	} );
+
 	it( 'renders the "no log entries" hint when there is nothing to show', () => {
 		const { container, unmount } = renderComponent(
 			React.createElement( RequestDetailView, {

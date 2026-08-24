@@ -91,6 +91,9 @@ class Performance_CI_Node extends Service_CI_Node {
 	private const NODE_FLAME_BUILDER = 'flame-builder';
 	private const NODE_REQUESTS      = 'requests:partition';
 
+	/** `url_detail` per-URL request-list cap, applied to the index walk. */
+	private const RECENT_REQUEST_LIMIT = 500;
+
 	/** `request_grep` default / max matched-request results (bounds the reply). */
 	private const GREP_RESULT_LIMIT_DEFAULT = 20;
 	private const GREP_RESULT_LIMIT_MAX     = 50;
@@ -119,6 +122,24 @@ class Performance_CI_Node extends Service_CI_Node {
 	 */
 	private const DIMENSIONS = [ 'status', 'method', 'server', 'country', 'from', 'ua', 'ja4' ];
 
+	/**
+	 * Complete 5-minute buckets one "Req/s (last hour)" figure averages over.
+	 *
+	 * Twelve, not thirteen: `recent_buckets()` drops the one still filling.
+	 */
+	private const RECENT_BUCKETS = 12;
+
+	/** Slowest rows the `urls` reply carries for the Ask brief's examples. */
+	private const SLOWEST_ROWS = 10;
+
+	/**
+	 * Row field holding each server's share of `recent_buckets()`.
+	 *
+	 * Beside `Stats_Store::URL_SRV_FIELD`, not inside it: recency is derived
+	 * from the bucket KEY at read time and has no place in a stored field table.
+	 */
+	private const SRV_RECENT_FIELD = 'srv_recent';
+
 	/** Deepest nesting `set` accepts in an array option; deeper is rejected. */
 	private const SETTINGS_ARRAY_DEPTH = 5;
 
@@ -129,26 +150,10 @@ class Performance_CI_Node extends Service_CI_Node {
 	private const SETTINGS_ARRAY_MAX   = 10000;
 
 	/**
-	 * Upper bound on `set` float values (24h in seconds); values outside
-	 * `0 <= $f <= 86400` are rejected.
-	 */
-	private const SETTINGS_FLOAT_MAX = 86400;
-
-	/**
-	 * Upper bound on `set` integer values (2^30); values outside
-	 * `0 <= $int <= 1073741824` are rejected.
-	 */
-	private const SETTINGS_INT_MAX = 1073741824;
-
-	/**
 	 * `set` whitelist: WP option name → sanitization type. An option absent
 	 * here is refused outright, so this list and `hub-control.tsl`'s
 	 * `add_setting` lines must stay in step — a hub push naming anything else
 	 * comes back as "unknown option".
-	 *
-	 * The sanitizer also handles `int` and `float`; no entry claims those
-	 * types today, so SETTINGS_INT_MAX / SETTINGS_FLOAT_MAX bound nothing
-	 * until one does.
 	 *
 	 * @var array<string,string>
 	 */
@@ -186,14 +191,13 @@ class Performance_CI_Node extends Service_CI_Node {
 	public static ?\Closure $load_index = null;
 
 	/**
-	 * Per-request memo of the merged URL index; null until index() reads once.
-	 * Deliberately an instance property, never a static: the node is built per
-	 * request graph, so the memo dies with it and no long-lived worker can
-	 * serve a stale snapshot.
+	 * The one unscoped read the projections above are cut from; null until the
+	 * first `index()` call. Keeping the raw merge is what holds a filtered poll
+	 * to a single fan-out when two verbs ask for two different scopes.
 	 *
 	 * @var array<int,array<array-key,mixed>>|null
 	 */
-	private ?array $index_cache = null;
+	private ?array $index_raw = null;
 
 	/**
 	 * Type-coerce + bounds-check a single value for `set`.
@@ -207,24 +211,6 @@ class Performance_CI_Node extends Service_CI_Node {
 	 */
 	private static function sanitize_settings_value( mixed $value, string $type ): mixed {
 		switch ( $type ) {
-			case 'int':
-				if ( ! \is_numeric( $value ) ) {
-					return null;
-				}
-				$int = (int) $value;
-				if ( $int < 0 || $int > self::SETTINGS_INT_MAX ) {
-					return null;
-				}
-				return $int;
-			case 'float':
-				if ( ! \is_numeric( $value ) ) {
-					return null;
-				}
-				$f = (float) $value;
-				if ( $f < 0 || $f > self::SETTINGS_FLOAT_MAX ) {
-					return null;
-				}
-				return $f;
 			case 'bool':
 				return (bool) $value;
 			case 'array':
@@ -281,27 +267,31 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * `{count, sum_ms, sum_peak_mb}` time series, keyed by bucket and sorted
 	 * ascending. Zero-count buckets are skipped, so the series is sparse.
 	 *
-	 * @param string $hash 12-char URL hash.
+	 * @param string $hash   12-char URL hash.
+	 * @param string $server Reporting server to scope to; '' reads every server.
 	 * @return array<string,mixed>
 	 */
-	private static function build_url_time_series( string $hash ): array {
+	private static function build_url_time_series( string $hash, string $server = '' ): array {
 		$buckets = self::read_window();
 		$series  = [];
 		foreach ( self::stats_stores() as $store ) {
-			$rows = $store->get_url_buckets( $buckets );
-			foreach ( $rows as $bucket_key => $bucket_data ) {
-				if ( ! \is_array( $bucket_data ) || ! isset( $bucket_data[ $hash ] ) ) {
+			// One shard, not the whole index — this wants a single hash.
+			foreach ( $store->url_row_sources( $buckets, $hash ) as [ $bucket_key, $bucket_data ] ) {
+				if ( ! isset( $bucket_data[ $hash ] ) ) {
 					continue;
 				}
-				$stats = Core::arr( $bucket_data[ $hash ] );
+				// Scoped per bucket: the chart sits under this server's stats.
+				$raw    = Core::arr( $bucket_data[ $hash ] );
+				$scoped = Stats_Store::swap_url_server_sums( $raw, $server );
+				if ( null === $scoped ) {
+					continue;
+				}
+				$stats = $scoped;
 				$count = Core::as_int( $stats['count'] ?? 0 );
 				if ( 0 === $count ) {
 					continue;
 				}
-				// sum_ms is current; legacy sum_req_time is in seconds.
-				$sum_ms = isset( $stats['sum_ms'] )
-					? Core::as_float( $stats['sum_ms'] )
-					: Core::as_float( $stats['sum_req_time'] ?? 0 ) * 1000.0;
+				$sum_ms = Core::as_float( $stats['sum_ms'] ?? 0 );
 				$series[ $bucket_key ] ??= [ 'count' => 0, 'sum_ms' => 0.0, 'sum_peak_mb' => 0.0 ];
 				$series[ $bucket_key ]['count']       += $count;
 				$series[ $bucket_key ]['sum_ms']      += $sum_ms;
@@ -338,23 +328,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 *
 	 * @return array<string,mixed>
 	 */
-	private static function merge_categories_across_partitions(): array {
-		$merged  = [];
-		$buckets = self::read_window();
-		foreach ( self::stats_stores() as $store ) {
-			self::merge_buckets_into( $merged, $store->get_category_buckets( $buckets ), Stats_Store::CAT_SUMS );
-		}
-		\ksort( $merged );
-		return $merged;
-	}
-
-	/**
-	 * Sum-merge per-server category buckets across all partitions.
-	 *
-	 * @param string $server Server name to scope to.
-	 * @return array<string,mixed>
-	 */
-	private static function merge_server_categories_across_partitions( string $server ): array {
+	private static function merge_categories_across_partitions( string $server = '' ): array {
 		$merged  = [];
 		$buckets = self::read_window();
 		foreach ( self::stats_stores() as $store ) {
@@ -381,17 +355,18 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * Compose the overview payload shape from a pre-loaded URL index.
+	 * The site-wide half of the dashboard: request totals and the chart series.
 	 *
-	 * Takes the index as a parameter rather than calling index() itself so the
-	 * caller controls the single fan-out. `most_requested` is the head of
-	 * `$index` untouched, which assumes the count-DESC sort load_index_default
-	 * applies; `slowest_urls` re-sorts a copy by p95.
+	 * These are the SITE's: `hourly` has no server dimension, so scoping one of
+	 * them and not the others is how a payload comes to contradict itself. Every
+	 * URL-set fact — how many, which are slowest, which are busiest — belongs to
+	 * the `urls` verb, which owns the filters and answers all of it in one scope
+	 * (decision 15). Nothing here touches the URL index, which is what keeps a
+	 * filtered poll to ONE fan-out across the retention window.
 	 *
-	 * @param array<int,array<array-key,mixed>> $index Output of the memoized index() (load_index_default).
 	 * @return array<string,mixed>
 	 */
-	private static function build_overview_payload( array $index ): array {
+	private static function build_overview_payload(): array {
 		$time_series       = self::merge_hourly_across_partitions();
 		$total_requests    = 0;
 		$total_sum_ms      = 0.0;
@@ -403,16 +378,10 @@ class Performance_CI_Node extends Service_CI_Node {
 			$total_sum_peak_mb += Core::as_float( $row_arr['sum_peak_mb'] ?? 0 );
 		}
 
-		$slowest = $index;
-		\usort( $slowest, static fn ( $a, $b ) => ( $b['p95_ms'] ?? 0 ) <=> ( $a['p95_ms'] ?? 0 ) );
-
 		return [
-			'total_urls'            => \count( $index ),
 			'total_requests'        => $total_requests,
 			'global_avg_ms'         => $total_requests > 0 ? $total_sum_ms / $total_requests : 0.0,
 			'global_avg_peak_mb'    => $total_requests > 0 ? $total_sum_peak_mb / $total_requests : 0.0,
-			'slowest_urls'          => \array_slice( $slowest, 0, 10 ),
-			'most_requested'        => \array_slice( $index, 0, 10 ),
 			'aggregate_time_series' => $time_series,
 		];
 	}
@@ -454,47 +423,30 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * Locate a single request index entry by rid in one partition and return the
-	 * search shape `{rid, partition, url_hash}` — enough for the dashboard to
-	 * then ask for `request_detail`; the request body is not read here.
+	 * Locate a single request index entry by rid and return the search shape
+	 * `{rid, partition, url_hash}` — enough for the dashboard to then ask for
+	 * `request_detail`; the request body is not read here. Its own partition is
+	 * tried first, and the shared scan budget spans the fan-out.
 	 *
-	 * @param string $dir           Partition directory.
-	 * @param int    $partition     Partition index, echoed back in the result.
-	 * @param string $rid           Request id to match.
-	 * @param int    $entries_count Running scan budget, shared across partitions
-	 *                              by the caller and mutated here.
+	 * @param string $rid Request id to match.
 	 * @return array<string,mixed>|null Search shape, or null when unmatched.
 	 */
-	private static function find_request_index_entry( string $dir, int $partition, string $rid, int &$entries_count ): ?array {
-		$result   = null;
-		$requests = new Partition_Node();
-		self::name_scratch_partition( $requests, 'requests', $partition );
-		$requests->arguments( [ $dir ] );
-		$requests->with_index(
-			static function ( array $message, array $position ): ?string {
-				return Request_Builder_Node::format_index_entry( $message, $position );
-			}
-		);
-		$requests->scan_index(
-			static function ( string $line ) use ( &$result, &$entries_count, $partition, $rid ): ?bool {
-				++$entries_count;
-				if ( $entries_count > self::MAX_INDEX_ENTRIES ) {
-					return false;
-				}
-				$entry = Request_Builder_Node::parse_request_index( $line );
-				if ( ! \is_array( $entry ) || \trim( Core::as_string( $entry['rid'] ) ) !== $rid ) {
-					return null;
-				}
+	private static function find_request_index_entry( string $rid ): ?array {
+		$result = null;
+		self::scan_index_entries(
+			self::search_order( $rid ),
+			'requests',
+			'rid',
+			$rid,
+			static function ( array $entry, int $partition ) use ( &$result, $rid ): bool {
 				$result = [
 					'rid'       => $rid,
 					'partition' => $partition,
-					'url_hash'  => \trim( Core::as_string( $entry['url_hash'] ) ),
+					'url_hash'  => \trim( Core::as_string( $entry['url_hash'] ?? '' ) ),
 				];
 				return false;
-			},
-			true
+			}
 		);
-		$requests->remove_node();
 		return $result;
 	}
 
@@ -690,10 +642,11 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * inventing a second attribute for scope.
 	 *
 	 * @param list<string> $descriptors Target first, containers after.
+	 * @param string       $server      Reporting server the brief answers for; '' is every server.
 	 * @return array<string,mixed>
 	 * @throws \RuntimeException On an unknown descriptor or a missing context.
 	 */
-	private static function assemble_ask( array $descriptors ): array {
+	private function assemble_ask( array $descriptors, string $server = '' ): array {
 		$target = Ask_Assembler::parse_descriptor( Core::as_string( $descriptors[0] ?? '' ) );
 		if ( null === $target ) {
 			throw new \RuntimeException(
@@ -706,7 +659,7 @@ class Performance_CI_Node extends Service_CI_Node {
 
 		switch ( $target['type'] ) {
 			case 'url':
-				return self::ask_url( $target['id'] );
+				return $this->ask_url( $target['id'], $server );
 			case 'request':
 				return self::ask_request( $target['id'], (int) $target['qualifier'] );
 			case 'span':
@@ -714,7 +667,7 @@ class Performance_CI_Node extends Service_CI_Node {
 			case 'entry':
 				return self::ask_entry( (int) $target['id'], $context );
 			case 'category':
-				return self::ask_category( $target['id'], $context );
+				return self::ask_category( $target['id'], $context, $server );
 		}
 		throw new \RuntimeException( \esc_html( 'unknown descriptor: ' . $target['type'] ) );
 	}
@@ -726,31 +679,33 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @return array<string,mixed>
 	 * @throws \RuntimeException When no URL row carries that hash.
 	 */
-	private static function ask_url( string $hash ): array {
-		$stats = null;
-		foreach ( self::load_index_default() as $row ) {
-			if ( Core::as_string( $row['hash'] ?? '' ) === $hash ) {
-				$stats = $row;
-				break;
-			}
-		}
+	private function ask_url( string $hash, string $server = '' ): array {
+		// @longform Through `row()`, never the loader: the loader emits sums
+		// and leaves the means to the projection, so a reader taking its
+		// output raw quotes a confident 0 for every average. Scoped, because
+		// the facts block stamps the filters onto every surface, and an
+		// unscoped number under a server's name is quotable and wrong.
+		$stats = $this->row( $hash, $server );
 		if ( null === $stats ) {
 			throw new \RuntimeException( \esc_html( "URL not found: {$hash}" ) );
 		}
 		return Ask_Assembler::for_url(
 			$stats,
 			self::find_recent_requests_for_url( $hash ),
-			self::rule_for_url( Core::as_string( $stats['url'] ?? '' ) )
+			self::rule_for_url( Core::as_string( $stats['url'] ?? '' ) ),
+			$server
 		);
 	}
 
 	/**
 	 * Merged URL index across all partitions, shaped for dashboard display.
 	 *
-	 * Rows are keyed by URL hash while merging, then flattened to a list sorted
-	 * by `count` DESC. That sort is load-bearing: `build_overview_payload` takes
-	 * the head of this list as `most_requested` without re-sorting, so a
-	 * replacement `$load_index` seam must sort the same way.
+	 * Rows are keyed by URL hash while merging, then flattened to a list. The
+	 * list is UNSCOPED and unsorted: `index()` projects it into the caller's
+	 * scope and sorts what survives, so one fan-out serves every scope a request
+	 * asks for. Each row therefore carries two maps the display never sees — its
+	 * per-server split, and that split's share of the recent buckets — which
+	 * `project_row()` consumes and strips.
 	 *
 	 * The bucket key IS the hash `Log_Manager::url_hash()` stamped on the
 	 * record — never derive another, or the row indexes under a hash no rid
@@ -761,34 +716,41 @@ class Performance_CI_Node extends Service_CI_Node {
 	 */
 	public static function load_index_default(): array {
 		$buckets = self::read_window();
+		$recent  = \array_flip( self::recent_buckets() );
 		$result  = [];
 		foreach ( self::stats_stores() as $store ) {
-			$rows = $store->get_url_buckets( $buckets );
-			foreach ( $rows as $bucket_data ) {
-				if ( ! \is_array( $bucket_data ) ) {
-					continue;
-				}
+			foreach ( $store->url_row_sources( $buckets ) as [ $bucket, $bucket_data ] ) {
+				$is_recent = isset( $recent[ $bucket ] );
 				foreach ( $bucket_data as $key => $stats ) {
 					$stat_arr = Core::arr( $stats );
 					// An all-digit hash arrives as an int array key; cast back.
 					$hash     = (string) $key;
 					if ( ! isset( $result[ $hash ] ) ) {
 						$result[ $hash ] = [
-							'hash'        => $hash,
-							'url'         => Core::as_string( $stat_arr['url'] ?? '' ),
-							'count'       => 0,
-							'count_2xx'   => 0,
-							'count_3xx'   => 0,
-							'count_4xx'   => 0,
-							'count_5xx'   => 0,
-							'sum_ms'      => 0.0,
-							'max_ms'      => 0.0,
-							'p50_ms'      => 0.0,
-							'p95_ms'      => 0.0,
-							'p99_ms'      => 0.0,
-							'sum_peak_mb' => 0.0,
-							'max_peak_mb' => 0.0,
-							'last_seen'   => 0,
+							'hash'         => $hash,
+							'url'          => Core::as_string( $stat_arr['url'] ?? '' ),
+							// Many URLs; `url_detail` cannot answer for it.
+							'aggregate'    => Stats_Store::is_other_key( $hash ),
+							'count'        => 0,
+							'timed_count'  => 0,
+							'count_2xx'    => 0,
+							'count_3xx'    => 0,
+							'count_4xx'    => 0,
+							'count_5xx'    => 0,
+							'sum_ms'       => 0.0,
+							// null until a TIMED bucket has a min to fold in.
+							'min_ms'       => null,
+							'max_ms'       => 0.0,
+							'p50_ms'       => 0.0,
+							'p95_ms'       => 0.0,
+							'p99_ms'       => 0.0,
+							'sum_peak_mb'  => 0.0,
+							'max_peak_mb'  => 0.0,
+							'worker'       => false,
+							'recent_count' => 0,
+							'last_updated' => 0,
+							Stats_Store::URL_SRV_FIELD => [],
+							self::SRV_RECENT_FIELD     => [],
 						];
 					}
 					$entry = $result[ $hash ];
@@ -796,22 +758,23 @@ class Performance_CI_Node extends Service_CI_Node {
 					if ( '' === $entry['url'] ) {
 						$entry['url'] = Core::as_string( $stat_arr['url'] ?? '' );
 					}
-					$entry['count']     += Core::as_int( $stat_arr['count']     ?? 0 );
+					$row_count            = Core::as_int( $stat_arr['count'] ?? 0 );
+					$entry['count']      += $row_count;
+					// Only timed requests contribute ms; only they divide it.
+					$entry['timed_count'] += Core::as_int( $stat_arr['timed_count'] ?? 0 );
+					$entry['recent_count'] += $is_recent ? $row_count : 0;
 					$entry['count_2xx'] += Core::as_int( $stat_arr['count_2xx'] ?? 0 );
 					$entry['count_3xx'] += Core::as_int( $stat_arr['count_3xx'] ?? 0 );
 					$entry['count_4xx'] += Core::as_int( $stat_arr['count_4xx'] ?? 0 );
 					$entry['count_5xx'] += Core::as_int( $stat_arr['count_5xx'] ?? 0 );
-					// sum_ms is current; legacy sum_req_time is in seconds.
-					$entry['sum_ms']      += isset( $stat_arr['sum_ms'] )
-						? Core::as_float( $stat_arr['sum_ms'] )
-						: Core::as_float( $stat_arr['sum_req_time'] ?? 0 ) * 1000.0;
+					$entry['sum_ms']      += Core::as_float( $stat_arr['sum_ms'] ?? 0 );
 					$entry['sum_peak_mb'] += Core::as_float( $stat_arr['sum_peak_mb'] ?? 0 );
 					// Fold min_ms only from timed buckets; skip sentinels.
 					if ( isset( $stat_arr['min_ms'] ) && ( $stat_arr['timed_count'] ?? 0 ) > 0 ) {
 						$stat_min        = Core::as_float( $stat_arr['min_ms'] );
-						$entry['min_ms'] = isset( $entry['min_ms'] )
-							? \min( Core::as_float( $entry['min_ms'] ), $stat_min )
-							: $stat_min;
+						$entry['min_ms'] = null === $entry['min_ms']
+							? $stat_min
+							: \min( Core::as_float( $entry['min_ms'] ), $stat_min );
 					}
 					$entry['max_ms']      = \max( Core::as_float( $entry['max_ms'] ),      Core::as_float( $stat_arr['max_ms']      ?? 0 ) );
 					$entry['max_peak_mb'] = \max( Core::as_float( $entry['max_peak_mb'] ), Core::as_float( $stat_arr['max_peak_mb'] ?? 0 ) );
@@ -820,41 +783,105 @@ class Performance_CI_Node extends Service_CI_Node {
 							$entry[ $k ] = Core::as_float( $stat_arr[ $k ] );
 						}
 					}
-					$entry['last_seen'] = \max(
-						Core::as_int( $entry['last_seen'] ),
+					$entry['worker']       = ! empty( $entry['worker'] ) || ! empty( $stat_arr['worker'] );
+					$entry['last_updated'] = \max(
+						Core::as_int( $entry['last_updated'] ),
 						Core::as_int( $stat_arr['last_seen'] ?? 0 )
 					);
+
+					// Recent share is read-time; it rides beside the split.
+					$row_srv = Core::arr( $stat_arr[ Stats_Store::URL_SRV_FIELD ] ?? null );
+					if ( [] !== $row_srv ) {
+						$entry[ Stats_Store::URL_SRV_FIELD ] = Stats_Store::sum_fields(
+							Core::arr( $entry[ Stats_Store::URL_SRV_FIELD ] ),
+							$row_srv,
+							Stats_Store::URL_SRV_SUMS
+						);
+						if ( $is_recent ) {
+							$entry[ self::SRV_RECENT_FIELD ] = Stats_Store::sum_fields(
+								Core::arr( $entry[ self::SRV_RECENT_FIELD ] ),
+								$row_srv,
+								[ 'count' => true ]
+							);
+						}
+					}
 					$result[ $hash ] = $entry;
 				}
 			}
 		}
 
-		// Convert into the display shape the React tree expects.
+		// @longform The display shape, keeping `sum_ms` and `sum_peak_mb`: the
+		// means belong to the projection, over whichever scope it is asked
+		// for, and un-averaging a figure divided here would put this
+		// denominator in a second place.
 		$out = [];
 		foreach ( $result as $entry ) {
-			$count = $entry['count'];
-			$denom = \max( 1, $count );
-			$out[] = [
-				'hash'         => $entry['hash'],
-				'url'          => $entry['url'],
-				'count'        => $count,
-				'count_2xx'    => $entry['count_2xx'],
-				'count_3xx'    => $entry['count_3xx'],
-				'count_4xx'    => $entry['count_4xx'],
-				'count_5xx'    => $entry['count_5xx'],
-				'avg_ms'       => $entry['sum_ms'] / $denom,
-				'min_ms'       => (float) ( $entry['min_ms'] ?? 0 ),
-				'max_ms'       => $entry['max_ms'],
-				'p50_ms'       => $entry['p50_ms'],
-				'p95_ms'       => $entry['p95_ms'],
-				'p99_ms'       => $entry['p99_ms'],
-				'avg_peak_mb'  => $entry['sum_peak_mb'] / $denom,
-				'max_peak_mb'  => $entry['max_peak_mb'],
-				'last_updated' => $entry['last_seen'],
-			];
+			// Null when nothing timed folded a min.
+			$entry['min_ms'] = Core::as_float( $entry['min_ms'] );
+			$out[]           = $entry;
 		}
-		\usort( $out, static fn ( $a, $b ) => $b['count'] <=> $a['count'] );
 		return $out;
+	}
+
+	/**
+	 * The headline numbers for a set of index rows.
+	 *
+	 * Summed from the rows the filters left, not read off a global namespace,
+	 * and divided at the end: sums merge across buckets and means do not.
+	 *
+	 * @param array<int,array<array-key,mixed>> $rows Filtered index rows.
+	 * @return array{urls: int, requests: int, avg_ms: float, avg_peak_mb: float, requests_per_second: float}
+	 */
+	private static function sum_rows( array $rows ): array {
+		$requests   = 0;
+		$timed      = 0;
+		$recent     = 0;
+		$aggregates = 0;
+		$sum_ms     = 0.0;
+		$sum_peak   = 0.0;
+		foreach ( $rows as $row ) {
+			$aggregates += empty( $row['aggregate'] ) ? 0 : 1;
+			$count     = Core::num_int( $row['count'] ?? null );
+			$row_ms    = Core::num_float( $row['sum_ms'] ?? null );
+			$requests += $count;
+			$recent   += Core::num_int( $row['recent_count'] ?? null );
+			$sum_ms   += $row_ms;
+			$sum_peak += Core::num_float( $row['sum_peak_mb'] ?? null );
+			// Denominator from the SAME row as its numerator.
+			$timed    += Core::num_int( $row['timed_count'] ?? null );
+		}
+		return [
+			// The overflow row stands for many URLs; it is not one of them.
+			'urls'                => \count( $rows ) - $aggregates,
+			'requests'            => $requests,
+			'avg_ms'              => self::mean_ms( $sum_ms, $timed ),
+			'avg_peak_mb'         => $requests > 0 ? $sum_peak / $requests : 0.0,
+			'requests_per_second' => self::recent_rate( $recent ),
+		];
+	}
+
+	/**
+	 * The complete buckets a "last hour" rate averages over, newest first.
+	 *
+	 * The newest bucket is still filling, so it is dropped: including a partial
+	 * one drags the figure down by however much of it has not happened yet.
+	 *
+	 * @return array<int,string>
+	 */
+	private static function recent_buckets(): array {
+		return \array_slice( self::read_window(), 1, self::RECENT_BUCKETS );
+	}
+
+	/**
+	 * Requests per second over those buckets.
+	 *
+	 * The divisor is the WINDOW, not the buckets that carried traffic: dividing
+	 * by the buckets it had made a URL seen in two of twelve read 6x its rate.
+	 *
+	 * @param int $requests Requests counted across `recent_buckets()`.
+	 */
+	private static function recent_rate( int $requests ): float {
+		return $requests / ( self::RECENT_BUCKETS * Stats_Store::BUCKET_SECONDS );
 	}
 
 	/**
@@ -903,58 +930,43 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * Walk the request partitions newest-first and collect up to 500 index
-	 * entries for the given url_hash, deduplicated by rid and sorted by
-	 * timestamp DESC. Stops early on either the 500-result cap or the shared
-	 * MAX_INDEX_ENTRIES scan budget, which spans all partitions.
+	 * Walk the request partitions newest-first and collect up to
+	 * RECENT_REQUEST_LIMIT index entries for the given url_hash, deduplicated by
+	 * rid and sorted by timestamp DESC. Stops early on either that cap or the
+	 * shared MAX_INDEX_ENTRIES scan budget, which spans all partitions.
+	 *
+	 * NOT server-scoped: an index entry carries no server, so filtering would
+	 * mean reading every record. Free today because a stored `url` is ABSOLUTE,
+	 * so one url_hash belongs to one site. If a host is ever reported by two
+	 * servers, the server has to go on the index entry.
 	 *
 	 * @param string $url_hash 12-char URL hash to match.
 	 * @return array<int,array<string,mixed>>
 	 */
 	private static function find_recent_requests_for_url( string $url_hash ): array {
-		$requests      = [];
-		$entries_count = 0;
-		foreach ( Bootstrap::node_dirs( self::NODE_REQUESTS ) as $p => $dir ) {
-			$partition = new Partition_Node();
-			self::name_scratch_partition( $partition, 'requests', $p );
-			$partition->arguments( [ $dir ] );
-			$partition->with_index(
-				static function ( array $message, array $position ): ?string {
-					return Request_Builder_Node::format_index_entry( $message, $position );
-				}
-			);
-			$partition->scan_index(
-				static function ( string $line, int $segment ) use ( &$requests, &$entries_count, $url_hash, $p ): ?bool {
-					++$entries_count;
-					if ( $entries_count > self::MAX_INDEX_ENTRIES ) {
-						return false;
-					}
-					$entry = Request_Builder_Node::parse_request_index( $line );
-					if ( ! \is_array( $entry ) || \trim( Core::as_string( $entry['url_hash'] ) ) !== $url_hash ) {
-						return null;
-					}
-					$requests[] = [
-						'rid'          => \trim( Core::as_string( $entry['rid'] ) ),
-						'timestamp'    => $entry['timestamp'] ?? 0,
-						'duration_ms'  => $entry['duration_ms'] ?? 0,
-						'status_code'  => $entry['status_code'] ?? 0,
-						'peak_mb'      => $entry['peak_mb'] ?? 0,
-						'method'       => $entry['method'] ?? '',
-						'error_status' => $entry['error_status'] ?? null,
-						'segment'   => $entry['segment'] ?? $segment,
-						'offset'       => $entry['offset'] ?? 0,
-						'length'       => $entry['length'] ?? 0,
-						'partition'    => $p,
-					];
-					return \count( $requests ) >= 500 ? false : null;
-				},
-				true
-			);
-			$partition->remove_node();
-			if ( \count( $requests ) >= 500 || $entries_count > self::MAX_INDEX_ENTRIES ) {
-				break;
+		$requests = [];
+		self::scan_index_entries(
+			Bootstrap::node_dirs( self::NODE_REQUESTS ),
+			'requests',
+			'url_hash',
+			$url_hash,
+			static function ( array $entry, int $partition, int $segment ) use ( &$requests ): ?bool {
+				$requests[] = [
+					'rid'          => \trim( Core::as_string( $entry['rid'] ?? '' ) ),
+					'timestamp'    => $entry['timestamp'] ?? 0,
+					'duration_ms'  => $entry['duration_ms'] ?? 0,
+					'status_code'  => $entry['status_code'] ?? 0,
+					'peak_mb'      => $entry['peak_mb'] ?? 0,
+					'method'       => $entry['method'] ?? '',
+					'error_status' => $entry['error_status'] ?? null,
+					'segment'      => $entry['segment'] ?? $segment,
+					'offset'       => $entry['offset'] ?? 0,
+					'length'       => $entry['length'] ?? 0,
+					'partition'    => $partition,
+				];
+				return \count( $requests ) >= self::RECENT_REQUEST_LIMIT ? false : null;
 			}
-		}
+		);
 
 		\usort( $requests, static fn ( $a, $b ) => $b['timestamp'] <=> $a['timestamp'] );
 		$seen   = [];
@@ -963,9 +975,6 @@ class Performance_CI_Node extends Service_CI_Node {
 			if ( ! isset( $seen[ $r['rid'] ] ) ) {
 				$seen[ $r['rid'] ] = true;
 				$unique[]          = $r;
-				if ( \count( $unique ) >= 500 ) {
-					break;
-				}
 			}
 		}
 		return $unique;
@@ -1065,7 +1074,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @return array<string,mixed>
 	 * @throws \RuntimeException When neither board holds the category.
 	 */
-	private static function ask_category( string $name, array $context ): array {
+	private static function ask_category( string $name, array $context, string $server = '' ): array {
 		$record = self::request_in_context( $context );
 		if ( null !== $record ) {
 			$brief = Ask_Assembler::for_request_category( $record, $name );
@@ -1073,9 +1082,10 @@ class Performance_CI_Node extends Service_CI_Node {
 				return $brief;
 			}
 		}
-		$board      = self::build_leaderboard();
+		// The card this is asked from renders the same scoped board.
+		$board      = self::build_leaderboard( $server );
 		$categories = \is_array( $board['categories'] ?? null ) ? $board['categories'] : [];
-		$brief      = Ask_Assembler::for_category( $categories, $name );
+		$brief      = Ask_Assembler::for_category( $categories, $name, $server );
 		if ( null === $brief ) {
 			throw new \RuntimeException( \esc_html( "no category '{$name}' in this request or the recent window" ) );
 		}
@@ -1103,9 +1113,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				}
 				$count        += Core::as_int( $row['count'] ?? 0 );
 				$sum_req_time += Core::as_float( $row['sum_req_time'] ?? 0 );
-				/** @var array<string,mixed> $categories -- decoded memcache leaderboard blob, keyed by category name. */
-				$categories    = \is_array( $row['categories'] ?? null ) ? $row['categories'] : [];
-				self::accumulate_leaderboard_categories( $sums, $categories );
+				$sums          = Stats_Store::sum_fields( $sums, Core::arr( $row['categories'] ?? null ), Stats_Store::LB_CAT_SUMS );
 			}
 		}
 		return Stats_Store::sums_to_display( $count, $sum_req_time, $sums );
@@ -1132,28 +1140,6 @@ class Performance_CI_Node extends Service_CI_Node {
 			self::$read_window_at = $at;
 		}
 		return self::$read_window;
-	}
-
-	/**
-	 * Sum-merge a single leaderboard bucket's categories into the running totals.
-	 * Used by both global + server leaderboard builders.
-	 *
-	 * @param array<string,array{samples:int,sum_time:float,sum_count:float,entries:array<int,mixed>}> $sums       Running totals (mutated).
-	 * @param array<string,mixed>                                                             $categories Inbound categories.
-	 */
-	private static function accumulate_leaderboard_categories( array &$sums, array $categories ): void {
-		foreach ( $categories as $cat => $data ) {
-			$data_arr = Core::arr( $data );
-			$sums[ $cat ] ??= [
-				'samples'   => 0,
-				'sum_time'  => 0.0,
-				'sum_count' => 0.0,
-				'entries'   => [],
-			];
-			$sums[ $cat ]['samples']   += Core::as_int( $data_arr['samples'] ?? 0 );
-			$sums[ $cat ]['sum_time']  += Core::as_float( $data_arr['sum_time'] ?? 0 );
-			$sums[ $cat ]['sum_count'] += Core::as_float( $data_arr['sum_count'] ?? 0 );
-		}
 	}
 
 	/**
@@ -1245,143 +1231,127 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @throws \RuntimeException When the rid resolves nowhere.
 	 */
 	private static function load_request( string $rid, int $partition ): array {
-		$dirs    = Bootstrap::node_dirs( self::NODE_REQUESTS );
-		$scanned = [];
-		if ( isset( $dirs[ $partition ] ) ) {
-			$record            = self::find_request_in_partition( $dirs[ $partition ], $partition, $rid );
-			$scanned[ $partition ] = true;
-			if ( null !== $record ) {
-				return $record;
-			}
+		$dirs = Bootstrap::node_dirs( self::NODE_REQUESTS );
+		// `+` keeps the caller's partition first; search_order has the rest.
+		$order  = isset( $dirs[ $partition ] )
+			? [ $partition => $dirs[ $partition ] ] + self::search_order( $rid )
+			: self::search_order( $rid );
+		$record = self::find_request( $order, $rid );
+		if ( null === $record ) {
+			throw new \RuntimeException( \esc_html( "Request not found: rid={$rid}" ) );
 		}
-		foreach ( self::search_order( $rid ) as $p => $dir ) {
-			// search_order() repeats every partition after the hashed one.
-			if ( isset( $scanned[ $p ] ) ) {
-				continue;
-			}
-			$scanned[ $p ] = true;
-			$record        = self::find_request_in_partition( $dir, $p, $rid );
-			if ( null !== $record ) {
-				return $record;
-			}
-		}
-		throw new \RuntimeException( \esc_html( "Request not found: rid={$rid}" ) );
+		return $record;
 	}
 
 	/**
-	 * Read the full request body from a known partition, then merge any matching
-	 * flame data in as `flame_data`. A missing flame is normal — flames are
-	 * built asynchronously — and leaves the body otherwise intact.
+	 * The full request body for a rid, from the first of `$dirs` holding it,
+	 * with any matching flame merged in as `flame_data`. A missing flame is
+	 * normal — they are built asynchronously, into whichever partition their
+	 * builder is wired to, so that lookup fans across all of them — and leaves
+	 * the body otherwise intact.
 	 *
-	 * Unlike find_request_index_entry, the scan budget here is per-call: this
-	 * walks exactly one partition.
-	 *
-	 * @param string $dir       Partition directory.
-	 * @param int    $partition Partition index (names the scratch node).
-	 * @param string $rid       Request id to match.
+	 * @param array<int,string> $dirs Partition index => dir, in search order.
+	 * @param string            $rid  Request id to match.
 	 * @return array<array-key,mixed>|null Decoded request body (keys come from the JSON envelope).
 	 */
-	private static function find_request_in_partition( string $dir, int $partition, string $rid ): ?array {
-		$result        = null;
-		$entries_count = 0;
-		$requests = new Partition_Node();
-		self::name_scratch_partition( $requests, 'requests', $partition );
-		$requests->arguments( [ $dir ] );
-		$requests->with_index(
-			static function ( array $message, array $position ): ?string {
-				return Request_Builder_Node::format_index_entry( $message, $position );
-			}
-		);
-		$requests->scan_index(
-			static function ( string $line ) use ( &$result, &$entries_count, $requests, $rid ): ?bool {
-				++$entries_count;
-				if ( $entries_count > self::MAX_INDEX_ENTRIES ) {
-					return false;
-				}
-				$entry = Request_Builder_Node::parse_request_index( $line );
-				if ( ! \is_array( $entry ) || \trim( Core::as_string( $entry['rid'] ) ) !== $rid ) {
-					return null;
-				}
-				$message = $requests->read_message_at(
+	private static function find_request( array $dirs, string $rid ): ?array {
+		$found = self::first_record( $dirs, 'requests', $rid );
+		if ( null === $found ) {
+			return null;
+		}
+		[ $entry, $record ] = $found;
+		$record['url_hash'] = \trim( Core::as_string( $entry['url_hash'] ?? '' ) );
+		$flame              = self::first_record( Bootstrap::node_dirs( self::NODE_FLAMES ), 'flames', $rid );
+		if ( null !== $flame ) {
+			$record['flame_data'] = $flame[1];
+		}
+		return $record;
+	}
+
+	/**
+	 * The first STORED record whose index entry matches, paired with that entry.
+	 * One seek, never a log walk: the entry carries segment, offset and length.
+	 *
+	 * @param array<int,string> $dirs  Partition index => dir, in search order.
+	 * @param string            $log   Log basename ('requests' | 'flames').
+	 * @param string            $rid   Request id the entry must carry.
+	 * @return array{0:array<array-key,mixed>,1:array<array-key,mixed>}|null Entry + decoded record.
+	 */
+	private static function first_record( array $dirs, string $log, string $rid ): ?array {
+		$found = null;
+		self::scan_index_entries(
+			$dirs,
+			$log,
+			'rid',
+			$rid,
+			static function ( array $entry, int $partition, int $segment, Partition_Node $node ) use ( &$found ): ?bool {
+				$message = $node->read_message_at(
 					Core::as_int( $entry['segment'] ?? 0 ),
 					Core::as_int( $entry['offset'] ?? 0 ),
 					Core::as_int( $entry['length'] ?? 0 )
 				);
-				$req = \is_array( $message ) ? ( $message[ Message::VALUE ] ?? null ) : null;
-				if ( ! \is_array( $req ) ) {
-					return false;
+				$record = \is_array( $message ) ? ( $message[ Message::VALUE ] ?? null ) : null;
+				if ( \is_array( $record ) ) {
+					$found = [ $entry, $record ];
 				}
-				$req['url_hash'] = \trim( Core::as_string( $entry['url_hash'] ) );
-				$result          = $req;
-				return false;
-			},
-			true
+				return null === $found ? null : false;
+			}
 		);
-		$requests->remove_node();
-
-		if ( null === $result ) {
-			return null;
-		}
-
-		$flame = self::find_flame_for_rid( $rid );
-		if ( null !== $flame ) {
-			$result['flame_data'] = $flame;
-		}
-		return $result;
+		return $found;
 	}
 
 	/**
-	 * Search every flame partition for a flame entry matching the rid; the
-	 * first hit wins. Flame_Builder writes to whatever partition it's wired
-	 * into, so a per-rid lookup has to fan out across all of them.
+	 * Fan a bounded index scan across a set of partition dirs, newest entry
+	 * first, handing every entry whose `$field` equals `$match` to `$on_hit`.
 	 *
-	 * @param string $rid Request id to match.
-	 * @return array<array-key,mixed>|null Decoded flame blob (keys come from the JSON envelope).
+	 * The one boundary MAX_INDEX_ENTRIES lives at: the budget spans the whole
+	 * fan-out, and the scan ends everywhere the moment it is spent or `$on_hit`
+	 * returns false. Each scratch Partition is built, named, formatted and
+	 * removed here, so a caller carries nothing but its predicate.
+	 *
+	 * @param array<int,string> $dirs   Partition index => dir, in scan order.
+	 * @param string            $log    Log basename ('requests' | 'flames').
+	 * @param string            $field  Index-entry field the match compares.
+	 * @param string            $match  Value that field must equal, trimmed.
+	 * @param callable(array<array-key,mixed>, int, int, Partition_Node): (bool|null) $on_hit Return false to end the scan.
 	 */
-	private static function find_flame_for_rid( string $rid ): ?array {
+	private static function scan_index_entries( array $dirs, string $log, string $field, string $match, callable $on_hit ): void {
+		// Both halves of ONE format: never read an index we didn't write.
+		[ $formatter, $parse ] = 'flames' === $log
+			? [ 'flame-index', Flame_Builder_Node::parse_flame_index( ... ) ]
+			: [ 'request-index', Request_Builder_Node::parse_request_index( ... ) ];
 		$entries_count = 0;
-		foreach ( Bootstrap::node_dirs( self::NODE_FLAMES ) as $p => $dir ) {
-			$flames = new Partition_Node();
-			self::name_scratch_partition( $flames, 'flames', $p );
-			$flames->arguments( [ $dir ] );
-			$flames->with_index(
-				static function ( array $message, array $position ): ?string {
-					return Flame_Builder_Node::format_index_entry( $message, $position );
-				}
-			);
-			$result = null;
-			$flames->scan_index(
-				static function ( string $line ) use ( &$result, &$entries_count, $flames, $rid ): ?bool {
+		foreach ( $dirs as $p => $dir ) {
+			$stopped = false;
+			$node    = new Partition_Node();
+			self::name_scratch_partition( $node, $log, $p );
+			$node->arguments( [ $dir ] );
+			// Unresolvable installs no index; the scan then finds nothing.
+			if ( ! $node->with_index_named( $formatter ) ) {
+				$node->remove_node();
+				throw new \RuntimeException( \esc_html( "index formatter not registered: {$formatter}" ) );
+			}
+			$node->scan_index(
+				static function ( string $line, int $segment ) use ( &$entries_count, &$stopped, $node, $p, $field, $match, $parse, $on_hit ): ?bool {
 					++$entries_count;
 					if ( $entries_count > self::MAX_INDEX_ENTRIES ) {
+						$stopped = true;
 						return false;
 					}
-					$entry = Flame_Builder_Node::parse_flame_index( $line );
-					if ( ! \is_array( $entry ) || \trim( $entry['rid'] ) !== $rid ) {
+					$entry = $parse( $line );
+					if ( ! \is_array( $entry ) || \trim( Core::as_string( $entry[ $field ] ?? '' ) ) !== $match ) {
 						return null;
 					}
-					$message = $flames->read_message_at(
-						$entry['segment'],
-						$entry['offset'],
-						$entry['length']
-					);
-					$flame = \is_array( $message ) ? ( $message[ Message::VALUE ] ?? null ) : null;
-					if ( \is_array( $flame ) ) {
-						$result = $flame;
-					}
-					return false;
+					$stopped = false === $on_hit( $entry, $p, $segment, $node );
+					return $stopped ? false : null;
 				},
 				true
 			);
-			$flames->remove_node();
-			if ( null !== $result ) {
-				return $result;
-			}
-			if ( $entries_count > self::MAX_INDEX_ENTRIES ) {
-				break;
+			$node->remove_node();
+			if ( $stopped ) {
+				return;
 			}
 		}
-		return null;
 	}
 
 	/**
@@ -1394,8 +1364,8 @@ class Performance_CI_Node extends Service_CI_Node {
 	 */
 	private static function name_scratch_partition( Partition_Node $partition, string $log, int $index ): void {
 		$token = \getmypid() . '-' . \spl_object_id( $partition );
-		$partition->name( "{$log}.{$token}.p{$index}" );
 		$partition->patron( $partition );
+		$partition->name( "{$log}.{$token}.p{$index}" );
 		$ci = Core::node( Node_Names::COMMAND_INTERPRETER );
 		if ( null === $partition->sink() && null !== $ci ) {
 			$partition->sink( $ci );
@@ -1425,28 +1395,143 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * Merged URL index for THIS request — read at most once and memoized, so the
-	 * three verbs that derive from it (`overview`, `urls`, and `url_detail`'s
-	 * stats lookup) share a single memcache fan-out instead of re-loading per
-	 * verb. Resolves the `load_index` seam (the real loader by default) on the
-	 * first call.
+	 * The whole index in one scope, memoized per scope.
+	 *
+	 * @param string $server Reporting server to scope to; '' reads every server.
+	 * @return array<int,array<array-key,mixed>>
+	 */
+	private function index( string $server = '' ): array {
+		$scoped = [];
+		foreach ( $this->raw_index() as $row ) {
+			$projected = self::project_row( $row, $server );
+			if ( null !== $projected ) {
+				$scoped[] = $projected;
+			}
+		}
+		return $scoped;
+	}
+
+	/**
+	 * One URL's display row in the given scope, or null when it is absent from
+	 * the index — or present but never served by that server.
+	 *
+	 * Projects the single match, not the whole index: its two callers would
+	 * otherwise hold a second copy of every URL to read one.
+	 *
+	 * @param string $hash   12-char URL hash.
+	 * @param string $server Reporting server to scope to; '' reads every server.
+	 * @return array<array-key,mixed>|null
+	 * @throws \RuntimeException When the row exists but the index carries no
+	 *                           per-server split to answer the scope with.
+	 */
+	private function row( string $hash, string $server = '' ): ?array {
+		foreach ( $this->raw_index() as $raw ) {
+			if ( Core::as_string( $raw['hash'] ?? '' ) !== $hash ) {
+				continue;
+			}
+			$projected = self::project_row( $raw, $server );
+			// THIS row's own split: one fresh row sets the index-wide flag.
+			if ( null === $projected && [] === Core::arr( $raw[ Stats_Store::URL_SRV_FIELD ] ?? null ) ) {
+				throw new \RuntimeException( \esc_html(
+					"No per-server data for {$server} yet: this index predates the split, and fills within one retention window."
+				) );
+			}
+			return $projected;
+		}
+		return null;
+	}
+
+	/**
+	 * Whether this request's index can answer a scoped question at all.
+	 *
+	 * For one retention window after an upgrade no row carries a split, and a
+	 * scoped read matches nothing — an absence of DATA, which reported as zero
+	 * would read "0 requests" over a live site. Derived rather than stamped
+	 * during the normalize pass: a flag set by a side effect in another method
+	 * reads `false` the moment that loop is reordered or short-circuited.
+	 */
+	private function index_has_split(): bool {
+		foreach ( $this->raw_index() as $row ) {
+			if ( [] !== Core::arr( $row[ Stats_Store::URL_SRV_FIELD ] ?? null ) ) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * One merged URL row projected into the caller's scope, or null when that
+	 * server never served it.
+	 *
+	 * A PROJECTION over the merged row, not a filter before the merge: every
+	 * field it swaps adds, so selecting then summing and summing then selecting
+	 * agree, and ONE fan-out serves every scope. The means come after the swap,
+	 * so a scoped row never carries the site's average beside a server's count.
+	 *
+	 * @param array<array-key,mixed> $row    A merged row from load_index_default().
+	 * @param string                 $server Reporting server; '' scopes to none.
+	 * @return array<array-key,mixed>|null
+	 */
+	private static function project_row( array $row, string $server ): ?array {
+		$recent = Core::arr( $row[ self::SRV_RECENT_FIELD ] ?? null );
+		unset( $row[ self::SRV_RECENT_FIELD ] );
+
+		$scoped = Stats_Store::swap_url_server_sums( $row, $server );
+		if ( null === $scoped ) {
+			return null;
+		}
+		if ( '' !== $server ) {
+			$scoped['recent_count'] = Core::num_int( Core::arr( $recent[ $server ] ?? null )['count'] ?? null );
+		}
+
+		// Two populations: a timeout has peak memory but no duration.
+		$all                   = \max( 1, Core::num_int( $scoped['count'] ?? null ) );
+		$scoped['avg_ms']      = self::mean_ms(
+			Core::num_float( $scoped['sum_ms'] ?? null ),
+			Core::num_int( $scoped['timed_count'] ?? null )
+		);
+		$scoped['avg_peak_mb'] = Core::num_float( $scoped['sum_peak_mb'] ?? null ) / $all;
+		return $scoped;
+	}
+
+	/**
+	 * Mean request duration over the requests that HAVE one.
+	 *
+	 * Only timed requests contribute milliseconds, so dividing by every request
+	 * would understate the mean by the untimed fraction.
+	 *
+	 * @param float $sum_ms Summed durations.
+	 * @param int   $timed  Requests that contributed one.
+	 */
+	private static function mean_ms( float $sum_ms, int $timed ): float {
+		return $timed > 0 ? $sum_ms / $timed : 0.0;
+	}
+
+	/**
+	 * The unscoped merged index for THIS request — read once and memoized, so
+	 * every reader that derives from it (`urls`, `url_detail`, `ask`) shares one
+	 * memcache fan-out however many scopes they ask between them. Resolves the
+	 * `load_index` seam (the real loader by default) on the first call.
+	 *
+	 * Its rows are NOT display shape: sums plus the internal maps, means still
+	 * the projection's. Read through `index()` or `row()`, never directly — raw,
+	 * they report a confident 0 for every average.
 	 *
 	 * @return array<int,array<array-key,mixed>>
 	 */
-	private function index(): array {
-		if ( null !== $this->index_cache ) {
-			return $this->index_cache;
-		}
-		$read = self::$load_index ?? static fn (): array => self::load_index_default();
-		$raw  = $read();
-		$rows = [];
-		foreach ( Core::arr( $raw ) as $row ) {
-			if ( \is_array( $row ) ) {
+	private function raw_index(): array {
+		if ( null === $this->index_raw ) {
+			$read = self::$load_index ?? static fn (): array => self::load_index_default();
+			$rows = [];
+			foreach ( Core::arr( $read() ) as $row ) {
+				if ( ! \is_array( $row ) ) {
+					continue;
+				}
 				$rows[] = $row;
 			}
+			$this->index_raw = $rows;
 		}
-		$this->index_cache = $rows;
-		return $this->index_cache;
+		return $this->index_raw;
 	}
 
 	/**
@@ -1461,6 +1546,10 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param array<string,mixed> $row A URL index row.
 	 */
 	private static function has_unclassified_requests( array $row ): bool {
+		// A folded row mixes hundreds of URLs; no row test speaks for it.
+		if ( ! empty( $row['aggregate'] ) ) {
+			return false;
+		}
 		$classified = Core::num_int( $row['count_2xx'] ?? 0 )
 			+ Core::num_int( $row['count_3xx'] ?? 0 )
 			+ Core::num_int( $row['count_4xx'] ?? 0 )
@@ -1568,10 +1657,8 @@ class Performance_CI_Node extends Service_CI_Node {
 				$categories = self::flag( $opts, 'categories' );
 
 				\assert( $self instanceof self );
-				$payload                       = self::build_overview_payload( $self->index() );
-				$payload['global_leaderboard'] = '' === $server
-					? self::build_leaderboard()
-					: self::build_leaderboard( $server );
+				$payload                       = self::build_overview_payload();
+				$payload['global_leaderboard'] = self::build_leaderboard( $server );
 
 				if ( '' !== $breakdown ) {
 					$dims = \array_values(
@@ -1591,9 +1678,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				}
 
 				if ( $categories ) {
-					$payload['category_time_series'] = '' === $server
-						? self::merge_categories_across_partitions()
-						: self::merge_server_categories_across_partitions( $server );
+					$payload['category_time_series'] = self::merge_categories_across_partitions( $server );
 				}
 
 				return $payload;
@@ -1609,7 +1694,9 @@ class Performance_CI_Node extends Service_CI_Node {
 						[ 'name' => 'limit', 'type' => 'int', 'required' => false, 'default' => 50 ],
 						[ 'name' => 'offset', 'type' => 'int', 'required' => false, 'default' => 0 ],
 						[ 'name' => 'search', 'type' => 'string', 'required' => false ],
+						[ 'name' => 'server', 'type' => 'string', 'required' => false ],
 						[ 'name' => 'errors_only', 'type' => 'bool', 'required' => false, 'default' => false ],
+						[ 'name' => 'include_workers', 'type' => 'bool', 'required' => false, 'default' => false ],
 					],
 					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
 				$opts    = Command_Args::parse( self::arg_strings( $args ) )['options'];
@@ -1618,7 +1705,10 @@ class Performance_CI_Node extends Service_CI_Node {
 				$limit   = \min( 1000, \max( 1, (int) ( $opts['limit']  ?? 50 ) ) );
 				$offset  = \min( 10000, \max( 0, (int) ( $opts['offset'] ?? 0 ) ) );
 				$search  = (string) ( $opts['search'] ?? '' );
+				$server  = (string) ( $opts['server'] ?? '' );
 				$errors  = self::flag( $opts, 'errors_only' );
+				// Opts IN: the default EXCLUDES. See decision 15.
+				$workers = self::flag( $opts, 'include_workers' );
 
 				if ( ! \in_array( $sort, self::URL_SORTS, true ) ) {
 					$sort = 'count';
@@ -1628,14 +1718,22 @@ class Performance_CI_Node extends Service_CI_Node {
 				}
 
 				\assert( $self instanceof self );
-				$index = $self->index();
+				$index = $self->index( $server );
 
-				// No server scope: a URL row carries none to scope by.
 				if ( '' !== $search ) {
 					$term  = \strtolower( $search );
+					// Named like `errors_only`, not left to the blank `url`.
 					$index = \array_values( \array_filter(
 						$index,
-						static fn ( $e ) => false !== \strpos( \strtolower( Core::as_string( $e['url'] ?? '' ) ), $term )
+						static fn ( $e ) => empty( $e['aggregate'] )
+							&& false !== \strpos( \strtolower( Core::as_string( $e['url'] ?? '' ) ), $term )
+					) );
+				}
+
+				if ( ! $workers ) {
+					$index = \array_values( \array_filter(
+						$index,
+						static fn ( $e ) => empty( $e['worker'] )
 					) );
 				}
 
@@ -1643,7 +1741,18 @@ class Performance_CI_Node extends Service_CI_Node {
 					$index = \array_values( \array_filter( $index, [ self::class, 'has_unclassified_requests' ] ) );
 				}
 
-				$total = \count( $index );
+				// Pre-split data cannot answer this; 0 would read as idle.
+				$totals = ( '' === $server || $self->index_has_split() )
+					? self::sum_rows( $index )
+					: null;
+
+				// The slowest of THIS set; the page has its own sort.
+				$slowest = $index;
+				\usort(
+					$slowest,
+					static fn ( $a, $b ) => ( $b['p95_ms'] ?? 0 ) <=> ( $a['p95_ms'] ?? 0 )
+				);
+				$slowest = \array_slice( $slowest, 0, self::SLOWEST_ROWS );
 
 				\usort(
 					$index,
@@ -1653,10 +1762,20 @@ class Performance_CI_Node extends Service_CI_Node {
 				);
 
 				return [
-					'data'   => \array_slice( $index, $offset, $limit ),
-					'total'  => $total,
-					'limit'  => $limit,
-					'offset' => $offset,
+					'data'    => \array_slice( $index, $offset, $limit ),
+					// The pager's question; `totals.urls` is another.
+					'rows'    => \count( $index ),
+					'totals'  => $totals,
+					'slowest' => $slowest,
+					// What the totals are OF, or they read as the site's.
+					'filters' => [
+						'server'      => $server,
+						'search'      => $search,
+						'errors_only'     => $errors,
+						'include_workers' => $workers,
+					],
+					'limit'   => $limit,
+					'offset'  => $offset,
 				];
 					},
 				],
@@ -1667,6 +1786,7 @@ class Performance_CI_Node extends Service_CI_Node {
 					'args'        => [
 						[ 'name' => 'hash', 'type' => 'string', 'required' => true ],
 						[ 'name' => 'breakdown', 'type' => 'string', 'required' => false ],
+						[ 'name' => 'server', 'type' => 'string', 'required' => false ],
 						[ 'name' => 'categories', 'type' => 'bool', 'required' => false ],
 					],
 					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
@@ -1677,29 +1797,34 @@ class Performance_CI_Node extends Service_CI_Node {
 					throw new \RuntimeException( 'invalid hash format' );
 				}
 
+				// @longform The row that opened this modal was the selected
+				// server's, so this answers for the same server — otherwise one
+				// click puts a site-wide average under a scoped count, on two
+				// surfaces too far apart to compare.
+				$server = (string) ( $opts['server'] ?? '' );
+
 				\assert( $self instanceof self );
-				$index = $self->index();
+				$entry = $self->row( $hash, $server );
 				$stats = null;
-				foreach ( $index as $entry ) {
-					if ( ( $entry['hash'] ?? '' ) === $hash ) {
-						$stats = [
-							'hash'         => $hash,
-							'url'          => $entry['url'] ?? '',
-							'count'        => $entry['count'] ?? 0,
-							'avg_ms'       => $entry['avg_ms'] ?? 0,
-							'min_ms'       => $entry['min_ms'] ?? 0,
-							'max_ms'       => $entry['max_ms'] ?? 0,
-							'p50_ms'       => $entry['p50_ms'] ?? 0,
-							'p95_ms'       => $entry['p95_ms'] ?? 0,
-							'p99_ms'       => $entry['p99_ms'] ?? 0,
-							'avg_peak_mb'  => $entry['avg_peak_mb'] ?? 0,
-							'max_peak_mb'  => $entry['max_peak_mb'] ?? 0,
-							'last_updated' => $entry['last_updated'] ?? 0,
-							// Per-URL time series (UrlDetailView + rps).
-							'time_series'  => self::build_url_time_series( $hash ),
-						];
-						break;
-					}
+				if ( null !== $entry ) {
+					$stats = [
+						'hash'                => $hash,
+						'url'                 => $entry['url'] ?? '',
+						'count'               => $entry['count'] ?? 0,
+						'avg_ms'              => $entry['avg_ms'] ?? 0,
+						'min_ms'              => $entry['min_ms'] ?? 0,
+						'max_ms'              => $entry['max_ms'] ?? 0,
+						'p50_ms'              => $entry['p50_ms'] ?? 0,
+						'p95_ms'              => $entry['p95_ms'] ?? 0,
+						'p99_ms'              => $entry['p99_ms'] ?? 0,
+						'avg_peak_mb'         => $entry['avg_peak_mb'] ?? 0,
+						'max_peak_mb'         => $entry['max_peak_mb'] ?? 0,
+						'last_updated'        => $entry['last_updated'] ?? 0,
+						// The header's own window and divisor.
+						'requests_per_second' => self::recent_rate( Core::num_int( $entry['recent_count'] ?? null ) ),
+						// Per-URL time series (UrlDetailView chart).
+						'time_series'         => self::build_url_time_series( $hash, $server ),
+					];
 				}
 				if ( null === $stats ) {
 					throw new \RuntimeException( \esc_html( "URL not found: {$hash}" ) );
@@ -1742,18 +1867,11 @@ class Performance_CI_Node extends Service_CI_Node {
 					throw new \RuntimeException( 'rid required' );
 				}
 
-				$scanned = 0;
-				foreach ( self::search_order( $rid ) as $p => $dir ) {
-					$found = self::find_request_index_entry( $dir, $p, $rid, $scanned );
-					if ( null !== $found ) {
-						return $found;
-					}
-					if ( $scanned > self::MAX_INDEX_ENTRIES ) {
-						break;
-					}
+				$found = self::find_request_index_entry( $rid );
+				if ( null === $found ) {
+					throw new \RuntimeException( \esc_html( "Request not found: rid={$rid}" ) );
 				}
-
-				throw new \RuntimeException( \esc_html( "Request not found: rid={$rid}" ) );
+				return $found;
 					},
 				],
 				[
@@ -1803,7 +1921,7 @@ class Performance_CI_Node extends Service_CI_Node {
 					throw new \RuntimeException( 'invalid partition' );
 				}
 
-				$result = self::find_request_in_partition( $dirs[ $partition ], $partition, $rid );
+				$result = self::find_request( [ $partition => $dirs[ $partition ] ], $rid );
 				if ( null === $result ) {
 					throw new \RuntimeException( \esc_html( "Request not found: rid={$rid}" ) );
 				}
@@ -1820,9 +1938,21 @@ class Performance_CI_Node extends Service_CI_Node {
 					'description' => 'Assemble the brief for one picker descriptor: `ask <descriptor> [<context-descriptor>…]`, outermost context last.',
 					'args'        => [
 						[ 'name' => 'descriptor', 'type' => 'string', 'required' => true ],
+						[ 'name' => 'server', 'type' => 'string', 'required' => false ],
+						// Declared because the handler reads it, positionally.
+						[ 'name' => 'context', 'type' => 'string', 'required' => false ],
 					],
 					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
-				return self::assemble_ask( Command_Args::parse( self::arg_strings( $args ) )['positional'] );
+				\assert( $self instanceof self );
+				$parsed  = Command_Args::parse( self::arg_strings( $args ) );
+				$context = (string) ( $parsed['options']['context'] ?? '' );
+				// Declared as an option; the descriptors stay positional.
+				return $self->assemble_ask(
+					'' === $context
+						? $parsed['positional']
+						: [ ...$parsed['positional'], $context ],
+					(string) ( $parsed['options']['server'] ?? '' )
+				);
 					},
 				],
 				[

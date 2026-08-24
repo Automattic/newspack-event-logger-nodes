@@ -17,12 +17,22 @@
  */
 
 import { useCallback, memo } from '@wordpress/element';
-import { __, _n, sprintf } from '@wordpress/i18n';
+import { __, _n } from '@wordpress/i18n';
 
 import { Core, useNodeState } from '@newspack-nodes/runtime';
 import { useErrorLogGraph } from './hooks/useErrorLogGraph';
 import LogStreamViewer from '@newspack-nodes/shared/components/LogStreamViewer';
-import LogListHeader from '@newspack-nodes/shared/components/LogListHeader';
+import {
+	Cell,
+	countLabel,
+	logColumns,
+	logListHeader,
+	rateLabel,
+	ridCell,
+	timeCell,
+	urlCell,
+} from '../log-table/logTable';
+import { gridTemplate } from '@newspack-nodes/shared/hooks/useColumnPicker';
 import './styles/error-log.scss';
 
 const ROW_HEIGHT = 33;
@@ -31,27 +41,15 @@ const VIEW_NODE = 'perferrors:view';
 const EMPTY_VIEW = { paused: false, connectionError: false };
 
 /**
- * Column definitions for the error log (fixed — no picker).
+ * Column definitions for the error log (fixed — no picker); the rest come from
+ * the shared set.
  */
-const COLUMNS = {
+const COLUMNS = logColumns( {
 	time: {
-		label: __( 'Time', 'newspack-event-logger-nodes' ),
 		tooltip: __( 'Error timestamp', 'newspack-event-logger-nodes' ),
-		width: '100px',
 	},
-	rid: {
-		label: __( 'Request ID', 'newspack-event-logger-nodes' ),
-		tooltip: __(
-			'Click to view request trace',
-			'newspack-event-logger-nodes'
-		),
-		width: '240px',
-	},
-	url: {
-		label: __( 'URL', 'newspack-event-logger-nodes' ),
-		tooltip: __( 'Request method and URL', 'newspack-event-logger-nodes' ),
-		width: 'minmax(0, 2fr)',
-	},
+	rid: {},
+	url: { width: 'minmax(0, 2fr)' },
 	keyword: {
 		label: __( 'Keyword', 'newspack-event-logger-nodes' ),
 		tooltip: __( 'Error/warning keyword', 'newspack-event-logger-nodes' ),
@@ -62,32 +60,12 @@ const COLUMNS = {
 		tooltip: __( 'Error message', 'newspack-event-logger-nodes' ),
 		width: 'minmax(0, 3fr)',
 	},
-};
+} );
 
 // The fixed column ORDER; the rows and the header both render from it.
 const DEFAULT_COLUMNS = [ 'time', 'rid', 'url', 'keyword', 'message' ];
 
-const GRID_TEMPLATE = DEFAULT_COLUMNS.map(
-	( col ) => COLUMNS[ col ].width
-).join( ' ' );
-
-/**
- * Format timestamp to HH:MM:SS.mmm
- *
- * @param {number} ts Unix timestamp (seconds with decimals).
- * @return {string} Formatted time string.
- */
-const formatTime = ( ts ) => {
-	if ( ! ts ) {
-		return '--:--:--.---';
-	}
-	const date = new Date( ts * 1000 );
-	const h = String( date.getHours() ).padStart( 2, '0' );
-	const m = String( date.getMinutes() ).padStart( 2, '0' );
-	const s = String( date.getSeconds() ).padStart( 2, '0' );
-	const ms = String( date.getMilliseconds() ).padStart( 3, '0' );
-	return `${ h }:${ m }:${ s }.${ ms }`;
-};
+const GRID_TEMPLATE = gridTemplate( COLUMNS, DEFAULT_COLUMNS );
 
 /**
  * Get keyword severity class.
@@ -113,33 +91,31 @@ const getKeywordClass = ( keyword ) => {
 	return 'info';
 };
 
-// Count label for the toolbar stats: entries, where the default says lines.
+// Entries, not lines; spelled out because `_n()` extracts only literals.
 const renderCount = ( stats ) =>
-	stats.visible !== stats.total
-		? sprintf(
-				// translators: 1: rows shown, 2: rows the ring holds.
-				_n(
-					'%1$d / %2$d entry',
-					'%1$d / %2$d entries',
-					stats.total,
-					'newspack-event-logger-nodes'
-				),
-				stats.visible,
-				stats.total
-		  )
-		: sprintf(
-				// translators: %d: number of rows the ring holds.
-				_n(
-					'%d entry',
-					'%d entries',
-					stats.total,
-					'newspack-event-logger-nodes'
-				),
-				stats.total
-		  );
+	countLabel(
+		stats,
+		// translators: %d: number of rows the ring holds.
+		_n(
+			'%d entry',
+			'%d entries',
+			stats.total,
+			'newspack-event-logger-nodes'
+		),
+		// translators: 1: rows shown, 2: rows the ring holds.
+		_n(
+			'%1$d / %2$d entry',
+			'%1$d / %2$d entries',
+			stats.total,
+			'newspack-event-logger-nodes'
+		)
+	);
 
 // Rate label matching that wording: entries/s, one decimal place.
-const renderRate = ( lps ) => `${ lps.toFixed( 1 ) } entries/s`;
+const renderRate = rateLabel(
+	// translators: %s: entries-per-second rate, formatted to one decimal place.
+	__( '%s entries/s', 'newspack-event-logger-nodes' )
+);
 
 // JSDoc rides the inner function: on the const, memo() infers props as `{}`.
 const ErrorRow = memo(
@@ -163,61 +139,19 @@ const ErrorRow = memo(
 				}` }
 				style={ { gridTemplateColumns: GRID_TEMPLATE } }
 			>
-				<span
-					role="cell"
-					className="newspack-nodes-table__cell entry-time"
-				>
-					{ formatTime( row.ts ) }
-				</span>
-				<span role="cell" className="newspack-nodes-table__cell">
-					<a
-						className="entry-rid"
-						href={ `admin.php?page=event-logger-overview&request=${ encodeURIComponent(
-							row.rid
-						) }` }
-						title={ __(
-							'View request trace',
-							'newspack-event-logger-nodes'
-						) }
-					>
-						{ row.rid }
-					</a>
-				</span>
-				<span
-					role="cell"
-					className="newspack-nodes-table__cell entry-url"
-				>
-					{ row.url && (
-						<>
-							<span className="entry-method">{ row.method }</span>{ ' ' }
-							<a
-								href={ `admin.php?page=event-logger-overview&url=${ row.urlHash }` }
-								className="entry-url-link"
-								title={ __(
-									'View URL stats',
-									'newspack-event-logger-nodes'
-								) }
-							>
-								{ row.url }
-							</a>
-						</>
-					) }
-				</span>
-				<span
-					role="cell"
-					className={ `newspack-nodes-table__cell entry-keyword entry-keyword--${ getKeywordClass(
+				{ timeCell( row.ts ) }
+				{ ridCell( row.rid ) }
+				{ urlCell( row.method, row.url, row.urlHash ) }
+				<Cell
+					mod={ `entry-keyword entry-keyword--${ getKeywordClass(
 						row.k
 					) }` }
 				>
 					{ row.k }
-				</span>
-				<span
-					role="cell"
-					className="newspack-nodes-table__cell entry-message"
-					title={ row.m }
-				>
+				</Cell>
+				<Cell mod="entry-message" title={ row.m }>
 					{ row.m }
-				</span>
+				</Cell>
 			</div>
 		);
 	}
@@ -226,21 +160,11 @@ const ErrorRow = memo(
 // Module-scope: a stable identity keeps LogRowList's row memoization live.
 const renderRow = ( row ) => <ErrorRow key={ row.id } row={ row } />;
 
-// The wrapper publishes the grid template; scss applies it to the header.
-const listHeader = (
-	<div
-		className="event-logger-error-log-columns"
-		style={ { '--stream-grid-template': GRID_TEMPLATE } }
-	>
-		<LogListHeader
-			columns={ DEFAULT_COLUMNS.map( ( col ) => ( {
-				key: col,
-				label: COLUMNS[ col ].label,
-				tooltip: COLUMNS[ col ].tooltip,
-			} ) ) }
-		/>
-	</div>
-);
+const listHeader = logListHeader( {
+	className: 'event-logger-error-log-columns',
+	columns: COLUMNS,
+	order: DEFAULT_COLUMNS,
+} );
 
 /**
  * Error Log Component.

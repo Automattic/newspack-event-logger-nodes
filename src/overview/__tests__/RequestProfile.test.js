@@ -4,10 +4,14 @@
  * network. Sorts profiles by time desc, hides zero-time entries,
  * collapses callback-breakdown rows (containing " @N "), and limits
  * to 10 visible rows until the "Show more" button is clicked.
+ *
+ * `ProfileWithCaption` wraps it for the two averaged views, so its cases run
+ * against the real profile rather than a sentinel: what the caption says and
+ * which heading survives are both answers the pair gives together.
  */
 
 import * as React from 'react';
-import RequestProfile from '../RequestProfile';
+import RequestProfile, { ProfileWithCaption } from '../RequestProfile';
 import { renderComponent, act } from '../../test-helpers/renderHook';
 
 const baseProfiles = {
@@ -308,6 +312,119 @@ describe( 'RequestProfile', () => {
 			true
 		);
 		expect( moreCell.style.color ).toBe( '' );
+		unmount();
+	} );
+
+	it( 'leaves the callback breakdown geometry to its stylesheet', () => {
+		const entries = {};
+		for ( let i = 0; i < 13; i++ ) {
+			entries[ `cb${ i }` ] = [ 13 - i, 1 ];
+		}
+		const { container, unmount } = renderComponent(
+			React.createElement( RequestProfile, {
+				profiles: { shortcodes: { count: 3, time: 42, entries } },
+				totalMs: 90,
+			} )
+		);
+		const row = Array.from( container.querySelectorAll( 'tbody tr' ) ).find(
+			( r ) => r.textContent.trim().startsWith( 'shortcodes' )
+		);
+		act( () => {
+			row.click();
+		} );
+
+		// The category swatch keeps only the colour it computes.
+		const swatch = container.querySelector(
+			'.event-logger-profile-swatch'
+		);
+		expect( swatch.style.width ).toBe( '' );
+		expect( swatch.style.background ).not.toBe( '' );
+
+		// Every cell of the nested table is named, and none carries geometry.
+		const nested = container.querySelector(
+			'.event-logger-profile-entries'
+		);
+		expect( nested.style.width ).toBe( '' );
+		const nameCell = nested.querySelector(
+			'.event-logger-profile-entries__name'
+		);
+		expect( nameCell.style.padding ).toBe( '' );
+		expect( nameCell.style.textOverflow ).toBe( '' );
+		expect(
+			nested.querySelector( '.event-logger-profile-entries__time' ).style
+				.width
+		).toBe( '' );
+		expect(
+			nested.querySelector( '.event-logger-profile-entries__count' ).style
+				.width
+		).toBe( '' );
+		expect(
+			nested.querySelector( '.event-logger-profile-entries__more' ).style
+				.fontStyle
+		).toBe( '' );
+
+		// The three trailing entries are summarized, not drawn.
+		expect( container.textContent ).toContain( 'and 3 more' );
+		expect( container.textContent ).not.toContain( 'cb12' );
+		unmount();
+	} );
+} );
+
+describe( 'ProfileWithCaption', () => {
+	const averaged = {
+		profiles: { db: { time: 95.1, count: 3 } },
+		totalMs: 317,
+		totalProfiledTime: 95.1,
+		count: 7331,
+	};
+
+	it( 'captions the site-wide average with the request count', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( ProfileWithCaption, averaged )
+		);
+		// The denominator is the caller's average, not the profiled total.
+		expect( container.textContent ).toContain( '30.0%' );
+		expect( container.textContent ).toContain(
+			'Average breakdown across 7331 requests'
+		);
+		// No heading of its own, so the profile keeps its built-in title.
+		const headings = [ ...container.querySelectorAll( 'h3' ) ].map(
+			( heading ) => heading.textContent
+		);
+		expect( headings ).toEqual( [ 'Time Breakdown' ] );
+		unmount();
+	} );
+
+	it( 'names the server in both the heading and the caption', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( ProfileWithCaption, {
+				...averaged,
+				heading: 'Time Breakdown (edge-77)',
+				serverName: 'edge-77',
+			} )
+		);
+		// The caller's heading replaces the profile's own rather than stacking.
+		const headings = [ ...container.querySelectorAll( 'h3' ) ].map(
+			( heading ) => heading.textContent
+		);
+		expect( headings ).toEqual( [ 'Time Breakdown (edge-77)' ] );
+		expect( container.textContent ).toContain(
+			'Average breakdown across 7331 requests on edge-77'
+		);
+		unmount();
+	} );
+
+	it( 'keeps the caption singular for one request', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( ProfileWithCaption, {
+				...averaged,
+				count: 1,
+			} )
+		);
+		expect( container.textContent ).toContain(
+			'Average breakdown across 1 request'
+		);
+		expect( container.textContent ).not.toContain( '1 requests' );
 		unmount();
 	} );
 } );
