@@ -8,3 +8,66 @@
 		box-sizing: border-box;
 	}
 }
+
+// The page skeleton every log-stream dashboard lays out the same way: the
+// padded flex column, its header, the browse body/main split, and the columns
+// wrapper below. Only the toolbar-stats overrides differ per dashboard, so
+// they are the argument. The accents — keyword inks, duration inks — stay with each
+// dashboard, because that is what actually differs between them.
+@mixin log-stream-page($block, $stats) {
+	.#{$block} {
+		padding: 16px 20px;
+		height: 100%;
+		display: flex;
+		flex-direction: column;
+
+		// ELN rows are COLUMN grids; the template rides inline per row.
+		.newspack-nodes-log-row:not(.is-debug) {
+			display: grid;
+			gap: 12px;
+			align-items: center;
+		}
+	}
+
+	// Layout (flex row + divider) comes from the shared header rule above.
+	.#{$block}__header {
+		flex-shrink: 0;
+	}
+
+	.#{$block} .newspack-nodes-toolbar-stats {
+		@each $prop, $value in $stats {
+			#{$prop}: $value;
+		}
+	}
+
+	// Browse layout: the segment sidebar sits beside the scrolling pane.
+	.#{$block}__body {
+		flex: 1;
+		min-height: 0;
+		display: flex;
+	}
+
+	// The pane column — header row + scrolling list — beside the sidebar.
+	.#{$block}__main {
+		flex: 1;
+		min-width: 0;
+		min-height: 0;
+		display: flex;
+		flex-direction: column;
+	}
+
+	@include log-columns($block);
+}
+
+// The display:contents wrapper letting the shared header row BE the grid.
+@mixin log-columns($block) {
+	.#{$block}-columns {
+		display: contents;
+
+		.newspack-nodes-log-header {
+			display: grid;
+			grid-template-columns: var(--stream-grid-template);
+			gap: 12px;
+		}
+	}
+}

@@ -163,42 +163,9 @@ class Discovery_Collector_Node extends Timer_Node {
 		// Fresh snapshot: merge below RMWs WP options (avoid clobber).
 		RuntimeConfig::invalidate_options_cache();
 
-		$hooks  = [];
-		$events = [];
-
-		// Collect discovered hooks (sanitize remote strings before storage).
-		$remote_hooks = $payload['registered_hooks'] ?? [];
-		if ( \is_array( $remote_hooks ) ) {
-			foreach ( $remote_hooks as $hook ) {
-				if ( \is_string( $hook ) ) {
-					$hook = \sanitize_text_field( $hook );
-					if ( '' !== $hook ) {
-						$hooks[ $hook ] = true;
-					}
-				}
-			}
-		}
-
-		// Collect discovered custom events (sanitize remote strings first).
-		$remote_events = $payload['custom_events'] ?? [];
-		if ( \is_array( $remote_events ) ) {
-			foreach ( $remote_events as $event ) {
-				if ( \is_string( $event ) ) {
-					$event = \sanitize_text_field( $event );
-					if ( '' !== $event ) {
-						$events[ $event ] = true;
-					}
-				}
-			}
-		}
-
-		// Cap discovered hooks/events to prevent unbounded option growth.
-		if ( \count( $hooks ) > self::MAX_EVENTS ) {
-			$hooks = \array_slice( $hooks, 0, self::MAX_EVENTS, true );
-		}
-		if ( \count( $events ) > self::MAX_EVENTS ) {
-			$events = \array_slice( $events, 0, self::MAX_EVENTS, true );
-		}
+		// `stage_discovered()` bounds the stored set; that is the bound.
+		$hooks  = self::sanitized_names( $payload['registered_hooks'] ?? null );
+		$events = self::sanitized_names( $payload['custom_events'] ?? null );
 
 		if ( ! empty( $events ) ) {
 			$this->stage_discovered( Config::OPTION_DISCOVERED_EVENTS, \array_keys( $events ) );
@@ -208,6 +175,25 @@ class Discovery_Collector_Node extends Timer_Node {
 		if ( ! empty( $hook_names ) ) {
 			$this->stage_discovered( Config::OPTION_DISCOVERED_HOOKS, $hook_names );
 		}
+	}
+
+	/**
+	 * Remote name list as a `name => true` set, sanitized and blank-free.
+	 *
+	 * @param mixed $raw The payload's list, from an untrusted spoke.
+	 * @return array<string,bool>
+	 */
+	private static function sanitized_names( mixed $raw ): array {
+		$out = [];
+		foreach ( Core::arr( $raw ) as $name ) {
+			if ( \is_string( $name ) ) {
+				$name = \sanitize_text_field( $name );
+				if ( '' !== $name ) {
+					$out[ $name ] = true;
+				}
+			}
+		}
+		return $out;
 	}
 
 	/**

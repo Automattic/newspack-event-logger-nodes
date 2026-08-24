@@ -1,65 +1,13 @@
 /**
- * Custom-event picker geometry. Shared modal/status classes own chrome.
+ * Custom-event picker geometry — the swatch grid inside the shared
+ * selector-modal chrome. Shared modal/status classes own paint.
  */
-
-.event-logger-custom-event-modal.event-logger-custom-event-modal {
-	&.components-modal__frame {
-		width: 680px;
-		max-width: 95vw;
-		height: auto;
-		max-height: 85vh;
-		display: flex;
-		flex-direction: column;
-		grid-template: none;
-		gap: 0;
-	}
-
-	.components-modal__header {
-		padding: 16px 20px;
-	}
-
-	.components-modal__header-heading {
-		font-size: 15px;
-	}
-
-	.components-modal__content,
-	.components-modal__children-container {
-		display: flex;
-		flex-direction: column;
-		flex: 1 1 auto;
-		min-height: 0;
-		padding: 0;
-		overflow: hidden;
-	}
-}
-
-.custom-event-header {
-	flex: 0 0 auto;
-	padding: 16px 20px;
-}
-
-.custom-event-search {
-	margin-bottom: 12px;
-}
-
-.custom-event-actions {
-	display: flex;
-	align-items: center;
-	gap: 8px;
-}
 
 .custom-event-grid {
 	display: grid;
 	grid-template-columns: repeat(2, 1fr);
 	gap: 2px;
 	padding: 8px;
-	flex: 1 1 auto;
-	min-height: 0;
-	overflow-y: auto;
-
-	&::-webkit-scrollbar {
-		width: 8px;
-	}
 }
 
 .custom-event-item {
@@ -92,13 +40,6 @@
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
-}
-
-.custom-event-footer {
-	flex: 0 0 auto;
-	padding: 12px 20px;
-	display: flex;
-	justify-content: flex-end;
 }
 
 .custom-event-count {

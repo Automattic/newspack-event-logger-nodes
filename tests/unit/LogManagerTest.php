@@ -298,10 +298,11 @@ class LogManagerTest extends TestCase {
 		$partitions = $parts_prop->getValue( $firehose );
 		$this->assertNotEmpty( $partitions, 'a partition materialized on the first message' );
 
-		$flag = new \ReflectionProperty( Partition_Node::class, 'allow_large_writes' );
+		$mode = new \ReflectionProperty( Partition_Node::class, 'large_write_mode' );
 		foreach ( $partitions as $partition ) {
-			$this->assertFalse(
-				$flag->getValue( $partition ),
+			$this->assertSame(
+				'',
+				$mode->getValue( $partition ),
 				'firehose partition must keep the PIPE_BUF cap (large writes disabled)'
 			);
 		}

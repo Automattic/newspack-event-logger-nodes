@@ -1,0 +1,11 @@
+/**
+ * The lazy flame graph's Suspense fallback sits inline, so it flattens the
+ * shared loading container's full-height centering. It ships with RequestTrace
+ * because both bundles rendering one need the rule; the URL detail view's
+ * aggregate flame reuses it from here.
+ */
+
+.event-logger-flame-container .newspack-nodes-performance-loading {
+	display: block;
+	min-height: 0;
+}

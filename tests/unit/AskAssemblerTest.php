@@ -49,6 +49,25 @@ class AskAssemblerTest extends TestCase {
 		];
 	}
 
+	public function test_a_url_brief_states_and_re_fetches_its_scope(): void {
+		// The brief's numbers are one server's; its `fetch` pointer is how an
+		// agent gets the rest. Without the scope on it, following the pointer
+		// answers site-wide for the same hash, and nothing in the brief says
+		// which of the two contradicting sets it was looking at.
+		$brief = Ask_Assembler::for_url(
+			[ 'url' => 'https://example.test/a', 'hash' => 'cccccccccccc', 'count' => 2, 'avg_ms' => 130.0 ],
+			[],
+			null,
+			'alpha.example'
+		);
+
+		$this->assertSame( 'alpha.example', $brief['server'] );
+		$this->assertSame(
+			[ 'hash' => 'cccccccccccc', 'server' => 'alpha.example' ],
+			$brief['fetch'][0]['arguments']
+		);
+	}
+
 	public function test_a_descriptor_parses_into_type_id_and_qualifier(): void {
 		$this->assertSame(
 			[ 'type' => 'request', 'id' => 'c6x0zgr', 'qualifier' => '3' ],
@@ -85,6 +104,19 @@ class AskAssemblerTest extends TestCase {
 		$this->assertStringNotContainsString( '203.0.113.7', $encoded, 'no IPs' );
 		$this->assertStringNotContainsString( 'secret build', $encoded, 'no user agents' );
 		$this->assertSame( 'flame-builder', $brief['env']['worker_type'] );
+	}
+
+	public function test_a_request_brief_names_the_server_that_served_it(): void {
+		// The brief's numbers are scoped by server everywhere else; the env
+		// block has to name the same axis or a scoped figure reads as the
+		// site's. `host` used to sit here and no longer exists on the record.
+		$record                = $this->record();
+		$record['server_name'] = 'spoke-17.example';
+
+		$brief = Ask_Assembler::for_request( $record, $this->rule() );
+
+		$this->assertSame( 'spoke-17.example', $brief['env']['server_name'] );
+		$this->assertArrayNotHasKey( 'host', $brief['env'] );
 	}
 
 	public function test_entries_ride_only_when_the_record_is_small(): void {

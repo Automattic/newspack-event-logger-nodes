@@ -5,7 +5,7 @@
  */
 
 import { createRoot } from '@wordpress/element';
-import './nodes/register';
+import './nodes/request-log-view-node';
 import RequestStreamPage from './RequestStreamPage';
 
 // Mount to request stream page container.

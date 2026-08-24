@@ -10,61 +10,11 @@
 
 @use "base";
 
-.event-logger-request-stream {
-	padding: 16px 20px;
-	height: 100%;
-	display: flex;
-	flex-direction: column;
-
-	// ELN rows are COLUMN grids; the template rides inline per row.
-	.newspack-nodes-log-row:not(.is-debug) {
-		display: grid;
-		gap: 12px;
-		align-items: center;
-	}
-}
-
-// Layout (flex row + divider) comes from the shared header rule in base.scss,
-// which lists `.event-logger-request-stream__header`.
-.event-logger-request-stream__header {
-	flex-shrink: 0;
-}
-
-// The stats readout runs count/rps side-by-side here (vs. the canonical
-// class's default stacked layout) — genuine per-dashboard layout, not look.
-.event-logger-request-stream .newspack-nodes-toolbar-stats {
-	flex-direction: row;
-	gap: 8px 16px;
-	min-width: 100px;
-}
-
-// Browse layout: the segment sidebar sits beside the scrolling request pane.
-.event-logger-request-stream__body {
-	flex: 1;
-	min-height: 0;
-	display: flex;
-}
-
-// The pane column — header row + scrolling list — beside the browse sidebar.
-.event-logger-request-stream__main {
-	flex: 1;
-	min-width: 0;
-	min-height: 0;
-	display: flex;
-	flex-direction: column;
-}
-
-// The dynamic column header: the wrapper publishes --stream-grid-template and
-// dissolves (display: contents) so the shared header row becomes the grid.
-.event-logger-request-stream-columns {
-	display: contents;
-
-	.newspack-nodes-log-header {
-		display: grid;
-		grid-template-columns: var(--stream-grid-template);
-		gap: 12px;
-	}
-}
+@include base.log-stream-page('event-logger-request-stream', (
+	'flex-direction': row,
+	gap: 8px 16px,
+	'min-width': 100px,
+));
 
 // Responsive adjustments — the search input is flex:1 (canonical class) and
 // the toolbar wraps by default, so only the row spacing needs narrowing.

@@ -36,9 +36,10 @@ use Newspack_Nodes\Service_CI_Node;
 class Discovery_CI_Node extends Service_CI_Node {
 
 	/**
-	 * Pull a flat de-duplicated string list out of either an indexed-string
-	 * array or an `assoc[name => true]` shape. Empty strings drop out; order of
-	 * first appearance survives.
+	 * The instrumented union's list of names, with empty strings dropped.
+	 *
+	 * `Rule_Set::instrumented_union()` returns `array_keys()` of two hash maps,
+	 * so what arrives is already a de-duplicated list of strings.
 	 *
 	 * @param mixed $value Hook or custom-event list from the instrumented union.
 	 * @return array<int,string>
@@ -47,15 +48,7 @@ class Discovery_CI_Node extends Service_CI_Node {
 		if ( ! \is_array( $value ) ) {
 			return [];
 		}
-		$out = [];
-		foreach ( $value as $key => $entry ) {
-			if ( \is_string( $key ) && '' !== $key && ! \is_numeric( $key ) ) {
-				$out[] = $key;
-			} elseif ( \is_string( $entry ) && '' !== $entry ) {
-				$out[] = $entry;
-			}
-		}
-		return \array_values( \array_unique( $out ) );
+		return \array_values( \array_filter( $value, static fn ( $v ): bool => \is_string( $v ) && '' !== $v ) );
 	}
 
 	/**

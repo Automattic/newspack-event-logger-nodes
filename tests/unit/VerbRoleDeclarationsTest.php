@@ -100,7 +100,7 @@ class VerbRoleDeclarationsTest extends TestCase {
 		$performance->name( 'performance' );
 		$payload = $performance->commands()['overview']( $performance, [], [] );
 		$this->assertIsArray( $payload );
-		$this->assertArrayHasKey( 'total_urls', $payload );
+		$this->assertArrayHasKey( 'total_requests', $payload );
 
 		$rules = new Rules_CI_Node();
 		$rules->name( 'rules' );

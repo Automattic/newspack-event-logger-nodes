@@ -107,15 +107,6 @@
 	.components-modal__children-container {
 		width: 100%;
 	}
-}
-
-.newspack-nodes-skin-root.event-logger-rule-edit-modal.components-modal__frame,
-.newspack-nodes-skin-root.event-logger-hook-selector-modal.components-modal__frame,
-.newspack-nodes-skin-root.event-logger-custom-event-modal.components-modal__frame {
-	display: flex;
-	flex-direction: column;
-	grid-template: none;
-	gap: 0;
 
 	.components-modal__header {
 		padding: 0 18px;

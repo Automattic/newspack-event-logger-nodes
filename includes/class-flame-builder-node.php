@@ -146,12 +146,25 @@ class Flame_Builder_Node extends Node {
 	protected const INTERN_TABLE_LIMIT = 50000;
 
 	/**
-	 * Max URLs kept per bucket in the URL index, ranked by request count.
+	 * The value every dimension uses for a producer that reported none.
+	 *
+	 * The dashboard builds its server picker from the `server` dimension, so
+	 * this is a name an operator can select — which means the URL row's split
+	 * has to answer to it too, or picking it empties the table.
+	 */
+	private const UNKNOWN_VALUE = 'Unknown';
+
+	/**
+	 * Max URLs kept per SHARD of a bucket, ranked by request count.
+	 *
+	 * Sixteen shards, so this admits 16x the URLs per bucket at a sixteenth the
+	 * blob — a backstop against an oversized item, not a policy. The tail folds
+	 * rather than dropping, so reaching it costs detail, never totals.
 	 *
 	 * "Hourly" in the `Stats_Store` URL-index method names is legacy: the key is
 	 * the same bucket key everything else uses.
 	 */
-	private const MAX_URLS_PER_BUCKET = 500;
+	private const MAX_URLS_PER_SHARD = 500;
 
 	/**
 	 * Per-URL namespaces bounded to top-N by traffic when mirrored to the durable
@@ -168,15 +181,19 @@ class Flame_Builder_Node extends Node {
 		Stats_Store::NS_URL_CAT => 100,  // per-URL category frames
 	];
 
-	/** @var Auto_Tuner_Node|null Owned sibling — receives auto-tune decisions. */
-	private ?Auto_Tuner_Node $auto_tuner = null;
+	/**
+	 * Auto-tune decisions accrued since the last emit: the key `Auto_Tuner_Node`
+	 * dispatches on => rule id => {name => true}. Keying by the emit key is what
+	 * makes a fourth decision kind one key here and one case there.
+	 *
+	 * @var array<string,array<string,array<string,bool>>>
+	 */
+	private array $auto_tune = [ 'disable_hooks' => [], 'disable_custom_events' => [], 'add_significant_events' => [] ];
 
 	/** @var (callable(): int)|null Test seam: clock function for bucket-key derivation. */
 	private $clock_fn = null;
 	/** @var array<string,bool> Custom-event-name set ({name => true}). */
-	private array $custom_event_names       = [];
-	/** @var array<string,array<string,bool>> rule_id => {event => true} disable decisions. */
-	private array $custom_events_to_disable = [];
+	private array $custom_event_names = [];
 
 	/**
 	 * Live top-N cap for the per-URL flame-profile mirror (NS_URL) — how many
@@ -189,16 +206,21 @@ class Flame_Builder_Node extends Node {
 	 * tests do that to exercise the persisted-profile shape at a non-zero cap.
 	 */
 	private int $flame_topn = 0;
-	/** @var array<string,array<string,bool>> rule_id => {hook => true} disable decisions. */
-	private array $hooks_to_disable         = [];
 
 	/** Hub mode: also accumulate the per-server namespaces. Derived from `<eln:is_hub>`. */
-	private bool $is_hub                    = false;
+	private bool $is_hub = false;
 
 	/** Unix time of the last flush(); fill() compares it against FLUSH_INTERVAL_SEC. */
-	private float $last_flush_time          = 0.0;
-	/** @var array<string,array<string,bool>> rule_id => {event => true} newly promoted. */
-	private array $new_significant_events   = [];
+	private float $last_flush_time = 0.0;
+
+	/**
+	 * Mirror writes buffered until their bucket closes: ns => key => [data, ttl].
+	 * One space for every namespace — bounded to `mirror_topn()` for the per-URL
+	 * ones, unbounded for the aggregates, which is all that separates them.
+	 *
+	 * @var array<string,array<string,array{0: array<array-key,mixed>,1: int}>>
+	 */
+	private array $mirror = [];
 
 	/** @var array<string,Bucket_Acc> Accumulators by bucket key, drained at flush(). */
 	private array $pending = [];
@@ -218,12 +240,6 @@ class Flame_Builder_Node extends Node {
 	private ?Rule_Set $rule_set = null;
 	/** @var array<string,array<string,bool>> rule_id => {event => true} known-significant dedupe cache. */
 	private array $significant_events       = [];
-
-	/** @var array<string,array{0: array<array-key,mixed>,1: int}> Aggregate mirror writes (kept in full): key => [data, ttl]. */
-	private array $stats_mirror_buffer = [];
-
-	/** @var array<string,array<string,array{0: array<array-key,mixed>,1: int}>> Per-URL top-N: ns => key => [data, ttl]. */
-	private array $stats_mirror_topn = [];
 
 	/**
 	 * Name of the durable Partition shadowing the stats store, read back when
@@ -248,8 +264,9 @@ class Flame_Builder_Node extends Node {
 		$this->last_flush_time = Core::$now ?: Core::right_now();
 
 		// Owned auto-tuner sibling (patron-linked; hidden from the canvas).
-		$this->auto_tuner = new Auto_Tuner_Node();
-		$this->auto_tuner->patron( $this );
+		$auto_tuner = new Auto_Tuner_Node();
+		$auto_tuner->patron( $this );
+		$this->publish_sibling( 'auto-tuner', $auto_tuner );
 
 		parent::__construct();
 		// Wire :config interpreter last: handlers read patron() lazily (safe).
@@ -320,9 +337,8 @@ class Flame_Builder_Node extends Node {
 			$profiles = [];
 		}
 
-		if ( $this->store_flame( $rid, $url_hash, $flame_data ) ) {
-			$this->accumulate_all_stats( $url_hash, $flame_data, $profiles, $request );
-		}
+		$this->store_flame( $rid, $url_hash, $flame_data );
+		$this->accumulate_all_stats( $url_hash, $flame_data, $profiles, $request );
 
 		// Periodic flush; cached per-tick clock gates the throttle.
 		$now_f = Core::$now ?: Core::right_now();
@@ -362,7 +378,7 @@ class Flame_Builder_Node extends Node {
 				'intern_count'             => \count( self::$intern ),
 				'pending_buckets'          => \array_keys( $this->pending ),
 				'last_flush_age_s'         => $this->last_flush_time > 0 ? (int) ( $now - $this->last_flush_time ) : null,
-				'auto_tune_pending_count'  => self::map_total( $this->hooks_to_disable ) + self::map_total( $this->custom_events_to_disable ) + self::map_total( $this->new_significant_events ),
+				'auto_tune_pending_count'  => \array_sum( \array_map( self::map_total( ... ), $this->auto_tune ) ),
 				'is_hub'                   => $this->is_hub,
 				'significant_events_count' => self::map_total( $this->significant_events ),
 				'mirror_held_frames'       => \count( $mirror ),
@@ -390,14 +406,13 @@ class Flame_Builder_Node extends Node {
 	 * installed by the topology's `with_index` verb) reads them off VALUE.
 	 *
 	 * Writing is optional: with no target or no sink the flame is simply not
-	 * persisted, and the caller still aggregates. Hence the unconditional true.
+	 * persisted, and the caller aggregates either way.
 	 *
 	 * @param string               $rid        Request ID.
 	 * @param string               $url_hash   URL hash.
 	 * @param array<string,mixed> $flame_data Flame tree; mutated locally, not by reference.
-	 * @return bool Always true — aggregation proceeds whether or not a flame was written.
 	 */
-	private function store_flame( string $rid, string $url_hash, array $flame_data ): bool {
+	private function store_flame( string $rid, string $url_hash, array $flame_data ): void {
 		// Duplicate-sibling suffixes exist only to survive the merge.
 		Flame_Tree::strip_name_suffixes( $flame_data );
 
@@ -405,7 +420,7 @@ class Flame_Builder_Node extends Node {
 		$flame_data['url_hash'] = $url_hash;
 
 		if ( '' === $this->target || null === $this->sink ) {
-			return true; // Aggregation still happens; just no on-disk flame.
+			return; // Aggregation still happens; just no on-disk flame.
 		}
 		$message                       = Message::new_message();
 		$message[ Message::TYPE ]      = Message::TM_STRUCT;
@@ -416,7 +431,6 @@ class Flame_Builder_Node extends Node {
 		$message[ Message::VALUE ]     = $flame_data;
 		// Deferred on a stop so the caller still accumulates stats.
 		$this->guarded( fn () => $this->sink->fill( $message ) );
-		return true;
 	}
 
 	/**
@@ -474,16 +488,19 @@ class Flame_Builder_Node extends Node {
 		$timestamp_raw = $request['timestamp'] ?? $now;
 		$timestamp     = Core::num_int( $timestamp_raw, $now );
 		$server_raw    = $request['server_name'] ?? '';
-		$server_name   = Core::str( $server_raw );
+		// `as_string`, the way the `server` DIMENSION reads it: same axis.
+		$server_name   = Core::as_string( $server_raw );
+		// The per-server gate, resolved once: '' accumulates none.
+		$server_key    = $this->is_hub && $count_global ? $server_name : '';
 
 		$aggregate = $this->accumulate_url_aggregate( $url_hash, $flame_data, $duration_ms, $record_timing, $now );
 		// The request STARTED in this bucket; it is reaching us at completion.
 		$bucket                     = Stats_Store::bucket_key( $timestamp );
 		$this->pending[ $bucket ] ??= self::empty_bucket();
 		$acc                        = &$this->pending[ $bucket ];
-		$this->accumulate_url_stats( $acc, $url_hash, $request, $duration_ms, $record_timing, $timestamp );
+		$this->accumulate_url_stats( $acc, $url_hash, $request, $duration_ms, $record_timing, $timestamp, $server_name, $count_global );
 		$this->accumulate_hourly( $acc, $request, $duration_ms, $record_timing, $count_global );
-		$this->accumulate_dimensions( $acc, $url_hash, $request, $server_name, $duration_ms, $record_timing, $count_global );
+		$this->accumulate_dimensions( $acc, $url_hash, $request, $server_key, $duration_ms, $record_timing, $count_global );
 
 		if ( ! empty( $profiles ) && $record_timing ) {
 			$this->accumulate_profiles(
@@ -492,7 +509,7 @@ class Flame_Builder_Node extends Node {
 				$profiles,
 				$request,
 				$aggregate,
-				$server_name,
+				$server_key,
 				$duration_ms,
 				$count_global,
 				$now
@@ -564,48 +581,70 @@ class Flame_Builder_Node extends Node {
 	 * @param float                   $duration_ms   Request duration.
 	 * @param bool                    $record_timing Whether timing counts.
 	 * @param int                     $timestamp     The request's timestamp.
+	 * @param string                  $server_name   Reporting server, '' when unknown.
+	 * @param bool                    $count_global  False for a worker, whose timing this row keeps and every site-wide aggregate drops.
 	 */
-	private function accumulate_url_stats( array &$acc, string $url_hash, array $request, float $duration_ms, bool $record_timing, int $timestamp ): void {
+	private function accumulate_url_stats( array &$acc, string $url_hash, array $request, float $duration_ms, bool $record_timing, int $timestamp, string $server_name, bool $count_global ): void {
 		$url_val = $request['url'] ?? '';
 		$url     = Core::str( $url_val );
 		if ( '' === $url ) {
 			return;
 		}
-		if ( ! isset( $acc['url_stats'][ $url_hash ] ) ) {
-			$acc['url_stats'][ $url_hash ] = [
-				'url'         => $url,
-				'count'       => 0,
-				'timed_count' => 0,
-				'sum_ms'      => 0,
-				'min_ms'      => PHP_INT_MAX,
-				'max_ms'      => 0,
-				'last_seen'   => 0,
-				'durations'   => [],
-				'count_2xx'   => 0,
-				'count_3xx'   => 0,
-				'count_4xx'   => 0,
-				'count_5xx'   => 0,
-				'sum_peak_mb' => 0,
-				'max_peak_mb' => 0,
-			];
+		// @longform The reservoir and the split make a row expensive to copy,
+		// so the common path leaves it alone. A row missing `durations` came
+		// from a checkpoint this process did not write, and everything below
+		// indexes it unguarded — `count( null )` is fatal, not a warning.
+		$row = Core::arr( $acc['url_stats'][ $url_hash ] ?? null );
+		if ( ! isset( $row['durations'] ) ) {
+			$acc['url_stats'][ $url_hash ] = \array_merge(
+				self::empty_url_row( $url, PHP_INT_MAX ),
+				$row
+			);
 		}
-		/** @var array{url: string, count: int, timed_count: int, sum_ms: float|int, min_ms: float|int, max_ms: float|int, last_seen: int, durations: array<int,float|int>, count_2xx: int, count_3xx: int, count_4xx: int, count_5xx: int, sum_peak_mb: float|int, max_peak_mb: float|int} $us */
-		$us = &$acc['url_stats'][ $url_hash ];
-		++$us['count'];
-		// Per-URL: workers keep timing on their own row.
-		if ( $record_timing ) {
-			++$us['timed_count'];
-			$us['sum_ms'] += $duration_ms;
-			$us['max_ms']  = \max( $us['max_ms'], $duration_ms );
-		}
-		$us['last_seen'] = \max( $us['last_seen'], $timestamp );
+		/** @var array{url: string, count: int, timed_count: int, sum_ms: float|int, min_ms: float|int, max_ms: float|int, last_seen: int, durations: array<int,float|int>, count_2xx: int, count_3xx: int, count_4xx: int, count_5xx: int, sum_peak_mb: float|int, max_peak_mb: float|int, worker: bool, srv: array<string,array<string,float|int>>} $us */
+		$us              = &$acc['url_stats'][ $url_hash ];
+		$peak_raw        = $request['peak_mb'] ?? 0;
+		$peak_mb         = \max( 0.0, Core::num_float( $peak_raw ) );
 		$status_category = self::status_category( $request );
+
+		// @longform The summed half of the row, built once and applied twice:
+		// to the row, and to this server's split of it. Two hand-written
+		// increment blocks would drift the moment a field is added — the keys
+		// here are `Stats_Store::URL_SRV_SUMS`, and a test holds them to it.
+		$sums = [
+			'count'       => 1,
+			// Per-URL: workers keep timing on their own row.
+			'timed_count' => $record_timing ? 1 : 0,
+			'sum_ms'      => $record_timing ? $duration_ms : 0,
+			'sum_peak_mb' => $peak_mb,
+		];
 		if ( null !== $status_category ) {
-			++$us[ "count_{$status_category}xx" ];
+			$sums[ "count_{$status_category}xx" ] = 1;
 		}
+		foreach ( $sums as $field => $value ) {
+			$us[ $field ] += $value;
+		}
+		// @longform NOT hub-gated, unlike the three per-server aggregates: the
+		// filter is offered wherever the `server` dimension has values, and a
+		// scoped read of a split-less row returns nothing, so gating this would
+		// empty the URL table on every spoke. A nameless producer is keyed as
+		// that dimension keys it, or the picker offers a name this cannot
+		// answer to. By reference: by value copies the hashtable per request.
+		$split_key = '' === $server_name ? self::UNKNOWN_VALUE : $server_name;
+		$us[ Stats_Store::URL_SRV_FIELD ][ $split_key ] ??= [];
+		$split = &$us[ Stats_Store::URL_SRV_FIELD ][ $split_key ];
+		foreach ( $sums as $field => $value ) {
+			$split[ $field ] = ( $split[ $field ] ?? 0 ) + $value;
+		}
+		unset( $split );
+
+		$us['last_seen'] = \max( $us['last_seen'], $timestamp );
+		// Recorded, not read out of the URL text — that guess emptied a table.
+		$us['worker']    = $us['worker'] || ! $count_global;
 		// Raw durations feed the percentiles; past the cap, Algorithm R.
 		if ( $record_timing ) {
 			$max_dur      = Stats_Store::MAX_DURATIONS_PER_BUCKET;
+			$us['max_ms'] = \max( $us['max_ms'], $duration_ms );
 			$us['min_ms'] = \min( $us['min_ms'], $duration_ms );
 			if ( \count( $us['durations'] ) < $max_dur ) {
 				$us['durations'][] = $duration_ms;
@@ -616,12 +655,7 @@ class Flame_Builder_Node extends Node {
 				}
 			}
 		}
-		$peak_raw = $request['peak_mb'] ?? 0;
-		$peak_mb  = Core::num_float( $peak_raw );
-		if ( $peak_mb > 0 ) {
-			$us['sum_peak_mb'] += $peak_mb;
-			$us['max_peak_mb']  = \max( $us['max_peak_mb'], $peak_mb );
-		}
+		$us['max_peak_mb'] = \max( $us['max_peak_mb'], $peak_mb );
 		unset( $us );
 	}
 
@@ -663,12 +697,12 @@ class Flame_Builder_Node extends Node {
 	 * @param Bucket_Acc              $acc           The request's bucket accumulator.
 	 * @param string                  $url_hash      URL hash of the request.
 	 * @param array<array-key,mixed> $request       Full request record.
-	 * @param string                  $server_name   Reporting server, '' when unknown.
+	 * @param string                  $server_key    Per-server scope, '' to accumulate none.
 	 * @param float                   $duration_ms   Request duration.
 	 * @param bool                    $record_timing Whether timing counts.
 	 * @param bool                    $count_global  Whether this feeds global stats.
 	 */
-	private function accumulate_dimensions( array &$acc, string $url_hash, array $request, string $server_name, float $duration_ms, bool $record_timing, bool $count_global ): void {
+	private function accumulate_dimensions( array &$acc, string $url_hash, array $request, string $server_key, float $duration_ms, bool $record_timing, bool $count_global ): void {
 		$status_category = self::status_category( $request );
 		if ( null !== $status_category ) {
 			// The 'status' axis reads this field; nothing else does.
@@ -682,7 +716,7 @@ class Flame_Builder_Node extends Node {
 			$field_raw = $request[ $field ] ?? '';
 			$val       = Core::as_string( $field_raw );
 			if ( '' === $val ) {
-				$val = 'Unknown';
+				$val = self::UNKNOWN_VALUE;
 			}
 			$val = self::intern( $val );
 			// Global: workers contribute nothing — count, timing, AND peak.
@@ -690,9 +724,9 @@ class Flame_Builder_Node extends Node {
 				$acc['dim'][ $dim ][ $val ] = self::add_dim( $acc['dim'][ $dim ][ $val ] ?? null, $dim_duration, $dim_peak_mb );
 			}
 
-			// Per-server (hub only; skip redundant dim); global drops workers.
-			if ( $this->is_hub && '' !== $server_name && 'server' !== $dim && $count_global ) {
-				$acc['dim_by_server'][ $server_name ][ $dim ][ $val ] = self::add_dim( $acc['dim_by_server'][ $server_name ][ $dim ][ $val ] ?? null, $dim_duration, $dim_peak_mb );
+			// Per-server, skipping the dim that would only repeat the scope.
+			if ( '' !== $server_key && 'server' !== $dim ) {
+				$acc['dim_by_server'][ $server_key ][ $dim ][ $val ] = self::add_dim( $acc['dim_by_server'][ $server_key ][ $dim ][ $val ] ?? null, $dim_duration, $dim_peak_mb );
 			}
 
 			// Per-URL.
@@ -748,7 +782,7 @@ class Flame_Builder_Node extends Node {
 	 * @param array<array-key,mixed>   $profiles     `profiles{}` from the request record.
 	 * @param array<array-key,mixed>   $request      Full request record.
 	 * @param array<array-key,mixed>   $aggregate    Per-URL aggregate, by reference.
-	 * @param string                    $server_name  Reporting server, '' when unknown.
+	 * @param string                    $server_key   Per-server scope, '' to accumulate none.
 	 * @param float                     $duration_ms  Request duration.
 	 * @param bool                      $count_global Whether this request feeds global stats.
 	 * @param int                       $now          Clock read for this request.
@@ -759,7 +793,7 @@ class Flame_Builder_Node extends Node {
 		array $profiles,
 		array $request,
 		array &$aggregate,
-		string $server_name,
+		string $server_key,
 		float $duration_ms,
 		bool $count_global,
 		int $now
@@ -784,12 +818,12 @@ class Flame_Builder_Node extends Node {
 		// The `total` rollup is folded in AFTER the loop, from $total_calls.
 		$total_calls = 0.0;
 
-		// Per-server leaderboard (hub mode only). Global: drop workers.
+		// Per-server leaderboard.
 		$slb = null;
-		if ( $this->is_hub && '' !== $server_name && $count_global ) {
-			$acc['leaderboard_by_server'][ $server_name ] ??= self::empty_leaderboard();
+		if ( '' !== $server_key ) {
+			$acc['leaderboard_by_server'][ $server_key ] ??= self::empty_leaderboard();
 			/** @var Leaderboard_Acc $slb */
-			$slb = &$acc['leaderboard_by_server'][ $server_name ];
+			$slb = &$acc['leaderboard_by_server'][ $server_key ];
 		}
 
 		foreach ( $profiles as $category => $data ) {
@@ -853,9 +887,9 @@ class Flame_Builder_Node extends Node {
 				$acc['cat'][ $category ] = self::add_cat( $acc['cat'][ $category ] ?? null, $cat_time, $cat_count );
 			}
 
-			// Global per-server category series: drop workers.
-			if ( $this->is_hub && '' !== $server_name && $count_global ) {
-				$acc['cat_by_server'][ $server_name ][ $category ] = self::add_cat( $acc['cat_by_server'][ $server_name ][ $category ] ?? null, $cat_time, $cat_count );
+			// Per-server category series.
+			if ( '' !== $server_key ) {
+				$acc['cat_by_server'][ $server_key ][ $category ] = self::add_cat( $acc['cat_by_server'][ $server_key ][ $category ] ?? null, $cat_time, $cat_count );
 			}
 
 			$acc['cat_by_url'][ $url_hash ][ $category ] = self::add_cat( $acc['cat_by_url'][ $url_hash ][ $category ] ?? null, $cat_time, $cat_count );
@@ -867,7 +901,7 @@ class Flame_Builder_Node extends Node {
 					$base_name = \explode( ' ', $category, 2 )[0];
 					if ( ! isset( $this->significant_events[ $rule_id ][ $base_name ] ) && ! $this->rule_significant( $rule, $base_name ) ) {
 						$this->significant_events[ $rule_id ][ $base_name ]     = true;
-						$this->new_significant_events[ $rule_id ][ $base_name ] = true;
+						$this->auto_tune['add_significant_events'][ $rule_id ][ $base_name ] = true;
 					}
 				}
 			}
@@ -898,9 +932,9 @@ class Flame_Builder_Node extends Node {
 			if ( $auto_tune_active && $count_global && ! $is_callback && ! $is_plugin && $count_threshold > 0 && $cat_count > $count_threshold ) {
 				$base_name = \explode( ' ', $category, 2 )[0];
 				if ( isset( $this->custom_event_names[ $base_name ] ) ) {
-					$this->custom_events_to_disable[ $rule_id ][ $base_name ] = true;
+					$this->auto_tune['disable_custom_events'][ $rule_id ][ $base_name ] = true;
 				} else {
-					$this->hooks_to_disable[ $rule_id ][ $base_name ] = true;
+					$this->auto_tune['disable_hooks'][ $rule_id ][ $base_name ] = true;
 				}
 			}
 			unset( $pcat );
@@ -911,8 +945,8 @@ class Flame_Builder_Node extends Node {
 		if ( $count_global ) {
 			$acc['cat'][ self::TOTAL_KEY ] = self::add_cat( $acc['cat'][ self::TOTAL_KEY ] ?? null, $duration_ms, $total_calls );
 		}
-		if ( $this->is_hub && '' !== $server_name && $count_global ) {
-			$acc['cat_by_server'][ $server_name ][ self::TOTAL_KEY ] = self::add_cat( $acc['cat_by_server'][ $server_name ][ self::TOTAL_KEY ] ?? null, $duration_ms, $total_calls );
+		if ( '' !== $server_key ) {
+			$acc['cat_by_server'][ $server_key ][ self::TOTAL_KEY ] = self::add_cat( $acc['cat_by_server'][ $server_key ][ self::TOTAL_KEY ] ?? null, $duration_ms, $total_calls );
 		}
 		$acc['cat_by_url'][ $url_hash ][ self::TOTAL_KEY ] = self::add_cat( $acc['cat_by_url'][ $url_hash ][ self::TOTAL_KEY ] ?? null, $duration_ms, $total_calls );
 
@@ -1159,61 +1193,58 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
-	 * Merge one bucket's per-URL rows into the URL index, capped to the busiest
-	 * `MAX_URLS_PER_BUCKET`.
+	 * Merge a flush's per-URL rows into the URL index, shard by shard.
 	 *
 	 * Percentiles and the mean are recomputed rather than merged: they are
 	 * derived from the reservoir-sampled raw durations, which addition cannot
 	 * combine.
+	 *
+	 * Each row also carries `srv`: the row's summed fields split by reporting
+	 * server, so one get scopes the whole index instead of one get per URL.
 	 *
 	 * @param Stats_Store         $stats_store Destination.
 	 * @param string              $bucket      Bucket key.
 	 * @param array<string,mixed> $rows        Accumulated rows by url_hash.
 	 */
 	private function persist_url_index( Stats_Store $stats_store, string $bucket, array $rows ): void {
+		// @longform Per SHARD, so a flush rewrites only what its own rows
+		// touched: one blob per bucket meant read-modify-writing every row in
+		// the window's busiest structure to change the handful this worker saw.
+		foreach ( Stats_Store::rows_by_shard( $rows ) as $shard => $shard_rows ) {
+			$this->persist_url_shard( $stats_store, $bucket, (string) $shard, $shard_rows );
+		}
+	}
+
+	/**
+	 * Merge one shard's accumulated rows into its stored bucket.
+	 *
+	 * @param Stats_Store            $stats_store Destination.
+	 * @param string                 $bucket      Bucket key.
+	 * @param string                 $shard       Shard name from `Stats_Store::url_shard()`.
+	 * @param array<array-key,mixed> $rows        That shard's accumulated rows.
+	 */
+	private function persist_url_shard( Stats_Store $stats_store, string $bucket, string $shard, array $rows ): void {
 		/** @var array<string,array<string,mixed>> $existing_urls */
-		$existing_urls = $stats_store->get_url_bucket( $bucket );
+		$existing_urls = $stats_store->get_url_shard( $bucket, $shard );
 
 		foreach ( $rows as $hash => $stats_raw ) {
 			$stats = Core::arr( $stats_raw );
-			if ( ! isset( $existing_urls[ $hash ] ) ) {
-				$existing_urls[ $hash ] = [
-					'url'         => $stats['url'] ?? '',
-					'count'       => 0,
-					'timed_count' => 0,
-					'sum_ms'      => 0,
-					'min_ms'      => 0,
-					'max_ms'      => 0,
-					'last_seen'   => 0,
-					'durations'   => [],
-					'count_2xx'   => 0,
-					'count_3xx'   => 0,
-					'count_4xx'   => 0,
-					'count_5xx'   => 0,
-					'sum_peak_mb' => 0,
-					'max_peak_mb' => 0,
-				];
-			}
-			/** @var array{url: string, count: int, timed_count: int, sum_ms: float|int, min_ms: float|int, max_ms: float|int, last_seen: int, durations: array<int,float|int>, count_2xx: int, count_3xx: int, count_4xx: int, count_5xx: int, sum_peak_mb: float|int, max_peak_mb: float|int} $e */
-			$e                 = &$existing_urls[ $hash ];
-			$e['count']       += \is_numeric( $stats['count'] ?? null ) ? $stats['count'] : 0;
-			$e['timed_count'] += \is_numeric( $stats['timed_count'] ?? null ) ? $stats['timed_count'] : 0;
-			$e['sum_ms']      += \is_numeric( $stats['sum_ms'] ?? null ) ? $stats['sum_ms'] : 0;
+			$row = Core::arr( $existing_urls[ $hash ] ?? null )
+				?: self::empty_url_row( Core::str( $stats['url'] ?? '' ) );
+			// The fields that ADD are the ones the `srv` split declares.
+			$existing_urls[ $hash ] = Stats_Store::sum_entry( $row, $stats, Stats_Store::URL_SRV_SUMS );
+			/** @var array{url: string, count: int, timed_count: int, sum_ms: float|int, min_ms: float|int, max_ms: float|int, last_seen: int, durations: array<int,float|int>, count_2xx: int, count_3xx: int, count_4xx: int, count_5xx: int, sum_peak_mb: float|int, max_peak_mb: float|int, worker: bool, srv: array<string,mixed>} $e */
+			$e        = &$existing_urls[ $hash ];
+			$s_timed  = Core::num_int( $stats['timed_count'] ?? null );
+			$s_min_ms = Core::num_float( $stats['min_ms'] ?? null );
 			// Fold min_ms from timed buckets only (skip PHP_INT_MAX).
-			$s_min_ms          = \is_numeric( $stats['min_ms'] ?? null ) ? $stats['min_ms'] : 0;
-			$s_max_ms          = \is_numeric( $stats['max_ms'] ?? null ) ? $stats['max_ms'] : 0;
-			$s_last            = \is_numeric( $stats['last_seen'] ?? null ) ? $stats['last_seen'] : 0;
-			if ( ( \is_numeric( $stats['timed_count'] ?? null ) ? $stats['timed_count'] : 0 ) > 0 ) {
+			if ( $s_timed > 0 ) {
 				$e['min_ms'] = ( 0 === $e['min_ms'] ) ? $s_min_ms : \min( $e['min_ms'], $s_min_ms );
 			}
-			$e['max_ms']       = \max( $e['max_ms'], $s_max_ms );
-			$e['last_seen']    = \max( $e['last_seen'], $s_last );
-			$e['count_2xx']   += \is_numeric( $stats['count_2xx'] ?? null ) ? $stats['count_2xx'] : 0;
-			$e['count_3xx']   += \is_numeric( $stats['count_3xx'] ?? null ) ? $stats['count_3xx'] : 0;
-			$e['count_4xx']   += \is_numeric( $stats['count_4xx'] ?? null ) ? $stats['count_4xx'] : 0;
-			$e['count_5xx']   += \is_numeric( $stats['count_5xx'] ?? null ) ? $stats['count_5xx'] : 0;
-			$e['sum_peak_mb'] += \is_numeric( $stats['sum_peak_mb'] ?? null ) ? $stats['sum_peak_mb'] : 0;
-			$e['max_peak_mb']  = \max( $e['max_peak_mb'], \is_numeric( $stats['max_peak_mb'] ?? null ) ? $stats['max_peak_mb'] : 0 );
+			$e['max_ms']      = \max( $e['max_ms'], Core::num_float( $stats['max_ms'] ?? null ) );
+			$e['last_seen']   = \max( $e['last_seen'], Core::num_int( $stats['last_seen'] ?? null ) );
+			$e['max_peak_mb'] = \max( $e['max_peak_mb'], Core::num_float( $stats['max_peak_mb'] ?? null ) );
+			$e['worker']      = $e['worker'] || ! empty( $stats['worker'] );
 
 			$max_dur     = Stats_Store::MAX_DURATIONS_PER_BUCKET;
 			$s_durations = \is_array( $stats['durations'] ?? null ) ? $stats['durations'] : [];
@@ -1223,6 +1254,13 @@ class Flame_Builder_Node extends Node {
 				$merged = \array_slice( $merged, 0, $max_dur );
 			}
 			$e['durations'] = $merged;
+
+			// Capped below, once, where the folded rows are back in the set.
+			$e[ Stats_Store::URL_SRV_FIELD ] = Stats_Store::sum_fields(
+				$e[ Stats_Store::URL_SRV_FIELD ],
+				Core::arr( $stats[ Stats_Store::URL_SRV_FIELD ] ?? null ),
+				Stats_Store::URL_SRV_SUMS
+			);
 			unset( $e );
 		}
 
@@ -1234,20 +1272,58 @@ class Flame_Builder_Node extends Node {
 				$url_stat['p50_ms'] = $sorted[ (int) ( $n * 0.50 ) ] ?? 0;
 				$url_stat['p95_ms'] = $sorted[ (int) ( $n * 0.95 ) ] ?? 0;
 				$url_stat['p99_ms'] = $sorted[ (int) ( $n * 0.99 ) ] ?? 0;
-				$tc_raw = $url_stat['timed_count'] ?? $url_stat['count'] ?? 0;
-				$tc     = Core::num_float( $tc_raw );
-				$sum_ms = Core::num_float( $url_stat['sum_ms'] ?? null );
-				$url_stat['avg_ms'] = $tc > 0 ? $sum_ms / $tc : 0;
 			}
 		}
 		unset( $url_stat );
 
-		if ( \count( $existing_urls ) > self::MAX_URLS_PER_BUCKET ) {
+		// @longform The tail FOLDS rather than dropping: every total on the
+		// dashboard is summed from this index, so anything discarded here comes
+		// off those numbers silently. Two synthetic rows, because the tail
+		// mixes worker and reader URLs and one cannot answer a filter on them.
+		$other = [
+			Stats_Store::OTHER_KEY        => Core::arr( $existing_urls[ Stats_Store::OTHER_KEY ] ?? null ),
+			Stats_Store::OTHER_WORKER_KEY => Core::arr( $existing_urls[ Stats_Store::OTHER_WORKER_KEY ] ?? null ),
+		];
+		unset( $existing_urls[ Stats_Store::OTHER_KEY ], $existing_urls[ Stats_Store::OTHER_WORKER_KEY ] );
+		// The overflow rows go back in below either way: the cap counts them.
+		$keep = self::MAX_URLS_PER_SHARD - \count( $other );
+		if ( \count( $existing_urls ) > $keep ) {
 			\uasort( $existing_urls, fn( $a, $b ) => ( \is_numeric( $b['count'] ?? null ) ? $b['count'] : 0 ) <=> ( \is_numeric( $a['count'] ?? null ) ? $a['count'] : 0 ) );
-			$existing_urls = \array_slice( $existing_urls, 0, self::MAX_URLS_PER_BUCKET, true );
+			foreach ( \array_slice( $existing_urls, $keep, null, true ) as $row ) {
+				$key           = Stats_Store::other_key( ! empty( $row['worker'] ) );
+				$other[ $key ] = Stats_Store::fold_url_rows( $other[ $key ], Core::arr( $row ) );
+			}
+			$existing_urls = \array_slice( $existing_urls, 0, $keep, true );
+		}
+		foreach ( $other as $key => $row ) {
+			if ( [] !== $row ) {
+				$existing_urls[ $key ] = $row;
+			}
 		}
 
-		$stats_store->set_url_bucket( $bucket, $existing_urls );
+		// @longform After the fold, because the fold is what MIXES hosts: a
+		// stored url is absolute, so a real row carries one or two servers,
+		// while the two overflow rows carry every server the tail was seen on.
+		// Uncapped that grows with `SERVER_NAME`, which Apache's default
+		// `UseCanonicalName Off` makes the client's Host header.
+		foreach ( $existing_urls as &$capped ) {
+			$capped[ Stats_Store::URL_SRV_FIELD ] = self::cap_servers(
+				Core::arr( $capped[ Stats_Store::URL_SRV_FIELD ] ?? null )
+			);
+		}
+		unset( $capped );
+
+		// @longform The largest blob the schema writes, and the only one
+		// carrying a per-server split on every row. memcached refuses an item
+		// over its limit, and a discarded return loses the whole bucket's
+		// index for this partition — again on every later merge into it.
+		if ( ! $stats_store->set_url_shard( $bucket, $shard, $existing_urls ) ) {
+			// Rows, not bytes: sizing it re-serialises a megabyte per flush.
+			$this->print_less_often(
+				'flame-builder: URL index write refused; a shard is over the cache item limit and its rows are lost',
+				\sprintf( ' — shard %s, %d rows', $shard, \count( $existing_urls ) )
+			);
+		}
 	}
 
 	/**
@@ -1262,10 +1338,8 @@ class Flame_Builder_Node extends Node {
 	private function persist_url_dimensions( Stats_Store $stats_store, string $bucket, string $url_hash, array $dims ): void {
 		$existing = $stats_store->get_url_dimensional_bucket( $url_hash, $bucket );
 		foreach ( $dims as $dim => $values ) {
-			$existing[ $dim ] = self::cap_dim(
-				Stats_Store::sum_fields( Core::arr( $existing[ $dim ] ?? null ), Core::arr( $values ), Stats_Store::DIM_SUMS ),
-				Stats_Store::MAX_URL_DIM_VALUES
-			);
+			$merged = Stats_Store::sum_fields( Core::arr( $existing[ $dim ] ?? null ), Core::arr( $values ), Stats_Store::DIM_SUMS );
+			$existing[ $dim ] = self::cap_dim( $merged, Stats_Store::dim_cap( $dim, Stats_Store::MAX_URL_DIM_VALUES ) );
 		}
 		$stats_store->set_url_dimensional_bucket( $url_hash, $bucket, Stats_Store::string_keys( $existing ) );
 	}
@@ -1362,7 +1436,12 @@ class Flame_Builder_Node extends Node {
 	 */
 	private function persist_dimension( Stats_Store $stats_store, string $bucket, string $dim, array $values, string $server = '' ): void {
 		$existing = Stats_Store::sum_fields( $stats_store->get_dimensional_bucket( $dim, $bucket, $server ), $values, Stats_Store::DIM_SUMS );
-		$stats_store->set_dimensional_bucket( $dim, $bucket, self::cap_dim( $existing, Stats_Store::MAX_DIM_VALUES ), $server );
+		$stats_store->set_dimensional_bucket(
+			$dim,
+			$bucket,
+			self::cap_dim( $existing, Stats_Store::dim_cap( $dim, Stats_Store::MAX_DIM_VALUES ) ),
+			$server
+		);
 	}
 
 	/**
@@ -1388,6 +1467,18 @@ class Flame_Builder_Node extends Node {
 	 */
 	private static function cap_dim( array $values, int $max_values ): array {
 		return self::cap_bucket( $values, $max_values, 'c', Stats_Store::DIM_SUMS );
+	}
+
+	/**
+	 * Cap a URL row's per-server split: ranked by request count, no reserved row.
+	 * Its own wrapper because the split carries the ROW's field names rather than
+	 * the dimensional ones, and one ceiling covers every home of the server axis.
+	 *
+	 * @param array<array-key,mixed> $split One row's `srv` map.
+	 * @return array<array-key,mixed>
+	 */
+	private static function cap_servers( array $split ): array {
+		return self::cap_bucket( $split, Stats_Store::MAX_SERVER_VALUES, 'count', Stats_Store::URL_SRV_SUMS );
 	}
 
 	/**
@@ -1428,7 +1519,7 @@ class Flame_Builder_Node extends Node {
 			$held = $values[ $reserved ] ?? null;
 			unset( $values[ $reserved ] );
 		}
-		// One slot for `Other`, one more when a reserved row is really there.
+		// One slot for the overflow key, one more for a reserved row.
 		$keep = \max( 0, $max_values - ( null === $held ? 1 : 2 ) );
 		\uasort(
 			$values,
@@ -1438,7 +1529,7 @@ class Flame_Builder_Node extends Node {
 		$top  = \array_slice( $values, 0, $keep, true );
 		$rest = [];
 		foreach ( \array_slice( $values, $keep ) as $v ) {
-			$rest = Stats_Store::sum_fields( $rest, [ 'Other' => Core::arr( $v ) ], $fields );
+			$rest = Stats_Store::sum_fields( $rest, [ Stats_Store::OTHER_KEY => Core::arr( $v ) ], $fields );
 		}
 		$top = Stats_Store::sum_fields( $top, $rest, $fields );
 		if ( null !== $held ) {
@@ -1461,11 +1552,7 @@ class Flame_Builder_Node extends Node {
 	 * race with).
 	 */
 	private function apply_auto_tune(): void {
-		if (
-			empty( $this->hooks_to_disable )
-			&& empty( $this->custom_events_to_disable )
-			&& empty( $this->new_significant_events )
-		) {
+		if ( ! \array_filter( $this->auto_tune ) ) {
 			return;
 		}
 
@@ -1507,20 +1594,12 @@ class Flame_Builder_Node extends Node {
 	 * empty item list and a sink-less node, so nothing here can be retried.
 	 */
 	private function fire_auto_tune_actions(): void {
-		$rule_ids = \array_unique( \array_merge(
-			\array_keys( $this->hooks_to_disable ),
-			\array_keys( $this->custom_events_to_disable ),
-			\array_keys( $this->new_significant_events )
-		) );
-		foreach ( $rule_ids as $rule_id ) {
-			$this->emit_auto_tune( 'disable_hooks',          $rule_id, \array_keys( $this->hooks_to_disable[ $rule_id ] ?? [] ) );
-			$this->emit_auto_tune( 'disable_custom_events',  $rule_id, \array_keys( $this->custom_events_to_disable[ $rule_id ] ?? [] ) );
-			$this->emit_auto_tune( 'add_significant_events', $rule_id, \array_keys( $this->new_significant_events[ $rule_id ] ?? [] ) );
+		foreach ( $this->auto_tune as $key => $by_rule ) {
+			foreach ( $by_rule as $rule_id => $names ) {
+				$this->emit_auto_tune( $key, $rule_id, \array_keys( $names ) );
+			}
+			$this->auto_tune[ $key ] = [];
 		}
-
-		$this->hooks_to_disable         = [];
-		$this->custom_events_to_disable = [];
-		$this->new_significant_events   = [];
 	}
 
 	/**
@@ -1551,7 +1630,7 @@ class Flame_Builder_Node extends Node {
 		$message[ Message::TYPE ]      = Message::TM_STRUCT;
 		$message[ Message::TIMESTAMP ] = Core::$now;
 		$message[ Message::FROM ]      = $this->name;
-		$message[ Message::TO ]        = $this->name . ':auto-tuner';
+		$message[ Message::TO ]        = $this->sibling_name( 'auto-tuner' );
 		$message[ Message::KEY ]       = $key;
 		$message[ Message::VALUE ]     = [
 			'rule_id' => $rule_id,
@@ -1581,12 +1660,7 @@ class Flame_Builder_Node extends Node {
 	 * lifts its own 4KB PIPE_BUF cap via `command_node <name>:config void_warranty` in the
 	 * topology, alongside its make_node.
 	 *
-	 * The mirror buffers writes in memory; `flush_stats_mirror()` writes a bucket's
-	 * frames at the first save_state() checkpoint after that bucket CLOSES, and
-	 * holds the open one until then. The held frames ride the checkpoint into the
-	 * offsetlog, so a respawn resumes them; only writes made since the last
-	 * checkpoint die with a crash, and the Consumer replays those from its
-	 * co-committed cursor.
+	 * See `flush_stats_mirror()` for when a frame is written versus held.
 	 *
 	 * @param string $name Partition node name; '' disables the mirror.
 	 */
@@ -1768,33 +1842,18 @@ class Flame_Builder_Node extends Node {
 	 * @param string                  $ns   Stats_Store namespace the key belongs to.
 	 */
 	private function buffer_mirror_write( string $key, array $data, int $ttl, string $ns ): void {
-		if ( ! isset( self::STATS_MIRROR_TOPN[ $ns ] ) ) {
-			$this->stats_mirror_buffer[ $key ] = [ $data, $ttl ]; // aggregate: keep all
-			return;
-		}
 		$cap = $this->mirror_topn( $ns );
 		if ( 0 === $cap ) {
 			return; // NS_URL's production default: rank nothing, keep nothing.
 		}
-		// Rank flame top-N only among URLs with profiling detail (fwd-compat).
-		if ( Stats_Store::NS_URL === $ns && ! self::has_profiling_detail( $data ) ) {
+		// A URL with no merged requests would spend a slot on nothing.
+		if ( Stats_Store::NS_URL === $ns && self::mirror_traffic_rank( $data, $ns ) <= 0 ) {
 			return;
 		}
-		$this->stats_mirror_topn[ $ns ][ $key ] = [ $data, $ttl ];
-		if ( \count( $this->stats_mirror_topn[ $ns ] ) > $cap ) {
+		$this->mirror[ $ns ][ $key ] = [ $data, $ttl ];
+		if ( \count( $this->mirror[ $ns ] ) > $cap ) {
 			$this->evict_lowest_rank( $ns );
 		}
-	}
-
-	/**
-	 * Whether a per-URL aggregate carries a flame tree worth mirroring. A URL
-	 * with no merged requests would spend a top-N slot on nothing.
-	 *
-	 * @param array<array-key,mixed> $data Per-URL aggregate value.
-	 */
-	private static function has_profiling_detail( array $data ): bool {
-		$flame = $data['flame'] ?? null;
-		return \is_array( $flame ) && ( \is_numeric( $flame['count'] ?? null ) ? (int) $flame['count'] : 0 ) > 0;
 	}
 
 	/**
@@ -1806,7 +1865,7 @@ class Flame_Builder_Node extends Node {
 	private function evict_lowest_rank( string $ns ): void {
 		$min_key  = null;
 		$min_rank = \PHP_INT_MAX;
-		foreach ( $this->stats_mirror_topn[ $ns ] as $k => [ $data ] ) {
+		foreach ( $this->mirror[ $ns ] as $k => [ $data ] ) {
 			$rank = self::mirror_traffic_rank( $data, $ns );
 			if ( $rank < $min_rank ) {
 				$min_rank = $rank;
@@ -1814,7 +1873,7 @@ class Flame_Builder_Node extends Node {
 			}
 		}
 		if ( null !== $min_key ) {
-			unset( $this->stats_mirror_topn[ $ns ][ $min_key ] );
+			unset( $this->mirror[ $ns ][ $min_key ] );
 		}
 	}
 
@@ -1827,12 +1886,8 @@ class Flame_Builder_Node extends Node {
 	 * flame trees and the closed buckets' mirror frames here — not only on the
 	 * FLUSH_INTERVAL_SEC cadence — is what makes that commit whole.
 	 *
-	 * The frames `flush_stats_mirror()` HELD — the open bucket, which by design
-	 * reaches no durable log until it closes — ride the frame too. That is what
-	 * backs the open window: the offsetlog is a bounded ring of at most 60
-	 * keyframes, so it costs fixed disk, where `flame-stats` retains for twice
-	 * the stats window. Their ranks are not carried; `mirror_traffic_rank()`
-	 * derives those from the data on the way back in.
+	 * The frames `flush_stats_mirror()` held ride it too, without their ranks —
+	 * `mirror_traffic_rank()` derives those on the way back in.
 	 *
 	 * This also WRITES — it drains the per-URL LRU to memcache and appends to the
 	 * stats partition before returning. The substrate calls `save_state()` as a
@@ -1860,14 +1915,14 @@ class Flame_Builder_Node extends Node {
 	 * with an operator input. Rank is not stored at all — `evict_lowest_rank()`
 	 * derives it from the data it already holds.
 	 *
-	 * @return array{at: int, buffer: array<string,array{0: array<array-key,mixed>, 1: int}>, topn: array<string,array<string,array{0: array<array-key,mixed>, 1: int}>>}
+	 * @return array{at: int, frames: array<string,array<string,array{0: array<array-key,mixed>, 1: int}>>}
 	 */
 	private function checkpoint_mirror(): array {
 		$held = $this->mirror_frames();
 		\usort( $held, static fn ( array $a, array $b ): int => $a['size'] <=> $b['size'] );
 
 		$remaining = self::MAX_CHECKPOINT_MIRROR_BYTES;
-		$out    = [ 'at' => $this->now_ts(), 'buffer' => [], 'topn' => [] ];
+		$out    = [ 'at' => $this->now_ts(), 'frames' => [] ];
 		foreach ( $held as $i => [ 'ns' => $ns, 'key' => $key, 'frame' => $frame, 'size' => $size ] ) {
 			if ( $size > $remaining ) {
 				// Ascending, so we stop on the SMALLEST that would not fit.
@@ -1875,23 +1930,20 @@ class Flame_Builder_Node extends Node {
 				$this->print_less_often(
 					'flame-builder: held stats frames over the checkpoint budget; they still reach the mirror at bucket close',
 					\sprintf(
-						' — %d of %d frames dropped; budget %d bytes, held total %d bytes; largest dropped %s at %d bytes',
+						' — %d of %d frames dropped; budget %d bytes, held total %d bytes; largest dropped %s/%s at %d bytes',
 						\count( $held ) - $i,
 						\count( $held ),
 						self::MAX_CHECKPOINT_MIRROR_BYTES,
 						\array_sum( \array_column( $held, 'size' ) ),
+						$largest['ns'],
 						$largest['key'],
 						$largest['size']
 					)
 				);
 				break;
 			}
-			$remaining -= $size;
-			if ( '' === $ns ) {
-				$out['buffer'][ $key ] = $frame;
-			} else {
-				$out['topn'][ $ns ][ $key ] = $frame;
-			}
+			$remaining                   -= $size;
+			$out['frames'][ $ns ][ $key ] = $frame;
 		}
 		return $out;
 	}
@@ -1907,10 +1959,7 @@ class Flame_Builder_Node extends Node {
 	 */
 	private function mirror_frames(): array {
 		$held = [];
-		foreach ( $this->stats_mirror_buffer as $key => $frame ) {
-			$held[] = [ 'ns' => '', 'key' => $key, 'frame' => $frame, 'size' => self::frame_bytes( $frame ) ];
-		}
-		foreach ( $this->stats_mirror_topn as $ns => $frames ) {
+		foreach ( $this->mirror as $ns => $frames ) {
 			foreach ( $frames as $key => $frame ) {
 				$held[] = [ 'ns' => $ns, 'key' => $key, 'frame' => $frame, 'size' => self::frame_bytes( $frame ) ];
 			}
@@ -1970,10 +2019,9 @@ class Flame_Builder_Node extends Node {
 	 * request that started before a boundary completes after it, and re-writes
 	 * the bucket it belongs to, which is by then closed.
 	 *
-	 * The held frames are not undurable, just durable somewhere cheaper: they ride
+	 * A held frame is not undurable, just durable somewhere cheaper: it rides
 	 * `save_state()` into the offsetlog, a bounded ring of at most 60 keyframes,
-	 * where `flame-stats` retains for twice the stats window. A respawn restores
-	 * them and writes them when the bucket closes.
+	 * and a respawn writes it when the bucket closes.
 	 *
 	 * Aggregates flush in full; the per-URL namespaces flush their bounded top-N.
 	 */
@@ -1987,9 +2035,8 @@ class Flame_Builder_Node extends Node {
 			return; // Keep the buffer; retry next checkpoint once the node exists.
 		}
 		$now = $this->now_ts();
-		$this->stats_mirror_buffer = $this->write_closed_frames( $partition, $this->stats_mirror_buffer, $now );
-		foreach ( $this->stats_mirror_topn as $ns => $entries ) {
-			$this->stats_mirror_topn[ $ns ] = $this->write_closed_frames( $partition, $entries, $now );
+		foreach ( $this->mirror as $ns => $entries ) {
+			$this->mirror[ $ns ] = $this->write_closed_frames( $partition, $entries, $now );
 		}
 	}
 
@@ -2127,17 +2174,20 @@ class Flame_Builder_Node extends Node {
 		$mirror = Core::arr( $saved['mirror'] ?? null );
 		// ADR-18: a lifetime that ran out is a miss, not a resurrection.
 		$elapsed                   = \max( 0, $this->now_ts() - Core::num_int( $mirror['at'] ?? null ) );
-		$this->stats_mirror_buffer = self::restore_frames( $mirror['buffer'] ?? null, $elapsed );
-		$topn                      = Core::arr( $mirror['topn'] ?? null );
-		// Re-bound by TRAFFIC; the carry's own order is smallest-first.
-		foreach ( self::STATS_MIRROR_TOPN as $ns => $ignored_default ) {
-			$restored = self::restore_frames( $topn[ $ns ] ?? null, $elapsed );
-			\uasort(
-				$restored,
-				static fn ( array $a, array $b ): int =>
-					self::mirror_traffic_rank( $b[0], $ns ) <=> self::mirror_traffic_rank( $a[0], $ns )
-			);
-			$this->stats_mirror_topn[ $ns ] = \array_slice( $restored, 0, \max( 0, $this->mirror_topn( $ns ) ), true );
+		foreach ( Core::arr( $mirror['frames'] ?? null ) as $ns_raw => $carried ) {
+			$ns       = Core::as_string( $ns_raw );
+			$restored = self::restore_frames( $carried, $elapsed );
+			$cap      = \max( 0, $this->mirror_topn( $ns ) );
+			if ( \count( $restored ) > $cap ) {
+				// Re-bound by TRAFFIC; the carry's own order is smallest-first.
+				\uasort(
+					$restored,
+					static fn ( array $a, array $b ): int =>
+						self::mirror_traffic_rank( $b[0], $ns ) <=> self::mirror_traffic_rank( $a[0], $ns )
+				);
+				$restored = \array_slice( $restored, 0, $cap, true );
+			}
+			$this->mirror[ $ns ] = $restored;
 		}
 		foreach ( $pending as $bucket => $acc ) {
 			// `Y-m-d-H-i` is a string PHP never re-types to int.
@@ -2149,18 +2199,56 @@ class Flame_Builder_Node extends Node {
 		}
 	}
 
+	/**
+	 * A zero-valued URL index row.
+	 *
+	 * Both sides of the write path seed one, differing only in the `min_ms`
+	 * sentinel: the accumulator folds with `min()` and needs a ceiling, the
+	 * persisted row starts at 0 and is guarded by `timed_count`. Two literals
+	 * made every new field a four-place edit, and one omission a silent
+	 * undefined index on a per-request path.
+	 *
+	 * @param string    $url    The row's URL.
+	 * @param float|int $min_ms Starting minimum; `PHP_INT_MAX` where `min()` folds it.
+	 * @return array<string,mixed>
+	 */
+	private static function empty_url_row( string $url, float|int $min_ms = 0 ): array {
+		return [
+			'url'         => $url,
+			'count'       => 0,
+			'timed_count' => 0,
+			'sum_ms'      => 0,
+			'min_ms'      => $min_ms,
+			'max_ms'      => 0,
+			'last_seen'   => 0,
+			'durations'   => [],
+			'count_2xx'   => 0,
+			'count_3xx'   => 0,
+			'count_4xx'   => 0,
+			'count_5xx'   => 0,
+			'sum_peak_mb' => 0,
+			'max_peak_mb' => 0,
+			'worker'      => false,
+			Stats_Store::URL_SRV_FIELD => [],
+		];
+	}
+
 	/** Current Unix time, through the test clock seam when one is installed. */
 	private function now_ts(): int {
 		return null !== $this->clock_fn ? ( $this->clock_fn )() : \time();
 	}
 
 	/**
-	 * The live top-N cap for a per-URL namespace: the configurable $flame_topn for
-	 * NS_URL (the flame profiles), the fixed STATS_MIRROR_TOPN default otherwise.
+	 * The live cap on one namespace's buffered frames: the configurable
+	 * $flame_topn for NS_URL (the flame profiles), the STATS_MIRROR_TOPN default
+	 * for the other per-URL namespaces, no bound at all for the aggregates.
 	 *
-	 * @param string $ns One of the STATS_MIRROR_TOPN namespaces.
+	 * @param string $ns Namespace a frame was written under.
 	 */
 	private function mirror_topn( string $ns ): int {
+		if ( ! isset( self::STATS_MIRROR_TOPN[ $ns ] ) ) {
+			return \PHP_INT_MAX; // an aggregate namespace: keep all.
+		}
 		return Stats_Store::NS_URL === $ns
 			? $this->flame_topn
 			: self::STATS_MIRROR_TOPN[ $ns ];
@@ -2259,7 +2347,7 @@ class Flame_Builder_Node extends Node {
 	 * Held frames win over the partition: they are what was written last.
 	 *
 	 * @param array<array-key,mixed> $keys      Keys the Table missed on, relative to its namespace.
-	 * @param int                    $partition Keyspace those keys sit in; the buffers key absolutely.
+	 * @param int                    $partition Keyspace those keys sit in; the buffer keys absolutely.
 	 * @return array<string,array{value: array<array-key,mixed>, ttl: int}>
 	 */
 	private function held_frames( array $keys, int $partition ): array {
@@ -2269,9 +2357,9 @@ class Flame_Builder_Node extends Node {
 			if ( ! \is_string( $key ) ) {
 				continue;
 			}
-			$held = Stats_Store::entry_key( $partition, $key );
-			$frame = $this->stats_mirror_buffer[ $held ] ?? null;
-			foreach ( $this->stats_mirror_topn as $entries ) {
+			$held  = Stats_Store::entry_key( $partition, $key );
+			$frame = null;
+			foreach ( $this->mirror as $entries ) {
 				$frame ??= $entries[ $held ] ?? null;
 			}
 			if ( null !== $frame ) {
@@ -2293,66 +2381,6 @@ class Flame_Builder_Node extends Node {
 	 */
 	public function set_flame_topn( int $n ): void {
 		$this->flame_topn = \max( 0, $n );
-	}
-
-	/**
-	 * Pre-check the owned auto-tuner sibling's `{name}:auto-tuner` slot
-	 * alongside the base's own-name + `:config` checks. Chains parent::.
-	 *
-	 * @api Used by substrate.
-	 * @param string $name Name the node is about to take.
-	 * @throws \RuntimeException When the sibling slot is already registered.
-	 */
-	protected function check_name_availability( string $name ): void {
-		if ( null !== $this->auto_tuner && null !== \Newspack_Nodes\Core::node( "{$name}:auto-tuner" ) ) {
-			throw new \RuntimeException( \esc_html( "node name collision: {$name}:auto-tuner already registered" ) );
-		}
-		parent::check_name_availability( $name );
-	}
-
-	/**
-	 * Track the owned auto-tuner sibling as `{name}:auto-tuner`. Only called from
-	 * name() with a non-empty $name; sibling teardown lives in remove_node().
-	 * Chains parent::.
-	 *
-	 * @api Used by substrate.
-	 * @param string|null $name New node name.
-	 */
-	protected function set_sibling_names( ?string $name = null ): void {
-		$this->auto_tuner?->name( "{$name}:auto-tuner" );
-		parent::set_sibling_names( $name );
-	}
-
-	/**
-	 * Cascade-remove the owned auto-tuner sibling alongside the patron. Full
-	 * remove_node (not a bare unregister) so the auto-tuner's own `:config`
-	 * interpreter sibling unregisters too and a same-name respawn doesn't collide.
-	 *
-	 * @api Used by substrate.
-	 */
-	public function remove_node(): void {
-		if ( null !== $this->auto_tuner ) {
-			$this->auto_tuner->remove_node();
-			$this->auto_tuner = null;
-		}
-		parent::remove_node();
-	}
-
-	/**
-	 * Propagate the make_node auto-sink down to the owned auto-tuner sibling, so
-	 * it too sinks into `_command_interpreter` like any other sibling (Rule 2c).
-	 * Without this the tuner has no sink and its replies go nowhere.
-	 *
-	 * @api Used by substrate.
-	 * @param Node|null $node New sink; omit the argument entirely to read.
-	 * @return Node|null The current sink.
-	 */
-	public function sink( ?Node $node = null ): ?Node {
-		if ( \func_num_args() > 0 ) {
-			$this->auto_tuner?->sink( $node );
-			return parent::sink( $node );
-		}
-		return parent::sink();
 	}
 
 	/**
@@ -2392,53 +2420,30 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
-	 * The queued auto-tune decisions, keyed per rule id.
+	 * The queued auto-tune decisions, by emit key then rule id.
 	 *
 	 * @api Used by tests.
-	 * @return array<string,array<string,list<string>>> Keys 'hooks', 'custom_events', 'new_significant'.
+	 * @return array<string,array<string,list<string>>> The `$auto_tune` map, its name sets listed.
 	 */
 	public function get_auto_tune_state(): array {
-		$names = static fn( array $set ): array => \array_keys( $set );
-		return [
-			'hooks'           => \array_map( $names, $this->hooks_to_disable ),
-			'custom_events'   => \array_map( $names, $this->custom_events_to_disable ),
-			'new_significant' => \array_map( $names, $this->new_significant_events ),
-		];
+		return \array_map(
+			static fn ( array $by_rule ): array => \array_map( static fn ( array $set ): array => \array_keys( $set ), $by_rule ),
+			$this->auto_tune
+		);
 	}
 
 	/**
-	 * Surface the stats-mirror partition as a named target so the console draws
-	 * the flame-builder → flame-stats:partition edge. Display only: the mirror
-	 * writes go straight to the partition at flush (bypassing the sink), so
-	 * without this override the partition renders disconnected even while it
-	 * fills. What actually gets mirrored is driven by add_snapshot_node +
-	 * set_stats_target, not by this method.
+	 * The stats-mirror partition, so the console draws the flame-builder →
+	 * flame-stats:partition edge. Display only: the mirror writes go straight to
+	 * the partition at flush (bypassing the sink), so without this it renders
+	 * disconnected even while it fills. What actually gets mirrored is driven by
+	 * add_snapshot_node + set_stats_target, not by this method.
 	 *
-	 * @api Used by substrate.
-	 * @param array<int,string>|string|null $value New primary target, or null to read.
-	 * @return array<int,string>|string The primary target, plus the stats partition when set.
+	 * @api Unioned into display_targets() by the substrate's Node.
+	 * @return list<string>
 	 */
-	public function target( $value = null ) {
-		if ( null !== $value ) {
-			return parent::target( $value );
-		}
-		$primary = parent::target();
-		$extras  = [];
-		if ( '' !== $this->stats_partition ) {
-			$extras[] = $this->stats_partition;
-		}
-		if ( ! $extras ) {
-			return $primary;
-		}
-		$all = \is_array( $primary )
-			? $primary
-			: ( '' !== $primary ? [ $primary ] : [] );
-		foreach ( $extras as $e ) {
-			if ( ! \in_array( $e, $all, true ) ) {
-				$all[] = $e;
-			}
-		}
-		return $all;
+	protected function extra_targets(): array {
+		return [ $this->stats_partition ];
 	}
 
 	/**
@@ -2453,10 +2458,7 @@ class Flame_Builder_Node extends Node {
 	 * @return string TSL lines, newline-terminated.
 	 */
 	public function dump_config(): string {
-		$out = parent::dump_config();
-		if ( $this->is_hub ) {
-			$out .= $this->config_line( 'set_is_hub', 'true' );
-		}
+		$out = parent::dump_config() . $this->dump_toggles();
 		if ( null !== $this->stats_store ) {
 			$out .= $this->config_line( 'configure_stats', (string) $this->stats_store->partition() );
 		}
@@ -2540,15 +2542,8 @@ class Flame_Builder_Node extends Node {
 					'args'        => [
 						[ 'name' => 'is_hub', 'type' => 'bool', 'required' => true, 'default' => '<eln:is_hub>' ],
 					],
-					'handler'     => static function ( Command_Interpreter_Node $interpreter, array $args ): string {
-						/** @var self $patron */
-						$patron = $interpreter->patron();
-						// THE bool parse; a local one here rejected yes/on.
-						$patron->set_is_hub(
-							self::truthy( \trim( Core::as_string( $args[0] ?? '' ) ) )
-						);
-						return 'ok';
-					},
+					// Declarative: the substrate synthesizes handler and dump.
+					'toggle'      => 'is_hub',
 				],
 				[
 					'name'        => 'configure_stats',

@@ -560,6 +560,22 @@ $GLOBALS['_eln_boot_actions'] = $GLOBALS['_wp_actions'];
 );
 \Newspack_Nodes\Command_Interpreter_Node::register_namespace( 'Newspack_Event_Logger_Nodes\\App\\' );
 
+// Named index formatters the .tsl `with_index` legs and Performance_CI's index
+// scans resolve by name, replayed from the same pri-11 closure. Without them
+// with_index_named() returns false and every index read scans nothing.
+\Newspack_Nodes\Formatters::register(
+	'request-index',
+	\Newspack_Event_Logger_Nodes\Request_Builder_Node::format_index_entry( ... )
+);
+\Newspack_Nodes\Formatters::register(
+	'flame-index',
+	\Newspack_Event_Logger_Nodes\Flame_Builder_Node::format_index_entry( ... )
+);
+\Newspack_Nodes\Formatters::register(
+	'stats-index',
+	\Newspack_Event_Logger_Nodes\Flame_Builder_Node::format_stats_index_entry( ... )
+);
+
 // Register the application `eln` token namespace so `<eln:…>` resolves in
 // tests (mirrors the substrate bootstrap's register_token_namespace() call).
 // Routes through Config::resolve_eln_token so prod + tests share derivation.

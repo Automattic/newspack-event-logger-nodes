@@ -2,32 +2,12 @@
 /**
  * Rules_CI: command-dispatch for the per-URL logging ruleset editor.
  *
- * Verbs:
- *   list   — every rule, with a pointer rule's hooks resolved to the full
- *            list via Rule_Set::hooks_for() and hooks_in normalized to
- *            'inline' — the editor never sees the storage tier.
- *   save   — whole-list replace. Arg `rules` is a JSON array of rule
- *            objects; each decodes via Rule::from_array(), the list is
- *            rekeyed by Rule_Set::rekey_by_pattern() — every entry takes the
- *            id its own pattern derives, and entries sharing a pattern
- *            collapse to the last one — and Rule_Set::save() persists it, so
- *            inline<->pointer tiering and orphan reconcile stay intact.
- *   upsert — single-rule add/replace. Arg `rule` is a JSON object. The rule
- *            carrying the incoming id, plus every rule sharing the incoming
- *            pattern, drops out; the incoming rule is appended under the id
- *            its pattern derives. A same-pattern edit therefore keeps its id,
- *            and an edit that changes the pattern (round-tripping the old id)
- *            rekeys the rule and drops the old-pattern entry. List position
- *            carries no meaning — Rule_Matcher ranks by specificity, not
- *            order. This is the performance-dashboard "log this URL" path —
- *            no need to ship the whole list for one change.
- *   delete — arg `id`. Drops the matching rule (if any), re-saves, and
- *            reports whether anything matched.
- *   reset  — no args. Discards the stored option so the file config seeds
- *            again; reports the seeded rule count.
- *
- * All five run through Rule_Set so the tiering/reconcile invariants in
- * Rule_Set::save() are never bypassed by a raw update_option().
+ * Five verbs — list, save, upsert, delete, reset — each declaring its own
+ * `description`. They all run through Rule_Set, so the tiering and orphan
+ * reconcile invariants in `Rule_Set::save()` are never bypassed by a raw
+ * `update_option()`. An id is a pure function of the pattern, so `save` and
+ * `upsert` rekey what they are handed: list POSITION carries no meaning —
+ * `Rule_Matcher` ranks by specificity.
  *
  * `save` and `upsert` take their JSON blob as the first raw token
  * (`self::arg_strings( $args )[0]`) instead of through Command_Args::parse(),

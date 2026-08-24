@@ -56,8 +56,6 @@ class Settings_Schema {
 		}
 
 		$general         = 'newspack_event_logger_nodes_general_section';
-		$instrumentation = 'newspack_event_logger_nodes_instrumentation_section';
-		$workers         = 'newspack_event_logger_nodes_workers_section';
 		$debugging       = 'newspack_event_logger_nodes_debugging_section';
 
 		// Literal prefix, not Admin::OPTION_PREFIX: schema-build skips Admin.
@@ -120,19 +118,10 @@ class Settings_Schema {
 					ui: false,
 				),
 			],
-			// Instrumentation and Workers have no field; they never render.
 			[
 				$general         => [
 					'title'    => static fn(): string => \__( 'General', 'newspack-event-logger-nodes' ),
 					'callback' => [ Admin::class, 'general_section_callback' ],
-				],
-				$instrumentation => [
-					'title'    => static fn(): string => \__( 'Instrumentation', 'newspack-event-logger-nodes' ),
-					'callback' => [ Admin::class, 'instrumentation_section_callback' ],
-				],
-				$workers         => [
-					'title'    => static fn(): string => \__( 'Performance Workers', 'newspack-event-logger-nodes' ),
-					'callback' => [ Admin::class, 'workers_section_callback' ],
 				],
 				$debugging       => [
 					'title'    => static fn(): string => \__( 'Debugging', 'newspack-event-logger-nodes' ),

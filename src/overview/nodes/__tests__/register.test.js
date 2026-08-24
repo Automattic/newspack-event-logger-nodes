@@ -140,11 +140,14 @@ describe( 'the data slices', () => {
 } );
 
 describe( 'UrlsView — the envelope slice', () => {
-	test( 'unwraps data and total, dropping limit and offset', () => {
+	test( 'unwraps data and totals, dropping limit and offset', () => {
 		const v = makeView( 'UrlsView', 'urls:view' );
 		expect( v.setStateCache.view ).toEqual( {
 			data: [],
-			total: 0,
+			totals: null,
+			rows: 0,
+			slowest: [],
+			filters: null,
 			loading: false,
 			error: null,
 		} );
@@ -152,7 +155,12 @@ describe( 'UrlsView — the envelope slice', () => {
 		v.fill(
 			reply( 'urls', {
 				data: [ { url: '/a' } ],
-				total: 7331,
+				totals: { urls: 7331, requests: 90210 },
+				// One more row than URLs: the folded row is sliceable but is
+				// not a unique URL, and the pager slices.
+				rows: 7332,
+				slowest: [ { url: '/slow', p95_ms: 2600 } ],
+				filters: { server: 'edge-01', search: '', errors_only: false },
 				limit: 20,
 				offset: 0,
 			} )
@@ -160,7 +168,10 @@ describe( 'UrlsView — the envelope slice', () => {
 
 		expect( v.setStateCache.view ).toEqual( {
 			data: [ { url: '/a' } ],
-			total: 7331,
+			totals: { urls: 7331, requests: 90210 },
+			rows: 7332,
+			slowest: [ { url: '/slow', p95_ms: 2600 } ],
+			filters: { server: 'edge-01', search: '', errors_only: false },
 			loading: false,
 			error: null,
 		} );
@@ -168,20 +179,30 @@ describe( 'UrlsView — the envelope slice', () => {
 
 	test( 'a malformed envelope publishes an empty table rather than throwing', () => {
 		const v = makeView( 'UrlsView', 'urls:view' );
-		v.fill( reply( 'urls', { data: [ { url: '/a' } ], total: 7331 } ) );
+		v.fill(
+			reply( 'urls', {
+				data: [ { url: '/a' } ],
+				totals: { urls: 7331 },
+			} )
+		);
 		v.fill( reply( 'urls', { nonsense: true } ) );
 
 		expect( v.setStateCache.view.data ).toEqual( [] );
-		expect( v.setStateCache.view.total ).toBe( 0 );
+		expect( v.setStateCache.view.totals ).toBe( null );
 	} );
 
 	test( 'a TM_ERROR reply keeps the rows already on screen', () => {
 		const v = makeView( 'UrlsView', 'urls:view' );
-		v.fill( reply( 'urls', { data: [ { url: '/a' } ], total: 7331 } ) );
+		v.fill(
+			reply( 'urls', {
+				data: [ { url: '/a' } ],
+				totals: { urls: 7331 },
+			} )
+		);
 		v.fill( reply( 'urls', 'query timed out', true ) );
 
 		expect( v.setStateCache.view.data ).toEqual( [ { url: '/a' } ] );
-		expect( v.setStateCache.view.total ).toBe( 7331 );
+		expect( v.setStateCache.view.totals ).toEqual( { urls: 7331 } );
 		expect( v.setStateCache.view.error ).toBe( 'query timed out' );
 	} );
 } );

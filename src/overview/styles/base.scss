@@ -19,6 +19,12 @@
 	padding: 16px 0;
 }
 
+// The overview card stacks the aggregate chart clear of the stat row above it;
+// the same panel inside the URL modal opens the body and needs no gap.
+.event-logger-performance-overview .event-logger-aggregate-chart {
+	margin-top: 20px;
+}
+
 // The `?` picker's brief. Findings first, the raw payload behind a disclosure —
 // a picker click is not consent to send, so the operator sees what leaves.
 

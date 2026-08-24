@@ -24,8 +24,6 @@
  */
 
 import {
-	lazy,
-	Suspense,
 	useRef,
 	memo,
 	useMemo,
@@ -33,11 +31,9 @@ import {
 	useEffect,
 	useCallback,
 } from '@wordpress/element';
-import { __, _n, sprintf } from '@wordpress/i18n';
-import { SelectControl } from '@wordpress/components';
+import { __, sprintf } from '@wordpress/i18n';
 import { formatCommandArgs } from '@newspack-nodes/runtime';
 import { useCommandOnce } from '@newspack-nodes/shared/hooks/useCommandOnce';
-import { CHART_METRIC_OPTIONS, CHART_BREAKDOWN_OPTIONS } from '../constants';
 import { SERVER } from '../hooks/usePerformanceGraph';
 
 /**
@@ -48,13 +44,12 @@ import { SERVER } from '../hooks/usePerformanceGraph';
  */
 const BREAKDOWN_REFRESH_MS = 300000;
 
-// Lazy load FlameGraph (heaviest component - uses d3-flame-graph).
-const FlameGraph = lazy( () => import( '../FlameGraph' ) );
-
 import ResponseTimeChart from '../ResponseTimeChart';
-import RequestProfile from '../RequestProfile';
-import AggregateTimeChart from '../AggregateTimeChart';
+import RequestTrace from './RequestTrace';
 import CategoryTimeChart from '../CategoryTimeChart';
+import { ProfileWithCaption } from '../RequestProfile';
+import BreakdownControls from './BreakdownControls';
+import { errorStatus } from '../../components/errorStatus';
 import useVirtualization from '@newspack-nodes/shared/hooks/useVirtualization';
 import useRouterTick from '@newspack-nodes/shared/hooks/useRouterTick';
 
@@ -76,8 +71,7 @@ const RequestRow = memo(
 	 * The row is a button: click or Enter/Space hands rid + partition to `onSelect`.
 	 * Its request-id cell carries a bar background whose width is the row's
 	 * value as a fraction of `maxBar`, and its status cell reads `error_status`
-	 * first — `F` for a fatal, `T` for a timeout — falling back to the HTTP
-	 * status code.
+	 * through the shared table, falling back to the HTTP status code.
 	 *
 	 * @param {Object}                                   props          Component props.
 	 * @param {Object}                                   props.req      Request index entry: rid, timestamp, method, status_code, error_status, duration_ms, peak_mb.
@@ -90,13 +84,7 @@ const RequestRow = memo(
 		const barField = metric === 'memory' ? 'peak_mb' : 'duration_ms';
 		const barValue = req[ barField ] || 0;
 		const barPct = maxBar > 0 ? ( barValue / maxBar ) * 100 : 0;
-		let statusRole = '';
-		if ( 'T' === req.error_status || 'A' === req.error_status ) {
-			// Aborted warns like a timeout: truncated, not a failure.
-			statusRole = ' newspack-nodes-status is-warning';
-		} else if ( 'F' === req.error_status ) {
-			statusRole = ' newspack-nodes-status is-error';
-		}
+		const status = errorStatus( req.error_status );
 		const handleKeyDown = ( e ) => {
 			if ( e.key === 'Enter' || e.key === ' ' ) {
 				e.preventDefault();
@@ -129,40 +117,16 @@ const RequestRow = memo(
 					<code>{ req.rid }</code>
 				</div>
 				<div
-					className={ `event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--status entry-status${ statusRole }` }
-					data-status={ statusRole ? undefined : req.status_code }
+					className={ `event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--status entry-status${
+						status ? ` newspack-nodes-status ${ status.tone }` : ''
+					}` }
+					data-status={ status ? undefined : req.status_code }
 				>
-					{ req.error_status === 'F' && (
-						<span
-							title={ __(
-								'Fatal error',
-								'newspack-event-logger-nodes'
-							) }
-						>
-							F
-						</span>
+					{ status ? (
+						<span title={ status.label }>{ req.error_status }</span>
+					) : (
+						req.status_code || '-'
 					) }
-					{ req.error_status === 'T' && (
-						<span
-							title={ __(
-								'Timed out',
-								'newspack-event-logger-nodes'
-							) }
-						>
-							T
-						</span>
-					) }
-					{ req.error_status === 'A' && (
-						<span
-							title={ __(
-								'Aborted — the worker stopped before this request finished',
-								'newspack-event-logger-nodes'
-							) }
-						>
-							A
-						</span>
-					) }
-					{ ! req.error_status && ( req.status_code || '-' ) }
 				</div>
 				<div className="event-logger-table__cell newspack-nodes-table__cell event-logger-table__cell--numeric">
 					{ req.duration_ms?.toFixed( 0 ) || 0 }ms
@@ -207,9 +171,8 @@ export default function UrlDetailView( {
 		if ( ! errorsOnly ) {
 			return sortedRequests;
 		}
-		// Mirrors Request_Builder_Node::ERROR_STATUSES.
-		return sortedRequests.filter( ( r ) =>
-			[ 'F', 'T', 'A' ].includes( r.error_status )
+		return sortedRequests.filter(
+			( r ) => null !== errorStatus( r.error_status )
 		);
 	}, [ sortedRequests, errorsOnly ] );
 
@@ -316,96 +279,17 @@ export default function UrlDetailView( {
 
 	return (
 		<>
-			{ /* Time Series Chart with Breakdown Controls */ }
-			{ urlDetail.stats?.time_series &&
-				Object.keys( urlDetail.stats.time_series ).length > 0 && (
-					<div className="event-logger-aggregate-chart">
-						<div
-							style={ {
-								display: 'flex',
-								gap: '16px',
-								margin: '12px 0',
-								alignItems: 'flex-end',
-								flexWrap: 'wrap',
-							} }
-						>
-							<SelectControl
-								__next40pxDefaultSize
-								label={ __(
-									'Metric',
-									'newspack-event-logger-nodes'
-								) }
-								value={ chartMetric }
-								options={ CHART_METRIC_OPTIONS }
-								onChange={ setChartMetric }
-								__nextHasNoMarginBottom
-								style={ { minWidth: '180px' } }
-							/>
-							<SelectControl
-								__next40pxDefaultSize
-								label={ __(
-									'Breakdown',
-									'newspack-event-logger-nodes'
-								) }
-								value={ chartBreakdown }
-								options={ CHART_BREAKDOWN_OPTIONS }
-								onChange={ setChartBreakdown }
-								__nextHasNoMarginBottom
-								style={ { minWidth: '140px' } }
-							/>
-							{ breakdownLoading && (
-								<span
-									className="newspack-nodes-status"
-									style={ {
-										fontSize: '12px',
-										paddingBottom: '8px',
-									} }
-								>
-									{ __(
-										'Loading…',
-										'newspack-event-logger-nodes'
-									) }
-								</span>
-							) }
-						</div>
-						<AggregateTimeChart
-							data={ urlDetail.stats.time_series }
-							breakdownData={ breakdownData }
-							metric={ chartMetric }
-							breakdown={ chartBreakdown }
-						/>
-					</div>
-				) }
+			<BreakdownControls
+				series={ urlDetail.stats?.time_series }
+				breakdownData={ breakdownData }
+				metric={ chartMetric }
+				setMetric={ setChartMetric }
+				breakdown={ chartBreakdown }
+				setBreakdown={ setChartBreakdown }
+				loading={ breakdownLoading }
+			/>
 
-			{ /* Category Time Series Charts */ }
-			{ urlDetail?.category_time_series && (
-				<>
-					<CategoryTimeChart
-						data={ urlDetail.category_time_series }
-						mode="time"
-						title={ __(
-							'Time by Category',
-							'newspack-event-logger-nodes'
-						) }
-					/>
-					<CategoryTimeChart
-						data={ urlDetail.category_time_series }
-						mode="count"
-						title={ __(
-							'Events by Category',
-							'newspack-event-logger-nodes'
-						) }
-					/>
-					<CategoryTimeChart
-						data={ urlDetail.category_time_series }
-						mode="average"
-						title={ __(
-							'Average Time per Event',
-							'newspack-event-logger-nodes'
-						) }
-					/>
-				</>
-			) }
+			<CategoryTimeChart data={ urlDetail?.category_time_series } />
 
 			{ /* Response Time Chart (individual requests) */ }
 			{ urlDetail.requests?.length > 0 && (
@@ -418,63 +302,27 @@ export default function UrlDetailView( {
 			{ /* Flame Graph */ }
 			{ urlDetail.aggregate_flame &&
 				urlDetail.aggregate_flame.children?.length > 0 && (
-					<div
-						className="event-logger-flame-container"
-						style={ { marginTop: '20px' } }
-					>
-						<h3>
-							{ __(
+					<div style={ { marginTop: '20px' } }>
+						<RequestTrace
+							flameData={ urlDetail.aggregate_flame }
+							title={ __(
 								'Aggregate Flame Graph',
 								'newspack-event-logger-nodes'
 							) }
-						</h3>
-						<Suspense
-							fallback={
-								<div className="event-logger-detail-loading newspack-nodes-performance-loading">
-									{ __(
-										'Loading chart…',
-										'newspack-event-logger-nodes'
-									) }
-								</div>
-							}
-						>
-							<FlameGraph
-								data={ urlDetail.aggregate_flame }
-								lastModified={ urlDetail.last_modified }
-							/>
-						</Suspense>
+							lastModified={ urlDetail.last_modified }
+						/>
 					</div>
 				) }
 
-			{ /* Aggregate Profile Breakdown */ }
 			{ urlDetail.aggregate_profiles?.categories && (
-				<div style={ { marginTop: '20px' } }>
-					<RequestProfile
-						profiles={ urlDetail.aggregate_profiles.categories }
-						totalMs={ urlDetail.stats?.avg_ms || 0 }
-						totalProfiledTime={
-							urlDetail.aggregate_profiles?.total_time
-						}
-					/>
-					<p
-						className="newspack-nodes-status"
-						style={ {
-							fontSize: '12px',
-							marginTop: '8px',
-						} }
-					>
-						{ sprintf(
-							// translators: %d: number of requests.
-							_n(
-								'Average breakdown across %d request',
-								'Average breakdown across %d requests',
-								urlDetail.aggregate_profiles?.count || 0,
-								'newspack-event-logger-nodes'
-							),
-							urlDetail.aggregate_profiles?.count || 0
-						) }
-					</p>
-				</div>
+				<ProfileWithCaption
+					profiles={ urlDetail.aggregate_profiles.categories }
+					totalMs={ urlDetail.stats?.avg_ms || 0 }
+					totalProfiledTime={
+						urlDetail.aggregate_profiles?.total_time
+					}
+					count={ urlDetail.aggregate_profiles?.count || 0 }
+				/>
 			) }
 
 			{ /* Virtualized Recent Requests */ }

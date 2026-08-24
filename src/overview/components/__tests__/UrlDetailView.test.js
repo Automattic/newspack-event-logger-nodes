@@ -32,17 +32,13 @@ jest.mock( '../../ResponseTimeChart', () => ( {
 	__esModule: true,
 	default: () => 'RESPONSE_TIME_CHART',
 } ) );
-jest.mock( '../../RequestProfile', () => ( {
-	__esModule: true,
-	default: () => 'REQUEST_PROFILE',
-} ) );
 jest.mock( '../../AggregateTimeChart', () => ( {
 	__esModule: true,
 	default: () => 'AGGREGATE',
 } ) );
 jest.mock( '../../CategoryTimeChart', () => ( {
 	__esModule: true,
-	default: ( { title } ) => `CATEGORY[${ title }]`,
+	default: () => 'CATEGORY',
 } ) );
 
 import * as React from 'react';
@@ -274,6 +270,43 @@ describe( 'UrlDetailView', () => {
 		unmount();
 	} );
 
+	it( 'labels an incomplete (I) request and keeps it under "Errors Only"', async () => {
+		const { container, unmount } = mount( {
+			sortedRequests: [
+				{
+					rid: 'gap-9714',
+					timestamp: 1748960777,
+					method: 'GET',
+					duration_ms: 77,
+					peak_mb: 3,
+					status_code: 200,
+					error_status: 'I',
+				},
+			],
+		} );
+		await act( async () => {} );
+		const cell = container.querySelector(
+			'.event-logger-table__cell--status'
+		);
+		expect( cell.className ).toContain(
+			'newspack-nodes-status is-warning'
+		);
+		expect( cell.textContent ).toBe( 'I' );
+		expect(
+			cell.querySelector( 'span' ).getAttribute( 'title' )
+		).toContain( 'Incomplete' );
+
+		const button = Array.from(
+			container.querySelectorAll( 'button' )
+		).find( ( b ) => b.textContent === 'Errors Only' );
+		act( () => {
+			button.click();
+		} );
+		expect( container.textContent ).toContain( 'Recent Requests (1)' );
+		expect( container.textContent ).toContain( 'gap-9714' );
+		unmount();
+	} );
+
 	it( 'fires onRequestSort when a sort header is clicked', () => {
 		const onRequestSort = jest.fn();
 		const { container, unmount } = mount( { onRequestSort } );
@@ -363,35 +396,27 @@ describe( 'UrlDetailView', () => {
 			urlDetail: {
 				...baseUrlDetail,
 				aggregate_profiles: {
-					categories: { hooks: 1 },
+					categories: { hooks: { time: 10, count: 4 } },
 					count: 100,
 					total_time: 10,
 				},
 			},
 		} );
-		expect( container.textContent ).toContain( 'REQUEST_PROFILE' );
+		expect( container.textContent ).toContain( 'Total Profiled' );
 		expect( container.textContent ).toContain(
 			'Average breakdown across 100 requests'
 		);
 		unmount();
 	} );
 
-	it( 'mounts CategoryTimeChart triple when category_time_series is present', () => {
+	it( 'hands the category series to CategoryTimeChart', () => {
 		const { container, unmount } = mount( {
 			urlDetail: {
 				...baseUrlDetail,
 				category_time_series: { hooks: [] },
 			},
 		} );
-		expect( container.textContent ).toContain(
-			'CATEGORY[Time by Category]'
-		);
-		expect( container.textContent ).toContain(
-			'CATEGORY[Events by Category]'
-		);
-		expect( container.textContent ).toContain(
-			'CATEGORY[Average Time per Event]'
-		);
+		expect( container.textContent ).toContain( 'CATEGORY' );
 		unmount();
 	} );
 

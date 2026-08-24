@@ -37,7 +37,6 @@ use Newspack_Nodes\Core;
 use Newspack_Nodes\LRU_Cache;
 use Newspack_Nodes\Line_Fitter;
 use Newspack_Nodes\Message;
-use Newspack_Nodes\Node;
 use Newspack_Nodes\Node_Names;
 use Newspack_Nodes\Timer_Node;
 
@@ -75,6 +74,22 @@ class Request_Builder_Node extends Timer_Node {
 	 */
 	public const ERROR_STATUSES = [ 'F', 'T', 'A', 'I' ];
 
+	/**
+	 * The index line's 1-char method column, written here and read back through
+	 * `array_flip()`. Two hand-kept tables is how a method added to one side
+	 * decoded as a bare letter on the other.
+	 */
+	private const METHOD_CODES = [
+		'GET'     => 'G',
+		'POST'    => 'P',
+		'HEAD'    => 'H',
+		'DELETE'  => 'D',
+		'PUT'     => 'U',
+		'PATCH'   => 'A',
+		'OPTIONS' => 'O',
+		'CLI'     => 'C',
+	];
+
 	/** Markers that close a request. They land even when the sequence broke. */
 	private const TERMINAL_KEYWORDS = [ 'process (complete)' => true, 'process (aborted)' => true ];
 
@@ -96,23 +111,10 @@ class Request_Builder_Node extends Timer_Node {
 	/** Cap on intern-table entries; past it, keywords pass through uninterned. */
 	private const INTERN_TABLE_LIMIT = 50000;
 
-	/**
-	 * Default maximum entries stored per REQUEST before it folds on its own.
-	 * A faster trigger than the pool budget for the single-runaway case: it
-	 * stops one pathological request dominating the envelope pool without
-	 * waiting for the next pressure check.
-	 */
+	/** Default entries one REQUEST holds before it folds itself. */
 	public const DEFAULT_MAX_ENTRIES_PER_REQUEST = 20000;
 
-	/**
-	 * Default ceiling on entries stored across ALL in-flight requests.
-	 *
-	 * The per-request cap constrained the wrong quantity: at 50,000 entries an
-	 * envelope measures ~18MB, which is fine once and fatal twenty times over
-	 * — and twenty concurrent is the workload a long template render creates.
-	 * Crossing this folds envelopes (see `relieve_pressure()`) rather than
-	 * letting the worker blow past its memory limit unbounded.
-	 */
+	/** Default entries held across ALL in-flight requests; ~18MB each at 50,000. */
 	public const DEFAULT_ENTRY_BUDGET = 50000;
 
 	/**
@@ -122,6 +124,15 @@ class Request_Builder_Node extends Timer_Node {
 	 * over budget would otherwise re-scan on every single entry.
 	 */
 	private const PRESSURE_CHECK_STRIDE = 1000;
+
+	/** The one width `format_index_entry()` writes and `parse_request_index()` reads. */
+	private const INDEX_LINE_BYTES = 97;
+
+	/** Display clip on a summary's URL; `Request_Flight_Node` shares it. */
+	public const MAX_URL_LENGTH = 2000;
+
+	/** Display clip on a summary's user agent. */
+	public const MAX_USER_AGENT_LENGTH = 500;
 
 	/**
 	 * Max stored message length per entry. Truncate long values (filter args,
@@ -145,6 +156,9 @@ class Request_Builder_Node extends Timer_Node {
 
 	/** @var Request_Flight_Node|null Hidden sibling — periodic in-flight snapshots. */
 	public ?Request_Flight_Node $flight = null;
+
+	/** @var bool Snapshot only rows whose activity advanced; read by Flight's fire(). */
+	private bool $inflight_delta = false;
 
 	/** @var int Positional arg 0 — in-flight requests per LRU bucket. */
 	protected int $bucket_size = self::DEFAULT_BUCKET_SIZE;
@@ -209,15 +223,18 @@ class Request_Builder_Node extends Timer_Node {
 		$this->cache = $this->build_cache();
 		$this->state_callbacks = $this->build_state_callbacks();
 
-		// Hidden Flight sibling; name()/sink() overrides propagate its wiring.
-		$this->flight = new Request_Flight_Node();
-		$this->flight->patron( $this );
+		// Hidden Flight sibling; the publish cascades its name and sink.
+		$flight = new Request_Flight_Node();
+		$flight->patron( $this );
 
 		// Rule 2c: default Flight's sink to _command_interpreter when in scope.
 		$ci = Core::node( Node_Names::COMMAND_INTERPRETER );
-		if ( null !== $ci && null === $this->flight->sink() ) {
-			$this->flight->sink( $ci );
+		if ( null !== $ci && null === $flight->sink() ) {
+			$flight->sink( $ci );
 		}
+
+		$this->publish_sibling( 'flight', $flight );
+		$this->flight = $flight;
 
 		parent::__construct();
 		// Wire :config interpreter last: handlers read patron() lazily (safe).
@@ -446,9 +463,9 @@ class Request_Builder_Node extends Timer_Node {
 				Flame_Fold::add( $fold, $stored );
 				$request->fold = $fold;
 				if ( self::is_kept( $stored ) ) {
-					$request->keep = self::kept( $request->keep ?? null, $stored );
+					$request->keep = self::bucket( $request->keep ?? null, $stored, null );
 				} else {
-					$request->tail = self::ring( $request->tail ?? null, $stored );
+					$request->tail = self::bucket( $request->tail ?? null, $stored, self::FOLD_KEEP_TAIL );
 				}
 			} else {
 				$entries[]        = $stored;
@@ -566,14 +583,10 @@ class Request_Builder_Node extends Timer_Node {
 		}
 		$gap       = Core::int( $request->gap_after ?? 0, 0 );
 		$offset    = Core::as_string( $request->last_position ?? '' );
-		$entries[] = [
-			'n'  => $gap + 1,
-			'ts' => $entry['ts'] ?? 0,
-			'k'  => 'entries (lost)',
-			'm'  => '' !== $offset
-				? "discarded entries after #{$gap} at {$offset}"
-				: "discarded entries after #{$gap}",
-		];
+		$lost      = '' !== $offset
+			? "discarded entries after #{$gap} at {$offset}"
+			: "discarded entries after #{$gap}";
+		$entries[] = [ 'n' => $gap + 1, 'ts' => $entry['ts'] ?? 0, 'k' => 'entries (lost)', 'm' => $lost ];
 		if ( $folded ) {
 			$request->tail = $entries;
 			return;
@@ -643,12 +656,7 @@ class Request_Builder_Node extends Timer_Node {
 			$request->stack    = [ [ 'process', '' ] ];
 			$request->profiles = [];
 		}
-		if ( ! \is_array( $request->stack ) ) {
-			$request->stack = [];
-		}
-		if ( ! \is_array( $request->profiles ) ) {
-			$request->profiles = [];
-		}
+		self::normalize_stack( $request );
 
 		// References, not copies: mutate \stdClass arrays in place (avoid COW).
 		/** @var list<array{0: string,1: string}> $stack */
@@ -713,12 +721,7 @@ class Request_Builder_Node extends Timer_Node {
 		if ( empty( $request->stack ) ) {
 			return;
 		}
-		if ( ! \is_array( $request->stack ) ) {
-			$request->stack = [];
-		}
-		if ( ! \is_array( $request->profiles ) ) {
-			$request->profiles = [];
-		}
+		self::normalize_stack( $request );
 
 		// References, not copies: mutate \stdClass arrays in place (avoid COW).
 		/** @var list<array{0: string,1: string}> $stack */
@@ -790,6 +793,21 @@ class Request_Builder_Node extends Timer_Node {
 	}
 
 	/**
+	 * Coerce `stack` and `profiles` to arrays so the callers can take
+	 * references. A restored envelope carries whatever the checkpoint held.
+	 *
+	 * @param \stdClass $request Request object, mutated in place.
+	 */
+	private static function normalize_stack( \stdClass $request ): void {
+		if ( ! \is_array( $request->stack ?? null ) ) {
+			$request->stack = [];
+		}
+		if ( ! \is_array( $request->profiles ?? null ) ) {
+			$request->profiles = [];
+		}
+	}
+
+	/**
 	 * Check if a state label is a callback (ends with " @N").
 	 *
 	 * @param string $state State label.
@@ -825,44 +843,22 @@ class Request_Builder_Node extends Timer_Node {
 	 * `command_node {name}:config <verb> <value>` line per setting that differs from its
 	 * default, for dump_config introspection (REPL/GUI). No generic verb recording.
 	 *
-	 * The two `set_inflight_*` lines read from the Flight sibling, whose own
-	 * config would otherwise never round-trip — it is hidden from the editor.
+	 * `set_inflight_target` reads the Flight sibling, which owns the target as
+	 * a base-Node property — its config would otherwise never round-trip, being
+	 * hidden from the editor — and teardown empties the slot, leaving nothing
+	 * to dump. `set_inflight_delta` is this node's own toggle, so `dump_toggles()`
+	 * emits it whether or not the sibling is still there.
 	 *
 	 * @api Used by substrate.
 	 * @return string Round-trippable TSL for this node and its Flight sibling.
 	 */
 	public function dump_config(): string {
-		$out = parent::dump_config();
-		if ( '' !== $this->errors_target ) {
-			$out .= $this->config_line( 'set_errors_target', $this->errors_target );
-		}
-		if ( '' !== $this->alerts_target ) {
-			$out .= $this->config_line( 'set_alerts_target', $this->alerts_target );
-		}
-		if ( '' !== $this->completed_target ) {
-			$out .= $this->config_line( 'set_completed_target', $this->completed_target );
-		}
-		$inflight_target = $this->flight()->target();
-		if ( \is_string( $inflight_target ) && '' !== $inflight_target ) {
+		$out             = parent::dump_config() . $this->dump_setters() . $this->dump_toggles();
+		$inflight_target = $this->flight_target();
+		if ( '' !== $inflight_target ) {
 			$out .= $this->config_line( 'set_inflight_target', $inflight_target );
 		}
-		if ( $this->flight()->delta() ) {
-			$out .= $this->config_line( 'set_inflight_delta', '1' );
-		}
 		return $out;
-	}
-
-	/**
-	 * The Flight sibling, narrowed to non-null for callers that require it.
-	 *
-	 * @return Request_Flight_Node The hidden in-flight snapshot sibling.
-	 * @throws \RuntimeException When the constructor did not build the sibling.
-	 */
-	public function flight(): Request_Flight_Node {
-		if ( null === $this->flight ) {
-			throw new \RuntimeException( 'flight sibling not constructed' );
-		}
-		return $this->flight;
 	}
 	/**
 	 * Build the state-callback table: keyword → mutator on the request envelope.
@@ -878,20 +874,11 @@ class Request_Builder_Node extends Timer_Node {
 		$s = [];
 
 		$s['process (start)'] = function ( \stdClass $request, array $entry ): void {
-			$payload = $entry['m'] ?? '';
-			if ( \is_array( $payload ) ) {
-				$payload = $payload['m'] ?? '';
-			}
-			if ( \is_string( $payload ) && strlen( $payload ) < self::MAX_ENTRY_MESSAGE_LENGTH && \preg_match( '/^(\d+) on (\S+)/', $payload, $m ) ) {
-				$request->process_id = $m[1];
-				$request->host       = $m[2];
-			}
 			$request->timestamp   = $entry['ts'] ?? ( Core::$now ?: Core::right_now() );
 			$request->stack       = [ [ 'process', '' ] ];
 			$request->profiles    = [];
 			$request->entries     = [];
 			$request->state       = 'process';
-			$request->initialized = true;
 			$request->gap_after   = 0;
 			// Handle operator time-travel gracefully.
 			unset( $request->fold, $request->folded, $request->tail, $request->keep );
@@ -1119,8 +1106,6 @@ class Request_Builder_Node extends Timer_Node {
 	}
 
 	/**
-	 * Whether an entry is exempt from folding because its producer said so.
-	 *
 	 * @longform A summary line is not repetitive middle: a render's stats flush
 	 * carries the request's cache hit rates and nothing else does, and on a real
 	 * render it lands 11-15 entries from the end — past any tail worth keeping.
@@ -1136,38 +1121,25 @@ class Request_Builder_Node extends Timer_Node {
 	}
 
 	/**
-	 * Append to the unbounded keep bucket.
+	 * Append an entry to a folded request's bucket, dropping the oldest past
+	 * $cap. A null cap leaves the bucket unbounded, which the keep bucket is on
+	 * purpose: a producer marks summaries, and a producer that marks everything
+	 * has made its own envelope large. Capping it there would reintroduce the
+	 * silent loss the mark exists to prevent.
 	 *
-	 * Unbounded on purpose: a producer marks summaries, and a producer that
-	 * marks everything has made its own envelope large. Capping it here would
-	 * reintroduce the silent loss the mark exists to prevent.
-	 *
-	 * @param mixed                $kept  Existing bucket, if any.
-	 * @param array<string,mixed> $entry Entry to keep.
+	 * @param mixed               $existing Existing bucket, if any.
+	 * @param array<string,mixed> $entry    Entry to append.
+	 * @param int|null            $cap      Entries kept, or null for unbounded.
 	 * @return list<array<string,mixed>>
 	 */
-	private static function kept( mixed $kept, array $entry ): array {
+	private static function bucket( mixed $existing, array $entry, ?int $cap ): array {
 		/** @var list<array<string,mixed>> $bucket */
-		$bucket   = \is_array( $kept ) ? $kept : [];
+		$bucket   = \is_array( $existing ) ? $existing : [];
 		$bucket[] = $entry;
-		return $bucket;
-	}
-
-	/**
-	 * Push onto a bounded ring, dropping the oldest past FOLD_KEEP_TAIL.
-	 *
-	 * @param mixed                $ring  Existing ring, if any.
-	 * @param array<string,mixed> $entry Entry to append.
-	 * @return list<array<string,mixed>>
-	 */
-	private static function ring( mixed $ring, array $entry ): array {
-		/** @var list<array<string,mixed>> $tail */
-		$tail   = \is_array( $ring ) ? $ring : [];
-		$tail[] = $entry;
-		if ( \count( $tail ) > self::FOLD_KEEP_TAIL ) {
-			\array_shift( $tail );
+		if ( null !== $cap && \count( $bucket ) > $cap ) {
+			\array_shift( $bucket );
 		}
-		return $tail;
+		return $bucket;
 	}
 
 	/**
@@ -1187,10 +1159,6 @@ class Request_Builder_Node extends Timer_Node {
 	 * @param \stdClass $request Completed request envelope.
 	 */
 	public function emit_request( \stdClass $request ): void {
-		$url = self::resolved_request_url( $request );
-		if ( '' !== $url ) {
-			$request->url = $url;
-		}
 		$message                       = Message::new_message();
 		$message[ Message::TYPE ]      = Message::TM_STRUCT;
 		$message[ Message::TIMESTAMP ] = Core::$now;
@@ -1224,6 +1192,10 @@ class Request_Builder_Node extends Timer_Node {
 	private static function record_of( \stdClass $request ): array {
 		/** @var array<string,mixed> $record */
 		$record = (array) $request;
+		$url    = self::resolved_request_url( $request );
+		if ( '' !== $url ) {
+			$record['url'] = $url;
+		}
 		$fold   = $record['fold'] ?? null;
 		if ( ! \is_array( $fold ) ) {
 			return $record;
@@ -1265,43 +1237,10 @@ class Request_Builder_Node extends Timer_Node {
 		if ( $dropped < 1 ) {
 			return \array_merge( $head, $kept, $tail );
 		}
-		$last = $head[ \count( $head ) - 1 ] ?? null;
-		return \array_merge(
-			$head,
-			[
-				[
-					'n'  => Core::int( $last['n'] ?? 0, 0 ) + 1,
-					'ts' => $last['ts'] ?? 0,
-					'k'  => 'entries (aggregated)',
-					'm'  => "{$dropped} entries merged into the flame graph under memory pressure",
-				],
-			],
-			$kept,
-			$tail
-		);
-	}
-
-	/**
-	 * Resolve the URL exactly as completed-request outputs do.
-	 *
-	 * A worker request gets its worker type appended as a bare query string, so
-	 * each worker type hashes to its own URL row instead of collapsing into the
-	 * endpoint they share.
-	 *
-	 * @api `Request_Flight_Node` resolves in-flight URLs through this too — the
-	 *      completed record and the gyroscope row MUST agree, or a job's
-	 *      execution and the request that enqueued it (same `/jobs/{handler}/{id}`
-	 *      URI) collapse onto one URL row.
-	 * @param \stdClass $request Request envelope.
-	 * @return string The resolved URL, or '' when the envelope carries none.
-	 */
-	public static function resolved_request_url( \stdClass $request ): string {
-		$url         = \is_string( $request->url ?? null ) ? $request->url : '';
-		$worker_type = \is_string( $request->worker_type ?? null ) ? $request->worker_type : '';
-		if ( '' !== $worker_type && '' !== $url && ! \str_contains( $url, '?' ) ) {
-			return $url . '?' . $worker_type;
-		}
-		return $url;
+		$last   = $head[ \count( $head ) - 1 ] ?? null;
+		$merged = "{$dropped} entries merged into the flame graph under memory pressure";
+		$marker = [ 'n' => Core::int( $last['n'] ?? 0, 0 ) + 1, 'ts' => $last['ts'] ?? 0, 'k' => 'entries (aggregated)', 'm' => $merged ];
+		return \array_merge( $head, [ $marker ], $kept, $tail );
 	}
 
 	/**
@@ -1334,10 +1273,7 @@ class Request_Builder_Node extends Timer_Node {
 	/**
 	 * Build an HTTP-access-log-style compact summary from a completed
 	 * request envelope. The schema is a fixed wire contract the request-log
-	 * dashboard consumes. URL clipped to 2000 chars + "..." suffix; UA to 500.
-	 *
-	 * Those clips are for display and are counted in characters, which only
-	 * approximates bytes; `Line_Fitter` does the byte-exact fit afterward.
+	 * dashboard consumes; `clip()` bounds the two free-text fields.
 	 *
 	 * @param \stdClass $request Completed request envelope.
 	 * @return array<string,mixed> The summary, keyed by the wire-contract fields.
@@ -1346,17 +1282,6 @@ class Request_Builder_Node extends Timer_Node {
 		// Decoded request envelope: string-keyed map, mixed-by-design values.
 		/** @var array<string,mixed> $r */
 		$r = (array) $request;
-		// Mixed-by-design (array)/stdClass reads; string casts intentional.
-		/** @var int|float|string|bool|null $url_raw */
-		$url_raw = $r['url'] ?? '';
-		$url     = (string) $url_raw;
-		/** @var int|float|string|bool|null $ua_raw */
-		$ua_raw = $r['user_agent'] ?? '';
-		$ua     = (string) $ua_raw;
-		/** @var int|float|string|bool|null $method_raw */
-		$method_raw = $r['request_method'] ?? 'GET';
-		/** @var int|float|string|bool|null $remote_addr_raw */
-		$remote_addr_raw = $r['remote_addr'] ?? '';
 		// Preserve native ts/dur type: casting breaks json_encode round-trip.
 		/** @var int|float $ts */
 		$ts = $r['timestamp'] ?? 0;
@@ -1364,34 +1289,67 @@ class Request_Builder_Node extends Timer_Node {
 		$dur = $r['duration_ms'] ?? 0;
 		// No rid here — it rides Message::KEY on the completed stream.
 		return [
-			'method'       => (string) $method_raw,
-			'url'          => \strlen( $url ) > 2000 ? \substr( $url, 0, 2000 ) . '...' : $url,
+			'method'       => Core::as_string( $r['request_method'] ?? 'GET' ),
+			'url'          => self::clip( self::resolved_request_url( $request ), self::MAX_URL_LENGTH ),
 			'start_time'   => $ts,
 			'end_time'     => $ts + ( $dur / 1000 ),
 			'duration_ms'  => $dur,
 			'status_code'  => $r['status_code'] ?? 0,
 			'state'        => 'complete',
 			'error_status' => $r['error_status'] ?? '-',
-			'remote_addr'  => (string) $remote_addr_raw,
-			'user_agent'   => \strlen( $ua ) > 500 ? \substr( $ua, 0, 500 ) . '...' : $ua,
+			'remote_addr'  => Core::as_string( $r['remote_addr'] ?? '' ),
+			'user_agent'   => self::clip( Core::as_string( $r['user_agent'] ?? '' ), self::MAX_USER_AGENT_LENGTH ),
 		];
 	}
 
 	/**
-	 * The label of whatever the request is doing right now (stack-top slot 1).
+	 * A display clip with an ellipsis, counted in characters.
 	 *
+	 * `Line_Fitter` does the byte-exact fit afterwards; this is only so a
+	 * pathological URL or user agent does not dominate a row.
+	 *
+	 * @param string $value The text to clip.
+	 * @param int    $max   Maximum characters kept.
+	 */
+	public static function clip( string $value, int $max ): string {
+		return \strlen( $value ) > $max ? \substr( $value, 0, $max ) . '...' : $value;
+	}
+
+	/**
+	 * Resolve the URL exactly as completed-request outputs do.
+	 *
+	 * A worker request gets its worker type appended as a bare query parameter,
+	 * so each worker type hashes to its own URL row instead of collapsing into
+	 * the endpoint they share. A URL that already carries a query gets it too,
+	 * with the right separator: skipping it there put worker traffic on the
+	 * VISITOR's row, and one row carries one `worker` flag — so the default
+	 * worker filter would drop that URL's visitor traffic along with it.
+	 *
+	 * @api `Request_Flight_Node` resolves in-flight URLs through this too — the
+	 *      completed record and the gyroscope row MUST agree, or a job's
+	 *      execution and the request that enqueued it (same `/jobs/{handler}/{id}`
+	 *      URI) collapse onto one URL row.
+	 * @param \stdClass $request Request envelope.
+	 * @return string The resolved URL, or '' when the envelope carries none.
+	 */
+	public static function resolved_request_url( \stdClass $request ): string {
+		$url         = \is_string( $request->url ?? null ) ? $request->url : '';
+		$worker_type = \is_string( $request->worker_type ?? null ) ? $request->worker_type : '';
+		if ( '' === $worker_type || '' === $url ) {
+			return $url;
+		}
+		return $url . ( \str_contains( $url, '?' ) ? '&' : '?' ) . $worker_type;
+	}
+
+	/**
 	 * @param array<string,mixed> $request Request envelope as an array.
-	 * @return string The label, or '' when the stack carries none.
 	 */
 	public static function extract_what( array $request ): string {
 		return self::extract_stack_top_slot( $request, 1, 'what', '' );
 	}
 
 	/**
-	 * The state the request is in right now (stack-top slot 0).
-	 *
 	 * @param array<string,mixed> $request Request envelope as an array.
-	 * @return string The state name, defaulting to 'process'.
 	 */
 	public static function extract_state( array $request ): string {
 		return self::extract_stack_top_slot( $request, 0, 'state', 'process' );
@@ -1423,6 +1381,165 @@ class Request_Builder_Node extends Timer_Node {
 			return $request[ $fallback_field ];
 		}
 		return $default;
+	}
+
+	/**
+	 * Save state for persistence.
+	 *
+	 * Persists the full request cache (including entries and profiles)
+	 * so in-flight requests retain trace data across worker restarts.
+	 * Orphan eviction is handled by LRU bucket rotation.
+	 *
+	 * @api Used by substrate.
+	 * @return array<string,mixed> State to persist.
+	 */
+	public function save_state(): array {
+		$fn = static fn ( $val ) => $val instanceof \stdClass ? (array) $val : $val;
+		return [ 'request_cache' => self::map_buckets( $this->cache->get_state(), $fn ) ];
+	}
+
+	/**
+	 * Restore state from save_state(). Rehydrates arrays back into stdClass.
+	 *
+	 * @api Used by substrate.
+	 * @param array<string,mixed> $saved Saved state from save_state().
+	 */
+	public function restore_state( array $saved ): void {
+		$cache_state = $saved['request_cache'] ?? null;
+		if ( ! \is_array( $cache_state ) ) {
+			return;
+		}
+		// Persisted cache snapshot: string-keyed by design (LRU_Cache state).
+		/** @var array<string,mixed> $cache_state */
+		$fn = static fn ( $val ) => \is_array( $val ) ? (object) $val : $val;
+		$this->cache->restore_state( self::map_buckets( $cache_state, $fn ) );
+	}
+
+	/**
+	 * Apply $fn to every request held in a cache-state bucket. Serialization
+	 * converts the envelopes one way and rehydration back; only $fn differs.
+	 *
+	 * @param array<string,mixed> $state Cache state from/for LRU_Cache.
+	 * @param callable            $fn    Per-request converter.
+	 * @return array<string,mixed> The state with converted requests.
+	 */
+	private static function map_buckets( array $state, callable $fn ): array {
+		if ( ! \is_array( $state['buckets'] ?? null ) ) {
+			return $state;
+		}
+		foreach ( $state['buckets'] as &$bucket ) {
+			if ( \is_array( $bucket ) ) {
+				$bucket = \array_map( $fn, $bucket );
+			}
+		}
+		unset( $bucket );
+		return $state;
+	}
+
+	/**
+	 * The conditional routes this node writes past its primary target, so the
+	 * console's TARGET column reflects the full fan-out. Without them those
+	 * partitions render disconnected (no inbound edge) despite being written to.
+	 *
+	 * @api Unioned into display_targets() by the substrate's Node.
+	 * @return list<string>
+	 */
+	protected function extra_targets(): array {
+		return [ $this->errors_target, $this->alerts_target, $this->completed_target, $this->flight_target() ];
+	}
+
+	/**
+	 * The Flight sibling's target, or `''` when the sibling or its target is
+	 * absent — read by the dump and by the fan-out getter, both of which have
+	 * to survive a torn-down sibling.
+	 */
+	private function flight_target(): string {
+		return Core::str( $this->flight?->target() );
+	}
+
+	/**
+	 * Parse one fixed-width index line written by format_index_entry().
+	 *
+	 * Columns: rid(32) url_hash(12) timestamp(10) duration_ms(8) status_code(3)
+	 * segment(6) offset(10) length(8) peak_mb(6) method(1) error_status(1) —
+	 * one width, the one `format_index_entry()` writes. A shorter line is a
+	 * truncated or half-written record, and is refused.
+	 *
+	 * @param string $line Index line.
+	 * @return array<string,mixed>|null Parsed entry, or null when malformed.
+	 */
+	public static function parse_request_index( string $line ): ?array {
+		$line = \rtrim( $line, "\n" );
+		if ( \strlen( $line ) < self::INDEX_LINE_BYTES ) {
+			return null;
+		}
+		$entry = [
+			'rid'         => \trim( \substr( $line, 0, 32 ) ),
+			'url_hash'    => \trim( \substr( $line, 32, 12 ) ),
+			'timestamp'   => (int) \substr( $line, 44, 10 ),
+			'duration_ms' => (int) \substr( $line, 54, 8 ),
+			'status_code' => (int) \substr( $line, 62, 3 ),
+			'segment'     => (int) \substr( $line, 65, 6 ),
+			'offset'      => (int) \substr( $line, 71, 10 ),
+			'length'      => (int) \substr( $line, 81, 8 ),
+			'peak_mb'     => (int) \substr( $line, 89, 6 ),
+			'method'      => self::method_names()[ \substr( $line, 95, 1 ) ] ?? \substr( $line, 95, 1 ),
+		];
+		$status = \substr( $line, 96, 1 );
+		if ( \in_array( $status, self::ERROR_STATUSES, true ) ) {
+			$entry['error_status'] = $status;
+		}
+		return $entry;
+	}
+
+	/**
+	 * `METHOD_CODES` inverted, memoized — the reader runs per index line, and
+	 * a second hand-written table is a lockstep hazard the round-trip test
+	 * would only catch after someone edited one side.
+	 *
+	 * @return array<string,string>
+	 */
+	private static function method_names(): array {
+		/** @var array<string,string> $names */
+		static $names = [];
+		if ( [] === $names ) {
+			$names = \array_flip( self::METHOD_CODES );
+		}
+		return $names;
+	}
+
+	/**
+	 * Drop the slot the base cascade just tore down, so nothing hands back a
+	 * Flight node whose name, sink and patron are cleared.
+	 *
+	 * @api Reached through the substrate's teardown cascade.
+	 */
+	public function remove_node(): void {
+		parent::remove_node();
+		$this->flight = null;
+	}
+
+	/**
+	 * The Flight sibling, narrowed to non-null for the two `set_inflight_*`
+	 * verbs, which cannot honour a setting with no sibling to hold it.
+	 * Throwing IS how a verb refuses here — the substrate wraps a handler
+	 * throw as `TM_COMMAND|TM_ERROR`, where a refusal string would report
+	 * success for a command that applied nothing.
+	 *
+	 * A torn-down builder never reaches it: teardown unregisters the `:config`
+	 * interpreter and drops its patron link, so the verbs refuse one step
+	 * earlier and identically to every other `patron()` handler in the tree.
+	 * Introspection runs on whatever the registry hands a sweep, so
+	 * `dump_config()` reads the nullable `flight_target()` instead.
+	 *
+	 * @return Request_Flight_Node The hidden in-flight snapshot sibling.
+	 * @throws \RuntimeException When the constructor did not build the sibling.
+	 */
+	public function flight(): Request_Flight_Node {
+		if ( null === $this->flight ) {
+			throw new \RuntimeException( 'flight sibling not constructed' );
+		}
+		return $this->flight;
 	}
 
 	/**
@@ -1470,29 +1587,17 @@ class Request_Builder_Node extends Timer_Node {
 		/** @var array<string,mixed> $value */
 		$request = (object) $value;
 
-		// Dynamic \stdClass reads mixed by design; casts intentional.
-		$rid_raw = $request->rid ?? '';
-		$rid     = Core::str( $rid_raw );
-		$url_raw = $request->url ?? '';
-		$url     = Core::str( $url_raw );
+		$rid          = Core::str( $request->rid ?? '' );
+		$url          = Core::str( $request->url ?? '' );
 		$url_hash     = Log_Manager::url_hash( $url );
-		/** @var int|float|string $ts_raw */
-		$ts_raw      = $request->timestamp ?? \time();
-		$timestamp   = (int) $ts_raw;
-		/** @var int|float|string $dur_raw */
-		$dur_raw     = $request->duration_ms ?? 0;
-		$duration_ms = (int) $dur_raw;
-		/** @var int|float|string $status_raw */
-		$status_raw  = $request->status_code ?? 0;
-		$status_code = (int) $status_raw;
-		/** @var int|float|string $peak_raw */
-		$peak_raw     = $request->peak_mb ?? 0;
-		$peak_mb      = (float) $peak_raw;
-		$segment   = $position['segment'];
+		$timestamp    = Core::as_int( $request->timestamp ?? \time() );
+		$duration_ms  = Core::as_int( $request->duration_ms ?? 0 );
+		$status_code  = Core::as_int( $request->status_code ?? 0 );
+		$peak_mb      = Core::as_float( $request->peak_mb ?? 0 );
+		$error_status = Core::str( $request->error_status ?? '-', '-' );
+		$segment      = $position['segment'];
 		$offset       = $position['offset'];
 		$length       = $position['length'];
-		$es_raw       = $request->error_status ?? '-';
-		$error_status = Core::str( $es_raw, '-' );
 
 		if ( $offset > 9999999999 || $length > 99999999 || $segment > 999999 ) {
 			return '';
@@ -1501,20 +1606,8 @@ class Request_Builder_Node extends Timer_Node {
 		// peak_mb: 6 chars, integer MB zero-padded (max 999999 MB).
 		$peak_mb_int = \min( (int) \round( $peak_mb ), 999999 );
 
-		// method: 1 char code for HTTP method.
-		/** @var array<string,string> $method_codes */
-		static $method_codes = [
-			'GET'     => 'G',
-			'POST'    => 'P',
-			'HEAD'    => 'H',
-			'DELETE'  => 'D',
-			'PUT'     => 'U',
-			'PATCH'   => 'A',
-			'OPTIONS' => 'O',
-			'CLI'     => 'C',
-		];
 		$rm_raw = $request->request_method ?? 'GET';
-		$method = $method_codes[ Core::str( $rm_raw, 'GET' ) ] ?? 'G';
+		$method = self::METHOD_CODES[ Core::str( $rm_raw, 'GET' ) ] ?? 'G';
 
 		return \str_pad( \substr( $rid, 0, 32 ), 32 )
 			. \str_pad( \substr( $url_hash, 0, 12 ), 12 )
@@ -1529,275 +1622,48 @@ class Request_Builder_Node extends Timer_Node {
 			. $error_status;
 	}
 
-	/**
-	 * Pre-check the `{name}:flight` sibling name for collisions before the base
-	 * commits a rename. Flight is application-specific; the parent handles the
-	 * :config interpreter sibling.
-	 *
-	 * @api Used by substrate.
-	 * @param string $name Proposed new name for this node.
-	 * @throws \RuntimeException When `{name}:flight` is already registered.
-	 */
-	protected function check_name_availability( string $name ): void {
-		if ( null !== $this->flight && null !== Core::node( "{$name}:flight" ) ) {
-			throw new \RuntimeException( \esc_html( "node name collision: {$name}:flight already registered" ) );
-		}
-		parent::check_name_availability( $name );
-	}
-
-	/**
-	 * Track the patron name on the Flight sibling as `{name}:flight`. Only called
-	 * from name() with a non-empty $name; sibling teardown lives in remove_node().
-	 * Mirrors Node::set_sibling_names for the :config interpreter.
-	 *
-	 * @api Used by substrate.
-	 * @param string|null $name New name for this node, or null to skip renaming
-	 */
-	protected function set_sibling_names( ?string $name = null ): void {
-		$this->flight?->name( "{$name}:flight" );
-		parent::set_sibling_names( $name );
-	}
-
-	/**
-	 * Unregister the Flight sibling on teardown so a name-recycle doesn't collide with an orphan.
-	 *
-	 * @api Used by substrate.
-	 */
-	public function remove_node(): void {
-		if ( null !== $this->flight ) {
-			$this->flight->remove_node();
-		}
-		parent::remove_node();
-	}
-
-	/**
-	 * Override Node::sink() so the auto-sink wiring make_node performs on
-	 * Request_Builder also reaches the hidden Flight sibling. Without this,
-	 * Flight's $this->sink stays null and its in-flight emits drop on the
-	 * floor.
-	 *
-	 * @api Used by substrate.
-	 * @param Node|null $node New sink node or null to get current sink.
-	 * @return Node|null The current sink.
-	 */
-	public function sink( ?Node $node = null ): ?Node {
-		if ( \func_num_args() > 0 ) {
-			if ( null !== $this->flight ) {
-				$this->flight->sink( $node );
-			}
-			return parent::sink( $node );
-		}
-		return parent::sink();
-	}
-
-	/**
-	 * Set the named target for compact-summary completed-request lines.
-	 *
-	 * @param string $target Target node name for completed-request lines.
-	 */
+	/** @param string $target Node name, or '' to stop emitting summaries. */
 	public function set_completed_target( string $target ): void {
 		$this->completed_target = $target;
 	}
 
-	/**
-	 * Set the named target for error/warning forwarding.
-	 *
-	 * @param string $target Target node name for error/warning forwarding.
-	 */
+	/** @param string $target Node name, or '' to stop forwarding errors. */
 	public function set_errors_target( string $target ): void {
 		$this->errors_target = $target;
 	}
 
-	/**
-	 * Set the named target `alert` entries also forward to (the fleet journal).
-	 *
-	 * @param string $target Target node name for alert forwarding.
-	 */
+	/** @param string $target Journal node name, or '' to stop forwarding alerts. */
 	public function set_alerts_target( string $target ): void {
 		$this->alerts_target = $target;
 	}
 
 	/**
-	 * Expose every named destination this node actually writes to so the
-	 * console's TARGET column reflects the full fan-out: the primary target plus
-	 * the conditional errors_target / alerts_target / completed_target and the
-	 * Flight sibling's target. Without this override those partitions render
-	 * disconnected on the topology console (no inbound edge) despite being
-	 * written to.
+	 * Delta mode for the hidden Flight sibling. The setting lives HERE, not on
+	 * the sibling: Flight is the node that reads it, but this is the node whose
+	 * verb sets it and whose `dump_config()` has to replay it, and a sibling is
+	 * derived state a teardown takes with it.
 	 *
-	 * The getter alone widens; the setter still writes only the primary target,
-	 * so a round-trip through set-then-get does not fold the extras into it.
+	 * This IS the `set_inflight_delta` verb: `Schema_Reflection` synthesizes a
+	 * handler that calls it dynamically, so nothing references it statically.
 	 *
-	 * @api Used by substrate.
-	 * @param array<int,string>|string|null $value New primary target or null to get current target.
-	 * @return array<int,string>|string The primary target, or every destination when extras exist.
+	 * @param bool $on True to emit only rows whose activity advanced since the last tick.
 	 */
-	public function target( $value = null ) {
-		if ( null !== $value ) {
-			return parent::target( $value );
-		}
-		$primary = parent::target();
-		$extras  = [];
-		if ( '' !== $this->errors_target ) {
-			$extras[] = $this->errors_target;
-		}
-		if ( '' !== $this->alerts_target ) {
-			$extras[] = $this->alerts_target;
-		}
-		if ( '' !== $this->completed_target ) {
-			$extras[] = $this->completed_target;
-		}
-		if ( null !== $this->flight ) {
-			$flight_target = $this->flight->target();
-			if ( \is_string( $flight_target ) && '' !== $flight_target ) {
-				$extras[] = $flight_target;
-			}
-		}
-		if ( ! $extras ) {
-			return $primary;
-		}
-		$all = \is_array( $primary )
-			? $primary
-			: ( '' !== $primary ? [ $primary ] : [] );
-		foreach ( $extras as $e ) {
-			if ( ! \in_array( $e, $all, true ) ) {
-				$all[] = $e;
-			}
-		}
-		return $all;
+	public function set_inflight_delta( bool $on ): void {
+		$this->inflight_delta = $on;
 	}
 
-	/**
-	 * Save state for persistence.
-	 *
-	 * Persists the full request cache (including entries and profiles)
-	 * so in-flight requests retain trace data across worker restarts.
-	 * Orphan eviction is handled by LRU bucket rotation.
-	 *
-	 * @api Used by substrate.
-	 * @return array<string,mixed> State to persist.
-	 */
-	public function save_state(): array {
-		// Convert objects to arrays for serialization.
-		$state = $this->cache->get_state();
-		if ( isset( $state['buckets'] ) && \is_array( $state['buckets'] ) ) {
-			foreach ( $state['buckets'] as &$bucket ) {
-				if ( \is_array( $bucket ) ) {
-					foreach ( $bucket as &$val ) {
-						if ( $val instanceof \stdClass ) {
-							$val = (array) $val;
-						}
-					}
-					unset( $val );
-				}
-			}
-			unset( $bucket );
-		}
-		return [ 'request_cache' => $state ];
-	}
-
-	/**
-	 * Restore state from save_state(). Rehydrates arrays back into stdClass.
-	 *
-	 * @api Used by substrate.
-	 * @param array<string,mixed> $saved Saved state from save_state().
-	 */
-	public function restore_state( array $saved ): void {
-		if ( ! isset( $saved['request_cache'] ) ) {
-			return;
-		}
-		$cache_state = $saved['request_cache'];
-		if ( ! \is_array( $cache_state ) ) {
-			return;
-		}
-		// Persisted cache snapshot: string-keyed by design (LRU_Cache state).
-		/** @var array<string,mixed> $cache_state */
-		if ( isset( $cache_state['buckets'] ) && \is_array( $cache_state['buckets'] ) ) {
-			foreach ( $cache_state['buckets'] as &$bucket ) {
-				if ( \is_array( $bucket ) ) {
-					foreach ( $bucket as &$val ) {
-						if ( \is_array( $val ) ) {
-							$val = (object) $val;
-						}
-					}
-					unset( $val );
-				}
-			}
-			unset( $bucket );
-		}
-		$this->cache->restore_state( $cache_state );
-	}
-
-	/**
-	 * Parse one fixed-width index line written by format_index_entry().
-	 *
-	 * Columns: rid(32) url_hash(12) timestamp(10) duration_ms(8) status_code(3)
-	 * segment(6) offset(10) length(8) — 89 bytes, the v1 line and the minimum
-	 * this accepts. Later versions only appended: peak_mb(6) at 89 (v2), method
-	 * code(1) at 95 (v3), error_status(1) at 96 (v4). Each tail field is read
-	 * only when the line is long enough to hold it, so an index written by an
-	 * older version parses without migration.
-	 *
-	 * @param string $line Index line.
-	 * @return array<string,mixed>|null Parsed entry, or null when too short.
-	 */
-	public static function parse_request_index( string $line ): ?array {
-		$line = \rtrim( $line, "\n" );
-		$len  = \strlen( $line );
-
-		if ( $len >= 89 ) {
-			$entry = [
-				'rid'         => \trim( \substr( $line, 0, 32 ) ),
-				'url_hash'    => \trim( \substr( $line, 32, 12 ) ),
-				'timestamp'   => (int) \substr( $line, 44, 10 ),
-				'duration_ms' => (int) \substr( $line, 54, 8 ),
-				'status_code' => (int) \substr( $line, 62, 3 ),
-				'segment'  => (int) \substr( $line, 65, 6 ),
-				'offset'      => (int) \substr( $line, 71, 10 ),
-				'length'      => (int) \substr( $line, 81, 8 ),
-			];
-
-			// peak_mb field appended in v2 format (position 89, 6 chars).
-			if ( $len >= 95 ) {
-				$entry['peak_mb'] = (int) \substr( $line, 89, 6 );
-			}
-
-			// method field appended in v3 format (position 95, 1 char).
-			if ( $len >= 96 ) {
-				/** @var array<string,string> $methods */
-				static $methods = [
-					'G' => 'GET',
-					'P' => 'POST',
-					'H' => 'HEAD',
-					'D' => 'DELETE',
-					'U' => 'PUT',
-					'A' => 'PATCH',
-					'O' => 'OPTIONS',
-					'C' => 'CLI',
-				];
-				$entry['method'] = $methods[ \substr( $line, 95, 1 ) ] ?? \substr( $line, 95, 1 );
-			}
-
-			// error_status field appended in v4 format (position 96, 1 char).
-			if ( $len >= 97 ) {
-				$c = \substr( $line, 96, 1 );
-				if ( \in_array( $c, self::ERROR_STATUSES, true ) ) {
-					$entry['error_status'] = $c;
-				}
-			}
-
-			return $entry;
-		}
-
-		return null;
+	/** Delta mode; read live by `Request_Flight_Node::fire()`, which holds no copy. */
+	public function inflight_delta(): bool {
+		return $this->inflight_delta;
 	}
 
 	/**
 	 * Declared arguments, `{name}:config` verbs, and TM_REQUEST verbs.
 	 *
-	 * The `set_inflight_*` verbs configure the Flight sibling, not this node —
-	 * Flight is hidden from the topology editor, so its configuration has to
-	 * surface on the patron's interpreter to be reachable at all.
+	 * The `set_inflight_*` verbs configure in-flight snapshotting, whose work
+	 * the hidden Flight sibling does — Flight is hidden from the topology
+	 * editor, so the knobs have to surface on this node's interpreter to be
+	 * reachable at all.
 	 *
 	 * @api Used by the substrate to provide UI etc.
 	 * @return array<string,mixed> Schema consumed by `Command_Interpreter_Node`.
@@ -1819,14 +1685,8 @@ class Request_Builder_Node extends Timer_Node {
 					'args'        => [
 						[ 'name' => 'target', 'type' => 'node_name', 'required' => true ],
 					],
-					'handler'     => static function ( Command_Interpreter_Node $interpreter, array $args ): string {
-						$arg = \trim( Core::as_string( $args[0] ?? '' ) );
-						// Empty arg clears target (disables secondary emit).
-						/** @var self $patron */
-						$patron = $interpreter->patron();
-						$patron->set_errors_target( $arg );
-						return 'ok';
-					},
+					// Declarative: the substrate trims, assigns and dumps it.
+					'setter'      => 'errors_target',
 				],
 				[
 					'name'        => 'set_alerts_target',
@@ -1834,14 +1694,8 @@ class Request_Builder_Node extends Timer_Node {
 					'args'        => [
 						[ 'name' => 'target', 'type' => 'node_name', 'required' => true ],
 					],
-					'handler'     => static function ( Command_Interpreter_Node $interpreter, array $args ): string {
-						$arg = \trim( Core::as_string( $args[0] ?? '' ) );
-						// Empty arg clears target (disables secondary emit).
-						/** @var self $patron */
-						$patron = $interpreter->patron();
-						$patron->set_alerts_target( $arg );
-						return 'ok';
-					},
+					// Declarative: the substrate trims, assigns and dumps it.
+					'setter'      => 'alerts_target',
 				],
 				[
 					'name'        => 'set_completed_target',
@@ -1849,14 +1703,8 @@ class Request_Builder_Node extends Timer_Node {
 					'args'        => [
 						[ 'name' => 'target', 'type' => 'node_name', 'required' => true ],
 					],
-					'handler'     => static function ( Command_Interpreter_Node $interpreter, array $args ): string {
-						$arg = \trim( Core::as_string( $args[0] ?? '' ) );
-						// Empty arg clears target (disables secondary emit).
-						/** @var self $patron */
-						$patron = $interpreter->patron();
-						$patron->set_completed_target( $arg );
-						return 'ok';
-					},
+					// Declarative: the substrate trims, assigns and dumps it.
+					'setter'      => 'completed_target',
 				],
 				[
 					'name'        => 'set_inflight_target',
@@ -1875,18 +1723,12 @@ class Request_Builder_Node extends Timer_Node {
 				],
 				[
 					'name'        => 'set_inflight_delta',
-					'description' => 'Emit only in-flight rows whose activity advanced since the last snapshot tick. Default off re-emits every row each tick (a fresh subscriber sees the whole cache in one tick); a bare/empty or `0` arg disables.',
+					'description' => 'Emit only in-flight rows whose activity advanced since the last snapshot tick. Default off re-emits every row each tick (a fresh subscriber sees the whole cache in one tick); a bare/empty, `0`, `false` or `off` arg disables.',
 					'args'        => [
 						[ 'name' => 'on', 'type' => 'bool', 'required' => false ],
 					],
-					'handler'     => static function ( Command_Interpreter_Node $interpreter, array $args ): string {
-						$arg = \trim( Core::as_string( $args[0] ?? '' ) );
-						// Bare/empty/0 disables; any other value enables.
-						/** @var self $patron */
-						$patron = $interpreter->patron();
-						$patron->flight()->set_delta( '' !== $arg && '0' !== $arg );
-						return 'ok';
-					},
+					// Declarative: the substrate synthesizes handler and dump.
+					'toggle'      => 'inflight_delta',
 				],
 				[
 					'name'        => 'purge',

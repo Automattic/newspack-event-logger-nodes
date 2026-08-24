@@ -2,44 +2,44 @@
  * Response Time Chart
  *
  * D3 scatter plot of individual request response times, mounted by the
- * overview dashboard's URL detail view. One dot per request, colored by HTTP
- * status class and clickable to open that request; a monotone trend line and a
- * dashed mean line sit behind them, and a legend lists the status classes
- * actually present.
+ * overview dashboard's URL detail view. One dot per request on a continuous
+ * time axis — not the slot-bucketed series its `AreaTimeChart` siblings draw —
+ * colored by HTTP status class and clickable to open that request; a monotone
+ * trend line and a dashed mean line sit behind them, and a legend lists the
+ * status classes actually present.
  *
- * D3 owns this SVG subtree, not React: the component renders one empty
- * container div, then four effects build the skeleton once, join data keyed by
- * `rid`, reposition everything on window resize, and tear the subtree down on
- * unmount. Every DOM write belongs inside those effects — React never
- * reconciles anything below the container.
+ * D3 owns this SVG subtree, not React: `useTimeChart` calls the render
+ * function on mount, on data change and on container resize, and it redraws
+ * from an emptied container each time. Every DOM write
+ * belongs inside that function — React never reconciles anything below the
+ * container.
  */
 
-import { useEffect, useRef, useMemo } from '@wordpress/element';
+import { useCallback, useEffect, useRef, useMemo } from '@wordpress/element';
 import { __, sprintf } from '@wordpress/i18n';
 import * as d3 from 'd3';
 import {
+	drawAxes,
+	drawLegend,
+	openFrame,
+	useTimeChart,
+} from '@newspack-nodes/shared/hooks/useTimeChart';
+import {
+	getStatusCategory,
 	getStatusColor,
 	STATUS_COLORS,
 } from '@newspack-nodes/shared/utils/formatUtils';
 
 /**
- * Chart margins, in pixels. The wide right margin is the gutter the status
- * legend draws into; the tall bottom margin clears the rotated time labels.
+ * Total SVG height in pixels. Only the width responds to resize.
  */
-const MARGIN = { top: 20, right: 160, bottom: 50, left: 60 };
-
-/**
- * Plot-area height, in pixels, inside a fixed 250px SVG. Only the width
- * responds to resize, so this never changes.
- */
-const HEIGHT = 250 - MARGIN.top - MARGIN.bottom;
+const CHART_HEIGHT = 250;
 
 /**
  * Response Time Chart component.
  *
- * Renders null while `requests` is empty, which also withholds the container
- * the skeleton effect needs. Mount this component only once data exists — the
- * caller, `UrlDetailView`, gates on `urlDetail.requests?.length > 0`.
+ * Renders null while `requests` is empty; the render function draws as soon as
+ * data arrives, so mounting it empty is fine.
  *
  * @param {Object}   props                Component props.
  * @param {Array}    props.requests       Request index entries: { rid, timestamp (seconds), duration_ms, status_code }.
@@ -47,12 +47,9 @@ const HEIGHT = 250 - MARGIN.top - MARGIN.bottom;
  * @return {import('react').ReactElement|null} The chart, or null without data.
  */
 export default function ResponseTimeChart( { requests, onRequestClick } ) {
-	const containerRef = useRef( null );
-	const svgRef = useRef( null );
-	const scalesRef = useRef( null );
 	const onRequestClickRef = useRef( onRequestClick );
 
-	// Ref-held so a new callback never re-runs the D3 effects.
+	// Ref-held so a new callback never re-runs the render.
 	useEffect( () => {
 		onRequestClickRef.current = onRequestClick;
 	}, [ onRequestClick ] );
@@ -82,315 +79,142 @@ export default function ResponseTimeChart( { requests, onRequestClick } ) {
 			.sort( ( a, b ) => a.time.getTime() - b.time.getTime() );
 	}, [ requests ] );
 
-	// Build the SVG skeleton once; later effects only mutate it.
-	useEffect( () => {
-		// Empty deps: no container at mount means no chart, ever.
-		if ( ! containerRef.current || svgRef.current ) {
-			return;
-		}
-
-		const width =
-			( containerRef.current.clientWidth || 800 ) -
-			MARGIN.left -
-			MARGIN.right;
-
-		const svg = d3
-			.select( containerRef.current )
-			.append( 'svg' )
-			.attr( 'width', width + MARGIN.left + MARGIN.right )
-			.attr( 'height', HEIGHT + MARGIN.top + MARGIN.bottom );
-
-		const g = svg
-			.append( 'g' )
-			.attr( 'transform', `translate(${ MARGIN.left },${ MARGIN.top })` );
-
-		// Append order is paint order: axes, lines, then dots on top.
-		g.append( 'g' )
-			.attr( 'class', 'x-axis' )
-			.attr( 'transform', `translate(0,${ HEIGHT })` );
-		g.append( 'g' ).attr( 'class', 'y-axis' );
-		g.append( 'text' )
-			.attr( 'class', 'y-label' )
-			.attr( 'transform', 'rotate(-90)' )
-			.attr( 'y', 0 - MARGIN.left )
-			.attr( 'x', 0 - HEIGHT / 2 )
-			.attr( 'dy', '1em' )
-			.style( 'text-anchor', 'middle' )
-			.style( 'font-size', '12px' )
-			.text( __( 'Response Time', 'newspack-event-logger-nodes' ) );
-		g.append( 'path' ).attr( 'class', 'trend-line' );
-		g.append( 'line' ).attr( 'class', 'avg-line' );
-		g.append( 'text' ).attr( 'class', 'avg-label' );
-		g.append( 'g' ).attr( 'class', 'dots' );
-
-		// Scales outlive renders; the update effect mutates them in place.
-		svgRef.current = { svg, g, width };
-		scalesRef.current = {
-			x: d3.scaleTime().range( [ 0, width ] ),
-			y: d3.scaleLinear().range( [ HEIGHT, 0 ] ),
-		};
-	}, [] );
-
-	// Update chart when data changes.
-	useEffect( () => {
-		if (
-			! svgRef.current ||
-			! scalesRef.current ||
-			chartData.length === 0
-		) {
-			return;
-		}
-
-		const { g, width } = svgRef.current;
-		const { x, y } = scalesRef.current;
-
-		// Update scales.
-		const xExtent = d3.extent( chartData, ( d ) => d.time );
-		const yMax = d3.max( chartData, ( d ) => d.duration ) * 1.1;
-		x.domain( xExtent );
-		y.domain( [ 0, yMax ] );
-
-		// Update X axis.
-		g.select( '.x-axis' ).call(
-			d3
-				.axisBottom( x )
-				.ticks( Math.min( chartData.length, 8 ) )
-				.tickFormat( d3.timeFormat( '%H:%M' ) )
-		);
-		g.select( '.x-axis' )
-			.selectAll( 'text' )
-			.attr( 'transform', 'rotate(-45)' )
-			.style( 'text-anchor', 'end' );
-
-		// Update Y axis.
-		g.select( '.y-axis' ).call(
-			d3
-				.axisLeft( y )
-				.ticks( 5 )
-				.tickFormat( ( d ) => Math.round( d ) + 'ms' )
-		);
-
-		// Update trend line.
-		if ( chartData.length > 1 ) {
-			const line = d3
-				.line()
-				.x( ( d ) => x( d.time ) )
-				.y( ( d ) => y( d.duration ) )
-				.curve( d3.curveMonotoneX );
-
-			g.select( '.trend-line' )
-				.datum( chartData )
-				.attr( 'fill', 'none' )
-				.attr( 'stroke', '#4a90d9' )
-				.attr( 'stroke-width', 1.5 )
-				.attr( 'stroke-opacity', 0.5 )
-				.attr( 'd', line );
-		}
-
-		// Update average line.
-		const avgDuration = d3.mean( chartData, ( d ) => d.duration );
-		g.select( '.avg-line' )
-			.attr( 'x1', 0 )
-			.attr( 'x2', width )
-			.attr( 'y1', y( avgDuration ) )
-			.attr( 'y2', y( avgDuration ) )
-			.attr( 'stroke', '#e57373' )
-			.attr( 'stroke-width', 1 )
-			.attr( 'stroke-dasharray', '5,5' );
-
-		g.select( '.avg-label' )
-			.attr( 'x', width - 5 )
-			.attr( 'y', y( avgDuration ) - 5 )
-			.attr( 'text-anchor', 'end' )
-			.style( 'font-size', '11px' )
-			.style( 'fill', '#e57373' )
-			.text(
-				sprintf(
-					// translators: %d: average response time in milliseconds.
-					__( 'avg: %dms', 'newspack-event-logger-nodes' ),
-					Math.round( avgDuration )
-				)
-			);
-
-		// Update dots using enter/update/exit pattern.
-		const dots = g
-			.select( '.dots' )
-			.selectAll( '.dot' )
-			.data( chartData, ( d ) => d.rid );
-
-		// Remove old dots.
-		dots.exit().remove();
-
-		// Add new dots.
-		const newDots = dots
-			.enter()
-			.append( 'circle' )
-			.attr( 'class', 'dot' )
-			.attr( 'r', 5 )
-			.attr( 'fill', ( d ) => getStatusColor( d.status ) )
-			.attr( 'stroke', '#fff' )
-			.attr( 'stroke-width', 1 )
-			.style( 'cursor', 'pointer' )
-			.on( 'mouseover', function () {
-				d3.select( this ).attr( 'r', 7 ).attr( 'opacity', 0.8 );
-			} )
-			.on( 'mouseout', function () {
-				d3.select( this ).attr( 'r', 5 ).attr( 'opacity', 1 );
-			} )
-			.on( 'click', ( _, d ) => {
-				if ( onRequestClickRef.current && d.rid ) {
-					onRequestClickRef.current( d.rid, d.partition );
-				}
-			} );
-
-		// Update positions and colors for all dots (new and existing).
-		dots.merge( newDots )
-			.attr( 'cx', ( d ) => x( d.time ) )
-			.attr( 'cy', ( d ) => y( d.duration ) )
-			.attr( 'fill', ( d ) => getStatusColor( d.status ) );
-
-		// Update tooltips.
-		g.select( '.dots' ).selectAll( '.dot' ).select( 'title' ).remove();
-		g.select( '.dots' )
-			.selectAll( '.dot' )
-			.append( 'title' )
-			.text( ( d ) =>
-				[
-					d.time.toLocaleString(),
-					sprintf(
-						// translators: %s: HTTP status code.
-						__( 'Status: %s', 'newspack-event-logger-nodes' ),
-						d.status || __( 'N/A', 'newspack-event-logger-nodes' )
-					),
-					sprintf(
-						// translators: %d: duration in milliseconds.
-						__( 'Duration: %dms', 'newspack-event-logger-nodes' ),
-						Math.round( d.duration )
-					),
-					__(
-						'Click to view details',
-						'newspack-event-logger-nodes'
-					),
-				].join( '\n' )
-			);
-
-		// Draw status code legend.
-		g.selectAll( '.legend' ).remove();
-		const statusCategories = new Set(
-			chartData.map( ( d ) => {
-				const cat = Math.floor( d.status / 100 );
-				return cat >= 2 && cat <= 5 ? `${ cat }xx` : 'unknown';
-			} )
-		);
-		const legendItems = [ '2xx', '3xx', '4xx', '5xx' ].filter( ( k ) =>
-			statusCategories.has( k )
-		);
-		const legend = g
-			.append( 'g' )
-			.attr( 'class', 'legend' )
-			.attr( 'transform', `translate(${ width + 10 }, 0)` );
-		legendItems.forEach( ( key, i ) => {
-			const ly = i * 16;
-			legend
-				.append( 'circle' )
-				.attr( 'cx', 5 )
-				.attr( 'cy', ly + 5 )
-				.attr( 'r', 5 )
-				.attr( 'fill', STATUS_COLORS[ key ] );
-			legend
-				.append( 'text' )
-				.attr( 'x', 14 )
-				.attr( 'y', ly + 9 )
-				.text( key )
-				.style( 'font-size', '11px' )
-				.style( 'fill', '#888' );
-		} );
-	}, [ chartData ] );
-
-	// Handle resize.
-	useEffect( () => {
-		const handleResize = () => {
-			if ( ! containerRef.current || ! svgRef.current ) {
+	const renderFn = useCallback(
+		( { containerRef } ) => {
+			if ( ! containerRef.current || 0 === chartData.length ) {
 				return;
 			}
 
-			const width =
-				( containerRef.current.clientWidth || 800 ) -
-				MARGIN.left -
-				MARGIN.right;
-
-			// Update SVG and stored width.
-			svgRef.current.svg.attr(
-				'width',
-				width + MARGIN.left + MARGIN.right
+			const { svg, g, width, innerW, innerH } = openFrame(
+				containerRef.current,
+				CHART_HEIGHT
 			);
-			svgRef.current.width = width;
 
-			// Update scale range.
-			if ( scalesRef.current ) {
-				scalesRef.current.x.range( [ 0, width ] );
+			const x = d3
+				.scaleTime()
+				.domain( d3.extent( chartData, ( d ) => d.time ) )
+				.range( [ 0, innerW ] );
+			const y = d3
+				.scaleLinear()
+				.domain( [ 0, d3.max( chartData, ( d ) => d.duration ) * 1.1 ] )
+				.range( [ innerH, 0 ] );
+
+			drawAxes( g, {
+				x,
+				y,
+				innerH,
+				tickCount: chartData.length,
+				yFormat: ( d ) => Math.round( d ) + 'ms',
+				yLabel: __( 'Response Time', 'newspack-event-logger-nodes' ),
+			} );
+
+			if ( chartData.length > 1 ) {
+				g.append( 'path' )
+					.datum( chartData )
+					.attr( 'fill', 'none' )
+					.attr( 'stroke', '#4a90d9' )
+					.attr( 'stroke-width', 1.5 )
+					.attr( 'stroke-opacity', 0.5 )
+					.attr(
+						'd',
+						d3
+							.line()
+							.x( ( d ) => x( d.time ) )
+							.y( ( d ) => y( d.duration ) )
+							.curve( d3.curveMonotoneX )
+					);
 			}
 
-			if ( chartData.length > 0 && scalesRef.current ) {
-				const { g } = svgRef.current;
-				const { x, y } = scalesRef.current;
-
-				// Update X axis.
-				g.select( '.x-axis' ).call(
-					d3
-						.axisBottom( x )
-						.ticks( Math.min( chartData.length, 8 ) )
-						.tickFormat( d3.timeFormat( '%H:%M' ) )
+			const avgDuration = d3.mean( chartData, ( d ) => d.duration );
+			g.append( 'line' )
+				.attr( 'x1', 0 )
+				.attr( 'x2', innerW )
+				.attr( 'y1', y( avgDuration ) )
+				.attr( 'y2', y( avgDuration ) )
+				.attr( 'stroke', '#e57373' )
+				.attr( 'stroke-width', 1 )
+				.attr( 'stroke-dasharray', '5,5' );
+			g.append( 'text' )
+				.attr( 'x', innerW - 5 )
+				.attr( 'y', y( avgDuration ) - 5 )
+				.attr( 'text-anchor', 'end' )
+				.style( 'font-size', '11px' )
+				.style( 'fill', '#e57373' )
+				.text(
+					sprintf(
+						// translators: %d: average response time in milliseconds.
+						__( 'avg: %dms', 'newspack-event-logger-nodes' ),
+						Math.round( avgDuration )
+					)
 				);
-				g.select( '.x-axis' )
-					.selectAll( 'text' )
-					.attr( 'transform', 'rotate(-45)' )
-					.style( 'text-anchor', 'end' );
 
-				// Update trend line.
-				if ( chartData.length > 1 ) {
-					const line = d3
-						.line()
-						.x( ( d ) => x( d.time ) )
-						.y( ( d ) => y( d.duration ) )
-						.curve( d3.curveMonotoneX );
+			g.append( 'g' )
+				.selectAll( 'circle' )
+				.data( chartData )
+				.join( 'circle' )
+				.attr( 'r', 5 )
+				.attr( 'cx', ( d ) => x( d.time ) )
+				.attr( 'cy', ( d ) => y( d.duration ) )
+				.attr( 'fill', ( d ) => getStatusColor( d.status ) )
+				.attr( 'stroke', '#fff' )
+				.attr( 'stroke-width', 1 )
+				.style( 'cursor', 'pointer' )
+				.on( 'mouseover', function () {
+					d3.select( this ).attr( 'r', 7 ).attr( 'opacity', 0.8 );
+				} )
+				.on( 'mouseout', function () {
+					d3.select( this ).attr( 'r', 5 ).attr( 'opacity', 1 );
+				} )
+				.on( 'click', ( _, d ) => {
+					if ( onRequestClickRef.current && d.rid ) {
+						onRequestClickRef.current( d.rid, d.partition );
+					}
+				} )
+				.append( 'title' )
+				.text( ( d ) =>
+					[
+						d.time.toLocaleString(),
+						sprintf(
+							// translators: %s: HTTP status code.
+							__( 'Status: %s', 'newspack-event-logger-nodes' ),
+							d.status ||
+								__( 'N/A', 'newspack-event-logger-nodes' )
+						),
+						sprintf(
+							// translators: %d: duration in milliseconds.
+							__(
+								'Duration: %dms',
+								'newspack-event-logger-nodes'
+							),
+							Math.round( d.duration )
+						),
+						__(
+							'Click to view details',
+							'newspack-event-logger-nodes'
+						),
+					].join( '\n' )
+				);
 
-					g.select( '.trend-line' ).attr( 'd', line );
-				}
+			const present = new Set(
+				chartData.map( ( d ) => getStatusCategory( d.status ) )
+			);
+			drawLegend(
+				svg,
+				[ '2xx', '3xx', '4xx', '5xx' ]
+					.filter( ( key ) => present.has( key ) )
+					.map( ( key ) => ( {
+						color: STATUS_COLORS[ key ],
+						label: key,
+					} ) ),
+				width
+			);
+		},
+		[ chartData ]
+	);
 
-				// Update average line.
-				const avgDuration = d3.mean( chartData, ( d ) => d.duration );
-				g.select( '.avg-line' ).attr( 'x2', width );
-				g.select( '.avg-label' )
-					.attr( 'x', width - 5 )
-					.attr( 'y', y( avgDuration ) - 5 );
+	const { containerRef } = useTimeChart( renderFn );
 
-				// Update dot positions.
-				g.select( '.dots' )
-					.selectAll( '.dot' )
-					.attr( 'cx', ( d ) => x( d.time ) );
-			}
-		};
-
-		window.addEventListener( 'resize', handleResize );
-		return () => window.removeEventListener( 'resize', handleResize );
-	}, [ chartData ] );
-
-	// Cleanup on unmount.
-	useEffect( () => {
-		const container = containerRef.current;
-		return () => {
-			if ( container ) {
-				d3.select( container ).selectAll( '*' ).remove();
-			}
-			svgRef.current = null;
-			scalesRef.current = null;
-		};
-	}, [] );
-
-	const hasData = requests && requests.length > 0;
-
-	if ( ! hasData ) {
+	if ( ! requests || requests.length === 0 ) {
 		return null;
 	}
 
@@ -404,7 +228,7 @@ export default function ResponseTimeChart( { requests, onRequestClick } ) {
 			</h3>
 			<div
 				ref={ containerRef }
-				style={ { width: '100%', minHeight: '250px' } }
+				style={ { width: '100%', minHeight: `${ CHART_HEIGHT }px` } }
 			/>
 		</div>
 	);

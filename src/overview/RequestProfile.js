@@ -1,7 +1,10 @@
 /**
  * Request Profile Component
  *
- * Displays aggregated timing breakdown from request profiles data.
+ * Displays aggregated timing breakdown from request profiles data. The
+ * `ProfileWithCaption` export below wraps it for the two averaged views —
+ * the Overview card and the URL modal — which caption the breakdown with the
+ * request count it averages.
  */
 
 import { useState, useMemo, Fragment } from '@wordpress/element';
@@ -20,6 +23,11 @@ import './styles/request-profile.scss';
 const DEFAULT_VISIBLE_COUNT = 10;
 
 /**
+ * Slowest callbacks drawn inside an expanded category; the rest are counted.
+ */
+const VISIBLE_ENTRY_COUNT = 10;
+
+/**
  * Test whether a profile category is a per-callback breakdown entry.
  * These contain ` \@N ` (e.g. `the_content \@10 do_blocks`). The at-signs are
  * backslash-escaped: unescaped, the JSDoc parser reads `\@10` as a malformed
@@ -29,6 +37,65 @@ const DEFAULT_VISIBLE_COUNT = 10;
  * @return {boolean} True if callback breakdown.
  */
 const isCallbackCategory = ( state ) => / @\d+$/.test( state );
+
+/**
+ * The per-callback breakdown of one expanded category: its slowest callbacks
+ * by time, then a count of what was left out.
+ *
+ * @param {Object} props         Component props.
+ * @param {Object} props.entries Callback name → `[ time, count ]`.
+ * @return {import('react').ReactElement} The nested breakdown table.
+ */
+function ProfileEntries( { entries } ) {
+	const hiddenCount = Object.keys( entries ).length - VISIBLE_ENTRY_COUNT;
+
+	return (
+		<table className="newspack-nodes-table newspack-nodes-table--undivided event-logger-profile-entries">
+			<tbody>
+				{ Object.entries( entries )
+					.sort( ( a, b ) => b[ 1 ][ 0 ] - a[ 1 ][ 0 ] )
+					.slice( 0, VISIBLE_ENTRY_COUNT )
+					.map( ( [ name, [ time, count ] ] ) => (
+						<tr key={ name }>
+							<td
+								className="event-logger-profile-entries__name"
+								title={ name }
+							>
+								{ name ||
+									__(
+										'(anonymous)',
+										'newspack-event-logger-nodes'
+									) }
+							</td>
+							<td className="newspack-nodes-table__terminal-data event-logger-profile-entries__time">
+								{ formatDuration( time ) }
+							</td>
+							<td className="newspack-nodes-table__terminal-data event-logger-profile-entries__count">
+								×{ Math.round( count ) }
+							</td>
+						</tr>
+					) ) }
+				{ hiddenCount > 0 && (
+					<tr>
+						<td
+							colSpan={ 3 }
+							className="newspack-nodes-status event-logger-profile-entries__more"
+						>
+							{ sprintf(
+								// translators: %d: number of additional entries not shown.
+								__(
+									'… and %d more',
+									'newspack-event-logger-nodes'
+								),
+								hiddenCount
+							) }
+						</td>
+					</tr>
+				) }
+			</tbody>
+		</table>
+	);
+}
 
 /**
  * Request Profile Component.
@@ -139,19 +206,17 @@ export default function RequestProfile( {
 			<table className="newspack-nodes-table newspack-nodes-table--undivided">
 				<thead>
 					<tr>
-						<th style={ { width: '40%' } }>
+						<th>
 							{ __( 'Category', 'newspack-event-logger-nodes' ) }
 						</th>
-						<th style={ { width: '20%', textAlign: 'right' } }>
-							{ __( 'Time', 'newspack-event-logger-nodes' ) }
-						</th>
-						<th style={ { width: '20%', textAlign: 'right' } }>
+						<th>{ __( 'Time', 'newspack-event-logger-nodes' ) }</th>
+						<th>
 							{ __(
 								'% of Total',
 								'newspack-event-logger-nodes'
 							) }
 						</th>
-						<th style={ { width: '20%', textAlign: 'right' } }>
+						<th>
 							{ __( 'Count', 'newspack-event-logger-nodes' ) }
 						</th>
 					</tr>
@@ -181,15 +246,10 @@ export default function RequestProfile( {
 									>
 										<td>
 											<span
+												className="event-logger-profile-swatch"
 												style={ {
-													display: 'inline-block',
-													width: '12px',
-													height: '12px',
-													borderRadius: '2px',
 													background:
 														getStateColor( state ),
-													marginRight: '8px',
-													verticalAlign: 'middle',
 												} }
 											/>
 											{ state }
@@ -204,159 +264,22 @@ export default function RequestProfile( {
 												</span>
 											) }
 										</td>
-										<td
-											className="newspack-nodes-table__terminal-data"
-											style={ {
-												textAlign: 'right',
-											} }
-										>
+										<td className="newspack-nodes-table__terminal-data">
 											{ formatDuration( time ) }
 										</td>
-										<td
-											className="newspack-nodes-table__terminal-data"
-											style={ {
-												textAlign: 'right',
-											} }
-										>
+										<td className="newspack-nodes-table__terminal-data">
 											{ pct.toFixed( 1 ) }%
 										</td>
-										<td
-											className="newspack-nodes-table__terminal-data"
-											style={ {
-												textAlign: 'right',
-											} }
-										>
+										<td className="newspack-nodes-table__terminal-data">
 											{ Math.round( count ) }
 										</td>
 									</tr>
 									{ isExpanded && hasEntries && (
-										<tr
-											key={ `${ state }-entries` }
-											className="newspack-nodes-table__details"
-										>
-											<td
-												colSpan={ 4 }
-												style={ {
-													padding: '0 0 0 30px',
-												} }
-											>
-												<table
-													className="newspack-nodes-table newspack-nodes-table--undivided"
-													style={ {
-														width: '100%',
-														fontSize: '12px',
-													} }
-												>
-													<tbody>
-														{ Object.entries(
-															entries
-														)
-															.sort(
-																( a, b ) =>
-																	b[ 1 ][ 0 ] -
-																	a[ 1 ][ 0 ]
-															)
-															.slice( 0, 10 )
-															.map(
-																( [
-																	name,
-																	[
-																		entryTime,
-																		entryCount,
-																	],
-																] ) => (
-																	<tr
-																		key={
-																			name
-																		}
-																	>
-																		<td
-																			style={ {
-																				maxWidth:
-																					'400px',
-																				overflow:
-																					'hidden',
-																				textOverflow:
-																					'ellipsis',
-																				whiteSpace:
-																					'nowrap',
-																				padding:
-																					'4px 8px',
-																			} }
-																			title={
-																				name
-																			}
-																		>
-																			{ name ||
-																				__(
-																					'(anonymous)',
-																					'newspack-event-logger-nodes'
-																				) }
-																		</td>
-																		<td
-																			className="newspack-nodes-table__terminal-data"
-																			style={ {
-																				textAlign:
-																					'right',
-																				padding:
-																					'4px 8px',
-																				width: '80px',
-																			} }
-																		>
-																			{ formatDuration(
-																				entryTime
-																			) }
-																		</td>
-																		<td
-																			className="newspack-nodes-table__terminal-data"
-																			style={ {
-																				textAlign:
-																					'right',
-																				padding:
-																					'4px 8px',
-																				width: '60px',
-																			} }
-																		>
-																			×
-																			{ Math.round(
-																				entryCount
-																			) }
-																		</td>
-																	</tr>
-																)
-															) }
-														{ Object.keys( entries )
-															.length > 10 && (
-															<tr>
-																<td
-																	colSpan={
-																		3
-																	}
-																	className="newspack-nodes-status"
-																	style={ {
-																		fontStyle:
-																			'italic',
-																		padding:
-																			'4px 8px',
-																	} }
-																>
-																	{ sprintf(
-																		// translators: %d: number of additional entries not shown.
-																		__(
-																			'… and %d more',
-																			'newspack-event-logger-nodes'
-																		),
-																		Object.keys(
-																			entries
-																		)
-																			.length -
-																			10
-																	) }
-																</td>
-															</tr>
-														) }
-													</tbody>
-												</table>
+										<tr className="newspack-nodes-table__details">
+											<td colSpan={ 4 }>
+												<ProfileEntries
+													entries={ entries }
+												/>
 											</td>
 										</tr>
 									) }
@@ -400,20 +323,10 @@ export default function RequestProfile( {
 								'newspack-event-logger-nodes'
 							) }
 						</td>
-						<td
-							className="newspack-nodes-table__terminal-data"
-							style={ {
-								textAlign: 'right',
-							} }
-						>
+						<td className="newspack-nodes-table__terminal-data">
 							{ formatDuration( profiledTime ) }
 						</td>
-						<td
-							className="newspack-nodes-table__terminal-data"
-							style={ {
-								textAlign: 'right',
-							} }
-						>
+						<td className="newspack-nodes-table__terminal-data">
 							{ totalMs > 0
 								? ( ( profiledTime / totalMs ) * 100 ).toFixed(
 										1
@@ -425,6 +338,75 @@ export default function RequestProfile( {
 					</tr>
 				</tfoot>
 			</table>
+		</div>
+	);
+}
+
+/**
+ * Averaged profile breakdown over the caption naming how many requests it
+ * averages — and, under a server filter, which server they ran on.
+ *
+ * The caption is the panel's own wording, so both plural forms live here as
+ * literal `_n()` calls the `serverName` prop selects between. The heading is
+ * the caller's, because only the caller knows what its scope is called; giving
+ * one replaces the profile's built-in title rather than stacking on it.
+ *
+ * @param {Object}      props                     Component props.
+ * @param {Object}      props.profiles            Per-category profile totals.
+ * @param {number}      props.totalMs             Wall-clock denominator for the summary bar.
+ * @param {number}      [props.totalProfiledTime] Pre-computed profiled total; derived from `profiles` when omitted.
+ * @param {number}      [props.count]             Requests the average covers.
+ * @param {string|null} [props.heading]           Already-translated heading; omitted leaves the profile's own title.
+ * @param {string}      [props.serverName]        Server the breakdown is scoped to; '' captions it site-wide.
+ * @return {import('react').ReactElement} Rendered panel.
+ */
+export function ProfileWithCaption( {
+	profiles,
+	totalMs,
+	totalProfiledTime,
+	count = 0,
+	heading = null,
+	serverName = '',
+} ) {
+	return (
+		<div
+			className="event-logger-request-profile"
+			style={ { marginTop: '20px' } }
+		>
+			{ heading && <h3>{ heading }</h3> }
+			<RequestProfile
+				profiles={ profiles }
+				totalMs={ totalMs }
+				totalProfiledTime={ totalProfiledTime }
+				title={ heading ? null : undefined }
+			/>
+			<p
+				className="newspack-nodes-status"
+				style={ { fontSize: '12px', marginTop: '8px' } }
+			>
+				{ serverName
+					? sprintf(
+							// translators: 1: number of requests, 2: the server name.
+							_n(
+								'Average breakdown across %1$d request on %2$s',
+								'Average breakdown across %1$d requests on %2$s',
+								count,
+								'newspack-event-logger-nodes'
+							),
+							count,
+							serverName
+					  )
+					: sprintf(
+							// translators: %d: number of requests.
+							_n(
+								'Average breakdown across %d request',
+								'Average breakdown across %d requests',
+								count,
+								'newspack-event-logger-nodes'
+							),
+							count
+					  ) }
+			</p>
 		</div>
 	);
 }

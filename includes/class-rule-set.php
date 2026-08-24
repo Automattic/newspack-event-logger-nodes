@@ -180,12 +180,7 @@ final class Rule_Set {
 				// Inline: strip any prior durable/table footprint.
 				\delete_option( self::hooks_option_name( $rule->id ) );
 				self::hooks_table()?->forget( $rule->id );
-				$inline   = new Rule(
-					$rule->id, $rule->pattern, $rule->action,
-					$rule->auto_disable_threshold, $rule->auto_protect_time_threshold,
-					$rule->significant_events, $rule->custom_events,
-					\array_values( $hooks ), Rule::HOOKS_INLINE
-				);
+				$inline   = $rule->with( [ 'hooks' => \array_values( $hooks ), 'hooks_in' => Rule::HOOKS_INLINE ] );
 				$tiered[] = $inline;
 				$stored[] = $inline->to_array();
 				continue;
@@ -194,12 +189,7 @@ final class Rule_Set {
 			\update_option( self::hooks_option_name( $rule->id ), \array_values( $hooks ), false );
 			self::hooks_table()?->store( $rule->id, \array_values( $hooks ) );
 			$live_pointers[ $rule->id ] = true;
-			$pointer                    = new Rule(
-				$rule->id, $rule->pattern, $rule->action,
-				$rule->auto_disable_threshold, $rule->auto_protect_time_threshold,
-				$rule->significant_events, $rule->custom_events,
-				null, Rule::HOOKS_MC
-			);
+			$pointer                    = $rule->with( [ 'hooks' => null, 'hooks_in' => Rule::HOOKS_MC ] );
 			$tiered[]                   = $pointer;
 			$stored[]                   = $pointer->to_array();
 		}
@@ -261,84 +251,6 @@ final class Rule_Set {
 				self::hooks_table()?->forget( $id );
 			}
 		}
-	}
-
-	/**
-	 * Resolve a rule's hooks. Inline is free; a pointer reads the table, which
-	 * reads through to the durable option and warms itself, then gives up to []
-	 * with a notice.
-	 *
-	 * Stateless (consults only $rule + the table + the durable option), so it's
-	 * static — Log_Manager already loaded the ruleset once per request; callers
-	 * must NOT re-`load()` a whole second Rule_Set just to reach this.
-	 *
-	 * @param Rule $rule Rule of either tier.
-	 * @return string[] Hook names; [] when a pointer rule's hooks are unresolvable.
-	 */
-	public static function hooks_for( Rule $rule ): array {
-		if ( Rule::HOOKS_INLINE === $rule->hooks_in ) {
-			return $rule->hooks ?? [];
-		}
-		$table = self::hooks_table();
-		// No cache, no table to read through; the record still reads directly.
-		$hooks = null !== $table ? $table->lookup( $rule->id ) : self::durable_hooks( $rule->id );
-		if ( \is_array( $hooks ) ) {
-			/** @var string[] $hooks Warm mirror, or the durable option behind it. */
-			return $hooks;
-		}
-		Core::print_less_often( 'Newspack ELN: hooks missing for pointer rule "', $rule->id, '" (table + durable option both absent).' );
-		return [];
-	}
-
-	/** The warm-mirror table, or null on a host with no cache backend at all. */
-	private static function hooks_table(): ?Table_Node {
-		if ( null === self::$hooks_table && null !== Cache_Backend::shared_first() ) {
-			// The option is the system of record; the table is its warm mirror.
-			$table             = Table_Node::table( self::TABLE_HOOKS, self::TABLE_TTL );
-			self::$hooks_table = $table->backed_by( self::read_durable_hooks( ... ) );
-		}
-		return self::$hooks_table;
-	}
-
-	/**
-	 * The Table's durable backing: the hooks each id's option still holds.
-	 *
-	 * @param list<string> $ids Rule ids the table missed on.
-	 * @return array<string,array{value: string[]}> Found ids only.
-	 */
-	private static function read_durable_hooks( array $ids ): array {
-		$found = [];
-		foreach ( $ids as $id ) {
-			$hooks = self::durable_hooks( Core::as_string( $id, '' ) );
-			if ( null !== $hooks ) {
-				$found[ $id ] = [ 'value' => $hooks ];
-			}
-		}
-		return $found;
-	}
-
-	/**
-	 * A pointer rule's hooks straight from the system of record, or null when
-	 * that option is absent. The Table's backing and the no-cache path share it.
-	 *
-	 * @return string[]|null
-	 */
-	private static function durable_hooks( string $id ): ?array {
-		$hooks = \get_option( self::hooks_option_name( $id ), null );
-		/** @var string[]|null $hooks hooks list persisted by save(). */
-		return \is_array( $hooks ) ? $hooks : null;
-	}
-
-	/**
-	 * The non-autoloaded option holding a pointer rule's hooks — the system of
-	 * record for that tier. `reconcile_orphans()` sweeps this namespace, and
-	 * uninstall cleanup deletes it by the same prefix.
-	 *
-	 * @param string $id Rule id.
-	 * @return string Option name.
-	 */
-	public static function hooks_option_name( string $id ): string {
-		return self::OPTION_HOOKS_PREFIX . $id;
 	}
 
 	/**
@@ -501,15 +413,99 @@ final class Rule_Set {
 	 * @return list<array<string,mixed>>
 	 */
 	private static function resolved_maps( array $rules ): array {
-		return \array_values( \array_map(
-			static function ( Rule $rule ): array {
-				$map = $rule->to_array();
-				unset( $map['hooks_in'] );
-				$map['hooks'] = self::hooks_for( $rule );
-				return $map;
-			},
-			$rules
-		) );
+		return \array_values( \array_map( [ self::class, 'resolved_map' ], $rules ) );
+	}
+
+	/**
+	 * One rule's stored map with its hooks resolved inline and its TIER
+	 * neutralised, so two rules compare equal across storage tiers.
+	 *
+	 * @param Rule $rule Rule of either tier.
+	 * @return array<string,mixed>
+	 */
+	public static function resolved_map( Rule $rule ): array {
+		$map             = $rule->to_array();
+		$map['hooks']    = self::hooks_for( $rule );
+		$map['hooks_in'] = Rule::HOOKS_INLINE;
+		return $map;
+	}
+
+	/**
+	 * Resolve a rule's hooks. Inline is free; a pointer reads the table, which
+	 * reads through to the durable option and warms itself, then gives up to []
+	 * with a notice.
+	 *
+	 * Stateless (consults only $rule + the table + the durable option), so it's
+	 * static — Log_Manager already loaded the ruleset once per request; callers
+	 * must NOT re-`load()` a whole second Rule_Set just to reach this.
+	 *
+	 * @param Rule $rule Rule of either tier.
+	 * @return string[] Hook names; [] when a pointer rule's hooks are unresolvable.
+	 */
+	public static function hooks_for( Rule $rule ): array {
+		if ( Rule::HOOKS_INLINE === $rule->hooks_in ) {
+			return $rule->hooks ?? [];
+		}
+		$table = self::hooks_table();
+		// No cache, no table to read through; the record still reads directly.
+		$hooks = null !== $table ? $table->lookup( $rule->id ) : self::durable_hooks( $rule->id );
+		if ( \is_array( $hooks ) ) {
+			/** @var string[] $hooks Warm mirror, or the durable option behind it. */
+			return $hooks;
+		}
+		Core::print_less_often( 'Newspack ELN: hooks missing for pointer rule "', $rule->id, '" (table + durable option both absent).' );
+		return [];
+	}
+
+	/** The warm-mirror table, or null on a host with no cache backend at all. */
+	private static function hooks_table(): ?Table_Node {
+		if ( null === self::$hooks_table && null !== Cache_Backend::shared_first() ) {
+			// The option is the system of record; the table is its warm mirror.
+			$table             = Table_Node::table( self::TABLE_HOOKS, self::TABLE_TTL );
+			self::$hooks_table = $table->backed_by( self::read_durable_hooks( ... ) );
+		}
+		return self::$hooks_table;
+	}
+
+	/**
+	 * The Table's durable backing: the hooks each id's option still holds.
+	 *
+	 * @param list<string> $ids Rule ids the table missed on.
+	 * @return array<string,array{value: string[]}> Found ids only.
+	 */
+	private static function read_durable_hooks( array $ids ): array {
+		$found = [];
+		foreach ( $ids as $id ) {
+			$hooks = self::durable_hooks( Core::as_string( $id, '' ) );
+			if ( null !== $hooks ) {
+				$found[ $id ] = [ 'value' => $hooks ];
+			}
+		}
+		return $found;
+	}
+
+	/**
+	 * A pointer rule's hooks straight from the system of record, or null when
+	 * that option is absent. The Table's backing and the no-cache path share it.
+	 *
+	 * @return string[]|null
+	 */
+	private static function durable_hooks( string $id ): ?array {
+		$hooks = \get_option( self::hooks_option_name( $id ), null );
+		/** @var string[]|null $hooks hooks list persisted by save(). */
+		return \is_array( $hooks ) ? $hooks : null;
+	}
+
+	/**
+	 * The non-autoloaded option holding a pointer rule's hooks — the system of
+	 * record for that tier. `reconcile_orphans()` sweeps this namespace, and
+	 * uninstall cleanup deletes it by the same prefix.
+	 *
+	 * @param string $id Rule id.
+	 * @return string Option name.
+	 */
+	public static function hooks_option_name( string $id ): string {
+		return self::OPTION_HOOKS_PREFIX . $id;
 	}
 
 	/**

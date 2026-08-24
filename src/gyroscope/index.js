@@ -7,10 +7,10 @@
  * `event-logger-gyroscope` page slug, so an absent container means the module
  * runs somewhere it does not belong; it then does nothing.
  *
- * `./nodes/register` is imported for its side effect alone: it registers the
- * `GyroscopeView` class with the runtime `CommandInterpreterNode`, which
- * `useGyroscopeGraph` needs before its `makeNode( 'GyroscopeView', … )` call.
- * Dropping the import breaks graph construction, not this file.
+ * `./nodes/gyroscope-view-node` is imported for its side effect alone: it
+ * registers the `GyroscopeView` class with the runtime `CommandInterpreterNode`,
+ * which `useGyroscopeGraph` needs before its `makeNode( 'GyroscopeView', … )`
+ * call. Dropping the import breaks graph construction, not this file.
  *
  * The mount runs at module evaluation instead of on `DOMContentLoaded`. That
  * is safe because the substrate enqueues the bundle in the footer, below the
@@ -18,7 +18,7 @@
  */
 
 import { createRoot } from '@wordpress/element';
-import './nodes/register';
+import './nodes/gyroscope-view-node';
 import GyroscopePage from './GyroscopePage';
 
 const gyroscopeMount = document.getElementById( 'event-logger-gyroscope' );

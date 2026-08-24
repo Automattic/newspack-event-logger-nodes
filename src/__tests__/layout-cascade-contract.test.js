@@ -2,16 +2,14 @@
 
 import fs from 'fs';
 import path from 'path';
-import { pathToFileURL } from 'url';
-import * as sass from 'sass';
-// PostCSS is a test/build dependency used to inspect the compiled cascade.
-// eslint-disable-next-line import/no-extraneous-dependencies
-import postcss from 'postcss';
+import {
+	compileLocal as local,
+	compileShared,
+	specificity,
+	compareSpecificity,
+} from '../test-helpers/cascade';
 
 const SRC = path.resolve( __dirname, '..' );
-const NODES = path.resolve( SRC, '../../newspack-nodes/src' );
-const NODES_SHARED = path.join( NODES, 'shared' );
-const SHARED_ALIAS = '@newspack-nodes/shared';
 const WORDPRESS_BUTTON_GEOMETRY = [
 	{
 		name: 'desktop button-small',
@@ -40,30 +38,6 @@ const WORDPRESS_BUTTON_GEOMETRY = [
 		},
 	},
 ];
-
-const compile = ( file ) =>
-	postcss.parse(
-		sass.compile( file, {
-			importers: [
-				{
-					findFileUrl( url ) {
-						if (
-							url !== SHARED_ALIAS &&
-							! url.startsWith( `${ SHARED_ALIAS }/` )
-						) {
-							return null;
-						}
-						const relative = url
-							.slice( SHARED_ALIAS.length )
-							.replace( /^\/+/, '' );
-						return pathToFileURL(
-							path.join( NODES_SHARED, relative )
-						);
-					},
-				},
-			],
-		} ).css
-	);
 
 const normalize = ( value ) => value.replace( /\s+/g, ' ' ).trim();
 
@@ -110,43 +84,9 @@ const cascadeDeclarations = ( stylesheet, selector ) => {
 	return result;
 };
 
-const specificity = ( selector ) => {
-	const withoutWhere = selector.replace( /:where\([^)]*\)/g, '' );
-	const functionalPseudos = new Set( [ 'has', 'is', 'not' ] );
-	const pseudoClasses = (
-		withoutWhere.match( /:(?!:)[\w-]+/g ) || []
-	).filter(
-		( pseudo ) => ! functionalPseudos.has( pseudo.slice( 1 ) )
-	).length;
-
-	return [
-		( withoutWhere.match( /#[\w-]+/g ) || [] ).length,
-		( withoutWhere.match( /\.[\w-]+/g ) || [] ).length +
-			( withoutWhere.match( /\[[^\]]+\]/g ) || [] ).length +
-			pseudoClasses,
-		0,
-	];
-};
-
-const compareSpecificity = ( left, right ) => {
-	for ( let index = 0; index < left.length; index++ ) {
-		if ( left[ index ] !== right[ index ] ) {
-			return left[ index ] - right[ index ];
-		}
-	}
-	return 0;
-};
-
-const local = ( relative ) => compile( path.join( SRC, relative ) );
-const sharedComponents = compile(
-	path.join( NODES_SHARED, 'styles/_components.scss' )
-);
-const sharedButtons = compile(
-	path.join( NODES_SHARED, 'styles/_buttons.scss' )
-);
-const sharedToolbar = compile(
-	path.join( NODES_SHARED, 'styles/_toolbar.scss' )
-);
+const sharedComponents = compileShared( 'styles/_components.scss' );
+const sharedButtons = compileShared( 'styles/_buttons.scss' );
+const sharedToolbar = compileShared( 'styles/_toolbar.scss' );
 
 const expectLocalCascadeWin = ( {
 	localStylesheet,
@@ -184,31 +124,24 @@ describe( 'Event Logger layout cascade', () => {
 		} );
 	} );
 
-	it.each( [
-		[
-			'overview/styles/charts.scss',
-			'.event-logger-detail-loading',
-			{ display: 'block', 'min-height': '0' },
-		],
-		[
-			'current-request/current-request.scss',
-			'.eln-current-request__chart-loading',
-			{ display: 'block', 'min-height': '0' },
-		],
-	] )(
-		'keeps compact loading geometry in %s',
-		( file, localSelector, expected ) => {
-			expect.hasAssertions();
-			expectLocalCascadeWin( {
-				localStylesheet: local( file ),
-				localSelector,
-				sharedStylesheet: sharedComponents,
-				sharedSelector:
-					':where(.newspack-nodes-ui) .newspack-nodes-performance-loading',
-				expected,
-			} );
-		}
-	);
+	it( 'ships compact loading geometry with every bundle rendering a trace', () => {
+		expect.hasAssertions();
+		expect(
+			fs.readFileSync(
+				path.join( SRC, 'overview/components/RequestTrace.js' ),
+				'utf8'
+			)
+		).toContain( "import '../styles/request-trace.scss';" );
+		expectLocalCascadeWin( {
+			localStylesheet: local( 'overview/styles/request-trace.scss' ),
+			localSelector:
+				'.event-logger-flame-container .newspack-nodes-performance-loading',
+			sharedStylesheet: sharedComponents,
+			sharedSelector:
+				':where(.newspack-nodes-ui) .newspack-nodes-performance-loading',
+			expected: { display: 'block', 'min-height': '0' },
+		} );
+	} );
 
 	it.each( [
 		[
@@ -230,7 +163,7 @@ describe( 'Event Logger layout cascade', () => {
 			// No padding here: the row carries `is-quiet`, which is the shared
 			// variant for an empty state that should read as a quiet note
 			// rather than a boxed panel, so it takes the shared padding.
-			'gyroscope/styles/request-stream.scss',
+			'gyroscope/styles/inflight.scss',
 			'.event-logger-request-stream-empty',
 			{ display: 'flex', height: '100%' },
 		],
@@ -450,19 +383,14 @@ describe( 'Event Logger layout cascade', () => {
 			padding: '0 18px',
 			height: '64px',
 		} );
-		for ( const picker of [ 'hook-selector', 'custom-event' ] ) {
-			expect(
-				cascadeDeclarations(
-					stylesheet,
-					`.newspack-nodes-skin-root.event-logger-${ picker }-modal.components-modal__frame`
-				)
-			).toMatchObject( {
-				display: 'flex',
-				'flex-direction': 'column',
-				'grid-template': 'none',
-				gap: '0',
-			} );
-		}
+		// The picker chrome is `selector-modal.scss`'s block. Reaching into it
+		// from here gave the one SelectorModal two dialog geometries, decided
+		// by which stylesheet the bundle happened to emit second.
+		stylesheet.walkRules( ( rule ) => {
+			expect( rule.selector ).not.toContain(
+				'event-logger-selector-modal'
+			);
+		} );
 	} );
 
 	it.each( [

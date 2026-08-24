@@ -75,6 +75,109 @@ function mount( overrides = {} ) {
 }
 
 describe( 'UrlTable', () => {
+	it( 'names the pager count as rows, not URLs', () => {
+		// A capped bucket carries synthetic overflow rows: sliceable, so the
+		// pager pages over them, but not URLs, so the header excludes them.
+		// The two counts legitimately differ, which is exactly why the pager
+		// has to say which one it is showing — "502 URLs" beside a header
+		// reading 500 is the same number twice, wrong once.
+		const { container, unmount } = mount( { totalUrls: 502 } );
+
+		const info = container.querySelector(
+			'.event-logger-table__pagination-info'
+		);
+		expect( info.textContent ).toBe( '1\u2013100 of 502 rows' );
+		unmount();
+	} );
+
+	it( 'falls back to a page that exists when the set shrinks', () => {
+		// Narrowing the server filter can leave the table on an offset past the
+		// end of the new set: the body renders empty AND, below the one-page
+		// threshold, the pager disappears — so no control is left to get back.
+		// The page follows the set down.
+		const onParamsChange = jest.fn();
+		const props = {
+			urls: URLS,
+			selectedUrl: null,
+			onSelect: jest.fn(),
+			onParamsChange,
+			totalUrls: 800,
+		};
+		const { container, rerender, unmount } = renderComponent(
+			React.createElement( UrlTable, props )
+		);
+		const next = Array.from( container.querySelectorAll( 'button' ) ).find(
+			( b ) => b.textContent.includes( 'Next' )
+		);
+		act( () => {
+			next.click();
+		} );
+		onParamsChange.mockClear();
+
+		rerender(
+			React.createElement( UrlTable, { ...props, totalUrls: 30 } )
+		);
+
+		expect(
+			onParamsChange.mock.calls.some( ( c ) => 0 === c[ 0 ].offset )
+		).toBe( true );
+		unmount();
+	} );
+
+	it( 'asks for worker traffic only when the toggle is on', () => {
+		// Workers are out of every site-wide aggregate, so the table hides them
+		// by default and the header it feeds agrees. The toggle opts IN — the
+		// mirror of Errors, which opts in to narrow.
+		const onParamsChange = jest.fn();
+		const { container, unmount } = mount( { onParamsChange } );
+		const toggle = Array.from(
+			container.querySelectorAll( 'button' )
+		).find( ( b ) => b.textContent.includes( 'Workers' ) );
+		expect( toggle ).toBeTruthy();
+		expect(
+			onParamsChange.mock.calls.every( ( c ) => ! c[ 0 ].includeWorkers )
+		).toBe( true );
+
+		act( () => {
+			toggle.click();
+		} );
+
+		expect(
+			onParamsChange.mock.calls.some(
+				( c ) => true === c[ 0 ].includeWorkers
+			)
+		).toBe( true );
+		unmount();
+	} );
+
+	it( 'does not offer the aggregate row as a URL', () => {
+		// The `Other` row stands for every URL past the per-bucket cap, so its
+		// key is not a url_hash and `url_detail` cannot answer for it. Making
+		// it clickable would open a modal that errors on a row whose whole job
+		// is to keep the totals honest.
+		const onSelect = jest.fn();
+		const { container, unmount } = mount( {
+			urls: [
+				{ ...URLS[ 0 ] },
+				{ hash: 'Other', aggregate: true, count: 900, avg_ms: 12 },
+			],
+			onSelect,
+		} );
+
+		const rows = container.querySelectorAll( '.event-logger-table__row' );
+		const other = rows[ rows.length - 1 ];
+		expect( other.getAttribute( 'role' ) ).not.toBe( 'button' );
+		expect( other.hasAttribute( 'data-ask' ) ).toBe( false );
+		// It carries no `url` — the writer stores none, because a label
+		// authored there is untranslated and searchable. The client names it.
+		expect( other.textContent ).toContain( 'other URLs' );
+		other.dispatchEvent(
+			new window.MouseEvent( 'click', { bubbles: true } )
+		);
+		expect( onSelect ).not.toHaveBeenCalled();
+		unmount();
+	} );
+
 	it( 'renders each URL row', () => {
 		const { container, unmount } = mount();
 		expect( container.textContent ).toContain( '/foo' );
@@ -112,6 +215,36 @@ describe( 'UrlTable', () => {
 			true
 		);
 		expect( list.previousElementSibling ).toBe( header );
+		unmount();
+	} );
+
+	it( 'keeps every header column and its row cell on the same field', () => {
+		// Header and row are two renderings of ONE column list. While they
+		// were spelled out twice, inserting a column in one and not the other
+		// silently shifted every cell after it under the wrong heading — the
+		// numbers still rendered, just against the wrong label.
+		const { container, unmount } = mount();
+		const fieldsOf = ( selector ) =>
+			[ ...container.querySelector( selector ).children ].map(
+				( cell ) => cell.dataset.field
+			);
+
+		expect( fieldsOf( '.event-logger-table__header' ) ).toEqual( [
+			'count',
+			'url',
+			'count_2xx',
+			'count_3xx',
+			'count_4xx',
+			'count_5xx',
+			'avg_ms',
+			'min_ms',
+			'max_ms',
+			'p95_ms',
+			'avg_peak_mb',
+		] );
+		expect( fieldsOf( '.event-logger-table__row' ) ).toEqual(
+			fieldsOf( '.event-logger-table__header' )
+		);
 		unmount();
 	} );
 
@@ -321,13 +454,14 @@ describe( 'UrlTable', () => {
 			order: 'desc',
 			offset: 0,
 			errorsOnly: false,
+			includeWorkers: false,
 		} );
 		unmount();
 	} );
 
 	it( 'shows total count summary when total <= URLS_PER_PAGE (100)', () => {
 		const { container, unmount } = mount( { totalUrls: 3 } );
-		expect( container.textContent ).toContain( '3 URLs' );
+		expect( container.textContent ).toContain( '3 rows' );
 		expect( container.textContent ).not.toContain( 'Prev' );
 		unmount();
 	} );

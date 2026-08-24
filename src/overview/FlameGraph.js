@@ -35,6 +35,7 @@ import * as d3 from 'd3';
 import { flamegraph } from 'd3-flame-graph';
 import 'd3-flame-graph/dist/d3-flamegraph.css';
 import './styles/flame-graph.scss';
+import { useContainerRefit } from '@newspack-nodes/shared/hooks/useContainerRefit';
 import { shadeForDepth, pickLabelColor, isColorParseable } from './flameColors';
 
 /**
@@ -366,6 +367,21 @@ const applyAskDescriptors = ( container ) => {
 };
 
 /**
+ * Re-apply everything a frame carries beyond its geometry.
+ *
+ * d3-flame-graph rebuilds every frame on update and on zoom, and re-runs the
+ * colour mapper — so both stamps are lost together and must be re-applied
+ * together. One function, because applying half leaves the labels at the
+ * default colour on a shade chosen to need the other one.
+ *
+ * @param {HTMLElement} container The chart container.
+ */
+const restamp = ( container ) => {
+	applyLabelContrast( container );
+	applyAskDescriptors( container );
+};
+
+/**
  * Build the root-to-node path, one segment per frame.
  *
  * Segments prefer `detail` ("name: message") over `name`, which is what
@@ -457,19 +473,19 @@ const countNodes = ( node ) =>
 	);
 
 /**
- * Collect the values of every non-root node into the given array.
+ * Collect the values of every node BELOW the given one.
  *
- * @param {Object}  node   Flame node.
- * @param {Array}   values Accumulator.
- * @param {boolean} isRoot Whether this node is the root (excluded).
+ * Called on the root, whose own value is the whole request and would swamp
+ * any cutoff derived from the rest.
+ *
+ * @param {Object} node   Flame node whose descendants are collected.
+ * @param {Array}  values Accumulator.
  */
-const collectNonRootValues = ( node, values, isRoot ) => {
-	if ( ! isRoot ) {
-		values.push( node.value || 0 );
-	}
-	( node.children || [] ).forEach( ( child ) =>
-		collectNonRootValues( child, values, false )
-	);
+const collectDescendantValues = ( node, values ) => {
+	( node.children || [] ).forEach( ( child ) => {
+		values.push( child.value || 0 );
+		collectDescendantValues( child, values );
+	} );
 };
 
 /**
@@ -506,7 +522,7 @@ export const pruneFlameGraph = ( root, options = {} ) => {
 	}
 
 	const values = [];
-	collectNonRootValues( root, values, true );
+	collectDescendantValues( root, values );
 	values.sort( ( a, b ) => b - a );
 
 	// Value of the frame at rank maxNodes; 0 = fewer frames, keep everything.
@@ -726,7 +742,6 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 					.setColorMapper( colorMapper )
 					.transitionDuration( 0 );
 				chartRef.current.update( framedData );
-				applyLabelContrast( container );
 
 				// Re-zoom to where the viewer was before the data changed.
 				if ( zoomedNodeRef.current ) {
@@ -740,7 +755,7 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 					}
 				}
 				// After the re-zoom: it rebuilds the frames, unstamped.
-				applyAskDescriptors( container );
+				restamp( container );
 
 				// Restore tooltip state (else it vanishes on refresh/zoom).
 				if ( tooltipHasState ) {
@@ -786,15 +801,14 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 						if ( chartRef.current ) {
 							chartRef.current.transitionDuration( 0 );
 						}
-						// New frames; unstamped, the picker cannot see them.
-						applyAskDescriptors( container );
+						// New frames; unstamped.
+						restamp( container );
 					}, 305 );
 				} );
 
 			chartRef.current = chart;
 			d3.select( container ).datum( framedData ).call( chart );
-			applyLabelContrast( container );
-			applyAskDescriptors( container );
+			restamp( container );
 
 			// Track Cmd/Ctrl on mousedown (more reliable than click on Mac).
 			container.addEventListener( 'mousedown', ( e ) => {
@@ -823,37 +837,25 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 	}, [] );
 
 	// Refit on CONTAINER resize; a window listener misses panel resizes.
-	useEffect( () => {
-		const container = containerRef.current;
-		if ( ! container || typeof window.ResizeObserver === 'undefined' ) {
-			return undefined;
-		}
-		let timer = null;
-		// Debounced 150ms: a drag fires the observer on every frame.
-		const ro = new window.ResizeObserver( () => {
-			if ( timer ) {
-				clearTimeout( timer );
+	useContainerRefit(
+		containerRef,
+		() => {
+			if (
+				! chartRef.current ||
+				! containerRef.current ||
+				! framedData
+			) {
+				return;
 			}
-			timer = setTimeout( () => {
-				if ( chartRef.current && containerRef.current && framedData ) {
-					const width = containerRef.current.clientWidth || 800;
-					chartRef.current.width( width );
-					d3.select( containerRef.current )
-						.datum( framedData )
-						.call( chartRef.current );
-					applyLabelContrast( containerRef.current );
-					applyAskDescriptors( containerRef.current );
-				}
-			}, 150 );
-		} );
-		ro.observe( container );
-		return () => {
-			if ( timer ) {
-				clearTimeout( timer );
-			}
-			ro.disconnect();
-		};
-	}, [ framedData ] );
+			chartRef.current.width( containerRef.current.clientWidth || 800 );
+			d3.select( containerRef.current )
+				.datum( framedData )
+				.call( chartRef.current );
+			restamp( containerRef.current );
+		},
+		// The dep that binds the observer: the empty state has no container.
+		[ framedData ]
+	);
 
 	// Gate the empty state on original data; pruning must not fake "no data".
 	if ( ! data || ! data.children || data.children.length === 0 ) {

@@ -5,6 +5,15 @@
 // moduleNameMapper handle resolution). The subpath alias
 // `@newspack-nodes/shared/*` (sibling-checkout shared hooks/utils/components)
 // is whitelisted via the no-unresolved `ignore` pattern below.
+// The bottom layers: importable from anywhere, importing no dashboard. One
+// list, because three hand-kept copies drift the moment a fourth is added.
+const BOTTOM_LAYERS = [ 'components', 'hooks', 'log-table' ];
+const BOTTOM_LAYER_IMPORTS = [
+	...BOTTOM_LAYERS.map( ( dir ) => `./${ dir }` ),
+	'./styles',
+	'./test-helpers',
+];
+
 module.exports = {
 	root: true,
 	extends: [
@@ -40,39 +49,20 @@ module.exports = {
 			{ additionalHooks: '^(useSelect|useSuspenseSelect)$' },
 		],
 		// The runtime layer lives in the substrate, so the zone that means
-		// something HERE is the shared one: components/hooks/test-helpers are
-		// the bottom layer and cannot reach up into a dashboard. Dashboards
-		// importing each other is deliberate and stays allowed — settings
-		// mounts RulesAdmin, current-request reuses RequestProfile.
+		// something HERE is the shared one: components/hooks/log-table/
+		// test-helpers are the bottom layer and cannot reach up into a
+		// dashboard. Dashboards importing each other is deliberate and stays
+		// allowed — settings mounts RulesAdmin, current-request reuses
+		// RequestProfile.
 		'import/no-restricted-paths': [
 			'error',
 			{
-				zones: [
-					{
-						target: './src/components',
-						from: './src',
-						except: [
-							'./components',
-							'./hooks',
-							'./styles',
-							'./test-helpers',
-						],
-						message:
-							'src/components is a bottom layer — it cannot import from a dashboard directory.',
-					},
-					{
-						target: './src/hooks',
-						from: './src',
-						except: [
-							'./components',
-							'./hooks',
-							'./styles',
-							'./test-helpers',
-						],
-						message:
-							'src/hooks is a bottom layer — it cannot import from a dashboard directory.',
-					},
-				],
+				zones: BOTTOM_LAYERS.map( ( dir ) => ( {
+					target: `./src/${ dir }`,
+					from: './src',
+					except: BOTTOM_LAYER_IMPORTS,
+					message: `src/${ dir } is a bottom layer — it cannot import from a dashboard directory.`,
+				} ) ),
 			},
 		],
 		'@wordpress/i18n-text-domain': [

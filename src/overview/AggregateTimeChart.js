@@ -2,9 +2,9 @@
  * Aggregate time chart — the Performance dashboard's main time series.
  *
  * Plots the whole retention window in 5-minute buckets (`buildTimeSlots`) as
- * one of two D3 shapes. `volume` and `cumulative` stack their series into a
- * stacked area chart; `avg` and `memory` overlay one translucent area per
- * series, because averages do not add up.
+ * one of two D3 shapes. `volume` and `cumulative` stack their series; `avg`
+ * and `memory` overlay one translucent area per series, because averages do
+ * not add up. `AreaTimeChart` owns the frame; this file owns the sampling.
  *
  * The parent owns the metric and breakdown dropdowns, refetches the breakdown
  * series when either changes, and filters by server before the data arrives —
@@ -18,15 +18,14 @@ import { __, sprintf } from '@wordpress/i18n';
 import * as d3 from 'd3';
 import { STATUS_COLORS } from '@newspack-nodes/shared/utils/formatUtils';
 import {
-	MARGIN,
 	PALETTE,
 	buildTimeSlots,
-	drawLegend,
-	formatXTick,
-	setupTooltip,
-	useTimeChart,
 } from '@newspack-nodes/shared/hooks/useTimeChart';
+import AreaTimeChart from './components/AreaTimeChart';
 import { RETENTION_SECONDS } from './retention';
+
+const CHART_HEIGHT = 280;
+const formatCount = d3.format( 'd' );
 
 /**
  * Format a duration in seconds for the cumulative axis and its tooltip.
@@ -52,6 +51,28 @@ const formatSeconds = ( seconds ) => {
 };
 
 /**
+ * Reduce one bucket's totals to the plotted value for a metric.
+ *
+ * @param {string} metric    'volume' | 'avg' | 'cumulative' | 'memory'.
+ * @param {number} count     Requests in the bucket.
+ * @param {number} sumMs     Milliseconds of response time in the bucket.
+ * @param {number} sumPeakMb Megabytes of peak memory in the bucket.
+ * @return {number} Value to plot.
+ */
+const bucketValue = ( metric, count, sumMs, sumPeakMb ) => {
+	if ( 'memory' === metric ) {
+		return count > 0 ? sumPeakMb / count : 0;
+	}
+	if ( 'avg' === metric ) {
+		return count > 0 ? Math.round( sumMs / count ) : 0;
+	}
+	if ( 'cumulative' === metric ) {
+		return sumMs / 1000;
+	}
+	return count;
+};
+
+/**
  * Aggregate Time Chart component.
  *
  * Renders nothing until `data` holds at least one bucket, so a caller may
@@ -74,39 +95,32 @@ export default function AggregateTimeChart( {
 	serverFilter = '',
 } ) {
 	const chartState = useMemo( () => {
+		// Averages don't add up, so they overlay instead of stacking.
+		const stacked = 'avg' !== metric && 'memory' !== metric;
 		if ( ! data ) {
-			return { chartData: [], keys: [], colorMap: {}, isLine: false };
+			return { series: [], colorMap: {}, stacked };
 		}
 
-		// isLine: averages don't add up, so they overlay instead of stacking.
-		const isLine = metric === 'avg' || metric === 'memory';
-		const effectiveBreakdown = breakdownData;
 		const slots = buildTimeSlots( RETENTION_SECONDS );
 
-		if ( ! effectiveBreakdown ) {
+		if ( ! breakdownData ) {
 			// No dimensional data — single-series "Total" chart.
-			const key = 'Total';
-			const chartData = slots.map( ( { date, bucketKey } ) => {
-				const b = data[ bucketKey ];
-				const row = { date };
-				if ( metric === 'memory' ) {
-					row[ key ] =
-						b && b.count > 0 ? ( b.sum_peak_mb || 0 ) / b.count : 0;
-				} else if ( metric === 'avg' ) {
-					row[ key ] =
-						b && b.count > 0 ? Math.round( b.sum_ms / b.count ) : 0;
-				} else if ( metric === 'cumulative' ) {
-					row[ key ] = b ? b.sum_ms / 1000 : 0;
-				} else {
-					row[ key ] = b ? b.count : 0;
-				}
-				return row;
+			const values = slots.map( ( { date, bucketKey } ) => {
+				const b = data[ bucketKey ] || {};
+				return {
+					date,
+					value: bucketValue(
+						metric,
+						b.count || 0,
+						b.sum_ms || 0,
+						b.sum_peak_mb || 0
+					),
+				};
 			} );
 			return {
-				chartData,
-				keys: [ key ],
-				colorMap: { [ key ]: PALETTE[ 0 ] },
-				isLine,
+				series: [ { label: 'Total', values } ],
+				colorMap: { Total: PALETTE[ 0 ] },
+				stacked,
 			};
 		}
 
@@ -121,302 +135,45 @@ export default function AggregateTimeChart( {
 		const colorMap = {};
 		dimValues.forEach( ( v, i ) => {
 			colorMap[ v ] =
-				breakdown === 'status' && STATUS_COLORS[ v ]
+				'status' === breakdown && STATUS_COLORS[ v ]
 					? STATUS_COLORS[ v ]
 					: PALETTE[ i % PALETTE.length ];
 		} );
 
-		const chartData = slots.map( ( { date, bucketKey } ) => {
-			const bucket = breakdownData[ bucketKey ] || {};
-			const row = { date };
+		const series = dimValues.map( ( label ) => ( {
+			label,
+			values: slots.map( ( { date, bucketKey } ) => {
+				const s = breakdownData[ bucketKey ]?.[ label ] || {};
+				return {
+					date,
+					value: bucketValue( metric, s.c || 0, s.s || 0, s.m || 0 ),
+				};
+			} ),
+		} ) );
 
-			if ( isLine ) {
-				dimValues.forEach( ( v ) => {
-					const s = bucket[ v ];
-					if ( metric === 'memory' ) {
-						row[ v ] = s && s.c > 0 ? ( s.m || 0 ) / s.c : 0;
-					} else {
-						row[ v ] = s && s.c > 0 ? Math.round( s.s / s.c ) : 0;
-					}
-				} );
-			} else {
-				dimValues.forEach( ( v ) => {
-					const s = bucket[ v ];
-					if ( metric === 'volume' ) {
-						row[ v ] = s ? s.c : 0;
-					} else {
-						row[ v ] = s ? s.s / 1000 : 0;
-					}
-				} );
-			}
-			return row;
-		} );
-
-		return { chartData, keys: dimValues, colorMap, isLine };
+		return { series, colorMap, stacked };
 	}, [ data, breakdownData, metric, breakdown ] );
 
-	const renderFn = useCallback(
-		( refs ) => {
-			if (
-				! refs.containerRef.current ||
-				chartState.chartData.length === 0
-			) {
-				return;
+	const yFormat = useCallback(
+		( value ) => {
+			if ( 'memory' === metric ) {
+				return `${ Number( value.toFixed( 1 ) ) }MB`;
 			}
-
-			const { chartData, keys, colorMap, isLine } = chartState;
-
-			// Every render redraws from scratch; d3 holds no update join.
-			d3.select( refs.containerRef.current ).selectAll( '*' ).remove();
-
-			const width =
-				( refs.containerRef.current.clientWidth || 800 ) -
-				MARGIN.left -
-				MARGIN.right;
-			const height = 280 - MARGIN.top - MARGIN.bottom;
-
-			const svg = d3
-				.select( refs.containerRef.current )
-				.append( 'svg' )
-				.attr( 'width', width + MARGIN.left + MARGIN.right )
-				.attr( 'height', height + MARGIN.top + MARGIN.bottom )
-				.append( 'g' )
-				.attr(
-					'transform',
-					`translate(${ MARGIN.left },${ MARGIN.top })`
-				);
-
-			const x = d3
-				.scaleTime()
-				.domain( d3.extent( chartData, ( d ) => d.date ) )
-				.range( [ 0, width ] );
-
-			svg.append( 'g' )
-				.attr( 'transform', `translate(0,${ height })` )
-				.call(
-					d3
-						.axisBottom( x )
-						.ticks( Math.min( chartData.length, 8 ) )
-						.tickFormat( formatXTick )
-				)
-				.selectAll( 'text' )
-				.attr( 'transform', 'rotate(-45)' )
-				.style( 'text-anchor', 'end' );
-
-			if ( isLine ) {
-				// Overlaid areas for avg response time / avg peak memory.
-				let yMax = 0;
-				chartData.forEach( ( d ) => {
-					keys.forEach( ( k ) => {
-						if ( ( d[ k ] || 0 ) > yMax ) {
-							yMax = d[ k ];
-						}
-					} );
-				} );
-				yMax = ( yMax || 100 ) * 1.2;
-				const y = d3
-					.scaleLinear()
-					.domain( [ 0, yMax ] )
-					.range( [ height, 0 ] );
-
-				svg.append( 'g' ).call(
-					d3
-						.axisLeft( y )
-						.ticks( 5 )
-						.tickFormat( ( d ) =>
-							metric === 'memory'
-								? `${ Number( d.toFixed( 1 ) ) }MB`
-								: `${ d }ms`
-						)
-				);
-
-				svg.append( 'text' )
-					.attr( 'class', 'y-label' )
-					.attr( 'transform', 'rotate(-90)' )
-					.attr( 'y', 0 - MARGIN.left )
-					.attr( 'x', 0 - height / 2 )
-					.attr( 'dy', '1em' )
-					.style( 'text-anchor', 'middle' )
-					.style( 'font-size', '12px' )
-					.text(
-						metric === 'memory'
-							? __(
-									'Avg Peak Memory (MB)',
-									'newspack-event-logger-nodes'
-							  )
-							: __(
-									'Avg Response Time (ms)',
-									'newspack-event-logger-nodes'
-							  )
-					);
-
-				const area = d3
-					.area()
-					.x( ( d ) => x( d.date ) )
-					.y0( height )
-					.y1( ( d ) => y( d.value ) )
-					.curve( d3.curveMonotoneX );
-
-				keys.forEach( ( key ) => {
-					const areaColor = colorMap[ key ] || PALETTE[ 0 ];
-					const areaData = chartData.map( ( d ) => ( {
-						date: d.date,
-						value: d[ key ] || 0,
-					} ) );
-					svg.append( 'path' )
-						.datum( areaData )
-						.attr( 'fill', areaColor )
-						.attr( 'fill-opacity', 0.5 )
-						.attr( 'stroke', areaColor )
-						.attr( 'stroke-width', 1 )
-						.attr( 'd', area );
-				} );
-
-				const ttFmt =
-					metric === 'memory'
-						? ( v ) => `${ v.toFixed( 1 ) }MB`
-						: ( v ) => `${ v }ms`;
-
-				const dates = chartData.map( ( d ) => d.date );
-				setupTooltip( svg, {
-					innerW: width,
-					innerH: height,
-					dates,
-					x,
-					formatEntry: ( idx ) =>
-						keys
-							.map( ( k ) => ( {
-								label: k,
-								value: ttFmt( chartData[ idx ][ k ] || 0 ),
-								raw: chartData[ idx ][ k ] || 0,
-							} ) )
-							.filter( ( e ) => e.raw > 0 )
-							.sort( ( a, b ) => b.raw - a.raw )
-							.slice( 0, 10 ),
-					tooltipRef: refs.tooltipRef,
-					lastMouseXRef: refs.lastMouseXRef,
-					containerRef: refs.containerRef,
-				} );
-
-				drawLegend(
-					svg,
-					keys.map( ( k ) => ( {
-						color: colorMap[ k ] || PALETTE[ 0 ],
-						label: k,
-					} ) ),
-					width + MARGIN.left + MARGIN.right
-				);
-			} else {
-				// Stacked areas for request volume / cumulative time.
-				const stack = d3.stack().keys( keys );
-				const stackedData = stack( chartData );
-
-				const yMax =
-					d3.max( chartData, ( d ) =>
-						keys.reduce( ( sum, k ) => sum + ( d[ k ] || 0 ), 0 )
-					) * 1.1 || 10;
-				const y = d3
-					.scaleLinear()
-					.domain( [ 0, yMax ] )
-					.range( [ height, 0 ] );
-
-				const yFormat =
-					metric === 'cumulative' ? formatSeconds : d3.format( 'd' );
-				svg.append( 'g' ).call(
-					d3.axisLeft( y ).ticks( 5 ).tickFormat( yFormat )
-				);
-
-				svg.append( 'text' )
-					.attr( 'class', 'y-label' )
-					.attr( 'transform', 'rotate(-90)' )
-					.attr( 'y', 0 - MARGIN.left )
-					.attr( 'x', 0 - height / 2 )
-					.attr( 'dy', '1em' )
-					.style( 'text-anchor', 'middle' )
-					.style( 'font-size', '12px' )
-					.text(
-						metric === 'cumulative'
-							? __(
-									'Cumulative Time',
-									'newspack-event-logger-nodes'
-							  )
-							: __( 'Requests', 'newspack-event-logger-nodes' )
-					);
-
-				const stackArea = d3
-					.area()
-					.x( ( d ) => x( d.data.date ) )
-					.y0( ( d ) => y( d[ 0 ] ) )
-					.y1( ( d ) => y( d[ 1 ] ) )
-					.curve( d3.curveMonotoneX );
-
-				svg.selectAll( '.layer' )
-					.data( stackedData )
-					.enter()
-					.append( 'path' )
-					.attr( 'class', 'layer' )
-					.attr( 'fill', ( d ) => colorMap[ d.key ] || '#999' )
-					.attr( 'fill-opacity', 0.7 )
-					.attr( 'stroke', ( d ) => colorMap[ d.key ] || '#999' )
-					.attr( 'stroke-width', 0.5 )
-					.attr( 'd', stackArea );
-
-				// The stacked tooltip leads with the column total.
-				const saFmt =
-					metric === 'cumulative'
-						? ( v ) => formatSeconds( v )
-						: ( v ) => String( Math.round( v ) );
-
-				const dates = chartData.map( ( d ) => d.date );
-				setupTooltip( svg, {
-					innerW: width,
-					innerH: height,
-					dates,
-					x,
-					formatEntry: ( idx ) => {
-						const total = keys.reduce(
-							( sum, k ) => sum + ( chartData[ idx ][ k ] || 0 ),
-							0
-						);
-						const entries = keys
-							.map( ( k ) => ( {
-								label: k,
-								value: saFmt( chartData[ idx ][ k ] || 0 ),
-								raw: chartData[ idx ][ k ] || 0,
-							} ) )
-							.filter( ( e ) => e.raw > 0 )
-							.sort( ( a, b ) => b.raw - a.raw )
-							.slice( 0, 10 );
-						return [
-							{
-								label: __(
-									'Total',
-									'newspack-event-logger-nodes'
-								),
-								value: saFmt( total ),
-							},
-							...entries,
-						];
-					},
-					tooltipRef: refs.tooltipRef,
-					lastMouseXRef: refs.lastMouseXRef,
-					containerRef: refs.containerRef,
-				} );
-
-				drawLegend(
-					svg,
-					keys.map( ( k ) => ( {
-						color: colorMap[ k ] || '#999',
-						label: k,
-					} ) ),
-					width + MARGIN.left + MARGIN.right
-				);
+			if ( 'avg' === metric ) {
+				return `${ value }ms`;
 			}
+			return 'cumulative' === metric
+				? formatSeconds( value )
+				: formatCount( value );
 		},
-		[ chartState, metric ]
+		[ metric ]
 	);
 
-	const { containerRef, tooltipRef } = useTimeChart( renderFn );
+	const colorAt = useCallback(
+		( label, index ) =>
+			chartState.colorMap[ label ] || PALETTE[ index % PALETTE.length ],
+		[ chartState ]
+	);
 
 	// Guard sits below every hook; hoisting it would break hook order.
 	if ( ! data || Object.keys( data ).length === 0 ) {
@@ -431,6 +188,13 @@ export default function AggregateTimeChart( {
 			'newspack-event-logger-nodes'
 		),
 		memory: __( 'Avg Peak Memory', 'newspack-event-logger-nodes' ),
+	};
+
+	const yLabels = {
+		volume: __( 'Requests', 'newspack-event-logger-nodes' ),
+		avg: __( 'Avg Response Time (ms)', 'newspack-event-logger-nodes' ),
+		cumulative: __( 'Cumulative Time', 'newspack-event-logger-nodes' ),
+		memory: __( 'Avg Peak Memory (MB)', 'newspack-event-logger-nodes' ),
 	};
 
 	const titleSuffix = serverFilter ? ` — ${ serverFilter }` : '';
@@ -448,25 +212,28 @@ export default function AggregateTimeChart( {
 			  );
 
 	return (
-		<div
+		<AreaTimeChart
 			className="event-logger-aggregate-time-chart"
-			style={ { position: 'relative' } }
-		>
-			<h3>
-				{ sprintf(
+			series={ chartState.series }
+			stacked={ chartState.stacked }
+			colorAt={ colorAt }
+			yFormat={ yFormat }
+			yLabel={ yLabels[ metric ] }
+			height={ CHART_HEIGHT }
+			totalLabel={
+				chartState.stacked
+					? __( 'Total', 'newspack-event-logger-nodes' )
+					: ''
+			}
+			title={
+				sprintf(
 					// translators: 1: metric name (e.g. Request Volume), 2: retention window (e.g. 24 Hours).
 					__( '%1$s (Last %2$s)', 'newspack-event-logger-nodes' ),
 					metricLabels[ metric ] ||
 						__( 'Chart', 'newspack-event-logger-nodes' ),
 					retentionLabel
-				) }
-				{ titleSuffix }
-			</h3>
-			<div
-				ref={ containerRef }
-				style={ { width: '100%', minHeight: '284px' } }
-			/>
-			<div ref={ tooltipRef } className="event-logger-chart-tooltip" />
-		</div>
+				) + titleSuffix
+			}
+		/>
 	);
 }

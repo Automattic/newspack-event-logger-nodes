@@ -218,10 +218,8 @@ class Hook_Categorizer {
 	}
 
 	/**
-	 * Get all categories with their colors.
-	 *
-	 * @return array<string,mixed> Associative array of category => color, base
-	 *                              colors with the user's merged over them.
+	 * @return array<string,mixed> Category => color, base colors with the
+	 *                             user's merged over them.
 	 */
 	public static function get_categories(): array {
 		$config = self::get_merged_config();
@@ -359,8 +357,6 @@ class Hook_Categorizer {
 	}
 
 	/**
-	 * Get user customizations from database.
-	 *
 	 * `wp_parse_args()` accepts an array, an object, or a query string; a
 	 * stored value of any other type is discarded before the merge, so the
 	 * three default keys are always present.

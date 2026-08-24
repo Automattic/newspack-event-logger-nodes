@@ -6,6 +6,61 @@ use Newspack_Nodes\Tests\TestCase as RuntimeTestCase;
 abstract class TestCase extends RuntimeTestCase {
 
 	/**
+	 * URL rows per bucket, across the shapes `url_row_sources()` returns.
+	 *
+	 * It returns one pair per shard, and only the OVERFLOW rows are folded here,
+	 * because `fold_url_rows()` keeps only the fields that add — a real hash
+	 * put through it would come back without `url`, the extremes or the
+	 * percentiles, and a later assertion on those would read as a data bug
+	 * rather than as the helper. A real straddling hash needs the reader's full
+	 * arithmetic, so it FAILS here instead of being quietly halved.
+	 *
+	 * @param \Newspack_Event_Logger_Nodes\Stats_Store $store   The store to read.
+	 * @param array<int,string>                        $buckets Bucket keys.
+	 * @return array<string,array<array-key,mixed>>
+	 */
+	protected function url_rows_by_bucket( \Newspack_Event_Logger_Nodes\Stats_Store $store, array $buckets ): array {
+		$out = [];
+		foreach ( $store->url_row_sources( $buckets ) as [ $bucket, $rows ] ) {
+			foreach ( $rows as $hash => $row ) {
+				if ( ! isset( $out[ $bucket ][ $hash ] ) ) {
+					$out[ $bucket ][ $hash ] = $row;
+					continue;
+				}
+				$this->assertTrue(
+					\Newspack_Event_Logger_Nodes\Stats_Store::is_other_key( (string) $hash ),
+					"hash {$hash} appears in two shards; only an overflow row may"
+				);
+				$out[ $bucket ][ $hash ] = \Newspack_Event_Logger_Nodes\Stats_Store::fold_url_rows(
+					\Newspack_Nodes\Core::arr( $out[ $bucket ][ $hash ] ),
+					\Newspack_Nodes\Core::arr( $row )
+				);
+			}
+		}
+		return $out;
+	}
+
+	/**
+	 * Every URL row of one bucket, merged across shards.
+	 *
+	 * A test convenience, deliberately not on `Stats_Store`: production reads a
+	 * window through `url_row_sources()` and writes one shard at a time, so a
+	 * bucket-level accessor there would be API kept alive only by its tests.
+	 *
+	 * One bucket of the sibling above, rather than its own shard walk: the
+	 * overflow rows carry the SAME key in every shard they were folded in, and
+	 * a walk that unions instead of folding keeps whichever shard it reached
+	 * first and silently under-reports the rest of the tail.
+	 *
+	 * @param \Newspack_Event_Logger_Nodes\Stats_Store $store  The store to read.
+	 * @param string                                   $bucket Bucket key.
+	 * @return array<array-key,mixed>
+	 */
+	protected function url_bucket_rows( \Newspack_Event_Logger_Nodes\Stats_Store $store, string $bucket ): array {
+		return \Newspack_Nodes\Core::arr( $this->url_rows_by_bucket( $store, [ $bucket ] )[ $bucket ] ?? [] );
+	}
+
+	/**
 	 * Re-assert the topology registration bootstrap.php makes. Sibling tests call
 	 * Topology_Registry::reset(), which strands every later test that reads a
 	 * topology — and ELN topologies `include` ACROSS the plugin boundary
@@ -104,4 +159,25 @@ abstract class TestCase extends RuntimeTestCase {
 	protected static function scoped( string $logical ): string {
 		return \Newspack_Nodes\Cache_Backend::site_key( $logical );
 	}
+	/**
+	 * Seed a whole URL bucket, routing each row to the shard its hash names.
+	 *
+	 * A test convenience: production writes one shard at a time, which is the
+	 * point of sharding. Writes EVERY shard, because "replace the bucket" has
+	 * to clear the ones this data does not reach.
+	 *
+	 * @param \Newspack_Event_Logger_Nodes\Stats_Store $store  Destination.
+	 * @param string                                   $bucket Bucket key.
+	 * @param array<array-key,mixed>                   $data   Whole bucket.
+	 * @return bool True when every shard's set landed.
+	 */
+	protected function set_url_bucket( \Newspack_Event_Logger_Nodes\Stats_Store $store, string $bucket, array $data ): bool {
+		$by_shard = \Newspack_Event_Logger_Nodes\Stats_Store::rows_by_shard( $data );
+		$ok       = true;
+		foreach ( \Newspack_Event_Logger_Nodes\Stats_Store::url_shards() as $shard ) {
+			$ok = $store->set_url_shard( $bucket, $shard, \Newspack_Nodes\Core::arr( $by_shard[ $shard ] ?? null ) ) && $ok;
+		}
+		return $ok;
+	}
+
 }

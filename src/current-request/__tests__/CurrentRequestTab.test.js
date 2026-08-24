@@ -315,11 +315,14 @@ test( 'renders an idle hint when no request id is localized', async () => {
 	);
 } );
 
-// error_status renders the Status card via statusLabel(); ts 0 → placeholder.
+// error_status renders the Status card via errorStatus(); ts 0 → placeholder.
 test.each( [
-	[ 'F', 'fatal error' ],
-	[ 'T', 'timed out' ],
-	[ 'A', 'aborted' ], // killed mid-flight: a worker stop, or a stolen lease
+	[ 'F', 'Fatal error' ],
+	[ 'T', 'Timed out (orphaned request)' ],
+	// killed mid-flight: a worker stop, or a stolen lease
+	[ 'A', 'Aborted (worker stopped mid-request)' ],
+	// a nominal finish over a firehose hole: the trace is partial
+	[ 'I', 'Incomplete (gap in the log)' ],
 	[ 'weird', 'weird' ], // an unrecognized code passes through unchanged
 ] )(
 	'labels error_status %s as "%s" in the status card',

@@ -1,4 +1,3 @@
-/* global localStorage */
 /**
  * In-Flight Requests — the Gyroscope dashboard's live request table, modeled on
  * Tachikoma's Gyroscope.
@@ -21,8 +20,8 @@
  * separately via `useNodeState('gyroscope:view','view')`.
  */
 
-import { useState, useEffect, useCallback, useMemo } from '@wordpress/element';
-import { __, _n, sprintf } from '@wordpress/i18n';
+import { useState, useEffect, useCallback } from '@wordpress/element';
+import { __, _n } from '@wordpress/i18n';
 
 import { Core, useNodeState } from '@newspack-nodes/runtime';
 import useRouterTick from '@newspack-nodes/shared/hooks/useRouterTick';
@@ -30,14 +29,29 @@ import { useGyroscopeGraph } from './hooks/useGyroscopeGraph';
 import { INFLIGHT_REFRESH_OPTIONS } from './constants';
 import {
 	formatDuration,
-	getDurationClass,
 	getStateColor,
 	getTextColor,
 } from '@newspack-nodes/shared/utils/formatUtils';
 import fnv1a from '@newspack-nodes/shared/utils/fnv1a';
 import ConnectionBanner from '@newspack-nodes/shared/components/ConnectionBanner';
+import ColumnPicker from '@newspack-nodes/shared/components/ColumnPicker';
+import { useColumnPicker } from '@newspack-nodes/shared/hooks/useColumnPicker';
+import { usePersistedChoice } from '@newspack-nodes/shared/hooks/usePersistedState';
+import {
+	Cell,
+	cellRenderer,
+	countLabel,
+	durationCell,
+	ipCell,
+	logColumns,
+	logListHeader,
+	rateLabel,
+	ridCell,
+	statusCell,
+	uaCell,
+	urlCell,
+} from '../log-table/logTable';
 import './styles/inflight.scss';
-import './styles/request-stream.scss';
 
 // The view node the refresh tick reads the in-flight snapshot + rps off of.
 const VIEW_NODE = 'gyroscope:view';
@@ -59,40 +73,18 @@ const badgeStyle = ( background ) => ( {
 } );
 
 /**
- * Column definitions, keyed by the field each renders.
+ * The In-Flight table's own columns; the rest come from the shared set.
  *
- * `label` is the header text, `tooltip` the header's `title`, and `width` one
- * track of the row's `grid-template-columns`. The key set doubles as the
- * validation whitelist for the persisted `event-logger-columns` selection and
- * as the column picker's contents, so a key added here becomes selectable at
- * once. Only completion records carry `status_code`, so that column stays blank
- * while a request is still running.
+ * This key set is what the persisted `event-logger-columns` selection is
+ * restored against, and the column picker's contents, so a key added here
+ * becomes selectable at once and a key removed drops out of a saved selection
+ * without resetting it. Only completion records carry `status_code`, so that
+ * column stays blank while a request is still running.
  */
-const COLUMNS = {
-	rid: {
-		label: __( 'Request ID', 'newspack-event-logger-nodes' ),
-		tooltip: __(
-			'Unique request identifier - click to view in Performance Dashboard',
-			'newspack-event-logger-nodes'
-		),
-		width: '240px',
-	},
-	url: {
-		label: __( 'URL', 'newspack-event-logger-nodes' ),
-		tooltip: __(
-			'Request method and URL - click to view URL stats',
-			'newspack-event-logger-nodes'
-		),
-		width: 'auto',
-	},
-	status_code: {
-		label: __( 'Status', 'newspack-event-logger-nodes' ),
-		tooltip: __(
-			'HTTP response status code',
-			'newspack-event-logger-nodes'
-		),
-		width: '50px',
-	},
+const COLUMNS = logColumns( {
+	rid: {},
+	url: {},
+	status_code: {},
 	state: {
 		label: __( 'State', 'newspack-event-logger-nodes' ),
 		tooltip: __(
@@ -109,19 +101,8 @@ const COLUMNS = {
 		),
 		width: '200px',
 	},
-	remote_addr: {
-		label: __( 'IP', 'newspack-event-logger-nodes' ),
-		tooltip: __( 'Client IP address', 'newspack-event-logger-nodes' ),
-		width: '100px',
-	},
-	user_agent: {
-		label: __( 'UA', 'newspack-event-logger-nodes' ),
-		tooltip: __(
-			'Browser/client identifier',
-			'newspack-event-logger-nodes'
-		),
-		width: '200px',
-	},
+	remote_addr: {},
+	user_agent: {},
 	est: {
 		label: __( 'Est', 'newspack-event-logger-nodes' ),
 		tooltip: __(
@@ -130,8 +111,8 @@ const COLUMNS = {
 		),
 		width: '70px',
 	},
+	// Shares only the 'Time' header: here it is a duration, not a wall clock.
 	time: {
-		label: __( 'Time', 'newspack-event-logger-nodes' ),
 		tooltip: __(
 			'Request duration from server logs only (ignores display delay)',
 			'newspack-event-logger-nodes'
@@ -154,7 +135,7 @@ const COLUMNS = {
 		),
 		width: '50px',
 	},
-};
+} );
 
 /**
  * URL hash for deep-linking to URL detail — must match PHP
@@ -174,6 +155,64 @@ const urlHash = ( url ) => fnv1a( url || '' );
  */
 const DEFAULT_COLUMNS = [ 'rid', 'url', 'status_code', 'state', 'what', 'est' ];
 
+// How far behind real-time a row is; `last_log_ts` is epoch SECONDS.
+const ageMs = ( req ) =>
+	req.last_log_ts ? Math.max( 0, Date.now() - req.last_log_ts * 1000 ) : 0;
+
+// A duration cell that warns past a threshold, for the two delay columns.
+const delayCell = ( ms, warn, col ) => (
+	<Cell
+		key={ col }
+		mod={ `entry-duration newspack-nodes-status${
+			ms > warn ? ' is-warning' : ''
+		}` }
+	>
+		{ formatDuration( ms ) }
+	</Cell>
+);
+
+// The table filters nothing, so it names no shown-over-held count form.
+const renderCount = ( total ) =>
+	countLabel(
+		{ total },
+		// translators: %d: number of in-flight requests.
+		_n( '%d request', '%d requests', total, 'newspack-event-logger-nodes' )
+	);
+
+const renderRate = rateLabel(
+	// translators: %s: requests-per-second rate, formatted to one decimal place.
+	__( '%s req/s', 'newspack-event-logger-nodes' )
+);
+
+// One cell of an in-flight row; state, what, age and lag are this table's own.
+const renderCell = cellRenderer( {
+	rid: ( req, col ) => ridCell( req.rid, col ),
+	time: ( req, col ) => durationCell( req.time_ms, col ),
+	est: ( req, col ) => durationCell( req.est_ms || req.time_ms || 0, col ),
+	age: ( req, col ) => delayCell( ageMs( req ), 5000, col ),
+	lag: ( req, col ) => delayCell( req.lag_ms || 0, 1000, col ),
+	state: ( req, col ) => (
+		<Cell key={ col }>
+			<span
+				className="event-logger-state-badge newspack-nodes-badge"
+				style={ badgeStyle( getStateColor( req.state ) ) }
+			>
+				{ req.state === 'include template' ? 'template' : req.state }
+			</span>
+		</Cell>
+	),
+	what: ( req, col ) => (
+		<Cell key={ col } mod="entry-url" title={ req.what }>
+			{ req.what }
+		</Cell>
+	),
+	status_code: ( req, col ) => statusCell( req.status_code, col ),
+	url: ( req, col ) =>
+		urlCell( req.method, req.url, urlHash( req.url ), col ),
+	remote_addr: ( req, col ) => ipCell( req.remote_addr, col ),
+	user_agent: ( req, col ) => uaCell( req.user_agent, col ),
+} );
+
 /**
  * In-flight requests table.
  *
@@ -181,7 +220,9 @@ const DEFAULT_COLUMNS = [ 'rid', 'url', 'status_code', 'state', 'what', 'est' ];
  * Column selection and refresh interval persist in localStorage under
  * `event-logger-columns` and `event-logger-inflight-refresh`; both are
  * revalidated on load, since a stale or hand-edited value would otherwise
- * render a header the picker cannot reach or a cadence the dropdown cannot show.
+ * render a header the picker cannot reach or a cadence the dropdown cannot
+ * show. The column selection keeps whatever keys still exist rather than
+ * discarding the whole layout over one it does not recognize.
  *
  * @param {Object} props         Component props.
  * @param {number} props.maxRows Maximum rows to display; the cap `snapshot()` applies.
@@ -195,66 +236,21 @@ export default function Inflight( { maxRows = 20 } ) {
 	const { connectionError } = useNodeState( VIEW_NODE, 'view' ) ?? EMPTY_VIEW;
 
 	const [ requests, setRequests ] = useState( [] );
-	const [ refreshInterval, setRefreshInterval ] = useState( () => {
-		// Load from localStorage; validate against allowed dropdown values.
-		const validValues = INFLIGHT_REFRESH_OPTIONS.map(
-			( opt ) => opt.value
-		);
-		const saved = localStorage.getItem( 'event-logger-inflight-refresh' );
-		if ( saved ) {
-			const parsed = parseFloat( saved );
-			if ( ! isNaN( parsed ) && validValues.includes( parsed ) ) {
-				return parsed;
-			}
-		}
-		return 2;
-	} );
-	const [ visibleColumns, setVisibleColumns ] = useState( () => {
-		// Load from localStorage with validation.
-		const validColumns = Object.keys( COLUMNS );
-		try {
-			const saved = localStorage.getItem( 'event-logger-columns' );
-			const parsed = saved ? JSON.parse( saved ) : null;
-			if (
-				Array.isArray( parsed ) &&
-				parsed.every( ( col ) => validColumns.includes( col ) )
-			) {
-				return parsed;
-			}
-		} catch {
-			// Fall through to default.
-		}
-		return DEFAULT_COLUMNS;
-	} );
+	const [ refreshInterval, setRefreshInterval ] = usePersistedChoice(
+		'event-logger-inflight-refresh',
+		INFLIGHT_REFRESH_OPTIONS,
+		2
+	);
+	const { visibleColumns, toggleColumn, isVisible, gridTemplate } =
+		useColumnPicker( {
+			columns: COLUMNS,
+			storageKey: 'event-logger-columns',
+			defaultVisible: DEFAULT_COLUMNS,
+		} );
 	const [ showColumnPicker, setShowColumnPicker ] = useState( false );
 	const [ requestsPerSecond, setRequestsPerSecond ] = useState( 0 );
 
 	const totalCount = requests.length;
-
-	// Save column selection to localStorage.
-	useEffect( () => {
-		localStorage.setItem(
-			'event-logger-columns',
-			JSON.stringify( visibleColumns )
-		);
-	}, [ visibleColumns ] );
-
-	// Save refresh interval to localStorage.
-	useEffect( () => {
-		localStorage.setItem(
-			'event-logger-inflight-refresh',
-			String( refreshInterval )
-		);
-	}, [ refreshInterval ] );
-
-	// Memoize grid template to avoid recomputation on every row.
-	const gridTemplate = useMemo(
-		() =>
-			visibleColumns
-				.map( ( col ) => COLUMNS[ col ]?.width || 'auto' )
-				.join( ' ' ),
-		[ visibleColumns ]
-	);
 
 	// Sample the view node's snapshot() (reaps, sorts, caps) each refresh.
 	const renderRequests = useCallback( () => {
@@ -294,7 +290,7 @@ export default function Inflight( { maxRows = 20 } ) {
 		};
 		window.addEventListener( 'keydown', handleKeyDown );
 		return () => window.removeEventListener( 'keydown', handleKeyDown );
-	}, [] );
+	}, [ setRefreshInterval ] );
 
 	// Display refresh: sub-second takes its own slot, 1s+ rides the Router.
 	useRouterTick( {
@@ -302,208 +298,6 @@ export default function Inflight( { maxRows = 20 } ) {
 		onTick: renderRequests,
 		intervalMs: refreshInterval * 1000,
 	} );
-
-	/**
-	 * Toggle a column's visibility.
-	 *
-	 * @param {string} col Column key.
-	 */
-	const toggleColumn = ( col ) => {
-		setVisibleColumns( ( prev ) => {
-			if ( prev.includes( col ) ) {
-				return prev.filter( ( c ) => c !== col );
-			}
-			// Add in original order.
-			const allCols = Object.keys( COLUMNS );
-			return allCols.filter( ( c ) => prev.includes( c ) || c === col );
-		} );
-	};
-
-	/**
-	 * Render a cell value based on column type.
-	 *
-	 * @param {string} col   Column key.
-	 * @param {Object} req   Request object.
-	 * @param {number} ageMs Calculated age in ms.
-	 * @return {import('react').ReactElement} Cell content.
-	 */
-	const renderCell = ( col, req, ageMs ) => {
-		switch ( col ) {
-			case 'rid':
-				return (
-					<span
-						key={ col }
-						role="cell"
-						className="newspack-nodes-table__cell"
-					>
-						<a
-							className="entry-rid"
-							href={ `admin.php?page=event-logger-overview&request=${ encodeURIComponent(
-								req.rid
-							) }` }
-							title={ __(
-								'View request trace',
-								'newspack-event-logger-nodes'
-							) }
-						>
-							{ req.rid }
-						</a>
-					</span>
-				);
-
-			case 'time':
-				return (
-					<span
-						key={ col }
-						role="cell"
-						className={ `newspack-nodes-table__cell entry-duration entry-duration--${ getDurationClass(
-							req.time_ms
-						) }` }
-					>
-						{ formatDuration( req.time_ms ) }
-					</span>
-				);
-
-			case 'est':
-				return (
-					<span
-						key={ col }
-						role="cell"
-						className={ `newspack-nodes-table__cell entry-duration entry-duration--${ getDurationClass(
-							req.est_ms || req.time_ms || 0
-						) }` }
-					>
-						{ formatDuration( req.est_ms || req.time_ms || 0 ) }
-					</span>
-				);
-
-			case 'age':
-				return (
-					<span
-						key={ col }
-						role="cell"
-						className={ `newspack-nodes-table__cell entry-duration newspack-nodes-status${
-							ageMs > 5000 ? ' is-warning' : ''
-						}` }
-					>
-						{ formatDuration( ageMs ) }
-					</span>
-				);
-
-			case 'lag':
-				return (
-					<span
-						key={ col }
-						role="cell"
-						className={ `newspack-nodes-table__cell entry-duration newspack-nodes-status${
-							req.lag_ms > 1000 ? ' is-warning' : ''
-						}` }
-					>
-						{ formatDuration( req.lag_ms || 0 ) }
-					</span>
-				);
-
-			case 'state':
-				return (
-					<span
-						key={ col }
-						role="cell"
-						className="newspack-nodes-table__cell"
-					>
-						<span
-							className="event-logger-state-badge newspack-nodes-badge"
-							style={ badgeStyle( getStateColor( req.state ) ) }
-						>
-							{ req.state === 'include template'
-								? 'template'
-								: req.state }
-						</span>
-					</span>
-				);
-
-			case 'what':
-				return (
-					<span
-						key={ col }
-						role="cell"
-						className="newspack-nodes-table__cell entry-url"
-						title={ req.what }
-					>
-						{ req.what }
-					</span>
-				);
-
-			case 'status_code':
-				return (
-					<span
-						key={ col }
-						role="cell"
-						className="newspack-nodes-table__cell entry-status"
-						data-status={ req.status_code }
-					>
-						{ req.status_code }
-					</span>
-				);
-
-			case 'url':
-				return (
-					<span
-						key={ col }
-						role="cell"
-						className="newspack-nodes-table__cell entry-url"
-						title={ req.url }
-					>
-						<span className="entry-method">{ req.method }</span>{ ' ' }
-						<a
-							href={ `admin.php?page=event-logger-overview&url=${ urlHash(
-								req.url
-							) }` }
-							className="entry-url-link"
-							title={ __(
-								'View URL stats',
-								'newspack-event-logger-nodes'
-							) }
-						>
-							{ req.url }
-						</a>
-					</span>
-				);
-
-			case 'remote_addr':
-				return (
-					<span
-						key={ col }
-						role="cell"
-						className="newspack-nodes-table__cell entry-ip"
-					>
-						{ req.remote_addr || '-' }
-					</span>
-				);
-
-			case 'user_agent':
-				return (
-					<span
-						key={ col }
-						role="cell"
-						className="newspack-nodes-table__cell entry-ua"
-						title={ req.user_agent }
-					>
-						{ req.user_agent || '-' }
-					</span>
-				);
-
-			default:
-				return (
-					<span
-						key={ col }
-						role="cell"
-						className="newspack-nodes-table__cell entry-default"
-					>
-						-
-					</span>
-				);
-		}
-	};
 
 	return (
 		<div
@@ -552,23 +346,10 @@ export default function Inflight( { maxRows = 20 } ) {
 				<span className="newspack-nodes-toolbar">
 					<span className="newspack-nodes-toolbar-stats">
 						<span className="newspack-nodes-toolbar-stats__count">
-							{ sprintf(
-								// translators: %d: number of in-flight requests.
-								_n(
-									'%d request',
-									'%d requests',
-									totalCount,
-									'newspack-event-logger-nodes'
-								),
-								totalCount
-							) }
+							{ renderCount( totalCount ) }
 						</span>
 						<span className="newspack-nodes-toolbar-stats__rps">
-							{ sprintf(
-								// translators: %s: requests-per-second rate, formatted to one decimal place.
-								__( '%s req/s', 'newspack-event-logger-nodes' ),
-								requestsPerSecond.toFixed( 1 )
-							) }
+							{ renderRate( requestsPerSecond ) }
 						</span>
 					</span>
 					<select
@@ -618,41 +399,19 @@ export default function Inflight( { maxRows = 20 } ) {
 			/>
 
 			{ showColumnPicker && (
-				<div className="newspack-nodes-column-picker">
-					{ Object.entries( COLUMNS ).map( ( [ key, col ] ) => (
-						<label
-							key={ key }
-							htmlFor={ `inflight-col-${ key }` }
-							title={ col.tooltip }
-						>
-							<input
-								id={ `inflight-col-${ key }` }
-								type="checkbox"
-								checked={ visibleColumns.includes( key ) }
-								onChange={ () => toggleColumn( key ) }
-							/>
-							{ col.label }
-						</label>
-					) ) }
-				</div>
+				<ColumnPicker
+					columns={ COLUMNS }
+					isVisible={ isVisible }
+					onToggle={ toggleColumn }
+					idPrefix="inflight-col"
+				/>
 			) }
 
-			<div
-				role="row"
-				className="event-logger-request-stream-header-row newspack-nodes-table__header"
-				style={ { gridTemplateColumns: gridTemplate } }
-			>
-				{ visibleColumns.map( ( col ) => (
-					<span
-						key={ col }
-						role="columnheader"
-						className="event-logger-request-stream-th newspack-nodes-table__cell"
-						title={ COLUMNS[ col ]?.tooltip }
-					>
-						{ COLUMNS[ col ]?.label || col }
-					</span>
-				) ) }
-			</div>
+			{ logListHeader( {
+				className: 'event-logger-inflight-columns',
+				columns: COLUMNS,
+				order: visibleColumns,
+			} ) }
 			<div
 				role="rowgroup"
 				className="event-logger-request-stream-list newspack-nodes-table"
@@ -666,31 +425,20 @@ export default function Inflight( { maxRows = 20 } ) {
 							) }
 						</div>
 					) : (
-						requests.map( ( req, index ) => {
-							// last_log_ts is epoch seconds, not ms.
-							const nowSec = Date.now() / 1000;
-							const ageSec = req.last_log_ts
-								? Math.max( 0, nowSec - req.last_log_ts )
-								: 0;
-							const ageMs = ageSec * 1000;
-
-							return (
-								<div
-									key={ req.rid }
-									role="row"
-									className={ `event-logger-request-stream-entry newspack-nodes-table__row ${
-										index % 2 === 0 ? 'row-even' : 'row-odd'
-									}` }
-									style={ {
-										gridTemplateColumns: gridTemplate,
-									} }
-								>
-									{ visibleColumns.map( ( col ) =>
-										renderCell( col, req, ageMs )
-									) }
-								</div>
-							);
-						} )
+						requests.map( ( req, index ) => (
+							<div
+								key={ req.rid }
+								role="row"
+								className={ `event-logger-request-stream-entry newspack-nodes-table__row ${
+									index % 2 === 0 ? 'row-even' : 'row-odd'
+								}` }
+								style={ { gridTemplateColumns: gridTemplate } }
+							>
+								{ visibleColumns.map( ( col ) =>
+									renderCell( col, req )
+								) }
+							</div>
+						) )
 					) }
 				</div>
 			</div>

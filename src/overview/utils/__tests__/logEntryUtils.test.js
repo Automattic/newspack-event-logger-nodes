@@ -12,6 +12,9 @@
 
 import {
 	formatDots,
+	formatFullTimestamp,
+	hasPair,
+	isEmptyPairStart,
 	computeIndentedEntries,
 	computeVisibleEntries,
 	getAncestorPairIds,
@@ -40,6 +43,63 @@ describe( 'isFoldablePairStart', () => {
 		expect( isFoldablePairStart( 'plain message' ) ).toBe( false );
 		expect( isFoldablePairStart( '' ) ).toBe( false );
 		expect( isFoldablePairStart( undefined ) ).toBe( false );
+	} );
+} );
+
+describe( 'formatFullTimestamp', () => {
+	it( 'renders HH:MM:SS with the hundredths of the timestamp', () => {
+		expect( formatFullTimestamp( 1700000000.42 ) ).toMatch(
+			/^\d{2}:\d{2}:\d{2}\.42$/
+		);
+	} );
+
+	it( 'is empty for a missing timestamp, not the epoch', () => {
+		expect( formatFullTimestamp( 0 ) ).toBe( '' );
+		expect( formatFullTimestamp( undefined ) ).toBe( '' );
+	} );
+} );
+
+describe( 'hasPair', () => {
+	it( 'is true for any pairId, including the falsy zero', () => {
+		expect( hasPair( { pairId: 0 } ) ).toBe( true );
+		expect( hasPair( { pairId: 37 } ) ).toBe( true );
+	} );
+
+	it( 'is false when the entry belongs to no pair', () => {
+		expect( hasPair( { pairId: null } ) ).toBe( false );
+		expect( hasPair( {} ) ).toBe( false );
+	} );
+} );
+
+describe( 'isEmptyPairStart', () => {
+	const start = { k: 'db (start)', pairId: 37 };
+	const complete = { k: 'db (complete)', pairId: 37 };
+
+	it( 'is true for a start its own complete immediately follows', () => {
+		expect( isEmptyPairStart( [ start, complete ], 0 ) ).toBe( true );
+	} );
+
+	it( 'is false once the pair holds a child', () => {
+		const child = { k: 'query', pairId: 37 };
+		expect( isEmptyPairStart( [ start, child, complete ], 0 ) ).toBe(
+			false
+		);
+	} );
+
+	it( 'is false for a leaf that merely inherits the enclosing pairId', () => {
+		// A leaf carries its parent's pairId, so "next is my complete" alone
+		// would call the row before a complete an empty pair start.
+		const child = { k: 'query', pairId: 37 };
+		expect( isEmptyPairStart( [ start, child, complete ], 1 ) ).toBe(
+			false
+		);
+	} );
+
+	it( 'is false for an unpaired row and past the end of the list', () => {
+		expect( isEmptyPairStart( [ { k: 'note', pairId: null } ], 0 ) ).toBe(
+			false
+		);
+		expect( isEmptyPairStart( [ start ], 0 ) ).toBe( false );
 	} );
 } );
 

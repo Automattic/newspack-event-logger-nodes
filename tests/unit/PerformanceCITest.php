@@ -215,10 +215,6 @@ class PerformanceCITest extends TestCase {
 		\file_put_contents( "{$dir}/0.log", $buffer, LOCK_EX );
 	}
 
-	// -------------------------------------------------------------------------
-	// overview verb
-	// -------------------------------------------------------------------------
-
 	public function test_overview_verb_returns_empty_shape_when_no_data(): void {
 		// No URL buckets seeded — verb still returns the canonical envelope
 		// with zeroed totals + empty leaderboard.
@@ -226,13 +222,14 @@ class PerformanceCITest extends TestCase {
 		$result = VerbHarness::fire( $interpreter, 'performance', 'overview' );
 
 		$this->assertIsArray( $result );
-		$this->assertSame( 0, $result['total_urls'] );
 		$this->assertSame( 0, $result['total_requests'] );
 		$this->assertEquals( 0.0, $result['global_avg_ms'] );
 		$this->assertEquals( 0.0, $result['global_avg_peak_mb'] );
-		$this->assertSame( [], $result['slowest_urls'] );
-		$this->assertSame( [], $result['most_requested'] );
 		$this->assertSame( [], $result['aggregate_time_series'] );
+		// The URL-set facts belong to the `urls` verb now.
+		$this->assertArrayNotHasKey( 'total_urls', $result );
+		$this->assertArrayNotHasKey( 'slowest_urls', $result );
+		$this->assertArrayNotHasKey( 'most_requested', $result );
 	}
 
 	public function test_overview_verb_aggregates_hourly_totals(): void {
@@ -251,30 +248,6 @@ class PerformanceCITest extends TestCase {
 		$this->assertEquals( 500.0, $result['global_avg_ms'] );
 		$this->assertEquals( 10.0, $result['global_avg_peak_mb'] );
 		$this->assertCount( 1, $result['aggregate_time_series'] );
-	}
-
-	public function test_overview_verb_includes_url_index_count(): void {
-		// Seed a URL bucket so the index walks pick something up. Bucket key
-		// is whatever Stats_Store::current_url_bucket returns "now" so the
-		// recent-bucket scan finds it.
-		$store  = new Stats_Store( 0, 86400 );
-		$bucket = $this->current_url_bucket();
-		$store->set_url_bucket( $bucket, [
-			'abc123def456' => [
-				'url'       => '/articles/123',
-				'count'     => 7,
-				'sum_ms'    => 350.0,
-				'last_seen' => 1700000000,
-			],
-		] );
-
-		$interpreter     = new Performance_CI_Node();
-		$result = VerbHarness::fire( $interpreter, 'performance', 'overview' );
-
-		$this->assertSame( 1, $result['total_urls'] );
-		$this->assertCount( 1, $result['most_requested'] );
-		$this->assertSame( '/articles/123', $result['most_requested'][0]['url'] );
-		$this->assertSame( 7, $result['most_requested'][0]['count'] );
 	}
 
 	public function test_overview_verb_rejects_unauthorized(): void {
@@ -462,21 +435,17 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( 0.2, $result['category_time_series'][ $bucket ]['db']['t'] );
 	}
 
-	// -------------------------------------------------------------------------
-	// urls verb
-	// -------------------------------------------------------------------------
-
 	public function test_urls_verb_returns_envelope_when_empty(): void {
 		$interpreter     = new Performance_CI_Node();
 		$result = VerbHarness::fire( $interpreter, 'performance', 'urls' );
 
 		$this->assertIsArray( $result );
 		$this->assertArrayHasKey( 'data', $result );
-		$this->assertArrayHasKey( 'total', $result );
+		$this->assertArrayHasKey( 'rows', $result );
 		$this->assertArrayHasKey( 'limit', $result );
 		$this->assertArrayHasKey( 'offset', $result );
 		$this->assertSame( [], $result['data'] );
-		$this->assertSame( 0, $result['total'] );
+		$this->assertSame( 0, $result['rows'] );
 	}
 
 	public function test_urls_verb_default_limit_is_50(): void {
@@ -502,7 +471,7 @@ class PerformanceCITest extends TestCase {
 	public function test_urls_verb_paginates_and_sorts(): void {
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
-		$store->set_url_bucket( $bucket, [
+		$this->set_url_bucket( $store, $bucket, [
 			'aaaaaaaaaaaa' => [ 'url' => '/a', 'count' => 1, 'sum_ms' => 100.0, 'last_seen' => 1700000001 ],
 			'bbbbbbbbbbbb' => [ 'url' => '/b', 'count' => 5, 'sum_ms' => 500.0, 'last_seen' => 1700000002 ],
 			'cccccccccccc' => [ 'url' => '/c', 'count' => 3, 'sum_ms' => 300.0, 'last_seen' => 1700000003 ],
@@ -516,7 +485,7 @@ class PerformanceCITest extends TestCase {
 			'--sort=count --order=desc --limit=2 --offset=0'
 		);
 
-		$this->assertSame( 3, $result['total'] );
+		$this->assertSame( 3, $result['rows'] );
 		$this->assertCount( 2, $result['data'] );
 		// Desc by count: /b first (5), /c second (3).
 		$this->assertSame( '/b', $result['data'][0]['url'] );
@@ -526,7 +495,7 @@ class PerformanceCITest extends TestCase {
 	public function test_urls_verb_filters_by_search_term(): void {
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
-		$store->set_url_bucket( $bucket, [
+		$this->set_url_bucket( $store, $bucket, [
 			'aaaaaaaaaaaa' => [ 'url' => '/articles/123', 'count' => 1, 'sum_ms' => 50.0, 'last_seen' => 1700000001 ],
 			'bbbbbbbbbbbb' => [ 'url' => '/home', 'count' => 2, 'sum_ms' => 100.0, 'last_seen' => 1700000002 ],
 		] );
@@ -539,21 +508,89 @@ class PerformanceCITest extends TestCase {
 			'--search=article'
 		);
 
-		$this->assertSame( 1, $result['total'] );
+		$this->assertSame( 1, $result['rows'] );
 		$this->assertSame( '/articles/123', $result['data'][0]['url'] );
 	}
 
-	public function test_urls_verb_ignores_a_server_scope_it_cannot_apply(): void {
-		// The URL index is keyed by url_hash and carries no server, which is
-		// why the Overview tile says "(all servers)". The verb used to honour
-		// `--server` by substring-matching the SERVER NAME against the URL
-		// text, so picking a server emptied the table for every site whose
-		// URLs do not contain their own host name.
+	public function test_a_later_bucket_supplies_the_url_an_earlier_one_omitted(): void {
+		$url    = 'https://okgazette.example/jobs/filmtimes/import-film-times';
+		$hash   = Log_Manager::url_hash( $url );
+		$store  = new Stats_Store( 0, 86400 );
+		$older  = Stats_Store::bucket_key( \time() - 600 );
+		$newer  = $this->current_url_bucket();
+		// Buckets merge newest-first, so the one REACHED FIRST is the one
+		// without a URL — the order that pins the row blank.
+		$this->set_url_bucket( $store, $newer, [
+			$hash => [ 'count' => 2, 'sum_ms' => 40.0, 'last_seen' => 2 ],
+		] );
+		$this->set_url_bucket( $store, $older, [
+			$hash => [ 'url' => $url, 'count' => 5, 'sum_ms' => 100.0, 'last_seen' => 1 ],
+		] );
+
+		$result = VerbHarness::fire(
+			new Performance_CI_Node(),
+			'performance',
+			'url_detail',
+			$hash
+		);
+
+		$this->assertSame( $url, $result['stats']['url'] );
+		$this->assertSame( 7, $result['stats']['count'] );
+	}
+
+	public function test_url_detail_returns_recent_matching_requests(): void {
+		// url_detail's `requests` slice walks requests.log for entries whose
+		// url_hash matches. Seed the URL in the memcache index AND two on-disk
+		// requests so the collect + dedup walk runs (not the empty-result skip).
+		$url    = '/recent-list';
+		$hash   = Log_Manager::url_hash( $url );
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
-		$store->set_url_bucket( $bucket, [
-			'cccccccccccc' => [ 'url' => '/reviews/941', 'count' => 7, 'sum_ms' => 311.0, 'last_seen' => 1700000003 ],
-			'dddddddddddd' => [ 'url' => '/events/88', 'count' => 4, 'sum_ms' => 122.0, 'last_seen' => 1700000004 ],
+		$this->set_url_bucket( $store, $bucket, [
+			$hash => [ 'url' => $url, 'count' => 2, 'sum_ms' => 32.0, 'last_seen' => 1700002000 ],
+		] );
+		$this->write_request( [
+			'rid'            => 'rid-recent-a-1234567890123456',
+			'url'            => $url,
+			'timestamp'      => 1700001000,
+			'duration_ms'    => 12,
+			'status_code'    => 200,
+			'peak_mb'        => 2,
+			'request_method' => 'GET',
+		] );
+		$this->write_request( [
+			'rid'            => 'rid-recent-b-1234567890123456',
+			'url'            => $url,
+			'timestamp'      => 1700002000,
+			'duration_ms'    => 20,
+			'status_code'    => 500,
+			'peak_mb'        => 3,
+			'request_method' => 'POST',
+		] );
+
+		$interpreter = new Performance_CI_Node();
+		$result      = VerbHarness::fire( $interpreter, 'performance', 'url_detail', $hash );
+
+		$this->assertCount( 2, $result['requests'] );
+		// Sorted by timestamp DESC → the newest (b, ts 1700002000) leads.
+		$this->assertSame( 'rid-recent-b-1234567890123456', $result['requests'][0]['rid'] );
+	}
+
+	public function test_urls_verb_scopes_rows_to_the_selected_server(): void {
+		// A URL row carries `srv`, its own server dimension, so the table can be
+		// scoped: only URLs that server served survive, and their counts are
+		// that server's, not every server's.
+		$store  = new Stats_Store( 0, 86400 );
+		$bucket = $this->current_url_bucket();
+		$this->set_url_bucket( $store, $bucket, [
+			'cccccccccccc' => [
+				'url' => '/reviews/941', 'count' => 9, 'timed_count' => 9, 'sum_ms' => 900.0, 'last_seen' => 1700000003,
+				'srv' => [ 'alpha.example' => [ 'count' => 2, 'timed_count' => 2, 'sum_ms' => 260.0, 'sum_peak_mb' => 8.0 ], 'beta.example' => [ 'count' => 7, 'timed_count' => 7, 'sum_ms' => 640.0, 'sum_peak_mb' => 21.0 ] ],
+			],
+			'dddddddddddd' => [
+				'url' => '/events/88', 'count' => 4, 'timed_count' => 4, 'sum_ms' => 122.0, 'last_seen' => 1700000004,
+				'srv' => [ 'beta.example' => [ 'count' => 4, 'timed_count' => 4, 'sum_ms' => 122.0, 'sum_peak_mb' => 12.0 ] ],
+			],
 		] );
 
 		$interpreter = new Performance_CI_Node();
@@ -561,27 +598,338 @@ class PerformanceCITest extends TestCase {
 			$interpreter,
 			'performance',
 			'urls',
-			'--server=edge-01'
+			'--server=alpha.example'
 		);
 
-		$this->assertSame( 2, $result['total'] );
+		$this->assertSame( 1, $result['totals']['urls'] );
+		$this->assertSame( '/reviews/941', $result['data'][0]['url'] );
+		$this->assertSame( 2, $result['data'][0]['count'] );
+		$this->assertEqualsWithDelta( 130.0, $result['data'][0]['avg_ms'], 1e-6 );
+	}
+
+	public function test_urls_verb_scopes_the_status_counts_too(): void {
+		// Scoping `count` alone would leave `count_2xx..5xx` describing every
+		// server, so a scoped row could report more classified requests than it
+		// had — and `errors_only`, which is `count` minus those four, would read
+		// negative and hide the row. The split carries the row's SUMMED fields.
+		$store  = new Stats_Store( 0, 86400 );
+		$bucket = $this->current_url_bucket();
+		$this->set_url_bucket( $store, $bucket, [
+			'cccccccccccc' => [
+				'url' => '/mixed', 'count' => 9, 'count_2xx' => 6, 'count_5xx' => 3, 'sum_ms' => 900.0, 'last_seen' => 1700000003,
+				'srv' => [ 'alpha.example' => [ 'count' => 2, 'timed_count' => 2, 'count_2xx' => 1, 'count_5xx' => 1, 'sum_ms' => 260.0 ] ],
+			],
+		] );
+
+		$interpreter = new Performance_CI_Node();
+		$result      = VerbHarness::fire(
+			$interpreter,
+			'performance',
+			'urls',
+			'--server=alpha.example'
+		);
+
+		$this->assertSame( 2, $result['data'][0]['count'] );
+		$this->assertSame( 1, $result['data'][0]['count_2xx'] );
+		$this->assertSame( 1, $result['data'][0]['count_5xx'] );
+	}
+
+	public function test_urls_verb_totals_answer_for_the_filtered_set(): void {
+		// The Overview header renders these numbers, so they must describe the
+		// set the table lists — under the server AND search filters both.
+		// Reading a global total beside a filtered table is what put
+		// `0 Unique URLs` next to 33,049 requests.
+		$store  = new Stats_Store( 0, 86400 );
+		$bucket = $this->current_url_bucket();
+		$this->set_url_bucket( $store, $bucket, [
+			'cccccccccccc' => [
+				'url' => '/reviews/941', 'count' => 9, 'timed_count' => 9, 'sum_ms' => 900.0, 'sum_peak_mb' => 36.0, 'last_seen' => 1700000003,
+				'srv' => [ 'alpha.example' => [ 'count' => 2, 'timed_count' => 2, 'sum_ms' => 260.0, 'sum_peak_mb' => 9.0 ] ],
+			],
+			'dddddddddddd' => [
+				'url' => '/reviews/88', 'count' => 4, 'timed_count' => 4, 'sum_ms' => 122.0, 'sum_peak_mb' => 12.0, 'last_seen' => 1700000004,
+				'srv' => [ 'alpha.example' => [ 'count' => 3, 'timed_count' => 3, 'sum_ms' => 90.0, 'sum_peak_mb' => 7.5 ] ],
+			],
+			'eeeeeeeeeeee' => [
+				'url' => '/events/7', 'count' => 5, 'timed_count' => 5, 'sum_ms' => 500.0, 'sum_peak_mb' => 20.0, 'last_seen' => 1700000005,
+				'srv' => [ 'alpha.example' => [ 'count' => 5, 'timed_count' => 5, 'sum_ms' => 500.0, 'sum_peak_mb' => 20.0 ] ],
+			],
+		] );
+
+		$interpreter = new Performance_CI_Node();
+		$result      = VerbHarness::fire(
+			$interpreter,
+			'performance',
+			'urls',
+			'--server=alpha.example --search=/reviews/'
+		);
+
+		$this->assertSame( 2, $result['totals']['urls'] );
+		$this->assertSame( 5, $result['totals']['requests'] );
+		$this->assertEqualsWithDelta( 70.0, $result['totals']['avg_ms'], 1e-6 );
+		$this->assertEqualsWithDelta( 3.3, $result['totals']['avg_peak_mb'], 1e-6 );
+	}
+
+	public function test_swapping_a_non_array_split_drops_the_row(): void {
+		// Tested directly, because the index merge normalizes a split through
+		// `sum_fields()` before any reader sees it — the hazard is for a caller
+		// handing this public method a raw row. `sum_fields()` SKIPS a non-array
+		// value, so an `isset` guard would leave the swap empty and `array_merge`
+		// would hand back the SITE's counts wearing one server's name.
+		$row = [ 'url' => '/corrupt', 'count' => 9, 'timed_count' => 9, 'sum_ms' => 900.0, 'srv' => [ 'alpha.example' => 'not-an-array' ] ];
+
+		$this->assertNull( Stats_Store::swap_url_server_sums( $row, 'alpha.example' ) );
+	}
+
+	public function test_url_detail_time_series_follows_the_server_scope(): void {
+		// The modal's stats are one server's; its chart is drawn from the same
+		// payload. An unscoped series under a scoped count is the same defect
+		// this change removed from the header, moved to the chart beneath it.
+		$store  = new Stats_Store( 0, 86400 );
+		$bucket = $this->current_url_bucket();
+		$this->set_url_bucket( $store, $bucket, [
+			'cccccccccccc' => [
+				'url' => '/charted', 'count' => 9, 'timed_count' => 9, 'sum_ms' => 900.0, 'last_seen' => 1700000003,
+				'srv' => [
+					'alpha.example' => [ 'count' => 2, 'sum_ms' => 260.0, 'sum_peak_mb' => 8.0 ],
+					'beta.example'  => [ 'count' => 7, 'timed_count' => 7, 'sum_ms' => 640.0, 'sum_peak_mb' => 21.0 ],
+				],
+			],
+		] );
+
+		$result = VerbHarness::fire(
+			new Performance_CI_Node(),
+			'performance',
+			'url_detail',
+			'cccccccccccc --server=alpha.example'
+		);
+
+		$this->assertSame( 2, $result['stats']['count'] );
+		$this->assertSame( 2, $result['stats']['time_series'][ $bucket ]['count'] );
+		$this->assertEqualsWithDelta( 260.0, $result['stats']['time_series'][ $bucket ]['sum_ms'], 1e-6 );
+	}
+
+	public function test_ask_accepts_the_context_it_declares_as_an_option(): void {
+		// The verb declares `context`, so a caller writing `--context=` is
+		// following the schema. Reading context only from the positionals meant
+		// that caller got "missing context" for doing exactly what it said.
+		$rid  = 'ctxrid0000000000';
+		$this->write_request( [
+			'rid' => $rid, 'url' => 'https://example.test/x', 'duration_ms' => 10.0,
+			'entries' => [ [ 'k' => 'span', 'n' => 'wp_loaded', 'd' => 5.0 ] ],
+			'profiles' => [ 'wpdb' => [ 'time' => 0.004, 'count' => 2, 'entries' => [] ] ],
+		] );
+
+		$result = VerbHarness::fire(
+			new Performance_CI_Node(),
+			'performance',
+			'ask',
+			"category:wpdb --context=request:{$rid}:0"
+		);
+
+		// 'request', not 'recent window': only the context path reaches the
+		// per-request board, so this distinguishes the two.
+		$this->assertSame( 'request', $result['scope'] );
+	}
+
+	public function test_ask_category_brief_honours_the_server_scope(): void {
+		// The Time Breakdown an operator clicks Ask from renders
+		// `build_leaderboard( $server )`, so the brief behind it has to read the
+		// same leaderboard. Quoting the whole site's category time under a
+		// surface stamped with one server's name is the defect this fixed for
+		// `url:` — it has to hold for every descriptor that reads a scoped set.
+		$store  = new Stats_Store( 0, 86400 );
+		$bucket = $this->current_url_bucket();
+		$store->set_leaderboard_bucket( $bucket, [
+			'count'        => 4,
+			'sum_req_time' => 1.0,
+			'categories'   => [ 'wpdb' => [ 'samples' => 4, 'sum_time' => 4.0, 'sum_count' => 8, 'entries' => [] ] ],
+		], 'alpha.example' );
+		$store->set_leaderboard_bucket( $bucket, [
+			'count'        => 40,
+			'sum_req_time' => 10.0,
+			'categories'   => [ 'wpdb' => [ 'samples' => 40, 'sum_time' => 400.0, 'sum_count' => 80, 'entries' => [] ] ],
+		] );
+
+		$result = VerbHarness::fire(
+			new Performance_CI_Node(),
+			'performance',
+			'ask',
+			'category:wpdb --server=alpha.example'
+		);
+
+		$this->assertEqualsWithDelta( 1.0, $result['avg_time_ms'], 1e-6 );
+		$this->assertSame( 'recent window on alpha.example', $result['scope'] );
+	}
+
+	public function test_ask_url_brief_honours_the_server_scope(): void {
+		// `pageFacts` stamps the active filters onto every surface it emits, so
+		// a brief that answered site-wide would hand an agent unscoped numbers
+		// labelled as one server's — a worse failure than not scoping at all,
+		// because the label makes it quotable.
+		$store  = new Stats_Store( 0, 86400 );
+		$bucket = $this->current_url_bucket();
+		$this->set_url_bucket( $store, $bucket, [
+			'cccccccccccc' => [
+				'url' => '/asked', 'count' => 9, 'timed_count' => 9, 'sum_ms' => 1800.0, 'last_seen' => 1700000003,
+				'srv' => [ 'alpha.example' => [ 'count' => 2, 'timed_count' => 2, 'sum_ms' => 500.0 ] ],
+			],
+		] );
+
+		$result = VerbHarness::fire(
+			new Performance_CI_Node(),
+			'performance',
+			'ask',
+			'url:cccccccccccc --server=alpha.example'
+		);
+
+		$this->assertSame( 2, $result['stats']['count'] );
+		$this->assertEqualsWithDelta( 250.0, $result['stats']['avg_ms'], 1e-6 );
+	}
+
+	public function test_ask_url_brief_carries_the_measured_average(): void {
+		// The brief is the number an agent quotes, so it reads a DISPLAY row —
+		// the loader emits sums and leaves the means to the projection, and a
+		// reader that takes the loader's output raw reports a confident 0.
+		$store  = new Stats_Store( 0, 86400 );
+		$bucket = $this->current_url_bucket();
+		$this->set_url_bucket( $store, $bucket, [
+			'cccccccccccc' => [ 'url' => '/asked', 'count' => 4, 'timed_count' => 4, 'sum_ms' => 1000.0, 'last_seen' => 1700000003 ],
+		] );
+
+		$result = VerbHarness::fire(
+			new Performance_CI_Node(),
+			'performance',
+			'ask',
+			'url:cccccccccccc'
+		);
+
+		$this->assertEqualsWithDelta( 250.0, $result['stats']['avg_ms'], 1e-6 );
+	}
+
+	public function test_url_detail_scopes_to_the_selected_server(): void {
+		// The row that opens this modal is the selected server's; the modal has
+		// to answer for the same server, or one click turns a scoped table into
+		// a site-wide average under the same URL and the same instant, on two
+		// surfaces too far apart to notice the disagreement.
+		$store  = new Stats_Store( 0, 86400 );
+		$bucket = $this->current_url_bucket();
+		$this->set_url_bucket( $store, $bucket, [
+			'cccccccccccc' => [
+				'url' => '/mixed', 'count' => 9, 'timed_count' => 9, 'sum_ms' => 900.0, 'last_seen' => 1700000003,
+				'srv' => [ 'alpha.example' => [ 'count' => 2, 'timed_count' => 2, 'sum_ms' => 260.0 ] ],
+			],
+		] );
+
+		$result = VerbHarness::fire(
+			new Performance_CI_Node(),
+			'performance',
+			'url_detail',
+			'cccccccccccc --server=alpha.example'
+		);
+
+		$this->assertSame( 2, $result['stats']['count'] );
+		$this->assertEqualsWithDelta( 130.0, $result['stats']['avg_ms'], 1e-6 );
+	}
+
+	public function test_urls_verb_echoes_the_filters_it_applied(): void {
+		// The totals beside these are narrower than the site, and a number
+		// whose scope is not stated is a number that will be read as the site's.
+		// The verb echoes what it actually applied, so the Ask brief describes
+		// the panel rather than guessing at it.
+		$result = VerbHarness::fire(
+			new Performance_CI_Node(),
+			'performance',
+			'urls',
+			'--server=alpha.example --search=/reviews/ --errors_only'
+		);
+
+		$this->assertSame(
+			[
+				'server'          => 'alpha.example',
+				'search'          => '/reviews/',
+				'errors_only'     => true,
+				'include_workers' => false,
+			],
+			$result['filters']
+		);
+	}
+
+	public function test_urls_verb_leaves_worker_traffic_out_by_default(): void {
+		// `$count_global` keeps workers out of every site-wide aggregate — one
+		// long-running job would otherwise dominate the averages — and the
+		// header sums THIS index, so the default view has to agree. The table
+		// hides them too, or the header stops describing what is listed.
+		$store  = new Stats_Store( 0, 86400 );
+		$bucket = $this->current_url_bucket();
+		$this->set_url_bucket( $store, $bucket, [
+			'cccccccccccc' => [ 'url' => '/reader', 'count' => 4, 'timed_count' => 4, 'sum_ms' => 48.0, 'last_seen' => 1700000003 ],
+			'dddddddddddd' => [ 'url' => '/w?reconcile', 'count' => 2, 'timed_count' => 2, 'sum_ms' => 180000.0, 'worker' => true, 'last_seen' => 1700000004 ],
+		] );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' );
+
+		$this->assertSame( 1, $result['totals']['urls'] );
+		$this->assertSame( 4, $result['totals']['requests'] );
+		$this->assertEqualsWithDelta( 12.0, $result['totals']['avg_ms'], 1e-6 );
+		$this->assertSame( [ '/reader' ], \array_column( $result['data'], 'url' ) );
+	}
+
+	public function test_urls_verb_shows_worker_traffic_when_asked(): void {
+		$store  = new Stats_Store( 0, 86400 );
+		$bucket = $this->current_url_bucket();
+		$this->set_url_bucket( $store, $bucket, [
+			'cccccccccccc' => [ 'url' => '/reader', 'count' => 4, 'timed_count' => 4, 'sum_ms' => 48.0, 'last_seen' => 1700000003 ],
+			'dddddddddddd' => [ 'url' => '/w?reconcile', 'count' => 2, 'timed_count' => 2, 'sum_ms' => 180000.0, 'worker' => true, 'last_seen' => 1700000004 ],
+		] );
+
+		$result = VerbHarness::fire(
+			new Performance_CI_Node(),
+			'performance',
+			'urls',
+			'--include_workers'
+		);
+
+		$this->assertSame( 2, $result['totals']['urls'] );
+		$this->assertSame( 6, $result['totals']['requests'] );
+		$this->assertTrue( $result['filters']['include_workers'] );
+	}
+
+	public function test_urls_verb_rate_skips_the_still_filling_bucket(): void {
+		// Req/s averages the 12 COMPLETE buckets: 3,600 requests over an hour is
+		// 1/s. The newest bucket is still accumulating, so counting it would drag
+		// every rate down — the dashboard's own rates have always dropped it, and
+		// the server has to drop the same one to answer the same question.
+		$store = new Stats_Store( 0, 86400 );
+		$now   = \time();
+		$this->set_url_bucket( $store, Stats_Store::bucket_key( $now - 600 ), [
+			'cccccccccccc' => [ 'url' => '/rate', 'count' => 3600, 'timed_count' => 3600, 'sum_ms' => 3600.0, 'last_seen' => $now - 600 ],
+		] );
+		$this->set_url_bucket( $store, Stats_Store::bucket_key( $now ), [
+			'cccccccccccc' => [ 'url' => '/rate', 'count' => 99000, 'timed_count' => 99000, 'sum_ms' => 99000.0, 'last_seen' => $now ],
+		] );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' );
+
+		$this->assertSame( 102600, $result['totals']['requests'] );
+		$this->assertEqualsWithDelta( 1.0, $result['totals']['requests_per_second'], 1e-9 );
 	}
 
 	public function test_urls_verb_filters_errors_only_and_totals_match(): void {
 		// "Errors" = requests no status bucket classified: timeouts and fatals.
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
-		$store->set_url_bucket( $bucket, [
+		$this->set_url_bucket( $store, $bucket, [
 			'aaaaaaaaaaaa' => [
-				'url' => '/clean', 'count' => 9, 'sum_ms' => 90.0, 'last_seen' => 1700000001,
+				'url' => '/clean', 'count' => 9, 'timed_count' => 9, 'sum_ms' => 90.0, 'last_seen' => 1700000001,
 				'count_2xx' => 7, 'count_3xx' => 1, 'count_4xx' => 1, 'count_5xx' => 0,
 			],
 			'bbbbbbbbbbbb' => [
-				'url' => '/timeouts', 'count' => 6, 'sum_ms' => 60.0, 'last_seen' => 1700000002,
+				'url' => '/timeouts', 'count' => 6, 'timed_count' => 6, 'sum_ms' => 60.0, 'last_seen' => 1700000002,
 				'count_2xx' => 2, 'count_3xx' => 0, 'count_4xx' => 0, 'count_5xx' => 0,
 			],
 			'cccccccccccc' => [
-				'url' => '/also-clean', 'count' => 4, 'sum_ms' => 40.0, 'last_seen' => 1700000003,
+				'url' => '/also-clean', 'count' => 4, 'timed_count' => 4, 'sum_ms' => 40.0, 'last_seen' => 1700000003,
 				'count_2xx' => 4, 'count_3xx' => 0, 'count_4xx' => 0, 'count_5xx' => 0,
 			],
 		] );
@@ -595,9 +943,40 @@ class PerformanceCITest extends TestCase {
 		);
 
 		// The footer reads `total`; it must count what is actually rendered.
-		$this->assertSame( 1, $result['total'] );
+		$this->assertSame( 1, $result['totals']['urls'] );
 		$this->assertCount( 1, $result['data'] );
 		$this->assertSame( '/timeouts', $result['data'][0]['url'] );
+	}
+
+	public function test_urls_verb_search_drops_the_folded_aggregate_row(): void {
+		// The folded row stands for many URLs, so a search cannot know whether
+		// its contents match. It is identified by `aggregate` — seeded here
+		// with matching url text, which must NOT be enough to include it.
+		$store  = new Stats_Store( 0, 86400 );
+		$bucket = $this->current_url_bucket();
+		$this->set_url_bucket( $store, $bucket, [
+			'aaaaaaaaaaaa' => [
+				'url' => '/reviews/spring', 'count' => 11, 'timed_count' => 11, 'sum_ms' => 220.0,
+				'last_seen' => 1700000401, 'count_2xx' => 11,
+			],
+			'bbbbbbbbbbbb' => [
+				'url' => '/archive/2019', 'count' => 5, 'timed_count' => 5, 'sum_ms' => 75.0,
+				'last_seen' => 1700000402, 'count_2xx' => 5,
+			],
+			Stats_Store::OTHER_KEY => [
+				'url' => '/reviews/folded', 'count' => 613, 'timed_count' => 613, 'sum_ms' => 9195.0,
+				'last_seen' => 1700000403, 'count_2xx' => 613,
+			],
+		] );
+
+		$interpreter = new Performance_CI_Node();
+		$result      = VerbHarness::fire( $interpreter, 'performance', 'urls', '--search=/reviews/' );
+
+		$this->assertSame( 1, $result['totals']['urls'] );
+		$this->assertCount( 1, $result['data'] );
+		$this->assertSame( '/reviews/spring', $result['data'][0]['url'] );
+		// The 613 folded requests must not reach a scoped total.
+		$this->assertSame( 11, $result['totals']['requests'] );
 	}
 
 	public function test_urls_verb_heals_poisoned_min_ms_sentinel(): void {
@@ -606,7 +985,7 @@ class PerformanceCITest extends TestCase {
 		// display must never surface the sentinel — it heals to 0.
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
-		$store->set_url_bucket( $bucket, [
+		$this->set_url_bucket( $store, $bucket, [
 			'aaaaaaaaaaaa' => [
 				'url'         => '/worker-only',
 				'count'       => 7,
@@ -621,7 +1000,7 @@ class PerformanceCITest extends TestCase {
 		$interpreter     = new Performance_CI_Node();
 		$result = VerbHarness::fire( $interpreter, 'performance', 'urls' );
 
-		$this->assertSame( 1, $result['total'] );
+		$this->assertSame( 1, $result['totals']['urls'] );
 		// JSON round-trip in the verb harness collapses 0.0 → int 0; the
 		// poisoned value would survive as a huge number, so a 0 here proves
 		// the sentinel was rejected.
@@ -637,7 +1016,7 @@ class PerformanceCITest extends TestCase {
 		$bucket_b = $this->current_url_bucket();
 		$bucket_a = Stats_Store::bucket_key( \time() - 600 );
 
-		$store->set_url_bucket( $bucket_a, [
+		$this->set_url_bucket( $store, $bucket_a, [
 			'bbbbbbbbbbbb' => [
 				'url'         => '/mixed',
 				'count'       => 3,
@@ -648,7 +1027,7 @@ class PerformanceCITest extends TestCase {
 				'last_seen'   => 1700000001,
 			],
 		] );
-		$store->set_url_bucket( $bucket_b, [
+		$this->set_url_bucket( $store, $bucket_b, [
 			'bbbbbbbbbbbb' => [
 				'url'         => '/mixed',
 				'count'       => 5,
@@ -663,7 +1042,7 @@ class PerformanceCITest extends TestCase {
 		$interpreter     = new Performance_CI_Node();
 		$result = VerbHarness::fire( $interpreter, 'performance', 'urls' );
 
-		$this->assertSame( 1, $result['total'] );
+		$this->assertSame( 1, $result['totals']['urls'] );
 		$this->assertSame( 42, $result['data'][0]['min_ms'] );
 	}
 
@@ -710,14 +1089,205 @@ class PerformanceCITest extends TestCase {
 		$this->assertStringContainsString( 'not found', \strtolower( $result ) );
 	}
 
+	public function test_a_split_row_elsewhere_does_not_silence_the_scope_guard(): void {
+		// The first post-deploy flush gives ONE row a split while every
+		// pre-deploy bucket keeps split-less rows for the rest of the window.
+		// An index-wide test therefore stops firing almost immediately, which
+		// is nearly the whole transition rather than none of it. The row
+		// answers for itself.
+		$store  = new Stats_Store( 0, 86400 );
+		$bucket = $this->current_url_bucket();
+		$this->set_url_bucket( $store, $bucket, [
+			'facade99beef' => [
+				'url'         => '/legacy/no-split',
+				'count'       => 37,
+				'timed_count' => 37,
+				'sum_ms'      => 1480.0,
+				'last_seen'   => 1700000999,
+			],
+			'beefcafe1234' => [
+				'url'         => '/fresh/with-split',
+				'count'       => 11,
+				'timed_count' => 11,
+				'sum_ms'      => 220.0,
+				'last_seen'   => 1700000999,
+				'srv'         => [ 'edge-19' => [ 'count' => 11, 'timed_count' => 11, 'sum_ms' => 220.0 ] ],
+			],
+		] );
+
+		$result = VerbHarness::fire(
+			new Performance_CI_Node(),
+			'performance',
+			'url_detail',
+			'facade99beef --server=edge-19'
+		);
+
+		$this->assertIsString( $result );
+		$this->assertStringNotContainsString( 'not found', \strtolower( $result ) );
+		$this->assertStringContainsString( 'edge-19', $result );
+	}
+
+	public function test_the_other_row_is_marked_as_an_aggregate(): void {
+		// It stands for many URLs, so it is not one: its key is not a url_hash
+		// and `url_detail` cannot answer for it. The row says so rather than
+		// leaving the table to offer a link that errors.
+		$store  = new Stats_Store( 0, 86400 );
+		$bucket = $this->current_url_bucket();
+		$this->set_url_bucket( $store, $bucket, [
+			'cccccccccccc'         => [ 'url' => '/real', 'count' => 3, 'timed_count' => 3, 'sum_ms' => 300.0, 'last_seen' => 1700000003 ],
+			Stats_Store::OTHER_KEY => [ 'count' => 40, 'timed_count' => 40, 'sum_ms' => 4000.0, 'last_seen' => 1700000004 ],
+		] );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' );
+
+		$rows = [];
+		foreach ( $result['data'] as $row ) {
+			$rows[ $row['hash'] ] = $row;
+		}
+		$this->assertTrue( $rows[ Stats_Store::OTHER_KEY ]['aggregate'] );
+		$this->assertFalse( $rows['cccccccccccc']['aggregate'] );
+		// Its REQUESTS count — that is the point of folding rather than
+		// dropping — but it is not itself a unique URL.
+		$this->assertSame( 43, $result['totals']['requests'] );
+		$this->assertSame( 1, $result['totals']['urls'] );
+	}
+
+	public function test_the_worker_overflow_row_is_an_aggregate_too(): void {
+		// The fold emits TWO overflow rows, because one cannot answer a filter
+		// about a set that mixes worker and reader traffic. A reader testing
+		// only the first key renders the second as an ordinary clickable row —
+		// with no URL, counted as a unique URL, and answering a click with
+		// "invalid hash format".
+		$store  = new Stats_Store( 0, 86400 );
+		$bucket = $this->current_url_bucket();
+		$this->set_url_bucket( $store, $bucket, [
+			'dddddddddddd'                => [ 'url' => '/real', 'count' => 7, 'timed_count' => 7, 'sum_ms' => 700.0, 'last_seen' => 1700000003 ],
+			Stats_Store::OTHER_WORKER_KEY => [ 'count' => 91, 'timed_count' => 91, 'sum_ms' => 9100.0, 'worker' => true, 'last_seen' => 1700000004 ],
+		] );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--include_workers=1' );
+
+		$rows = [];
+		foreach ( $result['data'] as $row ) {
+			$rows[ $row['hash'] ] = $row;
+		}
+		$this->assertTrue( $rows[ Stats_Store::OTHER_WORKER_KEY ]['aggregate'] );
+		$this->assertSame( 98, $result['totals']['requests'] );
+		$this->assertSame( 1, $result['totals']['urls'] );
+	}
+
+	public function test_the_errors_filter_does_not_admit_the_whole_folded_tail(): void {
+		// The overflow row stands for hundreds of URLs, and the predicate is a
+		// ROW test: one timeout anywhere in that tail makes the row look like
+		// an erroring URL, and every non-error request it folded then lands in
+		// an errors-only total. A folded row cannot answer a per-URL question.
+		$store  = new Stats_Store( 0, 86400 );
+		$bucket = $this->current_url_bucket();
+		$this->set_url_bucket( $store, $bucket, [
+			'0badc0de1234'         => [ 'url' => '/erroring', 'count' => 5, 'timed_count' => 5, 'sum_ms' => 50.0, 'count_2xx' => 4, 'last_seen' => 1700000003 ],
+			Stats_Store::OTHER_KEY => [ 'count' => 900, 'timed_count' => 900, 'sum_ms' => 9000.0, 'count_2xx' => 899, 'last_seen' => 1700000004 ],
+		] );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--errors_only=1' );
+
+		$this->assertSame( 5, $result['totals']['requests'] );
+		$this->assertSame( 1, $result['totals']['urls'] );
+	}
+
+	public function test_a_url_row_carries_no_seconds_field_fallback(): void {
+		// `sum_req_time` is the leaderboard's field, in SECONDS. A URL row has
+		// carried `sum_ms` for releases; reading the other one as a fallback
+		// multiplies a leaderboard-shaped value by 1000 onto a URL's mean.
+		$store  = new Stats_Store( 0, 86400 );
+		$bucket = $this->current_url_bucket();
+		$this->set_url_bucket( $store, $bucket, [
+			'5ec0d5fa11ba' => [ 'url' => '/seconds-era', 'count' => 4, 'sum_req_time' => 8.0, 'last_seen' => 1700000003 ],
+		] );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' );
+
+		$row = $result['data'][0] ?? [];
+		$this->assertSame( '/seconds-era', $row['url'] ?? '' );
+		$this->assertSame( 0.0, (float) ( $row['avg_ms'] ?? -1 ), 'no milliseconds are invented from it' );
+	}
+
+	public function test_a_row_with_no_timed_count_divides_by_nothing(): void {
+		// `timed_count` has ridden every URL row for releases. Falling back to
+		// the whole count for a row without it invents a denominator from a
+		// shape nothing writes.
+		$store  = new Stats_Store( 0, 86400 );
+		$bucket = $this->current_url_bucket();
+		$this->set_url_bucket( $store, $bucket, [
+			'facade0ffee1' => [ 'url' => '/untimed', 'count' => 5, 'sum_ms' => 750.0, 'last_seen' => 1700000004 ],
+		] );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' );
+
+		$this->assertSame( 0.0, (float) ( $result['totals']['avg_ms'] ?? -1 ) );
+	}
+
+	public function test_the_mean_divides_by_timed_requests_not_by_every_request(): void {
+		// Every other fixture seeds timed_count === count, so both denominators
+		// agree and neither discriminates. Here they differ: 400ms over the 4
+		// requests that recorded a duration is 100, over all 10 it is 40.
+		$store  = new Stats_Store( 0, 86400 );
+		$bucket = $this->current_url_bucket();
+		$this->set_url_bucket( $store, $bucket, [
+			'd1ff3d3n0m1n' => [
+				'url'         => '/mostly-timed-out',
+				'count'       => 10,
+				'timed_count' => 4,
+				'sum_ms'      => 400.0,
+				'last_seen'   => 1700000005,
+			],
+		] );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' );
+
+		$this->assertEqualsWithDelta( 100.0, $result['totals']['avg_ms'], 0.01 );
+		$this->assertEqualsWithDelta( 100.0, $result['data'][0]['avg_ms'], 0.01 );
+		$this->assertSame( 10, $result['totals']['requests'] );
+	}
+
+	public function test_url_detail_says_the_scope_is_unanswerable_not_missing(): void {
+		// A pre-upgrade index carries no per-server split, so a scoped read of
+		// a URL that plainly exists projects to nothing. Reporting that as
+		// "URL not found" sends the reader hunting a URL they are looking at;
+		// for one retention window after deploy the honest answer is that this
+		// index cannot answer THAT question yet.
+		$store  = new Stats_Store( 0, 86400 );
+		$bucket = $this->current_url_bucket();
+		$this->set_url_bucket( $store, $bucket, [
+			'facade99beef' => [
+				'url'         => '/legacy/no-split',
+				'count'       => 37,
+				'timed_count' => 37,
+				'sum_ms'      => 1480.0,
+				'p95_ms'      => 64.0,
+				'last_seen'   => 1700000999,
+			],
+		] );
+
+		$result = VerbHarness::fire(
+			new Performance_CI_Node(),
+			'performance',
+			'url_detail',
+			'facade99beef --server=edge-19'
+		);
+
+		$this->assertIsString( $result );
+		$this->assertStringNotContainsString( 'not found', \strtolower( $result ) );
+		$this->assertStringContainsString( 'edge-19', $result );
+	}
+
 	public function test_url_detail_verb_returns_stats_and_default_flame(): void {
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
-		$store->set_url_bucket( $bucket, [
+		$this->set_url_bucket( $store, $bucket, [
 			'abc123def456' => [
 				'url'       => '/articles/777',
 				'count'     => 9,
-				'sum_ms'    => 450.0,
+				'timed_count' => 9, 'sum_ms'    => 450.0,
 				'p95_ms'    => 80.0,
 				'last_seen' => 1700000999,
 			],
@@ -747,11 +1317,11 @@ class PerformanceCITest extends TestCase {
 	public function test_url_detail_verb_includes_aggregate_flame_when_seeded(): void {
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
-		$store->set_url_bucket( $bucket, [
+		$this->set_url_bucket( $store, $bucket, [
 			'cafebabe1234' => [
 				'url'       => '/x',
 				'count'     => 1,
-				'sum_ms'    => 10.0,
+				'timed_count' => 1, 'sum_ms'    => 10.0,
 				'last_seen' => 1700001000,
 			],
 		] );
@@ -789,16 +1359,16 @@ class PerformanceCITest extends TestCase {
 
 	public function test_url_detail_verb_includes_stats_time_series(): void {
 		// `stats.time_series` is consumed by UrlDetailView L232/L273 +
-		// PerformanceDashboard.js L727-741 (urlRequestsPerSecond computation).
+		// UrlDetailView's chart.
 		// Legacy PerfUrlsController::find_url_stats L228 calls `build_url_time_series`
 		// which walks the recent buckets keyed by hash. The interpreter verb must too.
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
-		$store->set_url_bucket( $bucket, [
+		$this->set_url_bucket( $store, $bucket, [
 			'abc123def456' => [
 				'url'       => '/x',
 				'count'     => 3,
-				'sum_ms'    => 150.0,
+				'timed_count' => 3, 'sum_ms'    => 150.0,
 				'last_seen' => 1700001000,
 			],
 		] );
@@ -821,11 +1391,11 @@ class PerformanceCITest extends TestCase {
 		// (legacy L195, L177-181). Consumed by fetchUrlBreakdown L213.
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
-		$store->set_url_bucket( $bucket, [
+		$this->set_url_bucket( $store, $bucket, [
 			'abc123def456' => [
 				'url'       => '/x',
 				'count'     => 1,
-				'sum_ms'    => 10.0,
+				'timed_count' => 1, 'sum_ms'    => 10.0,
 				'last_seen' => 1700001000,
 			],
 		] );
@@ -850,11 +1420,11 @@ class PerformanceCITest extends TestCase {
 		// fetchUrlCategories L237.
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
-		$store->set_url_bucket( $bucket, [
+		$this->set_url_bucket( $store, $bucket, [
 			'abc123def456' => [
 				'url'       => '/x',
 				'count'     => 1,
-				'sum_ms'    => 10.0,
+				'timed_count' => 1, 'sum_ms'    => 10.0,
 				'last_seen' => 1700001000,
 			],
 		] );
@@ -878,8 +1448,8 @@ class PerformanceCITest extends TestCase {
 		// `in_array(...,DIMENSIONS,true)` guard).
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
-		$store->set_url_bucket( $bucket, [
-			'abc123def456' => [ 'url' => '/x', 'count' => 1, 'sum_ms' => 10.0, 'last_seen' => 1700001000 ],
+		$this->set_url_bucket( $store, $bucket, [
+			'abc123def456' => [ 'url' => '/x', 'count' => 1, 'timed_count' => 1, 'sum_ms' => 10.0, 'last_seen' => 1700001000 ],
 		] );
 
 		$interpreter     = new Performance_CI_Node();
@@ -1375,11 +1945,11 @@ class PerformanceCITest extends TestCase {
 	public function test_ask_assembles_a_url_brief(): void {
 		$hash  = Log_Manager::url_hash( '/asked-url' );
 		$store = new Stats_Store( 0, 86400 );
-		$store->set_url_bucket( $this->current_url_bucket(), [
+		$this->set_url_bucket( $store, $this->current_url_bucket(), [
 			$hash => [
 				'url'       => '/asked-url',
 				'count'     => 7,
-				'sum_ms'    => 6300.0,
+				'timed_count' => 7, 'sum_ms'    => 6300.0,
 				'last_seen' => 1700000000,
 			],
 		] );
@@ -1673,27 +2243,6 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( [ 'pattern' => '/dowser/' ], $ref->invoke( null, [ 'blob' => new \stdClass(), 'pattern' => '/dowser/' ] ) );
 	}
 
-	public function test_sanitize_settings_value_float_bounds(): void {
-		// The `set` whitelist no longer maps any option to int/float (the
-		// auto-tune thresholds moved to per-rule fields), so the sanitizer's
-		// float branch is exercised directly.
-		$ref = new \ReflectionMethod( Performance_CI_Node::class, 'sanitize_settings_value' );
-
-		$this->assertEqualsWithDelta( 1.5, $ref->invoke( null, '1.5', 'float' ), 0.001 );
-		$this->assertNull( $ref->invoke( null, 'notafloat', 'float' ) );
-		// > SETTINGS_FLOAT_MAX (86400s) → rejected.
-		$this->assertNull( $ref->invoke( null, 99999, 'float' ) );
-	}
-
-	public function test_sanitize_settings_value_int_bounds(): void {
-		$ref = new \ReflectionMethod( Performance_CI_Node::class, 'sanitize_settings_value' );
-
-		$this->assertSame( 42, $ref->invoke( null, '42', 'int' ) );
-		$this->assertNull( $ref->invoke( null, 'notanumber', 'int' ) );
-		// > SETTINGS_INT_MAX (2^30) → rejected.
-		$this->assertNull( $ref->invoke( null, 2000000000, 'int' ) );
-	}
-
 	public function test_set_verb_rejects_unknown_option(): void {
 		$interpreter = new Performance_CI_Node();
 		$result      = VerbHarness::fire(
@@ -1789,8 +2338,8 @@ class PerformanceCITest extends TestCase {
 		// Out-of-whitelist sort/order silently fall back to count/desc.
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
-		$store->set_url_bucket( $bucket, [
-			'aaaaaaaaaaaa' => [ 'url' => '/only-host', 'count' => 3, 'sum_ms' => 30.0, 'last_seen' => 1700000001 ],
+		$this->set_url_bucket( $store, $bucket, [
+			'aaaaaaaaaaaa' => [ 'url' => '/only-host', 'count' => 3, 'timed_count' => 3, 'sum_ms' => 30.0, 'last_seen' => 1700000001 ],
 		] );
 
 		$interpreter = new Performance_CI_Node();
@@ -1801,16 +2350,16 @@ class PerformanceCITest extends TestCase {
 			'--sort=bogus --order=bogus'
 		);
 
-		$this->assertSame( 1, $result['total'] );
+		$this->assertSame( 1, $result['totals']['urls'] );
 		$this->assertSame( '/only-host', $result['data'][0]['url'] );
 	}
 
 	public function test_urls_verb_sorts_ascending(): void {
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
-		$store->set_url_bucket( $bucket, [
-			'aaaaaaaaaaaa' => [ 'url' => '/a', 'count' => 5, 'sum_ms' => 500.0, 'last_seen' => 1700000001 ],
-			'bbbbbbbbbbbb' => [ 'url' => '/b', 'count' => 1, 'sum_ms' => 100.0, 'last_seen' => 1700000002 ],
+		$this->set_url_bucket( $store, $bucket, [
+			'aaaaaaaaaaaa' => [ 'url' => '/a', 'count' => 5, 'timed_count' => 5, 'sum_ms' => 500.0, 'last_seen' => 1700000001 ],
+			'bbbbbbbbbbbb' => [ 'url' => '/b', 'count' => 1, 'timed_count' => 1, 'sum_ms' => 100.0, 'last_seen' => 1700000002 ],
 		] );
 
 		$interpreter = new Performance_CI_Node();
@@ -1856,8 +2405,8 @@ class PerformanceCITest extends TestCase {
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
 		// No 'url' key — the shape the sha256 fallback existed to cover.
-		$store->set_url_bucket( $bucket, [
-			$hash => [ 'count' => 3, 'sum_req_time' => 0.9, 'last_seen' => 1700000000 ],
+		$this->set_url_bucket( $store, $bucket, [
+			$hash => [ 'count' => 3, 'timed_count' => 3, 'sum_ms' => 900.0, 'last_seen' => 1700000000 ],
 		] );
 
 		$result = VerbHarness::fire(
@@ -1870,7 +2419,6 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( $hash, $result['stats']['hash'] );
 		// No `url` field in the row: blank, never the key standing in for one.
 		$this->assertSame( '', $result['stats']['url'] );
-		// Legacy `sum_req_time` is seconds: 0.9s over 3 = 300ms.
 		$this->assertEqualsWithDelta( 300.0, $result['stats']['avg_ms'], 0.01 );
 	}
 
@@ -1881,110 +2429,19 @@ class PerformanceCITest extends TestCase {
 		$hash     = 'abcabcabc123';
 		$bucket_a = Stats_Store::bucket_key( \time() - 600 );
 		$bucket_b = $this->current_url_bucket();
-		$store->set_url_bucket( $bucket_a, [
+		$this->set_url_bucket( $store, $bucket_a, [
 			$hash => [ 'url' => '/m', 'count' => 2, 'timed_count' => 2, 'sum_ms' => 200.0, 'min_ms' => 80, 'max_ms' => 100.0, 'last_seen' => 1 ],
 		] );
-		$store->set_url_bucket( $bucket_b, [
+		$this->set_url_bucket( $store, $bucket_b, [
 			$hash => [ 'url' => '/m', 'count' => 3, 'timed_count' => 3, 'sum_ms' => 300.0, 'min_ms' => 30, 'max_ms' => 120.0, 'last_seen' => 2 ],
 		] );
 
 		$interpreter = new Performance_CI_Node();
 		$result      = VerbHarness::fire( $interpreter, 'performance', 'urls' );
 
-		$this->assertSame( 1, $result['total'] );
+		$this->assertSame( 1, $result['totals']['urls'] );
 		$this->assertSame( 30, $result['data'][0]['min_ms'] );
 	}
-
-	/**
-	 * Whichever bucket names the URL wins. Buckets merge in fan-out order, so
-	 * a row that reaches the merge first without a `url` must not pin the
-	 * catalog entry blank for every later bucket that does carry one.
-	 */
-	public function test_a_later_bucket_supplies_the_url_an_earlier_one_omitted(): void {
-		$url    = 'https://okgazette.example/jobs/filmtimes/import-film-times';
-		$hash   = Log_Manager::url_hash( $url );
-		$store  = new Stats_Store( 0, 86400 );
-		$older  = Stats_Store::bucket_key( \time() - 600 );
-		$newer  = $this->current_url_bucket();
-		// Buckets merge newest-first, so the one REACHED FIRST is the one
-		// without a URL — the order that pins the row blank.
-		$store->set_url_bucket( $newer, [
-			$hash => [ 'count' => 2, 'sum_ms' => 40.0, 'last_seen' => 2 ],
-		] );
-		$store->set_url_bucket( $older, [
-			$hash => [ 'url' => $url, 'count' => 5, 'sum_ms' => 100.0, 'last_seen' => 1 ],
-		] );
-
-		$result = VerbHarness::fire(
-			new Performance_CI_Node(),
-			'performance',
-			'url_detail',
-			$hash
-		);
-
-		$this->assertSame( $url, $result['stats']['url'] );
-		$this->assertSame( 7, $result['stats']['count'] );
-	}
-
-	// ── find_recent_requests_for_url (disk walk for a known URL) ─────────────
-
-	public function test_url_detail_returns_recent_matching_requests(): void {
-		// url_detail's `requests` slice walks requests.log for entries whose
-		// url_hash matches. Seed the URL in the memcache index AND two on-disk
-		// requests so the collect + dedup walk runs (not the empty-result skip).
-		$url    = '/recent-list';
-		$hash   = Log_Manager::url_hash( $url );
-		$store  = new Stats_Store( 0, 86400 );
-		$bucket = $this->current_url_bucket();
-		$store->set_url_bucket( $bucket, [
-			$hash => [ 'url' => $url, 'count' => 2, 'sum_ms' => 32.0, 'last_seen' => 1700002000 ],
-		] );
-		$this->write_request( [
-			'rid'            => 'rid-recent-a-1234567890123456',
-			'url'            => $url,
-			'timestamp'      => 1700001000,
-			'duration_ms'    => 12,
-			'status_code'    => 200,
-			'peak_mb'        => 2,
-			'request_method' => 'GET',
-		] );
-		$this->write_request( [
-			'rid'            => 'rid-recent-b-1234567890123456',
-			'url'            => $url,
-			'timestamp'      => 1700002000,
-			'duration_ms'    => 20,
-			'status_code'    => 500,
-			'peak_mb'        => 3,
-			'request_method' => 'POST',
-		] );
-
-		$interpreter = new Performance_CI_Node();
-		$result      = VerbHarness::fire( $interpreter, 'performance', 'url_detail', $hash );
-
-		$this->assertCount( 2, $result['requests'] );
-		// Sorted by timestamp DESC → the newest (b, ts 1700002000) leads.
-		$this->assertSame( 'rid-recent-b-1234567890123456', $result['requests'][0]['rid'] );
-	}
-
-	public function test_url_detail_time_series_accepts_sum_req_time_buckets(): void {
-		// build_url_time_series accepts StatsAggregator buckets that carry
-		// `sum_req_time` (seconds) rather than `sum_ms`.
-		$hash   = 'deadbeef0001';
-		$store  = new Stats_Store( 0, 86400 );
-		$bucket = $this->current_url_bucket();
-		$store->set_url_bucket( $bucket, [
-			$hash => [ 'url' => '/agg-detail', 'count' => 2, 'sum_req_time' => 0.4, 'last_seen' => 1700000000 ],
-		] );
-
-		$interpreter = new Performance_CI_Node();
-		$result      = VerbHarness::fire( $interpreter, 'performance', 'url_detail', $hash );
-
-		$this->assertArrayHasKey( $bucket, $result['stats']['time_series'] );
-		// sum_ms derived from sum_req_time*1000 = 400.
-		$this->assertEqualsWithDelta( 400.0, $result['stats']['time_series'][ $bucket ]['sum_ms'], 0.01 );
-	}
-
-	// ── shared memoized index read (slice_verb decomposition) ───────────────
 
 	public function test_index_memo_is_per_request_not_shared_across_instances(): void {
 		// The memo is per-CI-instance (per request). A fresh Performance_CI_Node
@@ -1998,11 +2455,11 @@ class PerformanceCITest extends TestCase {
 		};
 
 		try {
-			VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview' );
+			VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' );
 			// Each fire() builds a fresh request-scope graph; reset Core between
 			// the two so the second _router/_command_interpreter don't collide.
 			VerbHarness::reset();
-			VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview' );
+			VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' );
 			$this->assertSame( 2, $calls, 'each request (instance) must re-read the index' );
 		} finally {
 			Performance_CI_Node::$load_index = $original;
@@ -2050,13 +2507,16 @@ class PerformanceCITest extends TestCase {
 	}
 
 	public function test_urls_verb_declares_sort_paging_filter_args(): void {
-		// urls reads sort/order/limit/offset/search/errors_only — all optional.
-		// No `server`: the index carries none, so it cannot be scoped by one.
+		// urls reads sort/order/limit/offset/search/server/errors_only and
+		// include_workers — all optional. `include_workers` opts IN because its
+		// default EXCLUDES, unlike `errors_only`, which opts in to narrow.
 		$args = self::args_by_name( 'urls' );
 		$this->assertSame(
-			[ 'sort', 'order', 'limit', 'offset', 'search', 'errors_only' ],
+			[ 'sort', 'order', 'limit', 'offset', 'search', 'server', 'errors_only', 'include_workers' ],
 			\array_keys( $args )
 		);
+		$this->assertSame( 'bool', $args['include_workers']['type'] );
+		$this->assertFalse( $args['include_workers']['default'] );
 		$this->assertSame( 'bool', $args['errors_only']['type'] );
 		$this->assertSame( 'string', $args['sort']['type'] );
 		$this->assertSame( 'string', $args['order']['type'] );
@@ -2065,6 +2525,7 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( 'int', $args['offset']['type'] );
 		$this->assertSame( 0, $args['offset']['default'] );
 		$this->assertSame( 'string', $args['search']['type'] );
+		$this->assertSame( 'string', $args['server']['type'] );
 		foreach ( $args as $arg ) {
 			$this->assertFalse( $arg['required'] );
 		}
@@ -2072,12 +2533,15 @@ class PerformanceCITest extends TestCase {
 
 	public function test_url_detail_verb_declares_required_hash_plus_filters(): void {
 		// url_detail requires hash (regex check throws on empty/bad) + optional
-		// breakdown/categories.
+		// breakdown/server/categories. `server` scopes it the way it scopes the
+		// table this modal opens from.
 		$args = self::args_by_name( 'url_detail' );
-		$this->assertSame( [ 'hash', 'breakdown', 'categories' ], \array_keys( $args ) );
+		$this->assertSame( [ 'hash', 'breakdown', 'server', 'categories' ], \array_keys( $args ) );
 		$this->assertSame( 'string', $args['hash']['type'] );
 		$this->assertTrue( $args['hash']['required'] );
 		$this->assertFalse( $args['breakdown']['required'] );
+		$this->assertSame( 'string', $args['server']['type'] );
+		$this->assertFalse( $args['server']['required'] );
 		$this->assertSame( 'bool', $args['categories']['type'] );
 		$this->assertFalse( $args['categories']['required'] );
 	}
@@ -2151,8 +2615,9 @@ class PerformanceCITest extends TestCase {
 		$this->assertNotSame( '', $dir, 'the shipped topology declares a mirror partition' );
 
 		$bucket = Stats_Store::bucket_key( \time() );
-		$key    = Stats_Store::entry_key( 0, 'urls:' . $bucket );
-		$rows   = [ 'ab12cd34ef56' => [ 'url' => 'https://example.test/jobs/import-film-times', 'count' => 2194 ] ];
+		$hash   = 'ab12cd34ef56';
+		$key    = Stats_Store::entry_key( 0, 'urls:' . Stats_Store::url_shard( $hash ) . ':' . $bucket );
+		$rows   = [ $hash => [ 'url' => 'https://example.test/jobs/import-film-times', 'count' => 2194 ] ];
 
 		$mirror = new \Newspack_Nodes\Partition_Node();
 		$mirror->arguments( [ $dir, '67108864' ] );
@@ -2173,4 +2638,176 @@ class PerformanceCITest extends TestCase {
 		$urls = \array_column( $result['data'] ?? [], 'url' );
 		$this->assertContains( 'https://example.test/jobs/import-film-times', $urls );
 	}
+
+	// ── disk-walk fan-out, index-row shape, leaderboard arithmetic ───────────
+
+	/**
+	 * The flame lookup fans across EVERY flame partition: the builder writes to
+	 * whichever one it is wired into, so a flame for a p0 request can land in p2.
+	 */
+	public function test_request_detail_merges_a_flame_written_to_another_partition(): void {
+		$this->activate_shipped_topology( 'performance', 3 );
+		$rid = $this->write_request( [
+			'rid'            => 'rid-flame-elsewhere-00000000001',
+			'url'            => '/flame-in-p2',
+			'timestamp'      => 1700003100,
+			'duration_ms'    => 27,
+			'status_code'    => 200,
+			'peak_mb'        => 4,
+			'request_method' => 'GET',
+		] );
+		$this->write_flame(
+			[
+				'rid'      => $rid,
+				'url_hash' => Log_Manager::url_hash( '/flame-in-p2' ),
+				'flame'    => [ 'name' => 'request', 'value' => 27, 'children' => [] ],
+			],
+			2
+		);
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'request_detail', $rid );
+
+		$this->assertIsArray( $result );
+		$this->assertSame( 27, $result['flame_data']['flame']['value'] );
+	}
+
+	/**
+	 * The recent-requests walk collects across every request partition, and the
+	 * partition index it stamps is the one the entry was READ from.
+	 */
+	public function test_url_detail_collects_recent_requests_from_every_partition(): void {
+		$this->activate_shipped_topology( 'performance', 3 );
+		$url   = '/spread-across-partitions';
+		$hash  = Log_Manager::url_hash( $url );
+		$store = new Stats_Store( 0, 86400 );
+		$this->set_url_bucket( $store, $this->current_url_bucket(), [
+			$hash => [ 'url' => $url, 'count' => 2, 'timed_count' => 2, 'sum_ms' => 61.0, 'last_seen' => 1700003300 ],
+		] );
+		$this->write_request(
+			[
+				'rid'            => 'rid-spread-p0-000000000000001',
+				'url'            => $url,
+				'timestamp'      => 1700003200,
+				'duration_ms'    => 29,
+				'status_code'    => 200,
+				'peak_mb'        => 2,
+				'request_method' => 'GET',
+			],
+			0
+		);
+		$this->write_request(
+			[
+				'rid'            => 'rid-spread-p2-000000000000001',
+				'url'            => $url,
+				'timestamp'      => 1700003300,
+				'duration_ms'    => 32,
+				'status_code'    => 503,
+				'peak_mb'        => 6,
+				'request_method' => 'POST',
+			],
+			2
+		);
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'url_detail', $hash );
+
+		$this->assertCount( 2, $result['requests'] );
+		$this->assertSame( 'rid-spread-p2-000000000000001', $result['requests'][0]['rid'] );
+		$this->assertSame( 2, $result['requests'][0]['partition'] );
+		$this->assertSame( 0, $result['requests'][1]['partition'] );
+	}
+
+	/**
+	 * The loader emits the recency fields under the names the projection and the
+	 * dashboard read — `recent_count` / `last_updated`, never the bucket's own
+	 * `recent` / `last_seen` — plus the `aggregate` flag and a defaulted min_ms.
+	 */
+	public function test_the_index_row_carries_the_projections_field_names(): void {
+		$recent_bucket = Stats_Store::retention_buckets( 86400, \time() )[1];
+		$store         = new Stats_Store( 0, 86400 );
+		$this->set_url_bucket( $store, $recent_bucket, [
+			'c0ffee123456' => [
+				'url'         => '/named-fields',
+				'count'       => 9,
+				'timed_count' => 9,
+				'sum_ms'      => 333.0,
+				'min_ms'      => 17,
+				'last_seen'   => 1711111111,
+			],
+		] );
+
+		$rows = Performance_CI_Node::load_index_default();
+
+		$row = \array_values( \array_filter( $rows, static fn ( $r ) => 'c0ffee123456' === $r['hash'] ) )[0] ?? null;
+		$this->assertIsArray( $row );
+		$this->assertSame( 1711111111, $row['last_updated'] );
+		$this->assertSame( 9, $row['recent_count'] );
+		$this->assertSame( 17.0, $row['min_ms'] );
+		$this->assertFalse( $row['aggregate'] );
+		$this->assertArrayNotHasKey( 'last_seen', $row, 'the bucket name must not reach the projection' );
+		$this->assertArrayNotHasKey( 'recent', $row, 'the bucket name must not reach the projection' );
+	}
+
+	/** A row with no timed bucket to fold reports min_ms 0 rather than a missing key. */
+	public function test_the_index_row_defaults_min_ms_when_nothing_timed_folded(): void {
+		$store = new Stats_Store( 0, 86400 );
+		$this->set_url_bucket( $store, $this->current_url_bucket(), [
+			'facade000777' => [
+				'url'         => '/never-timed',
+				'count'       => 6,
+				'timed_count' => 0,
+				'min_ms'      => 91,
+				'last_seen'   => 1711111222,
+			],
+		] );
+
+		$rows = Performance_CI_Node::load_index_default();
+
+		$row = \array_values( \array_filter( $rows, static fn ( $r ) => 'facade000777' === $r['hash'] ) )[0] ?? null;
+		$this->assertIsArray( $row );
+		$this->assertSame( 0.0, $row['min_ms'], 'an untimed bucket must not fold its min_ms sentinel' );
+	}
+
+	/**
+	 * The leaderboard reader sums each category's own totals across buckets and
+	 * leaves `entries` alone — the dashboard never reads a global category's
+	 * entries, and folding them would carry every appearance in the window.
+	 */
+	public function test_the_leaderboard_sums_categories_without_folding_entries(): void {
+		$window = Stats_Store::retention_buckets( 86400, \time() );
+		$store  = new Stats_Store( 0, 86400 );
+		$store->set_leaderboard_bucket( $window[0], [
+			'count'        => 4,
+			'sum_req_time' => 8.0,
+			'categories'   => [
+				'db' => [
+					'samples'   => 3,
+					'sum_time'  => 1.5,
+					'sum_count' => 6.0,
+					'entries'   => [ 'wpdb::query' => [ 0.9, 3.0, 3 ] ],
+				],
+			],
+		] );
+		$store->set_leaderboard_bucket( $window[1], [
+			'count'        => 6,
+			'sum_req_time' => 12.0,
+			'categories'   => [
+				'db' => [
+					'samples'   => 4,
+					'sum_time'  => 2.5,
+					'sum_count' => 10.0,
+					'entries'   => [ 'wpdb::get_row' => [ 1.1, 4.0, 4 ] ],
+				],
+			],
+		] );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview' );
+
+		$board = $result['global_leaderboard'];
+		$this->assertSame( 10, $board['count'] );
+		$this->assertSame( 7, $board['categories']['db']['samples'] );
+		$this->assertEqualsWithDelta( 0.4, $board['categories']['db']['time'], 0.0001 );
+		$this->assertEqualsWithDelta( 1.6, $board['categories']['db']['count'], 0.0001 );
+		$this->assertSame( [], $board['categories']['db']['entries'], 'the reader must not fold per-entry appearances' );
+	}
+
 }

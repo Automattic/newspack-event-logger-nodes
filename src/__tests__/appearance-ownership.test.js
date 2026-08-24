@@ -41,11 +41,11 @@ const DEAD_SELECTOR_NAMES = [
 ];
 const CANONICAL_CLASS_CONTRACTS = {
 	'components/LoadingFallback.js': [ 'newspack-nodes-performance-loading' ],
+	'components/RequestSummary.js': [ 'newspack-nodes-status', 'is-error' ],
 	'current-request/CurrentRequestTab.js': [
 		'newspack-nodes-empty-state',
 		'newspack-nodes-performance-loading',
 		'newspack-nodes-status',
-		'is-error',
 	],
 	'overview/PerformanceDashboard.js': [
 		'newspack-nodes-performance-loading',
@@ -67,6 +67,9 @@ const CANONICAL_CLASS_CONTRACTS = {
 		'newspack-nodes-sortable-header-button',
 		'entry-status',
 	],
+	// The two status modifiers belong to errorStatus.js: the views that paint
+	// an error_status read their tone from it rather than spelling it.
+	'components/errorStatus.js': [ 'is-warning', 'is-error' ],
 	'overview/components/UrlDetailView.js': [
 		'newspack-nodes-table',
 		'newspack-nodes-table__header',
@@ -74,19 +77,13 @@ const CANONICAL_CLASS_CONTRACTS = {
 		'newspack-nodes-table__cell',
 		'newspack-nodes-sortable-header-button',
 		'newspack-nodes-empty-state',
-		'newspack-nodes-performance-loading',
 		'entry-status',
 		'newspack-nodes-status',
-		'is-warning',
-		'is-error',
 	],
 	'overview/components/RequestDetailView.js': [
 		'newspack-nodes-badge',
 		'newspack-nodes-no-selection',
-		'newspack-nodes-performance-loading',
 		'newspack-nodes-status',
-		'is-warning',
-		'is-error',
 	],
 	'overview/RequestProfile.js': [
 		'newspack-nodes-table',
@@ -108,24 +105,25 @@ const CANONICAL_CLASS_CONTRACTS = {
 	],
 	'gyroscope/Inflight.js': [
 		'newspack-nodes-table',
-		'newspack-nodes-table__header',
 		'newspack-nodes-table__row',
-		'newspack-nodes-table__cell',
 		'newspack-nodes-empty-state',
 		'newspack-nodes-badge',
 		'newspack-nodes-status',
 		'is-warning',
-		'entry-status',
 	],
-	'requests/RequestStream.js': [
-		'newspack-nodes-table__row',
+	'requests/RequestStream.js': [ 'newspack-nodes-table__row' ],
+	// The cell class belongs to the one table primitive the three log
+	// dashboards draw through; each still owns its own modifiers below.
+	'log-table/logTable.js': [
 		'newspack-nodes-table__cell',
 		'entry-status',
+		'entry-duration',
+		'entry-time',
+		'entry-url',
+		'entry-ip',
+		'entry-ua',
 	],
-	'error-log/ErrorLog.js': [
-		'newspack-nodes-table__row',
-		'newspack-nodes-table__cell',
-	],
+	'error-log/ErrorLog.js': [ 'newspack-nodes-table__row', 'entry-keyword' ],
 	'overview/FlameGraph.js': [ 'newspack-nodes-empty-state' ],
 	'rules/RulesAdmin.js': [
 		'newspack-nodes-table',
@@ -133,14 +131,15 @@ const CANONICAL_CLASS_CONTRACTS = {
 		'newspack-nodes-badge',
 		'newspack-nodes-modal',
 	],
+	// The frame class rides with the shared chrome; each picker keeps the
+	// canonical roles of what IT renders.
+	'settings/settings/SelectorModal.js': [ 'newspack-nodes-modal' ],
 	'settings/settings/CustomEventSelectorModal.js': [
 		'newspack-nodes-status',
-		'newspack-nodes-modal',
 	],
 	'settings/settings/HookSelectorModal.js': [
 		'newspack-nodes-badge',
 		'newspack-nodes-status',
-		'newspack-nodes-modal',
 	],
 	'settings/settings/TagInputField.js': [ 'newspack-nodes-badge' ],
 	'rules/RuleEditModal.js': [
@@ -154,13 +153,12 @@ const INLINE_APPEARANCE_PROPERTY =
 const INLINE_SEMANTIC_ALLOWLIST = new Map( [
 	[ 'overview/UrlTable.js', [ /linear-gradient\(to right/ ] ],
 	[ 'overview/components/UrlDetailView.js', [ /linear-gradient\(to right/ ] ],
-	[ 'overview/AggregateTimeChart.js', [ /color:\s*colorMap/ ] ],
-	[ 'overview/CategoryTimeChart.js', [ /color:\s*PALETTE/ ] ],
+	// A legend item's `color` is data handed to `drawLegend`, not a style prop.
+	[ 'overview/ResponseTimeChart.js', [ /color: STATUS_COLORS/ ] ],
 	[
 		'overview/RequestProfile.js',
 		[
 			/background:\s*getStateColor/,
-			/borderRadius:\s*'2px'/,
 			/cursor:\s*'pointer'/,
 			/cursor:\s*hasEntries/,
 		],
@@ -170,7 +168,7 @@ const INLINE_SEMANTIC_ALLOWLIST = new Map( [
 		[
 			/background:\s*hexToRgba/,
 			/cursor:\s*isFoldable/,
-			/cursor:\s*entry\.pairId/,
+			/cursor:\s*hasPair\( entry \)/,
 		],
 	],
 	[
@@ -218,7 +216,7 @@ const STYLE_APPEARANCE_ALLOWLIST = [
 		properties: [ 'background', 'color', 'border-radius', 'font-weight' ],
 	},
 	{
-		file: 'gyroscope/styles/request-stream.scss',
+		file: 'gyroscope/styles/inflight.scss',
 		selector: /^\.entry-duration--[\w-]+$/,
 		properties: [ 'color' ],
 	},
@@ -231,6 +229,11 @@ const STYLE_APPEARANCE_ALLOWLIST = [
 		file: 'overview/styles/request-profile.scss',
 		selector: /^\.event-logger-profile-bar$/,
 		properties: [ 'background', 'border-radius' ],
+	},
+	{
+		file: 'overview/styles/request-profile.scss',
+		selector: /^\.event-logger-profile-swatch$/,
+		properties: [ 'border-radius' ],
 	},
 	{
 		file: 'overview/styles/charts.scss',
@@ -357,7 +360,7 @@ const selectorHasClass = ( selector, className ) =>
 describe( 'canonical appearance ownership', () => {
 	it.each( [
 		'requests/styles/request-stream.scss',
-		'gyroscope/styles/request-stream.scss',
+		'gyroscope/styles/inflight.scss',
 	] )( 'leaves HTTP status paint to shared CSS in %s', ( relative ) => {
 		const source = fs.readFileSync( path.join( SRC, relative ), 'utf8' );
 		expect( source ).not.toMatch( /\.entry-status\s*\{/ );

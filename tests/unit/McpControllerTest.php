@@ -181,7 +181,72 @@ class McpControllerTest extends TestCase {
 		$this->assertArrayNotHasKey( 'error', $reply );
 		$this->assertSame( 'text', $reply['result']['content'][0]['type'] );
 		$decoded = \json_decode( $reply['result']['content'][0]['text'], true );
-		$this->assertArrayHasKey( 'total_urls', $decoded );
+		$this->assertArrayHasKey( 'total_requests', $decoded );
+	}
+
+	public function test_every_tool_arg_names_a_real_verb_arg(): void {
+		// The tool map is a hand-maintained second copy of the verb args, and
+		// nothing else compares the two: a verb that renames or drops an option
+		// leaves an agent calling something that no longer exists. Every tool is
+		// resolved through its OWN node and a verb no node declares FAILS —
+		// skipping an unresolvable tool would excuse exactly the drift this
+		// exists to catch. The prose summaries have no gate; nothing mechanical
+		// can check those.
+		$nodes = [
+			'performance' => \Newspack_Event_Logger_Nodes\App\Performance_CI_Node::class,
+			'rules'       => \Newspack_Event_Logger_Nodes\App\Rules_CI_Node::class,
+			'discovery'   => \Newspack_Event_Logger_Nodes\App\Discovery_CI_Node::class,
+		];
+		$tools = ( new \ReflectionClass( MCP_Controller::class ) )->getConstant( 'TOOLS' );
+		$this->assertNotEmpty( $tools );
+
+		foreach ( $tools as $tool => $spec ) {
+			$class = $nodes[ $spec['node'] ] ?? null;
+			$this->assertNotNull( $class, "tool {$tool} names an unknown node '{$spec['node']}'" );
+
+			$declared = null;
+			foreach ( $class::node_schema()['commands'] ?? [] as $command ) {
+				if ( ( $command['name'] ?? '' ) === $spec['verb'] ) {
+					$declared = \array_column( $command['args'] ?? [], 'name' );
+				}
+			}
+			$this->assertIsArray(
+				$declared,
+				"tool {$tool} fronts verb '{$spec['verb']}', which {$spec['node']} does not declare"
+			);
+			foreach ( \array_keys( $spec['args'] ) as $arg ) {
+				$this->assertContains(
+					$arg,
+					$declared,
+					"tool {$tool} offers --{$arg}, which its verb does not declare"
+				);
+			}
+		}
+	}
+
+	public function test_a_json_false_reaches_the_verb_as_false(): void {
+		// `Core::as_string( false )` is '', so a rendered `--flag=` reads as
+		// TRUE at the verb — an agent asking to exclude worker traffic would
+		// get it included. The first boolean on this table makes it reachable.
+		$tokens = ( new \ReflectionMethod( MCP_Controller::class, 'tokens' ) )
+			->invoke( null, [ 'include_workers' => false ] );
+
+		$this->assertSame( [ '--include_workers=false' ], $tokens );
+	}
+
+	public function test_a_filter_whose_default_removes_data_is_declared(): void {
+		// The parity test above runs one way: every ARG declared names a real
+		// verb arg. Omission is the other failure, and it is worse for exactly
+		// one class of option — a filter that is ON unless asked otherwise.
+		// An agent reading this table sees no worker filter, so it reads the
+		// worker-excluded totals as the site's.
+		$tools = ( new \ReflectionClass( MCP_Controller::class ) )->getConstant( 'TOOLS' );
+
+		$this->assertArrayHasKey( 'include_workers', $tools['performance_urls']['args'] );
+		$this->assertStringContainsString(
+			'excluded',
+			$tools['performance_urls']['args']['include_workers']
+		);
 	}
 
 	/** The one guard a new fleet-fronting route must not quietly omit. */

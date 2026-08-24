@@ -192,16 +192,24 @@ describe( 'usePerformanceGraph — poll slices fire live args', () => {
 		expect( view.setStateCache.view.data ).toEqual( { total_requests: 7 } );
 	} );
 
-	test( 'a urls reply lands in the urls:view slice (data + total)', async () => {
+	test( 'a urls reply lands in the urls:view slice (data + totals)', async () => {
 		installWire( {
-			urls: { data: [ { hash: 'a' } ], total: 12, limit: 100, offset: 0 },
+			urls: {
+				data: [ { hash: 'a' } ],
+				totals: { urls: 12, requests: 340 },
+				limit: 100,
+				offset: 0,
+			},
 		} );
 		renderHook( () => usePerformanceGraph() );
 		await act( async () => {} );
 		const view = Core.node( 'urls:view' );
 		expect( view.setStateCache.view ).toEqual( {
 			data: [ { hash: 'a' } ],
-			total: 12,
+			totals: { urls: 12, requests: 340 },
+			rows: 0,
+			slowest: [],
+			filters: null,
 			loading: false,
 			error: null,
 		} );
@@ -347,7 +355,7 @@ describe( 'usePerformanceGraph — on-demand url_detail / request_detail', () =>
 describe( 'usePerformanceGraph — handleUrlParamsChange', () => {
 	test( 'debounces a search change (300ms)', async () => {
 		jest.useFakeTimers();
-		const wire = installWire( { urls: { data: [], total: 0 } } );
+		const wire = installWire( { urls: { data: [], totals: { urls: 0 } } } );
 		let api;
 		const { unmount } = renderHook(
 			( p ) => {
@@ -376,7 +384,7 @@ describe( 'usePerformanceGraph — handleUrlParamsChange', () => {
 		// the errors filter — which changes nothing else — returned before
 		// sending anything. The button flipped to "Showing Errors" and the
 		// table kept showing every URL.
-		const wire = installWire( { urls: { data: [], total: 0 } } );
+		const wire = installWire( { urls: { data: [], totals: { urls: 0 } } } );
 		let api;
 		renderHook(
 			( p ) => {
@@ -579,8 +587,43 @@ describe( 'usePerformanceGraph — overview/urls arg edge cases', () => {
 		).toBe( 'server,status' );
 	} );
 
+	test( 'the selected server is emitted in the url_detail args', async () => {
+		// The modal opens from a row the server filter scoped, so it has to ask
+		// the same question — otherwise one click puts the site's average under
+		// that row's count.
+		const wire = installWire( {
+			url_detail: { last_modified: 1, requests: [] },
+		} );
+		renderHook( () =>
+			usePerformanceGraph( {
+				serverFilter: 'alpha.example',
+				selectedUrl: { hash: 'abc' },
+			} )
+		);
+		await act( async () => {} );
+		const detail = findVerb( wire.batches, 'url_detail' );
+		expect(
+			parseCommandArgs( detail[ VALUE ].arguments ).options.server
+		).toBe( 'alpha.example' );
+	} );
+
+	test( 'the selected server is emitted in the urls args', async () => {
+		// The URL table is what the Overview header now counts, so the two have
+		// to be asking the same question: a server the header is scoped to must
+		// reach the `urls` verb as well as `overview`.
+		const wire = installWire( { urls: { data: [], totals: { urls: 0 } } } );
+		renderHook( () =>
+			usePerformanceGraph( { serverFilter: 'alpha.example' } )
+		);
+		await act( async () => {} );
+		const urls = findVerb( wire.batches, 'urls' );
+		expect(
+			parseCommandArgs( urls[ VALUE ].arguments ).options.server
+		).toBe( 'alpha.example' );
+	} );
+
 	test( 'a non-zero offset is emitted in the urls args (immediate fetch on a page change)', async () => {
-		const wire = installWire( { urls: { data: [], total: 0 } } );
+		const wire = installWire( { urls: { data: [], totals: { urls: 0 } } } );
 		const { getApi } = renderGraph( {} );
 		await act( async () => {} );
 		const before = countVerbs( wire.batches, 'urls' );
@@ -604,7 +647,7 @@ describe( 'usePerformanceGraph — overview/urls arg edge cases', () => {
 	} );
 
 	test( 'an unchanged params object is a no-op (no extra urls fetch)', async () => {
-		const wire = installWire( { urls: { data: [], total: 0 } } );
+		const wire = installWire( { urls: { data: [], totals: { urls: 0 } } } );
 		const { getApi } = renderGraph( {} );
 		await act( async () => {} );
 		const before = countVerbs( wire.batches, 'urls' );
@@ -621,7 +664,7 @@ describe( 'usePerformanceGraph — overview/urls arg edge cases', () => {
 
 	test( 'a second search change clears the first pending debounce timer', async () => {
 		jest.useFakeTimers();
-		const wire = installWire( { urls: { data: [], total: 0 } } );
+		const wire = installWire( { urls: { data: [], totals: { urls: 0 } } } );
 		const { getApi, unmount } = renderGraph( {} );
 		await act( async () => {} );
 		const before = countVerbs( wire.batches, 'urls' );

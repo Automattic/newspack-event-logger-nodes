@@ -31,6 +31,7 @@ namespace Newspack_Event_Logger_Nodes\App;
 
 use Newspack_Nodes\Bootstrap;
 use Newspack_Nodes\Capabilities;
+use Newspack_Nodes\Command_Args;
 use Newspack_Nodes\Command_Auth;
 use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Core;
@@ -66,6 +67,9 @@ class MCP_Controller {
 	/** Rate-limit window, in seconds. */
 	public const RATE_LIMIT_WINDOW_S = 10;
 
+	/** Tool arguments the verbs take positionally, in declared order. */
+	private const POSITIONAL_ARGS = [ 'descriptor', 'hash', 'rid', 'pattern', 'rule', 'id', 'context' ];
+
 	/**
 	 * Tool name → the CI node and verb behind it, with the role that verb
 	 * declares. The role is repeated here so `tools/list` can offer a session
@@ -79,22 +83,22 @@ class MCP_Controller {
 			'node'    => 'performance',
 			'verb'    => 'overview',
 			'role'    => Capabilities::READ,
-			'summary' => 'Site-wide performance: slowest URLs, most requested, totals and the time series.',
-			'args'    => [ 'server' => 'Optional server name to scope to.', 'breakdown' => 'Comma-separated dimensions.' ],
+			'summary' => 'Site-wide request totals and the aggregate time series. Per-URL facts live in performance_urls.',
+			'args'    => [ 'server' => 'Optional server name; scopes the leaderboard and breakdowns, not the site totals.', 'breakdown' => 'Comma-separated dimensions.' ],
 		],
 		'performance_urls'         => [
 			'node'    => 'performance',
 			'verb'    => 'urls',
 			'role'    => Capabilities::READ,
-			'summary' => 'The URL leaderboard, sortable and paginated.',
-			'args'    => [ 'sort' => 'count|url|avg_ms|p95_ms|…', 'limit' => 'Rows to return.', 'search' => 'Substring filter.' ],
+			'summary' => 'The URL leaderboard, sortable and paginated, plus totals and the slowest ten for whatever the filters left. Worker traffic is excluded unless asked for.',
+			'args'    => [ 'sort' => 'count|url|avg_ms|p95_ms|…', 'limit' => 'Rows to return.', 'search' => 'Substring filter.', 'server' => 'Optional server name to scope every row and total to.', 'include_workers' => 'Cron, WP-CLI and job traffic is excluded by default; set to include it.' ],
 		],
 		'performance_url_detail'   => [
 			'node'    => 'performance',
 			'verb'    => 'url_detail',
 			'role'    => Capabilities::READ,
 			'summary' => 'One URL: stats, aggregate flame data and its recent requests.',
-			'args'    => [ 'hash' => 'The 12-char URL hash (required).' ],
+			'args'    => [ 'hash' => 'The 12-char URL hash (required).', 'server' => 'Optional server name; scopes the stats the way performance_urls scopes the row.' ],
 		],
 		'performance_request_search' => [
 			'node'    => 'performance',
@@ -122,7 +126,7 @@ class MCP_Controller {
 			'verb'    => 'ask',
 			'role'    => Capabilities::READ,
 			'summary' => 'The brief for one thing: `url:<hash>`, `request:<rid>:<partition>`, `span:<name>`, `entry:<n>` or `category:<name>`. A span or an entry also needs its `request:` descriptor as a second argument.',
-			'args'    => [ 'descriptor' => 'What to ask about (required).', 'context' => 'The containing descriptor, if any.' ],
+			'args'    => [ 'descriptor' => 'What to ask about (required).', 'context' => 'The containing descriptor, if any.', 'server' => 'Optional server name; scopes a url: brief the way performance_urls scopes its rows.' ],
 		],
 		'rules_list'               => [
 			'node'    => 'rules',
@@ -303,21 +307,19 @@ class MCP_Controller {
 			return [];
 		}
 		$positional = [];
-		$options    = [];
-		foreach ( [ 'descriptor', 'hash', 'rid', 'pattern', 'rule', 'id', 'context' ] as $key ) {
+		foreach ( self::POSITIONAL_ARGS as $key ) {
 			if ( isset( $arguments[ $key ] ) && \is_scalar( $arguments[ $key ] ) ) {
 				$positional[] = Core::as_string( $arguments[ $key ] );
 			}
 		}
+		$options = [];
 		foreach ( $arguments as $key => $value ) {
-			if ( \in_array( $key, [ 'descriptor', 'hash', 'rid', 'pattern', 'rule', 'id', 'context' ], true ) ) {
-				continue;
-			}
-			if ( \is_scalar( $value ) ) {
-				$options[] = '--' . Core::as_string( $key ) . '=' . Core::as_string( $value );
+			if ( \is_scalar( $value ) && ! \in_array( $key, self::POSITIONAL_ARGS, true ) ) {
+				$options[ Core::as_string( $key ) ] = $value;
 			}
 		}
-		return [ ...$positional, ...$options ];
+		// The substrate owns the encoding, booleans included.
+		return Command_Args::format( $positional, $options );
 	}
 
 	/**

@@ -32,19 +32,28 @@ describe( 'dashboard Modal theme class', () => {
 		'rules/rule-edit-modal.scss',
 		'settings/styles/custom-event-selector.scss',
 		'settings/styles/hook-selector.scss',
+		'settings/styles/selector-modal.scss',
 	] )( '%s: does not repaint the modal close button', ( rel ) => {
 		expect( read( rel ) ).not.toMatch(
 			/\.components-modal__header\s*>?\s*button\s*\{[^}]*(?:color|background|border|box-shadow|outline)\s*:/
 		);
 	} );
 
+	it( 'the shared selector chrome carries the standalone product contract', () => {
+		const src = read( 'settings/settings/SelectorModal.js' );
+		expect( src ).toContain(
+			'event-logger-selector-modal newspack-nodes-modal newspack-nodes-theme newspack-nodes-ui'
+		);
+		expect( src ).not.toMatch( /className=.*topology-app/ );
+	} );
+
 	it.each( [
 		'settings/settings/HookSelectorModal.js',
 		'settings/settings/CustomEventSelectorModal.js',
-	] )( '%s: the Modal carries the standalone product contract', ( rel ) => {
+	] )( '%s: names its own modal frame class', ( rel ) => {
 		const src = read( rel );
 		expect( src ).toMatch(
-			/event-logger-[\w-]+-modal newspack-nodes-modal newspack-nodes-theme newspack-nodes-ui \$\{ className \}/
+			/`event-logger-[\w-]+-modal \$\{ className \}`/
 		);
 		expect( src ).not.toMatch( /className=.*topology-app/ );
 	} );

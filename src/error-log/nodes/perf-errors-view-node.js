@@ -9,7 +9,12 @@
  * `LogStreamViewNode` base.
  */
 
-import { KEY, VALUE, ID } from '@newspack-nodes/runtime';
+import {
+	KEY,
+	VALUE,
+	ID,
+	CommandInterpreterNode,
+} from '@newspack-nodes/runtime';
 import fnv1a from '@newspack-nodes/shared/utils/fnv1a';
 import { LogStreamViewNode } from '@newspack-nodes/shared/nodes/log-stream-view-node';
 
@@ -38,19 +43,21 @@ const clip = ( value, max ) => {
  * `perferrors:view` — owns the Error Log view model.
  *
  * A `LogStreamViewNode` subclass: the ring, paused belt + step budget,
- * decaying lps, seek tracking, and the shared control verbs
- * all live in the shared base. This class adds the Error Log's specifics:
- * - the `select` control (partition switch: reset the tracker, arm
- *   `seekActive` — breadcrumbs only mean anything within ONE dir; a glob
- *   mixes segments) and its `seekTracking()` gate;
- * - `shapeRow()`, which validates and enriches a raw errors envelope
- *   (KEY=rid, VALUE={ts, k, m, n, method, url}) into a row.
+ * decaying lps, seek tracking, and the shared control verbs — `select`
+ * included — all live in the shared base. This class adds the Error Log's
+ * specifics: `shapeRow()`, which validates and enriches a raw errors envelope
+ * (KEY=rid, VALUE={ts, k, m, n, method, url}) into a row, and the ingest
+ * filter over the four fields the placeholder names.
+ *
+ * @testonly The class is exported for its suite; production reaches it
+ *           through the `views` map registered at the foot of this file.
  */
 export class PerfErrorsViewNode extends LogStreamViewNode {
 	/**
 	 * Start disarmed on the glob and publish the initial view model, so a React
 	 * subscriber mounting before the first row reads a defined model rather
-	 * than undefined. Breadcrumb tracking arms only once `select` names a dir.
+	 * than undefined. Breadcrumb tracking arms only once `select` names a dir:
+	 * across a glob the interleaved segment ids mean nothing.
 	 *
 	 * @param {number} [maxLines] Ring cap (defaults to DEFAULT_MAX_LINES).
 	 */
@@ -59,35 +66,6 @@ export class PerfErrorsViewNode extends LogStreamViewNode {
 		this.seekActive = false;
 		// Publish a model up front so the view renders before the first row.
 		this._publish();
-	}
-
-	/**
-	 * Apply the Error Log's own `select` verb; defer the rest to the base.
-	 *
-	 * A partition switch resets the seek tracker and clears the ring, and
-	 * arms breadcrumb tracking only for a concrete dir: a segment/offset
-	 * breadcrumb means nothing across a glob, whose records interleave
-	 * partitions. An empty `dir` widens back to the glob and disarms.
-	 *
-	 * @param {Object} value Control payload; `action` picks the verb.
-	 */
-	_control( value ) {
-		if ( 'select' === value?.action ) {
-			this.seekActive = !! value.dir;
-			this.seek.select();
-			this._clear();
-		} else {
-			super._control( value );
-		}
-	}
-
-	/**
-	 * Gate the base's breadcrumb tracking on the armed single-dir selection.
-	 *
-	 * @return {boolean} True while one partition dir is selected.
-	 */
-	seekTracking() {
-		return this.seekActive;
 	}
 
 	/**
@@ -173,3 +151,8 @@ export class PerfErrorsViewNode extends LogStreamViewNode {
 		};
 	}
 }
+
+/** The view classes, handed to `makeNode` — a name is per-bundle. */
+export const views = CommandInterpreterNode.registerNodeClasses( {
+	PerfErrorsView: PerfErrorsViewNode,
+} );

@@ -25,12 +25,11 @@ import {
 
 import {
 	DASHBOARD_REFRESH_OPTIONS,
-	CHART_METRIC_OPTIONS,
 	CHART_BREAKDOWN_OPTIONS,
 } from '../constants';
-import AggregateTimeChart from '../AggregateTimeChart';
 import CategoryTimeChart from '../CategoryTimeChart';
-import RequestProfile from '../RequestProfile';
+import { ProfileWithCaption } from '../RequestProfile';
+import BreakdownControls from './BreakdownControls';
 import { AskButton } from './AskPanel';
 
 /**
@@ -38,7 +37,9 @@ import { AskButton } from './AskPanel';
  *
  * @param {Object}                  props                        Component props.
  * @param {Object|null}             props.overview               Overview slice payload; null renders nothing.
- * @param {Object}                  props.filteredStats          Headline stats: server-scoped when `isFiltered`, except `siteUrlCount`, which cannot be — a URL row carries no server.
+ * @param {Object|null}             props.urlTotals              Headline numbers for the URL set the filters selected; null until the first reply.
+ * @param {Object|null}             props.urlFilters             The filters the server reported applying to those numbers.
+ * @param {number}                  props.breakdownAvgMs         Average the Time Breakdown divides by — the selected server's, or the site's.
  * @param {string}                  props.serverFilter           Selected server name, or '' for all servers.
  * @param {(value: string) => void} props.setServerFilter        Server filter setter.
  * @param {string[]}                props.serverNames            Server names seen in the breakdown data.
@@ -63,7 +64,9 @@ import { AskButton } from './AskPanel';
  */
 export default function OverviewSection( {
 	overview,
-	filteredStats,
+	urlTotals,
+	urlFilters,
+	breakdownAvgMs,
 	serverFilter,
 	setServerFilter,
 	serverNames,
@@ -85,13 +88,6 @@ export default function OverviewSection( {
 	categoryData,
 	ask,
 } ) {
-	/**
-	 * The parent lifts `chartBreakdown` and passes the matching series down,
-	 * so the breakdown rides the combined overview payload. No separate fetch
-	 * remains to wait on, and the inline spinner below stays hidden.
-	 */
-	const breakdownLoading = false;
-
 	// Show server dropdown when 2+ servers detected (hub mode).
 	const isMultiServer = serverNames.length >= 2;
 
@@ -131,6 +127,53 @@ export default function OverviewSection( {
 	if ( ! overview ) {
 		return null;
 	}
+
+	// @longform Every headline number describes the URL set the filters
+	// selected — the same set the table below lists — so they come from one
+	// payload rather than from whichever namespace happened to hold each
+	// figure. A number that has not arrived renders as absent; a plausible
+	// zero beside a real total is exactly how the last defect hid.
+	const headlineStats = [
+		{
+			key: 'urls',
+			label: __( 'Unique URLs', 'newspack-event-logger-nodes' ),
+			format: ( n ) => n.toLocaleString(),
+		},
+		{
+			key: 'requests',
+			label: __( 'Total Requests', 'newspack-event-logger-nodes' ),
+			format: ( n ) => n.toLocaleString(),
+		},
+		{
+			key: 'avg_ms',
+			label: __( 'Avg Response', 'newspack-event-logger-nodes' ),
+			format: ( n ) => `${ n.toFixed( 0 ) }ms`,
+		},
+		{
+			key: 'requests_per_second',
+			label: __( 'Req/s (last hour)', 'newspack-event-logger-nodes' ),
+			format: ( n ) => n.toFixed( 2 ),
+		},
+		{
+			key: 'avg_peak_mb',
+			label: __( 'Avg Peak Memory', 'newspack-event-logger-nodes' ),
+			format: ( n ) => `${ n.toFixed( 1 ) }MB`,
+			// Absent on installs that do not sample peak memory.
+			onlyWhenPositive: true,
+		},
+	]
+		.filter(
+			( { key, onlyWhenPositive } ) =>
+				! onlyWhenPositive || urlTotals?.[ key ] > 0
+		)
+		.map( ( { key, label, format } ) => ( {
+			key,
+			label,
+			value:
+				'number' === typeof urlTotals?.[ key ]
+					? format( urlTotals[ key ] )
+					: '—',
+		} ) );
 
 	return (
 		<div className="event-logger-performance-overview">
@@ -286,193 +329,51 @@ export default function OverviewSection( {
 					) }
 				<CardBody>
 					<div className="newspack-nodes-stats-grid event-logger-overview-stats">
-						<div className="newspack-nodes-stat">
-							<span className="newspack-nodes-stat-value">
-								{ 'number' === typeof filteredStats.siteUrlCount
-									? filteredStats.siteUrlCount.toLocaleString()
-									: '—' }
-							</span>
-							<span className="newspack-nodes-stat-label">
-								{ filteredStats.isFiltered
-									? __(
-											'Unique URLs (all servers)',
-											'newspack-event-logger-nodes'
-									  )
-									: __(
-											'Unique URLs',
-											'newspack-event-logger-nodes'
-									  ) }
-							</span>
-						</div>
-						<div className="newspack-nodes-stat">
-							<span className="newspack-nodes-stat-value">
-								{ filteredStats.totalRequests.toLocaleString() }
-							</span>
-							<span className="newspack-nodes-stat-label">
-								{ __(
-									'Total Requests',
-									'newspack-event-logger-nodes'
-								) }
-							</span>
-						</div>
-						<div className="newspack-nodes-stat">
-							<span className="newspack-nodes-stat-value">
-								{ filteredStats.globalAvgMs.toFixed( 0 ) }
-								ms
-							</span>
-							<span className="newspack-nodes-stat-label">
-								{ __(
-									'Avg Response',
-									'newspack-event-logger-nodes'
-								) }
-							</span>
-						</div>
-						<div className="newspack-nodes-stat">
-							<span className="newspack-nodes-stat-value">
-								{ filteredStats.requestsPerSecond.toFixed( 2 ) }
-							</span>
-							<span className="newspack-nodes-stat-label">
-								{ __(
-									'Req/s (last hour)',
-									'newspack-event-logger-nodes'
-								) }
-							</span>
-						</div>
-						{ filteredStats.globalAvgPeakMb > 0 && (
-							<div className="newspack-nodes-stat">
+						{ headlineStats.map( ( { key, label, value } ) => (
+							<div className="newspack-nodes-stat" key={ key }>
 								<span className="newspack-nodes-stat-value">
-									{ filteredStats.globalAvgPeakMb.toFixed(
-										1
-									) }
-									MB
+									{ value }
 								</span>
 								<span className="newspack-nodes-stat-label">
-									{ __(
-										'Avg Peak Memory',
-										'newspack-event-logger-nodes'
-									) }
+									{ label }
 								</span>
 							</div>
-						) }
+						) ) }
 					</div>
 
-					{ /* Chart Controls + Chart */ }
-					{ overview.aggregate_time_series &&
-						Object.keys( overview.aggregate_time_series ).length >
-							0 && (
-							<div
-								className="event-logger-aggregate-chart"
-								style={ { marginTop: '20px' } }
-							>
-								<div
-									style={ {
-										display: 'flex',
-										gap: '16px',
-										margin: '12px 0',
-										alignItems: 'flex-end',
-										flexWrap: 'wrap',
-									} }
-								>
-									{ isMultiServer && (
-										<SelectControl
-											__next40pxDefaultSize
-											label={ __(
-												'Server',
-												'newspack-event-logger-nodes'
-											) }
-											value={ serverFilter }
-											options={ serverOptions }
-											onChange={ setServerFilter }
-											__nextHasNoMarginBottom
-											style={ { minWidth: '180px' } }
-										/>
-									) }
-									<SelectControl
-										__next40pxDefaultSize
-										label={ __(
-											'Metric',
-											'newspack-event-logger-nodes'
-										) }
-										value={ chartMetric }
-										options={ CHART_METRIC_OPTIONS }
-										onChange={ setChartMetric }
-										__nextHasNoMarginBottom
-										style={ { minWidth: '180px' } }
-									/>
-									<SelectControl
-										__next40pxDefaultSize
-										label={ __(
-											'Breakdown',
-											'newspack-event-logger-nodes'
-										) }
-										value={ chartBreakdown }
-										options={ breakdownOptions }
-										onChange={ setChartBreakdown }
-										__nextHasNoMarginBottom
-										style={ { minWidth: '140px' } }
-									/>
-									{ breakdownLoading && (
-										<span
-											className="newspack-nodes-status"
-											style={ {
-												fontSize: '12px',
-												paddingBottom: '8px',
-											} }
-										>
-											{ __(
-												'Loading…',
-												'newspack-event-logger-nodes'
-											) }
-										</span>
-									) }
-								</div>
-								<AggregateTimeChart
-									data={ overview.aggregate_time_series }
-									breakdownData={ breakdownData }
-									metric={ chartMetric }
-									breakdown={ chartBreakdown }
-									serverFilter={ serverFilter }
-								/>
-							</div>
-						) }
+					<BreakdownControls
+						series={ overview.aggregate_time_series }
+						breakdownData={ breakdownData }
+						metric={ chartMetric }
+						setMetric={ setChartMetric }
+						breakdown={ chartBreakdown }
+						setBreakdown={ setChartBreakdown }
+						breakdownOptions={ breakdownOptions }
+						serverOptions={ isMultiServer ? serverOptions : null }
+						serverFilter={ serverFilter }
+						setServerFilter={ setServerFilter }
+						note={
+							urlFilters?.include_workers
+								? __(
+										'This chart excludes worker traffic, which the stats above are counting: workers never enter the aggregate series.',
+										'newspack-event-logger-nodes'
+								  )
+								: null
+						}
+					/>
 
-					{ categoryData && (
-						<>
-							<CategoryTimeChart
-								data={ categoryData }
-								mode="time"
-								title={ __(
-									'Time by Category',
-									'newspack-event-logger-nodes'
-								) }
-							/>
-							<CategoryTimeChart
-								data={ categoryData }
-								mode="count"
-								title={ __(
-									'Events by Category',
-									'newspack-event-logger-nodes'
-								) }
-							/>
-							<CategoryTimeChart
-								data={ categoryData }
-								mode="average"
-								title={ __(
-									'Average Time per Event',
-									'newspack-event-logger-nodes'
-								) }
-							/>
-						</>
-					) }
+					<CategoryTimeChart data={ categoryData } />
 
-					{ /* Global / Per-Server Leaderboard */ }
 					{ overview.global_leaderboard?.categories && (
-						<div
-							className="event-logger-request-profile"
-							style={ { marginTop: '20px' } }
-						>
-							<h3>
-								{ serverFilter
+						<ProfileWithCaption
+							profiles={ overview.global_leaderboard.categories }
+							totalMs={ breakdownAvgMs }
+							totalProfiledTime={
+								overview.global_leaderboard.total_time
+							}
+							count={ overview.global_leaderboard.count || 0 }
+							heading={
+								serverFilter
 									? sprintf(
 											// translators: %s: the server name being filtered by.
 											__(
@@ -484,53 +385,10 @@ export default function OverviewSection( {
 									: __(
 											'Global Time Breakdown',
 											'newspack-event-logger-nodes'
-									  ) }
-							</h3>
-							<RequestProfile
-								profiles={
-									overview.global_leaderboard.categories
-								}
-								totalMs={ filteredStats.globalAvgMs }
-								totalProfiledTime={
-									overview.global_leaderboard.total_time
-								}
-								title={ null }
-							/>
-							<p
-								className="newspack-nodes-status"
-								style={ {
-									fontSize: '12px',
-									marginTop: '8px',
-								} }
-							>
-								{ serverFilter
-									? sprintf(
-											// translators: 1: number of requests, 2: the server name.
-											_n(
-												'Average breakdown across %1$d request on %2$s',
-												'Average breakdown across %1$d requests on %2$s',
-												overview.global_leaderboard
-													.count || 0,
-												'newspack-event-logger-nodes'
-											),
-											overview.global_leaderboard.count ||
-												0,
-											serverFilter
 									  )
-									: sprintf(
-											// translators: %d: number of requests.
-											_n(
-												'Average breakdown across %d request',
-												'Average breakdown across %d requests',
-												overview.global_leaderboard
-													.count || 0,
-												'newspack-event-logger-nodes'
-											),
-											overview.global_leaderboard.count ||
-												0
-									  ) }
-							</p>
-						</div>
+							}
+							serverName={ serverFilter }
+						/>
 					) }
 				</CardBody>
 			</Card>

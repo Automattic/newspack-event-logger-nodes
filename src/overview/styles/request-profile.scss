@@ -22,3 +22,62 @@
 	.button-link.event-logger-profile-expansion {
 	padding: 4px 8px;
 }
+
+// The category swatch keeps only the colour the component computes for it.
+.event-logger-profile-swatch {
+	display: inline-block;
+	width: 12px;
+	height: 12px;
+	margin-right: 8px;
+	border-radius: 2px;
+	vertical-align: middle;
+}
+
+// The shared table sizes every cell, so the column geometry has to outweigh it.
+.newspack-nodes-ui .event-logger-request-profile {
+	thead th {
+		width: 20%;
+		text-align: right;
+	}
+
+	thead th:first-child {
+		width: 40%;
+		text-align: left;
+	}
+
+	.newspack-nodes-table__terminal-data {
+		text-align: right;
+	}
+
+	.newspack-nodes-table__details > td {
+		padding: 0 0 0 30px;
+	}
+
+	.event-logger-profile-entries {
+		width: 100%;
+		font-size: 12px;
+
+		td {
+			padding: 4px 8px;
+		}
+
+		&__name {
+			max-width: 400px;
+			overflow: hidden;
+			text-overflow: ellipsis;
+			white-space: nowrap;
+		}
+
+		&__time {
+			width: 80px;
+		}
+
+		&__count {
+			width: 60px;
+		}
+
+		&__more {
+			font-style: italic;
+		}
+	}
+}

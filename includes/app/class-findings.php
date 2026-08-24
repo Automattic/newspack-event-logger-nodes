@@ -73,6 +73,47 @@ class Findings {
 	private const SEVERITY_ORDER = [ 'high' => 0, 'medium' => 1, 'info' => 2 ];
 
 	/**
+	 * What a span's kind and significance imply, in one table.
+	 *
+	 * `visibility_proposal()` and `interior_detail()` answer the same two
+	 * questions — is this marked, and what kind of span is it — and used to
+	 * answer them down two parallel `if` ladders that had to be edited
+	 * together. One entry per outcome makes drifting apart structurally
+	 * impossible; `%s` is the span's name.
+	 *
+	 * @var array<string,array<string,string>>
+	 */
+	private const SPAN_ADVICE = [
+		'significant:hook' => [
+			'detail' => 'It is already a significant event, so its listeners are logged — read those next.',
+			'why'    => 'It is already a significant event; its listeners are in this record.',
+		],
+		'significant'      => [
+			'detail' => 'The application logs this span itself, and marking it significant only keeps it from being auto-disabled — nothing about its interior follows from that.',
+			'why'    => 'It is already a significant event, which for a custom event only keeps it from being auto-disabled; the application decides what it logs inside.',
+		],
+		'hook'             => [
+			'detail'    => 'Its listeners are not logged, so what happens inside it is invisible.',
+			'why'       => 'Marking %s a significant event logs its listeners, which is the only way to see which one is holding the time.',
+			'action'    => 'mark_significant',
+			'direction' => 'more',
+			'field'     => 'significant_events',
+		],
+		'custom'           => [
+			'detail'    => 'The application logs this span itself; what happens inside it appears only where the application logs it.',
+			'why'       => '%s is a custom event the application logs itself, not a WordPress hook — significant events reach hooks only, so marking it does nothing. Its interior shows only where the application logs further custom events, enabled on this rule.',
+			'action'    => 'add_custom_events',
+			'direction' => 'more',
+			'field'     => 'custom_events',
+			'undo'      => 'Disable those custom events again once the interior is understood.',
+		],
+		'listener'         => [
+			'detail' => 'This is one listener on a significant hook — the time is inside this callback.',
+			'why'    => '%s is a listener, logged because its hook is already a significant event — this is the finest grain the logger has, and the answer is inside that callback.',
+		],
+	];
+
+	/**
 	 * Findings for one completed request record, worst first.
 	 *
 	 * @param array<array-key,mixed> $record A stored request record (`requests.p*`).
@@ -340,94 +381,54 @@ class Findings {
 	}
 
 	/**
-	 * What would make this span's interior visible, said accurately for what
-	 * KIND of span it is. Only a hook has listeners to log; a custom event's
-	 * interior belongs to the application that logged it, and a wrapped
-	 * listener is already the finest grain there is.
+	 * What rule edit would make this span's interior visible, and what it costs.
 	 *
 	 * @param string    $span The span's name, as the flame carries it.
 	 * @param Rule|null $rule The governing rule, or null when none does.
-	 * @param string    $undo What removes the instrumentation again.
-	 * @return array<string,mixed> The proposal that is true for this kind of span.
+	 * @param string    $undo The undo sentence for a `more` proposal.
+	 * @return array<string,mixed>
 	 */
 	private static function visibility_proposal( string $span, ?Rule $rule, string $undo ): array {
-		$rule_id = $rule?->id;
-		$kind    = self::span_kind( $span );
-		// Already marked; nothing to add, but what that bought differs by kind.
-		if ( self::is_significant( $span, $rule ) ) {
-			return [
-				'action'    => 'none',
-				'direction' => 'none',
-				'rule_id'   => $rule_id,
-				'why'       => 'hook' === $kind
-					? 'It is already a significant event; its listeners are in this record.'
-					: 'It is already a significant event, which for a custom event only keeps it from being auto-disabled; the application decides what it logs inside.',
-				'undo'      => '',
-			];
-		}
-		if ( 'hook' === $kind ) {
-			return [
-				'action'    => 'mark_significant',
-				'direction' => 'more',
-				'field'     => 'significant_events',
-				'value'     => $span,
-				'rule_id'   => $rule_id,
-				'why'       => \sprintf(
-					'Marking %s a significant event logs its listeners, which is the only way to see which one is holding the time.',
-					$span
-				),
-				'undo'      => $undo,
-			];
-		}
-		if ( 'custom' === $kind ) {
-			return [
-				'action'    => 'add_custom_events',
-				'direction' => 'more',
-				'field'     => 'custom_events',
-				'value'     => $span,
-				'rule_id'   => $rule_id,
-				'why'       => \sprintf(
-					'%s is a custom event the application logs itself, not a WordPress hook — significant events reach hooks only, so marking it does nothing. Its interior shows only where the application logs further custom events, enabled on this rule.',
-					$span
-				),
-				'undo'      => 'Disable those custom events again once the interior is understood.',
-			];
-		}
-		return [
-			'action'    => 'none',
-			'direction' => 'none',
-			'rule_id'   => $rule_id,
-			'why'       => \sprintf(
-				'%s is a listener, logged because its hook is already a significant event — this is the finest grain the logger has, and the answer is inside that callback.',
-				$span
-			),
-			'undo'      => '',
+		$advice = self::span_advice( $span, $rule );
+		$out    = [
+			'action'    => $advice['action'] ?? 'none',
+			'direction' => $advice['direction'] ?? 'none',
+			'rule_id'   => $rule?->id,
+			'why'       => \sprintf( $advice['why'], $span ),
+			'undo'      => isset( $advice['action'] ) ? ( $advice['undo'] ?? $undo ) : '',
 		];
+		if ( isset( $advice['field'] ) ) {
+			$out['field'] = $advice['field'];
+			$out['value'] = $span;
+		}
+		return $out;
 	}
 
 	/**
 	 * Why the inside of this span is or is not visible, in its own terms — only
-	 * a hook has listeners to speak of. Arms in the order `visibility_proposal`
-	 * uses, so the pair can be read side by side.
+	 * a hook has listeners to speak of.
 	 *
 	 * @param string    $span The span's name, as the flame carries it.
 	 * @param Rule|null $rule The governing rule, or null when none does.
 	 * @return string One sentence, true for this kind of span.
 	 */
 	private static function interior_detail( string $span, ?Rule $rule ): string {
+		return self::span_advice( $span, $rule )['detail'];
+	}
+
+	/**
+	 * The `SPAN_ADVICE` row governing one span.
+	 *
+	 * @param string    $span The span's name, as the flame carries it.
+	 * @param Rule|null $rule The governing rule, or null when none does.
+	 * @return array<string,string>
+	 */
+	private static function span_advice( string $span, ?Rule $rule ): array {
 		$kind = self::span_kind( $span );
 		if ( self::is_significant( $span, $rule ) ) {
-			return 'hook' === $kind
-				? 'It is already a significant event, so its listeners are logged — read those next.'
-				: 'The application logs this span itself, and marking it significant only keeps it from being auto-disabled — nothing about its interior follows from that.';
+			return self::SPAN_ADVICE[ 'hook' === $kind ? 'significant:hook' : 'significant' ];
 		}
-		if ( 'hook' === $kind ) {
-			return 'Its listeners are not logged, so what happens inside it is invisible.';
-		}
-		if ( 'custom' === $kind ) {
-			return 'The application logs this span itself; what happens inside it appears only where the application logs it.';
-		}
-		return 'This is one listener on a significant hook — the time is inside this callback.';
+		return self::SPAN_ADVICE[ $kind ];
 	}
 
 	/**

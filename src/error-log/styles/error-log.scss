@@ -11,57 +11,7 @@
 
 @use "base";
 
-.event-logger-error-log {
-	padding: 16px 20px;
-	height: 100%;
-	display: flex;
-	flex-direction: column;
-
-	// ELN rows are COLUMN grids; the template rides inline per row.
-	.newspack-nodes-log-row:not(.is-debug) {
-		display: grid;
-		gap: 12px;
-		align-items: center;
-	}
-}
-
-// Layout (flex row + divider) comes from the shared header rule in base.scss,
-// which lists `.event-logger-error-log__header`.
-.event-logger-error-log__header {
-	flex-shrink: 0;
-}
-
-.event-logger-error-log .newspack-nodes-toolbar-stats {
-	min-width: 80px;
-}
-
-// Browse layout: the segment sidebar sits beside the scrolling error pane.
-.event-logger-error-log__body {
-	flex: 1;
-	min-height: 0;
-	display: flex;
-}
-
-// The pane column — header row + scrolling list — beside the browse sidebar.
-.event-logger-error-log__main {
-	flex: 1;
-	min-width: 0;
-	min-height: 0;
-	display: flex;
-	flex-direction: column;
-}
-
-// The dynamic column header: the wrapper publishes --stream-grid-template and
-// dissolves (display: contents) so the shared header row becomes the grid.
-.event-logger-error-log-columns {
-	display: contents;
-
-	.newspack-nodes-log-header {
-		display: grid;
-		grid-template-columns: var(--stream-grid-template);
-		gap: 12px;
-	}
-}
+@include base.log-stream-page('event-logger-error-log', ( 'min-width': 80px ));
 
 .entry-keyword {
 	&--error {

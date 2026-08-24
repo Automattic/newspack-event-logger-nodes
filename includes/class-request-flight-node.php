@@ -27,17 +27,11 @@ use Newspack_Nodes\Timer_Node;
 /**
  * Timer sibling that puts RequestBuilder's in-flight map on the wire.
  *
- * It holds no copy of that map: the delta toggle and its watermark are the only
- * state, and every row is read live from the patron's LRU_Cache at fire time.
+ * It holds no copy of that map, and none of the delta toggle either: the fire
+ * watermark is the only state, and both the rows and the toggle are read live
+ * off the patron at fire time.
  */
 class Request_Flight_Node extends Timer_Node {
-
-	/** URL / user_agent display clips — identical to the completed-summary path. */
-	private const MAX_URL_LENGTH        = 2000;
-	private const MAX_USER_AGENT_LENGTH = 500;
-
-	/** Delta mode: emit only rows whose activity advanced since the last fire. */
-	private bool $delta = false;
 
 	/** Wall-clock watermark of the last fire that emitted rows (delta mode). */
 	private float $last_fire_ts = 0.0;
@@ -69,9 +63,10 @@ class Request_Flight_Node extends Timer_Node {
 		$watermark = $this->last_fire_ts;
 		$now       = Core::$now > 0.0 ? Core::$now : Core::right_now();
 		$emitted   = false;
+		$delta     = $this->delta();
 		foreach ( $rows as $rid => $row ) {
 			// Delta: skip a row with no activity since the previous fire.
-			if ( $this->delta && Core::as_float( $row['last_log_ts'] ?? 0 ) < $watermark ) {
+			if ( $delta && Core::as_float( $row['last_log_ts'] ?? 0 ) < $watermark ) {
 				continue;
 			}
 			$message                       = Message::new_message();
@@ -138,9 +133,9 @@ class Request_Flight_Node extends Timer_Node {
 			$user_agent_v  = $r['user_agent'] ?? '';
 			// Display clips identical to build_compact_summary (byte-based).
 			$url        = Request_Builder_Node::resolved_request_url( $request );
-			$url        = \strlen( $url ) > self::MAX_URL_LENGTH ? \substr( $url, 0, self::MAX_URL_LENGTH ) . '...' : $url;
+			$url        = Request_Builder_Node::clip( $url, Request_Builder_Node::MAX_URL_LENGTH );
 			$user_agent = Core::as_string( $user_agent_v );
-			$user_agent = \strlen( $user_agent ) > self::MAX_USER_AGENT_LENGTH ? \substr( $user_agent, 0, self::MAX_USER_AGENT_LENGTH ) . '...' : $user_agent;
+			$user_agent = Request_Builder_Node::clip( $user_agent, Request_Builder_Node::MAX_USER_AGENT_LENGTH );
 			$out[ Core::as_string( $rid ) ] = [
 				'method'      => Core::as_string( $method_v, 'GET' ),
 				'url'         => $url,
@@ -158,14 +153,15 @@ class Request_Flight_Node extends Timer_Node {
 		return $out;
 	}
 
-	/** Toggle delta mode (emit only advanced rows). Off = full per-tick re-emit. */
-	public function set_delta( bool $on ): void {
-		$this->delta = $on;
-	}
-
-	/** Current delta mode; read by the patron's dump_config round-trip. */
-	public function delta(): bool {
-		return $this->delta;
+	/**
+	 * Delta mode, read live off the patron the same way the rows are — the
+	 * `set_inflight_delta` verb writes the patron's field, and this node keeps
+	 * no copy to fall out of step with it. Off (full per-tick re-emit) with no
+	 * Request_Builder patron attached, which is the no-rows case anyway.
+	 */
+	private function delta(): bool {
+		$patron = $this->patron();
+		return $patron instanceof Request_Builder_Node && $patron->inflight_delta();
 	}
 
 	/**

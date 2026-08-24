@@ -20,9 +20,10 @@ import {
 	TM_STRUCT,
 	newMessage,
 	Core,
+	CommandInterpreterNode,
 } from '@newspack-nodes/runtime';
 import { LogStreamViewNode } from '@newspack-nodes/shared/nodes/log-stream-view-node';
-import { PerfErrorsViewNode } from '../perf-errors-view-node';
+import { PerfErrorsViewNode, views } from '../perf-errors-view-node';
 
 // Naming registers in the per-process Core registry; clear it between tests.
 beforeEach( () => Core.reset() );
@@ -379,6 +380,17 @@ describe( 'ingest filter', () => {
 		// whose searchable fields miss, or the filter lies about its scope.
 		expect( v.matchesFilter( { content: 'db timeout' }, 'timeout' ) ).toBe(
 			false
+		);
+	} );
+} );
+
+// Importing the view registers it: the class table `make_node` and the palette
+// resolve names against is what the dashboard's TSL reaches this class through.
+describe( 'registration', () => {
+	it( 'registers PerfErrorsView for make_node', () => {
+		expect( views ).toEqual( { PerfErrorsView: PerfErrorsViewNode } );
+		expect( CommandInterpreterNode.includeNodes.PerfErrorsView ).toBe(
+			PerfErrorsViewNode
 		);
 	} );
 } );

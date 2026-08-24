@@ -385,6 +385,41 @@ describe( 'RequestStream', () => {
 		expect( ths ).toEqual( [ 'Time', 'Request ID', 'UA' ] );
 	} );
 
+	it( 'keeps the known columns of a saved selection naming a removed one', () => {
+		window.localStorage.setItem(
+			'event-logger-stream-columns',
+			JSON.stringify( [
+				'user_agent',
+				'retired_column',
+				'status',
+				'status_code',
+			] )
+		);
+		registerViewFixture();
+		const { container } = mount();
+		const ths = [
+			...container.querySelectorAll( '.newspack-nodes-log-header__th' ),
+		].map( ( el ) => el.textContent );
+		expect( ths ).toEqual( [ 'Status', 'UA' ] );
+	} );
+
+	it( 'restores a selection saved under the pre-rename Status key', () => {
+		// Shipped as `status`; renamed `status_code` when the column set moved
+		// to the shared table. Filtering by the CURRENT keys alone silently
+		// drops Status from every upgraded install, and the write effect then
+		// persists the loss.
+		window.localStorage.setItem(
+			'event-logger-stream-columns',
+			JSON.stringify( [ 'rid', 'status', 'user_agent' ] )
+		);
+		registerViewFixture();
+		const { container } = mount();
+		const ths = [
+			...container.querySelectorAll( '.newspack-nodes-log-header__th' ),
+		].map( ( el ) => el.textContent );
+		expect( ths ).toEqual( [ 'Request ID', 'Status', 'UA' ] );
+	} );
+
 	describe( 'glob browse UI', () => {
 		it( 'renders neither the partition selector nor the sidebar by default', () => {
 			registerViewFixture();

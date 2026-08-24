@@ -20,24 +20,14 @@
  * `\Newspack_Nodes\Config` but must NOT WRITE them. The aggregator spoke
  * list is owned by the substrate `\Newspack_Nodes\Vault`, not here.
  *
- * Settings group / option-prefix:
- *   - Settings group:     `newspack_event_logger_nodes_options_group`
- *   - Settings page slug: `newspack_event_logger_nodes`
- *   - Menu page slug:     `newspack-event-logger-nodes`
- *   - Option prefix:      `newspack_event_logger_nodes_`
- *
  * Every derived view of the settings — the register/render loops, the reset
  * set, the delete-on-blank subset, the restart classification — comes from the
- * one `Settings_Schema`; this class hand-maintains no parallel list.
+ * one `Settings_Schema`; this class hand-maintains no parallel list, and it
+ * classifies restarts for application options only.
  *
- * Per-option worker-restart classification preserved for application options
- * only; substrate options classify on substrate Admin.
- *
- * Does NOT mount React dashboards — that wiring stays in the main plugin file's
+ * It does NOT mount React dashboards: that wiring is the plugin file's
  * `admin_enqueue_scripts` hook, which also enqueues the `settings` bundle whose
- * `RulesAdmin` tree fills the `#event-logger-rules-editor` div rendered here.
- * This class owns the WP-Settings-API surface only: the
- * `/options-general.php?page=newspack-event-logger-nodes` settings page.
+ * `RulesAdmin` fills the `#event-logger-rules-editor` div rendered here.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -46,10 +36,6 @@ namespace Newspack_Event_Logger_Nodes\Admin;
 
 use Newspack_Event_Logger_Nodes\Config;
 use Newspack_Event_Logger_Nodes\Settings_Schema;
-use Newspack_Event_Logger_Nodes\Stats_Store;
-use Newspack_Nodes\Bootstrap;
-use Newspack_Nodes\CLI;
-use Newspack_Nodes\Config as RuntimeConfig;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Config_System\Field_Reset_Assets;
 use Newspack_Nodes\Config_System\Reset_Gate;
@@ -104,43 +90,6 @@ class Admin {
 	 * `do_settings_sections()`. Distinct from the menu-page slug above.
 	 */
 	public const SETTINGS_PAGE = 'newspack_event_logger_nodes';
-
-	/**
-	 * Text-like keys that get a `pre_update_option_{$option}` delete-on-blank
-	 * filter: a blank submission deletes the row so the file default resurfaces
-	 * under presence-based Config, instead of storing '' (which would override
-	 * the default). Bool fields are EXCLUDED — an unchecked box is a real
-	 * override — and they reset only through the explicit `↺` mark. Derived from
-	 * the Schema's `delete_on_blank_options()` in `register_settings()`, which
-	 * classifies every non-`bool` Field as text-like. This plugin's three
-	 * settings fields are all bools today, so the list is empty; it stays wired
-	 * because the first non-bool Field must behave correctly the day it lands.
-	 *
-	 * @var array<int,string>
-	 */
-	private static array $delete_on_blank_options = [];
-
-	/**
-	 * Every application option with a settings field — the set `Reset_Gate`
-	 * attaches its per-field gate to. Booleans included, so a reset clears them
-	 * all.
-	 *
-	 * Substrate-level options (base_directory, num_partitions, max_segments,
-	 * segment_size, min_lifetime, memcache_servers) live on
-	 * `\Newspack_Nodes\Admin\Admin` and reset via its own form. The aggregator
-	 * spoke list is excluded too: the substrate `\Newspack_Nodes\Vault` owns it
-	 * through the `vault` REST CRUD, not a settings-form field.
-	 *
-	 * Derived from the single Settings_Schema in `register_settings()` (the
-	 * `setting_option_names()` set). `handle_reset_settings()` deliberately
-	 * re-derives the same list from the Schema rather than reading this cache,
-	 * so a reset works before `register_settings()` has ever run. The property
-	 * keeps this exact name because `tests/unit/Admin/AdminTest.php` reads it by
-	 * reflection to assert the reset set covers every registered setting.
-	 *
-	 * @var array<int,string>
-	 */
-	private static array $option_names = [];
 
 	/**
 	 * Register the whole admin surface: the Settings submenu, the Settings-API
@@ -319,7 +268,7 @@ class Admin {
 	}
 
 	/**
-	 * Render the settings page: the `flushed` / `reset` notices, the Settings-API
+	 * Render the settings page: the `reset` notice, the Settings-API
 	 * form posting to `options.php`, the hidden reset form the "Reset to
 	 * Defaults" button submits, and then the `settings_after_form` panels.
 	 *
@@ -339,24 +288,6 @@ class Admin {
 			<h1><?php \esc_html_e( 'Event Logger Settings', 'newspack-event-logger-nodes' ); ?></h1>
 			<?php
 			// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- read-only notice flag.
-			if ( isset( $_GET['flushed'] ) ) {
-				// phpcs:ignore WordPress.Security.NonceVerification.Recommended
-				$restarted = isset( $_GET['restarted'] ) && \is_numeric( $_GET['restarted'] ) ? (int) $_GET['restarted'] : 0;
-				echo '<div class="notice notice-success is-dismissible"><p>'
-					. \esc_html(
-						\sprintf(
-							/* translators: %d = number of workers restarted. */
-							\_n(
-								'Cache flushed. %d worker restart requested — fresh prefix takes effect on its next graceful exit.',
-								'Cache flushed. %d workers restart requested — fresh prefix takes effect on their next graceful exit.',
-								$restarted,
-								'newspack-event-logger-nodes'
-							),
-							$restarted
-						)
-					) . '</p></div>';
-			}
-			// phpcs:ignore WordPress.Security.NonceVerification.Recommended
 			if ( isset( $_GET['reset'] ) ) {
 				echo '<div class="notice notice-success is-dismissible"><p>'
 					. \esc_html__( 'Settings reset to defaults.', 'newspack-event-logger-nodes' )
@@ -519,14 +450,10 @@ class Admin {
 	public function register_settings(): void {
 		$schema = Settings_Schema::get();
 
-		// Cache the derived option lists the reset wiring below consumes.
-		self::$option_names            = $schema->setting_option_names();
-		self::$delete_on_blank_options = $schema->delete_on_blank_options();
-
 		$schema->register_options( self::OPTIONS_GROUP );
 
 		// Reset/delete-on-blank: drops the row so the file default returns.
-		Reset_Gate::register( self::RESET_MARK_FIELD, self::$option_names, self::$delete_on_blank_options );
+		Reset_Gate::register( self::RESET_MARK_FIELD, $schema->setting_option_names(), $schema->delete_on_blank_options() );
 
 		$schema->register_sections_and_fields( self::SETTINGS_PAGE );
 	}
@@ -540,25 +467,6 @@ class Admin {
 	 */
 	public static function general_section_callback(): void {
 		echo '<p>' . \esc_html__( 'Enable or disable event logging.', 'newspack-event-logger-nodes' ) . '</p>';
-	}
-
-	/**
-	 * Intro for the Instrumentation section, which no longer has any field: the
-	 * URL filters and hook lists it described became per-rule and moved to the
-	 * ruleset editor. The section is declared but never rendered, so this text
-	 * never prints.
-	 */
-	public static function instrumentation_section_callback(): void {
-		echo '<p>' . \esc_html__( 'URL filters and hooks to time. Use Browse Hooks / Browse Events to populate from the recommended set.', 'newspack-event-logger-nodes' ) . '</p>';
-	}
-
-	/**
-	 * Intro for the Performance Workers section, which no longer has any field:
-	 * the auto-tune thresholds it described became per-rule. Declared but never
-	 * rendered, like Instrumentation above.
-	 */
-	public static function workers_section_callback(): void {
-		echo '<p>' . \esc_html__( 'Automatically disable noisy events and protect slow ones.', 'newspack-event-logger-nodes' ) . '</p>';
 	}
 
 	/** Intro for the Debugging section: `log_memory` + `flush_every_line`. */
@@ -597,9 +505,8 @@ class Admin {
 
 	/**
 	 * Maintenance section — rendered below the form via
-	 * `newspack_event_logger_nodes/settings_after_form`. A confirm dialog feeds
-	 * a hidden form that POSTs to `admin-post.php`, which routes to
-	 * `handle_flush_stats`.
+	 * `newspack_event_logger_nodes/settings_after_form`. It links to the
+	 * substrate's page, which owns the flush.
 	 */
 	public function render_maintenance_section(): void {
 		$settings_url = \function_exists( 'admin_url' ) ? \admin_url( 'admin.php?page=newspack-nodes' ) : '';

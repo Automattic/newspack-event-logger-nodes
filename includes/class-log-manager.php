@@ -142,20 +142,6 @@ class Log_Manager {
 	 */
 	private static array $job_message = [];
 
-	/**
-	 * Deprecated mirror of is_started(), set with it at construction. The
-	 * profiler drop-in on Atomic is served from a read-only /wordpress/mu-plugins
-	 * with no override — a regular plugin can be shadowed from
-	 * /srv/htdocs/wp-content/plugins, an mu-plugin cannot — so the copy running
-	 * there gates on this. Left false it never contributes; mirroring restores
-	 * it without instrumenting requests the ruleset declined. Removable once
-	 * their deploy replaces the drop-in (2026-08-10).
-	 *
-	 * @api Read by pre-0.46.0 copies of 00-newspack-profiler.php.
-	 * @var bool
-	 */
-	public $enabled = false;
-
 	/** @var array<string,mixed> Cached config (loaded once at construction). */
 	private $config = [];
 	/** @var bool finish() has run; nothing more will be written. */
@@ -233,7 +219,6 @@ class Log_Manager {
 		$this->request_url = isset( $_SERVER['REQUEST_URI'] ) ? \sanitize_text_field( \wp_unslash( Core::as_string( $_SERVER['REQUEST_URI'] ) ) ) : '/unknown';
 		if ( $this->matches_url_filter( $this->request_url ) ) {
 			$this->started = true;
-			$this->enabled = true; // deprecated mirror; see the property.
 			\register_shutdown_function( [ $this, 'finish' ] );
 			$this->init_firehose();
 			$this->log_process();
@@ -371,10 +356,10 @@ class Log_Manager {
 	}
 
 	/**
-	 * Log an error message.
+	 * Log an error.
 	 *
 	 * @api Used by external plugins.
-	 * @param string $message Error message.
+	 * @param string $message The message.
 	 * @return bool True on success.
 	 */
 	public function error( string $message ): bool {
@@ -382,10 +367,10 @@ class Log_Manager {
 	}
 
 	/**
-	 * Log a warning message.
+	 * Log a warning.
 	 *
 	 * @api Used by external plugins.
-	 * @param string $message Warning message.
+	 * @param string $message The message.
 	 * @return bool True on success.
 	 */
 	public function warning( string $message ): bool {
@@ -396,7 +381,7 @@ class Log_Manager {
 	 * Log an info message.
 	 *
 	 * @api Used by external plugins.
-	 * @param string $message Info message.
+	 * @param string $message The message.
 	 * @return bool True on success.
 	 */
 	public function info( string $message ): bool {
@@ -502,7 +487,7 @@ class Log_Manager {
 	 * @param int    $seed Offset basis.
 	 * @return int 32-bit hash.
 	 */
-	private static function fnv1a32( string $str, int $seed = 2166136261 ): int {
+	public static function fnv1a32( string $str, int $seed = 2166136261 ): int {
 		$hash = $seed;
 		$len  = \strlen( $str );
 		for ( $i = 0; $i < $len; $i++ ) {
@@ -895,9 +880,9 @@ class Log_Manager {
 			$this->topic = $existing;
 		} else {
 			$this->topic = new Topic_Node();
+			$this->topic->patron( $this->topic );
 			$this->topic->name( '_firehose:topic' );
 			$this->topic->arguments( [ $dir_template, (string) $num_partitions, (string) $segment_size, (string) $min_segments, (string) $num_segments, (string) $max_segments, (string) $min_lifetime, (string) $lifetime ] );
-			$this->topic->patron( $this->topic );
 			$ci = Core::node( Node_Names::COMMAND_INTERPRETER );
 			if ( null !== $ci ) {
 				$this->topic->sink( $ci );

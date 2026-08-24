@@ -1,4 +1,9 @@
-import { KEY, VALUE, ID } from '@newspack-nodes/runtime';
+import {
+	KEY,
+	VALUE,
+	ID,
+	CommandInterpreterNode,
+} from '@newspack-nodes/runtime';
 import fnv1a from '@newspack-nodes/shared/utils/fnv1a';
 import { LogStreamViewNode } from '@newspack-nodes/shared/nodes/log-stream-view-node';
 
@@ -18,32 +23,21 @@ const clip = ( s, max ) => {
 };
 
 /**
- * URL hash for deep-linking to URL detail. Hashes the FULL url — matching PHP
- * `Log_Manager::url_hash`. The real query is already stripped upstream,
- * so the only `?` left is the intentional `?worker_type` marker on nodes/ELN
- * URLs (e.g. `/jobs/x?reconcile`), which MUST be kept or the hash won't match
- * that URL's row.
- *
- * @param {string} url URL to hash.
- * @return {string} 12-character FNV-1a hash.
- */
-const urlHash = ( url ) => fnv1a( url || '' );
-
-/**
  * `requestlog:view` — owns the Request Log view model.
  *
  * A `LogStreamViewNode` subclass: the ring, paused belt + step budget,
- * decaying lps, seek tracking, and the shared control verbs
- * all live in the shared base. This class adds the Request Log's specifics:
- * - the `select` control (partition switch: reset the tracker, arm
- *   `seekActive` — breadcrumbs only mean anything within ONE dir; a glob
- *   mixes segments) and its `seekTracking()` gate;
+ * decaying lps, seek tracking, and the shared control verbs — `select`
+ * included — all live in the shared base. This class adds the Request Log's
+ * specifics:
  * - `shapeRow()`: defensively shapes a raw completed-request envelope
  *   (VALUE = the summary from `_sse`, KEY = rid) into a row — drop
- *   missing-url, clip url@2000 + user_agent@500, default-fill, urlHash — plus
+ *   missing-url, clip url@2000 + user_agent@500 for DISPLAY, default-fill,
+ *   and urlHash over the FULL url — plus
  *   the shared debug trio (`msgId`, `key`, `raw`, `struct`) and the
  *   searchable `content` line.
  *
+ * @testonly The class is exported for its suite; production reaches it
+ *           through the `views` map registered at the foot of this file.
  * @param {number} [maxLines] Ring cap (defaults to DEFAULT_MAX_LINES).
  */
 export class RequestLogViewNode extends LogStreamViewNode {
@@ -60,41 +54,6 @@ export class RequestLogViewNode extends LogStreamViewNode {
 		super( maxLines || DEFAULT_MAX_LINES );
 		this.seekActive = false;
 		this._publish();
-	}
-
-	/**
-	 * Handle the Request Log's own `select` verb, deferring every shared verb
-	 * (`pause`, `step`, `connection`, `browse`, `follow`, `clear`) to the base.
-	 *
-	 * `select` is the partition switch `useGlobBrowse` fills in: it resets the
-	 * seek tracker and drops every buffered row, since rows read under the
-	 * previous subscription don't belong to the new one. Tracking re-arms only
-	 * for a single dir — an empty `dir` widens back to the `completed.*` glob,
-	 * whose interleaved segment ids would jitter the rail highlight.
-	 *
-	 * @param {{action: string, dir?: string}} value The control payload; `dir`
-	 *                                               is the chosen partition
-	 *                                               directory, `''` for the glob.
-	 */
-	_control( value ) {
-		if ( 'select' === value?.action ) {
-			// Partition switch: reset the tracker; arm only for a single dir.
-			this.seekActive = !! value.dir;
-			this.seek.select();
-			this._clear();
-		} else {
-			super._control( value );
-		}
-	}
-
-	/**
-	 * Whether position breadcrumbs currently mean anything — armed by `select`
-	 * for one partition dir, disarmed for the multi-partition glob.
-	 *
-	 * @return {boolean} True while a single dir is selected.
-	 */
-	seekTracking() {
-		return this.seekActive;
 	}
 
 	/**
@@ -138,6 +97,7 @@ export class RequestLogViewNode extends LogStreamViewNode {
 			return null;
 		}
 		const rid = 'string' === typeof message[ KEY ] ? message[ KEY ] : '';
+		// Clip for DISPLAY only; the hash below keys on the full string.
 		const url = clip( req.url, MAX_URL_LENGTH );
 		const method = req.method || 'GET';
 		const statusCode = req.status_code || 0;
@@ -146,7 +106,7 @@ export class RequestLogViewNode extends LogStreamViewNode {
 			rid,
 			method,
 			url,
-			urlHash: urlHash( url ),
+			urlHash: fnv1a( req.url ),
 			duration_ms: req.duration_ms || 0,
 			status_code: statusCode,
 			remote_addr: req.remote_addr || '',
@@ -172,3 +132,8 @@ export class RequestLogViewNode extends LogStreamViewNode {
 		};
 	}
 }
+
+/** The view classes, handed to `makeNode` — a name is per-bundle. */
+export const views = CommandInterpreterNode.registerNodeClasses( {
+	RequestLogView: RequestLogViewNode,
+} );

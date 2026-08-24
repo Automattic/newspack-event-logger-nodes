@@ -270,8 +270,8 @@ class RequestFlightTest extends TestCase {
 		$rb->sink( $this->capture_sink( $got ) );
 		$rb->cache->set( 'r-1', (object) [ 'url' => '/a', 'request_method' => 'GET', 'timestamp' => 10.0, 'last_log_ts' => 10.0 ] );
 
+		$rb->set_inflight_delta( true );
 		$flight = $rb->flight();
-		$flight->set_delta( true );
 		$flight->target( 'gyroscope_partition' );
 
 		// First tick: emits (initial watermark 0), advancing the watermark to 100.

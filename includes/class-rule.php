@@ -69,6 +69,69 @@ final class Rule {
 	}
 
 	/**
+	 * Whether this rule suppresses logging. Every action but ACTION_LOG skips.
+	 *
+	 * @return bool
+	 */
+	public function is_skip(): bool {
+		return ! $this->is_log();
+	}
+
+	/**
+	 * Whether this rule logs.
+	 *
+	 * @return bool
+	 */
+	public function is_log(): bool {
+		return self::ACTION_LOG === $this->action;
+	}
+
+	/**
+	 * A copy of this rule under a different id. The id is a pure function of
+	 * the pattern, so callers pass what `Rule_Set::id_for()` derives.
+	 *
+	 * @param string $id Pattern-derived id.
+	 * @return self
+	 */
+	public function with_id( string $id ): self {
+		return $this->with( [ 'id' => $id ] );
+	}
+
+	/**
+	 * A copy of this rule with some fields replaced, the object being immutable.
+	 *
+	 * Keys are `to_array()`'s; anything absent is carried over. Reconstructing
+	 * by hand means nine positional arguments at every call site, and a field
+	 * added to the constructor silently drops out of the ones that were missed.
+	 *
+	 * @param array<string,mixed> $overrides Fields to replace.
+	 * @return self
+	 */
+	public function with( array $overrides ): self {
+		return self::from_array( \array_merge( $this->to_array(), $overrides ) );
+	}
+
+	/**
+	 * The persisted and wire shape: what `Rule_Set::save()` stores, what the
+	 * hub syncs to spokes, and what `from_array()` reads back.
+	 *
+	 * @return array<string,mixed>
+	 */
+	public function to_array(): array {
+		return [
+			'id'                          => $this->id,
+			'pattern'                     => $this->pattern,
+			'action'                      => $this->action,
+			'auto_disable_threshold'      => $this->auto_disable_threshold,
+			'auto_protect_time_threshold' => $this->auto_protect_time_threshold,
+			'significant_events'          => $this->significant_events,
+			'custom_events'               => $this->custom_events,
+			'hooks'                       => $this->hooks,
+			'hooks_in'                    => $this->hooks_in,
+		];
+	}
+
+	/**
 	 * Decode a stored, config-seeded, or wire rule map. Scalars coerce through
 	 * Core::as_* and anything but 'log' reads as skip, but a map the rest of the
 	 * system cannot represent is REFUSED rather than aliased onto a shape it can.
@@ -112,41 +175,6 @@ final class Rule {
 	}
 
 	/**
-	 * Whether this rule suppresses logging. Every action but ACTION_LOG skips.
-	 *
-	 * @return bool
-	 */
-	public function is_skip(): bool {
-		return ! $this->is_log();
-	}
-
-	/**
-	 * Whether this rule logs.
-	 *
-	 * @return bool
-	 */
-	public function is_log(): bool {
-		return self::ACTION_LOG === $this->action;
-	}
-
-	/**
-	 * A copy of this rule under a different id, the object being immutable. The
-	 * id is a pure function of the pattern, so callers pass what
-	 * `Rule_Set::id_for()` derives rather than an id of their own choosing.
-	 *
-	 * @param string $id Pattern-derived id.
-	 * @return self
-	 */
-	public function with_id( string $id ): self {
-		return new self(
-			$id, $this->pattern, $this->action,
-			$this->auto_disable_threshold, $this->auto_protect_time_threshold,
-			$this->significant_events, $this->custom_events,
-			$this->hooks, $this->hooks_in
-		);
-	}
-
-	/**
 	 * Whether the pattern matches a path exactly rather than as a prefix — the
 	 * trailing '?' says "path ends here".
 	 *
@@ -158,25 +186,5 @@ final class Rule {
 	 */
 	public function is_exact(): bool {
 		return \str_ends_with( $this->pattern, '?' );
-	}
-
-	/**
-	 * The persisted and wire shape: what `Rule_Set::save()` stores, what the
-	 * hub syncs to spokes, and what `from_array()` reads back.
-	 *
-	 * @return array<string,mixed>
-	 */
-	public function to_array(): array {
-		return [
-			'id'                          => $this->id,
-			'pattern'                     => $this->pattern,
-			'action'                      => $this->action,
-			'auto_disable_threshold'      => $this->auto_disable_threshold,
-			'auto_protect_time_threshold' => $this->auto_protect_time_threshold,
-			'significant_events'          => $this->significant_events,
-			'custom_events'               => $this->custom_events,
-			'hooks'                       => $this->hooks,
-			'hooks_in'                    => $this->hooks_in,
-		];
 	}
 }
