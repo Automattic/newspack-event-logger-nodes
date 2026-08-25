@@ -24,6 +24,7 @@ import {
 	PALETTE,
 	buildTimeSlots,
 } from '@newspack-nodes/shared/hooks/useTimeChart';
+import { compactFixed } from '@newspack-nodes/shared/utils/formatters';
 import { hasBuckets } from './AggregateTimeChart';
 import AreaTimeChart from './components/AreaTimeChart';
 import { RETENTION_SECONDS } from './retention';
@@ -65,26 +66,26 @@ const formatYValue = ( val, mode ) => {
 	}
 	if ( mode === 'time' ) {
 		if ( val < 0.001 ) {
-			return `${ ( val * 1000000 ).toFixed( 0 ) }µs/s`;
+			return `${ compactFixed( val * 1000000 ) }µs/s`;
 		}
 		if ( val < 1 ) {
-			return `${ ( val * 1000 ).toFixed( 0 ) }ms/s`;
+			return `${ compactFixed( val * 1000 ) }ms/s`;
 		}
-		return `${ val.toFixed( 1 ) }s/s`;
+		return `${ compactFixed( val ) }s/s`;
 	}
 	if ( mode === 'average' ) {
 		if ( val < 1 ) {
-			return `${ ( val * 1000 ).toFixed( 0 ) }µs`;
+			return `${ compactFixed( val * 1000 ) }µs`;
 		}
 		if ( val >= 1000 ) {
-			return `${ ( val / 1000 ).toFixed( 1 ) }s`;
+			return `${ compactFixed( val / 1000 ) }s`;
 		}
-		return `${ val.toFixed( 0 ) }ms`;
+		return `${ compactFixed( val ) }ms`;
 	}
 	if ( val >= 1000 ) {
-		return `${ ( val / 1000 ).toFixed( 1 ) }K/s`;
+		return `${ compactFixed( val / 1000 ) }K/s`;
 	}
-	return `${ val.toFixed( val >= 10 ? 0 : 1 ) }/s`;
+	return `${ compactFixed( val ) }/s`;
 };
 
 /**

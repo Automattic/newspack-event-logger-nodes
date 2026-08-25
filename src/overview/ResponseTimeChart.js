@@ -29,11 +29,22 @@ import {
 	getStatusColor,
 	STATUS_COLORS,
 } from '@newspack-nodes/shared/utils/formatUtils';
+import { integerTicks } from '@newspack-nodes/shared/utils/axis-ticks';
 
 /**
  * Total SVG height in pixels. Only the width responds to resize.
  */
 const CHART_HEIGHT = 250;
+
+/**
+ * Durations to the millisecond, which is also what the axis ticks in — half a
+ * millisecond would print the same label twice.
+ *
+ * @param {number} ms Duration in milliseconds.
+ * @return {string} Formatted duration.
+ */
+const formatMs = ( ms ) => `${ Math.round( ms ) }ms`;
+formatMs.tickValues = integerTicks;
 
 /**
  * Response Time Chart component.
@@ -104,7 +115,7 @@ export default function ResponseTimeChart( { requests, onRequestClick } ) {
 				y,
 				innerH,
 				tickCount: chartData.length,
-				yFormat: ( d ) => Math.round( d ) + 'ms',
+				yFormat: formatMs,
 				yLabel: __( 'Response Time', 'newspack-event-logger-nodes' ),
 			} );
 

@@ -24,16 +24,16 @@ import {
 /**
  * Area time chart component.
  *
- * @param {Object}   props              Component props.
- * @param {Array}    props.series       `[ { label, values: [ { date, value } ] } ]`; every series shares one slot list.
- * @param {Function} props.yFormat      Formats a value for the Y axis and the tooltip.
- * @param {Function} props.colorAt      `( label, index ) => color` for area, stroke and legend swatch.
- * @param {string}   props.title        Translated heading.
- * @param {number}   props.height       Total SVG height in pixels.
- * @param {string}   [props.yLabel]     Translated Y-axis title; omitted leaves the axis unlabelled.
- * @param {boolean}  [props.stacked]    Stack the series instead of overlaying them.
- * @param {string}   [props.totalLabel] Translated label for the tooltip's leading column-total row; omitted drops the row.
- * @param {string}   [props.className]  Class for the wrapper element.
+ * @param {Object}                                                          props              Component props.
+ * @param {Array}                                                           props.series       `[ { label, values: [ { date, value } ] } ]`; every series shares one slot list.
+ * @param {import('@newspack-nodes/shared/utils/axis-ticks').AxisFormatter} props.yFormat      Formats a value for the Y axis and the tooltip.
+ * @param {Function}                                                        props.colorAt      `( label, index ) => color` for area, stroke and legend swatch.
+ * @param {string}                                                          props.title        Translated heading.
+ * @param {number}                                                          props.height       Total SVG height in pixels.
+ * @param {string}                                                          [props.yLabel]     Translated Y-axis title; omitted leaves the axis unlabelled.
+ * @param {boolean}                                                         [props.stacked]    Stack the series instead of overlaying them.
+ * @param {string}                                                          [props.totalLabel] Translated label for the tooltip's leading column-total row; omitted drops the row.
+ * @param {string}                                                          [props.className]  Class for the wrapper element.
  * @return {import('react').ReactElement} Rendered chart.
  */
 export default function AreaTimeChart( {
