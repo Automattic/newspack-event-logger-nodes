@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`Flame_Builder_Node` no longer names itself twice in its own log lines.** `Node::log_midfix()` already prepends `"<name>: "` to every line, and omits it only when the process name already starts with that name — so on a worker whose process name differs, the checkpoint-budget tripwire read `flame-builder: flame-builder: held stats frames over the checkpoint budget`. Four messages dropped the redundant prefix: three in `Flame_Builder_Node` and one in `Discovery_Collector_Node`. The static `Core::` log helpers add no node midfix, so their context tags (`LogManager: `, `PerformanceCI: `, `rules: `) are the only identity those lines carry and are left alone. A new `NodeLogPrefixTest` scans this plugin's node classes for the same defect.
+
+### Changed
+
+- **`MAX_CHECKPOINT_MIRROR_BYTES` raised from 262144 to 2097152 (2MB).** The cap was derived as a fraction of the 32MB record-drop cliff with margin, and never checked against the held size actually observed. On the production hub the checkpoint log reports held totals of ~267,000–348,000 bytes — just over the old cap — so it dropped one to thirteen frames on essentially every checkpoint, which made its own tripwire unreadable: a threshold that is always tripped reports nothing. 2MB is ~6x the observed peak held total (the Topics Cache Size chart peaks under 3.8MB across 24 hours), still 1/16th of the drop cliff, and leaves room for the O(servers) growth decision 11 describes. **The cost is disk**: the offsetlog ring holds at most 60 keyframes and each carries a whole checkpoint, so the budget bounds that ring at 60 × the cap — ~15.7MB before, ~120MB now. That ring caps keyframe COUNT and never bytes, and nothing else bounds it. Decision 11's reopen condition changes with it: "more than half the held frames drop" was written when routine firing was expected, and at 2MB routine firing stops, so any drop at all is now the signal.
+
 ## [0.60.1] - 2026-08-25
 
 ### Fixed

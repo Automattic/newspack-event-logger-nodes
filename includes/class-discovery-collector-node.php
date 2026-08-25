@@ -118,7 +118,7 @@ class Discovery_Collector_Node extends Timer_Node {
 			if ( '' === $spoke || ! Command_Auth::has_session( $spoke ) ) {
 				$uptime = (int) ( Core::$now - Core::$init_time );
 				if ( $uptime > 30 ) {
-					$this->print_less_often( 'discovery-collector: no session for ', $target, '; skipping' );
+					$this->print_less_often( 'no session for ', $target, '; skipping' );
 				}
 				// Skipping alone deadlocks: someone must ask for the handshake.
 				$egress?->ensure_session();
