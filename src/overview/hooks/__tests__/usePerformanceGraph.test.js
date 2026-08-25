@@ -23,6 +23,7 @@ import {
 } from '../../../test-helpers/renderHook';
 import { installFakeCommandWire } from '@newspack-nodes/shared/test-utils/fakeCommandWire';
 import {
+	CommandInterpreterNode,
 	Core,
 	TO,
 	FROM,
@@ -131,6 +132,30 @@ describe( 'usePerformanceGraph — toolkit wiring', () => {
 		}
 		// The urlDetail merge transform sits on the receiver→view edge.
 		expect( Core.node( 'urldetail:merge' ) ).toBeTruthy();
+	} );
+
+	test( 'builds the on-demand detail nodes through an interpreter that never registered their names', () => {
+		// ADR-16: the name map is a per-bundle static, so a hub tab building
+		// this graph through ITS interpreter resolves none of these names.
+		// Emptying the map is what that looks like from in here.
+		const saved = {};
+		for ( const name of [
+			'UrlDetailMerge',
+			'UrlDetailView',
+			'RequestDetailView',
+		] ) {
+			saved[ name ] = CommandInterpreterNode.includeNodes[ name ];
+			delete CommandInterpreterNode.includeNodes[ name ];
+		}
+		try {
+			installWire();
+			renderHook( () => usePerformanceGraph() );
+			expect( Core.node( 'urldetail:merge' ) ).toBeTruthy();
+			expect( Core.node( 'urldetail:view' ) ).toBeTruthy();
+			expect( Core.node( 'requestdetail:view' ) ).toBeTruthy();
+		} finally {
+			Object.assign( CommandInterpreterNode.includeNodes, saved );
+		}
 	} );
 
 	test( 'does NOT mount _output / _completion / _uptime / _cwd (dashboards are not REPLs)', () => {

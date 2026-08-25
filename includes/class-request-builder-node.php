@@ -90,6 +90,28 @@ class Request_Builder_Node extends Timer_Node {
 		'CLI'     => 'C',
 	];
 
+	/**
+	 * Where each RAW-COMPARABLE field sits on an index line, `[offset, length]`.
+	 *
+	 * Only columns whose trimmed bytes equal the parsed value belong here: a
+	 * scan pre-filters on them and parses only on a hit, so a zero-padded or
+	 * coded column would answer a question it cannot answer.
+	 */
+	private const INDEX_COLUMNS = [
+		'rid'      => [ 0, 32 ],
+		'url_hash' => [ 32, 12 ],
+	];
+
+	/**
+	 * The two columns a line's COMPLETION is read from: the zero-padded start
+	 * time, and the duration in milliseconds that closes it.
+	 *
+	 * Their own table, not INDEX_COLUMNS rows: zero padding is what makes the
+	 * raw bytes sort the way the numbers do, and that is a different property
+	 * from the equality the pre-filter columns promise.
+	 */
+	private const COMPLETION_COLUMNS = [ [ 44, 10 ], [ 54, 8 ] ];
+
 	/** Markers that close a request. They land even when the sequence broke. */
 	private const TERMINAL_KEYWORDS = [ 'process (complete)' => true, 'process (aborted)' => true ];
 
@@ -99,11 +121,23 @@ class Request_Builder_Node extends Timer_Node {
 	/** Default number of rotating LRU buckets. */
 	public const DEFAULT_NUM_BUCKETS = 3;
 
-	/**
-	 * Bucket rotation interval in seconds.
-	 * 3 buckets x 200s = 600s (10 min) before oldest bucket is evicted.
-	 */
+	/** Bucket rotation interval in seconds; see DEFAULT_EVICTION_WINDOW_SEC below. */
 	private const BUCKET_ROTATION_S = 200;
+
+	/**
+	 * The longest a request stays in flight under the DEFAULT declaration.
+	 *
+	 * Timed rotation evicts the oldest bucket, and `evict_request()` writes
+	 * whatever is still open as timed out, so no request outlives every bucket.
+	 * `Stats_Store::MAX_FUTURE_SKEW_SEC` borrows that magnitude as the lateness
+	 * it tolerates from a producer's clock.
+	 *
+	 * It measures `DEFAULT_NUM_BUCKETS`, not `$this->num_buckets`, because a
+	 * constant cannot follow a per-topology declaration — so a topology that
+	 * declares another count says so through `build_cache()` rather than
+	 * leaving the borrow quietly wrong.
+	 */
+	public const DEFAULT_EVICTION_WINDOW_SEC = self::DEFAULT_NUM_BUCKETS * self::BUCKET_ROTATION_S;
 
 	/** Longest keyword the intern table accepts; longer ones pass through. */
 	private const INTERN_MAX_KEY_LENGTH  = 256;
@@ -825,10 +859,22 @@ class Request_Builder_Node extends Timer_Node {
 	 *
 	 * The timed rotation is what makes a stalled request time out; its eviction
 	 * callback is `evict_request()`, which writes the request out as timed out.
+	 * A bucket count off the default moves the eviction window with it, and
+	 * `DEFAULT_EVICTION_WINDOW_SEC` cannot follow — so the declaration that
+	 * moved it is where that gets said.
 	 *
 	 * @return LRU_Cache The constructed cache instance.
 	 */
 	private function build_cache(): LRU_Cache {
+		if ( self::DEFAULT_NUM_BUCKETS !== $this->num_buckets ) {
+			$this->print_less_often(
+				'WARNING: eviction window is now ',
+				(string) ( $this->num_buckets * self::BUCKET_ROTATION_S ),
+				's, not the ',
+				(string) self::DEFAULT_EVICTION_WINDOW_SEC,
+				's other code borrows'
+			);
+		}
 		return ( new LRU_Cache( $this->bucket_size, $this->num_buckets ) )
 			->with_timed_rotation(
 				self::BUCKET_ROTATION_S,
@@ -1506,6 +1552,37 @@ class Request_Builder_Node extends Timer_Node {
 			$names = \array_flip( self::METHOD_CODES );
 		}
 		return $names;
+	}
+
+	/**
+	 * Where a raw-comparable field sits on the line this class writes.
+	 *
+	 * The scan that reads these lines compares ONE column before parsing, and
+	 * the offsets it slices with have to come from the writer that laid the
+	 * line out. A field with no such column answers `[]`, and its caller falls
+	 * back to the parse.
+	 *
+	 * @param string $field Index-entry field name.
+	 * @return array{0:int,1:int}|array{} Offset and length, or [] when none.
+	 */
+	public static function index_column( string $field ): array {
+		return self::INDEX_COLUMNS[ $field ] ?? [];
+	}
+
+	/**
+	 * Where a line's COMPLETION is read from, for a walk that bounds itself by
+	 * time rather than by a match: the start column, then the duration column
+	 * in milliseconds. A format carrying no time answers `[]`, and its caller
+	 * keeps the entry budget as its only bound.
+	 *
+	 * Completion, not start: this class appends a line when the request ENDS,
+	 * so start is the one time on the line a walk cannot order itself by — a
+	 * request that ran for hours carries one from outside any recent window.
+	 *
+	 * @return array{0:array{0:int,1:int},1:array{0:int,1:int}} Start, then duration.
+	 */
+	public static function index_completion_columns(): array {
+		return self::COMPLETION_COLUMNS;
 	}
 
 	/**

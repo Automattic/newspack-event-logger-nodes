@@ -340,12 +340,19 @@ class Ask_Assembler {
 	 * switch on. The dimensional breakdown is `url_detail`'s to return; a
 	 * brief names that verb rather than carrying an unbounded series.
 	 *
-	 * @param array<array-key,mixed>          $stats    A URL index row.
-	 * @param array<int,array<array-key,mixed>> $requests Recent requests for that URL.
-	 * @param Rule|null                 $rule     The governing rule, or null.
+	 * The requests are drawn from a WINDOW, and both facts about that walk are
+	 * required arguments: how it ended, and what it was of. A narrower number
+	 * that does not say so reads as the site's.
+	 *
+	 * @param array<array-key,mixed>            $stats             A URL index row.
+	 * @param array<int,array<array-key,mixed>> $requests          Recent requests for that URL.
+	 * @param Rule|null                         $rule              The governing rule, or null.
+	 * @param string                            $server            Server the numbers are of; '' is site-wide.
+	 * @param bool                              $scan_stopped_early Whether the walk behind `$requests` ran out of budget.
+	 * @param int                               $requests_window_start When the window those requests were drawn from opens.
 	 * @return array<string,mixed>
 	 */
-	public static function for_url( array $stats, array $requests, ?Rule $rule, string $server = '' ): array {
+	public static function for_url( array $stats, array $requests, ?Rule $rule, string $server, bool $scan_stopped_early, int $requests_window_start ): array {
 		\usort(
 			$requests,
 			static fn ( array $a, array $b ): int =>
@@ -353,29 +360,33 @@ class Ask_Assembler {
 		);
 
 		return [
-			'subject'        => 'url',
-			'url'            => Log_Manager::redact_url( Core::as_string( $stats['url'] ?? '' ) ),
-			'hash'           => Core::as_string( $stats['hash'] ?? '' ),
+			'subject'            => 'url',
+			'url'                => Log_Manager::redact_url( Core::as_string( $stats['url'] ?? '' ) ),
+			'hash'               => Core::as_string( $stats['hash'] ?? '' ),
 			// What these numbers are OF; the pointer below carries it too.
-			'server'         => $server,
-			'stats'          => [
+			'server'             => $server,
+			'stats'              => [
 				'count'       => Core::num_int( $stats['count'] ?? 0 ),
 				'avg_ms'      => Core::num_float( $stats['avg_ms'] ?? 0 ),
 				'p95_ms'      => Core::num_float( $stats['p95_ms'] ?? 0 ),
 				'max_ms'      => Core::num_float( $stats['max_ms'] ?? 0 ),
 				'max_peak_mb' => Core::num_float( $stats['max_peak_mb'] ?? 0 ),
 			],
-			'worst_requests' => \array_map(
+			'worst_requests'     => \array_map(
 				[ self::class, 'worst_request_shape' ],
 				\array_slice( $requests, 0, self::WORST_REQUESTS )
 			),
-			'rule'           => self::rule_shape( $rule ),
-			'findings'       => Findings::for_url( $stats, $rule ),
-			'fetch'          => self::fetch(
+			// The WALK, not the five-row slice above it, which always cuts.
+			'scan_stopped_early' => $scan_stopped_early,
+			// What the walk is OF: an empty list is empty of this window only.
+			'requests_window_start' => $requests_window_start,
+			'rule'               => self::rule_shape( $rule ),
+			'findings'           => Findings::for_url( $stats, $rule ),
+			'fetch'              => self::fetch(
 				'performance_url_detail',
 				[ 'hash' => Core::as_string( $stats['hash'] ?? '' ), 'server' => $server ]
 			),
-			'caveat'         => Findings::caveat(),
+			'caveat'             => Findings::caveat(),
 		];
 	}
 

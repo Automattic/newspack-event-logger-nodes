@@ -542,17 +542,20 @@ class PerformanceCITest extends TestCase {
 		// url_detail's `requests` slice walks requests.log for entries whose
 		// url_hash matches. Seed the URL in the memcache index AND two on-disk
 		// requests so the collect + dedup walk runs (not the empty-result skip).
+		// Timestamps ride the clock: the walk stops at the retention floor, so a
+		// fixed epoch would put the whole fixture behind it.
 		$url    = '/recent-list';
 		$hash   = Log_Manager::url_hash( $url );
+		$now    = \time();
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
 		$this->set_url_bucket( $store, $bucket, [
-			$hash => [ 'url' => $url, 'count' => 2, 'sum_ms' => 32.0, 'last_seen' => 1700002000 ],
+			$hash => [ 'url' => $url, 'count' => 2, 'sum_ms' => 32.0, 'last_seen' => $now - 623 ],
 		] );
 		$this->write_request( [
 			'rid'            => 'rid-recent-a-1234567890123456',
 			'url'            => $url,
-			'timestamp'      => 1700001000,
+			'timestamp'      => $now - 1817,
 			'duration_ms'    => 12,
 			'status_code'    => 200,
 			'peak_mb'        => 2,
@@ -561,7 +564,7 @@ class PerformanceCITest extends TestCase {
 		$this->write_request( [
 			'rid'            => 'rid-recent-b-1234567890123456',
 			'url'            => $url,
-			'timestamp'      => 1700002000,
+			'timestamp'      => $now - 623,
 			'duration_ms'    => 20,
 			'status_code'    => 500,
 			'peak_mb'        => 3,
@@ -572,8 +575,406 @@ class PerformanceCITest extends TestCase {
 		$result      = VerbHarness::fire( $interpreter, 'performance', 'url_detail', $hash );
 
 		$this->assertCount( 2, $result['requests'] );
-		// Sorted by timestamp DESC → the newest (b, ts 1700002000) leads.
+		// Sorted by timestamp DESC → the newest (b) leads.
 		$this->assertSame( 'rid-recent-b-1234567890123456', $result['requests'][0]['rid'] );
+	}
+
+	public function test_url_detail_reports_a_scan_that_stopped_before_reaching_the_url(): void {
+		// A low-traffic URL among high-traffic neighbours: the index walk spends
+		// its whole entry budget on the newer lines and never reaches the one
+		// matching entry. An empty list then says "no requests", which is a lie
+		// — the truth is that the scan stopped, and the payload has to say so.
+		$url    = '/buried-under-neighbours';
+		$hash   = Log_Manager::url_hash( $url );
+		$store  = new Stats_Store( 0, 86400 );
+		$bucket = $this->current_url_bucket();
+		$this->set_url_bucket( $store, $bucket, [
+			$hash => [ 'url' => $url, 'count' => 1, 'sum_ms' => 37.0, 'last_seen' => \time() - 2311 ],
+		] );
+		// Inside the window, so the BUDGET is the only thing that can stop the walk.
+		$this->write_request( [
+			'rid'            => 'rid-buried-1234567890123456789',
+			'url'            => $url,
+			'timestamp'      => \time() - 2311,
+			'duration_ms'    => 37,
+			'status_code'    => 418,
+			'peak_mb'        => 5,
+			'request_method' => 'GET',
+		] );
+		// Newer than that entry and more numerous than the budget. Short lines:
+		// the budget counts entries scanned, not bytes, and a line under the
+		// fixed width parses as no entry.
+		\file_put_contents(
+			$this->tmp . '/logs/requests.p0/0.idx',
+			\str_repeat( "x\n", Performance_CI_Node::MAX_INDEX_ENTRIES + 1 ),
+			FILE_APPEND | LOCK_EX
+		);
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'url_detail', $hash );
+
+		$this->assertSame( [], $result['requests'], 'the budget ran out before the matching entry' );
+		$this->assertTrue( $result['scan_stopped_early'], 'a stopped scan is not an empty result' );
+	}
+
+	public function test_url_detail_calls_a_full_request_list_complete_not_truncated(): void {
+		// The per-URL cap ends the walk with the answer in hand; only the entry
+		// budget running out is truncation. Seeding one past the cap proves the
+		// early exit is not reported as a stopped scan.
+		$url   = '/at-the-request-cap';
+		$hash  = Log_Manager::url_hash( $url );
+		$limit = (int) ( new \ReflectionClassConstant( Performance_CI_Node::class, 'RECENT_REQUEST_LIMIT' ) )->getValue();
+		$now   = \time();
+		$store = new Stats_Store( 0, 86400 );
+		$this->set_url_bucket( $store, $this->current_url_bucket(), [
+			$hash => [ 'url' => $url, 'count' => $limit + 1, 'sum_ms' => 64.0, 'last_seen' => $now - 907 ],
+		] );
+		for ( $i = 0; $i <= $limit; $i++ ) {
+			$this->write_request( [
+				'rid'            => \sprintf( 'rid-cap-%024d', $i ),
+				'url'            => $url,
+				'timestamp'      => $now - 1408 + $i,
+				'duration_ms'    => 64,
+				'status_code'    => 203,
+				'peak_mb'        => 7,
+				'request_method' => 'GET',
+			] );
+		}
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'url_detail', $hash );
+
+		$this->assertCount( $limit, $result['requests'] );
+		$this->assertFalse( $result['scan_stopped_early'], 'reaching the per-URL cap is a complete answer' );
+	}
+
+	// -------------------------------------------------------------------------
+	// Retention edge: the walk stops where an answer could no longer be.
+	//
+	// An index line is appended at its request's COMPLETION, so completion is
+	// what the stop compares — `timestamp` is the START, and a long request
+	// carries one from far outside the window. The line alone cannot end the
+	// walk either: on a hub, append order is the spokes' arrival order, so the
+	// stop also needs the segment's index to have gone untouched since the
+	// window opened, which is the one clock the reader owns.
+	// -------------------------------------------------------------------------
+
+	/** A retention window narrow enough to place seeded entries either side of it. */
+	private const SCAN_RETENTION = 7200;
+
+	/** Backdate a seeded segment's index, the way a segment closed hours ago reads. */
+	private function close_segment_index( int $seconds_ago, int $partition = 0, int $segment = 0 ): void {
+		$path = $this->tmp . "/logs/requests.p{$partition}/{$segment}.idx";
+		\touch( $path, \time() - $seconds_ago );
+		\clearstatcache( true, $path );
+	}
+
+	public function test_url_detail_names_the_window_its_request_list_was_drawn_from(): void {
+		// The list stops at the window, so an empty one is only empty OF that
+		// window — a reply that does not say which reads as the site's whole
+		// record. The number is the walk's own floor, not a rounded hour.
+		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'min_lifetime' => self::SCAN_RETENTION ] );
+		$now  = \time();
+		$url  = '/named-window-6205';
+		$hash = Log_Manager::url_hash( $url );
+		$this->set_url_bucket( new Stats_Store( 0, self::SCAN_RETENTION ), $this->current_url_bucket(), [
+			$hash => [ 'url' => $url, 'count' => 1, 'sum_ms' => 47.0, 'last_seen' => $now - 62 ],
+		] );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'url_detail', $hash );
+
+		$this->assertSame(
+			Stats_Store::window_start( self::SCAN_RETENTION, $now ),
+			$result['requests_window_start'],
+			'the reply has to name the window its list is of'
+		);
+	}
+
+	public function test_a_long_running_request_does_not_end_the_url_walk(): void {
+		// A request logging every few minutes stays in flight indefinitely and
+		// appends at completion, so its START can precede the window by hours.
+		// Completion is what the window asks about, and this one completed
+		// inside it — the matching entry behind it is still reachable.
+		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'min_lifetime' => self::SCAN_RETENTION ] );
+		$now  = \time();
+		$url  = '/behind-a-long-runner-5182';
+		$hash = Log_Manager::url_hash( $url );
+		$this->set_url_bucket( new Stats_Store( 0, self::SCAN_RETENTION ), $this->current_url_bucket(), [
+			$hash => [ 'url' => $url, 'count' => 1, 'sum_ms' => 58.0, 'last_seen' => $now - 211 ],
+		] );
+		$this->write_request( [
+			'rid'            => 'rid-inside-the-window-771300000',
+			'url'            => $url,
+			'timestamp'      => $now - 211,
+			'duration_ms'    => 58,
+			'status_code'    => 206,
+			'peak_mb'        => 9,
+			'request_method' => 'GET',
+		] );
+		// Started 3h ago, ran for 2h46m — the shape of a cron job, and far
+		// longer than any bucket rotation would have held it in flight.
+		$this->write_request( [
+			'rid'            => 'rid-the-long-runner-883100000000',
+			'url'            => '/a-long-running-job-6624',
+			'timestamp'      => $now - 10800,
+			'duration_ms'    => 10000000,
+			'status_code'    => 201,
+			'peak_mb'        => 4,
+			'request_method' => 'GET',
+		] );
+		$this->close_segment_index( 60 );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'url_detail', $hash );
+
+		$this->assertCount( 1, $result['requests'], 'a start time outside the window is not an ending' );
+		$this->assertSame( 'rid-inside-the-window-771300000', $result['requests'][0]['rid'] );
+	}
+
+	public function test_the_url_walk_stops_at_a_closed_segment_whose_newest_line_completed_first(): void {
+		// Nothing has been appended to this segment since the window opened,
+		// and its newest line completed before it — so every line behind it
+		// completed earlier still, and the walk ends rather than reading them.
+		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'min_lifetime' => self::SCAN_RETENTION ] );
+		$now  = \time();
+		$url  = '/behind-the-retention-edge-8813';
+		$hash = Log_Manager::url_hash( $url );
+		$this->set_url_bucket( new Stats_Store( 0, self::SCAN_RETENTION ), $this->current_url_bucket(), [
+			$hash => [ 'url' => $url, 'count' => 1, 'sum_ms' => 71.0, 'last_seen' => $now - 137 ],
+		] );
+		$this->write_request( [
+			'rid'            => 'rid-past-the-edge-55190000000000',
+			'url'            => $url,
+			'timestamp'      => $now - 137,
+			'duration_ms'    => 71,
+			'status_code'    => 207,
+			'peak_mb'        => 11,
+			'request_method' => 'GET',
+		] );
+		// Appended after it, and finished well before the window opened.
+		$this->write_request( [
+			'rid'            => 'rid-the-edge-marker-661900000000',
+			'url'            => '/an-unrelated-neighbour-2277',
+			'timestamp'      => $now - 9413,
+			'duration_ms'    => 12,
+			'status_code'    => 204,
+			'peak_mb'        => 2,
+			'request_method' => 'GET',
+		] );
+		$this->close_segment_index( 8000 );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'url_detail', $hash );
+
+		$this->assertSame( [], $result['requests'], 'the walk read past the retention edge' );
+		$this->assertFalse( $result['scan_stopped_early'], 'the retention edge is not a spent budget' );
+	}
+
+	public function test_an_out_of_window_line_in_a_live_segment_does_not_end_the_url_walk(): void {
+		// The hub's route: every spoke's requests land in ONE partition in
+		// ARRIVAL order, so a spoke reconnecting after a lag replays hours-old
+		// lines between live ones. A segment still being appended to can hold
+		// an in-window row behind any of them.
+		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'min_lifetime' => self::SCAN_RETENTION ] );
+		$now  = \time();
+		$url  = '/behind-a-replayed-spoke-4409';
+		$hash = Log_Manager::url_hash( $url );
+		$this->set_url_bucket( new Stats_Store( 0, self::SCAN_RETENTION ), $this->current_url_bucket(), [
+			$hash => [ 'url' => $url, 'count' => 1, 'sum_ms' => 33.0, 'last_seen' => $now - 96 ],
+		] );
+		$this->write_request( [
+			'rid'            => 'rid-live-traffic-4471000000000',
+			'url'            => $url,
+			'timestamp'      => $now - 96,
+			'duration_ms'    => 33,
+			'status_code'    => 208,
+			'peak_mb'        => 3,
+			'request_method' => 'GET',
+		] );
+		$this->write_request( [
+			'rid'            => 'rid-the-replayed-line-2960000000',
+			'url'            => '/a-lagging-spoke-3318',
+			'timestamp'      => $now - 21600,
+			'duration_ms'    => 17,
+			'status_code'    => 204,
+			'peak_mb'        => 2,
+			'request_method' => 'GET',
+		] );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'url_detail', $hash );
+
+		$this->assertCount( 1, $result['requests'], 'arrival order is no ordering of completions' );
+		$this->assertSame( 'rid-live-traffic-4471000000000', $result['requests'][0]['rid'] );
+	}
+
+	public function test_a_line_carrying_no_readable_time_does_not_end_the_url_walk(): void {
+		// A zero or non-numeric time column casts to 0, older than every floor.
+		// Only a line that parses as a completion may end a walk — otherwise one
+		// unreadable line ends a whole partition, silently and totally.
+		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'min_lifetime' => self::SCAN_RETENTION ] );
+		$now  = \time();
+		$url  = '/behind-an-unreadable-line-9047';
+		$hash = Log_Manager::url_hash( $url );
+		$this->set_url_bucket( new Stats_Store( 0, self::SCAN_RETENTION ), $this->current_url_bucket(), [
+			$hash => [ 'url' => $url, 'count' => 1, 'sum_ms' => 84.0, 'last_seen' => $now - 319 ],
+		] );
+		$this->write_request( [
+			'rid'            => 'rid-behind-the-junk-line-99310',
+			'url'            => $url,
+			'timestamp'      => $now - 319,
+			'duration_ms'    => 84,
+			'status_code'    => 205,
+			'peak_mb'        => 13,
+			'request_method' => 'GET',
+		] );
+		// Full width, so the length check passes and the time column reads 0.
+		\file_put_contents(
+			$this->tmp . '/logs/requests.p0/0.idx',
+			\str_repeat( '0', 97 ) . "\n",
+			FILE_APPEND | LOCK_EX
+		);
+		$this->close_segment_index( 8000 );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'url_detail', $hash );
+
+		$this->assertCount( 1, $result['requests'], 'an unreadable time is no completion' );
+	}
+
+	public function test_a_line_too_short_to_carry_a_time_does_not_end_the_url_walk(): void {
+		// The floor slices the raw column in place, and a slice off the end of a
+		// short line reads as 0 — the oldest time there is. One malformed line
+		// must not truncate the walk behind it; only the budget bounds junk.
+		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'min_lifetime' => self::SCAN_RETENTION ] );
+		$now  = \time();
+		$url  = '/behind-a-short-line-9047';
+		$hash = Log_Manager::url_hash( $url );
+		$this->set_url_bucket( new Stats_Store( 0, self::SCAN_RETENTION ), $this->current_url_bucket(), [
+			$hash => [ 'url' => $url, 'count' => 1, 'sum_ms' => 84.0, 'last_seen' => $now - 319 ],
+		] );
+		$this->write_request( [
+			'rid'            => 'rid-behind-the-short-line-99310',
+			'url'            => $url,
+			'timestamp'      => $now - 319,
+			'duration_ms'    => 84,
+			'status_code'    => 205,
+			'peak_mb'        => 13,
+			'request_method' => 'GET',
+		] );
+		\file_put_contents( $this->tmp . '/logs/requests.p0/0.idx', "zz\n", FILE_APPEND | LOCK_EX );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'url_detail', $hash );
+
+		$this->assertCount( 1, $result['requests'], 'a malformed line is no retention edge' );
+	}
+
+	public function test_the_url_walk_returns_every_entry_inside_the_window(): void {
+		// Nothing reaches the edge, so the bound is invisible.
+		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'min_lifetime' => self::SCAN_RETENTION ] );
+		$now  = \time();
+		$url  = '/wholly-inside-the-window-3352';
+		$hash = Log_Manager::url_hash( $url );
+		$this->set_url_bucket( new Stats_Store( 0, self::SCAN_RETENTION ), $this->current_url_bucket(), [
+			$hash => [ 'url' => $url, 'count' => 3, 'sum_ms' => 96.0, 'last_seen' => $now - 43 ],
+		] );
+		foreach ( [ 6011, 2903, 43 ] as $i => $ago ) {
+			$this->write_request( [
+				'rid'            => \sprintf( 'rid-inside-%020d', $i ),
+				'url'            => $url,
+				'timestamp'      => $now - $ago,
+				'duration_ms'    => 32,
+				'status_code'    => 202,
+				'peak_mb'        => 6,
+				'request_method' => 'GET',
+			] );
+		}
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'url_detail', $hash );
+
+		$this->assertCount( 3, $result['requests'] );
+		$this->assertFalse( $result['scan_stopped_early'] );
+	}
+
+	public function test_the_url_scan_refuses_a_line_that_only_carries_the_matched_column(): void {
+		// The walk compares the raw url_hash column before parsing. A line that
+		// carries the column but is too short to be an index entry is not a
+		// request, and the pre-filter must not turn it into one.
+		$url  = '/column-lookalike-4417';
+		$hash = Log_Manager::url_hash( $url );
+		$this->set_url_bucket( new Stats_Store( 0, 86400 ), $this->current_url_bucket(), [
+			$hash => [ 'url' => $url, 'count' => 1, 'sum_ms' => 19.0, 'last_seen' => 1700005000 ],
+		] );
+		$dir = $this->tmp . '/logs/requests.p0';
+		if ( ! \is_dir( $dir ) ) {
+			\mkdir( $dir, 0755, true );
+		}
+		\file_put_contents(
+			"{$dir}/0.idx",
+			\str_pad( 'rid-imposter-9931', 32 ) . \str_pad( $hash, 12 ) . "\n",
+			FILE_APPEND | LOCK_EX
+		);
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'url_detail', $hash );
+
+		$this->assertSame( [], $result['requests'], 'a short line is no entry, whatever its first 44 bytes read' );
+		$this->assertFalse( $result['scan_stopped_early'] );
+	}
+
+	public function test_the_flame_scan_matches_the_rid_column_and_only_that_rid(): void {
+		// Same pre-filter, the other index format: its own writer owns the
+		// offsets, so a flame belonging to a neighbouring rid stays unmatched.
+		$rid = $this->write_request( [
+			'rid'         => 'rid-flame-column-773311',
+			'url'         => '/flame-column',
+			'timestamp'   => 1700005100,
+			'duration_ms' => 41,
+		] );
+		$this->write_flame( [
+			'rid'   => 'rid-flame-column-OTHER1',
+			'flame' => [ 'name' => 'wrong', 'value' => 3, 'children' => [] ],
+		] );
+		$this->write_flame( [
+			'rid'   => $rid,
+			'flame' => [ 'name' => 'right', 'value' => 41, 'children' => [] ],
+		] );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'request_detail', $rid );
+
+		$this->assertSame( 'right', $result['flame_data']['flame']['name'] );
+	}
+
+	public function test_request_search_names_a_spent_budget_rather_than_a_missing_rid(): void {
+		// An incomplete search reported as a definite negative sends an
+		// operator after a retention bug that does not exist.
+		$this->fill_request_index_past_the_budget();
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'request_search', 'rid-never-reached-6f21' );
+
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( 'budget spent', \strtolower( $result ) );
+	}
+
+	public function test_request_detail_names_a_spent_budget_rather_than_a_missing_rid(): void {
+		$this->fill_request_index_past_the_budget();
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'request_detail', 'rid-never-reached-8c04' );
+
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( 'budget spent', \strtolower( $result ) );
+	}
+
+	/**
+	 * Bury p0's request index under more entries than the scan budget allows.
+	 * Short lines: the budget counts entries scanned, not bytes.
+	 */
+	private function fill_request_index_past_the_budget(): void {
+		// One real record first: a segment with no `.log` is no segment.
+		$this->write_request( [
+			'rid'         => 'rid-buried-under-the-budget',
+			'url'         => '/buried-under-the-budget',
+			'timestamp'   => 1700005200,
+			'duration_ms' => 15,
+		] );
+		\file_put_contents(
+			$this->tmp . '/logs/requests.p0/0.idx',
+			\str_repeat( "x\n", Performance_CI_Node::MAX_INDEX_ENTRIES + 1 ),
+			FILE_APPEND | LOCK_EX
+		);
 	}
 
 	public function test_urls_verb_scopes_rows_to_the_selected_server(): void {
@@ -679,34 +1080,6 @@ class PerformanceCITest extends TestCase {
 		$row = [ 'url' => '/corrupt', 'count' => 9, 'timed_count' => 9, 'sum_ms' => 900.0, 'srv' => [ 'alpha.example' => 'not-an-array' ] ];
 
 		$this->assertNull( Stats_Store::swap_url_server_sums( $row, 'alpha.example' ) );
-	}
-
-	public function test_url_detail_time_series_follows_the_server_scope(): void {
-		// The modal's stats are one server's; its chart is drawn from the same
-		// payload. An unscoped series under a scoped count is the same defect
-		// this change removed from the header, moved to the chart beneath it.
-		$store  = new Stats_Store( 0, 86400 );
-		$bucket = $this->current_url_bucket();
-		$this->set_url_bucket( $store, $bucket, [
-			'cccccccccccc' => [
-				'url' => '/charted', 'count' => 9, 'timed_count' => 9, 'sum_ms' => 900.0, 'last_seen' => 1700000003,
-				'srv' => [
-					'alpha.example' => [ 'count' => 2, 'sum_ms' => 260.0, 'sum_peak_mb' => 8.0 ],
-					'beta.example'  => [ 'count' => 7, 'timed_count' => 7, 'sum_ms' => 640.0, 'sum_peak_mb' => 21.0 ],
-				],
-			],
-		] );
-
-		$result = VerbHarness::fire(
-			new Performance_CI_Node(),
-			'performance',
-			'url_detail',
-			'cccccccccccc --server=alpha.example'
-		);
-
-		$this->assertSame( 2, $result['stats']['count'] );
-		$this->assertSame( 2, $result['stats']['time_series'][ $bucket ]['count'] );
-		$this->assertEqualsWithDelta( 260.0, $result['stats']['time_series'][ $bucket ]['sum_ms'], 1e-6 );
 	}
 
 	public function test_ask_accepts_the_context_it_declares_as_an_option(): void {
@@ -1357,33 +1730,33 @@ class PerformanceCITest extends TestCase {
 		$this->assertStringContainsString( 'permission denied', $result );
 	}
 
-	public function test_url_detail_verb_includes_stats_time_series(): void {
-		// `stats.time_series` is consumed by UrlDetailView L232/L273 +
-		// UrlDetailView's chart.
-		// Legacy PerfUrlsController::find_url_stats L228 calls `build_url_time_series`
-		// which walks the recent buckets keyed by hash. The interpreter verb must too.
+	public function test_url_detail_stats_carry_the_header_figures_and_no_series(): void {
+		// The modal's chart is drawn from `breakdown_time_series`, which the
+		// dropdown always asks for, so a second undifferentiated series bought
+		// a first paint nobody chose at the price of a full shard scan.
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
 		$this->set_url_bucket( $store, $bucket, [
-			'abc123def456' => [
-				'url'       => '/x',
-				'count'     => 3,
-				'timed_count' => 3, 'sum_ms'    => 150.0,
-				'last_seen' => 1700001000,
+			'a5c9e30b1f42' => [
+				'url'         => '/reviews/first',
+				'count'       => 7,
+				'timed_count' => 7,
+				'sum_ms'      => 917.0,
+				'last_seen'   => 1700001000,
 			],
 		] );
 
-		$interpreter     = new Performance_CI_Node();
 		$result = VerbHarness::fire(
-			$interpreter,
+			new Performance_CI_Node(),
 			'performance',
 			'url_detail',
-			'abc123def456'
+			'a5c9e30b1f42'
 		);
 
-		$this->assertArrayHasKey( 'time_series', $result['stats'] );
-		$this->assertArrayHasKey( $bucket, $result['stats']['time_series'] );
-		$this->assertSame( 3, $result['stats']['time_series'][ $bucket ]['count'] );
+		$this->assertArrayNotHasKey( 'time_series', $result['stats'] );
+		$this->assertSame( '/reviews/first', $result['stats']['url'] );
+		$this->assertSame( 7, $result['stats']['count'] );
+		$this->assertEqualsWithDelta( 131.0, $result['stats']['avg_ms'], 1e-6 );
 	}
 
 	public function test_url_detail_verb_includes_breakdown_time_series_when_arg_set(): void {
@@ -1412,6 +1785,55 @@ class PerformanceCITest extends TestCase {
 
 		$this->assertArrayHasKey( 'breakdown_time_series', $result );
 		$this->assertSame( 3, $result['breakdown_time_series'][ $bucket ]['GET']['c'] );
+	}
+
+	public function test_url_breakdown_answers_the_series_alone(): void {
+		// The chart polls this every five minutes and keeps only the series, so
+		// the verb behind it must not drag the index walk `url_detail` runs.
+		$store  = new Stats_Store( 0, 86400 );
+		$bucket = $this->current_url_bucket();
+		$this->set_url_bucket( $store, $bucket, [
+			'e71b04ac9d33' => [ 'url' => '/breakdown-only', 'count' => 6, 'timed_count' => 6, 'sum_ms' => 84.0, 'last_seen' => 1700006000 ],
+		] );
+		$store->set_url_dimensional_bucket( 'e71b04ac9d33', $bucket, [ 'status' => [ '503' => [ 'c' => 9, 's' => 1.7, 'm' => 0.4 ] ] ] );
+		$detail = VerbHarness::fire(
+			new Performance_CI_Node(),
+			'performance',
+			'url_detail',
+			'e71b04ac9d33 --breakdown=status'
+		);
+		// Each fire() builds a fresh request-scope graph; reset between them,
+		// keeping the memcache the seeded buckets live in.
+		$memd       = Core::$memd;
+		VerbHarness::reset();
+		Core::$memd = $memd;
+
+		$result = VerbHarness::fire(
+			new Performance_CI_Node(),
+			'performance',
+			'url_breakdown',
+			'e71b04ac9d33 --breakdown=status'
+		);
+
+		$this->assertSame( $detail['breakdown_time_series'], $result['breakdown_time_series'] );
+		$this->assertSame( 9, $result['breakdown_time_series'][ $bucket ]['503']['c'] );
+		$this->assertArrayNotHasKey( 'requests', $result );
+		$this->assertArrayNotHasKey( 'stats', $result );
+		$this->assertArrayNotHasKey( 'aggregate_flame', $result );
+	}
+
+	public function test_url_breakdown_refuses_a_dimension_it_cannot_answer(): void {
+		// A required argument that silently answers nothing leaves the chart
+		// spinning; url_detail can drop the key because it has a payload.
+		$result = VerbHarness::fire(
+			new Performance_CI_Node(),
+			'performance',
+			'url_breakdown',
+			'e71b04ac9d33 --breakdown=nosuchdim'
+		);
+
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( 'invalid breakdown', \strtolower( $result ) );
 	}
 
 	public function test_url_detail_verb_includes_category_time_series_when_arg_set(): void {
@@ -2470,8 +2892,8 @@ class PerformanceCITest extends TestCase {
 
 	public function test_node_schema_lists_all_verbs_with_handlers(): void {
 		$expected = [
-			'overview', 'urls', 'url_detail', 'request_search', 'request_detail',
-			'hooks_registered', 'set',
+			'overview', 'urls', 'url_detail', 'url_breakdown', 'request_search',
+			'request_detail', 'hooks_registered', 'set',
 		];
 
 		$verbs = [];
@@ -2544,6 +2966,16 @@ class PerformanceCITest extends TestCase {
 		$this->assertFalse( $args['server']['required'] );
 		$this->assertSame( 'bool', $args['categories']['type'] );
 		$this->assertFalse( $args['categories']['required'] );
+	}
+
+	public function test_url_breakdown_verb_declares_both_of_its_arguments_required(): void {
+		// Its whole answer is one dimension of one URL; neither has a default.
+		$args = self::args_by_name( 'url_breakdown' );
+		$this->assertSame( [ 'hash', 'breakdown' ], \array_keys( $args ) );
+		$this->assertSame( 'string', $args['hash']['type'] );
+		$this->assertTrue( $args['hash']['required'] );
+		$this->assertSame( 'string', $args['breakdown']['type'] );
+		$this->assertTrue( $args['breakdown']['required'] );
 	}
 
 	public function test_request_search_verb_declares_required_rid(): void {
@@ -2679,15 +3111,16 @@ class PerformanceCITest extends TestCase {
 		$this->activate_shipped_topology( 'performance', 3 );
 		$url   = '/spread-across-partitions';
 		$hash  = Log_Manager::url_hash( $url );
+		$now   = \time();
 		$store = new Stats_Store( 0, 86400 );
 		$this->set_url_bucket( $store, $this->current_url_bucket(), [
-			$hash => [ 'url' => $url, 'count' => 2, 'timed_count' => 2, 'sum_ms' => 61.0, 'last_seen' => 1700003300 ],
+			$hash => [ 'url' => $url, 'count' => 2, 'timed_count' => 2, 'sum_ms' => 61.0, 'last_seen' => $now - 742 ],
 		] );
 		$this->write_request(
 			[
 				'rid'            => 'rid-spread-p0-000000000000001',
 				'url'            => $url,
-				'timestamp'      => 1700003200,
+				'timestamp'      => $now - 1409,
 				'duration_ms'    => 29,
 				'status_code'    => 200,
 				'peak_mb'        => 2,
@@ -2699,7 +3132,7 @@ class PerformanceCITest extends TestCase {
 			[
 				'rid'            => 'rid-spread-p2-000000000000001',
 				'url'            => $url,
-				'timestamp'      => 1700003300,
+				'timestamp'      => $now - 742,
 				'duration_ms'    => 32,
 				'status_code'    => 503,
 				'peak_mb'        => 6,

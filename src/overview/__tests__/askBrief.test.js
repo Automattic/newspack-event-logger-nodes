@@ -133,6 +133,78 @@ test( 'a URL brief names the worst recent requests by rid', () => {
 	expect( md ).toContain( '**p95_ms:** 4100' );
 } );
 
+test( 'a URL brief marks worst-recent when the index scan stopped early', () => {
+	const md = briefToMarkdown( {
+		subject: 'url',
+		url: '/quiet/page',
+		stats: { count: 7, avg_ms: 331.5 },
+		worst_requests: [
+			{ rid: 'part1al', duration_ms: 2200.5, status_code: 404 },
+		],
+		scan_stopped_early: true,
+		rule: null,
+		findings: [],
+		caveat: 'c',
+	} );
+
+	expect( md ).toContain( '**worst recent:** part1al 2200.5ms 404' );
+	expect( md ).toContain( '**scan:** stopped early — this list is partial' );
+} );
+
+test( 'a URL brief names the window its recent rows were drawn from', () => {
+	// An empty list is empty OF a window; without naming it, the reader takes
+	// it for the URL's whole record.
+	const md = briefToMarkdown( {
+		subject: 'url',
+		url: '/quiet/page',
+		stats: { count: 3, avg_ms: 55.25 },
+		worst_requests: [],
+		scan_stopped_early: false,
+		requests_window_start: 1741000800,
+		rule: null,
+		findings: [],
+		caveat: 'c',
+	} );
+
+	expect( md ).toContain( '**requests since:** 2025-03-03T11:20:00Z' );
+} );
+
+test( 'a URL brief with no rows at all drops the label the scan note hung off', () => {
+	// The empty list is exactly the case the note exists for, and a label
+	// whose whole value is a parenthetical is not a sentence.
+	const md = briefToMarkdown( {
+		subject: 'url',
+		url: '/never/reached',
+		stats: { count: 3, avg_ms: 55.25 },
+		worst_requests: [],
+		scan_stopped_early: true,
+		rule: null,
+		findings: [],
+		caveat: 'c',
+	} );
+
+	expect( md ).not.toContain( 'worst recent' );
+	expect( md ).toContain( '**scan:** stopped early — this list is partial' );
+} );
+
+test( 'a URL brief whose scan finished says nothing about the five-row slice', () => {
+	const md = briefToMarkdown( {
+		subject: 'url',
+		url: '/busy/page',
+		stats: { count: 4210, avg_ms: 812 },
+		worst_requests: [
+			{ rid: 'wh0le1', duration_ms: 3300.5, status_code: 500 },
+		],
+		scan_stopped_early: false,
+		rule: null,
+		findings: [],
+		caveat: 'c',
+	} );
+
+	expect( md ).toContain( 'wh0le1 3300.5ms 500' );
+	expect( md ).not.toContain( 'scan stopped early' );
+} );
+
 test( 'a span brief carries its parent, its siblings and what is inside it', () => {
 	const md = briefToMarkdown( {
 		subject: 'span',

@@ -205,6 +205,22 @@ function bodyLines( brief ) {
 							)
 							.join( ', ' ),
 					],
+					// An empty list is empty of this window, not of the URL.
+					[
+						'requests since',
+						brief.requests_window_start
+							? new Date( brief.requests_window_start * 1000 )
+									.toISOString()
+									.replace( /\.\d+Z$/, 'Z' )
+							: '',
+					],
+					// Its own pair; concatenated it left a bare parenthetical.
+					[
+						'scan',
+						brief.scan_stopped_early
+							? 'stopped early — this list is partial'
+							: '',
+					],
 				] ),
 				...ruleLines( brief.rule ),
 			];

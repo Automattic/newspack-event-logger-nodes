@@ -6,7 +6,8 @@
  * `performance` CI's `url_detail` verb; this component owns no slice and issues
  * no command of its own. Top to bottom:
  *
- *   1. Aggregate time chart, with the Metric and Breakdown dropdowns that drive it.
+ *   1. Aggregate time chart of the breakdown series, with the Metric and
+ *      Breakdown dropdowns that drive it.
  *   2. Category time charts — time, count, and average per profile category.
  *   3. Response-time scatter of the individual requests.
  *   4. Aggregate flame graph, lazily imported because d3-flame-graph is heavy.
@@ -148,7 +149,7 @@ const RequestRow = memo(
  * heading count, and the bar-scaling maximum alike.
  *
  * @param {Object}                                   props                 Component props.
- * @param {Object}                                   props.urlDetail       `url_detail` payload: stats (with time_series), requests, aggregate_flame, aggregate_profiles, last_modified, and optional category_time_series.
+ * @param {Object}                                   props.urlDetail       `url_detail` payload: stats, requests, scan_stopped_early, aggregate_flame, aggregate_profiles, last_modified, and optional category_time_series.
  * @param {Array}                                    props.sortedRequests  Recent requests, already sorted by the parent.
  * @param {Object}                                   props.requestSort     Current sort as `{ field, dir }`; drives the header arrows only.
  * @param {(field: string) => void}                  props.onRequestSort   Receives a field name when a sortable header is clicked.
@@ -166,6 +167,14 @@ export default function UrlDetailView( {
 } ) {
 	const listRef = useRef( null );
 	const [ errorsOnly, setErrorsOnly ] = useState( false );
+
+	// A list the walk cut short reads exactly like a URL with no traffic.
+	const scanNote = urlDetail.scan_stopped_early
+		? __(
+				'The request index scan stopped early, so requests for this URL may be missing.',
+				'newspack-event-logger-nodes'
+		  )
+		: null;
 
 	const filteredRequests = useMemo( () => {
 		if ( ! errorsOnly ) {
@@ -200,12 +209,13 @@ export default function UrlDetailView( {
 	const [ chartBreakdown, setChartBreakdown ] = useState( 'status' );
 	const [ breakdownData, setBreakdownData ] = useState( null );
 	const [ breakdownLoading, setBreakdownLoading ] = useState( false );
+	const [ breakdownError, setBreakdownError ] = useState( null );
 
 	/**
 	 * Fetch one breakdown dimension and hand it to the aggregate chart.
 	 *
-	 * Without a fetcher or a hash there is nothing to ask for, so the chart
-	 * falls back to the undifferentiated series the payload already carries.
+	 * It is the chart's only series source, so without a hash to ask about
+	 * the panel draws nothing at all.
 	 *
 	 * @param {string} breakdown Dimension to break the series down by.
 	 */
@@ -214,13 +224,15 @@ export default function UrlDetailView( {
 	// by flipping the dropdown. Queued, three fast flips are three commands
 	// answered in any order, so the chart can show one dimension's data under
 	// another's label — and a dropped reply leaves "Loading…" forever, since
-	// a write never re-asks. Retried, the newest pick supersedes.
+	// a write never re-asks. Retried, the newest pick supersedes. `url_detail`
+	// would drag a full index walk this keeps nothing of.
 	const { run: fetchBreakdown } = useCommandOnce( {
 		ci: SERVER,
-		command: 'url_detail',
-		scope: `${ SERVER }:url_detail:breakdown`,
+		command: 'url_breakdown',
+		scope: `${ SERVER }:url_breakdown`,
 		retry: true,
-		onDone: ( { result } ) => {
+		onDone: ( { result, error } ) => {
+			setBreakdownError( error );
 			setBreakdownData( result?.breakdown_time_series ?? null );
 			setBreakdownLoading( false );
 		},
@@ -279,15 +291,19 @@ export default function UrlDetailView( {
 
 	return (
 		<>
-			<BreakdownControls
-				series={ urlDetail.stats?.time_series }
-				breakdownData={ breakdownData }
-				metric={ chartMetric }
-				setMetric={ setChartMetric }
-				breakdown={ chartBreakdown }
-				setBreakdown={ setChartBreakdown }
-				loading={ breakdownLoading }
-			/>
+			{ /* Mounted for as long as a URL is selected: an empty dimension
+			     or a refusal must leave the dropdowns to recover with. */ }
+			{ urlHash && (
+				<BreakdownControls
+					breakdownData={ breakdownData }
+					metric={ chartMetric }
+					setMetric={ setChartMetric }
+					breakdown={ chartBreakdown }
+					setBreakdown={ setChartBreakdown }
+					loading={ breakdownLoading }
+					error={ breakdownError }
+				/>
+			) }
 
 			<CategoryTimeChart data={ urlDetail?.category_time_series } />
 
@@ -397,10 +413,11 @@ export default function UrlDetailView( {
 				>
 					{ filteredRequests.length === 0 ? (
 						<div className="event-logger-table__empty newspack-nodes-empty-state">
-							{ __(
-								'No requests to display',
-								'newspack-event-logger-nodes'
-							) }
+							{ scanNote ||
+								__(
+									'No requests to display',
+									'newspack-event-logger-nodes'
+								) }
 						</div>
 					) : (
 						<>
@@ -418,6 +435,9 @@ export default function UrlDetailView( {
 						</>
 					) }
 				</div>
+				{ scanNote && filteredRequests.length > 0 && (
+					<p className="newspack-nodes-status">{ scanNote }</p>
+				) }
 			</div>
 		</>
 	);

@@ -249,6 +249,21 @@ class McpControllerTest extends TestCase {
 		);
 	}
 
+	public function test_the_two_rid_lookups_warn_that_a_spent_budget_is_not_a_negative(): void {
+		// Both verbs throw `... budget spent before rid <rid> was reached` when
+		// the index walk ends first. An agent whose tool description does not
+		// say so reads that refusal as "no such request" and stops looking.
+		$tools = ( new \ReflectionClass( MCP_Controller::class ) )->getConstant( 'TOOLS' );
+
+		foreach ( [ 'performance_request_search', 'performance_request_detail' ] as $tool ) {
+			$this->assertStringContainsString(
+				'budget spent',
+				$tools[ $tool ]['summary'],
+				"tool {$tool} does not warn about a spent scan budget"
+			);
+		}
+	}
+
 	/** The one guard a new fleet-fronting route must not quietly omit. */
 	public function test_a_subsite_is_refused_at_the_door(): void {
 		[ , $bearer ] = $this->session( Capabilities::READ );

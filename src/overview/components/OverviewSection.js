@@ -28,6 +28,7 @@ import {
 	CHART_BREAKDOWN_OPTIONS,
 } from '../constants';
 import CategoryTimeChart from '../CategoryTimeChart';
+import { chartSource } from '../AggregateTimeChart';
 import { ProfileWithCaption } from '../RequestProfile';
 import BreakdownControls from './BreakdownControls';
 import { AskButton } from './AskPanel';
@@ -341,26 +342,38 @@ export default function OverviewSection( {
 						) ) }
 					</div>
 
-					<BreakdownControls
-						series={ overview.aggregate_time_series }
-						breakdownData={ breakdownData }
-						metric={ chartMetric }
-						setMetric={ setChartMetric }
-						breakdown={ chartBreakdown }
-						setBreakdown={ setChartBreakdown }
-						breakdownOptions={ breakdownOptions }
-						serverOptions={ isMultiServer ? serverOptions : null }
-						serverFilter={ serverFilter }
-						setServerFilter={ setServerFilter }
-						note={
-							urlFilters?.include_workers
-								? __(
-										'This chart excludes worker traffic, which the stats above are counting: workers never enter the aggregate series.',
-										'newspack-event-logger-nodes'
-								  )
-								: null
-						}
-					/>
+					{ /* Two sources here, so wait for one of them rather
+					     than heading a panel over an empty axis — unless a
+					     server filter is on, whose only way out is inside. */ }
+					{ ( serverFilter ||
+						null !==
+							chartSource( {
+								data: overview.aggregate_time_series,
+								breakdownData,
+							} ).source ) && (
+						<BreakdownControls
+							series={ overview.aggregate_time_series }
+							breakdownData={ breakdownData }
+							metric={ chartMetric }
+							setMetric={ setChartMetric }
+							breakdown={ chartBreakdown }
+							setBreakdown={ setChartBreakdown }
+							breakdownOptions={ breakdownOptions }
+							serverOptions={
+								isMultiServer ? serverOptions : null
+							}
+							serverFilter={ serverFilter }
+							setServerFilter={ setServerFilter }
+							note={
+								urlFilters?.include_workers
+									? __(
+											'This chart excludes worker traffic, which the stats above are counting: workers never enter the aggregate series.',
+											'newspack-event-logger-nodes'
+									  )
+									: null
+							}
+						/>
+					) }
 
 					<CategoryTimeChart data={ categoryData } />
 

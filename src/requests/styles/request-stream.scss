@@ -10,11 +10,14 @@
 
 @use "base";
 
-@include base.log-stream-page('event-logger-request-stream', (
-	'flex-direction': row,
-	gap: 8px 16px,
-	'min-width': 100px,
-));
+@include base.log-stream-page(
+	"event-logger-request-stream",
+	(
+		"flex-direction": row,
+		gap: 8px 16px,
+		"min-width": 100px,
+	)
+);
 
 // Responsive adjustments — the search input is flex:1 (canonical class) and
 // the toolbar wraps by default, so only the row spacing needs narrowing.

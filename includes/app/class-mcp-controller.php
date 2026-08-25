@@ -56,11 +56,13 @@ class MCP_Controller {
 	 * Calls one session may make per RATE_LIMIT_WINDOW_S.
 	 *
 	 * MCP does not go through `/command`, so the substrate's per-user cap does
-	 * not bound it — and the tools behind it are not cheap: `request_grep`
-	 * walks every partition's index, `overview` and `ask` rebuild the
-	 * leaderboard out of memcache. A looping agent, or a leaked bearer, would
-	 * otherwise have an unmetered amplification path. Generous enough that a
-	 * conversational agent never grazes it.
+	 * not bound it — and the tools behind it are not cheap: `request_grep` and
+	 * the rid lookups walk every partition's index up to MAX_INDEX_ENTRIES,
+	 * `url_detail` walks one retention window of it, and `overview` and `ask`
+	 * rebuild the leaderboard out of memcache. A looping
+	 * agent, or a leaked bearer, would otherwise have an unmetered
+	 * amplification path. Generous enough that a conversational agent never
+	 * grazes it.
 	 */
 	public const RATE_LIMIT_BURST = 20;
 
@@ -97,21 +99,21 @@ class MCP_Controller {
 			'node'    => 'performance',
 			'verb'    => 'url_detail',
 			'role'    => Capabilities::READ,
-			'summary' => 'One URL: stats, aggregate flame data and its recent requests.',
+			'summary' => 'One URL: stats, aggregate flame data and its recent requests. `scan_stopped_early` true means the index walk ran out of budget, so an empty request list is not an idle URL.',
 			'args'    => [ 'hash' => 'The 12-char URL hash (required).', 'server' => 'Optional server name; scopes the stats the way performance_urls scopes the row.' ],
 		],
 		'performance_request_search' => [
 			'node'    => 'performance',
 			'verb'    => 'request_search',
 			'role'    => Capabilities::READ,
-			'summary' => 'Locate a request by id; returns {rid, partition, url_hash}.',
+			'summary' => 'Locate a request by id; returns {rid, partition, url_hash}. A `budget spent` error means the index walk ended before reaching the rid — an incomplete search, not a definite negative.',
 			'args'    => [ 'rid' => 'The request id (required).' ],
 		],
 		'performance_request_detail' => [
 			'node'    => 'performance',
 			'verb'    => 'request_detail',
 			'role'    => Capabilities::READ,
-			'summary' => 'One request in full, with its flame data and computed findings.',
+			'summary' => 'One request in full, with its flame data and computed findings. A `budget spent` error means the index walk ended before reaching the rid, so retry rather than reading it as an unknown request.',
 			'args'    => [ 'rid' => 'The request id (required).', 'partition' => 'Its partition.' ],
 		],
 		'performance_request_grep' => [

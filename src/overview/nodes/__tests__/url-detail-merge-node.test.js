@@ -239,3 +239,50 @@ test( 'an unknown verb from the control origin is never merged as a reply', () =
 
 	expect( sink.received ).toHaveLength( 1 );
 } );
+
+// The list is the union of every walk, so the flag has to be the union too.
+describe( 'UrlDetailMergeNode — scan_stopped_early describes the merged list', () => {
+	test( 'a truncated walk keeps its note over a later complete one', () => {
+		const { node, sink } = makeMerge();
+		node.fill(
+			reply( {
+				last_modified: 31,
+				scan_stopped_early: true,
+				requests: [ { rid: 'q7', timestamp: 771 } ],
+			} )
+		);
+		node.fill(
+			reply( {
+				last_modified: 32,
+				requests: [ { rid: 'q8', timestamp: 772 } ],
+			} )
+		);
+		expect( forwardedPayload( sink, 1 ).requests ).toHaveLength( 2 );
+		expect( forwardedPayload( sink, 1 ).scan_stopped_early ).toBe( true );
+	} );
+
+	test( 'a clear drops the note with the list it described', () => {
+		const { node, sink } = makeMerge();
+		node.fill(
+			reply( {
+				last_modified: 31,
+				scan_stopped_early: true,
+				requests: [ { rid: 'q7', timestamp: 771 } ],
+			} )
+		);
+
+		const clear = newMessage();
+		clear[ TYPE ] = TM_STRUCT;
+		clear[ FROM ] = 'urlDetail:merge';
+		clear[ VALUE ] = { action: 'clear' };
+		node.fill( clear );
+
+		node.fill(
+			reply( {
+				last_modified: 33,
+				requests: [ { rid: 'q9', timestamp: 773 } ],
+			} )
+		);
+		expect( forwardedPayload( sink, 1 ).scan_stopped_early ).toBeFalsy();
+	} );
+} );

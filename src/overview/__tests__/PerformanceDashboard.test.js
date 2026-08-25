@@ -673,10 +673,7 @@ describe( 'PerformanceDashboard', () => {
 			urlDetail: {
 				data: {
 					last_modified: 1,
-					stats: {
-						requests_per_second: 3.75,
-						time_series: { a: { count: 900 }, b: { count: 900 } },
-					},
+					stats: { requests_per_second: 3.75 },
 					requests: [],
 				},
 				loading: false,
@@ -737,7 +734,6 @@ describe( 'PerformanceDashboard', () => {
 						p95_ms: 90,
 						p99_ms: 99,
 						avg_peak_mb: 4,
-						time_series: { a: { count: 1 }, b: { count: 2 } },
 					},
 					requests: [],
 				},
@@ -938,7 +934,7 @@ describe( 'PerformanceDashboard', () => {
 			urlDetail: {
 				data: {
 					last_modified: 1,
-					stats: { avg_ms: 50, time_series: {} },
+					stats: { avg_ms: 50 },
 					requests: [
 						{
 							rid: 'r1',
@@ -1313,7 +1309,7 @@ describe( 'PerformanceDashboard', () => {
 			urlDetail: {
 				data: {
 					last_modified: 1,
-					stats: { time_series: {} },
+					stats: {},
 					requests: [
 						{ rid: 'r1', timestamp: 1, duration_ms: 100 },
 						{ rid: 'r2', timestamp: 2, duration_ms: 50 },
@@ -1352,7 +1348,7 @@ describe( 'PerformanceDashboard', () => {
 			urlDetail: {
 				data: {
 					last_modified: 1,
-					stats: { avg_ms: 50, time_series: {} },
+					stats: { avg_ms: 50 },
 					requests: [],
 				},
 				loading: false,
@@ -1385,7 +1381,7 @@ describe( 'PerformanceDashboard', () => {
 			urlDetail: {
 				data: {
 					last_modified: 1,
-					stats: { avg_ms: 50, time_series: {} },
+					stats: { avg_ms: 50 },
 					requests: [],
 				},
 				loading: false,
@@ -1431,7 +1427,7 @@ describe( 'PerformanceDashboard', () => {
 			urlDetail: {
 				data: {
 					last_modified: 1,
-					stats: { avg_ms: 50, time_series: {} },
+					stats: { avg_ms: 50 },
 					requests: [],
 				},
 				loading: false,
@@ -1471,7 +1467,7 @@ describe( 'PerformanceDashboard', () => {
 			urlDetail: {
 				data: {
 					last_modified: 1,
-					stats: { avg_ms: 50, time_series: {} },
+					stats: { avg_ms: 50 },
 					requests: [],
 				},
 				loading: false,
@@ -1507,7 +1503,7 @@ describe( 'PerformanceDashboard', () => {
 				urlDetail: {
 					data: {
 						last_modified: 1,
-						stats: { avg_ms: 50, time_series: {} },
+						stats: { avg_ms: 50 },
 						requests: [],
 					},
 					loading: false,
@@ -1582,7 +1578,7 @@ describe( 'PerformanceDashboard', () => {
 				urlDetail: {
 					data: {
 						last_modified: 1,
-						stats: { avg_ms: 50, time_series: {} },
+						stats: { avg_ms: 50 },
 						requests: [],
 					},
 					loading: false,

@@ -1063,6 +1063,101 @@ class RequestBuilderTest extends TestCase {
 	}
 
 	/**
+	 * The scan pre-filters on a raw column before parsing, so the offsets it
+	 * slices with have to come from the writer that laid the line out.
+	 */
+	public function test_index_column_locates_the_matchable_fields_the_writer_wrote(): void {
+		$message                   = Message::new_message();
+		$message[ Message::TYPE ]  = Message::TM_STRUCT;
+		$message[ Message::VALUE ] = [
+			'rid'            => 'zz9-prefilter-rid-7f31',
+			'url'            => '/prefilter/6612',
+			'timestamp'      => 1_711_222_333,
+			'duration_ms'    => 4321,
+			'status_code'    => 418,
+			'peak_mb'        => 77,
+			'request_method' => 'PATCH',
+		];
+		$line = (string) Request_Builder_Node::format_index_entry(
+			$message,
+			[ 'segment' => 4, 'offset' => 2048, 'length' => 96 ]
+		);
+
+		[ $rid_offset, $rid_length ]   = Request_Builder_Node::index_column( 'rid' );
+		[ $hash_offset, $hash_length ] = Request_Builder_Node::index_column( 'url_hash' );
+
+		$this->assertSame( 'zz9-prefilter-rid-7f31', \trim( \substr( $line, $rid_offset, $rid_length ) ) );
+		$this->assertSame(
+			\Newspack_Event_Logger_Nodes\Log_Manager::url_hash( '/prefilter/6612' ),
+			\trim( \substr( $line, $hash_offset, $hash_length ) )
+		);
+	}
+
+	public function test_a_bucket_count_off_the_default_says_the_borrowed_eviction_window_no_longer_measures_it(): void {
+		// `DEFAULT_EVICTION_WINDOW_SEC` is a magnitude other code borrows, and a
+		// constant cannot follow a per-topology declaration. Declaring a
+		// different one has to say so rather than leave the borrow quietly wrong.
+		$buf = '';
+		Core::set_stderr_handler( static function ( $message ) use ( &$buf ): void { $buf .= $message; } );
+		$node = new Request_Builder_Node();
+		$node->name( 'request-builder-off-default' );
+
+		$node->arguments( [ '137', '7' ] );
+
+		$this->assertStringContainsString( 'eviction window', $buf );
+		$this->assertStringContainsString( '1400', $buf, 'the window this declaration actually has' );
+		$node->remove_node();
+	}
+
+	public function test_the_default_bucket_count_says_nothing(): void {
+		$buf = '';
+		Core::set_stderr_handler( static function ( $message ) use ( &$buf ): void { $buf .= $message; } );
+		$node = new Request_Builder_Node();
+		$node->name( 'request-builder-at-default' );
+
+		$node->arguments( [ '137', (string) Request_Builder_Node::DEFAULT_NUM_BUCKETS ] );
+
+		$this->assertSame( '', $buf, 'the shipped declaration is what the constant measures' );
+		$node->remove_node();
+	}
+
+	/**
+	 * The retention bound compares a line's COMPLETION in place, so both of the
+	 * columns that make one come from the writer too — and the zero padding is
+	 * what makes the raw bytes sort in the order the numbers do.
+	 */
+	public function test_index_completion_columns_locate_the_zero_padded_start_and_duration(): void {
+		$message                   = Message::new_message();
+		$message[ Message::TYPE ]  = Message::TM_STRUCT;
+		$message[ Message::VALUE ] = [
+			'rid'            => 'zz9-timecol-rid-4d17',
+			'url'            => '/timecol/9928',
+			'timestamp'      => 1_433_557_799,
+			'duration_ms'    => 6512,
+			'status_code'    => 203,
+			'peak_mb'        => 41,
+			'request_method' => 'PUT',
+		];
+		$line = (string) Request_Builder_Node::format_index_entry(
+			$message,
+			[ 'segment' => 3, 'offset' => 512, 'length' => 88 ]
+		);
+
+		[ [ $start_at, $start_len ], [ $dur_at, $dur_len ] ] = Request_Builder_Node::index_completion_columns();
+
+		$this->assertSame( 10, $start_len, 'a 10-digit column is what keeps the padding sortable' );
+		$this->assertSame( 1_433_557_799, (int) \substr( $line, $start_at, $start_len ) );
+		$this->assertSame( 6512, (int) \substr( $line, $dur_at, $dur_len ), 'the milliseconds that close the start time' );
+	}
+
+	public function test_index_column_offers_no_column_for_a_field_the_raw_line_encodes(): void {
+		// `method` is a 1-char code and `timestamp` is zero-padded, so neither
+		// column equals its parsed value; a scan on those must still parse.
+		$this->assertSame( [], Request_Builder_Node::index_column( 'method' ) );
+		$this->assertSame( [], Request_Builder_Node::index_column( 'timestamp' ) );
+	}
+
+	/**
 	 * `A` (aborted) must survive the index round trip. The writer emitted it but
 	 * the reader accepted only F/T, so every aborted request came back with no
 	 * error_status at all — invisible to the URL detail view's errors filter and

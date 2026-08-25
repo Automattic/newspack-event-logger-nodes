@@ -96,7 +96,7 @@ jest.mock( '@newspack-nodes/shared/hooks/useTimeChart', () => {
 
 import * as React from 'react';
 import * as d3 from 'd3';
-import AggregateTimeChart from '../AggregateTimeChart';
+import AggregateTimeChart, { chartSource } from '../AggregateTimeChart';
 import { renderComponent } from '../../test-helpers/renderHook';
 
 const d3Mock = d3.__chain;
@@ -157,6 +157,60 @@ describe( 'AggregateTimeChart', () => {
 			React.createElement( AggregateTimeChart, {
 				data: {},
 				breakdownData: null,
+			} )
+		);
+		expect( container.textContent ).toBe( '' );
+		unmount();
+	} );
+
+	it( 'draws the breakdown series with no single-series source', () => {
+		// The URL modal hands over no undifferentiated series at all, so the
+		// breakdown reply is the only thing this chart ever draws there.
+		const bk = bucketKeyNow();
+		const breakdownData = { [ bk ]: { '5xx': { c: 7, s: 917 } } };
+		const { container, unmount } = renderComponent(
+			React.createElement( AggregateTimeChart, {
+				data: null,
+				breakdownData,
+				metric: 'avg',
+				breakdown: 'status',
+			} )
+		);
+		expect( container.textContent ).toContain( 'Avg Response Time' );
+		const labels = getFormatEntry()( lastSlotIndex() ).map(
+			( entry ) => entry.label
+		);
+		expect( labels ).toEqual( [ '5xx' ] );
+		unmount();
+	} );
+
+	it( 'falls back to the totals when the breakdown reply carries no dimensions', () => {
+		// The server sets `breakdown_time_series` whenever the dimension is
+		// VALID, not when it has rows, so an empty one reaches a card holding
+		// the totals. Drawing nothing there is a blank frame under live
+		// dropdowns; the totals are the answer already in hand.
+		const bk = bucketKeyNow();
+		const { container, unmount } = renderComponent(
+			React.createElement( AggregateTimeChart, {
+				data: { [ bk ]: { count: 41, sum_ms: 917 } },
+				breakdownData: {},
+				metric: 'avg',
+			} )
+		);
+		expect( container.textContent ).toContain( 'Avg Response Time' );
+		const labels = getFormatEntry()( lastSlotIndex() ).map(
+			( entry ) => entry.label
+		);
+		expect( labels ).toEqual( [ 'Total' ] );
+		unmount();
+	} );
+
+	it( 'draws nothing when neither source carries a bucket', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( AggregateTimeChart, {
+				data: {},
+				breakdownData: {},
+				metric: 'volume',
 			} )
 		);
 		expect( container.textContent ).toBe( '' );
@@ -376,6 +430,29 @@ describe( 'AggregateTimeChart', () => {
 			'class',
 			'y-label',
 		] );
+		unmount();
+	} );
+
+	// A wrapper gates on `chartSource`, so its answer and the chart's own
+	// emptiness have to be one predicate — an axis with no line otherwise.
+	it( 'reports no source for buckets that carry no dimension value', () => {
+		const bk = bucketKeyNow();
+		expect(
+			chartSource( { data: null, breakdownData: { [ bk ]: {} } } ).source
+		).toBeNull();
+	} );
+
+	it( 'draws nothing for buckets that carry no dimension value', () => {
+		const bk = bucketKeyNow();
+		const { container, unmount } = renderComponent(
+			React.createElement( AggregateTimeChart, {
+				data: null,
+				breakdownData: { [ bk ]: {} },
+				metric: 'cumulative',
+				breakdown: 'method',
+			} )
+		);
+		expect( container.textContent ).toBe( '' );
 		unmount();
 	} );
 

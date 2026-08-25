@@ -32,9 +32,12 @@ jest.mock( '../../ResponseTimeChart', () => ( {
 	__esModule: true,
 	default: () => 'RESPONSE_TIME_CHART',
 } ) );
+// The chart is mocked; its `chartSource` resolver is NOT — the wrapper
+// gates through the real one.
 jest.mock( '../../AggregateTimeChart', () => ( {
+	...jest.requireActual( '../../AggregateTimeChart' ),
 	__esModule: true,
-	default: () => 'AGGREGATE',
+	default: ( { data } ) => `AGGREGATE[data=${ data ? 'set' : 'none' }]`,
 } ) );
 jest.mock( '../../CategoryTimeChart', () => ( {
 	__esModule: true,
@@ -85,7 +88,7 @@ const REQUESTS = [
 	},
 ];
 
-// The view holds its own `url_detail` breakdown read, so every render mounts a
+// The view holds its own `url_breakdown` read, so every render mounts a
 // graph and needs a wire — not just the test that asserts what it sends.
 let wire;
 
@@ -110,6 +113,25 @@ function mount( overrides = {} ) {
 		...renderComponent( React.createElement( UrlDetailView, props ) ),
 	};
 }
+
+// Drive a SelectControl the way React hears it: the native value setter,
+// then a bubbling change the root listener picks up.
+function selectOption( select, value ) {
+	const { set } = Object.getOwnPropertyDescriptor(
+		window.HTMLSelectElement.prototype,
+		'value'
+	);
+	act( () => {
+		set.call( select, value );
+		select.dispatchEvent( new Event( 'change', { bubbles: true } ) );
+	} );
+}
+
+// The Metric and Breakdown labels, in order, of whatever panel is mounted.
+const dropdownLabels = ( container ) =>
+	Array.from( container.querySelectorAll( 'label' ) ).map(
+		( label ) => label.textContent
+	);
 
 describe( 'UrlDetailView', () => {
 	it( 'renders the recent-requests heading with the full count', () => {
@@ -370,13 +392,30 @@ describe( 'UrlDetailView', () => {
 		unmount();
 	} );
 
-	it( 'mounts AggregateTimeChart when stats.time_series is populated', () => {
+	it( 'never charts a series carried by the url_detail payload', () => {
+		// `url_detail` sends no series; a view that would draw one anyway is
+		// a server change away from the first paint nobody asked for.
 		const { container, unmount } = mount( {
 			urlDetail: { ...baseUrlDetail, stats: { time_series: { a: 1 } } },
 		} );
-		expect( container.textContent ).toContain( 'AGGREGATE' );
+		expect( container.textContent ).not.toContain( 'AGGREGATE[data=set]' );
 		unmount();
 	} );
+
+	it( 'charts the breakdown reply and hands the chart no series of its own', async () => {
+		wire = installFakeCommandWire( () => ( {
+			breakdown_time_series: { 1748960000: { '5xx': { c: 7 } } },
+		} ) );
+		const { container, unmount } = mount();
+		await waitFor(
+			() =>
+				expect( container.textContent ).toContain(
+					'AGGREGATE[data=none]'
+				),
+			{ timeout: 6000 }
+		);
+		unmount();
+	}, 20000 );
 
 	it( 'mounts FlameGraph when aggregate_flame has children', async () => {
 		const { container, unmount } = mount( {
@@ -422,40 +461,120 @@ describe( 'UrlDetailView', () => {
 
 	// The breakdown series is this view's OWN read now, so what it sends is
 	// asserted on the wire rather than through an injected fetcher.
-	it( 'asks url_detail for the initial breakdown on mount', async () => {
+	it( 'asks url_breakdown for the initial breakdown on mount', async () => {
+		// It keeps only the series, so it must not ask the verb that walks
+		// every partition's index to build a request list it discards.
 		const { unmount } = mount();
 		await waitFor(
 			() =>
 				expect(
 					wire.batches
 						.flat()
-						.filter( ( m ) => 'url_detail' === m[ VALUE ]?.name )
+						.filter( ( m ) => 'url_breakdown' === m[ VALUE ]?.name )
 						.length
 				).toBeGreaterThan( 0 ),
 			{ timeout: 6000 }
 		);
 		const [ msg ] = wire.batches
 			.flat()
-			.filter( ( m ) => 'url_detail' === m[ VALUE ]?.name );
+			.filter( ( m ) => 'url_breakdown' === m[ VALUE ]?.name );
 		expect( msg[ VALUE ].arguments ).toEqual( [
 			'deadbeef',
 			'--breakdown=status',
 		] );
+		expect(
+			wire.batches
+				.flat()
+				.filter( ( m ) => 'url_detail' === m[ VALUE ]?.name )
+		).toHaveLength( 0 );
 		unmount();
 	}, 20000 );
 
-	it( 'renders the aggregate series when there is no urlHash to break down', () => {
-		const { container, unmount } = mount( {
-			urlHash: null,
-			urlDetail: { ...baseUrlDetail, stats: { time_series: { a: 1 } } },
-		} );
-		expect( container.textContent ).toContain( 'AGGREGATE' );
+	it( 'asks nothing and charts nothing when there is no urlHash', () => {
+		const { container, unmount } = mount( { urlHash: null } );
+		expect( container.textContent ).not.toContain( 'AGGREGATE' );
+		expect(
+			wire.batches
+				.flat()
+				.filter( ( m ) => 'url_breakdown' === m[ VALUE ]?.name )
+		).toHaveLength( 0 );
 		unmount();
 	} );
 
 	it( 'shows "No requests" when sortedRequests is empty', () => {
 		const { container, unmount } = mount( { sortedRequests: [] } );
 		expect( container.textContent ).toContain( 'No requests to display' );
+		unmount();
+	} );
+
+	it( 'says the scan stopped rather than that the URL has no requests', () => {
+		const { container, unmount } = mount( {
+			urlDetail: { ...baseUrlDetail, scan_stopped_early: true },
+			sortedRequests: [],
+		} );
+		expect( container.textContent ).toContain( 'stopped early' );
+		expect( container.textContent ).not.toContain(
+			'No requests to display'
+		);
+		unmount();
+	} );
+
+	it( 'keeps its dropdowns and says so when the breakdown is refused', async () => {
+		wire = installFakeCommandWire(
+			() => new Error( 'index scan budget spent' )
+		);
+		const { container, unmount } = mount( { urlHash: '7f3c19ab52d0' } );
+		await waitFor(
+			() =>
+				expect( container.textContent ).toContain(
+					'index scan budget spent'
+				),
+			{ timeout: 6000 }
+		);
+		expect( dropdownLabels( container ) ).toEqual( [
+			'Metric',
+			'Breakdown',
+		] );
+		unmount();
+	}, 20000 );
+
+	it( 'keeps its dropdowns when the dimension has no rows to chart', async () => {
+		wire = installFakeCommandWire( () => ( {
+			breakdown_time_series: {},
+		} ) );
+		const { container, unmount } = mount( { urlHash: '7f3c19ab52d0' } );
+		await waitFor(
+			() => expect( container.textContent ).not.toContain( 'Loading…' ),
+			{ timeout: 6000 }
+		);
+		expect( dropdownLabels( container ) ).toEqual( [
+			'Metric',
+			'Breakdown',
+		] );
+
+		// The dropdowns are the only way out, so they have to still work.
+		const [ , breakdown ] = container.querySelectorAll( 'select' );
+		selectOption( breakdown, 'ja4' );
+		await waitFor(
+			() =>
+				expect(
+					wire.batches
+						.flat()
+						.some( ( m ) =>
+							m[ VALUE ]?.arguments?.includes( '--breakdown=ja4' )
+						)
+				).toBe( true ),
+			{ timeout: 6000 }
+		);
+		unmount();
+	}, 20000 );
+
+	it( 'notes a list the scan cut short even with rows in hand', () => {
+		const { container, unmount } = mount( {
+			urlDetail: { ...baseUrlDetail, scan_stopped_early: true },
+		} );
+		expect( container.textContent ).toContain( 'Recent Requests (3)' );
+		expect( container.textContent ).toContain( 'stopped early' );
 		unmount();
 	} );
 } );

@@ -25,8 +25,10 @@
  *  - Rate limit: none here. The substrate's `/command` endpoint already caps
  *    POSTs per user per window, so a polling dashboard is bounded upstream.
  *  - Stats reads fail-soft (matches Stats_Store + dashboards "no data" UX).
- *  - Disk scans capped at MAX_INDEX_ENTRIES so a missing-rid lookup can't
- *    escalate into a partition-wide segment walk.
+ *  - Disk scans are bounded by TIME where the index carries one — the per-URL
+ *    walk stops at `scan_floor()`, in a segment that closed before it — and
+ *    by MAX_INDEX_ENTRIES everywhere else, so a missing-rid lookup can't
+ *    escalate into a partition-wide walk.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -75,10 +77,31 @@ use Newspack_Nodes\Service_CI_Node;
 class Performance_CI_Node extends Service_CI_Node {
 
 	/**
-	 * Hard cap on .idx entries scanned per disk-walking verb — prevents a
-	 * missing-rid scan from walking unbounded numbers of firehose entries.
+	 * Hard cap on .idx entries scanned per disk-walking verb — the BACKSTOP for
+	 * a walk that has no better bound, not the bound the common case reaches.
+	 *
+	 * The per-URL walk stops at `scan_floor()`, so its real cost is a retention
+	 * window of index, whatever the index holds behind that. What is left under
+	 * this cap is a walk with nothing to stop it: a rid lookup, which searches
+	 * for one line and cannot know how far back it sits, and the flame index,
+	 * whose lines carry no time to compare (`Flame_Builder_Node::index_completion_columns()`).
+	 *
+	 * The floor is a full retention window of requests rather than a round
+	 * number, because a budget spent on one URL's high-traffic neighbours never
+	 * reaches that URL at all. At 97 bytes an entry, a million lines is ~97MB
+	 * of index read one segment at a time, so peak memory is ONE segment's
+	 * index — a few tens of MB — and a full spend costs ~0.2s of line work
+	 * rather than ~2s: a miss is one `substr` + `trim`, not a parse. Still an
+	 * answer rather than a wedged verb. A walk that spends the budget says so;
+	 * see `scan_index_entries()`.
+	 *
+	 * Revisit when a TIME-BOUNDED walk spends it — with a floor in place that
+	 * means one retention window holds a million entries, so the site outgrew
+	 * the number rather than misusing it. A rid lookup or a flame walk spending
+	 * it is the cap doing its job, and a bigger number would only buy a slower
+	 * miss.
 	 */
-	public const MAX_INDEX_ENTRIES = 100000;
+	public const MAX_INDEX_ENTRIES = 1000000;
 
 	/**
 	 * TSL node names the disk-walking verbs resolve their partitions through.
@@ -263,46 +286,6 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * Walk every recent URL bucket for the given hash and emit a per-bucket
-	 * `{count, sum_ms, sum_peak_mb}` time series, keyed by bucket and sorted
-	 * ascending. Zero-count buckets are skipped, so the series is sparse.
-	 *
-	 * @param string $hash   12-char URL hash.
-	 * @param string $server Reporting server to scope to; '' reads every server.
-	 * @return array<string,mixed>
-	 */
-	private static function build_url_time_series( string $hash, string $server = '' ): array {
-		$buckets = self::read_window();
-		$series  = [];
-		foreach ( self::stats_stores() as $store ) {
-			// One shard, not the whole index — this wants a single hash.
-			foreach ( $store->url_row_sources( $buckets, $hash ) as [ $bucket_key, $bucket_data ] ) {
-				if ( ! isset( $bucket_data[ $hash ] ) ) {
-					continue;
-				}
-				// Scoped per bucket: the chart sits under this server's stats.
-				$raw    = Core::arr( $bucket_data[ $hash ] );
-				$scoped = Stats_Store::swap_url_server_sums( $raw, $server );
-				if ( null === $scoped ) {
-					continue;
-				}
-				$stats = $scoped;
-				$count = Core::as_int( $stats['count'] ?? 0 );
-				if ( 0 === $count ) {
-					continue;
-				}
-				$sum_ms = Core::as_float( $stats['sum_ms'] ?? 0 );
-				$series[ $bucket_key ] ??= [ 'count' => 0, 'sum_ms' => 0.0, 'sum_peak_mb' => 0.0 ];
-				$series[ $bucket_key ]['count']       += $count;
-				$series[ $bucket_key ]['sum_ms']      += $sum_ms;
-				$series[ $bucket_key ]['sum_peak_mb'] += Core::as_float( $stats['sum_peak_mb'] ?? 0 );
-			}
-		}
-		\ksort( $series );
-		return $series;
-	}
-
-	/**
 	 * Sum-merge dimensional buckets across all partitions for one dim/server.
 	 * The server dimension is the global routing index: Flame Builder deliberately
 	 * omits its redundant per-server copy, so keep that dimension global while a
@@ -432,8 +415,8 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @return array<string,mixed>|null Search shape, or null when unmatched.
 	 */
 	private static function find_request_index_entry( string $rid ): ?array {
-		$result = null;
-		self::scan_index_entries(
+		$result  = null;
+		$stopped = self::scan_index_entries(
 			self::search_order( $rid ),
 			'requests',
 			'rid',
@@ -447,6 +430,9 @@ class Performance_CI_Node extends Service_CI_Node {
 				return false;
 			}
 		);
+		if ( null === $result && $stopped ) {
+			self::fail_budget_spent( $rid );
+		}
 		return $result;
 	}
 
@@ -689,11 +675,14 @@ class Performance_CI_Node extends Service_CI_Node {
 		if ( null === $stats ) {
 			throw new \RuntimeException( \esc_html( "URL not found: {$hash}" ) );
 		}
+		$recent = self::find_recent_requests_for_url( $hash );
 		return Ask_Assembler::for_url(
 			$stats,
-			self::find_recent_requests_for_url( $hash ),
+			$recent['requests'],
 			self::rule_for_url( Core::as_string( $stats['url'] ?? '' ) ),
-			$server
+			$server,
+			$recent['truncated'],
+			$recent['window_start']
 		);
 	}
 
@@ -932,8 +921,15 @@ class Performance_CI_Node extends Service_CI_Node {
 	/**
 	 * Walk the request partitions newest-first and collect up to
 	 * RECENT_REQUEST_LIMIT index entries for the given url_hash, deduplicated by
-	 * rid and sorted by timestamp DESC. Stops early on either that cap or the
-	 * shared MAX_INDEX_ENTRIES scan budget, which spans all partitions.
+	 * rid and sorted by timestamp DESC. Each partition's walk ends at
+	 * `scan_floor()`; the whole fan-out ends on that cap or on the shared
+	 * MAX_INDEX_ENTRIES budget.
+	 *
+	 * Both endings are the caller's to pass on. A URL quiet enough to sit behind
+	 * a million of its neighbours' entries is never reached, and a list that
+	 * stopped short reads exactly like a URL with no traffic; a list that ran
+	 * out of WINDOW reads the same way, so the floor it stopped at rides back
+	 * with it.
 	 *
 	 * NOT server-scoped: an index entry carries no server, so filtering would
 	 * mean reading every record. Free today because a stored `url` is ABSOLUTE,
@@ -941,11 +937,12 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * servers, the server has to go on the index entry.
 	 *
 	 * @param string $url_hash 12-char URL hash to match.
-	 * @return array<int,array<string,mixed>>
+	 * @return array{requests:array<int,array<string,mixed>>, truncated:bool, window_start:int} The list, whether the budget cut it short, and the window it is of.
 	 */
 	private static function find_recent_requests_for_url( string $url_hash ): array {
-		$requests = [];
-		self::scan_index_entries(
+		$requests  = [];
+		$floor     = self::scan_floor();
+		$truncated = self::scan_index_entries(
 			Bootstrap::node_dirs( self::NODE_REQUESTS ),
 			'requests',
 			'url_hash',
@@ -965,7 +962,8 @@ class Performance_CI_Node extends Service_CI_Node {
 					'partition'    => $partition,
 				];
 				return \count( $requests ) >= self::RECENT_REQUEST_LIMIT ? false : null;
-			}
+			},
+			$floor
 		);
 
 		\usort( $requests, static fn ( $a, $b ) => $b['timestamp'] <=> $a['timestamp'] );
@@ -977,7 +975,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				$unique[]          = $r;
 			}
 		}
-		return $unique;
+		return [ 'requests' => $unique, 'truncated' => $truncated, 'window_start' => $floor ];
 	}
 
 	/**
@@ -1143,6 +1141,25 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
+	 * The completion time below which a request-index walk can stop reading.
+	 *
+	 * The window floor `read_window()` enumerates, and nothing else: a request
+	 * that completed before the window opened cannot be answered with, and one
+	 * that completed inside it is in the window however long ago it started.
+	 * No slack — the walk compares completions, so it needs no allowance for
+	 * how long a request may have been in flight.
+	 *
+	 * It bounds the walk; it does not filter the answer. An entry the walk
+	 * reaches is returned whatever its time, which is the side to err on: the
+	 * alternative drops rows the operator can see in the chart beside the list.
+	 *
+	 * @return int Unix timestamp.
+	 */
+	private static function scan_floor(): int {
+		return Stats_Store::window_start( AppConfig::stats_retention_seconds(), \time() );
+	}
+
+	/**
 	 * One Stats_Store per flame-builder worker over the shared `Core::$memd`
 	 * handle. `configure_stats <partition>` keys each store by the WORKER index,
 	 * and nothing of it lands on disk — so the index space comes from the
@@ -1255,12 +1272,16 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @return array<array-key,mixed>|null Decoded request body (keys come from the JSON envelope).
 	 */
 	private static function find_request( array $dirs, string $rid ): ?array {
-		$found = self::first_record( $dirs, 'requests', $rid );
+		$found = self::first_record( $dirs, 'requests', $rid, $stopped );
 		if ( null === $found ) {
+			if ( $stopped ) {
+				self::fail_budget_spent( $rid );
+			}
 			return null;
 		}
 		[ $entry, $record ] = $found;
 		$record['url_hash'] = \trim( Core::as_string( $entry['url_hash'] ?? '' ) );
+		// A flame miss is normal, budget or not: unprofiled requests have none.
 		$flame              = self::first_record( Bootstrap::node_dirs( self::NODE_FLAMES ), 'flames', $rid );
 		if ( null !== $flame ) {
 			$record['flame_data'] = $flame[1];
@@ -1269,17 +1290,31 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
+	 * The ending a spent budget actually had. A rid the walk never reached is
+	 * not a rid that is gone: reported as a definite negative it sends an
+	 * operator after a retention bug that does not exist.
+	 *
+	 * @param string $rid Request id the walk was looking for.
+	 * @throws \RuntimeException Always.
+	 */
+	private static function fail_budget_spent( string $rid ): never {
+		throw new \RuntimeException( \esc_html( "request index scan budget spent before rid {$rid} was reached" ) );
+	}
+
+	/**
 	 * The first STORED record whose index entry matches, paired with that entry.
 	 * One seek, never a log walk: the entry carries segment, offset and length.
 	 *
-	 * @param array<int,string> $dirs  Partition index => dir, in search order.
-	 * @param string            $log   Log basename ('requests' | 'flames').
-	 * @param string            $rid   Request id the entry must carry.
+	 * @param array<int,string> $dirs    Partition index => dir, in search order.
+	 * @param string            $log     Log basename ('requests' | 'flames').
+	 * @param string            $rid     Request id the entry must carry.
+	 * @param bool|null         $stopped Set true when the budget ended the walk.
+	 * @param-out bool          $stopped
 	 * @return array{0:array<array-key,mixed>,1:array<array-key,mixed>}|null Entry + decoded record.
 	 */
-	private static function first_record( array $dirs, string $log, string $rid ): ?array {
-		$found = null;
-		self::scan_index_entries(
+	private static function first_record( array $dirs, string $log, string $rid, ?bool &$stopped = null ): ?array {
+		$found   = null;
+		$stopped = self::scan_index_entries(
 			$dirs,
 			$log,
 			'rid',
@@ -1309,17 +1344,46 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * returns false. Each scratch Partition is built, named, formatted and
 	 * removed here, so a caller carries nothing but its predicate.
 	 *
+	 * The two endings are NOT the same answer, so they are told apart: a caller
+	 * satisfied by `$on_hit` holds the whole truth, while a caller whose budget
+	 * ran out holds however much of it the walk reached.
+	 *
+	 * Misses dominate any walk that spends its budget, so a miss costs ONE
+	 * `substr` + `trim` against the field's fixed column — the offsets coming
+	 * from the writer that laid the line out. The parse, and the check that
+	 * settles the match, run only behind that filter.
+	 *
+	 * A `$floor` bounds the walk by TIME instead of by luck: past it, nothing
+	 * left in this partition can still be in the window, so the walk moves to
+	 * the next partition rather than reading the rest. That is not an ending
+	 * either caller has to hear about — it is where the answers stop being.
+	 *
+	 * Two facts have to agree before it ends anything, because either alone
+	 * truncates. The SEGMENT's index must have taken no line since the window
+	 * opened, which is a clock this machine owns — a hub takes its spokes in
+	 * ARRIVAL order, so one spoke reconnecting after a lag lays hours-old lines
+	 * between live ones and no line's own time orders the file. And the LINE
+	 * must have completed before the window too, read as start + duration:
+	 * start alone is a request's beginning, which a long-running one carries
+	 * from hours outside a window it finished inside. A duration too wide for
+	 * its column is written clamped, so a completion can only be UNDER-stated
+	 * — and the segment has the last word, which is what makes that safe.
+	 *
 	 * @param array<int,string> $dirs   Partition index => dir, in scan order.
 	 * @param string            $log    Log basename ('requests' | 'flames').
 	 * @param string            $field  Index-entry field the match compares.
 	 * @param string            $match  Value that field must equal, trimmed.
 	 * @param callable(array<array-key,mixed>, int, int, Partition_Node): (bool|null) $on_hit Return false to end the scan.
+	 * @param int|null          $floor  Stop a closed segment below this completion time; null walks to the budget.
+	 * @return bool True when the entry budget ended the scan.
 	 */
-	private static function scan_index_entries( array $dirs, string $log, string $field, string $match, callable $on_hit ): void {
+	private static function scan_index_entries( array $dirs, string $log, string $field, string $match, callable $on_hit, ?int $floor = null ): bool {
 		// Both halves of ONE format: never read an index we didn't write.
-		[ $formatter, $parse ] = 'flames' === $log
-			? [ 'flame-index', Flame_Builder_Node::parse_flame_index( ... ) ]
-			: [ 'request-index', Request_Builder_Node::parse_request_index( ... ) ];
+		[ $formatter, $parse, $column, $times ] = 'flames' === $log
+			? [ 'flame-index', Flame_Builder_Node::parse_flame_index( ... ), Flame_Builder_Node::index_column( $field ), Flame_Builder_Node::index_completion_columns() ]
+			: [ 'request-index', Request_Builder_Node::parse_request_index( ... ), Request_Builder_Node::index_column( $field ), Request_Builder_Node::index_completion_columns() ];
+		// Past the columns' last byte: a short line is skipped, not read as 0.
+		$span_end      = [] === $times ? 0 : \max( $times[0][0] + $times[0][1], $times[1][0] + $times[1][1] );
 		$entries_count = 0;
 		foreach ( $dirs as $p => $dir ) {
 			$stopped = false;
@@ -1331,12 +1395,25 @@ class Performance_CI_Node extends Service_CI_Node {
 				$node->remove_node();
 				throw new \RuntimeException( \esc_html( "index formatter not registered: {$formatter}" ) );
 			}
+			$closed = null === $floor || [] === $times ? [] : self::segments_closed_before( $node, $floor );
 			$node->scan_index(
-				static function ( string $line, int $segment ) use ( &$entries_count, &$stopped, $node, $p, $field, $match, $parse, $on_hit ): ?bool {
+				static function ( string $line, int $segment ) use ( &$entries_count, &$stopped, $node, $p, $field, $match, $column, $times, $span_end, $closed, $floor, $parse, $on_hit ): ?bool {
 					++$entries_count;
 					if ( $entries_count > self::MAX_INDEX_ENTRIES ) {
 						$stopped = true;
 						return false;
+					}
+					// A closed segment, and a line that agrees it is past.
+					if ( isset( $closed[ $segment ] ) && \strlen( $line ) >= $span_end ) {
+						$started = (int) \substr( $line, $times[0][0], $times[0][1] );
+						$done    = $started + \intdiv( (int) \substr( $line, $times[1][0], $times[1][1] ), 1000 );
+						if ( $started > 0 && $done < $floor ) {
+							return false;
+						}
+					}
+					// One slice per MISS; the parse runs only on a hit.
+					if ( [] !== $column && \trim( \substr( $line, $column[0], $column[1] ) ) !== $match ) {
+						return null;
 					}
 					$entry = $parse( $line );
 					if ( ! \is_array( $entry ) || \trim( Core::as_string( $entry[ $field ] ?? '' ) ) !== $match ) {
@@ -1349,9 +1426,10 @@ class Performance_CI_Node extends Service_CI_Node {
 			);
 			$node->remove_node();
 			if ( $stopped ) {
-				return;
+				return $entries_count > self::MAX_INDEX_ENTRIES;
 			}
 		}
+		return false;
 	}
 
 	/**
@@ -1370,6 +1448,29 @@ class Performance_CI_Node extends Service_CI_Node {
 		if ( null === $partition->sink() && null !== $ci ) {
 			$partition->sink( $ci );
 		}
+	}
+
+	/**
+	 * Which of a partition's segments took their last index line before
+	 * `$floor`, as a `{ id: true }` set the line callback tests with one
+	 * `isset()`.
+	 *
+	 * A segment still being appended to can hold an in-window line anywhere,
+	 * so only a CLOSED one may end a walk. Asked of the filesystem rather than
+	 * of the lines: a line's time is its producer's, and a hub has many.
+	 *
+	 * @param Partition_Node $node  The partition being walked.
+	 * @param int            $floor Unix time the window opens at.
+	 * @return array<int,bool> Segment id => true.
+	 */
+	private static function segments_closed_before( Partition_Node $node, int $floor ): array {
+		$closed = [];
+		foreach ( $node->index_mtimes() as $id => $mtime ) {
+			if ( $mtime < $floor ) {
+				$closed[ $id ] = true;
+			}
+		}
+		return $closed;
 	}
 
 	/**
@@ -1782,7 +1883,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'url_detail',
 					'capability'  => Capabilities::READ,
-					'description' => 'Single-URL detail incl. aggregate flame data.',
+					'description' => 'Single-URL detail incl. aggregate flame data. Its request list covers the window opening at requests_window_start, not the whole record.',
 					'args'        => [
 						[ 'name' => 'hash', 'type' => 'string', 'required' => true ],
 						[ 'name' => 'breakdown', 'type' => 'string', 'required' => false ],
@@ -1822,8 +1923,6 @@ class Performance_CI_Node extends Service_CI_Node {
 						'last_updated'        => $entry['last_updated'] ?? 0,
 						// The header's own window and divisor.
 						'requests_per_second' => self::recent_rate( Core::num_int( $entry['recent_count'] ?? null ) ),
-						// Per-URL time series (UrlDetailView chart).
-						'time_series'         => self::build_url_time_series( $hash, $server ),
 					];
 				}
 				if ( null === $stats ) {
@@ -1834,9 +1933,14 @@ class Performance_CI_Node extends Service_CI_Node {
 				$flame     = $aggregate['flame']
 					?? [ 'name' => 'aggregate', 'value' => 0, 'children' => [] ];
 
+				$recent  = self::find_recent_requests_for_url( $hash );
 				$payload = [
 					'stats'              => $stats,
-					'requests'           => self::find_recent_requests_for_url( $hash ),
+					'requests'           => $recent['requests'],
+					// An empty list that stopped short is not an empty URL.
+					'scan_stopped_early' => $recent['truncated'],
+					// Nor is one that ran out of window an empty record.
+					'requests_window_start' => $recent['window_start'],
 					'aggregate_flame'    => $flame,
 					'aggregate_profiles' => $aggregate['profiles'] ?? null,
 					'last_modified'      => $aggregate['last_modified'] ?? 0,
@@ -1852,6 +1956,31 @@ class Performance_CI_Node extends Service_CI_Node {
 				}
 
 				return $payload;
+					},
+				],
+				[
+					'name'        => 'url_breakdown',
+					'capability'  => Capabilities::READ,
+					'description' => "One URL's dimensional time series, and nothing else.",
+					'args'        => [
+						[ 'name' => 'hash', 'type' => 'string', 'required' => true ],
+						[ 'name' => 'breakdown', 'type' => 'string', 'required' => true ],
+					],
+					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
+				// @longform The chart polls this while the modal is open and
+				// keeps only the series, so it reads memcache and never the
+				// index: `url_detail` walks every partition's index to build
+				// `requests`, which a breakdown fetch throws away.
+				$parsed = Command_Args::parse( self::arg_strings( $args ) );
+				$hash   = $parsed['positional'][0] ?? '';
+				if ( ! \preg_match( '/^[a-f0-9]{8,64}$/', $hash ) ) {
+					throw new \RuntimeException( 'invalid hash format' );
+				}
+				$breakdown = (string) ( $parsed['options']['breakdown'] ?? '' );
+				if ( ! \in_array( $breakdown, self::DIMENSIONS, true ) ) {
+					throw new \RuntimeException( 'invalid breakdown dimension' );
+				}
+				return [ 'breakdown_time_series' => self::merge_url_dim( $hash, $breakdown ) ];
 					},
 				],
 				[
