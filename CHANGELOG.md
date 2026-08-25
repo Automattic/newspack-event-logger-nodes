@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.60.0] - 2026-08-25
+
 ### Fixed
 - **A folded request's log drew a time ruler across a sequence it disclaims.** The gap placeholder rows spanned the merged window with timestamps and dot ticks, reading merged frames as idle time — the inference decision 13 forbids. `computeIndentedEntries()` now draws them only where the interval IS elapsed time: never across a sequence-break marker (matching `Findings::entry_gap()`, which skips a gap on either side of one), and not at all in a record carrying `entries (aggregated)`, whose rows past the marker are a `keep` selection out of the middle rather than consecutive entries. A record that merely LOST entries keeps its ruler everywhere except the one interval touching its marker; its survivors are contiguous and really are that far apart. Merged spans, their counts, fold/expand and `displayTime` on real rows are unchanged.
 - **The Overview card keeps its chart panel up while a server filter is on.** Its gate is `chartSource()` finding one of its two series, and the Server selector lives INSIDE that panel — the only control that clears an active `serverFilter`, which still scopes the headline stats and the URL table beneath it. A window carrying only worker traffic empties both sources with no error at all (the aggregate series never counts workers), so the card could unmount the one way out of a filter it was still applying. Only a reload cleared it. The gate is now `serverFilter ||` that resolver, which leaves the unfiltered no-data case unheaded as before.
