@@ -89,25 +89,13 @@ class StatsStoreTest extends TestCase {
 		);
 	}
 
-	public function test_a_point_read_touches_one_shard(): void {
-		// `url_detail`, `ask` and the per-URL chart want ONE hash. Reading every
-		// row of the window to find it is what the shard removes.
-		$this->seed_memd();
-		$store = $this->make_store();
-		$this->set_url_bucket( $store, '2026-08-14-12-05', [
-			'a1b2c3d4e5f6' => [ 'url' => '/a', 'count' => 3 ],
-			'0f0f0f0f0f0f' => [ 'url' => '/b', 'count' => 5 ],
-		] );
-
-		$mc  = Core::$memd;
-		$one = $store->url_row_sources( [ '2026-08-14-12-05' ], 'a1b2c3d4e5f6' );
-
-		$rows = [];
-		foreach ( $one as [ , $bucket_rows ] ) {
-			$rows += $bucket_rows;
-		}
-		$this->assertSame( [ 'a1b2c3d4e5f6' => [ 'url' => '/a', 'count' => 3 ] ], $rows );
-		$this->assertInstanceOf( InMemoryMemcached::class, $mc );
+	public function test_a_url_row_read_is_never_scoped_to_one_hash(): void {
+		// Decision 14: one unscoped read serves every scope a request asks for,
+		// so the window is the only thing a caller gets to narrow.
+		$this->assertSame(
+			1,
+			( new \ReflectionMethod( Stats_Store::class, 'url_row_sources' ) )->getNumberOfParameters()
+		);
 	}
 
 	public function test_reading_the_whole_index_merges_every_shard(): void {

@@ -3413,6 +3413,38 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( 100, $parsed['length'] );
 	}
 
+	/**
+	 * The scan pre-filters on a raw column before parsing, so the offsets it
+	 * slices with have to come from the writer that laid the line out.
+	 */
+	public function test_index_column_locates_the_matchable_fields_the_writer_wrote(): void {
+		$message                   = Message::new_message();
+		$message[ Message::TYPE ]  = Message::TM_STRUCT;
+		$message[ Message::VALUE ] = [ 'rid' => 'qq4-flame-rid-8e02', 'url_hash' => 'c0ffee5eeded' ];
+		$line = (string) Flame_Builder_Node::format_index_entry(
+			$message,
+			[ 'segment' => 7, 'offset' => 4096, 'length' => 55 ]
+		);
+
+		[ $rid_offset, $rid_length ]   = Flame_Builder_Node::index_column( 'rid' );
+		[ $hash_offset, $hash_length ] = Flame_Builder_Node::index_column( 'url_hash' );
+
+		$this->assertSame( 'qq4-flame-rid-8e02', \trim( \substr( $line, $rid_offset, $rid_length ) ) );
+		$this->assertSame( 'c0ffee5eeded', \trim( \substr( $line, $hash_offset, $hash_length ) ) );
+	}
+
+	public function test_the_flame_index_carries_no_completion_columns(): void {
+		// The flame line is rid(32) url_hash(12) segment(6) offset(10) length(8):
+		// no timestamp anywhere, so a retention bound cannot read one off it and
+		// offset 44 is `segment`, not a time.
+		$this->assertSame( [], Flame_Builder_Node::index_completion_columns() );
+	}
+
+	public function test_index_column_offers_no_column_for_a_zero_padded_field(): void {
+		// `segment` is zero-padded, so its column never equals its parsed int.
+		$this->assertSame( [], Flame_Builder_Node::index_column( 'segment' ) );
+	}
+
 	public function test_format_index_entry_returns_null_when_rid_missing(): void {
 		$message                       = Message::new_message();
 		$message[ Message::TYPE ]      = Message::TM_STRUCT;

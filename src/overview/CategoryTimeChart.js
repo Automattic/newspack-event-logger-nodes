@@ -24,6 +24,7 @@ import {
 	PALETTE,
 	buildTimeSlots,
 } from '@newspack-nodes/shared/hooks/useTimeChart';
+import { chartSource } from './AggregateTimeChart';
 import AreaTimeChart from './components/AreaTimeChart';
 import { RETENTION_SECONDS } from './retention';
 
@@ -163,7 +164,7 @@ export default function CategoryTimeChart( { data } ) {
 	);
 
 	// The empty check sits below every hook; hoisting it breaks hook order.
-	if ( ! data || Object.keys( data ).length === 0 ) {
+	if ( null === chartSource( { data } ).source ) {
 		return null;
 	}
 

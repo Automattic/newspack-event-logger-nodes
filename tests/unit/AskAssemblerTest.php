@@ -58,7 +58,9 @@ class AskAssemblerTest extends TestCase {
 			[ 'url' => 'https://example.test/a', 'hash' => 'cccccccccccc', 'count' => 2, 'avg_ms' => 130.0 ],
 			[],
 			null,
-			'alpha.example'
+			'alpha.example',
+			false,
+			1_741_000_800
 		);
 
 		$this->assertSame( 'alpha.example', $brief['server'] );
@@ -244,13 +246,72 @@ class AskAssemblerTest extends TestCase {
 			[ 'rid' => 'c', 'duration_ms' => 1400, 'status_code' => 200, 'partition' => 0 ],
 		];
 
-		$brief = Ask_Assembler::for_url( $stats, $requests, $this->rule() );
+		$brief = Ask_Assembler::for_url( $stats, $requests, $this->rule(), '', false, 1_741_000_800 );
 
 		$this->assertSame( 'url', $brief['subject'] );
 		$this->assertStringContainsString( '[REDACTED]', $brief['url'] );
 		$this->assertSame( 4210, $brief['stats']['count'] );
 		$this->assertSame( [ 'b', 'c', 'a' ], \array_column( $brief['worst_requests'], 'rid' ) );
 		$this->assertSame( 'a1b2c3d4e5f6', $brief['rule']['id'] );
+	}
+
+	public function test_a_url_brief_says_when_the_request_scan_stopped_short(): void {
+		// The worst-five are drawn from whatever the index walk reached, so a
+		// brief quoting them without that caveat sounds like the whole record.
+		// Seven requests: the list is ALWAYS cut to five, and the flag is
+		// about the walk behind it, so a completed scan still reads false.
+		$stats    = [ 'url' => 'https://example.test/slow', 'hash' => 'e9e9e9e9e9e9', 'count' => 7, 'avg_ms' => 511.0 ];
+		$requests = [];
+		foreach ( \range( 1, 7 ) as $n ) {
+			$requests[] = [ 'rid' => "r{$n}", 'duration_ms' => 100.0 * $n, 'status_code' => 200, 'partition' => 0 ];
+		}
+
+		$complete = Ask_Assembler::for_url( $stats, $requests, null, 'delta.example', false, 1_741_000_800 );
+		$stopped  = Ask_Assembler::for_url( $stats, [], null, 'delta.example', true, 1_741_000_800 );
+
+		$this->assertCount( Ask_Assembler::WORST_REQUESTS, $complete['worst_requests'] );
+		$this->assertFalse( $complete['scan_stopped_early'] );
+		$this->assertTrue( $stopped['scan_stopped_early'] );
+		$this->assertArrayNotHasKey( 'worst_requests_truncated', $complete );
+	}
+
+	public function test_a_url_brief_names_the_window_its_requests_were_drawn_from(): void {
+		// An empty list reads two ways — no traffic, or no traffic since the
+		// window opened — and only the reply itself can tell them apart.
+		$brief = Ask_Assembler::for_url(
+			[ 'url' => 'https://example.test/quiet', 'hash' => 'b7b7b7b7b7b7', 'count' => 0 ],
+			[],
+			null,
+			'zeta.example',
+			false,
+			1_741_000_800
+		);
+
+		$this->assertSame( 1_741_000_800, $brief['requests_window_start'] );
+	}
+
+	public function test_a_url_brief_cannot_be_built_without_naming_that_window(): void {
+		// Same reason the scan's ending is required: a narrower number that
+		// does not say so reads as the site's.
+		$this->expectException( \ArgumentCountError::class );
+		Ask_Assembler::for_url(
+			[ 'url' => 'https://example.test/quiet', 'hash' => 'd0d0d0d0d0d0', 'count' => 3 ],
+			[],
+			null,
+			'eta.example',
+			false
+		);
+	}
+
+	public function test_a_url_brief_cannot_be_built_without_stating_how_its_scan_ended(): void {
+		// A completeness claim nobody made is the one answer that reassures.
+		$this->expectException( \ArgumentCountError::class );
+		Ask_Assembler::for_url(
+			[ 'url' => 'https://example.test/quiet', 'hash' => 'd0d0d0d0d0d0', 'count' => 3 ],
+			[],
+			null,
+			'epsilon.example'
+		);
 	}
 
 	/**
@@ -340,7 +401,10 @@ class AskAssemblerTest extends TestCase {
 		$brief = Ask_Assembler::for_url(
 			[ 'hash' => '25ecf5606840', 'url' => '/calendar', 'count' => 12 ],
 			[],
-			$this->rule()
+			$this->rule(),
+			'',
+			false,
+			1_741_000_800
 		);
 
 		$this->assertArrayNotHasKey( 'breakdown', $brief );
@@ -369,7 +433,10 @@ class AskAssemblerTest extends TestCase {
 					'length'       => 91551,
 				],
 			],
-			$this->rule()
+			$this->rule(),
+			'',
+			false,
+			1_741_000_800
 		);
 
 		$this->assertSame(
@@ -427,7 +494,10 @@ class AskAssemblerTest extends TestCase {
 		$brief = Ask_Assembler::for_url(
 			[ 'hash' => 'ff00', 'url' => '/uncovered', 'count' => 12, 'p95_ms' => 4000.0 ],
 			[],
-			null
+			null,
+			'',
+			false,
+			1_741_000_800
 		);
 
 		$this->assertNull( $brief['rule'] );

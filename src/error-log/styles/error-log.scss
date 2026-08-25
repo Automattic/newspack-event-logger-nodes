@@ -11,7 +11,12 @@
 
 @use "base";
 
-@include base.log-stream-page('event-logger-error-log', ( 'min-width': 80px ));
+@include base.log-stream-page(
+	"event-logger-error-log",
+	(
+		"min-width": 80px,
+	)
+);
 
 .entry-keyword {
 	&--error {

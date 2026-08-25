@@ -20,6 +20,12 @@
  * `displayTime` is a time ruler, not a per-row clock. A row shows a full
  * timestamp at a 100ms mark and bullets for the 10ms ticks between marks,
  * so scanning the column reads elapsed time down the request.
+ *
+ * The gap rows that carry that ruler across an interval are only drawn where
+ * the interval IS elapsed time. A sequence-break marker stands in for entries
+ * that were removed, so the intervals either side of one are missing detail,
+ * and a folded record has no measurable interval at all: everything past its
+ * marker was selected out of the middle rather than kept consecutive.
  */
 
 const START_REGEX = /^(.+?) \(start\)$/;
@@ -195,7 +201,8 @@ const formatTimeDisplay = ( ts, lastHundredth ) => {
  * Compute indentation levels for log entries based on (start)/(complete) pairs.
  * Uses LIFO name matching to handle improperly nested events.
  * Adds time display: timestamps at 100ms marks, bullets at 10ms marks.
- * Inserts placeholder rows with bullets to show time gaps.
+ * Inserts placeholder rows with bullets to show time gaps — but never across
+ * a sequence-break marker, and never at all in a folded record.
  *
  * @param {Array} entries Log entries array.
  * @return {IndentedEntries} Indented rows and the real-entry count.
@@ -204,6 +211,9 @@ export const computeIndentedEntries = ( entries ) => {
 	if ( ! entries?.length ) {
 		return { entries: [], realCount: 0 };
 	}
+	// Everything past a fold marker was selected out of the middle.
+	const folded = entries.some( ( e ) => FOLD_MARKER === ( e.k || '' ) );
+	let prevWasBreak = false;
 	let lastHundredth = -1;
 	const result = [];
 	let realCount = 0;
@@ -232,8 +242,10 @@ export const computeIndentedEntries = ( entries ) => {
 			}
 		}
 
+		const isBreak = SEQUENCE_BREAK_KEYWORDS.has( keyword );
+
 		// Left open, a severed span adopts every row after it.
-		if ( SEQUENCE_BREAK_KEYWORDS.has( keyword ) ) {
+		if ( isBreak ) {
 			const outermost =
 				pairStack.length > 0 && pairStack[ 0 ].name === OUTERMOST_PAIR
 					? 1
@@ -245,7 +257,8 @@ export const computeIndentedEntries = ( entries ) => {
 		const indent = pairStack.length;
 
 		// Insert compressed placeholder rows for gaps; escalating intervals.
-		if ( lastHundredth >= 0 && ts > 0 ) {
+		const measurable = ! folded && ! isBreak && ! prevWasBreak;
+		if ( measurable && lastHundredth >= 0 && ts > 0 ) {
 			const currentHundredth = Math.round( ts * 100 );
 			if ( currentHundredth > lastHundredth + 1 ) {
 				let interval = 1;
@@ -283,6 +296,7 @@ export const computeIndentedEntries = ( entries ) => {
 		if ( ts > 0 ) {
 			lastHundredth = Math.round( ts * 100 );
 		}
+		prevWasBreak = isBreak;
 
 		// Track start/complete pairs; displayTime recomputed per visible set.
 		let pairId = null;

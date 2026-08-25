@@ -18,7 +18,10 @@
  *     current breakdown is 'server'.
  */
 
+// The chart is mocked; its `chartSource` resolver is NOT — the wrapper
+// gates through the real one.
 jest.mock( '../../AggregateTimeChart', () => ( {
+	...jest.requireActual( '../../AggregateTimeChart' ),
 	__esModule: true,
 	default: ( { metric, breakdown, serverFilter } ) =>
 		`AGGREGATE[metric=${ metric },breakdown=${ breakdown },server=${
@@ -204,6 +207,35 @@ describe( 'OverviewSection', () => {
 		} );
 		expect( b.textContent ).toContain( 'AGGREGATE' );
 		ub();
+	} );
+
+	it( 'heads no chart panel when neither source carries a bucket', () => {
+		// The panel itself has no gate; this card owns the decision, because
+		// it is the one with a second source to fall back on.
+		const { container, unmount } = mount(
+			{ aggregate_time_series: {} },
+			{ breakdownData: {} }
+		);
+		expect( container.textContent ).not.toContain( 'AGGREGATE' );
+		expect( container.textContent ).not.toContain( 'Breakdown' );
+		unmount();
+	} );
+
+	it( 'keeps the chart panel up while a server filter is on, empty sources or not', () => {
+		// The Server selector lives in that panel and is the only way to clear
+		// a filter that still scopes the stats above and the table below. A
+		// window carrying only worker traffic empties both chart sources with
+		// no error at all, so the card would otherwise trap the filter.
+		const { container, unmount } = mount(
+			{ aggregate_time_series: {} },
+			{
+				breakdownData: {},
+				serverFilter: 'edge-01',
+				serverNames: [ 'edge-01', 'edge-02' ],
+			}
+		);
+		expect( container.textContent ).toContain( 'Server' );
+		unmount();
 	} );
 
 	it( 'mounts the global-leaderboard section when global_leaderboard.categories is present', () => {

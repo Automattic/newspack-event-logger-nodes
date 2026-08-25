@@ -167,9 +167,11 @@ class Stats_Store {
 	 * without a ceiling is not: one corrupt timestamp would pin its frames until
 	 * that year arrives. Past this, a skewed producer pays redundant last-wins
 	 * copies instead — which is a cost, where the other is a leak. One
-	 * `Request_Builder` eviction window, the same lateness the pipeline tolerates.
+	 * `Request_Builder` eviction window under its DEFAULT declaration, the same
+	 * lateness the shipped pipeline tolerates; a topology that declares another
+	 * bucket count warns that this no longer measures it.
 	 */
-	private const MAX_FUTURE_SKEW_SEC = 600;
+	private const MAX_FUTURE_SKEW_SEC = Request_Builder_Node::DEFAULT_EVICTION_WINDOW_SEC;
 
 	/**
 	 * Ceiling on one reader's bucket enumeration (24h at the 300s width).
@@ -311,13 +313,39 @@ class Stats_Store {
 	 * @return list<string>
 	 */
 	public static function retention_buckets( int $retention_seconds, int $now ): array {
-		$width = self::BUCKET_SECONDS;
-		$count = \min( (int) \ceil( $retention_seconds / $width ) + 1, self::MAX_READ_BUCKETS );
+		$count = self::window_bucket_count( $retention_seconds );
 		$out   = [];
 		for ( $i = 0; $i < $count; $i++ ) {
-			$out[] = self::bucket_key( $now - ( $i * $width ) );
+			$out[] = self::bucket_key( $now - ( $i * self::BUCKET_SECONDS ) );
 		}
 		return $out;
+	}
+
+	/**
+	 * When the oldest bucket `retention_buckets()` enumerates begins.
+	 *
+	 * The floor of the window as a TIMESTAMP, for readers that compare against
+	 * one rather than against keys — and it is read off the same bucket count,
+	 * so MAX_READ_BUCKETS caps both alike and no reader can bound itself by a
+	 * window wider than the one it enumerates.
+	 *
+	 * @param int $retention_seconds How far back the window reaches.
+	 * @param int $now               Clock, so a test window matches its writer's keys.
+	 * @return int Unix timestamp of the oldest enumerated bucket's start.
+	 */
+	public static function window_start( int $retention_seconds, int $now ): int {
+		return $now - ( $now % self::BUCKET_SECONDS )
+			- ( ( self::window_bucket_count( $retention_seconds ) - 1 ) * self::BUCKET_SECONDS );
+	}
+
+	/**
+	 * Buckets one window spans: a bucket per width, plus the partial one `now`
+	 * sits in, capped at MAX_READ_BUCKETS.
+	 *
+	 * @param int $retention_seconds How far back the window reaches.
+	 */
+	private static function window_bucket_count( int $retention_seconds ): int {
+		return \min( (int) \ceil( $retention_seconds / self::BUCKET_SECONDS ) + 1, self::MAX_READ_BUCKETS );
 	}
 
 	/**
@@ -400,16 +428,16 @@ class Stats_Store {
 	 * Every source of URL rows for a window, as `[bucket, rows]` pairs.
 	 *
 	 * Pairs rather than a merged map: one shard's rows are complete for the
-	 * hashes they cover, and the caller owns how it combines shards. A point
-	 * read costs one shard; a full read costs all sixteen, in one round-trip.
+	 * hashes they cover, and the caller owns how it combines shards. All
+	 * sixteen, in one round-trip — decision 14: one unscoped read serves every
+	 * scope a request asks for.
 	 *
-	 * @param array<int,string> $buckets  Bucket keys.
-	 * @param string            $url_hash Read only this hash's shard; '' reads all.
+	 * @param array<int,string> $buckets Bucket keys.
 	 * @return list<array{0: string, 1: array<array-key,mixed>}>
 	 */
-	public function url_row_sources( array $buckets, string $url_hash = '' ): array {
+	public function url_row_sources( array $buckets ): array {
 		$prefixes = [];
-		foreach ( '' === $url_hash ? self::url_shards() : [ self::url_shard( $url_hash ) ] as $shard ) {
+		foreach ( self::url_shards() as $shard ) {
 			$prefixes[] = [ self::NS_URLS, $shard ];
 		}
 		return $this->lookup_bucket_sets( $prefixes, $buckets );

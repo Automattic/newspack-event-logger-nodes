@@ -278,14 +278,14 @@ export function usePerformanceGraph( opts = {} ) {
 			// On-demand url_detail: Tee → merge → view; merge lives on edge.
 			const urlDetailRecv = interpreter.makeNode( 'Tee', URLDETAIL_RECV );
 			const merge = interpreter.makeNode(
-				'UrlDetailMerge',
+				views.UrlDetailMerge,
 				URLDETAIL_MERGE
 			);
 			merge.controlFrom = URLDETAIL_MERGE;
 			merge.connectNode( URLDETAIL_VIEW );
 			urlDetailRecv.connectNode( URLDETAIL_MERGE );
 			interpreter.makeNode(
-				'UrlDetailView',
+				views.UrlDetailView,
 				URLDETAIL_VIEW
 			).controlFrom = URLDETAIL_VIEW;
 
@@ -313,7 +313,7 @@ export function usePerformanceGraph( opts = {} ) {
 
 			// On-demand request_detail: Tee → view, like every other slice.
 			interpreter.makeNode(
-				'RequestDetailView',
+				views.RequestDetailView,
 				REQUESTDETAIL_VIEW
 			).controlFrom = REQUESTDETAIL_VIEW;
 			interpreter

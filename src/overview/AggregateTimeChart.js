@@ -73,19 +73,80 @@ const bucketValue = ( metric, count, sumMs, sumPeakMb ) => {
 };
 
 /**
+ * True when a bucketed source carries anything to draw.
+ *
+ * `for…in` rather than `Object.keys().length`: the URL modal re-renders on
+ * every scroll event, and a key array per frame is an allocation per frame.
+ *
+ * @param {Object|null} source Bucket-keyed series, or null.
+ * @return {boolean} True when it holds at least one bucket.
+ */
+const hasBuckets = ( source ) => {
+	for ( const key in source ) {
+		if ( Object.hasOwn( source, key ) ) {
+			return true;
+		}
+	}
+	return false;
+};
+
+/**
+ * True when a dimensional source carries a value to draw a series for.
+ *
+ * Buckets alone are not content: a dimension key that merges to an empty map
+ * leaves `{ '<bucket>': {} }`, which has a bucket and no series.
+ *
+ * @param {Object|null} source Bucket key => dimension value => totals, or null.
+ * @return {boolean} True when at least one bucket names a dimension value.
+ */
+const hasDimValues = ( source ) => {
+	for ( const key in source ) {
+		if ( Object.hasOwn( source, key ) && hasBuckets( source[ key ] ) ) {
+			return true;
+		}
+	}
+	return false;
+};
+
+/**
+ * The bucketed source this chart will actually draw, and whether it carries
+ * dimensions rather than totals.
+ *
+ * A dimensional series wins when it names a dimension value; one that names
+ * none falls back to the totals, because the server sets
+ * `breakdown_time_series` whenever the dimension is VALID rather than when it
+ * has rows. That emptiness is the SAME one the chart computes, so a wrapper
+ * gating on `null === source` cannot hold a different opinion than the chart
+ * it wraps: a dimensional source here always yields at least one series, and
+ * a totals source always yields exactly one.
+ *
+ * @param {Object}      props                 Both sources.
+ * @param {Object|null} [props.data]          Bucket key => `{ count, sum_ms, sum_peak_mb }`.
+ * @param {Object|null} [props.breakdownData] Bucket key => dimension value => `{ c, s, m }`.
+ * @return {{source: Object|null, dimensional: boolean}} What to draw, and in which shape.
+ */
+export function chartSource( { data = null, breakdownData = null } ) {
+	if ( hasDimValues( breakdownData ) ) {
+		return { source: breakdownData, dimensional: true };
+	}
+	return { source: hasBuckets( data ) ? data : null, dimensional: false };
+}
+
+/**
  * Aggregate Time Chart component.
  *
- * Renders nothing until `data` holds at least one bucket, so a caller may
- * mount it before the first fetch returns. `breakdownData`, when present,
- * supplants `data` as the series source; `data` then only gates that render.
+ * Renders nothing until one of its two sources carries a bucket, so a caller
+ * may mount it before the first fetch returns. `breakdownData`, when present,
+ * is the series source outright: the URL modal passes no `data` at all, and
+ * the Overview card passes both.
  *
  * @param {Object}      props                Component props.
- * @param {Object}      props.data           Bucket key => `{ count, sum_ms, sum_peak_mb }`, the single-series source.
+ * @param {Object|null} props.data           Bucket key => `{ count, sum_ms, sum_peak_mb }`, the single-series source.
  * @param {Object|null} props.breakdownData  Bucket key => dimension value => `{ c, s, m }` (count, sum ms, sum peak MB).
  * @param {string}      props.metric         'volume' | 'avg' | 'cumulative' | 'memory'.
  * @param {string}      props.breakdown      Dimension `breakdownData` was fetched for; picks the palette only.
  * @param {string}      [props.serverFilter] Server name for the heading; the caller has already filtered the data.
- * @return {import('react').ReactElement|null} Rendered chart, or null while no data has arrived.
+ * @return {import('react').ReactElement|null} Rendered chart, or null while neither source has arrived.
  */
 export default function AggregateTimeChart( {
 	data,
@@ -97,16 +158,17 @@ export default function AggregateTimeChart( {
 	const chartState = useMemo( () => {
 		// Averages don't add up, so they overlay instead of stacking.
 		const stacked = 'avg' !== metric && 'memory' !== metric;
-		if ( ! data ) {
+		const { source, dimensional } = chartSource( { data, breakdownData } );
+		if ( null === source ) {
 			return { series: [], colorMap: {}, stacked };
 		}
 
 		const slots = buildTimeSlots( RETENTION_SECONDS );
 
-		if ( ! breakdownData ) {
+		if ( ! dimensional ) {
 			// No dimensional data — single-series "Total" chart.
 			const values = slots.map( ( { date, bucketKey } ) => {
-				const b = data[ bucketKey ] || {};
+				const b = source[ bucketKey ] || {};
 				return {
 					date,
 					value: bucketValue(
@@ -126,7 +188,7 @@ export default function AggregateTimeChart( {
 
 		// Dimensional breakdown (all breakdowns including status).
 		const valueSet = new Set();
-		Object.values( breakdownData ).forEach( ( bucket ) => {
+		Object.values( source ).forEach( ( bucket ) => {
 			Object.keys( bucket ).forEach( ( v ) => valueSet.add( v ) );
 		} );
 		const dimValues = Array.from( valueSet );
@@ -143,7 +205,7 @@ export default function AggregateTimeChart( {
 		const series = dimValues.map( ( label ) => ( {
 			label,
 			values: slots.map( ( { date, bucketKey } ) => {
-				const s = breakdownData[ bucketKey ]?.[ label ] || {};
+				const s = source[ bucketKey ]?.[ label ] || {};
 				return {
 					date,
 					value: bucketValue( metric, s.c || 0, s.s || 0, s.m || 0 ),
@@ -176,7 +238,7 @@ export default function AggregateTimeChart( {
 	);
 
 	// Guard sits below every hook; hoisting it would break hook order.
-	if ( ! data || Object.keys( data ).length === 0 ) {
+	if ( 0 === chartState.series.length ) {
 		return null;
 	}
 

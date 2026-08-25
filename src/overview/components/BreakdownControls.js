@@ -18,11 +18,16 @@ import AggregateTimeChart from '../AggregateTimeChart';
  *
  * What differs between the Overview card and the URL modal arrives as a prop —
  * the Server selector, the note — so neither scope carries a second copy of
- * the panel to hang its one extra on. An empty series renders nothing rather
- * than an axis with no line.
+ * the panel to hang its one extra on.
+ *
+ * WHETHER to mount it is the caller's, because the two answer it from facts
+ * only they hold: the Overview card waits for `chartSource` to find something
+ * rather than drawing an axis with no line, while the URL modal keeps it up
+ * for as long as a URL is selected, since its dropdowns are the only way out
+ * of a dimension with no rows or a refused reply.
  *
  * @param {Object}                  props                    Component props.
- * @param {Object|null}             props.series             Bucketed time series; empty or absent renders nothing.
+ * @param {Object|null}             [props.series]           Bucketed single-series source; the URL modal passes none.
  * @param {Object|null}             props.breakdownData      Per-dimension series overlaying the chart, or null.
  * @param {string}                  props.metric             Selected metric, e.g. 'volume'.
  * @param {(value: string) => void} props.setMetric          Metric setter.
@@ -33,11 +38,12 @@ import AggregateTimeChart from '../AggregateTimeChart';
  * @param {string}                  [props.serverFilter]     Selected server name, or '' for all servers.
  * @param {(value: string) => void} [props.setServerFilter]  Server filter setter.
  * @param {boolean}                 [props.loading]          True while the breakdown series is in flight.
+ * @param {string|null}             [props.error]            Already-translated refusal printed under the chart.
  * @param {string|null}             [props.note]             Already-translated caveat printed under the chart.
- * @return {import('react').ReactElement|null} Rendered panel, or null without buckets.
+ * @return {import('react').ReactElement} Rendered panel.
  */
 export default function BreakdownControls( {
-	series,
+	series = null,
 	breakdownData,
 	metric,
 	setMetric,
@@ -48,12 +54,9 @@ export default function BreakdownControls( {
 	serverFilter = '',
 	setServerFilter,
 	loading = false,
+	error = null,
 	note = null,
 } ) {
-	if ( ! series || 0 === Object.keys( series ).length ) {
-		return null;
-	}
-
 	return (
 		<div className="event-logger-aggregate-chart">
 			<div
@@ -110,6 +113,9 @@ export default function BreakdownControls( {
 				breakdown={ breakdown }
 				serverFilter={ serverFilter }
 			/>
+			{ error && (
+				<p className="newspack-nodes-status is-error">{ error }</p>
+			) }
 			{ note && <p className="newspack-nodes-status">{ note }</p> }
 		</div>
 	);

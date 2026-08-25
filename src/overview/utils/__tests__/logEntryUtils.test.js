@@ -549,3 +549,98 @@ describe( 'spliceFoldedSpans', () => {
 		expect( spliceFoldedSpans( plain, null ) ).toBe( plain );
 	} );
 } );
+
+describe( 'placeholder gap rows across a sequence break', () => {
+	// A folded record: kept head, the marker, then rows the fold selected out
+	// of the middle — non-contiguous, so the interval between them is missing
+	// detail rather than elapsed time.
+	const FOLDED = [
+		{ n: 71, k: 'process (start)', ts: 4242.07 },
+		{
+			n: 72,
+			k: 'entries (aggregated)',
+			m: '5312 entries merged into the flame graph under memory pressure',
+			ts: 4242.07,
+		},
+		{ n: 73, k: 'shortcode (start)', ts: 4242.53 },
+		{ n: 74, k: 'shortcode (complete)', ts: 4242.61, duration_ms: 83 },
+		{ n: 75, k: 'process (complete)', ts: 4242.88 },
+	];
+
+	it( 'draws no ruler anywhere in a folded record', () => {
+		const { entries } = computeIndentedEntries( FOLDED );
+
+		expect( entries.filter( ( e ) => e.isPlaceholder ) ).toHaveLength( 0 );
+	} );
+
+	it( "leaves a folded record's real rows exactly as they were", () => {
+		const { entries, realCount } = computeIndentedEntries( FOLDED );
+
+		expect( entries.map( ( e ) => e.k ) ).toEqual( [
+			'process (start)',
+			'entries (aggregated)',
+			'shortcode (start)',
+			'shortcode (complete)',
+			'process (complete)',
+		] );
+		expect( entries.map( ( e ) => e.indent ) ).toEqual( [ 0, 1, 1, 1, 0 ] );
+		expect( entries[ 2 ].pairId ).toBe( entries[ 3 ].pairId );
+		expect( realCount ).toBe( 5 );
+	} );
+
+	it( 'still draws it for the same gaps without the fold marker', () => {
+		// The one that proves the ruler was scoped rather than deleted.
+		const unfolded = FOLDED.map( ( e ) =>
+			'entries (aggregated)' === e.k ? { ...e, k: 'metadatacache' } : e
+		);
+		const { entries } = computeIndentedEntries( unfolded );
+
+		expect(
+			entries.filter( ( e ) => e.isPlaceholder ).length
+		).toBeGreaterThan( 0 );
+	} );
+
+	// A record that merely LOST entries keeps a real timestamp on every
+	// survivor, so only the interval touching the marker is unmeasurable.
+	const LOST = [
+		{ n: 71, k: 'process (start)', ts: 4242.07 },
+		{ n: 72, k: 'template', ts: 4242.53 },
+		{
+			n: 73,
+			k: 'entries (lost)',
+			m: 'discarded entries after #72',
+			ts: 4242.61,
+		},
+		{ n: 74, k: 'process (complete)', ts: 4243.44 },
+	];
+
+	it( 'draws no ruler across a lost-entries marker', () => {
+		const { entries } = computeIndentedEntries( LOST );
+		const spanned = entries
+			.filter( ( e ) => e.isPlaceholder )
+			.map( ( e ) => e.ts );
+
+		expect( spanned.filter( ( ts ) => ts > 4242.53 ) ).toHaveLength( 0 );
+	} );
+
+	it( 'still draws it between two survivors of a lost-entries record', () => {
+		const { entries } = computeIndentedEntries( LOST );
+
+		expect(
+			entries.filter( ( e ) => e.isPlaceholder ).length
+		).toBeGreaterThan( 0 );
+	} );
+
+	it( 'rules the visible rows of a folded record with no placeholder run', () => {
+		const { entries } = computeIndentedEntries( FOLDED );
+		const visible = computeVisibleEntries( entries, new Set() );
+
+		expect( visible.filter( ( e ) => e.isPlaceholder ) ).toHaveLength( 0 );
+		const merged = visible.find( ( e ) => e.isMerged );
+		expect( merged.k ).toBe( 'shortcode' );
+		expect( merged.duration_ms ).toBe( 83 );
+		expect( visible[ visible.length - 1 ].displayTime ).toMatch(
+			/^\d{2}:\d{2}:\d{2}\.88$/
+		);
+	} );
+} );

@@ -21,6 +21,10 @@ import { Node, VALUE, FROM, payloadOf } from '@newspack-nodes/runtime';
  *                                       retained, sort the union newest-first
  *                                       by timestamp, cap at 500, forward.
  *
+ * `scan_stopped_early` describes the LIST, not the last walk, so it unions with
+ * `||` across merged replies: a walk that ran out of budget leaves rows missing
+ * from the accumulation, and a later complete walk does not put them back.
+ *
  * A `clear` control from `controlFrom` resets the retained state so the next
  * reply counts as fresh. `usePerformanceGraph` sends one when the modal closes,
  * which is what lets a reopened modal republish an unchanged `last_modified`.
@@ -42,6 +46,8 @@ export class UrlDetailMergeNode extends Node {
 		// Last forwarded url_detail payload + last_modified (reset on clear).
 		this._merged = null;
 		this._lastModified = null;
+		// True once any walk feeding the retained list was cut short.
+		this._scanStoppedEarly = false;
 		// FROM of controls; unset loses them silently (see LogStreamViewNode).
 		this.controlFrom = '';
 	}
@@ -84,6 +90,7 @@ export class UrlDetailMergeNode extends Node {
 		if ( 'clear' === action ) {
 			this._merged = null;
 			this._lastModified = null;
+			this._scanStoppedEarly = false;
 		}
 	}
 
@@ -99,17 +106,17 @@ export class UrlDetailMergeNode extends Node {
 		if ( ! data ) {
 			return null;
 		}
-		// First reply: nothing retained to merge against, so forward as-is.
-		if ( null === this._merged ) {
-			this._merged = data;
-			this._lastModified = data.last_modified;
-			return data;
-		}
 		// Unchanged last_modified: the server has nothing newer to render.
-		if ( data.last_modified === this._lastModified ) {
+		if (
+			null !== this._merged &&
+			data.last_modified === this._lastModified
+		) {
 			return null;
 		}
 		this._lastModified = data.last_modified;
+		// The note belongs to the list, so it unions the way the list does.
+		this._scanStoppedEarly =
+			this._scanStoppedEarly || !! data.scan_stopped_early;
 		const prev = this._merged;
 		let merged;
 		if ( ! prev || ! prev.requests || ! prev.requests.length ) {
@@ -133,6 +140,9 @@ export class UrlDetailMergeNode extends Node {
 						.slice( 0, 500 ),
 				};
 			}
+		}
+		if ( this._scanStoppedEarly ) {
+			merged = { ...merged, scan_stopped_early: true };
 		}
 		this._merged = merged;
 		return merged;
