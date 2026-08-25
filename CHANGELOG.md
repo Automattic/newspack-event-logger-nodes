@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.61.0] - 2026-08-25
+
+### Changed
+
+- **`Settings_Schema` is the single source of every config default, and `newspack-event-logger-nodes-config.php` is a commented ledger of the same values.** All nine application keys now carry their default in code: the six existing Fields declare `default:`, and `custom_colors`, `stats_mirror_node` and `recommended_log_events` gained `ui: false` Fields of their own — they carry no option and no settings field, but a key declared only by the config file is null on every install whose file predates it, because a deploy preserves the operator's copy. `Config::load_config_defaults()` seeds from `Settings_Schema::get()->defaults()`, then the config file, then `LOCAL_NEWSPACK_NODES_CONF`.
+
+- **`Config::register_config_keys()` no longer derives declared keys from the config file.** The schema's `overlay_keys()` is the only source. Deriving from the file made an operator's typo self-declaring — `stats_miror_node` became a valid key while the real one quietly fell back to its default and the durable stats mirror went dark — and left an install whose file predates a key unable to read it at all.
+
+- **An unrecognized key in the shipped config is REPORTED, never thrown.** `setup/newspack-event-logger-nodes.sh` copies the deployment's own config over the shipped path, so that file belongs to the operator. Throwing runs at `plugins_loaded:-10001` and would take down every request including wp-admin the day a key is renamed, recoverable only over SSH. `Config::unrecognized_keys()` records the stray keys and a rate-limited `Core::print_less_often()` names them on stderr; `Config::unknown_keys()` is the pure query behind it. New `tests/unit/ConfigSchemaTest.php` holds the schema, the ledger and the read sites together.
+
 ## [0.60.2] - 2026-08-25
 
 ### Fixed

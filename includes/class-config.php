@@ -15,6 +15,11 @@
  * against the shared substrate registry and throws on an undeclared one, so a
  * renamed or typo'd key fails loud instead of limping on a `?? default`.
  *
+ * `Settings_Schema` is the definition of both the declared set and every
+ * default. `newspack-event-logger-nodes-config.php` and
+ * `LOCAL_NEWSPACK_NODES_CONF` are override surfaces layered on top, and a key
+ * only they name is reported, never declared — see `note_unrecognized_keys()`.
+ *
  * @package Newspack_Event_Logger_Nodes
  */
 
@@ -56,6 +61,23 @@ class Config {
 	 * @var array<string,mixed>|null
 	 */
 	private static $config_defaults = null;
+
+	/**
+	 * Keys the shipped config named that no Field declares. Reported, never
+	 * thrown — see `note_unrecognized_keys()`.
+	 *
+	 * @var list<string>
+	 */
+	private static array $unrecognized = [];
+
+	/**
+	 * Shipped-config read seam. Tests reassign to inject a file that is not on
+	 * disk, which is the only way to exercise an operator's stale key.
+	 * Signature: `function (array $base): array`
+	 *
+	 * @var \Closure(array<string,mixed>): array<string,mixed>|null
+	 */
+	public static ?\Closure $read_shipped_config = null;
 
 	/**
 	 * Memoized `is_hub`. A process-lifetime constant, but deriving it walks
@@ -312,31 +334,26 @@ class Config {
 	}
 
 	/**
-	 * Declare this plugin's config keys (schema overlay keys ∪ config-file default
-	 * keys) with the shared substrate registry. Hooked to the substrate's
-	 * DECLARE_ACTION from the plugin file, so the substrate PULLS the declaration
-	 * whenever it derives its declared set — including after a Config::reset(),
-	 * which wipes the registry. Declaring once at boot instead would lose these on
-	 * the next reload, and would come too late for the profiler's first log line
-	 * (plugins_loaded:-10001, ahead of this plugin's loader).
+	 * Stray keys the last config load ignored.
+	 *
+	 * @api
+	 * @return list<string>
 	 */
-	public static function register_config_keys(): void {
-		if ( ! \class_exists( RuntimeConfig::class ) ) {
-			return;
-		}
-		RuntimeConfig::register_keys( Settings_Schema::get()->overlay_keys() );
-		RuntimeConfig::register_keys( \array_keys( self::load_config_defaults() ) );
+	public static function unrecognized_keys(): array {
+		self::load_config_defaults();
+		return self::$unrecognized;
 	}
 
 	/**
-	 * Load configuration defaults from file only (no WordPress options).
+	 * Configuration WITHOUT the WordPress option overlay: the schema's code
+	 * defaults, overridden by the shipped config file, then by an operator's
+	 * LOCAL_NEWSPACK_NODES_CONF. The schema is the definition; both files are
+	 * override surfaces.
 	 *
-	 * Reads the bundled `newspack-event-logger-nodes-config.php`, then overlays
-	 * the file named by the `LOCAL_NEWSPACK_NODES_CONF` environment variable
-	 * when one is set. That path is validated before it is `require`d, and an
-	 * unusable path throws rather than silently leaving the site on defaults.
+	 * The local path is validated before it is `require`d, and an unusable path
+	 * throws rather than silently leaving the site on defaults.
 	 *
-	 * @return array<string,mixed> Configuration defaults from file.
+	 * @return array<string,mixed> Configuration defaults from code + files.
 	 * @throws \RuntimeException If an explicit local config path or value tree is invalid.
 	 */
 	public static function load_config_defaults(): array {
@@ -348,11 +365,10 @@ class Config {
 			return [];
 		}
 
-		$config = Config_Utils::load_config_file(
-			[],
-			\dirname( __DIR__ ) . '/newspack-event-logger-nodes-config.php',
-			'Newspack_Event_Logger_Nodes\\Config'
-		);
+		// Code defaults first; a file only overrides values it names.
+		$read   = self::$read_shipped_config ?? self::shipped_config_reader();
+		$config = $read( Settings_Schema::get()->defaults() );
+		self::note_unrecognized_keys( $config );
 		$local_config_file = \getenv( 'LOCAL_NEWSPACK_NODES_CONF' );
 		if ( false !== $local_config_file && '' !== $local_config_file ) {
 			$validated_path = Config_Utils::validate_config_path(
@@ -374,6 +390,57 @@ class Config {
 		self::$config_defaults = $config;
 
 		return self::$config_defaults;
+	}
+
+	/**
+	 * Record and log an operator's stray key WITHOUT throwing.
+	 *
+	 * `setup/newspack-event-logger-nodes.sh` copies the deployment's own config
+	 * over the shipped path, so this file belongs to the operator. Throwing runs
+	 * at `plugins_loaded:-10001` and would take down every request, wp-admin
+	 * included, the day a key is renamed — recoverable only over SSH. Loud means
+	 * visible: stderr once per key set, which is this plugin's whole reporting
+	 * surface. It has no Site Health of its own.
+	 *
+	 * @param array<string,mixed> $config Schema defaults + config-file contents.
+	 */
+	private static function note_unrecognized_keys( array $config ): void {
+		self::$unrecognized = self::unknown_keys( $config );
+		if ( [] === self::$unrecognized ) {
+			return;
+		}
+		Core::print_less_often(
+			'newspack-event-logger-nodes: unrecognized config key(s) ignored: '
+				. \implode( ', ', self::$unrecognized )
+		);
+	}
+
+	/**
+	 * Keys in $config that no Field declares.
+	 *
+	 * @param array<string,mixed> $config Any config array.
+	 * @return list<string>
+	 */
+	public static function unknown_keys( array $config ): array {
+		return \array_values(
+			\array_diff( \array_keys( $config ), Settings_Schema::get()->overlay_keys() )
+		);
+	}
+
+	/**
+	 * The real shipped-config read the `$read_shipped_config` seam replaces.
+	 *
+	 * @return \Closure(array<string,mixed>): array<string,mixed>
+	 */
+	private static function shipped_config_reader(): \Closure {
+		return static function ( array $base ): array {
+			/** @var array<string,mixed> $base */
+			return Config_Utils::load_config_file(
+				$base,
+				\dirname( __DIR__ ) . '/newspack-event-logger-nodes-config.php',
+				'Newspack_Event_Logger_Nodes\\Config'
+			);
+		};
 	}
 
 	/**
@@ -401,6 +468,25 @@ class Config {
 		self::$config          = null;
 		self::$config_defaults = null;
 		self::$is_hub          = null;
+		self::$unrecognized    = [];
+	}
+
+	/**
+	 * Declare this plugin's config keys — the `Settings_Schema` overlay keys, and
+	 * NOT the config file's. Deriving from the file makes an operator's typo
+	 * self-declaring: the misspelling becomes valid, the real key quietly falls
+	 * back to its default, and nothing says so. Hooked to the substrate's
+	 * DECLARE_ACTION from the plugin file, so the substrate PULLS the declaration
+	 * whenever it derives its declared set — including after a Config::reset(),
+	 * which wipes the registry. Declaring once at boot instead would lose these on
+	 * the next reload, and would come too late for the profiler's first log line
+	 * (plugins_loaded:-10001, ahead of this plugin's loader).
+	 */
+	public static function register_config_keys(): void {
+		if ( ! \class_exists( RuntimeConfig::class ) ) {
+			return;
+		}
+		RuntimeConfig::register_keys( Settings_Schema::get()->overlay_keys() );
 	}
 
 	/**
