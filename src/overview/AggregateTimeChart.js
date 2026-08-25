@@ -18,6 +18,7 @@ import { useCallback, useMemo } from '@wordpress/element';
 import { __, sprintf } from '@wordpress/i18n';
 import * as d3 from 'd3';
 import { STATUS_COLORS } from '@newspack-nodes/shared/utils/formatUtils';
+import { integerTicks } from '@newspack-nodes/shared/utils/axis-ticks';
 import {
 	PALETTE,
 	buildTimeSlots,
@@ -26,7 +27,6 @@ import AreaTimeChart from './components/AreaTimeChart';
 import { RETENTION_SECONDS } from './retention';
 
 const CHART_HEIGHT = 280;
-const formatCount = d3.format( 'd' );
 
 /**
  * Format a duration in seconds for the cumulative axis and its tooltip.
@@ -49,6 +49,43 @@ const formatSeconds = ( seconds ) => {
 	return seconds < 10
 		? `${ seconds.toFixed( 1 ) }s`
 		: `${ Math.round( seconds ) }s`;
+};
+
+/**
+ * Requests, whole ones — and the axis ticks in the same unit.
+ *
+ * @param {number} count Requests in the bucket.
+ * @return {string} Formatted count.
+ */
+const formatRequests = d3.format( 'd' );
+formatRequests.tickValues = integerTicks;
+
+/**
+ * Average response time, rounded to the millisecond by `bucketValue`.
+ *
+ * @param {number} ms Milliseconds.
+ * @return {string} Formatted duration.
+ */
+const formatAvgMs = ( ms ) => `${ ms }ms`;
+formatAvgMs.tickValues = integerTicks;
+
+/**
+ * Average peak memory, already in megabytes.
+ *
+ * @param {number} mb Megabytes.
+ * @return {string} Formatted size.
+ */
+const formatMemoryMb = ( mb ) => `${ Number( mb.toFixed( 1 ) ) }MB`;
+
+/**
+ * One Y-axis formatter per metric — the unit each one prints is the unit its
+ * axis ticks in.
+ */
+const Y_FORMATS = {
+	volume: formatRequests,
+	avg: formatAvgMs,
+	cumulative: formatSeconds,
+	memory: formatMemoryMb,
 };
 
 /**
@@ -191,20 +228,7 @@ export default function AggregateTimeChart( {
 		return { series, colorMap, stacked };
 	}, [ breakdownData, metric, breakdown ] );
 
-	const yFormat = useCallback(
-		( value ) => {
-			if ( 'memory' === metric ) {
-				return `${ Number( value.toFixed( 1 ) ) }MB`;
-			}
-			if ( 'avg' === metric ) {
-				return `${ value }ms`;
-			}
-			return 'cumulative' === metric
-				? formatSeconds( value )
-				: formatCount( value );
-		},
-		[ metric ]
-	);
+	const yFormat = Y_FORMATS[ metric ];
 
 	const colorAt = useCallback(
 		( label, index ) =>

@@ -81,6 +81,27 @@ function highestPoint( path ) {
 	return Math.min( ...pairs.map( ( pair ) => Number( pair[ 2 ] ) ) );
 }
 
+/**
+ * The value-axis tick labels of the chart whose heading matches.
+ *
+ * @param {Element} container Mounted chart container.
+ * @param {string}  title     Chart heading to read the axis of.
+ * @return {Array<string>} The left axis's rendered label text.
+ */
+function valueLabels( container, title ) {
+	const panel = [ ...container.querySelectorAll( 'div' ) ].find(
+		( div ) => div.querySelector( 'h3' )?.textContent === title
+	);
+	const left = [ ...panel.querySelectorAll( 'svg g g' ) ].find(
+		( group ) =>
+			! group.getAttribute( 'transform' ) &&
+			group.querySelector( '.tick' )
+	);
+	return [ ...left.querySelectorAll( 'g.tick text' ) ].map(
+		( text ) => text.textContent
+	);
+}
+
 describe( 'area chart frame', () => {
 	const expected = { x: CHART_WIDTH - MARGIN.right + 10, y: MARGIN.top };
 
@@ -137,6 +158,44 @@ describe( 'area chart frame', () => {
 		const ceiling = innerH * ( 1 - 1 / 1.1 );
 		expect( highestPoint( areas[ 1 ] ) ).toBeCloseTo( ceiling, 3 );
 		expect( highestPoint( areas[ 0 ] ) ).toBeGreaterThan( ceiling );
+		unmount();
+	} );
+
+	it( 'ticks a request-volume axis in whole requests', () => {
+		const breakdownData = {
+			[ bucketKeyNow() ]: { 'curl/8.7.1': { c: 3, s: 51 } },
+		};
+		const { container, unmount } = renderComponent(
+			React.createElement( AggregateTimeChart, {
+				breakdownData,
+				metric: 'volume',
+				breakdown: 'ua',
+			} )
+		);
+
+		expect(
+			valueLabels( container, 'Request Volume (Last 24 Hours)' )
+		).toEqual( [ '0', '1', '2', '3' ] );
+		unmount();
+	} );
+
+	it( 'labels a few-millisecond category average without repeating', () => {
+		const data = {
+			[ bucketKeyNow() ]: { render: { c: 2, t: 6 } },
+		};
+		const { container, unmount } = renderComponent(
+			React.createElement( CategoryTimeChart, { data } )
+		);
+
+		expect( valueLabels( container, 'Average Time per Event' ) ).toEqual( [
+			'0',
+			'500µs',
+			'1ms',
+			'1.5ms',
+			'2ms',
+			'2.5ms',
+			'3ms',
+		] );
 		unmount();
 	} );
 } );

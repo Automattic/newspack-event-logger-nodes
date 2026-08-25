@@ -27,7 +27,11 @@ jest.mock( 'd3', () => {
 		'call',
 		'on',
 		'ticks',
+		// A scale's ticks() is an array in d3; here it is the chain, so the
+		// tick ladder's filter has to chain too.
+		'filter',
 		'tickFormat',
+		'tickValues',
 		'domain',
 		'range',
 		'x',

@@ -146,6 +146,23 @@ const texts = ( container ) =>
 		( node ) => node.textContent
 	);
 
+/**
+ * The value axis's tick labels, in draw order.
+ *
+ * @param {Element} container Mounted chart container.
+ * @return {Array<string>} The left axis's rendered label text.
+ */
+const valueLabels = ( container ) => {
+	const left = [ ...container.querySelectorAll( 'svg g g' ) ].find(
+		( group ) =>
+			! group.getAttribute( 'transform' ) &&
+			group.querySelector( '.tick' )
+	);
+	return [ ...left.querySelectorAll( 'g.tick text' ) ].map(
+		( text ) => text.textContent
+	);
+};
+
 describe( 'ResponseTimeChart', () => {
 	it( 'returns null when requests prop is missing', () => {
 		const { container, unmount } = mountChart( undefined );
@@ -249,6 +266,22 @@ describe( 'ResponseTimeChart', () => {
 		expect( texts( container ) ).toEqual(
 			expect.arrayContaining( [ '0ms', '200ms', '1000ms' ] )
 		);
+		unmount();
+	} );
+
+	it( 'ticks the value axis in whole milliseconds', () => {
+		// Sub-10ms requests: d3's half-millisecond ticks would repeat a label.
+		const { container, unmount } = mountChart( [
+			{ rid: 'req-quick', timestamp: 1755003000, duration_ms: 3 },
+			{ rid: 'req-quicker', timestamp: 1755003600, duration_ms: 1 },
+		] );
+
+		expect( valueLabels( container ) ).toEqual( [
+			'0ms',
+			'1ms',
+			'2ms',
+			'3ms',
+		] );
 		unmount();
 	} );
 
