@@ -32,12 +32,17 @@ jest.mock( '../../ResponseTimeChart', () => ( {
 	__esModule: true,
 	default: () => 'RESPONSE_TIME_CHART',
 } ) );
-// The chart is mocked; its `chartSource` resolver is NOT — the wrapper
-// gates through the real one.
+// The chart is mocked; its `breakdownState` resolver is NOT — the panel and
+// the chart read the same one.
 jest.mock( '../../AggregateTimeChart', () => ( {
 	...jest.requireActual( '../../AggregateTimeChart' ),
 	__esModule: true,
-	default: ( { data } ) => `AGGREGATE[data=${ data ? 'set' : 'none' }]`,
+	default: ( { breakdown, breakdownData } ) =>
+		`AGGREGATE[breakdown=${ breakdown },series=${
+			breakdownData ? 'set' : 'none'
+		}] keys:${ Object.values( breakdownData ?? {} )
+			.flatMap( ( bucket ) => Object.keys( bucket ) )
+			.join( ',' ) }`,
 } ) );
 jest.mock( '../../CategoryTimeChart', () => ( {
 	__esModule: true,
@@ -398,11 +403,11 @@ describe( 'UrlDetailView', () => {
 		const { container, unmount } = mount( {
 			urlDetail: { ...baseUrlDetail, stats: { time_series: { a: 1 } } },
 		} );
-		expect( container.textContent ).not.toContain( 'AGGREGATE[data=set]' );
+		expect( container.textContent ).toContain( 'series=none' );
 		unmount();
 	} );
 
-	it( 'charts the breakdown reply and hands the chart no series of its own', async () => {
+	it( 'charts the breakdown reply it asked for', async () => {
 		wire = installFakeCommandWire( () => ( {
 			breakdown_time_series: { 1748960000: { '5xx': { c: 7 } } },
 		} ) );
@@ -410,9 +415,97 @@ describe( 'UrlDetailView', () => {
 		await waitFor(
 			() =>
 				expect( container.textContent ).toContain(
-					'AGGREGATE[data=none]'
+					'AGGREGATE[breakdown=status,series=set]'
 				),
 			{ timeout: 6000 }
+		);
+		unmount();
+	}, 20000 );
+
+	it( 'drops the held series the moment the dimension changes', async () => {
+		// Otherwise the status series is drawn under a dropdown reading JA4
+		// for the round trip it takes the new dimension to arrive — plausible
+		// numbers under the wrong question, which is worse than a blank.
+		wire = installFakeCommandWire( () => ( {
+			breakdown_time_series: { 1748960000: { '5xx': { c: 7 } } },
+		} ) );
+		const { container, unmount } = mount( { urlHash: '7f3c19ab52d0' } );
+		await waitFor(
+			() =>
+				expect( container.textContent ).toContain(
+					'AGGREGATE[breakdown=status,series=set]'
+				),
+			{ timeout: 6000 }
+		);
+		const [ , breakdown ] = container.querySelectorAll( 'select' );
+		selectOption( breakdown, 'ja4' );
+		expect( container.textContent ).toContain(
+			'AGGREGATE[breakdown=ja4,series=none]'
+		);
+		unmount();
+	}, 20000 );
+
+	it( 'answers the dimension it asked about, never the superseded one', async () => {
+		// Two reads about one URL are ONE subject unless the dimension
+		// addresses them apart. Undifferentiated, the status answer retires
+		// the User Agent ask it does not answer: status series under a User
+		// Agent label, and the User Agent reply dropped for good after it.
+		const deferred = new Map();
+		const dimOf = ( message ) =>
+			( message[ VALUE ]?.arguments ?? [] )
+				.find( ( token ) => token.startsWith( '--breakdown=' ) )
+				?.slice( '--breakdown='.length );
+		const askFor = ( dim ) => {
+			if ( ! deferred.has( dim ) ) {
+				let settle;
+				const reply = new Promise( ( r ) => {
+					settle = r;
+				} );
+				deferred.set( dim, { reply, settle } );
+			}
+			return deferred.get( dim ).reply;
+		};
+		// A re-ask for a dimension answers with the same held promise, so the
+		// retry cadence cannot smuggle in an answer the test did not release.
+		wire = installFakeCommandWire( ( message ) =>
+			askFor( dimOf( message ) )
+		);
+		const flush = async () => {
+			await act( async () => {
+				for ( let i = 0; i < 8; i++ ) {
+					await Promise.resolve();
+				}
+			} );
+		};
+
+		const { container, unmount } = mount( { urlHash: '3b9a77c1de40' } );
+		await waitFor( () => expect( deferred.has( 'status' ) ).toBe( true ), {
+			timeout: 6000,
+		} );
+		const [ , breakdown ] = container.querySelectorAll( 'select' );
+		selectOption( breakdown, 'ua' );
+		await waitFor( () => expect( deferred.has( 'ua' ) ).toBe( true ), {
+			timeout: 6000,
+		} );
+
+		// The superseded status answer lands while User Agent is outstanding.
+		deferred.get( 'status' ).settle( {
+			breakdown_time_series: { 1748960000: { '5xx': { c: 7 } } },
+		} );
+		await flush();
+		expect( container.textContent ).toContain(
+			'AGGREGATE[breakdown=ua,series=none]'
+		);
+
+		deferred.get( 'ua' ).settle( {
+			breakdown_time_series: { 1748960000: { 'curl/8.4': { c: 3 } } },
+		} );
+		await waitFor(
+			() => expect( container.textContent ).toContain( 'series=set' ),
+			{ timeout: 6000 }
+		);
+		expect( container.textContent ).toContain(
+			'AGGREGATE[breakdown=ua,series=set] keys:curl/8.4'
 		);
 		unmount();
 	}, 20000 );
@@ -489,17 +582,6 @@ describe( 'UrlDetailView', () => {
 		).toHaveLength( 0 );
 		unmount();
 	}, 20000 );
-
-	it( 'asks nothing and charts nothing when there is no urlHash', () => {
-		const { container, unmount } = mount( { urlHash: null } );
-		expect( container.textContent ).not.toContain( 'AGGREGATE' );
-		expect(
-			wire.batches
-				.flat()
-				.filter( ( m ) => 'url_breakdown' === m[ VALUE ]?.name )
-		).toHaveLength( 0 );
-		unmount();
-	} );
 
 	it( 'shows "No requests" when sortedRequests is empty', () => {
 		const { container, unmount } = mount( { sortedRequests: [] } );

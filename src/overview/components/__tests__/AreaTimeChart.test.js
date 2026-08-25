@@ -85,14 +85,14 @@ describe( 'area chart frame', () => {
 	const expected = { x: CHART_WIDTH - MARGIN.right + 10, y: MARGIN.top };
 
 	it( 'places the aggregate legend inside the right margin', () => {
-		const data = {
-			[ bucketKeyNow() ]: { count: 137, sum_ms: 4213, sum_peak_mb: 91 },
+		const breakdownData = {
+			[ bucketKeyNow() ]: { 'curl/8.7.1': { c: 137, s: 4213, m: 91 } },
 		};
 		const { container, unmount } = renderComponent(
 			React.createElement( AggregateTimeChart, {
-				data,
-				breakdownData: null,
+				breakdownData,
 				metric: 'volume',
+				breakdown: 'ua',
 			} )
 		);
 
@@ -114,7 +114,6 @@ describe( 'area chart frame', () => {
 	} );
 
 	it( 'stacks a second series on top of the first', () => {
-		const data = { [ bucketKeyNow() ]: { count: 61, sum_ms: 7300 } };
 		const breakdownData = {
 			[ bucketKeyNow() ]: {
 				'2xx': { c: 47, s: 5900 },
@@ -123,7 +122,6 @@ describe( 'area chart frame', () => {
 		};
 		const { container, unmount } = renderComponent(
 			React.createElement( AggregateTimeChart, {
-				data,
 				breakdownData,
 				metric: 'cumulative',
 				breakdown: 'status',
@@ -155,12 +153,14 @@ describe( 'chart frame', () => {
 	} );
 
 	it( 'still renders both axes and the rotated Y title', () => {
-		const data = { [ bucketKeyNow() ]: { count: 61, sum_ms: 7300 } };
+		const breakdownData = {
+			[ bucketKeyNow() ]: { 'curl/8.7.1': { c: 61, s: 7300 } },
+		};
 		const { container, unmount } = renderComponent(
 			React.createElement( AggregateTimeChart, {
-				data,
-				breakdownData: null,
+				breakdownData,
 				metric: 'volume',
+				breakdown: 'ua',
 			} )
 		);
 		const label = container.querySelector( 'svg text.y-label' );

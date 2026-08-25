@@ -225,6 +225,178 @@ describe( 'useUrlNavigation', () => {
 		unmount();
 	} );
 
+	// ── back/forward to a request ─────────────────────────────────────────
+	//
+	// A popstate carrying a rid re-enters the SAME deep-link path a fresh load
+	// takes. The rid alone carries the partition, so selecting it here rendered
+	// "Could not determine the partition for this request" on every Forward.
+
+	it( 'reports the rid on a popstate to a request instead of selecting it partition-less', async () => {
+		const paged = [ { hash: 'zeta7', url: '/deep/zeta' } ];
+		setLocation( 'http://localhost/wp-admin/?url=zeta7' );
+		const { result, unmount } = renderHook( () =>
+			useUrlNavigation( paged )
+		);
+		await act( async () => {} );
+		expect( result.current.selectedUrl ).toEqual( paged[ 0 ] );
+
+		setLocation(
+			'http://localhost/wp-admin/?url=zeta7&request=q9kfwjrid42'
+		);
+		await act( async () => {
+			window.dispatchEvent( new Event( 'popstate' ) );
+		} );
+
+		expect( result.current.selectedRequest ).toBeNull();
+		expect( result.current.deepLink.requestId ).toBe( 'q9kfwjrid42' );
+		expect( result.current.selectedUrl ).toEqual( paged[ 0 ] );
+		unmount();
+	} );
+
+	it( 'pushes no history entry for a popstate-driven request selection', async () => {
+		const paged = [ { hash: 'zeta7', url: '/deep/zeta' } ];
+		setLocation( 'http://localhost/wp-admin/?url=zeta7' );
+		const { result, unmount } = renderHook( () =>
+			useUrlNavigation( paged )
+		);
+		await act( async () => {} );
+		pushSpy.mockClear();
+
+		setLocation(
+			'http://localhost/wp-admin/?url=zeta7&request=q9kfwjrid42'
+		);
+		await act( async () => {
+			window.dispatchEvent( new Event( 'popstate' ) );
+		} );
+		// The caller answers the intent, partition in hand, as the dashboard
+		// does once request_search replies.
+		await act( async () => {
+			result.current.clearDeepLink();
+			result.current.selectRequest( 'q9kfwjrid42' );
+		} );
+
+		expect( result.current.selectedRequest ).toBe( 'q9kfwjrid42' );
+		expect( pushSpy ).not.toHaveBeenCalled();
+		unmount();
+	} );
+
+	it( 'falls through to the ?url= hash when the caller cannot resolve the rid', async () => {
+		const paged = [ { hash: 'zeta7', url: '/deep/zeta' } ];
+		const { result, unmount } = renderHook( () =>
+			useUrlNavigation( paged )
+		);
+		await act( async () => {} );
+
+		setLocation(
+			'http://localhost/wp-admin/?url=kappa9&request=q9kfwjrid42'
+		);
+		await act( async () => {
+			window.dispatchEvent( new Event( 'popstate' ) );
+		} );
+		expect( result.current.deepLink.requestId ).toBe( 'q9kfwjrid42' );
+
+		// Not-found is an answer: the rid drops, the hash gets its turn.
+		act( () => result.current.clearDeepLink( 'request' ) );
+		expect( result.current.deepLink.requestId ).toBeNull();
+		expect( result.current.deepLink.urlHash ).toBe( 'kappa9' );
+		unmount();
+	} );
+
+	it( 'drops a pending request intent when popstate goes back to the dashboard', async () => {
+		const paged = [ { hash: 'zeta7', url: '/deep/zeta' } ];
+		setLocation(
+			'http://localhost/wp-admin/?url=zeta7&request=q9kfwjrid42'
+		);
+		const { result, unmount } = renderHook( () =>
+			useUrlNavigation( paged )
+		);
+		await act( async () => {} );
+		expect( result.current.deepLink.requestId ).toBe( 'q9kfwjrid42' );
+
+		setLocation( 'http://localhost/wp-admin/' );
+		await act( async () => {
+			window.dispatchEvent( new Event( 'popstate' ) );
+		} );
+
+		expect( result.current.deepLink.requestId ).toBeNull();
+		expect( result.current.deepLink.urlHash ).toBeNull();
+		expect( result.current.selectedUrl ).toBeNull();
+		unmount();
+	} );
+
+	// Answering the hash is not a navigation either: the bar already reads it,
+	// and writing the selection ALONE would delete a `?request=` the resolver
+	// has not answered yet — and push an entry for the deletion.
+	it( 'answers a ?url= without stripping the ?request= still being resolved', async () => {
+		setLocation( 'http://localhost/wp-admin/?url=aaa&request=req_9pk4tz' );
+		const { result, unmount } = renderHook( () =>
+			useUrlNavigation( URLS )
+		);
+		await act( async () => {} );
+
+		expect( result.current.selectedUrl ).toEqual( URLS[ 0 ] );
+		expect( result.current.deepLink.requestId ).toBe( 'req_9pk4tz' );
+		expect( pushSpy ).not.toHaveBeenCalled();
+		expect( window.location.search ).toContain( 'request=req_9pk4tz' );
+		unmount();
+	} );
+
+	// The suppression flag must be spent by the popstate that armed it. A
+	// Forward whose hash is already open writes no selection, so an armed flag
+	// would sit there until the operator's NEXT change — closing the modal —
+	// and swallow the entry that close is owed.
+	it( 'pushes for a close that follows a popstate which changed no selection', async () => {
+		const paged = [ { hash: 'omicron4', url: '/deep/omicron' } ];
+		setLocation( 'http://localhost/wp-admin/?url=omicron4' );
+		const { result, unmount } = renderHook( () =>
+			useUrlNavigation( paged )
+		);
+		await act( async () => {} );
+		expect( result.current.selectedUrl ).toEqual( paged[ 0 ] );
+		pushSpy.mockClear();
+
+		// Forward into a request of the URL already open: the rid is reported
+		// and nothing selected changes, so no flush is coming to spend a flag.
+		setLocation(
+			'http://localhost/wp-admin/?url=omicron4&request=t8vmqzr51xd'
+		);
+		await act( async () => {
+			window.dispatchEvent( new Event( 'popstate' ) );
+		} );
+		expect( result.current.deepLink.requestId ).toBe( 't8vmqzr51xd' );
+
+		// The operator closes the modal before the resolver answers.
+		await act( async () => {
+			result.current.selectUrl( null );
+		} );
+
+		expect( pushSpy ).toHaveBeenCalled();
+		const [ , , newUrl ] = pushSpy.mock.calls[ 0 ];
+		expect( newUrl ).not.toMatch( /url=omicron4/ );
+		unmount();
+	} );
+
+	// Back to a hash this page cannot answer must still LEAVE the URL it came
+	// from; otherwise Back reads as a no-op with the old modal still up.
+	it( 'clears the open URL on a popstate to a different, off-page hash', async () => {
+		const paged = [ { hash: 'omicron4', url: '/deep/omicron' } ];
+		setLocation( 'http://localhost/wp-admin/?url=omicron4' );
+		const { result, unmount } = renderHook( () =>
+			useUrlNavigation( paged )
+		);
+		await act( async () => {} );
+		expect( result.current.selectedUrl ).toEqual( paged[ 0 ] );
+
+		setLocation( 'http://localhost/wp-admin/?url=sigma88' );
+		await act( async () => {
+			window.dispatchEvent( new Event( 'popstate' ) );
+		} );
+
+		expect( result.current.selectedUrl ).toBeNull();
+		expect( result.current.deepLink.urlHash ).toBe( 'sigma88' );
+		unmount();
+	} );
+
 	it( 'updateBrowserUrl pushes only when href actually changes', () => {
 		const { result, unmount } = renderHook( () =>
 			useUrlNavigation( URLS )

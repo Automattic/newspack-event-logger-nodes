@@ -6,8 +6,8 @@
  * selectors mount and what the chart is handed.
  */
 
-// The chart is mocked; its `chartSource` resolver is NOT — the wrapper
-// gates through the real one.
+// The chart is mocked; its `breakdownState` resolver is NOT — the panel and
+// the chart read the same one.
 jest.mock( '../../AggregateTimeChart', () => ( {
 	...jest.requireActual( '../../AggregateTimeChart' ),
 	__esModule: true,
@@ -21,13 +21,10 @@ import * as React from 'react';
 import BreakdownControls from '../BreakdownControls';
 import { renderComponent } from '../../../test-helpers/renderHook';
 
-const SERIES = { 1748960000: { count: 3 } };
-
 function mountBreakdown( overrides = {} ) {
 	return renderComponent(
 		React.createElement( BreakdownControls, {
-			series: SERIES,
-			breakdownData: null,
+			breakdownData: { 1748960000: { '5xx': { c: 7 } } },
 			metric: 'memory',
 			setMetric: jest.fn(),
 			breakdown: 'method',
@@ -38,22 +35,17 @@ function mountBreakdown( overrides = {} ) {
 }
 
 describe( 'BreakdownControls', () => {
-	it( 'keeps the panel up when the breakdown reply is empty and the series is not', () => {
-		// The wrapper and the chart must not hold different opinions about
-		// what there is to draw: gating here on `breakdownData` alone hid a
-		// populated series behind a panel that never mounted.
-		const { container, unmount } = mountBreakdown( { breakdownData: {} } );
-		expect( container.textContent ).toContain( 'AGGREGATE[' );
-		unmount();
-	} );
-
-	it( 'holds no opinion about whether it should be here', () => {
-		// The caller mounts it, so an empty dimension still leaves the
-		// dropdowns the URL modal's operator has to pick another one with.
+	it( 'names the dimension the reply came back empty for', () => {
+		// A blank frame under a dropdown reading "User Agent" says nothing;
+		// the panel has to say WHICH dimension has no values in the window,
+		// and keep the dropdowns that pick another one.
 		const { container, unmount } = mountBreakdown( {
-			series: {},
+			breakdown: 'ua',
 			breakdownData: {},
 		} );
+		expect( container.textContent ).toContain(
+			'No User Agent data in this window.'
+		);
 		const labels = Array.from( container.querySelectorAll( 'label' ) ).map(
 			( label ) => label.textContent
 		);
@@ -61,9 +53,22 @@ describe( 'BreakdownControls', () => {
 		unmount();
 	} );
 
-	it( 'prints the refusal it was handed rather than swallowing it', () => {
+	it( 'says the read is still out rather than calling it empty', () => {
+		// The dimension's key is absent because the payload predates the
+		// switch. "No User Agent data" there is a lie that flickers.
 		const { container, unmount } = mountBreakdown( {
-			series: undefined,
+			breakdown: 'ua',
+			breakdownData: null,
+		} );
+		expect( container.textContent ).toContain( 'Loading…' );
+		expect( container.textContent ).not.toContain( 'No User Agent' );
+		unmount();
+	} );
+
+	it( 'prints the refusal it was handed rather than swallowing it', () => {
+		// `useCommandOnce` treats a refusal as an answer, so the read is over
+		// and "Loading…" beside the dropdowns would never clear.
+		const { container, unmount } = mountBreakdown( {
 			breakdownData: null,
 			error: 'index scan budget spent',
 		} );
@@ -71,6 +76,7 @@ describe( 'BreakdownControls', () => {
 			'.newspack-nodes-status.is-error'
 		);
 		expect( shown.textContent ).toBe( 'index scan budget spent' );
+		expect( container.textContent ).not.toContain( 'Loading…' );
 		unmount();
 	} );
 
@@ -109,35 +115,15 @@ describe( 'BreakdownControls', () => {
 		unmount();
 	} );
 
-	it( 'stays up with no series of its own while the read is in flight', () => {
-		// The URL modal has no undifferentiated series to fall back on, so the
-		// selectors have to survive the wait for the first breakdown reply.
-		const { container, unmount } = mountBreakdown( {
-			series: undefined,
-			loading: true,
-		} );
+	it( 'stays up while the read is in flight', () => {
+		// The selectors have to survive the wait for the first reply — they
+		// are the only way to ask for a different dimension.
+		const { container, unmount } = mountBreakdown( { loading: true } );
 		expect( container.textContent ).toContain( 'Loading…' );
 		const labels = Array.from( container.querySelectorAll( 'label' ) ).map(
 			( label ) => label.textContent
 		);
 		expect( labels ).toEqual( [ 'Metric', 'Breakdown' ] );
-		unmount();
-	} );
-
-	it( 'draws the breakdown series with no series of its own', () => {
-		const { container, unmount } = mountBreakdown( {
-			series: undefined,
-			breakdownData: { 1748960000: { '5xx': { c: 7 } } },
-		} );
-		expect( container.textContent ).toContain(
-			'AGGREGATE[metric=memory,breakdown=method,server=]'
-		);
-		unmount();
-	} );
-
-	it( 'says so while its own breakdown read is in flight', () => {
-		const { container, unmount } = mountBreakdown( { loading: true } );
-		expect( container.textContent ).toContain( 'Loading…' );
 		unmount();
 	} );
 } );

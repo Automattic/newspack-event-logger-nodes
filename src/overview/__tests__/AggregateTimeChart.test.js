@@ -5,6 +5,9 @@
  * Same approach as CategoryTimeChart: mock d3 chainable + useTimeChart's
  * setupTooltip/drawLegend, invoke captured formatEntry callbacks to
  * drive the formatSeconds + the per-metric value-computation branches.
+ *
+ * A dimension is always selected, so every case here is dimensional; the
+ * chart holds no undifferentiated totals to fall back on.
  */
 
 // Mock d3 — every call returns a shared chainable.
@@ -96,7 +99,7 @@ jest.mock( '@newspack-nodes/shared/hooks/useTimeChart', () => {
 
 import * as React from 'react';
 import * as d3 from 'd3';
-import AggregateTimeChart, { chartSource } from '../AggregateTimeChart';
+import AggregateTimeChart, { breakdownState } from '../AggregateTimeChart';
 import { renderComponent } from '../../test-helpers/renderHook';
 
 const d3Mock = d3.__chain;
@@ -141,10 +144,9 @@ describe( 'AggregateTimeChart', () => {
 		useTimeChart.drawLegend.mockClear();
 	} );
 
-	it( 'returns null when data is null', () => {
+	it( 'returns null when the breakdown is null', () => {
 		const { container, unmount } = renderComponent(
 			React.createElement( AggregateTimeChart, {
-				data: null,
 				breakdownData: null,
 			} )
 		);
@@ -152,25 +154,21 @@ describe( 'AggregateTimeChart', () => {
 		unmount();
 	} );
 
-	it( 'returns null when data is empty', () => {
+	it( 'returns null when the breakdown is empty', () => {
 		const { container, unmount } = renderComponent(
 			React.createElement( AggregateTimeChart, {
-				data: {},
-				breakdownData: null,
+				breakdownData: {},
 			} )
 		);
 		expect( container.textContent ).toBe( '' );
 		unmount();
 	} );
 
-	it( 'draws the breakdown series with no single-series source', () => {
-		// The URL modal hands over no undifferentiated series at all, so the
-		// breakdown reply is the only thing this chart ever draws there.
+	it( 'draws the breakdown series it is handed', () => {
 		const bk = bucketKeyNow();
 		const breakdownData = { [ bk ]: { '5xx': { c: 7, s: 917 } } };
 		const { container, unmount } = renderComponent(
 			React.createElement( AggregateTimeChart, {
-				data: null,
 				breakdownData,
 				metric: 'avg',
 				breakdown: 'status',
@@ -184,48 +182,60 @@ describe( 'AggregateTimeChart', () => {
 		unmount();
 	} );
 
-	it( 'falls back to the totals when the breakdown reply carries no dimensions', () => {
-		// The server sets `breakdown_time_series` whenever the dimension is
-		// VALID, not when it has rows, so an empty one reaches a card holding
-		// the totals. Drawing nothing there is a blank frame under live
-		// dropdowns; the totals are the answer already in hand.
+	it( 'draws nothing while the selected dimension has not arrived', () => {
+		// The payload still in state predates the dropdown switch, so the new
+		// dimension's key is absent. A totals series legended "Total" under a
+		// dropdown reading "User Agent" answers a question nobody asked, so
+		// the totals are handed over here and must still draw nothing.
 		const bk = bucketKeyNow();
 		const { container, unmount } = renderComponent(
 			React.createElement( AggregateTimeChart, {
-				data: { [ bk ]: { count: 41, sum_ms: 917 } },
-				breakdownData: {},
+				data: { [ bk ]: { count: 313, sum_ms: 4711 } },
+				breakdownData: null,
 				metric: 'avg',
-			} )
-		);
-		expect( container.textContent ).toContain( 'Avg Response Time' );
-		const labels = getFormatEntry()( lastSlotIndex() ).map(
-			( entry ) => entry.label
-		);
-		expect( labels ).toEqual( [ 'Total' ] );
-		unmount();
-	} );
-
-	it( 'draws nothing when neither source carries a bucket', () => {
-		const { container, unmount } = renderComponent(
-			React.createElement( AggregateTimeChart, {
-				data: {},
-				breakdownData: {},
-				metric: 'volume',
+				breakdown: 'ua',
 			} )
 		);
 		expect( container.textContent ).toBe( '' );
 		unmount();
 	} );
 
-	it( 'renders with single-series Total when no breakdownData (volume)', () => {
+	it( 'draws nothing when the dimension arrived carrying no values', () => {
+		// Fetched and genuinely empty. Still not the totals: the panel says
+		// which dimension came back empty, and the chart draws no series.
 		const bk = bucketKeyNow();
-		const data = { [ bk ]: { count: 50, sum_ms: 500, sum_peak_mb: 10 } };
 		const { container, unmount } = renderComponent(
 			React.createElement( AggregateTimeChart, {
-				data,
-				breakdownData: null,
+				data: { [ bk ]: { count: 313, sum_ms: 4711 } },
+				breakdownData: { [ bk ]: {} },
+				metric: 'avg',
+				breakdown: 'ua',
+			} )
+		);
+		expect( container.textContent ).toBe( '' );
+		unmount();
+	} );
+
+	it( 'tells the panel which of the three states the dimension is in', () => {
+		const bk = bucketKeyNow();
+		expect( breakdownState( null ) ).toBe( 'pending' );
+		expect( breakdownState( {} ) ).toBe( 'empty' );
+		expect( breakdownState( { [ bk ]: {} } ) ).toBe( 'empty' );
+		expect(
+			breakdownState( { [ bk ]: { 'curl/8.7.1': { c: 313 } } } )
+		).toBe( 'series' );
+	} );
+
+	it( 'renders the tooltip frame in volume mode', () => {
+		const bk = bucketKeyNow();
+		const breakdownData = {
+			[ bk ]: { 'curl/8.7.1': { c: 50, s: 500, m: 10 } },
+		};
+		const { container, unmount } = renderComponent(
+			React.createElement( AggregateTimeChart, {
+				breakdownData,
 				metric: 'volume',
-				breakdown: 'status',
+				breakdown: 'ua',
 			} )
 		);
 		expect( container.textContent ).toContain( 'Request Volume' );
@@ -239,51 +249,24 @@ describe( 'AggregateTimeChart', () => {
 		unmount();
 	} );
 
-	it( 'renders with single-series Total in avg-memory mode (memory branch)', () => {
+	it( 'titles the memory metric from its own dimension', () => {
 		const bk = bucketKeyNow();
-		const data = { [ bk ]: { count: 50, sum_ms: 500, sum_peak_mb: 10 } };
+		const breakdownData = {
+			[ bk ]: { 'curl/8.7.1': { c: 50, s: 500, m: 10 } },
+		};
 		const { container, unmount } = renderComponent(
 			React.createElement( AggregateTimeChart, {
-				data,
-				breakdownData: null,
+				breakdownData,
 				metric: 'memory',
+				breakdown: 'ua',
 			} )
 		);
 		expect( container.textContent ).toContain( 'Avg Peak Memory' );
 		unmount();
 	} );
 
-	it( 'renders with single-series Total in avg mode', () => {
-		const bk = bucketKeyNow();
-		const data = { [ bk ]: { count: 50, sum_ms: 500 } };
-		const { container, unmount } = renderComponent(
-			React.createElement( AggregateTimeChart, {
-				data,
-				breakdownData: null,
-				metric: 'avg',
-			} )
-		);
-		expect( container.textContent ).toContain( 'Avg Response Time' );
-		unmount();
-	} );
-
-	it( 'renders with single-series Total in cumulative mode', () => {
-		const bk = bucketKeyNow();
-		const data = { [ bk ]: { count: 50, sum_ms: 500 } };
-		const { container, unmount } = renderComponent(
-			React.createElement( AggregateTimeChart, {
-				data,
-				breakdownData: null,
-				metric: 'cumulative',
-			} )
-		);
-		expect( container.textContent ).toContain( 'Cumulative Response Time' );
-		unmount();
-	} );
-
 	it( 'renders with breakdownData (status) → cumulative stacked area', () => {
 		const bk = bucketKeyNow();
-		const data = { [ bk ]: { count: 100, sum_ms: 1000 } };
 		const breakdownData = {
 			[ bk ]: {
 				'2xx': { c: 80, s: 800 },
@@ -292,7 +275,6 @@ describe( 'AggregateTimeChart', () => {
 		};
 		const { container, unmount } = renderComponent(
 			React.createElement( AggregateTimeChart, {
-				data,
 				breakdownData,
 				metric: 'cumulative',
 				breakdown: 'status',
@@ -304,7 +286,6 @@ describe( 'AggregateTimeChart', () => {
 
 	it( 'renders with breakdownData (status) in volume mode', () => {
 		const bk = bucketKeyNow();
-		const data = { [ bk ]: { count: 100, sum_ms: 1000 } };
 		const breakdownData = {
 			[ bk ]: {
 				'2xx': { c: 80, s: 800 },
@@ -313,7 +294,6 @@ describe( 'AggregateTimeChart', () => {
 		};
 		const { unmount } = renderComponent(
 			React.createElement( AggregateTimeChart, {
-				data,
 				breakdownData,
 				metric: 'volume',
 				breakdown: 'status',
@@ -328,7 +308,6 @@ describe( 'AggregateTimeChart', () => {
 
 	it( 'renders with breakdownData (method) line chart in avg mode', () => {
 		const bk = bucketKeyNow();
-		const data = { [ bk ]: { count: 100, sum_ms: 1000 } };
 		const breakdownData = {
 			[ bk ]: {
 				GET: { c: 80, s: 8000 },
@@ -337,7 +316,6 @@ describe( 'AggregateTimeChart', () => {
 		};
 		const { unmount } = renderComponent(
 			React.createElement( AggregateTimeChart, {
-				data,
 				breakdownData,
 				metric: 'avg',
 				breakdown: 'method',
@@ -350,7 +328,6 @@ describe( 'AggregateTimeChart', () => {
 
 	it( 'renders memory line chart with breakdownData', () => {
 		const bk = bucketKeyNow();
-		const data = { [ bk ]: { count: 100 } };
 		const breakdownData = {
 			[ bk ]: {
 				A: { c: 5, m: 50, s: 500 },
@@ -359,7 +336,6 @@ describe( 'AggregateTimeChart', () => {
 		};
 		const { unmount } = renderComponent(
 			React.createElement( AggregateTimeChart, {
-				data,
 				breakdownData,
 				metric: 'memory',
 				breakdown: 'server',
@@ -373,11 +349,10 @@ describe( 'AggregateTimeChart', () => {
 
 	it( 'serverFilter suffixes the title', () => {
 		const bk = bucketKeyNow();
-		const data = { [ bk ]: { count: 1, sum_ms: 10 } };
+		const breakdownData = { [ bk ]: { '5xx': { c: 1, s: 10 } } };
 		const { container, unmount } = renderComponent(
 			React.createElement( AggregateTimeChart, {
-				data,
-				breakdownData: null,
+				breakdownData,
 				metric: 'volume',
 				serverFilter: 'edge-01',
 			} )
@@ -389,7 +364,6 @@ describe( 'AggregateTimeChart', () => {
 	it( 'formatSeconds covers all five magnitude branches', () => {
 		// cumulative mode drives every formatSeconds branch via saFmt.
 		const bk = bucketKeyNow();
-		const data = { [ bk ]: { count: 100, sum_ms: 1000 } };
 		const breakdownData = {
 			[ bk ]: {
 				zero: { c: 0, s: 0 }, // → 0s
@@ -402,7 +376,6 @@ describe( 'AggregateTimeChart', () => {
 		};
 		const { unmount } = renderComponent(
 			React.createElement( AggregateTimeChart, {
-				data,
 				breakdownData,
 				metric: 'cumulative',
 				breakdown: 'status',
@@ -418,11 +391,10 @@ describe( 'AggregateTimeChart', () => {
 
 	it( 'tags the y-axis title with the themable y-label class', () => {
 		const bk = bucketKeyNow();
-		const data = { [ bk ]: { count: 50, sum_ms: 500 } };
+		const breakdownData = { [ bk ]: { '5xx': { c: 50, s: 500 } } };
 		const { unmount } = renderComponent(
 			React.createElement( AggregateTimeChart, {
-				data,
-				breakdownData: null,
+				breakdownData,
 				metric: 'volume',
 			} )
 		);
@@ -433,36 +405,12 @@ describe( 'AggregateTimeChart', () => {
 		unmount();
 	} );
 
-	// A wrapper gates on `chartSource`, so its answer and the chart's own
-	// emptiness have to be one predicate — an axis with no line otherwise.
-	it( 'reports no source for buckets that carry no dimension value', () => {
-		const bk = bucketKeyNow();
-		expect(
-			chartSource( { data: null, breakdownData: { [ bk ]: {} } } ).source
-		).toBeNull();
-	} );
-
-	it( 'draws nothing for buckets that carry no dimension value', () => {
-		const bk = bucketKeyNow();
-		const { container, unmount } = renderComponent(
-			React.createElement( AggregateTimeChart, {
-				data: null,
-				breakdownData: { [ bk ]: {} },
-				metric: 'cumulative',
-				breakdown: 'method',
-			} )
-		);
-		expect( container.textContent ).toBe( '' );
-		unmount();
-	} );
-
 	it( 'renderFn no-ops on null container', () => {
 		const bk = bucketKeyNow();
-		const data = { [ bk ]: { count: 1, sum_ms: 1 } };
+		const breakdownData = { [ bk ]: { '5xx': { c: 1, s: 1 } } };
 		const { unmount } = renderComponent(
 			React.createElement( AggregateTimeChart, {
-				data,
-				breakdownData: null,
+				breakdownData,
 				metric: 'volume',
 			} )
 		);

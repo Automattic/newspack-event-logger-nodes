@@ -598,7 +598,10 @@ function renderGraph( props = {} ) {
 }
 
 describe( 'usePerformanceGraph — overview/urls arg edge cases', () => {
-	test( 'an empty chartBreakdown pads the overview breakdown list with status', async () => {
+	test( 'asks about the dimensions the page reads, and no filler', async () => {
+		// The server answers about exactly the dimensions it was asked for,
+		// whatever the count, so a dimension nothing reads is a memcache walk
+		// per poll for a series no chart draws.
 		const wire = installWire();
 		renderHook( () =>
 			usePerformanceGraph( {
@@ -609,7 +612,7 @@ describe( 'usePerformanceGraph — overview/urls arg edge cases', () => {
 		const overview = findVerb( wire.batches, 'overview' );
 		expect(
 			parseCommandArgs( overview[ VALUE ].arguments ).options.breakdown
-		).toBe( 'server,status' );
+		).toBe( 'server' );
 	} );
 
 	test( 'the selected server is emitted in the url_detail args', async () => {

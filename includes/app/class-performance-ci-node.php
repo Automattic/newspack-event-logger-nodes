@@ -1701,6 +1701,22 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
+	 * Refuse a dimension this CI does not know.
+	 *
+	 * Dropped instead of refused, the reply simply says nothing about it, and
+	 * a reader that reads an absent dimension as "still in flight" waits on
+	 * one nobody will ever send.
+	 *
+	 * @param string $dimension The dimension name as the caller spelled it.
+	 * @throws \RuntimeException When it is not one of DIMENSIONS.
+	 */
+	private static function assert_dimension( string $dimension ): void {
+		if ( ! \in_array( $dimension, self::DIMENSIONS, true ) ) {
+			throw new \RuntimeException( \esc_html( "invalid breakdown dimension: {$dimension}" ) );
+		}
+	}
+
+	/**
 	 * Resolve a Command_Args boolean flag. A bare `--flag` and any value other
 	 * than `0` / `false` read as true; `--flag=0`, `--flag=false`, and an
 	 * absent key read as false. The JS `formatCommandArgs` only ever emits the
@@ -1761,20 +1777,12 @@ class Performance_CI_Node extends Service_CI_Node {
 				$payload                       = self::build_overview_payload();
 				$payload['global_leaderboard'] = self::build_leaderboard( $server );
 
+				// One key per dimension ASKED for, whatever the count.
 				if ( '' !== $breakdown ) {
-					$dims = \array_values(
-						\array_filter(
-							\array_map( 'trim', \explode( ',', $breakdown ) ),
-							static fn ( $d ) => \in_array( $d, self::DIMENSIONS, true )
-						)
-					);
-					if ( 1 === \count( $dims ) ) {
-						$payload['breakdown_time_series'] = self::merge_dim_across_partitions( $dims[0], $server );
-					} elseif ( ! empty( $dims ) ) {
-						$payload['breakdowns'] = [];
-						foreach ( $dims as $dim ) {
-							$payload['breakdowns'][ $dim ] = self::merge_dim_across_partitions( $dim, $server );
-						}
+					$payload['breakdowns'] = [];
+					foreach ( \array_map( 'trim', \explode( ',', $breakdown ) ) as $dim ) {
+						self::assert_dimension( $dim );
+						$payload['breakdowns'][ $dim ] = self::merge_dim_across_partitions( $dim, $server );
 					}
 				}
 
@@ -1977,9 +1985,7 @@ class Performance_CI_Node extends Service_CI_Node {
 					throw new \RuntimeException( 'invalid hash format' );
 				}
 				$breakdown = (string) ( $parsed['options']['breakdown'] ?? '' );
-				if ( ! \in_array( $breakdown, self::DIMENSIONS, true ) ) {
-					throw new \RuntimeException( 'invalid breakdown dimension' );
-				}
+				self::assert_dimension( $breakdown );
 				return [ 'breakdown_time_series' => self::merge_url_dim( $hash, $breakdown ) ];
 					},
 				],
