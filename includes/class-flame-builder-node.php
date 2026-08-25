@@ -117,22 +117,33 @@ class Flame_Builder_Node extends Node {
 	/**
 	 * Byte ceiling on the held mirror frames a checkpoint frame carries.
 	 *
-	 * The offsetlog bounds keyframe COUNT (60), not size, and `add_snapshot_node`
-	 * lifts its PIPE_BUF cap to `MAX_LARGE_LINE_SIZE` — past which `Partition_Node`
-	 * DROPS the record, and the record is the whole checkpoint: the read cursor and
-	 * every snapshot node's state, not just these frames. Meanwhile the per-server
-	 * aggregates grow with the spoke count, one server's leaderboard bucket being
-	 * ~27KB. So this budget is what keeps a checkpoint far away from that cliff.
+	 * Set from the OBSERVED held size, not from the drop cliff. A production hub
+	 * reports held totals of ~267KB–348KB per checkpoint and a topics cache
+	 * peaking under 3.8MB across a day; this sits ~6x over that peak, so routine
+	 * operation does not trip it and the tripwire below is informative when it
+	 * fires. A budget tight enough to fire every checkpoint reports nothing.
+	 *
+	 * What it costs is DISK, in the offsetlog. That ring bounds keyframe COUNT
+	 * (`OFFSETLOG_MAX_SEGMENTS`, 60) and never bytes — its retention is count and
+	 * age only — and each keyframe carries a whole checkpoint, so this budget is
+	 * what bounds the ring: 60 x this value, ~120MB, plus a write every 30s.
+	 *
+	 * The cliff is elsewhere and far. `add_snapshot_node` lifts the PIPE_BUF cap
+	 * to `Partition_Node::MAX_LARGE_LINE_SIZE` (32MB), past which the record is
+	 * DROPPED — and the record is the whole checkpoint: the read cursor and every
+	 * snapshot node's state, not just these frames. This is a policy cap on FRAME
+	 * bytes, so keys, nesting and `pending` ride it uncounted; at 1/16th of the
+	 * cliff that slack cannot reach it.
+	 *
+	 * The headroom is also room for growth on the one axis that has none: the
+	 * per-server aggregates grow with the spoke count, one server's leaderboard
+	 * bucket being ~27KB. Decision 11 names bounding that axis as the real fix.
 	 *
 	 * A frame past the budget is re-merged from memcache by the next write to its
 	 * bucket, so it is lost only if the process AND memcache both fail before the
 	 * bucket closes — the same double failure the mirror exists for.
-	 *
-	 * It is a policy cap on FRAME bytes, not a measurement of the record: keys,
-	 * nesting and `pending` ride the same checkpoint uncounted. At 0.8% of the
-	 * drop cliff that slack cannot reach it.
 	 */
-	private const MAX_CHECKPOINT_MIRROR_BYTES = 262144;
+	private const MAX_CHECKPOINT_MIRROR_BYTES = 2097152;
 
 	/**
 	 * Cap on the per-process string-intern table. Every dimension value, category
@@ -1332,7 +1343,7 @@ class Flame_Builder_Node extends Node {
 		if ( ! $stats_store->set_url_shard( $bucket, $shard, $existing_urls ) ) {
 			// Rows, not bytes: sizing it re-serialises a megabyte per flush.
 			$this->print_less_often(
-				'flame-builder: URL index write refused; a shard is over the cache item limit and its rows are lost',
+				'URL index write refused; a shard is over the cache item limit and its rows are lost',
 				\sprintf( ' — shard %s, %d rows', $shard, \count( $existing_urls ) )
 			);
 		}
@@ -1940,7 +1951,7 @@ class Flame_Builder_Node extends Node {
 				// Ascending, so we stop on the SMALLEST that would not fit.
 				$largest = $held[ \count( $held ) - 1 ];
 				$this->print_less_often(
-					'flame-builder: held stats frames over the checkpoint budget; they still reach the mirror at bucket close',
+					'held stats frames over the checkpoint budget; they still reach the mirror at bucket close',
 					\sprintf(
 						' — %d of %d frames dropped; budget %d bytes, held total %d bytes; largest dropped %s/%s at %d bytes',
 						\count( $held ) - $i,
@@ -2043,7 +2054,7 @@ class Flame_Builder_Node extends Node {
 		}
 		$partition = $this->resolve_stats_partition();
 		if ( null === $partition ) {
-			$this->print_less_often( "flame-builder: stats_partition '{$this->stats_partition}' not found at flush" );
+			$this->print_less_often( "stats_partition '{$this->stats_partition}' not found at flush" );
 			return; // Keep the buffer; retry next checkpoint once the node exists.
 		}
 		$now = $this->now_ts();

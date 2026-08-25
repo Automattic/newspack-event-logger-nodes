@@ -523,6 +523,7 @@ require_once \dirname( __DIR__, 2 ) . '/newspack-nodes/tests/Helpers/TopologyDur
 // `<config:…>` token namespace, the stock-topology dir, and Core::$memd.
 \Newspack_Nodes\Bootstrap::ensure_runtime_wired();
 require_once \dirname( __DIR__, 2 ) . '/newspack-nodes/tests/Helpers/TestCase.php';
+require_once \dirname( __DIR__, 2 ) . '/newspack-nodes/tests/Helpers/NodeLogPrefixTestCase.php';
 require_once \dirname( __DIR__, 2 ) . '/newspack-nodes/tests/Helpers/CaptureSink.php';
 require_once \dirname( __DIR__, 2 ) . '/newspack-nodes/tests/Helpers/BoundedTicks.php';
 // The substrate's in-memory `\Memcached` subclass — shared so ELN tests can

@@ -1347,8 +1347,8 @@ class FlameBuilderTest extends TestCase {
 
 		// One that fits and TWO that do not, the leaderboard the larger.
 		$store->set_hourly_bucket( $bucket, [ 'count' => 3 ] );
-		$store->set_category_bucket( $bucket, [ 'blob' => \str_repeat( 'c', 300000 ) ] );
-		$store->set_leaderboard_bucket( $bucket, [ 'blob' => \str_repeat( 'x', 400000 ) ] );
+		$store->set_category_bucket( $bucket, [ 'blob' => \str_repeat( 'c', 2400000 ) ] );
+		$store->set_leaderboard_bucket( $bucket, [ 'blob' => \str_repeat( 'x', 3000000 ) ] );
 
 		$fb->save_state();
 		$fb->set_clock( null );
@@ -1367,7 +1367,7 @@ class FlameBuilderTest extends TestCase {
 			$hit,
 			'not the one the loop stopped on'
 		);
-		$this->assertStringContainsString( '262144', $hit, 'names the budget' );
+		$this->assertStringContainsString( '2097152', $hit, 'names the budget' );
 		// Makes the third bucket load-bearing: without it the counts go unasserted.
 		$this->assertStringContainsString( '2 of 3 frames dropped', $hit, 'counts what fell out' );
 	}
@@ -1391,8 +1391,8 @@ class FlameBuilderTest extends TestCase {
 		$fb->set_clock( static fn() => $open );
 
 		$store->set_hourly_bucket( $bucket, [ 'count' => 7 ] );
-		$store->set_category_bucket( $bucket, [ 'blob' => \str_repeat( 'c', 300000 ) ] );
-		$store->set_leaderboard_bucket( $bucket, [ 'blob' => \str_repeat( 'x', 400000 ) ] );
+		$store->set_category_bucket( $bucket, [ 'blob' => \str_repeat( 'c', 2400000 ) ] );
+		$store->set_leaderboard_bucket( $bucket, [ 'blob' => \str_repeat( 'x', 3000000 ) ] );
 
 		$fb->save_state();
 		$fb->set_clock( null );
@@ -1402,6 +1402,39 @@ class FlameBuilderTest extends TestCase {
 			$err,
 			'the namespace is printed beside the key it belongs to'
 		);
+	}
+
+	public function test_the_over_budget_tripwire_names_the_node_once(): void {
+		// `Node::log_midfix()` already prepends "<name>: " to every line, and
+		// drops it only when the process name starts with that name. A message
+		// that hard-codes its own name too doubles it on every other worker.
+		$err = '';
+		Core::set_stderr_handler( static function ( $text ) use ( &$err ) {
+			$err .= $text;
+		} );
+
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$p          = $this->make_partition( 'flames-stats' );
+		$p->with_index( Flame_Builder_Node::format_stats_index_entry( ... ) );
+		$fb = new Flame_Builder_Node();
+		// The name this node runs under in flame-builder.tsl, not the suite's
+		// short 'fb': the doubling is only visible under the real one.
+		$fb->name( 'flame-builder' );
+		$fb->set_stats_store( $store );
+		$fb->set_stats_target( $p->name() );
+
+		$open   = 1_700_000_000;
+		$bucket = Stats_Store::bucket_key( $open );
+		$fb->set_clock( static fn() => $open );
+		$store->set_hourly_bucket( $bucket, [ 'count' => 11 ] );
+		$store->set_category_bucket( $bucket, [ 'blob' => \str_repeat( 'c', 2400000 ) ] );
+		$store->set_leaderboard_bucket( $bucket, [ 'blob' => \str_repeat( 'x', 3000000 ) ] );
+		$fb->save_state();
+		$fb->set_clock( null );
+
+		$this->assertStringContainsString( 'over the checkpoint budget', $err, 'the tripwire fired' );
+		$this->assertSame( 1, \substr_count( $err, 'flame-builder' ), 'the node is named once' );
 	}
 
 	// --- finalize_flame_node ----------------------------------------------
@@ -3668,7 +3701,7 @@ class FlameBuilderTest extends TestCase {
 		$fb->set_clock( static fn() => $open );
 
 		$store->set_hourly_bucket( $bucket, [ 'count' => 3 ] );
-		$store->set_leaderboard_bucket( $bucket, [ 'blob' => \str_repeat( 'x', 300000 ) ] );
+		$store->set_leaderboard_bucket( $bucket, [ 'blob' => \str_repeat( 'x', 3000000 ) ] );
 
 		// One namespaced space now: flatten it, the assertions are about WHICH
 		// frames rode, not which namespace they sat under.
