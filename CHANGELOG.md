@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.60.2] - 2026-08-25
+
 ### Fixed
 
 - **Three Performance axes stop repeating a label.** The substrate's `drawAxes` now ticks a value axis through a `tickValues` ladder the formatter carries, and the same class of defect the byte axes had — ticks and formatter disagreeing about the unit — was here in whole-unit form: d3 steps a small domain by 0.5, and a formatter printing whole units rendered both ends of that step the same. Request Volume read `0 1 1 2 2 3 3` for a bucket of three requests and the response-time scatter read `0ms 1ms 1ms 2ms 2ms 3ms 3ms` under 4ms; both now tick in whole units (`integerTicks`). `AggregateTimeChart`'s four per-metric formatters moved out of a `useCallback` chain into one `Y_FORMATS` table, which is where the two whole-unit ones declare their ladder. Average Time per Event was the third: its milliseconds branch rounded to whole ms, so 1.5ms and 2ms both read `2ms`. `formatYValue` now rounds through the substrate's own `compactFixed` — one decimal under 10, none at or above — in every branch, which is the rule its per-second branch already used, so `1.5ms` prints and `2.0s` reads `2s`.
