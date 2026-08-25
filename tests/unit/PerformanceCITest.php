@@ -26,6 +26,7 @@
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\Medium;
 use Newspack_Event_Logger_Nodes\App\Performance_CI_Node;
 use Newspack_Event_Logger_Nodes\Flame_Builder_Node;
 use Newspack_Event_Logger_Nodes\Hook_Categorizer;
@@ -42,6 +43,7 @@ use Newspack_Nodes\Message;
 use Newspack_Nodes\Tests\Helpers\InMemoryMemcached;
 
 #[CoversClass( Performance_CI_Node::class )]
+#[Medium]
 class PerformanceCITest extends TestCase {
 	private string $tmp;
 
