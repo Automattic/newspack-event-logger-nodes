@@ -26,6 +26,11 @@ class SettingsSchemaTest extends TestCase {
 	 * (log_urls/skip_urls/log_events/custom_events/significant_events/
 	 * auto_disable_threshold/auto_protect_time_threshold) were retired to
 	 * per-rule fields in Task 10.
+	 *
+	 * Nine keys, because the schema declares every key the application has:
+	 * `custom_colors`, `stats_mirror_node` and `recommended_log_events` carry no
+	 * option and no settings field, but a key declared only by the config file
+	 * is null on every install whose file predates it.
 	 */
 	private const OVERLAY_KEYS = [
 		'allowed_users',
@@ -37,6 +42,9 @@ class SettingsSchemaTest extends TestCase {
 		// can seed it) but is not a settings-form field — the rules editor
 		// owns its option, not the WP Settings API.
 		'rules',
+		'custom_colors',
+		'stats_mirror_node',
+		'recommended_log_events',
 	];
 
 	/** The prefixed settings-form option names surviving the Task 10 retirement. */

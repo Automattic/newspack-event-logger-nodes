@@ -33,13 +33,131 @@ use Newspack_Nodes\Config_System\Schema;
  * The application's Field/Schema declaration.
  *
  * Three settings render as checkboxes — `enable_logging`, `log_memory`, and
- * `flush_every_line`. Three more keys overlay the config file with no settings
- * field at all (`ui: false`): `allowed_users`, `rules`, and
- * `hook_start_priority`. The URL filters, hook lists, and auto-tune thresholds
- * that were global settings through v0.25 are per-rule fields of the `rules`
- * ruleset now, which the React rules editor owns through the `rules` service CI.
+ * `flush_every_line`. Six more keys overlay the config file with no settings
+ * field at all (`ui: false`): `allowed_users`, `rules`, `hook_start_priority`,
+ * `custom_colors`, `stats_mirror_node`, and `recommended_log_events`. The URL
+ * filters, hook lists, and auto-tune thresholds that were global settings
+ * through v0.25 are per-rule fields of the `rules` ruleset now, which the React
+ * rules editor owns through the `rules` service CI.
+ *
+ * Every Field carries its `default:` here, and `newspack-event-logger-nodes-
+ * config.php` is a commented ledger of the same values — an override surface,
+ * never the definition. A default that lives only in that file is null on every
+ * install whose file predates the key, because a deploy preserves the
+ * operator's copy.
  */
 class Settings_Schema {
+
+	/**
+	 * Seed for the per-URL logging ruleset: the read-time default
+	 * `Rule_Set::load()` falls back to while the
+	 * `newspack_event_logger_nodes_rules` option is absent. Once the rules
+	 * editor writes that option, this list stops being consulted.
+	 *
+	 * `Rule_Matcher` ranks query-bearing patterns above exact patterns (the
+	 * trailing `?`) above prefixes, so these five exact skips govern their
+	 * endpoints whatever the list order and whatever `/` says. The four
+	 * `/wp-json/newspack-nodes/v1/…` routes are the substrate's own command,
+	 * SSE, and worker-spawn endpoints; logging them would log the logger.
+	 *
+	 * No match means skip, and empty means empty: drop the `/` rule and the
+	 * site logs nothing. A `log` rule may also carry `hooks`, `custom_events`,
+	 * `significant_events`, `auto_disable_threshold`, and
+	 * `auto_protect_time_threshold` — see `Rule` for the full shape. A rule's
+	 * id is derived from its pattern, so declaring one here is pointless.
+	 *
+	 * @var list<array<string,string>>
+	 */
+	private const RULES = [
+		[ 'pattern' => '/wp-json/newspack-nodes/v1/command?', 'action' => 'skip' ],
+		[ 'pattern' => '/wp-json/newspack-nodes/v1/log/stream?', 'action' => 'skip' ],
+		[ 'pattern' => '/wp-json/newspack-nodes/v1/messages/stream?', 'action' => 'skip' ],
+		[ 'pattern' => '/wp-json/newspack-nodes/v1/workers/spawn?', 'action' => 'skip' ],
+		[ 'pattern' => '/wp-cron.php?', 'action' => 'skip' ],
+		[ 'pattern' => '/', 'action' => 'log' ],
+	];
+
+	/**
+	 * Hook names the settings hook picker stars and its "Recommended" button
+	 * selects — that button REPLACES the current selection with this list.
+	 * Exposed to JS as `window.newspackNodesRecommendedHooks`.
+	 *
+	 * Despite the key's name these are hooks, not custom events, and nothing
+	 * here binds anything: each rule's own `hooks` list decides what a request
+	 * instruments. This is a menu, not an instruction.
+	 *
+	 * Grouped as lifecycle, scripts and styles, content rendering, query and
+	 * posts, taxonomies and terms, REST API, then the admin and plugin
+	 * lifecycle hooks worth profiling on a managed host.
+	 *
+	 * @var list<string>
+	 */
+	private const RECOMMENDED_LOG_EVENTS = [
+		'after_setup_theme',
+		'init',
+		'parse_query',
+		'parse_request',
+		'plugins_loaded',
+		'pre_get_posts',
+		'send_headers',
+		'setup_theme',
+		'shutdown',
+		'template_include',
+		'template_redirect',
+		'widgets_init',
+		'wp',
+		'wp_footer',
+		'wp_head',
+		'wp_loaded',
+		'wp_enqueue_scripts',
+		'body_class',
+		'document_title',
+		'document_title_parts',
+		'document_title_separator',
+		'post_class',
+		'the_content',
+		'the_permalink',
+		'the_posts',
+		'found_posts',
+		'found_posts_query',
+		'query',
+		'get_terms',
+		'rest_api_init',
+		'rest_post_dispatch',
+		'rest_pre_dispatch',
+		'activated_plugin',
+		'admin_enqueue_scripts',
+		'admin_footer',
+		'admin_init',
+		'admin_menu',
+		'admin_notices',
+		'admin_print_footer_scripts',
+		'after_password_reset',
+		'authenticate',
+		'cron_schedules',
+		'deactivate_jetpack-boost/jetpack-boost.php',
+		'deactivate_pwa/pwa.php',
+		'deactivate_woocommerce-memberships/woocommerce-memberships.php',
+		'deactivate_woocommerce/woocommerce.php',
+		'deactivate_wordpress-seo/wp-seo.php',
+		'deactivated_plugin',
+		'enqueue_block_editor_assets',
+		'googlesitekit_deactivation',
+		'load-plugins.php',
+		'load-themes.php',
+		'newspack_my_account_version',
+		'pre_set_site_transient_update_plugins',
+		'updated_option',
+		'wp_ajax_woocommerce_load_status_widget',
+		'wp_authenticate_user',
+		'wp_maybe_auto_update',
+		'wp_robots',
+		'wp_update_plugins',
+		'wp_version_check',
+		'wpseo_deactivate',
+		'wpseo_indexables_unindexed_calculated',
+		'wpseo_saved_indexable',
+	];
 
 	/** @var Schema|null Memoized — pure structure (runtime values resolve inside the render callbacks). */
 	private static ?Schema $schema = null;
@@ -70,6 +188,7 @@ class Settings_Schema {
 					section: $general,
 					// Cached in the Log_Manager singleton: restart all workers.
 					restart: 'all',
+					default: true,
 					sanitize: 'absint',
 					render: [ Admin::class, 'enable_logging_callback' ],
 					register_args: [],
@@ -85,6 +204,7 @@ class Settings_Schema {
 					section: $debugging,
 					// Cached in the Log_Manager singleton: restart all workers.
 					restart: 'all',
+					default: false,
 					sanitize: 'absint',
 					render: [ Admin::class, 'log_memory_callback' ],
 				),
@@ -95,6 +215,7 @@ class Settings_Schema {
 					section: $debugging,
 					// Cached in the Log_Manager singleton: restart all workers.
 					restart: 'all',
+					default: false,
 					sanitize: 'absint',
 					render: [ Admin::class, 'flush_every_line_callback' ],
 				),
@@ -104,18 +225,42 @@ class Settings_Schema {
 					key: 'allowed_users',
 					type: 'array_strings',
 					ui: false,
+					default: [],
 				),
 				// The rules editor owns this option; config only seeds it.
 				new Field(
 					key: 'rules',
 					type: 'array',
 					ui: false,
+					default: self::RULES,
 				),
 				// App\Core registers its hook_start at this priority.
 				new Field(
 					key: 'hook_start_priority',
 					type: 'int',
 					ui: false,
+					default: -10000,
+				),
+				// Custom-event name => hex swatch, for the event picker.
+				new Field(
+					key: 'custom_colors',
+					type: 'array',
+					ui: false,
+					default: [],
+				),
+				// Durable Partition shadowing memcache stats; '' turns it off.
+				new Field(
+					key: 'stats_mirror_node',
+					type: 'text',
+					ui: false,
+					default: 'flame-stats:partition',
+				),
+				// The hook picker's "Recommended" menu; binds nothing itself.
+				new Field(
+					key: 'recommended_log_events',
+					type: 'array_strings',
+					ui: false,
+					default: self::RECOMMENDED_LOG_EVENTS,
 				),
 			],
 			[

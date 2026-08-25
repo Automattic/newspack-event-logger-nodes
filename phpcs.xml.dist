@@ -46,6 +46,13 @@
 		<type>error</type>
 	</rule>
 
+	<!-- The config ledger IS commented-out code: every key ships commented out
+	     beside its default, and scripts/lint-comments.php gates the shape
+	     instead (each comment run must name a key). -->
+	<rule ref="Squiz.PHP.CommentedOutCode">
+		<exclude-pattern>*/newspack-event-logger-nodes-config.php</exclude-pattern>
+	</rule>
+
 	<!-- Text domain for translations -->
 	<config name="text_domain" value="newspack-event-logger-nodes"/>
 
