@@ -7,11 +7,11 @@
  * card and the URL modal both draw it.
  */
 
-import { __ } from '@wordpress/i18n';
+import { __, sprintf } from '@wordpress/i18n';
 import { SelectControl } from '@wordpress/components';
 
 import { CHART_METRIC_OPTIONS, CHART_BREAKDOWN_OPTIONS } from '../constants';
-import AggregateTimeChart from '../AggregateTimeChart';
+import AggregateTimeChart, { breakdownState } from '../AggregateTimeChart';
 
 /**
  * Breakdown controls component.
@@ -20,15 +20,12 @@ import AggregateTimeChart from '../AggregateTimeChart';
  * the Server selector, the note — so neither scope carries a second copy of
  * the panel to hang its one extra on.
  *
- * WHETHER to mount it is the caller's, because the two answer it from facts
- * only they hold: the Overview card waits for `chartSource` to find something
- * rather than drawing an axis with no line, while the URL modal keeps it up
- * for as long as a URL is selected, since its dropdowns are the only way out
- * of a dimension with no rows or a refused reply.
+ * Both callers mount it unconditionally, because the dropdowns are the only
+ * way out of a dimension with no rows, a read still in flight or a refused
+ * reply — and it says which of those four it is under the chart's own frame.
  *
  * @param {Object}                  props                    Component props.
- * @param {Object|null}             [props.series]           Bucketed single-series source; the URL modal passes none.
- * @param {Object|null}             props.breakdownData      Per-dimension series overlaying the chart, or null.
+ * @param {Object|null}             props.breakdownData      Per-dimension series driving the chart, or null before the reply.
  * @param {string}                  props.metric             Selected metric, e.g. 'volume'.
  * @param {(value: string) => void} props.setMetric          Metric setter.
  * @param {string}                  props.breakdown          Selected breakdown dimension.
@@ -43,7 +40,6 @@ import AggregateTimeChart from '../AggregateTimeChart';
  * @return {import('react').ReactElement} Rendered panel.
  */
 export default function BreakdownControls( {
-	series = null,
 	breakdownData,
 	metric,
 	setMetric,
@@ -57,6 +53,11 @@ export default function BreakdownControls( {
 	error = null,
 	note = null,
 } ) {
+	// A refusal is terminal: it is why the dimension never arrived.
+	const state = error ? 'error' : breakdownState( breakdownData );
+	const dimension =
+		breakdownOptions.find( ( option ) => option.value === breakdown )
+			?.label ?? breakdown;
 	return (
 		<div className="event-logger-aggregate-chart">
 			<div
@@ -97,7 +98,7 @@ export default function BreakdownControls( {
 					__nextHasNoMarginBottom
 					style={ { minWidth: '140px' } }
 				/>
-				{ loading && (
+				{ ( loading || 'pending' === state ) && (
 					<span
 						className="newspack-nodes-status"
 						style={ { fontSize: '12px', paddingBottom: '8px' } }
@@ -107,7 +108,6 @@ export default function BreakdownControls( {
 				) }
 			</div>
 			<AggregateTimeChart
-				data={ series }
 				breakdownData={ breakdownData }
 				metric={ metric }
 				breakdown={ breakdown }
@@ -115,6 +115,18 @@ export default function BreakdownControls( {
 			/>
 			{ error && (
 				<p className="newspack-nodes-status is-error">{ error }</p>
+			) }
+			{ 'empty' === state && (
+				<p className="newspack-nodes-status">
+					{ sprintf(
+						// translators: %s: the breakdown dimension's label, e.g. User Agent.
+						__(
+							'No %s data in this window.',
+							'newspack-event-logger-nodes'
+						),
+						dimension
+					) }
+				</p>
 			) }
 			{ note && <p className="newspack-nodes-status">{ note }</p> }
 		</div>

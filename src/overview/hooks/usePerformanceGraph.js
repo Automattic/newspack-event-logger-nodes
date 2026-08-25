@@ -118,8 +118,7 @@ const isValidPartition = ( p ) => Number.isInteger( p ) && p >= 0;
 /**
  * The dimension list `overview` asks for: always `server`, since the page's
  * server filter is built from that breakdown, plus the chart's active
- * dimension. A chart already on `server` leaves one dimension, so `status`
- * pads it back to two.
+ * dimension. A chart already on `server` asks for the one.
  *
  * @param {string} currentBreakdown The chart's active dimension.
  * @return {string[]} Deduped dimension names.
@@ -128,9 +127,6 @@ const breakdownsFor = ( currentBreakdown ) => {
 	const set = new Set( [ 'server' ] );
 	if ( currentBreakdown ) {
 		set.add( currentBreakdown );
-	}
-	if ( set.size < 2 ) {
-		set.add( 'status' );
 	}
 	return Array.from( set );
 };

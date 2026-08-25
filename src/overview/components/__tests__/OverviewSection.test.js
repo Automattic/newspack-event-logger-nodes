@@ -12,21 +12,21 @@
  *   - returns null when overview is null
  *   - renders the stats grid (URLs, requests, avg ms, req/s)
  *   - shows the optional peak-memory stat only when > 0
- *   - mounts AggregateTimeChart only when aggregate_time_series is present
+ *   - keeps the chart panel mounted whatever the selected dimension holds
  *   - mounts the global-leaderboard section when global_leaderboard exists
  *   - resets breakdown to 'status' when serverFilter activates while the
  *     current breakdown is 'server'.
  */
 
-// The chart is mocked; its `chartSource` resolver is NOT — the wrapper
-// gates through the real one.
+// The chart is mocked; its `breakdownState` resolver is NOT — the panel and
+// the chart read the same one.
 jest.mock( '../../AggregateTimeChart', () => ( {
 	...jest.requireActual( '../../AggregateTimeChart' ),
 	__esModule: true,
-	default: ( { metric, breakdown, serverFilter } ) =>
+	default: ( { metric, breakdown, serverFilter, data } ) =>
 		`AGGREGATE[metric=${ metric },breakdown=${ breakdown },server=${
 			serverFilter || ''
-		}]`,
+		},totals=${ undefined === data ? 'none' : 'given' }]`,
 } ) );
 jest.mock( '../../CategoryTimeChart', () => ( {
 	__esModule: true,
@@ -142,10 +142,7 @@ describe( 'OverviewSection', () => {
 		// cannot. The panel says so rather than letting the two disagree in
 		// silence — which is the defect the toggle was built to remove.
 		const { container } = mount(
-			{
-				total_requests: 33049,
-				aggregate_time_series: { b1: { count: 5 } },
-			},
+			{ total_requests: 33049 },
 			{ urlFilters: { include_workers: true } }
 		);
 
@@ -183,51 +180,51 @@ describe( 'OverviewSection', () => {
 	} );
 
 	it( 'shows the peak-memory stat only when the displayed stats include it', () => {
+		// Read the stat grid, not the whole card: the Metric dropdown offers
+		// an "Avg Peak Memory" option whatever the numbers say.
+		const statLabels = ( container ) =>
+			Array.from(
+				container.querySelectorAll( '.newspack-nodes-stat-label' )
+			).map( ( label ) => label.textContent );
+
 		const { container: a, unmount: ua } = mount( {} );
-		expect( a.textContent ).not.toContain( 'Avg Peak Memory' );
+		expect( statLabels( a ) ).not.toContain( 'Avg Peak Memory' );
 		ua();
 
 		const { container: b, unmount: ub } = mount(
 			{ global_avg_peak_mb: 12.3 },
 			{ urlTotals: { ...baseTotals, avg_peak_mb: 4.7 } }
 		);
-		expect( b.textContent ).toContain( 'Avg Peak Memory' );
+		expect( statLabels( b ) ).toContain( 'Avg Peak Memory' );
 		expect( b.textContent ).toContain( '4.7' );
 		expect( b.textContent ).not.toContain( '12.3' );
 		ub();
 	} );
 
-	it( 'mounts AggregateTimeChart only when aggregate_time_series is populated', () => {
-		const { container: a, unmount: ua } = mount( {} );
-		expect( a.textContent ).not.toContain( 'AGGREGATE' );
-		ua();
+	it.each( [
+		[ 'has not arrived', null ],
+		[ 'arrived with no values', {} ],
+	] )(
+		'keeps the chart panel up when the dimension %s',
+		( _label, breakdownData ) => {
+			// The Metric, Breakdown and Server selectors live in that panel,
+			// and they are the only way to pick a dimension that draws.
+			const { container, unmount } = mount(
+				{},
+				{ breakdownData, chartBreakdown: 'ua' }
+			);
+			expect( container.textContent ).toContain( 'AGGREGATE' );
+			expect( container.textContent ).toContain( 'Breakdown' );
+			unmount();
+		}
+	);
 
-		const { container: b, unmount: ub } = mount( {
-			aggregate_time_series: { bucket1: { count: 1 } },
-		} );
-		expect( b.textContent ).toContain( 'AGGREGATE' );
-		ub();
-	} );
-
-	it( 'heads no chart panel when neither source carries a bucket', () => {
-		// The panel itself has no gate; this card owns the decision, because
-		// it is the one with a second source to fall back on.
+	it( 'offers the Server selector under a filter with nothing to draw', () => {
+		// That selector is the only way to clear a filter which still scopes
+		// the stats above and the table below, and a window carrying only
+		// worker traffic empties the chart with no error at all.
 		const { container, unmount } = mount(
-			{ aggregate_time_series: {} },
-			{ breakdownData: {} }
-		);
-		expect( container.textContent ).not.toContain( 'AGGREGATE' );
-		expect( container.textContent ).not.toContain( 'Breakdown' );
-		unmount();
-	} );
-
-	it( 'keeps the chart panel up while a server filter is on, empty sources or not', () => {
-		// The Server selector lives in that panel and is the only way to clear
-		// a filter that still scopes the stats above and the table below. A
-		// window carrying only worker traffic empties both chart sources with
-		// no error at all, so the card would otherwise trap the filter.
-		const { container, unmount } = mount(
-			{ aggregate_time_series: {} },
+			{},
 			{
 				breakdownData: {},
 				serverFilter: 'edge-01',
@@ -235,6 +232,21 @@ describe( 'OverviewSection', () => {
 			}
 		);
 		expect( container.textContent ).toContain( 'Server' );
+		unmount();
+	} );
+
+	it( 'hands the chart no totals series to legend "Total"', () => {
+		// A breakdown is ALWAYS selected here, so the totals are never the
+		// requested view — and the chart drew them as "Total" regardless.
+		const { container, unmount } = mount(
+			{},
+			{
+				breakdownData: {
+					'2026-08-25-09-15': { 'curl/8.7.1': { c: 313 } },
+				},
+			}
+		);
+		expect( container.textContent ).toContain( 'totals=none' );
 		unmount();
 	} );
 

@@ -214,8 +214,7 @@ export default function UrlDetailView( {
 	/**
 	 * Fetch one breakdown dimension and hand it to the aggregate chart.
 	 *
-	 * It is the chart's only series source, so without a hash to ask about
-	 * the panel draws nothing at all.
+	 * It is the chart's only series source.
 	 *
 	 * @param {string} breakdown Dimension to break the series down by.
 	 */
@@ -231,6 +230,8 @@ export default function UrlDetailView( {
 		command: 'url_breakdown',
 		scope: `${ SERVER }:url_breakdown`,
 		retry: true,
+		// The PAIR is the address: one subject per URL retires the wrong ask.
+		subjectOf: ( args ) => args.join( ' ' ),
 		onDone: ( { result, error } ) => {
 			setBreakdownError( error );
 			setBreakdownData( result?.breakdown_time_series ?? null );
@@ -240,17 +241,15 @@ export default function UrlDetailView( {
 
 	const loadBreakdown = useCallback(
 		( breakdown ) => {
-			if ( ! urlHash ) {
-				setBreakdownData( null );
-				return;
-			}
 			setBreakdownLoading( true );
 			fetchBreakdown( formatCommandArgs( [ urlHash ], { breakdown } ) );
 		},
 		[ fetchBreakdown, urlHash ]
 	);
 
+	// Drop on a SWITCH, never a refresh: old numbers, new label, read true.
 	useEffect( () => {
+		setBreakdownData( null );
 		loadBreakdown( chartBreakdown );
 	}, [ chartBreakdown, loadBreakdown ] );
 
@@ -291,19 +290,17 @@ export default function UrlDetailView( {
 
 	return (
 		<>
-			{ /* Mounted for as long as a URL is selected: an empty dimension
-			     or a refusal must leave the dropdowns to recover with. */ }
-			{ urlHash && (
-				<BreakdownControls
-					breakdownData={ breakdownData }
-					metric={ chartMetric }
-					setMetric={ setChartMetric }
-					breakdown={ chartBreakdown }
-					setBreakdown={ setChartBreakdown }
-					loading={ breakdownLoading }
-					error={ breakdownError }
-				/>
-			) }
+			{ /* Unconditional: an empty dimension or a refusal must leave
+			     the dropdowns to recover with. */ }
+			<BreakdownControls
+				breakdownData={ breakdownData }
+				metric={ chartMetric }
+				setMetric={ setChartMetric }
+				breakdown={ chartBreakdown }
+				setBreakdown={ setChartBreakdown }
+				loading={ breakdownLoading }
+				error={ breakdownError }
+			/>
 
 			<CategoryTimeChart data={ urlDetail?.category_time_series } />
 

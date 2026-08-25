@@ -1183,6 +1183,66 @@ describe( 'PerformanceDashboard', () => {
 		unmount();
 	} );
 
+	// Back before the answer lands: the intent is gone, so the reply answers a
+	// question nobody is asking any more and must not reopen the modal the
+	// operator just left — nor push a fresh entry over the one they walked to.
+	it( 'a deep-link reply that no longer matches the standing intent is dropped', async () => {
+		mockNavState.deepLink = { requestId: 'tqz9ldm3wp', urlHash: null };
+		mockView = loadedView( {
+			urls: {
+				data: [ { hash: 'h-omicron', url: '/deep/omicron' } ],
+				total: 1,
+				loading: false,
+				error: null,
+			},
+		} );
+		const { rerender, unmount } = renderComponent(
+			React.createElement( PerformanceDashboard, { onError: jest.fn() } )
+		);
+		await flushEffects();
+		expect( sentTo( DEEP_REQUEST ) ).toContainEqual( [ 'tqz9ldm3wp' ] );
+
+		// Back to the dashboard: the hook drops the intent and the selection.
+		mockNavState.deepLink = { requestId: null, urlHash: null };
+		rerender(
+			React.createElement( PerformanceDashboard, { onError: jest.fn() } )
+		);
+		await flushEffects();
+
+		answerCommand( DEEP_REQUEST, {
+			result: { url_hash: 'h-omicron', partition: 6 },
+			args: [ 'tqz9ldm3wp' ],
+		} );
+		expect( mockNavState.selectRequest ).not.toHaveBeenCalled();
+		expect( mockNavState.selectUrl ).not.toHaveBeenCalled();
+		unmount();
+	} );
+
+	// The same rule on the hash resolver: a `?url=` reply applies only while
+	// that hash is still the standing intent.
+	it( 'a ?url= reply that no longer matches the standing intent is dropped', async () => {
+		mockNavState.deepLink = { requestId: null, urlHash: 'h-sigma88' };
+		mockView = loadedView();
+		const { rerender, unmount } = renderComponent(
+			React.createElement( PerformanceDashboard, { onError: jest.fn() } )
+		);
+		await flushEffects();
+		expect( sentTo( DEEP_URL ) ).toContainEqual( [ 'h-sigma88' ] );
+
+		mockNavState.deepLink = { requestId: null, urlHash: null };
+		rerender(
+			React.createElement( PerformanceDashboard, { onError: jest.fn() } )
+		);
+		await flushEffects();
+
+		answerCommand( DEEP_URL, {
+			result: { stats: { url: '/deep/sigma' } },
+			args: [ 'h-sigma88' ],
+		} );
+		expect( mockNavState.selectUrl ).not.toHaveBeenCalled();
+		unmount();
+	} );
+
 	it( 'searchRequest selects nothing when the request is not found', async () => {
 		mockView = loadedView();
 		const { unmount } = renderComponent(

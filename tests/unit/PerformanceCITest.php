@@ -334,24 +334,24 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( 0.5, $result['category_time_series'][ $bucket ]['db']['t'] );
 	}
 
-	public function test_overview_verb_includes_breakdown_time_series_for_single_dim(): void {
-		// `?breakdown=server` returns `breakdown_time_series` flat (legacy L111-112).
-		// Used by fetchBreakdown (usePerformanceApi.js L186 reads
-		// `data.breakdown_time_series`).
+	public function test_overview_verb_answers_one_dimension_in_the_breakdowns_map(): void {
+		// One dimension is the same shape as five. Answered flat instead, the
+		// key the reader looks the dimension up by is absent, and a reader
+		// that reads an absent key as "still in flight" waits forever.
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
-		$store->set_dimensional_bucket( 'server', $bucket, [ 'web01' => [ 'c' => 5, 's' => 0.5, 'm' => 0.1 ] ] );
+		$store->set_dimensional_bucket( 'country', $bucket, [ 'PT' => [ 'c' => 23, 's' => 2.3, 'm' => 0.7 ] ] );
 
-		$interpreter     = new Performance_CI_Node();
-		$result = VerbHarness::fire(
+		$interpreter = new Performance_CI_Node();
+		$result      = VerbHarness::fire(
 			$interpreter,
 			'performance',
 			'overview',
-			'--breakdown=server'
+			'--breakdown=country'
 		);
 
-		$this->assertArrayHasKey( 'breakdown_time_series', $result );
-		$this->assertSame( 5, $result['breakdown_time_series'][ $bucket ]['web01']['c'] );
+		$this->assertSame( 23, $result['breakdowns']['country'][ $bucket ]['PT']['c'] );
+		$this->assertArrayNotHasKey( 'breakdown_time_series', $result );
 	}
 
 	public function test_overview_verb_includes_breakdowns_map_for_multi_dim(): void {
@@ -401,20 +401,20 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( 37, $result['breakdowns']['status'][ $bucket ]['2xx']['c'] );
 	}
 
-	public function test_overview_verb_breakdown_filters_unknown_dims(): void {
-		// Unknown dim names are filtered out so a typo'd query param can't surface
-		// arbitrary memcache reads (legacy L107-108 `in_array(...,DIMENSIONS,true)`).
-		$interpreter     = new Performance_CI_Node();
-		$result = VerbHarness::fire(
+	public function test_overview_verb_refuses_an_unknown_breakdown_dimension(): void {
+		// An unknown dimension still never reaches a memcache key. Dropped
+		// silently it answered about the dimensions it recognized instead,
+		// which reads on the client as a dimension that never arrives; a
+		// chart option added without its dimension has to say so.
+		$interpreter = new Performance_CI_Node();
+		$result      = VerbHarness::fire(
 			$interpreter,
 			'performance',
 			'overview',
-			'--breakdown=nosuchdim'
+			'--breakdown=server,viewport'
 		);
 
-		// No valid dims → no breakdown_time_series, no breakdowns.
-		$this->assertArrayNotHasKey( 'breakdown_time_series', $result );
-		$this->assertArrayNotHasKey( 'breakdowns', $result );
+		$this->assertStringContainsString( 'invalid breakdown dimension: viewport', $result );
 	}
 
 	public function test_overview_verb_server_scoped_categories_when_both_args(): void {
@@ -1835,7 +1835,8 @@ class PerformanceCITest extends TestCase {
 		);
 
 		$this->assertIsString( $result );
-		$this->assertStringContainsString( 'invalid breakdown', \strtolower( $result ) );
+		// Named, because the caller's own spelling is what it has to fix.
+		$this->assertStringContainsString( 'invalid breakdown dimension: nosuchdim', $result );
 	}
 
 	public function test_url_detail_verb_includes_category_time_series_when_arg_set(): void {

@@ -332,6 +332,9 @@ export default function PerformanceDashboard( { onError } ) {
 		scope: `${ SERVER }:request_search:deeplink`,
 		retry: true,
 		onDone: ( { result, args } ) => {
+			if ( deepLinkRef.current.requestId !== args[ 0 ] ) {
+				return;
+			}
 			if ( found( result ) ) {
 				applyFoundRequest( args[ 0 ], result );
 				clearDeepLinkRef.current();
@@ -348,9 +351,7 @@ export default function PerformanceDashboard( { onError } ) {
 		scope: `${ SERVER }:url_detail:deeplink`,
 		retry: true,
 		onDone: ( { result, args } ) => {
-			// A deep link loses to whatever the operator opened while waiting.
-			if ( selectedUrlRef.current ) {
-				clearDeepLinkRef.current();
+			if ( deepLinkRef.current.urlHash !== args[ 0 ] ) {
 				return;
 			}
 			selectUrlNow( {
@@ -363,6 +364,12 @@ export default function PerformanceDashboard( { onError } ) {
 
 	const clearDeepLinkRef = useRef( clearDeepLink );
 	clearDeepLinkRef.current = clearDeepLink;
+	// @longform Apply only what is STILL asked for. Both resolvers are retried
+	// reads, so their reply lands well after the operator may have closed the
+	// modal or walked Back — and an answer to a cancelled question reopened
+	// what they left, pushing a history entry over the one they walked to.
+	const deepLinkRef = useRef( deepLink );
+	deepLinkRef.current = deepLink;
 
 	// The rid answers the hash AND the partition; `?url=` is the fallback.
 	useEffect( () => {
