@@ -359,6 +359,62 @@ class ReqgrepCommandTest extends TestCase {
 		return -1;
 	}
 
+	public function test_break_keeps_a_span_the_record_still_closes(): void {
+		$cmd      = $this->make_cmd();
+		$captured = $this->capture_output( $cmd );
+
+		// The pressure fold merges entries out of the MIDDLE of `gyrobase`, so
+		// both its ends survive and its kept children belong under it. Mirrors
+		// the dashboard's CUT_INSIDE fixture in logEntryUtils.test.js.
+		$rid = 'foldR';
+		$ts  = 1700000000.0;
+		foreach ( [ 'process (start)', 'gyrobase (start)', 'entries (aggregated)', 'query_sql (start)', 'query_sql (complete)', 'gyrobase (complete)', 'process (complete)' ] as $i => $key ) {
+			$this->feed( $cmd, [ 'n' => $i + 1, 'rid' => $rid, 'k' => $key, 'm' => 'x', 'ts' => $ts + $i / 10 ] );
+		}
+		$out = self::joined( $captured );
+
+		$this->assertSame( 8, $this->indent_of( 'entries (aggregated)', $out ), 'the marker sits inside the span the fold cut open' );
+		$this->assertSame( 8, $this->indent_of( 'query_sql (start)', $out ), 'and so do the children that survived it' );
+		$this->assertSame( 4, $this->indent_of( 'gyrobase (complete)', $out ), 'gyrobase closes at its own level, not the top column' );
+	}
+
+	public function test_break_budget_unwinds_the_way_the_dashboard_does(): void {
+		$cmd      = $this->make_cmd();
+		$captured = $this->capture_output( $cmd );
+
+		// One `X (complete)` follows the marker and a second `X (start)` opens
+		// after it, so the budget the break spends on X depends on how the
+		// reading unwinds. `computeIndentedEntries()` closes the match alone.
+		// Both readings agreed before the budget existed, so this pins the
+		// rule: it is the only red in the suite if the unwind is flipped.
+		$rid = 'unwindR';
+		$ts  = 1700000000.0;
+		foreach ( [ 'process (start)', 'X (start)', 'entries (aggregated)', 'Y (start)', 'X (start)', 'Y (complete)', 'X (complete)', 'process (complete)' ] as $i => $key ) {
+			$this->feed( $cmd, [ 'n' => $i + 1, 'rid' => $rid, 'k' => $key, 'm' => 'x', 'ts' => $ts + $i / 10 ] );
+		}
+		$out = self::joined( $captured );
+
+		// The dashboard severs the head's X here and prints Y at indent 1.
+		$this->assertSame( 4, $this->indent_of( 'Y (start)', $out ), 'Y sits where the dashboard puts it' );
+		$this->assertSame( 4, $this->indent_of( 'entries (aggregated)', $out ), 'and so does the marker' );
+	}
+
+	public function test_orphaned_complete_prints_inside_the_spans_still_open(): void {
+		$cmd      = $this->make_cmd();
+		$captured = $this->capture_output( $cmd );
+
+		// A `(complete)` whose `(start)` the fold merged away has nothing to
+		// close. Printing it at the top column put it outside the request.
+		$rid = 'orphR';
+		$ts  = 1700000000.0;
+		foreach ( [ 'process (start)', 'gyrobase (start)', 'sql (complete)', 'gyrobase (complete)', 'process (complete)' ] as $i => $key ) {
+			$this->feed( $cmd, [ 'n' => $i + 1, 'rid' => $rid, 'k' => $key, 'm' => 'x', 'ts' => $ts + $i / 10 ] );
+		}
+		$out = self::joined( $captured );
+
+		$this->assertSame( 8, $this->indent_of( 'sql (complete)', $out ), 'the orphan prints where the record still is' );
+	}
+
 	public function test_indent_clamped_at_zero_on_unbalanced_complete(): void {
 		$cmd = $this->make_cmd();
 		$captured = $this->capture_output( $cmd );

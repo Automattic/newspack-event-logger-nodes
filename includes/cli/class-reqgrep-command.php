@@ -42,6 +42,7 @@ namespace Newspack_Event_Logger_Nodes\CLI;
 \defined( 'ABSPATH' ) || exit;
 
 use Newspack_Event_Logger_Nodes\Config;
+use Newspack_Event_Logger_Nodes\Flame_Tree;
 use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Reqgrep_Core;
 use Newspack_Event_Logger_Nodes\Request_Builder_Node;
@@ -112,6 +113,14 @@ class Reqgrep_Command {
 	 * @var list<string>
 	 */
 	private array $fmt_pairs = [];
+
+	/**
+	 * Keywords of the request being formatted, indexed as its entries are — what
+	 * `spans_closed_after()` reads to tell a severed span from a straddling one.
+	 *
+	 * @var list<string>
+	 */
+	private array $fmt_keys = [];
 
 	/** Formatting state — last seen timestamp. */
 	private float $fmt_last_timestamp = 0;
@@ -478,7 +487,7 @@ class Reqgrep_Command {
 	 * strings, so this is a type narrowing, not a filter that drops real data.
 	 *
 	 * @param mixed $value Decoded value.
-	 * @return array<int,string>
+	 * @return list<string>
 	 */
 	private static function to_lines( $value ): array {
 		if ( ! \is_array( $value ) ) {
@@ -495,8 +504,9 @@ class Reqgrep_Command {
 	 * Formatted mode unpacks each envelope and renders its VALUE (the entry hash);
 	 * a line that isn't a packed Message passes through verbatim.
 	 *
-	 * @param array<string> $lines Packed Message envelopes for the request.
-	 * @param string        $rid   Request id, used for the formatted header.
+	 * @param list<string> $lines Packed Message envelopes, as `to_lines()` returns them —
+	 *                            keyed 0..n-1, which is what indexes `$fmt_keys`.
+	 * @param string       $rid   Request id, used for the formatted header.
 	 */
 	private function output_request( array $lines, string $rid ): void {
 		if ( $this->raw ) {
@@ -509,6 +519,7 @@ class Reqgrep_Command {
 
 		$this->fmt_indent         = 0;
 		$this->fmt_pairs          = [];
+		$this->fmt_keys           = [];
 		$this->fmt_last_timestamp = 0;
 
 		// The rule marks the real boundary: one request ends, another begins.
@@ -522,7 +533,9 @@ class Reqgrep_Command {
 			$this->emit( \sprintf( '      %22s request_id:%s', '', $rid ) );
 		}
 
-		foreach ( $lines as $line ) {
+		// A second decode, rather than holding 20,000 decoded entries.
+		$this->fmt_keys = self::breaks( $lines ) ? self::keywords_of( $lines ) : [];
+		foreach ( $lines as $at => $line ) {
 			try {
 				$message = Message::unpacked( $line );
 			} catch ( \InvalidArgumentException $e ) {
@@ -534,7 +547,7 @@ class Reqgrep_Command {
 				$this->emit( $line );
 				continue;
 			}
-			$this->emit( $this->format_entry( $entry ) );
+			$this->emit( $this->format_entry( $entry, $at ) );
 		}
 		$this->emit( '' );
 	}
@@ -556,12 +569,12 @@ class Reqgrep_Command {
 	 * @param array<int|string,mixed> $entry Decoded JSON entry.
 	 * @return string Formatted output line.
 	 */
-	private function format_entry( array $entry ): string {
+	private function format_entry( array $entry, int $at ): string {
 		$number = Core::num_int( $entry['n'] ?? 0 );
 		$ts     = Core::num_float( $entry['ts'] ?? 0 );
 		$key    = Core::as_string( $entry['k'] ?? '' );
 
-		$this->fmt_indent = $this->indent_for( $key );
+		$this->fmt_indent = $this->indent_for( $key, $at );
 
 		$output = '';
 
@@ -645,31 +658,112 @@ class Reqgrep_Command {
 	 * is the canonical reading of this log. Both must agree, or the same request reads two ways.
 	 *
 	 * A `(complete)` matches the nearest open `(start)` OF THE SAME NAME and closes only that one,
-	 * leaving children that outlived their parent where they are; with no match it is orphaned and
-	 * prints at the top column. Names, not arithmetic, are what let a request survive an embedded
-	 * engine trace whose spans are numbered from 1 and share names with the request's own.
+	 * leaving children that outlived their parent where they are; with no match its `(start)` was
+	 * merged away, so it prints at the depth of the spans still open rather than escaping them.
+	 * Names, not arithmetic, are what let a request survive an embedded engine trace whose spans
+	 * are numbered from 1 and share names with the request's own.
 	 *
-	 * A break keyword closes every span but the request itself, which does span the break.
+	 * A break keyword drops what went missing from the MIDDLE, so a span the rest of the record
+	 * still closes spans it and keeps its children; the request's own frame always does, since
+	 * `process (aborted)` ends it without a `(complete)`. Every other open span closes at the marker.
 	 */
-	private function indent_for( string $key ): int {
+	private function indent_for( string $key, int $at ): int {
 		if ( \in_array( $key, Request_Builder_Node::SEQUENCE_BREAK_KEYS, true ) ) {
-			$outermost       = ( [] !== $this->fmt_pairs && self::OUTERMOST_PAIR === $this->fmt_pairs[0] ) ? 1 : 0;
-			$this->fmt_pairs = \array_slice( $this->fmt_pairs, 0, $outermost );
+			$budget = $this->spans_closed_after( $at );
+			for ( $i = \count( $this->fmt_pairs ) - 1; $i >= 0; $i-- ) {
+				if ( 0 === $i && self::OUTERMOST_PAIR === $this->fmt_pairs[ $i ] ) {
+					continue;
+				}
+				$owed = $budget[ $this->fmt_pairs[ $i ] ] ?? 0;
+				if ( $owed < 1 ) {
+					\array_splice( $this->fmt_pairs, $i, 1 );
+					continue;
+				}
+				$budget[ $this->fmt_pairs[ $i ] ] = $owed - 1;
+			}
 		}
-		if ( \preg_match( '/^(.+?) \(complete\)$/', $key, $matches ) ) {
+		if ( \preg_match( Flame_Tree::PATTERN_COMPLETE, $key, $matches ) ) {
 			$found = \array_keys( $this->fmt_pairs, $matches[1], true );
 			if ( [] === $found ) {
-				return 0; // Orphaned: its (start) is not in this request.
+				// Orphaned: its (start) was merged away. Print where we are.
+				return \count( $this->fmt_pairs ) * 4;
 			}
-			$at = \end( $found );
-			\array_splice( $this->fmt_pairs, $at, 1 );
-			return $at * 4;
+			$found_at = \end( $found );
+			\array_splice( $this->fmt_pairs, $found_at, 1 );
+			return $found_at * 4;
 		}
 		$indent = \count( $this->fmt_pairs ) * 4;
-		if ( \preg_match( '/^(.+?) \(start\)$/', $key, $matches ) ) {
+		if ( \preg_match( Flame_Tree::PATTERN_START, $key, $matches ) ) {
 			$this->fmt_pairs[] = $matches[1];
 		}
 		return $indent;
+	}
+
+	/**
+	 * How many spans of each base name the record closes after `$from` without having opened them
+	 * there — the spans a break falls INSIDE rather than severs. Counted, not collected: with two
+	 * frames of one name open and a single `(complete)` to come, exactly one of them straddles.
+	 *
+	 * @param int $from Index of the break keyword.
+	 * @return array<string,int> Base name to the number of `(complete)` keywords still to come.
+	 */
+	private function spans_closed_after( int $from ): array {
+		$opened = [];
+		$closed = [];
+		for ( $i = $from, $c = \count( $this->fmt_keys ); $i < $c; $i++ ) {
+			if ( \preg_match( Flame_Tree::PATTERN_START, $this->fmt_keys[ $i ], $starts ) ) {
+				$opened[] = $starts[1];
+				continue;
+			}
+			if ( ! \preg_match( Flame_Tree::PATTERN_COMPLETE, $this->fmt_keys[ $i ], $completes ) ) {
+				continue;
+			}
+			$found = \array_keys( $opened, $completes[1], true );
+			if ( [] !== $found ) {
+				// Close the match alone, as the stack this budget prunes does.
+				\array_splice( $opened, \end( $found ), 1 );
+				continue;
+			}
+			$closed[ $completes[1] ] = ( $closed[ $completes[1] ] ?? 0 ) + 1;
+		}
+		return $closed;
+	}
+
+	/**
+	 * The keyword of each line, indexed as `$lines` is — '' where a line does not unpack.
+	 *
+	 * @param list<string> $lines Packed lines of one request.
+	 * @return list<string> Keywords, one per line.
+	 */
+	private static function keywords_of( array $lines ): array {
+		$keys = [];
+		foreach ( $lines as $line ) {
+			try {
+				$value = Message::unpacked( $line )[ Message::VALUE ];
+			} catch ( \InvalidArgumentException $e ) {
+				$keys[] = '';
+				continue;
+			}
+			$keys[] = \is_array( $value ) ? Core::as_string( $value['k'] ?? '' ) : '';
+		}
+		return $keys;
+	}
+
+	/**
+	 * Whether any line of this request carries a sequence-break keyword.
+	 *
+	 * @param list<string> $lines Packed lines of one request.
+	 * @return bool True when the record breaks.
+	 */
+	private static function breaks( array $lines ): bool {
+		foreach ( $lines as $line ) {
+			foreach ( Request_Builder_Node::SEQUENCE_BREAK_KEYS as $key ) {
+				if ( false !== \strpos( $line, $key ) ) {
+					return true;
+				}
+			}
+		}
+		return false;
 	}
 
 	/**

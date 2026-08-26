@@ -164,6 +164,225 @@ describe( 'computeIndentedEntries', () => {
 		expect( out[ 4 ].pairId ).toBe( out[ 0 ].pairId );
 	} );
 
+	// The pressure fold merges entries out of the MIDDLE of a span. Both ends
+	// survive, so `gyrobase` spans the break exactly as the request does.
+	const CUT_INSIDE = [
+		{ n: 1, k: 'process (start)', ts: 1 },
+		{ n: 2, k: 'gyrobase (start)', ts: 1 },
+		{ n: 3, k: 'entries (aggregated)', ts: 1 },
+		{ n: 4, k: 'query_sql (start)', ts: 1 },
+		{ n: 5, k: 'query_sql (complete)', ts: 1 },
+		{ n: 6, k: 'gyrobase (complete)', ts: 1 },
+		{ n: 7, k: 'process (complete)', ts: 1 },
+	];
+
+	it( 'keeps a span the record still closes after the break', () => {
+		const { entries: out } = computeIndentedEntries( CUT_INSIDE );
+
+		// Marker and kept children sit INSIDE gyrobase, not beside it.
+		expect( out[ 2 ].indent ).toBe( 2 );
+		expect( out[ 3 ].indent ).toBe( 2 );
+		expect( out[ 4 ].indent ).toBe( 2 );
+		// gyrobase closes at its own level, still paired with its start.
+		expect( out[ 5 ].indent ).toBe( 1 );
+		expect( out[ 5 ].pairId ).toBe( out[ 1 ].pairId );
+		expect( out[ 6 ].indent ).toBe( 0 );
+	} );
+
+	it( 'folds a break-spanning pair down to its own merged row', () => {
+		// With the children beside it rather than under it, the collapsed scan
+		// stopped on the first one and the merged row reported no children.
+		const { entries: out } = computeIndentedEntries( CUT_INSIDE );
+		const visible = computeVisibleEntries( out, new Set() );
+
+		expect( visible.map( ( e ) => e.k ) ).toEqual( [
+			'process (start)',
+			'gyrobase',
+			'process (complete)',
+		] );
+		expect( visible[ 1 ].childCount ).toBe( 3 );
+	} );
+
+	it( 'keeps the request frame across a break no `(complete)` closes', () => {
+		// `process (aborted)` is a terminal too, and matches neither regex, so
+		// a rule keeping only spans the record CLOSES drops the request's own
+		// frame and every row after the marker escapes it. Pins behaviour the
+		// old code also had; it guards the rule, not a fix.
+		const { entries: out } = computeIndentedEntries( [
+			{ n: 1, k: 'process (start)', ts: 1 },
+			{ n: 2, k: 'loop (start)', ts: 1 },
+			{ n: 3, k: 'entries (lost)', ts: 1 },
+			{ n: 4, k: 'shutdown', ts: 1 },
+			{ n: 5, k: 'process (aborted)', ts: 1 },
+		] );
+
+		expect( out[ 2 ].indent ).toBe( 1 );
+		expect( out[ 3 ].indent ).toBe( 1 );
+		expect( out[ 4 ].indent ).toBe( 1 );
+	} );
+
+	it( 'ignores the spliced-in middle when deciding what straddles the break', () => {
+		// The splice puts the merged middle back between the marker and the
+		// tail. A tree node repeating an open span's own name emits a
+		// start-only row there, which swallowed the real `(complete)` proving
+		// the span straddles — so the head's `gyrobase` was severed after all.
+		const flame = {
+			name: 'request',
+			t: null,
+			children: [
+				{
+					name: 'process',
+					count: 1,
+					value: 900,
+					t: 0,
+					children: [
+						{
+							name: 'gyrobase',
+							count: 1,
+							value: 880,
+							t: 1,
+							children: [
+								{
+									name: 'shortcode',
+									count: 1,
+									value: 10,
+									t: 2,
+									children: [],
+								},
+								{
+									name: 'gyrobase',
+									count: 2,
+									value: 20,
+									t: 3,
+									children: [],
+								},
+							],
+						},
+					],
+				},
+			],
+		};
+		const stored = [
+			{ n: 1, k: 'process (start)', ts: 1000 },
+			{ n: 2, k: 'gyrobase (start)', ts: 1000.01 },
+			{ n: 3, k: 'entries (aggregated)', ts: 1000.01 },
+			{ n: 4, k: 'gyrobase (complete)', ts: 1002 },
+			{ n: 5, k: 'process (complete)', ts: 1002 },
+		];
+		const { entries: out } = computeIndentedEntries(
+			spliceFoldedSpans( stored, flame )
+		);
+		const byKeyword = new Map(
+			out.filter( ( e ) => e.k ).map( ( e ) => [ e.k, e.indent ] )
+		);
+
+		expect( byKeyword.get( 'entries (aggregated)' ) ).toBe( 2 );
+		expect( byKeyword.get( 'shortcode (start)' ) ).toBe( 2 );
+		expect( byKeyword.get( 'gyrobase (complete)' ) ).toBe( 1 );
+	} );
+
+	it( 'counts only real rows when a child outlives its parent', () => {
+		// `A (start) B (start) A (complete)` leaves B open under a closed A, so
+		// the two passes hold different stacks and the fold emits a start-only
+		// `B`. Counting that synthetic row consumed the real `B (complete)`
+		// and severed the frame it proves is still open.
+		// The tree `Flame_Fold` actually builds from these rows: it opens B
+		// inside A, so B's path is `process/A/B`, not `process/B`.
+		const flame = {
+			name: 'request',
+			t: null,
+			children: [
+				{
+					name: 'process',
+					count: 1,
+					value: 90,
+					t: 0,
+					children: [
+						{
+							name: 'A',
+							count: 1,
+							value: 30,
+							t: 1,
+							children: [
+								{
+									name: 'B',
+									count: 2,
+									value: 20,
+									t: 1,
+									children: [],
+								},
+							],
+						},
+					],
+				},
+			],
+		};
+		const { entries: out } = computeIndentedEntries(
+			spliceFoldedSpans(
+				[
+					{ k: 'process (start)', ts: 1000 },
+					{ k: 'A (start)', ts: 1000 },
+					{ k: 'B (start)', ts: 1000 },
+					{ k: 'A (complete)', ts: 1000 },
+					{ k: 'entries (aggregated)', ts: 1000 },
+					{ k: 'B (complete)', ts: 1002 },
+					{ k: 'process (complete)', ts: 1002 },
+				],
+				flame
+			)
+		);
+		const marker = out.find( ( e ) => 'entries (aggregated)' === e.k );
+
+		// Still inside both `process` and the `B` the record has yet to close.
+		expect( marker.indent ).toBe( 2 );
+		// `Flame_Fold::close()` pops every frame above the match, so the tree
+		// holds B at `process/A/B`. Reading it with the other unwind puts B at
+		// `process/B`, and the fold then closes a span the tail already closes.
+		// The tail's `(complete)` is owed to the B the DISPLAY leaves open —
+		// the head's — not to the frame the merged middle opened.
+		const realStart = out.find( ( e ) => 'B (start)' === e.k );
+		const realClose = out.find(
+			( e ) => 'B (complete)' === e.k && ! e.fromFold
+		);
+		expect( realClose.pairId ).toBe( realStart.pairId );
+	} );
+
+	it( 'severs the outer of two same-named frames when one complete follows', () => {
+		// The record closes `gyrobase` once, so exactly one of the two open
+		// frames straddles the break; the outer one was severed by it.
+		const { entries: out } = computeIndentedEntries( [
+			{ n: 1, k: 'process (start)', ts: 1 },
+			{ n: 2, k: 'gyrobase (start)', ts: 1 },
+			{ n: 3, k: 'gyrobase (start)', ts: 1 },
+			{ n: 4, k: 'entries (aggregated)', ts: 1 },
+			{ n: 5, k: 'query_sql (start)', ts: 1 },
+			{ n: 6, k: 'query_sql (complete)', ts: 1 },
+			{ n: 7, k: 'gyrobase (complete)', ts: 1 },
+			{ n: 8, k: 'process (complete)', ts: 1 },
+		] );
+
+		expect( out[ 3 ].indent ).toBe( 2 );
+		expect( out[ 4 ].indent ).toBe( 2 );
+		expect( out[ 6 ].indent ).toBe( 1 );
+		expect( out[ 6 ].pairId ).toBe( out[ 2 ].pairId );
+		expect( out[ 7 ].indent ).toBe( 0 );
+	} );
+
+	it( 'renders an orphaned complete inside the spans still open', () => {
+		// A `(complete)` whose `(start)` the fold merged away has nothing to
+		// close. Showing it at indent 0 put it OUTSIDE the request, beside
+		// `process (complete)`; it belongs wherever the record still is.
+		const { entries: out } = computeIndentedEntries( [
+			{ n: 1, k: 'process (start)', ts: 1 },
+			{ n: 2, k: 'gyrobase (start)', ts: 1 },
+			{ n: 3, k: 'sql (complete)', ts: 1 },
+			{ n: 4, k: 'gyrobase (complete)', ts: 1 },
+			{ n: 5, k: 'process (complete)', ts: 1 },
+		] );
+
+		expect( out[ 2 ].indent ).toBe( 2 );
+	} );
+
 	it( 'treats a lost-entries marker as the same kind of break', () => {
 		const { entries: out } = computeIndentedEntries( [
 			{ n: 1, k: 'process (start)', ts: 1 },
@@ -392,6 +611,345 @@ describe( 'getAncestorPairIds', () => {
 			{ k: 'a (start)', ts: 1 },
 		] );
 		expect( getAncestorPairIds( 100, entries ).size ).toBe( 0 );
+	} );
+} );
+
+describe( 'getAncestorPairIds for an orphaned complete', () => {
+	it( 'reveals only the spans that actually contain it', () => {
+		// An orphan has no `(start)`, so nothing at its own level encloses it.
+		// Looking there matched a preceding SIBLING pair, and clicking a search
+		// hit unfolded a span the row was never inside.
+		const { entries } = computeIndentedEntries( [
+			{ n: 1, k: 'process (start)', ts: 1 },
+			{ n: 2, k: 'gyrobase (start)', ts: 1 },
+			{ n: 3, k: 'template (start)', ts: 1 },
+			{ n: 4, k: 'template (complete)', ts: 1 },
+			{ n: 5, k: 'sql (complete)', ts: 1 },
+			{ n: 6, k: 'gyrobase (complete)', ts: 1 },
+			{ n: 7, k: 'process (complete)', ts: 1 },
+		] );
+		const orphan = entries.findIndex( ( e ) => 'sql (complete)' === e.k );
+		const ids = getAncestorPairIds( orphan, entries );
+
+		// process and gyrobase enclose it; the closed template does not.
+		expect( ids.size ).toBe( 2 );
+		expect( ids.has( entries[ 2 ].pairId ) ).toBe( false );
+	} );
+} );
+
+describe( 'a merged span beside the one the head left open', () => {
+	const node = ( name, count, children = [] ) => ( {
+		name,
+		count,
+		value: 10,
+		t: 1,
+		children,
+	} );
+	const nest = ( children ) => ( {
+		name: 'request',
+		t: null,
+		children: [ node( 'process', 1, children ) ],
+	} );
+	const indentsOf = ( stored, flame ) =>
+		computeIndentedEntries( spliceFoldedSpans( stored, flame ) )
+			.entries.filter( ( e ) => e.k )
+			.map( ( e ) => [ e.k, e.indent ] );
+
+	it( "emits the siblings that only share the open span's base name", () => {
+		// `Flame_Fold` names nodes `base: label`, so `template: Home.html` and
+		// `template: Nav.html` are distinct spans with one base. Skipping by
+		// base dissolved BOTH, and Nav's children became Home's.
+		const rows = indentsOf(
+			[
+				{ k: 'process (start)', ts: 1000 },
+				{ k: 'template (start)', l: 'Home.html', ts: 1000 },
+				{ k: 'entries (aggregated)', ts: 1000 },
+				{ k: 'template (complete)', ts: 1002 },
+				{ k: 'process (complete)', ts: 1002 },
+			],
+			nest( [
+				node( 'template: Home.html', 1, [ node( 'sql', 4 ) ] ),
+				node( 'template: Nav.html', 1, [ node( 'shortcode', 2 ) ] ),
+			] )
+		);
+		const keywords = rows.map( ( [ k ] ) => k );
+
+		expect( keywords ).toContain( 'template: Nav.html (start)' );
+		// Nav's child is inside Nav, not beside Home's.
+		expect( rows ).toContainEqual( [ 'sql (start)', 2 ] );
+		expect( rows ).toContainEqual( [ 'shortcode (start)', 3 ] );
+	} );
+
+	it( 'never reports a negative or phantom merge count', () => {
+		// `kept` counts complete pairs by path, and labelled siblings share one,
+		// so it is spent rather than re-read: otherwise the second says
+		// "0 merged" for a span nothing merged and the third goes negative.
+		// Unreachable before these siblings were emitted at all, so this pins
+		// the rule rather than proving a fix.
+		const rows = computeIndentedEntries(
+			spliceFoldedSpans(
+				[
+					{ k: 'process (start)', ts: 1000 },
+					{ k: 'template (start)', ts: 1000 },
+					{ k: 'template (complete)', ts: 1000 },
+					{ k: 'template (start)', ts: 1000 },
+					{ k: 'template (complete)', ts: 1000 },
+					{ k: 'template (start)', ts: 1000 },
+					{ k: 'entries (aggregated)', ts: 1000 },
+					{ k: 'template (complete)', ts: 1002 },
+					{ k: 'process (complete)', ts: 1002 },
+				],
+				nest( [
+					node( 'template: Home.html', 1, [ node( 'sql', 4 ) ] ),
+					node( 'template: Nav.html', 1, [ node( 'shortcode', 2 ) ] ),
+					node( 'template: Foot.html', 1, [ node( 'menu', 2 ) ] ),
+				] )
+			)
+		).entries;
+		const merges = rows
+			.filter( ( e ) => ( e.m || '' ).includes( 'merged' ) )
+			.map( ( e ) => e.m );
+
+		// Neither a negative count nor a merge that never happened.
+		expect( merges.some( ( m ) => m.startsWith( '-' ) ) ).toBe( false );
+		expect( merges ).not.toContain( '0 merged' );
+	} );
+
+	it( 'claims the labelled sibling the head actually left open', () => {
+		// `Flame_Fold::open()` names a node `base: label` and paths it by that
+		// name, though its stack still MATCHES on the base. Reading the open
+		// path as bare bases hands the claim to the first sibling sharing it —
+		// here the Nav that already closed — so Nav's children reparent onto
+		// the real open span and Home is re-emitted inside itself.
+		const rows = computeIndentedEntries(
+			spliceFoldedSpans(
+				[
+					{ k: 'process (start)', ts: 1000 },
+					{ k: 'template (start)', l: 'Nav.html', ts: 1000 },
+					{ k: 'template (complete)', ts: 1000 },
+					{ k: 'template (start)', l: 'Home.html', ts: 1000 },
+					{ k: 'entries (aggregated)', ts: 1000 },
+					{ k: 'template (complete)', ts: 1002 },
+					{ k: 'process (complete)', ts: 1002 },
+				],
+				nest( [
+					node( 'template: Nav.html', 1, [ node( 'shortcode', 2 ) ] ),
+					node( 'template: Home.html', 1, [ node( 'sql', 4 ) ] ),
+				] )
+			)
+		).entries;
+		const keywords = rows.map( ( e ) => e.k );
+
+		// Home is the span on screen, so the tree must not re-emit it.
+		expect( keywords ).not.toContain( 'template: Home.html (start)' );
+		// Nav is a different span and keeps its own frame.
+		expect( keywords ).toContain( 'template: Nav.html (start)' );
+	} );
+
+	it( 'stops carrying the chain at the end of the claimed subtree', () => {
+		// The claim is per sibling LIST, so every sibling after the claimed one
+		// used to inherit the open chain and dissolve a same-named node in its
+		// own branch. `other`'s `template` must keep its frame, and `cache`
+		// must stay inside it rather than reparenting onto `other`.
+		const rows = indentsOf(
+			[
+				{ k: 'process (start)', ts: 1000 },
+				{ k: 'gyrobase (start)', ts: 1000 },
+				{ k: 'template (start)', ts: 1000 },
+				{ k: 'entries (aggregated)', ts: 1000 },
+				{ k: 'template (complete)', ts: 1002 },
+				{ k: 'gyrobase (complete)', ts: 1002 },
+				{ k: 'process (complete)', ts: 1002 },
+			],
+			nest( [
+				node( 'gyrobase', 1, [
+					node( 'template', 1, [ node( 'sql', 2 ) ] ),
+				] ),
+				node( 'other', 2, [
+					node( 'template', 0, [ node( 'cache', 3 ) ] ),
+				] ),
+			] )
+		);
+		const keywords = rows.map( ( [ k ] ) => k );
+
+		// Two `template` rows: the head's own, and `other`'s merged one.
+		expect(
+			keywords.filter( ( k ) => k.startsWith( 'template (' ) )
+		).toHaveLength( 4 );
+		expect( rows ).toContainEqual( [ 'cache (start)', 5 ] );
+	} );
+
+	it( 'reads kept paths the way the merged tree built them', () => {
+		// `Flame_Fold::close()` pops every frame above the match, so closing X
+		// drops Y and the later Z opens at `process/Z`. Reading the log with
+		// the other unwind leaves Y on the stack and keys the kept pair
+		// `process/Y/Z`, so the tree's Z finds nothing on screen to deduct.
+		const rows = computeIndentedEntries(
+			spliceFoldedSpans(
+				[
+					{ k: 'process (start)', ts: 1000 },
+					{ k: 'X (start)', ts: 1000 },
+					{ k: 'Y (start)', ts: 1000 },
+					{ k: 'X (complete)', ts: 1000 },
+					{ k: 'Z (start)', ts: 1000 },
+					{ k: 'Z (complete)', ts: 1000 },
+					{ k: 'entries (aggregated)', ts: 1000 },
+					{ k: 'process (complete)', ts: 1002 },
+				],
+				nest( [ node( 'X', 1, [ node( 'Y', 1 ) ] ), node( 'Z', 2 ) ] )
+			)
+		).entries;
+		const merged = rows.find(
+			( e ) => e.fromFold && 'Z (complete)' === e.k
+		);
+
+		// Two ran at that path and one is on screen, so one was merged away.
+		expect( merged.m ).toBe( '1 merged' );
+	} );
+
+	it( 'attributes a kept pair to the node whose path it ran at', () => {
+		// The kept `sql` pair ran INSIDE gyrobase. Spending the count on the
+		// first same-base node visited gave it to the shallow one, dropping
+		// that span from the record and over-counting the deep one.
+		const rows = computeIndentedEntries(
+			spliceFoldedSpans(
+				[
+					{ k: 'process (start)', ts: 1000 },
+					{ k: 'gyrobase (start)', ts: 1000 },
+					{ k: 'sql (start)', ts: 1000 },
+					{ k: 'sql (complete)', ts: 1000 },
+					{ k: 'entries (aggregated)', ts: 1000 },
+					{ k: 'gyrobase (complete)', ts: 1002 },
+					{ k: 'process (complete)', ts: 1002 },
+				],
+				nest( [
+					node( 'sql', 1 ),
+					node( 'gyrobase', 1, [ node( 'sql', 3 ) ] ),
+				] )
+			)
+		).entries;
+		const starts = rows.filter( ( e ) => 'sql (start)' === e.k );
+
+		// The kept row, plus a frame for each node: base keying cancelled the
+		// shallow one against a pair that ran at the deep path.
+		expect( starts ).toHaveLength( 3 );
+		// Three ran at the deep path, one of them already on screen.
+		expect( rows.map( ( e ) => e.m ) ).toContain( '2 merged' );
+	} );
+
+	it( 'keeps claiming the open chain below a span with merged instances', () => {
+		// When the open span's node has merged instances it emits a frame
+		// rather than being skipped, and the chain has to carry on below it or
+		// the `template` the head still has open is re-emitted as a duplicate.
+		// Unreachable before that node could emit, so this pins the rule.
+		const rows = computeIndentedEntries(
+			spliceFoldedSpans(
+				[
+					{ k: 'process (start)', ts: 1000 },
+					{ k: 'gyrobase (start)', ts: 1000 },
+					{ k: 'template (start)', ts: 1000 },
+					{ k: 'entries (aggregated)', ts: 1000 },
+					{ k: 'template (complete)', ts: 1002 },
+					{ k: 'gyrobase (complete)', ts: 1002 },
+					{ k: 'gyrobase (complete)', ts: 1002 },
+					{ k: 'process (complete)', ts: 1002 },
+				],
+				nest( [
+					node( 'gyrobase', 3, [
+						node( 'template', 1, [ node( 'sql', 2 ) ] ),
+					] ),
+				] )
+			)
+		).entries;
+
+		expect(
+			rows.filter( ( e ) => 'template (start)' === e.k )
+		).toHaveLength( 1 );
+	} );
+
+	it( 'claims the open span only inside the subtree that is on the path', () => {
+		// `onScreen` resets for every sibling's child list, so a node in an
+		// unrelated subtree matched `openPath[ depth ]` and was dissolved —
+		// its frame vanished and its children rendered one level too shallow.
+		const rows = indentsOf(
+			[
+				{ k: 'process (start)', ts: 1000 },
+				{ k: 'gyrobase (start)', ts: 1000 },
+				{ k: 'entries (aggregated)', ts: 1000 },
+				{ k: 'gyrobase (complete)', ts: 1002 },
+				{ k: 'process (complete)', ts: 1002 },
+			],
+			{
+				name: 'request',
+				t: null,
+				children: [
+					node( 'process', 1, [ node( 'gyrobase', 1 ) ] ),
+					node( 'bootstrap', 1, [
+						node( 'gyrobase', 1, [ node( 'cache', 2 ) ] ),
+					] ),
+				],
+			}
+		);
+		const keywords = rows.map( ( [ k ] ) => k );
+
+		// bootstrap's own gyrobase is not the span the head left open.
+		expect( keywords ).toContain( 'bootstrap (start)' );
+		expect(
+			keywords.filter( ( k ) => 'gyrobase (start)' === k )
+		).toHaveLength( 2 );
+	} );
+
+	it( 'unwinds the stack when reading which spans the head left open', () => {
+		// Three readers share one LIFO walk, so its unwind is load-bearing:
+		// leave a CLOSED span in `openPath` and every depth shifts, so the span
+		// actually open is re-emitted as a merged frame. Pins the rule.
+		const rows = indentsOf(
+			[
+				{ k: 'process (start)', ts: 1000 },
+				{ k: 'template (start)', ts: 1000 },
+				{ k: 'template (complete)', ts: 1000 },
+				{ k: 'gyrobase (start)', ts: 1000 },
+				{ k: 'entries (aggregated)', ts: 1000 },
+				{ k: 'gyrobase (complete)', ts: 1002 },
+				{ k: 'process (complete)', ts: 1002 },
+			],
+			nest( [ node( 'gyrobase', 1, [ node( 'sql', 4 ) ] ) ] )
+		);
+		const keywords = rows.map( ( [ k ] ) => k );
+
+		expect( keywords ).toContain( 'sql (start)' );
+		// One real `gyrobase (start)`; the tree's is the same span, not a new one.
+		expect(
+			keywords.filter( ( k ) => 'gyrobase (start)' === k )
+		).toHaveLength( 1 );
+	} );
+
+	it( 'gives a middle-born span of the same name its own frame', () => {
+		// Three `gyrobase` instances merge into one node: the head's, plus two
+		// from the middle. Skipping the node whole left the second tail
+		// `(complete)` with nothing to close, orphaning it outside the request.
+		const rows = indentsOf(
+			[
+				{ k: 'process (start)', ts: 1000 },
+				{ k: 'gyrobase (start)', ts: 1000 },
+				{ k: 'entries (aggregated)', ts: 1000 },
+				{ k: 'gyrobase (complete)', ts: 1002 },
+				{ k: 'gyrobase (complete)', ts: 1002 },
+				{ k: 'process (complete)', ts: 1002 },
+			],
+			nest( [ node( 'gyrobase', 3, [ node( 'sql', 5 ) ] ) ] )
+		);
+
+		expect(
+			rows.filter( ( [ k ] ) => 'gyrobase (start)' === k )
+		).toHaveLength( 2 );
+		// Both completes close a frame inside the request; neither escapes it.
+		expect(
+			rows.filter( ( [ k ] ) => 'gyrobase (complete)' === k )
+		).toEqual( [
+			[ 'gyrobase (complete)', 2 ],
+			[ 'gyrobase (complete)', 1 ],
+		] );
 	} );
 } );
 
