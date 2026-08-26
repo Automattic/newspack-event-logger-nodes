@@ -1750,9 +1750,11 @@ class Flame_Builder_Node extends Node {
 	/**
 	 * The rehydrate closure over a partition resolver.
 	 *
-	 * The locator table is memoized in the closure, so a reader pays for ONE
-	 * index pass however many of its keys miss — which is what keeps a
-	 * leaderboard's hundreds of bucket misses off the retention window.
+	 * The keys are resolved through `Partition_Node::locate_by()`, which is
+	 * bounded by them: it walks only for keys nobody has looked up yet and
+	 * memoizes what it searched for as well as what it found, so a
+	 * leaderboard's hundreds of bucket misses cost one pass between them
+	 * rather than one each — and never a table of the whole partition.
 	 *
 	 * @param \Closure(): ?\Newspack_Nodes\Partition_Node $resolve         Where the mirror is.
 	 * @param int                                            $partition_index Keyspace the Table's keys sit in.
@@ -1766,22 +1768,30 @@ class Flame_Builder_Node extends Node {
 			if ( null === $partition ) {
 				return [];
 			}
-			$locators = $partition->locate_by( self::locate_stats_frame( ... ) );
-			$wanted   = [];
+			// Frames are filed under the FULL key; the Table asks relative.
+			$hashes = [];
 			foreach ( $keys as $key ) {
 				// The seam is public and untyped; only strings name a key.
 				if ( ! \is_string( $key ) ) {
 					continue;
 				}
-				// Frames are filed under the FULL key; the Table asks relative.
-				$at = $locators[ Log_Manager::url_hash( Stats_Store::entry_key( $partition_index, $key ) ) ] ?? null;
+				$hashes[ $key ] = Log_Manager::url_hash( Stats_Store::entry_key( $partition_index, $key ) );
+			}
+			// Bounded: otherwise a locator per key in the WHOLE partition.
+			$locators = $partition->locate_by(
+				self::locate_stats_frame( ... ),
+				\array_values( $hashes )
+			);
+			$positions = [];
+			foreach ( $hashes as $key => $hash ) {
+				$at = $locators[ $hash ] ?? null;
 				if ( null !== $at ) {
-					$wanted[ $key ] = $at;
+					$positions[ $key ] = $at;
 				}
 			}
 			$now   = Core::right_now();
 			$found = [];
-			foreach ( $partition->read_many( $wanted ) as $key => $msg ) {
+			foreach ( $partition->read_many( $positions ) as $key => $msg ) {
 				$frame = self::read_mirror_frame( $msg );
 				// A hash collision lands another key's frame; its key says so.
 				if ( null === $frame || $frame['key'] !== Stats_Store::entry_key( $partition_index, $key ) ) {
