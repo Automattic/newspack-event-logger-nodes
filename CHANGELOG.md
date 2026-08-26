@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The stats-mirror read-through asks for the keys it wants.** `Flame_Builder_Node::rehydrate_seam()` called `Partition_Node::locate_by()` unbounded, taking a locator for every key in the flame-stats partition and discarding all but the few it needed. On a large site that allocation exhausted the request and fataled the overview dashboard. It now hashes its keys once and passes them down, so the cost scales with the query.
+
+
 ## [0.61.0] - 2026-08-25
 
 ### Changed
