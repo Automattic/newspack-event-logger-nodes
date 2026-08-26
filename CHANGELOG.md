@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.62.0] - 2026-08-26
+
 ### Changed
 
 - **The overview chart breaks down by Server first.** `Server` moves to the top of the Breakdown menu and is what the chart opens on; `DEFAULT_CHART_BREAKDOWN` names it so the menu order and the default cannot drift apart. Selecting a single server still falls back to `Status Codes` — breaking one server out against itself charts a single series — and that existing reset now doubles as the default's fallback, so the menu's first entry and the selection agree in both states.
