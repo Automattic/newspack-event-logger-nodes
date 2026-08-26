@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.62.1] - 2026-08-26
+
 ### Fixed
 
 - **A span the pressure fold cut the inside out of keeps its children.** `entries (aggregated)` closed every span still open, so a `gyrobase` pair whose middle was merged away had its surviving children rendered as its siblings and its `(complete)` orphaned. A break now closes only the spans the kept rows never close, counted per name so two open frames against a single later `(complete)` sever the outer one. Folding such a pair works again too: the collapsed scan stops on a row at or above the start's own indent, which every child was.
