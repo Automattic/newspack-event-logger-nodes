@@ -39,9 +39,10 @@ const OUTERMOST_PAIR = 'process';
 
 /**
  * Keywords that announce a break in the record: entries were dropped, or merged
- * away by the pressure fold. Nothing before one of these can contain anything
- * after it, so they close every span still open — except the request itself,
- * which does span the break.
+ * away by the pressure fold. What went missing came from the MIDDLE, so a span
+ * the record closes later spans the break and keeps its surviving children —
+ * the request itself, and any job or engine pass the fold cut the inside out
+ * of. Every other span still open was severed, and closes at the marker.
  */
 const FOLD_MARKER = 'entries (aggregated)';
 const SEQUENCE_BREAK_KEYWORDS = new Set( [ 'entries (lost)', FOLD_MARKER ] );
@@ -198,6 +199,104 @@ const formatTimeDisplay = ( ts, lastHundredth ) => {
  */
 
 /**
+ * Walk `(start)`/`(complete)` rows, LIFO, reporting every `(complete)` as it
+ * matches. THE pair walk: three readers want one, differing only in what they
+ * accumulate and whether the rows the splice injected count.
+ *
+ * Frames carry both names the tree uses: it MATCHES a `(complete)` on the base
+ * but PATHS the span by `base: label`, so a reader keying paths needs `name`
+ * and a reader counting spans needs `base`.
+ *
+ * `onClose( base, at, opened )` sees the base name, the stack index its
+ * `(start)` sat at (-1 when nothing opened it), and the stack before unwinding,
+ * whose first `at` frames are the span's ancestors.
+ *
+ * `outlive` picks WHICH unwind, and the two readers genuinely differ. The
+ * merged tree pops every frame above the match — `Flame_Fold::close()` is
+ * "pop everything above it" — so its paths and depths only line up with a
+ * truncating walk. `computeIndentedEntries` closes the match alone, leaving a
+ * child that outlived its parent open, so the budget feeding its stack has to
+ * count the same way. Sharing one unwind mis-nests whichever reader loses.
+ *
+ * @param {Array}    entries        Rows, spliced or not.
+ * @param {Object}   opts           Bounds, filter and unwind.
+ * @param {number}   [opts.from]    Index to start at.
+ * @param {number}   [opts.to]      Exclusive index to stop at.
+ * @param {boolean}  [opts.folded]  Whether rows the splice injected count.
+ * @param {boolean}  [opts.outlive] Whether a child outliving its parent stays.
+ * @param {Function} [onClose]      Called per matched or orphaned `(complete)`.
+ * @return {Array} `{ base, name }` frames still open, innermost last.
+ */
+const walkPairs = (
+	entries,
+	{ from = 0, to = entries.length, folded = true, outlive = false },
+	onClose
+) => {
+	const opened = [];
+	for ( let i = from; i < to; i++ ) {
+		const entry = entries[ i ];
+		if ( ! folded && entry.fromFold ) {
+			continue;
+		}
+		const keyword = entry.k || '';
+		const starts = keyword.match( START_REGEX );
+		if ( starts ) {
+			const base = starts[ 1 ];
+			opened.push( {
+				base,
+				name: entry.l ? `${ base }: ${ entry.l }` : base,
+			} );
+			continue;
+		}
+		const completes = keyword.match( COMPLETE_REGEX );
+		if ( ! completes ) {
+			continue;
+		}
+		let at = -1;
+		for ( let j = opened.length - 1; j >= 0; j-- ) {
+			if ( opened[ j ].base === completes[ 1 ] ) {
+				at = j;
+				break;
+			}
+		}
+		onClose?.( completes[ 1 ], at, opened );
+		if ( at >= 0 ) {
+			opened.splice( at, outlive ? 1 : opened.length - at );
+		}
+	}
+	return opened;
+};
+
+/**
+ * How many spans of each base name the KEPT rows close after `from` without
+ * having opened them there — the spans a break falls INSIDE rather than severs.
+ *
+ * Counted, not collected: with two frames of one name open and a single
+ * `(complete)` to come, exactly one of them straddles the break.
+ *
+ * Rows the splice put back are skipped. They are the merged MIDDLE of these
+ * very spans, and a synthetic `(start)` repeating an open span's name would
+ * otherwise swallow the real `(complete)` that proves the span straddles.
+ *
+ * @param {Array}  entries Rows, spliced or not.
+ * @param {number} from    Index to start at (the marker).
+ * @return {Map} Base name to the number of `(complete)` rows still to come.
+ */
+const spansClosedAfter = ( entries, from ) => {
+	const closed = new Map();
+	walkPairs(
+		entries,
+		{ from, folded: false, outlive: true },
+		( name, at ) => {
+			if ( at < 0 ) {
+				closed.set( name, ( closed.get( name ) || 0 ) + 1 );
+			}
+		}
+	);
+	return closed;
+};
+
+/**
  * Compute indentation levels for log entries based on (start)/(complete) pairs.
  * Uses LIFO name matching to handle improperly nested events.
  * Adds time display: timestamps at 100ms marks, bullets at 10ms marks.
@@ -221,7 +320,7 @@ export const computeIndentedEntries = ( entries ) => {
 	const pairStack = [];
 	let pairCounter = 0;
 
-	entries.forEach( ( entry ) => {
+	entries.forEach( ( entry, idx ) => {
 		const keyword = entry.k || '';
 		const ts = entry.ts || 0;
 
@@ -244,13 +343,21 @@ export const computeIndentedEntries = ( entries ) => {
 
 		const isBreak = SEQUENCE_BREAK_KEYWORDS.has( keyword );
 
-		// Left open, a severed span adopts every row after it.
+		// Drop the spans the break severed, before they adopt what follows.
 		if ( isBreak ) {
-			const outermost =
-				pairStack.length > 0 && pairStack[ 0 ].name === OUTERMOST_PAIR
-					? 1
-					: 0;
-			pairStack.length = outermost;
+			const budget = spansClosedAfter( entries, idx );
+			for ( let i = pairStack.length - 1; i >= 0; i-- ) {
+				// The request IS the record; `process (aborted)` closes it too.
+				if ( 0 === i && OUTERMOST_PAIR === pairStack[ i ].name ) {
+					continue;
+				}
+				const owed = budget.get( pairStack[ i ].name ) || 0;
+				if ( owed < 1 ) {
+					pairStack.splice( i, 1 );
+					continue;
+				}
+				budget.set( pairStack[ i ].name, owed - 1 );
+			}
 		}
 
 		// Current indent is stack depth.
@@ -316,8 +423,8 @@ export const computeIndentedEntries = ( entries ) => {
 				pairId,
 			} );
 		} else if ( completeMatch ) {
-			// No matching start - orphaned complete, show at indent 0.
-			result.push( { ...entry, indent: 0, pairId: null } );
+			// Orphan: its start was merged away. Show it where the record is.
+			result.push( { ...entry, indent, pairId: null } );
 		} else {
 			// Non-start/complete entry - use current stack depth.
 			pairId =
@@ -337,60 +444,10 @@ export const computeIndentedEntries = ( entries ) => {
  *
  * @param {Array}  entries Stored entries.
  * @param {number} upto    Exclusive index to stop at.
- * @return {Array} Base names of the spans still open.
+ * @return {Array} Tree node names of the spans still open.
  */
-const openSpansAt = ( entries, upto ) => {
-	const stack = [];
-	for ( let i = 0; i < upto; i++ ) {
-		const keyword = entries[ i ].k || '';
-		const opened = keyword.match( START_REGEX );
-		if ( opened ) {
-			stack.push( opened[ 1 ] );
-			continue;
-		}
-		const closed = keyword.match( COMPLETE_REGEX );
-		if ( ! closed ) {
-			continue;
-		}
-		const at = stack.lastIndexOf( closed[ 1 ] );
-		if ( at >= 0 ) {
-			stack.length = at;
-		}
-	}
-	return stack;
-};
-
-/**
- * Base names the kept TAIL closes without having opened — spans that began in
- * the folded middle and end after it.
- *
- * @param {Array}  entries Stored entries.
- * @param {number} from    Index to start at (the marker).
- * @return {Set} Base names whose `(complete)` the tail supplies.
- */
-const tailClosedNames = ( entries, from ) => {
-	const opened = [];
-	const closed = new Set();
-	for ( let i = from; i < entries.length; i++ ) {
-		const keyword = entries[ i ].k || '';
-		const starts = keyword.match( START_REGEX );
-		if ( starts ) {
-			opened.push( starts[ 1 ] );
-			continue;
-		}
-		const completes = keyword.match( COMPLETE_REGEX );
-		if ( ! completes ) {
-			continue;
-		}
-		const at = opened.lastIndexOf( completes[ 1 ] );
-		if ( at >= 0 ) {
-			opened.length = at;
-			continue;
-		}
-		closed.add( completes[ 1 ] );
-	}
-	return closed;
-};
+const openSpansAt = ( entries, upto ) =>
+	walkPairs( entries, { to: upto } ).map( ( frame ) => frame.name );
 
 /**
  * How many complete pairs of each base name the KEPT rows already show.
@@ -399,29 +456,23 @@ const tailClosedNames = ( entries, from ) => {
  * so those instances are counted in the merged nodes as well. A node whose
  * whole count is already on screen is a ghost of rows the reader can see.
  *
+ * Keyed by the PATH the pair ran at, because the tree merges by path too: a
+ * `sql` inside `gyrobase` must not cancel out a `sql` beside it.
+ *
  * @param {Array} entries Stored entries — kept head, marker, kept tail.
- * @return {Map} Base name to the number of complete pairs kept.
+ * @return {Map} Slash-joined base-name path to the number of complete pairs kept.
  */
 const keptPairCounts = ( entries ) => {
 	const counts = new Map();
-	const opened = [];
-	entries.forEach( ( entry ) => {
-		const keyword = entry.k || '';
-		const starts = keyword.match( START_REGEX );
-		if ( starts ) {
-			opened.push( starts[ 1 ] );
-			return;
-		}
-		const completes = keyword.match( COMPLETE_REGEX );
-		if ( ! completes ) {
-			return;
-		}
-		const at = opened.lastIndexOf( completes[ 1 ] );
+	walkPairs( entries, {}, ( name, at, opened ) => {
 		if ( at < 0 ) {
 			return;
 		}
-		opened.length = at;
-		counts.set( completes[ 1 ], ( counts.get( completes[ 1 ] ) || 0 ) + 1 );
+		const path = opened
+			.slice( 0, at + 1 )
+			.map( ( frame ) => frame.name )
+			.join( '/' );
+		counts.set( path, ( counts.get( path ) || 0 ) + 1 );
 	} );
 	return counts;
 };
@@ -438,58 +489,108 @@ const keptPairCounts = ( entries ) => {
  * Rows carry a real `ts`, derived from the node's own start offset against the
  * request origin, so the view rules and gaps them like any other row.
  *
- * Spans that STRADDLE a boundary are not emitted twice. One already open when
- * the head ended is skipped whole — that row exists. One the tail CLOSES but
- * never opened began in the middle: the tree opens it and the tail's real
- * `(complete)` closes it, so the merged half is left off.
+ * Spans that STRADDLE a boundary are not emitted twice. The one instance open
+ * when the head ended is skipped — that row exists, and its tail `(complete)`
+ * was already deducted. Instances the node merged BEYOND that one began
+ * in the middle and do get a frame, as does a sibling merely sharing the base
+ * name. A frame the tail closes with a complete no open span claimed leaves its
+ * own `(complete)` off, because that real one closes it.
  *
  * Durations stay INCLUSIVE, as every other duration in the log is.
  *
  * @param {?Object} flame    Merged tree from Flame_Fold::tree().
  * @param {Array}   openPath Base names the kept head left open, outermost first.
- * @param {Set}     tailEnds Base names the kept tail closes on the tree's behalf.
- * @param {Map}     kept     Base name to complete pairs the kept rows already show.
+ * @param {Map}     tailEnds Base name to completes left over for the tree, the
+ *                           spans the display leaves open having taken theirs.
+ * @param {Map}     kept     Path to complete pairs the kept rows already show.
  * @param {number}  originTs Unix seconds the request started at.
  * @return {Array} Synthetic log entries.
  */
 const foldedSpanEntries = ( flame, openPath, tailEnds, kept, originTs ) => {
 	const rows = [];
+	const owedByName = new Map( tailEnds );
+	const unshown = new Map( kept );
 	const stampOf = ( node ) =>
 		Number.isFinite( node.t ) && Number.isFinite( originTs )
 			? originTs + node.t / 1000
 			: 0;
 
-	const walk = ( nodes, depth ) => {
+	const walk = ( nodes, depth, onChain, path ) => {
+		// The head left ONE span open here, not every node sharing its base.
+		let onScreen = false;
 		( nodes || [] ).forEach( ( node ) => {
-			const base = String( node.name ).split( ': ' )[ 0 ];
-			if ( openPath[ depth ] === base ) {
-				walk( node.children, depth + 1 );
-				return;
-			}
-			// Already on screen: re-emitting shows a "1 merged" ghost of it.
-			const shown = kept.get( base ) || 0;
-			const merged = Number( node.count ) - shown;
-			if ( merged < 1 && ! node.children?.length ) {
+			const name = String( node.name );
+			const base = name.split( ': ' )[ 0 ];
+			const here = '' === path ? name : `${ path }/${ name }`;
+			// Spent once: labelled siblings share a path.
+			const owns = Math.min(
+				Number( node.count ),
+				unshown.get( here ) || 0
+			);
+			unshown.set( here, ( unshown.get( here ) || 0 ) - owns );
+			const merged = Number( node.count ) - owns;
+			const claimed = onChain && ! onScreen && openPath[ depth ] === name;
+			if ( claimed ) {
+				onScreen = true;
+				// Instances past it began in the middle and need a frame.
+				if ( merged < 1 ) {
+					walk( node.children, depth + 1, true, here );
+					return;
+				}
+			} else if ( merged < 1 && ! node.children?.length ) {
 				return;
 			}
 			const ts = stampOf( node );
-			rows.push( { n: '', k: `${ node.name } (start)`, m: '', ts } );
-			walk( node.children, depth + 1 );
-			if ( tailEnds.has( base ) ) {
+			rows.push( {
+				n: '',
+				k: `${ node.name } (start)`,
+				m: '',
+				ts,
+				fromFold: true,
+			} );
+			walk( node.children, depth + 1, claimed, here );
+			// One complete closes one node, not every node of the name.
+			const owed = owedByName.get( base ) || 0;
+			if ( owed > 0 ) {
+				owedByName.set( base, owed - 1 );
 				return;
 			}
 			rows.push( {
 				n: '',
 				k: `${ node.name } (complete)`,
-				m: `${ merged.toLocaleString() } merged`,
+				m: merged < 1 ? '' : `${ merged.toLocaleString() } merged`,
 				ts,
 				duration_ms: node.value,
+				fromFold: true,
 			} );
 		} );
 	};
 
-	walk( flame?.children, 0 );
+	walk( flame?.children, 0, true, '' );
 	return rows;
+};
+
+/**
+ * The tail `(complete)` rows left over for the merged tree.
+ *
+ * Spans the DISPLAY leaves open take theirs first: a tail row closing one of
+ * those closes it on screen, whatever the tree merged underneath. Which spans
+ * those are is the outlive reading, not the truncating path the tree indexes
+ * by — they differ exactly when a child outlives its parent.
+ *
+ * @param {Array}  entries Stored entries.
+ * @param {number} at      Index of the marker.
+ * @return {Map} Base name to the completes the tree may still claim.
+ */
+const owedToTree = ( entries, at ) => {
+	const owed = spansClosedAfter( entries, at );
+	walkPairs( entries, { to: at, outlive: true } ).forEach( ( frame ) => {
+		const left = owed.get( frame.base ) || 0;
+		if ( left > 0 ) {
+			owed.set( frame.base, left - 1 );
+		}
+	} );
+	return owed;
 };
 
 /**
@@ -516,7 +617,7 @@ export const spliceFoldedSpans = ( entries, flame ) => {
 		...foldedSpanEntries(
 			flame,
 			openSpansAt( entries, at ),
-			tailClosedNames( entries, at ),
+			owedToTree( entries, at ),
 			keptPairCounts( entries ),
 			origin
 		),
@@ -760,7 +861,8 @@ export const getAncestorPairIds = ( targetIdx, indentedEntries ) => {
 	}
 
 	// Walk back to the nearest enclosing start pairId per indent level.
-	let needIndent = isComplete ? targetEntry.indent : targetEntry.indent - 1;
+	const closesOwn = isComplete && hasPair( targetEntry );
+	let needIndent = closesOwn ? targetEntry.indent : targetEntry.indent - 1;
 	for ( let i = targetIdx - 1; i >= 0 && needIndent >= 0; i-- ) {
 		const e = indentedEntries[ i ];
 		if (
