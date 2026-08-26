@@ -7,10 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The overview chart breaks down by Server first.** `Server` moves to the top of the Breakdown menu and is what the chart opens on; `DEFAULT_CHART_BREAKDOWN` names it so the menu order and the default cannot drift apart. Selecting a single server still falls back to `Status Codes` — breaking one server out against itself charts a single series — and that existing reset now doubles as the default's fallback, so the menu's first entry and the selection agree in both states.
+
 ### Fixed
 
 - **The stats-mirror read-through asks for the keys it wants.** `Flame_Builder_Node::rehydrate_seam()` called `Partition_Node::locate_by()` unbounded, taking a locator for every key in the flame-stats partition and discarding all but the few it needed. On a large site that allocation exhausted the request and fataled the overview dashboard. It now hashes its keys once and passes them down, so the cost scales with the query.
-
 
 ## [0.61.0] - 2026-08-25
 
@@ -168,7 +171,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - **The checkpoint-budget tripwire now says what did not fit.** ADR-11 calls this log "the only tripwire that can tell you" the carry budget is set wrong, and it reported a bare count — so a hub firing it seventeen times in three hours still could not say which frame overflowed, how big it was, or how far over the budget it sat. It now names the largest dropped frame, its size, the budget and the held total — the two numbers a budget is actually set from. The count moved into `print_less_often`'s `$extra`, which is printed but not keyed: with it in the message text, "1 over" and "2 over" were two separate rate-limit timers, so the alternating counts minted two timers where one was intended. The observed volume was well inside the allowance either way; the fix stands on correctness, not on noise.
 - **ADR-11's reopen condition was permanently satisfied, which is the same as having none.** It said to revisit when this log fires routinely. But the largest frames are the per-server leaderboards and that axis grows with an operator input, so on any multi-spoke hub it fires as a matter of course — a staging hub with ~25 spokes trips it a few times an hour, dropping one or two frames, and a dropped frame is re-merged from memcache on the next write anyway. Decision 11 now records that dropping the biggest IS the design, and states a reopen condition the enriched log can actually answer: when the held total runs at a MULTIPLE of the budget rather than just past it, or when the largest dropped frame is not a per-server leaderboard. `mirror_held_bytes` / `mirror_held_frames` join the GET_STATS payload so the total is readable BEFORE it trips — a threshold you can only observe after the fact is not a signal. The budget stays at 262144 until a measurement moves it, and decision 11 now also records what actually bounds it from above (the offsetlog ring, not the record cliff) and that the real lever is upstream: the per-server namespaces have no rank cap, so the held set grows O(servers) and any fixed budget eventually loses to fleet size.
-
 
 ## [0.58.4] - 2026-08-22
 
@@ -378,7 +380,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Repinned to newspack-nodes v2.30.1, which stops the log viewers double-compensating their scroll position: scrolled into history, new rows shifted the list by more than the rows that arrived. Request Log and Error Log inherit the fix through the shared `LogRowList`.
 
-
 ## [0.55.0] - 2026-08-14
 
 ### Fixed
@@ -389,7 +390,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The partition travels WITH the selection** from every entry point — deep link, request row, scatter-plot dot — instead of being reconstructed downstream. `onSelectRequest` now receives `( rid, partition )`.
 - A selected request whose detail has not arrived renders a pending or error state instead of a blank panel, and the Back button survives a request that failed to load. An unresolvable partition reports an error rather than returning before even the loading state.
 - Request Log and Error Log inherit the substrate's ingest-gate filtering; their match predicates moved onto their view nodes as `matchesFilter()` overrides.
-
 
 ## [0.54.0] - 2026-08-14
 
@@ -526,7 +526,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `marginTop: 20px` — so the two rows now read as one rule rather than two
   spacings that happened to agree.
 
-
 ## [0.51.3] - 2026-08-11
 
 ### Removed
@@ -548,7 +547,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ShellNode.sendCommand()` / `parse()`+`dispatch()` pair, so no source change
   was needed — but the inlined overlay is only rebuilt against the new
   substrate by a release, which is what this one is for.
-
 
 ## [0.51.2] - 2026-08-11
 
@@ -1793,7 +1791,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tail: `node_schema()` defaults each retention arg to its `<config:…>` token,
   so an omitted tail is not an unset one.
 
-
 ## [0.43.10] - 2026-07-31
 
 ### Fixed
@@ -1813,7 +1810,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   runs from each `pre-push`. It caught three `make_node` examples in
   event-logger-nodes documenting a retention arg list the shipped topology never
   passes.
-
 
 ## [0.43.9] - 2026-07-31
 
@@ -1837,7 +1833,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gate.** Function-level prose moved into docblocks, inline prose condensed to
   one line; four algorithm notes that genuinely need the length carry
   `@longform`. No behavior change — the tool's own test still passes 38/38.
-
 
 ## [0.43.8] - 2026-07-31
 
@@ -1868,7 +1863,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dependency, and cghooks-installed `.git/hooks` files are now dead files git
   ignores.
 
-
 ## [0.43.7] - 2026-07-31
 
 ### Fixed
@@ -1882,7 +1876,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dependency this plugin owns is now pinned to its own copy. Verified by
   building against a substrate checkout carrying `node_modules` and diffing the
   result against the published release: byte-identical.
-
 
 ## [0.43.6] - 2026-07-31
 

@@ -44,4 +44,9 @@ describe( 'overview/constants', () => {
 		expect( values ).toContain( 'status' );
 		expect( values ).toContain( 'server' );
 	} );
+
+	it( 'offers Server first, since it is what the chart defaults to', () => {
+		expect( mod.CHART_BREAKDOWN_OPTIONS[ 0 ].value ).toBe( 'server' );
+		expect( mod.DEFAULT_CHART_BREAKDOWN ).toBe( 'server' );
+	} );
 } );

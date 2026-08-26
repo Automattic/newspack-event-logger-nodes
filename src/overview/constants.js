@@ -69,15 +69,16 @@ export const CHART_METRIC_OPTIONS = [
  * first place). A value in only one of the three yields an empty breakdown.
  *
  * `OverviewSection` filters `server` out while a server filter is active, since
- * the chart would then split a single server against itself.
+ * the chart would then split a single server against itself — and because it is
+ * the default, that same effect resets the selection to `status`.
  */
 export const CHART_BREAKDOWN_OPTIONS = [
+	{ label: __( 'Server', 'newspack-event-logger-nodes' ), value: 'server' },
 	{
 		label: __( 'Status Codes', 'newspack-event-logger-nodes' ),
 		value: 'status',
 	},
 	{ label: __( 'Method', 'newspack-event-logger-nodes' ), value: 'method' },
-	{ label: __( 'Server', 'newspack-event-logger-nodes' ), value: 'server' },
 	{
 		label: __( 'Country', 'newspack-event-logger-nodes' ),
 		value: 'country',
@@ -86,3 +87,11 @@ export const CHART_BREAKDOWN_OPTIONS = [
 	{ label: __( 'User Agent', 'newspack-event-logger-nodes' ), value: 'ua' },
 	{ label: __( 'JA4 Hash', 'newspack-event-logger-nodes' ), value: 'ja4' },
 ];
+
+/**
+ * What the aggregate chart breaks down by until someone chooses otherwise.
+ *
+ * `OverviewSection` swaps it for `status` while a server filter is active,
+ * because breaking a single server out against itself charts one series.
+ */
+export const DEFAULT_CHART_BREAKDOWN = 'server';

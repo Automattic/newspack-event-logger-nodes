@@ -38,7 +38,10 @@ import {
 	computeIndentedEntries,
 	spliceFoldedSpans,
 } from './utils/logEntryUtils';
-import { DASHBOARD_REFRESH_OPTIONS } from './constants';
+import {
+	DASHBOARD_REFRESH_OPTIONS,
+	DEFAULT_CHART_BREAKDOWN,
+} from './constants';
 import {
 	usePerformanceGraph,
 	SERVER,
@@ -106,7 +109,9 @@ export default function PerformanceDashboard( { onError } ) {
 	const [ serverFilter, setServerFilter ] = useState( '' );
 
 	// Breakdown selector state (lifted so the dim rides combined /overview).
-	const [ chartBreakdown, setChartBreakdown ] = useState( 'status' );
+	const [ chartBreakdown, setChartBreakdown ] = useState(
+		DEFAULT_CHART_BREAKDOWN
+	);
 
 	const [ searchQuery, setSearchQuery ] = useState( '' );
 	const [ searchError, setSearchError ] = useState( null );
