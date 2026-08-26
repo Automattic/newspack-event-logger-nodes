@@ -286,6 +286,7 @@ jest.mock( '@wordpress/components', () => ( {
 } ) );
 
 import * as React from 'react';
+import { DEFAULT_CHART_BREAKDOWN } from '../constants';
 import PerformanceDashboard from '../PerformanceDashboard';
 import { renderComponent, act } from '../../test-helpers/renderHook';
 
@@ -476,9 +477,10 @@ describe( 'PerformanceDashboard', () => {
 		await flushEffects();
 		// categoryData truthy.
 		expect( globalThis.__overviewProps.categoryData ).toBeTruthy();
-		// breakdownData equals the active default dim (status).
+		// Whatever the default dim is, breakdownData is THAT slice — naming it
+		// here rather than a literal keeps the test honest if the default moves.
 		expect( globalThis.__overviewProps.breakdownData ).toEqual(
-			mockView.overview.data.breakdowns.status
+			mockView.overview.data.breakdowns[ DEFAULT_CHART_BREAKDOWN ]
 		);
 		// serverNames extracted from the server breakdown.
 		expect( globalThis.__overviewProps.serverNames ).toContain( 'edge-01' );
