@@ -97,9 +97,6 @@ class Reqgrep_Command {
 	 */
 	private string $cat_offset = 'start';
 
-	/** The outermost pair: the request itself, which spans any break in the record. */
-	private const OUTERMOST_PAIR = 'process';
-
 	/** True once a request has been printed, so the rule falls BETWEEN requests only. */
 	private bool $fmt_printed_request = false;
 
@@ -121,6 +118,9 @@ class Reqgrep_Command {
 	 * @var list<string>
 	 */
 	private array $fmt_keys = [];
+
+	/** True when this record carries a fold marker, so no interval in it is measurable. */
+	private bool $fmt_folded = false;
 
 	/** Formatting state — last seen timestamp. */
 	private float $fmt_last_timestamp = 0;
@@ -520,6 +520,7 @@ class Reqgrep_Command {
 		$this->fmt_indent         = 0;
 		$this->fmt_pairs          = [];
 		$this->fmt_keys           = [];
+		$this->fmt_folded         = false;
 		$this->fmt_last_timestamp = 0;
 
 		// The rule marks the real boundary: one request ends, another begins.
@@ -534,7 +535,8 @@ class Reqgrep_Command {
 		}
 
 		// A second decode, rather than holding 20,000 decoded entries.
-		$this->fmt_keys = self::breaks( $lines ) ? self::keywords_of( $lines ) : [];
+		$this->fmt_keys   = self::breaks( $lines ) ? self::keywords_of( $lines ) : [];
+		$this->fmt_folded = \in_array( Request_Builder_Node::FOLD_MARKER_KEY, $this->fmt_keys, true );
 		foreach ( $lines as $at => $line ) {
 			try {
 				$message = Message::unpacked( $line );
@@ -585,7 +587,7 @@ class Reqgrep_Command {
 			$time_str = \gmdate( 'Y-m-d H:i:s', (int) $ts ) . ".{$tenth}";
 
 			// Dot rows at escalating intervals so long gaps stay O(log gap).
-			if ( $this->fmt_last_timestamp ) {
+			if ( $this->fmt_last_timestamp && $this->measurable( $at ) ) {
 				$last_sec = (int) $this->fmt_last_timestamp;
 				$curr_sec = (int) $ts;
 				if ( $curr_sec > $last_sec + 1 ) {
@@ -653,6 +655,29 @@ class Reqgrep_Command {
 	}
 
 	/**
+	 * Whether the interval before the entry at `$at` is elapsed TIME the ruler may draw, which
+	 * `computeIndentedEntries()` decides the same way for the dashboard.
+	 *
+	 * A sequence-break marker stands in for entries that were REMOVED, so the intervals either
+	 * side of one are missing detail rather than idle time, and a folded record has no measurable
+	 * interval anywhere: everything past its marker was selected out of the middle rather than
+	 * kept consecutive. Ruling it anyway printed ten minutes of dots for a fold that took none.
+	 *
+	 * @param int $at Index of the entry being formatted.
+	 * @return bool True when the gap before it may be ruled.
+	 */
+	private function measurable( int $at ): bool {
+		if ( $this->fmt_folded ) {
+			return false;
+		}
+		$breaks = Request_Builder_Node::SEQUENCE_BREAK_KEYS;
+		if ( \in_array( $this->fmt_keys[ $at ] ?? '', $breaks, true ) ) {
+			return false;
+		}
+		return ! \in_array( $this->fmt_keys[ $at - 1 ] ?? '', $breaks, true );
+	}
+
+	/**
 	 * The indent column for one entry, and the pair-stack move that goes with it — the CLI half
 	 * of the dashboard's `computeIndentedEntries()` (`src/overview/utils/logEntryUtils.js`), which
 	 * is the canonical reading of this log. Both must agree, or the same request reads two ways.
@@ -664,23 +689,11 @@ class Reqgrep_Command {
 	 * are numbered from 1 and share names with the request's own.
 	 *
 	 * A break keyword drops what went missing from the MIDDLE, so a span the rest of the record
-	 * still closes spans it and keeps its children; the request's own frame always does, since
-	 * `process (aborted)` ends it without a `(complete)`. Every other open span closes at the marker.
+	 * still closes spans it and keeps its children; `prune_severed_spans()` owns that rule.
 	 */
 	private function indent_for( string $key, int $at ): int {
 		if ( \in_array( $key, Request_Builder_Node::SEQUENCE_BREAK_KEYS, true ) ) {
-			$budget = $this->spans_closed_after( $at );
-			for ( $i = \count( $this->fmt_pairs ) - 1; $i >= 0; $i-- ) {
-				if ( 0 === $i && self::OUTERMOST_PAIR === $this->fmt_pairs[ $i ] ) {
-					continue;
-				}
-				$owed = $budget[ $this->fmt_pairs[ $i ] ] ?? 0;
-				if ( $owed < 1 ) {
-					\array_splice( $this->fmt_pairs, $i, 1 );
-					continue;
-				}
-				$budget[ $this->fmt_pairs[ $i ] ] = $owed - 1;
-			}
+			$this->prune_severed_spans( $at );
 		}
 		if ( \preg_match( Flame_Tree::PATTERN_COMPLETE, $key, $matches ) ) {
 			$found = \array_keys( $this->fmt_pairs, $matches[1], true );
@@ -697,6 +710,37 @@ class Reqgrep_Command {
 			$this->fmt_pairs[] = $matches[1];
 		}
 		return $indent;
+	}
+
+	/**
+	 * Drop the spans a break severed, before they adopt the rows that follow.
+	 *
+	 * A span survives where the record still closes it after the break, counted per name so two
+	 * open frames against one later `(complete)` sever the outer one. Only the request's own frame
+	 * is exempt: `process (aborted)` is a terminal that matches no `(complete)`, so nothing can
+	 * close it here. Every OTHER span gets one, because a producer drains its open stack as
+	 * `(orphaned)` completes before writing any terminal — `Log_Manager::finish()` and
+	 * `Gyrobase::Log::_unwind_to()` both do — so a span still open was cut by the fold.
+	 *
+	 * The dashboard's `pruneSeveredSpans()` is the same rule; the two must agree.
+	 *
+	 * @param int $at Index of the break keyword.
+	 */
+	private function prune_severed_spans( int $at ): void {
+		$budget = $this->spans_closed_after( $at );
+		for ( $i = \count( $this->fmt_pairs ) - 1; $i >= 0; $i-- ) {
+			// The request IS the record; its terminal closes it.
+			if ( 0 === $i && Log_Manager::REQUEST_LABEL === $this->fmt_pairs[ $i ] ) {
+				continue;
+			}
+			$name = $this->fmt_pairs[ $i ];
+			$owed = $budget[ $name ] ?? 0;
+			if ( $owed < 1 ) {
+				\array_splice( $this->fmt_pairs, $i, 1 );
+				continue;
+			}
+			$budget[ $name ] = $owed - 1;
+		}
 	}
 
 	/**
@@ -750,7 +794,7 @@ class Reqgrep_Command {
 	}
 
 	/**
-	 * Whether any line of this request carries a sequence-break keyword.
+	 * Whether any line of this request CONTAINS a sequence-break keyword — the substring test reads the whole packed line, so a marker quoted in a message body counts, costing one wasted keywords_of() pass and nothing else.
 	 *
 	 * @param list<string> $lines Packed lines of one request.
 	 * @return bool True when the record breaks.

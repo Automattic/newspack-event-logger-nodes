@@ -560,7 +560,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				$ts     = Core::num_float( $entry['ts'] ?? 0 );
 				$ts_set = true;
 			}
-			if ( 'process (start)' === $key ) {
+			if ( Log_Manager::REQUEST_START === $key ) {
 				$ts = Core::num_float( $entry['ts'] ?? $ts );
 			}
 			if ( 'request' === $key && '' === $method ) {

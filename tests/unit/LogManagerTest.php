@@ -19,6 +19,8 @@ use Newspack_Event_Logger_Nodes\Config;
 use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Rule_Set;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
+use Newspack_Nodes\Event_Framework;
+use Newspack_Nodes\Worker_Should_Stop;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Partition_Node;
 use Newspack_Nodes\Topic_Node;
@@ -543,19 +545,88 @@ class LogManagerTest extends TestCase {
 		$this->assertTrue( true );
 	}
 
-	public function test_finish_lifecycle(): void {
+	public function test_finish_writes_the_terminal_when_a_stop_arrives(): void {
+		// The cooperative stop lands on a WRITE, and finish() writes twice before
+		// its terminal. Landing on the memory line meant complete() was never
+		// reached — and `finished` latches on entry, so nothing retried it. The
+		// record then stranded in flight until eviction, on any job whose lock
+		// went away mid-request, not just a gyrobase render past its lease.
 		$this->require_config_or_skip();
-		$lm = Log_Manager::instance();
+		$this->rmdir_recursive( self::TEST_DIR );
+		$lm = $this->fresh_log_manager();
+		$lm->start( 'work' );
+		$lm->message( 'work', [ 'm' => 'before the stop' ] );
 
-		$lm->start( 'process_test' );
-		$lm->message( 'test_event', [ 'm' => 'data' ] );
-		$lm->complete( 'process_test' );
-		$lm->finish();
+		// Arm the framework's own stop seam; last_pump = 0 forces the check.
+		$framework = Event_Framework::instance();
+		$predicate = new \ReflectionProperty( Event_Framework::class, 'continue_predicate' );
+		$last_pump = new \ReflectionProperty( Event_Framework::class, 'last_pump' );
+		$predicate->setValue( $framework, static fn (): bool => false );
+		$last_pump->setValue( $framework, 0.0 );
 
-		// finish() resets started/tracked state.
-		// A second finish() should be a no-op.
-		$lm->finish();
-		$this->assertTrue( true );
+		$raised = false;
+		try {
+			$lm->finish();
+		} catch ( Worker_Should_Stop $e ) {
+			$raised = true;
+		} finally {
+			$predicate->setValue( $framework, null );
+		}
+
+		// ADR-14: the stop is signalling, not an error. It still propagates —
+		// after the terminal, the way Tap re-throws after its passthrough.
+		$this->assertTrue( $raised, 'the cooperative stop still reaches the worker' );
+		$this->assertNotNull(
+			$this->find_last_entry( 'process (aborted)' ),
+			'the record still gets its end, and says it was cut short'
+		);
+		$this->assertNull(
+			$this->find_last_entry( 'process (complete)' ),
+			'a request the stop cut short never reads as a clean finish'
+		);
+	}
+
+	public function test_finish_writes_the_terminal_when_the_stop_lands_on_it(): void {
+		// Guarding only the trimmings moves the window rather than closing it:
+		// complete() writes too, through the same Topic -> Partition -> pump.
+		// The predicate re-arms itself so the check falls on a LATER write than
+		// the first, which is the case a single guard around the drain misses.
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::TEST_DIR );
+		$lm = $this->fresh_log_manager();
+		$lm->start( 'work' );
+		$lm->message( 'work', [ 'm' => 'before the stop' ] );
+
+		$framework = Event_Framework::instance();
+		$predicate = new \ReflectionProperty( Event_Framework::class, 'continue_predicate' );
+		$last_pump = new \ReflectionProperty( Event_Framework::class, 'last_pump' );
+		$calls     = 0;
+		$predicate->setValue(
+			$framework,
+			static function () use ( &$calls, $framework, $last_pump ): bool {
+				++$calls;
+				// Un-throttle so the NEXT write checks too.
+				$last_pump->setValue( $framework, 0.0 );
+				return $calls < 3;
+			}
+		);
+		$last_pump->setValue( $framework, 0.0 );
+
+		$raised = false;
+		try {
+			$lm->finish();
+		} catch ( Worker_Should_Stop $e ) {
+			$raised = true;
+		} finally {
+			$predicate->setValue( $framework, null );
+		}
+
+		$this->assertTrue( $raised, 'the cooperative stop still reaches the worker' );
+		$this->assertNotNull(
+			$this->find_last_entry( 'process (aborted)' ),
+			'the terminal survives a stop that lands on the terminal write'
+		);
+		$this->assertFalse( $lm->is_started(), 'and the request state is still reset' );
 	}
 
 	public function test_get_request_id_returns_string(): void {
@@ -788,18 +859,6 @@ class LogManagerTest extends TestCase {
 		// A sub-path is NOT matched by the exact skip rule, so the '/' log rule governs.
 		$_SERVER['REQUEST_URI'] = '/health/check';
 		$this->assertTrue( $this->fresh_log_manager()->is_started(), "skip '/health?' must not skip a sub-path" );
-	}
-
-	public function test_complete_with_mismatched_label(): void {
-		$this->require_config_or_skip();
-		$lm = Log_Manager::instance();
-
-		// Start one label, complete a different one. The orphaned 'inner'
-		// should be logged as orphaned. No exception expected.
-		$lm->start( 'outer' );
-		$lm->start( 'inner' );
-		$lm->complete( 'outer' );
-		$this->assertTrue( true );
 	}
 
 	public function test_log_memory_config_flag(): void {

@@ -34,6 +34,9 @@ const TIME_FORMAT_OPTIONS = { hour12: false };
 
 /**
  * The base name of the outermost pair — the request itself, which never folds.
+ *
+ * `Log_Manager::REQUEST_LABEL` owns this word, since that class opens the frame
+ * and closes it. This is the one duplicate a separate deploy unit needs.
  */
 const OUTERMOST_PAIR = 'process';
 
@@ -42,7 +45,9 @@ const OUTERMOST_PAIR = 'process';
  * away by the pressure fold. What went missing came from the MIDDLE, so a span
  * the record closes later spans the break and keeps its surviving children —
  * the request itself, and any job or engine pass the fold cut the inside out
- * of. Every other span still open was severed, and closes at the marker.
+ * of. Every other span still open was severed, and closes at the marker —
+ * a producer drains its stack as `(orphaned)` completes before any terminal,
+ * so a span with none left was cut by the fold rather than by the ending.
  */
 const FOLD_MARKER = 'entries (aggregated)';
 const SEQUENCE_BREAK_KEYWORDS = new Set( [ 'entries (lost)', FOLD_MARKER ] );
@@ -55,7 +60,7 @@ const SEQUENCE_BREAK_KEYWORDS = new Set( [ 'entries (lost)', FOLD_MARKER ] );
  * @return {?string} Base name, or null.
  */
 const pairBaseName = ( keyword ) => {
-	const match = ( keyword || '' ).match( /^(.+?) \(start\)$/ );
+	const match = ( keyword || '' ).match( START_REGEX );
 	return match ? match[ 1 ] : null;
 };
 
@@ -297,6 +302,40 @@ const spansClosedAfter = ( entries, from ) => {
 };
 
 /**
+ * Drop the spans a break severed, before they adopt the rows that follow.
+ *
+ * A span survives where the record still closes it after the break — counted
+ * per name, so two open frames against one later `(complete)` sever the outer.
+ *
+ * Only the request's own frame is exempt: `process (aborted)` is a terminal
+ * that matches no `(complete)`, so nothing here can close it. Every OTHER span
+ * gets one, because a producer drains its open stack as `(orphaned)` completes
+ * before writing a terminal — `Log_Manager::finish()` and `Gyrobase::Log`'s
+ * `_unwind_to()` both do. A span still open at the end of a well-formed record
+ * means the fold ate its close, and it cannot keep the tail.
+ *
+ * @param {Array}  pairStack Open frames, innermost last. Mutated.
+ * @param {Array}  entries   Rows, spliced or not.
+ * @param {number} from      Index of the break keyword.
+ */
+const pruneSeveredSpans = ( pairStack, entries, from ) => {
+	const budget = spansClosedAfter( entries, from );
+	for ( let i = pairStack.length - 1; i >= 0; i-- ) {
+		// The request IS the record; its terminal closes it whatever it says.
+		if ( 0 === i && OUTERMOST_PAIR === pairStack[ i ].name ) {
+			continue;
+		}
+		const { name } = pairStack[ i ];
+		const owed = budget.get( name ) || 0;
+		if ( owed < 1 ) {
+			pairStack.splice( i, 1 );
+			continue;
+		}
+		budget.set( name, owed - 1 );
+	}
+};
+
+/**
  * Compute indentation levels for log entries based on (start)/(complete) pairs.
  * Uses LIFO name matching to handle improperly nested events.
  * Adds time display: timestamps at 100ms marks, bullets at 10ms marks.
@@ -343,21 +382,8 @@ export const computeIndentedEntries = ( entries ) => {
 
 		const isBreak = SEQUENCE_BREAK_KEYWORDS.has( keyword );
 
-		// Drop the spans the break severed, before they adopt what follows.
 		if ( isBreak ) {
-			const budget = spansClosedAfter( entries, idx );
-			for ( let i = pairStack.length - 1; i >= 0; i-- ) {
-				// The request IS the record; `process (aborted)` closes it too.
-				if ( 0 === i && OUTERMOST_PAIR === pairStack[ i ].name ) {
-					continue;
-				}
-				const owed = budget.get( pairStack[ i ].name ) || 0;
-				if ( owed < 1 ) {
-					pairStack.splice( i, 1 );
-					continue;
-				}
-				budget.set( pairStack[ i ].name, owed - 1 );
-			}
+			pruneSeveredSpans( pairStack, entries, idx );
 		}
 
 		// Current indent is stack depth.
@@ -643,7 +669,7 @@ export const computeVisibleEntries = ( entries, expandedSet ) => {
 	while ( i < entries.length ) {
 		const entry = entries[ i ];
 		const keyword = entry.k || '';
-		const startMatch = keyword.match( /^(.+?) \(start\)$/ );
+		const startMatch = keyword.match( START_REGEX );
 
 		if ( startMatch && hasPair( entry ) ) {
 			const baseName = startMatch[ 1 ];
