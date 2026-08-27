@@ -1134,14 +1134,20 @@ class Log_Manager {
 
 		// Request-scope hot: cache frozen; one fresh read, threaded to both.
 		$now                                           = Core::right_now();
-		$entry = [ 'n' => $this->line_number, 'k' => $category ] + $data + [ 'ts' => $now ];
+		// @longform Stamped and CONSUMED together. A cooperative stop raised
+		// inside fill() left the number un-advanced while the entry itself was
+		// durable — maybe_stop() flushes before re-raising — so the next entry
+		// reused it, and Request_Builder_Node drops a duplicate outright. When
+		// the next entry was the terminal, the record then stranded in flight
+		// until its trace timed out. Burning a number instead reads as a GAP,
+		// which the builder reports and still lets terminals through.
+		$entry = [ 'n' => $this->line_number++, 'k' => $category ] + $data + [ 'ts' => $now ];
 		$message                                       = \Newspack_Nodes\Message::new_message();
 		$message[ \Newspack_Nodes\Message::TYPE ]      = \Newspack_Nodes\Message::TM_STRUCT;
 		$message[ \Newspack_Nodes\Message::TIMESTAMP ] = $now;
 		$message[ \Newspack_Nodes\Message::KEY ]       = $this->request_id;
 		$message[ \Newspack_Nodes\Message::VALUE ]     = $entry;
 		$this->topic->fill( $message );
-		++$this->line_number;
 
 		if ( $this->flush_every_line ) {
 			$this->topic->flush();

@@ -627,6 +627,19 @@ class LogManagerTest extends TestCase {
 			'the terminal survives a stop that lands on the terminal write'
 		);
 		$this->assertFalse( $lm->is_started(), 'and the request state is still reset' );
+
+		// The line number is stamped BEFORE the write and advanced after, so a
+		// stop raised inside fill() burns neither: the entry is durable
+		// (maybe_stop flushes before re-raising) but the counter never moved,
+		// and the next entry reused the number. Request_Builder_Node drops a
+		// duplicate outright — terminal included — so the record stranded
+		// until its trace timed out, having written the terminal.
+		$numbers = \array_column( $this->read_firehose_entries(), 'n' );
+		$this->assertSame(
+			\count( $numbers ),
+			\count( \array_unique( $numbers ) ),
+			'no two entries share a sequence number'
+		);
 	}
 
 	public function test_get_request_id_returns_string(): void {
