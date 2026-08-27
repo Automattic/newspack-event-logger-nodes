@@ -57,15 +57,20 @@ class Request_Builder_Node extends Timer_Node {
 	use \Newspack_Nodes\Schema_Reflection;
 	use \Newspack_Nodes\Deferred_Clean_Stop;
 
+	/** Discarded on overflow: the entries between this and the last one are gone. */
+	public const LOST_MARKER_KEY = 'entries (lost)';
+
+	/** Merged by the pressure fold: those entries are in the flame tree instead. */
+	public const FOLD_MARKER_KEY = 'entries (aggregated)';
+
 	/**
-	 * Entry keys standing in for entries this node removed — merged by the fold,
-	 * or discarded on overflow. Either way the interval one covers is missing
-	 * DETAIL, not idle time, so no consumer may reason across it. This node
-	 * mints them, so it owns the vocabulary.
+	 * Entry keys standing in for entries this node removed. Either way the
+	 * interval one covers is missing DETAIL, not idle time, so no consumer may
+	 * reason across it. This node mints them, so it owns the vocabulary.
 	 *
 	 * @var list<string>
 	 */
-	public const SEQUENCE_BREAK_KEYS = [ 'entries (lost)', 'entries (aggregated)' ];
+	public const SEQUENCE_BREAK_KEYS = [ self::LOST_MARKER_KEY, self::FOLD_MARKER_KEY ];
 
 	/**
 	 * Every non-nominal terminal marker: fatal, timed out, aborted. The index
@@ -113,7 +118,7 @@ class Request_Builder_Node extends Timer_Node {
 	private const COMPLETION_COLUMNS = [ [ 44, 10 ], [ 54, 8 ] ];
 
 	/** Markers that close a request. They land even when the sequence broke. */
-	private const TERMINAL_KEYWORDS = [ 'process (complete)' => true, 'process (aborted)' => true ];
+	public const TERMINAL_KEYWORDS = [ Log_Manager::REQUEST_COMPLETE => true, Log_Manager::REQUEST_ABORTED => true ];
 
 	/** Default in-flight requests held per LRU bucket. */
 	public const DEFAULT_BUCKET_SIZE = 100;
@@ -364,8 +369,8 @@ class Request_Builder_Node extends Timer_Node {
 		// get() returns the same object instance — mutations happen in place.
 		$request = $this->cache->get( $rid );
 		if ( null === $request ) {
-			// Only 'process (start)' opens a request; orphan lines drop.
-			if ( 'process (start)' !== $keyword ) {
+			// Only the request opener opens a request; orphan lines drop.
+			if ( Log_Manager::REQUEST_START !== $keyword ) {
 				return;
 			}
 			$request = new \stdClass();
@@ -388,7 +393,7 @@ class Request_Builder_Node extends Timer_Node {
 		}
 
 		$expected = \is_int( $request->expected_n ?? null ) ? $request->expected_n : 1;
-		if ( 'process (start)' === $keyword && $expected > 1 ) {
+		if ( Log_Manager::REQUEST_START === $keyword && $expected > 1 ) {
 			$this->print_less_often( 'WARNING: multiple requests with ID: ', $rid );
 			$expected = 1;
 			$request->expected_n = 1;
@@ -620,7 +625,7 @@ class Request_Builder_Node extends Timer_Node {
 		$lost      = '' !== $offset
 			? "discarded entries after #{$gap} at {$offset}"
 			: "discarded entries after #{$gap}";
-		$entries[] = [ 'n' => $gap + 1, 'ts' => $entry['ts'] ?? 0, 'k' => 'entries (lost)', 'm' => $lost ];
+		$entries[] = [ 'n' => $gap + 1, 'ts' => $entry['ts'] ?? 0, 'k' => self::LOST_MARKER_KEY, 'm' => $lost ];
 		if ( $folded ) {
 			$request->tail = $entries;
 			return;
@@ -687,7 +692,7 @@ class Request_Builder_Node extends Timer_Node {
 	 */
 	private function push_stack( \stdClass $request, string $state, string $label ): void {
 		if ( ! isset( $request->stack ) ) {
-			$request->stack    = [ [ 'process', '' ] ];
+			$request->stack    = [ [ Log_Manager::REQUEST_LABEL, '' ] ];
 			$request->profiles = [];
 		}
 		self::normalize_stack( $request );
@@ -805,7 +810,7 @@ class Request_Builder_Node extends Timer_Node {
 			for ( $j = \count( $stack ) - 1; $j >= 0; $j-- ) {
 				$ancestor_frame = $stack[ $j ];
 				$ancestor       = $ancestor_frame[0];
-				if ( 'process' === $ancestor ) {
+				if ( Log_Manager::REQUEST_LABEL === $ancestor ) {
 					break;
 				}
 				if ( isset( $profiles[ $ancestor ] ) ) {
@@ -919,11 +924,12 @@ class Request_Builder_Node extends Timer_Node {
 	private function build_state_callbacks(): array {
 		$s = [];
 
-		$s['process (start)'] = function ( \stdClass $request, array $entry ): void {
+		$s[ Log_Manager::REQUEST_START ] = function ( \stdClass $request, array $entry ): void {
 			$request->timestamp   = $entry['ts'] ?? ( Core::$now ?: Core::right_now() );
-			$request->stack       = [ [ 'process', '' ] ];
+			$request->stack       = [ [ Log_Manager::REQUEST_LABEL, '' ] ];
 			$request->profiles    = [];
 			$request->entries     = [];
+			// A state name, not the span label: it pairs with 'complete' below.
 			$request->state       = 'process';
 			$request->gap_after   = 0;
 			// Handle operator time-travel gracefully.
@@ -931,7 +937,7 @@ class Request_Builder_Node extends Timer_Node {
 			$request->rule_id     = \is_string( $entry['rule'] ?? null ) ? $entry['rule'] : '';
 		};
 
-		$s['process (complete)'] = function ( \stdClass $request, array $entry ): void {
+		$s[ Log_Manager::REQUEST_COMPLETE ] = function ( \stdClass $request, array $entry ): void {
 			$request->duration_ms = $entry['duration_ms'] ?? 0;
 			$request->status_code = $entry['status_code'] ?? 0;
 			$error_status         = $entry['error_status'] ?? '-';
@@ -945,7 +951,7 @@ class Request_Builder_Node extends Timer_Node {
 		};
 
 		// Duration stops at the abort: not a real sample of the URL's cost.
-		$s['process (aborted)'] = function ( \stdClass $request, array $entry ): void {
+		$s[ Log_Manager::REQUEST_ABORTED ] = function ( \stdClass $request, array $entry ): void {
 			$request->duration_ms  = $entry['duration_ms'] ?? 0;
 			$request->status_code  = $entry['status_code'] ?? 0;
 			$request->error_status = 'A';
@@ -1275,7 +1281,7 @@ class Request_Builder_Node extends Timer_Node {
 		$fold = $record['fold'];
 		// Synthetic rows never folded, so they are not in the fold's count.
 		$folded_tail = \count(
-			\array_filter( $tail, static fn ( array $e ): bool => 'entries (lost)' !== ( $e['k'] ?? '' ) )
+			\array_filter( $tail, static fn ( array $e ): bool => self::LOST_MARKER_KEY !== ( $e['k'] ?? '' ) )
 		);
 		/** @var list<array<string,mixed>> $kept */
 		$kept    = \is_array( $record['keep'] ?? null ) ? $record['keep'] : [];
@@ -1284,8 +1290,8 @@ class Request_Builder_Node extends Timer_Node {
 			return \array_merge( $head, $kept, $tail );
 		}
 		$last   = $head[ \count( $head ) - 1 ] ?? null;
-		$merged = "{$dropped} entries merged into the flame graph under memory pressure";
-		$marker = [ 'n' => Core::int( $last['n'] ?? 0, 0 ) + 1, 'ts' => $last['ts'] ?? 0, 'k' => 'entries (aggregated)', 'm' => $merged ];
+		$merged = "{$dropped} entries merged under memory pressure";
+		$marker = [ 'n' => Core::int( $last['n'] ?? 0, 0 ) + 1, 'ts' => $last['ts'] ?? 0, 'k' => self::FOLD_MARKER_KEY, 'm' => $merged ];
 		return \array_merge( $head, [ $marker ], $kept, $tail );
 	}
 

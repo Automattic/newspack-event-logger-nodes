@@ -58,6 +58,22 @@ class ReqgrepCoreTest extends TestCase {
 		$this->assertCount( 3, $completed[0]['lines'] );
 	}
 
+	public function test_an_aborted_request_completes_like_any_other_terminal(): void {
+		// `process (aborted)` is a terminal in `Request_Builder_Node::TERMINAL_KEYWORDS`
+		// too. Firing only on `(complete)` left every lease-killed request out of the
+		// dashboard's `request_grep` reply entirely, and mislabelled `[incomplete]` in
+		// the CLI — the one request an operator greps for.
+		$completed = [];
+		$core      = $this->make_core( '/calendar', $completed );
+		$this->push( $core, 'reqAbort', 'process (start)', 'start /calendar', 1 );
+		$this->push( $core, 'reqAbort', 'render', 'render /calendar', 2 );
+		$this->push( $core, 'reqAbort', 'process (aborted)', 'aborted /calendar', 3 );
+
+		$this->assertCount( 1, $completed );
+		$this->assertSame( 'reqAbort', $completed[0]['rid'] );
+		$this->assertCount( 3, $completed[0]['lines'] );
+	}
+
 	public function test_on_complete_reports_a_line_capped_request_as_clipped(): void {
 		// A request over MAX_LINES_PER_REQUEST drops its tail — on_complete
 		// must say so (3rd arg) so callers never report a clipped count as full.

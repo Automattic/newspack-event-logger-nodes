@@ -18,6 +18,7 @@ namespace Newspack_Event_Logger_Nodes;
 
 use Newspack_Nodes\Bootstrap;
 use Newspack_Nodes\Topic_Node;
+use Newspack_Nodes\Worker_Should_Stop;
 use Newspack_Nodes\Partition_Node;
 use Newspack_Nodes\Callback_Node;
 use Newspack_Nodes\Core;
@@ -47,6 +48,18 @@ class Log_Manager {
 	 * error_get_last() and attached to the final `process (complete)` line.
 	 */
 	const FATAL_TYPES = [ E_ERROR, E_PARSE, E_COMPILE_ERROR, E_USER_ERROR ];
+
+	/**
+	 * The outermost timer label — the request itself. This class opens the frame
+	 * and closes it, so it owns the word; every consumer reads it from here, and
+	 * `logEntryUtils.js` holds the one duplicate a separate deploy unit needs.
+	 */
+	public const REQUEST_LABEL = 'process';
+
+	/** The request's own three keywords, composed from the label above. */
+	public const REQUEST_START    = self::REQUEST_LABEL . ' (start)';
+	public const REQUEST_COMPLETE = self::REQUEST_LABEL . ' (complete)';
+	public const REQUEST_ABORTED  = self::REQUEST_LABEL . ' (aborted)';
 
 	/** @var int Bytes-to-megabytes divisor. */
 	private const BYTES_PER_MB = 1024 * 1024;
@@ -242,18 +255,43 @@ class Log_Manager {
 			return;
 		}
 		$this->finished = true;
-		$now = \hrtime( true );
-		while ( \count( $this->times ) > 1 ) {
-			$this->emit_orphaned_complete( \array_pop( $this->times ), $now );
-		}
 
-		$this->message( 'memory', [
-			'm' => [
-				'peak' => \round( \memory_get_peak_usage( true ) / self::BYTES_PER_MB, 2 ) . 'MB',
-				'end'  => \round( \memory_get_usage( true ) / self::BYTES_PER_MB, 2 ) . 'MB',
-			],
-		] );
-		$this->log_resources();
+		// @longform The terminal outranks everything else here. A cooperative
+		// stop lands on a WRITE, and every line finish() emits is one — a stop
+		// on any of them skipped the terminal while `finished` stayed latched,
+		// so nothing retried and the record stranded in flight until eviction.
+		// ADR-14's Tap carve-out is this shape: do the thing that IS the
+		// pipeline, then re-raise. Terminal-LAST is a wire contract, not a
+		// preference: `Reqgrep_Core` finalizes and evicts the rid on it.
+		$stop = null;
+		try {
+			$this->drain_before_terminal();
+		} catch ( Worker_Should_Stop $e ) {
+			// It reached us mid-finish: this request did not run to its end.
+			$this->aborted = true;
+			$stop          = $e;
+		}
+		try {
+			$this->write_terminal();
+		} catch ( Worker_Should_Stop $e ) {
+			// Durable anyway: maybe_stop() flushes before it raises.
+			$stop ??= $e;
+		} finally {
+			$this->started = false;
+			// Per-request: a latched flag marks every later request.
+			$this->aborted = false;
+		}
+		if ( null !== $stop ) {
+			throw $stop;
+		}
+	}
+
+	/**
+	 * The line that ENDS the record. A fatal outranks a nominal finish, and an
+	 * abort outranks both — the duration is a fragment either way, so it must
+	 * never read as a clean completion.
+	 */
+	private function write_terminal(): void {
 		$complete_extra = [];
 		$error          = \error_get_last();
 		if ( $error && \in_array( $error['type'], self::FATAL_TYPES, true ) ) {
@@ -264,24 +302,25 @@ class Log_Manager {
 			$complete_extra['fatal_plugin'] = self::extract_plugin_slug( $error['file'] );
 			$complete_extra['error_status'] = 'F';
 		}
-
-		// A killed job's duration is a fragment: say aborted, never complete.
 		if ( $this->aborted ) {
 			$complete_extra['error_status'] = 'A';
 		}
 		$this->complete(
-			'process',
+			self::REQUEST_LABEL,
 			\array_merge( [ 'status_code' => \http_response_code() ?: 0 ], $complete_extra ),
 			$this->aborted ? 'aborted' : 'complete'
 		);
 		$this->topic?->flush();
-		$this->started = false;
-		// Per-request: a latched flag marks every later request in the process.
-		$this->aborted = false;
 	}
 
 	/**
 	 * Close a labeled operation and log its duration.
+	 *
+	 * `Gyrobase::Log::_unwind_to()` mirrors this rule for the Perl engine, which
+	 * writes into the same firehose — keep the two IDENTICAL, as the ENV_ALLOWLIST
+	 * pair already is. Four readers depend on both producers agreeing about which
+	 * spans a record leaves open: `computeIndentedEntries`, `pruneSeveredSpans`,
+	 * and their two CLI counterparts.
 	 *
 	 * Search runs from the top of the timer stack down to the first frame with
 	 * this label. Frames above it never got their own complete() — they drain as
@@ -322,19 +361,6 @@ class Log_Manager {
 	}
 
 	/**
-	 * Emit a single orphaned `(complete)` line for an unclosed timer-stack
-	 * frame. Shared by complete()'s mismatched-close drain and finish()'s
-	 * end-of-request stack close.
-	 *
-	 * @param array{label: string, ts: int|float, m?: mixed} $entry Timer-stack frame.
-	 * @param int|float $now Reference hrtime() reading.
-	 */
-	private function emit_orphaned_complete( array $entry, $now ): void {
-		$duration_ms = ( $now - $entry['ts'] ) / self::NS_PER_MS;
-		$this->message( "{$entry['label']} (complete)", [ 'm' => '(orphaned)', 'duration_ms' => $duration_ms ] );
-	}
-
-	/**
 	 * Extract plugin slug from a file path.
 	 *
 	 * @param string $file File path from error_get_last().
@@ -354,6 +380,37 @@ class Log_Manager {
 			$slug = \substr( $slug, 0, -4 );
 		}
 		return $slug;
+	}
+
+	/**
+	 * Everything the record carries before its terminal: the spans left open,
+	 * this request's memory high-water mark, and its resource usage.
+	 */
+	private function drain_before_terminal(): void {
+		$now = \hrtime( true );
+		while ( \count( $this->times ) > 1 ) {
+			$this->emit_orphaned_complete( \array_pop( $this->times ), $now );
+		}
+		$this->message( 'memory', [
+			'm' => [
+				'peak' => \round( \memory_get_peak_usage( true ) / self::BYTES_PER_MB, 2 ) . 'MB',
+				'end'  => \round( \memory_get_usage( true ) / self::BYTES_PER_MB, 2 ) . 'MB',
+			],
+		] );
+		$this->log_resources();
+	}
+
+	/**
+	 * Emit a single orphaned `(complete)` line for an unclosed timer-stack
+	 * frame. Shared by complete()'s mismatched-close drain and finish()'s
+	 * end-of-request stack close.
+	 *
+	 * @param array{label: string, ts: int|float, m?: mixed} $entry Timer-stack frame.
+	 * @param int|float $now Reference hrtime() reading.
+	 */
+	private function emit_orphaned_complete( array $entry, $now ): void {
+		$duration_ms = ( $now - $entry['ts'] ) / self::NS_PER_MS;
+		$this->message( "{$entry['label']} (complete)", [ 'm' => '(orphaned)', 'duration_ms' => $duration_ms ] );
 	}
 
 	/**
@@ -530,12 +587,16 @@ class Log_Manager {
 		if ( $reported && null === $outcome && null !== self::$instance ) {
 			self::$instance->aborted = true;
 		}
-		self::resume();
-		if ( ! empty( self::$job_server_stack ) ) {
-			// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- restoring saved value.
-			$_SERVER = \array_pop( self::$job_server_stack );
+		try {
+			self::resume();
+		} finally {
+			// The snapshot IS the pairing record; unpopped it strands jobs.
+			if ( ! empty( self::$job_server_stack ) ) {
+				// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- restoring saved value.
+				$_SERVER = \array_pop( self::$job_server_stack );
+			}
+			\do_action( 'newspack_event_logger_nodes_scope_changed' );
 		}
-		\do_action( 'newspack_event_logger_nodes_scope_changed' );
 	}
 
 	/**
@@ -545,15 +606,17 @@ class Log_Manager {
 	 * then the parent context is restored as the active instance.
 	 */
 	public static function resume(): void {
-		if ( null !== self::$instance ) {
-			self::$instance->finish();
-		}
-		self::$instance = ! empty( self::$context_stack )
-			? \array_pop( self::$context_stack )
-			: null;
-		// Restore UNIQUE_ID from parent context.
-		if ( null !== self::$instance && isset( self::$instance->saved_unique_id ) ) {
-			$_SERVER['UNIQUE_ID'] = self::$instance->saved_unique_id;
+		try {
+			self::$instance?->finish();
+		} finally {
+			// A re-raised stop must not strand the finished context.
+			self::$instance = ! empty( self::$context_stack )
+				? \array_pop( self::$context_stack )
+				: null;
+			// Restore UNIQUE_ID from parent context.
+			if ( null !== self::$instance && isset( self::$instance->saved_unique_id ) ) {
+				$_SERVER['UNIQUE_ID'] = self::$instance->saved_unique_id;
+			}
 		}
 	}
 
@@ -943,8 +1006,8 @@ class Log_Manager {
 		}
 		$process_data['rule'] = $this->governing_rule_id();
 
-		$this->message( 'process (start)', $process_data );
-		$this->times[] = [ 'label' => 'process', 'ts' => $process_hr ];
+		$this->message( self::REQUEST_START, $process_data );
+		$this->times[] = [ 'label' => self::REQUEST_LABEL, 'ts' => $process_hr ];
 
 		$method       = \is_string( $_SERVER['REQUEST_METHOD'] ?? null ) ? \sanitize_text_field( \wp_unslash( $_SERVER['REQUEST_METHOD'] ) ) : 'CLI';
 		$server_name  = \is_string( $_SERVER['SERVER_NAME'] ?? null ) ? \sanitize_text_field( \wp_unslash( $_SERVER['SERVER_NAME'] ) ) : '';

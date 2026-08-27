@@ -302,7 +302,7 @@ class FindingsTest extends TestCase {
 		$record['folded']  = true;
 		$record['entries'] = [
 			[ 'n' => 1, 'ts' => 2000.000, 'k' => 'process (start)', 'm' => '' ],
-			[ 'n' => 2, 'ts' => 2000.050, 'k' => 'entries (aggregated)', 'm' => '87074 entries merged into the flame graph under memory pressure' ],
+			[ 'n' => 2, 'ts' => 2000.050, 'k' => 'entries (aggregated)', 'm' => '87074 entries merged under memory pressure' ],
 			[ 'n' => 3, 'ts' => 2355.940, 'k' => 'gyrobase (complete)', 'm' => 'logged 87080 messages' ],
 		];
 
@@ -350,7 +350,7 @@ class FindingsTest extends TestCase {
 		$record['folded']  = true;
 		$record['entries'] = [
 			[ 'n' => 1, 'ts' => 1000.000, 'k' => 'process (start)', 'm' => '' ],
-			[ 'n' => 2, 'ts' => 1000.010, 'k' => 'entries (aggregated)', 'm' => '812 entries merged into the flame graph under memory pressure' ],
+			[ 'n' => 2, 'ts' => 1000.010, 'k' => 'entries (aggregated)', 'm' => '812 entries merged under memory pressure' ],
 		];
 
 		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'truncation' );

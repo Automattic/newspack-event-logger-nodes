@@ -10,6 +10,8 @@
  *   - getAncestorPairIds       — set of pair ids that must be expanded
  */
 
+import fs from 'fs';
+import path from 'path';
 import {
 	formatDots,
 	formatFullTimestamp,
@@ -142,27 +144,30 @@ describe( 'an unclosed pair', () => {
 } );
 
 describe( 'computeIndentedEntries', () => {
-	it( 'closes spans the fold cut open, so the kept tail is not nested under them', () => {
-		// A folded request keeps its first and last entries. The head ends
-		// wherever the cut fell — often on an unclosed `(start)` — and without
-		// a barrier every kept tail row becomes that span's child, so folding
-		// it swallows the end of the request into a single collapsed row.
-		const { entries: out } = computeIndentedEntries( [
-			{ n: 1, k: 'process (start)', ts: 1 },
-			{ n: 2, k: 'query hook (start)', ts: 1 },
-			{ n: 3, k: 'entries (aggregated)', ts: 1 },
-			{ n: 4, k: 'resources', ts: 1 },
-			{ n: 5, k: 'process (complete)', ts: 1 },
-		] );
+	it.each( [ 'entries (aggregated)', 'entries (lost)' ] )(
+		'closes spans the break cut open, across %s',
+		( marker ) => {
+			// A folded request keeps its first and last entries. The head ends
+			// wherever the cut fell — often on an unclosed `(start)` — and
+			// without a barrier every kept tail row becomes that span's child,
+			// so folding it swallows the end of the request into one row.
+			const { entries: out } = computeIndentedEntries( [
+				{ n: 1, k: 'process (start)', ts: 1 },
+				{ n: 2, k: 'query hook (start)', ts: 1 },
+				{ n: 3, k: marker, ts: 1 },
+				{ n: 4, k: 'resources', ts: 1 },
+				{ n: 5, k: 'process (complete)', ts: 1 },
+			] );
 
-		// Inside the request, but no longer inside the severed `query hook`.
-		expect( out[ 2 ].indent ).toBe( 1 );
-		expect( out[ 3 ].indent ).toBe( 1 );
-		expect( out[ 3 ].pairId ).toBe( out[ 0 ].pairId );
-		// The request's own pair still matches across the break.
-		expect( out[ 4 ].indent ).toBe( 0 );
-		expect( out[ 4 ].pairId ).toBe( out[ 0 ].pairId );
-	} );
+			// Inside the request, not inside the severed `query hook`.
+			expect( out[ 2 ].indent ).toBe( 1 );
+			expect( out[ 3 ].indent ).toBe( 1 );
+			expect( out[ 3 ].pairId ).toBe( out[ 0 ].pairId );
+			// The request's own pair still matches across the break.
+			expect( out[ 4 ].indent ).toBe( 0 );
+			expect( out[ 4 ].pairId ).toBe( out[ 0 ].pairId );
+		}
+	);
 
 	// The pressure fold merges entries out of the MIDDLE of a span. Both ends
 	// survive, so `gyrobase` spans the break exactly as the request does.
@@ -204,10 +209,12 @@ describe( 'computeIndentedEntries', () => {
 	} );
 
 	it( 'keeps the request frame across a break no `(complete)` closes', () => {
-		// `process (aborted)` is a terminal too, and matches neither regex, so
-		// a rule keeping only spans the record CLOSES drops the request's own
-		// frame and every row after the marker escapes it. Pins behaviour the
-		// old code also had; it guards the rule, not a fix.
+		// `process (aborted)` is a terminal too and matches neither regex, so a
+		// rule keeping only spans the record CLOSES drops the request's own
+		// frame and every row after the marker escapes it. `loop` is severed,
+		// and rightly: a producer drains its open spans as `(orphaned)`
+		// completes before any terminal, so one still open here was cut by the
+		// fold. Only the request itself can have no closer.
 		const { entries: out } = computeIndentedEntries( [
 			{ n: 1, k: 'process (start)', ts: 1 },
 			{ n: 2, k: 'loop (start)', ts: 1 },
@@ -219,6 +226,65 @@ describe( 'computeIndentedEntries', () => {
 		expect( out[ 2 ].indent ).toBe( 1 );
 		expect( out[ 3 ].indent ).toBe( 1 );
 		expect( out[ 4 ].indent ).toBe( 1 );
+	} );
+
+	it( 'nests a killed render under the spans its producer closed on the way out', () => {
+		// The screenshot case, as the FIXED producers write it: the engine
+		// drains its open spans as `(orphaned)` completes and closes the scope
+		// it owns (`Gyrobase::Log::_unwind_to`), then the parent writes the
+		// terminal it has always owned. Nothing is left open, so the ordinary
+		// straddle budget keeps `gyrobase` and the merged spans land inside it.
+		// No abort rule is needed here — that was compensating for the gap.
+		const flame = {
+			name: 'request',
+			t: null,
+			children: [
+				{
+					name: 'process',
+					count: 0,
+					value: 600000,
+					t: 0,
+					children: [
+						{
+							name: 'gyrobase',
+							count: 1,
+							value: 600000,
+							t: 350,
+							children: [
+								{
+									name: 'change',
+									count: 1237,
+									value: 433827,
+									t: 400,
+									children: [],
+								},
+							],
+						},
+					],
+				},
+			],
+		};
+		const stored = [
+			{ n: 1, k: 'process (start)', ts: 1000 },
+			{ n: 2, k: 'gyrobase (start)', ts: 1000.35 },
+			{ n: 3, k: 'publication', ts: 1000.35 },
+			{ n: 4, k: 'entries (aggregated)', ts: 1000.36 },
+			{ n: 5, k: 'include (complete)', ts: 1600.4, m: '(orphaned)' },
+			{ n: 6, k: 'gyrobase (complete)', ts: 1600.4 },
+			{ n: 7, k: 'process (aborted)', ts: 1600.5 },
+		];
+		const { entries: out } = computeIndentedEntries(
+			spliceFoldedSpans( stored, flame )
+		);
+		const byKeyword = new Map(
+			out.filter( ( e ) => e.k ).map( ( e ) => [ e.k, e.indent ] )
+		);
+
+		expect( byKeyword.get( 'entries (aggregated)' ) ).toBe( 2 );
+		expect( byKeyword.get( 'change (start)' ) ).toBe( 2 );
+		expect( byKeyword.get( 'include (complete)' ) ).toBe( 2 );
+		expect( byKeyword.get( 'gyrobase (complete)' ) ).toBe( 1 );
+		expect( byKeyword.get( 'process (aborted)' ) ).toBe( 1 );
 	} );
 
 	it( 'ignores the spliced-in middle when deciding what straddles the break', () => {
@@ -381,18 +447,6 @@ describe( 'computeIndentedEntries', () => {
 		] );
 
 		expect( out[ 2 ].indent ).toBe( 2 );
-	} );
-
-	it( 'treats a lost-entries marker as the same kind of break', () => {
-		const { entries: out } = computeIndentedEntries( [
-			{ n: 1, k: 'process (start)', ts: 1 },
-			{ n: 2, k: 'loop (start)', ts: 1 },
-			{ n: 3, k: 'entries (lost)', ts: 1 },
-			{ n: 4, k: 'process (complete)', ts: 1 },
-		] );
-
-		expect( out[ 2 ].indent ).toBe( 1 );
-		expect( out[ 3 ].indent ).toBe( 0 );
 	} );
 
 	it( 'returns empty result for null/empty input', () => {
@@ -1117,7 +1171,7 @@ describe( 'placeholder gap rows across a sequence break', () => {
 		{
 			n: 72,
 			k: 'entries (aggregated)',
-			m: '5312 entries merged into the flame graph under memory pressure',
+			m: '5312 entries merged under memory pressure',
 			ts: 4242.07,
 		},
 		{ n: 73, k: 'shortcode (start)', ts: 4242.53 },
@@ -1200,5 +1254,69 @@ describe( 'placeholder gap rows across a sequence break', () => {
 		expect( visible[ visible.length - 1 ].displayTime ).toMatch(
 			/^\d{2}:\d{2}:\d{2}\.88$/
 		);
+	} );
+} );
+
+describe( 'the PHP vocabulary this module mirrors', () => {
+	// A separate deploy unit cannot import the constants, so it copies them —
+	// and a hand-kept copy nobody re-reads is exactly how `A` and then `I`
+	// shipped writable by the node and unreadable by the dashboards. Both sides
+	// are read as SOURCE here, because neither module exports its own copy.
+	const read = ( ...parts ) =>
+		fs.readFileSync( path.join( __dirname, ...parts ), 'utf8' );
+	const js = read( '..', 'logEntryUtils.js' );
+	const phpConst = ( file, name ) => {
+		const match = read( '..', '..', '..', '..', 'includes', file ).match(
+			new RegExp( `const ${ name } = '([^']*)';` )
+		);
+		expect( match ).toBeTruthy();
+		return match[ 1 ];
+	};
+	const jsConst = ( name ) => {
+		const match = js.match( new RegExp( `const ${ name } = '([^']*)';` ) );
+		expect( match ).toBeTruthy();
+		return match[ 1 ];
+	};
+
+	it( 'spells the request label as Log_Manager mints it', () => {
+		expect( jsConst( 'OUTERMOST_PAIR' ) ).toBe(
+			phpConst( 'class-log-manager.php', 'REQUEST_LABEL' )
+		);
+	} );
+
+	it( 'spells the fold marker as Request_Builder_Node mints it', () => {
+		expect( jsConst( 'FOLD_MARKER' ) ).toBe(
+			phpConst( 'class-request-builder-node.php', 'FOLD_MARKER_KEY' )
+		);
+	} );
+
+	it( 'carries every keyword in SEQUENCE_BREAK_KEYS, and no others', () => {
+		// Read the PHP list's own members rather than naming them here: a
+		// hand-written expectation is the very parallel list this test exists
+		// to forbid, and a third keyword would slip past it silently.
+		const RBN = 'class-request-builder-node.php';
+		const members = read( '..', '..', '..', '..', 'includes', RBN ).match(
+			/const SEQUENCE_BREAK_KEYS = \[([^\]]*)\];/
+		);
+		expect( members ).toBeTruthy();
+		const php = members[ 1 ]
+			.split( ',' )
+			.map( ( part ) => part.trim().replace( /^self::/, '' ) )
+			.filter( Boolean )
+			.map( ( name ) => phpConst( RBN, name ) );
+		expect( php.length ).toBeGreaterThan( 1 );
+
+		const match = js.match(
+			/const SEQUENCE_BREAK_KEYWORDS = new Set\( \[([^\]]*)\] \);/
+		);
+		expect( match ).toBeTruthy();
+		const mirrored = match[ 1 ]
+			.split( ',' )
+			.map( ( part ) => part.trim().replace( /^'|'$/g, '' ) )
+			.filter( Boolean )
+			.map( ( name ) =>
+				'FOLD_MARKER' === name ? jsConst( 'FOLD_MARKER' ) : name
+			);
+		expect( mirrored.sort() ).toEqual( php.sort() );
 	} );
 } );

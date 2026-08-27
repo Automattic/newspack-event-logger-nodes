@@ -378,6 +378,26 @@ class ReqgrepCommandTest extends TestCase {
 		$this->assertSame( 4, $this->indent_of( 'gyrobase (complete)', $out ), 'gyrobase closes at its own level, not the top column' );
 	}
 
+	public function test_break_severs_a_span_the_record_never_closes(): void {
+		$cmd      = $this->make_cmd();
+		$captured = $this->capture_output( $cmd );
+
+		// The complement of the two tests around it, and the case the CLI never
+		// pinned: the record DOES close the request, so a span with no later
+		// `(complete)` had its own merged away and cannot keep the tail.
+		// Mirrors the dashboard's "closes spans the break cut open" fixture.
+		$rid = 'severR';
+		$ts  = 1700000000.0;
+		foreach ( [ 'process (start)', 'query hook (start)', 'entries (aggregated)', 'resources', 'process (complete)' ] as $i => $key ) {
+			$this->feed( $cmd, [ 'n' => $i + 1, 'rid' => $rid, 'k' => $key, 'm' => 'x', 'ts' => $ts + $i / 10 ] );
+		}
+		$out = self::joined( $captured );
+
+		$this->assertSame( 4, $this->indent_of( 'entries (aggregated)', $out ), 'the marker leaves the span the fold severed' );
+		$this->assertSame( 4, $this->indent_of( 'resources', $out ), 'and the kept tail sits beside it, not under it' );
+		$this->assertSame( 0, $this->indent_of( 'process (complete)', $out ), 'the request still closes at the top column' );
+	}
+
 	public function test_break_budget_unwinds_the_way_the_dashboard_does(): void {
 		$cmd      = $this->make_cmd();
 		$captured = $this->capture_output( $cmd );
@@ -397,6 +417,30 @@ class ReqgrepCommandTest extends TestCase {
 		// The dashboard severs the head's X here and prints Y at indent 1.
 		$this->assertSame( 4, $this->indent_of( 'Y (start)', $out ), 'Y sits where the dashboard puts it' );
 		$this->assertSame( 4, $this->indent_of( 'entries (aggregated)', $out ), 'and so does the marker' );
+	}
+
+	public function test_break_keeps_a_span_the_abort_left_open(): void {
+		$cmd      = $this->make_cmd();
+		$captured = $this->capture_output( $cmd );
+
+		// A lease-killed render, as the fixed producers write it: the engine
+		// drains its open spans as `(orphaned)` completes and closes the scope
+		// it owns, so `gyrobase` straddles the break like any other span and
+		// the terminal the parent writes needs no special case. Mirrors the
+		// dashboard's "nests a killed render under the spans its producer
+		// closed on the way out" fixture.
+		$rid = 'abortR';
+		$ts  = 1700000000.0;
+		foreach ( [ 'process (start)', 'gyrobase (start)', 'entries (aggregated)', 'function (start)', 'function (complete)', 'gyrobase (complete)', 'process (aborted)' ] as $i => $key ) {
+			$this->feed( $cmd, [ 'n' => $i + 1, 'rid' => $rid, 'k' => $key, 'm' => 'x', 'ts' => $ts + $i / 10 ] );
+		}
+		$this->output_remaining->invoke( $cmd );
+		$out = self::joined( $captured );
+
+		$this->assertSame( 8, $this->indent_of( 'entries (aggregated)', $out ), 'the marker stays inside the span the fold cut open' );
+		$this->assertSame( 8, $this->indent_of( 'function (start)', $out ), 'and so does the tail it kept' );
+		$this->assertSame( 4, $this->indent_of( 'gyrobase (complete)', $out ), 'the engine closes its own scope' );
+		$this->assertSame( 4, $this->indent_of( 'process (aborted)', $out ), 'and the terminal prints inside the request alone' );
 	}
 
 	public function test_orphaned_complete_prints_inside_the_spans_still_open(): void {
@@ -535,6 +579,51 @@ class ReqgrepCommandTest extends TestCase {
 		// Look for at least one dot row (lines ending with " .").
 		$dot_rows = \preg_match_all( '/^\s*\d+:.*\.\s*$/m', $out );
 		$this->assertGreaterThanOrEqual( 1, $dot_rows, 'should emit dot rows for multi-second gaps' );
+	}
+
+	public function test_no_dot_rows_across_a_sequence_break(): void {
+		$cmd      = $this->make_cmd();
+		$captured = $this->capture_output( $cmd );
+
+		// A marker stands in for entries that were REMOVED, so the interval it
+		// spans is missing detail rather than idle time — AGENTS.md decision 13.
+		// The dashboard draws no ruler anywhere in a folded record; the CLI drew
+		// ten minutes of dots across the same marker and called it elapsed.
+		$rid = 'foldGapR';
+		$ts0 = 1700000000.0;
+		$this->feed( $cmd, [ 'n' => 1, 'rid' => $rid, 'k' => 'process (start)', 'm' => '/g', 'ts' => $ts0 ] );
+		$this->feed( $cmd, [ 'n' => 2, 'rid' => $rid, 'k' => 'entries (aggregated)', 'm' => '900 merged', 'ts' => $ts0 ] );
+		$this->feed( $cmd, [ 'n' => 3, 'rid' => $rid, 'k' => 'render', 'm' => 'after-fold', 'ts' => $ts0 + 7 ] );
+		$this->feed( $cmd, [ 'n' => 4, 'rid' => $rid, 'k' => 'process (complete)', 'm' => '/g', 'ts' => $ts0 + 7.1 ] );
+
+		$out      = self::joined( $captured );
+		$dot_rows = \preg_match_all( '/^\s*\d+:.*\.\s*$/m', $out );
+		$this->assertSame( 0, $dot_rows, 'a folded record gets no time ruler at all' );
+	}
+
+	public function test_dot_rows_stop_at_a_lost_marker_but_not_elsewhere(): void {
+		// `entries (lost)` leaves the record measurable everywhere EXCEPT across
+		// the marker itself, unlike a fold, which makes the whole record
+		// unmeasurable. Only the fold branch had coverage here, so the two index
+		// reads either side of the marker — the whole lost-entries half of the
+		// rule, and the half the dashboard pins at four cases — never ran.
+		$cmd      = $this->make_cmd();
+		$captured = $this->capture_output( $cmd );
+
+		$rid = 'lostGapR';
+		$ts0 = 1700000000.0;
+		$this->feed( $cmd, [ 'n' => 1, 'rid' => $rid, 'k' => 'process (start)', 'm' => '/g', 'ts' => $ts0 ] );
+		// A rulable gap: no marker on either side of it.
+		$this->feed( $cmd, [ 'n' => 2, 'rid' => $rid, 'k' => 'warm', 'm' => 'after-gap', 'ts' => $ts0 + 4 ] );
+		$this->feed( $cmd, [ 'n' => 3, 'rid' => $rid, 'k' => 'entries (lost)', 'm' => '12 lost', 'ts' => $ts0 + 4 ] );
+		// This one straddles the marker, so it is missing detail, not idle time.
+		$this->feed( $cmd, [ 'n' => 16, 'rid' => $rid, 'k' => 'render', 'm' => 'past-hole', 'ts' => $ts0 + 40 ] );
+		$this->feed( $cmd, [ 'n' => 17, 'rid' => $rid, 'k' => 'process (complete)', 'm' => '/g', 'ts' => $ts0 + 40.1 ] );
+
+		$out  = self::joined( $captured );
+		$dots = \preg_match_all( '/^\s*\d+:.*\.\s*$/m', $out );
+		$this->assertGreaterThan( 0, $dots, 'a gap with no marker beside it is still ruled' );
+		$this->assertLessThan( 10, $dots, 'but the 36 seconds across the marker are not' );
 	}
 
 	public function test_format_entry_includes_peak_mb_in_complete_suffix(): void {

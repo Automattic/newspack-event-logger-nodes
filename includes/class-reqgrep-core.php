@@ -4,7 +4,7 @@
  * `wp nodes reqgrep` CLI and the `request_grep` performance-CI verb.
  *
  * It owns the part both consumers must agree on byte-for-byte: WHICH firehose
- * lines belong to WHICH request, and WHEN a request is "complete". The output
+ * lines belong to WHICH request, and WHEN a request has ENDED. The output
  * side differs (the CLI formats an indented tree to stdout; the verb builds a
  * bounded JSON summary), so that stays in each consumer and rides in as the
  * `on_complete` closure.
@@ -26,7 +26,7 @@ use Newspack_Nodes\LRU_Cache;
 \defined( 'ABSPATH' ) || exit;
 
 /**
- * Groups firehose lines by request id and decides when a request is complete.
+ * Groups firehose lines by request id and decides when a request has ended.
  *
  * State lives in two places: the caller-owned `LRU_Cache` of matched, in-flight
  * requests, and a private ring of history buckets holding the lines of rids that
@@ -35,7 +35,7 @@ use Newspack_Nodes\LRU_Cache;
  * still yield the request from its first line.
  *
  * The engine neither formats nor writes. It reports through two closures:
- * `on_complete` when a tracked rid's `process (complete)` entry arrives, and
+ * `on_complete` when a tracked rid reaches either terminal keyword, and
  * `on_history_miss` when a late match arrives too late to be reassembled.
  *
  * Deliberately NOT folded the way `Request_Builder_Node` is. Both hold the same
@@ -130,7 +130,7 @@ class Reqgrep_Core {
 	/**
 	 * Rid-grouping state machine — the shared tail of every read path.
 	 *
-	 *  - Already-tracked rid: append; fire on_complete on `process (complete)`.
+	 *  - Already-tracked rid: append; fire on_complete on either terminal.
 	 *  - Untracked rid equal to the pattern, or whose envelope matches it: replay
 	 *    the rid's history into fresh state, append, and start tracking.
 	 *  - Anything else: stash in history (bounded by num_buckets × bucket_size).
@@ -147,7 +147,7 @@ class Reqgrep_Core {
 		$state = $this->inflight->get( $rid );
 		if ( $state instanceof \stdClass ) {
 			$this->append_to_state( $state, $line );
-			$this->finalize_if_complete( $state, $rid, $key );
+			$this->finalize_if_terminal( $state, $rid, $key );
 		} elseif ( $rid === $this->pattern || \preg_match( $this->pattern_regex, $line ) ) {
 			// New matching rid: bootstrap state from history (if any).
 			$state        = new \stdClass();
@@ -173,7 +173,7 @@ class Reqgrep_Core {
 
 			$this->append_to_state( $state, $line );
 			$this->inflight->set( $rid, $state );
-			$this->finalize_if_complete( $state, $rid, $key );
+			$this->finalize_if_terminal( $state, $rid, $key );
 		} else {
 			// Not matching — stash in history; bound per-rid lines (memory).
 			$recent_idx = \count( $this->history ) - 1;
@@ -198,15 +198,20 @@ class Reqgrep_Core {
 	}
 
 	/**
-	 * Fire on_complete once a tracked rid's `process (complete)` arrives, then
-	 * evict it from the in-flight cache.
+	 * Fire on_complete once a tracked rid reaches a TERMINAL, then evict it from
+	 * the in-flight cache.
+	 *
+	 * Both terminals count. `process (aborted)` ends a request as surely as
+	 * `process (complete)` does — `Request_Builder_Node::TERMINAL_KEYWORDS` is
+	 * the one list, and reading only the nominal one dropped every lease-killed
+	 * request out of `request_grep` and mislabelled it `[incomplete]` in the CLI.
 	 *
 	 * @param \stdClass $state The rid's accumulated state.
 	 * @param string    $rid   Request id.
 	 * @param string    $key   This entry's `k` field.
 	 */
-	private function finalize_if_complete( \stdClass $state, string $rid, string $key ): void {
-		if ( 'process (complete)' !== $key ) {
+	private function finalize_if_terminal( \stdClass $state, string $rid, string $key ): void {
+		if ( ! isset( Request_Builder_Node::TERMINAL_KEYWORDS[ $key ] ) ) {
 			return;
 		}
 		// 3rd arg = clipped-by-caps; extra closure args are dropped (CLI).
@@ -221,7 +226,7 @@ class Reqgrep_Core {
 	/**
 	 * Append a line to the in-flight request state, respecting line + byte caps.
 	 *
-	 * Tripping either cap sets `->clipped`, which finalize_if_complete forwards to
+	 * Tripping either cap sets `->clipped`, which finalize_if_terminal forwards to
 	 * on_complete so the consumer can report the truncation instead of hiding it.
 	 *
 	 * @param \stdClass $state State object with ->lines and ->bytes fields.

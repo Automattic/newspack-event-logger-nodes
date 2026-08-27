@@ -187,7 +187,7 @@ class Findings {
 			'kind'     => 'truncation',
 			'severity' => 'info',
 			'title'    => 'This record was folded under memory pressure',
-			'detail'   => 'Entries were merged into the flame graph, so absence of evidence is not evidence of absence here.',
+			'detail'   => 'Entries were merged, so absence of evidence is not evidence of absence here.',
 			'measured' => 'record markers',
 			'metric'   => [
 				'folded'  => ! empty( $record['folded'] ),
