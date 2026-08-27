@@ -1547,7 +1547,7 @@ describe( 'PerformanceDashboard', () => {
 			} )
 		);
 		await flushEffects();
-		const trigger = container.querySelector( '.event-logger-ask__trigger' );
+		const trigger = container.querySelector( '[data-ask-trigger]' );
 		expect( trigger ).toBeTruthy();
 		expect( trigger.nextElementSibling ).toBe(
 			container.querySelector( '.event-logger-modal-back-button' )
@@ -1606,9 +1606,7 @@ describe( 'PerformanceDashboard', () => {
 				} )
 			);
 			await flushEffects();
-			const trigger = container.querySelector(
-				'.event-logger-ask__trigger'
-			);
+			const trigger = container.querySelector( '[data-ask-trigger]' );
 			const control = container.querySelector(
 				'.event-logger-rule-control'
 			);
