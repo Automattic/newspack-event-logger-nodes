@@ -286,3 +286,48 @@ describe( 'UrlDetailMergeNode — scan_stopped_early describes the merged list',
 		expect( forwardedPayload( sink, 1 ).scan_stopped_early ).toBeFalsy();
 	} );
 } );
+
+describe( 'watermark', () => {
+	/**
+	 * The browser's watermark is the newest request it holds, minus a second.
+	 * The server stops its reverse scan at the first entry AT or below it, so
+	 * sending the exact newest would skip a sibling logged in the same second
+	 * — permanently, since the scan never revisits it. One second of overlap
+	 * costs a few rows the merge already dedups by rid.
+	 */
+	it( 'is the newest retained timestamp less one second', () => {
+		const { node } = makeMerge();
+		node.fill(
+			reply( {
+				last_modified: 1,
+				requests: [
+					{ rid: 'b', timestamp: 1787000900 },
+					{ rid: 'a', timestamp: 1787000300 },
+				],
+			} )
+		);
+
+		expect( node.watermark() ).toBe( 1787000899 );
+	} );
+
+	it( 'is 0 with nothing retained, so the first ask reads the whole window', () => {
+		expect( new UrlDetailMergeNode().watermark() ).toBe( 0 );
+	} );
+
+	it( 'is 0 again after a clear, so a reopened modal reads the whole window', () => {
+		const { node } = makeMerge();
+		node.fill(
+			reply( {
+				last_modified: 1,
+				requests: [ { rid: 'a', timestamp: 1787000300 } ],
+			} )
+		);
+		const control = newMessage();
+		control[ TYPE ] = TM_STRUCT;
+		control[ FROM ] = node.controlFrom;
+		control[ VALUE ] = { action: 'clear' };
+		node.fill( control );
+
+		expect( node.watermark() ).toBe( 0 );
+	} );
+} );

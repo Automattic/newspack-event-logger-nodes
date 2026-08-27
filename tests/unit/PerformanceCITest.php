@@ -581,6 +581,136 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( 'rid-recent-b-1234567890123456', $result['requests'][0]['rid'] );
 	}
 
+	/**
+	 * The scan must reach the NEWEST entries first. Walking forward from the
+	 * oldest, the per-callback stop at RECENT_REQUEST_LIMIT fires on the
+	 * OLDEST matches — so a busy URL's "recent requests" panel showed the
+	 * start of its history, sorted descending to look convincing, and genuinely
+	 * recent requests never appeared at all.
+	 */
+	public function test_url_detail_returns_the_newest_requests_when_the_limit_bites(): void {
+		$url    = '/busy';
+		$hash   = Log_Manager::url_hash( $url );
+		$now    = \time();
+		$store  = new Stats_Store( 0, 86400 );
+		$this->set_url_bucket( $store, $this->current_url_bucket(), [
+			$hash => [ 'url' => $url, 'count' => 505, 'sum_ms' => 5050.0, 'last_seen' => $now ],
+		] );
+		// One past the 500 cap, oldest written first, as production appends.
+		for ( $i = 0; $i < 505; $i++ ) {
+			$this->write_request( [
+				'rid'            => \sprintf( '%032x', $i ),
+				'url'            => $url,
+				'timestamp'      => $now - 3000 + $i,
+				'duration_ms'    => 10,
+				'status_code'    => 200,
+				'peak_mb'        => 1,
+				'request_method' => 'GET',
+			] );
+		}
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'url_detail', $hash );
+		$rids   = \array_column( $result['requests'], 'rid' );
+
+		$this->assertContains( \sprintf( '%032x', 504 ), $rids, 'the newest request is missing' );
+		$this->assertNotContains( \sprintf( '%032x', 0 ), $rids, 'the oldest request should have fallen off' );
+	}
+
+	/**
+	 * `since` is the browser's watermark: the newest request it already holds.
+	 * The scan runs newest-first, so the first entry at or below it means every
+	 * remaining entry in that partition is already on screen — stop reading.
+	 */
+	public function test_url_detail_since_returns_only_what_the_browser_lacks(): void {
+		$url   = '/watermarked';
+		$hash  = Log_Manager::url_hash( $url );
+		$now   = \time();
+		$store = new Stats_Store( 0, 86400 );
+		$this->set_url_bucket( $store, $this->current_url_bucket(), [
+			$hash => [ 'url' => $url, 'count' => 3, 'sum_ms' => 30.0, 'last_seen' => $now ],
+		] );
+		foreach ( [ 900, 600, 300 ] as $i => $ago ) {
+			$this->write_request( [
+				'rid'            => \sprintf( '%032x', 0xAA0 + $i ),
+				'url'            => $url,
+				'timestamp'      => $now - $ago,
+				'duration_ms'    => 10,
+				'status_code'    => 200,
+				'peak_mb'        => 1,
+				'request_method' => 'GET',
+			] );
+		}
+
+		$result = VerbHarness::fire(
+			new Performance_CI_Node(),
+			'performance',
+			'url_detail',
+			[ $hash, '--since=' . ( $now - 450 ) ]
+		);
+
+		$this->assertSame(
+			[ \sprintf( '%032x', 0xAA2 ) ],
+			\array_column( $result['requests'], 'rid' )
+		);
+	}
+
+	/**
+	 * The watermark stops ONE partition, never the fan-out. Partition logs are
+	 * independent, so reaching known ground in p0 says nothing about p1 — a
+	 * naive `stop everything` drops every later partition's requests silently.
+	 */
+	public function test_url_detail_since_still_reads_later_partitions(): void {
+		\add_filter(
+			'newspack_nodes/topologies',
+			static function ( $catalog ) {
+				$catalog['performance'] = \array_merge(
+					\is_array( $catalog['performance'] ?? null ) ? $catalog['performance'] : [],
+					[ 'num_partitions' => 2 ]
+				);
+				return $catalog;
+			}
+		);
+		$url   = '/two-partitions';
+		$hash  = Log_Manager::url_hash( $url );
+		$now   = \time();
+		$store = new Stats_Store( 0, 86400 );
+		$this->set_url_bucket( $store, $this->current_url_bucket(), [
+			$hash => [ 'url' => $url, 'count' => 2, 'sum_ms' => 20.0, 'last_seen' => $now ],
+		] );
+		// p0 holds only ground the browser has; p1 holds something newer.
+		$this->write_request( [
+			'rid'            => \sprintf( '%032x', 0xB00 ),
+			'url'            => $url,
+			'timestamp'      => $now - 900,
+			'duration_ms'    => 10,
+			'status_code'    => 200,
+			'peak_mb'        => 1,
+			'request_method' => 'GET',
+		], 0 );
+		$this->write_request( [
+			'rid'            => \sprintf( '%032x', 0xB01 ),
+			'url'            => $url,
+			'timestamp'      => $now - 300,
+			'duration_ms'    => 10,
+			'status_code'    => 200,
+			'peak_mb'        => 1,
+			'request_method' => 'GET',
+		], 1 );
+
+		$result = VerbHarness::fire(
+			new Performance_CI_Node(),
+			'performance',
+			'url_detail',
+			[ $hash, '--since=' . ( $now - 450 ) ]
+		);
+
+		$this->assertSame(
+			[ \sprintf( '%032x', 0xB01 ) ],
+			\array_column( $result['requests'], 'rid' ),
+			'p0 hitting the watermark must not skip p1'
+		);
+	}
+
 	public function test_url_detail_reports_a_scan_that_stopped_before_reaching_the_url(): void {
 		// A low-traffic URL among high-traffic neighbours: the index walk spends
 		// its whole entry budget on the newer lines and never reaches the one

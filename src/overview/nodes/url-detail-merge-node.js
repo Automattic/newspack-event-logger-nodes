@@ -149,6 +149,29 @@ export class UrlDetailMergeNode extends Node {
 	}
 
 	/**
+	 * The browser's watermark: the newest request this node holds, less one
+	 * second. `url_detail --since` hands it to the server, whose reverse scan
+	 * stops at the first entry AT or below it — so a poll reads the entries
+	 * since the last one instead of the whole retained window.
+	 *
+	 * The second of slack is why this is not simply the newest timestamp. The
+	 * stop is inclusive, so sending the exact value would skip a request logged
+	 * in the SAME second as the one we hold, and the scan never revisits it. An
+	 * extra second of overlap re-sends a row or two, which `_merge` discards by
+	 * rid like any other duplicate.
+	 *
+	 * Zero with nothing retained — first open, and after a `clear` — which is
+	 * what makes a reopened modal read the whole window again.
+	 *
+	 * @return {number} Epoch seconds, or 0 to read the whole window.
+	 */
+	watermark() {
+		// The list is sorted newest-first, by the server and by `_merge`.
+		const newest = this._merged?.requests?.[ 0 ]?.timestamp;
+		return Number.isFinite( newest ) ? Math.floor( newest ) - 1 : 0;
+	}
+
+	/**
 	 * Console/palette metadata. `Hidden` keeps this edge transform out of the
 	 * palette: it takes no constructor arguments, answers no verbs, and gets its
 	 * target from the graph `usePerformanceGraph` builds.

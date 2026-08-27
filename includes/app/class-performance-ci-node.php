@@ -104,6 +104,17 @@ class Performance_CI_Node extends Service_CI_Node {
 	public const MAX_INDEX_ENTRIES = 1000000;
 
 	/**
+	 * What an `on_hit` callback tells the scan to do next.
+	 *
+	 * The distinction that matters is the middle one: a partition's log is
+	 * independent of its siblings', so a reader that has seen enough of THIS
+	 * one has learned nothing about the next. Ending the fan-out there drops
+	 * every later partition's entries silently — which is the whole reason a
+	 * plain `stop` is not enough.
+	 */
+	private const SCAN_STOP_PARTITION = 'partition';
+
+	/**
 	 * TSL node names the disk-walking verbs resolve their partitions through.
 	 * The dirs come from the DECLARATION (`Bootstrap::node_dirs`), never from a
 	 * path this class builds: request-builder alone pins `alerts.p0` and
@@ -939,7 +950,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param string $url_hash 12-char URL hash to match.
 	 * @return array{requests:array<int,array<string,mixed>>, truncated:bool, window_start:int} The list, whether the budget cut it short, and the window it is of.
 	 */
-	private static function find_recent_requests_for_url( string $url_hash ): array {
+	private static function find_recent_requests_for_url( string $url_hash, int $since = 0 ): array {
 		$requests  = [];
 		$floor     = self::scan_floor();
 		$truncated = self::scan_index_entries(
@@ -947,7 +958,14 @@ class Performance_CI_Node extends Service_CI_Node {
 			'requests',
 			'url_hash',
 			$url_hash,
-			static function ( array $entry, int $partition, int $segment ) use ( &$requests ): ?bool {
+			static function ( array $entry, int $partition, int $segment ) use ( &$requests, $since ) {
+				// @longform Newest-first, so the first entry at or below the
+				// browser's watermark means the rest of THIS partition is
+				// already on screen. Stop reading it; the others still run,
+				// because their logs are independent of this one's.
+				if ( $since > 0 && Core::as_int( $entry['timestamp'] ?? 0 ) <= $since ) {
+					return self::SCAN_STOP_PARTITION;
+				}
 				$requests[] = [
 					'rid'          => \trim( Core::as_string( $entry['rid'] ?? '' ) ),
 					'timestamp'    => $entry['timestamp'] ?? 0,
@@ -1373,7 +1391,9 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param string            $log    Log basename ('requests' | 'flames').
 	 * @param string            $field  Index-entry field the match compares.
 	 * @param string            $match  Value that field must equal, trimmed.
-	 * @param callable(array<array-key,mixed>, int, int, Partition_Node): (bool|null) $on_hit Return false to end the scan.
+	 * @param callable(array<array-key,mixed>, int, int, Partition_Node): ('partition'|bool|null) $on_hit
+	 *        Return false to end the whole fan-out, `SCAN_STOP_PARTITION` to
+	 *        finish this partition and carry on with the next, null to continue.
 	 * @param int|null          $floor  Stop a closed segment below this completion time; null walks to the budget.
 	 * @return bool True when the entry budget ended the scan.
 	 */
@@ -1419,7 +1439,12 @@ class Performance_CI_Node extends Service_CI_Node {
 					if ( ! \is_array( $entry ) || \trim( Core::as_string( $entry[ $field ] ?? '' ) ) !== $match ) {
 						return null;
 					}
-					$stopped = false === $on_hit( $entry, $p, $segment, $node );
+					$outcome = $on_hit( $entry, $p, $segment, $node );
+					// Done with this log, not with the fan-out.
+					if ( self::SCAN_STOP_PARTITION === $outcome ) {
+						return false;
+					}
+					$stopped = false === $outcome;
 					return $stopped ? false : null;
 				},
 				true
@@ -1941,7 +1966,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				$flame     = $aggregate['flame']
 					?? [ 'name' => 'aggregate', 'value' => 0, 'children' => [] ];
 
-				$recent  = self::find_recent_requests_for_url( $hash );
+				$recent  = self::find_recent_requests_for_url( $hash, Core::as_int( $opts['since'] ?? 0 ) );
 				$payload = [
 					'stats'              => $stats,
 					'requests'           => $recent['requests'],
