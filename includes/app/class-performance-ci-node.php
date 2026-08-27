@@ -215,10 +215,14 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * short-circuiting the production fan-out — the surrounding memo + the merge
 	 * logic still run as real code (mirrors Insights_CI_Demo_Node::$read_items).
 	 *
+	 * It takes the SHARD, so a point read goes through it too. Given a seam
+	 * that could not express one, `raw_row()` had to branch on the seam's
+	 * presence — and the narrowing this exists to measure never ran under it.
+	 *
 	 * Resolved once per request through index(); reassign in a test bootstrap,
 	 * restore in a finally.
 	 *
-	 * Signature: `function (): array<int,array<string,mixed>>`.
+	 * Signature: `function ( ?string $shard ): array<int,array<string,mixed>>`.
 	 *
 	 * @var \Closure|null
 	 */
@@ -712,101 +716,51 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * lookup can produce. Flame_Builder writes `sum_ms` directly; older
 	 * aggregator buckets carry `sum_req_time` in seconds, folded in at ×1000.
 	 *
+	 * @param ?string $shard Shard to read, or null for the whole index.
 	 * @return array<int,array<string,mixed>>
 	 */
-	public static function load_index_default(): array {
-		$buckets = self::read_window();
-		$recent  = \array_flip( self::recent_buckets() );
-		$result  = [];
+	public static function load_index_default( ?string $shard = null ): array {
+		// ONE window: the flag and the plan cannot straddle a boundary.
+		$plan   = Stats_Store::read_plan( \array_values( self::read_window() ) );
+		$recent = \array_flip( self::recent_buckets() );
+		$result = [];
+		// An hour is folded when EVERY shard this read covers carries it.
+		$whole = null === $shard ? \count( Stats_Store::url_shards() ) : 1;
 		foreach ( self::stats_stores() as $store ) {
-			foreach ( $store->url_row_sources( $buckets ) as [ $bucket, $bucket_data ] ) {
-				$is_recent = isset( $recent[ $bucket ] );
-				foreach ( $bucket_data as $key => $stats ) {
-					$stat_arr = Core::arr( $stats );
-					// An all-digit hash arrives as an int array key; cast back.
-					$hash     = (string) $key;
-					if ( ! isset( $result[ $hash ] ) ) {
-						$result[ $hash ] = [
-							'hash'         => $hash,
-							'url'          => Core::as_string( $stat_arr['url'] ?? '' ),
-							// Many URLs; `url_detail` cannot answer for it.
-							'aggregate'    => Stats_Store::is_other_key( $hash ),
-							'count'        => 0,
-							'timed_count'  => 0,
-							'count_2xx'    => 0,
-							'count_3xx'    => 0,
-							'count_4xx'    => 0,
-							'count_5xx'    => 0,
-							'sum_ms'       => 0.0,
-							// null until a TIMED bucket has a min to fold in.
-							'min_ms'       => null,
-							'max_ms'       => 0.0,
-							'p50_ms'       => 0.0,
-							'p95_ms'       => 0.0,
-							'p99_ms'       => 0.0,
-							'sum_peak_mb'  => 0.0,
-							'max_peak_mb'  => 0.0,
-							'worker'       => false,
-							'recent_count' => 0,
-							'last_updated' => 0,
-							Stats_Store::URL_SRV_FIELD => [],
-							self::SRV_RECENT_FIELD     => [],
-						];
-					}
-					$entry = $result[ $hash ];
-					// Whichever bucket names the URL wins; merge order varies.
-					if ( '' === $entry['url'] ) {
-						$entry['url'] = Core::as_string( $stat_arr['url'] ?? '' );
-					}
-					$row_count            = Core::as_int( $stat_arr['count'] ?? 0 );
-					$entry['count']      += $row_count;
-					// Only timed requests contribute ms; only they divide it.
-					$entry['timed_count'] += Core::as_int( $stat_arr['timed_count'] ?? 0 );
-					$entry['recent_count'] += $is_recent ? $row_count : 0;
-					$entry['count_2xx'] += Core::as_int( $stat_arr['count_2xx'] ?? 0 );
-					$entry['count_3xx'] += Core::as_int( $stat_arr['count_3xx'] ?? 0 );
-					$entry['count_4xx'] += Core::as_int( $stat_arr['count_4xx'] ?? 0 );
-					$entry['count_5xx'] += Core::as_int( $stat_arr['count_5xx'] ?? 0 );
-					$entry['sum_ms']      += Core::as_float( $stat_arr['sum_ms'] ?? 0 );
-					$entry['sum_peak_mb'] += Core::as_float( $stat_arr['sum_peak_mb'] ?? 0 );
-					// Fold min_ms only from timed buckets; skip sentinels.
-					if ( isset( $stat_arr['min_ms'] ) && ( $stat_arr['timed_count'] ?? 0 ) > 0 ) {
-						$stat_min        = Core::as_float( $stat_arr['min_ms'] );
-						$entry['min_ms'] = null === $entry['min_ms']
-							? $stat_min
-							: \min( Core::as_float( $entry['min_ms'] ), $stat_min );
-					}
-					$entry['max_ms']      = \max( Core::as_float( $entry['max_ms'] ),      Core::as_float( $stat_arr['max_ms']      ?? 0 ) );
-					$entry['max_peak_mb'] = \max( Core::as_float( $entry['max_peak_mb'] ), Core::as_float( $stat_arr['max_peak_mb'] ?? 0 ) );
-					foreach ( [ 'p50_ms', 'p95_ms', 'p99_ms' ] as $k ) {
-						if ( ! empty( $stat_arr[ $k ] ) ) {
-							$entry[ $k ] = Core::as_float( $stat_arr[ $k ] );
-						}
-					}
-					$entry['worker']       = ! empty( $entry['worker'] ) || ! empty( $stat_arr['worker'] );
-					$entry['last_updated'] = \max(
-						Core::as_int( $entry['last_updated'] ),
-						Core::as_int( $stat_arr['last_seen'] ?? 0 )
-					);
-
-					// Recent share is read-time; it rides beside the split.
-					$row_srv = Core::arr( $stat_arr[ Stats_Store::URL_SRV_FIELD ] ?? null );
-					if ( [] !== $row_srv ) {
-						$entry[ Stats_Store::URL_SRV_FIELD ] = Stats_Store::sum_fields(
-							Core::arr( $entry[ Stats_Store::URL_SRV_FIELD ] ),
-							$row_srv,
-							Stats_Store::URL_SRV_SUMS
-						);
-						if ( $is_recent ) {
-							$entry[ self::SRV_RECENT_FIELD ] = Stats_Store::sum_fields(
-								Core::arr( $entry[ self::SRV_RECENT_FIELD ] ),
-								$row_srv,
-								[ 'count' => true ]
-							);
-						}
-					}
-					$result[ $hash ] = $entry;
+			$by_hour = [];
+			foreach ( $store->url_hour_sources( $plan['hours'], $shard ) as [ $hour, $data ] ) {
+				$by_hour[ $hour ][] = [ $hour, $data ];
+			}
+			// @longform An hour with no coarse key has not been folded YET — a
+			// fresh deploy, or a worker down when it closed — so its twelve
+			// fine buckets answer for it. A folded hour's buckets are NOT read:
+			// they outlive the fold, and reading both counts the hour twice.
+			// ALL its shards or none, because a fold that died between shards
+			// leaves some: taking those beside the buckets answering for the
+			// rest would count the folded shards twice, and the writer treats
+			// the same hour as unfolded and redoes it.
+			$hours   = [];
+			$missing = [];
+			foreach ( $plan['hours'] as $hour ) {
+				$found = $by_hour[ $hour ] ?? [];
+				if ( \count( $found ) === $whole ) {
+					$hours = \array_merge( $hours, $found );
+					continue;
 				}
+				$missing = \array_merge( $missing, Stats_Store::buckets_in_hour( $hour ) );
+			}
+			// @longform Fine, then hours, then the fallback — newest first
+			// throughout, which is the order the percentiles' first-wins read
+			// depends on. One fold for all three: an hour key is never a recent
+			// five-minute bucket, and neither is a bucket behind the fine tail,
+			// so the recency predicate is uniform.
+			$sources = [
+				...$store->url_row_sources( $plan['fine'], $shard ),
+				...$hours,
+				...$store->url_row_sources( $missing, $shard ),
+			];
+			foreach ( $sources as [ $bucket, $bucket_data ] ) {
+				$result = self::fold_bucket( $result, $bucket_data, isset( $recent[ $bucket ] ) );
 			}
 		}
 
@@ -821,6 +775,135 @@ class Performance_CI_Node extends Service_CI_Node {
 			$out[]           = $entry;
 		}
 		return $out;
+	}
+
+	/**
+	 * Fold one stored bucket — fine or coarse, they hold the same shape — into
+	 * the merged rows so far.
+	 *
+	 * @param array<string,array<string,mixed>> $result    Merged rows by hash.
+	 * @param array<array-key,mixed>            $data      One stored bucket.
+	 * @param bool                              $is_recent Whether it is inside
+	 *                                                     the "last hour" window the rate divides by.
+	 * @return array<string,array<string,mixed>>
+	 */
+	private static function fold_bucket( array $result, array $data, bool $is_recent ): array {
+		foreach ( $data as $key => $stats ) {
+			// An all-digit hash arrives as an int array key; cast back.
+			$hash            = (string) $key;
+			$result[ $hash ] = self::fold_index_row(
+				$result[ $hash ] ?? self::empty_index_row( $hash ),
+				Core::arr( $stats ),
+				$is_recent
+			);
+		}
+		return $result;
+	}
+
+	/**
+	 * The zero row a hash folds its buckets into.
+	 *
+	 * @param string $hash 12-char URL hash, or an overflow key.
+	 * @return array<string,mixed>
+	 */
+	private static function empty_index_row( string $hash ): array {
+		return [
+			'hash'         => $hash,
+			'url'          => '',
+			// Many URLs; `url_detail` cannot answer for it.
+			'aggregate'    => Stats_Store::is_other_key( $hash ),
+			'count'        => 0,
+			'timed_count'  => 0,
+			'count_2xx'    => 0,
+			'count_3xx'    => 0,
+			'count_4xx'    => 0,
+			'count_5xx'    => 0,
+			'sum_ms'       => 0.0,
+			// null until a TIMED bucket has a min to fold in.
+			'min_ms'       => null,
+			'max_ms'       => 0.0,
+			'p50_ms'       => 0.0,
+			'p95_ms'       => 0.0,
+			'p99_ms'       => 0.0,
+			'sum_peak_mb'  => 0.0,
+			'max_peak_mb'  => 0.0,
+			'worker'       => false,
+			'recent_count' => 0,
+			'last_updated' => 0,
+			Stats_Store::URL_SRV_FIELD => [],
+			self::SRV_RECENT_FIELD     => [],
+		];
+	}
+
+	/**
+	 * Fold ONE stored bucket row into the merged row for its hash.
+	 *
+	 * The whole index and a single URL's point read share this: written twice,
+	 * the table and the detail modal would disagree about the same URL.
+	 *
+	 * @param array<string,mixed>    $entry     The merged row so far.
+	 * @param array<array-key,mixed> $stat_arr  One bucket's stored row.
+	 * @param bool                   $is_recent Whether that bucket is inside the
+	 *                                          "last hour" window the rate divides by.
+	 * @return array<string,mixed>
+	 */
+	private static function fold_index_row( array $entry, array $stat_arr, bool $is_recent ): array {
+		// Whichever bucket names the URL wins; merge order varies.
+		if ( '' === $entry['url'] ) {
+			$entry['url'] = Core::as_string( $stat_arr['url'] ?? '' );
+		}
+		// Both sides coerced: the accumulator arrives from the array as mixed.
+		$row_count             = Core::as_int( $stat_arr['count'] ?? 0 );
+		$entry['count']        = Core::as_int( $entry['count'] ) + $row_count;
+		// Only timed requests contribute ms; only they divide it.
+		$entry['timed_count']  = Core::as_int( $entry['timed_count'] ) + Core::as_int( $stat_arr['timed_count'] ?? 0 );
+		$entry['recent_count'] = Core::as_int( $entry['recent_count'] ) + ( $is_recent ? $row_count : 0 );
+		foreach ( [ 'count_2xx', 'count_3xx', 'count_4xx', 'count_5xx' ] as $status ) {
+			$entry[ $status ] = Core::as_int( $entry[ $status ] ) + Core::as_int( $stat_arr[ $status ] ?? 0 );
+		}
+		$entry['sum_ms']       = Core::as_float( $entry['sum_ms'] ) + Core::as_float( $stat_arr['sum_ms'] ?? 0 );
+		$entry['sum_peak_mb']  = Core::as_float( $entry['sum_peak_mb'] ) + Core::as_float( $stat_arr['sum_peak_mb'] ?? 0 );
+		// Fold min_ms only from timed buckets; skip sentinels.
+		if ( isset( $stat_arr['min_ms'] ) && ( $stat_arr['timed_count'] ?? 0 ) > 0 ) {
+			$stat_min        = Core::as_float( $stat_arr['min_ms'] );
+			$entry['min_ms'] = null === $entry['min_ms']
+				? $stat_min
+				: \min( Core::as_float( $entry['min_ms'] ), $stat_min );
+		}
+		$entry['max_ms']      = \max( Core::as_float( $entry['max_ms'] ),      Core::as_float( $stat_arr['max_ms']      ?? 0 ) );
+		$entry['max_peak_mb'] = \max( Core::as_float( $entry['max_peak_mb'] ), Core::as_float( $stat_arr['max_peak_mb'] ?? 0 ) );
+		// @longform Percentiles do not merge, so the fold takes ONE bucket's —
+		// the NEWEST that carries any. Sources arrive newest-first, so this is
+		// first-wins: a last-wins read handed the display the oldest bucket in
+		// the window, freezing a URL's p95 at what it was a day ago.
+		foreach ( [ 'p50_ms', 'p95_ms', 'p99_ms' ] as $k ) {
+			if ( empty( $entry[ $k ] ) && ! empty( $stat_arr[ $k ] ) ) {
+				$entry[ $k ] = Core::as_float( $stat_arr[ $k ] );
+			}
+		}
+		$entry['worker']       = ! empty( $entry['worker'] ) || ! empty( $stat_arr['worker'] );
+		$entry['last_updated'] = \max(
+			Core::as_int( $entry['last_updated'] ),
+			Core::as_int( $stat_arr['last_seen'] ?? 0 )
+		);
+
+		// Recent share is read-time; it rides beside the split.
+		$row_srv = Core::arr( $stat_arr[ Stats_Store::URL_SRV_FIELD ] ?? null );
+		if ( [] !== $row_srv ) {
+			$entry[ Stats_Store::URL_SRV_FIELD ] = Stats_Store::sum_fields(
+				Core::arr( $entry[ Stats_Store::URL_SRV_FIELD ] ),
+				$row_srv,
+				Stats_Store::URL_SRV_SUMS
+			);
+			if ( $is_recent ) {
+				$entry[ self::SRV_RECENT_FIELD ] = Stats_Store::sum_fields(
+					Core::arr( $entry[ self::SRV_RECENT_FIELD ] ),
+					$row_srv,
+					[ 'count' => true ]
+				);
+			}
+		}
+		return $entry;
 	}
 
 	/**
@@ -948,6 +1031,9 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * servers, the server has to go on the index entry.
 	 *
 	 * @param string $url_hash 12-char URL hash to match.
+	 * @param int    $since    Watermark (epoch seconds): the walk stops at the
+	 *                         first entry that COMPLETED below it. 0 reads the
+	 *                         whole retained window.
 	 * @return array{requests:array<int,array<string,mixed>>, truncated:bool, window_start:int} The list, whether the budget cut it short, and the window it is of.
 	 */
 	private static function find_recent_requests_for_url( string $url_hash, int $since = 0 ): array {
@@ -958,13 +1044,16 @@ class Performance_CI_Node extends Service_CI_Node {
 			'requests',
 			'url_hash',
 			$url_hash,
-			static function ( array $entry, int $partition, int $segment ) use ( &$requests, $since ) {
-				// @longform Newest-first, so the first entry at or below the
-				// browser's watermark means the rest of THIS partition is
-				// already on screen. Stop reading it; the others still run,
-				// because their logs are independent of this one's.
-				if ( $since > 0 && Core::as_int( $entry['timestamp'] ?? 0 ) <= $since ) {
-					return self::SCAN_STOP_PARTITION;
+			static function ( array $entry, int $partition, int $segment ) use ( &$requests, $since ): string|bool|null {
+				// @longform Comparing START would end the partition at the
+				// first long-running request and drop everything behind it for
+				// good, the watermark having advanced past them.
+				if ( $since > 0 ) {
+					$completed_at = Core::as_int( $entry['timestamp'] ?? 0 )
+						+ \intdiv( Core::as_int( $entry['duration_ms'] ?? 0 ), 1000 );
+					if ( $completed_at < $since ) {
+						return self::SCAN_STOP_PARTITION;
+					}
 				}
 				$requests[] = [
 					'rid'          => \trim( Core::as_string( $entry['rid'] ?? '' ) ),
@@ -1391,7 +1480,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param string            $log    Log basename ('requests' | 'flames').
 	 * @param string            $field  Index-entry field the match compares.
 	 * @param string            $match  Value that field must equal, trimmed.
-	 * @param callable(array<array-key,mixed>, int, int, Partition_Node): ('partition'|bool|null) $on_hit
+	 * @param callable(array<array-key,mixed>, int, int, Partition_Node): (self::SCAN_STOP_PARTITION|bool|null) $on_hit
 	 *        Return false to end the whole fan-out, `SCAN_STOP_PARTITION` to
 	 *        finish this partition and carry on with the next, null to continue.
 	 * @param int|null          $floor  Stop a closed segment below this completion time; null walks to the budget.
@@ -1551,18 +1640,67 @@ class Performance_CI_Node extends Service_CI_Node {
 	 *                           per-server split to answer the scope with.
 	 */
 	private function row( string $hash, string $server = '' ): ?array {
+		$raw = $this->raw_row( $hash );
+		if ( null === $raw ) {
+			return null;
+		}
+		$projected = self::project_row( $raw, $server );
+		// THIS row's own split: one fresh row sets the index-wide flag.
+		if ( null === $projected && [] === Core::arr( $raw[ Stats_Store::URL_SRV_FIELD ] ?? null ) ) {
+			throw new \RuntimeException( \esc_html(
+				"No per-server data for {$server} yet: this index predates the split, and fills within one retention window."
+			) );
+		}
+		return $projected;
+	}
+
+	/**
+	 * One URL's unscoped merged row, as cheaply as this request allows.
+	 *
+	 * A POINT READ of the hash's own shard — unless the whole index is already
+	 * in hand for this request, in which case walking it is free and reading
+	 * again would be a second fan-out for a row we hold.
+	 *
+	 * @param string $hash 12-char URL hash.
+	 * @return array<array-key,mixed>|null
+	 */
+	private function raw_row( string $hash ): ?array {
+		return null === $this->index_raw
+			? self::load_row_default( $hash )
+			: $this->row_from_index( $hash );
+	}
+
+	/**
+	 * One URL's merged row, read from the ONE shard its hash names.
+	 *
+	 * `Stats_Store::url_shard()` is the first hex digit of the hash, so a single
+	 * URL lives in a single shard and the other fifteen answer nothing. Reaching
+	 * this row through the whole index made the detail modal pay the URL TABLE's
+	 * fan-out — on the staging hub, 18,432 keys and 54 MB to answer about one row.
+	 *
+	 * @param string $hash 12-char URL hash.
+	 * @return array<array-key,mixed>|null The merged row, or null when absent.
+	 */
+	public static function load_row_default( string $hash ): ?array {
+		foreach ( self::read_index( Stats_Store::url_shard( $hash ) ) as $row ) {
+			if ( Core::as_string( $row['hash'] ?? '' ) === $hash ) {
+				return $row;
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * Find one hash in the whole merged index.
+	 *
+	 * @param string $hash 12-char URL hash.
+	 * @return array<array-key,mixed>|null
+	 */
+	private function row_from_index( string $hash ): ?array {
 		foreach ( $this->raw_index() as $raw ) {
-			if ( Core::as_string( $raw['hash'] ?? '' ) !== $hash ) {
-				continue;
+			if ( Core::as_string( $raw['hash'] ?? '' ) === $hash ) {
+				return $raw;
 			}
-			$projected = self::project_row( $raw, $server );
-			// THIS row's own split: one fresh row sets the index-wide flag.
-			if ( null === $projected && [] === Core::arr( $raw[ Stats_Store::URL_SRV_FIELD ] ?? null ) ) {
-				throw new \RuntimeException( \esc_html(
-					"No per-server data for {$server} yet: this index predates the split, and fills within one retention window."
-				) );
-			}
-			return $projected;
 		}
 		return null;
 	}
@@ -1647,17 +1785,27 @@ class Performance_CI_Node extends Service_CI_Node {
 	 */
 	private function raw_index(): array {
 		if ( null === $this->index_raw ) {
-			$read = self::$load_index ?? static fn (): array => self::load_index_default();
-			$rows = [];
-			foreach ( Core::arr( $read() ) as $row ) {
-				if ( ! \is_array( $row ) ) {
-					continue;
-				}
-				$rows[] = $row;
-			}
-			$this->index_raw = $rows;
+			$this->index_raw = self::read_index( null );
 		}
 		return $this->index_raw;
+	}
+
+	/**
+	 * The read seam, resolved. One entry point for both shapes, so a test
+	 * counting reads counts a point read as well as a whole-index one.
+	 *
+	 * @param ?string $shard Shard to read, or null for the whole index.
+	 * @return array<int,array<array-key,mixed>>
+	 */
+	private static function read_index( ?string $shard ): array {
+		$read = self::$load_index ?? static fn ( ?string $s ): array => self::load_index_default( $s );
+		$rows = [];
+		foreach ( Core::arr( $read( $shard ) ) as $row ) {
+			if ( \is_array( $row ) ) {
+				$rows[] = $row;
+			}
+		}
+		return $rows;
 	}
 
 	/**
@@ -1916,12 +2064,13 @@ class Performance_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'url_detail',
 					'capability'  => Capabilities::READ,
-					'description' => 'Single-URL detail incl. aggregate flame data. Its request list covers the window opening at requests_window_start, not the whole record.',
+					'description' => 'Single-URL detail incl. aggregate flame data. Its request list covers the window opening at requests_window_start, not the whole record; `since` tails it.',
 					'args'        => [
 						[ 'name' => 'hash', 'type' => 'string', 'required' => true ],
 						[ 'name' => 'breakdown', 'type' => 'string', 'required' => false ],
 						[ 'name' => 'server', 'type' => 'string', 'required' => false ],
 						[ 'name' => 'categories', 'type' => 'bool', 'required' => false ],
+						[ 'name' => 'since', 'type' => 'int', 'required' => false, 'description' => 'Watermark (epoch): tails the request list. Compared against COMPLETION, exclusively — a request sharing this second is still returned.' ],
 					],
 					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
 				$parsed = Command_Args::parse( self::arg_strings( $args ) );
@@ -1966,7 +2115,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				$flame     = $aggregate['flame']
 					?? [ 'name' => 'aggregate', 'value' => 0, 'children' => [] ];
 
-				$recent  = self::find_recent_requests_for_url( $hash, Core::as_int( $opts['since'] ?? 0 ) );
+				$recent  = self::find_recent_requests_for_url( $hash, self::require_option_int( $opts, 'since', 0 ) );
 				$payload = [
 					'stats'              => $stats,
 					'requests'           => $recent['requests'],

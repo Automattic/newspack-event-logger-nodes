@@ -289,13 +289,13 @@ describe( 'UrlDetailMergeNode — scan_stopped_early describes the merged list',
 
 describe( 'watermark', () => {
 	/**
-	 * The browser's watermark is the newest request it holds, minus a second.
-	 * The server stops its reverse scan at the first entry AT or below it, so
-	 * sending the exact newest would skip a sibling logged in the same second
-	 * — permanently, since the scan never revisits it. One second of overlap
-	 * costs a few rows the merge already dedups by rid.
+	 * The watermark is exactly the newest request this node holds — the client
+	 * says only what it knows. The slack that keeps a same-second sibling is
+	 * the SERVER's: its scan stop is exclusive, so an entry sharing that second
+	 * is still read. Encoding a second here would be guessing at the index's
+	 * timestamp resolution from a browser.
 	 */
-	it( 'is the newest retained timestamp less one second', () => {
+	it( 'is the newest retained timestamp', () => {
 		const { node } = makeMerge();
 		node.fill(
 			reply( {
@@ -307,7 +307,7 @@ describe( 'watermark', () => {
 			} )
 		);
 
-		expect( node.watermark() ).toBe( 1787000899 );
+		expect( node.watermark() ).toBe( 1787000900 );
 	} );
 
 	it( 'is 0 with nothing retained, so the first ask reads the whole window', () => {

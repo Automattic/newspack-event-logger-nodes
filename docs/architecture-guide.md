@@ -13,7 +13,7 @@ This plugin replaced the legacy `newspack-event-logger-plugins` monorepo wholesa
 - [Per-URL logging ruleset](#per-url-logging-ruleset)
 - [Topologies](#topologies)
 - [Application Nodes](#application-nodes)
-- [Memcache Schema (9 Namespaces)](#memcache-schema-9-namespaces)
+- [Memcache Schema](#memcache-schema)
 - [Stats_Store: Sums-Not-Means + Salt Rotation](#stats_store-sums-not-means--salt-rotation)
 - [Hub vs Spoke Topology](#hub-vs-spoke-topology)
 - [Hub-Side Settings Sync, Discovery, and Vault](#hub-side-settings-sync-discovery-and-vault)
@@ -254,7 +254,7 @@ Four things in that file are load-bearing.
 
 ### `topologies/flame-builder.tsl`
 
-Per-partition flame builder. Tails `requests.pN`; `Flame_Builder` emits `flames.pN` and bumps the 9-namespace memcache schema via `Stats_Store`.
+Per-partition flame builder. Tails `requests.pN`; `Flame_Builder` emits `flames.pN` and bumps the memcache schema via `Stats_Store`.
 
 ```tsl
 include topic-probe
@@ -557,7 +557,7 @@ Hub-side periodic discovery fan-out. A `Timer_Node` the `hub-control` topology m
 
 ### Stats production (owned by Flame_Builder_Node)
 
-There is no separate stats Node. The standalone `StatsAggregator` Node — the variant for topologies that wanted memcache stats without flame data — was removed in the M6 consolidation; `Flame_Builder_Node` is the single stats producer, owning flame generation AND the 9-namespace memcache fan-out via its injected `Stats_Store`. The `flame-builder` topology (and therefore `performance` and `complete`) wires the store with `cmd flame-builder:config configure_stats <partition>`.
+There is no separate stats Node. The standalone `StatsAggregator` Node — the variant for topologies that wanted memcache stats without flame data — was removed in the M6 consolidation; `Flame_Builder_Node` is the single stats producer, owning flame generation AND the memcache fan-out via its injected `Stats_Store`. The `flame-builder` topology (and therefore `performance` and `complete`) wires the store with `cmd flame-builder:config configure_stats <partition>`.
 
 Each completed request is folded into `Flame_Builder_Node`'s `$pending` map across the same dimension set the reader paths whitelist — `DIM_FIELDS`, listed under [Flame_Builder_Node](#flame_builder_node). `$pending` holds one accumulator per 5-minute bucket, keyed by the bucket the request STARTED in: a record reaches the builder at completion, so around a boundary it routinely belongs to an older bucket than the newest one seen, and a timed-out trace is evicted up to 600s stale.
 
@@ -565,7 +565,7 @@ On flush, `Flame_Builder_Node` reads each pending bucket's stored value, adds th
 
 When no `Stats_Store` is configured (`configure_stats` never called — e.g. in unit tests), the builder still emits flame data without touching memcache.
 
-## Memcache Schema (9 Namespaces)
+## Memcache Schema
 
 Per-key prefix: `evlog[:salt]:p{N}:{namespace}:...`
 
@@ -582,6 +582,8 @@ The retention window comes from the substrate's `min_lifetime` (default 43200), 
 | `url_dim` | per-URL dimensional series, keyed per bucket, every dimension in the value | `min_lifetime` |
 | `categories` | category time series, keyed per bucket, `$server` scopes it | `min_lifetime` |
 | `url_cat` | per-URL category series, keyed per bucket | `min_lifetime` |
+| `urls_h` | the URL index's COARSE tier, `urls_h:{shard}:{Y-m-d-H}` — one hour of merged rows in the same shape a `urls` bucket holds. DERIVED: `Flame_Builder_Node::roll_up_hours()` folds a closed hour once, and a missing key is answered from that hour's twelve `urls` buckets. Not mirrored, for the same reason | `min_lifetime` |
+| `url_dur` | the URL index's duration reservoirs, `url_dur:{shard}:{bucket}` — up to `MAX_DURATIONS_PER_BUCKET` raw samples per URL. WRITER-ONLY: its sole use is recomputing p50/p95/p99 when a later flush folds into the same bucket, so it sits beside the rows rather than inside them, and no reader carries it. Not mirrored | `min_lifetime` |
 
 **Caps prevent value-explosion** against memcache's 1MB/value limit:
 

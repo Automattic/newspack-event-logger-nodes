@@ -101,12 +101,17 @@ const REQUESTDETAIL_RECV = 'requestdetail:in';
  * the open and rescope fetches clear the merge first, so there is nothing held
  * and the whole window is what they want.
  *
- * @param {string} hash         The URL hash.
- * @param {string} serverFilter Server scope; '' means every server.
- * @param {number} [since]      Watermark (epoch seconds); 0 asks for it all.
+ * Named rather than positional, like its two siblings: `hash` is the only one
+ * that lands in the positional array, and a trailing default in slot three is
+ * how the option after it ends up in slot four.
+ *
+ * @param {Object} arg              The ask.
+ * @param {string} arg.hash         The URL hash.
+ * @param {string} arg.serverFilter Server scope; '' means every server.
+ * @param {number} [arg.since]      Watermark (epoch seconds); 0 asks for all.
  * @return {string[]} The command token array.
  */
-const urlDetailArgs = ( hash, serverFilter, since = 0 ) => {
+function urlDetailArgs( { hash, serverFilter, since = 0 } ) {
 	const options = { categories: true };
 	if ( serverFilter ) {
 		options.server = serverFilter;
@@ -115,7 +120,7 @@ const urlDetailArgs = ( hash, serverFilter, since = 0 ) => {
 		options.since = since;
 	}
 	return formatCommandArgs( [ hash ], options );
-};
+}
 
 // Validation guards for command args.
 const isValidHash = ( h ) => 'string' === typeof h && /^[a-f0-9]+$/.test( h );
@@ -279,44 +284,41 @@ export function usePerformanceGraph( opts = {} ) {
 					} ),
 			} );
 
-			// On-demand url_detail: Tee → merge → view; merge lives on edge.
-			const urlDetailRecv = interpreter.makeNode( 'Tee', URLDETAIL_RECV );
-			const merge = interpreter.makeNode(
-				views.UrlDetailMerge,
-				URLDETAIL_MERGE
-			);
-			merge.controlFrom = URLDETAIL_MERGE;
-			merge.connectNode( URLDETAIL_VIEW );
-			urlDetailRecv.connectNode( URLDETAIL_MERGE );
-			interpreter.makeNode(
-				views.UrlDetailView,
-				URLDETAIL_VIEW
-			).controlFrom = URLDETAIL_VIEW;
-
-			// url_detail auto-refresh Timer → Fetcher; armed by selection.
-			const udFetcher = interpreter.makeNode(
-				'Fetcher',
-				URLDETAIL_FETCHER,
-				[ URLDETAIL_RECV, 'url_detail' ]
-			);
-			// @longform
-			// No hash, nothing to ask: a null return sends nothing at all.
-			// The Timer is armed by default when `make_node Timer` takes no
-			// interval, so a tick can reach this before the effect that owns
-			// the arming has disarmed it.
-			udFetcher.command_args = () => {
-				const hash = optsRef.current.selectedUrl?.hash;
-				if ( ! isValidHash( hash ) ) {
-					return null;
-				}
-				// Read at FIRE time; the merge owns the watermark.
-				const since = Core.node( URLDETAIL_MERGE )?.watermark?.() ?? 0;
-				return urlDetailArgs( hash, serverFilterRef.current, since );
-			};
-			udFetcher.connectNode( TARGET );
-			interpreter
-				.makeNode( 'Timer', URLDETAIL_TIMER )
-				.connectNode( URLDETAIL_FETCHER );
+			// @longform On-demand url_detail: an ordinary slice, on its OWN
+			// Timer rather than the shared tick — the modal arms it by
+			// selection. The merge rides the transform slot, so it lands on
+			// the receiver→view edge.
+			addSliceFetcher( interpreter, {
+				fetcher: URLDETAIL_FETCHER,
+				receiver: URLDETAIL_RECV,
+				command: 'url_detail',
+				view: URLDETAIL_VIEW,
+				viewClass: views.UrlDetailView,
+				controlFrom: URLDETAIL_VIEW,
+				tee: interpreter.makeNode( 'Timer', URLDETAIL_TIMER ),
+				target: TARGET,
+				transform: {
+					name: URLDETAIL_MERGE,
+					nodeClass: views.UrlDetailMerge,
+					controlFrom: URLDETAIL_MERGE,
+				},
+				// @longform
+				// No hash, nothing to ask: a null return sends nothing at
+				// all. The Timer is armed by default when `make_node Timer`
+				// takes no interval, so a tick can reach this before the
+				// effect that owns the arming has disarmed it.
+				argsFn: () => {
+					const hash = optsRef.current.selectedUrl?.hash;
+					if ( ! isValidHash( hash ) ) {
+						return null;
+					}
+					return urlDetailArgs( {
+						hash,
+						serverFilter: serverFilterRef.current,
+						since: Core.node( URLDETAIL_MERGE ).watermark(),
+					} );
+				},
+			} );
 
 			// On-demand request_detail: Tee → view, like every other slice.
 			interpreter.makeNode(
@@ -429,7 +431,7 @@ export function usePerformanceGraph( opts = {} ) {
 		sendControl( URLDETAIL_MERGE, { action: 'clear' } );
 		sendCommand(
 			'url_detail',
-			urlDetailArgs( selectedUrl.hash, serverFilter ),
+			urlDetailArgs( { hash: selectedUrl.hash, serverFilter } ),
 			URLDETAIL_RECV
 		);
 	}, [ selectedUrl, serverFilter, sendCommand, sendControl ] );

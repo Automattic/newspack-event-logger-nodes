@@ -100,6 +100,28 @@ class Stats_Store {
 	 * expiry and the durable read-through are untouched. Decision 1.
 	 */
 	public const NS_URLS        = 'urls';
+	/**
+	 * The URL index's raw duration reservoirs: `url_dur:{shard}:{bucket}`,
+	 * `{ url_hash: [samples] }`.
+	 *
+	 * Beside the index rather than inside them, because it is the WRITER's
+	 * working set and no reader wants it: its only use is recomputing
+	 * p50/p95/p99 when a later flush folds more requests into the same bucket,
+	 * so exactly one bucket in a read window — the open one — has any use for
+	 * it, while `url_row_sources()` would hand up to
+	 * `MAX_DURATIONS_PER_BUCKET` floats per row to every poll.
+	 */
+	public const NS_URL_DUR     = 'url_dur';
+	/**
+	 * The URL index's COARSE tier: `urls_h:{shard}:{Y-m-d-H}`, one key per hour
+	 * holding the same row shape as a fine bucket.
+	 *
+	 * The readers distinguish exactly two resolutions — the whole retention
+	 * window, and the last complete hour — so five-minute buckets buy precision
+	 * at the window's EDGE and nothing else. Behind the recent tail they read as
+	 * hours, which is 13 + 23 keys per shard against 288.
+	 */
+	public const NS_URLS_HOUR   = 'urls_h';
 	/** Per-URL category time series. */
 	public const NS_URL_CAT     = 'url_cat';
 	/** Per-URL dimensional time series. */
@@ -184,6 +206,12 @@ class Stats_Store {
 	 * exceeded it outright once rows carried a `srv` split.
 	 */
 	public const MAX_READ_BUCKETS = 288;
+
+	/**
+	 * Fine buckets a read keeps: the twelve `RECENT_BUCKETS` a "last hour" rate
+	 * divides by, plus the one still filling that the rate drops.
+	 */
+	public const FINE_BUCKETS = 13;
 
 	/** The two tables this store keeps, by ROLE — their TTLs coincide at the floor. */
 	private const ROLE_AGGREGATE = 'aggregate';
@@ -386,6 +414,88 @@ class Stats_Store {
 	}
 
 	/**
+	 * What a read of the whole window covers, by TIER: the recent fine buckets,
+	 * then the closed hours behind them. Both newest first.
+	 *
+	 * The hours stop where the fine tail begins, so nothing is counted twice —
+	 * the hour the fine tail reaches into is NOT in `hours`, and the fine tail
+	 * is what covers it. The OLDEST hour is whole, so the window's far edge is
+	 * hour-granular and rounds outward: a 24h read may carry up to 59 extra
+	 * minutes rather than drop traffic inside its own window. Retention is a
+	 * floor, and five-minute precision at that edge answered no question.
+	 *
+	 * @param list<string> $window The window to split, newest first —
+	 *                             `retention_buckets()`, or the caller's memo of it.
+	 *                             Taken rather than re-enumerated: the memo exists so
+	 *                             one response cannot straddle a bucket boundary, and
+	 *                             reading the clock again here is how it would.
+	 * @return array{fine: list<string>, hours: list<string>}
+	 */
+	public static function read_plan( array $window ): array {
+		$fine = \array_slice( $window, 0, self::FINE_BUCKETS );
+		// @longform The hour the fine tail lands IN is read fine-grained to its
+		// END, not to wherever the tail stopped. Handing it to the coarse tier
+		// instead would read it twice; leaving it out read the rest of that
+		// hour at NEITHER resolution, and that hole is a function of the
+		// minute — nothing at :00, eleven buckets of it at :59. So
+		// FINE_BUCKETS is a floor, and the boundary does the rest.
+		$covered = self::hour_of( (string) \end( $fine ) );
+		$hours   = [];
+		foreach ( \array_slice( $window, self::FINE_BUCKETS ) as $bucket ) {
+			$hour = self::hour_of( $bucket );
+			if ( $hour === $covered ) {
+				$fine[] = $bucket;
+				continue;
+			}
+			// Keyed: distinctness is structural, order stays newest-first.
+			$hours[ $hour ] = true;
+		}
+		return [ 'fine' => $fine, 'hours' => \array_keys( $hours ) ];
+	}
+
+	/**
+	 * The hour a bucket key falls in — its own leading `Y-m-d-H`.
+	 *
+	 * @param string $bucket A `Y-m-d-H-i` bucket key.
+	 */
+	private static function hour_of( string $bucket ): string {
+		return \substr( $bucket, 0, 13 );
+	}
+
+	/**
+	 * Read one shard's coarse hours. Same pair shape as `url_row_sources()`, so
+	 * one fold serves both tiers.
+	 *
+	 * @param array<int,string> $hours Hour keys.
+	 * @param ?string           $shard One shard, or null for every shard.
+	 * @return list<array{0: string, 1: array<array-key,mixed>}>
+	 */
+	public function url_hour_sources( array $hours, ?string $shard = null ): array {
+		$shards   = null === $shard ? self::url_shards() : [ $shard ];
+		$prefixes = [];
+		foreach ( $shards as $one ) {
+			$prefixes[] = [ self::NS_URLS_HOUR, $one ];
+		}
+		return $this->lookup_bucket_sets( $prefixes, $hours );
+	}
+
+	/**
+	 * Overwrite one shard's rows for one coarse hour.
+	 *
+	 * An EMPTY hour is still written: a missing key means "not rolled up yet",
+	 * which is what sends the reader back to the twelve fine buckets, and an
+	 * hour with no traffic must not look like one that has not been folded.
+	 *
+	 * @param string                 $hour  Hour key.
+	 * @param string                 $shard Shard name from `url_shard()`.
+	 * @param array<array-key,mixed> $rows  The hour's merged rows.
+	 * @return bool True when the set landed.
+	 */
+	public function set_url_hour( string $hour, string $shard, array $rows ): bool {
+		return $this->bucket_set( [ self::NS_URLS_HOUR, $shard ], $hour, $rows );
+	}
+
+	/**
 	 * Read many request-total buckets: `{ bucket => { count, sum_ms, sum_peak_mb } }`.
 	 *
 	 * @param array<int,string> $buckets Bucket keys.
@@ -407,24 +517,6 @@ class Stats_Store {
 	}
 
 	/**
-	 * Read many buckets of one namespace in a single round-trip.
-	 *
-	 * A dashboard walks the whole retention window — hundreds of buckets — and
-	 * per-key gets across it are the latency cliff this exists to avoid.
-	 *
-	 * @param array<int,string> $parts   Namespace prefix parts, before the bucket.
-	 * @param array<int,string> $buckets Bucket keys.
-	 * @return array<string,mixed> Values keyed by bucket; misses absent.
-	 */
-	private function lookup_buckets( array $parts, array $buckets ): array {
-		$out = [];
-		foreach ( $this->lookup_bucket_sets( [ $parts ], $buckets ) as [ $bucket, $value ] ) {
-			$out[ $bucket ] = $value;
-		}
-		return $out;
-	}
-
-	/**
 	 * Every source of URL rows for a window, as `[bucket, rows]` pairs.
 	 *
 	 * Pairs rather than a merged map: one shard's rows are complete for the
@@ -433,43 +525,22 @@ class Stats_Store {
 	 * scope a request asks for.
 	 *
 	 * @param array<int,string> $buckets Bucket keys.
+	 * @param ?string            $shard   Read ONE shard, for a reader asking about a
+	 *                                    single URL: `url_shard()` is the first hex
+	 *                                    digit of its hash, so one URL is in one
+	 *                                    shard and the other fifteen are dead weight.
+	 *                                    Null reads every shard, which is what a
+	 *                                    reader rendering the whole table wants — and
+	 *                                    what an older consumer keeps by not passing it.
 	 * @return list<array{0: string, 1: array<array-key,mixed>}>
 	 */
-	public function url_row_sources( array $buckets ): array {
+	public function url_row_sources( array $buckets, ?string $shard = null ): array {
+		$shards   = null === $shard ? self::url_shards() : [ $shard ];
 		$prefixes = [];
-		foreach ( self::url_shards() as $shard ) {
-			$prefixes[] = [ self::NS_URLS, $shard ];
+		foreach ( $shards as $one ) {
+			$prefixes[] = [ self::NS_URLS, $one ];
 		}
 		return $this->lookup_bucket_sets( $prefixes, $buckets );
-	}
-
-	/**
-	 * Read several namespace prefixes across the same buckets in ONE round-trip.
-	 *
-	 * Decisions 1 and 6. Pairs, not a map: two prefixes can hold one bucket.
-	 *
-	 * @param array<int,array<int,string>> $prefix_sets Namespace prefix parts, before the bucket.
-	 * @param array<int,string>            $buckets     Bucket keys.
-	 * @return list<array{0: string, 1: array<array-key,mixed>}>
-	 */
-	private function lookup_bucket_sets( array $prefix_sets, array $buckets ): array {
-		if ( empty( $buckets ) || empty( $prefix_sets ) ) {
-			return [];
-		}
-		$map = [];
-		foreach ( $prefix_sets as $parts ) {
-			foreach ( $buckets as $bucket ) {
-				$map[ $this->key( ...[ ...$parts, $bucket ] ) ] = $bucket;
-			}
-		}
-		// No table (no backend) reads as empty, like a miss.
-		$out = [];
-		foreach ( $this->table( self::ROLE_AGGREGATE )?->lookup_multi( \array_keys( $map ) ) ?? [] as $key => $value ) {
-			if ( \is_array( $value ) && isset( $map[ $key ] ) ) {
-				$out[] = [ $map[ $key ], $value ];
-			}
-		}
-		return $out;
 	}
 
 	/**
@@ -557,6 +628,93 @@ class Stats_Store {
 	 */
 	public function set_url_shard( string $bucket, string $shard, array $rows ): bool {
 		return $this->bucket_set( [ self::NS_URLS, $shard ], $bucket, $rows );
+	}
+
+	/**
+	 * Read one shard's duration reservoirs. Writer-only; see `NS_URL_DUR`.
+	 *
+	 * @param string $bucket Bucket key.
+	 * @param string $shard  Shard name from `url_shard()`.
+	 * @return array<array-key,mixed> `{ url_hash: [samples] }`, [] on miss.
+	 */
+	public function get_url_durations( string $bucket, string $shard ): array {
+		return $this->bucket_get( [ self::NS_URL_DUR, $shard ], $bucket );
+	}
+
+	/**
+	 * Read MANY of one shard's duration reservoirs in one round trip — the
+	 * batched form the hour fold wants, which reads twelve at a time.
+	 *
+	 * A miss matters more here than elsewhere: `NS_URL_DUR` is excluded from
+	 * the mirror, so a missed key can never be rehydrated and the read-through
+	 * walks the whole index to its last line before giving up. Twelve of those
+	 * share one walk; twelve separate gets pay twelve.
+	 *
+	 * @param array<int,string> $buckets Bucket keys.
+	 * @param string            $shard   Shard name from `url_shard()`.
+	 * @return array<string,mixed> `{ url_hash: [samples] }` by bucket; misses absent.
+	 */
+	public function get_url_duration_buckets( array $buckets, string $shard ): array {
+		return $this->lookup_buckets( [ self::NS_URL_DUR, $shard ], $buckets );
+	}
+
+	/**
+	 * Read many buckets of one namespace in a single round-trip.
+	 *
+	 * A dashboard walks the whole retention window — hundreds of buckets — and
+	 * per-key gets across it are the latency cliff this exists to avoid.
+	 *
+	 * @param array<int,string> $parts   Namespace prefix parts, before the bucket.
+	 * @param array<int,string> $buckets Bucket keys.
+	 * @return array<string,mixed> Values keyed by bucket; misses absent.
+	 */
+	private function lookup_buckets( array $parts, array $buckets ): array {
+		$out = [];
+		foreach ( $this->lookup_bucket_sets( [ $parts ], $buckets ) as [ $bucket, $value ] ) {
+			$out[ $bucket ] = $value;
+		}
+		return $out;
+	}
+
+	/**
+	 * Read several namespace prefixes across the same buckets in ONE round-trip.
+	 *
+	 * Decisions 1 and 6. Pairs, not a map: two prefixes can hold one bucket.
+	 *
+	 * @param array<int,array<int,string>> $prefix_sets Namespace prefix parts, before the bucket.
+	 * @param array<int,string>            $buckets     Bucket keys.
+	 * @return list<array{0: string, 1: array<array-key,mixed>}>
+	 */
+	private function lookup_bucket_sets( array $prefix_sets, array $buckets ): array {
+		if ( empty( $buckets ) || empty( $prefix_sets ) ) {
+			return [];
+		}
+		$map = [];
+		foreach ( $prefix_sets as $parts ) {
+			foreach ( $buckets as $bucket ) {
+				$map[ $this->key( ...[ ...$parts, $bucket ] ) ] = $bucket;
+			}
+		}
+		// No table (no backend) reads as empty, like a miss.
+		$out = [];
+		foreach ( $this->table( self::ROLE_AGGREGATE )?->lookup_multi( \array_keys( $map ) ) ?? [] as $key => $value ) {
+			if ( \is_array( $value ) && isset( $map[ $key ] ) ) {
+				$out[] = [ $map[ $key ], $value ];
+			}
+		}
+		return $out;
+	}
+
+	/**
+	 * Overwrite one shard's duration reservoirs.
+	 *
+	 * @param string                 $bucket    Bucket key.
+	 * @param string                 $shard     Shard name from `url_shard()`.
+	 * @param array<array-key,mixed> $durations `{ url_hash: [samples] }`.
+	 * @return bool True when the set landed.
+	 */
+	public function set_url_durations( string $bucket, string $shard, array $durations ): bool {
+		return $this->bucket_set( [ self::NS_URL_DUR, $shard ], $bucket, $durations );
 	}
 
 	/**
@@ -940,30 +1098,6 @@ class Stats_Store {
 	}
 
 	/**
-	 * Sum `$fields` from `$incoming` into `$into`, entry by entry. The one merge
-	 * both the dimensional (`c,s,m`) and category (`t,c,n`) series share.
-	 *
-	 * Only `$fields` survive — unlike `add_totals()`, which lets a field outside
-	 * its triple ride through. Every shape here is closed (`{c,s,m}`, `{t,c,n}`),
-	 * so there is nothing to carry; a shape that grows a field adds it to the
-	 * table rather than relying on passthrough.
-	 *
-	 * @param array<array-key,mixed> $into     Running totals.
-	 * @param array<array-key,mixed> $incoming Inbound entries.
-	 * @param array<string,bool>     $fields   Field name => is a whole count.
-	 * @return array<string,mixed> The totals, string-keyed for the store.
-	 */
-	public static function sum_fields( array $into, array $incoming, array $fields ): array {
-		$out = self::string_keys( $into );
-		foreach ( $incoming as $key => $stats ) {
-			if ( \is_array( $stats ) ) {
-				$out[ (string) $key ] = self::sum_entry( Core::arr( $out[ (string) $key ] ?? null ), $stats, $fields );
-			}
-		}
-		return $out;
-	}
-
-	/**
 	 * Swap a URL row's SUMMED fields for one server's, or null when that server
 	 * never served the URL. `''` strips the split and returns the row as it
 	 * stands, so one call covers the unscoped case too.
@@ -1036,6 +1170,69 @@ class Stats_Store {
 	}
 
 	/**
+	 * Merge one stored URL row into another for the SAME url.
+	 *
+	 * Both tiers of the write path fold this rule — a flush into its bucket,
+	 * twelve buckets into their hour — so it lives once, beside the field table
+	 * it reads. Sums add, extremes take the larger, `min_ms` folds only from
+	 * TIMED buckets (0 is "nothing folded yet"), and whichever side names the
+	 * `url` wins, because merge order varies.
+	 *
+	 * Percentiles are not merged here: they come off the reservoir, through
+	 * `apply_percentiles()`. Contrast `fold_url_rows()`, which folds DIFFERENT
+	 * urls into an overflow row and therefore keeps only what adds.
+	 *
+	 * @param array<array-key,mixed> $into The row so far.
+	 * @param array<array-key,mixed> $row  The row being folded in.
+	 * @return array<string,mixed>
+	 */
+	public static function merge_url_row( array $into, array $row ): array {
+		$out = self::string_keys( self::sum_entry( $into, $row, self::URL_SRV_SUMS ) );
+		if ( '' === Core::str( $out['url'] ?? '' ) ) {
+			$out['url'] = Core::str( $row['url'] ?? '' );
+		}
+		$out['max_ms']      = \max( Core::num_float( $out['max_ms'] ?? null ), Core::num_float( $row['max_ms'] ?? null ) );
+		$out['max_peak_mb'] = \max( Core::num_float( $out['max_peak_mb'] ?? null ), Core::num_float( $row['max_peak_mb'] ?? null ) );
+		$out['last_seen']   = \max( Core::num_int( $out['last_seen'] ?? null ), Core::num_int( $row['last_seen'] ?? null ) );
+		$out['worker']      = ! empty( $out['worker'] ) || ! empty( $row['worker'] );
+		if ( Core::num_int( $row['timed_count'] ?? null ) > 0 ) {
+			$held          = Core::num_float( $out['min_ms'] ?? null );
+			$row_min       = Core::num_float( $row['min_ms'] ?? null );
+			$out['min_ms'] = 0.0 === $held ? $row_min : \min( $held, $row_min );
+		}
+		$out[ self::URL_SRV_FIELD ] = self::sum_fields(
+			Core::arr( $out[ self::URL_SRV_FIELD ] ?? null ),
+			Core::arr( $row[ self::URL_SRV_FIELD ] ?? null ),
+			self::URL_SRV_SUMS
+		);
+		return $out;
+	}
+
+	/**
+	 * Sum `$fields` from `$incoming` into `$into`, entry by entry. The one merge
+	 * both the dimensional (`c,s,m`) and category (`t,c,n`) series share.
+	 *
+	 * Only `$fields` survive — unlike `add_totals()`, which lets a field outside
+	 * its triple ride through. Every shape here is closed (`{c,s,m}`, `{t,c,n}`),
+	 * so there is nothing to carry; a shape that grows a field adds it to the
+	 * table rather than relying on passthrough.
+	 *
+	 * @param array<array-key,mixed> $into     Running totals.
+	 * @param array<array-key,mixed> $incoming Inbound entries.
+	 * @param array<string,bool>     $fields   Field name => is a whole count.
+	 * @return array<string,mixed> The totals, string-keyed for the store.
+	 */
+	public static function sum_fields( array $into, array $incoming, array $fields ): array {
+		$out = self::string_keys( $into );
+		foreach ( $incoming as $key => $stats ) {
+			if ( \is_array( $stats ) ) {
+				$out[ (string) $key ] = self::sum_entry( Core::arr( $out[ (string) $key ] ?? null ), $stats, $fields );
+			}
+		}
+		return $out;
+	}
+
+	/**
 	 * Sum `$fields` from one entry into another. What `sum_fields()` does per
 	 * key, reachable directly by the callers holding a single row — those were
 	 * inventing a throwaway map key to get at it, then unwrapping the result.
@@ -1069,6 +1266,43 @@ class Stats_Store {
 			$out[ (string) $key ] = $value;
 		}
 		return $out;
+	}
+
+	/**
+	 * The fine buckets one hour covers, oldest first.
+	 *
+	 * @param string $hour A `Y-m-d-H` hour key.
+	 * @return list<string>
+	 */
+	public static function buckets_in_hour( string $hour ): array {
+		$out = [];
+		for ( $m = 0; $m < 60; $m += self::BUCKET_MINUTES ) {
+			$out[] = $hour . \sprintf( '-%02d', $m );
+		}
+		return $out;
+	}
+
+	/**
+	 * Stamp a row's percentiles from its duration reservoir.
+	 *
+	 * Percentiles do not merge, so both tiers recompute them from the samples
+	 * they hold rather than from any row's own figures. An empty reservoir
+	 * leaves the row alone: a row nothing timed keeps what it was stored with.
+	 *
+	 * @param array<array-key,mixed> $row     The row to stamp.
+	 * @param array<array-key,mixed> $samples That row's reservoir.
+	 * @return array<array-key,mixed>
+	 */
+	public static function apply_percentiles( array $row, array $samples ): array {
+		if ( [] === $samples ) {
+			return $row;
+		}
+		\sort( $samples );
+		$n             = \count( $samples );
+		$row['p50_ms'] = $samples[ (int) ( $n * 0.50 ) ] ?? 0;
+		$row['p95_ms'] = $samples[ (int) ( $n * 0.95 ) ] ?? 0;
+		$row['p99_ms'] = $samples[ (int) ( $n * 0.99 ) ] ?? 0;
+		return $row;
 	}
 
 	/**
