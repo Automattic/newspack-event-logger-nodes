@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The URL-detail request list is tailed, not re-read.** Every auto-refresh walked the whole retained window of every partition index to rebuild a list the browser already had. It now sends `--since`, the newest request it holds less a second, and the reverse scan stops at the first entry at or below it — a poll costs the entries since the last one. The second of slack is load-bearing: the stop is inclusive, so the exact value would skip a request logged in the same second and the scan never revisits it; the overlap re-sends a row or two, which the merge discards by rid like any other duplicate.
+- **A watermark stops ONE partition, never the fan-out.** Partition logs are independent, so reaching known ground in p0 says nothing about p1, and a plain stop would drop every later partition's requests silently. `scan_index_entries` gained a third callback outcome for that — `false` still ends the whole fan-out, which is what the 500-request cap wants.
+- Only the refresh tick carries a watermark. Opening the modal, and changing the server scope, clear the merge first — so there is nothing held, and the whole window is exactly what they should ask for.
+
+
 ## [0.63.8] - 2026-08-27
 
 ### Fixed

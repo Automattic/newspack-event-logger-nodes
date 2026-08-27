@@ -97,17 +97,25 @@ const REQUESTDETAIL_RECV = 'requestdetail:in';
  * The server rides along for the same reason it rides on `urls`: this modal
  * opens from a row that filter scoped, and the two have to answer alike.
  *
+ * `since` is the browser's watermark, and only the refresh tick carries one:
+ * the open and rescope fetches clear the merge first, so there is nothing held
+ * and the whole window is what they want.
+ *
  * @param {string} hash         The URL hash.
  * @param {string} serverFilter Server scope; '' means every server.
+ * @param {number} [since]      Watermark (epoch seconds); 0 asks for it all.
  * @return {string[]} The command token array.
  */
-const urlDetailArgs = ( hash, serverFilter ) =>
-	formatCommandArgs(
-		[ hash ],
-		serverFilter
-			? { categories: true, server: serverFilter }
-			: { categories: true }
-	);
+const urlDetailArgs = ( hash, serverFilter, since = 0 ) => {
+	const options = { categories: true };
+	if ( serverFilter ) {
+		options.server = serverFilter;
+	}
+	if ( since > 0 ) {
+		options.since = since;
+	}
+	return formatCommandArgs( [ hash ], options );
+};
 
 // Validation guards for command args.
 const isValidHash = ( h ) => 'string' === typeof h && /^[a-f0-9]+$/.test( h );
@@ -298,9 +306,12 @@ export function usePerformanceGraph( opts = {} ) {
 			// the arming has disarmed it.
 			udFetcher.command_args = () => {
 				const hash = optsRef.current.selectedUrl?.hash;
-				return isValidHash( hash )
-					? urlDetailArgs( hash, serverFilterRef.current )
-					: null;
+				if ( ! isValidHash( hash ) ) {
+					return null;
+				}
+				// Read at FIRE time; the merge owns the watermark.
+				const since = Core.node( URLDETAIL_MERGE )?.watermark?.() ?? 0;
+				return urlDetailArgs( hash, serverFilterRef.current, since );
 			};
 			udFetcher.connectNode( TARGET );
 			interpreter

@@ -489,6 +489,47 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 		).toBe( 'abc' );
 	} );
 
+	/**
+	 * The refresh tick carries the browser's watermark, so the server's reverse
+	 * scan stops at what the modal already holds instead of re-reading the whole
+	 * retained window. The OPEN fetch must not: the merge is cleared first, so
+	 * there is nothing held and the full window is exactly what is wanted.
+	 */
+	test( 'the refresh tick sends --since from the merge, the open fetch does not', async () => {
+		const wire = installWire( {
+			url_detail: {
+				last_modified: 1,
+				requests: [ { rid: 'a', timestamp: 1787000900 } ],
+			},
+		} );
+		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
+			initialProps: { refreshInterval: '0' },
+		} );
+		await act( async () => {} );
+		await act( async () => {
+			rerender( {
+				refreshInterval: '0',
+				selectedUrl: { hash: 'abc' },
+			} );
+		} );
+
+		// The open fetch reads the whole window.
+		const opened = findVerb( wire.batches, 'url_detail' );
+		expect(
+			parseCommandArgs( opened[ VALUE ].arguments ).options.since
+		).toBeUndefined();
+
+		// The reply is now retained, so the next tick asks only for what is new.
+		wire.batches.length = 0;
+		await act( async () => {
+			Core.node( ROUTER ).fireCb();
+		} );
+		const refreshed = findVerb( wire.batches, 'url_detail' );
+		expect(
+			parseCommandArgs( refreshed[ VALUE ].arguments ).options.since
+		).toBe( '1787000899' );
+	} );
+
 	test( 'stops the urldetail:timer when a request detail opens, re-arms when it closes', async () => {
 		installWire( {
 			url_detail: { last_modified: 1, requests: [] },
