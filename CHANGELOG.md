@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.63.6] - 2026-08-27
+
+### Fixed
+
+- **Builds against substrate v2.43.2**, so the debug overlay's REPL echoes each line with the prompt it was typed at rather than a fixed `/`. The overlay is INLINED into this plugin's bundles, not loaded from the substrate at runtime, so the fix only reaches a reader through a release here.
+
 ## [0.63.5] - 2026-08-27
 
 ### Fixed
