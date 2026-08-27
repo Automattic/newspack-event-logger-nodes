@@ -696,12 +696,11 @@ class Reqgrep_Command {
 			$this->prune_severed_spans( $at );
 		}
 		if ( \preg_match( Flame_Tree::PATTERN_COMPLETE, $key, $matches ) ) {
-			$found = \array_keys( $this->fmt_pairs, $matches[1], true );
-			if ( [] === $found ) {
+			$found_at = self::nearest_open( $this->fmt_pairs, $matches[1] );
+			if ( $found_at < 0 ) {
 				// Orphaned: its (start) was merged away. Print where we are.
 				return \count( $this->fmt_pairs ) * 4;
 			}
-			$found_at = \end( $found );
 			\array_splice( $this->fmt_pairs, $found_at, 1 );
 			return $found_at * 4;
 		}
@@ -762,15 +761,33 @@ class Reqgrep_Command {
 			if ( ! \preg_match( Flame_Tree::PATTERN_COMPLETE, $this->fmt_keys[ $i ], $completes ) ) {
 				continue;
 			}
-			$found = \array_keys( $opened, $completes[1], true );
-			if ( [] !== $found ) {
+			$at = self::nearest_open( $opened, $completes[1] );
+			if ( $at >= 0 ) {
 				// Close the match alone, as the stack this budget prunes does.
-				\array_splice( $opened, \end( $found ), 1 );
+				\array_splice( $opened, $at, 1 );
 				continue;
 			}
 			$closed[ $completes[1] ] = ( $closed[ $completes[1] ] ?? 0 ) + 1;
 		}
 		return $closed;
+	}
+
+	/**
+	 * The index of the nearest open frame of this base name, or -1.
+	 *
+	 * THE rule the two readings must agree on: a `(complete)` matches the NEAREST open `(start)`
+	 * OF THE SAME NAME, which is what lets a request survive an embedded engine trace whose spans
+	 * are numbered from 1 and share names with the request's own. It was written out at both call
+	 * sites here — the batch walk and the per-entry stepper — so one rule had two places to drift
+	 * from `logEntryUtils.js`, which the whole CLI/dashboard parity rests on.
+	 *
+	 * @param list<string> $stack Open base names, innermost last.
+	 * @param string       $name  Base name being closed.
+	 * @return int Index into $stack, or -1 when nothing opened it.
+	 */
+	private static function nearest_open( array $stack, string $name ): int {
+		$found = \array_keys( $stack, $name, true );
+		return [] === $found ? -1 : \end( $found );
 	}
 
 	/**
