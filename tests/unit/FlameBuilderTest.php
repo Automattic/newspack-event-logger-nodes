@@ -1893,8 +1893,13 @@ class FlameBuilderTest extends TestCase {
 		// No auto-tune state set, just a basic flush.
 		$fb->flush();
 
-		// Lock not touched at all.
-		$this->assertEmpty( $mc->keys(), 'no lock or other keys written' );
+		// @longform The LOCK is what this test is about. A flush also folds any
+		// closed hour that has not been folded into the coarse URL tier, which
+		// an idle partition needs as much as a busy one — a missing coarse key
+		// is what sends the reader back to twelve fine buckets.
+		foreach ( $mc->keys() as $key ) {
+			$this->assertStringContainsString( ':' . Stats_Store::NS_URLS_HOUR . ':', $key, 'no lock or other keys written' );
+		}
 		// No auto-tune emits (only the flush has nothing to emit).
 		foreach ( $capture->captured as $m ) {
 			$this->assertNotContains( $m[ Message::KEY ], [ 'disable_hooks', 'disable_custom_events', 'add_significant_events' ] );
@@ -1935,6 +1940,285 @@ class FlameBuilderTest extends TestCase {
 
 		$this->assertSame( $untouched, $store->get_hourly_bucket( '1999-01-01-00-00' ) );
 		$this->assertNotSame( [], $this->recent_hourly( $store ), 'and the request it did fill landed' );
+	}
+
+	/**
+	 * The raw duration reservoir is the WRITER's working set: its only use is
+	 * recomputing p50/p95/p99 when a later flush folds more requests into the
+	 * same bucket. No reader touches it — `load_index_default()` takes the three
+	 * percentiles and nothing else — so of the buckets in a read window exactly
+	 * one, the open one, has any use for it, and the rest hand up to 100 floats
+	 * per row to every poll. It lives in its own key now.
+	 */
+	public function test_the_url_index_row_carries_no_duration_reservoir(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+
+		$now = \time();
+		$this->fill_request( $fb, $this->completed_request( [
+			'url'         => '/wombat-4471',
+			'duration_ms' => 447.0,
+			'timestamp'   => $now,
+		] ) );
+		$fb->flush();
+
+		$rows  = $this->url_bucket_rows( $store, Stats_Store::bucket_key( $now ) );
+		$stats = $rows[ Log_Manager::url_hash( '/wombat-4471' ) ];
+		$this->assertArrayNotHasKey( 'durations', $stats );
+		$this->assertGreaterThan( 0, $stats['p50_ms'], 'the percentiles it produces still land' );
+	}
+
+	/**
+	 * And moving it must not cost what it is FOR: two flushes into one bucket
+	 * have to see each other's samples, or the percentile describes the last
+	 * flush rather than the bucket.
+	 */
+	public function test_percentiles_span_every_flush_into_one_bucket(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$now        = \time();
+
+		foreach ( [ [ 1, 50 ], [ 51, 100 ] ] as [ $from, $to ] ) {
+			$fb = new Flame_Builder_Node();
+			$fb->set_stats_store( $store );
+			for ( $i = $from; $i <= $to; $i++ ) {
+				$this->fill_request( $fb, $this->completed_request( [
+					'url'         => '/quokka-8823',
+					'duration_ms' => (float) $i,
+					'timestamp'   => $now,
+				] ) );
+			}
+			$fb->flush();
+		}
+
+		$rows  = $this->url_bucket_rows( $store, Stats_Store::bucket_key( $now ) );
+		$stats = $rows[ Log_Manager::url_hash( '/quokka-8823' ) ];
+		// A percentile over the first flush alone could not exceed 50.
+		$this->assertGreaterThan( 50.0, (float) $stats['p99_ms'] );
+	}
+
+	/**
+	 * A closed hour is folded ONCE into a coarse key, not added to
+	 * incrementally: the five-minute write is a full overwrite and is safe to
+	 * repeat, while adding into an hour bucket double-counts on a re-flush.
+	 */
+	public function test_a_closed_hour_is_rolled_up_into_one_coarse_key(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$hash       = Log_Manager::url_hash( '/wombat-4471' );
+		$shard      = Stats_Store::url_shard( $hash );
+		$now        = \gmmktime( 15, 7, 0, 8, 27, 2026 );
+		// Two fine buckets of the hour that has just closed.
+		$store->set_url_shard( '2026-08-27-13-05', $shard, [
+			$hash => [ 'url' => '/wombat-4471', 'count' => 4, 'timed_count' => 4, 'sum_ms' => 40.0, 'max_ms' => 15.0, 'last_seen' => $now - 7200 ],
+		] );
+		$store->set_url_shard( '2026-08-27-13-40', $shard, [
+			$hash => [ 'url' => '/wombat-4471', 'count' => 6, 'timed_count' => 6, 'sum_ms' => 90.0, 'max_ms' => 22.0, 'last_seen' => $now - 5400 ],
+		] );
+
+		$fb = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+		$fb->roll_up_hours( $now );
+
+		$rolled = $store->url_hour_sources( [ '2026-08-27-13' ], $shard )[0][1];
+		$this->assertSame( 10, $rolled[ $hash ]['count'], 'the hour sums its buckets' );
+		$this->assertSame( 130.0, (float) $rolled[ $hash ]['sum_ms'] );
+		$this->assertSame( 22.0, (float) $rolled[ $hash ]['max_ms'], 'an extreme is a max, not a sum' );
+		$this->assertSame( '/wombat-4471', $rolled[ $hash ]['url'] );
+	}
+
+	/**
+	 * A folded hour must carry the per-server split, and `sum_entry()` does NOT
+	 * fold it — it sums the eight scalars of `URL_SRV_SUMS` and nothing else.
+	 * A folded hour's fine buckets are deliberately not read, so an hour whose
+	 * split came back empty takes every server-scoped read of that URL with it:
+	 * `swap_url_server_sums()` answers null for a row missing the server asked
+	 * for, and the URL leaves the filtered table AND its totals (decision 14).
+	 */
+	public function test_a_folded_hour_carries_the_per_server_split(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$hash       = Log_Manager::url_hash( '/wombat-4471' );
+		$shard      = Stats_Store::url_shard( $hash );
+		$now        = \gmmktime( 15, 7, 0, 8, 27, 2026 );
+		$store->set_url_shard( '2026-08-27-13-05', $shard, [
+			$hash => [
+				'url' => '/wombat-4471', 'count' => 4, 'timed_count' => 4, 'sum_ms' => 40.0,
+				Stats_Store::URL_SRV_FIELD => [ 'web-4471' => [ 'count' => 4, 'timed_count' => 4, 'sum_ms' => 40.0 ] ],
+			],
+		] );
+		$store->set_url_shard( '2026-08-27-13-40', $shard, [
+			$hash => [
+				'url' => '/wombat-4471', 'count' => 6, 'timed_count' => 6, 'sum_ms' => 90.0,
+				Stats_Store::URL_SRV_FIELD => [ 'web-8823' => [ 'count' => 6, 'timed_count' => 6, 'sum_ms' => 90.0 ] ],
+			],
+		] );
+
+		$fb = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+		$fb->roll_up_hours( $now );
+
+		$hour  = $store->url_hour_sources( [ '2026-08-27-13' ], $shard )[0][1];
+		$split = $hour[ $hash ][ Stats_Store::URL_SRV_FIELD ];
+		$this->assertSame( [ 'web-4471', 'web-8823' ], \array_keys( $split ) );
+		$this->assertSame( 4, $split['web-4471']['count'] );
+		$this->assertSame( 6, $split['web-8823']['count'] );
+	}
+
+	/**
+	 * An hour folds twelve buckets' URL SETS into one key, so its row count is
+	 * the union of twelve capped sets — up to twelve times a bucket's. It takes
+	 * the same ceiling the bucket does, and its tail FOLDS into the overflow
+	 * rows rather than dropping, so the totals stay exact.
+	 */
+	public function test_a_folded_hour_takes_the_same_row_cap_as_a_bucket(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$now        = \gmmktime( 15, 7, 0, 8, 27, 2026 );
+		// Six buckets of 120 distinct URLs each, all in one shard: 720 rows
+		// into an hour whose ceiling is 500.
+		$total = 0;
+		foreach ( \array_slice( Stats_Store::buckets_in_hour( '2026-08-27-13' ), 0, 6 ) as $b => $bucket ) {
+			$rows = [];
+			for ( $i = 0; $i < 120; $i++ ) {
+				$rows[ \sprintf( 'a%011x', $b * 1000 + $i ) ] = [
+					'url'   => "/row-{$b}-{$i}",
+					'count' => 3,
+				];
+				$total += 3;
+			}
+			$store->set_url_shard( $bucket, 'a', $rows );
+		}
+
+		$fb = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+		$fb->roll_up_hours( $now );
+
+		$hour = $store->url_hour_sources( [ '2026-08-27-13' ], 'a' )[0][1];
+		$this->assertLessThanOrEqual( 500, \count( $hour ), 'the hour takes the shard cap' );
+		$this->assertArrayHasKey( Stats_Store::OTHER_KEY, $hour, 'the tail folds rather than dropping' );
+		$this->assertSame(
+			$total,
+			\array_sum( \array_column( $hour, 'count' ) ),
+			'and the total survives the fold exactly'
+		);
+	}
+
+	/**
+	 * The skip probe is ONE round trip, not one per hour. Steady state is 23
+	 * hours already folded and nothing to do, on a flush that runs every few
+	 * seconds — asking per hour paid 23 trips to learn that, against an API
+	 * that takes a list (decision 6: per-key `get` is a latency cliff).
+	 */
+	public function test_the_rollup_probe_asks_once_for_every_hour(): void {
+		$memd       = new InMemoryMemcached();
+		Core::$memd = $memd;
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$now        = \gmmktime( 15, 7, 0, 8, 27, 2026 );
+		// Every hour already folded, so the probe is all this flush does.
+		foreach ( Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, $now ) )['hours'] as $hour ) {
+			foreach ( Stats_Store::url_shards() as $shard ) {
+				$store->set_url_hour( $hour, $shard, [] );
+			}
+		}
+		$fb = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+
+		$memd->multi_calls = 0;
+		$memd->get_calls   = 0;
+		$fb->roll_up_hours( $now );
+
+		$this->assertSame( 1, $memd->multi_calls, 'one probe for the whole window' );
+		$this->assertSame( 0, $memd->get_calls, 'and nothing folded, so no per-key reads' );
+	}
+
+	/**
+	 * A worker that folded an hour is the authority on whether it is folded —
+	 * decision 17 puts the fold on the flush path precisely BECAUSE one
+	 * partition has one writer. So steady state probes nothing: the probe reads
+	 * presence, but `getMulti` fetches and unserializes the VALUES, and the
+	 * settled hours are the whole coarse tier.
+	 */
+	public function test_a_second_flush_does_not_probe_hours_it_folded_itself(): void {
+		$memd       = new InMemoryMemcached();
+		Core::$memd = $memd;
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$now        = \gmmktime( 9, 41, 0, 8, 27, 2026 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+
+		// First flush: probes, then folds up to its budget.
+		$fb->roll_up_hours( $now );
+		$memd->multi_calls = 0;
+
+		// Everything it folded, it now knows; only the rest can be probed.
+		$fb->roll_up_hours( $now );
+		$fb->roll_up_hours( $now );
+
+		$folded = 0;
+		foreach ( Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, $now ) )['hours'] as $hour ) {
+			$folded += \count( $store->url_hour_sources( [ $hour ] ) ) >= Stats_Store::URL_SHARDS ? 1 : 0;
+		}
+		$this->assertGreaterThanOrEqual( 3, $folded, 'each flush folded its budget' );
+	}
+
+	/**
+	 * The memo names hours in ONE store's keyspace. `configure_stats <n>` can
+	 * repoint a worker at another partition, and a memo that survived it would
+	 * assert the old partition's folds and leave the new one's coarse tier
+	 * never written at all until the process restarted.
+	 */
+	public function test_repointing_the_store_forgets_what_was_folded(): void {
+		Core::$memd = new InMemoryMemcached();
+		$now        = \gmmktime( 15, 7, 0, 8, 27, 2026 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( new Stats_Store( partition: 0, max_lifespan: 86400 ) );
+		$fb->roll_up_hours( $now );
+
+		$other = new Stats_Store( partition: 3, max_lifespan: 86400 );
+		$fb->set_stats_store( $other );
+		$fb->roll_up_hours( $now );
+
+		$hour = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, $now ) )['hours'][0];
+		$this->assertNotSame(
+			[],
+			$other->url_hour_sources( [ $hour ] ),
+			'the new partition gets its own fold'
+		);
+	}
+
+	/**
+	 * An hour with no traffic is still written. A MISSING key means "not folded
+	 * yet", which is what sends the reader back to the twelve fine buckets — an
+	 * empty hour that looked unfolded would pay that fallback forever.
+	 */
+	public function test_an_empty_hour_is_still_written_so_it_is_not_read_as_unfolded(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+
+		$fb->roll_up_hours( \gmmktime( 15, 7, 0, 8, 27, 2026 ) );
+
+		$this->assertSame(
+			[ [ '2026-08-27-13', [] ] ],
+			$store->url_hour_sources( [ '2026-08-27-13' ], 'a' ),
+			'written with no rows, so the read finds it rather than falling back'
+		);
+	}
+
+	/** The hour still filling has more to come; folding it would freeze it. */
+	public function test_the_open_hour_is_not_rolled_up(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+
+		$fb->roll_up_hours( \gmmktime( 15, 7, 0, 8, 27, 2026 ) );
+
+		$this->assertSame( [], $store->url_hour_sources( [ '2026-08-27-15' ], 'a' ) );
 	}
 
 	public function test_url_index_computes_percentiles_from_durations(): void {
@@ -3129,6 +3413,60 @@ class FlameBuilderTest extends TestCase {
 		$this->assertNotSame( [], $store->get_hourly_bucket( $bucket ), 'memcache still warm by the old sentinel' );
 
 		$this->assertSame( [ $bucket => $rows ], $this->url_rows_by_bucket( $store, [ $bucket ] ) );
+	}
+
+	/**
+	 * Nor is the coarse tier. It is DERIVED from the fine buckets, which are
+	 * mirrored in full, and `read_plan()`'s fallback rebuilds a missing hour
+	 * from them — so a durable copy stores the same information twice, on the
+	 * one axis decision 11 says to watch, and an hour frame is the largest
+	 * thing that could ride the held set at a checkpoint.
+	 */
+	public function test_folded_hours_are_not_mirrored(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		[ $fb, $p ] = $this->mirrored_builder( $store, 'flames-stats' );
+
+		$store->set_url_hour( '2026-02-03-04', 'a', [ 'ab12cd34ef56' => [ 'url' => '/x', 'count' => 91 ] ] );
+		$fb->save_state();
+		$p->flush();
+
+		$this->assertSame(
+			[],
+			\array_values( \array_filter(
+				\array_keys( $this->read_mirror_frames( $p ) ),
+				static fn ( string $k ): bool => \str_contains( $k, ':' . Stats_Store::NS_URLS_HOUR . ':' )
+			) ),
+			'derived from urls; the read_plan fallback rebuilds it'
+		);
+	}
+
+	/**
+	 * The duration reservoir is NOT. It is the writer's working set for the
+	 * bucket it is filling, and mirroring it would put the exact payload this
+	 * change took OFF the read path back onto the durable write path — up to
+	 * `MAX_DURATIONS_PER_BUCKET` floats per row per bucket, on the checkpoint
+	 * budget. Losing one costs precision on one open bucket's percentiles and
+	 * nothing else, because every figure derived from it is already stored.
+	 */
+	public function test_duration_reservoirs_are_not_mirrored(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		[ $fb, $p ] = $this->mirrored_builder( $store, 'flames-stats' );
+
+		$store->set_url_durations( '2026-02-03-04-05', 'a', [ 'ab12cd34ef56' => [ 1.0, 2.0, 3.0 ] ] );
+		$fb->save_state();
+		$p->flush();
+
+		$mirrored = \array_keys( $this->read_mirror_frames( $p ) );
+		$this->assertSame(
+			[],
+			\array_values( \array_filter(
+				$mirrored,
+				static fn ( string $k ): bool => \str_contains( $k, ':' . Stats_Store::NS_URL_DUR . ':' )
+			) ),
+			'the reservoir is working state, not a durable record'
+		);
 	}
 
 	public function test_a_frame_mirrored_after_the_first_miss_is_still_found(): void {

@@ -13,7 +13,7 @@
  * so around a boundary it routinely lands in a bucket older than the newest one
  * seen — which is why `$pending` is a map rather than one rotating slot.
  * `flush()` merges each bucket into memcache through `Stats_Store` (the
- * 9-namespace schema) at most once per FLUSH_INTERVAL_SEC, capping as it
+ * memcache schema) at most once per FLUSH_INTERVAL_SEC, capping as it
  * writes, then drops them. Per-URL flame trees take a different route: they
  * live in an `LRU_Cache` and drain through `mirror_url_stats()`.
  *
@@ -43,7 +43,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
 }
 
 /**
- * Builds flame trees and the 9-namespace stats schema from completed requests.
+ * Builds flame trees and the memcache stats schema from completed requests.
  *
  * @phpstan-type Leaderboard_Acc array{count?: int, sum_req_time?: float|int, categories: array<string,array{samples: int,sum_time: float|int,sum_count: float|int,ts?: int,entries: array<string,array<int,float|int>>}>}
  * @phpstan-type Dim_Values array<string,array{c: int,s: float|int,m: float|int}>
@@ -190,6 +190,13 @@ class Flame_Builder_Node extends Node {
 	private const MAX_URLS_PER_SHARD = 500;
 
 	/**
+	 * Closed hours one flush folds into the coarse tier. A bound, not a
+	 * cadence: steady state has at most one hour to fold, and this is what
+	 * keeps a cold start's backfill off a single flush.
+	 */
+	private const ROLLUP_HOURS_PER_FLUSH = 2;
+
+	/**
 	 * Per-URL namespaces bounded to top-N by traffic when mirrored to the durable
 	 * stats partition. Aggregate namespaces are absent from this map and mirror in
 	 * full.
@@ -199,7 +206,10 @@ class Flame_Builder_Node extends Node {
 	 * here for `buffer_mirror_write()` to route NS_URL down the top-N path at all.
 	 */
 	private const STATS_MIRROR_TOPN = [
-		Stats_Store::NS_URL     => 0,    // flame profiles — see $flame_topn
+		Stats_Store::NS_URL      => 0,   // flame profiles — see $flame_topn
+		Stats_Store::NS_URL_DUR  => 0,   // duration reservoirs — working state
+		// Derived: a missing hour is answered from its mirrored fine buckets.
+		Stats_Store::NS_URLS_HOUR => 0,
 		Stats_Store::NS_URL_DIM => 100,  // per-URL dimensional frames
 		Stats_Store::NS_URL_CAT => 100,  // per-URL category frames
 	];
@@ -212,6 +222,33 @@ class Flame_Builder_Node extends Node {
 	 * @var array<string,array<string,array<string,bool>>>
 	 */
 	private array $auto_tune = [ 'disable_hooks' => [], 'disable_custom_events' => [], 'add_significant_events' => [] ];
+
+	/**
+	 * Hours this worker has folded into the coarse tier, pruned to the window.
+	 *
+	 * Decision 17 puts the fold on the flush path precisely BECAUSE one
+	 * partition has one writer — so the process that folded an hour is the
+	 * authority on whether it is folded, and steady state probes nothing. A
+	 * restart empties it and pays one probe, which re-adopts a predecessor's
+	 * work.
+	 *
+	 * @var array<string,bool>
+	 */
+	private array $folded_hours = [];
+
+	/**
+	 * Flushes between full re-probes of the coarse tier.
+	 *
+	 * The memo says what THIS process folded, which is not the same as what is
+	 * still there: `NS_URLS_HOUR` is excluded from the mirror, so an evicted
+	 * hour can never be rehydrated and would otherwise stay believed-folded for
+	 * the life of the worker — leaving the reader on the fallback it re-probes
+	 * to escape.
+	 */
+	private const REPROBE_EVERY_FLUSHES = 60;
+
+	/** Flushes since the memo was last emptied; see REPROBE_EVERY_FLUSHES. */
+	private int $folds_since_reprobe = 0;
 
 	/** @var (callable(): int)|null Test seam: clock function for bucket-key derivation. */
 	private $clock_fn = null;
@@ -1143,6 +1180,7 @@ class Flame_Builder_Node extends Node {
 	public function flush(): void {
 		$this->mirror_url_stats();
 		$this->persist_aggregate_stats();
+		$this->roll_up_hours( $this->now_ts() );
 		$this->apply_auto_tune();
 
 		$this->stats_store?->reset_url_stats();
@@ -1216,6 +1254,114 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
+	 * Fold every closed hour that has not been folded yet into its coarse key.
+	 *
+	 * The readers distinguish two resolutions — the whole window, and the last
+	 * complete hour — so five-minute buckets behind the recent tail are read at
+	 * a granularity nothing asks for. Folding them to hours takes a read from
+	 * 288 keys per shard to 36. It runs on flush, bounded to
+	 * `ROLLUP_HOURS_PER_FLUSH` so a cold start backfills over several flushes
+	 * instead of stalling one, and it fills the whole window rather than only
+	 * the hour that just closed — which is what makes a fresh deploy reach the
+	 * cheap read without a 24-hour ramp.
+	 *
+	 * A fold is idempotent because it OVERWRITES from the fine buckets. Adding
+	 * into an hour incrementally would double-count every re-flush.
+	 *
+	 * @param int $now Clock seam; the caller's `now_ts()` in production.
+	 */
+	public function roll_up_hours( int $now ): void {
+		$stats_store = $this->stats_store;
+		if ( null === $stats_store ) {
+			return;
+		}
+		$shards = Stats_Store::url_shards();
+		$plan   = Stats_Store::read_plan( Stats_Store::retention_buckets( $stats_store->ttl(), $now ) );
+		// @longform Drop what left the window, so the memo cannot outgrow it —
+		// and empty it outright now and then, because an evicted hour is not
+		// re-foldable while this process still believes it folded one.
+		if ( ++$this->folds_since_reprobe >= self::REPROBE_EVERY_FLUSHES ) {
+			$this->folds_since_reprobe = 0;
+			$this->folded_hours        = [];
+		}
+		$this->folded_hours = \array_intersect_key( $this->folded_hours, \array_flip( $plan['hours'] ) );
+		$unknown = \array_values( \array_diff( $plan['hours'], \array_keys( $this->folded_hours ) ) );
+		// @longform ONE round trip, and only for hours this process did not
+		// fold itself. The probe reads presence but `getMulti` fetches and
+		// unserializes the VALUES, so probing the settled hours pulled the
+		// whole coarse tier off memcache twelve times a minute — the tier this
+		// change built so a READER would not have to.
+		$found = [] === $unknown
+			? []
+			: \array_count_values( \array_column( $stats_store->url_hour_sources( $unknown ), 0 ) );
+		$budget = self::ROLLUP_HOURS_PER_FLUSH;
+		foreach ( $unknown as $hour ) {
+			// @longform A partial fold — a crash between shards — reads as
+			// unfolded and is simply redone, which costs a repeat and cannot
+			// corrupt: the fold overwrites rather than adding.
+			if ( ( $found[ $hour ] ?? 0 ) >= \count( $shards ) ) {
+				$this->folded_hours[ $hour ] = true;
+				continue;
+			}
+			// @longform Per SHARD, and not regroupable: each shard carries its
+			// own `Other` overflow row, which a merge by hash would collapse.
+			$landed = true;
+			foreach ( $shards as $shard ) {
+				$landed = $stats_store->set_url_hour( $hour, $shard, $this->fold_hour( $stats_store, $hour, $shard ) )
+					&& $landed;
+			}
+			// A refused shard leaves the hour unfolded; re-probe it next flush.
+			if ( $landed ) {
+				$this->folded_hours[ $hour ] = true;
+			}
+			if ( --$budget <= 0 ) {
+				return;
+			}
+		}
+	}
+
+	/**
+	 * One shard's twelve fine buckets, merged into the hour's rows.
+	 *
+	 * The same shape a fine bucket holds, so ONE reader fold serves both tiers.
+	 * Percentiles come from the merged reservoirs rather than from the buckets'
+	 * own figures: percentiles do not average, and an hour's samples describe
+	 * the hour better than any five minutes of it.
+	 *
+	 * @param Stats_Store $stats_store Source and destination.
+	 * @param string      $hour        Hour key.
+	 * @param string      $shard       Shard name from `Stats_Store::url_shard()`.
+	 * @return array<array-key,mixed>
+	 */
+	private function fold_hour( Stats_Store $stats_store, string $hour, string $shard ): array {
+		$buckets = Stats_Store::buckets_in_hour( $hour );
+		// @longform Two round trips, not 24: a miss here can never be
+		// rehydrated, so it walks the mirror index to its last line first.
+		$samples    = $stats_store->get_url_duration_buckets( $buckets, $shard );
+		$rows       = [];
+		$reservoirs = [];
+		foreach ( $stats_store->url_row_sources( $buckets, $shard ) as [ $bucket, $bucket_rows ] ) {
+			foreach ( $bucket_rows as $key => $stats_raw ) {
+				// An all-digit hash arrives as an int array key; cast back.
+				$hash  = (string) $key;
+				$stats = Core::arr( $stats_raw );
+				$into  = Core::arr( $rows[ $hash ] ?? null )
+					?: self::empty_url_row( Core::str( $stats['url'] ?? '' ) );
+				unset( $into['durations'] );
+				$rows[ $hash ]       = Stats_Store::merge_url_row( $into, $stats );
+				$reservoirs[ $hash ] = \array_merge(
+					Core::arr( $reservoirs[ $hash ] ?? null ),
+					Core::arr( Core::arr( $samples[ $bucket ] ?? null )[ $hash ] ?? null )
+				);
+			}
+		}
+		foreach ( $rows as $hash => $row ) {
+			$rows[ $hash ] = Stats_Store::apply_percentiles( $row, Core::arr( $reservoirs[ $hash ] ?? null ) );
+		}
+		return self::cap_url_rows( $rows );
+	}
+
+	/**
 	 * Merge a flush's per-URL rows into the URL index, shard by shard.
 	 *
 	 * Percentiles and the mean are recomputed rather than merged: they are
@@ -1249,78 +1395,106 @@ class Flame_Builder_Node extends Node {
 	private function persist_url_shard( Stats_Store $stats_store, string $bucket, string $shard, array $rows ): void {
 		/** @var array<string,array<string,mixed>> $existing_urls */
 		$existing_urls = $stats_store->get_url_shard( $bucket, $shard );
+		// Beside the rows, never inside them: no reader wants the reservoir.
+		$reservoirs = $stats_store->get_url_durations( $bucket, $shard );
 
 		foreach ( $rows as $hash => $stats_raw ) {
 			$stats = Core::arr( $stats_raw );
-			$row = Core::arr( $existing_urls[ $hash ] ?? null )
+			$row   = Core::arr( $existing_urls[ $hash ] ?? null )
 				?: self::empty_url_row( Core::str( $stats['url'] ?? '' ) );
-			// The fields that ADD are the ones the `srv` split declares.
-			$existing_urls[ $hash ] = Stats_Store::sum_entry( $row, $stats, Stats_Store::URL_SRV_SUMS );
-			/** @var array{url: string, count: int, timed_count: int, sum_ms: float|int, min_ms: float|int, max_ms: float|int, last_seen: int, durations: array<int,float|int>, count_2xx: int, count_3xx: int, count_4xx: int, count_5xx: int, sum_peak_mb: float|int, max_peak_mb: float|int, worker: bool, srv: array<string,mixed>} $e */
-			$e        = &$existing_urls[ $hash ];
-			$s_timed  = Core::num_int( $stats['timed_count'] ?? null );
-			$s_min_ms = Core::num_float( $stats['min_ms'] ?? null );
-			// Fold min_ms from timed buckets only (skip PHP_INT_MAX).
-			if ( $s_timed > 0 ) {
-				$e['min_ms'] = ( 0 === $e['min_ms'] ) ? $s_min_ms : \min( $e['min_ms'], $s_min_ms );
-			}
-			$e['max_ms']      = \max( $e['max_ms'], Core::num_float( $stats['max_ms'] ?? null ) );
-			$e['last_seen']   = \max( $e['last_seen'], Core::num_int( $stats['last_seen'] ?? null ) );
-			$e['max_peak_mb'] = \max( $e['max_peak_mb'], Core::num_float( $stats['max_peak_mb'] ?? null ) );
-			$e['worker']      = $e['worker'] || ! empty( $stats['worker'] );
 
-			$max_dur     = Stats_Store::MAX_DURATIONS_PER_BUCKET;
-			$s_durations = \is_array( $stats['durations'] ?? null ) ? $stats['durations'] : [];
-			$merged      = \array_merge( $e['durations'], $s_durations );
-			if ( \count( $merged ) > $max_dur ) {
-				\shuffle( $merged );
-				$merged = \array_slice( $merged, 0, $max_dur );
-			}
-			$e['durations'] = $merged;
-
-			// Capped below, once, where the folded rows are back in the set.
-			$e[ Stats_Store::URL_SRV_FIELD ] = Stats_Store::sum_fields(
-				$e[ Stats_Store::URL_SRV_FIELD ],
-				Core::arr( $stats[ Stats_Store::URL_SRV_FIELD ] ?? null ),
-				Stats_Store::URL_SRV_SUMS
+			// @longform Three parallel sources: what the shard's reservoir
+			// holds, what a row written before the reservoir moved out still
+			// carries, and this flush's own samples. Folding the second and
+			// dropping the field IS the migration — an untouched shard ages
+			// out on its own TTL.
+			$merged = \array_merge(
+				Core::arr( $reservoirs[ $hash ] ?? null ),
+				Core::arr( $row['durations'] ?? null ),
+				Core::arr( $stats['durations'] ?? null )
 			);
-			unset( $e );
-		}
-
-		foreach ( $existing_urls as &$url_stat ) {
-			if ( ! empty( $url_stat['durations'] ) && \is_array( $url_stat['durations'] ) ) {
-				$sorted = $url_stat['durations'];
-				\sort( $sorted );
-				$n = \count( $sorted );
-				$url_stat['p50_ms'] = $sorted[ (int) ( $n * 0.50 ) ] ?? 0;
-				$url_stat['p95_ms'] = $sorted[ (int) ( $n * 0.95 ) ] ?? 0;
-				$url_stat['p99_ms'] = $sorted[ (int) ( $n * 0.99 ) ] ?? 0;
+			unset( $row['durations'] );
+			if ( \count( $merged ) > Stats_Store::MAX_DURATIONS_PER_BUCKET ) {
+				\shuffle( $merged );
+				$merged = \array_slice( $merged, 0, Stats_Store::MAX_DURATIONS_PER_BUCKET );
 			}
+			$reservoirs[ $hash ]    = $merged;
+			$existing_urls[ $hash ] = Stats_Store::merge_url_row( $row, $stats );
 		}
-		unset( $url_stat );
 
+		foreach ( $existing_urls as $hash => $url_stat ) {
+			$existing_urls[ $hash ] = Stats_Store::apply_percentiles(
+				Core::arr( $url_stat ),
+				Core::arr( $reservoirs[ $hash ] ?? null )
+			);
+		}
+
+		$existing_urls = self::cap_url_rows( $existing_urls );
+
+		// @longform The largest blob the schema writes, and the only one
+		// carrying a per-server split on every row. memcached refuses an item
+		// over its limit, and a discarded return loses the whole bucket's
+		// index for this partition — again on every later merge into it.
+		// Reservoirs first: a refused index write must not leave samples the
+		// next flush would fold in a second time.
+		$kept = \array_intersect_key( $reservoirs, $existing_urls );
+		if ( ! $stats_store->set_url_durations( $bucket, $shard, $kept ) ) {
+			// @longform Silent, this leaves `apply_percentiles()` computing
+			// from one flush's samples with no diagnostic — and the reservoir
+			// is a standalone item now, up to MAX_URLS_PER_SHARD rows of
+			// MAX_DURATIONS_PER_BUCKET floats against memcached's ceiling.
+			$this->print_less_often(
+				'URL duration reservoir write refused; percentiles fall back to one flush of samples',
+				\sprintf( ' — shard %s, %d rows', $shard, \count( $kept ) )
+			);
+		}
+		if ( ! $stats_store->set_url_shard( $bucket, $shard, $existing_urls ) ) {
+			// Rows, not bytes: sizing it re-serialises a megabyte per flush.
+			$this->print_less_often(
+				'URL index write refused; a shard is over the cache item limit and its rows are lost',
+				\sprintf( ' — shard %s, %d rows', $shard, \count( $existing_urls ) )
+			);
+		}
+	}
+
+	/**
+	 * Cap one shard's rows, and bound every row's per-server split.
+	 *
+	 * Both tiers store the same shape, so both take the same ceiling — and the
+	 * HOUR needs it more than the bucket does, because it folds twelve buckets'
+	 * URL sets into one key.
+	 *
+	 * @param array<array-key,mixed> $rows One shard's rows, by url_hash.
+	 * @return array<array-key,mixed>
+	 */
+	private static function cap_url_rows( array $rows ): array {
 		// @longform The tail FOLDS rather than dropping: every total on the
 		// dashboard is summed from this index, so anything discarded here comes
 		// off those numbers silently. Two synthetic rows, because the tail
 		// mixes worker and reader URLs and one cannot answer a filter on them.
 		$other = [
-			Stats_Store::OTHER_KEY        => Core::arr( $existing_urls[ Stats_Store::OTHER_KEY ] ?? null ),
-			Stats_Store::OTHER_WORKER_KEY => Core::arr( $existing_urls[ Stats_Store::OTHER_WORKER_KEY ] ?? null ),
+			Stats_Store::OTHER_KEY        => Core::arr( $rows[ Stats_Store::OTHER_KEY ] ?? null ),
+			Stats_Store::OTHER_WORKER_KEY => Core::arr( $rows[ Stats_Store::OTHER_WORKER_KEY ] ?? null ),
 		];
-		unset( $existing_urls[ Stats_Store::OTHER_KEY ], $existing_urls[ Stats_Store::OTHER_WORKER_KEY ] );
+		unset( $rows[ Stats_Store::OTHER_KEY ], $rows[ Stats_Store::OTHER_WORKER_KEY ] );
 		// The overflow rows go back in below either way: the cap counts them.
 		$keep = self::MAX_URLS_PER_SHARD - \count( $other );
-		if ( \count( $existing_urls ) > $keep ) {
-			\uasort( $existing_urls, fn( $a, $b ) => ( \is_numeric( $b['count'] ?? null ) ? $b['count'] : 0 ) <=> ( \is_numeric( $a['count'] ?? null ) ? $a['count'] : 0 ) );
-			foreach ( \array_slice( $existing_urls, $keep, null, true ) as $row ) {
+		if ( \count( $rows ) > $keep ) {
+			\uasort(
+				$rows,
+				static fn ( $a, $b ) => Core::num_int( Core::arr( $b )['count'] ?? null )
+					<=> Core::num_int( Core::arr( $a )['count'] ?? null )
+			);
+			foreach ( \array_slice( $rows, $keep, null, true ) as $row ) {
+				$row           = Core::arr( $row );
 				$key           = Stats_Store::other_key( ! empty( $row['worker'] ) );
-				$other[ $key ] = Stats_Store::fold_url_rows( $other[ $key ], Core::arr( $row ) );
+				$other[ $key ] = Stats_Store::fold_url_rows( $other[ $key ], $row );
 			}
-			$existing_urls = \array_slice( $existing_urls, 0, $keep, true );
+			$rows = \array_slice( $rows, 0, $keep, true );
 		}
 		foreach ( $other as $key => $row ) {
 			if ( [] !== $row ) {
-				$existing_urls[ $key ] = $row;
+				$rows[ $key ] = $row;
 			}
 		}
 
@@ -1329,24 +1503,14 @@ class Flame_Builder_Node extends Node {
 		// while the two overflow rows carry every server the tail was seen on.
 		// Uncapped that grows with `SERVER_NAME`, which Apache's default
 		// `UseCanonicalName Off` makes the client's Host header.
-		foreach ( $existing_urls as &$capped ) {
-			$capped[ Stats_Store::URL_SRV_FIELD ] = self::cap_servers(
-				Core::arr( $capped[ Stats_Store::URL_SRV_FIELD ] ?? null )
+		foreach ( $rows as $key => $row_raw ) {
+			$row = Core::arr( $row_raw );
+			$row[ Stats_Store::URL_SRV_FIELD ] = self::cap_servers(
+				Core::arr( $row[ Stats_Store::URL_SRV_FIELD ] ?? null )
 			);
+			$rows[ $key ] = $row;
 		}
-		unset( $capped );
-
-		// @longform The largest blob the schema writes, and the only one
-		// carrying a per-server split on every row. memcached refuses an item
-		// over its limit, and a discarded return loses the whole bucket's
-		// index for this partition — again on every later merge into it.
-		if ( ! $stats_store->set_url_shard( $bucket, $shard, $existing_urls ) ) {
-			// Rows, not bytes: sizing it re-serialises a megabyte per flush.
-			$this->print_less_often(
-				'URL index write refused; a shard is over the cache item limit and its rows are lost',
-				\sprintf( ' — shard %s, %d rows', $shard, \count( $existing_urls ) )
-			);
-		}
+		return $rows;
 	}
 
 	/**
@@ -1669,6 +1833,8 @@ class Flame_Builder_Node extends Node {
 	 */
 	public function set_stats_store( ?Stats_Store $store ): void {
 		$this->stats_store = $store;
+		// The memo names hours in the OLD store's keyspace.
+		$this->folded_hours = [];
 		$this->arm_stats_mirror();
 	}
 
@@ -2254,6 +2420,7 @@ class Flame_Builder_Node extends Node {
 			'min_ms'      => $min_ms,
 			'max_ms'      => 0,
 			'last_seen'   => 0,
+			// In-flight buffer; persist moves it to its own key, then drops it.
 			'durations'   => [],
 			'count_2xx'   => 0,
 			'count_3xx'   => 0,
@@ -2592,7 +2759,7 @@ class Flame_Builder_Node extends Node {
 	public static function node_schema(): array {
 		return [
 			'category'    => 'Transform',
-			'description' => 'Aggregates per-event count + sum_time into the 9-namespace memcache schema; emits flame JSONL.',
+			'description' => 'Aggregates per-event count + sum_time into the memcache stats schema; emits flame JSONL.',
 			'arguments'        => [],
 			'commands'       => [
 				[

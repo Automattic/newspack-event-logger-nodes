@@ -132,9 +132,25 @@ class PerformanceCITest extends TestCase {
 		return Stats_Store::bucket_key( \time() );
 	}
 
-	private function write_request( array $body, int $partition = 0 ): string {
-		$rid          = $body['rid'];
-		$segment_dir  = $this->tmp . "/logs/requests.p{$partition}";
+	/** Bytes already appended per scratch segment path — the append offset. */
+	private array $segment_bytes = [];
+	/**
+	 * Append one record to a scratch `{log}.p{N}` segment plus its index, and
+	 * return its rid. Requests and flames differ only in the log name and the
+	 * formatter, whose signatures match.
+	 *
+	 * APPENDS. Rewriting the whole segment per record made seeding O(n^2) in
+	 * bytes, which the cap tests pay 500 times over; the offset ledger is what
+	 * lets the write be an append without re-reading to find the end.
+	 *
+	 * @param string   $log       Log basename ('requests' | 'flames').
+	 * @param callable $format    `format_index_entry( array $message, array $position ): ?string`.
+	 * @param array    $body      Record VALUE.
+	 * @param int      $partition Partition index.
+	 * @return string The record's rid.
+	 */
+	private function write_indexed( string $log, callable $format, array $body, int $partition ): string {
+		$segment_dir = $this->tmp . "/logs/{$log}.p{$partition}";
 		if ( ! \is_dir( $segment_dir ) ) {
 			\mkdir( $segment_dir, 0755, true );
 		}
@@ -143,53 +159,29 @@ class PerformanceCITest extends TestCase {
 		$message[ Message::TYPE ]      = Message::TM_STRUCT;
 		$message[ Message::TIMESTAMP ] = (float) ( $body['timestamp'] ?? \time() );
 		$message[ Message::VALUE ]     = $body;
-		$packed                    = Message::packed( $message );
+		$packed                        = Message::packed( $message );
 
 		$seg_path = "{$segment_dir}/0.log";
-		$existing = \file_exists( $seg_path ) ? \file_get_contents( $seg_path ) : '';
-		$offset   = \strlen( (string) $existing );
-		\file_put_contents( $seg_path, $existing . $packed, LOCK_EX );
+		$offset   = $this->segment_bytes[ $seg_path ] ?? 0;
+		\file_put_contents( $seg_path, $packed, FILE_APPEND | LOCK_EX );
+		$this->segment_bytes[ $seg_path ] = $offset + \strlen( $packed );
 
-		$position   = [
-			'segment' => 0,
-			'offset'     => $offset,
-			'length'     => \strlen( $packed ),
-		];
-		$index_line = Request_Builder_Node::format_index_entry( $message, $position );
+		$index_line = $format(
+			$message,
+			[ 'segment' => 0, 'offset' => $offset, 'length' => \strlen( $packed ) ]
+		);
 		if ( null !== $index_line && '' !== $index_line ) {
 			\file_put_contents( "{$segment_dir}/0.idx", $index_line . "\n", FILE_APPEND | LOCK_EX );
 		}
-		return $rid;
+		return Core::as_string( $body['rid'] ?? '' );
+	}
+
+	private function write_request( array $body, int $partition = 0 ): string {
+		return $this->write_indexed( 'requests', Request_Builder_Node::format_index_entry( ... ), $body, $partition );
 	}
 
 	private function write_flame( array $body, int $partition = 0 ): string {
-		$rid          = $body['rid'];
-		$segment_dir  = $this->tmp . "/logs/flames.p{$partition}";
-		if ( ! \is_dir( $segment_dir ) ) {
-			\mkdir( $segment_dir, 0755, true );
-		}
-
-		$message                       = Message::new_message();
-		$message[ Message::TYPE ]      = Message::TM_STRUCT;
-		$message[ Message::TIMESTAMP ] = (float) ( $body['timestamp'] ?? \time() );
-		$message[ Message::VALUE ]     = $body;
-		$packed                    = Message::packed( $message );
-
-		$seg_path = "{$segment_dir}/0.log";
-		$existing = \file_exists( $seg_path ) ? \file_get_contents( $seg_path ) : '';
-		$offset   = \strlen( (string) $existing );
-		\file_put_contents( $seg_path, $existing . $packed, LOCK_EX );
-
-		$position   = [
-			'segment' => 0,
-			'offset'     => $offset,
-			'length'     => \strlen( $packed ),
-		];
-		$index_line = Flame_Builder_Node::format_index_entry( $message, $position );
-		if ( null !== $index_line && '' !== $index_line ) {
-			\file_put_contents( "{$segment_dir}/0.idx", $index_line . "\n", FILE_APPEND | LOCK_EX );
-		}
-		return $rid;
+		return $this->write_indexed( 'flames', Flame_Builder_Node::format_index_entry( ... ), $body, $partition );
 	}
 
 	/**
@@ -540,6 +532,237 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( 7, $result['stats']['count'] );
 	}
 
+	/**
+	 * `url_detail` asks about ONE URL, and one URL lives in exactly one shard —
+	 * `Stats_Store::url_shard()` is the first hex digit of its hash. Reaching it
+	 * through the whole merged index made the modal pay the URL TABLE's fan-out:
+	 * on the staging hub that is 18,432 keys and 54 MB to answer about one row.
+	 */
+	public function test_url_detail_reads_only_the_shard_its_hash_names(): void {
+		$memd  = Core::$memd;
+		$store = new Stats_Store( 0, 86400 );
+		// Two rows, deliberately in DIFFERENT shards: the first hex digit is
+		// the shard, so `a…` and `b…` cannot share one.
+		$this->set_url_bucket( $store, $this->current_url_bucket(), [
+			'a4471ab0c0de' => [ 'url' => '/wombat-4471', 'count' => 31, 'sum_ms' => 992.0, 'timed_count' => 31 ],
+			'b8823bc1d2ef' => [ 'url' => '/quokka-8823', 'count' => 17, 'sum_ms' => 411.0, 'timed_count' => 17 ],
+		] );
+		$memd->multi_keys = 0;
+		$result           = VerbHarness::fire(
+			new Performance_CI_Node(),
+			'performance',
+			'url_detail',
+			'a4471ab0c0de'
+		);
+		$one_shard = $memd->multi_keys;
+
+		$this->assertSame( '/wombat-4471', $result['stats']['url'] );
+		$this->assertSame( 31, $result['stats']['count'] );
+
+		// Against what the whole table costs — a ratio rather than a count, so
+		// this says "one shard, not sixteen" whatever the read plan's width is.
+		Core::cleanup_all_nodes();
+		$memd->multi_keys = 0;
+		VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' );
+
+		$this->assertSame(
+			$memd->multi_keys,
+			$one_shard * Stats_Store::URL_SHARDS,
+			'url_detail must point-read the hash\'s shard, not the whole index'
+		);
+	}
+
+	/**
+	 * Decision 14's real guard: a request that already holds the whole index
+	 * answers about one URL FROM it. Point-reading unconditionally would make
+	 * the memo a per-scope cache and pay the fan-out twice for one poll — which
+	 * is the defect that put "one unscoped read" in the decision to begin with.
+	 */
+	public function test_a_request_holding_the_index_does_not_read_again_for_one_row(): void {
+		$memd  = Core::$memd;
+		$store = new Stats_Store( 0, 86400 );
+		$this->set_url_bucket( $store, $this->current_url_bucket(), [
+			'a4471ab0c0de' => [ 'url' => '/wombat-4471', 'count' => 31, 'sum_ms' => 992.0, 'timed_count' => 31 ],
+		] );
+		$node = new Performance_CI_Node();
+
+		// The table first: one fan-out, and the merged index is now in hand.
+		VerbHarness::fire( $node, 'performance', 'urls' );
+		// The harness mounts a backbone per fire; the NODE is what carries the
+		// memo across the two verbs of one request.
+		Core::cleanup_all_nodes();
+		$memd->multi_keys = 0;
+		$detail           = VerbHarness::fire( $node, 'performance', 'url_detail', 'a4471ab0c0de' );
+
+		$this->assertSame( '/wombat-4471', $detail['stats']['url'] );
+		$this->assertSame( 0, $memd->multi_keys, 'the index was already read for this request' );
+	}
+
+	/**
+	 * The reader takes the coarse hour where one has been folded, and falls
+	 * back to that hour's twelve fine buckets where one has not — which is what
+	 * makes a fresh deploy, and an hour a worker was down for, self-healing
+	 * rather than a hole in the table.
+	 */
+	public function test_the_index_reads_a_folded_hour_and_falls_back_where_none_was_folded(): void {
+		$store = new Stats_Store( 0, 86400 );
+		$hash  = 'a4471ab0c0de';
+		$shard = Stats_Store::url_shard( $hash );
+		$plan  = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, \time() ) );
+		// The newest closed hour is folded; the one behind it never was.
+		$store->set_url_hour( $plan['hours'][0], $shard, [
+			$hash => [ 'url' => '/wombat-4471', 'count' => 7, 'timed_count' => 7, 'sum_ms' => 70.0 ],
+		] );
+		$store->set_url_shard( Stats_Store::buckets_in_hour( $plan['hours'][1] )[3], $shard, [
+			$hash => [ 'url' => '/wombat-4471', 'count' => 5, 'timed_count' => 5, 'sum_ms' => 50.0 ],
+		] );
+
+		$row = Performance_CI_Node::load_row_default( $hash );
+
+		$this->assertNotNull( $row );
+		$this->assertSame( 12, $row['count'], 'the folded hour and the unfolded one both counted' );
+	}
+
+	/**
+	 * The coarse tier is DERIVED, so it is deliberately not mirrored — which
+	 * only holds if losing an hour costs nothing. Evict one and the reader
+	 * must answer from the fine buckets it was folded from, which ARE
+	 * mirrored. That fallback is the whole reason the tier needs no durability
+	 * of its own.
+	 */
+	public function test_an_evicted_hour_is_answered_from_the_buckets_it_was_folded_from(): void {
+		$store = new Stats_Store( 0, 86400 );
+		$hash  = 'a4471ab0c0de';
+		$shard = Stats_Store::url_shard( $hash );
+		$hour  = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, \time() ) )['hours'][0];
+		$store->set_url_shard( Stats_Store::buckets_in_hour( $hour )[4], $shard, [
+			$hash => [ 'url' => '/wombat-4471', 'count' => 23, 'timed_count' => 23, 'sum_ms' => 460.0 ],
+		] );
+		$store->set_url_hour( $hour, $shard, [
+			$hash => [ 'url' => '/wombat-4471', 'count' => 23, 'timed_count' => 23, 'sum_ms' => 460.0 ],
+		] );
+		$this->assertSame( 23, Performance_CI_Node::load_row_default( $hash )['count'] );
+
+		// Gone, the way memcache drops an item under pressure.
+		Core::$memd->delete( Stats_Store::entry_key( 0, Stats_Store::NS_URLS_HOUR . ":{$shard}:{$hour}" ) );
+
+		$this->assertSame(
+			23,
+			Performance_CI_Node::load_row_default( $hash )['count'],
+			'the fine buckets answer for an hour that is no longer folded'
+		);
+	}
+
+	/**
+	 * All sixteen shards or none. `roll_up_hours()` folds a hour shard by
+	 * shard and treats it as done only when every shard has a key — but the
+	 * reader treated ONE key anywhere as the whole hour, so a fold that died
+	 * between shards (or a shard whose write was refused) made the reader skip
+	 * the fine-bucket fallback for the shards that had none. Their traffic left
+	 * the window, and for a refused write it left it for good.
+	 */
+	public function test_a_partly_folded_hour_falls_back_rather_than_half_reading_it(): void {
+		$store = new Stats_Store( 0, 86400 );
+		$hour  = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, \time() ) )['hours'][0];
+		$bucket = Stats_Store::buckets_in_hour( $hour )[6];
+		// Two URLs in two different shards; both have fine buckets.
+		foreach ( [ 'a4471ab0c0de' => '/wombat-4471', 'b8823bc1d2ef' => '/quokka-8823' ] as $hash => $url ) {
+			$store->set_url_shard( $bucket, Stats_Store::url_shard( $hash ), [
+				$hash => [ 'url' => $url, 'count' => 9, 'timed_count' => 9, 'sum_ms' => 90.0 ],
+			] );
+		}
+		// Only ONE shard got its coarse key — the fold died after the first.
+		$store->set_url_hour( $hour, 'a', [
+			'a4471ab0c0de' => [ 'url' => '/wombat-4471', 'count' => 9, 'timed_count' => 9, 'sum_ms' => 90.0 ],
+		] );
+
+		$rows = [];
+		foreach ( Performance_CI_Node::load_index_default() as $row ) {
+			$rows[ Core::as_string( $row['hash'] ) ] = Core::as_int( $row['count'] );
+		}
+
+		$this->assertSame( 9, $rows['b8823bc1d2ef'] ?? 0, 'the unfolded shard falls back to its buckets' );
+		$this->assertSame( 9, $rows['a4471ab0c0de'] ?? 0, 'and the folded one is not counted twice' );
+	}
+
+	/**
+	 * Percentiles do not merge, so the fold picks ONE bucket's — and it has to
+	 * be the newest. Sources arrive newest-first, so a last-wins read hands the
+	 * display the OLDEST hour in the window: a URL whose p95 was 120ms a day
+	 * ago and is 4s now would read 120ms, forever.
+	 */
+	public function test_the_newest_bucket_supplies_the_percentiles(): void {
+		$store = new Stats_Store( 0, 86400 );
+		$hash  = 'a4471ab0c0de';
+		$shard = Stats_Store::url_shard( $hash );
+		$plan  = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, \time() ) );
+		$row   = static fn ( float $p95 ): array => [
+			$hash => [
+				'url'    => '/wombat-4471', 'count' => 3, 'timed_count' => 3, 'sum_ms' => 60.0,
+				'p50_ms' => $p95 / 2, 'p95_ms' => $p95, 'p99_ms' => $p95 + 1,
+			],
+		];
+		// Oldest hour in the window, then the newest fine bucket.
+		$store->set_url_hour( \end( $plan['hours'] ), $shard, $row( 120.0 ) );
+		$store->set_url_shard( $plan['fine'][0], $shard, $row( 4000.0 ) );
+
+		$this->assertSame(
+			4000.0,
+			Core::as_float( Performance_CI_Node::load_row_default( $hash )['p95_ms'] ),
+			'the newest bucket that carries one wins'
+		);
+	}
+
+	/**
+	 * And a folded hour must not be counted TWICE — once coarse, once from the
+	 * fine buckets it was folded from. Those buckets outlive the fold.
+	 */
+	public function test_a_folded_hour_is_not_counted_again_from_its_fine_buckets(): void {
+		$store = new Stats_Store( 0, 86400 );
+		$hash  = 'a4471ab0c0de';
+		$shard = Stats_Store::url_shard( $hash );
+		$hour  = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, \time() ) )['hours'][0];
+		$store->set_url_shard( Stats_Store::buckets_in_hour( $hour )[2], $shard, [
+			$hash => [ 'url' => '/wombat-4471', 'count' => 5, 'timed_count' => 5, 'sum_ms' => 50.0 ],
+		] );
+		$store->set_url_hour( $hour, $shard, [
+			$hash => [ 'url' => '/wombat-4471', 'count' => 5, 'timed_count' => 5, 'sum_ms' => 50.0 ],
+		] );
+
+		$row = Performance_CI_Node::load_row_default( $hash );
+
+		$this->assertSame( 5, $row['count'], 'the fold replaces its buckets, it does not add to them' );
+	}
+
+	/**
+	 * The whole point, as a number: with every closed hour folded, a read of
+	 * the URL index costs `fine + hours` keys per shard — between 36 and 47
+	 * depending on where the clock sits in the hour, against the 288
+	 * five-minute buckets it used to enumerate. On a four-partition hub that
+	 * is around 2,300 keys against 18,432, and 54 MB it no longer reads.
+	 */
+	public function test_a_folded_window_reads_two_tiers_not_every_bucket(): void {
+		$memd = Core::$memd;
+		$plan = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, \time() ) );
+		$store = new Stats_Store( 0, 86400 );
+		foreach ( $plan['hours'] as $hour ) {
+			foreach ( Stats_Store::url_shards() as $shard ) {
+				$store->set_url_hour( $hour, $shard, [] );
+			}
+		}
+
+		$memd->multi_keys = 0;
+		VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' );
+
+		$per_shard = \count( $plan['fine'] ) + \count( $plan['hours'] );
+		$this->assertLessThan( 48, $per_shard, 'two tiers, not 288 buckets' );
+		$this->assertSame(
+			$per_shard * Stats_Store::URL_SHARDS,
+			$memd->multi_keys,
+			'a folded window reads no fine bucket behind the recent tail'
+		);
+	}
+
 	public function test_url_detail_returns_recent_matching_requests(): void {
 		// url_detail's `requests` slice walks requests.log for entries whose
 		// url_hash matches. Seed the URL in the memcache index AND two on-disk
@@ -582,64 +805,46 @@ class PerformanceCITest extends TestCase {
 	}
 
 	/**
-	 * The scan must reach the NEWEST entries first. Walking forward from the
-	 * oldest, the per-callback stop at RECENT_REQUEST_LIMIT fires on the
-	 * OLDEST matches — so a busy URL's "recent requests" panel showed the
-	 * start of its history, sorted descending to look convincing, and genuinely
-	 * recent requests never appeared at all.
+	 * The watermark stop reads COMPLETION, not start. The index is appended
+	 * when a request ENDS, so a reverse walk is completion-descending and start
+	 * is not monotone along it — `Request_Builder_Node::index_completion_columns()`
+	 * says so in the class that writes the line, and the floor branch beside
+	 * this one already obeys it.
+	 *
+	 * Comparing start ends the partition at the first long-running request,
+	 * dropping every row that completed after it. The merge then advances past
+	 * them, so they never come back — on a URL that IS the long-running one, an
+	 * import or a cron endpoint, that is every poll.
 	 */
-	public function test_url_detail_returns_the_newest_requests_when_the_limit_bites(): void {
-		$url    = '/busy';
-		$hash   = Log_Manager::url_hash( $url );
-		$now    = \time();
-		$store  = new Stats_Store( 0, 86400 );
-		$this->set_url_bucket( $store, $this->current_url_bucket(), [
-			$hash => [ 'url' => $url, 'count' => 505, 'sum_ms' => 5050.0, 'last_seen' => $now ],
-		] );
-		// One past the 500 cap, oldest written first, as production appends.
-		for ( $i = 0; $i < 505; $i++ ) {
-			$this->write_request( [
-				'rid'            => \sprintf( '%032x', $i ),
-				'url'            => $url,
-				'timestamp'      => $now - 3000 + $i,
-				'duration_ms'    => 10,
-				'status_code'    => 200,
-				'peak_mb'        => 1,
-				'request_method' => 'GET',
-			] );
-		}
-
-		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'url_detail', $hash );
-		$rids   = \array_column( $result['requests'], 'rid' );
-
-		$this->assertContains( \sprintf( '%032x', 504 ), $rids, 'the newest request is missing' );
-		$this->assertNotContains( \sprintf( '%032x', 0 ), $rids, 'the oldest request should have fallen off' );
-	}
-
-	/**
-	 * `since` is the browser's watermark: the newest request it already holds.
-	 * The scan runs newest-first, so the first entry at or below it means every
-	 * remaining entry in that partition is already on screen — stop reading.
-	 */
-	public function test_url_detail_since_returns_only_what_the_browser_lacks(): void {
-		$url   = '/watermarked';
+	public function test_url_detail_since_stops_on_completion_not_start(): void {
+		$url   = '/long-running';
 		$hash  = Log_Manager::url_hash( $url );
 		$now   = \time();
 		$store = new Stats_Store( 0, 86400 );
 		$this->set_url_bucket( $store, $this->current_url_bucket(), [
-			$hash => [ 'url' => $url, 'count' => 3, 'sum_ms' => 30.0, 'last_seen' => $now ],
+			$hash => [ 'url' => $url, 'count' => 2, 'sum_ms' => 700010.0, 'last_seen' => $now ],
 		] );
-		foreach ( [ 900, 600, 300 ] as $i => $ago ) {
-			$this->write_request( [
-				'rid'            => \sprintf( '%032x', 0xAA0 + $i ),
-				'url'            => $url,
-				'timestamp'      => $now - $ago,
-				'duration_ms'    => 10,
-				'status_code'    => 200,
-				'peak_mb'        => 1,
-				'request_method' => 'GET',
-			] );
-		}
+		// Appended in COMPLETION order, as the builder appends them. The long
+		// one finishes LAST, so the reverse walk meets it first.
+		$this->write_request( [
+			'rid'            => \sprintf( '%032x', 0xC01 ),
+			'url'            => $url,
+			'timestamp'      => $now - 300,
+			'duration_ms'    => 10,
+			'status_code'    => 200,
+			'peak_mb'        => 1,
+			'request_method' => 'GET',
+		] );
+		$this->write_request( [
+			'rid'            => \sprintf( '%032x', 0xC00 ),
+			'url'            => $url,
+			// Starts well below the watermark; completes well above it.
+			'timestamp'      => $now - 900,
+			'duration_ms'    => 700000,
+			'status_code'    => 200,
+			'peak_mb'        => 1,
+			'request_method' => 'GET',
+		] );
 
 		$result = VerbHarness::fire(
 			new Performance_CI_Node(),
@@ -647,29 +852,22 @@ class PerformanceCITest extends TestCase {
 			'url_detail',
 			[ $hash, '--since=' . ( $now - 450 ) ]
 		);
+		$rids = \array_column( $result['requests'], 'rid' );
 
-		$this->assertSame(
-			[ \sprintf( '%032x', 0xAA2 ) ],
-			\array_column( $result['requests'], 'rid' )
+		$this->assertContains(
+			\sprintf( '%032x', 0xC00 ),
+			$rids,
+			'a request that COMPLETED above the watermark must be returned'
+		);
+		$this->assertContains(
+			\sprintf( '%032x', 0xC01 ),
+			$rids,
+			'and it must not end the partition on top of everything behind it'
 		);
 	}
 
-	/**
-	 * The watermark stops ONE partition, never the fan-out. Partition logs are
-	 * independent, so reaching known ground in p0 says nothing about p1 — a
-	 * naive `stop everything` drops every later partition's requests silently.
-	 */
 	public function test_url_detail_since_still_reads_later_partitions(): void {
-		\add_filter(
-			'newspack_nodes/topologies',
-			static function ( $catalog ) {
-				$catalog['performance'] = \array_merge(
-					\is_array( $catalog['performance'] ?? null ) ? $catalog['performance'] : [],
-					[ 'num_partitions' => 2 ]
-				);
-				return $catalog;
-			}
-		);
+		$this->activate_shipped_topology( 'performance', 2 );
 		$url   = '/two-partitions';
 		$hash  = Log_Manager::url_hash( $url );
 		$now   = \time();
@@ -776,6 +974,12 @@ class PerformanceCITest extends TestCase {
 
 		$this->assertCount( $limit, $result['requests'] );
 		$this->assertFalse( $result['scan_stopped_early'], 'reaching the per-URL cap is a complete answer' );
+		// And it keeps the NEWEST end. Walking forward from the oldest, the cap
+		// fires on the oldest matches, so the panel would show the start of a
+		// busy URL's history sorted descending to look convincing.
+		$rids = \array_column( $result['requests'], 'rid' );
+		$this->assertContains( \sprintf( 'rid-cap-%024d', $limit ), $rids, 'the newest request is missing' );
+		$this->assertNotContains( \sprintf( 'rid-cap-%024d', 0 ), $rids, 'the oldest should have fallen off' );
 	}
 
 	// -------------------------------------------------------------------------
@@ -3004,9 +3208,9 @@ class PerformanceCITest extends TestCase {
 		// against a static memo leaking stale stats across requests.
 		$calls    = 0;
 		$original = Performance_CI_Node::$load_index;
-		Performance_CI_Node::$load_index = static function () use ( &$calls, $original ) {
+		Performance_CI_Node::$load_index = static function ( ?string $shard ) use ( &$calls, $original ) {
 			++$calls;
-			return ( $original ?? [ Performance_CI_Node::class, 'load_index_default' ] )();
+			return ( $original ?? [ Performance_CI_Node::class, 'load_index_default' ] )( $shard );
 		};
 
 		try {
@@ -3088,10 +3292,12 @@ class PerformanceCITest extends TestCase {
 
 	public function test_url_detail_verb_declares_required_hash_plus_filters(): void {
 		// url_detail requires hash (regex check throws on empty/bad) + optional
-		// breakdown/server/categories. `server` scopes it the way it scopes the
-		// table this modal opens from.
+		// breakdown/server/categories/since. `server` scopes it the way it
+		// scopes the table this modal opens from; `since` tails the request
+		// list. A read-but-undeclared option is absent from `help`, from the
+		// palette and from the MCP tools/list schema, so the list is pinned.
 		$args = self::args_by_name( 'url_detail' );
-		$this->assertSame( [ 'hash', 'breakdown', 'server', 'categories' ], \array_keys( $args ) );
+		$this->assertSame( [ 'hash', 'breakdown', 'server', 'categories', 'since' ], \array_keys( $args ) );
 		$this->assertSame( 'string', $args['hash']['type'] );
 		$this->assertTrue( $args['hash']['required'] );
 		$this->assertFalse( $args['breakdown']['required'] );
@@ -3099,6 +3305,8 @@ class PerformanceCITest extends TestCase {
 		$this->assertFalse( $args['server']['required'] );
 		$this->assertSame( 'bool', $args['categories']['type'] );
 		$this->assertFalse( $args['categories']['required'] );
+		$this->assertSame( 'int', $args['since']['type'] );
+		$this->assertFalse( $args['since']['required'] );
 	}
 
 	public function test_url_breakdown_verb_declares_both_of_its_arguments_required(): void {

@@ -89,13 +89,88 @@ class StatsStoreTest extends TestCase {
 		);
 	}
 
-	public function test_a_url_row_read_is_never_scoped_to_one_hash(): void {
-		// Decision 14: one unscoped read serves every scope a request asks for,
-		// so the window is the only thing a caller gets to narrow.
-		$this->assertSame(
-			1,
-			( new \ReflectionMethod( Stats_Store::class, 'url_row_sources' ) )->getNumberOfParameters()
-		);
+	public function test_the_read_plan_splits_the_window_into_fine_buckets_and_hours(): void {
+		// The readers need TWO resolutions — the whole window, and the last
+		// complete hour — so the window edge is the only thing five-minute
+		// buckets buy, and only at the recent end. Everything behind the recent
+		// tail reads as hours: 13 + 23 keys per shard rather than 288.
+		$now  = \gmmktime( 14, 37, 0, 8, 27, 2026 );
+		$plan = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, $now ) );
+
+		// FINE_BUCKETS is a FLOOR: the tail runs to the end of the hour it
+		// lands in, so that hour is read at one resolution rather than half at
+		// each. At :37 that is 13 + the seven below 13-35.
+		$this->assertCount( 20, $plan['fine'] );
+		$this->assertSame( '2026-08-27-14-35', $plan['fine'][0], 'newest first, floored to the width' );
+		$this->assertSame( '2026-08-27-13-00', \end( $plan['fine'] ) );
+		// The hours behind them, newest first. The hour the fine tail reaches
+		// into is NOT among them, or its traffic would be counted twice.
+		$this->assertSame( '2026-08-27-12', $plan['hours'][0] );
+		$this->assertSame( 23, \count( $plan['hours'] ) );
+		// The oldest is WHOLE, so the window's far edge is hour-granular and
+		// rounds outward — a 24h read may carry up to 59 extra minutes rather
+		// than drop real traffic. Five-minute precision there bought nothing.
+		$this->assertSame( '2026-08-26-14', \end( $plan['hours'] ) );
+	}
+
+	/**
+	 * The plan must COVER the window. Reading it at two resolutions is the
+	 * point; reading part of it at neither is a hole, and a hole here is
+	 * traffic missing from every `urls` and `url_detail` answer — silently,
+	 * and by an amount that breathes with the clock.
+	 */
+	public function test_the_read_plan_covers_every_bucket_in_the_window(): void {
+		// Every minute of an hour, because the hole is a function of the
+		// minute: none at :00, and eleven buckets of it at :59.
+		foreach ( [ 0, 4, 7, 22, 37, 44, 55, 59 ] as $minute ) {
+			$now    = \gmmktime( 14, $minute, 0, 8, 27, 2026 );
+			$window = Stats_Store::retention_buckets( 86400, $now );
+			$plan   = Stats_Store::read_plan( $window );
+
+			$read = $plan['fine'];
+			foreach ( $plan['hours'] as $hour ) {
+				$read = \array_merge( $read, Stats_Store::buckets_in_hour( $hour ) );
+			}
+			$this->assertSame(
+				[],
+				\array_values( \array_diff( $window, $read ) ),
+				"buckets in the window that no tier reads, at :{$minute}"
+			);
+		}
+	}
+
+	public function test_an_hour_names_the_twelve_buckets_it_covers(): void {
+		$buckets = Stats_Store::buckets_in_hour( '2026-08-27-13' );
+
+		$this->assertCount( 12, $buckets );
+		$this->assertSame( '2026-08-27-13-00', $buckets[0] );
+		$this->assertSame( '2026-08-27-13-55', \end( $buckets ) );
+	}
+
+	public function test_hour_sources_read_the_coarse_tier_in_one_round_trip(): void {
+		$mc    = $this->seed_memd();
+		$store = $this->make_store();
+		$store->set_url_hour( '2026-08-27-13', 'a', [ 'a1b2c3d4e5f6' => [ 'url' => '/a', 'count' => 9 ] ] );
+
+		$mc->multi_calls = 0;
+		$sources         = $store->url_hour_sources( [ '2026-08-27-13', '2026-08-27-12' ], 'a' );
+
+		$this->assertSame( 1, $mc->multi_calls );
+		$this->assertSame( [ [ '2026-08-27-13', [ 'a1b2c3d4e5f6' => [ 'url' => '/a', 'count' => 9 ] ] ] ], $sources );
+	}
+
+	public function test_a_url_row_read_is_never_scoped_to_a_server(): void {
+		// @longform Decision 14: the SERVER scope is a projection over the
+		// merged row, never a filter before the merge — scoping the loader by
+		// it makes the memo a per-scope cache, and a poll that asks scoped and
+		// unscoped pays the whole read twice. The one narrowing this takes is
+		// the SHARD, which the same decision names as a constant the schema
+		// chooses rather than an input it does not control: one URL lives in
+		// one shard, and the memo stays whole because a request holding the
+		// index answers from it instead of reading again.
+		$params = ( new \ReflectionMethod( Stats_Store::class, 'url_row_sources' ) )->getParameters();
+		$this->assertSame( [ 'buckets', 'shard' ], \array_map( static fn ( $p ) => $p->getName(), $params ) );
+		$this->assertTrue( $params[1]->isOptional(), 'the whole index stays the default' );
 	}
 
 	public function test_reading_the_whole_index_merges_every_shard(): void {

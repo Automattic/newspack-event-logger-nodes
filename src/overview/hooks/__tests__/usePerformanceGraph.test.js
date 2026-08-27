@@ -132,6 +132,13 @@ describe( 'usePerformanceGraph — toolkit wiring', () => {
 		}
 		// The urlDetail merge transform sits on the receiver→view edge.
 		expect( Core.node( 'urldetail:merge' ) ).toBeTruthy();
+		// …and the receiver fans back to the Fetcher, which settles the ask.
+		// Without it the refresh asks once and never again: the outbox holds
+		// an ask that nothing answers until the fail-open window.
+		expect( Core.node( 'urldetail:in' ).target ).toEqual( [
+			'urldetail:merge',
+			'urldetail:fetch',
+		] );
 	} );
 
 	test( 'builds the on-demand detail nodes through an interpreter that never registered their names', () => {
@@ -490,10 +497,10 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 	} );
 
 	/**
-	 * The refresh tick carries the browser's watermark, so the server's reverse
-	 * scan stops at what the modal already holds instead of re-reading the whole
-	 * retained window. The OPEN fetch must not: the merge is cleared first, so
-	 * there is nothing held and the full window is exactly what is wanted.
+	 * The refresh tick carries the browser's watermark — the newest request it
+	 * holds — so the server's reverse scan stops at known ground instead of
+	 * re-reading the whole retained window. The OPEN fetch must not: the merge
+	 * is cleared first, so nothing is held and the full window is wanted.
 	 */
 	test( 'the refresh tick sends --since from the merge, the open fetch does not', async () => {
 		const wire = installWire( {
@@ -527,7 +534,7 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 		const refreshed = findVerb( wire.batches, 'url_detail' );
 		expect(
 			parseCommandArgs( refreshed[ VALUE ].arguments ).options.since
-		).toBe( '1787000899' );
+		).toBe( '1787000900' );
 	} );
 
 	test( 'stops the urldetail:timer when a request detail opens, re-arms when it closes', async () => {

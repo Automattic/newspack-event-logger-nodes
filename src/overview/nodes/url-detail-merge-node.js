@@ -1,6 +1,12 @@
 import { Node, VALUE, FROM, payloadOf } from '@newspack-nodes/runtime';
 
 /**
+ * Retained request rows, matching the server's own per-URL cap
+ * (`Performance_CI_Node::RECENT_REQUEST_LIMIT`).
+ */
+const MERGED_REQUEST_LIMIT = 500;
+
+/**
  * `urldetail:merge` — the url_detail incremental merge and `last_modified`
  * dedup, hosted on the receiver-Tee → view graph EDGE rather than inside the
  * view (D1b de-god). `usePerformanceGraph` wires it by hand as `urldetail:in`
@@ -15,11 +21,12 @@ import { Node, VALUE, FROM, payloadOf } from '@newspack-nodes/runtime';
  *
  * The merge:
  *   - empty payload                   → drop (no forward);
- *   - first reply (no retained state) → forward as-is, record last_modified;
  *   - unchanged last_modified         → drop;
- *   - changed last_modified           → discard requests whose rid is already
+ *   - anything else                   → discard requests whose rid is already
  *                                       retained, sort the union newest-first
- *                                       by timestamp, cap at 500, forward.
+ *                                       by timestamp, cap at MERGED_REQUEST_LIMIT,
+ *                                       forward. A first reply is that rule with
+ *                                       nothing retained, not a case of its own.
  *
  * `scan_stopped_early` describes the LIST, not the last walk, so it unions with
  * `||` across merged replies: a walk that ran out of budget leaves rows missing
@@ -43,11 +50,8 @@ export class UrlDetailMergeNode extends Node {
 	 */
 	constructor() {
 		super();
-		// Last forwarded url_detail payload + last_modified (reset on clear).
+		// Last forwarded payload; its own fields are the only copies.
 		this._merged = null;
-		this._lastModified = null;
-		// True once any walk feeding the retained list was cut short.
-		this._scanStoppedEarly = false;
 		// FROM of controls; unset loses them silently (see LogStreamViewNode).
 		this.controlFrom = '';
 	}
@@ -89,8 +93,6 @@ export class UrlDetailMergeNode extends Node {
 	_control( action ) {
 		if ( 'clear' === action ) {
 			this._merged = null;
-			this._lastModified = null;
-			this._scanStoppedEarly = false;
 		}
 	}
 
@@ -106,69 +108,48 @@ export class UrlDetailMergeNode extends Node {
 		if ( ! data ) {
 			return null;
 		}
-		// Unchanged last_modified: the server has nothing newer to render.
-		if (
-			null !== this._merged &&
-			data.last_modified === this._lastModified
-		) {
+		const prev = this._merged;
+		// Explicit null test: two undefined stamps would drop the first reply.
+		if ( null !== prev && data.last_modified === prev.last_modified ) {
 			return null;
 		}
-		this._lastModified = data.last_modified;
+		const held = prev?.requests ?? [];
+		const heldRids = new Set( held.map( ( r ) => r.rid ) );
+		const merged = {
+			...data,
+			requests: [
+				...( data.requests ?? [] ).filter(
+					( r ) => ! heldRids.has( r.rid )
+				),
+				...held,
+			]
+				.sort( ( a, b ) => ( b.timestamp || 0 ) - ( a.timestamp || 0 ) )
+				.slice( 0, MERGED_REQUEST_LIMIT ),
+		};
 		// The note belongs to the list, so it unions the way the list does.
-		this._scanStoppedEarly =
-			this._scanStoppedEarly || !! data.scan_stopped_early;
-		const prev = this._merged;
-		let merged;
-		if ( ! prev || ! prev.requests || ! prev.requests.length ) {
-			merged = data;
-		} else {
-			const existingRids = new Set( prev.requests.map( ( r ) => r.rid ) );
-			const newRequests =
-				( data.requests || [] ).filter(
-					( r ) => ! existingRids.has( r.rid )
-				) || [];
-			if ( 0 === newRequests.length ) {
-				merged = { ...data, requests: prev.requests };
-			} else {
-				merged = {
-					...data,
-					requests: [ ...newRequests, ...prev.requests ]
-						.sort(
-							( a, b ) =>
-								( b.timestamp || 0 ) - ( a.timestamp || 0 )
-						)
-						.slice( 0, 500 ),
-				};
-			}
-		}
-		if ( this._scanStoppedEarly ) {
-			merged = { ...merged, scan_stopped_early: true };
+		if ( prev?.scan_stopped_early ) {
+			merged.scan_stopped_early = true;
 		}
 		this._merged = merged;
 		return merged;
 	}
 
 	/**
-	 * The browser's watermark: the newest request this node holds, less one
-	 * second. `url_detail --since` hands it to the server, whose reverse scan
-	 * stops at the first entry AT or below it — so a poll reads the entries
-	 * since the last one instead of the whole retained window.
+	 * The browser's watermark: the newest request this node holds. `url_detail
+	 * --since` hands it to the server, whose reverse scan stops below it — so a
+	 * poll reads the entries since the last one rather than the whole window.
 	 *
-	 * The second of slack is why this is not simply the newest timestamp. The
-	 * stop is inclusive, so sending the exact value would skip a request logged
-	 * in the SAME second as the one we hold, and the scan never revisits it. An
-	 * extra second of overlap re-sends a row or two, which `_merge` discards by
-	 * rid like any other duplicate.
+	 * Exactly the newest, with no slack: the server's stop is exclusive, so the
+	 * same-second sibling is still read and `_merge` discards the overlap by
+	 * rid. A second subtracted here would guess at the index's resolution.
 	 *
-	 * Zero with nothing retained — first open, and after a `clear` — which is
-	 * what makes a reopened modal read the whole window again.
-	 *
-	 * @return {number} Epoch seconds, or 0 to read the whole window.
+	 * @return {number} Epoch seconds; 0 with nothing retained reads the whole
+	 *                  window, which is what a reopened modal wants.
 	 */
 	watermark() {
 		// The list is sorted newest-first, by the server and by `_merge`.
 		const newest = this._merged?.requests?.[ 0 ]?.timestamp;
-		return Number.isFinite( newest ) ? Math.floor( newest ) - 1 : 0;
+		return Number.isFinite( newest ) ? Math.floor( newest ) : 0;
 	}
 
 	/**
