@@ -8,7 +8,6 @@
  */
 
 import {
-	shadeForDepth,
 	relativeLuminance,
 	pickLabelColor,
 	parseColor,
@@ -16,55 +15,11 @@ import {
 	DARK_TEXT,
 	LIGHT_TEXT,
 } from '../flameColors';
+import { createColorMapper } from '../FlameGraph';
+import { getStateColor } from '@newspack-nodes/shared/utils/formatUtils';
 
-const ACCENT = '#41e07a';
-const BG = '#020a05';
-
-describe( 'shadeForDepth', () => {
-	it( 'returns the accent unchanged at depth 0 (fraction 0)', () => {
-		const accentRgb = parseColor( ACCENT );
-		expect( parseColor( shadeForDepth( 0, ACCENT, BG ) ) ).toEqual(
-			accentRgb
-		);
-	} );
-
-	it( 'shades deeper frames toward the background', () => {
-		const accentRgb = parseColor( ACCENT );
-		const bgRgb = parseColor( BG );
-		const deep = parseColor( shadeForDepth( 3, ACCENT, BG ) );
-
-		// Green dominates accent, bg near-black → g drops with depth.
-		expect( deep.g ).toBeLessThan( accentRgb.g );
-
-		// And the deep shade's luminance sits between bg and accent.
-		const accentLum = relativeLuminance( accentRgb );
-		const bgLum = relativeLuminance( bgRgb );
-		const deepLum = relativeLuminance( deep );
-		expect( deepLum ).toBeLessThan( accentLum );
-		expect( deepLum ).toBeGreaterThan( bgLum );
-	} );
-
-	it( 'caps the mix fraction at 0.65 (depth 5 and depth 20 are identical)', () => {
-		// 0.65 / 0.13 = 5, so depth 5 already hits the cap.
-		expect( shadeForDepth( 5, ACCENT, BG ) ).toBe(
-			shadeForDepth( 20, ACCENT, BG )
-		);
-	} );
-
-	it( 'never reaches the background even at the cap', () => {
-		expect( parseColor( shadeForDepth( 20, ACCENT, BG ) ) ).not.toEqual(
-			parseColor( BG )
-		);
-	} );
-
-	it( 'supports 3-digit shorthand hex', () => {
-		expect( parseColor( shadeForDepth( 0, '#fff', BG ) ) ).toEqual( {
-			r: 255,
-			g: 255,
-			b: 255,
-		} );
-	} );
-} );
+const BRIGHT = '#41e07a';
+const DEEP = '#1b3a5c';
 
 describe( 'relativeLuminance', () => {
 	it( 'is ~1 for white and ~0 for black', () => {
@@ -79,25 +34,23 @@ describe( 'relativeLuminance', () => {
 	} );
 
 	it( 'increases with brightness', () => {
-		const dim = relativeLuminance(
-			parseColor( shadeForDepth( 5, ACCENT, BG ) )
+		expect( relativeLuminance( parseColor( BRIGHT ) ) ).toBeGreaterThan(
+			relativeLuminance( parseColor( DEEP ) )
 		);
-		const bright = relativeLuminance( parseColor( ACCENT ) );
-		expect( bright ).toBeGreaterThan( dim );
 	} );
 } );
 
+/**
+ * The fills are palette colors now, so these read real ones: a bright hook
+ * green and a deep database blue, either end of what getStateColor returns.
+ */
 describe( 'pickLabelColor', () => {
-	it( 'picks dark text on the bright accent shade', () => {
-		expect( pickLabelColor( shadeForDepth( 0, ACCENT, BG ) ) ).toBe(
-			DARK_TEXT
-		);
+	it( 'picks dark text on a bright fill', () => {
+		expect( pickLabelColor( BRIGHT ) ).toBe( DARK_TEXT );
 	} );
 
-	it( 'picks light text on a deep, dark shade', () => {
-		expect( pickLabelColor( shadeForDepth( 5, ACCENT, BG ) ) ).toBe(
-			LIGHT_TEXT
-		);
+	it( 'picks light text on a deep fill', () => {
+		expect( pickLabelColor( DEEP ) ).toBe( LIGHT_TEXT );
 	} );
 } );
 
@@ -114,5 +67,34 @@ describe( 'isColorParseable', () => {
 		expect( isColorParseable( 'color-mix(in srgb, red, blue)' ) ).toBe(
 			false
 		);
+	} );
+} );
+
+describe( 'createColorMapper', () => {
+	afterEach( () => {
+		delete window.eventLoggerCustomColors;
+	} );
+
+	it( 'colors a hook frame with the shared hook palette, not a depth shade', () => {
+		const map = createColorMapper();
+		const shallow = map( { depth: 0, data: { name: 'init hook' } } );
+		const deep = map( { depth: 7, data: { name: 'init hook' } } );
+
+		expect( shallow ).toBe( getStateColor( 'init hook' ) );
+		// Depth changed nothing: the same span reads the same everywhere.
+		expect( deep ).toBe( shallow );
+	} );
+
+	it( 'honors a custom event color from the config', () => {
+		window.eventLoggerCustomColors = { validation: '#ff00aa' };
+		expect(
+			createColorMapper()( { depth: 3, data: { name: 'validation' } } )
+		).toBe( '#ff00aa' );
+	} );
+
+	it( 'leaves spacer frames transparent', () => {
+		expect(
+			createColorMapper()( { depth: 1, data: { spacer: true } } )
+		).toBe( 'transparent' );
 	} );
 } );
