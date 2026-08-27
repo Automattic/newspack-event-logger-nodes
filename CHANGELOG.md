@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.63.1] - 2026-08-26
+
+### Fixed
+
+- **A duration axis rescales to the unit its data needs.** `Avg Response Time (ms)` ticked to five digits on a slow site — `140000ms` — wider than the axis title beside it, so the two overlapped. Both duration axes build their formatter from the domain via the substrate's `axisDuration`, so the ticks read `140s` and the title drops its `(ms)`: the ticks carry the unit, and it moves with the data. That removed two of the three duration formatters here; `CategoryTimeChart` keeps its own, which needs the microseconds and compaction the others do not. `ResponseTimeChart`'s `avg:` label, drawn on the plot and hardcoded to `%dms`, uses the same formatter instance — a chart that disagrees with itself is worse than one that reads long.
+- **The Ask button wears no styles of its own.** It carried `event-logger-ask__trigger` beside `button`, a name that exists to be painted — and something did, so it read ink beside a "Log this URL" that read cyan: two identical controls in one header wearing different colours. The cause was in the substrate's modal styles and is fixed there; what is fixed here is the invitation. The class's only rule was `margin-left: auto`, which is placement rather than identity, so that keys on position now and no control is named for it. `useAskPicker` has always found the trigger by its data attribute, which is unchanged.
+
 ## [0.63.0] - 2026-08-26
 
 ### Fixed
