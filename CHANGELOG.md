@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.63.8] - 2026-08-27
+
+### Fixed
+
+- **Builds against substrate v2.43.3**, which stops a Router bounce crossing the wire. Unfixed, an unroutable error had the two ends POSTing `NOT_AVAILABLE` at each other about twenty times a second for as long as the tab stayed open. The runtime is INLINED into these bundles, so the fix only reaches a browser through a release here.
+
 ## [0.63.7] - 2026-08-27
 
 ### Fixed
