@@ -29,13 +29,14 @@ class RequestBuilderValidationTest extends TestCase {
 		} );
 	}
 
-	private function fill( Request_Builder_Node $rb, int $n, string $rid, string $k, array $extra = [], string $position = '' ): void {
+	private function fill( Request_Builder_Node $rb, int $n, string $rid, string $k, array $extra = [], string $position = '', string $from = '' ): void {
 		$entry                     = \array_merge( [ 'n' => $n, 'rid' => $rid, 'k' => $k, 'ts' => 1_700_000_000 ], $extra );
 		$message                   = Message::new_message();
 		$message[ Message::TYPE ]  = Message::TM_STRUCT;
 		$message[ Message::KEY ]   = $rid;
 		// Consumer stamps segment:offset:length here; '' if nothing durable read it.
 		$message[ Message::ID ]    = $position;
+		$message[ Message::FROM ]  = $from;
 		$message[ Message::VALUE ] = $entry;
 		$rb->fill( $message );
 	}
@@ -75,6 +76,29 @@ class RequestBuilderValidationTest extends TestCase {
 		$this->assertStringNotContainsString( 'missing message', $this->log );
 		$this->assertStringNotContainsString( 'duplicate message', $this->log );
 		$this->assertStringNotContainsString( 'multiple requests', $this->log );
+	}
+
+	public function test_sequence_warnings_name_the_message_they_came_from(): void {
+		// A gap or a dup is only actionable if you can pull the trace, and the
+		// rid alone does not find it: the consumer stamps ID as
+		// segment:offset:length, which IS the seek back onto the log, and FROM
+		// names which producer's stream to seek in.
+		$rb = $this->builder();
+		$this->fill( $rb, 1, 'seq_named', 'process (start)', [ 'm' => '1 on h', 'l' => '' ], '7:1200:180', 'jobs:consumer/jobintake:consumer' );
+		$this->fill( $rb, 3, 'seq_named', 'info', [ 'm' => 'skipped' ], '7:1500:210', 'jobs:consumer/jobintake:consumer' );
+
+		$this->assertStringContainsString( '7:1500:210', $this->log, 'the gap names the position to seek to' );
+		$this->assertStringContainsString( 'jobs:consumer/jobintake:consumer', $this->log, 'and the stream it came from' );
+	}
+
+	public function test_duplicate_warnings_name_the_message_they_came_from(): void {
+		$rb = $this->builder();
+		$this->fill( $rb, 1, 'seq_named_dup', 'process (start)', [ 'm' => '1 on h', 'l' => '' ], '7:2000:180', 'jobs:consumer/jobfeed:consumer' );
+		$this->fill( $rb, 2, 'seq_named_dup', 'request', [ 'm' => 'GET /a' ], '7:2180:190', 'jobs:consumer/jobfeed:consumer' );
+		$this->fill( $rb, 1, 'seq_named_dup', 'request', [ 'm' => 'GET /a' ], '7:2370:190', 'jobs:consumer/jobfeed:consumer' );
+
+		$this->assertStringContainsString( '7:2370:190', $this->log, 'the dup names the position to seek to' );
+		$this->assertStringContainsString( 'jobs:consumer/jobfeed:consumer', $this->log, 'and the stream it came from' );
 	}
 
 	public function test_gap_emits_missing_message_warning_and_recovers(): void {

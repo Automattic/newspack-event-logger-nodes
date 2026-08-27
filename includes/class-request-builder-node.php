@@ -398,12 +398,16 @@ class Request_Builder_Node extends Timer_Node {
 			$expected = 1;
 			$request->expected_n = 1;
 		}
+		// @longform The rid alone does not find the trace. ID is the consumer's
+		// segment:offset:length — the seek back onto the log — and FROM names
+		// whose stream to seek in.
+		$whence = ' on ' . $rid . ' from ' . Core::as_string( $message[ Message::FROM ] ?? '' ) . ' at ' . Core::as_string( $message[ Message::ID ] ?? '' );
 		if ( $seq_n < $expected ) {
-			$this->print_less_often( 'INFO: duplicate message: expected #', (string) $expected, ', got #', (string) $seq_n, ' on ', $rid );
+			$this->print_less_often( 'INFO: duplicate message: expected #', (string) $expected, ', got #', (string) $seq_n, $whence );
 			return;
 		}
 		if ( $seq_n > $expected ) {
-			$this->print_less_often( 'WARNING: missing message: expected #', (string) $expected, ', got #', (string) $seq_n, ' on ', $rid );
+			$this->print_less_often( 'WARNING: missing message: expected #', (string) $expected, ', got #', (string) $seq_n, $whence );
 			// First hole only: a later one names the last line dropped.
 			if ( 0 === Core::int( $request->gap_after ?? 0, 0 ) ) {
 				$request->gap_after = $expected - 1;
