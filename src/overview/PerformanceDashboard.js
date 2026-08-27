@@ -733,7 +733,6 @@ export default function PerformanceDashboard( { onError } ) {
 				ask={ ask }
 				overview={ overview }
 				urlTotals={ urlTotals }
-				urlFilters={ urlFilters }
 				breakdownAvgMs={ breakdownAvgMs }
 				serverFilter={ serverFilter }
 				setServerFilter={ setServerFilter }

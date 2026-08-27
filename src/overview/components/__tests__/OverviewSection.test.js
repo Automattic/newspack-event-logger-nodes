@@ -135,20 +135,6 @@ describe( 'OverviewSection', () => {
 		expect( container.textContent ).toContain( '30.0%' );
 	} );
 
-	it( 'says the charts cannot follow the worker toggle', () => {
-		// `$count_global` keeps worker traffic out of `hourly`, `dim` and the
-		// leaderboards entirely, so with Include Workers ON the header counts
-		// requests the chart and the Time Breakdown beneath it structurally
-		// cannot. The panel says so rather than letting the two disagree in
-		// silence — which is the defect the toggle was built to remove.
-		const { container } = mount(
-			{ total_requests: 33049 },
-			{ urlFilters: { include_workers: true } }
-		);
-
-		expect( container.textContent ).toContain( 'excludes worker' );
-	} );
-
 	it( 'counts the URLs the filters actually selected', () => {
 		// Every headline number describes the set the table below lists, so a
 		// server filter narrows this count instead of standing apart from it.

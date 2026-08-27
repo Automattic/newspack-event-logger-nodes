@@ -38,7 +38,6 @@ import { AskButton } from './AskPanel';
  * @param {Object}                  props                        Component props.
  * @param {Object|null}             props.overview               Overview slice payload; null renders nothing.
  * @param {Object|null}             props.urlTotals              Headline numbers for the URL set the filters selected; null until the first reply.
- * @param {Object|null}             props.urlFilters             The filters the server reported applying to those numbers.
  * @param {number}                  props.breakdownAvgMs         Average the Time Breakdown divides by — the selected server's, or the site's.
  * @param {string}                  props.serverFilter           Selected server name, or '' for all servers.
  * @param {(value: string) => void} props.setServerFilter        Server filter setter.
@@ -65,7 +64,6 @@ import { AskButton } from './AskPanel';
 export default function OverviewSection( {
 	overview,
 	urlTotals,
-	urlFilters,
 	breakdownAvgMs,
 	serverFilter,
 	setServerFilter,
@@ -355,14 +353,6 @@ export default function OverviewSection( {
 						serverOptions={ isMultiServer ? serverOptions : null }
 						serverFilter={ serverFilter }
 						setServerFilter={ setServerFilter }
-						note={
-							urlFilters?.include_workers
-								? __(
-										'This chart excludes worker traffic, which the stats above are counting: workers never enter the aggregate series.',
-										'newspack-event-logger-nodes'
-								  )
-								: null
-						}
 					/>
 
 					<CategoryTimeChart data={ categoryData } />
