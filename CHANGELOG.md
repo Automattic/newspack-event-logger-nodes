@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The substrate floor was three minors too low, which turns a graceful dormancy into a fatal.** The gate read `2.35.0` while this plugin calls `Node::publish_sibling()` and `Node::sibling_name()` (2.37.0), `Schema_Reflection::dump_setters()` (2.37.0) and `Partition_Node::index_mtimes()` (2.38.0). On a substrate between the two the handshake PASSES, the plugin wires itself up, and `Request_Builder` then fatals on an undefined method the first time it publishes its `flight` sibling — which is every logged request. The whole point of the floor is that too-old means dormant, so a floor set too low is worse than no floor at all. Nothing caught it: `lint-docs.sh` rule 6 holds the prose to the loader, and both agreed on the wrong number.
+
 ## [0.63.2] - 2026-08-27
 
 ### Fixed

@@ -72,18 +72,19 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	if ( ! \class_exists( '\\Newspack_Nodes\\Bootstrap' ) ) {
 		return;
 	}
-	// @longform Dormant when too old; 2.35.0 = Table_Node::backed_by(), which
-	// Stats_Store and Rule_Set both read their durable tier through; 2.31.0 was
-	// Capabilities::TUNE (every verb
-	// here declares a role) plus Bootstrap::mount_request_graph(), which the
-	// MCP controller builds its graph with — below it every MCP call fatals on
-	// an undefined method and every `tune` verb throws "unknown capability
-	// role". (2.25.0 was the prior floor: \Newspack_Nodes\Line_Fitter, which
-	// Request_Builder and Request_Flight fit their emits through; 2.21.0 before
-	// that, for Table_Node::store()/forget().)
+	// @longform Dormant when too old. 2.38.0 = Partition_Node::index_mtimes(),
+	// which the performance CI reads per-index freshness from; 2.37.0 was
+	// Node::publish_sibling()/sibling_name(), which Request_Builder uses on
+	// EVERY request to publish its flight sibling — below it the request path
+	// itself fatals — plus Schema_Reflection::dump_setters(). Earlier floors:
+	// 2.35.0 Table_Node::backed_by(), 2.31.0 Capabilities::TUNE +
+	// Bootstrap::mount_request_graph(), 2.25.0 Line_Fitter, 2.21.0
+	// Table_Node::store()/forget(). Raise this whenever a new hard requirement
+	// appears; the floor is what makes a too-old substrate DORMANT rather than
+	// fatal, so one set too low is worse than none.
 	// WordPress does not order plugin updates.
 	if ( ! \method_exists( '\\Newspack_Nodes\\Bootstrap', 'version_at_least' )
-		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.35.0', 'Newspack Event Logger Nodes' ) ) {
+		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.38.0', 'Newspack Event Logger Nodes' ) ) {
 		return;
 	}
 
