@@ -88,7 +88,7 @@ describe( 'OverviewSection', () => {
 			{},
 			{ ask: { active: false, start, cancel: jest.fn() } }
 		);
-		const trigger = container.querySelector( '.event-logger-ask__trigger' );
+		const trigger = container.querySelector( '[data-ask-trigger]' );
 		const search = container.querySelector( 'input[type="text"]' );
 		expect( trigger ).toBeTruthy();
 		expect( search ).toBeTruthy();

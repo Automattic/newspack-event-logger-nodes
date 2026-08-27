@@ -128,9 +128,7 @@ export function AskButton( { ask } ) {
 	return (
 		<button
 			type="button"
-			className={ `button event-logger-ask__trigger${
-				active ? ' is-active' : ''
-			}` }
+			className={ `button${ active ? ' is-active' : '' }` }
 			{ ...{ [ ASK_TRIGGER_ATTR ]: '' } }
 			onClick={ active ? cancel : start }
 			aria-pressed={ active }

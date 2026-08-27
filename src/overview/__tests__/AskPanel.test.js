@@ -73,7 +73,7 @@ const render = ( props = {} ) => {
 
 const arm = () =>
 	act( () => {
-		view.container.querySelector( '.event-logger-ask__trigger' ).click();
+		view.container.querySelector( '[data-ask-trigger]' ).click();
 	} );
 
 // Click the askable element — the picker reads the modifier on mousedown, so
@@ -172,7 +172,7 @@ test( 'a pick under a server filter asks about that server', () => {
 	);
 	act( () => {
 		container
-			.querySelector( '.event-logger-ask__trigger' )
+			.querySelector( '[data-ask-trigger]' )
 			.dispatchEvent(
 				new window.MouseEvent( 'click', { bubbles: true } )
 			);
@@ -391,7 +391,7 @@ test( 'a pick that hits nothing askable stays armed and stays quiet', () => {
 	render( { onError } );
 
 	act( () => {
-		view.container.querySelector( '.event-logger-ask__trigger' ).click();
+		view.container.querySelector( '[data-ask-trigger]' ).click();
 	} );
 	act( () => {
 		view.container

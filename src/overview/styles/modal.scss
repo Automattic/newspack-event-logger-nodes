@@ -32,9 +32,11 @@
 		gap: 16px;
 	}
 
-	// Request detail has no stat grid to carry the gap, so the Ask trigger
-	// is what pushes the header actions off the title.
-	.components-modal__header-heading-container + .event-logger-ask__trigger {
+	// Request detail has no stat grid to carry the gap, so whatever follows
+	// the title pushes the header actions off it. Keyed on POSITION, not on
+	// which control it is: naming one gives that control a style of its own,
+	// and it stops matching the buttons beside it.
+	.components-modal__header-heading-container + * {
 		margin-left: auto;
 	}
 
