@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.63.4] - 2026-08-27
+
+### Fixed
+
+- **The floor is 2.40.0, not 2.38.0 — 0.63.3 raised it by hand and still got it wrong.** `Config` reads `Config_System\Schema::defaults()`, which the substrate added in 2.40.0. The by-hand audit passed it because `function defaults(` DID exist at the floor being tested — on `Roles`, an unrelated class. That is the whole case against matching method names, and it is why the floor is now derived by `check-substrate-floor.sh`, which asks PHPStan what class actually declares each call. Wired into `pre-push`, so the number cannot drift again unnoticed.
+
 ## [0.63.3] - 2026-08-27
 
 ### Fixed
