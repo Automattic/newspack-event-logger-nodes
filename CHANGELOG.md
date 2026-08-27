@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.63.2] - 2026-08-27
+
+### Fixed
+
+- **Builds against substrate v2.43.1**, which stamps a log line in the reader's own zone rather than UTC, names a failing command's own node on the ERRORS tile, and puts the inbound FROM stamp behind `stamp_message`'s guards. The pin moved from v2.43.0; a release that leaves it behind ships the older shared code and still goes green, so the pin moves with the release.
+- **The console-warning gate matches that prefix in any zone.** It stripped a hardcoded ` UTC ` before comparing a declared `expectConsoleWarn`, so every declaration stopped matching the moment the substrate moved. The zone token is constrained to the shapes `Intl` emits — `UTC`, `GMT±H[:MM]`, a 2–5 letter abbreviation — never a bare `\S+`, which would match any `<date> <time> <word> <word>: ` warning text and strip it: the gate swallowing the very lines it exists to report.
+
 ## [0.63.1] - 2026-08-26
 
 ### Fixed
