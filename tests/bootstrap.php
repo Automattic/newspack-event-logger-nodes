@@ -5,7 +5,7 @@
  * @package Newspack_Event_Logger_Nodes
  */
 
-if ( \function_exists( 'posix_getuid' ) && 0 === \posix_getuid() ) {
+if ( \function_exists( 'posix_geteuid' ) && 0 === \posix_geteuid() ) {
 	error_log("ERROR: refusing to test as root.");
 	exit( 1 );
 }

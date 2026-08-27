@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.63.5] - 2026-08-27
+
+### Fixed
+
+- **The root refusal asks for the EFFECTIVE uid.** `Log_Manager` and the test bootstrap both read `posix_getuid()`, which is the real uid — but what decides who OWNS a file the process creates, and therefore who can rewrite it next, is the effective one. Under any setuid or `runuser` arrangement the two differ, and the check was answering the wrong question in exactly the case it exists for. Both now read `posix_geteuid()`, so the guard and the thing it guards agree.
+
 ## [0.63.4] - 2026-08-27
 
 ### Fixed

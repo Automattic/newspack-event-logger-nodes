@@ -216,7 +216,7 @@ class Log_Manager {
 		}
 		$this->log_memory       = ! empty( $this->config['log_memory'] );
 		$this->flush_every_line = ! empty( $this->config['flush_every_line'] );
-		if ( \function_exists( 'posix_getuid' ) && 0 === \posix_getuid() ) {
+		if ( \function_exists( 'posix_geteuid' ) && 0 === \posix_geteuid() ) {
 			return;
 		}
 		$this->matcher = Rule_Set::load()->matcher();
