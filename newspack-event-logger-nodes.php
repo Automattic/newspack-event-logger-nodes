@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Newspack Event Logger Nodes
  * Description: Event-logger application built on newspack-nodes runtime.
- * Version: 0.63.3
+ * Version: 0.63.4
  * Author: Automattic
  * Author URI: https://newspack.com/
  * License: GPL-2.0-or-later
@@ -40,7 +40,7 @@
 \defined( 'ABSPATH' ) || exit;
 
 if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION' ) ) {
-	\define( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION', '0.63.3' );
+	\define( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION', '0.63.4' );
 }
 if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_NODES_DIR' ) ) {
 	\define( 'NEWSPACK_EVENT_LOGGER_NODES_DIR', \plugin_dir_path( __FILE__ ) );
@@ -72,7 +72,9 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	if ( ! \class_exists( '\\Newspack_Nodes\\Bootstrap' ) ) {
 		return;
 	}
-	// @longform Dormant when too old. 2.38.0 = Partition_Node::index_mtimes(),
+	// @longform Dormant when too old. 2.40.0 = Config_System\Schema::defaults(),
+	// which Config reads the schema's own defaults through; 2.38.0 was
+	// Partition_Node::index_mtimes(),
 	// which the performance CI reads per-index freshness from; 2.37.0 was
 	// Node::publish_sibling()/sibling_name(), which Request_Builder uses on
 	// EVERY request to publish its flight sibling — below it the request path
@@ -84,7 +86,7 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	// fatal, so one set too low is worse than none.
 	// WordPress does not order plugin updates.
 	if ( ! \method_exists( '\\Newspack_Nodes\\Bootstrap', 'version_at_least' )
-		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.38.0', 'Newspack Event Logger Nodes' ) ) {
+		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.40.0', 'Newspack Event Logger Nodes' ) ) {
 		return;
 	}
 

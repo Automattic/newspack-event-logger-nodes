@@ -99,6 +99,15 @@ if [[ -f "$docslint" ]]; then
 	ok "lint-docs clean"
 fi
 
+# The substrate floor, against the substrate APIs this plugin actually calls.
+# lint-docs only holds the PROSE to the loader; both agreed on a wrong number
+# for three releases. Skips itself without a sibling substrate checkout.
+floorcheck="$(git rev-parse --show-toplevel)/scripts/check-substrate-floor.sh"
+if [ -x "$floorcheck" ]; then
+	step "substrate floor"
+	bash "$floorcheck" || fail "substrate floor too low (see above)"
+fi
+
 # Log_Manager and Gyrobase::Log write the SAME environment_v3 line into one
 # firehose, and their allowlists are hand-maintained copies. Only the dndocker
 # tree sees both, so the check lives there and runs when it is checked out.
