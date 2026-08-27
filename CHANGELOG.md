@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.63.0] - 2026-08-26
+
 ### Fixed
 
 - **A killed request closes what it was inside, so the log nests it correctly.** A render past the worker's lease window left `gyrobase` open at the `entries (aggregated)` marker with no `(complete)` anywhere, so the break prune read it as severed by the fold and reparented the whole tail — merged spans included — onto the request, one level shallow. The reading was right: a producer drains its open stack as `(orphaned)` completes before writing any terminal, so a span still open really was cut by the fold. What was wrong was the record. `Log_Manager::finish()` already drained; the engine's `abort_process` did not, and wrote a `process` terminal for a scope it had not opened, which preempted the parent's and took the true duration and status code with it. Both are fixed in `newspack-gyrobase`, and the indent rule here is unchanged from 0.62.1.
