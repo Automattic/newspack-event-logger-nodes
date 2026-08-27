@@ -269,6 +269,22 @@ describe( 'ResponseTimeChart', () => {
 		unmount();
 	} );
 
+	it( 'rescales the value axis to seconds for a slow request', () => {
+		// Pinned to milliseconds these ticks read `140000ms`, which is wider
+		// than the axis title beside it and overlaps it. One unit for the whole
+		// axis, chosen from the domain — so nothing here still says 'ms'.
+		const { container, unmount } = mountChart( [
+			{ rid: 'req-slow-a', timestamp: 1755003000, duration_ms: 140000 },
+			{ rid: 'req-slow-b', timestamp: 1755003060, duration_ms: 120000 },
+		] );
+
+		const labels = texts( container );
+		expect( labels ).toEqual( expect.arrayContaining( [ '0s' ] ) );
+		expect( labels.some( ( t ) => /^\d+s$/.test( t ) ) ).toBe( true );
+		expect( labels.some( ( t ) => t.endsWith( 'ms' ) ) ).toBe( false );
+		unmount();
+	} );
+
 	it( 'ticks the value axis in whole milliseconds', () => {
 		// Sub-10ms requests: d3's half-millisecond ticks would repeat a label.
 		const { container, unmount } = mountChart( [

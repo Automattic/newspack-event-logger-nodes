@@ -18,7 +18,12 @@ import { useCallback, useMemo } from '@wordpress/element';
 import { __, sprintf } from '@wordpress/i18n';
 import * as d3 from 'd3';
 import { STATUS_COLORS } from '@newspack-nodes/shared/utils/formatUtils';
-import { integerTicks } from '@newspack-nodes/shared/utils/axis-ticks';
+import {
+	axisDuration,
+	integerTicks,
+} from '@newspack-nodes/shared/utils/axis-ticks';
+
+const MS_PER_SECOND = 1000;
 import {
 	PALETTE,
 	buildTimeSlots,
@@ -27,29 +32,6 @@ import AreaTimeChart from './components/AreaTimeChart';
 import { RETENTION_SECONDS } from './retention';
 
 const CHART_HEIGHT = 280;
-
-/**
- * Format a duration in seconds for the cumulative axis and its tooltip.
- * Sub-second values read as milliseconds, values past 1000s as kiloseconds.
- *
- * @param {number} seconds Duration in seconds.
- * @return {string} Formatted duration, e.g. `250ms`, `4.2s`, `1.5Ks`.
- */
-const formatSeconds = ( seconds ) => {
-	if ( seconds === 0 ) {
-		return '0s';
-	}
-	if ( seconds < 1 ) {
-		return `${ Math.round( seconds * 1000 ) }ms`;
-	}
-	if ( seconds >= 1000 ) {
-		const ks = seconds / 1000;
-		return ks === Math.floor( ks ) ? `${ ks }Ks` : `${ ks.toFixed( 1 ) }Ks`;
-	}
-	return seconds < 10
-		? `${ seconds.toFixed( 1 ) }s`
-		: `${ Math.round( seconds ) }s`;
-};
 
 /**
  * Requests, whole ones — and the axis ticks in the same unit.
@@ -63,11 +45,14 @@ formatRequests.tickValues = integerTicks;
 /**
  * Average response time, rounded to the millisecond by `bucketValue`.
  *
+ * Formatted by the same ladder the cumulative axis reads in, because the unit
+ * has to follow the data: a slow site's axis runs to five digits of
+ * milliseconds — `140000ms` — which is wider than the axis title beside it, and
+ * the two collide. Sub-second values still read in milliseconds.
+ *
  * @param {number} ms Milliseconds.
- * @return {string} Formatted duration.
+ * @return {string} Formatted duration, e.g. `250ms`, `4.2s`, `140s`.
  */
-const formatAvgMs = ( ms ) => `${ ms }ms`;
-formatAvgMs.tickValues = integerTicks;
 
 /**
  * Average peak memory, already in megabytes.
@@ -78,14 +63,22 @@ formatAvgMs.tickValues = integerTicks;
 const formatMemoryMb = ( mb ) => `${ Number( mb.toFixed( 1 ) ) }MB`;
 
 /**
- * One Y-axis formatter per metric — the unit each one prints is the unit its
- * axis ticks in.
+ * One Y-axis formatter per metric, BUILT from the axis domain — the unit each
+ * prints is the unit its axis ticks in, and for a duration that unit follows
+ * the data: pinned to milliseconds, a slow site's ticks run to five digits and
+ * collide with the axis title beside them.
  */
 const Y_FORMATS = {
-	volume: formatRequests,
-	avg: formatAvgMs,
-	cumulative: formatSeconds,
-	memory: formatMemoryMb,
+	volume: () => formatRequests,
+	avg: ( maxMs ) => axisDuration( maxMs ),
+	// Cumulative plots SECONDS; the shared formatter counts milliseconds.
+	cumulative: ( maxSeconds ) => {
+		const format = axisDuration( maxSeconds * MS_PER_SECOND );
+		const inSeconds = ( seconds ) => format( seconds * MS_PER_SECOND );
+		inSeconds.tickValues = format.tickValues;
+		return inSeconds;
+	},
+	memory: () => formatMemoryMb,
 };
 
 /**
@@ -228,7 +221,18 @@ export default function AggregateTimeChart( {
 		return { series, colorMap, stacked };
 	}, [ breakdownData, metric, breakdown ] );
 
-	const yFormat = Y_FORMATS[ metric ];
+	// The axis unit is a property of the DOMAIN, not of the metric.
+	const yFormat = useMemo( () => {
+		const max = chartState.series.reduce(
+			( peak, s ) =>
+				s.values.reduce(
+					( m, v ) => Math.max( m, v.value || 0 ),
+					peak
+				),
+			0
+		);
+		return Y_FORMATS[ metric ]( max );
+	}, [ chartState, metric ] );
 
 	const colorAt = useCallback(
 		( label, index ) =>
@@ -253,7 +257,8 @@ export default function AggregateTimeChart( {
 
 	const yLabels = {
 		volume: __( 'Requests', 'newspack-event-logger-nodes' ),
-		avg: __( 'Avg Response Time (ms)', 'newspack-event-logger-nodes' ),
+		// No unit in the title: the ticks carry it, and it moves with the data.
+		avg: __( 'Avg Response Time', 'newspack-event-logger-nodes' ),
 		cumulative: __( 'Cumulative Time', 'newspack-event-logger-nodes' ),
 		memory: __( 'Avg Peak Memory (MB)', 'newspack-event-logger-nodes' ),
 	};
