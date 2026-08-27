@@ -2,8 +2,8 @@
  * Flame graph for the request, per-URL, and current-request detail views.
  *
  * Wraps `d3-flame-graph` in a React component and adds what the dashboards
- * need on top of it: frames shaded by stack depth in the active theme's
- * accent, a viewport-aware tooltip, zoom and tooltip that both survive an
+ * need on top of it: frames colored by the shared hook / plugin / custom-event
+ * palette, a viewport-aware tooltip, zoom and tooltip that both survive an
  * auto-refresh re-render, Cmd/Ctrl+Click to reveal a frame in the log table,
  * and a refit when the container (not the window) resizes. `pruneFlameGraph`
  * caps the rendered frame count so a pathological aggregate cannot lock up
@@ -36,7 +36,8 @@ import { flamegraph } from 'd3-flame-graph';
 import 'd3-flame-graph/dist/d3-flamegraph.css';
 import './styles/flame-graph.scss';
 import { useContainerRefit } from '@newspack-nodes/shared/hooks/useContainerRefit';
-import { shadeForDepth, pickLabelColor, isColorParseable } from './flameColors';
+import { pickLabelColor, isColorParseable } from './flameColors';
+import { getStateColor } from '@newspack-nodes/shared/utils/formatUtils';
 
 /**
  * The label d3-flame-graph shows for a frame, and the key it sorts on when no
@@ -292,34 +293,19 @@ const createTooltip = () => {
 };
 
 /**
- * Read the active theme's accent + background tokens off a container.
+ * Color frames by what they ARE — the hook, plugin or custom-event palette the
+ * Time Breakdown, the Inflight badges and the log rows already share, so one
+ * span is the same color everywhere a reader meets it.
  *
- * Falls back through the hub-overlay universal tokens, then the standalone
- * dashboard's `--np-*` tokens, then hardcoded CRT-green defaults, so the ramp
- * works in both contexts.
+ * Depth shading replaced this and lost the only distinction that carried
+ * meaning: a validation frame and a database frame at the same depth drew
+ * identical, and depth is already legible from the y-axis.
  *
- * @param {Element} container Element whose computed style carries the tokens.
- * @return {{accent: string, bg: string}} Resolved hex colors.
+ * @return {(d: Object) => string} d3-flame-graph color mapper.
+ * @testonly Exported for FlameGraph-colors.test.js.
  */
-const readThemeTokens = ( container ) => {
-	const style = window.getComputedStyle( container );
-	const read = ( name ) => style.getPropertyValue( name ).trim();
-	// First parseable color (skips named / color-mix() tokens).
-	const pick = ( ...candidates ) => candidates.find( isColorParseable );
-	const accent = pick( read( '--cyan' ), read( '--np-primary' ), '#41e07a' );
-	const bg = pick( read( '--paper' ), read( '--np-surface' ), '#ffffff' );
-	return { accent, bg };
-};
-
-/**
- * Color frames by stack depth in shades of the active theme's accent.
- *
- * @param {string} accent Theme accent hex.
- * @param {string} bg     Theme background hex.
- * @return {(d: Object) => string} d3-flame-graph color mapper: (d) => 'rgb(...)'.
- */
-const createColorMapper = ( accent, bg ) => ( d ) =>
-	d.data?.spacer ? 'transparent' : shadeForDepth( d.depth, accent, bg );
+export const createColorMapper = () => ( d ) =>
+	d.data?.spacer ? 'transparent' : getStateColor( d.data?.name );
 
 /**
  * Set each frame's label color for contrast against its (depth-shaded) fill.
@@ -720,9 +706,8 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 		const container = containerRef.current;
 		const width = container.clientWidth || 800;
 
-		// Depth-shaded palette in theme accent; re-read each render (reskins).
-		const { accent, bg } = readThemeTokens( container );
-		const colorMapper = createColorMapper( accent, bg );
+		// Category palette: a span reads the same color everywhere.
+		const colorMapper = createColorMapper();
 
 		const dataChanged = lastModified
 			? String( lastModified ) !== lastChangeKeyRef.current

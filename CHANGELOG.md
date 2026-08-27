@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.63.7] - 2026-08-27
+
+### Fixed
+
+- **The flame graph colors frames by what they ARE again, not by how deep they sit.** Depth shading drew every frame in one ramp of the theme accent, so a validation frame and a database frame at the same depth were indistinguishable — and depth is the one thing the graph already shows, on its y-axis. Frames read `getStateColor()` once more: the hook patterns, the `plugin` and system colors, and the `custom_colors` setting, which is the same palette the Time Breakdown bar beneath it, the Inflight badges and the log rows use. One span is now the same color everywhere a reader meets it. The depth shader and the theme-token reader that fed it are deleted; `flameColors` keeps only the label-contrast helpers, which measure whatever fill the palette produced.
+
 ## [0.63.6] - 2026-08-27
 
 ### Fixed

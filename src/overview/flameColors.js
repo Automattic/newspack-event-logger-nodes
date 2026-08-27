@@ -1,22 +1,12 @@
 /**
- * Theme-aware, depth-shaded flame graph palette.
+ * Label-contrast helpers for the flame graph.
  *
- * Each frame's fill is a shade of the active skin's accent, graduated by stack
- * depth: depth 0 (the request root, which d3-flame-graph draws at the base
- * because the chart is never inverted) is the pure accent, and deeper frames
- * mix toward the skin background without ever reaching it. Frame labels get a
- * contrasting color so they stay readable on every shade.
- *
- * The accent and background themselves are resolved by `FlameGraph.js`, which
- * reads the substrate skin tokens (`--cyan` / `--paper`) off the chart
- * container, falls back to the standalone `--np-*` tokens, then to hardcoded
- * defaults (CRT green on white). This module only mixes and measures the
- * colors it is handed; it holds no theme knowledge of its own.
+ * Frame FILLS come from the shared hook / plugin / custom-event palette
+ * (`getStateColor`), so a span reads the same color here as in the Time
+ * Breakdown, the Inflight badges and the log rows. This module only measures
+ * those fills and picks a label color that stays readable on each one; it
+ * holds no palette and no theme knowledge of its own.
  */
-
-// Mix grows with depth; the cap keeps the deepest frames off the background.
-const FRACTION_PER_DEPTH = 0.13;
-const MAX_FRACTION = 0.65;
 
 /**
  * Label text for bright shades: near-black with a faint green cast.
@@ -90,29 +80,6 @@ export const isColorParseable = ( color ) => {
 };
 
 /**
- * Mix the accent toward the background by a depth-graduated fraction.
- *
- * The fraction is `depth * FRACTION_PER_DEPTH`, capped at `MAX_FRACTION`, so
- * every frame at depth 5 or deeper shares one shade — and that shade still
- * stops short of the background.
- *
- * @param {number} depth  Stack depth (0 = root at the base, brightest).
- * @param {string} accent Theme accent hex.
- * @param {string} bg     Theme background hex.
- * @return {string} CSS `rgb(r, g, b)` color string.
- */
-export const shadeForDepth = ( depth, accent, bg ) => {
-	const fraction = Math.min( MAX_FRACTION, depth * FRACTION_PER_DEPTH );
-	const a = parseColor( accent );
-	const b = parseColor( bg );
-	const lerp = ( from, to ) => Math.round( from + ( to - from ) * fraction );
-	return `rgb(${ lerp( a.r, b.r ) }, ${ lerp( a.g, b.g ) }, ${ lerp(
-		a.b,
-		b.b
-	) })`;
-};
-
-/**
  * Perceived brightness (0-1) of an {r, g, b} color.
  *
  * The sRGB coefficients apply to the gamma-encoded channels directly, skipping
@@ -132,7 +99,7 @@ export const relativeLuminance = ( { r, g, b } ) =>
  * Pick a readable label color for a frame fill.
  *
  * `FlameGraph.js` feeds this the `fill` attribute it reads back off each
- * rendered `<rect>`, so the argument is whatever `shadeForDepth` produced.
+ * rendered `<rect>`, so the argument is whatever the palette produced.
  *
  * @param {string} color CSS color string (`rgb(...)` or hex).
  * @return {string} DARK_TEXT for bright fills, LIGHT_TEXT for dark fills.
