@@ -29,22 +29,12 @@ import {
 	getStatusColor,
 	STATUS_COLORS,
 } from '@newspack-nodes/shared/utils/formatUtils';
-import { integerTicks } from '@newspack-nodes/shared/utils/axis-ticks';
+import { axisDuration } from '@newspack-nodes/shared/utils/axis-ticks';
 
 /**
  * Total SVG height in pixels. Only the width responds to resize.
  */
 const CHART_HEIGHT = 250;
-
-/**
- * Durations to the millisecond, which is also what the axis ticks in — half a
- * millisecond would print the same label twice.
- *
- * @param {number} ms Duration in milliseconds.
- * @return {string} Formatted duration.
- */
-const formatMs = ( ms ) => `${ Math.round( ms ) }ms`;
-formatMs.tickValues = integerTicks;
 
 /**
  * Response Time Chart component.
@@ -110,12 +100,20 @@ export default function ResponseTimeChart( { requests, onRequestClick } ) {
 				.domain( [ 0, d3.max( chartData, ( d ) => d.duration ) * 1.1 ] )
 				.range( [ innerH, 0 ] );
 
+			// @longform Built from the domain, so the whole plot reads in one
+			// unit — milliseconds on a fast request, seconds on a slow one.
+			// The average line's label uses it too: ticks in seconds beside an
+			// `avg:` in milliseconds is the chart disagreeing with itself.
+			const formatDurationTick = axisDuration(
+				d3.max( chartData, ( d ) => d.duration )
+			);
+
 			drawAxes( g, {
 				x,
 				y,
 				innerH,
 				tickCount: chartData.length,
-				yFormat: formatMs,
+				yFormat: formatDurationTick,
 				yLabel: __( 'Response Time', 'newspack-event-logger-nodes' ),
 			} );
 
@@ -153,9 +151,9 @@ export default function ResponseTimeChart( { requests, onRequestClick } ) {
 				.style( 'fill', '#e57373' )
 				.text(
 					sprintf(
-						// translators: %d: average response time in milliseconds.
-						__( 'avg: %dms', 'newspack-event-logger-nodes' ),
-						Math.round( avgDuration )
+						// translators: %s: average response time, e.g. 68ms or 130s.
+						__( 'avg: %s', 'newspack-event-logger-nodes' ),
+						formatDurationTick( avgDuration )
 					)
 				);
 

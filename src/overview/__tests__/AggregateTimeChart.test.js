@@ -186,6 +186,49 @@ describe( 'AggregateTimeChart', () => {
 		unmount();
 	} );
 
+	it( 'ticks a slow response-time axis in seconds, not five digits of ms', () => {
+		// `140000ms` is wider than the axis title beside it, so the two collide.
+		// formatSeconds already owns the unit ladder this chart reads in — the
+		// cumulative axis has used it all along — so the avg axis reads the same
+		// way rather than pinning itself to the smallest unit.
+		const bk = bucketKeyNow();
+		const breakdownData = { [ bk ]: { slow: { c: 1, s: 140000 } } };
+		const { container, unmount } = renderComponent(
+			React.createElement( AggregateTimeChart, {
+				breakdownData,
+				metric: 'avg',
+				breakdown: 'status',
+			} )
+		);
+
+		const values = getFormatEntry()( lastSlotIndex() ).map(
+			( entry ) => entry.value
+		);
+		expect( values ).toContain( '140s' );
+		// The ticks carry the unit, so the title must not also claim one — and
+		// must not claim the WRONG one once the ticks have rescaled.
+		expect( container.textContent ).not.toContain( '(ms)' );
+		unmount();
+	} );
+
+	it( 'still reads a fast response-time axis in milliseconds', () => {
+		const bk = bucketKeyNow();
+		const breakdownData = { [ bk ]: { fast: { c: 4, s: 1000 } } };
+		const { unmount } = renderComponent(
+			React.createElement( AggregateTimeChart, {
+				breakdownData,
+				metric: 'avg',
+				breakdown: 'status',
+			} )
+		);
+
+		const values = getFormatEntry()( lastSlotIndex() ).map(
+			( entry ) => entry.value
+		);
+		expect( values ).toContain( '250ms' );
+		unmount();
+	} );
+
 	it( 'draws nothing while the selected dimension has not arrived', () => {
 		// The payload still in state predates the dropdown switch, so the new
 		// dimension's key is absent. A totals series legended "Total" under a
