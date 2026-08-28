@@ -233,7 +233,7 @@ class PerformanceCITest extends TestCase {
 		// Inside the reader's enumerated window: buckets are keys now, not a blob.
 		$now = \time();
 		$bucket = Stats_Store::bucket_key( $now );
-		$store->set_hourly_bucket( $bucket, [ 'count' => 4, 'sum_ms' => 2000.0, 'sum_peak_mb' => 40.0 ] );
+		$this->set_hourly_bucket( $store, $bucket, [ 'count' => 4, 'sum_ms' => 2000.0, 'sum_peak_mb' => 40.0 ] );
 
 		$interpreter     = new Performance_CI_Node();
 		$result = VerbHarness::fire( $interpreter, 'performance', 'overview' );
@@ -261,7 +261,7 @@ class PerformanceCITest extends TestCase {
 		// emits `global_leaderboard` unconditionally (L95-97). The interpreter verb must match.
 		$store   = new Stats_Store( 0, 86400 );
 		// Seed the most-recent bucket so the leaderboard fan-out picks it up.
-		$store->set_leaderboard_bucket( $this->current_url_bucket(), [
+		$this->set_leaderboard_bucket( $store, $this->current_url_bucket(), [
 			'count'        => 4,
 			'sum_req_time' => 0.8,
 			'categories'   => [
@@ -283,7 +283,7 @@ class PerformanceCITest extends TestCase {
 		// `server` arg scopes the leaderboard to that server (legacy L95-97
 		// switches to `build_server_leaderboard`). The interpreter verb must reroute.
 		$store   = new Stats_Store( 0, 86400 );
-		$store->set_leaderboard_bucket( $this->current_url_bucket(), [
+		$this->set_leaderboard_bucket( $store, $this->current_url_bucket(), [
 			'count'        => 2,
 			'sum_req_time' => 0.2,
 			'categories'   => [
@@ -311,7 +311,7 @@ class PerformanceCITest extends TestCase {
 		// `overviewData.category_time_series` (PerformanceDashboard.js L391).
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
-		$store->set_category_bucket( $bucket, [ 'db' => [ 't' => 0.5, 'c' => 4, 'n' => 4 ] ] );
+		$this->set_category_bucket( $store, $bucket, [ 'db' => [ 't' => 0.5, 'c' => 4, 'n' => 4 ] ] );
 
 		$interpreter     = new Performance_CI_Node();
 		$result = VerbHarness::fire(
@@ -332,7 +332,7 @@ class PerformanceCITest extends TestCase {
 		// that reads an absent key as "still in flight" waits forever.
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
-		$store->set_dimensional_bucket( 'country', $bucket, [ 'PT' => [ 'c' => 23, 's' => 2.3, 'm' => 0.7 ] ] );
+		$this->set_dimensional_bucket( $store, 'country', $bucket, [ 'PT' => [ 'c' => 23, 's' => 2.3, 'm' => 0.7 ] ] );
 
 		$interpreter = new Performance_CI_Node();
 		$result      = VerbHarness::fire(
@@ -353,8 +353,8 @@ class PerformanceCITest extends TestCase {
 		// can rely on the nested shape.
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
-		$store->set_dimensional_bucket( 'server', $bucket, [ 'web01' => [ 'c' => 5, 's' => 0.5, 'm' => 0.1 ] ] );
-		$store->set_dimensional_bucket( 'status', $bucket, [ '200' => [ 'c' => 4, 's' => 0.4, 'm' => 0.1 ] ] );
+		$this->set_dimensional_bucket( $store, 'server', $bucket, [ 'web01' => [ 'c' => 5, 's' => 0.5, 'm' => 0.1 ] ] );
+		$this->set_dimensional_bucket( $store, 'status', $bucket, [ '200' => [ 'c' => 4, 's' => 0.4, 'm' => 0.1 ] ] );
 
 		$interpreter     = new Performance_CI_Node();
 		$result = VerbHarness::fire(
@@ -374,11 +374,11 @@ class PerformanceCITest extends TestCase {
 	public function test_overview_server_scope_keeps_the_global_server_dimension(): void {
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
-		$store->set_dimensional_bucket( 'server', $bucket, [
+		$this->set_dimensional_bucket( $store, 'server', $bucket, [
 			'edge-amber.example'  => [ 'c' => 37, 's' => 3700.0, 'm' => 259.0 ],
 			'edge-violet.example' => [ 'c' => 11, 's' => 1430.0, 'm' => 99.0 ],
 		] );
-		$store->set_dimensional_bucket( 'status', $bucket, [ '2xx' => [ 'c' => 37, 's' => 3700.0, 'm' => 259.0 ] ], 'edge-amber.example' );
+		$this->set_dimensional_bucket( $store, 'status', $bucket, [ '2xx' => [ 'c' => 37, 's' => 3700.0, 'm' => 259.0 ] ], 'edge-amber.example' );
 
 		$interpreter = new Performance_CI_Node();
 		$result      = VerbHarness::fire(
@@ -414,8 +414,8 @@ class PerformanceCITest extends TestCase {
 		// blob (legacy L122-124 `merge_server_categories_across_partitions`).
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
-		$store->set_category_bucket( $bucket, [ 'db' => [ 't' => 0.2, 'c' => 2, 'n' => 2 ] ], 'web01' );
-		$store->set_category_bucket( $bucket, [ 'db' => [ 't' => 9.9, 'c' => 99, 'n' => 99 ] ] );
+		$this->set_category_bucket( $store, $bucket, [ 'db' => [ 't' => 0.2, 'c' => 2, 'n' => 2 ] ], 'web01' );
+		$this->set_category_bucket( $store, $bucket, [ 'db' => [ 't' => 9.9, 'c' => 99, 'n' => 99 ] ] );
 
 		$interpreter     = new Performance_CI_Node();
 		$result = VerbHarness::fire(
@@ -1421,12 +1421,12 @@ class PerformanceCITest extends TestCase {
 		// `url:` — it has to hold for every descriptor that reads a scoped set.
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
-		$store->set_leaderboard_bucket( $bucket, [
+		$this->set_leaderboard_bucket( $store, $bucket, [
 			'count'        => 4,
 			'sum_req_time' => 1.0,
 			'categories'   => [ 'wpdb' => [ 'samples' => 4, 'sum_time' => 4.0, 'sum_count' => 8, 'entries' => [] ] ],
 		], 'alpha.example' );
-		$store->set_leaderboard_bucket( $bucket, [
+		$this->set_leaderboard_bucket( $store, $bucket, [
 			'count'        => 40,
 			'sum_req_time' => 10.0,
 			'categories'   => [ 'wpdb' => [ 'samples' => 40, 'sum_time' => 400.0, 'sum_count' => 80, 'entries' => [] ] ],
@@ -2195,7 +2195,7 @@ class PerformanceCITest extends TestCase {
 			],
 		] );
 		$bucket = $this->current_url_bucket();
-		$store->set_url_dimensional_bucket( 'abc123def456', $bucket, [ 'method' => [ 'GET' => [ 'c' => 3, 's' => 0.3, 'm' => 0.1 ] ] ] );
+		$this->set_url_dimensional_bucket( $store, 'abc123def456', $bucket, [ 'method' => [ 'GET' => [ 'c' => 3, 's' => 0.3, 'm' => 0.1 ] ] ] );
 
 		$interpreter     = new Performance_CI_Node();
 		$result = VerbHarness::fire(
@@ -2217,7 +2217,7 @@ class PerformanceCITest extends TestCase {
 		$this->set_url_bucket( $store, $bucket, [
 			'e71b04ac9d33' => [ 'url' => '/breakdown-only', 'count' => 6, 'timed_count' => 6, 'sum_ms' => 84.0, 'last_seen' => 1700006000 ],
 		] );
-		$store->set_url_dimensional_bucket( 'e71b04ac9d33', $bucket, [ 'status' => [ '503' => [ 'c' => 9, 's' => 1.7, 'm' => 0.4 ] ] ] );
+		$this->set_url_dimensional_bucket( $store, 'e71b04ac9d33', $bucket, [ 'status' => [ '503' => [ 'c' => 9, 's' => 1.7, 'm' => 0.4 ] ] ] );
 		$detail = VerbHarness::fire(
 			new Performance_CI_Node(),
 			'performance',
@@ -2274,7 +2274,7 @@ class PerformanceCITest extends TestCase {
 			],
 		] );
 		$bucket = $this->current_url_bucket();
-		$store->set_url_category_bucket( 'abc123def456', $bucket, [ 'db' => [ 't' => 0.2, 'c' => 2, 'n' => 1 ] ] );
+		$this->set_url_category_bucket( $store, 'abc123def456', $bucket, [ 'db' => [ 't' => 0.2, 'c' => 2, 'n' => 1 ] ] );
 
 		$interpreter     = new Performance_CI_Node();
 		$result = VerbHarness::fire(
@@ -3640,7 +3640,7 @@ class PerformanceCITest extends TestCase {
 	public function test_the_leaderboard_sums_categories_without_folding_entries(): void {
 		$window = Stats_Store::retention_buckets( 86400, \time() );
 		$store  = new Stats_Store( 0, 86400 );
-		$store->set_leaderboard_bucket( $window[0], [
+		$this->set_leaderboard_bucket( $store, $window[0], [
 			'count'        => 4,
 			'sum_req_time' => 8.0,
 			'categories'   => [
@@ -3652,7 +3652,7 @@ class PerformanceCITest extends TestCase {
 				],
 			],
 		] );
-		$store->set_leaderboard_bucket( $window[1], [
+		$this->set_leaderboard_bucket( $store, $window[1], [
 			'count'        => 6,
 			'sum_req_time' => 12.0,
 			'categories'   => [

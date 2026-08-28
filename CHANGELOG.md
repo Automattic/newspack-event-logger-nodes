@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The stats flush batches its writes, so its cost stops scaling with URL cardinality.** `persist_aggregate_stats()` issued one read-modify-write per KEY and two of its loops are per URL, so a full-window replay started at 171K messages/s and decayed as the retention window refilled — roughly 490 round trips per bucket at 20 distinct URLs against ~2,400 at the 500 cap. It is now collect, one multi-get, merge, one multi-set, chunked at 500 keys. Measured on the pre-batch code, 12 URLs cost 72 single sets and 48 cost 151 — 2.2 per URL, exactly the two per-URL loops. The read path has batched since it was written (`lookup_bucket_sets()`); this is the write half, and it is `tachikoma.md`'s first rule applied to the side that never got it.
+- **Every URL-index key shape has one named owner.** `hourly_parts()`, `url_shard_parts()`, `url_hour_parts()`, `url_dim_parts()` and `url_cat_parts()` join the three that existed, so the batched writer spells no prefix itself and a shape cannot drift between the single-key setter and the batch.
+- **Chunking is deliberate, not incidental.** Batching trades round trips for held memory in a system where a full-window read already peaks near 160MB. One chunk is at most one shard's worth of rows — the largest value the schema writes. Thousands of round trips becoming a handful is the prize; becoming one is not worth an unbounded peak.
+
 
 ## [0.68.1] - 2026-08-28
 

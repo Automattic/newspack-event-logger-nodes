@@ -2,6 +2,7 @@
 namespace Newspack_Event_Logger_Nodes\Tests;
 
 use Newspack_Nodes\Tests\TestCase as RuntimeTestCase;
+use Newspack_Event_Logger_Nodes\Stats_Store;
 
 abstract class TestCase extends RuntimeTestCase {
 
@@ -216,7 +217,7 @@ abstract class TestCase extends RuntimeTestCase {
 	 * @param array<array-key,mixed>                   $rows   Named rows by hash.
 	 */
 	protected function seed_url_shard( \Newspack_Event_Logger_Nodes\Stats_Store $store, string $bucket, string $shard, array $rows ): bool {
-		return $store->set_url_shard( $bucket, $shard, \array_map( [ self::class, 'positional_url_row' ], $rows ) );
+		return $this->set_url_shard( $store, $bucket, $shard, \array_map( [ self::class, 'positional_url_row' ], $rows ) );
 	}
 
 	/**
@@ -283,9 +284,90 @@ abstract class TestCase extends RuntimeTestCase {
 		$by_shard = \Newspack_Event_Logger_Nodes\Stats_Store::rows_by_shard( $data );
 		$ok       = true;
 		foreach ( \Newspack_Event_Logger_Nodes\Stats_Store::url_shards() as $shard ) {
-			$ok = $store->set_url_shard( $bucket, $shard, \Newspack_Nodes\Core::arr( $by_shard[ $shard ] ?? null ) ) && $ok;
+			$ok = $this->set_url_shard( $store, $bucket, $shard, \Newspack_Nodes\Core::arr( $by_shard[ $shard ] ?? null ) ) && $ok;
 		}
 		return $ok;
 	}
 
+	// ── Stats_Store named bucket access ─────────────────────────────────────
+	//
+	// The per-namespace accessors the flush used to own. Batching its writes
+	// left them with no production caller, so they live here, where their 160
+	// call sites already are — named and readable for a test, over the parts
+	// the batch pair takes.
+
+	/** @param array<string,mixed> $data */
+	protected function set_hourly_bucket( Stats_Store $store, string $bucket, array $data ): bool {
+		return $store->bucket_set_multi( [ [ Stats_Store::hourly_parts(), $bucket, $data ] ] )[0];
+	}
+
+	/** @return array<string,mixed> */
+	protected function get_hourly_bucket( Stats_Store $store, string $bucket ): array {
+		return $store->bucket_get_multi( [ [ Stats_Store::hourly_parts(), $bucket ] ] )[0];
+	}
+
+	/** @return array<string,mixed> */
+	protected function get_url_hour( Stats_Store $store, string $hour, string $shard ): array {
+		return $store->bucket_get_multi( [ [ Stats_Store::url_hour_parts( $shard ), $hour ] ] )[0];
+	}
+
+	/** @return array<string,mixed> */
+	protected function get_category_bucket( Stats_Store $store, string $bucket, string $server = '' ): array {
+		return $store->bucket_get_multi( [ [ Stats_Store::cat_parts( $server ), $bucket ] ] )[0];
+	}
+
+	/** @param array<string,mixed> $data */
+	protected function set_category_bucket( Stats_Store $store, string $bucket, array $data, string $server = '' ): bool {
+		return $store->bucket_set_multi( [ [ Stats_Store::cat_parts( $server ), $bucket, $data ] ] )[0];
+	}
+
+	/** @return array<string,mixed> */
+	protected function get_dimensional_bucket( Stats_Store $store, string $dimension, string $bucket, string $server = '' ): array {
+		return $store->bucket_get_multi( [ [ Stats_Store::dim_parts( $dimension, $server ), $bucket ] ] )[0];
+	}
+
+	/** @param array<string,mixed> $data */
+	protected function set_dimensional_bucket( Stats_Store $store, string $dimension, string $bucket, array $data, string $server = '' ): bool {
+		return $store->bucket_set_multi( [ [ Stats_Store::dim_parts( $dimension, $server ), $bucket, $data ] ] )[0];
+	}
+
+	/** @return array<string,mixed> */
+	protected function get_leaderboard_bucket( Stats_Store $store, string $bucket, string $server = '' ): array {
+		return $store->bucket_get_multi( [ [ Stats_Store::lb_parts( $server ), $bucket ] ] )[0];
+	}
+
+	/** @param array<string,mixed> $data */
+	protected function set_leaderboard_bucket( Stats_Store $store, string $bucket, array $data, string $server = '' ): bool {
+		return $store->bucket_set_multi( [ [ Stats_Store::lb_parts( $server ), $bucket, $data ] ] )[0];
+	}
+
+	/** @return array<string,mixed> */
+	protected function get_url_category_bucket( Stats_Store $store, string $url_hash, string $bucket ): array {
+		return $store->bucket_get_multi( [ [ Stats_Store::url_cat_parts( $url_hash ), $bucket ] ] )[0];
+	}
+
+	/** @param array<string,mixed> $data */
+	protected function set_url_category_bucket( Stats_Store $store, string $url_hash, string $bucket, array $data ): bool {
+		return $store->bucket_set_multi( [ [ Stats_Store::url_cat_parts( $url_hash ), $bucket, $data ] ] )[0];
+	}
+
+	/** @return array<string,mixed> */
+	protected function get_url_dimensional_bucket( Stats_Store $store, string $url_hash, string $bucket ): array {
+		return $store->bucket_get_multi( [ [ Stats_Store::url_dim_parts( $url_hash ), $bucket ] ] )[0];
+	}
+
+	/** @param array<string,mixed> $data */
+	protected function set_url_dimensional_bucket( Stats_Store $store, string $url_hash, string $bucket, array $data ): bool {
+		return $store->bucket_set_multi( [ [ Stats_Store::url_dim_parts( $url_hash ), $bucket, $data ] ] )[0];
+	}
+
+	/** @return array<string,mixed> */
+	protected function get_url_shard( Stats_Store $store, string $bucket, string $shard ): array {
+		return $store->bucket_get_multi( [ [ Stats_Store::url_shard_parts( $shard ), $bucket ] ] )[0];
+	}
+
+	/** @param array<array-key,mixed> $rows */
+	protected function set_url_shard( Stats_Store $store, string $bucket, string $shard, array $rows ): bool {
+		return $store->bucket_set_multi( [ [ Stats_Store::url_shard_parts( $shard ), $bucket, $rows ] ] )[0];
+	}
 }

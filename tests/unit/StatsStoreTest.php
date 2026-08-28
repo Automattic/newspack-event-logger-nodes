@@ -92,10 +92,10 @@ class StatsStoreTest extends TestCase {
 
 		$this->set_url_bucket( $store, '2026-08-14-12-05', [ '0f0f0f0f0f0f' => [ 'url' => '/b', 'count' => 5 ] ] );
 
-		$this->assertSame( [], $store->get_url_shard( '2026-08-14-12-05', 'a' ) );
+		$this->assertSame( [], $this->get_url_shard( $store, '2026-08-14-12-05', 'a' ) );
 		$this->assertSame(
 			[ '0f0f0f0f0f0f' => [ 'url' => '/b', 'count' => 5 ] ],
-			self::named_url_rows( $store->get_url_shard( '2026-08-14-12-05', '0' ) )
+			self::named_url_rows( $this->get_url_shard( $store, '2026-08-14-12-05', '0' ) )
 		);
 	}
 
@@ -206,7 +206,7 @@ class StatsStoreTest extends TestCase {
 		$this->seed_memd();
 		$store = $this->make_store( partition: 3 );
 
-		$this->assertTrue( $store->set_hourly_bucket( '2026-08-14T12', [ 'count' => 7391 ] ) );
+		$this->assertTrue( $this->set_hourly_bucket( $store, '2026-08-14T12', [ 'count' => 7391 ] ) );
 
 		$table = \Newspack_Nodes\Table_Node::table( Stats_Store::namespace_for( 3 ), 60 );
 		$this->assertSame(
@@ -232,7 +232,7 @@ class StatsStoreTest extends TestCase {
 			$mirrored[] = $ns;
 		};
 
-		$this->assertFalse( $store->set_hourly_bucket( 'x', [ 'count' => 1 ] ), 'a refused write reports false' );
+		$this->assertFalse( $this->set_hourly_bucket( $store, 'x', [ 'count' => 1 ] ), 'a refused write reports false' );
 		$this->assertSame( [], $mirrored, 'and is not shadowed' );
 	}
 
@@ -242,10 +242,10 @@ class StatsStoreTest extends TestCase {
 		Core::$memd = null;
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 
-		$this->assertSame( [], $store->get_hourly_bucket( 'x' ) );
+		$this->assertSame( [], $this->get_hourly_bucket( $store, 'x' ) );
 		$this->assertSame( [], $this->url_rows_by_bucket( $store, [ 'b1', 'b2' ] ) );
 		$this->assertNull( $store->get_url_stats( 'abc' ) );
-		$this->assertFalse( $store->set_hourly_bucket( 'x', [ 'count' => 1 ] ), 'a write with no backend reports false' );
+		$this->assertFalse( $this->set_hourly_bucket( $store, 'x', [ 'count' => 1 ] ), 'a write with no backend reports false' );
 	}
 
 	public function test_stats_keys_are_scoped_to_this_install(): void {
@@ -260,12 +260,12 @@ class StatsStoreTest extends TestCase {
 		};
 		\Newspack_Nodes\Cache_Backend::$site = '';
 
-		$this->make_store()->set_hourly_bucket( '2026-01-01-00', [ "count" => 7719 ] );
+		$this->set_hourly_bucket( $this->make_store(), '2026-01-01-00', [ "count" => 7719 ] );
 		$mine = $mc->keys();
 
 		$GLOBALS['wpdb']->base_prefix       = 'wpco_tenant_';
 		\Newspack_Nodes\Cache_Backend::$site = '';
-		$this->make_store()->set_hourly_bucket( '2026-01-01-00', [ "count" => 1 ] );
+		$this->set_hourly_bucket( $this->make_store(), '2026-01-01-00', [ "count" => 1 ] );
 
 		\Newspack_Nodes\Cache_Backend::$site = '';
 
@@ -356,16 +356,16 @@ class StatsStoreTest extends TestCase {
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$this->assertSame( [], $this->url_bucket_rows( $store, 'any' ) );
 		$this->assertNull( $store->get_url_stats( 'any' ) );
-		$this->assertSame( [], $store->get_hourly_bucket( 'any' ) );
-		$this->assertSame( [], $store->get_dimensional_bucket( 'status', 'b1' ) );
+		$this->assertSame( [], $this->get_hourly_bucket( $store, 'any' ) );
+		$this->assertSame( [], $this->get_dimensional_bucket( $store, 'status', 'b1' ) );
 	}
 
 	public function test_fail_soft_set_returns_false_when_memd_null(): void {
 		Core::$memd = null;
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$this->assertFalse( $this->set_url_bucket( $store, '2026-01-01-00-00', [] ) );
-		$this->assertFalse( $store->set_leaderboard_bucket( '2026-01-01-00-00', [] ) );
-		$this->assertFalse( $store->set_dimensional_bucket( 'status', 'b1', [] ) );
+		$this->assertFalse( $this->set_leaderboard_bucket( $store, '2026-01-01-00-00', [] ) );
+		$this->assertFalse( $this->set_dimensional_bucket( $store, 'status', 'b1', [] ) );
 		$this->assertNull( Core::$memd );
 	}
 
@@ -396,23 +396,23 @@ class StatsStoreTest extends TestCase {
 
 	public function test_set_and_get_hourly_round_trip(): void {
 		$store = $this->make_store();
-		$store->set_hourly_bucket( '2026-01-01-00', [ 'count' => 5, 'sum_ms' => 100, 'sum_peak_mb' => 10 ] );
+		$this->set_hourly_bucket( $store, '2026-01-01-00', [ 'count' => 5, 'sum_ms' => 100, 'sum_peak_mb' => 10 ] );
 		$h = $store->get_hourly_buckets( [ '2026-01-01-00' ] );
 		$this->assertSame( 5, $h['2026-01-01-00']['count'] );
 	}
 
 	public function test_set_and_get_leaderboard_bucket_round_trip(): void {
 		$store = $this->make_store();
-		$store->set_leaderboard_bucket( '2026-01-01-00-05', [ 'count' => 3, 'sum_req_time' => 1.5, 'categories' => [] ] );
-		$lb = $store->get_leaderboard_bucket( '2026-01-01-00-05' );
+		$this->set_leaderboard_bucket( $store, '2026-01-01-00-05', [ 'count' => 3, 'sum_req_time' => 1.5, 'categories' => [] ] );
+		$lb = $this->get_leaderboard_bucket( $store, '2026-01-01-00-05' );
 		$this->assertSame( 3, $lb['count'] );
 		$this->assertEqualsWithDelta( 1.5, $lb['sum_req_time'], 1e-9 );
 	}
 
 	public function test_set_and_get_server_leaderboard_bucket_round_trip(): void {
 		$store = $this->make_store();
-		$store->set_leaderboard_bucket( '2026-01-01-00-05', [ 'count' => 7, 'sum_req_time' => 3.5, 'categories' => [] ], 'srv-x' );
-		$lb = $store->get_leaderboard_bucket( '2026-01-01-00-05', 'srv-x' );
+		$this->set_leaderboard_bucket( $store, '2026-01-01-00-05', [ 'count' => 7, 'sum_req_time' => 3.5, 'categories' => [] ], 'srv-x' );
+		$lb = $this->get_leaderboard_bucket( $store, '2026-01-01-00-05', 'srv-x' );
 		$this->assertSame( 7, $lb['count'] );
 	}
 
@@ -470,7 +470,7 @@ class StatsStoreTest extends TestCase {
 		};
 
 		$data = [ 'count' => 5 ];
-		$store->set_hourly_bucket( '2026-01-01-00', $data );
+		$this->set_hourly_bucket( $store, '2026-01-01-00', $data );
 
 		$this->assertCount( 1, $captured );
 		$this->assertSame( Stats_Store::entry_key( 0, Stats_Store::NS_HOURLY . ':2026-01-01-00' ), $captured[0][0] );
@@ -503,16 +503,16 @@ class StatsStoreTest extends TestCase {
 			$captured[] = $ns;
 		};
 
-		$store->set_hourly_bucket( 'x', [ 'count' => 1 ] );
-		$store->set_url_shard( 'b', '0', [ 'x' => [ 'url' => '/x' ] ] );
+		$this->set_hourly_bucket( $store, 'x', [ 'count' => 1 ] );
+		$this->set_url_shard( $store, 'b', '0', [ 'x' => [ 'url' => '/x' ] ] );
 		$store->set_url_stats( 'h', [ 'flame' => [ 'count' => 1 ] ] );
-		$store->set_leaderboard_bucket( 'b', [ 'count' => 1 ] );
-		$store->set_leaderboard_bucket( 'b', [ 'count' => 1 ], 'srv' );
-		$store->set_dimensional_bucket( 'status', 'b', [ '200' => [ 'c' => 1 ] ] );
-		$store->set_url_dimensional_bucket( 'h', 'b', [ 'status' => [ '200' => [ 'c' => 1 ] ] ] );
-		$store->set_category_bucket( 'b', [ 'total' => [ 'n' => 1 ] ] );
-		$store->set_category_bucket( 'b', [ 'total' => [ 'n' => 1 ] ], 'srv' );
-		$store->set_url_category_bucket( 'h', 'b', [ 'total' => [ 'n' => 1 ] ] );
+		$this->set_leaderboard_bucket( $store, 'b', [ 'count' => 1 ] );
+		$this->set_leaderboard_bucket( $store, 'b', [ 'count' => 1 ], 'srv' );
+		$this->set_dimensional_bucket( $store, 'status', 'b', [ '200' => [ 'c' => 1 ] ] );
+		$this->set_url_dimensional_bucket( $store, 'h', 'b', [ 'status' => [ '200' => [ 'c' => 1 ] ] ] );
+		$this->set_category_bucket( $store, 'b', [ 'total' => [ 'n' => 1 ] ] );
+		$this->set_category_bucket( $store, 'b', [ 'total' => [ 'n' => 1 ] ], 'srv' );
+		$this->set_url_category_bucket( $store, 'h', 'b', [ 'total' => [ 'n' => 1 ] ] );
 
 		$this->assertSame(
 			[
@@ -534,7 +534,7 @@ class StatsStoreTest extends TestCase {
 	public function test_set_hourly_returns_true_with_null_mirror(): void {
 		$store = $this->make_store();
 		$this->assertNull( $store->mirror );
-		$this->assertTrue( $store->set_hourly_bucket( 'x', [ 'count' => 1 ] ) );
+		$this->assertTrue( $this->set_hourly_bucket( $store, 'x', [ 'count' => 1 ] ) );
 	}
 
 	public function test_store_skips_mirror_when_memcache_set_fails(): void {
@@ -548,7 +548,7 @@ class StatsStoreTest extends TestCase {
 		$store->mirror = static function ( string $key, array $data, int $ttl, string $ns ) use ( &$invoked ): void {
 			$invoked = true;
 		};
-		$this->assertFalse( $store->set_hourly_bucket( 'x', [ 'count' => 1 ] ) );
+		$this->assertFalse( $this->set_hourly_bucket( $store, 'x', [ 'count' => 1 ] ) );
 		$this->assertFalse( $invoked, 'mirror must not fire when the memcache set failed' );
 	}
 
@@ -565,8 +565,8 @@ class StatsStoreTest extends TestCase {
 
 	public function test_leaderboard_buckets_read_in_one_round_trip(): void {
 		$store = $this->make_store();
-		$store->set_leaderboard_bucket( 'b1', [ 'count' => 31, 'sum_req_time' => 1.5, 'categories' => [] ] );
-		$store->set_leaderboard_bucket( 'b3', [ 'count' => 74, 'sum_req_time' => 2.5, 'categories' => [] ] );
+		$this->set_leaderboard_bucket( $store, 'b1', [ 'count' => 31, 'sum_req_time' => 1.5, 'categories' => [] ] );
+		$this->set_leaderboard_bucket( $store, 'b3', [ 'count' => 74, 'sum_req_time' => 2.5, 'categories' => [] ] );
 
 		$rows = $store->get_leaderboard_buckets( [ 'b1', 'b2', 'b3' ] );
 
@@ -576,8 +576,8 @@ class StatsStoreTest extends TestCase {
 
 	public function test_leaderboard_buckets_scope_to_a_server_when_asked(): void {
 		$store = $this->make_store();
-		$store->set_leaderboard_bucket( 'b1', [ 'count' => 31, 'sum_req_time' => 1.5, 'categories' => [] ] );
-		$store->set_leaderboard_bucket( 'b1', [ 'count' => 88, 'sum_req_time' => 3.5, 'categories' => [] ], 'spoke-a' );
+		$this->set_leaderboard_bucket( $store, 'b1', [ 'count' => 31, 'sum_req_time' => 1.5, 'categories' => [] ] );
+		$this->set_leaderboard_bucket( $store, 'b1', [ 'count' => 88, 'sum_req_time' => 3.5, 'categories' => [] ], 'spoke-a' );
 
 		$this->assertSame( 88, $store->get_leaderboard_buckets( [ 'b1' ], 'spoke-a' )['b1']['count'] );
 		$this->assertSame( 31, $store->get_leaderboard_buckets( [ 'b1' ] )['b1']['count'] );
@@ -591,7 +591,7 @@ class StatsStoreTest extends TestCase {
 		$store = $this->make_store( max_lifespan: 3600 );
 		$this->arm_entry( $store, Stats_Store::NS_HOURLY . ':2026-02-03-04-05', [ 'count' => 42 ], 900 );
 
-		$this->assertSame( [ 'count' => 42 ], $store->get_hourly_bucket( '2026-02-03-04-05' ) );
+		$this->assertSame( [ 'count' => 42 ], $this->get_hourly_bucket( $store, '2026-02-03-04-05' ) );
 	}
 
 	public function test_a_miss_is_filled_from_the_durable_backing(): void {
@@ -599,14 +599,14 @@ class StatsStoreTest extends TestCase {
 		$value = [ 'count' => 9 ];
 		$this->arm_entry( $store, Stats_Store::NS_HOURLY . ':2026-01-01-00', $value, 100 );
 
-		$this->assertSame( $value, $store->get_hourly_bucket( '2026-01-01-00' ) );
+		$this->assertSame( $value, $this->get_hourly_bucket( $store, '2026-01-01-00' ) );
 	}
 
 	public function test_an_entry_whose_lifetime_ran_out_is_not_filled(): void {
 		$store = $this->make_store();
 		$this->arm_entry( $store, Stats_Store::NS_HOURLY . ':x', [ 'count' => 1 ], 0 );
 
-		$this->assertSame( [], $store->get_hourly_bucket( 'x' ) );
+		$this->assertSame( [], $this->get_hourly_bucket( $store, 'x' ) );
 	}
 
 	public function test_the_backing_answers_in_the_stores_own_keyspace(): void {
@@ -615,7 +615,7 @@ class StatsStoreTest extends TestCase {
 		$store = $this->make_store();
 		$this->arm_entry( $store, 'other:p0:hourly:x', [ 'count' => 1 ], 100 );
 
-		$this->assertSame( [], $store->get_hourly_bucket( 'x' ), 'a key this store never asked for fills nothing' );
+		$this->assertSame( [], $this->get_hourly_bucket( $store, 'x' ), 'a key this store never asked for fills nothing' );
 	}
 
 	public function test_add_totals_sums_the_request_triple(): void {
@@ -650,21 +650,21 @@ class StatsStoreTest extends TestCase {
 		// One getter/setter pair with a server scope, matching the plural
 		// get_leaderboard_buckets() sibling that already takes one.
 		$store = $this->make_store();
-		$store->set_leaderboard_bucket( '2026-01-01-00-05', [ 'count' => 61 ], 'web07' );
+		$this->set_leaderboard_bucket( $store, '2026-01-01-00-05', [ 'count' => 61 ], 'web07' );
 
 		$this->assertSame( 61, ( $store->get_leaderboard_buckets( [ '2026-01-01-00-05' ], 'web07'  )[ '2026-01-01-00-05' ] ?? [] )['count'] );
-		$this->assertSame( [], $store->get_leaderboard_bucket( '2026-01-01-00-05' ), 'the global scope is a different key' );
+		$this->assertSame( [], $this->get_leaderboard_bucket( $store, '2026-01-01-00-05' ), 'the global scope is a different key' );
 	}
 
 	public function test_dimensional_bucket_round_trips_global_and_per_server(): void {
 		// Every bucketed namespace is keyed with the bucket LAST, so one
 		// lookup_buckets() batch serves them all.
 		$store = $this->make_store();
-		$store->set_dimensional_bucket( 'status', '2026-02-03-04-05', [ '503' => [ 'c' => 47, 's' => 12.5, 'm' => 3.0 ] ] );
-		$store->set_dimensional_bucket( 'status', '2026-02-03-04-05', [ '503' => [ 'c' => 91, 's' => 1.0, 'm' => 1.0 ] ], 'web07' );
+		$this->set_dimensional_bucket( $store, 'status', '2026-02-03-04-05', [ '503' => [ 'c' => 47, 's' => 12.5, 'm' => 3.0 ] ] );
+		$this->set_dimensional_bucket( $store, 'status', '2026-02-03-04-05', [ '503' => [ 'c' => 91, 's' => 1.0, 'm' => 1.0 ] ], 'web07' );
 
-		$this->assertSame( 47, $store->get_dimensional_bucket( 'status', '2026-02-03-04-05' )['503']['c'] );
-		$this->assertSame( 91, $store->get_dimensional_bucket( 'status', '2026-02-03-04-05', 'web07' )['503']['c'] );
+		$this->assertSame( 47, $this->get_dimensional_bucket( $store, 'status', '2026-02-03-04-05' )['503']['c'] );
+		$this->assertSame( 91, $this->get_dimensional_bucket( $store, 'status', '2026-02-03-04-05', 'web07' )['503']['c'] );
 		$this->assertSame(
 			47,
 			$store->get_dimensional_buckets( 'status', [ '2026-02-03-04-05' ] )['2026-02-03-04-05']['503']['c'],
@@ -674,11 +674,11 @@ class StatsStoreTest extends TestCase {
 
 	public function test_category_bucket_round_trips_global_and_per_server(): void {
 		$store = $this->make_store();
-		$store->set_category_bucket( '2026-02-03-04-05', [ 'wpdb' => [ 't' => 8.5, 'c' => 23, 'n' => 4 ] ] );
-		$store->set_category_bucket( '2026-02-03-04-05', [ 'wpdb' => [ 't' => 1.5, 'c' => 66, 'n' => 2 ] ], 'web07' );
+		$this->set_category_bucket( $store, '2026-02-03-04-05', [ 'wpdb' => [ 't' => 8.5, 'c' => 23, 'n' => 4 ] ] );
+		$this->set_category_bucket( $store, '2026-02-03-04-05', [ 'wpdb' => [ 't' => 1.5, 'c' => 66, 'n' => 2 ] ], 'web07' );
 
-		$this->assertSame( 23, $store->get_category_bucket( '2026-02-03-04-05' )['wpdb']['c'] );
-		$this->assertSame( 66, $store->get_category_bucket( '2026-02-03-04-05', 'web07' )['wpdb']['c'] );
+		$this->assertSame( 23, $this->get_category_bucket( $store, '2026-02-03-04-05' )['wpdb']['c'] );
+		$this->assertSame( 66, $this->get_category_bucket( $store, '2026-02-03-04-05', 'web07' )['wpdb']['c'] );
 		$this->assertSame(
 			23,
 			$store->get_category_buckets( [ '2026-02-03-04-05' ] )['2026-02-03-04-05']['wpdb']['c']
@@ -689,12 +689,12 @@ class StatsStoreTest extends TestCase {
 		// Bucket last, dims inside the value: 288 keys per URL rather than a
 		// dimension-by-bucket cross-product.
 		$store = $this->make_store();
-		$store->set_url_dimensional_bucket( 'ab12cd34ef56', '2026-02-03-04-05', [
+		$this->set_url_dimensional_bucket( $store, 'ab12cd34ef56', '2026-02-03-04-05', [
 			'status' => [ '503' => [ 'c' => 29, 's' => 1.0, 'm' => 1.0 ] ],
 			'method' => [ 'POST' => [ 'c' => 31, 's' => 2.0, 'm' => 2.0 ] ],
 		] );
 
-		$got = $store->get_url_dimensional_bucket( 'ab12cd34ef56', '2026-02-03-04-05' );
+		$got = $this->get_url_dimensional_bucket( $store, 'ab12cd34ef56', '2026-02-03-04-05' );
 		$this->assertSame( 29, $got['status']['503']['c'] );
 		$this->assertSame( 31, $got['method']['POST']['c'] );
 		$this->assertSame(
@@ -705,9 +705,9 @@ class StatsStoreTest extends TestCase {
 
 	public function test_url_category_bucket_round_trips(): void {
 		$store = $this->make_store();
-		$store->set_url_category_bucket( 'ab12cd34ef56', '2026-02-03-04-05', [ 'wpdb' => [ 't' => 3.5, 'c' => 57, 'n' => 2 ] ] );
+		$this->set_url_category_bucket( $store, 'ab12cd34ef56', '2026-02-03-04-05', [ 'wpdb' => [ 't' => 3.5, 'c' => 57, 'n' => 2 ] ] );
 
-		$this->assertSame( 57, $store->get_url_category_bucket( 'ab12cd34ef56', '2026-02-03-04-05' )['wpdb']['c'] );
+		$this->assertSame( 57, $this->get_url_category_bucket( $store, 'ab12cd34ef56', '2026-02-03-04-05' )['wpdb']['c'] );
 		$this->assertSame(
 			57,
 			$store->get_url_category_buckets( 'ab12cd34ef56', [ '2026-02-03-04-05' ] )['2026-02-03-04-05']['wpdb']['c']
@@ -717,12 +717,12 @@ class StatsStoreTest extends TestCase {
 	public function test_a_scope_is_a_different_keyspace_not_a_shared_one(): void {
 		// '' vs a named server, and one URL vs another, must not collide.
 		$store = $this->make_store();
-		$store->set_category_bucket( 'b1', [ 'wpdb' => [ 'c' => 13 ] ] );
-		$store->set_url_category_bucket( 'aaaaaaaaaaaa', 'b1', [ 'wpdb' => [ 'c' => 77 ] ] );
+		$this->set_category_bucket( $store, 'b1', [ 'wpdb' => [ 'c' => 13 ] ] );
+		$this->set_url_category_bucket( $store, 'aaaaaaaaaaaa', 'b1', [ 'wpdb' => [ 'c' => 77 ] ] );
 
 		$this->assertSame( [], $store->get_category_buckets( [ 'b1' ], 'web07' )[ 'b1' ] ?? [] );
 		$this->assertSame( [], $store->get_url_category_buckets( 'bbbbbbbbbbbb', [ 'b1' ] )[ 'b1' ] ?? [] );
-		$this->assertSame( 13, ( $store->get_category_bucket( 'b1' ) )['wpdb']['c'] );
+		$this->assertSame( 13, ( $this->get_category_bucket( $store, 'b1' ) )['wpdb']['c'] );
 		$this->assertSame( 77, ( $store->get_url_category_buckets( 'aaaaaaaaaaaa', [ 'b1' ]  )[ 'b1' ] ?? [] )['wpdb']['c'] );
 	}
 
@@ -733,16 +733,16 @@ class StatsStoreTest extends TestCase {
 		$mc    = $this->seed_memd();
 		$store = $this->make_store( max_lifespan: 7200 ); // 2h: distinct from every default
 
-		$store->set_hourly_bucket( 'b1', [ 'count' => 3 ] );
-		$store->set_leaderboard_bucket( 'b1', [ 'count' => 3 ] );
-		$store->set_leaderboard_bucket( 'b1', [ 'count' => 3 ], 'web07' );
-		$store->set_url_shard( 'b1', '0', [ 'h' => [ 'count' => 3 ] ] );
-		$store->set_dimensional_bucket( 'status', 'b1', [ '503' => [ 'c' => 3 ] ] );
-		$store->set_dimensional_bucket( 'status', 'b1', [ '503' => [ 'c' => 3 ] ], 'web07' );
-		$store->set_category_bucket( 'b1', [ 'db' => [ 'n' => 3 ] ] );
-		$store->set_category_bucket( 'b1', [ 'db' => [ 'n' => 3 ] ], 'web07' );
-		$store->set_url_dimensional_bucket( 'h', 'b1', [ 'status' => [ '503' => [ 'c' => 3 ] ] ] );
-		$store->set_url_category_bucket( 'h', 'b1', [ 'db' => [ 'n' => 3 ] ] );
+		$this->set_hourly_bucket( $store, 'b1', [ 'count' => 3 ] );
+		$this->set_leaderboard_bucket( $store, 'b1', [ 'count' => 3 ] );
+		$this->set_leaderboard_bucket( $store, 'b1', [ 'count' => 3 ], 'web07' );
+		$this->set_url_shard( $store, 'b1', '0', [ 'h' => [ 'count' => 3 ] ] );
+		$this->set_dimensional_bucket( $store, 'status', 'b1', [ '503' => [ 'c' => 3 ] ] );
+		$this->set_dimensional_bucket( $store, 'status', 'b1', [ '503' => [ 'c' => 3 ] ], 'web07' );
+		$this->set_category_bucket( $store, 'b1', [ 'db' => [ 'n' => 3 ] ] );
+		$this->set_category_bucket( $store, 'b1', [ 'db' => [ 'n' => 3 ] ], 'web07' );
+		$this->set_url_dimensional_bucket( $store, 'h', 'b1', [ 'status' => [ '503' => [ 'c' => 3 ] ] ] );
+		$this->set_url_category_bucket( $store, 'h', 'b1', [ 'db' => [ 'n' => 3 ] ] );
 
 		$expiries = $mc->expiries();
 		$this->assertCount( 10, $expiries, 'each scope is its own key' );
@@ -968,7 +968,77 @@ class StatsStoreTest extends TestCase {
 		$rows       = [ 'hash-4471' => [ Stats_Store::ROW_COUNT => 6, Stats_Store::ROW_URL => '/hourly-4471' ] ];
 
 		$this->assertTrue( $store->set_url_hour( '2026-08-27-13', 'a', $rows ) );
-		$this->assertSame( $rows, $store->get_url_hour( '2026-08-27-13', 'a' ) );
-		$this->assertSame( [], $store->get_url_hour( '2026-08-27-14', 'a' ), 'an unfolded hour reads empty' );
+		$this->assertSame( $rows, $this->get_url_hour( $store, '2026-08-27-13', 'a' ) );
+		$this->assertSame( [], $this->get_url_hour( $store, '2026-08-27-14', 'a' ), 'an unfolded hour reads empty' );
+	}
+	// ── batched writes: the flush's cost is its KEY COUNT ───────────────────
+
+	public function test_bucket_writes_batch_and_read_back_under_their_own_keys(): void {
+		// The write half of lookup_bucket_sets(). Seeds distinct from every
+		// default: three dimensions, counts 61/62/63, one bucket.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$writes     = [];
+		foreach ( [ 'status' => 61, 'server' => 62, 'plugin' => 63 ] as $dim => $n ) {
+			$writes[] = [ Stats_Store::dim_parts( $dim, '' ), '2026-08-27-13-05', [ 'v' => [ 'c' => $n ] ] ];
+		}
+
+		$this->assertSame( [ true, true, true ], $store->bucket_set_multi( $writes ) );
+
+		foreach ( [ 'status' => 61, 'server' => 62, 'plugin' => 63 ] as $dim => $n ) {
+			$this->assertSame(
+				$n,
+				$this->get_dimensional_bucket( $store, $dim, '2026-08-27-13-05' )['v']['c'],
+				"{$dim} must read back what the batch wrote"
+			);
+		}
+	}
+
+	public function test_a_batched_read_returns_a_miss_as_empty_in_place(): void {
+		// Positional: the caller merges result[i] onto writes[i], so a miss has
+		// to hold its slot or every later merge lands on the wrong key.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$store->bucket_set_multi( [
+			[ Stats_Store::dim_parts( 'status', '' ), '2026-08-27-13-05', [ 'v' => [ 'c' => 61 ] ] ],
+		] );
+
+		$read = $store->bucket_get_multi( [
+			[ Stats_Store::dim_parts( 'plugin', '' ), '2026-08-27-13-05' ],
+			[ Stats_Store::dim_parts( 'status', '' ), '2026-08-27-13-05' ],
+			[ Stats_Store::dim_parts( 'server', '' ), '2026-08-27-13-05' ],
+		] );
+
+		$this->assertCount( 3, $read, 'one entry per request, misses included' );
+		$this->assertSame( [], $read[0], 'a miss reads empty, in its own slot' );
+		$this->assertSame( 61, $read[1]['v']['c'] );
+		$this->assertSame( [], $read[2] );
+	}
+
+	public function test_an_empty_batch_is_a_no_op(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$this->assertSame( [], $store->bucket_set_multi( [] ) );
+		$this->assertSame( [], $store->bucket_get_multi( [] ) );
+	}
+	public function test_a_refused_batch_falls_back_to_one_key_at_a_time(): void {
+		// Neither backend reports success per KEY, so a caller that logs a
+		// specific refusal — an oversized URL shard — only learns which one
+		// because the batch is re-sent singly. One poisoned key, two good.
+		Core::$memd = new class() extends InMemoryMemcached {
+			public function set( string $key, mixed $value, int $expiration = 0 ): bool {
+				return \str_contains( $key, 'refuse-me' ) ? false : parent::set( $key, $value, $expiration );
+			}
+		};
+		$store = new Stats_Store( partition: 0, max_lifespan: 86400 );
+
+		$results = $store->bucket_set_multi( [
+			[ Stats_Store::dim_parts( 'status', '' ), '2026-08-27-13-05', [ 'v' => [ 'c' => 61 ] ] ],
+			[ Stats_Store::url_dim_parts( 'refuse-me' ), '2026-08-27-13-05', [ 'v' => [ 'c' => 62 ] ] ],
+			[ Stats_Store::dim_parts( 'plugin', '' ), '2026-08-27-13-05', [ 'v' => [ 'c' => 63 ] ] ],
+		] );
+
+		$this->assertSame( [ true, false, true ], $results, 'the refusal must be identified, not averaged' );
+		$this->assertSame( 61, $this->get_dimensional_bucket( $store, 'status', '2026-08-27-13-05' )['v']['c'], 'a good key still lands' );
 	}
 }

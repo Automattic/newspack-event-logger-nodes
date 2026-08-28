@@ -351,6 +351,17 @@ class Stats_Store {
 	}
 
 	/**
+	 * The namespace prefix for a dimensional scope.
+	 *
+	 * @param string $dimension Dimension name, e.g. `ua`.
+	 * @param string $server    Reporting server; '' is the global series.
+	 * @return list<string>
+	 */
+	public static function dim_parts( string $dimension, string $server ): array {
+		return '' === $server ? [ self::NS_DIM, $dimension ] : [ self::NS_DIM, $dimension, self::server_key( $server ) ];
+	}
+
+	/**
 	 * Read many of one URL's dimensional buckets in a single round-trip.
 	 *
 	 * @param string            $url_hash 12-char URL hash.
@@ -373,6 +384,16 @@ class Stats_Store {
 	}
 
 	/**
+	 * The namespace prefix for a category scope.
+	 *
+	 * @param string $server Reporting server; '' is the global series.
+	 * @return list<string>
+	 */
+	public static function cat_parts( string $server ): array {
+		return '' === $server ? [ self::NS_CATEGORIES ] : [ self::NS_CATEGORIES, self::server_key( $server ) ];
+	}
+
+	/**
 	 * Read many of one URL's category buckets in a single round-trip.
 	 *
 	 * @param string            $url_hash 12-char URL hash.
@@ -381,18 +402,6 @@ class Stats_Store {
 	 */
 	public function get_url_category_buckets( string $url_hash, array $buckets ): array {
 		return $this->lookup_buckets( [ self::NS_URL_CAT, $url_hash ], $buckets );
-	}
-
-	/**
-	 * Overwrite one request-total bucket. Per-bucket, like the leaderboard: the
-	 * bucket is the unit that changes, so it is the unit that gets written.
-	 *
-	 * @param string              $bucket Bucket key.
-	 * @param array<string,mixed> $data   Totals for the bucket.
-	 * @return bool True when the set landed.
-	 */
-	public function set_hourly_bucket( string $bucket, array $data ): bool {
-		return $this->bucket_set( [ self::NS_HOURLY ], $bucket, $data );
 	}
 
 	/**
@@ -557,20 +566,17 @@ class Stats_Store {
 	 * @return bool True when the set landed.
 	 */
 	public function set_url_hour( string $hour, string $shard, array $rows ): bool {
-		return $this->bucket_set( [ self::NS_URLS_HOUR, $shard ], $hour, $rows );
+		return $this->bucket_set( self::url_hour_parts( $shard ), $hour, $rows );
 	}
 
 	/**
-	 * Read one shard's rows for one coarse hour — `set_url_hour()`'s other half,
-	 * so a writer merging into the folded tier reads it the way `get_url_shard()`
-	 * reads the fine one.
+	 * Namespace prefix for one shard of the COARSE hourly URL index.
 	 *
-	 * @param string $hour  Hour key.
 	 * @param string $shard Shard name from `url_shard()`.
-	 * @return array<string,mixed>
+	 * @return array<int,string>
 	 */
-	public function get_url_hour( string $hour, string $shard ): array {
-		return $this->bucket_get( [ self::NS_URLS_HOUR, $shard ], $hour );
+	public static function url_hour_parts( string $shard ): array {
+		return [ self::NS_URLS_HOUR, $shard ];
 	}
 
 	/**
@@ -592,6 +598,31 @@ class Stats_Store {
 	 */
 	public function get_leaderboard_buckets( array $buckets, string $server = '' ): array {
 		return $this->lookup_buckets( self::lb_parts( $server ), $buckets );
+	}
+
+	/**
+	 * The namespace prefix for a leaderboard scope — the one place the global
+	 * and per-server keyspaces differ.
+	 *
+	 * @param string $server Reporting server; '' for the global series.
+	 * @return list<string>
+	 */
+	public static function lb_parts( string $server ): array {
+		return '' === $server ? [ self::NS_LB ] : [ self::NS_LB_S, self::server_key( $server ) ];
+	}
+
+	/**
+	 * Hash a server name to a key-safe ASCII token (FNV-1a 32-bit hex).
+	 * Used for `lb_s` / `dim:_:srv` keys so server names don't break colons.
+	 *
+	 * @param string $server Server name; '' hashes to ''.
+	 * @return string Eight hex digits, or ''.
+	 */
+	public static function server_key( string $server ): string {
+		if ( '' === $server ) {
+			return '';
+		}
+		return \sprintf( '%08x', Log_Manager::fnv1a32( $server ) );
 	}
 
 	/**
@@ -678,84 +709,6 @@ class Stats_Store {
 	}
 
 	/**
-	 * Read one category bucket: `{ cat => { t, c, n } }`.
-	 *
-	 * @param string $bucket Bucket key.
-	 * @param string $server Reporting server; '' reads the global series.
-	 * @return array<string,mixed> The bucket, [] on miss.
-	 */
-	public function get_category_bucket( string $bucket, string $server = '' ): array {
-		return $this->bucket_get( self::cat_parts( $server ), $bucket );
-	}
-
-	/**
-	 * Read one dimension's bucket: `{ value => { c, s, m } }`.
-	 *
-	 * @param string $dimension Dimension name.
-	 * @param string $bucket    Bucket key.
-	 * @param string $server    Reporting server; '' reads the global series.
-	 * @return array<string,mixed> The bucket, [] on miss.
-	 */
-	public function get_dimensional_bucket( string $dimension, string $bucket, string $server = '' ): array {
-		return $this->bucket_get( self::dim_parts( $dimension, $server ), $bucket );
-	}
-
-	/**
-	 * Read one leaderboard bucket, global or per server.
-	 *
-	 * @param string $bucket Bucket key.
-	 * @param string $server Reporting server; '' reads the global series.
-	 * @return array<string,mixed> Bucket sums, [] on miss.
-	 */
-	public function get_leaderboard_bucket( string $bucket, string $server = '' ): array {
-		return $this->bucket_get( self::lb_parts( $server ), $bucket );
-	}
-
-	/**
-	 * Read one URL's category bucket. Same shape as `get_category_bucket()`.
-	 *
-	 * @param string $url_hash 12-char URL hash.
-	 * @param string $bucket   Bucket key.
-	 * @return array<string,mixed> The bucket, [] on miss.
-	 */
-	public function get_url_category_bucket( string $url_hash, string $bucket ): array {
-		return $this->bucket_get( [ self::NS_URL_CAT, $url_hash ], $bucket );
-	}
-
-	/**
-	 * Read one URL's dimensional bucket: `{ dim => { value => { c, s, m } } }`.
-	 *
-	 * @param string $url_hash 12-char URL hash.
-	 * @param string $bucket   Bucket key.
-	 * @return array<string,mixed> The bucket, [] on miss.
-	 */
-	public function get_url_dimensional_bucket( string $url_hash, string $bucket ): array {
-		return $this->bucket_get( [ self::NS_URL_DIM, $url_hash ], $bucket );
-	}
-
-	/**
-	 * Read one shard of one bucket — what a writer read-modify-writes.
-	 *
-	 * @param string $bucket Bucket key.
-	 * @param string $shard  Shard name from `url_shard()`.
-	 * @return array<string,mixed>
-	 */
-	public function get_url_shard( string $bucket, string $shard ): array {
-		return $this->bucket_get( [ self::NS_URLS, $shard ], $bucket );
-	}
-
-	/**
-	 * Write one shard of one bucket.
-	 *
-	 * @param string                 $bucket Bucket key.
-	 * @param string                 $shard  Shard name from `url_shard()`.
-	 * @param array<array-key,mixed> $rows   That shard's rows.
-	 */
-	public function set_url_shard( string $bucket, string $shard, array $rows ): bool {
-		return $this->bucket_set( [ self::NS_URLS, $shard ], $bucket, $rows );
-	}
-
-	/**
 	 * Group URL rows by the shard their hash names.
 	 *
 	 * The routing rule in one place.
@@ -785,26 +738,82 @@ class Stats_Store {
 	}
 
 	/**
-	 * Read one request-total bucket: `{ count, sum_ms, sum_peak_mb }`.
+	 * Read many buckets across DIFFERENT namespaces in one round trip.
 	 *
-	 * @param string $bucket Bucket key.
-	 * @return array<string,mixed> Totals for the bucket, [] on miss.
+	 * `lookup_bucket_sets()` reads one namespace over many buckets; this reads
+	 * an arbitrary mix, which is what a flush touches. Results are POSITIONAL:
+	 * a miss holds its slot as `[]`, because the caller merges `result[i]` onto
+	 * `reads[i]` and a collapsed miss would land every later merge on the wrong
+	 * key.
+	 *
+	 * @param array<int,array{0: array<int,string>, 1: string}> $reads `[ parts, bucket ]` pairs.
+	 * @return array<int,array<string,mixed>> One entry per read, in order.
 	 */
-	public function get_hourly_bucket( string $bucket ): array {
-		return $this->bucket_get( [ self::NS_HOURLY ], $bucket );
+	public function bucket_get_multi( array $reads ): array {
+		if ( [] === $reads ) {
+			return [];
+		}
+		$keys = [];
+		foreach ( $reads as $i => [ $parts, $bucket ] ) {
+			$keys[ $i ] = $this->key( ...[ ...$parts, $bucket ] );
+		}
+		// No table (no backend) reads as empty, like a miss.
+		$found = $this->table( self::ROLE_AGGREGATE )?->lookup_multi( \array_values( \array_unique( $keys ) ) ) ?? [];
+		$out   = [];
+		foreach ( $keys as $i => $key ) {
+			$value    = $found[ $key ] ?? null;
+			$out[ $i ] = \is_array( $value ) ? self::string_keys( $value ) : [];
+		}
+		return $out;
 	}
 
 	/**
-	 * Read one bucket of a namespace. Every bucketed namespace puts the bucket
-	 * LAST, so scope (server, URL, dimension) is a key prefix.
+	 * Write many buckets across DIFFERENT namespaces in one round trip.
 	 *
-	 * @param array<int,string> $parts  Namespace prefix parts, before the bucket.
-	 * @param string            $bucket Bucket key.
-	 * @return array<string,mixed> The bucket, [] on miss.
+	 * Neither cache backend reports success per KEY, so a refused batch is
+	 * re-sent one key at a time — a caller that logs a specific refusal (an
+	 * oversized URL shard) still learns which one, and the slow path only runs
+	 * when something actually failed.
+	 *
+	 * @param array<int,array{0: array<int,string>, 1: string, 2: array<array-key,mixed>}> $writes `[ parts, bucket, data ]`.
+	 * @return array<int,bool> One result per write, in order.
 	 */
-	private function bucket_get( array $parts, string $bucket ): array {
-		$val = $this->lookup( $this->key( ...[ ...$parts, $bucket ] ) );
-		return \is_array( $val ) ? self::string_keys( $val ) : [];
+	public function bucket_set_multi( array $writes ): array {
+		if ( [] === $writes ) {
+			return [];
+		}
+		$values = [];
+		foreach ( $writes as [ $parts, $bucket, $data ] ) {
+			$values[ $this->key( ...[ ...$parts, $bucket ] ) ] = $data;
+		}
+		if ( true === $this->table( self::ROLE_AGGREGATE )?->store_multi( $values ) ) {
+			// Shadowed only once the set landed, as `store()` does.
+			if ( null !== $this->mirror ) {
+				foreach ( $writes as [ $parts, $bucket, $data ] ) {
+					$key = $this->key( ...[ ...$parts, $bucket ] );
+					( $this->mirror )( self::entry_key( $this->partition, $key ), $data, $this->ttl(), $parts[0] );
+				}
+			}
+			return \array_fill( 0, \count( $writes ), true );
+		}
+		$out = [];
+		foreach ( $writes as $i => [ $parts, $bucket, $data ] ) {
+			$out[ $i ] = $this->bucket_set( $parts, $bucket, $data );
+		}
+		return $out;
+	}
+
+	/**
+	 * Overwrite one bucket of a namespace. The namespace token leads `$parts`,
+	 * so it is also what routes the mirror.
+	 *
+	 * @param array<int,string>      $parts  Namespace prefix parts, before the bucket.
+	 * @param string                 $bucket Bucket key.
+	 * @param array<array-key,mixed> $data   The bucket.
+	 * @return bool True when the set landed.
+	 */
+	private function bucket_set( array $parts, string $bucket, array $data ): bool {
+		return $this->store( $this->key( ...[ ...$parts, $bucket ] ), $data, $this->ttl(), $parts[0] );
 	}
 
 	/**
@@ -833,126 +842,6 @@ class Stats_Store {
 	 */
 	public function set_url_stats( string $url_hash, array $data ): bool {
 		return $this->store( $this->key( self::NS_URL, $url_hash ), $data, $this->ttl_url_stats(), self::NS_URL );
-	}
-
-	/**
-	 * Overwrite one leaderboard bucket.
-	 *
-	 * @param string              $bucket Bucket key.
-	 * @param array<string,mixed> $data   Merged bucket sums.
-	 * @param string              $server Reporting server; '' writes the global series.
-	 * @return bool True when the set landed.
-	 */
-	public function set_leaderboard_bucket( string $bucket, array $data, string $server = '' ): bool {
-		return $this->bucket_set( self::lb_parts( $server ), $bucket, $data );
-	}
-
-	/**
-	 * The namespace prefix for a leaderboard scope — the one place the global
-	 * and per-server keyspaces differ.
-	 *
-	 * @param string $server Reporting server; '' for the global series.
-	 * @return list<string>
-	 */
-	private static function lb_parts( string $server ): array {
-		return '' === $server ? [ self::NS_LB ] : [ self::NS_LB_S, self::server_key( $server ) ];
-	}
-
-	/**
-	 * Overwrite one dimension's series, global or per server.
-	 *
-	 * @param string                 $dimension Dimension name.
-	 * @param string                 $bucket    Bucket key.
-	 * @param array<array-key,mixed> $data      The bucket's value map.
-	 * @param string                 $server    Reporting server; '' writes the global series.
-	 * @return bool True when the set landed.
-	 */
-	public function set_dimensional_bucket( string $dimension, string $bucket, array $data, string $server = '' ): bool {
-		return $this->bucket_set( self::dim_parts( $dimension, $server ), $bucket, $data );
-	}
-
-	/**
-	 * The namespace prefix for a dimensional scope.
-	 *
-	 * @param string $dimension Dimension name, e.g. `ua`.
-	 * @param string $server    Reporting server; '' is the global series.
-	 * @return list<string>
-	 */
-	private static function dim_parts( string $dimension, string $server ): array {
-		return '' === $server ? [ self::NS_DIM, $dimension ] : [ self::NS_DIM, $dimension, self::server_key( $server ) ];
-	}
-
-	/**
-	 * Overwrite one URL's dimensional bucket, every dimension in one value.
-	 *
-	 * @param string              $url_hash 12-char URL hash.
-	 * @param string              $bucket   Bucket key.
-	 * @param array<string,mixed> $data     Value maps keyed by dimension.
-	 * @return bool True when the set landed.
-	 */
-	public function set_url_dimensional_bucket( string $url_hash, string $bucket, array $data ): bool {
-		return $this->bucket_set( [ self::NS_URL_DIM, $url_hash ], $bucket, $data );
-	}
-
-	/**
-	 * Overwrite one category bucket.
-	 *
-	 * @param string                 $bucket Bucket key.
-	 * @param array<array-key,mixed> $data   The bucket's category map.
-	 * @param string                 $server Reporting server; '' writes the global series.
-	 * @return bool True when the set landed.
-	 */
-	public function set_category_bucket( string $bucket, array $data, string $server = '' ): bool {
-		return $this->bucket_set( self::cat_parts( $server ), $bucket, $data );
-	}
-
-	/**
-	 * The namespace prefix for a category scope.
-	 *
-	 * @param string $server Reporting server; '' is the global series.
-	 * @return list<string>
-	 */
-	private static function cat_parts( string $server ): array {
-		return '' === $server ? [ self::NS_CATEGORIES ] : [ self::NS_CATEGORIES, self::server_key( $server ) ];
-	}
-
-	/**
-	 * Hash a server name to a key-safe ASCII token (FNV-1a 32-bit hex).
-	 * Used for `lb_s` / `dim:_:srv` keys so server names don't break colons.
-	 *
-	 * @param string $server Server name; '' hashes to ''.
-	 * @return string Eight hex digits, or ''.
-	 */
-	public static function server_key( string $server ): string {
-		if ( '' === $server ) {
-			return '';
-		}
-		return \sprintf( '%08x', Log_Manager::fnv1a32( $server ) );
-	}
-
-	/**
-	 * Overwrite one URL's category bucket.
-	 *
-	 * @param string                 $url_hash 12-char URL hash.
-	 * @param string                 $bucket   Bucket key.
-	 * @param array<array-key,mixed> $data     The bucket's category map.
-	 * @return bool True when the set landed.
-	 */
-	public function set_url_category_bucket( string $url_hash, string $bucket, array $data ): bool {
-		return $this->bucket_set( [ self::NS_URL_CAT, $url_hash ], $bucket, $data );
-	}
-
-	/**
-	 * Overwrite one bucket of a namespace. The namespace token leads `$parts`,
-	 * so it is also what routes the mirror.
-	 *
-	 * @param array<int,string>      $parts  Namespace prefix parts, before the bucket.
-	 * @param string                 $bucket Bucket key.
-	 * @param array<array-key,mixed> $data   The bucket.
-	 * @return bool True when the set landed.
-	 */
-	private function bucket_set( array $parts, string $bucket, array $data ): bool {
-		return $this->store( $this->key( ...[ ...$parts, $bucket ] ), $data, $this->ttl(), $parts[0] );
 	}
 
 	/**
@@ -1307,6 +1196,45 @@ class Stats_Store {
 				: Core::num_float( $into[ $field ] ?? null ) + Core::num_float( $from[ $field ] ?? null );
 		}
 		return $into;
+	}
+
+	/**
+	 * Namespace prefix for one shard of the FINE URL index.
+	 *
+	 * @param string $shard Shard name from `url_shard()`.
+	 * @return array<int,string>
+	 */
+	public static function url_shard_parts( string $shard ): array {
+		return [ self::NS_URLS, $shard ];
+	}
+
+	/**
+	 * Namespace prefix for the site-wide request totals.
+	 *
+	 * @return array<int,string>
+	 */
+	public static function hourly_parts(): array {
+		return [ self::NS_HOURLY ];
+	}
+
+	/**
+	 * Namespace prefix for one URL's dimensional series.
+	 *
+	 * @param string $url_hash 12-char URL hash.
+	 * @return array<int,string>
+	 */
+	public static function url_dim_parts( string $url_hash ): array {
+		return [ self::NS_URL_DIM, $url_hash ];
+	}
+
+	/**
+	 * Namespace prefix for one URL's category series.
+	 *
+	 * @param string $url_hash 12-char URL hash.
+	 * @return array<int,string>
+	 */
+	public static function url_cat_parts( string $url_hash ): array {
+		return [ self::NS_URL_CAT, $url_hash ];
 	}
 
 	/**
