@@ -15,6 +15,7 @@ import {
 import { __, _n, sprintf } from '@wordpress/i18n';
 import { TextControl } from '@wordpress/components';
 import useVirtualization from '@newspack-nodes/shared/hooks/useVirtualization';
+import { gridTemplate } from '@newspack-nodes/shared/hooks/useColumnPicker';
 
 const ROW_HEIGHT = 40;
 const URLS_PER_PAGE = 100;
@@ -47,11 +48,13 @@ const pct = ( part, total ) => {
 const COLUMNS = [
 	{
 		field: 'count',
+		width: '60px',
 		label: __( 'Reqs', 'newspack-event-logger-nodes' ),
 		render: ( url, formatNum ) => formatNum( url.count ),
 	},
 	{
 		field: 'url',
+		width: 'minmax(0, 1fr)',
 		label: __( 'URL', 'newspack-event-logger-nodes' ),
 		kind: 'code',
 		render: ( url ) => (
@@ -65,20 +68,63 @@ const COLUMNS = [
 			</code>
 		),
 	},
-	{ field: 'count_2xx', label: '2xx', kind: 'status', status: '218' },
-	{ field: 'count_3xx', label: '3xx', kind: 'status', status: '307' },
-	{ field: 'count_4xx', label: '4xx', kind: 'status', status: '418' },
-	{ field: 'count_5xx', label: '5xx', kind: 'status', status: '599' },
-	{ field: 'avg_ms', label: __( 'Avg', 'newspack-event-logger-nodes' ) },
-	{ field: 'min_ms', label: __( 'Min', 'newspack-event-logger-nodes' ) },
-	{ field: 'max_ms', label: __( 'Max', 'newspack-event-logger-nodes' ) },
+	{
+		field: 'count_2xx',
+		label: '2xx',
+		kind: 'status',
+		status: '218',
+		width: '50px',
+	},
+	{
+		field: 'count_3xx',
+		label: '3xx',
+		kind: 'status',
+		status: '307',
+		width: '50px',
+	},
+	{
+		field: 'count_4xx',
+		label: '4xx',
+		kind: 'status',
+		status: '418',
+		width: '50px',
+	},
+	{
+		field: 'count_5xx',
+		label: '5xx',
+		kind: 'status',
+		status: '599',
+		width: '50px',
+	},
+	{
+		field: 'avg_ms',
+		label: __( 'Avg', 'newspack-event-logger-nodes' ),
+		width: '55px',
+	},
+	{
+		field: 'min_ms',
+		label: __( 'Min', 'newspack-event-logger-nodes' ),
+		width: '55px',
+	},
+	{
+		field: 'max_ms',
+		label: __( 'Max', 'newspack-event-logger-nodes' ),
+		width: '55px',
+	},
 	{
 		field: 'avg_peak_mb',
+		width: '60px',
 		label: __( 'Mem', 'newspack-event-logger-nodes' ),
 		render: ( url, formatNum ) =>
 			url.avg_peak_mb > 0 ? formatNum( url.avg_peak_mb, 'MB' ) : '-',
 	},
 ].map( ( col ) => ( { kind: 'numeric', ...col } ) );
+
+// One owner: a deleted column cannot leave a stray track behind.
+const GRID_TEMPLATE = gridTemplate(
+	Object.fromEntries( COLUMNS.map( ( col ) => [ col.field, col ] ) ),
+	COLUMNS.map( ( col ) => col.field )
+);
 
 // Per-kind class modifiers; `code` adds none to either mark.
 const CELL_CLASS = {
@@ -169,7 +215,10 @@ const UrlRow = memo(
 				className={ `event-logger-table__row newspack-nodes-table__row${
 					isSelected ? ' is-selected' : ''
 				}${ selectable ? '' : ' is-aggregate' }` }
-				style={ { height: ROW_HEIGHT } }
+				style={ {
+					height: ROW_HEIGHT,
+					gridTemplateColumns: GRID_TEMPLATE,
+				} }
 			>
 				{ COLUMNS.map( ( col ) => (
 					<div
@@ -405,6 +454,7 @@ export default function UrlTable( {
 				<div
 					className="event-logger-table__header newspack-nodes-table__header"
 					role="row"
+					style={ { gridTemplateColumns: GRID_TEMPLATE } }
 				>
 					{ COLUMNS.map( ( col ) =>
 						'status' === col.kind ? (

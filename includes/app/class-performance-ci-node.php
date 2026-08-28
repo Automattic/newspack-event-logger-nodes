@@ -1643,14 +1643,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		if ( null === $raw ) {
 			return null;
 		}
-		$projected = self::project_row( $raw, $server );
-		// THIS row's own split: one fresh row sets the index-wide flag.
-		if ( null === $projected && [] === Core::arr( $raw[ Stats_Store::URL_SRV_FIELD ] ?? null ) ) {
-			throw new \RuntimeException( \esc_html(
-				"No per-server data for {$server} yet: this index predates the split, and fills within one retention window."
-			) );
-		}
-		return $projected;
+		return self::project_row( $raw, $server );
 	}
 
 	/**

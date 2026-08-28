@@ -181,9 +181,6 @@ class Stats_Store {
 	public const ROW_WORKER      = 13;
 	public const ROW_SRV         = 14;
 
-	/** One past the last stored index: a row with this set predates decision 19. */
-	public const ROW_PAST_END    = 15;
-
 	/**
 	 * Summed fields of a URL row and of its per-server split => whether each is
 	 * a whole count. ONE map for both, which the index order above is chosen to

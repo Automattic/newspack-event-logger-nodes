@@ -1770,44 +1770,6 @@ class PerformanceCITest extends TestCase {
 		$this->assertStringContainsString( 'not found', \strtolower( $result ) );
 	}
 
-	public function test_a_split_row_elsewhere_does_not_silence_the_scope_guard(): void {
-		// The first post-deploy flush gives ONE row a split while every
-		// pre-deploy bucket keeps split-less rows for the rest of the window.
-		// An index-wide test therefore stops firing almost immediately, which
-		// is nearly the whole transition rather than none of it. The row
-		// answers for itself.
-		$store  = new Stats_Store( 0, 86400 );
-		$bucket = $this->current_url_bucket();
-		$this->set_url_bucket( $store, $bucket, [
-			'facade99beef' => [
-				'url'         => '/legacy/no-split',
-				'count'       => 37,
-				'timed_count' => 37,
-				'sum_ms'      => 1480.0,
-				'last_seen'   => 1700000999,
-			],
-			'beefcafe1234' => [
-				'url'         => '/fresh/with-split',
-				'count'       => 11,
-				'timed_count' => 11,
-				'sum_ms'      => 220.0,
-				'last_seen'   => 1700000999,
-				'srv'         => [ 'edge-19' => [ 'count' => 11, 'timed_count' => 11, 'sum_ms' => 220.0 ] ],
-			],
-		] );
-
-		$result = VerbHarness::fire(
-			new Performance_CI_Node(),
-			'performance',
-			'url_detail',
-			'facade99beef --server=edge-19'
-		);
-
-		$this->assertIsString( $result );
-		$this->assertStringNotContainsString( 'not found', \strtolower( $result ) );
-		$this->assertStringContainsString( 'edge-19', $result );
-	}
-
 	public function test_the_other_row_is_marked_as_an_aggregate(): void {
 		// It stands for many URLs, so it is not one: its key is not a url_hash
 		// and `url_detail` cannot answer for it. The row says so rather than
@@ -2112,36 +2074,6 @@ class PerformanceCITest extends TestCase {
 		$this->assertEqualsWithDelta( 100.0, $result['totals']['avg_ms'], 0.01 );
 		$this->assertEqualsWithDelta( 100.0, $result['data'][0]['avg_ms'], 0.01 );
 		$this->assertSame( 10, $result['totals']['requests'] );
-	}
-
-	public function test_url_detail_says_the_scope_is_unanswerable_not_missing(): void {
-		// A pre-upgrade index carries no per-server split, so a scoped read of
-		// a URL that plainly exists projects to nothing. Reporting that as
-		// "URL not found" sends the reader hunting a URL they are looking at;
-		// for one retention window after deploy the honest answer is that this
-		// index cannot answer THAT question yet.
-		$store  = new Stats_Store( 0, 86400 );
-		$bucket = $this->current_url_bucket();
-		$this->set_url_bucket( $store, $bucket, [
-			'facade99beef' => [
-				'url'         => '/legacy/no-split',
-				'count'       => 37,
-				'timed_count' => 37,
-				'sum_ms'      => 1480.0,
-				'last_seen'   => 1700000999,
-			],
-		] );
-
-		$result = VerbHarness::fire(
-			new Performance_CI_Node(),
-			'performance',
-			'url_detail',
-			'facade99beef --server=edge-19'
-		);
-
-		$this->assertIsString( $result );
-		$this->assertStringNotContainsString( 'not found', \strtolower( $result ) );
-		$this->assertStringContainsString( 'edge-19', $result );
 	}
 
 	public function test_url_detail_verb_returns_stats_and_default_flame(): void {

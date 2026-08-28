@@ -183,9 +183,6 @@ class Flame_Builder_Node extends Node {
 	 * Sixteen shards, so this admits 16x the URLs per bucket at a sixteenth the
 	 * blob — a backstop against an oversized item, not a policy. The tail folds
 	 * rather than dropping, so reaching it costs detail, never totals.
-	 *
-	 * "Hourly" in the `Stats_Store` URL-index method names is legacy: the key is
-	 * the same bucket key everything else uses.
 	 */
 	private const MAX_URLS_PER_SHARD = 500;
 
@@ -652,8 +649,7 @@ class Flame_Builder_Node extends Node {
 		// @longform The split makes a row expensive to copy, so the common path
 		// leaves it alone. A row missing ROW_SRV came from a checkpoint this
 		// process did not write, and everything below indexes it unguarded,
-		// where `max( null, … )` is a TypeError, not a warning. A v0.66.0 row
-		// is NOT caught here — its retired reservoir sat on this same index.
+		// where `max( null, … )` is a TypeError, not a warning.
 		$row = Core::arr( $acc['url_stats'][ $url_hash ] ?? null );
 		if ( ! isset( $row[ Stats_Store::ROW_SRV ] ) ) {
 			// @longform array_replace, NOT array_merge: the row is positional,
@@ -1335,11 +1331,6 @@ class Flame_Builder_Node extends Node {
 				// An all-digit hash arrives as an int array key; cast back.
 				$hash  = (string) $key;
 				$stats = Core::arr( $stats_raw );
-				// A row with no ROW_COUNT, or one past the end, is legacy.
-				if ( ! isset( $stats[ Stats_Store::ROW_COUNT ] )
-					|| isset( $stats[ Stats_Store::ROW_PAST_END ] ) ) {
-					continue;
-				}
 				$into = Core::arr( $rows[ $hash ] ?? null )
 					?: self::empty_url_row( Core::str( $stats[ Stats_Store::ROW_URL ] ?? '' ) );
 				$rows[ $hash ] = Stats_Store::merge_url_row( $into, $stats );
@@ -1380,17 +1371,8 @@ class Flame_Builder_Node extends Node {
 	 * @param array<array-key,mixed> $rows        That shard's accumulated rows.
 	 */
 	private function persist_url_shard( Stats_Store $stats_store, string $bucket, string $shard, array $rows ): void {
-		// @longform A legacy NAMED row cannot merge, and the documented upgrade
-		// rotates the salt so none is ever met. A SKIPPED rotation degrades
-		// here instead — and the test belongs to the BLOB, not the row: this
-		// shard is written back whole, so one the flush never touches would
-		// ride the read-modify-write back out as a url-less, count-less ghost.
 		/** @var array<array-key,array<array-key,mixed>> $existing_urls */
-		$existing_urls = \array_filter(
-			$stats_store->get_url_shard( $bucket, $shard ),
-			static fn ( $row ): bool => isset( Core::arr( $row )[ Stats_Store::ROW_COUNT ] )
-				&& ! isset( Core::arr( $row )[ Stats_Store::ROW_PAST_END ] )
-		);
+		$existing_urls = $stats_store->get_url_shard( $bucket, $shard );
 		foreach ( $rows as $hash => $stats_raw ) {
 			$stats = Core::arr( $stats_raw );
 			$row   = Core::arr( $existing_urls[ $hash ] ?? null )

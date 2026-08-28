@@ -1231,9 +1231,8 @@ class Request_Builder_Node extends Timer_Node {
 	/**
 	 * The wire record for one completed envelope.
 	 *
-	 * An unfolded request ships its raw `entries` and nothing changes — which
-	 * is also what every record already written to `requests.p*` looks like,
-	 * so accepting both shapes downstream is what makes this migration free.
+	 * An unfolded request ships its raw `entries`; readers accept that shape
+	 * and the folded one alike, because both are produced live.
 	 *
 	 * A folded one ships the merged tree in `flame`, its kept head and tail
 	 * rejoined around an `entries (aggregated)` marker. Each merged node
