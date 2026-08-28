@@ -1998,73 +1998,6 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	/**
-	 * A pre-0.65 NAMED row is not a row this writer can merge into, and the
-	 * documented procedure rotates the salt so it is never met. If that step is
-	 * skipped it must degrade the same way — discarded, not half-merged.
-	 *
-	 * Half-merged is silent and lasts a whole retention window: the named row
-	 * survives the `?:`, the accumulator sums into indexes it does not have, its
-	 * own counts vanish, its string keys ride into the stored row, and its
-	 * `durations` — up to a hundred floats — go back onto the read path 0.64.0
-	 * took them off.
-	 */
-	public function test_a_legacy_named_row_is_discarded_not_merged_into(): void {
-		Core::$memd = new InMemoryMemcached();
-		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		$now        = \time();
-		$bucket     = Stats_Store::bucket_key( $now );
-		$url        = '/pangolin-6142';
-		$hash       = Log_Manager::url_hash( $url );
-
-		// A second legacy row in the SAME shard that this flush never touches:
-		// the blob is written back whole, so it rides the read-modify-write out
-		// unless the legacy test is applied at the READ.
-		$untouched = \str_pad( \dechex( \hexdec( $hash[0] ) ), 13, '7' );
-
-		// What 0.64.0 wrote, verbatim: names, and a reservoir inside the row.
-		$store->set_url_shard( $bucket, Stats_Store::url_shard( $hash ), [
-			$hash      => [
-				'url'         => $url,
-				'count'       => 91,
-				'timed_count' => 91,
-				'sum_ms'      => 6142.0,
-				'durations'   => [ 61.0, 142.0 ],
-			],
-			$untouched => [
-				'url'         => '/pangolin-untouched',
-				'count'       => 23,
-				'timed_count' => 23,
-				'sum_ms'      => 1871.0,
-			],
-		] );
-
-		$fb = new Flame_Builder_Node();
-		$fb->set_stats_store( $store );
-		$this->fill_request( $fb, $this->completed_request( [
-			'url'         => $url,
-			'duration_ms' => 447.0,
-			'timestamp'   => $now,
-		] ) );
-		$fb->flush();
-
-		$rows = $this->url_bucket_rows( $store, $bucket );
-		$this->assertSame( 1, $rows[ $hash ]['count'], 'the legacy counts go, they do not half-merge' );
-		$this->assertArrayNotHasKey(
-			$untouched,
-			$rows,
-			'and one the flush never touched does not ride the read-modify-write back out'
-		);
-		$this->assertArrayNotHasKey( 'durations', $rows[ $hash ] );
-		$raw  = $store->get_url_shard( $bucket, Stats_Store::url_shard( $hash ) );
-		$keys = \array_keys( $raw[ $hash ] );
-		$this->assertSame(
-			$keys,
-			\array_filter( $keys, '\is_int' ),
-			'and what is stored is positional, with no legacy string keys riding along'
-		);
-	}
-
-	/**
 	 * A closed hour is folded ONCE into a coarse key, not added to
 	 * incrementally: the five-minute write is a full overwrite and is safe to
 	 * repeat, while adding into an hour bucket double-counts on a re-flush.
@@ -2325,56 +2258,6 @@ class FlameBuilderTest extends TestCase {
 		);
 	}
 
-	/**
-	 * A v0.66.0 row is positional and HAS index 0, so decision 5's legacy probe
-	 * cannot see it — and `ROW_SRV` moved onto 14, the index the retired
-	 * reservoir occupied. Merging one reads its split as absent, discards that
-	 * bucket's whole per-server history, and rides 15..18 back out for a
-	 * retention window. Raw integer keys below: this is a RETIRED shape, and
-	 * there are no constants left to name it.
-	 */
-	public function test_a_row_from_before_the_percentiles_were_retired_is_discarded(): void {
-		Core::$memd = new InMemoryMemcached();
-		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		$now        = \time();
-		$bucket     = Stats_Store::bucket_key( $now );
-		$url        = 'https://retired.example/quokka-8823';
-		$hash       = Log_Manager::url_hash( $url );
-		$shard      = Stats_Store::url_shard( $hash );
-
-		// 0..13 as today, then the v0.66.0 tail: srv at 15, percentiles 16-18.
-		$store->set_url_shard( $bucket, $shard, [
-			$hash => [
-				0 => 91, 1 => 91, 2 => 6142.0, 3 => 212.0, 4 => 0, 5 => 88, 6 => 3, 7 => 0,
-				8 => $url, 9 => 23.08, 10 => 268.93, 11 => 16.0, 12 => $now, 13 => false,
-				15 => [ 'retired.example' => null ], 16 => 24.56, 17 => 132.82, 18 => 268.93,
-			],
-		] );
-
-		$fb = new Flame_Builder_Node();
-		$fb->set_stats_store( $store );
-		$this->fill_request( $fb, $this->completed_request( [
-			'url'         => $url,
-			'duration_ms' => 47.0,
-			'timestamp'   => $now,
-			'server_name' => 'retired.example',
-		] ) );
-		$fb->flush();
-
-		$raw = $store->get_url_shard( $bucket, $shard )[ $hash ];
-		$this->assertSame(
-			\range( 0, 14 ),
-			\array_keys( $raw ),
-			'the retired tail does not ride the read-modify-write back out'
-		);
-		$this->assertSame( 1, $raw[ Stats_Store::ROW_COUNT ], 'and the stale counts go with it' );
-		$this->assertSame(
-			[ 'retired.example' => null ],
-			$raw[ Stats_Store::ROW_SRV ],
-			'the split is this flush\'s, at the index it now lives on'
-		);
-	}
-
 	/** Two hosts are not the row restated, so the split stays whole. */
 	public function test_a_two_server_split_does_not_collapse(): void {
 		Core::$memd = new InMemoryMemcached();
@@ -2399,36 +2282,6 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( [ 'edge-a.example', 'edge-b.example' ], \array_keys( $split ) );
 		$this->assertSame( 2, $split['edge-a.example'][ Stats_Store::ROW_COUNT ] );
 		$this->assertSame( 1, $split['edge-b.example'][ Stats_Store::ROW_COUNT ] );
-	}
-
-	public function test_a_legacy_named_row_is_not_folded_into_an_hour(): void {
-		Core::$memd = new InMemoryMemcached();
-		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		$legacy     = Log_Manager::url_hash( '/pangolin-6142' );
-		$live       = Log_Manager::url_hash( '/wombat-4471' );
-		$shard      = Stats_Store::url_shard( $live );
-		$now        = \gmmktime( 15, 7, 0, 8, 27, 2026 );
-
-		// A live positional row beside a pre-0.65 NAMED one, same shard.
-		$this->seed_url_shard( $store, '2026-08-27-13-05', $shard, [
-			$live => [ 'url' => '/wombat-4471', 'count' => 7, 'timed_count' => 7, 'sum_ms' => 91.0 ],
-		] );
-		$raw = $store->get_url_shard( '2026-08-27-13-05', $shard );
-		$raw[ $legacy ] = [
-			'url'         => '/pangolin-6142',
-			'count'       => 23,
-			'timed_count' => 23,
-			'sum_ms'      => 1871.0,
-		];
-		$store->set_url_shard( '2026-08-27-13-05', $shard, $raw );
-
-		$fb = new Flame_Builder_Node();
-		$fb->set_stats_store( $store );
-		$fb->roll_up_hours( $now );
-
-		$hour = self::named_url_rows( $store->url_hour_sources( [ '2026-08-27-13' ], $shard )[0][1] );
-		$this->assertSame( 7, $hour[ $live ]['count'] ?? -1, 'the live row folds' );
-		$this->assertArrayNotHasKey( $legacy, $hour, 'and the legacy row is not folded into a ghost' );
 	}
 
 	/**

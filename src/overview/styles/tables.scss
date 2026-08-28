@@ -96,11 +96,9 @@
 }
 
 .event-logger-table--urls {
+	// Track list rides inline from UrlTable's COLUMNS widths — one owner.
 	.event-logger-table__header,
 	.event-logger-table__row {
-		grid-template-columns:
-			60px minmax(0, 1fr) repeat(4, 50px) repeat(4, 55px)
-			60px;
 		min-width: 800px;
 	}
 }

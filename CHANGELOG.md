@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 
+## [0.68.0] - 2026-08-28
+
+### Removed
+
+- **Every row-level legacy probe in the URL-index writers, and `Stats_Store::ROW_PAST_END` with them.** Decision 5 already names the salt rotation as the migration: a schema change orphans the old keys the instant the salt moves. A second mechanism that sniffs each row for a missing `ROW_COUNT` or an index past the end had to be re-taught every future row shape, and it bought nothing the rotation does not already buy. Gone from `persist_url_shard()`, `fold_hour()`, and the `url_detail` scope guard that answered "this index predates the split" — an unscopeable row is now simply not found. Skipping the rotation costs one retention window of garbage and has a one-command fix, `wp nodes memcache flush`; it is not a case for the runtime to detect.
+
+### Changed
+
+- **Substrate pin moves to `v2.45.1`**, which fixes a config loader that truncated the whole configuration when an operator's config file assigned `$config`.
+
+### Fixed
+
+- **The URL table's Mem column sat in the wrong grid track.** Retiring the per-URL p95 in 0.67.0 removed a column from `UrlTable`'s `COLUMNS` and left `tables.scss` declaring eleven tracks for ten columns, so `Mem` slid into p95's 55px track and its own 60px stranded past the last cell. The track list is no longer written by hand: each column carries its `width` and the template comes from the shared `gridTemplate()` — the same one `ErrorLog` already uses — so a deleted column cannot leave a stray track behind.
+
+
 ## [0.67.1] - 2026-08-28
 
 ### Fixed

@@ -598,3 +598,21 @@ describe( 'UrlTable', () => {
 		unmount();
 	} );
 } );
+
+describe( 'column layout', () => {
+	// The grid track list and the COLUMNS array are one fact. Deleting the p95
+	// column in 0.67.0 left an 11-track template over 10 columns, which slid
+	// Mem into p95's 55px track and stranded its own 60px past the last cell.
+	it( 'lays out exactly one grid track per rendered column', () => {
+		const { container, unmount } = mount();
+
+		const header = container.querySelector( '.event-logger-table__header' );
+		const tracks = ( header.style.gridTemplateColumns || '' )
+			.split( /\s+(?![^(]*\))/ )
+			.filter( Boolean );
+		const cells = header.querySelectorAll( '[data-field]' ).length;
+		expect( cells ).toBe( 10 );
+		expect( tracks ).toHaveLength( cells );
+		unmount();
+	} );
+} );
