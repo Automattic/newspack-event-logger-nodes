@@ -155,24 +155,104 @@ class Stats_Store {
 	/** Shards the URL index is spread across — one per hex digit of the hash. */
 	public const URL_SHARDS     = 16;
 
-	/** The URL row field holding its per-server split. */
+	/** The DISPLAY row's split field; a stored row uses `ROW_SRV`. */
 	public const URL_SRV_FIELD = 'srv';
 
 	/**
-	 * Summed fields of one URL row's per-server split => whether it is a whole
-	 * count. These are the row's OWN field names, because the split is that row
-	 * restricted to one server. Only fields that ADD: the extremes and the
-	 * percentiles come off a sampled reservoir, so a scoped row keeps the URL's.
+	 * A STORED URL row is a positional array, indexed by these — the shape
+	 * `Message` uses and for the same reason. `serialize()` writes every key
+	 * NAME into every row, so `s:11:"timed_count";` costs 18 bytes to say what
+	 * `i:1;` says in 4, and a read pays that once per row per field. Measured
+	 * on live rows: 672 B/row named against 398 positional, 40.9%.
+	 *
+	 * **Never a bare index.** These constants are what buy back the
+	 * readability the shape spends, and a raw `$row[3]` is the worst literal
+	 * there is — unreadable AND silently mis-typeable.
+	 *
+	 * The eight fields that ADD come FIRST, and in `URL_SRV_SUMS` order, so one
+	 * map describes both the row's summed half and the per-server split values
+	 * — the split being that row restricted to one server, on the same indexes.
+	 *
+	 * The READER's row is separate and stays named: it is the display shape,
+	 * it crosses the wire as JSON, and `fold_index_row()` is the one place the
+	 * two meet. Its SPLIT is not display data at all — every projection strips
+	 * it — so it stays positional through the fold and is named only by
+	 * `swap_url_server_sums()`, for the one server a read is scoped to.
+	 */
+	public const ROW_COUNT       = 0;
+	public const ROW_TIMED_COUNT = 1;
+	public const ROW_SUM_MS      = 2;
+	public const ROW_SUM_PEAK_MB = 3;
+	public const ROW_COUNT_2XX   = 4;
+	public const ROW_COUNT_3XX   = 5;
+	public const ROW_COUNT_4XX   = 6;
+	public const ROW_COUNT_5XX   = 7;
+	public const ROW_URL         = 8;
+	public const ROW_MIN_MS      = 9;
+	public const ROW_MAX_MS      = 10;
+	public const ROW_MAX_PEAK_MB = 11;
+	public const ROW_LAST_SEEN   = 12;
+	public const ROW_WORKER      = 13;
+	public const ROW_DURATIONS   = 14;
+	public const ROW_SRV         = 15;
+	public const ROW_P50_MS      = 16;
+	public const ROW_P95_MS      = 17;
+	public const ROW_P99_MS      = 18;
+
+	/**
+	 * Summed fields of a URL row and of its per-server split => whether each is
+	 * a whole count. ONE map for both, which the index order above is chosen to
+	 * allow. Only fields that ADD: the extremes and the percentiles come off a
+	 * sampled reservoir, so a scoped row keeps the URL's own.
 	 */
 	public const URL_SRV_SUMS = [
-		'count'       => true,
-		'timed_count' => true,
-		'sum_ms'      => false,
-		'sum_peak_mb' => false,
-		'count_2xx'   => true,
-		'count_3xx'   => true,
-		'count_4xx'   => true,
-		'count_5xx'   => true,
+		self::ROW_COUNT       => true,
+		self::ROW_TIMED_COUNT => true,
+		self::ROW_SUM_MS      => false,
+		self::ROW_SUM_PEAK_MB => false,
+		self::ROW_COUNT_2XX   => true,
+		self::ROW_COUNT_3XX   => true,
+		self::ROW_COUNT_4XX   => true,
+		self::ROW_COUNT_5XX   => true,
+	];
+
+	/**
+	 * Every stored index and what it holds — the ONE place an index becomes a
+	 * name. `fold_index_row()` names the row at the storage/display boundary
+	 * and `swap_url_server_sums()` names one server's split;
+	 * dndocker's `tools/stats-shard-fields.php` reads it to label bytes per
+	 * field; a test helper reverses it to seed a row in names. Nothing else
+	 * should need it, and a stored row is never indexed through it in
+	 * production.
+	 */
+	public const ROW_FIELD_NAMES = [
+		self::ROW_COUNT       => 'count',
+		self::ROW_TIMED_COUNT => 'timed_count',
+		self::ROW_SUM_MS      => 'sum_ms',
+		self::ROW_SUM_PEAK_MB => 'sum_peak_mb',
+		self::ROW_COUNT_2XX   => 'count_2xx',
+		self::ROW_COUNT_3XX   => 'count_3xx',
+		self::ROW_COUNT_4XX   => 'count_4xx',
+		self::ROW_COUNT_5XX   => 'count_5xx',
+		self::ROW_URL         => 'url',
+		self::ROW_MIN_MS      => 'min_ms',
+		self::ROW_MAX_MS      => 'max_ms',
+		self::ROW_MAX_PEAK_MB => 'max_peak_mb',
+		self::ROW_LAST_SEEN   => 'last_seen',
+		self::ROW_WORKER      => 'worker',
+		self::ROW_DURATIONS   => 'durations',
+		self::ROW_SRV         => 'srv',
+		self::ROW_P50_MS      => 'p50_ms',
+		self::ROW_P95_MS      => 'p95_ms',
+		self::ROW_P99_MS      => 'p99_ms',
+	];
+
+	/** Status class (2..5) to the row index counting it. */
+	public const ROW_STATUS_COUNTS = [
+		2 => self::ROW_COUNT_2XX,
+		3 => self::ROW_COUNT_3XX,
+		4 => self::ROW_COUNT_4XX,
+		5 => self::ROW_COUNT_5XX,
 	];
 
 	/** Bucket width in minutes — the granularity every bucketed namespace is keyed at. */
@@ -257,7 +337,14 @@ class Stats_Store {
 	/** One leaderboard category's summed fields. */
 	public const LB_CAT_SUMS = [ 'samples' => true, 'sum_time' => false, 'sum_count' => false ];
 
-	/** One category entry's positional triple: time, count, samples. */
+	/**
+	 * One category entry's positional triple: time, count, samples.
+	 *
+	 * Positional with no constants, deliberately, and the one carve-out from
+	 * decision 18: a closed 3-tuple read by `sums_to_display()` beside it and
+	 * by `RequestProfile.js`, so naming it means naming it twice in two deploy
+	 * units for three fields. A URL row is 19 fields across three PHP files.
+	 */
 	private const LB_ENTRY_SUMS = [ 0 => false, 1 => false, 2 => true ];
 	/**
 	 * @param int $partition    Flame-builder partition to read and write.
@@ -1078,50 +1165,23 @@ class Stats_Store {
 	 *
 	 * @param array<array-key,mixed> $into The row so far, [] on first fold.
 	 * @param array<array-key,mixed> $row  The row being folded in.
-	 * @return array<string,mixed>
+	 * @return array<array-key,mixed>
 	 */
 	public static function fold_url_rows( array $into, array $row ): array {
 		// AFTER the sum: it returns `$into`, which carries its own `last_seen`.
-		$out              = self::string_keys( self::sum_entry( $into, $row, self::URL_SRV_SUMS ) );
-		$out['worker']    = ! empty( $into['worker'] ) || ! empty( $row['worker'] );
-		$out['last_seen'] = \max(
-			Core::num_int( $into['last_seen'] ?? null ),
-			Core::num_int( $row['last_seen'] ?? null )
+		$out                        = self::sum_entry( $into, $row, self::URL_SRV_SUMS );
+		$out[ self::ROW_WORKER ]    = ! empty( $into[ self::ROW_WORKER ] ) || ! empty( $row[ self::ROW_WORKER ] );
+		$out[ self::ROW_LAST_SEEN ] = \max(
+			Core::num_int( $into[ self::ROW_LAST_SEEN ] ?? null ),
+			Core::num_int( $row[ self::ROW_LAST_SEEN ] ?? null )
 		);
 
-		$out[ self::URL_SRV_FIELD ] = self::sum_fields(
-			Core::arr( $into[ self::URL_SRV_FIELD ] ?? null ),
-			Core::arr( $row[ self::URL_SRV_FIELD ] ?? null ),
+		$out[ self::ROW_SRV ] = self::sum_fields(
+			Core::arr( $into[ self::ROW_SRV ] ?? null ),
+			Core::arr( $row[ self::ROW_SRV ] ?? null ),
 			self::URL_SRV_SUMS
 		);
 		return $out;
-	}
-
-	/**
-	 * Swap a URL row's SUMMED fields for one server's, or null when that server
-	 * never served the URL. `''` strips the split and returns the row as it
-	 * stands, so one call covers the unscoped case too.
-	 *
-	 * The row it returns is not yet in one scope: its means and its recent-window
-	 * share are still the site's, and `Performance_CI_Node::project_row()`
-	 * finishes it. WHICH fields swap is the schema's; the division is the
-	 * reader's (decision 2).
-	 *
-	 * @param array<array-key,mixed> $row    A merged URL row carrying its split.
-	 * @param string                 $server Reporting server; '' scopes to none.
-	 * @return array<array-key,mixed>|null
-	 */
-	public static function swap_url_server_sums( array $row, string $server ): ?array {
-		$split = Core::arr( $row[ self::URL_SRV_FIELD ] ?? null );
-		unset( $row[ self::URL_SRV_FIELD ] );
-		if ( '' === $server ) {
-			return $row;
-		}
-		// `is_array`: a non-array leaves the swap empty and widens the row.
-		if ( ! \is_array( $split[ $server ] ?? null ) ) {
-			return null;
-		}
-		return \array_merge( $row, self::sum_entry( [], $split[ $server ], self::URL_SRV_SUMS ) );
 	}
 
 	/**
@@ -1184,25 +1244,25 @@ class Stats_Store {
 	 *
 	 * @param array<array-key,mixed> $into The row so far.
 	 * @param array<array-key,mixed> $row  The row being folded in.
-	 * @return array<string,mixed>
+	 * @return array<array-key,mixed>
 	 */
 	public static function merge_url_row( array $into, array $row ): array {
-		$out = self::string_keys( self::sum_entry( $into, $row, self::URL_SRV_SUMS ) );
-		if ( '' === Core::str( $out['url'] ?? '' ) ) {
-			$out['url'] = Core::str( $row['url'] ?? '' );
+		$out = self::sum_entry( $into, $row, self::URL_SRV_SUMS );
+		if ( '' === Core::str( $out[ self::ROW_URL ] ?? '' ) ) {
+			$out[ self::ROW_URL ] = Core::str( $row[ self::ROW_URL ] ?? '' );
 		}
-		$out['max_ms']      = \max( Core::num_float( $out['max_ms'] ?? null ), Core::num_float( $row['max_ms'] ?? null ) );
-		$out['max_peak_mb'] = \max( Core::num_float( $out['max_peak_mb'] ?? null ), Core::num_float( $row['max_peak_mb'] ?? null ) );
-		$out['last_seen']   = \max( Core::num_int( $out['last_seen'] ?? null ), Core::num_int( $row['last_seen'] ?? null ) );
-		$out['worker']      = ! empty( $out['worker'] ) || ! empty( $row['worker'] );
-		if ( Core::num_int( $row['timed_count'] ?? null ) > 0 ) {
-			$held          = Core::num_float( $out['min_ms'] ?? null );
-			$row_min       = Core::num_float( $row['min_ms'] ?? null );
-			$out['min_ms'] = 0.0 === $held ? $row_min : \min( $held, $row_min );
+		$out[ self::ROW_MAX_MS ]      = \max( Core::num_float( $out[ self::ROW_MAX_MS ] ?? null ), Core::num_float( $row[ self::ROW_MAX_MS ] ?? null ) );
+		$out[ self::ROW_MAX_PEAK_MB ] = \max( Core::num_float( $out[ self::ROW_MAX_PEAK_MB ] ?? null ), Core::num_float( $row[ self::ROW_MAX_PEAK_MB ] ?? null ) );
+		$out[ self::ROW_LAST_SEEN ]   = \max( Core::num_int( $out[ self::ROW_LAST_SEEN ] ?? null ), Core::num_int( $row[ self::ROW_LAST_SEEN ] ?? null ) );
+		$out[ self::ROW_WORKER ]      = ! empty( $out[ self::ROW_WORKER ] ) || ! empty( $row[ self::ROW_WORKER ] );
+		if ( Core::num_int( $row[ self::ROW_TIMED_COUNT ] ?? null ) > 0 ) {
+			$held                    = Core::num_float( $out[ self::ROW_MIN_MS ] ?? null );
+			$row_min                 = Core::num_float( $row[ self::ROW_MIN_MS ] ?? null );
+			$out[ self::ROW_MIN_MS ] = 0.0 === $held ? $row_min : \min( $held, $row_min );
 		}
-		$out[ self::URL_SRV_FIELD ] = self::sum_fields(
-			Core::arr( $out[ self::URL_SRV_FIELD ] ?? null ),
-			Core::arr( $row[ self::URL_SRV_FIELD ] ?? null ),
+		$out[ self::ROW_SRV ] = self::sum_fields(
+			Core::arr( $out[ self::ROW_SRV ] ?? null ),
+			Core::arr( $row[ self::ROW_SRV ] ?? null ),
 			self::URL_SRV_SUMS
 		);
 		return $out;
@@ -1219,7 +1279,7 @@ class Stats_Store {
 	 *
 	 * @param array<array-key,mixed> $into     Running totals.
 	 * @param array<array-key,mixed> $incoming Inbound entries.
-	 * @param array<string,bool>     $fields   Field name => is a whole count.
+	 * @param array<array-key,bool>  $fields   Field key => is a whole count.
 	 * @return array<string,mixed> The totals, string-keyed for the store.
 	 */
 	public static function sum_fields( array $into, array $incoming, array $fields ): array {
@@ -1269,6 +1329,44 @@ class Stats_Store {
 	}
 
 	/**
+	 * Swap a URL row's SUMMED fields for one server's, or null when that server
+	 * never served the URL. `''` strips the split and returns the row as it
+	 * stands, so one call covers the unscoped case too.
+	 *
+	 * The row it returns is not yet in one scope: its means and its recent-window
+	 * share are still the site's, and `Performance_CI_Node::project_row()`
+	 * finishes it. WHICH fields swap is the schema's; the division is the
+	 * reader's (decision 2).
+	 *
+	 * This is also the SPLIT's one crossing from indexes into display names, and
+	 * the only one it needs: no reader ever displays the split, so it stays
+	 * positional through the whole fold and eight names are spelled here, for
+	 * the one selected server, rather than for every server of every stored row.
+	 *
+	 * @param array<array-key,mixed> $row    A merged URL row carrying its split.
+	 * @param string                 $server Reporting server; '' scopes to none.
+	 * @return array<array-key,mixed>|null
+	 */
+	public static function swap_url_server_sums( array $row, string $server ): ?array {
+		$split = Core::arr( $row[ self::URL_SRV_FIELD ] ?? null );
+		unset( $row[ self::URL_SRV_FIELD ] );
+		if ( '' === $server ) {
+			return $row;
+		}
+		// `is_array`: a non-array leaves the swap empty and widens the row.
+		if ( ! \is_array( $split[ $server ] ?? null ) ) {
+			return null;
+		}
+		$sums = Core::arr( $split[ $server ] );
+		foreach ( self::URL_SRV_SUMS as $index => $is_count ) {
+			$row[ self::ROW_FIELD_NAMES[ $index ] ] = $is_count
+				? Core::num_int( $sums[ $index ] ?? null )
+				: Core::num_float( $sums[ $index ] ?? null );
+		}
+		return $row;
+	}
+
+	/**
 	 * The fine buckets one hour covers, oldest first.
 	 *
 	 * @param string $hour A `Y-m-d-H` hour key.
@@ -1298,10 +1396,10 @@ class Stats_Store {
 			return $row;
 		}
 		\sort( $samples );
-		$n             = \count( $samples );
-		$row['p50_ms'] = $samples[ (int) ( $n * 0.50 ) ] ?? 0;
-		$row['p95_ms'] = $samples[ (int) ( $n * 0.95 ) ] ?? 0;
-		$row['p99_ms'] = $samples[ (int) ( $n * 0.99 ) ] ?? 0;
+		$n                       = \count( $samples );
+		$row[ self::ROW_P50_MS ] = $samples[ (int) ( $n * 0.50 ) ] ?? 0;
+		$row[ self::ROW_P95_MS ] = $samples[ (int) ( $n * 0.95 ) ] ?? 0;
+		$row[ self::ROW_P99_MS ] = $samples[ (int) ( $n * 0.99 ) ] ?? 0;
 		return $row;
 	}
 

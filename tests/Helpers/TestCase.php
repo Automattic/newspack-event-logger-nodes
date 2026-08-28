@@ -37,6 +37,12 @@ abstract class TestCase extends RuntimeTestCase {
 				);
 			}
 		}
+		// Named on the way out: a test asserting on a row should read
+		// `['count']`. The stored SHAPE is pinned by the one test that reads a
+		// shard raw, not by every test that happens to touch a row.
+		foreach ( $out as $bucket => $rows ) {
+			$out[ $bucket ] = self::named_url_rows( $rows );
+		}
 		return $out;
 	}
 
@@ -160,6 +166,94 @@ abstract class TestCase extends RuntimeTestCase {
 		return \Newspack_Nodes\Cache_Backend::site_key( $logical );
 	}
 	/**
+	 * The inverse of `positional_url_row()`, for assertions.
+	 *
+	 * The read helpers below map through it, so a test asserting on a stored
+	 * row reads `['count']` rather than counting indexes. The SHAPE is pinned
+	 * separately, by the one test that reads a shard raw.
+	 *
+	 * @param array<array-key,mixed> $row Stored positional row.
+	 * @return array<string,mixed>
+	 */
+	protected static function named_url_row( array $row ): array {
+		$names = \Newspack_Event_Logger_Nodes\Stats_Store::ROW_FIELD_NAMES;
+		$out   = [];
+		foreach ( $row as $index => $value ) {
+			$name = \is_int( $index ) ? ( $names[ $index ] ?? $index ) : $index;
+			$out[ $name ] = \Newspack_Event_Logger_Nodes\Stats_Store::URL_SRV_FIELD === $name
+				? \array_map( [ self::class, 'named_url_row' ], \Newspack_Nodes\Core::arr( $value ) )
+				: $value;
+		}
+		return $out;
+	}
+
+	/**
+	 * A map of stored rows, named for assertions. See `named_url_row()`.
+	 *
+	 * @param array<array-key,mixed> $rows Stored rows by hash.
+	 * @return array<array-key,array<string,mixed>>
+	 */
+	protected static function named_url_rows( array $rows ): array {
+		return \array_map(
+			static fn ( $row ): array => self::named_url_row( \Newspack_Nodes\Core::arr( $row ) ),
+			$rows
+		);
+	}
+
+	/**
+	 * Seed one shard of a bucket from NAMED rows.
+	 *
+	 * @param \Newspack_Event_Logger_Nodes\Stats_Store $store  Destination.
+	 * @param string                                   $bucket Bucket key.
+	 * @param string                                   $shard  Shard name.
+	 * @param array<array-key,mixed>                   $rows   Named rows by hash.
+	 */
+	protected function seed_url_shard( \Newspack_Event_Logger_Nodes\Stats_Store $store, string $bucket, string $shard, array $rows ): bool {
+		return $store->set_url_shard( $bucket, $shard, \array_map( [ self::class, 'positional_url_row' ], $rows ) );
+	}
+
+	/**
+	 * Seed one shard of a coarse hour from NAMED rows.
+	 *
+	 * @param \Newspack_Event_Logger_Nodes\Stats_Store $store Destination.
+	 * @param string                                   $hour  Hour key.
+	 * @param string                                   $shard Shard name.
+	 * @param array<array-key,mixed>                   $rows  Named rows by hash.
+	 */
+	protected function seed_url_hour( \Newspack_Event_Logger_Nodes\Stats_Store $store, string $hour, string $shard, array $rows ): bool {
+		return $store->set_url_hour( $hour, $shard, \array_map( [ self::class, 'positional_url_row' ], $rows ) );
+	}
+
+	/**
+	 * A stored URL row from a NAMED one, so a test can say what it means.
+	 *
+	 * Storage is positional (`Stats_Store::ROW_*`) because `serialize()` writes
+	 * every key name into every row; a test seeding one should not have to
+	 * count indexes to stay readable. Reverses `ROW_FIELD_NAMES`, so it cannot
+	 * drift from the shape it seeds. A row already positional passes through.
+	 *
+	 * @param array<array-key,mixed> $row Named row, or an already-stored one.
+	 * @return array<int,mixed>
+	 */
+	protected static function positional_url_row( array $row ): array {
+		$index = \array_flip( \Newspack_Event_Logger_Nodes\Stats_Store::ROW_FIELD_NAMES );
+		$out   = [];
+		foreach ( $row as $field => $value ) {
+			if ( \is_int( $field ) ) {
+				$out[ $field ] = $value;
+				continue;
+			}
+			if ( ! isset( $index[ $field ] ) ) {
+				throw new \RuntimeException( "no such URL row field: {$field}" );
+			}
+			$out[ $index[ $field ] ] = \Newspack_Event_Logger_Nodes\Stats_Store::URL_SRV_FIELD === $field
+				? \array_map( [ self::class, 'positional_url_row' ], \Newspack_Nodes\Core::arr( $value ) )
+				: $value;
+		}
+		return $out;
+	}
+
+	/**
 	 * Seed a whole URL bucket, routing each row to the shard its hash names.
 	 *
 	 * A test convenience: production writes one shard at a time, which is the
@@ -172,6 +266,7 @@ abstract class TestCase extends RuntimeTestCase {
 	 * @return bool True when every shard's set landed.
 	 */
 	protected function set_url_bucket( \Newspack_Event_Logger_Nodes\Stats_Store $store, string $bucket, array $data ): bool {
+		$data     = \array_map( [ self::class, 'positional_url_row' ], $data );
 		$by_shard = \Newspack_Event_Logger_Nodes\Stats_Store::rows_by_shard( $data );
 		$ok       = true;
 		foreach ( \Newspack_Event_Logger_Nodes\Stats_Store::url_shards() as $shard ) {

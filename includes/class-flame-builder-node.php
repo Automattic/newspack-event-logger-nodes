@@ -655,13 +655,20 @@ class Flame_Builder_Node extends Node {
 		// from a checkpoint this process did not write, and everything below
 		// indexes it unguarded — `count( null )` is fatal, not a warning.
 		$row = Core::arr( $acc['url_stats'][ $url_hash ] ?? null );
-		if ( ! isset( $row['durations'] ) ) {
-			$acc['url_stats'][ $url_hash ] = \array_merge(
+		if ( ! isset( $row[ Stats_Store::ROW_DURATIONS ] ) ) {
+			// @longform array_replace, NOT array_merge: the row is positional,
+			// and merge RENUMBERS integer keys rather than overwriting them.
+			$acc['url_stats'][ $url_hash ] = \array_replace(
 				self::empty_url_row( $url, PHP_INT_MAX ),
 				$row
 			);
 		}
-		/** @var array{url: string, count: int, timed_count: int, sum_ms: float|int, min_ms: float|int, max_ms: float|int, last_seen: int, durations: array<int,float|int>, count_2xx: int, count_3xx: int, count_4xx: int, count_5xx: int, sum_peak_mb: float|int, max_peak_mb: float|int, worker: bool, srv: array<string,array<string,float|int>>} $us */
+		/**
+		 * Positional; see `Stats_Store::ROW_*`, which orders the summed eight
+		 * first so one field map serves the row and its split alike.
+		 *
+		 * @var array{0: int, 1: int, 2: float|int, 3: float|int, 4: int, 5: int, 6: int, 7: int, 8: string, 9: float|int, 10: float|int, 11: float|int, 12: int, 13: bool, 14: array<int,float|int>, 15: array<string,array<int,float|int>>} $us
+		 */
 		$us              = &$acc['url_stats'][ $url_hash ];
 		$peak_raw        = $request['peak_mb'] ?? 0;
 		$peak_mb         = \max( 0.0, Core::num_float( $peak_raw ) );
@@ -672,14 +679,14 @@ class Flame_Builder_Node extends Node {
 		// increment blocks would drift the moment a field is added — the keys
 		// here are `Stats_Store::URL_SRV_SUMS`, and a test holds them to it.
 		$sums = [
-			'count'       => 1,
+			Stats_Store::ROW_COUNT       => 1,
 			// Per-URL: workers keep timing on their own row.
-			'timed_count' => $record_timing ? 1 : 0,
-			'sum_ms'      => $record_timing ? $duration_ms : 0,
-			'sum_peak_mb' => $peak_mb,
+			Stats_Store::ROW_TIMED_COUNT => $record_timing ? 1 : 0,
+			Stats_Store::ROW_SUM_MS      => $record_timing ? $duration_ms : 0,
+			Stats_Store::ROW_SUM_PEAK_MB => $peak_mb,
 		];
 		if ( null !== $status_category ) {
-			$sums[ "count_{$status_category}xx" ] = 1;
+			$sums[ Stats_Store::ROW_STATUS_COUNTS[ $status_category ] ] = 1;
 		}
 		foreach ( $sums as $field => $value ) {
 			$us[ $field ] += $value;
@@ -691,31 +698,31 @@ class Flame_Builder_Node extends Node {
 		// that dimension keys it, or the picker offers a name this cannot
 		// answer to. By reference: by value copies the hashtable per request.
 		$split_key = '' === $server_name ? self::UNKNOWN_VALUE : $server_name;
-		$us[ Stats_Store::URL_SRV_FIELD ][ $split_key ] ??= [];
-		$split = &$us[ Stats_Store::URL_SRV_FIELD ][ $split_key ];
+		$us[ Stats_Store::ROW_SRV ][ $split_key ] ??= [];
+		$split = &$us[ Stats_Store::ROW_SRV ][ $split_key ];
 		foreach ( $sums as $field => $value ) {
 			$split[ $field ] = ( $split[ $field ] ?? 0 ) + $value;
 		}
 		unset( $split );
 
-		$us['last_seen'] = \max( $us['last_seen'], $timestamp );
+		$us[ Stats_Store::ROW_LAST_SEEN ] = \max( $us[ Stats_Store::ROW_LAST_SEEN ], $timestamp );
 		// Recorded, not read out of the URL text — that guess emptied a table.
-		$us['worker']    = $us['worker'] || ! $count_global;
+		$us[ Stats_Store::ROW_WORKER ]    = $us[ Stats_Store::ROW_WORKER ] || ! $count_global;
 		// Raw durations feed the percentiles; past the cap, Algorithm R.
 		if ( $record_timing ) {
 			$max_dur      = Stats_Store::MAX_DURATIONS_PER_BUCKET;
-			$us['max_ms'] = \max( $us['max_ms'], $duration_ms );
-			$us['min_ms'] = \min( $us['min_ms'], $duration_ms );
-			if ( \count( $us['durations'] ) < $max_dur ) {
-				$us['durations'][] = $duration_ms;
+			$us[ Stats_Store::ROW_MAX_MS ] = \max( $us[ Stats_Store::ROW_MAX_MS ], $duration_ms );
+			$us[ Stats_Store::ROW_MIN_MS ] = \min( $us[ Stats_Store::ROW_MIN_MS ], $duration_ms );
+			if ( \count( $us[ Stats_Store::ROW_DURATIONS ] ) < $max_dur ) {
+				$us[ Stats_Store::ROW_DURATIONS ][] = $duration_ms;
 			} else {
-				$idx = \random_int( 0, \max( 1, $us['timed_count'] ) - 1 );
+				$idx = \random_int( 0, \max( 1, $us[ Stats_Store::ROW_TIMED_COUNT ] ) - 1 );
 				if ( $idx < $max_dur ) {
-					$us['durations'][ $idx ] = $duration_ms;
+					$us[ Stats_Store::ROW_DURATIONS ][ $idx ] = $duration_ms;
 				}
 			}
 		}
-		$us['max_peak_mb'] = \max( $us['max_peak_mb'], $peak_mb );
+		$us[ Stats_Store::ROW_MAX_PEAK_MB ] = \max( $us[ Stats_Store::ROW_MAX_PEAK_MB ], $peak_mb );
 		unset( $us );
 	}
 
@@ -1345,9 +1352,13 @@ class Flame_Builder_Node extends Node {
 				// An all-digit hash arrives as an int array key; cast back.
 				$hash  = (string) $key;
 				$stats = Core::arr( $stats_raw );
+				// A row with no ROW_COUNT is legacy; see persist_url_shard().
+				if ( ! isset( $stats[ Stats_Store::ROW_COUNT ] ) ) {
+					continue;
+				}
 				$into  = Core::arr( $rows[ $hash ] ?? null )
-					?: self::empty_url_row( Core::str( $stats['url'] ?? '' ) );
-				unset( $into['durations'] );
+					?: self::empty_url_row( Core::str( $stats[ Stats_Store::ROW_URL ] ?? '' ) );
+				unset( $into[ Stats_Store::ROW_DURATIONS ] );
 				$rows[ $hash ]       = Stats_Store::merge_url_row( $into, $stats );
 				$reservoirs[ $hash ] = \array_merge(
 					Core::arr( $reservoirs[ $hash ] ?? null ),
@@ -1393,27 +1404,33 @@ class Flame_Builder_Node extends Node {
 	 * @param array<array-key,mixed> $rows        That shard's accumulated rows.
 	 */
 	private function persist_url_shard( Stats_Store $stats_store, string $bucket, string $shard, array $rows ): void {
-		/** @var array<string,array<string,mixed>> $existing_urls */
-		$existing_urls = $stats_store->get_url_shard( $bucket, $shard );
+		// @longform A legacy NAMED row cannot merge, and the documented upgrade
+		// rotates the salt so none is ever met. A SKIPPED rotation degrades
+		// here instead — and the test belongs to the BLOB, not the row: this
+		// shard is written back whole, so one the flush never touches would
+		// ride the read-modify-write back out as a url-less, count-less ghost.
+		/** @var array<array-key,array<array-key,mixed>> $existing_urls */
+		$existing_urls = \array_filter(
+			$stats_store->get_url_shard( $bucket, $shard ),
+			static fn ( $row ): bool => isset( Core::arr( $row )[ Stats_Store::ROW_COUNT ] )
+		);
 		// Beside the rows, never inside them: no reader wants the reservoir.
 		$reservoirs = $stats_store->get_url_durations( $bucket, $shard );
 
 		foreach ( $rows as $hash => $stats_raw ) {
 			$stats = Core::arr( $stats_raw );
 			$row   = Core::arr( $existing_urls[ $hash ] ?? null )
-				?: self::empty_url_row( Core::str( $stats['url'] ?? '' ) );
+				?: self::empty_url_row( Core::str( $stats[ Stats_Store::ROW_URL ] ?? '' ) );
 
-			// @longform Three parallel sources: what the shard's reservoir
-			// holds, what a row written before the reservoir moved out still
-			// carries, and this flush's own samples. Folding the second and
-			// dropping the field IS the migration — an untouched shard ages
-			// out on its own TTL.
+			// @longform Two sources: what the shard's reservoir holds, and this
+			// flush's own samples. A STORED row never carries them — persist
+			// unsets the field and the fold never adds it — so the
+			// accumulator's copy arrives in `$stats` and nowhere else.
 			$merged = \array_merge(
 				Core::arr( $reservoirs[ $hash ] ?? null ),
-				Core::arr( $row['durations'] ?? null ),
-				Core::arr( $stats['durations'] ?? null )
+				Core::arr( $stats[ Stats_Store::ROW_DURATIONS ] ?? null )
 			);
-			unset( $row['durations'] );
+			unset( $row[ Stats_Store::ROW_DURATIONS ] );
 			if ( \count( $merged ) > Stats_Store::MAX_DURATIONS_PER_BUCKET ) {
 				\shuffle( $merged );
 				$merged = \array_slice( $merged, 0, Stats_Store::MAX_DURATIONS_PER_BUCKET );
@@ -1482,12 +1499,12 @@ class Flame_Builder_Node extends Node {
 		if ( \count( $rows ) > $keep ) {
 			\uasort(
 				$rows,
-				static fn ( $a, $b ) => Core::num_int( Core::arr( $b )['count'] ?? null )
-					<=> Core::num_int( Core::arr( $a )['count'] ?? null )
+				static fn ( $a, $b ) => Core::num_int( Core::arr( $b )[ Stats_Store::ROW_COUNT ] ?? null )
+					<=> Core::num_int( Core::arr( $a )[ Stats_Store::ROW_COUNT ] ?? null )
 			);
 			foreach ( \array_slice( $rows, $keep, null, true ) as $row ) {
 				$row           = Core::arr( $row );
-				$key           = Stats_Store::other_key( ! empty( $row['worker'] ) );
+				$key           = Stats_Store::other_key( ! empty( $row[ Stats_Store::ROW_WORKER ] ) );
 				$other[ $key ] = Stats_Store::fold_url_rows( $other[ $key ], $row );
 			}
 			$rows = \array_slice( $rows, 0, $keep, true );
@@ -1505,8 +1522,8 @@ class Flame_Builder_Node extends Node {
 		// `UseCanonicalName Off` makes the client's Host header.
 		foreach ( $rows as $key => $row_raw ) {
 			$row = Core::arr( $row_raw );
-			$row[ Stats_Store::URL_SRV_FIELD ] = self::cap_servers(
-				Core::arr( $row[ Stats_Store::URL_SRV_FIELD ] ?? null )
+			$row[ Stats_Store::ROW_SRV ] = self::cap_servers(
+				Core::arr( $row[ Stats_Store::ROW_SRV ] ?? null )
 			);
 			$rows[ $key ] = $row;
 		}
@@ -1658,14 +1675,14 @@ class Flame_Builder_Node extends Node {
 
 	/**
 	 * Cap a URL row's per-server split: ranked by request count, no reserved row.
-	 * Its own wrapper because the split carries the ROW's field names rather than
+	 * Its own wrapper because the split carries the ROW's field INDEXES rather than
 	 * the dimensional ones, and one ceiling covers every home of the server axis.
 	 *
 	 * @param array<array-key,mixed> $split One row's `srv` map.
 	 * @return array<array-key,mixed>
 	 */
 	private static function cap_servers( array $split ): array {
-		return self::cap_bucket( $split, Stats_Store::MAX_SERVER_VALUES, 'count', Stats_Store::URL_SRV_SUMS );
+		return self::cap_bucket( $split, Stats_Store::MAX_SERVER_VALUES, Stats_Store::ROW_COUNT, Stats_Store::URL_SRV_SUMS );
 	}
 
 	/**
@@ -1692,12 +1709,12 @@ class Flame_Builder_Node extends Node {
 	 *
 	 * @param array<array-key,mixed> $values     One bucket's values.
 	 * @param int                    $max_values Ceiling on distinct values, synthetic slots included.
-	 * @param string                 $sort_field Field ranking survivors, descending.
-	 * @param array<string,bool>     $fields     Field name => is a whole count.
+	 * @param string|int             $sort_field Field ranking survivors, descending.
+	 * @param array<array-key,bool>  $fields     Field key => is a whole count.
 	 * @param string|null            $reserved   Row held out of the ranking and restored after.
 	 * @return array<array-key,mixed>
 	 */
-	private static function cap_bucket( array $values, int $max_values, string $sort_field, array $fields, ?string $reserved = null ): array {
+	private static function cap_bucket( array $values, int $max_values, string|int $sort_field, array $fields, ?string $reserved = null ): array {
 		if ( \count( $values ) <= $max_values ) {
 			return $values;
 		}
@@ -2409,27 +2426,27 @@ class Flame_Builder_Node extends Node {
 	 *
 	 * @param string    $url    The row's URL.
 	 * @param float|int $min_ms Starting minimum; `PHP_INT_MAX` where `min()` folds it.
-	 * @return array<string,mixed>
+	 * @return array<int,mixed>
 	 */
 	private static function empty_url_row( string $url, float|int $min_ms = 0 ): array {
 		return [
-			'url'         => $url,
-			'count'       => 0,
-			'timed_count' => 0,
-			'sum_ms'      => 0,
-			'min_ms'      => $min_ms,
-			'max_ms'      => 0,
-			'last_seen'   => 0,
+			Stats_Store::ROW_COUNT       => 0,
+			Stats_Store::ROW_TIMED_COUNT => 0,
+			Stats_Store::ROW_SUM_MS      => 0,
+			Stats_Store::ROW_SUM_PEAK_MB => 0,
+			Stats_Store::ROW_COUNT_2XX   => 0,
+			Stats_Store::ROW_COUNT_3XX   => 0,
+			Stats_Store::ROW_COUNT_4XX   => 0,
+			Stats_Store::ROW_COUNT_5XX   => 0,
+			Stats_Store::ROW_URL         => $url,
+			Stats_Store::ROW_MIN_MS      => $min_ms,
+			Stats_Store::ROW_MAX_MS      => 0,
+			Stats_Store::ROW_MAX_PEAK_MB => 0,
+			Stats_Store::ROW_LAST_SEEN   => 0,
+			Stats_Store::ROW_WORKER      => false,
 			// In-flight buffer; persist moves it to its own key, then drops it.
-			'durations'   => [],
-			'count_2xx'   => 0,
-			'count_3xx'   => 0,
-			'count_4xx'   => 0,
-			'count_5xx'   => 0,
-			'sum_peak_mb' => 0,
-			'max_peak_mb' => 0,
-			'worker'      => false,
-			Stats_Store::URL_SRV_FIELD => [],
+			Stats_Store::ROW_DURATIONS   => [],
+			Stats_Store::ROW_SRV         => [],
 		];
 	}
 

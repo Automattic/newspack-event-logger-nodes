@@ -737,7 +737,7 @@ class FlameBuilderTest extends TestCase {
 		// Straight into the shard: an overflow key is not hex, so routing it
 		// through the bucket writer would file it under shard '0' instead of
 		// the shard whose own tail produced it.
-		$store->set_url_shard( $bucket, 'a', $seed );
+		$this->seed_url_shard( $store, $bucket, 'a', $seed );
 
 		$url = '';
 		for ( $i = 0; '' === $url; $i++ ) {
@@ -783,7 +783,7 @@ class FlameBuilderTest extends TestCase {
 		$this->fill_request( $fb, $this->completed_request( [ 'url' => $url, 'duration_ms' => 2.0, 'timestamp' => $now ] ) );
 		$fb->flush();
 
-		$shard = $store->get_url_shard( $bucket, 'a' );
+		$shard = self::named_url_rows( $store->get_url_shard( $bucket, 'a' ) );
 
 		$this->assertTrue( $shard[ Stats_Store::other_key( true ) ]['worker'] );
 		$this->assertFalse( $shard[ Stats_Store::other_key( false ) ]['worker'] );
@@ -841,12 +841,60 @@ class FlameBuilderTest extends TestCase {
 		$fb->flush();
 
 		$hash = Log_Manager::url_hash( '/shared' );
-		$row  = $store->get_url_shard( Stats_Store::bucket_key( $now ), Stats_Store::url_shard( $hash ) )[ $hash ];
+		$row  = self::named_url_rows( $store->get_url_shard( Stats_Store::bucket_key( $now ), Stats_Store::url_shard( $hash ) ) )[ $hash ];
 		$srv  = $row[ Stats_Store::URL_SRV_FIELD ];
 
 		$this->assertArrayNotHasKey( Stats_Store::OTHER_KEY, $srv );
 		$this->assertCount( 40, $srv );
 		$this->assertSame( 1, $srv['edge39.example']['count'] );
+	}
+
+	/**
+	 * The per-server cap keeps the BUSIEST servers, not the first ones seen.
+	 * `cap_bucket()` ranks on a field of each entry, and the split's fields are
+	 * indexes now — ranking it by the old NAME finds nothing on every entry, so
+	 * every comparison ties and the sort silently becomes insertion order. It
+	 * only bites past `MAX_SERVER_VALUES`, which is exactly the Host-header
+	 * spray the cap exists for.
+	 */
+	public function test_the_server_cap_keeps_the_busiest_not_the_first_seen(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+
+		$now = \time();
+		$url = '/spray-4471';
+		// The quiet ones arrive FIRST, so insertion order would keep them.
+		for ( $i = 0; $i < Stats_Store::MAX_SERVER_VALUES + 20; $i++ ) {
+			$this->fill_request( $fb, $this->completed_request( [
+				'url'         => $url,
+				'server_name' => \sprintf( 'quiet-%03d.example', $i ),
+				'duration_ms' => 3.0,
+				'timestamp'   => $now,
+			] ) );
+		}
+		// One loud host, arriving last, with traffic nothing else comes near.
+		for ( $i = 0; $i < 50; $i++ ) {
+			$this->fill_request( $fb, $this->completed_request( [
+				'url'         => $url,
+				'server_name' => 'loud-8823.example',
+				'duration_ms' => 3.0,
+				'timestamp'   => $now,
+			] ) );
+		}
+		$fb->flush();
+
+		$hash = Log_Manager::url_hash( $url );
+		$row  = self::named_url_rows(
+			$store->get_url_shard( Stats_Store::bucket_key( $now ), Stats_Store::url_shard( $hash ) )
+		)[ $hash ];
+
+		$this->assertArrayHasKey(
+			'loud-8823.example',
+			$row[ Stats_Store::URL_SRV_FIELD ],
+			'the busiest server survives the cap'
+		);
 	}
 
 	public function test_a_host_header_spray_folds_instead_of_growing_the_axis(): void {
@@ -877,7 +925,7 @@ class FlameBuilderTest extends TestCase {
 		$bucket  = Stats_Store::bucket_key( $now );
 		$servers = $store->get_dimensional_bucket( 'server', $bucket );
 		$hash    = Log_Manager::url_hash( '/xmlrpc.php' );
-		$row     = $store->get_url_shard( $bucket, Stats_Store::url_shard( $hash ) )[ $hash ];
+		$row     = self::named_url_rows( $store->get_url_shard( $bucket, Stats_Store::url_shard( $hash ) ) )[ $hash ];
 		$srv     = $row[ Stats_Store::URL_SRV_FIELD ];
 
 		$this->assertLessThanOrEqual( Stats_Store::MAX_SERVER_VALUES, \count( $servers ) );
@@ -1024,7 +1072,7 @@ class FlameBuilderTest extends TestCase {
 		$this->fill_request( $fb, $this->completed_request( [ 'url' => $url, 'server_name' => 'alpha.example', 'duration_ms' => 2.0, 'timestamp' => $now ] ) );
 		$fb->flush();
 
-		$shard = $store->get_url_shard( $bucket, 'a' );
+		$shard = self::named_url_rows( $store->get_url_shard( $bucket, 'a' ) );
 		$other = $shard[ Stats_Store::OTHER_KEY ] ?? null;
 
 		$this->assertNotNull( $other, 'the tail folds into one row' );
@@ -1971,6 +2019,73 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	/**
+	 * A pre-0.65 NAMED row is not a row this writer can merge into, and the
+	 * documented procedure rotates the salt so it is never met. If that step is
+	 * skipped it must degrade the same way — discarded, not half-merged.
+	 *
+	 * Half-merged is silent and lasts a whole retention window: the named row
+	 * survives the `?:`, the accumulator sums into indexes it does not have, its
+	 * own counts vanish, its string keys ride into the stored row, and its
+	 * `durations` — up to a hundred floats — go back onto the read path 0.64.0
+	 * took them off.
+	 */
+	public function test_a_legacy_named_row_is_discarded_not_merged_into(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$now        = \time();
+		$bucket     = Stats_Store::bucket_key( $now );
+		$url        = '/pangolin-6142';
+		$hash       = Log_Manager::url_hash( $url );
+
+		// A second legacy row in the SAME shard that this flush never touches:
+		// the blob is written back whole, so it rides the read-modify-write out
+		// unless the legacy test is applied at the READ.
+		$untouched = \str_pad( \dechex( \hexdec( $hash[0] ) ), 13, '7' );
+
+		// What 0.64.0 wrote, verbatim: names, and a reservoir inside the row.
+		$store->set_url_shard( $bucket, Stats_Store::url_shard( $hash ), [
+			$hash      => [
+				'url'         => $url,
+				'count'       => 91,
+				'timed_count' => 91,
+				'sum_ms'      => 6142.0,
+				'durations'   => [ 61.0, 142.0 ],
+			],
+			$untouched => [
+				'url'         => '/pangolin-untouched',
+				'count'       => 23,
+				'timed_count' => 23,
+				'sum_ms'      => 1871.0,
+			],
+		] );
+
+		$fb = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+		$this->fill_request( $fb, $this->completed_request( [
+			'url'         => $url,
+			'duration_ms' => 447.0,
+			'timestamp'   => $now,
+		] ) );
+		$fb->flush();
+
+		$rows = $this->url_bucket_rows( $store, $bucket );
+		$this->assertSame( 1, $rows[ $hash ]['count'], 'the legacy counts go, they do not half-merge' );
+		$this->assertArrayNotHasKey(
+			$untouched,
+			$rows,
+			'and one the flush never touched does not ride the read-modify-write back out'
+		);
+		$this->assertArrayNotHasKey( 'durations', $rows[ $hash ] );
+		$raw  = $store->get_url_shard( $bucket, Stats_Store::url_shard( $hash ) );
+		$keys = \array_keys( $raw[ $hash ] );
+		$this->assertSame(
+			$keys,
+			\array_filter( $keys, '\is_int' ),
+			'and what is stored is positional, with no legacy string keys riding along'
+		);
+	}
+
+	/**
 	 * And moving it must not cost what it is FOR: two flushes into one bucket
 	 * have to see each other's samples, or the percentile describes the last
 	 * flush rather than the bucket.
@@ -2011,10 +2126,10 @@ class FlameBuilderTest extends TestCase {
 		$shard      = Stats_Store::url_shard( $hash );
 		$now        = \gmmktime( 15, 7, 0, 8, 27, 2026 );
 		// Two fine buckets of the hour that has just closed.
-		$store->set_url_shard( '2026-08-27-13-05', $shard, [
+		$this->seed_url_shard( $store, '2026-08-27-13-05', $shard, [
 			$hash => [ 'url' => '/wombat-4471', 'count' => 4, 'timed_count' => 4, 'sum_ms' => 40.0, 'max_ms' => 15.0, 'last_seen' => $now - 7200 ],
 		] );
-		$store->set_url_shard( '2026-08-27-13-40', $shard, [
+		$this->seed_url_shard( $store, '2026-08-27-13-40', $shard, [
 			$hash => [ 'url' => '/wombat-4471', 'count' => 6, 'timed_count' => 6, 'sum_ms' => 90.0, 'max_ms' => 22.0, 'last_seen' => $now - 5400 ],
 		] );
 
@@ -2022,7 +2137,7 @@ class FlameBuilderTest extends TestCase {
 		$fb->set_stats_store( $store );
 		$fb->roll_up_hours( $now );
 
-		$rolled = $store->url_hour_sources( [ '2026-08-27-13' ], $shard )[0][1];
+		$rolled = self::named_url_rows( $store->url_hour_sources( [ '2026-08-27-13' ], $shard )[0][1] );
 		$this->assertSame( 10, $rolled[ $hash ]['count'], 'the hour sums its buckets' );
 		$this->assertSame( 130.0, (float) $rolled[ $hash ]['sum_ms'] );
 		$this->assertSame( 22.0, (float) $rolled[ $hash ]['max_ms'], 'an extreme is a max, not a sum' );
@@ -2043,13 +2158,13 @@ class FlameBuilderTest extends TestCase {
 		$hash       = Log_Manager::url_hash( '/wombat-4471' );
 		$shard      = Stats_Store::url_shard( $hash );
 		$now        = \gmmktime( 15, 7, 0, 8, 27, 2026 );
-		$store->set_url_shard( '2026-08-27-13-05', $shard, [
+		$this->seed_url_shard( $store, '2026-08-27-13-05', $shard, [
 			$hash => [
 				'url' => '/wombat-4471', 'count' => 4, 'timed_count' => 4, 'sum_ms' => 40.0,
 				Stats_Store::URL_SRV_FIELD => [ 'web-4471' => [ 'count' => 4, 'timed_count' => 4, 'sum_ms' => 40.0 ] ],
 			],
 		] );
-		$store->set_url_shard( '2026-08-27-13-40', $shard, [
+		$this->seed_url_shard( $store, '2026-08-27-13-40', $shard, [
 			$hash => [
 				'url' => '/wombat-4471', 'count' => 6, 'timed_count' => 6, 'sum_ms' => 90.0,
 				Stats_Store::URL_SRV_FIELD => [ 'web-8823' => [ 'count' => 6, 'timed_count' => 6, 'sum_ms' => 90.0 ] ],
@@ -2060,11 +2175,48 @@ class FlameBuilderTest extends TestCase {
 		$fb->set_stats_store( $store );
 		$fb->roll_up_hours( $now );
 
-		$hour  = $store->url_hour_sources( [ '2026-08-27-13' ], $shard )[0][1];
+		$hour  = self::named_url_rows( $store->url_hour_sources( [ '2026-08-27-13' ], $shard )[0][1] );
 		$split = $hour[ $hash ][ Stats_Store::URL_SRV_FIELD ];
 		$this->assertSame( [ 'web-4471', 'web-8823' ], \array_keys( $split ) );
 		$this->assertSame( 4, $split['web-4471']['count'] );
 		$this->assertSame( 6, $split['web-8823']['count'] );
+	}
+
+	/**
+	 * The coarse tier needs decision 5's legacy guard too, and worse: a folded
+	 * hour's twelve fine buckets are deliberately never read again, so a ghost
+	 * written here is what the dashboard shows for the whole hour and outlives
+	 * its own source — the buckets age out on their TTL while the hour key
+	 * stands for the full window.
+	 */
+	public function test_a_legacy_named_row_is_not_folded_into_an_hour(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$legacy     = Log_Manager::url_hash( '/pangolin-6142' );
+		$live       = Log_Manager::url_hash( '/wombat-4471' );
+		$shard      = Stats_Store::url_shard( $live );
+		$now        = \gmmktime( 15, 7, 0, 8, 27, 2026 );
+
+		// A live positional row beside a pre-0.65 NAMED one, same shard.
+		$this->seed_url_shard( $store, '2026-08-27-13-05', $shard, [
+			$live => [ 'url' => '/wombat-4471', 'count' => 7, 'timed_count' => 7, 'sum_ms' => 91.0 ],
+		] );
+		$raw = $store->get_url_shard( '2026-08-27-13-05', $shard );
+		$raw[ $legacy ] = [
+			'url'         => '/pangolin-6142',
+			'count'       => 23,
+			'timed_count' => 23,
+			'sum_ms'      => 1871.0,
+		];
+		$store->set_url_shard( '2026-08-27-13-05', $shard, $raw );
+
+		$fb = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+		$fb->roll_up_hours( $now );
+
+		$hour = self::named_url_rows( $store->url_hour_sources( [ '2026-08-27-13' ], $shard )[0][1] );
+		$this->assertSame( 7, $hour[ $live ]['count'] ?? -1, 'the live row folds' );
+		$this->assertArrayNotHasKey( $legacy, $hour, 'and the legacy row is not folded into a ghost' );
 	}
 
 	/**
@@ -2089,14 +2241,14 @@ class FlameBuilderTest extends TestCase {
 				];
 				$total += 3;
 			}
-			$store->set_url_shard( $bucket, 'a', $rows );
+			$this->seed_url_shard( $store, $bucket, 'a', $rows );
 		}
 
 		$fb = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
 		$fb->roll_up_hours( $now );
 
-		$hour = $store->url_hour_sources( [ '2026-08-27-13' ], 'a' )[0][1];
+		$hour = self::named_url_rows( $store->url_hour_sources( [ '2026-08-27-13' ], 'a' )[0][1] );
 		$this->assertLessThanOrEqual( 500, \count( $hour ), 'the hour takes the shard cap' );
 		$this->assertArrayHasKey( Stats_Store::OTHER_KEY, $hour, 'the tail folds rather than dropping' );
 		$this->assertSame(
@@ -2120,7 +2272,7 @@ class FlameBuilderTest extends TestCase {
 		// Every hour already folded, so the probe is all this flush does.
 		foreach ( Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, $now ) )['hours'] as $hour ) {
 			foreach ( Stats_Store::url_shards() as $shard ) {
-				$store->set_url_hour( $hour, $shard, [] );
+				$this->seed_url_hour( $store, $hour, $shard, [] );
 			}
 		}
 		$fb = new Flame_Builder_Node();
@@ -2219,6 +2371,47 @@ class FlameBuilderTest extends TestCase {
 		$fb->roll_up_hours( \gmmktime( 15, 7, 0, 8, 27, 2026 ) );
 
 		$this->assertSame( [], $store->url_hour_sources( [ '2026-08-27-15' ], 'a' ) );
+	}
+
+	/**
+	 * A stored URL row is POSITIONAL — the one test that reads a shard raw, so
+	 * the shape is pinned somewhere even though every other test translates at
+	 * the seed and read helpers. What it costs, and why, is decision 18's and
+	 * the `ROW_*` docblock's; repeating the figure here is a third copy to keep
+	 * true.
+	 */
+	public function test_a_stored_url_row_is_positional(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+
+		$now = \time();
+		$this->fill_request( $fb, $this->completed_request( [
+			'url'         => '/wombat-4471',
+			'duration_ms' => 447.0,
+			'timestamp'   => $now,
+		] ) );
+		$fb->flush();
+
+		$hash = Log_Manager::url_hash( '/wombat-4471' );
+		// RAW, not through the naming read helper: the shape is the assertion.
+		$row  = $store->get_url_shard( Stats_Store::bucket_key( $now ), Stats_Store::url_shard( $hash ) )[ $hash ];
+		$this->assertSame(
+			[],
+			\array_values( \array_filter( \array_keys( $row ), '\is_string' ) ),
+			'no field NAMES in a stored row — that is the whole point'
+		);
+		// And the split it carries takes the same treatment. Read through
+		// ROW_SRV: `URL_SRV_FIELD` is a NAME, which the assertion above proves
+		// a stored row cannot carry, so it would check an empty array.
+		$split = \array_values( Core::arr( $row[ Stats_Store::ROW_SRV ] ?? null ) )[0] ?? [];
+		$this->assertNotSame( [], $split, 'the row HAS a split to check' );
+		$this->assertSame(
+			[],
+			\array_values( \array_filter( \array_keys( Core::arr( $split ) ), '\is_string' ) ),
+			'nor inside the per-server split, which is eight more names per row'
+		);
 	}
 
 	public function test_url_index_computes_percentiles_from_durations(): void {
@@ -3427,7 +3620,7 @@ class FlameBuilderTest extends TestCase {
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		[ $fb, $p ] = $this->mirrored_builder( $store, 'flames-stats' );
 
-		$store->set_url_hour( '2026-02-03-04', 'a', [ 'ab12cd34ef56' => [ 'url' => '/x', 'count' => 91 ] ] );
+		$this->seed_url_hour( $store, '2026-02-03-04', 'a', [ 'ab12cd34ef56' => [ 'url' => '/x', 'count' => 91 ] ] );
 		$fb->save_state();
 		$p->flush();
 
@@ -4075,8 +4268,11 @@ class FlameBuilderTest extends TestCase {
 		$fb->restore_state( [
 			'pending' => [
 				$bucket => [
+					// A checkpoint holds the STORED shape, which is positional.
 					'url_stats' => [
-						$hash => [ 'url' => $url, 'count' => 6, 'timed_count' => 6, 'sum_ms' => 300.0 ],
+						$hash => self::positional_url_row(
+							[ 'url' => $url, 'count' => 6, 'timed_count' => 6, 'sum_ms' => 300.0 ]
+						),
 					],
 				],
 			],
@@ -4088,7 +4284,7 @@ class FlameBuilderTest extends TestCase {
 			'timestamp'   => $now,
 		] ) );
 
-		$rows = $fb->save_state()['pending'][ $bucket ]['url_stats'] ?? [];
+		$rows = self::named_url_rows( $fb->save_state()['pending'][ $bucket ]['url_stats'] ?? [] );
 		$this->assertSame( 7, $rows[ $hash ]['count'] ?? 0 );
 	}
 }

@@ -371,9 +371,9 @@ class Performance_CI_Node extends Service_CI_Node {
 		$total_sum_peak_mb = 0.0;
 		foreach ( $time_series as $row ) {
 			$row_arr            = Core::arr( $row );
-			$total_requests    += Core::as_int( $row_arr['count'] ?? 0 );
-			$total_sum_ms      += Core::as_float( $row_arr['sum_ms'] ?? 0 );
-			$total_sum_peak_mb += Core::as_float( $row_arr['sum_peak_mb'] ?? 0 );
+			$total_requests    += Core::num_int( $row_arr['count'] ?? 0 );
+			$total_sum_ms      += Core::num_float( $row_arr['sum_ms'] ?? 0 );
+			$total_sum_peak_mb += Core::num_float( $row_arr['sum_peak_mb'] ?? 0 );
 		}
 
 		return [
@@ -713,8 +713,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 *
 	 * The bucket key IS the hash `Log_Manager::url_hash()` stamped on the
 	 * record — never derive another, or the row indexes under a hash no rid
-	 * lookup can produce. Flame_Builder writes `sum_ms` directly; older
-	 * aggregator buckets carry `sum_req_time` in seconds, folded in at ×1000.
+	 * lookup can produce.
 	 *
 	 * @param ?string $shard Shard to read, or null for the whole index.
 	 * @return array<int,array<string,mixed>>
@@ -848,47 +847,57 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @return array<string,mixed>
 	 */
 	private static function fold_index_row( array $entry, array $stat_arr, bool $is_recent ): array {
-		// Whichever bucket names the URL wins; merge order varies.
+		// @longform The storage/display boundary for the ROW: stored rows are
+		// POSITIONAL (`Stats_Store::ROW_*`) and this one crosses the wire as
+		// JSON, so it keeps its names. The SPLIT does not cross — every
+		// projection strips it — so it stays positional past here and is named
+		// once per scoped read by `Stats_Store::swap_url_server_sums()`.
 		if ( '' === $entry['url'] ) {
-			$entry['url'] = Core::as_string( $stat_arr['url'] ?? '' );
+			$entry['url'] = Core::as_string( $stat_arr[ Stats_Store::ROW_URL ] ?? '' );
 		}
-		// Both sides coerced: the accumulator arrives from the array as mixed.
-		$row_count             = Core::as_int( $stat_arr['count'] ?? 0 );
-		$entry['count']        = Core::as_int( $entry['count'] ) + $row_count;
+		// @longform Arithmetic reads take the VALIDATED family, per `Core`'s own
+		// rule: a stored row carries a bool at ROW_WORKER, so a shifted index
+		// puts one where a count is read, and `as_int( true )` folds it as 1
+		// while `num_int` takes the default. Under NAMES that needed a writer
+		// to spell `'count' => true`; under indexes any drift does it.
+		$row_count             = Core::num_int( $stat_arr[ Stats_Store::ROW_COUNT ] ?? 0 );
+		$entry['count']        = Core::num_int( $entry['count'] ) + $row_count;
 		// Only timed requests contribute ms; only they divide it.
-		$entry['timed_count']  = Core::as_int( $entry['timed_count'] ) + Core::as_int( $stat_arr['timed_count'] ?? 0 );
-		$entry['recent_count'] = Core::as_int( $entry['recent_count'] ) + ( $is_recent ? $row_count : 0 );
-		foreach ( [ 'count_2xx', 'count_3xx', 'count_4xx', 'count_5xx' ] as $status ) {
-			$entry[ $status ] = Core::as_int( $entry[ $status ] ) + Core::as_int( $stat_arr[ $status ] ?? 0 );
+		$entry['timed_count']  = Core::num_int( $entry['timed_count'] ) + Core::num_int( $stat_arr[ Stats_Store::ROW_TIMED_COUNT ] ?? 0 );
+		$entry['recent_count'] = Core::num_int( $entry['recent_count'] ) + ( $is_recent ? $row_count : 0 );
+		foreach ( Stats_Store::ROW_STATUS_COUNTS as $index ) {
+			$name           = Stats_Store::ROW_FIELD_NAMES[ $index ];
+			$entry[ $name ] = Core::num_int( $entry[ $name ] ) + Core::num_int( $stat_arr[ $index ] ?? 0 );
 		}
-		$entry['sum_ms']       = Core::as_float( $entry['sum_ms'] ) + Core::as_float( $stat_arr['sum_ms'] ?? 0 );
-		$entry['sum_peak_mb']  = Core::as_float( $entry['sum_peak_mb'] ) + Core::as_float( $stat_arr['sum_peak_mb'] ?? 0 );
+		$entry['sum_ms']       = Core::num_float( $entry['sum_ms'] ) + Core::num_float( $stat_arr[ Stats_Store::ROW_SUM_MS ] ?? 0 );
+		$entry['sum_peak_mb']  = Core::num_float( $entry['sum_peak_mb'] ) + Core::num_float( $stat_arr[ Stats_Store::ROW_SUM_PEAK_MB ] ?? 0 );
 		// Fold min_ms only from timed buckets; skip sentinels.
-		if ( isset( $stat_arr['min_ms'] ) && ( $stat_arr['timed_count'] ?? 0 ) > 0 ) {
-			$stat_min        = Core::as_float( $stat_arr['min_ms'] );
+		if ( isset( $stat_arr[ Stats_Store::ROW_MIN_MS ] ) && Core::num_int( $stat_arr[ Stats_Store::ROW_TIMED_COUNT ] ?? 0 ) > 0 ) {
+			$stat_min        = Core::num_float( $stat_arr[ Stats_Store::ROW_MIN_MS ] );
 			$entry['min_ms'] = null === $entry['min_ms']
 				? $stat_min
-				: \min( Core::as_float( $entry['min_ms'] ), $stat_min );
+				: \min( Core::num_float( $entry['min_ms'] ), $stat_min );
 		}
-		$entry['max_ms']      = \max( Core::as_float( $entry['max_ms'] ),      Core::as_float( $stat_arr['max_ms']      ?? 0 ) );
-		$entry['max_peak_mb'] = \max( Core::as_float( $entry['max_peak_mb'] ), Core::as_float( $stat_arr['max_peak_mb'] ?? 0 ) );
+		$entry['max_ms']      = \max( Core::num_float( $entry['max_ms'] ),      Core::num_float( $stat_arr[ Stats_Store::ROW_MAX_MS ]      ?? 0 ) );
+		$entry['max_peak_mb'] = \max( Core::num_float( $entry['max_peak_mb'] ), Core::num_float( $stat_arr[ Stats_Store::ROW_MAX_PEAK_MB ] ?? 0 ) );
 		// @longform Percentiles do not merge, so the fold takes ONE bucket's —
 		// the NEWEST that carries any. Sources arrive newest-first, so this is
 		// first-wins: a last-wins read handed the display the oldest bucket in
 		// the window, freezing a URL's p95 at what it was a day ago.
-		foreach ( [ 'p50_ms', 'p95_ms', 'p99_ms' ] as $k ) {
-			if ( empty( $entry[ $k ] ) && ! empty( $stat_arr[ $k ] ) ) {
-				$entry[ $k ] = Core::as_float( $stat_arr[ $k ] );
+		foreach ( [ Stats_Store::ROW_P50_MS, Stats_Store::ROW_P95_MS, Stats_Store::ROW_P99_MS ] as $index ) {
+			$name = Stats_Store::ROW_FIELD_NAMES[ $index ];
+			if ( empty( $entry[ $name ] ) && ! empty( $stat_arr[ $index ] ) ) {
+				$entry[ $name ] = Core::num_float( $stat_arr[ $index ] );
 			}
 		}
-		$entry['worker']       = ! empty( $entry['worker'] ) || ! empty( $stat_arr['worker'] );
+		$entry['worker']       = ! empty( $entry['worker'] ) || ! empty( $stat_arr[ Stats_Store::ROW_WORKER ] );
 		$entry['last_updated'] = \max(
-			Core::as_int( $entry['last_updated'] ),
-			Core::as_int( $stat_arr['last_seen'] ?? 0 )
+			Core::num_int( $entry['last_updated'] ),
+			Core::num_int( $stat_arr[ Stats_Store::ROW_LAST_SEEN ] ?? 0 )
 		);
 
-		// Recent share is read-time; it rides beside the split.
-		$row_srv = Core::arr( $stat_arr[ Stats_Store::URL_SRV_FIELD ] ?? null );
+		// Positional: the split is named once per scoped read, not here.
+		$row_srv = Core::arr( $stat_arr[ Stats_Store::ROW_SRV ] ?? null );
 		if ( [] !== $row_srv ) {
 			$entry[ Stats_Store::URL_SRV_FIELD ] = Stats_Store::sum_fields(
 				Core::arr( $entry[ Stats_Store::URL_SRV_FIELD ] ),
@@ -899,7 +908,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				$entry[ self::SRV_RECENT_FIELD ] = Stats_Store::sum_fields(
 					Core::arr( $entry[ self::SRV_RECENT_FIELD ] ),
 					$row_srv,
-					[ 'count' => true ]
+					[ Stats_Store::ROW_COUNT => true ]
 				);
 			}
 		}
@@ -1049,8 +1058,8 @@ class Performance_CI_Node extends Service_CI_Node {
 				// first long-running request and drop everything behind it for
 				// good, the watermark having advanced past them.
 				if ( $since > 0 ) {
-					$completed_at = Core::as_int( $entry['timestamp'] ?? 0 )
-						+ \intdiv( Core::as_int( $entry['duration_ms'] ?? 0 ), 1000 );
+					$completed_at = Core::num_int( $entry['timestamp'] ?? 0 )
+						+ \intdiv( Core::num_int( $entry['duration_ms'] ?? 0 ), 1000 );
 					if ( $completed_at < $since ) {
 						return self::SCAN_STOP_PARTITION;
 					}
@@ -1216,8 +1225,8 @@ class Performance_CI_Node extends Service_CI_Node {
 				if ( ! \is_array( $row ) ) {
 					continue;
 				}
-				$count        += Core::as_int( $row['count'] ?? 0 );
-				$sum_req_time += Core::as_float( $row['sum_req_time'] ?? 0 );
+				$count        += Core::num_int( $row['count'] ?? 0 );
+				$sum_req_time += Core::num_float( $row['sum_req_time'] ?? 0 );
 				$sums          = Stats_Store::sum_fields( $sums, Core::arr( $row['categories'] ?? null ), Stats_Store::LB_CAT_SUMS );
 			}
 		}
@@ -1745,7 +1754,9 @@ class Performance_CI_Node extends Service_CI_Node {
 			return null;
 		}
 		if ( '' !== $server ) {
-			$scoped['recent_count'] = Core::num_int( Core::arr( $recent[ $server ] ?? null )['count'] ?? null );
+			$scoped['recent_count'] = Core::num_int(
+				Core::arr( $recent[ $server ] ?? null )[ Stats_Store::ROW_COUNT ] ?? null
+			);
 		}
 
 		// Two populations: a timeout has peak memory but no duration.

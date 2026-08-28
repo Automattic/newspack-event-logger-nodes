@@ -610,10 +610,10 @@ class PerformanceCITest extends TestCase {
 		$shard = Stats_Store::url_shard( $hash );
 		$plan  = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, \time() ) );
 		// The newest closed hour is folded; the one behind it never was.
-		$store->set_url_hour( $plan['hours'][0], $shard, [
+		$this->seed_url_hour( $store, $plan['hours'][0], $shard, [
 			$hash => [ 'url' => '/wombat-4471', 'count' => 7, 'timed_count' => 7, 'sum_ms' => 70.0 ],
 		] );
-		$store->set_url_shard( Stats_Store::buckets_in_hour( $plan['hours'][1] )[3], $shard, [
+		$this->seed_url_shard( $store, Stats_Store::buckets_in_hour( $plan['hours'][1] )[3], $shard, [
 			$hash => [ 'url' => '/wombat-4471', 'count' => 5, 'timed_count' => 5, 'sum_ms' => 50.0 ],
 		] );
 
@@ -635,10 +635,10 @@ class PerformanceCITest extends TestCase {
 		$hash  = 'a4471ab0c0de';
 		$shard = Stats_Store::url_shard( $hash );
 		$hour  = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, \time() ) )['hours'][0];
-		$store->set_url_shard( Stats_Store::buckets_in_hour( $hour )[4], $shard, [
+		$this->seed_url_shard( $store, Stats_Store::buckets_in_hour( $hour )[4], $shard, [
 			$hash => [ 'url' => '/wombat-4471', 'count' => 23, 'timed_count' => 23, 'sum_ms' => 460.0 ],
 		] );
-		$store->set_url_hour( $hour, $shard, [
+		$this->seed_url_hour( $store, $hour, $shard, [
 			$hash => [ 'url' => '/wombat-4471', 'count' => 23, 'timed_count' => 23, 'sum_ms' => 460.0 ],
 		] );
 		$this->assertSame( 23, Performance_CI_Node::load_row_default( $hash )['count'] );
@@ -667,12 +667,12 @@ class PerformanceCITest extends TestCase {
 		$bucket = Stats_Store::buckets_in_hour( $hour )[6];
 		// Two URLs in two different shards; both have fine buckets.
 		foreach ( [ 'a4471ab0c0de' => '/wombat-4471', 'b8823bc1d2ef' => '/quokka-8823' ] as $hash => $url ) {
-			$store->set_url_shard( $bucket, Stats_Store::url_shard( $hash ), [
+			$this->seed_url_shard( $store, $bucket, Stats_Store::url_shard( $hash ), [
 				$hash => [ 'url' => $url, 'count' => 9, 'timed_count' => 9, 'sum_ms' => 90.0 ],
 			] );
 		}
 		// Only ONE shard got its coarse key — the fold died after the first.
-		$store->set_url_hour( $hour, 'a', [
+		$this->seed_url_hour( $store, $hour, 'a', [
 			'a4471ab0c0de' => [ 'url' => '/wombat-4471', 'count' => 9, 'timed_count' => 9, 'sum_ms' => 90.0 ],
 		] );
 
@@ -703,8 +703,8 @@ class PerformanceCITest extends TestCase {
 			],
 		];
 		// Oldest hour in the window, then the newest fine bucket.
-		$store->set_url_hour( \end( $plan['hours'] ), $shard, $row( 120.0 ) );
-		$store->set_url_shard( $plan['fine'][0], $shard, $row( 4000.0 ) );
+		$this->seed_url_hour( $store, \end( $plan['hours'] ), $shard, $row( 120.0 ) );
+		$this->seed_url_shard( $store, $plan['fine'][0], $shard, $row( 4000.0 ) );
 
 		$this->assertSame(
 			4000.0,
@@ -722,10 +722,10 @@ class PerformanceCITest extends TestCase {
 		$hash  = 'a4471ab0c0de';
 		$shard = Stats_Store::url_shard( $hash );
 		$hour  = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, \time() ) )['hours'][0];
-		$store->set_url_shard( Stats_Store::buckets_in_hour( $hour )[2], $shard, [
+		$this->seed_url_shard( $store, Stats_Store::buckets_in_hour( $hour )[2], $shard, [
 			$hash => [ 'url' => '/wombat-4471', 'count' => 5, 'timed_count' => 5, 'sum_ms' => 50.0 ],
 		] );
-		$store->set_url_hour( $hour, $shard, [
+		$this->seed_url_hour( $store, $hour, $shard, [
 			$hash => [ 'url' => '/wombat-4471', 'count' => 5, 'timed_count' => 5, 'sum_ms' => 50.0 ],
 		] );
 
@@ -747,7 +747,7 @@ class PerformanceCITest extends TestCase {
 		$store = new Stats_Store( 0, 86400 );
 		foreach ( $plan['hours'] as $hour ) {
 			foreach ( Stats_Store::url_shards() as $shard ) {
-				$store->set_url_hour( $hour, $shard, [] );
+				$this->seed_url_hour( $store, $hour, $shard, [] );
 			}
 		}
 
@@ -1411,8 +1411,8 @@ class PerformanceCITest extends TestCase {
 		// Tested directly, because the index merge normalizes a split through
 		// `sum_fields()` before any reader sees it — the hazard is for a caller
 		// handing this public method a raw row. `sum_fields()` SKIPS a non-array
-		// value, so an `isset` guard would leave the swap empty and `array_merge`
-		// would hand back the SITE's counts wearing one server's name.
+		// value, so an `isset` guard would name the eight sums off nothing and
+		// report ZERO for a server that did serve the URL.
 		$row = [ 'url' => '/corrupt', 'count' => 9, 'timed_count' => 9, 'sum_ms' => 900.0, 'srv' => [ 'alpha.example' => 'not-an-array' ] ];
 
 		$this->assertNull( Stats_Store::swap_url_server_sums( $row, 'alpha.example' ) );
@@ -1903,14 +1903,20 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( 1, $result['totals']['urls'] );
 	}
 
-	public function test_a_url_row_carries_no_seconds_field_fallback(): void {
-		// `sum_req_time` is the leaderboard's field, in SECONDS. A URL row has
-		// carried `sum_ms` for releases; reading the other one as a fallback
-		// multiplies a leaderboard-shaped value by 1000 onto a URL's mean.
+	/**
+	 * A stored row carrying an index this version does not know is IGNORED,
+	 * never read as something else. It replaces a guard against reading the
+	 * leaderboard's `sum_req_time` — a SECONDS field — as a URL row's `sum_ms`
+	 * and multiplying it onto a mean: a positional row has no room for a
+	 * foreign name, but a newer writer's extra index is the same hazard.
+	 */
+	public function test_a_url_row_ignores_an_index_it_does_not_know(): void {
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
-		$this->set_url_bucket( $store, $bucket, [
-			'5ec0d5fa11ba' => [ 'url' => '/seconds-era', 'count' => 4, 'sum_req_time' => 8.0, 'last_seen' => 1700000003 ],
+		$this->seed_url_shard( $store, $bucket, Stats_Store::url_shard( '5ec0d5fa11ba' ), [
+			'5ec0d5fa11ba' => self::positional_url_row(
+				[ 'url' => '/seconds-era', 'count' => 4, 'last_seen' => 1700000003 ]
+			) + [ 99 => 8.0 ],
 		] );
 
 		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' );
@@ -1918,6 +1924,93 @@ class PerformanceCITest extends TestCase {
 		$row = $result['data'][0] ?? [];
 		$this->assertSame( '/seconds-era', $row['url'] ?? '' );
 		$this->assertSame( 0.0, (float) ( $row['avg_ms'] ?? -1 ), 'no milliseconds are invented from it' );
+	}
+
+	/** Seed one URL whose row carries a per-server split. */
+	private function seed_split_row(): void {
+		$store = new Stats_Store( 0, 86400 );
+		$this->seed_url_shard( $store, $this->current_url_bucket(), Stats_Store::url_shard( '5p117c0de991' ), [
+			'5p117c0de991' => self::positional_url_row( [
+				'url'         => '/split-3907',
+				'count'       => 5,
+				'timed_count' => 5,
+				'sum_ms'      => 650.0,
+				'last_seen'   => 1700000007,
+				'srv'         => [
+					'edge-3907.example' => self::positional_url_row(
+						[ 'count' => 3, 'timed_count' => 3, 'sum_ms' => 390.0 ]
+					),
+					'edge-8823.example' => self::positional_url_row(
+						[ 'count' => 2, 'timed_count' => 2, 'sum_ms' => 260.0 ]
+					),
+				],
+			] ),
+		] );
+	}
+
+	/**
+	 * Decision 18 rests the positional split on it never crossing to the wire.
+	 * A `srv` on the reply is integer keys the browser cannot read, and JSON
+	 * takes them happily — no assertion elsewhere would notice.
+	 */
+	public function test_an_unscoped_reply_row_carries_no_stored_split(): void {
+		$this->seed_split_row();
+
+		$row = ( VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' )['data'][0] ) ?? [];
+
+		$this->assertSame( '/split-3907', $row['url'] ?? '' );
+		$this->assertArrayNotHasKey( Stats_Store::URL_SRV_FIELD, $row );
+		$this->assertArrayNotHasKey( 'srv_recent', $row );
+		$this->assertSame(
+			[],
+			\array_values( \array_filter( \array_keys( $row ), '\is_int' ) ),
+			'no positional key rides out to the wire'
+		);
+	}
+
+	/** And the scoped read, which is the path that NAMES the split. */
+	public function test_a_scoped_reply_row_carries_no_stored_split(): void {
+		$this->seed_split_row();
+
+		$result = VerbHarness::fire(
+			new Performance_CI_Node(),
+			'performance',
+			'urls',
+			'--server=edge-3907.example'
+		);
+		$row = $result['data'][0] ?? [];
+
+		$this->assertSame( '/split-3907', $row['url'] ?? '' );
+		$this->assertSame( 3, $row['count'] ?? -1, 'the scoped sums arrive under NAMES' );
+		$this->assertArrayNotHasKey( Stats_Store::URL_SRV_FIELD, $row );
+		$this->assertSame(
+			[],
+			\array_values( \array_filter( \array_keys( $row ), '\is_int' ) ),
+			'no positional key rides out to the wire'
+		);
+	}
+
+	public function test_a_bool_at_a_count_index_contributes_nothing(): void {
+		// A stored row carries a BOOL at ROW_WORKER, so a shifted index puts one
+		// where a count is read. The lenient family folds `true` as 1 and the
+		// number is wrong with nothing to show for it; the validated family
+		// takes the default, which is what `Core`'s own rule asks for on an
+		// arithmetic path. Seeded at 2, distinct from the 0 default and from
+		// the 1 the lenient cast would produce.
+		$store  = new Stats_Store( 0, 86400 );
+		$bucket = $this->current_url_bucket();
+		$this->seed_url_shard( $store, $bucket, Stats_Store::url_shard( 'b001a7c0un7' ), [
+			'b001a7c0un7' => self::positional_url_row(
+				[ 'url' => '/bool-at-a-count', 'count' => 2, 'last_seen' => 1700000005 ]
+			) + [ Stats_Store::ROW_COUNT_4XX => true ],
+		] );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' );
+
+		$row = $result['data'][0] ?? [];
+		$this->assertSame( '/bool-at-a-count', $row['url'] ?? '' );
+		$this->assertSame( 2, $row['count'] ?? -1, 'the real count is untouched' );
+		$this->assertSame( 0, $row['count_4xx'] ?? -1, 'and a bool adds nothing to a count' );
 	}
 
 	public function test_a_row_with_no_timed_count_divides_by_nothing(): void {
@@ -3390,7 +3483,12 @@ class PerformanceCITest extends TestCase {
 		$bucket = Stats_Store::bucket_key( \time() );
 		$hash   = 'ab12cd34ef56';
 		$key    = Stats_Store::entry_key( 0, 'urls:' . Stats_Store::url_shard( $hash ) . ':' . $bucket );
-		$rows   = [ $hash => [ 'url' => 'https://example.test/jobs/import-film-times', 'count' => 2194 ] ];
+		// A mirrored frame holds the STORED shape, which is positional.
+		$rows   = [
+			$hash => self::positional_url_row(
+				[ 'url' => 'https://example.test/jobs/import-film-times', 'count' => 2194 ]
+			),
+		];
 
 		$mirror = new \Newspack_Nodes\Partition_Node();
 		$mirror->arguments( [ $dir, '67108864' ] );
