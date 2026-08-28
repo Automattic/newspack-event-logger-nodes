@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 
+## [0.69.3] - 2026-08-28
+
+### Fixed
+
+- **`request_detail` resolves any rid `request_search` can find.** Given no `--partition` the verb searched p0 alone and answered a flat `Request not found` — indistinguishable from an unknown rid — for records `request_search` locates immediately, and for every `ask` brief, whose `fetch` pointer emits the rid by itself. The partition is a hint now, as it already was for `ask`: `load_request()` searches it first and the rest after, so the two verbs agree on what exists. An out-of-range partition still fails loud as `invalid partition`.
+
+
 ## [0.69.2] - 2026-08-28
 
 ### Fixed

@@ -12,8 +12,9 @@
  *                     (lifted from PerfUrlsController::get_url_detail).
  *   request_search  — locate a request by rid across partitions (lifted from
  *                     PerfRequestsController::search_request).
- *   request_detail  — full request + flame data for a known {rid, partition}
- *                     (lifted from PerfRequestsController::get_request).
+ *   request_detail  — full request + flame data for a rid; its partition is a
+ *                     search-order hint (lifted from
+ *                     PerfRequestsController::get_request).
  *
  * Substrate config (num_partitions, min_lifetime, base_directory) is seeded
  * via TestCase::use_base_dir(), matching SettingsCITest / EventsCITest. The
@@ -2576,6 +2577,29 @@ class PerformanceCITest extends TestCase {
 
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'not found', \strtolower( $result ) );
+	}
+
+	public function test_request_detail_finds_a_rid_no_partition_named(): void {
+		// Seeded in p2 of 4, and the rid hashes to p3, so neither the default
+		// nor the hash-first partition holds it: only a full walk finds it,
+		// which is what `request_search` already does with the same rid.
+		$this->activate_shipped_topology( 'performance', 4 );
+		$body = [
+			'rid'            => 'rid-detail-cross-partition-0001',
+			'url'            => '/elsewhere',
+			'timestamp'      => 1700000700,
+			'duration_ms'    => 41,
+			'status_code'    => 200,
+			'peak_mb'        => 3,
+			'request_method' => 'GET',
+		];
+		$this->assertSame( 3, \Newspack_Nodes\Partition_Node::hash_to_partition( $body['rid'], 4 ) );
+		$rid = $this->write_request( $body, 2 );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'request_detail', $rid );
+
+		$this->assertIsArray( $result, 'request_detail must resolve a rid request_search can find' );
+		$this->assertSame( '/elsewhere', $result['url'] );
 	}
 
 	/**

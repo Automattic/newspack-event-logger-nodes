@@ -114,7 +114,7 @@ class MCP_Controller {
 			'verb'    => 'request_detail',
 			'role'    => Capabilities::READ,
 			'summary' => 'One request in full, with its flame data and computed findings. A `budget spent` error means the index walk ended before reaching the rid, so retry rather than reading it as an unknown request.',
-			'args'    => [ 'rid' => 'The request id (required).', 'partition' => 'Its partition.' ],
+			'args'    => [ 'rid' => 'The request id (required).', 'partition' => 'Optional: the partition to search first. Every partition is searched either way.' ],
 		],
 		'performance_request_grep' => [
 			'node'    => 'performance',
