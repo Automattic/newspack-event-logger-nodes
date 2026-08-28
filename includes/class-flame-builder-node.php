@@ -45,6 +45,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
 /**
  * Builds flame trees and the memcache stats schema from completed requests.
  *
+ * @phpstan-type Pending_Write array{parts: array<int,string>, bucket: string, merge: \Closure(array<array-key,mixed>): array<array-key,mixed>, refused: \Closure|null}
  * @phpstan-type Leaderboard_Acc array{count?: int, sum_req_time?: float|int, categories: array<string,array{samples: int,sum_time: float|int,sum_count: float|int,ts?: int,entries: array<string,array<int,float|int>>}>}
  * @phpstan-type Dim_Values array<string,array{c: int,s: float|int,m: float|int}>
  * @phpstan-type Cat_Values array<string,array{t: float|int,c: float|int,n: int}>
@@ -52,11 +53,11 @@ if ( ! \defined( 'ABSPATH' ) ) {
  *   hourly: array<string,mixed>,
  *   dim: array<string,Dim_Values>,
  *   dim_by_server: array<string,array<string,Dim_Values>>,
- *   url_dim: array<string,array<string,Dim_Values>>,
+ *   url_dim: array<array-key,array<string,Dim_Values>>,
  *   url_stats: array<string,mixed>,
  *   cat: Cat_Values,
  *   cat_by_server: array<string,Cat_Values>,
- *   cat_by_url: array<string,Cat_Values>,
+ *   cat_by_url: array<array-key,Cat_Values>,
  *   leaderboard: Leaderboard_Acc,
  *   leaderboard_by_server: array<string,Leaderboard_Acc>
  * }
@@ -185,6 +186,13 @@ class Flame_Builder_Node extends Node {
 	 * rather than dropping, so reaching it costs detail, never totals.
 	 */
 	private const MAX_URLS_PER_SHARD = 500;
+
+	/**
+	 * Keys per read/write batch in a flush. Bounds the held set: one chunk is
+	 * at most one shard's worth of rows, which is the largest value the schema
+	 * writes. Raise only against a measured peak.
+	 */
+	private const WRITE_BATCH_KEYS = 500;
 
 	/**
 	 * Closed hours one flush folds into the coarse tier. A bound, not a
@@ -1212,18 +1220,24 @@ class Flame_Builder_Node extends Node {
 		if ( null === $stats_store ) {
 			return;
 		}
+		$intents = [];
 		foreach ( $this->pending as $bucket => $acc ) {
 			if ( ! empty( $acc['hourly'] ) ) {
-				$stats_store->set_hourly_bucket(
+				$totals    = $acc['hourly'];
+				$intents[] = self::intent(
+					Stats_Store::hourly_parts(),
 					$bucket,
-					Stats_Store::add_totals( $stats_store->get_hourly_bucket( $bucket ), $acc['hourly'] )
+					static fn ( array $existing ): array => Stats_Store::add_totals(
+						Stats_Store::string_keys( $existing ),
+						$totals
+					)
 				);
 			}
-			if ( ! empty( $acc['url_stats'] ) ) {
-				$this->persist_url_index( $stats_store, $bucket, $acc['url_stats'] );
+			foreach ( Stats_Store::rows_by_shard( $acc['url_stats'] ) as $shard => $shard_rows ) {
+				$intents[] = $this->url_shard_intent( $bucket, (string) $shard, $shard_rows );
 			}
 			foreach ( $acc['dim'] as $dim => $values ) {
-				$this->persist_dimension( $stats_store, $bucket, $dim, $values );
+				$intents[] = self::dimension_intent( $bucket, $dim, $values, '' );
 			}
 			// '' is the GLOBAL scope downstream; a nameless server is not one.
 			foreach ( $acc['dim_by_server'] as $server => $dims ) {
@@ -1231,32 +1245,66 @@ class Flame_Builder_Node extends Node {
 					continue;
 				}
 				foreach ( $dims as $dim => $values ) {
-					$this->persist_dimension( $stats_store, $bucket, $dim, $values, $server );
+					$intents[] = self::dimension_intent( $bucket, $dim, $values, $server );
 				}
 			}
 			foreach ( $acc['url_dim'] as $url_hash => $dims ) {
-				$this->persist_url_dimensions( $stats_store, $bucket, $url_hash, $dims );
+				$intents[] = self::url_dimensions_intent( $bucket, (string) $url_hash, $dims );
 			}
 			if ( ! empty( $acc['cat'] ) ) {
-				$this->persist_categories( $stats_store, $bucket, $acc['cat'] );
+				$intents[] = self::categories_intent( $bucket, $acc['cat'], '' );
 			}
 			foreach ( $acc['cat_by_server'] as $server => $cats ) {
 				if ( '' === $server ) {
 					continue;
 				}
-				$this->persist_categories( $stats_store, $bucket, $cats, $server );
+				$intents[] = self::categories_intent( $bucket, $cats, $server );
 			}
 			foreach ( $acc['cat_by_url'] as $url_hash => $cats ) {
-				$this->persist_url_categories( $stats_store, $bucket, $url_hash, $cats );
+				$intents[] = self::url_categories_intent( $bucket, (string) $url_hash, $cats );
 			}
 			if ( ( $acc['leaderboard']['count'] ?? 0 ) > 0 ) {
-				$this->persist_leaderboard( $stats_store, $bucket, $acc['leaderboard'] );
+				$intents[] = self::leaderboard_intent( $bucket, $acc['leaderboard'], '' );
 			}
 			foreach ( $acc['leaderboard_by_server'] as $server => $sums ) {
 				if ( '' === $server || ( $sums['count'] ?? 0 ) <= 0 ) {
 					continue;
 				}
-				$this->persist_leaderboard( $stats_store, $bucket, $sums, $server );
+				$intents[] = self::leaderboard_intent( $bucket, $sums, $server );
+			}
+		}
+		$this->flush_writes( $stats_store, $intents );
+	}
+
+	/**
+	 * Read, merge and write every pending key in batches.
+	 *
+	 * The flush's cost is its KEY COUNT, not its bytes: two of the
+	 * loops above are per URL, so a full-window replay decayed as the retention
+	 * window refilled. The reader has always batched (`lookup_bucket_sets()`);
+	 * this is the write half. Chunked because batching trades round trips for
+	 * held memory, and a full-window read already peaks near 160MB — the prize
+	 * is thousands of round trips becoming a handful, not becoming one.
+	 *
+	 * @param Stats_Store                    $stats_store Destination.
+	 * @param array<int,Pending_Write>       $intents     Pending writes.
+	 */
+	private function flush_writes( Stats_Store $stats_store, array $intents ): void {
+		foreach ( \array_chunk( $intents, self::WRITE_BATCH_KEYS ) as $chunk ) {
+			$reads = [];
+			foreach ( $chunk as $intent ) {
+				$reads[] = [ $intent['parts'], $intent['bucket'] ];
+			}
+			$existing = $stats_store->bucket_get_multi( $reads );
+			$writes = [];
+			foreach ( $chunk as $i => $intent ) {
+				$merge    = $intent['merge'];
+				$writes[] = [ $intent['parts'], $intent['bucket'], $merge( $existing[ $i ] ?? [] ) ];
+			}
+			foreach ( $stats_store->bucket_set_multi( $writes ) as $i => $landed ) {
+				if ( ! $landed && null !== ( $chunk[ $i ]['refused'] ?? null ) ) {
+					( $chunk[ $i ]['refused'] )();
+				}
 			}
 		}
 	}
@@ -1355,37 +1403,14 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
-	 * Merge a flush's per-URL rows into the URL index, shard by shard.
+	 * How one shard's accumulated rows fold into their stored bucket.
 	 *
-	 * Percentiles and the mean are recomputed rather than merged: they are
-	 * derived from the reservoir-sampled raw durations, which addition cannot
-	 * combine.
-	 *
-	 * Each row also carries `srv`: the row's summed fields split by reporting
-	 * server, so one get scopes the whole index instead of one get per URL.
-	 *
-	 * @param Stats_Store         $stats_store Destination.
-	 * @param string              $bucket      Bucket key.
-	 * @param array<string,mixed> $rows        Accumulated rows by url_hash.
+	 * @param string                 $bucket Bucket key.
+	 * @param string                 $shard  Shard name from `Stats_Store::url_shard()`.
+	 * @param array<array-key,mixed> $rows   That shard's accumulated rows.
+	 * @return Pending_Write
 	 */
-	private function persist_url_index( Stats_Store $stats_store, string $bucket, array $rows ): void {
-		// @longform Per SHARD, so a flush rewrites only what its own rows
-		// touched: one blob per bucket meant read-modify-writing every row in
-		// the window's busiest structure to change the handful this worker saw.
-		foreach ( Stats_Store::rows_by_shard( $rows ) as $shard => $shard_rows ) {
-			$this->persist_url_shard( $stats_store, $bucket, (string) $shard, $shard_rows );
-		}
-	}
-
-	/**
-	 * Merge one shard's accumulated rows into its stored bucket.
-	 *
-	 * @param Stats_Store            $stats_store Destination.
-	 * @param string                 $bucket      Bucket key.
-	 * @param string                 $shard       Shard name from `Stats_Store::url_shard()`.
-	 * @param array<array-key,mixed> $rows        That shard's accumulated rows.
-	 */
-	private function persist_url_shard( Stats_Store $stats_store, string $bucket, string $shard, array $rows ): void {
+	private function url_shard_intent( string $bucket, string $shard, array $rows ): array {
 		// @longform An hour folds once and its fine buckets are never read
 		// again, so a write arriving after the fold — a replay, an ingest, a
 		// spoke catching up — must merge into the coarse key the reader took
@@ -1393,34 +1418,32 @@ class Flame_Builder_Node extends Node {
 		// shape, same cap: only the key differs.
 		$hour   = Stats_Store::hour_of( $bucket );
 		$folded = isset( $this->folded_hours[ $hour ] );
-		/** @var array<array-key,array<array-key,mixed>> $existing_urls */
-		$existing_urls = $folded
-			? $stats_store->get_url_hour( $hour, $shard )
-			: $stats_store->get_url_shard( $bucket, $shard );
-		foreach ( $rows as $hash => $stats_raw ) {
-			$stats = Core::arr( $stats_raw );
-			$row   = Core::arr( $existing_urls[ $hash ] ?? null )
-				?: self::empty_url_row( Core::str( $stats[ Stats_Store::ROW_URL ] ?? '' ) );
+		$parts  = $folded ? Stats_Store::url_hour_parts( $shard ) : Stats_Store::url_shard_parts( $shard );
+		return self::intent(
+			$parts,
+			$folded ? $hour : $bucket,
+			static function ( array $existing ) use ( $rows ): array {
+				foreach ( $rows as $hash => $stats_raw ) {
+					$stats = Core::arr( $stats_raw );
+					$row   = Core::arr( $existing[ $hash ] ?? null )
+						?: self::empty_url_row( Core::str( $stats[ Stats_Store::ROW_URL ] ?? '' ) );
 
-			$existing_urls[ $hash ] = Stats_Store::merge_url_row( $row, $stats );
-		}
-
-		$existing_urls = self::cap_url_rows( $existing_urls );
-
-		// @longform The largest blob the schema writes, and the only one
-		// carrying a per-server split on every row. memcached refuses an item
-		// over its limit, and a discarded return loses the whole bucket's
-		// index for this partition — again on every later merge into it.
-		$landed = $folded
-			? $stats_store->set_url_hour( $hour, $shard, $existing_urls )
-			: $stats_store->set_url_shard( $bucket, $shard, $existing_urls );
-		if ( ! $landed ) {
-			// Rows, not bytes: sizing it re-serialises a megabyte per flush.
-			$this->print_less_often(
-				'URL index write refused; a shard is over the cache item limit and its rows are lost',
-				\sprintf( ' — shard %s, %d rows', $shard, \count( $existing_urls ) )
-			);
-		}
+					$existing[ $hash ] = Stats_Store::merge_url_row( $row, $stats );
+				}
+				return self::cap_url_rows( $existing );
+			},
+			// @longform The largest blob the schema writes, and the only one
+			// carrying a split on every row. memcached refuses an item over
+			// its limit, and a discarded return loses this partition's whole
+			// bucket index — again on every later merge into it.
+			function () use ( $shard, $rows ): void {
+				// Rows, not bytes: sizing re-serialises a megabyte a flush.
+				$this->print_less_often(
+					'URL index write refused; a shard is over the cache item limit and its rows are lost',
+					\sprintf( ' — shard %s, %d rows', $shard, \count( $rows ) )
+				);
+			}
+		);
 	}
 
 	/**
@@ -1481,52 +1504,69 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
-	 * Merge one URL's dimensional bucket — every dimension in one value, each
-	 * capped on its own.
+	 * How one URL's dimensional bucket folds — every dimension in one value,
+	 * each capped on its own.
 	 *
-	 * @param Stats_Store            $stats_store Destination.
-	 * @param string                 $bucket      Bucket key.
-	 * @param string                 $url_hash    12-char URL hash.
-	 * @param array<string,mixed>    $dims        Accumulated value maps by dimension.
+	 * @param string              $bucket   Bucket key.
+	 * @param string              $url_hash 12-char URL hash.
+	 * @param array<string,mixed> $dims     Accumulated value maps by dimension.
+	 * @return Pending_Write
 	 */
-	private function persist_url_dimensions( Stats_Store $stats_store, string $bucket, string $url_hash, array $dims ): void {
-		$existing = $stats_store->get_url_dimensional_bucket( $url_hash, $bucket );
-		foreach ( $dims as $dim => $values ) {
-			$merged = Stats_Store::sum_fields( Core::arr( $existing[ $dim ] ?? null ), Core::arr( $values ), Stats_Store::DIM_SUMS );
-			$existing[ $dim ] = self::cap_dim( $merged, Stats_Store::dim_cap( $dim, Stats_Store::MAX_URL_DIM_VALUES ) );
-		}
-		$stats_store->set_url_dimensional_bucket( $url_hash, $bucket, Stats_Store::string_keys( $existing ) );
+	private static function url_dimensions_intent( string $bucket, string $url_hash, array $dims ): array {
+		return self::intent(
+			Stats_Store::url_dim_parts( $url_hash ),
+			$bucket,
+			static function ( array $existing ) use ( $dims ): array {
+				foreach ( $dims as $dim => $values ) {
+					$merged = Stats_Store::sum_fields( Core::arr( $existing[ $dim ] ?? null ), Core::arr( $values ), Stats_Store::DIM_SUMS );
+					$existing[ $dim ] = self::cap_dim( $merged, Stats_Store::dim_cap( $dim, Stats_Store::MAX_URL_DIM_VALUES ) );
+				}
+				return Stats_Store::string_keys( $existing );
+			}
+		);
 	}
 
 	/**
-	 * Merge one URL's category bucket into the store, capped.
+	 * How one URL's category bucket folds, capped.
 	 *
-	 * @param Stats_Store         $stats_store Destination.
-	 * @param string              $bucket      Bucket key.
-	 * @param string              $url_hash    12-char URL hash.
-	 * @param array<string,mixed> $cats        Accumulated categories.
+	 * @param string              $bucket   Bucket key.
+	 * @param string              $url_hash 12-char URL hash.
+	 * @param array<string,mixed> $cats     Accumulated categories.
+	 * @return Pending_Write
 	 */
-	private function persist_url_categories( Stats_Store $stats_store, string $bucket, string $url_hash, array $cats ): void {
-		$existing = Stats_Store::sum_fields( $stats_store->get_url_category_bucket( $url_hash, $bucket ), $cats, Stats_Store::CAT_SUMS );
-		$stats_store->set_url_category_bucket( $url_hash, $bucket, self::cap_categories( $existing, Stats_Store::MAX_CAT_VALUES ) );
+	private static function url_categories_intent( string $bucket, string $url_hash, array $cats ): array {
+		return self::intent(
+			Stats_Store::url_cat_parts( $url_hash ),
+			$bucket,
+			static fn ( array $existing ): array => self::cap_categories(
+				Stats_Store::sum_fields( $existing, $cats, Stats_Store::CAT_SUMS ),
+				Stats_Store::MAX_CAT_VALUES
+			)
+		);
 	}
 
 	/**
-	 * Merge one scope's leaderboard bucket into the store, capped.
+	 * How one scope's leaderboard bucket folds, capped.
 	 *
-	 * @param Stats_Store         $stats_store Destination.
-	 * @param string              $bucket      Bucket key.
-	 * @param array<string,mixed> $sums        Accumulated sums.
-	 * @param string              $server      Reporting server; '' is the global series.
+	 * @param string              $bucket Bucket key.
+	 * @param array<string,mixed> $sums   Accumulated sums.
+	 * @param string              $server Reporting server; '' is the global series.
+	 * @return Pending_Write
 	 */
-	private function persist_leaderboard( Stats_Store $stats_store, string $bucket, array $sums, string $server = '' ): void {
-		$existing = $stats_store->get_leaderboard_bucket( $bucket, $server );
-		if ( empty( $existing ) ) {
-			$existing = self::empty_leaderboard();
-		}
-		Stats_Store::merge_leaderboard_bucket( $existing, $sums );
-		self::cap_leaderboard_entries( $existing );
-		$stats_store->set_leaderboard_bucket( $bucket, $existing, $server );
+	private static function leaderboard_intent( string $bucket, array $sums, string $server ): array {
+		return self::intent(
+			Stats_Store::lb_parts( $server ),
+			$bucket,
+			static function ( array $existing ) use ( $sums ): array {
+				$existing = Stats_Store::string_keys( $existing );
+				if ( empty( $existing ) ) {
+					$existing = self::empty_leaderboard();
+				}
+				Stats_Store::merge_leaderboard_bucket( $existing, $sums );
+				self::cap_leaderboard_entries( $existing );
+				return $existing;
+			}
+		);
 	}
 
 	/**
@@ -1580,35 +1620,61 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
-	 * Merge one scope's dimensional bucket into the store, capped.
+	 * How one dimension's bucket folds, capped.
 	 *
-	 * @param Stats_Store            $stats_store Destination.
-	 * @param string                 $bucket      Bucket key.
-	 * @param string                 $dim         Dimension name.
-	 * @param array<array-key,mixed> $values      Accumulated value map.
-	 * @param string                 $server      Reporting server; '' is the global series.
+	 * @param string                 $bucket Bucket key.
+	 * @param string                 $dim    Dimension name.
+	 * @param array<array-key,mixed> $values Accumulated values.
+	 * @param string                 $server Reporting server; '' is the global series.
+	 * @return Pending_Write
 	 */
-	private function persist_dimension( Stats_Store $stats_store, string $bucket, string $dim, array $values, string $server = '' ): void {
-		$existing = Stats_Store::sum_fields( $stats_store->get_dimensional_bucket( $dim, $bucket, $server ), $values, Stats_Store::DIM_SUMS );
-		$stats_store->set_dimensional_bucket(
-			$dim,
+	private static function dimension_intent( string $bucket, string $dim, array $values, string $server ): array {
+		return self::intent(
+			Stats_Store::dim_parts( $dim, $server ),
 			$bucket,
-			self::cap_dim( $existing, Stats_Store::dim_cap( $dim, Stats_Store::MAX_DIM_VALUES ) ),
-			$server
+			static fn ( array $existing ): array => self::cap_dim(
+				Stats_Store::sum_fields( $existing, $values, Stats_Store::DIM_SUMS ),
+				Stats_Store::dim_cap( $dim, Stats_Store::MAX_DIM_VALUES )
+			)
 		);
 	}
 
 	/**
-	 * Merge one scope's category bucket into the store, capped.
+	 * How one scope's category bucket folds, capped.
 	 *
-	 * @param Stats_Store            $stats_store Destination.
-	 * @param string                 $bucket      Bucket key.
-	 * @param array<array-key,mixed> $cats        Accumulated categories.
-	 * @param string                 $server      Reporting server; '' is the global series.
+	 * @param string                 $bucket Bucket key.
+	 * @param array<array-key,mixed> $cats   Accumulated categories.
+	 * @param string                 $server Reporting server; '' is the global series.
+	 * @return Pending_Write
 	 */
-	private function persist_categories( Stats_Store $stats_store, string $bucket, array $cats, string $server = '' ): void {
-		$existing = Stats_Store::sum_fields( $stats_store->get_category_bucket( $bucket, $server ), $cats, Stats_Store::CAT_SUMS );
-		$stats_store->set_category_bucket( $bucket, self::cap_categories( $existing, Stats_Store::MAX_CAT_VALUES ), $server );
+	private static function categories_intent( string $bucket, array $cats, string $server ): array {
+		return self::intent(
+			Stats_Store::cat_parts( $server ),
+			$bucket,
+			static fn ( array $existing ): array => self::cap_categories(
+				Stats_Store::sum_fields( $existing, $cats, Stats_Store::CAT_SUMS ),
+				Stats_Store::MAX_CAT_VALUES
+			)
+		);
+	}
+
+	/**
+	 * One pending write: where it goes, and how to fold this flush's numbers
+	 * onto whatever is already there.
+	 *
+	 * @param array<int,string>                        $parts   Namespace prefix.
+	 * @param string                                   $bucket  Bucket (or hour) key.
+	 * @param \Closure(array<array-key,mixed>): array<array-key,mixed> $merge Fold.
+	 * @param ?\Closure(): void                        $refused Called when the set is rejected.
+	 * @return Pending_Write
+	 */
+	private static function intent( array $parts, string $bucket, \Closure $merge, ?\Closure $refused = null ): array {
+		return [
+			'parts'   => $parts,
+			'bucket'  => $bucket,
+			'merge'   => $merge,
+			'refused' => $refused,
+		];
 	}
 
 	/**
