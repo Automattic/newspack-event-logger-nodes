@@ -896,8 +896,11 @@ class Performance_CI_Node extends Service_CI_Node {
 			Core::num_int( $stat_arr[ Stats_Store::ROW_LAST_SEEN ] ?? 0 )
 		);
 
-		// Positional: the split is named once per scoped read, not here.
-		$row_srv = Core::arr( $stat_arr[ Stats_Store::ROW_SRV ] ?? null );
+		// Expanded FIRST: `sum_fields()` skips a null and would drop the host.
+		$row_srv = Stats_Store::expand_sole_server(
+			$stat_arr,
+			Core::arr( $stat_arr[ Stats_Store::ROW_SRV ] ?? null )
+		);
 		if ( [] !== $row_srv ) {
 			$entry[ Stats_Store::URL_SRV_FIELD ] = Stats_Store::sum_fields(
 				Core::arr( $entry[ Stats_Store::URL_SRV_FIELD ] ),

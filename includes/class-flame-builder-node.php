@@ -1522,8 +1522,9 @@ class Flame_Builder_Node extends Node {
 		// `UseCanonicalName Off` makes the client's Host header.
 		foreach ( $rows as $key => $row_raw ) {
 			$row = Core::arr( $row_raw );
-			$row[ Stats_Store::ROW_SRV ] = self::cap_servers(
-				Core::arr( $row[ Stats_Store::ROW_SRV ] ?? null )
+			$row[ Stats_Store::ROW_SRV ] = Stats_Store::collapse_sole_server(
+				$row,
+				self::cap_servers( Core::arr( $row[ Stats_Store::ROW_SRV ] ?? null ) )
 			);
 			$rows[ $key ] = $row;
 		}

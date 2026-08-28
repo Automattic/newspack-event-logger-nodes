@@ -1163,11 +1163,20 @@ class Stats_Store {
 	 * over unrelated URLs describes nothing. The split folds with it, so a
 	 * scoped total is exact for the same reason the site's is.
 	 *
+	 * Both sides are EXPANDED first: a collapsed split says "the row's own
+	 * numbers", and `$out`'s counts are already both rows added together, so
+	 * the expansion has to read `$into` and `$row` while they still stand
+	 * apart. `sum_fields()` skips a non-array, so an unexpanded null is not a
+	 * zero — it is that host deleted from the merge with no error anywhere.
+	 *
 	 * @param array<array-key,mixed> $into The row so far, [] on first fold.
 	 * @param array<array-key,mixed> $row  The row being folded in.
 	 * @return array<array-key,mixed>
 	 */
 	public static function fold_url_rows( array $into, array $row ): array {
+		// Expanded BEFORE the sum: `$out`'s count is both rows added together.
+		$into_srv = self::expand_sole_server( $into, Core::arr( $into[ self::ROW_SRV ] ?? null ) );
+		$row_srv  = self::expand_sole_server( $row, Core::arr( $row[ self::ROW_SRV ] ?? null ) );
 		// AFTER the sum: it returns `$into`, which carries its own `last_seen`.
 		$out                        = self::sum_entry( $into, $row, self::URL_SRV_SUMS );
 		$out[ self::ROW_WORKER ]    = ! empty( $into[ self::ROW_WORKER ] ) || ! empty( $row[ self::ROW_WORKER ] );
@@ -1176,11 +1185,7 @@ class Stats_Store {
 			Core::num_int( $row[ self::ROW_LAST_SEEN ] ?? null )
 		);
 
-		$out[ self::ROW_SRV ] = self::sum_fields(
-			Core::arr( $into[ self::ROW_SRV ] ?? null ),
-			Core::arr( $row[ self::ROW_SRV ] ?? null ),
-			self::URL_SRV_SUMS
-		);
+		$out[ self::ROW_SRV ] = self::sum_fields( $into_srv, $row_srv, self::URL_SRV_SUMS );
 		return $out;
 	}
 
@@ -1242,12 +1247,21 @@ class Stats_Store {
 	 * `apply_percentiles()`. Contrast `fold_url_rows()`, which folds DIFFERENT
 	 * urls into an overflow row and therefore keeps only what adds.
 	 *
+	 * Both sides are EXPANDED first: a collapsed split says "the row's own
+	 * numbers", and `$out`'s counts are already both rows added together, so
+	 * the expansion has to read `$into` and `$row` while they still stand
+	 * apart. `sum_fields()` skips a non-array, so an unexpanded null is not a
+	 * zero — it is that host deleted from the merge with no error anywhere.
+	 *
 	 * @param array<array-key,mixed> $into The row so far.
 	 * @param array<array-key,mixed> $row  The row being folded in.
 	 * @return array<array-key,mixed>
 	 */
 	public static function merge_url_row( array $into, array $row ): array {
-		$out = self::sum_entry( $into, $row, self::URL_SRV_SUMS );
+		// Expanded BEFORE the sum: `$out`'s count is both rows added together.
+		$into_srv = self::expand_sole_server( $into, Core::arr( $into[ self::ROW_SRV ] ?? null ) );
+		$row_srv  = self::expand_sole_server( $row, Core::arr( $row[ self::ROW_SRV ] ?? null ) );
+		$out      = self::sum_entry( $into, $row, self::URL_SRV_SUMS );
 		if ( '' === Core::str( $out[ self::ROW_URL ] ?? '' ) ) {
 			$out[ self::ROW_URL ] = Core::str( $row[ self::ROW_URL ] ?? '' );
 		}
@@ -1260,11 +1274,7 @@ class Stats_Store {
 			$row_min                 = Core::num_float( $row[ self::ROW_MIN_MS ] ?? null );
 			$out[ self::ROW_MIN_MS ] = 0.0 === $held ? $row_min : \min( $held, $row_min );
 		}
-		$out[ self::ROW_SRV ] = self::sum_fields(
-			Core::arr( $out[ self::ROW_SRV ] ?? null ),
-			Core::arr( $row[ self::ROW_SRV ] ?? null ),
-			self::URL_SRV_SUMS
-		);
+		$out[ self::ROW_SRV ] = self::sum_fields( $into_srv, $row_srv, self::URL_SRV_SUMS );
 		return $out;
 	}
 
@@ -1293,6 +1303,44 @@ class Stats_Store {
 	}
 
 	/**
+	 * Re-key a decoded map with string keys. PHP casts numeric-looking keys to
+	 * int on decode, so a value read back from the cache is `array-key` typed
+	 * even though every namespace stores a string-keyed map; the setters and the
+	 * merge helpers want that guarantee back.
+	 *
+	 * @param array<array-key,mixed> $map Decoded value.
+	 * @return array<string,mixed>
+	 */
+	public static function string_keys( array $map ): array {
+		$out = [];
+		foreach ( $map as $key => $value ) {
+			$out[ (string) $key ] = $value;
+		}
+		return $out;
+	}
+
+	/**
+	 * The inverse of `collapse_sole_server()`: a collapsed host takes the row's
+	 * own summed fields back. Every merge of a stored split calls it FIRST —
+	 * `merge_url_row()`, `fold_url_rows()` and
+	 * `Performance_CI_Node::fold_index_row()` — because `sum_fields()` skips a
+	 * non-array and would drop the host rather than fold a zero.
+	 *
+	 * @param array<array-key,mixed> $row   The row the split belongs to.
+	 * @param array<array-key,mixed> $split That row's stored split.
+	 * @return array<array-key,mixed>
+	 */
+	public static function expand_sole_server( array $row, array $split ): array {
+		foreach ( $split as $server => $sums ) {
+			if ( null !== $sums ) {
+				continue;
+			}
+			$split[ $server ] = self::sum_entry( [], $row, self::URL_SRV_SUMS );
+		}
+		return $split;
+	}
+
+	/**
 	 * Sum `$fields` from one entry into another. What `sum_fields()` does per
 	 * key, reachable directly by the callers holding a single row — those were
 	 * inventing a throwaway map key to get at it, then unwrapping the result.
@@ -1312,20 +1360,37 @@ class Stats_Store {
 	}
 
 	/**
-	 * Re-key a decoded map with string keys. PHP casts numeric-looking keys to
-	 * int on decode, so a value read back from the cache is `array-key` typed
-	 * even though every namespace stores a string-keyed map; the setters and the
-	 * merge helpers want that guarantee back.
+	 * A split of ONE server that served every request the row counted is the
+	 * row restated, so it stores the host name against `null`.
 	 *
-	 * @param array<array-key,mixed> $map Decoded value.
-	 * @return array<string,mixed>
+	 * ~33 bytes where the positional sums are ~112, on the field that was over
+	 * half the whole index read: on a fleet of disjoint sites every URL is
+	 * served by exactly one host, so this is the common row, not the rare one.
+	 *
+	 * COUNT alone decides it. Every `URL_SRV_SUMS` field is summed into the row
+	 * and into the split from the same increment, so a matching count means the
+	 * other seven match by construction — comparing floats would be the same
+	 * question asked less reliably.
+	 *
+	 * `expand_sole_server()` is the inverse, and EVERY merge — reader or
+	 * writer — applies it before summing: `sum_fields()` skips a non-array
+	 * value, so an unexpanded null takes that server's whole history out of a
+	 * scoped read silently. `merge_url_row()` and `fold_url_rows()` do it for
+	 * both sides; `Performance_CI_Node::fold_index_row()` does it on the read.
+	 *
+	 * @param array<array-key,mixed> $row   The row the split belongs to.
+	 * @param array<array-key,mixed> $split That row's per-server split, capped.
+	 * @return array<array-key,mixed>
 	 */
-	public static function string_keys( array $map ): array {
-		$out = [];
-		foreach ( $map as $key => $value ) {
-			$out[ (string) $key ] = $value;
+	public static function collapse_sole_server( array $row, array $split ): array {
+		if ( 1 !== \count( $split ) ) {
+			return $split;
 		}
-		return $out;
+		$server = \array_key_first( $split );
+		$sums   = Core::arr( $split[ $server ] );
+		$same   = Core::num_int( $sums[ self::ROW_COUNT ] ?? null )
+			=== Core::num_int( $row[ self::ROW_COUNT ] ?? null );
+		return $same ? [ $server => null ] : $split;
 	}
 
 	/**
