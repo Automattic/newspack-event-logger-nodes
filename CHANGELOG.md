@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+
+## [0.69.0] - 2026-08-28
+
+### Changed
+
+- **The substrate floor rises to 2.46.0**, which is where `Table_Node::store_multi()` lands. A floor below what the code calls does not degrade: the plugin activates and then fatals on the missing method.
+
+### Removed
+
+- **Sixteen `Stats_Store` per-namespace accessors, and `bucket_get()` with them.** Batching the flush's writes left them with no production caller and 160 test call sites — test scaffolding living in a production class. They move to `tests/Helpers/TestCase.php`, where their callers already are, so a test keeps readable named access over the parts the batch pair takes. Gone from the store: `set_hourly_bucket`, `get_hourly_bucket`, `get_url_hour`, the category and dimensional getter/setter pairs (scoped and per-URL), the leaderboard pair, `get_url_shard` and `set_url_shard`. The plural readers the dashboards use are untouched, as is `set_url_hour`, which the roll-up still calls.
+
 ### Changed
 
 - **The stats flush batches its writes, so its cost stops scaling with URL cardinality.** `persist_aggregate_stats()` issued one read-modify-write per KEY and two of its loops are per URL, so a full-window replay started at 171K messages/s and decayed as the retention window refilled — roughly 490 round trips per bucket at 20 distinct URLs against ~2,400 at the 500 cap. It is now collect, one multi-get, merge, one multi-set, chunked at 500 keys. Measured on the pre-batch code, 12 URLs cost 72 single sets and 48 cost 151 — 2.2 per URL, exactly the two per-URL loops. The read path has batched since it was written (`lookup_bucket_sets()`); this is the write half, and it is `tachikoma.md`'s first rule applied to the side that never got it.
