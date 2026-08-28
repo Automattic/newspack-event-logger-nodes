@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+
+## [0.69.1] - 2026-08-28
+
+### Changed
+
+- **Substrate pin moves to `v2.46.1`**, which names a taken session lease `revoked` rather than `expired` and says that `wp nodes memcache flush` signs every session out.
+
 ### Fixed
 
 - **An aborted request's log entries indent correctly.** Three things were wrong on a killed nuclear-gyrobase render, all in `computeIndentedEntries()`. A span's argument lives in the entry's `l` field and the flame fuses the two into one node name, so the spliced `include: /Macros/Global.html (start)` and the record's own `include (complete)` name one span in two spellings and could never pair — even though `foldedSpanEntries()` deliberately defers to that complete rather than emitting its own. Pairing and the severed-span budget now both match on the BASE name. A frame the record never closes is dropped when its parent closes, instead of adopting every row after it — the same budget `pruneSeveredSpans()` uses at a break, applied at a close. And the request's terminal carries whatever suffix ended it (`aborted`), so it matched no `(complete)` and drew one level deeper than the `(start)` it ends; the outermost pair now closes on its terminal. Verified against the real 498-node record: the tail returned from indent 3 to 1, and `process (aborted)` from 1 to 0.
