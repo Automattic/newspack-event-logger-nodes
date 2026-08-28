@@ -442,7 +442,7 @@ class FindingsTest extends TestCase {
 	public function test_a_url_with_no_rule_reports_what_is_known(): void {
 		$found = $this->of_kind(
 			Findings::for_url(
-				[ 'url' => '/calendar/today', 'count' => 4210, 'avg_ms' => 812.0, 'p95_ms' => 2600.0, 'max_peak_mb' => 96.0 ],
+				[ 'url' => '/calendar/today', 'count' => 4210, 'avg_ms' => 812.0, 'max_ms' => 2600.0, 'max_peak_mb' => 96.0 ],
 				null
 			),
 			'insufficient_instrumentation'
@@ -450,7 +450,7 @@ class FindingsTest extends TestCase {
 
 		$this->assertNotNull( $found );
 		$this->assertSame( 4210, $found['metric']['count'] );
-		$this->assertSame( 2600.0, $found['metric']['p95_ms'] );
+		$this->assertSame( 2600.0, $found['metric']['max_ms'] );
 		$this->assertSame( 'create_rule', $found['proposal']['action'] );
 	}
 

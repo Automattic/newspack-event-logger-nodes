@@ -732,9 +732,6 @@ describe( 'PerformanceDashboard', () => {
 					last_modified: 1,
 					stats: {
 						avg_ms: 50,
-						p50_ms: 30,
-						p95_ms: 90,
-						p99_ms: 99,
 						avg_peak_mb: 4,
 					},
 					requests: [],
@@ -752,7 +749,6 @@ describe( 'PerformanceDashboard', () => {
 		expect( container.textContent ).toContain( '/foo' );
 		expect( container.textContent ).toContain( 'UrlDetailView' );
 		expect( container.textContent ).toContain( 'req/s' );
-		expect( container.textContent ).toContain( 'p50' );
 		const modal = container.querySelector( '[data-testid="modal"]' );
 		expect( modal ).toBeTruthy();
 		expect( modal.className ).toBe(
@@ -763,7 +759,7 @@ describe( 'PerformanceDashboard', () => {
 				'.event-logger-header-stats > .newspack-nodes-stat'
 			)
 		);
-		expect( headerStats ).toHaveLength( 6 );
+		expect( headerStats ).toHaveLength( 3 );
 		for ( const stat of headerStats ) {
 			expect(
 				stat.querySelector( '.newspack-nodes-stat-value' )
@@ -786,17 +782,11 @@ describe( 'PerformanceDashboard', () => {
 			{
 				requests_per_second: 7.125,
 				avg_ms: 412.6,
-				p50_ms: 318.2,
-				p95_ms: 904.7,
-				p99_ms: 1503.4,
 				avg_peak_mb: 26.45,
 			},
 			[
 				[ '7.13', 'req/s' ],
 				[ '413ms', 'avg' ],
-				[ '318ms', 'p50' ],
-				[ '905ms', 'p95' ],
-				[ '1503ms', 'p99' ],
 				[ '26.4MB', 'mem' ],
 			],
 		],
@@ -805,17 +795,11 @@ describe( 'PerformanceDashboard', () => {
 			{
 				requests_per_second: 2.5,
 				avg_ms: 77,
-				p50_ms: 61,
-				p95_ms: 140,
-				p99_ms: 209,
 				avg_peak_mb: 0,
 			},
 			[
 				[ '2.50', 'req/s' ],
 				[ '77ms', 'avg' ],
-				[ '61ms', 'p50' ],
-				[ '140ms', 'p95' ],
-				[ '209ms', 'p99' ],
 			],
 		],
 	] )( '%s', async ( _name, stats, expected ) => {

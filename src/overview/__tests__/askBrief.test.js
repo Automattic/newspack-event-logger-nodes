@@ -100,7 +100,7 @@ test( 'a URL with no rule says so rather than omitting the line', () => {
 	const md = briefToMarkdown( {
 		subject: 'url',
 		url: '/uncovered',
-		stats: { count: 12, p95_ms: 4000 },
+		stats: { count: 12, avg_ms: 4000 },
 		rule: null,
 		findings: [],
 		caveat: 'c',
@@ -113,7 +113,7 @@ test( 'a URL brief names the worst recent requests by rid', () => {
 	const md = briefToMarkdown( {
 		subject: 'url',
 		url: '/calendar/today',
-		stats: { count: 31, avg_ms: 812.25, p95_ms: 4100, max_peak_mb: 96.5 },
+		stats: { count: 31, avg_ms: 812.25, max_peak_mb: 96.5 },
 		worst_requests: [
 			{ rid: 'w0rst1', duration_ms: 9100.4, status_code: 500 },
 			{ rid: 'w0rst2', duration_ms: 8200, status_code: 200 },
@@ -130,7 +130,7 @@ test( 'a URL brief names the worst recent requests by rid', () => {
 
 	expect( md ).toContain( 'w0rst1 9100.4ms 500' );
 	expect( md ).toContain( 'w0rst2 8200ms 200' );
-	expect( md ).toContain( '**p95_ms:** 4100' );
+	expect( md ).toContain( '**avg_ms:** 812.3' );
 } );
 
 test( 'a URL brief marks worst-recent when the index scan stopped early', () => {

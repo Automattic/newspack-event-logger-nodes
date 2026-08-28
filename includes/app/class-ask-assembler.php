@@ -368,7 +368,6 @@ class Ask_Assembler {
 			'stats'              => [
 				'count'       => Core::num_int( $stats['count'] ?? 0 ),
 				'avg_ms'      => Core::num_float( $stats['avg_ms'] ?? 0 ),
-				'p95_ms'      => Core::num_float( $stats['p95_ms'] ?? 0 ),
 				'max_ms'      => Core::num_float( $stats['max_ms'] ?? 0 ),
 				'max_peak_mb' => Core::num_float( $stats['max_peak_mb'] ?? 0 ),
 			],

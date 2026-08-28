@@ -686,34 +686,6 @@ class PerformanceCITest extends TestCase {
 	}
 
 	/**
-	 * Percentiles do not merge, so the fold picks ONE bucket's — and it has to
-	 * be the newest. Sources arrive newest-first, so a last-wins read hands the
-	 * display the OLDEST hour in the window: a URL whose p95 was 120ms a day
-	 * ago and is 4s now would read 120ms, forever.
-	 */
-	public function test_the_newest_bucket_supplies_the_percentiles(): void {
-		$store = new Stats_Store( 0, 86400 );
-		$hash  = 'a4471ab0c0de';
-		$shard = Stats_Store::url_shard( $hash );
-		$plan  = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, \time() ) );
-		$row   = static fn ( float $p95 ): array => [
-			$hash => [
-				'url'    => '/wombat-4471', 'count' => 3, 'timed_count' => 3, 'sum_ms' => 60.0,
-				'p50_ms' => $p95 / 2, 'p95_ms' => $p95, 'p99_ms' => $p95 + 1,
-			],
-		];
-		// Oldest hour in the window, then the newest fine bucket.
-		$this->seed_url_hour( $store, \end( $plan['hours'] ), $shard, $row( 120.0 ) );
-		$this->seed_url_shard( $store, $plan['fine'][0], $shard, $row( 4000.0 ) );
-
-		$this->assertSame(
-			4000.0,
-			Core::as_float( Performance_CI_Node::load_row_default( $hash )['p95_ms'] ),
-			'the newest bucket that carries one wins'
-		);
-	}
-
-	/**
 	 * And a folded hour must not be counted TWICE — once coarse, once from the
 	 * fine buckets it was folded from. Those buckets outlive the fold.
 	 */
@@ -2156,7 +2128,6 @@ class PerformanceCITest extends TestCase {
 				'count'       => 37,
 				'timed_count' => 37,
 				'sum_ms'      => 1480.0,
-				'p95_ms'      => 64.0,
 				'last_seen'   => 1700000999,
 			],
 		] );
@@ -2181,7 +2152,6 @@ class PerformanceCITest extends TestCase {
 				'url'       => '/articles/777',
 				'count'     => 9,
 				'timed_count' => 9, 'sum_ms'    => 450.0,
-				'p95_ms'    => 80.0,
 				'last_seen' => 1700000999,
 			],
 		] );

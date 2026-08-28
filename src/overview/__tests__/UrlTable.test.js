@@ -32,7 +32,6 @@ const URLS = [
 		avg_ms: 50,
 		min_ms: 10,
 		max_ms: 100,
-		p95_ms: 90,
 		avg_peak_mb: 4,
 	},
 	{
@@ -43,7 +42,6 @@ const URLS = [
 		avg_ms: 100,
 		min_ms: 20,
 		max_ms: 200,
-		p95_ms: 180,
 		avg_peak_mb: 2,
 	},
 	{
@@ -54,7 +52,6 @@ const URLS = [
 		avg_ms: 75,
 		min_ms: 10,
 		max_ms: 300,
-		p95_ms: 220,
 		avg_peak_mb: 8,
 	},
 ];
@@ -239,7 +236,6 @@ describe( 'UrlTable', () => {
 			'avg_ms',
 			'min_ms',
 			'max_ms',
-			'p95_ms',
 			'avg_peak_mb',
 		] );
 		expect( fieldsOf( '.event-logger-table__row' ) ).toEqual(

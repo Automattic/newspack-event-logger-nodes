@@ -731,7 +731,7 @@ class FlameBuilderTest extends TestCase {
 				'sum_ms' => 2.0 * ( 1000 - $i ), 'min_ms' => 2.0, 'max_ms' => 2.0,
 				'sum_peak_mb' => 0, 'max_peak_mb' => 0, 'count_2xx' => 1000 - $i,
 				'count_3xx' => 0, 'count_4xx' => 0, 'count_5xx' => 0,
-				'worker' => false, 'last_seen' => $now, 'durations' => [],
+				'worker' => false, 'last_seen' => $now,
 			];
 		}
 		// Straight into the shard: an overflow key is not hex, so routing it
@@ -769,7 +769,7 @@ class FlameBuilderTest extends TestCase {
 				'sum_ms' => 2.0 * ( 1000 - $i ), 'min_ms' => 2.0, 'max_ms' => 2.0,
 				'sum_peak_mb' => 0, 'max_peak_mb' => 0, 'count_2xx' => 1000 - $i,
 				'count_3xx' => 0, 'count_4xx' => 0, 'count_5xx' => 0,
-				'worker' => 0 === $i % 2, 'last_seen' => $now, 'durations' => [],
+				'worker' => 0 === $i % 2, 'last_seen' => $now,
 			];
 		}
 		$this->set_url_bucket( $store, $bucket, $seed );
@@ -1057,7 +1057,6 @@ class FlameBuilderTest extends TestCase {
 				'sum_peak_mb' => 0,
 				'max_peak_mb' => 0,
 				'last_seen'   => $now,
-				'durations'   => [],
 				'srv'         => [ 'alpha.example' => [ 'count' => 1000 - $i, 'timed_count' => 1000 - $i, 'sum_ms' => 2.0 * ( 1000 - $i ), 'count_2xx' => 1000 - $i ] ],
 			];
 		}
@@ -1978,7 +1977,7 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( [], $state['disable_hooks'] );
 	}
 
-	// --- persist_aggregate_stats internals: hourly expiration, percentiles --
+	// --- persist_aggregate_stats internals: hourly expiration -------------
 
 	public function test_a_flush_leaves_buckets_it_did_not_fill_alone(): void {
 		// Retention is the key's own TTL, so a flush has no reason to touch a
@@ -1996,34 +1995,6 @@ class FlameBuilderTest extends TestCase {
 
 		$this->assertSame( $untouched, $store->get_hourly_bucket( '1999-01-01-00-00' ) );
 		$this->assertNotSame( [], $this->recent_hourly( $store ), 'and the request it did fill landed' );
-	}
-
-	/**
-	 * The raw duration reservoir is the WRITER's working set: its only use is
-	 * recomputing p50/p95/p99 when a later flush folds more requests into the
-	 * same bucket. No reader touches it — `load_index_default()` takes the three
-	 * percentiles and nothing else — so of the buckets in a read window exactly
-	 * one, the open one, has any use for it, and the rest hand up to 100 floats
-	 * per row to every poll. It lives in its own key now.
-	 */
-	public function test_the_url_index_row_carries_no_duration_reservoir(): void {
-		Core::$memd = new InMemoryMemcached();
-		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		$fb         = new Flame_Builder_Node();
-		$fb->set_stats_store( $store );
-
-		$now = \time();
-		$this->fill_request( $fb, $this->completed_request( [
-			'url'         => '/wombat-4471',
-			'duration_ms' => 447.0,
-			'timestamp'   => $now,
-		] ) );
-		$fb->flush();
-
-		$rows  = $this->url_bucket_rows( $store, Stats_Store::bucket_key( $now ) );
-		$stats = $rows[ Log_Manager::url_hash( '/wombat-4471' ) ];
-		$this->assertArrayNotHasKey( 'durations', $stats );
-		$this->assertGreaterThan( 0, $stats['p50_ms'], 'the percentiles it produces still land' );
 	}
 
 	/**
@@ -2091,35 +2062,6 @@ class FlameBuilderTest extends TestCase {
 			\array_filter( $keys, '\is_int' ),
 			'and what is stored is positional, with no legacy string keys riding along'
 		);
-	}
-
-	/**
-	 * And moving it must not cost what it is FOR: two flushes into one bucket
-	 * have to see each other's samples, or the percentile describes the last
-	 * flush rather than the bucket.
-	 */
-	public function test_percentiles_span_every_flush_into_one_bucket(): void {
-		Core::$memd = new InMemoryMemcached();
-		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		$now        = \time();
-
-		foreach ( [ [ 1, 50 ], [ 51, 100 ] ] as [ $from, $to ] ) {
-			$fb = new Flame_Builder_Node();
-			$fb->set_stats_store( $store );
-			for ( $i = $from; $i <= $to; $i++ ) {
-				$this->fill_request( $fb, $this->completed_request( [
-					'url'         => '/quokka-8823',
-					'duration_ms' => (float) $i,
-					'timestamp'   => $now,
-				] ) );
-			}
-			$fb->flush();
-		}
-
-		$rows  = $this->url_bucket_rows( $store, Stats_Store::bucket_key( $now ) );
-		$stats = $rows[ Log_Manager::url_hash( '/quokka-8823' ) ];
-		// A percentile over the first flush alone could not exceed 50.
-		$this->assertGreaterThan( 50.0, (float) $stats['p99_ms'] );
 	}
 
 	/**
@@ -2334,6 +2276,102 @@ class FlameBuilderTest extends TestCase {
 			$other['count'],
 			$other['srv']['tail.example']['count'] + Core::num_int( $other['srv']['live.example']['count'] ?? null ),
 			'and the split sums to the row: decision 15 is exact PER SERVER'
+		);
+	}
+
+	/**
+	 * The per-URL percentiles are GONE, and the duration reservoir with them.
+	 *
+	 * A stored percentile was never the window's: percentiles do not merge, so
+	 * the fold took ONE bucket's and labelled it as the whole retention window.
+	 * The honest fixes were a mergeable sketch (+33 to +129 B/row on a row just
+	 * cut to 290) or deletion. Nobody sorts by the column, so deletion wins:
+	 * it takes 38 B/row off the read AND the whole `url_dur` namespace — up to
+	 * `100` floats per row per bucket — off the write.
+	 */
+	public function test_a_stored_url_row_carries_no_percentiles_or_reservoir(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+
+		$now = \time();
+		for ( $i = 0; $i < 5; $i++ ) {
+			$this->fill_request( $fb, $this->completed_request( [
+				'url'         => '/pangolin-6142',
+				'duration_ms' => 20.0 + $i,
+				'timestamp'   => $now,
+			] ) );
+		}
+		$fb->flush();
+
+		$hash   = Log_Manager::url_hash( '/pangolin-6142' );
+		$bucket = Stats_Store::bucket_key( $now );
+		$row    = self::named_url_rows( $store->get_url_shard( $bucket, Stats_Store::url_shard( $hash ) ) )[ $hash ];
+
+		foreach ( [ 'p50_ms', 'p95_ms', 'p99_ms', 'durations' ] as $gone ) {
+			$this->assertArrayNotHasKey( $gone, $row, "{$gone} is retired" );
+		}
+		// The mean is not stored either: it divides by `timed_count`, and the
+		// reader owns that rule (decision 2, `Performance_CI_Node::mean_ms`).
+		$this->assertArrayNotHasKey( 'avg_ms', $row );
+		// The exact extremes stay: they fold from duration_ms and cost 2 fields.
+		$this->assertSame( 20.0, $row['min_ms'] );
+		$this->assertSame( 24.0, $row['max_ms'] );
+		// And nothing writes the reservoir namespace any more.
+		$this->assertFalse(
+			\method_exists( $store, 'get_url_durations' ),
+			'the url_dur namespace is gone, not merely unwritten'
+		);
+	}
+
+	/**
+	 * A v0.66.0 row is positional and HAS index 0, so decision 5's legacy probe
+	 * cannot see it — and `ROW_SRV` moved onto 14, the index the retired
+	 * reservoir occupied. Merging one reads its split as absent, discards that
+	 * bucket's whole per-server history, and rides 15..18 back out for a
+	 * retention window. Raw integer keys below: this is a RETIRED shape, and
+	 * there are no constants left to name it.
+	 */
+	public function test_a_row_from_before_the_percentiles_were_retired_is_discarded(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$now        = \time();
+		$bucket     = Stats_Store::bucket_key( $now );
+		$url        = 'https://retired.example/quokka-8823';
+		$hash       = Log_Manager::url_hash( $url );
+		$shard      = Stats_Store::url_shard( $hash );
+
+		// 0..13 as today, then the v0.66.0 tail: srv at 15, percentiles 16-18.
+		$store->set_url_shard( $bucket, $shard, [
+			$hash => [
+				0 => 91, 1 => 91, 2 => 6142.0, 3 => 212.0, 4 => 0, 5 => 88, 6 => 3, 7 => 0,
+				8 => $url, 9 => 23.08, 10 => 268.93, 11 => 16.0, 12 => $now, 13 => false,
+				15 => [ 'retired.example' => null ], 16 => 24.56, 17 => 132.82, 18 => 268.93,
+			],
+		] );
+
+		$fb = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+		$this->fill_request( $fb, $this->completed_request( [
+			'url'         => $url,
+			'duration_ms' => 47.0,
+			'timestamp'   => $now,
+			'server_name' => 'retired.example',
+		] ) );
+		$fb->flush();
+
+		$raw = $store->get_url_shard( $bucket, $shard )[ $hash ];
+		$this->assertSame(
+			\range( 0, 14 ),
+			\array_keys( $raw ),
+			'the retired tail does not ride the read-modify-write back out'
+		);
+		$this->assertSame( 1, $raw[ Stats_Store::ROW_COUNT ], 'and the stale counts go with it' );
+		$this->assertSame(
+			[ 'retired.example' => null ],
+			$raw[ Stats_Store::ROW_SRV ],
+			'the split is this flush\'s, at the index it now lives on'
 		);
 	}
 
@@ -2591,37 +2629,6 @@ class FlameBuilderTest extends TestCase {
 			\array_values( \array_filter( \array_keys( Core::arr( $split ) ), '\is_string' ) ),
 			'nor inside the per-server split, which is eight more names per row'
 		);
-	}
-
-	public function test_url_index_computes_percentiles_from_durations(): void {
-				Core::$memd = new InMemoryMemcached();
-		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		$fb    = new Flame_Builder_Node();
-		$fb->set_stats_store( $store );
-
-		// Drive 100 requests at the same URL with monotonic durations.
-		$now = \time();
-		for ( $i = 1; $i <= 100; $i++ ) {
-			$this->fill_request( $fb, $this->completed_request( [
-				'url'         => '/p50',
-				'duration_ms' => (float) $i,
-				'timestamp'   => $now,
-			] ) );
-		}
-		$fb->flush();
-
-		$bucket    = Stats_Store::bucket_key( $now );
-		$index     = $this->url_bucket_rows( $store, $bucket );
-		$url_hash  = Log_Manager::url_hash( '/p50' );
-		$this->assertArrayHasKey( $url_hash, $index );
-		$stats     = $index[ $url_hash ];
-		$this->assertGreaterThan( 0, $stats['p50_ms'] );
-		$this->assertGreaterThanOrEqual( $stats['p50_ms'], $stats['p95_ms'] );
-		$this->assertGreaterThanOrEqual( $stats['p95_ms'], $stats['p99_ms'] );
-		// The mean is NOT stored: it divides by `timed_count`, and the reader
-		// owns that rule (`Performance_CI_Node::mean_ms`). A second copy here
-		// wrote a field nothing read into the largest blob the schema keeps.
-		$this->assertArrayNotHasKey( 'avg_ms', $stats );
 	}
 
 	public function test_url_index_caps_at_500_keeps_top_by_count(): void {
@@ -3813,34 +3820,6 @@ class FlameBuilderTest extends TestCase {
 		);
 	}
 
-	/**
-	 * The duration reservoir is NOT. It is the writer's working set for the
-	 * bucket it is filling, and mirroring it would put the exact payload this
-	 * change took OFF the read path back onto the durable write path — up to
-	 * `MAX_DURATIONS_PER_BUCKET` floats per row per bucket, on the checkpoint
-	 * budget. Losing one costs precision on one open bucket's percentiles and
-	 * nothing else, because every figure derived from it is already stored.
-	 */
-	public function test_duration_reservoirs_are_not_mirrored(): void {
-		Core::$memd = new InMemoryMemcached();
-		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		[ $fb, $p ] = $this->mirrored_builder( $store, 'flames-stats' );
-
-		$store->set_url_durations( '2026-02-03-04-05', 'a', [ 'ab12cd34ef56' => [ 1.0, 2.0, 3.0 ] ] );
-		$fb->save_state();
-		$p->flush();
-
-		$mirrored = \array_keys( $this->read_mirror_frames( $p ) );
-		$this->assertSame(
-			[],
-			\array_values( \array_filter(
-				$mirrored,
-				static fn ( string $k ): bool => \str_contains( $k, ':' . Stats_Store::NS_URL_DUR . ':' )
-			) ),
-			'the reservoir is working state, not a durable record'
-		);
-	}
-
 	public function test_a_frame_mirrored_after_the_first_miss_is_still_found(): void {
 		Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
@@ -3898,7 +3877,7 @@ class FlameBuilderTest extends TestCase {
 	/**
 	 * An ABORTED request was killed partway — a worker cut off mid-job, or a
 	 * gyrobase render whose lease was stolen — so its duration is a fragment of
-	 * the real one. Counting it drags every percentile down and invents fast
+	 * the real one. Counting it drags the mean down and invents fast
 	 * requests that never happened, exactly like the timed-out case above.
 	 */
 	public function test_aborted_excluded_from_timing(): void {

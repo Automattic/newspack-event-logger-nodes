@@ -192,7 +192,6 @@ function bodyLines( brief ) {
 					[ 'url', brief.url ],
 					[ 'count', brief.stats?.count ],
 					[ 'avg_ms', num( brief.stats?.avg_ms ) ],
-					[ 'p95_ms', num( brief.stats?.p95_ms ) ],
 					[ 'max_peak_mb', num( brief.stats?.max_peak_mb ) ],
 					[
 						'worst recent',

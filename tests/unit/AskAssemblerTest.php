@@ -238,7 +238,7 @@ class AskAssemblerTest extends TestCase {
 			'url'    => '/calendar/today?token=hunter2seekrit',
 			'count'  => 4210,
 			'avg_ms' => 812.0,
-			'p95_ms' => 2600.0,
+			
 		];
 		$requests = [
 			[ 'rid' => 'a', 'duration_ms' => 300, 'status_code' => 200, 'partition' => 0 ],
@@ -492,7 +492,7 @@ class AskAssemblerTest extends TestCase {
 
 	public function test_a_url_with_no_rule_says_so_and_gets_the_cold_start_finding(): void {
 		$brief = Ask_Assembler::for_url(
-			[ 'hash' => 'ff00', 'url' => '/uncovered', 'count' => 12, 'p95_ms' => 4000.0 ],
+			[ 'hash' => 'ff00', 'url' => '/uncovered', 'count' => 12, 'avg_ms' => 4000.0 ],
 			[],
 			null,
 			'',

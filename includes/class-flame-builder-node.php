@@ -207,7 +207,6 @@ class Flame_Builder_Node extends Node {
 	 */
 	private const STATS_MIRROR_TOPN = [
 		Stats_Store::NS_URL      => 0,   // flame profiles — see $flame_topn
-		Stats_Store::NS_URL_DUR  => 0,   // duration reservoirs — working state
 		// Derived: a missing hour is answered from its mirrored fine buckets.
 		Stats_Store::NS_URLS_HOUR => 0,
 		Stats_Store::NS_URL_DIM => 100,  // per-URL dimensional frames
@@ -537,7 +536,7 @@ class Flame_Builder_Node extends Node {
 		// The RECORD's duration; the flame's is raised to cover children.
 		$duration_ms  = Core::num_float( $request['duration_ms'] ?? 0 );
 		$error_status = $request['error_status'] ?? '-';
-		// Both durations are fictions and would skew every percentile.
+		// Both durations are fictions and would skew the mean and the max.
 		$is_timed_out = \in_array( $error_status, [ 'T', 'A' ], true );
 		$is_worker    = ! empty( $request['is_worker'] );
 		// Two gates: per-URL rows keep worker timing; global drops workers.
@@ -633,7 +632,7 @@ class Flame_Builder_Node extends Node {
 
 	/**
 	 * Fold the request into its per-URL row in the pending bucket: counts, timing
-	 * extremes, status buckets, sampled durations and peak memory.
+	 * extremes, status buckets and peak memory.
 	 *
 	 * @param Bucket_Acc              $acc           The request's bucket accumulator.
 	 * @param string                  $url_hash      URL hash of the request.
@@ -650,12 +649,13 @@ class Flame_Builder_Node extends Node {
 		if ( '' === $url ) {
 			return;
 		}
-		// @longform The reservoir and the split make a row expensive to copy,
-		// so the common path leaves it alone. A row missing `durations` came
-		// from a checkpoint this process did not write, and everything below
-		// indexes it unguarded — `count( null )` is fatal, not a warning.
+		// @longform The split makes a row expensive to copy, so the common path
+		// leaves it alone. A row missing ROW_SRV came from a checkpoint this
+		// process did not write, and everything below indexes it unguarded,
+		// where `max( null, … )` is a TypeError, not a warning. A v0.66.0 row
+		// is NOT caught here — its retired reservoir sat on this same index.
 		$row = Core::arr( $acc['url_stats'][ $url_hash ] ?? null );
-		if ( ! isset( $row[ Stats_Store::ROW_DURATIONS ] ) ) {
+		if ( ! isset( $row[ Stats_Store::ROW_SRV ] ) ) {
 			// @longform array_replace, NOT array_merge: the row is positional,
 			// and merge RENUMBERS integer keys rather than overwriting them.
 			$acc['url_stats'][ $url_hash ] = \array_replace(
@@ -667,7 +667,7 @@ class Flame_Builder_Node extends Node {
 		 * Positional; see `Stats_Store::ROW_*`, which orders the summed eight
 		 * first so one field map serves the row and its split alike.
 		 *
-		 * @var array{0: int, 1: int, 2: float|int, 3: float|int, 4: int, 5: int, 6: int, 7: int, 8: string, 9: float|int, 10: float|int, 11: float|int, 12: int, 13: bool, 14: array<int,float|int>, 15: array<string,array<int,float|int>>} $us
+		 * @var array{0: int, 1: int, 2: float|int, 3: float|int, 4: int, 5: int, 6: int, 7: int, 8: string, 9: float|int, 10: float|int, 11: float|int, 12: int, 13: bool, 14: array<string,array<int,float|int>>} $us
 		 */
 		$us              = &$acc['url_stats'][ $url_hash ];
 		$peak_raw        = $request['peak_mb'] ?? 0;
@@ -708,19 +708,9 @@ class Flame_Builder_Node extends Node {
 		$us[ Stats_Store::ROW_LAST_SEEN ] = \max( $us[ Stats_Store::ROW_LAST_SEEN ], $timestamp );
 		// Recorded, not read out of the URL text — that guess emptied a table.
 		$us[ Stats_Store::ROW_WORKER ]    = $us[ Stats_Store::ROW_WORKER ] || ! $count_global;
-		// Raw durations feed the percentiles; past the cap, Algorithm R.
 		if ( $record_timing ) {
-			$max_dur      = Stats_Store::MAX_DURATIONS_PER_BUCKET;
 			$us[ Stats_Store::ROW_MAX_MS ] = \max( $us[ Stats_Store::ROW_MAX_MS ], $duration_ms );
 			$us[ Stats_Store::ROW_MIN_MS ] = \min( $us[ Stats_Store::ROW_MIN_MS ], $duration_ms );
-			if ( \count( $us[ Stats_Store::ROW_DURATIONS ] ) < $max_dur ) {
-				$us[ Stats_Store::ROW_DURATIONS ][] = $duration_ms;
-			} else {
-				$idx = \random_int( 0, \max( 1, $us[ Stats_Store::ROW_TIMED_COUNT ] ) - 1 );
-				if ( $idx < $max_dur ) {
-					$us[ Stats_Store::ROW_DURATIONS ][ $idx ] = $duration_ms;
-				}
-			}
 		}
 		$us[ Stats_Store::ROW_MAX_PEAK_MB ] = \max( $us[ Stats_Store::ROW_MAX_PEAK_MB ], $peak_mb );
 		unset( $us );
@@ -1331,9 +1321,6 @@ class Flame_Builder_Node extends Node {
 	 * One shard's twelve fine buckets, merged into the hour's rows.
 	 *
 	 * The same shape a fine bucket holds, so ONE reader fold serves both tiers.
-	 * Percentiles come from the merged reservoirs rather than from the buckets'
-	 * own figures: percentiles do not average, and an hour's samples describe
-	 * the hour better than any five minutes of it.
 	 *
 	 * @param Stats_Store $stats_store Source and destination.
 	 * @param string      $hour        Hour key.
@@ -1342,32 +1329,21 @@ class Flame_Builder_Node extends Node {
 	 */
 	private function fold_hour( Stats_Store $stats_store, string $hour, string $shard ): array {
 		$buckets = Stats_Store::buckets_in_hour( $hour );
-		// @longform Two round trips, not 24: a miss here can never be
-		// rehydrated, so it walks the mirror index to its last line first.
-		$samples    = $stats_store->get_url_duration_buckets( $buckets, $shard );
-		$rows       = [];
-		$reservoirs = [];
-		foreach ( $stats_store->url_row_sources( $buckets, $shard ) as [ $bucket, $bucket_rows ] ) {
+		$rows = [];
+		foreach ( $stats_store->url_row_sources( $buckets, $shard ) as [ , $bucket_rows ] ) {
 			foreach ( $bucket_rows as $key => $stats_raw ) {
 				// An all-digit hash arrives as an int array key; cast back.
 				$hash  = (string) $key;
 				$stats = Core::arr( $stats_raw );
-				// A row with no ROW_COUNT is legacy; see persist_url_shard().
-				if ( ! isset( $stats[ Stats_Store::ROW_COUNT ] ) ) {
+				// A row with no ROW_COUNT, or one past the end, is legacy.
+				if ( ! isset( $stats[ Stats_Store::ROW_COUNT ] )
+					|| isset( $stats[ Stats_Store::ROW_PAST_END ] ) ) {
 					continue;
 				}
-				$into  = Core::arr( $rows[ $hash ] ?? null )
+				$into = Core::arr( $rows[ $hash ] ?? null )
 					?: self::empty_url_row( Core::str( $stats[ Stats_Store::ROW_URL ] ?? '' ) );
-				unset( $into[ Stats_Store::ROW_DURATIONS ] );
-				$rows[ $hash ]       = Stats_Store::merge_url_row( $into, $stats );
-				$reservoirs[ $hash ] = \array_merge(
-					Core::arr( $reservoirs[ $hash ] ?? null ),
-					Core::arr( Core::arr( $samples[ $bucket ] ?? null )[ $hash ] ?? null )
-				);
+				$rows[ $hash ] = Stats_Store::merge_url_row( $into, $stats );
 			}
-		}
-		foreach ( $rows as $hash => $row ) {
-			$rows[ $hash ] = Stats_Store::apply_percentiles( $row, Core::arr( $reservoirs[ $hash ] ?? null ) );
 		}
 		return self::cap_url_rows( $rows );
 	}
@@ -1413,37 +1389,14 @@ class Flame_Builder_Node extends Node {
 		$existing_urls = \array_filter(
 			$stats_store->get_url_shard( $bucket, $shard ),
 			static fn ( $row ): bool => isset( Core::arr( $row )[ Stats_Store::ROW_COUNT ] )
+				&& ! isset( Core::arr( $row )[ Stats_Store::ROW_PAST_END ] )
 		);
-		// Beside the rows, never inside them: no reader wants the reservoir.
-		$reservoirs = $stats_store->get_url_durations( $bucket, $shard );
-
 		foreach ( $rows as $hash => $stats_raw ) {
 			$stats = Core::arr( $stats_raw );
 			$row   = Core::arr( $existing_urls[ $hash ] ?? null )
 				?: self::empty_url_row( Core::str( $stats[ Stats_Store::ROW_URL ] ?? '' ) );
 
-			// @longform Two sources: what the shard's reservoir holds, and this
-			// flush's own samples. A STORED row never carries them — persist
-			// unsets the field and the fold never adds it — so the
-			// accumulator's copy arrives in `$stats` and nowhere else.
-			$merged = \array_merge(
-				Core::arr( $reservoirs[ $hash ] ?? null ),
-				Core::arr( $stats[ Stats_Store::ROW_DURATIONS ] ?? null )
-			);
-			unset( $row[ Stats_Store::ROW_DURATIONS ] );
-			if ( \count( $merged ) > Stats_Store::MAX_DURATIONS_PER_BUCKET ) {
-				\shuffle( $merged );
-				$merged = \array_slice( $merged, 0, Stats_Store::MAX_DURATIONS_PER_BUCKET );
-			}
-			$reservoirs[ $hash ]    = $merged;
 			$existing_urls[ $hash ] = Stats_Store::merge_url_row( $row, $stats );
-		}
-
-		foreach ( $existing_urls as $hash => $url_stat ) {
-			$existing_urls[ $hash ] = Stats_Store::apply_percentiles(
-				Core::arr( $url_stat ),
-				Core::arr( $reservoirs[ $hash ] ?? null )
-			);
 		}
 
 		$existing_urls = self::cap_url_rows( $existing_urls );
@@ -1452,19 +1405,6 @@ class Flame_Builder_Node extends Node {
 		// carrying a per-server split on every row. memcached refuses an item
 		// over its limit, and a discarded return loses the whole bucket's
 		// index for this partition — again on every later merge into it.
-		// Reservoirs first: a refused index write must not leave samples the
-		// next flush would fold in a second time.
-		$kept = \array_intersect_key( $reservoirs, $existing_urls );
-		if ( ! $stats_store->set_url_durations( $bucket, $shard, $kept ) ) {
-			// @longform Silent, this leaves `apply_percentiles()` computing
-			// from one flush's samples with no diagnostic — and the reservoir
-			// is a standalone item now, up to MAX_URLS_PER_SHARD rows of
-			// MAX_DURATIONS_PER_BUCKET floats against memcached's ceiling.
-			$this->print_less_often(
-				'URL duration reservoir write refused; percentiles fall back to one flush of samples',
-				\sprintf( ' — shard %s, %d rows', $shard, \count( $kept ) )
-			);
-		}
 		if ( ! $stats_store->set_url_shard( $bucket, $shard, $existing_urls ) ) {
 			// Rows, not bytes: sizing it re-serialises a megabyte per flush.
 			$this->print_less_often(
@@ -2445,8 +2385,6 @@ class Flame_Builder_Node extends Node {
 			Stats_Store::ROW_MAX_PEAK_MB => 0,
 			Stats_Store::ROW_LAST_SEEN   => 0,
 			Stats_Store::ROW_WORKER      => false,
-			// In-flight buffer; persist moves it to its own key, then drops it.
-			Stats_Store::ROW_DURATIONS   => [],
 			Stats_Store::ROW_SRV         => [],
 		];
 	}

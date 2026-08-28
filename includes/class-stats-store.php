@@ -66,8 +66,6 @@ class Stats_Store {
 	/** Distinct values kept per global dimension bucket; see `dim_cap()`. */
 	public const MAX_DIM_VALUES           = 20;
 
-	/** Raw durations sampled per URL bucket for percentiles; Algorithm R past the cap. */
-	public const MAX_DURATIONS_PER_BUCKET = 100;
 	/** Distinct values kept per per-URL dimension bucket. */
 	public const MAX_URL_DIM_VALUES       = 10;
 	/**
@@ -100,18 +98,6 @@ class Stats_Store {
 	 * expiry and the durable read-through are untouched. Decision 1.
 	 */
 	public const NS_URLS        = 'urls';
-	/**
-	 * The URL index's raw duration reservoirs: `url_dur:{shard}:{bucket}`,
-	 * `{ url_hash: [samples] }`.
-	 *
-	 * Beside the index rather than inside them, because it is the WRITER's
-	 * working set and no reader wants it: its only use is recomputing
-	 * p50/p95/p99 when a later flush folds more requests into the same bucket,
-	 * so exactly one bucket in a read window — the open one — has any use for
-	 * it, while `url_row_sources()` would hand up to
-	 * `MAX_DURATIONS_PER_BUCKET` floats per row to every poll.
-	 */
-	public const NS_URL_DUR     = 'url_dur';
 	/**
 	 * The URL index's COARSE tier: `urls_h:{shard}:{Y-m-d-H}`, one key per hour
 	 * holding the same row shape as a fine bucket.
@@ -193,17 +179,16 @@ class Stats_Store {
 	public const ROW_MAX_PEAK_MB = 11;
 	public const ROW_LAST_SEEN   = 12;
 	public const ROW_WORKER      = 13;
-	public const ROW_DURATIONS   = 14;
-	public const ROW_SRV         = 15;
-	public const ROW_P50_MS      = 16;
-	public const ROW_P95_MS      = 17;
-	public const ROW_P99_MS      = 18;
+	public const ROW_SRV         = 14;
+
+	/** One past the last stored index: a row with this set predates decision 19. */
+	public const ROW_PAST_END    = 15;
 
 	/**
 	 * Summed fields of a URL row and of its per-server split => whether each is
 	 * a whole count. ONE map for both, which the index order above is chosen to
-	 * allow. Only fields that ADD: the extremes and the percentiles come off a
-	 * sampled reservoir, so a scoped row keeps the URL's own.
+	 * allow. Only fields that ADD: `min_ms` and `max_ms` are extremes, so a
+	 * scoped row keeps the URL's own.
 	 */
 	public const URL_SRV_SUMS = [
 		self::ROW_COUNT       => true,
@@ -240,11 +225,7 @@ class Stats_Store {
 		self::ROW_MAX_PEAK_MB => 'max_peak_mb',
 		self::ROW_LAST_SEEN   => 'last_seen',
 		self::ROW_WORKER      => 'worker',
-		self::ROW_DURATIONS   => 'durations',
 		self::ROW_SRV         => 'srv',
-		self::ROW_P50_MS      => 'p50_ms',
-		self::ROW_P95_MS      => 'p95_ms',
-		self::ROW_P99_MS      => 'p99_ms',
 	];
 
 	/** Status class (2..5) to the row index counting it. */
@@ -343,7 +324,7 @@ class Stats_Store {
 	 * Positional with no constants, deliberately, and the one carve-out from
 	 * decision 18: a closed 3-tuple read by `sums_to_display()` beside it and
 	 * by `RequestProfile.js`, so naming it means naming it twice in two deploy
-	 * units for three fields. A URL row is 19 fields across three PHP files.
+	 * units for three fields. A URL row is 15 fields across three PHP files.
 	 */
 	private const LB_ENTRY_SUMS = [ 0 => false, 1 => false, 2 => true ];
 	/**
@@ -604,6 +585,24 @@ class Stats_Store {
 	}
 
 	/**
+	 * Read many buckets of one namespace in a single round-trip.
+	 *
+	 * A dashboard walks the whole retention window — hundreds of buckets — and
+	 * per-key gets across it are the latency cliff this exists to avoid.
+	 *
+	 * @param array<int,string> $parts   Namespace prefix parts, before the bucket.
+	 * @param array<int,string> $buckets Bucket keys.
+	 * @return array<string,mixed> Values keyed by bucket; misses absent.
+	 */
+	private function lookup_buckets( array $parts, array $buckets ): array {
+		$out = [];
+		foreach ( $this->lookup_bucket_sets( [ $parts ], $buckets ) as [ $bucket, $value ] ) {
+			$out[ $bucket ] = $value;
+		}
+		return $out;
+	}
+
+	/**
 	 * Every source of URL rows for a window, as `[bucket, rows]` pairs.
 	 *
 	 * Pairs rather than a merged map: one shard's rows are complete for the
@@ -628,6 +627,35 @@ class Stats_Store {
 			$prefixes[] = [ self::NS_URLS, $one ];
 		}
 		return $this->lookup_bucket_sets( $prefixes, $buckets );
+	}
+
+	/**
+	 * Read several namespace prefixes across the same buckets in ONE round-trip.
+	 *
+	 * Decisions 1 and 6. Pairs, not a map: two prefixes can hold one bucket.
+	 *
+	 * @param array<int,array<int,string>> $prefix_sets Namespace prefix parts, before the bucket.
+	 * @param array<int,string>            $buckets     Bucket keys.
+	 * @return list<array{0: string, 1: array<array-key,mixed>}>
+	 */
+	private function lookup_bucket_sets( array $prefix_sets, array $buckets ): array {
+		if ( empty( $buckets ) || empty( $prefix_sets ) ) {
+			return [];
+		}
+		$map = [];
+		foreach ( $prefix_sets as $parts ) {
+			foreach ( $buckets as $bucket ) {
+				$map[ $this->key( ...[ ...$parts, $bucket ] ) ] = $bucket;
+			}
+		}
+		// No table (no backend) reads as empty, like a miss.
+		$out = [];
+		foreach ( $this->table( self::ROLE_AGGREGATE )?->lookup_multi( \array_keys( $map ) ) ?? [] as $key => $value ) {
+			if ( \is_array( $value ) && isset( $map[ $key ] ) ) {
+				$out[] = [ $map[ $key ], $value ];
+			}
+		}
+		return $out;
 	}
 
 	/**
@@ -715,93 +743,6 @@ class Stats_Store {
 	 */
 	public function set_url_shard( string $bucket, string $shard, array $rows ): bool {
 		return $this->bucket_set( [ self::NS_URLS, $shard ], $bucket, $rows );
-	}
-
-	/**
-	 * Read one shard's duration reservoirs. Writer-only; see `NS_URL_DUR`.
-	 *
-	 * @param string $bucket Bucket key.
-	 * @param string $shard  Shard name from `url_shard()`.
-	 * @return array<array-key,mixed> `{ url_hash: [samples] }`, [] on miss.
-	 */
-	public function get_url_durations( string $bucket, string $shard ): array {
-		return $this->bucket_get( [ self::NS_URL_DUR, $shard ], $bucket );
-	}
-
-	/**
-	 * Read MANY of one shard's duration reservoirs in one round trip — the
-	 * batched form the hour fold wants, which reads twelve at a time.
-	 *
-	 * A miss matters more here than elsewhere: `NS_URL_DUR` is excluded from
-	 * the mirror, so a missed key can never be rehydrated and the read-through
-	 * walks the whole index to its last line before giving up. Twelve of those
-	 * share one walk; twelve separate gets pay twelve.
-	 *
-	 * @param array<int,string> $buckets Bucket keys.
-	 * @param string            $shard   Shard name from `url_shard()`.
-	 * @return array<string,mixed> `{ url_hash: [samples] }` by bucket; misses absent.
-	 */
-	public function get_url_duration_buckets( array $buckets, string $shard ): array {
-		return $this->lookup_buckets( [ self::NS_URL_DUR, $shard ], $buckets );
-	}
-
-	/**
-	 * Read many buckets of one namespace in a single round-trip.
-	 *
-	 * A dashboard walks the whole retention window — hundreds of buckets — and
-	 * per-key gets across it are the latency cliff this exists to avoid.
-	 *
-	 * @param array<int,string> $parts   Namespace prefix parts, before the bucket.
-	 * @param array<int,string> $buckets Bucket keys.
-	 * @return array<string,mixed> Values keyed by bucket; misses absent.
-	 */
-	private function lookup_buckets( array $parts, array $buckets ): array {
-		$out = [];
-		foreach ( $this->lookup_bucket_sets( [ $parts ], $buckets ) as [ $bucket, $value ] ) {
-			$out[ $bucket ] = $value;
-		}
-		return $out;
-	}
-
-	/**
-	 * Read several namespace prefixes across the same buckets in ONE round-trip.
-	 *
-	 * Decisions 1 and 6. Pairs, not a map: two prefixes can hold one bucket.
-	 *
-	 * @param array<int,array<int,string>> $prefix_sets Namespace prefix parts, before the bucket.
-	 * @param array<int,string>            $buckets     Bucket keys.
-	 * @return list<array{0: string, 1: array<array-key,mixed>}>
-	 */
-	private function lookup_bucket_sets( array $prefix_sets, array $buckets ): array {
-		if ( empty( $buckets ) || empty( $prefix_sets ) ) {
-			return [];
-		}
-		$map = [];
-		foreach ( $prefix_sets as $parts ) {
-			foreach ( $buckets as $bucket ) {
-				$map[ $this->key( ...[ ...$parts, $bucket ] ) ] = $bucket;
-			}
-		}
-		// No table (no backend) reads as empty, like a miss.
-		$out = [];
-		foreach ( $this->table( self::ROLE_AGGREGATE )?->lookup_multi( \array_keys( $map ) ) ?? [] as $key => $value ) {
-			if ( \is_array( $value ) && isset( $map[ $key ] ) ) {
-				$out[] = [ $map[ $key ], $value ];
-			}
-		}
-		return $out;
-	}
-
-	/**
-	 * Overwrite one shard's duration reservoirs.
-	 *
-	 * @param string                 $bucket    Bucket key.
-	 * @param string                 $shard     Shard name from `url_shard()`.
-	 * @param array<array-key,mixed> $durations `{ url_hash: [samples] }`.
-	 * @return bool True when the set landed.
-	 */
-	public function set_url_durations( string $bucket, string $shard, array $durations ): bool {
-		return $this->bucket_set( [ self::NS_URL_DUR, $shard ], $bucket, $durations );
 	}
 
 	/**
@@ -1159,7 +1100,7 @@ class Stats_Store {
 	/**
 	 * Add one URL row into another, for the synthetic overflow row only.
 	 *
-	 * Only the fields that ADD (`URL_SRV_SUMS`) plus `last_seen`: a percentile
+	 * Only the fields that ADD (`URL_SRV_SUMS`) plus `last_seen`: an extreme
 	 * over unrelated URLs describes nothing. The split folds with it, so a
 	 * scoped total is exact for the same reason the site's is.
 	 *
@@ -1243,9 +1184,8 @@ class Stats_Store {
 	 * TIMED buckets (0 is "nothing folded yet"), and whichever side names the
 	 * `url` wins, because merge order varies.
 	 *
-	 * Percentiles are not merged here: they come off the reservoir, through
-	 * `apply_percentiles()`. Contrast `fold_url_rows()`, which folds DIFFERENT
-	 * urls into an overflow row and therefore keeps only what adds.
+	 * Contrast `fold_url_rows()`, which folds DIFFERENT urls into an overflow
+	 * row and therefore keeps only what adds.
 	 *
 	 * Both sides are EXPANDED first: a collapsed split says "the row's own
 	 * numbers", and `$out`'s counts are already both rows added together, so
@@ -1443,29 +1383,6 @@ class Stats_Store {
 			$out[] = $hour . \sprintf( '-%02d', $m );
 		}
 		return $out;
-	}
-
-	/**
-	 * Stamp a row's percentiles from its duration reservoir.
-	 *
-	 * Percentiles do not merge, so both tiers recompute them from the samples
-	 * they hold rather than from any row's own figures. An empty reservoir
-	 * leaves the row alone: a row nothing timed keeps what it was stored with.
-	 *
-	 * @param array<array-key,mixed> $row     The row to stamp.
-	 * @param array<array-key,mixed> $samples That row's reservoir.
-	 * @return array<array-key,mixed>
-	 */
-	public static function apply_percentiles( array $row, array $samples ): array {
-		if ( [] === $samples ) {
-			return $row;
-		}
-		\sort( $samples );
-		$n                       = \count( $samples );
-		$row[ self::ROW_P50_MS ] = $samples[ (int) ( $n * 0.50 ) ] ?? 0;
-		$row[ self::ROW_P95_MS ] = $samples[ (int) ( $n * 0.95 ) ] ?? 0;
-		$row[ self::ROW_P99_MS ] = $samples[ (int) ( $n * 0.99 ) ] ?? 0;
-		return $row;
 	}
 
 	/**

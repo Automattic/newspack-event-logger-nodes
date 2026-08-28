@@ -681,7 +681,7 @@ class Findings {
 	 * spans and no entries — only a total. The useful answer is not an
 	 * explanation but WHICH INSTRUMENTATION TO SWITCH ON.
 	 *
-	 * @param array<array-key,mixed> $stats A URL index row (`hash`, `url`, `count`, `avg_ms`, `p95_ms`, …).
+	 * @param array<array-key,mixed> $stats A URL index row (`hash`, `url`, `count`, `avg_ms`, `max_ms`, …).
 	 * @param Rule|null           $rule  The rule governing that URL, or null.
 	 * @return list<array<string,mixed>>
 	 */
@@ -693,7 +693,7 @@ class Findings {
 		$metric = [
 			'count'       => Core::num_int( $stats['count'] ?? 0 ),
 			'avg_ms'      => Core::num_float( $stats['avg_ms'] ?? 0 ),
-			'p95_ms'      => Core::num_float( $stats['p95_ms'] ?? 0 ),
+			'max_ms'      => Core::num_float( $stats['max_ms'] ?? 0 ),
 			'max_peak_mb' => Core::num_float( $stats['max_peak_mb'] ?? 0 ),
 		];
 		return [ self::insufficient( $url, $rule, $metric, 'url stats' ) ];
