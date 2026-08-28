@@ -1926,6 +1926,97 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( 0.0, (float) ( $row['avg_ms'] ?? -1 ), 'no milliseconds are invented from it' );
 	}
 
+	/**
+	 * The collapse turns ABSENCE into meaning, and the two states are adjacent
+	 * with opposite answers: `null` says "this server's numbers ARE the row's",
+	 * while a host missing from the split says "never served here" and drops
+	 * the row. Both halves are pinned, because one reading of the other is a
+	 * URL that silently leaves a filtered table or a wrong number in it.
+	 */
+	public function test_a_collapsed_split_resolves_to_the_rows_own_numbers(): void {
+		$store  = new Stats_Store( 0, 86400 );
+		$bucket = $this->current_url_bucket();
+		$this->seed_url_shard( $store, $bucket, Stats_Store::url_shard( 'c0119b5ed001' ), [
+			'c0119b5ed001' => self::positional_url_row( [
+				'url'         => '/collapsed-6142',
+				'count'       => 9,
+				'timed_count' => 9,
+				'sum_ms'      => 819.0,
+				'last_seen'   => 1700000009,
+				'srv'         => [ 'sole-host.example' => null ],
+			] ),
+		] );
+
+		$result = VerbHarness::fire(
+			new Performance_CI_Node(),
+			'performance',
+			'urls',
+			'--server=sole-host.example'
+		);
+		$row = $result['data'][0] ?? [];
+
+		$this->assertSame( '/collapsed-6142', $row['url'] ?? '' );
+		$this->assertSame( 9, $row['count'] ?? -1, 'the collapsed host gets the row back' );
+		$this->assertEqualsWithDelta( 91.0, $row['avg_ms'] ?? -1.0, 1e-6 );
+	}
+
+	/** The adjacent state: absent is not null, and still drops the row. */
+	public function test_a_host_absent_from_a_collapsed_split_drops_the_row(): void {
+		$store  = new Stats_Store( 0, 86400 );
+		$bucket = $this->current_url_bucket();
+		$this->seed_url_shard( $store, $bucket, Stats_Store::url_shard( 'c0119b5ed001' ), [
+			'c0119b5ed001' => self::positional_url_row( [
+				'url'         => '/collapsed-6142',
+				'count'       => 9,
+				'timed_count' => 9,
+				'sum_ms'      => 819.0,
+				'last_seen'   => 1700000009,
+				'srv'         => [ 'sole-host.example' => null ],
+			] ),
+		] );
+
+		$result = VerbHarness::fire(
+			new Performance_CI_Node(),
+			'performance',
+			'urls',
+			'--server=never-served.example'
+		);
+
+		$this->assertSame( [], $result['data'] ?? [ 'not-empty' ] );
+	}
+
+	/**
+	 * And the fold must ADD two collapsed buckets rather than skip them:
+	 * `sum_fields()` ignores a non-array value, so a collapse the reader does
+	 * not expand takes the server's whole history with it.
+	 */
+	public function test_two_collapsed_buckets_merge_to_the_summed_row(): void {
+		$store   = new Stats_Store( 0, 86400 );
+		$buckets = Stats_Store::retention_buckets( 86400, \time() );
+		foreach ( [ [ $buckets[1], 4, 364.0 ], [ $buckets[2], 5, 455.0 ] ] as [ $bucket, $count, $ms ] ) {
+			$this->seed_url_shard( $store, $bucket, Stats_Store::url_shard( 'c0119b5ed001' ), [
+				'c0119b5ed001' => self::positional_url_row( [
+					'url'         => '/collapsed-6142',
+					'count'       => $count,
+					'timed_count' => $count,
+					'sum_ms'      => $ms,
+					'last_seen'   => 1700000009,
+					'srv'         => [ 'sole-host.example' => null ],
+				] ),
+			] );
+		}
+
+		$result = VerbHarness::fire(
+			new Performance_CI_Node(),
+			'performance',
+			'urls',
+			'--server=sole-host.example'
+		);
+		$row = $result['data'][0] ?? [];
+
+		$this->assertSame( 9, $row['count'] ?? -1, 'both buckets, not one and not none' );
+	}
+
 	/** Seed one URL whose row carries a per-server split. */
 	private function seed_split_row(): void {
 		$store = new Stats_Store( 0, 86400 );

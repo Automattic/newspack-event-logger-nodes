@@ -172,6 +172,10 @@ abstract class TestCase extends RuntimeTestCase {
 	 * row reads `['count']` rather than counting indexes. The SHAPE is pinned
 	 * separately, by the one test that reads a shard raw.
 	 *
+	 * A collapsed split value stays null: it means "this host served every
+	 * request the row counted", and naming it would invent eight fields the
+	 * store deliberately did not write.
+	 *
 	 * @param array<array-key,mixed> $row Stored positional row.
 	 * @return array<string,mixed>
 	 */
@@ -181,7 +185,10 @@ abstract class TestCase extends RuntimeTestCase {
 		foreach ( $row as $index => $value ) {
 			$name = \is_int( $index ) ? ( $names[ $index ] ?? $index ) : $index;
 			$out[ $name ] = \Newspack_Event_Logger_Nodes\Stats_Store::URL_SRV_FIELD === $name
-				? \array_map( [ self::class, 'named_url_row' ], \Newspack_Nodes\Core::arr( $value ) )
+				? \array_map(
+					static fn ( $sums ) => null === $sums ? null : self::named_url_row( \Newspack_Nodes\Core::arr( $sums ) ),
+					\Newspack_Nodes\Core::arr( $value )
+				)
 				: $value;
 		}
 		return $out;
@@ -232,6 +239,9 @@ abstract class TestCase extends RuntimeTestCase {
 	 * count indexes to stay readable. Reverses `ROW_FIELD_NAMES`, so it cannot
 	 * drift from the shape it seeds. A row already positional passes through.
 	 *
+	 * A split VALUE of null is the collapse — the host served every request the
+	 * row counted — and passes through as null rather than recursing.
+	 *
 	 * @param array<array-key,mixed> $row Named row, or an already-stored one.
 	 * @return array<int,mixed>
 	 */
@@ -247,7 +257,10 @@ abstract class TestCase extends RuntimeTestCase {
 				throw new \RuntimeException( "no such URL row field: {$field}" );
 			}
 			$out[ $index[ $field ] ] = \Newspack_Event_Logger_Nodes\Stats_Store::URL_SRV_FIELD === $field
-				? \array_map( [ self::class, 'positional_url_row' ], \Newspack_Nodes\Core::arr( $value ) )
+				? \array_map(
+					static fn ( $sums ) => null === $sums ? null : self::positional_url_row( \Newspack_Nodes\Core::arr( $sums ) ),
+					\Newspack_Nodes\Core::arr( $value )
+				)
 				: $value;
 		}
 		return $out;

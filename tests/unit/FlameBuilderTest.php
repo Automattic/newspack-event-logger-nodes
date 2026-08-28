@@ -955,7 +955,8 @@ class FlameBuilderTest extends TestCase {
 
 		$row = $this->url_bucket_rows( $store, Stats_Store::bucket_key( $now ) )[ Log_Manager::url_hash( '/cron' ) ];
 
-		$this->assertSame( 1, $row[ Stats_Store::URL_SRV_FIELD ]['Unknown']['count'] );
+		// One server, so it collapses: the KEY is what this test is about.
+		$this->assertSame( [ 'Unknown' => null ], $row[ Stats_Store::URL_SRV_FIELD ] );
 	}
 
 	public function test_no_single_index_item_holds_the_whole_bucket(): void {
@@ -1085,7 +1086,10 @@ class FlameBuilderTest extends TestCase {
 		// so the 103 smallest fold: counts 502 down to 401, and the 1.
 		$expected = \array_sum( \range( 401, 502 ) ) + 1;
 		$this->assertSame( $expected, $other['count'] );
-		$this->assertSame( $expected, $other['srv']['alpha.example']['count'] );
+		// The tail was all one host, so the folded split collapses — which says
+		// the same thing more strongly: the collapse is written ONLY when the
+		// sole server's count is the row's own, here all 103 folded rows.
+		$this->assertSame( [ 'alpha.example' => null ], $other['srv'] );
 	}
 
 	public function test_url_index_split_is_written_on_a_spoke_too(): void {
@@ -1106,7 +1110,8 @@ class FlameBuilderTest extends TestCase {
 
 		$row = $this->url_bucket_rows( $store, Stats_Store::bucket_key( $now ) )[ Log_Manager::url_hash( '/spoke' ) ];
 
-		$this->assertSame( 1, $row[ Stats_Store::URL_SRV_FIELD ]['lone.example']['count'] );
+		// One server, so it collapses; a spoke writing the split at all is the point.
+		$this->assertSame( [ 'lone.example' => null ], $row[ Stats_Store::URL_SRV_FIELD ] );
 	}
 
 	public function test_url_index_split_carries_exactly_the_summed_fields(): void {
@@ -1121,6 +1126,9 @@ class FlameBuilderTest extends TestCase {
 		// to the same set here rather than by a comment asking them to agree.
 		$now = \time();
 		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/fields', 'server_name' => 'alpha.example', 'duration_ms' => 30.0, 'peak_mb' => 4.0, 'timestamp' => $now ] ) );
+		// A SECOND server, so the split does not collapse to a host name: the
+		// field set is what this test reads, and a collapse would hide it.
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/fields', 'server_name' => 'beta.example', 'duration_ms' => 70.0, 'peak_mb' => 9.0, 'timestamp' => $now ] ) );
 		$fb->flush();
 
 		$row = $this->url_bucket_rows( $store, Stats_Store::bucket_key( $now ) )[ Log_Manager::url_hash( '/fields' ) ];
@@ -2189,6 +2197,172 @@ class FlameBuilderTest extends TestCase {
 	 * its own source — the buckets age out on their TTL while the hour key
 	 * stands for the full window.
 	 */
+	/**
+	 * A split with ONE server whose count is the row's own is the row restated.
+	 * Storing it as a host name against `null` is ~33 bytes where the positional
+	 * sums are ~112 — and on this fleet every URL is served by exactly one host,
+	 * so `srv` was over half the whole read.
+	 *
+	 * Count alone decides it: every `URL_SRV_SUMS` field is summed into the row
+	 * and into the split from the SAME increment, so a matching count means the
+	 * other seven match by construction.
+	 */
+	public function test_a_single_server_split_collapses_to_the_host_name(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+
+		$now = \time();
+		for ( $i = 0; $i < 4; $i++ ) {
+			$this->fill_request( $fb, $this->completed_request( [
+				'url'         => 'https://one-host.example/wombat-4471',
+				'duration_ms' => 91.0,
+				'timestamp'   => $now,
+				'server_name' => 'one-host.example',
+			] ) );
+		}
+		$fb->flush();
+
+		$hash = Log_Manager::url_hash( 'https://one-host.example/wombat-4471' );
+		$row  = $store->get_url_shard( Stats_Store::bucket_key( $now ), Stats_Store::url_shard( $hash ) )[ $hash ];
+		$this->assertSame(
+			[ 'one-host.example' => null ],
+			$row[ Stats_Store::ROW_SRV ],
+			'the host name alone, against null'
+		);
+		$this->assertSame( 4, $row[ Stats_Store::ROW_COUNT ], 'and the row still carries the numbers' );
+	}
+
+	/**
+	 * A collapsed split is stored, then read back and merged — by WRITERS, not
+	 * just the reader. `sum_fields()` skips a non-array, so an unexpanded null
+	 * is not a zero: it is that host deleted from the merge, silently.
+	 */
+	public function test_a_second_flush_keeps_the_collapsed_hosts_whole_count(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$now        = \time();
+		$url        = 'https://reflush.example/wombat-4471';
+
+		// Three, flush, then two MORE into the same bucket, host and URL.
+		foreach ( [ 3, 2 ] as $batch ) {
+			$fb = new Flame_Builder_Node();
+			$fb->set_stats_store( $store );
+			for ( $i = 0; $i < $batch; $i++ ) {
+				$this->fill_request( $fb, $this->completed_request( [
+					'url'         => $url,
+					'duration_ms' => 10.0,
+					'timestamp'   => $now,
+					'server_name' => 'reflush.example',
+				] ) );
+			}
+			$fb->flush();
+		}
+
+		$hash = Log_Manager::url_hash( $url );
+		$row  = self::named_url_rows( $store->get_url_shard( Stats_Store::bucket_key( $now ), Stats_Store::url_shard( $hash ) ) )[ $hash ];
+		$this->assertSame( 5, $row['count'], 'the row counts both flushes' );
+		// Still one host, so still collapsed — which is the assertion: a
+		// collapse means the sole host's count IS the row's, all five.
+		$this->assertSame( [ 'reflush.example' => null ], $row['srv'] );
+	}
+
+	/** The coarse tier merges stored rows too, so it needs the expansion. */
+	public function test_a_folded_hour_keeps_a_collapsed_split(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$hash       = Log_Manager::url_hash( '/wombat-4471' );
+		$shard      = Stats_Store::url_shard( $hash );
+		$now        = \gmmktime( 15, 7, 0, 8, 27, 2026 );
+
+		foreach ( [ '2026-08-27-13-05', '2026-08-27-13-40' ] as $bucket ) {
+			$this->seed_url_shard( $store, $bucket, $shard, [
+				$hash => [
+					'url' => '/wombat-4471', 'count' => 4, 'timed_count' => 4, 'sum_ms' => 40.0,
+					'srv' => [ 'sole.example' => null ],
+				],
+			] );
+		}
+
+		$fb = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+		$fb->roll_up_hours( $now );
+
+		$hour = self::named_url_rows( $store->url_hour_sources( [ '2026-08-27-13' ], $shard )[0][1] );
+		$this->assertSame( 8, $hour[ $hash ]['count'], 'both buckets fold' );
+		$this->assertSame( [ 'sole.example' => null ], $hour[ $hash ]['srv'], 'and the split folds with them' );
+	}
+
+	/**
+	 * And the capped tail: decision 15 says a total summed from this index is
+	 * exact per server, not just site-wide, so the overflow row's split has to
+	 * carry the hosts the tail was seen on.
+	 */
+	public function test_a_capped_tail_of_collapsed_rows_folds_its_hosts(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$now        = \time();
+		$bucket     = Stats_Store::bucket_key( $now );
+
+		$seed = [];
+		for ( $i = 0; $i < 520; $i++ ) {
+			$seed[ \sprintf( 'a%011x', $i ) ] = [
+				'url' => "/u{$i}", 'count' => 7 + $i, 'timed_count' => 7 + $i,
+				'sum_ms' => 2.0 * ( 7 + $i ), 'last_seen' => $now,
+				'srv' => [ 'tail.example' => null ],
+			];
+		}
+		$this->seed_url_shard( $store, $bucket, 'a', $seed );
+
+		$url = '';
+		for ( $i = 0; '' === $url; $i++ ) {
+			if ( 'a' === Stats_Store::url_shard( Log_Manager::url_hash( "/in-a-{$i}" ) ) ) {
+				$url = "/in-a-{$i}";
+			}
+		}
+		$fb = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+		$this->fill_request( $fb, $this->completed_request( [
+			'url' => $url, 'server_name' => 'live.example', 'duration_ms' => 2.0, 'timestamp' => $now,
+		] ) );
+		$fb->flush();
+
+		$other = self::named_url_rows( $store->get_url_shard( $bucket, 'a' ) )[ Stats_Store::OTHER_KEY ];
+		$this->assertArrayHasKey( 'tail.example', $other['srv'], 'the folded tail keeps its host' );
+		$this->assertSame(
+			$other['count'],
+			$other['srv']['tail.example']['count'] + Core::num_int( $other['srv']['live.example']['count'] ?? null ),
+			'and the split sums to the row: decision 15 is exact PER SERVER'
+		);
+	}
+
+	/** Two hosts are not the row restated, so the split stays whole. */
+	public function test_a_two_server_split_does_not_collapse(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+
+		$now = \time();
+		foreach ( [ 'edge-a.example', 'edge-a.example', 'edge-b.example' ] as $server ) {
+			$this->fill_request( $fb, $this->completed_request( [
+				'url'         => 'https://two-host.example/quokka-8823',
+				'duration_ms' => 47.0,
+				'timestamp'   => $now,
+				'server_name' => $server,
+			] ) );
+		}
+		$fb->flush();
+
+		$hash  = Log_Manager::url_hash( 'https://two-host.example/quokka-8823' );
+		$row   = $store->get_url_shard( Stats_Store::bucket_key( $now ), Stats_Store::url_shard( $hash ) )[ $hash ];
+		$split = $row[ Stats_Store::ROW_SRV ];
+		$this->assertSame( [ 'edge-a.example', 'edge-b.example' ], \array_keys( $split ) );
+		$this->assertSame( 2, $split['edge-a.example'][ Stats_Store::ROW_COUNT ] );
+		$this->assertSame( 1, $split['edge-b.example'][ Stats_Store::ROW_COUNT ] );
+	}
+
 	public function test_a_legacy_named_row_is_not_folded_into_an_hour(): void {
 		Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
@@ -2387,11 +2561,16 @@ class FlameBuilderTest extends TestCase {
 		$fb->set_stats_store( $store );
 
 		$now = \time();
-		$this->fill_request( $fb, $this->completed_request( [
-			'url'         => '/wombat-4471',
-			'duration_ms' => 447.0,
-			'timestamp'   => $now,
-		] ) );
+		// TWO hosts, so the split does not collapse to a host name: this test
+		// reads the shape INSIDE it, and a collapse would leave a null to check.
+		foreach ( [ 'edge-a.example', 'edge-b.example' ] as $server ) {
+			$this->fill_request( $fb, $this->completed_request( [
+				'url'         => '/wombat-4471',
+				'duration_ms' => 447.0,
+				'timestamp'   => $now,
+				'server_name' => $server,
+			] ) );
+		}
 		$fb->flush();
 
 		$hash = Log_Manager::url_hash( '/wombat-4471' );

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.66.0] - 2026-08-28
+
+### Changed
+
+- **A per-server split of ONE host that served every request the row counted collapses to the host name against `null`.** A stored `url` is absolute, so on a fleet of disjoint sites every URL has exactly one host — this is the common row, not the rare one, and `srv` was over half the whole index read. Measured on the hub's own row shape: **369 -> 290 B/row, a further 21.4%** — and 56.8% off the 672 B/row the named form measured at before 0.65.0; the hub's read projects from 36.1 MB to roughly 16. Count alone decides it: every `URL_SRV_SUMS` field is summed into the row and the split from the same increment, so a matching count means the rest match by construction.
+- The collapse turns ABSENCE into MEANING, so both adjacent states are pinned: `null` resolves to the row's own numbers, while a host simply missing from the split still drops the row from a scoped read. Every merge — reader AND writer — expands through `Stats_Store::expand_sole_server()` BEFORE summing — `sum_fields()` skips a non-array value, so an unexpanded null would take that server's whole history out of a scoped read with no error anywhere.
+
 ## [0.65.0] - 2026-08-27
 
 ### Changed
