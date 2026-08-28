@@ -575,6 +575,34 @@ const keptPairCounts = ( entries ) => {
 };
 
 /**
+ * The tree path to its LAST span, outermost first, root dropped.
+ *
+ * A record's trailing `(orphaned)` completes name the spans that were still
+ * open when the producer drained — the chain the last logged thing sat in. That
+ * is the only chain entitled to spend those completes; a sibling that closed
+ * normally earlier had its own complete eaten by the fold and must emit one.
+ *
+ * @param {?Object} flame Merged tree from Flame_Fold::tree().
+ * @return {Array<string>} Node names, outermost first; empty without timings.
+ */
+const latestPath = ( flame ) => {
+	let best = { t: -1, path: [] };
+	const walk = ( node, path ) => {
+		const here = [ ...path, String( node.name ) ];
+		// `>=`: on a tie the deeper, later node wins, so ties pick the last.
+		if ( Number.isFinite( node.t ) && node.t >= best.t ) {
+			best = { t: node.t, path: here };
+		}
+		( node.children || [] ).forEach( ( child ) => walk( child, here ) );
+	};
+	if ( flame ) {
+		walk( flame, [] );
+	}
+	// Drop the root: `walk()` below starts at its children, depth 0.
+	return best.path.slice( 1 );
+};
+
+/**
  * Expand a folded request's merged tree into log rows.
  *
  * The fold replaces thousands of entries with one node per distinct path. Those
@@ -603,9 +631,11 @@ const keptPairCounts = ( entries ) => {
  * @param {number}  originTs Unix seconds the request started at.
  * @return {Array} Synthetic log entries.
  */
+
 const foldedSpanEntries = ( flame, openPath, tailEnds, kept, originTs ) => {
 	const rows = [];
 	const owedByName = new Map( tailEnds );
+	const drained = latestPath( flame );
 	const unshown = new Map( kept );
 	const stampOf = ( node ) =>
 		Number.isFinite( node.t ) && Number.isFinite( originTs )
@@ -646,8 +676,17 @@ const foldedSpanEntries = ( flame, openPath, tailEnds, kept, originTs ) => {
 				fromFold: true,
 			} );
 			walk( node.children, depth + 1, claimed, here );
-			// One complete closes one node, not every node of the name.
-			const owed = owedByName.get( base ) || 0;
+			// @longform Only a node the producer's drain actually closed may
+			// spend the debt. The record's trailing `(orphaned)` completes name
+			// the spans still open at the end, innermost first — the tree's
+			// deepest path by `t`. Keyed on the bare base alone, the FIRST
+			// same-base node in walk order took it instead: a sibling that had
+			// closed normally long before, whose own complete the fold ate, was
+			// left open across everything after it.
+			// A tree with no timings cannot say which path the drain closed;
+			// the gate stands down rather than refusing every debt.
+			const onDrained = 0 === drained.length || drained[ depth ] === name;
+			const owed = onDrained ? owedByName.get( base ) || 0 : 0;
 			if ( owed > 0 ) {
 				owedByName.set( base, owed - 1 );
 				return;
