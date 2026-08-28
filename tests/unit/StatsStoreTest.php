@@ -24,6 +24,16 @@ class StatsStoreTest extends TestCase {
 		return new Stats_Store( partition: $partition, max_lifespan: $max_lifespan );
 	}
 
+	public function test_the_row_index_tables_cover_every_index_contiguously(): void {
+		// `fold_index_row()` and `swap_url_server_sums()` both read
+		// ROW_FIELD_NAMES[ $index ] unguarded, per row, on the hot read path,
+		// and the two tables are hand-matched. Decision 18's "the eight that
+		// ADD come FIRST" is otherwise only prose: a ninth summed field
+		// appended past the end works and falsifies it silently.
+		$this->assertSame( \range( 0, 18 ), \array_keys( Stats_Store::ROW_FIELD_NAMES ) );
+		$this->assertSame( \range( 0, 7 ), \array_keys( Stats_Store::URL_SRV_SUMS ) );
+	}
+
 	public function test_the_url_index_is_sharded_by_url_hash(): void {
 		// One blob per bucket was what every cap in this schema was defending:
 		// the whole thing is read-modify-written on each five-second flush and
@@ -43,12 +53,12 @@ class StatsStoreTest extends TestCase {
 		$table = \Newspack_Nodes\Table_Node::table( Stats_Store::namespace_for( 2 ), 60 );
 		$this->assertSame(
 			[ $hash => [ 'url' => '/a', 'count' => 3 ] ],
-			$table->lookup( Stats_Store::NS_URLS . ':a:2026-08-14-12-05' ),
+			self::named_url_rows( \Newspack_Nodes\Core::arr( $table->lookup( Stats_Store::NS_URLS . ':a:2026-08-14-12-05' ) ) ),
 			'a row lands in the shard its hash names'
 		);
 		$this->assertSame(
 			[ $other => [ 'url' => '/b', 'count' => 5 ] ],
-			$table->lookup( Stats_Store::NS_URLS . ':0:2026-08-14-12-05' )
+			self::named_url_rows( \Newspack_Nodes\Core::arr( $table->lookup( Stats_Store::NS_URLS . ':0:2026-08-14-12-05' ) ) )
 		);
 	}
 
@@ -85,7 +95,7 @@ class StatsStoreTest extends TestCase {
 		$this->assertSame( [], $store->get_url_shard( '2026-08-14-12-05', 'a' ) );
 		$this->assertSame(
 			[ '0f0f0f0f0f0f' => [ 'url' => '/b', 'count' => 5 ] ],
-			$store->get_url_shard( '2026-08-14-12-05', '0' )
+			self::named_url_rows( $store->get_url_shard( '2026-08-14-12-05', '0' ) )
 		);
 	}
 
@@ -884,7 +894,10 @@ class StatsStoreTest extends TestCase {
 		$first  = [ 'count' => 3, 'last_seen' => 1700000100 ];
 		$second = [ 'count' => 4, 'last_seen' => 1700000900 ];
 
-		$folded = Stats_Store::fold_url_rows( $first, $second );
+		$folded = self::named_url_row( Stats_Store::fold_url_rows(
+			self::positional_url_row( $first ),
+			self::positional_url_row( $second )
+		) );
 
 		$this->assertSame( 1700000900, $folded['last_seen'] );
 		$this->assertSame( 7, $folded['count'] );
