@@ -225,7 +225,8 @@ describe( 'computeIndentedEntries', () => {
 
 		expect( out[ 2 ].indent ).toBe( 1 );
 		expect( out[ 3 ].indent ).toBe( 1 );
-		expect( out[ 4 ].indent ).toBe( 1 );
+		// The terminal CLOSES the request, so it draws at its opener's level.
+		expect( out[ 4 ].indent ).toBe( 0 );
 	} );
 
 	it( 'nests a killed render under the spans its producer closed on the way out', () => {
@@ -284,7 +285,7 @@ describe( 'computeIndentedEntries', () => {
 		expect( byKeyword.get( 'change (start)' ) ).toBe( 2 );
 		expect( byKeyword.get( 'include (complete)' ) ).toBe( 2 );
 		expect( byKeyword.get( 'gyrobase (complete)' ) ).toBe( 1 );
-		expect( byKeyword.get( 'process (aborted)' ) ).toBe( 1 );
+		expect( byKeyword.get( 'process (aborted)' ) ).toBe( 0 );
 	} );
 
 	it( 'ignores the spliced-in middle when deciding what straddles the break', () => {
@@ -1318,5 +1319,102 @@ describe( 'the PHP vocabulary this module mirrors', () => {
 				'FOLD_MARKER' === name ? jsConst( 'FOLD_MARKER' ) : name
 			);
 		expect( mirrored.sort() ).toEqual( php.sort() );
+	} );
+} );
+
+describe( 'a terminal closes the record it opened', () => {
+	it( 'indents process (aborted) at its own opener, not at its children', () => {
+		// The request's terminal carries whatever suffix ended it — Perl's
+		// abort_process() writes `aborted`, Log_Manager::complete() takes any
+		// suffix — so it matches no `(complete)` and never popped `process`.
+		// It then drew one level deeper than `process (start)`, beside the
+		// siblings it closes over. Seeds distinct from every default.
+		const row = ( n, k ) => ( { n, k, m: '', ts: n / 100 } );
+		const { entries } = computeIndentedEntries( [
+			row( 1, 'process (start)' ),
+			row( 2, 'request' ),
+			row( 3, 'gyrobase (start)' ),
+			row( 4, 'publication' ),
+			row( 5, 'gyrobase (complete)' ),
+			row( 6, 'resources' ),
+			row( 7, 'process (aborted)' ),
+		] );
+		const at = ( keyword ) =>
+			entries.find( ( e ) => e.k === keyword ).indent;
+
+		expect( at( 'process (aborted)' ) ).toBe( at( 'process (start)' ) );
+		expect( at( 'resources' ) ).toBe( at( 'request' ) );
+	} );
+} );
+
+describe( 'a span the record never closes cannot outlive its parent', () => {
+	it( 'returns the tail to the parent level after the parent closes', () => {
+		// Delta-debugged from the real aborted nuclear-gyrobase record: 498
+		// flame nodes shrank to this one span. The producer drains correctly —
+		// `include (complete)` is written — but the SPLICED frame is named for
+		// the flame node, `include: /Macros/Global.html`, so the LIFO name
+		// match can never pair them and the frame stays open. Keeping every
+		// child that outlives its parent then re-parented the whole PHP tail
+		// under it: `nuclear_gyrobase` drew at 2 where `request` drew at 1.
+		const flame = {
+			name: 'request',
+			value: 600716.7,
+			count: 0,
+			t: null,
+			folded: true,
+			children: [
+				{
+					name: 'process',
+					value: 600716.7,
+					count: 0,
+					t: 0,
+					children: [
+						{
+							name: 'gyrobase',
+							value: 600310.7,
+							count: 1,
+							t: 405.957,
+							children: [
+								{
+									name: 'include: /Macros/Global.html',
+									value: 134.87,
+									count: 1,
+									t: 516.697,
+									children: [],
+								},
+							],
+						},
+					],
+				},
+			],
+		};
+		const stored = [
+			{ n: 1, k: 'process (start)', ts: 1000 },
+			{ n: 2, k: 'request', ts: 1000 },
+			{ n: 1, k: 'gyrobase (start)', ts: 1000.4 },
+			{
+				n: 2,
+				k: 'entries (aggregated)',
+				ts: 1000.4,
+				m: '328091 entries merged',
+			},
+			{ n: 3, k: 'include (complete)', ts: 1600.4, m: '(orphaned)' },
+			{
+				n: 4,
+				k: 'gyrobase (complete)',
+				ts: 1600.4,
+				m: 'render exceeded the 600s lease window',
+			},
+			{ n: 5, k: 'nuclear_gyrobase', ts: 1600.4, m: 'engine exit 75' },
+			{ n: 6, k: 'process (aborted)', ts: 1600.5 },
+		];
+		const { entries } = computeIndentedEntries(
+			spliceFoldedSpans( stored, flame )
+		);
+		const at = ( k ) => entries.find( ( e ) => e.k === k ).indent;
+
+		expect( at( 'gyrobase (complete)' ) ).toBe( at( 'gyrobase (start)' ) );
+		expect( at( 'nuclear_gyrobase' ) ).toBe( at( 'request' ) );
+		expect( at( 'process (aborted)' ) ).toBe( at( 'process (start)' ) );
 	} );
 } );

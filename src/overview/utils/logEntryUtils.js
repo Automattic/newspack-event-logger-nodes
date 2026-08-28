@@ -30,6 +30,15 @@
 
 const START_REGEX = /^(.+?) \(start\)$/;
 const COMPLETE_REGEX = /^(.+?) \(complete\)$/;
+
+/**
+ * The record's own close, whatever ended it. Every other pair closes as
+ * `(complete)`; the REQUEST closes as a terminal carrying the disposition —
+ * `aborted` from `Gyrobase::Log::abort_process()`, any suffix at all from
+ * `Log_Manager::complete()`. Matching only `(complete)` left the terminal
+ * closing nothing, so it drew one level deeper than the `(start)` it ends.
+ */
+const TERMINAL_REGEX = /^(.+?) \(.+\)$/;
 const TIME_FORMAT_OPTIONS = { hour12: false };
 
 /**
@@ -51,6 +60,19 @@ const OUTERMOST_PAIR = 'process';
  */
 const FOLD_MARKER = 'entries (aggregated)';
 const SEQUENCE_BREAK_KEYWORDS = new Set( [ 'entries (lost)', FOLD_MARKER ] );
+
+/**
+ * A span name without its argument.
+ *
+ * A span carries its argument in the entry's `l` field, and the flame fuses
+ * the two into one node name — so the same span is `include` where the record
+ * closes it and `include: /Macros/Global.html` where the tree names it. Pairing
+ * has to see through that or a spliced frame can never be closed.
+ *
+ * @param {string} name Span name, decorated or not.
+ * @return {string} The part before `: `.
+ */
+const spanBase = ( name ) => String( name ).split( ': ' )[ 0 ];
 
 /**
  * The base name of the pair a `<name> (start)` keyword opens, or null when the
@@ -294,11 +316,45 @@ const spansClosedAfter = ( entries, from ) => {
 		{ from, folded: false, outlive: true },
 		( name, at ) => {
 			if ( at < 0 ) {
-				closed.set( name, ( closed.get( name ) || 0 ) + 1 );
+				// Keyed by BASE, so a decorated frame finds its bare close.
+				const base = spanBase( name );
+				closed.set( base, ( closed.get( base ) || 0 ) + 1 );
 			}
 		}
 	);
 	return closed;
+};
+
+/**
+ * Drop the frames above a closing parent that the record never closes.
+ *
+ * A child CAN outlive its parent — improper nesting is legal and the later
+ * `(complete)` proves it — so a frame with a close still to come stays. One
+ * with none was severed: the fold ate its close, or the producer's drain did
+ * not reach it. Left in place it adopts every row after the parent, which is
+ * how an aborted render re-parented the whole tail under spans that had ended.
+ *
+ * Same budget as `pruneSeveredSpans`, at a close rather than at a break.
+ *
+ * @param {Array}  pairStack  Open frames, innermost last. Mutated.
+ * @param {number} matchedIdx Index of the frame being closed; below it is safe.
+ * @param {Array}  entries    Rows, spliced or not.
+ * @param {number} from       Index of the closing row.
+ */
+const pruneUnclosedAbove = ( pairStack, matchedIdx, entries, from ) => {
+	if ( pairStack.length - 1 <= matchedIdx ) {
+		return;
+	}
+	const budget = spansClosedAfter( entries, from );
+	for ( let i = pairStack.length - 1; i > matchedIdx; i-- ) {
+		const name = spanBase( pairStack[ i ].name );
+		const owed = budget.get( name ) || 0;
+		if ( owed < 1 ) {
+			pairStack.splice( i, 1 );
+			continue;
+		}
+		budget.set( name, owed - 1 );
+	}
 };
 
 /**
@@ -325,7 +381,7 @@ const pruneSeveredSpans = ( pairStack, entries, from ) => {
 		if ( 0 === i && OUTERMOST_PAIR === pairStack[ i ].name ) {
 			continue;
 		}
-		const { name } = pairStack[ i ];
+		const name = spanBase( pairStack[ i ].name );
 		const owed = budget.get( name ) || 0;
 		if ( owed < 1 ) {
 			pairStack.splice( i, 1 );
@@ -365,15 +421,29 @@ export const computeIndentedEntries = ( entries ) => {
 
 		// Extract base name from keyword.
 		const startMatch = keyword.match( START_REGEX );
-		const completeMatch = keyword.match( COMPLETE_REGEX );
+		// The outermost pair also closes on its terminal, whatever it says.
+		const terminalMatch = startMatch
+			? null
+			: keyword.match( TERMINAL_REGEX );
+		const completeMatch =
+			keyword.match( COMPLETE_REGEX ) ||
+			( terminalMatch && OUTERMOST_PAIR === terminalMatch[ 1 ]
+				? terminalMatch
+				: null );
 
 		// For complete entries, find matching start using LIFO name matching.
 		let matchedIdx = -1;
 		if ( completeMatch ) {
 			const baseName = completeMatch[ 1 ];
-			// Search backwards for matching name.
+			// @longform Matched on the BASE. A span carries its argument in
+			// `l`, and the flame fuses the two into one node name, so the
+			// spliced `include: /Macros/Global.html (start)` and the record's
+			// own `include (complete)` name one span in two spellings —
+			// `foldedSpanEntries()` already defers to that complete rather
+			// than emitting its own, which only works if they can pair.
+			const wanted = spanBase( baseName );
 			for ( let i = pairStack.length - 1; i >= 0; i-- ) {
-				if ( pairStack[ i ].name === baseName ) {
+				if ( spanBase( pairStack[ i ].name ) === wanted ) {
 					matchedIdx = i;
 					break;
 				}
@@ -441,7 +511,8 @@ export const computeIndentedEntries = ( entries ) => {
 		} else if ( completeMatch && matchedIdx >= 0 ) {
 			// Found matching start - use its pairId.
 			pairId = pairStack[ matchedIdx ].pairId;
-			// Remove only the matched entry; children outliving parent stay.
+			// A severed child would adopt every row after its parent.
+			pruneUnclosedAbove( pairStack, matchedIdx, entries, idx );
 			pairStack.splice( matchedIdx, 1 );
 			result.push( {
 				...entry,
