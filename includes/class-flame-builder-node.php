@@ -542,7 +542,17 @@ class Flame_Builder_Node extends Node {
 		$now           = $this->now_ts();
 
 		$timestamp_raw = $request['timestamp'] ?? $now;
-		$timestamp     = Core::num_int( $timestamp_raw, $now );
+		// @longform The record reaches us at COMPLETION, so that is when it is
+		// filed: a request is a fact about the moment it ended, and a long one
+		// filed under its start lands in a bucket the readers may have closed
+		// and folded. An aborted request carries `now - start` as its duration
+		// (Request_Builder sets it at eviction), so this is its abort moment.
+		$started       = Core::num_int( $timestamp_raw, $now );
+		// @longform Clamped: a completed request cannot have finished after
+		// it reached us, so a skewed spoke clock or a bogus duration must
+		// not file into a future bucket — readers walk backwards from now
+		// and never would, the written-then-unreadable bug of decision 20.
+		$timestamp     = \min( $now, $started + (int) \round( $duration_ms / 1000 ) );
 		$server_raw    = $request['server_name'] ?? '';
 		// `as_string`, the way the `server` DIMENSION reads it: same axis.
 		$server_name   = Core::as_string( $server_raw );
@@ -1172,8 +1182,13 @@ class Flame_Builder_Node extends Node {
 	 */
 	public function flush(): void {
 		$this->mirror_url_stats();
-		$this->persist_aggregate_stats();
+		// @longform Roll up FIRST: it is what probes the coarse tier, and
+		// `folded_hours` is per-process while one partition has one worker, so
+		// a respawn is the only way the memo goes stale. Probing before the
+		// writes are placed is what keeps the first flush after one from
+		// putting rows into fine buckets a folded hour has already replaced.
 		$this->roll_up_hours( $this->now_ts() );
+		$this->persist_aggregate_stats();
 		$this->apply_auto_tune();
 
 		$this->stats_store?->reset_url_stats();
@@ -1371,8 +1386,17 @@ class Flame_Builder_Node extends Node {
 	 * @param array<array-key,mixed> $rows        That shard's accumulated rows.
 	 */
 	private function persist_url_shard( Stats_Store $stats_store, string $bucket, string $shard, array $rows ): void {
+		// @longform An hour folds once and its fine buckets are never read
+		// again, so a write arriving after the fold — a replay, an ingest, a
+		// spoke catching up — must merge into the coarse key the reader took
+		// instead, or it is stored where nothing will ever read it. Same
+		// shape, same cap: only the key differs.
+		$hour   = Stats_Store::hour_of( $bucket );
+		$folded = isset( $this->folded_hours[ $hour ] );
 		/** @var array<array-key,array<array-key,mixed>> $existing_urls */
-		$existing_urls = $stats_store->get_url_shard( $bucket, $shard );
+		$existing_urls = $folded
+			? $stats_store->get_url_hour( $hour, $shard )
+			: $stats_store->get_url_shard( $bucket, $shard );
 		foreach ( $rows as $hash => $stats_raw ) {
 			$stats = Core::arr( $stats_raw );
 			$row   = Core::arr( $existing_urls[ $hash ] ?? null )
@@ -1387,7 +1411,10 @@ class Flame_Builder_Node extends Node {
 		// carrying a per-server split on every row. memcached refuses an item
 		// over its limit, and a discarded return loses the whole bucket's
 		// index for this partition — again on every later merge into it.
-		if ( ! $stats_store->set_url_shard( $bucket, $shard, $existing_urls ) ) {
+		$landed = $folded
+			? $stats_store->set_url_hour( $hour, $shard, $existing_urls )
+			: $stats_store->set_url_shard( $bucket, $shard, $existing_urls );
+		if ( ! $landed ) {
 			// Rows, not bytes: sizing it re-serialises a megabyte per flush.
 			$this->print_less_often(
 				'URL index write refused; a shard is over the cache item limit and its rows are lost',

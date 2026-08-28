@@ -912,4 +912,63 @@ class StatsStoreTest extends TestCase {
 		$this->assertTrue( $folded['worker'] );
 	}
 
+	// ── decision 14: the split's one crossing into display names ────────────
+
+	public function test_a_scoped_read_swaps_in_that_server_s_own_sums(): void {
+		// The row totals 9 requests; edge-77 served 4 of them. A scoped read
+		// must report the SERVER's numbers under the row's own field names,
+		// and must not leak the split itself. Seeds distinct from every
+		// default and from each other, so a swap that misses reads wrong.
+		$row = [
+			Stats_Store::ROW_COUNT       => 9,
+			Stats_Store::ROW_TIMED_COUNT => 9,
+			Stats_Store::ROW_SUM_MS      => 990.0,
+			Stats_Store::ROW_SUM_PEAK_MB => 45.0,
+			Stats_Store::ROW_URL         => '/scoped-6612',
+			Stats_Store::URL_SRV_FIELD   => [
+				'edge-77' => [
+					Stats_Store::ROW_COUNT       => 4,
+					Stats_Store::ROW_TIMED_COUNT => 4,
+					Stats_Store::ROW_SUM_MS      => 480.0,
+					Stats_Store::ROW_SUM_PEAK_MB => 20.0,
+				],
+			],
+		];
+
+		$scoped = Stats_Store::swap_url_server_sums( $row, 'edge-77' );
+		$this->assertNotNull( $scoped );
+		$this->assertSame( 4, $scoped['count'], "the server's count, not the row's" );
+		$this->assertSame( 480.0, (float) $scoped['sum_ms'] );
+		$this->assertSame( '/scoped-6612', $scoped[ Stats_Store::ROW_URL ], 'unswapped fields survive' );
+		$this->assertArrayNotHasKey( Stats_Store::URL_SRV_FIELD, $scoped, 'the split never crosses the wire' );
+	}
+
+	public function test_a_row_that_never_saw_the_server_scopes_to_nothing(): void {
+		// Not zero: absent. A row the server never served must leave the
+		// filtered table AND its totals, or every URL reads as site-wide.
+		$row = [
+			Stats_Store::ROW_COUNT     => 9,
+			Stats_Store::URL_SRV_FIELD => [ 'edge-77' => [ Stats_Store::ROW_COUNT => 9 ] ],
+		];
+		$this->assertNull( Stats_Store::swap_url_server_sums( $row, 'edge-99' ) );
+	}
+
+	public function test_an_unscoped_read_returns_the_row_without_its_split(): void {
+		$row = [ Stats_Store::ROW_COUNT => 9, Stats_Store::URL_SRV_FIELD => [ 'edge-77' => [] ] ];
+		$whole = Stats_Store::swap_url_server_sums( $row, '' );
+		$this->assertSame( 9, $whole[ Stats_Store::ROW_COUNT ] );
+		$this->assertArrayNotHasKey( Stats_Store::URL_SRV_FIELD, $whole );
+	}
+
+	public function test_the_coarse_hour_round_trips_through_its_own_getter(): void {
+		// set_url_hour()'s other half: a writer merging into a folded hour
+		// reads it the way get_url_shard() reads the fine tier.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$rows       = [ 'hash-4471' => [ Stats_Store::ROW_COUNT => 6, Stats_Store::ROW_URL => '/hourly-4471' ] ];
+
+		$this->assertTrue( $store->set_url_hour( '2026-08-27-13', 'a', $rows ) );
+		$this->assertSame( $rows, $store->get_url_hour( '2026-08-27-13', 'a' ) );
+		$this->assertSame( [], $store->get_url_hour( '2026-08-27-14', 'a' ), 'an unfolded hour reads empty' );
+	}
 }

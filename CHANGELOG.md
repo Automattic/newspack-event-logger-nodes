@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 
+## [0.68.1] - 2026-08-28
+
+### Fixed
+
+- **A replayed request now lands where the dashboard reads it.** A record is filed in the bucket it FINISHED in rather than the one it started in (completion is `timestamp + duration_ms`, and for an aborted request that is its abort moment), and a write whose hour this process has already folded merges into the coarse hour key instead of a fine bucket the reader will never look at again. Before this, `wp nodes deactivate complete; wp nodes gc --force; wp nodes activate complete` — the ordinary way to reprocess a window — replayed every record under its original timestamp, straight into folded hours: written, then unreadable. The URL table showed a fraction of the traffic while `Total Profiled`, which walks the fine buckets directly, showed all of it. Steady state never hit this; measured on a hub, records reach the builder about 14 seconds old against a 95-minute fine tail. `flush()` also rolls up before it persists, so the first flush after a respawn probes the coarse tier before placing a row — one partition has one worker, so a respawn is the only way that memo goes stale. The completion is clamped to now, so a skewed spoke clock or a bogus duration cannot file into a future bucket — which readers, walking backwards from now, would never see. See decision 20.
+- **`Stats_Store::swap_url_server_sums()` is under test again.** Retiring the two `url_detail` scope-guard tests in 0.68.0 removed the only coverage of decision 14's scoped read; the class kept enough margin that the gate stayed green. Three tests now pin it: a scoped read swapping in that server's own sums, a row that never saw the server scoping to null rather than zero, and an unscoped read returning the row without its split.
+
+
 ## [0.68.0] - 2026-08-28
 
 ### Removed

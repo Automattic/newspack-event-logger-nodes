@@ -2002,6 +2002,110 @@ class FlameBuilderTest extends TestCase {
 	 * incrementally: the five-minute write is a full overwrite and is safe to
 	 * repeat, while adding into an hour bucket double-counts on a re-flush.
 	 */
+	public function test_a_request_is_filed_in_the_bucket_it_FINISHED_in(): void {
+		// The record reaches the builder at completion, so a long request must
+		// land where it ended, not where it began — a 7-minute request started
+		// at :58 belongs to the next hour, not the one that has since closed.
+		// Seeds distinct from every default: 420s duration, 5-minute buckets.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$start      = \gmmktime( 13, 58, 0, 8, 27, 2026 );
+
+		$fb = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+		$fb->set_clock( static fn (): float => (float) ( $start + 420 ) );
+		$this->fill_request( $fb, $this->completed_request( [
+			'url'         => '/slow-job-9930',
+			'timestamp'   => $start,
+			'duration_ms' => 420000.0,
+			'status_code' => 200,
+		] ) );
+		$fb->flush();
+
+		$hash  = Log_Manager::url_hash( '/slow-job-9930' );
+		$shard = Stats_Store::url_shard( $hash );
+		$ended = self::named_url_rows( $store->get_url_shard( '2026-08-27-14-05', $shard ) );
+		$began = self::named_url_rows( $store->get_url_shard( '2026-08-27-13-55', $shard ) );
+		$this->assertSame( 1, $ended[ $hash ]['count'] ?? 0, 'filed in the bucket it finished in' );
+		$this->assertArrayNotHasKey( $hash, $began, 'and not in the one it started in' );
+	}
+
+	public function test_a_respawned_worker_probes_the_coarse_tier_before_it_writes(): void {
+		// folded_hours is per-PROCESS and one partition has one worker, so a
+		// respawn is the only way the memo goes stale. flush() must probe —
+		// which roll_up_hours() does — before placing any row, or the first
+		// flush after a respawn writes into fine buckets nothing reads.
+		// Seeds distinct from every default: a folded hour of 3, then 8 more.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$hash       = Log_Manager::url_hash( '/respawn-7714' );
+		$shard      = Stats_Store::url_shard( $hash );
+		$now        = \gmmktime( 15, 7, 0, 8, 27, 2026 );
+
+		$this->seed_url_shard( $store, '2026-08-27-13-05', $shard, [
+			$hash => [ 'url' => '/respawn-7714', 'count' => 3, 'timed_count' => 3, 'sum_ms' => 33.0, 'last_seen' => $now - 7200 ],
+		] );
+		$folder = new Flame_Builder_Node();
+		$folder->set_stats_store( $store );
+		$folder->roll_up_hours( $now );
+
+		// A DIFFERENT process: same partition, no memory of the fold.
+		$fresh = new Flame_Builder_Node();
+		$fresh->set_stats_store( $store );
+		$fresh->set_clock( static fn (): float => (float) $now );
+		$ref = new \ReflectionProperty( $fresh, 'pending' );
+		$ref->setValue( $fresh, [ '2026-08-27-13-40' => \array_replace(
+			( new \ReflectionMethod( $fresh, 'empty_bucket' ) )->invoke( null ),
+			[ 'url_stats' => [ $hash => self::positional_url_row( [ 'url' => '/respawn-7714', 'count' => 8, 'timed_count' => 8, 'sum_ms' => 240.0, 'last_seen' => $now - 5400 ] ) ] ]
+		) ] );
+		$fresh->flush();
+
+		$hour = self::named_url_rows( $store->url_hour_sources( [ '2026-08-27-13' ], $shard )[0][1] );
+		$this->assertSame(
+			11,
+			$hour[ $hash ]['count'] ?? 0,
+			'the first flush after a respawn must probe before it writes'
+		);
+	}
+
+	/** Invoke the node's private per-shard writer, the way a flush does. */
+	private function persist_url_shard( Flame_Builder_Node $fb, Stats_Store $store, string $bucket, string $shard, array $rows ): void {
+		( new \ReflectionMethod( $fb, 'persist_url_shard' ) )->invoke( $fb, $store, $bucket, $shard, $rows );
+	}
+
+	public function test_a_bucket_inside_a_folded_hour_merges_into_the_coarse_key(): void {
+		// A replay files a record under its ORIGINAL timestamp. The reader
+		// takes the hour key and never re-reads a folded hour's fine buckets,
+		// and the hour folds exactly once — so a fine write landing after the
+		// fold is stored where nothing will ever read it. Seeds distinct from
+		// every default: 7 requests, 210ms, against a folded hour of 3.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$hash       = Log_Manager::url_hash( '/replayed-8823' );
+		$shard      = Stats_Store::url_shard( $hash );
+		$now        = \gmmktime( 15, 7, 0, 8, 27, 2026 );
+
+		$this->seed_url_shard( $store, '2026-08-27-13-05', $shard, [
+			$hash => [ 'url' => '/replayed-8823', 'count' => 3, 'timed_count' => 3, 'sum_ms' => 33.0, 'last_seen' => $now - 7200 ],
+		] );
+		$fb = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+		$fb->roll_up_hours( $now );
+
+		// Now a replayed record for a DIFFERENT bucket of that same closed hour.
+		$this->persist_url_shard( $fb, $store, '2026-08-27-13-40', $shard, [
+			$hash => self::positional_url_row( [ 'url' => '/replayed-8823', 'count' => 7, 'timed_count' => 7, 'sum_ms' => 210.0, 'last_seen' => $now - 5400 ] ),
+		] );
+
+		$hour = self::named_url_rows( $store->url_hour_sources( [ '2026-08-27-13' ], $shard )[0][1] );
+		$this->assertSame(
+			10,
+			$hour[ $hash ]['count'],
+			'a write into a folded hour must reach the key the reader actually reads'
+		);
+		$this->assertSame( 243.0, (float) $hour[ $hash ]['sum_ms'] );
+	}
+
 	public function test_a_closed_hour_is_rolled_up_into_one_coarse_key(): void {
 		Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );

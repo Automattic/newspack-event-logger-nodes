@@ -523,7 +523,7 @@ class Stats_Store {
 	 *
 	 * @param string $bucket A `Y-m-d-H-i` bucket key.
 	 */
-	private static function hour_of( string $bucket ): string {
+	public static function hour_of( string $bucket ): string {
 		return \substr( $bucket, 0, 13 );
 	}
 
@@ -558,6 +558,19 @@ class Stats_Store {
 	 */
 	public function set_url_hour( string $hour, string $shard, array $rows ): bool {
 		return $this->bucket_set( [ self::NS_URLS_HOUR, $shard ], $hour, $rows );
+	}
+
+	/**
+	 * Read one shard's rows for one coarse hour — `set_url_hour()`'s other half,
+	 * so a writer merging into the folded tier reads it the way `get_url_shard()`
+	 * reads the fine one.
+	 *
+	 * @param string $hour  Hour key.
+	 * @param string $shard Shard name from `url_shard()`.
+	 * @return array<string,mixed>
+	 */
+	public function get_url_hour( string $hour, string $shard ): array {
+		return $this->bucket_get( [ self::NS_URLS_HOUR, $shard ], $hour );
 	}
 
 	/**
