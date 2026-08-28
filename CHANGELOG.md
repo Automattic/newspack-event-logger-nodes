@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.67.0] - 2026-08-28
+
+### Removed
+
+- **The per-URL p50/p95/p99 columns, and the duration reservoir that computed them.** A percentile does not merge, so a fold over many buckets cannot produce the window's: `fold_index_row()` took ONE bucket's and the column was labelled as the whole retention window. A mergeable fixed-bin histogram was costed — it would have merged through `sum_entry()` with no new machinery — and rejected on price: 71-167 B/row for 1-9% accuracy, against 38 B for the fields it replaced, on a row just cut from 672 to 290. Nobody sorts by the column, so it goes.
+- Retired with it: `ROW_P50_MS` / `ROW_P95_MS` / `ROW_P99_MS`, `ROW_DURATIONS`, `Stats_Store::apply_percentiles()`, `MAX_DURATIONS_PER_BUCKET`, and the whole `url_dur` namespace — up to 100 floats per row per bucket off the WRITE path, plus its mirror carve-out and one `lookup_multi` per shard per hour fold. The stored row is 15 fields, contiguous `0..14`.
+- **`min_ms` and `max_ms` stay, and stay exact** — they fold from `duration_ms` directly. The `urls` verb's slowest-ten now ranks by `avg_ms`, and `Findings` / `Ask_Assembler` report `max_ms` where they reported `p95_ms`; both are exact and both were already stored.
+
 ## [0.66.0] - 2026-08-28
 
 ### Changed
@@ -63,7 +71,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The watermark carries no slack; the comparison does.** The stop is exclusive, so a request sharing the watermark's second is still returned and the client sends exactly the newest it holds. The unit of that slack is a property of the index's timestamp resolution, which a browser cannot know — encoding a second there would be guessing at it, and the merge dedups the overlap by rid regardless.
 - **A watermark stops ONE partition, never the fan-out.** Partition logs are independent, so reaching known ground in p0 says nothing about p1, and a plain stop would drop every later partition's requests silently. `scan_index_entries` gained a third callback outcome for that — `false` still ends the whole fan-out, which is what the 500-request cap wants.
 - Only the refresh tick carries a watermark. Opening the modal, and changing the server scope, clear the merge first — so there is nothing held, and the whole window is exactly what they should ask for.
-
 
 ## [0.63.8] - 2026-08-27
 
@@ -633,7 +640,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and Request Stream passed no `onClear`, so the shared `LogStreamViewer` reached
   past the graph and assigned `node.lines = []` directly. Both now pass the `clear`
   their graph hooks already returned, and the substrate's fallback is deleted.
-
 
 - **`dump_config` quotes every name it emits.** Each `command_node <name>:config`
   line was built by interpolating the node name raw, so a node whose name held a
@@ -2868,7 +2874,6 @@ release's BREAKING note; this release's topologies use the new
 
 - **The dashboards are reskinned to the Newspack theme (light Cobalt-on-white chrome + dark data/log surfaces), matching the substrate's event-dashboards reskin.** The Performance Dashboard chrome (summary cards, URL/request tables, the flame container, the modal) now reads as Newspack — the light product look mapped onto the `var(--np-*)` tokens — while the genuine LIVE LOG STREAMS (the Request Log, the Error Log, and the Gyroscope in-flight view) stay DARK terminal surfaces, exactly as the Topology Console's Newspack skin keeps a dark REPL. Each tree's `base.scss` flips its historical Sass tokens onto the canonical tokens (names retained, values flipped): `$light-*` → the light `--np-*` neutrals/Cobalt, and — because in this plugin the `$dark-*` tokens back the log panes rather than chrome — `$dark-*` map onto a local dark `$term-*` set instead of going light. The Material-blue accent (`#64b5f6`) and the ad-hoc dark/Material palette are gone; Cobalt leads (lightened to read on the dark panes), status is functional (success/warning/error), and the settings page + selector modals pick up Cobalt focus rings and the `--np-primary-subtle` custom-value chips. Each dashboard React root and the settings-page wrap now carry `.newspack-nodes-theme` (the substrate ships the token sheet as the `newspack-nodes-theme` style handle, registered early and defaulted into `Admin::enqueue_react_page`'s style deps; the extra settings stylesheet now declares it as a dependency) so `var(--np-*)` resolves.
 
-
 - **ELN now ships the full `aggregator.tsl` (relocated from the substrate).** The aggregator topology's only node beyond the firehose `Topic` is the ELN `Remote_Job_Rewrite_Node`, so it's an ELN topology, not a substrate one — unlike `hub-control.tsl` (substrate base + ELN override), there's nothing substrate-worthy left to keep a nodes base. The substrate dropped its stock `aggregator.tsl`; `make_node Remote_Source` / `Aggregator_CI`'s `graph_for('aggregator')` resolve this ELN copy via the registered stock dir.
 - **`Settings_CI` + `Status_CI` + `Settings_Event_Writer` moved to the `newspack-nodes` substrate.** All three operate purely on substrate concerns: `Settings_CI` reads/writes the four `newspack_nodes_*` integer settings, `Status_CI` reports the runtime version + active topologies + cache reachability, and `Settings_Event_Writer` appends option-name-only events to `settings.p0` on watched option changes. They now ship and mount/init in the substrate (`Newspack_Nodes\Rest\Settings_CI_Node`, `Newspack_Nodes\Rest\Status_CI_Node`, `Newspack_Nodes\Settings_Event_Writer`); ELN's `App\Settings_CI_Node`/`App\Status_CI_Node`/`Settings_Event_Writer`, their mounts in `newspack_event_logger_nodes_mount_service_cis()`, and the `Settings_Event_Writer::init()` call are removed. The `settings`/`status` service CIs are still mounted (now by the substrate), so dashboard `commandClient.send('settings'|'status', …)` calls are unaffected. `Status_CI.get` no longer returns the ELN `version` field (it had no consumer); `runtime_version` is unchanged.
 - **`Aggregator_CI` moved to the `newspack-nodes` substrate.** The hub-side aggregator `status`/`health`/`servers` CI operates purely on substrate concerns (the `Vault`, the `aggregator` topology, `Remote_Source` `np:remote:*` snapshots), so it now ships and mounts in the substrate as `Newspack_Nodes\Rest\Aggregator_CI_Node`; ELN's `App\Aggregator_CI_Node` and its mount in `newspack_event_logger_nodes_mount_service_cis()` are removed. The `aggregator` service CI is still mounted (now by the substrate), so the dashboard's `commandClient.send('aggregator', …)` calls are unaffected.
@@ -2891,7 +2896,6 @@ release's BREAKING note; this release's topologies use the new
 ### Fixed
 
 - **The `performance` `set` receiver no longer corrupts associative-array options synced from the hub.** `custom_events` is stored as `{event_name => true}`; the substrate settings-sync now ships array options as JSON (it previously comma-flattened them, dropping the keys → a meaningless `1,1,1,…`). `Performance_CI_Node`'s `set` verb decodes array-typed options through the new `decode_array_value()` — `json_decode` first (preserving the map's keys + values), falling back to the existing comma-split for legacy/CSV senders — instead of always csv-splitting, which mangled the synced value into a junk list (`['1','1',…]`, all custom-event enable state lost). Pairs with the substrate `Settings_Sync_Node` JSON change.
-
 
 - **Remote spoke geometry syncs its own default, not the hub's.** The `settings_sync/value` resolver stripped a leading `remote_` from the canonical key, so a blank `newspack_nodes_remote_max_lifespan` resolved to the hub's `max_lifespan` default (86400) instead of the remote setting's own default (3600) — the spoke got the wrong retention. Now that `remote_*` are first-class substrate settings with their own defaults, the resolver no longer strips `remote_`; `newspack_nodes_remote_max_lifespan` resolves to `remote_max_lifespan` (3600), matching the value shown on the Nodes Runtime page.
 - **Resetting a synced setting to its default now propagates to spokes** (two halves). (1) `Settings_Event_Writer` watched only `update_option`/`add_option`, but returning a setting to its default *deletes* the option row (`Reset_Gate` short-circuits `pre_update_option` with `delete_option`), so the reset fired `delete_option` — unwatched — and no event was emitted; it now also watches `delete_option`. (2) The `newspack_nodes/settings_sync/value` resolver then looked the canonical default key up only in *ELN's* `load_config_defaults()`, but substrate keys (`newspack_nodes_num_partitions`, …) live in `\Newspack_Nodes\Config` — so the lookup missed, returned the raw `false`, and shipped blank; it now routes `newspack_nodes_`-prefixed options to the substrate defaults. Net: dropping `num_partitions` 2→1 now resets the remote to 1.

@@ -93,7 +93,7 @@ class MCP_Controller {
 			'verb'    => 'urls',
 			'role'    => Capabilities::READ,
 			'summary' => 'The URL leaderboard, sortable and paginated, plus totals and the slowest ten for whatever the filters left. Worker traffic is excluded unless asked for.',
-			'args'    => [ 'sort' => 'count|url|avg_ms|p95_ms|…', 'limit' => 'Rows to return.', 'search' => 'Substring filter.', 'server' => 'Optional server name to scope every row and total to.', 'include_workers' => 'Cron, WP-CLI and job traffic is excluded by default; set to include it.' ],
+			'args'    => [ 'sort' => 'count|url|avg_ms|max_ms|…', 'limit' => 'Rows to return.', 'search' => 'Substring filter.', 'server' => 'Optional server name to scope every row and total to.', 'include_workers' => 'Cron, WP-CLI and job traffic is excluded by default; set to include it.' ],
 		],
 		'performance_url_detail'   => [
 			'node'    => 'performance',

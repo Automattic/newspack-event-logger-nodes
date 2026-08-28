@@ -10,8 +10,8 @@ import { pageFacts, factsJson } from '../pageFacts';
 // Both come off the `urls` reply now: it owns the filters, so it owns every
 // fact about the set they left.
 const SLOWEST = [
-	{ hash: 'aaa', url: '/slow', p95_ms: 2600, count: 4 },
-	{ hash: 'bbb', url: '/next', p95_ms: 900, count: 40 },
+	{ hash: 'aaa', url: '/slow', avg_ms: 2600, max_ms: 2600, count: 4 },
+	{ hash: 'bbb', url: '/next', avg_ms: 900, max_ms: 900, count: 40 },
 ];
 
 test( 'with nothing selected it carries the totals the panel is rendering', () => {
@@ -33,7 +33,7 @@ test( 'with nothing selected it carries the totals the panel is rendering', () =
 	expect( facts.slowest[ 0 ] ).toEqual( {
 		hash: 'aaa',
 		url: '/slow',
-		p95_ms: 2600,
+		avg_ms: 2600,
 		count: 4,
 	} );
 } );
@@ -41,12 +41,12 @@ test( 'with nothing selected it carries the totals the panel is rendering', () =
 test( 'a selected URL names itself and what it is', () => {
 	const facts = pageFacts( {
 		selectedUrl: { hash: 'aaa', url: '/slow' },
-		urlDetail: { stats: { count: 4, avg_ms: 900, p95_ms: 2600 } },
+		urlDetail: { stats: { count: 4, avg_ms: 900, max_ms: 2600 } },
 	} );
 
 	expect( facts.surface ).toBe( 'url' );
 	expect( facts.url ).toEqual( { hash: 'aaa', url: '/slow' } );
-	expect( facts.stats.p95_ms ).toBe( 2600 );
+	expect( facts.stats.max_ms ).toBe( 2600 );
 } );
 
 test( 'a selected request wins over its URL, and carries its findings', () => {
@@ -102,11 +102,11 @@ test( 'the slowest URLs come from the set the totals describe', () => {
 	// from the filtered one — one object, one scope statement, two scopes.
 	const facts = pageFacts( {
 		urlTotals: { urls: 2, requests: 9 },
-		urlSlowest: [ { hash: 'zzz', url: '/scoped', p95_ms: 1200, count: 3 } ],
+		urlSlowest: [ { hash: 'zzz', url: '/scoped', avg_ms: 1200, count: 3 } ],
 	} );
 
 	expect( facts.slowest ).toEqual( [
-		{ hash: 'zzz', url: '/scoped', p95_ms: 1200, count: 3 },
+		{ hash: 'zzz', url: '/scoped', avg_ms: 1200, count: 3 },
 	] );
 } );
 

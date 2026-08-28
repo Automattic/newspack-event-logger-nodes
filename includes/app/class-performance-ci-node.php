@@ -207,7 +207,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * Valid sort fields for the `urls` verb; anything outside falls back
 	 * to `count`.
 	 */
-	private const URL_SORTS = [ 'count', 'url', 'avg_ms', 'min_ms', 'max_ms', 'p95_ms', 'avg_peak_mb', 'last_updated' ];
+	private const URL_SORTS = [ 'count', 'url', 'avg_ms', 'min_ms', 'max_ms', 'avg_peak_mb', 'last_updated' ];
 
 	/**
 	 * URL-index read seam. Lazily-defaulted to the real merge-across-partitions
@@ -748,11 +748,11 @@ class Performance_CI_Node extends Service_CI_Node {
 				}
 				$missing = \array_merge( $missing, Stats_Store::buckets_in_hour( $hour ) );
 			}
-			// @longform Fine, then hours, then the fallback — newest first
-			// throughout, which is the order the percentiles' first-wins read
-			// depends on. One fold for all three: an hour key is never a recent
-			// five-minute bucket, and neither is a bucket behind the fine tail,
-			// so the recency predicate is uniform.
+			// @longform Fine, then hours, then the fallback. One fold for all
+			// three: an hour key is never a recent five-minute bucket, and
+			// neither is a bucket behind the fine tail, so the recency
+			// predicate is uniform. Order is no longer load-bearing — the last
+			// first-wins read went with the percentiles (decision 19).
 			$sources = [
 				...$store->url_row_sources( $plan['fine'], $shard ),
 				...$hours,
@@ -821,9 +821,6 @@ class Performance_CI_Node extends Service_CI_Node {
 			// null until a TIMED bucket has a min to fold in.
 			'min_ms'       => null,
 			'max_ms'       => 0.0,
-			'p50_ms'       => 0.0,
-			'p95_ms'       => 0.0,
-			'p99_ms'       => 0.0,
 			'sum_peak_mb'  => 0.0,
 			'max_peak_mb'  => 0.0,
 			'worker'       => false,
@@ -880,16 +877,6 @@ class Performance_CI_Node extends Service_CI_Node {
 		}
 		$entry['max_ms']      = \max( Core::num_float( $entry['max_ms'] ),      Core::num_float( $stat_arr[ Stats_Store::ROW_MAX_MS ]      ?? 0 ) );
 		$entry['max_peak_mb'] = \max( Core::num_float( $entry['max_peak_mb'] ), Core::num_float( $stat_arr[ Stats_Store::ROW_MAX_PEAK_MB ] ?? 0 ) );
-		// @longform Percentiles do not merge, so the fold takes ONE bucket's —
-		// the NEWEST that carries any. Sources arrive newest-first, so this is
-		// first-wins: a last-wins read handed the display the oldest bucket in
-		// the window, freezing a URL's p95 at what it was a day ago.
-		foreach ( [ Stats_Store::ROW_P50_MS, Stats_Store::ROW_P95_MS, Stats_Store::ROW_P99_MS ] as $index ) {
-			$name = Stats_Store::ROW_FIELD_NAMES[ $index ];
-			if ( empty( $entry[ $name ] ) && ! empty( $stat_arr[ $index ] ) ) {
-				$entry[ $name ] = Core::num_float( $stat_arr[ $index ] );
-			}
-		}
 		$entry['worker']       = ! empty( $entry['worker'] ) || ! empty( $stat_arr[ Stats_Store::ROW_WORKER ] );
 		$entry['last_updated'] = \max(
 			Core::num_int( $entry['last_updated'] ),
@@ -2042,11 +2029,11 @@ class Performance_CI_Node extends Service_CI_Node {
 					? self::sum_rows( $index )
 					: null;
 
-				// The slowest of THIS set; the page has its own sort.
+				// Slowest of THIS set by mean; the page has its own sort.
 				$slowest = $index;
 				\usort(
 					$slowest,
-					static fn ( $a, $b ) => ( $b['p95_ms'] ?? 0 ) <=> ( $a['p95_ms'] ?? 0 )
+					static fn ( $a, $b ) => ( $b['avg_ms'] ?? 0 ) <=> ( $a['avg_ms'] ?? 0 )
 				);
 				$slowest = \array_slice( $slowest, 0, self::SLOWEST_ROWS );
 
@@ -2111,9 +2098,6 @@ class Performance_CI_Node extends Service_CI_Node {
 						'avg_ms'              => $entry['avg_ms'] ?? 0,
 						'min_ms'              => $entry['min_ms'] ?? 0,
 						'max_ms'              => $entry['max_ms'] ?? 0,
-						'p50_ms'              => $entry['p50_ms'] ?? 0,
-						'p95_ms'              => $entry['p95_ms'] ?? 0,
-						'p99_ms'              => $entry['p99_ms'] ?? 0,
 						'avg_peak_mb'         => $entry['avg_peak_mb'] ?? 0,
 						'max_peak_mb'         => $entry['max_peak_mb'] ?? 0,
 						'last_updated'        => $entry['last_updated'] ?? 0,

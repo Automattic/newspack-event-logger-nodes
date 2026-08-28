@@ -80,7 +80,7 @@ export function pageFacts( {
 			stats: {
 				count: num( stats.count ),
 				avg_ms: num( stats.avg_ms ),
-				p95_ms: num( stats.p95_ms ),
+				max_ms: num( stats.max_ms ),
 				max_peak_mb: num( stats.max_peak_mb ),
 			},
 		};
@@ -103,7 +103,7 @@ export function pageFacts( {
 		slowest: ( urlSlowest ?? [] ).slice( 0, 10 ).map( ( u ) => ( {
 			hash: u.hash,
 			url: u.url,
-			p95_ms: num( u.p95_ms ),
+			avg_ms: num( u.avg_ms ),
 			count: num( u.count ),
 		} ) ),
 	};

@@ -10,8 +10,8 @@ abstract class TestCase extends RuntimeTestCase {
 	 *
 	 * It returns one pair per shard, and only the OVERFLOW rows are folded here,
 	 * because `fold_url_rows()` keeps only the fields that add — a real hash
-	 * put through it would come back without `url`, the extremes or the
-	 * percentiles, and a later assertion on those would read as a data bug
+	 * put through it would come back without `url` or the extremes, and a
+	 * later assertion on those would read as a data bug
 	 * rather than as the helper. A real straddling hash needs the reader's full
 	 * arithmetic, so it FAILS here instead of being quietly halved.
 	 *

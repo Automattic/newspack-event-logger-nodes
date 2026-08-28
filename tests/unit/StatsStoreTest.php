@@ -30,14 +30,14 @@ class StatsStoreTest extends TestCase {
 		// and the two tables are hand-matched. Decision 18's "the eight that
 		// ADD come FIRST" is otherwise only prose: a ninth summed field
 		// appended past the end works and falsifies it silently.
-		$this->assertSame( \range( 0, 18 ), \array_keys( Stats_Store::ROW_FIELD_NAMES ) );
+		$this->assertSame( \range( 0, 14 ), \array_keys( Stats_Store::ROW_FIELD_NAMES ) );
 		$this->assertSame( \range( 0, 7 ), \array_keys( Stats_Store::URL_SRV_SUMS ) );
 	}
 
 	public function test_the_url_index_is_sharded_by_url_hash(): void {
 		// One blob per bucket was what every cap in this schema was defending:
 		// the whole thing is read-modify-written on each five-second flush and
-		// unserialized whole on each poll, so rows, durations and splits all
+		// unserialized whole on each poll, so rows and splits both
 		// competed for one item's budget. The bucket stays LAST in the key, so
 		// `is_open_bucket()` and the durable read-through are untouched.
 		$this->seed_memd();

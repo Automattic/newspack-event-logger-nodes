@@ -73,9 +73,6 @@ const UNKNOWN_URL = () => __( 'Unknown URL', 'newspack-event-logger-nodes' );
 const headerStats = ( stats ) => [
 	[ ( stats?.requests_per_second ?? 0 ).toFixed( 2 ), 'req/s' ],
 	[ `${ stats?.avg_ms?.toFixed( 0 ) || 0 }ms`, 'avg' ],
-	[ `${ stats?.p50_ms?.toFixed( 0 ) || 0 }ms`, 'p50' ],
-	[ `${ stats?.p95_ms?.toFixed( 0 ) || 0 }ms`, 'p95' ],
-	[ `${ stats?.p99_ms?.toFixed( 0 ) || 0 }ms`, 'p99' ],
 	...( ( stats?.avg_peak_mb || 0 ) > 0
 		? [ [ `${ stats.avg_peak_mb.toFixed( 1 ) }MB`, 'mem' ] ]
 		: [] ),

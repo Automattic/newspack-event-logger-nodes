@@ -72,7 +72,6 @@ const COLUMNS = [
 	{ field: 'avg_ms', label: __( 'Avg', 'newspack-event-logger-nodes' ) },
 	{ field: 'min_ms', label: __( 'Min', 'newspack-event-logger-nodes' ) },
 	{ field: 'max_ms', label: __( 'Max', 'newspack-event-logger-nodes' ) },
-	{ field: 'p95_ms', label: 'p95' },
 	{
 		field: 'avg_peak_mb',
 		label: __( 'Mem', 'newspack-event-logger-nodes' ),

@@ -583,7 +583,6 @@ The retention window comes from the substrate's `min_lifetime` (default 43200), 
 | `categories` | category time series, keyed per bucket, `$server` scopes it | `min_lifetime` |
 | `url_cat` | per-URL category series, keyed per bucket | `min_lifetime` |
 | `urls_h` | the URL index's COARSE tier, `urls_h:{shard}:{Y-m-d-H}` — one hour of merged rows in the same positional shape a `urls` bucket holds. DERIVED: `Flame_Builder_Node::roll_up_hours()` folds a closed hour once, and a missing key is answered from that hour's twelve `urls` buckets. Not mirrored, for the same reason | `min_lifetime` |
-| `url_dur` | the URL index's duration reservoirs, `url_dur:{shard}:{bucket}` — up to `MAX_DURATIONS_PER_BUCKET` raw samples per URL. WRITER-ONLY: its sole use is recomputing p50/p95/p99 when a later flush folds into the same bucket, so it sits beside the rows rather than inside them, and no reader carries it. Not mirrored | `min_lifetime` |
 
 **Caps prevent value-explosion** against memcache's 1MB/value limit:
 
@@ -595,16 +594,15 @@ The retention window comes from the substrate's `min_lifetime` (default 43200), 
   it
 - `MAX_URL_DIM_VALUES = 10`
 - `MAX_CAT_VALUES = 50`
-- `MAX_DURATIONS_PER_BUCKET = 100`
 
 `srv` splits a URL row's SUMMED fields by reporting server and is capped by
 `MAX_SERVER_VALUES`, the same ceiling the `server` dimension takes — one
 window-merged scalar per server, co-located with the row so one `lookup_multi`
 scopes the whole index instead of one get per URL. It is NOT `url_dim`'s
 `server` axis, which is a per-bucket `{c,s,m}` time series; neither can produce
-the other (decision 14). Extremes and percentiles are absent from
-it: they do not add, and splitting them would need a reservoir per server, so a
-server-scoped row keeps the URL's own across every server. Because every split
+the other (decision 14). Extremes are absent from
+it: `URL_SRV_SUMS` and `sum_entry()` only ADD, so a server-scoped row keeps the
+URL's own across every server. Because every split
 field adds, the scope is applied as a projection over the merged row
 (`Stats_Store::swap_url_server_sums()`), which is what lets one unscoped read serve
 every scope a request asks for — and is also where the split's indexes become

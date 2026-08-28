@@ -159,7 +159,7 @@ describe( 'UrlsView — the envelope slice', () => {
 				// One more row than URLs: the folded row is sliceable but is
 				// not a unique URL, and the pager slices.
 				rows: 7332,
-				slowest: [ { url: '/slow', p95_ms: 2600 } ],
+				slowest: [ { url: '/slow', avg_ms: 2600 } ],
 				filters: { server: 'edge-01', search: '', errors_only: false },
 				limit: 20,
 				offset: 0,
@@ -170,7 +170,7 @@ describe( 'UrlsView — the envelope slice', () => {
 			data: [ { url: '/a' } ],
 			totals: { urls: 7331, requests: 90210 },
 			rows: 7332,
-			slowest: [ { url: '/slow', p95_ms: 2600 } ],
+			slowest: [ { url: '/slow', avg_ms: 2600 } ],
 			filters: { server: 'edge-01', search: '', errors_only: false },
 			loading: false,
 			error: null,
