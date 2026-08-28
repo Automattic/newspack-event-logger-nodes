@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+
+## [0.67.1] - 2026-08-28
+
+### Fixed
+
+- **The Request Log's segment rail scrolls again.** It is the substrate's shared `LogBrowser`, whose `flex-shrink: 0` protected its 200px width while it was a direct child of the row-flexed body; the column-flexed `.newspack-nodes-rail-dock` re-aimed that declaration at the HEIGHT and pinned the rail to its content. `completed.p0` carries two dozen segments here, so the rail ran off the bottom of the viewport with no way to reach the older ones. Fixed in newspack-nodes 2.45.0 and inlined by this build.
+
+### Changed
+
+- **Substrate pin moves to `v2.45.0`.** No ELN source changed; the pin is what carries the shared `LogBrowser` fix into the bundled CSS.
+
 ## [0.67.0] - 2026-08-28
 
 ### Removed
