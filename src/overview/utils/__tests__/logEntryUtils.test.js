@@ -1418,3 +1418,60 @@ describe( 'a span the record never closes cannot outlive its parent', () => {
 		expect( at( 'process (aborted)' ) ).toBe( at( 'process (start)' ) );
 	} );
 } );
+
+describe( 'the drained completes belong to the spans that were still open', () => {
+	it( 'does not let a closed sibling spend the debt of a deeper span', () => {
+		// From the real aborted record. `include: /Macros/Global.html` closed
+		// normally early on and the fold ate its complete; the surviving
+		// `include (complete)` is the producer's drain of a DIFFERENT include,
+		// five levels down on the abort chain. Keyed on the bare base, the
+		// first same-base node in walk order took that debt, skipped its own
+		// complete, and stayed open across every sibling after it.
+		const kid = ( name, t, children = [] ) => ( {
+			name,
+			count: 1,
+			value: 100,
+			t,
+			children,
+		} );
+		const flame = {
+			name: 'request',
+			t: null,
+			children: [
+				kid( 'process', 0, [
+					kid( 'gyrobase', 10, [
+						// Closed long before the abort; its complete was merged.
+						kid( 'include: /Macros/Global.html', 20 ),
+						// The abort chain: deepest by `t`.
+						kid( 'change', 30, [
+							kid( 'include: /Validation/Location.html', 40 ),
+						] ),
+					] ),
+				] ),
+			],
+		};
+		const stored = [
+			{ k: 'process (start)', ts: 1000 },
+			{ k: 'gyrobase (start)', ts: 1000 },
+			{ k: 'entries (aggregated)', ts: 1000 },
+			// The drain, innermost first.
+			{ k: 'include (complete)', ts: 1600, m: '(orphaned)' },
+			{ k: 'change (complete)', ts: 1600, m: '(orphaned)' },
+			{ k: 'gyrobase (complete)', ts: 1600 },
+			{ k: 'tail', ts: 1600 },
+			{ k: 'process (aborted)', ts: 1600 },
+		];
+		const rows = computeIndentedEntries(
+			spliceFoldedSpans( stored, flame )
+		).entries.filter( ( e ) => e.k );
+		const keywords = rows.map( ( e ) => e.k );
+
+		// The early sibling closes itself rather than waiting for the drain.
+		expect( keywords ).toContain(
+			'include: /Macros/Global.html (complete)'
+		);
+		// And the tail is not re-parented under it.
+		const at = ( k ) => rows.find( ( e ) => e.k === k ).indent;
+		expect( at( 'tail' ) ).toBe( at( 'gyrobase (start)' ) );
+	} );
+} );

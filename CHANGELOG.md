@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A span that closed before the abort no longer swallows a deeper span's drained complete.** A record's trailing `(orphaned)` completes name the spans still open when the producer drained, innermost first. `owedToTree()` keys that debt by BARE base, so the first same-base node in tree order took it — on the real record, `include: /Macros/Global.html`, a sibling that had closed normally early on and whose own complete the fold ate. It then skipped emitting one and stayed open across everything after it. Only a node on the chain the drain actually closed may spend the debt now: the tree's deepest path by `t`, which on that record is `change > save > validation > include: /Validation/Location.html > macro: processvideos` — matching the producer's drain order exactly. A tree with no timings cannot say, so the gate stands down rather than refusing every debt.
+
 
 ## [0.69.1] - 2026-08-28
 
