@@ -2199,7 +2199,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				[
 					'name'        => 'request_detail',
 					'capability'  => Capabilities::READ,
-					'description' => 'Full request + flame data for a known {rid, partition}.',
+					'description' => 'Full request + flame data for a rid; --partition hints where to look first.',
 					'args'        => [
 						[ 'name' => 'rid', 'type' => 'string', 'required' => true ],
 						[ 'name' => 'partition', 'type' => 'int', 'required' => false, 'default' => 0 ],
@@ -2221,10 +2221,8 @@ class Performance_CI_Node extends Service_CI_Node {
 					throw new \RuntimeException( 'invalid partition' );
 				}
 
-				$result = self::find_request( [ $partition => $dirs[ $partition ] ], $rid );
-				if ( null === $result ) {
-					throw new \RuntimeException( \esc_html( "Request not found: rid={$rid}" ) );
-				}
+				// A hint, as in `ask`: that partition first, then the rest.
+				$result = self::load_request( $rid, $partition );
 				// Findings ride the record; no model is involved in them.
 				$rule               = self::rule_for_record( $result );
 				$result['findings'] = Findings::for_request( $result, $rule );
