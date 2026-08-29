@@ -575,12 +575,25 @@ const openSpansAt = ( entries, upto ) =>
  */
 const keptPairCounts = ( entries ) => {
 	const counts = new Map();
+	// @longform A frame the record never closes is not on the TREE's path to
+	// these rows either — the fold ate its close, and the render prunes it —
+	// so leaving it in makes every path miss and redraws rows already shown.
+	// `outlive` finds it: the truncating unwind pops a child with its parent,
+	// so the unclosed frame vanishes at the request's own close.
+	const severed = new Set(
+		walkPairs( entries, { outlive: true } ).map( ( frame ) => frame.name )
+	);
 	walkPairs( entries, {}, ( name, at, opened ) => {
 		if ( at < 0 ) {
 			return;
 		}
 		const path = opened
 			.slice( 0, at + 1 )
+			.filter(
+				// The request's own frame stays: the tree's paths start there.
+				( frame, i ) =>
+					0 === i || i === at || ! severed.has( frame.name )
+			)
 			.map( ( frame ) => frame.name )
 			.join( '/' );
 		counts.set( path, ( counts.get( path ) || 0 ) + 1 );

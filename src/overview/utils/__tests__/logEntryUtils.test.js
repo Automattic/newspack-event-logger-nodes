@@ -288,6 +288,80 @@ describe( 'computeIndentedEntries', () => {
 		expect( byKeyword.get( 'process (aborted)' ) ).toBe( 0 );
 	} );
 
+	it( 'does not re-emit a tail row whose parent the record never closed', () => {
+		// The tail's `query hook` runs AFTER the gyrobase subprocess, and the
+		// tree agrees: it hangs off `process`, beside gyrobase. But gyrobase is
+		// never closed, so in the raw entry stream that row reads as
+		// `process/gyrobase/query hook` — and `keptPairCounts` keys by PATH, so
+		// it matched nothing and the fold drew a synthetic "1 merged" copy of a
+		// row already on screen, inside a Perl subprocess no PHP hook can enter.
+		const flame = {
+			name: 'request',
+			count: 0,
+			value: 900,
+			t: 0,
+			children: [
+				{
+					name: 'process',
+					count: 1,
+					value: 900,
+					t: 0,
+					children: [
+						{
+							name: 'gyrobase',
+							count: 1,
+							value: 800,
+							t: 10,
+							children: [
+								{
+									name: 'parse_template',
+									count: 1,
+									value: 400,
+									t: 20,
+									children: [],
+								},
+							],
+						},
+						{
+							name: 'query hook',
+							count: 1,
+							value: 3,
+							t: 850,
+							children: [],
+						},
+					],
+				},
+			],
+		};
+		const stored = [
+			{ n: 1, k: 'process (start)', ts: 1000 },
+			{ n: 1, k: 'gyrobase (start)', ts: 1000.01 },
+			{
+				n: 3,
+				k: 'entries (aggregated)',
+				ts: 1000.03,
+				m: '343760 merged',
+			},
+			{ n: 6, k: 'nuclear_gyrobase', ts: 1000.85, m: 'engine exit 0' },
+			{
+				n: 7,
+				k: 'query hook (start)',
+				ts: 1000.86,
+				m: 'SHOW FULL COLUMNS',
+			},
+			{ n: 8, k: 'query hook (complete)', ts: 1000.863 },
+			{ n: 9, k: 'process (complete)', ts: 1000.9 },
+		];
+
+		const { entries: out } = computeIndentedEntries(
+			spliceFoldedSpans( stored, flame )
+		);
+		const starts = out.filter( ( e ) => 'query hook (start)' === e.k );
+
+		expect( starts ).toHaveLength( 1 );
+		expect( starts[ 0 ].m ).toBe( 'SHOW FULL COLUMNS' );
+	} );
+
 	it( 'nests folded spans under a parent whose close the fold ate', () => {
 		// af1nyw's shape: the gyrobase subprocess exits 0, and its own
 		// `(complete)` was merged away with the other 343,760 entries, so the
