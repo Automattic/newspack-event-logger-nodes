@@ -128,6 +128,10 @@ class Findings {
 		$rule_id  = null === $rule ? null : $rule->id;
 
 		$findings = [];
+		$fatal    = self::fatal( $record, $rule_id );
+		if ( null !== $fatal ) {
+			$findings[] = $fatal;
+		}
 		$cold     = self::cold_start( $record, $rule, $nodes, $profiled, $duration );
 		if ( null !== $cold ) {
 			$findings[] = $cold;
@@ -575,6 +579,42 @@ class Findings {
 			'rule + record',
 			[] === $hooks
 		);
+	}
+
+	/**
+	 * The request DIED. The one finding that needs no arithmetic: PHP knew the
+	 * message, file, line and offending plugin at the moment it stopped, and
+	 * `Log_Manager` wrote them down. Stating them here is the difference
+	 * between "somewhere in plugins_loaded" and a file and a line.
+	 *
+	 * It carries no proposal: no rule edit fixes a fatal.
+	 *
+	 * @param array<array-key,mixed> $record  The request record.
+	 * @param string|null            $rule_id The governing rule, for the caller.
+	 * @return array<string,mixed>|null
+	 */
+	private static function fatal( array $record, ?string $rule_id ): ?array {
+		$message = Core::as_string( $record['fatal_error'] ?? '' );
+		if ( '' === $message ) {
+			return null;
+		}
+		$plugin = Core::as_string( $record['fatal_plugin'] ?? '' );
+		$file   = Core::as_string( $record['fatal_file'] ?? '' );
+		$line   = Core::num_int( $record['fatal_line'] ?? 0 );
+		$where  = '' === $plugin ? 'outside any plugin' : "in the {$plugin} plugin";
+		return [
+			'kind'     => 'fatal',
+			'severity' => 'high',
+			'title'    => "The request died {$where}",
+			'detail'   => '' === $file ? $message : "{$message} — {$file}:{$line}",
+			'measured' => 'php fatal',
+			'metric'   => [
+				'plugin' => $plugin,
+				'file'   => $file,
+				'line'   => $line,
+			],
+			'rule_id'  => $rule_id,
+		];
 	}
 
 	/**

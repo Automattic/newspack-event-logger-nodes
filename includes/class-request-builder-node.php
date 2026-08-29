@@ -951,6 +951,7 @@ class Request_Builder_Node extends Timer_Node {
 			}
 			// A hole outranks a nominal finish: the trace is partial, say so.
 			$request->error_status = Core::int( $request->gap_after ?? 0, 0 ) > 0 ? 'I' : $error_status;
+			self::carry_fatal( $request, $entry );
 			$request->state        = 'complete';
 		};
 
@@ -1047,6 +1048,28 @@ class Request_Builder_Node extends Timer_Node {
 	private static function env_str( array $env, string $key ): string {
 		$value = $env[ $key ] ?? '';
 		return Core::str( $value );
+	}
+
+	/**
+	 * Move a fatal's own detail off the terminal entry and onto the record.
+	 *
+	 * `Log_Manager::write_terminal()` resolves the message, file, line, type and
+	 * offending plugin from `error_get_last()` at the one moment PHP still
+	 * knows them. `error_status = 'F'` alone says a fatal happened and nothing
+	 * about where, which is a whole debugging session of difference.
+	 *
+	 * @param \stdClass              $request Record under assembly.
+	 * @param array<array-key,mixed> $entry   The terminal entry.
+	 */
+	private static function carry_fatal( \stdClass $request, array $entry ): void {
+		if ( ! isset( $entry['fatal_error'] ) ) {
+			return;
+		}
+		$request->fatal_error  = Core::str( $entry['fatal_error'], '' );
+		$request->fatal_file   = Core::str( $entry['fatal_file'] ?? '', '' );
+		$request->fatal_line   = Core::int( $entry['fatal_line'] ?? 0, 0 );
+		$request->fatal_type   = Core::int( $entry['fatal_type'] ?? 0, 0 );
+		$request->fatal_plugin = Core::str( $entry['fatal_plugin'] ?? '', '' );
 	}
 
 	/**

@@ -195,6 +195,62 @@ class RequestBuilderTest extends TestCase {
 		$this->assertSame( 0, $this->cache_size( $rb ) );
 	}
 
+	/**
+	 * `Log_Manager::write_terminal()` resolves the fatal's message, file, line
+	 * and offending plugin at the one moment PHP still knows them. Dropping
+	 * them leaves `error_status = 'F'`, which says a fatal happened and nothing
+	 * about where.
+	 */
+	public function test_a_fatal_carries_its_plugin_file_and_line_onto_the_record(): void {
+		$rb      = new Request_Builder_Node();
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+
+		$this->fill( $rb, 1, 'r1', 'process (start)' );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /wp-admin/' ] );
+		$this->fill(
+			$rb,
+			3,
+			'r1',
+			'process (complete)',
+			[
+				'duration_ms'  => 106.66,
+				'status_code'  => 500,
+				'error_status' => 'F',
+				'fatal_error'  => 'Uncaught Error: Undefined constant "USER_SWITCHING_SECURE_COOKIE"',
+				'fatal_file'   => '/srv/htdocs/wp-content/plugins/user-switching/user-switching.php',
+				'fatal_line'   => 1585,
+				'fatal_type'   => 1,
+				'fatal_plugin' => 'user-switching',
+			]
+		);
+
+		$req = $this->captured_request( $capture );
+		$this->assertSame( 'F', $req['error_status'] );
+		$this->assertSame( 'user-switching', $req['fatal_plugin'] );
+		$this->assertSame( 1585, $req['fatal_line'] );
+		$this->assertSame( 1, $req['fatal_type'] );
+		$this->assertSame(
+			'/srv/htdocs/wp-content/plugins/user-switching/user-switching.php',
+			$req['fatal_file']
+		);
+		$this->assertStringContainsString( 'USER_SWITCHING_SECURE_COOKIE', $req['fatal_error'] );
+	}
+
+	public function test_a_clean_completion_carries_no_fatal_fields(): void {
+		$rb      = new Request_Builder_Node();
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+
+		$this->fill( $rb, 1, 'r1', 'process (start)' );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /fine' ] );
+		$this->fill( $rb, 3, 'r1', 'process (complete)', [ 'duration_ms' => 12.0, 'status_code' => 200 ] );
+
+		$req = $this->captured_request( $capture );
+		$this->assertArrayNotHasKey( 'fatal_error', $req );
+		$this->assertArrayNotHasKey( 'fatal_plugin', $req );
+	}
+
 	public function test_clean_stop_on_a_completing_forward_finishes_bookkeeping_and_raises_clean(): void {
 		// When the completed-request forward triggers a cooperative stop (the partition
 		// wrote the doc, then pump() signaled the stop), RequestBuilder must finish its
