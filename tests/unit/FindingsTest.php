@@ -56,6 +56,38 @@ class FindingsTest extends TestCase {
 		return $record;
 	}
 
+	/**
+	 * `error_status = 'F'` says a fatal happened; it does not say where. The
+	 * runtime resolved the plugin, file and line at the moment it died, so the
+	 * finding states them rather than sending anyone to a server log.
+	 */
+	public function test_a_fatal_names_the_plugin_that_died(): void {
+		$record                 = $this->loaded_record();
+		$record['status_code']  = 500;
+		$record['error_status'] = 'F';
+		$record['fatal_error']  = 'Uncaught Error: Undefined constant "USER_SWITCHING_SECURE_COOKIE"';
+		$record['fatal_file']   = '/srv/htdocs/wp-content/plugins/user-switching/user-switching.php';
+		$record['fatal_line']   = 1585;
+		$record['fatal_plugin'] = 'user-switching';
+
+		$findings = Findings::for_request( $record, $this->instrumented_rule() );
+
+		$this->assertSame( 'fatal', $findings[0]['kind'], 'a request that DIED outranks every other finding' );
+		$this->assertSame( 'high', $findings[0]['severity'] );
+		$this->assertStringContainsString( 'user-switching', $findings[0]['title'] );
+		$this->assertStringContainsString( 'USER_SWITCHING_SECURE_COOKIE', $findings[0]['detail'] );
+		$this->assertSame( 1585, $findings[0]['metric']['line'] );
+	}
+
+	public function test_a_record_that_did_not_die_has_no_fatal_finding(): void {
+		$kinds = \array_column(
+			Findings::for_request( $this->loaded_record(), $this->instrumented_rule() ),
+			'kind'
+		);
+
+		$this->assertNotContains( 'fatal', $kinds );
+	}
+
 	public function test_a_loaded_record_carries_its_tree_at_flame_data(): void {
 		$record = $this->loaded_record();
 		$record['flame_data']['children'] = [

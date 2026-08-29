@@ -8,7 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 
-## [0.69.4] - 2026-08-28
+## [0.70.0] - 2026-08-29
+
+### Added
+
+- **A fatal names the plugin, file and line that killed the request.** `Log_Manager::write_terminal()` has always resolved `fatal_error`, `fatal_file`, `fatal_line`, `fatal_type` and `fatal_plugin` from `error_get_last()` — the one moment PHP still knows them — and nothing anywhere read them back: a grep for those keys returned the write site alone. `Request_Builder_Node` lifted `error_status` off the terminal entry and dropped the rest, so a dead request reported `F` and not one word about where it died. The record now carries all five, and `Findings` raises a `fatal` finding ahead of every other, titled with the plugin and detailed with the message plus `file:line`. It proposes nothing: no rule edit fixes a fatal. Found on a live wp-admin fatal that took a server-log grep to identify as `user-switching.php:1585`, which the logger had already recorded and thrown away.
 
 ### Fixed
 
