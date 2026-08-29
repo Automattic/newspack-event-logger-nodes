@@ -421,6 +421,67 @@ class FindingsTest extends TestCase {
 		$this->assertSame( 2, $found['metric']['hooks'], 'the rule it names has two' );
 	}
 
+	/**
+	 * A rule can instrument a request WITHOUT naming a single hook: significant
+	 * events measure the interior just as well, and the flame proves it. Keying
+	 * "no interior" on the hook list alone made a record carrying 295 spans and
+	 * a five-deep tree report at severity high that nothing inside it was
+	 * measured, in the same finding whose own numbers line said `spans=295`.
+	 */
+	public function test_a_rule_instrumenting_by_significant_events_is_not_called_hookless(): void {
+		$by_events = new Rule(
+			'0b01f4ec2288',
+			'/wp-admin/post.php?post=3663570',
+			Rule::ACTION_LOG,
+			0,
+			0.0,
+			[ 'render_block', 'the_content', 'pre_get_posts', 'shutdown' ],
+			[],
+			[]
+		);
+
+		$this->assertNull(
+			$this->of_kind(
+				Findings::for_request( $this->healthy_record(), $by_events ),
+				'insufficient_instrumentation'
+			)
+		);
+	}
+
+	/**
+	 * One record cannot ask for both directions at once. A folded record's
+	 * `truncation` proposes FEWER logged events; `cold_start` proposing more in
+	 * the same breath is the contradiction decision 13 records for `entry_gap`,
+	 * arriving by a second route.
+	 */
+	public function test_no_record_proposes_more_and_less_visibility_at_once(): void {
+		$record           = $this->healthy_record();
+		$record['folded'] = true;
+		$by_events        = new Rule(
+			'0b01f4ec2288',
+			'/wp-admin/post.php?post=3663570',
+			Rule::ACTION_LOG,
+			0,
+			0.0,
+			[ 'render_block', 'the_content' ],
+			[],
+			[]
+		);
+
+		$directions = [];
+		foreach ( Findings::for_request( $record, $by_events ) as $finding ) {
+			if ( isset( $finding['proposal']['direction'] ) ) {
+				$directions[] = $finding['proposal']['direction'];
+			}
+		}
+
+		$this->assertNotContains(
+			'more',
+			$directions,
+			'a folded record asking for MORE visibility contradicts its own trim proposal'
+		);
+	}
+
 	public function test_a_rule_registering_no_hooks_proposes_the_lifecycle_bracket(): void {
 		$bare = new Rule( 'ffff11112222', '/calendar/today', Rule::ACTION_LOG );
 
