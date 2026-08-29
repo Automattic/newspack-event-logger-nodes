@@ -288,6 +288,165 @@ describe( 'computeIndentedEntries', () => {
 		expect( byKeyword.get( 'process (aborted)' ) ).toBe( 0 );
 	} );
 
+	it( 'closes an orphan chain in reverse order of opening', () => {
+		// Spans are strictly LIFO: a bare `macro (complete)` closes the
+		// INNERMOST still-open macro, so a chain of trailing orphaned
+		// completes steps out exactly one level at a time. Several folded
+		// `macro: …` frames share the base name and must not steal the debt.
+		const macros = ( t ) => ( {
+			name: 'macro: processimages',
+			count: 6,
+			value: 10,
+			t,
+			children: [],
+		} );
+		const flame = {
+			name: 'request',
+			count: 0,
+			value: 600000,
+			t: 0,
+			children: [
+				{
+					name: 'process',
+					count: 0,
+					value: 600000,
+					t: 0,
+					children: [
+						{
+							name: 'change',
+							count: 1,
+							value: 500000,
+							t: 100,
+							children: [
+								macros( 200 ),
+								{
+									// Starts LAST but closed; `latestPath()` picks
+									// by max `t`, so it points here, not at the
+									// chain the drain actually left open.
+									name: 'render',
+									count: 1,
+									value: 100,
+									t: 900,
+									children: [ macros( 950 ) ],
+								},
+								{
+									name: 'save',
+									count: 1,
+									value: 490000,
+									t: 300,
+									children: [
+										{
+											name: 'validation',
+											count: 1,
+											value: 480000,
+											t: 400,
+											children: [
+												{
+													name: 'include: /Validation/Location.html',
+													count: 1,
+													value: 470000,
+													t: 500,
+													children: [
+														{
+															name: 'macro: processvideos',
+															count: 1,
+															value: 460000,
+															t: 600,
+															children: [],
+														},
+													],
+												},
+											],
+										},
+									],
+								},
+							],
+						},
+					],
+				},
+			],
+		};
+		const stored = [
+			{ n: 1, k: 'process (start)', ts: 1000 },
+			{ n: 2, k: 'change (start)', ts: 1000.1 },
+			{ n: 3, k: 'save (start)', ts: 1000.3 },
+			{ n: 4, k: 'validation (start)', ts: 1000.4 },
+			{ n: 5, k: 'entries (aggregated)', ts: 1000.45 },
+			{ n: 6, k: 'macro (complete)', ts: 1600.0, m: '(orphaned)' },
+			{ n: 7, k: 'include (complete)', ts: 1600.1, m: '(orphaned)' },
+			{ n: 8, k: 'validation (complete)', ts: 1600.2, m: '(orphaned)' },
+			{ n: 9, k: 'save (complete)', ts: 1600.3, m: '(orphaned)' },
+			{ n: 10, k: 'change (complete)', ts: 1600.4, m: '(orphaned)' },
+			{ n: 11, k: 'process (complete)', ts: 1600.5 },
+		];
+
+		const { entries: out } = computeIndentedEntries(
+			spliceFoldedSpans( stored, flame )
+		);
+		const chain = out
+			.filter(
+				( e ) => 'string' === typeof e.m && e.m.includes( 'orphaned' )
+			)
+			.map( ( e ) => e.indent );
+
+		// macro, include, validation, save, change — one level out each time.
+		expect( chain ).toEqual( [ 5, 4, 3, 2, 1 ] );
+	} );
+
+	it( 'does not repeat a span the kept head left open', () => {
+		// The head shows `gyrobase (start)` and never its complete, so the
+		// span STRADDLES the fold. Its merged node counts that same instance,
+		// so emitting a frame for it draws the span twice — once real, once
+		// synthetic — and hangs every merged child under the copy.
+		const flame = {
+			name: 'request',
+			count: 0,
+			value: 600000,
+			t: 0,
+			children: [
+				{
+					name: 'process',
+					count: 0,
+					value: 600000,
+					t: 0,
+					children: [
+						{
+							name: 'gyrobase',
+							count: 1,
+							value: 535829,
+							t: 350,
+							children: [
+								{
+									name: 'change',
+									count: 675,
+									value: 530143,
+									t: 400,
+									children: [],
+								},
+							],
+						},
+					],
+				},
+			],
+		};
+		const stored = [
+			{ n: 1, k: 'process (start)', ts: 1000 },
+			{ n: 2, k: 'gyrobase (start)', ts: 1000.35 },
+			{ n: 3, k: 'publication', ts: 1000.35 },
+			{ n: 4, k: 'entries (aggregated)', ts: 1000.36 },
+			// No `gyrobase (complete)`: the span never closes in the record.
+			{ n: 5, k: 'nuclear_gyrobase', ts: 1536.1 },
+			{ n: 6, k: 'process (complete)', ts: 1536.2 },
+		];
+
+		const out = spliceFoldedSpans( stored, flame );
+
+		const starts = out.filter( ( e ) => 'gyrobase (start)' === e.k );
+		expect( starts ).toHaveLength( 1 );
+		// And the merged children still land, under the real row.
+		expect( out.some( ( e ) => 'change (start)' === e.k ) ).toBe( true );
+	} );
+
 	it( 'ignores the spliced-in middle when deciding what straddles the break', () => {
 		// The splice puts the merged middle back between the marker and the
 		// tail. A tree node repeating an open span's own name emits a
