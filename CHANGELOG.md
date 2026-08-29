@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 
+## [0.70.1] - 2026-08-29
+
+### Changed
+
+- **Substrate pin moves to `v2.46.2`**, which registers the substrate's own `topologies/` dir at plugin load instead of inside the lazy runtime wiring. A frontend page view reaches neither wiring tier, so its shutdown wake could not resolve a consumer topology's stock includes.
+
+
 ## [0.70.0] - 2026-08-29
 
 ### Added
