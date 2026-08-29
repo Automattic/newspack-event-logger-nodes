@@ -15,6 +15,10 @@
  * slow one — "Image_CDN::filter_the_content @10 (complete)" nested inside the
  * hook's own "the_content hook" span.
  *
+ * A log rule also times every outbound HTTP request, which no hook can reach:
+ * `pre_http_request` opens the span and `http_api_debug` closes it. See
+ * `http_start()` for why a short-circuited request opens nothing.
+ *
  * Log_Manager fires `newspack_event_logger_nodes_scope_changed` whenever a job
  * context begins or ends; rebind_for_current_scope() then rebinds for whichever
  * rule governs next.
@@ -69,6 +73,9 @@ class Core {
 
 	/** @var array<int,true> spl_object_id of wrappers we created (prevents double-wrap). */
 	private array $wrapper_ids = [];
+
+	/** @var string[] Labels of outbound HTTP spans currently in flight. */
+	private array $http_spans = [];
 
 	/**
 	 * Read the start priority from config, bind the current scope, and listen
@@ -296,6 +303,8 @@ class Core {
 			\remove_filter( $hook_name, [ $this, 'hook_spacer' ], self::SPACER_PRIORITY );
 			\remove_filter( $hook_name, [ $this, 'hook_complete' ], PHP_INT_MAX - 1 );
 		}
+		\remove_filter( 'pre_http_request', [ $this, 'http_start' ], PHP_INT_MAX );
+		\remove_action( 'http_api_debug', [ $this, 'http_end' ], PHP_INT_MIN );
 		$this->bound_hooks = [];
 		$this->significant = [];
 		$this->bind_current_scope();
@@ -350,6 +359,56 @@ class Core {
 			\add_filter( $hook_name, [ $this, 'hook_complete' ], PHP_INT_MAX - 1 );
 			$this->bound_hooks[] = $hook_name;
 		}
+
+		// Outbound HTTP blocks below userland, where no hook reaches.
+		\add_filter( 'pre_http_request', [ $this, 'http_start' ], PHP_INT_MAX, 3 );
+		\add_action( 'http_api_debug', [ $this, 'http_end' ], PHP_INT_MIN, 5 );
+	}
+
+	/**
+	 * Open a span around one outbound HTTP request. Registered on
+	 * `pre_http_request` at PHP_INT_MAX, so every short-circuiting filter has
+	 * already run and `$preempt` carries their verdict.
+	 *
+	 * A short-circuited request opens NOTHING. `WP_Http::request()` returns it
+	 * with a bare `return $pre;` and never fires `http_api_debug`, so a span
+	 * opened here would never close and would adopt every row after it — and a
+	 * short-circuit is a cache hit with no I/O to time in the first place.
+	 *
+	 * The span is named for the HOST, so the flame aggregates every call to one
+	 * endpoint into a single node with its count: which host is slow is the
+	 * question this instrumentation exists to answer.
+	 *
+	 * @param mixed                 $preempt Short-circuit value, false to proceed.
+	 * @param array<string,mixed>   $args    Request arguments (unused).
+	 * @param string                $url     Request URL.
+	 * @return mixed The unmodified $preempt.
+	 */
+	public function http_start( $preempt = false, array $args = [], string $url = '' ) {
+		if ( false !== $preempt ) {
+			return $preempt;
+		}
+		if ( ! Log_Manager::has_instance() ) {
+			return $preempt;
+		}
+		$lm = Log_Manager::instance();
+		if ( ! $lm->is_started() ) {
+			return $preempt;
+		}
+		$label              = self::http_label( $url );
+		$this->http_spans[] = $label;
+		$lm->start( $label, [ 'm' => Log_Manager::redact_url( $url ), 'l' => '' ] );
+		return $preempt;
+	}
+
+	/**
+	 * A span name for one outbound request: `http: <host>`.
+	 *
+	 * @param string $url Request URL.
+	 */
+	private static function http_label( string $url ): string {
+		$host = RuntimeCore::as_string( \wp_parse_url( $url, PHP_URL_HOST ), '' );
+		return 'http: ' . ( '' === $host ? '(unparsed)' : $host );
 	}
 
 	/**
@@ -360,6 +419,31 @@ class Core {
 	 */
 	public static function is_listener_span( string $span ): bool {
 		return 1 === \preg_match( self::LISTENER_PATTERN, $span );
+	}
+
+	/**
+	 * Close the span `http_start` opened. Registered on `http_api_debug` at
+	 * PHP_INT_MIN so the span covers the request and not the other listeners
+	 * on that action.
+	 *
+	 * Closes the label it OPENED rather than one derived from `$url` again: a
+	 * redirect hands this action the final URL, and a label that no longer
+	 * matches leaves the span open.
+	 *
+	 * @param mixed               $response Response array or WP_Error.
+	 * @param string              $context  Always 'response'.
+	 * @param string              $class    Transport class (unused).
+	 * @param array<string,mixed> $args     Request arguments (unused).
+	 * @param string              $url      Request URL (unused).
+	 */
+	public function http_end( $response = null, string $context = '', string $class = '', array $args = [], string $url = '' ): void {
+		$label = \array_pop( $this->http_spans );
+		if ( null === $label || ! Log_Manager::has_instance() ) {
+			return;
+		}
+		$inner = \is_array( $response ) ? RuntimeCore::arr( $response['response'] ?? null, [] ) : [];
+		$code  = RuntimeCore::as_string( $inner['code'] ?? '', '' );
+		Log_Manager::instance()->complete( $label, '' === $code ? [] : [ 'm' => $code ] );
 	}
 
 	/**

@@ -288,6 +288,70 @@ describe( 'computeIndentedEntries', () => {
 		expect( byKeyword.get( 'process (aborted)' ) ).toBe( 0 );
 	} );
 
+	it( 'nests folded spans under a parent whose close the fold ate', () => {
+		// af1nyw's shape: the gyrobase subprocess exits 0, and its own
+		// `(complete)` was merged away with the other 343,760 entries, so the
+		// record never closes it. `pruneSeveredSpans` is right that a severed
+		// span cannot keep the record's RESUMED tail — gyrobase must not adopt
+		// `nuclear_gyrobase` — but the folded interior spliced in AT the marker
+		// is what the tree puts inside it, so the prune cannot precede it.
+		const flame = {
+			name: 'request',
+			count: 0,
+			value: 900,
+			t: 0,
+			children: [
+				{
+					name: 'process',
+					count: 1,
+					value: 900,
+					t: 0,
+					children: [
+						{
+							name: 'gyrobase',
+							count: 1,
+							value: 880,
+							t: 10,
+							children: [
+								{
+									name: 'parse_template',
+									count: 1,
+									value: 400,
+									t: 20,
+									children: [],
+								},
+							],
+						},
+					],
+				},
+			],
+		};
+		const stored = [
+			{ n: 1, k: 'process (start)', ts: 1000 },
+			{ n: 1, k: 'gyrobase (start)', ts: 1000.01 },
+			{ n: 2, k: 'publication', ts: 1000.02, m: 'thecoast' },
+			{
+				n: 3,
+				k: 'entries (aggregated)',
+				ts: 1000.03,
+				m: '343760 merged',
+			},
+			{ n: 6, k: 'nuclear_gyrobase', ts: 1000.9, m: 'engine exit 0' },
+			{ n: 7, k: 'process (complete)', ts: 1000.91 },
+		];
+
+		const { entries: out } = computeIndentedEntries(
+			spliceFoldedSpans( stored, flame )
+		);
+		const at = ( keyword ) => out.find( ( e ) => keyword === e.k )?.indent;
+
+		expect( at( 'gyrobase (start)' ) ).toBe( 1 );
+		// The folded interior belongs INSIDE gyrobase, one level in.
+		expect( at( 'parse_template (start)' ) ).toBe( 2 );
+		// The resumed tail does not: gyrobase never closed.
+		expect( at( 'nuclear_gyrobase' ) ).toBe( 1 );
+	} );
+
 	it( 'closes an orphan chain in reverse order of opening', () => {
 		// Spans are strictly LIFO: a bare `macro (complete)` closes the
 		// INNERMOST still-open macro, so a chain of trailing orphaned

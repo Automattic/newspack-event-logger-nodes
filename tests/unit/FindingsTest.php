@@ -449,12 +449,16 @@ class FindingsTest extends TestCase {
 	}
 
 	/**
-	 * One record cannot ask for both directions at once. A folded record's
-	 * `truncation` proposes FEWER logged events; `cold_start` proposing more in
-	 * the same breath is the contradiction decision 13 records for `entry_gap`,
-	 * arriving by a second route.
+	 * A folded record's `truncation` proposes FEWER logged events, so
+	 * `cold_start` cannot answer the same record with the LIFECYCLE BRACKET —
+	 * six hooks across the whole request, the contradiction decision 13 records
+	 * for `entry_gap`, arriving by a second route.
+	 *
+	 * Narrower than "never propose more": a real gap still reports in a folded
+	 * record (`entry_gap`) and asks for ONE hook at a named place, which is a
+	 * different claim from instrumenting everything and is deliberate.
 	 */
-	public function test_no_record_proposes_more_and_less_visibility_at_once(): void {
+	public function test_a_folded_record_with_an_interior_asks_for_no_lifecycle_bracket(): void {
 		$record           = $this->healthy_record();
 		$record['folded'] = true;
 		$by_events        = new Rule(
@@ -468,18 +472,19 @@ class FindingsTest extends TestCase {
 			[]
 		);
 
-		$directions = [];
-		foreach ( Findings::for_request( $record, $by_events ) as $finding ) {
-			if ( isset( $finding['proposal']['direction'] ) ) {
-				$directions[] = $finding['proposal']['direction'];
-			}
-		}
+		$findings = Findings::for_request( $record, $by_events );
 
-		$this->assertNotContains(
-			'more',
-			$directions,
-			'a folded record asking for MORE visibility contradicts its own trim proposal'
+		$this->assertNull(
+			$this->of_kind( $findings, 'insufficient_instrumentation' ),
+			'a folded record with 295 spans has an interior; asking to bracket the whole request contradicts its own trim proposal'
 		);
+		foreach ( $findings as $finding ) {
+			$this->assertNotSame(
+				Findings::LIFECYCLE_BRACKET,
+				$finding['proposal']['hooks'] ?? null,
+				'the whole-request bracket cannot ride a record that folded'
+			);
+		}
 	}
 
 	public function test_a_rule_registering_no_hooks_proposes_the_lifecycle_bracket(): void {
@@ -684,7 +689,10 @@ class FindingsTest extends TestCase {
 		$caveat = Findings::caveat();
 
 		$this->assertStringContainsString( 'SQL', $caveat );
-		$this->assertStringContainsString( 'outbound', $caveat );
+		// Outbound HTTP IS timed now; listing it as unseen sends a reader
+		// hunting for a cause the flame already names.
+		$this->assertStringContainsString( 'outbound HTTP request', $caveat );
+		$this->assertStringNotContainsString( 'SQL, outbound HTTP', $caveat );
 	}
 
 	public function test_findings_come_back_worst_first(): void {

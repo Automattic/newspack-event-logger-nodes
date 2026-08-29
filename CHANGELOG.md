@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.71.0] - 2026-08-29
+
+### Added
+
+- **Outbound HTTP is timed.** Every brief carried the same caveat — the logger sees no SQL and no outbound HTTP — so a request that spent its time below PHP userland reported as unmeasured, the one answer a reader cannot act on. A BDN `wp-admin/post.php` record made the cost concrete: 41.7s wall against 12.2s CPU, with `Image_CDN::filter_the_content @999999` holding 29.4s of self time and no interior, leaving the 29.5s off-CPU remainder with no name. `App\Core` now binds `pre_http_request` / `http_api_debug` for any log rule and emits one span per remote call, named for the HOST (`http: i0.wp.com`) so the flame merges every call to one endpoint into a node with its count. The redacted URL rides as the value; the status code closes it. A short-circuited request opens NOTHING — `WP_Http::request()` returns it with a bare `return $pre;` and never fires `http_api_debug`, so a span opened there would never close and would adopt every row after it, and a short-circuit is a cache hit with no I/O to time anyway. Recorded as decision 21; the measurement caveat on every brief was corrected to match.
+
+### Fixed
+
+- **A folded span no longer loses its interior when the fold ate its close.** `pruneSeveredSpans()` drops spans the record never closes so they cannot adopt the rows after the break — right for the tail, wrong for the folded interior spliced in AT the marker, which is exactly what the tree puts INSIDE that span. On a `community.thecoast.ca` job whose gyrobase subprocess exited 0, the subprocess's own `(complete)` was merged away with the other 343,760 entries, so the pruner severed `gyrobase` and rendered its entire 535s interior — `parse_template`, every `include:`, `change`, `singleplatformapi` — as its SIBLINGS, with the span itself collapsing to the four entries of its kept head. The identical shape whose drain happened to survive the fold nested correctly, which is why it took a second record to see. The prune now waits for the first row the record itself resumes with, so the interior nests and the resumed tail (`nuclear_gyrobase`, the query hooks) still does not.
+- **Instrumentation no longer constructs the logger it reports into.** `Log_Manager::instance()` lazily creates one, so a binding that outlived its request built the logger inside the callback and stamped `process (start)` with that moment rather than the mu-profiler's `request_ts`. New `Log_Manager::has_instance()` answers without creating, and both HTTP callbacks ask it first.
+
 ## [0.70.3] - 2026-08-29
 
 ### Fixed
