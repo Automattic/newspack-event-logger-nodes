@@ -374,6 +374,51 @@ class AskAssemblerTest extends TestCase {
 		$this->assertSame( 13.0, $brief['subtree'][0]['ms'], 'the subtree spans every occurrence' );
 	}
 
+	/**
+	 * One name appears under several parents, and a depth-first search finds
+	 * whichever comes first — on a real record that was `pre_get_posts hook`
+	 * at 9ms under `process`, while the sixteen under `do_blocks` held 2266ms
+	 * of a 3.3s request. The brief pointed away from its own answer.
+	 */
+	public function test_a_span_brief_reports_the_parent_holding_the_time(): void {
+		$record = [
+			'flame' => [
+				'name'     => 'request',
+				'value'    => 940.0,
+				'children' => [
+					[
+						'name'     => 'boot',
+						'value'    => 7.0,
+						'children' => [
+							[ 'name' => 'query hook', 'value' => 3.0, 'count' => 1, 'children' => [] ],
+							[ 'name' => 'boot_cheap', 'value' => 1.0, 'children' => [] ],
+						],
+					],
+					[
+						'name'     => 'render',
+						'value'    => 910.0,
+						'children' => [
+							[ 'name' => 'query hook', 'value' => 400.0, 'count' => 1, 'children' => [ [ 'name' => 'sql', 'value' => 380.0, 'children' => [] ] ] ],
+							[ 'name' => 'query hook', 'value' => 500.0, 'count' => 1, 'children' => [ [ 'name' => 'sql', 'value' => 470.0, 'children' => [] ] ] ],
+							[ 'name' => 'markup', 'value' => 6.0, 'children' => [] ],
+						],
+					],
+				],
+			],
+		];
+
+		$brief = Ask_Assembler::for_span( $record, 'query hook', $this->rule() );
+
+		$this->assertSame( 900.0, $brief['ms'], 'the group that holds the time, not the first one found' );
+		$this->assertSame( 2, $brief['count'] );
+		$this->assertSame( 'render', $brief['parent'] );
+		$this->assertSame( [ 'markup' ], \array_column( $brief['siblings'], 'name' ) );
+		$this->assertSame( 850.0, $brief['subtree'][0]['ms'] );
+		$this->assertSame( 3.0, $brief['elsewhere']['ms'], 'what the chosen parent leaves out' );
+		$this->assertSame( 1, $brief['elsewhere']['count'] );
+		$this->assertSame( [ 'boot' ], $brief['elsewhere']['parents'] );
+	}
+
 	public function test_a_span_brief_keeps_only_the_slowest_children(): void {
 		$children = [];
 		for ( $i = 1; $i <= 9; $i++ ) {

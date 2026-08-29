@@ -233,6 +233,17 @@ function bodyLines( brief ) {
 						'parent',
 						`${ brief.parent ?? '' } ${ num( brief.parent_ms ) }ms`,
 					],
+					// The parent above holds the most time, not all of it.
+					[
+						'elsewhere',
+						brief.elsewhere
+							? `${ num( brief.elsewhere.ms ) }ms\u00d7${
+									brief.elsewhere.count
+							  } under ${ ( brief.elsewhere.parents ?? [] ).join(
+									', '
+							  ) }`
+							: '',
+					],
 					[
 						'siblings',
 						( brief.siblings ?? [] )

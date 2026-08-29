@@ -133,37 +133,31 @@ class Ask_Assembler {
 	 * @return array<string,mixed>|null Null when the tree holds no such span.
 	 */
 	public static function for_span( array $record, string $name, ?Rule $rule, string $context = '' ): ?array {
-		$flame = Findings::flame_of( $record );
-		$found = self::locate_span( $flame, $name, $flame );
-		if ( null === $found ) {
+		$groups = self::span_groups( Findings::flame_of( $record ), $name );
+		if ( [] === $groups ) {
 			return null;
 		}
-		[ , $parent ] = $found;
 
 		// @longform
 		// A tree holds duplicate siblings apart, so `query hook` can be three
-		// nodes under one parent. The request brief already folds them, and a
-		// span brief reporting only the first would contradict it — with the
-		// other two accounted for nowhere, which reads as the SIBLING being
-		// the problem. Fold the subject exactly as its list is folded.
-		$mine     = [];
-		$siblings = [];
-		foreach ( \is_array( $parent['children'] ?? null ) ? $parent['children'] : [] as $child ) {
-			if ( ! \is_array( $child ) ) {
-				continue;
-			}
-			if ( Core::as_string( $child['name'] ?? '' ) === $name ) {
-				$mine[] = $child;
-				continue;
-			}
-			$siblings[] = $child;
-		}
-		$subject = self::top_spans( $mine )[0] ?? self::span_shape( [] );
-		$subtree = \array_merge(
+		// nodes under one parent, AND the same name can sit under a dozen
+		// different parents. The request brief folds the first kind, so a span
+		// brief reporting only one occurrence would contradict it — with the
+		// rest accounted for nowhere, which reads as the SIBLING being the
+		// problem. Answering for whichever parent a depth-first walk reached
+		// first is the same failure across parents: on a real 3.3s record that
+		// was 9ms of `pre_get_posts hook` under `process`, while the sixteen
+		// under `do_blocks` held 2266ms. Report the parent whose copies hold
+		// the most time, and let `elsewhere` say what that leaves out.
+		\usort( $groups, static fn ( array $a, array $b ): int => $b['ms'] <=> $a['ms'] );
+		$best     = \array_shift( $groups );
+		$parent   = $best['parent'];
+		$subject  = self::top_spans( $best['mine'] )[0] ?? self::span_shape( [] );
+		$subtree  = \array_merge(
 			...\array_map(
 				static fn ( array $node ): array =>
 					\is_array( $node['children'] ?? null ) ? $node['children'] : [],
-				$mine
+				$best['mine']
 			)
 		);
 
@@ -174,7 +168,8 @@ class Ask_Assembler {
 			'count'     => $subject['count'],
 			'parent'    => Core::as_string( $parent['name'] ?? 'request', 'request' ),
 			'parent_ms' => Core::num_float( $parent['value'] ?? 0 ),
-			'siblings'  => self::top_spans( $siblings ),
+			...( [] === $groups ? [] : [ 'elsewhere' => self::elsewhere( $groups ) ] ),
+			'siblings'  => self::top_spans( $best['siblings'] ),
 			'subtree'   => self::top_spans( $subtree ),
 			'url'       => self::url_of( $record ),
 			'rule'      => self::rule_shape( $rule ),
@@ -183,6 +178,32 @@ class Ask_Assembler {
 				[ 'descriptor' => "span:{$name}", 'context' => $context ]
 			),
 			'caveat'    => Findings::caveat(),
+		];
+	}
+
+	/**
+	 * What choosing one parent leaves out: the same span under every OTHER
+	 * parent, so a brief reporting the heaviest group cannot read as the whole
+	 * tree's total.
+	 *
+	 * @param list<array{parent:array<array-key,mixed>,mine:list<array<array-key,mixed>>,siblings:list<array<array-key,mixed>>,ms:float}> $groups The groups not chosen.
+	 * @return array{ms:float,count:int,parents:list<string>}
+	 */
+	private static function elsewhere( array $groups ): array {
+		$ms      = 0.0;
+		$count   = 0;
+		$parents = [];
+		foreach ( $groups as $group ) {
+			$ms       += $group['ms'];
+			$parents[] = Core::as_string( $group['parent']['name'] ?? 'request', 'request' );
+			foreach ( $group['mine'] as $node ) {
+				$count += Core::num_int( $node['count'] ?? 1, 1 );
+			}
+		}
+		return [
+			'ms'      => $ms,
+			'count'   => $count,
+			'parents' => \array_slice( \array_values( \array_unique( $parents ) ), 0, self::TOP_SPANS ),
 		];
 	}
 
@@ -232,30 +253,41 @@ class Ask_Assembler {
 	}
 
 	/**
-	 * Depth-first search for a span by name, returning it with its parent.
+	 * Every parent in the tree holding children of this name, each with those
+	 * children, that parent's other children, and what the group cost.
 	 *
-	 * @param array<array-key,mixed> $node   Subtree root.
-	 * @param string              $name   Span name to find.
-	 * @param array<array-key,mixed> $parent The node's parent.
-	 * @return array{0:array<array-key,mixed>,1:array<array-key,mixed>}|null
+	 * @param array<array-key,mixed> $node Subtree root.
+	 * @param string                 $name Span name to collect.
+	 * @return list<array{parent:array<array-key,mixed>,mine:list<array<array-key,mixed>>,siblings:list<array<array-key,mixed>>,ms:float}>
 	 */
-	private static function locate_span( array $node, string $name, array $parent ): ?array {
-		if ( Core::as_string( $node['name'] ?? '' ) === $name && $node !== $parent ) {
-			return [ $node, $parent ];
-		}
-		foreach ( \is_array( $node['children'] ?? null ) ? $node['children'] : [] as $child ) {
+	private static function span_groups( array $node, string $name ): array {
+		$mine     = [];
+		$siblings = [];
+		$children = \is_array( $node['children'] ?? null ) ? $node['children'] : [];
+		foreach ( $children as $child ) {
 			if ( ! \is_array( $child ) ) {
 				continue;
 			}
 			if ( Core::as_string( $child['name'] ?? '' ) === $name ) {
-				return [ $child, $node ];
+				$mine[] = $child;
+				continue;
 			}
-			$found = self::locate_span( $child, $name, $node );
-			if ( null !== $found ) {
-				return $found;
+			$siblings[] = $child;
+		}
+		$groups = [] === $mine
+			? []
+			: [ [
+				'parent'   => $node,
+				'mine'     => $mine,
+				'siblings' => $siblings,
+				'ms'       => \array_sum( \array_map( static fn ( array $n ): float => Core::num_float( $n['value'] ?? 0 ), $mine ) ),
+			] ];
+		foreach ( $children as $child ) {
+			if ( \is_array( $child ) ) {
+				$groups = \array_merge( $groups, self::span_groups( $child, $name ) );
 			}
 		}
-		return null;
+		return $groups;
 	}
 
 	/**
