@@ -228,6 +228,49 @@ test( 'a span brief carries its parent, its siblings and what is inside it', () 
 	expect( md ).toContain( 'query 610.5ms×17' );
 } );
 
+test( 'a span brief names what the chosen parent leaves out', () => {
+	const md = briefToMarkdown( {
+		subject: 'span',
+		name: 'pre_get_posts hook',
+		ms: 2266.0,
+		count: 16,
+		parent: 'do_blocks @9',
+		parent_ms: 2504,
+		elsewhere: {
+			ms: 9.16,
+			count: 12,
+			parents: [ 'process', 'wp_head hook' ],
+		},
+		siblings: [],
+		subtree: [],
+		url: '/homestead/',
+		rule: null,
+		caveat: 'c',
+	} );
+
+	expect( md ).toContain(
+		'**elsewhere:** 9.2ms×12 under process, wp_head hook'
+	);
+} );
+
+test( 'a span brief with every copy under one parent says nothing about elsewhere', () => {
+	const md = briefToMarkdown( {
+		subject: 'span',
+		name: 'query hook',
+		ms: 44.5,
+		count: 2,
+		parent: 'init hook',
+		parent_ms: 88,
+		siblings: [],
+		subtree: [],
+		url: '/only-here',
+		rule: null,
+		caveat: 'c',
+	} );
+
+	expect( md ).not.toContain( 'elsewhere' );
+} );
+
 test( 'an entry brief says where the silence around it starts and ends', () => {
 	const md = briefToMarkdown( {
 		subject: 'entry',

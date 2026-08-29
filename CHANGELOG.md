@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 
+## [0.69.4] - 2026-08-28
+
+### Fixed
+
+- **A `span:` brief reports the parent that holds the time.** `Ask_Assembler::for_span()` located the span with a depth-first search and folded only that parent's copies, so a name appearing under several parents was answered for whichever one the walk reached first. On a 3.3s bangordailynews.com render, `span:pre_get_posts hook` returned 9.16ms across 12 calls under `process` while the sixteen under `do_blocks` held 2266ms — the brief pointed away from 69% of the request. It now groups every parent holding that name, reports the heaviest group, and carries `elsewhere` (`ms`, `count`, `parents`) so the chosen group can never read as the tree's total — rendered as its own line in the dashboard's ask panel, and omitted entirely when every copy sits under one parent. `locate_span()` is deleted.
+
+
 ## [0.69.3] - 2026-08-28
 
 ### Fixed
