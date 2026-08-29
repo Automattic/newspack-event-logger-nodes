@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.71.1] - 2026-08-29
+
+### Fixed
+
+- **A row the record already shows is no longer redrawn inside a span it never ran in.** `keptPairCounts()` suppresses a merged row whose whole count is on screen, keyed by the PATH the pair ran at — "a `sql` inside `gyrobase` must not cancel out a `sql` beside it". But a span the fold left unclosed still frames the rows after it in the raw entry stream, so the tail's `query hook` read as `process/gyrobase/query hook` while the tree has it as `process/query hook`: the key missed, and the fold drew a synthetic "2 merged" copy of two rows already visible below — inside a Perl subprocess no PHP hook can enter. Kept paths now drop the frames the record never closes, which is where the tree does not put them either and where the render already prunes them. Finding the never-closed set needs the `outlive` unwind: the truncating one pops a child with its parent, so the unclosed frame vanishes at the request's own close.
+
 ## [0.71.0] - 2026-08-29
 
 ### Added
