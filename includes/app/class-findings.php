@@ -564,7 +564,10 @@ class Findings {
 	private static function cold_start( array $record, ?Rule $rule, array $nodes, float $profiled, float $duration ): ?array {
 		$has_spans = [] !== $nodes;
 		$hooks     = null === $rule ? [] : self::hooks_of( $rule );
-		if ( null !== $rule && [] !== $hooks && $has_spans ) {
+		// Significant and custom events instrument an interior too.
+		$declares  = [] !== $hooks || ( null !== $rule
+			&& ( [] !== $rule->significant_events || [] !== $rule->custom_events ) );
+		if ( null !== $rule && $declares && $has_spans ) {
 			return null;
 		}
 		return self::insufficient(

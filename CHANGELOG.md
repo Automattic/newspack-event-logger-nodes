@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.70.3] - 2026-08-29
+
+### Fixed
+
+- **A rule that instruments by significant events is no longer called hookless.** `cold_start()` suppressed its finding only when the governing rule's HOOK list was non-empty, but a rule instruments an interior just as well by naming significant events — and the flame proves it did. A BDN `wp-admin/post.php` record carrying 295 spans and a five-deep tree reported at severity high that "the governing rule registers no hooks, so nothing inside the request is measured", in the same finding whose own numbers line read `spans=295`. Significant and custom events now count as instrumentation, so the finding fires only when the rule declares nothing that could measure the interior.
+- **One record can no longer propose more and less visibility at once.** The record above asked for `add_hooks` from `cold_start()` and `trim_hooks` from `truncation()` in one brief — the contradiction decision 13 records for `entry_gap`, arriving by a second route. A folded record has an interior by construction, so the corrected gate retires it.
+
 ## [0.70.2] - 2026-08-29
 
 ### Fixed
