@@ -536,10 +536,11 @@ class Findings {
 	 * duration` with no caveat will invent a cause for the difference.
 	 */
 	public static function caveat(): string {
-		return 'The logger times ONLY the hooks the URL\'s governing rule names, plus the custom events '
-			. 'the application logs itself — nothing else is instrumented, so an absence here is as often '
-			. 'an unbound hook as an idle one. It does not see SQL, outbound HTTP, or time spent below '
-			. 'PHP userland unless the application logs it. Unattributed time means unmeasured, not idle.';
+		return 'The logger times ONLY the hooks the URL\'s governing rule names, the custom events '
+			. 'the application logs itself, and every outbound HTTP request — nothing else is '
+			. 'instrumented, so an absence here is as often an unbound hook as an idle one. It does '
+			. 'not see SQL, or time spent below PHP userland, unless the application logs it. '
+			. 'Unattributed time means unmeasured, not idle.';
 	}
 
 	/** A duration a human reads at a glance: ms under a second, else seconds. */

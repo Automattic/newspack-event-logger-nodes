@@ -156,6 +156,78 @@ class AppCoreTest extends TestCase {
 		return \array_keys( $GLOBALS['_wp_test_filters'] );
 	}
 
+	// ── outbound HTTP spans ─────────────────────────────────────────────
+
+	/** The open-span labels App\Core is holding for in-flight requests. */
+	private function http_spans( Core $core ): array {
+		$prop = new \ReflectionProperty( Core::class, 'http_spans' );
+		$prop->setAccessible( true );
+		return $prop->getValue( $core );
+	}
+
+	/**
+	 * A log rule times outbound HTTP without naming a hook: the request spends
+	 * the time below PHP userland, where no hook can reach, and the caveat on
+	 * every brief says so.
+	 */
+	public function test_a_log_rule_binds_the_outbound_http_pair(): void {
+		$this->require_priority_aware_add_filter_or_skip();
+		$this->set_governing_rule( new Rule( '7c9e1a4b2d3f', '/checkout/', Rule::ACTION_LOG ) );
+
+		$bound = $this->capture_added_filters( fn() => new Core() );
+
+		$this->assertContains( 'pre_http_request', $bound );
+		// `http_api_debug` is an ACTION; the harness records those separately.
+		$this->assertArrayHasKey( 'http_api_debug', $GLOBALS['_wp_actions'] );
+	}
+
+	/**
+	 * `WP_Http::request()` returns a short-circuited response WITHOUT firing
+	 * `http_api_debug` (class-wp-http.php, `if ( false !== $pre ) return $pre;`),
+	 * so opening a span there would never close and would adopt every row after
+	 * it. A short-circuit is a cache hit anyway — there is no I/O to time.
+	 */
+	public function test_a_short_circuited_request_opens_no_span(): void {
+		$this->set_governing_rule( new Rule( '7c9e1a4b2d3f', '/checkout/', Rule::ACTION_LOG ) );
+		$core = new Core();
+
+		$preempt = [ 'response' => [ 'code' => 200 ] ];
+
+		$this->assertSame( $preempt, $core->http_start( $preempt, [], 'https://img.example.net/a.jpg' ) );
+		$this->assertSame( [], $this->http_spans( $core ) );
+	}
+
+	/** A real outbound call opens exactly one span and closes it. */
+	public function test_an_outbound_request_opens_and_closes_one_span(): void {
+		$this->set_governing_rule( new Rule( '7c9e1a4b2d3f', '/checkout/', Rule::ACTION_LOG ) );
+		$core = new Core();
+		$url  = 'https://img.example.net/a.jpg?access_token=shhh';
+
+		$this->assertFalse( $core->http_start( false, [], $url ) );
+		$this->assertSame( [ 'http: img.example.net' ], $this->http_spans( $core ) );
+
+		$core->http_end( [ 'response' => [ 'code' => 200 ] ], 'response', 'Requests', [], $url );
+
+		$this->assertSame( [], $this->http_spans( $core ) );
+	}
+
+	/**
+	 * Instrumentation must never CONSTRUCT the logger it reports into.
+	 * `Log_Manager::instance()` lazily creates one, and a stale binding firing
+	 * after a reset would build it at that moment — stamping `process (start)`
+	 * with the callback's time instead of the mu-profiler's `request_ts`.
+	 */
+	public function test_an_http_span_never_creates_a_log_manager(): void {
+		$this->set_governing_rule( new Rule( '7c9e1a4b2d3f', '/checkout/', Rule::ACTION_LOG ) );
+		$core = new Core();
+		Log_Manager::reset();
+
+		$core->http_start( false, [], 'https://img.example.net/a.jpg' );
+		$core->http_end( null, 'response', 'Requests', [], 'https://img.example.net/a.jpg' );
+
+		$this->assertFalse( Log_Manager::has_instance() );
+	}
+
 	// ── short_name tests via reflection ─────────────────────────────────
 
 	public function test_short_name_string_function(): void {

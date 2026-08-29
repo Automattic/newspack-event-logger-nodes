@@ -407,6 +407,8 @@ export const computeIndentedEntries = ( entries ) => {
 	}
 	// Everything past a fold marker was selected out of the middle.
 	const folded = entries.some( ( e ) => FOLD_MARKER === ( e.k || '' ) );
+	// Index of a break whose prune is waiting for the folded rows to pass.
+	let pendingPrune = null;
 	let prevWasBreak = false;
 	let lastHundredth = -1;
 	const result = [];
@@ -452,8 +454,20 @@ export const computeIndentedEntries = ( entries ) => {
 
 		const isBreak = SEQUENCE_BREAK_KEYWORDS.has( keyword );
 
-		if ( isBreak ) {
+		// @longform A break severs the spans the record never closes, so they
+		// cannot adopt the rows after it. The folded interior spliced in AT the
+		// marker is the exception: the tree puts those rows INSIDE the open
+		// span, and the fold is what ate its close. Pruning first left every
+		// merged row a sibling of the parent it ran in. So the prune waits for
+		// the first row the record itself resumes with.
+		if ( isBreak && entries[ idx + 1 ]?.fromFold ) {
+			pendingPrune = idx;
+		} else if ( isBreak ) {
 			pruneSeveredSpans( pairStack, entries, idx );
+		}
+		if ( null !== pendingPrune && ! entry.fromFold && ! isBreak ) {
+			pruneSeveredSpans( pairStack, entries, pendingPrune );
+			pendingPrune = null;
 		}
 
 		// Current indent is stack depth.
