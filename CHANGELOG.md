@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.70.2] - 2026-08-29
+
+### Fixed
+
+- **An orphaned `(complete)` now closes the innermost open span of its name, not the last one to start.** Spans close in the reverse of the order they opened, so the instance a trailing orphaned complete belongs to is the innermost still-open one — the deepest frame carrying the name in the merged tree. The fold picked it by `t` instead, which finds the last span to START; whenever the drained chain began earlier than a sibling that has since closed, the orphan matched nothing, closed nothing, and rendered at its parent's indent. On a real 536s record that tied `macro (complete)` and `include (complete)` at the same level, breaking the one-level-out-per-close the chain should show. It now reads 6, 5, 4, 3, 2.
+- **A span the kept head left open is no longer drawn twice.** `foldedSpanEntries()` skips the instance that straddles the fold — "that row exists, and its tail `(complete)` was already deducted" — but it decided that from `owns`, which counts only completed PAIRS the kept rows show. A span left OPEN at the boundary has no pair, so `owns` was 0, `merged` kept the on-screen instance in its count, and the guard's `merged < 1` never fired. On a real 536s record that drew `gyrobase (start)` twice: once as entry 1 with its four real children, once as a synthetic parent carrying all 670 merged ones, reported as "1 merged". The claimed instance is now deducted, so the frame is skipped and its merged children hang under the real row. The existing coverage missed it by keying assertions on the keyword in a `Map`, where a duplicate collapses.
+
 
 ## [0.70.1] - 2026-08-29
 

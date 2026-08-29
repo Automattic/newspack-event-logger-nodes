@@ -575,31 +575,39 @@ const keptPairCounts = ( entries ) => {
 };
 
 /**
- * The tree path to its LAST span, outermost first, root dropped.
+ * The deepest path each base name reaches in the tree, keyed by that base.
  *
- * A record's trailing `(orphaned)` completes name the spans that were still
- * open when the producer drained — the chain the last logged thing sat in. That
- * is the only chain entitled to spend those completes; a sibling that closed
- * normally earlier had its own complete eaten by the fold and must emit one.
+ * A span closes in the reverse of the order it opened, so the instance a
+ * trailing `(orphaned)` complete belongs to is the INNERMOST one still open —
+ * and in the merged tree that is the deepest frame carrying the name. Only that
+ * frame may spend the complete; a shallower sibling closed normally earlier,
+ * had its own close eaten by the fold, and must emit one.
+ *
+ * Read from the tree's shape rather than from its timings. The deepest path by
+ * `t` finds the last span to START, which is a sibling that already closed
+ * whenever the drained chain began earlier — and then the orphan closes nothing
+ * and renders at its parent's indent instead of one level in.
  *
  * @param {?Object} flame Merged tree from Flame_Fold::tree().
- * @return {Array<string>} Node names, outermost first; empty without timings.
+ * @return {Map} Base name to the slash-joined path of its deepest frame.
  */
-const latestPath = ( flame ) => {
-	let best = { t: -1, path: [] };
-	const walk = ( node, path ) => {
-		const here = [ ...path, String( node.name ) ];
-		// `>=`: on a tie the deeper, later node wins, so ties pick the last.
-		if ( Number.isFinite( node.t ) && node.t >= best.t ) {
-			best = { t: node.t, path: here };
-		}
-		( node.children || [] ).forEach( ( child ) => walk( child, here ) );
+const deepestByBase = ( flame ) => {
+	const deepest = new Map();
+	const depths = new Map();
+	const walk = ( nodes, depth, path ) => {
+		( nodes || [] ).forEach( ( node ) => {
+			const name = String( node.name );
+			const base = name.split( ': ' )[ 0 ];
+			const here = '' === path ? name : `${ path }/${ name }`;
+			if ( depth > ( depths.get( base ) ?? -1 ) ) {
+				depths.set( base, depth );
+				deepest.set( base, here );
+			}
+			walk( node.children, depth + 1, here );
+		} );
 	};
-	if ( flame ) {
-		walk( flame, [] );
-	}
-	// Drop the root: `walk()` below starts at its children, depth 0.
-	return best.path.slice( 1 );
+	walk( flame?.children, 0, '' );
+	return deepest;
 };
 
 /**
@@ -628,14 +636,21 @@ const latestPath = ( flame ) => {
  * @param {Map}     tailEnds Base name to completes left over for the tree, the
  *                           spans the display leaves open having taken theirs.
  * @param {Map}     kept     Path to complete pairs the kept rows already show.
+ * @param {Map}     drained  Base name to the path of its deepest frame.
  * @param {number}  originTs Unix seconds the request started at.
  * @return {Array} Synthetic log entries.
  */
 
-const foldedSpanEntries = ( flame, openPath, tailEnds, kept, originTs ) => {
+const foldedSpanEntries = (
+	flame,
+	openPath,
+	tailEnds,
+	kept,
+	drained,
+	originTs
+) => {
 	const rows = [];
 	const owedByName = new Map( tailEnds );
-	const drained = latestPath( flame );
 	const unshown = new Map( kept );
 	const stampOf = ( node ) =>
 		Number.isFinite( node.t ) && Number.isFinite( originTs )
@@ -655,8 +670,9 @@ const foldedSpanEntries = ( flame, openPath, tailEnds, kept, originTs ) => {
 				unshown.get( here ) || 0
 			);
 			unshown.set( here, ( unshown.get( here ) || 0 ) - owns );
-			const merged = Number( node.count ) - owns;
 			const claimed = onChain && ! onScreen && openPath[ depth ] === name;
+			// `owns` counts completed PAIRS, so an OPEN one deducts here.
+			const merged = Number( node.count ) - owns - ( claimed ? 1 : 0 );
 			if ( claimed ) {
 				onScreen = true;
 				// Instances past it began in the middle and need a frame.
@@ -685,7 +701,7 @@ const foldedSpanEntries = ( flame, openPath, tailEnds, kept, originTs ) => {
 			// left open across everything after it.
 			// A tree with no timings cannot say which path the drain closed;
 			// the gate stands down rather than refusing every debt.
-			const onDrained = 0 === drained.length || drained[ depth ] === name;
+			const onDrained = drained.get( base ) === here;
 			const owed = onDrained ? owedByName.get( base ) || 0 : 0;
 			if ( owed > 0 ) {
 				owedByName.set( base, owed - 1 );
@@ -755,6 +771,7 @@ export const spliceFoldedSpans = ( entries, flame ) => {
 			openSpansAt( entries, at ),
 			owedToTree( entries, at ),
 			keptPairCounts( entries ),
+			deepestByBase( flame ),
 			origin
 		),
 		...entries.slice( at + 1 ),
