@@ -759,7 +759,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				...$store->url_row_sources( $missing, $shard ),
 			];
 			foreach ( $sources as [ $bucket, $bucket_data ] ) {
-				$result = self::fold_bucket( $result, $bucket_data, isset( $recent[ $bucket ] ) );
+				self::fold_bucket( $result, $bucket_data, isset( $recent[ $bucket ] ) );
 			}
 		}
 
@@ -767,26 +767,32 @@ class Performance_CI_Node extends Service_CI_Node {
 		// means belong to the projection, over whichever scope it is asked
 		// for, and un-averaging a figure divided here would put this
 		// denominator in a second place.
-		$out = [];
-		foreach ( $result as $entry ) {
+		// @longform By reference, and `array_values` after: copying each row
+		// into a second list materialised the WHOLE index twice, which is what
+		// exhausted 512MB on a production hub. The rows are refcounted here, so
+		// only the outer list is new.
+		foreach ( $result as &$entry ) {
 			// Null when nothing timed folded a min.
 			$entry['min_ms'] = Core::as_float( $entry['min_ms'] );
-			$out[]           = $entry;
 		}
-		return $out;
+		unset( $entry );
+		return \array_values( $result );
 	}
 
 	/**
 	 * Fold one stored bucket — fine or coarse, they hold the same shape — into
 	 * the merged rows so far.
 	 *
-	 * @param array<string,array<string,mixed>> $result    Merged rows by hash.
+	 * Taken BY REFERENCE: the caller holds the merged index across
+	 * the call, so a by-value parameter copies the whole thing on the callee's
+	 * first write — once per bucket source, of which there are thousands.
+	 *
+	 * @param array<string,array<string,mixed>> $result    Merged rows by hash, mutated.
 	 * @param array<array-key,mixed>            $data      One stored bucket.
 	 * @param bool                              $is_recent Whether it is inside
 	 *                                                     the "last hour" window the rate divides by.
-	 * @return array<string,array<string,mixed>>
 	 */
-	private static function fold_bucket( array $result, array $data, bool $is_recent ): array {
+	private static function fold_bucket( array &$result, array $data, bool $is_recent ): void {
 		foreach ( $data as $key => $stats ) {
 			// An all-digit hash arrives as an int array key; cast back.
 			$hash            = (string) $key;
@@ -796,7 +802,6 @@ class Performance_CI_Node extends Service_CI_Node {
 				$is_recent
 			);
 		}
-		return $result;
 	}
 
 	/**
