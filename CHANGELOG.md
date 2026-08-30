@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Per-rule query spans.** A log rule can now set `log_queries` and get every database query as its own flame span, named `sql: <OP> <table>` so identical lookups merge into one node with a count, with the SQL text on the entry. Same bracket as the outbound-HTTP pair — `query` before, `log_query_custom_data` after — but opt-in, because the close only fires under `SAVEQUERIES` and each query costs two log entries. The constant's price was measured rather than assumed: 3,000 queries took 1.117s with it against 1.254s without, so the per-query backtrace is noise beside a 0.4ms round trip; the real cost is the 217 bytes per query `wpdb` retains, which `query_end()` drains. Recorded as decision 23, and it answers decision 21's own reopen condition. The rules editor grows a "Log database queries" toggle.
+
+## [0.71.3] - 2026-08-30
+
+### Fixed
+
+- **The URL-index fold no longer materialises the index twice.** `load_index_default()` merged every bucket into `$result`, then copied it row by row into a second list, mutating `min_ms` on each — which forces a real copy of every row, so both arrays were fully resident at once. It also passed the whole index BY VALUE into `fold_bucket()` and assigned the return back, once per bucket source, and the caller holding a reference across that call makes the callee's first write copy the lot. A production hub exhausted its 512MB limit at that copy every fifteen seconds (`Allowed memory size of 536870912 bytes exhausted`, `class-performance-ci-node.php` line 773), taking the whole command response with it — the `urls`, `url_detail` and overview URL surfaces all read through this, so they rendered nothing. The fold now mutates by reference and the display shape mutates in place and returns `array_values()`, so rows are refcounted rather than duplicated. Measured on a 40,000-row shape, the display loop alone peaked at +15.3MB copying versus +2.2MB by reference. Every returned value is unchanged; the existing row assertions pin that.
+
 ## [0.71.2] - 2026-08-29
 
 ### Fixed

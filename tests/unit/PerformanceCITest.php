@@ -3636,6 +3636,39 @@ class PerformanceCITest extends TestCase {
 		$this->assertArrayNotHasKey( 'recent', $row, 'the bucket name must not reach the projection' );
 	}
 
+	/**
+	 * The fold must mutate the merged index IN PLACE.
+	 *
+	 * Taking it by value and returning it copies the whole index on the first
+	 * write inside the callee — the caller still holds a reference during the
+	 * call — and `load_index_default()` does that once per bucket source, of
+	 * which there are thousands. Paired with a display loop that built a second
+	 * complete copy, a production hub exhausted 512MB every fifteen seconds:
+	 * `Allowed memory size of 536870912 bytes exhausted` at the copy.
+	 */
+	public function test_the_bucket_fold_mutates_the_merged_index_in_place(): void {
+		$fold   = new \ReflectionMethod( Performance_CI_Node::class, 'fold_bucket' );
+		$result = [];
+		$data   = [
+			'ab12cd34ef56' => [
+				'url'         => '/in-place',
+				'count'       => 7,
+				'timed_count' => 7,
+				'sum_ms'      => 210.0,
+				'min_ms'      => 13,
+				'last_seen'   => 1711111333,
+			],
+		];
+
+		$fold->invokeArgs( null, [ &$result, $data, false ] );
+
+		$this->assertArrayHasKey(
+			'ab12cd34ef56',
+			$result,
+			'the caller\'s array must carry the fold without an assignment back'
+		);
+	}
+
 	/** A row with no timed bucket to fold reports min_ms 0 rather than a missing key. */
 	public function test_the_index_row_defaults_min_ms_when_nothing_timed_folded(): void {
 		$store = new Stats_Store( 0, 86400 );
