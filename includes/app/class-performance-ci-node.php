@@ -911,40 +911,111 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * The headline numbers for a set of index rows.
+	 * The filtered URL set: its totals, its slowest, and one page of it.
 	 *
-	 * Summed from the rows the filters left, not read off a global namespace,
-	 * and divided at the end: sums merge across buckets and means do not.
+	 * Two passes, because the verb needs a WHOLE display row for very few of the
+	 * URLs it reasons about. Pass one walks the memoized raw index and keeps
+	 * only what the filters, the totals and the two rankings consume — a hash
+	 * position, the sort value and `avg_ms` — accumulating the totals as it
+	 * goes. Pass two projects the page and the slowest, by position.
 	 *
-	 * @param array<int,array<array-key,mixed>> $rows Filtered index rows.
-	 * @return array{urls: int, requests: int, avg_ms: float, avg_peak_mb: float, requests_per_second: float}
+	 * Building a display row for every URL left TWO complete indexes resident,
+	 * the raw memo decision 14 requires plus the projection, and that is what
+	 * exhausted 512MB on a production hub. Measured over a 20,000-row index the
+	 * verb allocated 29.2MB against an index of 20.6MB.
+	 *
+	 * @param string $server Reporting server to scope to; '' reads every server.
+	 * @param string $search Case-insensitive URL substring; '' matches all.
+	 * @param bool   $errors Keep only rows with unclassified requests.
+	 * @param bool   $workers Keep worker traffic (the default excludes it).
+	 * @param string $sort   A URL_SORTS field.
+	 * @param string $order  'asc' or 'desc'.
+	 * @param int    $offset Page offset.
+	 * @param int    $limit  Page size.
+	 * @return array{data:array<int,array<array-key,mixed>>,rows:int,totals:array<string,mixed>,slowest:array<int,array<array-key,mixed>>}
 	 */
-	private static function sum_rows( array $rows ): array {
-		$requests   = 0;
-		$timed      = 0;
-		$recent     = 0;
-		$aggregates = 0;
-		$sum_ms     = 0.0;
-		$sum_peak   = 0.0;
-		foreach ( $rows as $row ) {
-			$aggregates += empty( $row['aggregate'] ) ? 0 : 1;
-			$count     = Core::num_int( $row['count'] ?? null );
-			$row_ms    = Core::num_float( $row['sum_ms'] ?? null );
-			$requests += $count;
+	private function url_page( string $server, string $search, bool $errors, bool $workers, string $sort, string $order, int $offset, int $limit ): array {
+		$term     = '' === $search ? '' : \strtolower( $search );
+		$keys     = [];
+		$urls     = 0;
+		$requests = 0;
+		$timed    = 0;
+		$recent   = 0;
+		$sum_ms   = 0.0;
+		$sum_peak = 0.0;
+
+		foreach ( $this->raw_index() as $pos => $raw ) {
+			$row = self::project_row( Core::arr( $raw ), $server );
+			if ( null === $row ) {
+				continue;
+			}
+			$aggregate = ! empty( $row['aggregate'] );
+			// A folded row stands for many URLs; no search term speaks for it.
+			if ( '' !== $term
+				&& ( $aggregate
+					|| false === \strpos( \strtolower( Core::as_string( $row['url'] ?? '' ) ), $term ) ) ) {
+				continue;
+			}
+			if ( ! $workers && ! empty( $row['worker'] ) ) {
+				continue;
+			}
+			if ( $errors && ! self::has_unclassified_requests( $row ) ) {
+				continue;
+			}
+			// The overflow row stands for many URLs; it is not one of them.
+			$urls     += $aggregate ? 0 : 1;
+			$requests += Core::num_int( $row['count'] ?? null );
 			$recent   += Core::num_int( $row['recent_count'] ?? null );
-			$sum_ms   += $row_ms;
-			$sum_peak += Core::num_float( $row['sum_peak_mb'] ?? null );
 			// Denominator from the SAME row as its numerator.
 			$timed    += Core::num_int( $row['timed_count'] ?? null );
+			$sum_ms   += Core::num_float( $row['sum_ms'] ?? null );
+			$sum_peak += Core::num_float( $row['sum_peak_mb'] ?? null );
+			$keys[]    = [ $pos, $row[ $sort ] ?? 0, Core::num_float( $row['avg_ms'] ?? null ) ];
 		}
+
+		// Slowest first; the page's sort then reuses the array.
+		\usort( $keys, static fn ( array $a, array $b ): int => $b[2] <=> $a[2] );
+		$slowest = $this->project_at( \array_slice( $keys, 0, self::SLOWEST_ROWS ), $server );
+
+		\usort(
+			$keys,
+			static fn ( array $a, array $b ): int => 'asc' === $order
+				? $a[1] <=> $b[1]
+				: $b[1] <=> $a[1]
+		);
+
 		return [
-			// The overflow row stands for many URLs; it is not one of them.
-			'urls'                => \count( $rows ) - $aggregates,
-			'requests'            => $requests,
-			'avg_ms'              => self::mean_ms( $sum_ms, $timed ),
-			'avg_peak_mb'         => $requests > 0 ? $sum_peak / $requests : 0.0,
-			'requests_per_second' => self::recent_rate( $recent ),
+			'data'    => $this->project_at( \array_slice( $keys, $offset, $limit ), $server ),
+			// The pager's question; `totals.urls` is another.
+			'rows'    => \count( $keys ),
+			'totals'  => [
+				'urls'                => $urls,
+				'requests'            => $requests,
+				'avg_ms'              => self::mean_ms( $sum_ms, $timed ),
+				'avg_peak_mb'         => $requests > 0 ? $sum_peak / $requests : 0.0,
+				'requests_per_second' => self::recent_rate( $recent ),
+			],
+			'slowest' => $slowest,
 		];
+	}
+
+	/**
+	 * Project the raw rows at these index positions, in order.
+	 *
+	 * @param array<int,array{0:int,1:mixed,2:float}> $keys Tuples from url_page()'s first pass.
+	 * @param string                                         $server Reporting server; '' scopes to none.
+	 * @return array<int,array<array-key,mixed>>
+	 */
+	private function project_at( array $keys, string $server ): array {
+		$raw = $this->raw_index();
+		$out = [];
+		foreach ( $keys as $key ) {
+			$row = self::project_row( Core::arr( $raw[ $key[0] ] ?? null ), $server );
+			if ( null !== $row ) {
+				$out[] = $row;
+			}
+		}
+		return $out;
 	}
 
 	/**
@@ -1614,23 +1685,6 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * The whole index in one scope, memoized per scope.
-	 *
-	 * @param string $server Reporting server to scope to; '' reads every server.
-	 * @return array<int,array<array-key,mixed>>
-	 */
-	private function index( string $server = '' ): array {
-		$scoped = [];
-		foreach ( $this->raw_index() as $row ) {
-			$projected = self::project_row( $row, $server );
-			if ( null !== $projected ) {
-				$scoped[] = $projected;
-			}
-		}
-		return $scoped;
-	}
-
-	/**
 	 * One URL's display row in the given scope, or null when it is absent from
 	 * the index — or present but never served by that server.
 	 *
@@ -1777,7 +1831,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * `load_index` seam (the real loader by default) on the first call.
 	 *
 	 * Its rows are NOT display shape: sums plus the internal maps, means still
-	 * the projection's. Read through `index()` or `row()`, never directly — raw,
+	 * the projection's. Read through `url_page()` or `row()`, never directly — raw,
 	 * they report a confident 0 for every average.
 	 *
 	 * @return array<int,array<array-key,mixed>>
@@ -1816,7 +1870,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * to apply this filter alone, leaving the footer reading an unfiltered
 	 * count ("1-100 of 5,000" above three rows).
 	 *
-	 * @param array<string,mixed> $row A URL index row.
+	 * @param array<array-key,mixed> $row A URL index row.
 	 */
 	private static function has_unclassified_requests( array $row ): bool {
 		// A folded row mixes hundreds of URLs; no row test speaks for it.
@@ -1999,55 +2053,16 @@ class Performance_CI_Node extends Service_CI_Node {
 				}
 
 				\assert( $self instanceof self );
-				$index = $self->index( $server );
-
-				if ( '' !== $search ) {
-					$term  = \strtolower( $search );
-					// Named like `errors_only`, not left to the blank `url`.
-					$index = \array_values( \array_filter(
-						$index,
-						static fn ( $e ) => empty( $e['aggregate'] )
-							&& false !== \strpos( \strtolower( Core::as_string( $e['url'] ?? '' ) ), $term )
-					) );
-				}
-
-				if ( ! $workers ) {
-					$index = \array_values( \array_filter(
-						$index,
-						static fn ( $e ) => empty( $e['worker'] )
-					) );
-				}
-
-				if ( $errors ) {
-					$index = \array_values( \array_filter( $index, [ self::class, 'has_unclassified_requests' ] ) );
-				}
-
-				// Pre-split data cannot answer this; 0 would read as idle.
-				$totals = ( '' === $server || $self->index_has_split() )
-					? self::sum_rows( $index )
-					: null;
-
-				// Slowest of THIS set by mean; the page has its own sort.
-				$slowest = $index;
-				\usort(
-					$slowest,
-					static fn ( $a, $b ) => ( $b['avg_ms'] ?? 0 ) <=> ( $a['avg_ms'] ?? 0 )
-				);
-				$slowest = \array_slice( $slowest, 0, self::SLOWEST_ROWS );
-
-				\usort(
-					$index,
-					static fn ( $a, $b ) => 'asc' === $order
-						? ( $a[ $sort ] ?? 0 ) <=> ( $b[ $sort ] ?? 0 )
-						: ( $b[ $sort ] ?? 0 ) <=> ( $a[ $sort ] ?? 0 )
-				);
+				$page = $self->url_page( $server, $search, $errors, $workers, $sort, $order, $offset, $limit );
 
 				return [
-					'data'    => \array_slice( $index, $offset, $limit ),
-					// The pager's question; `totals.urls` is another.
-					'rows'    => \count( $index ),
-					'totals'  => $totals,
-					'slowest' => $slowest,
+					'data'    => $page['data'],
+					'rows'    => $page['rows'],
+					// Pre-split data cannot answer this; 0 would read as idle.
+					'totals'  => ( '' === $server || $self->index_has_split() )
+						? $page['totals']
+						: null,
+					'slowest' => $page['slowest'],
 					// What the totals are OF, or they read as the site's.
 					'filters' => [
 						'server'      => $server,

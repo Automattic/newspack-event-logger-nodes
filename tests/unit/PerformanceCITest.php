@@ -3637,6 +3637,64 @@ class PerformanceCITest extends TestCase {
 	}
 
 	/**
+	 * The `urls` verb must not materialise a SECOND complete index.
+	 *
+	 * `raw_index()` is memoized for the request (decision 14), so a projection
+	 * that builds a display row for every URL leaves two full indexes resident.
+	 * On a production hub that exhausted 512MB. The verb needs whole rows only
+	 * for the page it returns and the ten slowest; everything else it reads per
+	 * row is summed, compared and discarded.
+	 */
+	public function test_the_urls_verb_does_not_hold_a_second_full_index(): void {
+		$base = \memory_get_usage();
+		$rows = [];
+		for ( $i = 0; $i < 20000; $i++ ) {
+			$rows[] = [
+				'hash'         => \sprintf( '%012x', $i ),
+				'url'          => "/page/{$i}",
+				'count'        => $i + 1,
+				'timed_count'  => $i + 1,
+				'sum_ms'       => 1.5 * $i,
+				'sum_peak_mb'  => 0.5,
+				'min_ms'       => 1.0,
+				'max_ms'       => 9.0,
+				'recent_count' => 1,
+				'last_updated' => 1711111111,
+				'worker'       => false,
+				'aggregate'    => false,
+				'count_2xx'    => $i + 1,
+				'count_3xx'    => 0,
+				'count_4xx'    => 0,
+				'count_5xx'    => 0,
+			];
+		}
+		$index_bytes = \memory_get_usage() - $base;
+
+		$original                        = Performance_CI_Node::$load_index;
+		Performance_CI_Node::$load_index = static fn ( ?string $shard ): array => $rows;
+		try {
+			$before = \memory_get_usage();
+			\memory_reset_peak_usage();
+			VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' );
+			$peak = \memory_get_peak_usage() - $before;
+		} finally {
+			Performance_CI_Node::$load_index = $original;
+			VerbHarness::reset();
+		}
+
+		$this->assertLessThan(
+			(int) ( $index_bytes * 0.5 ),
+			// Reported either way, so a regression names its own number.
+			$peak,
+			\sprintf(
+				'the verb allocated %.1f MB over an index of %.1f MB; a second full projection is ~1x',
+				$peak / 1048576,
+				$index_bytes / 1048576
+			)
+		);
+	}
+
+	/**
 	 * The fold must mutate the merged index IN PLACE.
 	 *
 	 * Taking it by value and returning it copies the whole index on the first

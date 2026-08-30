@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.72.1] - 2026-08-30
+
+### Fixed
+
+- **The `urls` verb no longer materialises a second complete URL index.** `raw_index()` is memoized for the request — decision 14 requires it, so a modal in the same command batch answers from the read the table already paid for — and `index()` projected a display row for every URL beside it, leaving two full indexes resident. That is what exhausted 512MB on a production hub once v0.71.3 removed the copies one layer down; the fatal simply moved from `class-performance-ci-node.php:773` to `class-stats-store.php:1295`, a `unset()` on a by-value row that happened to be the allocation standing when the heap filled. The verb needs a WHOLE row only for the page it returns and the ten slowest: the filters, the totals and both rankings read values that are summed, compared and discarded. `url_page()` now walks the raw index once keeping a position, the sort value and `avg_ms`, accumulates the totals as it goes, and projects only the page and the slowest by position. Measured over a 20,000-row index the verb allocated **29.2MB before and 7.8MB after**, against an index of 20.6MB. Every returned byte is unchanged — the existing `urls` assertions pin that — and `sum_rows()` and `index()`, whose only callers this replaced, are deleted. Spec: `docs/superpowers/specs/2026-08-30-url-index-projection-peak.md`.
+
 ## [0.72.0] - 2026-08-30
 
 ### Added
