@@ -159,8 +159,8 @@ class AppCoreTest extends TestCase {
 	// ── outbound HTTP spans ─────────────────────────────────────────────
 
 	/** The open-span labels App\Core is holding for in-flight requests. */
-	private function http_spans( Core $core ): array {
-		$prop = new \ReflectionProperty( Core::class, 'http_spans' );
+	private function http_spans( Core $core, string $which = 'http_spans' ): array {
+		$prop = new \ReflectionProperty( Core::class, $which );
 		$prop->setAccessible( true );
 		return $prop->getValue( $core );
 	}
@@ -226,6 +226,71 @@ class AppCoreTest extends TestCase {
 		$core->http_end( null, 'response', 'Requests', [], 'https://img.example.net/a.jpg' );
 
 		$this->assertFalse( Log_Manager::has_instance() );
+	}
+
+	// ── query spans ─────────────────────────────────────────────────────
+
+	/** A rule that opts in, distinct from every default. */
+	private function query_rule( bool $on ): Rule {
+		return new Rule( '5e2b8c1f4a70', '/reports/', Rule::ACTION_LOG, 0, 0.0, [], [], [], Rule::HOOKS_INLINE, $on );
+	}
+
+	/**
+	 * Unlike the outbound-HTTP pair, query spans are OFF unless the rule asks:
+	 * the close only fires under `SAVEQUERIES`, and they cost two entries per
+	 * query rather than two per remote call.
+	 */
+	public function test_a_rule_that_does_not_opt_in_binds_no_query_pair(): void {
+		$this->require_priority_aware_add_filter_or_skip();
+		$this->set_governing_rule( $this->query_rule( false ) );
+
+		$bound = $this->capture_added_filters( fn() => new Core() );
+
+		$this->assertNotContains( 'query', $bound );
+		$this->assertNotContains( 'log_query_custom_data', $bound );
+	}
+
+	public function test_a_rule_that_opts_in_binds_the_query_pair(): void {
+		$this->require_priority_aware_add_filter_or_skip();
+		$this->set_governing_rule( $this->query_rule( true ) );
+
+		$bound = $this->capture_added_filters( fn() => new Core() );
+
+		$this->assertContains( 'query', $bound );
+		$this->assertContains( 'log_query_custom_data', $bound );
+	}
+
+	/**
+	 * The span is named for the OPERATION and TABLE, never the SQL text: the
+	 * flame merges by name, so ten thousand identical lookups collapse into one
+	 * node with its count — which is the question a reader is asking. The text
+	 * rides the entry.
+	 */
+	public function test_a_query_span_is_named_for_its_operation_and_table(): void {
+		$ref = new \ReflectionMethod( Core::class, 'sql_label' );
+
+		$this->assertSame(
+			'sql: SELECT wp_postmeta',
+			$ref->invoke( null, "SELECT meta_value FROM `wp_postmeta` WHERE post_id = 42" )
+		);
+		$this->assertSame(
+			'sql: UPDATE wp_options',
+			$ref->invoke( null, "UPDATE wp_options SET option_value = 'x' WHERE option_name = 'cron'" )
+		);
+		$this->assertSame( 'sql: SHOW', $ref->invoke( null, 'SHOW FULL COLUMNS' ) );
+	}
+
+	/** The pair opens one span and closes it, passing both values through. */
+	public function test_a_query_opens_and_closes_one_span(): void {
+		$this->set_governing_rule( $this->query_rule( true ) );
+		$core = new Core();
+		$sql  = 'SELECT option_value FROM wp_options WHERE option_name = \'siteurl\'';
+
+		$this->assertSame( $sql, $core->query_start( $sql ) );
+		$this->assertSame( [ 'sql: SELECT wp_options' ], $this->http_spans( $core, 'query_spans' ) );
+
+		$this->assertSame( [ 'x' => 1 ], $core->query_end( [ 'x' => 1 ], $sql, 0.002, 'caller', 1.0 ) );
+		$this->assertSame( [], $this->http_spans( $core, 'query_spans' ) );
 	}
 
 	// ── short_name tests via reflection ─────────────────────────────────

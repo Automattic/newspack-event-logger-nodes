@@ -58,7 +58,8 @@ final class Rule {
 		public readonly array $significant_events = [],
 		public readonly array $custom_events = [],
 		public readonly ?array $hooks = [],
-		public readonly string $hooks_in = self::HOOKS_INLINE
+		public readonly string $hooks_in = self::HOOKS_INLINE,
+		public readonly bool $log_queries = false
 	) {
 		if ( '' === $pattern ) {
 			throw new \InvalidArgumentException( 'rule pattern is required' );
@@ -128,6 +129,7 @@ final class Rule {
 			'custom_events'               => $this->custom_events,
 			'hooks'                       => $this->hooks,
 			'hooks_in'                    => $this->hooks_in,
+			'log_queries'                 => $this->log_queries,
 		];
 	}
 
@@ -156,7 +158,8 @@ final class Rule {
 			self::to_string_list( $a['significant_events'] ?? null ),
 			self::to_string_list( $a['custom_events'] ?? null ),
 			null === $hooks ? null : self::to_string_list( $hooks ),
-			( self::HOOKS_MC === ( $a['hooks_in'] ?? '' ) ) ? self::HOOKS_MC : self::HOOKS_INLINE
+			( self::HOOKS_MC === ( $a['hooks_in'] ?? '' ) ) ? self::HOOKS_MC : self::HOOKS_INLINE,
+			! empty( $a['log_queries'] )
 		);
 	}
 
