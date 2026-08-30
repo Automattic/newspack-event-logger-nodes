@@ -274,6 +274,51 @@ class RequestBuilderPressureFoldTest extends TestCase {
 		$this->assertSame( 'process (complete)', \end( $keys ), 'and the tail still ends the record' );
 	}
 
+	/**
+	 * A span opened in the KEPT HEAD frames every row after it, so losing its
+	 * `(complete)` to the fold costs the record its shape, not one line. On a
+	 * `community.thecoast.ca` job the gyrobase subprocess closed after 535.8s
+	 * of a 536.2s request, and the PHP parent's ten post-subprocess rows filled
+	 * the rolling tail and evicted it — the flame still counted the span, but
+	 * the entry list left it open and the whole 535.8s interior read as its
+	 * SIBLING. The fold keeps those closes the way it keeps a marked line.
+	 */
+	public function test_the_close_of_a_span_opened_in_the_head_survives_the_fold(): void {
+		$sink = new Capture_Sink_Node();
+		$rb   = $this->builder( $sink );
+
+		// The parent's own numbering, then the subprocess restarts at n=1 and
+		// the parent resumes where it left off — as a real nested render does.
+		$this->fill( $rb, 1, 'nested', 'process (start)', [ 'm' => '1 on host POST /jobs' ] );
+		$this->fill( $rb, 2, 'nested', 'request', [ 'm' => 'POST http://x/jobs' ] );
+		$this->fill( $rb, 3, 'nested', 'resources', [ 'm' => 'utime => 0' ] );
+		$sub = 1;
+		$this->fill( $rb, $sub++, 'nested', 'gyrobase (start)' );
+		for ( $i = 0; $i < 40; $i++ ) {
+			$this->fill( $rb, $sub++, 'nested', 'change (start)' );
+			$this->fill( $rb, $sub++, 'nested', 'change (complete)', [ 'duration_ms' => 1 + $i ] );
+		}
+		$this->fill( $rb, $sub, 'nested', 'gyrobase (complete)', [ 'duration_ms' => 535829 ] );
+		// The parent's post-subprocess work: more rows than the tail holds.
+		$n = 4;
+		$this->fill( $rb, $n++, 'nested', 'nuclear_gyrobase', [ 'm' => 'engine exit 0' ] );
+		foreach ( [ 'query', 'query', 'updated_option' ] as $hook ) {
+			$this->fill( $rb, $n++, 'nested', "{$hook} hook (start)" );
+			$this->fill( $rb, $n++, 'nested', "{$hook} hook (complete)", [ 'duration_ms' => 1 ] );
+		}
+		$this->fill( $rb, $n++, 'nested', 'memory', [ 'm' => '14MB' ] );
+		$this->fill( $rb, $n++, 'nested', 'resources', [ 'm' => 'utime => 1' ] );
+		$this->fill( $rb, $n, 'nested', 'process (complete)', [ 'duration_ms' => 536214, 'status_code' => 200 ] );
+
+		$record = $this->record_for( $sink, 'nested' );
+		$this->assertTrue( $record['folded'] ?? false, 'the request must have folded' );
+		$keys = \array_column( $record['entries'], 'k' );
+
+		$this->assertContains( 'gyrobase (start)', $keys, 'the head opened it' );
+		$this->assertContains( 'gyrobase (complete)', $keys, 'so the record must close it' );
+		$this->assertSame( 'process (complete)', \end( $keys ), 'and the tail still ends the record' );
+	}
+
 	public function test_a_folded_record_marks_the_middle_it_aggregated_away(): void {
 		// A head running straight into a tail would read as a short request.
 		// The marker says how many lines are missing and where they went.

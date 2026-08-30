@@ -505,7 +505,9 @@ class Request_Builder_Node extends Timer_Node {
 				/** @var Fold_State $fold */
 				Flame_Fold::add( $fold, $stored );
 				$request->fold = $fold;
-				if ( self::is_kept( $stored ) ) {
+				// Consume the await first: a marked close is still a close.
+				$closes = self::closes_head_span( $request, $stored );
+				if ( $closes || self::is_kept( $stored ) ) {
 					$request->keep = self::bucket( $request->keep ?? null, $stored, null );
 				} else {
 					$request->tail = self::bucket( $request->tail ?? null, $stored, self::FOLD_KEEP_TAIL );
@@ -937,7 +939,7 @@ class Request_Builder_Node extends Timer_Node {
 			$request->state       = 'process';
 			$request->gap_after   = 0;
 			// Handle operator time-travel gracefully.
-			unset( $request->fold, $request->folded, $request->tail, $request->keep );
+			unset( $request->fold, $request->folded, $request->tail, $request->keep, $request->await );
 			$request->rule_id     = \is_string( $entry['rule'] ?? null ) ? $entry['rule'] : '';
 		};
 
@@ -1174,6 +1176,7 @@ class Request_Builder_Node extends Timer_Node {
 		}
 		$request->fold    = $fold;
 		$request->entries = \array_slice( $entries, 0, self::FOLD_KEEP_HEAD );
+		$request->await   = self::open_in_head( $request->entries );
 		$kept             = \array_values( \array_filter(
 			\array_slice( $entries, self::FOLD_KEEP_HEAD ),
 			static fn ( array $e ): bool => self::is_kept( $e )
@@ -1182,6 +1185,71 @@ class Request_Builder_Node extends Timer_Node {
 		$request->tail    = [];
 		$request->folded  = true;
 		return \count( $entries ) - \count( $request->entries ) - \count( $kept );
+	}
+
+	/**
+	 * The spans the kept head leaves OPEN, as a base-name set.
+	 *
+	 * A span opened in the head frames every row the reader sees after it, so
+	 * its `(complete)` is structure, not detail — losing it to the rolling tail
+	 * costs the record its shape. This is not the guess `is_kept()` refuses to
+	 * make: the fold just chose the head, so it knows exactly which frames it
+	 * left open, and there are at most `FOLD_KEEP_HEAD` of them.
+	 *
+	 * The request's own frame is exempt, as it is for the display's severed-span
+	 * prune: `process (complete)` is the terminal and has to END the record,
+	 * and `keep` is spliced in BEFORE the tail.
+	 *
+	 * @param list<array<string,mixed>> $head The kept head.
+	 * @return array<string,true> Base names still open, as a set.
+	 */
+	private static function open_in_head( array $head ): array {
+		$open = [];
+		foreach ( $head as $entry ) {
+			$keyword = Core::as_string( $entry['k'] ?? '' );
+			if ( \str_ends_with( $keyword, ' (start)' ) ) {
+				$open[] = \substr( $keyword, 0, -8 );
+				continue;
+			}
+			if ( ! \str_ends_with( $keyword, ' (complete)' ) ) {
+				continue;
+			}
+			$base = \substr( $keyword, 0, -11 );
+			for ( $i = \count( $open ) - 1; $i >= 0; $i-- ) {
+				if ( $open[ $i ] === $base ) {
+					// Pop everything above it, as the merged tree does.
+					\array_splice( $open, $i );
+					break;
+				}
+			}
+		}
+		unset( $open[ \array_search( Log_Manager::REQUEST_LABEL, $open, true ) ] );
+		return \array_fill_keys( $open, true );
+	}
+
+	/**
+	 * Whether this entry closes a span the kept head left open, consuming the
+	 * await so a later same-named span takes the rolling tail like any other.
+	 *
+	 * @param \stdClass           $request In-flight envelope, mutated.
+	 * @param array<string,mixed> $entry   Stored entry.
+	 */
+	private static function closes_head_span( \stdClass $request, array $entry ): bool {
+		$await = \is_array( $request->await ?? null ) ? $request->await : [];
+		if ( [] === $await ) {
+			return false;
+		}
+		$keyword = Core::as_string( $entry['k'] ?? '' );
+		if ( ! \str_ends_with( $keyword, ' (complete)' ) ) {
+			return false;
+		}
+		$base = \substr( $keyword, 0, -11 );
+		if ( ! isset( $await[ $base ] ) ) {
+			return false;
+		}
+		unset( $await[ $base ] );
+		$request->await = $await;
+		return true;
 	}
 
 	/**
@@ -1281,7 +1349,7 @@ class Request_Builder_Node extends Timer_Node {
 		/** @var Fold_State $fold */
 		$record['flame']   = Flame_Fold::tree( $fold );
 		$record['entries'] = self::head_marker_tail( $record );
-		unset( $record['fold'], $record['tail'] );
+		unset( $record['fold'], $record['tail'], $record['await'] );
 		// @longform `entries` is NOT cleared here: the fold already emptied it,
 		// and what lands in it afterwards is the `entries (lost)` marker, which
 		// announces a gap in the very requests whose trace is least worth

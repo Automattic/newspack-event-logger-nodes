@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.71.2] - 2026-08-29
+
+### Fixed
+
+- **The fold no longer drops the close of a span the kept head left open.** A span opened in the head frames every row after it, so losing its `(complete)` costs the record its shape rather than one line. On a `community.thecoast.ca` job the gyrobase subprocess closed after 535.8s of a 536.2s request, and the PHP parent's ten post-subprocess rows filled the rolling tail and evicted it — the flame still counted the span (`gyrobase` count 1, 535829.753ms) while the entry list left it open, and three display defects followed from the view reconstructing framing the record no longer stated. The fold now records what the head left open and routes those completes into the unbounded `keep` bucket, spliced between the marker and the tail. The request's own frame is exempt, so `process (complete)` still ends the record. Recorded as decision 22.
+
 ## [0.71.1] - 2026-08-29
 
 ### Fixed
