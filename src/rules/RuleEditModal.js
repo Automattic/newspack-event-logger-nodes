@@ -20,7 +20,7 @@ import {
 	Modal,
 	TextControl,
 	SelectControl,
-	ToggleControl,
+	CheckboxControl,
 } from '@wordpress/components';
 
 import HookSelectorModal from '../settings/settings/HookSelectorModal';
@@ -284,14 +284,14 @@ export default function RuleEditModal( {
 							/>
 						</div>
 
-						<ToggleControl
+						<CheckboxControl
 							__nextHasNoMarginBottom
 							label={ __(
 								'Log database queries',
 								'newspack-event-logger-nodes'
 							) }
 							help={ __(
-								'Times every query as its own flame span, named by operation and table. Needs SAVEQUERIES, and costs two log entries per query — leave off unless a request is under investigation.',
+								'Times every query as its own flame span. Two log entries per query, so a query-heavy request gets much slower.',
 								'newspack-event-logger-nodes'
 							) }
 							checked={ logQueries }
