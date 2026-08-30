@@ -17,4 +17,5 @@ export const BLANK_RULE = {
 	custom_events: [],
 	hooks: [],
 	hooks_in: 'inline',
+	log_queries: false,
 };

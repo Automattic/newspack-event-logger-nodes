@@ -17,6 +17,8 @@ describe( 'rules constants', () => {
 			custom_events: [],
 			hooks: [],
 			hooks_in: 'inline',
+			// Query spans are expensive; a blank rule asks for none.
+			log_queries: false,
 		} );
 	} );
 } );

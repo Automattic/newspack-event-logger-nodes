@@ -35,6 +35,7 @@ final class RuleTest extends TestCase {
 			'custom_events'               => [ 'cache_hit' ],
 			'hooks'                       => [ 'init', 'wp' ],
 			'hooks_in'                    => 'inline',
+			'log_queries'                 => true,
 		];
 		$rule = Rule::from_array( $data );
 		$this->assertSame( $data, $rule->to_array() );
@@ -48,6 +49,9 @@ final class RuleTest extends TestCase {
 		$this->assertSame( [], $rule->custom_events );
 		$this->assertSame( [], $rule->hooks );
 		$this->assertSame( 'inline', $rule->hooks_in );
+		// Query spans need SAVEQUERIES and cost two entries per query, so a
+		// rule that says nothing gets none.
+		$this->assertFalse( $rule->log_queries );
 	}
 
 	public function test_from_array_defaults_unknown_action_to_skip(): void {

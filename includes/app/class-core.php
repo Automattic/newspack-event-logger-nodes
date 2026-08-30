@@ -59,6 +59,9 @@ class Core {
 	 */
 	public const LISTENER_PATTERN = '/ @-?\d+$/';
 
+	/** SQL kept on a query span's entry; MAX_DATA_SIZE is 3840 for the lot. */
+	private const SQL_PREVIEW_MAX = 512;
+
 	/** Priority of the sacrificial hook_spacer; wrap_callbacks treats everything at/above it as ours. */
 	private const SPACER_PRIORITY = PHP_INT_MAX - 2;
 
@@ -76,6 +79,9 @@ class Core {
 
 	/** @var string[] Labels of outbound HTTP spans currently in flight. */
 	private array $http_spans = [];
+
+	/** @var string[] Labels of query spans currently in flight. */
+	private array $query_spans = [];
 
 	/**
 	 * Read the start priority from config, bind the current scope, and listen
@@ -363,6 +369,20 @@ class Core {
 		// Outbound HTTP blocks below userland, where no hook reaches.
 		\add_filter( 'pre_http_request', [ $this, 'http_start' ], PHP_INT_MAX, 3 );
 		\add_action( 'http_api_debug', [ $this, 'http_end' ], PHP_INT_MIN, 5 );
+
+		if ( ! $rule->log_queries ) {
+			return;
+		}
+		// @longform `wpdb` fires no post-query hook at all unless SAVEQUERIES is
+		// on: `_do_query()` gates the `log_query()` call — and so this pair's
+		// close — on it. A constant cannot be withdrawn, so a long-running
+		// worker keeps it for its life; `query_end()` drains `$wpdb->queries`
+		// to keep that from growing without bound.
+		if ( ! \defined( 'SAVEQUERIES' ) ) {
+			\define( 'SAVEQUERIES', true );
+		}
+		\add_filter( 'query', [ $this, 'query_start' ], PHP_INT_MAX );
+		\add_filter( 'log_query_custom_data', [ $this, 'query_end' ], PHP_INT_MIN, 5 );
 	}
 
 	/**
@@ -409,6 +429,78 @@ class Core {
 	private static function http_label( string $url ): string {
 		$host = RuntimeCore::as_string( \wp_parse_url( $url, PHP_URL_HOST ), '' );
 		return 'http: ' . ( '' === $host ? '(unparsed)' : $host );
+	}
+
+	/**
+	 * Open a span around one query. Registered on `query` at PHP_INT_MAX, so
+	 * every filter that rewrites the SQL has already run and the span names
+	 * what the database is actually asked.
+	 *
+	 * @param mixed $query The SQL, passed through untouched.
+	 * @return mixed
+	 */
+	public function query_start( $query = '' ) {
+		if ( ! Log_Manager::has_instance() ) {
+			return $query;
+		}
+		$lm = Log_Manager::instance();
+		if ( ! $lm->is_started() ) {
+			return $query;
+		}
+		$sql                 = RuntimeCore::as_string( $query, '' );
+		$label               = self::sql_label( $sql );
+		$this->query_spans[] = $label;
+		$lm->start( $label, [ 'm' => \substr( $sql, 0, self::SQL_PREVIEW_MAX ), 'l' => '' ] );
+		return $query;
+	}
+
+	/**
+	 * A span name for one query: `sql: <OP> <table>`.
+	 *
+	 * The flame merges by name, so naming the operation and its table collapses
+	 * ten thousand identical lookups into one node carrying its count — which
+	 * is the question a reader has. The SQL text rides the entry instead.
+	 *
+	 * @param string $sql The query.
+	 */
+	private static function sql_label( string $sql ): string {
+		$trimmed = \ltrim( $sql, " \t\n\r(" );
+		$op      = \strtoupper( \strtok( $trimmed, " \t\n\r" ) ?: '' );
+		if ( '' === $op ) {
+			return 'sql: ?';
+		}
+		$found = \preg_match( '/\b(?:FROM|INTO|UPDATE|JOIN)\s+`?([A-Za-z0-9_]+)`?/i', $sql, $m );
+		return 1 === $found ? "sql: {$op} {$m[1]}" : "sql: {$op}";
+	}
+
+	/**
+	 * Close the span `query_start` opened, and DRAIN `$wpdb->queries`.
+	 *
+	 * SAVEQUERIES makes `wpdb` retain every query it runs — 217 bytes each,
+	 * measured — which is the memory pressure that folds these records in the
+	 * first place. Draining here bounds it to what one query holds. Anything
+	 * else reading that array (Query Monitor) sees an empty one, which is why
+	 * this rides a per-rule opt-in rather than being always on.
+	 *
+	 * @param mixed  $data       Custom query data, passed through untouched.
+	 * @param string $query      The SQL (unused; the label came from the open).
+	 * @param float  $query_time Seconds the query took.
+	 * @param string $callstack  Calling functions (unused).
+	 * @param float  $query_start Unix timestamp the query started (unused).
+	 * @return mixed
+	 */
+	public function query_end( $data = null, string $query = '', float $query_time = 0.0, string $callstack = '', float $query_start = 0.0 ) {
+		$label = \array_pop( $this->query_spans );
+		if ( null === $label || ! Log_Manager::has_instance() ) {
+			return $data;
+		}
+		Log_Manager::instance()->complete( $label );
+		// `property_exists`: never CREATE it on a double that has none.
+		if ( isset( $GLOBALS['wpdb'] ) && \is_object( $GLOBALS['wpdb'] )
+			&& \property_exists( $GLOBALS['wpdb'], 'queries' ) ) {
+			$GLOBALS['wpdb']->queries = [];
+		}
+		return $data;
 	}
 
 	/**

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.72.0] - 2026-08-30
+
 ### Added
 
 - **Per-rule query spans.** A log rule can now set `log_queries` and get every database query as its own flame span, named `sql: <OP> <table>` so identical lookups merge into one node with a count, with the SQL text on the entry. Same bracket as the outbound-HTTP pair — `query` before, `log_query_custom_data` after — but opt-in, because the close only fires under `SAVEQUERIES` and each query costs two log entries. The constant's price was measured rather than assumed: 3,000 queries took 1.117s with it against 1.254s without, so the per-query backtrace is noise beside a 0.4ms round trip; the real cost is the 217 bytes per query `wpdb` retains, which `query_end()` drains. Recorded as decision 23, and it answers decision 21's own reopen condition. The rules editor grows a "Log database queries" toggle.

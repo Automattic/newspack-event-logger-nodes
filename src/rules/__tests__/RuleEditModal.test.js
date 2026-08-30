@@ -271,6 +271,20 @@ describe( 'RuleEditModal — log rule fields', () => {
 		expect( draft.id ).toBe( 'r1' );
 	} );
 
+	test( 'a log rule round-trips its query-span opt-in', () => {
+		// Distinct from the default: LOG_RULE does not set it, and the modal
+		// must still emit the flag rather than dropping it on save.
+		mount( { ...LOG_RULE, log_queries: true } );
+		click( saveButton() );
+		expect( onSave.mock.calls[ 0 ][ 0 ].log_queries ).toBe( true );
+	} );
+
+	test( 'a skip rule carries no query-span opt-in', () => {
+		mount( { ...LOG_RULE, action: 'skip', log_queries: true } );
+		click( saveButton() );
+		expect( onSave.mock.calls[ 0 ][ 0 ].log_queries ).toBe( false );
+	} );
+
 	test( 'editing the pattern is reflected in the saved draft', () => {
 		mount( LOG_RULE );
 		setInput( inDialog( 'input[name="rule-pattern"]' ), '/news' );

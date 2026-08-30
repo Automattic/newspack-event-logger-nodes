@@ -20,6 +20,7 @@ import {
 	Modal,
 	TextControl,
 	SelectControl,
+	ToggleControl,
 } from '@wordpress/components';
 
 import HookSelectorModal from '../settings/settings/HookSelectorModal';
@@ -87,6 +88,7 @@ export default function RuleEditModal( {
 	const [ autoProtect, setAutoProtect ] = useState(
 		String( rule?.auto_protect_time_threshold ?? 0 )
 	);
+	const [ logQueries, setLogQueries ] = useState( !! rule?.log_queries );
 	const [ error, setError ] = useState( '' );
 	const [ isHooksOpen, setIsHooksOpen ] = useState( false );
 	const [ isCustomOpen, setIsCustomOpen ] = useState( false );
@@ -117,6 +119,7 @@ export default function RuleEditModal( {
 			custom_events: isLog ? customEvents : [],
 			hooks: isLog ? hooks : [],
 			hooks_in: 'inline',
+			log_queries: isLog && logQueries,
 		};
 		onSave( draft );
 	};
@@ -280,6 +283,20 @@ export default function RuleEditModal( {
 								onChange={ setAutoProtect }
 							/>
 						</div>
+
+						<ToggleControl
+							__nextHasNoMarginBottom
+							label={ __(
+								'Log database queries',
+								'newspack-event-logger-nodes'
+							) }
+							help={ __(
+								'Times every query as its own flame span, named by operation and table. Needs SAVEQUERIES, and costs two log entries per query — leave off unless a request is under investigation.',
+								'newspack-event-logger-nodes'
+							) }
+							checked={ logQueries }
+							onChange={ setLogQueries }
+						/>
 					</>
 				) }
 
