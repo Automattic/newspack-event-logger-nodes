@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.72.2] - 2026-08-30
+
+### Fixed
+
+- **The rules editor's query-span control is a checkbox, like every other boolean in this UI.** It shipped as a `ToggleControl` — the only one in the tree. `HookSelectorModal` and `CustomEventSelectorModal`, the two modals this editor opens, both use `CheckboxControl`, and the settings page renders its booleans as checkboxes too. Nothing styles `.components-form-toggle` here, so the toggle inherited the modal's `.components-base-control` layout and rendered as a stray pill. The help text also now carries the measured cost rather than naming `SAVEQUERIES`, which is an implementation detail to an operator.
+
 ## [0.72.1] - 2026-08-30
 
 ### Fixed
