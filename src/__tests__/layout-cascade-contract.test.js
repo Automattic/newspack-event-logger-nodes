@@ -331,6 +331,34 @@ describe( 'Event Logger layout cascade', () => {
 		} );
 	} );
 
+	it( 'bounds the height of one log-entry message', () => {
+		expect(
+			declarations(
+				findRule(
+					local( 'overview/styles/tables.scss' ),
+					'.event-logger-log-entries .log-entries-message'
+				)
+			)
+		).toMatchObject( {
+			'-webkit-line-clamp': '6',
+			overflow: 'hidden',
+		} );
+	} );
+
+	it( 'keeps the backtrace count on the checkbox row', () => {
+		expect(
+			declarations(
+				findRule(
+					local( 'rules/rule-edit-modal.scss' ),
+					'.event-logger-rule-edit-modal .rule-edit-trace-row'
+				)
+			)
+		).toMatchObject( {
+			display: 'flex',
+			'align-items': 'flex-start',
+		} );
+	} );
+
 	it( 'preserves standalone and embedded modal frame geometry', () => {
 		const stylesheet = local( 'rules/rule-edit-modal.scss' );
 		expect(

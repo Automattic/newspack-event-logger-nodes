@@ -125,9 +125,11 @@ export default function RuleEditModal( {
 			hooks_in: 'inline',
 			log_queries: isLog && logQueries,
 			trace_hooks: isLog && traceHooks,
-			trace_callers: isLog
-				? toNumber( traceCallers, ( v ) => parseInt( v, 10 ) )
-				: 0,
+			// The count refines the label, so unticking retires both.
+			trace_callers:
+				isLog && traceHooks
+					? toNumber( traceCallers, ( v ) => parseInt( v, 10 ) )
+					: 0,
 		};
 		onSave( draft );
 	};
@@ -306,36 +308,53 @@ export default function RuleEditModal( {
 							onChange={ setLogQueries }
 						/>
 
-						<CheckboxControl
-							__nextHasNoMarginBottom
-							label={ __(
-								'Trace hook callers',
-								'newspack-event-logger-nodes'
-							) }
-							help={ __(
-								'Labels every span with who called it, so a hook that runs many times splits by caller in the flame graph.',
-								'newspack-event-logger-nodes'
-							) }
-							checked={ traceHooks }
-							onChange={ setTraceHooks }
-						/>
+						<div className="rule-edit-trace-row">
+							<CheckboxControl
+								__nextHasNoMarginBottom
+								name="rule-trace-hooks"
+								label={ __(
+									'Trace hook callers',
+									'newspack-event-logger-nodes'
+								) }
+								help={
+									traceHooks
+										? __(
+												'Labels every span with who called it, so a hook that runs many times splits by caller in the flame graph. The count is how many firings of each hook also record a full backtrace — expensive; 0 = labels only.',
+												'newspack-event-logger-nodes'
+										  )
+										: __(
+												'Labels every span with who called it, so a hook that runs many times splits by caller in the flame graph.',
+												'newspack-event-logger-nodes'
+										  )
+								}
+								checked={ traceHooks }
+								onChange={ setTraceHooks }
+							/>
 
-						<TextControl
-							__next40pxDefaultSize
-							__nextHasNoMarginBottom
-							type="number"
-							label={ __(
-								'Caller trace depth',
-								'newspack-event-logger-nodes'
+							{ traceHooks && (
+								<div className="rule-edit-trace-count">
+									<TextControl
+										__next40pxDefaultSize
+										__nextHasNoMarginBottom
+										hideLabelFromVision
+										type="number"
+										label={ __(
+											'Backtraces per hook',
+											'newspack-event-logger-nodes'
+										) }
+										name="rule-trace-callers"
+										value={ traceCallers }
+										onChange={ setTraceCallers }
+									/>
+									<span className="newspack-nodes-status is-muted">
+										{ __(
+											'backtraces per hook',
+											'newspack-event-logger-nodes'
+										) }
+									</span>
+								</div>
 							) }
-							help={ __(
-								'Frames of backtrace recorded per hook, on top of the label above. Expensive. 0 = off.',
-								'newspack-event-logger-nodes'
-							) }
-							name="rule-trace-callers"
-							value={ traceCallers }
-							onChange={ setTraceCallers }
-						/>
+						</div>
 					</>
 				) }
 

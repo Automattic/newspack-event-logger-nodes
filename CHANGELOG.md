@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.77.1] - 2026-08-31
+
+### Fixed
+
+- **The origin frame reaches the table, not only the flame.** `formatMessage` read `m || l`, so the label naming who called a hook appeared only when the hook had no value to preview — and every hook worth tracing is a filter with a value. On `the_content` the caller was captured, aggregated into the flame, and then dropped from the row a reader is actually looking at. `l` and the deeper `caller` chain now lead the cell as their own lines, OUTSIDE the value clamp, so a kilobyte of block markup can never push them out of view.
+- **One log entry can no longer own the whole table.** `hook_start` records up to 1024 bytes of the filter value as the span's `m`, which for `the_content` is sixty lines of block markup rendered into a single row — the surrounding entries are pushed off screen by the one you are least likely to be reading. The message now renders inside a six-line clamp, with duration, peak memory and the fold's child badge OUTSIDE it, so clipping a value never clips the numbers. Collapsing that distinction let `renderEntryMessage` lose its complete-vs-start branch entirely. `Core`'s two bare `1024` literals became `HOOK_VALUE_PREVIEW_MAX`, beside the `CALLER_PREVIEW_MAX` and `SQL_PREVIEW_MAX` they sit with.
+- **The backtrace count sits on the caller-tracing row, and is named for what it counts.** It shipped as a full-width field under its own all-caps header, labelled *caller trace depth* — which reads as how far up the stack to walk. It is not: the frame window is fixed at `CALLER_FRAMES` (20), and `trace_callers` counts how many FIRINGS of each hook record a full backtrace. It is now a small number beside the checkbox reading `20 backtraces per hook`, shown only while the box is ticked, and unticking the box zeroes it — a hidden count kept spending twenty backtraces per hook with nothing on screen saying so.
+
 ## [0.77.0] - 2026-08-31
 
 ### Added

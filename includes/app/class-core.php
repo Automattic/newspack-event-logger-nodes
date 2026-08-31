@@ -81,6 +81,9 @@ class Core {
 	/** Origin label kept on a span; it rides EVERY traced entry. */
 	private const ORIGIN_MAX = 128;
 
+	/** Filter value kept as a hook span's 'm'; MAX_DATA_SIZE is 3840. */
+	private const HOOK_VALUE_PREVIEW_MAX = 1024;
+
 	/** Caller summary kept on a hook's start entry; MAX_DATA_SIZE is 3840. */
 	private const CALLER_PREVIEW_MAX = 1024;
 
@@ -165,13 +168,15 @@ class Core {
 
 		$m = '';
 		if ( isset( $v ) && \is_string( $v ) ) {
-			$m = \strlen( $v ) > 1024 ? \substr( $v, 0, 1024 ) : $v;
+			$m = \strlen( $v ) > self::HOOK_VALUE_PREVIEW_MAX
+				? \substr( $v, 0, self::HOOK_VALUE_PREVIEW_MAX )
+				: $v;
 		} elseif ( isset( $v ) && \is_scalar( $v ) ) {
 			$m = $v;
 		} elseif ( isset( $v ) ) {
 			// phpcs:ignore WordPress.WP.AlternativeFunctions.json_encode_json_encode -- wp_json_encode() infinite-loops on circular refs (Core_Upgrader).
 			$encoded = \json_encode( $v, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES, 16 );
-			if ( false !== $encoded && \strlen( $encoded ) <= 1024 ) {
+			if ( false !== $encoded && \strlen( $encoded ) <= self::HOOK_VALUE_PREVIEW_MAX ) {
 				$m = $encoded;
 			}
 		}

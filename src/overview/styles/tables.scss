@@ -151,6 +151,15 @@
 		}
 	}
 
+	// A 1024-byte filter-value preview is sixty lines; six identify the value.
+	.log-entries-message {
+		display: -webkit-box;
+		-webkit-line-clamp: 6;
+		line-clamp: 6;
+		-webkit-box-orient: vertical;
+		overflow: hidden;
+	}
+
 	.log-entries-search {
 		display: flex;
 		align-items: flex-end;

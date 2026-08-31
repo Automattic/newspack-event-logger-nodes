@@ -69,6 +69,32 @@
 		}
 	}
 
+	// The count qualifies the checkbox, so it shares that row and its help.
+	.rule-edit-trace-row {
+		display: flex;
+		align-items: flex-start;
+		gap: 12px;
+
+		.components-checkbox-control {
+			flex: 1;
+		}
+	}
+
+	.rule-edit-trace-count {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		white-space: nowrap;
+
+		.components-base-control {
+			margin: 0;
+		}
+
+		input {
+			width: 76px;
+		}
+	}
+
 	.rule-edit-actions {
 		display: flex;
 		justify-content: flex-end;
