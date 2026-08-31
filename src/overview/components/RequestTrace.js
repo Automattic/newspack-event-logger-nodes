@@ -12,6 +12,7 @@ import { lazy, Suspense } from '@wordpress/element';
 import { __ } from '@wordpress/i18n';
 
 import LoadingFallback from '../../components/LoadingFallback';
+import MemoryTrack from './MemoryTrack';
 import '../styles/request-trace.scss';
 
 const FlameGraph = lazy( () => import( '../FlameGraph' ) );
@@ -22,6 +23,7 @@ const FlameGraph = lazy( () => import( '../FlameGraph' ) );
  * @param {string}                   [props.title]         Heading, already translated; defaults to "Request Trace".
  * @param {number}                   [props.lastModified]  Stamp the graph redraws on.
  * @param {(path: string[]) => void} [props.onRevealEntry] Called with a frame's path on Cmd/Ctrl+click.
+ * @param {Array<Object>}            [props.entries]       Log entries, for the peak-memory track under the graph.
  * @return {import('react').ReactElement} The trace section.
  */
 export default function RequestTrace( {
@@ -29,6 +31,7 @@ export default function RequestTrace( {
 	title = __( 'Request Trace', 'newspack-event-logger-nodes' ),
 	lastModified,
 	onRevealEntry,
+	entries,
 } ) {
 	return (
 		<div className="event-logger-flame-container">
@@ -49,6 +52,10 @@ export default function RequestTrace( {
 					onRevealEntry={ onRevealEntry }
 				/>
 			</Suspense>
+			<MemoryTrack
+				entries={ entries }
+				totalMs={ flameData?.value || 0 }
+			/>
 		</div>
 	);
 }

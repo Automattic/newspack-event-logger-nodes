@@ -743,6 +743,49 @@ describe( 'withTimeSpacers', () => {
 	const widths = ( node ) =>
 		node.children.map( ( c ) => [ c.spacer === true, c.value ] );
 
+	it( 'is not defeated by a microsecond of rounding between siblings', () => {
+		// `Flame_Tree::offset_ms()` rounds `t` to 3 decimals and the duration
+		// is rounded too, so two spans that really abut can land 0.001ms apart
+		// the wrong way. That read as an overlap, which declines the WHOLE
+		// family — one microsecond threw away the time axis for 46 siblings on
+		// a real request, packing every one of them flush left.
+		const rounded = {
+			name: 'process',
+			value: 1000,
+			t: 0,
+			children: [
+				{ name: 'plugin-a', value: 6.17, t: 0, children: [] },
+				{ name: 'plugin-b', value: 12, t: 6.169, children: [] },
+				{ name: 'render', value: 300, t: 400, children: [] },
+			],
+		};
+
+		// The 382ms hole before `render` is still a spacer, so the axis holds.
+		expect( widths( withTimeSpacers( rounded ) ) ).toContainEqual( [
+			true,
+			381.831,
+		] );
+	} );
+
+	it( 'still declines a family whose children genuinely overlap', () => {
+		// Real overlap has no side-by-side arrangement: the two together are
+		// wider than the interval they span, so any placement lies about one.
+		const overlapping = {
+			name: 'process',
+			value: 1000,
+			t: 0,
+			children: [
+				{ name: 'db', value: 260, t: 40, children: [] },
+				{ name: 'render', value: 300, t: 120, children: [] },
+			],
+		};
+
+		expect( widths( withTimeSpacers( overlapping ) ) ).toEqual( [
+			[ false, 260 ],
+			[ false, 300 ],
+		] );
+	} );
+
 	it( 'opens with a spacer covering the parent time before the first child', () => {
 		expect( widths( withTimeSpacers( TIMED ) )[ 0 ] ).toEqual( [
 			true,

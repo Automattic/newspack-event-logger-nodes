@@ -114,6 +114,7 @@ export default function RequestDetailView( {
 				<div style={ SECTION_STYLE }>
 					<RequestTrace
 						flameData={ flameData }
+						entries={ indentedEntries }
 						onRevealEntry={ ( path ) =>
 							revealRef.current?.( path )
 						}

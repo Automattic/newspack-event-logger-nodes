@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.81.0] - 2026-08-31
+
+### Changed
+
+- **Query and outbound-HTTP spans carry a STATE and a label, like every other span.** They spelled the discriminator into the state — `sql: SELECT wp_posts`, `http: api.example.com` — and left `l` empty, which is the field whose job that is. `Request_Builder_Node::push_stack()` keys its profile map on the state and aggregates labels INSIDE it, so a table or a host in the state name is a profile category per table and per host, against the axis `Stats_Store::MAX_CAT_VALUES` bounds. The state is now `sql` and `http`, the table and the host are the label, and `Flame_Tree` composes `state: label` for the graph exactly as before — the flame reads the same, the category axis stops filling with variants, and `getStateColor()` resolves without splitting a colon out of a keyword.
+
+### Fixed
+
+- **A microsecond of rounding no longer flattens a request's time axis.** `placeChildren()` declines a family whose children overlap, because overlapping spans have no side-by-side arrangement — but `Flame_Tree::offset_ms()` rounds `t` to three decimals and durations round too, so two spans that really abut can land 0.001ms the wrong way. On a real `update-core.php` trace that one pair cost the other 45 siblings their positions and packed every span flush left, which is what made outbound HTTP look like it happened at the start of a 28-second request. Overlap within `ABUT_TOLERANCE_MS` (0.01) counts as abutting; a genuine overlap still declines.
+
+### Added
+
+- **A peak-memory track under the flame graph.** `log_memory` appends `peak_mb` to every `complete()` entry and the flame's X axis is already milliseconds from the request's start, so the two line up over one request without either knowing about the other. It draws nothing when no entry carried a reading, which is what the setting being off looks like from here. What it plots is `memory_get_peak_usage()` — a HIGH-WATER MARK, so the shape is a staircase and a step says where memory was CLAIMED, not what was live; drawing it as a smooth line would suggest a fall the reading cannot show. A `0..1000` viewBox with `preserveAspectRatio="none"` is what keeps it in register with a flame that sizes itself from `clientWidth` — and what puts every label in HTML over the plot, since that stretch distorts anything drawn inside. Filled area, gridlines at the floor, half and peak, and both ends of the axis labelled: a bare stroke under the graph is a line, not a chart.
+
 ## [0.80.0] - 2026-08-31
 
 ### Added
