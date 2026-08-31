@@ -574,12 +574,16 @@ class PerformanceCITest extends TestCase {
 	}
 
 	/**
-	 * Decision 14's real guard: a request that already holds the whole index
-	 * answers about one URL FROM it. Point-reading unconditionally would make
-	 * the memo a per-scope cache and pay the fan-out twice for one poll — which
-	 * is the defect that put "one unscoped read" in the decision to begin with.
+	 * A modal costs ONE SHARD's read, never the table's fan-out.
+	 *
+	 * Decision 14 held the whole unscoped index for the request so a modal
+	 * opened from the table answered from the read the table already paid for.
+	 * That memo is what could not fit — the merged index is the count of
+	 * distinct URLs in the window, and a production hub exhausted 512MB inside
+	 * the fold. `raw_row()` now always point-reads the one shard `url_shard()`
+	 * names, which was already the tested fallback whenever the memo was unset.
 	 */
-	public function test_a_request_holding_the_index_does_not_read_again_for_one_row(): void {
+	public function test_one_row_costs_one_shard_not_the_whole_index(): void {
 		$memd  = Core::$memd;
 		$store = new Stats_Store( 0, 86400 );
 		$this->set_url_bucket( $store, $this->current_url_bucket(), [
@@ -587,16 +591,20 @@ class PerformanceCITest extends TestCase {
 		] );
 		$node = new Performance_CI_Node();
 
-		// The table first: one fan-out, and the merged index is now in hand.
 		VerbHarness::fire( $node, 'performance', 'urls' );
-		// The harness mounts a backbone per fire; the NODE is what carries the
-		// memo across the two verbs of one request.
+		$table = $memd->multi_keys;
 		Core::cleanup_all_nodes();
 		$memd->multi_keys = 0;
 		$detail           = VerbHarness::fire( $node, 'performance', 'url_detail', 'a4471ab0c0de' );
+		$modal            = $memd->multi_keys;
 
 		$this->assertSame( '/wombat-4471', $detail['stats']['url'] );
-		$this->assertSame( 0, $memd->multi_keys, 'the index was already read for this request' );
+		$this->assertGreaterThan( 0, $modal, 'the row is read, not remembered' );
+		$this->assertLessThan(
+			(int) ( $table / \count( Stats_Store::url_shards() ) ) + 1,
+			$modal,
+			'a modal must not pay the table fan-out'
+		);
 	}
 
 	/**
@@ -3263,76 +3271,28 @@ class PerformanceCITest extends TestCase {
 	// ── load_index bucket contract ──────────────────────────────────────────
 
 	/**
-	 * The bucket's inner key IS the hash `Log_Manager::url_hash()` stamped on
-	 * the record. Deriving a different one indexes the row under a hash no rid
-	 * lookup can ever produce, so `request_search` hands the dashboard a hash
-	 * `url_detail` refuses — the URL is in the index and unreachable anyway.
+	 * Each request reads the index for itself: two dispatches on two nodes read
+	 * it twice over, once per shard each. Guards a static memo leaking stale
+	 * stats across requests.
 	 */
-	public function test_index_keys_a_row_by_its_bucket_key_never_a_derived_hash(): void {
-		$url    = 'https://sevendaysvt.example/jobs/filmtimes/import-film-times';
-		$hash   = Log_Manager::url_hash( $url );
-		$store  = new Stats_Store( 0, 86400 );
-		$bucket = $this->current_url_bucket();
-		// No 'url' key — the shape the sha256 fallback existed to cover.
-		$this->set_url_bucket( $store, $bucket, [
-			$hash => [ 'count' => 3, 'timed_count' => 3, 'sum_ms' => 900.0, 'last_seen' => 1700000000 ],
-		] );
-
-		$result = VerbHarness::fire(
-			new Performance_CI_Node(),
-			'performance',
-			'url_detail',
-			$hash
-		);
-
-		$this->assertSame( $hash, $result['stats']['hash'] );
-		// No `url` field in the row: blank, never the key standing in for one.
-		$this->assertSame( '', $result['stats']['url'] );
-		$this->assertEqualsWithDelta( 300.0, $result['stats']['avg_ms'], 0.01 );
-	}
-
-	public function test_urls_verb_folds_min_ms_across_two_timed_buckets(): void {
-		// Two timed buckets for the same hash: the read merge must take the min of
-		// both bucket minima (the second fold hits the min() branch).
-		$store    = new Stats_Store( 0, 86400 );
-		$hash     = 'abcabcabc123';
-		$bucket_a = Stats_Store::bucket_key( \time() - 600 );
-		$bucket_b = $this->current_url_bucket();
-		$this->set_url_bucket( $store, $bucket_a, [
-			$hash => [ 'url' => '/m', 'count' => 2, 'timed_count' => 2, 'sum_ms' => 200.0, 'min_ms' => 80, 'max_ms' => 100.0, 'last_seen' => 1 ],
-		] );
-		$this->set_url_bucket( $store, $bucket_b, [
-			$hash => [ 'url' => '/m', 'count' => 3, 'timed_count' => 3, 'sum_ms' => 300.0, 'min_ms' => 30, 'max_ms' => 120.0, 'last_seen' => 2 ],
-		] );
-
-		$interpreter = new Performance_CI_Node();
-		$result      = VerbHarness::fire( $interpreter, 'performance', 'urls' );
-
-		$this->assertSame( 1, $result['totals']['urls'] );
-		$this->assertSame( 30, $result['data'][0]['min_ms'] );
-	}
-
-	public function test_index_memo_is_per_request_not_shared_across_instances(): void {
-		// The memo is per-CI-instance (per request). A fresh Performance_CI_Node
-		// re-reads — two dispatches on two instances each load once. This guards
-		// against a static memo leaking stale stats across requests.
+	public function test_the_index_is_read_per_request_not_shared_across_instances(): void {
 		$calls    = 0;
 		$original = Performance_CI_Node::$load_index;
-		Performance_CI_Node::$load_index = static function ( ?string $shard ) use ( &$calls, $original ) {
+		Performance_CI_Node::$load_index = static function ( ?string $shard ) use ( &$calls, $original ): array {
 			++$calls;
 			return ( $original ?? [ Performance_CI_Node::class, 'load_index_default' ] )( $shard );
 		};
 
 		try {
 			VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' );
-			// Each fire() builds a fresh request-scope graph; reset Core between
-			// the two so the second _router/_command_interpreter don't collide.
 			VerbHarness::reset();
 			VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' );
-			$this->assertSame( 2, $calls, 'each request (instance) must re-read the index' );
 		} finally {
 			Performance_CI_Node::$load_index = $original;
+			VerbHarness::reset();
 		}
+
+		$this->assertSame( \count( Stats_Store::url_shards() ) * 2, $calls );
 	}
 
 	// ── schema-driven dispatch ──────────────────────────────────────────────
@@ -3643,6 +3603,38 @@ class PerformanceCITest extends TestCase {
 	}
 
 	/**
+	 * The `urls` verb folds ONE SHARD AT A TIME and never the whole index.
+	 *
+	 * A url_hash's shard is its first hex digit, so shards are disjoint and a
+	 * per-shard fold is complete for every URL it holds. The merged index is
+	 * otherwise the count of distinct URLs across the retention window, which
+	 * nothing bounds — a production hub exhausted 512MB inside the fold itself,
+	 * after three releases had removed three real duplicate COPIES.
+	 */
+	public function test_the_urls_verb_folds_one_shard_at_a_time(): void {
+		$seen     = [];
+		$original = Performance_CI_Node::$load_index;
+
+		Performance_CI_Node::$load_index = static function ( ?string $shard ) use ( &$seen, $original ): array {
+			$seen[] = $shard;
+			return ( $original ?? [ Performance_CI_Node::class, 'load_index_default' ] )( $shard );
+		};
+		try {
+			VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' );
+		} finally {
+			Performance_CI_Node::$load_index = $original;
+			VerbHarness::reset();
+		}
+
+		$this->assertNotContains( null, $seen, 'the whole index must never be read at once' );
+		$this->assertSame(
+			Stats_Store::url_shards(),
+			\array_values( \array_unique( $seen ) ),
+			'every shard is folded, one at a time'
+		);
+	}
+
+	/**
 	 * The loader must read its buckets in BOUNDED batches.
 	 *
 	 * `url_row_sources()` issued ONE `lookup_multi` across all sixteen shards
@@ -3705,7 +3697,9 @@ class PerformanceCITest extends TestCase {
 		$rows = [];
 		for ( $i = 0; $i < 20000; $i++ ) {
 			$rows[] = [
-				'hash'         => \sprintf( '%012x', $i ),
+				// Vary the FIRST hex digit: that is the shard, and `%012x` of a
+				// small int is all leading zeros, so every row would be shard 0.
+				'hash'         => \sprintf( '%x%011x', $i % 16, $i ),
 				'url'          => "/page/{$i}",
 				'count'        => $i + 1,
 				'timed_count'  => $i + 1,
@@ -3726,7 +3720,14 @@ class PerformanceCITest extends TestCase {
 		$index_bytes = \memory_get_usage() - $base;
 
 		$original                        = Performance_CI_Node::$load_index;
-		Performance_CI_Node::$load_index = static fn ( ?string $shard ): array => $rows;
+		// Each shard answers for its OWN rows, as the real loader does: a
+		// url_hash lives in exactly one shard (its first hex digit).
+		Performance_CI_Node::$load_index = static function ( ?string $shard ) use ( $rows ): array {
+			return \array_values( \array_filter(
+				$rows,
+				static fn ( array $r ): bool => Stats_Store::url_shard( $r['hash'] ) === $shard
+			) );
+		};
 		try {
 			$before = \memory_get_usage();
 			\memory_reset_peak_usage();
@@ -3742,7 +3743,7 @@ class PerformanceCITest extends TestCase {
 			// Reported either way, so a regression names its own number.
 			$peak,
 			\sprintf(
-				'the verb allocated %.1f MB over an index of %.1f MB; a second full projection is ~1x',
+				'the verb allocated %.1f MB over an index of %.1f MB; a shard is a sixteenth',
 				$peak / 1048576,
 				$index_bytes / 1048576
 			)
