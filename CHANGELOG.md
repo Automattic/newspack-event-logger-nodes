@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.79.0] - 2026-08-31
+
 ### Changed
 
 - **A fine URL bucket is kept for its read window, not the retention one.** The read plan asks for thirteen five-minute buckets plus the rest of their hour, and `urls_h` answers for everything behind that — so 264 of every 288 buckets a shard were held for the whole window with nothing that reads them, and the fine tier is the largest thing this schema puts in a 512MB cache. They now expire at `Stats_Store::FINE_TTL_SECONDS` (4h), leaving the readers two hours of margin and `roll_up_hours()` three. A longer outage than that costs the last partial hour before it, which no reader had folded yet. Writes group by ROLE so the coarse tier keeps the window in the same batch.
