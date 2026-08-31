@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **A fine URL bucket is kept for its read window, not the retention one.** The read plan asks for thirteen five-minute buckets plus the rest of their hour, and `urls_h` answers for everything behind that — so 264 of every 288 buckets a shard were held for the whole window with nothing that reads them, and the fine tier is the largest thing this schema puts in a 512MB cache. They now expire at `Stats_Store::FINE_TTL_SECONDS` (4h), leaving the readers two hours of margin and `roll_up_hours()` three. A longer outage than that costs the last partial hour before it, which no reader had folded yet. Writes group by ROLE so the coarse tier keeps the window in the same batch.
+- **Worker traffic is its own shard family.** Cron, WP-CLI and job requests are a separate population, not a predicate over one: the table excludes them by default, so a shared index made every ordinary read carry rows it then discarded, and — worse — a URL a job also visited was ONE row flagged `worker`, which took its reader requests out of the default view with it. The shard token now carries the population (`urls:w3:{bucket}`), which every key builder below it treats as opaque, so the split needs no namespace and no second read plan. Each family caps and folds its own tail, which is what decision 14's two overflow keys were reserving slots for all along.
+
 ## [0.78.0] - 2026-08-31
 
 ### Changed

@@ -152,6 +152,18 @@ class Stats_Store {
 	/** Shards the URL index is spread across — one per hex digit of the hash. */
 	public const URL_SHARDS     = 16;
 
+	/**
+	 * What makes a shard token name WORKER traffic: `urls:w3:{bucket}`.
+	 *
+	 * Cron, WP-CLI and job requests are a separate population, not a predicate
+	 * over one — the table excludes them by default, so a shared index made
+	 * every ordinary read carry rows it then discarded, and a URL a job also
+	 * visited left that table with its reader requests still inside it. The
+	 * shard token is opaque to every key builder below it, so the split needs
+	 * no namespace of its own and no second read plan.
+	 */
+	public const WORKER_SHARD_PREFIX = 'w';
+
 	/** The DISPLAY row's split field; a stored row uses `ROW_SRV`. */
 	public const URL_SRV_FIELD = 'srv';
 
@@ -280,9 +292,25 @@ class Stats_Store {
 	 */
 	public const FINE_BUCKETS = 13;
 
+	/**
+	 * How long a FINE `urls` bucket is kept, against `min_lifetime` for the
+	 * coarse tier that outlives it.
+	 *
+	 * The read plan asks for `FINE_BUCKETS` plus the rest of their hour — two
+	 * hours at the very worst — and `roll_up_hours()` folds a closed hour into
+	 * `urls_h` within a re-probe of it closing. Everything behind that was
+	 * being held for the whole window with nothing to read it, and the fine
+	 * tier is the largest thing this schema puts in a 512MB cache: 288 buckets
+	 * a shard against the coarse tier's 24. Four hours leaves the readers two
+	 * hours of margin and the fold three; what a longer outage than that costs
+	 * is the last partial hour before it, which no reader had folded yet.
+	 */
+	public const FINE_TTL_SECONDS = 14400;
+
 	/** The two tables this store keeps, by ROLE — their TTLs coincide at the floor. */
 	private const ROLE_AGGREGATE = 'aggregate';
 	private const ROLE_URL       = 'url';
+	private const ROLE_URL_FINE  = 'url_fine';
 
 	/**
 	 * Mirror seam — when set, invoked `(string $key, array $data, int $ttl, string $ns)`
@@ -553,8 +581,10 @@ class Stats_Store {
 	 * @param ?string           $shard One shard, or null for every shard.
 	 * @return list<array{0: string, 1: array<array-key,mixed>}>
 	 */
-	public function url_hour_sources( array $hours, ?string $shard = null ): array {
-		$shards   = null === $shard ? self::url_shards() : [ $shard ];
+	public function url_hour_sources( array $hours, ?string $shard = null, bool $workers = false ): array {
+		$shards = null === $shard
+			? ( $workers ? \array_merge( self::url_shards(), self::url_shards( true ) ) : self::url_shards() )
+			: [ $shard ];
 		$prefixes = [];
 		foreach ( $shards as $one ) {
 			$prefixes[] = [ self::NS_URLS_HOUR, $one ];
@@ -668,10 +698,16 @@ class Stats_Store {
 	 *                                    Null reads every shard, which is what a
 	 *                                    reader rendering the whole table wants — and
 	 *                                    what an older consumer keeps by not passing it.
+	 * @param bool               $workers Include the WORKER shard family, whose
+	 *                                    rows the default table excludes. Ignored
+	 *                                    when one shard is named, since the token
+	 *                                    already says which family it belongs to.
 	 * @return list<array{0: string, 1: array<array-key,mixed>}>
 	 */
-	public function url_row_sources( array $buckets, ?string $shard = null ): array {
-		$shards   = null === $shard ? self::url_shards() : [ $shard ];
+	public function url_row_sources( array $buckets, ?string $shard = null, bool $workers = false ): array {
+		$shards = null === $shard
+			? ( $workers ? \array_merge( self::url_shards(), self::url_shards( true ) ) : self::url_shards() )
+			: [ $shard ];
 		$prefixes = [];
 		foreach ( $shards as $one ) {
 			$prefixes[] = [ self::NS_URLS, $one ];
@@ -713,8 +749,12 @@ class Stats_Store {
 	 *
 	 * @return list<string>
 	 */
-	public static function url_shards(): array {
-		return \array_map( 'dechex', \range( 0, self::URL_SHARDS - 1 ) );
+	public static function url_shards( bool $worker = false ): array {
+		$prefix = $worker ? self::WORKER_SHARD_PREFIX : '';
+		return \array_map(
+			static fn ( int $i ): string => $prefix . \dechex( $i ),
+			\range( 0, self::URL_SHARDS - 1 )
+		);
 	}
 
 	/**
@@ -725,10 +765,10 @@ class Stats_Store {
 	 * @param array<array-key,mixed> $rows Rows by url_hash.
 	 * @return array<array-key,array<array-key,mixed>>
 	 */
-	public static function rows_by_shard( array $rows ): array {
+	public static function rows_by_shard( array $rows, bool $worker = false ): array {
 		$by_shard = [];
 		foreach ( $rows as $hash => $row ) {
-			$by_shard[ self::url_shard( (string) $hash ) ][ $hash ] = $row;
+			$by_shard[ self::url_shard( (string) $hash, $worker ) ][ $hash ] = $row;
 		}
 		return $by_shard;
 	}
@@ -741,9 +781,9 @@ class Stats_Store {
 	 *
 	 * @param string $url_hash 12-char URL hash.
 	 */
-	public static function url_shard( string $url_hash ): string {
+	public static function url_shard( string $url_hash, bool $worker = false ): string {
 		$first = \strtolower( \substr( $url_hash, 0, 1 ) );
-		return \ctype_xdigit( $first ) ? $first : '0';
+		return ( $worker ? self::WORKER_SHARD_PREFIX : '' ) . ( \ctype_xdigit( $first ) ? $first : '0' );
 	}
 
 	/**
@@ -856,16 +896,21 @@ class Stats_Store {
 		if ( [] === $writes ) {
 			return [];
 		}
+		// One batch per ROLE
 		$values = [];
 		foreach ( $writes as [ $parts, $bucket, $data ] ) {
-			$values[ $this->key( ...[ ...$parts, $bucket ] ) ] = $data;
+			$values[ $this->role_for( $parts[0] ) ][ $this->key( ...[ ...$parts, $bucket ] ) ] = $data;
 		}
-		if ( true === $this->table( self::ROLE_AGGREGATE )?->store_multi( $values ) ) {
+		$landed = true;
+		foreach ( $values as $role => $batch ) {
+			$landed = true === $this->table( $role )?->store_multi( $batch ) && $landed;
+		}
+		if ( $landed ) {
 			// Shadowed only once the set landed, as `store()` does.
 			if ( null !== $this->mirror ) {
 				foreach ( $writes as [ $parts, $bucket, $data ] ) {
 					$key = $this->key( ...[ ...$parts, $bucket ] );
-					( $this->mirror )( self::entry_key( $this->partition, $key ), $data, $this->ttl(), $parts[0] );
+					( $this->mirror )( self::entry_key( $this->partition, $key ), $data, $this->ttl_for( $parts[0] ), $parts[0] );
 				}
 			}
 			return \array_fill( 0, \count( $writes ), true );
@@ -887,7 +932,20 @@ class Stats_Store {
 	 * @return bool True when the set landed.
 	 */
 	private function bucket_set( array $parts, string $bucket, array $data ): bool {
-		return $this->store( $this->key( ...[ ...$parts, $bucket ] ), $data, $this->ttl(), $parts[0] );
+		return $this->store( $this->key( ...[ ...$parts, $bucket ] ), $data, $this->ttl_for( $parts[0] ), $parts[0] );
+	}
+
+	/**
+	 * How long a namespace's value is kept — the role's own TTL.
+	 *
+	 * @param string $ns Namespace, an `NS_*` value.
+	 */
+	private function ttl_for( string $ns ): int {
+		return match ( $this->role_for( $ns ) ) {
+			self::ROLE_URL      => $this->ttl_url_stats(),
+			self::ROLE_URL_FINE => $this->ttl_url_fine(),
+			default             => $this->ttl(),
+		};
 	}
 
 	/**
@@ -913,8 +971,7 @@ class Stats_Store {
 	 * @return bool True when the set landed.
 	 */
 	private function store( string $key, array $data, int $ttl, string $ns ): bool {
-		$role = $ttl === $this->ttl_url_stats() ? self::ROLE_URL : self::ROLE_AGGREGATE;
-		$ok   = (bool) $this->table( $role )?->store( $key, $data );
+		$ok = (bool) $this->table( $this->role_for( $ns ) )?->store( $key, $data );
 		if ( $ok && null !== $this->mirror ) {
 			// The mirror records the full backend key, which is the Table's.
 			( $this->mirror )( self::entry_key( $this->partition, $key ), $data, $ttl, $ns );
@@ -930,6 +987,23 @@ class Stats_Store {
 	 */
 	public static function entry_key( int $partition, string $key ): string {
 		return Table_Node::entry_key( self::namespace_for( $partition ), $key );
+	}
+
+	/**
+	 * Which table a namespace is written through.
+	 *
+	 * Only the fine URL tier differs: it is read at the window's EDGE and
+	 * answered behind that by `urls_h`, so it is the one namespace whose TTL
+	 * is its read window rather than the retention window.
+	 *
+	 * @param string $ns Namespace, an `NS_*` value.
+	 */
+	private function role_for( string $ns ): string {
+		return match ( $ns ) {
+			self::NS_URL  => self::ROLE_URL,
+			self::NS_URLS => self::ROLE_URL_FINE,
+			default       => self::ROLE_AGGREGATE,
+		};
 	}
 
 	/**
@@ -1018,7 +1092,11 @@ class Stats_Store {
 			$is_url = self::ROLE_URL === $role;
 			$table  = Table_Node::table(
 				self::namespace_for( $this->partition ),
-				$is_url ? $this->ttl_url_stats() : $this->ttl()
+				match ( $role ) {
+					self::ROLE_URL      => $this->ttl_url_stats(),
+					self::ROLE_URL_FINE => $this->ttl_url_fine(),
+					default             => $this->ttl(),
+				}
 			);
 			if ( $is_url ) {
 				$table->accumulator( self::URL_ACCUMULATOR_SIZE, self::URL_ACCUMULATOR_BUCKETS );
@@ -1036,6 +1114,11 @@ class Stats_Store {
 	/** Retention window, in seconds, for every namespace but `url`. */
 	public function ttl(): int {
 		return $this->max_lifespan;
+	}
+
+	/** Retention for a FINE `urls` bucket: its read window, never the whole one. */
+	public function ttl_url_fine(): int {
+		return \min( $this->max_lifespan, self::FINE_TTL_SECONDS );
 	}
 
 	/** Retention for the high-volume `url` namespace: a day's worth cut to a 24th, floored at an hour. */

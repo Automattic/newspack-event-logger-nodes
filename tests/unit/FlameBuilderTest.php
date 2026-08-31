@@ -758,15 +758,16 @@ class FlameBuilderTest extends TestCase {
 		$fb         = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
 
-		// The capped tail mixes both kinds, and one synthetic row cannot answer
-		// a filter about them — the worker share would ride silently into a
-		// header that excludes every other worker request.
+		// Each population caps its OWN tail now, in its own shard family, so
+		// the two overflow rows can no longer be produced by one blob — and a
+		// worker share can no longer ride into a header that excludes it.
 		$now    = \time();
 		$bucket = Stats_Store::bucket_key( $now );
 		$seed   = [];
 		$cap    = Flame_Builder_Node::MAX_URLS_PER_SHARD;
-		for ( $i = 0; $i < $cap + 100; $i++ ) {
-			$base = $cap + 500 - $i;
+		// Alternating, so BOTH families overflow their own cap.
+		for ( $i = 0; $i < 2 * ( $cap + 100 ); $i++ ) {
+			$base = 2 * $cap + 1000 - $i;
 			$seed[ \sprintf( 'a%011x', $i ) ] = [
 				'url' => "/u{$i}", 'count' => $base, 'timed_count' => $base,
 				'sum_ms' => 2.0 * $base, 'min_ms' => 2.0, 'max_ms' => 2.0,
@@ -783,13 +784,19 @@ class FlameBuilderTest extends TestCase {
 				$url = "/in-a-{$i}";
 			}
 		}
+		// One of each: a shard is capped when it is WRITTEN, and each family is
+		// written by its own traffic.
 		$this->fill_request( $fb, $this->completed_request( [ 'url' => $url, 'duration_ms' => 2.0, 'timestamp' => $now ] ) );
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => $url, 'duration_ms' => 3.0, 'timestamp' => $now, 'is_worker' => true ] ) );
 		$fb->flush();
 
-		$shard = self::named_url_rows( $this->get_url_shard( $store, $bucket, 'a' ) );
+		$shard  = self::named_url_rows( $this->get_url_shard( $store, $bucket, 'a' ) );
+		$worker = self::named_url_rows( $this->get_url_shard( $store, $bucket, Stats_Store::url_shard( 'a', true ) ) );
 
-		$this->assertTrue( $shard[ Stats_Store::other_key( true ) ]['worker'] );
+		$this->assertArrayNotHasKey( Stats_Store::other_key( true ), $shard, 'the reader family folds reader rows only' );
 		$this->assertFalse( $shard[ Stats_Store::other_key( false ) ]['worker'] );
+		$this->assertTrue( $worker[ Stats_Store::other_key( true ) ]['worker'], 'and the worker family its own' );
+		$this->assertLessThanOrEqual( $cap, \count( $worker ) );
 		// Two overflow rows means two reserved slots, not one — the cap is a
 		// ceiling on the ITEM, and reserving for one row while emitting two
 		// puts it over by exactly the row that was supposed to bound it.
@@ -1050,6 +1057,31 @@ class FlameBuilderTest extends TestCase {
 		$this->assertNotEmpty( $row, 'the row is there' );
 		$this->assertNotContains( $url, $row, 'and it does not carry the name' );
 		$this->assertSame( [ $hash => $url ], $store->get_url_names( [ $hash ] ) );
+	}
+
+	public function test_worker_traffic_is_indexed_apart_from_reader_traffic(): void {
+		// One row per URL merged both kinds behind a `worker` flag, so a URL a
+		// job also visits left the default table taking its READER requests
+		// with it — and every default read paid for rows it then discarded.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+
+		$now    = \time();
+		$bucket = Stats_Store::bucket_key( $now );
+		$url    = '/served-both-ways-8261';
+		$hash   = Log_Manager::url_hash( $url );
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => $url, 'duration_ms' => 8.0, 'timestamp' => $now ] ) );
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => $url, 'duration_ms' => 61.0, 'timestamp' => $now, 'is_worker' => true ] ) );
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => $url, 'duration_ms' => 62.0, 'timestamp' => $now, 'is_worker' => true ] ) );
+		$fb->flush();
+
+		$reader = self::named_url_rows( $this->get_url_shard( $store, $bucket, Stats_Store::url_shard( $hash ) ) );
+		$worker = self::named_url_rows( $this->get_url_shard( $store, $bucket, Stats_Store::url_shard( $hash, true ) ) );
+
+		$this->assertSame( 1, $reader[ $hash ]['count'] ?? -1, 'the reader row counts reader requests only' );
+		$this->assertSame( 2, $worker[ $hash ]['count'] ?? -1, 'and the worker rows are their own index' );
 	}
 
 	public function test_the_capped_tail_folds_into_one_other_row(): void {
@@ -2533,8 +2565,9 @@ class FlameBuilderTest extends TestCase {
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$now        = \gmmktime( 15, 7, 0, 8, 27, 2026 );
 		// Every hour already folded, so the probe is all this flush does.
+		$families = \array_merge( Stats_Store::url_shards(), Stats_Store::url_shards( true ) );
 		foreach ( Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, $now ) )['hours'] as $hour ) {
-			foreach ( Stats_Store::url_shards() as $shard ) {
+			foreach ( $families as $shard ) {
 				$this->seed_url_hour( $store, $hour, $shard, [] );
 			}
 		}

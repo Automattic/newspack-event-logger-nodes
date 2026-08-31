@@ -965,8 +965,13 @@ class Performance_CI_Node extends Service_CI_Node {
 		// those two need every candidate named; every other read names a page.
 		$needs_names = '' !== $term || 'url' === $sort;
 
+		// Worker traffic is its own shard family
+		$shards = $workers
+			? \array_merge( Stats_Store::url_shards(), Stats_Store::url_shards( true ) )
+			: Stats_Store::url_shards();
+
 		$overflow = [];
-		foreach ( Stats_Store::url_shards() as $shard ) {
+		foreach ( $shards as $shard ) {
 			$kept  = [];
 			$index = self::read_index( $shard );
 			foreach ( $needs_names ? self::resolve_urls( $index ) : $index as $raw ) {
@@ -995,9 +1000,6 @@ class Performance_CI_Node extends Service_CI_Node {
 				if ( '' !== $term
 					&& ( $aggregate
 						|| false === \strpos( \strtolower( Core::as_string( $row['url'] ?? '' ) ), $term ) ) ) {
-					continue;
-				}
-				if ( ! $workers && ! empty( $row['worker'] ) ) {
 					continue;
 				}
 				if ( $errors && ! self::has_unclassified_requests( $row ) ) {
@@ -1029,9 +1031,6 @@ class Performance_CI_Node extends Service_CI_Node {
 			}
 			// Not one of `totals.urls`, but its requests are real.
 			if ( '' !== $term ) {
-				continue;
-			}
-			if ( ! $workers && ! empty( $row['worker'] ) ) {
 				continue;
 			}
 			if ( $errors && ! self::has_unclassified_requests( $row ) ) {
@@ -1860,11 +1859,32 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * this row through the whole index made the detail modal pay the URL TABLE's
 	 * fan-out — on the staging hub, 18,432 keys and 54 MB to answer about one row.
 	 *
+	 * The reader population answers first and the worker one only when it has
+	 * nothing: a URL served both ways shows the row the default table showed,
+	 * and a job-only URL still opens.
+	 *
 	 * @param string $hash 12-char URL hash.
 	 * @return array<array-key,mixed>|null The merged row, or null when absent.
 	 */
 	public static function load_row_default( string $hash ): ?array {
-		foreach ( self::read_index( Stats_Store::url_shard( $hash ) ) as $row ) {
+		foreach ( [ false, true ] as $worker ) {
+			$found = self::row_in_shard( $hash, Stats_Store::url_shard( $hash, $worker ) );
+			if ( null !== $found ) {
+				return $found;
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * One URL's merged row from one shard, or null when that shard has none.
+	 *
+	 * @param string $hash  12-char URL hash.
+	 * @param string $shard Shard token from `Stats_Store::url_shard()`.
+	 * @return array<array-key,mixed>|null
+	 */
+	private static function row_in_shard( string $hash, string $shard ): ?array {
+		foreach ( self::read_index( $shard ) as $row ) {
 			if ( Core::as_string( $row['hash'] ?? '' ) === $hash ) {
 				return $row;
 			}
