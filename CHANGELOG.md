@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.81.1] - 2026-08-31
+
+### Fixed
+
+- **Cmd-click on a query, an HTTP span or any traced hook lands on the span you clicked.** `pathToPairId()` built its key from `m` alone while `Flame_Tree` names a node `base: l` and only falls back to `m` — so with `trace_hooks` on, every hook segment differed and the whole path missed, falling through to the base-name key whose lookup is first-wins. Measured on a real trace: 15 of 305 frames were unreachable outright, every one of them a `sql:` or `http:` frame, because their base name carried a colon too and `revealPath()`'s `/: .+$/` strip took it back to `sql`. The table now composes its key exactly as the flame does.
+- **The trace labels wear the muted ink the durations do.** `l` and `caller` say who asked, which is context for the value rather than the value itself, and they were leading the cell in full-strength ink.
+
 ## [0.81.0] - 2026-08-31
 
 ### Changed
