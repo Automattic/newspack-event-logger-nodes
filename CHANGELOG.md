@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.76.0] - 2026-08-31
+
+### Added
+
+- **`trace_hooks` labels every span with who called it, and the flame splits itself.** The entry's `l` is already the flame's aggregation label — `Flame_Tree` and `Flame_Fold` both build a node as `"{base}: {label}"` — which is how gyrobase gets `include: /Macros/Global.html` as its own node. Putting the caller's origin frame there turns one merged `the_content ×25` into one node per caller, with MEASURED durations and no change to the flame code at all. On a BDN editor load that is `the_content: WP_REST_Revisions_Controller->prepare_item_for_response ×11 (25.8s)` beside `the_content: wp_trim_excerpt ×7 (8ms)` — the difference between a hook that looks uniformly slow and one whose cost has an owner.
+
+### Changed
+
+- **The origin frame is taken directly, not through `wp_debug_backtrace_summary()`.** That helper walks and formats the entire stack to build a string of which all but one frame is discarded: **12.7us measured, against 0.9us** for `debug_backtrace( DEBUG_BACKTRACE_IGNORE_ARGS, 8 )`. The depth limit is the lever — `IGNORE_ARGS` saves only 0.8us, because arguments are refcounted rather than copied even when one is a multi-megabyte `the_content`. At 0.9us the label runs on every firing (2,601 `render_block` calls cost 2.3ms), so the flame splits completely instead of only for the firings a budget covered.
+- **`trace_callers` now buys only the deep chains and defaults to 0.** Turn on `trace_hooks` first and read the split; raise `trace_callers` when a split node raises a question the one frame cannot answer. The rules editor's checkbox is the cheap switch, and an edit no longer zeroes a deep budget set through the API.
+
 ## [0.75.0] - 2026-08-31
 
 ### Changed

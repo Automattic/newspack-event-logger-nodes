@@ -231,8 +231,27 @@ class AppCoreTest extends TestCase {
 	// ── hook caller traces ──────────────────────────────────────────────
 
 	/** A rule that traces callers, distinct from every default. */
-	private function tracing_rule( int $traces ): Rule {
-		return new Rule( '9f3c1d7e5b28', '/reports/', Rule::ACTION_LOG, 0, 0.0, [], [], [ 'the_content' ], Rule::HOOKS_INLINE, false, $traces );
+	private function tracing_rule( int $traces, bool $hooks = true ): Rule {
+		return new Rule( '9f3c1d7e5b28', '/reports/', Rule::ACTION_LOG, 0, 0.0, [], [], [ 'the_content' ], Rule::HOOKS_INLINE, false, $hooks, $traces );
+	}
+
+	/**
+	 * The origin frame is the ONE frame worth a label: who called the hook.
+	 *
+	 * `debug_backtrace( IGNORE_ARGS, 8 )` measured 0.9us against 12.7us for
+	 * `wp_debug_backtrace_summary()`, which formats every frame on the stack
+	 * before we throw all but one away. At that price it runs on EVERY firing,
+	 * which is what lets `l` split a flame node completely rather than only for
+	 * the firings a budget covered.
+	 */
+	public function test_the_origin_frame_skips_the_hook_machinery(): void {
+		$ref    = new \ReflectionMethod( Core::class, 'origin_frame' );
+		$origin = $ref->invoke( null );
+
+		$this->assertNotSame( '', $origin, 'a caller is always there' );
+		$this->assertStringNotContainsString( 'App\\Core', $origin, 'never our own frames' );
+		$this->assertStringNotContainsString( 'WP_Hook', $origin, 'never the hook machinery' );
+		$this->assertStringNotContainsString( 'apply_filters', $origin );
 	}
 
 	/** The per-hook trace counters App\Core is holding. */

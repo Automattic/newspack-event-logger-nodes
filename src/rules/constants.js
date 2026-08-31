@@ -6,9 +6,6 @@
  * means the upsert appends. Kept here so both trees share ONE definition.
  */
 
-// Mirrors Rule::TRACE_CALLERS_DEFAULT, what `true` decodes to server-side.
-export const TRACE_CALLERS_DEFAULT = 20;
-
 // A brand-new draft the Add flow seeds RuleEditModal with (empty id = append).
 export const BLANK_RULE = {
 	id: '',
@@ -21,5 +18,6 @@ export const BLANK_RULE = {
 	hooks: [],
 	hooks_in: 'inline',
 	log_queries: false,
+	trace_hooks: false,
 	trace_callers: 0,
 };
