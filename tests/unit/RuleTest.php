@@ -36,7 +36,7 @@ final class RuleTest extends TestCase {
 			'hooks'                       => [ 'init', 'wp' ],
 			'hooks_in'                    => 'inline',
 			'log_queries'                 => true,
-			'trace_callers'               => true,
+			'trace_callers'               => 60,
 		];
 		$rule = Rule::from_array( $data );
 		$this->assertSame( $data, $rule->to_array() );
@@ -54,7 +54,25 @@ final class RuleTest extends TestCase {
 		// rule that says nothing gets none.
 		$this->assertFalse( $rule->log_queries );
 		// A backtrace per hook firing is a diagnostic, not a default.
-		$this->assertFalse( $rule->trace_callers );
+		$this->assertSame( 0, $rule->trace_callers );
+	}
+
+	/**
+	 * `trace_callers` is a COUNT — how many backtraces one hook may spend.
+	 *
+	 * A fixed cap of 20 left 21% of a real record unattributed and cut the
+	 * stack one frame short of the answer, so the number a diagnostic run wants
+	 * is not the number steady state wants. `true` keeps meaning "the default",
+	 * so a rule written before this still reads.
+	 */
+	public function test_trace_callers_is_a_count_and_true_means_the_default(): void {
+		$legacy = Rule::from_array( [ 'id' => 'g7', 'pattern' => '/x', 'action' => 'log', 'trace_callers' => true ] );
+		$tuned  = Rule::from_array( [ 'id' => 'h8', 'pattern' => '/x', 'action' => 'log', 'trace_callers' => 250 ] );
+		$off    = Rule::from_array( [ 'id' => 'i9', 'pattern' => '/x', 'action' => 'log', 'trace_callers' => false ] );
+
+		$this->assertSame( Rule::TRACE_CALLERS_DEFAULT, $legacy->trace_callers );
+		$this->assertSame( 250, $tuned->trace_callers );
+		$this->assertSame( 0, $off->trace_callers );
 	}
 
 	public function test_from_array_defaults_unknown_action_to_skip(): void {

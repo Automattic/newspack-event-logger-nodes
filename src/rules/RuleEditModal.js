@@ -24,6 +24,7 @@ import {
 } from '@wordpress/components';
 
 import HookSelectorModal from '../settings/settings/HookSelectorModal';
+import { TRACE_CALLERS_DEFAULT } from './constants';
 
 /**
  * Every skin class this modal's own stylesheet needs.
@@ -89,8 +90,9 @@ export default function RuleEditModal( {
 		String( rule?.auto_protect_time_threshold ?? 0 )
 	);
 	const [ logQueries, setLogQueries ] = useState( !! rule?.log_queries );
+	// The count, not a flag: a rule tuned past the default keeps its number.
 	const [ traceCallers, setTraceCallers ] = useState(
-		!! rule?.trace_callers
+		Number( rule?.trace_callers ) > 0 ? Number( rule.trace_callers ) : 0
 	);
 	const [ error, setError ] = useState( '' );
 	const [ isHooksOpen, setIsHooksOpen ] = useState( false );
@@ -123,7 +125,7 @@ export default function RuleEditModal( {
 			hooks: isLog ? hooks : [],
 			hooks_in: 'inline',
 			log_queries: isLog && logQueries,
-			trace_callers: isLog && traceCallers,
+			trace_callers: isLog ? traceCallers : 0,
 		};
 		onSave( draft );
 	};
@@ -309,11 +311,15 @@ export default function RuleEditModal( {
 								'newspack-event-logger-nodes'
 							) }
 							help={ __(
-								'Records who called each hook, for the first 20 firings of it. Answers why a hook runs more than once.',
+								'Records who called each hook, for its first few firings. Answers why a hook runs more than once.',
 								'newspack-event-logger-nodes'
 							) }
-							checked={ traceCallers }
-							onChange={ setTraceCallers }
+							checked={ traceCallers > 0 }
+							onChange={ ( on ) =>
+								setTraceCallers(
+									on ? TRACE_CALLERS_DEFAULT : 0
+								)
+							}
 						/>
 					</>
 				) }

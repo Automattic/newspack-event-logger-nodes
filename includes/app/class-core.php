@@ -59,14 +59,17 @@ class Core {
 	 */
 	public const LISTENER_PATTERN = '/ @-?\d+$/';
 
-	/** Backtraces captured per hook per request; a diagnostic, not a log. */
-	private const CALLER_TRACE_LIMIT = 20;
+	/**
+	 * Frames kept from a caller trace, NEAREST first.
+	 *
+	 * Eight cut a real stack one frame short of `rest_preload_api_request` —
+	 * the frame that explained a 41s request — so the answer had to be read out
+	 * of core instead. The byte cap below is the real bound.
+	 */
+	private const CALLER_FRAMES = 20;
 
-	/** Frames kept from a caller trace, NEAREST first; the rest is bootstrap. */
-	private const CALLER_FRAMES = 8;
-
-	/** Caller summary kept on a hook's start entry. */
-	private const CALLER_PREVIEW_MAX = 512;
+	/** Caller summary kept on a hook's start entry; MAX_DATA_SIZE is 3840. */
+	private const CALLER_PREVIEW_MAX = 1024;
 
 	/** SQL kept on a query span's entry; MAX_DATA_SIZE is 3840 for the lot. */
 	private const SQL_PREVIEW_MAX = 512;
@@ -95,8 +98,8 @@ class Core {
 	/** @var array<string,int> Caller traces already spent, by hook name. */
 	private array $traced = [];
 
-	/** @var bool Whether the governing rule asked for caller traces. */
-	private bool $trace_callers = false;
+	/** @var int Backtraces the governing rule allows per hook; 0 is off. */
+	private int $trace_callers = 0;
 
 	/**
 	 * Read the start priority from config, bind the current scope, and listen
@@ -319,7 +322,8 @@ class Core {
 	 * hook that fires sixteen times reads as sixteen identical mysteries. The
 	 * summary names the NEAREST frames instead, on the entry's `caller` field — not
 	 * `c`, which already means COUNT everywhere else in this schema. It is
-	 * capped per hook because the same
+	 * capped per hook — by the RULE's own number, because what a diagnostic run
+	 * wants is not what steady state wants — because the same
 	 * question on `render_block` would be 2,601 backtraces, and it ignores this
 	 * class so the top frame is the caller rather than the instrumentation.
 	 *
@@ -327,11 +331,8 @@ class Core {
 	 * @return string The caller summary, or '' when not tracing.
 	 */
 	private function caller_of( string $hook_name ): string {
-		if ( ! $this->trace_callers ) {
-			return '';
-		}
 		$spent = $this->traced[ $hook_name ] ?? 0;
-		if ( $spent >= self::CALLER_TRACE_LIMIT ) {
+		if ( $spent >= $this->trace_callers ) {
 			return '';
 		}
 		$this->traced[ $hook_name ] = $spent + 1;
