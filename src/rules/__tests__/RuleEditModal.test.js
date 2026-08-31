@@ -287,6 +287,14 @@ describe( 'RuleEditModal — log rule fields', () => {
 		expect( onSave.mock.calls[ 0 ][ 0 ].trace_callers ).toBe( 250 );
 	} );
 
+	test( 'editing the caller-trace depth is reflected in the saved draft', () => {
+		// 7 is distinct from 0 (off) and from Rule::TRACE_CALLERS_DEFAULT (20).
+		mount( { ...LOG_RULE, trace_hooks: true } );
+		setInput( inDialog( 'input[name="rule-trace-callers"]' ), '7' );
+		click( saveButton() );
+		expect( onSave.mock.calls[ 0 ][ 0 ].trace_callers ).toBe( 7 );
+	} );
+
 	test( 'a skip rule carries no query-span opt-in', () => {
 		mount( { ...LOG_RULE, action: 'skip', log_queries: true } );
 		click( saveButton() );

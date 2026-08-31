@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.77.0] - 2026-08-31
+
+### Added
+
+- **The caller trace depth is now a field in the rules editor.** `trace_callers` shipped in 0.76.0 as an integer the editor preserved but never showed, so the only way to set it was `rules_upsert` over the API — and a rule carrying a leftover budget of 20 read as untraced in the UI while still paying for twenty backtraces per hook. It is a number input beside the two auto-tune thresholds it matches in shape, `0 = off`, so both tiers of decision 24 are reachable from the same modal.
+
 ## [0.76.0] - 2026-08-31
 
 ### Added
