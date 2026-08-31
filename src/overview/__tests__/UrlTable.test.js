@@ -166,8 +166,13 @@ describe( 'UrlTable', () => {
 		expect( other.getAttribute( 'role' ) ).not.toBe( 'button' );
 		expect( other.hasAttribute( 'data-ask' ) ).toBe( false );
 		// It carries no `url` — the writer stores none, because a label
-		// authored there is untranslated and searchable. The client names it.
-		expect( other.textContent ).toContain( 'other URLs' );
+		// authored there is untranslated and searchable. The client names it,
+		// and names it for the REQUESTS the row counts: the Reqs column holds
+		// their traffic, not how many URLs folded, which nothing stores.
+		expect( other.textContent ).toContain(
+			'traffic from URLs beyond the per-shard cap'
+		);
+		expect( other.textContent ).not.toContain( 'other URLs beyond' );
 		other.dispatchEvent(
 			new window.MouseEvent( 'click', { bubbles: true } )
 		);

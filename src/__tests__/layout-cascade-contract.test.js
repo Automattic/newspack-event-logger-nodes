@@ -331,20 +331,6 @@ describe( 'Event Logger layout cascade', () => {
 		} );
 	} );
 
-	it( 'bounds the height of one log-entry message', () => {
-		expect(
-			declarations(
-				findRule(
-					local( 'overview/styles/tables.scss' ),
-					'.event-logger-log-entries .log-entries-message'
-				)
-			)
-		).toMatchObject( {
-			'-webkit-line-clamp': '6',
-			overflow: 'hidden',
-		} );
-	} );
-
 	it( 'keeps the backtrace count on the checkbox row', () => {
 		expect(
 			declarations(

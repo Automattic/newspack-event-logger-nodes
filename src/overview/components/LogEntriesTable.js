@@ -876,20 +876,6 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 	};
 
 	/**
-	 * Wrap message text in the row's height clamp.
-	 *
-	 * `hook_start` records up to 1024 bytes of the filter value, which for
-	 * `the_content` is sixty lines of markup owning the whole row. Stats render
-	 * outside the clamp so clipping the value never clips the duration.
-	 *
-	 * @param {import('react').ReactNode} children Message content.
-	 * @return {import('react').ReactElement} Clamped message.
-	 */
-	const renderClamped = ( children ) => (
-		<div className="log-entries-message">{ children }</div>
-	);
-
-	/**
 	 * Render the trace labels above a span's value.
 	 *
 	 * @param {Object} entry Log entry object.
@@ -943,16 +929,16 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 		return (
 			<>
 				{ renderTraceLines( entry ) }
-				{ hasContent &&
-					renderClamped(
-						<>
-							{ startMsg }
-							{ startMsg && completeMsg && ' ' }
-							{ completeMsg }
-						</>
-					) }
-				{ stats }
-				{ childBadge }
+				{ startMsg }
+				{ startMsg && completeMsg && ' ' }
+				{ completeMsg }
+				{ ( stats || childBadge ) && (
+					<>
+						{ hasContent && <br /> }
+						{ stats }
+						{ childBadge }
+					</>
+				) }
 			</>
 		);
 	};
@@ -973,7 +959,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 		return (
 			<>
 				{ renderTraceLines( entry ) }
-				{ msg && renderClamped( msg ) }
+				{ msg }
 				{ renderStats( entry ) }
 			</>
 		);

@@ -61,7 +61,7 @@ const COLUMNS = [
 			<code>
 				{ url.aggregate
 					? __(
-							'other URLs beyond the per-bucket cap',
+							'traffic from URLs beyond the per-shard cap',
 							'newspack-event-logger-nodes'
 					  )
 					: url.url }
