@@ -450,6 +450,21 @@ if ( ! function_exists( 'add_query_arg' ) ) {
 	}
 }
 
+if ( ! function_exists( 'wp_debug_backtrace_summary' ) ) {
+	/**
+	 * Core's caller summary. The real one walks debug_backtrace(); the tests
+	 * only need a deterministic string of the shape App\Core stores.
+	 *
+	 * @param string|null $ignore_class Class whose frames are skipped.
+	 * @param int         $skip_frames  Frames to drop from the top.
+	 * @param bool        $pretty       Whether to join with commas.
+	 * @return string
+	 */
+	function wp_debug_backtrace_summary( ?string $ignore_class = null, int $skip_frames = 0, bool $pretty = true ): string {
+		return "require('wp-admin/post.php'), do_action('edit_form_after_title'), apply_filters('the_content')";
+	}
+}
+
 if ( ! function_exists( 'wp_parse_url' ) ) {
 	function wp_parse_url( string $url, int $component = -1 ): mixed {
 		return \parse_url( $url, $component );

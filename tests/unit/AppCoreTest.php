@@ -228,6 +228,51 @@ class AppCoreTest extends TestCase {
 		$this->assertFalse( Log_Manager::has_instance() );
 	}
 
+	// ── hook caller traces ──────────────────────────────────────────────
+
+	/** A rule that traces callers, distinct from every default. */
+	private function tracing_rule( bool $on ): Rule {
+		return new Rule( '9f3c1d7e5b28', '/reports/', Rule::ACTION_LOG, 0, 0.0, [], [], [ 'the_content' ], Rule::HOOKS_INLINE, false, $on );
+	}
+
+	/** The per-hook trace counters App\Core is holding. */
+	private function traced( Core $core ): array {
+		$prop = new \ReflectionProperty( Core::class, 'traced' );
+		$prop->setAccessible( true );
+		return $prop->getValue( $core );
+	}
+
+	/**
+	 * A hook that fires SIXTEEN times is the question a record cannot answer:
+	 * the span says how long each pass took and nothing about who asked for it.
+	 * `wp_debug_backtrace_summary()` at the open names the caller — but a
+	 * backtrace per firing on a hook like `render_block` (2,601 times) is not
+	 * something to pay for, so it stops after CALLER_TRACE_LIMIT.
+	 */
+	public function test_caller_traces_stop_at_the_limit(): void {
+		$this->set_governing_rule( $this->tracing_rule( true ) );
+		$core  = new Core();
+		$limit = ( new \ReflectionClassConstant( Core::class, 'CALLER_TRACE_LIMIT' ) )->getValue();
+
+		$GLOBALS['_wp_test_current_filter'] = 'the_content';
+		for ( $i = 0; $i < $limit + 5; $i++ ) {
+			$core->hook_start( 'body' );
+		}
+
+		$this->assertSame( [ 'the_content' => $limit ], $this->traced( $core ) );
+	}
+
+	/** A rule that does not ask pays for no backtraces at all. */
+	public function test_a_rule_that_does_not_opt_in_traces_no_callers(): void {
+		$this->set_governing_rule( $this->tracing_rule( false ) );
+		$core = new Core();
+
+		$GLOBALS['_wp_test_current_filter'] = 'the_content';
+		$core->hook_start( 'body' );
+
+		$this->assertSame( [], $this->traced( $core ) );
+	}
+
 	// ── query spans ─────────────────────────────────────────────────────
 
 	/** A rule that opts in, distinct from every default. */
