@@ -35,6 +35,7 @@ namespace Newspack_Event_Logger_Nodes;
 use Newspack_Nodes\Cache_Backend;
 use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Core;
+use Newspack_Nodes\LRU_Cache;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Node;
 
@@ -55,6 +56,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
  *   dim_by_server: array<string,array<string,Dim_Values>>,
  *   url_dim: array<array-key,array<string,Dim_Values>>,
  *   url_stats: array<string,mixed>,
+ *   url_names: array<string,string>,
  *   cat: Cat_Values,
  *   cat_by_server: array<string,Cat_Values>,
  *   cat_by_url: array<array-key,Cat_Values>,
@@ -184,8 +186,14 @@ class Flame_Builder_Node extends Node {
 	 * Sixteen shards, so this admits 16x the URLs per bucket at a sixteenth the
 	 * blob — a backstop against an oversized item, not a policy. The tail folds
 	 * rather than dropping, so reaching it costs detail, never totals.
+	 *
+	 * Measured against a 1MB `item_size_max` with rows of the widest shape the
+	 * schema writes — a four-server split, at 699 bytes once the name moved to
+	 * `NS_URLMAP`: the client stores 4,000 rows (2.80MB raw) and REFUSES 5,000
+	 * (3.49MB), losing the whole shard. 2,000 leaves room for a fleet twice
+	 * that wide, and sixteen shards make the bucket's ceiling 32,000 URLs.
 	 */
-	private const MAX_URLS_PER_SHARD = 500;
+	public const MAX_URLS_PER_SHARD = 2000;
 
 	/**
 	 * Keys per read/write batch in a flush. Bounds the held set: one chunk is
@@ -250,6 +258,18 @@ class Flame_Builder_Node extends Node {
 	 * to escape.
 	 */
 	private const REPROBE_EVERY_FLUSHES = 60;
+
+	/**
+	 * Hashes whose name is already in the URL name table, against the time it
+	 * was written. A name never changes, so re-storing it every flush would
+	 * spend the saving the table exists for; the held set is what makes the
+	 * write once-per-URL instead. Eviction only costs a re-write.
+	 */
+	private const NAMED_URL_BUCKET_SIZE = 2000;
+	private const NAMED_URL_BUCKETS     = 4;
+
+	/** @var LRU_Cache Hash => Unix time its name was last stored. */
+	private LRU_Cache $named_urls;
 
 	/** Flushes since the memo was last emptied; see REPROBE_EVERY_FLUSHES. */
 	private int $folds_since_reprobe = 0;
@@ -326,6 +346,7 @@ class Flame_Builder_Node extends Node {
 	 */
 	public function __construct() {
 		$this->last_flush_time = Core::$now ?: Core::right_now();
+		$this->named_urls      = new LRU_Cache( self::NAMED_URL_BUCKET_SIZE, self::NAMED_URL_BUCKETS );
 
 		// Owned auto-tuner sibling (patron-linked; hidden from the canvas).
 		$auto_tuner = new Auto_Tuner_Node();
@@ -673,15 +694,17 @@ class Flame_Builder_Node extends Node {
 			// @longform array_replace, NOT array_merge: the row is positional,
 			// and merge RENUMBERS integer keys rather than overwriting them.
 			$acc['url_stats'][ $url_hash ] = \array_replace(
-				self::empty_url_row( $url, PHP_INT_MAX ),
+				self::empty_url_row( PHP_INT_MAX ),
 				$row
 			);
 		}
+		// The name goes to the URL name table, once, not into every row.
+		$acc['url_names'][ $url_hash ] = $url;
 		/**
 		 * Positional; see `Stats_Store::ROW_*`, which orders the summed eight
 		 * first so one field map serves the row and its split alike.
 		 *
-		 * @var array{0: int, 1: int, 2: float|int, 3: float|int, 4: int, 5: int, 6: int, 7: int, 8: string, 9: float|int, 10: float|int, 11: float|int, 12: int, 13: bool, 14: array<string,array<int,float|int>>} $us
+		 * @var array{0: int, 1: int, 2: float|int, 3: float|int, 4: int, 5: int, 6: int, 7: int, 8: float|int, 9: float|int, 10: float|int, 11: int, 12: bool, 13: array<string,array<int,float|int>>} $us
 		 */
 		$us              = &$acc['url_stats'][ $url_hash ];
 		$peak_raw        = $request['peak_mb'] ?? 0;
@@ -1220,6 +1243,7 @@ class Flame_Builder_Node extends Node {
 		if ( null === $stats_store ) {
 			return;
 		}
+		$this->persist_url_names( $stats_store );
 		$intents = [];
 		foreach ( $this->pending as $bucket => $acc ) {
 			if ( ! empty( $acc['hourly'] ) ) {
@@ -1274,6 +1298,34 @@ class Flame_Builder_Node extends Node {
 			}
 		}
 		$this->flush_writes( $stats_store, $intents );
+	}
+
+	/**
+	 * Store the names of URLs this flush saw, once each.
+	 *
+	 * A stored row carries the hash alone, so the name table is what a reader
+	 * resolves a displayed page through. Held hashes are skipped until half the
+	 * retention window has passed, which re-writes a name that is still in use
+	 * well before its own TTL retires it.
+	 *
+	 * @param Stats_Store $stats_store The wired store.
+	 * @return void
+	 */
+	private function persist_url_names( Stats_Store $stats_store ): void {
+		$now     = $this->now_ts();
+		$refresh = \max( 1, (int) ( $stats_store->max_lifespan() / 2 ) );
+		$due     = [];
+		foreach ( $this->pending as $acc ) {
+			foreach ( $acc['url_names'] as $hash => $url ) {
+				$written = $this->named_urls->get( $hash );
+				if ( null !== $written && $now - Core::num_int( $written ) < $refresh ) {
+					continue;
+				}
+				$due[ $hash ] = $url;
+				$this->named_urls->set( $hash, $now );
+			}
+		}
+		$stats_store->set_url_names( $due );
 	}
 
 	/**
@@ -1395,7 +1447,7 @@ class Flame_Builder_Node extends Node {
 				$hash  = (string) $key;
 				$stats = Core::arr( $stats_raw );
 				$into = Core::arr( $rows[ $hash ] ?? null )
-					?: self::empty_url_row( Core::str( $stats[ Stats_Store::ROW_URL ] ?? '' ) );
+					?: self::empty_url_row();
 				$rows[ $hash ] = Stats_Store::merge_url_row( $into, $stats );
 			}
 		}
@@ -1426,7 +1478,7 @@ class Flame_Builder_Node extends Node {
 				foreach ( $rows as $hash => $stats_raw ) {
 					$stats = Core::arr( $stats_raw );
 					$row   = Core::arr( $existing[ $hash ] ?? null )
-						?: self::empty_url_row( Core::str( $stats[ Stats_Store::ROW_URL ] ?? '' ) );
+						?: self::empty_url_row();
 
 					$existing[ $hash ] = Stats_Store::merge_url_row( $row, $stats );
 				}
@@ -2440,11 +2492,10 @@ class Flame_Builder_Node extends Node {
 	 * made every new field a four-place edit, and one omission a silent
 	 * undefined index on a per-request path.
 	 *
-	 * @param string    $url    The row's URL.
 	 * @param float|int $min_ms Starting minimum; `PHP_INT_MAX` where `min()` folds it.
 	 * @return array<int,mixed>
 	 */
-	private static function empty_url_row( string $url, float|int $min_ms = 0 ): array {
+	private static function empty_url_row( float|int $min_ms = 0 ): array {
 		return [
 			Stats_Store::ROW_COUNT       => 0,
 			Stats_Store::ROW_TIMED_COUNT => 0,
@@ -2454,7 +2505,6 @@ class Flame_Builder_Node extends Node {
 			Stats_Store::ROW_COUNT_3XX   => 0,
 			Stats_Store::ROW_COUNT_4XX   => 0,
 			Stats_Store::ROW_COUNT_5XX   => 0,
-			Stats_Store::ROW_URL         => $url,
 			Stats_Store::ROW_MIN_MS      => $min_ms,
 			Stats_Store::ROW_MAX_MS      => 0,
 			Stats_Store::ROW_MAX_PEAK_MB => 0,
@@ -2549,6 +2599,7 @@ class Flame_Builder_Node extends Node {
 			'dim_by_server'         => [],
 			'url_dim'               => [],
 			'url_stats'             => [],
+			'url_names'             => [],
 			'cat'                   => [],
 			'cat_by_server'         => [],
 			'cat_by_url'            => [],

@@ -724,12 +724,13 @@ class FlameBuilderTest extends TestCase {
 			Stats_Store::OTHER_KEY        => [ 'count' => 9, 'timed_count' => 9, 'sum_ms' => 18.0, 'worker' => false, 'last_seen' => $now ],
 			Stats_Store::OTHER_WORKER_KEY => [ 'count' => 7, 'timed_count' => 7, 'sum_ms' => 14.0, 'worker' => true, 'last_seen' => $now ],
 		];
-		// 499 seeded plus the one this flush adds lands EXACTLY on the cap.
-		for ( $i = 0; $i < 499; $i++ ) {
+		// One under the cap, so the row this flush adds lands EXACTLY on it.
+		$cap = Flame_Builder_Node::MAX_URLS_PER_SHARD;
+		for ( $i = 0; $i < $cap - 1; $i++ ) {
 			$seed[ \sprintf( 'a%011x', $i ) ] = [
-				'url' => "/cap{$i}", 'count' => 1000 - $i, 'timed_count' => 1000 - $i,
-				'sum_ms' => 2.0 * ( 1000 - $i ), 'min_ms' => 2.0, 'max_ms' => 2.0,
-				'sum_peak_mb' => 0, 'max_peak_mb' => 0, 'count_2xx' => 1000 - $i,
+				'url' => "/cap{$i}", 'count' => $cap + 500 - $i, 'timed_count' => $cap + 500 - $i,
+				'sum_ms' => 2.0 * ( $cap + 500 - $i ), 'min_ms' => 2.0, 'max_ms' => 2.0,
+				'sum_peak_mb' => 0, 'max_peak_mb' => 0, 'count_2xx' => $cap + 500 - $i,
 				'count_3xx' => 0, 'count_4xx' => 0, 'count_5xx' => 0,
 				'worker' => false, 'last_seen' => $now,
 			];
@@ -748,7 +749,7 @@ class FlameBuilderTest extends TestCase {
 		$this->fill_request( $fb, $this->completed_request( [ 'url' => $url, 'duration_ms' => 2.0, 'timestamp' => $now ] ) );
 		$fb->flush();
 
-		$this->assertLessThanOrEqual( 500, \count( $this->get_url_shard( $store, $bucket, 'a' ) ) );
+		$this->assertLessThanOrEqual( $cap, \count( $this->get_url_shard( $store, $bucket, 'a' ) ) );
 	}
 
 	public function test_the_overflow_row_keeps_worker_traffic_separate(): void {
@@ -763,11 +764,13 @@ class FlameBuilderTest extends TestCase {
 		$now    = \time();
 		$bucket = Stats_Store::bucket_key( $now );
 		$seed   = [];
-		for ( $i = 0; $i < 600; $i++ ) {
+		$cap    = Flame_Builder_Node::MAX_URLS_PER_SHARD;
+		for ( $i = 0; $i < $cap + 100; $i++ ) {
+			$base = $cap + 500 - $i;
 			$seed[ \sprintf( 'a%011x', $i ) ] = [
-				'url' => "/u{$i}", 'count' => 1000 - $i, 'timed_count' => 1000 - $i,
-				'sum_ms' => 2.0 * ( 1000 - $i ), 'min_ms' => 2.0, 'max_ms' => 2.0,
-				'sum_peak_mb' => 0, 'max_peak_mb' => 0, 'count_2xx' => 1000 - $i,
+				'url' => "/u{$i}", 'count' => $base, 'timed_count' => $base,
+				'sum_ms' => 2.0 * $base, 'min_ms' => 2.0, 'max_ms' => 2.0,
+				'sum_peak_mb' => 0, 'max_peak_mb' => 0, 'count_2xx' => $base,
 				'count_3xx' => 0, 'count_4xx' => 0, 'count_5xx' => 0,
 				'worker' => 0 === $i % 2, 'last_seen' => $now,
 			];
@@ -790,7 +793,7 @@ class FlameBuilderTest extends TestCase {
 		// Two overflow rows means two reserved slots, not one — the cap is a
 		// ceiling on the ITEM, and reserving for one row while emitting two
 		// puts it over by exactly the row that was supposed to bound it.
-		$this->assertLessThanOrEqual( 500, \count( $shard ) );
+		$this->assertLessThanOrEqual( $cap, \count( $shard ) );
 	}
 
 	public function test_a_url_row_records_whether_its_traffic_was_a_worker(): void {
@@ -1027,6 +1030,28 @@ class FlameBuilderTest extends TestCase {
 		);
 	}
 
+	public function test_a_stored_url_row_carries_the_hash_not_the_name(): void {
+		// The URL string is 101 of a minimal row's 166 bytes, and the row was
+		// written again in every bucket the URL appeared in: 288 copies of one
+		// name per retention window. The name belongs in one place.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+
+		$now    = \time();
+		$bucket = Stats_Store::bucket_key( $now );
+		$url    = 'https://bend.example/2026/08/31/a-headline-worth-101-bytes/';
+		$hash   = Log_Manager::url_hash( $url );
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => $url, 'duration_ms' => 2.0, 'timestamp' => $now ] ) );
+		$fb->flush();
+
+		$row = Core::arr( $this->get_url_shard( $store, $bucket, Stats_Store::url_shard( $hash ) )[ $hash ] ?? null );
+		$this->assertNotEmpty( $row, 'the row is there' );
+		$this->assertNotContains( $url, $row, 'and it does not carry the name' );
+		$this->assertSame( [ $hash => $url ], $store->get_url_names( [ $hash ] ) );
+	}
+
 	public function test_the_capped_tail_folds_into_one_other_row(): void {
 		Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
@@ -1040,15 +1065,17 @@ class FlameBuilderTest extends TestCase {
 		$now    = \time();
 		$bucket = Stats_Store::bucket_key( $now );
 		$seed   = [];
-		for ( $i = 0; $i < 600; $i++ ) {
+		$cap    = Flame_Builder_Node::MAX_URLS_PER_SHARD;
+		for ( $i = 0; $i < $cap + 100; $i++ ) {
 			// All in one shard, which is where the cap now applies.
+			$base = $cap + 500 - $i;
 			$seed[ \sprintf( 'a%011x', $i ) ] = [
 				'url'         => "/u{$i}",
 				// Descending, so the last 101 are the ones that fall off.
-				'count'       => 1000 - $i,
-				'timed_count' => 1000 - $i,
-				'sum_ms'      => 2.0 * ( 1000 - $i ),
-				'count_2xx'   => 1000 - $i,
+				'count'       => $base,
+				'timed_count' => $base,
+				'sum_ms'      => 2.0 * $base,
+				'count_2xx'   => $base,
 				'count_3xx'   => 0,
 				'count_4xx'   => 0,
 				'count_5xx'   => 0,
@@ -1057,7 +1084,7 @@ class FlameBuilderTest extends TestCase {
 				'sum_peak_mb' => 0,
 				'max_peak_mb' => 0,
 				'last_seen'   => $now,
-				'srv'         => [ 'alpha.example' => [ 'count' => 1000 - $i, 'timed_count' => 1000 - $i, 'sum_ms' => 2.0 * ( 1000 - $i ), 'count_2xx' => 1000 - $i ] ],
+				'srv'         => [ 'alpha.example' => [ 'count' => $base, 'timed_count' => $base, 'sum_ms' => 2.0 * $base, 'count_2xx' => $base ] ],
 			];
 		}
 		$this->set_url_bucket( $store, $bucket, $seed );
@@ -1076,13 +1103,14 @@ class FlameBuilderTest extends TestCase {
 		$other = $shard[ Stats_Store::OTHER_KEY ] ?? null;
 
 		$this->assertNotNull( $other, 'the tail folds into one row' );
-		// 498 kept plus both overflow rows: a slot is reserved for each the fold
-		// can emit, whether or not this tail fills them.
-		$this->assertLessThanOrEqual( 500, \count( $shard ) );
+		// Two under the cap plus both overflow rows: a slot is reserved for each
+		// the fold can emit, whether or not this tail fills them.
+		$this->assertLessThanOrEqual( $cap, \count( $shard ) );
 		$this->assertArrayHasKey( Stats_Store::OTHER_KEY, $shard );
-		// 601 rows in the shard (600 seeded plus the one just written, count 1),
-		// keep 498 — a slot reserved for each overflow row the fold can emit —
-		// so the 103 smallest fold: counts 502 down to 401, and the 1.
+		// cap+101 rows in the shard (cap+100 seeded plus the one just written,
+		// count 1), keeping cap-2 — a slot reserved for each overflow row the
+		// fold can emit — folds the 103 smallest: counts 502 down to 401, and
+		// the 1. Seeding from cap+500 holds those two numbers still.
 		$expected = \array_sum( \range( 401, 502 ) ) + 1;
 		$this->assertSame( $expected, $other['count'] );
 		// The tail was all one host, so the folded split collapses — which says
@@ -2189,7 +2217,9 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( 10, $rolled[ $hash ]['count'], 'the hour sums its buckets' );
 		$this->assertSame( 130.0, (float) $rolled[ $hash ]['sum_ms'] );
 		$this->assertSame( 22.0, (float) $rolled[ $hash ]['max_ms'], 'an extreme is a max, not a sum' );
-		$this->assertSame( '/wombat-4471', $rolled[ $hash ]['url'] );
+		// The name is not in the row: the fold carries statistics, and the URL
+		// name table carries the one copy of what those statistics are about.
+		$this->assertSame( [ $hash => '/wombat-4471' ], $store->get_url_names( [ $hash ] ) );
 	}
 
 	/**
@@ -2346,7 +2376,8 @@ class FlameBuilderTest extends TestCase {
 		$bucket     = Stats_Store::bucket_key( $now );
 
 		$seed = [];
-		for ( $i = 0; $i < 520; $i++ ) {
+		$cap  = Flame_Builder_Node::MAX_URLS_PER_SHARD;
+		for ( $i = 0; $i < $cap + 20; $i++ ) {
 			$seed[ \sprintf( 'a%011x', $i ) ] = [
 				'url' => "/u{$i}", 'count' => 7 + $i, 'timed_count' => 7 + $i,
 				'sum_ms' => 2.0 * ( 7 + $i ), 'last_seen' => $now,
@@ -2459,13 +2490,15 @@ class FlameBuilderTest extends TestCase {
 		Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$now        = \gmmktime( 15, 7, 0, 8, 27, 2026 );
-		// Six buckets of 120 distinct URLs each, all in one shard: 720 rows
-		// into an hour whose ceiling is 500.
+		// Six buckets of distinct URLs, all in one shard, summing to half again
+		// the ceiling the folded hour has to apply.
+		$cap   = Flame_Builder_Node::MAX_URLS_PER_SHARD;
+		$per   = (int) \ceil( $cap / 4 );
 		$total = 0;
 		foreach ( \array_slice( Stats_Store::buckets_in_hour( '2026-08-27-13' ), 0, 6 ) as $b => $bucket ) {
 			$rows = [];
-			for ( $i = 0; $i < 120; $i++ ) {
-				$rows[ \sprintf( 'a%011x', $b * 1000 + $i ) ] = [
+			for ( $i = 0; $i < $per; $i++ ) {
+				$rows[ \sprintf( 'a%011x', $b * ( $per + 1 ) + $i ) ] = [
 					'url'   => "/row-{$b}-{$i}",
 					'count' => 3,
 				];
@@ -2479,7 +2512,7 @@ class FlameBuilderTest extends TestCase {
 		$fb->roll_up_hours( $now );
 
 		$hour = self::named_url_rows( $store->url_hour_sources( [ '2026-08-27-13' ], 'a' )[0][1] );
-		$this->assertLessThanOrEqual( 500, \count( $hour ), 'the hour takes the shard cap' );
+		$this->assertLessThanOrEqual( $cap, \count( $hour ), 'the hour takes the shard cap' );
 		$this->assertArrayHasKey( Stats_Store::OTHER_KEY, $hour, 'the tail folds rather than dropping' );
 		$this->assertSame(
 			$total,
@@ -3809,7 +3842,11 @@ class FlameBuilderTest extends TestCase {
 		$this->assertFalse( Core::$memd->get( $key ), 'the shard holding it is evicted' );
 		$this->assertNotSame( [], $this->get_hourly_bucket( $store, $bucket ), 'memcache still warm by the old sentinel' );
 
-		$this->assertSame( [ $bucket => $rows ], $this->url_rows_by_bucket( $store, [ $bucket ] ) );
+		// The row alone: the name lives on its own key in the name table.
+		$this->assertSame(
+			[ $bucket => [ 'ab12cd34ef56' => [ 'count' => 639 ] ] ],
+			$this->url_rows_by_bucket( $store, [ $bucket ] )
+		);
 	}
 
 	/**
@@ -4447,7 +4484,7 @@ class FlameBuilderTest extends TestCase {
 					// A checkpoint holds the STORED shape, which is positional.
 					'url_stats' => [
 						$hash => self::positional_url_row(
-							[ 'url' => $url, 'count' => 6, 'timed_count' => 6, 'sum_ms' => 300.0 ]
+							[ 'count' => 6, 'timed_count' => 6, 'sum_ms' => 300.0 ]
 						),
 					],
 				],

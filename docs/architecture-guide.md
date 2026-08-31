@@ -463,7 +463,7 @@ class Flame_Builder_Node extends Node {
         'ja4'     => 'ja4_hash',
     ];
     private const AGGREGATE_EXPIRY_SEC = 3600;  // unseen aggregate children expire
-    private const MAX_URLS_PER_SHARD   = 500;   // top-N per URL-index SHARD (x16)
+    public  const MAX_URLS_PER_SHARD   = 2000;  // top-N per URL-index SHARD (x16)
 }
 ```
 
@@ -576,7 +576,8 @@ The retention window comes from the substrate's `min_lifetime` (default 43200), 
 | `hourly` | 5-min buckets, keyed per bucket, count + sum_ms + sum_peak_mb | `min_lifetime` (default 43200) |
 | `lb` | 5-min global leaderboard buckets, sums-not-means | `min_lifetime` |
 | `lb_s` | per-server leaderboard, keyed by server | `min_lifetime` |
-| `urls` | 5-min URL index, SHARDED `urls:{shard}:{bucket}` by the first hex digit of the url_hash, keyed by url_hash -> a POSITIONAL row indexed by `Stats_Store::ROW_*`. `serialize()` writes every key NAME into every row, so the shape `Message` uses is the shape this takes: measured 672 -> 398 B/row. The eight fields that ADD occupy indexes 0-7 in `URL_SRV_SUMS` order, so one map describes the row's summed half AND its per-server `srv` split, whose values take the same indexes. `ROW_FIELD_NAMES` is the one index-to-name map; `Performance_CI_Node::fold_index_row()` is the one place a stored row becomes the named display row. A split of ONE server whose count is the row's own stores the host name against `null` (`Stats_Store::collapse_sole_server()`), the row restated in ~33 bytes rather than ~112; readers expand it before merging | `min_lifetime` |
+| `urls` | 5-min URL index, SHARDED `urls:{shard}:{bucket}` by the first hex digit of the url_hash, keyed by url_hash -> a POSITIONAL row indexed by `Stats_Store::ROW_*`. `serialize()` writes every key NAME into every row, so the shape `Message` uses is the shape this takes: measured 672 -> 398 B/row. The eight fields that ADD occupy indexes 0-7 in `URL_SRV_SUMS` order, so one map describes the row's summed half AND its per-server `srv` split, whose values take the same indexes. `ROW_FIELD_NAMES` is the one index-to-name map; `Performance_CI_Node::fold_index_row()` is the one place a stored row becomes the named display row. The row carries NO URL string — the name lives once in `urlmap` and readers resolve only the hashes they show. A split of ONE server whose count is the row's own stores the host name against `null` (`Stats_Store::collapse_sole_server()`), the row restated in ~33 bytes rather than ~112; readers expand it before merging | `min_lifetime` |
+| `urlmap` | URL name table, `urlmap:{hash}` -> `[ url ]`. The name is 101 of a 166-byte minimal row and was written again in every bucket the URL appeared in, so a retention window held up to 288 copies of one name; here it is written once per URL and re-written only when half its own TTL has passed. `Performance_CI_Node::resolve_urls()` reads it for the rows a response shows — a page, or every candidate when a search term or a url-sort needs the names to answer at all | `min_lifetime` |
 | `url` | per-URL flame/profile blob | `max(3600, min_lifetime/24)` |
 | `dim` | dimensional time series, keyed per bucket | `min_lifetime` |
 | `url_dim` | per-URL dimensional series, keyed per bucket, every dimension in the value | `min_lifetime` |
