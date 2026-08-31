@@ -36,6 +36,7 @@ final class RuleTest extends TestCase {
 			'hooks'                       => [ 'init', 'wp' ],
 			'hooks_in'                    => 'inline',
 			'log_queries'                 => true,
+			'log_http'                    => false,
 			'trace_hooks'                 => true,
 			'trace_callers'               => 60,
 		];
@@ -54,6 +55,11 @@ final class RuleTest extends TestCase {
 		// Query spans need SAVEQUERIES and cost two entries per query, so a
 		// rule that says nothing gets none.
 		$this->assertFalse( $rule->log_queries );
+		// Outbound HTTP is two entries per REQUEST, not per query, and it was
+		// unconditional before it was a flag — so silence has to keep meaning
+		// what it meant, and only an explicit false turns it off.
+		$this->assertTrue( $rule->log_http );
+		$this->assertFalse( Rule::from_array( [ 'id' => 'd5', 'pattern' => '/y', 'action' => 'log', 'log_http' => false ] )->log_http );
 		// A backtrace per hook firing is a diagnostic, not a default.
 		$this->assertFalse( $rule->trace_hooks );
 		$this->assertSame( 0, $rule->trace_callers );

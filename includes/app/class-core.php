@@ -483,8 +483,10 @@ class Core {
 		}
 
 		// Outbound HTTP blocks below userland, where no hook reaches.
-		\add_filter( 'pre_http_request', [ $this, 'http_start' ], PHP_INT_MAX, 3 );
-		\add_action( 'http_api_debug', [ $this, 'http_end' ], PHP_INT_MIN, 5 );
+		if ( $rule->log_http ) {
+			\add_filter( 'pre_http_request', [ $this, 'http_start' ], PHP_INT_MAX, 3 );
+			\add_action( 'http_api_debug', [ $this, 'http_end' ], PHP_INT_MIN, 5 );
+		}
 
 		if ( ! $rule->log_queries ) {
 			return;

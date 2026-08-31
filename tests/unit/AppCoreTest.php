@@ -170,6 +170,20 @@ class AppCoreTest extends TestCase {
 	 * the time below PHP userland, where no hook can reach, and the caveat on
 	 * every brief says so.
 	 */
+	public function test_a_rule_can_turn_the_outbound_http_pair_off(): void {
+		// Every logged request paid for it whether or not anyone was reading
+		// outbound HTTP, and a rule is where the other span tiers say so.
+		$this->require_priority_aware_add_filter_or_skip();
+		$this->set_governing_rule(
+			new Rule( 'e41b7c2d9a05', '/checkout/', Rule::ACTION_LOG, log_http: false )
+		);
+
+		$bound = $this->capture_added_filters( fn() => new Core() );
+
+		$this->assertNotContains( 'pre_http_request', $bound );
+		$this->assertNotContains( 'http_api_debug', $bound );
+	}
+
 	public function test_a_log_rule_binds_the_outbound_http_pair(): void {
 		$this->require_priority_aware_add_filter_or_skip();
 		$this->set_governing_rule( new Rule( '7c9e1a4b2d3f', '/checkout/', Rule::ACTION_LOG ) );
@@ -232,7 +246,15 @@ class AppCoreTest extends TestCase {
 
 	/** A rule that traces callers, distinct from every default. */
 	private function tracing_rule( int $traces, bool $hooks = true ): Rule {
-		return new Rule( '9f3c1d7e5b28', '/reports/', Rule::ACTION_LOG, 0, 0.0, [], [], [ 'the_content' ], Rule::HOOKS_INLINE, false, $hooks, $traces );
+		// Named: a positional tail silently re-aims when a flag is added.
+		return new Rule(
+			'9f3c1d7e5b28',
+			'/reports/',
+			Rule::ACTION_LOG,
+			hooks: [ 'the_content' ],
+			trace_hooks: $hooks,
+			trace_callers: $traces
+		);
 	}
 
 	/**
@@ -316,7 +338,7 @@ class AppCoreTest extends TestCase {
 
 	/** A rule that opts in, distinct from every default. */
 	private function query_rule( bool $on ): Rule {
-		return new Rule( '5e2b8c1f4a70', '/reports/', Rule::ACTION_LOG, 0, 0.0, [], [], [], Rule::HOOKS_INLINE, $on );
+		return new Rule( '5e2b8c1f4a70', '/reports/', Rule::ACTION_LOG, log_queries: $on );
 	}
 
 	/**
