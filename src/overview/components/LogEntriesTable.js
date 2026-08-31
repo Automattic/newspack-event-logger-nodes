@@ -754,12 +754,33 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 	);
 
 	/**
+	 * The lines naming who opened a traced span.
+	 *
+	 * `l` is the origin frame the flame aggregates on; `caller` the deeper
+	 * chain, present only for the firings the rule's budget covered. Both are
+	 * what the row is READ for, so they lead and they never enter the value's
+	 * clamp — `m` on a filtered hook is a kilobyte of the value it filtered.
+	 *
+	 * @param {Object} entry Log entry object.
+	 * @return {string[]} Label lines, outermost concern first.
+	 */
+	const traceLines = ( entry ) => {
+		const lines = [];
+		if ( 'string' === typeof entry.l && entry.l ) {
+			lines.push( entry.l );
+		}
+		if ( 'string' === typeof entry.caller && entry.caller ) {
+			lines.push( `called by ${ entry.caller }` );
+		}
+		return lines;
+	};
+
+	/**
 	 * Format message content for display.
 	 *
-	 * Objects pretty-print with keys sorted; strings fall back to the stable
-	 * label `l` when the volatile message `m` is empty. A row that already
-	 * carries its own stats — merged, complete, or duration-bearing — shows
-	 * nothing rather than a placeholder dash.
+	 * Objects pretty-print with keys sorted. A row that already carries its own
+	 * stats — merged, complete, or duration-bearing — or that carries a trace
+	 * label shows nothing rather than a placeholder dash.
 	 *
 	 * @param {Object} entry Log entry object.
 	 * @return {string} Formatted message.
@@ -780,21 +801,16 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 					: entry.m;
 			return JSON.stringify( value, null, 2 );
 		}
-		const msg = entry.m || entry.l || '';
-		// Who opened this span; leads, the value preview was already visible.
-		const caller = 'string' === typeof entry.caller ? entry.caller : '';
+		const msg = entry.m || '';
+		if ( msg && '-' !== msg ) {
+			return msg;
+		}
 		// Merged/complete rows and duration-stat entries carry their own stats.
 		const carriesStats =
 			entry.isMerged ||
 			( entry.k || '' ).includes( '(complete)' ) ||
 			hasDuration( entry );
-		if ( carriesStats && ( ! msg || '-' === msg ) ) {
-			return caller ? `called by ${ caller }` : '';
-		}
-		if ( caller ) {
-			return `called by ${ caller }\n${ msg || '-' }`;
-		}
-		return msg || '-';
+		return carriesStats || traceLines( entry ).length ? '' : '-';
 	};
 
 	/**
@@ -860,6 +876,33 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 	};
 
 	/**
+	 * Wrap message text in the row's height clamp.
+	 *
+	 * `hook_start` records up to 1024 bytes of the filter value, which for
+	 * `the_content` is sixty lines of markup owning the whole row. Stats render
+	 * outside the clamp so clipping the value never clips the duration.
+	 *
+	 * @param {import('react').ReactNode} children Message content.
+	 * @return {import('react').ReactElement} Clamped message.
+	 */
+	const renderClamped = ( children ) => (
+		<div className="log-entries-message">{ children }</div>
+	);
+
+	/**
+	 * Render the trace labels above a span's value.
+	 *
+	 * @param {Object} entry Log entry object.
+	 * @return {import('react').ReactNode} One block per label line.
+	 */
+	const renderTraceLines = ( entry ) =>
+		traceLines( entry ).map( ( line ) => (
+			<div className="log-entries-trace" key={ line }>
+				{ line }
+			</div>
+		) );
+
+	/**
 	 * Render message cell for merged (collapsed) rows.
 	 * Shows start message + complete message, then stats on new line,
 	 * followed by a badge counting the entries the fold hides.
@@ -899,16 +942,17 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 		);
 		return (
 			<>
-				{ startMsg }
-				{ startMsg && completeMsg && ' ' }
-				{ completeMsg }
-				{ ( stats || childBadge ) && (
-					<>
-						{ hasContent && <br /> }
-						{ stats }
-						{ childBadge }
-					</>
-				) }
+				{ renderTraceLines( entry ) }
+				{ hasContent &&
+					renderClamped(
+						<>
+							{ startMsg }
+							{ startMsg && completeMsg && ' ' }
+							{ completeMsg }
+						</>
+					) }
+				{ stats }
+				{ childBadge }
 			</>
 		);
 	};
@@ -926,29 +970,11 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 			return '';
 		}
 		const msg = formatMessage( entry );
-		const isComplete = ( entry.k || '' ).includes( '(complete)' );
-		const stats = renderStats( entry );
-
-		if ( isComplete ) {
-			return (
-				<>
-					{ msg }
-					{ stats && (
-						<>
-							{ msg && <br /> }
-							{ stats }
-						</>
-					) }
-				</>
-			);
-		}
-
 		return (
 			<>
-				{ msg }
-				{ stats && (
-					<span style={ { marginLeft: '8px' } }>{ stats }</span>
-				) }
+				{ renderTraceLines( entry ) }
+				{ msg && renderClamped( msg ) }
+				{ renderStats( entry ) }
 			</>
 		);
 	};

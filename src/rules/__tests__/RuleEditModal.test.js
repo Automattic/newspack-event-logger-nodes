@@ -79,6 +79,14 @@ function click( el ) {
 	} );
 }
 
+// A checkbox needs jsdom's activation behaviour, which a dispatched Event
+// does not run; el.click() flips `checked` before React sees the event.
+function toggle( input ) {
+	act( () => {
+		input.click();
+	} );
+}
+
 function setInput( input, value ) {
 	const setter = Object.getOwnPropertyDescriptor(
 		window.HTMLInputElement.prototype,
@@ -287,12 +295,36 @@ describe( 'RuleEditModal — log rule fields', () => {
 		expect( onSave.mock.calls[ 0 ][ 0 ].trace_callers ).toBe( 250 );
 	} );
 
-	test( 'editing the caller-trace depth is reflected in the saved draft', () => {
+	test( 'editing the backtrace count is reflected in the saved draft', () => {
 		// 7 is distinct from 0 (off) and from Rule::TRACE_CALLERS_DEFAULT (20).
 		mount( { ...LOG_RULE, trace_hooks: true } );
 		setInput( inDialog( 'input[name="rule-trace-callers"]' ), '7' );
 		click( saveButton() );
 		expect( onSave.mock.calls[ 0 ][ 0 ].trace_callers ).toBe( 7 );
+	} );
+
+	test( 'the backtrace count is hidden until caller tracing is on', () => {
+		mount( LOG_RULE );
+		expect( inDialog( 'input[name="rule-trace-callers"]' ) ).toBeNull();
+	} );
+
+	test( 'unticking caller tracing zeroes the backtrace count it hides', () => {
+		// Otherwise a hidden 20 keeps costing twenty backtraces per hook.
+		mount( { ...LOG_RULE, trace_hooks: true, trace_callers: 20 } );
+		toggle( inDialog( 'input[name="rule-trace-hooks"]' ) );
+		click( saveButton() );
+		expect( onSave.mock.calls[ 0 ][ 0 ].trace_hooks ).toBe( false );
+		expect( onSave.mock.calls[ 0 ][ 0 ].trace_callers ).toBe( 0 );
+	} );
+
+	test( 'the backtrace count shares the checkbox row', () => {
+		mount( { ...LOG_RULE, trace_hooks: true } );
+		expect(
+			inDialog( '.rule-edit-trace-row input[name="rule-trace-callers"]' )
+		).not.toBeNull();
+		expect(
+			inDialog( '.rule-edit-trace-row input[name="rule-trace-hooks"]' )
+		).not.toBeNull();
 	} );
 
 	test( 'a skip rule carries no query-span opt-in', () => {
