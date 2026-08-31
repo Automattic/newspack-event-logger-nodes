@@ -36,6 +36,7 @@ final class RuleTest extends TestCase {
 			'hooks'                       => [ 'init', 'wp' ],
 			'hooks_in'                    => 'inline',
 			'log_queries'                 => true,
+			'trace_hooks'                 => true,
 			'trace_callers'               => 60,
 		];
 		$rule = Rule::from_array( $data );
@@ -54,6 +55,7 @@ final class RuleTest extends TestCase {
 		// rule that says nothing gets none.
 		$this->assertFalse( $rule->log_queries );
 		// A backtrace per hook firing is a diagnostic, not a default.
+		$this->assertFalse( $rule->trace_hooks );
 		$this->assertSame( 0, $rule->trace_callers );
 	}
 

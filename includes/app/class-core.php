@@ -68,11 +68,32 @@ class Core {
 	 */
 	private const CALLER_FRAMES = 20;
 
+	/**
+	 * Frames `debug_backtrace()` walks to find the ONE origin frame.
+	 *
+	 * Ours, `WP_Hook->apply_filters` and `apply_filters()` sit between, so the
+	 * origin is the fifth; eight is margin. The LIMIT is what makes this cheap:
+	 * 0.9us against 2.9us unlimited and 12.7us through core's summary helper,
+	 * which formats every frame before all but one is discarded.
+	 */
+	private const ORIGIN_DEPTH = 8;
+
+	/** Origin label kept on a span; it rides EVERY traced entry. */
+	private const ORIGIN_MAX = 128;
+
 	/** Caller summary kept on a hook's start entry; MAX_DATA_SIZE is 3840. */
 	private const CALLER_PREVIEW_MAX = 1024;
 
 	/** SQL kept on a query span's entry; MAX_DATA_SIZE is 3840 for the lot. */
 	private const SQL_PREVIEW_MAX = 512;
+
+	/** Dispatchers between a hook and its caller; flipped for O(1) lookup. */
+	private const HOOK_DISPATCHERS = [
+		'apply_filters'           => true,
+		'apply_filters_ref_array' => true,
+		'do_action'               => true,
+		'do_action_ref_array'     => true,
+	];
 
 	/** Priority of the sacrificial hook_spacer; wrap_callbacks treats everything at/above it as ours. */
 	private const SPACER_PRIORITY = PHP_INT_MAX - 2;
@@ -97,6 +118,9 @@ class Core {
 
 	/** @var array<string,int> Caller traces already spent, by hook name. */
 	private array $traced = [];
+
+	/** @var bool Whether the governing rule labels a span with its caller. */
+	private bool $trace_hooks = false;
 
 	/** @var int Backtraces the governing rule allows per hook; 0 is off. */
 	private int $trace_callers = 0;
@@ -151,7 +175,8 @@ class Core {
 				$m = $encoded;
 			}
 		}
-		$data = [ 'm' => $m, 'l' => '' ];
+		// `l` aggregates the flame, so the origin SPLITS the node by caller.
+		$data = [ 'm' => $m, 'l' => $this->trace_hooks ? self::origin_frame() : '' ];
 		$caller = $this->caller_of( $hook_name );
 		if ( '' !== $caller ) {
 			$data['caller'] = $caller;
@@ -346,6 +371,36 @@ class Core {
 	}
 
 	/**
+	 * The one frame worth a label: who called this hook.
+	 *
+	 * Deliberately NOT `wp_debug_backtrace_summary()`, which walks and formats
+	 * the whole stack — 12.7us measured, against 0.9us here — to produce a
+	 * string all but one frame of which is discarded. Bounded by
+	 * `ORIGIN_DEPTH`, so it is cheap enough to run on every firing rather than
+	 * out of a budget, which is what lets `l` split a flame node completely.
+	 *
+	 * @return string `Class->method`, a function name, or '' when only
+	 *                machinery is on the stack.
+	 */
+	private static function origin_frame(): string {
+		// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_debug_backtrace -- The caller IS the diagnostic; depth-bounded and gated per rule.
+		$frames = \debug_backtrace( \DEBUG_BACKTRACE_IGNORE_ARGS, self::ORIGIN_DEPTH );
+		foreach ( $frames as $frame ) {
+			$function = $frame['function'];
+			$class    = $frame['class'] ?? '';
+			if ( '' === $function || self::class === $class || 'WP_Hook' === $class ) {
+				continue;
+			}
+			if ( isset( self::HOOK_DISPATCHERS[ $function ] ) ) {
+				continue;
+			}
+			$name = '' === $class ? $function : $class . ( $frame['type'] ?? '::' ) . $function;
+			return \substr( $name, 0, self::ORIGIN_MAX );
+		}
+		return '';
+	}
+
+	/**
 	 * Remove the currently-bound hook filters and bind the current request's
 	 * governing rule afresh. Public because it is the listener for
 	 * `newspack_event_logger_nodes_scope_changed`, which Log_Manager fires when
@@ -387,6 +442,7 @@ class Core {
 		}
 
 		// Instrument real hooks; custom events (not do_action) are excluded.
+		$this->trace_hooks   = $rule->trace_hooks;
 		$this->trace_callers = $rule->trace_callers;
 		$hooks          = Rule_Set::hooks_for( $rule );
 		$custom_set     = \array_flip( \array_filter( $rule->custom_events, 'is_string' ) );

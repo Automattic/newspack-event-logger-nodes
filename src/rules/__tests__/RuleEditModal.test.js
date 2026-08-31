@@ -280,9 +280,10 @@ describe( 'RuleEditModal — log rule fields', () => {
 	} );
 
 	test( 'a log rule round-trips its caller-trace opt-in', () => {
-		// A tuned count survives an edit; the checkbox must not lower it to 20.
-		mount( { ...LOG_RULE, trace_callers: 250 } );
+		// The checkbox is the cheap switch; a tuned deep budget survives an edit.
+		mount( { ...LOG_RULE, trace_hooks: true, trace_callers: 250 } );
 		click( saveButton() );
+		expect( onSave.mock.calls[ 0 ][ 0 ].trace_hooks ).toBe( true );
 		expect( onSave.mock.calls[ 0 ][ 0 ].trace_callers ).toBe( 250 );
 	} );
 
