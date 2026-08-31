@@ -90,6 +90,9 @@ export default function RuleEditModal( {
 	);
 	const [ logQueries, setLogQueries ] = useState( !! rule?.log_queries );
 	const [ traceHooks, setTraceHooks ] = useState( !! rule?.trace_hooks );
+	const [ traceCallers, setTraceCallers ] = useState(
+		String( rule?.trace_callers ?? 0 )
+	);
 	const [ error, setError ] = useState( '' );
 	const [ isHooksOpen, setIsHooksOpen ] = useState( false );
 	const [ isCustomOpen, setIsCustomOpen ] = useState( false );
@@ -122,8 +125,9 @@ export default function RuleEditModal( {
 			hooks_in: 'inline',
 			log_queries: isLog && logQueries,
 			trace_hooks: isLog && traceHooks,
-			// The deep budget is API-set; an edit must not zero a tuned run.
-			trace_callers: isLog ? Number( rule?.trace_callers ?? 0 ) : 0,
+			trace_callers: isLog
+				? toNumber( traceCallers, ( v ) => parseInt( v, 10 ) )
+				: 0,
 		};
 		onSave( draft );
 	};
@@ -314,6 +318,23 @@ export default function RuleEditModal( {
 							) }
 							checked={ traceHooks }
 							onChange={ setTraceHooks }
+						/>
+
+						<TextControl
+							__next40pxDefaultSize
+							__nextHasNoMarginBottom
+							type="number"
+							label={ __(
+								'Caller trace depth',
+								'newspack-event-logger-nodes'
+							) }
+							help={ __(
+								'Frames of backtrace recorded per hook, on top of the label above. Expensive. 0 = off.',
+								'newspack-event-logger-nodes'
+							) }
+							name="rule-trace-callers"
+							value={ traceCallers }
+							onChange={ setTraceCallers }
 						/>
 					</>
 				) }
