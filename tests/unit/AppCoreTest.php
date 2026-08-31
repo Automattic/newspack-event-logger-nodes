@@ -262,6 +262,25 @@ class AppCoreTest extends TestCase {
 		$this->assertSame( [ 'the_content' => $limit ], $this->traced( $core ) );
 	}
 
+	/**
+	 * The NEAREST frames are the answer, and they are the ones a naive cap cut.
+	 *
+	 * `wp_debug_backtrace_summary()` hands back the stack nearest-first as an
+	 * array and outermost-first as a string — the pretty form is the array
+	 * reversed. Capping the string's HEAD therefore kept the bootstrap and
+	 * discarded the caller, which on a real admin request is the whole answer.
+	 */
+	public function test_a_caller_trace_keeps_the_nearest_frames(): void {
+		$this->set_governing_rule( $this->tracing_rule( true ) );
+		$core = new Core();
+		$ref  = new \ReflectionMethod( Core::class, 'caller_of' );
+
+		$summary = $ref->invoke( $core, 'the_content' );
+
+		$this->assertStringStartsWith( "apply_filters('the_content')", $summary );
+		$this->assertStringNotContainsString( 'far_frame_10', $summary );
+	}
+
 	/** A rule that does not ask pays for no backtraces at all. */
 	public function test_a_rule_that_does_not_opt_in_traces_no_callers(): void {
 		$this->set_governing_rule( $this->tracing_rule( false ) );
