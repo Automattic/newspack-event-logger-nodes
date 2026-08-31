@@ -186,6 +186,26 @@ describe( 'LogEntriesTable', () => {
 		unmount();
 	} );
 
+	it( 'renders the caller a traced hook recorded', () => {
+		// A hook that fires sixteen times reads as sixteen identical spans; the
+		// caller is the only thing that distinguishes them, and it was being
+		// captured onto the entry and then dropped because nothing read it.
+		const entries = [
+			{
+				n: 1,
+				k: 'the_content hook (start)',
+				m: '<p>body</p>',
+				caller: "require('wp-admin/post.php'), apply_filters('the_content')",
+				ts: 1000,
+			},
+		];
+		const { container, unmount } = renderComponent(
+			React.createElement( LogEntriesTable, { entries } )
+		);
+		expect( container.textContent ).toContain( 'wp-admin/post.php' );
+		unmount();
+	} );
+
 	it( 'renders duration, peak memory, and child count with shared metadata tiers', () => {
 		const { container, unmount } = renderComponent(
 			React.createElement( LogEntriesTable, {

@@ -781,13 +781,18 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 			return JSON.stringify( value, null, 2 );
 		}
 		const msg = entry.m || entry.l || '';
+		// Who opened this span; leads, the value preview was already visible.
+		const caller = 'string' === typeof entry.caller ? entry.caller : '';
 		// Merged/complete rows and duration-stat entries carry their own stats.
 		const carriesStats =
 			entry.isMerged ||
 			( entry.k || '' ).includes( '(complete)' ) ||
 			hasDuration( entry );
 		if ( carriesStats && ( ! msg || '-' === msg ) ) {
-			return '';
+			return caller ? `called by ${ caller }` : '';
+		}
+		if ( caller ) {
+			return `called by ${ caller }\n${ msg || '-' }`;
 		}
 		return msg || '-';
 	};

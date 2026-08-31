@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.73.1] - 2026-08-30
+
+### Fixed
+
+- **A traced hook's caller is now visible.** v0.73.0 captured it onto the entry and nothing read it: `LogEntriesTable` renders `entry.m` and no other field, so the whole point of the feature was written to the log and dropped on the floor. The field is also renamed `c` → `caller`, because `c` already means COUNT everywhere else in this schema (`DIM_SUMS`, the flame's per-node counts, the aggregate stats). A traced entry now leads with `called by …` above its value preview, which is the part that was already visible.
+
 ## [0.73.0] - 2026-08-30
 
 ### Added
