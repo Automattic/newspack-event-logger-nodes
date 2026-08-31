@@ -217,7 +217,7 @@ abstract class TestCase extends RuntimeTestCase {
 	 * @param array<array-key,mixed>                   $rows   Named rows by hash.
 	 */
 	protected function seed_url_shard( \Newspack_Event_Logger_Nodes\Stats_Store $store, string $bucket, string $shard, array $rows ): bool {
-		return $this->set_url_shard( $store, $bucket, $shard, \array_map( [ self::class, 'positional_url_row' ], $rows ) );
+		return $this->set_url_shard( $store, $bucket, $shard, self::store_url_names( $store, $rows ) );
 	}
 
 	/**
@@ -229,7 +229,33 @@ abstract class TestCase extends RuntimeTestCase {
 	 * @param array<array-key,mixed>                   $rows  Named rows by hash.
 	 */
 	protected function seed_url_hour( \Newspack_Event_Logger_Nodes\Stats_Store $store, string $hour, string $shard, array $rows ): bool {
-		return $store->set_url_hour( $hour, $shard, \array_map( [ self::class, 'positional_url_row' ], $rows ) );
+		return $store->set_url_hour( $hour, $shard, self::store_url_names( $store, $rows ) );
+	}
+
+	/**
+	 * Route each named row's `url` to the name table and store the rest.
+	 *
+	 * A stored row carries the hash alone; the name lives once in
+	 * `Stats_Store::NS_URLMAP`. A test still says what it means — `'url' => …`
+	 * beside the counts — and this puts each half where production does.
+	 *
+	 * @param \Newspack_Event_Logger_Nodes\Stats_Store $store Destination.
+	 * @param array<array-key,mixed>                   $rows  Named rows by hash.
+	 * @return array<array-key,array<int,mixed>>
+	 */
+	private static function store_url_names( \Newspack_Event_Logger_Nodes\Stats_Store $store, array $rows ): array {
+		$names = [];
+		$out   = [];
+		foreach ( $rows as $hash => $row ) {
+			$row = \Newspack_Nodes\Core::arr( $row );
+			if ( isset( $row['url'] ) ) {
+				$names[ (string) $hash ] = \Newspack_Nodes\Core::str( $row['url'] );
+				unset( $row['url'] );
+			}
+			$out[ $hash ] = self::positional_url_row( $row );
+		}
+		$store->set_url_names( $names );
+		return $out;
 	}
 
 	/**
@@ -252,6 +278,12 @@ abstract class TestCase extends RuntimeTestCase {
 		foreach ( $row as $field => $value ) {
 			if ( \is_int( $field ) ) {
 				$out[ $field ] = $value;
+				continue;
+			}
+			// The name is not part of the row, and passes through under its own
+			// key so `store_url_names()` can file it however deep the call is.
+			if ( 'url' === $field ) {
+				$out['url'] = $value;
 				continue;
 			}
 			if ( ! isset( $index[ $field ] ) ) {
@@ -280,7 +312,7 @@ abstract class TestCase extends RuntimeTestCase {
 	 * @return bool True when every shard's set landed.
 	 */
 	protected function set_url_bucket( \Newspack_Event_Logger_Nodes\Stats_Store $store, string $bucket, array $data ): bool {
-		$data     = \array_map( [ self::class, 'positional_url_row' ], $data );
+		$data     = self::store_url_names( $store, $data );
 		$by_shard = \Newspack_Event_Logger_Nodes\Stats_Store::rows_by_shard( $data );
 		$ok       = true;
 		foreach ( \Newspack_Event_Logger_Nodes\Stats_Store::url_shards() as $shard ) {

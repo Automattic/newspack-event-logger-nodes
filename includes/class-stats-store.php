@@ -108,6 +108,17 @@ class Stats_Store {
 	 * hours, which is 13 + 23 keys per shard against 288.
 	 */
 	public const NS_URLS_HOUR   = 'urls_h';
+	/**
+	 * URL name table: `urlmap:{hash}` => the URL string, written once.
+	 *
+	 * A stored row carries the 12-char hash and nothing else identifying — the
+	 * name is 101 bytes of a 166-byte minimal row and used to be repeated in
+	 * every bucket the URL appeared in, so the retention window held 288 copies
+	 * of one name. Readers resolve only the hashes they display, except a
+	 * search or a url-sort, which need the names to answer at all.
+	 */
+	public const NS_URLMAP      = 'urlmap';
+
 	/** Per-URL category time series. */
 	public const NS_URL_CAT     = 'url_cat';
 	/** Per-URL dimensional time series. */
@@ -173,13 +184,12 @@ class Stats_Store {
 	public const ROW_COUNT_3XX   = 5;
 	public const ROW_COUNT_4XX   = 6;
 	public const ROW_COUNT_5XX   = 7;
-	public const ROW_URL         = 8;
-	public const ROW_MIN_MS      = 9;
-	public const ROW_MAX_MS      = 10;
-	public const ROW_MAX_PEAK_MB = 11;
-	public const ROW_LAST_SEEN   = 12;
-	public const ROW_WORKER      = 13;
-	public const ROW_SRV         = 14;
+	public const ROW_MIN_MS      = 8;
+	public const ROW_MAX_MS      = 9;
+	public const ROW_MAX_PEAK_MB = 10;
+	public const ROW_LAST_SEEN   = 11;
+	public const ROW_WORKER      = 12;
+	public const ROW_SRV         = 13;
 
 	/**
 	 * Summed fields of a URL row and of its per-server split => whether each is
@@ -216,7 +226,6 @@ class Stats_Store {
 		self::ROW_COUNT_3XX   => 'count_3xx',
 		self::ROW_COUNT_4XX   => 'count_4xx',
 		self::ROW_COUNT_5XX   => 'count_5xx',
-		self::ROW_URL         => 'url',
 		self::ROW_MIN_MS      => 'min_ms',
 		self::ROW_MAX_MS      => 'max_ms',
 		self::ROW_MAX_PEAK_MB => 'max_peak_mb',
@@ -768,6 +777,71 @@ class Stats_Store {
 	}
 
 	/**
+	 * Read one URL's stats blob — flame tree, profiles, last_modified. Whole, not
+	 * summable: readers take the first partition that has it rather than merging.
+	 *
+	 * @param string $url_hash 12-char URL hash.
+	 * @return array<array-key,mixed>|null Blob, or null on miss.
+	 */
+	public function get_url_stats( string $url_hash ): ?array {
+		$val = $this->lookup( $this->key( self::NS_URL, $url_hash ) );
+		return \is_array( $val ) ? $val : null;
+	}
+
+	/** Read one key through the table; null (no backend) and miss both read empty. */
+	private function lookup( string $key ): mixed {
+		return $this->table( self::ROLE_AGGREGATE )?->lookup( $key );
+	}
+
+	/**
+	 * Resolve URL names for the hashes a reader is about to show.
+	 *
+	 * One `lookup_multi`, like every other reader path (decision 6). Absent
+	 * hashes are simply missing from the result: a name can expire while its
+	 * rows are still in the window, and a row with no name is still a row.
+	 *
+	 * @param array<int,string> $hashes 12-char URL hashes.
+	 * @return array<string,string> hash => URL, for the ones that resolved.
+	 */
+	public function get_url_names( array $hashes ): array {
+		if ( [] === $hashes ) {
+			return [];
+		}
+		$map = [];
+		foreach ( $hashes as $hash ) {
+			$map[ $this->key( self::NS_URLMAP, $hash ) ] = $hash;
+		}
+		$out = [];
+		foreach ( $this->table( self::ROLE_AGGREGATE )?->lookup_multi( \array_keys( $map ) ) ?? [] as $key => $value ) {
+			$url = Core::str( Core::arr( $value )[ 0 ] ?? '' );
+			if ( '' !== $url && isset( $map[ $key ] ) ) {
+				$out[ $map[ $key ] ] = $url;
+			}
+		}
+		return $out;
+	}
+
+	/**
+	 * Record the names of URLs this flush touched.
+	 *
+	 * One round trip for the whole flush, like every other write here: a name
+	 * per key would make the cost per URL, which is what the batch exists to
+	 * avoid. Wrapped in a list because the mirror and the memcache table both
+	 * carry arrays; the writer decides WHICH names are worth re-writing, since
+	 * a name never changes and re-storing it every flush would spend the saving.
+	 *
+	 * @param array<string,string> $names hash => URL.
+	 * @return void
+	 */
+	public function set_url_names( array $names ): void {
+		$writes = [];
+		foreach ( $names as $hash => $url ) {
+			$writes[] = [ [ self::NS_URLMAP ], $hash, [ $url ] ];
+		}
+		$this->bucket_set_multi( $writes );
+	}
+
+	/**
 	 * Write many buckets across DIFFERENT namespaces in one round trip.
 	 *
 	 * Neither cache backend reports success per KEY, so a refused batch is
@@ -814,23 +888,6 @@ class Stats_Store {
 	 */
 	private function bucket_set( array $parts, string $bucket, array $data ): bool {
 		return $this->store( $this->key( ...[ ...$parts, $bucket ] ), $data, $this->ttl(), $parts[0] );
-	}
-
-	/**
-	 * Read one URL's stats blob — flame tree, profiles, last_modified. Whole, not
-	 * summable: readers take the first partition that has it rather than merging.
-	 *
-	 * @param string $url_hash 12-char URL hash.
-	 * @return array<array-key,mixed>|null Blob, or null on miss.
-	 */
-	public function get_url_stats( string $url_hash ): ?array {
-		$val = $this->lookup( $this->key( self::NS_URL, $url_hash ) );
-		return \is_array( $val ) ? $val : null;
-	}
-
-	/** Read one key through the table; null (no backend) and miss both read empty. */
-	private function lookup( string $key ): mixed {
-		return $this->table( self::ROLE_AGGREGATE )?->lookup( $key );
 	}
 
 	/**
@@ -1101,9 +1158,6 @@ class Stats_Store {
 		$into_srv = self::expand_sole_server( $into, Core::arr( $into[ self::ROW_SRV ] ?? null ) );
 		$row_srv  = self::expand_sole_server( $row, Core::arr( $row[ self::ROW_SRV ] ?? null ) );
 		$out      = self::sum_entry( $into, $row, self::URL_SRV_SUMS );
-		if ( '' === Core::str( $out[ self::ROW_URL ] ?? '' ) ) {
-			$out[ self::ROW_URL ] = Core::str( $row[ self::ROW_URL ] ?? '' );
-		}
 		$out[ self::ROW_MAX_MS ]      = \max( Core::num_float( $out[ self::ROW_MAX_MS ] ?? null ), Core::num_float( $row[ self::ROW_MAX_MS ] ?? null ) );
 		$out[ self::ROW_MAX_PEAK_MB ] = \max( Core::num_float( $out[ self::ROW_MAX_PEAK_MB ] ?? null ), Core::num_float( $row[ self::ROW_MAX_PEAK_MB ] ?? null ) );
 		$out[ self::ROW_LAST_SEEN ]   = \max( Core::num_int( $out[ self::ROW_LAST_SEEN ] ?? null ), Core::num_int( $row[ self::ROW_LAST_SEEN ] ?? null ) );
@@ -1196,6 +1250,11 @@ class Stats_Store {
 				: Core::num_float( $into[ $field ] ?? null ) + Core::num_float( $from[ $field ] ?? null );
 		}
 		return $into;
+	}
+
+	/** The retention window this store was built for, in seconds. */
+	public function max_lifespan(): int {
+		return $this->max_lifespan;
 	}
 
 	/**

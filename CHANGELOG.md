@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.78.0] - 2026-08-31
+
+### Changed
+
+- **A URL row stores the hash; the name lives once in `urlmap`.** The URL string is 101 of a minimal row's 166 bytes, and the schema wrote it again in every bucket that URL appeared in — a retention window held up to 288 copies of one name, sharded by a hash of the same string. The name is now a key of its own (`Stats_Store::NS_URLMAP`), written once per URL and re-written only after half its TTL, batched into the flush's existing round trip. `Performance_CI_Node::resolve_urls()` reads names for the rows a response actually shows: one page, or every candidate when a search term or a `url` sort needs them to answer at all. Measured against a 1MB `item_size_max`: the widest row the schema writes goes 811 -> 699 bytes, and the common sole-server row 290 -> 189. **The stored shape changed, so run `wp nodes memcache flush` on deploy** — decision 5's salt rotation is the migration; without it a row written before this reads its name where `min_ms` is and renders with no URL until it ages out.
+- **`MAX_URLS_PER_SHARD` is 2,000, up from 500**, which the freed bytes pay for: the client stores 4,000 rows of the widest shape and refuses 5,000, so 2,000 keeps a fleet twice that wide inside the ceiling. Sixteen shards put a bucket's ceiling at 32,000 distinct URLs rather than 8,000. The constant is public, and the tests that had 500 written into their seeds derive it.
+
 ## [0.77.1] - 2026-08-31
 
 ### Fixed

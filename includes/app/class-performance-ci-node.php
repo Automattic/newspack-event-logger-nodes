@@ -861,9 +861,6 @@ class Performance_CI_Node extends Service_CI_Node {
 		// JSON, so it keeps its names. The SPLIT does not cross — every
 		// projection strips it — so it stays positional past here and is named
 		// once per scoped read by `Stats_Store::swap_url_server_sums()`.
-		if ( '' === $entry['url'] ) {
-			$entry['url'] = Core::as_string( $stat_arr[ Stats_Store::ROW_URL ] ?? '' );
-		}
 		// @longform Arithmetic reads take the VALIDATED family, per `Core`'s own
 		// rule: a stored row carries a bool at ROW_WORKER, so a shifted index
 		// puts one where a count is read, and `as_int( true )` folds it as 1
@@ -964,10 +961,15 @@ class Performance_CI_Node extends Service_CI_Node {
 		$by_mean = static fn ( array $a, array $b ): int =>
 			( $b['avg_ms'] ?? 0 ) <=> ( $a['avg_ms'] ?? 0 );
 
+		// @longform A term matches on the name and a url-sort orders by it, so
+		// those two need every candidate named; every other read names a page.
+		$needs_names = '' !== $term || 'url' === $sort;
+
 		$overflow = [];
 		foreach ( Stats_Store::url_shards() as $shard ) {
-			$kept = [];
-			foreach ( self::read_index( $shard ) as $raw ) {
+			$kept  = [];
+			$index = self::read_index( $shard );
+			foreach ( $needs_names ? self::resolve_urls( $index ) : $index as $raw ) {
 				$raw_row = Core::arr( $raw );
 				// Derived here: there is no second walk to spend on it.
 				$has_split = $has_split
@@ -1049,7 +1051,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		\usort( $ranked, $by_sort );
 
 		return [
-			'data'      => \array_slice( $ranked, $offset, $limit ),
+			'data'      => self::resolve_urls( \array_slice( $ranked, $offset, $limit ) ),
 			// The pager's question; `totals.urls` is another.
 			'rows'      => $rows,
 			'totals'    => [
@@ -1059,7 +1061,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				'avg_peak_mb'         => $requests > 0 ? $sum_peak / $requests : 0.0,
 				'requests_per_second' => self::recent_rate( $recent ),
 			],
-			'slowest'   => \array_slice( $slowest, 0, self::SLOWEST_ROWS ),
+			'slowest'   => self::resolve_urls( \array_slice( $slowest, 0, self::SLOWEST_ROWS ) ),
 			// Pre-split data cannot answer a scoped question; see the handler.
 			'has_split' => $has_split,
 		];
@@ -1434,34 +1436,6 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * One Stats_Store per flame-builder worker over the shared `Core::$memd`
-	 * handle. `configure_stats <partition>` keys each store by the WORKER index,
-	 * and nothing of it lands on disk — so the index space comes from the
-	 * declaring topology's count, not from a dir listing.
-	 *
-	 * With no memcache handle this returns an empty list, which is what makes
-	 * every stats reader above degrade to an empty or zeroed shape instead of
-	 * throwing. Each store's TTL comes from the substrate `min_lifetime` key.
-	 *
-	 * @return array<int,Stats_Store>
-	 */
-	private static function stats_stores(): array {
-		// Not Core::$memd: an APCu-only pool reaches stats via the mirror.
-		if ( null === \Newspack_Nodes\Cache_Backend::shared_first() ) {
-			return [];
-		}
-		$max_lifespan = AppConfig::stats_retention_seconds();
-		$stores       = [];
-		foreach ( Bootstrap::node_partitions( self::NODE_FLAME_BUILDER ) as $p ) {
-			$store = new Stats_Store( $p, $max_lifespan );
-			// No worker here to arm it: a miss must still reach the mirror.
-			Flame_Builder_Node::arm_stats_reader( $store );
-			$stores[] = $store;
-		}
-		return $stores;
-	}
-
-	/**
 	 * The request record named by the first `request:` descriptor in a context
 	 * chain.
 	 *
@@ -1794,7 +1768,74 @@ class Performance_CI_Node extends Service_CI_Node {
 		if ( null === $raw ) {
 			return null;
 		}
-		return self::project_row( $raw, $server );
+		return self::project_row( self::resolve_urls( [ $raw ] )[0], $server );
+	}
+
+	/**
+	 * Fill in each row's URL from the name table.
+	 *
+	 * A stored row carries the 12-char hash and nothing else identifying, so
+	 * the name is read for the rows a response actually SHOWS — one
+	 * `lookup_multi` per partition rather than 101 bytes in every bucket of
+	 * every window. Rows that already carry a name, and the synthetic overflow
+	 * rows, which name no URL, cost nothing.
+	 *
+	 * @param array<int,array<array-key,mixed>> $rows Merged display rows.
+	 * @return array<int,array<array-key,mixed>>
+	 */
+	private static function resolve_urls( array $rows ): array {
+		$wanted = [];
+		foreach ( $rows as $row ) {
+			$hash = Core::as_string( $row['hash'] ?? '' );
+			if ( '' !== $hash
+				&& '' === Core::as_string( $row['url'] ?? '' )
+				&& ! Stats_Store::is_other_key( $hash ) ) {
+				$wanted[ $hash ] = true;
+			}
+		}
+		if ( [] === $wanted ) {
+			return $rows;
+		}
+		$names = [];
+		foreach ( self::stats_stores() as $store ) {
+			// A hash is named in the partition that saw it; first name wins.
+			$names += $store->get_url_names( \array_keys( $wanted ) );
+		}
+		foreach ( $rows as $i => $row ) {
+			$hash = Core::as_string( $row['hash'] ?? '' );
+			if ( isset( $names[ $hash ] ) && '' === Core::as_string( $row['url'] ?? '' ) ) {
+				$rows[ $i ]['url'] = $names[ $hash ];
+			}
+		}
+		return $rows;
+	}
+
+	/**
+	 * One Stats_Store per flame-builder worker over the shared `Core::$memd`
+	 * handle. `configure_stats <partition>` keys each store by the WORKER index,
+	 * and nothing of it lands on disk — so the index space comes from the
+	 * declaring topology's count, not from a dir listing.
+	 *
+	 * With no memcache handle this returns an empty list, which is what makes
+	 * every stats reader above degrade to an empty or zeroed shape instead of
+	 * throwing. Each store's TTL comes from the substrate `min_lifetime` key.
+	 *
+	 * @return array<int,Stats_Store>
+	 */
+	private static function stats_stores(): array {
+		// Not Core::$memd: an APCu-only pool reaches stats via the mirror.
+		if ( null === \Newspack_Nodes\Cache_Backend::shared_first() ) {
+			return [];
+		}
+		$max_lifespan = AppConfig::stats_retention_seconds();
+		$stores       = [];
+		foreach ( Bootstrap::node_partitions( self::NODE_FLAME_BUILDER ) as $p ) {
+			$store = new Stats_Store( $p, $max_lifespan );
+			// No worker here to arm it: a miss must still reach the mirror.
+			Flame_Builder_Node::arm_stats_reader( $store );
+			$stores[] = $store;
+		}
+		return $stores;
 	}
 
 	/**

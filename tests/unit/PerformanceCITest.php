@@ -566,9 +566,11 @@ class PerformanceCITest extends TestCase {
 		$memd->multi_keys = 0;
 		VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' );
 
-		$this->assertSame(
-			$memd->multi_keys,
-			$one_shard * Stats_Store::URL_SHARDS,
+		// Plus the name lookup each read pays: a stored row carries the hash,
+		// so one key resolves the one URL this modal shows.
+		$this->assertLessThanOrEqual(
+			(int) ( $memd->multi_keys / Stats_Store::URL_SHARDS ) + 2,
+			$one_shard,
 			'url_detail must point-read the hash\'s shard, not the whole index'
 		);
 	}
@@ -600,8 +602,10 @@ class PerformanceCITest extends TestCase {
 
 		$this->assertSame( '/wombat-4471', $detail['stats']['url'] );
 		$this->assertGreaterThan( 0, $modal, 'the row is read, not remembered' );
+		// +2, not +1: both reads resolve the name of what they display, and
+		// the modal's single row is one key against the table's page.
 		$this->assertLessThan(
-			(int) ( $table / \count( Stats_Store::url_shards() ) ) + 1,
+			(int) ( $table / \count( Stats_Store::url_shards() ) ) + 2,
 			$modal,
 			'a modal must not pay the table fan-out'
 		);
@@ -1858,8 +1862,8 @@ class PerformanceCITest extends TestCase {
 		$bucket = $this->current_url_bucket();
 		$this->seed_url_shard( $store, $bucket, Stats_Store::url_shard( '5ec0d5fa11ba' ), [
 			'5ec0d5fa11ba' => self::positional_url_row(
-				[ 'url' => '/seconds-era', 'count' => 4, 'last_seen' => 1700000003 ]
-			) + [ 99 => 8.0 ],
+				[ 'count' => 4, 'last_seen' => 1700000003 ]
+			) + [ 99 => 8.0, 'url' => '/seconds-era' ],
 		] );
 
 		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' );
@@ -3471,12 +3475,20 @@ class PerformanceCITest extends TestCase {
 		$mirror->arguments( [ $dir, '67108864' ] );
 		$mirror->void_warranty();
 		$mirror->with_index( Flame_Builder_Node::format_stats_index_entry( ... ) );
-		$msg                         = Message::new_message();
-		$msg[ Message::TYPE ]        = Message::TM_STRUCT;
-		$msg[ Message::TIMESTAMP ]   = \time();
-		$msg[ Message::KEY ]         = $key;
-		$msg[ Message::VALUE ]       = [ 'key' => $key, 'data' => $rows, 'ttl' => 43200 ];
-		$mirror->fill( $msg );
+		// The name is mirrored too, on its own key: a stored row carries the
+		// hash, so a bucket recovered without its names renders anonymous rows.
+		$name_key = Stats_Store::entry_key( 0, Stats_Store::NS_URLMAP . ':' . $hash );
+		foreach ( [
+			[ $key, $rows ],
+			[ $name_key, [ 'https://example.test/jobs/import-film-times' ] ],
+		] as [ $frame_key, $data ] ) {
+			$msg                       = Message::new_message();
+			$msg[ Message::TYPE ]      = Message::TM_STRUCT;
+			$msg[ Message::TIMESTAMP ] = \time();
+			$msg[ Message::KEY ]       = $frame_key;
+			$msg[ Message::VALUE ]     = [ 'key' => $frame_key, 'data' => $data, 'ttl' => 43200 ];
+			$mirror->fill( $msg );
+		}
 		$mirror->flush();
 
 		// Nothing in memcache: the bucket was evicted, as on a busy host.

@@ -30,7 +30,7 @@ class StatsStoreTest extends TestCase {
 		// and the two tables are hand-matched. Decision 18's "the eight that
 		// ADD come FIRST" is otherwise only prose: a ninth summed field
 		// appended past the end works and falsifies it silently.
-		$this->assertSame( \range( 0, 14 ), \array_keys( Stats_Store::ROW_FIELD_NAMES ) );
+		$this->assertSame( \range( 0, 13 ), \array_keys( Stats_Store::ROW_FIELD_NAMES ) );
 		$this->assertSame( \range( 0, 7 ), \array_keys( Stats_Store::URL_SRV_SUMS ) );
 	}
 
@@ -52,12 +52,12 @@ class StatsStoreTest extends TestCase {
 
 		$table = \Newspack_Nodes\Table_Node::table( Stats_Store::namespace_for( 2 ), 60 );
 		$this->assertSame(
-			[ $hash => [ 'url' => '/a', 'count' => 3 ] ],
+			[ $hash => [ 'count' => 3 ] ],
 			self::named_url_rows( \Newspack_Nodes\Core::arr( $table->lookup( Stats_Store::NS_URLS . ':a:2026-08-14-12-05' ) ) ),
 			'a row lands in the shard its hash names'
 		);
 		$this->assertSame(
-			[ $other => [ 'url' => '/b', 'count' => 5 ] ],
+			[ $other => [ 'count' => 5 ] ],
 			self::named_url_rows( \Newspack_Nodes\Core::arr( $table->lookup( Stats_Store::NS_URLS . ':0:2026-08-14-12-05' ) ) )
 		);
 	}
@@ -94,7 +94,7 @@ class StatsStoreTest extends TestCase {
 
 		$this->assertSame( [], $this->get_url_shard( $store, '2026-08-14-12-05', 'a' ) );
 		$this->assertSame(
-			[ '0f0f0f0f0f0f' => [ 'url' => '/b', 'count' => 5 ] ],
+			[ '0f0f0f0f0f0f' => [ 'count' => 5 ] ],
 			self::named_url_rows( $this->get_url_shard( $store, '2026-08-14-12-05', '0' ) )
 		);
 	}
@@ -924,7 +924,8 @@ class StatsStoreTest extends TestCase {
 			Stats_Store::ROW_TIMED_COUNT => 9,
 			Stats_Store::ROW_SUM_MS      => 990.0,
 			Stats_Store::ROW_SUM_PEAK_MB => 45.0,
-			Stats_Store::ROW_URL         => '/scoped-6612',
+			// An extreme, so the swap must leave it alone: the row's own max.
+			Stats_Store::ROW_MAX_MS      => 661.2,
 			Stats_Store::URL_SRV_FIELD   => [
 				'edge-77' => [
 					Stats_Store::ROW_COUNT       => 4,
@@ -939,7 +940,7 @@ class StatsStoreTest extends TestCase {
 		$this->assertNotNull( $scoped );
 		$this->assertSame( 4, $scoped['count'], "the server's count, not the row's" );
 		$this->assertSame( 480.0, (float) $scoped['sum_ms'] );
-		$this->assertSame( '/scoped-6612', $scoped[ Stats_Store::ROW_URL ], 'unswapped fields survive' );
+		$this->assertSame( 661.2, $scoped[ Stats_Store::ROW_MAX_MS ], 'unswapped fields survive' );
 		$this->assertArrayNotHasKey( Stats_Store::URL_SRV_FIELD, $scoped, 'the split never crosses the wire' );
 	}
 
@@ -965,7 +966,7 @@ class StatsStoreTest extends TestCase {
 		// reads it the way get_url_shard() reads the fine tier.
 		Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		$rows       = [ 'hash-4471' => [ Stats_Store::ROW_COUNT => 6, Stats_Store::ROW_URL => '/hourly-4471' ] ];
+		$rows       = [ 'hash-4471' => [ Stats_Store::ROW_COUNT => 6, Stats_Store::ROW_MAX_MS => 44.71 ] ];
 
 		$this->assertTrue( $store->set_url_hour( '2026-08-27-13', 'a', $rows ) );
 		$this->assertSame( $rows, $this->get_url_hour( $store, '2026-08-27-13', 'a' ) );
