@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.79.1] - 2026-08-31
+
+### Fixed
+
+- **The overflow row no longer calls a request count a URL count.** It read `other URLs beyond the per-bucket cap` beside a `Reqs` column holding 4,542 — which is the traffic of the URLs that folded, not how many folded. How many is not stored: `cap_url_rows()` sums their rows into one and the identities are gone. It reads `traffic from URLs beyond the per-shard cap` now, which is also where the cap actually applies.
+
+### Removed
+
+- **The six-line clamp on a log entry's message.** It bounded the row by hiding what the row is for. The trace labels that 0.77.1 added still lead the cell on their own lines, which is what made a long value readable in the first place.
+
 ## [0.79.0] - 2026-08-31
 
 ### Changed

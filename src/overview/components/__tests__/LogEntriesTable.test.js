@@ -222,59 +222,12 @@ describe( 'LogEntriesTable', () => {
 		const { container, unmount } = renderComponent(
 			React.createElement( LogEntriesTable, { entries } )
 		);
-		expect( container.textContent ).toContain(
-			'prepare_item_for_response'
+		// Its own line, leading the value it filtered.
+		const trace = container.querySelector( '.log-entries-trace' );
+		expect( trace.textContent ).toBe(
+			'WP_REST_Revisions_Controller->prepare_item_for_response'
 		);
-		// Outside the clamp: the caller is what the row is read for.
-		const clamp = container.querySelector( '.log-entries-message' );
-		expect( clamp.textContent ).not.toContain(
-			'prepare_item_for_response'
-		);
-		expect( clamp.textContent ).toContain( 'wp-block-column' );
-		unmount();
-	} );
-
-	it( 'clamps a long filter-value preview and keeps its stats outside', () => {
-		// hook_start records up to 1024 bytes of the filter value, which for
-		// the_content is ~60 lines of markup owning the whole row.
-		const entries = [
-			{
-				n: 1,
-				k: 'the_content hook (complete)',
-				m: '<div class="wp-block-column"></div>\n'.repeat( 30 ),
-				duration_ms: 1.744,
-				peak_mb: 44,
-				ts: 1000,
-			},
-		];
-		const { container, unmount } = renderComponent(
-			React.createElement( LogEntriesTable, { entries } )
-		);
-		const clamp = container.querySelector( '.log-entries-message' );
-		expect( clamp.textContent ).toContain( 'wp-block-column' );
-		// Clipped content must not take the duration out of view with it.
-		expect( clamp.textContent ).not.toContain( '1.744' );
-		expect( container.textContent ).toContain( '1.744' );
-		unmount();
-	} );
-
-	it( 'clamps a long preview on a merged row too', () => {
-		const entries = [
-			{
-				n: 1,
-				k: 'the_content hook',
-				m: '<div class="wp-block-column"></div>\n'.repeat( 30 ),
-				isMerged: true,
-				duration_ms: 2.5,
-				ts: 1000,
-			},
-		];
-		const { container, unmount } = renderComponent(
-			React.createElement( LogEntriesTable, { entries } )
-		);
-		const clamp = container.querySelector( '.log-entries-message' );
-		expect( clamp.textContent ).toContain( 'wp-block-column' );
-		expect( clamp.textContent ).not.toContain( '2.5' );
+		expect( container.textContent ).toContain( 'wp-block-column' );
 		unmount();
 	} );
 
