@@ -21,21 +21,18 @@ abstract class TestCase extends RuntimeTestCase {
 	 * @return array<string,array<array-key,mixed>>
 	 */
 	protected function url_rows_by_bucket( \Newspack_Event_Logger_Nodes\Stats_Store $store, array $buckets ): array {
+		// Both populations in ONE round trip, folded back together the way one
+		// row used to be: a reader and a worker row for one hash is not a
+		// straddle, and reading them shard by shard is the latency cliff.
 		$out = [];
-		foreach ( $store->url_row_sources( $buckets ) as [ $bucket, $rows ] ) {
+		foreach ( $store->url_row_sources( $buckets, null, true ) as [ $bucket, $rows ] ) {
 			foreach ( $rows as $hash => $row ) {
-				if ( ! isset( $out[ $bucket ][ $hash ] ) ) {
-					$out[ $bucket ][ $hash ] = $row;
-					continue;
-				}
-				$this->assertTrue(
-					\Newspack_Event_Logger_Nodes\Stats_Store::is_other_key( (string) $hash ),
-					"hash {$hash} appears in two shards; only an overflow row may"
-				);
-				$out[ $bucket ][ $hash ] = \Newspack_Event_Logger_Nodes\Stats_Store::fold_url_rows(
-					\Newspack_Nodes\Core::arr( $out[ $bucket ][ $hash ] ),
-					\Newspack_Nodes\Core::arr( $row )
-				);
+				$out[ $bucket ][ $hash ] = isset( $out[ $bucket ][ $hash ] )
+					? \Newspack_Event_Logger_Nodes\Stats_Store::fold_url_rows(
+						\Newspack_Nodes\Core::arr( $out[ $bucket ][ $hash ] ),
+						\Newspack_Nodes\Core::arr( $row )
+					)
+					: $row;
 			}
 		}
 		// Named on the way out: a test asserting on a row should read
@@ -312,11 +309,19 @@ abstract class TestCase extends RuntimeTestCase {
 	 * @return bool True when every shard's set landed.
 	 */
 	protected function set_url_bucket( \Newspack_Event_Logger_Nodes\Stats_Store $store, string $bucket, array $data ): bool {
-		$data     = self::store_url_names( $store, $data );
-		$by_shard = \Newspack_Event_Logger_Nodes\Stats_Store::rows_by_shard( $data );
-		$ok       = true;
-		foreach ( \Newspack_Event_Logger_Nodes\Stats_Store::url_shards() as $shard ) {
-			$ok = $this->set_url_shard( $store, $bucket, $shard, \Newspack_Nodes\Core::arr( $by_shard[ $shard ] ?? null ) ) && $ok;
+		$data = self::store_url_names( $store, $data );
+		// Worker rows go to the worker shard family, as the writer files them.
+		$split = [ false => [], true => [] ];
+		foreach ( $data as $hash => $row ) {
+			$row_arr = \Newspack_Nodes\Core::arr( $row );
+			$split[ ! empty( $row_arr[ \Newspack_Event_Logger_Nodes\Stats_Store::ROW_WORKER ] ) ][ $hash ] = $row;
+		}
+		$ok = true;
+		foreach ( [ false, true ] as $worker ) {
+			$by_shard = \Newspack_Event_Logger_Nodes\Stats_Store::rows_by_shard( $split[ $worker ], $worker );
+			foreach ( \Newspack_Event_Logger_Nodes\Stats_Store::url_shards( $worker ) as $shard ) {
+				$ok = $this->set_url_shard( $store, $bucket, $shard, \Newspack_Nodes\Core::arr( $by_shard[ $shard ] ?? null ) ) && $ok;
+			}
 		}
 		return $ok;
 	}

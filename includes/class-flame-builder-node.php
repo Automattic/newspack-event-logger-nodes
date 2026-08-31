@@ -56,6 +56,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
  *   dim_by_server: array<string,array<string,Dim_Values>>,
  *   url_dim: array<array-key,array<string,Dim_Values>>,
  *   url_stats: array<string,mixed>,
+ *   url_stats_worker: array<string,mixed>,
  *   url_names: array<string,string>,
  *   cat: Cat_Values,
  *   cat_by_server: array<string,Cat_Values>,
@@ -689,11 +690,14 @@ class Flame_Builder_Node extends Node {
 		// leaves it alone. A row missing ROW_SRV came from a checkpoint this
 		// process did not write, and everything below indexes it unguarded,
 		// where `max( null, … )` is a TypeError, not a warning.
-		$row = Core::arr( $acc['url_stats'][ $url_hash ] ?? null );
+		// Worker traffic indexes apart: the table excludes it by default, and
+		// merging both into one row took a URL's reader requests out with it.
+		$slot = $count_global ? 'url_stats' : 'url_stats_worker';
+		$row  = Core::arr( $acc[ $slot ][ $url_hash ] ?? null );
 		if ( ! isset( $row[ Stats_Store::ROW_SRV ] ) ) {
 			// @longform array_replace, NOT array_merge: the row is positional,
 			// and merge RENUMBERS integer keys rather than overwriting them.
-			$acc['url_stats'][ $url_hash ] = \array_replace(
+			$acc[ $slot ][ $url_hash ] = \array_replace(
 				self::empty_url_row( PHP_INT_MAX ),
 				$row
 			);
@@ -706,7 +710,7 @@ class Flame_Builder_Node extends Node {
 		 *
 		 * @var array{0: int, 1: int, 2: float|int, 3: float|int, 4: int, 5: int, 6: int, 7: int, 8: float|int, 9: float|int, 10: float|int, 11: int, 12: bool, 13: array<string,array<int,float|int>>} $us
 		 */
-		$us              = &$acc['url_stats'][ $url_hash ];
+		$us              = &$acc[ $slot ][ $url_hash ];
 		$peak_raw        = $request['peak_mb'] ?? 0;
 		$peak_mb         = \max( 0.0, Core::num_float( $peak_raw ) );
 		$status_category = self::status_category( $request );
@@ -1257,8 +1261,11 @@ class Flame_Builder_Node extends Node {
 					)
 				);
 			}
-			foreach ( Stats_Store::rows_by_shard( $acc['url_stats'] ) as $shard => $shard_rows ) {
-				$intents[] = $this->url_shard_intent( $bucket, (string) $shard, $shard_rows );
+			foreach ( [ false, true ] as $worker ) {
+				$rows = $worker ? $acc['url_stats_worker'] : $acc['url_stats'];
+				foreach ( Stats_Store::rows_by_shard( $rows, $worker ) as $shard => $shard_rows ) {
+					$intents[] = $this->url_shard_intent( $bucket, (string) $shard, $shard_rows );
+				}
 			}
 			foreach ( $acc['dim'] as $dim => $values ) {
 				$intents[] = self::dimension_intent( $bucket, $dim, $values, '' );
@@ -1383,7 +1390,7 @@ class Flame_Builder_Node extends Node {
 		if ( null === $stats_store ) {
 			return;
 		}
-		$shards = Stats_Store::url_shards();
+		$shards = \array_merge( Stats_Store::url_shards(), Stats_Store::url_shards( true ) );
 		$plan   = Stats_Store::read_plan( Stats_Store::retention_buckets( $stats_store->ttl(), $now ) );
 		// @longform Drop what left the window, so the memo cannot outgrow it —
 		// and empty it outright now and then, because an evicted hour is not
@@ -1401,7 +1408,7 @@ class Flame_Builder_Node extends Node {
 		// change built so a READER would not have to.
 		$found = [] === $unknown
 			? []
-			: \array_count_values( \array_column( $stats_store->url_hour_sources( $unknown ), 0 ) );
+			: \array_count_values( \array_column( $stats_store->url_hour_sources( $unknown, null, true ), 0 ) );
 		$budget = self::ROLLUP_HOURS_PER_FLUSH;
 		foreach ( $unknown as $hour ) {
 			// @longform A partial fold — a crash between shards — reads as
@@ -1511,8 +1518,8 @@ class Flame_Builder_Node extends Node {
 	private static function cap_url_rows( array $rows ): array {
 		// @longform The tail FOLDS rather than dropping: every total on the
 		// dashboard is summed from this index, so anything discarded here comes
-		// off those numbers silently. Two synthetic rows, because the tail
-		// mixes worker and reader URLs and one cannot answer a filter on them.
+		// off those numbers silently. Two synthetic KEYS, one per population,
+		// so the two shard families never fold their tails into each other.
 		$other = [
 			Stats_Store::OTHER_KEY        => Core::arr( $rows[ Stats_Store::OTHER_KEY ] ?? null ),
 			Stats_Store::OTHER_WORKER_KEY => Core::arr( $rows[ Stats_Store::OTHER_WORKER_KEY ] ?? null ),
@@ -2599,6 +2606,7 @@ class Flame_Builder_Node extends Node {
 			'dim_by_server'         => [],
 			'url_dim'               => [],
 			'url_stats'             => [],
+			'url_stats_worker'      => [],
 			'url_names'             => [],
 			'cat'                   => [],
 			'cat_by_server'         => [],

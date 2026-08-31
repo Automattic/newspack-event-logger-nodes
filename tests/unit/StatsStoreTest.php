@@ -24,6 +24,31 @@ class StatsStoreTest extends TestCase {
 		return new Stats_Store( partition: $partition, max_lifespan: $max_lifespan );
 	}
 
+	public function test_a_fine_url_bucket_expires_with_its_read_window(): void {
+		// 288 fine buckets a shard were held for the whole window while the
+		// read plan looks at thirteen of them plus the rest of their hour. The
+		// unread remainder is the largest thing this schema puts in a 512MB
+		// cache, and the coarse tier already answers for it.
+		$mc    = $this->seed_memd();
+		$store = $this->make_store( max_lifespan: 86400 );
+		$this->set_url_bucket( $store, '2026-08-14-12-05', [ 'a1b2c3d4e5f6' => [ 'count' => 3 ] ] );
+		$store->set_url_hour( '2026-08-14-12', 'a', [ 'a1b2c3d4e5f6' => [ Stats_Store::ROW_COUNT => 3 ] ] );
+
+		$now  = \time();
+		$fine = 0;
+		$hour = 0;
+		foreach ( $mc->expiries() as $key => $expires ) {
+			if ( \str_contains( $key, ':' . Stats_Store::NS_URLS . ':a:' ) ) {
+				$fine = $expires - $now;
+			}
+			if ( \str_contains( $key, ':' . Stats_Store::NS_URLS_HOUR . ':a:' ) ) {
+				$hour = $expires - $now;
+			}
+		}
+		$this->assertLessThanOrEqual( Stats_Store::FINE_TTL_SECONDS, $fine, 'a fine bucket outlives its readers by hours, not a day' );
+		$this->assertGreaterThan( Stats_Store::FINE_TTL_SECONDS, $hour, 'the coarse tier still carries the window' );
+	}
+
 	public function test_the_row_index_tables_cover_every_index_contiguously(): void {
 		// `fold_index_row()` and `swap_url_server_sums()` both read
 		// ROW_FIELD_NAMES[ $index ] unguarded, per row, on the hot read path,
@@ -179,7 +204,7 @@ class StatsStoreTest extends TestCase {
 		// one shard, and the memo stays whole because a request holding the
 		// index answers from it instead of reading again.
 		$params = ( new \ReflectionMethod( Stats_Store::class, 'url_row_sources' ) )->getParameters();
-		$this->assertSame( [ 'buckets', 'shard' ], \array_map( static fn ( $p ) => $p->getName(), $params ) );
+		$this->assertSame( [ 'buckets', 'shard', 'workers' ], \array_map( static fn ( $p ) => $p->getName(), $params ) );
 		$this->assertTrue( $params[1]->isOptional(), 'the whole index stays the default' );
 	}
 
