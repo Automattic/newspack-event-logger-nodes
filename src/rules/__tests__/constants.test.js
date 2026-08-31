@@ -19,6 +19,7 @@ describe( 'rules constants', () => {
 			hooks_in: 'inline',
 			// Query spans are expensive; a blank rule asks for none.
 			log_queries: false,
+			log_http: true,
 			trace_hooks: false,
 			trace_callers: 0,
 		} );

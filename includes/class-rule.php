@@ -54,6 +54,8 @@ final class Rule {
 	 * @param string[]      $custom_events               Categories the application logs itself; never bound as do_action hooks.
 	 * @param string[]|null $hooks                       Inline list when hooks_in=inline; null when hooks_in=mc, meaning unresolved.
 	 * @param string        $hooks_in                    self::HOOKS_INLINE | self::HOOKS_MC.
+	 * @param bool          $log_queries                 Time every SQL query as its own span; needs SAVEQUERIES and costs two entries per query.
+	 * @param bool          $log_http                    Time every outbound HTTP request as its own span. On unless a rule says otherwise: it was unconditional before it was a flag.
 	 *
 	 * @throws \InvalidArgumentException When the pattern is empty, or hooks and hooks_in contradict.
 	 */
@@ -68,6 +70,7 @@ final class Rule {
 		public readonly ?array $hooks = [],
 		public readonly string $hooks_in = self::HOOKS_INLINE,
 		public readonly bool $log_queries = false,
+		public readonly bool $log_http = true,
 		public readonly bool $trace_hooks = false,
 		public readonly int $trace_callers = 0
 	) {
@@ -140,6 +143,7 @@ final class Rule {
 			'hooks'                       => $this->hooks,
 			'hooks_in'                    => $this->hooks_in,
 			'log_queries'                 => $this->log_queries,
+			'log_http'                    => $this->log_http,
 			'trace_hooks'                 => $this->trace_hooks,
 			'trace_callers'               => $this->trace_callers,
 		];
@@ -172,6 +176,8 @@ final class Rule {
 			null === $hooks ? null : self::to_string_list( $hooks ),
 			( self::HOOKS_MC === ( $a['hooks_in'] ?? '' ) ) ? self::HOOKS_MC : self::HOOKS_INLINE,
 			! empty( $a['log_queries'] ),
+			// Absent means ON: only an explicit false retires a live span.
+			! \array_key_exists( 'log_http', $a ) || ! empty( $a['log_http'] ),
 			! empty( $a['trace_hooks'] ),
 			self::to_trace_count( $a['trace_callers'] ?? 0 )
 		);

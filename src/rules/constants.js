@@ -18,6 +18,7 @@ export const BLANK_RULE = {
 	hooks: [],
 	hooks_in: 'inline',
 	log_queries: false,
+	log_http: true,
 	trace_hooks: false,
 	trace_callers: 0,
 };

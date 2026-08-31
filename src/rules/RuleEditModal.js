@@ -89,6 +89,8 @@ export default function RuleEditModal( {
 		String( rule?.auto_protect_time_threshold ?? 0 )
 	);
 	const [ logQueries, setLogQueries ] = useState( !! rule?.log_queries );
+	// Absent means ON: outbound HTTP was unconditional before it was a flag.
+	const [ logHttp, setLogHttp ] = useState( rule?.log_http ?? true );
 	const [ traceHooks, setTraceHooks ] = useState( !! rule?.trace_hooks );
 	const [ traceCallers, setTraceCallers ] = useState(
 		String( rule?.trace_callers ?? 0 )
@@ -124,6 +126,7 @@ export default function RuleEditModal( {
 			hooks: isLog ? hooks : [],
 			hooks_in: 'inline',
 			log_queries: isLog && logQueries,
+			log_http: isLog && !! logHttp,
 			trace_hooks: isLog && traceHooks,
 			// The count refines the label, so unticking retires both.
 			trace_callers:
@@ -306,6 +309,21 @@ export default function RuleEditModal( {
 							) }
 							checked={ logQueries }
 							onChange={ setLogQueries }
+						/>
+
+						<CheckboxControl
+							__nextHasNoMarginBottom
+							name="rule-log-http"
+							label={ __(
+								'Log HTTP requests',
+								'newspack-event-logger-nodes'
+							) }
+							help={ __(
+								'Times every outbound HTTP request as its own flame span. Two log entries per request, so a request that calls many APIs gets a little slower.',
+								'newspack-event-logger-nodes'
+							) }
+							checked={ !! logHttp }
+							onChange={ setLogHttp }
 						/>
 
 						<div className="rule-edit-trace-row">

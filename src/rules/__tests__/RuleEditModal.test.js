@@ -287,6 +287,21 @@ describe( 'RuleEditModal — log rule fields', () => {
 		expect( onSave.mock.calls[ 0 ][ 0 ].log_queries ).toBe( true );
 	} );
 
+	test( 'a log rule round-trips its outbound-HTTP opt-in', () => {
+		// It was unconditional before it was a flag, so an untouched rule keeps
+		// it: the box opens checked and only an explicit save turns it off.
+		mount( LOG_RULE );
+		click( saveButton() );
+		expect( onSave.mock.calls[ 0 ][ 0 ].log_http ).toBe( true );
+	} );
+
+	test( 'unticking outbound HTTP is reflected in the saved draft', () => {
+		mount( LOG_RULE );
+		toggle( inDialog( 'input[name="rule-log-http"]' ) );
+		click( saveButton() );
+		expect( onSave.mock.calls[ 0 ][ 0 ].log_http ).toBe( false );
+	} );
+
 	test( 'a log rule round-trips its caller-trace opt-in', () => {
 		// The checkbox is the cheap switch; a tuned deep budget survives an edit.
 		mount( { ...LOG_RULE, trace_hooks: true, trace_callers: 250 } );

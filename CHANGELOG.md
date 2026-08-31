@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.80.0] - 2026-08-31
+
+### Added
+
+- **`log_http`: a per-rule checkbox for outbound HTTP spans.** They were unconditional, so every logged request paid two entries per outbound call whether or not anyone was reading them — while the two span tiers beside them, query spans and caller traces, both ask the rule first. Absent means ON, so a rule written before this keeps what it had and only an explicit save turns it off; the editor's box opens checked for the same reason.
+
 ## [0.79.1] - 2026-08-31
 
 ### Fixed
