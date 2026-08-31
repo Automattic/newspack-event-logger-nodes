@@ -90,6 +90,18 @@ class Core {
 	/** SQL kept on a query span's entry; MAX_DATA_SIZE is 3840 for the lot. */
 	private const SQL_PREVIEW_MAX = 512;
 
+	/**
+	 * The STATE these two span families carry, one each.
+	 *
+	 * Every other span in the schema is a bounded state plus a separate `l`,
+	 * and `Flame_Tree` composes `state: label` for the graph. Spelling the
+	 * table or the host into the state instead made a profile category per
+	 * table and per host — the axis `Stats_Store::MAX_CAT_VALUES` bounds — and
+	 * left `l`, whose job this is, empty.
+	 */
+	private const SQL_STATE  = 'sql';
+	private const HTTP_STATE = 'http';
+
 	/** Dispatchers between a hook and its caller; flipped for O(1) lookup. */
 	private const HOOK_DISPATCHERS = [
 		'apply_filters'           => true,
@@ -533,20 +545,28 @@ class Core {
 		if ( ! $lm->is_started() ) {
 			return $preempt;
 		}
-		$label              = self::http_label( $url );
-		$this->http_spans[] = $label;
-		$lm->start( $label, [ 'm' => Log_Manager::redact_url( $url ), 'l' => '' ] );
+		$this->http_spans[] = self::HTTP_STATE;
+		$lm->start(
+			self::HTTP_STATE,
+			[ 'm' => Log_Manager::redact_url( $url ), 'l' => self::http_label( $url ) ]
+		);
 		return $preempt;
 	}
 
 	/**
-	 * A span name for one outbound request: `http: <host>`.
+	 * The aggregation label for one outbound request: its host.
+	 *
+	 * The STATE is `http` for every one of them, because that is what keys
+	 * `Request_Builder_Node`'s profile map and what a rule and the auto-tuner
+	 * name; the host is the label aggregated inside it, which is what `l` is
+	 * for everywhere else in the schema. `Flame_Tree` composes the two back
+	 * into `http: <host>` for the graph.
 	 *
 	 * @param string $url Request URL.
 	 */
 	private static function http_label( string $url ): string {
 		$host = RuntimeCore::as_string( \wp_parse_url( $url, PHP_URL_HOST ), '' );
-		return 'http: ' . ( '' === $host ? '(unparsed)' : $host );
+		return '' === $host ? '(unparsed)' : $host;
 	}
 
 	/**
@@ -566,18 +586,22 @@ class Core {
 			return $query;
 		}
 		$sql                 = RuntimeCore::as_string( $query, '' );
-		$label               = self::sql_label( $sql );
-		$this->query_spans[] = $label;
-		$lm->start( $label, [ 'm' => \substr( $sql, 0, self::SQL_PREVIEW_MAX ), 'l' => '' ] );
+		$this->query_spans[] = self::SQL_STATE;
+		$lm->start(
+			self::SQL_STATE,
+			[ 'm' => \substr( $sql, 0, self::SQL_PREVIEW_MAX ), 'l' => self::sql_label( $sql ) ]
+		);
 		return $query;
 	}
 
 	/**
-	 * A span name for one query: `sql: <OP> <table>`.
+	 * The aggregation label for one query: `<OP> <table>`.
 	 *
 	 * The flame merges by name, so naming the operation and its table collapses
 	 * ten thousand identical lookups into one node carrying its count — which
 	 * is the question a reader has. The SQL text rides the entry instead.
+	 *
+	 * The STATE is `sql` for all of them, as `http_label()` explains.
 	 *
 	 * @param string $sql The query.
 	 */
@@ -585,10 +609,10 @@ class Core {
 		$trimmed = \ltrim( $sql, " \t\n\r(" );
 		$op      = \strtoupper( \strtok( $trimmed, " \t\n\r" ) ?: '' );
 		if ( '' === $op ) {
-			return 'sql: ?';
+			return '?';
 		}
 		$found = \preg_match( '/\b(?:FROM|INTO|UPDATE|JOIN)\s+`?([A-Za-z0-9_]+)`?/i', $sql, $m );
-		return 1 === $found ? "sql: {$op} {$m[1]}" : "sql: {$op}";
+		return 1 === $found ? "{$op} {$m[1]}" : $op;
 	}
 
 	/**

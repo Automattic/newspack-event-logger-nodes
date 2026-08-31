@@ -218,7 +218,7 @@ class AppCoreTest extends TestCase {
 		$url  = 'https://img.example.net/a.jpg?access_token=shhh';
 
 		$this->assertFalse( $core->http_start( false, [], $url ) );
-		$this->assertSame( [ 'http: img.example.net' ], $this->http_spans( $core ) );
+		$this->assertSame( [ 'http' ], $this->http_spans( $core ) );
 
 		$core->http_end( [ 'response' => [ 'code' => 200 ] ], 'response', 'Requests', [], $url );
 
@@ -375,15 +375,54 @@ class AppCoreTest extends TestCase {
 	public function test_a_query_span_is_named_for_its_operation_and_table(): void {
 		$ref = new \ReflectionMethod( Core::class, 'sql_label' );
 
+		// The LABEL, not the state: `Request_Builder_Node::push_stack()` keys
+		// its profile map on the state and aggregates labels INSIDE it, so a
+		// discriminator in the state name is a category per table.
 		$this->assertSame(
-			'sql: SELECT wp_postmeta',
+			'SELECT wp_postmeta',
 			$ref->invoke( null, "SELECT meta_value FROM `wp_postmeta` WHERE post_id = 42" )
 		);
 		$this->assertSame(
-			'sql: UPDATE wp_options',
+			'UPDATE wp_options',
 			$ref->invoke( null, "UPDATE wp_options SET option_value = 'x' WHERE option_name = 'cron'" )
 		);
-		$this->assertSame( 'sql: SHOW', $ref->invoke( null, 'SHOW FULL COLUMNS' ) );
+		$this->assertSame( 'SHOW', $ref->invoke( null, 'SHOW FULL COLUMNS' ) );
+	}
+
+	/**
+	 * Every other span in the schema is `state` + a separate `l`, and the flame
+	 * composes `state: label` from the two. These two spelled the discriminator
+	 * INTO the state, which is a profile category per table and per host —
+	 * against `MAX_CAT_VALUES` — and left `l`, whose whole job this is, empty.
+	 */
+	public function test_a_query_span_states_sql_and_labels_the_table(): void {
+		$this->set_governing_rule( $this->query_rule( true ) );
+		$core = new Core();
+
+		$core->query_start( 'SELECT option_value FROM wp_options WHERE 1' );
+
+		// The state is what `complete()` matches and what keys the profile map.
+		$this->assertSame( [ 'sql' ], $this->http_spans( $core, 'query_spans' ) );
+		$this->assertSame( 'sql', $this->open_span_label() );
+	}
+
+	public function test_an_http_span_states_http_and_labels_the_host(): void {
+		$this->set_governing_rule( new Rule( '7c9e1a4b2d3f', '/checkout/', Rule::ACTION_LOG ) );
+		$core = new Core();
+
+		$core->http_start( false, [], 'https://img.example.net/a.jpg' );
+
+		$this->assertSame( [ 'http' ], $this->http_spans( $core ) );
+		$this->assertSame( 'http', $this->open_span_label() );
+	}
+
+	/** The label of the span Log_Manager currently has open, innermost first. */
+	private function open_span_label(): string {
+		$prop = new \ReflectionProperty( Log_Manager::class, 'times' );
+		$prop->setAccessible( true );
+		$times = $prop->getValue( Log_Manager::instance() );
+		$last  = \end( $times );
+		return \is_array( $last ) ? (string) ( $last['label'] ?? '' ) : '';
 	}
 
 	/** The pair opens one span and closes it, passing both values through. */
@@ -393,7 +432,7 @@ class AppCoreTest extends TestCase {
 		$sql  = 'SELECT option_value FROM wp_options WHERE option_name = \'siteurl\'';
 
 		$this->assertSame( $sql, $core->query_start( $sql ) );
-		$this->assertSame( [ 'sql: SELECT wp_options' ], $this->http_spans( $core, 'query_spans' ) );
+		$this->assertSame( [ 'sql' ], $this->http_spans( $core, 'query_spans' ) );
 
 		$this->assertSame( [ 'x' => 1 ], $core->query_end( [ 'x' => 1 ], $sql, 0.002, 'caller', 1.0 ) );
 		$this->assertSame( [], $this->http_spans( $core, 'query_spans' ) );

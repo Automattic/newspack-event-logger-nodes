@@ -139,7 +139,6 @@ return [
 	//	// Query & posts.
 	//	'found_posts',
 	//	'found_posts_query',
-	//	'query',
 	//	// Taxonomies & terms.
 	//	'get_terms',
 	//	// REST API.

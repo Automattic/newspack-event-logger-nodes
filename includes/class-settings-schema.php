@@ -120,7 +120,6 @@ class Settings_Schema {
 		'the_posts',
 		'found_posts',
 		'found_posts_query',
-		'query',
 		'get_terms',
 		'rest_api_init',
 		'rest_post_dispatch',

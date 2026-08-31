@@ -540,6 +540,18 @@ export const pruneFlameGraph = ( root, options = {} ) => {
 const isPositioned = ( node ) => typeof node.t === 'number' && ! node.merged;
 
 /**
+ * How far two siblings may overlap and still count as abutting.
+ *
+ * `Flame_Tree::offset_ms()` rounds `t` to 3 decimals and a span's duration is
+ * rounded as well, so two that really do abut can land a microsecond the wrong
+ * way. Treating that as a true overlap declined the whole FAMILY — on a real
+ * request one such pair cost the other 45 siblings their positions and packed
+ * every one of them flush left. A hundredth of a millisecond is far above the
+ * rounding and far below anything a pixel could show.
+ */
+const ABUT_TOLERANCE_MS = 0.01;
+
+/**
  * Order a parent's children by start time and measure the time it leaves
  * uncovered, or null when the family cannot honestly be laid out flat.
  *
@@ -561,10 +573,11 @@ const placeChildren = ( node ) => {
 	let cursor = node.t;
 	for ( const child of ordered ) {
 		const gap = child.t - cursor;
-		if ( gap < 0 ) {
+		if ( gap < -ABUT_TOLERANCE_MS ) {
 			return null;
 		}
-		gaps.push( gap );
+		// Clamped, so a rounded abutment contributes no width either way.
+		gaps.push( Math.max( 0, gap ) );
 		cursor = child.t + ( child.value || 0 );
 	}
 	return { ordered, gaps };
