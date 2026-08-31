@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.74.1] - 2026-08-31
+
+### Fixed
+
+- **The overflow rows collapse across shards again.** `Stats_Store::other_key()` is `Other` / `Other:worker` for EVERY shard, so the whole-index fold merged all sixteen for free — decision 14 says it outright: "a merge keyed on the url_hash would collapse sixteen of them into one". v0.74.0's per-shard fold lost that implicit collapse and the URL table showed fourteen identical `other URLs beyond the per-bucket cap` rows. The overflow is now accumulated across shards while raw and projected once at the end, so its means divide a whole row, and it passes through the same filters and totals as before. `merge_overflow_rows()` mirrors `fold_index_row()`'s accumulation over two merged rows: sums add, extremes take the extreme, `last_updated` takes the later, the split sums per server. Only the overflow needs it — every other hash lives in exactly one shard.
+
 ## [0.74.0] - 2026-08-31
 
 ### Changed

@@ -3603,6 +3603,57 @@ class PerformanceCITest extends TestCase {
 	}
 
 	/**
+	 * Every shard's overflow row shares ONE key, so they collapse into one row.
+	 *
+	 * `Stats_Store::other_key()` is `Other` / `Other:worker` for every shard, so
+	 * the old whole-index fold merged all sixteen implicitly — decision 14 says
+	 * so: "a merge keyed on the url_hash would collapse sixteen of them into
+	 * one". Folding per shard loses that unless the overflow is accumulated
+	 * across shards, and the table showed fourteen identical rows.
+	 */
+	public function test_the_overflow_rows_collapse_across_shards(): void {
+		$original = Performance_CI_Node::$load_index;
+		$row      = [
+			'hash'         => Stats_Store::OTHER_KEY,
+			'url'          => '',
+			'aggregate'    => true,
+			'worker'       => false,
+			'count'        => 10,
+			'timed_count'  => 10,
+			'count_2xx'    => 10,
+			'count_3xx'    => 0,
+			'count_4xx'    => 0,
+			'count_5xx'    => 0,
+			'sum_ms'       => 100.0,
+			'min_ms'       => 2.0,
+			'max_ms'       => 9.0,
+			'sum_peak_mb'  => 1.0,
+			'max_peak_mb'  => 1.0,
+			'recent_count' => 2,
+			'last_updated' => 1711111111,
+		];
+
+		Performance_CI_Node::$load_index = static function ( ?string $shard ) use ( $row ): array {
+			return \in_array( $shard, [ '0', '1', '3' ], true ) ? [ $row ] : [];
+		};
+		try {
+			$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' );
+		} finally {
+			Performance_CI_Node::$load_index = $original;
+			VerbHarness::reset();
+		}
+
+		$others = \array_values( \array_filter(
+			$reply['data'],
+			static fn ( array $r ): bool => ! empty( $r['aggregate'] )
+		) );
+
+		$this->assertCount( 1, $others, 'the overflow rows are one row, not one per shard' );
+		$this->assertSame( 30, $others[0]['count'], 'and it carries every shard it stood for' );
+		$this->assertSame( 1, $reply['rows'], 'the pager counts it once' );
+	}
+
+	/**
 	 * The `urls` verb folds ONE SHARD AT A TIME and never the whole index.
 	 *
 	 * A url_hash's shard is its first hex digit, so shards are disjoint and a
