@@ -3636,6 +3636,61 @@ class PerformanceCITest extends TestCase {
 		$this->assertArrayNotHasKey( 'recent', $row, 'the bucket name must not reach the projection' );
 	}
 
+	/** The read window the loader plans over. */
+	private static function read_window_for_test(): array {
+		$m = new \ReflectionMethod( Performance_CI_Node::class, 'read_window' );
+		return (array) $m->invoke( null );
+	}
+
+	/**
+	 * The loader must read its buckets in BOUNDED batches.
+	 *
+	 * `url_row_sources()` issued ONE `lookup_multi` across all sixteen shards
+	 * and returned every bucket's rows, so the whole window was resident before
+	 * the first fold — on top of the index being built. At
+	 * `MAX_URLS_PER_SHARD` rows per key that is hundreds of MB, and it is what
+	 * exhausted 512MB on a production hub after both duplicate copies were
+	 * already gone. Decision 6's batching stays; the batch is just bounded.
+	 *
+	 * Asserted on the multi-get WIDTH rather than on memory: the in-memory
+	 * double hands back references instead of unserializing, so it cannot
+	 * reproduce the per-key allocation that makes this expensive in production.
+	 */
+	public function test_the_index_loader_reads_in_bounded_batches(): void {
+		$store   = new Stats_Store( 0, 86400 );
+		$buckets = \array_slice( self::read_window_for_test(), 0, 24 );
+		$rows    = [];
+		for ( $i = 0; $i < 40; $i++ ) {
+			$rows[ \sprintf( '%012x', $i ) ] = [
+				'url'         => "/streamed/{$i}",
+				'count'       => 3,
+				'timed_count' => 3,
+				'sum_ms'      => 90.0,
+				'min_ms'      => 5,
+				'last_seen'   => 1711111111,
+			];
+		}
+		foreach ( $buckets as $bucket ) {
+			$this->set_url_bucket( $store, $bucket, $rows );
+		}
+
+		$memd = Core::$memd;
+		\assert( $memd instanceof InMemoryMemcached );
+		$memd->multi_calls = 0;
+		$memd->multi_keys  = 0;
+
+		$out = Performance_CI_Node::load_index_default();
+
+		$this->assertCount( 40, $out, 'every seeded URL still folds' );
+		$this->assertGreaterThan( 1, $memd->multi_calls, 'the window must not be one read' );
+		$widest = (int) \ceil( $memd->multi_keys / \max( 1, $memd->multi_calls ) );
+		$this->assertLessThanOrEqual(
+			\count( Stats_Store::url_shards() ) * Performance_CI_Node::INDEX_READ_CHUNK,
+			$widest,
+			\sprintf( 'average multi-get width %d exceeds one chunk across the shards', $widest )
+		);
+	}
+
 	/**
 	 * The `urls` verb must not materialise a SECOND complete index.
 	 *

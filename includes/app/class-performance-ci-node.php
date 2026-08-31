@@ -210,6 +210,15 @@ class Performance_CI_Node extends Service_CI_Node {
 	private const URL_SORTS = [ 'count', 'url', 'avg_ms', 'min_ms', 'max_ms', 'avg_peak_mb', 'last_updated' ];
 
 	/**
+	 * Buckets read per `lookup_multi` while folding the index.
+	 *
+	 * Decision 6 wants ONE round trip per read, not one per key; it does not
+	 * want the whole retention window resident. Twelve is an hour of fine
+	 * buckets, so a chunk is a natural unit and the batch stays wide.
+	 */
+	public const INDEX_READ_CHUNK = 12;
+
+	/**
 	 * URL-index read seam. Lazily-defaulted to the real merge-across-partitions
 	 * loader (load_index_default). Tests reassign it to COUNT index reads without
 	 * short-circuiting the production fan-out — the surrounding memo + the merge
@@ -726,10 +735,6 @@ class Performance_CI_Node extends Service_CI_Node {
 		// An hour is folded when EVERY shard this read covers carries it.
 		$whole = null === $shard ? \count( Stats_Store::url_shards() ) : 1;
 		foreach ( self::stats_stores() as $store ) {
-			$by_hour = [];
-			foreach ( $store->url_hour_sources( $plan['hours'], $shard ) as [ $hour, $data ] ) {
-				$by_hour[ $hour ][] = [ $hour, $data ];
-			}
 			// @longform An hour with no coarse key has not been folded YET — a
 			// fresh deploy, or a worker down when it closed — so its twelve
 			// fine buckets answer for it. A folded hour's buckets are NOT read:
@@ -737,29 +742,40 @@ class Performance_CI_Node extends Service_CI_Node {
 			// ALL its shards or none, because a fold that died between shards
 			// leaves some: taking those beside the buckets answering for the
 			// rest would count the folded shards twice, and the writer treats
-			// the same hour as unfolded and redoes it.
-			$hours   = [];
+			// the same hour as unfolded and redoes it. Chunked, and the check
+			// stays exact because an hour's shards are read together.
 			$missing = [];
-			foreach ( $plan['hours'] as $hour ) {
-				$found = $by_hour[ $hour ] ?? [];
-				if ( \count( $found ) === $whole ) {
-					$hours = \array_merge( $hours, $found );
-					continue;
+			foreach ( \array_chunk( $plan['hours'], self::INDEX_READ_CHUNK ) as $hour_chunk ) {
+				$by_hour = [];
+				foreach ( $store->url_hour_sources( $hour_chunk, $shard ) as [ $hour, $data ] ) {
+					$by_hour[ $hour ][] = [ $hour, $data ];
 				}
-				$missing = \array_merge( $missing, Stats_Store::buckets_in_hour( $hour ) );
+				foreach ( $hour_chunk as $hour ) {
+					$found = $by_hour[ $hour ] ?? [];
+					if ( \count( $found ) === $whole ) {
+						foreach ( $found as [ $bucket, $bucket_data ] ) {
+							self::fold_bucket( $result, $bucket_data, isset( $recent[ $bucket ] ) );
+						}
+						continue;
+					}
+					$missing = \array_merge( $missing, Stats_Store::buckets_in_hour( $hour ) );
+				}
 			}
-			// @longform Fine, then hours, then the fallback. One fold for all
-			// three: an hour key is never a recent five-minute bucket, and
+
+			// @longform Fine, then the fallback for unfolded hours. One fold
+			// for both: an hour key is never a recent five-minute bucket, and
 			// neither is a bucket behind the fine tail, so the recency
 			// predicate is uniform. Order is no longer load-bearing — the last
-			// first-wins read went with the percentiles (decision 19).
-			$sources = [
-				...$store->url_row_sources( $plan['fine'], $shard ),
-				...$hours,
-				...$store->url_row_sources( $missing, $shard ),
-			];
-			foreach ( $sources as [ $bucket, $bucket_data ] ) {
-				self::fold_bucket( $result, $bucket_data, isset( $recent[ $bucket ] ) );
+			// first-wins read went with the percentiles (decision 19). Each
+			// chunk is folded and DROPPED before the next is read: holding the
+			// whole window's rows beside the index it builds is what exhausted
+			// 512MB once the duplicate copies were gone.
+			foreach ( [ $plan['fine'], $missing ] as $tier ) {
+				foreach ( \array_chunk( $tier, self::INDEX_READ_CHUNK ) as $chunk ) {
+					foreach ( $store->url_row_sources( $chunk, $shard ) as [ $bucket, $bucket_data ] ) {
+						self::fold_bucket( $result, $bucket_data, isset( $recent[ $bucket ] ) );
+					}
+				}
 			}
 		}
 

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.73.3] - 2026-08-31
+
+### Fixed
+
+- **The URL-index read streams its buckets instead of holding the window.** `url_row_sources()` issues one `lookup_multi` across all sixteen shards, so asking it for the whole retention window returned every bucket's unserialized rows at once — at `MAX_URLS_PER_SHARD` per key, hundreds of MB — resident before the first fold and beside the index being built. A production hub exhausted its 512MB there (`class-performance-ci-node.php:815`, inside `empty_index_row()`), the third address for the same fatal: v0.71.3 removed the fold's duplicate copies and v0.72.1 removed the projection's, and neither touched the volume. `load_index_default()` now folds one `INDEX_READ_CHUNK` (12 buckets) at a time and drops it before reading the next, hour tier included. Decision 6's batching is kept — still one round trip for many keys, just bounded. The "all shards or none" rule for a folded hour stays exact because an hour's shards are read together within a chunk. Every returned value is unchanged; the existing index assertions pin that.
+
 ## [0.73.2] - 2026-08-30
 
 ### Fixed
