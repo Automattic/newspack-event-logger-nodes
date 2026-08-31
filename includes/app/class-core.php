@@ -148,7 +148,7 @@ class Core {
 		$data = [ 'm' => $m, 'l' => '' ];
 		$caller = $this->caller_of( $hook_name );
 		if ( '' !== $caller ) {
-			$data['c'] = $caller;
+			$data['caller'] = $caller;
 		}
 		$lm->start( $category, $data );
 
@@ -314,7 +314,9 @@ class Core {
 	 *
 	 * A span says how long a pass took and nothing about who asked for it, so a
 	 * hook that fires sixteen times reads as sixteen identical mysteries. The
-	 * summary names the frames instead. It is capped per hook because the same
+	 * summary names the frames instead, on the entry's `caller` field — not
+	 * `c`, which already means COUNT everywhere else in this schema. It is
+	 * capped per hook because the same
 	 * question on `render_block` would be 2,601 backtraces, and it ignores this
 	 * class so the top frame is the caller rather than the instrumentation.
 	 *
