@@ -964,6 +964,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		$by_mean = static fn ( array $a, array $b ): int =>
 			( $b['avg_ms'] ?? 0 ) <=> ( $a['avg_ms'] ?? 0 );
 
+		$overflow = [];
 		foreach ( Stats_Store::url_shards() as $shard ) {
 			$kept = [];
 			foreach ( self::read_index( $shard ) as $raw ) {
@@ -971,7 +972,19 @@ class Performance_CI_Node extends Service_CI_Node {
 				// Derived here: there is no second walk to spend on it.
 				$has_split = $has_split
 					|| [] !== Core::arr( $raw_row[ Stats_Store::URL_SRV_FIELD ] ?? null );
-				$row       = self::project_row( $raw_row, $server );
+				// @longform Every shard's overflow row shares ONE key, so the
+				// whole-index fold collapsed all sixteen for free and a
+				// per-shard fold must do it deliberately — decision 14 says a
+				// merge on the url_hash collapses sixteen into one. Held raw
+				// and projected once below, so the means divide a whole row.
+				$hash = Core::as_string( $raw_row['hash'] ?? '' );
+				if ( Stats_Store::is_other_key( $hash ) ) {
+					$overflow[ $hash ] = isset( $overflow[ $hash ] )
+						? self::merge_overflow_rows( $overflow[ $hash ], $raw_row )
+						: $raw_row;
+					continue;
+				}
+				$row = self::project_row( $raw_row, $server );
 				if ( null === $row ) {
 					continue;
 				}
@@ -1007,6 +1020,31 @@ class Performance_CI_Node extends Service_CI_Node {
 			$ranked  = \array_merge( $ranked, \array_slice( $kept, 0, $page_keep ) );
 		}
 
+		foreach ( $overflow as $raw_row ) {
+			$row = self::project_row( $raw_row, $server );
+			if ( null === $row ) {
+				continue;
+			}
+			// Not one of `totals.urls`, but its requests are real.
+			if ( '' !== $term ) {
+				continue;
+			}
+			if ( ! $workers && ! empty( $row['worker'] ) ) {
+				continue;
+			}
+			if ( $errors && ! self::has_unclassified_requests( $row ) ) {
+				continue;
+			}
+			++$rows;
+			$requests += Core::num_int( $row['count'] ?? null );
+			$recent   += Core::num_int( $row['recent_count'] ?? null );
+			$timed    += Core::num_int( $row['timed_count'] ?? null );
+			$sum_ms   += Core::num_float( $row['sum_ms'] ?? null );
+			$sum_peak += Core::num_float( $row['sum_peak_mb'] ?? null );
+			$ranked[]  = $row;
+			$slowest[] = $row;
+		}
+
 		\usort( $slowest, $by_mean );
 		\usort( $ranked, $by_sort );
 
@@ -1025,6 +1063,51 @@ class Performance_CI_Node extends Service_CI_Node {
 			// Pre-split data cannot answer a scoped question; see the handler.
 			'has_split' => $has_split,
 		];
+	}
+
+	/**
+	 * Merge one shard's overflow row into another's.
+	 *
+	 * The same accumulation `fold_index_row()` performs, over two MERGED rows
+	 * rather than a merged row and a stored one: sums add, extremes take the
+	 * extreme, `last_updated` takes the later, and the split sums per server.
+	 * Only the overflow rows need this — every other hash lives in one shard.
+	 *
+	 * @param array<array-key,mixed> $into A merged overflow row.
+	 * @param array<array-key,mixed> $from Another shard's, same key.
+	 * @return array<array-key,mixed>
+	 */
+	private static function merge_overflow_rows( array $into, array $from ): array {
+		foreach ( [ 'count', 'timed_count', 'recent_count' ] as $field ) {
+			$into[ $field ] = Core::num_int( $into[ $field ] ?? null ) + Core::num_int( $from[ $field ] ?? null );
+		}
+		foreach ( Stats_Store::ROW_STATUS_COUNTS as $name ) {
+			$into[ $name ] = Core::num_int( $into[ $name ] ?? null ) + Core::num_int( $from[ $name ] ?? null );
+		}
+		foreach ( [ 'sum_ms', 'sum_peak_mb' ] as $field ) {
+			$into[ $field ] = Core::num_float( $into[ $field ] ?? null ) + Core::num_float( $from[ $field ] ?? null );
+		}
+		foreach ( [ 'max_ms', 'max_peak_mb' ] as $field ) {
+			$into[ $field ] = \max( Core::num_float( $into[ $field ] ?? null ), Core::num_float( $from[ $field ] ?? null ) );
+		}
+		// Null means nothing timed; a real minimum always wins over it.
+		$from_min = $from['min_ms'] ?? null;
+		if ( null !== $from_min ) {
+			$into['min_ms'] = null === ( $into['min_ms'] ?? null )
+				? Core::num_float( $from_min )
+				: \min( Core::num_float( $into['min_ms'] ), Core::num_float( $from_min ) );
+		}
+		$into['last_updated'] = \max(
+			Core::num_int( $into['last_updated'] ?? null ),
+			Core::num_int( $from['last_updated'] ?? null )
+		);
+		$into['worker'] = ! empty( $into['worker'] ) || ! empty( $from['worker'] );
+		$into[ Stats_Store::URL_SRV_FIELD ] = Stats_Store::sum_fields(
+			Core::arr( $into[ Stats_Store::URL_SRV_FIELD ] ?? null ),
+			Core::arr( $from[ Stats_Store::URL_SRV_FIELD ] ?? null ),
+			Stats_Store::URL_SRV_SUMS
+		);
+		return $into;
 	}
 
 	/**
