@@ -279,6 +279,12 @@ describe( 'RuleEditModal — log rule fields', () => {
 		expect( onSave.mock.calls[ 0 ][ 0 ].log_queries ).toBe( true );
 	} );
 
+	test( 'a log rule round-trips its caller-trace opt-in', () => {
+		mount( { ...LOG_RULE, trace_callers: true } );
+		click( saveButton() );
+		expect( onSave.mock.calls[ 0 ][ 0 ].trace_callers ).toBe( true );
+	} );
+
 	test( 'a skip rule carries no query-span opt-in', () => {
 		mount( { ...LOG_RULE, action: 'skip', log_queries: true } );
 		click( saveButton() );

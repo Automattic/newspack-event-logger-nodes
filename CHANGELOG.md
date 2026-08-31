@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.73.0] - 2026-08-30
+
+### Added
+
+- **Per-rule hook caller traces (`trace_callers`).** A span says how long a hook took and nothing about who asked for it, so a hook that fires sixteen times reads as sixteen identical mysteries. On a BDN `wp-admin/post.php` record, `the_content` fired sixteen times at ~2.4s each — 93% of a 40.6s request — and no amount of timing said why. `App\Core` now records `wp_debug_backtrace_summary()` onto the hook's own start entry as `c`, ignoring its own class so the top frame is the caller rather than the instrumentation. Capped at `CALLER_TRACE_LIMIT` (20) per HOOK per request, because the same question asked of `render_block` on that record would be 2,601 backtraces. Off by default and per-rule, like query spans. Recorded as decision 24.
+
 ## [0.72.2] - 2026-08-30
 
 ### Fixed

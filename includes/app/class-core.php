@@ -59,6 +59,12 @@ class Core {
 	 */
 	public const LISTENER_PATTERN = '/ @-?\d+$/';
 
+	/** Backtraces captured per hook per request; a diagnostic, not a log. */
+	private const CALLER_TRACE_LIMIT = 20;
+
+	/** Caller summary kept on a hook's start entry. */
+	private const CALLER_PREVIEW_MAX = 512;
+
 	/** SQL kept on a query span's entry; MAX_DATA_SIZE is 3840 for the lot. */
 	private const SQL_PREVIEW_MAX = 512;
 
@@ -82,6 +88,12 @@ class Core {
 
 	/** @var string[] Labels of query spans currently in flight. */
 	private array $query_spans = [];
+
+	/** @var array<string,int> Caller traces already spent, by hook name. */
+	private array $traced = [];
+
+	/** @var bool Whether the governing rule asked for caller traces. */
+	private bool $trace_callers = false;
 
 	/**
 	 * Read the start priority from config, bind the current scope, and listen
@@ -133,7 +145,12 @@ class Core {
 				$m = $encoded;
 			}
 		}
-		$lm->start( $category, [ 'm' => $m, 'l' => '' ] );
+		$data = [ 'm' => $m, 'l' => '' ];
+		$caller = $this->caller_of( $hook_name );
+		if ( '' !== $caller ) {
+			$data['c'] = $caller;
+		}
+		$lm->start( $category, $data );
 
 		// Wrap significant-hook callbacks each call for late registrations.
 		if ( isset( $this->significant[ $hook_name ] ) ) {
@@ -293,6 +310,36 @@ class Core {
 	}
 
 	/**
+	 * Who called this hook, once the rule asks and while the budget lasts.
+	 *
+	 * A span says how long a pass took and nothing about who asked for it, so a
+	 * hook that fires sixteen times reads as sixteen identical mysteries. The
+	 * summary names the frames instead. It is capped per hook because the same
+	 * question on `render_block` would be 2,601 backtraces, and it ignores this
+	 * class so the top frame is the caller rather than the instrumentation.
+	 *
+	 * @param string $hook_name The hook being opened.
+	 * @return string The caller summary, or '' when not tracing.
+	 */
+	private function caller_of( string $hook_name ): string {
+		if ( ! $this->trace_callers ) {
+			return '';
+		}
+		$spent = $this->traced[ $hook_name ] ?? 0;
+		if ( $spent >= self::CALLER_TRACE_LIMIT ) {
+			return '';
+		}
+		$this->traced[ $hook_name ] = $spent + 1;
+		// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_wp_debug_backtrace_summary -- The caller summary IS the diagnostic; capped per hook and gated per rule.
+		$summary = \wp_debug_backtrace_summary( self::class );
+		return \substr(
+			RuntimeCore::as_string( $summary, '' ),
+			0,
+			self::CALLER_PREVIEW_MAX
+		);
+	}
+
+	/**
 	 * Remove the currently-bound hook filters and bind the current request's
 	 * governing rule afresh. Public because it is the listener for
 	 * `newspack_event_logger_nodes_scope_changed`, which Log_Manager fires when
@@ -313,6 +360,7 @@ class Core {
 		\remove_action( 'http_api_debug', [ $this, 'http_end' ], PHP_INT_MIN );
 		$this->bound_hooks = [];
 		$this->significant = [];
+		$this->traced      = [];
 		$this->bind_current_scope();
 	}
 
@@ -333,6 +381,7 @@ class Core {
 		}
 
 		// Instrument real hooks; custom events (not do_action) are excluded.
+		$this->trace_callers = $rule->trace_callers;
 		$hooks          = Rule_Set::hooks_for( $rule );
 		$custom_set     = \array_flip( \array_filter( $rule->custom_events, 'is_string' ) );
 		$log_events_set = \array_flip( \array_filter( $hooks, 'is_string' ) );

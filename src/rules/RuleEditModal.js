@@ -89,6 +89,9 @@ export default function RuleEditModal( {
 		String( rule?.auto_protect_time_threshold ?? 0 )
 	);
 	const [ logQueries, setLogQueries ] = useState( !! rule?.log_queries );
+	const [ traceCallers, setTraceCallers ] = useState(
+		!! rule?.trace_callers
+	);
 	const [ error, setError ] = useState( '' );
 	const [ isHooksOpen, setIsHooksOpen ] = useState( false );
 	const [ isCustomOpen, setIsCustomOpen ] = useState( false );
@@ -120,6 +123,7 @@ export default function RuleEditModal( {
 			hooks: isLog ? hooks : [],
 			hooks_in: 'inline',
 			log_queries: isLog && logQueries,
+			trace_callers: isLog && traceCallers,
 		};
 		onSave( draft );
 	};
@@ -296,6 +300,20 @@ export default function RuleEditModal( {
 							) }
 							checked={ logQueries }
 							onChange={ setLogQueries }
+						/>
+
+						<CheckboxControl
+							__nextHasNoMarginBottom
+							label={ __(
+								'Trace hook callers',
+								'newspack-event-logger-nodes'
+							) }
+							help={ __(
+								'Records who called each hook, for the first 20 firings of it. Answers why a hook runs more than once.',
+								'newspack-event-logger-nodes'
+							) }
+							checked={ traceCallers }
+							onChange={ setTraceCallers }
 						/>
 					</>
 				) }

@@ -36,6 +36,7 @@ final class RuleTest extends TestCase {
 			'hooks'                       => [ 'init', 'wp' ],
 			'hooks_in'                    => 'inline',
 			'log_queries'                 => true,
+			'trace_callers'               => true,
 		];
 		$rule = Rule::from_array( $data );
 		$this->assertSame( $data, $rule->to_array() );
@@ -52,6 +53,8 @@ final class RuleTest extends TestCase {
 		// Query spans need SAVEQUERIES and cost two entries per query, so a
 		// rule that says nothing gets none.
 		$this->assertFalse( $rule->log_queries );
+		// A backtrace per hook firing is a diagnostic, not a default.
+		$this->assertFalse( $rule->trace_callers );
 	}
 
 	public function test_from_array_defaults_unknown_action_to_skip(): void {
