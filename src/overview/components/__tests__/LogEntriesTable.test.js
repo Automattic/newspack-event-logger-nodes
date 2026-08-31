@@ -648,6 +648,76 @@ describe( 'LogEntriesTable', () => {
 		unmount();
 	} );
 
+	it( 'reveals the right occurrence when a span carries a stable label', () => {
+		jest.useFakeTimers();
+		// `Flame_Tree` names a node `base: l` and only falls back to `m`, so a
+		// path built from `m` alone missed every segment whose entry carried an
+		// `l` — with `trace_hooks` on that is EVERY hook, which sent each
+		// reveal down the base-name fallback and its first-wins lookup. The
+		// second `sql` here carries a label and no message, which is exactly a
+		// traced hook, and is reachable only if the label is in the key.
+		const entries = [
+			{
+				n: 1,
+				k: 'process (start)',
+				pairId: 1,
+				indent: 0,
+				originalIdx: 0,
+			},
+			{
+				n: 2,
+				k: 'sql (start)',
+				l: 'SELECT wp_users',
+				pairId: 2,
+				indent: 1,
+				originalIdx: 1,
+			},
+			{ n: 3, k: 'sql (complete)', pairId: 2, indent: 1, originalIdx: 2 },
+			{
+				n: 4,
+				k: 'sql (start)',
+				l: 'SELECT wp_posts',
+				pairId: 3,
+				indent: 1,
+				originalIdx: 3,
+			},
+			{ n: 5, k: 'sql (complete)', pairId: 3, indent: 1, originalIdx: 4 },
+			{
+				n: 6,
+				k: 'process (complete)',
+				pairId: 1,
+				indent: 0,
+				originalIdx: 5,
+			},
+		];
+		const revealRef = { current: null };
+		const { container, unmount } = renderComponent(
+			React.createElement( LogEntriesTable, { entries, revealRef } )
+		);
+
+		act( () =>
+			revealRef.current( [
+				'request',
+				'process',
+				'sql: SELECT wp_users',
+			] )
+		);
+		// The highlight lands in a rAF, so flush one frame.
+		act( () => {
+			jest.advanceTimersByTime( 20 );
+		} );
+
+		// Whichever row got the highlight IS the answer. Without the label in
+		// the key both spans share one, and a detail key is LAST-wins — so a
+		// miss lands on `SELECT wp_posts`, the one that was not clicked.
+		const lit = Array.from( container.querySelectorAll( 'tr' ) ).find(
+			( tr ) => tr.querySelector( 'td' )?.style.boxShadow
+		);
+		expect( lit?.dataset.pairId ).toBe( '2' );
+		unmount();
+		jest.useRealTimers();
+	} );
+
 	it( 'shows duration + peak_mb stats on complete entries', () => {
 		const entries = makeEntries();
 		const { container, unmount } = renderComponent(

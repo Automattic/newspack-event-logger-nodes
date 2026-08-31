@@ -481,7 +481,18 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 				const name = startMatch[ 1 ];
 				const msg =
 					typeof entry.m === 'string' && entry.m ? entry.m : '';
-				const detail = msg ? `${ name }: ${ msg }` : name;
+				const label =
+					typeof entry.l === 'string' && entry.l ? entry.l : '';
+				// @longform `Flame_Tree` names a node `base: l` and only falls
+				// back to `m`, and the path arrives built by that rule — so a
+				// key built from `m` alone misses every segment carrying a
+				// label, which with `trace_hooks` on is every hook. Every miss
+				// fell through to the base-name key, whose first-wins lookup
+				// reveals the FIRST occurrence rather than the one clicked.
+				const detail =
+					msg && msg !== label
+						? `${ name }: ${ msg }`
+						: ( label && `${ name }: ${ label }` ) || name;
 				stack.push( { name, detail } );
 				const detailKey = stack.map( ( s ) => s.detail ).join( '/' );
 				map[ detailKey ] = entry.pairId;
@@ -757,9 +768,9 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 	 * The lines naming who opened a traced span.
 	 *
 	 * `l` is the origin frame the flame aggregates on; `caller` the deeper
-	 * chain, present only for the firings the rule's budget covered. Both are
-	 * what the row is READ for, so they lead and they never enter the value's
-	 * clamp — `m` on a filtered hook is a kilobyte of the value it filtered.
+	 * chain, present only for the firings the rule's budget covered. Both lead
+	 * the value, in the muted ink the durations wear: they say who asked, which
+	 * is context for the value rather than the value itself.
 	 *
 	 * @param {Object} entry Log entry object.
 	 * @return {string[]} Label lines, outermost concern first.
@@ -883,7 +894,10 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 	 */
 	const renderTraceLines = ( entry ) =>
 		traceLines( entry ).map( ( line ) => (
-			<div className="log-entries-trace" key={ line }>
+			<div
+				className="log-entries-trace newspack-nodes-status is-muted"
+				key={ line }
+			>
 				{ line }
 			</div>
 		) );
