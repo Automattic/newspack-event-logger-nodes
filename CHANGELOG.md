@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.74.0] - 2026-08-31
+
+### Changed
+
+- **The URL index is folded ONE SHARD at a time, and the whole-index memo is gone.** The stored buckets are capped at `MAX_URLS_PER_SHARD`; their MERGE is not, so `$result` grew to the count of distinct URLs in the retention window and a production hub exhausted 512MB inside the fold itself — `empty_index_row()`, `fold_index_row()` and the display loop — with the unscoped `urls` verb returning HTTP 500. Three earlier releases removed three real duplicate copies (v0.71.3, v0.72.1, v0.73.3); none of them was the volume. A url_hash's shard is its first hex digit, so shards are disjoint and a shard's fold is complete for every URL it holds. `url_page()` now folds each shard, keeps only that shard's best `$offset + $limit` by the sort key and best `SLOWEST_ROWS` by mean, and drops the rest — the union of the per-shard top-N is exactly the global top-N, and `rows` and `totals` accumulate across shards and stay site-wide. Measured over a 20,000-row index spread across the shards: **3.6MB allocated, against 29.2MB before this work and 7.8MB after v0.72.1**. Decision 14's memo is deliberately retired: `raw_row()` point-reads the one shard its hash names, which was already the tested fallback whenever the memo was unset, and its test is replaced by one asserting a modal costs one shard rather than the table's fan-out. `raw_index()`, `row_from_index()`, `index_has_split()` and `project_at()` are deleted. Spec: `docs/superpowers/specs/2026-08-31-url-index-per-shard-fold.md`.
+
 ## [0.73.3] - 2026-08-31
 
 ### Fixed

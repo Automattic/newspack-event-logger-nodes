@@ -238,15 +238,6 @@ class Performance_CI_Node extends Service_CI_Node {
 	public static ?\Closure $load_index = null;
 
 	/**
-	 * The one unscoped read the projections above are cut from; null until the
-	 * first `index()` call. Keeping the raw merge is what holds a filtered poll
-	 * to a single fan-out when two verbs ask for two different scopes.
-	 *
-	 * @var array<int,array<array-key,mixed>>|null
-	 */
-	private ?array $index_raw = null;
-
-	/**
 	 * Type-coerce + bounds-check a single value for `set`.
 	 *
 	 * Rejection is signalled by null, so a legitimately-null sanitized value is
@@ -929,16 +920,19 @@ class Performance_CI_Node extends Service_CI_Node {
 	/**
 	 * The filtered URL set: its totals, its slowest, and one page of it.
 	 *
-	 * Two passes, because the verb needs a WHOLE display row for very few of the
-	 * URLs it reasons about. Pass one walks the memoized raw index and keeps
-	 * only what the filters, the totals and the two rankings consume — a hash
-	 * position, the sort value and `avg_ms` — accumulating the totals as it
-	 * goes. Pass two projects the page and the slowest, by position.
+	 * Folded ONE SHARD AT A TIME. A url_hash's shard is its first hex digit, so
+	 * shards are disjoint and a shard's fold is complete for every URL it
+	 * holds — there is no cross-shard merge to miss. The whole merged index is
+	 * otherwise the count of distinct URLs across the retention window, which
+	 * nothing bounds: the stored buckets are capped at `MAX_URLS_PER_SHARD`,
+	 * the MERGE of them is not, and a production hub exhausted 512MB inside the
+	 * fold itself once three releases had removed three real duplicate copies.
 	 *
-	 * Building a display row for every URL left TWO complete indexes resident,
-	 * the raw memo decision 14 requires plus the projection, and that is what
-	 * exhausted 512MB on a production hub. Measured over a 20,000-row index the
-	 * verb allocated 29.2MB against an index of 20.6MB.
+	 * The union of the per-shard top-N is exactly the global top-N, because
+	 * every row belongs to exactly one shard — so keeping each shard's best
+	 * `$offset + $limit` by the sort key, and its best `SLOWEST_ROWS` by
+	 * `avg_ms`, loses nothing. `rows` and `totals` accumulate across shards and
+	 * stay site-wide (decision 15).
 	 *
 	 * @param string $server Reporting server to scope to; '' reads every server.
 	 * @param string $search Case-insensitive URL substring; '' matches all.
@@ -948,90 +942,89 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param string $order  'asc' or 'desc'.
 	 * @param int    $offset Page offset.
 	 * @param int    $limit  Page size.
-	 * @return array{data:array<int,array<array-key,mixed>>,rows:int,totals:array<string,mixed>,slowest:array<int,array<array-key,mixed>>}
+	 * @return array{data:array<int,array<array-key,mixed>>,rows:int,totals:array<string,mixed>,slowest:array<int,array<array-key,mixed>>,has_split:bool}
 	 */
 	private function url_page( string $server, string $search, bool $errors, bool $workers, string $sort, string $order, int $offset, int $limit ): array {
-		$term     = '' === $search ? '' : \strtolower( $search );
-		$keys     = [];
-		$urls     = 0;
-		$requests = 0;
-		$timed    = 0;
-		$recent   = 0;
-		$sum_ms   = 0.0;
-		$sum_peak = 0.0;
+		$term      = '' === $search ? '' : \strtolower( $search );
+		$page_keep = \max( 0, $offset ) + \max( 0, $limit );
+		$ranked    = [];
+		$slowest   = [];
+		$rows      = 0;
+		$urls      = 0;
+		$requests  = 0;
+		$timed     = 0;
+		$recent    = 0;
+		$sum_ms    = 0.0;
+		$sum_peak  = 0.0;
+		$has_split = false;
 
-		foreach ( $this->raw_index() as $pos => $raw ) {
-			$row = self::project_row( Core::arr( $raw ), $server );
-			if ( null === $row ) {
-				continue;
+		$by_sort = static fn ( array $a, array $b ): int => 'asc' === $order
+			? ( $a[ $sort ] ?? 0 ) <=> ( $b[ $sort ] ?? 0 )
+			: ( $b[ $sort ] ?? 0 ) <=> ( $a[ $sort ] ?? 0 );
+		$by_mean = static fn ( array $a, array $b ): int =>
+			( $b['avg_ms'] ?? 0 ) <=> ( $a['avg_ms'] ?? 0 );
+
+		foreach ( Stats_Store::url_shards() as $shard ) {
+			$kept = [];
+			foreach ( self::read_index( $shard ) as $raw ) {
+				$raw_row = Core::arr( $raw );
+				// Derived here: there is no second walk to spend on it.
+				$has_split = $has_split
+					|| [] !== Core::arr( $raw_row[ Stats_Store::URL_SRV_FIELD ] ?? null );
+				$row       = self::project_row( $raw_row, $server );
+				if ( null === $row ) {
+					continue;
+				}
+				$aggregate = ! empty( $row['aggregate'] );
+				// A folded row stands for many URLs; no term speaks for it.
+				if ( '' !== $term
+					&& ( $aggregate
+						|| false === \strpos( \strtolower( Core::as_string( $row['url'] ?? '' ) ), $term ) ) ) {
+					continue;
+				}
+				if ( ! $workers && ! empty( $row['worker'] ) ) {
+					continue;
+				}
+				if ( $errors && ! self::has_unclassified_requests( $row ) ) {
+					continue;
+				}
+				++$rows;
+				// The overflow row stands for many URLs; not one of them.
+				$urls     += $aggregate ? 0 : 1;
+				$requests += Core::num_int( $row['count'] ?? null );
+				$recent   += Core::num_int( $row['recent_count'] ?? null );
+				// Denominator from the SAME row as its numerator.
+				$timed    += Core::num_int( $row['timed_count'] ?? null );
+				$sum_ms   += Core::num_float( $row['sum_ms'] ?? null );
+				$sum_peak += Core::num_float( $row['sum_peak_mb'] ?? null );
+				$kept[]    = $row;
 			}
-			$aggregate = ! empty( $row['aggregate'] );
-			// A folded row stands for many URLs; no search term speaks for it.
-			if ( '' !== $term
-				&& ( $aggregate
-					|| false === \strpos( \strtolower( Core::as_string( $row['url'] ?? '' ) ), $term ) ) ) {
-				continue;
-			}
-			if ( ! $workers && ! empty( $row['worker'] ) ) {
-				continue;
-			}
-			if ( $errors && ! self::has_unclassified_requests( $row ) ) {
-				continue;
-			}
-			// The overflow row stands for many URLs; it is not one of them.
-			$urls     += $aggregate ? 0 : 1;
-			$requests += Core::num_int( $row['count'] ?? null );
-			$recent   += Core::num_int( $row['recent_count'] ?? null );
-			// Denominator from the SAME row as its numerator.
-			$timed    += Core::num_int( $row['timed_count'] ?? null );
-			$sum_ms   += Core::num_float( $row['sum_ms'] ?? null );
-			$sum_peak += Core::num_float( $row['sum_peak_mb'] ?? null );
-			$keys[]    = [ $pos, $row[ $sort ] ?? 0, Core::num_float( $row['avg_ms'] ?? null ) ];
+
+			// This shard's contenders only; the rest of it is dropped here.
+			\usort( $kept, $by_mean );
+			$slowest = \array_merge( $slowest, \array_slice( $kept, 0, self::SLOWEST_ROWS ) );
+			\usort( $kept, $by_sort );
+			$ranked  = \array_merge( $ranked, \array_slice( $kept, 0, $page_keep ) );
 		}
 
-		// Slowest first; the page's sort then reuses the array.
-		\usort( $keys, static fn ( array $a, array $b ): int => $b[2] <=> $a[2] );
-		$slowest = $this->project_at( \array_slice( $keys, 0, self::SLOWEST_ROWS ), $server );
-
-		\usort(
-			$keys,
-			static fn ( array $a, array $b ): int => 'asc' === $order
-				? $a[1] <=> $b[1]
-				: $b[1] <=> $a[1]
-		);
+		\usort( $slowest, $by_mean );
+		\usort( $ranked, $by_sort );
 
 		return [
-			'data'    => $this->project_at( \array_slice( $keys, $offset, $limit ), $server ),
+			'data'      => \array_slice( $ranked, $offset, $limit ),
 			// The pager's question; `totals.urls` is another.
-			'rows'    => \count( $keys ),
-			'totals'  => [
+			'rows'      => $rows,
+			'totals'    => [
 				'urls'                => $urls,
 				'requests'            => $requests,
 				'avg_ms'              => self::mean_ms( $sum_ms, $timed ),
 				'avg_peak_mb'         => $requests > 0 ? $sum_peak / $requests : 0.0,
 				'requests_per_second' => self::recent_rate( $recent ),
 			],
-			'slowest' => $slowest,
+			'slowest'   => \array_slice( $slowest, 0, self::SLOWEST_ROWS ),
+			// Pre-split data cannot answer a scoped question; see the handler.
+			'has_split' => $has_split,
 		];
-	}
-
-	/**
-	 * Project the raw rows at these index positions, in order.
-	 *
-	 * @param array<int,array{0:int,1:mixed,2:float}> $keys Tuples from url_page()'s first pass.
-	 * @param string                                         $server Reporting server; '' scopes to none.
-	 * @return array<int,array<array-key,mixed>>
-	 */
-	private function project_at( array $keys, string $server ): array {
-		$raw = $this->raw_index();
-		$out = [];
-		foreach ( $keys as $key ) {
-			$row = self::project_row( Core::arr( $raw[ $key[0] ] ?? null ), $server );
-			if ( null !== $row ) {
-				$out[] = $row;
-			}
-		}
-		return $out;
 	}
 
 	/**
@@ -1732,9 +1725,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @return array<array-key,mixed>|null
 	 */
 	private function raw_row( string $hash ): ?array {
-		return null === $this->index_raw
-			? self::load_row_default( $hash )
-			: $this->row_from_index( $hash );
+		return self::load_row_default( $hash );
 	}
 
 	/**
@@ -1755,39 +1746,6 @@ class Performance_CI_Node extends Service_CI_Node {
 			}
 		}
 		return null;
-	}
-
-	/**
-	 * Find one hash in the whole merged index.
-	 *
-	 * @param string $hash 12-char URL hash.
-	 * @return array<array-key,mixed>|null
-	 */
-	private function row_from_index( string $hash ): ?array {
-		foreach ( $this->raw_index() as $raw ) {
-			if ( Core::as_string( $raw['hash'] ?? '' ) === $hash ) {
-				return $raw;
-			}
-		}
-		return null;
-	}
-
-	/**
-	 * Whether this request's index can answer a scoped question at all.
-	 *
-	 * For one retention window after an upgrade no row carries a split, and a
-	 * scoped read matches nothing — an absence of DATA, which reported as zero
-	 * would read "0 requests" over a live site. Derived rather than stamped
-	 * during the normalize pass: a flag set by a side effect in another method
-	 * reads `false` the moment that loop is reordered or short-circuited.
-	 */
-	private function index_has_split(): bool {
-		foreach ( $this->raw_index() as $row ) {
-			if ( [] !== Core::arr( $row[ Stats_Store::URL_SRV_FIELD ] ?? null ) ) {
-				return true;
-			}
-		}
-		return false;
 	}
 
 	/**
@@ -1838,25 +1796,6 @@ class Performance_CI_Node extends Service_CI_Node {
 	 */
 	private static function mean_ms( float $sum_ms, int $timed ): float {
 		return $timed > 0 ? $sum_ms / $timed : 0.0;
-	}
-
-	/**
-	 * The unscoped merged index for THIS request — read once and memoized, so
-	 * every reader that derives from it (`urls`, `url_detail`, `ask`) shares one
-	 * memcache fan-out however many scopes they ask between them. Resolves the
-	 * `load_index` seam (the real loader by default) on the first call.
-	 *
-	 * Its rows are NOT display shape: sums plus the internal maps, means still
-	 * the projection's. Read through `url_page()` or `row()`, never directly — raw,
-	 * they report a confident 0 for every average.
-	 *
-	 * @return array<int,array<array-key,mixed>>
-	 */
-	private function raw_index(): array {
-		if ( null === $this->index_raw ) {
-			$this->index_raw = self::read_index( null );
-		}
-		return $this->index_raw;
 	}
 
 	/**
@@ -2075,7 +2014,7 @@ class Performance_CI_Node extends Service_CI_Node {
 					'data'    => $page['data'],
 					'rows'    => $page['rows'],
 					// Pre-split data cannot answer this; 0 would read as idle.
-					'totals'  => ( '' === $server || $self->index_has_split() )
+					'totals'  => ( '' === $server || $page['has_split'] )
 						? $page['totals']
 						: null,
 					'slowest' => $page['slowest'],
