@@ -231,8 +231,8 @@ class AppCoreTest extends TestCase {
 	// ── hook caller traces ──────────────────────────────────────────────
 
 	/** A rule that traces callers, distinct from every default. */
-	private function tracing_rule( bool $on ): Rule {
-		return new Rule( '9f3c1d7e5b28', '/reports/', Rule::ACTION_LOG, 0, 0.0, [], [], [ 'the_content' ], Rule::HOOKS_INLINE, false, $on );
+	private function tracing_rule( int $traces ): Rule {
+		return new Rule( '9f3c1d7e5b28', '/reports/', Rule::ACTION_LOG, 0, 0.0, [], [], [ 'the_content' ], Rule::HOOKS_INLINE, false, $traces );
 	}
 
 	/** The per-hook trace counters App\Core is holding. */
@@ -250,9 +250,9 @@ class AppCoreTest extends TestCase {
 	 * something to pay for, so it stops after CALLER_TRACE_LIMIT.
 	 */
 	public function test_caller_traces_stop_at_the_limit(): void {
-		$this->set_governing_rule( $this->tracing_rule( true ) );
+		$limit = 7;
+		$this->set_governing_rule( $this->tracing_rule( $limit ) );
 		$core  = new Core();
-		$limit = ( new \ReflectionClassConstant( Core::class, 'CALLER_TRACE_LIMIT' ) )->getValue();
 
 		$GLOBALS['_wp_test_current_filter'] = 'the_content';
 		for ( $i = 0; $i < $limit + 5; $i++ ) {
@@ -271,19 +271,20 @@ class AppCoreTest extends TestCase {
 	 * discarded the caller, which on a real admin request is the whole answer.
 	 */
 	public function test_a_caller_trace_keeps_the_nearest_frames(): void {
-		$this->set_governing_rule( $this->tracing_rule( true ) );
+		$this->set_governing_rule( $this->tracing_rule( Rule::TRACE_CALLERS_DEFAULT ) );
 		$core = new Core();
 		$ref  = new \ReflectionMethod( Core::class, 'caller_of' );
 
 		$summary = $ref->invoke( $core, 'the_content' );
 
 		$this->assertStringStartsWith( "apply_filters('the_content')", $summary );
-		$this->assertStringNotContainsString( 'far_frame_10', $summary );
+		// Beyond CALLER_FRAMES: the window keeps the near end, not the boot end.
+		$this->assertStringNotContainsString( 'far_frame_30', $summary );
 	}
 
 	/** A rule that does not ask pays for no backtraces at all. */
 	public function test_a_rule_that_does_not_opt_in_traces_no_callers(): void {
-		$this->set_governing_rule( $this->tracing_rule( false ) );
+		$this->set_governing_rule( $this->tracing_rule( 0 ) );
 		$core = new Core();
 
 		$GLOBALS['_wp_test_current_filter'] = 'the_content';

@@ -19,7 +19,7 @@ describe( 'rules constants', () => {
 			hooks_in: 'inline',
 			// Query spans are expensive; a blank rule asks for none.
 			log_queries: false,
-			trace_callers: false,
+			trace_callers: 0,
 		} );
 	} );
 } );

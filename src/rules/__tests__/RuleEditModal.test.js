@@ -280,9 +280,10 @@ describe( 'RuleEditModal — log rule fields', () => {
 	} );
 
 	test( 'a log rule round-trips its caller-trace opt-in', () => {
-		mount( { ...LOG_RULE, trace_callers: true } );
+		// A tuned count survives an edit; the checkbox must not lower it to 20.
+		mount( { ...LOG_RULE, trace_callers: 250 } );
 		click( saveButton() );
-		expect( onSave.mock.calls[ 0 ][ 0 ].trace_callers ).toBe( true );
+		expect( onSave.mock.calls[ 0 ][ 0 ].trace_callers ).toBe( 250 );
 	} );
 
 	test( 'a skip rule carries no query-span opt-in', () => {

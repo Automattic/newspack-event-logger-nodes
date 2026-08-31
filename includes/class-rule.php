@@ -30,6 +30,14 @@ final class Rule {
 	public const ACTION_LOG   = 'log';
 	public const ACTION_SKIP  = 'skip';
 	public const HOOKS_INLINE = 'inline';
+
+	/**
+	 * Backtraces one hook may spend when `trace_callers` is on but unnumbered.
+	 *
+	 * A fixed 20 left 21% of a real record's time unattributed, so a rule can
+	 * name its own number; `true` still means this one.
+	 */
+	public const TRACE_CALLERS_DEFAULT = 20;
 	public const HOOKS_MC     = 'mc';
 
 	/**
@@ -60,7 +68,7 @@ final class Rule {
 		public readonly ?array $hooks = [],
 		public readonly string $hooks_in = self::HOOKS_INLINE,
 		public readonly bool $log_queries = false,
-		public readonly bool $trace_callers = false
+		public readonly int $trace_callers = 0
 	) {
 		if ( '' === $pattern ) {
 			throw new \InvalidArgumentException( 'rule pattern is required' );
@@ -162,8 +170,24 @@ final class Rule {
 			null === $hooks ? null : self::to_string_list( $hooks ),
 			( self::HOOKS_MC === ( $a['hooks_in'] ?? '' ) ) ? self::HOOKS_MC : self::HOOKS_INLINE,
 			! empty( $a['log_queries'] ),
-			! empty( $a['trace_callers'] )
+			self::to_trace_count( $a['trace_callers'] ?? 0 )
 		);
+	}
+
+	/**
+	 * How many caller traces a stored value asks for.
+	 *
+	 * `true` predates the count and means the default; anything numeric is the
+	 * number itself; everything else is off. A negative is off, not a cap that
+	 * never trips.
+	 *
+	 * @param mixed $v Stored value.
+	 */
+	private static function to_trace_count( mixed $v ): int {
+		if ( true === $v ) {
+			return self::TRACE_CALLERS_DEFAULT;
+		}
+		return \max( 0, Core::num_int( $v, 0 ) );
 	}
 
 	/**

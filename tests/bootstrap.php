@@ -472,10 +472,10 @@ if ( ! function_exists( 'wp_debug_backtrace_summary' ) ) {
 			'wp',
 			'require_once(wp-load.php)',
 			'{main}',
-			'far_frame_8',
-			'far_frame_9',
-			'far_frame_10',
 		];
+		for ( $i = 8; $i <= 30; $i++ ) {
+			$frames[] = "far_frame_{$i}";
+		}
 		return $pretty ? \implode( ', ', \array_reverse( $frames ) ) : $frames;
 	}
 }

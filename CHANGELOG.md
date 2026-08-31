@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.75.0] - 2026-08-31
+
+### Changed
+
+- **`trace_callers` is a COUNT, and the frame window no longer truncates the answer.** Both caps were guesses and both cost a real diagnosis: 20 traces per hook left 21% of a `wp-admin/post.php` record's time unattributed, and an 8-frame window cut its stack at `rest_do_request` — one frame short of `rest_preload_api_request`, which is what explained the entire 41s request. The number now belongs to the rule: `trace_callers` is how many backtraces one hook may spend, with `true` still decoding to `Rule::TRACE_CALLERS_DEFAULT` (20) so rules written before this still read. `CALLER_FRAMES` is 20 and `CALLER_PREVIEW_MAX` 1024, against a 3840-byte `MAX_DATA_SIZE`, so the byte cap is the real bound rather than an arbitrary frame count. The rules editor keeps a tuned count instead of lowering it to the default when the box is re-ticked.
+
 ## [0.74.1] - 2026-08-31
 
 ### Fixed
