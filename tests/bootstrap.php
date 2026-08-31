@@ -460,8 +460,23 @@ if ( ! function_exists( 'wp_debug_backtrace_summary' ) ) {
 	 * @param bool        $pretty       Whether to join with commas.
 	 * @return string
 	 */
-	function wp_debug_backtrace_summary( ?string $ignore_class = null, int $skip_frames = 0, bool $pretty = true ): string {
-		return "require('wp-admin/post.php'), do_action('edit_form_after_title'), apply_filters('the_content')";
+	function wp_debug_backtrace_summary( ?string $ignore_class = null, int $skip_frames = 0, bool $pretty = true ) {
+		// Core returns the frames NEAREST-FIRST as an array, and the pretty
+		// string is that array REVERSED — so the immediate caller is the
+		// array's head and the string's tail.
+		$frames = [
+			"apply_filters('the_content')",
+			"do_action('edit_form_after_title')",
+			"require('wp-admin/post.php')",
+			'WP::main',
+			'wp',
+			'require_once(wp-load.php)',
+			'{main}',
+			'far_frame_8',
+			'far_frame_9',
+			'far_frame_10',
+		];
+		return $pretty ? \implode( ', ', \array_reverse( $frames ) ) : $frames;
 	}
 }
 

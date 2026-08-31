@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.73.2] - 2026-08-30
+
+### Fixed
+
+- **A traced hook's caller now reaches the record at all.** `Request_Builder_Node` rebuilds every stored entry from an ALLOWLIST — `n, ts, k, m, l, duration_ms, peak_mb, keep` — so `caller` was written to the firehose and dropped on the way into the request. Measured on a local run: 1,919 callers in the firehose segment, zero in the assembled records, which is why a traced hook showed nothing in any dashboard however the rule was set.
+- **The trace keeps the NEAREST frames.** `wp_debug_backtrace_summary()` returns the stack nearest-first as an array and outermost-first as a string — the pretty form is that array reversed. Capping the string's head kept eight frames of `require_once('wp-settings.php')` bootstrap and cut the caller, which is the entire answer. `App\Core` now takes the array form and keeps `CALLER_FRAMES` (8) from the near end. The test shim modelled only the string, so it could not have caught this; it now models both halves of core's contract.
+
+### Note
+
+Assembly runs in a worker, so `wp nodes restart` is required after deploying a change to what a record carries; the old class survives in the running process otherwise.
+
 ## [0.73.1] - 2026-08-30
 
 ### Fixed

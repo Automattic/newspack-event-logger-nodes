@@ -176,6 +176,41 @@ class RequestBuilderTest extends TestCase {
 		$this->assertStringContainsString( 'expected #2, got #5 on r1', $buf, 'the one emission carries the first payload' );
 	}
 
+	/**
+	 * The stored entry is an ALLOWLIST, so a producer field it does not name is
+	 * dropped on the way into the record. `caller` was: the firehose carried
+	 * 403 of them on a local run and the assembled records carried none, which
+	 * is why a traced hook showed nothing in any dashboard.
+	 */
+	public function test_a_stored_entry_carries_the_producer_caller(): void {
+		$rb      = new Request_Builder_Node();
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+		$trace = "apply_filters('the_content'), do_action('edit_form_after_title')";
+
+		$this->fill( $rb, 1, 'r9', 'process (start)', [ 'm' => '99 on host', 'l' => '' ] );
+		$this->fill( $rb, 2, 'r9', 'request', [ 'm' => 'GET /post/9' ] );
+		$this->fill( $rb, 3, 'r9', 'the_content hook (start)', [ 'm' => '<p>x</p>', 'caller' => $trace ] );
+		$this->fill( $rb, 4, 'r9', 'process (complete)', [ 'duration_ms' => 50.0, 'status_code' => 200 ] );
+
+		$req = [];
+		foreach ( $capture->captured as $captured ) {
+			$value = $captured[ Message::VALUE ];
+			if ( \is_array( $value ) && isset( $value['entries'] ) ) {
+				$req = $value;
+			}
+		}
+		$hook = null;
+		foreach ( $req['entries'] ?? [] as $entry ) {
+			if ( 'the_content hook (start)' === ( $entry['k'] ?? '' ) ) {
+				$hook = $entry;
+			}
+		}
+
+		$this->assertIsArray( $hook, 'the record must carry the hook entry' );
+		$this->assertSame( $trace, $hook['caller'] ?? null );
+	}
+
 	public function test_complete_with_url_emits_assembled_request(): void {
 		$rb      = new Request_Builder_Node();
 		$capture = new Capture_Sink_Node();

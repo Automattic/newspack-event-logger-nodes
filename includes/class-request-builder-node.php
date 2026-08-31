@@ -494,6 +494,13 @@ class Request_Builder_Node extends Timer_Node {
 			if ( isset( $entry['peak_mb'] ) ) {
 				$stored['peak_mb'] = $entry['peak_mb'];
 			}
+			// @longform The stored entry is an ALLOWLIST, so a producer field
+			// named nowhere here is dropped between the firehose and the
+			// record — which is what made every traced hook caller invisible
+			// while the firehose carried hundreds of them.
+			if ( isset( $entry['caller'] ) ) {
+				$stored['caller'] = Core::as_string( $entry['caller'], '' );
+			}
 			// The producer's fold exemption; see is_kept().
 			if ( ! empty( $entry['keep'] ) ) {
 				$stored['keep'] = 1;

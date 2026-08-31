@@ -62,6 +62,9 @@ class Core {
 	/** Backtraces captured per hook per request; a diagnostic, not a log. */
 	private const CALLER_TRACE_LIMIT = 20;
 
+	/** Frames kept from a caller trace, NEAREST first; the rest is bootstrap. */
+	private const CALLER_FRAMES = 8;
+
 	/** Caller summary kept on a hook's start entry. */
 	private const CALLER_PREVIEW_MAX = 512;
 
@@ -314,7 +317,7 @@ class Core {
 	 *
 	 * A span says how long a pass took and nothing about who asked for it, so a
 	 * hook that fires sixteen times reads as sixteen identical mysteries. The
-	 * summary names the frames instead, on the entry's `caller` field — not
+	 * summary names the NEAREST frames instead, on the entry's `caller` field — not
 	 * `c`, which already means COUNT everywhere else in this schema. It is
 	 * capped per hook because the same
 	 * question on `render_block` would be 2,601 backtraces, and it ignores this
@@ -332,13 +335,13 @@ class Core {
 			return '';
 		}
 		$this->traced[ $hook_name ] = $spent + 1;
+		// @longform The ARRAY form, because core hands back the frames nearest
+		// first and the pretty string is that array REVERSED. Capping the
+		// string kept the bootstrap and cut the caller — the whole answer.
 		// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_wp_debug_backtrace_summary -- The caller summary IS the diagnostic; capped per hook and gated per rule.
-		$summary = \wp_debug_backtrace_summary( self::class );
-		return \substr(
-			RuntimeCore::as_string( $summary, '' ),
-			0,
-			self::CALLER_PREVIEW_MAX
-		);
+		$frames = \wp_debug_backtrace_summary( self::class, 0, false );
+		$near   = \array_slice( $frames, 0, self::CALLER_FRAMES );
+		return \substr( \implode( ', ', $near ), 0, self::CALLER_PREVIEW_MAX );
 	}
 
 	/**
