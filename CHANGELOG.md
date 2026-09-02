@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The MCP endpoint is documented where an operator looks for it.** `README.md` had no MCP section at all, and `docs/API.md` described the `Bearer <handle>.<key>` header and said wiring a client up was the operator's deliberate act without ever showing the one command that does it. Both now carry `claude mcp add --transport http`.
+
+### Changed
+
+- **One name for the test scratch directory.** `tests/configs/logging-*.php` pointed at `/tmp/event-logger-nodes-test` while the baseline config used `/tmp/newspack-event-logger-nodes-test`, so `run-coverage.sh` carried a second `rm -rf` for the unprefixed name and a comment explaining the split. Both are the prefixed name now, declared once as `Tests\TestCase::TEST_DIR` — four classes each held a private copy of the same constant, and a fifth spelled it as a bare literal — and the cleanup is one glob that covers the scratch base and every `make_temp_dir()` sibling beside it. Test-only.
+
 ## [0.86.0] - 2026-09-02
 
 ### Added
