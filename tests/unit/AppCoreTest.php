@@ -1464,6 +1464,25 @@ class AppCoreTest extends TestCase {
 		);
 	}
 
+	/**
+	 * `SHOW FULL COLUMNS` reaches the filter from deep inside wpdb — update()
+	 * to process_fields() to get_table_charset() to get_results() to query().
+	 * ORIGIN_DEPTH was sized for a hook, whose origin is the fifth frame, so
+	 * climbing past that many transport frames ran out of stack and labelled
+	 * the span with nothing at all.
+	 */
+	public function test_a_query_span_labels_a_caller_deep_behind_the_transport(): void {
+		$this->set_governing_rule( $this->query_rule( true ) );
+		$core = new Core();
+
+		( new FakeCaller() )->update_metadata( new FakeTransport(), 'SHOW FULL COLUMNS FROM `wp_postmeta`' );
+
+		$this->assertStringContainsString(
+			'FakeCaller->update_metadata',
+			$this->last_entry_label( 'sql (start)' )
+		);
+	}
+
 	/** Same for outbound HTTP, applied from `WP_Http::request()`. */
 	public function test_an_http_span_labels_the_caller_beyond_the_transport(): void {
 		$this->set_governing_rule( new Rule( '7c9e1a4b2d3f', '/checkout/', Rule::ACTION_LOG ) );
@@ -1510,6 +1529,19 @@ class FakeTransport {
 	public function get_row( string $sql ) {
 		return $this->query( $sql );
 	}
+	/** As deep as wpdb::update() -> get_table_charset() -> get_results(). */
+	public function update( string $sql ) {
+		return $this->process_fields( $sql );
+	}
+	public function process_fields( string $sql ) {
+		return $this->get_table_charset( $sql );
+	}
+	public function get_table_charset( string $sql ) {
+		return $this->get_results( $sql );
+	}
+	public function get_results( string $sql ) {
+		return $this->query( $sql );
+	}
 	public function query( string $sql ) {
 		return \apply_filters( 'query', $sql );
 	}
@@ -1525,6 +1557,9 @@ class FakeTransport {
 class FakeCaller {
 	public function build_articles_query( FakeTransport $t, string $sql ) {
 		return $t->get_row( $sql );
+	}
+	public function update_metadata( FakeTransport $t, string $sql ) {
+		return $t->update( $sql );
 	}
 	public function fetch_feed( FakeTransport $t, string $url ) {
 		return $t->dispatch( $url );

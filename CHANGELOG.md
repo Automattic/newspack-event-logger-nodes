@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.84.2] - 2026-09-02
+
+### Fixed
+
+- **A query issued deep inside `wpdb` is labelled again.** `SHOW FULL COLUMNS` reaches the `query` filter through four transport frames — `update()`, `process_fields()`, `get_table_charset()`, `get_results()` — and `ORIGIN_DEPTH` (8) was sized for a hook, whose origin is the fifth frame. Climbing past that many frames ran the walk out of stack, so `origin_frame()` returned `''` and the span carried no label at all. The climb now walks `TRANSPORT_ORIGIN_DEPTH` (16); the hook path keeps its 8 frames and its measured 0.9us, and the deeper walk is already gated on `trace_callers` being 0.
+
 ## [0.84.1] - 2026-09-02
 
 ### Fixed
