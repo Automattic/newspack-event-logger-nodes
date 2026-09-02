@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.85.0] - 2026-09-02
+
 ### Changed
 
 - **One toggle per row: unfold and show-more are the same act.** Clicking anywhere in a row opens it and its whole message body; clicking again folds and shows less. The Show more / Show less link is gone, and so is the second `expandedBodies` state that tracked bodies separately — everything lives in `expandedSet` under `bodyKey( entry )`, a row's `pairId` when it has one and `n:<n>` when it does not. The string prefix cannot collide with a numeric pairId, and the fold computation only ever looks up pairIds, so the extra keys pass it by. An unpaired row therefore opens on a click and on a search match like any other.
