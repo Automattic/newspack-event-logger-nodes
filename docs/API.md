@@ -156,6 +156,13 @@ ceiling — so authority is the user's and the scope only ever subtracts, and
 performance tools and `rules list`; `tune` additionally sees `rules upsert` and
 `rules delete`.
 
+**Connecting a client**. Register the endpoint with the handle and key that
+session issued — `<ID>` is the local name the client will file it under:
+
+```
+claude mcp add --transport http <ID> https://<DOMAIN>/wp-json/newspack-event-logger-nodes/v1/mcp --header "Authorization: Bearer <HANDLE>.<KEY>"
+```
+
 Every tool description carries the measurement caveat, because a model handed
 `175.6ms profiled / 420000ms duration` with nothing saying what is unmeasured
 will invent a cause for the difference — and the invented cause reads exactly
