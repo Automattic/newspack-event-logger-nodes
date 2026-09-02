@@ -1133,7 +1133,6 @@ class Log_Manager {
 		// the guard skips truncating and the Partition drops the record.
 		$data_json = \wp_json_encode( $data, \JSON_INVALID_UTF8_SUBSTITUTE | \JSON_PARTIAL_OUTPUT_ON_ERROR );
 		if ( false !== $data_json && \strlen( $data_json ) > self::MAX_DATA_SIZE ) {
-			Core::print_less_often( "LogManager: data truncated for category \"{$category}\", size=", (string) \strlen( $data_json ), \sprintf( ' (limit=%d).', self::MAX_DATA_SIZE ) );
 			$data = self::fit_data( $data, $data_json );
 		}
 		if ( null === $this->topic ) {

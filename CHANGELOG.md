@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.83.0] - 2026-09-02
+
+### Added
+
+- **A message body longer than five lines folds behind a Show more link.** The value stays whole on the wire — this is the reader's fold, not a cap — and `l`, the stats and the child badge stay outside it, so folding never hides a number. Both render paths carry it: a merged pair renders through `renderMergedMessage`, not `renderEntryMessage`, which a test caught.
+
+### Changed
+
+- **The host's request annotation no longer rides every query span.** The platform appends `/* <uri> request_id: <hex> */` to each query so a DB-side slow log can be traced back; the record already carries both facts — the URL is the row, the rid is `Message::KEY` — so on the 958-query homepage save it was ~100KB of duplication. `App\Core` strips it at capture, anchored at the end so a comment inside a query survives. **Search is unaffected and now has a regression test**: a URL pattern still reaches a request's SQL lines through the `request` entry, which carries the full redacted URL, because `Reqgrep_Core` matches any line for a rid and then collects every line for it — and `Performance_CI_Node` greps through that same core.
+
+### Removed
+
+- The rate-limited `error_log` notice `message()` emitted when it trimmed an entry. The entry says so itself now, with `truncated => true`.
+
 ## [0.82.1] - 2026-09-02
 
 ### Changed

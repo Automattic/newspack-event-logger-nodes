@@ -527,7 +527,7 @@ class Core {
 		if ( ! $lm->is_started() ) {
 			return $query;
 		}
-		$sql                 = RuntimeCore::as_string( $query, '' );
+		$sql                 = self::without_host_annotation( RuntimeCore::as_string( $query, '' ) );
 		$this->query_spans[] = self::SQL_STATE;
 		$lm->start(
 			self::SQL_STATE,
@@ -568,6 +568,21 @@ class Core {
 			return \substr( $name, 0, self::ORIGIN_MAX );
 		}
 		return '';
+	}
+
+	/**
+	 * Drop the host's trailing `/* <uri> request_id: <hex> *' . '/` annotation.
+	 *
+	 * The platform appends it so a DB-side slow log can be traced back to a
+	 * request. The record already carries both facts — the URL is the row and
+	 * the rid is `Message::KEY` — so on a 958-query request it is ~100KB of
+	 * duplication. Anchored at the end, so a comment inside the query stays.
+	 *
+	 * @param string $sql The query as the database was asked it.
+	 * @return string The query without its trailing comment.
+	 */
+	private static function without_host_annotation( string $sql ): string {
+		return \rtrim( (string) \preg_replace( '#\s*/\*[^*]*\*+([^/*][^*]*\*+)*/\s*$#', '', $sql ) );
 	}
 
 	/**

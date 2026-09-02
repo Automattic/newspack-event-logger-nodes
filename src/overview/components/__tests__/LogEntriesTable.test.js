@@ -1096,3 +1096,33 @@ it( 'marks a trimmed entry with a subdued [truncated] line after the message', (
 	expect( mark.previousSibling ).not.toBeNull();
 	unmount();
 } );
+
+it( 'folds a message body past five lines behind Show more', () => {
+	const entries = makeEntries();
+	const body = Array.from(
+		{ length: 12 },
+		( _, i ) => `line-${ i + 1 }`
+	).join( '\n' );
+	entries[ 1 ] = { ...entries[ 1 ], m: body };
+	const { container, unmount } = renderComponent(
+		React.createElement( LogEntriesTable, { entries } )
+	);
+	const fold = ( label ) =>
+		Array.from( container.querySelectorAll( 'button' ) ).find(
+			( b ) => label === b.textContent
+		);
+
+	expect( container.textContent ).toContain( 'line-5' );
+	expect( container.textContent ).not.toContain( 'line-12' );
+
+	act( () => {
+		fold( 'Show more' ).click();
+	} );
+	expect( container.textContent ).toContain( 'line-12' );
+
+	act( () => {
+		fold( 'Show less' ).click();
+	} );
+	expect( container.textContent ).not.toContain( 'line-12' );
+	unmount();
+} );
