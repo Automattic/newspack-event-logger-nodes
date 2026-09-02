@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.83.1] - 2026-09-02
+
+### Fixed
+
+- **The Show more / Show less link sits on its own line.** It rendered inline, so it ran on from the last line of the folded body — `"is_singleShow less`. A block wrapper puts it under the text; no CSS, which keeps it clear of the appearance-ownership guards.
+
 ## [0.83.0] - 2026-09-02
 
 ### Added

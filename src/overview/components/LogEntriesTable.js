@@ -983,25 +983,27 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 		return (
 			<>
 				{ open ? msg : lines.slice( 0, BODY_FOLD_LINES ).join( '\n' ) }
-				<button
-					type="button"
-					className="button-link"
-					onClick={ () =>
-						setExpandedBodies( ( prev ) => {
-							const next = new Set( prev );
-							if ( next.has( entry.n ) ) {
-								next.delete( entry.n );
-							} else {
-								next.add( entry.n );
-							}
-							return next;
-						} )
-					}
-				>
-					{ open
-						? __( 'Show less', 'newspack-event-logger-nodes' )
-						: __( 'Show more', 'newspack-event-logger-nodes' ) }
-				</button>
+				<div className="log-entries-fold">
+					<button
+						type="button"
+						className="button-link"
+						onClick={ () =>
+							setExpandedBodies( ( prev ) => {
+								const next = new Set( prev );
+								if ( next.has( entry.n ) ) {
+									next.delete( entry.n );
+								} else {
+									next.add( entry.n );
+								}
+								return next;
+							} )
+						}
+					>
+						{ open
+							? __( 'Show less', 'newspack-event-logger-nodes' )
+							: __( 'Show more', 'newspack-event-logger-nodes' ) }
+					</button>
+				</div>
 			</>
 		);
 	};
