@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`process (start)` names the WordPress version.** It already carried the pid and the host; a trace read months later had no record of the core version it ran against, and the environment allowlist is the wrong home for a value that is neither a header nor a server variable. The line now reads `<pid> on <host>, WordPress <version>`.
+
+### Changed
+
+- **Show more / Show less is a control again, with its own state.** Folding a row and opening its message body are separate acts on separate state: `expandedSet` holds pairIds, `expandedBodies` holds entry `n`s. Clicking the row folds and unfolds it and leaves the body alone; clicking Show more or Show less opens or closes the body and stops the event there, so neither one moves the fold. A search still opens the body it lands on and puts it back on the next `n`, and `clearSearch` restores both sets.
+- **A childless pair stays merged when a search lands on it.** Opening it was only ever needed while the fold hid the body too; the body now opens on its own, so there is nothing for the unfold to reveal.
+
+### Fixed
+
+- **A search term is marked in the complete half of a merged pair.** `renderMergedMessage` printed `completeMsg` raw. It went unnoticed while a search unfolded the pair it landed on, which exposed the real `(complete)` row; with the pair staying merged, the match the reader navigated to had no `<mark>` on it.
+
 ## [0.85.0] - 2026-09-02
 
 ### Changed

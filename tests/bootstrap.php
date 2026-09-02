@@ -246,6 +246,16 @@ if ( ! function_exists( 'wp_localize_script' ) ) {
 	}
 }
 
+if ( ! function_exists( 'get_bloginfo' ) ) {
+	/**
+	 * Seeded 9.9.9 — no WordPress release carries it, so a test that reads a
+	 * version really read this one.
+	 */
+	function get_bloginfo( string $show = '', string $filter = 'raw' ): string {
+		return 'version' === $show ? '9.9.9' : '';
+	}
+}
+
 // Overrides shared shim: adds the _test_get_option_hook seam.
 if ( ! function_exists( 'get_option' ) ) {
 	$GLOBALS['_wp_options'] = [];
