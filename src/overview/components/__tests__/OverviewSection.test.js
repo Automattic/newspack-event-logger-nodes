@@ -266,6 +266,22 @@ describe( 'OverviewSection', () => {
 		unmount();
 	} );
 
+	it( 'offers no Server breakdown outside hub mode', () => {
+		const { container, unmount } = mount(
+			{},
+			{ serverNames: [ 'web01' ] }
+		);
+		const labels = Array.from(
+			container.querySelectorAll( 'select' )
+		).flatMap( ( sel ) =>
+			Array.from( sel.options ).map( ( o ) => o.textContent )
+		);
+
+		// One server is not a hub; breaking down by it is a single bar.
+		expect( labels ).not.toContain( 'Server' );
+		unmount();
+	} );
+
 	it( 'submits the request search from Enter, with no submit button', () => {
 		const onSearch = jest.fn();
 		const { container, unmount } = mount(
