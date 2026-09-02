@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.86.2] - 2026-09-02
+
 ### Fixed
 
 - **A flame-graph tooltip stays inside the viewport, and stops growing past it.** A frame's `detail` is its raw message — a `query` frame carries the whole SQL, a `the_content` frame the rendered HTML — so on a real record the tooltip ran to dozens of lines. Taller than the space below the cursor it flipped above, and taller than the space above it ran off the TOP, where nothing can scroll it back: the first lines were simply unreachable. The label is capped at 30 lines with a `… N more lines` marker, the box takes a `max-height` of the viewport and scrolls inside it, and the flip is clamped at both edges rather than only the bottom.
