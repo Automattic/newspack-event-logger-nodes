@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **One toggle per row: unfold and show-more are the same act.** Clicking anywhere in a row opens it and its whole message body; clicking again folds and shows less. The Show more / Show less link is gone, and so is the second `expandedBodies` state that tracked bodies separately — everything lives in `expandedSet` under `bodyKey( entry )`, a row's `pairId` when it has one and `n:<n>` when it does not. The string prefix cannot collide with a numeric pairId, and the fold computation only ever looks up pairIds, so the extra keys pass it by. An unpaired row therefore opens on a click and on a search match like any other.
+- **A childless pair now opens when a search lands on it, and closes when you step on.** It used to stay merged, which was right until the fold began hiding the body as well — landing on one then hid the very match you navigated to. `matchOpenedRef` remembers a row opened *only* for the current match and drops it on the next `n`, so walking a search leaves no trail; a row already open stays open, because it is only remembered when it was shut.
+
 ## [0.84.2] - 2026-09-02
 
 ### Fixed
