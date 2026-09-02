@@ -144,7 +144,7 @@ When workers spawn via the HMAC endpoint, the substrate sets `NEWSPACK_NODES_WOR
 
 ### PIPE_BUF and truncation
 
-Per-line writes go to `Topic::fill()` → `Partition::fill()`, which appends via `fwrite(O_APPEND)`. POSIX guarantees atomic appends only when the payload fits in `PIPE_BUF` (4096 bytes on Linux). `MAX_DATA_SIZE = 3840` leaves headroom for the envelope around the entry. Anything larger is truncated: a rate-limited `Core::print_less_often()` notice fires, the category gets `" (truncated)"` appended, and the data is replaced with a 1000-char excerpt (`['m' => substr($data_json, 0, 1000) . '...']`). Oversize payloads belong in `\Newspack_Nodes\Job_Intake::queue()`, which goes through `Partition::allow_large_writes()` and the per-partition write lock. Truncation never throws — the firehose is fire-and-forget — so size discipline is the caller's responsibility.
+Per-line writes go to `Topic::fill()` → `Partition::fill()`, which appends via `fwrite(O_APPEND)`. POSIX guarantees atomic appends only when the payload fits in `PIPE_BUF` (4096 bytes on Linux). `MAX_DATA_SIZE = 3840` leaves headroom for the envelope around the entry. Anything larger is trimmed: a rate-limited `Core::print_less_often()` notice fires and `m` is trimmed (or dropped, when it is an array) until the encoded map fits, keeping every other key and the category itself, so the readers still pair the entry. Oversize payloads belong in `\Newspack_Nodes\Job_Intake::queue()`, which goes through `Partition::allow_large_writes()` and the per-partition write lock. Truncation never throws — the firehose is fire-and-forget — so size discipline is the caller's responsibility.
 
 ### Per-request lifecycle
 
@@ -398,7 +398,6 @@ class Request_Builder_Node extends Timer_Node {
     private const BUCKET_ROTATION_S        = 200;   // 3 × 200s = 600s retention
     private const MAX_STACK_DEPTH          = 50;    // runaway cutoff
     private const MAX_ENTRIES_PER_REQUEST  = 50000;
-    private const MAX_ENTRY_MESSAGE_LENGTH = 1024;
 
     public function fill( array $message ): void {
         // Validate the per-request sequence `n`; assemble (start)/(complete)
@@ -751,7 +750,7 @@ Two write paths into the job queue:
 - Payload exceeds 4KB (serialized option blobs, image-handler args, large arrays).
 - Job is local-only (jobintake never aggregates; entries stay on the originating site).
 
-Using the wrong path loses jobs. `Log_Manager` truncates data over `MAX_DATA_SIZE` (3840B) to a 1000-char excerpt with `" (truncated)"` appended to the category, so the handler never sees a parseable payload. Job_Intake never aggregates, so spoke jobs there never reach the hub.
+Using the wrong path loses jobs. `Log_Manager` trims `m` on data over `MAX_DATA_SIZE` (3840B), so the handler never sees a parseable payload. Job_Intake never aggregates, so spoke jobs there never reach the hub.
 
 Job_Intake has three partition-selection modes:
 

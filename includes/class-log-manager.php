@@ -1112,8 +1112,7 @@ class Log_Manager {
 	 *
 	 * The entry carries the line number as `n`, the category as `k`, the caller's
 	 * data, and a `ts` timestamp. Data encoding over MAX_DATA_SIZE is NOT chunked
-	 * — the category gains `" (truncated)"` and the data collapses to a
-	 * 1000-character excerpt, so anything larger belongs in
+	 * — `m` is trimmed until the map fits, so anything larger belongs in
 	 * `\Newspack_Nodes\Job_Intake::queue()` instead. A caller-supplied `rid` is
 	 * dropped: the real one is the Message KEY, and honoring the caller's would
 	 * let it forge another request's identity.
@@ -1135,8 +1134,7 @@ class Log_Manager {
 		$data_json = \wp_json_encode( $data, \JSON_INVALID_UTF8_SUBSTITUTE | \JSON_PARTIAL_OUTPUT_ON_ERROR );
 		if ( false !== $data_json && \strlen( $data_json ) > self::MAX_DATA_SIZE ) {
 			Core::print_less_often( "LogManager: data truncated for category \"{$category}\", size=", (string) \strlen( $data_json ), \sprintf( ' (limit=%d).', self::MAX_DATA_SIZE ) );
-			$category .= ' (truncated)';
-			$data = [ 'm' => \substr( $data_json, 0, 1000 ) . '...' ];
+			$data = self::fit_data( $data, $data_json );
 		}
 		if ( null === $this->topic ) {
 			return false;
@@ -1166,6 +1164,44 @@ class Log_Manager {
 		}
 
 		return true;
+	}
+
+	/**
+	 * Shrink an oversized entry to fit MAX_DATA_SIZE, keeping every key but the
+	 * one that overflowed. `m` is the only value that reaches this size, so an
+	 * array `m` is dropped and a string `m` is trimmed to whatever room the
+	 * other keys leave — `l` and `caller` survive, which is what lets the
+	 * reader still open the span and merge it in the flame. The category is
+	 * left alone: renaming it broke `Flame_Tree::PATTERN_START` and the
+	 * `' (start)'` suffix test, so a trimmed span never opened at all.
+	 *
+	 * Re-encoding per step is what makes the fit exact: JSON escaping expands
+	 * bytes, so a byte-count subtraction can still land over the cap.
+	 *
+	 * @param array<string,mixed> $data      The oversized data map.
+	 * @param string              $data_json Its encoding, already measured.
+	 * @return array<string,mixed> A map whose encoding fits.
+	 */
+	private static function fit_data( array $data, string $data_json ): array {
+		$flags = \JSON_INVALID_UTF8_SUBSTITUTE | \JSON_PARTIAL_OUTPUT_ON_ERROR;
+		$m                  = $data['m'] ?? null;
+		$data['truncated']  = true;
+		if ( \is_string( $m ) ) {
+			for ( $len = \strlen( $m ); $len > 0; $len = (int) ( $len * 0.9 ) ) {
+				$data['m'] = \substr( $m, 0, $len );
+				$encoded   = \wp_json_encode( $data, $flags );
+				if ( false !== $encoded && \strlen( $encoded ) <= self::MAX_DATA_SIZE ) {
+					return $data;
+				}
+			}
+		}
+		unset( $data['m'] );
+		$encoded = \wp_json_encode( $data, $flags );
+		if ( false !== $encoded && \strlen( $encoded ) <= self::MAX_DATA_SIZE ) {
+			return $data;
+		}
+		// Nothing else is ever this big; keep the old salvage as the floor.
+		return [ 'm' => \substr( $data_json, 0, 1000 ) . '...', 'truncated' => true ];
 	}
 
 	/**

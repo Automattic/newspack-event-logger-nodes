@@ -35,9 +35,6 @@ class Ask_Assembler {
 	/** Entries a request brief carries before it stops being "small". */
 	public const MAX_ENTRIES = 60;
 
-	/** Per-entry payload cap; a clipped one says so in its own text. */
-	public const MAX_ENTRY_CHARS = 400;
-
 	/** Entries either side of the subject an `entry:` brief carries. */
 	public const NEIGHBOURS = 2;
 
@@ -343,8 +340,8 @@ class Ask_Assembler {
 	}
 
 	/**
-	 * One entry, payload capped. The cap announces itself in the text rather
-	 * than in a sibling flag, so a model reading the line cannot miss it.
+	 * One entry, shaped for the brief. The payload is whatever survived the
+	 * firehose; `MAX_ENTRIES` bounds the brief, not the entry.
 	 *
 	 * @param mixed $entry A raw entry.
 	 * @return array<string,mixed>
@@ -354,10 +351,6 @@ class Ask_Assembler {
 		$message = \is_array( $entry['m'] ?? null )
 			? Core::as_string( \wp_json_encode( $entry['m'] ) )
 			: Core::as_string( $entry['m'] ?? '' );
-		if ( \mb_strlen( $message ) > self::MAX_ENTRY_CHARS ) {
-			// mb_: a byte cut mid-codepoint empties the whole JSON reply.
-			$message = \mb_substr( $message, 0, self::MAX_ENTRY_CHARS ) . '…(truncated)';
-		}
 		return [
 			'n'  => Core::num_int( $entry['n'] ?? 0 ),
 			'ts' => Core::num_float( $entry['ts'] ?? 0 ),

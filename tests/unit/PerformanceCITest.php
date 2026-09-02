@@ -3909,4 +3909,16 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( [], $board['categories']['db']['entries'], 'the reader must not fold per-entry appearances' );
 	}
 
+	/**
+	 * A grep excerpt is the matching entry, not a 200-byte prefix of it.
+	 * 350 is distinct from every cap this method has held.
+	 */
+	public function test_a_grep_excerpt_carries_the_whole_entry(): void {
+		$message = \str_repeat( 'q', 350 );
+		$method  = new \ReflectionMethod( Performance_CI_Node::class, 'grep_excerpt' );
+		$method->setAccessible( true );
+
+		$this->assertSame( "sql: {$message}", $method->invoke( null, 'sql', $message ) );
+	}
+
 }

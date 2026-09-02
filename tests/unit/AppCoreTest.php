@@ -367,29 +367,6 @@ class AppCoreTest extends TestCase {
 	}
 
 	/**
-	 * The span is named for the OPERATION and TABLE, never the SQL text: the
-	 * flame merges by name, so ten thousand identical lookups collapse into one
-	 * node with its count — which is the question a reader is asking. The text
-	 * rides the entry.
-	 */
-	public function test_a_query_span_is_named_for_its_operation_and_table(): void {
-		$ref = new \ReflectionMethod( Core::class, 'sql_label' );
-
-		// The LABEL, not the state: `Request_Builder_Node::push_stack()` keys
-		// its profile map on the state and aggregates labels INSIDE it, so a
-		// discriminator in the state name is a category per table.
-		$this->assertSame(
-			'SELECT wp_postmeta',
-			$ref->invoke( null, "SELECT meta_value FROM `wp_postmeta` WHERE post_id = 42" )
-		);
-		$this->assertSame(
-			'UPDATE wp_options',
-			$ref->invoke( null, "UPDATE wp_options SET option_value = 'x' WHERE option_name = 'cron'" )
-		);
-		$this->assertSame( 'SHOW', $ref->invoke( null, 'SHOW FULL COLUMNS' ) );
-	}
-
-	/**
 	 * Every other span in the schema is `state` + a separate `l`, and the flame
 	 * composes `state: label` from the two. These two spelled the discriminator
 	 * INTO the state, which is a profile category per table and per host —
@@ -1393,6 +1370,96 @@ class AppCoreTest extends TestCase {
 		// The re-bind left the governing hook registered in the filter registry.
 		$this->assertArrayHasKey( 'the_content', $GLOBALS['_wp_test_filters'] ?? [] );
 	}
+	/**
+	 * The SQL a span carries is the query, not a prefix of it. 700 bytes is
+	 * distinct from every cap this file has ever held (512, 1024).
+	 */
+	public function test_a_query_span_carries_the_whole_sql(): void {
+		$this->set_governing_rule( $this->query_rule( true ) );
+		$core = new Core();
+		$sql  = 'SELECT option_value FROM wp_options WHERE option_name = \'' . \str_repeat( 'x', 700 ) . '\'';
+
+		$core->query_start( $sql );
+
+		$this->assertSame( $sql, $this->open_span_message() );
+	}
+
+	/** A long filter value rides whole; 1500 is distinct from the old 1024. */
+	public function test_a_hook_span_carries_a_long_string_value_whole(): void {
+		$this->set_governing_rule( new Rule( '9d3f5b7a1c28', '/reports/', Rule::ACTION_LOG, hooks: [ 'the_content' ] ) );
+		$GLOBALS['_wp_test_current_filter'] = 'the_content';
+		$core  = new Core();
+		$value = \str_repeat( 'y', 1500 );
+
+		$core->hook_start( $value );
+
+		$this->assertSame( $value, $this->open_span_message() );
+	}
+
+	/** The `m` of the span Log_Manager currently has open. */
+	private function open_span_message(): string {
+		$prop = new \ReflectionProperty( Log_Manager::class, 'times' );
+		$prop->setAccessible( true );
+		$times = $prop->getValue( Log_Manager::instance() );
+		$last  = \end( $times );
+		return \is_array( $last ) ? (string) ( $last['m'] ?? '' ) : '';
+	}
+
+	/** The `l` of the last firehose entry emitted under $category. */
+	private function last_entry_label( string $category ): string {
+		$topic = ( new \ReflectionProperty( Log_Manager::class, 'topic' ) )->getValue( Log_Manager::instance() );
+		if ( null === $topic ) {
+			$this->fail( 'no firehose topic; cannot read emitted entries' );
+		}
+		$parts = ( new \ReflectionProperty( \Newspack_Nodes\Topic_Node::class, 'partitions' ) )->getValue( $topic );
+		$batch = new \ReflectionProperty( \Newspack_Nodes\Partition_Node::class, 'batch' );
+		$path  = new \ReflectionProperty( \Newspack_Nodes\Partition_Node::class, 'current_log_path' );
+		$label = '';
+		foreach ( (array) $parts as $partition ) {
+			$file = (string) ( $path->getValue( $partition ) ?? '' );
+			$raw  = ( '' !== $file && \is_file( $file ) ? (string) \file_get_contents( $file ) : '' )
+				. (string) $batch->getValue( $partition );
+			foreach ( \array_filter( \explode( "\n", $raw ) ) as $line ) {
+				$value = \Newspack_Nodes\Message::unpacked( $line )[ \Newspack_Nodes\Message::VALUE ] ?? null;
+				if ( \is_array( $value ) && ( $value['k'] ?? '' ) === $category ) {
+					$label = (string) ( $value['l'] ?? '' );
+				}
+			}
+		}
+		return $label;
+	}
+
+	/**
+	 * `query` and `pre_http_request` are applied from the TRANSPORT (`wpdb`,
+	 * `WP_Http`), not from application code, so the frame a hook span would
+	 * take names the transport and is the same string every time. The span
+	 * must name the caller one frame further out.
+	 */
+	public function test_a_query_span_labels_the_caller_beyond_the_transport(): void {
+		$this->set_governing_rule( $this->query_rule( true ) );
+		$core = new Core();
+
+		( new FakeCaller() )->build_articles_query( new FakeTransport(), 'SELECT option_value FROM wp_options WHERE 1' );
+
+		$this->assertStringContainsString(
+			'FakeCaller->build_articles_query',
+			$this->last_entry_label( 'sql (start)' )
+		);
+	}
+
+	/** Same for outbound HTTP, applied from `WP_Http::request()`. */
+	public function test_an_http_span_labels_the_caller_beyond_the_transport(): void {
+		$this->set_governing_rule( new Rule( '7c9e1a4b2d3f', '/checkout/', Rule::ACTION_LOG ) );
+		$core = new Core();
+
+		( new FakeCaller() )->fetch_feed( new FakeTransport(), 'https://img.example.net/a.jpg' );
+
+		$this->assertStringContainsString(
+			'FakeCaller->fetch_feed',
+			$this->last_entry_label( 'http (start)' )
+		);
+	}
+
 }
 
 /**
@@ -1417,5 +1484,25 @@ class RefParamFixture {
 class InvokableRefFixture {
 	public function __invoke( &$v ) {
 		return $v;
+	}
+}
+
+/** Stands in for `wpdb` / `WP_Http`: applies the filter from its own method. */
+class FakeTransport {
+	public function query( string $sql ) {
+		return \apply_filters( 'query', $sql );
+	}
+	public function request( string $url ) {
+		return \apply_filters( 'pre_http_request', false, [], $url );
+	}
+}
+
+/** Stands in for the application code that asked the transport for something. */
+class FakeCaller {
+	public function build_articles_query( FakeTransport $t, string $sql ) {
+		return $t->query( $sql );
+	}
+	public function fetch_feed( FakeTransport $t, string $url ) {
+		return $t->request( $url );
 	}
 }

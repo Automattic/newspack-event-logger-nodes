@@ -465,8 +465,8 @@ describe( 'LogEntriesTable', () => {
 
 	it( 'keeps a truncated complete — "(complete)" mid-keyword is not a pair end', () => {
 		const entries = makeEntries();
-		// Log_Manager appends " (truncated)" to an oversized category, so the
-		// pair-end token is no longer the suffix; the row must stay a stop.
+		// Defensive: a keyword with "(complete)" mid-string must not read as a
+		// pair end. Log_Manager no longer produces one, but a producer could.
 		entries[ 5 ] = { ...entries[ 5 ], k: 'render (complete) (truncated)' };
 		jest.useFakeTimers();
 		const { container, unmount } = renderComponent(
@@ -1079,4 +1079,20 @@ describe( 'LogEntriesTable', () => {
 		jest.useRealTimers();
 		unmount();
 	} );
+} );
+
+it( 'marks a trimmed entry with a subdued [truncated] line after the message', () => {
+	const entries = makeEntries();
+	entries[ 1 ] = { ...entries[ 1 ], m: 'SELECT 1', truncated: true };
+	const { container, unmount } = renderComponent(
+		React.createElement( LogEntriesTable, { entries } )
+	);
+
+	const mark = container.querySelector( '.log-entries-truncated' );
+	expect( mark ).not.toBeNull();
+	expect( mark.textContent ).toBe( '[truncated]' );
+	expect( mark.className ).toContain( 'is-muted' );
+	// Its own line, after the value.
+	expect( mark.previousSibling ).not.toBeNull();
+	unmount();
 } );

@@ -139,9 +139,6 @@ class Performance_CI_Node extends Service_CI_Node {
 	 */
 	private const GREP_MAX_SCAN_LINES = 200000;
 
-	/** `request_grep` first-match excerpt length (bounded for the reply). */
-	private const GREP_EXCERPT_LENGTH = 200;
-
 	/** `request_grep` in-flight LRU_Cache geometry (100 × 3 = 300 concurrent rids). */
 	private const GREP_INFLIGHT_BUCKET_SIZE = 100;
 	private const GREP_INFLIGHT_NUM_BUCKETS = 3;
@@ -615,8 +612,8 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * Bounded, human-readable excerpt of the first matching entry ("key: message").
-	 * Arrays JSON-encode; the whole thing is trimmed to GREP_EXCERPT_LENGTH.
+	 * Human-readable excerpt of the first matching entry ("key: message").
+	 * Arrays JSON-encode; `GREP_RESULT_LIMIT_MAX` bounds the reply, not this.
 	 *
 	 * @param string $key     The entry `k` field.
 	 * @param mixed  $message The entry `m` field (string or array).
@@ -624,7 +621,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	private static function grep_excerpt( string $key, mixed $message ): string {
 		$text = \is_array( $message ) ? Core::as_string( \wp_json_encode( $message ) ) : Core::as_string( $message );
 		$raw  = '' === $key ? $text : "{$key}: {$text}";
-		return \substr( \trim( $raw ), 0, self::GREP_EXCERPT_LENGTH );
+		return \trim( $raw );
 	}
 
 	/** Name a transient scratch Consumer uniquely (per scan) so a live worker's registry can't collide; caller removes it. */

@@ -64,7 +64,7 @@ class Core {
 	 *
 	 * Eight cut a real stack one frame short of `rest_preload_api_request` —
 	 * the frame that explained a 41s request — so the answer had to be read out
-	 * of core instead. The byte cap below is the real bound.
+	 * of core instead. `Log_Manager::MAX_DATA_SIZE` is the only bound.
 	 */
 	private const CALLER_FRAMES = 20;
 
@@ -80,15 +80,6 @@ class Core {
 
 	/** Origin label kept on a span; it rides EVERY traced entry. */
 	private const ORIGIN_MAX = 128;
-
-	/** Filter value kept as a hook span's 'm'; MAX_DATA_SIZE is 3840. */
-	private const HOOK_VALUE_PREVIEW_MAX = 1024;
-
-	/** Caller summary kept on a hook's start entry; MAX_DATA_SIZE is 3840. */
-	private const CALLER_PREVIEW_MAX = 1024;
-
-	/** SQL kept on a query span's entry; MAX_DATA_SIZE is 3840 for the lot. */
-	private const SQL_PREVIEW_MAX = 512;
 
 	/**
 	 * The STATE these two span families carry, one each.
@@ -179,16 +170,12 @@ class Core {
 		$category  = $hook_name . self::HOOK_SUFFIX;
 
 		$m = '';
-		if ( isset( $v ) && \is_string( $v ) ) {
-			$m = \strlen( $v ) > self::HOOK_VALUE_PREVIEW_MAX
-				? \substr( $v, 0, self::HOOK_VALUE_PREVIEW_MAX )
-				: $v;
-		} elseif ( isset( $v ) && \is_scalar( $v ) ) {
+		if ( isset( $v ) && \is_scalar( $v ) ) {
 			$m = $v;
 		} elseif ( isset( $v ) ) {
 			// phpcs:ignore WordPress.WP.AlternativeFunctions.json_encode_json_encode -- wp_json_encode() infinite-loops on circular refs (Core_Upgrader).
 			$encoded = \json_encode( $v, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES, 16 );
-			if ( false !== $encoded && \strlen( $encoded ) <= self::HOOK_VALUE_PREVIEW_MAX ) {
+			if ( false !== $encoded ) {
 				$m = $encoded;
 			}
 		}
@@ -381,40 +368,10 @@ class Core {
 		// @longform The ARRAY form, because core hands back the frames nearest
 		// first and the pretty string is that array REVERSED. Capping the
 		// string kept the bootstrap and cut the caller — the whole answer.
-		// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_wp_debug_backtrace_summary -- The caller summary IS the diagnostic; capped per hook and gated per rule.
+		// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_wp_debug_backtrace_summary -- The caller summary IS the diagnostic; counted per hook and gated per rule.
 		$frames = \wp_debug_backtrace_summary( self::class, 0, false );
 		$near   = \array_slice( $frames, 0, self::CALLER_FRAMES );
-		return \substr( \implode( ', ', $near ), 0, self::CALLER_PREVIEW_MAX );
-	}
-
-	/**
-	 * The one frame worth a label: who called this hook.
-	 *
-	 * Deliberately NOT `wp_debug_backtrace_summary()`, which walks and formats
-	 * the whole stack — 12.7us measured, against 0.9us here — to produce a
-	 * string all but one frame of which is discarded. Bounded by
-	 * `ORIGIN_DEPTH`, so it is cheap enough to run on every firing rather than
-	 * out of a budget, which is what lets `l` split a flame node completely.
-	 *
-	 * @return string `Class->method`, a function name, or '' when only
-	 *                machinery is on the stack.
-	 */
-	private static function origin_frame(): string {
-		// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_debug_backtrace -- The caller IS the diagnostic; depth-bounded and gated per rule.
-		$frames = \debug_backtrace( \DEBUG_BACKTRACE_IGNORE_ARGS, self::ORIGIN_DEPTH );
-		foreach ( $frames as $frame ) {
-			$function = $frame['function'];
-			$class    = $frame['class'] ?? '';
-			if ( '' === $function || self::class === $class || 'WP_Hook' === $class ) {
-				continue;
-			}
-			if ( isset( self::HOOK_DISPATCHERS[ $function ] ) ) {
-				continue;
-			}
-			$name = '' === $class ? $function : $class . ( $frame['type'] ?? '::' ) . $function;
-			return \substr( $name, 0, self::ORIGIN_MAX );
-		}
-		return '';
+		return \implode( ', ', $near );
 	}
 
 	/**
@@ -525,9 +482,9 @@ class Core {
 	 * opened here would never close and would adopt every row after it — and a
 	 * short-circuit is a cache hit with no I/O to time in the first place.
 	 *
-	 * The span is named for the HOST, so the flame aggregates every call to one
-	 * endpoint into a single node with its count: which host is slow is the
-	 * question this instrumentation exists to answer.
+	 * The span is named for its CALLER, one frame beyond `WP_Http`, which is
+	 * what applies this filter: naming the transport would name the same string
+	 * every time. The redacted URL rides the entry instead.
 	 *
 	 * @param mixed                 $preempt Short-circuit value, false to proceed.
 	 * @param array<string,mixed>   $args    Request arguments (unused).
@@ -548,25 +505,10 @@ class Core {
 		$this->http_spans[] = self::HTTP_STATE;
 		$lm->start(
 			self::HTTP_STATE,
-			[ 'm' => Log_Manager::redact_url( $url ), 'l' => self::http_label( $url ) ]
+			// `pre_http_request` is applied from WP_Http, not from the caller.
+			[ 'm' => Log_Manager::redact_url( $url ), 'l' => self::origin_frame( 1 ) ]
 		);
 		return $preempt;
-	}
-
-	/**
-	 * The aggregation label for one outbound request: its host.
-	 *
-	 * The STATE is `http` for every one of them, because that is what keys
-	 * `Request_Builder_Node`'s profile map and what a rule and the auto-tuner
-	 * name; the host is the label aggregated inside it, which is what `l` is
-	 * for everywhere else in the schema. `Flame_Tree` composes the two back
-	 * into `http: <host>` for the graph.
-	 *
-	 * @param string $url Request URL.
-	 */
-	private static function http_label( string $url ): string {
-		$host = RuntimeCore::as_string( \wp_parse_url( $url, PHP_URL_HOST ), '' );
-		return '' === $host ? '(unparsed)' : $host;
 	}
 
 	/**
@@ -589,30 +531,43 @@ class Core {
 		$this->query_spans[] = self::SQL_STATE;
 		$lm->start(
 			self::SQL_STATE,
-			[ 'm' => \substr( $sql, 0, self::SQL_PREVIEW_MAX ), 'l' => self::sql_label( $sql ) ]
+			// `query` is applied from wpdb, so the caller is one frame further.
+			[ 'm' => $sql, 'l' => self::origin_frame( 1 ) ]
 		);
 		return $query;
 	}
 
 	/**
-	 * The aggregation label for one query: `<OP> <table>`.
+	 * The one frame worth a label: who called this hook.
 	 *
-	 * The flame merges by name, so naming the operation and its table collapses
-	 * ten thousand identical lookups into one node carrying its count — which
-	 * is the question a reader has. The SQL text rides the entry instead.
+	 * Deliberately NOT `wp_debug_backtrace_summary()`, which walks and formats
+	 * the whole stack — 12.7us measured, against 0.9us here — to produce a
+	 * string all but one frame of which is discarded. Bounded by
+	 * `ORIGIN_DEPTH`, so it is cheap enough to run on every firing rather than
+	 * out of a budget, which is what lets `l` split a flame node completely.
 	 *
-	 * The STATE is `sql` for all of them, as `http_label()` explains.
-	 *
-	 * @param string $sql The query.
+	 * @return string `Class->method`, a function name, or '' when only
+	 *                machinery is on the stack.
 	 */
-	private static function sql_label( string $sql ): string {
-		$trimmed = \ltrim( $sql, " \t\n\r(" );
-		$op      = \strtoupper( \strtok( $trimmed, " \t\n\r" ) ?: '' );
-		if ( '' === $op ) {
-			return '?';
+	private static function origin_frame( int $skip = 0 ): string {
+		// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_debug_backtrace -- The caller IS the diagnostic; depth-bounded and gated per rule.
+		$frames = \debug_backtrace( \DEBUG_BACKTRACE_IGNORE_ARGS, self::ORIGIN_DEPTH );
+		foreach ( $frames as $frame ) {
+			$function = $frame['function'];
+			$class    = $frame['class'] ?? '';
+			if ( '' === $function || self::class === $class || 'WP_Hook' === $class ) {
+				continue;
+			}
+			if ( isset( self::HOOK_DISPATCHERS[ $function ] ) ) {
+				continue;
+			}
+			if ( $skip-- > 0 ) {
+				continue;
+			}
+			$name = '' === $class ? $function : $class . ( $frame['type'] ?? '::' ) . $function;
+			return \substr( $name, 0, self::ORIGIN_MAX );
 		}
-		$found = \preg_match( '/\b(?:FROM|INTO|UPDATE|JOIN)\s+`?([A-Za-z0-9_]+)`?/i', $sql, $m );
-		return 1 === $found ? "{$op} {$m[1]}" : $op;
+		return '';
 	}
 
 	/**
