@@ -1132,3 +1132,89 @@ it( 'folds a message body past five lines behind Show more', () => {
 	expect( container.textContent ).not.toContain( 'line-12' );
 	unmount();
 } );
+
+it( 'never folds the environment entry, however long it is', () => {
+	const entries = makeEntries();
+	const body = Array.from(
+		{ length: 30 },
+		( _, i ) => `env-${ i + 1 }`
+	).join( '\n' );
+	entries[ 1 ] = { ...entries[ 1 ], k: 'environment_v3', m: body };
+	const { container, unmount } = renderComponent(
+		React.createElement( LogEntriesTable, { entries } )
+	);
+
+	expect( container.textContent ).toContain( 'env-30' );
+	expect( container.querySelector( '.log-entries-fold' ) ).toBeNull();
+	unmount();
+} );
+
+it( 'expands a folded body when search navigates to that row', () => {
+	const entries = makeEntries();
+	const body = Array.from(
+		{ length: 12 },
+		( _, i ) => `body-line-${ i + 1 }`
+	).join( '\n' );
+	entries[ 1 ] = { ...entries[ 1 ], m: body };
+	jest.useFakeTimers();
+	const { container, unmount } = renderComponent(
+		React.createElement( LogEntriesTable, { entries } )
+	);
+
+	// Folded: only the first five lines are on screen.
+	expect( container.textContent ).not.toContain( 'body-line-11' );
+
+	const input = container.querySelector( 'input' );
+	const setter = Object.getOwnPropertyDescriptor(
+		window.HTMLInputElement.prototype,
+		'value'
+	).set;
+	act( () => {
+		setter.call( input, 'body-line-11' );
+		input.dispatchEvent( new Event( 'input', { bubbles: true } ) );
+	} );
+	act( () => {
+		jest.advanceTimersByTime( 200 );
+	} );
+	// Typing counts matches; ▼ is what navigates to one.
+	act( () => {
+		Array.from( container.querySelectorAll( 'button' ) )
+			.find( ( b ) => '▼' === b.textContent )
+			.click();
+	} );
+
+	// Navigating to the row unfolds its pair; the body must open with it.
+	expect( container.textContent ).toContain( 'body-line-11' );
+	jest.useRealTimers();
+	unmount();
+} );
+
+it( 'marks the search term inside the message body', () => {
+	const entries = makeEntries();
+	entries[ 1 ] = {
+		...entries[ 1 ],
+		m: 'SELECT * FROM wp_posts WHERE ID = 1',
+	};
+	jest.useFakeTimers();
+	const { container, unmount } = renderComponent(
+		React.createElement( LogEntriesTable, { entries } )
+	);
+
+	const input = container.querySelector( 'input' );
+	const setter = Object.getOwnPropertyDescriptor(
+		window.HTMLInputElement.prototype,
+		'value'
+	).set;
+	act( () => {
+		setter.call( input, 'wp_posts' );
+		input.dispatchEvent( new Event( 'input', { bubbles: true } ) );
+	} );
+	act( () => {
+		jest.advanceTimersByTime( 200 );
+	} );
+
+	const marks = Array.from( container.querySelectorAll( 'mark' ) );
+	expect( marks.map( ( m ) => m.textContent ) ).toContain( 'wp_posts' );
+	jest.useRealTimers();
+	unmount();
+} );

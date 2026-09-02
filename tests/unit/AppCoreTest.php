@@ -1506,8 +1506,15 @@ class InvokableRefFixture {
 
 /** Stands in for `wpdb` / `WP_Http`: applies the filter from its own method. */
 class FakeTransport {
+	/** Two frames deep, as wpdb::get_row() reaches the `query` filter. */
+	public function get_row( string $sql ) {
+		return $this->query( $sql );
+	}
 	public function query( string $sql ) {
 		return \apply_filters( 'query', $sql );
+	}
+	public function dispatch( string $url ) {
+		return $this->request( $url );
 	}
 	public function request( string $url ) {
 		return \apply_filters( 'pre_http_request', false, [], $url );
@@ -1517,9 +1524,9 @@ class FakeTransport {
 /** Stands in for the application code that asked the transport for something. */
 class FakeCaller {
 	public function build_articles_query( FakeTransport $t, string $sql ) {
-		return $t->query( $sql );
+		return $t->get_row( $sql );
 	}
 	public function fetch_feed( FakeTransport $t, string $url ) {
-		return $t->request( $url );
+		return $t->dispatch( $url );
 	}
 }
