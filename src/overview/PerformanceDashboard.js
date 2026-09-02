@@ -159,17 +159,15 @@ export default function PerformanceDashboard( { onError } ) {
 		() => overview?.breakdowns?.server ?? null,
 		[ overview ]
 	);
-	const chartBreakdownData = useMemo( () => {
-		if ( ! overview?.breakdowns || ! chartBreakdown ) {
-			return null;
-		}
-		return overview.breakdowns[ chartBreakdown ] ?? null;
-	}, [ overview, chartBreakdown ] );
-
-	// serverNames stays sticky: don't overwrite on one-server scoped reply.
-	const [ serverNames, setServerNames ] = useState( [] );
+	// Sticky across a scoped reply, and null until the first one lands.
+	const [ serverNames, setServerNames ] = useState( null );
+	// @longform Read, never depended on: keying the effect on the filter
+	// re-derives names from the reply fetched UNDER it, collapsing a hub to
+	// the one server it was scoped to the moment that filter clears.
+	const serverFilterRef = useRef( serverFilter );
+	serverFilterRef.current = serverFilter;
 	useEffect( () => {
-		if ( ! serverBreakdownData || serverFilter ) {
+		if ( ! serverBreakdownData || serverFilterRef.current ) {
 			return;
 		}
 		const names = new Set();
@@ -179,7 +177,28 @@ export default function PerformanceDashboard( { onError } ) {
 		// The schema's overflow key, not a server: pre-deploy buckets carry it.
 		names.delete( 'Other' );
 		setServerNames( Array.from( names ).sort() );
-	}, [ serverBreakdownData, serverFilter ] );
+	}, [ serverBreakdownData ] );
+
+	// @longform One server draws a single bar, and a server filter draws that
+	// server against itself, so neither can chart this axis. Derived rather
+	// than written back: a reply carrying one server before its sibling
+	// reports would otherwise strand the choice for the session. `null` is a
+	// reply not yet landed, which is neither. The selector shows this derived
+	// value while the state keeps the operator's own choice, so a fallback is
+	// undone by the axis returning rather than by them choosing again.
+	const canBreakDownByServer =
+		! serverFilter && ( serverNames === null || serverNames.length >= 2 );
+	const activeBreakdown =
+		'server' === chartBreakdown && ! canBreakDownByServer
+			? 'status'
+			: chartBreakdown;
+
+	const chartBreakdownData = useMemo( () => {
+		if ( ! overview?.breakdowns ) {
+			return null;
+		}
+		return overview.breakdowns[ activeBreakdown ] ?? null;
+	}, [ overview, activeBreakdown ] );
 
 	const {
 		selectedUrl,
@@ -209,7 +228,7 @@ export default function PerformanceDashboard( { onError } ) {
 	// The graph polls and publishes; this page's own verbs are below.
 	const { handleUrlParamsChange } = usePerformanceGraph( {
 		serverFilter,
-		chartBreakdown,
+		chartBreakdown: activeBreakdown,
 		refreshInterval,
 		requestPartition,
 		selectedUrl,
@@ -746,7 +765,8 @@ export default function PerformanceDashboard( { onError } ) {
 				setRefreshInterval={ setRefreshInterval }
 				chartMetric={ chartMetric }
 				setChartMetric={ setChartMetric }
-				chartBreakdown={ chartBreakdown }
+				chartBreakdown={ activeBreakdown }
+				canBreakDownByServer={ canBreakDownByServer }
 				setChartBreakdown={ setChartBreakdown }
 				breakdownData={ chartBreakdownData }
 				categoryData={ categoryData }

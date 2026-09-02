@@ -15,6 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **One name for the test scratch directory.** `tests/configs/logging-*.php` pointed at `/tmp/event-logger-nodes-test` while the baseline config used `/tmp/newspack-event-logger-nodes-test`, so `run-coverage.sh` carried a second `rm -rf` for the unprefixed name and a comment explaining the split. Both are the prefixed name now, declared once as `Tests\TestCase::TEST_DIR` — four classes each held a private copy of the same constant, and a fifth spelled it as a bare literal — and the cleanup is one glob that covers the scratch base and every `make_temp_dir()` sibling beside it. Test-only.
 
+### Fixed
+
+- **The Overview breakdown no longer strands itself off `Server` on a hub.** `OverviewSection` dropped the `server` option and WROTE the selection back to `status` whenever `serverNames` was empty. Empty means "the overview reply has not landed" as often as it means "one server", and the reset effect ran on the FIRST render pass — the `! overview` early return sits below the hooks — so every page load demoted the selection before a name could arrive, and nothing promoted it back. A hub opened on Status Codes with a populated Server selector beside it. The fallback is now DERIVED per render in `PerformanceDashboard`, as `canBreakDownByServer`, and feeds the chart, the option list and the overview request alike, so nothing latches: a reply that has not landed keeps the default, a reply carrying one server (or only the `Other` overflow key) falls back, and a hub whose second server reports a window late gets the axis back instead of staying on `status` for the session. Regression from v0.84.1's "no Server breakdown outside hub mode" (`050973f9`).
+
+### Security
+- **`allowed_users` now gates the dashboards, not only the settings page.** `Admin::current_user_allowed()` — the `manage_options` baseline plus the allowlist — was called from three places, all of them the Settings screen. The top-level Event Logger menu and the Performance, Errors, Gyroscope and Request Log submenus are registered by the main plugin file's own `admin_menu` closure, which asked for `manage_options` alone, so an operator who set `allowed_users` to restrict the admin UI still handed every dashboard to any administrator. It takes the same gate now. Access to the underlying data is unchanged and stays with the service CI's capability roles: this closes the UI gap the setting names, not the command endpoint.
 ## [0.86.0] - 2026-09-02
 
 ### Added

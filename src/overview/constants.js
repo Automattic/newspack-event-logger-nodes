@@ -68,9 +68,11 @@ export const CHART_METRIC_OPTIONS = [
  * `Flame_Builder_Node::DIM_FIELDS` (which decides what gets accumulated in the
  * first place). A value in only one of the three yields an empty breakdown.
  *
- * `OverviewSection` filters `server` out while a server filter is active, since
- * the chart would then split a single server against itself — and because it is
- * the default, that same effect resets the selection to `status`.
+ * The full list. `PerformanceDashboard` is the only consumer that narrows it:
+ * it offers `server` while `canBreakDownByServer` holds — no server filter, and
+ * two or more servers known — and resolves the active dimension against the
+ * same flag, so a reply that has not landed yet keeps the default. The URL
+ * modal passes no `breakdownOptions` and therefore offers every entry.
  */
 export const CHART_BREAKDOWN_OPTIONS = [
 	{ label: __( 'Server', 'newspack-event-logger-nodes' ), value: 'server' },
@@ -91,7 +93,9 @@ export const CHART_BREAKDOWN_OPTIONS = [
 /**
  * What the aggregate chart breaks down by until someone chooses otherwise.
  *
- * `OverviewSection` swaps it for `status` while a server filter is active,
- * because breaking a single server out against itself charts one series.
+ * `PerformanceDashboard` resolves it to `status` whenever `canBreakDownByServer`
+ * is false. That fallback is DERIVED, never written back over this default, so
+ * a hub whose second server reports late gets the axis back rather than staying
+ * on `status` for the session.
  */
 export const DEFAULT_CHART_BREAKDOWN = 'server';

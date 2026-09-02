@@ -5,8 +5,8 @@
  * Children mocked at the module boundary:
  *   - AggregateTimeChart / CategoryTimeChart (heavy D3). RequestProfile is
  *     real: it owns the captioned wrapper this section renders.
- *   - @wordpress/components: lightweight stubs so we can drive state from
- *     the test without pulling in the full component library's CSS-in-JS.
+ *   - Nothing else: the real SelectControl renders, which is what lets the
+ *     option-list tests read `sel.options` straight off the DOM.
  *
  * What we cover:
  *   - returns null when overview is null
@@ -14,8 +14,9 @@
  *   - shows the optional peak-memory stat only when > 0
  *   - keeps the chart panel mounted whatever the selected dimension holds
  *   - mounts the global-leaderboard section when global_leaderboard exists
- *   - resets breakdown to 'status' when serverFilter activates while the
- *     current breakdown is 'server'.
+ *   - offers the Server breakdown only while `canBreakDownByServer` says the
+ *     page can chart that axis. Choosing the active dimension against that
+ *     rule belongs to PerformanceDashboard, and is tested there.
  */
 
 // The chart is mocked; its `breakdownState` resolver is NOT — the panel and
@@ -67,6 +68,7 @@ function mount( overview, overrides = {} ) {
 		setChartMetric: jest.fn(),
 		chartBreakdown: 'status',
 		setChartBreakdown: jest.fn(),
+		canBreakDownByServer: true,
 		breakdownData: null,
 		categoryData: null,
 		ask: { active: false, start: jest.fn(), cancel: jest.fn() },
@@ -251,25 +253,30 @@ describe( 'OverviewSection', () => {
 		unmount();
 	} );
 
-	it( 'resets breakdown to "status" when serverFilter activates with breakdown=server', () => {
-		const setChartBreakdown = jest.fn();
-		const { unmount } = mount(
+	it( 'offers the Server breakdown when the page can chart that axis', () => {
+		const { container, unmount } = mount(
 			{},
 			{
-				serverFilter: 'web01',
-				chartBreakdown: 'server',
-				setChartBreakdown,
 				serverNames: [ 'web01', 'web02' ],
+				canBreakDownByServer: true,
 			}
 		);
-		expect( setChartBreakdown ).toHaveBeenCalledWith( 'status' );
+		const labels = Array.from(
+			container.querySelectorAll( 'select' )
+		).flatMap( ( sel ) =>
+			Array.from( sel.options ).map( ( o ) => o.textContent )
+		);
+
+		expect( labels ).toContain( 'Server' );
 		unmount();
 	} );
 
-	it( 'offers no Server breakdown outside hub mode', () => {
+	it( 'offers no Server breakdown when the page cannot chart that axis', () => {
 		const { container, unmount } = mount(
 			{},
-			{ serverNames: [ 'web01' ] }
+			// Two servers, so `isMultiServer` alone would KEEP the option:
+			// only the passed rule (a server filter is active) removes it.
+			{ serverNames: [ 'web01', 'web02' ], canBreakDownByServer: false }
 		);
 		const labels = Array.from(
 			container.querySelectorAll( 'select' )

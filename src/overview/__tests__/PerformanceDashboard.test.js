@@ -450,6 +450,162 @@ describe( 'PerformanceDashboard', () => {
 		expect( () => unmount() ).not.toThrow();
 	} );
 
+	describe( 'the server breakdown axis', () => {
+		const serverView = ( bucket ) =>
+			loadedView( {
+				overview: {
+					data: {
+						total_requests: 100,
+						aggregate_time_series: {},
+						breakdowns: { server: bucket, status: {} },
+					},
+					loading: false,
+					error: null,
+				},
+			} );
+		const hub = { b: { 'edge-01': { c: 9 }, 'edge-02': { c: 4 } } };
+		const single = { b: { 'edge-01': { c: 9 } } };
+
+		const mountDash = () =>
+			renderComponent(
+				React.createElement( PerformanceDashboard, {
+					onError: jest.fn(),
+				} )
+			);
+
+		it( 'stays on Server while the first reply is still in flight', async () => {
+			// Empty is "nothing has ARRIVED", not "one server". Resolving it as
+			// the latter demoted every page load before the names could land.
+			mockView = loadedView( {
+				overview: { data: null, loading: true, error: null },
+			} );
+			const { unmount } = mountDash();
+			await flushEffects();
+
+			expect( globalThis.__overviewProps.chartBreakdown ).toBe(
+				'server'
+			);
+			unmount();
+		} );
+
+		it( 'stays on Server on a hub with no filter', async () => {
+			mockView = serverView( hub );
+			const { unmount } = mountDash();
+			await flushEffects();
+
+			expect( globalThis.__overviewProps.chartBreakdown ).toBe(
+				'server'
+			);
+			expect( globalThis.__overviewProps.canBreakDownByServer ).toBe(
+				true
+			);
+			unmount();
+		} );
+
+		it( 'falls back to Status Codes when one server reports', async () => {
+			mockView = serverView( single );
+			const { unmount } = mountDash();
+			await flushEffects();
+
+			expect( globalThis.__overviewProps.chartBreakdown ).toBe(
+				'status'
+			);
+			unmount();
+		} );
+
+		it( 'falls back when the only key is the overflow key', async () => {
+			// `Other` is deleted as a non-server, so this reply HAS landed and
+			// carries zero servers — an answer, not a wait.
+			mockView = serverView( { b: { Other: { c: 9 } } } );
+			const { unmount } = mountDash();
+			await flushEffects();
+
+			expect( globalThis.__overviewProps.chartBreakdown ).toBe(
+				'status'
+			);
+			unmount();
+		} );
+
+		it( 'falls back under a server filter and restores when it clears', async () => {
+			// Clearing the filter must not re-derive names from the reply that
+			// was fetched UNDER it, or the hub loses its own Server selector.
+			mockView = serverView( hub );
+			const { unmount } = mountDash();
+			await flushEffects();
+			expect( globalThis.__overviewProps.chartBreakdown ).toBe(
+				'server'
+			);
+
+			await act( async () => {
+				globalThis.__overviewProps.setServerFilter( 'edge-01' );
+			} );
+			await flushEffects();
+			expect( globalThis.__overviewProps.chartBreakdown ).toBe(
+				'status'
+			);
+
+			// The scoped reply lands while the filter is on, and is still what
+			// is in hand when it clears — no new payload arrives at that moment.
+			mockView = serverView( { b: { 'edge-01': { c: 9 } } } );
+			await act( async () => {
+				globalThis.__overviewProps.setRefreshInterval( '5000' );
+			} );
+			await flushEffects();
+
+			await act( async () => {
+				globalThis.__overviewProps.setServerFilter( '' );
+			} );
+			await flushEffects();
+
+			expect( globalThis.__overviewProps.serverNames ).toEqual( [
+				'edge-01',
+				'edge-02',
+			] );
+			expect( globalThis.__overviewProps.chartBreakdown ).toBe(
+				'server'
+			);
+			unmount();
+		} );
+
+		it( 'asks the server for the dimension it is going to draw', async () => {
+			// The whole point of deriving: the request and the render agree.
+			mockView = serverView( single );
+			const { unmount } = mountDash();
+			await flushEffects();
+
+			expect( globalThis.__overviewProps.chartBreakdown ).toBe(
+				'status'
+			);
+			expect( mockGraphOpts.chartBreakdown ).toBe( 'status' );
+			unmount();
+		} );
+
+		it( 'returns to Server when a second server starts reporting', async () => {
+			// The fallback is derived per render, never written back: a hub
+			// whose sibling was silent for one window would otherwise be stuck
+			// on Status Codes for the session, which is the original bug.
+			mockView = serverView( single );
+			const { rerender, unmount } = mountDash();
+			await flushEffects();
+			expect( globalThis.__overviewProps.chartBreakdown ).toBe(
+				'status'
+			);
+
+			mockView = serverView( hub );
+			rerender(
+				React.createElement( PerformanceDashboard, {
+					onError: jest.fn(),
+				} )
+			);
+			await flushEffects();
+
+			expect( globalThis.__overviewProps.chartBreakdown ).toBe(
+				'server'
+			);
+			unmount();
+		} );
+	} );
+
 	it( 'derives categoryData / breakdownData / serverNames from the overview slice', async () => {
 		mockView = loadedView( {
 			overview: {
@@ -458,7 +614,10 @@ describe( 'PerformanceDashboard', () => {
 					category_time_series: { x: {} },
 					breakdowns: {
 						server: {
-							b: { 'edge-01': { c: 10, s: 100 } },
+							b: {
+								'edge-01': { c: 10, s: 100 },
+								'edge-02': { c: 4, s: 40 },
+							},
 						},
 						status: {
 							b: { '2xx': { c: 10, s: 100 } },

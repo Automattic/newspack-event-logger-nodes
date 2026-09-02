@@ -12,7 +12,7 @@
  * to null until the `overview:view` slice carries data.
  */
 
-import { useEffect, useMemo } from '@wordpress/element';
+import { useMemo } from '@wordpress/element';
 import { __, _n, sprintf } from '@wordpress/i18n';
 
 import {
@@ -41,7 +41,7 @@ import { AskButton } from './AskPanel';
  * @param {number}                  props.breakdownAvgMs         Average the Time Breakdown divides by — the selected server's, or the site's.
  * @param {string}                  props.serverFilter           Selected server name, or '' for all servers.
  * @param {(value: string) => void} props.setServerFilter        Server filter setter.
- * @param {string[]}                props.serverNames            Server names seen in the breakdown data.
+ * @param {string[]|null}           props.serverNames            Server names seen in the breakdown data; null until the first reply lands.
  * @param {string}                  props.searchQuery            Search box value.
  * @param {(value: string) => void} props.setSearchQuery         Search box setter.
  * @param {boolean}                 props.searchLoading          True while a search is in flight.
@@ -56,6 +56,7 @@ import { AskButton } from './AskPanel';
  * @param {(value: string) => void} props.setChartMetric         Chart metric setter.
  * @param {string}                  props.chartBreakdown         Aggregate chart breakdown dimension.
  * @param {(value: string) => void} props.setChartBreakdown      Breakdown dimension setter.
+ * @param {boolean}                 props.canBreakDownByServer   Whether the page can chart the server axis: no server filter active AND two or more servers known. Both halves matter — under a filter the chart splits one server against itself.
  * @param {Object|null}             props.breakdownData          Time series for the selected breakdown dim.
  * @param {Object|null}             props.categoryData           Category time series, or null.
  * @param {Object}                  props.ask                    The `useAsk` state driving the Ask trigger.
@@ -82,12 +83,13 @@ export default function OverviewSection( {
 	setChartMetric,
 	chartBreakdown,
 	setChartBreakdown,
+	canBreakDownByServer,
 	breakdownData,
 	categoryData,
 	ask,
 } ) {
 	// Show server dropdown when 2+ servers detected (hub mode).
-	const isMultiServer = serverNames.length >= 2;
+	const isMultiServer = ( serverNames?.length ?? 0 ) >= 2;
 
 	const serverOptions = useMemo( () => {
 		if ( ! isMultiServer ) {
@@ -105,25 +107,15 @@ export default function OverviewSection( {
 		];
 	}, [ isMultiServer, serverNames ] );
 
-	// Redundant under a server filter, and a single bar outside hub mode.
+	// The caller owns this rule and hands chartBreakdown down resolved by it.
 	const breakdownOptions = useMemo( () => {
-		if ( serverFilter || ! isMultiServer ) {
-			return CHART_BREAKDOWN_OPTIONS.filter(
-				( opt ) => opt.value !== 'server'
-			);
+		if ( canBreakDownByServer ) {
+			return CHART_BREAKDOWN_OPTIONS;
 		}
-		return CHART_BREAKDOWN_OPTIONS;
-	}, [ serverFilter, isMultiServer ] );
-
-	// Reset breakdown 'server'→'status' when that option goes away.
-	useEffect( () => {
-		if (
-			( serverFilter || ! isMultiServer ) &&
-			chartBreakdown === 'server'
-		) {
-			setChartBreakdown( 'status' );
-		}
-	}, [ serverFilter, isMultiServer, chartBreakdown, setChartBreakdown ] );
+		return CHART_BREAKDOWN_OPTIONS.filter(
+			( opt ) => opt.value !== 'server'
+		);
+	}, [ canBreakDownByServer ] );
 
 	if ( ! overview ) {
 		return null;
