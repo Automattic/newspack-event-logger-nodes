@@ -1115,6 +1115,12 @@ it( 'folds a message body past five lines behind Show more', () => {
 	expect( container.textContent ).toContain( 'line-5' );
 	expect( container.textContent ).not.toContain( 'line-12' );
 
+	// Its own line: a block wrapper, not glued to the end of the body text.
+	const wrapper = container.querySelector( '.log-entries-fold' );
+	expect( wrapper ).not.toBeNull();
+	expect( wrapper.tagName ).toBe( 'DIV' );
+	expect( wrapper.querySelector( 'button' ) ).not.toBeNull();
+
 	act( () => {
 		fold( 'Show more' ).click();
 	} );
