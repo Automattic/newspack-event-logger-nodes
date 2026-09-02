@@ -77,6 +77,24 @@ Every dashboard sends TM_COMMAND envelopes to a service CI via the substrate's s
 
 For the full per-CI verb tables and TM_COMMAND envelope shape, see [docs/API.md](docs/API.md).
 
+## MCP
+
+The same service-CI verbs are also served as JSON-RPC over MCP, so an agent can read the performance data and edit the ruleset without a dashboard. It adds no runtime surface — `tools/call` mounts the request graph `/command` mounts and dispatches through the same interpreter.
+
+```
+POST /wp-json/newspack-event-logger-nodes/v1/mcp
+```
+
+Authentication is a scoped command session (issue one under Nodes → Sessions), passed as `Authorization: Bearer <handle>.<key>`. The request becomes that session's minting user and applies its scope as a ceiling, so the scope can only ever subtract and `tools/list` offers only what it covers: a `read` session sees the performance tools and `rules list`, `tune` adds `rules upsert` and `rules delete`.
+
+Register it with a client — `<ID>` is the local name the client files it under:
+
+```
+claude mcp add --transport http <ID> https://<DOMAIN>/wp-json/newspack-event-logger-nodes/v1/mcp --header "Authorization: Bearer <HANDLE>.<KEY>"
+```
+
+See [docs/API.md](docs/API.md) for the tool list, the measurement caveat every tool description carries, and refusal semantics.
+
 ## Topologies
 
 Per-partition node graphs ship as declarative `.tsl` files in `topologies/`: `aggregator.tsl`, `hub-control.tsl`, `request-builder.tsl`, `job-router.tsl`, `job-feed.tsl`, `job-spoke.tsl`, `job-hub.tsl`, `flame-builder.tsl`, `complete.tsl`, and `performance.tsl` (plus the substrate's runtime-only `firehose` / `jobintake` basenames). Which topologies are active is the substrate's `topologies` config key. Hub vs spoke is derived from topology membership (no operator toggle): a spoke runs the request/job/flame graphs locally, while a hub additionally runs `aggregator.tsl` (the substrate `Remote_Source_Node` pull-side feeding ELN's `Remote_Job_Rewrite_Node`) and the single-instance `hub-control.tsl` (settings-sync + discovery fan-out). See [docs/architecture-guide.md](docs/architecture-guide.md) for the full per-topology breakdown and hub/spoke flow.
