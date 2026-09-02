@@ -8,19 +8,6 @@ import fnv1a from '@newspack-nodes/shared/utils/fnv1a';
 import { LogStreamViewNode } from '@newspack-nodes/shared/nodes/log-stream-view-node';
 
 const DEFAULT_MAX_LINES = 1000;
-// Defensive bounds for raw envelope VALUEs (view owns the row mapping).
-const MAX_URL_LENGTH = 2000;
-const MAX_UA_LENGTH = 500;
-// Debug-mode raw retention per row (pretty-printable); ~PIPE_BUF x2.
-const MAX_RAW_LENGTH = 8192;
-
-// Clip a string at `max`, appending an ellipsis. Non-strings pass through.
-const clip = ( s, max ) => {
-	if ( 'string' !== typeof s ) {
-		return s;
-	}
-	return s.length > max ? s.substring( 0, max ) + '...' : s;
-};
 
 /**
  * `requestlog:view` — owns the Request Log view model.
@@ -98,7 +85,7 @@ export class RequestLogViewNode extends LogStreamViewNode {
 		}
 		const rid = 'string' === typeof message[ KEY ] ? message[ KEY ] : '';
 		// Clip for DISPLAY only; the hash below keys on the full string.
-		const url = clip( req.url, MAX_URL_LENGTH );
+		const url = req.url;
 		const method = req.method || 'GET';
 		const statusCode = req.status_code || 0;
 		return {
@@ -110,10 +97,10 @@ export class RequestLogViewNode extends LogStreamViewNode {
 			duration_ms: req.duration_ms || 0,
 			status_code: statusCode,
 			remote_addr: req.remote_addr || '',
-			user_agent: clip( req.user_agent || '', MAX_UA_LENGTH ),
+			user_agent: req.user_agent || '',
 			msgId: 'string' === typeof message[ ID ] ? message[ ID ] : '',
 			key: rid,
-			raw: clip( JSON.stringify( req ), MAX_RAW_LENGTH ),
+			raw: JSON.stringify( req ),
 			struct: true,
 			content: `${ method } ${ url } ${ statusCode } ${ rid }`,
 		};

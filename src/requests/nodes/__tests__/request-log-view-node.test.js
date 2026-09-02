@@ -120,7 +120,7 @@ test( 'urlHash keys the FULL url, not the display clip', () => {
 	v.fill( rowMsg( row( { rid: 'long', url: long, end_time: 1 } ) ) );
 
 	expect( v.lines[ 0 ].urlHash ).toBe( fnv1a( long ) );
-	expect( v.lines[ 0 ].url.endsWith( '...' ) ).toBe( true );
+	expect( v.lines[ 0 ].url ).toBe( long );
 } );
 
 test( 'stamps each row with the base monotonic id + isEven stripe', () => {
@@ -161,15 +161,17 @@ test( 'carries the shared debug trio + a searchable content line on each row', (
 	expect( shaped.content ).toBe( 'GET /dbg-407 503 r-dbg-407' );
 } );
 
-test( 'clips the debug raw JSON at 8192 chars + ellipsis', () => {
+test( 'keeps the debug raw JSON whole and parseable', () => {
 	const v = makeView( 'requestlog:view' );
 	v.fill(
 		rowMsg(
 			row( { rid: 'r-raw', url: '/raw', user_agent: 'u'.repeat( 9000 ) } )
 		)
 	);
-	expect( v.lines[ 0 ].raw.length ).toBe( 8195 );
-	expect( v.lines[ 0 ].raw.endsWith( '...' ) ).toBe( true );
+	// Parsing proves it was not cut mid-JSON, which the 8192 clip guaranteed.
+	expect( JSON.parse( v.lines[ 0 ].raw ).user_agent ).toBe(
+		'u'.repeat( 9000 )
+	);
 } );
 
 test( 'exposes a decaying lps rate on the node instance', () => {
@@ -295,7 +297,7 @@ test( 'drops a raw envelope whose VALUE is not an object', () => {
 	expect( v.lines ).toHaveLength( 0 );
 } );
 
-test( 'clips url at 2000 chars + ellipsis when appending', () => {
+test( 'carries url whole when appending', () => {
 	const v = makeView( 'requestlog:view' );
 	const longUrl = 'https://x/' + 'a'.repeat( 5000 );
 	v.fill(
@@ -307,11 +309,10 @@ test( 'clips url at 2000 chars + ellipsis when appending', () => {
 		} )
 	);
 	expect( v.lines ).toHaveLength( 1 );
-	expect( v.lines[ 0 ].url.length ).toBe( 2003 );
-	expect( v.lines[ 0 ].url.endsWith( '...' ) ).toBe( true );
+	expect( v.lines[ 0 ].url ).toBe( longUrl );
 } );
 
-test( 'clips user_agent at 500 chars + ellipsis when appending', () => {
+test( 'carries user_agent whole when appending', () => {
 	const v = makeView( 'requestlog:view' );
 	const longUA = 'a'.repeat( 1000 );
 	v.fill(
@@ -323,8 +324,7 @@ test( 'clips user_agent at 500 chars + ellipsis when appending', () => {
 		} )
 	);
 	expect( v.lines ).toHaveLength( 1 );
-	expect( v.lines[ 0 ].user_agent.length ).toBe( 503 );
-	expect( v.lines[ 0 ].user_agent.endsWith( '...' ) ).toBe( true );
+	expect( v.lines[ 0 ].user_agent ).toBe( longUA );
 } );
 
 test( 'fills sensible defaults for missing fields on the appended row', () => {

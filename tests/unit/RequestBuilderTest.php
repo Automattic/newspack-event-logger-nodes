@@ -1794,12 +1794,35 @@ class RequestBuilderTest extends TestCase {
 		$this->assertEqualsWithDelta( 31.5, $wpdb_entry['peak_mb'], 1e-9 );
 	}
 
-	public function test_fill_truncates_long_string_m_to_max_entry_message_length(): void {
+	/** `truncated` is a producer field; the stored allowlist must carry it. */
+	public function test_fill_keeps_the_truncated_flag_on_the_stored_entry(): void {
 		$rb      = new Request_Builder_Node();
 		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
 
-		$long = \str_repeat( 'A', 2048 );
+		$this->fill( $rb, 1, 'r1', 'process (start)' );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$this->fill( $rb, 3, 'r1', 'sql (start)', [ 'm' => 'SELECT 1', 'truncated' => true ] );
+		$this->fill( $rb, 4, 'r1', 'process (complete)' );
+
+		$req   = $this->captured_request( $capture );
+		$found = null;
+		foreach ( $req['entries'] as $e ) {
+			if ( 'sql (start)' === ( $e['k'] ?? '' ) ) {
+				$found = $e;
+				break;
+			}
+		}
+		$this->assertNotNull( $found );
+		$this->assertTrue( $found['truncated'] ?? false );
+	}
+
+	public function test_fill_carries_a_long_string_m_whole(): void {
+		$rb      = new Request_Builder_Node();
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+
+		$long = \str_repeat( 'A', 1500 );
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
 		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
 		$this->fill( $rb, 3, 'r1', 'noise', [ 'm' => $long ] );
@@ -1814,8 +1837,7 @@ class RequestBuilderTest extends TestCase {
 			}
 		}
 		$this->assertNotNull( $found );
-		// MAX_ENTRY_MESSAGE_LENGTH = 1024.
-		$this->assertSame( 1024, \strlen( $found['m'] ) );
+		$this->assertSame( $long, $found['m'] );
 	}
 
 	// --- process (complete): error_status validation ----------------------

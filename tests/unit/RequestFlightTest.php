@@ -290,14 +290,16 @@ class RequestFlightTest extends TestCase {
 		$this->assertCount( 2, $this->inflight_messages( $got ), 'advanced row re-emitted under delta' );
 	}
 
-	public function test_inflight_row_clips_url_and_user_agent_like_the_completed_path(): void {
+	public function test_inflight_row_carries_url_and_user_agent_whole(): void {
 		$rb = new Request_Builder_Node();
 		$rb->name( 'rb-clip-inflight' );
 		$got = [];
 		$rb->sink( $this->capture_sink( $got ) );
 		$rb->cache->set( 'r-clip', (object) [
-			'url'            => '/' . \str_repeat( 'u', 3000 ),
-			'user_agent'     => \str_repeat( 'A', 900 ),
+			// 2500/700 clear the old 2000/500 caps and still fit under PIPE_BUF,
+			// so what survives is Line_Fitter's byte-exact fit, not a char cap.
+			'url'            => '/' . \str_repeat( 'u', 2500 ),
+			'user_agent'     => \str_repeat( 'A', 700 ),
 			'request_method' => 'GET',
 			'timestamp'      => 1.0,
 		] );
@@ -308,8 +310,8 @@ class RequestFlightTest extends TestCase {
 
 		$inflight = $this->inflight_messages( $got );
 		$this->assertCount( 1, $inflight );
-		$this->assertSame( 2003, \strlen( $inflight[0][ Message::VALUE ]['url'] ) );
-		$this->assertSame( 503, \strlen( $inflight[0][ Message::VALUE ]['user_agent'] ) );
+		$this->assertSame( 2501, \strlen( $inflight[0][ Message::VALUE ]['url'] ) );
+		$this->assertSame( 700, \strlen( $inflight[0][ Message::VALUE ]['user_agent'] ) );
 	}
 
 	public function test_inflight_row_fits_a_multibyte_payload_under_pipe_buf(): void {

@@ -276,7 +276,7 @@ class LogManagerTest extends TestCase {
 		$lm->finish();
 
 		$this->assertNotNull(
-			$this->find_last_entry( 'binstderr (truncated)' ),
+			$this->find_last_entry( 'binstderr' ),
 			'oversized invalid-UTF8 data must hit the truncation branch, not be dropped'
 		);
 	}
@@ -1911,10 +1911,8 @@ class LogManagerTest extends TestCase {
 
 	/**
 	 * When the JSON-encoded `$data` exceeds MAX_DATA_SIZE (3840 bytes), `message()`
-	 * suffixes the category with " (truncated)" and replaces `$data` with a 1000-char
-	 * substring of the original encoded blob plus an ellipsis. Verifies the
-	 * truncated entry actually lands on disk under the modified category — the
-	 * exact knob that prevents firehose lines from blowing past PIPE_BUF.
+	 * trims `m` until the map fits, leaving the category alone so the readers
+	 * still pair it. The exact knob that keeps firehose lines under PIPE_BUF.
 	 */
 	public function test_message_emits_truncated_entry_when_data_exceeds_max_size(): void {
 		$this->require_config_or_skip();
@@ -1932,18 +1930,69 @@ class LogManagerTest extends TestCase {
 		$lm->finish();
 
 		$entries = $this->read_firehose_entries();
-		// The "(truncated)" suffix is the marker — find the entry by k=oversized_event (truncated).
 		$truncated_entry = null;
 		foreach ( $entries as $entry ) {
-			if ( isset( $entry['k'] ) && 'oversized_event (truncated)' === $entry['k'] ) {
+			if ( isset( $entry['k'] ) && 'oversized_event' === $entry['k'] ) {
 				$truncated_entry = $entry;
 				break;
 			}
 		}
-		$this->assertNotNull( $truncated_entry, 'Oversized data must emit under "{k} (truncated)" category' );
+		$this->assertNotNull( $truncated_entry, 'Oversized data must emit under its own category' );
 		$this->assertArrayHasKey( 'm', $truncated_entry );
-		// The replacement message ends with "..." to signal truncation.
-		$this->assertStringEndsWith( '...', (string) $truncated_entry['m'] );
+		// `m` is a real prefix of the value; the category carries the marker.
+		$this->assertStringStartsWith( 'AAAA', (string) $truncated_entry['m'] );
+		$this->assertLessThanOrEqual( 3840, \strlen( (string) \wp_json_encode( $truncated_entry ) ) );
+	}
+
+	/**
+	 * An oversized STRING `m` is trimmed to fit; every other key survives.
+	 * 6000 is distinct from both MAX_DATA_SIZE (3840) and the old 1000-char
+	 * replacement, and `l` is what the flame aggregates on — losing it is what
+	 * made a truncated span unopenable.
+	 */
+	public function test_message_trims_an_oversized_string_and_keeps_the_other_keys(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::TEST_DIR );
+		Log_Manager::reset();
+		Config::reset();
+		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
+		Config::reset();
+
+		$this->set_rules_option( [ [ 'id' => 'root', 'pattern' => '/', 'action' => 'log', 'custom_events' => [ 'truncation_test', 'oversized_event' ] ] ] );
+		$lm = Log_Manager::instance();
+		$lm->start( 'truncation_test' );
+		$long = \str_repeat( 'A', 6000 );
+		$lm->message( 'oversized_event', [ 'm' => $long, 'l' => 'Newspack_Blocks::build_articles_query' ] );
+		$lm->finish();
+
+		$entry = $this->find_last_entry( 'oversized_event' );
+		$this->assertNotNull( $entry );
+		$this->assertSame( 'Newspack_Blocks::build_articles_query', $entry['l'] ?? null );
+		$this->assertStringStartsWith( 'AAAA', (string) $entry['m'] );
+		$this->assertTrue( $entry['truncated'] ?? false, 'the wire says it was trimmed' );
+		$this->assertLessThanOrEqual( 3840, \strlen( (string) \wp_json_encode( $entry ) ) );
+	}
+
+	/** An oversized ARRAY `m` is dropped; the other keys still ride. */
+	public function test_message_drops_an_oversized_array_and_keeps_the_other_keys(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::TEST_DIR );
+		Log_Manager::reset();
+		Config::reset();
+		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
+		Config::reset();
+
+		$this->set_rules_option( [ [ 'id' => 'root', 'pattern' => '/', 'action' => 'log', 'custom_events' => [ 'truncation_test', 'oversized_event' ] ] ] );
+		$lm = Log_Manager::instance();
+		$lm->start( 'truncation_test' );
+		$lm->message( 'oversized_event', [ 'm' => \array_fill( 0, 400, \str_repeat( 'B', 40 ) ), 'l' => 'the_content' ] );
+		$lm->finish();
+
+		$entry = $this->find_last_entry( 'oversized_event' );
+		$this->assertNotNull( $entry );
+		$this->assertSame( 'the_content', $entry['l'] ?? null );
+		$this->assertArrayNotHasKey( 'm', $entry );
+		$this->assertTrue( $entry['truncated'] ?? false );
 	}
 
 	// ── message(): started without a topic ─────────────────────────────────

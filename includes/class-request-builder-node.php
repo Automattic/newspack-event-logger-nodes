@@ -167,18 +167,6 @@ class Request_Builder_Node extends Timer_Node {
 	/** The one width `format_index_entry()` writes and `parse_request_index()` reads. */
 	private const INDEX_LINE_BYTES = 97;
 
-	/** Display clip on a summary's URL; `Request_Flight_Node` shares it. */
-	public const MAX_URL_LENGTH = 2000;
-
-	/** Display clip on a summary's user agent. */
-	public const MAX_USER_AGENT_LENGTH = 500;
-
-	/**
-	 * Max stored message length per entry. Truncate long values (filter args,
-	 * callback lists) to keep in-flight request memory bounded.
-	 */
-	private const MAX_ENTRY_MESSAGE_LENGTH = 1024;
-
 	/**
 	 * Max raw payload length for URL/process-start extraction.
 	 */
@@ -478,12 +466,7 @@ class Request_Builder_Node extends Timer_Node {
 				'k'  => $keyword,
 			];
 
-			// Truncate 'm' to bound memory (arrays already PIPE_BUF-bounded).
-			$m = $entry['m'] ?? '';
-			if ( \is_string( $m ) && \strlen( $m ) > self::MAX_ENTRY_MESSAGE_LENGTH ) {
-				$m = \substr( $m, 0, self::MAX_ENTRY_MESSAGE_LENGTH );
-			}
-			$stored['m'] = $m;
+			$stored['m'] = $entry['m'] ?? '';
 
 			if ( isset( $entry['l'] ) ) {
 				$stored['l'] = $entry['l'];
@@ -500,6 +483,10 @@ class Request_Builder_Node extends Timer_Node {
 			// while the firehose carried hundreds of them.
 			if ( isset( $entry['caller'] ) ) {
 				$stored['caller'] = Core::as_string( $entry['caller'], '' );
+			}
+			// Log_Manager trimmed this entry to fit; the reader says so.
+			if ( ! empty( $entry['truncated'] ) ) {
+				$stored['truncated'] = true;
 			}
 			// The producer's fold exemption; see is_kept().
 			if ( ! empty( $entry['keep'] ) ) {
@@ -1443,7 +1430,7 @@ class Request_Builder_Node extends Timer_Node {
 		// No rid here — it rides Message::KEY on the completed stream.
 		return [
 			'method'       => Core::as_string( $r['request_method'] ?? 'GET' ),
-			'url'          => self::clip( self::resolved_request_url( $request ), self::MAX_URL_LENGTH ),
+			'url'          => self::resolved_request_url( $request ),
 			'start_time'   => $ts,
 			'end_time'     => $ts + ( $dur / 1000 ),
 			'duration_ms'  => $dur,
@@ -1451,21 +1438,8 @@ class Request_Builder_Node extends Timer_Node {
 			'state'        => 'complete',
 			'error_status' => $r['error_status'] ?? '-',
 			'remote_addr'  => Core::as_string( $r['remote_addr'] ?? '' ),
-			'user_agent'   => self::clip( Core::as_string( $r['user_agent'] ?? '' ), self::MAX_USER_AGENT_LENGTH ),
+			'user_agent'   => Core::as_string( $r['user_agent'] ?? '' ),
 		];
-	}
-
-	/**
-	 * A display clip with an ellipsis, counted in characters.
-	 *
-	 * `Line_Fitter` does the byte-exact fit afterwards; this is only so a
-	 * pathological URL or user agent does not dominate a row.
-	 *
-	 * @param string $value The text to clip.
-	 * @param int    $max   Maximum characters kept.
-	 */
-	public static function clip( string $value, int $max ): string {
-		return \strlen( $value ) > $max ? \substr( $value, 0, $max ) . '...' : $value;
 	}
 
 	/**

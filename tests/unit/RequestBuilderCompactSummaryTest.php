@@ -102,7 +102,7 @@ class RequestBuilderCompactSummaryTest extends TestCase {
 		$this->assertSame( 'complete', $summary['state'] );
 	}
 
-	public function test_compact_summary_clips_url_and_user_agent(): void {
+	public function test_compact_summary_carries_url_and_user_agent_whole(): void {
 		$rb       = new Request_Builder_Node();
 		$rb->name( 'rb-clip' );
 		$captured = [];
@@ -126,8 +126,10 @@ class RequestBuilderCompactSummaryTest extends TestCase {
 			$captured,
 			static fn( $m ): bool => 'completed:tee' === $m[ Message::TO ]
 		) );
-		$this->assertLessThanOrEqual( 2003, \strlen( $compact[0][ Message::VALUE ]['url'] ) );
-		$this->assertLessThanOrEqual( 503, \strlen( $compact[0][ Message::VALUE ]['user_agent'] ) );
+		// Line_Fitter still trims what cannot pack under PIPE_BUF; the sibling
+		// multibyte test covers that. What is gone is the char cap above it.
+		$this->assertSame( $long_url, $compact[0][ Message::VALUE ]['url'] );
+		$this->assertSame( $long_ua, $compact[0][ Message::VALUE ]['user_agent'] );
 	}
 
 	public function test_compact_summary_fits_a_multibyte_payload_under_pipe_buf(): void {

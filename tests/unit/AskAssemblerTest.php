@@ -136,30 +136,15 @@ class AskAssemblerTest extends TestCase {
 		$this->assertTrue( $big['entries_truncated'] );
 	}
 
-	public function test_an_entry_payload_is_capped_and_says_so(): void {
+	/** 600 chars is distinct from the 400-char cap this used to carry. */
+	public function test_an_entry_payload_is_carried_whole(): void {
 		$record                    = $this->record();
-		$record['entries'][1]['m'] = \str_repeat( 'z', Ask_Assembler::MAX_ENTRY_CHARS + 500 );
+		$payload                   = \str_repeat( 'z', 600 );
+		$record['entries'][1]['m'] = $payload;
 
 		$brief = Ask_Assembler::for_request( $record, $this->rule() );
 
-		$this->assertSame(
-			Ask_Assembler::MAX_ENTRY_CHARS + \mb_strlen( '…(truncated)' ),
-			\mb_strlen( $brief['entries'][1]['m'] )
-		);
-	}
-
-	/**
-	 * A byte cut mid-codepoint makes wp_json_encode return false, and an MCP
-	 * reply comes back EMPTY rather than as an error.
-	 */
-	public function test_a_multibyte_payload_survives_the_cap_as_valid_utf8(): void {
-		$record                    = $this->record();
-		$record['entries'][1]['m'] = \str_repeat( '→', Ask_Assembler::MAX_ENTRY_CHARS + 20 );
-
-		$brief = Ask_Assembler::for_request( $record, $this->rule() );
-
-		$this->assertNotFalse( \wp_json_encode( $brief ) );
-		$this->assertTrue( \mb_check_encoding( $brief['entries'][1]['m'], 'UTF-8' ) );
+		$this->assertSame( $payload, $brief['entries'][1]['m'] );
 	}
 
 	/** The production key: only a FOLDED record carries `flame`. */

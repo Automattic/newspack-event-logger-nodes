@@ -946,6 +946,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 				{ startMsg }
 				{ startMsg && completeMsg && ' ' }
 				{ completeMsg }
+				{ renderTruncatedMark( entry ) }
 				{ ( stats || childBadge ) && (
 					<>
 						{ hasContent && <br /> }
@@ -956,6 +957,21 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 			</>
 		);
 	};
+
+	/**
+	 * `Log_Manager` trimmed this entry's value to fit the firehose line. Say so
+	 * on its own line, in the muted ink the trace labels wear, so the value
+	 * above it is never mistaken for the whole of it.
+	 *
+	 * @param {Object} entry Log entry object.
+	 * @return {import('react').ReactNode} The mark, or null.
+	 */
+	const renderTruncatedMark = ( entry ) =>
+		entry.truncated ? (
+			<div className="log-entries-truncated newspack-nodes-status is-muted">
+				{ '[truncated]' }
+			</div>
+		) : null;
 
 	/**
 	 * Render message cell for non-merged entries.
@@ -974,6 +990,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 			<>
 				{ renderTraceLines( entry ) }
 				{ msg }
+				{ renderTruncatedMark( entry ) }
 				{ renderStats( entry ) }
 			</>
 		);
