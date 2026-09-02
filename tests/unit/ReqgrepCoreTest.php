@@ -46,6 +46,24 @@ class ReqgrepCoreTest extends TestCase {
 		$core->push( [ 'n' => $n, 'k' => $key ], $rid, $line );
 	}
 
+	/**
+	 * The host annotation used to put the URL on EVERY sql line; `App\Core`
+	 * now strips it. A url search must still reach that request's sql lines,
+	 * which it does through the `request` entry that carries the full URL.
+	 */
+	public function test_a_url_search_still_collects_sql_lines_carrying_no_url(): void {
+		$completed = [];
+		$core      = $this->make_core( '/wp-admin/post.php', $completed );
+		$this->push( $core, 'reqU', 'process (start)', 'start', 1 );
+		$this->push( $core, 'reqU', 'request', 'GET https://www.elsol.com.ar/wp-admin/post.php?post=867431', 2 );
+		$this->push( $core, 'reqU', 'sql (start)', 'SELECT object_id FROM wp_yoast_indexable', 3 );
+		$this->push( $core, 'reqU', 'process (complete)', 'complete', 4 );
+
+		$this->assertCount( 1, $completed );
+		$this->assertCount( 4, $completed[0]['lines'] );
+		$this->assertStringContainsString( 'wp_yoast_indexable', \implode( "\n", $completed[0]['lines'] ) );
+	}
+
 	public function test_completed_matching_request_fires_on_complete_with_all_lines(): void {
 		$completed = [];
 		$core      = $this->make_core( '/calendar', $completed );

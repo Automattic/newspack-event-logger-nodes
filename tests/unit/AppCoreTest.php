@@ -1371,6 +1371,23 @@ class AppCoreTest extends TestCase {
 		$this->assertArrayHasKey( 'the_content', $GLOBALS['_wp_test_filters'] ?? [] );
 	}
 	/**
+	 * The host appends `/* <uri> request_id: <hex> *' . '/` to every query so a
+	 * DB-side slow log can be traced back. The record already carries both
+	 * facts, so on a 958-query request that is ~100KB of pure duplication.
+	 */
+	public function test_a_query_span_strips_the_host_request_annotation(): void {
+		$this->set_governing_rule( $this->query_rule( true ) );
+		$core = new Core();
+		$sql  = 'SELECT option_value FROM wp_options WHERE 1';
+
+		$core->query_start(
+			$sql . ' /*  www.elsol.com.ar/wp-admin/post.php?post=867431 request_id: 7b64b63f331de35af9cd8effa0fb48bc */'
+		);
+
+		$this->assertSame( $sql, $this->open_span_message() );
+	}
+
+	/**
 	 * The SQL a span carries is the query, not a prefix of it. 700 bytes is
 	 * distinct from every cap this file has ever held (512, 1024).
 	 */

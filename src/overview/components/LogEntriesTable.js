@@ -195,6 +195,9 @@ const scrollToAndHighlight = ( tableRef, selector ) => {
 	} );
 };
 
+// A message body longer than this folds behind a Show more link.
+const BODY_FOLD_LINES = 5;
+
 /**
  * Log Entries Table component.
  *
@@ -211,6 +214,8 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 	const tableRef = useRef( null );
 	const searchContainerRef = useRef( null );
 	const [ expandedSet, setExpandedSet ] = useState( () => new Set() );
+	// Message bodies expanded past BODY_FOLD_LINES, keyed by entry `n`.
+	const [ expandedBodies, setExpandedBodies ] = useState( () => new Set() );
 	const [ highlightRange, setHighlightRange ] = useState( null );
 
 	// Search state.
@@ -943,7 +948,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 		return (
 			<>
 				{ renderTraceLines( entry ) }
-				{ startMsg }
+				{ renderFoldedBody( entry, startMsg ) }
 				{ startMsg && completeMsg && ' ' }
 				{ completeMsg }
 				{ renderTruncatedMark( entry ) }
@@ -954,6 +959,49 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 						{ childBadge }
 					</>
 				) }
+			</>
+		);
+	};
+
+	/**
+	 * A message body past five lines folds, with a link to see the rest.
+	 * `l` and the stats stay outside it, so folding never hides a number.
+	 *
+	 * @param {Object} entry Log entry object.
+	 * @param {string} msg   The formatted message body.
+	 * @return {import('react').ReactNode} The body, folded or whole.
+	 */
+	const renderFoldedBody = ( entry, msg ) => {
+		if ( 'string' !== typeof msg ) {
+			return msg;
+		}
+		const lines = msg.split( '\n' );
+		if ( lines.length <= BODY_FOLD_LINES ) {
+			return msg;
+		}
+		const open = expandedBodies.has( entry.n );
+		return (
+			<>
+				{ open ? msg : lines.slice( 0, BODY_FOLD_LINES ).join( '\n' ) }
+				<button
+					type="button"
+					className="button-link"
+					onClick={ () =>
+						setExpandedBodies( ( prev ) => {
+							const next = new Set( prev );
+							if ( next.has( entry.n ) ) {
+								next.delete( entry.n );
+							} else {
+								next.add( entry.n );
+							}
+							return next;
+						} )
+					}
+				>
+					{ open
+						? __( 'Show less', 'newspack-event-logger-nodes' )
+						: __( 'Show more', 'newspack-event-logger-nodes' ) }
+				</button>
 			</>
 		);
 	};
@@ -989,7 +1037,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 		return (
 			<>
 				{ renderTraceLines( entry ) }
-				{ msg }
+				{ renderFoldedBody( entry, msg ) }
 				{ renderTruncatedMark( entry ) }
 				{ renderStats( entry ) }
 			</>
