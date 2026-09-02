@@ -301,6 +301,10 @@ function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\Command_
 		if ( ! \class_exists( '\\Newspack_Nodes\\Bootstrap' ) ) {
 			return;
 		}
+		// The dashboards ARE the admin UI `allowed_users` restricts.
+		if ( ! \Newspack_Event_Logger_Nodes\Admin\Admin::current_user_allowed() ) {
+			return;
+		}
 		$performance_callback = static fn () => print( '<div id="event-logger-admin" class="event-logger-admin-page"></div>' );
 		\add_menu_page(
 			'Event Logger',
