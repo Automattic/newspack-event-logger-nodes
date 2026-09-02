@@ -266,7 +266,7 @@ describe( 'OverviewSection', () => {
 		unmount();
 	} );
 
-	it( 'submits the request search from Enter and the Find button', () => {
+	it( 'submits the request search from Enter, with no submit button', () => {
 		const onSearch = jest.fn();
 		const { container, unmount } = mount(
 			{},
@@ -276,9 +276,12 @@ describe( 'OverviewSection', () => {
 			}
 		);
 		const input = container.querySelector( 'input[type="text"]' );
-		const findButton = Array.from(
-			container.querySelectorAll( 'button' )
-		).find( ( b ) => b.textContent === 'Find' );
+		// No sibling dashboard's search carries a submit button; nor does this.
+		expect(
+			Array.from( container.querySelectorAll( 'button' ) ).some(
+				( b ) => 'Find' === b.textContent
+			)
+		).toBe( false );
 		act( () => {
 			input.dispatchEvent(
 				new KeyboardEvent( 'keydown', {
@@ -287,12 +290,21 @@ describe( 'OverviewSection', () => {
 				} )
 			);
 		} );
-		act( () => {
-			findButton.click();
-		} );
-		expect( onSearch ).toHaveBeenCalledTimes( 2 );
-		expect( onSearch ).toHaveBeenNthCalledWith( 1, 'rid-123' );
-		expect( onSearch ).toHaveBeenNthCalledWith( 2, 'rid-123' );
+		expect( onSearch ).toHaveBeenCalledTimes( 1 );
+		expect( onSearch ).toHaveBeenCalledWith( 'rid-123' );
+		unmount();
+	} );
+
+	it( 'shows a muted Searching… status while a search is in flight', () => {
+		const { container, unmount } = mount(
+			{},
+			{ searchQuery: 'rid-123', searchLoading: true }
+		);
+		const status = Array.from(
+			container.querySelectorAll( '.newspack-nodes-status' )
+		).find( ( n ) => n.textContent.startsWith( 'Searching' ) );
+		expect( status ).not.toBeUndefined();
+		expect( status.className ).toContain( 'is-muted' );
 		unmount();
 	} );
 
