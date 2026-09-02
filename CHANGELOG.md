@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.86.1] - 2026-09-02
+
 ### Added
 
 - **The MCP endpoint is documented where an operator looks for it.** `README.md` had no MCP section at all, and `docs/API.md` described the `Bearer <handle>.<key>` header and said wiring a client up was the operator's deliberate act without ever showing the one command that does it. Both now carry `claude mcp add --transport http`.
