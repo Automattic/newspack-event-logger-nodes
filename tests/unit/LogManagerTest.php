@@ -721,6 +721,29 @@ class LogManagerTest extends TestCase {
 		$this->assertSame( 'shop', $entry['rule'] );
 	}
 
+	/**
+	 * A trace is read months later against a core version nobody recorded.
+	 * `process (start)` already names the pid and the host; the WordPress
+	 * version belongs beside them, not in the environment allowlist.
+	 */
+	public function test_process_start_frame_names_the_wordpress_version(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::TEST_DIR );
+		$this->set_rules_option( [ [ 'id' => 'shop', 'pattern' => '/shop/', 'action' => 'log', 'hooks' => [ 'wp' ] ] ] );
+		$_SERVER['REQUEST_URI'] = '/shop/cart';
+		$lm = $this->fresh_log_manager();
+		$lm->start( 'noop' );
+		$lm->finish();
+
+		$entry = $this->find_last_entry( 'process (start)' );
+		$this->assertNotNull( $entry, 'Should have a process (start) entry' );
+		$this->assertMatchesRegularExpression(
+			'/^\d+ on \S+, WordPress 9\.9\.9$/',
+			(string) $entry['m'],
+			'process (start) should read "<pid> on <host>, WordPress <version>"'
+		);
+	}
+
 	// ── URL filter ─────────────────────────────────────────────────────────
 
 	public function test_matches_url_filter_with_skip_urls(): void {

@@ -195,22 +195,8 @@ const scrollToAndHighlight = ( tableRef, selector ) => {
 	} );
 };
 
-// A message body longer than this folds with its row.
+// A message body longer than this folds behind a Show more link.
 const BODY_FOLD_LINES = 5;
-
-/**
- * The key a row's expanded state lives under, in the one `expandedSet`.
- *
- * A paired row keys on its pairId, so unfolding it and showing its body are
- * one act. An unpaired row has no pairId, so it keys on its own `n` under a
- * string prefix that cannot collide with a numeric pairId — the fold
- * computation only ever looks up pairIds, so the extra keys pass it by.
- *
- * @param {Object} entry Log entry object.
- * @return {number|string} The key.
- */
-const bodyKey = ( entry ) =>
-	hasPair( entry ) ? entry.pairId : `n:${ entry.n }`;
 
 // Read whole or not at all, and one per request: never fold the environment.
 const NEVER_FOLDED = new Set( [ 'environment_v3' ] );
@@ -231,6 +217,8 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 	const tableRef = useRef( null );
 	const searchContainerRef = useRef( null );
 	const [ expandedSet, setExpandedSet ] = useState( () => new Set() );
+	// Bodies opened past BODY_FOLD_LINES, keyed by `n`. Folding is separate.
+	const [ expandedBodies, setExpandedBodies ] = useState( () => new Set() );
 	const [ highlightRange, setHighlightRange ] = useState( null );
 
 	// Search state.
@@ -238,7 +226,8 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 	const [ matchedIndices, setMatchedIndices ] = useState( [] );
 	const [ currentMatchIndex, setCurrentMatchIndex ] = useState( -1 );
 	const preSearchExpandedRef = useRef( null );
-	// The row opened only to show the current match; put back on the next one.
+	const preSearchBodiesRef = useRef( null );
+	// The body opened only to show the current match; put back on the next one.
 	const matchOpenedRef = useRef( null );
 	const searchTimerRef = useRef( null );
 
@@ -352,34 +341,41 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 				return;
 			}
 
-			// Snapshot fold state before first search navigation.
+			// Snapshot fold and body state before first search navigation.
 			if ( preSearchExpandedRef.current === null ) {
 				preSearchExpandedRef.current = new Set( expandedSet );
+				preSearchBodiesRef.current = new Set( expandedBodies );
 			}
 
 			const entryIdx = matchedIndices[ matchIdx ];
 			const ancestorIds = getAncestorPairIds( entryIdx, entries );
 
-			// @longform The matched row opens whether or not it has children:
-			// the fold now hides the body as well, so leaving a childless pair
-			// merged hides the match itself. That open is TRANSIENT — stepping
-			// to the next match puts it back, so walking a search does not
-			// leave a trail of rows the reader never chose to open.
-			const own = bodyKey( entries[ entryIdx ] );
-			const prior = matchOpenedRef.current;
-			matchOpenedRef.current = expandedSet.has( own ) ? null : own;
-
 			setExpandedSet( ( prev ) => {
 				const next = new Set( prev );
-				if ( null !== prior && prior !== own ) {
-					next.delete( prior );
-				}
 				for ( const id of ancestorIds ) {
 					if ( allPairIds.has( id ) ) {
 						next.add( id );
 					}
 				}
-				next.add( own );
+				return next;
+			} );
+
+			// @longform A match can sit past the fold, so the body opens with
+			// the row. That open is TRANSIENT — stepping to the next match puts
+			// it back, so walking a search leaves no trail of bodies the reader
+			// never chose to open; one already open is left alone.
+			const own = entries[ entryIdx ]?.n;
+			const prior = matchOpenedRef.current;
+			matchOpenedRef.current = expandedBodies.has( own ) ? null : own;
+
+			setExpandedBodies( ( prev ) => {
+				const next = new Set( prev );
+				if ( null !== prior && prior !== own ) {
+					next.delete( prior );
+				}
+				if ( undefined !== own ) {
+					next.add( own );
+				}
 				return next;
 			} );
 
@@ -395,7 +391,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 				staysFolded ? { pairId: ownPairId } : { entryIdx }
 			);
 		},
-		[ matchedIndices, entries, expandedSet, allPairIds ]
+		[ matchedIndices, entries, expandedSet, expandedBodies, allPairIds ]
 	);
 
 	/** Step to the next match, wrapping past the last one. */
@@ -425,7 +421,9 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 		setCurrentMatchIndex( -1 );
 		if ( preSearchExpandedRef.current !== null ) {
 			setExpandedSet( preSearchExpandedRef.current );
+			setExpandedBodies( preSearchBodiesRef.current );
 			preSearchExpandedRef.current = null;
+			preSearchBodiesRef.current = null;
 			matchOpenedRef.current = null;
 		}
 	}, [] );
@@ -759,22 +757,30 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 					fullIdx,
 					event.metaKey || event.ctrlKey
 				);
-				return;
 			}
-			// No pair to fold, but a long body still opens on the same click.
-			const key = bodyKey( entry );
-			setExpandedSet( ( prev ) => {
-				const next = new Set( prev );
-				if ( next.has( key ) ) {
-					next.delete( key );
-				} else {
-					next.add( key );
-				}
-				return next;
-			} );
 		},
 		[ entries, toggleFold ]
 	);
+
+	/**
+	 * Open or close one message body. Stops the click there: the row beneath
+	 * folds on click, and showing more must never move the fold.
+	 *
+	 * @param {number} n     The entry's `n`.
+	 * @param {Event}  event Click event.
+	 */
+	const toggleBody = useCallback( ( n, event ) => {
+		event.stopPropagation();
+		setExpandedBodies( ( prev ) => {
+			const next = new Set( prev );
+			if ( next.has( n ) ) {
+				next.delete( n );
+			} else {
+				next.add( n );
+			}
+			return next;
+		} );
+	}, [] );
 
 	/**
 	 * Get row style based on highlight state and entry type.
@@ -992,7 +998,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 				{ renderTraceLines( entry ) }
 				{ renderFoldedBody( entry, startMsg ) }
 				{ startMsg && completeMsg && ' ' }
-				{ completeMsg }
+				{ completeMsg && markSearchTerm( completeMsg ) }
 				{ renderTruncatedMark( entry ) }
 				{ ( stats || childBadge ) && (
 					<>
@@ -1055,14 +1061,28 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 			return msg;
 		}
 		const lines = msg.split( '\n' );
-		if (
-			NEVER_FOLDED.has( entry.k ) ||
-			lines.length <= BODY_FOLD_LINES ||
-			expandedSet.has( bodyKey( entry ) )
-		) {
+		if ( NEVER_FOLDED.has( entry.k ) || lines.length <= BODY_FOLD_LINES ) {
 			return markSearchTerm( msg );
 		}
-		return markSearchTerm( lines.slice( 0, BODY_FOLD_LINES ).join( '\n' ) );
+		const open = expandedBodies.has( entry.n );
+		return (
+			<>
+				{ markSearchTerm(
+					open ? msg : lines.slice( 0, BODY_FOLD_LINES ).join( '\n' )
+				) }
+				<div className="log-entries-fold">
+					<button
+						type="button"
+						className="button-link"
+						onClick={ ( event ) => toggleBody( entry.n, event ) }
+					>
+						{ open
+							? __( 'Show less', 'newspack-event-logger-nodes' )
+							: __( 'Show more', 'newspack-event-logger-nodes' ) }
+					</button>
+				</div>
+			</>
+		);
 	};
 
 	/**

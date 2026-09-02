@@ -1006,7 +1006,7 @@ class Log_Manager {
 	 */
 	private function log_process(): void {
 		$process_hr   = $this->request_time ?? \hrtime( true );
-		$process_data = [ 'm' => \getmypid() . ' on ' . \gethostname(), 'l' => '' ];
+		$process_data = [ 'm' => \getmypid() . ' on ' . \gethostname() . ', WordPress ' . \get_bloginfo( 'version' ), 'l' => '' ];
 
 		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Sanitized immediately below.
 		$worker_type = \sanitize_text_field( Core::as_string( $_SERVER['NEWSPACK_NODES_WORKER_TYPE'] ?? '' ) );

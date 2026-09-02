@@ -491,10 +491,8 @@ describe( 'LogEntriesTable', () => {
 		unmount();
 	} );
 
-	it( 'unfolds an empty pair a search lands on, and puts it back on next', () => {
+	it( 'does not unfold an empty pair when a search lands on it', () => {
 		const entries = makeEntries();
-		// A second match, so `n` has somewhere else to go.
-		entries[ 2 ] = { ...entries[ 2 ], m: 'render me' };
 		jest.useFakeTimers();
 		const { container, unmount } = renderComponent(
 			React.createElement( LogEntriesTable, { entries } )
@@ -517,28 +515,11 @@ describe( 'LogEntriesTable', () => {
 				new KeyboardEvent( 'keydown', { key: 'n', bubbles: true } )
 			);
 		} );
-		const pair3 = () =>
-			container.querySelectorAll( 'tr[data-pair-id="3"]' ).length;
-
-		// First match is the unpaired row; the render pair stays merged.
-		expect( pair3() ).toBe( 1 );
-
-		// The fold now hides the body too, so a childless pair must open —
-		// otherwise landing on it hides the very match you navigated to.
-		act( () => {
-			document.dispatchEvent(
-				new KeyboardEvent( 'keydown', { key: 'n', bubbles: true } )
-			);
-		} );
-		expect( pair3() ).toBe( 2 );
-
-		// Stepping on puts it back: walking a search leaves no trail.
-		act( () => {
-			document.dispatchEvent(
-				new KeyboardEvent( 'keydown', { key: 'n', bubbles: true } )
-			);
-		} );
-		expect( pair3() ).toBe( 1 );
+		// render (pairId 3) empty pair: search stays one merged row. Its body
+		// opens on its own, so the fold has nothing to reveal.
+		expect(
+			container.querySelectorAll( 'tr[data-pair-id="3"]' ).length
+		).toBe( 1 );
 		jest.useRealTimers();
 		unmount();
 	} );
@@ -1117,7 +1098,7 @@ it( 'marks a trimmed entry with a subdued [truncated] line after the message', (
 	unmount();
 } );
 
-it( 'one row toggle unfolds and shows more, folds and shows less', () => {
+it( 'Show more opens the body and leaves the pair folded', () => {
 	const entries = makeEntries();
 	const body = Array.from(
 		{ length: 12 },
@@ -1127,27 +1108,87 @@ it( 'one row toggle unfolds and shows more, folds and shows less', () => {
 	const { container, unmount } = renderComponent(
 		React.createElement( LogEntriesTable, { entries } )
 	);
-	const row = () => container.querySelectorAll( 'tbody tr' )[ 1 ];
+	const showToggle = () =>
+		Array.from( container.querySelectorAll( 'button' ) ).find( ( b ) =>
+			b.textContent.startsWith( 'Show ' )
+		);
 
-	// Folded: five lines, and no separate control to open the rest.
+	// Folded pair, folded body: five lines, and the nested row is hidden.
 	expect( container.textContent ).toContain( 'line-5' );
 	expect( container.textContent ).not.toContain( 'line-12' );
-	expect(
-		Array.from( container.querySelectorAll( 'button' ) ).some( ( b ) =>
-			b.textContent.startsWith( 'Show ' )
-		)
-	).toBe( false );
+	expect( container.textContent ).not.toContain( 'logged value' );
+	expect( showToggle().textContent ).toBe( 'Show more' );
 
-	// Clicking anywhere in the row unfolds it and shows the whole body.
-	act( () => {
-		row().click();
-	} );
+	// Its own line, and a block wrapper carrying no styling of its own.
+	const wrapper = container.querySelector( '.log-entries-fold' );
+	expect( wrapper ).not.toBeNull();
+	expect( wrapper.tagName ).toBe( 'DIV' );
+	expect( wrapper.querySelector( 'button' ) ).not.toBeNull();
+
+	act( () => showToggle().click() );
+
+	// Whole body, and the pair is exactly as folded as it was.
 	expect( container.textContent ).toContain( 'line-12' );
+	expect( container.textContent ).not.toContain( 'logged value' );
+	expect( container.textContent ).toContain( '▶' );
+	expect( showToggle().textContent ).toBe( 'Show less' );
 
-	// And back again.
+	act( () => showToggle().click() );
+
+	expect( container.textContent ).not.toContain( 'line-12' );
+	expect( container.textContent ).not.toContain( 'logged value' );
+	unmount();
+} );
+
+it( 'Show less closes the body and leaves an open pair open', () => {
+	const entries = makeEntries();
+	const body = Array.from(
+		{ length: 12 },
+		( _, i ) => `line-${ i + 1 }`
+	).join( '\n' );
+	entries[ 1 ] = { ...entries[ 1 ], m: body };
+	const { container, unmount } = renderComponent(
+		React.createElement( LogEntriesTable, { entries } )
+	);
+	const showToggle = () =>
+		Array.from( container.querySelectorAll( 'button' ) ).find( ( b ) =>
+			b.textContent.startsWith( 'Show ' )
+		);
+
+	// Open the pair by clicking its row, then open the body on its own.
 	act( () => {
-		row().click();
+		container.querySelectorAll( 'tbody tr' )[ 1 ].click();
 	} );
+	act( () => showToggle().click() );
+	expect( container.textContent ).toContain( 'line-12' );
+	expect( container.textContent ).toContain( 'logged value' );
+
+	act( () => showToggle().click() );
+
+	// Body shut, pair untouched.
+	expect( container.textContent ).not.toContain( 'line-12' );
+	expect( container.textContent ).toContain( 'logged value' );
+	expect( container.textContent ).toContain( '▼' );
+	unmount();
+} );
+
+it( 'the row click folds, and leaves the body folded', () => {
+	const entries = makeEntries();
+	const body = Array.from(
+		{ length: 12 },
+		( _, i ) => `line-${ i + 1 }`
+	).join( '\n' );
+	entries[ 1 ] = { ...entries[ 1 ], m: body };
+	const { container, unmount } = renderComponent(
+		React.createElement( LogEntriesTable, { entries } )
+	);
+
+	act( () => {
+		container.querySelectorAll( 'tbody tr' )[ 1 ].click();
+	} );
+
+	// The pair opened; the body did not.
+	expect( container.textContent ).toContain( 'logged value' );
 	expect( container.textContent ).not.toContain( 'line-12' );
 	unmount();
 } );
@@ -1238,7 +1279,42 @@ it( 'marks the search term inside the message body', () => {
 	unmount();
 } );
 
-it( 'an unpaired row shows more on click, and on a search match', () => {
+it( 'marks the search term in the complete half of a merged pair', () => {
+	const entries = makeEntries();
+	// render (start)/(complete) is childless, so it stays one merged row.
+	entries[ 5 ] = { ...entries[ 5 ], m: 'cache miss for key abc' };
+	jest.useFakeTimers();
+	const { container, unmount } = renderComponent(
+		React.createElement( LogEntriesTable, { entries } )
+	);
+
+	const input = container.querySelector( 'input' );
+	const setter = Object.getOwnPropertyDescriptor(
+		window.HTMLInputElement.prototype,
+		'value'
+	).set;
+	act( () => {
+		setter.call( input, 'abc' );
+		input.dispatchEvent( new Event( 'input', { bubbles: true } ) );
+	} );
+	act( () => {
+		jest.advanceTimersByTime( 200 );
+	} );
+
+	// The merged row never unfolds, so the mark has to be on it.
+	expect( container.querySelectorAll( 'tr[data-pair-id="3"]' ).length ).toBe(
+		1
+	);
+	expect(
+		Array.from( container.querySelectorAll( 'mark' ) ).map(
+			( m ) => m.textContent
+		)
+	).toContain( 'abc' );
+	jest.useRealTimers();
+	unmount();
+} );
+
+it( 'an unpaired row shows more from its own control, and on a search match', () => {
 	const entries = makeEntries();
 	const body = Array.from(
 		{ length: 12 },
@@ -1250,9 +1326,13 @@ it( 'an unpaired row shows more on click, and on a search match', () => {
 	const { container, unmount } = renderComponent(
 		React.createElement( LogEntriesTable, { entries } )
 	);
-	const rowFor = ( text ) =>
+	const soloRow = () =>
 		Array.from( container.querySelectorAll( 'tbody tr' ) ).find( ( tr ) =>
-			tr.textContent.includes( text )
+			tr.textContent.includes( 'solo-1' )
+		);
+	const showToggle = () =>
+		Array.from( soloRow().querySelectorAll( 'button' ) ).find( ( b ) =>
+			b.textContent.startsWith( 'Show ' )
 		);
 
 	// It nests inside a pair that starts folded; open the tree first.
@@ -1263,13 +1343,9 @@ it( 'an unpaired row shows more on click, and on a search match', () => {
 	} );
 
 	expect( container.textContent ).not.toContain( 'solo-12' );
-	act( () => {
-		rowFor( 'solo-1' ).click();
-	} );
+	act( () => showToggle().click() );
 	expect( container.textContent ).toContain( 'solo-12' );
-	act( () => {
-		rowFor( 'solo-1' ).click();
-	} );
+	act( () => showToggle().click() );
 	expect( container.textContent ).not.toContain( 'solo-12' );
 
 	// And a search landing on it opens it the same way.
