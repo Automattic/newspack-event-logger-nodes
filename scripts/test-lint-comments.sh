@@ -679,6 +679,48 @@ PHP
 assert_flags 'a config-file comment still obeys the column budget' \
 	"$root/zzlint-long-config.php" 'exceeds 80 columns'
 
+# ...but the ENTRY it documents is a declaration, and wraps to nothing useful.
+cat > "$root/zzlint-longentry-config.php" <<'PHP'
+<?php
+/**
+ * Demo configuration — deployment OVERRIDES.
+ *
+ * @package Demo
+ */
+
+\defined( 'ABSPATH' ) || exit;
+
+return [
+	// Object editor link target.
+	// 'objecteditor_url' => '/wp-admin/admin.php?page=newspack-pyrobase-object-editor',
+];
+PHP
+assert_clean 'a commented-out ledger ENTRY may exceed the column budget' \
+	"$root/zzlint-longentry-config.php"
+
+# ...and so may its body: a commented closure wraps to nothing useful.
+cat > "$root/zzlint-longbody-config.php" <<'PHP'
+<?php
+/**
+ * Demo configuration — deployment OVERRIDES.
+ *
+ * @package Demo
+ */
+
+\defined( 'ABSPATH' ) || exit;
+
+return [
+	// Interface callback.
+	// 'allow_interface' => static function () {
+	// 	if ( false !== $app_server && '' !== $app_server && '0' !== $app_server ) {
+	// 		return '1';
+	// 	}
+	// },
+];
+PHP
+assert_clean 'a commented entry BODY may exceed the column budget' \
+	"$root/zzlint-longbody-config.php"
+
 # The predicate must not leak onto real code that merely ends in -config.php.
 cat > "$tmp/class-config.php" <<'PHP'
 <?php
