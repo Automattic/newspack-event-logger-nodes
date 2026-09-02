@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.84.0] - 2026-09-02
+
+### Added
+
+- **The search term is marked inside the message body.** A long body could match on a line the eye had to hunt for; occurrences now render in a `<mark>`. Semantic element, no new CSS, so it stays clear of the appearance-ownership guards.
+- **Navigating to a search hit opens that row's folded body**, alongside the pair it already unfolded — a match can sit past the fold, and landing on a row that still hides it is worse than not folding at all.
+
+### Fixed
+
+- **A query span names the code that asked, not `wpdb`.** `origin_frame( 1 )` skipped a fixed one frame, which landed on `wpdb->get_row` — `get_row()` reaches the `query` filter through `query()`, so the depth is not fixed. It now takes the class of the first non-machinery frame as the transport and climbs past every frame of it, which needs no hardcoded name and covers `WP_Http` the same way. Hardcoding `wpdb::class` was tried and rejected: neither class exists in the test environment, so the behaviour could not be tested.
+- **That climb is paid for only when `trace_callers` is 0.** With backtraces on, the entry's `caller` field already answers who asked.
+- **The environment map never folds.** It is read whole or not at all, and it rides one entry per request.
+
 ## [0.83.1] - 2026-09-02
 
 ### Fixed

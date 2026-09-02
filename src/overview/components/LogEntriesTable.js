@@ -198,6 +198,9 @@ const scrollToAndHighlight = ( tableRef, selector ) => {
 // A message body longer than this folds behind a Show more link.
 const BODY_FOLD_LINES = 5;
 
+// Read whole or not at all, and one per request: never fold the environment.
+const NEVER_FOLDED = new Set( [ 'environment_v3' ] );
+
 /**
  * Log Entries Table component.
  *
@@ -353,6 +356,19 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 				}
 				return next;
 			} );
+
+			// A match can sit past the fold; open the body as well as the pair.
+			const matchedN = entries[ entryIdx ]?.n;
+			if ( undefined !== matchedN ) {
+				setExpandedBodies( ( prev ) => {
+					if ( prev.has( matchedN ) ) {
+						return prev;
+					}
+					const next = new Set( prev );
+					next.add( matchedN );
+					return next;
+				} );
+			}
 
 			setCurrentMatchIndex( matchIdx );
 
@@ -964,6 +980,43 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 	};
 
 	/**
+	 * Wrap every case-insensitive occurrence of the live search term in a
+	 * `<mark>`, so the reason a row matched is visible in a long body rather
+	 * than left for the eye to find.
+	 *
+	 * @param {string} text The body text to mark up.
+	 * @return {import('react').ReactNode} The text, with matches marked.
+	 */
+	const markSearchTerm = ( text ) => {
+		const needle = searchQuery.trim();
+		if (
+			'' === needle ||
+			! text.toLowerCase().includes( needle.toLowerCase() )
+		) {
+			return text;
+		}
+		const out = [];
+		const hay = text.toLowerCase();
+		const lower = needle.toLowerCase();
+		let at = 0;
+		for (
+			let hit = hay.indexOf( lower );
+			-1 !== hit;
+			hit = hay.indexOf( lower, at )
+		) {
+			out.push( text.slice( at, hit ) );
+			out.push(
+				<mark key={ `${ hit }-${ out.length }` }>
+					{ text.slice( hit, hit + needle.length ) }
+				</mark>
+			);
+			at = hit + needle.length;
+		}
+		out.push( text.slice( at ) );
+		return out;
+	};
+
+	/**
 	 * A message body past five lines folds, with a link to see the rest.
 	 * `l` and the stats stay outside it, so folding never hides a number.
 	 *
@@ -976,13 +1029,15 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 			return msg;
 		}
 		const lines = msg.split( '\n' );
-		if ( lines.length <= BODY_FOLD_LINES ) {
-			return msg;
+		if ( NEVER_FOLDED.has( entry.k ) || lines.length <= BODY_FOLD_LINES ) {
+			return markSearchTerm( msg );
 		}
 		const open = expandedBodies.has( entry.n );
 		return (
 			<>
-				{ open ? msg : lines.slice( 0, BODY_FOLD_LINES ).join( '\n' ) }
+				{ markSearchTerm(
+					open ? msg : lines.slice( 0, BODY_FOLD_LINES ).join( '\n' )
+				) }
 				<div className="log-entries-fold">
 					<button
 						type="button"

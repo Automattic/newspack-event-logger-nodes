@@ -505,8 +505,11 @@ class Core {
 		$this->http_spans[] = self::HTTP_STATE;
 		$lm->start(
 			self::HTTP_STATE,
-			// `pre_http_request` is applied from WP_Http, not from the caller.
-			[ 'm' => Log_Manager::redact_url( $url ), 'l' => self::origin_frame( 1 ) ]
+			// Backtraces already answer who asked; don't pay for it twice.
+			[
+				'm' => Log_Manager::redact_url( $url ),
+				'l' => self::origin_frame( 0 === $this->trace_callers ),
+			]
 		);
 		return $preempt;
 	}
@@ -531,8 +534,8 @@ class Core {
 		$this->query_spans[] = self::SQL_STATE;
 		$lm->start(
 			self::SQL_STATE,
-			// `query` is applied from wpdb, so the caller is one frame further.
-			[ 'm' => $sql, 'l' => self::origin_frame( 1 ) ]
+			// Backtraces already answer who asked; don't pay for it twice.
+			[ 'm' => $sql, 'l' => self::origin_frame( 0 === $this->trace_callers ) ]
 		);
 		return $query;
 	}
@@ -549,7 +552,8 @@ class Core {
 	 * @return string `Class->method`, a function name, or '' when only
 	 *                machinery is on the stack.
 	 */
-	private static function origin_frame( int $skip = 0 ): string {
+	private static function origin_frame( bool $past_transport = false ): string {
+		$transport = null;
 		// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_debug_backtrace -- The caller IS the diagnostic; depth-bounded and gated per rule.
 		$frames = \debug_backtrace( \DEBUG_BACKTRACE_IGNORE_ARGS, self::ORIGIN_DEPTH );
 		foreach ( $frames as $frame ) {
@@ -561,8 +565,20 @@ class Core {
 			if ( isset( self::HOOK_DISPATCHERS[ $function ] ) ) {
 				continue;
 			}
-			if ( $skip-- > 0 ) {
-				continue;
+			// @longform Climb past the class that applied the filter, however
+			// many frames of it there are: `wpdb::get_row()` reaches `query`
+			// through `wpdb::query()`, so both a fixed skip and a hardcoded
+			// class name land inside wpdb rather than on the code that asked.
+			// The transport is simply the first non-machinery frame, so this
+			// needs no names and covers WP_Http the same way.
+			if ( $past_transport && '' !== $class ) {
+				if ( null === $transport ) {
+					$transport = $class;
+					continue;
+				}
+				if ( $class === $transport ) {
+					continue;
+				}
 			}
 			$name = '' === $class ? $function : $class . ( $frame['type'] ?? '::' ) . $function;
 			return \substr( $name, 0, self::ORIGIN_MAX );
