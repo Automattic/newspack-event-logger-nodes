@@ -1,6 +1,6 @@
 <?php
 return [
-	'base_directory'   => '/tmp/event-logger-nodes-test',
+	'base_directory'   => '/tmp/newspack-event-logger-nodes-test-logging',
 	'num_partitions'   => 1,
 	'segment_size'     => 1024,
 	'min_segments'     => 2,

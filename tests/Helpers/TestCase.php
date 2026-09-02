@@ -7,6 +7,29 @@ use Newspack_Event_Logger_Nodes\Stats_Store;
 abstract class TestCase extends RuntimeTestCase {
 
 	/**
+	 * Scratch tree the `tests/configs/logging-*.php` configs point at.
+	 *
+	 * MUST match their `base_directory`: storage nodes refuse a path outside the
+	 * runtime tree, and the logging suites write `logs/` under it.
+	 *
+	 * MUST NOT be the BASELINE config's `base_directory`. The logging suites
+	 * `rmdir_recursive()` this path ~40 times mid-run, and the substrate's
+	 * `make_temp_dir()` hands out dirs INSIDE the configured base — so sharing
+	 * one path puts every other test's live scratch tree under a recursive
+	 * delete. `ConfigParityTest` pins both halves.
+	 */
+	protected const TEST_DIR = '/tmp/newspack-event-logger-nodes-test-logging';
+
+	/**
+	 * Path to a pre-written config file in `tests/configs/`.
+	 *
+	 * @param string $name Basename without the extension.
+	 */
+	protected function config_path( string $name ): string {
+		return \dirname( __DIR__ ) . '/configs/' . $name . '.php';
+	}
+
+	/**
 	 * URL rows per bucket, across the shapes `url_row_sources()` returns.
 	 *
 	 * It returns one pair per shard, and only the OVERFLOW rows are folded here,

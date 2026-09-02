@@ -28,11 +28,6 @@ if [ "$(id -u)" -eq 0 ]; then
 	exit 1
 fi
 
-# Also clean up the directory the tests actually use. The earlier line at
-# the bottom of this script cleaned /tmp/newspack-event-logger-nodes-test,
-# but LogManagerTest writes to /tmp/event-logger-nodes-test (different).
-rm -rf /tmp/event-logger-nodes-test 2>/dev/null
-
 # Pin phpunit to the project's vendor binary rather than whatever
 # /usr/bin/phpunit happens to be. The container's system phpunit is
 # 11.x; the project pins 10.5.x in composer.json. Mixing them causes
@@ -44,8 +39,10 @@ PHPUNIT="$SCRIPT_DIR/../vendor/bin/phpunit"
 # Ensure xdebug coverage mode is enabled
 export XDEBUG_MODE=coverage
 
-# Clean up any previous test artifacts
-rm -rf /tmp/newspack-event-logger-nodes-test 2>/dev/null
+# Clean up any previous test artifacts. One glob covers the baseline base
+# directory and the `-logging` tree beside it; make_temp_dir() dirs are
+# children of one of the two, so they go with their parent.
+rm -rf /tmp/newspack-event-logger-nodes-test* 2>/dev/null
 
 # Run PHPUnit with coverage
 "$PHPUNIT" --configuration phpunit.xml \
@@ -57,6 +54,5 @@ rm -rf /tmp/newspack-event-logger-nodes-test 2>/dev/null
 echo ""
 echo "Coverage report: ${OUT}/newspack-event-logger-nodes-coverage/index.html"
 
-rm -rf /tmp/event-logger-nodes-test                   \
-       /tmp/newspack-event-logger-nodes-test*         \
-	   /tmp/phpunit-cache-newspack-event-logger-nodes
+rm -rf /tmp/newspack-event-logger-nodes-test* \
+       /tmp/phpunit-cache-newspack-event-logger-nodes

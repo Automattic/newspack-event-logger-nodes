@@ -18,8 +18,6 @@ use Newspack_Nodes\Message;
 #[CoversClass( Diagnostics_Bridge::class )]
 class DiagnosticsBridgeTest extends TestCase {
 
-	private const TEST_DIR = '/tmp/event-logger-nodes-test';
-
 	/** @var array<string, mixed> Original $_SERVER backup. */
 	private array $orig_server;
 

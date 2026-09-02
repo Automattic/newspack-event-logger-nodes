@@ -28,8 +28,6 @@ use Newspack_Nodes\Topic_Node;
 #[CoversClass( Log_Manager::class )]
 class LogManagerTest extends TestCase {
 
-	private const TEST_DIR = '/tmp/event-logger-nodes-test';
-
 	/** @var array Original $_SERVER backup. */
 	private array $orig_server;
 
@@ -113,13 +111,6 @@ class LogManagerTest extends TestCase {
 	}
 
 	// rmdir_recursive() is inherited from RuntimeTestCase (newspack-nodes/tests/Helpers/TestCase.php).
-
-	/**
-	 * Get path to a pre-written test config file.
-	 */
-	private function config_path( string $name ): string {
-		return \dirname( __DIR__ ) . '/configs/' . $name . '.php';
-	}
 
 	/**
 	 * Skip a test if the parallel-ported Config class isn't available yet.

@@ -31,8 +31,8 @@ class LogManagerJobContextTest extends TestCase {
 	 * assertions but not for anything reading the firehose off disk.
 	 */
 	private function arrange_logging(): void {
-		@\mkdir( '/tmp/event-logger-nodes-test/logs', 0755, true );
-		foreach ( \glob( '/tmp/event-logger-nodes-test/logs/firehose.p*/*.log' ) ?: [] as $stale ) {
+		@\mkdir( self::TEST_DIR . '/logs', 0755, true );
+		foreach ( \glob( self::TEST_DIR . '/logs/firehose.p*/*.log' ) ?: [] as $stale ) {
 			@\unlink( $stale );
 		}
 		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . \dirname( __DIR__ ) . '/configs/logging-enabled.php' );
@@ -367,7 +367,7 @@ class LogManagerJobContextTest extends TestCase {
 	/** Every firehose segment under the test base dir, concatenated. */
 	private function firehose_lines(): string {
 		$out = '';
-		foreach ( \glob( '/tmp/event-logger-nodes-test/logs/firehose.p*/*.log' ) ?: [] as $path ) {
+		foreach ( \glob( self::TEST_DIR . '/logs/firehose.p*/*.log' ) ?: [] as $path ) {
 			$out .= (string) \file_get_contents( $path );
 		}
 		return $out;
