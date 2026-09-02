@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.82.1] - 2026-09-02
+
+### Changed
+
+- **The request search has no submit button.** No other dashboard's search, filter or lookup field carries one, and this one's `Find` was the odd exception; Enter already submitted. The in-flight signal it used to carry survives as a muted `Searching…` beside the field, rendered the way `searchError` already is — deleting the button outright would have taken the only feedback a server round-trip had.
+- Picks up substrate 2.49.0: Routing in the inspector for included nodes, and the settings-checkbox and chart-legend spacing fixes, both of which this plugin inlines.
+
 ## [0.82.0] - 2026-09-01
 
 ### Changed

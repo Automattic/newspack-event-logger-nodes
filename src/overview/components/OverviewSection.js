@@ -214,25 +214,18 @@ export default function OverviewSection( {
 									marginBottom: 0,
 								} }
 							/>
-							<button
-								className="button"
-								onClick={ () => onSearch( searchQuery ) }
-								disabled={
-									searchLoading || ! searchQuery.trim()
-								}
-								style={ { height: '30px' } }
-							>
-								{ searchLoading
-									? __(
-											'Searching…',
-											'newspack-event-logger-nodes'
-									  )
-									: __(
-											'Find',
-											'newspack-event-logger-nodes'
-									  ) }
-							</button>
 						</div>
+						{ searchLoading && (
+							<span
+								className="newspack-nodes-status is-muted"
+								style={ { fontSize: '12px' } }
+							>
+								{ __(
+									'Searching…',
+									'newspack-event-logger-nodes'
+								) }
+							</span>
+						) }
 						{ searchError && (
 							<span
 								className="newspack-nodes-status is-error"
