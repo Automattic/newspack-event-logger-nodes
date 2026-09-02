@@ -298,6 +298,65 @@ describe( 'FlameGraph', () => {
 		unmount();
 	} );
 
+	it( 'caps a huge detail blob so the tooltip cannot outgrow the viewport', () => {
+		// A query frame carries the whole SQL as its detail; El Sol's run to
+		// dozens of lines of JSON, taller than the window on either side of
+		// the cursor, so the top of it cannot be read at all.
+		const chain = require( 'd3' ).__chain;
+		const { unmount } = renderComponent(
+			React.createElement( FlameGraph, {
+				data: SAMPLE_DATA,
+				lastModified: 1,
+			} )
+		);
+		chain.text.mockClear();
+		const detail = Array.from(
+			{ length: 80 },
+			( _, i ) => `line ${ i }`
+		).join( '\n' );
+		flamegraphState.tooltip.show( {
+			data: { name: 'query', detail, value: 5 },
+			parent: { data: { name: 'process', value: 100 }, parent: null },
+		} );
+
+		const rendered = chain.text.mock.calls.at( -1 )[ 0 ];
+		expect( rendered.split( '\n' ).length ).toBeLessThanOrEqual( 32 );
+		expect( rendered ).toContain( 'line 0' );
+		expect( rendered ).not.toContain( 'line 79' );
+		expect( rendered ).toContain( '50 more lines' );
+		unmount();
+	} );
+
+	it( 'never positions the tooltip above the top of the viewport', () => {
+		const chain = require( 'd3' ).__chain;
+		const { unmount } = renderComponent(
+			React.createElement( FlameGraph, {
+				data: SAMPLE_DATA,
+				lastModified: 1,
+			} )
+		);
+		// Taller than the space above the cursor: flipping runs it off the top,
+		// where nothing can scroll it back.
+		chain.node.mockReturnValue( { offsetWidth: 100, offsetHeight: 900 } );
+		chain.style.mockClear();
+		const previousEvent = window.event;
+		window.event = { pageX: 400, pageY: 120 };
+
+		flamegraphState.tooltip.show( {
+			data: { name: 'db', value: 600 },
+			parent: { data: { name: 'process', value: 1000 }, parent: null },
+		} );
+
+		const top = chain.style.mock.calls
+			.filter( ( c ) => 'top' === c[ 0 ] )
+			.at( -1 )[ 1 ];
+		expect( parseFloat( top ) ).toBeGreaterThanOrEqual( window.scrollY );
+
+		window.event = previousEvent;
+		chain.node.mockReturnValue( { offsetWidth: 100, offsetHeight: 20 } );
+		unmount();
+	} );
+
 	it( 'tooltip.show formats names with parent + total percentages', () => {
 		const { unmount } = renderComponent(
 			React.createElement( FlameGraph, {

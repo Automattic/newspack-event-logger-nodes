@@ -11,7 +11,8 @@
  * footgun comments whose full length is strictly necessary. A docblock is
  * exempt already, so opening one of its lines with that tag marks nothing and
  * is itself an error; prose naming the tag is fine. Directive comments
- * (`phpcs:`, `translators:`, `eslint-`) are exempt: they cannot be split.
+ * (`phpcs:`, `translators:`, `eslint-`) are exempt: they cannot be split, as is
+ * a commented-out entry in a config ledger, whose width is the declaration's.
  *
  * GENERICS: a docblock type carries no space after its comma. Write
  * `array<string,mixed>`; a space before `mixed` is the violation. Both parse
@@ -378,6 +379,36 @@ function ledger_run_names_a_key( int $start, int $len, array $comments, array $l
 }
 
 /**
+ * Line numbers belonging to a commented-out entry in a config ledger.
+ *
+ * An entry's continuation lines are code exactly as its first line is: a
+ * multi-line array default, or a closure's body, wraps to nothing useful and
+ * stops looking like the declaration it documents. The span runs from the
+ * `// 'key' =>` line to the one closing it at depth zero.
+ *
+ * @param array<int,string> $comments Comment text keyed by line.
+ * @return array<int,true> The exempt lines, as a set.
+ */
+function ledger_entry_lines( array $comments ): array {
+	$out = []; $open = false; $depth = 0;
+	\ksort( $comments );
+	foreach ( $comments as $line => $text ) {
+		$body = \trim( (string) \preg_replace( '~^\s*//+\s?~', '', $text ) );
+		if ( ! $open && 1 !== \preg_match( LEDGER_ENTRY, $text ) ) {
+			continue;
+		}
+		$open         = true;
+		$out[ $line ] = true;
+		$depth       += \substr_count( $body, '[' ) + \substr_count( $body, '{' )
+			- \substr_count( $body, ']' ) - \substr_count( $body, '}' );
+		if ( 0 === $depth ) {
+			$open = false;
+		}
+	}
+	return $out;
+}
+
+/**
  * Every violation in one file.
  *
  * @param string $file Path to check.
@@ -390,6 +421,7 @@ function check_file( string $file ): array {
 	}
 	$lines      = \explode( "\n", $source );
 	$violations = [];
+	$is_ledger  = is_config_ledger( $file );
 
 	// Collect comment-only // or # lines (token-verified) keyed by line number.
 	$comment_only = [];
@@ -416,9 +448,15 @@ function check_file( string $file ): array {
 		}
 	}
 
+	$entry_lines = $is_ledger ? ledger_entry_lines( $comment_only ) : [];
+
 	// Length check on each comment-only line.
 	foreach ( $comment_only as $line => $text ) {
 		if ( is_longform( $text ) || is_directive( $text ) ) {
+			continue;
+		}
+		// A ledger entry's width is the declaration's, not a sentence's.
+		if ( $is_ledger && isset( $entry_lines[ $line ] ) ) {
 			continue;
 		}
 		$src_line = \rtrim( $lines[ $line - 1 ] ?? '', "\r" );
@@ -461,7 +499,6 @@ function check_file( string $file ): array {
 	$run_len   = 0;
 	$prev      = 0;
 	\ksort( $comment_only );
-	$is_ledger = is_config_ledger( $file );
 	$flush     = static function () use ( &$run_start, &$run_len, $comment_only, $lines, $is_ledger, &$violations ): void {
 		if ( $run_len < 2 ) {
 			return;

@@ -90,9 +90,39 @@ const compareFrames = ( a, b ) => {
  * @param {Object} d D3 hierarchy node.
  * @return {string} Tooltip text.
  */
+/** Lines of detail a tooltip shows before it is taller than any viewport. */
+const TOOLTIP_MAX_LINES = 30;
+
+/**
+ * One frame's label, bounded.
+ *
+ * `detail` is the raw message: a query frame carries the whole SQL, and a
+ * `the_content` frame the rendered HTML. Untrimmed those run to hundreds of
+ * lines, and the tooltip is then taller than the window whichever side of the
+ * cursor it lands on — so the top of it cannot be read at all.
+ *
+ * @param {string} text The raw label.
+ * @return {string} At most TOOLTIP_MAX_LINES lines, marked when trimmed.
+ */
+const capLines = ( text ) => {
+	const lines = String( text ).split( '\n' );
+	if ( lines.length <= TOOLTIP_MAX_LINES ) {
+		return text;
+	}
+	return (
+		lines.slice( 0, TOOLTIP_MAX_LINES ).join( '\n' ) +
+		'\n' +
+		sprintf(
+			// translators: %d: how many further lines the frame's detail holds.
+			__( '… %d more lines', 'newspack-event-logger-nodes' ),
+			lines.length - TOOLTIP_MAX_LINES
+		)
+	);
+};
+
 const getTooltipText = ( d ) => {
 	// 'detail' carries the message; 'name' is the stable label.
-	const name = d.data?.detail || d.data?.name || 'unknown';
+	const name = capLines( d.data?.detail || d.data?.name || 'unknown' );
 	const value = d.data?.value || 0;
 
 	let root = d;
@@ -211,6 +241,8 @@ const createTooltip = () => {
 		// Text and styles must land before the element can be measured.
 		tooltipEl
 			.style( 'max-width', maxWidth + 'px' )
+			.style( 'max-height', window.innerHeight - 20 + 'px' )
+			.style( 'overflow-y', 'auto' )
 			.style( 'white-space', 'pre-wrap' )
 			.style( 'word-wrap', 'break-word' )
 			.style( 'overflow-wrap', 'break-word' )
@@ -229,10 +261,17 @@ const createTooltip = () => {
 			left = window.scrollX + 10;
 		}
 
-		// Flip above the cursor rather than run off the bottom.
+		// @longform Flip above the cursor rather than run off the bottom — then
+		// clamp, because a tooltip taller than the space above ran off the TOP
+		// instead, where nothing can scroll it back into view.
+		const viewTop = window.scrollY + 10;
+		const viewBottom = window.scrollY + window.innerHeight - 10;
 		let top = mouseY + 15;
-		if ( mouseY + tipHeight + 20 > window.innerHeight + window.scrollY ) {
+		if ( top + tipHeight > viewBottom ) {
 			top = mouseY - tipHeight - 15;
+		}
+		if ( top < viewTop ) {
+			top = viewTop;
 		}
 
 		tooltipEl.style( 'left', left + 'px' ).style( 'top', top + 'px' );
