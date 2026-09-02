@@ -78,6 +78,14 @@ class Core {
 	 */
 	private const ORIGIN_DEPTH = 8;
 
+	/**
+	 * Depth when climbing past a transport. `SHOW FULL COLUMNS` reaches the
+	 * `query` filter through four wpdb frames — update, process_fields,
+	 * get_table_charset, get_results — so ORIGIN_DEPTH's hook-shaped budget
+	 * runs out mid-climb and the span is labelled with nothing at all.
+	 */
+	private const TRANSPORT_ORIGIN_DEPTH = 16;
+
 	/** Origin label kept on a span; it rides EVERY traced entry. */
 	private const ORIGIN_MAX = 128;
 
@@ -555,7 +563,10 @@ class Core {
 	private static function origin_frame( bool $past_transport = false ): string {
 		$transport = null;
 		// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_debug_backtrace -- The caller IS the diagnostic; depth-bounded and gated per rule.
-		$frames = \debug_backtrace( \DEBUG_BACKTRACE_IGNORE_ARGS, self::ORIGIN_DEPTH );
+		$frames = \debug_backtrace(
+			\DEBUG_BACKTRACE_IGNORE_ARGS,
+			$past_transport ? self::TRANSPORT_ORIGIN_DEPTH : self::ORIGIN_DEPTH
+		);
 		foreach ( $frames as $frame ) {
 			$function = $frame['function'];
 			$class    = $frame['class'] ?? '';
