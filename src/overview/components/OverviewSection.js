@@ -105,22 +105,25 @@ export default function OverviewSection( {
 		];
 	}, [ isMultiServer, serverNames ] );
 
-	// When server filter active, hide 'Server' breakdown (redundant).
+	// Redundant under a server filter, and a single bar outside hub mode.
 	const breakdownOptions = useMemo( () => {
-		if ( serverFilter ) {
+		if ( serverFilter || ! isMultiServer ) {
 			return CHART_BREAKDOWN_OPTIONS.filter(
 				( opt ) => opt.value !== 'server'
 			);
 		}
 		return CHART_BREAKDOWN_OPTIONS;
-	}, [ serverFilter ] );
+	}, [ serverFilter, isMultiServer ] );
 
-	// Reset breakdown 'server'→'status' when server filter activates.
+	// Reset breakdown 'server'→'status' when that option goes away.
 	useEffect( () => {
-		if ( serverFilter && chartBreakdown === 'server' ) {
+		if (
+			( serverFilter || ! isMultiServer ) &&
+			chartBreakdown === 'server'
+		) {
 			setChartBreakdown( 'status' );
 		}
-	}, [ serverFilter, chartBreakdown, setChartBreakdown ] );
+	}, [ serverFilter, isMultiServer, chartBreakdown, setChartBreakdown ] );
 
 	if ( ! overview ) {
 		return null;

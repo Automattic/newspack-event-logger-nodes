@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.84.1] - 2026-09-02
+
+### Fixed
+
+- **No Server breakdown outside hub mode.** It was hidden under an active server filter but not on a single-site install, where breaking down by server is one bar. It now goes on the same `isMultiServer` test the server dropdown already uses, and a stored `server` breakdown falls back to `status` rather than leaving the select on an option that is no longer offered.
+
 ## [0.84.0] - 2026-09-02
 
 ### Added
