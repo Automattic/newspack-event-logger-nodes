@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.86.0] - 2026-09-02
+
 ### Added
 
 - **`process (start)` names the WordPress version.** It already carried the pid and the host; a trace read months later had no record of the core version it ran against, and the environment allowlist is the wrong home for a value that is neither a header nor a server variable. The line now reads `<pid> on <host>, WordPress <version>`.
