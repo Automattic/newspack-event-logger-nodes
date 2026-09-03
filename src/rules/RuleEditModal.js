@@ -1,16 +1,23 @@
 /**
- * RuleEditModal — edits ONE logging-rule draft in a @wordpress/components Modal.
+ * The editor for ONE logging rule.
  *
- * Fields: pattern (TextControl), action (log/skip SelectControl), and — only for
- * `log` rules — a Hooks field (opens the reused HookSelectorModal, shows a
- * count), a Custom Events field (opens the reused CustomEventSelectorModal), a
- * Significant Events tag-pill input (TagInputField), and two number inputs
- * (auto_disable_threshold int, auto_protect_time_threshold float ms). Skip rules
- * hide the log-only fields entirely.
+ * Every rule an operator writes comes through here. The settings page's ruleset
+ * table and the performance dashboard's "Log this URL" each open it on the
+ * stored rule when the pattern already has one, and on a `BLANK_RULE` draft
+ * when it does not — seeded with that URL's pattern, in the dashboard's case.
+ * The modal owns the draft and nothing else: `onSave( draft )` hands the
+ * assembled rule back in `Rule::to_array()`'s wire shape and the parent writes
+ * it through the `rules` CI's `upsert`, so one editor serves both trees while
+ * owning neither's transport.
  *
- * `onSave(draft)` emits the assembled rule object (the id round-trips so the
- * parent's upsert can preserve it); the parent decides upsert vs save. Pattern
- * must be non-empty — an empty pattern blocks save with an inline message.
+ * Pattern and action apply to every rule; the rest belong to `log` rules, which
+ * is why a `skip` rule hides them AND saves them empty. Emitting the state as it
+ * stands would keep a rule's hooks and thresholds alive under an action that
+ * logs nothing.
+ *
+ * The draft's id round-trips untouched. `Rules_CI_Node` mints a rule's id from
+ * its pattern, so an edit that moves the pattern arrives carrying the OLD id,
+ * which is the only thing telling `upsert` which entry this edit replaces.
  */
 
 import { useState } from '@wordpress/element';
@@ -29,10 +36,10 @@ import HookSelectorModal from '../settings/settings/HookSelectorModal';
  * Every skin class this modal's own stylesheet needs.
  *
  * `rule-edit-modal.scss` gates a whole layout block on
- * `.newspack-nodes-skin-root` — flex column, 600px wide, scrolling content —
- * so it is not decoration a caller opts into. Leaving that one class to an
- * optional `className` gave the same modal two layouts: the Performance
- * dashboard passed it, the rules admin did not.
+ * `.newspack-nodes-skin-root` — flex column, 600px wide, scrolling content — so
+ * that class is structure, not decoration a caller opts into. Leaving it to the
+ * optional `className` gives the same modal two layouts, one per tree that
+ * mounts it.
  */
 const SKIN_CLASSES =
 	'event-logger-rule-edit-modal newspack-nodes-modal newspack-nodes-theme newspack-nodes-ui newspack-nodes-skin-root';
@@ -41,7 +48,19 @@ import TagInputField from '../settings/settings/TagInputField';
 
 import './rule-edit-modal.scss';
 
-// Number input via parse (blank→0), held as a string so the caret is stable.
+/**
+ * Parse one numeric field, reading a blank or unparseable value as 0.
+ *
+ * The three number inputs hold their value as a string, so parsing waits for
+ * save: round-tripping each keystroke through `Number` swallows a half-typed
+ * `250.` and takes the caret with it. Zero is what every numeric rule field
+ * reads as off, so a cleared field turns its feature off rather than refusing
+ * the save.
+ *
+ * @param {string}                  value Raw field value.
+ * @param {(raw: string) => number} parse `parseInt` or `parseFloat`, per field.
+ * @return {number} The parsed value, or 0 when the parse is not finite.
+ */
 function toNumber( value, parse ) {
 	const n = parse( value );
 	return Number.isFinite( n ) ? n : 0;
@@ -50,15 +69,16 @@ function toNumber( value, parse ) {
 /**
  * Rule edit modal.
  *
- * Delete is the owner's call: RulesAdmin deletes from its table rows and passes
+ * Delete is the owner's call. RulesAdmin deletes from its table rows and passes
  * no handler, so the modal shows no delete button; the performance dashboard
- * passes one only once the draft has an id.
+ * passes one only once the draft has an id. The button that appears arms a
+ * confirm on its first click rather than stacking a second modal over this one.
  *
  * @param {Object}                  props             Component props.
- * @param {Object}                  props.rule        The rule draft to edit (wire shape from Rules_CI).
- * @param {(draft: Object) => void} props.onSave      Called with the edited draft on Save.
+ * @param {Object}                  props.rule        The rule draft to edit, in `Rule::to_array()`'s wire shape; an empty `id` titles the modal "Add rule".
+ * @param {(draft: Object) => void} props.onSave      Called with the assembled draft once the pattern validates.
  * @param {() => void}              props.onCancel    Dismiss handler (Cancel / ESC / backdrop).
- * @param {(() => void)|undefined}  [props.onDelete]  Delete handler; omitted hides the delete button.
+ * @param {(() => void)|undefined}  [props.onDelete]  Delete handler; omitting it hides the delete button.
  * @param {string}                  [props.className] EXTRA class names; the skin classes are the modal's own.
  * @return {import('react').ReactElement} The modal.
  */
@@ -89,7 +109,7 @@ export default function RuleEditModal( {
 		String( rule?.auto_protect_time_threshold ?? 0 )
 	);
 	const [ logQueries, setLogQueries ] = useState( !! rule?.log_queries );
-	// Absent means ON: outbound HTTP was unconditional before it was a flag.
+	// Absent means ON: only an explicit false retires the HTTP spans.
 	const [ logHttp, setLogHttp ] = useState( rule?.log_http ?? true );
 	const [ traceHooks, setTraceHooks ] = useState( !! rule?.trace_hooks );
 	const [ traceCallers, setTraceCallers ] = useState(
@@ -102,6 +122,13 @@ export default function RuleEditModal( {
 
 	const isLog = 'log' === action;
 
+	/**
+	 * Assemble the draft and hand it to `onSave`, refusing an empty pattern.
+	 *
+	 * The pattern is trimmed before it is checked and before it is emitted, so
+	 * surrounding whitespace never reaches `Rules_CI_Node`, which mints the id
+	 * from the pattern text and would key the rule to a string no URL matches.
+	 */
 	const handleSave = () => {
 		const trimmed = pattern.trim();
 		if ( ! trimmed ) {
@@ -110,7 +137,7 @@ export default function RuleEditModal( {
 			);
 			return;
 		}
-		// Skip rules carry no payload; emit empty fields, no stale hooks leak.
+		// A skip rule carries no payload, so emit the log-only fields empty.
 		const draft = {
 			id: rule?.id ?? '',
 			pattern: trimmed,
@@ -124,11 +151,12 @@ export default function RuleEditModal( {
 			significant_events: isLog ? significant : [],
 			custom_events: isLog ? customEvents : [],
 			hooks: isLog ? hooks : [],
+			// The editor holds resolved hooks; Rule_Set re-tiers on save.
 			hooks_in: 'inline',
 			log_queries: isLog && logQueries,
 			log_http: isLog && !! logHttp,
 			trace_hooks: isLog && traceHooks,
-			// The count refines the label, so unticking retires both.
+			// The count refines the caller label, so unticking retires both.
 			trace_callers:
 				isLog && traceHooks
 					? toNumber( traceCallers, ( v ) => parseInt( v, 10 ) )

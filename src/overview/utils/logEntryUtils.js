@@ -2,20 +2,23 @@
  * Log-entry view model for the request-detail table.
  *
  * A request arrives from `Request_Builder_Node` as a flat list of log
- * entries — `n` line number, `k` keyword, `m` message, `ts` Unix timestamp
- * with `duration_ms` and `peak_mb` on the ones that carry them. This module
- * turns that list into the nested, foldable, time-ruled rows that
- * `LogEntriesTable` renders, in two passes:
+ * entries — `n` line number, `k` keyword, `m` message, `l` a span's argument,
+ * `ts` Unix timestamp, with `duration_ms` and `peak_mb` on the ones that carry
+ * them. This module turns that list into the nested, foldable, time-ruled rows
+ * that `LogEntriesTable` renders, in three passes:
  *
- * 1. `computeIndentedEntries()` derives an indent level and a `pairId` for
+ * 1. `spliceFoldedSpans()` puts a folded record's merged tree back where its
+ *    entries were, as ordinary `(start)`/`(complete)` rows, so everything
+ *    below reads one list whether the record was folded or not.
+ * 2. `computeIndentedEntries()` derives an indent level and a `pairId` for
  *    every entry from its `(start)`/`(complete)` keyword, and spans time
  *    gaps with placeholder rows.
- * 2. `computeVisibleEntries()` applies the fold state, replacing each
+ * 3. `computeVisibleEntries()` applies the fold state, replacing each
  *    collapsed pair with a single merged row, then rewrites the placeholder
  *    runs and the `displayTime` column for the rows that survive.
  *
- * The split is what keeps folding cheap: the first pass is memoized on the
- * request, the second on the fold set, which changes with every click.
+ * The split is what keeps folding cheap: the first two are memoized on the
+ * request, the last on the fold set, which changes with every click.
  *
  * `displayTime` is a time ruler, not a per-row clock. A row shows a full
  * timestamp at a 100ms mark and bullets for the 10ms ticks between marks,
@@ -28,17 +31,30 @@
  * marker was selected out of the middle rather than kept consecutive.
  */
 
+/**
+ * Matches a `<name> (start)` keyword, capturing the pair's name.
+ */
 const START_REGEX = /^(.+?) \(start\)$/;
+
+/**
+ * Matches a `<name> (complete)` keyword, capturing the pair's name. Every pair
+ * but the request's own closes this way.
+ */
 const COMPLETE_REGEX = /^(.+?) \(complete\)$/;
 
 /**
  * The record's own close, whatever ended it. Every other pair closes as
  * `(complete)`; the REQUEST closes as a terminal carrying the disposition —
  * `aborted` from `Gyrobase::Log::abort_process()`, any suffix at all from
- * `Log_Manager::complete()`. Matching only `(complete)` left the terminal
- * closing nothing, so it drew one level deeper than the `(start)` it ends.
+ * `Log_Manager::complete()`. Matching only `(complete)` leaves the terminal
+ * closing nothing, so it draws one level deeper than the `(start)` it ends.
  */
 const TERMINAL_REGEX = /^(.+?) \(.+\)$/;
+
+/**
+ * A 24-hour clock for the time column. The 12-hour form adds a meridiem the
+ * column has no room for and varies the width of every full timestamp.
+ */
 const TIME_FORMAT_OPTIONS = { hour12: false };
 
 /**
@@ -50,6 +66,16 @@ const TIME_FORMAT_OPTIONS = { hour12: false };
 const OUTERMOST_PAIR = 'process';
 
 /**
+ * The keyword the pressure fold leaves where it merged the record's middle
+ * away.
+ *
+ * `Request_Builder_Node::SEQUENCE_BREAK_KEYS` owns the vocabulary, since that
+ * class mints the marker. This is the one deliberate duplicate, because the
+ * dashboard is a separate deploy unit.
+ */
+const FOLD_MARKER = 'entries (aggregated)';
+
+/**
  * Keywords that announce a break in the record: entries were dropped, or merged
  * away by the pressure fold. What went missing came from the MIDDLE, so a span
  * the record closes later spans the break and keeps its surviving children —
@@ -58,7 +84,6 @@ const OUTERMOST_PAIR = 'process';
  * a producer drains its stack as `(orphaned)` completes before any terminal,
  * so a span with none left was cut by the fold rather than by the ending.
  */
-const FOLD_MARKER = 'entries (aggregated)';
 const SEQUENCE_BREAK_KEYWORDS = new Set( [ 'entries (lost)', FOLD_MARKER ] );
 
 /**
@@ -89,11 +114,11 @@ const pairBaseName = ( keyword ) => {
 /**
  * Whether a keyword opens a pair the reader may fold.
  *
- * THE rule, in one place. It previously had five spellings across this file
- * and LogEntriesTable, and they disagreed on real input: a
- * `startsWith( 'process ' )` test excluded `process queue (start)` from
- * "Unfold All" while the same row still got a disclosure triangle, a pointer
- * cursor, and a working click handler.
+ * THE rule, in one place. Every caller asks this function — the disclosure
+ * triangle, the pointer cursor, the click handler and "Unfold All" — because a
+ * second spelling disagrees with it on real input: a `startsWith( 'process ' )`
+ * test drops `process queue (start)` from "Unfold All" while the same row still
+ * folds on click.
  *
  * @param {string} keyword Entry keyword.
  * @return {boolean} True when the pair is foldable.
@@ -154,7 +179,8 @@ export const formatDots = ( count ) => {
  * Format a full timestamp string from a Unix ts.
  *
  * @param {number} ts Unix timestamp.
- * @return {string} Formatted time "HH:MM:SS.TH" (2 decimal places, 10ms precision), or empty without a ts.
+ * @return {string} Formatted time `HH:MM:SS.cc` at 10ms precision, or empty
+ *                  without a ts.
  */
 export const formatFullTimestamp = ( ts ) => {
 	if ( ! ts ) {
@@ -171,11 +197,14 @@ export const formatFullTimestamp = ( ts ) => {
 };
 
 /**
- * Format time display - timestamps at 100ms marks, bullets at 10ms marks.
+ * Rule one row of the time column: a full timestamp at a 100ms mark, a dot per
+ * 10ms tick since the row above, nothing inside the same tick.
  *
  * @param {number} ts            Current timestamp.
- * @param {number} lastHundredth Last displayed hundredth (10ms interval).
- * @return {Object} { displayTime, newHundredth }
+ * @param {number} lastHundredth Last displayed hundredth (10ms interval), -1
+ *                               before any row has been ruled.
+ * @return {Object} `displayTime` for this row, and `newHundredth` for the next
+ *                  call to measure against.
  */
 const formatTimeDisplay = ( ts, lastHundredth ) => {
 	if ( ! ts ) {
@@ -187,7 +216,7 @@ const formatTimeDisplay = ( ts, lastHundredth ) => {
 
 	const currentHundredth = Math.round( ts * 100 );
 
-	// Same 10ms interval - no display.
+	// Within the same 10ms tick, so this row shows nothing.
 	if ( currentHundredth <= lastHundredth ) {
 		return {
 			displayTime: '',
@@ -197,7 +226,7 @@ const formatTimeDisplay = ( ts, lastHundredth ) => {
 
 	const dots = currentHundredth - lastHundredth;
 
-	// First entry, exact 100ms boundary, or crossed (>9 dots skipped a mark).
+	// The first row, an exact 100ms mark, or a jump that skipped one.
 	if ( lastHundredth < 0 || currentHundredth % 10 === 0 || dots > 9 ) {
 		return {
 			displayTime: formatFullTimestamp( ts ),
@@ -205,7 +234,7 @@ const formatTimeDisplay = ( ts, lastHundredth ) => {
 		};
 	}
 
-	// 10ms boundaries within the same tenth - show grouped dots.
+	// Ticks inside the same tenth of a second draw as grouped dots.
 	return {
 		displayTime: formatDots( dots ),
 		newHundredth: currentHundredth,
@@ -331,8 +360,8 @@ const spansClosedAfter = ( entries, from ) => {
  * A child CAN outlive its parent — improper nesting is legal and the later
  * `(complete)` proves it — so a frame with a close still to come stays. One
  * with none was severed: the fold ate its close, or the producer's drain did
- * not reach it. Left in place it adopts every row after the parent, which is
- * how an aborted render re-parented the whole tail under spans that had ended.
+ * not reach it. Left in place it adopts every row after the parent, putting an
+ * aborted render's whole tail under spans that have ended.
  *
  * Same budget as `pruneSeveredSpans`, at a close rather than at a break.
  *
@@ -392,11 +421,18 @@ const pruneSeveredSpans = ( pairStack, entries, from ) => {
 };
 
 /**
- * Compute indentation levels for log entries based on (start)/(complete) pairs.
- * Uses LIFO name matching to handle improperly nested events.
- * Adds time display: timestamps at 100ms marks, bullets at 10ms marks.
- * Inserts placeholder rows with bullets to show time gaps — but never across
- * a sequence-break marker, and never at all in a folded record.
+ * Derive an indent level and a pairId for every entry from its
+ * `(start)`/`(complete)` keyword, matching LIFO so an improperly nested span
+ * still pairs.
+ *
+ * Inserts placeholder rows to span time gaps — but never across a
+ * sequence-break marker, and never at all in a folded record, where the
+ * interval is missing detail rather than elapsed time. The `displayTime`
+ * column belongs to `computeVisibleEntries()`, which recomputes the whole
+ * ruler per fold state.
+ *
+ * A break also severs the spans the record never closes, so a span the fold
+ * cut short cannot adopt the rows after it.
  *
  * @param {Array} entries Log entries array.
  * @return {IndentedEntries} Indented rows and the real-entry count.
@@ -457,7 +493,7 @@ export const computeIndentedEntries = ( entries ) => {
 		// @longform A break severs the spans the record never closes, so they
 		// cannot adopt the rows after it. The folded interior spliced in AT the
 		// marker is the exception: the tree puts those rows INSIDE the open
-		// span, and the fold is what ate its close. Pruning first left every
+		// span, and the fold is what ate its close. Pruning first makes every
 		// merged row a sibling of the parent it ran in. So the prune waits for
 		// the first row the record itself resumes with.
 		if ( isBreak && entries[ idx + 1 ]?.fromFold ) {
@@ -523,7 +559,7 @@ export const computeIndentedEntries = ( entries ) => {
 			pairStack.push( { name: startMatch[ 1 ], pairId } );
 			result.push( { ...entry, indent, pairId } );
 		} else if ( completeMatch && matchedIdx >= 0 ) {
-			// Found matching start - use its pairId.
+			// A matching start is on the stack, so the pair keeps its id.
 			pairId = pairStack[ matchedIdx ].pairId;
 			// A severed child would adopt every row after its parent.
 			pruneUnclosedAbove( pairStack, matchedIdx, entries, idx );
@@ -537,7 +573,7 @@ export const computeIndentedEntries = ( entries ) => {
 			// Orphan: its start was merged away. Show it where the record is.
 			result.push( { ...entry, indent, pairId: null } );
 		} else {
-			// Non-start/complete entry - use current stack depth.
+			// A leaf entry sits at the depth of the innermost open pair.
 			pairId =
 				pairStack.length > 0
 					? pairStack[ pairStack.length - 1 ].pairId
@@ -571,7 +607,8 @@ const openSpansAt = ( entries, upto ) =>
  * `sql` inside `gyrobase` must not cancel out a `sql` beside it.
  *
  * @param {Array} entries Stored entries — kept head, marker, kept tail.
- * @return {Map} Slash-joined base-name path to the number of complete pairs kept.
+ * @return {Map} Slash-joined tree-node-name path to the number of complete
+ *               pairs kept.
  */
 const keptPairCounts = ( entries ) => {
 	const counts = new Map();
@@ -659,7 +696,8 @@ const deepestByBase = ( flame ) => {
  * Durations stay INCLUSIVE, as every other duration in the log is.
  *
  * @param {?Object} flame    Merged tree from Flame_Fold::tree().
- * @param {Array}   openPath Base names the kept head left open, outermost first.
+ * @param {Array}   openPath Tree node names the kept head left open, outermost
+ *                           first.
  * @param {Map}     tailEnds Base name to completes left over for the tree, the
  *                           spans the display leaves open having taken theirs.
  * @param {Map}     kept     Path to complete pairs the kept rows already show.
@@ -667,7 +705,6 @@ const deepestByBase = ( flame ) => {
  * @param {number}  originTs Unix seconds the request started at.
  * @return {Array} Synthetic log entries.
  */
-
 const foldedSpanEntries = (
 	flame,
 	openPath,
@@ -723,9 +760,9 @@ const foldedSpanEntries = (
 			// spend the debt. The record's trailing `(orphaned)` completes name
 			// the spans still open at the end, innermost first — the tree's
 			// deepest path by `t`. Keyed on the bare base alone, the FIRST
-			// same-base node in walk order took it instead: a sibling that had
-			// closed normally long before, whose own complete the fold ate, was
-			// left open across everything after it.
+			// same-base node in walk order takes it instead: a sibling that
+			// closed normally long before, whose own complete the fold ate,
+			// stays open across everything after it.
 			// A tree with no timings cannot say which path the drain closed;
 			// the gate stands down rather than refusing every debt.
 			const onDrained = drained.get( base ) === here;
@@ -806,11 +843,20 @@ export const spliceFoldedSpans = ( entries, flame ) => {
 };
 
 /**
- * Filter indented entries by fold state, emitting merged rows for collapsed pairs.
+ * Filter indented entries by fold state, emitting one merged row per collapsed
+ * pair, then rewrite the placeholder runs and the `displayTime` column over
+ * what is left.
+ *
+ * The ruler is recomputed here rather than carried from
+ * `computeIndentedEntries()` because folding removes rows: a collapsed pair
+ * takes its whole interior with it, placeholders included, so the interval
+ * between the rows that survive is not the one the first pass measured.
  *
  * @param {Array} entries     Output of computeIndentedEntries().entries.
- * @param {Set}   expandedSet Set of pairIds that are expanded. Empty = all folded.
- * @return {Array} Visible entries, with collapsed pairs replaced by merged rows.
+ * @param {Set}   expandedSet pairIds the reader has unfolded; an empty set
+ *                            folds every pair.
+ * @return {Array} Visible rows, each collapsed pair replaced by one merged
+ *                 row.
  */
 export const computeVisibleEntries = ( entries, expandedSet ) => {
 	if ( ! entries?.length ) {
@@ -860,7 +906,7 @@ export const computeVisibleEntries = ( entries, expandedSet ) => {
 				result.push( {
 					...entry,
 					k: baseName,
-					// Use complete ts so next compare starts after pair.
+					// The complete's ts: the ruler resumes past the pair.
 					ts: completeEntry?.ts || entry.ts,
 					startTs: entry.ts,
 					duration_ms: completeEntry?.duration_ms ?? null,
@@ -1020,9 +1066,14 @@ export const computeVisibleEntries = ( entries, expandedSet ) => {
  * Walk backwards from a target entry index to collect ancestor pairIds
  * that must be expanded for the target to be visible.
  *
+ * A `(complete)` carries its own `(start)`'s indent, so the walk begins at the
+ * target's own level and picks up its pair first; every other row is one level
+ * inside the pair that contains it.
+ *
  * @param {number} targetIdx       Index in the full indented entries array.
  * @param {Array}  indentedEntries Full indented entries array.
- * @return {Set} Set of pairIds (ancestors + target) to expand.
+ * @return {Set} pairIds to expand: the enclosing pairs, plus the target's own
+ *               when it opens or closes one.
  */
 export const getAncestorPairIds = ( targetIdx, indentedEntries ) => {
 	const ids = new Set();

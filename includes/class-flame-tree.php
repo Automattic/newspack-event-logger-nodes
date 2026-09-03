@@ -1,6 +1,6 @@
 <?php
 /**
- * Flame_Tree — the pure flame-graph algorithm split out of Flame_Builder_Node.
+ * Flame_Tree — the pure flame-graph algorithm behind `Flame_Builder_Node`.
  *
  * The node owns the state, the I/O, and the clock; this file owns the math.
  * Every function here is static, takes any clock reading it needs as an
@@ -49,7 +49,11 @@ final class Flame_Tree {
 	/** Recursion ceiling for the tree walks; deeper subtrees are left alone. */
 	private const MAX_RECURSION_DEPTH = 50;
 
-	/** Open-span ceiling; spans nested deeper are recorded but never matched. */
+	/**
+	 * Open-span ceiling; spans nested deeper are recorded but never matched.
+	 * `Flame_Fold` bounds its own stack by the same number, which is why this
+	 * ceiling is public and `MAX_RECURSION_DEPTH` is not.
+	 */
 	public const MAX_STACK_DEPTH = 50;
 
 	/**
@@ -57,8 +61,13 @@ final class Flame_Tree {
 	 *
 	 * Each entry is a firehose line as `Log_Manager` wrote it: `k` holds the
 	 * keyword (`<label> (start)` or `<label> (complete)`), `l` a stable label
-	 * that aggregation groups on, `m` the volatile message, and a complete
-	 * additionally carries `duration_ms` and `ts`.
+	 * that aggregation groups on, `m` the volatile message, `ts` the moment the
+	 * line was written, and a complete additionally carries `duration_ms`.
+	 *
+	 * A node's `name` carries the stable label — `<base>: <label>` — because
+	 * that is the key aggregation merges on; `detail` carries the message the
+	 * same way and is what the graph displays, written only when the message
+	 * differs from the label.
 	 *
 	 * A start pushes a node, stamped with `t` — the span's offset in
 	 * milliseconds from the request's own start, which is what positions it on
@@ -78,11 +87,12 @@ final class Flame_Tree {
 	 * the base name, the wrong node — and their own value stays 0. Their `t`
 	 * is still honest, and `cover_children()` gives them an extent.
 	 *
-	 * The root's own value is left at 0; the caller overwrites it with the
-	 * request's measured duration.
+	 * The root starts at 0, and `cover_children()` raises it to cover the spans
+	 * beneath it; the caller then takes the greater of that and the request's
+	 * measured duration.
 	 *
 	 * @param array<array-key,mixed> $entries Log entries.
-	 * @return array<string,mixed> Flame graph data.
+	 * @return array<string,mixed> Root node: `name`, `value`, `children`, plus `t` when the request was timestamped.
 	 */
 	public static function build_flame_data( array $entries ): array {
 		$origin = self::request_origin( $entries );
@@ -179,7 +189,7 @@ final class Flame_Tree {
 	 * Apply `cover_children()` to a whole tree, deepest first.
 	 *
 	 * @param array<array-key,mixed> $node  Node to normalize, by reference.
-	 * @param int                     $depth Current recursion depth.
+	 * @param int                    $depth Current recursion depth.
 	 */
 	private static function cover_children_deep( array &$node, int $depth = 0 ): void {
 		if ( $depth > self::MAX_RECURSION_DEPTH ) {
@@ -197,14 +207,15 @@ final class Flame_Tree {
 	}
 
 	/**
-	 * Recursively number duplicate sibling names with hidden suffix.
+	 * Number duplicate sibling names with a hidden suffix, recursively.
 	 *
-	 * Merging keys on `name`, so two siblings sharing one would collapse into
-	 * a single aggregate node. Appending \x00{N} keeps them apart; every read
-	 * path strips the suffix again before storage or display.
+	 * `merge_flame_children_incremental()` keys on `name`, so two siblings
+	 * sharing one would collapse into a single aggregate node. Appending
+	 * `\x00{N}` keeps them apart; every read path strips the suffix again
+	 * before storage or display.
 	 *
 	 * @param array<array-key,mixed> $node  Flame node (modified by reference).
-	 * @param int                     $depth Current recursion depth.
+	 * @param int                    $depth Current recursion depth.
 	 */
 	private static function number_duplicate_siblings( array &$node, int $depth = 0 ): void {
 		if ( $depth > self::MAX_RECURSION_DEPTH ) {
@@ -289,13 +300,13 @@ final class Flame_Tree {
 	 * Finalize a flame node for display: convert sums to averages, strip
 	 * suffixes, normalize parent ≥ children, and remove internal fields.
 	 *
-	 * The divisor is the aggregate's own request count, not the node's
-	 * `seen_count`, so a node appearing in a minority of requests averages
-	 * down — the flame shows mean cost per request, not per appearance.
+	 * The divisor is the aggregate's own request count, never a per-node tally,
+	 * so a node appearing in a minority of requests averages down — the flame
+	 * shows mean cost per request, not per appearance.
 	 *
 	 * @param array<array-key,mixed> $node        Flame node (modified by reference).
-	 * @param int                     $total_count Requests the aggregate covers; 0 skips the averaging.
-	 * @param int                     $depth       Current recursion depth.
+	 * @param int                    $total_count Requests the aggregate covers; 0 skips the averaging.
+	 * @param int                    $depth       Current recursion depth.
 	 */
 	public static function finalize_flame_node( array &$node, int $total_count, int $depth = 0 ): void {
 		if ( $depth > self::MAX_RECURSION_DEPTH ) {
@@ -403,8 +414,8 @@ final class Flame_Tree {
 	 * trees keep their suffixes until finalize_flame_node() strips them, since
 	 * the suffix is what holds duplicate siblings apart across merges.
 	 *
-	 * @param array<string,mixed> $node  Flame node (modified in place).
-	 * @param int                  $depth Current recursion depth.
+	 * @param array<string,mixed> $node  Flame node (modified by reference).
+	 * @param int                 $depth Current recursion depth.
 	 */
 	public static function strip_name_suffixes( array &$node, int $depth = 0 ): void {
 		if ( $depth > self::MAX_RECURSION_DEPTH ) {
@@ -429,6 +440,7 @@ final class Flame_Tree {
 	 * two siblings of the same name; nothing downstream should ever see it.
 	 *
 	 * @param string $name The stored name.
+	 * @return string Everything before the first NUL, or the name unchanged.
 	 */
 	private static function strip_suffix( string $name ): string {
 		$null_pos = \strpos( $name, "\x00" );
@@ -437,10 +449,9 @@ final class Flame_Tree {
 
 	/**
 	 * Merge child nodes from a per-request flame into the per-URL aggregate
-	 * children additively (sums-not-means). Each node carries `sum_value` (sum
-	 * of inclusive durations across every request the node was seen in) and
-	 * the aggregate's own request count. Display values come from
-	 * finalize at flush time (sum_value / total_count).
+	 * children additively (sums-not-means). Each node carries `sum_value`, the
+	 * sum of inclusive durations across every request the node was seen in;
+	 * `finalize_flame_node()` turns that into a display value at flush time.
 	 *
 	 * Node `name` is the merge key, which is why build_flame_data numbers
 	 * duplicate siblings first. `ts` records when a node was last touched —
@@ -453,9 +464,9 @@ final class Flame_Tree {
 	 *
 	 * @param array<array-key,mixed> $existing Existing aggregate children (list).
 	 * @param array<array-key,mixed> $incoming Incoming per-request children (list).
-	 * @param int                     $now_ts   Timestamp for un-stamped nodes and the expiry cutoff.
-	 * @param int                     $depth    Current recursion depth.
-	 * @return array<int,mixed>
+	 * @param int                    $now_ts   Timestamp for un-stamped nodes and the expiry cutoff.
+	 * @param int                    $depth    Current recursion depth.
+	 * @return array<int,mixed> Merged aggregate children, re-indexed as a list.
 	 */
 	public static function merge_flame_children_incremental( array $existing, array $incoming, int $now_ts, int $depth = 0 ): array {
 		if ( $depth > self::MAX_RECURSION_DEPTH ) {
@@ -503,7 +514,7 @@ final class Flame_Tree {
 			}
 		}
 
-		// Expire entries not seen in over 1 hour.
+		// Drop anything not seen within AGGREGATE_EXPIRY_SEC.
 		$cutoff = $now_ts - self::AGGREGATE_EXPIRY_SEC;
 		foreach ( $indexed as $name => $child ) {
 			if ( ( $child['ts'] ?? 0 ) < $cutoff ) {

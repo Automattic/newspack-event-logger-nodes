@@ -1,24 +1,24 @@
 <?php
 /**
- * Event Logger Configuration
- *
- * Owns application-level keys (logging toggles, debugging flags, the per-URL
- * ruleset, etc.). Substrate keys (base_directory, partitioning, memcache_servers)
- * live on `\Newspack_Nodes\Config`.
- *
- * `load_config()` merges substrate values into the returned array so existing
- * callers reading e.g. `$config['base_directory']` continue to work without
- * having to know which Config to ask. Path-resolution helpers delegate to the
- * substrate Config — only one place owns the realpath/symlink check.
- *
- * `value()` is the accessor callers should reach for: it validates the key
- * against the shared substrate registry and throws on an undeclared one, so a
- * renamed or typo'd key fails loud instead of limping on a `?? default`.
+ * Event Logger configuration: this plugin's config layers, read as one map.
  *
  * `Settings_Schema` is the definition of both the declared set and every
  * default. `newspack-event-logger-nodes-config.php` and
- * `LOCAL_NEWSPACK_NODES_CONF` are override surfaces layered on top, and a key
- * only they name is reported, never declared — see `note_unrecognized_keys()`.
+ * `LOCAL_NEWSPACK_NODES_CONF` are override surfaces layered on top of it, so a
+ * key the schema does not declare is never registered and `value()` refuses it;
+ * a stray in the shipped file is reported besides — see
+ * `note_unrecognized_keys()`.
+ * Substrate keys (`base_directory`, the partition geometry, `memcache_servers`,
+ * `topologies`) belong to `\Newspack_Nodes\Config`.
+ *
+ * `load_config()` merges the substrate's effective values into what it returns,
+ * so a caller reading `$config['base_directory']` never has to know which Config
+ * owns the key, and the path helpers delegate outright — one place owns the
+ * realpath/symlink check behind them.
+ *
+ * Reach for `value()`: it validates the key against the shared substrate
+ * registry and throws on an undeclared one, so a renamed or typo'd key fails
+ * loud instead of limping on a `?? default`.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -36,9 +36,11 @@ if ( ! \defined( 'ABSPATH' ) ) {
 }
 
 /**
- * Application configuration: file defaults, the WordPress-option overlay on top
- * of them, and the substrate's effective values merged underneath. Every read
- * goes through the memoized `load_config()`; `reset()` drops both layers.
+ * Application configuration: schema defaults, the config files over them, the
+ * WordPress-option overlay over those, and the substrate's effective values for
+ * every key this plugin does not own. Every read goes through the memoized
+ * `load_config()`. `reset()` clears this class and the substrate's cache
+ * together; `reset_local_cache()` clears only this one.
  */
 class Config {
 
@@ -56,7 +58,8 @@ class Config {
 	private static $config = null;
 
 	/**
-	 * Cached config defaults from files.
+	 * Memoized defaults WITHOUT the WordPress-option overlay: schema defaults,
+	 * the shipped config file over them, `LOCAL_NEWSPACK_NODES_CONF` over that.
 	 *
 	 * @var array<string,mixed>|null
 	 */
@@ -75,7 +78,7 @@ class Config {
 	 * disk, which is the only way to exercise an operator's stale key.
 	 * Signature: `function (array $base): array`
 	 *
-	 * @var \Closure(array<string,mixed>): array<string,mixed>|null
+	 * @var (\Closure(array<string,mixed>): array<string,mixed>)|null
 	 */
 	public static ?\Closure $read_shipped_config = null;
 
@@ -111,14 +114,17 @@ class Config {
 	];
 
 	/**
-	 * Get custom colors with filter applied (for admin UI).
+	 * The event-name-to-color map the dashboards render their swatches from.
 	 *
 	 * Applies the `newspack_event_logger_nodes_custom_colors` filter lazily, so
 	 * plugins that load after Event Logger can still register their events, then
 	 * folds in the events spokes reported to the hub — offered to the operator,
-	 * not selected — and sorts the map for the picker.
+	 * not selected — and sorts the map for the picker. Discovery stages a
+	 * reported event as a presence flag (`name => true`), so it carries no color
+	 * of its own and takes the default swatch here.
 	 *
-	 * @return array<string,mixed> Associative array of event_name => hex_color.
+	 * @return array<string,mixed> Event name to color, in case-insensitive
+	 *                            natural key order.
 	 */
 	public static function get_custom_colors(): array {
 		/** @var array<string,mixed> $colors */
@@ -126,12 +132,11 @@ class Config {
 
 		if ( \function_exists( 'apply_filters' ) ) {
 			$filtered = \apply_filters( 'newspack_event_logger_nodes_custom_colors', $colors );
-			// Validate filter return (any type); color maps are string-keyed.
+			// A non-array filter return drops every configured color to [].
 			/** @var array<string,mixed> $colors */
 			$colors = Core::arr( $filtered );
 		}
 
-		// Merge discovered events from remote spokes (available, not selected).
 		if ( \function_exists( 'get_option' ) ) {
 			$discovered = \get_option( self::OPTION_DISCOVERED_EVENTS, [] );
 			if ( \is_array( $discovered ) ) {
@@ -144,16 +149,15 @@ class Config {
 			}
 		}
 
-		// Sort alphabetically so events are easier to find in the UI.
 		\ksort( $colors, SORT_NATURAL | SORT_FLAG_CASE );
 
 		return $colors;
 	}
 
 	/**
-	 * `<eln:KEY>` topology-token resolver — owned-keys list + per-key
-	 * derivation. Used both by the plugin's `register_config_namespace`
-	 * call and by `tests/bootstrap.php` so both paths resolve identically.
+	 * `<eln:KEY>` topology-token resolver: the owned-key list plus each key's
+	 * derivation. The plugin's `register_config_namespace` call and
+	 * `tests/bootstrap.php` both route through here, so the two resolve alike.
 	 *
 	 * Returns null for keys this plugin doesn't own; substrate keys are
 	 * addressed under the `<config:KEY>` namespace instead. Null is not a
@@ -164,7 +168,8 @@ class Config {
 	 * array-valued key must be flattened to a scalar here.
 	 *
 	 * @param string $key Token key after the `eln:` prefix.
-	 * @return mixed|null Resolved value, or null if not owned by `eln`.
+	 * @return mixed Resolved value, or null when `eln` does not own $key or the
+	 *               merged config carries no value for it.
 	 */
 	public static function resolve_eln_token( string $key ) {
 		/** @var array<string,bool> $own */
@@ -206,12 +211,11 @@ class Config {
 	 * Fail-loud single-key read over THIS plugin's merged config, validated
 	 * against the shared substrate registry: an undeclared key throws instead of
 	 * limping on a `?? default`. A declared key resolves off the merged config
-	 * (each key comes from its owning plugin's defaults + option overlay);
-	 * declared-but-unset returns null.
+	 * (each key comes from its owning plugin's defaults + option overlay).
 	 *
 	 * @api
 	 * @param string $key Config key, declared by this plugin or the substrate.
-	 * @return mixed
+	 * @return mixed The key's merged value, or null when it is declared but unset.
 	 * @throws \RuntimeException If $key is not declared by any registered schema.
 	 */
 	public static function value( string $key ): mixed {
@@ -234,7 +238,9 @@ class Config {
 	 * keys, so a name collision resolves in favor of the owner.
 	 *
 	 * The result is memoized for the process; `reset()` clears it. Returns an
-	 * empty array when the substrate is absent — nothing to layer onto.
+	 * empty array when the substrate is absent — nothing to layer onto — and
+	 * does NOT memoize that, because this plugin sorts ahead of `newspack-nodes`
+	 * and a caller reading too early must get the real map on its next read.
 	 *
 	 * @return array<string,mixed> Configuration array.
 	 * @throws \RuntimeException If an explicit local config path or value tree is invalid.
@@ -268,16 +274,9 @@ class Config {
 	}
 
 	/**
-	 * Whether any active topology makes this install a hub.
-	 *
-	 * Two signals, because neither covers both shapes. The stock `aggregator`
-	 * ships NO `Remote_Source` nodes — the operator wires them on the console
-	 * canvas — so it is only recognisable by name. A deployment that forks the
-	 * stock file to change an argument renames it, so its include chain never
-	 * says `aggregator`, and only its wired readers give it away.
-	 *
-	 * Name-matching alone is what silently turned per-server stats off on a
-	 * hub running `aggregator-hub` → `aggregator-fdn` → `aggregator-fanout`.
+	 * Whether any active topology makes this install a hub, memoized because
+	 * deriving it walks every active topology's graph. `reset_local_cache()`
+	 * drops the memo; the guard below covers re-entrancy rather than cost.
 	 *
 	 * @return bool True when an active topology aggregates from spokes.
 	 */
@@ -305,12 +304,18 @@ class Config {
 	}
 
 	/**
-	 * Whether any active topology makes this install a hub.
+	 * Derive hub-ness from the active topologies: an `aggregator` topology by
+	 * name or include, or any graph carrying a `Remote_Source` node.
 	 *
-	 * Two signals, because neither covers both shapes: an `aggregator` topology
-	 * by name or include, and any graph carrying a `Remote_Source` node.
+	 * Two signals, because neither covers both shapes. The stock `aggregator`
+	 * ships NO `Remote_Source` nodes — the operator wires them on the console
+	 * canvas — so only its name gives it away. A deployment that forks the stock
+	 * file to change an argument renames it, and no name in a chain of renamed
+	 * forks says `aggregator`, so only its wired readers give that one away.
+	 * Matching on the name alone reads such a hub as a spoke and turns its
+	 * per-server stats off.
 	 *
-	 * @return bool True when one of the two signals fires.
+	 * @return bool True when either signal fires.
 	 */
 	private static function derive_hub_topology(): bool {
 		foreach ( \array_keys( \Newspack_Nodes\Bootstrap::get_topologies() ) as $active ) {
@@ -334,7 +339,8 @@ class Config {
 	}
 
 	/**
-	 * Stray keys the last config load ignored.
+	 * Keys the shipped config named that no Field declares. Forces the defaults
+	 * load, so a caller need not have read the config first.
 	 *
 	 * @api
 	 * @return list<string>
@@ -351,7 +357,8 @@ class Config {
 	 * override surfaces.
 	 *
 	 * The local path is validated before it is `require`d, and an unusable path
-	 * throws rather than silently leaving the site on defaults.
+	 * throws rather than silently leaving the site on defaults. An absent
+	 * substrate yields an unmemoized empty array, as `load_config()` explains.
 	 *
 	 * @return array<string,mixed> Configuration defaults from code + files.
 	 * @throws \RuntimeException If an explicit local config path or value tree is invalid.
@@ -396,8 +403,9 @@ class Config {
 	 * Record and log an operator's stray key WITHOUT throwing.
 	 *
 	 * `setup/newspack-event-logger-nodes.sh` copies the deployment's own config
-	 * over the shipped path, so this file belongs to the operator. Throwing runs
-	 * at `plugins_loaded:-10001` and would take down every request, wp-admin
+	 * over the shipped path, so this file belongs to the operator. The profiler
+	 * drop-in builds `Log_Manager` at `plugins_loaded:-10001`, which loads this
+	 * config, so a throw would take down every request, wp-admin
 	 * included, the day a key is renamed — recoverable only over SSH. Loud means
 	 * visible: stderr once per key set, which is this plugin's whole reporting
 	 * surface. It has no Site Health of its own.
@@ -416,7 +424,9 @@ class Config {
 	}
 
 	/**
-	 * Keys in $config that no Field declares.
+	 * Keys in $config that no Field declares. Public because it answers about
+	 * ANY array: the ledger test reconstructs the shipped file's commented-out
+	 * keys and holds them to the schema through here.
 	 *
 	 * @param array<string,mixed> $config Any config array.
 	 * @return list<string>
@@ -428,7 +438,8 @@ class Config {
 	}
 
 	/**
-	 * The real shipped-config read the `$read_shipped_config` seam replaces.
+	 * The real read the `$read_shipped_config` seam replaces: the shipped
+	 * `newspack-event-logger-nodes-config.php` layered over the given defaults.
 	 *
 	 * @return \Closure(array<string,mixed>): array<string,mixed>
 	 */
@@ -444,13 +455,13 @@ class Config {
 	}
 
 	/**
-	 * Reset cached config - call before load_config() to get fresh values.
+	 * Drop every memo, here and in the substrate, so the next `load_config()`
+	 * rebuilds the layered view from scratch.
 	 *
-	 * Resets the substrate Config too so the layered view rebuilds from
-	 * scratch. The substrate fires `Newspack_Nodes\Config::RESET_ACTION`, which
-	 * the listener the deferred loader registers catches to invalidate THIS
-	 * class via `reset_local_cache()` — calling `reset()` from inside that
-	 * listener would loop back into the substrate.
+	 * The substrate fires `Newspack_Nodes\Config::RESET_ACTION`, which the
+	 * listener the deferred loader registers catches to invalidate THIS class
+	 * via `reset_local_cache()` — calling `reset()` from inside that listener
+	 * would loop back into the substrate.
 	 */
 	public static function reset(): void {
 		self::reset_local_cache();
@@ -475,12 +486,15 @@ class Config {
 	 * Declare this plugin's config keys — the `Settings_Schema` overlay keys, and
 	 * NOT the config file's. Deriving from the file makes an operator's typo
 	 * self-declaring: the misspelling becomes valid, the real key quietly falls
-	 * back to its default, and nothing says so. Hooked to the substrate's
-	 * DECLARE_ACTION from the plugin file, so the substrate PULLS the declaration
-	 * whenever it derives its declared set — including after a Config::reset(),
-	 * which wipes the registry. Declaring once at boot instead would lose these on
-	 * the next reload, and would come too late for the profiler's first log line
-	 * (plugins_loaded:-10001, ahead of this plugin's loader).
+	 * back to its default, and nothing says so.
+	 *
+	 * The plugin file hooks this to the substrate's DECLARE_ACTION at its own
+	 * file scope, so the substrate PULLS the declaration whenever it derives its
+	 * declared set — on the first read, and again after a `Config::reset()`
+	 * re-arms that derive. Declaring from the deferred loader instead would come
+	 * too late: the profiler's first log line reads config at
+	 * `plugins_loaded:-10001`, ahead of the loader's `plugins_loaded:11`, and
+	 * `value()` would throw on a real key.
 	 */
 	public static function register_config_keys(): void {
 		if ( ! \class_exists( RuntimeConfig::class ) ) {
@@ -491,8 +505,8 @@ class Config {
 
 	/**
 	 * Whether a given option should be written with `autoload=true`. The write
-	 * paths that touch settings options — `Performance_CI_Node`'s `set_setting`
-	 * verb and `Discovery_Collector_Node`'s staging writes — ask here instead of
+	 * paths that touch settings options — `Performance_CI_Node`'s `set` verb and
+	 * `Discovery_Collector_Node`'s staging writes — ask here instead of
 	 * passing a literal, so hot-path scalars stay on the single alloptions query
 	 * and the fleet-sized staging options stay off it. The ruleset options are
 	 * not covered: `Rule_Set` owns its own inline/pointer tiering.
@@ -505,10 +519,14 @@ class Config {
 	}
 
 	/**
-	 * Get the logs directory path ({base}/logs).
+	 * The logs directory, `{base_directory}/logs`.
+	 *
+	 * Delegates to the substrate, which owns the base directory and the
+	 * canonical-path check, so an application caller asks one Config for
+	 * everything and only one place resolves a path.
 	 *
 	 * @api
-	 * @return string Validated absolute path to logs directory.
+	 * @return string Validated absolute path to the logs directory.
 	 * @throws \RuntimeException If the directory cannot be created or fails the substrate's canonical-path check.
 	 */
 	public static function get_logs_directory(): string {
@@ -516,10 +534,13 @@ class Config {
 	}
 
 	/**
-	 * Get the locks directory path ({base}/locks).
+	 * The locks directory, `{base_directory}/locks`.
+	 *
+	 * Delegates to the substrate for the same reason `get_logs_directory()`
+	 * does: one owner for the base directory and the canonical-path check.
 	 *
 	 * @api
-	 * @return string Validated absolute path to locks directory.
+	 * @return string Validated absolute path to the locks directory.
 	 * @throws \RuntimeException If the directory cannot be created or fails the substrate's canonical-path check.
 	 */
 	public static function get_locks_directory(): string {

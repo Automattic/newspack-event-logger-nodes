@@ -1,20 +1,23 @@
 /**
- * Category Time Chart Component
+ * The Performance dashboard's profile-category panel.
  *
- * D3 overlaid-area chart of profile-category timings across the retention
- * window. The series come from the `category_time_series` payload the
- * `performance` CI merges out of `Stats_Store`'s per-bucket category blobs —
- * site-wide (or per-server) on the overview, per-URL in the URL detail view.
+ * D3 area charts of profile-category timings across the retention window, from
+ * the `category_time_series` payload the `performance` CI merges out of
+ * `Stats_Store`'s per-bucket category blobs — site-wide (or per-server) on
+ * the overview, per-URL in the URL detail view. `AggregateTimeChart` plots
+ * request-level metrics on the same `AreaTimeChart` frame; this one breaks the
+ * window down by profile category.
  *
- * Each 5-minute bucket carries `{ t, c }` per category: `t` milliseconds of
- * wall time, `c` events. One payload answers three questions, so the panel
- * draws all three — "time" (seconds of category time per second of clock),
- * "count" (events per second), and "average" (milliseconds per event). Areas
- * overlay rather than stack, so each band reads against the axis instead of
- * against its neighbors.
+ * Each 5-minute bucket carries `{ t, c, n }` per category: `t` milliseconds of
+ * wall time, `c` events fired, `n` requests the category appeared in. The panel
+ * reads `t` and `c`, and one payload answers three questions, so it draws all
+ * three — "time" (seconds of category time per second of clock), "count"
+ * (events per second) and "average" (milliseconds per event).
  *
- * The sibling `AggregateTimeChart` plots request-level metrics on the same
- * `AreaTimeChart` frame; this one breaks the window down by profile category.
+ * Areas overlay rather than stack, and the tooltip carries no total row,
+ * because category times overlap: a callback's time counts inside its hook's,
+ * so summing the bands double-counts, and an average never adds up at all.
+ * Each band reads against the axis instead of against its neighbors.
  */
 
 import { useCallback, useMemo } from '@wordpress/element';
@@ -29,10 +32,19 @@ import { hasBuckets } from './AggregateTimeChart';
 import AreaTimeChart from './components/AreaTimeChart';
 import { RETENTION_SECONDS } from './retention';
 
+/**
+ * Height of one chart frame, in pixels. Three of them stack in one panel, so
+ * each is shorter than the single breakdown chart above them.
+ */
 const CHART_HEIGHT = 200;
 
 /**
- * The three views the panel takes of one series, in render order.
+ * The three views the panel takes of one series, in render order. `mode` picks
+ * both the sampler in `buildSeries` and the unit in `formatYValue`; `title` is
+ * the heading, translated here because `AreaTimeChart` holds no wording of its
+ * own.
+ *
+ * @type {Array<{mode: string, title: string}>}
  */
 const CATEGORY_VIEWS = [
 	{
@@ -53,8 +65,9 @@ const CATEGORY_VIEWS = [
  * Format a Y-axis value in the unit its mode implies.
  *
  * The unit is mode-specific: "time" is a rate (µs/s, ms/s, s/s), "average" a
- * duration (µs, ms, s), and "count" a frequency (/s, K/s). Serves both the
- * axis ticks and the tooltip rows.
+ * duration (µs, ms, s), and "count" a frequency (/s, K/s). A zero prints bare,
+ * because a unit on it says nothing. Serves both the axis ticks and the
+ * tooltip rows.
  *
  * @param {number} val  Value in the mode's native unit — seconds per second for 'time', milliseconds for 'average', events per second for 'count'.
  * @param {string} mode One of 'time', 'average', or 'count'.
@@ -91,9 +104,22 @@ const formatYValue = ( val, mode ) => {
 /**
  * Rank categories by their whole-window total, then sample each across it.
  *
- * @param {Object} data Category series keyed by bucket.
- * @param {string} mode 'time' | 'count' | 'average'.
- * @return {Array} Series in rank order, each `{ label, values }`.
+ * The rank fixes palette index and legend order, and it runs over the mode's
+ * own field — `c` for "count", `t` otherwise — so "average" ranks by total
+ * time rather than by the mean it plots, and one slow outlier cannot take the
+ * top band. That also makes the "count" ranking its own, so a category may
+ * wear a different color there than in the other two views.
+ *
+ * The `total` pseudo-category is dropped: it carries the request's own wall
+ * time rather than any category's, so as a band it would swamp every other one.
+ *
+ * Every series gets a point in every slot, zero where the bucket holds nothing,
+ * because `AreaTimeChart` takes its x-domain from the first series alone and
+ * reads the rest by that index.
+ *
+ * @param {Object} data Category series keyed by bucket — `{ bucket: { category: { t, c, n } } }`.
+ * @param {string} mode One of 'time', 'count', or 'average'.
+ * @return {Array<{label:string,values:Array<{date:Date,value:number}>}>} Series in rank order.
  */
 const buildSeries = ( data, mode ) => {
 	const totals = {};
@@ -134,12 +160,15 @@ const buildSeries = ( data, mode ) => {
 /**
  * Category time charts — one per view over the same category series.
  *
+ * The three memos buy identity, not arithmetic: `AreaTimeChart` redraws
+ * whenever `series`, `yFormat` or `colorAt` changes, and the URL modal
+ * re-renders on every scroll event.
+ *
  * @param {Object}      props      Component props.
- * @param {Object|null} props.data Category series keyed by bucket — `{ bucket: { category: { t, c } } }`, `t` in milliseconds.
+ * @param {Object|null} props.data Category series keyed by bucket — `{ bucket: { category: { t, c, n } } }`, `t` in milliseconds.
  * @return {import('react').ReactElement[]|null} One chart per view, or null when data is empty.
  */
 export default function CategoryTimeChart( { data } ) {
-	// Ranking sums the whole window, so it drives palette and legend order.
 	const series = useMemo(
 		() =>
 			CATEGORY_VIEWS.map( ( { mode } ) =>

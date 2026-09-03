@@ -2,16 +2,16 @@
 /**
  * MCP_Controller: an MCP server over the verbs the dashboards already drive.
  *
- * The originating ask was an "Ask AI" button that points you at the problem and,
+ * The goal is an "Ask AI" button that points a reader at the problem and,
  * where the plugins allow, at the P2s, Linear issues and repos that explain it.
- * An in-plugin LLM call would have shipped faster and been the wrong shape: it
- * buys a dashboard that summarises itself to one model behind one proxy that
- * publishers cannot reach, and it cannot see a Linear issue at all. Exposing
- * the data lets an agent that ALREADY holds those context providers do the
- * correlation, which is the thing actually wanted.
+ * An in-plugin LLM call ships faster and is the wrong shape: it buys a
+ * dashboard that summarises itself to one model behind one proxy publishers
+ * cannot reach, and it cannot see a Linear issue at all. Exposing the data lets
+ * an agent that ALREADY holds those context providers do the correlation, which
+ * is the thing actually wanted.
  *
- * It adds no runtime surface. One tool per verb; arguments pass through
- * `Command_Args`; replies come back verbatim.
+ * It adds no verbs. One tool per verb; arguments pass through `Command_Args`;
+ * replies come back verbatim.
  *
  * Authorization has two halves and needs both. A scoped session says how much
  * of the surface is reachable, and the session's MINTING USER says whose
@@ -38,10 +38,17 @@ use Newspack_Nodes\Core;
 
 \defined( 'ABSPATH' ) || exit;
 
+/**
+ * Serves the MCP endpoint: authenticates the session, meters it, and forwards
+ * each tool call to the command-interpreter verb behind it.
+ */
 class MCP_Controller {
 
+	/** REST namespace the route mounts under. */
 	public const REST_NAMESPACE = 'newspack-event-logger-nodes/v1';
-	public const ROUTE          = '/mcp';
+
+	/** Route path under that namespace; one POST carries every JSON-RPC method. */
+	public const ROUTE = '/mcp';
 
 	/** The MCP revision this server speaks. */
 	public const PROTOCOL_VERSION = '2025-06-18';
@@ -59,17 +66,20 @@ class MCP_Controller {
 	 * not bound it — and the tools behind it are not cheap: `request_grep` and
 	 * the rid lookups walk every partition's index up to MAX_INDEX_ENTRIES,
 	 * `url_detail` walks one retention window of it, and `overview` and `ask`
-	 * rebuild the leaderboard out of memcache. A looping
-	 * agent, or a leaked bearer, would otherwise have an unmetered
-	 * amplification path. Generous enough that a conversational agent never
-	 * grazes it.
+	 * rebuild the leaderboard out of memcache. A looping agent, or a leaked
+	 * bearer, would otherwise hold an unmetered amplification path. Generous
+	 * enough that a conversational agent never grazes it.
 	 */
 	public const RATE_LIMIT_BURST = 20;
 
 	/** Rate-limit window, in seconds. */
 	public const RATE_LIMIT_WINDOW_S = 10;
 
-	/** Tool arguments the verbs take positionally, in declared order. */
+	/**
+	 * Tool arguments the verbs read positionally, in the order `tokens()` emits
+	 * them. Only `ask` takes two, and it reads `descriptor` first, which is why
+	 * `context` sits last.
+	 */
 	private const POSITIONAL_ARGS = [ 'descriptor', 'hash', 'rid', 'pattern', 'rule', 'id', 'context' ];
 
 	/**
@@ -188,6 +198,7 @@ class MCP_Controller {
 	 * credential, so an unauthenticated flood cannot poison the transient
 	 * table — the ordering `Spawn_Controller` and `HTTP_In_Node` both use.
 	 *
+	 * @param string $handle Session handle the bearer credential named.
 	 * @return true|\WP_Error
 	 */
 	private static function check_rate_limit( string $handle ) {
@@ -297,9 +308,9 @@ class MCP_Controller {
 
 	/**
 	 * MCP hands arguments as a named object; the command protocol takes a flat
-	 * token array. `descriptor` / `context` and a bare `hash`/`rid`/`pattern`
-	 * are POSITIONAL, and everything else becomes `--key=value` — which is what
-	 * `Command_Args::parse()` reassembles on the other side.
+	 * token array. Every key POSITIONAL_ARGS names becomes a bare token, in that
+	 * constant's order, and everything else becomes `--key=value` — which is
+	 * what `Command_Args::parse()` reassembles on the other side.
 	 *
 	 * @param mixed $arguments The tool's arguments object.
 	 * @return list<string>
@@ -370,7 +381,11 @@ class MCP_Controller {
 		return $out;
 	}
 
-	/** @api Wired from the plugin bootstrap on rest_api_init. */
+	/**
+	 * Register the MCP route on the REST API.
+	 *
+	 * @api Called from the plugin bootstrap on `rest_api_init`.
+	 */
 	public function register_routes(): void {
 		\register_rest_route(
 			self::REST_NAMESPACE,

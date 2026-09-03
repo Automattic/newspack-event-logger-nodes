@@ -3,8 +3,9 @@
  *
  * The dashboard's selection lives here: which URL is open (`selectedUrl`) and
  * which of its requests (`selectedRequest`). The hook keeps that selection and
- * the query string (`?url=`, `?request=`, `?search=`) in step, so every view is
- * a shareable link and Back/Forward walks the views the operator visited.
+ * the `?url=` / `?request=` pair in step, so every view is a shareable link and
+ * Back/Forward walks the views the operator visited. `?search=` it only reads,
+ * once on mount, leaving the writing to the owner.
  *
  * Traffic runs both ways. Inbound, the query params seed the selection — on
  * mount and again on every Back/Forward, because the address bar IS the link.
@@ -63,6 +64,9 @@ const findUrl = ( urls, hash ) =>
  * caller writing the same params twice never stacks duplicate history entries.
  * Keys the caller omits are left alone.
  *
+ * The pushed history state is never read back: `popstate` re-reads the query
+ * string, so a restored view and a fresh load take one path.
+ *
  * @param {Object} params Query params to set; a falsy value deletes the key.
  */
 const updateBrowserUrl = ( params ) => {
@@ -81,7 +85,7 @@ const updateBrowserUrl = ( params ) => {
 };
 
 /**
- * Custom hook for URL navigation state and browser history management.
+ * Hold the selection the dashboard renders, and the address bar that names it.
  *
  * The returned object carries the selection — `selectedUrl`, a `{hash, url}`
  * object, and `selectedRequest`, a request id — with a setter for each. It also
@@ -108,7 +112,9 @@ export default function useUrlNavigation( urls ) {
 	const [ selectedUrl, setSelectedUrl ] = useState( null );
 	const [ selectedRequest, setSelectedRequest ] = useState( null );
 
-	// Initial URL parameters (read once on mount).
+	// @longform Seeded from the query string on mount, these hold the part of
+	// the link nothing has answered yet: popstate re-seeds the hash and the
+	// rid, while the search query is read once and the owner clears it.
 	const [ initialUrlHash, setInitialUrlHash ] = useState( () =>
 		getUrlParams().get( 'url' )
 	);
@@ -120,11 +126,13 @@ export default function useUrlNavigation( urls ) {
 		getUrlParams().get( 'search' )
 	);
 
-	// Refs for navigation state tracking.
+	// Each makes the write-back effect below skip a flush, and it clears them.
 	const isAddressBarNavigation = useRef( false );
 	const isInitialMount = useRef( true );
 
-	// The committed selection, for the handlers that run outside render.
+	// @longform What the popstate listener reads. It registers once, so it
+	// would otherwise close over the first render's selection and catalog
+	// page; assigning during render keeps it reading what is on screen.
 	const selectedUrlRef = useRef( null );
 	const selectedRequestRef = useRef( null );
 	const urlsRef = useRef( urls );
@@ -200,28 +208,31 @@ export default function useUrlNavigation( urls ) {
 		// decides whether anything commits, so the flush spends what it armed.
 		isAddressBarNavigation.current = urlObj !== selectedUrlRef.current;
 		setSelectedUrl( urlObj );
-		// @longform The RID is REPORTED, not selected: it alone carries the
-		// partition, and selecting a request without one makes the detail
-		// modal render "Could not determine the partition for this request"
-		// until the answer lands. The caller selects it WITH the partition.
+		// @longform The hash is answered, so it stops being an intent. The RID
+		// beside it stays REPORTED: it alone carries the partition, and a
+		// request selected without one makes the detail modal render "Could
+		// not determine the partition for this request" until the answer
+		// lands. The caller selects it WITH the partition.
 		setInitialUrlHash( null );
 	}, [ urls, initialUrlHash ] );
 
-	// The part of the link nothing has answered yet.
+	// @longform The link's unanswered part, packaged for the caller. Memoized
+	// because the caller keys an effect on it: a fresh literal each render
+	// re-fires the deep-link read.
 	const deepLink = useMemo(
 		() => ( { requestId: initialRequestId, urlHash: initialUrlHash } ),
 		[ initialRequestId, initialUrlHash ]
 	);
 
-	// Update browser URL when selection changes.
+	// Write the operator's selection back as a history entry.
 	useEffect( () => {
-		// Skip when the address bar drove this — it already says this.
+		// Skip when the address bar drove the change — it already says so.
 		if ( isAddressBarNavigation.current ) {
 			isAddressBarNavigation.current = false;
 			return;
 		}
 
-		// Skip on initial mount - don't push history on page reload.
+		// Skip the mount flush — the bar already says what loaded.
 		if ( isInitialMount.current ) {
 			isInitialMount.current = false;
 			return;
@@ -236,9 +247,9 @@ export default function useUrlNavigation( urls ) {
 	// @longform Browser back/forward re-enters through the deep-link path a
 	// fresh load takes: the address bar is the link, so the rid is REPORTED
 	// and the hash is answered from the loaded page where it can be.
-	// Selecting the rid here instead left it without the partition it alone
-	// carries, and Forward rendered "Could not determine the partition for
-	// this request" on a request a reload of the same URL opened fine.
+	// Selecting the rid here instead leaves it without the partition it alone
+	// carries, and Forward renders "Could not determine the partition for
+	// this request" on a request a reload of the same URL opens fine.
 	useEffect( () => {
 		const handlePopState = () => {
 			const params = getUrlParams();
@@ -261,9 +272,9 @@ export default function useUrlNavigation( urls ) {
 
 			// @longform Armed only when this popstate really moves the
 			// selection, so the flush that move causes is what spends it.
-			// Armed unconditionally it outlived a Forward that selected
+			// Armed unconditionally it outlives a Forward that selects
 			// nothing — the rid is REPORTED, never selected — and the
-			// operator's next change, closing the modal, went unpushed.
+			// operator's next change, closing the modal, goes unpushed.
 			isAddressBarNavigation.current =
 				nextUrl !== selectedUrlRef.current ||
 				null !== selectedRequestRef.current;
@@ -287,9 +298,6 @@ export default function useUrlNavigation( urls ) {
 		initialSearchQuery,
 		setInitialSearchQuery,
 		updateBrowserUrl,
-		// @longform The part of the link this hook could not answer by
-		// itself. Memoized because callers key effects on it: a fresh
-		// literal each render re-fires whatever asks about it.
 		deepLink,
 		clearDeepLink,
 	};

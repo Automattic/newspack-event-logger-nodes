@@ -5,15 +5,15 @@
  *
  * `Rule_Set` keeps a rule's hooks inline in the autoloaded rules option up to
  * `Rule_Set::INLINE_HOOK_LIMIT`, and behind a Table-mirrored non-autoloaded
- * option above it. This command measures the three per-request costs that
+ * option above it. This command measures the three per-request costs the
  * crossover trades off — the alloptions unserialize tax, an inline read plus
- * bind, and a table fetch plus bind — over a hooks-per-rule × rule-count
- * grid, then prints the guidance for reading the table. The limit is already
- * fixed at 100; rerun the sweep to re-validate it on new hardware.
+ * bind, and a table fetch plus bind — over a hooks-per-rule × rule-count grid,
+ * then prints the rule for picking the limit from it. The limit is fixed at
+ * 100; rerun the sweep to re-validate it on new hardware.
  *
  * The sweep never touches the live ruleset. It builds synthetic hook lists in
- * memory and writes only its own short-lived, bench-private Table
- * keys, which it deletes per grid cell.
+ * memory and writes only its own bench-private Table keys, each deleted at the
+ * end of its grid cell.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -60,10 +60,10 @@ class Ruleset_Bench_Command {
 	 *
 	 * @when after_wp_load
 	 *
-	 * @param array<int,string>    $args       Positional (unused).
-	 * @param array<string,mixed>  $assoc_args Flags. A non-numeric or missing
-	 *                                          `iterations` falls back to 200;
-	 *                                          anything below 1 clamps to 1.
+	 * @param array<int,string>   $args       Positional arguments; none are read.
+	 * @param array<string,mixed> $assoc_args Flags. A missing or non-numeric
+	 *                                        `iterations` falls back to 200, and
+	 *                                        anything below 1 clamps to 1.
 	 * @return void
 	 */
 	public function __invoke( array $args, array $assoc_args ): void {
@@ -101,10 +101,11 @@ class Ruleset_Bench_Command {
 	 * - `pointer` — one Table lookup plus the same bind loop.
 	 *
 	 * Only the pointer path touches the cache, under a bench-private key it sets
-	 * with a 300-second TTL and deletes afterwards. With no backend it still
-	 * runs, but WARNS: the pointer column then reports the bind loop alone,
-	 * which is a floor and not a measurement, and INLINE_HOOK_LIMIT is read
-	 * off that column.
+	 * with a 300-second TTL and deletes afterwards. `Table_Node::table()` throws
+	 * without a backing store, so the null check ahead of it is required rather
+	 * than defensive. With no backend the sweep still runs, but WARNS: the
+	 * pointer column then reports the bind loop alone, which is a floor rather
+	 * than a measurement, and INLINE_HOOK_LIMIT is read off that column.
 	 *
 	 * Every path is summarized to median, p95, and n; the sweep prints medians.
 	 *
@@ -146,7 +147,7 @@ class Ruleset_Bench_Command {
 			$inline_samps[] = ( \hrtime( true ) - $t ) / 1000.0;
 		}
 
-		// Pointer path: the same table read hooks_for() makes, L1-free.
+		// Pointer path: the Table lookup hooks_for() makes, with no backing.
 		$bench_key = "bench-{$k}";
 		$table     = null === Cache_Backend::shared_first() ? null : Table_Node::table( Rule_Set::TABLE_HOOKS, 300 );
 		$table?->store( $bench_key, $hooks );

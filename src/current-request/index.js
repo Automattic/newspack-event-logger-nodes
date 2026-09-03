@@ -13,7 +13,8 @@
  * reads. That same PHP class loads this bundle by two paths — the substrate's
  * `newspack_nodes/devtools_tab_bundles` filter covers the Nodes hub page, and
  * an `admin_enqueue_scripts` callback covers every other page that mounts the
- * overlay.
+ * overlay. The SCSS import carries the tab's styles: esbuild emits it as the
+ * sibling `index.css` that class enqueues under the same handle.
  */
 
 import { __ } from '@wordpress/i18n';

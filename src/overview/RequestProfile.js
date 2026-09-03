@@ -1,10 +1,13 @@
 /**
- * Request Profile Component
+ * The time-breakdown panel: a request's `profiles{}` drawn as a proportional
+ * summary bar over a table of categories ranked by time, either of which
+ * opens a category to the origins that raised it.
  *
- * Displays aggregated timing breakdown from request profiles data. The
- * `ProfileWithCaption` export below wraps it for the two averaged views —
- * the Overview card and the URL modal — which caption the breakdown with the
- * request count it averages.
+ * One component serves two shapes. A single request supplies its own record,
+ * and `RequestDetailView` and `CurrentRequestTab` mount `RequestProfile`
+ * directly. The two averaged views — the Overview card and the URL modal — go
+ * through `ProfileWithCaption`, which captions the same panel with how many
+ * requests the average covers.
  */
 
 import { useState, useMemo, Fragment } from '@wordpress/element';
@@ -18,32 +21,42 @@ import {
 import './styles/request-profile.scss';
 
 /**
- * Default number of categories to show before collapsing.
+ * Categories the table draws before it truncates; the rest wait behind the
+ * Show-more button. The summary bar above is never truncated, so a category
+ * held back from the table still has a segment.
  */
 const DEFAULT_VISIBLE_COUNT = 10;
 
 /**
- * Slowest callbacks drawn inside an expanded category; the rest are counted.
+ * Slowest origins drawn inside an expanded category; the rest are counted.
  */
 const VISIBLE_ENTRY_COUNT = 10;
 
 /**
- * Test whether a profile category is a per-callback breakdown entry.
- * These contain ` \@N ` (e.g. `the_content \@10 do_blocks`). The at-signs are
- * backslash-escaped: unescaped, the JSDoc parser reads `\@10` as a malformed
- * tag and fails the file.
+ * Test whether a profile category names one wrapped listener rather than a
+ * span of its own. `App\Core::wrap_callbacks()` mints those as
+ * `<callable> @N` for priority N, and a listener's time is already inside the
+ * hook that dispatched it, so counting one into Total Profiled or giving it a
+ * segment of the summary bar bills the same work twice.
  *
  * @param {string} state Category name.
- * @return {boolean} True if callback breakdown.
+ * @return {boolean} True when the name ends in the ` @N` priority suffix.
  */
 const isCallbackCategory = ( state ) => / @\d+$/.test( state );
 
 /**
- * The per-callback breakdown of one expanded category: its slowest callbacks
- * by time, then a count of what was left out.
+ * The breakdown of one expanded category by the code that raised it: the
+ * slowest origins by time, then a count of what was left out.
  *
- * @param {Object} props         Component props.
- * @param {Object} props.entries Callback name → `[ time, count ]`.
+ * An origin is the `Class::method` frame `App\Core` records as a span's `l`
+ * label, so a hook fired from four places splits into four rows rather than
+ * one total. An empty origin renders as "(anonymous)".
+ *
+ * Counts are rounded because the averaged views divide their sums by the
+ * request count before sending them, which lands most origins on a fraction.
+ *
+ * @param {Object}                  props         Component props.
+ * @param {Object<string,number[]>} props.entries Per-origin `[ time, count ]`, keyed by origin; the averaged shape appends a sample count this table ignores.
  * @return {import('react').ReactElement} The nested breakdown table.
  */
 function ProfileEntries( { entries } ) {
@@ -98,14 +111,27 @@ function ProfileEntries( { entries } ) {
 }
 
 /**
- * Request Profile Component.
+ * The time breakdown for one request, or for an average of many.
  *
- * @param {Object}      props                     Component props.
- * @param {Object}      props.profiles            Profiles data from request.
- * @param {number}      props.totalMs             Total request duration in ms.
- * @param {number}      [props.totalProfiledTime] Pre-calculated total profiled time; derived from `profiles` when omitted.
- * @param {string|null} [props.title]             Custom title (null to hide heading); defaults to "Time Breakdown".
- * @return {import('react').ReactElement|null} Rendered component or null if no data.
+ * Every percentage divides by `totalMs`, the wall clock, rather than by the
+ * profiled total. The bar's unfilled remainder is therefore the time nothing
+ * instrumented accounts for, and the footer reads as how much of the request
+ * the logger saw.
+ *
+ * A category's time is exclusive of its children, `Request_Builder_Node`
+ * having subtracted each closing span from its ancestors, so the segments
+ * tile rather than nest and Total Profiled is a plain sum. Wrapped listeners
+ * are what that sum and that bar leave out, their time being already inside
+ * the hook that dispatched them. They keep their table rows, which is where a
+ * hook's slowest callback is found, so the percentage column does not add up
+ * to the footer's.
+ *
+ * @param {Object}                props                     Component props.
+ * @param {Object<string,Object>} props.profiles            Per-category `{ count, time, entries }`, keyed by category name.
+ * @param {number}                props.totalMs             Wall-clock duration in ms — the denominator for every percentage.
+ * @param {number}                [props.totalProfiledTime] Profiled total the averaged views compute server-side; summed from the non-listener categories when omitted.
+ * @param {string|null}           [props.title]             Heading text, or null for no heading; defaults to "Time Breakdown".
+ * @return {import('react').ReactElement|null} The panel, or null when every category carries zero time and zero count.
  */
 export default function RequestProfile( {
 	profiles,
@@ -116,7 +142,6 @@ export default function RequestProfile( {
 	const [ expandedState, setExpandedState ] = useState( null );
 	const [ showAll, setShowAll ] = useState( false );
 
-	// Process profiles into sorted array.
 	const sortedProfiles = useMemo( () => {
 		if ( ! profiles || typeof profiles !== 'object' ) {
 			return [];
@@ -138,13 +163,12 @@ export default function RequestProfile( {
 		if ( totalProfiledTime !== undefined ) {
 			return totalProfiledTime;
 		}
-		// Single request: sum category times, skip " @N " breakdowns.
+		// Single request: sum category times, skip " @N" listeners.
 		return sortedProfiles
 			.filter( ( p ) => ! isCallbackCategory( p.state ) )
 			.reduce( ( sum, p ) => sum + p.time, 0 );
 	}, [ sortedProfiles, totalProfiledTime ] );
 
-	// Determine which profiles to display.
 	const visibleProfiles = useMemo( () => {
 		if ( showAll || sortedProfiles.length <= DEFAULT_VISIBLE_COUNT ) {
 			return sortedProfiles;
@@ -152,7 +176,6 @@ export default function RequestProfile( {
 		return sortedProfiles.slice( 0, DEFAULT_VISIBLE_COUNT );
 	}, [ sortedProfiles, showAll ] );
 
-	// Check if there are hidden profiles.
 	const hiddenCount = sortedProfiles.length - DEFAULT_VISIBLE_COUNT;
 	const hasHiddenProfiles = hiddenCount > 0;
 
@@ -160,7 +183,6 @@ export default function RequestProfile( {
 		return null;
 	}
 
-	// Toggle expanded state.
 	const toggleExpand = ( state ) => {
 		setExpandedState( expandedState === state ? null : state );
 	};
@@ -169,13 +191,11 @@ export default function RequestProfile( {
 		<div className="event-logger-request-profile">
 			{ title && <h3>{ title }</h3> }
 
-			{ /* Summary bar */ }
 			<div className="event-logger-profile-bar">
 				{ sortedProfiles.map( ( { state, time } ) => {
 					if ( isCallbackCategory( state ) ) {
 						return null;
 					}
-					// Wall-clock denominator: unprofiled gap shows as empty bg.
 					const pct = totalMs > 0 ? ( time / totalMs ) * 100 : 0;
 					return (
 						<div
@@ -202,7 +222,6 @@ export default function RequestProfile( {
 				} ) }
 			</div>
 
-			{ /* Profile table */ }
 			<table className="newspack-nodes-table newspack-nodes-table--undivided">
 				<thead>
 					<tr>
@@ -224,7 +243,6 @@ export default function RequestProfile( {
 				<tbody>
 					{ visibleProfiles.map(
 						( { state, count, time, entries } ) => {
-							// Wall clock so row % match the summary bars.
 							const pct =
 								totalMs > 0 ? ( time / totalMs ) * 100 : 0;
 							const hasEntries =
@@ -351,13 +369,13 @@ export default function RequestProfile( {
  * the caller's, because only the caller knows what its scope is called; giving
  * one replaces the profile's built-in title rather than stacking on it.
  *
- * @param {Object}      props                     Component props.
- * @param {Object}      props.profiles            Per-category profile totals.
- * @param {number}      props.totalMs             Wall-clock denominator for the summary bar.
- * @param {number}      [props.totalProfiledTime] Pre-computed profiled total; derived from `profiles` when omitted.
- * @param {number}      [props.count]             Requests the average covers.
- * @param {string|null} [props.heading]           Already-translated heading; omitted leaves the profile's own title.
- * @param {string}      [props.serverName]        Server the breakdown is scoped to; '' captions it site-wide.
+ * @param {Object}                props                     Component props.
+ * @param {Object<string,Object>} props.profiles            Per-category `{ count, time, entries }`, already averaged over `count` requests.
+ * @param {number}                props.totalMs             Average wall-clock duration in ms — the denominator for every percentage.
+ * @param {number}                [props.totalProfiledTime] Profiled total computed server-side; summed from `profiles` when omitted.
+ * @param {number}                [props.count]             Requests the average covers.
+ * @param {string|null}           [props.heading]           Already-translated heading; omitted leaves the profile's own title.
+ * @param {string}                [props.serverName]        Server the breakdown is scoped to; '' captions it site-wide.
  * @return {import('react').ReactElement} Rendered panel.
  */
 export function ProfileWithCaption( {

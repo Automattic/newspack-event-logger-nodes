@@ -7,7 +7,7 @@
  * either knowing about the other. The chart draws nothing when no entry
  * carried a reading, which is what "the setting is off" looks like from here.
  *
- * What it plots is `memory_get_peak_usage()`, a HIGH-WATER MARK: it never
+ * What it plots is `memory_get_peak_usage( true )`, a HIGH-WATER MARK: it never
  * falls, so the shape is a staircase and a step says where memory was CLAIMED,
  * not what was live at that moment. Drawing it as a smooth line would suggest
  * a fall that the reading cannot show.
@@ -24,8 +24,16 @@ import { __, sprintf } from '@wordpress/i18n';
 
 import '../styles/memory-track.scss';
 
-/** Viewbox units; the SVG stretches to the container, so these are not pixels. */
+/**
+ * The X domain, in viewBox units. The SVG stretches to its container, so this
+ * is a resolution rather than a width in pixels.
+ */
 const VIEW_W = 1000;
+/**
+ * The Y domain, in viewBox units. CSS fixes the drawn height and
+ * `preserveAspectRatio="none"` discards the ratio, so this only decides how
+ * finely the plot is expressed, never how tall it appears.
+ */
 const VIEW_H = 100;
 /** Room above the peak so its own gridline is not the top edge. */
 const PAD_TOP = 12;
@@ -35,7 +43,16 @@ const GRID_AT = [ 0, 0.5, 1 ];
 /**
  * Readings from the entries that carried one, in request order.
  *
- * @param {Array<Object>} entries Log entries.
+ * An entry's `ts` is seconds, so each offset is scaled to the milliseconds the
+ * flame's axis is drawn in.
+ *
+ * Time zero is the earliest entry of the WHOLE request, not the first entry
+ * that carried a reading, because that is where the flame's X axis starts.
+ * Measuring from the first reading instead slides the staircase left of the
+ * graph it sits under, by however long the request ran before the first
+ * `complete()`.
+ *
+ * @param {Array<Object>} entries Log entries for one request; may be undefined.
  * @return {Array<{ms: number, mb: number}>} Readings, oldest first.
  */
 const readings = ( entries ) => {
@@ -59,10 +76,20 @@ const readings = ( entries ) => {
 };
 
 /**
+ * The peak-memory staircase, drawn to the flame graph's own width.
+ *
+ * Two readings are the floor: one point draws a dot rather than a staircase,
+ * and a peak of zero leaves the Y scale with nothing to divide by. Either
+ * renders nothing at all.
+ *
+ * `totalMs` is the X domain rather than the last reading's offset, so the
+ * staircase ends where the flame ends even when the final `complete()` carried
+ * no reading. It falls back to the last reading when the caller has no total.
+ *
  * @param {Object}        props         Component props.
  * @param {Array<Object>} props.entries Log entries for one request.
- * @param {number}        props.totalMs The request's duration, the X domain.
- * @return {import('react').ReactElement|null} The chart, or null with no readings.
+ * @param {number}        props.totalMs The flame's X domain in milliseconds: its root's `value`, a layout width rather than the measured duration.
+ * @return {import('react').ReactElement|null} The chart, or null.
  */
 export default function MemoryTrack( { entries, totalMs } ) {
 	const points = useMemo( () => readings( entries ), [ entries ] );

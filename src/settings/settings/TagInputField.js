@@ -1,9 +1,9 @@
 /**
- * Tag Input Field Component
- *
- * A controlled multi-value input for arrays of strings. Type a value and press
- * Enter (or blur) to add it as a tag; Backspace on an empty input removes the
- * last one. Duplicates and blank values are refused.
+ * The editor for a rule field holding an array of strings. Type a value and
+ * press Enter, or blur the input, to add it as a tag; click a tag's remove
+ * button, or press Backspace on an empty input, to take one away. Blank and
+ * duplicate values are refused, and the whole array is reported through
+ * `onChange` after every change.
  */
 
 import { useState, useEffect, useCallback, useRef } from '@wordpress/element';
@@ -15,10 +15,14 @@ import '../styles/tag-input.scss';
 /**
  * Tag Input Field component.
  *
+ * A token carries `newspack-nodes-badge` beside its own class: the shared badge
+ * paints it — background, radius and the inset ring — while `tag-input.scss`
+ * contributes only geometry. Without that class a tag reads as bare text.
+ *
  * @param {Object}                     props                 Component props.
- * @param {Array}                      [props.initialValues] Initial values array; defaults to empty.
+ * @param {string[]}                   [props.initialValues] Seeds the tag list at mount; later renders ignore it, so a caller showing a different list must remount the field.
  * @param {boolean}                    [props.horizontal]    If true, tags flow horizontally (for short values).
- * @param {(values: string[]) => void} [props.onChange]      Fired with the values array on change.
+ * @param {(values: string[]) => void} [props.onChange]      Fired with the values array after every change; an unstable identity re-fires it on every parent render.
  * @return {import('react').ReactElement} Rendered component.
  */
 export default function TagInputField( {
@@ -52,7 +56,8 @@ export default function TagInputField( {
 	}, [] );
 
 	/**
-	 * Add the input's value as a tag, trimmed; a blank or duplicate is a no-op.
+	 * Add the input's trimmed value as a tag. A blank leaves the input alone;
+	 * a duplicate clears it without adding a second tag.
 	 */
 	const addValue = useCallback( () => {
 		const trimmed = inputValue.trim();
@@ -66,7 +71,8 @@ export default function TagInputField( {
 	}, [ inputValue ] );
 
 	/**
-	 * Handle key down in input.
+	 * Add the typed value on Enter; on Backspace with the input already empty,
+	 * drop the last tag. Backspace with text in the input edits that text.
 	 *
 	 * @param {import('react').KeyboardEvent} e Keyboard event.
 	 */

@@ -5,9 +5,13 @@
  * the kit takes no bare dependency on them so it works against a sibling
  * newspack-nodes checkout that has no node_modules of its own.
  *
- * The kit, the `@newspack-nodes/*` aliases, and bare-import resolution all
- * point at the sibling newspack-nodes checkout; CI overrides each via the
- * matching NEWSPACK_NODES_* env var.
+ * The kit and the `@newspack-nodes/*` aliases both derive from one directory,
+ * the substrate's `src`: a sibling checkout by default, `NEWSPACK_NODES_SRC`
+ * wherever the substrate sits elsewhere. Bare imports resolve to THIS plugin's
+ * node_modules, pinned below, whichever tree the importing source came from.
+ *
+ * `npm run build` empties `build/` before this runs, so the script only
+ * compiles; `--watch` keeps it compiling as sources change.
  */
 
 import esbuild from 'esbuild';
@@ -17,13 +21,22 @@ import path from 'node:path';
 import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+/** This file's directory; ESM defines no `__dirname`. */
 const __dirname = path.dirname( fileURLToPath( import.meta.url ) );
+
+/** The plugin root, which every path in this file resolves from. */
 const ROOT = path.resolve( __dirname, '..' );
 
-// @longform
-// ONE override for the whole substrate surface. It was four — one per alias
-// plus the kit — all naming paths inside the same directory, so omitting any
-// single one resolved to a nonexistent sibling path.
+/**
+ * The substrate `src` directory — a sibling newspack-nodes checkout, or
+ * `NEWSPACK_NODES_SRC` wherever the substrate sits elsewhere, as in CI.
+ *
+ * One override serves the build kit and every alias, because all of them name
+ * paths inside this directory. A knob per alias lets a build set some and omit
+ * another, and the omitted one resolves to a path that does not exist. The
+ * existence check names the missing directory here, instead of surfacing as an
+ * unresolved import deep inside esbuild.
+ */
 const substrateSrc =
 	process.env.NEWSPACK_NODES_SRC ||
 	path.resolve( ROOT, '../newspack-nodes/src' );
@@ -32,6 +45,13 @@ if ( ! existsSync( substrateSrc ) ) {
 		`substrate src not found at ${ substrateSrc } — set NEWSPACK_NODES_SRC when building outside a sibling newspack-nodes checkout`
 	);
 }
+
+/**
+ * The build kit's entry point. It and the alias map both load through
+ * `import()` rather than a static import, because a static specifier cannot be
+ * a path computed at run time; the alias map arrives under `.default` because
+ * it is CommonJS.
+ */
 const buildKit = path.join( substrateSrc, 'build-kit/index.mjs' );
 const { buildDashboards } = await import( pathToFileURL( buildKit ).href );
 const { esbuildAlias, assertNoRetiredOverrides } = (
@@ -44,6 +64,7 @@ const { esbuildAlias, assertNoRetiredOverrides } = (
 // Refuse the retired per-alias overrides; never silently ignore one.
 assertNoRetiredOverrides( process.env );
 
+/** The `@newspack-nodes/*` aliases; the loop below adds this plugin's deps. */
 const alias = esbuildAlias( substrateSrc );
 
 /**
@@ -66,6 +87,13 @@ for ( const dep of Object.keys(
 	}
 }
 
+/**
+ * One bundle per screen: five admin pages that `enqueue_react_page()` mounts by
+ * directory name, plus the front-end `current-request` overlay. Into each
+ * `outDir` the kit emits `index.js` and the `index.asset.php` manifest PHP
+ * reads dependencies and version from, plus `index.css` and its RTL companion
+ * whenever the entry imports styles.
+ */
 const ENTRIES = [
 	{
 		entry: 'src/overview/index.js',

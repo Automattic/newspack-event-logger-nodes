@@ -7,6 +7,11 @@
  *     request_detail — the performance dashboard's per-slice graph
  *     (`src/overview/hooks/usePerformanceGraph.js`), plus the
  *     current-request overlay tab, which fetches `request_detail`.
+ *   - url_breakdown — the URL-detail modal's dimension chart, which polls
+ *     one series while the modal is open and wants none of the index walk
+ *     `url_detail` pays for.
+ *   - ask — one descriptor chain's brief for the `?` picker
+ *     (`src/overview/components/AskPanel.js`).
  *   - hooks_registered — the Settings page's hook-catalog tree.
  *   - set — the spoke-side receiver of the substrate Settings_Sync_Node
  *     hub→spoke fanout. `hub-control.tsl` maps three application options
@@ -24,7 +29,8 @@
  *    gate would silently override the declaration.
  *  - Rate limit: none here. The substrate's `/command` endpoint already caps
  *    POSTs per user per window, so a polling dashboard is bounded upstream.
- *  - Stats reads fail-soft (matches Stats_Store + dashboards "no data" UX).
+ *  - Stats reads fail soft, as `Stats_Store` and the dashboards' "no data"
+ *    state do.
  *  - Disk scans are bounded by TIME where the index carries one — the per-URL
  *    walk stops at `scan_floor()`, in a segment that closed before it — and
  *    by MAX_INDEX_ENTRIES everywhere else, so a missing-rid lookup can't
@@ -68,7 +74,7 @@ use Newspack_Nodes\Service_CI_Node;
  * this class holds no commands table of its own.
  *
  * The static helpers below fall into three families:
- *   - memcache readers, which fan a Stats_Store out per flame-builder worker
+ *   - stats readers, which fan a Stats_Store out per flame-builder worker
  *     and sum-merge the per-partition buckets;
  *   - disk walkers, which construct throwaway Partition/Consumer nodes over
  *     the DECLARED node dirs and remove them again;
@@ -218,15 +224,15 @@ class Performance_CI_Node extends Service_CI_Node {
 	/**
 	 * URL-index read seam. Lazily-defaulted to the real merge-across-partitions
 	 * loader (load_index_default). Tests reassign it to COUNT index reads without
-	 * short-circuiting the production fan-out — the surrounding memo + the merge
-	 * logic still run as real code (mirrors Insights_CI_Demo_Node::$read_items).
+	 * short-circuiting the production fan-out — the merge logic still runs as
+	 * real code (mirrors `Insights_CI_Demo_Node::$read_items`).
 	 *
-	 * It takes the SHARD, so a point read goes through it too. Given a seam
-	 * that could not express one, `raw_row()` had to branch on the seam's
-	 * presence — and the narrowing this exists to measure never ran under it.
+	 * It takes the SHARD, so a point read goes through it too. A seam that
+	 * cannot express one forces `raw_row()` to branch on the seam's presence,
+	 * and the narrowing this exists to measure never runs under it.
 	 *
-	 * Resolved once per request through index(); reassign in a test bootstrap,
-	 * restore in a finally.
+	 * Resolved on every read through `read_index()`; reassign in a test
+	 * bootstrap, restore in a finally.
 	 *
 	 * Signature: `function ( ?string $shard ): array<int,array<string,mixed>>`.
 	 *
@@ -235,13 +241,13 @@ class Performance_CI_Node extends Service_CI_Node {
 	public static ?\Closure $load_index = null;
 
 	/**
-	 * Type-coerce + bounds-check a single value for `set`.
+	 * Coerce and bounds-check one value for `set`.
 	 *
 	 * Rejection is signalled by null, so a legitimately-null sanitized value is
 	 * not representable — every accepted type here returns a scalar or array.
 	 *
 	 * @param mixed  $value Raw input.
-	 * @param string $type  One of int|float|bool|array; anything else rejects.
+	 * @param string $type  `bool` or `array`; anything else rejects.
 	 * @return mixed|null Sanitized value, or null to reject.
 	 */
 	private static function sanitize_settings_value( mixed $value, string $type ): mixed {
@@ -265,8 +271,8 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * An object is DROPPED silently; a too-deep or too-wide array rejects the
 	 * whole option. NULL survives: it is inert, and it is load-bearing on the
 	 * wire — a heavy rule syncs as a POINTER whose `hooks` key is an explicit
-	 * null, and dropping it produced a map `Rule::from_array()` refuses, so a
-	 * normal settings push could only ever fail.
+	 * null, and dropping it produces a map `Rule::from_array()` refuses, so a
+	 * normal settings push fails.
 	 *
 	 * @param array<mixed,mixed> $arr   Input array.
 	 * @param int                $depth Current recursion depth.
@@ -319,8 +325,10 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * Sum-merge category buckets across all partitions (global scope).
+	 * Sum-merge category buckets across all partitions, for one reporting
+	 * server or, with '', for the site.
 	 *
+	 * @param string $server Server scope; '' merges every server.
 	 * @return array<string,mixed>
 	 */
 	private static function merge_categories_across_partitions( string $server = '' ): array {
@@ -624,7 +632,14 @@ class Performance_CI_Node extends Service_CI_Node {
 		return \trim( $raw );
 	}
 
-	/** Name a transient scratch Consumer uniquely (per scan) so a live worker's registry can't collide; caller removes it. */
+	/**
+	 * Name a transient scratch Consumer `firehose-grep.{token}.p{N}`, unique per
+	 * scan so a live worker's registry cannot collide with it. Callers
+	 * `remove_node()` it after use.
+	 *
+	 * @param Consumer_Node $consumer Freshly-constructed scratch Consumer.
+	 * @param int           $index    Firehose partition index.
+	 */
 	private static function name_scratch_consumer( Consumer_Node $consumer, int $index ): void {
 		$token = \getmypid() . '-' . \spl_object_id( $consumer );
 		$consumer->name( "firehose-grep.{$token}.p{$index}" );
@@ -674,6 +689,8 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * The `url:` brief — stats, worst recent requests, and the
 	 * cold-start finding when nothing governs it.
 	 *
+	 * @param string $hash   12-char URL hash the descriptor names.
+	 * @param string $server Server the brief answers for; '' is every server.
 	 * @return array<string,mixed>
 	 * @throws \RuntimeException When no URL row carries that hash.
 	 */
@@ -699,20 +716,21 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * Merged URL index across all partitions, shaped for dashboard display.
+	 * One shard of the merged URL index across all partitions, shaped for
+	 * dashboard display.
 	 *
 	 * Rows are keyed by URL hash while merging, then flattened to a list. The
-	 * list is UNSCOPED and unsorted: `index()` projects it into the caller's
-	 * scope and sorts what survives, so one fan-out serves every scope a request
-	 * asks for. Each row therefore carries two maps the display never sees — its
-	 * per-server split, and that split's share of the recent buckets — which
-	 * `project_row()` consumes and strips.
+	 * list is UNSCOPED and unsorted: `url_page()` projects each row into the
+	 * caller's scope and sorts what survives, so one read serves every scope a
+	 * request asks for. Each row therefore carries two maps the display never
+	 * sees — its per-server split, and that split's share of the recent
+	 * buckets — which `project_row()` consumes and strips.
 	 *
 	 * The bucket key IS the hash `Log_Manager::url_hash()` stamped on the
 	 * record — never derive another, or the row indexes under a hash no rid
 	 * lookup can produce.
 	 *
-	 * @param ?string $shard Shard to read, or null for the whole index.
+	 * @param ?string $shard One shard's rows; null reads every reader shard.
 	 * @return array<int,array<string,mixed>>
 	 */
 	public static function load_index_default( ?string $shard = null ): array {
@@ -753,11 +771,10 @@ class Performance_CI_Node extends Service_CI_Node {
 			// @longform Fine, then the fallback for unfolded hours. One fold
 			// for both: an hour key is never a recent five-minute bucket, and
 			// neither is a bucket behind the fine tail, so the recency
-			// predicate is uniform. Order is no longer load-bearing — the last
-			// first-wins read went with the percentiles (decision 19). Each
-			// chunk is folded and DROPPED before the next is read: holding the
-			// whole window's rows beside the index it builds is what exhausted
-			// 512MB once the duplicate copies were gone.
+			// predicate is uniform. Order is not load-bearing: no read here
+			// is first-wins. Each chunk is folded and DROPPED before the next
+			// is read, because holding the whole window's rows beside the
+			// index it builds exhausts a production hub's 512MB.
 			foreach ( [ $plan['fine'], $missing ] as $tier ) {
 				foreach ( \array_chunk( $tier, self::INDEX_READ_CHUNK ) as $chunk ) {
 					foreach ( $store->url_row_sources( $chunk, $shard ) as [ $bucket, $bucket_data ] ) {
@@ -772,8 +789,8 @@ class Performance_CI_Node extends Service_CI_Node {
 		// for, and un-averaging a figure divided here would put this
 		// denominator in a second place.
 		// @longform By reference, and `array_values` after: copying each row
-		// into a second list materialised the WHOLE index twice, which is what
-		// exhausted 512MB on a production hub. The rows are refcounted here, so
+		// into a second list materialises the WHOLE index twice, which
+		// exhausts a production hub's 512MB. The rows are refcounted here, so
 		// only the outer list is new.
 		foreach ( $result as &$entry ) {
 			// Null when nothing timed folded a min.
@@ -919,8 +936,8 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * holds — there is no cross-shard merge to miss. The whole merged index is
 	 * otherwise the count of distinct URLs across the retention window, which
 	 * nothing bounds: the stored buckets are capped at `MAX_URLS_PER_SHARD`,
-	 * the MERGE of them is not, and a production hub exhausted 512MB inside the
-	 * fold itself once three releases had removed three real duplicate copies.
+	 * the MERGE of them is not, and folding all sixteen at once exhausts a
+	 * production hub's 512MB inside the fold itself.
 	 *
 	 * The union of the per-shard top-N is exactly the global top-N, because
 	 * every row belongs to exactly one shard — so keeping each shard's best
@@ -976,11 +993,11 @@ class Performance_CI_Node extends Service_CI_Node {
 				// Derived here: there is no second walk to spend on it.
 				$has_split = $has_split
 					|| [] !== Core::arr( $raw_row[ Stats_Store::URL_SRV_FIELD ] ?? null );
-				// @longform Every shard's overflow row shares ONE key, so the
-				// whole-index fold collapsed all sixteen for free and a
-				// per-shard fold must do it deliberately — decision 14 says a
-				// merge on the url_hash collapses sixteen into one. Held raw
-				// and projected once below, so the means divide a whole row.
+				// @longform Every shard's overflow row shares ONE key, so a
+				// per-shard fold must collapse all sixteen deliberately —
+				// decision 14 says a merge on the url_hash collapses sixteen
+				// into one. Held raw and projected once below, so the means
+				// divide a whole row.
 				$hash = Core::as_string( $raw_row['hash'] ?? '' );
 				if ( Stats_Store::is_other_key( $hash ) ) {
 					$overflow[ $hash ] = isset( $overflow[ $hash ] )
@@ -1124,7 +1141,8 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * Requests per second over those buckets.
 	 *
 	 * The divisor is the WINDOW, not the buckets that carried traffic: dividing
-	 * by the buckets it had made a URL seen in two of twelve read 6x its rate.
+	 * by the buckets a URL appeared in makes one seen in two of twelve read six
+	 * times its rate.
 	 *
 	 * @param int $requests Requests counted across `recent_buckets()`.
 	 */
@@ -1162,10 +1180,10 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * Sum-merge one namespace's buckets into the running totals, through the
 	 * SAME arithmetic and the same field table the writer used.
 	 *
-	 * The reader used to hand-roll this per namespace with `Core::as_*`, the
-	 * permissive family that casts any scalar — against values the writer stored
-	 * through the refusing `num_*` family, and with `c` as a float where
-	 * `CAT_SUMS` calls it a whole count. One producer, one reader, one table.
+	 * Hand-rolled per namespace, a reader reaches for `Core::as_*`, the
+	 * permissive family that casts any scalar, against values the writer stored
+	 * through the refusing `num_*` family — and counts `c` as a float where
+	 * `CAT_SUMS` calls it whole. One producer, one reader, one table.
 	 *
 	 * @param array<string,mixed> $merged Mutated.
 	 * @param array<string,mixed> $rows   Inbound, keyed by bucket.
@@ -1196,9 +1214,9 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * servers, the server has to go on the index entry.
 	 *
 	 * @param string $url_hash 12-char URL hash to match.
-	 * @param int    $since    Watermark (epoch seconds): the walk stops at the
-	 *                         first entry that COMPLETED below it. 0 reads the
-	 *                         whole retained window.
+	 * @param int    $since    Watermark (epoch seconds): a partition's walk ends
+	 *                         at the first entry that COMPLETED below it. 0 reads
+	 *                         the whole retained window.
 	 * @return array{requests:array<int,array<string,mixed>>, truncated:bool, window_start:int} The list, whether the budget cut it short, and the window it is of.
 	 */
 	private static function find_recent_requests_for_url( string $url_hash, int $since = 0 ): array {
@@ -1254,6 +1272,9 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * The rule governing a URL, for the surfaces that hold no record — the
 	 * `url:` brief works from an index row. Matching takes the PATH: a stored
 	 * url is absolute, and `Rule_Matcher` compares against patterns like `/`.
+	 *
+	 * @param string $url The stored absolute URL.
+	 * @return ?Rule The governing rule, or null when no pattern matches.
 	 */
 	private static function rule_for_url( string $url ): ?Rule {
 		if ( '' === $url ) {
@@ -1270,6 +1291,8 @@ class Performance_CI_Node extends Service_CI_Node {
 	/**
 	 * The `request:` brief.
 	 *
+	 * @param string $rid       Request id the descriptor names.
+	 * @param int    $partition Partition its qualifier names, searched first.
 	 * @return array<string,mixed>
 	 * @throws \RuntimeException When the rid resolves nowhere.
 	 */
@@ -1282,6 +1305,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * The `span:` brief. A span is not addressable on its own — it needs the
 	 * request it ran in, which the descriptor chain supplies.
 	 *
+	 * @param string       $name    Span name the descriptor carries.
 	 * @param list<string> $context Container descriptors, outermost last.
 	 * @return array<string,mixed>
 	 * @throws \RuntimeException With no request context, or an absent span.
@@ -1307,11 +1331,11 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * rule about a hook.
 	 *
 	 * The RECORD answers this: `Request_Builder_Node` stamps `rule_id` from the
-	 * match the request itself made. Re-deriving it here found nothing, because
+	 * match the request itself made. Re-deriving it here finds nothing, because
 	 * a stored `url` is absolute and query-stripped (`https://host/path`) while
-	 * rules are path patterns — so not even a catch-all `/` matched, and every
-	 * brief reported "no rule governs this URL" and proposed creating one whose
-	 * pattern could never match anything.
+	 * rules are path patterns — not even a catch-all `/` matches one, so every
+	 * brief would report "no rule governs this URL" and propose creating a rule
+	 * whose pattern could never match anything.
 	 *
 	 * @param array<array-key,mixed> $record A stored request record.
 	 */
@@ -1323,6 +1347,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	/**
 	 * The `entry:` brief.
 	 *
+	 * @param int          $n       Entry position within the request.
 	 * @param list<string> $context Container descriptors, outermost last.
 	 * @return array<string,mixed>
 	 * @throws \RuntimeException With no request context, or an absent entry.
@@ -1340,7 +1365,10 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * request's profile, so the context chain decides which board answers —
 	 * the global leaderboard describes a different thing entirely.
 	 *
+	 * @param string       $name    Category name the descriptor carries.
 	 * @param list<string> $context Container descriptors, outermost last.
+	 * @param string       $server  Server the leaderboard fallback answers for;
+	 *                              '' builds the global board.
 	 * @return array<string,mixed>
 	 * @throws \RuntimeException When neither board holds the category.
 	 */
@@ -1363,10 +1391,10 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * Build the category leaderboard for the recent window, global or scoped to
-	 * one reporting server — the scope was the only thing the two ever differed
-	 * by, and the window is read in ONE round trip per store rather than one per
-	 * bucket across hundreds of them.
+	 * Build the category leaderboard for the retention window, global or scoped
+	 * to one reporting server — one function, because the scope is the only
+	 * thing separating them, and the window is read in ONE round trip per store
+	 * rather than one per bucket across hundreds of them.
 	 *
 	 * @param string $server Server to scope to; '' builds the global board.
 	 * @return array<string,mixed>
@@ -1393,10 +1421,10 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * The bucket keys a reader walks — the configured retention window.
 	 *
 	 * Memoized for as long as the current bucket is current. One `overview` calls
-	 * this eleven times (seven dimensions, plus hourly, leaderboard, index and
-	 * categories), each otherwise rebuilding up to 288 keys with a `gmdate()`
-	 * apiece — and each re-reading the clock, so two panels of one response could
-	 * straddle a boundary and answer for different windows.
+	 * this ten times (seven dimensions, plus hourly, leaderboard and categories),
+	 * each otherwise rebuilding up to 288 keys with a `gmdate()` apiece — and each
+	 * re-reading the clock, so two panels of one response could straddle a
+	 * boundary and answer for different windows.
 	 *
 	 * @return array<int,string>
 	 */
@@ -1472,6 +1500,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * descriptor as the picker wrote it — not the record it resolves to.
 	 *
 	 * @param list<string> $context Container descriptors.
+	 * @param string       $type    Descriptor type to look for.
 	 * @return string The descriptor, or '' when the chain names none.
 	 */
 	private static function descriptor_of( array $context, string $type ): string {
@@ -1488,6 +1517,8 @@ class Performance_CI_Node extends Service_CI_Node {
 	/**
 	 * One request record by rid, searching its hashed partition first.
 	 *
+	 * @param string $rid       Request id to load.
+	 * @param int    $partition Caller's hint, searched ahead of the hashed order.
 	 * @return array<array-key,mixed>
 	 * @throws \RuntimeException When the rid resolves nowhere.
 	 */
@@ -1684,8 +1715,10 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * Name (`{log}.{token}.p{N}`, unique per scan), self-patron, and Rule-4 interpreter-sink
-	 * a transient scratch Partition. Callers remove_node() it after use.
+	 * Prepare a transient scratch Partition: a name unique per scan
+	 * (`{log}.{token}.p{N}`) so a live worker's registry cannot collide with it,
+	 * itself as its own patron, and — per Rule 4 — the in-scope
+	 * CommandInterpreter as its sink. Callers `remove_node()` it after use.
 	 *
 	 * @param Partition_Node $partition Freshly-constructed scratch Partition.
 	 * @param string         $log       Log basename ('requests' | 'flames').
@@ -1756,8 +1789,6 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param string $hash   12-char URL hash.
 	 * @param string $server Reporting server to scope to; '' reads every server.
 	 * @return array<array-key,mixed>|null
-	 * @throws \RuntimeException When the row exists but the index carries no
-	 *                           per-server split to answer the scope with.
 	 */
 	private function row( string $hash, string $server = '' ): ?array {
 		$raw = $this->raw_row( $hash );
@@ -1807,14 +1838,15 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * One Stats_Store per flame-builder worker over the shared `Core::$memd`
-	 * handle. `configure_stats <partition>` keys each store by the WORKER index,
-	 * and nothing of it lands on disk — so the index space comes from the
-	 * declaring topology's count, not from a dir listing.
+	 * One Stats_Store per flame-builder worker. `configure_stats <partition>`
+	 * keys each store by the WORKER index, and nothing of it lands on disk — so
+	 * the index space comes from the declaring topology's count, not from a dir
+	 * listing.
 	 *
-	 * With no memcache handle this returns an empty list, which is what makes
-	 * every stats reader above degrade to an empty or zeroed shape instead of
-	 * throwing. Each store's TTL comes from the substrate `min_lifetime` key.
+	 * With no shared cache backend at all this returns an empty list, which is
+	 * what makes every stats reader above degrade to an empty or zeroed shape
+	 * instead of throwing. Each store's TTL comes from the substrate
+	 * `min_lifetime` key.
 	 *
 	 * @return array<int,Stats_Store>
 	 */
@@ -1835,14 +1867,11 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * One URL's unscoped merged row, as cheaply as this request allows.
-	 *
-	 * A POINT READ of the hash's own shard — unless the whole index is already
-	 * in hand for this request, in which case walking it is free and reading
-	 * again would be a second fan-out for a row we hold.
+	 * One URL's unscoped merged row: a POINT READ of the shard its hash names,
+	 * never the whole index.
 	 *
 	 * @param string $hash 12-char URL hash.
-	 * @return array<array-key,mixed>|null
+	 * @return array<array-key,mixed>|null The merged row, or null when absent.
 	 */
 	private function raw_row( string $hash ): ?array {
 		return self::load_row_default( $hash );
@@ -1853,8 +1882,8 @@ class Performance_CI_Node extends Service_CI_Node {
 	 *
 	 * `Stats_Store::url_shard()` is the first hex digit of the hash, so a single
 	 * URL lives in a single shard and the other fifteen answer nothing. Reaching
-	 * this row through the whole index made the detail modal pay the URL TABLE's
-	 * fan-out — on the staging hub, 18,432 keys and 54 MB to answer about one row.
+	 * this row through the whole index makes the detail modal pay the URL
+	 * TABLE's fan-out — 18,432 keys and 54 MB on the staging hub, for one row.
 	 *
 	 * The reader population answers first and the worker one only when it has
 	 * nothing: a URL served both ways shows the row the default table showed,
@@ -1898,7 +1927,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * agree, and ONE fan-out serves every scope. The means come after the swap,
 	 * so a scoped row never carries the site's average beside a server's count.
 	 *
-	 * @param array<array-key,mixed> $row    A merged row from load_index_default().
+	 * @param array<array-key,mixed> $row    A merged index row.
 	 * @param string                 $server Reporting server; '' scopes to none.
 	 * @return array<array-key,mixed>|null
 	 */
@@ -1943,7 +1972,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * The read seam, resolved. One entry point for both shapes, so a test
 	 * counting reads counts a point read as well as a whole-index one.
 	 *
-	 * @param ?string $shard Shard to read, or null for the whole index.
+	 * @param ?string $shard One shard's rows; null reads every reader shard.
 	 * @return array<int,array<array-key,mixed>>
 	 */
 	private static function read_index( ?string $shard ): array {
@@ -1962,9 +1991,9 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * what the dashboard's "Errors" filter means: timeouts (T) and fatals (F),
 	 * not 5xx, which IS a response.
 	 *
-	 * Server-side so `total` counts what is actually rendered; the client used
-	 * to apply this filter alone, leaving the footer reading an unfiltered
-	 * count ("1-100 of 5,000" above three rows).
+	 * Server-side so `total` counts what is rendered: applied on the client
+	 * alone, the filter leaves the footer stating an unfiltered count —
+	 * "1-100 of 5,000" above three rows.
 	 *
 	 * @param array<array-key,mixed> $row A URL index row.
 	 */
@@ -2062,9 +2091,9 @@ class Performance_CI_Node extends Service_CI_Node {
 	/**
 	 * Schema-driven dispatch: each verb is declared once in
 	 * `commands[]` carrying its `handler`. The inherited Service_CI_Node ctor
-	 * builds the commands table from this schema. Stats-reading verbs build
-	 * per-partition Stats_Store off the shared `Core::$memd` handle; a null
-	 * handle yields empty/zeroed shapes. Disk-walking verbs work regardless.
+	 * builds the commands table from this schema. Stats-reading verbs build a
+	 * per-partition Stats_Store off the shared cache backend; with none, they
+	 * answer with empty or zeroed shapes. Disk-walking verbs work regardless.
 	 *
 	 * Every handler throws a RuntimeException on bad input; the interpreter
 	 * turns the throw into a TM_COMMAND|TM_ERROR reply, so no handler returns

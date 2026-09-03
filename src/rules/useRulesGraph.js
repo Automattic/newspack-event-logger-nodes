@@ -1,35 +1,38 @@
 /**
- * useRulesGraph — mounts the per-URL logging-ruleset editor node graph onto the
- * canonical rule-#2 backbone (`_command_interpreter → _router`) using the
- * substrate's HTTP I/O boundary node. Modeled on useVaultGraph, single-concern:
+ * useRulesGraph — the per-URL logging-ruleset editor's node graph, clipped onto
+ * the canonical rule-#2 backbone (`_command_interpreter` → `_router`) through
+ * the substrate's HTTP boundary node:
  *
- *   _http     (HttpOutNode — POST /command boundary; .client = the transport)
- *   rules:in  (Tee) → rules:view (the RulesView slice) — repainted by `list`
+ *   _http     (HttpOutNode) — the POST /command egress; `.client` is the
+ *             transport it POSTs through
+ *   rules:in  (Tee) → rules:view (a RulesView slice), repainted by every `list`
  *
- * Nothing here is correlated, because the addressing already is the
- * correlation. Each MUTATING verb owns its own node — `rules:save`,
- * `rules:upsert`, `rules:delete`, `rules:reset`, one per verb via
- * `useCommandOnce` — and a node stamps FROM with its own name, so the server's
- * TO=FROM reply lands back on exactly the node that minted it. There is no id in `message[ID]`, no
- * `replies` map, and nothing keyed by one; batching several verbs in a tick
- * would mean more nodes, never one node telling replies apart.
+ * Nothing here pairs a reply with its request, because the addressing already
+ * is the correlation. Each MUTATING verb owns its own nodes — one
+ * `useCommandOnce` each, scoped `rules:save`, `rules:upsert`, `rules:delete`
+ * and `rules:reset` — and every scope mints FROM its own receiver Tee, so the
+ * server's TO=FROM reply lands on exactly the Tee that asked. There is no id in
+ * `message[ID]`, no `replies` map and nothing keyed by one; sending several
+ * verbs in one tick means more nodes, never one node telling replies apart.
  *
- * `list` is the odd one out and deliberately so: it is a publish, not an await.
- * It fills through the `_shell` Tap (observable at `connect _shell`) addressed
- * to the `rules:in` Tee, whose reply fans into `rules:view`, which refreshes
- * the render model every consumer reads.
+ * `list` is the odd one out, deliberately: it is a publish, not an await. It is
+ * minted FROM the `rules:in` Tee and filled through the `_shell` Tap
+ * (observable at `connect _shell`), so its reply lands back on that Tee and
+ * fans into `rules:view`, the render model every consumer reads.
  *
- * Either way the router peels `_http`, HttpOutNode POSTs, and the reply routes
- * home by its TO.
+ * Either way the Router peels `_http` off the TO, HttpOutNode POSTs, and the
+ * reply routes home by the TO the server echoed.
  *
- * Wire contract mirrors Rules_CI_Node: `save`/`upsert` pass the RAW JSON as a
- * single arg token (the handler json_decodes `$args[0]`); `delete` passes the id
- * as a positional token; `list` and `reset` take no args (`[]`). Mutations
- * re-`list()` to refresh the table.
+ * The wire contract mirrors `Rules_CI_Node`: `save` and `upsert` pass the raw
+ * JSON as a single argument token (the handler `json_decode`s `$args[0]`),
+ * `delete` passes the id as a positional token, and `list` and `reset` take no
+ * arguments. Every successful mutation re-`list`s, so the table repaints from
+ * the server rather than from a locally patched copy; a refusal leaves the
+ * server unchanged, so it repaints nothing.
  *
- * Nothing is injected: HttpOut lazily defaults its own client, and tests seam
- * at `fetch` (`installFakeCommandWire`) so the whole egress runs for real.
- * to `_http.client`). Production lets HttpOut default it.
+ * Nothing is injected: HttpOutNode defaults its own client lazily, and tests
+ * seam at `fetch` (`installFakeCommandWire`), so packing, the POST, the Router
+ * and the interpreter all run for real.
  */
 
 import { useCallback, useEffect, useRef, useState } from '@wordpress/element';
@@ -46,13 +49,23 @@ import {
 import { views } from './nodes/register';
 import { useCommandOnce } from '@newspack-nodes/shared/hooks/useCommandOnce';
 
+/** The server-side CI mount every verb here is addressed to. */
 const RULES_CI = 'rules';
+
+/** The Tee that mints `list` and, by TO=FROM, receives its reply. */
 const RECV = 'rules:in';
+
+/** The slice view holding the table's render model. */
 const VIEW = 'rules:view';
 
 /**
- * Ask the `rules` CI to re-list, FROM the table's own receiver Tee — its reply
- * repaints `rules:view`, and that IS the result.
+ * Ask the `rules` CI to re-list, minted FROM the table's own receiver Tee: the
+ * server echoes TO=FROM, so the reply lands on `rules:in`, fans into
+ * `rules:view` and repaints the table. That repaint IS the result — nothing is
+ * returned and no caller awaits one.
+ *
+ * The Tee carries no target, so the egress address is stamped on the message
+ * here rather than configured on the node.
  *
  * @param {Object} shell The `_shell` Tap every command routes through.
  */
@@ -66,11 +79,13 @@ function fireList( shell ) {
 }
 
 /**
- * Each mutation's answer lands on the node that asked, and re-lists — so the
- * TABLE repaints one round trip after the mutation settles. Read the table from
- * the returned `rules`, never from a mutation's outcome.
+ * Mount the ruleset editor's graph and return the table with its CRUD verbs.
  *
- * @param {Object}   [opts]            Options (testing seams).
+ * Each mutation's answer lands on the node that asked, and a successful one
+ * re-lists — so the TABLE repaints one round trip after the mutation settles.
+ * Read the rules from the returned `rules`, never from a mutation's outcome.
+ *
+ * @param {Object}   [opts]            Options.
  * @param {Function} [opts.onMutation] `( { verb, error } ) => void`, fired once
  *                                     per mutation reply. A refusal arrives
  *                                     here rather than as a rejected promise:
@@ -85,7 +100,7 @@ function fireList( shell ) {
  *   The `rules:view` render model plus the CRUD callbacks. `loading` starts
  *   true and clears on the first `list` reply; `error` carries a `list`
  *   failure's banner — a mutation's failure goes to `onMutation` instead,
- *   leaving the banner clean for the caller to own.
+ *   leaving the banner for the caller to own.
  */
 export function useRulesGraph( opts = {} ) {
 	const { onMutation } = opts;
@@ -109,10 +124,10 @@ export function useRulesGraph( opts = {} ) {
 
 			bumpBuild( ( n ) => n + 1 );
 
-			// One list once authed; its reply repaints the table.
+			// One list once the session is up; its reply repaints the table.
 			ensureSession().then( () => {
 				if ( shellRef.current !== shell ) {
-					return; // unmounted while /auth was in flight
+					return; // unmounted or rebuilt while /auth was in flight
 				}
 				fireList( shell );
 			} );
@@ -127,7 +142,7 @@ export function useRulesGraph( opts = {} ) {
 		return teardown;
 	}, [] );
 
-	// One one-shot per verb; each re-lists on its own answer.
+	// One one-shot per verb; a success re-lists, a refusal only reports.
 	const onMutationRef = useRef( onMutation );
 	onMutationRef.current = onMutation;
 	const settle = useCallback(
@@ -141,7 +156,7 @@ export function useRulesGraph( opts = {} ) {
 		[]
 	);
 
-	// save/upsert send a DOCUMENT first; neither can address a reply with it.
+	// A document cannot address a reply: save sends no subject, upsert an id.
 	const saveOnce = useCommandOnce( {
 		ci: RULES_CI,
 		command: 'save',

@@ -3,8 +3,8 @@
  * Flame_Fold — the merging, resumable variant of `Flame_Tree`'s stack machine.
  *
  * `Flame_Tree::build_flame_data()` runs once over a finished request and keeps
- * every span as its own node; `number_duplicate_siblings()` even works to hold
- * repeated siblings apart. This does the opposite, and stays open afterwards:
+ * every span as its own node, and `number_duplicate_siblings()` numbers repeats
+ * to hold them apart. This does the opposite, and stays open afterwards:
  * same-name siblings under a parent collapse into ONE node carrying `count`,
  * summed `value` and `max`, and entries keep arriving into that same tree.
  *
@@ -21,9 +21,9 @@
  * per-URL — reads the record's own duration and `profiles`, so those are
  * identical either way.
  *
- * Because it is the same stack machine, pair balance is inherent: there is no
- * way to emit an orphaned complete or an unclosed span, which is exactly what
- * disqualified dropping every Nth entry.
+ * Because it is the same stack machine, pair balance is inherent: every entry
+ * reaches it, so a start is never severed from its complete — which is what
+ * disqualifies dropping every Nth entry instead.
  *
  * Static over a plain-array state, like `Flame_Tree`, and for a harder reason:
  * a fold lives on an in-flight envelope, and those ride the Consumer's
@@ -54,11 +54,12 @@ final class Flame_Fold {
 	 *
 	 * `origin` is the request start in unix seconds — the reference every `t`
 	 * offset is measured from. Callers that know it (Request_Builder holds the
-	 * envelope's `timestamp`) should pass it; folding a full entry list from
-	 * its first line arrives at the same answer, but folding a partial one
-	 * would not.
+	 * envelope's `timestamp`) should pass it. Left null, the first entry
+	 * carrying a usable `ts` seeds it: right for a whole entry list, wrong for
+	 * a partial one. The fold streams, so it cannot take the earliest across
+	 * every entry the way `Flame_Tree::request_origin()` does.
 	 *
-	 * @param float|null $origin Request start, or null to take the earliest seen.
+	 * @param float|null $origin Request start, or null to take the first seen.
 	 * @return Fold_State State for add()/tree().
 	 */
 	public static function start( ?float $origin = null ): array {
@@ -67,6 +68,7 @@ final class Flame_Fold {
 			'root'    => self::empty_node(),
 			// Open spans, innermost last; `path` is the name chain into root.
 			'stack'   => [],
+			// Every entry added, span or not; the fold marker counts from it.
 			'count'   => 0,
 			'origin'  => $origin,
 		];
@@ -124,6 +126,11 @@ final class Flame_Fold {
 	/**
 	 * Open a span: ensure its merged node exists, then push it.
 	 *
+	 * Past `Flame_Tree::MAX_STACK_DEPTH` a span still gets its node and its
+	 * start counted, but no frame, so its complete matches nothing — or, when
+	 * an open ancestor shares the base name, the wrong span. The depth bounds
+	 * the stack; the path is what a reader needs to see the span ran at all.
+	 *
 	 * @param Fold_State $state Fold state, by reference.
 	 * @param string     $base  Span base name.
 	 * @param string     $label Stable aggregation label, or ''.
@@ -149,12 +156,14 @@ final class Flame_Fold {
 	 * Walk to a name path, creating nodes along the way, and fold one
 	 * instance's duration into the node it lands on.
 	 *
-	 * A null duration only creates the path — what a `(start)` needs, so that
-	 * a span still shows as a frame if its complete never arrives.
+	 * A null duration records a start rather than a completion: it creates the
+	 * path and counts the open in `starts`, folding no duration in. That is
+	 * what a `(start)` needs, so a span still shows as a frame when its
+	 * complete never arrives.
 	 *
 	 * @param array<array-key,mixed> $node     Node to descend from, by reference.
 	 * @param list<string>           $path     Remaining name chain.
-	 * @param float|null             $duration Milliseconds to fold in, or null to only create.
+	 * @param float|null             $duration Milliseconds to fold in, or null for a start.
 	 * @param float|null             $t        Start offset in ms, kept at its EARLIEST.
 	 */
 	private static function record( array &$node, array $path, ?float $duration, ?float $t = null ): void {
@@ -164,7 +173,7 @@ final class Flame_Fold {
 				$node['t'] = \is_numeric( $seen ) ? \min( (float) $seen, $t ) : $t;
 			}
 			if ( null === $duration ) {
-				// Starts, not completions: see positioned().
+				// Starts, not completions: see merged().
 				$node['starts'] = Core::num_int( $node['starts'] ?? null ) + 1;
 				return;
 			}
@@ -184,6 +193,10 @@ final class Flame_Fold {
 
 	/**
 	 * A merged node with nothing folded into it yet.
+	 *
+	 * `t` starts null, never 0: `record()` keeps the EARLIEST offset, so a zero
+	 * seed would win every comparison and put every node at the request's own
+	 * start. Zero is a real position and cannot double as "no instance yet".
 	 *
 	 * @return array<string,mixed>
 	 */
@@ -207,6 +220,9 @@ final class Flame_Fold {
 	 * position that is true of a merged node. The detail view stamps its log
 	 * rows from it, and `FlameGraph` positions the frame by it.
 	 *
+	 * The root carries `folded`, which marks the tree as this machine's output
+	 * rather than `Flame_Tree`'s.
+	 *
 	 * @param Fold_State $state Fold state.
 	 * @return array<string,mixed> Flame tree rooted at `request`.
 	 */
@@ -217,10 +233,15 @@ final class Flame_Fold {
 	}
 
 	/**
-	 * Turn one name-keyed node into the list-keyed display shape, raising a
-	 * parent that never closed to cover the children that did — the browser
-	 * prunes on a single value cutoff and takes a whole subtree with anything
-	 * it drops, so a 0 here would delete exactly the frames worth reading.
+	 * Turn one name-keyed node into the list-keyed display shape, raising any
+	 * parent that falls short of its positioned children. The browser prunes on
+	 * a single value cutoff and takes a whole subtree with anything it drops, so
+	 * a parent that never closed would carry 0 and delete exactly the frames
+	 * worth reading.
+	 *
+	 * `starts` is this machine's own bookkeeping and stops here; the display
+	 * node carries `merged` instead, which is the one verdict a reader wants
+	 * from it.
 	 *
 	 * @param string                 $name Node name.
 	 * @param array<array-key,mixed> $node Name-keyed node.
@@ -284,13 +305,13 @@ final class Flame_Fold {
 	 * outliving its parent is left open and never reaches `count` — while its
 	 * `t` is already stamped and its path free to be opened again.
 	 *
-	 * Completions are the FLOOR, for the state a worker restores from a
-	 * checkpoint written before `starts` existed: a missing key reads as 0,
-	 * which would claim one span and hand every such node back to the extent
-	 * rule. A path can never close more often than it opened, so the max is
-	 * the identity on anything this version wrote. One case stays wrong there
-	 * — two starts and a single completion — until that path completes again
-	 * or opens twice more; a single further open leaves both counters at 1.
+	 * Completions are the FLOOR, because a checkpoint frame a worker restores
+	 * may carry no `starts` at all: a missing key reads as 0, which would claim
+	 * one span and hand every such node back to the extent rule. A path can
+	 * never close more often than it opened, so on a node this machine counted
+	 * the max is the identity. One case stays wrong on a node missing `starts`
+	 * — two starts and a single completion — until that path completes again or
+	 * opens twice more; a single further open leaves both counters at 1.
 	 *
 	 * @param array<array-key,mixed> $node Folded node.
 	 * @return bool True when the node stands for two or more spans.

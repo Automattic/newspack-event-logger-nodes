@@ -6,14 +6,20 @@
  * owns none. The graph publishes its data through FOUR independent per-slice
  * view nodes — `overview:view`, `urls:view`, `urldetail:view`,
  * `requestdetail:view`. This component reads each slice with its own
- * `useNodeState`, derives the render-time values, and drives control through the
- * callbacks the hook returns.
+ * `useNodeState`, derives the render-time values, and hands the URL table's
+ * paging back through `handleUrlParamsChange`, the one callback the hook
+ * returns.
  *
- * What it does own is the UI state those callbacks read at fire time: the server
- * filter, the chart metric and breakdown dimension, the refresh cadence, the
- * search box and its results, the request-table sort, and the inline "Log this
- * URL" rule editor. It renders the URL / request detail modal too, and preserves
- * the modal's scroll position across the URL-detail ↔ request-detail switch.
+ * What it does own is the UI state the graph's fetchers read at fire time: the
+ * server filter, the chart metric and breakdown dimension, the refresh cadence,
+ * the partition a located request was found in, the search box and its results,
+ * the request-table sort, and the inline "Log this URL" rule editor. It also
+ * runs every command whose reply sets that state: the `?url=` and `?request=`
+ * deep-link resolvers, the title lookup for a hash the loaded catalog page does
+ * not carry, the search box's exact-rid lookup and its pattern search, and the
+ * ruleset reads and writes behind "Log this URL". It renders the URL / request
+ * detail modal and the Ask panel over it, and preserves the modal's scroll
+ * position across the URL-detail ↔ request-detail switch.
  */
 
 import {
@@ -60,7 +66,14 @@ import { BLANK_RULE } from '../rules/constants';
 
 import UrlTable from './UrlTable';
 
-// No URL to name. canLogUrl tests for it — a hash here would offer a rule.
+/**
+ * The stand-in title for a URL whose hash is selected but whose name has not
+ * arrived. `canLogUrl` compares against this exact string, so it stays the one
+ * place the placeholder is spelled: put the hash here instead and the modal
+ * offers a logging rule for a URL nobody has named.
+ *
+ * @return {string} The translated placeholder.
+ */
 const UNKNOWN_URL = () => __( 'Unknown URL', 'newspack-event-logger-nodes' );
 
 /**
@@ -83,15 +96,18 @@ import './styles/tables.scss';
 import './styles/charts.scss';
 
 /**
- * Performance Dashboard component.
+ * The dashboard's one component: the overview card, the URL table, and the
+ * detail modal over them.
  *
- * Renders a spinner until the `overview:view` slice resolves — until then the
+ * It renders a spinner until the `overview:view` slice resolves — until then the
  * graph may not even be mounted, and an empty dashboard would read as no data.
  *
- * @param {Object}               props         Component props.
- * @param {(err: Error) => void} props.onError Error handler callback. Reported
- *                                             failures surface as the page's
- *                                             dismissible notice.
+ * @param {Object}                    props         Component props.
+ * @param {(message: string) => void} props.onError Ask-failure reporter, handed
+ *                                                  straight to `useAsk`, which
+ *                                                  calls it with the reason the
+ *                                                  ask failed. The page renders
+ *                                                  that as a dismissible notice.
  * @return {import('react').ReactElement} Rendered component.
  */
 export default function PerformanceDashboard( { onError } ) {
@@ -102,10 +118,10 @@ export default function PerformanceDashboard( { onError } ) {
 	} );
 	const [ chartMetric, setChartMetric ] = useState( 'volume' );
 
-	// Page-wide server filter state (lifted from OverviewSection).
+	// The server filter is page-wide scope, not the overview card's own.
 	const [ serverFilter, setServerFilter ] = useState( '' );
 
-	// Breakdown selector state (lifted so the dim rides combined /overview).
+	// The breakdown dimension rides the `overview` fetch, so it lives here.
 	const [ chartBreakdown, setChartBreakdown ] = useState(
 		DEFAULT_CHART_BREAKDOWN
 	);
@@ -113,7 +129,7 @@ export default function PerformanceDashboard( { onError } ) {
 	const [ searchQuery, setSearchQuery ] = useState( '' );
 	const [ searchError, setSearchError ] = useState( null );
 	const [ searchLoading, setSearchLoading ] = useState( false );
-	// request_grep result rows + whether the server capped them.
+	// request_grep result rows, and whether the server capped them.
 	const [ searchResults, setSearchResults ] = useState( null );
 	const [ searchResultsTruncated, setSearchResultsTruncated ] =
 		useState( false );
@@ -124,13 +140,14 @@ export default function PerformanceDashboard( { onError } ) {
 		'15000'
 	);
 
-	// Refs break the resolve/navigation ↔ selection cycle.
+	// Read, never depended on: these keep the callbacks below stable.
 	const selectUrlRef = useRef(
 		/** @type {( url: Object|null ) => void} */ ( () => {} )
 	);
 	const selectRequestRef = useRef(
 		/** @type {( rid: string|null ) => void} */ ( () => {} )
 	);
+	// The catalog is a fresh array on every poll; `applyFoundRequest` is not.
 	const urlsRef = useRef( [] );
 
 	// Read each slice from its own per-slice view node (null until mounted).
@@ -150,7 +167,7 @@ export default function PerformanceDashboard( { onError } ) {
 	const requestDetail = requestDetailSlice?.data ?? null;
 	urlsRef.current = urls;
 
-	// Overview fan-out (replaces applyOverviewBreakdowns' setState calls).
+	// The overview reply's own series, read straight off the slice.
 	const categoryData = useMemo(
 		() => overview?.category_time_series ?? null,
 		[ overview ]
@@ -174,7 +191,7 @@ export default function PerformanceDashboard( { onError } ) {
 		Object.values( serverBreakdownData ).forEach( ( bucket ) =>
 			Object.keys( bucket ).forEach( ( n ) => names.add( n ) )
 		);
-		// The schema's overflow key, not a server: pre-deploy buckets carry it.
+		// The overflow fold, not a server: a read scoped to it matches nothing.
 		names.delete( 'Other' );
 		setServerNames( Array.from( names ).sort() );
 	}, [ serverBreakdownData ] );
@@ -193,6 +210,14 @@ export default function PerformanceDashboard( { onError } ) {
 			? 'status'
 			: chartBreakdown;
 
+	/**
+	 * The drawn dimension's series, or null while none is in hand.
+	 *
+	 * Keyed off `activeBreakdown` rather than the operator's choice, so the
+	 * chart and the dropdown never disagree when `server` falls back. An absent
+	 * key is a dropdown switch the reply has not caught up with, which
+	 * `breakdownState` reads as `pending` instead of as an empty dimension.
+	 */
 	const chartBreakdownData = useMemo( () => {
 		if ( ! overview?.breakdowns ) {
 			return null;
@@ -220,6 +245,11 @@ export default function PerformanceDashboard( { onError } ) {
 	// land before React has re-rendered the selection that preceded it.
 	const selectedUrlRef = useRef( selectedUrl );
 	selectedUrlRef.current = selectedUrl;
+	/**
+	 * Select a URL, recording it in `selectedUrlRef` in the same call.
+	 *
+	 * @param {?Object} urlObj The `{hash, url}` entry to open, or null to close.
+	 */
 	const selectUrlNow = useCallback( ( urlObj ) => {
 		selectedUrlRef.current = urlObj;
 		selectUrlRef.current( urlObj );
@@ -248,8 +278,17 @@ export default function PerformanceDashboard( { onError } ) {
 		}
 	}, [ selectedRequest ] );
 
+	// Where the URL detail was scrolled to, restored when the request closes.
 	const urlDetailScrollRef = useRef( 0 );
 
+	/**
+	 * Open one of the URL's requests inside the modal, or return to the URL
+	 * detail.
+	 *
+	 * @param {?string} rid         The request id to open, or null to go back.
+	 * @param {number}  [partition] The partition the rid was located in. Omit it
+	 *                              to keep the partition already selected.
+	 */
 	const selectRequest = useCallback(
 		( rid, partition ) => {
 			if ( rid ) {
@@ -270,7 +309,12 @@ export default function PerformanceDashboard( { onError } ) {
 		[ baseSelectRequest ]
 	);
 
-	// Opening a URL leaves whatever request was open inside the previous one.
+	/**
+	 * Open a URL's modal, leaving behind whatever request was open inside the
+	 * previous one.
+	 *
+	 * @param {Object} url The `{hash, url}` catalog entry to open.
+	 */
 	const openUrl = useCallback(
 		( url ) => {
 			selectRequest( null );
@@ -280,7 +324,9 @@ export default function PerformanceDashboard( { onError } ) {
 	);
 
 	/**
-	 * Handle sorting of request columns.
+	 * Sort the URL modal's request table by one column. Clicking the column
+	 * already sorted descending flips it to ascending; every other click sorts
+	 * descending.
 	 *
 	 * @param {string} field Field key to sort by.
 	 */
@@ -292,14 +338,13 @@ export default function PerformanceDashboard( { onError } ) {
 	}, [] );
 
 	/**
-	 * Search for a request by ID and open its modal.
+	 * Ask `url_detail` for the title of a hash the loaded catalog page does not
+	 * carry.
 	 *
-	 * @param {string} rid Request ID to search for.
+	 * A hash becomes a title in two steps that need no pairing: select what is
+	 * already known, then ask for the name. The reply names the hash it
+	 * answered, which is how the guard below tells whose title it is.
 	 */
-	// @longform A hash becomes a title here, in two steps that need no pairing:
-	// select what is already known, then ask `url_detail` for the title if the
-	// hash is off the loaded page. The lookup's reply names the hash it
-	// answered, so it upgrades that selection and no other.
 	const { run: lookupUrl } = useCommandOnce( {
 		ci: SERVER,
 		command: 'url_detail',
@@ -316,7 +361,14 @@ export default function PerformanceDashboard( { onError } ) {
 		},
 	} );
 
-	// Show the request now; the title fills in when the lookup answers.
+	/**
+	 * Open a request the server has just located, showing it now and letting the
+	 * title fill in when `lookupUrl` answers.
+	 *
+	 * @param {string} rid  The request id that was found.
+	 * @param {Object} data The `request_search` reply, carrying `url_hash` and
+	 *                      `partition`.
+	 */
 	const applyFoundRequest = useCallback(
 		( rid, data ) => {
 			const known = urlsRef.current.find(
@@ -340,13 +392,22 @@ export default function PerformanceDashboard( { onError } ) {
 		[ lookupUrl, selectUrlNow, setServerFilter ]
 	);
 
+	/**
+	 * Whether a `request_search` reply located the request.
+	 *
+	 * @param {?Object} data The reply payload.
+	 * @return {boolean} True when it carries both a URL hash and a partition.
+	 */
 	const found = ( data ) =>
 		data && data.url_hash && undefined !== data.partition;
 
-	// @longform The deep link is a RETRIED read: it keeps asking while the
-	// intent stands, so a link opened against a dashboard whose catalog has
-	// not moved still converges. That is the whole of the old one-at-a-time
-	// latch and its 1s-to-30s backoff — the substrate's read does both.
+	/**
+	 * Resolve a `?request=` deep link. Only the server can answer for a rid,
+	 * whose partition nothing on the page knows.
+	 *
+	 * A RETRIED read: an undelivered send is asked again while the link still
+	 * stands, and a not-found is an answer that ends it.
+	 */
 	const { run: askDeepLinkRequest } = useCommandOnce( {
 		ci: SERVER,
 		command: 'request_search',
@@ -366,6 +427,10 @@ export default function PerformanceDashboard( { onError } ) {
 		},
 	} );
 
+	/**
+	 * Resolve a `?url=` deep link, which needs the server whenever the hash
+	 * falls outside the loaded catalog page and so carries no title.
+	 */
 	const { run: askDeepLinkUrl } = useCommandOnce( {
 		ci: SERVER,
 		command: 'url_detail',
@@ -403,7 +468,11 @@ export default function PerformanceDashboard( { onError } ) {
 		}
 	}, [ deepLink, askDeepLinkRequest, askDeepLinkUrl ] );
 
-	// The search box: one ask per submit, and a miss is an answer.
+	/**
+	 * Look one exact request id up in the request index and open it. One ask per
+	 * submit, and a miss is an answer: it fills the search box's error instead
+	 * of being re-asked.
+	 */
 	const { run: searchForRequest } = useCommandOnce( {
 		ci: SERVER,
 		command: 'request_search',
@@ -433,6 +502,12 @@ export default function PerformanceDashboard( { onError } ) {
 		},
 	} );
 
+	/**
+	 * Run the exact-id search, clearing the previous answer first so a stale
+	 * error or result list never sits under a search still in flight.
+	 *
+	 * @param {string} rid The request id to look up.
+	 */
 	const searchRequest = useCallback(
 		( rid ) => {
 			if ( ! rid || ! rid.trim() ) {
@@ -447,9 +522,9 @@ export default function PerformanceDashboard( { onError } ) {
 	);
 
 	/**
-	 * Pattern-search recent firehose traffic and render the matching-request list.
-	 *
-	 * @param {string} pattern The search pattern.
+	 * Scan the recent firehose window for a pattern, capped at
+	 * `GREP_RESULT_LIMIT` matching requests. No match reports through the search
+	 * box's error line, so an empty list never sits there unexplained.
 	 */
 	const { run: requestGrep } = useCommandOnce( {
 		ci: SERVER,
@@ -474,6 +549,12 @@ export default function PerformanceDashboard( { onError } ) {
 		},
 	} );
 
+	/**
+	 * Pattern-search recent firehose traffic and render the matching-request
+	 * list.
+	 *
+	 * @param {string} pattern The search pattern.
+	 */
 	const patternSearch = useCallback(
 		( pattern ) => {
 			setSearchLoading( true );
@@ -490,8 +571,9 @@ export default function PerformanceDashboard( { onError } ) {
 	);
 
 	/**
-	 * Search box submit: a rid-shaped token keeps today's exact request lookup;
-	 * anything else (a URL or text pattern) runs a recent-traffic pattern search.
+	 * Route the search box's submit. A rid-shaped token is an exact request
+	 * lookup against the index; anything else — a URL or free text — is a
+	 * pattern search over recent traffic.
 	 *
 	 * @param {string} query The raw search input.
 	 */
@@ -510,7 +592,13 @@ export default function PerformanceDashboard( { onError } ) {
 		[ searchRequest, patternSearch ]
 	);
 
-	// Clicking a pattern-search result deep-links via the exact-rid path.
+	/**
+	 * Open a pattern-search result by re-running the exact-rid path. A grep row
+	 * carries the rid alone, and the URL hash and partition the modal needs come
+	 * only from `request_search`.
+	 *
+	 * @param {string} rid The request id of the clicked row.
+	 */
 	const selectSearchResult = useCallback(
 		( rid ) => {
 			setSearchResults( null );
@@ -520,7 +608,13 @@ export default function PerformanceDashboard( { onError } ) {
 		[ searchRequest ]
 	);
 
-	// Sort recent requests.
+	/**
+	 * The URL's requests in the order the modal's table shows them.
+	 *
+	 * Sorting happens here rather than on the server because the modal already
+	 * holds the rows `url_detail` returned, so a column click costs no fetch. A
+	 * row missing the sort field counts as 0 and still takes a position.
+	 */
 	const sortedRequests = useMemo( () => {
 		if ( ! urlDetail?.requests ) {
 			return [];
@@ -537,10 +631,17 @@ export default function PerformanceDashboard( { onError } ) {
 		return sorted;
 	}, [ urlDetail?.requests, requestSort ] );
 
-	// Use server-built flame_data from Flame Builder.
+	// `Flame_Builder_Node` builds the tree; nothing here derives one.
 	const requestFlameData = requestDetail?.flame_data ?? null;
 
-	// A folded request's merged tree splices in where its entries were.
+	/**
+	 * The entry rows the table renders, and how many of them are real.
+	 *
+	 * A folded request's merged tree splices in where its entries were, so the
+	 * indent walk reads one list either way. `realEntryCount` excludes the
+	 * placeholder rows `computeIndentedEntries` inserts to span time gaps,
+	 * which is what the header counts.
+	 */
 	const { entries: indentedEntries, realCount: realEntryCount } = useMemo(
 		() =>
 			computeIndentedEntries(
@@ -576,7 +677,7 @@ export default function PerformanceDashboard( { onError } ) {
 		return totalC > 0 ? totalS / totalC : 0;
 	}, [ serverFilter, serverBreakdownData, overview?.global_avg_ms ] );
 
-	// Inline "Log this URL" state: ruleDraft = open rule, existingRule = label.
+	// Inline "Log this URL" state: the open draft, the ruleset, and the error.
 	const [ ruleDraft, setRuleDraft ] = useState( null );
 	// The whole ruleset as the server last reported it; null until it answers.
 	const [ rules, setRules ] = useState( null );
@@ -586,11 +687,15 @@ export default function PerformanceDashboard( { onError } ) {
 	const canLogUrl = !! ruleUrl && UNKNOWN_URL() !== ruleUrl;
 	// Strip origin so exact rule matches REQUEST_URI ('?' = match sentinel).
 	const rulePath = ruleUrl ? ruleUrl.replace( /^https?:\/\/[^/]+/, '' ) : '';
-	// Append the sentinel only for a URL that lacks a '?'; else use path as-is.
+	// A path already carrying a query is the exact-plus-query-prefix form.
 	const needsSentinel = ruleUrl && ! rulePath.includes( '?' );
 	const exactPattern = needsSentinel ? `${ rulePath }?` : rulePath;
 
-	// A retried READ; this modal's rule is DERIVED from it, never a copy.
+	/**
+	 * Read the whole ruleset. A retried READ, and `existingRule` is DERIVED from
+	 * the answer on every render rather than copied into state, so the button's
+	 * label and the draft it opens always agree with the ruleset last read.
+	 */
 	const { run: listRules } = useCommandOnce( {
 		ci: RULES_CI,
 		command: 'list',
@@ -602,6 +707,7 @@ export default function PerformanceDashboard( { onError } ) {
 			? rules.find( ( r ) => r.pattern === exactPattern ) ?? null
 			: null;
 
+	// A new URL is a new rule question: drop the old draft and re-read.
 	useEffect( () => {
 		setRuleError( null );
 		setRuleDraft( null );
@@ -610,7 +716,10 @@ export default function PerformanceDashboard( { onError } ) {
 		}
 	}, [ ruleUrl, exactPattern, canLogUrl, selectedRequest, listRules ] );
 
-	// Open RuleEditModal on the exact rule (edit) or a blank seeded rule (add).
+	/**
+	 * Open `RuleEditModal` on the exact rule for this URL, or on a blank draft
+	 * seeded with its pattern when no rule matches.
+	 */
 	const openRuleEditor = useCallback( () => {
 		if ( ! canLogUrl ) {
 			return;
@@ -625,7 +734,10 @@ export default function PerformanceDashboard( { onError } ) {
 		);
 	}, [ canLogUrl, existingRule, exactPattern ] );
 
-	// The reply closes the editor or fills the banner; the ruleset re-reads.
+	/**
+	 * Write one rule. The reply closes the editor or fills the banner, and a
+	 * success re-reads the ruleset rather than patching the copy in hand.
+	 */
 	const { run: upsertRule } = useCommandOnce( {
 		ci: RULES_CI,
 		command: 'upsert',
@@ -646,11 +758,19 @@ export default function PerformanceDashboard( { onError } ) {
 			);
 		},
 	} );
+	/**
+	 * Save the open draft, sending the rule as one JSON document.
+	 *
+	 * @param {Object} draft The rule as `RuleEditModal` hands it back.
+	 */
 	const saveRule = useCallback(
 		( draft ) => upsertRule( [ JSON.stringify( draft ) ] ),
 		[ upsertRule ]
 	);
 
+	/**
+	 * Delete one rule by id, on the same reply contract as `upsertRule`.
+	 */
 	const { run: removeRule } = useCommandOnce( {
 		ci: RULES_CI,
 		command: 'delete',
@@ -669,6 +789,10 @@ export default function PerformanceDashboard( { onError } ) {
 			);
 		},
 	} );
+	/**
+	 * Delete the rule the open draft names. The editor offers this only for a
+	 * draft that already has an id, so a blank "Log this URL" draft cannot.
+	 */
 	const deleteRule = useCallback(
 		() => removeRule( [ ruleDraft?.id ] ),
 		[ removeRule, ruleDraft ]

@@ -1,5 +1,5 @@
 /**
- * The one area-chart frame both Performance time series draw on.
+ * The one area-chart frame both slot-bucketed Performance series draw on.
  *
  * Axes, areas, tooltip and legend over a series list already sampled at the
  * caller's slot resolution: `AggregateTimeChart` hands it request metrics,
@@ -8,7 +8,9 @@
  * do not (averages).
  *
  * Every label arrives already translated. This component holds no wording of
- * its own, so `__()` keeps its literal arguments at the call site.
+ * its own, so `__()` keeps its literal arguments at the call site. That is
+ * also why the tooltip's column total rides on `totalLabel` rather than on a
+ * flag: naming the row is the caller's job, so the name is the switch.
  */
 
 import { useCallback } from '@wordpress/element';
@@ -22,7 +24,12 @@ import {
 } from '@newspack-nodes/shared/hooks/useTimeChart';
 
 /**
- * Area time chart component.
+ * Draws one already-sampled series list as areas under a shared frame.
+ *
+ * The tooltip carries the ten largest non-zero series for the hovered column,
+ * largest first. One series arrives per breakdown value with no ceiling here,
+ * and a series contributing nothing to that column would crowd out the ones
+ * that do.
  *
  * @param {Object}                                                          props              Component props.
  * @param {Array}                                                           props.series       `[ { label, values: [ { date, value } ] } ]`; every series shares one slot list.
@@ -74,6 +81,7 @@ export default function AreaTimeChart( {
 				: d3.max( series, ( s ) =>
 						d3.max( s.values, ( v ) => v.value )
 				  );
+			// 10% headroom clears the peak band; an all-zero one gets [0,1].
 			const y = d3
 				.scaleLinear()
 				.domain( [ 0, peak * 1.1 || 1 ] )
@@ -97,6 +105,7 @@ export default function AreaTimeChart( {
 				.y1( ( d ) => y( d.y1 ) )
 				.curve( d3.curveMonotoneX );
 
+			// The overlaid mark trades fill for outline, so bands stay apart.
 			series.forEach( ( s, i ) => {
 				const band = s.values.map( ( v, idx ) => {
 					const y0 = stacked ? baseline[ idx ] : 0;
@@ -112,7 +121,6 @@ export default function AreaTimeChart( {
 					.attr( 'd', area );
 			} );
 
-			// The tooltip lists the 10 largest non-zero series, largest first.
 			setupTooltip( g, {
 				innerW,
 				innerH,
@@ -158,6 +166,7 @@ export default function AreaTimeChart( {
 
 	const { containerRef, tooltipRef } = useTimeChart( renderFn );
 
+	// `position: relative` makes this wrapper the tooltip's offset parent.
 	return (
 		<div className={ className } style={ { position: 'relative' } }>
 			<h3>{ title }</h3>

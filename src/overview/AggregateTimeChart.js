@@ -10,8 +10,9 @@
  * selected dimension's series is the only thing this chart ever draws. It
  * holds no undifferentiated totals to fall back on, because a series legended
  * "Total" under a dropdown reading "User Agent" answers a question nobody
- * asked. `OverviewSection` mounts it for the global series, `UrlDetailView`
- * for one URL's.
+ * asked. `BreakdownControls` mounts it under the Metric and Breakdown selects
+ * that set both props — for the global series in the Overview card, and for
+ * one URL's in the detail modal.
  */
 
 import { useCallback, useMemo } from '@wordpress/element';
@@ -23,6 +24,12 @@ import {
 	integerTicks,
 } from '@newspack-nodes/shared/utils/axis-ticks';
 
+/**
+ * Milliseconds per second, converting the seconds the `cumulative` metric
+ * plots back into the milliseconds `axisDuration` picks a unit from.
+ *
+ * @type {number}
+ */
 const MS_PER_SECOND = 1000;
 import {
 	PALETTE,
@@ -31,28 +38,28 @@ import {
 import AreaTimeChart from './components/AreaTimeChart';
 import { RETENTION_SECONDS } from './retention';
 
+/**
+ * Total SVG height in pixels, margins included, handed to `AreaTimeChart`.
+ *
+ * This panel draws ONE chart where `CategoryTimeChart` stacks three, so it
+ * can afford the taller frame.
+ *
+ * @type {number}
+ */
 const CHART_HEIGHT = 280;
 
 /**
- * Requests, whole ones — and the axis ticks in the same unit.
+ * Requests, whole ones, and the integer tick ladder to match.
+ *
+ * `drawAxes` ticks the axis with whatever `tickValues` the formatter carries,
+ * so the ladder rides on the formatter. Without it a short axis takes d3's
+ * fractional ticks and prints the same rounded label twice.
  *
  * @param {number} count Requests in the bucket.
  * @return {string} Formatted count.
  */
 const formatRequests = d3.format( 'd' );
 formatRequests.tickValues = integerTicks;
-
-/**
- * Average response time, rounded to the millisecond by `bucketValue`.
- *
- * Formatted by the same ladder the cumulative axis reads in, because the unit
- * has to follow the data: a slow site's axis runs to five digits of
- * milliseconds — `140000ms` — which is wider than the axis title beside it, and
- * the two collide. Sub-second values still read in milliseconds.
- *
- * @param {number} ms Milliseconds.
- * @return {string} Formatted duration, e.g. `250ms`, `4.2s`, `140s`.
- */
 
 /**
  * Average peak memory, already in megabytes.
@@ -67,6 +74,12 @@ const formatMemoryMb = ( mb ) => `${ Number( mb.toFixed( 1 ) ) }MB`;
  * prints is the unit its axis ticks in, and for a duration that unit follows
  * the data: pinned to milliseconds, a slow site's ticks run to five digits and
  * collide with the axis title beside them.
+ *
+ * Each entry takes the largest value its axis has to show and returns the
+ * formatter for it. `volume` and `memory` ignore that domain, because a count
+ * and a megabyte have one unit each.
+ *
+ * @type {Object<string,(max: number) => import('@newspack-nodes/shared/utils/axis-ticks').AxisFormatter>}
  */
 const Y_FORMATS = {
 	volume: () => formatRequests,
@@ -88,7 +101,9 @@ const Y_FORMATS = {
  * @param {number} count     Requests in the bucket.
  * @param {number} sumMs     Milliseconds of response time in the bucket.
  * @param {number} sumPeakMb Megabytes of peak memory in the bucket.
- * @return {number} Value to plot.
+ * @return {number} Requests for `volume`, mean milliseconds for `avg`, summed
+ * seconds for `cumulative`, mean megabytes for `memory`. An empty bucket
+ * averages to 0 rather than dividing by zero.
  */
 const bucketValue = ( metric, count, sumMs, sumPeakMb ) => {
 	if ( 'memory' === metric ) {
@@ -164,7 +179,7 @@ export function breakdownState( breakdownData = null ) {
 }
 
 /**
- * Aggregate Time Chart component.
+ * Samples the selected dimension into slot series and draws them.
  *
  * Renders nothing unless the selected dimension carries values, so a caller
  * may mount it before the first fetch returns — and must keep the dropdowns up
@@ -172,8 +187,8 @@ export function breakdownState( breakdownData = null ) {
  *
  * @param {Object}      props                Component props.
  * @param {Object|null} props.breakdownData  Bucket key => dimension value => `{ c, s, m }` (count, sum ms, sum peak MB).
- * @param {string}      props.metric         'volume' | 'avg' | 'cumulative' | 'memory'.
- * @param {string}      props.breakdown      Dimension `breakdownData` was fetched for; picks the palette only.
+ * @param {string}      [props.metric]       'volume' | 'avg' | 'cumulative' | 'memory'; defaults to 'volume'.
+ * @param {string}      [props.breakdown]    Dimension `breakdownData` was fetched for, defaulting to 'status'; picks the palette only.
  * @param {string}      [props.serverFilter] Server name for the heading; the caller has already filtered the data.
  * @return {import('react').ReactElement|null} Rendered chart, or null when the dimension has no series.
  */
@@ -198,7 +213,7 @@ export default function AggregateTimeChart( {
 		} );
 		const dimValues = Array.from( valueSet );
 
-		// Color map: STATUS_COLORS for status breakdown, PALETTE otherwise.
+		// Status classes keep the dashboard's shared 2xx green, 5xx red.
 		const colorMap = {};
 		dimValues.forEach( ( v, i ) => {
 			colorMap[ v ] =

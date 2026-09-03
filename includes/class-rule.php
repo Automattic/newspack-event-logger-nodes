@@ -3,10 +3,9 @@
  * One per-URL logging rule: a URL pattern, its log/skip verdict, and the
  * instrumentation a log verdict carries.
  *
- * The ruleset replaced the seven global logging options. Three classes divide
- * the work: `Rule` is this immutable row, `Rule_Set` persists the list and
- * resolves pointer-tier hooks, and `Rule_Matcher` picks the one rule that
- * governs a request.
+ * Three classes divide the ruleset: `Rule` is this immutable row, `Rule_Set`
+ * persists the list and resolves pointer-tier hooks, and `Rule_Matcher` picks
+ * the one rule that governs a request.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -27,23 +26,35 @@ use Newspack_Nodes\Core;
  */
 final class Rule {
 
-	public const ACTION_LOG   = 'log';
-	public const ACTION_SKIP  = 'skip';
+	/** Verdict: instrument this request. */
+	public const ACTION_LOG = 'log';
+
+	/** Verdict: log nothing. Every action but ACTION_LOG reads as this one. */
+	public const ACTION_SKIP = 'skip';
+
+	/** Hook tier: the list rides in `hooks`, inside the autoloaded ruleset. */
 	public const HOOKS_INLINE = 'inline';
 
 	/**
-	 * Backtraces one hook may spend when `trace_callers` is on but unnumbered.
+	 * Caller chains one hook records when `trace_callers` is stored as `true`
+	 * rather than as a count.
 	 *
-	 * A fixed 20 left 21% of a real record's time unattributed, so a rule can
-	 * name its own number; `true` still means this one.
+	 * Twenty is sized for a hook that fires sixteen times: enough to see a
+	 * repeat whole, few enough that a hot hook stops paying after the first
+	 * twenty. A rule needing a wider window names its own count, because a
+	 * diagnostic run wants what steady state does not.
 	 */
 	public const TRACE_CALLERS_DEFAULT = 20;
-	public const HOOKS_MC     = 'mc';
 
 	/**
-	 * Every property is readonly; `with_id()` is the only derivation this class
-	 * offers, and Rule_Set / Auto_Tuner_Node build a fresh Rule for any other
-	 * change.
+	 * Hook tier: `hooks` is null and the list lives in a per-rule durable
+	 * option mirrored into memcache, which `Rule_Set::hooks_for()` resolves.
+	 */
+	public const HOOKS_MC = 'mc';
+
+	/**
+	 * Every property is readonly. `with()` derives a changed copy and
+	 * `with_id()` narrows that to the id, so nothing mutates a rule in place.
 	 *
 	 * @param string        $id                          Stable short id, the pattern's Log_Manager::url_hash(); keys the durable hooks option and its mc mirror. '' when the source map carried none — Rule_Set mints it from the pattern.
 	 * @param string        $pattern                     '/prefix', exact '/path?', or exact path plus query prefix '/path?query'.
@@ -55,7 +66,9 @@ final class Rule {
 	 * @param string[]|null $hooks                       Inline list when hooks_in=inline; null when hooks_in=mc, meaning unresolved.
 	 * @param string        $hooks_in                    self::HOOKS_INLINE | self::HOOKS_MC.
 	 * @param bool          $log_queries                 Time every SQL query as its own span; needs SAVEQUERIES and costs two entries per query.
-	 * @param bool          $log_http                    Time every outbound HTTP request as its own span. On unless a rule says otherwise: it was unconditional before it was a flag.
+	 * @param bool          $log_http                    Time every outbound HTTP request as its own span, between `pre_http_request` and `http_api_debug`. On by default: a request making no remote calls pays two add_filter() calls and nothing else.
+	 * @param bool          $trace_hooks                 Name the calling frame on each hook entry's aggregation label, so one hook firing sixteen times splits into a flame node per caller. Costs one shallow backtrace per firing.
+	 * @param int           $trace_callers               Deep caller chains one hook may record per request, on its start entry's `caller` field; 0 = off. A stored `true` decodes to self::TRACE_CALLERS_DEFAULT.
 	 *
 	 * @throws \InvalidArgumentException When the pattern is empty, or hooks and hooks_in contradict.
 	 */
@@ -115,7 +128,7 @@ final class Rule {
 	 * A copy of this rule with some fields replaced, the object being immutable.
 	 *
 	 * Keys are `to_array()`'s; anything absent is carried over. Reconstructing
-	 * by hand means nine positional arguments at every call site, and a field
+	 * by hand means thirteen positional arguments at every call site, and a field
 	 * added to the constructor silently drops out of the ones that were missed.
 	 *
 	 * @param array<string,mixed> $overrides Fields to replace.
@@ -186,11 +199,11 @@ final class Rule {
 	/**
 	 * How many caller traces a stored value asks for.
 	 *
-	 * `true` predates the count and means the default; anything numeric is the
-	 * number itself; everything else is off. A negative is off, not a cap that
-	 * never trips.
+	 * `true` means the default count, a numeric value is the count itself, and
+	 * everything else is off. A negative is off, not a cap that never trips.
 	 *
 	 * @param mixed $v Stored value.
+	 * @return int Caller chains per hook; 0 when off.
 	 */
 	private static function to_trace_count( mixed $v ): int {
 		if ( true === $v ) {

@@ -8,7 +8,10 @@
  * like a finding.
  */
 
-/** A prompt longer than this stops being a link and starts being a payload. */
+/**
+ * A prompt longer than this stops being a link and starts being a payload. The
+ * budget counts percent-encoded characters, which is what the URL carries.
+ */
 const PROMPT_MAX = 6000;
 
 /** What the brief is, for a chat that has no other context. */
@@ -46,10 +49,11 @@ const MCP_NOTE =
  * A number a reader can scan, without dragging a formatter in.
  *
  * Below 1 the tenth is not enough: shares and per-call costs live there, and
- * one decimal rendered a 4% self share as `0.0` beside a finding saying 4%.
+ * one decimal renders a 4% self share as `0.0` beside a finding saying 4%.
  *
- * @param {*} value Anything numeric-ish.
- * @return {string} The rendered number.
+ * @param {*} value A number, or whatever the brief carried in its place.
+ * @return {string} The number at one decimal, three below 1; a non-number as
+ *                  its own string form, and `—` when it is null or absent.
  */
 function num( value ) {
 	if ( 'number' !== typeof value || ! Number.isFinite( value ) ) {
@@ -148,7 +152,8 @@ function findingLines( finding ) {
  * Subject-specific body, above the findings.
  *
  * @param {Object} brief An assembled brief.
- * @return {string[]} Markdown list items.
+ * @return {string[]} Markdown list items; none for a subject this renderer
+ *                    does not know, which still gets its heading and caveat.
  */
 function bodyLines( brief ) {
 	switch ( brief.subject ) {
@@ -213,7 +218,7 @@ function bodyLines( brief ) {
 									.replace( /\.\d+Z$/, 'Z' )
 							: '',
 					],
-					// Its own pair; concatenated it left a bare parenthetical.
+					// Its own pair; concatenated it is a bare parenthetical.
 					[
 						'scan',
 						brief.scan_stopped_early

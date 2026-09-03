@@ -7,9 +7,10 @@
  * module does nothing, so loading the bundle elsewhere is harmless.
  *
  * esbuild builds this as its own bundle; the error-log, gyroscope, requests,
- * settings, and current-request trees are separate entries. `PerformanceDashboard`
- * splits again at runtime, so the page chrome paints under `LoadingFallback`
- * while that chunk resolves.
+ * settings and current-request trees are separate entries. The
+ * `styles/base.scss` import below is what makes the kit emit
+ * `build/overview/index.css`, the stylesheet `enqueue_react_page()` pairs with
+ * the script; without it the page loses its scoped reset and overview layout.
  */
 
 import {
@@ -26,7 +27,13 @@ import ThemedRoot from '../components/ThemedRoot';
 import LoadingFallback from '../components/LoadingFallback';
 import './nodes/register';
 
-// Code-split: the shell paints under LoadingFallback until this chunk lands.
+/**
+ * The dashboard body, code-split into a chunk of its own.
+ *
+ * The split is what lets the page chrome — heading, error notice and debug
+ * overlay — paint under `LoadingFallback` rather than wait on the whole
+ * dashboard.
+ */
 const PerformanceDashboard = lazy( () => import( './PerformanceDashboard' ) );
 
 import './styles/base.scss';
@@ -41,11 +48,20 @@ import './styles/base.scss';
  * reader can also dismiss it.
  *
  * `ThemedRoot` supplies the console-selected skin tokens and paints the
- * surrounding WP-admin gutters to match. `DebugOverlay` carries this page's own
- * `storageKey`, which keeps its panel layout separate from every sibling
- * dashboard's.
+ * surrounding WP-admin gutters to match. The Gyroscope, Request Log and Error
+ * Log pages reach it through `DashboardShell`; this page does not, because that
+ * shell is a fixed full-viewport box and Performance flows in WP-admin's own
+ * padded column. `DebugOverlay` carries this page's own `storageKey`, which
+ * keeps its panel layout separate from every sibling dashboard's.
+ *
+ * Both wrappers carry paired class names: the `newspack-nodes-` half brings the
+ * substrate's shared appearance, and `event-logger-admin-wrap` adds this page's
+ * padding and min-height. `dashboard-theme-root.test.js` pins both pairs
+ * exactly, so a rename fails a test rather than quietly reshaping the page.
  *
  * @return {import('react').ReactElement} Rendered component.
+ * @testonly Exported for index.test.js and dashboard-theme-root.test.js; the
+ *           mount below is the only production caller.
  */
 export function AdminApp() {
 	const [ error, setError ] = useState( null );
@@ -53,12 +69,14 @@ export function AdminApp() {
 	/**
 	 * Raise a dashboard failure into the page's error notice.
 	 *
-	 * @param {Error} err Error object; a blank message falls back to a generic string.
+	 * @param {string} reason Why the ask failed, as `useAsk` reports it: the
+	 *                        reply's `error` string, or the message it builds
+	 *                        for a reply that carried no brief. An empty
+	 *                        reason renders the generic string instead.
 	 */
-	const handleError = ( err ) => {
+	const handleError = ( reason ) => {
 		setError(
-			err.message ||
-				__( 'An error occurred', 'newspack-event-logger-nodes' )
+			reason || __( 'An error occurred', 'newspack-event-logger-nodes' )
 		);
 	};
 
@@ -111,7 +129,6 @@ export function AdminApp() {
 	);
 }
 
-// Mount once the DOM is ready; no container means no render, and no error.
 document.addEventListener( 'DOMContentLoaded', () => {
 	const dashboardContainer = document.getElementById( 'event-logger-admin' );
 	if ( dashboardContainer ) {

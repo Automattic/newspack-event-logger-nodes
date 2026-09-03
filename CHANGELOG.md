@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Every failed Ask showed "An error occurred" instead of why.** `useAsk` reports a reason STRING — the substrate types a reply's `error` as `?string`, and `errorMessage()` coerces every TM_ERROR payload before `onDone` sees it — but the page's handler read `err.message`, which is `undefined` on a string, so the real reason was discarded on both failure paths. The tests passed because they drove the handler with an `Error` object production never sends; they now use the string the runtime actually delivers, and fail against the old code.
+
+### Documentation
+
+- **Every PHP and JS source file's documentation reviewed against its code.** One agent per file, tests excluded: missing docblocks written, `@param`/`@return` drift corrected against the real signature, documentation for deleted behaviour removed, and the why recorded where the what was already plain. Comments describing history rather than the present are gone.
+- **JSDoc types repaired where the sweep's prose broke the type gate.** An `@type` naming `LazyExoticComponent` with no type argument overrode correct inference and erased `PerformanceDashboard`'s whole props contract; `@` inside prose (`@<priority>`, `@0`) parses as a tag and is a syntax error; a `%s` was handed a number.
+
 ## [0.86.2] - 2026-09-02
 
 ### Fixed

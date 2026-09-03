@@ -2,15 +2,18 @@
  * Request Stream Component — real-time scrolling log of completed requests.
  *
  * A THIN wrapper over the shared `LogStreamViewer` chrome (toolbar, filter,
- * counts + rate, pause, Debug, Clear, banner, body split, virtualized
- * `LogRowList`). The `requestlog:*` node graph (mounted by `useRequestLogGraph`)
- * owns all data: `requestlog:link` holds the EventSource and routes envelopes
- * to `requestlog:view` (a `LogStreamViewNode` subclass), whose ring the list
- * reads straight off the node each frame. This component only supplies the
- * differing pieces: the column set + picker, the grid row/header renderers,
- * the URL ingest gate, the toolbar partition picker, and the segment rail.
+ * counts + rate, pause, step, offset jump, Debug, Clear, banner, body split,
+ * virtualized `LogRowList`). The `requestlog:*` node graph (mounted by
+ * `useRequestLogGraph`) owns all data: `requestlog:link` holds the EventSource
+ * and fans its frames through the `requestlog:stream` Tee into
+ * `requestlog:view` (a `LogStreamViewNode` subclass), whose ring the list reads
+ * straight off the node each frame — row data never becomes React state. This
+ * component supplies only the differing pieces: the column set + picker, the
+ * grid row/header renderers, the request-count and rate labels, the filter
+ * placeholder, the toolbar partition picker, and the segment rail.
  *
- * Click any request to view its full trace in the Performance Dashboard.
+ * Click a request ID for its full trace in the Performance Dashboard; click a
+ * URL for that URL's stats.
  */
 
 import { useState, useCallback, memo } from '@wordpress/element';
@@ -37,13 +40,48 @@ import {
 } from '../log-table/logTable';
 import './styles/request-stream.scss';
 
+/**
+ * Fixed row height, in pixels.
+ *
+ * `LogRowList` virtualizes on this number and publishes it to the scss as
+ * `--log-row-height`, so its scroll arithmetic and the drawn row cannot
+ * disagree.
+ *
+ * @type {number}
+ */
 const ROW_HEIGHT = 33;
+
+/**
+ * The view-model node. The chrome reads its published state; `LogRowList`
+ * reads its ring.
+ *
+ * @type {string}
+ */
 const VIEW_NODE = 'requestlog:view';
+
+/**
+ * What the chrome renders until `requestlog:view` publishes its first `view`
+ * state — the two fields it reads, so the pause button and the reconnect
+ * banner never render off an undefined.
+ *
+ * @type {{paused: boolean, connectionError: boolean}}
+ */
 const EMPTY_VIEW = { paused: false, connectionError: false };
+
+/**
+ * localStorage key holding the reader's column selection.
+ *
+ * @type {string}
+ */
 const COLUMNS_STORAGE_KEY = 'event-logger-stream-columns';
 
 /**
- * Column definitions for the request log; the rest come from the shared set.
+ * The request log's columns, keyed by the row field each draws. Only what
+ * differs from the shared set is spelled out; `logColumns()` merges the rest.
+ * Declaration order is the table's column order, because `useColumnPicker`
+ * re-inserts a toggled-on column here rather than at the end.
+ *
+ * @type {Object}
  */
 const COLUMNS = logColumns( {
 	time: {
@@ -61,9 +99,23 @@ const COLUMNS = logColumns( {
 	},
 } );
 
-// Shipped as `status`; the shared column set spells it `status_code`.
+/**
+ * Retired column key → current key, for selections already in localStorage.
+ *
+ * A stored selection naming `status` restores as `status_code`. Without the
+ * mapping `useColumnPicker` discards the unknown key, Status vanishes from
+ * every selection that names it, and the write-back makes the loss permanent.
+ *
+ * @type {Object<string,string>}
+ */
 const COLUMN_ALIASES = { status: 'status_code' };
 
+/**
+ * The columns visible before the reader chooses — every declared column except
+ * `user_agent`, which the "Cols" picker turns on.
+ *
+ * @type {string[]}
+ */
 const DEFAULT_COLUMNS = [
 	'time',
 	'rid',
@@ -73,12 +125,24 @@ const DEFAULT_COLUMNS = [
 	'duration',
 ];
 
-// Count + rate labels for the shared toolbar stats.
+/**
+ * The toolbar's rate label: requests per second, to one decimal place.
+ *
+ * @type {( lps: number ) => string}
+ */
 const renderRate = rateLabel(
 	// translators: %s: requests-per-second rate, formatted to one decimal place.
 	__( '%s req/s', 'newspack-event-logger-nodes' )
 );
 
+/**
+ * The toolbar's count label: rows shown over rows held while the filter hides
+ * some, the plain total otherwise. Requests, not lines — and both forms are
+ * spelled out here because `_n()` extracts only literals.
+ *
+ * @param {{total: number, visible: number}} stats Ring stats from `LogRowList`.
+ * @return {string} The label.
+ */
 const renderCount = ( stats ) =>
 	countLabel(
 		stats,
@@ -98,7 +162,11 @@ const renderCount = ( stats ) =>
 		)
 	);
 
-// One cell of a `requestlog:view` row, by column.
+/**
+ * One cell of a `requestlog:view` row, by column.
+ *
+ * @type {( col: string, row: Object ) => import('react').ReactElement}
+ */
 const renderCell = cellRenderer( {
 	time: ( row, col ) => timeCell( row.timestamp, col ),
 	duration: ( row, col ) => durationCell( row.duration_ms, col ),
@@ -109,15 +177,26 @@ const renderCell = cellRenderer( {
 	user_agent: ( row, col ) => uaCell( row.user_agent, col ),
 } );
 
-// JSDoc rides the inner function: on the const, memo() infers props as `{}`.
 const StreamRow = memo(
 	/**
-	 * Memoized row component - only re-renders when the row or columns change.
+	 * One request-log row — the visible cells on a grid, re-rendered only when
+	 * the row or the column set changes.
+	 *
+	 * The docblock rides this inner function rather than the `StreamRow`
+	 * const, where `memo()` infers the props as `{}`.
 	 *
 	 * @param {Object}   props                Component props.
-	 * @param {Object}   props.row            Row from `requestlog:view`: timestamp, rid, method, url, urlHash, status_code, remote_addr, user_agent, duration_ms, plus the base view node's `id` and `isEven`.
-	 * @param {string[]} props.visibleColumns Column keys to render, in display order.
-	 * @param {string}   props.gridTemplate   `grid-template-columns` value for the row.
+	 * @param {Object}   props.row            Row from `requestlog:view`. Its
+	 *                                        `shapeRow()` supplies `timestamp`,
+	 *                                        `rid`, `method`, `url`, `urlHash`,
+	 *                                        `status_code`, `remote_addr`,
+	 *                                        `user_agent` and `duration_ms`;
+	 *                                        the base view node stamps `id` and
+	 *                                        `isEven`.
+	 * @param {string[]} props.visibleColumns Column keys to render, in display
+	 *                                        order.
+	 * @param {string}   props.gridTemplate   `grid-template-columns` value for
+	 *                                        the row.
 	 * @return {import('react').ReactElement} Rendered row.
 	 */
 	function StreamRow( { row, visibleColumns, gridTemplate } ) {
@@ -136,19 +215,20 @@ const StreamRow = memo(
 );
 
 /**
- * Request Stream Component.
+ * The Request Log dashboard: completed requests in the shared viewer chrome.
  *
- * @param {Object} props            Component props.
- * @param {number} props.maxEntries Maximum rows to keep in the view ring.
+ * @param {Object} props              Component props.
+ * @param {number} [props.maxEntries] Rows the view ring holds; 500 unless the
+ *                                    page names its own.
  * @return {import('react').ReactElement} Rendered component.
  */
 export default function RequestStream( { maxEntries = 500 } ) {
-	// Mount the graph; returns the control callbacks + the browse model.
+	// Mount the graph; it returns the controls and the browse model.
 	const { setPaused, clear, step, browse, setFilter } = useRequestLogGraph( {
 		maxEntries,
 	} );
 
-	// Low-freq view model (pause button, empty-state label, reconnect banner).
+	// The low-frequency model: the pause button and the reconnect banner.
 	const view = useNodeState( VIEW_NODE, 'view' ) ?? EMPTY_VIEW;
 	const { paused: isPaused, connectionError } = view;
 
@@ -174,7 +254,7 @@ export default function RequestStream( { maxEntries = 500 } ) {
 		[ visibleColumns, gridTemplate ]
 	);
 
-	// Re-read the live nodes each frame so a graph reinit is picked up.
+	// Read the live node per frame, so a graph rebuild is picked up.
 	const getViewNode = useCallback( () => Core.node( VIEW_NODE ), [] );
 
 	const listHeader = logListHeader( {

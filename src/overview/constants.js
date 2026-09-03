@@ -1,11 +1,13 @@
 /**
- * Dropdown option lists for the Performance Dashboard.
+ * The Performance Dashboard's dropdown vocabularies.
  *
- * `PerformanceDashboard`, `OverviewSection`, and `UrlDetailView` share these
- * three lists; the Gyroscope in-flight view keeps its own in
- * `src/gyroscope/constants.js`. Each entry is a `SelectControl` option, so the
- * `label` is translated and the `value` is the token the rest of the dashboard
- * — and, for breakdowns, the server — matches on.
+ * `PerformanceDashboard` reads the refresh cadences and the breakdown default,
+ * `OverviewSection` the refresh cadences and the breakdown dimensions, and
+ * `BreakdownControls` the metrics and the dimensions; the Gyroscope in-flight
+ * view keeps its own list in `src/gyroscope/constants.js`. Each entry is a
+ * `SelectControl` option, so the `value` is the token the rest of the dashboard
+ * — and, for breakdowns, the server — matches on. The metric and dimension
+ * labels are translated; the refresh cadences' unit abbreviations are not.
  */
 
 import { __ } from '@wordpress/i18n';
@@ -19,9 +21,9 @@ import { __ } from '@wordpress/i18n';
  *
  * The list doubles as the validation whitelist for the persisted
  * `event-logger-refresh-interval` localStorage value: `PerformanceDashboard`
- * discards a saved string absent here and falls back to `'15000'`. Dropping
- * that entry would therefore leave the dashboard defaulting to a value the
- * dropdown cannot render.
+ * hands it to `usePersistedChoice`, which discards a saved string matching no
+ * option here and falls back to `'15000'`. Dropping that entry would leave the
+ * dashboard defaulting to a value the dropdown cannot render.
  */
 export const DASHBOARD_REFRESH_OPTIONS = [
 	{ label: '1s', value: '1000' },
@@ -35,11 +37,16 @@ export const DASHBOARD_REFRESH_OPTIONS = [
 /**
  * Metric choices for the aggregate time chart's "Metric" dropdown.
  *
- * The `value` drives both the shape and the units `AggregateTimeChart` draws:
- * `avg` and `memory` render as lines, `volume` and `cumulative` as stacked
- * bars, and `memory` reads the `peak_mb` field where the others read
- * `duration_ms`. `PerformanceDashboard` and `UrlDetailView` each default their
- * own state to `'volume'` — the list order does not set the default.
+ * Every metric reads the same three per-bucket totals — `c`, `s` and `m`, the
+ * request count, the summed milliseconds and the summed peak megabytes — and
+ * the `value` decides how `AggregateTimeChart` reduces them: `volume` plots the
+ * count, `avg` the mean millisecond, `cumulative` the summed seconds, `memory`
+ * the mean megabyte. It also decides the shape. `volume` and `cumulative` stack
+ * their series; `avg` and `memory` overlay one translucent area per series,
+ * because averages do not add up.
+ *
+ * `PerformanceDashboard` and `UrlDetailView` each seed their own state with
+ * `'volume'`. The list order sets no default.
  */
 export const CHART_METRIC_OPTIONS = [
 	{
@@ -68,11 +75,13 @@ export const CHART_METRIC_OPTIONS = [
  * `Flame_Builder_Node::DIM_FIELDS` (which decides what gets accumulated in the
  * first place). A value in only one of the three yields an empty breakdown.
  *
- * The full list. `PerformanceDashboard` is the only consumer that narrows it:
- * it offers `server` while `canBreakDownByServer` holds — no server filter, and
- * two or more servers known — and resolves the active dimension against the
- * same flag, so a reply that has not landed yet keeps the default. The URL
- * modal passes no `breakdownOptions` and therefore offers every entry.
+ * `BreakdownControls` offers the whole list unless its caller narrows it, and
+ * only the Overview card does: `OverviewSection` drops `server` whenever
+ * `canBreakDownByServer` is false — no server filter, and two or more servers
+ * known. `PerformanceDashboard` computes that flag, passes it down, and
+ * resolves the active dimension against the same flag, so a reply that has not
+ * landed yet keeps the default. The URL modal passes no `breakdownOptions` and
+ * therefore offers every entry.
  */
 export const CHART_BREAKDOWN_OPTIONS = [
 	{ label: __( 'Server', 'newspack-event-logger-nodes' ), value: 'server' },
@@ -93,9 +102,10 @@ export const CHART_BREAKDOWN_OPTIONS = [
 /**
  * What the aggregate chart breaks down by until someone chooses otherwise.
  *
- * `PerformanceDashboard` resolves it to `status` whenever `canBreakDownByServer`
- * is false. That fallback is DERIVED, never written back over this default, so
- * a hub whose second server reports late gets the axis back rather than staying
- * on `status` for the session.
+ * `PerformanceDashboard` seeds its `chartBreakdown` state with this and
+ * resolves `server` to `status` whenever `canBreakDownByServer` is false. That
+ * fallback is DERIVED, never written back over the state, so a hub whose second
+ * server reports late gets the axis back rather than staying on `status` for
+ * the session.
  */
 export const DEFAULT_CHART_BREAKDOWN = 'server';

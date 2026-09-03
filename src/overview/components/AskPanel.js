@@ -1,6 +1,6 @@
 /**
- * The `?` picker: `useAsk` holds it, <AskButton> opens it, <AskPanel> shows what
- * it assembled.
+ * The `?` picker: `useAsk` holds it, <AskButton> opens it, and <AskPanel>
+ * shows what it assembled.
  *
  * Click a trigger, the cursor becomes a `?`, and the next thing you click
  * decides everything — a slow URL in the overview, a request in URL detail, a
@@ -11,12 +11,12 @@
  * ships on these same elements. A picker click is not consent to send: the
  * assembled brief is shown here first, and copying it is a separate act.
  *
- * The three parts live together because the picker is ONE document-level mode —
- * it marks the body, retargets every `[data-ask]` element and swallows the next
- * click in the capture phase. A second `useAsk` would fight the first over that
- * one mode, so the dashboard holds one and renders <AskButton> wherever a
- * question forms: beside the overview search, beside the URL's rule control,
- * beside the request's back button.
+ * The three parts live together because the picker is ONE document-level mode.
+ * It marks the body, makes every `[data-ask]` element focusable and swallows
+ * the next click in the capture phase. A second `useAsk` would fight the first
+ * over that one mode, so the dashboard holds one and renders <AskButton>
+ * wherever a question forms: beside the overview search, beside the URL's rule
+ * control, beside the request's back button.
  */
 
 import { useCallback, useEffect, useRef, useState } from '@wordpress/element';
@@ -33,10 +33,22 @@ import { askClaudeUrl, briefToMarkdown } from '../askBrief';
 /**
  * The picker's state, held once for the whole dashboard.
  *
+ * A pick sends its descriptor chain to the `performance` CI's `ask` verb, which
+ * assembles the brief. Nothing is shaped here; <AskPanel> renders what arrives.
+ *
+ * Every ask carries the dashboard's server filter, and the assembler applies it
+ * to the two briefs a server can narrow: `url:` and `category:`. The rest are
+ * one request or one span inside it, which one server already served.
+ *
  * @param {Object}   options
  * @param {Function} [options.onError]      Called with a message when an ask fails.
- * @param {string}   [options.serverFilter] Server scope a `url:` brief answers for; '' is every server.
- * @return {{ active: boolean, start: Function, cancel: Function, briefs: Array, open: boolean, close: Function }} Ask state.
+ * @param {string}   [options.serverFilter] Server the briefs are scoped to;
+ *                                          '' is every server.
+ * @return {{active: boolean, start: Function, cancel: Function, briefs: Object[], open: boolean, close: Function}}
+ *   The mode and what it gathered: `start` and `cancel` arm and disarm the
+ *   picker, `briefs` holds one assembled reply per pick in arrival order,
+ *   `open` says the picker is done and something arrived, and `close` discards
+ *   the selection.
  */
 export function useAsk( { onError, serverFilter = '' } = {} ) {
 	const [ briefs, setBriefs ] = useState( [] );
@@ -72,7 +84,7 @@ export function useAsk( { onError, serverFilter = '' } = {} ) {
 
 	const handlePick = useCallback(
 		( descriptors ) => {
-			// Scoped: the facts block stamps the filters onto each surface.
+			// A brief under a server's name must not quote site-wide numbers.
 			ask(
 				formatCommandArgs(
 					descriptors,
@@ -93,7 +105,7 @@ export function useAsk( { onError, serverFilter = '' } = {} ) {
 	// a modified click keeps it open, and the plain click that disarms the
 	// picker ends it. So the panel is not a separate piece of state — it is
 	// simply "the picker is done and something arrived". Opening on each reply
-	// instead put the brief in front of the next thing being Cmd-clicked, and
+	// instead puts the brief in front of the next thing being Cmd-clicked, and
 	// a flag read at reply time would answer for whichever pick landed last.
 	const open = ! active && 0 < briefs.length;
 	const discard = useCallback( () => setBriefs( [] ), [] );
@@ -117,7 +129,11 @@ export function useAsk( { onError, serverFilter = '' } = {} ) {
 }
 
 /**
- * A door into the picker. As many as there are places worth asking from.
+ * A door into the picker, rendered wherever a question forms.
+ *
+ * It carries `ASK_TRIGGER_ATTR` so an armed picker lets its own click through.
+ * Without that the capture-phase handler swallows the click and the button
+ * cannot cancel the mode it opened.
  *
  * @param {Object} props
  * @param {Object} props.ask The `useAsk` state.
@@ -143,7 +159,13 @@ export function AskButton( { ask } ) {
 	);
 }
 
-/** Severity → the status class the shared roles already define. */
+/**
+ * The status class each severity renders as. `Findings` mints exactly these
+ * three, and `info` takes no modifier so it keeps the shared role's own
+ * neutral styling.
+ *
+ * @type {Object<string,string>}
+ */
 const TONE = {
 	high: 'is-error',
 	medium: 'is-warning',
@@ -155,7 +177,12 @@ const TONE = {
  * involved at all: the detector computes, and the numbers speak.
  *
  * @param {Object} props
- * @param {Object} props.finding A finding from the assembler.
+ * @param {Object} props.finding One of the brief's findings: `severity`,
+ *                               `title`, `detail`, `measured`, and a
+ *                               `proposal` carrying the rule edit to make as
+ *                               `action` — `none` when there is nothing to
+ *                               change — beside the `direction` that edit
+ *                               moves visibility in and its `why`.
  * @return {import('react').ReactElement} The rendered finding.
  */
 function Finding( { finding } ) {
@@ -194,11 +221,13 @@ function Finding( { finding } ) {
 }
 
 /**
- * The brief preview.
+ * The brief preview: what the picker assembled, the markdown behind it, and
+ * the two deliberate ways to send that markdown off the page.
  *
  * @param {Object} props
  * @param {Object} props.ask The `useAsk` state.
- * @return {import('react').ReactElement} The panel.
+ * @return {?import('react').ReactElement} The panel, or null until the picker
+ *                                         disarms with a brief in hand.
  */
 export default function AskPanel( { ask } ) {
 	const { briefs, open, close } = ask;
@@ -214,7 +243,7 @@ export default function AskPanel( { ask } ) {
 	}newspack-event-logger-nodes/v1/mcp`;
 	const markdown = briefToMarkdown( briefs, endpoint );
 
-	// The Claude link's too: past the URL budget it only asks for a paste.
+	// The Claude link copies too: past the URL budget it asks for a paste.
 	const copy = useCallback( () => {
 		window.navigator?.clipboard
 			?.writeText( markdown )

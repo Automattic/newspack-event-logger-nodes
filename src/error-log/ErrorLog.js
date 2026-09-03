@@ -1,6 +1,6 @@
 /**
- * Error Log Component — real-time scrolling log of the errors, warnings, fleet
- * alerts, and substrate stderr tailed across the `errors.*` partitions.
+ * Error Log Component — real-time scrolling log of the errors, warnings and
+ * substrate stderr lines tailed across the `errors.*` partitions.
  *
  * A THIN wrapper over the shared `LogStreamViewer` chrome (toolbar, filter,
  * counts + rate, pause, step, offset jump, Debug, Clear, banner, body split,
@@ -8,12 +8,14 @@
  * `useErrorLogGraph`) owns all data: `perferrors:link` (a substrate
  * `RemoteLink`) holds the EventSource and fans its frames through the
  * `perferrors:stream` Tee into `perferrors:view` (a `LogStreamViewNode`
- * subclass), whose ring the list reads straight off the node each frame. This
- * component only supplies the differing pieces: the fixed column set, the grid
- * row/header renderers, the multi-field ingest gate, the entry-count and rate
- * labels, the toolbar partition picker, and the segment rail.
+ * subclass), whose ring the list reads straight off the node each frame — row
+ * data never becomes React state. This component supplies only the differing
+ * pieces: the fixed column set, the grid row/header renderers, the entry-count
+ * and rate labels, the filter placeholder, the toolbar partition picker, and
+ * the segment rail.
  *
- * Click any request ID to view its full trace in the Performance Dashboard.
+ * Click a request ID for its full trace in the Performance Dashboard; click a
+ * URL for that URL's stats.
  */
 
 import { useCallback, memo } from '@wordpress/element';
@@ -35,14 +37,40 @@ import {
 import { gridTemplate } from '@newspack-nodes/shared/hooks/useColumnPicker';
 import './styles/error-log.scss';
 
+/**
+ * Fixed row height, in pixels.
+ *
+ * `LogRowList` virtualizes on this number and publishes it to the scss as
+ * `--log-row-height`, so its scroll arithmetic and the drawn row cannot
+ * disagree.
+ *
+ * @type {number}
+ */
 const ROW_HEIGHT = 33;
+
+/**
+ * The view-model node. The chrome reads its published state; `LogRowList`
+ * reads its ring.
+ *
+ * @type {string}
+ */
 const VIEW_NODE = 'perferrors:view';
-// View-model fallback until the view node publishes its first `view` state.
+
+/**
+ * What the chrome renders until `perferrors:view` publishes its first `view`
+ * state — the two fields it reads, so the pause button and the reconnect
+ * banner never render off an undefined.
+ *
+ * @type {{paused: boolean, connectionError: boolean}}
+ */
 const EMPTY_VIEW = { paused: false, connectionError: false };
 
 /**
- * Column definitions for the error log (fixed — no picker); the rest come from
- * the shared set.
+ * The error log's columns, keyed by the row field each draws. Only what
+ * differs from the shared set is spelled out; `logColumns()` merges the rest.
+ * The set is fixed: this dashboard offers no column picker.
+ *
+ * @type {Object}
  */
 const COLUMNS = logColumns( {
 	time: {
@@ -62,13 +90,27 @@ const COLUMNS = logColumns( {
 	},
 } );
 
-// The fixed column ORDER; the rows and the header both render from it.
+/**
+ * The column order the rows and the header both render from.
+ *
+ * @type {string[]}
+ */
 const DEFAULT_COLUMNS = [ 'time', 'rid', 'url', 'keyword', 'message' ];
 
+/**
+ * The `grid-template-columns` value every row draws on, built once because
+ * the column set never changes.
+ *
+ * @type {string}
+ */
 const GRID_TEMPLATE = gridTemplate( COLUMNS, DEFAULT_COLUMNS );
 
 /**
  * Get keyword severity class.
+ *
+ * `Request_Builder_Node` routes `error`, `warning`, `stderr` and the
+ * `(error)` / `(warning)` suffixes into `errors.*`, and `alert` into
+ * `alerts.p0`, which this dashboard does not tail.
  *
  * @param {string} keyword Log keyword.
  * @return {string} Suffix of the `entry-keyword--` accent class in
@@ -81,7 +123,6 @@ const getKeywordClass = ( keyword ) => {
 	if ( keyword === 'warning' || keyword.endsWith( '(warning)' ) ) {
 		return 'warning';
 	}
-	// Fleet alerts get a louder accent; substrate stderr a muted one.
 	if ( keyword === 'alert' ) {
 		return 'alert';
 	}
@@ -91,7 +132,15 @@ const getKeywordClass = ( keyword ) => {
 	return 'info';
 };
 
-// Entries, not lines; spelled out because `_n()` extracts only literals.
+/**
+ * The toolbar's count label: rows shown over rows held while the filter hides
+ * some, the plain total otherwise. Entries, not lines — and both forms are
+ * spelled out here because `_n()` extracts only literals.
+ *
+ * @param {{total: number, visible: number}} stats Ring stats from
+ *                                                 `LogRowList`.
+ * @return {string} The label.
+ */
 const renderCount = ( stats ) =>
 	countLabel(
 		stats,
@@ -111,23 +160,30 @@ const renderCount = ( stats ) =>
 		)
 	);
 
-// Rate label matching that wording: entries/s, one decimal place.
+/**
+ * The toolbar's rate label, matching that wording: entries per second, to one
+ * decimal place.
+ *
+ * @type {( lps: number ) => string}
+ */
 const renderRate = rateLabel(
 	// translators: %s: entries-per-second rate, formatted to one decimal place.
 	__( '%s entries/s', 'newspack-event-logger-nodes' )
 );
 
-// JSDoc rides the inner function: on the const, memo() infers props as `{}`.
 const ErrorRow = memo(
 	/**
 	 * One error-log row — the five fixed cells on a grid, memoized on `row`.
 	 *
+	 * The docblock rides this inner function rather than the `ErrorRow`
+	 * const, where `memo()` infers the props as `{}`.
+	 *
 	 * @param {Object} props     Props.
 	 * @param {Object} props.row Row from `perferrors:view`. Its `shapeRow()`
-	 *                           supplies `ts`, `rid`, `k`, `m` — plus `method`,
-	 *                           `url`, and `urlHash` when the entry carried a
-	 *                           URL; the base view node stamps `id` and
-	 *                           `isEven`.
+	 *                           supplies `ts`, `rid`, `k` and `m` — plus
+	 *                           `method`, `url` and `urlHash` when the entry
+	 *                           carried a URL; the base view node stamps `id`
+	 *                           and `isEven`.
 	 * @return {import('react').ReactElement} The rendered row.
 	 */
 	function ErrorRow( { row } ) {
@@ -157,9 +213,20 @@ const ErrorRow = memo(
 	}
 );
 
-// Module-scope: a stable identity keeps LogRowList's row memoization live.
+/**
+ * One row, for `LogRowList`. Module scope gives it a stable identity, which is
+ * what keeps that list's per-row memoization live across renders.
+ *
+ * @type {( row: Object ) => import('react').ReactElement}
+ */
 const renderRow = ( row ) => <ErrorRow key={ row.id } row={ row } />;
 
+/**
+ * The header row above the list, built once: the column set is fixed, so
+ * nothing a render can change reaches it.
+ *
+ * @type {import('react').ReactElement}
+ */
 const listHeader = logListHeader( {
 	className: 'event-logger-error-log-columns',
 	columns: COLUMNS,
@@ -180,14 +247,14 @@ const listHeader = logListHeader( {
  * @return {import('react').ReactElement} Rendered component.
  */
 export default function ErrorLog() {
-	// Mount the graph; returns the control callbacks + the browse model.
+	// Mount the graph; it returns the controls and the browse model.
 	const { setPaused, clear, step, browse, setFilter } = useErrorLogGraph();
 
-	// Low-frequency view model (pause button + reconnect banner + empty-state).
+	// The low-frequency model: pause button, empty label, reconnect banner.
 	const view = useNodeState( VIEW_NODE, 'view' ) ?? EMPTY_VIEW;
 	const { paused: isPaused, connectionError } = view;
 
-	// Re-read the live node each frame so a graph reinit is picked up.
+	// Read the live node per frame, so a graph rebuild is picked up.
 	const getViewNode = useCallback( () => Core.node( VIEW_NODE ), [] );
 
 	return (

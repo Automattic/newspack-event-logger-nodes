@@ -2,14 +2,15 @@
 /**
  * Diagnostics Bridge
  *
- * Carries the substrate's `newspack_nodes/stderr` seam into the event-logger:
- * every substrate stderr() / print_less_often() line is logged to the ACTIVE
- * request (or job context) as a `stderr` entry, so it shows in that request's
- * detail and — because `Request_Builder_Node` routes the `stderr` keyword to
- * its errors target — in the Error Log. With no started request logger the line
- * is dropped; the substrate's default handler already error_log()s it. Fleet
- * alerts do not pass through here: the substrate journals them itself into
- * `alerts.p0`.
+ * Carries the substrate's `newspack_nodes/stderr` seam into the event-logger.
+ * Every line the substrate emits through `Core::_stderr()` — `stderr()`,
+ * `print_less_often()` and raw callers such as `Shell_Node` alike — is logged
+ * to the ACTIVE request (or job context) as a `stderr` entry. That puts it in
+ * the request's detail, and — because `Request_Builder_Node` routes the
+ * `stderr` keyword to its errors target — in the Error Log. With no started
+ * request logger the line is dropped; the substrate's default handler already
+ * error_log()s it. Fleet alerts do not pass through here: the substrate
+ * journals them itself into `alerts.p0`.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -34,14 +35,13 @@ class Diagnostics_Bridge {
 	 * listener in its own try/catch, so a throw here cannot break the
 	 * last-resort diagnostic path — no local try/catch is needed. And
 	 * `Core::$in_stderr` short-circuits re-entry to `error_log()`, so the
-	 * `Core::print_less_often()` that `Log_Manager::message()` emits on an
-	 * oversize payload cannot recurse back into this listener.
+	 * `print_less_often()` a failed `Partition_Node` write emits below
+	 * `message()` cannot recurse back into this listener.
 	 *
-	 * @param string $line The stderr line. `Core::stderr()` prefixes it with the
-	 *                     process-identity midfix (host, argv0, pid, uptime);
-	 *                     the timestamp prefix lands downstream, and a raw
-	 *                     `Core::_stderr()` caller such as `Shell_Node` supplies
-	 *                     neither.
+	 * @param string $line The stderr line. `Core::stderr()` prefixes it with
+	 *                     the process-identity midfix (host, argv0, pid,
+	 *                     uptime); the timestamp prefix is stamped downstream,
+	 *                     and a raw caller supplies neither.
 	 */
 	public static function on_stderr( string $line ): void {
 		Log_Manager::started_instance()?->message( 'stderr', [ 'm' => $line ] );

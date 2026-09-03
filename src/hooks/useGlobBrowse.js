@@ -2,20 +2,20 @@
  * useGlobBrowse — the partition PICK a glob subscription needs, on top of the
  * substrate's segment browsing.
  *
- * The browse model over a glob is two-level:
- *   - selectedPartition '' → the glob, tailed live: the toolbar picker's empty
- *     row, and no segment rail.
- *   - selectedPartition 'errors.p3' → that ONE dir, with the rail and Live /
- *     Replay / per-segment seeks — which is exactly `useSegmentBrowse`.
+ * The browse model over a glob has two levels. An empty `selectedPartition` is
+ * the whole glob tailed live, which is the picker's empty row and no segment
+ * rail. A concrete dir such as `errors.p3` narrows to that ONE partition, and
+ * brings with it the rail and the Live / Replay / per-segment seeks — which
+ * is exactly `useSegmentBrowse`.
  *
- * A sole partition auto-selects, because one dir already IS the whole live glob.
+ * A sole partition auto-selects: one dir already IS the whole live glob.
  *
  * Seeks ride the existing `positions` transport (keyed by partition DIRECTORY,
  * the same key SseIn tracks resume offsets under), so no new server verb is
- * needed. The substrate's `raw-logs` CI catalogs the concrete dirs with
- * `list_logs` and one dir's segments with `log_status`. Each verb gets its OWN
- * awaitable node, so every reply lands on the node that asked for it and nothing
- * needs correlating.
+ * needed. The substrate's `raw-logs` CI answers both catalog questions —
+ * `list_logs` for the concrete dirs, polled as a slice, and `log_status` for
+ * one dir's segments. Each rides its OWN nodes, so every reply lands on the
+ * node that asked for it and no id pairs them up (ADR-7).
  */
 
 import {
@@ -35,10 +35,14 @@ import { LIVE } from '@newspack-nodes/shared/nodes/seekTracker';
 import { useLogCatalog } from '@newspack-nodes/shared/hooks/useStreamGraph';
 import { egressPath } from '@newspack-nodes/shared/helpers/egressPath';
 
-// The substrate service CI that catalogs the on-disk logs.
+/** The substrate service CI that catalogs the on-disk logs. */
 const RAW_LOGS = 'raw-logs';
 
 /**
+ * Selecting a partition RESUBSCRIBES the stream to that dir alone, so this
+ * picker is a subscription control and not a filter over records already in
+ * the view.
+ *
  * @param {Object}     o       Hook options.
  * @param {string}     o.glob  The subscription glob (e.g. `errors.*`).
  * @param {Object}     o.graph The `useStreamGraph` handle this browses.
@@ -91,12 +95,12 @@ export default function useGlobBrowse( { glob, graph, step } ) {
 	);
 
 	// @longform
-	// A sole partition auto-selects, before paint: one dir IS the live glob,
-	// and a passive effect would paint the picker at a value matching no row
-	// first. Layout effects run before the graph's own mount effect, so this
-	// leans on the catalog never arriving populated on a first render — it
-	// only ever fills from a command reply, and a rebuild clears the node's
-	// state cache. A catalog hoisted above this dashboard would break that.
+	// A sole partition auto-selects BEFORE PAINT: a passive effect would paint
+	// the picker at a value matching no row first. Layout effects run before
+	// the graph's own mount effect, so this leans on the catalog never arriving
+	// populated on a first render — it only ever fills from a command reply,
+	// and a rebuild clears the node's state cache. A catalog hoisted above this
+	// dashboard would break that.
 	useLayoutEffect( () => {
 		if ( 1 === partitions.length && '' === selectedRef.current ) {
 			selectPartition( partitions[ 0 ].key );
@@ -108,7 +112,6 @@ export default function useGlobBrowse( { glob, graph, step } ) {
 		if ( partitions.length < 2 ) {
 			return partitions;
 		}
-		// Widens the subscription back to the whole glob.
 		const all = {
 			key: '',
 			label: __( 'All partitions (live)', 'newspack-event-logger-nodes' ),

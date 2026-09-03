@@ -9,34 +9,43 @@
  */
 
 /**
- * Label text for bright shades: near-black with a faint green cast.
+ * Label text for bright fills: near-black with a faint green cast.
  *
- * Both text colors are fixed, not skin-derived: they only have to clear the
- * contrast threshold against a fill, which either end of the range does.
+ * Two fixed inks, one per side of `LUMINANCE_THRESHOLD`, rather than a color
+ * derived from the fill: each has to read against half the luminance range, not
+ * against one particular color, and deriving one would put palette knowledge
+ * back into a module that holds none.
  *
  * @type {string}
  * @testonly Exported for FlameGraph-colors.test.js.
  */
 export const DARK_TEXT = '#0b140d';
 /**
- * Label text for deep shades: near-white with a faint green cast.
+ * Label text for deep fills: near-white with a faint green cast.
  *
  * @type {string}
  * @testonly Exported for FlameGraph-colors.test.js.
  */
 export const LIGHT_TEXT = '#eafff1';
 
-// Luminance threshold below which a shade needs light text.
+/**
+ * The fill luminance dividing the two inks, at the midpoint of the range
+ * `relativeLuminance` reports. Above it a label takes `DARK_TEXT`; at or below
+ * it, `LIGHT_TEXT`.
+ *
+ * @type {number}
+ */
 const LUMINANCE_THRESHOLD = 0.5;
 
 /**
  * Parse a #rgb / #rrggbb hex or `rgb(r, g, b)` color into an {r, g, b} object.
  *
- * Only those two syntaxes parse. Anything else — a named color, `color-mix()`,
- * the space-separated `rgb(r g b / a)` form, an empty token — yields NaN or
- * undefined channels rather than throwing, which is what `isColorParseable`
- * tests for. Callers taking a color from a CSS custom property must screen it
- * through that guard first, or the NaN silently reaches the fill string.
+ * Only those two syntaxes parse. Anything else — `transparent`, a named color,
+ * `color-mix()`, the space-separated `rgb(r g b / a)` form, an empty token —
+ * yields NaN or undefined channels rather than throwing, which is what
+ * `isColorParseable` tests for. Screen a fill through that guard before
+ * measuring it: NaN compares false against the threshold, so an unparseable
+ * color quietly takes `LIGHT_TEXT` rather than failing.
  *
  * @param {string} color Hex (with or without leading #) or `rgb(...)` string.
  * @return {{r: number, g: number, b: number}} RGB channels (0-255).
@@ -67,9 +76,13 @@ export const parseColor = ( color ) => {
 };
 
 /**
- * Whether a string parses to finite RGB channels (a usable #hex or rgb() color).
- * Lets the token fallback chain skip a theme value that isn't a plain color
- * (a named color or `color-mix(...)` would otherwise yield NaN fills).
+ * Whether a string parses to finite RGB channels (a usable #hex or rgb color).
+ *
+ * `FlameGraph.js` screens every fill it reads off a `<rect>` through this
+ * before measuring it, and leaves the label alone when it fails. An
+ * unmeasurable fill is routine rather than a fault: a spacer frame is filled
+ * `transparent`, and a `custom_colors` entry is whatever the deployment config
+ * wrote, which nothing between there and the palette checks the format of.
  *
  * @param {string} color Candidate color string.
  * @return {boolean} True when `parseColor` yields finite channels.

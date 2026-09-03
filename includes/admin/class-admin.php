@@ -5,9 +5,10 @@
  *
  * Renders exactly three checkboxes, the only application options with a
  * settings field: `enable_logging`, `log_memory`, and `flush_every_line`. The
- * remaining application keys `Settings_Schema` declares — `allowed_users`,
- * `rules`, `hook_start_priority` — are overlay-only (`ui: false`): loaded by
- * Config, never rendered, never reset here.
+ * six remaining keys `Settings_Schema` declares — `allowed_users`, `rules`,
+ * `hook_start_priority`, `custom_colors`, `stats_mirror_node`, and
+ * `recommended_log_events` — are overlay-only (`ui: false`): Config loads
+ * them, and this class neither renders nor resets them.
  *
  * URL filters, hook lists, and auto-tune thresholds are per-rule fields in the
  * `newspack_event_logger_nodes_rules` option, not global settings. That option
@@ -93,8 +94,9 @@ class Admin {
 
 	/**
 	 * Register the whole admin surface: the Settings submenu, the Settings-API
-	 * wiring, both admin-post handlers, the three panels below the form, and the
-	 * two option-write filters.
+	 * wiring, the reset-to-defaults handler, the three panels below the form,
+	 * the restart request on `added_option` / `updated_option`, and the
+	 * default-write skip on `pre_update_option`.
 	 *
 	 * Constructing a second Admin double-registers every hook, so the plugin
 	 * builds exactly one.
@@ -116,8 +118,9 @@ class Admin {
 	}
 
 	/**
-	 * The master logging switch. Ships on in the config file, and passes a hard
-	 * default of 1 so it still renders checked without one.
+	 * The master logging switch. `Settings_Schema` defaults it on; the hard
+	 * default of 1 keeps the box checked on an install whose config defaults
+	 * fail to load at all.
 	 */
 	public static function enable_logging_callback(): void {
 		self::render_checkbox(
@@ -171,16 +174,16 @@ class Admin {
 
 	/**
 	 * Resolve a boolean toggle's display value, preferring the WP options row
-	 * but falling back to the file-config default (not `get_option`'s hard-coded
+	 * but falling back to the config default (not `get_option`'s hard-coded
 	 * fallback) when the row is missing. Required because `skip_default_writes`
-	 * deletes the WP option whenever the user saves a value that matches the
-	 * file default — without this fallback, every box that mirrors a file
-	 * default would render unchecked despite the file saying otherwise.
+	 * deletes the row whenever the user saves a value equal to that default —
+	 * without the fallback, every box mirroring its default would render
+	 * unchecked while the config says otherwise.
 	 *
 	 * @param string $short_key    Option key without the `newspack_event_logger_nodes_` prefix.
-	 * @param int    $hard_default 0 or 1 — used only if both the WP option AND the file
-	 *                              default are absent (e.g., on a brand-new install
-	 *                              with no config-file override for this key).
+	 * @param int    $hard_default 0 or 1 — reached only when the WP option is absent AND
+	 *                             `Config::load_config_defaults()` names no such key, which
+	 *                             it always does once the substrate has loaded.
 	 * @return int 0 or 1.
 	 */
 	private static function bool_option_with_file_default( string $short_key, int $hard_default = 0 ): int {
@@ -193,13 +196,14 @@ class Admin {
 	}
 
 	/**
-	 * The file-config default for a boolean toggle as 0/1 — what a reset
-	 * restores (reset deletes the option row, resurfacing this value). Used by
-	 * the `data-nn-reset-default` attribute so the reset-toggle JS previews the
-	 * real default state, NOT the current stored value.
+	 * The config default for a boolean toggle as 0/1 — what a reset restores
+	 * (reset deletes the option row, resurfacing this value). It is the Field's
+	 * own `default:`, overlaid by `newspack-event-logger-nodes-config.php` and
+	 * `LOCAL_NEWSPACK_NODES_CONF`. Feeds `data-nn-reset-default` so the
+	 * reset-toggle JS previews the default state, NOT the stored value.
 	 *
 	 * @param string $short_key    Option key without the `newspack_event_logger_nodes_` prefix.
-	 * @param int    $hard_default 0 or 1 — used only if the file default is absent.
+	 * @param int    $hard_default 0 or 1 — reached only when the defaults name no such key.
 	 * @return int 0 or 1.
 	 */
 	private static function bool_file_default( string $short_key, int $hard_default = 0 ): int {
@@ -249,9 +253,9 @@ class Admin {
 	}
 
 	/**
-	 * Shared admin-post gate: verify the POSTed nonce (read from $nonce_field
-	 * against $action) and the caller's capability, `wp_die`-ing on either
-	 * failure. Both admin-post handlers run this identical check first.
+	 * Admin-post gate: verify the POSTed nonce (read from $nonce_field against
+	 * $action) and the caller's capability, `wp_die`-ing on either failure.
+	 * `handle_reset_settings` runs it before it deletes a single row.
 	 *
 	 * @param string $nonce_field POST key carrying the nonce.
 	 * @param string $action      Nonce action to verify against.
@@ -328,7 +332,9 @@ class Admin {
 	 * Presence-based Config reads a stored row as an override, so a row holding
 	 * the default would pin that value and survive a later change to the config
 	 * file. Saving a field back to its default therefore DELETES the row and
-	 * returns the old value, short-circuiting WordPress's own write.
+	 * returns the old value, short-circuiting WordPress's own write. The delete
+	 * is guarded on the value having changed, so re-saving a row that already
+	 * holds the default leaves it alone.
 	 *
 	 * Runs on every option WordPress updates, so it bails unless the name
 	 * actually carries our prefix and the remainder is a key the file defaults
@@ -339,7 +345,7 @@ class Admin {
 	 * @param mixed  $value     New option value about to be written.
 	 * @param string $option    Full option name.
 	 * @param mixed  $old_value Current stored value.
-	 * @return mixed The value to persist, or $old_value when the row was deleted.
+	 * @return mixed The submitted value, or $old_value when it equals the default.
 	 */
 	public function skip_default_writes( mixed $value, string $option, mixed $old_value ): mixed {
 		$prefix = 'newspack_event_logger_nodes_';
@@ -461,9 +467,9 @@ class Admin {
 	/**
 	 * Intro for the General section, which holds `enable_logging`.
 	 *
-	 * A section renders only when the Schema gives it at least one rendered
-	 * field, so of the four declared sections only this one and Debugging reach
-	 * the page.
+	 * `Schema::register_sections_and_fields()` adds a section only once a
+	 * rendered field claims it, so a section that loses its last rendered field
+	 * leaves the page with it.
 	 */
 	public static function general_section_callback(): void {
 		echo '<p>' . \esc_html__( 'Enable or disable event logging.', 'newspack-event-logger-nodes' ) . '</p>';
@@ -538,9 +544,9 @@ class Admin {
 	 * to the set of live topologies whose graphs instantiate that node and touches
 	 * each one's per-partition lock dir. A worker sees the flag on its next
 	 * `Worker_Base::should_continue()` check and exits for a peer's scan to
-	 * respawn. `stats_salt` is rotated by the flush handler and is not a settings
-	 * Field, so `restart_for()` would return `[]` for it; it is classified inline
-	 * here instead, against `Flame_Builder` — the node its `Stats_Store` runs in.
+	 * respawn. `stats_salt` is no Field of the Schema, so `restart_for()` returns
+	 * `[]` for it; the inline branch classifies it against `Flame_Builder`, the
+	 * node its `Stats_Store` runs in.
 	 *
 	 * Best-effort throughout: a planner failure is swallowed because the next
 	 * worker loads the new config regardless.

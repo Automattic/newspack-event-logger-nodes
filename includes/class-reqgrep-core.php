@@ -9,11 +9,11 @@
  * bounded JSON summary), so that stays in each consumer and rides in as the
  * `on_complete` closure.
  *
- * Match semantics (identical to the original reqgrep): a line matches when its
- * rid equals the pattern exactly OR the pattern (preg_quote'd, case-insensitive)
- * is found anywhere in the packed Message envelope. Once any line of a request
- * matches, every line sharing that rid is grouped — earlier lines are recovered
- * from the rotating history buckets.
+ * Match semantics: a line matches when its rid equals the pattern exactly, or
+ * when the pattern — preg_quote'd and case-insensitive — is found anywhere in
+ * the packed Message envelope. Once any line of a request matches, every line
+ * sharing that rid is grouped, and earlier lines are recovered from the
+ * rotating history buckets.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -30,9 +30,9 @@ use Newspack_Nodes\LRU_Cache;
  *
  * State lives in two places: the caller-owned `LRU_Cache` of matched, in-flight
  * requests, and a private ring of history buckets holding the lines of rids that
- * have not matched anything yet. A rid graduates from history to in-flight the
- * moment one of its lines matches, which is what lets a match on a late line
- * still yield the request from its first line.
+ * have not matched anything yet. A rid enters the in-flight cache the moment one
+ * of its lines matches, and its buffered history is replayed into it, which is
+ * what lets a match on a late line still yield the request from its first line.
  *
  * The engine neither formats nor writes. It reports through two closures:
  * `on_complete` when a tracked rid reaches either terminal keyword, and
@@ -44,22 +44,28 @@ use Newspack_Nodes\LRU_Cache;
  * raw line stream, so merging would leave it nothing to print. Its own bound
  * would have to be a total-bytes ceiling that stops tracking new rids: a
  * different mechanism for a different process, since this runs in the
- * foreground of a short-lived CLI over a bounded window rather than in a
- * ten-minute worker holding twenty envelopes at once.
+ * foreground of one CLI run or one dashboard poll over a bounded window,
+ * rather than in a ten-minute worker holding hundreds of envelopes at once.
  */
 class Reqgrep_Core {
 
 	/**
-	 * Maximum bytes per in-progress request. Disk-sourced lines are already
-	 * PIPE_BUF-capped at 4KB and the `m` field is truncated to 1KB at source, so
-	 * this only bites when a non-canonical producer pipes giant lines in.
+	 * Maximum bytes per in-progress request — the memory bound the line cap
+	 * cannot give. `Log_Manager` fits each entry's encoded data under its
+	 * `MAX_DATA_SIZE` so a firehose write stays inside PIPE_BUF, and 20,000
+	 * lines at that width would be 76MB. Real entries are far narrower, so
+	 * `MAX_LINES_PER_REQUEST` is what usually binds first.
 	 */
 	public const MAX_BYTES_PER_REQUEST = 10 * 1024 * 1024;
 
 	/** Maximum lines per in-progress request. */
 	public const MAX_LINES_PER_REQUEST = 20000;
 
-	/** Maximum lines per request retained in the history buckets. */
+	/**
+	 * Maximum lines one rid may hold in a SINGLE history bucket. `bucket_size`
+	 * counts lines as well as rids and normally rolls the bucket first, so this
+	 * is the backstop against one chatty rid filling a large bucket.
+	 */
 	public const MAX_LINES_PER_REQUEST_IN_HISTORY = 10000;
 
 	/** Search pattern (the exact-rid short-circuit compares against this). */
@@ -88,8 +94,8 @@ class Reqgrep_Core {
 
 	/**
 	 * fn(list<string> $lines, string $rid, bool $clipped): void — invoked when a
-	 * tracked rid completes. Declaring fewer parameters is legal and the CLI does,
-	 * ignoring `$clipped`.
+	 * tracked rid completes. A closure may declare fewer parameters; the CLI's
+	 * takes only `$lines` and `$rid`.
 	 */
 	private \Closure $on_complete;
 
@@ -103,8 +109,16 @@ class Reqgrep_Core {
 	private ?\Closure $on_history_miss;
 
 	/**
+	 * Wire the engine to a caller-built in-flight cache and history geometry.
+	 *
+	 * The cache belongs to the caller because the caller outlives the engine:
+	 * `wp nodes reqgrep` hangs the eviction callback that prints a dropped rid
+	 * as `[incomplete]`, then walks the same cache at the end for the requests
+	 * still open. The history geometry is a parameter because it is operator-
+	 * tunable — that command exposes it as `--bucket-size` and `--num-buckets`.
+	 *
 	 * @param string        $pattern         Search pattern (rid, URL, or any text).
-	 * @param LRU_Cache     $inflight        Pre-built in-flight cache (the caller owns its on-evict).
+	 * @param LRU_Cache     $inflight        In-flight cache, built and retained by the caller.
 	 * @param int           $bucket_size     History bucket size, counting rids plus lines.
 	 * @param int           $num_buckets     History bucket count.
 	 * @param \Closure      $on_complete     Called with (lines, rid, clipped) when a tracked rid completes.
@@ -128,7 +142,8 @@ class Reqgrep_Core {
 	}
 
 	/**
-	 * Rid-grouping state machine — the shared tail of every read path.
+	 * Feed one firehose line through the rid-grouping state machine, the tail
+	 * every read path shares.
 	 *
 	 *  - Already-tracked rid: append; fire on_complete on either terminal.
 	 *  - Untracked rid equal to the pattern, or whose envelope matches it: replay
@@ -139,8 +154,10 @@ class Reqgrep_Core {
 	 * the second branch reassembles a late match from.
 	 *
 	 * @param array<int|string,mixed> $entry Decoded entry hash (the Message VALUE).
-	 * @param string                   $rid   Request id (the Message KEY).
-	 * @param string                   $line  Packed Message envelope; what the pattern matches and what on_complete receives.
+	 * @param string                  $rid   Request id (the Message KEY).
+	 * @param string                  $line  Packed Message envelope: what the
+	 *                                       pattern matches, and what
+	 *                                       on_complete receives.
 	 */
 	public function push( array $entry, string $rid, string $line ): void {
 		$key   = Core::as_string( $entry['k'] ?? '' );
@@ -202,9 +219,9 @@ class Reqgrep_Core {
 	 * the in-flight cache.
 	 *
 	 * Both terminals count. `process (aborted)` ends a request as surely as
-	 * `process (complete)` does — `Request_Builder_Node::TERMINAL_KEYWORDS` is
-	 * the one list, and reading only the nominal one dropped every lease-killed
-	 * request out of `request_grep` and mislabelled it `[incomplete]` in the CLI.
+	 * `process (complete)` does, and `Request_Builder_Node::TERMINAL_KEYWORDS`
+	 * is the one list: reading only the nominal one drops every lease-killed
+	 * request out of `request_grep` and mislabels it `[incomplete]` in the CLI.
 	 *
 	 * @param \stdClass $state The rid's accumulated state.
 	 * @param string    $rid   Request id.
@@ -228,10 +245,13 @@ class Reqgrep_Core {
 	 *
 	 * Tripping either cap sets `->clipped`, which finalize_if_terminal forwards to
 	 * on_complete so the consumer can report the truncation instead of hiding it.
+	 * Only the history merge stops on a false return; `push()` ignores it and keeps
+	 * feeding the rid, so a clipped request still finalizes at its terminal instead
+	 * of vanishing from the results.
 	 *
 	 * @param \stdClass $state State object with ->lines and ->bytes fields.
-	 * @param string    $line  Packed Message envelope (already m-truncated at source).
-	 * @return bool True if appended; false if a cap was hit (caller may stop).
+	 * @param string    $line  Packed Message envelope.
+	 * @return bool True when the line was appended; false when a cap was hit.
 	 */
 	private function append_to_state( \stdClass $state, string $line ): bool {
 		$line_bytes = \strlen( $line );

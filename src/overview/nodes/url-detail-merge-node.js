@@ -2,43 +2,45 @@ import { Node, VALUE, FROM, payloadOf } from '@newspack-nodes/runtime';
 
 /**
  * Retained request rows, matching the server's own per-URL cap
- * (`Performance_CI_Node::RECENT_REQUEST_LIMIT`).
+ * (`Performance_CI_Node::RECENT_REQUEST_LIMIT`), so an accumulation across
+ * replies holds no more rows than one reply could have carried.
  */
 const MERGED_REQUEST_LIMIT = 500;
 
 /**
  * `urldetail:merge` — the url_detail incremental merge and `last_modified`
  * dedup, hosted on the receiver-Tee → view graph EDGE rather than inside the
- * view (D1b de-god). `usePerformanceGraph` wires it by hand as `urldetail:in`
- * (Tee) → `urldetail:merge` → `urldetail:view`, the edge shape
- * `addSliceFetcher` standardizes in its optional `transform` slot.
+ * view. `usePerformanceGraph` declares it in the optional `transform` slot of
+ * `addSliceFetcher`, which builds the edge `urldetail:in` (Tee) →
+ * `urldetail:merge` → `urldetail:view` and stamps `controlFrom` from the same
+ * declaration.
  *
- * It receives the raw command reply (VALUE = `{ name, payload }`, the payload
- * being the url_detail object the server returned), merges that payload against
+ * It receives the raw command reply — VALUE is `{ name, payload }`, the payload
+ * being the url_detail object the server returned — merges that payload against
  * the one it last forwarded, and forwards a message whose VALUE.payload is the
- * MERGED object — or DROPS the message when `last_modified` is unchanged, so an
+ * MERGED object. It DROPS the message when `last_modified` is unchanged, so an
  * idle auto-refresh tick never re-renders the modal.
  *
- * The merge:
- *   - empty payload                   → drop (no forward);
- *   - unchanged last_modified         → drop;
- *   - anything else                   → discard requests whose rid is already
- *                                       retained, sort the union newest-first
- *                                       by timestamp, cap at MERGED_REQUEST_LIMIT,
- *                                       forward. A first reply is that rule with
- *                                       nothing retained, not a case of its own.
+ * The merge is one rule and two refusals. An empty payload forwards nothing,
+ * and neither does a payload whose `last_modified` matches the retained one.
+ * Anything else discards the requests whose rid is already retained, sorts the
+ * union newest-first by timestamp, caps it at MERGED_REQUEST_LIMIT and forwards
+ * it. A first reply is that rule with nothing retained, not a case of its own.
  *
- * `scan_stopped_early` describes the LIST, not the last walk, so it unions with
- * `||` across merged replies: a walk that ran out of budget leaves rows missing
- * from the accumulation, and a later complete walk does not put them back.
+ * `scan_stopped_early` describes the LIST, not the last walk, so it carries
+ * across merged replies: a walk that ran out of budget leaves rows missing from
+ * the accumulation, and a later complete walk does not put them back. Only a
+ * `clear` drops the note, with the list it described.
  *
  * A `clear` control from `controlFrom` resets the retained state so the next
- * reply counts as fresh. `usePerformanceGraph` sends one when the modal closes,
- * which is what lets a reopened modal republish an unchanged `last_modified`.
+ * reply counts as fresh. `usePerformanceGraph` sends one when the modal opens,
+ * when it closes and whenever the server scope changes: `last_modified` is the
+ * URL's flame mtime and reads the same under every scope, so an uncleared
+ * reopen or rescope would drop the reply it needs as a duplicate.
  *
  * Forwarding runs through the base `fill()`, which stamps TO from `target` (the
- * view) and hands the message to the sink `makeNode` wired — the interpreter. It
- * does NOT stamp FROM: a transform is an internal edge, not an I/O boundary.
+ * view) and hands the message to the sink `makeNode` wired — the interpreter.
+ * It does NOT stamp FROM: a transform is an internal edge, not an I/O boundary.
  */
 export class UrlDetailMergeNode extends Node {
 	/**
@@ -50,9 +52,9 @@ export class UrlDetailMergeNode extends Node {
 	 */
 	constructor() {
 		super();
-		// Last forwarded payload; its own fields are the only copies.
+		// Last forwarded payload — the view holds it too; do not mutate.
 		this._merged = null;
-		// FROM of controls; unset loses them silently (see LogStreamViewNode).
+		// FROM the graph stamps controls with; the minter refuses an empty one.
 		this.controlFrom = '';
 	}
 
@@ -79,16 +81,16 @@ export class UrlDetailMergeNode extends Node {
 			// No-op (empty or unchanged last_modified) — drop, no republish.
 			return;
 		}
-		// Forward merged payload to the view via sink (TO stamped from target).
+		// Forward the merged payload; base fill() stamps TO from target.
 		message[ VALUE ] = { ...value, payload: next };
 		super.fill( message );
 	}
 
 	/**
 	 * Apply one control verb: `clear` drops the retained payload so the next
-	 * reply counts as fresh. An unrecognised verb is a no-op.
+	 * reply counts as fresh. An unrecognised or absent verb is a no-op.
 	 *
-	 * @param {?string} action The verb.
+	 * @param {string|undefined} action The verb.
 	 */
 	_control( action ) {
 		if ( 'clear' === action ) {
@@ -97,8 +99,8 @@ export class UrlDetailMergeNode extends Node {
 	}
 
 	/**
-	 * Merge one reply's payload into the retained payload, updating both
-	 * retained fields when the result is forwardable.
+	 * Merge one reply's payload into the retained payload, replacing what is
+	 * retained whenever the result is forwardable.
 	 *
 	 * @param {Object|null} data The url_detail payload this reply carried.
 	 * @return {Object|null} The payload to forward, or null to drop the message
@@ -143,6 +145,10 @@ export class UrlDetailMergeNode extends Node {
 	 * same-second sibling is still read and `_merge` discards the overlap by
 	 * rid. A second subtracted here would guess at the index's resolution.
 	 *
+	 * The stamp is the request's START, and the server stops on COMPLETION, so
+	 * a request still running when the watermark was taken is read again rather
+	 * than skipped.
+	 *
 	 * @return {number} Epoch seconds; 0 with nothing retained reads the whole
 	 *                  window, which is what a reopened modal wants.
 	 */
@@ -154,8 +160,8 @@ export class UrlDetailMergeNode extends Node {
 
 	/**
 	 * Console/palette metadata. `Hidden` keeps this edge transform out of the
-	 * palette: it takes no constructor arguments, answers no verbs, and gets its
-	 * target from the graph `usePerformanceGraph` builds.
+	 * palette: it takes no constructor arguments, answers no verbs, and takes
+	 * its target from the graph `usePerformanceGraph` builds.
 	 *
 	 * @return {Object} The node schema.
 	 */

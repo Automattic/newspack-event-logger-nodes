@@ -2,10 +2,12 @@
 /**
  * The durable per-URL logging ruleset: load, save, two-tier hook storage.
  *
- * Every ruleset write lands here — the config seed, the `rules` CI editor
- * verbs, `Auto_Tuner_Node`, and the hub→spoke settings sync — so the
- * pattern-is-identity and inline↔pointer tiering invariants hold whoever
- * writes. `Log_Manager` reads it once per request and hands the rules to a
+ * Every ruleset write lands here — the `rules` CI editor verbs,
+ * `Auto_Tuner_Node`, and the hub→spoke settings sync — so the inline↔pointer
+ * tiering and the orphan sweep hold whoever writes. Pattern-is-identity is the
+ * one invariant `save()` leaves to its callers: a path that accepts rules from
+ * outside runs them through `rekey_by_pattern()` first.
+ * `Log_Manager` reads the ruleset once per request and hands the rules to a
  * `Rule_Matcher`.
  *
  * @package Newspack_Event_Logger_Nodes
@@ -42,10 +44,12 @@ final class Rule_Set {
 	public const TABLE_HOOKS         = 'eln-rule-hooks';
 	/** Warm-mirror lifetime; the durable option outlives it and rewarms it. */
 	public const TABLE_TTL           = 3600;
+	/** Prefix of a pointer rule's non-autoloaded hooks option. */
 	public const OPTION_HOOKS_PREFIX = 'newspack_event_logger_nodes_rule_hooks_';
+	/** The autoloaded option holding the whole rule list. */
 	public const OPTION_RULES        = 'newspack_event_logger_nodes_rules';
 
-	/** @var Rule[] */
+	/** @var Rule[] The list in persisted form; `save()` re-tiers it in place. */
 	private array $rules;
 
 	/**
@@ -61,6 +65,10 @@ final class Rule_Set {
 	private static ?Table_Node $hooks_table = null;
 
 	/**
+	 * Hold a rule list. `reset()` and `apply_synced()` construct with `[]` to
+	 * reach `save()` or `reconcile_orphans()` without paying a read: both
+	 * replace the whole list anyway.
+	 *
 	 * @param Rule[] $rules Rules in persisted form; `load()` is the usual source.
 	 */
 	public function __construct( array $rules ) {
@@ -83,6 +91,9 @@ final class Rule_Set {
 	 * Config is memoized per process with the stored option already folded in,
 	 * so it must be invalidated before the read-back or this returns the very
 	 * ruleset it discarded (the `settings_set` verb resets it for this reason).
+	 *
+	 * Signals the live fleet for itself, because deleting the option never
+	 * reaches `save()`; see `request_reloads()`.
 	 */
 	public static function reset(): self {
 		\delete_option( self::OPTION_RULES );
@@ -207,9 +218,11 @@ final class Rule_Set {
 	 * Signalled from `save()` rather than its callers because save() is the one
 	 * origin every ruleset write passes through — `Rules_CI_Node`, the synced
 	 * `Rule_Set::apply_synced()` receive path and `Auto_Tuner_Node` — so a fourth
-	 * caller cannot forget it. Two of those run INSIDE a worker, so that worker
-	 * signals itself along with its peers; intended, because a reload also purges
-	 * the option cache its own later reads go through.
+	 * caller cannot forget it. `reset()` is the one caller that signals for
+	 * itself: it DELETES the option instead of saving, so it never reaches
+	 * save(). Two of the three run INSIDE a worker, so that worker signals itself
+	 * along with its peers; intended, because a reload also purges the option
+	 * cache its own later reads go through.
 	 *
 	 * Best-effort: the next worker generation loads the new ruleset regardless,
 	 * so an unresolvable locks directory must not fail the write.
@@ -488,6 +501,7 @@ final class Rule_Set {
 	 * A pointer rule's hooks straight from the system of record, or null when
 	 * that option is absent. The Table's backing and the no-cache path share it.
 	 *
+	 * @param string $id Rule id.
 	 * @return string[]|null
 	 */
 	private static function durable_hooks( string $id ): ?array {
@@ -518,6 +532,10 @@ final class Rule_Set {
 	}
 
 	/**
+	 * The rule an id names. Every caller starts from a `rule_id` something else
+	 * already resolved — the record's stamp, an auto-tune decision, the editor's
+	 * read-back after `save()` — so matching a URL stays `Rule_Matcher`'s job.
+	 *
 	 * @param string $id Rule id.
 	 * @return Rule|null The rule, or null when no rule carries that id.
 	 */

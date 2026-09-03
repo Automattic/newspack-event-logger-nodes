@@ -9,20 +9,24 @@
  * every aggregate the dashboards read.
  *
  * Per-request counters land in `$pending`, one accumulator per 5-minute bucket,
- * keyed by the bucket the request STARTED in. A record arrives at completion,
- * so around a boundary it routinely lands in a bucket older than the newest one
- * seen — which is why `$pending` is a map rather than one rotating slot.
+ * keyed by the bucket the request COMPLETED in. The record reaches this node
+ * some way behind that moment, so around a boundary it routinely lands in a
+ * bucket older than the newest one seen — which is why `$pending` is a map
+ * rather than one rotating slot.
  * `flush()` merges each bucket into memcache through `Stats_Store` (the
- * memcache schema) at most once per FLUSH_INTERVAL_SEC, capping as it
- * writes, then drops them. Per-URL flame trees take a different route: they
- * live in an `LRU_Cache` and drain through `mirror_url_stats()`.
+ * memcache schema) at most once per FLUSH_INTERVAL_SEC, capping as it writes,
+ * then drops them. It also folds each closed hour of the URL index into the
+ * coarse `urls_h` tier, which is what keeps a reader off 288 fine buckets per
+ * shard. Per-URL flame trees take a different route: they live in the
+ * `Stats_Store` accumulator and drain through `mirror_url_stats()`.
  *
  * Two side channels hang off that pipeline. `set_stats_target` names a durable
  * Partition that shadows each memcache write once its bucket closes, so a
- * non-Atomic deployment can replay stats after memcache loses them. And the request's governing `Rule`
- * drives auto-tune: hooks that fire too often, custom events to disable, and
- * newly significant events accumulate here and are emitted as messages to the
- * owned `Auto_Tuner_Node` sibling, which rewrites the rule.
+ * non-Atomic deployment can replay stats after memcache loses them. And the
+ * request's governing `Rule` drives auto-tune: hooks that fire too often,
+ * custom events to disable, and newly significant events accumulate here and
+ * are emitted as messages to the owned `Auto_Tuner_Node` sibling, which
+ * rewrites the rule.
  *
  * Worker context: this node runs inside the `flame-builder` (or `complete`)
  * topology. See `topologies/flame-builder.tsl` for the wiring.
@@ -74,8 +78,8 @@ class Flame_Builder_Node extends Node {
 	 * category. It carries `n` = requests in the bucket, `t` = their summed wall
 	 * time, and `c` = the summed call count of every category in them.
 	 *
-	 * Only `n` has a reader — `mirror_traffic_rank()` reads one bucket's to rank a
-	 * URL when the mirror buffer overflows. The dashboard's
+	 * Only `n` has a reader — `mirror_traffic_rank()` reads one bucket's `n` to
+	 * rank a URL when the mirror buffer overflows. The dashboard's
 	 * `CategoryTimeChart` skips the row outright, so `t` and `c` are published
 	 * but unread today.
 	 *
@@ -86,6 +90,16 @@ class Flame_Builder_Node extends Node {
 	 */
 	private const TOTAL_KEY = 'total';
 
+	/**
+	 * The seven dimensional axes, each as `axis name => request-record field`.
+	 *
+	 * One table drives all three accumulations of a request — global, per
+	 * reporting server, and per URL — so an axis added here appears in all
+	 * three. `status_category` is the one field no producer writes;
+	 * `accumulate_dimensions()` derives it from the status code first.
+	 *
+	 * @var array<string,string>
+	 */
 	const DIM_FIELDS = [
 		'status'  => 'status_category',
 		'method'  => 'request_method',
@@ -122,10 +136,11 @@ class Flame_Builder_Node extends Node {
 	 * Byte ceiling on the held mirror frames a checkpoint frame carries.
 	 *
 	 * Set from the OBSERVED held size, not from the drop cliff. A production hub
-	 * reports held totals of ~267KB–348KB per checkpoint and a topics cache
-	 * peaking under 3.8MB across a day; this sits ~6x over that peak, so routine
-	 * operation does not trip it and the tripwire below is informative when it
-	 * fires. A budget tight enough to fire every checkpoint reports nothing.
+	 * reports held totals of ~267KB–348KB per checkpoint, against a topics cache
+	 * peaking under 3.8MB across a day; this sits ~6x over the held peak, so
+	 * routine operation does not trip it and the tripwire below is informative
+	 * when it fires. A budget tight enough to fire every checkpoint reports
+	 * nothing.
 	 *
 	 * What it costs is DISK, in the offsetlog. That ring bounds keyframe COUNT
 	 * (`OFFSETLOG_MAX_SEGMENTS`, 60) and never bytes — its retention is count and
@@ -211,9 +226,9 @@ class Flame_Builder_Node extends Node {
 	private const ROLLUP_HOURS_PER_FLUSH = 2;
 
 	/**
-	 * Per-URL namespaces bounded to top-N by traffic when mirrored to the durable
-	 * stats partition. Aggregate namespaces are absent from this map and mirror in
-	 * full.
+	 * Namespaces bounded when mirrored to the durable stats partition: the value
+	 * is a top-N by traffic, and 0 keeps nothing at all. Aggregate namespaces are
+	 * absent from this map and mirror in full.
 	 *
 	 * The NS_URL entry (the flame profiles) is the STARTING default only — the
 	 * live bound is `$flame_topn` (see `set_flame_topn`), so the key must stay
@@ -261,12 +276,16 @@ class Flame_Builder_Node extends Node {
 	private const REPROBE_EVERY_FLUSHES = 60;
 
 	/**
-	 * Hashes whose name is already in the URL name table, against the time it
-	 * was written. A name never changes, so re-storing it every flush would
-	 * spend the saving the table exists for; the held set is what makes the
-	 * write once-per-URL instead. Eviction only costs a re-write.
+	 * Entries per generation of the named-URL held set: hashes whose name is
+	 * already in the URL name table, against the time it was written.
+	 *
+	 * A name never changes, so re-storing it every flush would spend the saving
+	 * the table exists for; the held set is what makes the write once-per-URL
+	 * instead. Eviction only costs a re-write.
 	 */
 	private const NAMED_URL_BUCKET_SIZE = 2000;
+
+	/** Generations the named-URL held set keeps. See NAMED_URL_BUCKET_SIZE. */
 	private const NAMED_URL_BUCKETS     = 4;
 
 	/** @var LRU_Cache Hash => Unix time its name was last stored. */
@@ -338,7 +357,8 @@ class Flame_Builder_Node extends Node {
 	private $stats_store = null;
 
 	/**
-	 * Build the per-URL LRU and the owned auto-tuner.
+	 * Seed the flush clock, build the named-URL held set, and publish the owned
+	 * auto-tuner sibling.
 	 *
 	 * The node is inert until `configure_stats` supplies a `Stats_Store`: it still
 	 * accumulates and still forwards flames, but nothing reaches memcache.
@@ -536,10 +556,10 @@ class Flame_Builder_Node extends Node {
 	/**
 	 * Fold one completed request into every accumulator.
 	 *
-	 * The order is fixed and the numbered sections below follow it: per-URL flame
-	 * aggregate (LRU), bucket rotation, per-URL row, hourly totals, the seven
-	 * dimensional axes, and finally the profile loop that feeds the leaderboards,
-	 * the category time series, and auto-tune.
+	 * The order below is fixed: per-URL flame aggregate (LRU), bucket selection,
+	 * per-URL row, hourly totals, the seven dimensional axes, and finally the
+	 * profile loop that feeds the leaderboards, the category time series, and
+	 * auto-tune.
 	 *
 	 * Two independent gates decide what a request contributes, and conflating
 	 * them is the classic bug here:
@@ -590,7 +610,7 @@ class Flame_Builder_Node extends Node {
 		$server_key    = $this->is_hub && $count_global ? $server_name : '';
 
 		$aggregate = $this->accumulate_url_aggregate( $url_hash, $flame_data, $duration_ms, $record_timing, $now );
-		// The request STARTED in this bucket; it is reaching us at completion.
+		// Filed under the bucket it COMPLETED in, not the one it started in.
 		$bucket                     = Stats_Store::bucket_key( $timestamp );
 		$this->pending[ $bucket ] ??= self::empty_bucket();
 		$acc                        = &$this->pending[ $bucket ];
@@ -676,7 +696,7 @@ class Flame_Builder_Node extends Node {
 	 * @param array<array-key,mixed> $request       Full request record.
 	 * @param float                   $duration_ms   Request duration.
 	 * @param bool                    $record_timing Whether timing counts.
-	 * @param int                     $timestamp     The request's timestamp.
+	 * @param int                     $timestamp     Completion time, clamped to now.
 	 * @param string                  $server_name   Reporting server, '' when unknown.
 	 * @param bool                    $count_global  False for a worker, whose timing this row keeps and every site-wide aggregate drops.
 	 */
@@ -691,7 +711,7 @@ class Flame_Builder_Node extends Node {
 		// process did not write, and everything below indexes it unguarded,
 		// where `max( null, … )` is a TypeError, not a warning.
 		// Worker traffic indexes apart: the table excludes it by default, and
-		// merging both into one row took a URL's reader requests out with it.
+		// merging both into one row takes a URL's reader requests out with it.
 		$slot = $count_global ? 'url_stats' : 'url_stats_worker';
 		$row  = Core::arr( $acc[ $slot ][ $url_hash ] ?? null );
 		if ( ! isset( $row[ Stats_Store::ROW_SRV ] ) ) {
@@ -747,7 +767,7 @@ class Flame_Builder_Node extends Node {
 		unset( $split );
 
 		$us[ Stats_Store::ROW_LAST_SEEN ] = \max( $us[ Stats_Store::ROW_LAST_SEEN ], $timestamp );
-		// Recorded, not read out of the URL text — that guess emptied a table.
+		// Recorded, not read out of the URL text — that guess empties a table.
 		$us[ Stats_Store::ROW_WORKER ]    = $us[ Stats_Store::ROW_WORKER ] || ! $count_global;
 		if ( $record_timing ) {
 			$us[ Stats_Store::ROW_MAX_MS ] = \max( $us[ Stats_Store::ROW_MAX_MS ], $duration_ms );
@@ -850,9 +870,12 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
-	 * The `Nxx` status bucket a request falls in, or 0 when it has no usable
-	 * status code. Both the per-URL `count_Nxx` counters and the `status`
-	 * dimension key off this, and they used to derive it separately.
+	 * The `Nxx` status bucket a request falls in, or null when its status code
+	 * is outside 200-599.
+	 *
+	 * One derivation serves both readers, the per-URL `count_Nxx` counters and
+	 * the `status` dimension. Two would let a request count in one and not the
+	 * other.
 	 *
 	 * @param array<array-key,mixed> $request Full request record.
 	 * @return int<2,5>|null Null when the status code is outside 200-599.
@@ -867,9 +890,8 @@ class Flame_Builder_Node extends Node {
 	 * Fold a request's profile categories into the per-URL aggregate, the two
 	 * leaderboards, the three category time series, and the auto-tune signals.
 	 *
-	 * Split out of `accumulate_all_stats()`, which had grown to 470 lines of
-	 * hand-numbered sections. The auto-tune thresholds resolve here because this
-	 * is the only section that reads them.
+	 * The auto-tune thresholds resolve here because this is the only accumulator
+	 * that reads them.
 	 *
 	 * Only ever called for a timed request, so `$duration_ms` is positive. The
 	 * `$count_global` gate is passed in rather than re-derived, since deciding it
@@ -1141,9 +1163,8 @@ class Flame_Builder_Node extends Node {
 	 * Share one zval for a repeated name, until the table freezes at the cap.
 	 *
 	 * Every dimension value, category name and entry name goes through here.
-	 * Entry names are by far the highest-cardinality strings the node sees, and
-	 * they used to intern with no freeze check at all — so the one table the cap
-	 * exists to bound was the one table that grew without limit.
+	 * Entry names are by far the highest-cardinality strings the node sees, so
+	 * the freeze has to cover them: exempt one caller and the cap bounds nothing.
 	 *
 	 * @param string $name The name to intern.
 	 * @return string The shared instance, or `$name` once the table is frozen.
@@ -1338,12 +1359,12 @@ class Flame_Builder_Node extends Node {
 	/**
 	 * Read, merge and write every pending key in batches.
 	 *
-	 * The flush's cost is its KEY COUNT, not its bytes: two of the
-	 * loops above are per URL, so a full-window replay decayed as the retention
-	 * window refilled. The reader has always batched (`lookup_bucket_sets()`);
-	 * this is the write half. Chunked because batching trades round trips for
-	 * held memory, and a full-window read already peaks near 160MB — the prize
-	 * is thousands of round trips becoming a handful, not becoming one.
+	 * The flush's cost is its KEY COUNT, not its bytes: two of the loops above
+	 * are per URL, so the fuller the retention window, the more round trips a
+	 * replay costs. The reader batches through `lookup_bucket_sets()`; this is
+	 * the write half. Chunked because batching trades round trips for held
+	 * memory, and a full-window read peaks near 160MB — the prize is thousands
+	 * of round trips becoming a handful, not becoming one.
 	 *
 	 * @param Stats_Store                    $stats_store Destination.
 	 * @param array<int,Pending_Write>       $intents     Pending writes.
@@ -1403,9 +1424,9 @@ class Flame_Builder_Node extends Node {
 		$unknown = \array_values( \array_diff( $plan['hours'], \array_keys( $this->folded_hours ) ) );
 		// @longform ONE round trip, and only for hours this process did not
 		// fold itself. The probe reads presence but `getMulti` fetches and
-		// unserializes the VALUES, so probing the settled hours pulled the
-		// whole coarse tier off memcache twelve times a minute — the tier this
-		// change built so a READER would not have to.
+		// unserializes the VALUES, so probing the settled hours would pull the
+		// whole coarse tier off memcache twelve times a minute — the tier that
+		// exists so a READER does not have to.
 		$found = [] === $unknown
 			? []
 			: \array_count_values( \array_column( $stats_store->url_hour_sources( $unknown, null, true ), 0 ) );
@@ -1980,6 +2001,7 @@ class Flame_Builder_Node extends Node {
 	 * unconfigured mirror leaves it memcache-only, exactly as before one existed.
 	 *
 	 * @api Readers building a Stats_Store outside the worker graph.
+	 * @param Stats_Store $store Store whose read seam is armed.
 	 */
 	public static function arm_stats_reader( Stats_Store $store ): void {
 		self::arm_rehydrate( $store, \trim( Core::as_string( Config::value( 'stats_mirror_node' ), '' ) ) );
@@ -1994,6 +2016,9 @@ class Flame_Builder_Node extends Node {
 	 * same resolution rather than two. Reading through a detached handle before
 	 * the worker's own node exists is safe precisely because it is read-only;
 	 * the WRITE path keeps `resolve_stats_partition()`, which never falls back.
+	 *
+	 * @param Stats_Store $store Store whose read seam is set.
+	 * @param string      $name  Mirror partition node name; '' unarms the seam.
 	 */
 	private static function arm_rehydrate( Stats_Store $store, string $name ): void {
 		$partition        = $store->partition();
@@ -2073,6 +2098,10 @@ class Flame_Builder_Node extends Node {
 	 * The dir comes from `Bootstrap::node_dirs()` rather than a rebuilt path
 	 * template — the partition token sits wherever the topology puts it, and a
 	 * reader that spells the layout itself goes blind the moment it moves.
+	 *
+	 * @param string $name      Mirror partition node name.
+	 * @param int    $partition Which of that node's partitions to open.
+	 * @return \Newspack_Nodes\Partition_Node|null Null when the topology declares no dir for it.
 	 */
 	private static function mirror_partition( string $name, int $partition ): ?\Newspack_Nodes\Partition_Node {
 		$live = Core::node( $name );
@@ -2135,7 +2164,7 @@ class Flame_Builder_Node extends Node {
 	private function buffer_mirror_write( string $key, array $data, int $ttl, string $ns ): void {
 		$cap = $this->mirror_topn( $ns );
 		if ( 0 === $cap ) {
-			return; // NS_URL's production default: rank nothing, keep nothing.
+			return; // 0 keeps nothing: NS_URLS_HOUR always, NS_URL by default.
 		}
 		// A URL with no merged requests would spend a slot on nothing.
 		if ( Stats_Store::NS_URL === $ns && self::mirror_traffic_rank( $data, $ns ) <= 0 ) {
@@ -2270,11 +2299,14 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
-	 * Drain the current per-URL flame/profile stats_cache into the store (memcache + the
-	 * mirror seam). Shared by flush() and save_state() so the flame trees co-commit with
-	 * the cursor at every checkpoint, not only on the FLUSH_INTERVAL_SEC cadence.
-	 * set_url_stats overwrites with the full aggregate and does NOT reset stats_cache, so
-	 * a save_state drain plus the next flush() is idempotent (no double-count).
+	 * Drain the per-URL flame and profile aggregates into the store — memcache
+	 * and the mirror seam both.
+	 *
+	 * `flush()` and `save_state()` share it, so the flame trees co-commit with
+	 * the read cursor at every checkpoint rather than only on the
+	 * FLUSH_INTERVAL_SEC cadence. `Stats_Store::set_url_stats()` overwrites with
+	 * the whole aggregate and leaves the accumulator standing, so a
+	 * `save_state()` drain followed by the next `flush()` double-counts nothing.
 	 */
 	private function mirror_url_stats(): void {
 		$stats_store = $this->stats_store;
@@ -2496,7 +2528,7 @@ class Flame_Builder_Node extends Node {
 	 * Both sides of the write path seed one, differing only in the `min_ms`
 	 * sentinel: the accumulator folds with `min()` and needs a ceiling, the
 	 * persisted row starts at 0 and is guarded by `timed_count`. Two literals
-	 * made every new field a four-place edit, and one omission a silent
+	 * would make every new field a four-place edit, and one omission a silent
 	 * undefined index on a per-request path.
 	 *
 	 * @param float|int $min_ms Starting minimum; `PHP_INT_MAX` where `min()` folds it.
@@ -2527,9 +2559,9 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
-	 * The live cap on one namespace's buffered frames: the configurable
-	 * $flame_topn for NS_URL (the flame profiles), the STATS_MIRROR_TOPN default
-	 * for the other per-URL namespaces, no bound at all for the aggregates.
+	 * The live cap on one namespace's buffered frames: `$flame_topn` for NS_URL
+	 * (the flame profiles), the `STATS_MIRROR_TOPN` value for the rest of that
+	 * map, and no bound at all for a namespace absent from it.
 	 *
 	 * @param string $ns Namespace a frame was written under.
 	 */

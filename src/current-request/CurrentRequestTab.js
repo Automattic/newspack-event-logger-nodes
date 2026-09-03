@@ -9,8 +9,9 @@
  * and profile breakdown are fetched from the `performance` CI's `request_detail`
  * verb (by rid + partition). The request-builder processes the firehose
  * asynchronously, so a just-loaded page won't be in the log for a beat — that's
- * the "still processing" state. There is no Refresh: the tab asks again every
- * tick, so the only thing a button could do is what is already happening.
+ * the "still processing" state. There is no Refresh: the tab asks each tick
+ * until the record and its flame land, so a button would only repeat an ask
+ * the tick already makes.
  */
 
 import { useState, useEffect } from '@wordpress/element';
@@ -26,12 +27,13 @@ import RequestTrace from '../overview/components/RequestTrace';
 import RequestProfile from '../overview/RequestProfile';
 import { egressPath } from '@newspack-nodes/shared/helpers/egressPath';
 
+/** The view node's name: the poll fills it, `useNodeState` reads it. */
 const VIEW = 'currentrequest:view';
 
 /** Every router tick: the record lands the moment the worker writes it. */
 const POLL_INTERVAL_MS = 1000;
 
-/** Ticks the ask outlives the record by, waiting on the later flame write. */
+/** Replies carrying the record the poll waits out for the flame write. */
 const FLAME_RETRY_TICKS = 5;
 
 /**
@@ -55,11 +57,11 @@ function currentRequestData() {
 /**
  * The overlay's "Request" tab.
  *
- * Four states, in the order they render, all read off the view node: `idle`
- * when the page localized no rid (logging off, running as root, or no matching
- * `log` rule), `loading` before the graph is mounted, `processing` while the
- * request-builder has yet to write the record, and `found` once
- * `request_detail` answers with one.
+ * Four states, in the order they render: `idle` when the page localized no rid
+ * (logging off, running as root, or no matching `log` rule), `loading` until
+ * the poll graph mounts the view node, `processing` while the request-builder
+ * has yet to write the record, and `found` once `request_detail` answers with
+ * one.
  *
  * The load is desired state rather than an event: the tab POLLS for its own
  * record until one arrives, so a record written a second after the page
@@ -82,10 +84,10 @@ export default function CurrentRequestTab() {
 
 	// @longform
 	// The flame is a SECOND write: Flame_Builder consumes requests.log after
-	// Request_Builder wrote the record, so the reply that finds the request
-	// almost always predates its flame. Asking on past the record is what
-	// delivers the trace without a reload, and the tick bound is what keeps a
-	// site running no flame-builder topology from asking for one forever.
+	// Request_Builder writes the record, so the reply that finds the request
+	// almost always predates its flame. Asking on past the record delivers the
+	// trace without a reload, and the retry bound keeps a site running no
+	// flame-builder topology from asking for one forever.
 	const [ asksSinceFound, setAsksSinceFound ] = useState( 0 );
 	useEffect( () => {
 		if ( model?.request ) {
@@ -94,13 +96,12 @@ export default function CurrentRequestTab() {
 	}, [ model ] );
 
 	// @longform
-	// The ask keeps going until the record exists. That serves both failure
-	// modes at once: request_detail legitimately answers nothing until
-	// requests.log has the record, and a refused command answered the same way
-	// — the old catch collapsed both into a permanent "processing" that never
-	// retried, so an expired session looked exactly like a slow write. Settling
-	// PAUSES: `enabled` tears the graph down, taking the node that owns the
-	// answer with it, which is what once forced a mirror in component state.
+	// The ask keeps going until the record exists, which serves both failure
+	// modes at once: request_detail answers nothing until requests.log has the
+	// record, and a refused command answers the same way, so an expired session
+	// recovers on the same retry a slow write does. Settling PAUSES rather than
+	// disabling: `enabled` tears the graph down, taking the view node that owns
+	// the answer with it.
 	useBatchedPoll( {
 		build: ( { interpreter, tee } ) =>
 			addSliceFetcher( interpreter, {

@@ -25,8 +25,7 @@
  * real chronological one: d3-flame-graph packs children flush, so the dead
  * time between two spans has to be handed to it as a transparent frame of its
  * own or it gets smeared into the widths either side. Without `t` the graph
- * falls back to what it has always done — proportional widths, alphabetical
- * order.
+ * falls back to proportional widths in alphabetical order.
  */
 
 import { useEffect, useRef, useMemo } from '@wordpress/element';
@@ -50,8 +49,7 @@ const frameName = ( d ) => d.data?.detail || d.data?.name || '';
 
 /**
  * Order two sibling frames: by when they started, or — for an aggregate, whose
- * frames span many requests and so have no single start — by displayed name,
- * which is what `.sort( true )` did for every graph before positions existed.
+ * frames span many requests and so have no single start — by displayed name.
  *
  * A `merged` frame sorts by `t` like any other, so this deliberately does not
  * use `isPositioned`: ordering needs a start, not a single span, and a merged
@@ -82,15 +80,10 @@ const compareFrames = ( a, b ) => {
 };
 
 /**
- * Build the tooltip text for a frame: name, shares of parent and total, duration.
+ * Lines of detail a tooltip shows before it is taller than any viewport.
  *
- * A frame whose share of its parent matches its share of the total (within
- * 0.1 point) shows one percentage rather than repeating itself.
- *
- * @param {Object} d D3 hierarchy node.
- * @return {string} Tooltip text.
+ * @type {number}
  */
-/** Lines of detail a tooltip shows before it is taller than any viewport. */
 const TOOLTIP_MAX_LINES = 30;
 
 /**
@@ -120,6 +113,15 @@ const capLines = ( text ) => {
 	);
 };
 
+/**
+ * Build the tooltip text for a frame: name, shares of parent and total, duration.
+ *
+ * A frame whose share of its parent matches its share of the total (within
+ * 0.1 point) shows one percentage rather than repeating itself.
+ *
+ * @param {Object} d D3 hierarchy node.
+ * @return {string} Tooltip text.
+ */
 const getTooltipText = ( d ) => {
 	// 'detail' carries the message; 'name' is the stable label.
 	const name = capLines( d.data?.detail || d.data?.name || 'unknown' );
@@ -261,9 +263,9 @@ const createTooltip = () => {
 			left = window.scrollX + 10;
 		}
 
-		// @longform Flip above the cursor rather than run off the bottom — then
-		// clamp, because a tooltip taller than the space above ran off the TOP
-		// instead, where nothing can scroll it back into view.
+		// @longform Flip above the cursor rather than run off the bottom, then
+		// clamp: a tooltip taller than the space above would otherwise run off
+		// the TOP, where nothing can scroll it back into view.
 		const viewTop = window.scrollY + 10;
 		const viewBottom = window.scrollY + window.innerHeight - 10;
 		let top = mouseY + 15;
@@ -336,9 +338,9 @@ const createTooltip = () => {
  * Time Breakdown, the Inflight badges and the log rows already share, so one
  * span is the same color everywhere a reader meets it.
  *
- * Depth shading replaced this and lost the only distinction that carried
- * meaning: a validation frame and a database frame at the same depth drew
- * identical, and depth is already legible from the y-axis.
+ * Depth shading is the rejected alternative: it draws a validation frame and a
+ * database frame at the same depth identically, discarding the one distinction
+ * that carries meaning, and depth is already legible from the y-axis.
  *
  * @return {(d: Object) => string} d3-flame-graph color mapper.
  * @testonly Exported for FlameGraph-colors.test.js.
@@ -347,7 +349,7 @@ export const createColorMapper = () => ( d ) =>
 	d.data?.spacer ? 'transparent' : getStateColor( d.data?.name );
 
 /**
- * Set each frame's label color for contrast against its (depth-shaded) fill.
+ * Set each frame's label color for contrast against its category fill.
  *
  * d3-flame-graph renders the label as a `div.d3-flame-graph-label` inside the
  * frame's `<foreignObject>`; the fill lives on the frame's `<rect>`. Re-run
@@ -414,7 +416,7 @@ const restamp = ( container ) => {
  * falls back to the base names.
  *
  * @param {Object} d D3 hierarchy node.
- * @return {Array} Frame labels from the root down to this node.
+ * @return {string[]} Frame labels from the root down to this node.
  */
 const getNodePath = ( d ) => {
 	const path = [];
@@ -433,8 +435,8 @@ const getNodePath = ( d ) => {
  * took from `detail` will not match. Zoom restoration therefore resolves only
  * for detail-less frames.
  *
- * @param {Object} node D3 hierarchy node (root).
- * @param {Array}  path Names to follow, root first.
+ * @param {Object}   node D3 hierarchy node (root).
+ * @param {string[]} path Names to follow, root first.
  * @return {Object|null} The named node, or null when the path does not resolve.
  */
 const findNodeByPath = ( node, path ) => {
@@ -463,9 +465,28 @@ const findNodeByPath = ( node, path ) => {
 	return null;
 };
 
-// Pruning thresholds: keep top-N or >= min fraction; hard cap is the ceiling.
+/**
+ * Share of the root's time a frame must reach to survive past the soft cap.
+ *
+ * @type {number}
+ */
 const PRUNE_MIN_FRACTION = 0.001;
+
+/**
+ * Frame count at or under which pruning keeps everything, and — once it does
+ * prune — the rank within which a frame is kept whatever its share.
+ *
+ * @type {number}
+ */
 const PRUNE_SOFT_MAX_NODES = 1000;
+
+/**
+ * Absolute ceiling on rendered frames, and `withTimeSpacers`' default spacer
+ * budget. The component derives that budget from what pruning left under this
+ * number instead, so the two passes together stay within one ceiling.
+ *
+ * @type {number}
+ */
 const PRUNE_HARD_MAX_NODES = 5000;
 
 /**
@@ -503,8 +524,8 @@ const countNodes = ( node ) =>
  * Called on the root, whose own value is the whole request and would swamp
  * any cutoff derived from the rest.
  *
- * @param {Object} node   Flame node whose descendants are collected.
- * @param {Array}  values Accumulator.
+ * @param {Object}   node   Flame node whose descendants are collected.
+ * @param {number[]} values Accumulator.
  */
 const collectDescendantValues = ( node, values ) => {
 	( node.children || [] ).forEach( ( child ) => {
@@ -529,7 +550,7 @@ const collectDescendantValues = ( node, values ) => {
  * @param {number} [options.minFraction]  Min fraction of total kept past the soft cap (default 0.001).
  * @param {number} [options.softMaxNodes] Frames ranked within this are always kept (default 1000).
  * @param {number} [options.hardMaxNodes] Absolute ceiling on rendered node count (default 5000).
- * @return {Object} Pruned tree (a copy; the input is not mutated).
+ * @return {Object} Pruned copy — the input is never mutated; a falsy root comes back unchanged.
  * @testonly Exported for FlameGraph.test.js; the component prunes internally.
  */
 export const pruneFlameGraph = ( root, options = {} ) => {
@@ -583,8 +604,8 @@ const isPositioned = ( node ) => typeof node.t === 'number' && ! node.merged;
  *
  * `Flame_Tree::offset_ms()` rounds `t` to 3 decimals and a span's duration is
  * rounded as well, so two that really do abut can land a microsecond the wrong
- * way. Treating that as a true overlap declined the whole FAMILY — on a real
- * request one such pair cost the other 45 siblings their positions and packed
+ * way. Reading that as a true overlap declines the whole FAMILY: on a real
+ * request one such pair costs the other 45 siblings their positions and packs
  * every one of them flush left. A hundredth of a millisecond is far above the
  * rounding and far below anything a pixel could show.
  */
@@ -600,7 +621,7 @@ const ABUT_TOLERANCE_MS = 0.01;
  * and whose combined width already exceeds the interval they span.
  *
  * @param {Object} node Flame node whose children are being placed.
- * @return {{ordered: Array, gaps: number[]}|null} Ordered children and the gap before each, or null.
+ * @return {{ordered: Object[], gaps: number[]}|null} Ordered children and the gap before each, or null.
  */
 const placeChildren = ( node ) => {
 	const children = node.children || [];
@@ -639,9 +660,12 @@ const collectGaps = ( node, out ) => {
 /**
  * Rebuild the tree with a spacer wherever a gap clears the cutoff.
  *
+ * A subtree that gains nothing comes back as the same object, so an aggregate —
+ * where no family can be placed at all — is never copied to reproduce itself.
+ *
  * @param {Object} node   Flame node.
  * @param {number} cutoff Gaps must exceed this to earn a spacer.
- * @return {Object} New node.
+ * @return {Object} The rebuilt node, or the input when nothing gained a spacer.
  */
 const insertSpacers = ( node, cutoff ) => {
 	if ( ! node?.children?.length ) {
@@ -697,7 +721,7 @@ const insertSpacers = ( node, cutoff ) => {
  *
  * @param {Object} root         Flame graph root.
  * @param {number} [maxSpacers] Spacers to emit at most (default 5000).
- * @return {Object} New tree; the input is not mutated.
+ * @return {Object} The tree with spacers, or the input when none were placed; never mutated.
  * @testonly Exported for FlameGraph.test.js; the component applies it internally.
  */
 export const withTimeSpacers = ( root, maxSpacers = PRUNE_HARD_MAX_NODES ) => {
@@ -815,7 +839,7 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 				.sort( compareFrames )
 				.title( '' )
 				.getName( frameName )
-				// Keep the object: .tooltip(true) type-checks but 4.1.3 no-ops.
+				// Keep the object: only a function is kept; true no-ops.
 				.tooltip( tip )
 				.selfValue( false )
 				.setColorMapper( colorMapper )

@@ -1,25 +1,22 @@
 <?php
 /**
- * Discovery_CI: command-dispatch for the spoke-side discovery surface.
+ * Discovery_CI: the spoke's answer to "which hooks and events do you
+ * instrument?".
  *
  * `newspack-event-logger-nodes.php` mounts this as the `discovery` node on the
  * substrate's `newspack_nodes/request_graph_ready` action, beside the
- * `performance` and `rules` service CIs. The hub's `Discovery_Collector_Node`
- * fans a `discovery.get` command at every connected spoke and union-merges the
- * replies into the hub's `discovered_*` staging options, which feed the ruleset
- * editor's hook picker.
+ * `performance` and `rules` service CIs. Two callers ask its one verb: the
+ * hub's `Discovery_Collector_Node` fans `discovery.get` at every connected
+ * spoke and union-merges the replies into the `discovered_hooks` /
+ * `discovered_events` staging options behind the ruleset editor's hook picker,
+ * and the substrate's `vault` CI probes the same verb to test one spoke's
+ * connection.
  *
- * The class declares no constructor: the inherited Service_CI_Node ctor builds
- * the commands table from node_schema() and gates every verb behind
- * manage_options, so the catalog scan picks the verb up automatically.
- *
- * Verbs:
- *   get — return registered_hooks + custom_events for this spoke.
- *
- * The payload is the union of instrumented hooks and custom events across every
- * LOG rule in the durable ruleset (`Rule_Set::instrumented_union()`), with
- * custom-event names filtered out of registered_hooks so the two lists stay
- * disjoint.
+ * The payload is the union of the hooks and custom events every LOG rule in the
+ * durable ruleset instruments (`Rule_Set::instrumented_union()`), with
+ * custom-event names filtered out of registered_hooks so the picker's two
+ * catalogs stay disjoint. It reports the ruleset and never writes it, because
+ * the editor is the only rules writer.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -33,13 +30,28 @@ use Newspack_Nodes\Service_CI_Node;
 
 \defined( 'ABSPATH' ) || exit;
 
+/**
+ * The `discovery` service CI. Its one verb is declared in node_schema(), and
+ * the inherited Service_CI_Node constructor builds the dispatch table from
+ * that declaration, wrapping the handler in the capability role the verb
+ * names — so this class needs neither a constructor nor a gate of its own,
+ * and the catalog scan picks the verb up with no registration.
+ */
 class Discovery_CI_Node extends Service_CI_Node {
 
 	/**
-	 * The instrumented union's list of names, with empty strings dropped.
+	 * One of the instrumented union's two lists, reduced to a list of non-empty
+	 * strings. The union de-duplicates already, by keying a hash map on each
+	 * name and returning its `array_keys()`.
 	 *
-	 * `Rule_Set::instrumented_union()` returns `array_keys()` of two hash maps,
-	 * so what arrives is already a de-duplicated list of strings.
+	 * That map is what leaves two shapes to clean up. A numeric hook name keys
+	 * it as an integer, so `array_keys()` hands the name back as one, and a
+	 * blank name would stage on the hub as an empty catalog entry. The union
+	 * declares `string[]`, but a pointer rule's hooks come back from a stored
+	 * option, so that declaration is an assertion about data an operator can
+	 * edit. `array_values()` reindexes because `array_filter()` preserves keys,
+	 * and a gapped array encodes as a JSON object rather than the list the hub
+	 * parses.
 	 *
 	 * @param mixed $value Hook or custom-event list from the instrumented union.
 	 * @return array<int,string>
@@ -52,12 +64,18 @@ class Discovery_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * Verb declaration for the `discovery` service CI. The inherited
-	 * Service_CI_Node ctor turns this into the dispatch table, wrapping each
-	 * handler in the manage_options gate; the topology console reads it for the
-	 * palette entry.
+	 * Declare the `discovery` CI: its category, description, and the single
+	 * `get` verb with its capability role and handler. The inherited
+	 * Service_CI_Node ctor turns this into the dispatch table, and the topology
+	 * console reads the same array for the palette entry.
+	 *
+	 * `get` declares READ, the lowest of the substrate's three roles, because it
+	 * only reads the ruleset. Service_CI_Node applies whatever role the verb
+	 * declares, so a handler gating itself would override this declaration
+	 * silently.
 	 *
 	 * @api Used by the substrate to provide UI etc.
+	 * @return array<string,mixed>
 	 */
 	public static function node_schema(): array {
 		return \array_merge( parent::node_schema(), [

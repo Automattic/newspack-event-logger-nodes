@@ -2,17 +2,21 @@
 /**
  * Settings_Schema: the application's config declaration — ONE Field per setting.
  *
- * The single source both Config and Admin derive from. Config takes the overlay
- * key-list and the option prefix; Admin takes the register_setting targets, the
- * add_settings_field loop, the reset set, the delete-on-blank subset, and the
- * per-option worker-restart class. Neither keeps a hand-written parallel list
- * any more — declare a setting here once and every view of it follows.
+ * The single source both Config and Admin derive from. Config takes the
+ * declared defaults, the overlay key-list and the option prefix; Admin takes
+ * the register_setting targets, the add_settings_field loop, the reset set, the
+ * delete-on-blank subset, and the per-option worker-restart class. Neither
+ * keeps a hand-written parallel list — declare a setting here once and every
+ * view of it follows.
  *
  * Substrate keys (base_directory, partitioning, memcache_servers, topologies,
  * and the remote-spoke geometry `remote_*` settings) belong to the nodes
  * Settings_Schema under `newspack_nodes_*`. Config::load_config imports their
  * effective values after removing ELN-owned names, so each plugin's option
- * namespace stays authoritative. They are NEVER declared here.
+ * namespace stays authoritative. They are NEVER declared here. `allowed_users`
+ * is the collision that makes the removal matter: both schemas declare it, and
+ * dropping the substrate's copy is what leaves this plugin's list governing its
+ * own admin page.
  *
  * Labels and section titles are lazy `fn(): string` thunks: building the Schema
  * for overlay_keys() — which a frontend request does through Config — must never
@@ -35,10 +39,10 @@ use Newspack_Nodes\Config_System\Schema;
  * Three settings render as checkboxes — `enable_logging`, `log_memory`, and
  * `flush_every_line`. Six more keys overlay the config file with no settings
  * field at all (`ui: false`): `allowed_users`, `rules`, `hook_start_priority`,
- * `custom_colors`, `stats_mirror_node`, and `recommended_log_events`. The URL
- * filters, hook lists, and auto-tune thresholds that were global settings
- * through v0.25 are per-rule fields of the `rules` ruleset now, which the React
- * rules editor owns through the `rules` service CI.
+ * `custom_colors`, `stats_mirror_node`, and `recommended_log_events`. URL
+ * filters, hook lists, and auto-tune thresholds are per-rule fields of the
+ * `rules` ruleset, which the React rules editor owns through the `rules`
+ * service CI — never the Settings API.
  *
  * Every Field carries its `default:` here, and `newspack-event-logger-nodes-
  * config.php` is a commented ledger of the same values — an override surface,
@@ -51,8 +55,9 @@ class Settings_Schema {
 	/**
 	 * Seed for the per-URL logging ruleset: the read-time default
 	 * `Rule_Set::load()` falls back to while the
-	 * `newspack_event_logger_nodes_rules` option is absent. Once the rules
-	 * editor writes that option, this list stops being consulted.
+	 * `newspack_event_logger_nodes_rules` option is absent or corrupt. Once the
+	 * rules editor writes that option, this list stops being consulted until
+	 * `Rule_Set::reset()` deletes it again.
 	 *
 	 * `Rule_Matcher` ranks query-bearing patterns above exact patterns (the
 	 * trailing `?`) above prefixes, so these five exact skips govern their
@@ -61,10 +66,10 @@ class Settings_Schema {
 	 * SSE, and worker-spawn endpoints; logging them would log the logger.
 	 *
 	 * No match means skip, and empty means empty: drop the `/` rule and the
-	 * site logs nothing. A `log` rule may also carry `hooks`, `custom_events`,
-	 * `significant_events`, `auto_disable_threshold`, and
-	 * `auto_protect_time_threshold` — see `Rule` for the full shape. A rule's
-	 * id is derived from its pattern, so declaring one here is pointless.
+	 * site logs nothing. A `log` rule may also carry hook lists, custom and
+	 * significant event names, the two auto-tune thresholds, and the query,
+	 * HTTP and hook-trace switches — `Rule` is the full shape. A rule's id is
+	 * derived from its pattern, so declaring one here is pointless.
 	 *
 	 * @var list<array<string,string>>
 	 */
@@ -193,7 +198,7 @@ class Settings_Schema {
 					register_args: [],
 				),
 
-				// URL/hook/threshold fields are per-rule now — none here.
+				// A URL, hook or threshold field belongs to a rule, not here.
 
 				// -- Debugging ----------------------------------------------
 				new Field(
@@ -219,7 +224,7 @@ class Settings_Schema {
 					render: [ Admin::class, 'flush_every_line_callback' ],
 				),
 
-				// ui:false: Config overlays these; no settings field.
+				// Logins narrowing manage_options; empty admits every admin.
 				new Field(
 					key: 'allowed_users',
 					type: 'array_strings',

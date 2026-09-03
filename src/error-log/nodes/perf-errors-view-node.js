@@ -1,12 +1,12 @@
 /**
  * The Error Log dashboard's view node.
  *
- * The `errors.*` partitions carry one record per error, warning, or stderr
- * line that `Request_Builder_Node` split off the firehose. This file maps
- * those raw envelopes to the rows `ErrorLog.js` renders, and does nothing
- * else: the stream plumbing lives in `useGlobStreamGraph`, the browse controls
- * in `useGlobBrowse`, and every generic log-stream behavior in the shared
- * `LogStreamViewNode` base.
+ * The `errors.*` partitions carry one record per firehose line whose keyword is
+ * `error`, `warning` or `stderr`, or ends in `(error)` or `(warning)` —
+ * `Request_Builder_Node` splits those off. This file maps the raw envelopes to
+ * the rows `ErrorLog.js` renders, and does nothing else: the stream plumbing
+ * lives in `useGlobStreamGraph`, the browse controls in `useGlobBrowse`, and
+ * every generic log-stream behavior in the shared `LogStreamViewNode` base.
  */
 
 import {
@@ -18,11 +18,20 @@ import {
 import fnv1a from '@newspack-nodes/shared/utils/fnv1a';
 import { LogStreamViewNode } from '@newspack-nodes/shared/nodes/log-stream-view-node';
 
+/** Rows the ring holds when the graph passes no cap of its own. */
 const DEFAULT_MAX_LINES = 5000;
-// Defensive bounds for raw envelope VALUEs (view owns the row mapping).
+
+/** Longest message a row displays; `raw` still carries the whole entry. */
 const MAX_M_LENGTH = 1000;
+
+/** Longest URL a row displays; `urlHash` hashes the unclipped one. */
 const MAX_URL_LENGTH = 2000;
-// Debug-mode raw retention per row (pretty-printable); ~PIPE_BUF x2.
+
+/**
+ * Longest debug-mode `raw` JSON a row keeps — twice the 4096-byte record
+ * `Line_Fitter` fits an error entry into, so it clips nothing a partition wrote
+ * and still bounds a row against anything else the stream hands this view.
+ */
 const MAX_RAW_LENGTH = 8192;
 
 /**
@@ -42,8 +51,8 @@ const clip = ( value, max ) => {
 /**
  * `perferrors:view` — owns the Error Log view model.
  *
- * A `LogStreamViewNode` subclass: the ring, paused belt + step budget,
- * decaying lps, seek tracking, and the shared control verbs — `select`
+ * A `LogStreamViewNode` subclass: the ring, the paused belt and step budget,
+ * the decaying lps, seek tracking, and the shared control verbs — `select`
  * included — all live in the shared base. This class adds the Error Log's
  * specifics: `shapeRow()`, which validates and enriches a raw errors envelope
  * (KEY=rid, VALUE={ts, k, m, n, method, url}) into a row, and the ingest
@@ -64,13 +73,14 @@ export class PerfErrorsViewNode extends LogStreamViewNode {
 	constructor( maxLines ) {
 		super( maxLines || DEFAULT_MAX_LINES );
 		this.seekActive = false;
-		// Publish a model up front so the view renders before the first row.
 		this._publish();
 	}
 
 	/**
-	 * Ingest gate over the four fields the placeholder names — request id,
-	 * keyword, message, url — and not the base's `content`.
+	 * Ingest gate over the four fields the toolbar placeholder names — request
+	 * id, keyword, message and url — each searched on its own. The base's
+	 * `content` joins the same four with spaces, so matching there would also
+	 * admit a term straddling two of them, which no column on screen contains.
 	 *
 	 * @param {Object} fields      Shaped row fields.
 	 * @param {string} filterLower The active filter, already lowercased.
@@ -87,15 +97,22 @@ export class PerfErrorsViewNode extends LogStreamViewNode {
 	/**
 	 * Validate and enrich one raw errors envelope into a row.
 	 *
-	 * Drops an empty rid, the `connected` sentinel, and any VALUE that is not
-	 * a plain object. Clips the message at 1000 characters and the displayed
-	 * URL at 2000, but hashes the FULL URL, so `urlHash` keys the same
+	 * Drops an empty rid, the `connected` sentinel, and any VALUE that is not a
+	 * plain object. Clips the message at `MAX_M_LENGTH` and the displayed URL at
+	 * `MAX_URL_LENGTH`, but hashes the UNCLIPPED URL, so `urlHash` keys the same
 	 * Overview URL detail the server's `Log_Manager::url_hash()` does. The
-	 * `n` line number survives only inside `raw`, the debug-mode JSON of the
-	 * whole VALUE clipped at 8192, which rides along with `msgId`, `key`, and
-	 * the `struct` flag; `content` is the line the viewer's filter matches.
+	 * `method`, `url` and `urlHash` trio appears only when the entry carried a
+	 * URL, which is what leaves that cell empty for an entry with none.
 	 *
-	 * @param {Array} message The 7-field envelope (KEY=rid, VALUE=entry).
+	 * The `n` line number survives only inside `raw`, the debug-mode JSON of the
+	 * whole VALUE, which rides along with `msgId`, `key` and the `struct` flag
+	 * that makes debug mode pretty-print the record instead of printing it as
+	 * one line. `content` satisfies the base's row contract — it is the fallback
+	 * debug mode renders when a row carries no `raw` — and `matchesFilter()`
+	 * reads the shaped fields rather than it.
+	 *
+	 * @param {Array} message The 7-field envelope (KEY=rid, VALUE=entry, ID the
+	 *                        `segment:offset:length` breadcrumb).
 	 * @return {Object|null} Row fields, or null to drop the envelope.
 	 */
 	shapeRow( message ) {
@@ -152,7 +169,12 @@ export class PerfErrorsViewNode extends LogStreamViewNode {
 	}
 }
 
-/** The view classes, handed to `makeNode` — a name is per-bundle. */
+/**
+ * The view class under the name TSL and the console palette resolve, exported
+ * so `useErrorLogGraph` hands `makeNode` the class itself: that name table is a
+ * per-bundle static, and a hub tab building its graph through another bundle's
+ * interpreter cannot resolve a name this bundle registered (ADR-16).
+ */
 export const views = CommandInterpreterNode.registerNodeClasses( {
 	PerfErrorsView: PerfErrorsViewNode,
 } );

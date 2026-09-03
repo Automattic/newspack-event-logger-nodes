@@ -1,7 +1,10 @@
 /**
- * Custom Event Selector Modal Component
+ * The custom-event picker a logging rule's editor opens.
  *
- * A modal for selecting custom events to log, with color swatches.
+ * A rule records only the custom events it names, and this is where an operator
+ * picks them from every event the deployment has registered. Each row carries
+ * the swatch the dashboards draw that event in, so one name looks the same in
+ * both places.
  */
 
 import { useState, useMemo } from '@wordpress/element';
@@ -12,18 +15,31 @@ import SelectorModal from './SelectorModal';
 import '../styles/custom-event-selector.scss';
 
 /**
- * Custom event colors - loaded from PHP config (includes plugin-registered events via filter).
- * Order is preserved from config so each plugin's events stay together.
+ * Every registered custom event, mapped to the swatch the dashboards draw it in.
+ *
+ * `Config::get_custom_colors()` merges the deployment config, whatever the
+ * `newspack_event_logger_nodes_custom_colors` filter adds and the events spokes
+ * reported to the hub, then sorts the map case-insensitively; the picker lists
+ * the events in that order and imposes none of its own. WordPress prints the
+ * map as an inline script before this bundle, so it is in hand at module load
+ * and cannot change while the page lives.
+ *
+ * @type {Object<string,string>}
  */
 const CUSTOM_COLORS = window.newspackNodesCustomColors || {};
 
 /**
  * Custom Event Selector Modal component.
  *
+ * The search narrows the grid and Select All with it, so searching and then
+ * selecting adds a whole family of event names at once. Clear All and both
+ * footer numbers ignore the search, because the selection Apply hands back is
+ * the whole one — a count of what survived the search would understate it.
+ *
  * @param {Object}                  props             Component props.
  * @param {boolean}                 props.isOpen      Whether the modal is open.
  * @param {() => void}              props.onClose     Close callback.
- * @param {Array}                   props.selected    Currently selected events.
+ * @param {Array}                   props.selected    Events the modal opens with; reopening resets to these.
  * @param {(events: Array) => void} props.onSelect    Called on Apply with the selected event names.
  * @param {string}                  [props.className] Extra classes for the modal frame (skin theming).
  * @return {import('react').ReactElement|null} Rendered component.
@@ -38,10 +54,8 @@ export default function CustomEventSelectorModal( {
 	const [ search, setSearch ] = useState( '' );
 	const chosen = useMultiSelect( { selected, isOpen } );
 
-	// Get all available events from config (preserves order).
 	const allEvents = useMemo( () => Object.keys( CUSTOM_COLORS ), [] );
 
-	// Filter events by search.
 	const filteredEvents = useMemo( () => {
 		const searchLower = search.toLowerCase();
 		return allEvents.filter( ( event ) =>
@@ -117,6 +131,7 @@ export default function CustomEventSelectorModal( {
 		>
 			<div className="custom-event-grid">
 				{ filteredEvents.map( ( event ) => {
+					// Mirrors the PHP default swatch for a colorless event.
 					const color = CUSTOM_COLORS[ event ] || '#ffa726';
 					const isSelected = chosen.has( event );
 					const eventId = `event-${ event.replace(
