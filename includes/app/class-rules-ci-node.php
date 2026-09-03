@@ -1,18 +1,27 @@
 <?php
 /**
- * Rules_CI: command-dispatch for the per-URL logging ruleset editor.
+ * Rules_CI: command dispatch for the per-URL logging ruleset editor.
  *
- * Five verbs — list, save, upsert, delete, reset — each declaring its own
- * `description`. They all run through Rule_Set, so the tiering and orphan
- * reconcile invariants in `Rule_Set::save()` are never bypassed by a raw
- * `update_option()`. An id is a pure function of the pattern, so `save` and
- * `upsert` rekey what they are handed: list POSITION carries no meaning —
- * `Rule_Matcher` ranks by specificity.
+ * `newspack-event-logger-nodes.php` mounts this as the `rules` node on the
+ * substrate's `newspack_nodes/request_graph_ready` action, beside the
+ * `discovery` and `performance` service CIs. The `src/rules` editor, mounted
+ * into the settings page's Logging Rules section, drives all five verbs —
+ * list, save, upsert, delete, reset.
  *
- * `save` and `upsert` take their JSON blob as the first raw token
- * (`self::arg_strings( $args )[0]`) instead of through Command_Args::parse(),
- * which would swallow a `--`-leading payload as an option. `delete` takes a
- * plain positional id and parses normally.
+ * Every verb goes through `Rule_Set`, so the inline/pointer tiering and the
+ * orphan reconcile in `Rule_Set::save()` hold for an editor write exactly as
+ * they do for the config seed. A raw `update_option()` here would store the
+ * list without writing a heavy rule's hooks option or sweeping the options a
+ * removed rule left behind. An id is a pure function of the pattern, so `save`
+ * and `upsert` rekey what they are handed rather than trust an incoming id,
+ * and list POSITION carries no meaning: `Rule_Matcher` ranks by specificity.
+ *
+ * `save` and `upsert` read their JSON blob as the raw first token
+ * (`self::arg_strings( $args )[0]`); a blob carries its own structure, so
+ * there is nothing for `Command_Args::parse()` to classify. `delete` takes a
+ * plain positional id and parses normally. One unrepresentable entry throws
+ * out of `Rule::from_array()` before `Rule_Set::save()` is reached, so a
+ * whole-list replace is all or nothing.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -29,22 +38,34 @@ use Newspack_Nodes\Service_CI_Node;
 \defined( 'ABSPATH' ) || exit;
 
 /**
- * The `rules` service CI. Verbs are declared once in node_schema(); the
- * inherited Service_CI_Node constructor builds the dispatch table from it,
- * so this class needs no constructor of its own.
+ * The `rules` service CI: five verbs over one `Rule_Set`.
+ *
+ * Verbs are declared once in `node_schema()`, and the inherited
+ * `Service_CI_Node` constructor builds the dispatch table from that
+ * declaration, so this class needs no constructor of its own.
  */
 class Rules_CI_Node extends Service_CI_Node {
 
-	/** Hard cap on JSON payload size for `save`/`upsert` — a whole ruleset is small; this just bounds a runaway request. */
+	/**
+	 * Byte cap on a `save` or `upsert` payload. A whole ruleset is small, so
+	 * this bounds a runaway request rather than any edit an operator makes.
+	 */
 	private const MAX_JSON_BYTES = 65536;
 
-	/** Bounded decode depth — plenty for a rule object's nested hooks/events lists. */
+	/**
+	 * Decode depth ceiling. A rule list nests three levels — the list, a rule
+	 * object, its hooks or events list — so 12 clears any real payload while
+	 * `json_decode()` refuses a deeper one instead of building it.
+	 */
 	private const MAX_JSON_DEPTH = 12;
 
 	/**
-	 * Decode + guard a JSON arg into an array. Rejects oversized payloads and
-	 * anything that doesn't decode to a PHP array (malformed JSON, or valid
-	 * JSON that isn't an object/array at the top level).
+	 * Decode and guard a JSON argument into an array.
+	 *
+	 * Refuses an oversized payload before decoding, and refuses anything that
+	 * does not come back a PHP array: malformed JSON, JSON nested past
+	 * MAX_JSON_DEPTH, and valid JSON carrying a scalar at the top level all
+	 * land in the same refusal.
 	 *
 	 * @param string $raw Raw JSON token as it arrived on the command envelope.
 	 * @return array<array-key,mixed>
@@ -62,9 +83,16 @@ class Rules_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * Project a Rule into the wire shape the editor consumes: hooks always
-	 * resolved to the full list (pointer tier included) and hooks_in always
-	 * 'inline' — the storage tier is a Rule_Set implementation detail.
+	 * Project a Rule into the wire shape the editor consumes: hooks resolved to
+	 * the full list whichever tier holds them, and `hooks_in` always inline.
+	 *
+	 * A pointer rule stores its hooks under a separate option and carries null
+	 * in the rule itself, so an unresolved projection would show the editor a
+	 * rule with no hooks. Saying `inline` beside those resolved hooks is what
+	 * keeps the shape representable on the way back: `Rule` refuses a hooks
+	 * list that claims the pointer tier. The tier is `Rule_Set`'s own decision,
+	 * re-derived from the hook count on every save, so the editor never picks
+	 * it.
 	 *
 	 * @param Rule $rule Persisted rule, either tier.
 	 * @return array<string,mixed>
@@ -78,7 +106,12 @@ class Rules_CI_Node extends Service_CI_Node {
 
 	/**
 	 * Declare the `rules` CI: its category, description, and the five verbs
-	 * with their argument lists and handlers.
+	 * with their capability roles, argument lists and handlers.
+	 *
+	 * The `capability` key is the whole gate. `Service_CI_Node` wraps each
+	 * handler in `Capabilities::require()` for the role declared here — READ
+	 * for `list`, TUNE for the four writes — so no handler checks again; one
+	 * that did would outrank its own declaration without saying so.
 	 *
 	 * @api Used by the substrate to provide UI etc.
 	 * @return array<string,mixed>
@@ -140,7 +173,7 @@ class Rules_CI_Node extends Service_CI_Node {
 						$set       = Rule_Set::load();
 						$remaining = [];
 						foreach ( $set->rules() as $r ) {
-							// Drop the id match and any pattern match.
+							// An edit that moved the pattern keeps its old id.
 							if ( ( '' !== $incoming->id && $r->id === $incoming->id ) || $r->pattern === $incoming->pattern ) {
 								continue;
 							}

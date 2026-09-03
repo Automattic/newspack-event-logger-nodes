@@ -2,22 +2,23 @@
  * URL Detail View — the body of the Performance dashboard's URL modal.
  *
  * `PerformanceDashboard` opens a modal for one URL and renders this view inside
- * it. Everything here draws a payload the parent already fetched from the
- * `performance` CI's `url_detail` verb; this component owns no slice and issues
- * no command of its own. Top to bottom:
+ * it. The view owns no slice: everything but the breakdown series draws a
+ * payload the parent already fetched from the `performance` CI's `url_detail`
+ * verb. Top to bottom:
  *
  *   1. Aggregate time chart of the breakdown series, with the Metric and
  *      Breakdown dropdowns that drive it.
  *   2. Category time charts — time, count, and average per profile category.
  *   3. Response-time scatter of the individual requests.
- *   4. Aggregate flame graph, lazily imported because d3-flame-graph is heavy.
+ *   4. Aggregate flame graph, drawn by `RequestTrace`, which holds
+ *      d3-flame-graph behind `lazy()` so the sections above it paint first.
  *   5. Aggregate profile breakdown, averaged across the profiled requests.
  *   6. Virtualized recent-requests table with an "Errors Only" filter.
  *
- * The one piece of data it fetches is the breakdown series, which is its OWN
- * read: it goes whenever the Breakdown dropdown changes and again on a
- * router-tick timer, because the breakdown is a separate round trip from the
- * `url_detail` payload.
+ * The breakdown series is the one read this view issues for itself, because it
+ * is a separate round trip from the `url_detail` payload: `url_breakdown` goes
+ * whenever the Breakdown dropdown or the URL changes, and again on a
+ * router-tick timer.
  *
  * Footgun: the requests table virtualizes against the modal's scroll container
  * (`.components-modal__content`). Mounted outside a `Modal`, `useVirtualization`
@@ -69,13 +70,16 @@ const RequestRow = memo(
 	 * One row of the recent-requests table, memoized so scrolling re-renders
 	 * only the rows that entered the window.
 	 *
-	 * The row is a button: click or Enter/Space hands rid + partition to `onSelect`.
-	 * Its request-id cell carries a bar background whose width is the row's
-	 * value as a fraction of `maxBar`, and its status cell reads `error_status`
-	 * through the shared table, falling back to the HTTP status code.
+	 * The row is a button: click or Enter/Space hands rid + partition to
+	 * `onSelect`. It also carries the `?` picker's `request:` descriptor as
+	 * `data-ask`, so a picker click on a row asks about that request rather
+	 * than about the URL the modal is open on. Its request-id cell carries a
+	 * bar background whose width is the row's value as a fraction of `maxBar`,
+	 * and its status cell reads `error_status` through `errorStatus()`, falling
+	 * back to the HTTP status code for a request that ended nominally.
 	 *
 	 * @param {Object}                                   props          Component props.
-	 * @param {Object}                                   props.req      Request index entry: rid, timestamp, method, status_code, error_status, duration_ms, peak_mb.
+	 * @param {Object}                                   props.req      Request index entry: rid, partition, timestamp, method, status_code, error_status, duration_ms, peak_mb.
 	 * @param {(rid: string, partition: number) => void} props.onSelect Receives the row's rid and partition on click or keyboard activation.
 	 * @param {number}                                   props.maxBar   Largest bar value across the filtered rows; 0 draws no bar.
 	 * @param {string}                                   props.metric   Chart metric; 'memory' bars peak_mb, every other value bars duration_ms.
@@ -149,12 +153,12 @@ const RequestRow = memo(
  * heading count, and the bar-scaling maximum alike.
  *
  * @param {Object}                                   props                 Component props.
- * @param {Object}                                   props.urlDetail       `url_detail` payload: stats, requests, scan_stopped_early, aggregate_flame, aggregate_profiles, last_modified, and optional category_time_series.
+ * @param {Object}                                   props.urlDetail       The fields this view reads off the `url_detail` payload: stats, requests, scan_stopped_early, aggregate_flame, aggregate_profiles, last_modified, and optional category_time_series.
  * @param {Array}                                    props.sortedRequests  Recent requests, already sorted by the parent.
  * @param {Object}                                   props.requestSort     Current sort as `{ field, dir }`; drives the header arrows only.
  * @param {(field: string) => void}                  props.onRequestSort   Receives a field name when a sortable header is clicked.
  * @param {(rid: string, partition: number) => void} props.onSelectRequest Receives a rid AND its partition from a row click or a scatter-plot dot.
- * @param {string}                                   props.urlHash         Hash identifying the URL; the breakdown series is this view's own read.
+ * @param {string}                                   props.urlHash         The URL's 12-char hash, which addresses the `url_breakdown` read below.
  * @return {import('react').ReactElement} Rendered component.
  */
 export default function UrlDetailView( {
@@ -185,7 +189,6 @@ export default function UrlDetailView( {
 		);
 	}, [ sortedRequests, errorsOnly ] );
 
-	// Virtualize based on modal scroll position.
 	const { startIndex, endIndex, paddingTop, paddingBottom } =
 		useVirtualization(
 			listRef,
@@ -195,7 +198,6 @@ export default function UrlDetailView( {
 		);
 	const visibleRequests = filteredRequests.slice( startIndex, endIndex );
 
-	// --- Breakdown chart controls ---
 	const [ chartMetric, setChartMetric ] = useState( 'volume' );
 
 	// Row bars scale against the filtered rows, not the whole result set.
@@ -212,25 +214,24 @@ export default function UrlDetailView( {
 	const [ breakdownError, setBreakdownError ] = useState( null );
 
 	/**
-	 * Fetch one breakdown dimension and hand it to the aggregate chart.
+	 * `url_breakdown` for one dimension; `onDone` is the chart's only series
+	 * source. `run` takes the command's token array, so `loadBreakdown` below
+	 * is what the rest of the component calls.
 	 *
-	 * It is the chart's only series source.
-	 *
-	 * @param {string} breakdown Dimension to break the series down by.
+	 * A READ in the substrate's sense: idempotent, and keyed on a subject the
+	 * operator changes by flipping the dropdown. Sent as a write, three fast
+	 * flips would be three commands answered in any order, so the chart could
+	 * draw one dimension's data under another's label, and a dropped reply
+	 * would leave "Loading…" standing forever, because a write never re-asks.
+	 * Retried, the newest pick supersedes. Asking `url_detail` for the series
+	 * instead would drag a full request-index walk the chart keeps nothing of.
 	 */
-	// @longform The chart's own read, and a READ in the substrate's sense:
-	// idempotent, keyed on a subject the operator changes
-	// by flipping the dropdown. Queued, three fast flips are three commands
-	// answered in any order, so the chart can show one dimension's data under
-	// another's label — and a dropped reply leaves "Loading…" forever, since
-	// a write never re-asks. Retried, the newest pick supersedes. `url_detail`
-	// would drag a full index walk this keeps nothing of.
 	const { run: fetchBreakdown } = useCommandOnce( {
 		ci: SERVER,
 		command: 'url_breakdown',
 		scope: `${ SERVER }:url_breakdown`,
 		retry: true,
-		// The PAIR is the address: one subject per URL retires the wrong ask.
+		// Subject is the PAIR, not the hash: a superseded reply fills nothing.
 		subjectOf: ( args ) => args.join( ' ' ),
 		onDone: ( { result, error } ) => {
 			setBreakdownError( error );
@@ -239,6 +240,12 @@ export default function UrlDetailView( {
 		},
 	} );
 
+	/**
+	 * Ask for one breakdown dimension, and mark the panel loading until it
+	 * lands.
+	 *
+	 * @param {string} breakdown Dimension to break the series down by.
+	 */
 	const loadBreakdown = useCallback(
 		( breakdown ) => {
 			setBreakdownLoading( true );
@@ -247,13 +254,18 @@ export default function UrlDetailView( {
 		[ fetchBreakdown, urlHash ]
 	);
 
-	// Drop on a SWITCH, never a refresh: old numbers, new label, read true.
+	// Clear on a SWITCH only: old numbers under the new label would read true.
 	useEffect( () => {
 		setBreakdownData( null );
 		loadBreakdown( chartBreakdown );
 	}, [ chartBreakdown, loadBreakdown ] );
 
-	// The tick passes no arguments; bind the breakdown showing right now.
+	/**
+	 * Re-ask for the dimension currently on screen, on the router tick.
+	 *
+	 * The tick passes no arguments, so the callback has to close over the
+	 * dropdown's value rather than be handed it.
+	 */
 	const reloadBreakdown = useCallback( () => {
 		loadBreakdown( chartBreakdown );
 	}, [ chartBreakdown, loadBreakdown ] );
@@ -264,11 +276,14 @@ export default function UrlDetailView( {
 	} );
 
 	/**
-	 * Render sortable column header.
+	 * A column header that sorts, carrying the arrow for the current sort.
 	 *
-	 * @param {string} field   Field name.
-	 * @param {string} label   Display label.
-	 * @param {string} variant Optional modifier class variant.
+	 * Sorting is the parent's: this reports the click and reads `requestSort`
+	 * to decide which arrow, if any, to draw.
+	 *
+	 * @param {string} field   Sort field this header stands for.
+	 * @param {string} label   Already-translated column label.
+	 * @param {string} variant Cell modifier: 'center', 'numeric' or ''.
 	 * @return {import('react').ReactElement} Header element.
 	 */
 	const renderSortHeader = ( field, label, variant = '' ) => (
@@ -290,8 +305,7 @@ export default function UrlDetailView( {
 
 	return (
 		<>
-			{ /* Unconditional: an empty dimension or a refusal must leave
-			     the dropdowns to recover with. */ }
+			{ /* Always mounted: a gate here can strand the operator. */ }
 			<BreakdownControls
 				breakdownData={ breakdownData }
 				metric={ chartMetric }
@@ -304,7 +318,6 @@ export default function UrlDetailView( {
 
 			<CategoryTimeChart data={ urlDetail?.category_time_series } />
 
-			{ /* Response Time Chart (individual requests) */ }
 			{ urlDetail.requests?.length > 0 && (
 				<ResponseTimeChart
 					requests={ urlDetail.requests }
@@ -312,7 +325,6 @@ export default function UrlDetailView( {
 				/>
 			) }
 
-			{ /* Flame Graph */ }
 			{ urlDetail.aggregate_flame &&
 				urlDetail.aggregate_flame.children?.length > 0 && (
 					<div style={ { marginTop: '20px' } }>
@@ -338,7 +350,6 @@ export default function UrlDetailView( {
 				/>
 			) }
 
-			{ /* Virtualized Recent Requests */ }
 			<div className="event-logger-table event-logger-table--requests">
 				<div
 					style={ {
@@ -375,7 +386,7 @@ export default function UrlDetailView( {
 					</button>
 				</div>
 
-				{ /* Header outside scroll container */ }
+				{ /* Outside listRef, so it is never a virtualized row. */ }
 				<div className="event-logger-table__header newspack-nodes-table__header">
 					{ renderSortHeader(
 						'timestamp',

@@ -5,20 +5,22 @@
  * otherwise has to scrape a rendered table and infer what the numbers mean.
  * This is those numbers, named.
  *
- * FACTS ONLY. It carries no instructions, and nothing here is a field the
- * request record would not already have shown on screen: the environment,
- * the remote address and the user agent are not in it, because a discovery
- * block is a convenience for a reader, not a second export path.
+ * FACTS ONLY. It carries no instructions, and every field measures the
+ * selection the operator already has open, read off the replies the panels
+ * render. The environment, the remote address and the user agent stay out,
+ * because a discovery block is a convenience for a reader, not a second
+ * export path.
  */
 
 /**
  * The number, or the fallback. Pass `null` where "no answer yet" has to stay
  * distinguishable from "measured zero" — the distinction the headline stats
  * already render; the default floors a missing measurement so a reader can
- * index without guarding.
+ * index without guarding. Only a finite number survives: a numeric string,
+ * `NaN` and `Infinity` all take the fallback.
  *
- * @param {*}       value      Anything numeric-ish.
- * @param {?number} [fallback] What an absent measurement reads as.
+ * @param {*}       value        A candidate measurement.
+ * @param {?number} [fallback=0] What an absent measurement reads as.
  * @return {?number} The finite number, or the fallback.
  */
 function num( value, fallback = 0 ) {
@@ -30,18 +32,23 @@ function num( value, fallback = 0 ) {
 /**
  * What the dashboard is currently showing, innermost selection first: a
  * selected request describes the page better than the URL it sits under, and
- * that better than the totals of the URL set on screen.
+ * that better than the totals of the URL set on screen. `surface` says which
+ * of the three it is — `request`, `url` or `overview` — and `filters` rides
+ * on all three, because a narrowed number that does not say what narrowed it
+ * reads as the site's.
  *
- * @param {Object}  state                    The dashboard's current selection.
+ * @param {Object}  [state]                  The dashboard's current selection.
  * @param {?Object} [state.urlTotals]        Totals for the URL set the filters selected.
  * @param {?Array}  [state.urlSlowest]       The slowest URLs of that same set.
  * @param {?Object} [state.urlFilters]       The filters both are of.
  * @param {?Object} [state.selectedUrl]      The selected URL row.
  * @param {?Object} [state.urlDetail]        Its detail payload.
  * @param {?string} [state.selectedRequest]  The selected request id.
- * @param {?number} [state.requestPartition] Its partition.
+ * @param {?number} [state.requestPartition] Its partition. Absent reads as 0,
+ *                                           the `request_detail` verb's own
+ *                                           default.
  * @param {?Object} [state.requestDetail]    Its detail payload.
- * @return {Object} The facts block.
+ * @return {Object} The facts block, discriminated by `surface`.
  */
 export function pageFacts( {
 	urlTotals,
@@ -99,7 +106,7 @@ export function pageFacts( {
 			avg_ms: num( urlTotals?.avg_ms, null ),
 			avg_peak_mb: num( urlTotals?.avg_peak_mb, null ),
 		},
-		// The slowest of the SAME set, sorted by the verb that filtered it.
+		// The SAME set the totals are of, ranked by `avg_ms` server-side.
 		slowest: ( urlSlowest ?? [] ).slice( 0, 10 ).map( ( u ) => ( {
 			hash: u.hash,
 			url: u.url,

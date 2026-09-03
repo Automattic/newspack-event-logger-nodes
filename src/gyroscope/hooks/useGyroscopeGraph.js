@@ -1,26 +1,37 @@
 /**
  * useGyroscopeGraph — the Gyroscope dashboard's stream graph.
  *
- * The graph and its connection lifecycle are the substrate's `useStreamGraph`;
- * this declares the three values that make it this dashboard's — the node-name
- * prefix, the `gyroscope.*` subscription, and the view-model class.
+ * The nodes, the SSE connection and the visibility gate are the substrate's
+ * `useStreamGraph`. This file declares only what makes that graph this
+ * dashboard's: the node-name prefix, the subscription, the view class and the
+ * pre-open clear.
  *
- * `gyroscope:view` consumes wire envelopes directly: the rid rides KEY and the
- * VALUE's `state` says what the record is. React samples it through
- * `snapshot()`. Rows that predate a connection gap are stale, so the view is
- * cleared before every open.
+ * Nothing sits between the stream and the view, because `gyroscope:view`
+ * consumes wire envelopes as they arrive — the rid rides KEY and the VALUE's
+ * `state` says what the record is. React samples the model off that node
+ * through `snapshot()` on its own refresh tick rather than re-rendering per
+ * message.
  */
 
 import { views } from '../nodes/gyroscope-view-node';
 import { useStreamGraph } from '@newspack-nodes/shared/hooks/useStreamGraph';
 
 /**
- * Mount the Gyroscope graph and own its SSE connection while the page is visible.
+ * Mount the Gyroscope graph and hold its SSE connection while the page is
+ * visible.
  *
- * Returns nothing: the view reads its model via useNodeState +
- * Core.node(VIEW).snapshot(), and the gyroscope dashboard has no control
- * callbacks. Reset Graph is driven by a `Core.bumpGraphGeneration()` bump —
- * mountExospine subscribes this reused mount's rebuild to it.
+ * The prefix is a contract rather than a label: it names the three nodes, and
+ * `Inflight.js` reaches `gyroscope:view` by that literal string — the
+ * reconnect banner through `useNodeState`, the row list through the
+ * `snapshot()` its refresh tick calls. The view class is handed over rather
+ * than named because the interpreter that builds the graph may belong to
+ * another bundle, whose `includeNodes` never registered `GyroscopeView`
+ * (ADR-16).
+ *
+ * Returns nothing: this dashboard offers no pause, step or filter control, and
+ * React reads the model off the node. Reset Graph needs no wiring here either
+ * — `useStreamGraph` mounts through `mountExospine`, which subscribes the
+ * rebuild to `Core.bumpGraphGeneration()`.
  */
 export function useGyroscopeGraph() {
 	useStreamGraph( {

@@ -16,8 +16,9 @@
  *   - URLs go through `Log_Manager::redact_url()`, the one redaction path.
  *   - The environment is dropped except an allowlist. No headers, no IPs, no
  *     user agents, no cookies — the brief leaves the site.
- *   - Findings and the caveat ride along, because a model handed a
- *     profiled/duration ratio with no caveat will invent a cause.
+ *   - The caveat rides on every brief, because a model handed a
+ *     profiled/duration ratio without one will invent a cause. `Findings`
+ *     rides where a detector has something to say: the request and the URL.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -30,9 +31,19 @@ use Newspack_Nodes\Core;
 
 \defined( 'ABSPATH' ) || exit;
 
+/**
+ * Six shapers for five descriptor types — `category:` has two, one for the
+ * board inside a request and one for the global board — plus the parser that
+ * decides which. Every method is static and the class holds no state.
+ *
+ * A shaper returns null when the record does not hold what was asked about: a
+ * span absent from the tree, an entry number no line carries, a category off
+ * the board. `Performance_CI_Node` turns that null into the message the picker
+ * shows, so no shaper here decides how a miss reads.
+ */
 class Ask_Assembler {
 
-	/** Entries a request brief carries before it stops being "small". */
+	/** Entries a request brief carries; past this it truncates and says so. */
 	public const MAX_ENTRIES = 60;
 
 	/** Entries either side of the subject an `entry:` brief carries. */
@@ -41,7 +52,11 @@ class Ask_Assembler {
 	/** Worst recent requests a `url:` brief carries. */
 	public const WORST_REQUESTS = 5;
 
-	/** Spans a list carries. Beyond this the brief spends its budget on noise. */
+	/**
+	 * Rows any list in a brief carries: top-level and sibling spans, the
+	 * parents in `elsewhere`, the rest of a category board. Past this a brief
+	 * spends its budget on noise.
+	 */
 	public const TOP_SPANS = 6;
 
 	/** The descriptor vocabulary. Deliberately small: it is a contract. */
@@ -58,7 +73,7 @@ class Ask_Assembler {
 	 * One request: what it did, how long it took, what the detector found.
 	 *
 	 * @param array<array-key,mixed> $record A stored request record.
-	 * @param Rule|null           $rule   The rule governing its URL.
+	 * @param Rule|null              $rule   The rule governing its URL.
 	 * @return array<string,mixed>
 	 */
 	public static function for_request( array $record, ?Rule $rule ): array {
@@ -88,8 +103,8 @@ class Ask_Assembler {
 	}
 
 	/**
-	 * The top-level shape of the flame tree: total, and each phase with its
-	 * share. The whole tree is what `span:` briefs are for.
+	 * The top of the flame tree: what the profiler accounted for, and the
+	 * heaviest top-level spans. The whole tree is what `span:` briefs are for.
 	 *
 	 * @param array<array-key,mixed> $record A stored request record.
 	 * @return array<string,mixed>
@@ -103,9 +118,8 @@ class Ask_Assembler {
 	}
 
 	/**
-	 * The environment, allowlisted. Everything absent from ENV_ALLOWLIST is
-	 * DROPPED rather than filtered out by name, so a field added to the record
-	 * later does not silently start leaving the site.
+	 * The environment as a brief carries it: the ENV_ALLOWLIST keys this record
+	 * holds, scalar values only.
 	 *
 	 * @param array<array-key,mixed> $record A stored request record.
 	 * @return array<string,mixed>
@@ -124,9 +138,10 @@ class Ask_Assembler {
 	 * One flame span: its subtree, its siblings, and its parent's total — the
 	 * three numbers that say whether it is the problem or merely contains it.
 	 *
-	 * @param array<array-key,mixed> $record A stored request record.
-	 * @param string              $name   Span name as it appears in the tree.
-	 * @param Rule|null           $rule   The rule an edit would land on.
+	 * @param array<array-key,mixed> $record  A stored request record.
+	 * @param string                 $name    Span name as it appears in the tree.
+	 * @param Rule|null              $rule    The rule an edit would land on.
+	 * @param string                 $context Descriptor of the request this span ran in, which `fetch` addresses the brief again by.
 	 * @return array<string,mixed>|null Null when the tree holds no such span.
 	 */
 	public static function for_span( array $record, string $name, ?Rule $rule, string $context = '' ): ?array {
@@ -292,7 +307,7 @@ class Ask_Assembler {
 	 * an uninstrumented call shows up as nothing at all.
 	 *
 	 * @param array<array-key,mixed> $record A stored request record.
-	 * @param int                 $n      The entry's own sequence number.
+	 * @param int                    $n      The entry's own sequence number.
 	 * @return array<string,mixed>|null Null when the record holds no such entry.
 	 */
 	public static function for_entry( array $record, int $n ): ?array {
@@ -330,6 +345,9 @@ class Ask_Assembler {
 	 * The milliseconds between two entries, or null when either end is missing.
 	 *
 	 * @param list<mixed> $entries The entry list.
+	 * @param int         $from    Index of the earlier entry.
+	 * @param int         $to      Index of the later entry.
+	 * @return float|null
 	 */
 	private static function gap( array $entries, int $from, int $to ): ?float {
 		if ( ! isset( $entries[ $from ], $entries[ $to ] )
@@ -374,7 +392,7 @@ class Ask_Assembler {
 	 * @param Rule|null                         $rule              The governing rule, or null.
 	 * @param string                            $server            Server the numbers are of; '' is site-wide.
 	 * @param bool                              $scan_stopped_early Whether the walk behind `$requests` ran out of budget.
-	 * @param int                               $requests_window_start When the window those requests were drawn from opens.
+	 * @param int                               $requests_window_start Unix time the window those requests were drawn from opens.
 	 * @return array<string,mixed>
 	 */
 	public static function for_url( array $stats, array $requests, ?Rule $rule, string $server, bool $scan_stopped_early, int $requests_window_start ): array {
@@ -436,7 +454,8 @@ class Ask_Assembler {
 	 * roster of names — neither the hooks (hundreds) nor the custom events
 	 * (dozens), which no consumer renders and a model cannot act on.
 	 *
-	 * @return array<string,mixed>|null
+	 * @param Rule|null $rule The rule governing the subject's URL.
+	 * @return array<string,mixed>|null Null when no rule governs it.
 	 */
 	private static function rule_shape( ?Rule $rule ): ?array {
 		if ( null === $rule ) {
@@ -477,6 +496,7 @@ class Ask_Assembler {
 	 * The record's URL, redacted through the one path the firehose uses.
 	 *
 	 * @param array<array-key,mixed> $record A stored request record.
+	 * @return string
 	 */
 	private static function url_of( array $record ): string {
 		return Log_Manager::redact_url( Core::as_string( $record['url'] ?? '' ) );
@@ -487,7 +507,8 @@ class Ask_Assembler {
 	 * with — a category means nothing without the rest of the board.
 	 *
 	 * @param array<array-key,mixed> $categories The display-shaped category map.
-	 * @param string              $name       The category clicked.
+	 * @param string                 $name       The category clicked.
+	 * @param string                 $server     Server the means are of; '' is every server.
 	 * @return array<string,mixed>|null Null when the board holds no such row.
 	 */
 	public static function for_category( array $categories, string $name, string $server = '' ): ?array {
@@ -549,6 +570,7 @@ class Ask_Assembler {
 	 * Split `type:id[:qualifier]`. Null on anything outside the vocabulary, so
 	 * a hand-typed or stale descriptor is refused rather than half-honoured.
 	 *
+	 * @param string $descriptor `type:id[:qualifier]`, as a `data-ask` attribute carries it.
 	 * @return array{type:string,id:string,qualifier:string}|null
 	 */
 	public static function parse_descriptor( string $descriptor ): ?array {

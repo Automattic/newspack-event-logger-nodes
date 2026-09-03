@@ -10,9 +10,8 @@
  *
  * D3 owns this SVG subtree, not React: `useTimeChart` calls the render
  * function on mount, on data change and on container resize, and it redraws
- * from an emptied container each time. Every DOM write
- * belongs inside that function — React never reconciles anything below the
- * container.
+ * from an emptied container each time. Every DOM write belongs inside that
+ * function — React never reconciles anything below the container.
  */
 
 import { useCallback, useEffect, useRef, useMemo } from '@wordpress/element';
@@ -43,7 +42,7 @@ const CHART_HEIGHT = 250;
  * data arrives, so mounting it empty is fine.
  *
  * @param {Object}   props                Component props.
- * @param {Array}    props.requests       Request index entries: { rid, timestamp (seconds), duration_ms, status_code }.
+ * @param {Array}    props.requests       Request index entries: { rid, partition, timestamp (seconds), duration_ms, status_code }.
  * @param {Function} props.onRequestClick Called with the clicked dot's rid and partition.
  * @return {import('react').ReactElement|null} The chart, or null without data.
  */
@@ -80,6 +79,23 @@ export default function ResponseTimeChart( { requests, onRequestClick } ) {
 			.sort( ( a, b ) => a.time.getTime() - b.time.getTime() );
 	}, [ requests ] );
 
+	/**
+	 * Draw every mark, into the container `useTimeChart` hands back.
+	 *
+	 * Draw order is stacking order: the trend line and the mean line go down
+	 * first, the dots last, so nothing is painted over a dot's hover and
+	 * click target.
+	 *
+	 * Neither guard duplicates the component's own empty check. `useTimeChart`
+	 * renders on mount whether or not the component drew a container, so an
+	 * empty `requests` reaches this function with nothing to draw into; and a
+	 * `requests` array whose entries all lack a timestamp or a duration mounts
+	 * the container and still leaves no point to plot, where `d3.extent` and
+	 * `d3.max` have no domain to give.
+	 *
+	 * @param {Object} params              Refs from `useTimeChart`.
+	 * @param {Object} params.containerRef Ref to the div this draws into.
+	 */
 	const renderFn = useCallback(
 		( { containerRef } ) => {
 			if ( ! containerRef.current || 0 === chartData.length ) {
@@ -204,6 +220,7 @@ export default function ResponseTimeChart( { requests, onRequestClick } ) {
 					].join( '\n' )
 				);
 
+			// The four classes only: a status-less dot is grey, unlegended.
 			const present = new Set(
 				chartData.map( ( d ) => getStatusCategory( d.status ) )
 			);

@@ -2,12 +2,16 @@
 /**
  * Hook Categorizer
  *
- * Sorts WordPress hook names into human-readable, colored categories so the
- * settings page's hook picker can offer thousands of hooks as labeled sections
- * instead of one flat list. The categories, their colors, and the regular
- * expressions that assign hooks to them ship in `hook_categories.json` at the
- * plugin root; a site adds to or overrides any of it through the
- * `newspack_event_logger_nodes_hook_customizations` option.
+ * Sorts WordPress hook names into named categories so the settings page's hook
+ * picker can offer thousands of hooks as labeled sections instead of one flat
+ * list. The categories, their colors, their one-line descriptions and the
+ * regular expressions that assign hooks to them ship in `hook_categories.json`
+ * at the plugin root; a site adds to or overrides any of it through the
+ * `newspack_event_logger_nodes_hook_customizations` option. The file has a
+ * second reader that does not come through this class:
+ * `newspack-event-logger-nodes.php` publishes it whole on
+ * `window.eventLoggerHookCategories`, where the Gyroscope legend takes its
+ * colors, so a change to its shape has to answer for both.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -26,17 +30,15 @@ if ( ! \defined( 'ABSPATH' ) ) {
  * Hook Categorizer class.
  *
  * Static throughout, with both configuration sources memoized for the life of
- * the process: the JSON file and the customizations option each load once, and
- * `clear_cache()` drops both.
+ * the process: the JSON file loads once, the merge over the customizations
+ * option computes once, and `clear_cache()` drops both.
  *
- * The hook list it reports is a union of three sources — hooks WordPress
- * currently has callbacks on, hooks the durable ruleset instruments, and hooks
- * a spoke reported through discovery — so a hook that fires only inside a
- * worker, or only on another site, still reaches the picker.
+ * The hook list unions what `$wp_filter` holds, what the ruleset instruments
+ * and what discovery staged; `get_registered_hooks()` says why each is there.
  *
- * Patterns arrive from a database option rather than from code, so
- * `categorize()` treats them as untrusted: it caps their length, rejects nested
- * quantifiers, and lowers `pcre.backtrack_limit` while they run.
+ * A pattern can arrive from a database option rather than from code, so
+ * `categorize()` treats every one as untrusted: it caps their length, rejects
+ * nested quantifiers, and lowers `pcre.backtrack_limit` while they run.
  *
  * Consumers: the `hooks_registered` verb of `App\Performance_CI_Node`, which
  * feeds the settings page's `HookSelectorModal`, and
@@ -91,8 +93,11 @@ class Hook_Categorizer {
 	/**
 	 * Get registered hooks grouped by category.
 	 *
-	 * Drops the plugin's own hooks, sends anything matching no pattern to
-	 * `Other`, and omits the categories that ended up empty.
+	 * Drops this plugin's and the substrate's own hooks, sends anything matching
+	 * no pattern to `Other`, and omits the categories that ended up empty. The
+	 * color map seeds the groups, so its key order is the picker's section
+	 * order; a category named only by a user pattern or override gets no seeded
+	 * bucket and lands after them, in first-hook order.
 	 *
 	 * @return array<string,mixed> Associative array of category => [hooks...].
 	 */
@@ -105,7 +110,7 @@ class Hook_Categorizer {
 			$grouped[ $category ] = [];
 		}
 
-		// Skip Event Logger's own internal filters (no-op + past reentry loop).
+		// Our own filters answer no "where is time going" question.
 		foreach ( $hooks as $hook ) {
 			if ( self::is_internal( $hook ) ) {
 				continue;
@@ -127,12 +132,12 @@ class Hook_Categorizer {
 	 *
 	 * Patterns come from the database, so three guards bound the work: one
 	 * longer than MAX_PATTERN_LENGTH is skipped, one carrying a nested
-	 * quantifier is skipped and logged, and `pcre.backtrack_limit` drops to
-	 * 10000 for the scan — restored in `finally`, including on a throw. A
-	 * pattern PCRE refuses to compile is skipped rather than aborting the scan.
-	 * Both rejections report through `Core::print_less_often`, whose throttle
-	 * key is the message prefix alone, so one rejected pattern per window
-	 * prints and the rest stay silent.
+	 * quantifier is skipped and logged — the test is blunt, so a lazy `.*?`
+	 * trips it too — and `pcre.backtrack_limit` drops to 10000 for the scan,
+	 * restored in `finally`, including on a throw. A pattern PCRE refuses to
+	 * compile is skipped rather than aborting the scan. Both rejections report
+	 * through `Core::print_less_often`, whose throttle key is the message prefix
+	 * alone, so one rejected pattern per window prints and the rest stay silent.
 	 *
 	 * @param string $hook_name Hook name.
 	 * @return string Category name, or `Other` when nothing matches.
@@ -196,7 +201,7 @@ class Hook_Categorizer {
 	 * prefix list covers both. Instrumenting our own filters is never an
 	 * answer to a real "where is time going" question, and binding
 	 * `hook_start`/`hook_complete` to substrate filters can loop via
-	 * `Config::load_config` during LogManager bootstrap.
+	 * `Config::load_config` during `Log_Manager` bootstrap.
 	 *
 	 * @param string $hook_name Hook to test.
 	 * @return bool True if the hook belongs to Event Logger / Nodes itself.
@@ -218,8 +223,13 @@ class Hook_Categorizer {
 	}
 
 	/**
-	 * @return array<string,mixed> Category => color, base colors with the
-	 *                             user's merged over them.
+	 * The category taxonomy, as category name => display color.
+	 *
+	 * The KEYS are what the rest of this class treats as the taxonomy: they seed
+	 * the grouping in `get_registered_hooks_by_category()` and order the
+	 * picker's sections. The colors ride the `hooks_registered` reply.
+	 *
+	 * @return array<string,mixed> Base colors with the user's merged over them.
 	 */
 	public static function get_categories(): array {
 		$config = self::get_merged_config();
@@ -284,10 +294,10 @@ class Hook_Categorizer {
 	/**
 	 * One-line descriptions for the categories, keyed by category name.
 	 *
-	 * These live beside the taxonomy they describe. The hook picker used to
-	 * carry its own hand-written map covering 24 of the 63 categories this
-	 * config declares — and a user can add more — so the rest silently rendered
-	 * blank.
+	 * They live beside the taxonomy they describe rather than in the picker, so
+	 * a category a site adds can carry its own. The map is partial —
+	 * `hook_categories.json` colors more categories than it describes — and
+	 * `HookSelectorModal` renders a category with no entry without one.
 	 *
 	 * @return array<string,mixed> Category name => description.
 	 */
@@ -357,9 +367,11 @@ class Hook_Categorizer {
 	}
 
 	/**
+	 * Read the site's customizations option, filled out with empty defaults.
+	 *
 	 * `wp_parse_args()` accepts an array, an object, or a query string; a
-	 * stored value of any other type is discarded before the merge, so the
-	 * three default keys are always present.
+	 * stored value of any other type is discarded before the merge, so all
+	 * four default keys are always present.
 	 *
 	 * @return array<string,mixed> User customizations: patterns, overrides, colors, descriptions.
 	 */

@@ -1,9 +1,10 @@
 /**
- * useMultiSelect — the selection state a selector modal runs on.
+ * Pending-selection state for the settings selector modals.
  *
- * Both selector modals kept their own copy of it, differing only in what they
- * were selecting. The list, its grouping and its chrome stay with each modal;
- * the state machine is here.
+ * The hook picker and the custom-event picker differ only in what they list,
+ * so the Set of chosen values, the reset on open and the apply that hands an
+ * array back live here; the list, its grouping and the modal chrome stay with
+ * each picker.
  */
 
 import { useState, useEffect, useMemo } from '@wordpress/element';
@@ -12,10 +13,13 @@ import { useState, useEffect, useMemo } from '@wordpress/element';
  * Track a modal's pending selection.
  *
  * Reopening resets to what was passed in, so an edit abandoned by closing the
- * modal does not survive into the next open.
+ * modal does not survive into the next open. The controls memoize on the
+ * selection, so the returned object takes a new identity whenever the
+ * selection changes and a consumer's own `useMemo` may depend on it to
+ * recount.
  *
  * @param {Object}  [opts]          Options.
- * @param {Array}   [opts.selected] The selection the modal opened with.
+ * @param {Array}   [opts.selected] The selection the modal opens with.
  * @param {boolean} [opts.isOpen]   Whether the modal is open.
  * @return {{has: (v: string) => boolean, count: number, toggle: (v: string) => void,
  *   addAll: (vs: Array) => void, removeAll: (vs: Array) => void,
@@ -29,6 +33,7 @@ export function useMultiSelect( { selected = [], isOpen = true } = {} ) {
 		if ( isOpen ) {
 			setChosen( new Set( selected ) );
 		}
+		// Depend on isOpen alone; a fresh `selected` wipes the pending edit.
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [ isOpen ] );
 

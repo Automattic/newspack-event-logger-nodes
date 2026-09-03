@@ -2,22 +2,24 @@
  * In-Flight Requests — the Gyroscope dashboard's live request table, modeled on
  * Tachikoma's Gyroscope.
  *
- * A THIN view over the `gyroscope:*` node graph (mounted by
- * `useGyroscopeGraph`). The graph owns all data: `gyroscope:link` — a substrate
- * `RemoteLink` — holds the SSE connection and targets the `gyroscope:stream`
- * Tee, which copies every frame to `gyroscope:view`. That view node dispatches
- * the inflight/complete envelopes itself and owns the model: the rid-keyed map,
- * the reap/age-out/sort/cap snapshot, and RPS. This component only renders.
+ * A THIN view over the `gyroscope:*` node graph `useGyroscopeGraph` mounts. The
+ * graph owns the data: `gyroscope:link`, a substrate `RemoteLink`, holds the SSE
+ * connection and targets the `gyroscope:stream` Tee, which copies every frame to
+ * `gyroscope:view`. That view node dispatches the in-flight and completion
+ * envelopes itself and owns the model — the rid-keyed map, the snapshot that
+ * reaps and orders it, and the requests-per-second readout. This component only
+ * renders.
  *
- * The refresh-interval timer (user-controllable, 0-9 keys + dropdown) drives the
- * render cadence: each tick it calls `Core.node('gyroscope:view').snapshot(maxRows)`
- * — which reaps completed entries (shown one tick then dropped), drops in-flight
- * rows unseen for 15 minutes, sorts by est_ms desc, caps to maxRows — and reads
- * `.rps` off the node. A busy stream never re-renders React per message; only
- * the cheap snapshot is pushed at the refresh cadence.
+ * The refresh interval, which the dropdown and the 0-9 keys both set, drives the
+ * render cadence. Each tick calls `snapshot( maxRows )` on the view node, which
+ * returns completed entries once before dropping them, discards in-flight rows
+ * unseen for fifteen minutes, sorts by `est_ms` descending and caps the result;
+ * the tick then reads `.rps` off the node. A busy stream therefore never
+ * re-renders React per message: only the snapshot arrives, at the operator's
+ * cadence.
  *
- * The low-frequency `{ connectionError }` model (the reconnect banner) is read
- * separately via `useNodeState('gyroscope:view','view')`.
+ * The low-frequency `{ connectionError }` model behind the reconnect banner is
+ * read separately, through `useNodeState( VIEW_NODE, 'view' )`.
  */
 
 import { useState, useEffect, useCallback } from '@wordpress/element';
@@ -53,9 +55,20 @@ import {
 } from '../log-table/logTable';
 import './styles/inflight.scss';
 
-// The view node the refresh tick reads the in-flight snapshot + rps off of.
+/**
+ * The view node the refresh tick reads the in-flight snapshot and rps off of.
+ *
+ * `useGyroscopeGraph` mounts it under this name, and nothing else addresses
+ * it, so the name is spelled once for the two hooks that need it.
+ */
 const VIEW_NODE = 'gyroscope:view';
-// Banner fallback for the window before the view node exists.
+
+/**
+ * Banner state for the render before the graph's mount effect has run.
+ *
+ * `useNodeState` returns undefined until the node exists, and destructuring
+ * that throws, so the first render reads its banner flag from here.
+ */
 const EMPTY_VIEW = { connectionError: false };
 
 /**
@@ -80,6 +93,10 @@ const badgeStyle = ( background ) => ( {
  * becomes selectable at once and a key removed drops out of a saved selection
  * without resetting it. Only completion records carry `status_code`, so that
  * column stays blank while a request is still running.
+ *
+ * `time` overrides the tooltip and nothing else: it keeps the shared 'Time'
+ * header, but the value under it here is a server-side duration rather than a
+ * wall clock.
  */
 const COLUMNS = logColumns( {
 	rid: {},
@@ -111,7 +128,6 @@ const COLUMNS = logColumns( {
 		),
 		width: '70px',
 	},
-	// Shares only the 'Time' header: here it is a duration, not a wall clock.
 	time: {
 		tooltip: __(
 			'Request duration from server logs only (ignores display delay)',
@@ -155,11 +171,27 @@ const urlHash = ( url ) => fnv1a( url || '' );
  */
 const DEFAULT_COLUMNS = [ 'rid', 'url', 'status_code', 'state', 'what', 'est' ];
 
-// How far behind real-time a row is; `last_log_ts` is epoch SECONDS.
+/**
+ * How far behind real-time a row is, in milliseconds.
+ *
+ * `last_log_ts` is epoch SECONDS, hence the thousand. The floor at zero keeps a
+ * browser clock running behind the server's from reading as a negative age.
+ *
+ * @param {Object} req One in-flight row.
+ * @return {number} Milliseconds since the row's last log line, 0 when it has none.
+ */
 const ageMs = ( req ) =>
 	req.last_log_ts ? Math.max( 0, Date.now() - req.last_log_ts * 1000 ) : 0;
 
-// A duration cell that warns past a threshold, for the two delay columns.
+/**
+ * A duration cell carrying a warning class past `warn`, for the two delay
+ * columns: an Age or a Lag says nothing until it is large.
+ *
+ * @param {number} ms   The delay, in milliseconds.
+ * @param {number} warn Threshold above which the cell warns.
+ * @param {string} col  Column key, which is also the React key.
+ * @return {import('react').ReactElement} The cell.
+ */
 const delayCell = ( ms, warn, col ) => (
 	<Cell
 		key={ col }
@@ -171,7 +203,16 @@ const delayCell = ( ms, warn, col ) => (
 	</Cell>
 );
 
-// The table filters nothing, so it names no shown-over-held count form.
+/**
+ * The toolbar's request count.
+ *
+ * The table filters nothing, so it passes the total alone and names no
+ * shown-over-held form. The number counts the rows `snapshot()` returned, which
+ * `maxRows` has already capped.
+ *
+ * @param {number} total Rows in the snapshot.
+ * @return {string} The label.
+ */
 const renderCount = ( total ) =>
 	countLabel(
 		{ total },
@@ -179,12 +220,29 @@ const renderCount = ( total ) =>
 		_n( '%d request', '%d requests', total, 'newspack-event-logger-nodes' )
 	);
 
+/**
+ * The toolbar's rate readout: completions per second, averaged by the view node
+ * over its own ten-second window.
+ *
+ * @type {(rps: number) => string}
+ */
 const renderRate = rateLabel(
 	// translators: %s: requests-per-second rate, formatted to one decimal place.
 	__( '%s req/s', 'newspack-event-logger-nodes' )
 );
 
-// One cell of an in-flight row; state, what, age and lag are this table's own.
+/**
+ * One cell of an in-flight row. State, What, Age and Lag are this table's own;
+ * the rest draw through the shared log-table cells.
+ *
+ * `est` falls back to `time_ms` and then to zero, so a row the producer has not
+ * estimated yet shows what its logs do account for rather than a dash. The
+ * State badge shortens `include template` to `template` — the badge clips at
+ * 90px, so the full name would render as an ellipsis — while its color still
+ * resolves from the unshortened state.
+ *
+ * @type {(col: string, req: Object) => import('react').ReactElement}
+ */
 const renderCell = cellRenderer( {
 	rid: ( req, col ) => ridCell( req.rid, col ),
 	time: ( req, col ) => durationCell( req.time_ms, col ),
@@ -224,6 +282,10 @@ const renderCell = cellRenderer( {
  * show. The column selection keeps whatever keys still exist rather than
  * discarding the whole layout over one it does not recognize.
  *
+ * The legend names six of the many categories `Hook_Categorizer` ships, colored
+ * from the `window.eventLoggerHookCategories` global the plugin prints; a
+ * category that global does not carry draws grey.
+ *
  * @param {Object} props         Component props.
  * @param {number} props.maxRows Maximum rows to display; the cap `snapshot()` applies.
  * @return {import('react').ReactElement} Rendered component.
@@ -232,7 +294,7 @@ export default function Inflight( { maxRows = 20 } ) {
 	// Mount the node graph; it owns the data, this only renders the snapshot.
 	useGyroscopeGraph();
 
-	// Low-freq view model (reconnect banner); rows/rps read off the node.
+	// The banner's low-frequency model; rows and rps come off the node.
 	const { connectionError } = useNodeState( VIEW_NODE, 'view' ) ?? EMPTY_VIEW;
 
 	const [ requests, setRequests ] = useState( [] );
@@ -262,7 +324,7 @@ export default function Inflight( { maxRows = 20 } ) {
 		setRequestsPerSecond( node.rps );
 	}, [ maxRows ] );
 
-	// Keyboard 0-9 → refresh interval; every value must exist in the dropdown.
+	// The 0-9 keys set the interval; every value must exist in the dropdown.
 	useEffect( () => {
 		const keyMap = {
 			0: 0.1,
@@ -292,7 +354,7 @@ export default function Inflight( { maxRows = 20 } ) {
 		return () => window.removeEventListener( 'keydown', handleKeyDown );
 	}, [ setRefreshInterval ] );
 
-	// Display refresh: sub-second takes its own slot, 1s+ rides the Router.
+	// A sub-second cadence takes its own slot; a slower one rides the Router.
 	useRouterTick( {
 		name: 'gyroscope:display',
 		onTick: renderRequests,

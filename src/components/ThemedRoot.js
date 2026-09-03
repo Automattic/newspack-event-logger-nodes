@@ -21,14 +21,14 @@ import './ThemedRoot.scss';
  * the dashboard (terminal-mono under decorative skins, the Newspack sans by
  * default).
  *
- * The dashboard's dark surface only covers its own box; the WP-admin area around
- * it (the ~20px left gutter beside the menu, the right `max-width` margin, the
- * footer area below the content) otherwise shows the light body background as
- * stray strips. The effect below paints `document.body` with the skin surface
- * resolved from inside this wrapper, and repaints on every `SKIN_EVENT` — the
- * same-tab skin-change signal, which the `storage` event never delivers — so
- * every gutter tracks the live skin. The original background is restored on
- * unmount.
+ * The dashboard's skinned surface covers only its own box; the WP-admin area
+ * around it (the ~20px left gutter beside the menu, the right `max-width`
+ * margin, the footer area below the content) otherwise shows the light body
+ * background as stray strips. The effect below paints `document.body` with the
+ * skin surface resolved from inside this wrapper, and repaints on every
+ * `SKIN_EVENT` — the same-tab skin-change signal, which the `storage` event
+ * never delivers — so every gutter tracks the live skin. Unmounting restores
+ * the original background.
  *
  * @param {Object}                    props          Component props.
  * @param {import('react').ReactNode} props.children Dashboard root(s) to skin.
@@ -37,9 +37,9 @@ import './ThemedRoot.scss';
 export default function ThemedRoot( { children } ) {
 	const ref = useRef( null );
 
-	// Paint WP-admin gutters to the skin base surface, on mount and on change.
+	// Paint the WP-admin gutters with the skin surface at mount and on change.
 	useEffect( () => {
-		// Apply persisted skin to <html> before gutter probe reads --paper-3.
+		// The gutter probe reads --paper-3, so apply the persisted skin first.
 		initSkin();
 		const host = ref.current;
 		if ( ! host ) {
@@ -49,13 +49,13 @@ export default function ThemedRoot( { children } ) {
 		/**
 		 * Paint `document.body` with the skin's `--paper-3`, resolved by a
 		 * throwaway probe span parented INSIDE the themed wrapper — the token
-		 * only exists under the skin-root selector, so a probe anywhere else
+		 * exists only under the skin-root selector, so a probe anywhere else
 		 * reads nothing.
 		 *
 		 * A token that fails to resolve computes as transparent; leave the body
-		 * untouched rather than paint it see-through. The pre-paint background
-		 * is captured on the first successful paint only, so an unmount that
-		 * never painted restores nothing.
+		 * untouched rather than paint it see-through. The first successful
+		 * paint captures the pre-paint background, so an unmount that never
+		 * painted restores nothing.
 		 */
 		const paintGutters = () => {
 			const probe = document.createElement( 'span' );

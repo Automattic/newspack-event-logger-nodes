@@ -1,20 +1,23 @@
 /**
- * Gyroscope dashboard entry point.
+ * Gyroscope dashboard entry point — the `build/gyroscope` bundle.
  *
- * Mounts the full-page live in-flight request monitor into the
- * `#event-logger-gyroscope` container printed by the Gyroscope admin page
- * (`newspack-event-logger-nodes.php`). The bundle is enqueued only for the
- * `event-logger-gyroscope` page slug, so an absent container means the module
- * runs somewhere it does not belong; it then does nothing.
+ * Mounts the live in-flight request monitor into `#event-logger-gyroscope`, the
+ * bare div the plugin's "Event Logger → Gyroscope" submenu page prints
+ * (`newspack-event-logger-nodes.php`). Without that container the module does
+ * nothing, so loading the bundle elsewhere is harmless. The mount runs at
+ * module evaluation rather than on `DOMContentLoaded`, which is safe because
+ * the substrate enqueues this bundle in the footer, below the container markup.
  *
- * `./nodes/gyroscope-view-node` is imported for its side effect alone: it
- * registers the `GyroscopeView` class with the runtime `CommandInterpreterNode`,
- * which `useGyroscopeGraph` needs before its `makeNode( 'GyroscopeView', … )`
- * call. Dropping the import breaks graph construction, not this file.
+ * Importing `./nodes/gyroscope-view-node` for its side effect merges
+ * `GyroscopeView` into the runtime's `includeNodes` map, the name surface the
+ * console palette and `make_node` read. `useGyroscopeGraph` imports the same
+ * module for the class itself — `useStreamGraph` takes a `viewClass` rather
+ * than a name (ADR-16) — so the side-effect import states the dependency at the
+ * entry point rather than resting on the page tree's import chain.
  *
- * The mount runs at module evaluation instead of on `DOMContentLoaded`. That
- * is safe because the substrate enqueues the bundle in the footer, below the
- * container markup.
+ * This entry imports no stylesheet, unlike its siblings: `Inflight` pulls in
+ * `./styles/inflight.scss`, which reaches the shared tokens and mixins through
+ * this dashboard's own `styles/base.scss`.
  */
 
 import { createRoot } from '@wordpress/element';

@@ -1,13 +1,37 @@
-// ESLint config — standalone (no @wordpress/scripts dependency).
-//
-// `import/core-modules` tells eslint-plugin-import that the exact-match
-// `@newspack-nodes/*` aliases resolve at runtime (build alias + jest
-// moduleNameMapper handle resolution). The subpath alias
-// `@newspack-nodes/shared/*` (sibling-checkout shared hooks/utils/components)
-// is whitelisted via the no-unresolved `ignore` pattern below.
-// The bottom layers: importable from anywhere, importing no dashboard. One
-// list, because three hand-kept copies drift the moment a fourth is added.
+/**
+ * ESLint rules for the dashboards, the shared modules beneath them and the
+ * build scripts, standalone — no @wordpress/scripts dependency.
+ *
+ * The `@newspack-nodes/*` aliases resolve through the build alias and jest's
+ * moduleNameMapper, neither of which eslint can see, so two settings carry
+ * them past the resolver. `import/core-modules` takes whole specifiers and
+ * matches no prefix, which covers `@newspack-nodes/runtime` and
+ * `@newspack-nodes/debug-overlay`; the `@newspack-nodes/shared/*` subpath
+ * alias, pointing at the sibling newspack-nodes checkout's hooks, utils and
+ * components, needs the `import/no-unresolved` ignore pattern instead.
+ */
+
+/**
+ * The directories any module may import and that may import no dashboard.
+ *
+ * One list drives both the restricted zones and their permitted imports below,
+ * because three hand-kept copies drift the moment a fourth directory joins
+ * them.
+ *
+ * @type {string[]}
+ */
 const BOTTOM_LAYERS = [ 'components', 'hooks', 'log-table' ];
+
+/**
+ * What a bottom-layer directory may import, relative to `src/`.
+ *
+ * Each bottom layer, plus `styles` and `test-helpers` — leaves that import no
+ * dashboard themselves and so need no zone of their own. The bottom layers'
+ * own tests import `test-helpers`, which is why it is permitted here rather
+ * than gated.
+ *
+ * @type {string[]}
+ */
 const BOTTOM_LAYER_IMPORTS = [
 	...BOTTOM_LAYERS.map( ( dir ) => `./${ dir }` ),
 	'./styles',
@@ -24,14 +48,10 @@ module.exports = {
 		// knip suppression tag: an export that exists for its unit test, not
 		// for callers. jsdoc/check-tag-names rejects unknown tags otherwise.
 		'jsdoc/check-tag-names': [ 'error', { definedTags: [ 'testonly' ] } ],
-		// The three rules below mirror the substrate's; see its .eslintrc.js
-		// for the incidents behind each. Baselines here were measured before
-		// gating: exhaustive-deps and no-restricted-paths were already at 0,
-		// require-jsdoc was 23 and is now 0.
-		//
-		// A bare `{Function}` in a docblock has no call signature, so it
-		// satisfies no specific handler type. require-jsdoc is what stops new
-		// ones appearing; it also catches a docblock orphaned from its subject.
+		// Every exported function, method and class carries a docblock, and
+		// this rule is what keeps it that way. It also catches the orphaned
+		// docblock: a member inserted between a docblock and its subject
+		// leaves the real function undocumented, and no other gate sees that.
 		'jsdoc/require-jsdoc': [
 			'error',
 			{
@@ -49,8 +69,8 @@ module.exports = {
 			{ additionalHooks: '^(useSelect|useSuspenseSelect)$' },
 		],
 		// The runtime layer lives in the substrate, so the zone that means
-		// something HERE is the shared one: components/hooks/log-table/
-		// test-helpers are the bottom layer and cannot reach up into a
+		// something HERE is the shared one: components/, hooks/ and
+		// log-table/ are the bottom layer and cannot reach up into a
 		// dashboard. Dashboards importing each other is deliberate and stays
 		// allowed — settings mounts RulesAdmin, current-request reuses
 		// RequestProfile.
@@ -91,9 +111,8 @@ module.exports = {
 				],
 			},
 		],
-		// The `@newspack-nodes/shared/*` subpath alias resolves at runtime
-		// (esbuild alias + jest moduleNameMapper) to the sibling newspack-nodes
-		// checkout; eslint can't follow it without the build context.
+		// core-modules matches a whole specifier, never a prefix, so the
+		// shared subpath alias is exempted here instead.
 		'import/no-unresolved': [
 			'error',
 			{ ignore: [ '^@newspack-nodes/shared/' ] },
@@ -107,7 +126,9 @@ module.exports = {
 			globals: { expectConsoleWarn: 'readonly' },
 		},
 		{
-			// Build/CLI scripts run under Node and legitimately log to the console.
+			// Build and CLI scripts run under Node and log to the console by
+			// design; their helpers carry a one-line docblock rather than a
+			// tag block, so require-param is off.
 			files: [ 'scripts/**/*.@(js|mjs)' ],
 			env: { node: true },
 			rules: {

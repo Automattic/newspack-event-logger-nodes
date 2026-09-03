@@ -30,23 +30,24 @@ import { errorStatus } from '../../components/errorStatus';
 const SECTION_STYLE = { marginBottom: '20px' };
 
 /**
- * Request Detail View Component.
+ * `requestDetail` is the durable request body `record_of()` writes and
+ * `request_detail` reads back: `url`, `request_method`, `timestamp` (seconds),
+ * `duration_ms`, `peak_mb`, `status_code`, `profiles`, `error_status` and
+ * `folded`.
  *
- * `requestDetail` is the decoded request body: `url`, `timestamp` (seconds),
- * `duration_ms`, `peak_mb`, `status_code`, `profiles`, and `error_status`.
  * `Request_Builder_Node` stamps `error_status` as one character — `-` for a
  * clean request, and one of the shared `ERROR_STATUSES` codes for anything
- * else, which is what gets the badge. The durable body names the HTTP verb
- * `request_method`; the compact summary that `build_compact_summary()` writes
- * names it `method`, so both are read.
+ * else, which is what gets the badge. It sets `folded` on a request it merged
+ * under memory pressure, and the banner is where that record says what the
+ * merge cost its sequence.
  *
- * @param {Object} props                 Component props.
- * @param {Object} props.requestDetail   Decoded request body; see above.
- * @param {Object} props.flameData       Server-built flame tree, or null.
- * @param {Array}  props.indentedEntries Log entries from computeIndentedEntries().
- * @param {number} props.realEntryCount  Count of real (non-placeholder) log entries.
- * @param {string} [props.rid]           Request id, so the picker can scope what is inside.
- * @param {number} [props.partition]     Its partition; nothing downstream can recover it.
+ * @param {Object}  props                 Component props.
+ * @param {Object}  props.requestDetail   Decoded request body; see above.
+ * @param {?Object} props.flameData       Server-built flame tree; null whenever the builder has not written one, which is normal for an unprofiled request.
+ * @param {Array}   props.indentedEntries Log entries from computeIndentedEntries().
+ * @param {number}  props.realEntryCount  Count of real (non-placeholder) log entries.
+ * @param {string}  [props.rid]           Request id, so the picker can scope what is inside.
+ * @param {number}  [props.partition]     Partition the record was read from, riding the `request:` descriptor as the brief's first place to look; the rid's own hash names it too, so an absent one costs a fallback rather than the answer.
  * @return {import('react').ReactElement} Request detail view.
  */
 export default function RequestDetailView( {
@@ -63,6 +64,7 @@ export default function RequestDetailView( {
 	const hasEntries = indentedEntries.length > 0;
 	const hasFlame = flameData && flameData.children?.length > 0;
 	const hasProfiles = !! requestDetail.profiles;
+	// A folded record answers for itself in the banner, not as "no entries".
 	const hasNoDetail =
 		! hasEntries && ! hasFlame && ! hasProfiles && ! isFolded;
 	const errorRow = status && (

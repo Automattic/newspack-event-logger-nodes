@@ -8,8 +8,10 @@
  * `Request_Builder_Node` / `Flame_Builder_Node` reassemble those lines
  * downstream into requests, flame graphs, and stats.
  *
- * This file is also the event logger's public API: Pyrobase, Nuclear Gyrobase,
- * and the substrate's job worker all log through `Log_Manager::instance()`.
+ * This file is also the event logger's public API: Pyrobase and Nuclear
+ * Gyrobase log through `Log_Manager::instance()`, while the substrate's job
+ * worker reaches it through the `begin_job_context_filter()` /
+ * `end_job_context()` pair hooked onto its before/after-job hooks.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -38,8 +40,8 @@ if ( ! \defined( 'ABSPATH' ) ) {
  *
  * Nested contexts — background jobs, cron, template subprocesses — suspend the
  * active instance onto a LIFO stack and install a fresh one. See
- * begin_job_context() / end_job_context(), the pair the substrate's job worker
- * hooks around every handler.
+ * begin_job_context() / end_job_context(), the pair bracketing every job the
+ * substrate's worker runs.
  */
 class Log_Manager {
 
@@ -56,10 +58,19 @@ class Log_Manager {
 	 */
 	public const REQUEST_LABEL = 'process';
 
-	/** The request's own three keywords, composed from the label above. */
-	public const REQUEST_START    = self::REQUEST_LABEL . ' (start)';
+	/** Opens the record, and carries the `rule` that admitted the request. */
+	public const REQUEST_START = self::REQUEST_LABEL . ' (start)';
+
+	/** Ends a record that ran to its end. */
 	public const REQUEST_COMPLETE = self::REQUEST_LABEL . ' (complete)';
-	public const REQUEST_ABORTED  = self::REQUEST_LABEL . ' (aborted)';
+
+	/**
+	 * Ends a record whose work stopped early, so a fragment of a duration
+	 * never reads as a clean finish. With REQUEST_COMPLETE it makes up
+	 * `Request_Builder_Node::TERMINAL_KEYWORDS`, the pair that closes a
+	 * record — without one, it strands in flight until eviction.
+	 */
+	public const REQUEST_ABORTED = self::REQUEST_LABEL . ' (aborted)';
 
 	/** @var int Bytes-to-megabytes divisor. */
 	private const BYTES_PER_MB = 1024 * 1024;
@@ -71,7 +82,7 @@ class Log_Manager {
 	 * HTTP_X_JA4_HASH; the rest are diagnostics. Keys already carried by the
 	 * `request` log line (REQUEST_METHOD / REQUEST_URI / QUERY_STRING) are
 	 * intentionally omitted. Perl mirrors this list in Gyrobase::Log — keep the
-	 * two IDENTICAL and in sync.
+	 * two IDENTICAL.
 	 *
 	 * @var array<int,string>
 	 */
@@ -112,16 +123,22 @@ class Log_Manager {
 		'UNIQUE_ID',
 	];
 
-	/** @var int Per-value byte cap for environment_v3 map values. Keeps one long
-	 * (client-controllable) value from pushing the encoded map over MAX_DATA_SIZE
-	 * and dropping the whole map. 256 keeps the full curated allowlist — even with
-	 * several oversized values — comfortably under MAX_DATA_SIZE. */
+	/**
+	 * Per-value byte cap for environment_v3 map values. Keeps one long
+	 * (client-controllable) value from pushing the encoded map over
+	 * MAX_DATA_SIZE and dropping the whole map. 256 keeps the full curated
+	 * allowlist — even with several oversized values — comfortably under
+	 * MAX_DATA_SIZE. Perl mirrors it in Gyrobase::Log; `check-firehose-parity`
+	 * holds the two equal.
+	 */
 	private const ENV_VALUE_MAX = 256;
 
-	/** @var int Encoded-data cap in bytes. Headroom under PIPE_BUF (4096), which
-	 * is what keeps a lock-free append atomic against every other writer on this
+	/**
+	 * Encoded-data cap in bytes. Headroom under PIPE_BUF (4096), which is what
+	 * keeps a lock-free append atomic against every other writer on this
 	 * multi-writer log. Payloads that can exceed it belong in
-	 * \Newspack_Nodes\Job_Intake::queue(), not here — message() truncates. */
+	 * \Newspack_Nodes\Job_Intake::queue(), not here — message() truncates.
+	 */
 	private const MAX_DATA_SIZE = 3840;
 
 	/** @var int Maximum timer stack depth to prevent unbounded growth. */
@@ -133,7 +150,7 @@ class Log_Manager {
 	/** @var string Regex for sensitive URL query parameters. */
 	private const URL_REDACT_PATTERN = '/([?&])(key|api_key|apikey|token|access_token|auth_token|refresh_token|password|passwd|pwd|secret|api_secret|client_secret|private_key|subscription[_-]?key|bearer|authorization|auth|session|sessionid|credentials)=[^&]*/i';
 
-	/** @var array<int,self> Stack of suspended parent LogManager instances. */
+	/** @var array<int,self> Stack of suspended parent Log_Manager instances. */
 	private static $context_stack = [];
 
 	/** @var self|null The active instance; instance() creates it on demand. */
@@ -181,14 +198,20 @@ class Log_Manager {
 	private $partition_idx = 0;
 	/** @var string This request's id — the KEY every Message carries. */
 	private $request_id = '';
-	/** @var float|null hrtime() reading the profiler drop-in took at request start. */
+	/** @var int|float|null hrtime() reading the profiler drop-in took at request start. */
 	private $request_time = null;
-	/** @var int|float|null Wall-clock request start, from the profiler drop-in. */
+	/** @var float|null Wall-clock request start (microtime), from the profiler drop-in. */
 	private $request_ts = null;
 	/** @var string Sanitized REQUEST_URI, or '/unknown' when there is none. */
 	private $request_url = '';
 
-	/** Saved UNIQUE_ID for suspend/resume. */
+	/**
+	 * This context's `$_SERVER['UNIQUE_ID']`, captured by suspend() so resume()
+	 * can put it back — a nested context overwrites the superglobal with its
+	 * own per-job identity.
+	 *
+	 * @var string|null
+	 */
 	private ?string $saved_unique_id = null;
 	/** @var bool|null True while logging, false after finish(), null when no rule started it. */
 	private $started = null;
@@ -221,7 +244,7 @@ class Log_Manager {
 		}
 		$this->matcher = Rule_Set::load()->matcher();
 
-		/** @var array{request_time?: float, request_ts?: int|float}|null $newspack_profiler */
+		/** @var array{request_time?: int|float,request_ts?: float}|null $newspack_profiler */
 		global $newspack_profiler;
 		if ( null !== $newspack_profiler ) {
 			$this->request_time = $newspack_profiler['request_time'] ?? null;
@@ -257,12 +280,12 @@ class Log_Manager {
 		$this->finished = true;
 
 		// @longform The terminal outranks everything else here. A cooperative
-		// stop lands on a WRITE, and every line finish() emits is one — a stop
-		// on any of them skipped the terminal while `finished` stayed latched,
-		// so nothing retried and the record stranded in flight until eviction.
-		// ADR-14's Tap carve-out is this shape: do the thing that IS the
-		// pipeline, then re-raise. Terminal-LAST is a wire contract, not a
-		// preference: `Reqgrep_Core` finalizes and evicts the rid on it.
+		// stop lands on a WRITE, and every line finish() emits is one, so
+		// letting one propagate skips the terminal while `finished` stays
+		// latched: nothing retries, and the record strands in flight until
+		// eviction. ADR-14's Tap carve-out is this shape — do the thing that
+		// IS the pipeline, then re-raise. Terminal-LAST is a wire contract,
+		// not a preference: `Reqgrep_Core` finalizes and evicts the rid on it.
 		$stop = null;
 		try {
 			$this->drain_before_terminal();
@@ -328,8 +351,11 @@ class Log_Manager {
 	 * frames and not the enclosing ones. An unknown label matches nothing and
 	 * leaves the stack untouched.
 	 *
-	 * @param string $label Label that was passed to start().
-	 * @param array<string,mixed>  $data  Additional data to include in the complete event.
+	 * @param string              $label  Label that was passed to start().
+	 * @param array<string,mixed> $data   Extra keys for the emitted entry.
+	 * @param string              $suffix Parenthesised half of the keyword —
+	 *                                    `complete`, or `aborted` when the
+	 *                                    work stopped early.
 	 */
 	public function complete( string $label, array $data = [], string $suffix = 'complete' ): void {
 		if ( \count( $this->times ) < 1 ) {
@@ -405,7 +431,7 @@ class Log_Manager {
 	 * frame. Shared by complete()'s mismatched-close drain and finish()'s
 	 * end-of-request stack close.
 	 *
-	 * @param array{label: string, ts: int|float, m?: mixed} $entry Timer-stack frame.
+	 * @param array{label: string,ts: int|float,m?: mixed} $entry Timer-stack frame.
 	 * @param int|float $now Reference hrtime() reading.
 	 */
 	private function emit_orphaned_complete( array $entry, $now ): void {
@@ -417,8 +443,8 @@ class Log_Manager {
 	 * Log an error.
 	 *
 	 * @api Used by external plugins.
-	 * @param string $message The message.
-	 * @return bool True on success.
+	 * @param string $message Error text.
+	 * @return bool True when the line was written.
 	 */
 	public function error( string $message ): bool {
 		return $this->message( 'error', [ 'm' => $message ] );
@@ -428,8 +454,8 @@ class Log_Manager {
 	 * Log a warning.
 	 *
 	 * @api Used by external plugins.
-	 * @param string $message The message.
-	 * @return bool True on success.
+	 * @param string $message Warning text.
+	 * @return bool True when the line was written.
 	 */
 	public function warning( string $message ): bool {
 		return $this->message( 'warning', [ 'm' => $message ] );
@@ -439,8 +465,8 @@ class Log_Manager {
 	 * Log an info message.
 	 *
 	 * @api Used by external plugins.
-	 * @param string $message The message.
-	 * @return bool True on success.
+	 * @param string $message Informational text.
+	 * @return bool True when the line was written.
 	 */
 	public function info( string $message ): bool {
 		return $this->message( 'info', [ 'm' => $message ] );
@@ -453,8 +479,8 @@ class Log_Manager {
 	 * that reach the Error Log.
 	 *
 	 * @api Used by external plugins.
-	 * @param string $message Alert message.
-	 * @return bool True on success.
+	 * @param string $message Alert text.
+	 * @return bool True when the line was written.
 	 */
 	public function alert( string $message ): bool {
 		return $this->message( 'alert', [ 'm' => $message ] );
@@ -463,12 +489,12 @@ class Log_Manager {
 	/**
 	 * Start timing a labeled operation and push its frame on the timer stack.
 	 *
-	 * Two budgets guard the stack. Past MAX_TIMER_DEPTH the call is dropped
-	 * entirely. A frame is also dropped when the start line itself could not
-	 * be written — pair every start() with a complete() carrying the same label.
+	 * Two things drop a frame: a stack already MAX_TIMER_DEPTH deep, and a start
+	 * line that could not be written. Pair every start() with a complete()
+	 * carrying the same label — an unmatched frame drains as `(orphaned)`.
 	 *
-	 * @param string $label Label for the timer (e.g., 'query', 'template').
-	 * @param array<string,mixed>  $data  Additional data to include in the start event.
+	 * @param string              $label Label for the timer (e.g. 'query', 'template').
+	 * @param array<string,mixed> $data  Extra keys for the emitted start entry.
 	 */
 	public function start( string $label, array $data = [] ): void {
 		if ( \count( $this->times ) >= self::MAX_TIMER_DEPTH ) {
@@ -492,8 +518,8 @@ class Log_Manager {
 	 * request, so it is exactly the span that can hold data.
 	 *
 	 * A topology's `var num_partitions` is its WORKER count and says nothing
-	 * about the firehose. Unioning the two let a pinned topology — `hub-control`
-	 * pins 1 — argue with the writer about a layout it does not own, and made
+	 * about the firehose. Unioning the two lets a pinned topology — `hub-control`
+	 * pins 1 — argue with the writer about a layout it does not own, and makes
 	 * every reader parse TSL to ask.
 	 *
 	 * `$log_path` is `reqgrep --firehose`'s override. A path that already names
@@ -556,7 +582,7 @@ class Log_Manager {
 	}
 
 	/**
-	 * Leave a background-job request context: resume the parent LogManager and
+	 * Leave a background-job request context: resume the parent Log_Manager and
 	 * restore the $_SERVER snapshot pushed by begin_job_context(). The symmetric
 	 * pair to begin_job_context() — safe to call on an empty stack (no-op restore)
 	 * so a throwing/unpaired begin can't fatal here.
@@ -600,10 +626,13 @@ class Log_Manager {
 	}
 
 	/**
-	 * Finish the current LogManager and restore the parent from the stack.
+	 * Finish the current Log_Manager and restore the parent from the stack.
 	 *
-	 * The current context gets finish() called (logging process complete),
-	 * then the parent context is restored as the active instance.
+	 * finish() writes the terminal, then the parent becomes the active instance
+	 * again and takes back its own UNIQUE_ID. The restore runs in a finally
+	 * because finish() re-raises a cooperative stop: leaving the finished
+	 * context installed would send every later line to an instance that writes
+	 * nothing.
 	 */
 	public static function resume(): void {
 		try {
@@ -646,15 +675,15 @@ class Log_Manager {
 	/**
 	 * Enter a background-job request context.
 	 *
-	 * The substrate's Job_Worker_Node fires `newspack_nodes/job_worker/before_job`
-	 * with ( $handler, $id ) around each handler; this is the event-logger's hooked
-	 * listener. It suspends the parent LogManager, generates a fresh per-job
-	 * UNIQUE_ID, and rewrites $_SERVER to a synthetic `/jobs/{handler}/{id}` request
-	 * (plain `/jobs/{handler}` when the id is empty) so any LogManager the handler
-	 * spawns picks up job-scoped context. The id is the substrate's first-class job
-	 * identity, not a compound handler string or a smuggled parameter.
+	 * Reached from begin_job_context_filter(), the listener this plugin hooks onto
+	 * the substrate's `newspack_nodes/job_worker/before_job`. It suspends the parent
+	 * Log_Manager, generates a fresh per-job UNIQUE_ID, and rewrites $_SERVER to a
+	 * synthetic `/jobs/{handler}/{id}` request (plain `/jobs/{handler}` when the id
+	 * is empty) so any Log_Manager the handler spawns picks up job-scoped context.
+	 * The id is the substrate's first-class job identity, not a compound handler
+	 * string or a smuggled parameter.
 	 *
-	 * Stack-based by design: the before/after-job actions thread no state, so the
+	 * Stack-based by design: the before/after-job hooks thread no state, so the
 	 * original $_SERVER is pushed onto an internal LIFO restored by
 	 * end_job_context(). The snapshot is taken FIRST so a partial $_SERVER edit
 	 * mid-method still leaves a complete snapshot to restore from, and so an
@@ -667,7 +696,7 @@ class Log_Manager {
 	 * A handler running something other than a POST against /jobs/{handler} —
 	 * a template rendered as GET with its own URI and query string — passes
 	 * $server. Those keys are applied over the defaults BEFORE the action
-	 * fires, because the listener builds the LogManager that reads them.
+	 * fires, because the listener builds the Log_Manager that reads them.
 	 *
 	 * @param string               $handler Job handler name.
 	 * @param string               $id      First-class job identity ('' ⇒ no id segment).
@@ -683,7 +712,7 @@ class Log_Manager {
 	 *                                     fresh per-job request identity above.
 	 */
 	public static function begin_job_context( string $handler, string $id = '', array $message = [], array $server = [] ): void {
-		// Before the scope action, which builds the LogManager that reads it.
+		// Before the scope action, which builds the Log_Manager reading it.
 		if ( [] !== $message ) {
 			self::$job_message = $message;
 		}
@@ -693,7 +722,7 @@ class Log_Manager {
 		$snapshot                 = $_SERVER;
 		self::$job_server_stack[] = $snapshot;
 
-		// LogManager::suspend() pushes the parent context onto its stack.
+		// self::suspend() pushes the parent context onto the context stack.
 		self::suspend();
 
 		$request_uri = '/jobs/' . \ltrim( $handler, '/' );
@@ -742,14 +771,15 @@ class Log_Manager {
 	}
 
 	/**
-	 * Suspend the current LogManager and push it onto the context stack.
+	 * Suspend the current Log_Manager and push it onto the context stack.
 	 *
-	 * The suspended instance keeps its state (timers, request ID, buffer)
-	 * intact. A new instance will be created on the next instance() call.
-	 * Call resume() to restore the parent context.
+	 * The suspended instance keeps its state — timers, request id, line number
+	 * — so resume() picks it up where it left off, while the next instance()
+	 * call builds a fresh one for the nested context.
 	 *
-	 * The parent's buffered lines are flushed on the way out, so the nested
-	 * context's lines land after them rather than interleaved.
+	 * The Topic underneath is shared rather than per-instance, so this flushes
+	 * the parent's buffered lines on the way out and the nested context's land
+	 * after them rather than interleaved.
 	 */
 	public static function suspend(): void {
 		if ( null !== self::$instance ) {
@@ -763,11 +793,13 @@ class Log_Manager {
 	}
 
 	/**
-	 * Resolve the governing rule for a URL, storing it accordingly.
-	 * No rule matched means skip — there is no log-all baseline.
+	 * Resolve the rule governing a URL and keep it as this request's.
+	 *
+	 * No match means skip: there is no log-all baseline, so a deployment that
+	 * wants everything logged declares a `/` rule.
 	 *
 	 * @param string $url URL to check.
-	 * @return bool True if URL should be logged.
+	 * @return bool True when a rule matched and it says `log`.
 	 */
 	public function matches_url_filter( string $url ): bool {
 		$this->matched_rule = $this->matcher?->match( $url );
@@ -786,12 +818,13 @@ class Log_Manager {
 	}
 
 	/**
-	 * The active instance IFF it has already started logging — the bridge's seam
-	 * for "is there somewhere to log this line?". Never creates or starts an
-	 * instance (unlike instance()), so an unmatched / rule-gated / root context
-	 * yields null and the caller drops or writes elsewhere.
+	 * The active instance IFF it has already started logging — the seam for "is
+	 * there somewhere to log this line?". Never creates or starts an instance
+	 * (unlike instance()), so an unmatched / rule-gated / root context yields
+	 * null and the caller drops the line, writes elsewhere, or opens a job
+	 * context of its own.
 	 *
-	 * @api Used by the substrate-diagnostics bridge.
+	 * @api Used by the diagnostics bridge and by external plugins' cron managers.
 	 */
 	public static function started_instance(): ?self {
 		return ( null !== self::$instance && self::$instance->is_started() ) ? self::$instance : null;
@@ -839,10 +872,9 @@ class Log_Manager {
 	}
 
 	/**
-	 * Reset the singleton instance.
-	 *
-	 * Call before changing REQUEST_URI to log a different request context.
-	 * Only used by unit tests.
+	 * Finish the active instance and drop it, so the next instance() call
+	 * resolves a fresh context. Call before changing REQUEST_URI to log a
+	 * different request.
 	 *
 	 * @api Used by tests.
 	 */
@@ -978,6 +1010,8 @@ class Log_Manager {
 	 *
 	 * The `{partition}` spelling is load-bearing — `Topic_Node` substitutes only
 	 * that one, while the GC accepts either.
+	 *
+	 * @param string $logs_dir Root the partition dirs hang from.
 	 */
 	public static function firehose_dir_template( string $logs_dir = '<config:logs_dir>' ): string {
 		return \rtrim( $logs_dir, '/' ) . '/firehose.p{partition}';
@@ -1001,8 +1035,6 @@ class Log_Manager {
 	 *
 	 * The `process` frame this pushes is the root of the timer stack — finish()
 	 * closes it last, and every orphaned frame above it drains first.
-	 *
-	 * @return void
 	 */
 	private function log_process(): void {
 		$process_hr   = $this->request_time ?? \hrtime( true );
@@ -1141,15 +1173,16 @@ class Log_Manager {
 		// Strip caller rid (real one is Message::KEY); blocks a forged rid.
 		unset( $data['rid'] );
 
-		// Request-scope hot: cache frozen; one fresh read, threaded to both.
+		// The cached clock is frozen in request scope: read once, use twice.
 		$now                                           = Core::right_now();
-		// @longform Stamped and CONSUMED together. A cooperative stop raised
-		// inside fill() left the number un-advanced while the entry itself was
-		// durable — maybe_stop() flushes before re-raising — so the next entry
-		// reused it, and Request_Builder_Node drops a duplicate outright. When
-		// the next entry was the terminal, the record then stranded in flight
-		// until its trace timed out. Burning a number instead reads as a GAP,
-		// which the builder reports and still lets terminals through.
+		// @longform Stamped and CONSUMED together. Advancing the number
+		// after fill() returns loses it to a cooperative stop, which leaves
+		// the entry durable — maybe_stop() flushes before re-raising — so
+		// the next entry reuses the number and Request_Builder_Node drops
+		// it as a duplicate; when that next entry is the terminal, the
+		// record strands in flight until its trace times out. Burning a
+		// number reads as a GAP, which the builder reports and still lets
+		// terminals through.
 		$entry = [ 'n' => $this->line_number++, 'k' => $category ] + $data + [ 'ts' => $now ];
 		$message                                       = \Newspack_Nodes\Message::new_message();
 		$message[ \Newspack_Nodes\Message::TYPE ]      = \Newspack_Nodes\Message::TM_STRUCT;
@@ -1170,9 +1203,9 @@ class Log_Manager {
 	 * one that overflowed. `m` is the only value that reaches this size, so an
 	 * array `m` is dropped and a string `m` is trimmed to whatever room the
 	 * other keys leave — `l` and `caller` survive, which is what lets the
-	 * reader still open the span and merge it in the flame. The category is
-	 * left alone: renaming it broke `Flame_Tree::PATTERN_START` and the
-	 * `' (start)'` suffix test, so a trimmed span never opened at all.
+	 * reader still open the span and merge it in the flame. The category is left
+	 * alone: renaming it breaks `Flame_Tree::PATTERN_START` and the `' (start)'`
+	 * suffix test, so a trimmed span never opens at all.
 	 *
 	 * Re-encoding per step is what makes the fit exact: JSON escaping expands
 	 * bytes, so a byte-count subtraction can still land over the cap.
@@ -1199,7 +1232,7 @@ class Log_Manager {
 		if ( false !== $encoded && \strlen( $encoded ) <= self::MAX_DATA_SIZE ) {
 			return $data;
 		}
-		// Nothing else is ever this big; keep the old salvage as the floor.
+		// Nothing else is ever this big; a truncated dump is the floor.
 		return [ 'm' => \substr( $data_json, 0, 1000 ) . '...', 'truncated' => true ];
 	}
 
@@ -1220,8 +1253,6 @@ class Log_Manager {
 	 * The governing rule's id, or '' when nothing matched. Rides the
 	 * `process (start)` line as `rule`, which is how a reader attributes a
 	 * request to the rule that admitted it.
-	 *
-	 * @api Public accessor.
 	 */
 	public function governing_rule_id(): string {
 		return $this->matched_rule->id ?? '';

@@ -1,8 +1,11 @@
 /**
- * Hook Selector Modal Component
+ * Hook picker for the rule editor.
  *
- * A modal for browsing and selecting WordPress hooks organized by category.
- * Fetches registered hooks from $wp_filter via REST API.
+ * Presents the registered-hook taxonomy as a collapsible tree of categories so
+ * a rule's hook list is built from thousands of names without scrolling one
+ * flat list. `useHookCatalogGraph` supplies the taxonomy and `useMultiSelect`
+ * holds the pending selection, which leaves here only on Apply; this file owns
+ * the search filter, the per-category counts and the tree itself.
  */
 
 import { useState, useMemo } from '@wordpress/element';
@@ -15,19 +18,37 @@ import { useMultiSelect } from '../../hooks/useMultiSelect';
 import SelectorModal from './SelectorModal';
 
 /**
- * Recommended hooks from config file (source of truth).
+ * Hook names the tree stars and the "Recommended" button selects.
+ *
+ * PHP publishes the `recommended_log_events` config list on the window, as an
+ * inline script printed before this bundle, so the set is settled at module
+ * load. The button REPLACES the pending selection with it rather than adding
+ * to it, and a star binds nothing: each rule's own `hooks` list decides what a
+ * request instruments, so this is a menu.
+ *
+ * @type {Set<string>}
  */
 const RECOMMENDED_HOOKS = new Set( window.newspackNodesRecommendedHooks || [] );
 
 /**
  * Hook Selector Modal component.
  *
+ * A closed picker renders nothing and passes `isOpen` down to the catalog
+ * hook, which then mounts no nodes and asks the server for nothing. Closing it
+ * clears no state, so a caller that leaves it mounted finds the search term
+ * and the expanded categories still there on reopen, while the pending
+ * selection resets to `selected`.
+ *
+ * Searching drops the categories that match nothing and expands none of the
+ * rest, so a matched name shows only inside a category already open; "Select
+ * Matches" takes every match either way.
+ *
  * @param {Object}                 props             Component props.
  * @param {boolean}                props.isOpen      Whether the modal is open.
  * @param {() => void}             props.onClose     Close callback.
- * @param {Array}                  props.selected    Currently selected hooks.
+ * @param {Array}                  props.selected    Hooks the modal opens with; reopening resets to these.
  * @param {(hooks: Array) => void} props.onSelect    Called on Apply with the selected hook names.
- * @param {string}                 props.mode        'include' or 'exclude' mode.
+ * @param {string}                 props.mode        Title wording: 'exclude' asks which hooks to skip, 'include' which to log.
  * @param {string}                 [props.className] Extra classes for the modal frame (skin theming).
  * @return {import('react').ReactElement|null} Rendered component.
  */
@@ -43,14 +64,14 @@ export default function HookSelectorModal( {
 	const [ expandedCategories, setExpandedCategories ] = useState( new Set() );
 	const chosen = useMultiSelect( { selected, isOpen } );
 
-	// The hook-catalog fetch runs in a JS-node graph; hook fires it on open.
+	// The taxonomy arrives on a batched poll that `isOpen` gates.
 	const {
 		hooksByCategory,
 		descriptions = {},
 		loading,
 	} = useHookCatalogGraph( { isOpen } );
 
-	// Filter hooks by search.
+	// A malformed category value would throw in filter; skip it instead.
 	const filteredCategories = useMemo( () => {
 		const searchLower = search.toLowerCase();
 		const result = {};
@@ -70,7 +91,7 @@ export default function HookSelectorModal( {
 		return result;
 	}, [ search, hooksByCategory ] );
 
-	// Count selected and recommended in each category.
+	// Counts cover the whole category, so the badge ignores the search.
 	const categoryCounts = useMemo( () => {
 		const counts = {};
 		Object.entries( hooksByCategory ).forEach( ( [ category, hooks ] ) => {
@@ -95,6 +116,9 @@ export default function HookSelectorModal( {
 	/**
 	 * Toggle every hook in a category, on unless they are already all on.
 	 *
+	 * The whole category toggles, hooks the search hides included, which is
+	 * what keeps the header checkbox agreeing with its own count badge.
+	 *
 	 * @param {string} category Category name.
 	 */
 	const toggleCategory = ( category ) => {
@@ -107,7 +131,10 @@ export default function HookSelectorModal( {
 	};
 
 	/**
-	 * Toggle category expansion.
+	 * Expand a collapsed category, or collapse an expanded one.
+	 *
+	 * Each category carries its own state, so opening one leaves every other
+	 * category exactly as the operator left it.
 	 *
 	 * @param {string} category Category name.
 	 */
@@ -121,6 +148,9 @@ export default function HookSelectorModal( {
 
 	/**
 	 * Every hook the search filter currently leaves visible.
+	 *
+	 * An empty search leaves every hook visible, which is why "Select All"
+	 * and "Select Matches" are one handler behind two labels.
 	 *
 	 * @return {Array} Visible hook names.
 	 */

@@ -11,8 +11,8 @@ import { __ } from '@wordpress/i18n';
 /**
  * @param {Object}                    props              Component props.
  * @param {Object}                    props.request      Decoded request body: `url`, the HTTP verb as `request_method` (durable body) or `method` (compact summary), `timestamp` in seconds, `duration_ms`, `peak_mb`, `status_code`.
- * @param {string}                    [props.statusNote] Already-translated note appended to the status code; its presence also marks the row as an error.
- * @param {import('react').ReactNode} [props.errorRow]   Row rendered after the status.
+ * @param {string}                    [props.statusNote] Already-translated note appended to the status code. Its presence marks the row as an error, because the code cannot: `Request_Builder_Node` stamps `error_status` for a fatal, a timeout, an abort or a gap in the log, and any of those can accompany a 200.
+ * @param {import('react').ReactNode} [props.errorRow]   Row rendered after the status, for a caller that shows the verdict as its own badge; one that folds the verdict into `statusNote` instead passes nothing.
  * @return {import('react').ReactElement} The summary rows.
  */
 export default function RequestSummary( {

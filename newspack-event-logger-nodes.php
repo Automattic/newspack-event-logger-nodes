@@ -27,9 +27,9 @@
  *    `$_newspack_event_logger_nodes_load`, run on `plugins_loaded` priority 11
  *    and gated on the substrate being present AND new enough.
  * 3. Hooks whose actions only ever fire from substrate code — the
- *    `newspack_nodes/` stderr, request-graph-ready and
- *    reconcile-run actions — register at file scope. Without the substrate the
- *    action never fires, so a presence guard would be dead weight.
+ *    `newspack_nodes/` log-producer, stderr, reconcile and request-graph-ready
+ *    hooks — register at file scope. Without the substrate the action never
+ *    fires, so a presence guard would be dead weight.
  *
  * The admin menu and dashboard enqueues also register at file scope, guarding
  * only on the substrate class they call into.
@@ -46,13 +46,14 @@ if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_NODES_DIR' ) ) {
 	\define( 'NEWSPACK_EVENT_LOGGER_NODES_DIR', \plugin_dir_path( __FILE__ ) );
 }
 if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_NODES_URL' ) ) {
+	// The test shims define plugin_dir_path() but not plugin_dir_url().
 	$newspack_event_logger_nodes_url = \function_exists( 'plugin_dir_url' ) ? \plugin_dir_url( __FILE__ ) : '';
 	\define( 'NEWSPACK_EVENT_LOGGER_NODES_URL', $newspack_event_logger_nodes_url );
 }
 
 require_once NEWSPACK_EVENT_LOGGER_NODES_DIR . 'vendor/autoload.php';
 
-// Substrate pulls this; literal name — we load before newspack-nodes.
+// The substrate PULLS this; a literal name, since this file loads first.
 if ( \function_exists( 'add_action' ) ) {
 	\add_action(
 		'newspack_nodes/declare_config_keys',
@@ -64,29 +65,21 @@ if ( \function_exists( 'add_action' ) ) {
  * Deferred bootstrap: every registration that needs a substrate class.
  *
  * Runs on `plugins_loaded` priority 11, once both plugins are loaded. Don't
- * lower the priority. A missing substrate returns silently; one below the
- * version floor leaves an admin notice naming both versions and returns, so
- * the plugin goes dormant instead of fataling on an API that isn't there.
+ * lower the priority. A missing substrate — or one older than
+ * `version_at_least()` itself — returns silently; one below the version floor
+ * leaves an admin notice naming both versions and returns, so the plugin goes
+ * dormant instead of fataling on an API that isn't there.
  */
 $_newspack_event_logger_nodes_load = static function (): void {
 	if ( ! \class_exists( '\\Newspack_Nodes\\Bootstrap' ) ) {
 		return;
 	}
-	// @longform Dormant when too old. 2.46.0 = Table_Node::store_multi(), which
-	// the stats flush batches every write through; 2.40.0 was
-	// Config_System\Schema::defaults(),
-	// which Config reads the schema's own defaults through; 2.38.0 was
-	// Partition_Node::index_mtimes(),
-	// which the performance CI reads per-index freshness from; 2.37.0 was
-	// Node::publish_sibling()/sibling_name(), which Request_Builder uses on
-	// EVERY request to publish its flight sibling — below it the request path
-	// itself fatals — plus Schema_Reflection::dump_setters(). Earlier floors:
-	// 2.35.0 Table_Node::backed_by(), 2.31.0 Capabilities::TUNE +
-	// Bootstrap::mount_request_graph(), 2.25.0 Line_Fitter, 2.21.0
-	// Table_Node::store()/forget(). Raise this whenever a new hard requirement
-	// appears; the floor is what makes a too-old substrate DORMANT rather than
-	// fatal, so one set too low is worse than none.
-	// WordPress does not order plugin updates.
+	// @longform Dormant when too old. 2.46.0 is Table_Node::store_multi(),
+	// which the stats flush batches every write through. Raise the floor
+	// whenever a new hard requirement appears; check-substrate-floor.sh audits
+	// it against every substrate API this plugin calls. The floor is what
+	// makes a too-old substrate DORMANT rather than fatal, so one set too low
+	// is worse than none, and WordPress does not order plugin updates.
 	if ( ! \method_exists( '\\Newspack_Nodes\\Bootstrap', 'version_at_least' )
 		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.46.0', 'Newspack Event Logger Nodes' ) ) {
 		return;
@@ -116,13 +109,13 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	// App\ only — the service CIs. Node classes resolve via the prefix above.
 	\Newspack_Nodes\Command_Interpreter_Node::register_namespace( 'Newspack_Event_Logger_Nodes\\App\\' );
 
-	// Resolves `<eln:KEY>` .tsl tokens; substrate keys use the `config` ns.
+	// Resolves `<eln:KEY>` .tsl tokens; substrate keys use `<config:KEY>`.
 	\Newspack_Nodes\Core::register_config_namespace(
 		'eln',
 		[ \Newspack_Event_Logger_Nodes\Config::class, 'resolve_eln_token' ]
 	);
 
-	// Named callables .tsl index legs reference; TSL has no closures.
+	// Named callables the .tsl index legs reference; TSL has no closures.
 	\Newspack_Nodes\Formatters::register(
 		'request-index',
 		\Newspack_Event_Logger_Nodes\Request_Builder_Node::format_index_entry( ... )
@@ -136,7 +129,7 @@ $_newspack_event_logger_nodes_load = static function (): void {
 		\Newspack_Event_Logger_Nodes\Flame_Builder_Node::format_stats_index_entry( ... )
 	);
 
-	// Settings-sync value-resolver filter (writer now lives in the substrate).
+	// The settings-sync value resolver; the substrate owns the writer.
 	\add_filter(
 		'newspack_nodes/settings_sync/value',
 		'newspack_event_logger_nodes_resolve_settings_sync_value',
@@ -167,12 +160,12 @@ $_newspack_event_logger_nodes_load = static function (): void {
  * so the log GC declares — and the Workers dashboard catalogs — the dirs
  * `Log_Manager` writes with no topology Partition node behind them.
  *
- * The registered value is the writer's own dir template, expanded by the
- * substrate over the configured partition count. `jobintake` is `Job_Intake`'s,
- * substrate code that registers itself.
+ * The registered value is the writer's own dir template, which the substrate
+ * expands over the configured partition count. The substrate registers its own
+ * the same way, for `Job_Intake`'s feed and the alerts log.
  *
  * @param array<int,string> $producers Producers registered by prior contributors.
- * @return array<int,string>
+ * @return array<int,string> The same set, plus this plugin's firehose template.
  */
 function newspack_event_logger_nodes_register_log_producers( array $producers ): array {
 	return \array_values( \array_unique( \array_merge(
@@ -186,17 +179,18 @@ function newspack_event_logger_nodes_register_log_producers( array $producers ):
 );
 
 /**
- * Resolve a synced option's value for Settings_Sync_Node at consume time.
+ * Resolve a synced option's value for `Settings_Sync_Node` at consume time.
  *
- * Ported from the legacy Settings_Sync::maybe_queue_static_sync empty→default
- * logic: a blank ('') or absent (false) value for a synced option resolves to
- * its file-backed default — so blanking a field syncs the *default* rather than
- * '' (which would fail a spoke's typed sanitization). The default key is the
- * option name with the `newspack_event_logger_nodes_` / `newspack_nodes_` prefix
- * stripped, looked up in the OWNING config's defaults (`newspack_nodes_` keys —
- * including `remote_*` spoke geometry, which has its own defaults distinct from
- * the hub's — live in the substrate \Newspack_Nodes\Config, the rest in ELN's).
- * Non-blank values and non-synced options pass through unchanged.
+ * Two transforms, and every other value passes through untouched. A blank ('')
+ * or absent (false) value resolves to its file-backed default, so blanking a
+ * field syncs the DEFAULT rather than '', which would fail a spoke's typed
+ * sanitization. The default key is the option name with the
+ * `newspack_event_logger_nodes_` / `newspack_nodes_` prefix stripped, looked up
+ * in the OWNING config's defaults: `newspack_nodes_` keys — `remote_*` spoke
+ * geometry among them, whose defaults differ from the hub's — live in the
+ * substrate's \Newspack_Nodes\Config, the rest in this plugin's. Second, the
+ * ruleset arrives hydrated, so a spoke reads every rule's hooks inline instead
+ * of a pointer into an option only the hub holds.
  *
  * @api Hooked to `newspack_nodes/settings_sync/value` by the deferred bootstrap.
  * @param mixed  $value  The raw option value Settings_Sync_Node read (default get_option).
@@ -230,7 +224,7 @@ function newspack_event_logger_nodes_resolve_settings_sync_value( $value, string
 /**
  * Give the substrate's minute-cadence reconciliation pass its own request
  * context, so everything it logs during `Bootstrap::reconcile_fleet()` — spawn,
- * lock reconcile, retention, orphan-IPC reaping and every
+ * backlog wake, lock reconcile, retention, orphan-IPC reaping and every
  * `newspack_nodes/periodic` subscriber — lands in a `/jobs/newspack-nodes`
  * request instead of bleeding into whatever WP-Cron request happened to host it.
  *
@@ -268,12 +262,14 @@ function newspack_event_logger_nodes_resolve_settings_sync_value( $value, string
  * Mount the three application service CIs onto the request-scope command
  * interpreter the substrate has just built.
  *
- * `HTTP_In_Node::dispatch()` lazy-builds `_router` / `_command_interpreter` /
- * `_http` and then fires `newspack_nodes/request_graph_ready`, which is the
- * first moment a base interpreter exists to hang these off. Each shell name
- * resolves to `\Newspack_Event_Logger_Nodes\App\{name}_Node` through the `App\`
- * namespace the deferred bootstrap registered; the second argument is the node
- * name the dashboards address verbs to.
+ * `Bootstrap::mount_request_graph()` lazy-builds `_router` and
+ * `_command_interpreter`, then fires `newspack_nodes/request_graph_ready` — the
+ * first moment a base interpreter exists to hang these off. Every command door
+ * goes through it, so the `/command` route and the MCP controller both arrive
+ * here. Each shell name resolves to
+ * `\Newspack_Event_Logger_Nodes\App\{name}_Node` through the `App\` namespace
+ * the deferred bootstrap registered; the second argument is the node name the
+ * dashboards address verbs to.
  *
  * @param \Newspack_Nodes\Command_Interpreter_Node $base_interpreter Request-scope CI.
  */
@@ -356,7 +352,7 @@ function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\Command_
  * `window.*` payloads below bind to that handle, so they only ship when the
  * bundle did.
  *
- * @param string $hook Current admin page hook suffix; the slug gate is used instead.
+ * @param string $hook Current admin page hook suffix; unused, since the `page` slug gates instead.
  */
 \add_action(
 	'admin_enqueue_scripts',

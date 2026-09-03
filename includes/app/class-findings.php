@@ -30,6 +30,10 @@ use Newspack_Event_Logger_Nodes\App\Core as Hooks;
 
 \defined( 'ABSPATH' ) || exit;
 
+/**
+ * Computes what is wrong with one request record, or with one URL nothing
+ * measures, as a list of findings ordered worst first.
+ */
 class Findings {
 
 	/**
@@ -59,6 +63,8 @@ class Findings {
 	 * phases at a fixed, small cost. The next round subdivides only the phase
 	 * that held the time, which is binary search over the request lifecycle —
 	 * and it is what stops a proposal being "here are forty hooks".
+	 *
+	 * @var list<string>
 	 */
 	public const LIFECYCLE_BRACKET = [
 		'plugins_loaded',
@@ -69,17 +75,21 @@ class Findings {
 		'shutdown',
 	];
 
-	/** Severity ranking, worst first — the order findings come back in. */
+	/**
+	 * Severity ranking, worst first — the order findings come back in.
+	 *
+	 * @var array<string,int>
+	 */
 	private const SEVERITY_ORDER = [ 'high' => 0, 'medium' => 1, 'info' => 2 ];
 
 	/**
 	 * What a span's kind and significance imply, in one table.
 	 *
 	 * `visibility_proposal()` and `interior_detail()` answer the same two
-	 * questions — is this marked, and what kind of span is it — and used to
-	 * answer them down two parallel `if` ladders that had to be edited
-	 * together. One entry per outcome makes drifting apart structurally
-	 * impossible; `%s` is the span's name.
+	 * questions — is this span already marked significant, and what kind of
+	 * span is it. One entry per outcome makes the prose and the proposal
+	 * impossible to drift apart; two parallel `if` ladders would have to be
+	 * edited together. A `%s` in a `why` takes the span's name.
 	 *
 	 * @var array<string,array<string,string>>
 	 */
@@ -117,7 +127,7 @@ class Findings {
 	 * Findings for one completed request record, worst first.
 	 *
 	 * @param array<array-key,mixed> $record A stored request record (`requests.p*`).
-	 * @param Rule|null           $rule   The rule governing this request's URL, or null when none does.
+	 * @param Rule|null              $rule   The rule governing this request's URL, or null when none does.
 	 * @return list<array<string,mixed>>
 	 */
 	public static function for_request( array $record, ?Rule $rule = null ): array {
@@ -156,8 +166,8 @@ class Findings {
 	 * Sort by severity, stable within a rank so the detector's own order — the
 	 * biggest unexplained number first — survives.
 	 *
-	 * @param list<array<string,mixed>> $findings
-	 * @return list<array<string,mixed>>
+	 * @param list<array<string,mixed>> $findings The findings in detection order.
+	 * @return list<array<string,mixed>> The same findings, worst first.
 	 */
 	private static function worst_first( array $findings ): array {
 		\usort(
@@ -173,8 +183,9 @@ class Findings {
 	 * The record was folded or capped, so absence of evidence is not evidence
 	 * of absence. `Request_Builder_Node` already marks these.
 	 *
-	 * @param array<array-key,mixed> $record The request record.
-	 * @return array<string,mixed>|null
+	 * @param array<array-key,mixed> $record  The request record.
+	 * @param string|null            $rule_id The governing rule's id, or null when none governs.
+	 * @return array<string,mixed>|null The finding, or null when the record arrived whole.
 	 */
 	private static function truncation( array $record, ?string $rule_id ): ?array {
 		$markers = [];
@@ -212,8 +223,9 @@ class Findings {
 	 * The widest unexplained interval between consecutive entries — where a
 	 * `proc_open` or an outbound call hides, since neither is instrumented.
 	 *
-	 * @param array<array-key,mixed> $record The request record.
-	 * @return array<string,mixed>|null
+	 * @param array<array-key,mixed> $record  The request record.
+	 * @param string|null            $rule_id The governing rule's id, or null when none governs.
+	 * @return array<string,mixed>|null The finding, or null when no gap reaches `GAP_MS`.
 	 */
 	private static function entry_gap( array $record, ?string $rule_id ): ?array {
 		$entries = \is_array( $record['entries'] ?? null ) ? \array_values( $record['entries'] ) : [];
@@ -275,7 +287,8 @@ class Findings {
 	 * a repeat, since dispatching them is what the repetition costs.
 	 *
 	 * @param array<array-key,mixed> $record The request record.
-	 * @return array<string,mixed>|null
+	 * @param Rule|null              $rule   The governing rule, or null when none does.
+	 * @return array<string,mixed>|null The finding, or null when no span repeats enough.
 	 */
 	private static function repetition( array $record, ?Rule $rule ): ?array {
 		$profiles = \is_array( $record['profiles'] ?? null ) ? $record['profiles'] : [];
@@ -328,8 +341,11 @@ class Findings {
 	 * wins: it is the most specific thing that still dominates, and therefore
 	 * the one worth being able to see inside.
 	 *
-	 * @param list<array{name:string,value:float,self_ms:float,depth:int}> $nodes Flattened flame nodes.
-	 * @return array<string,mixed>|null
+	 * @param list<array{name:string,value:float,self_ms:float,depth:int}> $nodes    Flattened flame nodes.
+	 * @param float                                                        $profiled Profiled milliseconds.
+	 * @param Rule|null                                                    $rule     The governing rule, or null when none does.
+	 * @param float                                                        $duration Request duration in milliseconds.
+	 * @return array<string,mixed>|null The finding, or null when no span holds `DOMINANT_SHARE`.
 	 */
 	private static function dominant_span( array $nodes, float $profiled, ?Rule $rule, float $duration ): ?array {
 		if ( $profiled <= 0.0 || $duration < self::MIN_DURATION_MS ) {
@@ -439,6 +455,10 @@ class Findings {
 	 * Whether the rule already marks this span significant. `bind_current_scope()`
 	 * accepts an event with or without the ` hook` suffix, so both spellings name
 	 * the same hook and a comparison that misses one proposes a no-op edit.
+	 *
+	 * @param string    $span The span's name, as the flame carries it.
+	 * @param Rule|null $rule The governing rule, or null when none does.
+	 * @return bool True when the rule names the span under either spelling.
 	 */
 	private static function is_significant( string $span, ?Rule $rule ): bool {
 		if ( null === $rule ) {
@@ -456,9 +476,10 @@ class Findings {
 	}
 
 	/**
-	 * The only three kinds of span the flame carries, classified once so the
-	 * two prose ladders below cannot drift apart — which is how both came to
-	 * credit a custom event with listeners it never had.
+	 * The only three kinds of span the flame carries, classified once so every
+	 * caller reaches the same `SPAN_ADVICE` row. A custom event has no
+	 * listeners, and prose crediting it with any sends the reader hunting a
+	 * callback that does not exist.
 	 *
 	 * @param string $span The span's name, as the flame carries it.
 	 * @return string `hook`, `listener` or `custom`.
@@ -473,11 +494,11 @@ class Findings {
 	/**
 	 * How much of the time a span holds it actually SPENDS, said only where it
 	 * has children to hide behind. A wrapper reads as 100% and sends a reader
-	 * looking inside the one span guaranteed to contain everything; the live
-	 * case was `pyrobase` at 100% holding 9.5% in its own body.
+	 * inside the one span guaranteed to contain everything — a `pyrobase` span
+	 * holds 100% of the profiled time and spends 9.5% of it in its own body.
 	 *
 	 * @param array{name:string,value:float,self_ms:float,depth:int} $node       The dominant node.
-	 * @param float                                                            $self_share Its own body's share of profiled time.
+	 * @param float                                                  $self_share Its own body's share of the profiled time.
 	 * @return string A leading sentence, or '' where nothing is contained.
 	 */
 	private static function spent_detail( array $node, float $self_share ): string {
@@ -495,7 +516,10 @@ class Findings {
 	 * Profiled total far below the request duration. Pure subtraction, and the
 	 * finding says so — this is the one most likely to be over-read.
 	 *
-	 * @return array<string,mixed>|null
+	 * @param float       $profiled Profiled milliseconds.
+	 * @param float       $duration Request duration in milliseconds.
+	 * @param string|null $rule_id  The governing rule's id, or null when none governs.
+	 * @return array<string,mixed>|null The finding, or null when the record accounts for itself.
 	 */
 	private static function unattributed( float $profiled, float $duration, ?string $rule_id ): ?array {
 		if ( $duration < self::MIN_DURATION_MS || $profiled >= $duration * self::UNATTRIBUTED_SHARE ) {
@@ -534,6 +558,8 @@ class Findings {
 	 * What we do not measure. This rides in every brief and every tool
 	 * description, because a model handed `175.6ms profiled / 420000ms
 	 * duration` with no caveat will invent a cause for the difference.
+	 *
+	 * @return string The caveat, as one paragraph of prose.
 	 */
 	public static function caveat(): string {
 		return 'The logger times ONLY the hooks the URL\'s governing rule names, the custom events '
@@ -543,7 +569,12 @@ class Findings {
 			. 'Unattributed time means unmeasured, not idle.';
 	}
 
-	/** A duration a human reads at a glance: ms under a second, else seconds. */
+	/**
+	 * A duration a human reads at a glance: ms under a second, else seconds.
+	 *
+	 * @param float $ms Milliseconds.
+	 * @return string One decimal place, with its unit.
+	 */
 	private static function ms( float $ms ): string {
 		return $ms >= 1000.0
 			? \sprintf( '%.1fs', $ms / 1000.0 )
@@ -555,12 +586,12 @@ class Findings {
 	 * governing rule registers no hooks, or the record profiled so little of
 	 * its own duration that nothing can be concluded from what IS there.
 	 *
-	 * @param array<array-key,mixed>    $record   The request record.
-	 * @param Rule|null                 $rule     The governing rule.
+	 * @param array<array-key,mixed>                                       $record   The request record.
+	 * @param Rule|null                                                    $rule     The governing rule, or null when none does.
 	 * @param list<array{name:string,value:float,self_ms:float,depth:int}> $nodes    Flattened flame nodes.
-	 * @param float                     $profiled Profiled milliseconds.
-	 * @param float                     $duration Request duration in milliseconds.
-	 * @return array<string,mixed>|null
+	 * @param float                                                        $profiled Profiled milliseconds.
+	 * @param float                                                        $duration Request duration in milliseconds.
+	 * @return array<string,mixed>|null The finding, or null when the rule and the record between them measure enough.
 	 */
 	private static function cold_start( array $record, ?Rule $rule, array $nodes, float $profiled, float $duration ): ?array {
 		$has_spans = [] !== $nodes;
@@ -594,8 +625,8 @@ class Findings {
 	 * It carries no proposal: no rule edit fixes a fatal.
 	 *
 	 * @param array<array-key,mixed> $record  The request record.
-	 * @param string|null            $rule_id The governing rule, for the caller.
-	 * @return array<string,mixed>|null
+	 * @param string|null            $rule_id The governing rule's id, or null when none governs.
+	 * @return array<string,mixed>|null The finding, or null when the request did not die.
 	 */
 	private static function fatal( array $record, ?string $rule_id ): ?array {
 		$message = Core::as_string( $record['fatal_error'] ?? '' );
@@ -626,8 +657,9 @@ class Findings {
 	 * sum of the top-level spans. A tree built by `Flame_Fold` sets the root;
 	 * one assembled span-by-span may not.
 	 *
-	 * @param array<array-key,mixed>    $flame The flame tree root.
+	 * @param array<array-key,mixed>                                       $flame The flame tree root.
 	 * @param list<array{name:string,value:float,self_ms:float,depth:int}> $nodes Flattened nodes.
+	 * @return float Milliseconds.
 	 */
 	private static function profiled_ms( array $flame, array $nodes ): float {
 		$root = Core::num_float( $flame['value'] ?? 0 );
@@ -644,9 +676,9 @@ class Findings {
 	}
 
 	/**
-	 * Flatten a flame tree into a list of `{name, value, count, self_ms, depth}`,
-	 * root excluded — the root IS the request, so it can never be the span
-	 * holding most of the request.
+	 * Flatten a flame tree into a list of `{name, value, self_ms, depth}`, root
+	 * excluded — the root IS the request, so it can never be the span holding
+	 * most of the request.
 	 *
 	 * `self_ms` is what the span spent in its OWN body: its value less what its
 	 * children hold. That is the number that separates a span doing work from
@@ -661,6 +693,7 @@ class Findings {
 	 * `self_ms` is the gaps between its children.
 	 *
 	 * @param array<array-key,mixed> $flame The flame tree root.
+	 * @param int                    $depth The depth of `$flame` itself; its children come back one deeper.
 	 * @return list<array{name:string,value:float,self_ms:float,depth:int}>
 	 */
 	private static function flatten( array $flame, int $depth = 0 ): array {
@@ -705,10 +738,10 @@ class Findings {
 	 * A LOADED record carries it at `flame_data` — `Performance_CI` merges the
 	 * flames partition in under that name — while only a FOLDED record ever
 	 * carries `flame`, which `Request_Builder_Node` writes as part of the fold.
-	 * Reading one key alone made every ordinary request look wholly unmeasured.
+	 * Reading one key alone makes every ordinary request look wholly unmeasured.
 	 *
 	 * @param array<array-key,mixed> $record A stored request record.
-	 * @return array<array-key,mixed>
+	 * @return array<array-key,mixed> The flame tree root, or [] when the record carries none.
 	 */
 	public static function flame_of( array $record ): array {
 		foreach ( [ 'flame_data', 'flame' ] as $key ) {
@@ -726,8 +759,8 @@ class Findings {
 	 * explanation but WHICH INSTRUMENTATION TO SWITCH ON.
 	 *
 	 * @param array<array-key,mixed> $stats A URL index row (`hash`, `url`, `count`, `avg_ms`, `max_ms`, …).
-	 * @param Rule|null           $rule  The rule governing that URL, or null.
-	 * @return list<array<string,mixed>>
+	 * @param Rule|null              $rule  The rule governing that URL, or null when none does.
+	 * @return list<array<string,mixed>> One finding, or [] when the rule already registers hooks.
 	 */
 	public static function for_url( array $stats, ?Rule $rule = null ): array {
 		$url = Core::as_string( $stats['url'] ?? '' );
@@ -748,9 +781,11 @@ class Findings {
 	 * rule for a URL nothing governs, or bracket the lifecycle on a rule that
 	 * registers nothing. Both propose MORE, and both name their own removal.
 	 *
-	 * @param array<array-key,mixed> $metric    The numbers that ARE known.
-	 * @param string                 $measured  Where they came from.
-	 * @param bool                   $hookless  Whether the rule registers no hooks.
+	 * @param string                 $url      The URL, which a `create_rule` proposal needs as its pattern.
+	 * @param Rule|null              $rule     The governing rule, or null when none does.
+	 * @param array<array-key,mixed> $metric   The numbers that ARE known.
+	 * @param string                 $measured Where they came from.
+	 * @param bool                   $hookless Whether the rule registers no hooks.
 	 * @return array<string,mixed>
 	 */
 	private static function insufficient( string $url, ?Rule $rule, array $metric, string $measured, bool $hookless = true ): array {
@@ -804,6 +839,7 @@ class Findings {
 	 * unresolved list is deliberately NOT treated as empty-and-therefore-bare:
 	 * a pointer-tier rule has more hooks than fit inline, never none.
 	 *
+	 * @param Rule $rule The governing rule.
 	 * @return list<string>
 	 */
 	private static function hooks_of( Rule $rule ): array {

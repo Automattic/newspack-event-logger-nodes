@@ -33,7 +33,10 @@ namespace Newspack_Event_Logger_Nodes;
  * cache and the `delete_option` hooks stay in step.
  *
  * @param \wpdb  $wpdb   WordPress database handle. Reads `$wpdb->options`, so
- *                       the caller's current site decides which table.
+ *                       the caller's current site decides which table. The
+ *                       signature leaves it untyped on purpose: no `wpdb` class
+ *                       is declared in a test process, so the unit test passes
+ *                       an anonymous double a type hint would reject.
  * @param string $prefix Option-name prefix, e.g. `newspack_event_logger_nodes_`.
  * @return int Number of option rows deleted.
  */

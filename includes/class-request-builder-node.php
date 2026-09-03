@@ -24,8 +24,8 @@
  *
  * The two static index helpers, `format_index_entry()` and
  * `parse_request_index()`, are a matched pair — a fixed-width companion-index
- * line writer and its reader. They are registered as the `request-index`
- * formatter and used by the `performance` CI's lookup verbs.
+ * line writer and its reader. The writer is registered as the `request-index`
+ * formatter, and the `performance` CI's lookup verbs read through both.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -73,16 +73,17 @@ class Request_Builder_Node extends Timer_Node {
 	public const SEQUENCE_BREAK_KEYS = [ self::LOST_MARKER_KEY, self::FOLD_MARKER_KEY ];
 
 	/**
-	 * Every non-nominal terminal marker: fatal, timed out, aborted. The index
-	 * writer, its reader and the `process (complete)` validator all read this —
-	 * three parallel lists is how `A` shipped writable but unreadable.
+	 * Every non-nominal terminal marker: fatal, timed out, aborted, incomplete.
+	 * The index writer, its reader and the `process (complete)` validator all
+	 * read this one list, because three parallel copies is how a status becomes
+	 * writable but unreadable.
 	 */
 	public const ERROR_STATUSES = [ 'F', 'T', 'A', 'I' ];
 
 	/**
 	 * The index line's 1-char method column, written here and read back through
 	 * `array_flip()`. Two hand-kept tables is how a method added to one side
-	 * decoded as a bare letter on the other.
+	 * decodes as a bare letter on the other.
 	 */
 	private const METHOD_CODES = [
 		'GET'     => 'G',
@@ -167,15 +168,17 @@ class Request_Builder_Node extends Timer_Node {
 	/** The one width `format_index_entry()` writes and `parse_request_index()` reads. */
 	private const INDEX_LINE_BYTES = 97;
 
-	/**
-	 * Max raw payload length for URL/process-start extraction.
-	 */
+	/** Longest `request` line the URL regex scans; past it, no URL is read. */
 	private const MAX_PAYLOAD_SCAN_LENGTH = 8192;
 
 	/** Max distinct labels tracked per profiled state (bounds runaway memory). */
 	private const MAX_PROFILE_ENTRY_LABELS = 1000;
 
-	/** Maximum stack depth before request is considered runaway and evicted. */
+	/**
+	 * Open spans one request may hold before it is marked runaway. A runaway
+	 * stays visible in the in-flight view and stores no further entries; it
+	 * leaves on the ordinary bucket rotation, like every other request.
+	 */
 	private const MAX_STACK_DEPTH = 50;
 
 	/** @var LRU_Cache In-flight requests, keyed by rid. */
@@ -209,12 +212,16 @@ class Request_Builder_Node extends Timer_Node {
 	private int $appended = 0;
 
 	/**
-	 * Raw entries a folded request keeps from each end. The head is how a
-	 * request identifies itself (process start, request line, environment) and
-	 * the tail is how it ends (stats flush, memory, process complete); both are
-	 * bounded, and it is the repetitive middle that costs memory.
+	 * Raw entries a folded request keeps from its head — how a request
+	 * identifies itself: process start, request line, environment.
 	 */
 	private const FOLD_KEEP_HEAD = 10;
+
+	/**
+	 * Raw entries a folded request keeps from its tail — how it ends: stats
+	 * flush, memory, process complete. Both ends are bounded, and it is the
+	 * repetitive middle that costs memory.
+	 */
 	private const FOLD_KEEP_TAIL = 10;
 
 	/** @var int `$appended` value that triggers the next pressure check. */
@@ -229,7 +236,7 @@ class Request_Builder_Node extends Timer_Node {
 	/** @var string Late-bound node NAME `alert` entries also forward to ('' = off). */
 	private $alerts_target = '';
 
-	/** @var int Process line counter (for tests/debug). */
+	/** @var int Firehose lines seen since start; reported by `GET_CACHE`. */
 	private $line_counter = 0;
 
 	/** @var array<string,callable> Keyword → mutator. Set in constructor. */
@@ -270,8 +277,11 @@ class Request_Builder_Node extends Timer_Node {
 
 	/**
 	 * Store and parse the positional token array via parse_schema_args()
-	 * (bucket_size / num_buckets), then rebuild the LRU_Cache with the new
-	 * dimensions (here — not the ctor — because it depends on the positional args).
+	 * (bucket_size, num_buckets, entry_budget, max_entries_per_request), then
+	 * rebuild the LRU_Cache with the new dimensions and re-arm the pressure
+	 * check at the new budget. The rebuild lives here, not in the constructor,
+	 * because it depends on the positional args. Either budget declared at 0 or
+	 * below clamps to 1.
 	 *
 	 * Calling this also arms the router-tick timer, so a node constructed but
 	 * never given arguments never fires.
@@ -304,15 +314,18 @@ class Request_Builder_Node extends Timer_Node {
 	 * the only place it is checked. A line numbered below the expected value is
 	 * a duplicate, above it a gap; both are logged and dropped, so a request
 	 * whose middle is missing stops accumulating rather than reporting a
-	 * plausible-looking lie. A nested render (gyrobase via `proc_open`) restarts
-	 * numbering at 1 under the same rid, which `seq_stack` accommodates by
-	 * saving the parent's expected value across the subprocess.
+	 * plausible-looking lie. A terminal marker is the one exception on the gap
+	 * side: it lands anyway, or the request strands in the cache until eviction.
+	 * A nested render (gyrobase via `proc_open`) restarts numbering at 1 under
+	 * the same rid, which `seq_stack` accommodates by saving the parent's
+	 * expected value across the subprocess.
 	 *
-	 * Completion is detected by the `process (complete)` callback setting
-	 * `state`; this method then emits and drops the envelope immediately, to get
-	 * the state back out of RAM rather than wait for eviction.
+	 * A request completes when a terminal callback — `process (complete)` or
+	 * `process (aborted)` — sets `state`; this method then emits the envelope
+	 * and drops it immediately, to get the state back out of RAM rather than
+	 * wait for eviction.
 	 *
-	 * @param array<int,mixed> $message Reference; not mutated.
+	 * @param array<int,mixed> $message The firehose line or command to fold in.
 	 */
 	public function fill( array $message ): void {
 		++$this->counter;
@@ -477,10 +490,7 @@ class Request_Builder_Node extends Timer_Node {
 			if ( isset( $entry['peak_mb'] ) ) {
 				$stored['peak_mb'] = $entry['peak_mb'];
 			}
-			// @longform The stored entry is an ALLOWLIST, so a producer field
-			// named nowhere here is dropped between the firehose and the
-			// record — which is what made every traced hook caller invisible
-			// while the firehose carried hundreds of them.
+			// Allowlist: a producer field named nowhere here is dropped.
 			if ( isset( $entry['caller'] ) ) {
 				$stored['caller'] = Core::as_string( $entry['caller'], '' );
 			}
@@ -532,7 +542,7 @@ class Request_Builder_Node extends Timer_Node {
 
 	/**
 	 * Router-TIMER tick. Drives the cache's idle rotation so a stalled in-flight
-	 * request times out (error_status='T') and is emitted to both requests.log and
+	 * request times out (error_status='T') and reaches both the primary sink and
 	 * the completed target even on a partition with no inbound firehose traffic.
 	 *
 	 * @api Used by substrate.
@@ -566,7 +576,7 @@ class Request_Builder_Node extends Timer_Node {
 			$count      = 0;
 			foreach ( $this->cache->iterate() as $rid => $request ) {
 				++$count;
-				// Cache holds stdClass; an is_array test read as "no stall".
+				// Cache holds stdClass; an is_array test reads "no stall".
 				$created = $request instanceof \stdClass
 					? Core::as_int( $request->timestamp ?? 0 )
 					: 0;
@@ -1227,6 +1237,7 @@ class Request_Builder_Node extends Timer_Node {
 	 *
 	 * @param \stdClass           $request In-flight envelope, mutated.
 	 * @param array<string,mixed> $entry   Stored entry.
+	 * @return bool True when it closed one, which routes it into `keep`.
 	 */
 	private static function closes_head_span( \stdClass $request, array $entry ): bool {
 		$await = \is_array( $request->await ?? null ) ? $request->await : [];
@@ -1247,6 +1258,8 @@ class Request_Builder_Node extends Timer_Node {
 	}
 
 	/**
+	 * Whether the producer marked this entry to survive a fold.
+	 *
 	 * A summary line is not repetitive middle: a render's stats flush carries
 	 * the request's cache hit rates and nothing else does, and on a real render
 	 * it lands 11-15 entries from the end — past any tail worth keeping. Sizing
@@ -1256,6 +1269,7 @@ class Request_Builder_Node extends Timer_Node {
 	 * producer marks the line instead, and the fold honours the mark.
 	 *
 	 * @param array<string,mixed> $entry Stored entry.
+	 * @return bool True when the producer marked the line.
 	 */
 	private static function is_kept( array $entry ): bool {
 		return ! empty( $entry['keep'] );
@@ -1413,7 +1427,8 @@ class Request_Builder_Node extends Timer_Node {
 	/**
 	 * Build an HTTP-access-log-style compact summary from a completed
 	 * request envelope. The schema is a fixed wire contract the request-log
-	 * dashboard consumes; `clip()` bounds the two free-text fields.
+	 * dashboard consumes; `emit_compact_summary()` fits its two free-text
+	 * fields, `url` and `user_agent`, to the line budget on the way out.
 	 *
 	 * @param \stdClass $request Completed request envelope.
 	 * @return array<string,mixed> The summary, keyed by the wire-contract fields.
@@ -1448,9 +1463,9 @@ class Request_Builder_Node extends Timer_Node {
 	 * A worker request gets its worker type appended as a bare query parameter,
 	 * so each worker type hashes to its own URL row instead of collapsing into
 	 * the endpoint they share. A URL that already carries a query gets it too,
-	 * with the right separator: skipping it there put worker traffic on the
+	 * with the right separator: skipping it there puts worker traffic on the
 	 * VISITOR's row, and one row carries one `worker` flag — so the default
-	 * worker filter would drop that URL's visitor traffic along with it.
+	 * worker filter drops that URL's visitor traffic along with it.
 	 *
 	 * @api `Request_Flight_Node` resolves in-flight URLs through this too — the
 	 *      completed record and the gyroscope row MUST agree, or a job's
@@ -1469,14 +1484,21 @@ class Request_Builder_Node extends Timer_Node {
 	}
 
 	/**
+	 * The label of the innermost open span, for the in-flight gyroscope row.
+	 *
 	 * @param array<string,mixed> $request Request envelope as an array.
+	 * @return string The stack top's label, or '' when it carries none.
 	 */
 	public static function extract_what( array $request ): string {
 		return self::extract_stack_top_slot( $request, 1, 'what', '' );
 	}
 
 	/**
+	 * The name of the innermost open span, for the in-flight gyroscope row.
+	 * A request inside nothing else reads as 'process', its own frame.
+	 *
 	 * @param array<string,mixed> $request Request envelope as an array.
+	 * @return string The stack top's state name, or 'process'.
 	 */
 	public static function extract_state( array $request ): string {
 		return self::extract_stack_top_slot( $request, 0, 'state', 'process' );
@@ -1487,8 +1509,8 @@ class Request_Builder_Node extends Timer_Node {
 	 * `state` (slot 0) and `what` (slot 1) from the top of the request's
 	 * hook stack, defaulting to `[ 'process', '' ]` when the stack is empty.
 	 *
-	 * The fallback chain: stack-top slot → explicit named field (for test
-	 * seams that prime fields without driving the stack) → static default.
+	 * The stack answers first. An envelope carrying none — restored, or built
+	 * by hand — falls back to the named field, and then to the default.
 	 *
 	 * @param array<string,mixed> $request        Request envelope as an array.
 	 * @param int                 $slot           Frame slot (0 = state, 1 = what).
@@ -1723,9 +1745,9 @@ class Request_Builder_Node extends Timer_Node {
 	 *
 	 * Registered as the `request-index` formatter; `parse_request_index()` is
 	 * the reader for the lines this writes. The layout is fixed-width and
-	 * append-only — 97 columns as of v4 — so the reader slices each field by
-	 * constant offset and an older, shorter index still parses. Change a width
-	 * and every existing `.idx` on disk decodes as garbage.
+	 * append-only, `INDEX_LINE_BYTES` wide, so the reader slices each field by
+	 * constant offset and refuses anything shorter. Change a width and every
+	 * existing `.idx` on disk decodes as garbage.
 	 *
 	 * Two cases skip indexing, both by the substrate's null-or-'' contract: a
 	 * record with no URL, and a position too large for its column — an offset,

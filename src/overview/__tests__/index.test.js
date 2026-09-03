@@ -52,22 +52,28 @@ describe( 'overview — AdminApp', () => {
 		const { container } = await mount( <AdminApp /> );
 		expect( mockOnError ).toEqual( expect.any( Function ) );
 		jest.useFakeTimers();
+		// `useAsk` reports a reason STRING: `errorMessage()` coerces every
+		// TM_ERROR payload before the reply reaches `onDone`.
 		await act( async () => {
-			mockOnError( new Error( 'oh no' ) );
+			mockOnError( 'the ask timed out reading partition 3' );
 		} );
-		expect( container.textContent ).toContain( 'oh no' );
+		expect( container.textContent ).toContain(
+			'the ask timed out reading partition 3'
+		);
 		// Advance past the effect's 5s auto-clear timeout.
 		await act( async () => {
 			jest.advanceTimersByTime( 6000 );
 		} );
-		expect( container.textContent ).not.toContain( 'oh no' );
+		expect( container.textContent ).not.toContain(
+			'the ask timed out reading partition 3'
+		);
 		jest.useRealTimers();
 	} );
 
-	it( 'AdminApp falls back to "An error occurred" when error has no message', async () => {
+	it( 'AdminApp falls back to "An error occurred" for an empty reason', async () => {
 		const { container } = await mount( <AdminApp /> );
 		await act( async () => {
-			mockOnError( {} );
+			mockOnError( '' );
 		} );
 		expect( container.textContent ).toContain( 'An error occurred' );
 	} );

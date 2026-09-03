@@ -5,8 +5,8 @@
  * Renders one request's log entries as an indented, foldable table in the
  * request-detail modal. Entries arrive already indented and pair-tagged from
  * `computeIndentedEntries()`; this component owns only view state — which
- * pairs are unfolded, which rows the search matched, and which range the pair
- * swatch highlights.
+ * pairs are unfolded, which long message bodies are open, which rows the
+ * search matched, and which range the pair swatch highlights.
  *
  * Folding a `(start)`/`(complete)` pair replaces both rows and everything
  * between them with one merged row, computed by `computeVisibleEntries()`.
@@ -122,11 +122,14 @@ const collectDescendantPairIds = ( entries, startIdx, pairId ) => {
  * Active highlight state — the currently highlighted cells and the timer that
  * clears them, so navigating to a new match drops the old highlight at once.
  * Module-scoped, so exactly one highlight exists across every mounted table.
+ *
+ * @type {{cells: HTMLElement[], timer: ?ReturnType<typeof setTimeout>}}
  */
 let activeHighlight = { cells: [], timer: null };
 
 /**
- * Clear any active cell highlights.
+ * Drop every highlighted cell's flash and cancel the timer that would have
+ * dropped it, so a new highlight never inherits the old one's countdown.
  */
 const clearHighlight = () => {
 	for ( const td of activeHighlight.cells ) {
@@ -195,10 +198,23 @@ const scrollToAndHighlight = ( tableRef, selector ) => {
 	} );
 };
 
-// A message body longer than this folds behind a Show more link.
+/**
+ * Lines a message body may run to before it folds behind a Show more link,
+ * and the number shown while it is folded.
+ *
+ * @type {number}
+ */
 const BODY_FOLD_LINES = 5;
 
-// Read whole or not at all, and one per request: never fold the environment.
+/**
+ * Keywords whose body never folds, however long it runs.
+ *
+ * The curated environment map is read whole or not at all, and one entry
+ * carries it per request, so a fold link on it costs a click and saves
+ * nothing.
+ *
+ * @type {Set<string>}
+ */
 const NEVER_FOLDED = new Set( [ 'environment_v3' ] );
 
 /**
@@ -207,10 +223,10 @@ const NEVER_FOLDED = new Set( [ 'environment_v3' ] );
  * Every pair starts folded: `expandedSet` holds the pairIds the reader has
  * opened, and an empty set means everything is collapsed.
  *
- * @param {Object} props           Component props.
- * @param {Array}  props.entries   Array of indented log entries (from computeIndentedEntries).
- * @param {number} props.realCount Count of real (non-placeholder) entries; the heading falls back to entries.length.
- * @param {Object} props.revealRef Ref the component fills with `revealPath( path )`, the flame graph's way in.
+ * @param {Object} props             Component props.
+ * @param {Array}  props.entries     Array of indented log entries (from computeIndentedEntries).
+ * @param {number} [props.realCount] Count of real (non-placeholder) entries; the heading falls back to entries.length.
+ * @param {Object} [props.revealRef] Ref the component fills with `revealPath( path )`, the flame graph's way in.
  * @return {import('react').ReactElement|null} Rendered component or null if no entries.
  */
 export default function LogEntriesTable( { entries, realCount, revealRef } ) {
@@ -235,7 +251,8 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 	 * Recompute matches 150ms after the query settles.
 	 *
 	 * A match is a case-insensitive substring hit on the keyword or on the
-	 * message (objects are matched against their JSON). One start/complete
+	 * message (objects are matched against their JSON); the trace labels `l`
+	 * and `caller` render on the row but are not searched. One start/complete
 	 * pair counts once: when the query matched the start's keyword, the
 	 * complete's identical keyword is skipped unless its own message also
 	 * matched. Keywords are tested suffix-anchored, like the parser, so a
@@ -307,8 +324,9 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 	/**
 	 * Every pairId that can be unfolded — the set "Unfold All" applies and
 	 * search navigation checks before expanding an ancestor. Empty pairs and
-	 * any pair whose keyword begins with `process ` (the outermost pair, which
-	 * never folds) are excluded; neither has anything to reveal.
+	 * the outermost `process` pair are excluded; neither has anything to
+	 * reveal. `isFoldablePairStart()` owns that test and matches the base name
+	 * exactly, so `process queue (start)` is a foldable pair like any other.
 	 */
 	const allPairIds = useMemo( () => {
 		const ids = new Set();
@@ -486,7 +504,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 			document.removeEventListener( 'keydown', handleKeyDown, true );
 	}, [ searchQuery, matchedIndices, gotoNext, gotoPrev, clearSearch ] );
 
-	// Compute visible entries from fold state.
+	/** The rows the current fold state leaves on screen. */
 	const visibleEntries = useMemo(
 		() => computeVisibleEntries( entries, expandedSet ),
 		[ entries, expandedSet ]
@@ -519,8 +537,8 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 				// @longform `Flame_Tree` names a node `base: l` and only falls
 				// back to `m`, and the path arrives built by that rule — so a
 				// key built from `m` alone misses every segment carrying a
-				// label, which with `trace_hooks` on is every hook. Every miss
-				// fell through to the base-name key, whose first-wins lookup
+				// label, which with `trace_hooks` on is every hook. A miss
+				// falls through to the base-name key, whose first-wins lookup
 				// reveals the FIRST occurrence rather than the one clicked.
 				const detail =
 					msg && msg !== label
@@ -549,7 +567,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 	 * Reveal the row for a flame-graph path: expand its ancestors and scroll
 	 * to it. An unresolvable path is a no-op.
 	 *
-	 * @param {Array} path Segment names from the flame root down to the span.
+	 * @param {string[]} path Segment names from the flame root down to the span.
 	 */
 	const revealPath = useCallback(
 		( path ) => {
@@ -820,13 +838,13 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 	/**
 	 * The lines naming who opened a traced span.
 	 *
-	 * `l` is the origin frame the flame aggregates on; `caller` the deeper
-	 * chain, present only for the firings the rule's budget covered. Both lead
-	 * the value, in the muted ink the durations wear: they say who asked, which
-	 * is context for the value rather than the value itself.
+	 * `l` is the origin frame the flame aggregates on; `caller` is the nearest
+	 * frames beyond it, recorded only for the firings a rule's `trace_callers`
+	 * budget covers. Both lead the value and render muted, because they say
+	 * who asked rather than what the span did.
 	 *
 	 * @param {Object} entry Log entry object.
-	 * @return {string[]} Label lines, outermost concern first.
+	 * @return {string[]} Zero to two lines: the origin frame, then the callers.
 	 */
 	const traceLines = ( entry ) => {
 		const lines = [];
@@ -912,11 +930,11 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 	};
 
 	/**
-	 * Render duration + peak_mb stats line, or nothing when the entry carries
-	 * neither.
+	 * Render the duration and peak-memory figures, or nothing when the entry
+	 * carries neither.
 	 *
-	 * @param {Object} entry Entry with duration_ms and peak_mb.
-	 * @return {import('react').ReactElement|null} Stats span or null.
+	 * @param {Object} entry Log entry; `duration_ms` and `peak_mb` may be absent.
+	 * @return {import('react').ReactElement|null} Stats span, or null.
 	 */
 	const renderStats = ( entry ) => {
 		const hasPeak = entry.peak_mb > 0;
@@ -956,9 +974,12 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 		) );
 
 	/**
-	 * Render message cell for merged (collapsed) rows.
-	 * Shows start message + complete message, then stats on new line,
-	 * followed by a badge counting the entries the fold hides.
+	 * Render the message cell of a merged row.
+	 *
+	 * The start message and the complete message run together on one line. The
+	 * stats and a badge counting the entries the fold hides follow on the next
+	 * line, and break to it only when the row has content to break away from —
+	 * an empty pair would otherwise open with a blank line.
 	 *
 	 * @param {Object} entry Merged entry.
 	 * @return {import('react').ReactElement} Message content.
@@ -1049,8 +1070,9 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 	};
 
 	/**
-	 * A message body past five lines folds, with a link to see the rest.
-	 * `l` and the stats stay outside it, so folding never hides a number.
+	 * A message body past `BODY_FOLD_LINES` folds, with a link to see the rest;
+	 * a keyword in `NEVER_FOLDED` is exempt. The trace labels and the stats
+	 * stay outside the fold, so folding never hides a number.
 	 *
 	 * @param {Object} entry Log entry object.
 	 * @param {string} msg   The formatted message body.
@@ -1086,9 +1108,9 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 	};
 
 	/**
-	 * `Log_Manager` trimmed this entry's value to fit the firehose line. Say so
-	 * on its own line, in the muted ink the trace labels wear, so the value
-	 * above it is never mistaken for the whole of it.
+	 * Mark an entry whose value `Log_Manager` trims to fit the firehose line.
+	 * The mark takes its own line, in the muted ink the trace labels wear, so
+	 * the value above it is never mistaken for the whole of it.
 	 *
 	 * @param {Object} entry Log entry object.
 	 * @return {import('react').ReactNode} The mark, or null.
@@ -1101,9 +1123,8 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 		) : null;
 
 	/**
-	 * Render message cell for non-merged entries.
-	 * Complete entries show duration/peak on a new line after content;
-	 * everything else keeps them inline.
+	 * Render the message cell of a non-merged row: the trace labels, the
+	 * message body, the truncation mark, then the stats inline after them.
 	 *
 	 * @param {Object} entry Entry object.
 	 * @return {import('react').ReactNode} Message content.
@@ -1285,6 +1306,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 						{ visibleEntries.map( ( entry, idx ) => {
 							const keyword = entry.k || '';
 							const eventColor = getStateColor( keyword );
+							// Gap and fold rows share n: ''; idx is unique.
 							return (
 								<tr
 									key={ idx }

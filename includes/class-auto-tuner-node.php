@@ -42,8 +42,10 @@ class Auto_Tuner_Node extends Node {
 	 * Gates precede any write: the message must carry TM_STRUCT, its VALUE must
 	 * be an array holding a non-empty `rule_id` and a non-empty `items` list,
 	 * and the process must be authorized. An unrecognized KEY falls through the
-	 * switch. Every rejection is silent — a malformed decision costs the caller
-	 * nothing, and FlameBuilder emits these from its periodic flush.
+	 * switch. Every rejection is silent: `Flame_Builder_Node::emit_auto_tune()`
+	 * satisfies the shape gates by construction, so a shape rejection means a
+	 * hand-built or replayed message, and the authorization gate is the one a
+	 * real decision can lose — `authorized()` says when.
 	 *
 	 * @param array<int,mixed> $message Positional Message array.
 	 */
@@ -59,7 +61,7 @@ class Auto_Tuner_Node extends Node {
 		}
 
 		$rule_id = \is_string( $value['rule_id'] ?? null ) ? $value['rule_id'] : '';
-		/** @var string[] $items dynamic message VALUE['items']. */
+		/** @var string[] $items Hook or event names from the message VALUE. */
 		$items = \is_array( $value['items'] ?? null ) ? $value['items'] : [];
 
 		if ( empty( $items ) || '' === $rule_id || ! $this->authorized() ) {
@@ -82,12 +84,20 @@ class Auto_Tuner_Node extends Node {
 	/**
 	 * May this process rewrite the ruleset?
 	 *
-	 * Auto-tune fires from inside a worker running FlameBuilder. Workers
-	 * populate `NEWSPACK_NODES_WORKER_TYPE` only after the substrate has
-	 * authorized the spawn (`Spawn_Controller::spawn()`),
-	 * so its presence stands in for that check; an ordinary admin request
-	 * qualifies on `manage_options` instead. Tests clear both to exercise the
-	 * early return.
+	 * Auto-tune fires from inside a worker running FlameBuilder, and
+	 * `NEWSPACK_NODES_WORKER_TYPE` marks that context. Only the substrate writes
+	 * it — `Spawn_Controller::spawn()` past the endpoint's permission check, and
+	 * `Bootstrap::reconcile_fleet()` on the cron pass. A visitor cannot forge it:
+	 * PHP exposes request headers under an `HTTP_` prefix, so nothing a client
+	 * sends lands on this key. An ordinary admin request qualifies on
+	 * `manage_options` instead, and a process with no WordPress loaded, where
+	 * `current_user_can()` is undefined, qualifies on neither.
+	 *
+	 * A worker started by `wp nodes run` has neither — that path sets no worker
+	 * env, and WP-CLI has no current user — so its auto-tune decisions are
+	 * dropped unless the command is passed a `--user` holding `manage_options`.
+	 *
+	 * @return bool
 	 */
 	private function authorized(): bool {
 		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- read-only env check.
@@ -106,13 +116,14 @@ class Auto_Tuner_Node extends Node {
 	 * A hook that also appears in the rule's `significant_events` is protected
 	 * and survives, however noisy it got.
 	 *
-	 * All three appliers rebuild the Rule the same way, and the reason is a
-	 * footgun worth stating once: each hands the constructor the RESOLVED hook
-	 * list together with the `HOOKS_INLINE` marker. A pointer-tier rule carries
-	 * `hooks = null`, and `Rule_Set::save()` reads a null under an inline marker
-	 * as "no hooks" — it would collapse the rule to an empty list and delete the
-	 * durable option, losing every hook the rule instruments. Resolving first
-	 * also gives save() a true count to re-tier by.
+	 * All three appliers rebuild the Rule the same way, and the reason is worth
+	 * stating once: each hands `Rule::with()` the RESOLVED hook list together
+	 * with the `HOOKS_INLINE` marker. The two travel as a pair because the
+	 * constructor refuses a list under `HOOKS_MC` and a null under
+	 * `HOOKS_INLINE`, and a pointer-tier rule carries `hooks = null` — so
+	 * overriding one half of the pair on such a rule throws. Passing the pair
+	 * even where the hooks are untouched costs a heavy rule nothing:
+	 * `Rule_Set::save()` re-tiers by count and writes the pointer form back.
 	 *
 	 * @param string[] $items   Hooks to disable, unless protected by the rule's significant_events.
 	 * @param string   $rule_id Id of the rule to mutate.
@@ -128,7 +139,7 @@ class Auto_Tuner_Node extends Node {
 					$hooks,
 					static fn( $hook ) => \in_array( $hook, $significant, true ) || ! \in_array( $hook, $items, true )
 				) );
-				// Give save() resolved list + inline marker; re-tiers by count.
+				// The pair the constructor demands; save() re-tiers by count.
 				return $rule->with( [ 'significant_events' => $significant, 'hooks' => $kept, 'hooks_in' => Rule::HOOKS_INLINE ] );
 			}
 		);
@@ -138,8 +149,8 @@ class Auto_Tuner_Node extends Node {
 	 * Drop the named custom-event categories from the rule.
 	 *
 	 * As with hooks, a category listed in `significant_events` is protected.
-	 * The rule's hooks are untouched but must still be passed in resolved form
-	 * — see `apply_disable_hooks()`.
+	 * The rule's hooks are untouched and travel resolved all the same, for the
+	 * reason `apply_disable_hooks()` gives.
 	 *
 	 * @param string[] $items   Custom-event categories to disable, unless protected by the rule's significant_events.
 	 * @param string   $rule_id Id of the rule to mutate.
@@ -160,8 +171,8 @@ class Auto_Tuner_Node extends Node {
 	/**
 	 * Append newly-promoted significant-event tags to the rule, deduped.
 	 *
-	 * Hooks and custom events are untouched, but the hooks must still be passed
-	 * in resolved form — see `apply_disable_hooks()`.
+	 * Hooks and custom events are untouched; the hooks travel resolved all the
+	 * same, for the reason `apply_disable_hooks()` gives.
 	 *
 	 * @param string[] $items   Newly-promoted significant-event tags to append.
 	 * @param string   $rule_id Id of the rule to mutate.
@@ -182,10 +193,14 @@ class Auto_Tuner_Node extends Node {
 	 * back. Three outcomes write nothing: no rule carries that id, `$mutate`
 	 * returns null (the mutation opting out), or the result is `unchanged()`.
 	 *
-	 * The read-modify-write is not locked. It opens by dropping WordPress's
-	 * per-process option caches, which is what keeps a long-lived worker from
-	 * saving a ruleset it read minutes ago and clobbering an admin edit; two
-	 * workers racing the same rule still resolve last-writer-wins.
+	 * The read-modify-write takes no lock of its own, because
+	 * `Flame_Builder_Node::apply_auto_tune()` holds a five-second memcache lock
+	 * across the synchronous emit and already serialises the fleet. What this
+	 * method owns is staleness: it opens by dropping WordPress's per-process
+	 * option caches, which keeps a long-lived worker from saving a ruleset it
+	 * read minutes ago and clobbering an admin edit. Writers that collide
+	 * anyway — the lock expired, or the host runs no memcache — resolve
+	 * last-writer-wins.
 	 *
 	 * @param string                $rule_id Id of the rule to mutate.
 	 * @param callable(Rule): ?Rule $mutate  Returns the replacement Rule, or null to abort.
@@ -210,13 +225,17 @@ class Auto_Tuner_Node extends Node {
 	}
 
 	/**
-	 * True when $updated equals $original once both hook lists are resolved to
-	 * concrete form. A pointer-tier rule stores hooks=null, so a raw to_array()
-	 * comparison would always differ — this lets a no-op action (e.g. a hook a
-	 * concurrent worker already removed) skip the write entirely.
+	 * True when $updated equals $original once `Rule_Set::resolved_map()` has
+	 * resolved both hook lists and neutralised both tier markers. A pointer-tier
+	 * rule stores `hooks = null` under `HOOKS_MC` while every applier returns a
+	 * resolved list under `HOOKS_INLINE`, so a raw `to_array()` comparison would
+	 * report a change on every heavy rule forever. Normalising both lets a no-op
+	 * action — a hook a concurrent worker already removed — skip the write
+	 * entirely.
 	 *
 	 * @param Rule $original Rule as loaded.
 	 * @param Rule $updated  Rule as returned by the mutation.
+	 * @return bool
 	 */
 	private static function unchanged( Rule $original, Rule $updated ): bool {
 		return Rule_Set::resolved_map( $original ) === Rule_Set::resolved_map( $updated );
@@ -227,7 +246,7 @@ class Auto_Tuner_Node extends Node {
 	 * FlameBuilder constructs it, so no topology ever names it in TSL. It takes
 	 * no constructor arguments and exposes no verbs.
 	 *
-	 * @api Used by the substrate to provide UI etc.
+	 * @api Used by the substrate to resolve the node + provide UI.
 	 * @return array<string,mixed>
 	 */
 	public static function node_schema(): array {

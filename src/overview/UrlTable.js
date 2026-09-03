@@ -1,7 +1,17 @@
 /**
- * URL Table Component
+ * The Performance dashboard's URL leaderboard.
  *
- * Virtualized sortable table of URLs with performance stats.
+ * The server owns the set. `PerformanceDashboard` polls the `performance` CI's
+ * `urls` verb and this table draws the page it is handed, in the order it
+ * arrives: the search box, the sort headers, the two filter toggles and the
+ * pager are local state that only reports itself upward through
+ * `onParamsChange`. Re-applying any of it here makes the footer's total
+ * describe a different population than the rows, and `localeCompare` re-orders
+ * a page the server already cut with PHP's byte-order `<=>`, so rows skip and
+ * repeat across pages.
+ *
+ * Rows virtualize against window scroll, and each row's URL cell carries a
+ * background bar scaling the active chart metric against the page's p95.
  */
 
 import {
@@ -17,15 +27,33 @@ import { TextControl } from '@wordpress/components';
 import useVirtualization from '@newspack-nodes/shared/hooks/useVirtualization';
 import { gridTemplate } from '@newspack-nodes/shared/hooks/useColumnPicker';
 
+/**
+ * Row height in pixels.
+ *
+ * The virtualizer's arithmetic and each row's inline style read this one
+ * constant. Let them disagree and the padding spacers mis-size the runway,
+ * drifting the visible window away from the scroll position.
+ */
 const ROW_HEIGHT = 40;
+
+/**
+ * Page size, in rows.
+ *
+ * `usePerformanceGraph` fixes the `urls` verb's `limit` at 100 to match, since
+ * every `offset` this table sends is derived from this number: the two are one
+ * page size split across two files.
+ */
 const URLS_PER_PAGE = 100;
 
 /**
- * Calculate percentage.
+ * One status class's share of a row's requests, as a whole percentage.
  *
- * @param {number} part  Part count.
- * @param {number} total Total count.
- * @return {string} Formatted percentage or '-'.
+ * A share that rounds to zero reads '-' rather than '0%', so a scan down the
+ * four status columns lands on the ones carrying traffic.
+ *
+ * @param {number} part  Requests in this status class.
+ * @param {number} total Requests on the row.
+ * @return {string} The percentage, or '-' when it rounds to zero.
  */
 const pct = ( part, total ) => {
 	if ( ! total || total === 0 ) {
@@ -41,9 +69,14 @@ const pct = ( part, total ) => {
  * `kind` defaults to `numeric` — a sortable right-aligned header over a
  * numeric cell. `status` is an unsortable HTTP-class heading over a `pct()`
  * share, `code` the sortable URL heading over the bar-backed `<code>` cell.
- * `render` overrides the default `formatNum( url[ field ], 'ms' )`.
+ * `render` overrides the default `formatNum( url[ field ], 'ms' )`, and
+ * `width` is the column's grid track.
  *
- * @type {Array<{field: string, label: string, kind: string, status?: string, render?: Function}>}
+ * A `status` column's `status` is a representative code, not a count of that
+ * one status: the shared `.entry-status[data-status^="2"]` rules colour the
+ * cell by the first digit, so any 2xx code paints the 2xx column.
+ *
+ * @type {Array<{field: string, width: string, label: string, kind: string, status?: string, render?: Function}>}
  */
 const COLUMNS = [
 	{
@@ -120,22 +153,41 @@ const COLUMNS = [
 	},
 ].map( ( col ) => ( { kind: 'numeric', ...col } ) );
 
-// One owner: a deleted column cannot leave a stray track behind.
+/**
+ * The `grid-template-columns` the header and every row are laid out on.
+ *
+ * One owner, derived from COLUMNS itself, so a deleted column cannot leave a
+ * stray track behind for the cells after it to slide into.
+ */
 const GRID_TEMPLATE = gridTemplate(
 	Object.fromEntries( COLUMNS.map( ( col ) => [ col.field, col ] ) ),
 	COLUMNS.map( ( col ) => col.field )
 );
 
-// Per-kind class modifiers; `code` adds none to either mark.
+/** Per-kind cell modifiers; `code` adds none. */
 const CELL_CLASS = {
 	code: '',
 	numeric: ' event-logger-table__cell--numeric',
 	status: ' event-logger-table__cell--status entry-status',
 };
+
+/**
+ * Per-kind header modifiers; `code` adds none.
+ *
+ * `status` needs no entry: an HTTP-class share is not a sort key, so that
+ * heading is a `<span>` and never reaches this map.
+ */
 const HEADER_CLASS = {
 	code: '',
 	numeric: ' event-logger-table__header-btn--numeric',
 };
+
+/**
+ * The class list for one cell, in the header or in a row.
+ *
+ * @param {Object} col Column declaration from COLUMNS.
+ * @return {string} The canonical table-cell classes plus the kind's modifier.
+ */
 const cellClass = ( col ) =>
 	`event-logger-table__cell newspack-nodes-table__cell${
 		CELL_CLASS[ col.kind ]
@@ -144,10 +196,14 @@ const cellClass = ( col ) =>
 /**
  * Render one column's cell for one URL.
  *
+ * A `status` column declares no `render` because its cell divides two fields,
+ * the class count over the row's total, which a single field lookup cannot
+ * express.
+ *
  * @param {Object}   col       Column declaration from COLUMNS.
- * @param {Object}   url       URL data object.
- * @param {Function} formatNum Number formatting function.
- * @return {*} Cell content.
+ * @param {Object}   url       One row of the `urls` reply.
+ * @param {Function} formatNum Number formatter, from the table.
+ * @return {string|import('react').ReactElement} Cell content.
  */
 const renderCell = ( col, url, formatNum ) => {
 	if ( 'status' === col.kind ) {
@@ -161,15 +217,21 @@ const renderCell = ( col, url, formatNum ) => {
 // JSDoc rides the inner function: on the const, memo() infers props as `{}`.
 const UrlRow = memo(
 	/**
-	 * Memoized URL row component.
+	 * One URL row, memoized so a scroll re-renders only the rows that entered
+	 * the window.
+	 *
+	 * The URL cell carries a background bar whose width is this row's value as
+	 * a fraction of `maxAvg`; a row above that value fills the cell and stops.
+	 * A selectable row is a button carrying the `?` picker's `url:`
+	 * descriptor, so a picker click asks about this URL rather than the page.
 	 *
 	 * @param {Object}                       props            Component props.
-	 * @param {Object}                       props.url        URL data object.
-	 * @param {boolean}                      props.isSelected Whether this row is selected.
-	 * @param {(url: Object) => void}        props.onSelect   Selection callback.
-	 * @param {(n: number, s?: string) => *} props.formatNum  Number formatting function.
-	 * @param {number}                       props.maxAvg     Largest bar value, for scaling.
-	 * @param {string}                       props.metric     Which metric the bar shows.
+	 * @param {Object}                       props.url        One row of the `urls` reply.
+	 * @param {boolean}                      props.isSelected Whether the detail modal is open on this row.
+	 * @param {(url: Object) => void}        props.onSelect   Receives the row on click or Enter/Space.
+	 * @param {(n: number, s?: string) => *} props.formatNum  Number formatter, from the table.
+	 * @param {number}                       props.maxAvg     The page's p95 of the bar metric; 0 draws no bar.
+	 * @param {string}                       props.metric     'memory' bars avg_peak_mb, 'volume' bars count, 'avg' and 'cumulative' bar avg_ms.
 	 * @return {import('react').ReactElement} Rendered row.
 	 */
 	function UrlRow( {
@@ -237,15 +299,16 @@ const UrlRow = memo(
 );
 
 /**
- * URL Table component.
+ * The URL leaderboard: its search and filter controls, the virtualized table,
+ * and the pager beneath it.
  *
- * @param {Object}                props                Component props.
- * @param {Array}                 props.urls           URL data array.
- * @param {Object}                props.selectedUrl    Currently selected URL.
- * @param {(url: Object) => void} props.onSelect       Selection callback, forwarded to each row.
- * @param {Function}              props.onParamsChange Callback when search/sort/page changes.
- * @param {number}                props.totalUrls      Total URL count from server (for pagination).
- * @param {string}                props.metric         Chart metric for bar backgrounds.
+ * @param {Object}                   props                Component props.
+ * @param {Array<Object>}            props.urls           The page of rows the `urls` verb returned.
+ * @param {?Object}                  props.selectedUrl    The row the detail modal is open on, or null.
+ * @param {(url: Object) => void}    props.onSelect       Receives a row on click or Enter/Space, and is forwarded to each row.
+ * @param {(params: Object) => void} props.onParamsChange Receives `search`, `sort`, `order`, `offset`, `errorsOnly` and `includeWorkers` whenever one of them changes.
+ * @param {number}                   props.totalUrls      Rows the server's filters left, the synthetic overflow rows included; the pager counts rows, not distinct URLs.
+ * @param {string}                   [props.metric]       Chart metric the row bars scale.
  * @return {import('react').ReactElement} Rendered component.
  */
 export default function UrlTable( {
@@ -287,7 +350,11 @@ export default function UrlTable( {
 	}, [] );
 
 	/**
-	 * Handle column header click for sorting.
+	 * Sort by a column, flipping direction when it already holds the sort.
+	 *
+	 * A new field starts descending, which puts the busiest and costliest
+	 * rows first on the columns that rank them. The page resets: the same
+	 * offset under a new order names a different set of rows.
 	 *
 	 * @param {string} field Field to sort by.
 	 */
@@ -302,7 +369,7 @@ export default function UrlTable( {
 	};
 
 	/**
-	 * Handle search input change — resets to page 1.
+	 * Search for a new term, from the first page.
 	 *
 	 * @param {string} value New search value.
 	 */
@@ -311,14 +378,6 @@ export default function UrlTable( {
 		setCurrentPage( 1 );
 	};
 
-	/**
-	 * Report the params; the server filters, sorts and paginates.
-	 *
-	 * Re-doing any of it here made the footer's `total` describe a different
-	 * population than the rows, and `localeCompare` re-ordered a page the
-	 * server had already cut with PHP's byte-order `<=>`, so rows could skip
-	 * or repeat across pages.
-	 */
 	// Clamped on READ: a shrinking set strands the page, pager and all.
 	const total = totalUrls || 0;
 	const totalPages = Math.max( 1, Math.ceil( total / URLS_PER_PAGE ) );
@@ -372,11 +431,11 @@ export default function UrlTable( {
 	}, [ filteredUrls, metric ] );
 
 	/**
-	 * Format a number with units.
+	 * Format a count or a measurement for one cell.
 	 *
-	 * @param {number} num    Number to format.
-	 * @param {string} suffix Suffix to append.
-	 * @return {string} Formatted string.
+	 * @param {?number} num      The value; null and undefined read '-'.
+	 * @param {string}  [suffix] Unit to append, such as 'ms' or 'MB'.
+	 * @return {string} The rounded, locale-grouped number, or '-'.
 	 */
 	const formatNum = useCallback( ( num, suffix = '' ) => {
 		if ( num === null || num === undefined ) {
@@ -386,10 +445,10 @@ export default function UrlTable( {
 	}, [] );
 
 	/**
-	 * Render sort indicator.
+	 * The arrow marking the column the server sorted on.
 	 *
 	 * @param {string} field Field name.
-	 * @return {string} Sort indicator character.
+	 * @return {string} ' ▲' ascending, ' ▼' descending, '' on every other column.
 	 */
 	const sortIndicator = ( field ) => {
 		if ( sortField !== field ) {
@@ -398,7 +457,7 @@ export default function UrlTable( {
 		return sortOrder === 'asc' ? ' ▲' : ' ▼';
 	};
 
-	// Virtualize based on window scroll position.
+	// Window scroll drives it; the list scrolls only sideways.
 	const { startIndex, endIndex, paddingTop, paddingBottom } =
 		useVirtualization( listRef, ROW_HEIGHT, filteredUrls.length, null );
 	const visibleUrls = filteredUrls.slice( startIndex, endIndex );
@@ -449,7 +508,7 @@ export default function UrlTable( {
 				</button>
 			</div>
 
-			{ /* Scroll container for header + list */ }
+			{ /* One x-scroller, so header and rows keep the same tracks. */ }
 			<div className="event-logger-table__scroll">
 				<div
 					className="event-logger-table__header newspack-nodes-table__header"
@@ -520,7 +579,6 @@ export default function UrlTable( {
 				</div>
 			</div>
 
-			{ /* Pagination */ }
 			<div className="event-logger-table__pagination">
 				<span className="event-logger-table__pagination-info newspack-nodes-status">
 					{ total > URLS_PER_PAGE &&

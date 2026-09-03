@@ -1,6 +1,6 @@
 <?php
 /**
- * Application Core — WordPress hook instrumentation for the request log.
+ * Application Core — hook, HTTP and query timing for the request log.
  *
  * Binds hook_start / hook_spacer / hook_complete on only the hooks named by the
  * current request's governing rule (Log_Manager::governing_rule()), so a skip rule
@@ -15,9 +15,11 @@
  * slow one — "Image_CDN::filter_the_content @10 (complete)" nested inside the
  * hook's own "the_content hook" span.
  *
- * A log rule also times every outbound HTTP request, which no hook can reach:
- * `pre_http_request` opens the span and `http_api_debug` closes it. See
- * `http_start()` for why a short-circuited request opens nothing.
+ * Two more span pairs reach what no hook can. A rule's `log_http` times every
+ * outbound HTTP request, between `pre_http_request` and `http_api_debug`; see
+ * `http_start()` for why a short-circuited request opens nothing. A rule's
+ * `log_queries` times every database query, between `query` and
+ * `log_query_custom_data`.
  *
  * Log_Manager fires `newspack_event_logger_nodes_scope_changed` whenever a job
  * context begins or ends; rebind_for_current_scope() then rebinds for whichever
@@ -39,8 +41,8 @@ if ( ! \defined( 'ABSPATH' ) ) {
 }
 
 /**
- * Times each bound hook — and each callback on a significant hook — into the
- * current request's log.
+ * Times each bound hook — and each callback on a significant hook, each outbound
+ * HTTP request and each database query — into the current request's log.
  */
 class Core {
 
@@ -62,9 +64,9 @@ class Core {
 	/**
 	 * Frames kept from a caller trace, NEAREST first.
 	 *
-	 * Eight cut a real stack one frame short of `rest_preload_api_request` —
-	 * the frame that explained a 41s request — so the answer had to be read out
-	 * of core instead. `Log_Manager::MAX_DATA_SIZE` is the only bound.
+	 * Eight cuts a real stack one frame short of `rest_preload_api_request`, the
+	 * frame that explains a 41s request, leaving the answer to be read out of
+	 * core instead. `Log_Manager::MAX_DATA_SIZE` is the only bound.
 	 */
 	private const CALLER_FRAMES = 20;
 
@@ -86,7 +88,10 @@ class Core {
 	 */
 	private const TRANSPORT_ORIGIN_DEPTH = 16;
 
-	/** Origin label kept on a span; it rides EVERY traced entry. */
+	/**
+	 * Characters kept from an origin label. A label rides every span that names
+	 * one, so this cap is paid per entry rather than once per request.
+	 */
 	private const ORIGIN_MAX = 128;
 
 	/**
@@ -94,9 +99,9 @@ class Core {
 	 *
 	 * Every other span in the schema is a bounded state plus a separate `l`,
 	 * and `Flame_Tree` composes `state: label` for the graph. Spelling the
-	 * table or the host into the state instead made a profile category per
+	 * table or the host into the state instead mints a profile category per
 	 * table and per host — the axis `Stats_Store::MAX_CAT_VALUES` bounds — and
-	 * left `l`, whose job this is, empty.
+	 * leaves `l`, whose job this is, empty.
 	 */
 	private const SQL_STATE  = 'sql';
 	private const HTTP_STATE = 'http';
@@ -109,7 +114,10 @@ class Core {
 		'do_action_ref_array'     => true,
 	];
 
-	/** Priority of the sacrificial hook_spacer; wrap_callbacks treats everything at/above it as ours. */
+	/**
+	 * Priority of the sacrificial hook_spacer. `wrap_callbacks()` treats
+	 * everything at or above it as ours and leaves it alone.
+	 */
 	private const SPACER_PRIORITY = PHP_INT_MAX - 2;
 
 	/** @var string[] Hook names currently bound (tracked for rebind_for_current_scope). */
@@ -133,7 +141,7 @@ class Core {
 	/** @var array<string,int> Caller traces already spent, by hook name. */
 	private array $traced = [];
 
-	/** @var bool Whether the governing rule labels a span with its caller. */
+	/** @var bool Whether the rule labels a hook span with its calling frame. */
 	private bool $trace_hooks = false;
 
 	/** @var int Backtraces the governing rule allows per hook; 0 is off. */
@@ -158,11 +166,14 @@ class Core {
 	 * Open the hook's timing span, wrapping its callbacks when it is significant.
 	 *
 	 * Registered as a filter at start_priority on every bound hook. The entry
-	 * records the filter value as 'm', a preview capped at 1024 bytes — strings
-	 * clipped, other scalars verbatim, anything else JSON-encoded to 16 levels
-	 * and dropped when the encoding overflows the cap. Its stable label 'l' is
-	 * deliberately empty, which keeps flame nodes aggregating on the hook name
-	 * rather than on the value.
+	 * records the filter value as `m`: a scalar verbatim, anything else
+	 * JSON-encoded to 16 levels and left empty when the encoding fails.
+	 * `Log_Manager::message()` is what bounds the encoded size.
+	 *
+	 * The aggregation label `l` carries the calling frame under `trace_hooks`
+	 * and is empty otherwise, so the flame either splits one node per caller or
+	 * aggregates every firing on the hook name. `caller` carries the deeper
+	 * summary while the rule's per-hook budget lasts.
 	 *
 	 * @param mixed $v Filter value (passed through).
 	 * @return mixed
@@ -279,8 +290,8 @@ class Core {
 	 *
 	 * Such a callback can't be timing-wrapped: the wrapper passes args via
 	 * func_get_args() + call_user_func_array(), which copy, so a by-ref param
-	 * receives a value (PHP warning + lost mutation). Reflect once; on any
-	 * reflection failure, fall through to wrapping (prior behavior).
+	 * receives a value (PHP warning + lost mutation). Reflect once; a failed
+	 * reflection reports false, so an uninspectable callback is wrapped.
 	 *
 	 * @param mixed $function Callback (string|array|Closure|invokable object).
 	 * @return bool
@@ -318,7 +329,8 @@ class Core {
 	 * Short name for a callback (no namespace, no priority).
 	 *
 	 * @param mixed $function Callback.
-	 * @return string e.g. "do_blocks" or "Image_CDN::filter_the_content".
+	 * @return string e.g. "do_blocks", "Image_CDN::filter_the_content",
+	 *                "{closure}:file.php:12" or "Handler::__invoke".
 	 */
 	private static function short_name( $function ): string {
 		if ( \is_string( $function ) ) {
@@ -357,12 +369,14 @@ class Core {
 	 *
 	 * A span says how long a pass took and nothing about who asked for it, so a
 	 * hook that fires sixteen times reads as sixteen identical mysteries. The
-	 * summary names the NEAREST frames instead, on the entry's `caller` field — not
-	 * `c`, which already means COUNT everywhere else in this schema. It is
-	 * capped per hook — by the RULE's own number, because what a diagnostic run
-	 * wants is not what steady state wants — because the same
-	 * question on `render_block` would be 2,601 backtraces, and it ignores this
-	 * class so the top frame is the caller rather than the instrumentation.
+	 * summary names the NEAREST frames instead, on the entry's `caller` field —
+	 * not `c`, which already means COUNT everywhere else in this schema — and
+	 * ignores this class, so the top frame is the caller rather than the
+	 * instrumentation.
+	 *
+	 * The budget is per HOOK and the RULE names it, because what a diagnostic
+	 * run wants is not what steady state wants: the same question asked of
+	 * `render_block` is 2,601 backtraces.
 	 *
 	 * @param string $hook_name The hook being opened.
 	 * @return string The caller summary, or '' when not tracing.
@@ -375,7 +389,7 @@ class Core {
 		$this->traced[ $hook_name ] = $spent + 1;
 		// @longform The ARRAY form, because core hands back the frames nearest
 		// first and the pretty string is that array REVERSED. Capping the
-		// string kept the bootstrap and cut the caller — the whole answer.
+		// string keeps the bootstrap and cuts the caller — the whole answer.
 		// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_wp_debug_backtrace_summary -- The caller summary IS the diagnostic; counted per hook and gated per rule.
 		$frames = \wp_debug_backtrace_summary( self::class, 0, false );
 		$near   = \array_slice( $frames, 0, self::CALLER_FRAMES );
@@ -389,9 +403,10 @@ class Core {
 	 * a job context switch changes which rule governs mid-request
 	 * (begin_job_context / end_job_context).
 	 *
-	 * Only this class's own three filters come off. Callback wrappers already
-	 * installed by wrap_callbacks() stay in $wp_filter and keep timing, and
-	 * wrapper_ids keeps remembering them, so the new scope can't double-wrap.
+	 * Only this class's own filters come off — the per-hook trio and the HTTP
+	 * pair. Callback wrappers already installed by wrap_callbacks() stay in
+	 * $wp_filter and keep timing, and wrapper_ids keeps remembering them, so
+	 * the new scope can't double-wrap.
 	 */
 	public function rebind_for_current_scope(): void {
 		foreach ( $this->bound_hooks as $hook_name ) {
@@ -416,6 +431,9 @@ class Core {
 	 * doesn't already cover. One that matches a custom event stays unbound:
 	 * custom events are categories the application logs itself, not do_action
 	 * names, so binding them would register a filter nothing ever fires.
+	 *
+	 * The rule's `log_http` and `log_queries` add the two span pairs no hook
+	 * reaches; the SAVEQUERIES the second needs is why it is an opt-in.
 	 */
 	private function bind_current_scope(): void {
 		$rule = Log_Manager::instance()->governing_rule();
@@ -468,8 +486,8 @@ class Core {
 		if ( ! $rule->log_queries ) {
 			return;
 		}
-		// @longform `wpdb` fires no post-query hook at all unless SAVEQUERIES is
-		// on: `_do_query()` gates the `log_query()` call — and so this pair's
+		// @longform `wpdb` fires no post-query hook unless SAVEQUERIES is on:
+		// `_do_query()` gates the `log_query()` call — and so this pair's
 		// close — on it. A constant cannot be withdrawn, so a long-running
 		// worker keeps it for its life; `query_end()` drains `$wpdb->queries`
 		// to keep that from growing without bound.
@@ -490,9 +508,11 @@ class Core {
 	 * opened here would never close and would adopt every row after it — and a
 	 * short-circuit is a cache hit with no I/O to time in the first place.
 	 *
-	 * The span is named for its CALLER, one frame beyond `WP_Http`, which is
-	 * what applies this filter: naming the transport would name the same string
-	 * every time. The redacted URL rides the entry instead.
+	 * The label `l` names the frame beyond `WP_Http`, which is what applies
+	 * this filter, because naming the transport names the same string every
+	 * time — unless the rule already buys caller backtraces, which answer that
+	 * question and are not worth paying for twice. The redacted URL rides the
+	 * entry as `m`.
 	 *
 	 * @param mixed                 $preempt Short-circuit value, false to proceed.
 	 * @param array<string,mixed>   $args    Request arguments (unused).
@@ -524,8 +544,10 @@ class Core {
 
 	/**
 	 * Open a span around one query. Registered on `query` at PHP_INT_MAX, so
-	 * every filter that rewrites the SQL has already run and the span names
-	 * what the database is actually asked.
+	 * every filter that rewrites the SQL has already run and the entry carries
+	 * what the database is actually asked, minus the host's trailing
+	 * annotation. The label `l` names the frame beyond `wpdb`, on the same
+	 * terms as `http_start()`.
 	 *
 	 * @param mixed $query The SQL, passed through untouched.
 	 * @return mixed
@@ -549,7 +571,7 @@ class Core {
 	}
 
 	/**
-	 * The one frame worth a label: who called this hook.
+	 * The one frame worth a label: who called this hook, request or query.
 	 *
 	 * Deliberately NOT `wp_debug_backtrace_summary()`, which walks and formats
 	 * the whole stack — 12.7us measured, against 0.9us here — to produce a
@@ -557,6 +579,9 @@ class Core {
 	 * `ORIGIN_DEPTH`, so it is cheap enough to run on every firing rather than
 	 * out of a budget, which is what lets `l` split a flame node completely.
 	 *
+	 * @param bool $past_transport Climb past the class that applied the filter,
+	 *                             `wpdb` or `WP_Http`, at the wider
+	 *                             TRANSPORT_ORIGIN_DEPTH.
 	 * @return string `Class->method`, a function name, or '' when only
 	 *                machinery is on the stack.
 	 */
@@ -621,10 +646,10 @@ class Core {
 	 * else reading that array (Query Monitor) sees an empty one, which is why
 	 * this rides a per-rule opt-in rather than being always on.
 	 *
-	 * @param mixed  $data       Custom query data, passed through untouched.
-	 * @param string $query      The SQL (unused; the label came from the open).
-	 * @param float  $query_time Seconds the query took.
-	 * @param string $callstack  Calling functions (unused).
+	 * @param mixed  $data        Custom query data, passed through untouched.
+	 * @param string $query       The SQL (unused; the label comes from the open).
+	 * @param float  $query_time  Seconds the query took (unused).
+	 * @param string $callstack   Calling functions (unused).
 	 * @param float  $query_start Unix timestamp the query started (unused).
 	 * @return mixed
 	 */
@@ -647,6 +672,7 @@ class Core {
 	 * the application's own custom events.
 	 *
 	 * @param string $span A span name, as the flame carries it.
+	 * @return bool
 	 */
 	public static function is_listener_span( string $span ): bool {
 		return 1 === \preg_match( self::LISTENER_PATTERN, $span );

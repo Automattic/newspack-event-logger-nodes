@@ -14,21 +14,24 @@ import {
 } from '@newspack-nodes/shared/hooks/useStreamGraph';
 import useGlobBrowse from './useGlobBrowse';
 
-// The substrate service CI whose `read_message` answers a paused Step.
+/** The substrate service CI whose `read_message` answers a paused Step. */
 const RAW_LOGS = 'raw-logs';
 
 /**
  * Mount one dashboard's stream graph and return its React view's controls.
  *
  * @param {Object}   spec              The dashboard's declaration.
- * @param {string}   spec.prefix       Node-name prefix for the three soft nodes.
+ * @param {string}   spec.prefix       Node-name prefix for every soft node
+ *                                     this hook mounts: the stream backbone,
+ *                                     the paused read and the browse catalog.
  * @param {string}   spec.glob         Partition glob this dashboard tails.
  * @param {Function} spec.viewClass    View-model node class to mount.
- * @param {Object}   [opts]            Options.
- * @param {number}   [opts.maxEntries] View ring cap; the view class's own default when unset.
- * @return {{ setPaused: Function, clear: () => void, step: ?() => void, browse: Object, setFilter: (term: string) => void }}
+ * @param {Object}   [opts]            Per-mount options.
+ * @param {number}   [opts.maxEntries] View ring cap; the view class's own
+ *                                     default when unset.
+ * @return {{ setPaused: (paused: boolean) => void, clear: () => void, step: ?() => void, browse: Object, setFilter: (term: string) => void }}
  *   Control callbacks plus the browse model for the thin React view; the view's
- *   own state is read via useNodeState.
+ *   own state is read through `useNodeState`.
  */
 export function useGlobStreamGraph( { prefix, glob, viewClass }, opts = {} ) {
 	const graph = useStreamGraph( {

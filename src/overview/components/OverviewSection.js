@@ -1,10 +1,11 @@
 /**
  * Overview Section Component
  *
- * The top card of the Performance Dashboard: request-ID / pattern search, the
- * refresh-interval picker, the headline stat grid, the aggregate time chart
- * with its metric / breakdown / server selectors, the three category charts,
- * and the global — or, under a server filter, per-server — time breakdown.
+ * The top card of the Performance Dashboard: the Ask trigger, request-ID /
+ * pattern search, the refresh-interval picker, the headline stat grid, the
+ * aggregate time chart with its metric / breakdown / server selectors, the
+ * three category charts, and the global — or, under a server filter,
+ * per-server — time breakdown.
  *
  * The component is presentational. Every value and every setter arrives from
  * `PerformanceDashboard`, which reads the per-slice view nodes and owns all
@@ -36,28 +37,28 @@ import { AskButton } from './AskPanel';
  * Overview Section component.
  *
  * @param {Object}                  props                        Component props.
- * @param {Object|null}             props.overview               Overview slice payload; null renders nothing.
+ * @param {Object|null}             props.overview               Overview slice payload; it supplies `global_leaderboard` and gates the card, so null renders nothing.
  * @param {Object|null}             props.urlTotals              Headline numbers for the URL set the filters selected; null until the first reply.
  * @param {number}                  props.breakdownAvgMs         Average the Time Breakdown divides by — the selected server's, or the site's.
- * @param {string}                  props.serverFilter           Selected server name, or '' for all servers.
+ * @param {string}                  props.serverFilter           Selected server name, or '' for all servers; it also captions the Time Breakdown.
  * @param {(value: string) => void} props.setServerFilter        Server filter setter.
- * @param {string[]|null}           props.serverNames            Server names seen in the breakdown data; null until the first reply lands.
+ * @param {string[]|null}           props.serverNames            Server names seen in the breakdown data; null until the first reply lands. Fewer than two withholds the Server select, which would offer no choice.
  * @param {string}                  props.searchQuery            Search box value.
  * @param {(value: string) => void} props.setSearchQuery         Search box setter.
  * @param {boolean}                 props.searchLoading          True while a search is in flight.
- * @param {string|null}             props.searchError            Search error message, or null.
+ * @param {string|null}             props.searchError            Already-translated search error, or null.
  * @param {(query: string) => void} props.onSearch               Search submit handler, given the raw query.
- * @param {Array|null}              props.searchResults          Pattern-search result rows, or null.
+ * @param {Array|null}              props.searchResults          Pattern-search rows — `{ rid, method, url, match_count }` — or null before a search.
  * @param {boolean}                 props.searchResultsTruncated Whether the server capped the result set.
  * @param {(rid: string) => void}   props.onSelectResult         Row-click handler; deep-links by request id.
  * @param {string}                  props.refreshInterval        Poll interval in milliseconds, as a string.
  * @param {(value: string) => void} props.setRefreshInterval     Refresh interval setter.
- * @param {string}                  props.chartMetric            Aggregate chart metric, e.g. 'volume'.
+ * @param {string}                  props.chartMetric            Aggregate chart metric: 'volume', 'avg', 'cumulative' or 'memory'.
  * @param {(value: string) => void} props.setChartMetric         Chart metric setter.
- * @param {string}                  props.chartBreakdown         Aggregate chart breakdown dimension.
+ * @param {string}                  props.chartBreakdown         Aggregate chart breakdown dimension, already resolved by the caller against `canBreakDownByServer`.
  * @param {(value: string) => void} props.setChartBreakdown      Breakdown dimension setter.
- * @param {boolean}                 props.canBreakDownByServer   Whether the page can chart the server axis: no server filter active AND two or more servers known. Both halves matter — under a filter the chart splits one server against itself.
- * @param {Object|null}             props.breakdownData          Time series for the selected breakdown dim.
+ * @param {boolean}                 props.canBreakDownByServer   Whether the page can chart the server axis: no server filter, and the server list either unknown or holding two or more names. A filter would split one server against itself, and withholding the axis before the first reply lands would strand the `server` default on `status` for the session.
+ * @param {Object|null}             props.breakdownData          Time series for the selected breakdown dimension; null until that dimension's reply lands.
  * @param {Object|null}             props.categoryData           Category time series, or null.
  * @param {Object}                  props.ask                    The `useAsk` state driving the Ask trigger.
  * @return {import('react').ReactElement|null} Rendered section, or null without overview data.
@@ -88,7 +89,7 @@ export default function OverviewSection( {
 	categoryData,
 	ask,
 } ) {
-	// Show server dropdown when 2+ servers detected (hub mode).
+	// One server offers no choice, so the Server select needs two.
 	const isMultiServer = ( serverNames?.length ?? 0 ) >= 2;
 
 	const serverOptions = useMemo( () => {
@@ -107,7 +108,7 @@ export default function OverviewSection( {
 		];
 	}, [ isMultiServer, serverNames ] );
 
-	// The caller owns this rule and hands chartBreakdown down resolved by it.
+	// Dropping 'server' cannot strand the selection: the caller resolved it.
 	const breakdownOptions = useMemo( () => {
 		if ( canBreakDownByServer ) {
 			return CHART_BREAKDOWN_OPTIONS;
@@ -123,9 +124,9 @@ export default function OverviewSection( {
 
 	// @longform Every headline number describes the URL set the filters
 	// selected — the same set the table below lists — so they come from one
-	// payload rather than from whichever namespace happened to hold each
-	// figure. A number that has not arrived renders as absent; a plausible
-	// zero beside a real total is exactly how the last defect hid.
+	// payload rather than from whichever namespace happens to hold each
+	// figure. A number that has not arrived renders as absent, because a
+	// plausible zero beside a real total reads as a measurement.
 	const headlineStats = [
 		{
 			key: 'urls',
@@ -338,6 +339,7 @@ export default function OverviewSection( {
 						breakdown={ chartBreakdown }
 						setBreakdown={ setChartBreakdown }
 						breakdownOptions={ breakdownOptions }
+						// An empty array is truthy: null hides the selector.
 						serverOptions={ isMultiServer ? serverOptions : null }
 						serverFilter={ serverFilter }
 						setServerFilter={ setServerFilter }

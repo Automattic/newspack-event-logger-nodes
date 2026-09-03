@@ -3,13 +3,15 @@
  * Stats Store
  *
  * The memcache schema for performance stats, expressed as one small key/value
- * API. Nine namespaces (`hourly`, `lb`, `lb_s`, `urls`, `url`, `dim`,
- * `url_dim`, `categories`, `url_cat`) live under the per-partition prefix
- * `evlog:p{N}:`, under the install scope Cache_Backend owns.
- * `Flame_Builder_Node` produces every value;
- * `App\Performance_CI_Node` and the admin flush button consume them.
+ * API. Eleven namespaces (`hourly`, `lb`, `lb_s`, `urls`, `urls_h`, `urlmap`,
+ * `url`, `dim`, `url_dim`, `categories`, `url_cat`) live under the
+ * per-partition prefix `evlog:p{N}:`, inside the install scope Cache_Backend
+ * owns. `Flame_Builder_Node` produces every value and
+ * `App\Performance_CI_Node` reads them for the dashboards.
  *
- * Stats live in memcache alone; this file writes no durable state.
+ * Stats live in memcache alone; nothing here writes durable state. The
+ * `$mirror` and `$rehydrate` seams let a caller shadow them to a durable
+ * partition without this schema knowing.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -28,19 +30,22 @@ if ( ! \defined( 'ABSPATH' ) ) {
  *
  * Keys are `evlog:p{N}:{namespace}[:...]`, so every flame-builder
  * partition owns a disjoint keyspace and readers fan one store out per
- * partition. Values are plain arrays, always keyed by string.
+ * partition. A value is a plain array, string-keyed everywhere but a stored
+ * URL row, which is positional and read through the `ROW_*` constants.
  *
- * Retention: the per-URL blob (`url`) is the high-volume namespace and expires
- * at `ttl_url_stats()` — a twenty-fourth of the lifespan, floored at an hour.
- * Every other namespace expires at `ttl()`.
+ * Retention runs at three lengths, one per table ROLE. Every aggregate
+ * namespace expires at `ttl()`, the whole retention window. The per-URL blob
+ * (`url`) is the high-volume one and takes `ttl_url_stats()`, a twenty-fourth
+ * of that floored at an hour. A FINE `urls` bucket takes `ttl_url_fine()`, its
+ * own read window, because `urls_h` answers for it behind the recent tail.
  *
  * Bucketing is part of the key schema, so it lives here: `bucket_key()` is the
- * five-minute `Y-m-d-H-ii` derivation every producer and reader shares, and
+ * five-minute `Y-m-d-H-i` derivation every producer and reader shares, and
  * `retention_buckets()` is the window a reader enumerates. The `hourly`
- * namespace name is historical rather than descriptive: `hourly` buckets are
- * five minutes wide, like every other bucketed namespace.
+ * namespace name misleads: its buckets are five minutes wide, like every other
+ * bucketed namespace.
  *
- * Storage is a `Table_Node` per TTL over one namespace (`evlog:p{N}`), so the
+ * Storage is a `Table_Node` per ROLE over one namespace (`evlog:p{N}`), so the
  * substrate owns key scoping and the backend handle. Reads and writes fail soft:
  * `Table_Node::table()` throws without a backing store, so the table is built
  * lazily behind that check and a missing backend yields `[]`, `null`, or `false`
@@ -48,11 +53,10 @@ if ( ! \defined( 'ABSPATH' ) ) {
  * SSE slot pool is deliberately the opposite, and unifying the two breaks its
  * rate limit.
  *
- * No L1 (`l1_ttl` 0): the one hot reader, `Flame_Builder_Node`, already holds an
- * `LRU_Cache` in front of `get_url_stats()` — and that LRU is an accumulator
- * holding state not yet persisted, not a cache of what is stored, so the Table's
- * write-through L1 cannot replace it. Enabling one here would just add a second
- * cache underneath the first.
+ * Only the per-URL table opts into the Table's accumulator tier, which holds
+ * the aggregates `Flame_Builder_Node` is still folding; `backed_by()` hands
+ * the other two the `$rehydrate` seam instead. `table()` carries why no table
+ * takes both.
  *
  * Flushing is the substrate's one button (`Cache_Backend::rotate_salt()`),
  * which moves the install scope for every plugin at once; this keeps no salt
@@ -94,8 +98,9 @@ class Stats_Store {
 	public const NS_URL         = 'url';
 	/**
 	 * URL index bucket, sharded by the first hex digit of the url_hash:
-	 * `urls:{shard}:{bucket}`. The bucket stays LAST, so `is_open_bucket()`,
-	 * expiry and the durable read-through are untouched. Decision 1.
+	 * `urls:{shard}:{bucket}`. The bucket stays LAST, which is what lets
+	 * `is_open_bucket()`, expiry and the durable read-through work off the key
+	 * alone. Decision 1.
 	 */
 	public const NS_URLS        = 'urls';
 	/**
@@ -111,11 +116,11 @@ class Stats_Store {
 	/**
 	 * URL name table: `urlmap:{hash}` => the URL string, written once.
 	 *
-	 * A stored row carries the 12-char hash and nothing else identifying — the
-	 * name is 101 bytes of a 166-byte minimal row and used to be repeated in
-	 * every bucket the URL appeared in, so the retention window held 288 copies
-	 * of one name. Readers resolve only the hashes they display, except a
-	 * search or a url-sort, which need the names to answer at all.
+	 * A stored row carries the 12-char hash and nothing else identifying. The
+	 * name is 101 bytes of a 166-byte minimal row, so keeping it on the row puts
+	 * 288 copies of one name in a retention window. Readers resolve only the
+	 * hashes they display, except a search or a url-sort, which need the names
+	 * to answer at all.
 	 */
 	public const NS_URLMAP      = 'urlmap';
 
@@ -126,8 +131,9 @@ class Stats_Store {
 
 	/** Key prefix under the install scope. */
 	private const PREFIX_BASE  = 'evlog';
-	/** Per-URL accumulator geometry; capacity is roughly the product. */
+	/** Per-URL aggregates one accumulator bucket holds before it rotates. */
 	private const URL_ACCUMULATOR_SIZE    = 1000;
+	/** Accumulator buckets retained; capacity is roughly the product. */
 	private const URL_ACCUMULATOR_BUCKETS = 5;
 
 	/** Shortest retention window the stats keyspace works with, in seconds. */
@@ -156,9 +162,9 @@ class Stats_Store {
 	 * What makes a shard token name WORKER traffic: `urls:w3:{bucket}`.
 	 *
 	 * Cron, WP-CLI and job requests are a separate population, not a predicate
-	 * over one — the table excludes them by default, so a shared index made
-	 * every ordinary read carry rows it then discarded, and a URL a job also
-	 * visited left that table with its reader requests still inside it. The
+	 * over one — the table excludes them by default, so a shared index makes
+	 * every ordinary read carry rows it then discards, and a URL a job also
+	 * visits leaves that table carrying its reader requests with it. The
 	 * shard token is opaque to every key builder below it, so the split needs
 	 * no namespace of its own and no second read plan.
 	 */
@@ -181,6 +187,12 @@ class Stats_Store {
 	 * The eight fields that ADD come FIRST, and in `URL_SRV_SUMS` order, so one
 	 * map describes both the row's summed half and the per-server split values
 	 * — the split being that row restricted to one server, on the same indexes.
+	 *
+	 * `ROW_FIELD_NAMES` below names every index. Three of the fourteen are not
+	 * the counts and sums the rest are: `ROW_TIMED_COUNT` counts only the
+	 * requests whose duration was measured, which is what `min_ms` folds from;
+	 * `ROW_WORKER` is a boolean saying the row counts worker traffic; and
+	 * `ROW_SRV` holds the per-server split, the row's one nested value.
 	 *
 	 * The READER's row is separate and stays named: it is the display shape,
 	 * it crosses the wire as JSON, and `fold_index_row()` is the one place the
@@ -270,7 +282,7 @@ class Stats_Store {
 	 * copies instead — which is a cost, where the other is a leak. One
 	 * `Request_Builder` eviction window under its DEFAULT declaration, the same
 	 * lateness the shipped pipeline tolerates; a topology that declares another
-	 * bucket count warns that this no longer measures it.
+	 * bucket count warns that this stops matching it.
 	 */
 	private const MAX_FUTURE_SKEW_SEC = Request_Builder_Node::DEFAULT_EVICTION_WINDOW_SEC;
 
@@ -281,8 +293,8 @@ class Stats_Store {
 	 * per bucket, so a full read costs `URL_SHARDS x` this — 4,608 keys in one
 	 * `lookup_multi` at the ceiling. That is the trade sharding makes, and it
 	 * is the right way round: a point read for one URL costs a single shard,
-	 * and no item approaches memcached's 1MB limit, where the unsharded blob
-	 * exceeded it outright once rows carried a `srv` split.
+	 * and no item approaches memcached's 1MB limit, which one unsharded blob
+	 * exceeds outright once its rows carry a `srv` split.
 	 */
 	public const MAX_READ_BUCKETS = 288;
 
@@ -298,27 +310,28 @@ class Stats_Store {
 	 *
 	 * The read plan asks for `FINE_BUCKETS` plus the rest of their hour — two
 	 * hours at the very worst — and `roll_up_hours()` folds a closed hour into
-	 * `urls_h` within a re-probe of it closing. Everything behind that was
-	 * being held for the whole window with nothing to read it, and the fine
-	 * tier is the largest thing this schema puts in a 512MB cache: 288 buckets
-	 * a shard against the coarse tier's 24. Four hours leaves the readers two
-	 * hours of margin and the fold three; what a longer outage than that costs
-	 * is the last partial hour before it, which no reader had folded yet.
+	 * `urls_h` within a re-probe of it closing. Nothing reads a fine bucket
+	 * behind that, and the fine tier is the largest thing this schema puts in a
+	 * 512MB cache: 288 buckets a shard against the coarse tier's 24. Four hours
+	 * leaves the readers two hours of margin and the fold three; a longer outage
+	 * costs the last partial hour before it, the one the fold has not reached.
 	 */
 	public const FINE_TTL_SECONDS = 14400;
 
-	/** The two tables this store keeps, by ROLE — their TTLs coincide at the floor. */
+	/** Every namespace but `url` and a fine `urls` bucket; TTL is `ttl()`. */
 	private const ROLE_AGGREGATE = 'aggregate';
+	/** The per-URL blob; TTL is `ttl_url_stats()`, and it accumulates. */
 	private const ROLE_URL       = 'url';
+	/** A fine `urls` bucket; TTL is `ttl_url_fine()`, its own read window. */
 	private const ROLE_URL_FINE  = 'url_fine';
 
 	/**
-	 * Mirror seam — when set, invoked `(string $key, array $data, int $ttl, string $ns)`
-	 * after each memcache write that landed, so a durable partition can shadow
-	 * stats for a later read-back. The namespace lets the mirror route aggregates
-	 * vs. the bounded per-URL namespaces. Null (default) = zero overhead.
-	 * `Flame_Builder_Node::arm_stats_mirror()` is the only wiring. Signature:
-	 * `function(string $key, array $data, int $ttl, string $ns): void`.
+	 * Mirror seam — invoked after each memcache write that landed, so a durable
+	 * partition can shadow stats for a later read-back. The namespace lets the
+	 * mirror route aggregates apart from the bounded per-URL namespaces. Null,
+	 * the default, costs nothing. `Flame_Builder_Node::arm_stats_mirror()` is the
+	 * only production wiring; tests assign a recording closure in its place.
+	 * Signature: `function (string $key, array $data, int $ttl, string $ns): void`.
 	 *
 	 * @var \Closure|null
 	 */
@@ -482,6 +495,7 @@ class Stats_Store {
 	 * sits in, capped at MAX_READ_BUCKETS.
 	 *
 	 * @param int $retention_seconds How far back the window reaches.
+	 * @return int Buckets to enumerate, at most MAX_READ_BUCKETS.
 	 */
 	private static function window_bucket_count( int $retention_seconds ): int {
 		return \min( (int) \ceil( $retention_seconds / self::BUCKET_SECONDS ) + 1, self::MAX_READ_BUCKETS );
@@ -514,7 +528,7 @@ class Stats_Store {
 	}
 
 	/**
-	 * The bucket a timestamp falls in: `Y-m-d-H-mm` UTC, floored to
+	 * The bucket a timestamp falls in: `Y-m-d-H-i` UTC, floored to
 	 * BUCKET_MINUTES (which must divide 60). Lexical order is chronological
 	 * order, which is what lets expiry compare keys with `<` against a cutoff.
 	 *
@@ -546,7 +560,7 @@ class Stats_Store {
 		$fine = \array_slice( $window, 0, self::FINE_BUCKETS );
 		// @longform The hour the fine tail lands IN is read fine-grained to its
 		// END, not to wherever the tail stopped. Handing it to the coarse tier
-		// instead would read it twice; leaving it out read the rest of that
+		// instead would read it twice; leaving it out reads the rest of that
 		// hour at NEITHER resolution, and that hole is a function of the
 		// minute — nothing at :00, eleven buckets of it at :59. So
 		// FINE_BUCKETS is a floor, and the boundary does the rest.
@@ -577,8 +591,12 @@ class Stats_Store {
 	 * Read one shard's coarse hours. Same pair shape as `url_row_sources()`, so
 	 * one fold serves both tiers.
 	 *
-	 * @param array<int,string> $hours Hour keys.
-	 * @param ?string           $shard One shard, or null for every shard.
+	 * @param array<int,string> $hours   Hour keys.
+	 * @param ?string           $shard   One shard, or null for every shard.
+	 * @param bool              $workers Include the WORKER shard family, whose
+	 *                                   rows the default table excludes. Ignored
+	 *                                   when one shard is named, since the token
+	 *                                   already says which family it belongs to.
 	 * @return list<array{0: string, 1: array<array-key,mixed>}>
 	 */
 	public function url_hour_sources( array $hours, ?string $shard = null, bool $workers = false ): array {
@@ -691,17 +709,16 @@ class Stats_Store {
 	 * scope a request asks for.
 	 *
 	 * @param array<int,string> $buckets Bucket keys.
-	 * @param ?string            $shard   Read ONE shard, for a reader asking about a
-	 *                                    single URL: `url_shard()` is the first hex
-	 *                                    digit of its hash, so one URL is in one
-	 *                                    shard and the other fifteen are dead weight.
-	 *                                    Null reads every shard, which is what a
-	 *                                    reader rendering the whole table wants — and
-	 *                                    what an older consumer keeps by not passing it.
-	 * @param bool               $workers Include the WORKER shard family, whose
-	 *                                    rows the default table excludes. Ignored
-	 *                                    when one shard is named, since the token
-	 *                                    already says which family it belongs to.
+	 * @param ?string           $shard   Read ONE shard, for a reader asking about a
+	 *                                   single URL: `url_shard()` is the first hex
+	 *                                   digit of its hash, so one URL is in one
+	 *                                   shard and the other fifteen are dead weight.
+	 *                                   Null reads every shard, which is what a
+	 *                                   reader rendering the whole table wants.
+	 * @param bool              $workers Include the WORKER shard family, whose
+	 *                                   rows the default table excludes. Ignored
+	 *                                   when one shard is named, since the token
+	 *                                   already says which family it belongs to.
 	 * @return list<array{0: string, 1: array<array-key,mixed>}>
 	 */
 	public function url_row_sources( array $buckets, ?string $shard = null, bool $workers = false ): array {
@@ -747,6 +764,7 @@ class Stats_Store {
 	/**
 	 * Every shard the URL index is spread across.
 	 *
+	 * @param bool $worker Name the WORKER shard family instead of the default one.
 	 * @return list<string>
 	 */
 	public static function url_shards( bool $worker = false ): array {
@@ -762,7 +780,8 @@ class Stats_Store {
 	 *
 	 * The routing rule in one place.
 	 *
-	 * @param array<array-key,mixed> $rows Rows by url_hash.
+	 * @param array<array-key,mixed> $rows   Rows by url_hash.
+	 * @param bool                   $worker Route into the WORKER shard family.
 	 * @return array<array-key,array<array-key,mixed>>
 	 */
 	public static function rows_by_shard( array $rows, bool $worker = false ): array {
@@ -780,6 +799,8 @@ class Stats_Store {
 	 * uniform — so a point read knows its shard without consulting anything.
 	 *
 	 * @param string $url_hash 12-char URL hash.
+	 * @param bool   $worker   Name the shard in the WORKER family.
+	 * @return string Shard token, as `url_shards()` spells them.
 	 */
 	public static function url_shard( string $url_hash, bool $worker = false ): string {
 		$first = \strtolower( \substr( $url_hash, 0, 1 ) );
@@ -828,7 +849,12 @@ class Stats_Store {
 		return \is_array( $val ) ? $val : null;
 	}
 
-	/** Read one key through the table; null (no backend) and miss both read empty. */
+	/**
+	 * Read one key through the table; no backend and a miss both read as null.
+	 *
+	 * @param string $key Entry key below the Table's namespace.
+	 * @return mixed The stored value, or null.
+	 */
 	private function lookup( string $key ): mixed {
 		return $this->table( self::ROLE_AGGREGATE )?->lookup( $key );
 	}
@@ -951,7 +977,7 @@ class Stats_Store {
 	/**
 	 * Overwrite one URL's stats blob, under the shorter per-URL TTL.
 	 *
-	 * @param string               $url_hash 12-char URL hash.
+	 * @param string              $url_hash 12-char URL hash.
 	 * @param array<string,mixed> $data     Whole blob.
 	 * @return bool True when the set landed.
 	 */
@@ -964,10 +990,11 @@ class Stats_Store {
 	 * to the mirror seam — a rejected/failed set must not be durably recorded and
 	 * resurrected by a later read-back.
 	 *
-	 * @param string                 $key  Full memcache key.
+	 * @param string                 $key  Entry key below the Table's namespace.
 	 * @param array<array-key,mixed> $data Value to store.
-	 * @param int                  $ttl  Expiry in seconds.
-	 * @param string               $ns   Namespace routing hint for the mirror.
+	 * @param int                    $ttl  Expiry in seconds, for the mirror only —
+	 *                                     the Table holds its role's own.
+	 * @param string                 $ns   Namespace routing hint for the mirror.
 	 * @return bool True when the set landed.
 	 */
 	private function store( string $key, array $data, int $ttl, string $ns ): bool {
@@ -984,6 +1011,7 @@ class Stats_Store {
 	 *
 	 * @param int    $partition Flame-builder partition.
 	 * @param string $key       Entry key within the namespace.
+	 * @return string The Table's own key, install-scoped.
 	 */
 	public static function entry_key( int $partition, string $key ): string {
 		return Table_Node::entry_key( self::namespace_for( $partition ), $key );
@@ -1007,11 +1035,13 @@ class Stats_Store {
 	}
 
 	/**
-	 * Per-URL aggregate accumulator: the un-drained value for a url_hash, or what
-	 * was last persisted when none is held.
+	 * Per-URL aggregate accumulator: the un-drained value for a url_hash, or the
+	 * last persisted one when the accumulator holds none.
 	 *
 	 * @api Flame_Builder_Node's per-URL accumulation.
 	 * @param string $url_hash URL hash.
+	 * @return mixed The held aggregate, the last persisted one when none is
+	 *               held, or null with no cache backend.
 	 */
 	public function accumulated_url_stats( string $url_hash ): mixed {
 		return $this->table( self::ROLE_URL )?->accumulated( $this->key( self::NS_URL, $url_hash ) );
@@ -1028,15 +1058,16 @@ class Stats_Store {
 	}
 
 	/**
-	 * Join a memcache key from the prefix, the partition, and the caller's parts,
-	 * scoped to this INSTALL by the substrate.
+	 * Join the caller's parts into one entry key, namespace token first.
 	 *
-	 * Stats live in memcache alone and two installs share one server on Atomic,
-	 * so the bare `evlog:p0:hourly` was the same key for both — a co-tenant's
-	 * request volume landing in this install's dashboard.
+	 * The `evlog:p{N}` prefix and the install scope are NOT here: the Table
+	 * carries them, through `namespace_for()` and `Table_Node::entry_key()`. That
+	 * scoping is what keeps two installs sharing one memcached server — an Atomic
+	 * pair — off each other's `hourly` key, which is otherwise a co-tenant's
+	 * request volume in this install's dashboard.
 	 *
 	 * @param string ...$parts Namespace token first, then any sub-keys.
-	 * @return string Full key.
+	 * @return string Entry key, below the Table's namespace.
 	 */
 	private function key( string ...$parts ): string {
 		return \implode( ':', $parts );
@@ -1064,25 +1095,27 @@ class Stats_Store {
 	}
 
 	/**
-	 * The Table this store reads and writes, memoized per TTL.
+	 * The Table this store reads and writes, memoized per ROLE.
 	 *
-	 * Two TTLs are in play — `ttl()` for the aggregates and `ttl_url_stats()` for
-	 * the bounded per-URL blobs — and a Table's TTL is fixed at construction, so
-	 * each gets its own instance over the SAME namespace. Built lazily behind the
-	 * backend check because `Table_Node::table()` throws without one, and every
-	 * method here has to fail soft instead.
+	 * Three TTLs are in play — `ttl()` for the aggregates, `ttl_url_stats()` for
+	 * the bounded per-URL blobs and `ttl_url_fine()` for a fine `urls` bucket —
+	 * and a Table's TTL is fixed at construction, so each role gets its own
+	 * instance over the SAME namespace. Built lazily behind the backend check
+	 * because `Table_Node::table()` throws without one, and every method here has
+	 * to fail soft instead.
 	 *
-	 * No L1: Flame_Builder already caches `get_url_stats()` behind its own
-	 * `LRU_Cache`, so one here would sit redundantly underneath it.
+	 * The per-URL table takes the accumulator and no backing; the other two take
+	 * the backing and no accumulator. `accumulated()` falls through to `lookup()`
+	 * on every request, and `flame_topn` is 0 in production, so backing the
+	 * per-URL table would pay an index scan per cold URL for a frame that is
+	 * never written.
 	 *
-	 * The per-URL table is deliberately NOT backed: `accumulated()` falls
-	 * through to `lookup()` on every request, and `flame_topn` is 0 in
-	 * production, so backing it would pay an index scan per cold URL for a
-	 * frame that is never written.
-	 *
-	 * @param string $role ROLE_AGGREGATE or ROLE_URL; each resolves its own TTL.
-	 *        Keyed by role, never by TTL: the two coincide at PREFIX_FLOOR, and a
-	 *        shared table would hand aggregate reads the deliberately unbacked one.
+	 * @param string $role ROLE_AGGREGATE, ROLE_URL or ROLE_URL_FINE; each resolves
+	 *        its own TTL. Keyed by role, never by TTL: all three coincide at
+	 *        PREFIX_FLOOR, and a shared table would hand aggregate reads the
+	 *        deliberately unbacked one.
+	 * @return ?Table_Node Null with no cache backend, which every caller reads as
+	 *                     a miss.
 	 */
 	private function table( string $role ): ?Table_Node {
 		if ( null === \Newspack_Nodes\Cache_Backend::shared_first() ) {
@@ -1170,9 +1203,10 @@ class Stats_Store {
 	}
 
 	/**
-	 * Sum two `{count, sum_ms, sum_peak_mb}` totals. The write-side counterpart
-	 * of `sums_to_display()`: the schema owns the triple, so it owns the
-	 * arithmetic over it, and a non-numeric field on either side reads as zero.
+	 * Sum two `{count, sum_ms, sum_peak_mb}` totals — the `hourly` namespace's
+	 * shape. The schema owns the triple, so it owns the addition over it, as
+	 * `sums_to_display()` owns the read-time division over its own. A non-numeric
+	 * field on either side reads as zero.
 	 *
 	 * Fields outside the triple ride through from `$a`: the stored bucket is the
 	 * caller's, and rebuilding it here would drop a fourth field silently.
@@ -1186,13 +1220,15 @@ class Stats_Store {
 	}
 
 	/**
-	 * Additive merge of one leaderboard bucket's sums into another (modifying $dst).
+	 * Merge one leaderboard bucket's sums into another, in place.
 	 *
-	 * Used by FlameBuilder at persist time to combine the current flush's bucket
-	 * with the already-persisted bucket of the same key. Static so callers can
-	 * use it without an instance.
-	 * @param array<string,mixed> $dst
-	 * @param array<string,mixed> $src
+	 * `Flame_Builder_Node` combines the current flush's bucket with the already
+	 * persisted bucket of the same key. Three shapes nest here and each has its
+	 * own field table: the bucket (`LB_SUMS`), a category inside it
+	 * (`LB_CAT_SUMS`) and one of that category's entries (`LB_ENTRY_SUMS`).
+	 *
+	 * @param array<string,mixed> $dst The bucket so far; rewritten in place.
+	 * @param array<string,mixed> $src The bucket being merged in.
 	 */
 	public static function merge_leaderboard_bucket( array &$dst, array $src ): void {
 		$dst  = self::string_keys( self::sum_entry( $dst, $src, self::LB_SUMS ) );
@@ -1317,14 +1353,13 @@ class Stats_Store {
 	}
 
 	/**
-	 * Sum `$fields` from one entry into another. What `sum_fields()` does per
-	 * key, reachable directly by the callers holding a single row — those were
-	 * inventing a throwaway map key to get at it, then unwrapping the result.
+	 * Sum `$fields` from one entry into another — what `sum_fields()` does per
+	 * key, reachable directly by a caller holding a single row rather than a map.
 	 *
-	 * @param array<array-key,mixed>  $into    The entry so far.
-	 * @param array<array-key,mixed>  $from    The entry being added.
-	 * @param array<array-key,bool>   $fields  Field => whether it is a whole count.
-	 * @return array<array-key,mixed>
+	 * @param array<array-key,mixed> $into   The entry so far.
+	 * @param array<array-key,mixed> $from   The entry being added.
+	 * @param array<array-key,bool>  $fields Field => whether it is a whole count.
+	 * @return array<array-key,mixed> `$into`, with every `$fields` key summed.
 	 */
 	public static function sum_entry( array $into, array $from, array $fields ): array {
 		foreach ( $fields as $field => $is_count ) {
@@ -1335,7 +1370,7 @@ class Stats_Store {
 		return $into;
 	}
 
-	/** The retention window this store was built for, in seconds. */
+	/** The retention window every TTL here derives from, in seconds. */
 	public function max_lifespan(): int {
 		return $this->max_lifespan;
 	}
@@ -1383,9 +1418,10 @@ class Stats_Store {
 	 * A split of ONE server that served every request the row counted is the
 	 * row restated, so it stores the host name against `null`.
 	 *
-	 * ~33 bytes where the positional sums are ~112, on the field that was over
-	 * half the whole index read: on a fleet of disjoint sites every URL is
-	 * served by exactly one host, so this is the common row, not the rare one.
+	 * ~33 bytes where the positional sums are ~112, on the field that otherwise
+	 * takes over half the whole index read: on a fleet of disjoint sites every
+	 * URL is served by exactly one host, so this is the common row, not the
+	 * rare one.
 	 *
 	 * COUNT alone decides it. Every `URL_SRV_SUMS` field is summed into the row
 	 * and into the split from the same increment, so a matching count means the
@@ -1515,9 +1551,9 @@ class Stats_Store {
 	 * hundred entries a category keeps only its fifty slowest, ranked by average
 	 * exclusive time, so one pathological category cannot flood a payload.
 	 *
-	 * @param int                   $total_count  Total profiled requests.
-	 * @param float                 $sum_req_time Sum of per-request $req_time values.
-	 * @param array<string,mixed>  $sums         Per-category sums keyed by category name.
+	 * @param int                 $total_count  Total profiled requests.
+	 * @param float               $sum_req_time Sum of per-request $req_time values.
+	 * @param array<string,mixed> $sums         Per-category sums keyed by category name.
 	 * @return array<string,mixed> Display-shaped leaderboard data.
 	 */
 	public static function sums_to_display( int $total_count, float $sum_req_time, array $sums ): array {

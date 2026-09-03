@@ -1,3 +1,13 @@
+/**
+ * The Gyroscope dashboard's view node.
+ *
+ * The `gyroscope.*` partitions carry two producers' records: one per in-flight
+ * request per Router tick, and one per completion. This file turns that stream
+ * into the request model the In-Flight Requests table reads, and does nothing
+ * else — the SSE connection and the node graph live in `useGyroscopeGraph`, the
+ * rendering in `Inflight.js`.
+ */
+
 import {
 	FROM,
 	KEY,
@@ -6,15 +16,15 @@ import {
 	CommandInterpreterNode,
 } from '@newspack-nodes/runtime';
 
-// Averaging window for the requests/second readout, in seconds.
+/** Averaging window for the requests/second readout, in seconds. */
 const RPS_WINDOW_SEC = 10;
 
-// Age out an in-flight row unseen this long — a crash/eviction backstop.
+/** Age out an in-flight row unseen this long — a crash/eviction backstop. */
 const INFLIGHT_STALE_MS = 15 * 60 * 1000;
 
 /**
  * `gyroscope:view` — owns the in-flight request model behind the In-Flight
- * Requests dashboard (`src/gyroscope/Inflight.js`).
+ * Requests dashboard.
  *
  * Two cadences, deliberately split for performance (mirrors requestlog/view):
  * - HIGH frequency (the gyroscope stream): `_inflight` / `_complete` mutate the
@@ -44,8 +54,8 @@ const INFLIGHT_STALE_MS = 15 * 60 * 1000;
  *   by rid, stamping a freshness time; NEVER overwrite one already marked
  *   complete (a late record may predate a completion already in the map).
  *   Under full re-emit this refreshes every row each tick; delta only advanced.
- * - keyless or state-less shapes are dropped, which is what discards the
- *   substrate `connected` sentinel and any verb reply.
+ * - every other shape is dropped: a string or array VALUE, an empty KEY, or an
+ *   object carrying no `state`. Only the two producers' records have both.
  *
  * `snapshot()` reaps completed entries (shown one tick), ages out in-flight rows
  * past INFLIGHT_STALE_MS, sorts by est_ms descending, and caps — plus the
@@ -61,11 +71,14 @@ export class GyroscopeViewNode extends Node {
 	 */
 	constructor() {
 		super();
-		this.requests = new Map(); // All requests keyed by rid.
-		// Per-second RPS buckets + running total, bounded to the window.
+		// Every request seen, in-flight and just completed, keyed by rid.
+		this.requests = new Map();
+		// Completions per second, bucketed, plus the running window total.
 		this.rpsBuckets = [];
 		this.rpsWindowTotal = 0;
+		// The readout `Inflight.js` reads off this node beside `snapshot()`.
 		this.rps = 0;
+		// Reconnect-banner flag; the only field `_publish()` carries.
 		this.connectionError = false;
 		// FROM of controls; unset loses them silently (see LogStreamViewNode).
 		this.controlFrom = '';
@@ -86,7 +99,7 @@ export class GyroscopeViewNode extends Node {
 		if ( ! value ) {
 			return;
 		}
-		// Local control — LOW-freq path; publish.
+		// A local control: the low-frequency path, which republishes.
 		if ( '' !== this.controlFrom && message[ FROM ] === this.controlFrom ) {
 			this._control( value );
 			this._publish();
@@ -207,11 +220,11 @@ export class GyroscopeViewNode extends Node {
 			if ( 'complete' === req.state ) {
 				completedCount += 1;
 				this.requests.delete( rid );
-				allRequests.push( req ); // shown one tick, then reaped
+				allRequests.push( req ); // Shown for one tick, then reaped.
 				continue;
 			}
 			if ( req._seen && now - req._seen > INFLIGHT_STALE_MS ) {
-				this.requests.delete( rid ); // stale straggler — drop, don't render
+				this.requests.delete( rid ); // Stale: dropped, never rendered.
 				continue;
 			}
 			allRequests.push( req );
@@ -251,6 +264,7 @@ export class GyroscopeViewNode extends Node {
 		}
 		this.rps = this.rpsWindowTotal / RPS_WINDOW_SEC;
 	}
+
 	/**
 	 * Hidden terminal: `fill()` mutates the model and publishes, never forwards,
 	 * so the node declares no target — and it is mounted by the dashboard graph,

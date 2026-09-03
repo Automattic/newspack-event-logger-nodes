@@ -24,8 +24,8 @@ import {
 import { gridTemplate } from '@newspack-nodes/shared/hooks/useColumnPicker';
 
 /**
- * The columns more than one dashboard declares, keyed by the log field each
- * draws. A dashboard merges its own `tooltip` and `width` over these.
+ * The columns more than one dashboard declares. A dashboard merges its own
+ * `label`, `tooltip` or `width` over these.
  *
  * `time` carries no tooltip and no shared meaning beyond its label: the two
  * viewer panes head a wall clock with it, In-Flight a server-side duration.
@@ -92,7 +92,7 @@ export const logColumns = ( spec ) =>
  * One table cell — the base class and `role` are the table's a11y contract,
  * spelled once. Anything beyond `mod` lands on the span, `title` most of all.
  *
- * @param {{ mod?: string, children?: * } & Record<string, *>} props Props.
+ * @param {{ mod?: string, children?: * } & Record<string,*>} props Props.
  * @return {import('react').ReactElement} The cell.
  */
 export const Cell = ( { mod = '', children, ...rest } ) => (
@@ -172,7 +172,7 @@ export const statusCell = ( status, key ) => (
 );
 
 /**
- * Client IP address.
+ * Client IP address, or a dash when the entry carried none.
  *
  * @param {?string} remoteAddr Client IP.
  * @param {string}  [key]      React key, when the caller renders from a list.
@@ -186,6 +186,7 @@ export const ipCell = ( remoteAddr, key ) => (
 
 /**
  * User agent, truncated by the column with the full text as its tooltip.
+ * Draws a dash when the entry carried none.
  *
  * @param {?string} userAgent Browser/client identifier.
  * @param {string}  [key]     React key, when the caller renders from a list.
@@ -233,7 +234,8 @@ export const timeCell = ( ts, key ) => (
  * nothing shifts every column after it a slot left.
  *
  * @param {Object} cases Column key → `( ...row, col ) => element`.
- * @return {Function} `( col, ...row ) => element`.
+ * @return {( col: string, ...row: * ) => import('react').ReactElement}
+ *   The row's cell renderer.
  */
 export const cellRenderer =
 	( cases ) =>
@@ -243,6 +245,11 @@ export const cellRenderer =
 /**
  * The header above a log table: the wrapper publishing the grid template as
  * the custom property its scss applies, over the shared `LogListHeader`.
+ *
+ * The grid lands on `LogListHeader` itself, whose style this function does not
+ * own, so the template rides down as a custom property and the wrapper is
+ * `display: contents` — the header row is the grid, and the extra element
+ * costs no layout.
  *
  * @param {Object}   opts           Options.
  * @param {string}   opts.className Wrapper class the dashboard's scss reads.
@@ -264,8 +271,12 @@ export const logListHeader = ( { className, columns, order } ) => (
 	</div>
 );
 
-// sprintf types its args off a LITERAL format; ours is already translated.
-/** @type {( format: string, ...args: * ) => string} */
+/**
+ * `sprintf` under a looser type: it reads its argument types off a LITERAL
+ * format, and every format reaching it here is already translated.
+ *
+ * @type {( format: string, ...args: * ) => string}
+ */
 const interpolate = sprintf;
 
 /**
@@ -289,7 +300,7 @@ export const countLabel = ( stats, plain, split ) =>
  * The toolbar's rate label, to one decimal place.
  *
  * @param {string} unit Already-translated `sprintf` format taking the rate.
- * @return {Function} `( lps ) => string`.
+ * @return {( lps: number ) => string} The label builder.
  */
 export const rateLabel = ( unit ) => ( lps ) =>
 	interpolate( unit, lps.toFixed( 1 ) );

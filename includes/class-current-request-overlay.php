@@ -7,9 +7,9 @@
  * server-side jobs that bundle needs: it contributes the bundle descriptor to
  * the substrate's `newspack_nodes/devtools_tab_bundles` filter (which loads it
  * on the Nodes hub page), enqueues it directly on the admin pages that mount
- * `<DebugOverlay>` themselves, and injects THIS request's id and partition into
- * a JS global the tab reads. ELN owns all of it because ELN owns the request
- * lifecycle — `Log_Manager` is what mints the id.
+ * `<DebugOverlay>` themselves, and injects THIS request's id, partition and
+ * dashboard deep link into a JS global the tab reads. ELN owns all of it
+ * because ELN owns the request lifecycle — `Log_Manager` is what mints the id.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -21,7 +21,7 @@ namespace Newspack_Event_Logger_Nodes;
 \defined( 'ABSPATH' ) || exit;
 
 /**
- * Wires the Current-Request overlay tab's bundle + per-request data exposure.
+ * Registers the Current-Request tab's bundle and the data the tab reads.
  *
  * Every member is static: this is hook glue with no state of its own, so
  * {@see init()} registers the callbacks and nothing is ever instantiated.
@@ -34,9 +34,9 @@ class Current_Request_Overlay {
 	/**
 	 * ELN admin pages that mount `<DebugOverlay>` themselves, and so must load
 	 * the tab bundle themselves. The substrate's `devtools_tab_bundles` filter
-	 * covers the Nodes hub page and nothing else. All four ELN dashboard trees
-	 * render the overlay — overview, error-log, gyroscope, requests; the settings
-	 * page does not, and is absent.
+	 * covers the Nodes hub page and nothing else. Four of ELN's five dashboard
+	 * trees render the overlay — overview, error-log, gyroscope and requests;
+	 * the settings tree renders none, so its page is absent here.
 	 *
 	 * @var string[]
 	 */
@@ -54,9 +54,10 @@ class Current_Request_Overlay {
 	 * substrate's overlay tabs rather than in a second tab bar.
 	 *
 	 * Dependencies and version come from the build's `index.asset.php` manifest
-	 * (`{ dependencies, version }`), falling back to the plugin version when the
-	 * bundle was never built. The stylesheet cache-busts on its OWN content hash,
-	 * so a SCSS-only rebuild still lands behind a fresh `?ver=`.
+	 * (`{ dependencies, version }`); with no manifest the script declares no
+	 * dependencies and takes the plugin version. The stylesheet cache-busts on
+	 * its OWN content hash, so a SCSS-only rebuild still lands behind a fresh
+	 * `?ver=`.
 	 *
 	 * Hooked to `admin_enqueue_scripts`; returns silently off an overlay page.
 	 */
@@ -165,8 +166,9 @@ class Current_Request_Overlay {
 	}
 
 	/**
-	 * Hook the substrate's tab-bundle filter (hub) + our own enqueue on the ELN
-	 * pages that embed the overlay + the per-request data injection.
+	 * Register all three callbacks: the substrate's tab-bundle filter for the
+	 * hub page, our own enqueue for the ELN pages that embed the overlay, and
+	 * the per-request data injection.
 	 *
 	 * Called from the plugin's deferred bootstrap, admin requests only.
 	 */

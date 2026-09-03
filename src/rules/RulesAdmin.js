@@ -1,17 +1,21 @@
 /**
- * RulesAdmin — the thin React view over the per-URL logging-ruleset editor node
- * graph. useRulesGraph owns the data + CRUD transport; this component reads the
- * model and renders a wp-list-table (Pattern, Action, Hooks count, Events count,
- * Auto-tune summary) with a "+ Add Rule" button and per-row Edit / Delete.
+ * The settings page's Logging Rules section, top to bottom.
  *
- * Add / Edit open RuleEditModal (add = a blank log rule); Save → `upsert` (single
- * rule, so the editor never ships the whole list) and the table re-lists. Delete
- * opens a confirm dialog → `remove(id)`. Loading / error come from the model.
+ * `useRulesGraph` owns the data and the CRUD transport, so this file is the
+ * view alone: a `wp-list-table` of Pattern, Action, Hooks, Events and
+ * Auto-tune, an "+ Add Rule" button, per-row Edit and Delete, and the
+ * confirmation each destructive path raises. Add and Edit both open
+ * `RuleEditModal`, Add seeding it with `BLANK_RULE`. Save sends the ONE edited
+ * rule through the `rules` CI's `upsert` rather than the whole list through its
+ * `save`, so an edit never republishes the snapshot the table was listed from.
+ * Every mutation re-lists, and the table repaints from that reply rather than
+ * from the mutation's own answer.
  *
  * The `↺` beside "+ Add Rule" is the section's reset-to-defaults, matching the
  * per-field toggle every other setting carries. It applies at once behind a
- * confirm rather than marking-then-Save: this editor writes through the `rules`
- * CI, so there is no form submission to defer a mark to.
+ * confirmation rather than marking the field and waiting for a Save: this
+ * editor writes through the `rules` CI, so there is no form submission to
+ * defer a mark to.
  */
 
 import { useCallback, useEffect, useRef, useState } from '@wordpress/element';
@@ -21,7 +25,17 @@ import { useRulesGraph } from './useRulesGraph';
 import RuleEditModal from './RuleEditModal';
 import { BLANK_RULE } from './constants';
 
-// One-line auto-tune summary for the table cell (— when both are off).
+/**
+ * Render a rule's auto-tune thresholds as one line for the table cell.
+ *
+ * Zero is off for both, and zero is what `BLANK_RULE` carries, so a rule that
+ * auto-tunes nothing reads as an em dash rather than as a pair of zeroes.
+ *
+ * @param {Object} rule                             A rule in the `Rules_CI` wire shape.
+ * @param {number} rule.auto_disable_threshold      Per-request occurrences above which auto-tune proposes disabling a hook or custom event; 0 is off.
+ * @param {number} rule.auto_protect_time_threshold Average ms per call at or above which auto-tune promotes a hook to significant; 0 is off.
+ * @return {string} Both thresholds that are on, comma separated, or an em dash when neither is.
+ */
 function autoTuneSummary( rule ) {
 	const parts = [];
 	if ( rule.auto_disable_threshold ) {
@@ -38,14 +52,30 @@ function autoTuneSummary( rule ) {
 			sprintf(
 				// translators: %s: auto-protect time threshold in ms.
 				__( 'protect @%sms', 'newspack-event-logger-nodes' ),
-				rule.auto_protect_time_threshold
+				String( rule.auto_protect_time_threshold )
 			)
 		);
 	}
 	return parts.length ? parts.join( ', ' ) : '—';
 }
 
-// Minimal confirm dialog; the confirm button focuses on mount.
+/**
+ * Confirm a destructive action — deleting one rule, or resetting the whole set.
+ *
+ * The confirm button takes focus on mount, so the keyboard answer is the one
+ * being asked about. Cancel and a press on the backdrop are the dismissals,
+ * and the backdrop takes mousedown rather than click: a click fires on the
+ * nearest common ancestor, so a text selection dragged out of the dialog and
+ * released on the backdrop would close it.
+ *
+ * @param {Object}     props              Component props.
+ * @param {string}     props.label        Accessible name for the dialog.
+ * @param {string}     props.question     The question put to the operator.
+ * @param {string}     props.confirmLabel Text of the destructive button.
+ * @param {() => void} props.onCancel     Dismiss handler (Cancel, or the backdrop).
+ * @param {() => void} props.onConfirm    Called when the operator confirms.
+ * @return {import('react').ReactElement} The dialog.
+ */
 function ConfirmModal( {
 	label,
 	question,
@@ -97,7 +127,21 @@ function ConfirmModal( {
 	);
 }
 
-// A single rule row — pattern / action / hooks count / auto-tune + Edit/Delete.
+/**
+ * One rule as a table row: pattern, action, the two counts, the auto-tune
+ * summary and the Edit / Delete buttons.
+ *
+ * A skip rule stores no hooks, custom events or thresholds — `RuleEditModal`
+ * emits those fields empty whenever the action is skip — so the three log-only
+ * columns show an em dash rather than a zero, which would read as a log rule
+ * with nothing configured.
+ *
+ * @param {Object}                 props          Component props.
+ * @param {Object}                 props.rule     The rule to render, in the `Rules_CI` wire shape.
+ * @param {(rule: Object) => void} props.onEdit   Called with the rule when Edit is pressed.
+ * @param {(rule: Object) => void} props.onDelete Called with the rule when Delete is pressed.
+ * @return {import('react').ReactElement} The table row.
+ */
 function RuleRow( { rule, onEdit, onDelete } ) {
 	return (
 		<tr data-rule-id={ rule.id }>
@@ -163,6 +207,9 @@ function RuleRow( { rule, onEdit, onDelete } ) {
 }
 
 /**
+ * The section's root component, owning only which surface is open and what a
+ * write refused; the rules themselves live in the graph.
+ *
  * Takes no props: `useRulesGraph` mounts the graph and supplies every datum, so
  * the settings page mounts this bare.
  *
@@ -172,7 +219,7 @@ function RuleRow( { rule, onEdit, onDelete } ) {
  * length only breaks ties within a rank). Row order says nothing about which
  * rule wins a URL.
  *
- * @return {import('react').ReactElement} The rendered admin app.
+ * @return {import('react').ReactElement} The Logging Rules section.
  */
 export default function RulesAdmin() {
 	// Rule open in the editor: null = closed, object = editing/adding.
@@ -184,7 +231,7 @@ export default function RulesAdmin() {
 	// A mutation's failure; `error` belongs to the table's own `list`.
 	const [ mutationError, setMutationError ] = useState( null );
 
-	// The answer names its verb, so the right surface is the one that closes.
+	// The reply names its verb, so it closes the surface that asked.
 	const onMutation = useCallback( ( { verb, error: refusal } ) => {
 		if ( refusal ) {
 			setMutationError( refusal );

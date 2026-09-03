@@ -24,7 +24,7 @@
  *
  * Every firehose line is a 7-field positional `Message` envelope
  * (`Message::packed`): the entry hash sits at `Message::VALUE`, the request id
- * at `Message::KEY`. No legacy entry-hash format is read.
+ * at `Message::KEY`.
  *
  * The partition dirs come from `Log_Manager::firehose_dirs()`, which owns the
  * layout; `--firehose` overrides the base and must resolve inside
@@ -85,10 +85,14 @@ class Reqgrep_Command {
 	 */
 	public ?\Newspack_Nodes\Node $stdout = null;
 
-	/** Firehose base path — the `--firehose` override, else the configured logs dir. Reported by follow mode. */
+	/**
+	 * What follow mode reports it is watching: the `--firehose` override, or
+	 * partition 0's dir when there is none. It is not the read path — that is
+	 * `$partition_dirs`, every entry of it.
+	 */
 	private string $base_dir = '';
 
-	/** History bucket size (lines per bucket). */
+	/** History bucket capacity, counting rids plus lines. Clamped to 1-10000. */
 	private int $bucket_size = 250;
 
 	/**
@@ -100,7 +104,7 @@ class Reqgrep_Command {
 	/** True once a request has been printed, so the rule falls BETWEEN requests only. */
 	private bool $fmt_printed_request = false;
 
-	/** Formatting state — current indent column. */
+	/** Column the current line indents to, four spaces per open span. */
 	private int $fmt_indent = 0;
 
 	/**
@@ -122,19 +126,26 @@ class Reqgrep_Command {
 	/** True when this record carries a fold marker, so no interval in it is measurable. */
 	private bool $fmt_folded = false;
 
-	/** Formatting state — last seen timestamp. */
+	/**
+	 * Timestamp of the previous entry, which gates the clock column at 0.1-second
+	 * resolution and anchors the dot rows drawn across an elapsed gap.
+	 */
 	private float $fmt_last_timestamp = 0;
 
 	/** Grouping/matching engine (shared with the request_grep verb); built by init_core(). */
 	private ?Reqgrep_Core $core = null;
 
-	/** True if --incomplete was passed. */
+	/** `--incomplete`: suppress completed requests, leaving only the unfinished ones. */
 	private bool $incomplete = false;
 
-	/** In-flight matched requests, shared with Reqgrep_Core. Each value is stdClass {lines:array, bytes:int, clipped?:bool}. */
+	/**
+	 * In-flight matched requests, shared with `Reqgrep_Core`. Each value is a
+	 * `\stdClass` carrying `lines` and `bytes`, plus `clipped` once one of the
+	 * engine's caps trims the request.
+	 */
 	private ?LRU_Cache $inflight = null;
 
-	/** History bucket count. */
+	/** History buckets retained. Clamped to 1-100. */
 	private int $num_buckets = 10;
 
 	/** @var array<int,string> Firehose partition dirs to walk, indexed by partition. */
@@ -169,10 +180,10 @@ class Reqgrep_Command {
 	 * : Emit raw JSONL instead of formatted output.
 	 *
 	 * [--incomplete]
-	 * : Show requests that never reached `process (complete)`.
+	 * : Show only requests that reached neither `process (complete)` nor `process (aborted)`.
 	 *
 	 * [--bucket-size=<size>]
-	 * : Lines per bucket for the history buffer. Clamped to 1-10000.
+	 * : History bucket capacity, counting request ids plus lines. Clamped to 1-10000.
 	 * ---
 	 * default: 250
 	 * ---
@@ -231,7 +242,6 @@ class Reqgrep_Command {
 		$this->partition_dirs = Log_Manager::firehose_dirs( $override );
 		$this->base_dir       = '' !== $override ? $override : $this->partition_dirs[0];
 
-		// LRU_Cache: 300 slots, 60s rotation, on-evict prints [incomplete].
 		$this->inflight = ( new LRU_Cache( self::INFLIGHT_BUCKET_SIZE, self::INFLIGHT_NUM_BUCKETS ) )
 			->with_timed_rotation(
 				self::INFLIGHT_ROTATE_INTERVAL,
@@ -363,8 +373,8 @@ class Reqgrep_Command {
 	 * Stdin pipe mode: drive a `Stdin_Node` over `$stream` into a `Callback_Node`
 	 * that unpacks each packed Message envelope and runs it through
 	 * process_message, then flush incomplete requests so the operator can see
-	 * partial state. eof_deadline 0 → the reader self-exits immediately after the
-	 * stream's TM_EOF (no lingering post-EOF poll).
+	 * partial state. An eof_deadline of 0 makes the reader exit on the stream's
+	 * TM_EOF rather than polling on past it.
 	 *
 	 * Defaults to STDIN; tests inject a `fopen('php://memory', 'r+')` filled with
 	 * fixture lines to drive the loop deterministically.
@@ -397,8 +407,8 @@ class Reqgrep_Command {
 
 	/**
 	 * Print every still-in-flight request as `[incomplete]`. Cat and stdin modes
-	 * call this once their sources are exhausted, so a request whose
-	 * `process (complete)` never arrived is still shown rather than dropped.
+	 * call this once their sources are exhausted, so a request whose terminal
+	 * never arrived is still shown rather than dropped.
 	 */
 	private function output_remaining(): void {
 		foreach ( $this->require_inflight()->iterate() as $rid => $state ) {
@@ -416,8 +426,8 @@ class Reqgrep_Command {
 	 * type bits — S_IFIFO (pipe) or S_IFREG (file) means data; everything
 	 * else (tty, /dev/null, sockets) is "no piped data, use cat mode."
 	 *
-	 * Defaults to STDIN; tests pass a php://memory resource so the dispatch
-	 * decision is observable without a real STDIN pipe.
+	 * Defaults to STDIN; tests pass a temp-file handle so the dispatch decision
+	 * is observable without a real STDIN pipe.
 	 *
 	 * @param resource|null $stream Stream to inspect (defaults to STDIN).
 	 * @return bool True when the stream is a pipe or a regular file.
@@ -429,7 +439,7 @@ class Reqgrep_Command {
 			}
 			$stream = STDIN;
 		}
-		// Closed / non-resource → not piped data.
+		// A closed or non-resource stream carries no piped data.
 		if ( ! \is_resource( $stream ) ) {
 			return false;
 		}
@@ -445,8 +455,12 @@ class Reqgrep_Command {
 	 * Build the shared grouping/matching engine from the parsed run config. Its
 	 * on_complete emits the assembled request (unless --incomplete suppresses
 	 * completed output); on_history_miss surfaces the tune-your-buckets warning.
-	 * The engine shares the LRU_Cache the on-evict callback drives, so output_remaining
-	 * still walks $this->inflight for the [incomplete] tail.
+	 * The engine shares the LRU_Cache the on-evict callback drives, so
+	 * output_remaining still walks $this->inflight for the [incomplete] tail.
+	 *
+	 * `Reqgrep_Core` passes on_complete a third `clipped` argument that this
+	 * two-parameter closure drops, so a request the engine's caps trimmed prints
+	 * with no marker saying so.
 	 */
 	private function init_core(): void {
 		$on_complete = function ( array $lines, string $rid ): void {
@@ -486,7 +500,7 @@ class Reqgrep_Command {
 	 * output_request. `Reqgrep_Core::append_to_state()` only ever appends
 	 * strings, so this is a type narrowing, not a filter that drops real data.
 	 *
-	 * @param mixed $value Decoded value.
+	 * @param mixed $value A state object's `lines` field.
 	 * @return list<string>
 	 */
 	private static function to_lines( $value ): array {
@@ -569,7 +583,9 @@ class Reqgrep_Command {
 	 *  - Suffix: `duration_ms` and `peak_mb` trail the line when present.
 	 *
 	 * @param array<int|string,mixed> $entry Decoded JSON entry.
-	 * @return string Formatted output line.
+	 * @param int                     $at    Index of the entry within the request,
+	 *                                       which is what indexes `$fmt_keys`.
+	 * @return string The entry's line, preceded by any gap dot rows.
 	 */
 	private function format_entry( array $entry, int $at ): string {
 		$number = Core::num_int( $entry['n'] ?? 0 );
@@ -658,10 +674,11 @@ class Reqgrep_Command {
 	 * Whether the interval before the entry at `$at` is elapsed TIME the ruler may draw, which
 	 * `computeIndentedEntries()` decides the same way for the dashboard.
 	 *
-	 * A sequence-break marker stands in for entries that were REMOVED, so the intervals either
-	 * side of one are missing detail rather than idle time, and a folded record has no measurable
-	 * interval anywhere: everything past its marker was selected out of the middle rather than
-	 * kept consecutive. Ruling it anyway printed ten minutes of dots for a fold that took none.
+	 * A sequence-break marker stands in for entries `Request_Builder_Node` REMOVED, so the
+	 * intervals either side of one are missing detail rather than idle time, and a folded record
+	 * has no measurable interval anywhere: everything past its marker was selected out of the
+	 * middle rather than kept consecutive. Ruling it anyway draws ten minutes of dots for a fold
+	 * that took none.
 	 *
 	 * @param int $at Index of the entry being formatted.
 	 * @return bool True when the gap before it may be ruled.
@@ -682,14 +699,16 @@ class Reqgrep_Command {
 	 * of the dashboard's `computeIndentedEntries()` (`src/overview/utils/logEntryUtils.js`), which
 	 * is the canonical reading of this log. Both must agree, or the same request reads two ways.
 	 *
-	 * A `(complete)` matches the nearest open `(start)` OF THE SAME NAME and closes only that one,
-	 * leaving children that outlived their parent where they are; with no match its `(start)` was
-	 * merged away, so it prints at the depth of the spans still open rather than escaping them.
-	 * Names, not arithmetic, are what let a request survive an embedded engine trace whose spans
-	 * are numbered from 1 and share names with the request's own.
+	 * A `(complete)` closes only the frame `nearest_open()` matches, leaving children that
+	 * outlived their parent where they are; with no match its `(start)` was merged away, so it
+	 * prints at the depth of the spans still open rather than escaping them.
 	 *
 	 * A break keyword drops what went missing from the MIDDLE, so a span the rest of the record
-	 * still closes spans it and keeps its children; `prune_severed_spans()` owns that rule.
+	 * still closes straddles it and keeps its children; `prune_severed_spans()` owns that rule.
+	 *
+	 * @param string $key This entry's keyword.
+	 * @param int    $at  Index of the entry within the request.
+	 * @return int Indent column, four spaces per enclosing span.
 	 */
 	private function indent_for( string $key, int $at ): int {
 		if ( \in_array( $key, Request_Builder_Node::SEQUENCE_BREAK_KEYS, true ) ) {
@@ -777,9 +796,10 @@ class Reqgrep_Command {
 	 *
 	 * THE rule the two readings must agree on: a `(complete)` matches the NEAREST open `(start)`
 	 * OF THE SAME NAME, which is what lets a request survive an embedded engine trace whose spans
-	 * are numbered from 1 and share names with the request's own. It was written out at both call
-	 * sites here — the batch walk and the per-entry stepper — so one rule had two places to drift
-	 * from `logEntryUtils.js`, which the whole CLI/dashboard parity rests on.
+	 * are numbered from 1 and share names with the request's own. Both call sites here — the batch
+	 * walk in `spans_closed_after()` and the per-entry stepper in `indent_for()` — read the rule
+	 * from this one function, so it has a single place to drift from `logEntryUtils.js`, which the
+	 * whole CLI/dashboard parity rests on.
 	 *
 	 * @param list<string> $stack Open base names, innermost last.
 	 * @param string       $name  Base name being closed.
@@ -811,7 +831,9 @@ class Reqgrep_Command {
 	}
 
 	/**
-	 * Whether any line of this request CONTAINS a sequence-break keyword — the substring test reads the whole packed line, so a marker quoted in a message body counts, costing one wasted keywords_of() pass and nothing else.
+	 * Whether any line of this request CONTAINS a sequence-break keyword. The substring test
+	 * reads the whole packed line, so a marker quoted in a message body counts — costing one
+	 * wasted `keywords_of()` pass and nothing else.
 	 *
 	 * @param list<string> $lines Packed lines of one request.
 	 * @return bool True when the record breaks.
@@ -837,7 +859,6 @@ class Reqgrep_Command {
 	private function emit( string $text ): void {
 		$message                   = Message::new_message();
 		$message[ Message::TYPE ]  = Message::TM_BYTESTREAM;
-		// Stdout_Node writes the VALUE verbatim; nothing else terminates.
 		$message[ Message::VALUE ] = \rtrim( $text, "\n" ) . "\n";
 		( $this->stdout ??= new Stdout_Node() )->fill( $message );
 	}
