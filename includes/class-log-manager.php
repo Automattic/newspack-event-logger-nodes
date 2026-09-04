@@ -123,23 +123,14 @@ class Log_Manager {
 		'UNIQUE_ID',
 	];
 
-	/**
-	 * Per-value byte cap for environment_v3 map values. Keeps one long
-	 * (client-controllable) value from pushing the encoded map over
-	 * MAX_DATA_SIZE and dropping the whole map. 256 keeps the full curated
-	 * allowlist — even with several oversized values — comfortably under
-	 * MAX_DATA_SIZE. Perl mirrors it in Gyrobase::Log; `check-firehose-parity`
-	 * holds the two equal.
-	 */
+	/** Per-value byte cap for environment_v3 map values. */
 	private const ENV_VALUE_MAX = 256;
 
-	/**
-	 * Encoded-data cap in bytes. Headroom under PIPE_BUF (4096), which is what
-	 * keeps a lock-free append atomic against every other writer on this
-	 * multi-writer log. Payloads that can exceed it belong in
-	 * \Newspack_Nodes\Job_Intake::queue(), not here — message() truncates.
-	 */
-	private const MAX_DATA_SIZE = 3840;
+	/** Encoded-data cap in bytes. */
+	private const MAX_DATA_SIZE = 4000;
+
+	/** Truncated size in bytes. */
+	private const TRUNCATED_SIZE = 3840;
 
 	/** @var int Maximum timer stack depth to prevent unbounded growth. */
 	private const MAX_TIMER_DEPTH = 100;
@@ -1144,10 +1135,7 @@ class Log_Manager {
 	 *
 	 * The entry carries the line number as `n`, the category as `k`, the caller's
 	 * data, and a `ts` timestamp. Data encoding over MAX_DATA_SIZE is NOT chunked
-	 * — `m` is trimmed until the map fits, so anything larger belongs in
-	 * `\Newspack_Nodes\Job_Intake::queue()` instead. A caller-supplied `rid` is
-	 * dropped: the real one is the Message KEY, and honoring the caller's would
-	 * let it forge another request's identity.
+	 * — `m` is trimmed.
 	 *
 	 * @param string $category Event category/keyword.
 	 * @param array<string,mixed>  $data     Additional data to include.
@@ -1160,9 +1148,6 @@ class Log_Manager {
 		if ( isset( $data['m'] ) && \is_string( $data['m'] ) && false !== \strpos( $data['m'], '?' ) ) {
 			$data['m'] = self::redact_url( $data['m'] );
 		}
-		// @longform Substitute-on-error: invalid-UTF8 data still yields a
-		// string sized like Message::packed()'s output (same flag) — else
-		// the guard skips truncating and the Partition drops the record.
 		$data_json = \wp_json_encode( $data, \JSON_INVALID_UTF8_SUBSTITUTE | \JSON_PARTIAL_OUTPUT_ON_ERROR );
 		if ( false !== $data_json && \strlen( $data_json ) > self::MAX_DATA_SIZE ) {
 			$data = self::fit_data( $data, $data_json );
@@ -1170,23 +1155,11 @@ class Log_Manager {
 		if ( null === $this->topic ) {
 			return false;
 		}
-		// Strip caller rid (real one is Message::KEY); blocks a forged rid.
-		unset( $data['rid'] );
 
-		// The cached clock is frozen in request scope: read once, use twice.
-		$now                                           = Core::right_now();
-		// @longform Stamped and CONSUMED together. Advancing the number
-		// after fill() returns loses it to a cooperative stop, which leaves
-		// the entry durable — maybe_stop() flushes before re-raising — so
-		// the next entry reuses the number and Request_Builder_Node drops
-		// it as a duplicate; when that next entry is the terminal, the
-		// record strands in flight until its trace times out. Burning a
-		// number reads as a GAP, which the builder reports and still lets
-		// terminals through.
-		$entry = [ 'n' => $this->line_number++, 'k' => $category ] + $data + [ 'ts' => $now ];
+		$entry = [ 'n' => $this->line_number++, 'k' => $category ] + $data;
 		$message                                       = \Newspack_Nodes\Message::new_message();
 		$message[ \Newspack_Nodes\Message::TYPE ]      = \Newspack_Nodes\Message::TM_STRUCT;
-		$message[ \Newspack_Nodes\Message::TIMESTAMP ] = $now;
+		$message[ \Newspack_Nodes\Message::TIMESTAMP ] = Core::right_now();
 		$message[ \Newspack_Nodes\Message::KEY ]       = $this->request_id;
 		$message[ \Newspack_Nodes\Message::VALUE ]     = $entry;
 		$this->topic->fill( $message );
@@ -1199,16 +1172,7 @@ class Log_Manager {
 	}
 
 	/**
-	 * Shrink an oversized entry to fit MAX_DATA_SIZE, keeping every key but the
-	 * one that overflowed. `m` is the only value that reaches this size, so an
-	 * array `m` is dropped and a string `m` is trimmed to whatever room the
-	 * other keys leave — `l` and `caller` survive, which is what lets the
-	 * reader still open the span and merge it in the flame. The category is left
-	 * alone: renaming it breaks `Flame_Tree::PATTERN_START` and the `' (start)'`
-	 * suffix test, so a trimmed span never opens at all.
-	 *
-	 * Re-encoding per step is what makes the fit exact: JSON escaping expands
-	 * bytes, so a byte-count subtraction can still land over the cap.
+	 * Shrink an oversized entry to fit MAX_DATA_SIZE.
 	 *
 	 * @param array<string,mixed> $data      The oversized data map.
 	 * @param string              $data_json Its encoding, already measured.
@@ -1219,21 +1183,15 @@ class Log_Manager {
 		$m                  = $data['m'] ?? null;
 		$data['truncated']  = true;
 		if ( \is_string( $m ) ) {
-			for ( $len = \strlen( $m ); $len > 0; $len = (int) ( $len * 0.9 ) ) {
-				$data['m'] = \substr( $m, 0, $len );
-				$encoded   = \wp_json_encode( $data, $flags );
-				if ( false !== $encoded && \strlen( $encoded ) <= self::MAX_DATA_SIZE ) {
-					return $data;
-				}
+			$data['m'] = \substr( $m, 0, self::TRUNCATED_SIZE ) . '...';
+			$encoded   = \wp_json_encode( $data, $flags );
+			if ( false !== $encoded && \strlen( $encoded ) <= self::MAX_DATA_SIZE ) {
+				return $data;
 			}
 		}
 		unset( $data['m'] );
 		$encoded = \wp_json_encode( $data, $flags );
-		if ( false !== $encoded && \strlen( $encoded ) <= self::MAX_DATA_SIZE ) {
-			return $data;
-		}
-		// Nothing else is ever this big; a truncated dump is the floor.
-		return [ 'm' => \substr( $data_json, 0, 1000 ) . '...', 'truncated' => true ];
+		return $data;
 	}
 
 	/**

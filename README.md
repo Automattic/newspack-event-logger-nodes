@@ -1,12 +1,25 @@
 # Newspack Event Logger Nodes
 
-Application built on the [`newspack-nodes`](https://github.com/Automattic/newspack-nodes) runtime. It replaced the legacy `newspack-event-logger-plugins` monorepo: high-throughput WordPress request lifecycle logging, real-time SSE streaming, flame graph generation, and hub/spoke aggregation across multiple sites.
+Application built on the [`newspack-nodes`](https://github.com/Automattic/newspack-nodes) runtime: high-throughput WordPress request-lifecycle logging, live SSE dashboards, flame-graph generation, and hub/spoke aggregation across sites. It replaced the legacy `newspack-event-logger-plugins` monorepo wholesale, and that monorepo is gone from the tree: there is no coexisting stack.
 
 ## Relation to newspack-nodes
 
-This plugin is the *application*. The *runtime* — Node, Message, Router, Topic, Partition, Worker, Fleet, REPL — lives in [`newspack-nodes`](https://github.com/Automattic/newspack-nodes). Both plugins must be installed and active; the runtime must load first. The plugin header declares `Requires Plugins: newspack-nodes` (WordPress 6.5+ keeps the runtime active), and the deferred bootstrap is gated on a `class_exists` substrate-presence check so it no-ops gracefully if the runtime isn't loaded.
+This plugin is the *application*. The *runtime* — Node, Message, Router, Topic, Partition, Worker, Fleet, REPL — lives in [`newspack-nodes`](https://github.com/Automattic/newspack-nodes), and both plugins must be installed and active. The plugin header declares `Requires Plugins: newspack-nodes`, which keeps the runtime active on WordPress 6.5 and later, but WordPress orders neither plugin loading nor plugin updates: this plugin sorts alphabetically ahead of the substrate, so its wiring waits on a `plugins_loaded` priority 11 closure gated on the substrate being present *and* at 2.46.0 or newer. Below that floor the plugin goes dormant behind an admin notice naming both versions rather than fataling on an API that is not there.
 
-Application classes (`Request_Builder_Node`, `Flame_Builder_Node`, `Job_Router_Node`, `Auto_Tuner_Node`, `Remote_Job_Rewrite_Node`, `Discovery_Collector_Node`, …) are plain `Newspack_Nodes\Node` subclasses with their own `fill()` bodies — Node subclasses carry a `_Node` suffix; helpers (`Log_Manager`, `Stats_Store`) don't. The generic `Job_Worker_Node` executor moved to the `newspack-nodes` substrate (`\Newspack_Nodes\Job_Worker_Node`); this plugin contributes only the per-job request-context glue (`Log_Manager::begin/end_job_context`, hooked onto `newspack_nodes/job_worker/{before,after}_job`). The runtime owns the wiring; this plugin owns the data-processing logic. The plugin registers its class namespace with the substrate (`Topology_Registry::register_plugin( 'Newspack_Event_Logger_Nodes\\', …/topologies )` for application nodes + `Command_Interpreter_Node::register_namespace( 'Newspack_Event_Logger_Nodes\\App\\' )` for service CIs), so a topology's `make_node Flame_Builder` resolves `\Newspack_Event_Logger_Nodes\Flame_Builder_Node` by prefix — no per-class registration.
+Application classes (`Request_Builder_Node`, `Request_Flight_Node`, `Flame_Builder_Node`, `Auto_Tuner_Node`, `Job_Router_Node`, `Remote_Job_Rewrite_Node`, `Discovery_Collector_Node`) are plain `Newspack_Nodes\Node` subclasses with their own `fill()` bodies. Node subclasses carry a `_Node` suffix; helpers (`Log_Manager`, `Stats_Store`, `Rule_Set`) do not. Three pieces live in the substrate and have no alias here: the generic `Job_Worker_Node` executor, the `Job_Intake` large-write ingress, and the hub-side `Remote_Source_Node`. This plugin contributes the per-job request context (`Log_Manager::begin_job_context_filter` / `end_job_context`, hooked onto `newspack_nodes/job_worker/{before,after}_job`). The runtime owns the wiring; this plugin owns the data processing.
+
+Registration is by namespace prefix, never per class. `Topology_Registry::register_plugin( 'Newspack_Event_Logger_Nodes\\', …/topologies )` resolves node classes and supplies the stock topologies, and `Command_Interpreter_Node::register_namespace( 'Newspack_Event_Logger_Nodes\\App\\' )` resolves the service CIs, so a topology's `make_node Flame_Builder` finds `\Newspack_Event_Logger_Nodes\Flame_Builder_Node`.
+
+## Requirements
+
+| Requirement | Minimum |
+|-------------|---------|
+| WordPress | 6.5 |
+| PHP | 8.2 |
+| `newspack-nodes` | 2.46.0, installed and active |
+| A cache backend | Memcached, or APCu |
+
+The substrate's `Cache_Backend` prefers the shared `Memcached` handle `Bootstrap` builds from `memcache_servers` and falls back to APCu. The performance statistics are served from that cache; with neither backend every `Stats_Store` read fails soft and the dashboards read "no data".
 
 ## Quick Start
 
@@ -21,11 +34,13 @@ wp plugin install --force --activate \
 wp nodes status
 ```
 
-Or download the zips from the [Releases](https://github.com/Automattic/newspack-event-logger-nodes/releases) page and upload via the WordPress admin.
+Or download the zips from the [Releases](https://github.com/Automattic/newspack-event-logger-nodes/releases) page and upload them through the WordPress admin.
 
-There is no config *filter*. Config is loaded from a PHP config file layered with a WordPress-options overlay.
+## Configuration
 
-Substrate-level settings (base directory, partitions, memcache, active topologies) are read by the substrate's `Newspack_Nodes\Config::load_config()` from `newspack-nodes-config.php` (in the `newspack-nodes` plugin) merged with the substrate's WP-options overlay. Application-level settings (the per-URL logging ruleset, debug toggles, admin allowlist) are read by this plugin's `Newspack_Event_Logger_Nodes\Config::load_config()` from `newspack-event-logger-nodes-config.php` merged with the `Settings_Schema` WP-options overlay — most are editable from the WP admin. (Remote-pull segment sizing moved to the substrate's `newspack_nodes_*` config.)
+Two config files, one per plugin, each layered under a WordPress-options overlay. There is no config *filter*.
+
+Substrate settings — the base directory (default `/tmp/newspack-nodes`), the partition count, the memcache servers, the active topologies — are read by `Newspack_Nodes\Config::load_config()` from `newspack-nodes-config.php`, in the `newspack-nodes` plugin. This plugin's nine application keys are declared once in `Settings_Schema` and overridden in `newspack-event-logger-nodes-config.php`, a commented ledger carrying every key beside its default. Four layers, weakest first: the schema default, that file, the file named by `LOCAL_NEWSPACK_NODES_CONF`, and a stored `newspack_event_logger_nodes_<key>` option. Presence decides the option layer rather than truthiness, so a stored `''`, `[]` or `false` beats both files, and `Config::value()` throws on a key no `Field` declares rather than limping on a default.
 
 ```php
 // Substrate keys live in newspack-nodes-config.php (the newspack-nodes plugin).
@@ -33,6 +48,7 @@ return [
     'base_directory'   => '/tmp/newspack-nodes',
     'num_partitions'   => 4,
     'memcache_servers' => [ '127.0.0.1:11211' ],
+    'topologies'       => [ 'complete' ],
 ];
 
 // Application keys live in newspack-event-logger-nodes-config.php (this plugin).
@@ -40,52 +56,69 @@ return [
     'enable_logging' => true,
     // Per-URL logging ruleset seed (the editor owns it once saved).
     'rules'          => [
-        [ 'pattern' => '/wp-cron.php', 'action' => 'skip' ],
+        [ 'pattern' => '/wp-cron.php?', 'action' => 'skip' ],
         [ 'pattern' => '/', 'action' => 'log' ],
     ],
 ];
 ```
 
-There is no operator hub toggle — `enable_aggregator` (like `enable_workers` before it) was retired. Hub-mode is derived from whether the `aggregator` topology is in the substrate's `topologies` list. Remote-spoke credentials (when this site is the hub) live in the substrate **Vault** (the substrate's `vault` CI); the per-spoke `Remote_Source` nodes are wired on the topology console canvas.
+The settings layer is the substrate's shared Config System (`Newspack_Nodes\Config_System\Field` / `Schema` / `Settings_Renderer` / `Options_Overlay` / `Reset_Gate`); this plugin declares only the `Settings_Schema` those read. Three keys render as checkboxes on the settings page — `enable_logging`, `log_memory` and `flush_every_line`. `rules` has its own editor on that page. The remaining five — `allowed_users`, `hook_start_priority`, `custom_colors`, `stats_mirror_node`, `recommended_log_events` — are overlay-only.
+
+Hub-mode is derived, never toggled: an active `aggregator` topology, by name or by include, or any active graph carrying a `Remote_Source` node. `enable_workers` and `enable_aggregator` are retired, and `tests/unit/RetiredConfigKeysTest.php` guards both names. Remote-spoke credentials live in the substrate's **Vault** (the substrate's `vault` CI); the per-spoke `Remote_Source` nodes are wired on the topology console canvas.
+
+### Logging rules
+
+Which URLs and hooks get logged is a per-URL ruleset, not a global setting. Each rule pairs a URL pattern with a `log` or `skip` action and, for a `log` rule, its own hooks, custom events, significant events, auto-tune thresholds and per-rule diagnostics (`log_queries`, `log_http`, `trace_hooks`, `trace_callers`).
+
+Matching is most-specific-first: a query-bearing pattern (`/jobs/x?job-work`) outranks an exact path (`/about?`), which outranks a prefix (`/blog`). Length breaks ties only *within* a rank, so this is not longest-prefix-wins, and list order never decides the outcome. Comparison is case-insensitive. No rule matched means skip — there is no implicit log-all baseline, so a site that logs everything declares a `/` log rule, as the shipped seed does alongside skips for `/wp-cron.php` and the substrate's own command, SSE and worker-spawn endpoints.
+
+A rule's id is its pattern's `Log_Manager::url_hash()`, so every write rekeys. Rules are edited in the "Logging Rules" editor on the settings page, backed by the `rules` service CI, and seeded from the config file's `rules` key until that editor first writes the option. The classes are `Rule`, `Rule_Set` and `Rule_Matcher`.
 
 ## Development
 
-Fresh clone: `npm install && composer install && npm run build` (the
+Fresh clone: `npm install && composer install && npm run build`. The
 `newspack-nodes` checkout must sit beside this repo — the build kit and
-shared JS resolve through `../newspack-nodes`). Regenerate the classmap
-after adding a Node class: `composer build:autoloaders`. See `AGENTS.md`.
+shared JS resolve through `../newspack-nodes`, unless `NEWSPACK_NODES_SRC`
+names its `src` directory. Regenerate the classmap after adding a Node
+class: `composer build:autoloaders`. See `AGENTS.md`.
 
-## Features
+## Dashboards
 
-Application graph backed by `newspack-nodes` partitions, surfaced as dashboards and SSE streams:
+A dashboard reaches the server two ways, both of them the substrate's: a TM_COMMAND envelope to a service CI through `POST /wp-json/newspack-nodes/v1/command`, and a subscription on `GET /wp-json/newspack-nodes/v1/messages/stream`. Most surfaces use one or the other. The verbs column lists what each one calls; the live-data column lists what it subscribes to.
 
-Every dashboard sends TM_COMMAND envelopes to a service CI via the substrate's single `POST /wp-json/newspack-nodes/v1/command` endpoint, and consumes live data through the substrate's single `/wp-json/newspack-nodes/v1/messages/stream` SSE endpoint. The "verbs" column below lists the CI verb each dashboard calls; the live-data column lists the substrate stream it subscribes to.
+| Surface | Service CI verbs | Live data | Source |
+|---------|------------------|-----------|--------|
+| **Performance** (Event Logger → Performance) | `performance.{overview, urls, url_detail, url_breakdown, request_search, request_detail, request_grep, ask}`, `rules.{list, upsert, delete}` | — | `Request_Builder_Node` + `Flame_Builder_Node` + `Stats_Store` + `Reqgrep_Core`, over the `requests` partition index |
+| **Gyroscope** | — | `subscribe=gyroscope.*` | `Request_Flight_Node` in-flight snapshots plus the `completed:tee` fan-out |
+| **Request Log** | substrate `raw-logs.{list_logs, log_status, read_message}` | `subscribe=completed.*` | `completed:tee` → `completed.p0` |
+| **Error Log** | substrate `raw-logs.{list_logs, log_status, read_message}` | `subscribe=errors.*` | `errors.p0`, written by `Request_Builder_Node` — its own error records, and the `stderr` lines `Diagnostics_Bridge` carries in from the substrate |
+| **Settings** (Settings → Event Logger) | `performance.hooks_registered`, `rules.{list, save, upsert, delete, reset}` | — | The hook taxonomy and `Rule_Set` |
+| **Current Request** (a DevTools tab) | `performance.request_detail` | — | This request's own record |
 
-| Dashboard | Service CI verbs | Live data | Source |
-|-----------|------------------|-----------|--------|
-| **Performance Dashboards** | `performance.{overview, urls, url_detail, request_grep}` | — | `Request_Builder_Node` + `Flame_Builder_Node` + `Stats_Store` + `Reqgrep_Core` |
-| **Request profile** | `performance.{request_search, request_detail}` | — | Partition scan via `.idx` |
-| **Performance Gyroscope** | — | `subscribe=gyroscope.pN` | `Request_Flight_Node` snapshots + `completed:tee` fan-out |
-| **Request Log** | — | `subscribe=completed.pN` | Requests index + `requests.log` |
-| **Event Aggregator (Raw Logs)** | — | `subscribe=firehose.pN` | Direct firehose tail |
-| **Errors** | — | `subscribe=errors.pN` | Tail of `errors.log` |
-| **Workers** (substrate-owned) | `workers.{list, restart, …}` | — | Substrate's `Workers_CI` (lock-dir scan + offsetlog cursors) |
-| **Performance Logger settings** | `performance.{hooks_registered, set}`, `discovery.get` | — | WP options |
-| **Logging Rules editor** (on the settings page) | `rules.{list, save, upsert, delete, reset}` | — | `Rule_Set` (autoloaded ruleset option + per-rule hook options) |
-| **Aggregator Admin (hub-only, substrate-owned)** | substrate `aggregator.*` + `vault.*` CIs | — | Substrate `Remote_Source_Node` per-spoke state + Vault |
-| **Status probe** (substrate-owned) | substrate `status.get` | — | Version, partitions, active topologies, cache reachability |
+Two verbs answer no dashboard. `performance.set` is the write a hub's settings sync pushes at a spoke, and `discovery.get` reports a spoke's hook and custom-event roster to the hub's `Discovery_Collector_Node`. Substrate-owned surfaces live on the substrate's own **Nodes** admin page, as its tabs: Overview, Jobs, Partition Viewer, Log Viewer, Config Audit, Console, Sessions, Vault and Aggregator.
 
-For the full per-CI verb tables and TM_COMMAND envelope shape, see [docs/API.md](docs/API.md).
+For the full per-CI verb tables and the TM_COMMAND envelope shape, see [docs/API.md](docs/API.md).
+
+## Command line
+
+Both commands mount under the substrate's `nodes` namespace:
+
+```bash
+wp nodes reqgrep [<pattern>]   # application-aware firehose filter: groups matching lines by request
+wp nodes ruleset-bench         # measures the ruleset's two hook-storage tiers, inline vs Table-pointer
+```
+
+`reqgrep` matches every request when the pattern is omitted, and takes `--follow`, `--recent`, `--raw`, `--incomplete`, `--bucket-size`, `--num-buckets` and `--firehose`; `ruleset-bench` takes `--iterations`.
 
 ## MCP
 
-The same service-CI verbs are also served as JSON-RPC over MCP, so an agent can read the performance data and edit the ruleset without a dashboard. It adds no runtime surface — `tools/call` mounts the request graph `/command` mounts and dispatches through the same interpreter.
+The same service-CI verbs are also served as JSON-RPC over MCP, so an agent can read the performance data and edit the ruleset without a dashboard. It adds no runtime surface: `tools/call` mounts the same request graph `/command` mounts and dispatches through the same interpreter.
 
 ```
 POST /wp-json/newspack-event-logger-nodes/v1/mcp
 ```
 
-Authentication is a scoped command session (issue one under Nodes → Sessions), passed as `Authorization: Bearer <handle>.<key>`. The request becomes that session's minting user and applies its scope as a ceiling, so the scope can only ever subtract and `tools/list` offers only what it covers: a `read` session sees the performance tools and `rules list`, `tune` adds `rules upsert` and `rules delete`.
+Authentication is a scoped command session (issue one under Nodes → Sessions), passed as `Authorization: Bearer <handle>.<key>`. The request becomes that session's minting user and applies the scope as a ceiling, so a scope can only ever subtract and `tools/list` offers only what it covers: a `read` session sees the seven performance tools and `rules_list`, and `tune` adds `rules_upsert` and `rules_delete`.
 
 Register it with a client — `<ID>` is the local name the client files it under:
 
@@ -97,21 +130,22 @@ See [docs/API.md](docs/API.md) for the tool list, the measurement caveat every t
 
 ## Topologies
 
-Per-partition node graphs ship as declarative `.tsl` files in `topologies/`: `aggregator.tsl`, `hub-control.tsl`, `request-builder.tsl`, `job-router.tsl`, `job-feed.tsl`, `job-spoke.tsl`, `job-hub.tsl`, `flame-builder.tsl`, `complete.tsl`, and `performance.tsl` (plus the substrate's runtime-only `firehose` / `jobintake` basenames). Which topologies are active is the substrate's `topologies` config key. Hub vs spoke is derived from topology membership (no operator toggle): a spoke runs the request/job/flame graphs locally, while a hub additionally runs `aggregator.tsl` (the substrate `Remote_Source_Node` pull-side feeding ELN's `Remote_Job_Rewrite_Node`) and the single-instance `hub-control.tsl` (settings-sync + discovery fan-out). See [docs/architecture-guide.md](docs/architecture-guide.md) for the full per-topology breakdown and hub/spoke flow.
+Per-partition node graphs ship as declarative `.tsl` files in `topologies/`: `request-builder.tsl`, `flame-builder.tsl`, `performance.tsl`, `complete.tsl`, `job-router.tsl`, `job-feed.tsl`, `job-hub.tsl`, `job-spoke.tsl`, `aggregator.tsl` and `hub-control.tsl`. They include the substrate's own `job-intake`, `job-worker`, `settings-sync` and `topic-probe` graphs. Which topologies run is the substrate's `topologies` config key.
 
-## Cache Warmer (moved)
+Hub and spoke differ by topology membership rather than by a toggle. A spoke runs the request, job and flame graphs locally; a hub additionally runs `aggregator.tsl` — the substrate `Remote_Source_Node` pull side feeding this plugin's `Remote_Job_Rewrite_Node` — and the single-partition `hub-control.tsl`, which fans settings sync and discovery out across the fleet. See [docs/architecture-guide.md](docs/architecture-guide.md) for the per-topology breakdown and the hub/spoke flow.
 
-The refresh-ahead cache warmer that used to ship here was extracted into its own plugin, **newspack-cache-cozy**, in v0.15.0. The standalone profiler asset `00-newspack-profiler.php` still ships as an mu-plugin drop-in alongside this plugin.
+## Bundled assets
 
-## Configuration / Settings
+`mu-plugins/00-newspack-profiler.php` is a standalone drop-in that times each active plugin's load and records the moment PHP began the request; this plugin writes those measurements to the firehose when it is active, and the drop-in depends on nothing. Every release attaches it beside the plugin zip, for installation under `wp-content/mu-plugins/`.
 
-As of 0.13.0 the settings layer is built on the substrate's shared Config System (`Newspack_Nodes\Config_System\Field` / `Schema` / `Settings_Renderer`). This plugin declares a single declarative `Settings_Schema` (`includes/class-settings-schema.php`); the WP-options overlay that `Config::load_config()` applies, the per-field reset (↺) UI, and the delete-on-blank gate are all the shared `Newspack_Nodes\Config_System` machinery (`Options_Overlay`, `Reset_Gate`).
+The refresh-ahead cache warmer that once shipped here is its own plugin, [`newspack-cache-cozy`](https://github.com/Automattic/newspack-cache-cozy).
 
-**Which URLs and hooks get logged is a per-URL ruleset, not a global setting (v0.26.0).** The seven old global options (`log_urls` / `skip_urls` / `log_events` / `custom_events` / `significant_events` / `auto_disable_threshold` / `auto_protect_time_threshold`) were replaced by an ordered list of **rules** — each a URL pattern (prefix `/x` or exact `/x?`) with a `log`/`skip` action and, for `log` rules, its own hooks, custom events, significant events, and auto-tune thresholds. Matching is longest-prefix-wins and case-insensitive; no rule matches ⇒ skip, and there is no implicit log-all baseline (declare a `/` log rule to log everything). Rules are edited in the "Logging Rules" editor on the settings page (the `rules` CI backs it) and seeded from `newspack-event-logger-nodes-config.php`'s `rules` key until the editor first writes the option. New classes: `Rule`, `Rule_Set`, `Rule_Matcher`.
+## Documentation
 
-## Migration from Newspack Event Logger Plugins
-
-The legacy `newspack-event-logger-plugins` monorepo was replaced wholesale by this plugin (application) plus `newspack-nodes` (substrate). That monorepo has since been removed from the tree ("the museum") — there is no live coexisting stack. This plugin defaults its storage to `/tmp/newspack-nodes` and exposes `wp nodes reqgrep` for firehose searching.
+- [docs/architecture-guide.md](docs/architecture-guide.md) — write path, topologies, application nodes, memcache schema, hub/spoke flow
+- [docs/API.md](docs/API.md) — service-CI verbs, the command endpoint, SSE and MCP
+- [AGENTS.md](AGENTS.md) — architecture decisions, layout, build and release
+- [CHANGELOG.md](CHANGELOG.md) — version-by-version history
 
 ## License
 
@@ -119,4 +153,4 @@ GPL-2.0-or-later
 
 ## Status
 
-0.43.11. The dashboard consolidation (per-dashboard SSE controllers → single substrate `/messages/stream`) and the controller→CI migration are complete; all dashboards ride the substrate's `_http` / `_sse` / `_heartbeat` spine with a canonical view contract (pending-Map gate, TM_ERROR isolation, `_errorMessage()` helper). Post-0.8 milestones: `Job_Worker_Node` executor moving to the substrate (0.12.0), migration onto the substrate's shared Config System (0.13.0), the refresh-ahead cache warmer extracted to the standalone `newspack-cache-cozy` plugin (0.15.0), `Request_Builder_Node` becoming a `Timer_Node` plus `void_warranty` lock-free output partitions (0.16.0), the jobs-log kind field normalized to `k` end-to-end (0.16.1), per-worker-URL stats rows fully excluded from global aggregates (0.17.0), adoption of the substrate's flat partition-in-name layout plus `parse_schema_args` delegation (0.18.0), the **per-URL logging ruleset** that replaced the seven global logging/auto-tune options with an ordered `Rule`/`Rule_Set`/`Rule_Matcher` set (0.26.0), whose rule ids are the pattern's `url_hash` and whose editor is a fifth `rules` service CI on the settings page, and the substrate's **token-array command contract** (TM_COMMAND / node-constructor `arguments` are a `list<string>` argv rather than a joined string; verb handlers take `array $args` and parse via `Command_Args::parse( self::arg_strings( $args ) )`). Most recently: the dashboards adopted the substrate's canonical UI layer — controls, modals, focus rings, and status colors now share one implementation (0.43.4) — and the repo gained vendored copies of the substrate's shared tooling plus `core.hooksPath` git hooks, so a standalone clone works without a sibling checkout (0.43.8). The `status.get` verb reports the substrate `runtime_version`, `num_partitions`, active `topologies`, and `cache_available`; it carries no separate application version field. See `CHANGELOG.md` for the version-by-version history.
+This plugin releases independently of the substrate: it declares a minimum runtime version, not a matching one, and the plugin header and `CHANGELOG.md` carry its own. Every dashboard rides the substrate's `_http` / `_sse` / `_heartbeat` spine and its canonical UI layer, and every server-side read is a service-CI verb. The `status.get` verb — substrate-owned — reports the runtime version, the partition count, the active topologies and cache reachability; it carries no separate application version.

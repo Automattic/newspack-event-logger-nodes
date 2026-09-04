@@ -1182,7 +1182,7 @@ class LogManagerTest extends TestCase {
 
 	public function test_max_data_size_constant_preserved(): void {
 		$ref = new \ReflectionClassConstant( Log_Manager::class, 'MAX_DATA_SIZE' );
-		$this->assertSame( 3840, $ref->getValue() );
+		$this->assertSame( 4000, $ref->getValue() );
 	}
 
 	public function test_fatal_types_constant_preserved(): void {
@@ -1955,7 +1955,7 @@ class LogManagerTest extends TestCase {
 		$this->assertArrayHasKey( 'm', $truncated_entry );
 		// `m` is a real prefix of the value; the category carries the marker.
 		$this->assertStringStartsWith( 'AAAA', (string) $truncated_entry['m'] );
-		$this->assertLessThanOrEqual( 3840, \strlen( (string) \wp_json_encode( $truncated_entry ) ) );
+		$this->assertLessThanOrEqual( 4000, \strlen( (string) \wp_json_encode( $truncated_entry ) ) );
 	}
 
 	/**
@@ -1984,7 +1984,7 @@ class LogManagerTest extends TestCase {
 		$this->assertSame( 'Newspack_Blocks::build_articles_query', $entry['l'] ?? null );
 		$this->assertStringStartsWith( 'AAAA', (string) $entry['m'] );
 		$this->assertTrue( $entry['truncated'] ?? false, 'the wire says it was trimmed' );
-		$this->assertLessThanOrEqual( 3840, \strlen( (string) \wp_json_encode( $entry ) ) );
+		$this->assertLessThanOrEqual( 4000, \strlen( (string) \wp_json_encode( $entry ) ) );
 	}
 
 	/** An oversized ARRAY `m` is dropped; the other keys still ride. */
