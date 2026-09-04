@@ -2174,15 +2174,13 @@ class FlameBuilderTest extends TestCase {
 			$singles[ $urls ] = $counter->singles;
 		}
 
+		// Four times the URLs must not cost four times the round trips. On the
+		// pre-batch code these were 72 and 151 — dead linear in URLs.
 		$this->assertLessThan(
 			2 * $singles[12],
 			$singles[48],
 			'single round trips must not scale with URL count'
 		);
-
-		// Four times the URLs must not cost four times the round trips. Measured
-		// on the pre-batch code these were 72 and 151 — dead linear in URLs.
-		\fwrite( \STDERR, "\nSINGLES: 12 urls => {$singles[12]}, 48 urls => {$singles[48]}\n" );
 	}
 
 	/** Seed one bucket's URL rows into the node's pending state and persist them. */
