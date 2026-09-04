@@ -365,6 +365,8 @@ class Request_Builder_Node extends Timer_Node {
 			$keyword = $intern[ $keyword ] ??= $keyword;
 		}
 		$n = $entry['n'] ?? 0;
+		$ts_v = $message[ Message::TIMESTAMP ] ?? 0;
+		$entry['ts'] = $ts_v;
 		++$this->line_counter;
 
 		// get() returns the same object instance — mutations happen in place.
@@ -449,7 +451,6 @@ class Request_Builder_Node extends Timer_Node {
 			$this->push_stack( $request, \substr( $keyword, 0, -8 ), Core::str( $label ) );
 		} elseif ( \str_ends_with( $keyword, ' (complete)' ) ) {
 			$dur_v = $entry['duration_ms'] ?? 0;
-			$ts_v  = $entry['ts'] ?? 0;
 			$this->pop_stack(
 				$request,
 				\substr( $keyword, 0, -11 ),
@@ -459,8 +460,7 @@ class Request_Builder_Node extends Timer_Node {
 		}
 
 		// Per-line activity timestamps for the inflight snapshot's *_ms derive.
-		$ts_log_v             = $entry['ts'] ?? 0;
-		$request->last_log_ts = Core::as_float( $ts_log_v );
+		$request->last_log_ts = Core::as_float( $ts_v );
 		$request->tracker_ts  = Core::$now ?: Core::right_now();
 
 		// Runaways stay visible (Perl gyroscope parity); still evicted+bounded.
@@ -475,7 +475,7 @@ class Request_Builder_Node extends Timer_Node {
 		if ( isset( $request->entries ) ) {
 			$stored = [
 				'n'  => $n,
-				'ts' => $entry['ts'] ?? 0,
+				'ts' => $ts_v,
 				'k'  => $keyword,
 			];
 
@@ -651,11 +651,11 @@ class Request_Builder_Node extends Timer_Node {
 	 * stale copy on the line would disagree with the completed-request doc.
 	 *
 	 * @param array<string,mixed> $entry   Decoded entry.
-	 * @param string               $rid     Request id — propagated to Message::KEY so
-	 *                                      downstream readers can identify the request
-	 *                                      without re-parsing the entry payload.
-	 * @param \stdClass            $request Active request state supplying authoritative URL context.
-	 * @param string               $target  Destination node name ('' = skip).
+	 * @param string              $rid     Request id — propagated to Message::KEY so
+	 *                                     downstream readers can identify the request
+	 *                                     without re-parsing the entry payload.
+	 * @param \stdClass           $request Active request state supplying authoritative URL context.
+	 * @param string              $target  Destination node name ('' = skip).
 	 */
 	private function emit_entry( array $entry, string $rid, \stdClass $request, string $target ): void {
 		if ( '' === $target || null === $this->sink ) {
@@ -672,7 +672,6 @@ class Request_Builder_Node extends Timer_Node {
 		}
 		$message                       = Message::new_message();
 		$message[ Message::TYPE ]      = Message::TM_STRUCT;
-		$message[ Message::TIMESTAMP ] = Core::$now;
 		$message[ Message::FROM ]      = $this->name;
 		$message[ Message::TO ]        = $target;
 		$message[ Message::KEY ]       = $rid;
@@ -805,8 +804,8 @@ class Request_Builder_Node extends Timer_Node {
 		if ( isset( $profiles[ $state ] ) ) {
 			$profile          = &$profiles[ $state ];
 			$profile['time'] += $time;
+			$profile['ts']    = $ts;
 			++$profile['count'];
-			$profile['ts'] = \max( $profile['ts'], $ts );
 
 			if ( $label && isset( $profile['entries'][ $label ] ) ) {
 				$profile['entries'][ $label ][0] += $time;
@@ -1316,7 +1315,6 @@ class Request_Builder_Node extends Timer_Node {
 	public function emit_request( \stdClass $request ): void {
 		$message                       = Message::new_message();
 		$message[ Message::TYPE ]      = Message::TM_STRUCT;
-		$message[ Message::TIMESTAMP ] = Core::$now;
 		$message[ Message::FROM ]      = $this->name;
 		// Dynamic \stdClass prop is mixed by design; string cast intentional.
 		/** @var int|float|string $rid_raw */
@@ -1411,7 +1409,6 @@ class Request_Builder_Node extends Timer_Node {
 		$rid     = Core::as_string( $request->rid ?? '' );
 		$message                       = Message::new_message();
 		$message[ Message::TYPE ]      = Message::TM_STRUCT;
-		$message[ Message::TIMESTAMP ] = Core::$now;
 		$message[ Message::FROM ]      = $this->name;
 		$message[ Message::TO ]        = $this->completed_target;
 		$message[ Message::KEY ]       = $rid;

@@ -79,13 +79,12 @@ class Request_Flight_Node extends Timer_Node {
 			if ( $delta && Core::as_float( $row['last_log_ts'] ?? 0 ) < $watermark ) {
 				continue;
 			}
-			$message                       = Message::new_message();
-			$message[ Message::TYPE ]      = Message::TM_STRUCT;
-			$message[ Message::TIMESTAMP ] = Core::$now;
-			$message[ Message::FROM ]      = $this->name;
-			$message[ Message::TO ]        = $this->target;
-			$message[ Message::KEY ]       = (string) $rid;
-			$message[ Message::VALUE ]     = $row;
+			$message                   = Message::new_message();
+			$message[ Message::TYPE ]  = Message::TM_STRUCT;
+			$message[ Message::FROM ]  = $this->name;
+			$message[ Message::TO ]    = $this->target;
+			$message[ Message::KEY ]   = (string) $rid;
+			$message[ Message::VALUE ] = $row;
 			$fitted = Line_Fitter::fit( $message, [ 'url', 'user_agent' ] );
 			if ( null === $fitted ) {
 				$this->print_less_often( 'WARNING: dropping oversize in-flight row for ', (string) $rid );
