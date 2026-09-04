@@ -1183,15 +1183,21 @@ class Log_Manager {
 		$m                  = $data['m'] ?? null;
 		$data['truncated']  = true;
 		if ( \is_string( $m ) ) {
-			$data['m'] = \substr( $m, 0, self::TRUNCATED_SIZE ) . '...';
-			$encoded   = \wp_json_encode( $data, $flags );
-			if ( false !== $encoded && \strlen( $encoded ) <= self::MAX_DATA_SIZE ) {
-				return $data;
+			for ( $len = self::TRUNCATED_SIZE; $len > 0; $len = (int) ( $len * 0.9 ) ) {
+				$data['m'] = \substr( $m, 0, $len );
+				$encoded   = \wp_json_encode( $data, $flags );
+				if ( false !== $encoded && \strlen( $encoded ) <= self::MAX_DATA_SIZE ) {
+					return $data;
+				}
 			}
 		}
 		unset( $data['m'] );
 		$encoded = \wp_json_encode( $data, $flags );
-		return $data;
+		if ( false !== $encoded && \strlen( $encoded ) <= self::MAX_DATA_SIZE ) {
+			return $data;
+		}
+		// Nothing else is ever this big; a truncated dump is the floor.
+		return [ 'm' => \substr( $data_json, 0, 1000 ) . '...', 'truncated' => true ];
 	}
 
 	/**

@@ -528,13 +528,12 @@ class Flame_Builder_Node extends Node {
 		if ( '' === $this->target || null === $this->sink ) {
 			return; // Aggregation still happens; just no on-disk flame.
 		}
-		$message                       = Message::new_message();
-		$message[ Message::TYPE ]      = Message::TM_STRUCT;
-		$message[ Message::TIMESTAMP ] = Core::$now;
-		$message[ Message::FROM ]      = $this->name;
-		$message[ Message::TO ]        = $this->target;
-		$message[ Message::KEY ]       = $flame_data['rid'];
-		$message[ Message::VALUE ]     = $flame_data;
+		$message                   = Message::new_message();
+		$message[ Message::TYPE ]  = Message::TM_STRUCT;
+		$message[ Message::FROM ]  = $this->name;
+		$message[ Message::TO ]    = $this->target;
+		$message[ Message::KEY ]   = $flame_data['rid'];
+		$message[ Message::VALUE ] = $flame_data;
 		// Deferred on a stop so the caller still accumulates stats.
 		$this->guarded( fn () => $this->sink->fill( $message ) );
 	}
@@ -1928,7 +1927,6 @@ class Flame_Builder_Node extends Node {
 		);
 		$message                       = Message::new_message();
 		$message[ Message::TYPE ]      = Message::TM_STRUCT;
-		$message[ Message::TIMESTAMP ] = Core::$now;
 		$message[ Message::FROM ]      = $this->name;
 		$message[ Message::TO ]        = $this->sibling_name( 'auto-tuner' );
 		$message[ Message::KEY ]       = $key;
