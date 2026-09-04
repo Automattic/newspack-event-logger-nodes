@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The firehose cap now bounds what the wire carries.** `MAX_DATA_SIZE` was measured against the caller's `$data`, but `n`, `k` and `ts` are stamped on afterwards, so a payload that cleared the cap on its own still shipped an oversized entry — 3895 bytes against a 3840 cap in the regression test. `message()` builds the entry first and fits THAT, and the last-resort floor keeps `n`, `k` and `ts` so a reader can still place the line.
+
 - **Every failed Ask showed "An error occurred" instead of why.** `useAsk` reports a reason STRING — the substrate types a reply's `error` as `?string`, and `errorMessage()` coerces every TM_ERROR payload before `onDone` sees it — but the page's handler read `err.message`, which is `undefined` on a string, so the real reason was discarded on both failure paths. The tests passed because they drove the handler with an `Error` object production never sends; they now use the string the runtime actually delivers, and fail against the old code.
 
 ### Documentation
