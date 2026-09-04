@@ -356,18 +356,20 @@ class LogManagerTest extends TestCase {
 
 	public function test_worst_case_envelope_fits_a_full_data_payload_under_pipe_buf(): void {
 		// The MAX_DATA_SIZE (3840) ↔ PIPE_BUF (4096) gap must absorb the WHOLE
-		// positional envelope at the extremes: a data payload sitting exactly at
-		// MAX_DATA_SIZE plus a maximum-length request-id KEY. If it doesn't, the
-		// Partition drops the record whole and this test sees no full-size line.
+		// positional envelope at the extremes: an ENTRY fitted right up to
+		// MAX_DATA_SIZE plus a maximum-length request-id KEY. The cap bounds the
+		// entry, so `n`, `k` and `ts` are inside it and the gap is the envelope's
+		// alone. If it doesn't fit, the Partition drops the record whole and this
+		// test sees no full-size line.
 		$this->require_config_or_skip();
 		$this->rmdir_recursive( self::TEST_DIR );
 
 		// Max-length rid: init_firehose caps X-A8C-Request-Id at 64 chars.
 		$_SERVER['HTTP_X_A8C_REQUEST_ID'] = \str_repeat( 'R', 70 );
 
-		// Adversarial data whose encoded length is EXACTLY MAX_DATA_SIZE: multibyte
-		// (6-byte \uXXXX escapes) + quote/backslash escapes, then ASCII pad to land
-		// on 3840 — not plain padding, so escape expansion is exercised.
+		// Adversarial data over MAX_DATA_SIZE: multibyte (6-byte \uXXXX escapes) +
+		// quote/backslash escapes, then ASCII pad — not plain padding, so escape
+		// expansion is exercised on the way down to the cap.
 		$m  = \str_repeat( '错', 300 ) . \str_repeat( '"', 100 ) . \str_repeat( '\\', 100 );
 		$m .= \str_repeat( 'x', 3840 - \strlen( (string) \wp_json_encode( [ 'm' => $m ] ) ) );
 		$this->assertSame(
@@ -388,7 +390,9 @@ class LogManagerTest extends TestCase {
 				$max = \max( $max, \strlen( $line ) );
 			}
 		}
-		$this->assertGreaterThan( 3840, $max, 'the full worst-case record survived — not dropped as oversize' );
+		// 3500 is far above any routine firehose line, so only the worst-case
+		// record can reach it: a drop would leave $max at the ordinary lines.
+		$this->assertGreaterThan( 3500, $max, 'the full worst-case record survived — not dropped as oversize' );
 		$this->assertLessThanOrEqual( 4096, $max + 1, 'packed record + newline fits PIPE_BUF at the extremes' );
 	}
 
@@ -1182,7 +1186,7 @@ class LogManagerTest extends TestCase {
 
 	public function test_max_data_size_constant_preserved(): void {
 		$ref = new \ReflectionClassConstant( Log_Manager::class, 'MAX_DATA_SIZE' );
-		$this->assertSame( 4000, $ref->getValue() );
+		$this->assertSame( 3840, $ref->getValue() );
 	}
 
 	public function test_fatal_types_constant_preserved(): void {
@@ -1955,7 +1959,7 @@ class LogManagerTest extends TestCase {
 		$this->assertArrayHasKey( 'm', $truncated_entry );
 		// `m` is a real prefix of the value; the category carries the marker.
 		$this->assertStringStartsWith( 'AAAA', (string) $truncated_entry['m'] );
-		$this->assertLessThanOrEqual( 4000, \strlen( (string) \wp_json_encode( $truncated_entry ) ) );
+		$this->assertLessThanOrEqual( 3840, \strlen( (string) \wp_json_encode( $truncated_entry ) ) );
 	}
 
 	/**
@@ -1984,7 +1988,37 @@ class LogManagerTest extends TestCase {
 		$this->assertSame( 'Newspack_Blocks::build_articles_query', $entry['l'] ?? null );
 		$this->assertStringStartsWith( 'AAAA', (string) $entry['m'] );
 		$this->assertTrue( $entry['truncated'] ?? false, 'the wire says it was trimmed' );
-		$this->assertLessThanOrEqual( 4000, \strlen( (string) \wp_json_encode( $entry ) ) );
+		$this->assertLessThanOrEqual( 3840, \strlen( (string) \wp_json_encode( $entry ) ) );
+	}
+
+	/**
+	 * The cap must bound what the WIRE carries. `n`, `k` and `ts` are stamped on
+	 * after the caller's data, so a payload that clears the cap on its own can
+	 * still put the entry over it. 3800 is chosen to encode just under 3840 as
+	 * `$data` and just over it as an entry — distinct from the cap, from the
+	 * 1000-char floor and from every other seed in this file.
+	 */
+	public function test_the_cap_bounds_the_entry_including_n_k_and_ts(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::TEST_DIR );
+		Log_Manager::reset();
+		Config::reset();
+		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
+		Config::reset();
+
+		$this->set_rules_option( [ [ 'id' => 'root', 'pattern' => '/', 'action' => 'log', 'custom_events' => [ 'truncation_test', 'edge_event' ] ] ] );
+		$lm = Log_Manager::instance();
+		$lm->start( 'truncation_test' );
+		$lm->message( 'edge_event', [ 'm' => \str_repeat( 'A', 3800 ) ] );
+		$lm->finish();
+
+		$entry = $this->find_last_entry( 'edge_event' );
+		$this->assertNotNull( $entry );
+		$this->assertLessThanOrEqual(
+			3840,
+			\strlen( (string) \wp_json_encode( $entry ) ),
+			'the entry on the wire — not just the caller data — fits the cap'
+		);
 	}
 
 	/** An oversized ARRAY `m` is dropped; the other keys still ride. */

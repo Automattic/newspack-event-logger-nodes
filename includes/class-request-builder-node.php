@@ -365,8 +365,6 @@ class Request_Builder_Node extends Timer_Node {
 			$keyword = $intern[ $keyword ] ??= $keyword;
 		}
 		$n = $entry['n'] ?? 0;
-		$ts_v = $message[ Message::TIMESTAMP ] ?? 0;
-		$entry['ts'] = $ts_v;
 		++$this->line_counter;
 
 		// get() returns the same object instance — mutations happen in place.
@@ -451,6 +449,7 @@ class Request_Builder_Node extends Timer_Node {
 			$this->push_stack( $request, \substr( $keyword, 0, -8 ), Core::str( $label ) );
 		} elseif ( \str_ends_with( $keyword, ' (complete)' ) ) {
 			$dur_v = $entry['duration_ms'] ?? 0;
+			$ts_v  = $entry['ts'] ?? 0;
 			$this->pop_stack(
 				$request,
 				\substr( $keyword, 0, -11 ),
@@ -460,7 +459,8 @@ class Request_Builder_Node extends Timer_Node {
 		}
 
 		// Per-line activity timestamps for the inflight snapshot's *_ms derive.
-		$request->last_log_ts = Core::as_float( $ts_v );
+		$ts_log_v             = $entry['ts'] ?? 0;
+		$request->last_log_ts = Core::as_float( $ts_log_v );
 		$request->tracker_ts  = Core::$now ?: Core::right_now();
 
 		// Runaways stay visible (Perl gyroscope parity); still evicted+bounded.
@@ -475,7 +475,7 @@ class Request_Builder_Node extends Timer_Node {
 		if ( isset( $request->entries ) ) {
 			$stored = [
 				'n'  => $n,
-				'ts' => $ts_v,
+				'ts' => $entry['ts'] ?? 0,
 				'k'  => $keyword,
 			];
 
@@ -804,8 +804,8 @@ class Request_Builder_Node extends Timer_Node {
 		if ( isset( $profiles[ $state ] ) ) {
 			$profile          = &$profiles[ $state ];
 			$profile['time'] += $time;
-			$profile['ts']    = $ts;
 			++$profile['count'];
+			$profile['ts'] = \max( $profile['ts'], $ts );
 
 			if ( $label && isset( $profile['entries'][ $label ] ) ) {
 				$profile['entries'][ $label ][0] += $time;

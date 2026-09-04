@@ -126,11 +126,15 @@ class Log_Manager {
 	/** Per-value byte cap for environment_v3 map values. */
 	private const ENV_VALUE_MAX = 256;
 
-	/** Encoded-data cap in bytes. */
-	private const MAX_DATA_SIZE = 4000;
-
-	/** Truncated size in bytes. */
-	private const TRUNCATED_SIZE = 3840;
+	/**
+	 * Encoded-data cap in bytes. The headroom under PIPE_BUF (4096) keeps a
+	 * lock-free append atomic against every other writer on this multi-writer
+	 * log, and it also has to cover the `n`, `k` and `ts` keys message() stamps
+	 * onto the entry AFTER this cap is applied. Payloads that can exceed it
+	 * belong in \Newspack_Nodes\Job_Intake::queue(), not here — message()
+	 * truncates.
+	 */
+	private const MAX_DATA_SIZE = 3840;
 
 	/** @var int Maximum timer stack depth to prevent unbounded growth. */
 	private const MAX_TIMER_DEPTH = 100;
@@ -1148,18 +1152,21 @@ class Log_Manager {
 		if ( isset( $data['m'] ) && \is_string( $data['m'] ) && false !== \strpos( $data['m'], '?' ) ) {
 			$data['m'] = self::redact_url( $data['m'] );
 		}
-		$data_json = \wp_json_encode( $data, \JSON_INVALID_UTF8_SUBSTITUTE | \JSON_PARTIAL_OUTPUT_ON_ERROR );
-		if ( false !== $data_json && \strlen( $data_json ) > self::MAX_DATA_SIZE ) {
-			$data = self::fit_data( $data, $data_json );
-		}
 		if ( null === $this->topic ) {
 			return false;
 		}
 
-		$entry = [ 'n' => $this->line_number++, 'k' => $category ] + $data;
+		// The cached clock is frozen in request scope: read once, use twice.
+		$now   = Core::right_now();
+		$entry = [ 'n' => $this->line_number++, 'k' => $category ] + $data + [ 'ts' => $now ];
+		// Fit the ENTRY, not $data: the cap must bound what the wire carries.
+		$entry_json = \wp_json_encode( $entry, \JSON_INVALID_UTF8_SUBSTITUTE | \JSON_PARTIAL_OUTPUT_ON_ERROR );
+		if ( false !== $entry_json && \strlen( $entry_json ) > self::MAX_DATA_SIZE ) {
+			$entry = self::fit_data( $entry, $entry_json );
+		}
 		$message                                       = \Newspack_Nodes\Message::new_message();
 		$message[ \Newspack_Nodes\Message::TYPE ]      = \Newspack_Nodes\Message::TM_STRUCT;
-		$message[ \Newspack_Nodes\Message::TIMESTAMP ] = Core::right_now();
+		$message[ \Newspack_Nodes\Message::TIMESTAMP ] = $now;
 		$message[ \Newspack_Nodes\Message::KEY ]       = $this->request_id;
 		$message[ \Newspack_Nodes\Message::VALUE ]     = $entry;
 		$this->topic->fill( $message );
@@ -1174,30 +1181,41 @@ class Log_Manager {
 	/**
 	 * Shrink an oversized entry to fit MAX_DATA_SIZE.
 	 *
-	 * @param array<string,mixed> $data      The oversized data map.
-	 * @param string              $data_json Its encoding, already measured.
-	 * @return array<string,mixed> A map whose encoding fits.
+	 * `m` is the only value that reaches this size: an array `m` is dropped
+	 * whole and a string `m` is trimmed to whatever room the other keys leave.
+	 * The category `k` is never renamed — that breaks `Flame_Tree::PATTERN_START`
+	 * and a trimmed span would never open.
+	 *
+	 * @param array<string,mixed> $entry      The oversized entry.
+	 * @param string              $entry_json Its encoding, already measured.
+	 * @return array<string,mixed> An entry whose encoding fits.
 	 */
-	private static function fit_data( array $data, string $data_json ): array {
-		$flags = \JSON_INVALID_UTF8_SUBSTITUTE | \JSON_PARTIAL_OUTPUT_ON_ERROR;
-		$m                  = $data['m'] ?? null;
-		$data['truncated']  = true;
+	private static function fit_data( array $entry, string $entry_json ): array {
+		$flags              = \JSON_INVALID_UTF8_SUBSTITUTE | \JSON_PARTIAL_OUTPUT_ON_ERROR;
+		$m                  = $entry['m'] ?? null;
+		$entry['truncated'] = true;
 		if ( \is_string( $m ) ) {
-			for ( $len = self::TRUNCATED_SIZE; $len > 0; $len = (int) ( $len * 0.9 ) ) {
-				$data['m'] = \substr( $m, 0, $len );
-				$encoded   = \wp_json_encode( $data, $flags );
+			for ( $len = self::MAX_DATA_SIZE; $len > 0; $len = (int) ( $len * 0.9 ) ) {
+				$entry['m'] = \substr( $m, 0, $len );
+				$encoded    = \wp_json_encode( $entry, $flags );
 				if ( false !== $encoded && \strlen( $encoded ) <= self::MAX_DATA_SIZE ) {
-					return $data;
+					return $entry;
 				}
 			}
 		}
-		unset( $data['m'] );
-		$encoded = \wp_json_encode( $data, $flags );
+		unset( $entry['m'] );
+		$encoded = \wp_json_encode( $entry, $flags );
 		if ( false !== $encoded && \strlen( $encoded ) <= self::MAX_DATA_SIZE ) {
-			return $data;
+			return $entry;
 		}
-		// Nothing else is ever this big; a truncated dump is the floor.
-		return [ 'm' => \substr( $data_json, 0, 1000 ) . '...', 'truncated' => true ];
+		// Floor: a truncated dump keeping n/k/ts, or no reader can place it.
+		return [
+			'n'         => $entry['n'] ?? 0,
+			'k'         => $entry['k'] ?? '',
+			'm'         => \substr( $entry_json, 0, 1000 ) . '...',
+			'ts'        => $entry['ts'] ?? 0,
+			'truncated' => true,
+		];
 	}
 
 	/**
