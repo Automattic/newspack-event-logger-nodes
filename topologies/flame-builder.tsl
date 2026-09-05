@@ -2,7 +2,7 @@
 #
 #   Consumer (requests.log) ─→ FlameBuilder ─→ Partition (flames:partition)
 #                                            └→ Stats_Store (memcache, hidden via configure_stats)
-#                                            └→ Partition (flame-stats:partition — stats mirror = full aggregates + top-N per-URL (10 flame / 100 dim / 100 cat), snapshot-per-checkpoint; read back on a memcache miss; <eln:stats_mirror_node> empty turns it off)
+#                                            └→ Partition (flame-stats:partition — stats mirror = full aggregates + top-N per-URL (100 dim / 100 cat; flame profiles only when set_flame_topn raises the default 0; the derived hourly tier keeps nothing), one write per bucket at close; read back on a memcache miss; <eln:stats_mirror_node> empty turns it off)
 #                                            └→ flame-builder:auto-tuner (owned sibling, hidden)
 
 include topic-probe

@@ -1,9 +1,10 @@
 # Newspack Event Logger Nodes API
 
-The plugin registers exactly **one** REST route of its own — the MCP server. Everything
-else a caller reaches is a verb on a service Command_Interpreter (CI) node, addressed by
-name through the substrate's command endpoint, plus two WP-CLI verbs, a small PHP API
-sibling plugins log through, and the WordPress hooks it fires and consumes.
+The plugin registers exactly **one** REST route of its own — the MCP server. Every other
+call a client makes over HTTP is a verb on a service Command_Interpreter (CI) node,
+addressed by name through the substrate's command endpoint. Beside that wire surface the
+plugin exposes two WP-CLI verbs, the `Log_Manager` PHP API sibling plugins log through,
+and the WordPress hooks it fires and consumes.
 
 | Endpoint | Owner | Purpose |
 |----------|-------|---------|
@@ -21,8 +22,8 @@ for the substrate's own wire shapes.
 
 ## Authentication and rate limiting
 
-Every door runs `Bootstrap::fleet_gate()` first, so a subsite cannot reach the main site's
-fleet; it answers `403 Forbidden`.
+Every door runs `Bootstrap::fleet_gate()` first: the fleet is network-global, so it runs on
+the main site alone and a multisite subsite gets `403 Forbidden`.
 
 `/command` and `/messages/stream` then gate on the substrate's lowest role,
 `Capabilities::READ`. That role resolves to `manage_options` on a stock install and to
@@ -75,12 +76,17 @@ Content-Type: application/json
 - `auth` is the HMAC envelope `Command_Auth::sign()` stamps: a nonce and a signature over
   `[ts, name, arguments, nonce]`, plus a `handle` when the key is a session key. An
   in-process (LOCAL) command needs none; anything arriving over the wire is refused
-  without one, and a batch carrying a refusal answers 401.
+  without one.
 
 The reply is a `TM_COMMAND|TM_RESPONSE` envelope sent back via TO=FROM, carrying the verb's
 return value in VALUE. A verb that throws answers `TM_COMMAND|TM_ERROR` instead; the
 dashboard view's pending-Map handler converts the structured `{ message }` payload into a
 rejected Promise (see architecture-guide.md → "Canonical view contract").
+
+The HTTP status is decided once, when the body opens. The first reply written sends 200, or
+401 if a command had already been refused by then. A batch that writes nothing back answers
+401 when any command was refused and 202 otherwise — the work routed onward, and its replies
+are due on the caller's own SSE stream.
 
 ## Service CIs
 
@@ -112,10 +118,11 @@ user holding the READ role, which is what satisfies the gate on the far end.
 
 Backs the "Logging Rules" editor on the settings page. All five verbs route through
 `Rule_Set`, so the inline↔pointer hook-tiering and orphan-reconcile invariants can never be
-bypassed by a raw `update_option()`. A rule's id is derived from its URL pattern
-(`Rule_Set::id_for` = the pattern's `url_hash`) — the pattern is the identity, so the
-ruleset can never hold two differently-configured rules for one URL, and a client-supplied
-id is re-derived rather than trusted.
+bypassed by a raw `update_option()`. A rule's id is the pattern's hash — `Rule_Set::id_for()`
+runs the pattern through `Log_Manager::url_hash()` — so the pattern is the identity and the
+ruleset can never hold two differently-configured rules for one URL. `upsert` reads a
+client-supplied id to find the entry an edit is moving, but what it stores is always
+re-derived from the pattern.
 
 | Verb | Role | Args | Returns |
 |------|------|------|---------|
@@ -137,7 +144,7 @@ hub syncs to spokes:
 
 | Field | Type | Meaning |
 |-------|------|---------|
-| `id` | string | The pattern's `Log_Manager::url_hash()`. Re-derived on every write; `''` on the way in. |
+| `id` | string | The pattern's `Log_Manager::url_hash()`, re-derived on every write. A new rule sends `''`; an edit sends the id it already has, which is how `upsert` finds the entry whose pattern moved. |
 | `pattern` | string | `/prefix`, exact `/path?`, or exact path plus query prefix `/path?query`. Required. |
 | `action` | string | `log` or `skip`. Anything but `log` reads as `skip`. |
 | `auto_disable_threshold` | int | Per-request occurrence count above which auto-tune proposes disabling a hook or custom event; 0 is off. |
@@ -154,9 +161,13 @@ hub syncs to spokes:
 ### `performance` — the omnibus dashboard CI
 
 The largest CI; every Performance-tree dashboard verb lives here. Its stats verbs build one
-`Stats_Store` per partition, reading `num_partitions` straight from substrate config —
-**unclamped**. Every handler throws on bad input and the interpreter wraps the throw as a
-TM_ERROR reply, so no handler returns an error shape.
+`Stats_Store` per FLAME-BUILDER WORKER, over the indices
+`Bootstrap::node_partitions( 'flame-builder' )` reports across every active topology that
+declares the node — the stats live in memcache alone, so the index space is the declaring
+topology's worker count and not a partition-dir listing. With no shared cache backend the
+list is empty, and every stats reader degrades to an empty or zeroed shape. Disk-walking
+verbs work regardless. Every handler throws on bad input and the interpreter wraps the throw
+as a TM_ERROR reply, so no handler returns an error shape.
 
 | Verb | Role | Args | Returns |
 |------|------|------|---------|
@@ -165,7 +176,7 @@ TM_ERROR reply, so no handler returns an error shape.
 | `url_detail` | READ | `hash` (required, positional, `[a-f0-9]{8,64}`), `--server`, `--breakdown`, `--categories`, `--since` | `{ stats, requests, scan_stopped_early, requests_window_start, aggregate_flame, aggregate_profiles, last_modified }`, plus `breakdown_time_series` and `category_time_series` when asked for. Throws `URL not found` for an unknown hash and `invalid hash format` for a malformed one. |
 | `url_breakdown` | READ | `hash` (required, positional), `--breakdown` (required) | `{ breakdown_time_series }` and nothing else — memcache only, no index walk, for the chart that polls one dimension while the URL modal is open. Throws `invalid hash format` / `invalid breakdown dimension`. |
 | `request_search` | READ | `rid` (required, positional) | `{ rid, partition, url_hash }`, so the dashboard can deep-link without scanning every partition. Throws `Request not found` for an unknown rid, and `request index scan budget spent before rid <rid> was reached` when the walk ended first — an incomplete search is not a definite negative. |
-| `request_grep` | READ | `pattern` (required, positional), `--limit` (default 20, max 50) | `{ pattern, scope, scanned_partitions, results, truncated, result_count }` — pattern search across the recent firehose window, grouped by request. Each result carries `rid`, `url`, `method`, `ts`, `match_count` and an excerpt. Shares its matching and grouping engine with `wp nodes reqgrep` (`Reqgrep_Core`), so both agree on what matched. |
+| `request_grep` | READ | `pattern` (required, positional), `--limit` (default 20, max 50) | `{ pattern, scope, scanned_partitions, results, truncated, result_count }` — literal, case-insensitive search across the recent firehose window, grouped by request. `scope` is always `recent`: every partition's walk starts at the second-to-last segment, and `truncated` says it spent `GREP_MAX_SCAN_LINES` before finishing. Each result carries `rid`, `url`, `method`, `ts`, `match_count` and `first_match_excerpt`. Shares its matching and grouping engine with `wp nodes reqgrep` (`Reqgrep_Core`), so both agree on what matched. |
 | `request_detail` | READ | `rid` (required, positional), `--partition` (default 0) | The full request body and merged flame data, plus computed `findings` and the measurement `caveat`. `partition` is a hint: searched first, then the rest, so any rid `request_search` locates resolves here too. Throws `invalid partition` for an out-of-range partition, `Request not found` for an unknown rid, and the `budget spent` message above. |
 | `ask` | READ | `descriptor` (required, positional; further context descriptors follow it, outermost last), `--server`, `--context` | The brief for one picker descriptor. |
 | `hooks_registered` | READ | — | `{ total_hooks, categories, category_descriptions, hooks_by_category }`. |
@@ -204,9 +215,10 @@ three-option whitelist: `newspack_event_logger_nodes_rules` (array),
 `newspack_event_logger_nodes_log_memory` (bool) and
 `newspack_event_logger_nodes_flush_every_line` (bool). An option absent from it is refused
 as `unknown option`, so the whitelist and `hub-control.tsl`'s `add_setting` lines must stay
-in step. Array-typed options carry their value as JSON. A set to the value already in place answers `updated: false` without saving,
-because the hub re-pushes every synced option on its sweep whether or not it moved and a
-reload fires `Config::RESET_ACTION` on every worker. The ruleset routes to
+in step. Array-typed options carry their value as JSON. A set to the value already in place
+answers `updated: false` without saving, because the hub re-pushes every synced option on its
+sweep whether or not it moved and a reload fires `Config::RESET_ACTION` on every worker,
+which re-parses every `.tsl` for the same answer. The ruleset routes to
 `Rule_Set::apply_synced()` instead, which re-tiers and holds its own gate. Autoload follows
 `Config::autoload_for()`, and the write emits a settings event that `Settings_Sync_Node`
 fans out to spokes.
@@ -221,7 +233,7 @@ plugin's operators.
 | TO | Verbs | What it answers |
 |----|-------|-----------------|
 | `workers` | `list`, `dump_graph`, `cleanup_status`, `restart`, `heartbeat` | The fleet, and the SSE slot keep-alive every dashboard pokes. |
-| `status` | `get` | `runtime_version`, `num_partitions`, active `topologies`, `cache_available` and a `timestamp`. It carries no application version field. |
+| `status` | `get` | A literal `status: ok`, the `runtime_version`, `num_partitions`, the active `topologies`, `cache_available` and a `timestamp`. It carries no application version field. |
 | `settings` | `get`, `set` | The seven substrate-owned integer settings: `num_partitions`, `segment_size`, `min_segments`, `num_segments`, `min_lifetime`, `lifetime`, `max_segments`. |
 | `vault` | `list`, `get`, `add`, `update`, `delete`, `test` | Remote-spoke credentials. This is where a spoke's URL and Authorization header live. |
 | `aggregator` | `summary`, `servers_status`, `probe` | Per-spoke `Remote_Source_Node` status on the hub. |
@@ -231,7 +243,7 @@ the command and routes the reply back by the TO the server echoed off the sender
 `_http/workers` is the heartbeat target: `mountExospine` wires the shared `_heartbeat` node
 to it, and that is fixed wiring rather than a per-dashboard choice.
 
-Three names a stale client may still address are verbs on nothing: `servers`, `logger` and
+Three CI names a stale client may still address resolve to nothing: `servers`, `logger` and
 `events`. Remote-spoke credentials live in the substrate `vault` CI, and
 `performance.hooks_registered` and `performance.overview` answer what the other two did.
 
@@ -243,14 +255,18 @@ A client subscribes to one or more `<log>.p<N>` partitions; the server emits a 7
 message envelope per data line plus an idle `heartbeat` event.
 
 ```
-GET /wp-json/newspack-nodes/v1/messages/stream?subscribe=<log>.p<N>[,<log>.p<N>...][&positions=...]
+GET /wp-json/newspack-nodes/v1/messages/stream?subscribe=<log>.p<N>[,<log>.p<N>...][&positions=...][&multi_writer=1]
 ```
+
+`subscribe` is required and takes a comma-separated list; `positions` carries the resume
+cursors; `multi_writer` is the client's assertion that more than one process appends the
+subscribed logs, which buys the reader a grace window and costs nothing but that when wrong.
 
 Per-line transforms live in the browser, inside each dashboard's view node
 (`RequestLogViewNode`, `GyroscopeViewNode`, `PerfErrorsViewNode`); the browser consumes the
-stream through the `<link>:sse-in` node (`SseInNode`) each `RemoteLink` owns. The
-slot TTL is the same for every caller — the `sse_slot_ttl` setting, default 60s, floored at
-45s by `SSE_Slot_Pool::ttl()` — and both a browser and a hub-side `Remote_Source_Node` poke
+stream through the `<link>:sse-in` node (`SseInNode`) each `RemoteLink` owns. The slot TTL is
+the same for every caller — the `sse_slot_ttl` setting, default 60s, floored at 45s by
+`SSE_Slot_Pool::ttl()` — and both a browser and a hub-side `Remote_Source_Node` poke
 `workers.heartbeat` every 15 seconds, so one lost poke still leaves a refresh before expiry.
 
 Operational discipline:
@@ -297,7 +313,8 @@ user and installs its scope as a ceiling, so authority is the user's and the sco
 subtracts: a manage-scoped session minted by someone who can do nothing still does nothing.
 `tools/list` offers only the tools the scope covers.
 
-Ten tools, one per verb, arguments passed through `Command_Args`, replies returned verbatim:
+Ten tools, one per verb. Each tool's named arguments go through `Command_Args` on the way in,
+and the verb's reply comes back verbatim:
 
 | Tool | Node.verb | Role |
 |------|-----------|------|
@@ -313,10 +330,11 @@ Ten tools, one per verb, arguments passed through `Command_Args`, replies return
 | `rules_delete` | `rules.delete` | TUNE |
 
 So a `read` session sees the seven performance tools and `rules_list`; `tune` additionally
-sees `rules_upsert` and `rules_delete`. `hooks_registered`, `url_breakdown` and
-`performance.set` are deliberately absent. `POSITIONAL_ARGS` — `descriptor, hash, rid,
-pattern, rule, id, context` — is the order bare tokens are emitted in; every other argument
-becomes `--key=value`.
+sees `rules_upsert` and `rules_delete`. Six verbs have no tool at all and are reachable only
+over `/command`: `performance.url_breakdown`, `performance.hooks_registered`,
+`performance.set`, `rules.save`, `rules.reset` and `discovery.get`. `POSITIONAL_ARGS` —
+`descriptor, hash, rid, pattern, rule, id, context` — is the order bare tokens are emitted
+in; every other argument becomes `--key=value`.
 
 **Connecting a client**. Register the endpoint with the handle and key that session issued.
 `<ID>` is the local name the client files it under:
@@ -351,7 +369,7 @@ are ignored.
 
 | Flag | Meaning |
 |------|---------|
-| `<pattern>` | Search pattern — a rid, a URL, or any text. Matches everything when omitted. |
+| `<pattern>` | Search pattern — a rid, a URL, or any text. `Reqgrep_Core::compile()` `preg_quote`s it, so it matches as a LITERAL, case-insensitively, and regex metacharacters carry no meaning. Omitting it takes the default `.`, which every packed line's float timestamp contains. |
 | `--follow` | Tail mode: keep reading and printing new requests as they finish. |
 | `--recent` | Scan only the second-to-last segment and newer, for a fast lookup. |
 | `--raw` | Emit raw JSONL instead of the formatted tree. |
@@ -420,12 +438,17 @@ strands in flight until eviction.
 
 **Payload size.** `message()` enforces an encoded-data cap of 3840 bytes — headroom under
 PIPE_BUF (4096), which is what keeps a lock-free append atomic against every other writer on
-this multi-writer log. An oversize map is trimmed: `m` is shortened in a re-encoding loop,
-then dropped outright, and every other key survives. The category itself is never renamed,
-because `Flame_Tree` matches spans on the `' (start)'` suffix. The constant is private, so a
-producer sizing its own payloads keeps its own copy — Pyrobase's `Runtime\Log` does.
-Anything that can exceed it belongs in `\Newspack_Nodes\Job_Intake::queue()`, which takes
-the auto-lock around large writes.
+this multi-writer log. An oversize map is trimmed and marked `truncated => true`: `m` is
+shortened in a re-encoding loop — re-encoding per step, because JSON escaping expands bytes —
+then dropped outright, and every other key survives, `l` and `caller` included. Where the
+remaining keys alone still exceed the cap, the floor case keeps `n`, `k` and `ts` and puts a
+1000-character slice of the encoded map in `m`, so a reader can still place the entry.
+Nothing is chunked and nothing reaches `error_log`; the entry says so itself. The category
+is never renamed, because a `" (truncated)"` suffix would break `Flame_Tree::PATTERN_START`
+and `Request_Builder_Node`'s `' (start)'` test, so the span would never open and its
+`(complete)` would orphan. The constant is private, so a producer sizing its own payloads
+keeps its own copy — Pyrobase's `Runtime\Log` does. Anything that can exceed it belongs in
+`\Newspack_Nodes\Job_Intake::queue()`, which takes the auto-lock around large writes.
 
 **The profiler drop-in.** `mu-plugins/00-newspack-profiler.php` publishes a `$newspack_profiler`
 global carrying `request_time` (monotonic nanoseconds), `request_ts` (the matching wall
@@ -458,12 +481,18 @@ unread.
 | `newspack_nodes/before_reconcile` / `newspack_nodes/after_reconcile` | An anonymous pair sharing an `$entered` flag, giving the minute-cadence reconcile pass its own `/jobs/newspack-nodes` request context. |
 | `newspack_nodes/stderr` | `Diagnostics_Bridge::on_stderr` — carries a substrate diagnostic into the active request or job log as a `stderr` entry, feeding the Error Log. |
 | `newspack_nodes/request_graph_ready` | `newspack_event_logger_nodes_mount_service_cis` — mounts `discovery`, `performance` and `rules`. |
-| `newspack_nodes/devtools_tab_bundles` | `Current_Request_Overlay::register_bundle` — adds the `current-request` bundle descriptor so the hub enqueues that tab. Its sibling `enqueue_inline_data`, on `admin_enqueue_scripts` at priority 20, injects this request's id into the JS global the tab reads. |
+| `newspack_nodes/devtools_tab_bundles` | `Current_Request_Overlay::register_bundle` — adds the `current-request` bundle descriptor so the hub enqueues that tab. `Current_Request_Overlay` registers two `admin_enqueue_scripts` callbacks beside it: `enqueue_on_overlay_pages` at the default priority, for the ELN pages that embed the overlay themselves, and `enqueue_inline_data` at 20, which injects this request's id into the JS global the tab reads once both enqueue paths have run. |
 
-Named substrate callables the bootstrap registers alongside them: the config namespace
-`eln` (resolving `<eln:KEY>` tokens in `.tsl`), and three `Formatters` — `request-index`,
-`flame-index` and `stats-index` — that the topology index legs reference, TSL having no
-closures.
+Named substrate callables the bootstrap registers alongside them:
+
+- The config namespace `eln`, resolving `<eln:KEY>` tokens in `.tsl` through
+  `Config::resolve_eln_token()`. It owns three keys and returns null for any other:
+  `is_hub` (whether a hub topology is active), `stats_mirror_node` (the durable stats
+  Partition, `''` to turn the mirror off) and `stats_mirror_lifetime`, DERIVED as twice
+  `Config::stats_retention_seconds()` rather than stored, so widening the stats window
+  widens the mirror with it.
+- Three `Formatters` — `request-index`, `flame-index` and `stats-index` — that the topology
+  index legs reference, TSL having no closures.
 
 The plugin binds `newspack_nodes/periodic`, `newspack_nodes/job_handlers` and
 `newspack_nodes/remote_job_handlers` nowhere; the last two are read by the substrate's
@@ -475,13 +504,41 @@ The plugin binds `newspack_nodes/periodic`, `newspack_nodes/job_handlers` and
 `admin_enqueue_scripts`, `admin_init`, `admin_post_newspack_event_logger_nodes_reset_settings`,
 `updated_option`, `added_option` and `pre_update_option` (a filter, 3 args) in the admin.
 
-`App\Core` binds the rest, per governing rule. Each of a rule's `hooks` gets a start
-callback at `hook_start_priority` (default -10000), a sacrificial spacer at
-`PHP_INT_MAX - 2`, and a self-removing complete callback at `PHP_INT_MAX - 1` — the spacer
-is what keeps that complete firing. A rule with `log_http` — the default — also gets the
+The profiler drop-in binds three more at file scope, outside this plugin's bootstrap.
+`option_active_plugins` (a filter at priority 1) takes the load baseline on its first firing:
+a wall-clock and hrtime pair, plus the declared-class and included-file counts.
+`wp_get_active_and_valid_plugins()` reads that option immediately ahead of the plugin loop,
+the last point still outside every plugin, so anything reading `active_plugins` earlier in
+bootstrap moves the baseline earlier with it. `plugin_loaded` (priority 1) fires after each
+plugin's include and records the difference since the previous firing: elapsed time, new
+classes and new files. That interval also covers the loop's own per-plugin work, because
+WordPress offers no signal bracketing the include alone. `plugins_loaded` (priority -10001)
+writes the rows to the firehose as `(start)` / `(complete)` span pairs, and only when the
+governing rule said `log`; that priority sits one below the default `hook_start_priority`, so
+the rows precede whatever `App\Core` records for the same hook. A listener short-circuiting
+`pre_option_active_plugins` stops `option_active_plugins` from firing, so the baseline is
+never taken and `plugin_loaded` records nothing. Site-activated plugins alone are timed:
+must-use plugins announce themselves on `mu_plugin_loaded` and network-activated ones on
+`network_plugin_loaded`, and the drop-in binds neither.
+
+`App\Core` binds the rest, per governing rule. Each of a rule's `hooks` gets a start callback
+at `hook_start_priority` (default -10000), a sacrificial no-op spacer at `PHP_INT_MAX - 2`,
+and a complete callback at `PHP_INT_MAX - 1`. The spacer is what keeps that complete firing:
+when a callback removes itself mid-run, `WP_Hook::resort_active_iterations()` parks the
+pointer on the next surviving priority and `apply_filters`' `next()` skips it — the spacer is
+consumed instead of `hook_complete`. A rule with `log_http` — the default — also gets the
 outbound-HTTP span pair, `pre_http_request` at `PHP_INT_MAX` and `http_api_debug` at
 `PHP_INT_MIN`; one with `log_queries` gets the query pair, `query` at `PHP_INT_MAX` and
 `log_query_custom_data` at `PHP_INT_MIN`, and `SAVEQUERIES` is defined if it is not already.
 Each pair opens after every filter that could rewrite or short-circuit the call and closes
 ahead of the other listeners on that action, so the span covers the work and not its
-audience.
+audience. A short-circuited HTTP request opens no span at all: `WP_Http::request()` returns
+a non-false `$preempt` without ever firing `http_api_debug`, so a span opened for one would
+never close.
+
+Two things `App\Core` will not instrument. It wraps only the callbacks registered strictly
+between `hook_start_priority` and the spacer, so everything at or above the spacer reads as
+its own and is left alone. And it skips any callback whose reflection reports a by-reference
+parameter, because wrapping one breaks WordPress's by-reference contract. Each wrapper it
+does install claims `accepted_args = 99` and slices back to the original's count before
+calling it, so the original never sees an argument it did not ask for.

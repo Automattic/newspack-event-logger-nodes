@@ -16,26 +16,28 @@ After any diff touching files under `newspack-event-logger-nodes/`. Run BEFORE p
 
 ### 1. Job_Intake for >4KB, firehose for ≤4KB
 
-`Log_Manager::message()` writes to the firehose under `MAX_DATA_SIZE = 3840` bytes on the JSON-encoded data. That is headroom under PIPE_BUF (4096), which is what keeps a lock-free append atomic against every other writer on the multi-writer log. It is a size budget for atomicity, not tidiness.
+`Log_Manager::message()` fits every firehose line under `MAX_DATA_SIZE = 3840` bytes, measured on the encoded ENTRY rather than on the caller's data, because the cap has to bound what the wire carries. That is headroom under PIPE_BUF (4096), which is what keeps a lock-free append atomic against every other writer on the multi-writer log. It is a size budget for atomicity, not tidiness.
 
-`fit_data()` handles an oversize map by setting `truncated => true` and trimming the `m` value in a loop — 90% of the length each pass, **re-encoding every step**, because JSON escaping expands bytes and a byte-count subtraction can still land over the cap. When no string length fits, `m` is dropped outright. The floor, when even that fails, is `[ 'm' => substr( $json, 0, 1000 ) . '...', 'truncated' => true ]`. Every other key survives, and the category is left alone: renaming it would break `Flame_Tree::PATTERN_START`, so a trimmed span would never open at all.
+`fit_data()` handles an oversize map by setting `truncated => true` and trimming the `m` value in a loop — 90% of the length each pass, **re-encoding every step**, because JSON escaping expands bytes and a byte-count subtraction can still land over the cap. When no string length fits, `m` is dropped outright and every other key survives, `l` and `caller` included. Only the floor drops them, reached when those keys alone still exceed the cap: it keeps `n`, `k` and `ts` beside a 1000-character slice of the encoded entry. The category `k` is never renamed at any step, because a `" (truncated)"` suffix breaks `Flame_Tree::PATTERN_START` and a trimmed span would never open at all.
 
 Large payloads belong on `\Newspack_Nodes\Job_Intake::queue( $handler, $id, $parameters, $key = null, … )`, a substrate class. It auto-locks and writes through an `allow_large_writes()` Partition up to `Job_Intake::MAX_JOB_SIZE`, 32MB.
 
-A new producer of potentially-large jobs routed through `Log_Manager` is silently broken. Check whether `wp_json_encode( $payload )` can exceed 4KB; if it can, it must use `Job_Intake`.
+A new producer of potentially-large jobs routed through `Log_Manager` is broken: the handler never sees a parseable payload, and nothing but the entry's own `truncated` flag says so. Check whether `wp_json_encode( $payload )` can exceed 4KB; if it can, it must use `Job_Intake`.
 
 ### 2. The firehose wire contract is shared with a Perl producer
 
-`Log_Manager` and `Gyrobase::Log` (`services/gyrobase/sources/newspack-gyrobase/Gyrobase/Log.pm`) write the SAME `environment_v3` line into one firehose, so a single parser decodes both. Four values must agree, each a hand-maintained copy in its own standalone repo:
+`Log_Manager` and `Gyrobase::Log` (`services/gyrobase/sources/newspack-gyrobase/Gyrobase/Log.pm`) write the SAME `environment_v3` line into one firehose, so a single parser decodes both. Four values must agree, each a hand-maintained copy in its own standalone repo, and all four in `includes/class-log-manager.php`:
 
-| Value | PHP anchor | What must match |
-|---|---|---|
-| `ENV_ALLOWLIST` | `class-log-manager.php:89` | 34 `$_SERVER` keys, membership AND order |
-| `ENV_VALUE_MAX` | `:134` | 256 bytes per value |
-| Elision marker | `log_environment()` | The U+2026 appended to a capped value |
-| `URL_REDACT_PATTERN` | `:151` | 21 redacted query parameters |
+| Value | What must match |
+|---|---|
+| `ENV_ALLOWLIST` | 34 `$_SERVER` keys, membership AND order |
+| `ENV_VALUE_MAX` | 256 bytes per value |
+| The elision marker `log_environment()` appends to a capped value | U+2026 on both sides |
+| `URL_REDACT_PATTERN` | 21 redacted query parameters |
 
 Neither plugin can host the check — only the dndocker tree sees both producers. `tools/check-firehose-parity.py` is it, and ELN's `pre-push` runs it whenever this tree is the checkout. It also refuses an allowlisted key that reads as a secret.
+
+Those four values are the whole of what it compares. `MAX_DATA_SIZE` (3840) is not among them and the script never reads it, because the Perl side bounds a different thing: `$MAX_LINE_SIZE` is PIPE_BUF itself, 4096, applied to the PACKED LINE rather than to the encoded entry, and its overflow path replaces `m` with a `(truncated, original N bytes)` stub instead of trimming it in a loop. Moving 3840 therefore draws no mechanical warning, and the two producers have to be reasoned about against `Log.pm` by hand.
 
 **Cap AFTER redaction.** Reversing the two would let a truncation expose the tail of a secret the redaction covered. A diff editing either side alone ships two producers writing different lines.
 
@@ -44,7 +46,7 @@ Neither plugin can host the check — only the dndocker tree sees both producers
 Two cache uses with deliberately opposite behavior:
 
 - **`Stats_Store`**, and anything reading stats for a dashboard: every method returns `null` / `[]` / `false` when the backend is unreachable, and never throws. Dashboards display "no data" rather than erroring.
-- **The SSE slot pool**: fail CLOSED. A backend outage means new connections get HTTP 429, because the pool IS the rate limit. `Sse_Slot_Pool` is a substrate class (`newspack-nodes/includes/class-sse-slot-pool.php`); the ELN-side gate is to leave its invariant alone.
+- **The SSE slot pool**: fail CLOSED. A backend outage means new connections get HTTP 429, because the pool IS the rate limit. `SSE_Slot_Pool` is a substrate class (`newspack-nodes/includes/class-sse-slot-pool.php`); the ELN-side gate is to leave its invariant alone.
 
 A diff unifying these into one error-handling style is wrong. Code that throws from the stats path, or swallows errors in the slot path, has them inverted.
 
@@ -83,7 +85,7 @@ Raising a cap without weighing the value size, or removing the `Other` fold, is 
 
 ### 7. Sums, not means — and nothing measured reads a flame `value`
 
-Leaderboard and URL rows store raw sums — `count`, `timed_count`, `sum_ms`, `sum_peak_mb`, the four status-class counts — so cross-bucket and cross-partition merge is exact addition. The display layer divides at read time. A diff introducing running-mean storage regresses to the EMA-clamp bug this replaced. Aggregator code MUST sum.
+The leaderboard stores `count` and `sum_req_time` (`LB_SUMS`), its per-category entries `samples`, `sum_time` and `sum_count` (`LB_CAT_SUMS`), and a URL row `count`, `timed_count`, `sum_ms`, `sum_peak_mb` and the four status-class counts. Every one of them is a raw sum, so cross-bucket and cross-partition merge is exact addition. The display layer divides at read time. A diff introducing running-mean storage regresses to the EMA-clamp bug this replaced. Aggregator code MUST sum.
 
 The same rule bans a stored percentile: a percentile does not merge, so a fold over N buckets cannot produce the window's. `min_ms` and `max_ms` stay because they fold from `duration_ms` exactly.
 
@@ -122,10 +124,10 @@ Each of these moved and has no compatibility alias here. Call the substrate clas
 | Concern | Substrate class | ELN keeps |
 |---|---|---|
 | Job execution | `Job_Worker_Node` | `Log_Manager::begin/end_job_context`, on `newspack_nodes/job_worker/{before,after}_job` |
-| Large-write ingress | `Job_Intake` | The `jobintake`→`jobs` legs in its own topologies |
+| Large-write ingress | `Job_Intake` | The legs draining `jobintake` into `jobs`, in its own topologies |
 | Hub fan-in | `Remote_Source_Node` | `Remote_Job_Rewrite_Node`, between the sources and the firehose Topic |
 | Spoke credentials | `Vault`, via the substrate `vault` CI | Nothing |
-| SSE rate limiting | `Sse_Slot_Pool` | Nothing |
+| SSE rate limiting | `SSE_Slot_Pool` | Nothing |
 | Bucket LRU | `LRU_Cache` | Callers that pass one in, e.g. `Reqgrep_Core` |
 | Settings render / overlay / reset | `Config_System\{Settings_Renderer, Options_Overlay, Reset_Gate}` | `Settings_Schema`, the Field declarations |
 
@@ -141,7 +143,7 @@ A new node subclass inherits that registration free if it lives under `Newspack_
 
 The deferred loader's require_once chain loads every class in this plugin before anything constructs them, so a guard around an in-plugin class is a dead branch. Push back when a diff adds one back as "defensive".
 
-Cross-deploy-unit guards stay, because the other side really can be absent: the substrate classes (`\Newspack_Nodes\Bootstrap`, `Config_Utils`, `Admin\Admin`) in the bootstrap and `Config`, and `Log_Manager` in `mu-plugins/00-newspack-profiler.php`, which ships as a separate asset. WP-CLI registration guards on `defined( 'WP_CLI' )`. Ask "is this class guaranteed loaded by our own bootstrap?" If yes, drop the guard.
+Cross-deploy-unit guards stay, because the other side really can be absent. The loader and `Config` guard the substrate's `Bootstrap`, `Config` and `Config_Utils`; `Current_Request_Overlay` guards `Admin\Admin`; `mu-plugins/00-newspack-profiler.php` guards `Log_Manager`, because it ships as a separate asset; and WP-CLI registration guards on `defined( 'WP_CLI' )`. Ask "is this class guaranteed loaded by our own bootstrap?" If yes, drop the guard.
 
 ### 14. Injection seams for blocking work
 
@@ -159,14 +161,14 @@ Inherited from the substrate: array VALUE → `TM_STRUCT`, string VALUE → `TM_
 
 Three named formatters are registered because TSL has no closures: `request-index` → `Request_Builder_Node::format_index_entry`, `flame-index` → `Flame_Builder_Node::format_index_entry`, `stats-index` → `Flame_Builder_Node::format_stats_index_entry`. All three take `( array $message, array $position ): ?string` and read `$message[ Message::VALUE ]` directly.
 
-Push back on a diff reintroducing a `json_decode` inside a formatter, or restoring a `string $line` / by-ref `$data` signature. The substrate no longer passes a line, so a decode there operates on the wrong type. A new index leg needs a `Formatters::register()` call in the bootstrap, not an inline callable in the `.tsl`.
+Push back on a diff reintroducing a `json_decode` inside a formatter, or restoring a `string $line` / by-ref `$data` signature. The substrate passes the unpacked array, so a decode there operates on the wrong type. A new index leg needs a `Formatters::register()` call in the bootstrap, not an inline callable in the `.tsl`.
 
 ### 17. Per-URL logging ruleset — one writer, pattern-hash ids, empty means empty
 
 The seven global logging settings (`log_urls`, `skip_urls`, `log_events`, `custom_events`, `significant_events`, `auto_disable_threshold`, `auto_protect_time_threshold`) were absorbed into a per-URL **ruleset**: an ordered list of `Rule`s, each a URL pattern with a `log` or `skip` action and — for `log` rules — its own hooks, custom events, significant events, auto-tune thresholds and diagnostic knobs. `Log_Manager` resolves ONE governing rule per request through `Rule_Matcher`. Gates:
 
 - **Matching is by SPECIFICITY, not longest prefix.** Query-bearing patterns (`/jobs/x?job-work`) outrank ALL exact patterns (`/about?`), which outrank ALL prefixes (`/blog`); length only breaks ties within a rank. Comparison is case-insensitive, and a prefix matches by string rather than path segment, so `/wp-cron` governs `/wp-cron.php`. A diff reordering the list to change an outcome misreads the matcher — list order never sways it.
-- **Every write goes through `Rule_Set::save()`** — never a raw `update_option` on `newspack_event_logger_nodes_rules`. `save()` maintains the inline↔pointer hook tiering (`INLINE_HOOK_LIMIT` = 100; a heavier list tiers to a non-autoloaded per-rule option mirrored into the substrate `Table`) and the orphan reconcile. Bypassing it corrupts the two-tier storage.
+- **Every write goes through `Rule_Set::save()`** — never a raw `update_option` on `newspack_event_logger_nodes_rules`. `save()` maintains the inline↔pointer hook tiering (`INLINE_HOOK_LIMIT` = 100, the crossover `wp nodes ruleset-bench` measures; a heavier list tiers to a non-autoloaded per-rule option mirrored into the substrate `Table`) and the orphan reconcile. Bypassing it corrupts the two-tier storage.
 - **A rule's id is `Rule_Set::id_for( $pattern )`**, the pattern's `Log_Manager::url_hash()` — one id per pattern, and a client-supplied id is ignored. Positional id minting (`generate_rule_id`, `gen_id`), or two rules sharing a pattern, is a regression.
 - **Empty means empty.** There is no implicit `/` log-all baseline; an empty or absent ruleset logs nothing. A diff re-adding a synthetic minimal `/` rule regresses the fixed behavior. A deployment wanting log-all declares a `/` log rule explicitly, as the shipped config does alongside baseline skips for the substrate's worker IPC, SSE and spawn endpoints and `/wp-cron.php`.
 - **Don't revive the global options.** Reintroducing any of the seven as a `Settings_Schema` Field or an option row revives retired machinery. (`enable_logging`, `log_memory`, `flush_every_line`, `allowed_users`, `hook_start_priority` stay global.)
@@ -182,11 +184,11 @@ Four flags on `Rule` gate instrumentation, and their defaults differ because the
 | `log_http` | on (absent means on) | Two `add_filter` calls per request; two entries per outbound call |
 | `log_queries` | off | Two entries per QUERY, and it turns `SAVEQUERIES` on |
 | `trace_hooks` | off | One shallow backtrace per hook firing, ~0.9µs |
-| `trace_callers` | 0 | A formatted stack per hook, capped per HOOK at `Rule::TRACE_CALLERS_DEFAULT` (20) |
+| `trace_callers` | 0 | A formatted stack per hook firing, capped per HOOK at the number the rule names; a stored `true` decodes to `Rule::TRACE_CALLERS_DEFAULT` (20) |
 
 Three invariants a diff must keep. **The HTTP pair is deliberately unbalanced**: `WP_Http::request()` short-circuits with a bare `return $pre;` and never fires `http_api_debug`, so `http_start` binds at `PHP_INT_MAX` and opens nothing when `$preempt` is not false. **`query_end()` drains `$wpdb->queries`**, which is why `log_queries` cannot be always-on — anything else reading that array would find it empty. **Instrumentation never CONSTRUCTS the logger**: both callbacks ask `Log_Manager::has_instance()` first, or a binding that outlives its request builds a logger inside the callback and stamps `process (start)` with the wrong moment.
 
-A span is named for its CALLER — `origin_frame( 1 )`, one frame beyond `WP_Http` or `wpdb` — never for its host or its table. And a field nothing renders does not exist: a new traced field needs a reader in `LogEntriesTable`, which reads `entry.m` and nothing else.
+A span is named for its CALLER, never for its host or its table: `origin_frame( true )` climbs past EVERY frame of the class that applied the filter, at `TRANSPORT_ORIGIN_DEPTH` (16) against `ORIGIN_DEPTH` (8) for a hook's own origin, because `wpdb::get_row()` reaches the `query` filter through `wpdb::query()` and a fixed skip would land inside `wpdb`. Both pairs pass `0 === $this->trace_callers`, so they climb only while no deep chain is being recorded. And a field nothing renders does not exist: `LogEntriesTable` renders `m`, the origin frame `l` and `caller`, so a new traced field needs its own reader there.
 
 ### 19. Hook-instrumentation invariants
 
@@ -204,13 +206,34 @@ Settings live in ONE declarative `Settings_Schema` (`includes/class-settings-sch
 
 A diff adding a setting adds a `Field` with its `restart:` key, never a parallel `Admin` array, and leaves reset and delete-on-blank to the substrate's `Config_System\Reset_Gate`.
 
-**A `restart:` key holds node-class tokens** — `['Flame_Builder']`, `['Partition','Topic','Log']`, `'all'` or `[]` — which `Restart_Planner` resolves to the live topologies running a matching node. They are NOT topology names.
+**A `restart:` key holds node-class tokens**, never topology names: `'all'`, `[]`, or a list like `['Flame_Builder']` or `['Partition','Topic','Log']`, which `Restart_Planner` resolves to the live topologies running a matching node. The nine application Fields take only `'all'` and `[]`.
 
 **Config reads fail loud.** `Config::value()` throws on a key the substrate registry does not declare. Never `?? default` a key you depend on; a renamed key should throw at the boundary.
 
 ### 22. Schema field names
 
 `node_schema()` uses `'arguments'` for positional constructor args and `'commands'` for verb declarations. A diff reading or writing `'ctor'` or `'verbs'` is a stale port.
+
+### 23. Option names carry the prefix; the hook seams are a fixed set
+
+Uninstall selects BY PREFIX. `includes/uninstall-cleanup.php` deletes every `newspack_event_logger_nodes_` option row and its two transient stubs, on every site of a multisite, which is what carries the ruleset's non-autoloaded `rule_hooks_*` rows off with it. An option stored under any other name survives a delete.
+
+The plugin fires three extension points — `newspack_event_logger_nodes/settings_after_form`, `newspack_event_logger_nodes_scope_changed` and the `newspack_event_logger_nodes_custom_colors` filter — and binds ELEVEN substrate ones. `docs/API.md`'s "Consumed from the substrate" table is the list of record, with the callback each one carries:
+
+| Substrate hook | What it carries |
+|---|---|
+| `newspack_nodes/declare_config_keys` | `Config::register_config_keys`, at file scope under a literal name because this plugin loads first |
+| `Newspack_Nodes\Config::RESET_ACTION` | `Config::reset_local_cache` — not `reset()`, which would re-enter the substrate |
+| `newspack_nodes/job_worker/before_job` (filter, four args) | The job request context, opened |
+| `newspack_nodes/job_worker/after_job` (action, three args) | The job request context, closed |
+| `newspack_nodes/settings_sync/value` (filter, two args) | A blank or absent value resolved to the OWNING config's default, and a pointer rule's hooks hydrated |
+| `newspack_nodes/registered_log_producers` (filter) | `Log_Manager::firehose_dir_template()`, so the log GC declares the dirs the writer writes |
+| `newspack_nodes/before_reconcile` / `after_reconcile` | The reconcile pass's own `/jobs/newspack-nodes` context, a shared `$entered` flag keeping the pair honest |
+| `newspack_nodes/stderr` | `Diagnostics_Bridge`, feeding the Error Log |
+| `newspack_nodes/request_graph_ready` | The three service CIs |
+| `newspack_nodes/devtools_tab_bundles` (filter) | `Current_Request_Overlay`'s `current-request` tab bundle |
+
+Preserve each `accepted_args` exactly when re-registering one: inflating it hands arguments to callbacks never written to receive them.
 
 ## Service CI specifics
 
@@ -246,6 +269,7 @@ Per-plugin REST controllers are gone; endpoints are verbs on `App\*_CI_Node` ser
 - **Mount through the substrate toolkits, not by hand.** `mountExospine` builds the backbone — `_command_interpreter` sinking into `_router`, plus `_shell`, `_http` and `_heartbeat` — and runs the dashboard's build callback against it, so a hook registers only its own soft view nodes and returns the teardown. Polled dashboards use `useBatchedPoll` + `addSliceFetcher`, which own the Timer, the Tee and the page-visibility gate; live-stream dashboards use `useStreamGraph`. A hook constructing its own boundary nodes duplicates that and loses the debug overlay's Reset Graph for free.
 - **Steer with `target` / TO, never a bespoke `sink` chain.** Everything sinks into the interpreter; the router dispatches by TO while staying bare. `scripts/lint-contract.mjs` fails the build on the ADR violations review keeps passing — a hand-rolled correlation table, a minted reply id, a parked resolver pair, a pending-reply registry, a KEY demux, a wall-clock timer grid, node-class resolution by NAME. Each of them WORKS, which is why a correctness review nods it through.
 - **A view node is a slice.** `registerSliceViews` declares `{ description, empty, parse }`; the graph drives `loading` / `clear` / `error` through each node's own `controlFrom`, never by payload shape. A reply carrying no payload keeps the slice already on screen, so a verb that answers nothing never blanks an open modal.
+- **Never throw from `fill()`.** A React tree has nothing to catch it. `SliceViewNode` already coerces a TM_ERROR envelope — a bare string VALUE included — through the substrate's `errorMessage()` into the slice's `error`, so a second coercion in a view node re-implements code that already ran.
 - **Hand `makeNode` the CLASS, never the name.** `CommandInterpreterNode.includeNodes` is a per-bundle static, so another bundle's interpreter cannot resolve a name registered here.
 - **Preserve prior data on a partial reply.** `UrlDetailMergeNode` dedups by rid and drops a reply whose `last_modified` is unchanged; `UrlsView` list-replaces the whole rows array. A diff that wholesale-replaces the model on every reply clobbers sibling slices and breaks drilldown.
 - **No dead REPL mounts on a production dashboard.** The `_output` / `_completion` / `_uptime` / `_cwd` set serves the console tree; copy-pasted elsewhere it adds nodes competing for `_router` traffic and colliding with the debug overlay's REPL.
@@ -259,9 +283,10 @@ Per-plugin REST controllers are gone; endpoints are verbs on `App\*_CI_Node` ser
 
 - Unit tests live under `tests/unit/`, mostly flat, with `Admin/` and `Cli/` the only subdirectories; integration tests live under `tests/integration/`. Helpers are split: substrate-owned ones load from `../newspack-nodes/tests/Helpers/`, this plugin's own from `tests/Helpers/`.
 - ELN owns three Service-CI test files — `DiscoveryCITest.php`, `PerformanceCITest.php`, `RulesCITest.php`. The ruleset engine has `RuleTest.php`, `RuleSetTest.php` and `RuleMatcherTest.php`. There is no `tests/unit/Rest/`; per-plugin REST controllers retired with the Service CI cutover.
-- Run as a NON-ROOT user with the vendored binary, and pass `--enforce-time-limit`: `cd tests && ../vendor/bin/phpunit --enforce-time-limit`. `Log_Manager` refuses to run as root, which fails the whole suite, and the container's system phpunit is a newer major that crashes the bootstrap.
+- Run as a NON-ROOT user with the vendored binary (composer pins `^10.0`, resolved 10.5.64), and pass `--enforce-time-limit`: `cd tests && ../vendor/bin/phpunit --enforce-time-limit`. `Log_Manager` refuses to run as root, which fails the whole suite. Neither container puts a `phpunit` on PATH, so a bare invocation finds nothing, and an 11.x one would crash the bootstrap with `DispatchingEmitter::exportsObjects`.
 - Coverage lands under `${TEST_TMP:-${TMPDIR:-/tmp}}/newspack-event-logger-nodes-coverage/` after `tests/run-coverage.sh`. New code should add tests so coverage does not regress.
 - Fixtures use `Message::TM_STRUCT` for array-VALUE messages. `TM_BYTESTREAM` in a fixture carrying an array VALUE is a stale test.
+- Tests needing a cache backend assign the substrate's in-memory `\Memcached` double (`../newspack-nodes/tests/Helpers/InMemoryMemcached.php`) to `Core::$memd` in `setUp`. There is no cache interface to inject, and nothing should type-hint one.
 - A new Service CI verb needs a happy-path test, a role test asserting `Capabilities::require()` rejects a caller without the declared role, and a cache-failure test where the handler reads through a Table. Rate-limit tests belong to the substrate.
 - Seed test values **distinct from every default and fallback**. A test seeded with the default still passes when the change is ignored, so it proves nothing.
 
@@ -274,7 +299,7 @@ Reproduce a finding against these before writing it up by hand — and never dis
 | `scripts/lint-contract.mjs` | The ADR violations a correctness review passes |
 | `scripts/check-substrate-floor.sh` | The declared floor against the substrate APIs this plugin calls |
 | `scripts/lint-docs.sh` | Doc-vs-runtime drift, including the floor in prose |
-| `tools/check-firehose-parity.py` | The PHP and Perl producers writing one line |
+| dndocker's `tools/check-firehose-parity.py` | The PHP and Perl producers writing one line |
 | `scripts/lint-comments.{mjs,php}` | 80-column comments, honouring `@longform` |
 | `npm run lint:deadcode` / `:deadcode:js` | phpstan-deadcode and knip; most findings are public API or test seams, so verify every call path |
 
