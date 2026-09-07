@@ -2846,6 +2846,38 @@ class FlameBuilderTest extends TestCase {
 		$this->assertNotSame( [], $this->cat_series( $store ), 'and the request it did fill landed' );
 	}
 
+	public function test_leaderboard_categories_roll_the_tail_into_other(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+
+		$now = \time();
+		// 73 distinct categories, each heavier than the last, so the ranking
+		// the cap sorts by is unambiguous and the tail is the cheap end.
+		$profiles = [];
+		for ( $i = 0; $i < 73; $i++ ) {
+			$profiles[ "hook-$i" ] = [ 'time' => 0.5 + ( $i / 100 ), 'count' => 1, 'entries' => [] ];
+		}
+		$this->fill_request( $fb, $this->completed_request( [
+			'duration_ms' => 91.0,
+			'timestamp'   => $now,
+			'profiles'    => $profiles,
+		] ) );
+		$fb->flush();
+
+		$cats = $this->get_leaderboard_bucket( $store, Stats_Store::bucket_key( $now ) )['categories'];
+		$this->assertLessThanOrEqual( Stats_Store::MAX_CAT_VALUES, \count( $cats ) );
+		$this->assertArrayHasKey( Stats_Store::OTHER_KEY, $cats, 'the tail folds rather than dropping' );
+		$this->assertArrayHasKey( 'hook-72', $cats, 'the heaviest category survives the cap' );
+		// 73 categories at 0.5 + i/100 sum to 62.78ms; capping must lose none.
+		$kept = 0.0;
+		foreach ( $cats as $row ) {
+			$kept += (float) $row['sum_time'];
+		}
+		$this->assertEqualsWithDelta( 62.78, $kept, 1e-6, 'the rolled tail keeps its time' );
+	}
+
 	// --- Per-server leaderboard merge + cap (hub mode) --------------------
 
 	public function test_per_server_leaderboard_cap_global_upper_bound(): void {

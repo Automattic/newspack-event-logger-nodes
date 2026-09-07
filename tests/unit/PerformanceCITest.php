@@ -1456,6 +1456,29 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( 'recent window on alpha.example', $result['scope'] );
 	}
 
+	public function test_ask_refuses_the_synthetic_overflow_category(): void {
+		// `Other` is the tail of the category cap pooled into one row, so its
+		// time, its invocation count and its appearances each sum across
+		// categories that share nothing. A brief built from them reads like a
+		// measurement of one thing, which is worse than no brief at all.
+		$store  = new Stats_Store( 0, 86400 );
+		$bucket = $this->current_url_bucket();
+		$this->set_leaderboard_bucket( $store, $bucket, [
+			'count'        => 6,
+			'sum_req_time' => 3.0,
+			'categories'   => [
+				Stats_Store::OTHER_KEY => [ 'samples' => 91, 'sum_time' => 27.0, 'sum_count' => 54, 'entries' => [] ],
+			],
+		] );
+
+		// The interpreter answers a throwing verb with TM_ERROR, so the harness
+		// hands back the reason string rather than raising.
+		$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', 'category:' . Stats_Store::OTHER_KEY );
+
+		$this->assertIsString( $reply );
+		$this->assertStringContainsString( 'pools the categories past the cap', $reply );
+	}
+
 	public function test_ask_url_brief_honours_the_server_scope(): void {
 		// `pageFacts` stamps the active filters onto every surface it emits, so
 		// a brief that answered site-wide would hand an agent unscoped numbers
