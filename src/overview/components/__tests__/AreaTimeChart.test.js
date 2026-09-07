@@ -123,7 +123,8 @@ describe( 'area chart frame', () => {
 
 	it( 'places the category legend at the same offset', () => {
 		const data = {
-			[ bucketKeyNow() ]: { db: { c: 43, t: 2711 } },
+			names: [ 'db' ],
+			buckets: { [ bucketKeyNow() ]: [ [ 0, 2711, 43, 43 ] ] },
 		};
 		const { container, unmount } = renderComponent(
 			React.createElement( CategoryTimeChart, { data } )
@@ -181,7 +182,8 @@ describe( 'area chart frame', () => {
 
 	it( 'labels a few-millisecond category average without repeating', () => {
 		const data = {
-			[ bucketKeyNow() ]: { render: { c: 2, t: 6 } },
+			names: [ 'render' ],
+			buckets: { [ bucketKeyNow() ]: [ [ 0, 6, 2, 2 ] ] },
 		};
 		const { container, unmount } = renderComponent(
 			React.createElement( CategoryTimeChart, { data } )
