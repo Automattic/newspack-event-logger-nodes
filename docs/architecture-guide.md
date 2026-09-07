@@ -760,7 +760,7 @@ The retention window comes from the substrate's `min_lifetime` (default 43200), 
 | `url` | per-URL flame/profile blob | `max(3600, min_lifetime/24)` |
 | `dim` | dimensional time series, keyed per bucket, one namespace per dimension and `$server` scopes it (`Stats_Store::dim_parts()`) | `min_lifetime` |
 | `url_dim` | per-URL dimensional series, keyed per bucket, every dimension in the value | `min_lifetime` |
-| `categories` | category time series, keyed per bucket, `$server` scopes it (`Stats_Store::cat_parts()`). Each category in a bucket is a `CAT_SUMS` triple, `{ t, c, n }` — milliseconds of wall time, events fired, requests the category appeared in — which is NOT the `{ c, s, m }` of the `dim` namespaces beside it, though both spell one field `c`: requests there, events here. The bucket also carries a synthetic `total` category holding the request's own wall time, which every ranking has to hold out — `Stats_Store::cap_bucket()` does it before the cap and `CategoryTimeChart` before the palette, since as a band it swamps every real category | `min_lifetime` |
+| `categories` | category time series, keyed per bucket, `$server` scopes it (`Stats_Store::cat_parts()`). Each category in a bucket is a `CAT_SUMS` triple, `{ t, c, n }` — milliseconds of wall time, events fired, requests the category appeared in — which is NOT the `{ c, s, m }` of the `dim` namespaces beside it, though both spell one field `c`: requests there, events here. The bucket also carries a synthetic `total` category holding the request's own wall time, which every ranking has to hold out — `Flame_Builder_Node::cap_bucket()` does it before the cap and `CategoryTimeChart` before the palette, since as a band it swamps every real category | `min_lifetime` |
 | `url_cat` | per-URL category series, keyed per bucket, in the same `{ t, c, n }` shape | `min_lifetime` |
 | `urls_h` | the URL index's COARSE tier, `urls_h:{shard}:{Y-m-d-H}` — one hour of merged rows in the same positional shape a `urls` bucket holds. DERIVED: `Flame_Builder_Node::roll_up_hours()` folds a closed hour once, and a missing key is answered from that hour's twelve `urls` buckets. Not mirrored, for the same reason | `min_lifetime` |
 
@@ -775,11 +775,7 @@ The retention window comes from the substrate's `min_lifetime` (default 43200), 
   of a 24-spoke fleet's own picker. See architecture decision 14 for when to raise
   it
 - `MAX_URL_DIM_VALUES = 10`
-- `MAX_CAT_VALUES = 50` — the category time series and the leaderboard's own
-  category map alike. A category is one hook, callback or plugin, so the axis
-  is as wide as the site's plugin set: a production install reached 1,197 of
-  them, and the leaderboard bucket that carried every one of them made the
-  `overview` reply too large to deliver
+- `MAX_CAT_VALUES = 50`
 - `Flame_Builder_Node::MAX_URLS_PER_SHARD = 2000` — sixteen shards, so a bucket's
   ceiling is 32,000 URLs. Measured against a 1MB `item_size_max` with the widest
   row the schema writes: the client stores 4,000 rows (2.80MB raw) and REFUSES
@@ -798,13 +794,11 @@ field adds, the scope is applied as a projection over the merged row
 every scope a request asks for — and is also where the split's indexes become
 names, for that one server, since no reader ever displays it.
 
-Overflow rolls into a synthetic `Other` value rather than dropping, so a total summed from a capped namespace is still exact. The URL index folds its `MAX_URLS_PER_SHARD` tail the same way, into TWO overflow rows (`Stats_Store::other_key()`): `Other` and `Other:worker`, one per population, so the two shard families never fold their tails into each other. `Stats_Store::cap_bucket()` holds the `total` pseudo-category out of the ranking sort and puts it back afterwards, so a wide bucket can never fold the total into `Other`. The leaderboard passes no reserved row, because `collision_free_category()` renames an incoming `total` to `total (event)` and keeps that map clear of one.
+Overflow rolls into a synthetic `Other` value rather than dropping, so a total summed from a capped namespace is still exact. The URL index folds its `MAX_URLS_PER_SHARD` tail the same way, into TWO overflow rows (`Stats_Store::other_key()`): `Other` and `Other:worker`, one per population, so the two shard families never fold their tails into each other. `Flame_Builder_Node::cap_bucket()` holds the `total` pseudo-category out of the ranking sort and puts it back afterwards, so a wide bucket can never fold the total into `Other`.
 
 Those two rows are the one thing on the leaderboard a reader cannot open. `Performance_CI_Node` stamps each row `aggregate` from `Stats_Store::is_other_key()`, and `UrlTable` draws such a row with the fixed label "traffic from URLs beyond the per-shard cap" in place of a URL and none of the row interactions: its key is no url_hash, so there is nothing for `url_detail` to answer about and no `url:` descriptor for the Ask picker to stamp.
 
-`Stats_Store::sums_to_display()` caps a SECOND time, and that cap is a payload bound rather than a storage one: each bucket was capped as it was written, but a reply merges the whole retention window and those top sets differ, so the union overflows again. Its categories fold into `Other` on the same ranking; the rolled row carries no `entries`, because a callback breakdown pooled across an arbitrary tail names nothing an operator can act on.
-
-The ENTRY cap beneath it does NOT fold, and no reply reaches it. Past a hundred entries a category would keep the fifty slowest by average exclusive time and discard the rest, but `Performance_CI_Node::build_leaderboard()` folds its buckets through `LB_CAT_SUMS`, which names no `entries` key — so a leaderboard row crosses the wire with `entries` empty and the per-origin breakdown an operator opens comes from `url_detail`'s own aggregate instead. The entries are in memcache, and only the WRITE-side trim (`cap_leaderboard_entries()`) bounds what is kept there.
+One cap does NOT fold, and it is a payload bound rather than a storage one. `Stats_Store::sums_to_display()` divides a category's summed entries into per-appearance averages at read time, and past a hundred entries it keeps the fifty slowest by average exclusive time and discards the rest; an entry with no samples is dropped rather than shown as zero. Nothing is lost from memcache, but a leaderboard modal missing an entry has no `Other` row to look for it in.
 
 **`get_multi` batching is essential.** Reader paths multi-get across the retention buckets in one round-trip (`Stats_Store::lookup_buckets()`) rather than one `get` per key, which is a latency cliff. The URL index is chunked on top of that: `Performance_CI_Node::load_index_default()` folds `INDEX_READ_CHUNK` buckets (12, an hour of fine ones) at a time and drops each chunk before reading the next, so hundreds of MB of rows are never resident beside the index being built. The shared `Core::$memd` (`\Memcached`) provides `getMulti` natively; the in-memory test double mirrors it.
 
