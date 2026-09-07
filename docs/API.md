@@ -57,11 +57,14 @@ is `TM_COMMAND` (8), TO names the CI node, and VALUE carries `{ name, arguments 
 
 ```http
 POST /wp-json/newspack-nodes/v1/command HTTP/1.1
-Content-Type: application/json
+Content-Type: text/plain; charset=UTF-8
 
 [8,1756900000,"","performance","","",{"name":"urls","arguments":["--limit=25","--server=example.com"],"auth":{"nonce":"…","sig":"…"}}]
 ```
 
+- The content type is `text/plain`, never `application/json`. JSONL is not one JSON
+  document, so WordPress parses an `application/json` body itself and answers
+  `rest_invalid_json` before `HTTP_In_Node` is reached.
 - `TO` is the service CI name. This plugin owns `performance`, `discovery` and `rules`. A
   sub-path addresses a child node; most callers name the CI alone.
 - `FROM` is the sender's own node name, and the door prepends `_output` to it on the way
@@ -78,15 +81,18 @@ Content-Type: application/json
   in-process (LOCAL) command needs none; anything arriving over the wire is refused
   without one.
 
-The reply is a `TM_COMMAND|TM_RESPONSE` envelope sent back via TO=FROM, carrying the verb's
-return value in VALUE. A verb that throws answers `TM_COMMAND|TM_ERROR` instead; the
-dashboard view's pending-Map handler converts the structured `{ message }` payload into a
-rejected Promise (see architecture-guide.md → "Canonical view contract").
+The reply is a `TM_COMMAND|TM_RESPONSE` envelope sent back via TO=FROM. Its VALUE carries
+`{ name, arguments, payload }` — the verb it answers, the tokens it was given, and the
+verb's return value under `payload`. A verb that throws answers `TM_COMMAND|TM_ERROR`
+instead, whose `payload` is the throw's message text. There is no promise registry and no
+rejected Promise: the refusal lands a tick later on the node that asked, and the view
+surfaces it beside that caller (see architecture-guide.md → "Canonical view contract").
 
 The HTTP status is decided once, when the body opens. The first reply written sends 200, or
 401 if a command had already been refused by then. A batch that writes nothing back answers
 401 when any command was refused and 202 otherwise — the work routed onward, and its replies
-are due on the caller's own SSE stream.
+are due on the caller's own SSE stream. A request-scope graph missing `_router` or `_output`
+answers 500 before any command runs.
 
 ## Service CIs
 
@@ -105,7 +111,7 @@ The handlers live in this plugin's `Newspack_Event_Logger_Nodes\App\` namespace:
 
 | Verb | Role | Args | Returns |
 |------|------|------|---------|
-| `get` | READ | — | `{ registered_hooks: string[], custom_events: string[] }` — the union across every LOG rule of its instrumented hooks and custom events (`Rule_Set::instrumented_union()`), with `custom_events` filtered out of `registered_hooks` so the picker's two catalogs stay disjoint. |
+| `get` | READ | — | `{ registered_hooks: string[], custom_events: string[] }` — the union across every LOG rule of its `hooks` (either tier, resolved through `hooks_for`) and its `custom_events` (`Rule_Set::instrumented_union()`), with `custom_events` filtered out of `registered_hooks` so the picker's two catalogs stay disjoint. A `significant_events` name outside the `hooks` list is not in it, though `App\Core` binds one. |
 
 Two callers ask it: the hub's `Discovery_Collector_Node`, which union-merges every spoke's
 reply into the `discovered_hooks` / `discovered_events` staging options behind the rules
@@ -163,20 +169,20 @@ hub syncs to spokes:
 The largest CI; every Performance-tree dashboard verb lives here. Its stats verbs build one
 `Stats_Store` per FLAME-BUILDER WORKER, over the indices
 `Bootstrap::node_partitions( 'flame-builder' )` reports across every active topology that
-declares the node — the stats live in memcache alone, so the index space is the declaring
-topology's worker count and not a partition-dir listing. With no shared cache backend the
-list is empty, and every stats reader degrades to an empty or zeroed shape. Disk-walking
-verbs work regardless. Every handler throws on bad input and the interpreter wraps the throw
-as a TM_ERROR reply, so no handler returns an error shape.
+declares the node — a store is keyed by the worker index that wrote it rather than by a
+partition directory, so the index space is the declaring topology's worker count. With no
+shared cache backend the list is empty, and every stats reader degrades to an empty or
+zeroed shape. Disk-walking verbs work regardless. Every handler throws on bad input and the
+interpreter wraps the throw as a TM_ERROR reply, so no handler returns an error shape.
 
 | Verb | Role | Args | Returns |
 |------|------|------|---------|
 | `overview` | READ | `--server`, `--breakdown` (comma-separated), `--categories` | `{ total_requests, global_avg_ms, global_avg_peak_mb, aggregate_time_series, global_leaderboard }`, plus `breakdowns` keyed by dimension when `breakdown` is given and `category_time_series` when `categories` is. The site totals come from the global `hourly` namespace, which has no server dimension; `server` scopes the leaderboard and the breakdowns only. A dimension outside `DIMENSIONS` throws `invalid breakdown dimension` rather than answering about the rest. |
-| `urls` | READ | `--sort` (default `count`), `--order` (`desc`), `--limit` (50, clamped 1–1000), `--offset` (0, clamped 0–10000), `--search`, `--server`, `--errors_only`, `--include_workers` | `{ data, rows, totals, slowest, filters, limit, offset }` — the paginated, sortable URL leaderboard plus the totals and the slowest ten for whatever the filters left. An unknown `sort` falls back to `count`, an unknown `order` to `desc`. Worker traffic is excluded until `include_workers` opts it in. `totals` is null for a server scope the stored rows carry no split for, because 0 would read as idle; `filters` echoes what was applied, so a narrower number never reads as the site's. |
+| `urls` | READ | `--sort` (default `count`), `--order` (`desc`), `--limit` (50, clamped 1–1000), `--offset` (0, clamped 0–10000), `--search`, `--server`, `--errors_only`, `--include_workers` | `{ data, rows, totals, slowest, filters, limit, offset }` — the paginated, sortable URL leaderboard plus the totals and the slowest ten for whatever the filters left. An unknown `sort` falls back to `count`, an unknown `order` to `desc`. Worker traffic is excluded until `include_workers` opts it in. `errors_only` keeps the rows whose status buckets fail to account for every request — the timeouts and fatals that never reached a bucket at all — so a 5xx-heavy URL is excluded, a 5xx being a real response. `rows` is the pager's count, every row the filters left including the folded `Other` and `Other:worker` overflow rows, while `totals.urls` counts the distinct URLs among them; an overflow row is one row standing for many URLs, so the two are never expected to agree. `totals` is null for a server scope the stored rows carry no split for, because 0 would read as idle; `filters` echoes what was applied, so a narrower number never reads as the site's. |
 | `url_detail` | READ | `hash` (required, positional, `[a-f0-9]{8,64}`), `--server`, `--breakdown`, `--categories`, `--since` | `{ stats, requests, scan_stopped_early, requests_window_start, aggregate_flame, aggregate_profiles, last_modified }`, plus `breakdown_time_series` and `category_time_series` when asked for. Throws `URL not found` for an unknown hash and `invalid hash format` for a malformed one. |
 | `url_breakdown` | READ | `hash` (required, positional), `--breakdown` (required) | `{ breakdown_time_series }` and nothing else — memcache only, no index walk, for the chart that polls one dimension while the URL modal is open. Throws `invalid hash format` / `invalid breakdown dimension`. |
 | `request_search` | READ | `rid` (required, positional) | `{ rid, partition, url_hash }`, so the dashboard can deep-link without scanning every partition. Throws `Request not found` for an unknown rid, and `request index scan budget spent before rid <rid> was reached` when the walk ended first — an incomplete search is not a definite negative. |
-| `request_grep` | READ | `pattern` (required, positional), `--limit` (default 20, max 50) | `{ pattern, scope, scanned_partitions, results, truncated, result_count }` — literal, case-insensitive search across the recent firehose window, grouped by request. `scope` is always `recent`: every partition's walk starts at the second-to-last segment, and `truncated` says it spent `GREP_MAX_SCAN_LINES` before finishing. Each result carries `rid`, `url`, `method`, `ts`, `match_count` and `first_match_excerpt`. Shares its matching and grouping engine with `wp nodes reqgrep` (`Reqgrep_Core`), so both agree on what matched. |
+| `request_grep` | READ | `pattern` (required, positional), `--limit` (default 20, max 50) | `{ pattern, scope, scanned_partitions, results, truncated, result_count }` — literal, case-insensitive search across the recent firehose window, grouped by request. `scope` is always `recent`: every partition's walk starts at the second-to-last segment. `truncated` reports any of the three bounds — the result `limit`, the grouping engine's per-request byte and line caps, or `GREP_MAX_SCAN_LINES`. Each result carries `rid`, `url`, `method`, `ts`, `match_count` and `first_match_excerpt`. Shares its matching and grouping engine with `wp nodes reqgrep` (`Reqgrep_Core`), so both agree on what matched. Where the CLI hangs a history-miss callback on that engine, this verb wires none: a match on a late line whose earlier lines have already rotated out of the fixed 250-entry × 10-bucket history ring answers with `url` and `method` empty and `truncated` still false, so nothing in the reply says the request was reassembled from its tail alone. |
 | `request_detail` | READ | `rid` (required, positional), `--partition` (default 0) | The full request body and merged flame data, plus computed `findings` and the measurement `caveat`. `partition` is a hint: searched first, then the rest, so any rid `request_search` locates resolves here too. Throws `invalid partition` for an out-of-range partition, `Request not found` for an unknown rid, and the `budget spent` message above. |
 | `ask` | READ | `descriptor` (required, positional; further context descriptors follow it, outermost last), `--server`, `--context` | The brief for one picker descriptor. |
 | `hooks_registered` | READ | — | `{ total_hooks, categories, category_descriptions, hooks_by_category }`. |
@@ -189,39 +195,75 @@ country, from, ua, ja4`; `URL_SORTS` is `count, url, avg_ms, min_ms, max_ms, avg
 last_updated`.
 
 **`url_detail`'s request window.** `requests` reaches back to `requests_window_start` and no
-further — the floor of the same window the modal's charts are drawn from, which is the
-stats-retention setting capped at the 288 five-minute buckets a reader enumerates (24h), so
-above a `min_lifetime` of ~86,100s the reach stays 24h whatever the setting says. A request
-that completed before it is absent by design, not by truncation. `since` TAILS that list:
-the walk stops below that epoch, so `requests` then reaches back only to the watermark while
-`requests_window_start` still names the window's floor — the caller is expected to be
-accumulating, and the dashboard's merge does. It is compared against a request's COMPLETION,
-not its start, and the stop is exclusive, so a request sharing the watermark's second is
-still returned. `scan_stopped_early` is true when the walk instead spent `MAX_INDEX_ENTRIES`
-before the caller was satisfied, so an empty `requests` is not an idle URL.
+further — the floor of the same window the modal's charts are drawn from. That window is
+`min_lifetime`, floored at `Stats_Store::PREFIX_FLOOR` (3,600s), rounded up to a whole
+five-minute bucket and capped at the 288 buckets a reader enumerates. Measured back from
+the current bucket boundary, the floor sits 3,600 seconds back at or below a `min_lifetime`
+of 3,600s, tracks the setting between, and stops at 86,100 seconds back above 85,800s. A
+request that completed before it is absent by design, not by truncation. `since`
+TAILS that list: the walk stops below that epoch, so `requests` reaches back only to the
+watermark while `requests_window_start` still names the window's floor — the caller is
+expected to be accumulating, and the dashboard's merge does. It is compared against a
+request's COMPLETION, not its start, and the stop is exclusive, so a request sharing the
+watermark's second is still returned. `scan_stopped_early` is true when the walk instead
+spent `MAX_INDEX_ENTRIES` before the caller was satisfied, so an empty `requests` is not an
+idle URL. It says nothing about `RECENT_REQUEST_LIMIT`: the 500th row ends the fan-out,
+leaving every later partition unread and the flag false.
 
 **`ask` descriptors** are `url:<hash>`, `request:<rid>[:<partition>]`, `span:<name>`,
 `entry:<n>` and `category:<name>`. A `span:` or `entry:` brief also needs its `request:`
 descriptor as context, outermost last; on `request:` the partition is a hint, not a filter.
-Every brief carries the measurement `caveat`, and the `request:`, `span:` and `url:` briefs
-carry a `fetch` pointer naming the MCP tool that returns the same subject in full. A `span:`
-brief answers for the parent whose copies of that name hold the most time, and carries
-`elsewhere` (`ms`, `count`, `parents`) for the copies under other parents — omitted when
-every copy sits under one parent. `server` scopes a `url:` brief the way `urls` scopes its
-rows. An unparseable descriptor throws `unknown descriptor`.
+Every brief carries the measurement `caveat`, and three carry a `fetch` pointer — the MCP
+call that re-addresses the same subject: `performance_request_detail` for `request:`,
+`performance_url_detail` for `url:`, and `performance_ask` carrying the descriptor and its
+context for `span:`. A `span:` brief answers for the parent whose copies of that name hold
+the most time, and carries `elsewhere` (`ms`, `count`, `parents`) for the copies under other
+parents — omitted when every copy sits under one parent. A `category:` brief answers from
+one of two boards. With a `request:` descriptor in its context chain it answers from that
+request's own per-category profile and reports `scope: request`; with no request context, or
+with one holding no such category, it falls back to the leaderboard for the recent window
+and reports `scope: recent window`. The two describe different populations, and answering a
+click inside a request from the global board would describe a different thing entirely with
+nothing in the payload saying so. `server` scopes the `url:` brief and that fallback board
+the way `urls` scopes its rows. An unparseable descriptor throws `unknown descriptor`.
+
+**The `findings` list** is what `request_detail` computes and what the `request:` and `url:`
+briefs carry. Each entry is one record, and the list comes back worst first: `severity` is
+`high`, `medium` or `info`, and that is the sort. `kind` is one of `fatal`,
+`insufficient_instrumentation`, `unattributed`, `dominant_span`, `repetition`, `entry_gap`
+and `truncation`. `title` and `detail` are the prose; `metric` is a numbers object whose keys
+follow the kind; `rule_id` names the rule admitting the request, or null when none does.
+`measured` says where the number came from — `flame`, `profiles`, `subtraction`,
+`entry timestamps`, `record markers`, `php fatal`, `rule + record` or `url stats` — because a
+share read off the flame tree and one obtained by subtracting warrant different confidence.
+`proposal` says what rule edit would act on the finding: an `action` (`add_hooks`,
+`trim_hooks`, `mark_significant`, `add_custom_events`, `create_rule` or `none`), a
+`direction` of `more`, `less` or `none`, a `why`, an `undo`, and whichever of `pattern`,
+`hooks`, `field` and `value` that action needs. Every kind but `fatal` carries one, since no
+rule edit fixes a crash. A `direction` is as often `more` as `less`: a proposal that only
+ever turned monitoring off would make the system blinder each time it was taken.
 
 **`set`** is the normalized positional single-option writer (`set <option> <value>`) over a
 three-option whitelist: `newspack_event_logger_nodes_rules` (array),
 `newspack_event_logger_nodes_log_memory` (bool) and
 `newspack_event_logger_nodes_flush_every_line` (bool). An option absent from it is refused
 as `unknown option`, so the whitelist and `hub-control.tsl`'s `add_setting` lines must stay
-in step. Array-typed options carry their value as JSON. A set to the value already in place
-answers `updated: false` without saving, because the hub re-pushes every synced option on its
+in step. Array-typed options carry their value as JSON, and the decoded array is sanitized
+before it is stored: string keys and string values pass through `sanitize_text_field`, an
+object is dropped, and the whole option is refused as `invalid value for option` — a
+different refusal from `unknown option` — when it nests more than `SETTINGS_ARRAY_DEPTH` (5)
+levels below the top or any one level holds more than `SETTINGS_ARRAY_MAX` (10,000)
+elements. Nothing is truncated to fit. A set to the value already in place answers
+`updated: false` without saving, because the hub re-pushes every synced option on its
 sweep whether or not it moved and a reload fires `Config::RESET_ACTION` on every worker,
 which re-parses every `.tsl` for the same answer. The ruleset routes to
-`Rule_Set::apply_synced()` instead, which re-tiers and holds its own gate. Autoload follows
-`Config::autoload_for()`, and the write emits a settings event that `Settings_Sync_Node`
-fans out to spokes.
+`Rule_Set::apply_synced()` instead, which re-tiers and holds its own gate, and that is where
+the decode's one footgun lands: a `rules` value that fails to parse as JSON is taken as an
+empty array rather than refused, and `apply_synced()` SAVES it — so a malformed hub push
+clears the spoke's rules and pins the explicit "log nothing" that `reset` exists to avoid
+storing. A rate-limited `PerformanceCI: rejected non-JSON synced array-option value` notice
+is the only sign. Autoload follows `Config::autoload_for()`, and the write emits a settings
+event that `Settings_Sync_Node` fans out to spokes.
 
 ## Substrate verbs the dashboards use
 
@@ -234,7 +276,7 @@ plugin's operators.
 |----|-------|-----------------|
 | `workers` | `list`, `dump_graph`, `cleanup_status`, `restart`, `heartbeat` | The fleet, and the SSE slot keep-alive every dashboard pokes. |
 | `status` | `get` | A literal `status: ok`, the `runtime_version`, `num_partitions`, the active `topologies`, `cache_available` and a `timestamp`. It carries no application version field. |
-| `settings` | `get`, `set` | The seven substrate-owned integer settings: `num_partitions`, `segment_size`, `min_segments`, `num_segments`, `min_lifetime`, `lifetime`, `max_segments`. |
+| `settings` | `get`, `set` | `get` answers a snapshot of the seven substrate-owned storage settings: `num_partitions`, `segment_size`, `min_segments`, `num_segments`, `min_lifetime`, `lifetime` and `max_segments`. `set` reaches further — every `int` Field declaring a minimum, which adds the six `remote_*` spoke-geometry keys, the three `alert_*` thresholds and the four bounded `sse_*` limits — and answers with that same seven-key snapshot whatever it wrote. The wider reach is how `Settings_Sync_Node` pushes a hub's `remote_*` geometry out to its spokes. |
 | `vault` | `list`, `get`, `add`, `update`, `delete`, `test` | Remote-spoke credentials. This is where a spoke's URL and Authorization header live. |
 | `aggregator` | `summary`, `servers_status`, `probe` | Per-spoke `Remote_Source_Node` status on the hub. |
 
@@ -243,16 +285,15 @@ the command and routes the reply back by the TO the server echoed off the sender
 `_http/workers` is the heartbeat target: `mountExospine` wires the shared `_heartbeat` node
 to it, and that is fixed wiring rather than a per-dashboard choice.
 
-Three CI names a stale client may still address resolve to nothing: `servers`, `logger` and
-`events`. Remote-spoke credentials live in the substrate `vault` CI, and
-`performance.hooks_registered` and `performance.overview` answer what the other two did.
-
 See [`../../newspack-nodes/docs/API.md`](../../newspack-nodes/docs/API.md) for full schemas.
 
 ## SSE: `/messages/stream`
 
-A client subscribes to one or more `<log>.p<N>` partitions; the server emits a 7-field
-message envelope per data line plus an idle `heartbeat` event.
+A client subscribes to one or more `<log>.p<N>` partitions. The server opens with a `retry`
+event carrying the reopen delay and a `connected` envelope carrying the starting resume
+cursors, then emits one `msg` event per data line, a `heartbeat` every 2 seconds while no
+data flows, and a `disconnect` when the slot lease is lost. Every one of them is a 7-field
+message envelope.
 
 ```
 GET /wp-json/newspack-nodes/v1/messages/stream?subscribe=<log>.p<N>[,<log>.p<N>...][&positions=...][&multi_writer=1]
@@ -278,9 +319,12 @@ Operational discipline:
   server-side check is check-only. Each client's TTL must outlive its own poke interval.
 - Flush before the framework sleeps, NOT per event. Per-event flushing tanks throughput on
   TLS and proxy paths.
-- No application-level connection timeout — the stream disables PHP's execution time limit.
-  A connection ends when the slot lease is lost or the client disconnects; infrastructure
-  limits (PHP-FPM, a proxy) can still cap it from outside the application.
+- A stream that has carried no `msg` for `sse_idle_timeout` (default 15s, 0 never closing)
+  closes cleanly, sending no terminal frame, and the client reopens after the `sse_retry_ms`
+  (default 5,000ms) the opening `retry` event named. Heartbeats do not defer that close —
+  only data does — so zero-message streams closing and reopening on that cycle is the normal
+  case. PHP's own execution time limit is disabled, so nothing else inside the application
+  caps a connection; infrastructure (PHP-FPM, a proxy) still can.
 
 ## Worker spawn
 
@@ -313,8 +357,9 @@ user and installs its scope as a ceiling, so authority is the user's and the sco
 subtracts: a manage-scoped session minted by someone who can do nothing still does nothing.
 `tools/list` offers only the tools the scope covers.
 
-Ten tools, one per verb. Each tool's named arguments go through `Command_Args` on the way in,
-and the verb's reply comes back verbatim:
+Ten tools, one per verb. Each tool's named arguments go through `Command_Args::format()` on
+the way in, and the verb's reply comes back unreshaped as one `text` content block, JSON
+encoded unless the verb already returned a string:
 
 | Tool | Node.verb | Role |
 |------|-----------|------|
@@ -349,7 +394,10 @@ cause for the difference — and the invented cause reads exactly like a finding
 caveat is `initialize`'s `instructions`.
 
 A verb refusal comes back as an MCP tool error (`result.isError`), not a transport error:
-the call reached the server and was answered.
+the call reached the server and was answered. A tool the session's scope does not cover is
+refused earlier and differently — JSON-RPC error `-32601`, `Unknown tool: <name>`, the same
+answer a name that exists nowhere gets. The server draws no line between a typo and a
+permission refusal, so read `tools/list` for what this session actually offers.
 
 Nothing here assumes an agent will act on instructions found in a page. Wiring a client up
 is a deliberate act by the operator; the endpoint advertises itself in prose aimed at a
@@ -376,7 +424,7 @@ are ignored.
 | `--incomplete` | Show only requests that reached neither `process (complete)` nor `process (aborted)`. |
 | `--bucket-size=<size>` | History bucket capacity, counting request ids plus lines. Default 250, clamped 1–10000. |
 | `--num-buckets=<count>` | History buckets retained. Default 10, clamped 1–100. |
-| `--firehose=<path>` | Override the firehose base directory. Must resolve inside `Config::get_logs_directory()`, which is validated first. |
+| `--firehose=<path>` | Override the firehose base directory, validated before any dir is opened: it must resolve inside `Config::get_logs_directory()`. A path already naming a partition (`.p<N>`) reads that partition alone, under the index it names. |
 
 The in-flight cache holds 100 items × 3 buckets, rotating every 60 seconds; anything falling
 out of the oldest bucket prints as `[incomplete]`. `Reqgrep_Core` does the grouping, so this
@@ -386,10 +434,12 @@ command and `performance.request_grep` agree byte for byte on what belongs to wh
 
 Measurement only, off the request hot path. Sweeps a grid of hooks-per-rule × rule-count and
 prints the median autoload, inline and pointer cost in microseconds per cell — what
-`Rule_Set::INLINE_HOOK_LIMIT` (100) is calibrated from. `--iterations` defaults to 200 and
-clamps to a minimum of 1; a higher count buys a steadier median at the cost of runtime. With
-no cache backend the sweep still runs but warns, because the pointer column then reports the
-bind loop alone.
+`Rule_Set::INLINE_HOOK_LIMIT` (100) is calibrated from. It closes with the rule for reading
+that table: take the largest hooks-per-rule K whose inline cost stays below the pointer
+floor and whose autoload tax stays negligible, never going below 65. `--iterations` defaults
+to 200 and clamps to a minimum of 1; a higher count buys a steadier median at the cost of
+runtime. With no cache backend the sweep still runs but warns, because the pointer column
+then reports the bind loop alone.
 
 ## PHP API
 
@@ -429,7 +479,7 @@ false.
 | `static url_hash( string ): string` | 12-char FNV-1a. The shared URL identity primitive, also behind `Rule_Set::id_for()`. The two hash different inputs — a rule id hashes a PATTERN, a stats bucket a concrete URL — so don't join them. |
 | `static fnv1a32( string, int $seed = 2166136261 ): int` | The hash underneath it. |
 | `static generate_request_id(): string` | 32 base-36 characters over 25 random bytes. |
-| `static redact_url( string ): string` | The ONE redaction path; public for that reason. Strips 21 sensitive query parameters. |
+| `static redact_url( string ): string` | The ONE redaction path; public for that reason. Replaces the value of each of 21 sensitive query parameters with `[REDACTED]`, keeping the parameter itself. |
 
 Public constants: `FATAL_TYPES`, and the four request keywords `REQUEST_LABEL` (`process`),
 `REQUEST_START`, `REQUEST_COMPLETE` and `REQUEST_ABORTED`. The last two together are
@@ -438,25 +488,32 @@ strands in flight until eviction.
 
 **Payload size.** `message()` enforces an encoded-data cap of 3840 bytes — headroom under
 PIPE_BUF (4096), which is what keeps a lock-free append atomic against every other writer on
-this multi-writer log. An oversize map is trimmed and marked `truncated => true`: `m` is
-shortened in a re-encoding loop — re-encoding per step, because JSON escaping expands bytes —
-then dropped outright, and every other key survives, `l` and `caller` included. Where the
-remaining keys alone still exceed the cap, the floor case keeps `n`, `k` and `ts` and puts a
-1000-character slice of the encoded map in `m`, so a reader can still place the entry.
-Nothing is chunked and nothing reaches `error_log`; the entry says so itself. The category
-is never renamed, because a `" (truncated)"` suffix would break `Flame_Tree::PATTERN_START`
-and `Request_Builder_Node`'s `' (start)'` test, so the span would never open and its
-`(complete)` would orphan. The constant is private, so a producer sizing its own payloads
-keeps its own copy — Pyrobase's `Runtime\Log` does. Anything that can exceed it belongs in
-`\Newspack_Nodes\Job_Intake::queue()`, which takes the auto-lock around large writes.
+this multi-writer log. An oversize map is trimmed and marked `truncated => true`: a string
+`m` is shortened in a re-encoding loop — re-encoding per step, because JSON escaping expands
+bytes — then dropped outright, while an `m` of any other type is dropped whole without the
+loop. Every other key survives, `l` and `caller` included. Where the remaining keys alone
+still exceed the cap, the floor case keeps `n`, `k`, `ts` and the `truncated` flag, and puts
+the encoded map's first 1000 bytes plus a literal `...` in `m`, so a reader can still place
+the entry — that `m` is a legible dump, not decodable JSON. Nothing is chunked and nothing
+reaches `error_log`. The category is never renamed, because a `" (truncated)"` suffix would
+break `Flame_Tree::PATTERN_START` and `Request_Builder_Node`'s `' (start)'` test, so the
+span would never open and its `(complete)` would orphan. The constant is private, so a
+producer sizing its own payloads keeps its own copy — Pyrobase's `Runtime\Log` does.
+Anything that can exceed it belongs in `\Newspack_Nodes\Job_Intake::queue()`, which takes
+the auto-lock around large writes.
+
+**The second producer.** The Perl engine's `Gyrobase::Log` appends to the same firehose, and
+its `@ENV_ALLOWLIST` (34 keys), `ENV_VALUE_MAX` (256 bytes), U+2026 elision marker and URL
+redaction pattern are hand-maintained copies of `Log_Manager`'s. Only dndocker holds both
+repositories, so its `tools/check-firehose-parity.py` is what keeps the two identical, and
+this plugin's `pre-push` runs that check whenever dndocker is the checkout in hand.
 
 **The profiler drop-in.** `mu-plugins/00-newspack-profiler.php` publishes a `$newspack_profiler`
 global carrying `request_time` (monotonic nanoseconds), `request_ts` (the matching wall
 clock) and one `plugins` row per timed plugin. `Log_Manager`'s constructor adopts and unsets
 the first two, which is what stamps `process (start)` with the moment PHP began the request
 rather than the moment the logger emitted its first line, and stops a nested job context from
-claiming them again. The drop-in depends on nothing; with the plugin inactive it simply goes
-unread.
+claiming them again. The drop-in depends on nothing; with the plugin inactive it goes unread.
 
 ## Hooks
 
@@ -526,19 +583,28 @@ at `hook_start_priority` (default -10000), a sacrificial no-op spacer at `PHP_IN
 and a complete callback at `PHP_INT_MAX - 1`. The spacer is what keeps that complete firing:
 when a callback removes itself mid-run, `WP_Hook::resort_active_iterations()` parks the
 pointer on the next surviving priority and `apply_filters`' `next()` skips it — the spacer is
-consumed instead of `hook_complete`. A rule with `log_http` — the default — also gets the
+consumed instead of `hook_complete`. A `significant_events` name the `hooks` list omits is
+bound alongside them once a trailing ` hook` is stripped, so a rule may spell one either way
+and naming it is enough to instrument it. One naming a `custom_events` category stays
+unbound: a custom event is a category the application logs itself, so binding it would
+register a filter nothing fires. Two more names never bind at all: `plugin_loaded`, which
+the profiler drop-in owns, and any hook `Hook_Categorizer::is_internal()` reports — a
+`newspack_nodes` or `newspack_event_logger_nodes` prefix — because instrumenting one
+re-enters the logger's own bootstrap. A rule with `log_http` — the default — also gets the
 outbound-HTTP span pair, `pre_http_request` at `PHP_INT_MAX` and `http_api_debug` at
 `PHP_INT_MIN`; one with `log_queries` gets the query pair, `query` at `PHP_INT_MAX` and
 `log_query_custom_data` at `PHP_INT_MIN`, and `SAVEQUERIES` is defined if it is not already.
 Each pair opens after every filter that could rewrite or short-circuit the call and closes
-ahead of the other listeners on that action, so the span covers the work and not its
+ahead of the other listeners on the closing hook, so the span covers the work and not its
 audience. A short-circuited HTTP request opens no span at all: `WP_Http::request()` returns
 a non-false `$preempt` without ever firing `http_api_debug`, so a span opened for one would
 never close.
 
-Two things `App\Core` will not instrument. It wraps only the callbacks registered strictly
-between `hook_start_priority` and the spacer, so everything at or above the spacer reads as
-its own and is left alone. And it skips any callback whose reflection reports a by-reference
-parameter, because wrapping one breaks WordPress's by-reference contract. Each wrapper it
-does install claims `accepted_args = 99` and slices back to the original's count before
-calling it, so the original never sees an argument it did not ask for.
+`hook_start` wraps a hook's own callbacks only where the rule names that hook in
+`significant_events`, and two things narrow the wrapping further. It takes only the callbacks
+registered strictly between `hook_start_priority` and the spacer, so everything at or above
+the spacer reads as its own and is left alone. And it skips any callback whose reflection
+reports a by-reference parameter, because wrapping one breaks WordPress's by-reference
+contract. Each wrapper it does install claims `accepted_args = 99` and slices back to the
+original's count before calling it, so the original never sees an argument it did not ask
+for.
