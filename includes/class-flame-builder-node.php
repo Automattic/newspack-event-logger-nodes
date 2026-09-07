@@ -238,6 +238,8 @@ class Flame_Builder_Node extends Node {
 		Stats_Store::NS_URL      => 0,   // flame profiles — see $flame_topn
 		// Derived: a missing hour is answered from its mirrored fine buckets.
 		Stats_Store::NS_URLS_HOUR => 0,
+		// Derived from `urlnames`, so excluded for the same reason.
+		Stats_Store::NS_URLNAMES_HOUR => 0,
 		Stats_Store::NS_URL_DIM => 100,  // per-URL dimensional frames
 		Stats_Store::NS_URL_CAT => 100,  // per-URL category frames
 	];
@@ -1285,6 +1287,11 @@ class Flame_Builder_Node extends Node {
 				$rows = $worker ? $acc['url_stats_worker'] : $acc['url_stats'];
 				foreach ( Stats_Store::rows_by_shard( $rows, $worker ) as $shard => $shard_rows ) {
 					$intents[] = $this->url_shard_intent( $bucket, (string) $shard, $shard_rows );
+					$intents[] = $this->url_name_intent(
+						$bucket,
+						(string) $shard,
+						self::paths_of( $shard_rows, $acc['url_names'] )
+					);
 				}
 			}
 			foreach ( $acc['dim'] as $dim => $values ) {
@@ -1423,18 +1430,19 @@ class Flame_Builder_Node extends Node {
 		$unknown = \array_values( \array_diff( $plan['hours'], \array_keys( $this->folded_hours ) ) );
 		// @longform ONE round trip, and only for hours this process did not
 		// fold itself. The probe reads presence but `getMulti` fetches and
-		// unserializes the VALUES, so probing the settled hours would pull the
-		// whole coarse tier off memcache twelve times a minute — the tier that
-		// exists so a READER does not have to.
-		$found = [] === $unknown
-			? []
-			: \array_count_values( \array_column( $stats_store->url_hour_sources( $unknown, null, true ), 0 ) );
+		// unserializes the VALUES, so probing the settled hours would pull
+		// the whole coarse tier off memcache twelve times a minute — the
+		// tier that exists so a READER does not have to. It asks about BOTH
+		// derived tiers: an hour folded by a release that wrote rows alone
+		// otherwise reads as settled forever, keeping its index and losing
+		// its names.
+		$found = [] === $unknown ? [] : $stats_store->url_hours_folded( $unknown );
 		$budget = self::ROLLUP_HOURS_PER_FLUSH;
 		foreach ( $unknown as $hour ) {
 			// @longform A partial fold — a crash between shards — reads as
 			// unfolded and is simply redone, which costs a repeat and cannot
 			// corrupt: the fold overwrites rather than adding.
-			if ( ( $found[ $hour ] ?? 0 ) >= \count( $shards ) ) {
+			if ( ! empty( $found[ $hour ] ) ) {
 				$this->folded_hours[ $hour ] = true;
 				continue;
 			}
@@ -1442,8 +1450,12 @@ class Flame_Builder_Node extends Node {
 			// own `Other` overflow row, which a merge by hash would collapse.
 			$landed = true;
 			foreach ( $shards as $shard ) {
-				$landed = $stats_store->set_url_hour( $hour, $shard, $this->fold_hour( $stats_store, $hour, $shard ) )
-					&& $landed;
+				// Names fold with rows, or a name is left where nothing reads.
+				$both = $stats_store->bucket_set_multi( [
+					[ Stats_Store::url_hour_parts( $shard ), $hour, $this->fold_hour( $stats_store, $hour, $shard ) ],
+					[ Stats_Store::url_name_hour_parts( $shard ), $hour, self::fold_hour_names( $stats_store, $hour, $shard ) ],
+				] );
+				$landed = ! \in_array( false, $both, true ) && $landed;
 			}
 			// A refused shard leaves the hour unfolded; re-probe it next flush.
 			if ( $landed ) {
@@ -1479,6 +1491,30 @@ class Flame_Builder_Node extends Node {
 			}
 		}
 		return self::cap_url_rows( $rows );
+	}
+
+	/**
+	 * One shard's twelve fine name blobs, merged into the hour's.
+	 *
+	 * The twin of `fold_hour()`, folded in the same pass for the same reason:
+	 * the two tiers have to agree about which hours they answer for, or a row
+	 * survives the fold with no name and leaves the search.
+	 *
+	 * A union, not a sum — a name never changes.
+	 *
+	 * @param Stats_Store $stats_store Source and destination.
+	 * @param string      $hour        Hour key.
+	 * @param string      $shard       Shard name from `Stats_Store::url_shard()`.
+	 * @return array<string,string> hash => path.
+	 */
+	private static function fold_hour_names( Stats_Store $stats_store, string $hour, string $shard ): array {
+		$names = [];
+		foreach ( $stats_store->url_name_sources( Stats_Store::buckets_in_hour( $hour ), $shard ) as [ , $blob ] ) {
+			foreach ( $blob as $hash => $path ) {
+				$names[ (string) $hash ] = Core::str( $path );
+			}
+		}
+		return $names;
 	}
 
 	/**
@@ -1520,6 +1556,69 @@ class Flame_Builder_Node extends Node {
 				$this->print_less_often(
 					'URL index write refused; a shard is over the cache item limit and its rows are lost',
 					\sprintf( ' — shard %s, %d rows', $shard, \count( $rows ) )
+				);
+			}
+		);
+	}
+
+	/**
+	 * The PATH of each row in one shard, for that shard's name blob.
+	 *
+	 * Keyed off the ROWS rather than off the whole flush, so a name lands in the
+	 * shard its row went to and a URL both populations visited is named in both
+	 * — the shard token is what tells the two families apart.
+	 *
+	 * @param array<array-key,mixed> $rows  One shard's rows, by url_hash.
+	 * @param array<string,string>   $names This flush's `hash => url` map.
+	 * @return array<string,string> hash => path.
+	 */
+	private static function paths_of( array $rows, array $names ): array {
+		$out = [];
+		foreach ( \array_keys( $rows ) as $hash ) {
+			$url = $names[ (string) $hash ] ?? '';
+			if ( '' !== $url ) {
+				$out[ (string) $hash ] = Stats_Store::split_url( $url )[0];
+			}
+		}
+		return $out;
+	}
+
+	/**
+	 * How one shard's names fold into their stored blob.
+	 *
+	 * The same tier choice `url_shard_intent()` makes, for the same reason: a
+	 * folded hour is the key a reader takes, so a late write has to reach it.
+	 *
+	 * UNCAPPED, deliberately — every URL has to be searchable, and a cap here
+	 * would drop exactly the URL somebody is searching for. So it is NOT
+	 * bounded by `MAX_URLS_PER_SHARD`: `cap_url_rows()` runs inside the ROW
+	 * intent's merge, after this map is built, so a name is written for a URL
+	 * whose row folded into `Other`. What bounds it in practice is the distinct
+	 * URLs a shard sees in one bucket; what bounds it in the end is the refusal
+	 * log below, which is why this carries one exactly as its twin does.
+	 *
+	 * A name never changes, so the merge is a union.
+	 *
+	 * @param string               $bucket Bucket key.
+	 * @param string               $shard  Shard name from `Stats_Store::url_shard()`.
+	 * @param array<string,string> $paths  That shard's `hash => path` map.
+	 * @return Pending_Write
+	 */
+	private function url_name_intent( string $bucket, string $shard, array $paths ): array {
+		$hour   = Stats_Store::hour_of( $bucket );
+		$folded = isset( $this->folded_hours[ $hour ] );
+		$parts  = $folded ? Stats_Store::url_name_hour_parts( $shard ) : Stats_Store::url_name_parts( $shard );
+		return self::intent(
+			$parts,
+			$folded ? $hour : $bucket,
+			static fn ( array $existing ): array => \array_replace( $existing, $paths ),
+			// @longform Uncapped and unmirrored, so a refusal is the ONLY
+			// signal: a shard over the item limit loses every name it holds,
+			// and its rows answer no search until a later bucket names them.
+			function () use ( $shard, $paths ): void {
+				$this->print_less_often(
+					'URL name index write refused; a shard is over the cache item limit and its names are lost',
+					\sprintf( ' — shard %s, %d names', $shard, \count( $paths ) )
 				);
 			}
 		);
@@ -2302,7 +2401,7 @@ class Flame_Builder_Node extends Node {
 	 *
 	 * `flush()` and `save_state()` share it, so the flame trees co-commit with
 	 * the read cursor at every checkpoint rather than only on the
-	 * FLUSH_INTERVAL_SEC cadence. `Stats_Store::set_url_stats()` overwrites with
+	 * FLUSH_INTERVAL_SEC cadence. The batched `NS_URL` write overwrites with
 	 * the whole aggregate and leaves the accumulator standing, so a
 	 * `save_state()` drain followed by the next `flush()` double-counts nothing.
 	 */
@@ -2311,7 +2410,8 @@ class Flame_Builder_Node extends Node {
 		if ( null === $stats_store ) {
 			return;
 		}
-		$now = $this->now_ts();
+		$now    = $this->now_ts();
+		$writes = [];
 		foreach ( $stats_store->accumulating_url_stats() as $url_hash => $aggregate ) {
 			if ( ! \is_array( $aggregate ) ) {
 				continue;
@@ -2325,7 +2425,15 @@ class Flame_Builder_Node extends Node {
 			Flame_Tree::finalize_flame_node( $flame, $total_count );
 			$aggregate['flame']         = $flame;
 			$aggregate['last_modified'] = $now;
-			$stats_store->set_url_stats( $url_hash, $aggregate );
+			// @longform One write per URL is one ROUND TRIP per URL, which is
+			// the cost this whole flush path is batched to avoid. Chunked on
+			// `flush_writes()`'s budget, which bounds what one `store_multi`
+			// serializes; the aggregates themselves are alive either way,
+			// because the accumulator this drains is already holding them.
+			$writes[] = [ [ Stats_Store::NS_URL ], $url_hash, $aggregate ];
+		}
+		foreach ( \array_chunk( $writes, self::WRITE_BATCH_KEYS ) as $chunk ) {
+			$stats_store->bucket_set_multi( $chunk );
 		}
 	}
 
