@@ -7,14 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.86.3] - 2026-09-06
+
 ### Fixed
 
 - **The firehose cap now bounds what the wire carries.** `MAX_DATA_SIZE` was measured against the caller's `$data`, but `n`, `k` and `ts` are stamped on afterwards, so a payload that cleared the cap on its own still shipped an oversized entry — 3895 bytes against a 3840 cap in the regression test. `message()` builds the entry first and fits THAT, and the last-resort floor keeps `n`, `k` and `ts` so a reader can still place the line.
-
 - **Every failed Ask showed "An error occurred" instead of why.** `useAsk` reports a reason STRING — the substrate types a reply's `error` as `?string`, and `errorMessage()` coerces every TM_ERROR payload before `onDone` sees it — but the page's handler read `err.message`, which is `undefined` on a string, so the real reason was discarded on both failure paths. The tests passed because they drove the handler with an `Error` object production never sends; they now use the string the runtime actually delivers, and fail against the old code.
 
 ### Documentation
 
+- **The seven documents verified against source, then completed from it.** Two passes held every existing claim to the code, the second re-deriving each rather than reviewing the first's reasoning. Every `file:line` citation became a symbol reference, because a cited line is right only until someone edits above it. Then all 931 non-test PHP and JS files across the six plugins were read to establish what these documents omit, and each resulting finding was verified against source again before being written — a claim that the Current-Request overlay passes `Admin::devtools_overlay_pages()` as its `page` value was dropped, since `Current_Request_Overlay::enqueue_on_overlay_pages()` never calls `enqueue_react_page` at all — it gates on its own `is_overlay_page()` and hand-rolls `wp_enqueue_script`.
 - **Every PHP and JS source file's documentation reviewed against its code.** One agent per file, tests excluded: missing docblocks written, `@param`/`@return` drift corrected against the real signature, documentation for deleted behaviour removed, and the why recorded where the what was already plain. Comments describing history rather than the present are gone.
 - **JSDoc types repaired where the sweep's prose broke the type gate.** An `@type` naming `LazyExoticComponent` with no type argument overrode correct inference and erased `PerformanceDashboard`'s whole props contract; `@` inside prose (`@<priority>`, `@0`) parses as a tag and is a syntax error; a `%s` was handed a number.
 
