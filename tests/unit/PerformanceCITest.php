@@ -3604,6 +3604,39 @@ class PerformanceCITest extends TestCase {
 	}
 
 	/**
+	 * The reader's fallback horizon is the writer's TTL.
+	 *
+	 * An unfolded hour is answered from its twelve fine buckets, but the fine
+	 * tier is kept for `ttl_url_fine()` — four hours — while the plan's hours
+	 * reach back a whole retention window. Asking for the rest was a certain
+	 * miss per shard per chunk, and under an armed mirror each one walked that
+	 * mirror's index in full. Nothing can answer for them: the FOLD reads the
+	 * same keys, so an hour behind the horizon is gone from the fine tier for
+	 * everyone.
+	 */
+	public function test_an_unfolded_hour_past_the_fine_ttl_is_not_asked_for(): void {
+		$this->activate_shipped_topology( 'performance', 1 );
+		$store = new Stats_Store( 0, 86400 );
+		$now   = \time();
+		// Two unfolded hours: one inside the fine tier, one long past it.
+		$recent  = \gmdate( 'Y-m-d-H', $now - 3600 );
+		$ancient = \gmdate( 'Y-m-d-H', $now - ( 11 * 3600 ) );
+		foreach ( [ $recent => 'recent', $ancient => 'ancient' ] as $hour => $tag ) {
+			$hash = \substr( Log_Manager::url_hash( "https://example.test/{$tag}" ), 0, 12 );
+			$this->set_url_bucket(
+				$store,
+				Stats_Store::buckets_in_hour( (string) $hour )[0],
+				[ $hash => [ 'url' => "https://example.test/{$tag}", 'count' => 7 ] ]
+			);
+		}
+
+		$urls = \array_column( VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' )['data'] ?? [], 'url' );
+
+		$this->assertContains( 'https://example.test/recent', $urls, 'inside the fine tier, the fallback still answers' );
+		$this->assertNotContains( 'https://example.test/ancient', $urls, 'past it, the key cannot exist and is never asked for' );
+	}
+
+	/**
 	 * The reset belongs to the ANSWER, not to the inbound message.
 	 *
 	 * `Mcp_Controller` calls `dispatch()` straight, with no Message behind it,

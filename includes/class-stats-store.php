@@ -349,11 +349,16 @@ class Stats_Store {
 	 *
 	 * The read plan asks for `FINE_BUCKETS` plus the rest of their hour — two
 	 * hours at the very worst — and `roll_up_hours()` folds a closed hour into
-	 * `urls_h` within a re-probe of it closing. Nothing reads a fine bucket
-	 * behind that, and the fine tier is the largest thing this schema puts in a
-	 * 512MB cache: 288 buckets a shard against the coarse tier's 24. Four hours
-	 * leaves the readers two hours of margin and the fold three; a longer outage
-	 * costs the last partial hour before it, the one the fold has not reached.
+	 * `urls_h` within a re-probe of it closing. The fine tier is the largest
+	 * thing this schema puts in a 512MB cache: 288 buckets a shard against the
+	 * coarse tier's 24. Four hours leaves the readers two hours of margin and
+	 * the fold three; a longer outage costs the hours the fold never reached.
+	 *
+	 * `unfolded_hour_buckets()` is what holds the readers to it. Their fallback
+	 * for an unfolded hour reads that hour's fine buckets, and the plan's hours
+	 * span a whole retention window — so without a horizon they asked for keys
+	 * this TTL had discarded hours earlier, four times more of them than the
+	 * tier can hold.
 	 */
 	public const FINE_TTL_SECONDS = 14400;
 
@@ -564,17 +569,6 @@ class Stats_Store {
 		return \strlen( $bucket ) === \strlen( $opened )
 			&& $bucket >= $opened
 			&& $bucket <= self::bucket_key( $now + self::MAX_FUTURE_SKEW_SEC );
-	}
-
-	/**
-	 * The bucket a timestamp falls in: `Y-m-d-H-i` UTC, floored to
-	 * BUCKET_MINUTES (which must divide 60). Lexical order is chronological
-	 * order, which is what lets expiry compare keys with `<` against a cutoff.
-	 *
-	 * @param int $timestamp Unix timestamp.
-	 */
-	public static function bucket_key( int $timestamp ): string {
-		return \gmdate( 'Y-m-d-H-i', $timestamp - ( $timestamp % self::BUCKET_SECONDS ) );
 	}
 
 	/**
@@ -1263,11 +1257,6 @@ class Stats_Store {
 		return $this->max_lifespan;
 	}
 
-	/** Retention for a FINE `urls` bucket: its read window, never the whole one. */
-	public function ttl_url_fine(): int {
-		return \min( $this->max_lifespan, self::FINE_TTL_SECONDS );
-	}
-
 	/** Retention for the high-volume `url` namespace: a day's worth cut to a 24th, floored at an hour. */
 	public function ttl_url_stats(): int {
 		return \max( self::PREFIX_FLOOR, (int) ( $this->max_lifespan / 24 ) );
@@ -1485,6 +1474,67 @@ class Stats_Store {
 	}
 
 	/**
+	 * The fine buckets that still ANSWER for an unfolded hour.
+	 *
+	 * `buckets_in_hour()` enumerates all twelve whatever their age, and the
+	 * three readers that fall back to them read the plan's whole hour list —
+	 * a retention window. The fine tier is kept for `ttl_url_fine()`, four
+	 * hours, so everything behind that was a certain miss per shard per chunk,
+	 * and under an armed mirror each miss walked that mirror's index in full.
+	 * The reader's fallback horizon is the writer's TTL.
+	 *
+	 * Nothing is lost that anything could have answered: `roll_up_hours()`
+	 * folds an hour from these same keys, so an hour behind the horizon is
+	 * gone from the fine tier for the fold as well as for the reader.
+	 *
+	 * Bucket keys are fixed-width and zero-padded, so they sort
+	 * chronologically and a string compare is the whole test.
+	 *
+	 * @api The dashboard readers, for an hour the coarse tier cannot answer.
+	 * @param string $hour A `Y-m-d-H` hour key.
+	 * @return list<string>
+	 */
+	public function unfolded_hour_buckets( string $hour ): array {
+		$floor = self::bucket_key( \time() - $this->ttl_url_fine() );
+		return \array_values(
+			\array_filter(
+				self::buckets_in_hour( $hour ),
+				static fn ( string $bucket ): bool => $bucket >= $floor
+			)
+		);
+	}
+
+	/**
+	 * The fine buckets one hour covers, oldest first.
+	 *
+	 * @param string $hour A `Y-m-d-H` hour key.
+	 * @return list<string>
+	 */
+	public static function buckets_in_hour( string $hour ): array {
+		$out = [];
+		for ( $m = 0; $m < 60; $m += self::BUCKET_MINUTES ) {
+			$out[] = $hour . \sprintf( '-%02d', $m );
+		}
+		return $out;
+	}
+
+	/** Retention for a FINE `urls` bucket: its read window, never the whole one. */
+	public function ttl_url_fine(): int {
+		return \min( $this->max_lifespan, self::FINE_TTL_SECONDS );
+	}
+
+	/**
+	 * The bucket a timestamp falls in: `Y-m-d-H-i` UTC, floored to
+	 * BUCKET_MINUTES (which must divide 60). Lexical order is chronological
+	 * order, which is what lets expiry compare keys with `<` against a cutoff.
+	 *
+	 * @param int $timestamp Unix timestamp.
+	 */
+	public static function bucket_key( int $timestamp ): string {
+		return \gmdate( 'Y-m-d-H-i', $timestamp - ( $timestamp % self::BUCKET_SECONDS ) );
+	}
+
+	/**
 	 * Namespace prefix for one shard of the COARSE hourly URL index.
 	 *
 	 * @param string $shard Shard name from `url_shard()`.
@@ -1629,20 +1679,6 @@ class Stats_Store {
 				: Core::num_float( $sums[ $index ] ?? null );
 		}
 		return $row;
-	}
-
-	/**
-	 * The fine buckets one hour covers, oldest first.
-	 *
-	 * @param string $hour A `Y-m-d-H` hour key.
-	 * @return list<string>
-	 */
-	public static function buckets_in_hour( string $hour ): array {
-		$out = [];
-		for ( $m = 0; $m < 60; $m += self::BUCKET_MINUTES ) {
-			$out[] = $hour . \sprintf( '-%02d', $m );
-		}
-		return $out;
 	}
 
 	/**

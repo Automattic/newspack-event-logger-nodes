@@ -767,7 +767,7 @@ class Performance_CI_Node extends Service_CI_Node {
 						}
 						continue;
 					}
-					$missing = \array_merge( $missing, Stats_Store::buckets_in_hour( $hour ) );
+					$missing = \array_merge( $missing, $store->unfolded_hour_buckets( $hour ) );
 				}
 			}
 
@@ -1445,7 +1445,7 @@ class Performance_CI_Node extends Service_CI_Node {
 			$missing = [];
 			foreach ( $plan['hours'] as $hour ) {
 				if ( ! isset( $hours[ $hour ] ) ) {
-					$missing = \array_merge( $missing, Stats_Store::buckets_in_hour( $hour ) );
+					$missing = \array_merge( $missing, $store->unfolded_hour_buckets( $hour ) );
 				}
 			}
 			$fold( $hours );
@@ -1893,7 +1893,7 @@ class Performance_CI_Node extends Service_CI_Node {
 			$missing = [];
 			foreach ( $plan['hours'] as $hour ) {
 				if ( ! isset( $covered[ $hour ] ) ) {
-					$missing = \array_merge( $missing, Stats_Store::buckets_in_hour( $hour ) );
+					$missing = \array_merge( $missing, $store->unfolded_hour_buckets( $hour ) );
 				}
 			}
 			foreach ( [ $plan['fine'], $missing ] as $tier ) {
