@@ -94,6 +94,21 @@ class Stats_Store {
 	public const NS_LB          = 'lb';
 	/** Per-server leaderboard bucket. */
 	public const NS_LB_S        = 'lb_s';
+
+	/**
+	 * The GLOBAL leaderboard's COARSE tier: `lb_h:{Y-m-d-H}`, one key an hour
+	 * holding the same shape a fine bucket holds.
+	 *
+	 * The leaderboard is the heaviest read the dashboard makes — one category
+	 * per hook, callback and plugin the site fires, 1,198 of them on a
+	 * production hub, each with its own entry map, across 288 buckets and four
+	 * partitions. Decision 17 already answers that shape for `urls`; this is the
+	 * same answer for the same reason, and the readers ask at the same two
+	 * resolutions. The per-SERVER tier keeps the fine path: a shard count is a
+	 * constant the schema chooses, but the servers present in an hour cannot be
+	 * enumerated from the keyspace.
+	 */
+	public const NS_LB_HOUR     = 'lb_h';
 	/** Per-URL stats blob: flame tree and profiles. */
 	public const NS_URL         = 'url';
 	/**
@@ -659,6 +674,25 @@ class Stats_Store {
 	 */
 	public function get_hourly_buckets( array $buckets ): array {
 		return $this->lookup_buckets( [ self::NS_HOURLY ], $buckets );
+	}
+
+	/**
+	 * Read many COARSE leaderboard hours in a single round-trip.
+	 *
+	 * @param array<int,string> $hours Hour keys.
+	 * @return array<string,mixed> Bucket sums keyed by hour; misses absent.
+	 */
+	public function get_leaderboard_hours( array $hours ): array {
+		return $this->lookup_buckets( self::lb_hour_parts(), $hours );
+	}
+
+	/**
+	 * Namespace prefix for the coarse global leaderboard.
+	 *
+	 * @return list<string>
+	 */
+	public static function lb_hour_parts(): array {
+		return [ self::NS_LB_HOUR ];
 	}
 
 	/**

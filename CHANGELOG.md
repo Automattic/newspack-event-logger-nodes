@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The leaderboard read 288 buckets across four partitions on every poll, and each one carries a category per hook the site fires.** 1,198 of them on a production hub, each with its own entry map — 1,152 keys and tens of millions of array elements unserialized and merged, per 15-second poll. That is the read that takes `overview` past any answering deadline. `lb` now has the coarse hourly tier `urls` has had since decision 17, folded by the same `roll_up_hours()` pass into the same shape a fine bucket holds, so one `build_leaderboard()` fold serves both tiers: **1,152 keys → 144**, with each hour merged once at write time instead of 288 times per read. An hour the fold has not reached is still answered from its twelve fine buckets, so a fresh deploy and a cold-start backfill stay self-healing. Nothing is capped. The per-SERVER board keeps the fine path — a shard count is a constant the schema chooses, but the servers present in an hour cannot be enumerated from the keyspace.
+
 ## [0.87.1] - 2026-09-07
 
 ### Fixed
