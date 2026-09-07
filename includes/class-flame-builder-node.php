@@ -240,6 +240,8 @@ class Flame_Builder_Node extends Node {
 		Stats_Store::NS_URLS_HOUR => 0,
 		// Derived from `urlnames`, so excluded for the same reason.
 		Stats_Store::NS_URLNAMES_HOUR => 0,
+		// Derived from `lb`, which mirrors in full.
+		Stats_Store::NS_LB_HOUR => 0,
 		Stats_Store::NS_URL_DIM => 100,  // per-URL dimensional frames
 		Stats_Store::NS_URL_CAT => 100,  // per-URL category frames
 	];
@@ -1448,7 +1450,9 @@ class Flame_Builder_Node extends Node {
 			}
 			// @longform Per SHARD, and not regroupable: each shard carries its
 			// own `Other` overflow row, which a merge by hash would collapse.
-			$landed = true;
+			$landed = true === $stats_store->bucket_set_multi( [
+				[ Stats_Store::lb_hour_parts(), $hour, self::fold_hour_leaderboard( $stats_store, $hour ) ],
+			] )[0];
 			foreach ( $shards as $shard ) {
 				// Names fold with rows, or a name is left where nothing reads.
 				$both = $stats_store->bucket_set_multi( [
@@ -1491,6 +1495,28 @@ class Flame_Builder_Node extends Node {
 			}
 		}
 		return self::cap_url_rows( $rows );
+	}
+
+	/**
+	 * One hour's twelve fine leaderboard buckets, merged into the hour's.
+	 *
+	 * The heaviest read the dashboard makes, folded once at write time instead
+	 * of 288 times per poll — decision 17's answer for `urls`, applied to the
+	 * namespace that costs more than it does. The same shape a fine bucket
+	 * holds, so ONE `build_leaderboard()` fold serves both tiers.
+	 *
+	 * @param Stats_Store $stats_store Source and destination.
+	 * @param string      $hour        Hour key.
+	 * @return array<string,mixed>
+	 */
+	private static function fold_hour_leaderboard( Stats_Store $stats_store, string $hour ): array {
+		$merged = [];
+		foreach ( $stats_store->get_leaderboard_buckets( Stats_Store::buckets_in_hour( $hour ) ) as $row ) {
+			if ( \is_array( $row ) ) {
+				Stats_Store::merge_leaderboard_bucket( $merged, Stats_Store::string_keys( $row ) );
+			}
+		}
+		return $merged;
 	}
 
 	/**

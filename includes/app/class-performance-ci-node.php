@@ -1411,15 +1411,45 @@ class Performance_CI_Node extends Service_CI_Node {
 		$count        = 0;
 		$sum_req_time = 0.0;
 		$sums         = [];
-		$buckets      = self::read_window();
-		foreach ( self::stats_stores() as $store ) {
-			foreach ( $store->get_leaderboard_buckets( $buckets, $server ) as $row ) {
+		$fold         = static function ( array $rows ) use ( &$count, &$sum_req_time, &$sums ): void {
+			foreach ( $rows as $row ) {
 				if ( ! \is_array( $row ) ) {
 					continue;
 				}
 				$count        += Core::num_int( $row['count'] ?? 0 );
 				$sum_req_time += Core::num_float( $row['sum_req_time'] ?? 0 );
 				$sums          = Stats_Store::sum_fields( $sums, Core::arr( $row['categories'] ?? null ), Stats_Store::LB_CAT_SUMS );
+			}
+		};
+		// @longform A server scope has no coarse tier — a shard count is a
+		// constant the schema chooses, but the servers present in an hour
+		// cannot be enumerated from the keyspace — so it walks the window.
+		if ( '' !== $server ) {
+			foreach ( self::stats_stores() as $store ) {
+				$fold( $store->get_leaderboard_buckets( self::read_window(), $server ) );
+			}
+			return Stats_Store::sums_to_display( $count, $sum_req_time, $sums );
+		}
+
+		$plan = Stats_Store::read_plan( \array_values( self::read_window() ) );
+		foreach ( self::stats_stores() as $store ) {
+			// @longform An hour the coarse tier cannot answer for is not folded
+			// yet — a fresh deploy, a backfill, a worker down at the boundary —
+			// and its twelve fine buckets answer for it, exactly as the URL
+			// index's do. A folded hour's buckets are NOT read: they outlive
+			// the fold, and taking both counts the hour twice.
+			$hours   = $store->get_leaderboard_hours( $plan['hours'] );
+			$missing = [];
+			foreach ( $plan['hours'] as $hour ) {
+				if ( ! isset( $hours[ $hour ] ) ) {
+					$missing = \array_merge( $missing, Stats_Store::buckets_in_hour( $hour ) );
+				}
+			}
+			$fold( $hours );
+			foreach ( [ $plan['fine'], $missing ] as $tier ) {
+				foreach ( \array_chunk( $tier, self::INDEX_READ_CHUNK ) as $chunk ) {
+					$fold( $store->get_leaderboard_buckets( $chunk ) );
+				}
 			}
 		}
 		return Stats_Store::sums_to_display( $count, $sum_req_time, $sums );

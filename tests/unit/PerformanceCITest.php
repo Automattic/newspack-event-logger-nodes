@@ -305,6 +305,27 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( 2, $result['global_leaderboard']['count'] );
 	}
 
+	public function test_the_leaderboard_reads_the_coarse_tier_behind_the_fine_tail(): void {
+		// A fine leaderboard bucket outlives its fold only briefly; behind the
+		// recent tail the hour IS the record. A reader still walking 288 fine
+		// buckets both misses what only the hour holds and pays for a window
+		// it does not need — the read that takes the overview past 15s.
+		$store = new Stats_Store( 0, 86400 );
+		// Two hours back: inside the window, behind the fine tail, folded.
+		$hour  = Stats_Store::hour_of( Stats_Store::bucket_key( \time() - 7200 ) );
+		$store->bucket_set_multi( [ [ Stats_Store::lb_hour_parts(), $hour, [
+			'count'        => 9,
+			'sum_req_time' => 27.0,
+			'categories'   => [ 'wpdb' => [ 'samples' => 9, 'sum_time' => 45.0, 'sum_count' => 18, 'entries' => [] ] ],
+		] ] ] );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview' );
+
+		$board = $result['global_leaderboard'];
+		$this->assertSame( 9, $board['count'], 'the coarse hour answers for its buckets' );
+		$this->assertEqualsWithDelta( 5.0, $board['categories']['wpdb']['time'], 1e-9 );
+	}
+
 	public function test_overview_verb_includes_category_time_series_when_categories_arg_set(): void {
 		// Legacy `?categories=1` (L121-125) adds `category_time_series` to the
 		// response — global or server-scoped. The dashboard always passes

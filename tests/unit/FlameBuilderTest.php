@@ -2042,13 +2042,18 @@ class FlameBuilderTest extends TestCase {
 		// closed hour that has not been folded into the coarse URL tier, which
 		// an idle partition needs as much as a busy one — a missing coarse key
 		// is what sends the reader back to twelve fine buckets.
-		// Rows and NAMES fold together, so an idle flush writes both tiers.
+		// One fold, three coarse tiers: rows, their names, and the leaderboard.
+		$coarse = [
+			':' . Stats_Store::NS_URLS_HOUR . ':',
+			':' . Stats_Store::NS_URLNAMES_HOUR . ':',
+			':' . Stats_Store::NS_LB_HOUR . ':',
+		];
 		foreach ( $mc->keys() as $key ) {
-			$this->assertTrue(
-				\str_contains( $key, ':' . Stats_Store::NS_URLS_HOUR . ':' )
-					|| \str_contains( $key, ':' . Stats_Store::NS_URLNAMES_HOUR . ':' ),
-				'no lock or other keys written'
-			);
+			$hit = false;
+			foreach ( $coarse as $tier ) {
+				$hit = $hit || \str_contains( $key, $tier );
+			}
+			$this->assertTrue( $hit, 'no lock or other keys written' );
 		}
 		// No auto-tune emits (only the flush has nothing to emit).
 		foreach ( $capture->captured as $m ) {
@@ -2316,6 +2321,35 @@ class FlameBuilderTest extends TestCase {
 		$folded = $store->url_name_hour_sources( [ '2026-08-27-13' ], $shard );
 		$this->assertNotEmpty( $folded, 'the hour is folded again for the tier it is missing' );
 		$this->assertSame( [ $hash => '/anchovy-7781' ], $folded[0][1] );
+	}
+
+	public function test_a_closed_hour_folds_the_leaderboard_too(): void {
+		// `build_leaderboard()` reads 288 buckets x 4 partitions, and every one
+		// of them carries a category per hook the site fires — 1,198 on a
+		// production hub, each with its own entry map. That is the read that
+		// takes the overview past any answering deadline. The same fold `urls`
+		// gets takes it to 13 fine buckets plus 23 hours.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$now        = \gmmktime( 15, 7, 0, 8, 27, 2026 );
+
+		$this->set_leaderboard_bucket( $store, '2026-08-27-13-05', [
+			'count' => 4, 'sum_req_time' => 8.0,
+			'categories' => [ 'db' => [ 'samples' => 4, 'sum_time' => 40.0, 'sum_count' => 8, 'entries' => [] ] ],
+		] );
+		$this->set_leaderboard_bucket( $store, '2026-08-27-13-40', [
+			'count' => 6, 'sum_req_time' => 12.0,
+			'categories' => [ 'db' => [ 'samples' => 6, 'sum_time' => 60.0, 'sum_count' => 12, 'entries' => [] ] ],
+		] );
+
+		$fb = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+		$fb->roll_up_hours( $now );
+
+		$hour = $store->get_leaderboard_hours( [ '2026-08-27-13' ] )['2026-08-27-13'] ?? null;
+		$this->assertNotNull( $hour, 'the hour has a coarse leaderboard key' );
+		$this->assertSame( 10, $hour['count'], 'the hour sums its buckets' );
+		$this->assertSame( 100.0, (float) $hour['categories']['db']['sum_time'] );
 	}
 
 	public function test_a_closed_hour_is_rolled_up_into_one_coarse_key(): void {
