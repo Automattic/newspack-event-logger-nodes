@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.86.4] - 2026-09-06
+
+### Fixed
+
+- **The leaderboard kept one category row per hook the site ever fired.** Every other bucket in the schema caps its distinct values and folds the tail into `Other`; the leaderboard capped only the ENTRIES inside each category, never the categories themselves. A category is one hook, callback or plugin, so the axis is as wide as the site's plugin set — a production install reached 1,197 of them. That is the one namespace whose stored value had no ceiling, and these caps exist against memcached's 1MB item limit, which a refused leaderboard write hits with no report and no `refused` callback to raise one. `Flame_Builder_Node::leaderboard_intent()` now caps at `MAX_CAT_VALUES` as it writes, ranked by `sum_time`, and `Stats_Store::sums_to_display()` caps again as it reads, because a reply merges the whole retention window and those per-bucket top sets differ.
+- **`ask category:Other` answered with a brief built from the pooled tail.** The overflow row sums time, invocation count and appearances across categories that share nothing, so a brief off it reads like a measurement of one thing. `Performance_CI_Node::ask_category()` refuses it by name, the way `UrlTable` already declines to open an overflow URL row.
+
+### Changed
+
+- **`cap_bucket()` moved from `Flame_Builder_Node` to `Stats_Store`.** It reads nothing but that class's field tables, `sum_fields()` and `OTHER_KEY`, and the read side needed it too; a second copy beside `sums_to_display()` is how two caps come to rank by different fields.
+
 ## [0.86.3] - 2026-09-06
 
 ### Fixed

@@ -1370,7 +1370,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param string       $server  Server the leaderboard fallback answers for;
 	 *                              '' builds the global board.
 	 * @return array<string,mixed>
-	 * @throws \RuntimeException When neither board holds the category.
+	 * @throws \RuntimeException When neither board holds the category, or when it is the synthetic overflow row.
 	 */
 	private static function ask_category( string $name, array $context, string $server = '' ): array {
 		$record = self::request_in_context( $context );
@@ -1379,6 +1379,10 @@ class Performance_CI_Node extends Service_CI_Node {
 			if ( null !== $brief ) {
 				return $brief;
 			}
+		}
+		// A pooled tail measures nothing; refuse before building a brief.
+		if ( Stats_Store::is_other_key( $name ) ) {
+			throw new \RuntimeException( \esc_html( "'{$name}' pools the categories past the cap and measures none of them" ) );
 		}
 		// The card this is asked from renders the same scoped board.
 		$board      = self::build_leaderboard( $server );
