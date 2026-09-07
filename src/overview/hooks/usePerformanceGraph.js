@@ -410,11 +410,17 @@ export function usePerformanceGraph( opts = {} ) {
 				},
 			} );
 
-			// On-demand request_detail: Tee → view, like every other slice.
-			interpreter.makeNode(
-				views.RequestDetailView,
-				REQUESTDETAIL_VIEW
-			).controlFrom = REQUESTDETAIL_VIEW;
+			// @longform On-demand request_detail: Tee → view, like every other
+			// slice. `makeNode` takes a name OR a class, so it answers `Node`;
+			// the slice views carrying `controlFrom` are the narrower type.
+			const requestDetailView =
+				/** @type {import('@newspack-nodes/shared/nodes/slice-view-node').SliceViewNode} */ (
+					interpreter.makeNode(
+						views.RequestDetailView,
+						REQUESTDETAIL_VIEW
+					)
+				);
+			requestDetailView.controlFrom = REQUESTDETAIL_VIEW;
 			interpreter
 				.makeNode( 'Tee', REQUESTDETAIL_RECV )
 				.connectNode( REQUESTDETAIL_VIEW );

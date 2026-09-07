@@ -2085,6 +2085,48 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
+	 * The category series in its WIRE shape: a name table and positional rows.
+	 *
+	 * Nothing is dropped — every category and every bucket survives. What goes
+	 * is repetition. A merged series is `{ bucket => { name => {t,c,n} } }`, so
+	 * one category's NAME is spelled once per bucket it appears in — 288 times
+	 * across a retention window — and each value spends ~18 bytes of JSON key
+	 * names to carry three numbers. Measured on a production hub: the series is
+	 * the largest thing the `overview` reply carries, and the reply was being
+	 * cut off before it finished.
+	 *
+	 * This is decision 18's argument at the WIRE rather than in the store, and
+	 * the boundary is the same one: positional above, named below.
+	 *
+	 * `t` is rounded to display precision. It is a millisecond sum a chart draws
+	 * as seconds-per-second or as a mean, so four decimal places is a tenth of
+	 * a nanosecond — past anything rendered, and the longest float the payload
+	 * carries otherwise.
+	 *
+	 * @param array<string,mixed> $merged `{ bucket => { name => {t,c,n} } }`.
+	 * @return array{names:list<string>,buckets:array<string,list<array{0:int,1:float,2:int,3:int}>>}
+	 */
+	private static function compact_category_series( array $merged ): array {
+		$names   = [];
+		$buckets = [];
+		foreach ( $merged as $bucket => $entries ) {
+			$rows = [];
+			foreach ( Core::arr( $entries ) as $name => $stats ) {
+				$names[ $name ] ??= \count( $names );
+				$stat           = Core::arr( $stats );
+				$rows[]         = [
+					$names[ $name ],
+					\round( Core::num_float( $stat['t'] ?? null ), 4 ),
+					Core::num_int( $stat['c'] ?? null ),
+					Core::num_int( $stat['n'] ?? null ),
+				];
+			}
+			$buckets[ $bucket ] = $rows;
+		}
+		return [ 'names' => \array_keys( $names ), 'buckets' => $buckets ];
+	}
+
+	/**
 	 * Decode a synced array-option value. Settings_Sync_Node::scalarize()
 	 * JSON-encodes arrays unconditionally, so the wire form is always JSON. A
 	 * non-JSON value is a contract violation: reject it explicitly to [] with a
@@ -2213,7 +2255,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				}
 
 				if ( $categories ) {
-					$payload['category_time_series'] = self::merge_categories_across_partitions( $server );
+					$payload['category_time_series'] = self::compact_category_series( self::merge_categories_across_partitions( $server ) );
 				}
 
 				return $payload;
@@ -2345,7 +2387,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				}
 
 				if ( self::flag( $opts, 'categories' ) ) {
-					$payload['category_time_series'] = self::merge_url_categories( $hash );
+					$payload['category_time_series'] = self::compact_category_series( self::merge_url_categories( $hash ) );
 				}
 
 				return $payload;

@@ -322,9 +322,13 @@ class PerformanceCITest extends TestCase {
 			'--categories'
 		);
 
-		$this->assertArrayHasKey( 'category_time_series', $result );
-		$this->assertArrayHasKey( $bucket, $result['category_time_series'] );
-		$this->assertSame( 0.5, $result['category_time_series'][ $bucket ]['db']['t'] );
+		// The NAME rides once in a table, not in all 288 buckets, and each
+		// entry is the positional triple the store already holds. Lossless:
+		// every category and every bucket survives — what goes is the ~30 bytes
+		// of key names JSON spends on each of ~14,400 entries.
+		$series = $result['category_time_series'];
+		$this->assertSame( [ 'db' ], $series['names'] );
+		$this->assertSame( [ [ 0, 0.5, 4, 4 ] ], $series['buckets'][ $bucket ] );
 	}
 
 	public function test_overview_verb_answers_one_dimension_in_the_breakdowns_map(): void {
@@ -426,8 +430,9 @@ class PerformanceCITest extends TestCase {
 			'--server=web01 --categories'
 		);
 
-		// Server-scoped data, not the global ones.
-		$this->assertSame( 0.2, $result['category_time_series'][ $bucket ]['db']['t'] );
+		// Server-scoped data, not the global ones, in the compact wire shape.
+		$this->assertSame( [ 'db' ], $result['category_time_series']['names'] );
+		$this->assertSame( 0.2, $result['category_time_series']['buckets'][ $bucket ][0][1] );
 	}
 
 	public function test_urls_verb_returns_envelope_when_empty(): void {
@@ -2391,7 +2396,9 @@ class PerformanceCITest extends TestCase {
 		);
 
 		$this->assertArrayHasKey( 'category_time_series', $result );
-		$this->assertSame( 0.2, $result['category_time_series'][ $bucket ]['db']['t'] );
+		// The modal reads the same compact shape the overview card does.
+		$this->assertSame( [ 'db' ], $result['category_time_series']['names'] );
+		$this->assertSame( 0.2, $result['category_time_series']['buckets'][ $bucket ][0][1] );
 	}
 
 	public function test_url_detail_verb_breakdown_filters_unknown_dims(): void {

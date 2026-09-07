@@ -122,35 +122,48 @@ const formatYValue = ( val, mode ) => {
  * @return {Array<{label:string,values:Array<{date:Date,value:number}>}>} Series in rank order.
  */
 const buildSeries = ( data, mode ) => {
+	const names = data?.names ?? [];
+	const buckets = data?.buckets ?? {};
+	// Positional row: [ nameIndex, t, c, n ] — named only here.
 	const totals = {};
-	Object.values( data ).forEach( ( bucket ) => {
-		Object.entries( bucket ).forEach( ( [ cat, stats ] ) => {
-			if ( 'total' === cat ) {
+	Object.values( buckets ).forEach( ( rows ) => {
+		rows.forEach( ( [ index, t, c ] ) => {
+			if ( 'total' === names[ index ] ) {
 				return;
 			}
-			const val = mode === 'count' ? stats.c || 0 : stats.t || 0;
-			totals[ cat ] = ( totals[ cat ] || 0 ) + val;
+			const val = mode === 'count' ? c || 0 : t || 0;
+			totals[ index ] = ( totals[ index ] || 0 ) + val;
 		} );
 	} );
-	const categories = Object.keys( totals ).sort(
+	const ranked = Object.keys( totals ).sort(
 		( a, b ) => totals[ b ] - totals[ a ]
 	);
 	const slots = buildTimeSlots( RETENTION_SECONDS );
+	// One lookup per bucket, built once, rather than a scan per slot per band.
+	const byBucket = {};
+	Object.entries( buckets ).forEach( ( [ key, rows ] ) => {
+		const row = {};
+		rows.forEach( ( [ index, t, c ] ) => {
+			row[ index ] = [ t, c ];
+		} );
+		byBucket[ key ] = row;
+	} );
 
-	return categories.map( ( cat ) => ( {
-		label: cat,
+	return ranked.map( ( index ) => ( {
+		label: names[ index ],
 		values: slots.map( ( slot ) => {
-			const stats = data[ slot.bucketKey ]?.[ cat ];
+			const stats = byBucket[ slot.bucketKey ]?.[ index ];
 			if ( ! stats ) {
 				return { date: slot.date, value: 0 };
 			}
+			const [ t, c ] = stats;
 			let value;
 			if ( mode === 'average' ) {
-				value = stats.c > 0 ? stats.t / stats.c : 0;
+				value = c > 0 ? t / c : 0;
 			} else if ( mode === 'time' ) {
-				value = stats.t / 1000 / BUCKET_SECONDS;
+				value = t / 1000 / BUCKET_SECONDS;
 			} else {
-				value = stats.c / BUCKET_SECONDS;
+				value = c / BUCKET_SECONDS;
 			}
 			return { date: slot.date, value };
 		} ),
@@ -193,8 +206,8 @@ export default function CategoryTimeChart( { data } ) {
 		[]
 	);
 
-	// The empty check sits below every hook; hoisting it breaks hook order.
-	if ( ! hasBuckets( data ) ) {
+	// Emptiness asks about the BUCKETS, and below every hook: order matters.
+	if ( ! hasBuckets( data?.buckets ) ) {
 		return null;
 	}
 

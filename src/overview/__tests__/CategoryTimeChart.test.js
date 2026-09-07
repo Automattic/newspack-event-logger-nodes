@@ -118,7 +118,10 @@ describe( 'CategoryTimeChart', () => {
 	it( 'draws exactly one chart per declared view, in render order', () => {
 		const { container, unmount } = renderComponent(
 			React.createElement( CategoryTimeChart, {
-				data: { '2019-07-04-13-45': { redis: { c: 419, t: 8123 } } },
+				data: {
+					names: [ 'redis' ],
+					buckets: { '2019-07-04-13-45': [ [ 0, 8123, 419, 419 ] ] },
+				},
 			} )
 		);
 		const headings = [ ...container.querySelectorAll( 'h3' ) ].map(
@@ -148,14 +151,49 @@ describe( 'CategoryTimeChart', () => {
 		unmount();
 	} );
 
+	it( 'draws from the compact wire shape and treats an empty one as no data', () => {
+		// The series arrives as a name TABLE plus positional rows: one category
+		// name rides once rather than once per bucket, which is what keeps the
+		// overview reply deliverable. An empty payload still has both keys, so
+		// emptiness is a question about the buckets, not about the envelope.
+		const empty = renderComponent(
+			React.createElement( CategoryTimeChart, {
+				data: { names: [], buckets: {} },
+			} )
+		);
+		expect( empty.container.textContent ).toBe( '' );
+		empty.unmount();
+
+		const drawn = renderComponent(
+			React.createElement( CategoryTimeChart, {
+				data: {
+					names: [ 'total', 'db' ],
+					buckets: {
+						[ bucketKeyNow() ]: [
+							[ 0, 5000, 100, 100 ],
+							[ 1, 1500, 30, 30 ],
+						],
+					},
+				},
+			} )
+		);
+		expect(
+			drawn.container.querySelectorAll( '.event-logger-chart-tooltip' )
+		).toHaveLength( VIEW_COUNT );
+		drawn.unmount();
+	} );
+
 	it( 'gives every view its own chart frame and tooltip', () => {
 		const data = {
-			[ bucketKeyNow() ]: {
-				total: { c: 100, t: 5000 },
-				db: { c: 30, t: 1500 },
-				render: { c: 70, t: 3500 },
-				// count=0 drives the average-mode divide-by-zero path.
-				cache: { c: 0, t: 0 },
+			names: [ 'total', 'db', 'render', 'cache' ],
+			buckets: {
+				[ bucketKeyNow() ]: [
+					[ 0, 5000, 100, 100 ],
+					[ 1, 1500, 30, 30 ],
+					[ 2, 3500, 70, 70 ],
+					// count=0 drives the average-mode divide-by-zero path.
+					[ 3, 0, 0, 0 ],
+				],
 			},
 		};
 
@@ -179,9 +217,8 @@ describe( 'CategoryTimeChart', () => {
 	it( 'handles buckets where category stats are missing', () => {
 		// Bucket key matches no slot → exercises the value=0 fallback.
 		const data = {
-			'1970-01-01-00-00': {
-				db: { c: 1, t: 10 },
-			},
+			names: [ 'db' ],
+			buckets: { '1970-01-01-00-00': [ [ 0, 10, 1, 1 ] ] },
 		};
 
 		const { unmount } = renderComponent(
@@ -239,10 +276,13 @@ describe( 'CategoryTimeChart', () => {
 	it( 'formatYValue covers all branches via tooltip formatEntry callback', () => {
 		// varying magnitudes drive the <0.001 / <1 / >=1 time-mode branches.
 		const data = {
-			[ bucketKeyNow() ]: {
-				tiny: { c: 1, t: 0.0001 },
-				mid: { c: 1, t: 150000 },
-				big: { c: 1, t: 900000 },
+			names: [ 'tiny', 'mid', 'big' ],
+			buckets: {
+				[ bucketKeyNow() ]: [
+					[ 0, 0.0001, 1, 1 ],
+					[ 1, 150000, 1, 1 ],
+					[ 2, 900000, 1, 1 ],
+				],
 			},
 		};
 		const { unmount } = renderComponent(
@@ -258,10 +298,13 @@ describe( 'CategoryTimeChart', () => {
 	it( 'formatYValue covers average-mode microsecond / second / ms branches', () => {
 		// average mode: value = t/c (in same units).
 		const data = {
-			[ bucketKeyNow() ]: {
-				submicro: { c: 1000, t: 0.5 }, // 0.0005ms → microsecond
-				bigsec: { c: 1, t: 2000 }, // value=2000ms → s branch
-				normal: { c: 1, t: 5 }, // value=5ms → ms branch
+			names: [ 'submicro', 'bigsec', 'normal' ],
+			buckets: {
+				[ bucketKeyNow() ]: [
+					[ 0, 0.5, 1000, 1000 ], // 0.0005ms → microsecond
+					[ 1, 2000, 1, 1 ], // value=2000ms → s branch
+					[ 2, 5, 1, 1 ], // value=5ms → ms branch
+				],
 			},
 		};
 		const { unmount } = renderComponent(
@@ -275,10 +318,13 @@ describe( 'CategoryTimeChart', () => {
 	it( 'formatYValue covers count-mode K/s and per-second branches', () => {
 		// count mode: value = c/BUCKET_SECONDS.
 		const data = {
-			[ bucketKeyNow() ]: {
-				high: { c: 1_000_000, t: 1 }, // → K/s branch (~3333/s)
-				low: { c: 5, t: 1 }, // → per-second branch
-				zero: { c: 0, t: 0 }, // → '0' branch
+			names: [ 'high', 'low', 'zero' ],
+			buckets: {
+				[ bucketKeyNow() ]: [
+					[ 0, 1, 1_000_000, 1 ], // → K/s branch (~3333/s)
+					[ 1, 1, 5, 1 ], // → per-second branch
+					[ 2, 0, 0, 0 ], // → '0' branch
+				],
 			},
 		};
 		const { unmount } = renderComponent(
@@ -293,7 +339,10 @@ describe( 'CategoryTimeChart', () => {
 		// Re-invoke captured renderFn with null containerRef → early return.
 		const { unmount } = renderComponent(
 			React.createElement( CategoryTimeChart, {
-				data: { [ bucketKeyNow() ]: { foo: { c: 1, t: 10 } } },
+				data: {
+					names: [ 'foo' ],
+					buckets: { [ bucketKeyNow() ]: [ [ 0, 10, 1, 1 ] ] },
+				},
 			} )
 		);
 
