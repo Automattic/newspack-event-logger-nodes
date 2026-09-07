@@ -3,7 +3,7 @@
  * Deployment OVERRIDES for Newspack Event Logger Nodes: the operator's copy of
  * the application config.
  *
- * Each of the nine keys `Settings_Schema` declares appears below, commented out
+ * Each of the ten keys `Settings_Schema` declares appears below, commented out
  * beside the default the schema declares in code. Uncomment a line to pin that
  * value on this deployment. Pinning is not the same as leaving a key alone — a
  * pinned value survives a later change to the schema default.
@@ -106,6 +106,16 @@ return [
 	// `Flame_Builder_Node::set_stats_target()`, which treats an empty name as
 	// off. The topology already builds `flame-stats:partition` for the job.
 	// 'stats_mirror_node' => 'flame-stats:partition',
+
+	// Milliseconds a DASHBOARD response may spend reading that mirror.
+	// `Partition_Node::locate_by()` has no early stop for a key that is absent,
+	// so every batch missing on memcache costs a full pass over the mirror's
+	// index — measured at ~192ms over 150,000 lines — and one cold `urls` poll
+	// issues thousands of them across sixteen shards and four partitions. Past
+	// the budget the reader answers from memcache alone and the next poll
+	// completes it. 0 turns the reader's mirror read off; the WORKER restoring
+	// its own state is never budgeted.
+	// 'stats_mirror_read_budget_ms' => 1500,
 
 	// Add `peak_mb`, peak memory in MB, to every entry `Log_Manager`'s
 	// `complete()` emits — `(complete)` and `(aborted)` alike.

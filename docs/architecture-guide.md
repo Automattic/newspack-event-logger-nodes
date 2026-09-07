@@ -368,6 +368,8 @@ secure
 
 `set_stats_target <eln:stats_mirror_node>` mirrors the memcache stats into the durable `flame-stats:partition`, which a memcache miss reads back through its `stats-index` companion index; set `stats_mirror_node` to `''` to disable it. The mirror keeps full aggregates plus a bounded top-N per URL (`STATS_MIRROR_TOPN`: 100 dimensional, 100 category, and flame profiles only when `set_flame_topn` raises the default 0). The coarse hourly URL tier is excluded, because it is derived from a `urls` index the mirror already keeps in full.
 
+Reading it back is BUDGETED, and only for the dashboard. `Partition_Node::locate_by()` cannot stop early on a key that is absent from the index, so every batch that misses on memcache costs a full pass over the mirror's `.idx` — ~192ms over 150,000 lines — and one cold `urls` poll issues thousands of them, sixteen shards by four partitions by twenty-five bucket chunks. So `Performance_CI_Node::dispatch()` starts each VERB with a fresh `stats_mirror_read_budget_ms` (default 1500, `0` off), `Flame_Builder_Node::arm_stats_reader()` stops consulting the mirror once it is spent, and the reader answers from memcache alone for the rest of that verb — one poll batches `overview` and `urls` into a single POST, so a response can spend the budget twice — the "no data" degradation the stats readers already take. `rehydrate_seam()` also skips any namespace `STATS_MIRROR_TOPN` caps at zero, since a read of one can only ever walk and find nothing. The WORKER's own seam, armed by `set_stats_target`, is unbudgeted: it is restoring its own state, not answering a poll.
+
 `set_is_hub <eln:is_hub>` turns on the three per-server AGGREGATES — the `lb_s` leaderboard, the per-server dimensional series and the per-server category series — because only an aggregating hub has more than one reporting server to spread across them. The URL row's `srv` split is deliberately NOT gated by it: a scoped read of a row carrying no split returns nothing, so gating it would empty the URL table on every spoke rather than save one write.
 
 A bucket's frames are written once, at the first checkpoint after that bucket CLOSES — the partition keeps only the last frame for a key, so mirroring the bucket still being accumulated into would be nine redundant copies of a growing value. Until it closes the open bucket is held in memory and backed by the OFFSETLOG: `save_state()` carries the held frames, `restore_state()` takes them on, and a respawned worker writes them when the bucket closes. That is the point of the split — the offsetlog is a bounded ring, so the open window costs fixed disk there, where `flame-stats` retains every frame for `stats_mirror_lifetime`, twice the stats window. The carry is capped at `MAX_CHECKPOINT_MIRROR_BYTES` (2 MiB), smallest-first, because `Partition_Node` drops an oversize record whole — cursor included — and a dropped frame is re-merged from memcache by the next write to its bucket.
@@ -981,7 +983,7 @@ Substrate keys (`base_directory`, partitioning, `memcache_servers`, `topologies`
 
 ### Application option keys
 
-The nine schema keys all take an option overlay under `newspack_event_logger_nodes_`. Three render as checkboxes on the settings page; the rest are `ui: false`, pinned from a config file or written by a service CI.
+The ten schema keys all take an option overlay under `newspack_event_logger_nodes_`. Three render as checkboxes on the settings page; the rest are `ui: false`, pinned from a config file or written by a service CI.
 
 | Option | Type | Surface | Default | Use |
 |--------|------|---------|---------|-----|
@@ -992,6 +994,7 @@ The nine schema keys all take an option overlay under `newspack_event_logger_nod
 | `allowed_users` | array of strings | `ui:false` | `[]` | A `user_login` allowlist OVER the `manage_options` gate; empty admits every user who holds the capability |
 | `hook_start_priority` | int | `ui:false` | `-10000` | Priority `App\Core` binds `hook_start` at. `hook_complete` is always `PHP_INT_MAX - 1`, so a lower number widens the measured span |
 | `stats_mirror_node` | string | `ui:false` | `flame-stats:partition` | Node name of the durable stats-mirror partition; a memcache miss reads the frame back from it. `''` disables the mirror |
+| `stats_mirror_read_budget_ms` | int | `ui:false` | `1500` | Milliseconds ONE dashboard verb may spend reading that mirror. `locate_by()` has no early stop for an absent key, so each batch that misses costs a full pass over the mirror's index; past the budget the verb answers from memcache alone. `0` turns the reader's mirror read off. The worker's own read is never budgeted |
 | `custom_colors` | array | `ui:false` | `[]` | Custom-event name → hex swatch, filtered through `newspack_event_logger_nodes_custom_colors` and merged with the events spokes reported. Hook-category colours are a different thing entirely — they come from `hook_categories.json` |
 | `recommended_log_events` | array of strings | `ui:false` | curated list | Hook names the settings picker stars; its "Recommended" button REPLACES the current selection with them. A menu, not an instruction — nothing here binds anything |
 

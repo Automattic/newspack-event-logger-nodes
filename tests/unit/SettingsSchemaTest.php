@@ -44,6 +44,7 @@ class SettingsSchemaTest extends TestCase {
 		'rules',
 		'custom_colors',
 		'stats_mirror_node',
+		'stats_mirror_read_budget_ms',
 		'recommended_log_events',
 	];
 

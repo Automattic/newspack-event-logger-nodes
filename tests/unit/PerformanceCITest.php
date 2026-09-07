@@ -3576,21 +3576,71 @@ class PerformanceCITest extends TestCase {
 	 * the mirror — so its stores must reach the durable frames on their own.
 	 */
 	public function test_the_leaderboard_recovers_an_evicted_bucket_from_the_mirror(): void {
+		$url = $this->seed_evicted_bucket_on_the_mirror();
+
+		// Nothing in memcache: the bucket was evicted, as on a busy host.
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' );
+
+		$this->assertIsArray( $result );
+		$urls = \array_column( $result['data'] ?? [], 'url' );
+		$this->assertContains( $url, $urls );
+	}
+
+	/**
+	 * The mirror read budget is per RESPONSE, not per process.
+	 *
+	 * A process-wide accumulator would let one poll's spend blind every later
+	 * poll served by the same worker or CLI, and the budget exists to bound one
+	 * answer — not to ration the reader for its lifetime.
+	 */
+	public function test_each_command_gets_its_own_mirror_read_budget(): void {
+		$url = $this->seed_evicted_bucket_on_the_mirror();
+		// A predecessor spent the whole budget; this command still gets one.
+		( new \ReflectionProperty( Flame_Builder_Node::class, 'mirror_read_ns' ) )->setValue( null, \PHP_INT_MAX );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' );
+
+		$this->assertContains( $url, \array_column( $result['data'] ?? [], 'url' ) );
+	}
+
+	/**
+	 * The reset belongs to the ANSWER, not to the inbound message.
+	 *
+	 * `Mcp_Controller` calls `dispatch()` straight, with no Message behind it,
+	 * so a reset hung on `fill()` covers that path only by the accident of a
+	 * JSON-RPC request being one method in one process.
+	 */
+	public function test_a_direct_dispatch_gets_its_own_mirror_read_budget(): void {
+		$url = $this->seed_evicted_bucket_on_the_mirror();
+		( new \ReflectionProperty( Flame_Builder_Node::class, 'mirror_read_ns' ) )->setValue( null, \PHP_INT_MAX );
+
+		$node = new Performance_CI_Node();
+		$node->name( 'performance' );
+		/** @var array<string,mixed> $result */
+		$result = $node->dispatch( 'urls' );
+
+		$this->assertContains( $url, \array_column( $result['data'] ?? [], 'url' ) );
+	}
+
+	/**
+	 * Seed one URL bucket and its name on the durable mirror, with memcache
+	 * empty — the evicted-bucket state a busy host reaches.
+	 *
+	 * @return string The seeded URL.
+	 */
+	private function seed_evicted_bucket_on_the_mirror(): string {
 		$this->activate_shipped_topology( 'performance', 1 );
 		Core::$memd = new \Newspack_Nodes\Tests\Helpers\InMemoryMemcached();
 
 		$dir = \Newspack_Nodes\Bootstrap::node_dirs( 'flame-stats:partition' )[0] ?? '';
 		$this->assertNotSame( '', $dir, 'the shipped topology declares a mirror partition' );
 
+		$url    = 'https://example.test/jobs/import-film-times';
 		$bucket = Stats_Store::bucket_key( \time() );
 		$hash   = 'ab12cd34ef56';
 		$key    = Stats_Store::entry_key( 0, 'urls:' . Stats_Store::url_shard( $hash ) . ':' . $bucket );
 		// A mirrored frame holds the STORED shape, which is positional.
-		$rows   = [
-			$hash => self::positional_url_row(
-				[ 'url' => 'https://example.test/jobs/import-film-times', 'count' => 2194 ]
-			),
-		];
+		$rows   = [ $hash => self::positional_url_row( [ 'url' => $url, 'count' => 2194 ] ) ];
 
 		$mirror = new \Newspack_Nodes\Partition_Node();
 		$mirror->arguments( [ $dir, '67108864' ] );
@@ -3599,10 +3649,7 @@ class PerformanceCITest extends TestCase {
 		// The name is mirrored too, on its own key: a stored row carries the
 		// hash, so a bucket recovered without its names renders anonymous rows.
 		$name_key = Stats_Store::entry_key( 0, Stats_Store::NS_URLMAP . ':' . $hash );
-		foreach ( [
-			[ $key, $rows ],
-			[ $name_key, [ 'https://example.test/jobs/import-film-times' ] ],
-		] as [ $frame_key, $data ] ) {
+		foreach ( [ [ $key, $rows ], [ $name_key, [ $url ] ] ] as [ $frame_key, $data ] ) {
 			$msg                       = Message::new_message();
 			$msg[ Message::TYPE ]      = Message::TM_STRUCT;
 			$msg[ Message::TIMESTAMP ] = \time();
@@ -3611,13 +3658,7 @@ class PerformanceCITest extends TestCase {
 			$mirror->fill( $msg );
 		}
 		$mirror->flush();
-
-		// Nothing in memcache: the bucket was evicted, as on a busy host.
-		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' );
-
-		$this->assertIsArray( $result );
-		$urls = \array_column( $result['data'] ?? [], 'url' );
-		$this->assertContains( 'https://example.test/jobs/import-film-times', $urls );
+		return $url;
 	}
 
 	// ── disk-walk fan-out, index-row shape, leaderboard arithmetic ───────────

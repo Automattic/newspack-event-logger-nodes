@@ -247,6 +247,16 @@ class Flame_Builder_Node extends Node {
 	];
 
 	/**
+	 * Nanoseconds spent reading the durable mirror for the answer in progress.
+	 *
+	 * `Performance_CI_Node::dispatch()` zeroes it as each verb begins and
+	 * `arm_stats_reader()` stops reading once it passes the configured budget.
+	 * The WORKER's own seam (`arm_stats_mirror()`) is unbudgeted — it is
+	 * restoring its own state, not answering a poll.
+	 */
+	private static int $mirror_read_ns = 0;
+
+	/**
 	 * Auto-tune decisions accrued since the last emit: the key `Auto_Tuner_Node`
 	 * dispatches on => rule id => {name => true}. Keying by the emit key is what
 	 * makes a fourth decision kind one key here and one case there.
@@ -2128,6 +2138,21 @@ class Flame_Builder_Node extends Node {
 	 */
 	public static function arm_stats_reader( Stats_Store $store ): void {
 		self::arm_rehydrate( $store, \trim( Core::as_string( Config::value( 'stats_mirror_node' ), '' ) ) );
+		$seam = $store->rehydrate;
+		if ( null === $seam ) {
+			return;
+		}
+		// num_int: arithmetic, and a corrupt value must read as OFF.
+		$budget_ns        = 1_000_000 * \max( 0, Core::num_int( Config::value( 'stats_mirror_read_budget_ms' ) ) );
+		$store->rehydrate = static function ( array $keys ) use ( $seam, $budget_ns ): array {
+			if ( self::$mirror_read_ns >= $budget_ns ) {
+				return [];
+			}
+			$at    = \hrtime( true );
+			$found = $seam( $keys );
+			self::$mirror_read_ns += \hrtime( true ) - $at;
+			return $found;
+		};
 	}
 
 	/**
@@ -2181,7 +2206,15 @@ class Flame_Builder_Node extends Node {
 				if ( ! \is_string( $key ) ) {
 					continue;
 				}
+				// Decision 1: the namespace is the key's first segment.
+				if ( ! self::mirrors_namespace( \explode( ':', $key, 2 )[0] ) ) {
+					continue;
+				}
 				$hashes[ $key ] = Log_Manager::url_hash( Stats_Store::entry_key( $partition_index, $key ) );
+			}
+			// Nothing this mirror can hold: no walk, no partition to resolve.
+			if ( [] === $hashes ) {
+				return [];
 			}
 			// Bounded: otherwise a locator per key in the WHOLE partition.
 			$locators = $partition->locate_by(
@@ -2691,6 +2724,23 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
+	 * Whether the mirror can hold a namespace AT ALL.
+	 *
+	 * `buffer_mirror_write()` drops a namespace capped at zero, so reading one
+	 * back can only walk the whole index and find nothing — and `locate_by()`
+	 * has no early stop for a key that is absent, so each such read is a full
+	 * pass. A cold dashboard poll asks for hundreds of coarse-tier keys.
+	 *
+	 * NS_URL's cap is a runtime verb (`set_flame_topn`), so only a STATIC zero
+	 * is a refusal this can be sure of.
+	 *
+	 * @param string $ns Stats_Store namespace token.
+	 */
+	private static function mirrors_namespace( string $ns ): bool {
+		return Stats_Store::NS_URL === $ns || 0 !== ( self::STATS_MIRROR_TOPN[ $ns ] ?? \PHP_INT_MAX );
+	}
+
+	/**
 	 * The live cap on one namespace's buffered frames: `$flame_topn` for NS_URL
 	 * (the flame profiles), the `STATS_MIRROR_TOPN` value for the rest of that
 	 * map, and no bound at all for a namespace absent from it.
@@ -2788,6 +2838,19 @@ class Flame_Builder_Node extends Node {
 	 */
 	private static function empty_leaderboard(): array {
 		return [ 'count' => 0, 'sum_req_time' => 0.0, 'categories' => [] ];
+	}
+
+	/**
+	 * Start a fresh mirror read budget.
+	 *
+	 * The budget bounds ONE answer, so the reader resets it where an answer
+	 * begins — `Performance_CI_Node::dispatch()`. Without that, one poll's
+	 * spend would blind every later poll a long-lived process serves.
+	 *
+	 * @api The dashboard reader, once per inbound command.
+	 */
+	public static function reset_mirror_read_budget(): void {
+		self::$mirror_read_ns = 0;
 	}
 
 	/**
