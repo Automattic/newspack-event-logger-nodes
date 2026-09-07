@@ -98,11 +98,11 @@ class ConfigSchemaTest extends TestCase {
 		$this->assertSame( $schema, $ledger );
 	}
 
-	/** The three option-less keys are declared but never rendered. */
+	/** The option-less keys are declared but never rendered. */
 	public function test_the_option_less_keys_are_declared_but_never_rendered(): void {
 		$schema = Settings_Schema::get();
 
-		foreach ( [ 'custom_colors', 'stats_mirror_node', 'recommended_log_events' ] as $key ) {
+		foreach ( [ 'custom_colors', 'stats_mirror_node', 'stats_mirror_read_budget_ms', 'recommended_log_events' ] as $key ) {
 			$field = $schema->field_for_short( $key );
 			$this->assertNotNull( $field, "{$key} must be declared" );
 			$this->assertFalse( $field->ui, "{$key} must never render in the settings page" );

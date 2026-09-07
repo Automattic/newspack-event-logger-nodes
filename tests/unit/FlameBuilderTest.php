@@ -3763,6 +3763,102 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( 0, $p->index_scans, 'a hit never consults the mirror' );
 	}
 
+	/**
+	 * The coarse tiers are buffered at a cap of ZERO, so a read of one can only
+	 * ever walk the whole index and find nothing. `locate_by()` cannot stop
+	 * early on a key that is absent, so each such read is a full pass — and a
+	 * cold dashboard poll issues hundreds of them inside one request.
+	 */
+	public function test_a_coarse_tier_key_is_never_looked_for_on_the_mirror(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		/** @var CountingIndexPartition $p */
+		[ , $p ] = $this->mirrored_builder( $store, 'flames-stats', CountingIndexPartition::class );
+
+		// Seeded ANYWAY: a reader that looks WOULD find it, so what fails here
+		// is the looking, not an empty partition.
+		$key = 'urls_h:3:2026-01-01-00';
+		$this->fill_partition_entry( $p, Stats_Store::entry_key( 0, $key ), [ 'ab12cd34ef56' => [ 71 ] ], 86400, \time() );
+		$p->flush();
+		$p->index_scans = 0;
+
+		$this->assertSame( [], ( $store->rehydrate )( [ $key ] ), 'a tier the mirror refuses is never read back' );
+		$this->assertSame( 0, $p->index_scans, 'and the futile walk never happens' );
+	}
+
+	/**
+	 * The DASHBOARD's mirror read is best-effort inside a request budget.
+	 *
+	 * `locate_by()` cannot early-stop on an absent key, so every batch that
+	 * misses walks the whole index; a cold `urls` poll issues over three
+	 * thousand such batches across sixteen shards and four partitions. The
+	 * budget is what makes that bounded rather than unbounded, and zero spends
+	 * it before the first read.
+	 */
+	public function test_a_spent_read_budget_stops_the_reader_consulting_the_mirror(): void {
+		Core::$memd = new InMemoryMemcached();
+		Flame_Builder_Node::reset_mirror_read_budget();
+		$this->use_base_dir( $this->make_temp_dir(), [ 'stats_mirror_node' => 'flames-stats', 'stats_mirror_read_budget_ms' => 0 ] );
+		$store   = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		/** @var CountingIndexPartition $p */
+		[ , $p ] = $this->mirrored_builder( $store, 'flames-stats', CountingIndexPartition::class );
+		$this->fill_partition_entry( $p, Stats_Store::entry_key( 0, 'hourly:2026-01-01-00' ), [ 'count' => 83 ], 86400, \time() );
+		$p->flush();
+
+		$reader = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		Flame_Builder_Node::arm_stats_reader( $reader );
+		$p->index_scans = 0;
+
+		$this->assertSame( [], ( $reader->rehydrate )( [ 'hourly:2026-01-01-00' ] ), 'a spent budget reads nothing' );
+		$this->assertSame( 0, $p->index_scans, 'and walks nothing' );
+	}
+
+	/** With budget left, the same read finds the frame — zero is the switch. */
+	public function test_a_reader_inside_its_budget_still_reads_the_mirror(): void {
+		Core::$memd = new InMemoryMemcached();
+		Flame_Builder_Node::reset_mirror_read_budget();
+		$this->use_base_dir( $this->make_temp_dir(), [ 'stats_mirror_node' => 'flames-stats', 'stats_mirror_read_budget_ms' => 2500 ] );
+		$store   = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		[ , $p ] = $this->mirrored_builder( $store, 'flames-stats', CountingIndexPartition::class );
+		$this->fill_partition_entry( $p, Stats_Store::entry_key( 0, 'hourly:2026-01-01-00' ), [ 'count' => 83 ], 86400, \time() );
+		$p->flush();
+
+		$reader = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		Flame_Builder_Node::arm_stats_reader( $reader );
+
+		$found = ( $reader->rehydrate )( [ 'hourly:2026-01-01-00' ] );
+
+		$this->assertSame( [ 'count' => 83 ], $found['hourly:2026-01-01-00']['value'] ?? null );
+	}
+
+	/** An unnamed mirror leaves the reader memcache-only: there is nothing to budget. */
+	public function test_an_unnamed_mirror_leaves_the_reader_unarmed(): void {
+		$this->use_base_dir( $this->make_temp_dir(), [ 'stats_mirror_node' => '', 'stats_mirror_read_budget_ms' => 2500 ] );
+
+		$reader = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		Flame_Builder_Node::arm_stats_reader( $reader );
+
+		$this->assertNull( $reader->rehydrate, 'no mirror named, so no seam to wrap' );
+	}
+
+	/** Skipping the coarse tier filters the batch; it does not disarm the seam. */
+	public function test_a_mirrored_key_beside_a_coarse_one_still_resolves(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		[ , $p ]    = $this->mirrored_builder( $store, 'flames-stats', CountingIndexPartition::class );
+
+		$fine   = 'urls:3:2026-01-01-00-00';
+		$coarse = 'urls_h:3:2026-01-01-00';
+		$this->fill_partition_entry( $p, Stats_Store::entry_key( 0, $fine ), [ 'ab12cd34ef56' => [ 71 ] ], 86400, \time() );
+		$this->fill_partition_entry( $p, Stats_Store::entry_key( 0, $coarse ), [ 'ab12cd34ef56' => [ 83 ] ], 86400, \time() );
+		$p->flush();
+
+		$found = ( $store->rehydrate )( [ $coarse, $fine ] );
+
+		$this->assertArrayHasKey( $fine, $found, 'the mirrored tier still reads back' );
+		$this->assertArrayNotHasKey( $coarse, $found, 'only the never-mirrored key is skipped' );
+	}
+
 	public function test_a_decayed_out_frame_is_not_restored(): void {
 		Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );

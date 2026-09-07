@@ -34,7 +34,10 @@
  *  - Disk scans are bounded by TIME where the index carries one — the per-URL
  *    walk stops at `scan_floor()`, in a segment that closed before it — and
  *    by MAX_INDEX_ENTRIES everywhere else, so a missing-rid lookup can't
- *    escalate into a partition-wide walk.
+ *    escalate into a partition-wide walk. The durable stats mirror is the
+ *    third: `Partition_Node::locate_by()` cannot stop early on a key that is
+ *    absent, so `dispatch()` gives each answer one
+ *    `stats_mirror_read_budget_ms` to spend across every such walk.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -2112,6 +2115,24 @@ class Performance_CI_Node extends Service_CI_Node {
 			+ Core::num_int( $row['count_4xx'] ?? 0 )
 			+ Core::num_int( $row['count_5xx'] ?? 0 );
 		return $classified < Core::num_int( $row['count'] ?? 0 );
+	}
+
+	/**
+	 * One verb is one answer, and the durable mirror may be read only inside
+	 * that answer's budget — so the budget starts here.
+	 *
+	 * `dispatch()` rather than `fill()`: `interpret()` routes every inbound
+	 * TM_COMMAND through here, and `Mcp_Controller` calls it straight with no
+	 * Message behind it. Hung on `fill()` the MCP path would be covered only
+	 * by the accident of a JSON-RPC request being one method in one process.
+	 *
+	 * @param string           $name     Verb name.
+	 * @param list<string>     $args     Argument tokens.
+	 * @param array<int,mixed> $envelope Inbound TM_COMMAND, or [] for an inline call.
+	 */
+	public function dispatch( string $name, array $args = [], array $envelope = [] ): mixed {
+		Flame_Builder_Node::reset_mirror_read_budget();
+		return parent::dispatch( $name, $args, $envelope );
 	}
 
 	/**

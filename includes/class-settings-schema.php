@@ -259,6 +259,21 @@ class Settings_Schema {
 					ui: false,
 					default: 'flame-stats:partition',
 				),
+				// @longform What the DASHBOARD may spend walking the durable
+				// mirror in ONE verb — a poll batches `overview` and `urls`
+				// into one POST, so a response can spend it twice.
+				// `locate_by()` has no early stop for an absent key, so every
+				// batch that misses costs a full index pass, and a cold `urls`
+				// poll issues thousands of them across sixteen shards and four
+				// partitions. Past the budget the reader answers from memcache
+				// alone (decision 3), which the next poll completes. 0 turns
+				// the reader's mirror read off outright.
+				new Field(
+					key: 'stats_mirror_read_budget_ms',
+					type: 'int',
+					ui: false,
+					default: 1500,
+				),
 				// The hook picker's "Recommended" menu; binds nothing itself.
 				new Field(
 					key: 'recommended_log_events',
