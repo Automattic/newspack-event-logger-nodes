@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.87.1] - 2026-09-07
+
 ### Fixed
 
 - **The `overview` reply was too big to finish, and its largest part was repetition.** `category_time_series` spells each category's NAME once per bucket it appears in — 288 times across a retention window — and spends ~18 bytes of JSON key names on every three-number value. At 288 buckets by 50 categories that is 838KB of an ~1.1MB reply, and the browser reported `JSON.parse: end of data` at column 336,729 on one poll and 387,461 on another. The series now crosses the wire as a name TABLE plus positional `[ nameIndex, t, c, n ]` rows: **838KB → 292KB, 65% off, with every category and every bucket kept**. This is decision 18's argument at the wire rather than in the store. `url_detail` emits the same shape, so one encoder serves the overview card and the URL modal alike.
