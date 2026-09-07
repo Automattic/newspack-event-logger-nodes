@@ -988,7 +988,9 @@ class Performance_CI_Node extends Service_CI_Node {
 		foreach ( $shards as $shard ) {
 			$kept  = [];
 			$index = self::read_index( $shard );
-			foreach ( $needs_names ? self::resolve_urls( $index ) : $index as $raw ) {
+			// The shard's own name blob: ~40 keys, however many URLs it holds.
+			$names = $needs_names ? self::shard_paths( $shard ) : [];
+			foreach ( $index as $raw ) {
 				$raw_row = Core::arr( $raw );
 				// Derived here: there is no second walk to spend on it.
 				$has_split = $has_split
@@ -1005,17 +1007,23 @@ class Performance_CI_Node extends Service_CI_Node {
 						: $raw_row;
 					continue;
 				}
+				// @longform Filtered on the NAME before the row is projected:
+				// the term speaks about the path, and projecting a row it
+				// rejects is the index's whole work for nothing. An overflow
+				// row is held out above; no term speaks for one.
+				if ( '' !== $term
+					&& false === \strpos( \strtolower( $names[ $hash ] ?? '' ), $term ) ) {
+					continue;
+				}
 				$row = self::project_row( $raw_row, $server );
 				if ( null === $row ) {
 					continue;
 				}
-				$aggregate = ! empty( $row['aggregate'] );
-				// A folded row stands for many URLs; no term speaks for it.
-				if ( '' !== $term
-					&& ( $aggregate
-						|| false === \strpos( \strtolower( Core::as_string( $row['url'] ?? '' ) ), $term ) ) ) {
-					continue;
+				// The url-sort's key; `resolve_urls()` names the page it cuts.
+				if ( isset( $names[ $hash ] ) ) {
+					$row['url'] = $names[ $hash ];
 				}
+				$aggregate = ! empty( $row['aggregate'] );
 				if ( $errors && ! self::has_unclassified_requests( $row ) ) {
 					continue;
 				}
@@ -1418,29 +1426,6 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * The bucket keys a reader walks — the configured retention window.
-	 *
-	 * Memoized for as long as the current bucket is current. One `overview` calls
-	 * this ten times (seven dimensions, plus hourly, leaderboard and categories),
-	 * each otherwise rebuilding up to 288 keys with a `gmdate()` apiece — and each
-	 * re-reading the clock, so two panels of one response could straddle a
-	 * boundary and answer for different windows.
-	 *
-	 * @return array<int,string>
-	 */
-	private static function read_window(): array {
-		$now       = \time();
-		$retention = AppConfig::stats_retention_seconds();
-		// Keyed on retention too, or a settings change goes unnoticed.
-		$at = Stats_Store::bucket_key( $now ) . ':' . $retention;
-		if ( $at !== self::$read_window_at ) {
-			self::$read_window    = Stats_Store::retention_buckets( $retention, $now );
-			self::$read_window_at = $at;
-		}
-		return self::$read_window;
-	}
-
-	/**
 	 * The completion time below which a request-index walk can stop reading.
 	 *
 	 * The window floor `read_window()` enumerates, and nothing else: a request
@@ -1804,8 +1789,9 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * A stored row carries the 12-char hash and nothing else identifying, so
 	 * the name is read for the rows a response actually SHOWS — one
 	 * `lookup_multi` per partition rather than 101 bytes in every bucket of
-	 * every window. Rows that already carry a name, and the synthetic overflow
-	 * rows, which name no URL, cost nothing.
+	 * every window. Every displayed row is named here, including one already
+	 * carrying the PATH a url-sort ranked it by; only the synthetic overflow
+	 * rows are skipped, and they name no URL to look up.
 	 *
 	 * @param array<int,array<array-key,mixed>> $rows Merged display rows.
 	 * @return array<int,array<array-key,mixed>>
@@ -1814,9 +1800,8 @@ class Performance_CI_Node extends Service_CI_Node {
 		$wanted = [];
 		foreach ( $rows as $row ) {
 			$hash = Core::as_string( $row['hash'] ?? '' );
-			if ( '' !== $hash
-				&& '' === Core::as_string( $row['url'] ?? '' )
-				&& ! Stats_Store::is_other_key( $hash ) ) {
+			// The overflow rows name no URL, so nothing can name them.
+			if ( '' !== $hash && ! Stats_Store::is_other_key( $hash ) ) {
 				$wanted[ $hash ] = true;
 			}
 		}
@@ -1830,11 +1815,101 @@ class Performance_CI_Node extends Service_CI_Node {
 		}
 		foreach ( $rows as $i => $row ) {
 			$hash = Core::as_string( $row['hash'] ?? '' );
-			if ( isset( $names[ $hash ] ) && '' === Core::as_string( $row['url'] ?? '' ) ) {
-				$rows[ $i ]['url'] = $names[ $hash ];
+			if ( isset( $names[ $hash ] ) ) {
+				// @longform Overwrites rather than filling a gap: a url-sorted
+				// page carries the PATH it was ranked by, and this is the one
+				// authority for what a row DISPLAYS — origin and path joined.
+				$rows[ $i ]['url'] = $names[ $hash ][1] . $names[ $hash ][0];
 			}
 		}
 		return $rows;
+	}
+
+	/**
+	 * Every path one shard holds across the read window, `hash => path`.
+	 *
+	 * What a SEARCH needs, and the reason the name index is sharded and
+	 * bucketed exactly as the rows are: ~40 keys answer for a shard however
+	 * many URLs it holds, where `urlmap` answers one key per URL and a hub
+	 * asks it 668,918 times a poll.
+	 *
+	 * BOTH tiers are read unconditionally, unlike `load_index_default()`, which
+	 * skips a folded hour's fine buckets to avoid counting it twice. A name is
+	 * not a count: the merge is a union, so reading an hour and its buckets
+	 * together costs a repeat and can never double anything.
+	 *
+	 * @param string $shard Shard token from `Stats_Store::url_shard()`.
+	 * @return array<string,string> hash => path.
+	 */
+	private static function shard_paths( string $shard ): array {
+		$plan  = Stats_Store::read_plan( \array_values( self::read_window() ) );
+		$paths = [];
+		foreach ( self::stats_stores() as $store ) {
+			$covered = [];
+			foreach ( \array_chunk( $plan['hours'], self::INDEX_READ_CHUNK ) as $chunk ) {
+				foreach ( $store->url_name_hour_sources( $chunk, $shard ) as [ $hour, $blob ] ) {
+					$covered[ $hour ] = true;
+					self::merge_paths( $paths, $blob );
+				}
+			}
+			// @longform An hour the coarse tier cannot answer for is not folded
+			// YET — a fresh deploy, a backfill, a worker down at the boundary
+			// — and `load_index_default()` takes its ROWS from the twelve fine
+			// buckets. Names take the same fallback, or those rows arrive
+			// nameless and leave every search until the fold catches up.
+			$missing = [];
+			foreach ( $plan['hours'] as $hour ) {
+				if ( ! isset( $covered[ $hour ] ) ) {
+					$missing = \array_merge( $missing, Stats_Store::buckets_in_hour( $hour ) );
+				}
+			}
+			foreach ( [ $plan['fine'], $missing ] as $tier ) {
+				foreach ( \array_chunk( $tier, self::INDEX_READ_CHUNK ) as $chunk ) {
+					foreach ( $store->url_name_sources( $chunk, $shard ) as [ , $blob ] ) {
+						self::merge_paths( $paths, $blob );
+					}
+				}
+			}
+		}
+		return $paths;
+	}
+
+	/**
+	 * Fold one stored name blob into the paths gathered so far.
+	 *
+	 * By reference: the caller holds every path in the shard across the call,
+	 * and a by-value parameter copies the whole map on the first write.
+	 *
+	 * @param array<string,string>   $paths Gathered paths, mutated.
+	 * @param array<array-key,mixed> $blob  One stored `{ hash => path }` blob.
+	 */
+	private static function merge_paths( array &$paths, array $blob ): void {
+		foreach ( $blob as $hash => $path ) {
+			$paths[ (string) $hash ] = Core::as_string( $path );
+		}
+	}
+
+	/**
+	 * The bucket keys a reader walks — the configured retention window.
+	 *
+	 * Memoized for as long as the current bucket is current. One `overview` calls
+	 * this ten times (seven dimensions, plus hourly, leaderboard and categories),
+	 * each otherwise rebuilding up to 288 keys with a `gmdate()` apiece — and each
+	 * re-reading the clock, so two panels of one response could straddle a
+	 * boundary and answer for different windows.
+	 *
+	 * @return array<int,string>
+	 */
+	private static function read_window(): array {
+		$now       = \time();
+		$retention = AppConfig::stats_retention_seconds();
+		// Keyed on retention too, or a settings change goes unnoticed.
+		$at = Stats_Store::bucket_key( $now ) . ':' . $retention;
+		if ( $at !== self::$read_window_at ) {
+			self::$read_window    = Stats_Store::retention_buckets( $retention, $now );
+			self::$read_window_at = $at;
+		}
+		return self::$read_window;
 	}
 
 	/**

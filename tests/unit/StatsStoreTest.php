@@ -32,7 +32,7 @@ class StatsStoreTest extends TestCase {
 		$mc    = $this->seed_memd();
 		$store = $this->make_store( max_lifespan: 86400 );
 		$this->set_url_bucket( $store, '2026-08-14-12-05', [ 'a1b2c3d4e5f6' => [ 'count' => 3 ] ] );
-		$store->set_url_hour( '2026-08-14-12', 'a', [ 'a1b2c3d4e5f6' => [ Stats_Store::ROW_COUNT => 3 ] ] );
+		$this->set_url_hour( $store, '2026-08-14-12', 'a', [ 'a1b2c3d4e5f6' => [ Stats_Store::ROW_COUNT => 3 ] ] );
 
 		$now  = \time();
 		$fine = 0;
@@ -185,7 +185,7 @@ class StatsStoreTest extends TestCase {
 	public function test_hour_sources_read_the_coarse_tier_in_one_round_trip(): void {
 		$mc    = $this->seed_memd();
 		$store = $this->make_store();
-		$store->set_url_hour( '2026-08-27-13', 'a', [ 'a1b2c3d4e5f6' => [ 'url' => '/a', 'count' => 9 ] ] );
+		$this->set_url_hour( $store, '2026-08-27-13', 'a', [ 'a1b2c3d4e5f6' => [ 'url' => '/a', 'count' => 9 ] ] );
 
 		$mc->multi_calls = 0;
 		$sources         = $store->url_hour_sources( [ '2026-08-27-13', '2026-08-27-12' ], 'a' );
@@ -335,7 +335,7 @@ class StatsStoreTest extends TestCase {
 	public function test_get_url_stats_round_trip(): void {
 		$store = $this->make_store();
 		$this->assertNull( $store->get_url_stats( 'urlhash-x' ) );
-		$store->set_url_stats( 'urlhash-x', [ 'flame' => [ 1, 2, 3 ] ] );
+		$this->set_url_stats( $store, 'urlhash-x', [ 'flame' => [ 1, 2, 3 ] ] );
 		$this->assertSame(
 			[ 'flame' => [ 1, 2, 3 ] ],
 			$store->get_url_stats( 'urlhash-x' )
@@ -512,7 +512,7 @@ class StatsStoreTest extends TestCase {
 		};
 
 		$data = [ 'flame' => [ 1, 2, 3 ] ];
-		$store->set_url_stats( 'abc', $data );
+		$this->set_url_stats( $store, 'abc', $data );
 
 		$this->assertCount( 1, $captured );
 		$this->assertSame( Stats_Store::entry_key( 0, Stats_Store::NS_URL . ':abc' ), $captured[0][0] );
@@ -530,7 +530,7 @@ class StatsStoreTest extends TestCase {
 
 		$this->set_hourly_bucket( $store, 'x', [ 'count' => 1 ] );
 		$this->set_url_shard( $store, 'b', '0', [ 'x' => [ 'url' => '/x' ] ] );
-		$store->set_url_stats( 'h', [ 'flame' => [ 'count' => 1 ] ] );
+		$this->set_url_stats( $store, 'h', [ 'flame' => [ 'count' => 1 ] ] );
 		$this->set_leaderboard_bucket( $store, 'b', [ 'count' => 1 ] );
 		$this->set_leaderboard_bucket( $store, 'b', [ 'count' => 1 ], 'srv' );
 		$this->set_dimensional_bucket( $store, 'status', 'b', [ '200' => [ 'c' => 1 ] ] );
@@ -813,6 +813,26 @@ class StatsStoreTest extends TestCase {
 		$this->assertCount( Stats_Store::MAX_READ_BUCKETS, $buckets );
 	}
 
+	public function test_splitting_a_url_always_rejoins_to_the_original(): void {
+		// The pair is stored apart and joined for display, so the split is only
+		// safe if it is lossless. An authority with no path is the case that
+		// bites: everything after the host has to be the PATH half, or the
+		// origin swallows a query and the display grows a slash from nowhere.
+		$urls = [
+			'https://alpha.test/reports',
+			'https://alpha.test/?cache-cozy',
+			'https://alpha.test?q=1',
+			'https://alpha.test',
+			'/a-bare-path',
+			'',
+		];
+		foreach ( $urls as $url ) {
+			[ $path, $origin ] = Stats_Store::split_url( $url );
+			$this->assertSame( $url, $origin . $path, "rejoins: {$url}" );
+			$this->assertStringNotContainsString( 'alpha.test', $path, "the host is not searchable: {$url}" );
+		}
+	}
+
 	public function test_sums_to_display_converts_running_sums_to_avg(): void {
 		$sums = [
 			'wpdb' => [
@@ -993,7 +1013,7 @@ class StatsStoreTest extends TestCase {
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$rows       = [ 'hash-4471' => [ Stats_Store::ROW_COUNT => 6, Stats_Store::ROW_MAX_MS => 44.71 ] ];
 
-		$this->assertTrue( $store->set_url_hour( '2026-08-27-13', 'a', $rows ) );
+		$this->assertTrue( $this->set_url_hour( $store, '2026-08-27-13', 'a', $rows ) );
 		$this->assertSame( $rows, $this->get_url_hour( $store, '2026-08-27-13', 'a' ) );
 		$this->assertSame( [], $this->get_url_hour( $store, '2026-08-27-14', 'a' ), 'an unfolded hour reads empty' );
 	}

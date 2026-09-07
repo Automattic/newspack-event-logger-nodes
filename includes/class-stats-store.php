@@ -104,6 +104,24 @@ class Stats_Store {
 	 */
 	public const NS_URLS        = 'urls';
 	/**
+	 * The searchable name index: `urlnames:{shard}:{bucket}` => `{ hash => path }`.
+	 *
+	 * `urlmap` answers "name THIS row" in one key and is what a page and a point
+	 * read want. A SEARCH asks the other question — "which of this shard's URLs
+	 * match" — and answering it through `urlmap` costs one key per URL, which on
+	 * a hub is 668,918 of them per poll. Same shard, same two tiers, same read
+	 * plan as the rows, so one geometry serves both and a search is one read.
+	 *
+	 * PATHS only. The origin is already the `ROW_SRV` split's key and already
+	 * the `server` dimension the picker is built from; putting it here a third
+	 * time would also make one search box ask the dropdown's question.
+	 */
+	public const NS_URLNAMES      = 'urlnames';
+
+	/** The name index's COARSE tier, folded beside `urls_h`. See NS_URLNAMES. */
+	public const NS_URLNAMES_HOUR = 'urlnames_h';
+
+	/**
 	 * The URL index's COARSE tier: `urls_h:{shard}:{Y-m-d-H}`, one key per hour
 	 * holding the same row shape as a fine bucket.
 	 *
@@ -114,13 +132,19 @@ class Stats_Store {
 	 */
 	public const NS_URLS_HOUR   = 'urls_h';
 	/**
-	 * URL name table: `urlmap:{hash}` => the URL string, written once.
+	 * URL name table: `urlmap:{hash}` => `[ path, origin ]`, written once.
 	 *
 	 * A stored row carries the 12-char hash and nothing else identifying. The
 	 * name is 101 bytes of a 166-byte minimal row, so keeping it on the row puts
 	 * 288 copies of one name in a retention window. Readers resolve only the
 	 * hashes they display, except a search or a url-sort, which need the names
 	 * to answer at all.
+	 *
+	 * ORIGIN and PATH are stored apart because they answer different questions.
+	 * The origin is already the `ROW_SRV` split's key and already the `server`
+	 * dimension the picker is built from, so a search term matching it would
+	 * make one box ask the dropdown's question; the PATH is what a search
+	 * matches. Display joins the two back, and nothing else reads the origin.
 	 */
 	public const NS_URLMAP      = 'urlmap';
 
@@ -600,40 +624,31 @@ class Stats_Store {
 	 * @return list<array{0: string, 1: array<array-key,mixed>}>
 	 */
 	public function url_hour_sources( array $hours, ?string $shard = null, bool $workers = false ): array {
-		$shards = null === $shard
-			? ( $workers ? \array_merge( self::url_shards(), self::url_shards( true ) ) : self::url_shards() )
-			: [ $shard ];
-		$prefixes = [];
-		foreach ( $shards as $one ) {
-			$prefixes[] = [ self::NS_URLS_HOUR, $one ];
-		}
-		return $this->lookup_bucket_sets( $prefixes, $hours );
+		return $this->shard_sources( self::NS_URLS_HOUR, $hours, $shard, $workers );
 	}
 
 	/**
-	 * Overwrite one shard's rows for one coarse hour.
+	 * One shard's FINE name blobs, as `[bucket, { hash => path }]` pairs.
 	 *
-	 * An EMPTY hour is still written: a missing key means "not rolled up yet",
-	 * which is what sends the reader back to the twelve fine buckets, and an
-	 * hour with no traffic must not look like one that has not been folded.
-	 *
-	 * @param string                 $hour  Hour key.
-	 * @param string                 $shard Shard name from `url_shard()`.
-	 * @param array<array-key,mixed> $rows  The hour's merged rows.
-	 * @return bool True when the set landed.
+	 * @param array<int,string> $buckets Bucket keys.
+	 * @param ?string           $shard   One shard, or null for every shard.
+	 * @param bool              $workers Include the WORKER shard family.
+	 * @return list<array{0: string, 1: array<array-key,mixed>}>
 	 */
-	public function set_url_hour( string $hour, string $shard, array $rows ): bool {
-		return $this->bucket_set( self::url_hour_parts( $shard ), $hour, $rows );
+	public function url_name_sources( array $buckets, ?string $shard = null, bool $workers = false ): array {
+		return $this->shard_sources( self::NS_URLNAMES, $buckets, $shard, $workers );
 	}
 
 	/**
-	 * Namespace prefix for one shard of the COARSE hourly URL index.
+	 * One shard's COARSE name blobs. See `url_name_sources()`.
 	 *
-	 * @param string $shard Shard name from `url_shard()`.
-	 * @return array<int,string>
+	 * @param array<int,string> $hours   Hour keys.
+	 * @param ?string           $shard   One shard, or null for every shard.
+	 * @param bool              $workers Include the WORKER shard family.
+	 * @return list<array{0: string, 1: array<array-key,mixed>}>
 	 */
-	public static function url_hour_parts( string $shard ): array {
-		return [ self::NS_URLS_HOUR, $shard ];
+	public function url_name_hour_sources( array $hours, ?string $shard = null, bool $workers = false ): array {
+		return $this->shard_sources( self::NS_URLNAMES_HOUR, $hours, $shard, $workers );
 	}
 
 	/**
@@ -722,14 +737,62 @@ class Stats_Store {
 	 * @return list<array{0: string, 1: array<array-key,mixed>}>
 	 */
 	public function url_row_sources( array $buckets, ?string $shard = null, bool $workers = false ): array {
+		return $this->shard_sources( self::NS_URLS, $buckets, $shard, $workers );
+	}
+
+	/**
+	 * Read one sharded namespace over many buckets, as `[bucket, value]` pairs.
+	 *
+	 * Four namespaces share one key geometry — `{ns}:{shard}:{bucket}` — across
+	 * two tiers and two populations, so they share one reader and the four
+	 * public wrappers name which namespace each caller means. A second copy of
+	 * this is how a tier comes to read a shard set the other one does not.
+	 *
+	 * @param string            $ns      Namespace token.
+	 * @param array<int,string> $buckets Bucket or hour keys.
+	 * @param ?string           $shard   One shard, or null for every shard.
+	 * @param bool              $workers Include the WORKER shard family; ignored
+	 *                                   when one shard is named, whose token
+	 *                                   already says which family it belongs to.
+	 * @return list<array{0: string, 1: array<array-key,mixed>}>
+	 */
+	private function shard_sources( string $ns, array $buckets, ?string $shard, bool $workers ): array {
 		$shards = null === $shard
 			? ( $workers ? \array_merge( self::url_shards(), self::url_shards( true ) ) : self::url_shards() )
 			: [ $shard ];
 		$prefixes = [];
 		foreach ( $shards as $one ) {
-			$prefixes[] = [ self::NS_URLS, $one ];
+			$prefixes[] = [ $ns, $one ];
 		}
 		return $this->lookup_bucket_sets( $prefixes, $buckets );
+	}
+
+	/**
+	 * Which of `$hours` the coarse tier answers for COMPLETELY.
+	 *
+	 * An hour is folded when BOTH derived tiers cover every shard of both
+	 * populations: rows without names is an hour whose URLs no search can
+	 * reach, and the fold is what would otherwise never revisit it. Asked in
+	 * ONE round trip over all four products, because the probe runs on every
+	 * flush and decision 6 is what keeps that affordable.
+	 *
+	 * @param array<int,string> $hours Hour keys to probe.
+	 * @return array<string,bool> hour => true when the fold is complete.
+	 */
+	public function url_hours_folded( array $hours ): array {
+		$shards   = \array_merge( self::url_shards(), self::url_shards( true ) );
+		$prefixes = [];
+		foreach ( [ self::NS_URLS_HOUR, self::NS_URLNAMES_HOUR ] as $ns ) {
+			foreach ( $shards as $one ) {
+				$prefixes[] = [ $ns, $one ];
+			}
+		}
+		$whole = \count( $prefixes );
+		$out   = [];
+		foreach ( \array_count_values( \array_column( $this->lookup_bucket_sets( $prefixes, $hours ), 0 ) ) as $hour => $seen ) {
+			$out[ $hour ] = $seen >= $whole;
+		}
+		return $out;
 	}
 
 	/**
@@ -867,7 +930,7 @@ class Stats_Store {
 	 * rows are still in the window, and a row with no name is still a row.
 	 *
 	 * @param array<int,string> $hashes 12-char URL hashes.
-	 * @return array<string,string> hash => URL, for the ones that resolved.
+	 * @return array<string,array{0:string,1:string}> hash => [ path, origin ].
 	 */
 	public function get_url_names( array $hashes ): array {
 		if ( [] === $hashes ) {
@@ -879,9 +942,10 @@ class Stats_Store {
 		}
 		$out = [];
 		foreach ( $this->table( self::ROLE_AGGREGATE )?->lookup_multi( \array_keys( $map ) ) ?? [] as $key => $value ) {
-			$url = Core::str( Core::arr( $value )[ 0 ] ?? '' );
-			if ( '' !== $url && isset( $map[ $key ] ) ) {
-				$out[ $map[ $key ] ] = $url;
+			$stored = Core::arr( $value );
+			$path   = Core::str( $stored[0] ?? '' );
+			if ( '' !== $path && isset( $map[ $key ] ) ) {
+				$out[ $map[ $key ] ] = [ $path, Core::str( $stored[1] ?? '' ) ];
 			}
 		}
 		return $out;
@@ -902,7 +966,7 @@ class Stats_Store {
 	public function set_url_names( array $names ): void {
 		$writes = [];
 		foreach ( $names as $hash => $url ) {
-			$writes[] = [ [ self::NS_URLMAP ], $hash, [ $url ] ];
+			$writes[] = [ [ self::NS_URLMAP ], $hash, self::split_url( $url ) ];
 		}
 		$this->bucket_set_multi( $writes );
 	}
@@ -975,17 +1039,6 @@ class Stats_Store {
 	}
 
 	/**
-	 * Overwrite one URL's stats blob, under the shorter per-URL TTL.
-	 *
-	 * @param string              $url_hash 12-char URL hash.
-	 * @param array<string,mixed> $data     Whole blob.
-	 * @return bool True when the set landed.
-	 */
-	public function set_url_stats( string $url_hash, array $data ): bool {
-		return $this->store( $this->key( self::NS_URL, $url_hash ), $data, $this->ttl_url_stats(), self::NS_URL );
-	}
-
-	/**
 	 * Write to memcache, then (if wired AND the set landed) shadow the same write
 	 * to the mirror seam — a rejected/failed set must not be durably recorded and
 	 * resurrected by a later read-back.
@@ -1028,10 +1081,37 @@ class Stats_Store {
 	 */
 	private function role_for( string $ns ): string {
 		return match ( $ns ) {
-			self::NS_URL  => self::ROLE_URL,
-			self::NS_URLS => self::ROLE_URL_FINE,
-			default       => self::ROLE_AGGREGATE,
+			self::NS_URL      => self::ROLE_URL,
+			// A name outliving the fine rows it names is a name nothing reads.
+			self::NS_URLS,
+			self::NS_URLNAMES => self::ROLE_URL_FINE,
+			default           => self::ROLE_AGGREGATE,
 		};
+	}
+
+	/**
+	 * A stored URL split into the pair the name table holds: `[ path, origin ]`.
+	 *
+	 * The ONE place the schema decides where a URL divides, so the search's
+	 * haystack and the display's join can never disagree about it. A stored url
+	 * is absolute (`https://host/path`); one that carries no scheme is all
+	 * path, which is what a test seeding `/a` means and what a producer with no
+	 * `SERVER_NAME` writes.
+	 *
+	 * @param string $url The stored URL.
+	 * @return array{0:string,1:string} Path, then origin.
+	 */
+	public static function split_url( string $url ): array {
+		$at = \strpos( $url, '://' );
+		if ( false === $at ) {
+			return [ $url, '' ];
+		}
+		// @longform The authority ends at whichever delimiter comes first, so
+		// the split is LOSSLESS — `origin . path` is the stored url again —
+		// and an authority with no path keeps its query on the search half.
+		$host = $at + 3;
+		$end  = $host + \strcspn( $url, '/?#', $host );
+		return [ \substr( $url, $end ), \substr( $url, 0, $end ) ];
 	}
 
 	/**
@@ -1368,6 +1448,36 @@ class Stats_Store {
 				: Core::num_float( $into[ $field ] ?? null ) + Core::num_float( $from[ $field ] ?? null );
 		}
 		return $into;
+	}
+
+	/**
+	 * Namespace prefix for one shard of the COARSE hourly URL index.
+	 *
+	 * @param string $shard Shard name from `url_shard()`.
+	 * @return array<int,string>
+	 */
+	public static function url_hour_parts( string $shard ): array {
+		return [ self::NS_URLS_HOUR, $shard ];
+	}
+
+	/**
+	 * Namespace prefix for one shard of the FINE name index.
+	 *
+	 * @param string $shard Shard name from `url_shard()`.
+	 * @return array<int,string>
+	 */
+	public static function url_name_parts( string $shard ): array {
+		return [ self::NS_URLNAMES, $shard ];
+	}
+
+	/**
+	 * Namespace prefix for one shard of the COARSE name index.
+	 *
+	 * @param string $shard Shard name from `url_shard()`.
+	 * @return array<int,string>
+	 */
+	public static function url_name_hour_parts( string $shard ): array {
+		return [ self::NS_URLNAMES_HOUR, $shard ];
 	}
 
 	/** The retention window every TTL here derives from, in seconds. */

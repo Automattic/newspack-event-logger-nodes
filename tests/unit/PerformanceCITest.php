@@ -487,6 +487,99 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( '/c', $result['data'][1]['url'] );
 	}
 
+	public function test_a_search_reads_names_per_shard_not_per_url(): void {
+		// `resolve_urls()` builds one `urlmap:{hash}` key per row, and a search
+		// hands it the WHOLE shard index rather than the page it documents. On
+		// the hub that is 668,918 hashes x 4 partitions in one poll, which is
+		// what runs the verb to 290 seconds. The names must come from the
+		// shard, in one read, however many URLs it holds.
+		Core::$memd = new class() extends InMemoryMemcached {
+			/** @var array<int,string> */
+			public array $asked = [];
+
+			public function getMulti( array $keys, int $get_flags = 0 ): array|false {
+				foreach ( $keys as $key ) {
+					$this->asked[] = (string) $key;
+				}
+				return parent::getMulti( $keys, $get_flags );
+			}
+		};
+		$store  = new Stats_Store( 0, 86400 );
+		$bucket = $this->current_url_bucket();
+		// 137 URLs, all in shard `a`, distinct from every cap in this schema.
+		$seeded = [];
+		for ( $i = 0; $i < 137; $i++ ) {
+			$seeded[ \sprintf( 'a%011x', $i ) ] = [
+				'url'       => \sprintf( 'https://alpha.test/page-%d', $i ),
+				'count'     => $i + 1,
+				'last_seen' => 1700000000 + $i,
+			];
+		}
+		$this->set_url_bucket( $store, $bucket, $seeded );
+		/** @var object{asked: array<int,string>} $memd */
+		$memd         = Core::$memd;
+		$memd->asked  = [];
+
+		VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--search=page-3' );
+
+		$per_hash = \count( \array_filter(
+			$memd->asked,
+			static fn ( string $key ): bool => false !== \strpos( $key, ':urlmap:' )
+		) );
+		$this->assertLessThan( 137, $per_hash, 'a search does not ask one key per URL' );
+	}
+
+	public function test_a_search_reaches_an_hour_that_has_not_been_folded_yet(): void {
+		// `load_index_default()` answers an unfolded hour from its twelve fine
+		// buckets, which is what makes a fresh deploy and a cold-start backfill
+		// self-healing. The NAMES have to take the same fallback: rows through
+		// one path and names through the other is a URL in the index that no
+		// search can reach, for as long as the fold is behind.
+		$store  = new Stats_Store( 0, 86400 );
+		// Two hours back: inside the window, behind the fine tail, unfolded.
+		$bucket = Stats_Store::bucket_key( \time() - 7200 );
+		$this->set_url_bucket( $store, $bucket, [
+			'aaaaaaaaaaaa' => [ 'url' => 'https://zeta.test/mackerel-5502', 'count' => 4, 'last_seen' => \time() - 7200 ],
+		] );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--search=mackerel' );
+
+		$this->assertSame( 1, $result['rows'] );
+		$this->assertSame( 'https://zeta.test/mackerel-5502', $result['data'][0]['url'] );
+	}
+
+	public function test_a_search_does_not_match_the_host(): void {
+		// The host is already the split's KEY on every row, and the dropdown is
+		// built from the `server` dimension — two indexes that answer about a
+		// server. Leave it in the searchable text and one box asks the
+		// dropdown's question: on a hub every row matches the busiest host.
+		$store  = new Stats_Store( 0, 86400 );
+		$bucket = $this->current_url_bucket();
+		$this->set_url_bucket( $store, $bucket, [
+			'aaaaaaaaaaaa' => [ 'url' => 'https://alpha.test/reports', 'count' => 7, 'last_seen' => 1700000001 ],
+			'bbbbbbbbbbbb' => [ 'url' => 'https://alpha.test/notes',   'count' => 9, 'last_seen' => 1700000002 ],
+		] );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--search=alpha.test' );
+
+		$this->assertSame( 0, $result['rows'] );
+	}
+
+	public function test_a_search_matches_the_path_and_the_row_still_displays_whole(): void {
+		$store  = new Stats_Store( 0, 86400 );
+		$bucket = $this->current_url_bucket();
+		$this->set_url_bucket( $store, $bucket, [
+			'aaaaaaaaaaaa' => [ 'url' => 'https://alpha.test/reports', 'count' => 7, 'last_seen' => 1700000001 ],
+			'bbbbbbbbbbbb' => [ 'url' => 'https://alpha.test/notes',   'count' => 9, 'last_seen' => 1700000002 ],
+		] );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--search=reports' );
+
+		$this->assertSame( 1, $result['rows'] );
+		// Stored apart, joined for display: the operator still reads a URL.
+		$this->assertSame( 'https://alpha.test/reports', $result['data'][0]['url'] );
+	}
+
 	public function test_urls_verb_filters_by_search_term(): void {
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
@@ -2134,7 +2227,7 @@ class PerformanceCITest extends TestCase {
 			],
 		] );
 		// Per-URL flame stats blob lives at NS_URL keyed by url_hash.
-		$store->set_url_stats( 'cafebabe1234', [
+		$this->set_url_stats( $store, 'cafebabe1234', [
 			'flame'         => [ 'name' => 'aggregate', 'value' => 100, 'children' => [ [ 'name' => 'a', 'value' => 50 ] ] ],
 			'last_modified' => 1700001111,
 		] );

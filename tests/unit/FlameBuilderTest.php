@@ -1056,7 +1056,37 @@ class FlameBuilderTest extends TestCase {
 		$row = Core::arr( $this->get_url_shard( $store, $bucket, Stats_Store::url_shard( $hash ) )[ $hash ] ?? null );
 		$this->assertNotEmpty( $row, 'the row is there' );
 		$this->assertNotContains( $url, $row, 'and it does not carry the name' );
-		$this->assertSame( [ $hash => $url ], $store->get_url_names( [ $hash ] ) );
+		// Stored as the pair a search and a display want separately: the origin
+		// is the `srv` split's key already, so the searchable half is the path.
+		$this->assertSame(
+			[ $hash => [ '/2026/08/31/a-headline-worth-101-bytes/', 'https://bend.example' ] ],
+			$store->get_url_names( [ $hash ] )
+		);
+	}
+
+	public function test_a_flush_writes_the_shard_name_blob_beside_its_rows(): void {
+		// `urlmap` answers about ONE hash. A search asks about a whole shard,
+		// and answering that per hash is what runs the verb to 290 seconds, so
+		// the flush that writes a shard's rows writes its names in one key too.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+
+		$now    = \time();
+		$bucket = Stats_Store::bucket_key( $now );
+		$url    = 'https://gamma.test/almanac/tide-tables-8823';
+		$hash   = Log_Manager::url_hash( $url );
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => $url, 'duration_ms' => 3.0, 'timestamp' => $now ] ) );
+		$fb->flush();
+
+		$blobs = $store->url_name_sources( [ $bucket ], Stats_Store::url_shard( $hash ) );
+		$this->assertNotEmpty( $blobs, 'the shard has a name blob for the bucket' );
+		$this->assertSame(
+			[ $hash => '/almanac/tide-tables-8823' ],
+			$blobs[0][1],
+			'PATHS only: the origin is the split key and the dropdown axis'
+		);
 	}
 
 	public function test_worker_traffic_is_indexed_apart_from_reader_traffic(): void {
@@ -2012,8 +2042,13 @@ class FlameBuilderTest extends TestCase {
 		// closed hour that has not been folded into the coarse URL tier, which
 		// an idle partition needs as much as a busy one — a missing coarse key
 		// is what sends the reader back to twelve fine buckets.
+		// Rows and NAMES fold together, so an idle flush writes both tiers.
 		foreach ( $mc->keys() as $key ) {
-			$this->assertStringContainsString( ':' . Stats_Store::NS_URLS_HOUR . ':', $key, 'no lock or other keys written' );
+			$this->assertTrue(
+				\str_contains( $key, ':' . Stats_Store::NS_URLS_HOUR . ':' )
+					|| \str_contains( $key, ':' . Stats_Store::NS_URLNAMES_HOUR . ':' ),
+				'no lock or other keys written'
+			);
 		}
 		// No auto-tune emits (only the flush has nothing to emit).
 		foreach ( $capture->captured as $m ) {
@@ -2174,13 +2209,14 @@ class FlameBuilderTest extends TestCase {
 			$singles[ $urls ] = $counter->singles;
 		}
 
-		// Four times the URLs must not cost four times the round trips. On the
-		// pre-batch code these were 72 and 151 — dead linear in URLs.
-		$this->assertLessThan(
-			2 * $singles[12],
-			$singles[48],
-			'single round trips must not scale with URL count'
-		);
+		// @longform Four times the URLs must not cost four times the round
+		// trips. On the pre-batch code these were 72 and 151 — dead linear in
+		// URLs — and the last per-URL write left was the aggregate blob, which
+		// `mirror_url_stats()` now batches with the rest. Zero, not merely
+		// sublinear: an inequality against a constant offset is what let that
+		// last linearity sit here unnoticed.
+		$this->assertSame( 0, $singles[12], 'a flush makes no single round trips' );
+		$this->assertSame( 0, $singles[48], 'however many URLs it carries' );
 	}
 
 	/** Seed one bucket's URL rows into the node's pending state and persist them. */
@@ -2225,6 +2261,63 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( 243.0, (float) $hour[ $hash ]['sum_ms'] );
 	}
 
+	public function test_the_hour_fold_carries_the_names_with_the_rows(): void {
+		// A folded hour's fine buckets are never read again, so a name left
+		// behind in them is a URL the search can no longer find — which the
+		// "every URL must be searchable" rule forbids outright.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$early      = Log_Manager::url_hash( 'https://delta.test/kelp-3140' );
+		$late       = Log_Manager::url_hash( 'https://delta.test/kelp-9052' );
+		$shard      = Stats_Store::url_shard( $early );
+		$now        = \gmmktime( 15, 7, 0, 8, 27, 2026 );
+
+		$store->bucket_set_multi( [
+			[ Stats_Store::url_name_parts( $shard ), '2026-08-27-13-05', [ $early => '/kelp-3140' ] ],
+			[ Stats_Store::url_name_parts( $shard ), '2026-08-27-13-40', [ $late  => '/kelp-9052' ] ],
+		] );
+
+		$fb = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+		$fb->roll_up_hours( $now );
+
+		$folded = $store->url_name_hour_sources( [ '2026-08-27-13' ], $shard );
+		$this->assertNotEmpty( $folded, 'the hour has a name blob' );
+		$this->assertSame(
+			[ $early => '/kelp-3140', $late => '/kelp-9052' ],
+			$folded[0][1],
+			'and it is the union of the buckets it replaced'
+		);
+	}
+
+	public function test_an_hour_folded_before_the_name_tier_existed_is_folded_again(): void {
+		// The probe decides an hour is done. Asking only the ROW tier means
+		// every hour a previous release folded reads as done forever, so its
+		// rows keep their index and lose their names — a retention window of
+		// URLs that no search can reach and no url-sort can order.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$hash       = Log_Manager::url_hash( 'https://epsilon.test/anchovy-7781' );
+		$shard      = Stats_Store::url_shard( $hash );
+		$now        = \gmmktime( 15, 7, 0, 8, 27, 2026 );
+
+		// The shape 0.86.3 left behind: every shard has rows, none has names.
+		foreach ( \array_merge( Stats_Store::url_shards(), Stats_Store::url_shards( true ) ) as $one ) {
+			$this->set_url_hour( $store, '2026-08-27-13', $one, [] );
+		}
+		$store->bucket_set_multi( [
+			[ Stats_Store::url_name_parts( $shard ), '2026-08-27-13-05', [ $hash => '/anchovy-7781' ] ],
+		] );
+
+		$fb = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+		$fb->roll_up_hours( $now );
+
+		$folded = $store->url_name_hour_sources( [ '2026-08-27-13' ], $shard );
+		$this->assertNotEmpty( $folded, 'the hour is folded again for the tier it is missing' );
+		$this->assertSame( [ $hash => '/anchovy-7781' ], $folded[0][1] );
+	}
+
 	public function test_a_closed_hour_is_rolled_up_into_one_coarse_key(): void {
 		Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
@@ -2249,7 +2342,7 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( 22.0, (float) $rolled[ $hash ]['max_ms'], 'an extreme is a max, not a sum' );
 		// The name is not in the row: the fold carries statistics, and the URL
 		// name table carries the one copy of what those statistics are about.
-		$this->assertSame( [ $hash => '/wombat-4471' ], $store->get_url_names( [ $hash ] ) );
+		$this->assertSame( [ $hash => [ '/wombat-4471', '' ] ], $store->get_url_names( [ $hash ] ) );
 	}
 
 	/**
@@ -2941,7 +3034,7 @@ class FlameBuilderTest extends TestCase {
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$url      = '/legacy';
 		$url_hash = Log_Manager::url_hash( $url );
-		$store->set_url_stats( $url_hash, [
+		$this->set_url_stats( $store, $url_hash, [
 			'flame'    => [
 				'name'     => 'aggregate',
 				'value'    => 42.0, // Legacy EMA running mean — no sum_value.
@@ -2978,7 +3071,7 @@ class FlameBuilderTest extends TestCase {
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$url      = '/promoted';
 		$url_hash = Log_Manager::url_hash( $url );
-		$store->set_url_stats( $url_hash, [
+		$this->set_url_stats( $store, $url_hash, [
 			'flame_raw' => [
 				'name'      => 'aggregate',
 				'sum_value' => 300.0,
@@ -3522,7 +3615,7 @@ class FlameBuilderTest extends TestCase {
 		// No set_flame_topn() → the production default of 0: the per-URL flame
 		// mirror is OFF, so no `url:` frames persist regardless of traffic.
 		for ( $i = 1; $i <= 15; $i++ ) {
-			$store->set_url_stats( "h{$i}", [ 'flame' => [ 'count' => $i ] ] );
+			$this->set_url_stats( $store, "h{$i}", [ 'flame' => [ 'count' => $i ] ] );
 		}
 
 		$fb->save_state();
@@ -3548,7 +3641,7 @@ class FlameBuilderTest extends TestCase {
 		// top-N (highest-traffic) survive; the count persisted IS the number
 		// configured.
 		for ( $i = 1; $i <= 15; $i++ ) {
-			$store->set_url_stats( "h{$i}", [ 'flame' => [ 'count' => $i ] ] );
+			$this->set_url_stats( $store, "h{$i}", [ 'flame' => [ 'count' => $i ] ] );
 		}
 
 		$fb->save_state();
@@ -3608,8 +3701,8 @@ class FlameBuilderTest extends TestCase {
 
 		$fb->set_flame_topn( 10 ); // enable the flame mirror to exercise the gate
 
-		$store->set_url_stats( 'empty', [ 'flame' => [ 'count' => 0 ] ] );
-		$store->set_url_stats( 'filled', [ 'flame' => [ 'count' => 3 ] ] );
+		$this->set_url_stats( $store, 'empty', [ 'flame' => [ 'count' => 0 ] ] );
+		$this->set_url_stats( $store, 'filled', [ 'flame' => [ 'count' => 3 ] ] );
 
 		$fb->save_state();
 		$p->flush();
@@ -3679,7 +3772,7 @@ class FlameBuilderTest extends TestCase {
 		$fb->set_flame_topn( 10 ); // enable the flame mirror
 		// >4KB and carries profiling detail so it survives the top-N gate.
 		$data = [ 'flame' => [ 'count' => 1 ], 'blob' => \str_repeat( 'x', 5000 ) ];
-		$store->set_url_stats( 'abc', $data );
+		$this->set_url_stats( $store, 'abc', $data );
 		$fb->save_state();
 		$p->flush();
 

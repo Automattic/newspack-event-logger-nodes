@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.87.0] - 2026-09-07
+
+### Fixed
+
+- **A URL search named every URL in the window, one memcache key at a time.** `url_page()` hands `resolve_urls()` the WHOLE shard index whenever a search term or a `url` sort is set, and that function builds one `urlmap:{hash}` key per row — 668,918 hashes across four partitions on a production hub. Measured there: `/command` at p50 139ms and p95 28.5s, with a tail at 200-290 seconds and 350-510MB peak, answering 200 and then cut off mid-body, so the browser reported `JSON.parse: unexpected end of data` and the dashboard kept the previous poll's numbers. `include_workers` doubled it again by doubling the shard set. The names now come from the shard: `urlnames:{shard}:{bucket}`, folded to `urlnames_h` by the same pass that folds `urls_h`, read on the same `read_plan()` — ~40 keys per shard however many URLs it holds. Nothing is capped or ranked; every URL stays searchable.
+- **A search matched the hostname, so on a hub every row answered to the busiest host.** The stored name was the absolute URL, and the host in it is a literal duplicate of the `ROW_SRV` split's KEY — the axis the server dropdown is already built from. `urlmap` now stores `[ path, origin ]`, a search matches the path alone, and `resolve_urls()` joins the two back for display.
+- **A folded hour could keep its rows and lose its names.** `roll_up_hours()` memoizes an hour as done from ONE probe, and that probe asked the row tier alone — so every hour folded by an earlier release would have read as settled forever, leaving its rows in the index with nothing to search them by for a full retention window. It now asks both derived tiers, still in one round trip (`Stats_Store::url_hours_folded()`).
+- **A search could not reach an hour the fold had not caught up with.** `load_index_default()` answers an unfolded hour from its twelve fine buckets, which is what makes a fresh deploy and a cold-start backfill self-healing; the name read took the coarse tier only, so those rows arrived nameless and dropped out of every search. It takes the same fallback now, chunked on the same `INDEX_READ_CHUNK`.
+- **`Stats_Store::split_url()` was lossless only for a URL with a path.** `https://host?q=1` split to `[ '/', 'https://host?q=1' ]` — a display slash from nowhere and a haystack of one character. The authority now ends at the first `/`, `?` or `#`, and a round-trip test pins `origin . path === url`.
+- **A flush made one un-batched round trip per URL.** `mirror_url_stats()` wrote each per-URL aggregate with its own `set`, and the round-trip test only passed because the hour fold contributed a constant that padded the small-N side of its inequality. Both are batched now, and the test asserts zero single round trips rather than a ratio.
+
+### Changed
+
+- **`Stats_Store`'s four sharded readers collapse onto one.** `urls`, `urls_h`, `urlnames` and `urlnames_h` share one key geometry, so they share one reader with four named wrappers. `set_url_hour()` and `set_url_stats()` lost their last production callers to the batching above and move to the test utilities, beside the sibling accessors that went the same way.
+
 ## [0.86.3] - 2026-09-06
 
 ### Fixed

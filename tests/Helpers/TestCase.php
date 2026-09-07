@@ -237,7 +237,40 @@ abstract class TestCase extends RuntimeTestCase {
 	 * @param array<array-key,mixed>                   $rows   Named rows by hash.
 	 */
 	protected function seed_url_shard( \Newspack_Event_Logger_Nodes\Stats_Store $store, string $bucket, string $shard, array $rows ): bool {
-		return $this->set_url_shard( $store, $bucket, $shard, self::store_url_names( $store, $rows ) );
+		$paths = self::url_paths_of( $rows );
+		$ok    = $this->set_url_shard( $store, $bucket, $shard, self::store_url_names( $store, $rows ) );
+		return $this->set_url_name_shard( $store, $bucket, $shard, $paths ) && $ok;
+	}
+
+	/**
+	 * The PATH of each named row, as the flush files them into the name blob.
+	 *
+	 * @param array<array-key,mixed> $rows Named rows by hash.
+	 * @return array<string,string> hash => path.
+	 */
+	private static function url_paths_of( array $rows ): array {
+		$paths = [];
+		foreach ( $rows as $hash => $row ) {
+			$url = \Newspack_Nodes\Core::str( \Newspack_Nodes\Core::arr( $row )['url'] ?? '' );
+			if ( '' !== $url ) {
+				$paths[ (string) $hash ] = \Newspack_Event_Logger_Nodes\Stats_Store::split_url( $url )[0];
+			}
+		}
+		return $paths;
+	}
+
+	/**
+	 * Seed one shard's FINE name blob — the half a search reads.
+	 *
+	 * @param \Newspack_Event_Logger_Nodes\Stats_Store $store  Destination.
+	 * @param string                                   $bucket Bucket key.
+	 * @param string                                   $shard  Shard name.
+	 * @param array<string,string>                     $paths  hash => path.
+	 */
+	protected function set_url_name_shard( \Newspack_Event_Logger_Nodes\Stats_Store $store, string $bucket, string $shard, array $paths ): bool {
+		return $store->bucket_set_multi( [
+			[ \Newspack_Event_Logger_Nodes\Stats_Store::url_name_parts( $shard ), $bucket, $paths ],
+		] )[0];
 	}
 
 	/**
@@ -249,7 +282,11 @@ abstract class TestCase extends RuntimeTestCase {
 	 * @param array<array-key,mixed>                   $rows  Named rows by hash.
 	 */
 	protected function seed_url_hour( \Newspack_Event_Logger_Nodes\Stats_Store $store, string $hour, string $shard, array $rows ): bool {
-		return $store->set_url_hour( $hour, $shard, self::store_url_names( $store, $rows ) );
+		$paths = self::url_paths_of( $rows );
+		$ok    = $this->set_url_hour( $store, $hour, $shard, self::store_url_names( $store, $rows ) );
+		return $store->bucket_set_multi( [
+			[ \Newspack_Event_Logger_Nodes\Stats_Store::url_name_hour_parts( $shard ), $hour, $paths ],
+		] )[0] && $ok;
 	}
 
 	/**
@@ -332,7 +369,8 @@ abstract class TestCase extends RuntimeTestCase {
 	 * @return bool True when every shard's set landed.
 	 */
 	protected function set_url_bucket( \Newspack_Event_Logger_Nodes\Stats_Store $store, string $bucket, array $data ): bool {
-		$data = self::store_url_names( $store, $data );
+		$paths = self::url_paths_of( $data );
+		$data  = self::store_url_names( $store, $data );
 		// Worker rows go to the worker shard family, as the writer files them.
 		$split = [ false => [], true => [] ];
 		foreach ( $data as $hash => $row ) {
@@ -343,7 +381,15 @@ abstract class TestCase extends RuntimeTestCase {
 		foreach ( [ false, true ] as $worker ) {
 			$by_shard = \Newspack_Event_Logger_Nodes\Stats_Store::rows_by_shard( $split[ $worker ], $worker );
 			foreach ( \Newspack_Event_Logger_Nodes\Stats_Store::url_shards( $worker ) as $shard ) {
-				$ok = $this->set_url_shard( $store, $bucket, $shard, \Newspack_Nodes\Core::arr( $by_shard[ $shard ] ?? null ) ) && $ok;
+				$shard_rows = \Newspack_Nodes\Core::arr( $by_shard[ $shard ] ?? null );
+				$ok = $this->set_url_shard( $store, $bucket, $shard, $shard_rows ) && $ok;
+				// The names of THIS shard's rows, where the flush files them.
+				$ok = $this->set_url_name_shard(
+					$store,
+					$bucket,
+					$shard,
+					\array_intersect_key( $paths, $shard_rows )
+				) && $ok;
 			}
 		}
 		return $ok;
@@ -355,6 +401,27 @@ abstract class TestCase extends RuntimeTestCase {
 	// left them with no production caller, so they live here, where their 160
 	// call sites already are — named and readable for a test, over the parts
 	// the batch pair takes.
+
+	/**
+	 * Overwrite one shard's rows for one coarse hour.
+	 *
+	 * An EMPTY hour is still written: a missing key means "not rolled up yet",
+	 * which is what sends the reader back to the twelve fine buckets.
+	 *
+	 * @param array<array-key,mixed> $rows The hour's merged rows.
+	 */
+	protected function set_url_hour( Stats_Store $store, string $hour, string $shard, array $rows ): bool {
+		return $store->bucket_set_multi( [ [ Stats_Store::url_hour_parts( $shard ), $hour, $rows ] ] )[0];
+	}
+
+	/**
+	 * Overwrite one URL's stats blob, under the shorter per-URL TTL.
+	 *
+	 * @param array<string,mixed> $data Whole blob.
+	 */
+	protected function set_url_stats( Stats_Store $store, string $url_hash, array $data ): bool {
+		return $store->bucket_set_multi( [ [ [ Stats_Store::NS_URL ], $url_hash, $data ] ] )[0];
+	}
 
 	/** @param array<string,mixed> $data */
 	protected function set_hourly_bucket( Stats_Store $store, string $bucket, array $data ): bool {
