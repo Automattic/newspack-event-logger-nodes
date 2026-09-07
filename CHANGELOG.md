@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.88.1] - 2026-09-07
+
+### Fixed
+
+- **The readers asked for four times more fine buckets than the fine tier keeps.** An hour the coarse tier cannot answer for is answered from its twelve fine buckets — the fallback that makes a fresh deploy and a cold-start backfill self-healing — but `buckets_in_hour()` enumerates all twelve whatever their age, and the plan's hours reach back a whole retention window. `urls` and `urlnames` are `ROLE_URL_FINE`, kept for `ttl_url_fine()`, four hours. Everything behind that was a key memcache had already discarded: a certain miss, per shard, per chunk, per partition — and each miss is what walked the durable mirror's index in full. `FINE_TTL_SECONDS`'s own docblock asserted "nothing reads a fine bucket behind that", and three readers did.
+  `Stats_Store::unfolded_hour_buckets()` is now the one spelling of that fallback, and it stops at the tier's TTL: the reader's horizon is the writer's. Cold batch counts per poll, four partitions: **`overview` 108 → 28, `urls` 1,728 → 448, `urls --search` 3,456 → 896, `urls --include_workers` 3,456 → 896** — the same factor off the memcache round trips and off the worst-case index walks behind them. Nothing recoverable is lost: `roll_up_hours()` folds an hour from those same keys, so an hour past the horizon is gone from the fine tier for the fold as well as for the reader.
+
 ## [0.88.0] - 2026-09-07
 
 ### Fixed
