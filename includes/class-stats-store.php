@@ -1291,142 +1291,6 @@ class Stats_Store {
 	}
 
 	/**
-	 * The inverse of `collapse_sole_server()`: a collapsed host takes the row's
-	 * own summed fields back. Every merge of a stored split calls it FIRST —
-	 * `merge_url_row()`, `fold_url_rows()` and
-	 * `Performance_CI_Node::fold_index_row()` — because `sum_fields()` skips a
-	 * non-array and would drop the host rather than fold a zero.
-	 *
-	 * @param array<array-key,mixed> $row   The row the split belongs to.
-	 * @param array<array-key,mixed> $split That row's stored split.
-	 * @return array<array-key,mixed>
-	 */
-	public static function expand_sole_server( array $row, array $split ): array {
-		foreach ( $split as $server => $sums ) {
-			if ( null !== $sums ) {
-				continue;
-			}
-			$split[ $server ] = self::sum_entry( [], $row, self::URL_SRV_SUMS );
-		}
-		return $split;
-	}
-
-	/**
-	 * Convert summed leaderboard data to the display shape expected by the frontend.
-	 *
-	 *  - 'time'    = sum_time  / total_count — avg exclusive cat time per request.
-	 *  - 'count'   = sum_count / total_count — avg invocation count per request.
-	 *  - entries   are per-appearance averages (sum / samples).
-	 *
-	 * An entry whose sample count is zero is dropped rather than divided. Past a
-	 * hundred entries a category keeps only its fifty slowest, ranked by average
-	 * exclusive time, so one pathological category cannot flood a payload.
-	 *
-	 * The CATEGORIES are capped the same way, for the same reason one level up.
-	 * Each bucket is capped as it is written, but a reply merges the whole
-	 * retention window and those top sets differ, so the union overflows again;
-	 * the tail rolls into `Other` rather than dropping.
-	 *
-	 * The entry arithmetic is unreachable from the one production caller.
-	 * `Performance_CI_Node::build_leaderboard()` folds its buckets through
-	 * `LB_CAT_SUMS`, which names no `entries` key, so every category arrives
-	 * here without one and every row leaves with `entries` empty. The code
-	 * stays because the shape it reads is what the buckets STORE.
-	 *
-	 * @param int                 $total_count  Total profiled requests.
-	 * @param float               $sum_req_time Sum of per-request $req_time values.
-	 * @param array<string,mixed> $sums         Per-category sums keyed by category name.
-	 * @return array<string,mixed> Display-shaped leaderboard data.
-	 */
-	public static function sums_to_display( int $total_count, float $sum_req_time, array $sums ): array {
-		$display_cats = [];
-		foreach ( self::cap_bucket( $sums, self::MAX_CAT_VALUES, 'sum_time', self::LB_CAT_SUMS ) as $cat => $data ) {
-			$data      = Core::arr( $data );
-			$samples   = Core::num_int( $data['samples'] ?? null );
-			$sum_time  = Core::num_float( $data['sum_time'] ?? null );
-			$sum_count = Core::num_float( $data['sum_count'] ?? null );
-
-			$entries_out = [];
-			$entries     = ( isset( $data['entries'] ) && \is_array( $data['entries'] ) ) ? $data['entries'] : [];
-			foreach ( $entries as $name => $entry ) {
-				$entry     = Core::arr( $entry );
-				$e_samples = Core::num_int( $entry[2] ?? null );
-				if ( $e_samples > 0 ) {
-					$entries_out[ $name ] = [
-						Core::num_float( $entry[0] ?? null ) / $e_samples,
-						Core::num_float( $entry[1] ?? null ) / $e_samples,
-						$e_samples,
-					];
-				}
-			}
-
-			if ( \count( $entries_out ) > 100 ) {
-				\uasort( $entries_out, fn( $a, $b ) => $b[0] <=> $a[0] );
-				$entries_out = \array_slice( $entries_out, 0, 50, true );
-			}
-
-			$display_cats[ $cat ] = [
-				'time'    => $total_count > 0 ? $sum_time / $total_count : 0.0,
-				'count'   => $total_count > 0 ? $sum_count / $total_count : 0.0,
-				'samples' => $samples,
-				'entries' => $entries_out,
-			];
-		}
-
-		return [
-			'count'      => $total_count,
-			'total_time' => $total_count > 0 ? $sum_req_time / $total_count : 0.0,
-			'categories' => $display_cats,
-		];
-	}
-
-	/**
-	 * Cap a bucket's value map to the top `$max_values`, rolling the tail into a
-	 * synthetic `Other`.
-	 *
-	 * The dimensional and category caps differ only in what they sort by, which
-	 * fields they sum, and whether a reserved row (`total`) is lifted clear of the
-	 * ranking — so they are arguments, not two functions.
-	 *
-	 * Key-agnostic: a decoded bucket can carry int keys (a numeric value name);
-	 * the body only ever names `Other` and the caller's reserved row.
-	 *
-	 * @param array<array-key,mixed> $values     One bucket's values.
-	 * @param int                    $max_values Ceiling on distinct values, synthetic slots included.
-	 * @param string|int             $sort_field Field ranking survivors, descending.
-	 * @param array<array-key,bool>  $fields     Field key => is a whole count.
-	 * @param string|null            $reserved   Row held out of the ranking and restored after.
-	 * @return array<array-key,mixed>
-	 */
-	public static function cap_bucket( array $values, int $max_values, string|int $sort_field, array $fields, ?string $reserved = null ): array {
-		if ( \count( $values ) <= $max_values ) {
-			return $values;
-		}
-		$held = null;
-		if ( null !== $reserved ) {
-			$held = $values[ $reserved ] ?? null;
-			unset( $values[ $reserved ] );
-		}
-		// One slot for the overflow key, one more for a reserved row.
-		$keep = \max( 0, $max_values - ( null === $held ? 1 : 2 ) );
-		\uasort(
-			$values,
-			fn( $a, $b ) => ( \is_array( $b ) && \is_numeric( $b[ $sort_field ] ?? null ) ? $b[ $sort_field ] : 0 )
-				<=> ( \is_array( $a ) && \is_numeric( $a[ $sort_field ] ?? null ) ? $a[ $sort_field ] : 0 )
-		);
-		$top  = \array_slice( $values, 0, $keep, true );
-		$rest = [];
-		foreach ( \array_slice( $values, $keep ) as $v ) {
-			$rest = self::sum_fields( $rest, [ self::OTHER_KEY => Core::arr( $v ) ], $fields );
-		}
-		$top = self::sum_fields( $top, $rest, $fields );
-		if ( null !== $held ) {
-			$top[ $reserved ] = $held;
-		}
-		return $top;
-	}
-
-	/**
 	 * Sum `$fields` from `$incoming` into `$into`, entry by entry. The one merge
 	 * both the dimensional (`c,s,m`) and category (`t,c,n`) series share.
 	 *
@@ -1451,6 +1315,44 @@ class Stats_Store {
 	}
 
 	/**
+	 * Re-key a decoded map with string keys. PHP casts numeric-looking keys to
+	 * int on decode, so a value read back from the cache is `array-key` typed
+	 * even though every namespace stores a string-keyed map; the setters and the
+	 * merge helpers want that guarantee back.
+	 *
+	 * @param array<array-key,mixed> $map Decoded value.
+	 * @return array<string,mixed>
+	 */
+	public static function string_keys( array $map ): array {
+		$out = [];
+		foreach ( $map as $key => $value ) {
+			$out[ (string) $key ] = $value;
+		}
+		return $out;
+	}
+
+	/**
+	 * The inverse of `collapse_sole_server()`: a collapsed host takes the row's
+	 * own summed fields back. Every merge of a stored split calls it FIRST —
+	 * `merge_url_row()`, `fold_url_rows()` and
+	 * `Performance_CI_Node::fold_index_row()` — because `sum_fields()` skips a
+	 * non-array and would drop the host rather than fold a zero.
+	 *
+	 * @param array<array-key,mixed> $row   The row the split belongs to.
+	 * @param array<array-key,mixed> $split That row's stored split.
+	 * @return array<array-key,mixed>
+	 */
+	public static function expand_sole_server( array $row, array $split ): array {
+		foreach ( $split as $server => $sums ) {
+			if ( null !== $sums ) {
+				continue;
+			}
+			$split[ $server ] = self::sum_entry( [], $row, self::URL_SRV_SUMS );
+		}
+		return $split;
+	}
+
+	/**
 	 * Sum `$fields` from one entry into another — what `sum_fields()` does per
 	 * key, reachable directly by a caller holding a single row rather than a map.
 	 *
@@ -1466,23 +1368,6 @@ class Stats_Store {
 				: Core::num_float( $into[ $field ] ?? null ) + Core::num_float( $from[ $field ] ?? null );
 		}
 		return $into;
-	}
-
-	/**
-	 * Re-key a decoded map with string keys. PHP casts numeric-looking keys to
-	 * int on decode, so a value read back from the cache is `array-key` typed
-	 * even though every namespace stores a string-keyed map; the setters and the
-	 * merge helpers want that guarantee back.
-	 *
-	 * @param array<array-key,mixed> $map Decoded value.
-	 * @return array<string,mixed>
-	 */
-	public static function string_keys( array $map ): array {
-		$out = [];
-		foreach ( $map as $key => $value ) {
-			$out[ (string) $key ] = $value;
-		}
-		return $out;
 	}
 
 	/** The retention window every TTL here derives from, in seconds. */
@@ -1653,6 +1538,64 @@ class Stats_Store {
 	/** Partition this store reads and writes. */
 	public function partition(): int {
 		return $this->partition;
+	}
+
+	/**
+	 * Convert summed leaderboard data to the display shape expected by the frontend.
+	 *
+	 *  - 'time'    = sum_time  / total_count — avg exclusive cat time per request.
+	 *  - 'count'   = sum_count / total_count — avg invocation count per request.
+	 *  - entries   are per-appearance averages (sum / samples).
+	 *
+	 * An entry whose sample count is zero is dropped rather than divided. Past a
+	 * hundred entries a category keeps only its fifty slowest, ranked by average
+	 * exclusive time, so one pathological category cannot flood a payload.
+	 *
+	 * @param int                 $total_count  Total profiled requests.
+	 * @param float               $sum_req_time Sum of per-request $req_time values.
+	 * @param array<string,mixed> $sums         Per-category sums keyed by category name.
+	 * @return array<string,mixed> Display-shaped leaderboard data.
+	 */
+	public static function sums_to_display( int $total_count, float $sum_req_time, array $sums ): array {
+		$display_cats = [];
+		foreach ( $sums as $cat => $data ) {
+			$data      = Core::arr( $data );
+			$samples   = Core::num_int( $data['samples'] ?? null );
+			$sum_time  = Core::num_float( $data['sum_time'] ?? null );
+			$sum_count = Core::num_float( $data['sum_count'] ?? null );
+
+			$entries_out = [];
+			$entries     = ( isset( $data['entries'] ) && \is_array( $data['entries'] ) ) ? $data['entries'] : [];
+			foreach ( $entries as $name => $entry ) {
+				$entry     = Core::arr( $entry );
+				$e_samples = Core::num_int( $entry[2] ?? null );
+				if ( $e_samples > 0 ) {
+					$entries_out[ $name ] = [
+						Core::num_float( $entry[0] ?? null ) / $e_samples,
+						Core::num_float( $entry[1] ?? null ) / $e_samples,
+						$e_samples,
+					];
+				}
+			}
+
+			if ( \count( $entries_out ) > 100 ) {
+				\uasort( $entries_out, fn( $a, $b ) => $b[0] <=> $a[0] );
+				$entries_out = \array_slice( $entries_out, 0, 50, true );
+			}
+
+			$display_cats[ $cat ] = [
+				'time'    => $total_count > 0 ? $sum_time / $total_count : 0.0,
+				'count'   => $total_count > 0 ? $sum_count / $total_count : 0.0,
+				'samples' => $samples,
+				'entries' => $entries_out,
+			];
+		}
+
+		return [
+			'count'      => $total_count,
+			'total_time' => $total_count > 0 ? $sum_req_time / $total_count : 0.0,
+			'categories' => $display_cats,
+		];
 	}
 
 }

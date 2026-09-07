@@ -1642,7 +1642,6 @@ class Flame_Builder_Node extends Node {
 					$existing = self::empty_leaderboard();
 				}
 				Stats_Store::merge_leaderboard_bucket( $existing, $sums );
-				self::cap_leaderboard_categories( $existing );
 				self::cap_leaderboard_entries( $existing );
 				return $existing;
 			}
@@ -1758,6 +1757,18 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
+	 * Cap a dimensional bucket: ranked by request count, no reserved row. Named
+	 * so the sort field and the field table cannot be paired wrongly at a call site.
+	 *
+	 * @param array<array-key,mixed> $values     One bucket's values.
+	 * @param int                    $max_values Ceiling on distinct values.
+	 * @return array<array-key,mixed>
+	 */
+	private static function cap_dim( array $values, int $max_values ): array {
+		return self::cap_bucket( $values, $max_values, 'c', Stats_Store::DIM_SUMS );
+	}
+
+	/**
 	 * Cap a URL row's per-server split: ranked by request count, no reserved row.
 	 * Its own wrapper because the split carries the ROW's field INDEXES rather than
 	 * the dimensional ones, and one ceiling covers every home of the server axis.
@@ -1766,7 +1777,64 @@ class Flame_Builder_Node extends Node {
 	 * @return array<array-key,mixed>
 	 */
 	private static function cap_servers( array $split ): array {
-		return Stats_Store::cap_bucket( $split, Stats_Store::MAX_SERVER_VALUES, Stats_Store::ROW_COUNT, Stats_Store::URL_SRV_SUMS );
+		return self::cap_bucket( $split, Stats_Store::MAX_SERVER_VALUES, Stats_Store::ROW_COUNT, Stats_Store::URL_SRV_SUMS );
+	}
+
+	/**
+	 * Cap a category bucket: ranked by time, `total` lifted clear of the ranking.
+	 *
+	 * @param array<array-key,mixed> $cats       Category buckets.
+	 * @param int                    $max_values Categories kept, synthetic slots included.
+	 * @return array<array-key,mixed>
+	 */
+	private static function cap_categories( array $cats, int $max_values ): array {
+		return self::cap_bucket( $cats, $max_values, 't', Stats_Store::CAT_SUMS, self::TOTAL_KEY );
+	}
+
+	/**
+	 * Cap a bucket's value map to the top `$max_values`, rolling the tail into a
+	 * synthetic `Other`.
+	 *
+	 * The dimensional and category caps differ only in what they sort by, which
+	 * fields they sum, and whether a reserved row (`total`) is lifted clear of the
+	 * ranking — so they are arguments, not two functions.
+	 *
+	 * Key-agnostic: a decoded bucket can carry int keys (a numeric value name);
+	 * the body only ever names `Other` and the caller's reserved row.
+	 *
+	 * @param array<array-key,mixed> $values     One bucket's values.
+	 * @param int                    $max_values Ceiling on distinct values, synthetic slots included.
+	 * @param string|int             $sort_field Field ranking survivors, descending.
+	 * @param array<array-key,bool>  $fields     Field key => is a whole count.
+	 * @param string|null            $reserved   Row held out of the ranking and restored after.
+	 * @return array<array-key,mixed>
+	 */
+	private static function cap_bucket( array $values, int $max_values, string|int $sort_field, array $fields, ?string $reserved = null ): array {
+		if ( \count( $values ) <= $max_values ) {
+			return $values;
+		}
+		$held = null;
+		if ( null !== $reserved ) {
+			$held = $values[ $reserved ] ?? null;
+			unset( $values[ $reserved ] );
+		}
+		// One slot for the overflow key, one more for a reserved row.
+		$keep = \max( 0, $max_values - ( null === $held ? 1 : 2 ) );
+		\uasort(
+			$values,
+			fn( $a, $b ) => ( \is_array( $b ) && \is_numeric( $b[ $sort_field ] ?? null ) ? $b[ $sort_field ] : 0 )
+				<=> ( \is_array( $a ) && \is_numeric( $a[ $sort_field ] ?? null ) ? $a[ $sort_field ] : 0 )
+		);
+		$top  = \array_slice( $values, 0, $keep, true );
+		$rest = [];
+		foreach ( \array_slice( $values, $keep ) as $v ) {
+			$rest = Stats_Store::sum_fields( $rest, [ Stats_Store::OTHER_KEY => Core::arr( $v ) ], $fields );
+		}
+		$top = Stats_Store::sum_fields( $top, $rest, $fields );
+		if ( null !== $held ) {
+			$top[ $reserved ] = $held;
+		}
+		return $top;
 	}
 
 	/**
@@ -2586,54 +2654,6 @@ class Flame_Builder_Node extends Node {
 	 */
 	private static function empty_leaderboard(): array {
 		return [ 'count' => 0, 'sum_req_time' => 0.0, 'categories' => [] ];
-	}
-
-	/**
-	 * Cap a leaderboard bucket's distinct categories, rolling the tail into
-	 * `Other`. The sibling of `cap_categories` for the leaderboard's own shape:
-	 * ranked by `sum_time` and summed by `LB_CAT_SUMS`, with no reserved row,
-	 * because `collision_free_category` keeps a real `total` out of this map.
-	 *
-	 * The rolled row carries no `entries`. `LB_CAT_SUMS` names the fields that
-	 * add, and a callback breakdown pooled across an arbitrary tail names
-	 * nothing an operator can act on.
-	 *
-	 * Without this the map grows one row per distinct hook, callback and plugin
-	 * the site ever fires, and `overview` answers with every one of them.
-	 *
-	 * @param array<string,mixed> $bucket Leaderboard bucket, modified in place.
-	 */
-	private static function cap_leaderboard_categories( array &$bucket ): void {
-		$categories = $bucket['categories'] ?? null;
-		if ( ! \is_array( $categories ) ) {
-			return;
-		}
-		$bucket['categories'] = Stats_Store::string_keys(
-			Stats_Store::cap_bucket( $categories, Stats_Store::MAX_CAT_VALUES, 'sum_time', Stats_Store::LB_CAT_SUMS )
-		);
-	}
-
-	/**
-	 * Cap a dimensional bucket: ranked by request count, no reserved row. Named
-	 * so the sort field and the field table cannot be paired wrongly at a call site.
-	 *
-	 * @param array<array-key,mixed> $values     One bucket's values.
-	 * @param int                    $max_values Ceiling on distinct values.
-	 * @return array<array-key,mixed>
-	 */
-	private static function cap_dim( array $values, int $max_values ): array {
-		return Stats_Store::cap_bucket( $values, $max_values, 'c', Stats_Store::DIM_SUMS );
-	}
-
-	/**
-	 * Cap a category bucket: ranked by time, `total` lifted clear of the ranking.
-	 *
-	 * @param array<array-key,mixed> $cats       Category buckets.
-	 * @param int                    $max_values Categories kept, synthetic slots included.
-	 * @return array<array-key,mixed>
-	 */
-	private static function cap_categories( array $cats, int $max_values ): array {
-		return Stats_Store::cap_bucket( $cats, $max_values, 't', Stats_Store::CAT_SUMS, self::TOTAL_KEY );
 	}
 
 	/**

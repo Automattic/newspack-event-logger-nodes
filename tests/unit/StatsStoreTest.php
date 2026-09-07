@@ -859,34 +859,6 @@ class StatsStoreTest extends TestCase {
 		$this->assertSame( 0, $dst['categories']['wpdb']['entries']['SELECT'][2] );
 	}
 
-	public function test_sums_to_display_caps_categories_and_rolls_the_tail(): void {
-		// Each bucket is capped as it is written, but 288 of them are merged for
-		// one reply and their top sets differ, so the union overflows again.
-		$sums = [];
-		for ( $i = 0; $i < 67; $i++ ) {
-			$sums[ "hook-$i" ] = [
-				'samples'   => 3,
-				'sum_time'  => 2.0 + $i,
-				'sum_count' => 6,
-				'entries'   => [ "call-$i" => [ 1.5, 3.0, 3 ] ],
-			];
-		}
-		$display = Stats_Store::sums_to_display( 3, 9.0, $sums );
-
-		$cats = $display['categories'];
-		$this->assertLessThanOrEqual( Stats_Store::MAX_CAT_VALUES, \count( $cats ) );
-		$this->assertArrayHasKey( Stats_Store::OTHER_KEY, $cats, 'the tail folds rather than dropping' );
-		$this->assertArrayHasKey( 'hook-66', $cats, 'the heaviest category survives the cap' );
-		$this->assertArrayHasKey( 'call-66', $cats['hook-66']['entries'], 'a survivor keeps its own entries' );
-		$this->assertSame( [], $cats[ Stats_Store::OTHER_KEY ]['entries'], 'the pooled row has none to keep' );
-		// sum_time totals 2*67 + (0+..+66) = 2345, divided by the 3 requests.
-		$kept = 0.0;
-		foreach ( $cats as $row ) {
-			$kept += (float) $row['time'];
-		}
-		$this->assertEqualsWithDelta( 2345.0 / 3, $kept, 1e-6, 'the rolled tail keeps its time' );
-	}
-
 	public function test_sums_to_display_skips_entries_with_zero_samples(): void {
 		$sums = [
 			'wpdb' => [
