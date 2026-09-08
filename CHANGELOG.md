@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.89.0] - 2026-09-08
+
+### Security
+
+- **The cache-cozy warm secret reached the firehose unredacted.** `01-newspack-cache-cozy.php` builds `?cache_cozy_warm=<32 hex>` with `add_query_arg`, generated once and never rotated. `$request->url` strips the query string, but the `request` log line records the URL whole — and `aggregator.tsl` replicates a spoke's raw firehose to the hub, so a hub operator holding only the least-privilege `hub-user` account reads every spoke's warm secret. Added to `URL_REDACT_PATTERN` in both producers, since `tools/check-firehose-parity.py` holds the PHP and Perl copies to one list. **This closes the instance, not the class:** the pattern is a name list anchored at `[?&]`, so it can only ever match a name someone remembered to add, and it will be wrong again the next time a credential goes in a URL.
+
+### Fixed
+
+- **`Ask_Assembler`'s class docblock asserted an invariant the code does not hold.** It states that across every shaper the environment is dropped except an allowlist — *"No headers, no IPs, no user agents, no cookies — the brief leaves the site."* `entry_shape()` copies an entry's `m` verbatim, and an `environment_v3` entry's `m` IS the curated `$_SERVER` map, so a brief carrying that entry carries REMOTE_ADDR and the user agent off-site. The docblock now says what the code does and marks the shaper's allowlist as an open question rather than a settled rule.
+- **An evicted hour is rebuilt from fine buckets whose CACHE lifetime is spent.** `ttl_url_fine()` is two hours because the fine tier is the largest thing this schema puts in a 512MB cache — a footprint bound, not a statement that the data expired. The mirror keeps those buckets for twice the stats window, but the rehydrate seam reported what was left of the frame's CACHE ttl, so the substrate refused it and an evicted `urls_h` key was unrecoverable. That is decision 17's premise for leaving the coarse tier unmirrored, so the premise did not hold. The seam now reports `Stats_Store::window_remaining()` — seconds until the bucket leaves the RETENTION window — and a bucket genuinely past retention is dropped rather than served. Needs substrate 2.50.0, and the loader's floor is raised to it: this is a BEHAVIOUR requirement, which `check-substrate-floor.sh` cannot see.
+
+### Changed
+
+- **`unfolded_hour_buckets()` no longer trims the grace hour by `ttl_url_fine()`.** With the mirror answering past that TTL there is nothing to trim: all twelve of the grace hour's buckets are asked for, and the grace-hour bound alone keeps a cold `urls --search` at 640 batches.
+
 ## [0.88.2] - 2026-09-07
 
 ### Changed

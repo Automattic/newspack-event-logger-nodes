@@ -14,8 +14,14 @@
  *
  * Three rules hold across every shaper:
  *   - URLs go through `Log_Manager::redact_url()`, the one redaction path.
- *   - The environment is dropped except an allowlist. No headers, no IPs, no
- *     user agents, no cookies — the brief leaves the site.
+ *   - `env_of()` drops the environment except an allowlist — no headers, no
+ *     IPs, no user agents, no cookies. That holds for the environment FIELD
+ *     and not for an entry body: `entry_shape()` copies an entry's `m`
+ *     verbatim, and an `environment_v3` entry's `m` IS the curated $_SERVER
+ *     map, so a brief carrying that entry carries REMOTE_ADDR and the user
+ *     agent off-site. Whether the shaper should apply the same allowlist is
+ *     an open question, not a settled invariant — do not read this list as
+ *     one until it is answered.
  *   - The caveat rides on every brief, because a model handed a
  *     profiled/duration ratio without one will invent a cause. `Findings`
  *     rides where a detector has something to say: the request and the URL.

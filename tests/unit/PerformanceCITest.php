@@ -786,17 +786,25 @@ class PerformanceCITest extends TestCase {
 
 	/**
 	 * The coarse tier is DERIVED, so it is deliberately not mirrored — which
-	 * only holds if losing an hour costs nothing. Evict one and the reader
-	 * must answer from the fine buckets it was folded from, which ARE
-	 * mirrored. That fallback is the whole reason the tier needs no durability
-	 * of its own.
+	 * only holds while the fine buckets it was folded from can still answer.
+	 * Evict an hour INSIDE that window and the reader recovers it.
+	 *
+	 * The window is `ttl_url_fine()`, and it bounds BOTH tiers: the mirror keeps
+	 * the bytes for twice the stats window, but a frame states the lifetime it
+	 * was written with and `Table_Node::read_through()` drops one whose life ran
+	 * out. Past it an evicted hour is not recoverable from anywhere, which is a
+	 * live gap in decision 17's premise rather than something this test pins —
+	 * so it seeds the hour's LAST bucket, the one inside the floor at any
+	 * minute, instead of asserting a guarantee the storage contract does not
+	 * make.
 	 */
 	public function test_an_evicted_hour_is_answered_from_the_buckets_it_was_folded_from(): void {
 		$store = new Stats_Store( 0, 86400 );
 		$hash  = 'a4471ab0c0de';
 		$shard = Stats_Store::url_shard( $hash );
 		$hour  = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, \time() ) )['hours'][0];
-		$this->seed_url_shard( $store, Stats_Store::buckets_in_hour( $hour )[4], $shard, [
+		$fine = Stats_Store::buckets_in_hour( $hour );
+		$this->seed_url_shard( $store, (string) \end( $fine ), $shard, [
 			$hash => [ 'url' => '/wombat-4471', 'count' => 23, 'timed_count' => 23, 'sum_ms' => 460.0 ],
 		] );
 		$this->seed_url_hour( $store, $hour, $shard, [
@@ -3682,6 +3690,56 @@ class PerformanceCITest extends TestCase {
 		$result = $node->dispatch( 'urls' );
 
 		$this->assertContains( $url, \array_column( $result['data'] ?? [], 'url' ) );
+	}
+
+	/**
+	 * An evicted hour rebuilds from fine buckets whose CACHE lifetime is spent.
+	 *
+	 * This is decision 17's premise, end to end. The coarse tier is unmirrored
+	 * because it is derived from `urls`, which mirrors in full — and that only
+	 * holds if the mirror still answers for a fine bucket past `ttl_url_fine()`.
+	 * The frame is seeded with the TTL the write path really uses (7200) and
+	 * aged well past it, and memcache is left EMPTY so only the mirror can
+	 * answer. `Table_Node::read_through()` re-warms a spent remainder rather
+	 * than reading it as a miss; refuse that and this test is the failure.
+	 */
+	public function test_an_evicted_hour_rebuilds_from_an_expired_fine_bucket(): void {
+		$this->activate_shipped_topology( 'performance', 1 );
+		Core::$memd = new \Newspack_Nodes\Tests\Helpers\InMemoryMemcached();
+
+		$dir = \Newspack_Nodes\Bootstrap::node_dirs( 'flame-stats:partition' )[0] ?? '';
+		$this->assertNotSame( '', $dir, 'the shipped topology declares a mirror partition' );
+
+		$hash   = 'a4471ab0c0de';
+		$shard  = Stats_Store::url_shard( $hash );
+		$hour   = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, \time() ) )['hours'][0];
+		$bucket = Stats_Store::buckets_in_hour( $hour )[2];
+		$url    = 'https://example.test/rebuilt-past-its-cache-life';
+
+		$mirror = new \Newspack_Nodes\Partition_Node();
+		$mirror->arguments( [ $dir, '67108864' ] );
+		$mirror->void_warranty();
+		$mirror->with_index( Flame_Builder_Node::format_stats_index_entry( ... ) );
+		// Written 4 hours ago with the fine tier's real 7200s TTL: spent.
+		$written = \time() - ( 4 * 3600 );
+		foreach ( [
+			[ "urls:{$shard}:{$bucket}", [ $hash => self::positional_url_row( [ 'url' => $url, 'count' => 41 ] ) ] ],
+			[ Stats_Store::NS_URLMAP . ":{$hash}", [ $url ] ],
+		] as [ $logical, $data ] ) {
+			$key                       = Stats_Store::entry_key( 0, $logical );
+			$msg                       = Message::new_message();
+			$msg[ Message::TYPE ]      = Message::TM_STRUCT;
+			$msg[ Message::TIMESTAMP ] = $written;
+			$msg[ Message::KEY ]       = $key;
+			$msg[ Message::VALUE ]     = [ 'key' => $key, 'data' => $data, 'ttl' => 7200 ];
+			$mirror->fill( $msg );
+		}
+		$mirror->flush();
+
+		$row = Performance_CI_Node::load_row_default( $hash );
+
+		$this->assertNotNull( $row, 'nothing in memcache; the mirror must answer' );
+		$this->assertSame( 41, $row['count'], 'and a spent cache lifetime does not erase the record' );
 	}
 
 	/**
