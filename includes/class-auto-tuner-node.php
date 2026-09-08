@@ -24,6 +24,7 @@
 
 namespace Newspack_Event_Logger_Nodes;
 
+use Newspack_Nodes\Capabilities;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Node;
 
@@ -89,13 +90,19 @@ class Auto_Tuner_Node extends Node {
 	 * it — `Spawn_Controller::spawn()` past the endpoint's permission check, and
 	 * `Bootstrap::reconcile_fleet()` on the cron pass. A visitor cannot forge it:
 	 * PHP exposes request headers under an `HTTP_` prefix, so nothing a client
-	 * sends lands on this key. An ordinary admin request qualifies on
-	 * `manage_options` instead, and a process with no WordPress loaded, where
-	 * `current_user_can()` is undefined, qualifies on neither.
+	 * sends lands on this key. The env branch runs FIRST because a worker holds
+	 * no WordPress user, so `Capabilities::can()` would refuse every one of its
+	 * decisions.
+	 *
+	 * An ordinary admin request qualifies on TUNE instead — the role the `rules`
+	 * service CI gates this same ruleset write behind, so one authority is not
+	 * admitted at one door and refused at the other. That also brings the write
+	 * under the substrate's `allowed_users` list, which `can()` applies to every
+	 * role. A process with no WordPress loaded qualifies on neither branch.
 	 *
 	 * A worker started by `wp nodes run` has neither — that path sets no worker
 	 * env, and WP-CLI has no current user — so its auto-tune decisions are
-	 * dropped unless the command is passed a `--user` holding `manage_options`.
+	 * dropped unless the command is passed a `--user` holding TUNE.
 	 *
 	 * @return bool
 	 */
@@ -104,10 +111,7 @@ class Auto_Tuner_Node extends Node {
 		if ( isset( $_SERVER['NEWSPACK_NODES_WORKER_TYPE'] ) ) {
 			return true;
 		}
-		if ( \function_exists( 'current_user_can' ) ) {
-			return \current_user_can( 'manage_options' );
-		}
-		return false;
+		return Capabilities::can( Capabilities::TUNE );
 	}
 
 	/**

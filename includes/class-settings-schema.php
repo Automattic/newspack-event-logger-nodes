@@ -10,13 +10,11 @@
  * view of it follows.
  *
  * Substrate keys (base_directory, partitioning, memcache_servers, topologies,
- * and the remote-spoke geometry `remote_*` settings) belong to the nodes
- * Settings_Schema under `newspack_nodes_*`. Config::load_config imports their
- * effective values after removing ELN-owned names, so each plugin's option
- * namespace stays authoritative. They are NEVER declared here. `allowed_users`
- * is the collision that makes the removal matter: both schemas declare it, and
- * dropping the substrate's copy is what leaves this plugin's list governing its
- * own admin page.
+ * the operator `allowed_users` allowlist, and the remote-spoke geometry
+ * `remote_*` settings) belong to the nodes Settings_Schema under
+ * `newspack_nodes_*`. Config::load_config imports their effective values after
+ * removing ELN-owned names, so each plugin's option namespace stays
+ * authoritative. They are NEVER declared here.
  *
  * Labels and section titles are lazy `fn(): string` thunks: building the Schema
  * for overlay_keys() — which a frontend request does through Config — must never
@@ -38,11 +36,11 @@ use Newspack_Nodes\Config_System\Schema;
  *
  * Three settings render as checkboxes — `enable_logging`, `log_memory`, and
  * `flush_every_line`. Six more keys overlay the config file with no settings
- * field at all (`ui: false`): `allowed_users`, `rules`, `hook_start_priority`,
- * `custom_colors`, `stats_mirror_node`, and `recommended_log_events`. URL
- * filters, hook lists, and auto-tune thresholds are per-rule fields of the
- * `rules` ruleset, which the React rules editor owns through the `rules`
- * service CI — never the Settings API.
+ * field at all (`ui: false`): `rules`, `hook_start_priority`, `custom_colors`,
+ * `stats_mirror_node`, `stats_mirror_read_budget_ms`, and
+ * `recommended_log_events`. URL filters, hook lists, and auto-tune thresholds
+ * are per-rule fields of the `rules` ruleset, which the React rules editor owns
+ * through the `rules` service CI — never the Settings API.
  *
  * Every Field carries its `default:` here, and `newspack-event-logger-nodes-
  * config.php` is a commented ledger of the same values — an override surface,
@@ -224,13 +222,6 @@ class Settings_Schema {
 					render: [ Admin::class, 'flush_every_line_callback' ],
 				),
 
-				// Logins narrowing manage_options; empty admits every admin.
-				new Field(
-					key: 'allowed_users',
-					type: 'array_strings',
-					ui: false,
-					default: [],
-				),
 				// The rules editor owns this option; config only seeds it.
 				new Field(
 					key: 'rules',

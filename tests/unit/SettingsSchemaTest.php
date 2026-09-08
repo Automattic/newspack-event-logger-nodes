@@ -33,7 +33,6 @@ class SettingsSchemaTest extends TestCase {
 	 * is null on every install whose file predates it.
 	 */
 	private const OVERLAY_KEYS = [
-		'allowed_users',
 		'enable_logging',
 		'log_memory',
 		'flush_every_line',
@@ -77,9 +76,9 @@ class SettingsSchemaTest extends TestCase {
 	}
 
 	public function test_setting_option_names_exclude_overlay_only_keys(): void {
-		// allowed_users + hook_start_priority overlay but are not settings-form fields.
+		// custom_colors + hook_start_priority overlay but are not settings-form fields.
 		$names = Settings_Schema::get()->setting_option_names();
-		$this->assertNotContains( 'newspack_event_logger_nodes_allowed_users', $names );
+		$this->assertNotContains( 'newspack_event_logger_nodes_custom_colors', $names );
 		$this->assertNotContains( 'newspack_event_logger_nodes_hook_start_priority', $names );
 	}
 

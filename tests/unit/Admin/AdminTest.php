@@ -30,6 +30,7 @@ use Newspack_Nodes\Config as RuntimeConfig;
 use Newspack_Nodes\Config_System\Field_Reset_Assets;
 use Newspack_Nodes\Config_System\Reset_Gate;
 use Newspack_Nodes\Lock_Node;
+use Newspack_Nodes\Roles;
 
 #[CoversClass( Admin::class )]
 class AdminTest extends TestCase {
@@ -128,54 +129,6 @@ class AdminTest extends TestCase {
 		foreach ( [ 'enable_logging', 'log_memory', 'flush_every_line' ] as $field ) {
 			$this->assertArrayHasKey( $field, $GLOBALS['_registered_fields'], "field $field not registered" );
 			$this->assertSame( Admin::SETTINGS_PAGE, $GLOBALS['_registered_fields'][ $field ]['page'] );
-		}
-	}
-
-	// ---- current_user_allowed --------------------------------------------
-
-	public function test_current_user_allowed_requires_manage_options(): void {
-		$GLOBALS['_current_user_can'] = false;
-		$this->assertFalse( Admin::current_user_allowed() );
-	}
-
-	public function test_current_user_allowed_empty_whitelist_means_all_admins(): void {
-		$GLOBALS['_current_user_can']   = true;
-		$GLOBALS['_current_user_login'] = 'someone';
-
-		// Empty allowed_users → allow.
-		\add_filter(
-			'newspack_event_logger_nodes_option_schema_core',
-			function ( $schema ) {
-				return $schema; // no-op
-			}
-		);
-		Config::reset();
-		$this->assertTrue( Admin::current_user_allowed() );
-	}
-
-	public function test_current_user_allowed_respects_allowed_users_whitelist(): void {
-		$GLOBALS['_current_user_can'] = true;
-
-		// Inject allowed_users via the LOCAL_NEWSPACK_NODES_CONF env override.
-		$config_file = '/tmp/admin-test-conf-' . \uniqid() . '.php';
-		\file_put_contents(
-			$config_file,
-			'<?php return [ "allowed_users" => [ "alice", "bob" ] ];'
-		);
-		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $config_file );
-		Config::reset();
-
-		try {
-			// User alice is on the list → allowed.
-			$GLOBALS['_current_user_login'] = 'alice';
-			$this->assertTrue( Admin::current_user_allowed() );
-
-			// User mallory is not → denied even though manage_options is true.
-			$GLOBALS['_current_user_login'] = 'mallory';
-			$this->assertFalse( Admin::current_user_allowed() );
-		} finally {
-			\putenv( 'LOCAL_NEWSPACK_NODES_CONF' );
-			\unlink( $config_file );
 		}
 	}
 
@@ -411,6 +364,29 @@ class AdminTest extends TestCase {
 		$admin->add_admin_menu();
 		$this->assertArrayHasKey( Admin::MENU_SLUG, $GLOBALS['_options_pages'] );
 		$this->assertSame( 'manage_options', $GLOBALS['_options_pages'][ Admin::MENU_SLUG ]['capability'] );
+	}
+
+	/**
+	 * With the granular capabilities installed the settings page must register
+	 * under the capability MANAGE resolves to, not the WordPress one it used to
+	 * name, or the page 403s for the very user the substrate admits.
+	 */
+	public function test_add_admin_menu_registers_the_resolved_manage_capability(): void {
+		\update_option( Roles::OPTION, true );
+		$GLOBALS['_wp_test_current_user_can'] = [
+			Roles::CAP_MANAGE => true,
+			'manage_options'  => false,
+		];
+		$GLOBALS['_current_user_login'] = 'granular-operator-8841';
+		try {
+			$admin = new Admin();
+			$admin->add_admin_menu();
+			$this->assertArrayHasKey( Admin::MENU_SLUG, $GLOBALS['_options_pages'] );
+			$this->assertSame( Roles::CAP_MANAGE, $GLOBALS['_options_pages'][ Admin::MENU_SLUG ]['capability'] );
+		} finally {
+			$GLOBALS['_wp_test_current_user_can'] = [];
+			\delete_option( Roles::OPTION );
+		}
 	}
 
 	public function test_add_admin_menu_skips_unauthorized_user(): void {

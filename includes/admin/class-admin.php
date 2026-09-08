@@ -5,10 +5,11 @@
  *
  * Renders exactly three checkboxes, the only application options with a
  * settings field: `enable_logging`, `log_memory`, and `flush_every_line`. The
- * six remaining keys `Settings_Schema` declares — `allowed_users`, `rules`,
- * `hook_start_priority`, `custom_colors`, `stats_mirror_node`, and
- * `recommended_log_events` — are overlay-only (`ui: false`): Config loads
- * them, and this class neither renders nor resets them.
+ * six remaining keys `Settings_Schema` declares — `rules`,
+ * `hook_start_priority`, `custom_colors`, `stats_mirror_node`,
+ * `stats_mirror_read_budget_ms`, and `recommended_log_events` — are
+ * overlay-only (`ui: false`): Config loads them, and this class neither
+ * renders nor resets them.
  *
  * URL filters, hook lists, and auto-tune thresholds are per-rule fields in the
  * `newspack_event_logger_nodes_rules` option, not global settings. That option
@@ -37,6 +38,7 @@ namespace Newspack_Event_Logger_Nodes\Admin;
 
 use Newspack_Event_Logger_Nodes\Config;
 use Newspack_Event_Logger_Nodes\Settings_Schema;
+use Newspack_Nodes\Capabilities;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Config_System\Field_Reset_Assets;
 use Newspack_Nodes\Config_System\Reset_Gate;
@@ -266,64 +268,9 @@ class Admin {
 		if ( '' === $nonce || ! \wp_verify_nonce( $nonce, $action ) ) {
 			\wp_die( \esc_html__( 'Security check failed.', 'newspack-event-logger-nodes' ) );
 		}
-		if ( ! self::current_user_allowed() ) {
+		if ( ! Capabilities::can( Capabilities::MANAGE ) ) {
 			\wp_die( \esc_html__( 'You do not have permission to perform this action.', 'newspack-event-logger-nodes' ) );
 		}
-	}
-
-	/**
-	 * Render the settings page: the `reset` notice, the Settings-API
-	 * form posting to `options.php`, the hidden reset form the "Reset to
-	 * Defaults" button submits, and then the `settings_after_form` panels.
-	 *
-	 * Permission is re-checked here rather than trusting the menu-registration
-	 * gate alone, since `add_options_page` only enforces `manage_options` while
-	 * `current_user_allowed()` also honors the `allowed_users` whitelist.
-	 */
-	public function render_settings_page(): void {
-		if ( ! self::current_user_allowed() ) {
-			\wp_die( \esc_html__( 'You do not have permission to access this page.', 'newspack-event-logger-nodes' ) );
-		}
-		$reset_url = \function_exists( 'admin_url' )
-			? \admin_url( 'admin-post.php' )
-			: '/wp-admin/admin-post.php';
-		?>
-		<div class="wrap event-logger-settings-wrap newspack-nodes-theme newspack-nodes-ui">
-			<h1><?php \esc_html_e( 'Event Logger Settings', 'newspack-event-logger-nodes' ); ?></h1>
-			<?php
-			// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- read-only notice flag.
-			if ( isset( $_GET['reset'] ) ) {
-				echo '<div class="notice notice-success is-dismissible"><p>'
-					. \esc_html__( 'Settings reset to defaults.', 'newspack-event-logger-nodes' )
-					. '</p></div>';
-			}
-			?>
-			<form method="post" action="options.php">
-				<?php
-				\settings_fields( self::OPTIONS_GROUP );
-				\do_settings_sections( self::SETTINGS_PAGE );
-				?>
-				<p class="submit">
-					<?php \submit_button( \__( 'Save Settings', 'newspack-event-logger-nodes' ), 'primary', 'submit', false ); ?>
-					<span style="display:inline-block; margin-left: 10px;">
-						<input type="button" class="button button-secondary"
-							value="<?php \esc_attr_e( 'Reset to Defaults', 'newspack-event-logger-nodes' ); ?>"
-							onclick="if ( confirm( '<?php echo \esc_js( \__( 'Are you sure you want to reset all settings to defaults? This cannot be undone.', 'newspack-event-logger-nodes' ) ); ?>' ) ) { document.getElementById( 'newspack-event-logger-nodes-reset-form' ).submit(); }" />
-					</span>
-				</p>
-			</form>
-			<form id="newspack-event-logger-nodes-reset-form" method="post" action="<?php echo \esc_url( $reset_url ); ?>" style="display:none;">
-				<input type="hidden" name="action" value="<?php echo \esc_attr( self::RESET_ACTION ); ?>">
-				<?php \wp_nonce_field( self::RESET_ACTION, self::RESET_NONCE ); ?>
-			</form>
-			<?php
-			// Child plugins add sections below form via settings_after_form.
-			\do_action( 'newspack_event_logger_nodes/settings_after_form' );
-			Field_Reset_Assets::enqueue();
-			echo Field_Reset_Assets::highlight_style(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- static CSS literal.
-			?>
-		</div>
-		<?php
 	}
 
 	/**
@@ -387,6 +334,61 @@ class Admin {
 	}
 
 	/**
+	 * Render the settings page: the `reset` notice, the Settings-API
+	 * form posting to `options.php`, the hidden reset form the "Reset to
+	 * Defaults" button submits, and then the `settings_after_form` panels.
+	 *
+	 * Permission is re-checked here rather than trusting the menu-registration
+	 * gate alone, since `add_options_page` enforces the bare capability while
+	 * `Capabilities::can()` also honors the operator's `allowed_users` list.
+	 */
+	public function render_settings_page(): void {
+		if ( ! Capabilities::can( Capabilities::MANAGE ) ) {
+			\wp_die( \esc_html__( 'You do not have permission to access this page.', 'newspack-event-logger-nodes' ) );
+		}
+		$reset_url = \function_exists( 'admin_url' )
+			? \admin_url( 'admin-post.php' )
+			: '/wp-admin/admin-post.php';
+		?>
+		<div class="wrap event-logger-settings-wrap newspack-nodes-theme newspack-nodes-ui">
+			<h1><?php \esc_html_e( 'Event Logger Settings', 'newspack-event-logger-nodes' ); ?></h1>
+			<?php
+			// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- read-only notice flag.
+			if ( isset( $_GET['reset'] ) ) {
+				echo '<div class="notice notice-success is-dismissible"><p>'
+					. \esc_html__( 'Settings reset to defaults.', 'newspack-event-logger-nodes' )
+					. '</p></div>';
+			}
+			?>
+			<form method="post" action="options.php">
+				<?php
+				\settings_fields( self::OPTIONS_GROUP );
+				\do_settings_sections( self::SETTINGS_PAGE );
+				?>
+				<p class="submit">
+					<?php \submit_button( \__( 'Save Settings', 'newspack-event-logger-nodes' ), 'primary', 'submit', false ); ?>
+					<span style="display:inline-block; margin-left: 10px;">
+						<input type="button" class="button button-secondary"
+							value="<?php \esc_attr_e( 'Reset to Defaults', 'newspack-event-logger-nodes' ); ?>"
+							onclick="if ( confirm( '<?php echo \esc_js( \__( 'Are you sure you want to reset all settings to defaults? This cannot be undone.', 'newspack-event-logger-nodes' ) ); ?>' ) ) { document.getElementById( 'newspack-event-logger-nodes-reset-form' ).submit(); }" />
+					</span>
+				</p>
+			</form>
+			<form id="newspack-event-logger-nodes-reset-form" method="post" action="<?php echo \esc_url( $reset_url ); ?>" style="display:none;">
+				<input type="hidden" name="action" value="<?php echo \esc_attr( self::RESET_ACTION ); ?>">
+				<?php \wp_nonce_field( self::RESET_ACTION, self::RESET_NONCE ); ?>
+			</form>
+			<?php
+			// Child plugins add sections below form via settings_after_form.
+			\do_action( 'newspack_event_logger_nodes/settings_after_form' );
+			Field_Reset_Assets::enqueue();
+			echo Field_Reset_Assets::highlight_style(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- static CSS literal.
+			?>
+		</div>
+		<?php
+	}
+
+	/**
 	 * Add the "Event Logger" entry under the standard Settings menu.
 	 *
 	 * ONLY that entry. The top-level "Event Logger" menu and its dashboard
@@ -394,7 +396,7 @@ class Admin {
 	 * configuration lives under Settings while dashboards stay top-level.
 	 */
 	public function add_admin_menu(): void {
-		if ( ! self::current_user_allowed() ) {
+		if ( ! Capabilities::can( Capabilities::MANAGE ) ) {
 			return;
 		}
 		if ( ! \function_exists( 'add_options_page' ) ) {
@@ -403,42 +405,10 @@ class Admin {
 		\add_options_page(
 			\__( 'Event Logger Settings', 'newspack-event-logger-nodes' ),
 			\__( 'Event Logger', 'newspack-event-logger-nodes' ),
-			'manage_options',
+			Capabilities::cap_for( Capabilities::MANAGE ),
 			self::MENU_SLUG,
 			[ $this, 'render_settings_page' ]
 		);
-	}
-
-	/**
-	 * Permission gate: `manage_options` baseline + optional `allowed_users`
-	 * whitelist from Config.
-	 *
-	 * Empty `allowed_users` means "all users with manage_options". When the
-	 * whitelist is populated, the current user's `user_login` must be a member.
-	 * This is intentional — manage_options is required even for whitelisted
-	 * users, so a demoted account loses access immediately without needing the
-	 * whitelist updated.
-	 *
-	 * With no user API available — a CLI context — the whitelist is skipped
-	 * rather than enforced against a nonexistent login, so `wp` stays usable.
-	 *
-	 * @return bool True if user is allowed.
-	 */
-	public static function current_user_allowed(): bool {
-		if ( ! \current_user_can( 'manage_options' ) ) {
-			return false;
-		}
-
-		$allowed_users = Config::value( 'allowed_users' );
-		if ( empty( $allowed_users ) || ! \is_array( $allowed_users ) ) {
-			return true;
-		}
-
-		if ( ! \function_exists( 'wp_get_current_user' ) ) {
-			return true; // CLI / no user context — don't lock out CLI admins.
-		}
-		$current_user = \wp_get_current_user();
-		return \in_array( $current_user->user_login, $allowed_users, true );
 	}
 
 	/**
