@@ -572,6 +572,17 @@ class Stats_Store {
 	}
 
 	/**
+	 * The bucket a timestamp falls in: `Y-m-d-H-i` UTC, floored to
+	 * BUCKET_MINUTES (which must divide 60). Lexical order is chronological
+	 * order, which is what lets expiry compare keys with `<` against a cutoff.
+	 *
+	 * @param int $timestamp Unix timestamp.
+	 */
+	public static function bucket_key( int $timestamp ): string {
+		return \gmdate( 'Y-m-d-H-i', $timestamp - ( $timestamp % self::BUCKET_SECONDS ) );
+	}
+
+	/**
 	 * What a read of the whole window covers, by TIER: the recent fine buckets,
 	 * then the closed hours behind them. Both newest first.
 	 *
@@ -1257,6 +1268,11 @@ class Stats_Store {
 		return $this->max_lifespan;
 	}
 
+	/** Retention for a FINE `urls` bucket: its read window, never the whole one. */
+	public function ttl_url_fine(): int {
+		return \min( $this->max_lifespan, self::FINE_TTL_SECONDS );
+	}
+
 	/** Retention for the high-volume `url` namespace: a day's worth cut to a 24th, floored at an hour. */
 	public function ttl_url_stats(): int {
 		return \max( self::PREFIX_FLOOR, (int) ( $this->max_lifespan / 24 ) );
@@ -1474,23 +1490,22 @@ class Stats_Store {
 	}
 
 	/**
-	 * The fine buckets that still ANSWER for an unfolded hour.
+	 * The fine buckets that answer for an unfolded hour.
 	 *
 	 * The fine tier answers the last hour and feeds the fold; it is not a tier
 	 * to read old hours from. So the fallback reaches the GRACE hour — the one
 	 * immediately behind the fine tail, which the fold may simply not have
-	 * caught yet — and stops. Everything older is the coarse tier's, whether or
-	 * not it was folded, because `roll_up_hours()` reads these same keys: an
-	 * hour the fold did not reach in time is gone from here for it too.
+	 * caught yet — and stops. Everything older is the coarse tier's.
 	 *
-	 * Inside the grace hour the buckets are filtered again to what
-	 * `ttl_url_fine()` can still be holding. Bucket keys are fixed-width and
-	 * zero-padded, so they sort chronologically and a string compare does it.
-	 *
-	 * Without either bound the three readers handed this the plan's whole hour
-	 * list — a retention window against a two-hour tier — so most of what they
-	 * asked for was a key memcache had discarded: a certain miss per shard per
-	 * chunk, and each miss walked an armed mirror's index in full.
+	 * All twelve, whatever their age against `ttl_url_fine()`. That TTL bounds
+	 * the CACHE — the fine tier is the largest thing this schema puts in a
+	 * 512MB one — and says nothing about how long the data is available: `urls`
+	 * and `urlnames` mirror in full, the mirror retains for twice the stats
+	 * window, and a spent remainder re-warms rather than reading as a miss.
+	 * That is what lets decision 17 leave the coarse tier UNMIRRORED — an
+	 * evicted hour is rebuilt from buckets that outlive it — and it needs
+	 * `Table_Node::read_through()` to keep serving a record whose cache
+	 * lifetime ran out.
 	 *
 	 * @api The dashboard readers, for an hour the coarse tier cannot answer.
 	 * @param string       $hour  A `Y-m-d-H` hour key.
@@ -1498,17 +1513,8 @@ class Stats_Store {
 	 *                            read finely only when it leads them.
 	 * @return list<string>
 	 */
-	public function unfolded_hour_buckets( string $hour, array $hours ): array {
-		if ( $hour !== ( $hours[0] ?? null ) ) {
-			return [];
-		}
-		$floor = self::bucket_key( \time() - $this->ttl_url_fine() );
-		return \array_values(
-			\array_filter(
-				self::buckets_in_hour( $hour ),
-				static fn ( string $bucket ): bool => $bucket >= $floor
-			)
-		);
+	public static function unfolded_hour_buckets( string $hour, array $hours ): array {
+		return $hour === ( $hours[0] ?? null ) ? self::buckets_in_hour( $hour ) : [];
 	}
 
 	/**
@@ -1525,20 +1531,37 @@ class Stats_Store {
 		return $out;
 	}
 
-	/** Retention for a FINE `urls` bucket: its read window, never the whole one. */
-	public function ttl_url_fine(): int {
-		return \min( $this->max_lifespan, self::FINE_TTL_SECONDS );
-	}
-
 	/**
-	 * The bucket a timestamp falls in: `Y-m-d-H-i` UTC, floored to
-	 * BUCKET_MINUTES (which must divide 60). Lexical order is chronological
-	 * order, which is what lets expiry compare keys with `<` against a cutoff.
+	 * Seconds a bucket has left before it leaves the RETENTION window.
 	 *
-	 * @param int $timestamp Unix timestamp.
+	 * What a re-materialized entry is warmed for. The TTL it was written with
+	 * bounds the CACHE and decays from the WRITE, so a spent one says nothing
+	 * about how long the data is still read: the window does, and it is a pure
+	 * function of the bucket key, which is the last segment and sorts
+	 * chronologically. Zero or less means genuinely past retention — nothing
+	 * asks for it, and nothing should warm it.
+	 *
+	 * @api The mirror seam, sizing what it hands back.
+	 * @param string $key Full entry key; its last segment is the bucket.
+	 * @param int    $now Clock, so one answer cannot straddle a boundary.
+	 * @return int Seconds remaining, 0 when the key names no readable bucket.
 	 */
-	public static function bucket_key( int $timestamp ): string {
-		return \gmdate( 'Y-m-d-H-i', $timestamp - ( $timestamp % self::BUCKET_SECONDS ) );
+	public function window_remaining( string $key, int $now ): int {
+		$parts  = \explode( ':', $key );
+		$bucket = \end( $parts );
+		// ISO 8601: strtotime() reads many non-dates as dates, `x` included.
+		if ( \preg_match( '/^(\d{4}-\d{2}-\d{2})-(\d{2})-(\d{2})$/D', $bucket, $m ) ) {
+			$stamp = \strtotime( "{$m[1]}T{$m[2]}:{$m[3]}:00+00:00" );
+		} elseif ( \preg_match( '/^(\d{4}-\d{2}-\d{2})-(\d{2})$/D', $bucket, $m ) ) {
+			$stamp = \strtotime( "{$m[1]}T{$m[2]}:00:00+00:00" );
+		} else {
+			// `url` and `urlmap` key on a hash; neither is bucket-shaped.
+			return $this->max_lifespan;
+		}
+		if ( false === $stamp ) {
+			return $this->max_lifespan;
+		}
+		return \max( 0, ( $stamp + $this->max_lifespan ) - $now );
 	}
 
 	/**

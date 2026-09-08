@@ -627,11 +627,21 @@ class StatsStoreTest extends TestCase {
 		$this->assertSame( $value, $this->get_hourly_bucket( $store, '2026-01-01-00' ) );
 	}
 
-	public function test_an_entry_whose_lifetime_ran_out_is_not_filled(): void {
+	/**
+	 * A frame whose CACHE lifetime is spent is still filled from the mirror.
+	 *
+	 * The TTL a frame was written with bounds memcache — the fine tier is the
+	 * largest thing this schema puts in a 512MB one — and says nothing about
+	 * how long the data is available. The mirror retains for twice the stats
+	 * window, and refusing a spent frame made it useless for exactly the tier
+	 * whose cache lifetime is shortest: an evicted `urls_h` could never be
+	 * rebuilt from the fine buckets decision 17 says it derives from.
+	 */
+	public function test_an_entry_whose_cache_lifetime_is_spent_is_still_filled(): void {
 		$store = $this->make_store();
 		$this->arm_entry( $store, Stats_Store::NS_HOURLY . ':x', [ 'count' => 1 ], 0 );
 
-		$this->assertSame( [], $this->get_hourly_bucket( $store, 'x' ) );
+		$this->assertSame( [ 'count' => 1 ], $this->get_hourly_bucket( $store, 'x' ) );
 	}
 
 	public function test_the_backing_answers_in_the_stores_own_keyspace(): void {
@@ -1076,7 +1086,7 @@ class StatsStoreTest extends TestCase {
 
 		$this->assertSame(
 			Stats_Store::buckets_in_hour( $hour ),
-			$store->unfolded_hour_buckets( $hour, [ $hour, \gmdate( 'Y-m-d-H', \time() - 7200 ) ] )
+			Stats_Store::unfolded_hour_buckets( $hour, [ $hour, \gmdate( 'Y-m-d-H', \time() - 7200 ) ] )
 		);
 	}
 
@@ -1086,17 +1096,48 @@ class StatsStoreTest extends TestCase {
 		$grace  = \gmdate( 'Y-m-d-H', \time() - 3600 );
 		$behind = \gmdate( 'Y-m-d-H', \time() - 7200 );
 
-		$this->assertSame( [], $store->unfolded_hour_buckets( $behind, [ $grace, $behind ] ) );
-	}
-
-	/** And inside the grace hour, only the buckets the tier can still hold. */
-	public function test_the_grace_hour_keeps_only_buckets_inside_the_ttl(): void {
-		$hour = \gmdate( 'Y-m-d-H', \time() - ( 5 * 3600 ) );
-
-		$this->assertSame( [], ( new Stats_Store( 0, 86400 ) )->unfolded_hour_buckets( $hour, [ $hour ] ) );
+		$this->assertSame( [], Stats_Store::unfolded_hour_buckets( $behind, [ $grace, $behind ] ) );
 	}
 
 	/** Two hours is the fold's margin, and the tier is sized to it. */
+	/**
+	 * What a re-materialized entry is warmed for: time left in the WINDOW.
+	 *
+	 * The TTL a frame was written with bounds the cache and decays from the
+	 * write, so a spent one says nothing about how long the data is still read.
+	 * The window does, and it is a pure function of the bucket key.
+	 */
+	public function test_window_remaining_decays_with_the_bucket_age(): void {
+		$store = new Stats_Store( 0, 86400 );
+		$now   = \time();
+
+		$two_hours = Stats_Store::entry_key( 0, 'urls:3:' . Stats_Store::bucket_key( $now - 7200 ) );
+		$this->assertEqualsWithDelta( 79200, $store->window_remaining( $two_hours, $now ), 310, 'a two-hour-old bucket has 22h left' );
+
+		$old_hour = Stats_Store::entry_key( 0, 'urls_h:3:' . \gmdate( 'Y-m-d-H', $now - ( 23 * 3600 ) ) );
+		$this->assertGreaterThan( 0, $store->window_remaining( $old_hour, $now ), 'a 23-hour-old hour is still inside the window' );
+		$this->assertLessThan( 7200, $store->window_remaining( $old_hour, $now ), 'with about an hour left, not a fresh one' );
+	}
+
+	/** Past the window there is nothing left, and nothing should warm it. */
+	public function test_window_remaining_is_zero_past_retention(): void {
+		$store = new Stats_Store( 0, 86400 );
+		$now   = \time();
+		$gone  = Stats_Store::entry_key( 0, 'urls:3:' . Stats_Store::bucket_key( $now - ( 48 * 3600 ) ) );
+
+		$this->assertSame( 0, $store->window_remaining( $gone, $now ) );
+	}
+
+	/** `url` and `urlmap` key on a hash, not a bucket, so both keep the window. */
+	public function test_window_remaining_gives_a_hash_keyed_entry_the_whole_window(): void {
+		$store = new Stats_Store( 0, 86400 );
+
+		$this->assertSame(
+			86400,
+			$store->window_remaining( Stats_Store::entry_key( 0, 'urlmap:ab12cd34ef56' ), \time() )
+		);
+	}
+
 	public function test_the_fine_tier_is_kept_for_two_hours(): void {
 		$this->assertSame( 7200, ( new Stats_Store( 0, 86400 ) )->ttl_url_fine() );
 	}

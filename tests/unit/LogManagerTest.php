@@ -2549,4 +2549,30 @@ class LogManagerTest extends TestCase {
 		$path2 = \WP_PLUGIN_DIR . '/raw-segment';
 		$this->assertSame( 'raw-segment', $this->invoke_extract_plugin_slug( $path2 ) );
 	}
+	/**
+	 * The cache-cozy warm secret is a credential in a query parameter.
+	 *
+	 * `01-newspack-cache-cozy.php` builds `?cache_cozy_warm=<32 hex>` with
+	 * `add_query_arg`, generated once and never rotated. `$request->url` strips
+	 * the query string, but the firehose `request` line records the URL whole —
+	 * and `aggregator.tsl` replicates a spoke's raw firehose to the hub, so a
+	 * hub operator holding only the least-privilege `hub-user` account reads
+	 * every spoke's warm secret.
+	 *
+	 * The pattern is a NAME LIST anchored at `[?&]`, so it can only ever match
+	 * a name someone remembered to add. Whether that is the right shape is a
+	 * separate question; this closes the known instance.
+	 */
+	public function test_the_cache_cozy_warm_secret_is_redacted(): void {
+		$this->assertSame(
+			'https://example.test/?cache_cozy_warm=[REDACTED]',
+			Log_Manager::redact_url( 'https://example.test/?cache_cozy_warm=0123456789abcdef0123456789abcdef' )
+		);
+		$this->assertSame(
+			'https://example.test/?a=1&cache_cozy_warm=[REDACTED]&b=2',
+			Log_Manager::redact_url( 'https://example.test/?a=1&cache_cozy_warm=deadbeef&b=2' ),
+			'and it stops at the parameter boundary'
+		);
+	}
+
 }

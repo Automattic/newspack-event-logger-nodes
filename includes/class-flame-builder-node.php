@@ -2174,7 +2174,8 @@ class Flame_Builder_Node extends Node {
 			? null
 			: self::rehydrate_seam(
 				static fn (): ?\Newspack_Nodes\Partition_Node => self::mirror_partition( $name, $partition ),
-				$partition
+				$partition,
+				$store
 			);
 	}
 
@@ -2189,11 +2190,12 @@ class Flame_Builder_Node extends Node {
 	 *
 	 * @param \Closure(): ?\Newspack_Nodes\Partition_Node $resolve         Where the mirror is.
 	 * @param int                                            $partition_index Keyspace the Table's keys sit in.
+	 * @param Stats_Store                                    $store           Sizes what is handed back, by window.
 	 * @return \Closure(array<array-key,mixed>): array<array-key,array{value: array<array-key,mixed>, ttl: int}>
 	 */
-	private static function rehydrate_seam( \Closure $resolve, int $partition_index ): \Closure {
+	private static function rehydrate_seam( \Closure $resolve, int $partition_index, Stats_Store $store ): \Closure {
 		$partition = null;
-		return static function ( array $keys ) use ( $resolve, $partition_index, &$partition ): array {
+		return static function ( array $keys ) use ( $resolve, $partition_index, $store, &$partition ): array {
 			// Retried while null: the node may be built after this one.
 			$partition ??= $resolve();
 			if ( null === $partition ) {
@@ -2236,10 +2238,14 @@ class Flame_Builder_Node extends Node {
 				if ( null === $frame || $frame['key'] !== Stats_Store::entry_key( $partition_index, $key ) ) {
 					continue;
 				}
+				// What is left of the RETENTION window, not of the cache TTL.
+				$left = $store->window_remaining( $key, (int) $now );
+				if ( $left <= 0 ) {
+					continue;
+				}
 				$found[ $key ] = [
 					'value' => $frame['data'],
-					// What is LEFT of its life, so an expiry stays expired.
-					'ttl'   => $frame['ttl'] - (int) ( $now - $frame['ts'] ),
+					'ttl'   => $left,
 				];
 			}
 			return $found;
