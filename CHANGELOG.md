@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.89.1] - 2026-09-08
+
+### Security
+
+- **`$` matches before a trailing newline, and none of this plugin's gates were `D`-anchored.** `Job_Router_Node::HANDLER_NAME_PATTERN` — what stops an aggregated spoke string from reaching jobs.log as a dispatch key — let `"work\n"` through, and jobs.log is line-oriented; the substrate carries the other two copies. The same sweep took `Performance_CI_Node`'s two url_hash gates, where the hash is client-supplied and becomes a memcache key through `row()`, and `MCP_Controller`'s `Bearer <handle>.<key>` gate, where it becomes a session lookup. `Flame_Tree::PATTERN_{START,COMPLETE}` and `Request_Builder_Node`'s method line are deliberately left alone: both PARSE a line rather than validate a token, so the trailing newline is incidental and `D` would lose the capture.
+
+### Fixed
+
+- **A rehydrated fine bucket was warmed for the whole retention window.** 0.89.0 had the mirror seam report `Stats_Store::window_remaining()` so an evicted `urls_h` could rebuild from the fine buckets it derives from; what it did not do is bound that by the bucket's own storage ROLE. `ttl_url_fine()` is a memcache FOOTPRINT — 24 buckets a shard rather than 288, because decision 17's coarse tier answers for everything behind the edge — so a rehydrate put all 288 back in the cache that tier exists to keep out, for up to twelve times its footprint. `window_remaining()` now returns the smaller of the two, and its parameter is documented as the Table-RELATIVE key the seam actually passes, whose first segment is the namespace.
+- Decision 11 and two comments still cited substrate ADR-18 as "an expired frame is a miss, not a resurrection", which 0.89.0 and substrate 2.50.0 replaced. The CHECKPOINT carry still drops a spent frame, and now says why in its own terms: a held frame is an unmerged delta, not a copy of anything durable.
+- `FINE_TTL_SECONDS` reads 7200 in the debugging skill and the architecture guide's schema table. Both still said 14400.
+- `hub-control.tsl` says that each per-spoke egress needs `allow_replies_to discovery-collector` beside its settings-sync declaration, or the discovery replies are dropped. Substrate 2.50.0 made that mandatory and only `settings-sync.tsl` mentioned it.
+
 ## [0.89.0] - 2026-09-08
 
 ### Security

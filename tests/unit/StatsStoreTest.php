@@ -1111,31 +1111,48 @@ class StatsStoreTest extends TestCase {
 		$store = new Stats_Store( 0, 86400 );
 		$now   = \time();
 
-		$two_hours = Stats_Store::entry_key( 0, 'urls:3:' . Stats_Store::bucket_key( $now - 7200 ) );
+		$two_hours = 'hourly:' . Stats_Store::bucket_key( $now - 7200 );
 		$this->assertEqualsWithDelta( 79200, $store->window_remaining( $two_hours, $now ), 310, 'a two-hour-old bucket has 22h left' );
 
-		$old_hour = Stats_Store::entry_key( 0, 'urls_h:3:' . \gmdate( 'Y-m-d-H', $now - ( 23 * 3600 ) ) );
+		$old_hour = 'urls_h:3:' . \gmdate( 'Y-m-d-H', $now - ( 23 * 3600 ) );
 		$this->assertGreaterThan( 0, $store->window_remaining( $old_hour, $now ), 'a 23-hour-old hour is still inside the window' );
 		$this->assertLessThan( 7200, $store->window_remaining( $old_hour, $now ), 'with about an hour left, not a fresh one' );
+	}
+
+	/**
+	 * A re-warmed entry is bounded by its ROLE's TTL, not by retention alone.
+	 *
+	 * `ttl_url_fine()` is a memcache FOOTPRINT bound: 24 buckets a shard rather
+	 * than 288. Sizing a rehydrated fine bucket by the retention window alone
+	 * warmed it for up to twelve times that and put the whole 288 back in the
+	 * cache the two-hour tier exists to keep out.
+	 */
+	public function test_window_remaining_never_exceeds_the_role_ttl(): void {
+		$store = new Stats_Store( 0, 86400 );
+		$now   = \time();
+
+		$fine = 'urls:3:' . Stats_Store::bucket_key( $now - 600 );
+		$this->assertSame( 7200, $store->window_remaining( $fine, $now ), 'a fine bucket is warmed for its own tier' );
+
+		$names = 'urlnames:3:' . Stats_Store::bucket_key( $now - 600 );
+		$this->assertSame( 7200, $store->window_remaining( $names, $now ), 'the name index rides the same tier' );
 	}
 
 	/** Past the window there is nothing left, and nothing should warm it. */
 	public function test_window_remaining_is_zero_past_retention(): void {
 		$store = new Stats_Store( 0, 86400 );
 		$now   = \time();
-		$gone  = Stats_Store::entry_key( 0, 'urls:3:' . Stats_Store::bucket_key( $now - ( 48 * 3600 ) ) );
+		$gone  = 'urls:3:' . Stats_Store::bucket_key( $now - ( 48 * 3600 ) );
 
 		$this->assertSame( 0, $store->window_remaining( $gone, $now ) );
 	}
 
-	/** `url` and `urlmap` key on a hash, not a bucket, so both keep the window. */
+	/** `url` and `urlmap` key on a hash, not a bucket, so both keep their role's TTL. */
 	public function test_window_remaining_gives_a_hash_keyed_entry_the_whole_window(): void {
 		$store = new Stats_Store( 0, 86400 );
 
-		$this->assertSame(
-			86400,
-			$store->window_remaining( Stats_Store::entry_key( 0, 'urlmap:ab12cd34ef56' ), \time() )
-		);
+		$this->assertSame( 86400, $store->window_remaining( 'urlmap:ab12cd34ef56', \time() ) );
+		$this->assertSame( 3600, $store->window_remaining( 'url:ab12cd34ef56', \time() ), 'the per-URL flame role keeps its own' );
 	}
 
 	public function test_the_fine_tier_is_kept_for_two_hours(): void {

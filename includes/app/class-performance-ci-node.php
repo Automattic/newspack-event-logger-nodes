@@ -2383,7 +2383,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				$parsed = Command_Args::parse( self::arg_strings( $args ) );
 				$opts   = $parsed['options'];
 				$hash   = $parsed['positional'][0] ?? '';
-				if ( ! \preg_match( '/^[a-f0-9]{8,64}$/', $hash ) ) {
+				if ( ! \preg_match( '/^[a-f0-9]{8,64}$/D', $hash ) ) {
 					throw new \RuntimeException( 'invalid hash format' );
 				}
 
@@ -2459,7 +2459,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				// `requests`, which a breakdown fetch throws away.
 				$parsed = Command_Args::parse( self::arg_strings( $args ) );
 				$hash   = $parsed['positional'][0] ?? '';
-				if ( ! \preg_match( '/^[a-f0-9]{8,64}$/', $hash ) ) {
+				if ( ! \preg_match( '/^[a-f0-9]{8,64}$/D', $hash ) ) {
 					throw new \RuntimeException( 'invalid hash format' );
 				}
 				$breakdown = (string) ( $parsed['options']['breakdown'] ?? '' );

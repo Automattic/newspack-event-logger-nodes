@@ -2666,7 +2666,7 @@ class Flame_Builder_Node extends Node {
 	public function restore_state( array $saved ): void {
 		$pending = Core::arr( $saved['pending'] ?? null );
 		$mirror = Core::arr( $saved['mirror'] ?? null );
-		// ADR-18: a lifetime that ran out is a miss, not a resurrection.
+		// An unmerged delta, not durable: a spent one is dropped.
 		$elapsed                   = \max( 0, $this->now_ts() - Core::num_int( $mirror['at'] ?? null ) );
 		foreach ( Core::arr( $mirror['frames'] ?? null ) as $ns_raw => $carried ) {
 			$ns       = Core::as_string( $ns_raw );
