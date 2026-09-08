@@ -5,12 +5,10 @@
  *
  * `newspack-event-logger-nodes.php` mounts this as the `discovery` node on the
  * substrate's `newspack_nodes/request_graph_ready` action, beside the
- * `performance` and `rules` service CIs. Two callers ask its one verb: the
+ * `performance` and `rules` service CIs. One caller asks its one verb: the
  * hub's `Discovery_Collector_Node` fans `discovery.get` at every connected
  * spoke and union-merges the replies into the `discovered_hooks` /
- * `discovered_events` staging options behind the ruleset editor's hook picker,
- * and the substrate's `vault` CI probes the same verb to test one spoke's
- * connection.
+ * `discovered_events` staging options behind the ruleset editor's hook picker.
  *
  * The payload is the union of the hooks and custom events every LOG rule in the
  * durable ruleset instruments (`Rule_Set::instrumented_union()`), with

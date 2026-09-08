@@ -1084,7 +1084,7 @@ Six bounds shape a reply: `MAX_INDEX_ENTRIES` 1,000,000, `GREP_MAX_SCAN_LINES` 2
 
 **`rules`** — `list` (READ), and `save` / `upsert` / `delete` / `reset` (TUNE), all routed through `Rule_Set`. A JSON argument is bounded at `MAX_JSON_BYTES` 65536 and `MAX_JSON_DEPTH` 12.
 
-**`discovery`** — one verb, `get` (READ), returning `{ registered_hooks, custom_events }`: the union across every LOG rule, with custom-event names filtered out of `registered_hooks` so the picker's two catalogs stay disjoint. It reports the ruleset and never writes it. Two callers reach it — the hub's `Discovery_Collector_Node`, and the substrate's `vault` CI probing one spoke's connection.
+**`discovery`** — one verb, `get` (READ), returning `{ registered_hooks, custom_events }`: the union across every LOG rule, with custom-event names filtered out of `registered_hooks` so the picker's two catalogs stay disjoint. It reports the ruleset and never writes it. One caller reaches it: the hub's `Discovery_Collector_Node`.
 
 ### MCP: one route, ten tools
 
