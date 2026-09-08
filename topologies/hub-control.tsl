@@ -14,7 +14,11 @@ include settings-sync
 make_node Discovery_Collector discovery-collector 300
 
 # discovery-collector fans `discovery.get` to every spoke on its own 300s tick
-# and union-merges the replies into the hub options.
+# and union-merges the replies into the hub options. Its replies come back
+# through the per-spoke egress the operator wires (see settings-sync.tsl), and
+# that egress admits only DECLARED destinations, so each one needs
+# `cmd <egress>:config allow_replies_to discovery-collector` beside the
+# settings-sync declaration or the discovery replies are dropped.
 cmd settings-sync:config add_setting newspack_event_logger_nodes_rules performance newspack_event_logger_nodes_rules
 cmd settings-sync:config add_setting newspack_event_logger_nodes_log_memory performance newspack_event_logger_nodes_log_memory
 cmd settings-sync:config add_setting newspack_event_logger_nodes_flush_every_line performance newspack_event_logger_nodes_flush_every_line

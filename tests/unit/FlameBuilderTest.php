@@ -4651,7 +4651,8 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_a_held_frame_whose_life_ran_out_is_not_restored(): void {
-		// ADR-18: a stated lifetime that has run out is a miss, not a resurrection.
+		// The carry is an UNMERGED delta, not a copy of durable data, so a spent
+		// frame is dropped here where read_through() would serve it (ADR-18).
 		Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 7200 );
 		[ $fb, $p ] = $this->mirrored_builder( $store, 'flames-stats' );

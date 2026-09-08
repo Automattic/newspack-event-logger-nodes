@@ -67,8 +67,8 @@ if ( ! \defined( 'ABSPATH' ) ) {
 class Job_Router_Node extends Node {
 	use \Newspack_Nodes\Schema_Reflection;
 
-	/** Handler names: a leading letter then up to 63 word/dash characters. Mirrors `\Newspack_Nodes\Job_Worker_Node::HANDLER_NAME_PATTERN`. */
-	public const HANDLER_NAME_PATTERN = '/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/';
+	/** Handler names: a leading letter then up to 63 word/dash characters, `D`-anchored so a trailing newline cannot ride in. Mirrors `\Newspack_Nodes\Job_Worker_Node::HANDLER_NAME_PATTERN`. */
+	public const HANDLER_NAME_PATTERN = '/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/D';
 
 	/** Kind dispatched locally on every node, against `newspack_nodes/job_handlers`. */
 	public const KIND_JOB = 'job';

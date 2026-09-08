@@ -653,6 +653,21 @@ class PerformanceCITest extends TestCase {
 	}
 
 	/**
+	 * The hash gate is `D`-anchored: `$` matches before a trailing newline.
+	 *
+	 * The hash is client-supplied and becomes a memcache key through `row()`,
+	 * so a name carrying a newline reaches a protocol-oriented sink — the same
+	 * defect as the substrate's `HANDLER_NAME_PATTERN`, on a different gate.
+	 */
+	public function test_url_detail_refuses_a_hash_with_a_trailing_newline(): void {
+		// An explicit token array: the harness whitespace-SPLITS a string arg,
+		// which would eat the newline before the gate ever sees it.
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'url_detail', [ "a1b2c3d4\n" ] );
+
+		$this->assertSame( "invalid hash format\n", $result );
+	}
+
+	/**
 	 * `url_detail` asks about ONE URL, and one URL lives in exactly one shard —
 	 * `Stats_Store::url_shard()` is the first hex digit of its hash. Reaching it
 	 * through the whole merged index made the modal pay the URL TABLE's fan-out:

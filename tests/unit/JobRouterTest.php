@@ -269,6 +269,20 @@ class JobRouterTest extends TestCase {
 		$this->assertCount( 0, $this->sink->captured );
 	}
 
+	/**
+	 * `$` matches before a TRAILING NEWLINE, so the gate is `D`-anchored.
+	 *
+	 * This pattern is what stops an aggregated spoke string from reaching
+	 * jobs.log as a dispatch key, and jobs.log is line-oriented: a newline
+	 * inside the value is a second line.
+	 */
+	public function test_a_handler_name_with_a_trailing_newline_is_dropped(): void {
+		$entry   = $this->firehose_entry( 'job', "work\n", [] );
+		$message = $this->msg( 'firehose:consumer', $entry );
+		$this->jr->fill( $message );
+		$this->assertCount( 0, $this->sink->captured );
+	}
+
 	public function test_non_array_parameters_dropped(): void {
 		$entry = [
 			'n'   => 1, 'rid' => 'r1', 'k' => 'job', 'ts' => Core::$now - 9.75,

@@ -178,7 +178,7 @@ class MCP_Controller {
 			return $gate;
 		}
 		$header = Core::as_string( $req->get_header( 'authorization' ) ?? '' );
-		if ( ! \preg_match( '/^Bearer\s+([0-9a-f]{32})\.([0-9a-f]{64})$/i', \trim( $header ), $m ) ) {
+		if ( ! \preg_match( '/^Bearer\s+([0-9a-f]{32})\.([0-9a-f]{64})$/iD', \trim( $header ), $m ) ) {
 			return new \WP_Error( 'mcp_unauthorized', 'A Bearer <handle>.<key> session credential is required.', [ 'status' => 401 ] );
 		}
 		$record = Command_Auth::load_session_record( $m[1] );
