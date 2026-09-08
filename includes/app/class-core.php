@@ -560,7 +560,7 @@ class Core {
 		if ( ! $lm->is_started() ) {
 			return $query;
 		}
-		$sql                 = self::without_host_annotation( RuntimeCore::as_string( $query, '' ) );
+		$sql                 = self::without_literals( self::without_host_annotation( RuntimeCore::as_string( $query, '' ) ) );
 		$this->query_spans[] = self::SQL_STATE;
 		$lm->start(
 			self::SQL_STATE,
@@ -635,6 +635,106 @@ class Core {
 	 */
 	private static function without_host_annotation( string $sql ): string {
 		return \rtrim( (string) \preg_replace( '#\s*/\*[^*]*\*+([^/*][^*]*\*+)*/\s*$#', '', $sql ) );
+	}
+
+	/**
+	 * Reduce a statement to its SHAPE: literals replaced with `?`, comments gone.
+	 *
+	 * Ported from the gyroscope pipeline's own anonymizer, which carried four
+	 * copies of these rules in `DN::Nodes::InstrumentalityGrail` until a trim
+	 * dropped them. Two reasons to do it, and the second decides the design:
+	 *
+	 * A literal is a token, an email, a nonce or an id, and a comment can carry
+	 * any of those too. `log_queries` puts the statement in the firehose, and an
+	 * aggregator replicates that log to a hub in full, so whatever is captured
+	 * here leaves the site.
+	 *
+	 * And a shape is the only form worth counting. Two statements differing only
+	 * in their literals are one query asked twice, so replacing them is what
+	 * makes the capture aggregate at all.
+	 *
+	 * SCANNED rather than pattern-matched, because literals and comments can
+	 * each contain the other's delimiter and no chain of independent regexes
+	 * settles that: strip comments first and `note = 'x -- y'` truncates the
+	 * statement mid-literal; replace literals first and an apostrophe inside a
+	 * comment opens one that swallows real SQL. One left-to-right pass consumes
+	 * whichever construct starts at the cursor, so neither can misread the other.
+	 *
+	 * @param string $sql The statement, host annotation already stripped.
+	 * @return string Its shape: `?` for every literal, no comments, one space.
+	 */
+	private static function without_literals( string $sql ): string {
+		$out = '';
+		$len = \strlen( $sql );
+		$i   = 0;
+		while ( $i < $len ) {
+			$c = $sql[ $i ];
+			// `-- ` and `#` run to end of line; the newline itself survives.
+			if ( '#' === $c || '--' === \substr( $sql, $i, 2 ) ) {
+				$nl = \strpos( $sql, "\n", $i );
+				$i  = false === $nl ? $len : $nl;
+				continue;
+			}
+			if ( '/*' === \substr( $sql, $i, 2 ) ) {
+				$end = \strpos( $sql, '*/', $i + 2 );
+				// Unterminated: the rest of the statement is comment.
+				$i   = false === $end ? $len : $end + 2;
+				continue;
+			}
+			if ( "'" === $c || '"' === $c ) {
+				$i = self::past_literal( $sql, $i, $len, $c );
+				$out .= '?';
+				continue;
+			}
+			$out .= $c;
+			++$i;
+		}
+
+		$rules = [
+			// After the scan, so a list of literals is already `?,?,?`.
+			'/\bIN\s*\(\s*[?\d\s,]*\)/i'          => 'IN (?)',
+			'/\b(LIMIT|OFFSET)\s+\d+/i'            => '$1 ?',
+			// The Perl left bare numeric predicates alone; ids live there.
+			'/(=|<=|>=|<>|!=|<|>)\s*\d+(\.\d+)?/'  => '$1 ?',
+			// One shape however the caller formatted it.
+			'/\s+/'                                => ' ',
+		];
+		foreach ( $rules as $pattern => $replacement ) {
+			$out = (string) \preg_replace( $pattern, $replacement, $out ) ?: $out;
+		}
+		return \trim( $out );
+	}
+
+	/**
+	 * Index just past the quoted literal opening at `$from`.
+	 *
+	 * Both escapes SQL accepts end up here: a backslashed quote, and the doubled
+	 * quote that is the standard's own. An unterminated literal consumes the
+	 * rest, which is the safe direction — it redacts more, never less.
+	 *
+	 * @param string $sql   The statement being scanned.
+	 * @param int    $from  Index of the opening quote.
+	 * @param int    $len   Length of `$sql`, hoisted by the caller.
+	 * @param string $quote The opening quote character.
+	 * @return int Index of the first character after the literal.
+	 */
+	private static function past_literal( string $sql, int $from, int $len, string $quote ): int {
+		$i = $from + 1;
+		while ( $i < $len ) {
+			if ( '\\' === $sql[ $i ] ) {
+				$i += 2;
+				continue;
+			}
+			if ( $quote === $sql[ $i ] ) {
+				if ( $i + 1 < $len && $quote === $sql[ $i + 1 ] ) {
+					$i += 2;
+					continue;
+				}
+				return $i + 1;
+			}
+			++$i;
+		}
+		return $len;
 	}
 
 	/**

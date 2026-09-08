@@ -2253,36 +2253,6 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
-	 * The mirror partition for one flame-builder partition: the live node when
-	 * this process runs the graph, else a detached handle over the directory the
-	 * active topology declares for it.
-	 *
-	 * The dir comes from `Bootstrap::node_dirs()` rather than a rebuilt path
-	 * template — the partition token sits wherever the topology puts it, and a
-	 * reader that spells the layout itself goes blind the moment it moves.
-	 *
-	 * @param string $name      Mirror partition node name.
-	 * @param int    $partition Which of that node's partitions to open.
-	 * @return \Newspack_Nodes\Partition_Node|null Null when the topology declares no dir for it.
-	 */
-	private static function mirror_partition( string $name, int $partition ): ?\Newspack_Nodes\Partition_Node {
-		$live = Core::node( $name );
-		if ( $live instanceof \Newspack_Nodes\Partition_Node ) {
-			return $live;
-		}
-		$dir = \Newspack_Nodes\Bootstrap::node_dirs( $name )[ $partition ] ?? '';
-		if ( '' === $dir ) {
-			return null;
-		}
-		// Read-only: the topology, not this handle, owns the mirror's geometry.
-		$node = new \Newspack_Nodes\Partition_Node();
-		$node->arguments( [ $dir ] );
-		// The callable, not the name: the name is for the topology round trip.
-		$node->with_index( self::format_stats_index_entry( ... ) );
-		return $node;
-	}
-
-	/**
 	 * One mirror frame's fields, or null when the envelope is not one — a
 	 * malformed frame must skip, never abort the read repairing a hole.
 	 *
@@ -2586,36 +2556,6 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
-	 * Format one companion-index line for the stats mirror.
-	 *
-	 * Registered as `stats-index` and installed by
-	 * `command_node flame-stats:partition:config with_index stats-index`. Fixed
-	 * width so `parse_stats_index()` can slice it by offset: key_hash(12)
-	 * segment(6) offset(10) length(8) = 36 bytes.
-	 *
-	 * The key is hashed because a backend key runs some seventy characters and a
-	 * fixed-width line needs a bound; `Log_Manager::url_hash()` is the house
-	 * 12-char digest rather than a second hashing convention. A reader files a
-	 * located frame under the key the FRAME carries, so a collision costs one
-	 * wasted read and can never file a value under a name that is not its own.
-	 *
-	 * @param array<int,mixed>  $message  The unpacked positional message array.
-	 * @param array<string,int> $position Position array with segment, offset, length.
-	 * @return string|null Index entry, or null for a frame carrying no key.
-	 */
-	public static function format_stats_index_entry( array $message, array $position ): ?string {
-		$value = $message[ Message::VALUE ] ?? null;
-		$key   = \is_array( $value ) ? ( $value['key'] ?? null ) : null;
-		if ( ! \is_string( $key ) || '' === $key ) {
-			return null;
-		}
-		return Log_Manager::url_hash( $key )
-			. \str_pad( (string) $position['segment'], 6, '0', STR_PAD_LEFT )
-			. \str_pad( (string) $position['offset'], 10, '0', STR_PAD_LEFT )
-			. \str_pad( (string) $position['length'], 8, '0', STR_PAD_LEFT );
-	}
-
-	/**
 	 * The app's half of `locate_by()`: where the record for a stats-index line
 	 * sits, keyed by the hash that line carries.
 	 *
@@ -2844,6 +2784,64 @@ class Flame_Builder_Node extends Node {
 	 */
 	private static function empty_leaderboard(): array {
 		return [ 'count' => 0, 'sum_req_time' => 0.0, 'categories' => [] ];
+	}
+
+	/**
+	 * The mirror partition for one flame-builder partition: the live node when
+	 * this process runs the graph, else a detached handle over the directory the
+	 * active topology declares for it.
+	 *
+	 * The dir comes from `Bootstrap::node_dirs()` rather than a rebuilt path
+	 * template — the partition token sits wherever the topology puts it, and a
+	 * reader that spells the layout itself goes blind the moment it moves.
+	 *
+	 * @param string $name      Mirror partition node name.
+	 * @param int    $partition Which of that node's partitions to open.
+	 * @return \Newspack_Nodes\Partition_Node|null Null when the topology declares no dir for it.
+	 */
+	private static function mirror_partition( string $name, int $partition ): ?\Newspack_Nodes\Partition_Node {
+		$live = Core::node( $name );
+		if ( $live instanceof \Newspack_Nodes\Partition_Node ) {
+			return $live;
+		}
+		$dir = \Newspack_Nodes\Bootstrap::node_dirs( $name )[ $partition ] ?? '';
+		if ( '' === $dir ) {
+			return null;
+		}
+		// Read-only: the topology, not this handle, owns the mirror's geometry.
+		$node = new \Newspack_Nodes\Partition_Node();
+		$node->arguments( [ $dir ] );
+		return $node;
+	}
+
+	/**
+	 * Format one companion-index line for the stats mirror.
+	 *
+	 * Registered as `stats-index` and installed by
+	 * `command_node flame-stats:partition:config with_index stats-index`. Fixed
+	 * width so `parse_stats_index()` can slice it by offset: key_hash(12)
+	 * segment(6) offset(10) length(8) = 36 bytes.
+	 *
+	 * The key is hashed because a backend key runs some seventy characters and a
+	 * fixed-width line needs a bound; `Log_Manager::url_hash()` is the house
+	 * 12-char digest rather than a second hashing convention. A reader files a
+	 * located frame under the key the FRAME carries, so a collision costs one
+	 * wasted read and can never file a value under a name that is not its own.
+	 *
+	 * @param array<int,mixed>  $message  The unpacked positional message array.
+	 * @param array<string,int> $position Position array with segment, offset, length.
+	 * @return string|null Index entry, or null for a frame carrying no key.
+	 */
+	public static function format_stats_index_entry( array $message, array $position ): ?string {
+		$value = $message[ Message::VALUE ] ?? null;
+		$key   = \is_array( $value ) ? ( $value['key'] ?? null ) : null;
+		if ( ! \is_string( $key ) || '' === $key ) {
+			return null;
+		}
+		return Log_Manager::url_hash( $key )
+			. \str_pad( (string) $position['segment'], 6, '0', STR_PAD_LEFT )
+			. \str_pad( (string) $position['offset'], 10, '0', STR_PAD_LEFT )
+			. \str_pad( (string) $position['length'], 8, '0', STR_PAD_LEFT );
 	}
 
 	/**

@@ -1685,8 +1685,8 @@ class Performance_CI_Node extends Service_CI_Node {
 			$node    = new Partition_Node();
 			self::name_scratch_partition( $node, $log, $p );
 			$node->arguments( [ $dir ] );
-			// Unresolvable installs no index; the scan then finds nothing.
-			if ( ! $node->with_index_named( $formatter ) ) {
+			// Read-only; the NAME still proves its writer is in the graph.
+			if ( null === \Newspack_Nodes\Formatters::resolve( $formatter ) ) {
 				$node->remove_node();
 				throw new \RuntimeException( \esc_html( "index formatter not registered: {$formatter}" ) );
 			}

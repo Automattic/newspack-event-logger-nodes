@@ -1388,17 +1388,20 @@ class AppCoreTest extends TestCase {
 	}
 
 	/**
-	 * The SQL a span carries is the query, not a prefix of it. 700 bytes is
-	 * distinct from every cap this file has ever held (512, 1024).
+	 * The SHAPE a span carries is the whole query, not a prefix of it — and the
+	 * literal inside it does not survive. 700 bytes is distinct from every cap
+	 * this file has ever held (512, 1024), so a truncation would still show.
 	 */
-	public function test_a_query_span_carries_the_whole_sql(): void {
+	public function test_a_query_span_carries_the_whole_shape_without_the_literal(): void {
 		$this->set_governing_rule( $this->query_rule( true ) );
-		$core = new Core();
-		$sql  = 'SELECT option_value FROM wp_options WHERE option_name = \'' . \str_repeat( 'x', 700 ) . '\'';
+		$core   = new Core();
+		$secret = \str_repeat( 'x', 700 );
 
-		$core->query_start( $sql );
+		$core->query_start( 'SELECT option_value FROM wp_options WHERE option_name = \'' . $secret . '\' AND autoload = \'yes\'' );
 
-		$this->assertSame( $sql, $this->open_span_message() );
+		$logged = $this->open_span_message();
+		$this->assertSame( 'SELECT option_value FROM wp_options WHERE option_name = ? AND autoload = ?', $logged );
+		$this->assertStringNotContainsString( $secret, $logged, 'the literal never reaches the firehose' );
 	}
 
 	/** A long filter value rides whole; 1500 is distinct from the old 1024. */
@@ -1496,6 +1499,148 @@ class AppCoreTest extends TestCase {
 		);
 	}
 
+	/**
+	 * Query capture replaces literals before the statement is logged.
+	 *
+	 * `log_queries` sends the statement into the firehose, which an aggregator
+	 * replicates to a hub in full, so a literal is a token, an email or an id
+	 * leaving the site. Ported from the gyroscope pipeline's own anonymizer —
+	 * four copies in `InstrumentalityGrail.pm`, dropped between r4815 and r4859.
+	 *
+	 * Replacing literals is also what makes the capture USEFUL: it collapses N
+	 * statements into one shape, which is the only form worth counting.
+	 */
+	public function test_without_literals_replaces_quoted_strings(): void {
+		$ref = new \ReflectionMethod( Core::class, 'without_literals' );
+
+		$this->assertSame(
+			"SELECT * FROM wp_users WHERE user_email = ?",
+			$ref->invoke( null, "SELECT * FROM wp_users WHERE user_email = 'chris@example.com'" )
+		);
+	}
+
+	/** A backslash-escaped quote does not end the literal. */
+	public function test_without_literals_is_escape_aware(): void {
+		$ref = new \ReflectionMethod( Core::class, 'without_literals' );
+
+		$this->assertSame(
+			"SELECT ? FROM t",
+			$ref->invoke( null, "SELECT 'it\\'s a token' FROM t" )
+		);
+	}
+
+	/** An IN list collapses to one placeholder, not one per element. */
+	public function test_without_literals_collapses_an_in_list(): void {
+		$ref = new \ReflectionMethod( Core::class, 'without_literals' );
+
+		$this->assertSame(
+			'SELECT * FROM wp_posts WHERE ID IN (?)',
+			$ref->invoke( null, 'SELECT * FROM wp_posts WHERE ID IN (12,34,56)' )
+		);
+	}
+
+	/**
+	 * A bare numeric literal in a predicate is the gap the Perl left open, and
+	 * ids are exactly the personal data worth removing.
+	 */
+	public function test_without_literals_replaces_a_bare_numeric_predicate(): void {
+		$ref = new \ReflectionMethod( Core::class, 'without_literals' );
+
+		$this->assertSame(
+			'SELECT * FROM wp_usermeta WHERE user_id = ? AND meta_id >= ?',
+			$ref->invoke( null, 'SELECT * FROM wp_usermeta WHERE user_id = 12345 AND meta_id >= 99' )
+		);
+	}
+
+	/** LIMIT and OFFSET are high-cardinality noise, not data. */
+	public function test_without_literals_replaces_limit_and_offset(): void {
+		$ref = new \ReflectionMethod( Core::class, 'without_literals' );
+
+		$this->assertSame(
+			'SELECT * FROM wp_posts LIMIT ? OFFSET ?',
+			$ref->invoke( null, 'SELECT * FROM wp_posts LIMIT 10 OFFSET 40' )
+		);
+	}
+
+	/** A block comment can carry a token; it does not reach the firehose. */
+	public function test_without_literals_strips_a_block_comment(): void {
+		$ref = new \ReflectionMethod( Core::class, 'without_literals' );
+
+		$this->assertSame(
+			'SELECT a FROM t',
+			$ref->invoke( null, 'SELECT /* jetpack_token=abc123 */ a FROM t' )
+		);
+	}
+
+	/** Both line-comment forms MySQL accepts, stripped to end of line. */
+	public function test_without_literals_strips_line_comments(): void {
+		$ref = new \ReflectionMethod( Core::class, 'without_literals' );
+
+		$this->assertSame(
+			'SELECT a FROM t WHERE b = ?',
+			$ref->invoke( null, "SELECT a FROM t -- nonce: deadbeef\nWHERE b = 1" )
+		);
+		$this->assertSame(
+			'SELECT a FROM t',
+			$ref->invoke( null, "SELECT a FROM t # secret=hunter2" )
+		);
+	}
+
+	/**
+	 * ORDER is the whole difficulty: a literal may contain a comment marker.
+	 *
+	 * Stripping comments first would cut the statement at the `--` inside this
+	 * literal and leave an unterminated quote, so literals have to be consumed
+	 * first — which a chain of independent regexes cannot express.
+	 */
+	public function test_without_literals_does_not_truncate_a_literal_holding_a_comment_marker(): void {
+		$ref = new \ReflectionMethod( Core::class, 'without_literals' );
+
+		$this->assertSame(
+			'SELECT a FROM t WHERE note = ? AND b = ?',
+			$ref->invoke( null, "SELECT a FROM t WHERE note = 'x -- y' AND b = 2" )
+		);
+	}
+
+	/** And the mirror case: an apostrophe inside a comment must not open a literal. */
+	public function test_without_literals_survives_an_apostrophe_inside_a_comment(): void {
+		$ref = new \ReflectionMethod( Core::class, 'without_literals' );
+
+		$this->assertSame(
+			'SELECT a FROM t WHERE b = ?',
+			$ref->invoke( null, "SELECT a /* Bob's query */ FROM t WHERE b = 7" )
+		);
+	}
+
+	/** A doubled quote is SQL's own escape and does not end the literal. */
+	public function test_without_literals_handles_a_doubled_quote_escape(): void {
+		$ref = new \ReflectionMethod( Core::class, 'without_literals' );
+
+		$this->assertSame(
+			'SELECT ? FROM t',
+			$ref->invoke( null, "SELECT 'it''s a token' FROM t" )
+		);
+	}
+
+	/** Whitespace collapses, so the same query formatted two ways is one shape. */
+	public function test_without_literals_collapses_whitespace(): void {
+		$ref = new \ReflectionMethod( Core::class, 'without_literals' );
+
+		$this->assertSame(
+			'SELECT a FROM t WHERE b = ?',
+			$ref->invoke( null, "SELECT a\n  FROM t\n  WHERE b = 3" )
+		);
+	}
+
+	/** The shape survives: two queries differing only in literals normalize alike. */
+	public function test_without_literals_collapses_two_statements_to_one_shape(): void {
+		$ref = new \ReflectionMethod( Core::class, 'without_literals' );
+
+		$this->assertSame(
+			$ref->invoke( null, "SELECT * FROM t WHERE slug = 'alpha' LIMIT 5" ),
+			$ref->invoke( null, "SELECT * FROM t WHERE slug = 'beta' LIMIT 9" )
+		);
+	}
 }
 
 /**

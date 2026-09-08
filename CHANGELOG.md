@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.90.0] - 2026-09-08
+
+### Security
+
+- **`log_queries` captured SQL literals, and the aggregator replicates them to a hub.** A literal is a token, an email, a nonce or an id, and `query_start()` recorded the statement whole — host annotation stripped, nothing else. `App\Core::without_literals()` now replaces every literal with `?` before the span is opened: quoted strings (escape-aware, single and double), `IN` lists collapsed to one placeholder before the general rules run, `LIMIT`/`OFFSET`, and bare numeric predicates. Ported from the gyroscope pipeline's own anonymizer, which carried four copies of these rules in `DN::Nodes::InstrumentalityGrail` until a trim dropped them; the numeric-predicate rule is new, because that is where ids live. **Replacing literals is also what makes the capture aggregate** — two statements differing only in their literals are one query asked twice — so a shape is now countable where a stream of unique statements was not. Comment BODIES are still uncovered; `without_host_annotation()` only strips a trailing one.
+
+### Changed
+
+- **Two read-only Partition handles no longer arm a write-side index formatter.** `Flame_Builder_Node::mirror_partition()` and `Performance_CI_Node`'s index scan each called `with_index()` on a handle they only ever read from, because `locate_by()` and `scan_index()` gated on the formatter being installed. Substrate 2.51.0 makes both read-side and refuses `with_index()` on a partition that has not claimed sole writer, so the calls are gone; the formatter NAME is still checked through `Formatters::resolve()`, since an unregistered one means the writer that should produce the index is not in the graph.
+
+
 ## [0.89.1] - 2026-09-08
 
 ### Security
