@@ -851,8 +851,10 @@ class Reqgrep_Command {
 
 	/**
 	 * Emit one line to the output node — `$stdout`, lazily a `Stdout_Node` unless
-	 * a test swapped it. `Stdout_Node::fill()` fwrites the VALUE verbatim and
-	 * appends nothing, so `$text` carries whatever layout the caller wants.
+	 * a test swapped it. `Stdout_Node::fill()` fwrites the VALUE with its control
+	 * characters rendered as `<XX>` tokens and appends nothing else, so `$text`
+	 * carries whatever layout the caller wants and a crafted firehose line
+	 * cannot drive the operator's terminal.
 	 *
 	 * @param string $text Text to write.
 	 */

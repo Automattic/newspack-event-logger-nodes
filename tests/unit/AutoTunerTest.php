@@ -9,15 +9,19 @@ use Newspack_Event_Logger_Nodes\Rule_Set;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
+use Newspack_Nodes\Roles;
 use Newspack_Nodes\Tests\Helpers\InMemoryMemcached;
 
 #[CoversClass( Auto_Tuner_Node::class )]
 class AutoTunerTest extends TestCase {
 	protected function setUp(): void {
 		parent::setUp();
-		$GLOBALS['_wp_options']       = [];
-		$GLOBALS['_wp_actions']       = [];
-		$GLOBALS['_current_user_can'] = false;
+		$GLOBALS['_wp_options']               = [];
+		$GLOBALS['_wp_actions']               = [];
+		$GLOBALS['_current_user_can']         = false;
+		$GLOBALS['_wp_test_current_user_can'] = [];
+		$GLOBALS['_current_user_login']       = '';
+		\Newspack_Nodes\Config::reset();
 		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
 		unset( $_SERVER['NEWSPACK_NODES_WORKER_TYPE'] );
 		// Rule_Set::save()'s reconcile_orphans() no-ops when $wpdb isn't set;
@@ -35,6 +39,10 @@ class AutoTunerTest extends TestCase {
 		$wpdb       = null;
 		Core::$memd = null;
 		unset( $GLOBALS['_test_fire_option_actions'] );
+		$GLOBALS['_wp_test_current_user_can'] = [];
+		\delete_option( 'newspack_nodes_allowed_users' );
+		\delete_option( Roles::OPTION );
+		\Newspack_Nodes\Config::reset();
 		parent::tearDown();
 	}
 
@@ -169,6 +177,103 @@ class AutoTunerTest extends TestCase {
 		$tuner->fill( $message );
 
 		$this->assertSame( [ 'keep_hook' ], Rule_Set::load()->rule_by_id( 'shop' )->hooks );
+	}
+
+	/**
+	 * The gate the `rules` service CI already applies to the identical write.
+	 * After `wp nodes caps install` the substrate resolves TUNE to
+	 * `newspack_nodes_tune`, and a user holding that and not `manage_options`
+	 * can save the same rule through `rules upsert` — so auto-tune must admit
+	 * them too rather than dropping the decision.
+	 */
+	public function test_granular_tune_capability_applies_the_decision(): void {
+		$GLOBALS['_wp_options'][ Roles::OPTION ] = 1;
+		$GLOBALS['_wp_test_current_user_can']    = [
+			Roles::CAP_TUNE  => true,
+			'manage_options' => false,
+		];
+		$GLOBALS['_current_user_login'] = 'tune-only-3268';
+		$this->set_rules_option( [ [ 'id' => 'autotune-scope-6612', 'pattern' => '/autotune-scope/', 'action' => 'log', 'hooks' => [ 'keep_hook_4407', 'noisy_hook_8825' ] ] ] );
+
+		$tuner   = $this->make_auto_tuner();
+		$message = $this->struct_message( 'disable_hooks', [ 'rule_id' => 'autotune-scope-6612', 'items' => [ 'noisy_hook_8825' ] ] );
+		$tuner->fill( $message );
+
+		$this->assertSame(
+			[ 'keep_hook_4407' ],
+			Rule_Set::load()->rule_by_id( 'autotune-scope-6612' )->hooks,
+			'A newspack_nodes_tune holder writes the ruleset through the rules CI; auto-tune must not refuse them.'
+		);
+	}
+
+	/**
+	 * TUNE, not READ: the granular migration exists to cut authority, so a
+	 * dashboard-only reader must still be refused this write.
+	 */
+	public function test_granular_read_capability_alone_is_refused(): void {
+		$GLOBALS['_wp_options'][ Roles::OPTION ] = 1;
+		$GLOBALS['_wp_test_current_user_can']    = [
+			Roles::CAP_READ  => true,
+			Roles::CAP_TUNE  => false,
+			'manage_options' => false,
+		];
+		$GLOBALS['_current_user_login'] = 'read-only-7714';
+		$this->set_rules_option( [ [ 'id' => 'autotune-scope-6612', 'pattern' => '/autotune-scope/', 'action' => 'log', 'hooks' => [ 'keep_hook_4407', 'noisy_hook_8825' ] ] ] );
+
+		$tuner   = $this->make_auto_tuner();
+		$message = $this->struct_message( 'disable_hooks', [ 'rule_id' => 'autotune-scope-6612', 'items' => [ 'noisy_hook_8825' ] ] );
+		$tuner->fill( $message );
+
+		$this->assertSame(
+			[ 'keep_hook_4407', 'noisy_hook_8825' ],
+			Rule_Set::load()->rule_by_id( 'autotune-scope-6612' )->hooks
+		);
+	}
+
+	/**
+	 * `Capabilities::can()` narrows every role by the substrate's operator
+	 * allowlist, so an admin request auto-tuning off a login the operator did
+	 * not list is refused — the same answer that login gets from the rules CI.
+	 */
+	public function test_a_login_outside_the_substrate_allowlist_is_refused(): void {
+		$GLOBALS['_current_user_can']   = true;
+		$GLOBALS['_current_user_login'] = 'barred-tuner-9036';
+		\update_option( 'newspack_nodes_allowed_users', [ 'roster-holder-2451' ] );
+		\Newspack_Nodes\Config::reset();
+		$this->set_rules_option( [ [ 'id' => 'autotune-scope-6612', 'pattern' => '/autotune-scope/', 'action' => 'log', 'hooks' => [ 'keep_hook_4407', 'noisy_hook_8825' ] ] ] );
+
+		$tuner   = $this->make_auto_tuner();
+		$message = $this->struct_message( 'disable_hooks', [ 'rule_id' => 'autotune-scope-6612', 'items' => [ 'noisy_hook_8825' ] ] );
+		$tuner->fill( $message );
+
+		$this->assertSame(
+			[ 'keep_hook_4407', 'noisy_hook_8825' ],
+			Rule_Set::load()->rule_by_id( 'autotune-scope-6612' )->hooks
+		);
+	}
+
+	/**
+	 * The worker branch runs ahead of the capability check and must stay that
+	 * way: a worker holds no WordPress user, so routing it through `can()`
+	 * would drop every worker-side decision with nothing to show for it.
+	 */
+	public function test_worker_env_authorizes_with_no_current_user(): void {
+		$this->worker_context();
+		$GLOBALS['_wp_options'][ Roles::OPTION ] = 1;
+		$GLOBALS['_wp_test_current_user_can']    = [];
+		$GLOBALS['_current_user_can']            = false;
+		$GLOBALS['_current_user_login']          = '';
+		$this->set_rules_option( [ [ 'id' => 'autotune-scope-6612', 'pattern' => '/autotune-scope/', 'action' => 'log', 'hooks' => [ 'keep_hook_4407', 'noisy_hook_8825' ] ] ] );
+
+		$tuner   = $this->make_auto_tuner();
+		$message = $this->struct_message( 'disable_hooks', [ 'rule_id' => 'autotune-scope-6612', 'items' => [ 'noisy_hook_8825' ] ] );
+		$tuner->fill( $message );
+
+		$this->assertSame(
+			[ 'keep_hook_4407' ],
+			Rule_Set::load()->rule_by_id( 'autotune-scope-6612' )->hooks,
+			'A worker carries no user; the env branch is the whole authorization.'
+		);
 	}
 
 	// --- disable_hooks --------------------------------------------------------

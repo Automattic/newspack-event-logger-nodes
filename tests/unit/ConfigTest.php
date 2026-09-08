@@ -148,18 +148,22 @@ class ConfigTest extends TestCase {
 		$this->assertSame( \Newspack_Event_Logger_Nodes\Stats_Store::PREFIX_FLOOR, Config::stats_retention_seconds() );
 	}
 
-	public function test_substrate_option_does_not_override_application_owned_key(): void {
-		$override_path = $this->temp_dir . '/overlapping-ownership-7319.php';
-		\file_put_contents(
-			$override_path,
-			"<?php return [ 'allowed_users' => [ 'application-file-7319' ] ];\n"
-		);
-		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $override_path );
+	/**
+	 * `allowed_users` belongs to the substrate, so its option row governs here
+	 * too. This plugin declares no Field for the key and no gate of its own —
+	 * an ELN-prefixed row is an unrecognized option, not a second allowlist.
+	 */
+	public function test_substrate_owns_the_operator_allowlist(): void {
 		\update_option( 'newspack_nodes_allowed_users', [ 'substrate-option-2843' ] );
-		\delete_option( 'newspack_event_logger_nodes_allowed_users' );
+		\update_option( 'newspack_event_logger_nodes_allowed_users', [ 'application-option-7319' ] );
 		Config::reset();
 
-		$this->assertSame( [ 'application-file-7319' ], Config::load_config()['allowed_users'] );
+		try {
+			$this->assertSame( [ 'substrate-option-2843' ], Config::load_config()['allowed_users'] );
+		} finally {
+			\delete_option( 'newspack_event_logger_nodes_allowed_users' );
+			\delete_option( 'newspack_nodes_allowed_users' );
+		}
 	}
 
 	public function test_reset_clears_cache(): void {

@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Newspack Event Logger Nodes
  * Description: Event-logger application built on newspack-nodes runtime.
- * Version: 0.90.0
+ * Version: 0.91.0
  * Author: Automattic
  * Author URI: https://newspack.com/
  * License: GPL-2.0-or-later
@@ -40,7 +40,7 @@
 \defined( 'ABSPATH' ) || exit;
 
 if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION' ) ) {
-	\define( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION', '0.90.0' );
+	\define( 'NEWSPACK_EVENT_LOGGER_NODES_VERSION', '0.91.0' );
 }
 if ( ! \defined( 'NEWSPACK_EVENT_LOGGER_NODES_DIR' ) ) {
 	\define( 'NEWSPACK_EVENT_LOGGER_NODES_DIR', \plugin_dir_path( __FILE__ ) );
@@ -83,7 +83,7 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	// too-old substrate DORMANT rather than fatal, so one set too low is
 	// worse than none, and WordPress does not order plugin updates.
 	if ( ! \method_exists( '\\Newspack_Nodes\\Bootstrap', 'version_at_least' )
-		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.51.0', 'Newspack Event Logger Nodes' ) ) {
+		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.53.0', 'Newspack Event Logger Nodes' ) ) {
 		return;
 	}
 
@@ -299,15 +299,16 @@ function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\Command_
 		if ( ! \class_exists( '\\Newspack_Nodes\\Bootstrap' ) ) {
 			return;
 		}
-		// The dashboards ARE the admin UI `allowed_users` restricts.
-		if ( ! \Newspack_Event_Logger_Nodes\Admin\Admin::current_user_allowed() ) {
+		// The substrate owns this gate: MANAGE, narrowed by `allowed_users`.
+		if ( ! \Newspack_Nodes\Capabilities::can( \Newspack_Nodes\Capabilities::MANAGE ) ) {
 			return;
 		}
+		$manage_cap           = \Newspack_Nodes\Capabilities::cap_for( \Newspack_Nodes\Capabilities::MANAGE );
 		$performance_callback = static fn () => print( '<div id="event-logger-admin" class="event-logger-admin-page"></div>' );
 		\add_menu_page(
 			'Event Logger',
 			'Event Logger',
-			'manage_options',
+			$manage_cap,
 			'event-logger-overview',
 			$performance_callback,
 			'dashicons-chart-line',
@@ -317,7 +318,7 @@ function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\Command_
 			'event-logger-overview',
 			'Performance Dashboard',
 			'Performance',
-			'manage_options',
+			$manage_cap,
 			'event-logger-overview',
 			$performance_callback
 		);
@@ -331,7 +332,7 @@ function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\Command_
 				'event-logger-overview',
 				$title,
 				$menu_title,
-				'manage_options',
+				$manage_cap,
 				$slug,
 				// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- $mount_html is a hardcoded constant string from $dashboards above, not user input.
 			static fn () => print( $mount_html )

@@ -27,9 +27,9 @@
  * so a default changed in one file alone fails the suite.
  *
  * Substrate keys — `base_directory`, the partition geometry, `memcache_servers`,
- * the active `topologies` list, the remote-spoke settings — belong to
- * `newspack-nodes-config.php`, and `Config::load_config()` merges their
- * effective values underneath these.
+ * the active `topologies` list, the `allowed_users` operator allowlist, the
+ * remote-spoke settings — belong to `newspack-nodes-config.php`, and
+ * `Config::load_config()` merges their effective values underneath these.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -37,11 +37,6 @@
 \defined( 'ABSPATH' ) || exit;
 
 return [
-	// A `user_login` allowlist over the `manage_options` gate: a listed user
-	// still needs the capability, so a demoted account loses access without
-	// an edit here. Empty allows every user who holds it.
-	// 'allowed_users' => [],
-
 	// The master switch. Off, `Log_Manager` stays inert and no request is
 	// logged; the workers keep running, because this gates the request-side
 	// writer and not the topologies.
