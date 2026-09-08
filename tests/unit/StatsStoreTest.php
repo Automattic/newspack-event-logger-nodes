@@ -1062,34 +1062,43 @@ class StatsStoreTest extends TestCase {
 	}
 
 	/**
-	 * The fallback for an unfolded hour stops where the fine tier's TTL does.
+	 * The fine tier answers the LAST HOUR and feeds the fold. Nothing else.
 	 *
-	 * `buckets_in_hour()` enumerates all twelve whatever their age, and the
-	 * readers hand it every hour of the plan — a retention window against a
-	 * four-hour tier. Everything behind that is a key memcache discarded, and
-	 * a miss on an armed mirror walks its whole index.
+	 * `RECENT_BUCKETS` twelve buckets are one hour, and `roll_up_hours()` builds
+	 * the coarse tiers out of a closed hour's fine buckets. It was never a tier
+	 * to read old hours from, so the fallback for an unfolded hour reaches at
+	 * most the hour immediately behind the fine tail — the one the fold has not
+	 * caught yet — and no further.
 	 */
-	public function test_an_hour_inside_the_fine_ttl_still_answers(): void {
+	public function test_the_hour_behind_the_fine_tail_still_answers(): void {
 		$store = new Stats_Store( 0, 86400 );
 		$hour  = \gmdate( 'Y-m-d-H', \time() - 3600 );
 
-		$this->assertSame( Stats_Store::buckets_in_hour( $hour ), $store->unfolded_hour_buckets( $hour ) );
+		$this->assertSame(
+			Stats_Store::buckets_in_hour( $hour ),
+			$store->unfolded_hour_buckets( $hour, [ $hour, \gmdate( 'Y-m-d-H', \time() - 7200 ) ] )
+		);
 	}
 
-	/** Past it there is nothing to fall back TO — the fold reads the same keys. */
-	public function test_an_hour_past_the_fine_ttl_answers_with_nothing(): void {
-		$store = new Stats_Store( 0, 86400 );
-		$hour  = \gmdate( 'Y-m-d-H', \time() - ( 11 * 3600 ) );
+	/** An hour further back than that is the coarse tier's job, whatever its age. */
+	public function test_an_hour_behind_the_grace_hour_is_never_read_finely(): void {
+		$store  = new Stats_Store( 0, 86400 );
+		$grace  = \gmdate( 'Y-m-d-H', \time() - 3600 );
+		$behind = \gmdate( 'Y-m-d-H', \time() - 7200 );
 
-		$this->assertSame( [], $store->unfolded_hour_buckets( $hour ) );
+		$this->assertSame( [], $store->unfolded_hour_buckets( $behind, [ $grace, $behind ] ) );
 	}
 
-	/** The horizon is the TIER's TTL, not the read window: `ttl_url_fine()` clamps. */
-	public function test_the_horizon_follows_the_fine_ttl_not_the_window(): void {
-		$hour = \gmdate( 'Y-m-d-H', \time() - ( 2 * 3600 ) );
+	/** And inside the grace hour, only the buckets the tier can still hold. */
+	public function test_the_grace_hour_keeps_only_buckets_inside_the_ttl(): void {
+		$hour = \gmdate( 'Y-m-d-H', \time() - ( 5 * 3600 ) );
 
-		$this->assertNotSame( [], ( new Stats_Store( 0, 86400 ) )->unfolded_hour_buckets( $hour ), 'inside a four-hour tier' );
-		$this->assertSame( [], ( new Stats_Store( 0, 3600 ) )->unfolded_hour_buckets( $hour ), 'outside a one-hour one' );
+		$this->assertSame( [], ( new Stats_Store( 0, 86400 ) )->unfolded_hour_buckets( $hour, [ $hour ] ) );
+	}
+
+	/** Two hours is the fold's margin, and the tier is sized to it. */
+	public function test_the_fine_tier_is_kept_for_two_hours(): void {
+		$this->assertSame( 7200, ( new Stats_Store( 0, 86400 ) )->ttl_url_fine() );
 	}
 
 	public function test_an_empty_batch_is_a_no_op(): void {

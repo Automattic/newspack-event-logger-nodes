@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.88.2] - 2026-09-07
+
+### Changed
+
+- **The fine tier is kept for two hours, and the readers stop reaching into it past the last hour.** It has exactly two consumers: `RECENT_BUCKETS`' twelve buckets, which are the last-hour rate, and `roll_up_hours()`, which builds every coarse tier out of a closed hour's fine buckets. It is the window's EDGE and the fold's input — never a tier to read old hours from — and both of those need two hours, not four: the plan's fine span is just under two at the worst minute, and an hour folds within a re-probe of it closing. `FINE_TTL_SECONDS` 14400 → **7200**, which costs 24 buckets a shard against the coarse tier's 24 hours; the four hours it was, and the "288 buckets a shard" the old note costed it at, bought margin for a fallback that should not have been reading here at all.
+- **`unfolded_hour_buckets()` now reaches only the GRACE hour** — the one immediately behind the fine tail, which the fold may simply not have caught yet — and filters even that to the buckets the TTL can still hold. Everything older is the coarse tier's alone, folded or not: `roll_up_hours()` reads the same keys, so an hour it never reached is gone from here for it too. Cold batch counts per poll, four partitions, against the 0.88.1 numbers: **`overview` 28 → 20, `urls` 448 → 320, `urls --search` 896 → 640, `urls --include_workers` 896 → 640** — 5.4x off where this release series started, and the same factor off the worst-case mirror walks behind them.
+
 ## [0.88.1] - 2026-09-07
 
 ### Fixed

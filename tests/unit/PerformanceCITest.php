@@ -732,27 +732,56 @@ class PerformanceCITest extends TestCase {
 
 	/**
 	 * The reader takes the coarse hour where one has been folded, and falls
-	 * back to that hour's twelve fine buckets where one has not — which is what
-	 * makes a fresh deploy, and an hour a worker was down for, self-healing
-	 * rather than a hole in the table.
+	 * back to fine buckets for the GRACE hour — the one immediately behind the
+	 * fine tail, which the fold may simply not have caught yet. That is what
+	 * makes a fresh deploy, and the hour a worker was restarting through,
+	 * self-healing rather than a hole in the table.
 	 */
-	public function test_the_index_reads_a_folded_hour_and_falls_back_where_none_was_folded(): void {
+	public function test_the_index_reads_a_folded_hour_and_falls_back_for_the_grace_hour(): void {
 		$store = new Stats_Store( 0, 86400 );
 		$hash  = 'a4471ab0c0de';
 		$shard = Stats_Store::url_shard( $hash );
 		$plan  = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, \time() ) );
-		// The newest closed hour is folded; the one behind it never was.
-		$this->seed_url_hour( $store, $plan['hours'][0], $shard, [
+		// The hour behind the grace hour is folded; the grace hour never was.
+		$this->seed_url_hour( $store, $plan['hours'][1], $shard, [
 			$hash => [ 'url' => '/wombat-4471', 'count' => 7, 'timed_count' => 7, 'sum_ms' => 70.0 ],
 		] );
-		$this->seed_url_shard( $store, Stats_Store::buckets_in_hour( $plan['hours'][1] )[3], $shard, [
+		// Its LAST bucket: the grace hour straddles the fine TTL, and only the
+		// newest bucket is inside it whatever minute the test runs at.
+		$grace = Stats_Store::buckets_in_hour( $plan['hours'][0] );
+		$this->seed_url_shard( $store, (string) \end( $grace ), $shard, [
 			$hash => [ 'url' => '/wombat-4471', 'count' => 5, 'timed_count' => 5, 'sum_ms' => 50.0 ],
 		] );
 
 		$row = Performance_CI_Node::load_row_default( $hash );
 
 		$this->assertNotNull( $row );
-		$this->assertSame( 12, $row['count'], 'the folded hour and the unfolded one both counted' );
+		$this->assertSame( 12, $row['count'], 'the folded hour and the grace hour both counted' );
+	}
+
+	/**
+	 * An unfolded hour BEHIND the grace hour is the coarse tier's job alone.
+	 *
+	 * The fine tier answers the last hour and feeds the fold; reading it for
+	 * older hours asked memcache for keys `ttl_url_fine()` had discarded, once
+	 * per shard per chunk per partition, and each miss walked an armed mirror's
+	 * index in full. `roll_up_hours()` folds from these same keys, so an hour
+	 * the fold never reached is gone from here for it too.
+	 */
+	public function test_an_unfolded_hour_behind_the_grace_hour_is_not_read_finely(): void {
+		$store = new Stats_Store( 0, 86400 );
+		$hash  = 'a4471ab0c0de';
+		$shard = Stats_Store::url_shard( $hash );
+		$plan  = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, \time() ) );
+		$stale = Stats_Store::buckets_in_hour( $plan['hours'][2] );
+		$this->seed_url_shard( $store, (string) \end( $stale ), $shard, [
+			$hash => [ 'url' => '/wombat-4471', 'count' => 5, 'timed_count' => 5, 'sum_ms' => 50.0 ],
+		] );
+
+		$this->assertNull(
+			Performance_CI_Node::load_row_default( $hash ),
+			'nothing folded it, and the fine tier is not where it is read from'
+		);
 	}
 
 	/**

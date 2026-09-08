@@ -347,20 +347,20 @@ class Stats_Store {
 	 * How long a FINE `urls` bucket is kept, against `min_lifetime` for the
 	 * coarse tier that outlives it.
 	 *
-	 * The read plan asks for `FINE_BUCKETS` plus the rest of their hour — two
-	 * hours at the very worst — and `roll_up_hours()` folds a closed hour into
-	 * `urls_h` within a re-probe of it closing. The fine tier is the largest
-	 * thing this schema puts in a 512MB cache: 288 buckets a shard against the
-	 * coarse tier's 24. Four hours leaves the readers two hours of margin and
-	 * the fold three; a longer outage costs the hours the fold never reached.
+	 * The tier has exactly two consumers: `RECENT_BUCKETS` twelve buckets, which
+	 * are the last-hour rate, and `roll_up_hours()`, which builds every coarse
+	 * tier out of a closed hour's fine buckets. It is the window's EDGE and the
+	 * fold's input — never a tier to read old hours from, which is what
+	 * `unfolded_hour_buckets()` now holds the readers to.
 	 *
-	 * `unfolded_hour_buckets()` is what holds the readers to it. Their fallback
-	 * for an unfolded hour reads that hour's fine buckets, and the plan's hours
-	 * span a whole retention window — so without a horizon they asked for keys
-	 * this TTL had discarded hours earlier, four times more of them than the
-	 * tier can hold.
+	 * Two hours covers both: the read plan asks for `FINE_BUCKETS` plus the rest
+	 * of their hour, just under two at the worst minute, and the fold folds an
+	 * hour within a re-probe of it closing. At that width the tier costs 24
+	 * buckets a shard — the same as the coarse tier's 24 hours — where the four
+	 * hours this was, and the 288 the old note costed it at, bought margin for
+	 * a fallback that should not have been reading here at all.
 	 */
-	public const FINE_TTL_SECONDS = 14400;
+	public const FINE_TTL_SECONDS = 7200;
 
 	/** Every namespace but `url` and a fine `urls` bucket; TTL is `ttl()`. */
 	private const ROLE_AGGREGATE = 'aggregate';
@@ -1476,25 +1476,32 @@ class Stats_Store {
 	/**
 	 * The fine buckets that still ANSWER for an unfolded hour.
 	 *
-	 * `buckets_in_hour()` enumerates all twelve whatever their age, and the
-	 * three readers that fall back to them read the plan's whole hour list —
-	 * a retention window. The fine tier is kept for `ttl_url_fine()`, four
-	 * hours, so everything behind that was a certain miss per shard per chunk,
-	 * and under an armed mirror each miss walked that mirror's index in full.
-	 * The reader's fallback horizon is the writer's TTL.
+	 * The fine tier answers the last hour and feeds the fold; it is not a tier
+	 * to read old hours from. So the fallback reaches the GRACE hour — the one
+	 * immediately behind the fine tail, which the fold may simply not have
+	 * caught yet — and stops. Everything older is the coarse tier's, whether or
+	 * not it was folded, because `roll_up_hours()` reads these same keys: an
+	 * hour the fold did not reach in time is gone from here for it too.
 	 *
-	 * Nothing is lost that anything could have answered: `roll_up_hours()`
-	 * folds an hour from these same keys, so an hour behind the horizon is
-	 * gone from the fine tier for the fold as well as for the reader.
+	 * Inside the grace hour the buckets are filtered again to what
+	 * `ttl_url_fine()` can still be holding. Bucket keys are fixed-width and
+	 * zero-padded, so they sort chronologically and a string compare does it.
 	 *
-	 * Bucket keys are fixed-width and zero-padded, so they sort
-	 * chronologically and a string compare is the whole test.
+	 * Without either bound the three readers handed this the plan's whole hour
+	 * list — a retention window against a two-hour tier — so most of what they
+	 * asked for was a key memcache had discarded: a certain miss per shard per
+	 * chunk, and each miss walked an armed mirror's index in full.
 	 *
 	 * @api The dashboard readers, for an hour the coarse tier cannot answer.
-	 * @param string $hour A `Y-m-d-H` hour key.
+	 * @param string       $hour  A `Y-m-d-H` hour key.
+	 * @param list<string> $hours The plan's hours, newest first; `$hour` is
+	 *                            read finely only when it leads them.
 	 * @return list<string>
 	 */
-	public function unfolded_hour_buckets( string $hour ): array {
+	public function unfolded_hour_buckets( string $hour, array $hours ): array {
+		if ( $hour !== ( $hours[0] ?? null ) ) {
+			return [];
+		}
 		$floor = self::bucket_key( \time() - $this->ttl_url_fine() );
 		return \array_values(
 			\array_filter(
