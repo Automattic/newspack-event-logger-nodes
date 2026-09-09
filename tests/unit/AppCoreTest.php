@@ -504,6 +504,68 @@ class AppCoreTest extends TestCase {
 		$this->assertStringNotContainsString( "\n", $this->open_span_message() );
 	}
 
+	/**
+	 * The census found this on a live host: a hook frame publishing a WP_User
+	 * row, password hash and activation key included. Keys survive so the frame
+	 * still says a user object went through; not one leaf of it does.
+	 */
+	public function test_hook_start_publishes_no_part_of_a_user_row(): void {
+		$this->set_governing_rule( $this->query_rule( false ) );
+		$core = new Core();
+
+		$core->hook_start(
+			[
+				'data'    => [
+					'user_login'           => 'carol',
+					'user_pass'            => '$P$Bshibbolethcardamomvestibule',
+					'user_email'           => 'carol@example.test',
+					'user_activation_key'  => 'zaphod-betelgeuse-nonce',
+				],
+				'allcaps' => [ 'manage_options' => true ],
+			]
+		);
+
+		$logged = $this->open_span_message();
+		foreach ( [ 'carol', 'shibboleth', 'example.test', 'zaphod' ] as $secret ) {
+			$this->assertStringNotContainsString( $secret, $logged );
+		}
+		$this->assertStringContainsString( '"user_pass":"?"', $logged );
+		$this->assertStringContainsString( '"user_email":"?"', $logged );
+	}
+
+	/**
+	 * A WP_Query argument is the bulk of what hook frames carry, and its value
+	 * is worth keeping where the value is structure rather than the reader's
+	 * search term.
+	 */
+	public function test_hook_start_keeps_query_structure_and_drops_its_terms(): void {
+		$this->set_governing_rule( $this->query_rule( false ) );
+		$core = new Core();
+
+		$core->hook_start(
+			[
+				'query_vars' => [
+					's'         => 'cardamom vestibule',
+					'post_type' => 'post',
+					'paged'     => 3,
+					'meta_value' => 'shibboleth',
+				],
+				'is_search'  => true,
+				'found_posts' => 41,
+			]
+		);
+
+		$logged = $this->open_span_message();
+		$this->assertStringNotContainsString( 'cardamom', $logged );
+		$this->assertStringNotContainsString( 'shibboleth', $logged );
+		$this->assertStringContainsString( '"s":"?"', $logged );
+		$this->assertStringContainsString( '"meta_value":"?"', $logged );
+		$this->assertStringContainsString( '"post_type":"post"', $logged );
+		$this->assertStringContainsString( '"paged":3', $logged );
+		$this->assertStringContainsString( '"is_search":true', $logged );
+		$this->assertStringContainsString( '"found_posts":41', $logged );
+	}
+
 	// ── the query span covers the filter chain ──────────────────────────
 
 	/**
