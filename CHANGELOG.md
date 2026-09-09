@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **A structured hook argument is shaped against an allowlist.** `hook_start()` json_encoded a non-scalar filter argument verbatim, sixteen levels deep, which is where a credential in a hook frame actually sits — the `Authorization` header of `http_request_args`, an option array carrying an integration key. JSON has an explicit parse, so unlike SQL there is a real seam: every KEY is kept, because the keys are what say what the argument was, and every leaf whose key is not in `HOOK_ARG_KEEP` is replaced with `?`, at any depth. SQL keeps its regex-replace-everything treatment for the opposite reason — no seam a list could follow. `JSON_PRETTY_PRINT` goes with it: it spent the entry's byte budget against `MAX_DATA_SIZE` on indentation nobody reads.
+
+  The list is a SEED, not the answer. It holds the documented structural half of `http_request_args` — `method`, `timeout`, `redirection`, `httpversion`, `blocking`, `sslverify`, `stream`, `decompress`, `user-agent` — as against `headers`, `body` and `cookies`, which carry content. The census it should be built from did not reach this population: the argument arrives json_encoded, so its keys sat inside a string the survey never descended. `tools/survey-firehose-keys.php` in dndocker now reports them; populate this from a run against a real host. The default is deny, so an incomplete list costs diagnostic and never exposure.
+
 ## [0.94.0] - 2026-09-09
 
 ### Changed
