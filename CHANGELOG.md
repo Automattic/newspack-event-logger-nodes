@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.93.0] - 2026-09-08
+
+### Removed
+
+- **The Request Log's `status` → `status_code` column alias is gone.** `COLUMN_ALIASES` mapped the pre-rename key onto the current one so a selection saved before the rename kept its Status column; the substrate drops the `aliases` option that read it in the same pass, so the two halves ship together or the option is passed to nobody. **A reader whose stored selection still names `status` loses that column once**: the picker keeps the keys it declares and drops the rest, so the selection falls back to the default set, and choosing columns from "Cols" writes the current keys back. Cosmetic, one-time, self-healing, and confined to the browser holding that `localStorage` entry.
+
 ## [0.92.0] - 2026-09-08
 
 ### Changed

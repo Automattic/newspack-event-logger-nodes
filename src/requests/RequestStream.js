@@ -100,17 +100,6 @@ const COLUMNS = logColumns( {
 } );
 
 /**
- * Retired column key → current key, for selections already in localStorage.
- *
- * A stored selection naming `status` restores as `status_code`. Without the
- * mapping `useColumnPicker` discards the unknown key, Status vanishes from
- * every selection that names it, and the write-back makes the loss permanent.
- *
- * @type {Object<string,string>}
- */
-const COLUMN_ALIASES = { status: 'status_code' };
-
-/**
  * The columns visible before the reader chooses — every declared column except
  * `user_agent`, which the "Cols" picker turns on.
  *
@@ -238,7 +227,6 @@ export default function RequestStream( { maxEntries = 500 } ) {
 			columns: COLUMNS,
 			storageKey: COLUMNS_STORAGE_KEY,
 			defaultVisible: DEFAULT_COLUMNS,
-			aliases: COLUMN_ALIASES,
 		} );
 
 	// Stable identity per column set keeps LogRowList's row memoization live.

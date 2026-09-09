@@ -385,14 +385,18 @@ describe( 'RequestStream', () => {
 		expect( ths ).toEqual( [ 'Time', 'Request ID', 'UA' ] );
 	} );
 
-	it( 'keeps the known columns of a saved selection naming a removed one', () => {
+	it( 'keeps the stored keys this column set declares and drops the rest', () => {
+		// `retired_column` names nothing and neither does `status` — the set
+		// declares `status_code` — so both are dropped rather than translated
+		// onto a key that exists. The survivors come back declaration-first.
+		// A reader loses that column once and picks it back up from Cols.
 		window.localStorage.setItem(
 			'event-logger-stream-columns',
 			JSON.stringify( [
-				'user_agent',
+				'duration',
 				'retired_column',
 				'status',
-				'status_code',
+				'user_agent',
 			] )
 		);
 		registerViewFixture();
@@ -400,24 +404,7 @@ describe( 'RequestStream', () => {
 		const ths = [
 			...container.querySelectorAll( '.newspack-nodes-log-header__th' ),
 		].map( ( el ) => el.textContent );
-		expect( ths ).toEqual( [ 'Status', 'UA' ] );
-	} );
-
-	it( 'restores a selection saved under the pre-rename Status key', () => {
-		// Shipped as `status`; renamed `status_code` when the column set moved
-		// to the shared table. Filtering by the CURRENT keys alone silently
-		// drops Status from every upgraded install, and the write effect then
-		// persists the loss.
-		window.localStorage.setItem(
-			'event-logger-stream-columns',
-			JSON.stringify( [ 'rid', 'status', 'user_agent' ] )
-		);
-		registerViewFixture();
-		const { container } = mount();
-		const ths = [
-			...container.querySelectorAll( '.newspack-nodes-log-header__th' ),
-		].map( ( el ) => el.textContent );
-		expect( ths ).toEqual( [ 'Request ID', 'Status', 'UA' ] );
+		expect( ths ).toEqual( [ 'UA', 'Duration' ] );
 	} );
 
 	describe( 'glob browse UI', () => {
