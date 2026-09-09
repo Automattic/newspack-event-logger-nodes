@@ -112,6 +112,22 @@ return [
 	// its own state is never budgeted.
 	// 'stats_mirror_read_budget_ms' => 1500,
 
+	// The stats mirror's OWN ring geometry, in bytes per segment and segments
+	// kept. 0 means "follow the substrate value in force"
+	// (`newspack_nodes_segment_size` / `newspack_nodes_num_segments`), so an
+	// install that sets neither is unchanged. `flame-stats` holds every per-URL
+	// frame — budget roughly two frames per distinct URL per five-minute bucket
+	// — and those substrate knobs also size `requests`, `flames` and `jobs`, so
+	// without these an operator could only buy the mirror room by inflating
+	// every other partition identically. Capacity is the PRODUCT of the two.
+	// `max_segments` needs no key of its own: it derives as twice whichever
+	// `num_segments` the node was given and is floored at that count, so this
+	// one already moves the mirror's hard cap. Nor does `min_segments`, which
+	// is the AGE rule's floor, and the mirror's age rule is its own
+	// `<eln:stats_mirror_lifetime>`.
+	// 'stats_mirror_segment_size' => 0,
+	// 'stats_mirror_num_segments' => 0,
+
 	// Add `peak_mb`, peak memory in MB, to every entry `Log_Manager`'s
 	// `complete()` emits — `(complete)` and `(aborted)` alike.
 	// 'log_memory' => false,

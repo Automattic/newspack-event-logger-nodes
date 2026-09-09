@@ -63,6 +63,36 @@ class ElnConfigTokenTest extends TestCase {
 		$this->assertSame( '14400', Core::resolve_config_token( 'eln', 'stats_mirror_lifetime' ) );
 	}
 
+	// --- stats_mirror ring geometry -----------------------------------------
+
+	public function test_the_mirror_ring_follows_the_substrate_until_it_is_set(): void {
+		// Unset, each token is the substrate value IN FORCE — not the schema
+		// default — so an install that sets neither is unchanged.
+		$GLOBALS['_wp_options']['newspack_nodes_segment_size'] = 12582912;
+		$GLOBALS['_wp_options']['newspack_nodes_num_segments'] = 5;
+		\Newspack_Nodes\Config::reset();
+		Config::reset();
+
+		$this->assertSame( '12582912', Core::resolve_config_token( 'eln', 'stats_mirror_segment_size' ) );
+		$this->assertSame( '5', Core::resolve_config_token( 'eln', 'stats_mirror_num_segments' ) );
+	}
+
+	public function test_the_mirror_ring_is_sized_apart_from_every_other_partition(): void {
+		// `flame-stats` holds every per-URL frame now, so an operator has to be
+		// able to budget for its volume without inflating `requests`, `flames`
+		// and `jobs` by the same factor — which the shared `<config:*>` knobs
+		// forced. Set, the mirror's own value wins and nothing else moves.
+		$GLOBALS['_wp_options']['newspack_nodes_segment_size'] = 12582912;
+		$GLOBALS['_wp_options']['newspack_nodes_num_segments'] = 5;
+		$GLOBALS['_wp_options']['newspack_event_logger_nodes_stats_mirror_segment_size'] = 4194304;
+		$GLOBALS['_wp_options']['newspack_event_logger_nodes_stats_mirror_num_segments'] = 24;
+		\Newspack_Nodes\Config::reset();
+		Config::reset();
+
+		$this->assertSame( '4194304', Core::resolve_config_token( 'eln', 'stats_mirror_segment_size' ) );
+		$this->assertSame( '24', Core::resolve_config_token( 'eln', 'stats_mirror_num_segments' ) );
+	}
+
 	// --- is_hub resolver ----------------------------------------------------
 
 	public function test_is_hub_false_when_aggregator_topology_inactive(): void {

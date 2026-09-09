@@ -97,7 +97,7 @@ class FlameBuilderTest extends TestCase {
 		$msg[ Message::TYPE ]        = Message::TM_STRUCT;
 		$msg[ Message::TIMESTAMP ]   = $timestamp;
 		$msg[ Message::KEY ]         = $key;
-		$msg[ Message::VALUE ]       = [ 'key' => $key, 'data' => $data, 'ttl' => $ttl ];
+		$msg[ Message::VALUE ]       = [ 'data' => $data, 'ttl' => $ttl ];
 		$p->fill( $msg );
 	}
 
@@ -114,9 +114,10 @@ class FlameBuilderTest extends TestCase {
 				if ( '' === $line ) {
 					continue;
 				}
-				$val = Message::unpacked( $line )[ Message::VALUE ];
-				if ( \is_array( $val ) && \is_string( $val['key'] ?? null ) ) {
-					$out[] = $val;
+				$msg = Message::unpacked( $line );
+				$val = $msg[ Message::VALUE ];
+				if ( \is_array( $val ) && \is_string( $msg[ Message::KEY ] ?? null ) ) {
+					$out[] = $val + [ 'key' => $msg[ Message::KEY ] ];
 				}
 			}
 		}
@@ -132,6 +133,26 @@ class FlameBuilderTest extends TestCase {
 		$out = [];
 		foreach ( $this->mirror_frames( $p ) as $val ) {
 			$out[ $val['key'] ] = $val;
+		}
+		return $out;
+	}
+
+	/**
+	 * Every mirror frame in a flushed partition as the whole unpacked message —
+	 * what a size or an envelope assertion reads, where `mirror_frames()` gives
+	 * only VALUE.
+	 *
+	 * @return list<array<int,mixed>>
+	 */
+	private function raw_mirror_messages( \Newspack_Nodes\Partition_Node $p ): array {
+		$out = [];
+		foreach ( $p->get_segments( true ) as $seg ) {
+			$bytes = $p->read_at( (int) $seg['id'], 0, (int) $seg['size'] );
+			foreach ( \explode( "\n", $bytes ) as $line ) {
+				if ( '' !== $line ) {
+					$out[] = Message::unpacked( $line );
+				}
+			}
 		}
 		return $out;
 	}
@@ -1433,8 +1454,8 @@ class FlameBuilderTest extends TestCase {
 		$this->assertArrayHasKey( $bucket, $cats );
 		$this->assertArrayHasKey( 'wpdb', $cats[ $bucket ] );
 		$this->assertArrayHasKey( 'total', $cats[ $bucket ] );
-		$this->assertEqualsWithDelta( 0.4, $cats[ $bucket ]['wpdb']['t'], 1e-6 );
-		$this->assertEqualsWithDelta( 12.0, $cats[ $bucket ]['wpdb']['c'], 1e-6 );
+		$this->assertEqualsWithDelta( 0.4, $cats[ $bucket ]['wpdb'][ Stats_Store::CAT_MS ], 1e-6 );
+		$this->assertEqualsWithDelta( 12.0, $cats[ $bucket ]['wpdb'][ Stats_Store::CAT_CALLS ], 1e-6 );
 
 		// Leaderboard bucket holds sums-not-means.
 		$lb = $this->get_leaderboard_bucket( $store, $bucket );
@@ -1482,8 +1503,35 @@ class FlameBuilderTest extends TestCase {
 		$fb->set_clock( null );
 
 		$stats = $this->get_stats( $fb );
-		$this->assertSame( 2, $stats['mirror_held_frames'], 'both frames are held' );
-		$this->assertGreaterThan( 9000, $stats['mirror_held_bytes'], 'and their bytes are reported' );
+		$this->assertGreaterThan( 9000, $stats['mirror_held_bytes'], 'their bytes are reported' );
+	}
+
+	public function test_held_frames_reports_the_namespace_the_backstop_binds_on(): void {
+		// `MAX_HELD_FRAMES` is PER namespace, so a cross-namespace TOTAL cannot
+		// warn: six namespaces holding five thousand each read as thirty
+		// thousand with nothing near the bound, while one spilling on every
+		// write reads as ten thousand and fifty. The payload therefore reports
+		// the WIDEST single namespace, which is the number the bound is against.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		[ $fb ]     = $this->mirrored_builder( $store, 'flames-stats' );
+
+		$open = 1_700_000_000;
+		$fb->set_clock( static fn() => $open );
+		$bucket = Stats_Store::bucket_key( $open );
+		// Four frames across three namespaces; the widest holds two.
+		$this->set_hourly_bucket( $store, $bucket, [ 'count' => 41 ] );
+		$this->set_dimensional_bucket( $store, 'status', $bucket, [ '418' => [ 'c' => 9, 's' => 0, 'm' => 0 ] ] );
+		$this->set_category_bucket( $store, $bucket, [ 'zither render' => self::cat_entry( 7.5, 3, 1 ) ] );
+		$this->set_category_bucket( $store, Stats_Store::bucket_key( $open + 300 ), [ 'zither render' => self::cat_entry( 2.5, 1, 1 ) ] );
+		$fb->save_state();
+		$fb->set_clock( null );
+
+		$this->assertSame(
+			2,
+			$this->get_stats( $fb )['mirror_held_frames'],
+			'the widest namespace, not the four-frame total'
+		);
 	}
 
 	public function test_the_over_budget_tripwire_names_what_did_not_fit(): void {
@@ -1904,17 +1952,17 @@ class FlameBuilderTest extends TestCase {
 		$bucket = \reset( $buckets );
 
 		// One request in the bucket, whatever the incoming categories are called.
-		$this->assertSame( 1, $bucket['total']['n'], 'rollup counts requests, not categories' );
-		$this->assertEqualsWithDelta( 250.0, $bucket['total']['t'], 1e-6, 'rollup time is request wall time' );
-		$this->assertEqualsWithDelta( 10.0, $bucket['total']['c'], 1e-6, 'rollup counts every category call' );
+		$this->assertSame( 1, $bucket['total'][ Stats_Store::CAT_REQUESTS ], 'rollup counts requests, not categories' );
+		$this->assertEqualsWithDelta( 250.0, $bucket['total'][ Stats_Store::CAT_MS ], 1e-6, 'rollup time is request wall time' );
+		$this->assertEqualsWithDelta( 10.0, $bucket['total'][ Stats_Store::CAT_CALLS ], 1e-6, 'rollup counts every category call' );
 
 		// The colliding event still gets its own row, under a distinct key.
 		$this->assertArrayHasKey( 'wpdb', $bucket );
 		$rows = \array_diff( \array_keys( $bucket ), [ 'total', 'wpdb' ] );
 		$this->assertCount( 1, $rows, 'the colliding event keeps a row of its own' );
 		$own = $bucket[ \reset( $rows ) ];
-		$this->assertEqualsWithDelta( 40.0, $own['t'], 1e-6 );
-		$this->assertEqualsWithDelta( 7.0, $own['c'], 1e-6 );
+		$this->assertEqualsWithDelta( 40.0, $own[ Stats_Store::CAT_MS ], 1e-6 );
+		$this->assertEqualsWithDelta( 7.0, $own[ Stats_Store::CAT_CALLS ], 1e-6 );
 	}
 
 	public function test_handle_request_unknown_verb_returns_error(): void {
@@ -2972,8 +3020,8 @@ class FlameBuilderTest extends TestCase {
 		$fb->set_stats_store( $store );
 
 		$untouched = [
-			'total' => [ 't' => 99, 'c' => 99, 'n' => 99 ],
-			'old'   => [ 't' => 99, 'c' => 99, 'n' => 99 ],
+			'total' => self::cat_entry( 99, 99, 99 ),
+			'old'   => self::cat_entry( 99, 99, 99 ),
 		];
 		$this->set_category_bucket( $store, '1999-01-01-00-00', $untouched );
 
@@ -3046,7 +3094,7 @@ class FlameBuilderTest extends TestCase {
 		$this->assertArrayHasKey( $bucket, $srv_cats );
 		$this->assertArrayHasKey( 'wpdb', $srv_cats[ $bucket ] );
 		$this->assertArrayHasKey( 'total', $srv_cats[ $bucket ], 'per-server "total" present' );
-		$this->assertEqualsWithDelta( 0.4, $srv_cats[ $bucket ]['wpdb']['t'], 1e-6 );
+		$this->assertEqualsWithDelta( 0.4, $srv_cats[ $bucket ]['wpdb'][ Stats_Store::CAT_MS ], 1e-6 );
 	}
 
 	public function test_hub_mode_per_server_dim_skips_server_dim(): void {
@@ -3396,7 +3444,7 @@ class FlameBuilderTest extends TestCase {
 		$fb->set_stats_store( $store );
 
 		$stale_dim = [ '418' => [ 'c' => 83, 's' => 9.5, 'm' => 4.5 ] ];
-		$stale_cat = [ 'sabbath' => [ 't' => 7.5, 'c' => 61, 'n' => 3 ] ];
+		$stale_cat = [ 'sabbath' => self::cat_entry( 7.5, 61, 3 ) ];
 		$this->set_dimensional_bucket( $store, 'status', '1999-01-01-00-00', $stale_dim );
 		$this->set_category_bucket( $store, '1999-01-01-00-00', $stale_cat );
 
@@ -3502,7 +3550,7 @@ class FlameBuilderTest extends TestCase {
 		$fb->restore_state( [
 			'pending' => [
 				$bucket => [
-					'cat_by_server' => [ '' => [ 'db' => [ 't' => 4.5, 'c' => 71, 'n' => 3 ] ] ],
+					'cat_by_server' => [ '' => [ 'db' => self::cat_entry( 4.5, 71, 3 ) ] ],
 					'dim_by_server' => [ '' => [ 'status' => [ '503' => [ 'c' => 67, 's' => 2.5, 'm' => 1.5 ] ] ] ],
 				],
 			],
@@ -3705,7 +3753,15 @@ class FlameBuilderTest extends TestCase {
 		$this->assertNotContains( Stats_Store::entry_key( 0, 'url:h5' ), $url_keys, 'lowest-traffic URL evicted' );
 	}
 
-	public function test_url_dim_and_url_cat_bounded_to_top_100(): void {
+	/**
+	 * Every per-URL frame reaches the durable mirror, whatever its traffic rank.
+	 *
+	 * A rank cap here kept only the busiest hundred, so a quiet URL lived in the
+	 * shared cache alone: when an install's cache scope moved under it, the
+	 * site-wide series rehydrated from the mirror and that URL's history was
+	 * gone, with nothing to recover it from.
+	 */
+	public function test_url_dim_and_url_cat_mirror_every_frame(): void {
 		Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$p          = $this->make_partition( 'flames-stats' );
@@ -3715,28 +3771,164 @@ class FlameBuilderTest extends TestCase {
 		$fb->set_stats_store( $store );
 		$fb->set_stats_target( $p->name() );
 
-		// 105 distinct URLs, highest-traffic inserted FIRST (rank DESCENDING) so eviction
-		// order != insertion order — a rank that misreads the value shape would fall back to
-		// evict-by-insertion and keep the wrong 100. Persisted shapes, per bucket:
-		// url_dim is { dim => { val => {c,s,m} } }; url_cat is { category => {t,c,n} }.
-		for ( $i = 1; $i <= 105; $i++ ) {
-			$rank = 106 - $i; // h1 busiest (105), h105 quietest (1).
-			$this->set_url_dimensional_bucket( $store, "h{$i}", '1700000000', [ 'status' => [ '200' => [ 'c' => $rank, 's' => 0, 'm' => 0 ] ] ] );
-			$this->set_url_category_bucket( $store, "h{$i}", '1700000000', [ 'db' => [ 't' => 0, 'c' => 0, 'n' => $rank ], 'total' => [ 't' => 0, 'c' => 0, 'n' => $rank ] ] );
+		// 137 distinct URLs, busiest FIRST, so a rank cap keeps the head and
+		// drops the tail rather than dropping by insertion order. Counts run
+		// 415, 412, 409 … 7 — distinct from every other fixture's ranks.
+		// Persisted shapes, per bucket: url_dim is { dim => { val => {c,s,m} } };
+		// url_cat is { category => CAT_SUMS entry }.
+		for ( $i = 1; $i <= 137; $i++ ) {
+			$rank = ( 137 - $i ) * 3 + 7;
+			$this->set_url_dimensional_bucket( $store, "q{$i}", '1655444333', [ 'status' => [ '200' => [ 'c' => $rank, 's' => 0, 'm' => 0 ] ] ] );
+			$this->set_url_category_bucket( $store, "q{$i}", '1655444333', [ 'db' => self::cat_entry( 0, 0, $rank ), 'total' => self::cat_entry( 0, 0, $rank ) ] );
 		}
 
 		$fb->save_state();
 		$p->flush();
 
-		$frames    = \array_keys( $this->read_mirror_frames( $p ) );
-		$dim_keys  = \array_filter( $frames, static fn ( string $k ): bool => \str_starts_with( $k, Stats_Store::entry_key( 0, 'url_dim:' ) ) );
-		$cat_keys  = \array_filter( $frames, static fn ( string $k ): bool => \str_starts_with( $k, Stats_Store::entry_key( 0, 'url_cat:' ) ) );
-		$this->assertCount( 100, $dim_keys, 'top-100 url_dim retained' );
-		$this->assertCount( 100, $cat_keys, 'top-100 url_cat retained' );
-		$this->assertContains( Stats_Store::entry_key( 0, 'url_dim:h1:1700000000' ), $dim_keys, 'busiest url_dim retained' );
-		$this->assertNotContains( Stats_Store::entry_key( 0, 'url_dim:h105:1700000000' ), $dim_keys, 'quietest url_dim evicted' );
-		$this->assertContains( Stats_Store::entry_key( 0, 'url_cat:h1:1700000000' ), $cat_keys, 'busiest url_cat retained' );
-		$this->assertNotContains( Stats_Store::entry_key( 0, 'url_cat:h105:1700000000' ), $cat_keys, 'quietest url_cat evicted' );
+		$frames   = \array_keys( $this->read_mirror_frames( $p ) );
+		$dim_keys = \array_filter( $frames, static fn ( string $k ): bool => \str_starts_with( $k, Stats_Store::entry_key( 0, 'url_dim:' ) ) );
+		$cat_keys = \array_filter( $frames, static fn ( string $k ): bool => \str_starts_with( $k, Stats_Store::entry_key( 0, 'url_cat:' ) ) );
+		$this->assertCount( 137, $dim_keys, 'every url_dim frame mirrored' );
+		$this->assertCount( 137, $cat_keys, 'every url_cat frame mirrored' );
+		$this->assertContains( Stats_Store::entry_key( 0, 'url_dim:q137:1655444333' ), $dim_keys, 'the quietest url_dim among them' );
+		$this->assertContains( Stats_Store::entry_key( 0, 'url_cat:q137:1655444333' ), $cat_keys, 'the quietest url_cat among them' );
+	}
+
+	/**
+	 * The three DERIVED hour tiers stay out of the mirror: each is rebuilt from
+	 * fine buckets the mirror already keeps in full, so a durable copy would
+	 * store the same information twice on the axis decision 11 watches.
+	 */
+	public function test_derived_hour_tiers_are_refused_by_the_mirror(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		/** @var CountingIndexPartition $p */
+		[ , $p ] = $this->mirrored_builder( $store, 'flames-stats', CountingIndexPartition::class );
+
+		$keys = [
+			Stats_Store::NS_URLS_HOUR . ':7:' . self::live_hour(),
+			Stats_Store::NS_URLNAMES_HOUR . ':7:' . self::live_hour(),
+			Stats_Store::NS_LB_HOUR . ':' . self::live_hour(),
+		];
+		// Seeded ANYWAY: a reader that looked WOULD find these, so what fails
+		// here is the looking, not an empty partition.
+		foreach ( $keys as $key ) {
+			$this->fill_partition_entry( $p, Stats_Store::entry_key( 0, $key ), [ 'seeded' => 4931 ], 86400, \time() );
+		}
+		$p->flush();
+		$p->index_scans = 0;
+
+		$this->assertSame( [], ( $store->rehydrate )( $keys ), 'no derived hour tier is read back' );
+		$this->assertSame( 0, $p->index_scans, 'and the futile walk never happens' );
+	}
+
+	/**
+	 * The held buffer has a hard ceiling, and reaching it costs a redundant
+	 * write rather than a frame: the overflow goes to the partition early
+	 * instead of being dropped, so nothing the buffer stops holding is lost.
+	 */
+	public function test_held_frames_over_the_backstop_spill_instead_of_dropping(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$p          = $this->make_partition( 'flames-stats' );
+
+		$fb = new TinyHoldFlameBuilder();
+		$fb->name( 'fb' );
+		$fb->set_stats_store( $store );
+		$fb->set_stats_target( $p->name() );
+
+		// The OPEN bucket, so nothing here flushes on its own — every frame
+		// that reaches the partition got there by spilling.
+		$bucket = Stats_Store::bucket_key( \time() );
+		$wrote  = [];
+		for ( $i = 1; $i <= 9; $i++ ) {
+			$this->set_url_dimensional_bucket( $store, "s{$i}", $bucket, [ 'status' => [ '200' => [ 'c' => $i * 11 + 3, 's' => 0, 'm' => 0 ] ] ] );
+			$wrote[] = Stats_Store::entry_key( 0, "url_dim:s{$i}:{$bucket}" );
+		}
+		$p->flush();
+
+		$spilled = \array_keys( $this->read_mirror_frames( $p ) );
+		$held    = \array_keys( $fb->save_state()['mirror']['frames'][ Stats_Store::NS_URL_DIM ] );
+
+		$this->assertCount( 3, $held, 'the spill leaves the band below the backstop free' );
+		$this->assertCount( 6, $spilled, 'the overflow was written, not dropped' );
+		\sort( $wrote );
+		$both = \array_merge( $spilled, $held );
+		\sort( $both );
+		$this->assertSame( $wrote, $both, 'every frame is either held or already durable' );
+	}
+
+	/**
+	 * The backstop's scan is amortized across the writes past it, not paid on
+	 * every one of them.
+	 *
+	 * The buffer pins at the bound under exactly the traffic the bound exists
+	 * for — a crawler, or a query-string spray of unique URLs — so re-ranking
+	 * the whole buffer per write makes the cost quadratic in the spray length,
+	 * inside the worker whose failure mode the bound was added to prevent. One
+	 * scan spills a BAND, and the next is not due until that headroom refills:
+	 * sixty writes past a hundred-frame bound cost six scans, not sixty.
+	 */
+	public function test_the_backstop_scan_is_amortized_across_the_writes_past_it(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$p          = $this->make_partition( 'flames-stats' );
+
+		$fb = new CountingRankFlameBuilder();
+		$fb->name( 'fb' );
+		$fb->set_stats_store( $store );
+		$fb->set_stats_target( $p->name() );
+
+		// The OPEN bucket, so nothing drains on its own.
+		$bucket = Stats_Store::bucket_key( \time() );
+		CountingRankFlameBuilder::$rank_reads = 0;
+		for ( $i = 1; $i <= 160; $i++ ) {
+			$this->set_url_dimensional_bucket( $store, "z{$i}", $bucket, [ 'status' => [ '200' => [ 'c' => $i * 13 + 5, 's' => 0, 'm' => 0 ] ] ] );
+		}
+
+		$this->assertLessThan(
+			1200,
+			CountingRankFlameBuilder::$rank_reads,
+			'sixty writes past the bound must not each re-rank the whole buffer'
+		);
+		$held = $fb->save_state()['mirror']['frames'][ Stats_Store::NS_URL_DIM ];
+		$this->assertGreaterThanOrEqual( 90, \count( $held ), 'the band, and no deeper' );
+		$this->assertLessThanOrEqual( 100, \count( $held ), 'the backstop bound it' );
+	}
+
+	/**
+	 * With no partition to spill INTO, the backstop refuses NEW frames rather
+	 * than discarding held ones — the same reading `flush_stats_mirror()` takes
+	 * of a name that does not resolve, which is that it may resolve next
+	 * checkpoint. A refused frame's value is still in memcache and its bucket's
+	 * next write re-offers it.
+	 */
+	public function test_held_frames_survive_a_backstop_with_no_partition_to_spill_into(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+
+		$fb = new TinyHoldFlameBuilder();
+		$fb->name( 'fb' );
+		$fb->set_stats_store( $store );
+		$fb->set_stats_target( 'no-stats-partition-here' );
+
+		$bucket = Stats_Store::bucket_key( \time() );
+		for ( $i = 1; $i <= 9; $i++ ) {
+			$this->set_url_dimensional_bucket( $store, "d{$i}", $bucket, [ 'status' => [ '200' => [ 'c' => $i * 17 + 5, 's' => 0, 'm' => 0 ] ] ] );
+		}
+
+		$held = \array_keys( $fb->save_state()['mirror']['frames'][ Stats_Store::NS_URL_DIM ] );
+		\sort( $held );
+		$this->assertSame(
+			[
+				Stats_Store::entry_key( 0, "url_dim:d1:{$bucket}" ),
+				Stats_Store::entry_key( 0, "url_dim:d2:{$bucket}" ),
+				Stats_Store::entry_key( 0, "url_dim:d3:{$bucket}" ),
+				Stats_Store::entry_key( 0, "url_dim:d4:{$bucket}" ),
+			],
+			$held,
+			'nothing already held is discarded, and the bound still binds'
+		);
 	}
 
 	public function test_flame_requires_profiling_detail(): void {
@@ -4050,15 +4242,15 @@ class FlameBuilderTest extends TestCase {
 				if ( null === $entry || $entry['key_hash'] !== Log_Manager::url_hash( $key ) ) {
 					return true;
 				}
-				$found = Message::unpacked( $p->read_at( $segment, $entry['offset'], $entry['length'] ) )[ Message::VALUE ];
+				$found = Message::unpacked( $p->read_at( $segment, $entry['offset'], $entry['length'] ) );
 				return false;
 			},
 			true
 		);
 
 		$this->assertIsArray( $found, 'the index located the hourly frame' );
-		$this->assertSame( $key, $found['key'] );
-		$this->assertSame( [ 'count' => 37 ], $found['data'] );
+		$this->assertSame( $key, $found[ Message::KEY ] );
+		$this->assertSame( [ 'data' => [ 'count' => 37 ], 'ttl' => 86400 ], $found[ Message::VALUE ] );
 	}
 
 	public function test_a_closed_bucket_is_not_re_mirrored_when_a_later_bucket_fills(): void {
@@ -4773,6 +4965,195 @@ class FlameBuilderTest extends TestCase {
 		$rows = self::named_url_rows( $fb->save_state()['pending'][ $bucket ]['url_stats'] ?? [] );
 		$this->assertSame( 7, $rows[ $hash ]['count'] ?? 0 );
 	}
+	// --- Frame size: one key, rounded milliseconds, positional categories ---
+
+	/**
+	 * A frame the new writer produced and the new reader read back yields the
+	 * identical category aggregate — the three size changes are only correct
+	 * together, so the round trip is what pins them.
+	 */
+	public function test_a_mirrored_category_frame_round_trips_its_aggregate(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		[ $fb, $p ] = $this->mirrored_builder( $store, 'flames-stats' );
+
+		$bucket = self::live_bucket();
+		$stored = [
+			'zither render'  => [
+				Stats_Store::CAT_MS       => 913.207,
+				Stats_Store::CAT_CALLS    => 47,
+				Stats_Store::CAT_REQUESTS => 11,
+			],
+			'quokka dispatch' => [
+				Stats_Store::CAT_MS       => 12.049,
+				Stats_Store::CAT_CALLS    => 3,
+				Stats_Store::CAT_REQUESTS => 2,
+			],
+		];
+		$this->set_category_bucket( $store, $bucket, $stored );
+		$fb->save_state();
+		$p->flush();
+
+		$key   = Stats_Store::NS_CATEGORIES . ':' . $bucket;
+		$found = ( $store->rehydrate )( [ $key ] );
+
+		$this->assertSame( $stored, $found[ $key ]['value'] ?? null, 'the aggregate survives the round trip unchanged' );
+	}
+
+	/**
+	 * The collision check reads the key off `Message::KEY`, so a frame the
+	 * index landed on under another key's hash is still rejected.
+	 */
+	public function test_a_frame_reached_under_another_keys_hash_is_rejected(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$wanted     = 'hourly:' . self::live_hour();
+		$collided   = Log_Manager::url_hash( Stats_Store::entry_key( 0, $wanted ) );
+
+		$p = $this->make_partition( 'flames-stats' );
+		// Every line indexed under the WANTED key's hash: a forced collision.
+		$p->with_index(
+			static fn ( array $message, array $position ): string => $collided
+				. \str_pad( (string) $position['segment'], 6, '0', STR_PAD_LEFT )
+				. \str_pad( (string) $position['offset'], 10, '0', STR_PAD_LEFT )
+				. \str_pad( (string) $position['length'], 8, '0', STR_PAD_LEFT )
+		);
+		$fb = new Flame_Builder_Node();
+		$fb->name( 'fb' );
+		$fb->set_stats_store( $store );
+		$fb->set_stats_target( $p->name() );
+
+		$other = 'hourly:' . \gmdate( 'Y-m-d-H', \time() - 7200 );
+		$this->fill_partition_entry( $p, Stats_Store::entry_key( 0, $other ), [ 'count' => 61 ], 86400, \time() );
+		$p->flush();
+
+		$this->assertSame( [], ( $store->rehydrate )( [ $wanted ] ), 'another key\'s frame is not filed under this one' );
+	}
+
+	/** The frame carries the key once — `Message::KEY` — and not again inside VALUE. */
+	public function test_a_mirror_frame_carries_its_key_once(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		[ $fb, $p ] = $this->mirrored_builder( $store, 'flames-stats' );
+
+		$this->set_hourly_bucket( $store, self::live_hour(), [ 'count' => 61 ] );
+		$fb->save_state();
+		$p->flush();
+
+		$key = Stats_Store::entry_key( 0, 'hourly:' . self::live_hour() );
+		$this->assertSame(
+			[ $key ],
+			\array_column( $this->raw_mirror_messages( $p ), Message::KEY ),
+			'the key is the Message key'
+		);
+		$this->assertSame(
+			[ [ 'data' => [ 'count' => 61 ], 'ttl' => 86400 ] ],
+			\array_column( $this->raw_mirror_messages( $p ), Message::VALUE ),
+			'and VALUE carries no second copy of it'
+		);
+	}
+
+	/**
+	 * A category's milliseconds are rounded where the value is stored, so a
+	 * full-precision double never reaches the frame.
+	 */
+	public function test_category_milliseconds_are_stored_at_display_precision(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+
+		$now = \time();
+		$this->fill_request( $fb, $this->completed_request( [
+			'duration_ms' => 500.51303300000006,
+			'timestamp'   => $now,
+			'profiles'    => [
+				'zither render' => [
+					'time'    => 41.903852000000015,
+					'count'   => 7,
+					'ts'      => $now,
+					'entries' => [],
+				],
+			],
+		] ) );
+		$fb->flush();
+
+		$cats = $this->cat_series( $store )[ Stats_Store::bucket_key( $now ) ];
+		$this->assertSame( 41.904, $cats['zither render'][ Stats_Store::CAT_MS ], 'the category time is rounded' );
+		$this->assertSame( 500.513, $cats['total'][ Stats_Store::CAT_MS ], 'and so is the rollup' );
+		$this->assertSame( 7, $cats['zither render'][ Stats_Store::CAT_CALLS ], 'a count is untouched' );
+		$this->assertSame( 1, $cats['zither render'][ Stats_Store::CAT_REQUESTS ], 'and so is a sample count' );
+	}
+
+	/**
+	 * A pending category slot carried over from a pre-deploy checkpoint is
+	 * DISCARDED, never read.
+	 *
+	 * The offsetlog checkpoint is not salted, so the first respawn after a
+	 * deploy really does meet the old named slot. Adding to it warns once per
+	 * category per bucket, and reading it would be a dual-format reader — so
+	 * the slot is replaced, losing one worker's un-flushed delta, which
+	 * `restore_state()` already declares acceptable.
+	 */
+	public function test_a_pending_category_slot_from_a_pre_deploy_checkpoint_is_discarded(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+
+		$now    = \time();
+		$bucket = Stats_Store::bucket_key( $now );
+		$fb->restore_state( [
+			'pending' => [ $bucket => [ 'cat' => [ 'zither render' => [ 't' => 812.5, 'c' => 61, 'n' => 7 ] ] ] ],
+		] );
+		$this->fill_request( $fb, $this->completed_request( [
+			'duration_ms' => 40.0,
+			'timestamp'   => $now,
+			'profiles'    => [
+				'zither render' => [ 'time' => 9.25, 'count' => 3, 'ts' => $now, 'entries' => [] ],
+			],
+		] ) );
+
+		// A call count accumulates as a float and becomes whole at the store.
+		$this->assertSame(
+			[ Stats_Store::CAT_MS => 9.25, Stats_Store::CAT_CALLS => 3.0, Stats_Store::CAT_REQUESTS => 1 ],
+			$fb->save_state()['pending'][ $bucket ]['cat']['zither render'],
+			'the request lands in a fresh positional slot; the old shape is gone'
+		);
+	}
+
+	/**
+	 * The three changes together, measured. This fixed twenty-category frame
+	 * packs to 799 bytes; the same frame carrying the key twice, at full double
+	 * precision, with named category fields, packs to 1,294 — 38.2% more. The
+	 * cap is what makes a change that reinstates any of the three fail here
+	 * rather than quietly cost that in production.
+	 */
+	public function test_a_mirrored_category_frame_stays_under_its_byte_budget(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		[ $fb, $p ] = $this->mirrored_builder( $store, 'flames-stats' );
+
+		$cats = [];
+		for ( $i = 0; $i < 20; $i++ ) {
+			$cats[ "zither stage {$i}" ] = [
+				Stats_Store::CAT_MS       => \round( 913.207 + ( $i / 7 ), 3 ),
+				Stats_Store::CAT_CALLS    => 47 + $i,
+				Stats_Store::CAT_REQUESTS => 11 + $i,
+			];
+		}
+		$this->set_category_bucket( $store, self::live_bucket(), $cats );
+		$fb->save_state();
+		$p->flush();
+
+		$bytes = \array_map(
+			static fn ( array $m ): int => \strlen( Message::packed( $m ) ),
+			$this->raw_mirror_messages( $p )
+		);
+		$this->assertCount( 1, $bytes );
+		$this->assertLessThanOrEqual( 820, $bytes[0], 'twenty categories in one frame' );
+	}
+
 }
 
 /**
@@ -4781,6 +5162,35 @@ class FlameBuilderTest extends TestCase {
  */
 class TinyInternFlameBuilder extends Flame_Builder_Node {
 	protected const INTERN_TABLE_LIMIT = 3;
+}
+
+/**
+ * A Flame_Builder whose held-frame backstop is four, so a test can reach the
+ * spill without pushing ten thousand distinct URLs through one bucket.
+ */
+class TinyHoldFlameBuilder extends Flame_Builder_Node {
+	protected const MAX_HELD_FRAMES = 4;
+}
+
+/**
+ * A Flame_Builder that counts rank reads, so a test can assert the backstop's
+ * COMPLEXITY rather than its wall clock. The override delegates to the real
+ * `mirror_traffic_rank()`, so what is measured is the production body running.
+ */
+class CountingRankFlameBuilder extends Flame_Builder_Node {
+	protected const MAX_HELD_FRAMES = 100;
+
+	/** @var int Rank reads since a test last zeroed it. */
+	public static int $rank_reads = 0;
+
+	/**
+	 * @param array<array-key,mixed> $data Value being mirrored.
+	 * @param string                 $ns   Namespace it belongs to.
+	 */
+	protected static function mirror_traffic_rank( array $data, string $ns ): int {
+		++self::$rank_reads;
+		return parent::mirror_traffic_rank( $data, $ns );
+	}
 }
 
 /** Counts index scans, so a test can pin the batch path to ONE pass. */

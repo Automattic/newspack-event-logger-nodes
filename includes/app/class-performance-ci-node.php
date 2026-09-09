@@ -1193,12 +1193,13 @@ class Performance_CI_Node extends Service_CI_Node {
 	 *
 	 * Hand-rolled per namespace, a reader reaches for `Core::as_*`, the
 	 * permissive family that casts any scalar, against values the writer stored
-	 * through the refusing `num_*` family — and counts `c` as a float where
-	 * `CAT_SUMS` calls it whole. One producer, one reader, one table.
+	 * through the refusing `num_*` family — and counts `CAT_CALLS` as a float
+	 * where `CAT_SUMS` calls it whole. One producer, one reader, one table.
 	 *
-	 * @param array<string,mixed> $merged Mutated.
-	 * @param array<string,mixed> $rows   Inbound, keyed by bucket.
-	 * @param array<string,bool>  $fields Field name => is a whole count.
+	 * @param array<string,mixed>   $merged Mutated.
+	 * @param array<string,mixed>   $rows   Inbound, keyed by bucket.
+	 * @param array<array-key,bool> $fields Field key => is a whole count; a name
+	 *                                      for `DIM_SUMS`, an index for `CAT_SUMS`.
 	 */
 	private static function merge_buckets_into( array &$merged, array $rows, array $fields ): void {
 		foreach ( $rows as $bucket => $values ) {
@@ -2139,22 +2140,27 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * The category series in its WIRE shape: a name table and positional rows.
 	 *
 	 * Nothing is dropped — every category and every bucket survives. What goes
-	 * is repetition. A merged series is `{ bucket => { name => {t,c,n} } }`, so
-	 * one category's NAME is spelled once per bucket it appears in — 288 times
-	 * across a retention window — and each value spends ~18 bytes of JSON key
-	 * names to carry three numbers. Measured on a production hub: the series is
-	 * the largest thing the `overview` reply carries, and the reply was being
-	 * cut off before it finished.
+	 * is repetition: one category's NAME is spelled once per bucket it appears
+	 * in — 288 times across a retention window. Measured on a production hub:
+	 * the series is the largest thing the `overview` reply carries, and the
+	 * reply was being cut off before it finished.
 	 *
 	 * This is decision 18's argument at the WIRE rather than in the store, and
-	 * the boundary is the same one: positional above, named below.
+	 * the boundary is the same one — but only the NAME crosses it here: a
+	 * stored entry is already `CAT_SUMS`-indexed, so the row is a re-order.
 	 *
-	 * `t` is rounded to display precision. It is a millisecond sum a chart draws
-	 * as seconds-per-second or as a mean, so four decimal places is a tenth of
-	 * a nanosecond — past anything rendered, and the longest float the payload
-	 * carries otherwise.
+	 * `CAT_MS` is rounded all the same, and the store having rounded it is not
+	 * the reason it can be skipped — it is the reason it CANNOT. What arrives
+	 * here is a SUM across one `Stats_Store` per flame-builder partition, and a
+	 * sum of doubles at `CAT_MS_DECIMALS` places is not itself at that
+	 * precision: 0.1 + 0.2 serializes as 0.30000000000000004, nineteen
+	 * characters for a number a chart draws as three. Measured over 5,000
+	 * realistic millisecond pairs, 22.1% of two-store sums and 30.0% of
+	 * four-store sums serialize LONGER than their rounded value — the same
+	 * bloat the stored rounding removes, put back on the wire of every
+	 * multi-partition install.
 	 *
-	 * @param array<string,mixed> $merged `{ bucket => { name => {t,c,n} } }`.
+	 * @param array<string,mixed> $merged `{ bucket => { name => CAT_SUMS entry } }`.
 	 * @return array{names:list<string>,buckets:array<string,list<array{0:int,1:float,2:int,3:int}>>}
 	 */
 	private static function compact_category_series( array $merged ): array {
@@ -2167,9 +2173,9 @@ class Performance_CI_Node extends Service_CI_Node {
 				$stat           = Core::arr( $stats );
 				$rows[]         = [
 					$names[ $name ],
-					\round( Core::num_float( $stat['t'] ?? null ), 4 ),
-					Core::num_int( $stat['c'] ?? null ),
-					Core::num_int( $stat['n'] ?? null ),
+					\round( Core::num_float( $stat[ Stats_Store::CAT_MS ] ?? null ), Stats_Store::CAT_MS_DECIMALS ),
+					Core::num_int( $stat[ Stats_Store::CAT_CALLS ] ?? null ),
+					Core::num_int( $stat[ Stats_Store::CAT_REQUESTS ] ?? null ),
 				];
 			}
 			$buckets[ $bucket ] = $rows;

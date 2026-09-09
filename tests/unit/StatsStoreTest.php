@@ -59,6 +59,29 @@ class StatsStoreTest extends TestCase {
 		$this->assertSame( \range( 0, 7 ), \array_keys( Stats_Store::URL_SRV_SUMS ) );
 	}
 
+	public function test_the_category_entry_is_positional_and_contiguous(): void {
+		// The same mechanism for the second value decision 18 governs: every
+		// CAT_SUMS field ADDS, so the table is the whole index set, and a
+		// fourth field appended past the end has to move the assertion.
+		$this->assertSame( \range( 0, 2 ), \array_keys( Stats_Store::CAT_SUMS ) );
+	}
+
+	public function test_a_merged_entry_keeps_only_what_its_field_table_names(): void {
+		// The positional switch is the first change to depend on the stated
+		// invariant, and it was not true: the merged entry kept `$into`'s own
+		// keys too. A pre-deploy `{t,c,n}` entry summed with a positional one
+		// became a six-key hybrid that `json_encode` emits as an OBJECT —
+		// larger than either shape, and re-mirrored that way for the bucket's
+		// life. The old shape is DISCARDED, never translated.
+		$merged = Stats_Store::sum_fields(
+			[ 'zither render' => [ 't' => 7.5, 'c' => 61, 'n' => 3 ] ],
+			[ 'zither render' => self::cat_entry( 2.25, 4, 1 ) ],
+			Stats_Store::CAT_SUMS
+		);
+
+		$this->assertSame( '{"zither render":[2.25,4,1]}', \wp_json_encode( $merged ) );
+	}
+
 	public function test_the_url_index_is_sharded_by_url_hash(): void {
 		// One blob per bucket was what every cap in this schema was defending:
 		// the whole thing is read-modify-written on each five-second flush and
@@ -709,14 +732,14 @@ class StatsStoreTest extends TestCase {
 
 	public function test_category_bucket_round_trips_global_and_per_server(): void {
 		$store = $this->make_store();
-		$this->set_category_bucket( $store, '2026-02-03-04-05', [ 'wpdb' => [ 't' => 8.5, 'c' => 23, 'n' => 4 ] ] );
-		$this->set_category_bucket( $store, '2026-02-03-04-05', [ 'wpdb' => [ 't' => 1.5, 'c' => 66, 'n' => 2 ] ], 'web07' );
+		$this->set_category_bucket( $store, '2026-02-03-04-05', [ 'wpdb' => self::cat_entry( 8.5, 23, 4 ) ] );
+		$this->set_category_bucket( $store, '2026-02-03-04-05', [ 'wpdb' => self::cat_entry( 1.5, 66, 2 ) ], 'web07' );
 
-		$this->assertSame( 23, $this->get_category_bucket( $store, '2026-02-03-04-05' )['wpdb']['c'] );
-		$this->assertSame( 66, $this->get_category_bucket( $store, '2026-02-03-04-05', 'web07' )['wpdb']['c'] );
+		$this->assertSame( 23, $this->get_category_bucket( $store, '2026-02-03-04-05' )['wpdb'][ Stats_Store::CAT_CALLS ] );
+		$this->assertSame( 66, $this->get_category_bucket( $store, '2026-02-03-04-05', 'web07' )['wpdb'][ Stats_Store::CAT_CALLS ] );
 		$this->assertSame(
 			23,
-			$store->get_category_buckets( [ '2026-02-03-04-05' ] )['2026-02-03-04-05']['wpdb']['c']
+			$store->get_category_buckets( [ '2026-02-03-04-05' ] )['2026-02-03-04-05']['wpdb'][ Stats_Store::CAT_CALLS ]
 		);
 	}
 
@@ -740,25 +763,25 @@ class StatsStoreTest extends TestCase {
 
 	public function test_url_category_bucket_round_trips(): void {
 		$store = $this->make_store();
-		$this->set_url_category_bucket( $store, 'ab12cd34ef56', '2026-02-03-04-05', [ 'wpdb' => [ 't' => 3.5, 'c' => 57, 'n' => 2 ] ] );
+		$this->set_url_category_bucket( $store, 'ab12cd34ef56', '2026-02-03-04-05', [ 'wpdb' => self::cat_entry( 3.5, 57, 2 ) ] );
 
-		$this->assertSame( 57, $this->get_url_category_bucket( $store, 'ab12cd34ef56', '2026-02-03-04-05' )['wpdb']['c'] );
+		$this->assertSame( 57, $this->get_url_category_bucket( $store, 'ab12cd34ef56', '2026-02-03-04-05' )['wpdb'][ Stats_Store::CAT_CALLS ] );
 		$this->assertSame(
 			57,
-			$store->get_url_category_buckets( 'ab12cd34ef56', [ '2026-02-03-04-05' ] )['2026-02-03-04-05']['wpdb']['c']
+			$store->get_url_category_buckets( 'ab12cd34ef56', [ '2026-02-03-04-05' ] )['2026-02-03-04-05']['wpdb'][ Stats_Store::CAT_CALLS ]
 		);
 	}
 
 	public function test_a_scope_is_a_different_keyspace_not_a_shared_one(): void {
 		// '' vs a named server, and one URL vs another, must not collide.
 		$store = $this->make_store();
-		$this->set_category_bucket( $store, 'b1', [ 'wpdb' => [ 'c' => 13 ] ] );
-		$this->set_url_category_bucket( $store, 'aaaaaaaaaaaa', 'b1', [ 'wpdb' => [ 'c' => 77 ] ] );
+		$this->set_category_bucket( $store, 'b1', [ 'wpdb' => self::cat_entry( 0, 13, 1 ) ] );
+		$this->set_url_category_bucket( $store, 'aaaaaaaaaaaa', 'b1', [ 'wpdb' => self::cat_entry( 0, 77, 1 ) ] );
 
 		$this->assertSame( [], $store->get_category_buckets( [ 'b1' ], 'web07' )[ 'b1' ] ?? [] );
 		$this->assertSame( [], $store->get_url_category_buckets( 'bbbbbbbbbbbb', [ 'b1' ] )[ 'b1' ] ?? [] );
-		$this->assertSame( 13, ( $this->get_category_bucket( $store, 'b1' ) )['wpdb']['c'] );
-		$this->assertSame( 77, ( $store->get_url_category_buckets( 'aaaaaaaaaaaa', [ 'b1' ]  )[ 'b1' ] ?? [] )['wpdb']['c'] );
+		$this->assertSame( 13, ( $this->get_category_bucket( $store, 'b1' ) )['wpdb'][ Stats_Store::CAT_CALLS ] );
+		$this->assertSame( 77, ( $store->get_url_category_buckets( 'aaaaaaaaaaaa', [ 'b1' ]  )[ 'b1' ] ?? [] )['wpdb'][ Stats_Store::CAT_CALLS ] );
 	}
 
 	public function test_every_bucketed_write_lands_under_the_retention_ttl(): void {
@@ -959,10 +982,10 @@ class StatsStoreTest extends TestCase {
 	}
 
 	public function test_folding_keeps_worker_true_once_either_side_is(): void {
-		$folded = Stats_Store::fold_url_rows(
-			[ 'count' => 1, 'worker' => true ],
-			[ 'count' => 1 ]
-		);
+		$folded = self::named_url_row( Stats_Store::fold_url_rows(
+			self::positional_url_row( [ 'count' => 1, 'worker' => true ] ),
+			self::positional_url_row( [ 'count' => 1 ] )
+		) );
 
 		$this->assertTrue( $folded['worker'] );
 	}

@@ -35,9 +35,10 @@ use Newspack_Nodes\Config_System\Schema;
  * The application's Field/Schema declaration.
  *
  * Three settings render as checkboxes — `enable_logging`, `log_memory`, and
- * `flush_every_line`. Six more keys overlay the config file with no settings
+ * `flush_every_line`. Eight more keys overlay the config file with no settings
  * field at all (`ui: false`): `rules`, `hook_start_priority`, `custom_colors`,
- * `stats_mirror_node`, `stats_mirror_read_budget_ms`, and
+ * `stats_mirror_node`, `stats_mirror_read_budget_ms`,
+ * `stats_mirror_segment_size`, `stats_mirror_num_segments` and
  * `recommended_log_events`. URL filters, hook lists, and auto-tune thresholds
  * are per-rule fields of the `rules` ruleset, which the React rules editor owns
  * through the `rules` service CI — never the Settings API.
@@ -264,6 +265,29 @@ class Settings_Schema {
 					type: 'int',
 					ui: false,
 					default: 1500,
+				),
+				// @longform The stats mirror's own ring geometry, 0 meaning
+				// "follow the substrate value in force". `flame-stats` holds
+				// every per-URL frame, and the `<config:*>` knobs that sized
+				// it also size `requests`, `flames` and `jobs` — so an
+				// operator budgeting for the mirror had to inflate every other
+				// partition by the same factor. Capacity is the PRODUCT of
+				// these two, and two is enough: `max_segments` derives as
+				// twice `num_segments` and `derive_max_segments()` floors it
+				// at the count, so the mirror's own count already moves its
+				// ceiling; `min_segments` is the AGE rule's floor, and the
+				// mirror's age rule is `<eln:stats_mirror_lifetime>` already.
+				new Field(
+					key: 'stats_mirror_segment_size',
+					type: 'int',
+					ui: false,
+					default: 0,
+				),
+				new Field(
+					key: 'stats_mirror_num_segments',
+					type: 'int',
+					ui: false,
+					default: 0,
 				),
 				// The hook picker's "Recommended" menu; binds nothing itself.
 				new Field(

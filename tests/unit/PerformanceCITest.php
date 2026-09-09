@@ -333,7 +333,7 @@ class PerformanceCITest extends TestCase {
 		// `overviewData.category_time_series` (PerformanceDashboard.js L391).
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
-		$this->set_category_bucket( $store, $bucket, [ 'db' => [ 't' => 0.5, 'c' => 4, 'n' => 4 ] ] );
+		$this->set_category_bucket( $store, $bucket, [ 'db' => self::cat_entry( 0.5, 4, 4 ) ] );
 
 		$interpreter     = new Performance_CI_Node();
 		$result = VerbHarness::fire(
@@ -350,6 +350,27 @@ class PerformanceCITest extends TestCase {
 		$series = $result['category_time_series'];
 		$this->assertSame( [ 'db' ], $series['names'] );
 		$this->assertSame( [ [ 0, 0.5, 4, 4 ] ], $series['buckets'][ $bucket ] );
+	}
+
+	public function test_category_series_rounds_a_sum_across_partitions_to_display_precision(): void {
+		// The STORE rounds what it writes, so one partition's entry is already
+		// at display precision. This series is a SUM across one store per
+		// flame-builder partition, and a sum of rounded doubles is not itself
+		// rounded: 0.1 + 0.2 serializes as 0.30000000000000004, nineteen
+		// characters for a number the chart draws as three. Rounding at the
+		// wire is what keeps the frame change from being undone on the reply.
+		$this->activate_shipped_topology( 'performance', 2 );
+		$bucket = $this->current_url_bucket();
+		$this->set_category_bucket( new Stats_Store( 0, 86400 ), $bucket, [ 'zither render' => self::cat_entry( 0.1, 3, 1 ) ] );
+		$this->set_category_bucket( new Stats_Store( 1, 86400 ), $bucket, [ 'zither render' => self::cat_entry( 0.2, 4, 1 ) ] );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', '--categories' );
+
+		$this->assertSame(
+			'[[0,0.3,7,2]]',
+			\wp_json_encode( $result['category_time_series']['buckets'][ $bucket ] ),
+			'the summed milliseconds reach the wire at display precision'
+		);
 	}
 
 	public function test_overview_verb_answers_one_dimension_in_the_breakdowns_map(): void {
@@ -440,8 +461,8 @@ class PerformanceCITest extends TestCase {
 		// blob (legacy L122-124 `merge_server_categories_across_partitions`).
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
-		$this->set_category_bucket( $store, $bucket, [ 'db' => [ 't' => 0.2, 'c' => 2, 'n' => 2 ] ], 'web01' );
-		$this->set_category_bucket( $store, $bucket, [ 'db' => [ 't' => 9.9, 'c' => 99, 'n' => 99 ] ] );
+		$this->set_category_bucket( $store, $bucket, [ 'db' => self::cat_entry( 0.2, 2, 2 ) ], 'web01' );
+		$this->set_category_bucket( $store, $bucket, [ 'db' => self::cat_entry( 9.9, 99, 99 ) ] );
 
 		$interpreter     = new Performance_CI_Node();
 		$result = VerbHarness::fire(
@@ -2458,7 +2479,7 @@ class PerformanceCITest extends TestCase {
 			],
 		] );
 		$bucket = $this->current_url_bucket();
-		$this->set_url_category_bucket( $store, 'abc123def456', $bucket, [ 'db' => [ 't' => 0.2, 'c' => 2, 'n' => 1 ] ] );
+		$this->set_url_category_bucket( $store, 'abc123def456', $bucket, [ 'db' => self::cat_entry( 0.2, 2, 1 ) ] );
 
 		$interpreter     = new Performance_CI_Node();
 		$result = VerbHarness::fire(

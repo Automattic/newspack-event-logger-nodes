@@ -44,6 +44,10 @@ class SettingsSchemaTest extends TestCase {
 		'custom_colors',
 		'stats_mirror_node',
 		'stats_mirror_read_budget_ms',
+		// The mirror's own ring geometry, so an operator can budget for its
+		// volume without inflating every other partition by the same factor.
+		'stats_mirror_segment_size',
+		'stats_mirror_num_segments',
 		'recommended_log_events',
 	];
 
