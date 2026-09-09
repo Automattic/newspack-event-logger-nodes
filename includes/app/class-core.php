@@ -114,27 +114,52 @@ class Core {
 	 * SQL gets every literal replaced because it has no seam a list could
 	 * follow: the regex keeps the identifiers and drops the rest. Structured
 	 * data DOES have one — keys are the shape, leaves are the data — so here the
-	 * default is to drop and the list says what survives.
+	 * default is to drop and the list says what survives. Keys are kept whatever
+	 * they are, so a frame still shows what the argument WAS; only leaves go.
 	 *
-	 * SEED, not the answer. The census this should be built from did
-	 * not cover this population: `hook_start()` json_encodes its argument, so
-	 * the keys arrive inside a string that `tools/survey-firehose-keys.php` did
-	 * not descend. That tool now reports them; populate this from a run against
-	 * a real host. What is here meanwhile is the documented STRUCTURAL half of
-	 * `http_request_args` — the fields that say what kind of request it was, as
-	 * against `headers`, `body` and `cookies`, which say what was in it. Keys
-	 * match at any depth, lowercased.
+	 * Built from `tools/survey-firehose-keys.php` over two hosts (243 and 254
+	 * distinct keys). What it admits is structure: booleans, counters,
+	 * pagination, enumerated states, and the request-shape half of
+	 * `http_request_args`. What it deliberately excludes is every leaf that is
+	 * content or identity — the census found `user_pass`, `user_activation_key`,
+	 * `user_email`, `post_password`, `token`, `meta_value`, `comment_author_IP`
+	 * and post bodies all riding hook frames on live hosts.
+	 *
+	 * A flat list of NAMES, flipped once per process: `'key' => true` reads to
+	 * the VIP sniffs as a WP_Query argument, which `suppress_filters` is not
+	 * here. Matched lowercased, at any depth. Add to it from a fresh census, never
+	 * from a guess: a key that is not here costs a diagnostic, and one that is
+	 * here wrongly costs a disclosure.
 	 */
 	private const HOOK_ARG_KEEP = [
-		'method'       => true,
-		'timeout'      => true,
-		'redirection'  => true,
-		'httpversion'  => true,
-		'blocking'     => true,
-		'sslverify'    => true,
-		'stream'       => true,
-		'decompress'   => true,
-		'user-agent'   => true,
+		// WP_Query / WP conditional flags.
+		'is_single', 'is_preview', 'is_page', 'is_archive', 'is_date', 'is_year',
+		'is_month', 'is_day', 'is_time', 'is_author', 'is_category', 'is_tag', 'is_tax',
+		'is_search', 'is_feed', 'is_comment_feed', 'is_trackback', 'is_home',
+		'is_privacy_policy', 'is_404', 'is_embed', 'is_paged', 'is_admin',
+		'is_attachment', 'is_singular', 'is_robots', 'is_favicon', 'is_sitemap',
+		'is_posts_page', 'is_post_type_archive', 'is_newspack_query',
+		// Counters and pagination.
+		'post_count', 'current_post', 'current_comment', 'comment_count', 'found_posts',
+		'max_num_pages', 'max_num_comment_pages', 'posts_per_page', 'numberposts',
+		'paged', 'page', 'offset', 'count', 'menu_order',
+		// Behaviour flags.
+		'before_loop', 'in_the_loop', 'thumbnails_cached', 'suppress_filters',
+		'no_found_rows', 'ignore_sticky_posts', 'update_post_meta_cache',
+		'update_post_term_cache', 'cache_results', 'lazy_load_term_meta',
+		'did_permalink', 'include_children', 'has_password', 'sentence', 'preview',
+		'embed', 'withcomments', 'in_footer', 'do_concat',
+		// Enumerated states and shapes.
+		'post_type', 'post_status', 'comment_status', 'ping_status', 'post_mime_type',
+		'comment_type', 'comment_approved', 'order', 'orderby', 'fields', 'field',
+		'filter', 'relation', 'operator', 'taxonomy', 'type', 'feed', 'robots', 'status',
+		'code', 'primary_table', 'primary_id_column',
+		// http_request_args: what kind of request, not what was in it.
+		'method', 'timeout', 'redirection', 'httpversion', 'blocking', 'sslverify',
+		'stream', 'decompress', 'user-agent',
+		// Response shape.
+		'x-wp-total', 'x-wp-totalpages', 'width', 'height', 'thumbnail_width',
+		'thumbnail_height', 'version', 'success', 'provider_name',
 	];
 
 	/** What a string has to open with before it is treated as a statement. */
@@ -160,6 +185,9 @@ class Core {
 
 	/** @var array<string,true> Significant events that get per-callback profiling. */
 	private array $significant = [];
+
+	/** @var array<string,int>|null HOOK_ARG_KEEP flipped for lookup, once per process. */
+	private static ?array $hook_arg_keep = null;
 
 	/** @var int Priority hook_start registers at (config key `hook_start_priority`). */
 	private int $start_priority = 1;
@@ -295,6 +323,8 @@ class Core {
 	 * @return mixed The branch with its unlisted leaves replaced.
 	 */
 	private static function shaped_argument( $value ) {
+		self::$hook_arg_keep ??= \array_flip( self::HOOK_ARG_KEEP );
+		$keep                  = self::$hook_arg_keep;
 		if ( \is_object( $value ) ) {
 			$value = \get_object_vars( $value );
 		}
@@ -305,7 +335,7 @@ class Core {
 		foreach ( $value as $key => $item ) {
 			$out[ $key ] = \is_array( $item ) || \is_object( $item )
 				? self::shaped_argument( $item )
-				: ( isset( self::HOOK_ARG_KEEP[ \strtolower( (string) $key ) ] ) ? $item : '?' );
+				: ( isset( $keep[ \strtolower( (string) $key ) ] ) ? $item : '?' );
 		}
 		return $out;
 	}
