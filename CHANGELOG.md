@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.94.0] - 2026-09-09
+
+### Changed
+
+- **A hook frame no longer republishes the SQL the query anonymizer strips.** `hook_start()` puts the filter's first argument in `m` verbatim, so a rule naming `query` — or any hook carrying a statement — logged every literal beside the shaped copy `query_start()` had just made: the same `UPDATE wp_options` appearing once as `option_value = ?` and once with the serialized blob intact. A string argument that opens with a statement keyword now goes through the existing `without_literals()`; everything else passes through untouched, because SQL is a language whose literals separate cleanly from its structure and arbitrary application data is not. The filter still returns its argument unmodified — this runs on `query`, and returning a shape would execute the shape.
+
+- **The SQL span covers the filter chain as well as the round-trip.** `query_start()` binds at the configured `hook_start_priority` rather than `PHP_INT_MAX`, so it opens ahead of the callbacks on `query`, and calls `wrap_callbacks()` when a rule marks that hook significant. Those per-callback timings now nest INSIDE the `sql` span instead of landing in a sibling frame, and since the flame lays spans out by timestamp, the rewrite cost reads straight off their position at its left edge. `sql`'s duration therefore measures more than it did — any stored baseline sees a step change.
+
+- **The statement rides `sql (complete)`, not `sql (start)`.** Opening ahead of the chain means the SQL at the open is what the caller wrote, not what the database is asked. `query_end()` already received the rewritten statement and discarded it as unused; it now reports it, shaped. `sql (start)` carries the label alone.
+
+- **`query` is not also bound as a generic hook when `log_queries` is on.** The span covers the same interval end to end, so the pair was a second copy of it carrying the raw statement. With `log_queries` off there is no span, the pair still binds, and the shaping above covers it.
+
 ## [0.93.0] - 2026-09-08
 
 ### Removed

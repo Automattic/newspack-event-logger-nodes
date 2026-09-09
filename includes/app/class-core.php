@@ -104,6 +104,12 @@ class Core {
 	 * leaves `l`, whose job this is, empty.
 	 */
 	private const SQL_STATE  = 'sql';
+
+	/** The hook the SQL span rides; also the one it makes a generic pair redundant on. */
+	private const QUERY_HOOK = 'query';
+
+	/** What a string has to open with before it is treated as a statement. */
+	private const SQL_LEAD = '/\A\s*(?:SELECT|INSERT|UPDATE|DELETE|REPLACE|SHOW|DESCRIBE|EXPLAIN|CREATE|ALTER|DROP|TRUNCATE)\b/i';
 	private const HTTP_STATE = 'http';
 
 	/** Dispatchers between a hook and its caller; flipped for O(1) lookup. */
@@ -190,7 +196,7 @@ class Core {
 
 		$m = '';
 		if ( isset( $v ) && \is_scalar( $v ) ) {
-			$m = $v;
+			$m = \is_string( $v ) ? self::shaped_if_sql( $v ) : $v;
 		} elseif ( isset( $v ) ) {
 			// phpcs:ignore WordPress.WP.AlternativeFunctions.json_encode_json_encode -- wp_json_encode() infinite-loops on circular refs (Core_Upgrader).
 			$encoded = \json_encode( $v, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES, 16 );
@@ -212,6 +218,240 @@ class Core {
 		}
 
 		return $v;
+	}
+
+	/**
+	 * Who called this hook, once the rule asks and while the budget lasts.
+	 *
+	 * A span says how long a pass took and nothing about who asked for it, so a
+	 * hook that fires sixteen times reads as sixteen identical mysteries. The
+	 * summary names the NEAREST frames instead, on the entry's `caller` field —
+	 * not `c`, which already means COUNT everywhere else in this schema — and
+	 * ignores this class, so the top frame is the caller rather than the
+	 * instrumentation.
+	 *
+	 * The budget is per HOOK and the RULE names it, because what a diagnostic
+	 * run wants is not what steady state wants: the same question asked of
+	 * `render_block` is 2,601 backtraces.
+	 *
+	 * @param string $hook_name The hook being opened.
+	 * @return string The caller summary, or '' when not tracing.
+	 */
+	private function caller_of( string $hook_name ): string {
+		$spent = $this->traced[ $hook_name ] ?? 0;
+		if ( $spent >= $this->trace_callers ) {
+			return '';
+		}
+		$this->traced[ $hook_name ] = $spent + 1;
+		// @longform The ARRAY form, because core hands back the frames nearest
+		// first and the pretty string is that array REVERSED. Capping the
+		// string keeps the bootstrap and cuts the caller — the whole answer.
+		// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_wp_debug_backtrace_summary -- The caller summary IS the diagnostic; counted per hook and gated per rule.
+		$frames = \wp_debug_backtrace_summary( self::class, 0, false );
+		$near   = \array_slice( $frames, 0, self::CALLER_FRAMES );
+		return \implode( ', ', $near );
+	}
+
+	/**
+	 * A hook argument as the log may carry it.
+	 *
+	 * `hook_start()` puts the filter's first argument in `m` verbatim, so a hook
+	 * carrying SQL republishes every literal `query_start()` exists to strip.
+	 * SQL is the one case worth shaping here: it is a language whose literals
+	 * separate cleanly from its structure. Arbitrary application data has no
+	 * such seam — shaping it would either destroy the diagnostic or need a list
+	 * of hook names, and a list is what the redaction denylist already is — so
+	 * it passes through, and the rule's choice of hook is what bounds it.
+	 *
+	 * @param string $value The filter argument.
+	 * @return string The argument, or its shape when it reads as a statement.
+	 */
+	private static function shaped_if_sql( string $value ): string {
+		return 1 === \preg_match( self::SQL_LEAD, $value )
+			? self::without_literals( $value )
+			: $value;
+	}
+
+	/**
+	 * Remove the currently-bound hook filters and bind the current request's
+	 * governing rule afresh. Public because it is the listener for
+	 * `newspack_event_logger_nodes_scope_changed`, which Log_Manager fires when
+	 * a job context switch changes which rule governs mid-request
+	 * (begin_job_context / end_job_context).
+	 *
+	 * Only this class's own filters come off — the per-hook trio and the HTTP
+	 * pair. Callback wrappers already installed by wrap_callbacks() stay in
+	 * $wp_filter and keep timing, and wrapper_ids keeps remembering them, so
+	 * the new scope can't double-wrap.
+	 */
+	public function rebind_for_current_scope(): void {
+		foreach ( $this->bound_hooks as $hook_name ) {
+			\remove_filter( $hook_name, [ $this, 'hook_start' ], $this->start_priority );
+			\remove_filter( $hook_name, [ $this, 'hook_spacer' ], self::SPACER_PRIORITY );
+			\remove_filter( $hook_name, [ $this, 'hook_complete' ], PHP_INT_MAX - 1 );
+		}
+		\remove_filter( 'pre_http_request', [ $this, 'http_start' ], PHP_INT_MAX );
+		\remove_action( 'http_api_debug', [ $this, 'http_end' ], PHP_INT_MIN );
+		$this->bound_hooks = [];
+		$this->significant = [];
+		$this->traced      = [];
+		$this->bind_current_scope();
+	}
+
+	/**
+	 * Bind hook_start/hook_spacer/hook_complete for the current request's
+	 * governing rule only — the hot-path win: a skip rule or no match binds
+	 * zero hooks instead of every hook the ruleset names.
+	 *
+	 * A significant event joins the bind list when it names a hook the rule
+	 * doesn't already cover. One that matches a custom event stays unbound:
+	 * custom events are categories the application logs itself, not do_action
+	 * names, so binding them would register a filter nothing ever fires.
+	 *
+	 * The rule's `log_http` and `log_queries` add the two span pairs no hook
+	 * reaches; the SAVEQUERIES the second needs is why it is an opt-in.
+	 */
+	private function bind_current_scope(): void {
+		$rule = Log_Manager::instance()->governing_rule();
+		if ( null === $rule || ! $rule->is_log() ) {
+			return;
+		}
+
+		// Instrument real hooks; custom events (not do_action) are excluded.
+		$this->trace_hooks   = $rule->trace_hooks;
+		$this->trace_callers = $rule->trace_callers;
+		$hooks          = Rule_Set::hooks_for( $rule );
+		$custom_set     = \array_flip( \array_filter( $rule->custom_events, 'is_string' ) );
+		$log_events_set = \array_flip( \array_filter( $hooks, 'is_string' ) );
+
+		// Significant events get per-callback profiling.
+		foreach ( $rule->significant_events as $event ) {
+			$hook = \str_ends_with( $event, self::HOOK_SUFFIX )
+				? \substr( $event, 0, -\strlen( self::HOOK_SUFFIX ) )
+				: $event;
+			$this->significant[ $hook ] = true;
+			if ( ! isset( $log_events_set[ $hook ] ) && ! isset( $custom_set[ $hook ] ) ) {
+				$hooks[] = $hook;
+			}
+		}
+
+		foreach ( $hooks as $hook_name ) {
+			if ( '' === $hook_name ) {
+				continue;
+			}
+			// Plugin-load timing lives in the 00-newspack-profiler mu-plugin.
+			if ( 'plugin_loaded' === $hook_name ) {
+				continue;
+			}
+			// The SQL span covers this hook, and with the shape not the raw.
+			if ( self::QUERY_HOOK === $hook_name && $rule->log_queries ) {
+				continue;
+			}
+			// Skip internal filters: instrumenting re-enters LM bootstrap.
+			if ( Hook_Categorizer::is_internal( $hook_name ) ) {
+				continue;
+			}
+			\add_filter( $hook_name, [ $this, 'hook_start' ], $this->start_priority );
+			\add_filter( $hook_name, [ $this, 'hook_spacer' ], self::SPACER_PRIORITY );
+			\add_filter( $hook_name, [ $this, 'hook_complete' ], PHP_INT_MAX - 1 );
+			$this->bound_hooks[] = $hook_name;
+		}
+
+		// Outbound HTTP blocks below userland, where no hook reaches.
+		if ( $rule->log_http ) {
+			\add_filter( 'pre_http_request', [ $this, 'http_start' ], PHP_INT_MAX, 3 );
+			\add_action( 'http_api_debug', [ $this, 'http_end' ], PHP_INT_MIN, 5 );
+		}
+
+		if ( ! $rule->log_queries ) {
+			return;
+		}
+		// @longform `wpdb` fires no post-query hook unless SAVEQUERIES is on:
+		// `_do_query()` gates the `log_query()` call — and so this pair's
+		// close — on it. A constant cannot be withdrawn, so a long-running
+		// worker keeps it for its life; `query_end()` drains `$wpdb->queries`
+		// to keep that from growing without bound.
+		if ( ! \defined( 'SAVEQUERIES' ) ) {
+			\define( 'SAVEQUERIES', true );
+		}
+		\add_filter( self::QUERY_HOOK, [ $this, 'query_start' ], $this->start_priority );
+		\add_filter( 'log_query_custom_data', [ $this, 'query_end' ], PHP_INT_MIN, 5 );
+	}
+
+	/**
+	 * Open a span around one outbound HTTP request. Registered on
+	 * `pre_http_request` at PHP_INT_MAX, so every short-circuiting filter has
+	 * already run and `$preempt` carries their verdict.
+	 *
+	 * A short-circuited request opens NOTHING. `WP_Http::request()` returns it
+	 * with a bare `return $pre;` and never fires `http_api_debug`, so a span
+	 * opened here would never close and would adopt every row after it — and a
+	 * short-circuit is a cache hit with no I/O to time in the first place.
+	 *
+	 * The label `l` names the frame beyond `WP_Http`, which is what applies
+	 * this filter, because naming the transport names the same string every
+	 * time — unless the rule already buys caller backtraces, which answer that
+	 * question and are not worth paying for twice. The redacted URL rides the
+	 * entry as `m`.
+	 *
+	 * @param mixed                 $preempt Short-circuit value, false to proceed.
+	 * @param array<string,mixed>   $args    Request arguments (unused).
+	 * @param string                $url     Request URL.
+	 * @return mixed The unmodified $preempt.
+	 */
+	public function http_start( $preempt = false, array $args = [], string $url = '' ) {
+		if ( false !== $preempt ) {
+			return $preempt;
+		}
+		if ( ! Log_Manager::has_instance() ) {
+			return $preempt;
+		}
+		$lm = Log_Manager::instance();
+		if ( ! $lm->is_started() ) {
+			return $preempt;
+		}
+		$this->http_spans[] = self::HTTP_STATE;
+		$lm->start(
+			self::HTTP_STATE,
+			// Backtraces already answer who asked; don't pay for it twice.
+			[
+				'm' => Log_Manager::redact_url( $url ),
+				'l' => self::origin_frame( 0 === $this->trace_callers ),
+			]
+		);
+		return $preempt;
+	}
+
+	/**
+	 * Open a span around one query. Registered on `query` at the same priority
+	 * the generic hook timer uses, so the span covers the filter chain as well
+	 * as the round-trip, and so `wrap_callbacks()` can still replace the
+	 * callbacks on `query` when a rule marks it significant — their timings
+	 * then nest INSIDE this span rather than in a sibling frame.
+	 *
+	 * The statement is not read here. Opening ahead of the chain means the SQL
+	 * at this point is what the caller wrote, not what the database is asked;
+	 * `query_end()` receives the rewritten statement and reports it. The label
+	 * `l` names the frame beyond `wpdb`, on the same terms as `http_start()`.
+	 *
+	 * @param mixed $query The SQL, passed through untouched.
+	 * @return mixed
+	 */
+	public function query_start( $query = '' ) {
+		if ( ! Log_Manager::has_instance() ) {
+			return $query;
+		}
+		$lm = Log_Manager::instance();
+		if ( ! $lm->is_started() ) {
+			return $query;
+		}
+		$this->query_spans[] = self::SQL_STATE;
+		// Backtraces already answer who asked; don't pay for it twice.
+		$lm->start( self::SQL_STATE, [ 'l' => self::origin_frame( 0 === $this->trace_callers ) ] );
+		if ( isset( $this->significant[ self::QUERY_HOOK ] ) ) {
+			$this->wrap_callbacks( self::QUERY_HOOK );
+		}
+		return $query;
 	}
 
 	/**
@@ -365,212 +605,6 @@ class Core {
 	}
 
 	/**
-	 * Who called this hook, once the rule asks and while the budget lasts.
-	 *
-	 * A span says how long a pass took and nothing about who asked for it, so a
-	 * hook that fires sixteen times reads as sixteen identical mysteries. The
-	 * summary names the NEAREST frames instead, on the entry's `caller` field —
-	 * not `c`, which already means COUNT everywhere else in this schema — and
-	 * ignores this class, so the top frame is the caller rather than the
-	 * instrumentation.
-	 *
-	 * The budget is per HOOK and the RULE names it, because what a diagnostic
-	 * run wants is not what steady state wants: the same question asked of
-	 * `render_block` is 2,601 backtraces.
-	 *
-	 * @param string $hook_name The hook being opened.
-	 * @return string The caller summary, or '' when not tracing.
-	 */
-	private function caller_of( string $hook_name ): string {
-		$spent = $this->traced[ $hook_name ] ?? 0;
-		if ( $spent >= $this->trace_callers ) {
-			return '';
-		}
-		$this->traced[ $hook_name ] = $spent + 1;
-		// @longform The ARRAY form, because core hands back the frames nearest
-		// first and the pretty string is that array REVERSED. Capping the
-		// string keeps the bootstrap and cuts the caller — the whole answer.
-		// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_wp_debug_backtrace_summary -- The caller summary IS the diagnostic; counted per hook and gated per rule.
-		$frames = \wp_debug_backtrace_summary( self::class, 0, false );
-		$near   = \array_slice( $frames, 0, self::CALLER_FRAMES );
-		return \implode( ', ', $near );
-	}
-
-	/**
-	 * Remove the currently-bound hook filters and bind the current request's
-	 * governing rule afresh. Public because it is the listener for
-	 * `newspack_event_logger_nodes_scope_changed`, which Log_Manager fires when
-	 * a job context switch changes which rule governs mid-request
-	 * (begin_job_context / end_job_context).
-	 *
-	 * Only this class's own filters come off — the per-hook trio and the HTTP
-	 * pair. Callback wrappers already installed by wrap_callbacks() stay in
-	 * $wp_filter and keep timing, and wrapper_ids keeps remembering them, so
-	 * the new scope can't double-wrap.
-	 */
-	public function rebind_for_current_scope(): void {
-		foreach ( $this->bound_hooks as $hook_name ) {
-			\remove_filter( $hook_name, [ $this, 'hook_start' ], $this->start_priority );
-			\remove_filter( $hook_name, [ $this, 'hook_spacer' ], self::SPACER_PRIORITY );
-			\remove_filter( $hook_name, [ $this, 'hook_complete' ], PHP_INT_MAX - 1 );
-		}
-		\remove_filter( 'pre_http_request', [ $this, 'http_start' ], PHP_INT_MAX );
-		\remove_action( 'http_api_debug', [ $this, 'http_end' ], PHP_INT_MIN );
-		$this->bound_hooks = [];
-		$this->significant = [];
-		$this->traced      = [];
-		$this->bind_current_scope();
-	}
-
-	/**
-	 * Bind hook_start/hook_spacer/hook_complete for the current request's
-	 * governing rule only — the hot-path win: a skip rule or no match binds
-	 * zero hooks instead of every hook the ruleset names.
-	 *
-	 * A significant event joins the bind list when it names a hook the rule
-	 * doesn't already cover. One that matches a custom event stays unbound:
-	 * custom events are categories the application logs itself, not do_action
-	 * names, so binding them would register a filter nothing ever fires.
-	 *
-	 * The rule's `log_http` and `log_queries` add the two span pairs no hook
-	 * reaches; the SAVEQUERIES the second needs is why it is an opt-in.
-	 */
-	private function bind_current_scope(): void {
-		$rule = Log_Manager::instance()->governing_rule();
-		if ( null === $rule || ! $rule->is_log() ) {
-			return;
-		}
-
-		// Instrument real hooks; custom events (not do_action) are excluded.
-		$this->trace_hooks   = $rule->trace_hooks;
-		$this->trace_callers = $rule->trace_callers;
-		$hooks          = Rule_Set::hooks_for( $rule );
-		$custom_set     = \array_flip( \array_filter( $rule->custom_events, 'is_string' ) );
-		$log_events_set = \array_flip( \array_filter( $hooks, 'is_string' ) );
-
-		// Significant events get per-callback profiling.
-		foreach ( $rule->significant_events as $event ) {
-			$hook = \str_ends_with( $event, self::HOOK_SUFFIX )
-				? \substr( $event, 0, -\strlen( self::HOOK_SUFFIX ) )
-				: $event;
-			$this->significant[ $hook ] = true;
-			if ( ! isset( $log_events_set[ $hook ] ) && ! isset( $custom_set[ $hook ] ) ) {
-				$hooks[] = $hook;
-			}
-		}
-
-		foreach ( $hooks as $hook_name ) {
-			if ( '' === $hook_name ) {
-				continue;
-			}
-			// Plugin-load timing lives in the 00-newspack-profiler mu-plugin.
-			if ( 'plugin_loaded' === $hook_name ) {
-				continue;
-			}
-			// Skip internal filters: instrumenting re-enters LM bootstrap.
-			if ( Hook_Categorizer::is_internal( $hook_name ) ) {
-				continue;
-			}
-			\add_filter( $hook_name, [ $this, 'hook_start' ], $this->start_priority );
-			\add_filter( $hook_name, [ $this, 'hook_spacer' ], self::SPACER_PRIORITY );
-			\add_filter( $hook_name, [ $this, 'hook_complete' ], PHP_INT_MAX - 1 );
-			$this->bound_hooks[] = $hook_name;
-		}
-
-		// Outbound HTTP blocks below userland, where no hook reaches.
-		if ( $rule->log_http ) {
-			\add_filter( 'pre_http_request', [ $this, 'http_start' ], PHP_INT_MAX, 3 );
-			\add_action( 'http_api_debug', [ $this, 'http_end' ], PHP_INT_MIN, 5 );
-		}
-
-		if ( ! $rule->log_queries ) {
-			return;
-		}
-		// @longform `wpdb` fires no post-query hook unless SAVEQUERIES is on:
-		// `_do_query()` gates the `log_query()` call — and so this pair's
-		// close — on it. A constant cannot be withdrawn, so a long-running
-		// worker keeps it for its life; `query_end()` drains `$wpdb->queries`
-		// to keep that from growing without bound.
-		if ( ! \defined( 'SAVEQUERIES' ) ) {
-			\define( 'SAVEQUERIES', true );
-		}
-		\add_filter( 'query', [ $this, 'query_start' ], PHP_INT_MAX );
-		\add_filter( 'log_query_custom_data', [ $this, 'query_end' ], PHP_INT_MIN, 5 );
-	}
-
-	/**
-	 * Open a span around one outbound HTTP request. Registered on
-	 * `pre_http_request` at PHP_INT_MAX, so every short-circuiting filter has
-	 * already run and `$preempt` carries their verdict.
-	 *
-	 * A short-circuited request opens NOTHING. `WP_Http::request()` returns it
-	 * with a bare `return $pre;` and never fires `http_api_debug`, so a span
-	 * opened here would never close and would adopt every row after it — and a
-	 * short-circuit is a cache hit with no I/O to time in the first place.
-	 *
-	 * The label `l` names the frame beyond `WP_Http`, which is what applies
-	 * this filter, because naming the transport names the same string every
-	 * time — unless the rule already buys caller backtraces, which answer that
-	 * question and are not worth paying for twice. The redacted URL rides the
-	 * entry as `m`.
-	 *
-	 * @param mixed                 $preempt Short-circuit value, false to proceed.
-	 * @param array<string,mixed>   $args    Request arguments (unused).
-	 * @param string                $url     Request URL.
-	 * @return mixed The unmodified $preempt.
-	 */
-	public function http_start( $preempt = false, array $args = [], string $url = '' ) {
-		if ( false !== $preempt ) {
-			return $preempt;
-		}
-		if ( ! Log_Manager::has_instance() ) {
-			return $preempt;
-		}
-		$lm = Log_Manager::instance();
-		if ( ! $lm->is_started() ) {
-			return $preempt;
-		}
-		$this->http_spans[] = self::HTTP_STATE;
-		$lm->start(
-			self::HTTP_STATE,
-			// Backtraces already answer who asked; don't pay for it twice.
-			[
-				'm' => Log_Manager::redact_url( $url ),
-				'l' => self::origin_frame( 0 === $this->trace_callers ),
-			]
-		);
-		return $preempt;
-	}
-
-	/**
-	 * Open a span around one query. Registered on `query` at PHP_INT_MAX, so
-	 * every filter that rewrites the SQL has already run and the entry carries
-	 * what the database is actually asked, minus the host's trailing
-	 * annotation. The label `l` names the frame beyond `wpdb`, on the same
-	 * terms as `http_start()`.
-	 *
-	 * @param mixed $query The SQL, passed through untouched.
-	 * @return mixed
-	 */
-	public function query_start( $query = '' ) {
-		if ( ! Log_Manager::has_instance() ) {
-			return $query;
-		}
-		$lm = Log_Manager::instance();
-		if ( ! $lm->is_started() ) {
-			return $query;
-		}
-		$sql                 = self::without_literals( self::without_host_annotation( RuntimeCore::as_string( $query, '' ) ) );
-		$this->query_spans[] = self::SQL_STATE;
-		$lm->start(
-			self::SQL_STATE,
-			// Backtraces already answer who asked; don't pay for it twice.
-			[ 'm' => $sql, 'l' => self::origin_frame( 0 === $this->trace_callers ) ]
-		);
-		return $query;
-	}
-
-	/**
 	 * The one frame worth a label: who called this hook, request or query.
 	 *
 	 * Deliberately NOT `wp_debug_backtrace_summary()`, which walks and formats
@@ -620,6 +654,38 @@ class Core {
 			return \substr( $name, 0, self::ORIGIN_MAX );
 		}
 		return '';
+	}
+
+	/**
+	 * Close the span `query_start` opened, and DRAIN `$wpdb->queries`.
+	 *
+	 * SAVEQUERIES makes `wpdb` retain every query it runs — 217 bytes each,
+	 * measured — which is the memory pressure that folds these records in the
+	 * first place. Draining here bounds it to what one query holds. Anything
+	 * else reading that array (Query Monitor) sees an empty one, which is why
+	 * this rides a per-rule opt-in rather than being always on.
+	 *
+	 * @param mixed  $data        Custom query data, passed through untouched.
+	 * @param string $query       The SQL as rewritten, which the entry reports.
+	 * @param float  $query_time  Seconds the query took (unused).
+	 * @param string $callstack   Calling functions (unused).
+	 * @param float  $query_start Unix timestamp the query started (unused).
+	 * @return mixed
+	 */
+	public function query_end( $data = null, string $query = '', float $query_time = 0.0, string $callstack = '', float $query_start = 0.0 ) {
+		$label = \array_pop( $this->query_spans );
+		if ( null === $label || ! Log_Manager::has_instance() ) {
+			return $data;
+		}
+		// Only here is the statement the one the database was actually asked.
+		$sql = self::without_literals( self::without_host_annotation( $query ) );
+		Log_Manager::instance()->complete( $label, '' === $sql ? [] : [ 'm' => $sql ] );
+		// `property_exists`: never CREATE it on a double that has none.
+		if ( isset( $GLOBALS['wpdb'] ) && \is_object( $GLOBALS['wpdb'] )
+			&& \property_exists( $GLOBALS['wpdb'], 'queries' ) ) {
+			$GLOBALS['wpdb']->queries = [];
+		}
+		return $data;
 	}
 
 	/**
@@ -735,36 +801,6 @@ class Core {
 			++$i;
 		}
 		return $len;
-	}
-
-	/**
-	 * Close the span `query_start` opened, and DRAIN `$wpdb->queries`.
-	 *
-	 * SAVEQUERIES makes `wpdb` retain every query it runs — 217 bytes each,
-	 * measured — which is the memory pressure that folds these records in the
-	 * first place. Draining here bounds it to what one query holds. Anything
-	 * else reading that array (Query Monitor) sees an empty one, which is why
-	 * this rides a per-rule opt-in rather than being always on.
-	 *
-	 * @param mixed  $data        Custom query data, passed through untouched.
-	 * @param string $query       The SQL (unused; the label comes from the open).
-	 * @param float  $query_time  Seconds the query took (unused).
-	 * @param string $callstack   Calling functions (unused).
-	 * @param float  $query_start Unix timestamp the query started (unused).
-	 * @return mixed
-	 */
-	public function query_end( $data = null, string $query = '', float $query_time = 0.0, string $callstack = '', float $query_start = 0.0 ) {
-		$label = \array_pop( $this->query_spans );
-		if ( null === $label || ! Log_Manager::has_instance() ) {
-			return $data;
-		}
-		Log_Manager::instance()->complete( $label );
-		// `property_exists`: never CREATE it on a double that has none.
-		if ( isset( $GLOBALS['wpdb'] ) && \is_object( $GLOBALS['wpdb'] )
-			&& \property_exists( $GLOBALS['wpdb'], 'queries' ) ) {
-			$GLOBALS['wpdb']->queries = [];
-		}
-		return $data;
 	}
 
 	/**
