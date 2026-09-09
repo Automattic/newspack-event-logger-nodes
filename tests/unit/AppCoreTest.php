@@ -415,6 +415,103 @@ class AppCoreTest extends TestCase {
 		$this->assertSame( [], $this->http_spans( $core, 'query_spans' ) );
 	}
 
+	// ── the SQL a hook frame publishes ──────────────────────────────────
+
+	/** Priorities a hook was bound at, from the add_filter stub. */
+	private function bound_priorities( string $hook ): array {
+		return \array_keys( $GLOBALS['_wp_test_filters'][ $hook ] ?? [] );
+	}
+
+	/**
+	 * `hook_start` puts the filter's first argument in `m` verbatim, so a hook
+	 * carrying SQL republishes every literal the query anonymizer exists to
+	 * strip. The value the FILTER returns must still be the untouched original:
+	 * this runs on `query`, and returning a shape would run the shape.
+	 */
+	public function test_hook_start_shapes_a_sql_argument(): void {
+		$this->set_governing_rule( $this->query_rule( false ) );
+		$core = new Core();
+		$sql  = "SELECT * FROM wp_posts WHERE post_name = 'shibboleth-cardamom' AND id = 4815162342";
+
+		$this->assertSame( $sql, $core->hook_start( $sql ), 'the filter passes the value through' );
+		$this->assertSame(
+			'SELECT * FROM wp_posts WHERE post_name = ? AND id = ?',
+			$this->open_span_message()
+		);
+	}
+
+	/** Prose is not SQL, and an apostrophe in it is not a literal delimiter. */
+	public function test_hook_start_leaves_a_non_sql_argument_alone(): void {
+		$this->set_governing_rule( $this->query_rule( false ) );
+		$core = new Core();
+		$prose = "Bob's notes on the vestibule, unabridged";
+
+		$core->hook_start( $prose );
+
+		$this->assertSame( $prose, $this->open_span_message() );
+	}
+
+	// ── the query span covers the filter chain ──────────────────────────
+
+	/**
+	 * The span has to open BEFORE the callbacks on `query` run: that is the
+	 * only moment `wrap_callbacks()` can replace them, and it is what puts the
+	 * per-callback timings inside the span rather than in a sibling frame.
+	 */
+	public function test_the_query_span_opens_before_the_filter_chain(): void {
+		$this->require_priority_aware_add_filter_or_skip();
+		$this->set_governing_rule( $this->query_rule( true ) );
+
+		$this->capture_added_filters( fn() => new Core() );
+
+		$priorities = $this->bound_priorities( 'query' );
+		$this->assertNotEmpty( $priorities );
+		$this->assertContains(
+			(int) Config::value( 'hook_start_priority' ),
+			$priorities,
+			'the span must open where the generic hook timer would have'
+		);
+	}
+
+	/**
+	 * Opening early means the statement at the open is the one the caller
+	 * wrote, not the one the database is asked. `query_end()` already receives
+	 * the rewritten statement and threw it away; it is what the entry carries.
+	 */
+	public function test_the_query_span_reports_the_rewritten_statement(): void {
+		$this->set_governing_rule( $this->query_rule( true ) );
+		$core = new Core();
+
+		$core->query_start( 'SELECT * FROM t WHERE a = 1' );
+		$core->query_end( null, "SELECT * FROM t WHERE a = 1 AND tenant = 'cardamom'", 0.002, 'caller', 1.0 );
+
+		$this->assertSame(
+			'SELECT * FROM t WHERE a = ? AND tenant = ?',
+			$this->last_entry_message( 'sql (complete)' )
+		);
+	}
+
+	/**
+	 * With the span covering the same interval, a generic `query hook` frame is
+	 * a second copy of it carrying the raw statement.
+	 */
+	public function test_query_is_not_also_bound_as_a_generic_hook(): void {
+		$this->require_priority_aware_add_filter_or_skip();
+		$rule = new Rule( '5e2b8c1f4a70', '/reports/', Rule::ACTION_LOG, log_queries: true, hooks: [ 'query' ] );
+		$this->set_governing_rule( $rule );
+
+		$this->capture_added_filters( fn() => new Core() );
+
+		$this->assertSame(
+			[],
+			\array_filter(
+				$this->bound_priorities( 'query' ),
+				fn( $p ) => $p > -10000 && $p < PHP_INT_MAX - 2
+			),
+			'no hook_start/hook_complete pair on query'
+		);
+	}
+
 	// ── short_name tests via reflection ─────────────────────────────────
 
 	public function test_short_name_string_function(): void {
@@ -1380,11 +1477,13 @@ class AppCoreTest extends TestCase {
 		$core = new Core();
 		$sql  = 'SELECT option_value FROM wp_options WHERE 1';
 
-		$core->query_start(
-			$sql . ' /*  www.elsol.com.ar/wp-admin/post.php?post=867431 request_id: 7b64b63f331de35af9cd8effa0fb48bc */'
-		);
+		$annotated = $sql . ' /*  www.elsol.com.ar/wp-admin/post.php?post=867431 request_id: 7b64b63f331de35af9cd8effa0fb48bc */';
+		$core->query_start( $annotated );
+		$core->query_end( null, $annotated, 0.002, 'caller', 1.0 );
 
-		$this->assertSame( $sql, $this->open_span_message() );
+		// The statement rides the CLOSE: the open runs ahead of every filter
+		// that rewrites it, so only here is it what the database was asked.
+		$this->assertSame( $sql, $this->last_entry_message( 'sql (complete)' ) );
 	}
 
 	/**
@@ -1397,9 +1496,11 @@ class AppCoreTest extends TestCase {
 		$core   = new Core();
 		$secret = \str_repeat( 'x', 700 );
 
-		$core->query_start( 'SELECT option_value FROM wp_options WHERE option_name = \'' . $secret . '\' AND autoload = \'yes\'' );
+		$sql = 'SELECT option_value FROM wp_options WHERE option_name = \'' . $secret . '\' AND autoload = \'yes\'';
+		$core->query_start( $sql );
+		$core->query_end( null, $sql, 0.002, 'caller', 1.0 );
 
-		$logged = $this->open_span_message();
+		$logged = $this->last_entry_message( 'sql (complete)' );
 		$this->assertSame( 'SELECT option_value FROM wp_options WHERE option_name = ? AND autoload = ?', $logged );
 		$this->assertStringNotContainsString( $secret, $logged, 'the literal never reaches the firehose' );
 	}
@@ -1425,8 +1526,23 @@ class AppCoreTest extends TestCase {
 		return \is_array( $last ) ? (string) ( $last['m'] ?? '' ) : '';
 	}
 
+	/** The `m` of the last firehose entry emitted under $category. */
+	private function last_entry_message( string $category ): string {
+		return $this->last_entry_field( $category, 'm' );
+	}
+
 	/** The `l` of the last firehose entry emitted under $category. */
 	private function last_entry_label( string $category ): string {
+		return $this->last_entry_field( $category, 'l' );
+	}
+
+	/**
+	 * One field of the last firehose entry emitted under $category.
+	 *
+	 * @param string $category The entry's `k`.
+	 * @param string $field    The field to read.
+	 */
+	private function last_entry_field( string $category, string $field ): string {
 		$topic = ( new \ReflectionProperty( Log_Manager::class, 'topic' ) )->getValue( Log_Manager::instance() );
 		if ( null === $topic ) {
 			$this->fail( 'no firehose topic; cannot read emitted entries' );
@@ -1442,7 +1558,7 @@ class AppCoreTest extends TestCase {
 			foreach ( \array_filter( \explode( "\n", $raw ) ) as $line ) {
 				$value = \Newspack_Nodes\Message::unpacked( $line )[ \Newspack_Nodes\Message::VALUE ] ?? null;
 				if ( \is_array( $value ) && ( $value['k'] ?? '' ) === $category ) {
-					$label = (string) ( $value['l'] ?? '' );
+					$label = (string) ( $value[ $field ] ?? '' );
 				}
 			}
 		}
