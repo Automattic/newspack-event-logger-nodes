@@ -30,8 +30,9 @@ if ( ! \defined( 'ABSPATH' ) ) {
  *
  * Keys are `evlog:p{N}:{namespace}[:...]`, so every flame-builder
  * partition owns a disjoint keyspace and readers fan one store out per
- * partition. A value is a plain array, string-keyed everywhere but a stored
- * URL row, which is positional and read through the `ROW_*` constants.
+ * partition. A value is a plain array, string-keyed, but two of the entries
+ * inside one are POSITIONAL and read through named constants: a stored URL row
+ * (`ROW_*`) and a category (`CAT_*`).
  *
  * Retention runs at three lengths, one per table ROLE. Every aggregate
  * namespace expires at `ttl()`, the whole retention window. The per-URL blob
@@ -181,8 +182,40 @@ class Stats_Store {
 	/** Summed fields of one dimensional value => whether it is a whole count. */
 	public const DIM_SUMS = [ 'c' => true, 's' => false, 'm' => false ];
 
+	/**
+	 * A stored CATEGORY entry is positional, indexed by these — decision 18's
+	 * shape on the second value dense enough to earn it. A category series
+	 * spells every one of its entries once per five-minute bucket per scope,
+	 * and the stats mirror carries the whole window: `{"t":913.207,"c":47,"n":11}`
+	 * is 30 bytes of JSON where `[913.207,47,11]` is 15.
+	 *
+	 * **Never a bare index**, exactly as `ROW_COUNT` and its neighbours below.
+	 *
+	 * There is no `CAT_FIELD_NAMES` because nothing names these: every field
+	 * ADDS, so `CAT_SUMS` is already the whole index set, and
+	 * `Performance_CI_Node::compact_category_series()` — the one
+	 * storage/display boundary the series has — emits a positional wire row
+	 * too. A name table with no naming site is a second shape waiting to drift.
+	 *
+	 * `CAT_MS` is milliseconds of wall time, `CAT_CALLS` the events fired, and
+	 * `CAT_REQUESTS` the requests the category appeared in. The reserved
+	 * `total` row holds the request's own wall time instead, so its
+	 * `CAT_REQUESTS` is a request count.
+	 */
+	public const CAT_MS       = 0;
+	public const CAT_CALLS    = 1;
+	public const CAT_REQUESTS = 2;
+
+	/**
+	 * Decimal places `CAT_MS` is stored at. These are milliseconds a chart draws
+	 * as seconds-per-second or as a mean, so a microsecond is already past
+	 * anything rendered, and a full-precision double spends 12 more bytes per
+	 * entry saying it.
+	 */
+	public const CAT_MS_DECIMALS = 3;
+
 	/** Summed fields of one category => whether it is a whole count. */
-	public const CAT_SUMS = [ 't' => false, 'c' => true, 'n' => true ];
+	public const CAT_SUMS = [ self::CAT_MS => false, self::CAT_CALLS => true, self::CAT_REQUESTS => true ];
 
 	/**
 	 * The synthetic key every capped namespace rolls its overflow into.
@@ -1280,15 +1313,17 @@ class Stats_Store {
 	 * `sums_to_display()` owns the read-time division over its own. A non-numeric
 	 * field on either side reads as zero.
 	 *
-	 * Fields outside the triple ride through from `$a`: the stored bucket is the
-	 * caller's, and rebuilding it here would drop a fourth field silently.
+	 * Fields outside the triple ride through from `$a`, which is why the sum is
+	 * replaced ONTO it rather than returned on its own: the stored bucket is
+	 * the caller's — a merged time series carries the `hour` it is keyed by —
+	 * and rebuilding it here would drop a fourth field silently.
 	 *
 	 * @param array<string,mixed>    $a One side, and the shape that survives.
 	 * @param array<array-key,mixed> $b The other, read by name only.
 	 * @return array<string,mixed>
 	 */
 	public static function add_totals( array $a, array $b ): array {
-		return self::string_keys( self::sum_entry( $a, $b, self::HOURLY_SUMS ) );
+		return self::string_keys( \array_replace( $a, self::sum_entry( $a, $b, self::HOURLY_SUMS ) ) );
 	}
 
 	/**
@@ -1303,8 +1338,9 @@ class Stats_Store {
 	 * @param array<string,mixed> $src The bucket being merged in.
 	 */
 	public static function merge_leaderboard_bucket( array &$dst, array $src ): void {
-		$dst  = self::string_keys( self::sum_entry( $dst, $src, self::LB_SUMS ) );
+		// Read BEFORE the sum: `sum_entry()` keeps only what LB_SUMS names.
 		$cats = Core::arr( $dst['categories'] ?? null );
+		$dst  = self::string_keys( self::sum_entry( $dst, $src, self::LB_SUMS ) );
 		foreach ( Core::arr( $src['categories'] ?? null ) as $cat => $data ) {
 			$data    = Core::arr( $data );
 			$current = Core::arr( $cats[ $cat ] ?? null );
@@ -1348,13 +1384,16 @@ class Stats_Store {
 		// Expanded BEFORE the sum: `$out`'s count is both rows added together.
 		$into_srv = self::expand_sole_server( $into, Core::arr( $into[ self::ROW_SRV ] ?? null ) );
 		$row_srv  = self::expand_sole_server( $row, Core::arr( $row[ self::ROW_SRV ] ?? null ) );
+		// Read off `$into`, never `$out`: only URL_SRV_SUMS survives the sum.
 		$out      = self::sum_entry( $into, $row, self::URL_SRV_SUMS );
-		$out[ self::ROW_MAX_MS ]      = \max( Core::num_float( $out[ self::ROW_MAX_MS ] ?? null ), Core::num_float( $row[ self::ROW_MAX_MS ] ?? null ) );
-		$out[ self::ROW_MAX_PEAK_MB ] = \max( Core::num_float( $out[ self::ROW_MAX_PEAK_MB ] ?? null ), Core::num_float( $row[ self::ROW_MAX_PEAK_MB ] ?? null ) );
-		$out[ self::ROW_LAST_SEEN ]   = \max( Core::num_int( $out[ self::ROW_LAST_SEEN ] ?? null ), Core::num_int( $row[ self::ROW_LAST_SEEN ] ?? null ) );
-		$out[ self::ROW_WORKER ]      = ! empty( $out[ self::ROW_WORKER ] ) || ! empty( $row[ self::ROW_WORKER ] );
+		$out[ self::ROW_MAX_MS ]      = \max( Core::num_float( $into[ self::ROW_MAX_MS ] ?? null ), Core::num_float( $row[ self::ROW_MAX_MS ] ?? null ) );
+		$out[ self::ROW_MAX_PEAK_MB ] = \max( Core::num_float( $into[ self::ROW_MAX_PEAK_MB ] ?? null ), Core::num_float( $row[ self::ROW_MAX_PEAK_MB ] ?? null ) );
+		$out[ self::ROW_LAST_SEEN ]   = \max( Core::num_int( $into[ self::ROW_LAST_SEEN ] ?? null ), Core::num_int( $row[ self::ROW_LAST_SEEN ] ?? null ) );
+		$out[ self::ROW_WORKER ]      = ! empty( $into[ self::ROW_WORKER ] ) || ! empty( $row[ self::ROW_WORKER ] );
+		// Verbatim, so an unfolded 0 stays the int the empty row seeded.
+		$out[ self::ROW_MIN_MS ] = $into[ self::ROW_MIN_MS ] ?? 0;
 		if ( Core::num_int( $row[ self::ROW_TIMED_COUNT ] ?? null ) > 0 ) {
-			$held                    = Core::num_float( $out[ self::ROW_MIN_MS ] ?? null );
+			$held                    = Core::num_float( $out[ self::ROW_MIN_MS ] );
 			$row_min                 = Core::num_float( $row[ self::ROW_MIN_MS ] ?? null );
 			$out[ self::ROW_MIN_MS ] = 0.0 === $held ? $row_min : \min( $held, $row_min );
 		}
@@ -1364,12 +1403,16 @@ class Stats_Store {
 
 	/**
 	 * Sum `$fields` from `$incoming` into `$into`, entry by entry. The one merge
-	 * both the dimensional (`c,s,m`) and category (`t,c,n`) series share.
+	 * the dimensional (`DIM_SUMS`) and category (`CAT_SUMS`) series share, and
+	 * it reads a field key rather than a name, so a positional table works here
+	 * exactly as a named one does.
 	 *
 	 * Only `$fields` survive — unlike `add_totals()`, which lets a field outside
-	 * its triple ride through. Every shape here is closed (`{c,s,m}`, `{t,c,n}`),
-	 * so there is nothing to carry; a shape that grows a field adds it to the
-	 * table rather than relying on passthrough.
+	 * its triple ride through. Every shape here is closed, so there is nothing
+	 * to carry; a shape that grows a field adds it to the table rather than
+	 * relying on passthrough. `sum_entry()` rebuilds each entry from the table,
+	 * so an entry arriving in a shape the table does not name is DISCARDED
+	 * rather than hybridised with the current one.
 	 *
 	 * @param array<array-key,mixed> $into     Running totals.
 	 * @param array<array-key,mixed> $incoming Inbound entries.
@@ -1428,18 +1471,24 @@ class Stats_Store {
 	 * Sum `$fields` from one entry into another — what `sum_fields()` does per
 	 * key, reachable directly by a caller holding a single row rather than a map.
 	 *
+	 * The entry it returns is built from `$fields` and nothing else, so a key
+	 * either side carries outside the table is DISCARDED — which is what makes
+	 * `sum_fields()`'s invariant true. A caller wanting a field the table does
+	 * not name puts it back itself, beside the reason it survives.
+	 *
 	 * @param array<array-key,mixed> $into   The entry so far.
 	 * @param array<array-key,mixed> $from   The entry being added.
 	 * @param array<array-key,bool>  $fields Field => whether it is a whole count.
-	 * @return array<array-key,mixed> `$into`, with every `$fields` key summed.
+	 * @return array<array-key,mixed> The `$fields` keys, summed.
 	 */
 	public static function sum_entry( array $into, array $from, array $fields ): array {
+		$out = [];
 		foreach ( $fields as $field => $is_count ) {
-			$into[ $field ] = $is_count
+			$out[ $field ] = $is_count
 				? Core::num_int( $into[ $field ] ?? null ) + Core::num_int( $from[ $field ] ?? null )
 				: Core::num_float( $into[ $field ] ?? null ) + Core::num_float( $from[ $field ] ?? null );
 		}
-		return $into;
+		return $out;
 	}
 
 	/**

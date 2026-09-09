@@ -174,9 +174,21 @@ class Config {
 	public static function resolve_eln_token( string $key ) {
 		/** @var array<string,bool> $own */
 		static $own = [
-			'is_hub'                 => true,
-			'stats_mirror_node'      => true,
-			'stats_mirror_lifetime'  => true,
+			'is_hub'                    => true,
+			'stats_mirror_node'         => true,
+			'stats_mirror_lifetime'     => true,
+			'stats_mirror_segment_size' => true,
+			'stats_mirror_num_segments' => true,
+		];
+		/**
+		 * The mirror's ring geometry, and the substrate key each falls back to
+		 * when the operator has set no value of its own.
+		 *
+		 * @var array<string,string> $inherits
+		 */
+		static $inherits = [
+			'stats_mirror_segment_size' => 'segment_size',
+			'stats_mirror_num_segments' => 'num_segments',
 		];
 		if ( ! isset( $own[ $key ] ) ) {
 			return null;
@@ -188,6 +200,16 @@ class Config {
 		// Derived, never a constant: a widened stats window widens this too.
 		if ( 'stats_mirror_lifetime' === $key ) {
 			return (string) ( 2 * self::stats_retention_seconds() );
+		}
+
+		// @longform 0 is "follow the substrate", so an install setting neither
+		// gets the value IN FORCE rather than the schema default — the shipped
+		// geometry is unchanged, and only an operator budgeting for the mirror
+		// moves it. Both are illegal values for the knob itself, which is what
+		// makes the sentinel unambiguous.
+		if ( isset( $inherits[ $key ] ) ) {
+			$own_value = Core::num_int( self::value( $key ) );
+			return (string) ( $own_value > 0 ? $own_value : Core::num_int( self::value( $inherits[ $key ] ) ) );
 		}
 
 		return self::load_config()[ $key ] ?? null;

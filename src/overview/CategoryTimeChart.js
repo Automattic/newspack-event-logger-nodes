@@ -8,11 +8,12 @@
  * request-level metrics on the same `AreaTimeChart` frame; this one breaks the
  * window down by profile category.
  *
- * Each 5-minute bucket carries `{ t, c, n }` per category: `t` milliseconds of
- * wall time, `c` events fired, `n` requests the category appeared in. The panel
- * reads `t` and `c`, and one payload answers three questions, so it draws all
- * three — "time" (seconds of category time per second of clock), "count"
- * (events per second) and "average" (milliseconds per event).
+ * The payload is `{ names, buckets }`: each bucket holds one positional row per
+ * category, `[ nameIndex, t, c, n ]` — `t` milliseconds of wall time, `c`
+ * events fired, `n` requests the category appeared in. The panel reads `t` and
+ * `c`, and one payload answers three questions, so it draws all three — "time"
+ * (seconds of category time per second of clock), "count" (events per second)
+ * and "average" (milliseconds per event).
  *
  * Areas overlay rather than stack, and the tooltip carries no total row,
  * because category times overlap: a callback's time counts inside its hook's,
@@ -117,7 +118,7 @@ const formatYValue = ( val, mode ) => {
  * because `AreaTimeChart` takes its x-domain from the first series alone and
  * reads the rest by that index.
  *
- * @param {Object} data Category series keyed by bucket — `{ bucket: { category: { t, c, n } } }`.
+ * @param {Object} data Category series — `{ names, buckets: { bucket: [ [ nameIndex, t, c, n ], … ] } }`.
  * @param {string} mode One of 'time', 'count', or 'average'.
  * @return {Array<{label:string,values:Array<{date:Date,value:number}>}>} Series in rank order.
  */
@@ -178,7 +179,7 @@ const buildSeries = ( data, mode ) => {
  * re-renders on every scroll event.
  *
  * @param {Object}      props      Component props.
- * @param {Object|null} props.data Category series keyed by bucket — `{ bucket: { category: { t, c, n } } }`, `t` in milliseconds.
+ * @param {Object|null} props.data Category series — `{ names, buckets: { bucket: [ [ nameIndex, t, c, n ], … ] } }`, `t` in milliseconds.
  * @return {import('react').ReactElement[]|null} One chart per view, or null when data is empty.
  */
 export default function CategoryTimeChart( { data } ) {

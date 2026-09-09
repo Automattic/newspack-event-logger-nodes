@@ -2,7 +2,7 @@
 #
 #   Consumer (requests.log) ─→ FlameBuilder ─→ Partition (flames:partition)
 #                                            └→ Stats_Store (memcache, hidden via configure_stats)
-#                                            └→ Partition (flame-stats:partition — stats mirror = full aggregates + top-N per-URL (100 dim / 100 cat; flame profiles only when set_flame_topn raises the default 0; the derived hourly tier keeps nothing), one write per bucket at close; read back on a memcache miss; <eln:stats_mirror_node> empty turns it off)
+#                                            └→ Partition (flame-stats:partition — stats mirror = every aggregate and every per-URL frame in full; the three derived hour tiers keep nothing, and the flame profiles only when set_flame_topn raises the default 0. One write per bucket at close, or earlier for whatever a namespace holds past MAX_HELD_FRAMES; read back on a memcache miss; <eln:stats_mirror_node> empty turns it off. Its ring is sized by <eln:stats_mirror_segment_size> and <eln:stats_mirror_num_segments>, both 0 = follow the substrate)
 #                                            └→ flame-builder:auto-tuner (owned sibling, hidden)
 
 include topic-probe
@@ -10,7 +10,7 @@ include topic-probe
 make_node Consumer requests:consumer <config:logs_dir>/requests.p<partition> <config:offsets_dir>/<topology>.requests.p<partition> <config:deadletter_dir>/<topology>.requests.p<partition>
 make_node Flame_Builder flame-builder
 make_node Partition flames:partition <config:logs_dir>/flames.p<partition>
-make_node Partition flame-stats:partition <config:logs_dir>/flame-stats.p<partition> <config:segment_size> <config:min_segments> <config:num_segments> <config:max_segments> <config:min_lifetime> <eln:stats_mirror_lifetime>
+make_node Partition flame-stats:partition <config:logs_dir>/flame-stats.p<partition> <eln:stats_mirror_segment_size> <config:min_segments> <eln:stats_mirror_num_segments> <config:max_segments> <config:min_lifetime> <eln:stats_mirror_lifetime>
 cmd requests:consumer:config add_snapshot_node flame-builder
 cmd flame-builder:config configure_stats <partition>
 cmd flame-builder:config set_stats_target <eln:stats_mirror_node>

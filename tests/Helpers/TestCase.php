@@ -50,8 +50,10 @@ abstract class TestCase extends RuntimeTestCase {
 		$out = [];
 		foreach ( $store->url_row_sources( $buckets, null, true ) as [ $bucket, $rows ] ) {
 			foreach ( $rows as $hash => $row ) {
+				// `merge_url_row`, not `fold_url_rows`: one hash across two
+				// populations is the SAME url, so its extremes still describe it.
 				$out[ $bucket ][ $hash ] = isset( $out[ $bucket ][ $hash ] )
-					? \Newspack_Event_Logger_Nodes\Stats_Store::fold_url_rows(
+					? \Newspack_Event_Logger_Nodes\Stats_Store::merge_url_row(
 						\Newspack_Nodes\Core::arr( $out[ $bucket ][ $hash ] ),
 						\Newspack_Nodes\Core::arr( $row )
 					)
@@ -441,6 +443,23 @@ abstract class TestCase extends RuntimeTestCase {
 	/** @return array<string,mixed> */
 	protected function get_category_bucket( Stats_Store $store, string $bucket, string $server = '' ): array {
 		return $store->bucket_get_multi( [ [ Stats_Store::cat_parts( $server ), $bucket ] ] )[0];
+	}
+
+	/**
+	 * One stored category entry, named at the seed so a test never counts
+	 * indexes — decision 18's `CAT_SUMS` triple.
+	 *
+	 * @param float|int $ms       Milliseconds of wall time.
+	 * @param int       $calls    Events fired.
+	 * @param int       $requests Requests the category appeared in.
+	 * @return array<int,float|int>
+	 */
+	protected static function cat_entry( float|int $ms, int $calls, int $requests ): array {
+		return [
+			Stats_Store::CAT_MS       => $ms,
+			Stats_Store::CAT_CALLS    => $calls,
+			Stats_Store::CAT_REQUESTS => $requests,
+		];
 	}
 
 	/** @param array<string,mixed> $data */

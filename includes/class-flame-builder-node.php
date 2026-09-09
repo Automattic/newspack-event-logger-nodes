@@ -53,7 +53,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
  * @phpstan-type Pending_Write array{parts: array<int,string>, bucket: string, merge: \Closure(array<array-key,mixed>): array<array-key,mixed>, refused: \Closure|null}
  * @phpstan-type Leaderboard_Acc array{count?: int, sum_req_time?: float|int, categories: array<string,array{samples: int,sum_time: float|int,sum_count: float|int,ts?: int,entries: array<string,array<int,float|int>>}>}
  * @phpstan-type Dim_Values array<string,array{c: int,s: float|int,m: float|int}>
- * @phpstan-type Cat_Values array<string,array{t: float|int,c: float|int,n: int}>
+ * @phpstan-type Cat_Values array<string,array{0: float|int,1: float|int,2: int}>
  * @phpstan-type Bucket_Acc array{
  *   hourly: array<string,mixed>,
  *   dim: array<string,Dim_Values>,
@@ -75,12 +75,13 @@ class Flame_Builder_Node extends Node {
 
 	/**
 	 * Reserved key of the category time series: the per-bucket ROLLUP row, not a
-	 * category. It carries `n` = requests in the bucket, `t` = their summed wall
-	 * time, and `c` = the summed call count of every category in them.
+	 * category. It carries `CAT_REQUESTS` = requests in the bucket, `CAT_MS` =
+	 * their summed wall time, and `CAT_CALLS` = the summed call count of every
+	 * category in them.
 	 *
-	 * Only `n` has a reader — `mirror_traffic_rank()` reads one bucket's `n` to
-	 * rank a URL when the mirror buffer overflows. The dashboard's
-	 * `CategoryTimeChart` skips the row outright, so `t` and `c` are published
+	 * Only `CAT_REQUESTS` has a reader — `mirror_traffic_rank()` reads one
+	 * bucket's to rank a URL when the mirror buffer overflows. The dashboard's
+	 * `CategoryTimeChart` skips the row outright, so the other two are published
 	 * but unread today.
 	 *
 	 * Category names come from the ruleset, where a custom event may be called
@@ -227,12 +228,20 @@ class Flame_Builder_Node extends Node {
 
 	/**
 	 * Namespaces bounded when mirrored to the durable stats partition: the value
-	 * is a top-N by traffic, and 0 keeps nothing at all. Aggregate namespaces are
-	 * absent from this map and mirror in full.
+	 * is a top-N by traffic, and 0 keeps nothing at all. A namespace absent from
+	 * this map mirrors in full — every aggregate, and both per-URL time series.
 	 *
-	 * The NS_URL entry (the flame profiles) is the STARTING default only — the
-	 * live bound is `$flame_topn` (see `set_flame_topn`), so the key must stay
-	 * here for `buffer_mirror_write()` to route NS_URL down the top-N path at all.
+	 * Every literal here is 0, and the map is an int map anyway because NS_URL's
+	 * live bound is the runtime `$flame_topn` (see `set_flame_topn`): the key has
+	 * to stay for `buffer_mirror_write()` to route NS_URL down the top-N path at
+	 * all. The other three are DERIVED tiers, answered from mirrored fine buckets,
+	 * so a durable copy would store the same information twice.
+	 *
+	 * Ranking the per-URL series here kept only the busiest hundred of a bucket,
+	 * which left every quieter URL in memcache alone: a cache scope that moved
+	 * under a live install took their whole history with it while the site-wide
+	 * series rehydrated. `MAX_HELD_FRAMES` bounds the buffer instead, without
+	 * choosing which URLs are worth keeping.
 	 */
 	private const STATS_MIRROR_TOPN = [
 		Stats_Store::NS_URL      => 0,   // flame profiles — see $flame_topn
@@ -242,9 +251,44 @@ class Flame_Builder_Node extends Node {
 		Stats_Store::NS_URLNAMES_HOUR => 0,
 		// Derived from `lb`, which mirrors in full.
 		Stats_Store::NS_LB_HOUR => 0,
-		Stats_Store::NS_URL_DIM => 100,  // per-URL dimensional frames
-		Stats_Store::NS_URL_CAT => 100,  // per-URL category frames
 	];
+
+	/**
+	 * Frames one namespace holds before the overflow is written EARLY.
+	 *
+	 * The buffer's residency is one open bucket — `flush_stats_mirror()` drains
+	 * every closed one at each checkpoint — so its size is the distinct keys that
+	 * bucket sees, which nothing else bounds: a query-string-heavy URL space, a
+	 * crawler or Host-header spray all push it with no ceiling. Reaching this is
+	 * a redundant write and never a lost frame: `spill_over_backstop()` writes
+	 * the lowest-ranked band to the partition and stops holding it, so a
+	 * bucket's later state still lands when its key is written again.
+	 *
+	 * Ten thousand a namespace is far past any site in evidence — the per-URL
+	 * series would need 10,000 distinct URLs inside one five-minute bucket on one
+	 * partition, against a production hub whose whole held set measures ~350KB —
+	 * and holds the worst case to tens of megabytes against the worker's 80%
+	 * memory watermark. `mirror_held_frames` on the GET_STATS payload reports
+	 * the WIDEST namespace's held count against this, so the trend is read
+	 * before it binds.
+	 *
+	 * Protected so a test double can reach the spill without pushing ten thousand
+	 * distinct URLs through one bucket.
+	 *
+	 * @var int
+	 */
+	protected const MAX_HELD_FRAMES = 10000;
+
+	/**
+	 * How much of the backstop one spill writes out: a tenth of it.
+	 *
+	 * The hysteresis between the two bounds, in the shape `trim_entries()`
+	 * already uses — stop at the upper, resume at the lower — because the
+	 * single threshold it replaces put a full ranking pass on every write past
+	 * the bound. A tenth buys a tenfold amortization for one extra partition
+	 * write per spilled frame, which is the cost a spill already pays.
+	 */
+	private const HELD_FRAMES_SPILL_DIVISOR = 10;
 
 	/**
 	 * Nanoseconds spent reading the durable mirror for the answer in progress.
@@ -320,8 +364,9 @@ class Flame_Builder_Node extends Node {
 	 *
 	 * 0 in production: flame profiles are the largest per-URL values, and paying
 	 * to make them durable is not worth it, while the per-URL dimensional and
-	 * category namespaces still mirror at top-100. `set_flame_topn` raises it;
-	 * tests do that to exercise the persisted-profile shape at a non-zero cap.
+	 * category namespaces mirror in full at a fraction of the bytes.
+	 * `set_flame_topn` raises it; tests do that to exercise the persisted-profile
+	 * shape at a non-zero cap.
 	 */
 	private int $flame_topn = 0;
 
@@ -333,8 +378,9 @@ class Flame_Builder_Node extends Node {
 
 	/**
 	 * Mirror writes buffered until their bucket closes: ns => key => [data, ttl].
-	 * One space for every namespace — bounded to `mirror_topn()` for the per-URL
-	 * ones, unbounded for the aggregates, which is all that separates them.
+	 * One space for every namespace, each holding at most `MAX_HELD_FRAMES` —
+	 * NS_URL additionally rank-capped to `mirror_topn()`, which is all that
+	 * separates it from the rest.
 	 *
 	 * @var array<string,array<string,array{0: array<array-key,mixed>,1: int}>>
 	 */
@@ -490,7 +536,6 @@ class Flame_Builder_Node extends Node {
 
 		if ( 'GET_STATS' === $verb ) {
 			$stats_count = \iterator_count( $this->stats_store?->accumulating_url_stats() ?? new \EmptyIterator() );
-			$mirror      = $this->mirror_frames();
 			$now = ( Core::$now ?: Core::right_now() );
 			$payload = [
 				'stats_count'              => $stats_count,
@@ -501,8 +546,10 @@ class Flame_Builder_Node extends Node {
 				'auto_tune_pending_count'  => \array_sum( \array_map( self::map_total( ... ), $this->auto_tune ) ),
 				'is_hub'                   => $this->is_hub,
 				'significant_events_count' => self::map_total( $this->significant_events ),
-				'mirror_held_frames'       => \count( $mirror ),
-				'mirror_held_bytes'        => \array_sum( \array_column( $mirror, 'size' ) ),
+				'mirror_held_frames'       => $this->widest_namespace_frames(),
+				'mirror_held_bytes'        => \array_sum(
+					\array_map( self::frame_bytes( ... ), \array_column( $this->mirror_frames(), 'frame' ) )
+				),
 			];
 		} else {
 			$payload = [ 'error' => "unknown request verb: {$verb}" ];
@@ -1123,19 +1170,27 @@ class Flame_Builder_Node extends Node {
 	 * one more sample.
 	 *
 	 * The `total` pseudo-category folds once per REQUEST, carrying the request's
-	 * wall time and the summed call count of every category in it — so its `n`
-	 * stays a request count.
+	 * wall time and the summed call count of every category in it — so its
+	 * `CAT_REQUESTS` stays a request count.
 	 *
-	 * @param array{t: float|int, c: float|int, n: int}|null $slot  Bucket, null on first use.
+	 * A slot arriving in any other shape is DISCARDED, not read: the offsetlog
+	 * checkpoint carries no salt, so the first respawn after a deploy really
+	 * does meet a pre-deploy `pending`, and reading it would be a second format
+	 * to maintain. What it costs is one worker's un-flushed delta, which
+	 * `restore_state()` already declares acceptable.
+	 *
+	 * @param array{0: float|int, 1: float|int, 2: int}|null $slot  Bucket, null on first use.
 	 * @param float                                          $time  Time to add.
 	 * @param float                                          $count Call count to add.
-	 * @return array{t: float|int, c: float|int, n: int} The updated bucket.
+	 * @return array{0: float|int, 1: float|int, 2: int} The updated bucket.
 	 */
 	private static function add_cat( ?array $slot, float $time, float $count ): array {
-		$slot ??= [ 't' => 0, 'c' => 0, 'n' => 0 ];
-		$slot['t'] += $time;
-		$slot['c'] += $count;
-		++$slot['n'];
+		if ( ! isset( $slot[ Stats_Store::CAT_MS ] ) ) {
+			$slot = [ Stats_Store::CAT_MS => 0, Stats_Store::CAT_CALLS => 0, Stats_Store::CAT_REQUESTS => 0 ];
+		}
+		$slot[ Stats_Store::CAT_MS ]    += $time;
+		$slot[ Stats_Store::CAT_CALLS ] += $count;
+		++$slot[ Stats_Store::CAT_REQUESTS ];
 		return $slot;
 	}
 
@@ -1752,10 +1807,7 @@ class Flame_Builder_Node extends Node {
 		return self::intent(
 			Stats_Store::url_cat_parts( $url_hash ),
 			$bucket,
-			static fn ( array $existing ): array => self::cap_categories(
-				Stats_Store::sum_fields( $existing, $cats, Stats_Store::CAT_SUMS ),
-				Stats_Store::MAX_CAT_VALUES
-			)
+			static fn ( array $existing ): array => self::fold_categories( $existing, $cats )
 		);
 	}
 
@@ -1865,10 +1917,7 @@ class Flame_Builder_Node extends Node {
 		return self::intent(
 			Stats_Store::cat_parts( $server ),
 			$bucket,
-			static fn ( array $existing ): array => self::cap_categories(
-				Stats_Store::sum_fields( $existing, $cats, Stats_Store::CAT_SUMS ),
-				Stats_Store::MAX_CAT_VALUES
-			)
+			static fn ( array $existing ): array => self::fold_categories( $existing, $cats )
 		);
 	}
 
@@ -1916,14 +1965,36 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
-	 * Cap a category bucket: ranked by time, `total` lifted clear of the ranking.
+	 * A category bucket's STORED shape: this flush's numbers summed onto what is
+	 * already there, capped by time with `total` lifted clear of the ranking,
+	 * and each entry's `CAT_MS` rounded to display precision.
 	 *
-	 * @param array<array-key,mixed> $cats       Category buckets.
-	 * @param int                    $max_values Categories kept, synthetic slots included.
+	 * Rounding comes LAST because the cap re-sums its tail into `Other`, and a
+	 * sum of rounded doubles is not itself rounded.
+	 *
+	 * @param array<array-key,mixed> $existing What the bucket already holds.
+	 * @param array<array-key,mixed> $cats     This flush's accumulated categories.
 	 * @return array<array-key,mixed>
 	 */
-	private static function cap_categories( array $cats, int $max_values ): array {
-		return self::cap_bucket( $cats, $max_values, 't', Stats_Store::CAT_SUMS, self::TOTAL_KEY );
+	private static function fold_categories( array $existing, array $cats ): array {
+		$capped = self::cap_bucket(
+			Stats_Store::sum_fields( $existing, $cats, Stats_Store::CAT_SUMS ),
+			Stats_Store::MAX_CAT_VALUES,
+			Stats_Store::CAT_MS,
+			Stats_Store::CAT_SUMS,
+			self::TOTAL_KEY
+		);
+		foreach ( $capped as $name => $entry ) {
+			if ( ! \is_array( $entry ) ) {
+				continue;
+			}
+			$entry[ Stats_Store::CAT_MS ] = \round(
+				Core::num_float( $entry[ Stats_Store::CAT_MS ] ?? null ),
+				Stats_Store::CAT_MS_DECIMALS
+			);
+			$capped[ $name ] = $entry;
+		}
+		return $capped;
 	}
 
 	/**
@@ -2260,16 +2331,17 @@ class Flame_Builder_Node extends Node {
 	 * @return array{key: string, data: array<array-key,mixed>, ttl: int, ts: float}|null
 	 */
 	private static function read_mirror_frame( array $msg ): ?array {
+		$key   = $msg[ Message::KEY ] ?? null;
 		$value = $msg[ Message::VALUE ] ?? null;
-		if ( ! \is_array( $value )
-			|| ! \is_string( $value['key'] ?? null )
+		if ( ! \is_string( $key ) || '' === $key
+			|| ! \is_array( $value )
 			|| ! \is_array( $value['data'] ?? null )
 			|| ! \is_int( $value['ttl'] ?? null )
 		) {
 			return null;
 		}
 		return [
-			'key'  => $value['key'],
+			'key'  => $key,
 			'data' => $value['data'],
 			'ttl'  => $value['ttl'],
 			'ts'   => Core::num_float( $msg[ Message::TIMESTAMP ] ?? null ),
@@ -2279,14 +2351,15 @@ class Flame_Builder_Node extends Node {
 	/**
 	 * Buffer a mirrored write until the next checkpoint.
 	 *
-	 * Aggregates are kept in full. The per-URL namespaces are bounded to top-N by
-	 * traffic (see STATS_MIRROR_TOPN and `mirror_topn()`), or the buffer would grow
-	 * with the site's URL space. The bound counts FRAMES, and a key is one
-	 * (URL, bucket) — so with the open bucket held back (`flush_stats_mirror()`)
-	 * the survivors are the busiest N URLs of the WHOLE bucket, ranked on its full
-	 * counts rather than one checkpoint's. Re-keying on `$key` means the newest
-	 * write for a key replaces the older one, so a held key carries the bucket's
-	 * latest state, and an evicted one is re-buffered by its next write.
+	 * Every namespace is kept in full: a key is one (URL, bucket), and with the
+	 * open bucket held back (`flush_stats_mirror()`) what lands is that bucket's
+	 * whole and final state for every key it saw. Re-keying on `$key` means the
+	 * newest write for a key replaces the older one.
+	 *
+	 * Two bounds sit on top, and only one of them drops a frame. `mirror_topn()`
+	 * rank-caps NS_URL, whose profiles are the largest per-URL values and whose
+	 * cap is an operator's (`set_flame_topn`). `MAX_HELD_FRAMES` bounds what the
+	 * buffer may HOLD, and its overflow is written early rather than dropped.
 	 *
 	 * @param string                  $key  Memcache key being shadowed.
 	 * @param array<array-key,mixed> $data Value written.
@@ -2299,34 +2372,106 @@ class Flame_Builder_Node extends Node {
 			return; // 0 keeps nothing: NS_URLS_HOUR always, NS_URL by default.
 		}
 		// A URL with no merged requests would spend a slot on nothing.
-		if ( Stats_Store::NS_URL === $ns && self::mirror_traffic_rank( $data, $ns ) <= 0 ) {
+		if ( Stats_Store::NS_URL === $ns && static::mirror_traffic_rank( $data, $ns ) <= 0 ) {
 			return;
 		}
 		$this->mirror[ $ns ][ $key ] = [ $data, $ttl ];
 		if ( \count( $this->mirror[ $ns ] ) > $cap ) {
 			$this->evict_lowest_rank( $ns );
 		}
+		if ( \count( $this->mirror[ $ns ] ) > static::MAX_HELD_FRAMES ) {
+			$this->spill_over_backstop( $ns, $key );
+		}
 	}
 
 	/**
-	 * Drop the lowest-ranked buffered write in a namespace. Linear scan — the
-	 * namespaces are capped in the low hundreds and this runs once per overflow.
+	 * Write the lowest-ranked BAND of buffered frames NOW and stop holding them
+	 * — the held-frame backstop doing its job, so memory is bounded and nothing
+	 * is lost.
+	 *
+	 * The partition keeps only the last frame for a key, so an early copy of an
+	 * open bucket is superseded by the write that closes it: the cost is one
+	 * redundant record per frame, which is exactly what holding the bucket was
+	 * saving.
+	 *
+	 * A BAND rather than one frame, because ranking the buffer is a pass over
+	 * it and the buffer PINS at the bound under exactly the traffic the bound
+	 * exists for — a crawler, or a query-string spray of unique URLs. Spilling
+	 * one frame per write puts that pass on every write past the bound, which
+	 * is quadratic in the spray length inside the worker whose failure mode
+	 * this bound was added to prevent. Spilling `HELD_FRAMES_SPILL_DIVISOR` of
+	 * the bound leaves that much headroom to refill before the next pass, so
+	 * the pass is amortized across the band. Ranking a frame does not settle
+	 * once — a request merging into a key changes it — so a rank-ordered
+	 * structure would pay per write instead, which is the cost being removed.
+	 *
+	 * With no partition there is nothing to spill INTO, and the reading is
+	 * `flush_stats_mirror()`'s: a name that does not resolve may resolve next
+	 * checkpoint, so nothing already HELD is discarded. What the backstop
+	 * refuses instead is the arrival — new work, at the entry, whose value is
+	 * still in memcache and whose bucket's next write re-offers it. Loud
+	 * either way.
+	 *
+	 * @param string $ns      Namespace to spill from.
+	 * @param string $arrived Key whose arrival crossed the bound.
+	 */
+	private function spill_over_backstop( string $ns, string $arrived ): void {
+		$partition = $this->resolve_stats_partition();
+		if ( null === $partition ) {
+			unset( $this->mirror[ $ns ][ $arrived ] );
+			$this->print_less_often( "stats_partition '{$this->stats_partition}' not found; refusing {$ns} frames over the backstop" );
+			return;
+		}
+		$keep  = static::MAX_HELD_FRAMES - \max( 1, \intdiv( static::MAX_HELD_FRAMES, self::HELD_FRAMES_SPILL_DIVISOR ) );
+		$ranks = [];
+		foreach ( $this->mirror[ $ns ] as $k => [ $data ] ) {
+			$ranks[ $k ] = static::mirror_traffic_rank( $data, $ns );
+		}
+		\asort( $ranks );
+		foreach ( \array_slice( \array_keys( $ranks ), 0, \count( $ranks ) - $keep ) as $key ) {
+			[ $data, $ttl ] = $this->mirror[ $ns ][ $key ];
+			$this->write_mirror_frame( $partition, $key, $data, $ttl );
+			unset( $this->mirror[ $ns ][ $key ] );
+		}
+		$this->print_less_often(
+			\sprintf(
+				'held stats frames at the backstop; open buckets are being written early — %s over %d frames',
+				$ns,
+				static::MAX_HELD_FRAMES
+			)
+		);
+	}
+
+	/**
+	 * Drop the lowest-ranked buffered write in a namespace — the rank cap doing
+	 * its job, so the frame never reaches the durable mirror.
 	 *
 	 * @param string $ns Namespace to evict from.
 	 */
 	private function evict_lowest_rank( string $ns ): void {
+		$key = $this->lowest_rank_key( $ns );
+		if ( null !== $key ) {
+			unset( $this->mirror[ $ns ][ $key ] );
+		}
+	}
+
+	/**
+	 * The lowest-ranked key a namespace is holding, or null when it holds none.
+	 * Linear scan, run once per overflow.
+	 *
+	 * @param string $ns Namespace to scan.
+	 */
+	private function lowest_rank_key( string $ns ): ?string {
 		$min_key  = null;
 		$min_rank = \PHP_INT_MAX;
 		foreach ( $this->mirror[ $ns ] as $k => [ $data ] ) {
-			$rank = self::mirror_traffic_rank( $data, $ns );
+			$rank = static::mirror_traffic_rank( $data, $ns );
 			if ( $rank < $min_rank ) {
 				$min_rank = $rank;
 				$min_key  = $k;
 			}
 		}
-		if ( null !== $min_key ) {
-			unset( $this->mirror[ $ns ][ $min_key ] );
-		}
+		return $min_key;
 	}
 
 	/**
@@ -2364,32 +2509,42 @@ class Flame_Builder_Node extends Node {
 	 *
 	 * Smallest-first keeps the most keys recoverable per byte, and drops the
 	 * biggest — which are the per-server leaderboards, the one axis that grows
-	 * with an operator input. Rank is not stored at all — `evict_lowest_rank()`
+	 * with an operator input. Rank is not stored at all — `lowest_rank_key()`
 	 * derives it from the data it already holds.
+	 *
+	 * The ordering is by ENTRY COUNT, which is free, rather than by encoded
+	 * bytes, which is not: encoding every held frame to sort them measured the
+	 * whole buffer to carry a budget's worth of it. A frame is a map of small
+	 * numeric entries, so its count tracks its size closely — and the ordering
+	 * only has to be APPROXIMATE, because the budget below is enforced against
+	 * REAL encoded bytes as they accumulate. A proxy that mis-orders two frames
+	 * costs a slightly worse packing, never an oversize record; there is no
+	 * reason to restore the full encode.
 	 *
 	 * @return array{at: int, frames: array<string,array<string,array{0: array<array-key,mixed>, 1: int}>>}
 	 */
 	private function checkpoint_mirror(): array {
 		$held = $this->mirror_frames();
-		\usort( $held, static fn ( array $a, array $b ): int => $a['size'] <=> $b['size'] );
+		\usort( $held, static fn ( array $a, array $b ): int => \count( $a['frame'][0] ) <=> \count( $b['frame'][0] ) );
 
 		$remaining = self::MAX_CHECKPOINT_MIRROR_BYTES;
 		$out    = [ 'at' => $this->now_ts(), 'frames' => [] ];
-		foreach ( $held as $i => [ 'ns' => $ns, 'key' => $key, 'frame' => $frame, 'size' => $size ] ) {
+		foreach ( $held as $i => [ 'ns' => $ns, 'key' => $key, 'frame' => $frame ] ) {
+			$size = self::frame_bytes( $frame );
 			if ( $size > $remaining ) {
-				// Ascending, so we stop on the SMALLEST that would not fit.
-				$largest = $held[ \count( $held ) - 1 ];
+				// Ascending, so the widest held frame is the last of them.
+				$widest = $held[ \count( $held ) - 1 ];
 				$this->print_less_often(
 					'held stats frames over the checkpoint budget; they still reach the mirror at bucket close',
 					\sprintf(
-						' — %d of %d frames dropped; budget %d bytes, held total %d bytes; largest dropped %s/%s at %d bytes',
+						' — %d of %d frames dropped; budget %d bytes, %d carried; widest held %s/%s at %d bytes',
 						\count( $held ) - $i,
 						\count( $held ),
 						self::MAX_CHECKPOINT_MIRROR_BYTES,
-						\array_sum( \array_column( $held, 'size' ) ),
-						$largest['ns'],
-						$largest['key'],
-						$largest['size']
+						self::MAX_CHECKPOINT_MIRROR_BYTES - $remaining,
+						$widest['ns'],
+						$widest['key'],
+						self::frame_bytes( $widest['frame'] )
 					)
 				);
 				break;
@@ -2401,22 +2556,40 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
-	 * The mirror frames being held, each with what it would cost a checkpoint.
+	 * The mirror frames being held, flattened out of their namespaces.
 	 *
-	 * One builder, two readers: the pack below, and the introspection payload —
-	 * which needs the total BEFORE the pack goes over, since a threshold you can
-	 * only observe after it trips is not a signal.
+	 * One builder, two readers: the pack above, and the introspection payload.
+	 * Neither is handed a SIZE — the pack measures only what it reaches, and
+	 * `mirror_held_bytes` is asked for by an operator rather than every thirty
+	 * seconds, so it pays for the exact total where it is wanted.
 	 *
-	 * @return list<array{ns: string, key: string, frame: array{0: array<array-key,mixed>, 1: int}, size: int}>
+	 * @return list<array{ns: string, key: string, frame: array{0: array<array-key,mixed>, 1: int}}>
 	 */
 	private function mirror_frames(): array {
 		$held = [];
 		foreach ( $this->mirror as $ns => $frames ) {
 			foreach ( $frames as $key => $frame ) {
-				$held[] = [ 'ns' => $ns, 'key' => $key, 'frame' => $frame, 'size' => self::frame_bytes( $frame ) ];
+				$held[] = [ 'ns' => $ns, 'key' => $key, 'frame' => $frame ];
 			}
 		}
 		return $held;
+	}
+
+	/**
+	 * Frames held in the WIDEST single namespace — the number `MAX_HELD_FRAMES`
+	 * is against.
+	 *
+	 * The bound is per namespace, so a cross-namespace total cannot warn about
+	 * it: six namespaces holding five thousand each read as thirty thousand
+	 * with nothing near the bound, while one spilling on every write reads as
+	 * ten thousand and fifty.
+	 */
+	private function widest_namespace_frames(): int {
+		$widest = 0;
+		foreach ( $this->mirror as $frames ) {
+			$widest = \max( $widest, \count( $frames ) );
+		}
+		return $widest;
 	}
 
 	/**
@@ -2487,7 +2660,8 @@ class Flame_Builder_Node extends Node {
 	 * `save_state()` into the offsetlog, a bounded ring of at most 60 keyframes,
 	 * and a respawn writes it when the bucket closes.
 	 *
-	 * Aggregates flush in full; the per-URL namespaces flush their bounded top-N.
+	 * Every namespace flushes in full: what a buffer holds is what the closing
+	 * bucket saw, less whatever the backstop already wrote early.
 	 */
 	private function flush_stats_mirror(): void {
 		if ( '' === $this->stats_partition ) {
@@ -2535,10 +2709,14 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
-	 * Write one mirror frame (TM_STRUCT {key,data,ttl}) to the partition.
+	 * Write one mirror frame (TM_STRUCT {data,ttl}, keyed by `Message::KEY`) to
+	 * the partition.
 	 *
 	 * Written straight to the partition rather than through the sink, so the
 	 * frame lands in the checkpoint regardless of how the graph is wired.
+	 *
+	 * The key rides in `Message::KEY` alone. A backend key runs some eighty
+	 * characters, and a second copy inside VALUE was 11% of the frame.
 	 *
 	 * @param \Newspack_Nodes\Partition_Node $partition Resolved stats partition.
 	 * @param string                         $key       Memcache key being shadowed.
@@ -2551,7 +2729,7 @@ class Flame_Builder_Node extends Node {
 		$msg[ Message::TIMESTAMP ] = Core::$now;
 		$msg[ Message::FROM ]      = $this->name;
 		$msg[ Message::KEY ]       = $key;
-		$msg[ Message::VALUE ]     = [ 'key' => $key, 'data' => $data, 'ttl' => $ttl ];
+		$msg[ Message::VALUE ]     = [ 'data' => $data, 'ttl' => $ttl ];
 		$partition->fill( $msg );
 	}
 
@@ -2611,13 +2789,13 @@ class Flame_Builder_Node extends Node {
 		foreach ( Core::arr( $mirror['frames'] ?? null ) as $ns_raw => $carried ) {
 			$ns       = Core::as_string( $ns_raw );
 			$restored = self::restore_frames( $carried, $elapsed );
-			$cap      = \max( 0, $this->mirror_topn( $ns ) );
+			$cap      = \max( 0, \min( $this->mirror_topn( $ns ), static::MAX_HELD_FRAMES ) );
 			if ( \count( $restored ) > $cap ) {
 				// Re-bound by TRAFFIC; the carry's own order is smallest-first.
 				\uasort(
 					$restored,
 					static fn ( array $a, array $b ): int =>
-						self::mirror_traffic_rank( $b[0], $ns ) <=> self::mirror_traffic_rank( $a[0], $ns )
+						static::mirror_traffic_rank( $b[0], $ns ) <=> static::mirror_traffic_rank( $a[0], $ns )
 				);
 				$restored = \array_slice( $restored, 0, $cap, true );
 			}
@@ -2687,9 +2865,11 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
-	 * The live cap on one namespace's buffered frames: `$flame_topn` for NS_URL
-	 * (the flame profiles), the `STATS_MIRROR_TOPN` value for the rest of that
-	 * map, and no bound at all for a namespace absent from it.
+	 * The live RANK cap on one namespace's buffered frames: `$flame_topn` for
+	 * NS_URL (the flame profiles), the `STATS_MIRROR_TOPN` value for the rest of
+	 * that map — every one of them 0 — and no rank at all for a namespace absent
+	 * from it, which is where both per-URL series and every aggregate land.
+	 * `MAX_HELD_FRAMES` is the separate bound on what those may HOLD.
 	 *
 	 * @param string $ns Namespace a frame was written under.
 	 */
@@ -2708,10 +2888,14 @@ class Flame_Builder_Node extends Node {
 	 * Each namespace stores a different shape, so each derives the count its own
 	 * way. The result only has to order URLs against each other.
 	 *
+	 * Reached through `static::` and protected so a test double can COUNT the
+	 * reads — the backstop's cost is a complexity claim, and wall clock is not
+	 * evidence for one. An override delegates to this body, which still runs.
+	 *
 	 * @param array<array-key,mixed> $data Value being mirrored.
 	 * @param string                  $ns   Namespace it belongs to.
 	 */
-	private static function mirror_traffic_rank( array $data, string $ns ): int {
+	protected static function mirror_traffic_rank( array $data, string $ns ): int {
 		if ( Stats_Store::NS_URL === $ns ) {
 			$flame = $data['flame'] ?? null;
 			return \is_array( $flame ) && \is_numeric( $flame['count'] ?? null ) ? (int) $flame['count'] : 0;
@@ -2719,7 +2903,9 @@ class Flame_Builder_Node extends Node {
 		if ( Stats_Store::NS_URL_CAT === $ns ) {
 			// One bucket: the `total` pseudo-category's sampled requests.
 			$total = $data[ self::TOTAL_KEY ] ?? null;
-			return \is_array( $total ) && \is_numeric( $total['n'] ?? null ) ? (int) $total['n'] : 0;
+			return \is_array( $total ) && \is_numeric( $total[ Stats_Store::CAT_REQUESTS ] ?? null )
+				? (int) $total[ Stats_Store::CAT_REQUESTS ]
+				: 0;
 		}
 		// NS_URL_DIM: one bucket; take the first dimension's counts.
 		$sum   = 0;
@@ -2822,19 +3008,19 @@ class Flame_Builder_Node extends Node {
 	 * width so `parse_stats_index()` can slice it by offset: key_hash(12)
 	 * segment(6) offset(10) length(8) = 36 bytes.
 	 *
-	 * The key is hashed because a backend key runs some seventy characters and a
+	 * The key is hashed because a backend key runs some eighty characters and a
 	 * fixed-width line needs a bound; `Log_Manager::url_hash()` is the house
 	 * 12-char digest rather than a second hashing convention. A reader files a
-	 * located frame under the key the FRAME carries, so a collision costs one
-	 * wasted read and can never file a value under a name that is not its own.
+	 * located frame under the key the FRAME's `Message::KEY` carries, so a
+	 * collision costs one wasted read and can never file a value under a name
+	 * that is not its own.
 	 *
 	 * @param array<int,mixed>  $message  The unpacked positional message array.
 	 * @param array<string,int> $position Position array with segment, offset, length.
 	 * @return string|null Index entry, or null for a frame carrying no key.
 	 */
 	public static function format_stats_index_entry( array $message, array $position ): ?string {
-		$value = $message[ Message::VALUE ] ?? null;
-		$key   = \is_array( $value ) ? ( $value['key'] ?? null ) : null;
+		$key = $message[ Message::KEY ] ?? null;
 		if ( ! \is_string( $key ) || '' === $key ) {
 			return null;
 		}
