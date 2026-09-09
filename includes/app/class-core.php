@@ -108,6 +108,35 @@ class Core {
 	/** The hook the SQL span rides; also the one it makes a generic pair redundant on. */
 	private const QUERY_HOOK = 'query';
 
+	/**
+	 * Hook-argument keys whose VALUE may be published. Everything else is `?`.
+	 *
+	 * SQL gets every literal replaced because it has no seam a list could
+	 * follow: the regex keeps the identifiers and drops the rest. Structured
+	 * data DOES have one — keys are the shape, leaves are the data — so here the
+	 * default is to drop and the list says what survives.
+	 *
+	 * SEED, not the answer. The census this should be built from did
+	 * not cover this population: `hook_start()` json_encodes its argument, so
+	 * the keys arrive inside a string that `tools/survey-firehose-keys.php` did
+	 * not descend. That tool now reports them; populate this from a run against
+	 * a real host. What is here meanwhile is the documented STRUCTURAL half of
+	 * `http_request_args` — the fields that say what kind of request it was, as
+	 * against `headers`, `body` and `cookies`, which say what was in it. Keys
+	 * match at any depth, lowercased.
+	 */
+	private const HOOK_ARG_KEEP = [
+		'method'       => true,
+		'timeout'      => true,
+		'redirection'  => true,
+		'httpversion'  => true,
+		'blocking'     => true,
+		'sslverify'    => true,
+		'stream'       => true,
+		'decompress'   => true,
+		'user-agent'   => true,
+	];
+
 	/** What a string has to open with before it is treated as a statement. */
 	private const SQL_LEAD = '/\A\s*(?:SELECT|INSERT|UPDATE|DELETE|REPLACE|SHOW|DESCRIBE|EXPLAIN|CREATE|ALTER|DROP|TRUNCATE)\b/i';
 	private const HTTP_STATE = 'http';
@@ -198,8 +227,9 @@ class Core {
 		if ( isset( $v ) && \is_scalar( $v ) ) {
 			$m = \is_string( $v ) ? self::shaped_if_sql( $v ) : $v;
 		} elseif ( isset( $v ) ) {
+			// Pretty-printing spends the entry's byte budget on indentation.
 			// phpcs:ignore WordPress.WP.AlternativeFunctions.json_encode_json_encode -- wp_json_encode() infinite-loops on circular refs (Core_Upgrader).
-			$encoded = \json_encode( $v, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES, 16 );
+			$encoded = \json_encode( self::shaped_argument( $v ), JSON_UNESCAPED_SLASHES, 16 );
 			if ( false !== $encoded ) {
 				$m = $encoded;
 			}
@@ -250,6 +280,34 @@ class Core {
 		$frames = \wp_debug_backtrace_summary( self::class, 0, false );
 		$near   = \array_slice( $frames, 0, self::CALLER_FRAMES );
 		return \implode( ', ', $near );
+	}
+
+	/**
+	 * A structured hook argument reduced to its shape.
+	 *
+	 * Keys are kept whatever they are — they say what the argument WAS, which
+	 * is the diagnostic — and a leaf is kept only when `HOOK_ARG_KEEP` names its
+	 * key. This is where a credential in a hook frame actually sits: the
+	 * `Authorization` header of `http_request_args`, an option array carrying an
+	 * integration key.
+	 *
+	 * @param mixed $value The filter argument, or a branch of it.
+	 * @return mixed The branch with its unlisted leaves replaced.
+	 */
+	private static function shaped_argument( $value ) {
+		if ( \is_object( $value ) ) {
+			$value = \get_object_vars( $value );
+		}
+		if ( ! \is_array( $value ) ) {
+			return '?';
+		}
+		$out = [];
+		foreach ( $value as $key => $item ) {
+			$out[ $key ] = \is_array( $item ) || \is_object( $item )
+				? self::shaped_argument( $item )
+				: ( isset( self::HOOK_ARG_KEEP[ \strtolower( (string) $key ) ] ) ? $item : '?' );
+		}
+		return $out;
 	}
 
 	/**

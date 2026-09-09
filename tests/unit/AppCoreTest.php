@@ -451,6 +451,59 @@ class AppCoreTest extends TestCase {
 		$this->assertSame( $prose, $this->open_span_message() );
 	}
 
+	/**
+	 * A structured argument is where a credential actually sits — the
+	 * `Authorization` header in `http_request_args`, an option array holding an
+	 * integration key. JSON has an explicit parse, so unlike SQL there is a real
+	 * seam: keys are the shape and leaves are the data. Anything not on the
+	 * allowlist is logged as `?`.
+	 */
+	public function test_hook_start_shapes_a_structured_argument(): void {
+		$this->set_governing_rule( $this->query_rule( false ) );
+		$core = new Core();
+
+		$core->hook_start(
+			[
+				'method'  => 'POST',
+				'timeout' => 5,
+				'headers' => [ 'Authorization' => 'Bearer shibboleth-cardamom-vestibule' ],
+				'body'    => 'user=carol&password=hunter2',
+			]
+		);
+
+		$logged = $this->open_span_message();
+		$this->assertStringNotContainsString( 'shibboleth-cardamom-vestibule', $logged );
+		$this->assertStringNotContainsString( 'hunter2', $logged );
+		// The shape survives: the keys still say what the argument was.
+		$this->assertStringContainsString( '"Authorization":"?"', $logged );
+		$this->assertStringContainsString( '"body":"?"', $logged );
+	}
+
+	/** An allowlisted key keeps its value; that is what the list is for. */
+	public function test_hook_start_keeps_an_allowlisted_key(): void {
+		$this->set_governing_rule( $this->query_rule( false ) );
+		$core = new Core();
+
+		$core->hook_start( [ 'method' => 'POST', 'headers' => [ 'X-Trace' => 'abc' ] ] );
+
+		$logged = $this->open_span_message();
+		$this->assertStringContainsString( '"method":"POST"', $logged );
+		$this->assertStringContainsString( '"X-Trace":"?"', $logged );
+	}
+
+	/**
+	 * Pretty-printing spends bytes on indentation nobody reads, against the
+	 * same MAX_DATA_SIZE the SQL frames were already losing content to.
+	 */
+	public function test_hook_start_does_not_pretty_print(): void {
+		$this->set_governing_rule( $this->query_rule( false ) );
+		$core = new Core();
+
+		$core->hook_start( [ 'method' => 'POST', 'timeout' => 5 ] );
+
+		$this->assertStringNotContainsString( "\n", $this->open_span_message() );
+	}
+
 	// ── the query span covers the filter chain ──────────────────────────
 
 	/**
