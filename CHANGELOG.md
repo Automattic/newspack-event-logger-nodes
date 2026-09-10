@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.95.1] - 2026-09-09
+
 ### Fixed
 
 - **`client`, `sig` and `signature` are redacted from a logged URL.** The census found all three on live hosts and `URL_REDACT_PATTERN` covered none of them — they were redacted only where a URL happened to pass through SinglePlatform's own sanitizer, which is a per-integration copy rather than the central rule. Both producers carry the names now, and `check-firehose-parity.py` holds them in step.
