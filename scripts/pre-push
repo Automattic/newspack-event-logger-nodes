@@ -99,6 +99,16 @@ if [[ -f "$docslint" ]]; then
 	ok "lint-docs clean"
 fi
 
+# The @wordpress/* family compiles against the API the browser is handed, so a
+# declaration carrying a range, or a lock resolved past it, builds against the
+# wrong WordPress.
+wppin="$(git rev-parse --show-toplevel)/scripts/lint-wp-pin.mjs"
+if [[ -f "$wppin" ]]; then
+	step "lint-wp-pin (@wordpress/* declared exactly and locked to it)"
+	node "$wppin" || fail "lint-wp-pin failed — a @wordpress/* dependency carries a range or the lock drifted (see above)"
+	ok "wp pin clean"
+fi
+
 # The substrate floor, against the substrate APIs this plugin actually calls.
 # lint-docs only holds the PROSE to the loader; both agreed on a wrong number
 # for three releases. Skips itself without a sibling substrate checkout.
