@@ -66,7 +66,7 @@ The one raw-handle read is the cross-worker auto-tune lock in `Flame_Builder_Nod
 
 The scope is memoized per process, so a live worker keeps writing the OLD prefix until it respawns. Both callers therefore restart the workers after rotating, best-effort — a failure only delays the new scope to the next spawn. A diff that rotates and expects immediate effect without a restart is wrong.
 
-**The rotation IS the schema migration.** Nothing compensates for skipping it: no reader or writer carries a shape probe, a version key component or a row-level legacy test. Each of those is a second migration mechanism to maintain against every future row shape, so reject one.
+**The rotation IS the schema migration.** Nothing compensates for skipping it: no reader or writer carries a shape probe, a version key component or a row-level legacy test. The durable stats mirror is the exception: the salt never reaches it, so its key carries `Stats_Store::MIRROR_KEY_VERSION`, bumped on a frame-shape change. Each of those is a second migration mechanism to maintain against every future row shape, so reject one.
 
 ### 6. Memcache value caps
 

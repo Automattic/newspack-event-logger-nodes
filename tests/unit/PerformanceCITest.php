@@ -849,7 +849,7 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( 23, Performance_CI_Node::load_row_default( $hash )['count'] );
 
 		// Gone, the way memcache drops an item under pressure.
-		Core::$memd->delete( Stats_Store::entry_key( 0, Stats_Store::NS_URLS_HOUR . ":{$shard}:{$hour}" ) );
+		Core::$memd->delete( self::cache_key( 0, Stats_Store::NS_URLS_HOUR . ":{$shard}:{$hour}" ) );
 
 		$this->assertSame(
 			23,

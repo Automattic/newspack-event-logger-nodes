@@ -819,7 +819,7 @@ Do NOT regress to incremental averages: they look mathematically equivalent but 
 wp nodes memcache flush     # rotate the salt, then restart the workers
 ```
 
-Nothing in the code compensates for skipping it: no reader or writer carries a shape probe, a version component or a row-level legacy test. The scope is memoized per process, so a long-running worker keeps writing the OLD prefix until it respawns — which is why the CLI restarts workers after rotating (best-effort, warning on failure), and why the admin "Flush Caches" button does the same. Skip the rotation and the dashboard reads garbage for one retention window; that is an operator error with a one-command fix. The rotation also takes every issued session, so reissue any you were using.
+Nothing in the code compensates for skipping it: no reader or writer carries a shape probe, a version component or a row-level legacy test. The durable stats mirror in `flame-stats.p{N}` is the one tier the rotation does not reach, on purpose, so its key carries `Stats_Store::MIRROR_KEY_VERSION` instead, bumped on a frame-shape change. The scope is memoized per process, so a long-running worker keeps writing the OLD prefix until it respawns — which is why the CLI restarts workers after rotating (best-effort, warning on failure), and why the admin "Flush Caches" button does the same. Skip the rotation and the dashboard reads garbage for one retention window; that is an operator error with a one-command fix. The rotation also takes every issued session, so reissue any you were using.
 
 **Memcache failure asymmetry**, deliberate on both sides. Do not unify them:
 
