@@ -143,7 +143,7 @@ class Log_Manager {
 	private const NS_PER_MS = 1_000_000;
 
 	/** @var string Regex for sensitive URL query parameters. */
-	private const URL_REDACT_PATTERN = '/([?&])(key|api_key|apikey|cache_cozy_warm|token|access_token|auth_token|refresh_token|password|passwd|pwd|secret|api_secret|client_secret|private_key|subscription[_-]?key|bearer|authorization|auth|session|sessionid|credentials)=[^&]*/i';
+	private const URL_REDACT_PATTERN = '/([?&])(key|api_key|apikey|cache_cozy_warm|token|access_token|auth_token|refresh_token|password|passwd|pwd|secret|api_secret|client|client_secret|private_key|sig|signature|subscription[_-]?key|bearer|authorization|auth|session|sessionid|credentials)=[^&]*/i';
 
 	/** @var array<int,self> Stack of suspended parent Log_Manager instances. */
 	private static $context_stack = [];

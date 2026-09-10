@@ -2575,4 +2575,45 @@ class LogManagerTest extends TestCase {
 		);
 	}
 
+	/**
+	 * Names the census found on live hosts, and the local redactors they used
+	 * to need. `subscription-Key` was carried by two forks of the film-times
+	 * client; `client`, `sig` and `apiKey` by the SinglePlatform pair. Covering
+	 * them centrally is what makes those copies redundant, so this is the test
+	 * that has to hold once they are gone.
+	 *
+	 * @dataProvider central_redaction_provider
+	 */
+	public function test_the_central_pattern_covers_the_local_redactors( string $url, string $expected ): void {
+		$this->assertSame( $expected, Log_Manager::redact_url( $url ) );
+	}
+
+	/**
+	 * @return array<string,array{string,string}>
+	 */
+	public static function central_redaction_provider(): array {
+		return [
+			'film-times subscription-Key' => [
+				'https://ee.iva-api.com/x?a=1&subscription-Key=shibboleth&b=2',
+				'https://ee.iva-api.com/x?a=1&subscription-Key=[REDACTED]&b=2',
+			],
+			'SinglePlatform client' => [
+				'https://api.example.test/v1?client=cardamom&page=2',
+				'https://api.example.test/v1?client=[REDACTED]&page=2',
+			],
+			'SinglePlatform sig' => [
+				'https://api.example.test/v1?sig=vestibule&page=2',
+				'https://api.example.test/v1?sig=[REDACTED]&page=2',
+			],
+			'signature, whatever its case' => [
+				'https://api.example.test/v1?Signature=vestibule',
+				'https://api.example.test/v1?Signature=[REDACTED]',
+			],
+			'SinglePlatform apiKey, whatever its case' => [
+				'https://api.example.test/v1?apiKey=cardamom',
+				'https://api.example.test/v1?apiKey=[REDACTED]',
+			],
+		];
+	}
+
 }

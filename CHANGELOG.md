@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`client`, `sig` and `signature` are redacted from a logged URL.** The census found all three on live hosts and `URL_REDACT_PATTERN` covered none of them — they were redacted only where a URL happened to pass through SinglePlatform's own sanitizer, which is a per-integration copy rather than the central rule. Both producers carry the names now, and `check-firehose-parity.py` holds them in step.
+
+- **The parity checker asserts WHERE each producer applies the pattern, not just that the two patterns match.** They have been byte-identical throughout, while PHP ran the pattern over any string `m` and Perl ran it over the environment block alone — so every URL a gyrobase tag logged as a message kept its secrets, and the tool built to catch exactly that divergence was green the whole time. It now also asserts that neither side redacts a queued job body: that body is the transport a hub runs the work from, so redacting it would break the job rather than protect anything. Two regression cases cover both.
+
 ## [0.95.0] - 2026-09-09
 
 ### Changed
