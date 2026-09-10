@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.95.2] - 2026-09-10
+
 ### Changed
 
 - **The `@wordpress/*` family is declared exactly, and a push gate holds the lock to the declaration.** Every runtime package was declared with a caret at its `wp-7.0` version, and the committed lock had climbed to trunk (`components` 32.6.0, `icons` 11.8.0, `api-fetch` 7.45.0, `element` 6.46.0 and `i18n` 6.18.0 against 32.2.1, 11.7.1, 7.40.1, 6.40.1 and 6.13.1), so `npm ci` built against an API ahead of the one WordPress 7.0 hands the browser. `@wordpress/icons` is bundled rather than externalized, so the shipped icons move from 11.8.0 to 11.7.1; everything else only changes the API the bundle was compiled against. The declarations drop the caret, the lock is rebuilt at the tag, and `scripts/lint-wp-pin.mjs`, run from `pre-push`, fails a push when a declaration carries a range or the lock resolves elsewhere.
