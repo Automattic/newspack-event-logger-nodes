@@ -2272,7 +2272,7 @@ class Flame_Builder_Node extends Node {
 			if ( null === $partition ) {
 				return [];
 			}
-			// Frames are filed under the FULL key; the Table asks relative.
+			// Frames are filed under the durable key; the Table asks relative.
 			$hashes = [];
 			foreach ( $keys as $key ) {
 				// The seam is public and untyped; only strings name a key.
@@ -2361,7 +2361,7 @@ class Flame_Builder_Node extends Node {
 	 * cap is an operator's (`set_flame_topn`). `MAX_HELD_FRAMES` bounds what the
 	 * buffer may HOLD, and its overflow is written early rather than dropped.
 	 *
-	 * @param string                  $key  Memcache key being shadowed.
+	 * @param string                  $key  Durable key the frame is filed under.
 	 * @param array<array-key,mixed> $data Value written.
 	 * @param int                     $ttl  TTL the memcache write used.
 	 * @param string                  $ns   Stats_Store namespace the key belongs to.
@@ -2715,11 +2715,11 @@ class Flame_Builder_Node extends Node {
 	 * Written straight to the partition rather than through the sink, so the
 	 * frame lands in the checkpoint regardless of how the graph is wired.
 	 *
-	 * The key rides in `Message::KEY` alone. A backend key runs some eighty
-	 * characters, and a second copy inside VALUE was 11% of the frame.
+	 * The key rides in `Message::KEY` alone; a copy inside VALUE would repeat
+	 * it in every frame for nothing.
 	 *
 	 * @param \Newspack_Nodes\Partition_Node $partition Resolved stats partition.
-	 * @param string                         $key       Memcache key being shadowed.
+	 * @param string                         $key       Durable key the frame is filed under.
 	 * @param array<array-key,mixed>        $data      Value written.
 	 * @param int                            $ttl       TTL the memcache write used.
 	 */
@@ -2932,7 +2932,8 @@ class Flame_Builder_Node extends Node {
 			$frame = Core::arr( $frame );
 			$data  = $frame[0] ?? null;
 			$ttl   = Core::num_int( $frame[1] ?? null ) - $elapsed;
-			if ( \is_string( $key ) && \is_array( $data ) && $ttl > 0 ) {
+			// A carry from another mirror version matches no lookup; drop it.
+			if ( \is_string( $key ) && Stats_Store::is_mirror_key( $key ) && \is_array( $data ) && $ttl > 0 ) {
 				$out[ $key ] = [ $data, $ttl ];
 			}
 		}
@@ -3008,8 +3009,8 @@ class Flame_Builder_Node extends Node {
 	 * width so `parse_stats_index()` can slice it by offset: key_hash(12)
 	 * segment(6) offset(10) length(8) = 36 bytes.
 	 *
-	 * The key is hashed because a backend key runs some eighty characters and a
-	 * fixed-width line needs a bound; `Log_Manager::url_hash()` is the house
+	 * The key is hashed because a fixed-width line needs a bound;
+	 * `Log_Manager::url_hash()` is the house
 	 * 12-char digest rather than a second hashing convention. A reader files a
 	 * located frame under the key the FRAME's `Message::KEY` carries, so a
 	 * collision costs one wasted read and can never file a value under a name

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The durable stats mirror survives a salt rotation.** Every frame in `flame-stats.p{N}` was filed under the Table's memcache key, which carries the install scope, and the scope moves on every `wp nodes memcache flush`. The reader hashed the new scope, matched nothing, and the dashboards showed only the minutes since the last worker start with weeks of history on disk. `Stats_Store::entry_key()` now returns `evlog:m{V}:p{N}:{key}` with no scope, so the mirror write, the index hash, the rehydrate compare and the held-frame lookup all key the same way across rotations. `V` is `Stats_Store::MIRROR_KEY_VERSION`, the mirror's own migration lever now that the salt no longer reaches it: a frame-shape change bumps it. Frames and checkpoint carries written under the old scoped key are not read, and the carry drops them rather than holding them; history accumulates from the first bucket to close after the upgrade.
+
 ## [0.95.2] - 2026-09-10
 
 ### Changed

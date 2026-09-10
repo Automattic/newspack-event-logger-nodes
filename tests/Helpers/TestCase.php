@@ -188,6 +188,15 @@ abstract class TestCase extends RuntimeTestCase {
 	protected static function scoped( string $logical ): string {
 		return \Newspack_Nodes\Cache_Backend::site_key( $logical );
 	}
+
+	/**
+	 * The MEMCACHE key a stats entry sits under, scoped through the Table.
+	 * Distinct from `Stats_Store::entry_key()`, the durable key, which carries
+	 * no scope: a test evicting a row from memcache spells the cache key here.
+	 */
+	protected static function cache_key( int $partition, string $key ): string {
+		return \Newspack_Nodes\Table_Node::entry_key( \Newspack_Event_Logger_Nodes\Stats_Store::namespace_for( $partition ), $key );
+	}
 	/**
 	 * The inverse of `positional_url_row()`, for assertions.
 	 *

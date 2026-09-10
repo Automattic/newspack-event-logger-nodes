@@ -510,6 +510,20 @@ class StatsStoreTest extends TestCase {
 
 	// --- Mirror seam + restore() ------------------------------------------
 
+	public function test_entry_key_is_the_durable_key_and_carries_no_install_scope(): void {
+		// The mirror files every frame under this key, and the mirror is what
+		// outlives `wp nodes memcache flush`. A key carrying the install scope
+		// is orphaned by the very rotation it exists to survive. What it
+		// carries instead is the MIRROR's own version, the one lever a frame
+		// shape change turns, since the salt no longer reaches this tier.
+		// Partition 3 and an odd bucket, so no default satisfies it by accident.
+		$key = Stats_Store::NS_HOURLY . ':2026-03-04-05';
+		$this->assertSame( 'evlog:m' . Stats_Store::MIRROR_KEY_VERSION . ':p3:' . $key, Stats_Store::entry_key( 3, $key ) );
+		$this->assertTrue( Stats_Store::is_mirror_key( Stats_Store::entry_key( 3, $key ) ) );
+		$this->assertFalse( Stats_Store::is_mirror_key( 'newspack_nodes:v3:4f82f2fc5124:table:evlog:p3:' . $key ), 'a scoped cache key is not a mirror key' );
+		$this->assertFalse( Stats_Store::is_mirror_key( 'evlog:m0:p3:' . $key ), 'an older mirror version is not this one' );
+	}
+
 	public function test_set_hourly_invokes_mirror_with_key_data_ttl_ns(): void {
 		$store    = $this->make_store();
 		$captured = [];
@@ -954,12 +968,12 @@ class StatsStoreTest extends TestCase {
 
 		$store->url_row_sources( [ $bucket ] );
 
-		$unsharded = Stats_Store::entry_key( 0, 'urls:' . $bucket );
+		$unsharded = self::cache_key( 0, 'urls:' . $bucket );
 		/** @var array<int,string> $asked */
 		$asked = Core::$memd->asked;
 		$this->assertNotContains( $unsharded, $asked, 'the unsharded key is never asked for' );
 		$this->assertContains(
-			Stats_Store::entry_key( 0, 'urls:a:' . $bucket ),
+			self::cache_key( 0, 'urls:a:' . $bucket ),
 			$asked,
 			'every shard is'
 		);

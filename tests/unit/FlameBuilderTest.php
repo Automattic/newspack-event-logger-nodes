@@ -1822,6 +1822,33 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( [], $fb->save_state()['pending'] );
 	}
 
+	public function test_restore_state_drops_a_carried_frame_under_a_foreign_key(): void {
+		// A checkpoint written by the release before this one carried its held
+		// frames under the scoped cache key. Taken back, such a frame matches no
+		// lookup, counts against the held bound, and is written to disk at close
+		// as a record nothing reads. The carry keeps only this mirror's keys.
+		$fb     = new Flame_Builder_Node();
+		$now    = 1_700_003_000;
+		$bucket = Stats_Store::bucket_key( $now );
+		$fb->set_clock( static fn() => $now );
+		$durable = Stats_Store::entry_key( 0, 'hourly:' . $bucket );
+		$foreign = 'newspack_nodes:v3:4f82f2fc5124:table:evlog:p0:hourly:' . $bucket;
+		$fb->restore_state( [
+			'mirror' => [
+				'at'     => $now,
+				'frames' => [
+					'hourly' => [
+						$foreign => [ [ 'count' => 41 ], 3600 ],
+						$durable => [ [ 'count' => 43 ], 3600 ],
+					],
+				],
+			],
+		] );
+		$fb->set_clock( null );
+
+		$this->assertSame( [ $durable ], \array_keys( $fb->save_state()['mirror']['frames']['hourly'] ) );
+	}
+
 	public function test_restore_state_seeds_every_key_a_partial_bucket_omits(): void {
 		$fb = new Flame_Builder_Node();
 		$fb->restore_state( [
@@ -4300,7 +4327,7 @@ class FlameBuilderTest extends TestCase {
 
 		// Evict just that row's shard, the way memcache does under pressure.
 		$shard = Stats_Store::url_shard( 'ab12cd34ef56' );
-		$key   = Stats_Store::entry_key( 0, "urls:{$shard}:{$bucket}" );
+		$key   = self::cache_key( 0, "urls:{$shard}:{$bucket}" );
 		Core::$memd->delete( $key );
 		$this->assertFalse( Core::$memd->get( $key ), 'the shard holding it is evicted' );
 		$this->assertNotSame( [], $this->get_hourly_bucket( $store, $bucket ), 'memcache still warm by the old sentinel' );
@@ -4344,7 +4371,7 @@ class FlameBuilderTest extends TestCase {
 		[ $fb, $p ] = $this->mirrored_builder( $store, 'flames-stats' );
 
 		$bucket = self::live_bucket();
-		$key    = Stats_Store::entry_key( 0, 'urls:' . Stats_Store::url_shard( 'h' ) . ':' . $bucket );
+		$key    = self::cache_key( 0, 'urls:' . Stats_Store::url_shard( 'h' ) . ':' . $bucket );
 
 		$this->set_url_bucket( $store, $bucket, [ 'h' => [ 'url' => '/a', 'count' => 11 ] ] );
 		$fb->save_state();
@@ -4381,7 +4408,7 @@ class FlameBuilderTest extends TestCase {
 		$p->flush();
 		foreach ( $buckets as $bucket ) {
 			foreach ( Stats_Store::url_shards() as $shard ) {
-				Core::$memd->delete( Stats_Store::entry_key( 0, "urls:{$shard}:{$bucket}" ) );
+				Core::$memd->delete( self::cache_key( 0, "urls:{$shard}:{$bucket}" ) );
 			}
 		}
 		$p->index_scans = 0;
@@ -4829,7 +4856,7 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( 9, $this->get_hourly_bucket( $store, $bucket )['count'] ?? 0, 'nine landed' );
 
 		// memcached evicts the open bucket under pressure.
-		Core::$memd->delete( Stats_Store::entry_key( 0, Stats_Store::NS_HOURLY . ':' . $bucket ) );
+		Core::$memd->delete( self::cache_key( 0, Stats_Store::NS_HOURLY . ':' . $bucket ) );
 
 		$this->fill_request( $fb, $this->completed_request( [ 'duration_ms' => 32.0, 'timestamp' => $open ] ) );
 		$fb->flush();
@@ -4886,7 +4913,7 @@ class FlameBuilderTest extends TestCase {
 		$fb->flush();
 		$this->assertSame( 6, $this->get_url_dimensional_bucket( $store, $hash, $bucket )['method']['GET']['c'] ?? 0 );
 
-		Core::$memd->delete( Stats_Store::entry_key( 0, Stats_Store::NS_URL_DIM . ':' . $hash . ':' . $bucket ) );
+		Core::$memd->delete( self::cache_key( 0, Stats_Store::NS_URL_DIM . ':' . $hash . ':' . $bucket ) );
 		$this->fill_request( $fb, $this->completed_request( [ 'duration_ms' => 30.0, 'timestamp' => $open ] ) );
 		$fb->flush();
 		$fb->set_clock( null );

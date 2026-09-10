@@ -171,6 +171,14 @@ class Stats_Store {
 
 	/** Key prefix under the install scope. */
 	private const PREFIX_BASE  = 'evlog';
+
+	/**
+	 * The durable mirror's own schema version, folded into every key it files
+	 * under. The salt rotation that migrates memcache (decision 5) never reaches
+	 * the mirror, by design (decision 10), so a frame-shape change bumps THIS,
+	 * and a frame filed under the previous version is never read back.
+	 */
+	public const MIRROR_KEY_VERSION = 1;
 	/** Per-URL aggregates one accumulator bucket holds before it rotates. */
 	private const URL_ACCUMULATOR_SIZE    = 1000;
 	/** Accumulator buckets retained; capacity is roughly the product. */
@@ -1112,21 +1120,26 @@ class Stats_Store {
 	private function store( string $key, array $data, int $ttl, string $ns ): bool {
 		$ok = (bool) $this->table( $this->role_for( $ns ) )?->store( $key, $data );
 		if ( $ok && null !== $this->mirror ) {
-			// The mirror records the full backend key, which is the Table's.
+			// The mirror records the durable key, which no salt rotation moves.
 			( $this->mirror )( self::entry_key( $this->partition, $key ), $data, $ttl, $ns );
 		}
 		return $ok;
 	}
 
 	/**
-	 * Full backend key for one entry — what the mirror records its frames under.
+	 * Durable key for one entry — what the mirror records its frames under.
+	 *
+	 * Deliberately NOT the Table's cache key: that one carries the install
+	 * scope, and the scope moves on every salt rotation. The mirror exists to
+	 * outlive `wp nodes memcache flush`, so its key carries the mirror version,
+	 * the partition and the entry, and a rotation orphans nothing on disk.
 	 *
 	 * @param int    $partition Flame-builder partition.
 	 * @param string $key       Entry key within the namespace.
-	 * @return string The Table's own key, install-scoped.
+	 * @return string `evlog:m{V}:p{N}:{key}`, stable across salt rotations.
 	 */
 	public static function entry_key( int $partition, string $key ): string {
-		return Table_Node::entry_key( self::namespace_for( $partition ), $key );
+		return self::mirror_prefix() . 'p' . $partition . ':' . $key;
 	}
 
 	/**
@@ -1152,6 +1165,21 @@ class Stats_Store {
 		$host = $at + 3;
 		$end  = $host + \strcspn( $url, '/?#', $host );
 		return [ \substr( $url, $end ), \substr( $url, 0, $end ) ];
+	}
+
+	/**
+	 * Whether a key is one THIS mirror version files under — what the
+	 * checkpoint carry keeps and what a reader may file a frame as.
+	 *
+	 * @param string $key A key read back from a checkpoint or a frame.
+	 */
+	public static function is_mirror_key( string $key ): bool {
+		return \str_starts_with( $key, self::mirror_prefix() );
+	}
+
+	/** The `evlog:m{V}:` head every durable key opens with. */
+	private static function mirror_prefix(): string {
+		return self::PREFIX_BASE . ':m' . self::MIRROR_KEY_VERSION . ':';
 	}
 
 	/**
@@ -1181,7 +1209,8 @@ class Stats_Store {
 	 * Join the caller's parts into one entry key, namespace token first.
 	 *
 	 * The `evlog:p{N}` prefix and the install scope are NOT here: the Table
-	 * carries them, through `namespace_for()` and `Table_Node::entry_key()`. That
+	 * carries them, through `namespace_for()` and `Table_Node::entry_key()`, and
+	 * the mirror's durable key carries the prefix with no scope (`entry_key()`). That
 	 * scoping is what keeps two installs sharing one memcached server — an Atomic
 	 * pair — off each other's `hourly` key, which is otherwise a co-tenant's
 	 * request volume in this install's dashboard.
@@ -1267,7 +1296,7 @@ class Stats_Store {
 	/**
 	 * Table namespace owning one partition's keyspace.
 	 *
-	 * @api Tests and the mirror derive backend keys from it.
+	 * @api Tests derive cache keys from it; the mirror's durable key opens with it too.
 	 * @param int $partition Flame-builder partition.
 	 */
 	public static function namespace_for( int $partition ): string {
