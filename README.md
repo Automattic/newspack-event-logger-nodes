@@ -149,6 +149,7 @@ Hub and spoke differ by topology membership rather than by a toggle. A spoke run
 
 ## Documentation
 
+- [docs/series/README.md](docs/series/README.md) — the introductory series, with diagrams: the firehose and its readers, hub and spoke, the dashboards, and the security review
 - [docs/architecture-guide.md](docs/architecture-guide.md) — write path, topologies, application nodes, memcache schema, hub/spoke flow
 - [docs/API.md](docs/API.md) — service-CI verbs, the command endpoint, SSE, MCP, the WP-CLI verbs, the PHP API sibling plugins log through, and the hooks this plugin fires and consumes
 - [AGENTS.md](AGENTS.md) — architecture decisions, layout, build and release
