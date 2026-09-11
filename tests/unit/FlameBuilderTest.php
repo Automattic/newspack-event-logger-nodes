@@ -2,6 +2,7 @@
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\Medium;
 use Newspack_Event_Logger_Nodes\Flame_Builder_Node;
 use Newspack_Event_Logger_Nodes\Flame_Fold;
 use Newspack_Event_Logger_Nodes\Flame_Tree;
@@ -29,6 +30,8 @@ use Newspack_Nodes\Tests\Helpers\InMemoryMemcached;
  * The flame tree is built from `entries` via LIFO matching of `^(.+?) \(start\)$`
  * / `^(.+?) \(complete\)$` patterns on `k`.
  */
+// The overflow tests fill two shard families past their caps; under Xdebug that passes 1 s.
+#[Medium]
 #[CoversClass( Flame_Builder_Node::class )]
 class FlameBuilderTest extends TestCase {
 
