@@ -3,7 +3,7 @@ declare( strict_types=1 );
 
 namespace Newspack_Event_Logger_Nodes\Tests\Unit\Cli;
 
-use PHPUnit\Framework\Attributes\Medium;
+use PHPUnit\Framework\Attributes\Large;
 use PHPUnit\Framework\TestCase;
 use Newspack_Event_Logger_Nodes\CLI\Ruleset_Bench_Command;
 use Newspack_Nodes\Core;
@@ -16,7 +16,8 @@ require_once \dirname( __DIR__, 4 ) . '/newspack-nodes/tests/Helpers/WPCLIStub.p
  * default-iterations (200) paths legitimately exceed the 1s Small-test budget,
  * so raise the per-test limit as the substrate does for its heavy suites.
  */
-#[Medium]
+// The default 200 iterations run for real; under Xdebug that nears 10 s.
+#[Large]
 final class RulesetBenchCommandTest extends TestCase {
 
 	/** @var \Memcached|null Saved handle restored in tearDown. */
