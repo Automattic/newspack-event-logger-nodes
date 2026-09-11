@@ -149,13 +149,13 @@ Hub and spoke differ by topology membership rather than by a toggle. A spoke run
 
 ## Documentation
 
-- [docs/series/README.md](docs/series/README.md) — the introductory series, with diagrams: the firehose and its readers, hub and spoke, the dashboards, and the security review
-- [docs/architecture-guide.md](docs/architecture-guide.md) — write path, topologies, application nodes, memcache schema, hub/spoke flow
-- [docs/API.md](docs/API.md) — service-CI verbs, the command endpoint, SSE, MCP, the WP-CLI verbs, the PHP API sibling plugins log through, and the hooks this plugin fires and consumes
-- [AGENTS.md](AGENTS.md) — architecture decisions, layout, build and release
-- [CHANGELOG.md](CHANGELOG.md) — version-by-version history
-- [newspack-nodes docs/README.md](https://github.com/Automattic/newspack-nodes/blob/main/docs/README.md) — the substrate's documentation map and glossary
-- [newspack-nodes docs/getting-started.md](https://github.com/Automattic/newspack-nodes/blob/main/docs/getting-started.md) — the substrate from zero to a running pipeline
+[docs/README.md](docs/README.md) is the map. It reads in three groups:
+
+- **Understand it**: [the Event Logger](docs/the-event-logger.md), [hub control](docs/hub-control.md) and [dashboards](docs/dashboards.md), three chapters with diagrams
+- **Reference**: [architecture-guide.md](docs/architecture-guide.md), [architecture-decisions.md](docs/architecture-decisions.md), [security-model.md](docs/security-model.md) and [API.md](docs/API.md)
+- **The substrate**: newspack-nodes' [documentation map](https://github.com/Automattic/newspack-nodes/blob/main/docs/README.md), [getting-started.md](https://github.com/Automattic/newspack-nodes/blob/main/docs/getting-started.md) and [hub-and-spoke.md](https://github.com/Automattic/newspack-nodes/blob/main/docs/hub-and-spoke.md)
+
+[AGENTS.md](AGENTS.md) covers layout, build and release, and [CHANGELOG.md](CHANGELOG.md) the version-by-version history.
 
 ## License
 

@@ -586,7 +586,7 @@ class ReqgrepCommandTest extends TestCase {
 		$captured = $this->capture_output( $cmd );
 
 		// A marker stands in for entries that were REMOVED, so the interval it
-		// spans is missing detail rather than idle time — AGENTS.md decision 13.
+		// spans is missing detail rather than idle time: docs/architecture-decisions.md, decision 13.
 		// The dashboard draws no ruler anywhere in a folded record; the CLI drew
 		// ten minutes of dots across the same marker and called it elapsed.
 		$rid = 'foldGapR';

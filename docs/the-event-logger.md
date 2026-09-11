@@ -1,5 +1,4 @@
 # The Event Logger
-*Part 6 of 10 in Newspack Nodes and the Event Logger. Previous: Commands, capabilities and sessions. Next: Hub and spoke.*
 
 Newspack Event Logger Nodes is an application on the runtime: it records what a WordPress request does and how long each part takes. The runtime owns the wiring; the plugin owns the data processing.
 
@@ -25,7 +24,7 @@ The firehose interleaves every request's lines. Four topologies pull them apart:
 
 Assembly happens in the workers, where the request is over and nobody is waiting. Request_Builder_Node keys an envelope per request id, folds each line in, checks the line numbers for gaps, and emits the record to the requests partition when the terminal arrives. A summary of each finished request goes to completed, error and warning lines to errors, and alert lines to alerts; Request_Flight_Node writes an in-flight snapshot to gyroscope on the router's one-second tick. The consumer checkpoints the envelopes into its offsetlog, so a respawned worker resumes half-built requests, and a silent request is evicted as timed out after 600 seconds. Four statuses mark an unclean end, F for a fatal, T for a timeout, A for an abort and I for a gap; they tell you whether a measurement is missing or the request was.
 
-Gyroscope shows what is in flight now, Request Log a row per finished request, and Errors the error lines; a bridge carries the runtime's own diagnostics into the active request's errors. Settings holds the three switches, `enable_logging`, `log_memory` and `flush_every_line`, the effective configuration and the ruleset editor; a change applies at once through the `rules` verbs.
+Gyroscope shows what is in flight now, Request Log a row per finished request, and Errors the error lines; a bridge carries the runtime's own diagnostics into the active request's errors. Settings holds the three switches, `enable_logging`, `log_memory` and `flush_every_line`, the effective configuration and the ruleset editor; a change applies at once through the `rules` verbs. [Dashboards](dashboards.md) covers what each one reads.
 
 ## Flames and statistics
 
@@ -43,13 +42,11 @@ When memcache is unreachable every read returns nothing, and `wp nodes memcache 
 
 ## Jobs ride the firehose too
 
-Jobs ride the firehose because the append is already paid for, and because only firehose entries cross from a spoke to its hub (Part 7). A job is an entry in the `job` category, so the same append that logs a request can enqueue work. Job_Router_Node writes every job entry to the jobs partition, a sieve drops any job older than 900 seconds, and the runtime's job-worker topology runs the handlers. The `complete` topology runs assembly, flames, routing and dispatch in one worker, with a Tee splitting one firehose consumer between the builder and the router.
+Jobs ride the firehose because the append is already paid for, and because only firehose entries cross from a spoke to its hub ([hub control](hub-control.md#jobs-from-a-spoke)). A job is an entry in the `job` category, so the same append that logs a request can enqueue work. Job_Router_Node writes every job entry to the jobs partition, a sieve drops any job older than 900 seconds, and the runtime's job-worker topology runs the handlers. The `complete` topology runs assembly, flames, routing and dispatch in one worker, with a Tee splitting one firehose consumer between the builder and the router.
 
 ## Read more
 
-- [newspack-event-logger-nodes/docs/architecture-guide.md](https://github.com/Automattic/newspack-event-logger-nodes/blob/v0.95.3/docs/architecture-guide.md)
-- [newspack-event-logger-nodes/README.md](https://github.com/Automattic/newspack-event-logger-nodes/blob/v0.95.3/README.md)
-- [newspack-event-logger-nodes/AGENTS.md](https://github.com/Automattic/newspack-event-logger-nodes/blob/v0.95.3/AGENTS.md)
-- [newspack-event-logger-nodes/topologies/](https://github.com/Automattic/newspack-event-logger-nodes/tree/v0.95.3/topologies)
-
-*Part 6 of 10 in Newspack Nodes and the Event Logger. Previous: Commands, capabilities and sessions. Next: Hub and spoke.*
+- [architecture-guide.md](architecture-guide.md), the sections [Write Path: Log_Manager](architecture-guide.md#write-path-log_manager), [Per-URL logging ruleset](architecture-guide.md#per-url-logging-ruleset), [Topologies](architecture-guide.md#topologies) and [Memcache Schema](architecture-guide.md#memcache-schema)
+- [README.md](../README.md)
+- [AGENTS.md](../AGENTS.md)
+- [topologies/](../topologies)

@@ -631,7 +631,7 @@ class Flame_Builder_Node extends Node {
 	 *   not count, not timing, not peak memory. Otherwise a long-running worker
 	 *   would dominate the site-wide averages.
 	 *
-	 * Sums are stored, never means (see AGENTS.md architecture decision 2); the
+	 * Sums are stored, never means (see docs/architecture-decisions.md, decision 2); the
 	 * display layer divides at read time so cross-bucket merges stay exact.
 	 *
 	 * @param string                  $url_hash   URL hash of the request.
@@ -1196,7 +1196,7 @@ class Flame_Builder_Node extends Node {
 
 	/**
 	 * Fold a category sample into a leaderboard bucket (sums, never means —
-	 * AGENTS.md decision 2). The per-URL caller stamps `ts` afterwards.
+	 * docs/architecture-decisions.md, decision 2). The per-URL caller stamps `ts` afterwards.
 	 *
 	 * @param array{samples: int, sum_time: float|int, sum_count: float|int, ts?: int, entries: array<string,array<int,float|int>>}|null $slot Bucket, null on first use.
 	 * @param float $time  Time to add.
