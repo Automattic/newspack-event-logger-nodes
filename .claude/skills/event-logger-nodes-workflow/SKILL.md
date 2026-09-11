@@ -8,7 +8,7 @@ argument-hint: "[handler / verb / dashboard / node]"
 
 The application built on the newspack-nodes runtime. For substrate changes (Node, Router, Topic, Partition, Worker, Fleet, REPL, Tee, Tail, Consumer), use the `nodes-workflow` skill in newspack-nodes instead.
 
-AGENTS.md carries the architecture decisions and key files; this skill is the procedural companion.
+`docs/architecture-decisions.md` carries the architecture decisions and AGENTS.md the key files; this skill is the procedural companion.
 
 ## When to Use
 
@@ -270,7 +270,7 @@ For job handler changes: queue a job through the legitimate caller, wait, check 
 
 ## After You Land
 
-- Update AGENTS.md if the change altered an architecture decision or a key file.
+- Update `docs/architecture-decisions.md` if the change altered an architecture decision, and AGENTS.md if it altered a key file.
 - If you added a job handler that crosses the hub/spoke boundary, document which side is intended (`job_handlers` vs `remote_job_handlers`).
 - If you called a substrate API newer than 2.51.0, raise the floor in `newspack-event-logger-nodes.php` and say why in the comment beside it.
 - Add the CHANGELOG entry, then `./scripts/bump-version.sh <version>` — it rewrites the header, the `NEWSPACK_EVENT_LOGGER_NODES_VERSION` constant, `package.json` and the substrate pin in `release.yml` together, and refuses to bump when the sibling substrate's version is not tagged locally. Never hand-edit any of the four.
