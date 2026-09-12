@@ -4,7 +4,7 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 
 **Maintenance rule:** a release that changes any consumer-facing contract adds its entry here in the same commit as its CHANGELOG entry. No entry means nothing to do.
 
-## Unreleased
+## 0.96.0
 
 - **The substrate floor RISES with this release.** The dashboards send the
   substrate's renamed verbs (`raw-logs dump_log`, `workers dump_cleanup`,

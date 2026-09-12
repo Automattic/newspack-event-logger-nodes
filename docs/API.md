@@ -9,12 +9,12 @@ and the WordPress hooks it fires and consumes.
 | Endpoint | Owner | Purpose |
 |----------|-------|---------|
 | `POST /wp-json/newspack-event-logger-nodes/v1/mcp` | this plugin ([`App\MCP_Controller`](../includes/app/class-mcp-controller.php)) | JSON-RPC MCP server over ten verbs the dashboards already drive. |
-| `POST /wp-json/newspack-nodes/v1/command` | substrate ([`Rest\HTTP_In_Node`](https://github.com/Automattic/newspack-nodes/blob/v2.55.3/includes/rest/class-http-in-node.php)) | Routes a batch of packed command Messages to named CI nodes and writes the replies back. |
-| `GET /wp-json/newspack-nodes/v1/messages/stream` | substrate ([`Rest\SSE_Out_Node`](https://github.com/Automattic/newspack-nodes/blob/v2.55.3/includes/rest/class-sse-out-node.php)) | Subscribes to one or more `<log>.pN` partitions and emits 7-field message envelopes as SSE events. |
-| `GET /wp-json/newspack-nodes/v1/log/stream` | substrate ([`Rest\Log_Stream_Out_Node`](https://github.com/Automattic/newspack-nodes/blob/v2.55.3/includes/rest/class-log-stream-out-node.php)) | The same stream over a named log-registry source rather than a partition. |
-| `POST /wp-json/newspack-nodes/v1/auth` | substrate ([`Rest\Auth_Controller`](https://github.com/Automattic/newspack-nodes/blob/v2.55.3/includes/rest/class-auth-controller.php)) | Mints the scoped command session an MCP bearer credential names. |
-| `POST /wp-json/newspack-nodes/v1/workers/spawn` | substrate ([`Rest\Spawn_Controller`](https://github.com/Automattic/newspack-nodes/blob/v2.55.3/includes/rest/class-spawn-controller.php)) | HMAC-validated worker bootstrap. Not for public callers. |
-| `POST /wp-json/newspack-nodes/v1/health/cache` | substrate ([`Rest\Health_Cache_Controller`](https://github.com/Automattic/newspack-nodes/blob/v2.55.3/includes/rest/class-health-cache-controller.php)) | Token-gated cache probe the state doctor calls. |
+| `POST /wp-json/newspack-nodes/v1/command` | substrate ([`Rest\HTTP_In_Node`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/rest/class-http-in-node.php)) | Routes a batch of packed command Messages to named CI nodes and writes the replies back. |
+| `GET /wp-json/newspack-nodes/v1/messages/stream` | substrate ([`Rest\SSE_Out_Node`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/rest/class-sse-out-node.php)) | Subscribes to one or more `<log>.pN` partitions and emits 7-field message envelopes as SSE events. |
+| `GET /wp-json/newspack-nodes/v1/log/stream` | substrate ([`Rest\Log_Stream_Out_Node`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/rest/class-log-stream-out-node.php)) | The same stream over a named log-registry source rather than a partition. |
+| `POST /wp-json/newspack-nodes/v1/auth` | substrate ([`Rest\Auth_Controller`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/rest/class-auth-controller.php)) | Mints the scoped command session an MCP bearer credential names. |
+| `POST /wp-json/newspack-nodes/v1/workers/spawn` | substrate ([`Rest\Spawn_Controller`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/rest/class-spawn-controller.php)) | HMAC-validated worker bootstrap. Not for public callers. |
+| `POST /wp-json/newspack-nodes/v1/health/cache` | substrate ([`Rest\Health_Cache_Controller`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/rest/class-health-cache-controller.php)) | Token-gated cache probe the state doctor calls. |
 
 This plugin contributes the verbs its three CIs expose; it registers no route under the
 `newspack-nodes/v1` namespace. See [`../../newspack-nodes/docs/API.md`](https://github.com/Automattic/newspack-nodes/blob/main/docs/API.md)
@@ -22,14 +22,14 @@ for the substrate's own wire shapes.
 
 ## Authentication and rate limiting
 
-Every door runs [`Bootstrap::fleet_gate()`](https://github.com/Automattic/newspack-nodes/blob/v2.55.3/includes/class-bootstrap.php) first: the fleet is network-global, so it runs on
+Every door runs [`Bootstrap::fleet_gate()`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/class-bootstrap.php) first: the fleet is network-global, so it runs on
 the main site alone and a multisite subsite gets `403 Forbidden`.
 
 `/command` and `/messages/stream` then gate on the substrate's lowest role,
-[`Capabilities::READ`](https://github.com/Automattic/newspack-nodes/blob/v2.55.3/includes/class-capabilities.php). That role resolves to `manage_options` on a stock install and to
+[`Capabilities::READ`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/class-capabilities.php). That role resolves to `manage_options` on a stock install and to
 `newspack_nodes_read` once `wp nodes caps install` swaps in the granular capabilities;
 `newspack_nodes/capability_map` overrides either. The door demands the least any verb
-behind it needs, and authority is decided per verb: [`Service_CI_Node`](https://github.com/Automattic/newspack-nodes/blob/v2.55.3/includes/class-service-ci-node.php) wraps each handler in
+behind it needs, and authority is decided per verb: [`Service_CI_Node`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/class-service-ci-node.php) wraps each handler in
 `Capabilities::require()` for the role its schema declares, and a verb declaring none takes
 MANAGE. **No handler in this plugin re-checks a capability** — one that did would outrank
 its own declaration without saying so.
@@ -46,7 +46,7 @@ seconds, keyed by session handle. MCP does not go through `/command`, so the sub
 per-user cap does not bound it.
 
 SSE rate-limiting is independent and **fail-closed**: `SSE_Out_Node` consults
-[`\Newspack_Nodes\SSE_Slot_Pool`](https://github.com/Automattic/newspack-nodes/blob/v2.55.3/includes/class-sse-slot-pool.php) before opening headers, and memcache down means HTTP 429.
+[`\Newspack_Nodes\SSE_Slot_Pool`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/class-sse-slot-pool.php) before opening headers, and memcache down means HTTP 429.
 The slot pool IS the rate limit and cannot fall through silently.
 
 ## Sending a command
@@ -77,7 +77,7 @@ defines a per-class constructor. **TO=`<ci-name>`, `name`=`<verb>`** addresses a
 
 The handlers live in this plugin's `Newspack_Event_Logger_Nodes\App\` namespace:
 [`newspack-event-logger-nodes.php`](../newspack-event-logger-nodes.php) registers it with
-[`Command_Interpreter_Node::register_namespace()`](https://github.com/Automattic/newspack-nodes/blob/v2.55.3/includes/class-command-interpreter-node.php), and the CIs mount on the substrate's
+[`Command_Interpreter_Node::register_namespace()`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/class-command-interpreter-node.php), and the CIs mount on the substrate's
 `newspack_nodes/request_graph_ready` action.
 
 ### `discovery` — spoke-side hook and event roster
@@ -188,7 +188,7 @@ empty array rather than refused, and `apply_synced()` SAVES it — so a malforme
 clears the spoke's rules and pins the explicit "log nothing" that `reset` exists to avoid
 storing. A rate-limited `PerformanceCI: rejected non-JSON synced array-option value` notice
 is the only sign. Autoload follows `Config::autoload_for()`, and the write emits a settings
-event that [`Settings_Sync_Node`](https://github.com/Automattic/newspack-nodes/blob/v2.55.3/includes/class-settings-sync-node.php) fans out to spokes.
+event that [`Settings_Sync_Node`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/class-settings-sync-node.php) fans out to spokes.
 
 ## Substrate verbs the dashboards use
 
@@ -203,7 +203,7 @@ plugin's operators.
 | `status` | `get` | A literal `status: ok`, the `runtime_version`, `num_partitions`, the active `topologies`, `cache_available` and a `timestamp`. It carries no application version field. |
 | `settings` | `get`, `set` | `get` answers a snapshot of the seven substrate-owned storage settings: `num_partitions`, `segment_size`, `min_segments`, `num_segments`, `min_lifetime`, `lifetime` and `max_segments`. `set` reaches further — every `int` Field declaring a minimum, which adds the six `remote_*` spoke-geometry keys, the three `alert_*` thresholds and the four bounded `sse_*` limits — and answers with that same seven-key snapshot whatever it wrote. The wider reach is how `Settings_Sync_Node` pushes a hub's `remote_*` geometry out to its spokes. |
 | `vault` | `list`, `get`, `add`, `update`, `delete`, `test` | Remote-spoke credentials. This is where a spoke's URL and Authorization header live. |
-| `aggregator` | `summary`, `list_servers`, `probe` | Per-spoke [`Remote_Source_Node`](https://github.com/Automattic/newspack-nodes/blob/v2.55.3/includes/class-remote-source-node.php) status on the hub. |
+| `aggregator` | `summary`, `list_servers`, `probe` | Per-spoke [`Remote_Source_Node`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/class-remote-source-node.php) status on the hub. |
 
 The React graphs address `_http/<ci-name>`, so the browser runtime's `HttpOut` node POSTs
 the command and routes the reply back by the TO the server echoed off the sender's FROM.
@@ -429,7 +429,7 @@ Named substrate callables the bootstrap registers alongside them:
 
 The plugin binds `newspack_nodes/periodic`, `newspack_nodes/job_handlers` and
 `newspack_nodes/remote_job_handlers` nowhere; the last two are read by the substrate's
-[`Job_Worker_Node`](https://github.com/Automattic/newspack-nodes/blob/v2.55.3/includes/class-job-worker-node.php).
+[`Job_Worker_Node`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/class-job-worker-node.php).
 
 ### Consumed from WordPress
 
