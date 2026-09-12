@@ -1,0 +1,98 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+.top { display:flex; gap:14px; align-items:stretch; }
+.top > .card { flex:1; padding:12px 15px; }
+.top .card h3 { font-size:14px; }
+.top .card p { font-size:12px; margin:0 0 5px; }
+.dec { display:flex; gap:6px; margin:8px 0; }
+.dec .d { flex:1; border-radius:7px; padding:7px 8px; font-size:11.5px; line-height:1.35; text-align:center; }
+.dec .d b { display:block; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:12px; margin-bottom:2px; white-space:nowrap; }
+.dec .dup { background:#F6F7F7; border:1px solid #C3C4C7; color:#50575E; }
+.dec .ok { background:#EDF7ED; border:1px solid #9EC89E; color:#1E5B1E; padding:7px 8px; }
+.dec .gap { background:#FBEAEA; border:1px solid #E6A3A3; color:#5C2223; }
+.buckets { display:flex; gap:6px; margin:8px 0; }
+.bk { flex:1; border:1px solid #C3D3EC; background:#F0F4FB; border-radius:7px; padding:7px 8px; font-size:11.5px; text-align:center; line-height:1.35; }
+.bk b { display:block; color:#003DA5; }
+.bk.old { background:#FBEAEA; border-color:#E6A3A3; }
+.bk.old b { color:#B32D2E; }
+.outs { margin-top:6px; }
+.outs .chip { font-size:11.5px; padding:5px 9px; margin-bottom:5px; }
+.outs .chip b { color:#003DA5; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-weight:700; }
+.fold { margin-top:16px; }
+.fold h2 { font-size:15px; margin:0 0 4px; }
+.fold .cap { font-size:12.5px; color:#50575E; margin:0 0 10px; line-height:1.5; }
+.strip { display:flex; gap:3px; align-items:stretch; height:64px; } .strip.two { height:86px; }
+.seg { display:flex; flex-direction:column; align-items:center; justify-content:center; border-radius:6px; font-size:11px; text-align:center; line-height:1.3; padding:0 6px; }
+.seg b { font-size:12px; }
+.seg.head { flex:10; background:#003DA5; color:#fff; }
+.seg.mid { flex:60; background:#F6F7F7; border:1px dashed #B0B3B8; color:#50575E; }
+.seg.mark { flex:11; background:#FBEAEA; border:1px solid #E6A3A3; color:#B32D2E; }
+.seg.keep { flex:8; background:#EDF7ED; border:1px solid #9EC89E; color:#1E5B1E; }
+.seg.tail { flex:10; background:#003DA5; color:#fff; }
+.seg.tree { flex:30; background:#F0F4FB; border:1px solid #C3D3EC; color:#003DA5; }
+.arrowdown { text-align:center; color:#003DA5; font-size:18px; line-height:1; margin:4px 0; }
+.bounds { display:flex; gap:12px; margin-top:12px; }
+.bounds .card { flex:1; padding:10px 14px; }
+.bounds .card h3 { font-size:13px; }
+.bounds .card p { font-size:12px; margin:0; }
+.mono { overflow-wrap:anywhere; }
+</style>
+<div class="sheet">
+<h1>A record is assembled by sequence, evicted by silence, and folded under pressure</h1>
+<p class="sub">Request_Builder_Node keys every firehose line by the envelope's KEY, checks its <span class="mono">n</span> against the number it expects next, and holds the record in a three-bucket LRU until the terminal arrives or the LRU evicts it, 400 to 600 seconds after its last line. Two entry bounds fold a record rather than cap it.</p>
+
+<div class="top">
+  <div class="card">
+    <h3>The sequence gate, per line</h3>
+    <p>Only <span class="mono">process (start)</span> opens a record; an orphan line for an unknown rid drops. Then <span class="mono">n</span> is compared with <span class="mono">expected_n</span>:</p>
+    <div class="dec">
+      <div class="d dup"><b>n &lt; expected</b>a duplicate: dropped, rate-limited INFO</div>
+      <div class="d ok"><b>n = expected</b>stored; <span class="mono">expected_n</span> = n + 1</div>
+      <div class="d gap"><b>n &gt; expected</b>a GAP: the first hole is recorded as <span class="mono">gap_after</span>; a non-terminal line drops; a terminal still lands, the hole becomes an <span class="mono">entries (lost)</span> marker, and <span class="mono">process (complete)</span> stamps <span class="mono">I</span></div>
+    </div>
+    <p>A <span class="mono">gyrobase (start)</span> pushes the counter and restarts at 1, so a nested <span class="mono">proc_open</span> render under the same rid is no break; its <span class="mono">(complete)</span> pops it back. Past <span class="mono">MAX_STACK_DEPTH</span> 50 open spans the record is <span class="mono">is_runaway</span>: still visible, for Perl gyroscope parity, no longer accumulating, and evicted by the same rotation as any other.</p>
+  </div>
+  <div class="card">
+    <h3>The LRU: 3 buckets × 100, rotating every 200 s or when the newest fills</h3>
+    <div class="buckets">
+      <div class="bk"><b>newest</b>every <span class="mono">get()</span> promotes the rid here</div>
+      <div class="bk"><b>middle</b>untouched for one rotation</div>
+      <div class="bk old"><b>oldest</b>evicted at the next rotation, stamped <span class="mono">T</span></div>
+    </div>
+    <p>The window measures SILENCE, not duration: a request still emitting lines is re-promoted on each and never ages out. Rotation runs on an absolute 200 s grid, so a silent record goes at the third rotation, 400 to 600 s after its last line, and sooner when a full newest bucket forces one. <span class="mono">fire()</span> on the Router's 1 s TIMER rotates the cache too, so a stalled request times out on an idle partition.</p><p>Eviction stamps <span class="mono">duration_ms</span> as whole seconds since the start, times 1,000, and emits through <span class="mono">$this-&gt;sink</span>, never a direct file write. A record with no <span class="mono">url</span> is dropped on either path.</p>
+  </div>
+  <div class="card">
+    <h3>What leaves, and where</h3>
+    <div class="outs">
+      <div class="chip"><b>sink</b> the full record, one TM_STRUCT, KEY = rid, on <span class="mono">complete</span> or eviction</div>
+      <div class="chip"><b>completed_target</b> the compact summary: method, url, start_time, end_time, duration_ms, status_code, state, error_status, remote_addr, user_agent; the rid rides KEY</div>
+      <div class="chip"><b>errors_target</b> <span class="mono">error</span>, <span class="mono">warning</span>, <span class="mono">stderr</span>, and any <span class="mono">*(error)</span> / <span class="mono">*(warning)</span></div>
+      <div class="chip"><b>alerts_target</b> <span class="mono">alert</span> entries</div>
+      <div class="chip"><b>inflight_target</b> one row per in-flight request per tick, from the hidden Request_Flight sibling</div>
+    </div>
+  </div>
+</div>
+
+<div class="fold">
+  <h2>The fold: a runaway record becomes a path map, and keeps both its ends</h2>
+  <p class="cap"><span class="mono">fold_request()</span> replays the stored entries through <span class="mono">Flame_Fold</span>, keeps <span class="mono">FOLD_KEEP_HEAD</span> 10 raw entries (how the request identifies itself: process start, request line, environment) and a rolling <span class="mono">FOLD_KEEP_TAIL</span> 10 (how it ends: stats flush, memory, terminal), and drops the list. The request keeps logging; every later entry folds straight into the same path map, so its cost stops tracking message volume. A folded request cannot un-fold.</p>
+  <div class="strip">
+    <div class="seg head"><b>head, 10</b>raw entries</div>
+    <div class="seg mid">the repetitive middle: thousands of entries, replayed into the fold and dropped</div>
+    <div class="seg tail"><b>tail, 10</b>rolling, raw</div>
+  </div>
+  <div class="arrowdown">▼</div>
+  <div class="strip two">
+    <div class="seg head"><b>head, 10</b></div>
+    <div class="seg mark"><b>entries (aggregated)</b>"N entries merged under memory pressure"</div>
+    <div class="seg keep" style="flex:12"><b>keep</b>closes of spans the head left open; rows marked <span class="mono">keep</span></div>
+    <div class="seg tail"><b>tail, 10</b></div>
+    <div class="seg tree"><b>flame, from Flame_Fold::tree()</b>same-name siblings as one node with count, summed value, max and <span class="mono">merged</span></div>
+  </div>
+  <div class="bounds">
+    <div class="card"><h3><span class="mono">max_entries_per_request</span>, default 20,000</h3><p>Constrains ONE envelope and folds that one: the faster trigger for a single runaway. Checked on every append.</p></div>
+    <div class="card"><h3><span class="mono">entry_budget</span>, default 50,000</h3><p>Constrains the SUM across everything in flight. <span class="mono">relieve_pressure()</span> recounts the truth over the LRU and folds the LARGEST envelope, repeatedly, until under budget; the check re-arms at the budget, or 1,000 entries on when folding could not reach it.</p></div>
+    <div class="card"><h3>Never a cap</h3><p>A bound that stopped appending behind a flag nothing surfaces would lose every entry past it. No consumer may reason across the marker: the interval it covers is missing detail, not idle time, and <span class="mono">entries (lost)</span>, the marker a sequence gap leaves, is read the same way.</p></div>
+  </div>
+</div>
+</div>

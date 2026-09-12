@@ -1,0 +1,87 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+.key { display:flex; gap:4px; margin:6px 0 4px; }
+.key .s { flex:1; border-radius:6px; padding:8px 6px; text-align:center; font-size:11.5px; line-height:1.3; border:1px solid #C3D3EC; background:#F0F4FB; }
+.key .s b { display:block; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:12px; color:#003DA5; }
+.key .s.scope { background:#F6F7F7; border-color:#C3C4C7; }
+.key .s.scope b { color:#50575E; }
+.key .s.bk { background:#003DA5; border-color:#003DA5; color:#fff; }
+.key .s.bk b { color:#fff; }
+.cap { font-size:12px; color:#50575E; margin:0 0 12px; line-height:1.5; }
+table.ns { border-collapse:collapse; width:100%; font-size:11.5px; }
+table.ns th { text-align:left; font-size:11px; color:#787C82; font-weight:600; padding:4px 8px; border-bottom:1px solid #C3C4C7; }
+table.ns td { padding:4px 8px; border-top:1px solid #EEF0F2; vertical-align:top; line-height:1.4; }
+table.ns td.k { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color:#003DA5; white-space:nowrap; font-size:11.5px; }
+table.ns td.t { white-space:nowrap; color:#50575E; }
+table.ns tr.tier td { background:#F6F7F7; }
+table.ns tr.coarse td.k { color:#1E5B1E; }
+.two { display:flex; gap:14px; margin-top:16px; align-items:flex-start; }
+.two > div { flex:1; }
+.row14 { display:flex; gap:2px; margin:8px 0 4px; }
+.row14 .c { flex:1; border-radius:4px; border:1px solid #C3D3EC; background:#F0F4FB; font-size:10px; text-align:center; padding:5px 2px; line-height:1.25; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.row14 .c b { display:block; font-size:10.5px; color:#003DA5; }
+.row14 .c.x { background:#F6F7F7; border-color:#C3C4C7; }
+.row14 .c.x b { color:#50575E; }
+.row14 .c.srv { background:#EDF7ED; border-color:#9EC89E; }
+.row14 .c.srv b { color:#1E5B1E; }
+.small { font-size:11.5px; color:#50575E; line-height:1.45; margin:4px 0 0; }
+.mono { overflow-wrap:anywhere; }
+</style>
+<div class="sheet">
+<h1>Every stats key ends in its bucket, and the URL index is stored at two resolutions</h1>
+<p class="sub">Stats_Store writes through the substrate's Table, which prefixes the install scope; below that, one partition's keyspace is <span class="mono">evlog:p{N}</span>, then the namespace, then the scope parts, then the bucket LAST, so every scope is a pure key prefix, one <span class="mono">lookup_multi</span> serves it, and retention is the key's own TTL.</p>
+
+<div class="key">
+  <div class="s scope"><b>&lt;install scope&gt;</b>the substrate's salt lives here; rotating it orphans every key</div>
+  <div class="s"><b>evlog</b>PREFIX_BASE</div>
+  <div class="s"><b>p{N}</b>the flame-builder partition</div>
+  <div class="s"><b>{namespace}</b>one of fourteen</div>
+  <div class="s"><b>{scope parts}</b>a shard, a url_hash, a dimension, a server's fnv1a32</div>
+  <div class="s bk"><b>{bucket}</b><span class="mono">Y-m-d-H-i</span> floored to 5 minutes, or <span class="mono">Y-m-d-H</span> for a coarse tier</div>
+</div>
+<p class="cap">Lexical order is chronological order, which is what lets expiry compare keys and <span class="mono">is_open_bucket()</span> decide from the key alone whether a bucket is still being written. Two namespaces key on a hash instead of a bucket: <span class="mono">url</span> and <span class="mono">urlmap</span>.</p>
+
+<table class="ns">
+  <tr><th>key, under evlog:p{N}:</th><th>value</th><th>TTL</th></tr>
+  <tr><td class="k">hourly:{bucket}</td><td>site totals: count, sum_ms, sum_peak_mb</td><td class="t">min_lifetime, 43200 by default</td></tr>
+  <tr><td class="k">lb:{bucket}</td><td>the global leaderboard: per category, samples, sum_time, sum_count and an entry map, each category's entries trimmed from 100 back to 50</td><td class="t">min_lifetime</td></tr>
+  <tr class="coarse"><td class="k">lb_h:{Y-m-d-H}</td><td>the same shape for one closed hour, folded by <span class="mono">roll_up_hours()</span>; the heaviest read the dashboard makes</td><td class="t">min_lifetime</td></tr>
+  <tr><td class="k">lb_s:{server}:{bucket}</td><td>a per-server leaderboard; no coarse tier, since the servers in an hour cannot be enumerated from the keyspace</td><td class="t">min_lifetime</td></tr>
+  <tr class="tier"><td class="k">urls:{shard}:{bucket}</td><td>{ url_hash → positional row }, sharded 16 ways by the hash's first hex digit; a <span class="mono">w</span> prefix on the shard names worker traffic. At most MAX_URLS_PER_SHARD 2,000 rows, the tail folded into <span class="mono">Other</span> / <span class="mono">Other:worker</span></td><td class="t">min( min_lifetime, 7200 )</td></tr>
+  <tr class="tier coarse"><td class="k">urls_h:{shard}:{Y-m-d-H}</td><td>one hour of merged rows in the same shape. DERIVED; only the grace hour, the newest read coarse, falls back to its twelve fine buckets while it is missing</td><td class="t">min_lifetime</td></tr>
+  <tr class="tier"><td class="k">urlnames:{shard}:{bucket}</td><td>{ url_hash → path }, the searchable name index; paths only, uncapped</td><td class="t">min( min_lifetime, 7200 )</td></tr>
+  <tr class="tier coarse"><td class="k">urlnames_h:{shard}:{Y-m-d-H}</td><td>its coarse tier, a union rather than a sum, folded in the same pass and the same <span class="mono">bucket_set_multi()</span> as <span class="mono">urls_h</span></td><td class="t">min_lifetime</td></tr>
+  <tr><td class="k">urlmap:{hash}</td><td>[ path, origin ], written once per URL and rewritten only after half its TTL; answers about ONE hash</td><td class="t">min_lifetime</td></tr>
+  <tr><td class="k">url:{hash}</td><td>the per-URL flame and profile blob, through a rotating accumulator of 5 buckets × 1,000</td><td class="t">max( 3600, min_lifetime / 24 )</td></tr>
+  <tr><td class="k">dim:{dimension}[:{server}]:{bucket}</td><td>{ value → { c, s, m } } for status, method, server, country, from, ua, ja4; MAX_DIM_VALUES 20, the server axis 128</td><td class="t">min_lifetime</td></tr>
+  <tr><td class="k">url_dim:{hash}:{bucket}</td><td>the same, every dimension in one value, MAX_URL_DIM_VALUES 10</td><td class="t">min_lifetime</td></tr>
+  <tr><td class="k">categories[:{server}]:{bucket}</td><td>{ category → [ ms, calls, requests ] }, positional CAT_SUMS, capped at MAX_CAT_VALUES 50, plus a synthetic <span class="mono">total</span> every ranking holds out</td><td class="t">min_lifetime</td></tr>
+  <tr><td class="k">url_cat:{hash}:{bucket}</td><td>the same per URL</td><td class="t">min_lifetime</td></tr>
+</table>
+
+<h3 style="font-size:14px;margin:18px 0 4px">What one read of the URL index asks for</h3>
+<svg width="1052" height="86" viewBox="0 0 1052 86" font-family="Inter, Helvetica, Arial, sans-serif" font-size="11">
+  <text x="0" y="12" fill="#50575E">12 h ago, at the default 43,200 s retention</text><text x="1052" y="12" text-anchor="end" fill="#50575E">now, in hour H</text>
+  <rect x="0" y="20" width="700" height="32" rx="5" fill="#EDF7ED" stroke="#9EC89E"/>
+  <text x="350" y="33" text-anchor="middle" fill="#1E5B1E" font-size="10.5">urls_h:{shard}:{Y-m-d-H}: eleven hour keys, H−12 to H−2, DERIVED by roll_up_hours()</text>
+  <text x="350" y="46" text-anchor="middle" fill="#1E5B1E" font-size="10.5">H−2, the grace hour, falls back to its twelve fine buckets until it is folded</text>
+  <rect x="706" y="20" width="140" height="32" rx="5" fill="#F0F4FB" stroke="#C3D3EC"/>
+  <text x="776" y="33" text-anchor="middle" fill="#003DA5" font-size="10">the rest of hour H−1,</text><text x="776" y="46" text-anchor="middle" fill="#003DA5" font-size="10">where the 13th bucket lands</text>
+  <rect x="852" y="20" width="200" height="32" rx="5" fill="#003DA5"/>
+  <text x="952" y="33" text-anchor="middle" fill="#fff" font-size="10">FINE_BUCKETS 13</text><text x="952" y="46" text-anchor="middle" fill="#fff" font-size="10">urls:{shard}:{Y-m-d-H-i}</text>
+  <path d="M706 58 V64 H1052 V58" fill="none" stroke="#50575E"/><text x="1052" y="77" text-anchor="end" fill="#50575E">fine: the newest still fills; the 12 behind it make the rate</text>
+  <path d="M0 58 V64 H700 V58" fill="none" stroke="#50575E"/><text x="350" y="77" text-anchor="middle" fill="#50575E">a folded hour's fine buckets are never read again; the oldest hour is whole, so a 12 h read carries up to 59 extra minutes</text>
+</svg>
+<p class="small" style="margin-top:0">The fine tier lives 7,200 s: 13 buckets plus the rest of their hour is just under two hours at the worst minute, and at that width it costs 24 buckets a shard, as many keys as the coarse tier holds at a 24-hour retention and twice what it holds at the default. <span class="mono">Performance_CI_Node::load_index_default()</span> folds INDEX_READ_CHUNK 12 buckets at a time and drops each chunk before reading the next.</p>
+
+<h3 style="font-size:14px;margin:14px 0 4px">A URL row is positional: fourteen indexes, named once in <span class="mono">ROW_FIELD_NAMES</span></h3>
+<div class="row14">
+  <div class="c"><b>0</b>count</div><div class="c"><b>1</b>timed_count</div><div class="c"><b>2</b>sum_ms</div><div class="c"><b>3</b>sum_peak_mb</div><div class="c"><b>4</b>count_2xx</div><div class="c"><b>5</b>count_3xx</div><div class="c"><b>6</b>count_4xx</div><div class="c"><b>7</b>count_5xx</div><div class="c x"><b>8</b>min_ms</div><div class="c x"><b>9</b>max_ms</div><div class="c x"><b>10</b>max_peak_mb</div><div class="c x"><b>11</b>last_seen</div><div class="c x"><b>12</b>worker</div><div class="c srv"><b>13</b>srv</div>
+</div>
+<div class="two" style="margin-top:6px">
+  <div><p class="small">Indexes 0 to 7 ADD, in <span class="mono">URL_SRV_SUMS</span> order, and the <span class="mono">srv</span> split at 13 holds those same eight per reporting server, capped at MAX_SERVER_VALUES 128; a scope is applied as a projection over the merged row (<span class="mono">swap_url_server_sums()</span>), so one unscoped read serves every server. Extremes at 8 and 9 stay the URL's own. A split of one server whose count is the row's own collapses to its name against <span class="mono">null</span>, ~33 bytes for ~112. The row carries no URL string: <span class="mono">urlmap</span> holds the name once. Measured on live rows: 672 bytes named, 398 positional.</p></div>
+  <div><p class="small">Caps fold into a synthetic <span class="mono">Other</span> rather than dropping, so a total summed from a capped namespace stays exact. Against a 1 MB item: 4,000 of the widest rows store at 2.80 MB raw, 5,000 refuse at 3.49 MB and lose the shard, so 2,000 a shard by 16 shards is the 32,000-URL ceiling per bucket. The one cap that does not fold is a payload bound: <span class="mono">sums_to_display()</span> keeps a category's fifty slowest entries by average exclusive time past a hundred.</p></div>
+</div>
+</div>
+</div>
+</div>

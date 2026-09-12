@@ -1,0 +1,92 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+.flow { display:flex; align-items:stretch; gap:0; }
+.stage { flex:1; background:#fff; border:1px solid #C3C4C7; border-radius:9px; padding:12px 14px; font-size:12.5px; line-height:1.45; }
+.stage h3 { font-size:14px; margin:0 0 6px; }
+.stage p { margin:0 0 5px; color:#50575E; }
+.stage p:last-child { margin-bottom:0; }
+.stage b { color:#101517; }
+.arr { flex:0 0 34px; display:flex; align-items:center; justify-content:center; }
+.arr svg { display:block; }
+.env { border:2px solid #003DA5; border-radius:8px; overflow:hidden; margin-top:8px; }
+.env .h { background:#003DA5; color:#fff; font-size:11.5px; font-weight:700; padding:4px 9px; }
+.env .f { display:flex; }
+.env .f div { flex:1; padding:6px 4px; text-align:center; font-size:11px; line-height:1.3; border-right:1px solid #C3D3EC; }
+.env .f div:last-child { border-right:0; }
+.env .f div b { display:block; font-size:11.5px; color:#003DA5; }
+.env .f div.hot { background:#F0F4FB; }
+.logs { display:flex; gap:12px; margin-top:22px; }
+.log { flex:1; border:1px solid #C3C4C7; border-radius:9px; background:#fff; padding:12px 14px; font-size:12.5px; line-height:1.45; }
+.log .name { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-weight:700; font-size:13px; color:#003DA5; margin-bottom:5px; }
+.log p { margin:0 0 4px; color:#50575E; }
+.log p:last-child { margin-bottom:0; }
+.log .who { font-size:11.5px; color:#787C82; margin-bottom:4px; }
+.log.prime { border-color:#003DA5; border-width:2px; }
+.gates { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+.gates .chip { flex:0 0 calc(50% - 3px); margin:0; font-size:11.5px; padding:5px 7px; text-align:center; line-height:1.3; }
+.gates .chip b { display:block; color:#003DA5; }
+.mono { overflow-wrap:anywhere; }
+</style>
+<div class="sheet">
+<h1>Every line of one request lands in one firehose partition</h1>
+<p class="sub">This plugin writes the firehose from inside a WordPress request through Log_Manager alone. Its three gates, the entry it stamps, the envelope it packs and the hash that picks the partition are the whole write path; three sibling logs take jobs.</p>
+
+<div class="flow">
+  <div class="stage" style="flex:1.05">
+    <h3>Log_Manager opens, or stays inert</h3>
+    <p>Constructed on first use, at <span class="mono">plugins_loaded</span> 11 or earlier. Three gates, in order:</p>
+    <div class="gates">
+      <div class="chip"><b>1</b><span class="mono">enable_logging</span> on</div>
+      <div class="chip"><b>2</b>not root: <span class="mono">posix_geteuid()</span> ≠ 0</div>
+      <div class="chip" style="flex-basis:100%"><b>3</b>the governing rule says <span class="blue">log</span></div>
+    </div>
+    <p style="margin-top:7px">Which hooks bind is <span class="mono">App\Core</span>'s later choice and gates nothing: a log rule naming no hooks still writes <span class="mono">process (start)</span>, <span class="mono">request</span>, <span class="mono">environment_v3</span> and <span class="mono">resources</span>.</p>
+    <p>Inert means <span class="mono">is_started()</span> false and every <span class="mono">message()</span> a no-op for the rest of the request. Started means <span class="mono">finish()</span> is handed to PHP's <span class="mono">register_shutdown_function()</span>, so the terminal is written even after a fatal.</p>
+  </div>
+  <div class="arr"><svg width="30" height="18" viewBox="0 0 30 18"><path d="M0 9 H24" stroke="#003DA5" stroke-width="2"/><path d="M20 3 L28 9 L20 15 z" fill="#003DA5"/></svg></div>
+  <div class="stage" style="flex:1.15">
+    <h3>The entry: three stamped keys, one cap</h3>
+    <p><span class="mono">message( category, data )</span> stamps <span class="mono">n</span> (from 1) and <span class="mono">k</span> ahead of the caller's data and <span class="mono">ts</span> behind it, redacts an <span class="mono">m</span> carrying a <span class="mono">?</span>, then encodes the WHOLE entry and holds that encoding to <b>3,840 bytes</b>.</p>
+    <div class="env"><div class="h">the entry, JSON on the wire</div><div class="f">
+      <div class="hot"><b>n</b>line, from 1</div><div class="hot"><b>k</b>category</div><div><b>m</b>payload</div><div><b>l</b>label</div><div><b>…</b>more data</div><div class="hot"><b>ts</b>epoch float</div>
+    </div></div>
+    <p style="margin-top:7px">Shaded keys are stamped; <span class="mono">m</span>, <span class="mono">l</span> and the rest (<span class="mono">duration_ms</span>, <span class="mono">status_code</span>, <span class="mono">caller</span>, <span class="mono">rule</span>, …) are the caller's. Over the cap the entry goes through <span class="mono">fit_data()</span>, which cuts <span class="mono">m</span> first and never renames the category.</p>
+  </div>
+  <div class="arr"><svg width="30" height="18" viewBox="0 0 30 18"><path d="M0 9 H24" stroke="#003DA5" stroke-width="2"/><path d="M20 3 L28 9 L20 15 z" fill="#003DA5"/></svg></div>
+  <div class="stage" style="flex:1.05">
+    <h3>The envelope, and the partition</h3>
+    <p>The entry rides a 7-field substrate Message: <span class="mono">TYPE</span> = <span class="mono">TM_STRUCT</span>, <span class="mono">KEY</span> = the request id, <span class="mono">VALUE</span> = the entry, <span class="mono">TIMESTAMP</span> = the clock <span class="mono">message()</span> read, which is the entry's <span class="mono">ts</span> unless the caller supplied its own, as <span class="mono">process (start)</span> and the profiler's plugin spans do.</p>
+    <div class="env"><div class="h">Message, packed by Topic</div><div class="f">
+      <div><b>TYPE</b>TM_STRUCT</div><div><b>TIMESTAMP</b>now</div><div>FROM</div><div>TO</div><div>ID</div><div class="hot"><b>KEY</b>request id</div><div class="hot"><b>VALUE</b>the entry</div>
+    </div></div>
+    <p style="margin-top:7px"><span class="mono">_firehose:topic</span>, built once per process, hashes the KEY: <span class="mono">Partition_Node::hash_to_partition( rid, num_partitions )</span>. Every line of one request lands in one <span class="mono">firehose.pN</span>, appended with <span class="mono">O_APPEND</span> under PIPE_BUF, so many PHP workers share one file without a lock.</p>
+  </div>
+</div>
+
+<div class="card" style="margin-top:14px;padding:11px 16px">
+  <p style="margin:0"><b>The request id</b> is <span class="mono">HTTP_X_A8C_REQUEST_ID</span>, else <span class="mono">UNIQUE_ID</span>, each clipped to 64 characters; absent both, <span class="mono">generate_request_id()</span> mints up to 32 base-36 characters and publishes them into <span class="mono">$_SERVER['UNIQUE_ID']</span>, so a subprocess inherits the identity. It is not one of the entry's fields: readers group a request's lines by the envelope's KEY.</p>
+</div>
+
+<div class="logs">
+  <div class="log prime">
+    <div class="name">logs/firehose.pN</div>
+    <div class="who">Log_Manager, per request; a gyrate subprocess's <span class="mono">Gyrobase::Log</span> too</div>
+    <p>Every entry of every logged request, jobs included as <span class="mono">k:"job"</span>. Under 4 KB a line, lock-free, and the only log a hub pulls from a spoke.</p>
+  </div>
+  <div class="log">
+    <div class="name">logs/jobfeed.pN</div>
+    <div class="who"><span class="mono">Job_Intake::feed()</span></div>
+    <p>Small jobs alone, no lock, PIPE_BUF-bounded. A site tailing this with <span class="mono">job-feed</span> reads jobs without reading every request's lines.</p>
+  </div>
+  <div class="log">
+    <div class="name">logs/jobintake.pN</div>
+    <div class="who"><span class="mono">Job_Intake::queue()</span></div>
+    <p>Large jobs, up to 32 MiB, behind the partition's write lock taken by <span class="mono">allow_large_writes()</span>. Local only: nothing here reaches a hub.</p>
+  </div>
+  <div class="log">
+    <div class="name">logs/jobdelay.p0</div>
+    <div class="who">a future <span class="mono">not_before</span> or <span class="mono">delay</span></div>
+    <p>Parks the job until <span class="mono">Job_Delay::sweep()</span> re-writes it through <span class="mono">write_job()</span> with a fresh envelope.</p>
+  </div>
+</div>
+</div>

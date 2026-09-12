@@ -1,0 +1,76 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+.g { position:relative; width:1052px; height:660px; }
+.b.prod .t { font-size:11px; }
+.g svg.wire { position:absolute; left:0; top:0; z-index:3; pointer-events:none; }
+.b { position:absolute; z-index:2; background:#fff; border:1px solid #C3C4C7; border-radius:8px; padding:8px 11px; font-size:11.5px; line-height:1.4; }
+.b .t { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-weight:700; font-size:12px; color:#003DA5; }
+.b p { margin:2px 0 0; color:#50575E; }
+.b.prod { border-color:#003DA5; }
+.b.log { background:#F6F7F7; border-style:dashed; }
+.b.log .t { color:#101517; }
+.b.node { border-color:#003DA5; }
+.b.stop { background:#FBEAEA; border-color:#E6A3A3; }
+.b.stop .t { color:#B32D2E; }
+.cap { position:absolute; z-index:4; font-size:10.5px; color:#50575E; background:#FBFBFC; padding:0 4px; white-space:nowrap; }
+.lane { position:absolute; left:0; font-size:11px; color:#787C82; text-transform:uppercase; letter-spacing:.04em; }
+.cols { display:flex; gap:12px; margin-top:14px; }
+.cols .card { flex:1; padding:11px 14px; }
+.cols .card h3 { font-size:13.5px; }
+.cols .card p { font-size:12px; margin:0 0 4px; }
+.cols .card p:last-child { margin-bottom:0; }
+.mono { overflow-wrap:anywhere; }
+</style>
+<div class="sheet">
+<h1>Three producers, four logs, one router, and a sieve that counts from enqueue</h1>
+<p class="sub">Which producer a job takes is decided by two questions: does the payload fit in PIPE_BUF, and must the job reach a hub. Whichever log it lands in, Job_Router_Node normalizes it onto <span class="mono">jobs.pN</span>, the Age_Sieve drops it past 900 seconds, and the substrate's Job_Worker runs it.</p>
+
+<div class="g" id="g">
+<svg class="wire" id="wire" width="1052" height="660"><defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#003DA5"/></marker></defs></svg>
+
+<div class="lane" style="top:0">producers, inside a request</div>
+<div class="b prod" id="p1" style="left:0;top:18px;width:330px"><span class="t">Log_Manager-&gt;message( 'job', payload )</span><p>Under 4 KB, PIPE_BUF atomic. The ONLY path a hub aggregates: firehose entries alone cross a spoke's SSE pull. An oversized one arrives at the router with <span class="mono">m</span> stripped and reads as an invalid handler.</p></div>
+<div class="b prod" id="p2" style="left:361px;top:18px;width:330px"><span class="t">Job_Intake::feed( handler, id, parameters )</span><p>Under PIPE_BUF, no lock, local only. Lets the site run <span class="mono">job-feed</span>, whose reader tails jobs alone rather than every line of every request.</p></div>
+<div class="b prod" id="p3" style="left:722px;top:18px;width:330px"><span class="t">Job_Intake::queue( handler, id, parameters )</span><p>Up to <span class="mono">MAX_JOB_SIZE</span> 32 MiB, behind the partition's write lock, local only. Serialized option blobs, image-handler args, large arrays go here.</p></div>
+
+<div class="lane" style="top:132px">ingress logs</div>
+<div class="b log" id="l1" style="left:0;top:150px;width:200px"><span class="t">firehose.pN</span><p><span class="mono">k:"job"</span> among every other entry; body under <span class="mono">m</span></p></div>
+<div class="b log" id="l2" style="left:361px;top:150px;width:200px"><span class="t">jobfeed.pN</span><p>jobs alone; body flat</p></div>
+<div class="b log" id="l3" style="left:722px;top:150px;width:200px"><span class="t">jobintake.pN</span><p>locked writes; body flat</p></div>
+<div class="b log" id="l4" style="left:852px;top:250px;width:200px"><span class="t">jobdelay.p0</span><p>a future <span class="mono">not_before</span> or <span class="mono">delay</span> parks here until <span class="mono">Job_Delay::sweep()</span> re-writes it through <span class="mono">write_job()</span>, envelope fresh</p></div>
+
+<div class="lane" style="top:262px;width:160px;line-height:1.4">the router leg: job-router reads the firehose, job-feed reads jobfeed, both read jobintake</div>
+<div class="b node" id="jr" style="left:180px;top:250px;width:300px"><span class="t">Job_Router_Node</span><p>A nested array under <span class="mono">m</span> is the body; otherwise the entry is. Out: <span class="mono">{ k, handler, parameters, ts }</span> + <span class="mono">id</span> + the <span class="mono">DISPATCH_FIELDS</span> it carries: <span class="mono">retries</span>, <span class="mono">attempt</span>, <span class="mono">batch</span>, <span class="mono">key</span>. Kind from the ENTRY's <span class="mono">k</span>. No size gate, no age gate, no arguments.</p></div>
+<div class="b stop" id="sv" style="left:520px;top:250px;width:320px"><span class="t">Age_Sieve 900 1</span><p>Drops an envelope whose TIMESTAMP is older than 900 s, warning on. <span class="mono">Message::unpacked()</span> restores the TIMESTAMP the producer stamped and forwarding never rewrites it, so age counts from ENQUEUE: when the fleet stops draining, every job enqueued more than fifteen minutes before the router catches up is discarded as it is read, cursor advanced, nothing dead-lettered. Raise <span class="mono">max_age</span> where jobs are not disposable.</p></div>
+
+<div class="lane" style="top:488px">dispatch, the substrate's job-worker</div>
+<div class="b log" id="jobs" style="left:180px;top:506px;width:200px"><span class="t">jobs.pN</span><p>line mode; <span class="mono">void_warranty</span></p></div>
+<div class="b node" id="jw" style="left:420px;top:506px;width:220px"><span class="t">Job_Worker_Node</span><p>a throwing handler's job is dead-lettered by its Consumer, or re-parked in jobdelay.p0 when it opted into retries; batch settlement reads the dispatch fields too</p></div>
+<div class="b" id="h" style="left:680px;top:506px;width:372px"><span class="t">handlers by kind</span><p><span class="mono">job</span> → <span class="mono">newspack_nodes/job_handlers</span>; <span class="mono">remote_job</span> → <span class="mono">newspack_nodes/remote_job_handlers</span>; the worker drops an unregistered name silently, after the read</p></div>
+</div>
+
+<div class="cols">
+  <div class="card"><h3>Three partition-selection modes</h3><p><b>pinned</b>: <span class="mono">$intake-&gt;partition( $i )</span>. <b>keyed</b>: <span class="mono">Partition_Node::hash_to_partition( $key, $num_partitions )</span>, identical to the firehose. <b>round-robin</b>: a static counter modulo <span class="mono">PHP_INT_MAX</span>, for callers with no meaningful key. A future <span class="mono">not_before</span> is applied after the mode runs, so it still advances the round-robin counter, then parks the job in <span class="mono">jobdelay.p0</span>.</p></div>
+  <div class="card"><h3><span class="mono">write_job()</span> options</h3><p><span class="mono">retries</span> and <span class="mono">attempt</span> for Job_Worker backoff, <span class="mono">batch</span> for batch settlement, <span class="mono">unique</span> + <span class="mono">unique_ttl</span> for enqueue dedup within a window (needs a cache backend), <span class="mono">delay</span> / <span class="mono">not_before</span> for scheduling. An unknown option key throws, so a typo stays loud.</p></div>
+  <div class="card"><h3>The lock is per partition</h3><p><span class="mono">Partition_Node::allow_large_writes()</span> takes the partition's write lock on the call and holds it for the partition's lifetime; it waits <span class="mono">DEFAULT_LOCK_WAIT_MS</span> 15 s and throws when a live writer still holds it, which <span class="mono">queue()</span> reports as <span class="mono">false</span>. <span class="mono">queue()</span> releases it in a <span class="mono">finally</span>, the destructor covers an instance that never closes, and a batch caller reuses one instance across <span class="mono">queue_many()</span> so the acquisition cost amortizes.</p></div>
+  <div class="card"><h3>Two rejections warn, three do not</h3><p>An invalid handler name (<span class="mono">HANDLER_NAME_PATTERN</span> <span class="mono">/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/D</span>, whose <span class="mono">D</span> refuses a trailing newline) and non-array parameters are malformed jobs: rate-limited warnings. Wrong type flags, a non-array VALUE and a kind other than <span class="mono">job</span> / <span class="mono">remote_job</span> are ordinary firehose traffic and return silently.</p></div>
+</div>
+</div>
+<script>
+(function(){
+  var svg=document.getElementById('wire'), NS='http://www.w3.org/2000/svg';
+  function el(t,a){var e=document.createElementNS(NS,t);for(var k in a)e.setAttribute(k,a[k]);return e;}
+  function box(id){var b=document.getElementById(id);return {x:b.offsetLeft,y:b.offsetTop,w:b.offsetWidth,h:b.offsetHeight};}
+  function path(d){svg.appendChild(el('path',{d:d,stroke:'#003DA5','stroke-width':1.6,fill:'none','marker-end':'url(#a)'}));}
+  function down(f,t,dx){var a=box(f),b=box(t),x=a.x+(dx||a.w/2);path('M'+x+' '+(a.y+a.h)+' V'+(b.y-2));}
+  function elbow(f,t,fx,tx){var a=box(f),b=box(t),x0=a.x+(fx!=null?fx:a.w/2),x1=b.x+(tx!=null?tx:b.w/2),ym=a.y+a.h+24;path('M'+x0+' '+(a.y+a.h)+' V'+ym+' H'+x1+' V'+(b.y-2));}
+  down('p1','l1',100);down('p2','l2',100);down('p3','l3',100);
+  // p3 also to jobdelay
+  var a=box('p3'),d=box('l4');path('M'+(a.x+300)+' '+(a.y+a.h)+' V'+(d.y-2));
+  var c=document.createElement('div');c.className='cap';c.textContent='a future not_before or delay';document.getElementById('g').appendChild(c);c.style.left=(a.x+300-c.offsetWidth-6)+'px';c.style.top=(d.y-24)+'px';
+  elbow('l1','jr',100,60);elbow('l2','jr',100,150);elbow('l3','jr',100,240);
+  var j=box('jr'),s=box('sv');path('M'+(j.x+j.w)+' '+(j.y+j.h/2)+' H'+(s.x-2));
+  var jb=box('jobs');path('M'+(s.x+s.w/2)+' '+(s.y+s.h)+' V'+(s.y+s.h+10)+' H'+(jb.x+jb.w/2)+' V'+(jb.y-2));
+  var w=box('jw'),h=box('h');path('M'+(jb.x+jb.w)+' '+(jb.y+jb.h/2)+' H'+(w.x-2));path('M'+(w.x+w.w)+' '+(w.y+w.h/2)+' H'+(h.x-2));
+})();
+</script>

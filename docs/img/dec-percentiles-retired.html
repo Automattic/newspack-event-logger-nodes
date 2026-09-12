@@ -1,0 +1,60 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+  .top { display: flex; gap: 18px; align-items: stretch; }
+  .merge { flex: 0 0 470px; }
+  .tbl { border-collapse: collapse; width: 100%; font-size: 12.5px; background: #fff; }
+  .tbl th { background: #003DA5; color: #fff; text-align: left; padding: 7px 9px; font-size: 12px; }
+  .tbl td { padding: 6px 9px; border-top: 1px solid #EEF0F2; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  .tbl td.x { color: #B32D2E; font-family: Inter, sans-serif; font-weight: 700; }
+  .tbl td.ok2 { color: #1E5B1E; }
+  .tbl tr.gone td { background: #FBEAEA; }
+  .wrap { border: 1px solid #C3C4C7; border-radius: 9px; overflow: hidden; }
+  .bars { flex: 1; background: #fff; border: 1px solid #C3C4C7; border-radius: 9px; padding: 14px 16px; }
+  .bars h3 { font-size: 14px; margin: 0 0 12px; }
+  .bar { display: flex; align-items: center; gap: 10px; margin-bottom: 9px; }
+  .bar .lab { flex: 0 0 150px; font-size: 12px; color: #50575E; line-height: 1.3; }
+  .bar .track { flex: 1; position: relative; height: 24px; }
+  .bar .fill { position: absolute; left: 0; top: 0; height: 24px; border-radius: 4px; background: #003DA5; color: #fff; font-size: 12px; font-weight: 700; line-height: 24px; padding-left: 8px; white-space: nowrap; }
+  .bar .fill.grey { background: #C3C4C7; color: #101517; }
+  .bar .fill.band { background: repeating-linear-gradient( 45deg, #FBEAEA, #FBEAEA 6px, #F3CFCF 6px, #F3CFCF 12px ); border: 1px solid #E6A3A3; color: #B32D2E; }
+  .note2 { font-size: 12px; color: #50575E; line-height: 1.5; margin-top: 8px; }
+  .three { display: flex; gap: 14px; margin-top: 16px; }
+  .three > * { flex: 1; }
+  .card p, .ok p, .callout p { font-size: 12.5px; }
+</style>
+<div class="sheet">
+<h1>The per-URL percentiles are retired, and the duration reservoir with them</h1>
+<p class="sub">Every field the URL index keeps must survive a fold over N buckets, because the table sums the whole retention window. A percentile cannot: the window's p95 is no function of the buckets' p95s. The two honest ends are a mergeable sketch or deletion, and the sketch is priced in bytes.</p>
+
+<div class="top">
+  <div class="merge wrap">
+    <table class="tbl">
+      <tr><th>Field</th><th>Bucket A</th><th>Bucket B</th><th>The window</th></tr>
+      <tr><td>count</td><td>40</td><td>60</td><td class="ok2">A + B = 100</td></tr>
+      <tr><td>sum_ms</td><td>9,200</td><td>15,000</td><td class="ok2">A + B = 24,200</td></tr>
+      <tr><td>min_ms</td><td>80</td><td>95</td><td class="ok2">min( A, B ) = 80</td></tr>
+      <tr><td>max_ms</td><td>1,900</td><td>2,400</td><td class="ok2">max( A, B ) = 2,400</td></tr>
+      <tr class="gone"><td>p95_ms</td><td>1,200</td><td>1,700</td><td class="x">no function of the two</td></tr>
+    </table>
+    <div style="padding:10px 12px" class="note2">A fold can take only ONE bucket's percentile and label it as the window's. Taking the NEWEST bucket, or widening the sample with decision 17's hourly tier, still reports one bucket's figure. Illustrative values.</div>
+  </div>
+
+  <div class="bars">
+    <h3>What a histogram would put back on the row</h3>
+    <div class="bar"><div class="lab">named row</div><div class="track"><div class="fill grey" style="width:100%">672 B</div></div></div>
+    <div class="bar"><div class="lab">positional (decision 18)</div><div class="track"><div class="fill" style="width:59.2%">398 B</div></div></div>
+    <div class="bar"><div class="lab">+ sole-server collapse (decision 18)</div><div class="track"><div class="fill" style="width:43.2%">290 B</div></div></div>
+    <div class="bar"><div class="lab">+ fixed-bin histogram, rejected</div><div class="track"><div class="fill" style="width:43.2%">290</div><div class="fill band" style="left:43.2%; width:19.2%; padding-left:0"></div><div style="position:absolute; left:63.6%; top:0; line-height:24px; font-size:12px; font-weight:700; color:#B32D2E; white-space:nowrap">+33 to +129 B</div></div></div>
+    <div class="note2">Run-encoded at 1.5x bins, the histogram measures 71–167 B/row for 1–9% accuracy: up to 44% back onto the row, and more than the whole sole-server collapse saves. Counts ADD, so it would merge through <span class="mono">sum_entry()</span> with no new machinery. It is rejected on price alone: the bytes would make a number nobody sorts by more nearly true.</div>
+  </div>
+</div>
+
+<div class="three">
+  <div class="callout"><h4>Not stored</h4>
+    <p><span class="mono">ROW_P50_MS</span>, <span class="mono">ROW_P95_MS</span> and <span class="mono">ROW_P99_MS</span> (38 B/row), <span class="mono">ROW_DURATIONS</span>, <span class="mono">apply_percentiles()</span>, <span class="mono">MAX_DURATIONS_PER_BUCKET</span>, and the whole <span class="mono">NS_URL_DUR</span> namespace, which spares the WRITE path up to 100 floats per row per bucket, a <span class="mono">STATS_MIRROR_TOPN</span> carve-out, and one <span class="mono">lookup_multi</span> per shard per hour fold.</p></div>
+  <div class="ok"><h4>Kept, and exact</h4>
+    <p><span class="mono">min_ms</span> and <span class="mono">max_ms</span> fold from <span class="mono">duration_ms</span> directly and cost two fields. The <span class="mono">urls</span> verb's slowest-ten ranks by <span class="mono">avg_ms</span>, a read-time division over merged sums; <span class="mono">Findings::for_url()</span> reports <span class="mono">max_ms</span>; <span class="mono">Ask_Assembler</span> carries both. On a low-count URL a mean is more volatile than a 100-sample p95, and <span class="mono">max_ms</span> is the steadier ranking if that shows.</p></div>
+  <div class="card"><h3>Why no older row is read</h3>
+    <p>A layout change moves indexes: <span class="mono">ROW_SRV</span> occupies the reservoir's index, and every index past 7 is one lower than a row carrying its URL string would use (decision 1 keeps it in <span class="mono">urlmap</span>). A row of an older layout would read its split at an index that now holds something else. Decision 5 governs: each release rotates the salt, so no such row is ever read. The unsalted OFFSETLOG checkpoint costs one worker's un-flushed per-server delta once, which <span class="mono">restore_state()</span> declares acceptable.</p></div>
+</div>
+</div>

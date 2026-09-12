@@ -1,0 +1,91 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+  .m { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .rowwire { display: flex; gap: 4px; padding: 12px 14px 14px; align-items: stretch; }
+  .cell { flex: 1; display: flex; flex-direction: column; align-items: center; border-radius: 6px; padding: 7px 3px 6px; border: 1px solid #C3D3EC; background: #F0F4FB; min-width: 0; }
+  .cell .idx { width: 20px; height: 20px; border-radius: 50%; background: #003DA5; color: #fff; font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+  .cell .nm { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 9.5px; color: #101517; margin-top: 5px; text-align: center; line-height: 1.3; white-space: nowrap; }
+  .cell .nm b { display: block; color: #003DA5; font-size: 9.5px; }
+  .cell.sum { border-color: #003DA5; background: #E8EEF9; }
+  .cell.ext { background: #fff; border-style: dashed; border-color: #B0B3B8; }
+  .cell.srv { background: #FBEAEA; border-color: #E6A3A3; }
+  .cell.srv .idx { background: #B32D2E; }
+  .brace { display: flex; padding: 0 14px 12px; gap: 4px; font-size: 11.5px; color: #50575E; }
+  .brace div { text-align: center; border-top: 2px solid #003DA5; padding-top: 5px; line-height: 1.35; }
+  .brace div.g { border-top-color: #B0B3B8; }
+  .brace div.r { border-top-color: #B32D2E; }
+  .cols { display: flex; gap: 16px; margin-top: 16px; align-items: flex-start; }
+  .cols .card { flex: 1; }
+  .cols .card p { margin-bottom: 5px; }
+  .cols .card p .m { color: #101517; }
+  .nums { display: flex; gap: 8px; margin-top: 16px; }
+  .nums .n { flex: 1; background: #fff; border: 1px solid #C3C4C7; border-radius: 7px; padding: 8px 10px; text-align: center; }
+  .nums .n .big { font-size: 19px; font-weight: 700; color: #003DA5; line-height: 1.2; }
+  .nums .n .k { font-size: 11.5px; color: #50575E; margin-top: 3px; line-height: 1.35; }
+  .split { display: flex; gap: 10px; margin-top: 8px; align-items: stretch; }
+  .split .s { flex: 1; border-radius: 6px; padding: 8px 10px; font-size: 12px; line-height: 1.45; }
+  .split .s.a { background: #F0F4FB; border: 1px solid #C3D3EC; }
+  .split .s.b { background: #FBEAEA; border: 1px solid #E6A3A3; color: #5C2223; }
+  .split .s b { display: block; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; margin-bottom: 2px; }
+  .split .s.a b { color: #003DA5; }
+  .split .s.b b { color: #B32D2E; }
+  .rej { display: flex; gap: 10px; margin-top: 16px; }
+  .rej .callout { flex: 1; }
+  .rej .callout h4 .m { color: #B32D2E; }
+</style>
+<div class="sheet">
+  <h1>A stored URL row is positional, and its indexes are named constants</h1>
+  <p class="sub"><span class="m">serialize()</span> writes every key NAME into every entry, so a named row spends <span class="m">s:11:"timed_count";</span>, 19 bytes, to say what <span class="m">i:1;</span> says in 4, once per row per field, on a read that fans out to thousands of keys. The URL index is the one value dense enough to earn the shape. <span class="m">$row[3]</span> is forbidden: the constants buy back the readability the shape spends.</p>
+
+  <div class="panel">
+    <header>One row: fourteen slots, each <span class="m">Stats_Store::ROW_&lt;name&gt;</span>, and the eight that ADD come first</header>
+    <div class="rowwire">
+      <div class="cell sum"><span class="idx">0</span><span class="nm"><b>COUNT</b>count</span></div>
+      <div class="cell sum"><span class="idx">1</span><span class="nm"><b>TIMED_COUNT</b>timed_count</span></div>
+      <div class="cell sum"><span class="idx">2</span><span class="nm"><b>SUM_MS</b>sum_ms</span></div>
+      <div class="cell sum"><span class="idx">3</span><span class="nm"><b>SUM_PEAK_MB</b>sum_peak_mb</span></div>
+      <div class="cell sum"><span class="idx">4</span><span class="nm"><b>COUNT_2XX</b>count_2xx</span></div>
+      <div class="cell sum"><span class="idx">5</span><span class="nm"><b>COUNT_3XX</b>count_3xx</span></div>
+      <div class="cell sum"><span class="idx">6</span><span class="nm"><b>COUNT_4XX</b>count_4xx</span></div>
+      <div class="cell sum"><span class="idx">7</span><span class="nm"><b>COUNT_5XX</b>count_5xx</span></div>
+      <div class="cell ext"><span class="idx">8</span><span class="nm"><b>MIN_MS</b>min_ms</span></div>
+      <div class="cell ext"><span class="idx">9</span><span class="nm"><b>MAX_MS</b>max_ms</span></div>
+      <div class="cell ext"><span class="idx">10</span><span class="nm"><b>MAX_PEAK_MB</b>max_peak_mb</span></div>
+      <div class="cell ext"><span class="idx">11</span><span class="nm"><b>LAST_SEEN</b>last_seen</span></div>
+      <div class="cell ext"><span class="idx">12</span><span class="nm"><b>WORKER</b>worker</span></div>
+      <div class="cell srv"><span class="idx">13</span><span class="nm"><b>SRV</b>srv</span></div>
+    </div>
+    <div class="brace">
+      <div style="flex:8"><span class="m">URL_SRV_SUMS</span>: the summed half. ONE map describes the row and its per-server split alike, so decision 14's "that row restricted to one server" is structural, and <span class="m">cap_servers()</span> ranks a split by index 0 rather than by a field name the positional split does not carry.</div>
+      <div class="g" style="flex:5">Extremes, a timestamp and a flag. Never split: a scoped row keeps the URL's own <span class="m">min_ms</span> and <span class="m">max_ms</span>.</div>
+      <div class="r" style="flex:1">the split: the row's one nested value</div>
+    </div>
+  </div>
+
+  <div class="nums">
+    <div class="n"><div class="big">672 → 398 B</div><div class="k">per row, named against positional, measured on live rows through the real pipeline: 40.9%, taking the hub's 36.1 MB across 58,415 rows to roughly 21</div></div>
+    <div class="n"><div class="big">369 → 290 B</div><div class="k">the sole-server collapse on the hub's own row shape: a further 21.4%, and 56.8% off the 672, on the field that was over half the read</div></div>
+    <div class="n"><div class="big">23–37%</div><div class="k">of the entire fold pass, 34–98 ms per <span class="m">urls</span> poll, that naming the split at the fold would cost: a third field map, a memoized derivation and a 25-line translation, to name data nothing displays</div></div>
+    <div class="n"><div class="big">30 → 15 B</div><div class="k">a category entry in the JSON stats mirror: <span class="m">CAT_SUMS</span> is positional too, <span class="m">CAT_MS</span> 0, <span class="m">CAT_CALLS</span> 1, <span class="m">CAT_REQUESTS</span> 2</div></div>
+  </div>
+
+  <div class="cols">
+    <div class="card">
+      <h3>Where an index becomes a name</h3>
+      <p><span class="m">ROW_FIELD_NAMES</span> is the one map, beside the constants it names, in the shape <span class="m">Message::TYPE_NAMES</span> sets, because a private copy is how a reader ends up omitting a field. <span class="m">Performance_CI_Node::fold_index_row()</span> is the one storage/display boundary for the ROW: everything above it is positional, the display row keeps its names because it crosses the wire as JSON, and a second copy of the translation is how the table and the modal come to disagree about one URL.</p>
+      <p>The SPLIT never crosses: <span class="m">swap_url_server_sums()</span> merges one server's sums into the row and unsets it, <span class="m">project_row()</span> unsets <span class="m">srv_recent</span>, and every escape from the index goes through that projection. A thing crosses a boundary where it is CONSUMED, not where it is convenient to convert.</p>
+      <p><span class="m">CAT_SUMS</span> has no <span class="m">CAT_FIELD_NAMES</span>, and that is not an omission: <span class="m">compact_category_series()</span> emits a POSITIONAL wire row, so no index ever becomes a name, and a name table with no naming site is a second shape waiting to drift.</p>
+    </div>
+    <div class="card">
+      <h3>A split of one server is the row restated</h3>
+      <p>A stored <span class="m">url</span> is ABSOLUTE, so on a fleet of disjoint sites every URL has exactly one host: this is the COMMON row. COUNT alone decides it, because every <span class="m">URL_SRV_SUMS</span> field is summed into the row and the split from the same increment.</p>
+      <div class="split">
+        <div class="s a"><b>"host" =&gt; null</b>this host's numbers ARE the row's</div>
+        <div class="s b"><b>host absent</b>never served here: the row drops from a scoped read</div>
+      </div>
+      <p style="margin-top:8px"><span class="m">collapse_sole_server()</span> and <span class="m">expand_sole_server()</span> are the pair, and every merge, reader or writer, expands BEFORE summing: <span class="m">merge_url_row()</span> and <span class="m">fold_url_rows()</span> do it for both sides, which covers the re-flush, the coarse fold and the overflow tail. <span class="m">sum_fields()</span> skips a non-array value, so an unexpanded null is not a zero but that host deleted from the merge. The rule names writers too, because a write-side merge that skips the expansion breaks no reader's test. The suite pins the shape in ONE test that reads a shard raw and translates everywhere else.</p>
+    </div>
+  </div>
+
+
+</div>

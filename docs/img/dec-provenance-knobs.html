@@ -1,0 +1,73 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+  .two { display: flex; gap: 18px; align-items: stretch; }
+  .two > .panel { flex: 1; }
+  .panel > .body p { font-size: 12.5px; color: #50575E; line-height: 1.5; margin: 0 0 8px; }
+  .flame { background: #FBFBFC; border: 1px solid #EEF0F2; border-radius: 7px; padding: 10px; margin: 8px 0 10px; }
+  .fl { height: 24px; border-radius: 3px; font-size: 11.5px; line-height: 24px; padding-left: 7px; margin-bottom: 3px; white-space: nowrap; overflow: hidden; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .fl.p { background: #C3D3EC; color: #101517; }
+  .fl.h { background: #003DA5; color: #fff; }
+  .fl.m { background: #F3CFCF; color: #B32D2E; }
+  .row3 { display: flex; gap: 3px; }
+  .tag { font-size: 11px; color: #787C82; margin: 2px 0 6px; font-family: Inter, sans-serif; }
+  .strip { display: flex; gap: 3px; margin: 8px 0 4px; flex-wrap: nowrap; }
+  .strip span { flex: 1; height: 26px; border-radius: 3px; background: #EEF0F2; }
+  .strip span.bt { background: #003DA5; }
+  .axis2 { display: flex; gap: 3px; }
+  .axis2 span { flex: 1; min-width: 0; text-align: center; font-size: 11px; color: #50575E; white-space: nowrap; }
+  .axis2 span.tk::before { content: ""; display: block; width: 1.5px; height: 6px; background: #50575E; margin: 0 auto 2px; }
+  .capnote { font-size: 12px !important; color: #50575E; margin: 6px 0 0 !important; }
+  .entry { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; background: #F6F7F7; border-radius: 5px; padding: 7px 9px; margin: 6px 0; line-height: 1.5; overflow-wrap: anywhere; color: #101517; }
+  .entry b { color: #003DA5; }
+  .price { display: flex; gap: 8px; margin-top: 8px; }
+  .price .chip { flex: 1; margin: 0; font-size: 12px; line-height: 1.45; }
+  .price .chip b { display: block; font-size: 15px; }
+  .foot { display: flex; gap: 14px; margin-top: 14px; }
+  .foot > * { flex: 1; }
+  .card p, .callout p { font-size: 12.5px; }
+</style>
+<div class="sheet">
+<h1>A span says how long, never who asked; two knobs answer the second question, at two prices</h1>
+<p class="sub">A <span class="mono">/wp-admin/post.php</span> record: <span class="mono">the_content</span> fired sixteen times at about 2.4 s each, 93% of a 40.6 s request, and every span said the same thing. Both knobs are per rule and add no new wire field: <span class="mono">Log_Manager::message()</span> merges arbitrary keys into the entry, <span class="mono">[ 'n', 'k' ] + $data + [ 'ts' ]</span>.</p>
+
+<div class="two">
+  <div class="panel"><header><span class="mono">trace_hooks</span>: one frame on every firing, into the aggregation label</header>
+    <div class="body">
+      <p><span class="mono">origin_frame()</span> takes ONE frame, who called the hook, and puts it on the entry's <span class="mono">l</span>. <span class="mono">Flame_Tree</span> and <span class="mono">Flame_Fold</span> aggregate on <span class="mono">l</span>, so one node splits into a node per caller, each with MEASURED durations, and no tree code changes.</p>
+      <div class="flame">
+        <div class="tag">off: one node, sixteen identical mysteries</div>
+        <div class="fl p">request</div>
+        <div class="fl h">the_content hook ×16</div>
+        <div class="tag" style="margin-top:10px">on: split by caller (caller names illustrative)</div>
+        <div class="fl p">request</div>
+        <div class="row3"><div class="fl h" style="flex:5">the_content ← caller A</div><div class="fl h" style="flex:3">← caller B</div><div class="fl h" style="flex:2">← C</div></div>
+        <div class="tag" style="margin-top:10px">never: an invented ancestor for an uninstrumented frame</div>
+        <div class="fl m" style="text-decoration:line-through">wp_trim_excerpt, valued at the the_content inside it</div>
+      </div>
+      <p>It must NOT synthesise ancestor nodes: that parent would assert a duration nobody measured, which is decision 12's whole point. Attribution is honest; invented ancestry is not. Gyrobase already uses the idiom for <span class="mono">include: /Macros/Global.html</span>.</p>
+      <div class="price">
+        <div class="chip"><b>0.9 µs</b><span class="mono">debug_backtrace( DEBUG_BACKTRACE_IGNORE_ARGS, ORIGIN_DEPTH )</span></div>
+        <div class="chip danger"><b>12.7 µs</b><span class="mono">wp_debug_backtrace_summary()</span>: walks and formats the whole stack to keep one frame</div>
+      </div>
+      <p style="margin-top:8px">The depth LIMIT is the lever, not <span class="mono">IGNORE_ARGS</span>: args are refcounted, not copied, and cost 0.8 µs even on a multi-megabyte <span class="mono">the_content</span>. At 0.9 µs it runs on every firing (2,601 <span class="mono">render_block</span> calls = 2.3 ms), so the split is complete rather than cut at a budget.</p>
+    </div></div>
+
+  <div class="panel"><header><span class="mono">trace_callers</span>: a deep chain on the first N firings of each hook</header>
+    <div class="body">
+      <p><span class="mono">caller_of()</span> records <span class="mono">wp_debug_backtrace_summary( self::class )</span>, ignoring the instrumentation class so the top frame is the caller, onto the hook's OWN start entry:</p>
+      <div class="entry">the_content hook (start) · m … · <b>caller</b> "rest_preload_api_request, apply_filters('the_content'), …"</div>
+      <p>The field is <span class="mono">caller</span>, not <span class="mono">c</span>, which already means COUNT throughout this schema. The window is 20 frames (<span class="mono">CALLER_FRAMES</span>), and <span class="mono">MAX_DATA_SIZE</span> is the only other bound.</p>
+      <p><b>One hook's firings, in order, with <span class="mono">trace_callers</span> = 20:</b></p>
+      <div class="strip"><span class="bt"></span><span class="bt"></span><span class="bt"></span><span class="bt"></span><span class="bt"></span><span class="bt"></span><span class="bt"></span><span class="bt"></span><span class="bt"></span><span class="bt"></span><span class="bt"></span><span class="bt"></span><span class="bt"></span><span class="bt"></span><span class="bt"></span><span class="bt"></span><span class="bt"></span><span class="bt"></span><span class="bt"></span><span class="bt"></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+      <div class="axis2"><span class="tk">1</span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span class="tk">20</span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span class="tk">32</span></div>
+      <p class="capnote">The cap is per HOOK, not per request: firings past the twentieth carry no chain.</p>
+      <p style="margin-top:10px">The RULE names the count: <span class="mono">trace_callers</span> IS the number of deep chains, default 0, and a stored <span class="mono">true</span> decodes to <span class="mono">Rule::TRACE_CALLERS_DEFAULT</span> (20), because what a diagnostic run wants is not what steady state wants. Sixteen firings fit inside twenty, enough to see a repeat whole; a hot hook stops paying after twenty. The same question asked of <span class="mono">render_block</span> on that record would be 2,601 backtraces.</p>
+      <p>A fixed 20 leaves 21% of a real record's time unattributed, and an 8-frame window stops one frame short of <span class="mono">rest_preload_api_request</span>, the frame that explains the whole request.</p>
+    </div></div>
+</div>
+
+<div class="foot">
+  <div class="callout"><h4>A field nothing renders is a field that does not exist</h4><p>So <span class="mono">LogEntriesTable</span> renders what the knobs capture: the <span class="mono">l</span> origin frame, then <span class="mono">caller</span> as "called by …", muted ahead of the entry's value.</p></div>
+  <div class="card"><h3>Where each knob sits</h3><p>Both off by default, like <span class="mono">log_queries</span> (decision 23) and unlike <span class="mono">log_http</span> (decision 21): a backtrace is cheap once and not cheap always. Neither reaches the transport spans: their <span class="mono">l</span> climbs past the transport whatever <span class="mono">trace_callers</span> says.</p></div>
+</div>
+</div>

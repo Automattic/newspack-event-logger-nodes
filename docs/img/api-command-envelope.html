@@ -1,0 +1,89 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+  .slots { display: flex; align-items: stretch; gap: 6px; }
+  .slot { flex: 1; background: #fff; border: 1px solid #C3D3EC; border-radius: 7px; padding: 8px 9px; font-size: 12px; line-height: 1.4; color: #50575E; }
+  .slot .i { display: inline-block; width: 20px; height: 20px; border-radius: 50%; background: #003DA5; color: #fff; font-size: 11px; font-weight: 700; text-align: center; line-height: 20px; margin-right: 5px; }
+  .slot .nm { font-weight: 700; color: #003DA5; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+  .slot .v { display: block; margin-top: 5px; color: #101517; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; overflow-wrap: anywhere; }
+  .slot.wide { flex: 2.6; border-color: #003DA5; }
+  .slot.dim { background: #F6F7F7; border-style: dashed; border-color: #C3C4C7; }
+  .value { margin-top: 10px; display: flex; gap: 10px; }
+  .value .card { flex: 1; padding: 12px 14px; }
+  .value .card h3 { font-size: 13.5px; margin-bottom: 6px; }
+  .value .card p { font-size: 12.5px; margin-bottom: 4px; }
+  .cols { display: flex; gap: 16px; margin-top: 18px; align-items: flex-start; }
+  .gate { display: flex; align-items: flex-start; gap: 10px; background: #fff; border: 1px solid #C3C4C7; border-radius: 7px; padding: 8px 11px; margin-bottom: 7px; font-size: 12.5px; line-height: 1.45; }
+  .gate .code { flex: 0 0 64px; font-weight: 700; color: #B32D2E; font-size: 12.5px; }
+  .gate .code.go { color: #1E5B1E; }
+  .dec { background: #fff; border: 1px solid #C3C4C7; border-radius: 9px; padding: 14px 16px; }
+  .dec h3 { font-size: 14px; margin: 0 0 10px; }
+  .q { font-size: 12.5px; font-weight: 700; color: #101517; margin: 8px 0 5px; }
+  .ans { display: flex; gap: 8px; }
+  .ans .chip { flex: 1; margin: 0; font-size: 12.5px; line-height: 1.45; }
+  .ans .chip b { font-size: 15px; display: block; }
+  .own { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; font-weight: 600; color: #003DA5; margin: 12px 0 6px; }
+  .own.first { margin-top: 0; }
+  .h { font-size: 13px; font-weight: 700; margin: 0 0 8px; color: #50575E; text-transform: uppercase; letter-spacing: 0.04em; font-size: 11.5px; }
+</style>
+<div class="sheet">
+<h1>A /command body is one packed Message per line, and the HTTP status is decided once</h1>
+<p class="sub">Build a request by hand from the slot row, read the gates it must pass in order, and read the status it comes back with. The reply is a Message too, sent TO the FROM the request carried.</p>
+
+<div class="panel">
+  <header>One line of the body: a 7-element positional JSON array, <span class="mono">Content-Type: text/plain</span></header>
+  <div class="body">
+    <div class="slots">
+      <div class="slot"><span class="i">0</span><span class="nm">TYPE</span><span class="v">8</span>TM_COMMAND</div>
+      <div class="slot"><span class="i">1</span><span class="nm">TIMESTAMP</span><span class="v">1756900000</span></div>
+      <div class="slot"><span class="i">2</span><span class="nm">FROM</span><span class="v">""</span>the sender's node; the door prepends <span class="mono">_output</span>. Empty: the reply lands in the body.</div>
+      <div class="slot"><span class="i">3</span><span class="nm">TO</span><span class="v">"performance"</span>the CI: <span class="mono">performance</span>, <span class="mono">discovery</span> or <span class="mono">rules</span>. Most callers name the CI alone; a sub-path names a child.</div>
+      <div class="slot dim"><span class="i">4</span><span class="nm">ID</span><span class="v">""</span></div>
+      <div class="slot dim"><span class="i">5</span><span class="nm">KEY</span><span class="v">""</span></div>
+      <div class="slot wide"><span class="i">6</span><span class="nm">VALUE</span><span class="v">{ name, arguments, auth }</span>the verb, its tokens, and the signature</div>
+    </div>
+    <div class="value">
+      <div class="card"><h3><span class="mono">arguments</span>: one flat token array</h3>
+        <p>The grammar <span class="mono">Command_Args::parse()</span> and the browser's <span class="mono">parseCommandArgs()</span> both read. Required values ride positionally, in the order the verb declares; optional ones are <span class="mono">--key=value</span>; a boolean is a bare <span class="mono">--key</span> (<span class="mono">--key=false</span> turns one off); a list is comma-separated inside one value.</p>
+        <p class="mono" style="color:#101517">["--limit=25", "--server=example.com"]</p></div>
+      <div class="card"><h3><span class="mono">auth</span>: the envelope <span class="mono">Command_Auth::sign()</span> stamps</h3>
+        <p>A <span class="mono">nonce</span> and a <span class="mono">sig</span> over <span class="mono">[ts, name, arguments, nonce]</span>, plus a <span class="mono">handle</span> when the key is a session key.</p>
+        <p>An in-process (LOCAL) command needs none; anything arriving over the wire is refused without one.</p></div>
+      <div class="card"><h3>Why <span class="mono">text/plain</span></h3>
+        <p>JSONL is not one JSON document. Sent as <span class="mono">application/json</span>, WordPress parses the body itself and answers <span class="mono">rest_invalid_json</span> before <span class="mono">HTTP_In_Node</span> is reached.</p></div>
+    </div>
+  </div>
+</div>
+
+<div class="cols">
+  <div style="flex:0 0 470px">
+    <p class="h">The gates, in order</p>
+    <p class="own first">HTTP_In_Node::check_permission()</p>
+    <div class="gate"><span class="code">403</span><span><span class="mono">Bootstrap::fleet_gate()</span>: the fleet is network-global, so a multisite subsite is refused.</span></div>
+    <div class="gate"><span class="code">401 / 403</span><span>Not <span class="mono">Capabilities::READ</span>, the substrate's lowest role: <span class="mono">rest_forbidden</span>, 401 for a visitor and 403 for a signed-in user. The door demands the least any verb behind it needs.</span></div>
+    <div class="gate"><span class="code">429</span><span>Over <span class="mono">RATE_LIMIT_BURST</span> (30) POSTs per user per <span class="mono">RATE_LIMIT_WINDOW_S</span> (1): one transient per clock-second. The <span class="mono">newspack_nodes/command_rate_limit</span> filter tunes it, clamped to at least 1. Counted after the capability, so an unauthenticated flood cannot poison the transient table.</span></div>
+    <p class="own">HTTP_In_Node::dispatch()</p>
+    <div class="gate"><span class="code">500</span><span>The request-scope graph is missing <span class="mono">_router</span> or <span class="mono">_output</span>: answered before any command runs.</span></div>
+    <p class="own">Service_CI_Node, per handler</p>
+    <div class="gate"><span class="code go">per verb</span><span><span class="mono">Service_CI_Node</span> wraps each handler in <span class="mono">Capabilities::require()</span> for the role its schema declares; a verb declaring none takes MANAGE. No handler in this plugin re-checks.</span></div>
+  </div>
+
+  <div style="flex:1">
+    <p class="h">The status, decided once</p>
+    <div class="dec">
+      <div class="q">Did a reply reach the body? The first one written opens it, and the status line is spent.</div>
+      <div class="ans">
+        <div class="chip"><b>200</b>a reply is on the wire</div>
+        <div class="chip danger"><b>401</b>a command earlier in the batch had already been refused</div>
+      </div>
+      <div class="q">Nothing written back once the batch has run?</div>
+      <div class="ans">
+        <div class="chip"><b>202</b>the work routed onward; its replies are due on the caller's own SSE stream</div>
+        <div class="chip danger"><b>401</b>any command in the batch was refused</div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:12px"><h3>The reply Message</h3>
+      <p><span class="mono">TM_COMMAND|TM_RESPONSE</span>, sent TO=FROM, whose VALUE is <span class="mono">{ name, arguments, payload }</span>: the verb it answers, the tokens it was given, and the verb's return under <span class="mono">payload</span>.</p>
+      <p>A verb that throws answers <span class="mono">TM_COMMAND|TM_ERROR</span> instead, whose <span class="mono">payload</span> is the throw's message. No promise registry, no rejected Promise: the refusal lands a tick later on the node that asked.</p></div>
+  </div>
+</div>
+</div>

@@ -1,0 +1,69 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+.seq { position: relative; width: 1052px; }
+.seq svg.wire { position: absolute; left: 0; top: 0; }
+.seq .lane { position: absolute; top: 0; width: 236px; min-height: 96px; padding:12px 14px; }
+.seq .lane h3 { font-size: 14px; }
+.seq .lane p { font-size: 12px; margin: 0; }
+.seq .hop { position: absolute; background: #fff; border: 1px solid #C3D3EC; border-radius: 7px; padding: 9px 12px 9px 40px; font-size: 12.5px; line-height: 1.5; color: #101517; }
+.seq .n { position: absolute; left: 10px; top: 9px; width: 22px; height: 22px; border-radius: 50%; background: #003DA5; color: #fff; font-size: 12px; font-weight: 700; text-align: center; line-height: 22px; }
+.seq .cap { position: absolute; font-size: 12px; color: #50575E; text-align: center; background: #FBFBFC; padding: 0 6px; white-space: nowrap; }
+.seq .hop.danger { border-color:#E6A3A3; background:#FBEAEA; }
+.seq .hop.danger .n { background:#B32D2E; }
+.kv { display:flex; gap:6px; margin:6px 0 2px; }
+.kv div { flex:1; border:1px solid #C3D3EC; background:#F0F4FB; border-radius:5px; padding:5px 8px; font-size:11.5px; line-height:1.35; }
+.kv div b { display:block; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color:#003DA5; font-size:11.5px; }
+.mono { overflow-wrap: anywhere; }
+</style>
+<div class="sheet">
+<h1>An auto-tune decision is a message to a hidden sibling, and a rule edit like any other</h1>
+<p class="sub">Flame_Builder_Node judges each completed request against its governing rule's two thresholds, batches the candidates to its five-second flush, and sends them to the owned <span class="mono">{name}:auto-tuner</span> node, which mutates ONE rule through Rule_Set. From there the change reaches spokes the way an admin edit does.</p>
+
+<div class="seq" id="seq">
+<svg class="wire" id="wire"><defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#003DA5"/></marker></defs></svg>
+
+<div class="lane card" data-lane="0"><h3>Flame_Builder_Node</h3><p>One per partition, in the flame-builder worker.</p></div>
+<div class="lane card" data-lane="1"><h3>Auto_Tuner_Node</h3><p>Owned, hidden, patron-linked; never built in TSL.</p></div>
+<div class="lane card" data-lane="2"><h3>Rule_Set</h3><p>The durable ruleset, one option plus per-rule hook options.</p></div>
+<div class="lane card" data-lane="3"><h3>hub-control</h3><p>Settings_Sync tailing <span class="mono">settings.p0</span>.</p></div>
+
+<div class="hop" data-span="0,2"><span class="n">1</span>Per completed request, with a non-zero threshold on the rule: a hook firing more than <span class="mono">auto_disable_threshold</span> times in ONE request is a disable candidate; a hook whose leaderboard mean ms per call reaches <span class="mono">auto_protect_time_threshold</span>, over this partition's requests in the current five-minute bucket since the last flush, is a candidate for significant status. Worker traffic and the callback and plugin views feed neither test.</div>
+
+<div class="hop" data-span="0,2"><span class="n">2</span>Candidates accrue until the 5 s flush. Across the emit batch the builder holds a 5 s <span class="mono">evlog:auto_disable_lock</span> taken with <span class="mono">Memcached::add()</span>, the one call site on the raw handle, and releases it only while the value it wrote is still there; two partitions flushing at the same instant would otherwise emit overlapping decisions twice. With no shared handle, or no Stats_Store, it fires unlocked.</div>
+
+<div class="hop" data-arrow="0,1" data-cap="TM_STRUCT, TO = {name}:auto-tuner" data-span="0,2"><span class="n">3</span>One message per list to tune. KEY discriminates which per-rule list; VALUE names the rule and the items.
+  <div class="kv"><div><b>disable_hooks</b><span class="mono">hooks</span> minus the items; significant events preserved</div><div><b>disable_custom_events</b><span class="mono">custom_events</span> minus the items; significant events preserved</div><div><b>add_significant_events</b><span class="mono">significant_events</span> ∪ items</div><div><b>VALUE</b><span class="mono">{ rule_id, items }</span></div></div></div>
+
+<div class="hop danger" data-span="1,2"><span class="n">4</span><span class="mono">authorized()</span>: <span class="mono">NEWSPACK_NODES_WORKER_TYPE</span> in <span class="mono">$_SERVER</span> (the flame-builder worker) or the TUNE capability (an admin request), <span class="mono">manage_options</span> until <span class="mono">wp nodes caps install</span> moves it; otherwise nothing is written. The check reads the process and the user, never where the message came from.</div>
+
+<div class="hop" data-arrow="1,2" data-cap="read-modify-write" data-span="1,3"><span class="n">5</span><span class="mono">mutate_rule()</span> calls <span class="mono" style="white-space:nowrap">\Newspack_Nodes\Config::invalidate_options_cache()</span> first, so the read starts from a fresh snapshot rather than clobbering a concurrent worker; it reads the rule by id, applies the one <span class="mono">apply_*</span> the KEY names, and compares before and after with both hook lists resolved to concrete form (<span class="mono">unchanged()</span>), because a pointer-tier rule stores <span class="mono">hooks = null</span>. A no-op decision skips the write.</div>
+
+<div class="hop" data-arrow="2,3" data-cap="a settings event, like an admin edit" data-span="2,4"><span class="n">6</span><span class="mono">Rule_Set::save()</span> re-tiers and persists the whole ruleset. The option write records a settings event; where <span class="mono">hub-control</span> is active, Settings_Sync pushes the changed option to every spoke, and its 300 s sweep re-pushes every option as a backstop. There is no <span class="mono">remote_manager</span> job and no <span class="mono">suppress_sync</span> guard.</div>
+</div>
+</div>
+<script>
+(function () {
+  var L = [131, 394, 657, 920], seq = document.getElementById('seq'), svg = document.getElementById('wire');
+  var NS = 'http://www.w3.org/2000/svg';
+  function el(t, a) { var e = document.createElementNS(NS, t); for (var k in a) e.setAttribute(k, a[k]); return e; }
+  var lanes = seq.querySelectorAll('.lane'), headBottom = 0;
+  lanes.forEach(function (c) { var i = +c.dataset.lane; c.style.left = (L[i] - 118) + 'px'; headBottom = Math.max(headBottom, c.offsetHeight); });
+  var y = headBottom + 18;
+  seq.querySelectorAll('[data-span]').forEach(function (b) {
+    var s = b.dataset.span.split(',').map(Number), x0 = L[s[0]] - 115, x1 = (s[1] === 4) ? 1042 : L[s[1]] - 10;
+    if (b.dataset.arrow) {
+      var a = b.dataset.arrow.split(',').map(Number), ay = y + 22, dir = a[1] > a[0] ? 1 : -1;
+      svg.appendChild(el('path', { d: 'M' + L[a[0]] + ' ' + ay + ' H' + (L[a[1]] - 6 * dir), stroke: '#003DA5', 'stroke-width': 1.8, fill: 'none', 'marker-end': 'url(#a)' }));
+      var cap = document.createElement('div'); cap.className = 'cap'; cap.textContent = b.dataset.cap;
+      cap.style.top = (ay - 20) + 'px'; seq.appendChild(cap);
+      cap.style.left = ((L[a[0]] + L[a[1]]) / 2 - cap.offsetWidth / 2) + 'px';
+      y = ay + 10;
+    }
+    b.style.left = x0 + 'px'; b.style.width = (x1 - x0) + 'px'; b.style.top = y + 'px';
+    y += b.offsetHeight + 12;
+  });
+  var boxes = seq.querySelectorAll('[data-span]'), last = boxes[boxes.length - 1], lastBottom = last.offsetTop + last.offsetHeight;
+  seq.style.height = y + 'px'; svg.setAttribute('width', 1052); svg.setAttribute('height', y);
+  L.forEach(function (x) { svg.insertBefore(el('path', { d: 'M' + x + ' ' + (headBottom + 4) + ' V' + (lastBottom + 4), stroke: '#B0B3B8', 'stroke-dasharray': '4 5', 'stroke-width': 1.5 }), svg.firstChild.nextSibling); });
+})();
+</script>

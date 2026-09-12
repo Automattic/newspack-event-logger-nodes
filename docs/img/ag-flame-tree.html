@@ -1,0 +1,86 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+.stages { display:flex; gap:0; align-items:stretch; }
+.st { flex:1; background:#fff; border:1px solid #C3C4C7; border-radius:9px; padding:12px 14px; font-size:12px; line-height:1.45; }
+.st h3 { font-size:14px; margin:0 0 6px; }
+.st h3 .n { display:inline-block; width:22px; height:22px; border-radius:50%; background:#003DA5; color:#fff; font-size:12px; text-align:center; line-height:22px; margin-right:6px; }
+.st p { margin:0 0 5px; color:#50575E; }
+.st p:last-child { margin-bottom:0; }
+.st b { color:#101517; }
+.arr { flex:0 0 30px; display:flex; align-items:center; justify-content:center; }
+.lines { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:11px; line-height:1.5; background:#F6F7F7; border:1px solid #C3C4C7; border-radius:6px; padding:7px 9px; margin:6px 0; color:#101517; }
+.lines .k { color:#003DA5; }
+.lines .g { color:#787C82; }
+.flame { margin:6px 0; }
+.rules li { margin-bottom:3px; }
+.rules { padding-left:16px; margin:4px 0; color:#50575E; }
+.two { display:flex; gap:12px; margin-top:14px; }
+.two > div { flex:1; }
+.mono { overflow-wrap:anywhere; }
+</style>
+<div class="sheet">
+<h1>A flame tree is a stack machine over spans, merged by name and averaged per request</h1>
+<p class="sub">Flame_Tree is stateless: four static stages Flame_Builder_Node runs in order on each record it reads from <span class="mono">requests.pN</span>; a record carrying Request_Builder's pre-folded <span class="mono">flame</span> skips the first. The per-request tree goes to <span class="mono">flames.pN</span>; the merged one is the URL's aggregate flame.</p>
+
+<div class="stages">
+  <div class="st">
+    <h3><span class="n">1</span><span class="mono">build_flame_data()</span></h3>
+    <p>One request's entries, in order. The root is <span class="mono">request</span>, <span class="mono">t = 0</span>.</p>
+    <div class="lines">
+      <span class="k">init hook (start)</span> ts +12 ms<br>
+      &nbsp;&nbsp;<span class="k">http (start)</span> l=Plugin::fetch m=api.example.com<br>
+      &nbsp;&nbsp;<span class="k">http (complete)</span> duration_ms 212<br>
+      &nbsp;&nbsp;<span class="k">http (start)</span> l=Plugin::fetch<br>
+      &nbsp;&nbsp;<span class="k">http (complete)</span> duration_ms 30<br>
+      <span class="k">init hook (complete)</span> duration_ms 340<br>
+      <span class="k">template (start)</span> <span class="g">never closed</span><br>
+      <span class="k">wp_head hook (complete)</span> <span class="g">matches nothing: dropped</span>
+    </div>
+    <ul class="rules">
+      <li>A <b>start</b> pushes a node named <span class="mono">&lt;base&gt;: &lt;l&gt;</span>, with <span class="mono">detail</span> from <span class="mono">m</span> when it differs, and <span class="mono">t</span>, the offset in ms from the request's own start. <span class="mono">t</span> is absent, never zero, when unknown.</li>
+      <li>A <b>complete</b> matches the nearest open node of the same base name, LIFO, stamps <span class="mono">value = duration_ms</span>, and pops it with everything above it. Children that outlive their parent keep value 0.</li>
+      <li>The stack, root included, holds <span class="mono">MAX_STACK_DEPTH</span> 50, so 49 spans nest; a deeper span is attached but never pushed.</li>
+      <li>Then duplicate siblings get a hidden <span class="mono">\x00N</span> suffix, so the merge cannot collapse them, and <span class="mono">cover_children()</span> raises every parent to the larger of its children's extent and their sum.</li>
+    </ul>
+  </div>
+  <div class="arr"><svg width="26" height="18" viewBox="0 0 26 18"><path d="M0 9 H20" stroke="#003DA5" stroke-width="2"/><path d="M16 3 L24 9 L16 15 z" fill="#003DA5"/></svg></div>
+  <div class="st">
+    <h3><span class="n">2</span>The per-request tree</h3>
+    <div class="flame">
+      <svg width="286" height="140" viewBox="0 0 286 140" font-family="Inter, Helvetica, Arial, sans-serif" font-size="10.5">
+        <rect x="0" y="0" width="286" height="26" rx="4" fill="#003DA5"/><text x="8" y="17" fill="#fff" font-weight="700">request  t=0  value=520</text>
+        <rect x="6" y="32" width="170" height="26" rx="4" fill="#4F79C9"/><text x="12" y="49" fill="#fff">init hook  t=12  340</text>
+        <rect x="200" y="32" width="86" height="26" rx="4" fill="#C3C4C7"/><text x="205" y="49" fill="#101517">template  t=372</text>
+        <rect x="12" y="64" width="112" height="26" rx="4" fill="#9EC89E"/><text x="17" y="81" fill="#1E5B1E">http \x001 · 212</text>
+        <rect x="130" y="64" width="46" height="26" rx="4" fill="#9EC89E"/><text x="134" y="81" fill="#1E5B1E">\x002 30</text>
+        <text x="0" y="110" fill="#50575E">Both green frames are named http: Plugin::fetch. A frame's</text>
+        <text x="0" y="123" fill="#50575E">extent is [ t, t + value ]; the unclosed template span keeps</text>
+        <text x="0" y="136" fill="#50575E">its honest t and is covered, not guessed.</text>
+      </svg>
+    </div>
+    <p><span class="mono">strip_name_suffixes()</span> removes the <span class="mono">\x00N</span> numbering before the tree is stored or shown. The caller takes the greater of the covered root and the request's measured <span class="mono">duration_ms</span>.</p>
+    <p>A flame <span class="mono">value</span> is a LAYOUT width: <span class="mono">cover_children()</span> raises a parent over its children, so every stat reads <span class="mono">duration_ms</span> instead.</p>
+  </div>
+  <div class="arr"><svg width="26" height="18" viewBox="0 0 26 18"><path d="M0 9 H20" stroke="#003DA5" stroke-width="2"/><path d="M16 3 L24 9 L16 15 z" fill="#003DA5"/></svg></div>
+  <div class="st">
+    <h3><span class="n">3</span><span class="mono">merge_flame_children_incremental()</span></h3>
+    <p>Into the URL's aggregate, keyed on <span class="mono">name</span>, recursively:</p>
+    <div class="lines">
+      new name → { name, <span class="k">sum_value</span>: value, <span class="k">ts</span>: now, children: [] }<br>
+      seen name → sum_value += value; ts = now<br>
+      children → the same merge, one level down<br>
+      ts &lt; now − <span class="k">3600</span> → dropped
+    </div>
+    <p>An incoming node's <span class="mono">detail</span> and <span class="mono">t</span> never reach the aggregate, which has merged many requests and holds no single position. No per-node tally is kept.</p>
+    <h3 style="margin-top:10px"><span class="n">4</span><span class="mono">finalize_flame_node()</span></h3>
+    <div class="lines">value = sum_value / <span class="k">requests the aggregate covers</span></div>
+    <p>The divisor is the aggregate's own request count, never a per-node tally, so a node seen in a minority of requests averages down: the flame shows mean cost per request. The blob, <span class="mono">url:{hash}</span>, carries no bucket, and a reader takes the first partition's blob whole rather than summing across partitions.</p>
+  </div>
+</div>
+
+<div class="two">
+  <div class="card"><h3>The resumable twin, <span class="mono">Flame_Fold</span></h3><p>The same stack machine, static over a plain-array state so it can ride the Consumer's checkpoint frame, and MERGING as it goes: same-name siblings under a parent collapse into one node with <span class="mono">count</span>, summed <span class="mono">value</span>, <span class="mono">max</span> and a <span class="mono">merged</span> flag, so a folded envelope costs O(distinct paths). Its stack starts empty and holds <span class="mono">MAX_STACK_DEPTH</span> 50 spans.</p></div>
+  <div class="card"><h3>Exclusive time lives elsewhere</h3><p>The assembled record's <span class="mono">profiles</span> map, built by Request_Builder_Node, credits a span's duration to its own category and subtracts it from every open ancestor up to the first non-callback one, so a hook's number is its own work. The leaderboards, <span class="mono">dump_url</span> and <span class="mono">RequestProfile</span> read that, not the flame.</p></div>
+  <div class="card"><h3>In the browser</h3><p><span class="mono">pruneFlameGraph()</span> keeps every frame at or under 1,000, then frames ranked within that or worth 0.001 of the root, and raises the cutoff past 5,000; <span class="mono">withTimeSpacers()</span> turns <span class="mono">t</span> into a real x position by inserting transparent spacer frames, declining any family with a missing <span class="mono">t</span>, a <span class="mono">merged</span> node or overlapping children.</p></div>
+</div>
+</div>

@@ -1,0 +1,56 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+  .tl { position: relative; padding-left: 196px; }
+  .tl::before { content: ""; position: absolute; left: 182px; top: 10px; bottom: 16px; width: 2px; background: #003DA5; }
+  .ev { position: relative; margin-bottom: 10px; }
+  .ev .when { position: absolute; left: -196px; top: 9px; width: 168px; text-align: right; font-size: 11.5px; line-height: 1.35; color: #50575E; }
+  .ev .when b { display: block; color: #003DA5; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11.5px; overflow-wrap: anywhere; }
+  .ev .dot { position: absolute; left: -19px; top: 13px; width: 12px; height: 12px; border-radius: 50%; background: #003DA5; border: 2px solid #FBFBFC; }
+  .ev .dot.grey { background: #787C82; }
+  .ev .dot.red { background: #B32D2E; }
+  .ev .card { padding: 10px 14px; }
+  .ev .card h3 { font-size: 13.5px; margin-bottom: 4px; }
+  .ev .card p { font-size: 12.2px; margin-bottom: 3px; line-height: 1.45; }
+  .ev .card p:last-child { margin-bottom: 0; }
+  .m { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #101517; }
+  .pri { display: flex; gap: 6px; margin: 6px 0 2px; }
+  .pri .chip { flex: 1; margin: 0; font-size: 11.5px; padding: 5px 8px; line-height: 1.35; }
+  .pri .chip b { display: block; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #003DA5; }
+  .pri .chip.off { background: #F6F7F7; border-color: #DCDCDE; color: #50575E; }
+  .pri .chip.off b { color: #50575E; }
+  .two { display: flex; gap: 14px; margin-top: 4px; align-items: stretch; }
+  .two > * { flex: 1; }
+  .aside { font-size: 11.5px; color: #787C82; margin-top: 6px; }
+</style>
+<div class="sheet">
+  <h1>What fires and what listens along one logged request</h1>
+  <p class="sub">Priorities decide the order the record reads in: the profiler writes ahead of the instrumentation, a hook's span opens before its callbacks and closes after them, and the terminal is written from a shutdown function so a fatal still ends the record.</p>
+
+  <div class="tl">
+    <div class="ev"><div class="when">mu-plugin, file scope<b>option_active_plugins @1</b></div><div class="dot grey"></div><div class="card"><h3>The profiler drop-in takes the load baseline</h3><p><span class="m">00-newspack-profiler.php</span> binds this filter at priority 1 and keeps its FIRST firing: a wall-clock and hrtime pair plus the declared-class and included-file counts. <span class="m">wp_get_active_and_valid_plugins()</span> reads the option immediately ahead of the plugin loop, the last point outside every plugin. A listener short-circuiting <span class="m">pre_option_active_plugins</span> stops it firing, and nothing is recorded.</p></div></div>
+
+    <div class="ev"><div class="when">once per plugin<b>plugin_loaded @1</b></div><div class="dot grey"></div><div class="card"><h3>One row per site-activated plugin</h3><p>Elapsed time, new classes and new files since the previous firing, which also covers the loop's own per-plugin work. Must-use plugins announce on <span class="m">mu_plugin_loaded</span> and network-activated ones on <span class="m">network_plugin_loaded</span>; the drop-in binds neither, so neither is timed.</p></div></div>
+
+    <div class="ev"><div class="when">before the bootstrap<b>plugins_loaded @-10001</b></div><div class="dot grey"></div><div class="card"><h3>The rows reach the firehose, and the logger is built</h3><p><span class="m">Log_Manager::instance()</span> is constructed here when nothing else has: it resolves the rule matching <span class="m">REQUEST_URI</span>, adopts and unsets the profiler's <span class="m">request_time</span> and <span class="m">request_ts</span>, and, when the rule says <span class="m">log</span>, registers <span class="m">finish()</span> as a shutdown function and writes <span class="m">process (start)</span> stamped with the moment PHP began the request and the governing <span class="m">rule</span> id. The plugin rows follow as <span class="m">&lt;slug&gt; plugin (start)</span> / <span class="m">(complete)</span> pairs carrying their own <span class="m">ts</span>. One below the default <span class="m">hook_start_priority</span>, so they precede what <span class="m">App\Core</span> records for the same hook. A <span class="m">skip</span> rule, no rule, <span class="m">enable_logging</span> off or a root process leaves the instance inert and every write returns false.</p></div></div>
+
+    <div class="ev"><div class="when">the deferred bootstrap<b>plugins_loaded @11</b></div><div class="dot"></div><div class="card"><h3><span class="m">new App\Core()</span> binds the governing rule's instrumentation</h3><p>Each of the rule's <span class="m">hooks</span> gets three registrations. A <span class="m">significant_events</span> name the list omits is bound too, once a trailing <span class="m">&nbsp;hook</span> is stripped. Never bound: a <span class="m">custom_events</span> category (the application logs it itself), <span class="m">plugin_loaded</span> (the drop-in owns it), <span class="m">query</span> under <span class="m">log_queries</span> (the SQL span covers it), and any name <span class="m">Hook_Categorizer::is_internal()</span> reports, a <span class="m">newspack_nodes</span> or <span class="m">newspack_event_logger_nodes</span> prefix, because instrumenting one re-enters the logger's own bootstrap.</p>
+      <div class="pri">
+        <div class="chip"><b>hook_start @ hook_start_priority (-10000)</b>opens <span class="m">&lt;hook&gt; hook (start)</span>; the filter value rides as <span class="m">m</span>, shaped</div>
+        <div class="chip off"><b>hook_spacer @ PHP_INT_MAX − 2</b>a sacrificial no-op: when a callback removes itself mid-run, <span class="m">WP_Hook::resort_active_iterations()</span> parks the pointer on the next surviving priority and <span class="m">next()</span> skips it; the spacer is consumed instead of the close</div>
+        <div class="chip"><b>hook_complete @ PHP_INT_MAX − 1</b>closes the span</div>
+      </div>
+      <p>Two more pairs, each closed ahead of the other listeners so the span covers the work and not its audience. The HTTP pair opens after every filter that could short-circuit the call; the query pair opens ahead of the filter chain:</p>
+      <div class="pri">
+        <div class="chip"><b>log_http (absent means ON)</b><span class="m">pre_http_request @ PHP_INT_MAX</span> (3 args) opens <span class="m">http</span>, and only when <span class="m">$preempt</span> is false: a short-circuit fires no <span class="m">http_api_debug</span>, so a span opened for one would never close. <span class="m">http_api_debug @ PHP_INT_MIN</span> (5 args) closes it with the status code.</div>
+        <div class="chip"><b>log_queries (default off)</b>defines <span class="m">SAVEQUERIES</span> if it is not already. <span class="m">query @ hook_start_priority</span> opens <span class="m">sql</span> ahead of the filter chain, so a significant <span class="m">query</span> hook's wrapped callbacks nest inside it; <span class="m">log_query_custom_data @ PHP_INT_MIN</span> (5 args) closes it with the rewritten statement, literals replaced, and drains <span class="m">$wpdb-&gt;queries</span>.</div>
+      </div>
+      <p class="aside">The same closure also registers the job-context filter and action, the <span class="m">newspack_nodes/settings_sync/value</span> resolver, and the MCP route on <span class="m">rest_api_init</span>; the three service CIs mount later, on <span class="m">newspack_nodes/request_graph_ready</span>, when a command request builds its graph.</p>
+    </div></div>
+
+    <div class="ev"><div class="when">while the request runs<b>each bound hook</b></div><div class="dot"></div><div class="card"><h3>Spans open and close; significant hooks are wrapped per callback</h3><p><span class="m">hook_start</span> wraps a hook's own callbacks only where the rule names it in <span class="m">significant_events</span>, and only those registered strictly between <span class="m">hook_start_priority</span> and the spacer: everything at or above the spacer is the logger's own. A callback whose reflection reports a by-reference parameter is skipped, because wrapping it breaks WordPress's by-reference contract. Each wrapper claims <span class="m">accepted_args = 99</span> and slices back to the original's count before calling it. Under <span class="m">trace_hooks</span> the start entry's <span class="m">l</span> names the calling frame; under <span class="m">trace_callers</span> its <span class="m">caller</span> carries a deep backtrace, at most that many per hook.</p></div></div>
+
+    <div class="ev"><div class="when">in a worker only<b>newspack_nodes/ job_worker/before_job</b> (filter, 4 args)<b>…/after_job</b> (action, 3 args)</div><div class="dot"></div><div class="card"><h3>A job gets its own request context</h3><p><span class="m">Log_Manager::begin_job_context_filter()</span> opens it unless an earlier listener declined, passing the decision through: <span class="m">$_SERVER</span> is snapshotted, the live instance suspended, and the request rewritten to a synthetic <span class="m">/jobs/{handler}/{id}</span>. <span class="m">end_job_context()</span> restores it; the <span class="m">$_SERVER</span> stack IS the pairing record, and <span class="m">func_num_args() &gt;= 3</span> with a null outcome marks the context aborted. Both ends fire <span class="m">newspack_event_logger_nodes_scope_changed</span>, and <span class="m">App\Core</span> rebinds its instrumentation to the restored scope's rule.</p></div></div>
+
+    <div class="ev"><div class="when">shutdown<b>register_shutdown_ function()</b></div><div class="dot red"></div><div class="card"><h3><span class="m">finish()</span> writes the terminal, after a fatal too</h3><p>Idempotent. Every frame still on the timer stack drains as <span class="m">(orphaned)</span>, innermost first; then <span class="m">process (complete)</span> carries <span class="m">status_code</span>, or the fatal's message, file, line, type and offending plugin with <span class="m">error_status: F</span> when <span class="m">error_get_last()</span> reports one of <span class="m">FATAL_TYPES</span>. A cooperative stop landing mid-finish writes <span class="m">process (aborted)</span> with <span class="m">error_status: A</span> instead, then re-raises. Without a terminal the record strands in flight until the builder evicts it.</p></div></div>
+  </div>
+</div>

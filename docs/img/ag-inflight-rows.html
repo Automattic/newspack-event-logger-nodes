@@ -1,0 +1,196 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+.grid3 { position: relative; display: grid; grid-template-columns: 404px 196px 396px; column-gap: 28px; }
+.grid3 svg.wire { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visible; }
+.colh { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: #787C82; margin: 0 0 8px; }
+.stack2 > * + * { margin-top: 10px; }
+.card { padding: 10px 14px; }
+.card h3 { font-size: 13.5px; margin: 0 0 5px; line-height: 1.3; }
+.card p { font-size: 12px; margin: 0 0 5px; }
+.card p:last-child { margin-bottom: 0; }
+.where { font-size: 10.5px; color: #787C82; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 2px; }
+.mono { white-space: nowrap; }
+.code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11.5px; background: #F6F7F7; border: 1px solid #EDEEF0; border-radius: 5px; padding: 5px 8px; margin: 4px 0 6px; color: #101517; white-space: nowrap; }
+.keys { display: flex; flex-wrap: wrap; gap: 4px; margin: 5px 0 6px; }
+.keys span { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; background: #F0F4FB; border: 1px solid #C3D3EC; border-radius: 4px; padding: 1px 6px; color: #003DA5; }
+.pair { display: flex; gap: 8px; margin-top: 4px; }
+.pair > div { flex: 1 1 0; border: 1px solid #C3D3EC; background: #F7F9FD; border-radius: 6px; padding: 7px 9px; }
+.pair > div b { display: block; font-size: 12px; margin-bottom: 3px; }
+.pair > div p { font-size: 11.5px; margin: 0; line-height: 1.45; }
+.pair > div.bad { border-color: #E6A3A3; background: #FBEAEA; }
+.pair > div.bad b { color: #B32D2E; }
+.halve { display: flex; align-items: center; gap: 5px; margin: 5px 0 6px; font-size: 11px; }
+.halve .st { border: 1px solid #C3D3EC; background: #F0F4FB; border-radius: 4px; padding: 2px 6px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: nowrap; }
+.halve .st.drop { border-color: #E6A3A3; background: #FBEAEA; color: #B32D2E; }
+.halve .ar { color: #003DA5; font-weight: 700; }
+.callout { padding: 10px 14px; }
+.callout h4 { margin-bottom: 5px; }
+.callout p { font-size: 12px; }
+.dn { display: flex; align-items: center; gap: 8px; margin: 4px 0 4px 22px; font-size: 11.5px; color: #50575E; }
+.dn svg { flex: 0 0 auto; }
+.dn + .card, .dn + .callout { margin-top: 4px; }
+.tape { border: 2px solid #003DA5; border-radius: 10px; background: #fff; display: flex; flex-direction: column; }
+.tape > header { background: #003DA5; color: #fff; font-size: 14px; font-weight: 700; padding: 8px 12px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.tape .intro { font-size: 11.5px; color: #50575E; line-height: 1.45; padding: 8px 10px 2px; }
+.tick { font-size: 10.5px; color: #787C82; text-align: center; border-top: 1px dashed #C3C4C7; margin: 9px 8px 0; padding-top: 3px; }
+.ln { margin: 5px 8px 0; padding: 4px 7px; border-left: 3px solid #003DA5; background: #F0F4FB; border-radius: 0 4px 4px 0; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; line-height: 1.4; color: #101517; }
+.ln .k { font-weight: 700; color: #003DA5; }
+.ln .src { float: right; font-family: Inter, -apple-system, sans-serif; font-size: 10px; color: #787C82; }
+.ln.tee { border-left-color: #50575E; background: #F1F2F3; }
+.ln.tee .k { color: #50575E; }
+.ln .ann { display: block; font-family: Inter, -apple-system, sans-serif; font-size: 10.5px; color: #50575E; }
+.dlt { margin: 12px 8px 0; padding: 7px 9px; border: 1px dashed #B0B3B8; border-radius: 6px; font-size: 11px; line-height: 1.45; color: #50575E; }
+.dlt b { color: #101517; display: block; margin-bottom: 2px; }
+.legend { margin-top: auto; padding: 10px 10px 10px; border-top: 1px solid #EDEEF0; font-size: 11px; color: #50575E; line-height: 1.45; }
+.legend div { display: flex; gap: 7px; align-items: flex-start; margin-bottom: 4px; }
+.legend i { flex: 0 0 auto; width: 10px; height: 14px; border-radius: 2px; background: #003DA5; margin-top: 1px; }
+.legend i.tee { background: #50575E; }
+.reap { width: 100%; border-collapse: collapse; margin: 3px 0 5px; }
+.reap td { font-size: 11.5px; line-height: 1.4; padding: 4px 6px; border-top: 1px solid #EDEEF0; vertical-align: top; color: #50575E; }
+.reap tr:first-child td { border-top: 0; }
+.reap td.w { width: 128px; color: #101517; font-weight: 600; }
+.reap td.x { color: #B32D2E; }
+.bottom { display: flex; gap: 14px; margin-top: 16px; }
+.bottom > div { flex: 1 1 0; }
+</style>
+<div class="sheet">
+<h1>Each running request reaches the log as its own row every second, and the browser tells rows from completions by <span class="mono">state</span> alone</h1>
+<p class="sub">On the left, Request_Flight_Node reads Request_Builder_Node's in-flight map on the Router's 1 s TIMER, fits each row to the 4096-byte line cap, and the completion summary joins the same partition. In the middle, <span class="mono">gyroscope.p0</span> interleaves the two record shapes. On the right, GyroscopeView folds them and <span class="mono">snapshot()</span> reaps, sorts and caps what the table renders.</p>
+
+<div class="grid3" id="grid">
+<svg class="wire" id="wire"><defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#003DA5"/></marker></defs></svg>
+
+<!-- SERVER -->
+<div>
+  <div class="colh">Server · every partition's request-builder worker</div>
+
+  <div class="card" id="s1"><div class="where">Request_Builder_Node · the patron</div>
+    <h3>The in-flight map is the builder's own LRU_Cache</h3>
+    <p>One envelope per rid. Every firehose line the builder folds stamps <span class="mono">last_log_ts</span> with the line's <span class="mono">ts</span> and <span class="mono">tracker_ts</span> with the worker's clock. The patron also owns the <span class="mono">inflight_delta</span> toggle, off by default.</p>
+  </div>
+
+  <div class="dn"><svg width="12" height="20"><path d="M6 0 V14" stroke="#003DA5" stroke-width="1.8"/><path d="M1 12 L6 19 L11 12 z" fill="#003DA5"/></svg>read live at every fire; Flight copies neither</div>
+
+  <div class="card" id="s2"><div class="where">Request_Flight_Node · hidden Timer_Node sibling</div>
+    <h3><span class="mono">fire()</span> rides the Router's TIMER, every 1 s</h3>
+    <p><span class="mono">set_inflight_target gyroscope:partition</span> arms it: a non-empty string target registers the hitchhike, and any other value stops the timer. <span class="mono">inflight_snapshot()</span> builds one row per rid, with eleven keys:</p>
+    <div class="keys"><span>method</span><span>url</span><span>state</span><span>what</span><span>time_ms</span><span>est_ms</span><span>start_time</span><span>last_log_ts</span><span>lag_ms</span><span>remote_addr</span><span>user_agent</span></div>
+    <p><span class="mono">state</span> is the innermost open span's name, or <span class="mono">process</span> when none is open. <span class="mono">est_ms</span> is <span class="mono">time_ms</span> plus the age of <span class="mono">tracker_ts</span>, so an idle row's estimate keeps growing.</p>
+  </div>
+
+  <div class="card" id="s3" style="margin-top:10px"><div class="where">which rows go</div>
+    <div class="pair">
+      <div><b>Full mode (default)</b><p>Every row, every tick. A fresh subscriber holds the whole cache after one tick.</p></div>
+      <div><b>Delta mode</b><p>Only rows whose <span class="mono">last_log_ts</span> is not older than the fire watermark.</p></div>
+    </div>
+  </div>
+
+  <div class="card" id="s4" style="margin-top:10px"><div class="where">per row</div>
+    <h3>One TM_STRUCT per row, fitted to 4096 bytes</h3>
+    <div class="code">Line_Fitter::fit( $message, [ 'url', 'user_agent' ] )</div>
+    <p>It measures the packed line plus its newline. It halves <span class="mono">url</span> until the line fits or <span class="mono">url</span> is empty, and only then starts on <span class="mono">user_agent</span>.</p>
+    <div class="halve"><span class="st">url ÷2 … ''</span><span class="ar">→</span><span class="st">user_agent ÷2 … ''</span><span class="ar">→</span><span class="st drop">still over: null</span></div>
+    <p>A null is dropped with <span class="mono">print_less_often()</span>: at most one <i>dropping oversize in-flight row</i> warning per 60 s for the node, naming the first rid.</p>
+  </div>
+
+  <div class="callout" style="margin-top:10px"><h4>The watermark governs a dropped row's retry</h4>
+    <p><span class="mono">last_fire_ts</span> takes the fire's start time, and only when at least one row shipped. Full mode never reads it, so a dropped row is offered again every tick. Under delta mode, once any sibling ships, the dropped row's <span class="mono">last_log_ts</span> falls behind the watermark, and the row is not offered again until its request logs a new line. The browser keeps the last row it received for that rid, unrefreshed.</p>
+  </div>
+
+  <div class="card" id="s6" style="margin-top:10px"><div class="where">Request_Builder_Node · on completion</div>
+    <h3>A finished request becomes a ten-key summary</h3>
+    <p>On <span class="mono">process (complete)</span>, or when the LRU's timed rotation evicts a stalled request with <span class="mono">error_status</span> T, <span class="mono">emit_request()</span> writes the full document to <span class="mono">requests.pN</span> and the summary to <span class="mono">completed:tee</span>, which copies it to <span class="mono">completed.p0</span> and <span class="mono">gyroscope.p0</span>.</p>
+    <p>Its <span class="mono">state</span> is always <span class="mono">complete</span>, and it gets the same fit and the same rate-limited drop. The rid then leaves the map, so no later tick offers it.</p>
+  </div>
+</div>
+
+<!-- LOG -->
+<div class="tape" id="tape">
+  <header>gyroscope.p0</header>
+  <div class="intro">Every worker appends to this one Partition; the 4096-byte cap keeps each append atomic without a lock. Nothing on the server sorts the two shapes. Illustrative, full mode:</div>
+  <div class="tick">Router tick</div>
+  <div class="ln"><span class="k">a1</span><span class="src">Flight</span><br>"include template"<br>est_ms 412</div>
+  <div class="ln"><span class="k">b7</span><span class="src">Flight</span><br>"process"<br>est_ms 96</div>
+  <div class="ln tee"><span class="k">c4</span><span class="src">tee</span><br>"complete"<br>duration_ms 88<span class="ann">never seen in flight</span></div>
+  <div class="tick">+1 s</div>
+  <div class="ln"><span class="k">a1</span><span class="src">Flight</span><br>"include template"<br>est_ms 1418</div>
+  <div class="ln"><span class="k">b7</span><span class="src">Flight</span><br>"process"<br>est_ms 1102</div>
+  <div class="ln tee"><span class="k">a1</span><span class="src">tee</span><br>"complete"<br>duration_ms 1530<span class="ann">retires a1</span></div>
+  <div class="tick">+2 s</div>
+  <div class="ln"><span class="k">b7</span><span class="src">Flight</span><br>"process"<br>est_ms 2104<span class="ann">no new line; est_ms still grows</span></div>
+  <div class="dlt"><b>The same stretch under delta mode</b>b7 logs no line after its first row, so its +1 s and +2 s rows are never sent. a1's +1 s row goes only if a1 logged a line after the first tick. Both completions go either way: they come from the tee, not from Flight.</div>
+  <div class="legend">
+    <div><i></i><span>Request_Flight_Node row: KEY = rid, eleven keys, <span class="mono">state</span> a span name</span></div>
+    <div><i class="tee"></i><span>completed:tee summary: KEY = rid, ten keys, <span class="mono">state</span> = complete</span></div>
+  </div>
+</div>
+
+<!-- BROWSER -->
+<div>
+  <div class="colh">Browser · the Gyroscope page</div>
+
+  <div class="card" id="b1"><div class="where">useGyroscopeGraph · SSE</div>
+    <h3>One stream, subscribed to <span class="mono">gyroscope.*</span></h3>
+    <p>A RemoteLink feeds the <span class="mono">gyroscope:stream</span> Tee, which copies every frame to <span class="mono">gyroscope:view</span>. A <span class="mono">clear</span> empties the model before every (re)connect.</p>
+  </div>
+
+  <div class="card" id="b2" style="margin-top:10px"><div class="where">GyroscopeViewNode · fill()</div>
+    <h3>The fold reads KEY and <span class="mono">state</span>, and nothing else</h3>
+    <div class="pair">
+      <div><b><span class="mono">state</span> = complete</b><p><span class="mono">_complete()</span> merges over whatever the rid holds and sets <span class="mono">time_ms</span> and <span class="mono">est_ms</span> to <span class="mono">duration_ms</span>. A completion for a rid never seen in flight is still recorded.</p></div>
+      <div class="bad"><b>any other <span class="mono">state</span></b><p><span class="mono">_inflight()</span> upserts and stamps <span class="mono">_seen</span>, unless the rid is held as complete: then the row is DROPPED, having lost the race with the completion. The guard lasts until <span class="mono">snapshot()</span> reaps that completion.</p></div>
+    </div>
+    <p style="margin-top:6px">A string or array VALUE, an empty KEY or a missing <span class="mono">state</span> is dropped. With no mode flag, one fold is correct under full and delta mode alike.</p>
+  </div>
+
+  <div class="card" id="b3" style="margin-top:10px"><div class="where">Inflight · the refresh tick</div>
+    <h3>React samples the model on the operator's cadence</h3>
+    <p>100 ms to 10 s, 2 s by default, set by the dropdown or the 0–9 keys. Each tick calls <span class="mono">snapshot( maxRows )</span> (GyroscopePage passes 100), then reads <span class="mono">.rps</span>. No streamed message re-renders React.</p>
+  </div>
+
+  <div class="dn"><svg width="12" height="20"><path d="M6 0 V14" stroke="#003DA5" stroke-width="1.8"/><path d="M1 12 L6 19 L11 12 z" fill="#003DA5"/></svg>the only caller, and the only reaper</div>
+
+  <div class="card" id="b4"><div class="where">GyroscopeViewNode · snapshot()</div>
+    <h3>Reap, sort by <span class="mono">est_ms</span> descending, cap</h3>
+    <table class="reap">
+      <tr><td class="w">complete</td><td>Returned once and deleted in the same pass, so it flashes for one refresh tick.</td></tr>
+      <tr><td class="w">in flight, <span class="mono">_seen</span> older than 15 min</td><td class="x">Deleted, never rendered (<span class="mono">INFLIGHT_STALE_MS</span>).</td></tr>
+      <tr><td class="w">in flight, fresher</td><td>Kept.</td></tr>
+    </table>
+    <p>The table reads slowest first, and <span class="mono">slice( 0, maxRows )</span> can cap a short request out of a busy tick. A completion capped out is deleted all the same, and never renders.</p>
+  </div>
+
+  <div class="card" id="b5" style="margin-top:10px"><div class="where">GyroscopeViewNode · _updateRequestsPerSecond()</div>
+    <h3>rps: the reaped completions over a 10 s window</h3>
+    <p>Each snapshot files its completions under the current second; a bucket 10 s old leaves the running total, and <span class="mono">rps</span> = total ÷ 10. A silent stream decays to 0 over about 10 s. The clock is the snapshot's, not the completion's.</p>
+  </div>
+</div>
+</div>
+
+<div class="bottom">
+  <div class="card"><h3>Three ways a row leaves the table</h3>
+    <p><b>A completion arrives</b>, normal or timed out (T), and the next snapshot shows it once and deletes it. <b>Fifteen minutes pass unrefreshed</b>, and the snapshot deletes it unrendered; that and a reconnect are the only exits for a request <span class="mono">purge</span> discarded, which emits no summary, or for a producer that died. <b>The stream reconnects</b>, and its <span class="mono">clear</span> empties the model.</p>
+  </div>
+  <div class="callout"><h4>Delta mode stops refreshing an idle row</h4>
+    <p>A row whose request logs nothing is not re-sent, so its <span class="mono">_seen</span> stops advancing: a request silent for 15 minutes leaves the table while it is still running. Full mode refreshes every row each tick, so only a row the server stopped offering ages out.</p>
+  </div>
+</div>
+</div>
+<script>
+(function () {
+  var grid = document.getElementById('grid'), svg = document.getElementById('wire'), NS = 'http://www.w3.org/2000/svg';
+  var g = grid.getBoundingClientRect();
+  svg.setAttribute('width', g.width); svg.setAttribute('height', g.height);
+  function r(id) { var b = document.getElementById(id).getBoundingClientRect(); return { l: b.left - g.left, r: b.right - g.left, t: b.top - g.top, b: b.bottom - g.top, m: (b.top + b.bottom) / 2 - g.top }; }
+  function arrow(from, to, y) {
+    var p = document.createElementNS(NS, 'path');
+    p.setAttribute('d', 'M' + (from.r + 2) + ' ' + y + ' H' + (to.l - 3));
+    p.setAttribute('stroke', '#003DA5'); p.setAttribute('stroke-width', 1.8); p.setAttribute('fill', 'none');
+    p.setAttribute('marker-end', 'url(#a)'); svg.appendChild(p);
+  }
+  var tape = r('tape');
+  arrow(r('s4'), tape, r('s4').m);
+  arrow(r('s6'), tape, r('s6').m);
+  arrow(tape, r('b1'), r('b1').m);
+})();
+</script>

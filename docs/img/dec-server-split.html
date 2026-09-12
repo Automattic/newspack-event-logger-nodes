@@ -1,0 +1,62 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+  .flow { display: flex; align-items: stretch; gap: 0; }
+  .flow > .card { flex: 1; padding: 13px 14px; }
+  .flow .arrow { flex: 0 0 34px; display: flex; align-items: center; justify-content: center; color: #003DA5; font-size: 22px; font-weight: 700; }
+  .card h3 { font-size: 14px; }
+  .card p { font-size: 12.5px; }
+  .rowbox { display: flex; gap: 2px; margin: 8px 0; }
+  .rowbox span { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px; padding: 4px 3px; border-radius: 3px; text-align: center; line-height: 1.25; }
+  .rowbox .sum { flex: 8; background: #F0F4FB; border: 1px solid #003DA5; color: #003DA5; }
+  .rowbox .ext { flex: 5; background: #F6F7F7; border: 1px dashed #C3C4C7; color: #50575E; }
+  .rowbox .srv { flex: 3; background: #FBEAEA; border: 1px solid #E6A3A3; color: #B32D2E; }
+  .srvmap { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; background: #FBFBFC; border: 1px solid #EEF0F2; border-radius: 6px; padding: 7px 9px; line-height: 1.55; color: #101517; margin: 6px 0; overflow-wrap: anywhere; }
+  .srvmap .c { color: #787C82; font-family: Inter, sans-serif; font-size: 11.5px; }
+  .shards { margin-top: 16px; background: #fff; border: 1px solid #C3C4C7; border-radius: 9px; padding: 14px 16px; }
+  .shards h3 { font-size: 14px; margin: 0 0 10px; }
+  .sgrid { display: grid; grid-template-columns: repeat(16, 1fr); gap: 4px; }
+  .sgrid div { border: 1px solid #C3D3EC; background: #F0F4FB; border-radius: 4px; text-align: center; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; padding: 5px 0 3px; color: #003DA5; }
+  .sgrid div small { display: block; height: 22px; margin: 4px 5px 0; background: linear-gradient( #003DA5 0 40%, #C3D3EC 40% ); border-radius: 2px; }
+  .sgrid div.pt { background: #003DA5; color: #fff; }
+  .union { margin-top: 8px; display: flex; gap: 12px; font-size: 12.5px; color: #50575E; line-height: 1.5; }
+  .union > div { flex: 1; }
+  .foot { display: flex; gap: 14px; margin-top: 14px; }
+  .foot > * { flex: 1; }
+  .callout p, .ok p { font-size: 12.5px; }
+</style>
+<div class="sheet">
+<h1>A server scope the key cannot carry rides inside the value, and is applied as a projection</h1>
+<p class="sub">Every other scope is a key prefix (decision 1). The URL index cannot take one: a per-server namespace would apply <span class="mono">MAX_URLS_PER_SHARD</span> per key and grow O(servers × that cap) rows per bucket, on the axis decision 11 watches. So each row carries its own per-server split, and a server-scoped read is a projection over the MERGED row.</p>
+
+<div class="flow">
+  <div class="card"><h3>1 · The stored row carries <span class="mono">srv</span></h3>
+    <div class="rowbox"><span class="sum">0–7 the fields that ADD</span><span class="ext">8–12 extremes, seen, worker</span><span class="srv">13 srv</span></div>
+    <div class="srvmap">{ "a.example": [ 8 sums ],<br>&nbsp; "b.example": [ 8 sums ] }<br><span class="c">an overflow row: every server its tail was seen on</span></div>
+    <div class="srvmap">{ "a.example": null }<br><span class="c">one server served every request the row counted: the row restated (decision 18)</span></div>
+    <p>Only <span class="mono">URL_SRV_SUMS</span> split. Capped at <span class="mono">MAX_SERVER_VALUES</span> (128) ONCE, after the <span class="mono">MAX_URLS_PER_SHARD</span> fold, because the fold is what mixes hosts, by the ranked <span class="mono">Other</span> fold <span class="mono">dim_cap()</span> gives the axis everywhere.</p></div>
+  <div class="arrow">→</div>
+  <div class="card"><h3>2 · Merge first, across buckets and partitions</h3>
+    <p>Every merge, reader or writer, runs <span class="mono">expand_sole_server()</span> BEFORE summing; <span class="mono">sum_fields()</span> skips a non-array, so an unexpanded <span class="mono">null</span> would delete that host from the merge.</p>
+    <p>Because every split field adds, selecting then summing and summing then selecting agree. So the scope need not reach the loader: ONE <span class="mono">fold_index_row()</span> merges for the table and the modal alike, and a scoped poll pays no second fan-out.</p></div>
+  <div class="arrow">→</div>
+  <div class="card"><h3>3 · Project for one server</h3>
+    <p><span class="mono">swap_url_server_sums()</span> replaces the row's eight summed fields with the selected server's and unsets the split: the one place the split's fields become names.</p>
+    <p><span class="mono">Performance_CI_Node::project_row()</span> finishes it: unsets <span class="mono">srv_recent</span>, divides the means once from <span class="mono">sum_ms</span> and <span class="mono">sum_peak_mb</span>, so nothing un-averages a figure another function divided, and computes the recent-window share, reader geometry the schema has no name for.</p>
+    <p><span class="mono">min_ms</span> and <span class="mono">max_ms</span> are extremes, so a scoped row keeps the URL's own: deliberate, and invisible on a fleet of disjoint sites. A server absent from <span class="mono">srv</span> drops the row from the scoped read.</p></div>
+</div>
+
+<div class="shards">
+  <h3><span class="mono">url_page()</span> folds ONE shard at a time; the shards are disjoint, so the per-shard top-N IS the global top-N</h3>
+  <div class="sgrid"><div>0<small></small></div><div>1<small></small></div><div>2<small></small></div><div class="pt">3<small style="background:#fff"></small></div><div>4<small></small></div><div>5<small></small></div><div>6<small></small></div><div>7<small></small></div><div>8<small></small></div><div>9<small></small></div><div>a<small></small></div><div>b<small></small></div><div>c<small></small></div><div>d<small></small></div><div>e<small></small></div><div>f<small></small></div></div>
+  <div class="union">
+    <div>A url_hash's shard is its first hex digit. Each shard keeps its best <span class="mono">$offset + $limit</span> rows by the sort key and its best <span class="mono">SLOWEST_ROWS</span> by mean (the dark band), then drops the rest before the next shard is read.</div>
+    <div><b style="color:#003DA5">dump_url</b> point-reads the one shard <span class="mono">url_shard()</span> names (dark cell): a sixteenth of the keys, through the same <span class="mono">$read_index</span> seam the table folds, and <span class="mono">raw_row()</span> point-reads the same way.</div>
+    <div class="callout" style="padding:10px 12px"><p><b>No whole-index memo.</b> The merged index counts the DISTINCT URLs in the window, which nothing bounds. Holding it exhausts a production hub's 512 MB inside the fold itself.</p></div>
+  </div>
+</div>
+
+<div class="foot">
+  <div class="callout"><h4>The axis is visitor input</h4><p><span class="mono">server_name</span> is <span class="mono">SERVER_NAME</span>, and under Apache's default <span class="mono">UseCanonicalName Off</span> that is the client's Host header, so a domain-mapped multisite or a catch-all vhost has no ceiling. The cap sits far above any fleet in evidence (five times the largest hub, three times the widest per-URL split any test asserts), and the tail FOLDS, so every total stays exact.</p></div>
+  <div class="ok"><h4>Not hub-gated</h4><p>Unlike the three per-server aggregates beside it, the split is stored everywhere: the filter is offered wherever the <span class="mono">server</span> dimension has values, and a scoped read of a row without a split returns nothing, so gating it would empty the URL table on every spoke.</p></div>
+</div>
+</div>

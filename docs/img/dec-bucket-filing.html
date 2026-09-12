@@ -1,0 +1,111 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+  .m { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .flow { display: flex; gap: 14px; align-items: stretch; }
+  .flow .step { flex: 1; background: #fff; border: 1px solid #C3C4C7; border-radius: 9px; padding: 12px 14px; position: relative; }
+  .flow .step h3 { font-size: 14px; margin: 0 0 6px; color: #003DA5; }
+  .flow .step p { font-size: 12.5px; line-height: 1.5; color: #50575E; margin: 0 0 5px; }
+  .flow .step p:last-child { margin: 0; }
+  .flow .step p .m { color: #101517; }
+  .flow .step .formula { background: #F0F4FB; border: 1px solid #C3D3EC; border-radius: 6px; padding: 7px 10px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: #003DA5; margin: 6px 0 8px; text-align: center; }
+  .flow .arrow { flex: 0 0 26px; display: flex; align-items: center; justify-content: center; color: #003DA5; font-size: 22px; font-weight: 700; }
+  .branch { display: flex; gap: 12px; margin-top: 8px; }
+  .branch .b { flex: 1; border-radius: 6px; padding: 8px 10px; font-size: 12px; line-height: 1.45; }
+  .branch .b.fine { background: #F0F4FB; border: 1px solid #C3D3EC; }
+  .branch .b.hour { background: #F6F7F7; border: 1px solid #787C82; }
+  .branch .b b { display: block; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+  .branch .b.fine b { color: #003DA5; }
+  .branch .b.hour b { color: #50575E; }
+  .cols { display: flex; gap: 14px; margin-top: 16px; align-items: flex-start; }
+  .cols .card { flex: 1; }
+  .cols .card p .m { color: #101517; }
+  .fig { position: relative; width: 1052px; height: 262px; background: #fff; border: 1px solid #C3C4C7; border-radius: 9px; margin-bottom: 14px; }
+  .fig svg { position: absolute; left: 0; top: 0; }
+  .fl { position: absolute; font-size: 11.5px; line-height: 1.4; color: #50575E; }
+  .fl b { color: #101517; }
+  .fl .m { color: #101517; }
+  .kbox { position: absolute; top: 184px; height: 66px; border-radius: 7px; padding: 7px 10px; font-size: 11.5px; line-height: 1.4; }
+  .kbox b { display: block; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; margin-bottom: 2px; white-space: nowrap; }
+  .kbox.dead { background: #FBEAEA; border: 1px dashed #B32D2E; color: #5C2223; }
+  .kbox.dead b { color: #B32D2E; text-decoration: line-through; }
+  .kbox.live { background: #EDF7ED; border: 1px solid #1E5B1E; color: #2B5F2B; }
+  .kbox.live b { color: #1E5B1E; }
+  .rej { display: flex; gap: 10px; margin-top: 14px; }
+  .rej .callout { flex: 1; }
+  .rej .callout h4 .m { color: #B32D2E; }
+</style>
+<div class="sheet">
+  <h1>A request is filed in the bucket it FINISHED in, and a write into a folded hour goes to the hour key</h1>
+  <p class="sub">Two halves of one rule: a stats write must land where a reader will actually read it. The record reaches <span class="m">Flame_Builder_Node</span> at completion, and an hour folds exactly once.</p>
+
+  <div class="fig">
+    <svg width="1052" height="262" viewBox="0 0 1052 262">
+      <!-- hours: H-1 30..290, H 290..550, H+1 550..810, later 810..1030; 12 buckets of 21.67 px in H -->
+      <g font-family="Inter, Helvetica, Arial, sans-serif" font-size="11.5" fill="#50575E">
+        <text x="160" y="22" text-anchor="middle">hour H−1</text>
+        <text x="420" y="22" text-anchor="middle" font-weight="700" fill="#003DA5">hour H</text>
+        <text x="680" y="22" text-anchor="middle">hour H+1</text>
+        <text x="920" y="22" text-anchor="middle">later</text>
+      </g>
+      <line x1="30" y1="118" x2="1030" y2="118" stroke="#787C82" stroke-width="1.5"/>
+      <path d="M1030 113 L1040 118 L1030 123 Z" fill="#787C82"/>
+      <g stroke="#C3C4C7"><line x1="30" y1="30" x2="30" y2="124"/><line x1="290" y1="30" x2="290" y2="124"/><line x1="810" y1="30" x2="810" y2="124"/></g>
+      <line x1="550" y1="30" x2="550" y2="124" stroke="#003DA5" stroke-width="1.5" stroke-dasharray="4 3"/>
+      <g fill="#F0F4FB" stroke="#C3D3EC"><rect x="290" y="100" width="21.67" height="18"/><rect x="311.67" y="100" width="21.67" height="18"/><rect x="333.33" y="100" width="21.67" height="18"/><rect x="376.67" y="100" width="21.67" height="18"/><rect x="398.33" y="100" width="21.67" height="18"/><rect x="420" y="100" width="21.67" height="18"/><rect x="441.67" y="100" width="21.67" height="18"/><rect x="463.33" y="100" width="21.67" height="18"/><rect x="485" y="100" width="21.67" height="18"/><rect x="506.67" y="100" width="21.67" height="18"/><rect x="528.33" y="100" width="21.67" height="18"/></g>
+      <rect x="355" y="100" width="21.67" height="18" fill="#003DA5"/>
+      <rect x="200" y="40" width="172" height="20" rx="4" fill="#C3D3EC" stroke="#003DA5"/>
+      <line x1="200" y1="36" x2="200" y2="64" stroke="#003DA5" stroke-width="2"/>
+      <line x1="372" y1="36" x2="372" y2="64" stroke="#003DA5" stroke-width="2"/>
+      <path d="M366 66 L366 96" stroke="#003DA5" stroke-width="1.5"/><path d="M361 90 L366 98 L371 90" fill="none" stroke="#003DA5" stroke-width="1.5"/>
+      <circle cx="870" cy="118" r="7" fill="#B32D2E"/>
+      <circle cx="810" cy="118" r="6" fill="#50575E"/>
+      <line x1="810" y1="112" x2="810" y2="100" stroke="#50575E" stroke-width="1.5"/>
+      <path d="M866 128 C 820 160, 560 150, 466 182" fill="none" stroke="#B32D2E" stroke-width="1.8" stroke-dasharray="5 4"/>
+      <path d="M459 177 L466 183 L457 186" fill="none" stroke="#B32D2E" stroke-width="1.8"/>
+      <path d="M874 128 C 880 150, 860 165, 850 182" fill="none" stroke="#1E5B1E" stroke-width="2"/>
+      <path d="M845 175 L850 183 L856 176" fill="none" stroke="#1E5B1E" stroke-width="2"/>
+    </svg>
+    <div class="fl" style="left:40px; top:38px; width:156px; text-align:right"><b>one request</b>, from <span class="m">timestamp</span> (its start)</div>
+    <div class="fl" style="left:380px; top:38px; width:166px"><b>completes</b> in hour H</div>
+    <div class="fl" style="left:40px; top:84px; width:240px; text-align:right">filed in the five-minute bucket of the completion, not of the start</div>
+    <div class="fl" style="left:40px; top:128px; width:520px"><span class="m">bucket = min( now, timestamp + round( duration_ms / 1000 ) )</span></div>
+    <div class="fl" style="left:556px; top:64px; width:150px"><b style="color:#003DA5">H closes</b></div>
+    <div class="fl" style="left:626px; top:32px; width:178px; text-align:right">at least an hour after H closes, a flush folds H into <span class="m" style="white-space:nowrap">urls_h:{shard}:{H}</span> and records it in <span class="m">folded_hours</span></div>
+    <div class="fl" style="left:884px; top:74px; width:150px"><b style="color:#B32D2E">the record arrives</b> after the fold, as a replay's does</div>
+    <div class="kbox dead" style="left:250px; width:340px"><b>urls:{shard}:{bucket}</b>its fine bucket: decision 17's reader skips a folded hour's fine buckets, so a write here is never read</div>
+    <div class="kbox live" style="left:690px; width:340px"><b>urls_h:{shard}:{H}</b><span class="m">url_shard_intent()</span> sends the write to the hour key, the one the reader takes</div>
+  </div>
+
+  <div class="flow">
+    <div class="step">
+      <h3>1 · Which bucket: the completion, clamped</h3>
+      <div class="formula">bucket = min( now, timestamp + round( duration_ms / 1000 ) )</div>
+      <p>Filing under <span class="m">timestamp</span>, the START, would put a long request in a bucket that may already have closed. Completion needs no new field, and for an aborted request it is the abort moment, because <span class="m">Request_Builder</span> sets <span class="m">duration_ms = now - start</span> at eviction. That removes the request's own duration from the exposure, which the 600 s assembly window bounds at ten minutes.</p>
+      <p><b>Clamped to now:</b> a completed request cannot have finished after it reached us, so a skewed spoke clock or a bogus duration cannot file into a future bucket that readers, walking backwards from now, would never reach.</p>
+    </div>
+    <div class="arrow">&rarr;</div>
+    <div class="step">
+      <h3>2 · Which key: <span class="m">url_shard_intent()</span> picks the tier</h3>
+      <p>Transit is the second half. Decision 17's reader skips a folded hour's fine buckets, so a record arriving after its hour folded, written to its fine bucket, would sit where nothing reads it and never merge into the coarse key that replaced it.</p>
+      <div class="branch">
+        <div class="b fine"><b>hour not in folded_hours</b><span class="m">url_shard_parts( shard )</span> under the five-minute bucket key</div>
+        <div class="b hour"><b>hour in folded_hours</b><span class="m">url_hour_parts( shard )</span> under the hour key</div>
+      </div>
+      <p style="margin-top:8px">Same <span class="m">merge_url_row()</span>, same <span class="m">cap_url_rows()</span> ceiling: only the key differs.</p>
+    </div>
+    <div class="arrow">&rarr;</div>
+    <div class="step">
+      <h3>3 · When the memo is right</h3>
+      <p><span class="m">folded_hours</span> is per-process, and one partition has one worker (<span class="m">persist_aggregate_stats()</span>: read-then-write is not atomic), so a respawn is the only way it goes stale; there is no peer to race.</p>
+      <p><span class="m">flush()</span> therefore rolls up BEFORE it persists: the roll-up is what probes the coarse tier, so the first flush after a respawn has an accurate memo before a single row is placed.</p>
+    </div>
+  </div>
+
+  <div class="cols">
+    <div class="card">
+      <h3>The trigger is routine, not exotic</h3>
+      <p><span class="m">wp nodes deactivate complete; wp nodes gc --force; wp nodes activate complete</span> replays the whole retention window, and every replayed record carries its original timestamp. Steady state never sees it: measured on a hub, records reach the builder about 14 s old against a fine tail of 65 to 120 minutes.</p>
+    </div>
+  </div>
+
+</div>

@@ -1,0 +1,43 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+  .fig { position: relative; width: 1052px; height: 250px; background: #fff; border: 1px solid #C3C4C7; border-radius: 9px; }
+  .fig svg { position: absolute; left: 0; top: 0; }
+  .l { position: absolute; font-size: 12.5px; line-height: 1.4; color: #50575E; }
+  .l b { color: #101517; }
+  .two { display: flex; gap: 14px; margin-top: 16px; }
+  .two > * { flex: 1; }
+  .card p { font-size: 12.5px; }
+</style>
+<div class="sheet">
+<h1>A stat times the request; a flame value is a rendering artifact</h1>
+<p class="sub">Two numbers describe one request, from a real record: the record, the raised root and the child's 355 s offset are drawn to scale. <span class="mono">duration_ms</span> is what the request took, measured once. A flame node's <span class="mono">value</span> is a layout width, raised so a parent covers its positioned children.</p>
+
+<div class="fig">
+  <svg width="1052" height="250" viewBox="0 0 1052 250">
+    <!-- scale: 724,662.87 ms = 860 px from x=150; 356,312 ms = 423 px; 355 s = 421 px -->
+    <line x1="150" y1="18" x2="150" y2="232" stroke="#C3C4C7"/>
+    <rect x="150" y="34" width="423" height="30" rx="4" fill="#003DA5"/>
+    <text x="162" y="54" fill="#fff" font-size="13" font-weight="700" font-family="Inter, sans-serif">duration_ms = 356,312 ms</text>
+    <rect x="150" y="112" width="860" height="30" rx="4" fill="#F0F4FB" stroke="#003DA5" stroke-width="1.5" stroke-dasharray="6 4"/>
+    <text x="162" y="132" fill="#003DA5" font-size="13" font-weight="700" font-family="Inter, sans-serif">root value = 724,662.87 ms, after fill() raised it</text>
+    <line x1="150" y1="146" x2="150" y2="178" stroke="#003DA5" stroke-width="3"/>
+    <text x="158" y="166" fill="#101517" font-size="11.5" font-family="Inter, sans-serif">parent's own occurrence, t = 0</text>
+    <rect x="571" y="150" width="439" height="24" rx="3" fill="#C3D3EC"/>
+    <text x="580" y="166" fill="#101517" font-size="11.5" font-family="Inter, sans-serif">a child positioned 355 s after it</text>
+    <path d="M571 184 L571 196" stroke="#787C82"/><path d="M150 190 L571 190" stroke="#787C82" stroke-dasharray="3 3"/>
+    <text x="300" y="206" fill="#787C82" font-size="11.5" font-family="Inter, sans-serif">t = 355 s</text>
+  </svg>
+  <div class="l" style="left:14px; top:36px; width:128px"><b>The record</b><br>what every stat reads</div>
+  <div class="l" style="left:14px; top:114px; width:128px"><b>The flame</b><br>what the graph draws</div>
+  <div class="l" style="left:600px; top:30px; width:430px"><b style="color:#B32D2E">Read from the raised root,</b> this request reaches the URL's <span class="mono">avg_ms</span> as 724,662.87 ms. A stat reads the record, never the root.</div>
+  <div class="l" style="left:150px; top:214px; width:880px">The parent is widened to the end of its farthest child, so the child stays inside it when drawn.</div>
+</div>
+
+<div class="two">
+  <div class="card"><h3>Three places raise a value</h3>
+    <p><span class="mono">Flame_Tree::cover_children()</span>, <span class="mono">Flame_Fold::flatten()</span> and <span class="mono">Flame_Builder_Node::fill()</span>.</p>
+    <p>Raising is right for drawing. The browser prunes on a single cutoff and takes a whole subtree with anything it drops, and <span class="mono">treemapDice</span> scales children by <span class="mono">parentWidth / parent.value</span>.</p></div>
+  <div class="ok"><h4>The rule</h4>
+    <p>Every stat reads <span class="mono">$request['duration_ms']</span>, and nothing measured reads a flame <span class="mono">value</span>. That covers every namespace of decision 1 plus the per-URL aggregate's <span class="mono">sum_value</span>. Raising is wrong for counting.</p></div>
+</div>
+</div>

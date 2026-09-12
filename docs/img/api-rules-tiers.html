@@ -1,0 +1,99 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+  .verbs { display: flex; gap: 8px; }
+  .verb { flex: 1; background: #fff; border: 1px solid #C3C4C7; border-radius: 8px; padding: 9px 11px; font-size: 12px; line-height: 1.45; color: #50575E; }
+  .verb .nm { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-weight: 700; color: #003DA5; font-size: 13px; }
+  .verb .role { float: right; border-radius: 4px; padding: 1px 6px; font-size: 10.5px; font-weight: 700; }
+  .verb .role.read { background: #F0F4FB; color: #003DA5; border: 1px solid #C3D3EC; }
+  .verb .role.tune { background: #003DA5; color: #fff; }
+  .verb .in { display: block; margin: 3px 0 2px; color: #101517; }
+  .verb .m { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #101517; }
+  .flow { position: relative; margin-top: 18px; }
+  .cols { display: flex; gap: 14px; align-items: flex-start; }
+  .decide { flex: 0 0 300px; }
+  .tier { flex: 1; }
+  .tier .panel header { font-size: 14px; }
+  .tier .body { padding: 12px 14px 8px; }
+  .tier .chip { font-size: 12.2px; line-height: 1.45; }
+  .tier .chip .m, .decide .m, .foot .m { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .panel.grey { border-color: #787C82; }
+  .panel.grey > header { background: #787C82; }
+  .dbox { background: #fff; border: 2px solid #003DA5; border-radius: 10px; padding: 12px 14px; font-size: 12.5px; line-height: 1.5; }
+  .dbox h4 { margin: 0 0 6px; font-size: 14px; color: #003DA5; }
+  .dbox p { margin: 0 0 6px; color: #50575E; }
+  .dbox p:last-child { margin: 0; }
+  .arrows { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+  .arrow { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+  .arrow .lbl { flex: 1; background: #F0F4FB; border: 1px solid #C3D3EC; border-radius: 5px; padding: 6px 9px; line-height: 1.4; }
+  .arrow .lbl.g { background: #F6F7F7; border-color: #DCDCDE; color: #50575E; }
+  .foot { display: flex; gap: 14px; margin-top: 16px; align-items: stretch; }
+  .foot .card { flex: 1; }
+  .foot .card p { margin-bottom: 4px; }
+</style>
+<div class="sheet">
+  <h1>Five <span class="mono">rules</span> verbs, one writer, and a hook list stored in one of two tiers</h1>
+  <p class="sub">Every verb routes through <span class="mono">Rule_Set</span>, so a raw <span class="mono">update_option()</span> can never bypass the tiering or the orphan sweep. A rule's id is its pattern's hash, so the ruleset can never hold two differently-configured rules for one URL.</p>
+
+  <div class="verbs">
+    <div class="verb"><span class="role read">READ</span><span class="nm">dump</span><span class="in">no arguments</span><span class="m">{ rules: [...] }</span>, every pointer rule's hooks resolved to the full list and <span class="m">hooks_in</span> normalized to <span class="m">inline</span>: the editor never sees the tier.</div>
+    <div class="verb"><span class="role tune">TUNE</span><span class="nm">save</span><span class="in">raw JSON array as the first token</span><span class="m">{ saved: int }</span>. Whole-list replace; one unrepresentable entry throws before anything is stored.</div>
+    <div class="verb"><span class="role tune">TUNE</span><span class="nm">upsert</span><span class="in">raw JSON object as the first token</span><span class="m">{ rule: {...} }</span>. Keyed by pattern; an edit carrying the old id and a new pattern rekeys and drops the old entry.</div>
+    <div class="verb"><span class="role tune">TUNE</span><span class="nm">delete</span><span class="in"><span class="m">id</span>, positional</span><span class="m">{ deleted: bool }</span>. Drop the match and re-save.</div>
+    <div class="verb"><span class="role tune">TUNE</span><span class="nm">reset</span><span class="in">no arguments</span><span class="m">{ reset: int }</span>. DELETES the option so the file config seeds again; storing <span class="m">[]</span> would pin "log nothing". Sweeps every pointer option too.</div>
+  </div>
+
+  <div class="flow">
+    <div class="cols">
+      <div class="decide">
+        <div class="dbox">
+          <h4><span class="mono">Rule_Set::save()</span>, per rule</h4>
+          <p>A <span class="mono">skip</span> rule is stored as it is. A <span class="mono">log</span> rule's hook list is counted (a pointer rule is rehydrated first) and tiered:</p>
+          <div class="arrows">
+            <div class="arrow"><span class="lbl">hooks ≤ <span class="mono">INLINE_HOOK_LIMIT</span> (100) &rarr; <b>inline</b></span></div>
+            <div class="arrow"><span class="lbl">hooks &gt; 100 &rarr; <b>pointer</b></span></div>
+          </div>
+          <p style="margin-top:10px">Then <span class="mono">reconcile_orphans()</span> deletes every <span class="mono">…_rule_hooks_*</span> option whose id is not a live pointer, the list is written to the autoloaded <span class="mono">newspack_event_logger_nodes_rules</span>, and every live worker is asked to re-read its config.</p>
+        </div>
+        <div class="dbox" style="margin-top:14px;border-color:#787C82">
+          <h4 style="color:#50575E">Two size gates before decoding</h4>
+          <p><span class="mono">save</span> and <span class="mono">upsert</span> refuse a blob over <span class="mono">MAX_JSON_BYTES</span> (65,536) as <span class="mono">payload too large</span>, decode at <span class="mono">MAX_JSON_DEPTH</span> (12), and refuse anything that is not an array.</p>
+        </div>
+      </div>
+
+      <div class="tier">
+        <div class="panel">
+          <header>Inline tier: the list rides the rule</header>
+          <div class="body">
+            <div class="chip">Stored: <span class="m">hooks: [ … ]</span>, <span class="m">hooks_in: "inline"</span>, inside the autoloaded rules option every request already unserializes.</div>
+            <div class="chip">Any prior durable option and Table entry for the id are deleted, so a rule that shrank back leaves no footprint.</div>
+            <div class="chip">Read: <span class="m">hooks_for()</span> returns the list.</div>
+          </div>
+        </div>
+        <div class="panel grey" style="margin-top:14px">
+          <header>Pointer tier: the list lives beside the rule</header>
+          <div class="body">
+            <div class="chip">Stored: <span class="m">hooks: null</span>, <span class="m">hooks_in: "mc"</span>. The two must agree, or <span class="m">Rule</span>'s constructor throws.</div>
+            <div class="chip"><b>System of record:</b> the NON-autoloaded option <span class="m">newspack_event_logger_nodes_rule_hooks_&lt;id&gt;</span>, so the autoload blob stays small.</div>
+            <div class="chip"><b>Warm mirror:</b> the substrate Table <span class="m">eln-rule-hooks</span>, TTL <span class="m">TABLE_TTL</span> 3,600 s, keyed per install, backed by the option on a miss. A host with no cache backend has no mirror and reads the option directly.</div>
+            <div class="chip danger">Read with both absent: <span class="m">hooks_for()</span> returns <span class="m">[]</span> and prints a rate-limited <span class="m">hooks missing for pointer rule</span> notice. The rule then binds nothing.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="foot">
+    <div class="card">
+      <h3>Why the crossover is 100</h3>
+      <p><span class="mono">wp nodes ruleset-bench</span> measures the three costs the tier trades: the alloptions unserialize every request pays for inline storage, the inline bind loop, and a Table fetch plus the same loop. <span class="mono">INLINE_HOOK_LIMIT</span> is the largest hooks-per-rule whose inline read still beats the Table fetch while the autoload tax stays negligible, and never below 65.</p>
+    </div>
+    <div class="card">
+      <h3>What crosses to a spoke</h3>
+      <p>The hub's settings sync ships each rule hook-complete: the <span class="mono">newspack_nodes/settings_sync/value</span> resolver hydrates a pointer rule's hooks before the push, and the spoke's <span class="mono">Rule_Set::apply_synced()</span> re-tiers locally, writing heavy lists back out to its own option and mirror. A push that changes nothing does nothing.</p>
+    </div>
+    <div class="card">
+      <h3>Identity</h3>
+      <p><span class="mono">Rule_Set::id_for( pattern )</span> is <span class="mono">Log_Manager::url_hash( pattern )</span>, re-derived on every write. <span class="mono">upsert</span> reads a client-supplied id only to find the entry an edit is moving; what it stores always comes from the pattern.</p>
+    </div>
+  </div>
+</div>

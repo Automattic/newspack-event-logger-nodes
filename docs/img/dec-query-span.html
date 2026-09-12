@@ -1,0 +1,67 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+  .ladder { display: flex; gap: 18px; align-items: stretch; }
+  .main { flex: 0 0 640px; position: relative; padding-left: 30px; }
+  .main::before { content: ""; position: absolute; left: 11px; top: 10px; bottom: 10px; width: 2px; background: #003DA5; }
+  .step { position: relative; margin-bottom: 10px; }
+  .step .n { position: absolute; left: -30px; top: 10px; width: 24px; height: 24px; border-radius: 50%; background: #003DA5; color: #fff; font-size: 12px; font-weight: 700; line-height: 24px; text-align: center; }
+  .step.gate .n { background: #B32D2E; }
+  .step .card { padding: 11px 14px; }
+  .step .card h3 { font-size: 14px; margin-bottom: 6px; }
+  .prio { display: flex; gap: 6px; margin-top: 6px; }
+  .prio .chip { margin: 0; font-size: 12px; line-height: 1.4; padding: 6px 8px; }
+  .prio .chip b { display: block; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; }
+  .prio .chip.us { background: #003DA5; border-color: #003DA5; color: #fff; }
+  .prio .chip.grey { background: #F6F7F7; border-color: #C3C4C7; color: #50575E; }
+  .side { flex: 1; display: flex; flex-direction: column; gap: 10px; }
+  .rec { background: #fff; border: 1px solid #C3C4C7; border-radius: 8px; overflow: hidden; }
+  .rec header { background: #50575E; color: #fff; font-size: 12.5px; font-weight: 700; padding: 7px 12px; }
+  .rec div { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; padding: 5px 12px; border-top: 1px solid #EEF0F2; overflow-wrap: anywhere; }
+  .rec div span { color: #787C82; font-family: Inter, sans-serif; }
+  .card p, .callout p, .ok p { font-size: 12.5px; }
+  .stats { display: flex; gap: 10px; margin-top: 14px; }
+  .stats .card { flex: 1; text-align: center; padding: 12px 12px; }
+  .stats .big { font-size: 20px; font-weight: 700; color: #003DA5; margin-bottom: 4px; }
+  .stats .big.red { color: #B32D2E; }
+  .stats p { font-size: 12px; margin: 0; }
+</style>
+<div class="sheet">
+<h1>Query spans are the same pair as decision 21, with a different gate</h1>
+<p class="sub"><span class="mono">wpdb</span> brackets a query with the <span class="mono">query</span> filter before and, only under <span class="mono">SAVEQUERIES</span>, <span class="mono">log_query_custom_data</span> after. The span opens ahead of the filter chain and reads the statement at the close, where it is the one the database was asked. Bound only when the rule sets <span class="mono">log_queries</span> (default false).</p>
+
+<div class="ladder">
+  <div class="main">
+    <div class="step"><span class="n">1</span><div class="card"><h3><span class="mono">apply_filters( 'query', $sql )</span> inside <span class="mono">wpdb::query()</span></h3>
+      <div class="prio">
+        <div class="chip us"><b>hook_start_priority · query_start</b>opens <span class="mono">sql</span>, label only: the SQL here is what the caller wrote</div>
+        <div class="chip grey"><b>later priorities</b>filters that rewrite the SQL run INSIDE the span</div>
+      </div>
+      <p style="margin-top:8px">The same priority the generic hook timer uses (default −10000), so the span covers the filter chain as well as the round trip. A rule marking <span class="mono">query</span> significant gets its per-callback timings nested inside <span class="mono">sql</span>, and <span class="mono">query</span> itself is not bound as an ordinary hook: the SQL span covers it.</p></div></div>
+    <div class="step"><span class="n">2</span><div class="card"><h3>The database round trip</h3>
+      <p>About 0.4 ms on the measured host.</p></div></div>
+    <div class="step gate"><span class="n">3</span><div class="card"><h3><span class="mono">log_query_custom_data</span>, fired only under <span class="mono">SAVEQUERIES</span></h3>
+      <div class="prio">
+        <div class="chip us"><b>PHP_INT_MIN · query_end</b>pops the label and writes <span class="mono">sql (complete)</span> with the statement as rewritten</div>
+        <div class="chip grey"><b>every later priority</b>the other listeners, outside the span</div>
+      </div>
+      <p style="margin-top:8px">Then it DRAINS <span class="mono">$wpdb->queries</span>. <span class="mono">_do_query()</span> gates the close on the constant, so <span class="mono">App\Core</span> defines <span class="mono">SAVEQUERIES</span> when it is not already. A constant cannot be withdrawn: a long-running worker keeps it for its life, bounded by the drain.</p></div></div>
+  </div>
+
+  <div class="side">
+    <div class="rec"><header>What one query writes</header>
+      <div>sql (start) <span>· l</span> the calling frame, past every wpdb frame</div>
+      <div>sql (complete) <span>· m</span> SELECT … WHERE ID = ? <span>· duration_ms</span></div>
+      <div><span>host annotation stripped (without_host_annotation()), literals replaced with ? (without_literals()), bounded only by MAX_DATA_SIZE</span></div></div>
+    <div class="card"><h3>Named for its caller, not its table</h3>
+      <p><span class="mono">l</span> is <span class="mono">origin_frame( true )</span>: the first non-machinery frame is the transport, and the walk climbs past every frame of it. A fixed skip cannot: <span class="mono">wpdb::get_row()</span> reaches the filter through <span class="mono">wpdb::query()</span>, and <span class="mono">SHOW FULL COLUMNS</span> arrives four <span class="mono">wpdb</span> frames deep, hence <span class="mono">TRANSPORT_ORIGIN_DEPTH</span> (16) against <span class="mono">ORIGIN_DEPTH</span> (8). The table says <span class="mono">SELECT wp_posts</span> ran 156 times, never which code ran it.</p></div>
+    <div class="callout"><h4>Why it cannot be always-on</h4>
+      <p>Anything else reading <span class="mono">$wpdb->queries</span> (Query Monitor) finds it empty after the drain.</p></div>
+  </div>
+</div>
+
+<div class="stats">
+  <div class="card"><div class="big">1.117 s vs 1.254 s</div><p>3,000 queries with the constant and without: the <span class="mono">get_caller()</span> backtrace is noise against the round trip</p></div>
+  <div class="card"><div class="big red">217 B</div><p>held per query in <span class="mono">$wpdb->queries</span>: the retention that folds these records, and what the drain bounds</p></div>
+  <div class="card"><div class="big">2 entries</div><p>per query, where HTTP pays two per remote call: why HTTP is on for any log rule and queries opt in</p></div>
+</div>
+</div>
