@@ -9,7 +9,7 @@ use Newspack_Event_Logger_Nodes\Tests\TestCase;
 
 /**
  * The Current-Request overlay tab's enqueue glue: it registers an ELN bundle on
- * the substrate's `newspack_nodes/devtools_tab_bundles` filter and injects the
+ * the substrate's `newspack_nodes/station_tab_bundles` filter and injects the
  * page's request id into a DISTINCT JS global (not the shared, clobber-prone
  * `NewspackNodesData`).
  */
@@ -66,15 +66,15 @@ class CurrentRequestOverlayTest extends TestCase {
 		$this->assertTrue( Current_Request_Overlay::is_overlay_page( 'event-logger-requests' ) );
 		$this->assertTrue( Current_Request_Overlay::is_overlay_page( 'event-logger-overview' ) );
 		$this->assertTrue( Current_Request_Overlay::is_overlay_page( 'event-logger-gyroscope' ) );
-		// Hub is the substrate filter's job, not ours; unrelated pages never match.
-		$this->assertFalse( Current_Request_Overlay::is_overlay_page( 'newspack-nodes-hub' ) );
+		// The station is the substrate filter's job, not ours; unrelated pages never match.
+		$this->assertFalse( Current_Request_Overlay::is_overlay_page( 'newspack-nodes-station' ) );
 		$this->assertFalse( Current_Request_Overlay::is_overlay_page( 'edit.php' ) );
 		$this->assertFalse( Current_Request_Overlay::is_overlay_page( '' ) );
 	}
 
 	public function test_is_overlay_page_includes_substrate_registry_pages(): void {
 		\add_filter(
-			'newspack_nodes/devtools_overlay_pages',
+			'newspack_nodes/overlay_pages',
 			static fn ( array $pages ): array => \array_merge( $pages, [ 'some-consumer-page' ] )
 		);
 		// finally so a failed assertion can't leak the filter into later tests.
@@ -85,7 +85,7 @@ class CurrentRequestOverlayTest extends TestCase {
 			$this->assertTrue( Current_Request_Overlay::is_overlay_page( 'event-logger-overview' ) );
 			$this->assertFalse( Current_Request_Overlay::is_overlay_page( 'unrelated-page' ) );
 		} finally {
-			unset( $GLOBALS['_wp_actions']['newspack_nodes/devtools_overlay_pages'] );
+			unset( $GLOBALS['_wp_actions']['newspack_nodes/overlay_pages'] );
 		}
 	}
 

@@ -152,7 +152,7 @@ describe( 'usePerformanceGraph — toolkit wiring', () => {
 	} );
 
 	test( 'builds the on-demand detail nodes through an interpreter that never registered their names', () => {
-		// ADR-16: the name map is a per-bundle static, so a hub tab building
+		// ADR-16: the name map is a per-bundle static, so a station tab building
 		// this graph through ITS interpreter resolves none of these names.
 		// Emptying the map is what that looks like from in here.
 		const saved = {};

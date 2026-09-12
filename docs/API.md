@@ -351,7 +351,7 @@ A JSON-RPC MCP server over verbs this plugin already answers, speaking protocol 
 interpreter.
 
 **Permission**: `Authorization: Bearer <handle>.<key>` — 32 hex, a dot, 64 hex — naming a
-live command session (issue one from the Nodes hub's Sessions tab, or from
+live command session (issue one from the station's Sessions tab, or from
 `POST /wp-json/newspack-nodes/v1/auth`). The request then BECOMES that session's minting
 user and installs its scope as a ceiling, so authority is the user's and the scope only ever
 subtracts: a manage-scoped session minted by someone who can do nothing still does nothing.
@@ -538,7 +538,7 @@ claiming them again. The drop-in depends on nothing; with the plugin inactive it
 | `newspack_nodes/before_reconcile` / `newspack_nodes/after_reconcile` | An anonymous pair sharing an `$entered` flag, giving the minute-cadence reconcile pass its own `/jobs/newspack-nodes` request context. |
 | `newspack_nodes/stderr` | `Diagnostics_Bridge::on_stderr` — carries a substrate diagnostic into the active request or job log as a `stderr` entry, feeding the Error Log. |
 | `newspack_nodes/request_graph_ready` | `newspack_event_logger_nodes_mount_service_cis` — mounts `discovery`, `performance` and `rules`. |
-| `newspack_nodes/devtools_tab_bundles` | `Current_Request_Overlay::register_bundle` — adds the `current-request` bundle descriptor so the hub enqueues that tab. `Current_Request_Overlay` registers two `admin_enqueue_scripts` callbacks beside it: `enqueue_on_overlay_pages` at the default priority, for the ELN pages that embed the overlay themselves, and `enqueue_inline_data` at 20, which injects this request's id into the JS global the tab reads once both enqueue paths have run. |
+| `newspack_nodes/station_tab_bundles` | `Current_Request_Overlay::register_bundle` — adds the `current-request` bundle descriptor so the station enqueues that tab. `Current_Request_Overlay` registers two `admin_enqueue_scripts` callbacks beside it: `enqueue_on_overlay_pages` at the default priority, for the ELN pages that embed the overlay themselves, and `enqueue_inline_data` at 20, which injects this request's id into the JS global the tab reads once both enqueue paths have run. |
 
 Named substrate callables the bootstrap registers alongside them:
 

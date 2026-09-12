@@ -8,8 +8,10 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 
 - **The substrate floor RISES with this release.** The dashboards send the
   substrate's renamed verbs (`raw-logs dump_log`, `workers dump_cleanup`,
-  `aggregator list_servers`, `topologies dump`), so this plugin needs the
-  substrate release that carries them; [the loader's version floor](../newspack-event-logger-nodes.php)
+  `aggregator list_servers`, `topologies dump`), and the current-request tab
+  registers on the substrate's `newspack_nodes/station_tab_bundles` filter and
+  reads `Admin::overlay_pages()`, so this plugin needs the substrate release
+  that carries them; [the loader's version floor](../newspack-event-logger-nodes.php)
   names it, and below it the plugin goes dormant behind an admin notice rather
   than rendering rails that every fetch refuses. Fix: update `newspack-nodes`
   first.

@@ -150,7 +150,7 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit {
 			Current_Request_Overlay::init();
 
 			$this->assertArrayHasKey(
-				'newspack_nodes/devtools_tab_bundles',
+				'newspack_nodes/station_tab_bundles',
 				$GLOBALS['_wp_actions'],
 				'init must register the substrate tab-bundle filter'
 			);

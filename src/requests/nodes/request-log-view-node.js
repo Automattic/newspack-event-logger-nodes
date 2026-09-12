@@ -140,7 +140,7 @@ export class RequestLogViewNode extends LogStreamViewNode {
 /**
  * The view class under the name TSL and the console palette resolve, exported
  * so `useRequestLogGraph` hands `makeNode` the class itself: that name table is
- * a per-bundle static, and a hub tab building its graph through another
+ * a per-bundle static, and a station tab building its graph through another
  * bundle's interpreter cannot resolve a name this bundle registered (ADR-16).
  */
 export const views = CommandInterpreterNode.registerNodeClasses( {
