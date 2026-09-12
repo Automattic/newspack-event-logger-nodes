@@ -79,6 +79,24 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit\Admin {
 			return null;
 		}
 
+		public function test_settings_page_enqueues_the_shared_field_reset_bundle(): void {
+			$_GET['page'] = 'newspack-event-logger-nodes';
+			$this->dispatch( 'settings_page_newspack-event-logger-nodes' );
+
+			// The toggle and the sheet that paints it ride this head-time hook,
+			// so the sheet prints in <head> rather than as a late style.
+			$this->assertNotNull( $this->enqueued_script_for( 'newspack-nodes-field-reset' ) );
+			$styles = \array_map( static fn ( $rec ) => $rec[0] ?? '', $GLOBALS['_enqueued_styles'] );
+			$this->assertContains( 'newspack-nodes-ui', $styles );
+		}
+
+		public function test_dashboard_pages_carry_no_field_reset_bundle(): void {
+			$_GET['page'] = 'event-logger-overview';
+			$this->dispatch( 'toplevel_page_event-logger-overview' );
+
+			$this->assertNull( $this->enqueued_script_for( 'newspack-nodes-field-reset' ) );
+		}
+
 		/** Find the wp_enqueue_style record (positional stub) for $handle. */
 		private function enqueued_style_for( string $handle ): ?array {
 			foreach ( $GLOBALS['_enqueued_styles'] as $rec ) {

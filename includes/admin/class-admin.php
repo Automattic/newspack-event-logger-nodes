@@ -40,7 +40,6 @@ use Newspack_Event_Logger_Nodes\Config;
 use Newspack_Event_Logger_Nodes\Settings_Schema;
 use Newspack_Nodes\Capabilities;
 use Newspack_Nodes\Core;
-use Newspack_Nodes\Config_System\Field_Reset_Assets;
 use Newspack_Nodes\Config_System\Reset_Gate;
 use Newspack_Nodes\Config_System\Restart_Planner;
 use Newspack_Nodes\Config_System\Settings_Renderer;
@@ -381,8 +380,6 @@ class Admin {
 			<?php
 			// Child plugins add sections below form via settings_after_form.
 			\do_action( 'newspack_event_logger_nodes/settings_after_form' );
-			Field_Reset_Assets::enqueue();
-			echo Field_Reset_Assets::highlight_style(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- static CSS literal.
 			?>
 		</div>
 		<?php

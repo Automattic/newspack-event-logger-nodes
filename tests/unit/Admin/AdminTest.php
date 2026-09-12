@@ -27,7 +27,6 @@ use Newspack_Event_Logger_Nodes\Tests\Helpers\RedirectException;
 use Newspack_Event_Logger_Nodes\Tests\Helpers\TopologyLockHarness;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Config as RuntimeConfig;
-use Newspack_Nodes\Config_System\Field_Reset_Assets;
 use Newspack_Nodes\Config_System\Reset_Gate;
 use Newspack_Nodes\Lock_Node;
 use Newspack_Nodes\Roles;
@@ -294,8 +293,6 @@ class AdminTest extends TestCase {
 		// Submit + reset buttons present.
 		$this->assertStringContainsString( '<input type="submit"', $html );
 
-		// Per-field reset toggle highlight style is injected on the page.
-		$this->assertStringContainsString( '.is-marked [data-nn-reset-toggle]', $html );
 	}
 
 	public function test_render_settings_page_shows_reset_success_notice(): void {
@@ -851,38 +848,6 @@ class AdminTest extends TestCase {
 		);
 	}
 
-	public function test_render_settings_page_enqueues_shared_nodes_field_reset_bundle(): void {
-		$GLOBALS['_enqueued_scripts'] = [];
-		$admin                        = new Admin();
-		$admin->register_settings();
-
-		\ob_start();
-		$admin->render_settings_page();
-		\ob_end_clean();
-
-		$handles = \array_map( static fn ( $args ) => $args[0] ?? '', $GLOBALS['_enqueued_scripts'] );
-		$this->assertContains(
-			'newspack-nodes-field-reset',
-			$handles,
-			'settings page must enqueue the shared nodes-built field-reset bundle'
-		);
-		$this->assertNotContains(
-			'newspack-event-logger-nodes-field-reset',
-			$handles,
-			'the ELN-local field-reset enqueue must be gone (shared bundle only)'
-		);
-	}
-
-	public function test_render_settings_page_highlight_style_comes_from_shared_assets(): void {
-		$admin = new Admin();
-		$admin->register_settings();
-
-		\ob_start();
-		$admin->render_settings_page();
-		$html = \ob_get_clean();
-
-		$this->assertStringContainsString( Field_Reset_Assets::highlight_style(), $html );
-	}
 	public function test_maybe_request_worker_restart_swallows_throwables_in_worker_groups_path(): void {
 		// Same defensive path on the regular (request-workers / job-workers)
 		// branch — Config::load_config() failing is caught and the handler

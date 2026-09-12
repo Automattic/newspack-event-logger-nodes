@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A marked reset toggle on the settings page turns red.** The substrate's inline highlight lost to the UI stylesheet's secondary-button role, so the `↺` never showed its mark here. The mark is now the `is-danger` button role that sheet paints, and the page prints no style of its own.
+
 ## [0.96.1] - 2026-09-12
 
 ### Security
