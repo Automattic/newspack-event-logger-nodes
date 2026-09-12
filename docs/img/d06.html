@@ -1,0 +1,104 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+  .gates { position: relative; padding-left: 34px; }
+  .gates::before { content: ""; position: absolute; left: 13px; top: 14px; bottom: 26px; width: 2px; background: #003DA5; }
+  .gate { position: relative; margin-bottom: 12px; }
+  .gate .num {
+    position: absolute; left: -34px; top: 10px; width: 28px; height: 28px; border-radius: 50%;
+    background: #003DA5; color: #fff; font-size: 13px; font-weight: 700; line-height: 28px; text-align: center;
+  }
+  .gate .card p { margin-bottom: 4px; }
+  .gate .card p:last-child { margin-bottom: 0; }
+  .rank { display: flex; gap: 6px; margin: 6px 0; }
+  .rank .chip { flex: 1; margin: 0; font-size: 12.5px; text-align: center; padding: 6px 6px; }
+  .rank .gt { font-size: 15px; color: #003DA5; align-self: center; font-weight: 700; }
+  .listing { border: 1px solid #C3C4C7; border-radius: 9px; background: #fff; overflow: hidden; }
+  .listing header { background: #003DA5; color: #fff; font-size: 15px; font-weight: 700; padding: 10px 18px; }
+  .listing table { border-collapse: collapse; width: 100%; }
+  .listing td { padding: 6px 10px; font-size: 12.5px; vertical-align: top; border-top: 1px solid #EEF0F2; line-height: 1.45; }
+  .listing tr:first-child td { border-top: 0; }
+  .listing td.n { width: 34px; color: #787C82; text-align: right; }
+  .listing td.k { width: 160px; color: #003DA5; white-space: nowrap; }
+  .listing td.v { width: 172px; color: #101517; overflow-wrap: anywhere; }
+  .listing td.c { color: #50575E; }
+  .listing td.c b { color: #101517; }
+  .listing tr.dim td { background: #F6F7F7; }
+  .listing tr.job td.k { color: #1E5B1E; }
+  .listing tr.job td { background: #EDF7ED; }
+  .fields { display: flex; gap: 6px; margin-top: 10px; }
+  .fields .chip { flex: 1; margin: 0; text-align: center; font-size: 12.5px; }
+  .fields .chip b { display: block; font-size: 13px; }
+  .bytes { margin-top: 18px; }
+  .bytes .lbl { font-size: 12.5px; color: #50575E; line-height: 1.45; }
+</style>
+<div class="sheet">
+<h1>What one request writes</h1>
+<p class="sub">Four gates decide whether the request is logged and what is timed. Past them, Log_Manager appends one line per event to the firehose, an append-only topic; the request id is the message key, so every line of one request lands in one partition, <span class="mono">firehose.pN</span>.</p>
+
+<div class="row" style="gap:22px">
+  <div class="gates" style="flex:0 0 440px">
+    <div class="gate"><div class="num">1</div>
+      <div class="card"><h3>Master switch</h3>
+        <p>With <span class="mono">enable_logging</span> off, nothing is written. The other two switches are <span class="mono">log_memory</span> and <span class="mono">flush_every_line</span>.</p></div></div>
+    <div class="gate"><div class="num">2</div>
+      <div class="card"><h3>Not root</h3>
+        <p>The writer refuses to run as root.</p></div></div>
+    <div class="gate"><div class="num">3</div>
+      <div class="card"><h3>The rule</h3>
+        <p>A rule pairs a URL pattern with a verdict, <span class="blue">log</span> or <span class="blue">skip</span>. Specificity outranks list order; length breaks ties only within a rank.</p>
+        <div class="rank"><div class="chip">pattern with a query</div><div class="gt">&gt;</div><div class="chip">exact path</div><div class="gt">&gt;</div><div class="chip">prefix</div></div>
+        <p>No match means skip. The seed ruleset is one log rule on the path <span class="mono">/</span>, beside five exact skips: cron and the runtime's own endpoints.</p>
+        <p>A rule's id is the hash of its pattern, so one URL never carries two rules.</p></div></div>
+    <div class="gate"><div class="num">4</div>
+      <div class="card"><h3>What the log rule binds</h3>
+        <p>The hooks to time, the custom events to log, and the events to profile per callback.</p>
+        <p><b>Outbound HTTP</b>: timed by default, one span per remote call; a rule can turn it off.</p>
+        <p><b>SQL</b>: timed only when a rule asks. The closing hook fires only under <span class="mono">SAVEQUERIES</span>, and each query costs two entries.</p>
+        <p class="red">Nothing bound: the Performance dashboard's findings report insufficient instrumentation rather than guess.</p></div></div>
+  </div>
+
+  <div style="flex:1">
+    <div class="listing">
+      <header>One request's record, line by line</header>
+      <table>
+        <tr><td class="n">1</td><td class="k">process (start)</td><td class="v"></td><td class="c">The record opens.</td></tr>
+        <tr><td class="n">2</td><td class="k">request</td><td class="v mono">GET /events/?date=…</td><td class="c">The method and the <b>redacted</b> URL.</td></tr>
+        <tr><td class="n">3</td><td class="k">environment</td><td class="v mono">server, country, …</td><td class="c">The request's environment.</td></tr>
+        <tr><td class="n">4</td><td class="k">init (start)</td><td class="v"></td><td class="c">A <b>span</b> opens: one bound hook begins.</td></tr>
+        <tr><td class="n">5</td><td class="k">http (start)</td><td class="v mono">api.example.com</td><td class="c">One span per remote call.</td></tr>
+        <tr><td class="n">6</td><td class="k">http (complete)</td><td class="v mono">212 ms</td><td class="c">The close carries the <b>duration</b>.</td></tr>
+        <tr><td class="n">7</td><td class="k">init (complete)</td><td class="v mono">340 ms</td><td class="c">Spans nest; the flame tree is built from them.</td></tr>
+        <tr class="job"><td class="n">8</td><td class="k">job</td><td class="v mono">{ handler, id, parameters }</td><td class="c">A small job rides the same append. Part 7: only firehose entries cross from a spoke to its hub.</td></tr>
+        <tr><td class="n">9</td><td class="k">template (start)</td><td class="v"></td><td class="c">A span opens and is never closed.</td></tr>
+        <tr class="dim"><td class="n">10</td><td class="k">template (orphaned)</td><td class="v"></td><td class="c">At shutdown the writer <b>drains</b> every open span as orphaned.</td></tr>
+        <tr class="dim"><td class="n">11</td><td class="k">process (complete)</td><td class="v mono">or process (aborted)</td><td class="c">The <b>terminal</b>. An abort carries the fatal error's message, file, line and offending plugin.</td></tr>
+      </table>
+    </div>
+    <div class="fields">
+      <div class="chip"><b>line number</b>gap-checked by the builder</div>
+      <div class="chip"><b>category</b>never trimmed</div>
+      <div class="chip"><b>payload</b>trimmed to fit</div>
+      <div class="chip"><b>label</b>optional</div>
+      <div class="chip"><b>timestamp</b></div>
+      <div class="chip" style="background:#fff;border-style:dashed"><b>KEY</b>the request id</div>
+    </div>
+  </div>
+</div>
+
+<div class="bytes">
+  <svg width="1052" height="108" viewBox="0 0 1052 108">
+    <text x="526" y="16" text-anchor="middle" fill="#50575E" font-size="12.5" font-family="Inter, Helvetica, Arial, sans-serif">4,096 bytes: the most Linux appends atomically, and many PHP processes append to one partition at once</text>
+    <path d="M0 34 L0 26 L1052 26 L1052 34" fill="none" stroke="#50575E" stroke-width="1.5"/>
+    <rect x="0" y="42" width="986" height="30" rx="6" fill="#003DA5"/>
+    <rect x="986" y="42" width="66" height="30" rx="6" fill="#C3C4C7"/>
+    <rect x="980" y="42" width="12" height="30" fill="#C3C4C7"/>
+    <text x="493" y="62" text-anchor="middle" fill="#fff" font-size="13" font-weight="700" font-family="Inter, Helvetica, Arial, sans-serif">the encoded entry: at most 3,840 bytes</text>
+    <text x="1019" y="62" text-anchor="middle" fill="#101517" font-size="12" font-weight="700" font-family="Inter, Helvetica, Arial, sans-serif">256</text>
+    <text x="1052" y="98" text-anchor="end" fill="#50575E" font-size="12.5" font-family="Inter, Helvetica, Arial, sans-serif">256 bytes for the envelope: the KEY and the JSON framing</text>
+  </svg>
+  <div class="row" style="gap:14px;margin-top:6px">
+    <div class="callout" style="flex:1"><h4>Over the cap</h4><p>The entry is marked <span class="mono">truncated</span> and the payload is trimmed ten percent at a time until it fits. The category is never trimmed: a shortened start never pairs with its close.</p></div>
+    <div class="ok" style="flex:1"><h4>Anything that can exceed it goes through the runtime's job intake</h4><p>The intake takes a write lock and accepts a payload of up to 32 MiB.</p></div>
+  </div>
+</div>
+</div>

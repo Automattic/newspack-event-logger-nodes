@@ -1,0 +1,46 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<div class="sheet">
+  <h1>What the logger writes, and the three ways it leaves the site</h1>
+  <p class="sub">Two programs write the firehose and redact the same way. The hub copies the lines raw. The Ask brief leaves by a different door.</p>
+
+  <div class="row" style="gap:0;align-items:flex-start">
+    <div class="card" style="flex:0 0 400px">
+      <h3>On the spoke: two writers, one redaction</h3>
+      <p class="mono blue" style="margin:0 0 10px">Log_Manager::message() · Gyrobase::Log::_write_entry</p>
+      <p><strong>URL query string</strong> — a denylist of 25 parameter names. A parity check holds both writers to the same list, applied in the same place.</p>
+      <p><strong>Hook arguments</strong> — every key kept, every value replaced by <span class="mono">?</span> unless its key is one of 104 allowed names.</p>
+      <p><strong>SQL</strong> — every quoted literal becomes <span class="mono">?</span>.</p>
+      <p>One entry per request, <span class="mono">environment_v3</span>, is a map of 34 server variables: <span class="mono red">REMOTE_ADDR</span>, <span class="mono red">HTTP_USER_AGENT</span>, <span class="mono red">HTTP_X_FORWARDED_FOR</span>, the JA3 and JA4 fingerprints.</p>
+      <p style="margin:0">Each entry is capped at 3,840 bytes so the append stays atomic.</p>
+      <div class="chip mono blue" style="margin:12px 0 0;text-align:center">firehose.p0</div>
+    </div>
+
+    <div class="conn" style="flex:0 0 170px;padding-top:130px">
+      <svg width="170" height="26" viewBox="0 0 170 26"><defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#003DA5"/></marker></defs><path d="M4 13 L156 13" stroke="#003DA5" stroke-width="1.8" marker-end="url(#a)"/></svg>
+      <div class="cap" style="margin-top:8px"><strong class="blue">1 · copied to the hub</strong><br><span class="grey">Raw lines. No second redaction.</span></div>
+    </div>
+
+    <div class="panel" style="flex:1 1 auto">
+      <header>On the hub</header>
+      <div class="body">
+        <div class="chip mono blue" style="text-align:center;margin-bottom:12px">hub firehose, every spoke's lines</div>
+        <div class="callout" style="margin-bottom:12px">
+          <h4>2 · read by an operator</h4>
+          <p style="margin:0">The request-detail and request-grep commands need the <span class="mono">read</span> capability. The account the hub logs in with holds <span class="mono">read</span> and <span class="mono">tune</span>, the smallest role the plugin defines.</p>
+        </div>
+        <div class="card" style="padding:12px 14px">
+          <h3 style="font-size:13.5px">3 · the Ask brief</h3>
+          <p>A summary of one request, one URL or one entry, shaped for pasting into an AI assistant. Its <span class="mono">env</span> field keeps six keys. Its <span class="mono">entries</span> field copies up to 60 entries <strong>verbatim</strong>, <span class="mono">environment_v3</span> among them.</p>
+          <div class="chip" style="margin-top:8px"><strong>Dashboard</strong> — shows the entries as a count only.</div>
+          <div class="chip danger"><strong>MCP tool</strong> <span class="mono">performance_ask</span> — returns the whole brief to an AI agent holding a read session.</div>
+          <div class="chip danger" style="margin-bottom:0"><strong>"Ask Claude" link</strong> — an entry brief renders its message in full and carries it to claude.ai in the URL.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="note">
+    <h4>Question 3c</h4>
+    <p>Should the brief's entries pass through the same allowlist its <span class="mono">env</span> field already does?</p>
+  </div>
+</div>
