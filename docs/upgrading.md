@@ -4,7 +4,7 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 
 **Maintenance rule:** a release that changes any consumer-facing contract adds its entry here in the same commit as its CHANGELOG entry. No entry means nothing to do.
 
-## Unreleased
+## 0.96.1
 
 - **An MCP tool result is fenced and JSON-HEX-escaped.** `tools/call` answers
   with the reply encoded as

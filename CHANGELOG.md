@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.96.1] - 2026-09-12
+
 ### Security
 
 - **URL redaction matches a parameter by the SHAPE of its name.** `URL_REDACT_PATTERN` was a list of whole names anchored at `[?&]`, so it covered only what someone remembered to add: a WooCommerce `consumer_key` / `consumer_secret` pair matched neither `key` nor `secret` and reached the firehose in cleartext, as did `api-key`, `hmac`, `code`, `oauth_token` and `_wpnonce`. It now redacts any name CONTAINING a credential token (`secret`, `token`, `nonce`, `session`, `hmac`, `signature`, `bearer`, `credential`, the password spellings, `apikey`, `authorization` and `auth`, which spares WordPress's `author`), or carrying one as a whole SEGMENT bounded by `_`, `-`, `.` or the name's ends (`key`, `sig`, `code`, `pass`, `pin`, `otp`, `client`) — so `keyword`, `postcode` and `design` keep their values while `consumer_key` and `subscription-Key` lose theirs. The accepted cost is `country_code` and `client_id`, neither a secret, redacted anyway; both are pinned in the tests. It stays a denylist, because `?p=`, `?s=` and the `utm_*` family are what an operator reads a URL log for. `Gyrobase::Log::_redact_url` carries the identical pattern body, and dndocker's `check-firehose-parity.py` diffs the two bodies byte for byte.
@@ -18,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The request id no longer comes from a request header.** `init_firehose()` adopted `HTTP_X_A8C_REQUEST_ID` — a value any client can send — as the request id, which is every firehose line's `Message::KEY`, the identity `Request_Builder_Node` groups by and the input to `Partition_Node::hash_to_partition()`, so a visitor could file their lines under another request's id and choose their partition. Readers group by the Message KEY the writer stamps, never by a `rid` a caller supplies, and the header defeated that from the other side; nobody can establish whether WP Cloud overwrites the header at the edge, so the id depends on neither answer. The order is now `UNIQUE_ID`, which Apache's mod_unique_id sets and a client cannot reach, else a generated id published back into `$_SERVER['UNIQUE_ID']`, with the 64-character cap unchanged. The header value is still written verbatim into the `environment_v3` entry, so `wp nodes reqgrep <edge id>` still finds the request through that line, and `begin_job_context()` clears it for a job, which has no edge id of its own.
 
 ### Changed
+
+- **The substrate floor rises to 2.57.0**, the release whose `/auth` reply names the signing key `secret`. Below it the bundled auth client reads a field the reply does not carry, so the plugin stays dormant there instead.
 
 - **The MCP Bearer credential is `<handle>.<secret>`.** The substrate's `/auth` reply names its second half `secret`; the header's bytes are unchanged, and nothing in this plugin's request handling moves.
 
