@@ -12,7 +12,7 @@ The numbers run without a gap. Code comments, docblocks, [`AGENTS.md`](../AGENTS
 | [4](#decision-4-settings-fan-out-is-a-node-graph-no-consumer-means-a-silent-no-op) | Settings fan-out is a node graph; no consumer means a silent no-op | Settings propagate through the `hub-control` node graph, and with no consumer wired the event is dropped. |
 | [5](#decision-5-salt-rotation-schema-migration) | Salt-rotation schema migration | A schema change is migrated by rotating the salt, and nothing in the code compensates for skipping it. |
 | [6](#decision-6-get_multi-batching-is-essential) | `get_multi` batching is essential | Every reader path multi-gets its buckets in one round trip. |
-| [7](#decision-7-job_intake-for-4kb-payloads-the-firehose-for-4kb) | Job_Intake for >4KB payloads, the firehose for ≤4KB | Small jobs ride the firehose; anything over 4KB goes through `Job_Intake`. |
+| [7](#decision-7-job_intake-for-4kb-jobs-the-firehose-for-4kb) | Job_Intake for >4KB jobs, the firehose for ≤4KB | Small jobs ride the firehose; anything over 4KB goes through `Job_Intake`. |
 | [8](#decision-8-hub-vs-spoke-topology) | Hub vs spoke topology | A hub is the `aggregator` topology being active; jobs register under `job_handlers`, `remote_job_handlers` or both. |
 | [9](#decision-9-a-requests-partition-is-its-id-hashed-by-the-substrate) | A request's partition is its id, hashed by the substrate | The firehose partition is the substrate's `hash_to_partition()` over the request id, on the write and on every read. |
 | [10](#decision-10-the-durable-mirror-writes-a-bucket-once-when-it-closes-under-a-key-that-carries-no-install-scope) | The durable mirror writes a bucket once, when it closes, under a key that carries no install scope | The durable mirror writes a bucket once, at close, under an unscoped key that survives a flush. |
@@ -90,7 +90,7 @@ Reader paths multi-get across all retention buckets per partition in one round-t
 
 ---
 
-## Decision 7: Job_Intake for >4KB payloads, the firehose for ≤4KB
+## Decision 7: Job_Intake for >4KB jobs, the firehose for ≤4KB
 
 Small runtime jobs ride the firehose with `k:"job"`, and [`Job_Router_Node`](../includes/class-job-router-node.php) extracts them; [`job-feed.tsl`](../topologies/job-feed.tsl) tails the substrate's `jobfeed` log instead, so a spoke's router reads jobs alone rather than the whole firehose. A job the firehose cannot carry goes straight to `jobintake` through the substrate's [`Job_Intake::queue()`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/class-job-intake.php), the locked path past the PIPE_BUF cap ([substrate ADR-4](https://github.com/Automattic/newspack-nodes/blob/main/docs/architecture-decisions.md#adr-4-pipe_buf-atomic-writes)). The wrong path loses jobs: `Log_Manager` trims `m` on any ENTRY over `MAX_DATA_SIZE` (3840B), so the handler never sees a parseable payload.
 

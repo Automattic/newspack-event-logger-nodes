@@ -156,7 +156,7 @@ Each is intentional, stated in full in [`docs/architecture-decisions.md`](docs/a
 | 4 | Settings fan-out is a node graph; no consumer means a silent no-op | [Decision 4](docs/architecture-decisions.md#decision-4-settings-fan-out-is-a-node-graph-no-consumer-means-a-silent-no-op) |
 | 5 | Salt-rotation schema migration | [Decision 5](docs/architecture-decisions.md#decision-5-salt-rotation-schema-migration) |
 | 6 | `get_multi` batching is essential | [Decision 6](docs/architecture-decisions.md#decision-6-get_multi-batching-is-essential) |
-| 7 | Job_Intake for >4KB payloads, the firehose for ≤4KB | [Decision 7](docs/architecture-decisions.md#decision-7-job_intake-for-4kb-payloads-the-firehose-for-4kb) |
+| 7 | Job_Intake for >4KB jobs, the firehose for ≤4KB | [Decision 7](docs/architecture-decisions.md#decision-7-job_intake-for-4kb-jobs-the-firehose-for-4kb) |
 | 8 | Hub vs spoke topology | [Decision 8](docs/architecture-decisions.md#decision-8-hub-vs-spoke-topology) |
 | 9 | A request's partition is its id, hashed by the substrate | [Decision 9](docs/architecture-decisions.md#decision-9-a-requests-partition-is-its-id-hashed-by-the-substrate) |
 | 10 | The durable mirror writes a bucket once, when it closes, under a key that carries no install scope | [Decision 10](docs/architecture-decisions.md#decision-10-the-durable-mirror-writes-a-bucket-once-when-it-closes-under-a-key-that-carries-no-install-scope) |
