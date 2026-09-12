@@ -18,7 +18,7 @@ The vocabulary here is the substrate's. Its [documentation map](https://github.c
 |-------------|---------|
 | WordPress | 6.5 |
 | PHP | 8.2 |
-| `newspack-nodes` | 2.56.0, installed and active |
+| `newspack-nodes` | 2.57.0, installed and active |
 | A cache backend | Memcached, or APCu |
 
 The substrate's [`Cache_Backend`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/class-cache-backend.php) prefers the shared `Memcached` handle `Bootstrap` builds from `memcache_servers` and falls back to APCu. Either one alone brings the runtime up. With neither, the substrate cannot claim a command's single-use nonce, so verification fails closed and no dashboard verb answers; [`Stats_Store::table()`](includes/class-stats-store.php) returns null besides, and every statistics read counts as a miss.
