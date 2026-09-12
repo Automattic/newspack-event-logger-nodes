@@ -78,12 +78,14 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	// serving a record whose stated cache lifetime is spent — what lets an
 	// evicted `urls_h` rebuild from the fine buckets it derives from, and a
 	// BEHAVIOUR requirement check-substrate-floor.sh cannot see, since it
-	// audits which APIs exist rather than what they do. Raise the floor
+	// audits which APIs exist rather than what they do. 2.56.0 is
+	// Admin::overlay_pages() and the station_tab_bundles filter the
+	// current-request tab registers on. Raise the floor
 	// whenever a new hard requirement appears. The floor is what makes a
 	// too-old substrate DORMANT rather than fatal, so one set too low is
 	// worse than none, and WordPress does not order plugin updates.
 	if ( ! \method_exists( '\\Newspack_Nodes\\Bootstrap', 'version_at_least' )
-		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.53.0', 'Newspack Event Logger Nodes' ) ) {
+		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.56.0', 'Newspack Event Logger Nodes' ) ) {
 		return;
 	}
 
