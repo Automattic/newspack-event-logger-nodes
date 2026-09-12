@@ -661,7 +661,7 @@ class Flame_Builder_Node extends Node {
 		// @longform Clamped: a completed request cannot have finished after
 		// it reached us, so a skewed spoke clock or a bogus duration must
 		// not file into a future bucket — readers walk backwards from now
-		// and never would, the written-then-unreadable bug of decision 20.
+		// and never would, the written-then-unreadable bug of decision 19.
 		$timestamp     = \min( $now, $started + (int) \round( $duration_ms / 1000 ) );
 		$server_raw    = $request['server_name'] ?? '';
 		// `as_string`, the way the `server` DIMENSION reads it: same axis.

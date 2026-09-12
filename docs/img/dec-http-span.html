@@ -51,7 +51,7 @@
       <div><span>· l</span> the calling frame, past every WP_Http frame</div>
       <div>http (complete) <span>· m</span> 200 <span>· duration_ms</span></div></div>
     <div class="card"><h3>Named for its caller, not its host</h3>
-      <p><span class="mono">l</span> is <span class="mono">origin_frame( true )</span>, which climbs past the class that applied the filter at <span class="mono">TRANSPORT_ORIGIN_DEPTH</span> (16) rather than <span class="mono">ORIGIN_DEPTH</span> (8): "which of my code paths makes this call, how many times" is the reader's question. It climbs whatever decision 24's <span class="mono">trace_callers</span> says, because that budget attaches <span class="mono">caller</span> to hook entries alone.</p></div>
+      <p><span class="mono">l</span> is <span class="mono">origin_frame( true )</span>, which climbs past the class that applied the filter at <span class="mono">TRANSPORT_ORIGIN_DEPTH</span> (16) rather than <span class="mono">ORIGIN_DEPTH</span> (8): "which of my code paths makes this call, how many times" is the reader's question. It climbs whatever decision 23's <span class="mono">trace_callers</span> says, because that budget attaches <span class="mono">caller</span> to hook entries alone.</p></div>
   </div>
 </div>
 
