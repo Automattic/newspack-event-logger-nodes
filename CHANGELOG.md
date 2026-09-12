@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`rules list` is `rules dump`, and the MCP tool `rules_list` is `dump_rules`.** A verb named `list` whose reply carries a nested structure per item is a dump, and is named for what it is, as the substrate's `list_nodes` and `dump_node` already are: every rule comes back with its hooks resolved. The old verb is refused as `unknown command: list`, with no alias, and the old tool name is absent from `tools/list`; `docs/upgrading.md` names the JS calls to change.
+
+- **Five `performance` verbs are named verb first: `request_search`, `request_grep`, `request_detail`, `url_detail` and `hooks_registered` are `search_requests`, `grep_requests`, `dump_request`, `dump_url` and `list_hooks`, and the four MCP tools wrapping the first four take the verb's name.** A service verb reads verb first, as the substrate's `list_nodes`, `dump_node` and `make_node` do; a noun-noun compound says what the reply is about and not what it does. The old verbs are refused as `unknown command: <name>`, with no alias, and the old tool names are absent from `tools/list`; `docs/upgrading.md` names the JS calls to change. The substrate renames three of its own in the same shape.
+
+- **This plugin's dashboards now send the substrate's renamed verbs** (`raw-logs dump_log` from the shared segment rail, `workers dump_cleanup`, `aggregator list_servers`, `topologies dump`), which exist only from the substrate release that carries them. The loader's `version_at_least()` floor moves to that release with this plugin's own; on an older substrate the rails would be refused as `unknown command` with nothing in the loader to say why.
+
+- **Every browser node name is `<subject>:<role>`.** The subject is what the slice shows, hyphenated when compound, and the role is one of the substrate's fixed set (`timer`, `tee`, `fetch`, `in`, `transform`, `view`, `result`, `link`, `stream`); the verb lives on the Fetcher alone. The run-together prefixes go: `hookcatalog:*`, `currentrequest:*`, `urldetail:*`, `requestdetail:*`, `requestlog:*` and `perferrors:*` are `hook-catalog:*`, `current-request:*`, `url-detail:*`, `request-detail:*`, `request-log:*` and `error-log:*`, the merge on the URL-detail edge is `url-detail:transform` rather than `urldetail:merge`, the Performance poll's `perf:timer` and `perf:tee` are `performance:timer` and `performance:tee`, the Gyroscope's render cadence `gyroscope:display` is `gyroscope:timer`, the breakdown refresh `urldetail:breakdown` is `url-breakdown:timer`, the glob dashboards' segment read and rail tick are `<prefix>-segments:*` and `<prefix>-rail:timer` rather than `<prefix>:view:status:*` and `<prefix>:view:segments`, and the four one-shot scopes the Performance page passes to tell two readers of one verb apart are subjects — `url-lookup`, `url-deeplink`, `request-search` and `request-deeplink` — rather than `performance:<verb>:<reader>`. The substrate's `docs/writing-a-view-node.md` states the rule; nothing on the wire changes.
+
 ## [0.95.3] - 2026-09-10
 
 ### Fixed

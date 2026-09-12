@@ -63,9 +63,9 @@ class MCP_Controller {
 	 * Calls one session may make per RATE_LIMIT_WINDOW_S.
 	 *
 	 * MCP does not go through `/command`, so the substrate's per-user cap does
-	 * not bound it — and the tools behind it are not cheap: `request_grep` and
+	 * not bound it — and the tools behind it are not cheap: `grep_requests` and
 	 * the rid lookups walk every partition's index up to MAX_INDEX_ENTRIES,
-	 * `url_detail` walks one retention window of it, and `overview` and `ask`
+	 * `dump_url` walks one retention window of it, and `overview` and `ask`
 	 * rebuild the leaderboard out of memcache. A looping agent, or a leaked
 	 * bearer, would otherwise hold an unmetered amplification path. Generous
 	 * enough that a conversational agent never grazes it.
@@ -105,30 +105,30 @@ class MCP_Controller {
 			'summary' => 'The URL leaderboard, sortable and paginated, plus totals and the slowest ten for whatever the filters left. Worker traffic is excluded unless asked for.',
 			'args'    => [ 'sort' => 'count|url|avg_ms|max_ms|…', 'limit' => 'Rows to return.', 'search' => 'Substring filter.', 'server' => 'Optional server name to scope every row and total to.', 'include_workers' => 'Cron, WP-CLI and job traffic is excluded by default; set to include it.' ],
 		],
-		'performance_url_detail'   => [
+		'dump_url'                 => [
 			'node'    => 'performance',
-			'verb'    => 'url_detail',
+			'verb'    => 'dump_url',
 			'role'    => Capabilities::READ,
 			'summary' => 'One URL: stats, aggregate flame data and its recent requests. `scan_stopped_early` true means the index walk ran out of budget, so an empty request list is not an idle URL.',
 			'args'    => [ 'hash' => 'The 12-char URL hash (required).', 'server' => 'Optional server name; scopes the stats the way performance_urls scopes the row.' ],
 		],
-		'performance_request_search' => [
+		'search_requests'          => [
 			'node'    => 'performance',
-			'verb'    => 'request_search',
+			'verb'    => 'search_requests',
 			'role'    => Capabilities::READ,
 			'summary' => 'Locate a request by id; returns {rid, partition, url_hash}. A `budget spent` error means the index walk ended before reaching the rid — an incomplete search, not a definite negative.',
 			'args'    => [ 'rid' => 'The request id (required).' ],
 		],
-		'performance_request_detail' => [
+		'dump_request'             => [
 			'node'    => 'performance',
-			'verb'    => 'request_detail',
+			'verb'    => 'dump_request',
 			'role'    => Capabilities::READ,
 			'summary' => 'One request in full, with its flame data and computed findings. A `budget spent` error means the index walk ended before reaching the rid, so retry rather than reading it as an unknown request.',
 			'args'    => [ 'rid' => 'The request id (required).', 'partition' => 'Optional: the partition to search first. Every partition is searched either way.' ],
 		],
-		'performance_request_grep' => [
+		'grep_requests'            => [
 			'node'    => 'performance',
-			'verb'    => 'request_grep',
+			'verb'    => 'grep_requests',
 			'role'    => Capabilities::READ,
 			'summary' => 'Pattern-search recent traffic; returns matching requests, not lines.',
 			'args'    => [ 'pattern' => 'Case-insensitive pattern (required).', 'limit' => 'Max matches.' ],
@@ -140,9 +140,9 @@ class MCP_Controller {
 			'summary' => 'The brief for one thing: `url:<hash>`, `request:<rid>:<partition>`, `span:<name>`, `entry:<n>` or `category:<name>`. A span or an entry also needs its `request:` descriptor as a second argument.',
 			'args'    => [ 'descriptor' => 'What to ask about (required).', 'context' => 'The containing descriptor, if any.', 'server' => 'Optional server name; scopes a url: brief the way performance_urls scopes its rows.' ],
 		],
-		'rules_list'               => [
+		'dump_rules'               => [
 			'node'    => 'rules',
-			'verb'    => 'list',
+			'verb'    => 'dump',
 			'role'    => Capabilities::READ,
 			'summary' => 'The per-URL logging ruleset. The finest grain a rule has is a URL pattern.',
 			'args'    => [],

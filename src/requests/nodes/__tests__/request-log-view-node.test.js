@@ -1,5 +1,5 @@
 /**
- * requestlog:view tests — the Request Log's LogStreamViewNode subclass.
+ * request-log:view tests — the Request Log's LogStreamViewNode subclass.
  *
  * The shared base owns the ring (`lines`/`lineAt`/`linesCount`), the monotonic
  * `id` + `isEven` stamps, the paused belt + step budget, the decaying `lps`,
@@ -50,7 +50,7 @@ function rowMsg( req ) {
 function controlMsg( payload ) {
 	const m = newMessage();
 	m[ TYPE ] = TM_STRUCT;
-	m[ FROM ] = 'requestlog:view';
+	m[ FROM ] = 'request-log:view';
 	m[ VALUE ] = payload;
 	return m;
 }
@@ -70,11 +70,13 @@ function row( overrides = {} ) {
 }
 
 test( 'extends the shared LogStreamViewNode base', () => {
-	expect( makeView( 'requestlog:view' ) ).toBeInstanceOf( LogStreamViewNode );
+	expect( makeView( 'request-log:view' ) ).toBeInstanceOf(
+		LogStreamViewNode
+	);
 } );
 
 test( 'appends rows newest-first into lines (no publish)', () => {
-	const v = makeView( 'requestlog:view' );
+	const v = makeView( 'request-log:view' );
 	v.fill( rowMsg( row( { rid: 'a' } ) ) );
 	v.fill( rowMsg( row( { rid: 'b' } ) ) );
 	v.fill( rowMsg( row( { rid: 'c' } ) ) );
@@ -83,7 +85,7 @@ test( 'appends rows newest-first into lines (no publish)', () => {
 } );
 
 test( 'appending rows does NOT publish setState (no per-row React re-render)', () => {
-	const v = makeView( 'requestlog:view' );
+	const v = makeView( 'request-log:view' );
 	const spy = jest.spyOn( v, 'setState' );
 	v.fill( rowMsg( row() ) );
 	v.fill( rowMsg( row() ) );
@@ -91,7 +93,7 @@ test( 'appending rows does NOT publish setState (no per-row React re-render)', (
 } );
 
 test( 'caps the ring at maxLines (newest kept)', () => {
-	const v = makeView( 'requestlog:view', { maxLines: 3 } );
+	const v = makeView( 'request-log:view', { maxLines: 3 } );
 	for ( let i = 0; i < 5; i++ ) {
 		v.fill( rowMsg( row( { rid: `r${ i }` } ) ) );
 	}
@@ -101,7 +103,7 @@ test( 'caps the ring at maxLines (newest kept)', () => {
 } );
 
 test( 'urlHash keeps the ?worker marker so nodes/ELN URLs deep-link (matches PHP url_hash)', () => {
-	const v = makeView( 'requestlog:view' );
+	const v = makeView( 'request-log:view' );
 	v.fill(
 		rowMsg( row( { rid: 'w', url: '/jobs/x?reconcile', end_time: 1 } ) )
 	);
@@ -116,7 +118,7 @@ test( 'urlHash keys the FULL url, not the display clip', () => {
 	// view node says so in its own docblock — so a URL past the clip must not
 	// deep-link to a hash the Overview has never heard of.
 	const long = '/reports/' + 'q'.repeat( 2600 );
-	const v = makeView( 'requestlog:view' );
+	const v = makeView( 'request-log:view' );
 	v.fill( rowMsg( row( { rid: 'long', url: long, end_time: 1 } ) ) );
 
 	expect( v.lines[ 0 ].urlHash ).toBe( fnv1a( long ) );
@@ -124,7 +126,7 @@ test( 'urlHash keys the FULL url, not the display clip', () => {
 } );
 
 test( 'stamps each row with the base monotonic id + isEven stripe', () => {
-	const v = makeView( 'requestlog:view' );
+	const v = makeView( 'request-log:view' );
 	v.fill( rowMsg( row( { rid: 'first', url: '/a', end_time: 111 } ) ) );
 	v.fill( rowMsg( row( { rid: 'second', url: '/b', end_time: 222 } ) ) );
 	expect( v.lines[ 0 ] ).toMatchObject( {
@@ -144,7 +146,7 @@ test( 'stamps each row with the base monotonic id + isEven stripe', () => {
 } );
 
 test( 'carries the shared debug trio + a searchable content line on each row', () => {
-	const v = makeView( 'requestlog:view' );
+	const v = makeView( 'request-log:view' );
 	const m = rowMsg(
 		row( { rid: 'r-dbg-407', url: '/dbg-407', status_code: 503 } )
 	);
@@ -162,7 +164,7 @@ test( 'carries the shared debug trio + a searchable content line on each row', (
 } );
 
 test( 'keeps the debug raw JSON whole and parseable', () => {
-	const v = makeView( 'requestlog:view' );
+	const v = makeView( 'request-log:view' );
 	v.fill(
 		rowMsg(
 			row( { rid: 'r-raw', url: '/raw', user_agent: 'u'.repeat( 9000 ) } )
@@ -175,14 +177,14 @@ test( 'keeps the debug raw JSON whole and parseable', () => {
 } );
 
 test( 'exposes a decaying lps rate on the node instance', () => {
-	const v = makeView( 'requestlog:view' );
+	const v = makeView( 'request-log:view' );
 	v.fill( rowMsg( row() ) );
 	expect( typeof v.lps ).toBe( 'number' );
 	expect( v.lps ).toBeGreaterThan( 0 );
 } );
 
 test( 'exposes O(1) windowed reads — linesCount + lineAt (newest-first) — for the virtual list', () => {
-	const v = makeView( 'requestlog:view' );
+	const v = makeView( 'request-log:view' );
 	v.fill( rowMsg( row( { rid: 'a' } ) ) );
 	v.fill( rowMsg( row( { rid: 'b' } ) ) );
 	v.fill( rowMsg( row( { rid: 'c' } ) ) );
@@ -193,7 +195,7 @@ test( 'exposes O(1) windowed reads — linesCount + lineAt (newest-first) — fo
 } );
 
 test( 'pause stops appends and the published model reflects paused', () => {
-	const v = makeView( 'requestlog:view' );
+	const v = makeView( 'request-log:view' );
 	v.fill( controlMsg( { action: 'pause', paused: true } ) );
 	v.fill( rowMsg( row( { rid: 'ignored' } ) ) );
 	expect( v.lines ).toHaveLength( 0 );
@@ -201,7 +203,7 @@ test( 'pause stops appends and the published model reflects paused', () => {
 } );
 
 test( 'a step budget admits exactly that many rows through the paused belt', () => {
-	const v = makeView( 'requestlog:view' );
+	const v = makeView( 'request-log:view' );
 	v.fill( controlMsg( { action: 'pause', paused: true } ) );
 	v.fill( controlMsg( { action: 'step', frames: 2 } ) );
 	v.fill( rowMsg( row( { rid: 'stepped-1' } ) ) );
@@ -214,7 +216,7 @@ test( 'a step budget admits exactly that many rows through the paused belt', () 
 } );
 
 test( 'resume after pause lets rows through again', () => {
-	const v = makeView( 'requestlog:view' );
+	const v = makeView( 'request-log:view' );
 	v.fill( controlMsg( { action: 'pause', paused: true } ) );
 	v.fill( rowMsg( row( { rid: 'dropped' } ) ) );
 	v.fill( controlMsg( { action: 'pause', paused: false } ) );
@@ -225,7 +227,7 @@ test( 'resume after pause lets rows through again', () => {
 } );
 
 test( 'clear empties the ring and resets the id counter', () => {
-	const v = makeView( 'requestlog:view' );
+	const v = makeView( 'request-log:view' );
 	for ( let i = 0; i < 10; i++ ) {
 		v.fill( rowMsg( row( { rid: `r${ i }` } ) ) );
 	}
@@ -237,7 +239,7 @@ test( 'clear empties the ring and resets the id counter', () => {
 } );
 
 test( 'the published model carries paused, connectionError, and seek feedback', () => {
-	const v = makeView( 'requestlog:view' );
+	const v = makeView( 'request-log:view' );
 	v.fill( controlMsg( { action: 'pause', paused: false } ) );
 	expect( Object.keys( v.setStateCache.view ).sort() ).toEqual( [
 		'connectionError',
@@ -248,27 +250,27 @@ test( 'the published model carries paused, connectionError, and seek feedback', 
 } );
 
 test( 'connection control publishes connectionError', () => {
-	const v = makeView( 'requestlog:view' );
+	const v = makeView( 'request-log:view' );
 	v.fill( controlMsg( { action: 'connection', connectionError: true } ) );
 	expect( v.setStateCache.view.connectionError ).toBe( true );
 } );
 
 test( 'a connectionError:false control clears the published flag', () => {
-	const v = makeView( 'requestlog:view' );
+	const v = makeView( 'request-log:view' );
 	v.fill( controlMsg( { action: 'connection', connectionError: true } ) );
 	v.fill( controlMsg( { action: 'connection', connectionError: false } ) );
 	expect( v.setStateCache.view.connectionError ).toBe( false );
 } );
 
 test( 'an unrelated control leaves connectionError untouched', () => {
-	const v = makeView( 'requestlog:view' );
+	const v = makeView( 'request-log:view' );
 	v.fill( controlMsg( { action: 'connection', connectionError: true } ) );
 	v.fill( controlMsg( { action: 'pause', paused: true } ) );
 	expect( v.setStateCache.view.connectionError ).toBe( true );
 } );
 
 test( 'publishes an initial view model on construction', () => {
-	const v = makeView( 'requestlog:view' );
+	const v = makeView( 'request-log:view' );
 	expect( v.setStateCache.view ).toEqual( {
 		paused: false,
 		connectionError: false,
@@ -278,27 +280,27 @@ test( 'publishes an initial view model on construction', () => {
 } );
 
 test( 'names the node', () => {
-	const v = makeView( 'requestlog:view' );
-	expect( v.name ).toBe( 'requestlog:view' );
+	const v = makeView( 'request-log:view' );
+	expect( v.name ).toBe( 'request-log:view' );
 } );
 
-// Defensive shaping inlined from the dropped requestlog:transform node.
+// Defensive shaping inlined from the dropped request-log:transform node.
 
 test( 'drops a raw envelope whose VALUE has no url (defensive)', () => {
-	const v = makeView( 'requestlog:view' );
+	const v = makeView( 'request-log:view' );
 	v.fill( rowMsg( { rid: 'no-url' } ) );
 	expect( v.lines ).toHaveLength( 0 );
 } );
 
 test( 'drops a raw envelope whose VALUE is not an object', () => {
-	const v = makeView( 'requestlog:view' );
+	const v = makeView( 'request-log:view' );
 	v.fill( rowMsg( 'string' ) );
 	v.fill( rowMsg( [ 1, 2, 3 ] ) );
 	expect( v.lines ).toHaveLength( 0 );
 } );
 
 test( 'carries url whole when appending', () => {
-	const v = makeView( 'requestlog:view' );
+	const v = makeView( 'request-log:view' );
 	const longUrl = 'https://x/' + 'a'.repeat( 5000 );
 	v.fill(
 		rowMsg( {
@@ -313,7 +315,7 @@ test( 'carries url whole when appending', () => {
 } );
 
 test( 'carries user_agent whole when appending', () => {
-	const v = makeView( 'requestlog:view' );
+	const v = makeView( 'request-log:view' );
 	const longUA = 'a'.repeat( 1000 );
 	v.fill(
 		rowMsg( {
@@ -328,7 +330,7 @@ test( 'carries user_agent whole when appending', () => {
 } );
 
 test( 'fills sensible defaults for missing fields on the appended row', () => {
-	const v = makeView( 'requestlog:view' );
+	const v = makeView( 'request-log:view' );
 	v.fill( rowMsg( { url: 'https://x' } ) );
 	expect( v.lines ).toHaveLength( 1 );
 	const e = v.lines[ 0 ];
@@ -344,7 +346,7 @@ test( 'fills sensible defaults for missing fields on the appended row', () => {
 // Seek/live feedback: only meaningful while browsing ONE partition dir, so it is
 // gated on `seekActive` (armed by a `select` control carrying a dir). Distinct
 // values (segments 98/105, offsets 1200) so a silently-dropped change fails loud.
-describe( 'requestlog:view — seek feedback (single-dir browse)', () => {
+describe( 'request-log:view — seek feedback (single-dir browse)', () => {
 	const rowWithId = ( id, overrides = {} ) => {
 		const m = rowMsg( row( overrides ) );
 		m[ ID ] = id;
@@ -352,7 +354,7 @@ describe( 'requestlog:view — seek feedback (single-dir browse)', () => {
 	};
 
 	test( 'does not track breadcrumbs under the glob-live default (seekActive off)', () => {
-		const v = makeView( 'requestlog:view' );
+		const v = makeView( 'request-log:view' );
 		v.fill( rowWithId( '98:0:40' ) );
 		expect( v.seekActive ).toBe( false );
 		expect( v.lastReceivedSegment ).toBe( null );
@@ -360,7 +362,7 @@ describe( 'requestlog:view — seek feedback (single-dir browse)', () => {
 	} );
 
 	test( 'a select control with a dir arms tracking, clears the ring, and follows the segment', () => {
-		const v = makeView( 'requestlog:view' );
+		const v = makeView( 'request-log:view' );
 		v.fill( rowMsg( row( { rid: 'pre-select' } ) ) );
 		v.fill( controlMsg( { action: 'select', dir: 'completed.p4' } ) );
 		expect( v.seekActive ).toBe( true );
@@ -371,7 +373,7 @@ describe( 'requestlog:view — seek feedback (single-dir browse)', () => {
 	} );
 
 	test( 'a select control with an empty dir disarms tracking and resets it', () => {
-		const v = makeView( 'requestlog:view' );
+		const v = makeView( 'request-log:view' );
 		v.fill( controlMsg( { action: 'select', dir: 'completed.p4' } ) );
 		v.fill( rowWithId( '98:0:40' ) );
 		v.fill( controlMsg( { action: 'select', dir: '' } ) );
@@ -382,7 +384,7 @@ describe( 'requestlog:view — seek feedback (single-dir browse)', () => {
 	} );
 
 	test( 'browse enters replay from a clean slate and flips to live at the end', () => {
-		const v = makeView( 'requestlog:view' );
+		const v = makeView( 'request-log:view' );
 		v.fill( controlMsg( { action: 'select', dir: 'completed.p4' } ) );
 		v.fill( rowWithId( '97:0:40', { rid: 'pre-browse' } ) );
 		v.fill(
@@ -400,7 +402,7 @@ describe( 'requestlog:view — seek feedback (single-dir browse)', () => {
 	} );
 
 	test( 'follow returns the view to live', () => {
-		const v = makeView( 'requestlog:view' );
+		const v = makeView( 'request-log:view' );
 		v.fill( controlMsg( { action: 'select', dir: 'completed.p4' } ) );
 		v.fill(
 			controlMsg( { action: 'browse', endSegment: 105, endOffset: 1200 } )
@@ -410,9 +412,9 @@ describe( 'requestlog:view — seek feedback (single-dir browse)', () => {
 	} );
 } );
 
-describe( 'requestlog:view — nodeSchema', () => {
+describe( 'request-log:view — nodeSchema', () => {
 	test( 'is a Hidden, terminal (no output port) node', () => {
-		const schema = makeView( 'requestlog:view' ).constructor.nodeSchema();
+		const schema = makeView( 'request-log:view' ).constructor.nodeSchema();
 		expect( schema.has_target ).toBe( false );
 		expect( schema.category ).toBe( 'Hidden' );
 		expect( typeof schema.description ).toBe( 'string' );

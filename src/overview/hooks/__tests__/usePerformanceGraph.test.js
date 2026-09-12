@@ -3,15 +3,15 @@
  * substrate batched-poll toolkit (useBatchedPoll + addSliceFetcher), D1b.
  *
  * The graph:
- *   perf:timer (Timer) → perf:tee (Tee) → overview:fetch, urls:fetch (Fetchers,
+ *   performance:timer (Timer) → performance:tee (Tee) → overview:fetch, urls:fetch (Fetchers,
  *     each with an argsFn getter reading current React UI state) → _shell/_http/performance
  *   overview:in (Tee) → overview:view (OverviewView)
  *   urls:in     (Tee) → urls:view     (UrlsView)
- *   urldetail:merge (UrlDetailMerge) → urldetail:view (UrlDetailView)   [on-demand]
- *   requestdetail:view (RequestDetailView)                             [on-demand]
+ *   url-detail:transform (UrlDetailMerge) → url-detail:view (UrlDetailView)   [on-demand]
+ *   request-detail:view (RequestDetailView)                             [on-demand]
  *
  * overview + urls are POLLED (on the Timer, live args via the getters);
- * url_detail and request_detail are ON-DEMAND (modal-open → fetch). The verbs a
+ * dump_url and dump_request are ON-DEMAND (modal-open → fetch). The verbs a
  * click drives are NOT here — they live beside the state their replies set, and
  * are covered where they live.
  */
@@ -123,22 +123,32 @@ describe( 'usePerformanceGraph — toolkit wiring', () => {
 		for ( const name of [
 			'overview:view',
 			'urls:view',
-			'urldetail:view',
-			'requestdetail:view',
+			'url-detail:view',
+			'request-detail:view',
 		] ) {
 			const node = Core.node( name );
 			expect( node ).toBeTruthy();
 			expect( node.sink ).toBe( interpreter );
 		}
 		// The urlDetail merge transform sits on the receiver→view edge.
-		expect( Core.node( 'urldetail:merge' ) ).toBeTruthy();
+		expect( Core.node( 'url-detail:transform' ) ).toBeTruthy();
 		// …and the receiver fans back to the Fetcher, which settles the ask.
 		// Without it the refresh asks once and never again: the outbox holds
 		// an ask that nothing answers until the fail-open window.
-		expect( Core.node( 'urldetail:in' ).target ).toEqual( [
-			'urldetail:merge',
-			'urldetail:fetch',
+		expect( Core.node( 'url-detail:in' ).target ).toEqual( [
+			'url-detail:transform',
+			'url-detail:fetch',
 		] );
+		// Every name is `<subject>:<role>`; the old spellings are gone.
+		for ( const name of [
+			'perf:timer',
+			'perf:tee',
+			'urldetail:view',
+			'urldetail:merge',
+			'requestdetail:view',
+		] ) {
+			expect( Core.node( name ) ).toBeNull();
+		}
 	} );
 
 	test( 'builds the on-demand detail nodes through an interpreter that never registered their names', () => {
@@ -157,9 +167,9 @@ describe( 'usePerformanceGraph — toolkit wiring', () => {
 		try {
 			installWire();
 			renderHook( () => usePerformanceGraph() );
-			expect( Core.node( 'urldetail:merge' ) ).toBeTruthy();
-			expect( Core.node( 'urldetail:view' ) ).toBeTruthy();
-			expect( Core.node( 'requestdetail:view' ) ).toBeTruthy();
+			expect( Core.node( 'url-detail:transform' ) ).toBeTruthy();
+			expect( Core.node( 'url-detail:view' ) ).toBeTruthy();
+			expect( Core.node( 'request-detail:view' ) ).toBeTruthy();
 		} finally {
 			Object.assign( CommandInterpreterNode.includeNodes, saved );
 		}
@@ -293,7 +303,7 @@ describe( 'usePerformanceGraph — refresh interval wiring', () => {
 				refreshInterval: '30000',
 			} )
 		);
-		const timer = Core.node( 'perf:timer' );
+		const timer = Core.node( 'performance:timer' );
 		expect( timer.mode ).toBe( 'router' );
 		expect( timer.interval_ms ).toBe( 30000 );
 	} );
@@ -304,19 +314,19 @@ describe( 'usePerformanceGraph — refresh interval wiring', () => {
 			initialProps: { refreshInterval: '5000' },
 		} );
 		await act( async () => {} );
-		expect( Core.node( 'perf:timer' ).interval_ms ).toBe( 5000 );
+		expect( Core.node( 'performance:timer' ).interval_ms ).toBe( 5000 );
 
 		await act( async () => {
 			rerender( { refreshInterval: '60000' } );
 		} );
-		expect( Core.node( 'perf:timer' ).interval_ms ).toBe( 60000 );
+		expect( Core.node( 'performance:timer' ).interval_ms ).toBe( 60000 );
 	} );
 } );
 
-describe( 'usePerformanceGraph — on-demand url_detail / request_detail', () => {
-	test( 'selecting a URL fires url_detail with the hash, routes the reply to urldetail:view', async () => {
+describe( 'usePerformanceGraph — on-demand dump_url / dump_request', () => {
+	test( 'selecting a URL fires dump_url with the hash, routes the reply to url-detail:view', async () => {
 		const wire = installWire( {
-			url_detail: { last_modified: 1, requests: [] },
+			dump_url: { last_modified: 1, requests: [] },
 		} );
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
 			initialProps: {},
@@ -325,24 +335,24 @@ describe( 'usePerformanceGraph — on-demand url_detail / request_detail', () =>
 		await act( async () => {
 			rerender( { selectedUrl: { hash: 'abc' } } );
 		} );
-		const detail = findVerb( wire.batches, 'url_detail' );
+		const detail = findVerb( wire.batches, 'dump_url' );
 		expect( detail ).toBeTruthy();
 		expect(
 			parseCommandArgs( detail[ VALUE ].arguments ).positional[ 0 ]
 		).toBe( 'abc' );
-		const view = Core.node( 'urldetail:view' );
+		const view = Core.node( 'url-detail:view' );
 		expect( view.setStateCache.view.data ).toEqual( {
 			last_modified: 1,
 			requests: [],
 		} );
 	} );
 
-	// The view was BOTH the minter and the reply sink: request_detail went out
-	// FROM `requestdetail:view`, so one node carried two protocols — its own
+	// The view was BOTH the minter and the reply sink: dump_request went out
+	// FROM `request-detail:view`, so one node carried two protocols — its own
 	// controls and a command reply. Every other slice mints from a receiver and
 	// forwards to its view; this one now does too.
-	test( 'request_detail is minted from the receiver, not from the view', async () => {
-		const wire = installWire( { request_detail: { rid: 'r1' } } );
+	test( 'dump_request is minted from the receiver, not from the view', async () => {
+		const wire = installWire( { dump_request: { rid: 'r1' } } );
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
 			initialProps: {},
 		} );
@@ -351,21 +361,21 @@ describe( 'usePerformanceGraph — on-demand url_detail / request_detail', () =>
 			rerender( { selectedRequest: 'r1', requestPartition: 2 } );
 		} );
 
-		const req = findVerb( wire.batches, 'request_detail' );
-		expect( req[ FROM ] ).toBe( 'requestdetail:in' );
-		expect( req[ FROM ] ).not.toBe( 'requestdetail:view' );
+		const req = findVerb( wire.batches, 'dump_request' );
+		expect( req[ FROM ] ).toBe( 'request-detail:in' );
+		expect( req[ FROM ] ).not.toBe( 'request-detail:view' );
 
-		const receiver = Core.node( 'requestdetail:in' );
+		const receiver = Core.node( 'request-detail:in' );
 		expect( receiver ).toBeTruthy();
-		expect( receiver.target ).toContain( 'requestdetail:view' );
+		expect( receiver.target ).toContain( 'request-detail:view' );
 		// The reply still reaches the view, through the receiver.
 		expect(
-			Core.node( 'requestdetail:view' ).setStateCache.view.data
+			Core.node( 'request-detail:view' ).setStateCache.view.data
 		).toEqual( { rid: 'r1' } );
 	} );
 
-	test( 'selecting a request fires request_detail with the partition', async () => {
-		const wire = installWire( { request_detail: { rid: 'r1' } } );
+	test( 'selecting a request fires dump_request with the partition', async () => {
+		const wire = installWire( { dump_request: { rid: 'r1' } } );
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
 			initialProps: {},
 		} );
@@ -376,7 +386,7 @@ describe( 'usePerformanceGraph — on-demand url_detail / request_detail', () =>
 				requestPartition: 2,
 			} );
 		} );
-		const req = findVerb( wire.batches, 'request_detail' );
+		const req = findVerb( wire.batches, 'dump_request' );
 		expect( req ).toBeTruthy();
 		expect(
 			parseCommandArgs( req[ VALUE ].arguments ).options.partition
@@ -443,32 +453,32 @@ describe( 'usePerformanceGraph — handleUrlParamsChange', () => {
 } );
 
 describe( 'usePerformanceGraph — timer suspension on modal open / tab visibility', () => {
-	test( 'pauses perf:timer while a URL detail is open, re-arms when it closes', async () => {
+	test( 'pauses performance:timer while a URL detail is open, re-arms when it closes', async () => {
 		installWire( {
-			url_detail: { last_modified: 1, requests: [] },
+			dump_url: { last_modified: 1, requests: [] },
 		} );
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
 			initialProps: {},
 		} );
 		await act( async () => {} );
-		expect( Core.node( 'perf:timer' ).mode ).toBe( 'router' );
+		expect( Core.node( 'performance:timer' ).mode ).toBe( 'router' );
 
 		// Open the URL detail modal — the overview/urls poll must suspend.
 		await act( async () => {
 			rerender( { selectedUrl: { hash: 'abc' } } );
 		} );
-		expect( Core.node( 'perf:timer' ).mode ).toBe( 'inactive' );
+		expect( Core.node( 'performance:timer' ).mode ).toBe( 'inactive' );
 
 		// Close it — the overview/urls poll resumes.
 		await act( async () => {
 			rerender( { selectedUrl: null } );
 		} );
-		expect( Core.node( 'perf:timer' ).mode ).toBe( 'router' );
+		expect( Core.node( 'performance:timer' ).mode ).toBe( 'router' );
 	} );
 
-	test( 'url_detail auto-refresh rides a urldetail:timer + urldetail:fetch Fetcher (a router tick re-fires url_detail with the hash)', async () => {
+	test( 'dump_url auto-refresh rides a url-detail:timer + url-detail:fetch Fetcher (a router tick re-fires dump_url with the hash)', async () => {
 		const wire = installWire( {
-			url_detail: { last_modified: 1, requests: [] },
+			dump_url: { last_modified: 1, requests: [] },
 		} );
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
 			initialProps: { refreshInterval: '0' },
@@ -481,15 +491,15 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 			} );
 		} );
 		// On-demand slice runs on a real Timer + Fetcher, not setInterval.
-		expect( Core.node( 'urldetail:timer' ) ).toBeTruthy();
-		expect( Core.node( 'urldetail:timer' ).mode ).toBe( 'router' );
-		expect( Core.node( 'urldetail:fetch' ) ).toBeTruthy();
+		expect( Core.node( 'url-detail:timer' ) ).toBeTruthy();
+		expect( Core.node( 'url-detail:timer' ).mode ).toBe( 'router' );
+		expect( Core.node( 'url-detail:fetch' ) ).toBeTruthy();
 
 		wire.batches.length = 0;
 		await act( async () => {
 			Core.node( ROUTER ).fireCb();
 		} );
-		const detail = findVerb( wire.batches, 'url_detail' );
+		const detail = findVerb( wire.batches, 'dump_url' );
 		expect( detail ).toBeTruthy();
 		expect(
 			parseCommandArgs( detail[ VALUE ].arguments ).positional[ 0 ]
@@ -504,7 +514,7 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 	 */
 	test( 'the refresh tick sends --since from the merge, the open fetch does not', async () => {
 		const wire = installWire( {
-			url_detail: {
+			dump_url: {
 				last_modified: 1,
 				requests: [ { rid: 'a', timestamp: 1787000900 } ],
 			},
@@ -521,7 +531,7 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 		} );
 
 		// The open fetch reads the whole window.
-		const opened = findVerb( wire.batches, 'url_detail' );
+		const opened = findVerb( wire.batches, 'dump_url' );
 		expect(
 			parseCommandArgs( opened[ VALUE ].arguments ).options.since
 		).toBeUndefined();
@@ -531,16 +541,16 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 		await act( async () => {
 			Core.node( ROUTER ).fireCb();
 		} );
-		const refreshed = findVerb( wire.batches, 'url_detail' );
+		const refreshed = findVerb( wire.batches, 'dump_url' );
 		expect(
 			parseCommandArgs( refreshed[ VALUE ].arguments ).options.since
 		).toBe( '1787000900' );
 	} );
 
-	test( 'stops the urldetail:timer when a request detail opens, re-arms when it closes', async () => {
+	test( 'stops the url-detail:timer when a request detail opens, re-arms when it closes', async () => {
 		installWire( {
-			url_detail: { last_modified: 1, requests: [] },
-			request_detail: { rid: 'r1' },
+			dump_url: { last_modified: 1, requests: [] },
+			dump_request: { rid: 'r1' },
 		} );
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
 			initialProps: {},
@@ -549,9 +559,9 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 		await act( async () => {
 			rerender( { selectedUrl: { hash: 'abc' } } );
 		} );
-		expect( Core.node( 'urldetail:timer' ).mode ).toBe( 'router' );
+		expect( Core.node( 'url-detail:timer' ).mode ).toBe( 'router' );
 
-		// Drill into a request — the url_detail poll must stop.
+		// Drill into a request — the dump_url poll must stop.
 		await act( async () => {
 			rerender( {
 				selectedUrl: { hash: 'abc' },
@@ -559,21 +569,21 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 				requestPartition: 0,
 			} );
 		} );
-		expect( Core.node( 'urldetail:timer' ).mode ).toBe( 'inactive' );
+		expect( Core.node( 'url-detail:timer' ).mode ).toBe( 'inactive' );
 
-		// Back out to the URL detail — the url_detail poll resumes.
+		// Back out to the URL detail — the dump_url poll resumes.
 		await act( async () => {
 			rerender( {
 				selectedUrl: { hash: 'abc' },
 				selectedRequest: null,
 			} );
 		} );
-		expect( Core.node( 'urldetail:timer' ).mode ).toBe( 'router' );
+		expect( Core.node( 'url-detail:timer' ).mode ).toBe( 'router' );
 	} );
 
-	test( 'closing the last detail modal immediately re-fetches overview + urls (perf:timer was paused)', async () => {
+	test( 'closing the last detail modal immediately re-fetches overview + urls (performance:timer was paused)', async () => {
 		const wire = installWire( {
-			url_detail: { last_modified: 1, requests: [] },
+			dump_url: { last_modified: 1, requests: [] },
 		} );
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
 			initialProps: {},
@@ -593,9 +603,9 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 		expect( findVerb( wire.batches, 'urls' ) ).toBeTruthy();
 	} );
 
-	test( 'a hidden tab stops the urldetail:timer; returning to visible re-arms it', async () => {
+	test( 'a hidden tab stops the url-detail:timer; returning to visible re-arms it', async () => {
 		installWire( {
-			url_detail: { last_modified: 1, requests: [] },
+			dump_url: { last_modified: 1, requests: [] },
 		} );
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
 			initialProps: {},
@@ -604,13 +614,13 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 		await act( async () => {
 			rerender( { selectedUrl: { hash: 'abc' } } );
 		} );
-		expect( Core.node( 'urldetail:timer' ).mode ).toBe( 'router' );
+		expect( Core.node( 'url-detail:timer' ).mode ).toBe( 'router' );
 
 		await act( async () => setVisibility( 'hidden' ) );
-		expect( Core.node( 'urldetail:timer' ).mode ).toBe( 'inactive' );
+		expect( Core.node( 'url-detail:timer' ).mode ).toBe( 'inactive' );
 
 		await act( async () => setVisibility( 'visible' ) );
-		expect( Core.node( 'urldetail:timer' ).mode ).toBe( 'router' );
+		expect( Core.node( 'url-detail:timer' ).mode ).toBe( 'router' );
 	} );
 } );
 
@@ -623,8 +633,8 @@ describe( 'usePerformanceGraph — teardown', () => {
 			HTTP,
 			'overview:view',
 			'urls:view',
-			'urldetail:view',
-			'requestdetail:view',
+			'url-detail:view',
+			'request-detail:view',
 			INTERPRETER,
 		] ) {
 			expect( Core.node( name ) ).toBeNull();
@@ -663,12 +673,12 @@ describe( 'usePerformanceGraph — overview/urls arg edge cases', () => {
 		).toBe( 'server' );
 	} );
 
-	test( 'the selected server is emitted in the url_detail args', async () => {
+	test( 'the selected server is emitted in the dump_url args', async () => {
 		// The modal opens from a row the server filter scoped, so it has to ask
 		// the same question — otherwise one click puts the site's average under
 		// that row's count.
 		const wire = installWire( {
-			url_detail: { last_modified: 1, requests: [] },
+			dump_url: { last_modified: 1, requests: [] },
 		} );
 		renderHook( () =>
 			usePerformanceGraph( {
@@ -677,7 +687,7 @@ describe( 'usePerformanceGraph — overview/urls arg edge cases', () => {
 			} )
 		);
 		await act( async () => {} );
-		const detail = findVerb( wire.batches, 'url_detail' );
+		const detail = findVerb( wire.batches, 'dump_url' );
 		expect(
 			parseCommandArgs( detail[ VALUE ].arguments ).options.server
 		).toBe( 'alpha.example' );
@@ -766,25 +776,25 @@ describe( 'usePerformanceGraph — overview/urls arg edge cases', () => {
 } );
 
 describe( 'usePerformanceGraph — invalid selection guards', () => {
-	test( 'an invalid URL hash sends no url_detail command', async () => {
+	test( 'an invalid URL hash sends no dump_url command', async () => {
 		const wire = installWire();
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
 			initialProps: {},
 		} );
 		await act( async () => {} );
-		const before = countVerbs( wire.batches, 'url_detail' );
+		const before = countVerbs( wire.batches, 'dump_url' );
 		await act( async () => {
 			rerender( {
 				selectedUrl: { hash: 'NOT-HEX!' },
 			} );
 		} );
-		expect( countVerbs( wire.batches, 'url_detail' ) ).toBe( before );
-		expect( Core.node( 'urldetail:view' ).setStateCache.view.error ).toBe(
+		expect( countVerbs( wire.batches, 'dump_url' ) ).toBe( before );
+		expect( Core.node( 'url-detail:view' ).setStateCache.view.error ).toBe(
 			'Invalid URL hash format'
 		);
 	} );
 
-	test( 'an invalid request id sends no request_detail command', async () => {
+	test( 'an invalid request id sends no dump_request command', async () => {
 		const wire = installWire();
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
 			initialProps: {},
@@ -795,16 +805,16 @@ describe( 'usePerformanceGraph — invalid selection guards', () => {
 				selectedRequest: 'bad id!',
 			} );
 		} );
-		expect( findVerb( wire.batches, 'request_detail' ) ).toBeNull();
+		expect( findVerb( wire.batches, 'dump_request' ) ).toBeNull();
 		expect(
-			Core.node( 'requestdetail:view' ).setStateCache.view.error
+			Core.node( 'request-detail:view' ).setStateCache.view.error
 		).toBe( 'Invalid request ID format' );
 	} );
 
 	test( 'an unresolved partition reports an error instead of doing nothing', async () => {
 		// Silence here was the whole bug: no fetch, no loading state, no error,
 		// so the modal rendered neither the request nor the URL sections.
-		const wire = installWire( { request_detail: { rid: 'r1' } } );
+		const wire = installWire( { dump_request: { rid: 'r1' } } );
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
 			initialProps: {},
 		} );
@@ -813,14 +823,14 @@ describe( 'usePerformanceGraph — invalid selection guards', () => {
 			rerender( { selectedRequest: 'r1', requestPartition: null } );
 		} );
 
-		expect( findVerb( wire.batches, 'request_detail' ) ).toBeNull();
-		expect( Core.node( 'requestdetail:view' ).model.error ).toBeTruthy();
+		expect( findVerb( wire.batches, 'dump_request' ) ).toBeNull();
+		expect( Core.node( 'request-detail:view' ).model.error ).toBeTruthy();
 	} );
 
 	test( 'never reconstructs the partition from the recent-request window', async () => {
 		// That window is a page of recent requests, not a source of truth about
 		// one request: a deep link to an older rid simply is not in it.
-		const wire = installWire( { request_detail: { rid: 'r1' } } );
+		const wire = installWire( { dump_request: { rid: 'r1' } } );
 		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
 			initialProps: {},
 		} );
@@ -833,7 +843,7 @@ describe( 'usePerformanceGraph — invalid selection guards', () => {
 			} );
 		} );
 
-		expect( findVerb( wire.batches, 'request_detail' ) ).toBeNull();
+		expect( findVerb( wire.batches, 'dump_request' ) ).toBeNull();
 	} );
 } );
 
@@ -843,9 +853,9 @@ describe( 'usePerformanceGraph — control origins', () => {
 		for ( const name of [
 			'overview:view',
 			'urls:view',
-			'urldetail:view',
-			'urldetail:merge',
-			'requestdetail:view',
+			'url-detail:view',
+			'url-detail:transform',
+			'request-detail:view',
 		] ) {
 			expect( Core.node( name ).controlFrom ).toBe( name );
 		}
@@ -858,11 +868,11 @@ describe( 'usePerformanceGraph — control origins', () => {
 				selectedUrl,
 			} )
 		);
-		const view = Core.node( 'urldetail:view' );
+		const view = Core.node( 'url-detail:view' );
 		// Drive it the way the graph does: a reply, not a method call.
 		const landed = newMessage();
 		landed[ VALUE ] = {
-			name: 'url_detail',
+			name: 'dump_url',
 			payload: { last_modified: 9, requests: [ { rid: 'a' } ] },
 		};
 		view.fill( landed );

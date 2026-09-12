@@ -4,8 +4,8 @@
  *
  * `usePerformanceGraph` mounts the graph and owns every fetch; this component
  * owns none. The graph publishes its data through FOUR independent per-slice
- * view nodes — `overview:view`, `urls:view`, `urldetail:view`,
- * `requestdetail:view`. This component reads each slice with its own
+ * view nodes — `overview:view`, `urls:view`, `url-detail:view`,
+ * `request-detail:view`. This component reads each slice with its own
  * `useNodeState`, derives the render-time values, and hands the URL table's
  * paging back through `handleUrlParamsChange`, the one callback the hook
  * returns.
@@ -129,7 +129,7 @@ export default function PerformanceDashboard( { onError } ) {
 	const [ searchQuery, setSearchQuery ] = useState( '' );
 	const [ searchError, setSearchError ] = useState( null );
 	const [ searchLoading, setSearchLoading ] = useState( false );
-	// request_grep result rows, and whether the server capped them.
+	// grep_requests result rows, and whether the server capped them.
 	const [ searchResults, setSearchResults ] = useState( null );
 	const [ searchResultsTruncated, setSearchResultsTruncated ] =
 		useState( false );
@@ -153,8 +153,8 @@ export default function PerformanceDashboard( { onError } ) {
 	// Read each slice from its own per-slice view node (null until mounted).
 	const overviewSlice = useNodeState( 'overview:view', 'view' );
 	const urlsSlice = useNodeState( 'urls:view', 'view' );
-	const urlDetailSlice = useNodeState( 'urldetail:view', 'view' );
-	const requestDetailSlice = useNodeState( 'requestdetail:view', 'view' );
+	const urlDetailSlice = useNodeState( 'url-detail:view', 'view' );
+	const requestDetailSlice = useNodeState( 'request-detail:view', 'view' );
 
 	const overview = overviewSlice?.data ?? null;
 	const urls = useMemo( () => urlsSlice?.data ?? [], [ urlsSlice?.data ] );
@@ -266,7 +266,7 @@ export default function PerformanceDashboard( { onError } ) {
 	} );
 
 	// @longform One picker, several doors. Live scope, like every other FETCH:
-	// `urls` and `url_detail` both ask for what is selected now, and a brief
+	// `urls` and `dump_url` both ask for what is selected now, and a brief
 	// assembled for the previous one would contradict the modal it was asked
 	// from. The echoed `urlFilters` labels what is on screen, never steers.
 	const ask = useAsk( { onError, serverFilter } );
@@ -338,7 +338,7 @@ export default function PerformanceDashboard( { onError } ) {
 	}, [] );
 
 	/**
-	 * Ask `url_detail` for the title of a hash the loaded catalog page does not
+	 * Ask `dump_url` for the title of a hash the loaded catalog page does not
 	 * carry.
 	 *
 	 * A hash becomes a title in two steps that need no pairing: select what is
@@ -347,8 +347,8 @@ export default function PerformanceDashboard( { onError } ) {
 	 */
 	const { run: lookupUrl } = useCommandOnce( {
 		ci: SERVER,
-		command: 'url_detail',
-		scope: `${ SERVER }:url_detail:lookup`,
+		command: 'dump_url',
+		scope: 'url-lookup',
 		retry: true,
 		onDone: ( { result, args } ) => {
 			const url = result?.stats?.url;
@@ -366,7 +366,7 @@ export default function PerformanceDashboard( { onError } ) {
 	 * title fill in when `lookupUrl` answers.
 	 *
 	 * @param {string} rid  The request id that was found.
-	 * @param {Object} data The `request_search` reply, carrying `url_hash` and
+	 * @param {Object} data The `search_requests` reply, carrying `url_hash` and
 	 *                      `partition`.
 	 */
 	const applyFoundRequest = useCallback(
@@ -375,7 +375,7 @@ export default function PerformanceDashboard( { onError } ) {
 				( u ) => u.hash === data.url_hash
 			);
 			// @longform A rid names ONE request; the server filter is a
-			// browsing scope, and `url_detail` honours it. A search landing
+			// browsing scope, and `dump_url` honours it. A search landing
 			// outside it would ask for a row the scope excludes and answer
 			// "URL not found" for a URL plainly on screen. The navigation
 			// wins, and the select resets so nothing is hidden.
@@ -393,7 +393,7 @@ export default function PerformanceDashboard( { onError } ) {
 	);
 
 	/**
-	 * Whether a `request_search` reply located the request.
+	 * Whether a `search_requests` reply located the request.
 	 *
 	 * @param {?Object} data The reply payload.
 	 * @return {boolean} True when it carries both a URL hash and a partition.
@@ -410,8 +410,8 @@ export default function PerformanceDashboard( { onError } ) {
 	 */
 	const { run: askDeepLinkRequest } = useCommandOnce( {
 		ci: SERVER,
-		command: 'request_search',
-		scope: `${ SERVER }:request_search:deeplink`,
+		command: 'search_requests',
+		scope: 'request-deeplink',
 		retry: true,
 		onDone: ( { result, args } ) => {
 			if ( deepLinkRef.current.requestId !== args[ 0 ] ) {
@@ -433,8 +433,8 @@ export default function PerformanceDashboard( { onError } ) {
 	 */
 	const { run: askDeepLinkUrl } = useCommandOnce( {
 		ci: SERVER,
-		command: 'url_detail',
-		scope: `${ SERVER }:url_detail:deeplink`,
+		command: 'dump_url',
+		scope: 'url-deeplink',
 		retry: true,
 		onDone: ( { result, args } ) => {
 			if ( deepLinkRef.current.urlHash !== args[ 0 ] ) {
@@ -475,8 +475,8 @@ export default function PerformanceDashboard( { onError } ) {
 	 */
 	const { run: searchForRequest } = useCommandOnce( {
 		ci: SERVER,
-		command: 'request_search',
-		scope: `${ SERVER }:request_search:search`,
+		command: 'search_requests',
+		scope: 'request-search',
 		onDone: ( { result, args } ) => {
 			setSearchLoading( false );
 			if ( ! found( result ) ) {
@@ -528,7 +528,7 @@ export default function PerformanceDashboard( { onError } ) {
 	 */
 	const { run: requestGrep } = useCommandOnce( {
 		ci: SERVER,
-		command: 'request_grep',
+		command: 'grep_requests',
 		// A search pattern is free text the operator typed, not an identity.
 		subjectOf: () => null,
 		onDone: ( { result, error } ) => {
@@ -595,7 +595,7 @@ export default function PerformanceDashboard( { onError } ) {
 	/**
 	 * Open a pattern-search result by re-running the exact-rid path. A grep row
 	 * carries the rid alone, and the URL hash and partition the modal needs come
-	 * only from `request_search`.
+	 * only from `search_requests`.
 	 *
 	 * @param {string} rid The request id of the clicked row.
 	 */
@@ -612,7 +612,7 @@ export default function PerformanceDashboard( { onError } ) {
 	 * The URL's requests in the order the modal's table shows them.
 	 *
 	 * Sorting happens here rather than on the server because the modal already
-	 * holds the rows `url_detail` returned, so a column click costs no fetch. A
+	 * holds the rows `dump_url` returned, so a column click costs no fetch. A
 	 * row missing the sort field counts as 0 and still takes a position.
 	 */
 	const sortedRequests = useMemo( () => {
@@ -696,9 +696,9 @@ export default function PerformanceDashboard( { onError } ) {
 	 * the answer on every render rather than copied into state, so the button's
 	 * label and the draft it opens always agree with the ruleset last read.
 	 */
-	const { run: listRules } = useCommandOnce( {
+	const { run: dumpRules } = useCommandOnce( {
 		ci: RULES_CI,
-		command: 'list',
+		command: 'dump',
 		retry: true,
 		onDone: ( { result } ) => setRules( result?.rules ?? null ),
 	} );
@@ -712,9 +712,9 @@ export default function PerformanceDashboard( { onError } ) {
 		setRuleError( null );
 		setRuleDraft( null );
 		if ( canLogUrl && ! selectedRequest ) {
-			listRules( [] );
+			dumpRules( [] );
 		}
-	}, [ ruleUrl, exactPattern, canLogUrl, selectedRequest, listRules ] );
+	}, [ ruleUrl, exactPattern, canLogUrl, selectedRequest, dumpRules ] );
 
 	/**
 	 * Open `RuleEditModal` on the exact rule for this URL, or on a blank draft
@@ -746,7 +746,7 @@ export default function PerformanceDashboard( { onError } ) {
 		onDone: ( { result, error } ) => {
 			setRuleDraft( null );
 			if ( result ) {
-				listRules( [] );
+				dumpRules( [] );
 				return;
 			}
 			setRuleError(
@@ -777,7 +777,7 @@ export default function PerformanceDashboard( { onError } ) {
 		onDone: ( { result, error } ) => {
 			setRuleDraft( null );
 			if ( result ) {
-				listRules( [] );
+				dumpRules( [] );
 				return;
 			}
 			setRuleError(

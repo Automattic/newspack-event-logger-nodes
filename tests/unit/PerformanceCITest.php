@@ -8,11 +8,11 @@
  *                     PerfOverviewController::get_overview).
  *   urls            — paginated/sortable URL list (lifted from
  *                     PerfUrlsController::get_urls).
- *   url_detail      — single-URL detail including aggregate flame data
+ *   dump_url      — single-URL detail including aggregate flame data
  *                     (lifted from PerfUrlsController::get_url_detail).
- *   request_search  — locate a request by rid across partitions (lifted from
+ *   search_requests  — locate a request by rid across partitions (lifted from
  *                     PerfRequestsController::search_request).
- *   request_detail  — full request + flame data for a rid; its partition is a
+ *   dump_request  — full request + flame data for a rid; its partition is a
  *                     search-order hint (lifted from
  *                     PerfRequestsController::get_request).
  *
@@ -666,7 +666,7 @@ class PerformanceCITest extends TestCase {
 		$result = VerbHarness::fire(
 			new Performance_CI_Node(),
 			'performance',
-			'url_detail',
+			'dump_url',
 			$hash
 		);
 
@@ -681,21 +681,21 @@ class PerformanceCITest extends TestCase {
 	 * so a name carrying a newline reaches a protocol-oriented sink — the same
 	 * defect as the substrate's `HANDLER_NAME_PATTERN`, on a different gate.
 	 */
-	public function test_url_detail_refuses_a_hash_with_a_trailing_newline(): void {
+	public function test_dump_url_refuses_a_hash_with_a_trailing_newline(): void {
 		// An explicit token array: the harness whitespace-SPLITS a string arg,
 		// which would eat the newline before the gate ever sees it.
-		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'url_detail', [ "a1b2c3d4\n" ] );
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', [ "a1b2c3d4\n" ] );
 
 		$this->assertSame( "invalid hash format\n", $result );
 	}
 
 	/**
-	 * `url_detail` asks about ONE URL, and one URL lives in exactly one shard —
+	 * `dump_url` asks about ONE URL, and one URL lives in exactly one shard —
 	 * `Stats_Store::url_shard()` is the first hex digit of its hash. Reaching it
 	 * through the whole merged index made the modal pay the URL TABLE's fan-out:
 	 * on the staging hub that is 18,432 keys and 54 MB to answer about one row.
 	 */
-	public function test_url_detail_reads_only_the_shard_its_hash_names(): void {
+	public function test_dump_url_reads_only_the_shard_its_hash_names(): void {
 		$memd  = Core::$memd;
 		$store = new Stats_Store( 0, 86400 );
 		// Two rows, deliberately in DIFFERENT shards: the first hex digit is
@@ -708,7 +708,7 @@ class PerformanceCITest extends TestCase {
 		$result           = VerbHarness::fire(
 			new Performance_CI_Node(),
 			'performance',
-			'url_detail',
+			'dump_url',
 			'a4471ab0c0de'
 		);
 		$one_shard = $memd->multi_keys;
@@ -727,7 +727,7 @@ class PerformanceCITest extends TestCase {
 		$this->assertLessThanOrEqual(
 			(int) ( $memd->multi_keys / Stats_Store::URL_SHARDS ) + 2,
 			$one_shard,
-			'url_detail must point-read the hash\'s shard, not the whole index'
+			'dump_url must point-read the hash\'s shard, not the whole index'
 		);
 	}
 
@@ -753,7 +753,7 @@ class PerformanceCITest extends TestCase {
 		$table = $memd->multi_keys;
 		Core::cleanup_all_nodes();
 		$memd->multi_keys = 0;
-		$detail           = VerbHarness::fire( $node, 'performance', 'url_detail', 'a4471ab0c0de' );
+		$detail           = VerbHarness::fire( $node, 'performance', 'dump_url', 'a4471ab0c0de' );
 		$modal            = $memd->multi_keys;
 
 		$this->assertSame( '/wombat-4471', $detail['stats']['url'] );
@@ -941,8 +941,8 @@ class PerformanceCITest extends TestCase {
 		);
 	}
 
-	public function test_url_detail_returns_recent_matching_requests(): void {
-		// url_detail's `requests` slice walks requests.log for entries whose
+	public function test_dump_url_returns_recent_matching_requests(): void {
+		// dump_url's `requests` slice walks requests.log for entries whose
 		// url_hash matches. Seed the URL in the memcache index AND two on-disk
 		// requests so the collect + dedup walk runs (not the empty-result skip).
 		// Timestamps ride the clock: the walk stops at the retention floor, so a
@@ -975,7 +975,7 @@ class PerformanceCITest extends TestCase {
 		] );
 
 		$interpreter = new Performance_CI_Node();
-		$result      = VerbHarness::fire( $interpreter, 'performance', 'url_detail', $hash );
+		$result      = VerbHarness::fire( $interpreter, 'performance', 'dump_url', $hash );
 
 		$this->assertCount( 2, $result['requests'] );
 		// Sorted by timestamp DESC → the newest (b) leads.
@@ -994,7 +994,7 @@ class PerformanceCITest extends TestCase {
 	 * them, so they never come back — on a URL that IS the long-running one, an
 	 * import or a cron endpoint, that is every poll.
 	 */
-	public function test_url_detail_since_stops_on_completion_not_start(): void {
+	public function test_dump_url_since_stops_on_completion_not_start(): void {
 		$url   = '/long-running';
 		$hash  = Log_Manager::url_hash( $url );
 		$now   = \time();
@@ -1027,7 +1027,7 @@ class PerformanceCITest extends TestCase {
 		$result = VerbHarness::fire(
 			new Performance_CI_Node(),
 			'performance',
-			'url_detail',
+			'dump_url',
 			[ $hash, '--since=' . ( $now - 450 ) ]
 		);
 		$rids = \array_column( $result['requests'], 'rid' );
@@ -1044,7 +1044,7 @@ class PerformanceCITest extends TestCase {
 		);
 	}
 
-	public function test_url_detail_since_still_reads_later_partitions(): void {
+	public function test_dump_url_since_still_reads_later_partitions(): void {
 		$this->activate_shipped_topology( 'performance', 2 );
 		$url   = '/two-partitions';
 		$hash  = Log_Manager::url_hash( $url );
@@ -1076,7 +1076,7 @@ class PerformanceCITest extends TestCase {
 		$result = VerbHarness::fire(
 			new Performance_CI_Node(),
 			'performance',
-			'url_detail',
+			'dump_url',
 			[ $hash, '--since=' . ( $now - 450 ) ]
 		);
 
@@ -1087,7 +1087,7 @@ class PerformanceCITest extends TestCase {
 		);
 	}
 
-	public function test_url_detail_reports_a_scan_that_stopped_before_reaching_the_url(): void {
+	public function test_dump_url_reports_a_scan_that_stopped_before_reaching_the_url(): void {
 		// A low-traffic URL among high-traffic neighbours: the index walk spends
 		// its whole entry budget on the newer lines and never reaches the one
 		// matching entry. An empty list then says "no requests", which is a lie
@@ -1118,13 +1118,13 @@ class PerformanceCITest extends TestCase {
 			FILE_APPEND | LOCK_EX
 		);
 
-		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'url_detail', $hash );
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', $hash );
 
 		$this->assertSame( [], $result['requests'], 'the budget ran out before the matching entry' );
 		$this->assertTrue( $result['scan_stopped_early'], 'a stopped scan is not an empty result' );
 	}
 
-	public function test_url_detail_calls_a_full_request_list_complete_not_truncated(): void {
+	public function test_dump_url_calls_a_full_request_list_complete_not_truncated(): void {
 		// The per-URL cap ends the walk with the answer in hand; only the entry
 		// budget running out is truncation. Seeding one past the cap proves the
 		// early exit is not reported as a stopped scan.
@@ -1148,7 +1148,7 @@ class PerformanceCITest extends TestCase {
 			] );
 		}
 
-		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'url_detail', $hash );
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', $hash );
 
 		$this->assertCount( $limit, $result['requests'] );
 		$this->assertFalse( $result['scan_stopped_early'], 'reaching the per-URL cap is a complete answer' );
@@ -1181,7 +1181,7 @@ class PerformanceCITest extends TestCase {
 		\clearstatcache( true, $path );
 	}
 
-	public function test_url_detail_names_the_window_its_request_list_was_drawn_from(): void {
+	public function test_dump_url_names_the_window_its_request_list_was_drawn_from(): void {
 		// The list stops at the window, so an empty one is only empty OF that
 		// window — a reply that does not say which reads as the site's whole
 		// record. The number is the walk's own floor, not a rounded hour.
@@ -1193,7 +1193,7 @@ class PerformanceCITest extends TestCase {
 			$hash => [ 'url' => $url, 'count' => 1, 'sum_ms' => 47.0, 'last_seen' => $now - 62 ],
 		] );
 
-		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'url_detail', $hash );
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', $hash );
 
 		$this->assertSame(
 			Stats_Store::window_start( self::SCAN_RETENTION, $now ),
@@ -1236,7 +1236,7 @@ class PerformanceCITest extends TestCase {
 		] );
 		$this->close_segment_index( 60 );
 
-		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'url_detail', $hash );
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', $hash );
 
 		$this->assertCount( 1, $result['requests'], 'a start time outside the window is not an ending' );
 		$this->assertSame( 'rid-inside-the-window-771300000', $result['requests'][0]['rid'] );
@@ -1274,7 +1274,7 @@ class PerformanceCITest extends TestCase {
 		] );
 		$this->close_segment_index( 8000 );
 
-		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'url_detail', $hash );
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', $hash );
 
 		$this->assertSame( [], $result['requests'], 'the walk read past the retention edge' );
 		$this->assertFalse( $result['scan_stopped_early'], 'the retention edge is not a spent budget' );
@@ -1311,7 +1311,7 @@ class PerformanceCITest extends TestCase {
 			'request_method' => 'GET',
 		] );
 
-		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'url_detail', $hash );
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', $hash );
 
 		$this->assertCount( 1, $result['requests'], 'arrival order is no ordering of completions' );
 		$this->assertSame( 'rid-live-traffic-4471000000000', $result['requests'][0]['rid'] );
@@ -1345,7 +1345,7 @@ class PerformanceCITest extends TestCase {
 		);
 		$this->close_segment_index( 8000 );
 
-		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'url_detail', $hash );
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', $hash );
 
 		$this->assertCount( 1, $result['requests'], 'an unreadable time is no completion' );
 	}
@@ -1372,7 +1372,7 @@ class PerformanceCITest extends TestCase {
 		] );
 		\file_put_contents( $this->tmp . '/logs/requests.p0/0.idx', "zz\n", FILE_APPEND | LOCK_EX );
 
-		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'url_detail', $hash );
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', $hash );
 
 		$this->assertCount( 1, $result['requests'], 'a malformed line is no retention edge' );
 	}
@@ -1398,7 +1398,7 @@ class PerformanceCITest extends TestCase {
 			] );
 		}
 
-		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'url_detail', $hash );
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', $hash );
 
 		$this->assertCount( 3, $result['requests'] );
 		$this->assertFalse( $result['scan_stopped_early'] );
@@ -1423,7 +1423,7 @@ class PerformanceCITest extends TestCase {
 			FILE_APPEND | LOCK_EX
 		);
 
-		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'url_detail', $hash );
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', $hash );
 
 		$this->assertSame( [], $result['requests'], 'a short line is no entry, whatever its first 44 bytes read' );
 		$this->assertFalse( $result['scan_stopped_early'] );
@@ -1447,26 +1447,26 @@ class PerformanceCITest extends TestCase {
 			'flame' => [ 'name' => 'right', 'value' => 41, 'children' => [] ],
 		] );
 
-		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'request_detail', $rid );
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_request', $rid );
 
 		$this->assertSame( 'right', $result['flame_data']['flame']['name'] );
 	}
 
-	public function test_request_search_names_a_spent_budget_rather_than_a_missing_rid(): void {
+	public function test_search_requests_names_a_spent_budget_rather_than_a_missing_rid(): void {
 		// An incomplete search reported as a definite negative sends an
 		// operator after a retention bug that does not exist.
 		$this->fill_request_index_past_the_budget();
 
-		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'request_search', 'rid-never-reached-6f21' );
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'search_requests', 'rid-never-reached-6f21' );
 
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'budget spent', \strtolower( $result ) );
 	}
 
-	public function test_request_detail_names_a_spent_budget_rather_than_a_missing_rid(): void {
+	public function test_dump_request_names_a_spent_budget_rather_than_a_missing_rid(): void {
 		$this->fill_request_index_past_the_budget();
 
-		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'request_detail', 'rid-never-reached-8c04' );
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_request', 'rid-never-reached-8c04' );
 
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'budget spent', \strtolower( $result ) );
@@ -1694,7 +1694,7 @@ class PerformanceCITest extends TestCase {
 		$this->assertEqualsWithDelta( 250.0, $result['stats']['avg_ms'], 1e-6 );
 	}
 
-	public function test_url_detail_scopes_to_the_selected_server(): void {
+	public function test_dump_url_scopes_to_the_selected_server(): void {
 		// The row that opens this modal is the selected server's; the modal has
 		// to answer for the same server, or one click turns a scoped table into
 		// a site-wide average under the same URL and the same instant, on two
@@ -1711,7 +1711,7 @@ class PerformanceCITest extends TestCase {
 		$result = VerbHarness::fire(
 			new Performance_CI_Node(),
 			'performance',
-			'url_detail',
+			'dump_url',
 			'cccccccccccc --server=alpha.example'
 		);
 
@@ -1943,17 +1943,17 @@ class PerformanceCITest extends TestCase {
 	}
 
 	// -------------------------------------------------------------------------
-	// url_detail verb
+	// dump_url verb
 	// -------------------------------------------------------------------------
 
-	public function test_url_detail_verb_rejects_invalid_hash(): void {
+	public function test_dump_url_verb_rejects_invalid_hash(): void {
 		// Legacy `get_url_detail` returns invalid_hash 400 when hash regex fails.
 		// We surface that as a verb error string (interpreter errors are string-encoded).
 		$interpreter     = new Performance_CI_Node();
 		$result = VerbHarness::fire(
 			$interpreter,
 			'performance',
-			'url_detail',
+			'dump_url',
 			'not-a-hash'
 		);
 
@@ -1961,14 +1961,14 @@ class PerformanceCITest extends TestCase {
 		$this->assertStringContainsString( 'invalid', \strtolower( $result ) );
 	}
 
-	public function test_url_detail_verb_returns_not_found_when_unknown_hash(): void {
+	public function test_dump_url_verb_returns_not_found_when_unknown_hash(): void {
 		// Hash matches the regex but doesn't exist in the URL index — legacy
 		// surfaces a 404 with "URL not found".
 		$interpreter     = new Performance_CI_Node();
 		$result = VerbHarness::fire(
 			$interpreter,
 			'performance',
-			'url_detail',
+			'dump_url',
 			'deadbeefcafe'
 		);
 
@@ -1978,7 +1978,7 @@ class PerformanceCITest extends TestCase {
 
 	public function test_the_other_row_is_marked_as_an_aggregate(): void {
 		// It stands for many URLs, so it is not one: its key is not a url_hash
-		// and `url_detail` cannot answer for it. The row says so rather than
+		// and `dump_url` cannot answer for it. The row says so rather than
 		// leaving the table to offer a link that errors.
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
@@ -2282,7 +2282,7 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( 10, $result['totals']['requests'] );
 	}
 
-	public function test_url_detail_verb_returns_stats_and_default_flame(): void {
+	public function test_dump_url_verb_returns_stats_and_default_flame(): void {
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
 		$this->set_url_bucket( $store, $bucket, [
@@ -2298,7 +2298,7 @@ class PerformanceCITest extends TestCase {
 		$result = VerbHarness::fire(
 			$interpreter,
 			'performance',
-			'url_detail',
+			'dump_url',
 			'abc123def456'
 		);
 
@@ -2315,7 +2315,7 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( [], $result['requests'] );
 	}
 
-	public function test_url_detail_verb_includes_aggregate_flame_when_seeded(): void {
+	public function test_dump_url_verb_includes_aggregate_flame_when_seeded(): void {
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
 		$this->set_url_bucket( $store, $bucket, [
@@ -2336,7 +2336,7 @@ class PerformanceCITest extends TestCase {
 		$result = VerbHarness::fire(
 			$interpreter,
 			'performance',
-			'url_detail',
+			'dump_url',
 			'cafebabe1234'
 		);
 
@@ -2344,13 +2344,13 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( 1700001111, $result['last_modified'] );
 	}
 
-	public function test_url_detail_verb_rejects_unauthorized(): void {
+	public function test_dump_url_verb_rejects_unauthorized(): void {
 		$GLOBALS['_current_user_can'] = false;
 		$interpreter     = new Performance_CI_Node();
 		$result = VerbHarness::fire(
 			$interpreter,
 			'performance',
-			'url_detail',
+			'dump_url',
 			'abc123def456'
 		);
 
@@ -2358,7 +2358,7 @@ class PerformanceCITest extends TestCase {
 		$this->assertStringContainsString( 'permission denied', $result );
 	}
 
-	public function test_url_detail_stats_carry_the_header_figures_and_no_series(): void {
+	public function test_dump_url_stats_carry_the_header_figures_and_no_series(): void {
 		// The modal's chart is drawn from `breakdown_time_series`, which the
 		// dropdown always asks for, so a second undifferentiated series bought
 		// a first paint nobody chose at the price of a full shard scan.
@@ -2377,7 +2377,7 @@ class PerformanceCITest extends TestCase {
 		$result = VerbHarness::fire(
 			new Performance_CI_Node(),
 			'performance',
-			'url_detail',
+			'dump_url',
 			'a5c9e30b1f42'
 		);
 
@@ -2387,7 +2387,7 @@ class PerformanceCITest extends TestCase {
 		$this->assertEqualsWithDelta( 131.0, $result['stats']['avg_ms'], 1e-6 );
 	}
 
-	public function test_url_detail_verb_includes_breakdown_time_series_when_arg_set(): void {
+	public function test_dump_url_verb_includes_breakdown_time_series_when_arg_set(): void {
 		// `?breakdown=method` on /urls/{hash} emits `breakdown_time_series`
 		// (legacy L195, L177-181). Consumed by fetchUrlBreakdown L213.
 		$store  = new Stats_Store( 0, 86400 );
@@ -2407,7 +2407,7 @@ class PerformanceCITest extends TestCase {
 		$result = VerbHarness::fire(
 			$interpreter,
 			'performance',
-			'url_detail',
+			'dump_url',
 			'abc123def456 --breakdown=method'
 		);
 
@@ -2417,7 +2417,7 @@ class PerformanceCITest extends TestCase {
 
 	public function test_url_breakdown_answers_the_series_alone(): void {
 		// The chart polls this every five minutes and keeps only the series, so
-		// the verb behind it must not drag the index walk `url_detail` runs.
+		// the verb behind it must not drag the index walk `dump_url` runs.
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
 		$this->set_url_bucket( $store, $bucket, [
@@ -2427,7 +2427,7 @@ class PerformanceCITest extends TestCase {
 		$detail = VerbHarness::fire(
 			new Performance_CI_Node(),
 			'performance',
-			'url_detail',
+			'dump_url',
 			'e71b04ac9d33 --breakdown=status'
 		);
 		// Each fire() builds a fresh request-scope graph; reset between them,
@@ -2452,7 +2452,7 @@ class PerformanceCITest extends TestCase {
 
 	public function test_url_breakdown_refuses_a_dimension_it_cannot_answer(): void {
 		// A required argument that silently answers nothing leaves the chart
-		// spinning; url_detail can drop the key because it has a payload.
+		// spinning; dump_url can drop the key because it has a payload.
 		$result = VerbHarness::fire(
 			new Performance_CI_Node(),
 			'performance',
@@ -2465,7 +2465,7 @@ class PerformanceCITest extends TestCase {
 		$this->assertStringContainsString( 'invalid breakdown dimension: nosuchdim', $result );
 	}
 
-	public function test_url_detail_verb_includes_category_time_series_when_arg_set(): void {
+	public function test_dump_url_verb_includes_category_time_series_when_arg_set(): void {
 		// `?categories=1` on /urls/{hash} emits `category_time_series`
 		// (legacy L196, L184-186). Consumed by UrlDetailView L282-295 +
 		// fetchUrlCategories L237.
@@ -2486,7 +2486,7 @@ class PerformanceCITest extends TestCase {
 		$result = VerbHarness::fire(
 			$interpreter,
 			'performance',
-			'url_detail',
+			'dump_url',
 			'abc123def456 --categories'
 		);
 
@@ -2496,7 +2496,7 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( 0.2, $result['category_time_series']['buckets'][ $bucket ][0][1] );
 	}
 
-	public function test_url_detail_verb_breakdown_filters_unknown_dims(): void {
+	public function test_dump_url_verb_breakdown_filters_unknown_dims(): void {
 		// Unknown dim → no breakdown_time_series (matches legacy L179's
 		// `in_array(...,DIMENSIONS,true)` guard).
 		$store  = new Stats_Store( 0, 86400 );
@@ -2509,7 +2509,7 @@ class PerformanceCITest extends TestCase {
 		$result = VerbHarness::fire(
 			$interpreter,
 			'performance',
-			'url_detail',
+			'dump_url',
 			'abc123def456 --breakdown=nosuchdim'
 		);
 
@@ -2539,7 +2539,7 @@ class PerformanceCITest extends TestCase {
 		\Newspack_Nodes\Config::reset();
 	}
 
-	public function test_request_search_spans_the_topologys_own_worker_count(): void {
+	public function test_search_requests_spans_the_topologys_own_worker_count(): void {
 		// Global num_partitions stays 1; performance runs 4. A rid living in p2 is
 		// invisible to a reader that loops to the global.
 		$this->activate_shipped_topology( 'performance', 4 );
@@ -2556,13 +2556,13 @@ class PerformanceCITest extends TestCase {
 			2
 		);
 
-		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'request_search', $rid );
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'search_requests', $rid );
 
 		$this->assertIsArray( $result );
 		$this->assertSame( 2, $result['partition'] );
 	}
 
-	public function test_request_search_tries_the_rids_own_partition_first(): void {
+	public function test_search_requests_tries_the_rids_own_partition_first(): void {
 		// This rid hashes to 3 of 4. Seeded in BOTH 3 and 0, an ascending scan
 		// returns 0 — only hash-first returns 3.
 		$this->activate_shipped_topology( 'performance', 4 );
@@ -2579,20 +2579,20 @@ class PerformanceCITest extends TestCase {
 		$this->write_request( $body, 0 );
 		$rid = $this->write_request( $body, 3 );
 
-		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'request_search', $rid );
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'search_requests', $rid );
 
 		$this->assertIsArray( $result );
 		$this->assertSame( 3, $result['partition'] );
 	}
 
-	public function test_request_detail_says_not_found_when_no_topology_is_active(): void {
+	public function test_dump_request_says_not_found_when_no_topology_is_active(): void {
 		// Nothing declares requests:partition, so there is no partition set to
 		// be outside of. "invalid partition" blames the caller for a request
 		// that is merely unfindable.
 		\update_option( 'newspack_nodes_topologies', [] );
 		\Newspack_Nodes\Config::reset();
 
-		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'request_detail', 'some-rid' );
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_request', 'some-rid' );
 
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'not found', \strtolower( $result ) );
@@ -2611,15 +2611,15 @@ class PerformanceCITest extends TestCase {
 	}
 
 	// -------------------------------------------------------------------------
-	// request_search verb
+	// search_requests verb
 	// -------------------------------------------------------------------------
 
-	public function test_request_search_verb_returns_not_found_when_missing(): void {
+	public function test_search_requests_verb_returns_not_found_when_missing(): void {
 		$interpreter     = new Performance_CI_Node();
 		$result = VerbHarness::fire(
 			$interpreter,
 			'performance',
-			'request_search',
+			'search_requests',
 			'no-such-rid'
 		);
 
@@ -2627,7 +2627,7 @@ class PerformanceCITest extends TestCase {
 		$this->assertStringContainsString( 'not found', \strtolower( $result ) );
 	}
 
-	public function test_request_search_verb_locates_known_rid(): void {
+	public function test_search_requests_verb_locates_known_rid(): void {
 		// Seed one request — search should return {rid, partition, url_hash}.
 		// Rid must be ≤32 chars or it gets truncated when written into the
 		// fixed-width .idx field and the round-trip lookup fails.
@@ -2645,7 +2645,7 @@ class PerformanceCITest extends TestCase {
 		$result = VerbHarness::fire(
 			$interpreter,
 			'performance',
-			'request_search',
+			'search_requests',
 			$rid
 		);
 
@@ -2655,21 +2655,21 @@ class PerformanceCITest extends TestCase {
 		$this->assertNotEmpty( $result['url_hash'] );
 	}
 
-	public function test_request_search_verb_requires_rid(): void {
+	public function test_search_requests_verb_requires_rid(): void {
 		$interpreter     = new Performance_CI_Node();
-		$result = VerbHarness::fire( $interpreter, 'performance', 'request_search' );
+		$result = VerbHarness::fire( $interpreter, 'performance', 'search_requests' );
 
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'rid required', \strtolower( $result ) );
 	}
 
-	public function test_request_search_verb_rejects_unauthorized(): void {
+	public function test_search_requests_verb_rejects_unauthorized(): void {
 		$GLOBALS['_current_user_can'] = false;
 		$interpreter     = new Performance_CI_Node();
 		$result = VerbHarness::fire(
 			$interpreter,
 			'performance',
-			'request_search',
+			'search_requests',
 			'whatever'
 		);
 
@@ -2678,10 +2678,10 @@ class PerformanceCITest extends TestCase {
 	}
 
 	// -------------------------------------------------------------------------
-	// request_grep verb (server-side recent-firehose pattern search)
+	// grep_requests verb (server-side recent-firehose pattern search)
 	// -------------------------------------------------------------------------
 
-	public function test_request_grep_returns_matching_request_summary(): void {
+	public function test_grep_requests_returns_matching_request_summary(): void {
 		// One completed request whose URL matches, plus a non-matching one.
 		$this->write_firehose( 0, [
 			[ 'rid' => 'grepR1', 'k' => 'process (start)', 'm' => '12345 on host', 'ts' => 1700000000.0, 'n' => 1 ],
@@ -2692,7 +2692,7 @@ class PerformanceCITest extends TestCase {
 		] );
 
 		$interpreter = new Performance_CI_Node();
-		$result      = VerbHarness::fire( $interpreter, 'performance', 'request_grep', '/calendar' );
+		$result      = VerbHarness::fire( $interpreter, 'performance', 'grep_requests', '/calendar' );
 
 		$this->assertIsArray( $result );
 		$this->assertSame( 'recent', $result['scope'] );
@@ -2709,7 +2709,7 @@ class PerformanceCITest extends TestCase {
 		$this->assertStringContainsString( '/calendar', $summary['first_match_excerpt'] );
 	}
 
-	public function test_request_grep_truncates_at_result_limit(): void {
+	public function test_grep_requests_truncates_at_result_limit(): void {
 		// Three matching completed requests; --limit=2 → 2 results + truncated.
 		$entries = [];
 		foreach ( [ 'gA', 'gB', 'gC' ] as $i => $rid ) {
@@ -2719,66 +2719,66 @@ class PerformanceCITest extends TestCase {
 		$this->write_firehose( 0, $entries );
 
 		$interpreter = new Performance_CI_Node();
-		$result      = VerbHarness::fire( $interpreter, 'performance', 'request_grep', '/match --limit=2' );
+		$result      = VerbHarness::fire( $interpreter, 'performance', 'grep_requests', '/match --limit=2' );
 
 		$this->assertCount( 2, $result['results'] );
 		$this->assertTrue( $result['truncated'] );
 	}
 
 	/** `max(1, (int) 'abc')` answers one result and calls it the whole match set. */
-	public function test_request_grep_refuses_a_malformed_limit(): void {
+	public function test_grep_requests_refuses_a_malformed_limit(): void {
 		$this->write_firehose( 0, [
 			[ 'rid' => 'lim1', 'k' => 'request', 'm' => 'GET /match/a', 'ts' => 1700000000.0, 'n' => 1 ],
 			[ 'rid' => 'lim1', 'k' => 'process (complete)', 'm' => '(done)', 'ts' => 1700000000.5, 'n' => 2 ],
 		] );
 
-		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'request_grep', '/match --limit=abc' );
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'grep_requests', '/match --limit=abc' );
 
 		$this->assertIsString( $result, 'a malformed --limit must not silently return one row' );
 		$this->assertStringContainsString( 'limit', $result );
 	}
 
-	public function test_request_grep_empty_when_no_match(): void {
+	public function test_grep_requests_empty_when_no_match(): void {
 		$this->write_firehose( 0, [
 			[ 'rid' => 'z1', 'k' => 'request', 'm' => 'GET /other', 'ts' => 1700000000.0, 'n' => 1 ],
 			[ 'rid' => 'z1', 'k' => 'process (complete)', 'm' => '(done)', 'ts' => 1700000000.2, 'n' => 2 ],
 		] );
 
 		$interpreter = new Performance_CI_Node();
-		$result      = VerbHarness::fire( $interpreter, 'performance', 'request_grep', '/nonexistent' );
+		$result      = VerbHarness::fire( $interpreter, 'performance', 'grep_requests', '/nonexistent' );
 
 		$this->assertSame( [], $result['results'] );
 		$this->assertFalse( $result['truncated'] );
 		$this->assertSame( 1, $result['scanned_partitions'] );
 	}
 
-	public function test_request_grep_requires_pattern(): void {
+	public function test_grep_requests_requires_pattern(): void {
 		$interpreter = new Performance_CI_Node();
-		$result      = VerbHarness::fire( $interpreter, 'performance', 'request_grep' );
+		$result      = VerbHarness::fire( $interpreter, 'performance', 'grep_requests' );
 
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'pattern required', \strtolower( $result ) );
 	}
 
-	public function test_request_grep_rejects_unauthorized(): void {
+	public function test_grep_requests_rejects_unauthorized(): void {
 		$GLOBALS['_current_user_can'] = false;
 		$interpreter                  = new Performance_CI_Node();
-		$result                       = VerbHarness::fire( $interpreter, 'performance', 'request_grep', '/x' );
+		$result                       = VerbHarness::fire( $interpreter, 'performance', 'grep_requests', '/x' );
 
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'permission denied', $result );
 	}
 
 	// -------------------------------------------------------------------------
-	// request_detail verb
+	// dump_request verb
 	// -------------------------------------------------------------------------
 
-	public function test_request_detail_verb_returns_not_found_when_missing(): void {
+	public function test_dump_request_verb_returns_not_found_when_missing(): void {
 		$interpreter     = new Performance_CI_Node();
 		$result = VerbHarness::fire(
 			$interpreter,
 			'performance',
-			'request_detail',
+			'dump_request',
 			'no-such-rid'
 		);
 
@@ -2786,10 +2786,10 @@ class PerformanceCITest extends TestCase {
 		$this->assertStringContainsString( 'not found', \strtolower( $result ) );
 	}
 
-	public function test_request_detail_finds_a_rid_no_partition_named(): void {
+	public function test_dump_request_finds_a_rid_no_partition_named(): void {
 		// Seeded in p2 of 4, and the rid hashes to p3, so neither the default
 		// nor the hash-first partition holds it: only a full walk finds it,
-		// which is what `request_search` already does with the same rid.
+		// which is what `search_requests` already does with the same rid.
 		$this->activate_shipped_topology( 'performance', 4 );
 		$body = [
 			'rid'            => 'rid-detail-cross-partition-0001',
@@ -2803,9 +2803,9 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( 3, \Newspack_Nodes\Partition_Node::hash_to_partition( $body['rid'], 4 ) );
 		$rid = $this->write_request( $body, 2 );
 
-		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'request_detail', $rid );
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_request', $rid );
 
-		$this->assertIsArray( $result, 'request_detail must resolve a rid request_search can find' );
+		$this->assertIsArray( $result, 'dump_request must resolve a rid search_requests can find' );
 		$this->assertSame( '/elsewhere', $result['url'] );
 	}
 
@@ -2813,7 +2813,7 @@ class PerformanceCITest extends TestCase {
 	 * A malformed --partition casts to 0, so the verb answers for a partition
 	 * the operator never named — and where the rid is absent, blames the rid.
 	 */
-	public function test_request_detail_verb_refuses_a_malformed_partition(): void {
+	public function test_dump_request_verb_refuses_a_malformed_partition(): void {
 		$rid = $this->write_request( [
 			'rid'         => 'rid-malformed-partition-flag',
 			'url'         => '/p0-only',
@@ -2825,7 +2825,7 @@ class PerformanceCITest extends TestCase {
 		$result = VerbHarness::fire(
 			new Performance_CI_Node(),
 			'performance',
-			'request_detail',
+			'dump_request',
 			$rid . ' --partition=abc'
 		);
 
@@ -2833,13 +2833,13 @@ class PerformanceCITest extends TestCase {
 		$this->assertStringContainsString( 'partition', \strtolower( $result ) );
 	}
 
-	public function test_request_detail_verb_rejects_invalid_partition(): void {
+	public function test_dump_request_verb_rejects_invalid_partition(): void {
 		// num_partitions = 1 (test setUp), partition = 5 is out of range.
 		$interpreter     = new Performance_CI_Node();
 		$result = VerbHarness::fire(
 			$interpreter,
 			'performance',
-			'request_detail',
+			'dump_request',
 			'whatever --partition=5'
 		);
 
@@ -2847,7 +2847,7 @@ class PerformanceCITest extends TestCase {
 		$this->assertStringContainsString( 'invalid partition', \strtolower( $result ) );
 	}
 
-	public function test_request_detail_verb_returns_body_for_known_rid(): void {
+	public function test_dump_request_verb_returns_body_for_known_rid(): void {
 		// Rid must be ≤32 chars so the round-trip through the .idx fixed-width
 		// field doesn't drop characters and break the lookup.
 		$rid = $this->write_request( [
@@ -2867,7 +2867,7 @@ class PerformanceCITest extends TestCase {
 		$result = VerbHarness::fire(
 			$interpreter,
 			'performance',
-			'request_detail',
+			'dump_request',
 			$rid
 		);
 
@@ -2880,7 +2880,7 @@ class PerformanceCITest extends TestCase {
 		$this->assertCount( 1, $result['events'] );
 	}
 
-	public function test_request_detail_carries_the_findings_for_that_record(): void {
+	public function test_dump_request_carries_the_findings_for_that_record(): void {
 		$rid = $this->write_request( [
 			'rid'            => 'rid-findings-1234567890123456789',
 			'url'            => '/slow-thing',
@@ -2896,7 +2896,7 @@ class PerformanceCITest extends TestCase {
 			],
 		] );
 
-		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'request_detail', $rid );
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_request', $rid );
 
 		$this->assertIsArray( $result );
 		$this->assertContains(
@@ -2931,7 +2931,7 @@ class PerformanceCITest extends TestCase {
 	 * nothing, not even a catch-all `/`. The record already carries the answer
 	 * the request itself resolved.
 	 */
-	public function test_request_detail_resolves_the_rule_the_record_recorded(): void {
+	public function test_dump_request_resolves_the_rule_the_record_recorded(): void {
 		\update_option(
 			Rule_Set::OPTION_RULES,
 			[
@@ -3037,7 +3037,7 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( '/asked-url', $result['url'] );
 	}
 
-	public function test_request_detail_verb_merges_flame_data_when_present(): void {
+	public function test_dump_request_verb_merges_flame_data_when_present(): void {
 		// Rid must be ≤32 chars (fixed-width .idx field) so the lookup matches.
 		$rid = $this->write_request( [
 			'rid'            => 'rid-flame-123456789012345678901',
@@ -3061,14 +3061,14 @@ class PerformanceCITest extends TestCase {
 		$result = VerbHarness::fire(
 			$interpreter,
 			'performance',
-			'request_detail',
+			'dump_request',
 			$rid
 		);
 
 		$this->assertArrayHasKey( 'flame_data', $result );
 	}
 
-	public function test_request_detail_verb_merges_flame_data_at_max_stack_depth(): void {
+	public function test_dump_request_verb_merges_flame_data_at_max_stack_depth(): void {
 		// A MAX_STACK_DEPTH (50) flame nests ~2 JSON levels per span. Both the
 		// write-side index formatter and this read path used depth-64 decodes,
 		// so deep flames were written but never indexed or returned.
@@ -3094,7 +3094,7 @@ class PerformanceCITest extends TestCase {
 		$result      = VerbHarness::fire(
 			$interpreter,
 			'performance',
-			'request_detail',
+			'dump_request',
 			$rid
 		);
 
@@ -3106,12 +3106,12 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( 49, $depth, 'deep flame should round-trip intact' );
 	}
 
-	public function test_request_detail_verb_requires_rid(): void {
+	public function test_dump_request_verb_requires_rid(): void {
 		$interpreter     = new Performance_CI_Node();
 		$result = VerbHarness::fire(
 			$interpreter,
 			'performance',
-			'request_detail',
+			'dump_request',
 			'--partition=0'
 		);
 
@@ -3119,13 +3119,13 @@ class PerformanceCITest extends TestCase {
 		$this->assertStringContainsString( 'rid required', \strtolower( $result ) );
 	}
 
-	public function test_request_detail_verb_rejects_unauthorized(): void {
+	public function test_dump_request_verb_rejects_unauthorized(): void {
 		$GLOBALS['_current_user_can'] = false;
 		$interpreter     = new Performance_CI_Node();
 		$result = VerbHarness::fire(
 			$interpreter,
 			'performance',
-			'request_detail',
+			'dump_request',
 			'whatever'
 		);
 
@@ -3134,12 +3134,12 @@ class PerformanceCITest extends TestCase {
 	}
 
 	// -------------------------------------------------------------------------
-	// hooks_registered verb — replaces PerfHooksController::get_registered_hooks.
+	// list_hooks verb — replaces PerfHooksController::get_registered_hooks.
 	// -------------------------------------------------------------------------
 
 	/**
 	 * Seed $wp_filter with three known hooks so HookCategorizer has something
-	 * to walk. Shared across the hooks_registered cluster — the categorizer
+	 * to walk. Shared across the list_hooks cluster — the categorizer
 	 * cares about the hook NAMES, not the callback shapes, so a minimal stub
 	 * object with a non-empty `callbacks` array is enough.
 	 */
@@ -3153,11 +3153,11 @@ class PerformanceCITest extends TestCase {
 		];
 	}
 
-	public function test_hooks_registered_verb_returns_canonical_shape(): void {
+	public function test_list_hooks_verb_returns_canonical_shape(): void {
 		$this->seed_wp_filter_with_known_hooks();
 
 		$interpreter     = new Performance_CI_Node();
-		$result = VerbHarness::fire( $interpreter, 'performance', 'hooks_registered' );
+		$result = VerbHarness::fire( $interpreter, 'performance', 'list_hooks' );
 
 		$this->assertIsArray( $result );
 		$this->assertArrayHasKey( 'total_hooks', $result );
@@ -3165,14 +3165,14 @@ class PerformanceCITest extends TestCase {
 		$this->assertArrayHasKey( 'hooks_by_category', $result );
 	}
 
-	public function test_hooks_registered_ships_category_descriptions(): void {
+	public function test_list_hooks_ships_category_descriptions(): void {
 		// The descriptions used to be a hand-written map in HookSelectorModal.js
 		// covering 24 of the 63 categories this config declares — and users can
 		// add more. They travel with the taxonomy that owns them now.
 		$this->seed_wp_filter_with_known_hooks();
 
 		$interpreter = new Performance_CI_Node();
-		$result      = VerbHarness::fire( $interpreter, 'performance', 'hooks_registered' );
+		$result      = VerbHarness::fire( $interpreter, 'performance', 'list_hooks' );
 
 		$this->assertArrayHasKey( 'category_descriptions', $result );
 		$this->assertSame(
@@ -3185,11 +3185,11 @@ class PerformanceCITest extends TestCase {
 		}
 	}
 
-	public function test_hooks_registered_verb_total_matches_summed_buckets(): void {
+	public function test_list_hooks_verb_total_matches_summed_buckets(): void {
 		$this->seed_wp_filter_with_known_hooks();
 
 		$interpreter     = new Performance_CI_Node();
-		$result = VerbHarness::fire( $interpreter, 'performance', 'hooks_registered' );
+		$result = VerbHarness::fire( $interpreter, 'performance', 'list_hooks' );
 
 		$summed = 0;
 		foreach ( $result['hooks_by_category'] as $bucket ) {
@@ -3198,11 +3198,11 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( $result['total_hooks'], $summed );
 	}
 
-	public function test_hooks_registered_verb_includes_seeded_hooks(): void {
+	public function test_list_hooks_verb_includes_seeded_hooks(): void {
 		$this->seed_wp_filter_with_known_hooks();
 
 		$interpreter     = new Performance_CI_Node();
-		$result = VerbHarness::fire( $interpreter, 'performance', 'hooks_registered' );
+		$result = VerbHarness::fire( $interpreter, 'performance', 'list_hooks' );
 
 		$all = [];
 		foreach ( $result['hooks_by_category'] as $bucket ) {
@@ -3213,10 +3213,10 @@ class PerformanceCITest extends TestCase {
 		$this->assertContains( 'admin_menu', $all );
 	}
 
-	public function test_hooks_registered_verb_rejects_unauthorized(): void {
+	public function test_list_hooks_verb_rejects_unauthorized(): void {
 		$GLOBALS['_current_user_can'] = false;
 		$interpreter     = new Performance_CI_Node();
-		$result = VerbHarness::fire( $interpreter, 'performance', 'hooks_registered' );
+		$result = VerbHarness::fire( $interpreter, 'performance', 'list_hooks' );
 
 		$this->assertIsString( $result );
 		$this->assertStringContainsString( 'permission denied', $result );
@@ -3494,12 +3494,79 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( \count( Stats_Store::url_shards() ) * 2, $calls );
 	}
 
+	// ── verb grammar: verb first ────────────────────────────────────────────
+
+	public function test_search_requests_answers_a_rid_lookup(): void {
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'search_requests', 'rid-renamed-7d3a' );
+
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( 'not found', \strtolower( $result ) );
+	}
+
+	public function test_grep_requests_answers_a_pattern_scan(): void {
+		$this->write_firehose( 0, [
+			[ 'rid' => 'g7', 'k' => 'request', 'm' => 'GET /elsewhere', 'ts' => 1700000000.0, 'n' => 1 ],
+			[ 'rid' => 'g7', 'k' => 'process (complete)', 'm' => '(done)', 'ts' => 1700000000.2, 'n' => 2 ],
+		] );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'grep_requests', '/renamed-9e1c' );
+
+		$this->assertIsArray( $result );
+		$this->assertSame( [], $result['results'] );
+		$this->assertSame( 1, $result['scanned_partitions'] );
+	}
+
+	public function test_dump_request_answers_a_rid_read(): void {
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_request', 'rid-renamed-4b2f' );
+
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( 'not found', \strtolower( $result ) );
+	}
+
+	public function test_dump_url_answers_a_hash_read(): void {
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', 'deadbeef7d3a' );
+
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( 'not found', \strtolower( $result ) );
+	}
+
+	public function test_list_hooks_answers_the_hook_catalog(): void {
+		$this->seed_wp_filter_with_known_hooks();
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'list_hooks' );
+
+		$this->assertIsArray( $result );
+		$this->assertSame( 3, $result['total_hooks'] );
+	}
+
+	/**
+	 * @return array<string,array{0:string}>
+	 */
+	public static function noun_first_verbs(): array {
+		return [
+			'request_search'   => [ 'request_search' ],
+			'request_grep'     => [ 'request_grep' ],
+			'request_detail'   => [ 'request_detail' ],
+			'url_detail'       => [ 'url_detail' ],
+			'hooks_registered' => [ 'hooks_registered' ],
+		];
+	}
+
+	/** Each verb-first name replaces its noun-first one; the old name is refused, not aliased. */
+	#[\PHPUnit\Framework\Attributes\DataProvider( 'noun_first_verbs' )]
+	public function test_a_noun_first_verb_is_refused_as_an_unknown_command( string $old ): void {
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', $old, 'renamed-arg' );
+
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( "unknown command: {$old}", $result );
+	}
+
 	// ── schema-driven dispatch ──────────────────────────────────────────────
 
 	public function test_node_schema_lists_all_verbs_with_handlers(): void {
 		$expected = [
-			'overview', 'urls', 'url_detail', 'url_breakdown', 'request_search',
-			'request_detail', 'hooks_registered', 'set',
+			'overview', 'urls', 'dump_url', 'url_breakdown', 'search_requests',
+			'dump_request', 'list_hooks', 'set',
 		];
 
 		$verbs = [];
@@ -3517,7 +3584,7 @@ class PerformanceCITest extends TestCase {
 		// These verbs read no $payload/$args — they return a fixed shape, so the
 		// Inspector fires them immediately with no arg modal.
 		$verbs = self::verbs_by_name();
-		foreach ( [ 'hooks_registered' ] as $name ) {
+		foreach ( [ 'list_hooks' ] as $name ) {
 			$this->assertSame( [], $verbs[ $name ]['args'], "'{$name}' must declare no args" );
 		}
 	}
@@ -3559,13 +3626,13 @@ class PerformanceCITest extends TestCase {
 		}
 	}
 
-	public function test_url_detail_verb_declares_required_hash_plus_filters(): void {
-		// url_detail requires hash (regex check throws on empty/bad) + optional
+	public function test_dump_url_verb_declares_required_hash_plus_filters(): void {
+		// dump_url requires hash (regex check throws on empty/bad) + optional
 		// breakdown/server/categories/since. `server` scopes it the way it
 		// scopes the table this modal opens from; `since` tails the request
 		// list. A read-but-undeclared option is absent from `help`, from the
 		// palette and from the MCP tools/list schema, so the list is pinned.
-		$args = self::args_by_name( 'url_detail' );
+		$args = self::args_by_name( 'dump_url' );
 		$this->assertSame( [ 'hash', 'breakdown', 'server', 'categories', 'since' ], \array_keys( $args ) );
 		$this->assertSame( 'string', $args['hash']['type'] );
 		$this->assertTrue( $args['hash']['required'] );
@@ -3588,17 +3655,17 @@ class PerformanceCITest extends TestCase {
 		$this->assertTrue( $args['breakdown']['required'] );
 	}
 
-	public function test_request_search_verb_declares_required_rid(): void {
-		// request_search throws 'rid required' when absent → required string.
-		$args = self::args_by_name( 'request_search' );
+	public function test_search_requests_verb_declares_required_rid(): void {
+		// search_requests throws 'rid required' when absent → required string.
+		$args = self::args_by_name( 'search_requests' );
 		$this->assertSame( [ 'rid' ], \array_keys( $args ) );
 		$this->assertSame( 'string', $args['rid']['type'] );
 		$this->assertTrue( $args['rid']['required'] );
 	}
 
-	public function test_request_detail_verb_declares_required_rid_optional_partition(): void {
-		// request_detail throws on empty rid; partition defaults to 0.
-		$args = self::args_by_name( 'request_detail' );
+	public function test_dump_request_verb_declares_required_rid_optional_partition(): void {
+		// dump_request throws on empty rid; partition defaults to 0.
+		$args = self::args_by_name( 'dump_request' );
 		$this->assertSame( [ 'rid', 'partition' ], \array_keys( $args ) );
 		$this->assertTrue( $args['rid']['required'] );
 		$this->assertSame( 'int', $args['partition']['type'] );
@@ -3824,7 +3891,7 @@ class PerformanceCITest extends TestCase {
 	 * The flame lookup fans across EVERY flame partition: the builder writes to
 	 * whichever one it is wired into, so a flame for a p0 request can land in p2.
 	 */
-	public function test_request_detail_merges_a_flame_written_to_another_partition(): void {
+	public function test_dump_request_merges_a_flame_written_to_another_partition(): void {
 		$this->activate_shipped_topology( 'performance', 3 );
 		$rid = $this->write_request( [
 			'rid'            => 'rid-flame-elsewhere-00000000001',
@@ -3844,7 +3911,7 @@ class PerformanceCITest extends TestCase {
 			2
 		);
 
-		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'request_detail', $rid );
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_request', $rid );
 
 		$this->assertIsArray( $result );
 		$this->assertSame( 27, $result['flame_data']['flame']['value'] );
@@ -3854,7 +3921,7 @@ class PerformanceCITest extends TestCase {
 	 * The recent-requests walk collects across every request partition, and the
 	 * partition index it stamps is the one the entry was READ from.
 	 */
-	public function test_url_detail_collects_recent_requests_from_every_partition(): void {
+	public function test_dump_url_collects_recent_requests_from_every_partition(): void {
 		$this->activate_shipped_topology( 'performance', 3 );
 		$url   = '/spread-across-partitions';
 		$hash  = Log_Manager::url_hash( $url );
@@ -3888,7 +3955,7 @@ class PerformanceCITest extends TestCase {
 			2
 		);
 
-		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'url_detail', $hash );
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', $hash );
 
 		$this->assertCount( 2, $result['requests'] );
 		$this->assertSame( 'rid-spread-p2-000000000000001', $result['requests'][0]['rid'] );

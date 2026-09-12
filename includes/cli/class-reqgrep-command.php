@@ -7,7 +7,7 @@
  * This command owns reading and rendering; `Reqgrep_Core` owns grouping. Every
  * read path funnels lines into `Reqgrep_Core::push()`, which decides which lines
  * belong to which request and when one is complete, so the command and the
- * `performance` CI's `request_grep` verb agree byte-for-byte. The caps on an
+ * `performance` CI's `grep_requests` verb agree byte-for-byte. The caps on an
  * in-progress request — bytes, lines, retained history lines — live there too.
  *
  * Three read paths share one graph shape: a source node whose sink is a
@@ -132,7 +132,7 @@ class Reqgrep_Command {
 	 */
 	private float $fmt_last_timestamp = 0;
 
-	/** Grouping/matching engine (shared with the request_grep verb); built by init_core(). */
+	/** Grouping/matching engine (shared with the grep_requests verb); built by init_core(). */
 	private ?Reqgrep_Core $core = null;
 
 	/** `--incomplete`: suppress completed requests, leaving only the unfinished ones. */

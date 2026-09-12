@@ -3,14 +3,14 @@
  * the substrate's I/O boundary node (exospine + `_http`) with ONE receiver Tee
  * (`rules:in`) in front of the `rules:view` model node. Modeled on
  * useVaultGraph: each verb dispatches a TM_COMMAND through the interpreter
- * (the table's list FROM = `rules:in`, each mutation FROM its own Request node,
+ * (the table's dump FROM = `rules:in`, each mutation FROM its own Request node,
  * TO = `_http/rules`, verb in VALUE.name); the reply routes
  * TO=FROM back into the Tee, which fans it to the view. Nothing is injected:
  * the seam is `fetch`, so the hook never touches the real network.
  *
  * The wire contract mirrors Rules_CI_Node: `save`/`upsert` take the RAW JSON as
  * the command arguments string (the handler json_decodes the whole arg);
- * `delete` takes the id as a positional token; `list` takes no args.
+ * `delete` takes the id as a positional token; `dump` takes no args.
  */
 
 import { renderHook, act, waitFor } from '../../test-helpers/renderHook';
@@ -141,7 +141,7 @@ describe( 'useRulesGraph — exospine + receiver wiring', () => {
 		expect( wire.batches.flat() ).not.toHaveLength( 0 );
 	} );
 
-	test( 'fires one immediate list() on mount, FROM the receiver, TO _http/rules', async () => {
+	test( 'fires one immediate dump() on mount, FROM the receiver, TO _http/rules', async () => {
 		const wire = installWire();
 		renderHook( () => useRulesGraph() );
 		await act( async () => {} );
@@ -149,16 +149,16 @@ describe( 'useRulesGraph — exospine + receiver wiring', () => {
 		const msg = wire.batches[ 0 ][ 0 ];
 		expect( msg[ TO ] ).toBe( 'rules' );
 		expect( msg[ FROM ] ).toBe( RECV );
-		expect( msg[ VALUE ].name ).toBe( 'list' );
+		expect( msg[ VALUE ].name ).toBe( 'dump' );
 	} );
 
 	/**
 	 * Mount races /auth: the graph is built synchronously, the session arrives a
-	 * round trip later. Firing the list before then mints it UNSIGNED and the
+	 * round trip later. Firing the dump before then mints it UNSIGNED and the
 	 * server refuses it — the page then looked "half-working", alive only because
 	 * a later user-triggered refresh happened to run after auth landed.
 	 */
-	test( 'holds the mount-time list until the session is established', async () => {
+	test( 'holds the mount-time dump until the session is established', async () => {
 		forgetSession();
 		__setAuthFetch( async () => ( {
 			handle: 'cccc3333cccc3333cccc3333cccc3333',
@@ -190,19 +190,19 @@ describe( 'useRulesGraph — exospine + receiver wiring', () => {
 				now: 1771000000,
 			} ) )
 		);
-		const wire = installWire( { list: { rules: [] } } );
+		const wire = installWire( { dump: { rules: [] } } );
 		const { result } = renderHook( () => useRulesGraph() );
 		await act( async () => {} );
 
 		await act( async () => {
-			const pending = result.current.list();
+			const pending = result.current.dump();
 			landAuth();
 			await pending;
 		} );
 
 		const listed = wire.batches
 			.flat()
-			.filter( ( m ) => 'list' === m[ VALUE ]?.name );
+			.filter( ( m ) => 'dump' === m[ VALUE ]?.name );
 		expect( listed.length ).toBeGreaterThanOrEqual( 1 );
 		expect( listed[ 0 ][ VALUE ].auth ).toBeDefined();
 	} );
@@ -212,7 +212,7 @@ describe( 'useRulesGraph — exospine + receiver wiring', () => {
 		const { result } = renderHook( () => useRulesGraph() );
 		await act( async () => {} );
 		expect( Array.isArray( result.current.rules ) ).toBe( true );
-		expect( typeof result.current.list ).toBe( 'function' );
+		expect( typeof result.current.dump ).toBe( 'function' );
 		expect( typeof result.current.saveAll ).toBe( 'function' );
 		expect( typeof result.current.upsert ).toBe( 'function' );
 		expect( typeof result.current.remove ).toBe( 'function' );
@@ -220,9 +220,9 @@ describe( 'useRulesGraph — exospine + receiver wiring', () => {
 	} );
 } );
 
-describe( 'useRulesGraph — list populates rules', () => {
-	test( 'an immediate list reply lands in the view model and the hook return', async () => {
-		installWire( { list: { rules: SAMPLE_RULES } } );
+describe( 'useRulesGraph — dump populates rules', () => {
+	test( 'an immediate dump reply lands in the view model and the hook return', async () => {
+		installWire( { dump: { rules: SAMPLE_RULES } } );
 		const { result } = renderHook( () => useRulesGraph() );
 		await act( async () => {} );
 
@@ -238,21 +238,21 @@ describe( 'useRulesGraph — list populates rules', () => {
 	} );
 } );
 
-describe( 'useRulesGraph — mutations dispatch the verb then re-list', () => {
-	test( 'upsert sends the raw-JSON rule as arguments then re-lists', async () => {
+describe( 'useRulesGraph — mutations dispatch the verb then re-dump', () => {
+	test( 'upsert sends the raw-JSON rule as arguments then re-dumps', async () => {
 		const wire = installWire( {
-			list: { rules: [] },
+			dump: { rules: [] },
 			upsert: { rule: SAMPLE_RULES[ 0 ] },
 		} );
 		const { result } = renderHook( () => useRulesGraph() );
 		await act( async () => {} );
-		const listsBefore = countVerbs( wire.batches, 'list' );
+		const dumpsBefore = countVerbs( wire.batches, 'dump' );
 
 		act( () => result.current.upsert( SAMPLE_RULES[ 0 ] ) );
 
 		await waitFor( () =>
-			expect( countVerbs( wire.batches, 'list' ) ).toBeGreaterThan(
-				listsBefore
+			expect( countVerbs( wire.batches, 'dump' ) ).toBeGreaterThan(
+				dumpsBefore
 			)
 		);
 		const up = findVerb( wire.batches, 'upsert' );
@@ -271,21 +271,21 @@ describe( 'useRulesGraph — mutations dispatch the verb then re-list', () => {
 		);
 	}, 15000 );
 
-	test( 'saveAll sends the whole-list raw JSON then re-lists', async () => {
+	test( 'saveAll sends the whole-list raw JSON then re-dumps', async () => {
 		const wire = installWire( {
-			list: { rules: SAMPLE_RULES },
+			dump: { rules: SAMPLE_RULES },
 			save: { saved: 2 },
 		} );
 		const { result } = renderHook( () => useRulesGraph() );
 		await act( async () => {} );
-		const listsBefore = countVerbs( wire.batches, 'list' );
+		const dumpsBefore = countVerbs( wire.batches, 'dump' );
 
 		act( () => result.current.saveAll( SAMPLE_RULES ) );
 
-		// The verb rides the router tick, and the re-list follows its answer.
+		// The verb rides the router tick, and the re-dump follows its answer.
 		await waitFor( () =>
-			expect( countVerbs( wire.batches, 'list' ) ).toBeGreaterThan(
-				listsBefore
+			expect( countVerbs( wire.batches, 'dump' ) ).toBeGreaterThan(
+				dumpsBefore
 			)
 		);
 		const save = findVerb( wire.batches, 'save' );
@@ -294,20 +294,20 @@ describe( 'useRulesGraph — mutations dispatch the verb then re-list', () => {
 		] );
 	}, 15000 );
 
-	test( 'remove sends delete with the id as a positional token then re-lists', async () => {
+	test( 'remove sends delete with the id as a positional token then re-dumps', async () => {
 		const wire = installWire( {
-			list: { rules: [] },
+			dump: { rules: [] },
 			delete: { deleted: true },
 		} );
 		const { result } = renderHook( () => useRulesGraph() );
 		await act( async () => {} );
-		const listsBefore = countVerbs( wire.batches, 'list' );
+		const dumpsBefore = countVerbs( wire.batches, 'dump' );
 
 		act( () => result.current.remove( 'r1' ) );
 
 		await waitFor( () =>
-			expect( countVerbs( wire.batches, 'list' ) ).toBeGreaterThan(
-				listsBefore
+			expect( countVerbs( wire.batches, 'dump' ) ).toBeGreaterThan(
+				dumpsBefore
 			)
 		);
 		const del = findVerb( wire.batches, 'delete' );
@@ -318,20 +318,20 @@ describe( 'useRulesGraph — mutations dispatch the verb then re-list', () => {
 		);
 	}, 15000 );
 
-	test( 'reset sends the nullary verb from its own node then re-lists', async () => {
+	test( 'reset sends the nullary verb from its own node then re-dumps', async () => {
 		const wire = installWire( {
-			list: { rules: SAMPLE_RULES },
+			dump: { rules: SAMPLE_RULES },
 			reset: { reset: 3 },
 		} );
 		const { result } = renderHook( () => useRulesGraph() );
 		await act( async () => {} );
-		const listsBefore = countVerbs( wire.batches, 'list' );
+		const dumpsBefore = countVerbs( wire.batches, 'dump' );
 
 		act( () => result.current.reset() );
 
 		await waitFor( () =>
-			expect( countVerbs( wire.batches, 'list' ) ).toBeGreaterThan(
-				listsBefore
+			expect( countVerbs( wire.batches, 'dump' ) ).toBeGreaterThan(
+				dumpsBefore
 			)
 		);
 		const reset = findVerb( wire.batches, 'reset' );
@@ -342,10 +342,10 @@ describe( 'useRulesGraph — mutations dispatch the verb then re-list', () => {
 } );
 
 describe( 'useRulesGraph — errors', () => {
-	test( 'an uncorrelated list error surfaces as view.error without throwing', async () => {
+	test( 'an uncorrelated dump error surfaces as view.error without throwing', async () => {
 		installWire(
-			{ list: 'ruleset unavailable' },
-			{ errorVerbs: [ 'list' ] }
+			{ dump: 'ruleset unavailable' },
+			{ errorVerbs: [ 'dump' ] }
 		);
 		const { result } = renderHook( () => useRulesGraph() );
 		await act( async () => {} );

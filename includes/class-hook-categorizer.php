@@ -40,7 +40,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
  * `categorize()` treats every one as untrusted: it caps their length, rejects
  * nested quantifiers, and lowers `pcre.backtrack_limit` while they run.
  *
- * Consumers: the `hooks_registered` verb of `App\Performance_CI_Node`, which
+ * Consumers: the `list_hooks` verb of `App\Performance_CI_Node`, which
  * feeds the settings page's `HookSelectorModal`, and
  * `App\Core::bind_current_scope()`, which calls `is_internal()`.
  */
@@ -227,7 +227,7 @@ class Hook_Categorizer {
 	 *
 	 * The KEYS are what the rest of this class treats as the taxonomy: they seed
 	 * the grouping in `get_registered_hooks_by_category()` and order the
-	 * picker's sections. The colors ride the `hooks_registered` reply.
+	 * picker's sections. The colors ride the `list_hooks` reply.
 	 *
 	 * @return array<string,mixed> Base colors with the user's merged over them.
 	 */

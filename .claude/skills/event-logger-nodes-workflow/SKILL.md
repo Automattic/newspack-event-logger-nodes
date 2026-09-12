@@ -64,8 +64,8 @@ Endpoints are verbs on a service CI. The substrate's `/wp-json/newspack-nodes/v1
 
    | Class | Mount name | Verbs |
    |---|---|---|
-   | `Performance_CI_Node` | `performance` | `overview`, `urls`, `url_detail`, `url_breakdown`, `request_search`, `request_grep`, `request_detail`, `ask`, `hooks_registered`, `set` |
-   | `Rules_CI_Node` | `rules` | `list`, `save`, `upsert`, `delete`, `reset` |
+   | `Performance_CI_Node` | `performance` | `overview`, `urls`, `dump_url`, `url_breakdown`, `search_requests`, `grep_requests`, `dump_request`, `ask`, `list_hooks`, `set` |
+   | `Rules_CI_Node` | `rules` | `dump`, `save`, `upsert`, `delete`, `reset` |
    | `Discovery_CI_Node` | `discovery` | `get` |
 
    The substrate owns ten more (`Status_CI_Node`, `Settings_CI_Node`, `Aggregator_CI_Node`, `Vault_CI_Node`, `Workers_CI_Node`, `Raw_Logs_CI_Node`, `Topologies_CI_Node`, `Sessions_CI_Node`, `Classes_CI_Node`, `Layouts_CI_Node`) — add those verbs in newspack-nodes, not here.
@@ -92,12 +92,12 @@ Logging is per-URL, never global: there is no `log_urls`, `skip_urls`, `log_even
 - Durable state lives in `Rule_Set` (`includes/class-rule-set.php`). The rule LIST always rides the autoloaded `newspack_event_logger_nodes_rules` option; a heavy rule's hooks (past `INLINE_HOOK_LIMIT` = 100) tier out to a non-autoloaded `newspack_event_logger_nodes_rule_hooks_<id>` option, warm-mirrored through a substrate `Table_Node` on `'eln-rule-hooks'` with a 3600s TTL, read through to the option by `backed_by()`. The Table scopes keys per install, so two sites sharing one memcached cannot hand each other the same pattern's hooks. Every write MUST go through `Rule_Set::save()`, which re-tiers, reconciles orphans and signals a worker reload — never raw `update_option`.
 - A rule's id is `Rule_Set::id_for( $pattern )`, the pattern's `Log_Manager::url_hash()`. The stored id is always minted from the pattern — `Rule_Set::rekey_by_pattern()` runs on the config seed, the `save` verb and `apply_synced()` off the wire — so one pattern has exactly one id. `upsert` reads an incoming id for one purpose only: finding the entry a renamed pattern replaces.
 - `Rule_Set::hooks_for()` is static and stateless. `Log_Manager` already loaded the ruleset this request, so never `load()` a second `Rule_Set` to reach a rule's hooks.
-- Editing goes through the `Rules_CI_Node` service CI. The full rules-editor UI (`src/rules/RulesAdmin`) mounts from `src/settings/index.js` into the settings page's `#event-logger-rules-editor` "Logging Rules" container, not a separate submenu. The performance dashboard (`src/overview/PerformanceDashboard.js`) reuses `src/rules/RuleEditModal` for the inline "Log this URL" editor on the URL-detail view, driving the same CI's `list`, `upsert` and `delete`.
+- Editing goes through the `Rules_CI_Node` service CI. The full rules-editor UI (`src/rules/RulesAdmin`) mounts from `src/settings/index.js` into the settings page's `#event-logger-rules-editor` "Logging Rules" container, not a separate submenu. The performance dashboard (`src/overview/PerformanceDashboard.js`) reuses `src/rules/RuleEditModal` for the inline "Log this URL" editor on the URL-detail view, driving the same CI's `dump`, `upsert` and `delete`.
 - `Auto_Tuner_Node` is the other writer: it mutates the rule its message names (`rule_id`) and persists the whole list through `Rule_Set::save()` like any admin edit.
 
 #### Adding an MCP tool
 
-`App\MCP_Controller` registers this plugin's one REST route, `POST /wp-json/newspack-event-logger-nodes/v1/mcp`, a JSON-RPC server (protocol `2025-06-18`) wrapping verbs that already exist. Ten tools ship, declared in the private `TOOLS` map as `{ node, verb, role, summary, args }`: seven `performance` reads (`overview`, `urls`, `url_detail`, `request_search`, `request_detail`, `request_grep`, `ask`) plus `rules_list`, `rules_upsert` and `rules_delete`.
+`App\MCP_Controller` registers this plugin's one REST route, `POST /wp-json/newspack-event-logger-nodes/v1/mcp`, a JSON-RPC server (protocol `2025-06-18`) wrapping verbs that already exist. Ten tools ship, declared in the private `TOOLS` map as `{ node, verb, role, summary, args }`: seven `performance` reads (`overview`, `urls`, `dump_url`, `search_requests`, `dump_request`, `grep_requests`, `ask`) plus `dump_rules`, `rules_upsert` and `rules_delete`.
 
 1. The verb must exist first, with its own `capability`. A tool is a wrapper, never a second implementation.
 2. Add one `TOOLS` entry. `role` must match the verb's declared capability: `tools/list` shows only what the caller's session scope covers, and offering a tool that will refuse is worse than not offering it.
@@ -151,7 +151,7 @@ Two suites hold every file in the directory to a shape:
    - `follow_mode( int $max_iterations = PHP_INT_MAX )` — iteration-cap seam; production passes the default, tests pass a small number.
 
    Keep them separate; don't fold the cap into the stdin reader.
-4. Reading and rendering belong to the command; grouping does not. Every read path in `Reqgrep_Command` funnels lines into `Reqgrep_Core::push()`, the same engine the `performance` CI's `request_grep` verb constructs, so the two agree line-for-line on which lines belong to which request and when it is complete. A change to the grouping goes in `Reqgrep_Core`, never in one caller.
+4. Reading and rendering belong to the command; grouping does not. Every read path in `Reqgrep_Command` funnels lines into `Reqgrep_Core::push()`, the same engine the `performance` CI's `grep_requests` verb constructs, so the two agree line-for-line on which lines belong to which request and when it is complete. A change to the grouping goes in `Reqgrep_Core`, never in one caller.
 
 #### Touching the profiler drop-in
 

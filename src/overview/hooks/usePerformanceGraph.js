@@ -9,7 +9,7 @@
  * the page-visibility gate. It brackets nothing itself: the Router owns the lock
  * and flush around a tick, and that is what puts one tick into one POST:
  *
- *   perf:timer (Timer) → perf:tee (Tee) → overview:fetch, urls:fetch (Fetchers)
+ *   performance:timer (Timer) → performance:tee (Tee) → overview:fetch, urls:fetch (Fetchers)
  *                                       → _shell/_http/performance
  *   overview:in (Tee) → overview:view (OverviewView)
  *   urls:in     (Tee) → urls:view     (UrlsView)
@@ -19,18 +19,18 @@
  * re-wiring the graph. A `serverFilter` or `chartBreakdown` change fires the
  * batched tick immediately rather than waiting out the cadence.
  *
- * ON-DEMAND slices. Opening a modal fetches; neither slice hangs off `perf:timer`,
+ * ON-DEMAND slices. Opening a modal fetches; neither slice hangs off `performance:timer`,
  * and the overview/urls poll pauses while either modal is open:
  *
- *   urldetail:in (Tee) → urldetail:merge (UrlDetailMerge) → urldetail:view (UrlDetailView)
- *   urldetail:timer (Timer) → urldetail:fetch (Fetcher) → _shell/_http/performance
- *   requestdetail:in (Tee) → requestdetail:view (RequestDetailView)
+ *   url-detail:in (Tee) → url-detail:transform (UrlDetailMerge) → url-detail:view (UrlDetailView)
+ *   url-detail:timer (Timer) → url-detail:fetch (Fetcher) → _shell/_http/performance
+ *   request-detail:in (Tee) → request-detail:view (RequestDetailView)
  *
- * The url_detail reply rides through `UrlDetailMergeNode` on the receiver → view
+ * The dump_url reply rides through `UrlDetailMergeNode` on the receiver → view
  * edge: it merges each reply into the last one (dedup by rid, newest first, 500
  * rows) and DROPS a reply whose `last_modified` is unchanged, so an auto-refresh
- * tick never re-renders the modal for nothing. `urldetail:timer` is armed only
- * while URL detail is the visible modal and the tab is visible. `request_detail`
+ * tick never re-renders the modal for nothing. `url-detail:timer` is armed only
+ * while URL detail is the visible modal and the tab is visible. `dump_request`
  * mints from its own receiver Tee like every other slice: minting at the view
  * would make one node both the control origin and the reply address.
  *
@@ -74,7 +74,7 @@ export const SERVER = 'performance';
 const TARGET = egressPath( SERVER );
 
 /**
- * The ruleset CI reached by the inline rule editor's `list`, `upsert` and
+ * The ruleset CI reached by the inline rule editor's `dump`, `upsert` and
  * `delete`. Exported for the same reason `SERVER` is.
  */
 export const RULES_CI = 'rules';
@@ -86,7 +86,7 @@ export const RULES_CI = 'rules';
 const DEFAULT_REFRESH_INTERVAL_MS = 15000;
 
 /**
- * Matched-request cap `PerformanceDashboard` sends with `request_grep`. It
+ * Matched-request cap `PerformanceDashboard` sends with `grep_requests`. It
  * matches the verb's own default, and the server clamps anything larger to 50.
  */
 export const GREP_RESULT_LIMIT = 20;
@@ -95,31 +95,31 @@ export const GREP_RESULT_LIMIT = 20;
 const OVERVIEW_VIEW = 'overview:view';
 /** Reply-address Tee for `overview`, and its Fetcher's FROM. */
 const OVERVIEW_RECV = 'overview:in';
-/** Fetcher turning each `perf:tee` tick into one `overview` command. */
+/** Fetcher turning each `performance:tee` tick into one `overview` command. */
 const OVERVIEW_FETCHER = 'overview:fetch';
 /** View node for the polled `urls` slice. */
 const URLS_VIEW = 'urls:view';
 /** Reply-address Tee for `urls`, and its Fetcher's FROM. */
 const URLS_RECV = 'urls:in';
-/** Fetcher turning each `perf:tee` tick into one `urls` command. */
+/** Fetcher turning each `performance:tee` tick into one `urls` command. */
 const URLS_FETCHER = 'urls:fetch';
 /** View node for the on-demand URL detail modal. */
-const URLDETAIL_VIEW = 'urldetail:view';
-/** Reply-address Tee for `url_detail`, for the Fetcher and the modal alike. */
-const URLDETAIL_RECV = 'urldetail:in';
-/** Merge transform on the `urldetail:in` to `urldetail:view` edge. */
-const URLDETAIL_MERGE = 'urldetail:merge';
+const URLDETAIL_VIEW = 'url-detail:view';
+/** Reply-address Tee for `dump_url`, for the Fetcher and the modal alike. */
+const URLDETAIL_RECV = 'url-detail:in';
+/** Merge transform on the `url-detail:in` to `url-detail:view` edge. */
+const URLDETAIL_TRANSFORM = 'url-detail:transform';
 /** The URL detail slice's OWN Timer, armed only while that modal is visible. */
-const URLDETAIL_TIMER = 'urldetail:timer';
+const URLDETAIL_TIMER = 'url-detail:timer';
 /** Fetcher the URL detail auto-refresh tick fans to. */
-const URLDETAIL_FETCHER = 'urldetail:fetch';
+const URLDETAIL_FETCHER = 'url-detail:fetch';
 /** View node for the on-demand request detail modal. */
-const REQUESTDETAIL_VIEW = 'requestdetail:view';
-/** Reply-address Tee for `request_detail`; the modal's fetch mints at it. */
-const REQUESTDETAIL_RECV = 'requestdetail:in';
+const REQUESTDETAIL_VIEW = 'request-detail:view';
+/** Reply-address Tee for `dump_request`; the modal's fetch mints at it. */
+const REQUESTDETAIL_RECV = 'request-detail:in';
 
 /**
- * `url_detail` args for the open modal. The auto-refresh tick and the
+ * `dump_url` args for the open modal. The auto-refresh tick and the
  * selection fetch share this, so both ask for the same payload shape and the
  * merge node compares like with like.
  *
@@ -155,7 +155,7 @@ function urlDetailArgs( { hash, serverFilter, since = 0 } ) {
 }
 
 /**
- * Whether a URL hash may go out as a `url_detail` token. A selection arrives
+ * Whether a URL hash may go out as a `dump_url` token. A selection arrives
  * from a deep link as readily as from a clicked row, so it is user input, and
  * one that fails here drives the modal's error control instead of a command.
  *
@@ -165,7 +165,7 @@ function urlDetailArgs( { hash, serverFilter, since = 0 } ) {
 const isValidHash = ( h ) => 'string' === typeof h && /^[a-f0-9]+$/.test( h );
 
 /**
- * Whether a request id may go out as a `request_detail` token, on the same
+ * Whether a request id may go out as a `dump_request` token, on the same
  * reasoning as `isValidHash`.
  *
  * @param {*} r The candidate rid.
@@ -314,7 +314,7 @@ export function usePerformanceGraph( opts = {} ) {
 		selectedRequest = null,
 	} = opts;
 
-	// The whole opts object, for the url_detail getter's fire-time selection.
+	// The whole opts object, for the dump_url getter's fire-time selection.
 	const optsRef = useRef( opts );
 	optsRef.current = opts;
 
@@ -374,23 +374,23 @@ export function usePerformanceGraph( opts = {} ) {
 					} ),
 			} );
 
-			// @longform On-demand url_detail: an ordinary slice, on its OWN
+			// @longform On-demand dump_url: an ordinary slice, on its OWN
 			// Timer rather than the shared tick — the modal arms it by
 			// selection. The merge rides the transform slot, so it lands on
 			// the receiver→view edge.
 			addSliceFetcher( interpreter, {
 				fetcher: URLDETAIL_FETCHER,
 				receiver: URLDETAIL_RECV,
-				command: 'url_detail',
+				command: 'dump_url',
 				view: URLDETAIL_VIEW,
 				viewClass: views.UrlDetailView,
 				controlFrom: URLDETAIL_VIEW,
 				tee: interpreter.makeNode( 'Timer', URLDETAIL_TIMER ),
 				target: TARGET,
 				transform: {
-					name: URLDETAIL_MERGE,
+					name: URLDETAIL_TRANSFORM,
 					nodeClass: views.UrlDetailMerge,
-					controlFrom: URLDETAIL_MERGE,
+					controlFrom: URLDETAIL_TRANSFORM,
 				},
 				// @longform
 				// No hash, nothing to ask: a null return sends nothing at
@@ -405,12 +405,12 @@ export function usePerformanceGraph( opts = {} ) {
 					return urlDetailArgs( {
 						hash,
 						serverFilter: serverFilterRef.current,
-						since: Core.node( URLDETAIL_MERGE ).watermark(),
+						since: Core.node( URLDETAIL_TRANSFORM ).watermark(),
 					} );
 				},
 			} );
 
-			// @longform On-demand request_detail: Tee → view, like every other
+			// @longform On-demand dump_request: Tee → view, like every other
 			// slice. `makeNode` takes a name OR a class, so it answers `Node`;
 			// the slice views carrying `controlFrom` are the narrower type.
 			const requestDetailView =
@@ -431,8 +431,8 @@ export function usePerformanceGraph( opts = {} ) {
 				}
 			};
 		},
-		timerName: 'perf:timer',
-		teeName: 'perf:tee',
+		timerName: 'performance:timer',
+		teeName: 'performance:tee',
 		// Suspend offscreen overview/urls poll while any detail modal is open.
 		paused: !! ( selectedUrl || selectedRequest ),
 		intervalMs,
@@ -531,11 +531,11 @@ export function usePerformanceGraph( opts = {} ) {
 		modalWasOpen.current = modalOpen;
 	}, [ selectedUrl, selectedRequest, isPageVisible, pokeOverviewUrls ] );
 
-	// Selection-driven url_detail fetch on open, and on a change of scope.
+	// Selection-driven dump_url fetch on open, and on a change of scope.
 	useEffect( () => {
 		if ( ! selectedUrl ) {
 			sendControl( URLDETAIL_VIEW, { action: 'clear' } );
-			sendControl( URLDETAIL_MERGE, { action: 'clear' } );
+			sendControl( URLDETAIL_TRANSFORM, { action: 'clear' } );
 			return;
 		}
 		if ( ! isValidHash( selectedUrl.hash ) ) {
@@ -550,15 +550,15 @@ export function usePerformanceGraph( opts = {} ) {
 		// the one it holds, and that stamp is the URL's flame mtime — the same
 		// for every scope. Uncleared, a rescoped reply is discarded and
 		// the modal keeps the previous server's numbers.
-		sendControl( URLDETAIL_MERGE, { action: 'clear' } );
+		sendControl( URLDETAIL_TRANSFORM, { action: 'clear' } );
 		sendCommand(
-			'url_detail',
+			'dump_url',
 			urlDetailArgs( { hash: selectedUrl.hash, serverFilter } ),
 			URLDETAIL_RECV
 		);
 	}, [ selectedUrl, serverFilter, sendCommand, sendControl ] );
 
-	// Arm url_detail refresh Timer only while URL detail is the visible view.
+	// Arm dump_url refresh Timer only while URL detail is the visible view.
 	useEffect( () => {
 		const timer = Core.node( URLDETAIL_TIMER );
 		if ( ! timer ) {
@@ -577,7 +577,7 @@ export function usePerformanceGraph( opts = {} ) {
 		return undefined;
 	}, [ selectedUrl, selectedRequest, isPageVisible, intervalMs ] );
 
-	// Selection-driven request_detail.
+	// Selection-driven dump_request.
 	useEffect( () => {
 		if ( ! selectedRequest ) {
 			sendControl( REQUESTDETAIL_VIEW, { action: 'clear' } );
@@ -614,7 +614,7 @@ export function usePerformanceGraph( opts = {} ) {
 			options.partition = partition;
 		}
 		sendCommand(
-			'request_detail',
+			'dump_request',
 			formatCommandArgs( [ selectedRequest ], options ),
 			REQUESTDETAIL_RECV
 		);

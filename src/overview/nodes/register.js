@@ -12,10 +12,10 @@
  * `usePerformanceGraph` builds one node per class:
  *   - `OverviewView` → `overview:view` and `UrlsView` → `urls:view`, the two
  *     slices `addSliceFetcher` polls off the shared tick;
- *   - `UrlDetailView` → `urldetail:view` and `RequestDetailView` →
- *     `requestdetail:view`, the two on-demand modal slices;
- *   - `UrlDetailMerge` → `urldetail:merge`, the incremental-merge transform on
- *     the `urldetail:in` Tee → `urldetail:view` edge.
+ *   - `UrlDetailView` → `url-detail:view` and `RequestDetailView` →
+ *     `request-detail:view`, the two on-demand modal slices;
+ *   - `UrlDetailMerge` → `url-detail:transform`, the incremental-merge transform on
+ *     the `url-detail:in` Tee → `url-detail:view` edge.
  *
  * The `performance` CI verbs answer PHP arrays rather than JSON strings, so a
  * payload reaches `parse` already decoded and no declaration sets `json`.
@@ -101,10 +101,10 @@ export const views = {
 		},
 
 		/**
-		 * `urldetail:view` — the on-demand URL modal slice.
+		 * `url-detail:view` — the on-demand URL modal slice.
 		 *
-		 * Replies land here already merged: the graph runs `urldetail:in` (Tee)
-		 * → `urldetail:merge` → this node, and the merge node owns the
+		 * Replies land here already merged: the graph runs `url-detail:in` (Tee)
+		 * → `url-detail:transform` → this node, and the merge node owns the
 		 * incremental request-list merge, the `last_modified` dedup and the
 		 * 500-request cap.
 		 */
@@ -113,7 +113,7 @@ export const views = {
 		),
 
 		/**
-		 * `requestdetail:view` — one selected request: its record, flame data
+		 * `request-detail:view` — one selected request: its record, flame data
 		 * and findings.
 		 */
 		RequestDetailView: dataSlice(

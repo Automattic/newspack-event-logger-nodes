@@ -107,6 +107,14 @@ class McpControllerTest extends TestCase {
 
 		$this->assertContains( 'performance_overview', $names );
 		$this->assertContains( 'performance_ask', $names );
+		$this->assertContains( 'dump_rules', $names, 'the ruleset read is a dump: every rule with its hooks nested' );
+		$this->assertNotContains( 'rules_list', $names, 'the old tool name is gone, not aliased' );
+		foreach ( [ 'search_requests', 'grep_requests', 'dump_request', 'dump_url' ] as $tool ) {
+			$this->assertContains( $tool, $names, "the {$tool} tool is named after its verb" );
+		}
+		foreach ( [ 'performance_request_search', 'performance_request_grep', 'performance_request_detail', 'performance_url_detail' ] as $tool ) {
+			$this->assertNotContains( $tool, $names, "the old {$tool} tool name is gone, not aliased" );
+		}
 		$this->assertNotContains( 'rules_upsert', $names, 'a read scope may not edit the ruleset' );
 	}
 
@@ -255,7 +263,7 @@ class McpControllerTest extends TestCase {
 		// say so reads that refusal as "no such request" and stops looking.
 		$tools = ( new \ReflectionClass( MCP_Controller::class ) )->getConstant( 'TOOLS' );
 
-		foreach ( [ 'performance_request_search', 'performance_request_detail' ] as $tool ) {
+		foreach ( [ 'search_requests', 'dump_request' ] as $tool ) {
 			$this->assertStringContainsString(
 				'budget spent',
 				$tools[ $tool ]['summary'],
@@ -393,7 +401,7 @@ class McpControllerTest extends TestCase {
 					'jsonrpc' => '2.0',
 					'id'      => 8,
 					'method'  => 'tools/call',
-					'params'  => [ 'name' => 'performance_url_detail', 'arguments' => [ 'hash' => 'ffffffff' ] ],
+					'params'  => [ 'name' => 'dump_url', 'arguments' => [ 'hash' => 'ffffffff' ] ],
 				],
 				$bearer
 			)

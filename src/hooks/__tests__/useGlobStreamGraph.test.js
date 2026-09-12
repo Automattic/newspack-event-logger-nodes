@@ -204,7 +204,7 @@ describe( 'the partition catalog', () => {
 		const { result } = await renderBrowse( {
 			payloadByVerb: {
 				list_logs: [ { key: 'errors.p0', label: 'errors.p0' } ],
-				log_status: { segments: [ { id: 4, size: 90 } ] },
+				dump_log: { segments: [ { id: 4, size: 90 } ] },
 			},
 		} );
 		await waitFor( () =>
@@ -236,7 +236,7 @@ describe( 'the partition catalog', () => {
 		const { result } = await renderBrowse( {
 			payloadByVerb: {
 				list_logs: [ { key: 'errors.p0', label: 'errors.p0' } ],
-				log_status: { segments: [ { id: 4, size: 90 } ] },
+				dump_log: { segments: [ { id: 4, size: 90 } ] },
 			},
 		} );
 		await waitFor( () =>
@@ -309,7 +309,7 @@ describe( 'moving the selection', () => {
 		const { result, view } = await renderBrowse( {
 			payloadByVerb: {
 				list_logs: TWO,
-				log_status: { segments: [ { id: 7, size: 12 } ] },
+				dump_log: { segments: [ { id: 7, size: 12 } ] },
 			},
 		} );
 		await act( async () =>
@@ -326,7 +326,7 @@ describe( 'moving the selection', () => {
 		const { result } = await renderBrowse( {
 			payloadByVerb: {
 				list_logs: TWO,
-				log_status: { segments: [ { id: 7, size: 12 } ] },
+				dump_log: { segments: [ { id: 7, size: 12 } ] },
 			},
 		} );
 		await act( async () =>
@@ -336,11 +336,11 @@ describe( 'moving the selection', () => {
 		expect( subscribedTo() ).toEqual( [ GLOB ] );
 	} );
 
-	test( 'a refused log_status leaves the rail empty', async () => {
+	test( 'a refused dump_log leaves the rail empty', async () => {
 		let refuse = false;
 		wire = installFakeCommandWire( ( m ) => {
 			const verb = m[ VALUE ]?.name;
-			if ( 'log_status' === verb ) {
+			if ( 'dump_log' === verb ) {
 				return refuse
 					? new Error( verb )
 					: { segments: [ { id: 12, size: 640 } ] };
@@ -373,11 +373,11 @@ describe( 'moving the selection', () => {
 		);
 	} );
 
-	test( 'an answered log_status fills the rail', async () => {
+	test( 'an answered dump_log fills the rail', async () => {
 		const { result } = await renderBrowse( {
 			payloadByVerb: {
 				list_logs: TWO,
-				log_status: { segments: [ { id: 12, size: 640 } ] },
+				dump_log: { segments: [ { id: 12, size: 640 } ] },
 			},
 		} );
 		await act( async () =>
@@ -389,6 +389,21 @@ describe( 'moving the selection', () => {
 		expect( railItems( result.current.browse )[ 0 ].textContent ).toContain(
 			'Segment 12'
 		);
+		// The catalog, the segment read and its rail tick are each a subject.
+		for ( const name of [
+			`${ PREFIX }-catalog:view`,
+			`${ PREFIX }-segments:result`,
+			`${ PREFIX }-rail:timer`,
+		] ) {
+			expect( Core.node( name ) ).toBeTruthy();
+		}
+		for ( const name of [
+			`${ PREFIX }:list:view`,
+			`${ PREFIX }:view:status:result`,
+			`${ PREFIX }:view:segments`,
+		] ) {
+			expect( Core.node( name ) ).toBeNull();
+		}
 	} );
 } );
 
@@ -402,7 +417,7 @@ describe( 'the two-level gate', () => {
 	];
 	const WITH_RAIL = {
 		list_logs: TWO,
-		log_status: { segments: [ { id: 9, size: 12 } ] },
+		dump_log: { segments: [ { id: 9, size: 12 } ] },
 	};
 
 	test( 'the whole-glob view has no rail, no jump and no step', async () => {

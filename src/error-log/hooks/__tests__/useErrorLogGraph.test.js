@@ -1,13 +1,13 @@
 /**
  * useErrorLogGraph tests — the Error Log dashboard graph migrated onto the
  * substrate's canonical rule-#2 backbone (`_command_interpreter → _router`) via
- * a SINGLE `RemoteLink` node plus the single `perferrors:view` view-model node.
+ * a SINGLE `RemoteLink` node plus the single `error-log:view` view-model node.
  *
  * RemoteLink composes the three I/O children every SSE dashboard used to wire by
- * hand — `perferrors:link:sse-in` (SseIn), `perferrors:link:http` (HttpOut) and
- * `perferrors:link:heartbeat` (Heartbeat) — and wires the `connected → slot`
- * bridge to its own heartbeat. The dead `perferrors:route` classifier and the
- * `perferrors:transform` Callback are gone — the view's `fill()` shapes raw
+ * hand — `error-log:link:sse-in` (SseIn), `error-log:link:http` (HttpOut) and
+ * `error-log:link:heartbeat` (Heartbeat) — and wires the `connected → slot`
+ * bridge to its own heartbeat. The dead `error-log:route` classifier and the
+ * `error-log:transform` Callback are gone — the view's `fill()` shapes raw
  * envelopes inline.
  *
  * EventSource is faked via `global.EventSource`; SseInNode's connection logic is
@@ -92,15 +92,19 @@ afterEach( () => jest.restoreAllMocks() );
 
 const INTERPRETER = '_command_interpreter';
 const ROUTER = '_router';
-const LINK = 'perferrors:link';
+const LINK = 'error-log:link';
 // RemoteLink has an the SseIn + shares the reserved _http/_heartbeat.
 const HTTP = '_http';
 const HEARTBEAT = '_heartbeat';
-const VIEW = 'perferrors:view';
-const TEE = 'perferrors:stream';
+const VIEW = 'error-log:view';
+const TEE = 'error-log:stream';
 const COMPOSED_NAMES = [ HTTP, HEARTBEAT ];
 // Names that MUST NOT be registered any more — the dead route/transform nodes.
-const REMOVED_NODE_NAMES = [ 'perferrors:route', 'perferrors:transform' ];
+const REMOVED_NODE_NAMES = [
+	'error-log:route',
+	'error-log:transform',
+	'perferrors:view',
+];
 const LEASE_OWNER = '9007199254740993';
 
 // Build a `connected` envelope as a flat `KEY VALUE` string (SseInNode shape).
@@ -143,12 +147,12 @@ describe( 'useErrorLogGraph — exospine + RemoteLink wiring', () => {
 			expect( node.sink ).toBe( interpreter );
 		}
 		// Registered so `trace` reaches it; patron keeps it off the canvas.
-		expect( Core.node( 'perferrors:link:sse-in' ) ).toBe(
-			Core.node( 'perferrors:link' ).sseIn
+		expect( Core.node( 'error-log:link:sse-in' ) ).toBe(
+			Core.node( 'error-log:link' ).sseIn
 		);
 	} );
 
-	test( 'does not mount the retired perferrors:route / perferrors:transform nodes', () => {
+	test( 'does not mount the retired error-log:route / error-log:transform nodes', () => {
 		renderHook( () => useErrorLogGraph() );
 		for ( const name of REMOVED_NODE_NAMES ) {
 			expect( Core.node( name ) ).toBeNull();
@@ -272,7 +276,7 @@ describe( 'useErrorLogGraph — slot keep-alive bridge', () => {
 } );
 
 describe( 'useErrorLogGraph — end-to-end routing through the exospine', () => {
-	test( 'an errors envelope from the EventSource flows into perferrors:view', () => {
+	test( 'an errors envelope from the EventSource flows into error-log:view', () => {
 		renderHook( () => useErrorLogGraph() );
 		act( () => {
 			FakeEventSource.last.dispatch(

@@ -5,7 +5,7 @@
  *
  *   _http     (HttpOutNode) — the POST /command egress; `.client` is the
  *             transport it POSTs through
- *   rules:in  (Tee) → rules:view (a RulesView slice), repainted by every `list`
+ *   rules:in  (Tee) → rules:view (a RulesView slice), repainted by every `dump`
  *
  * Nothing here pairs a reply with its request, because the addressing already
  * is the correlation. Each MUTATING verb owns its own nodes — one
@@ -15,7 +15,7 @@
  * `message[ID]`, no `replies` map and nothing keyed by one; sending several
  * verbs in one tick means more nodes, never one node telling replies apart.
  *
- * `list` is the odd one out, deliberately: it is a publish, not an await. It is
+ * `dump` is the odd one out, deliberately: it is a publish, not an await. It is
  * minted FROM the `rules:in` Tee and filled through the `_shell` Tap
  * (observable at `connect _shell`), so its reply lands back on that Tee and
  * fans into `rules:view`, the render model every consumer reads.
@@ -25,8 +25,8 @@
  *
  * The wire contract mirrors `Rules_CI_Node`: `save` and `upsert` pass the raw
  * JSON as a single argument token (the handler `json_decode`s `$args[0]`),
- * `delete` passes the id as a positional token, and `list` and `reset` take no
- * arguments. Every successful mutation re-`list`s, so the table repaints from
+ * `delete` passes the id as a positional token, and `dump` and `reset` take no
+ * arguments. Every successful mutation re-`dump`s, so the table repaints from
  * the server rather than from a locally patched copy; a refusal leaves the
  * server unchanged, so it repaints nothing.
  *
@@ -52,14 +52,14 @@ import { useCommandOnce } from '@newspack-nodes/shared/hooks/useCommandOnce';
 /** The server-side CI mount every verb here is addressed to. */
 const RULES_CI = 'rules';
 
-/** The Tee that mints `list` and, by TO=FROM, receives its reply. */
+/** The Tee that mints `dump` and, by TO=FROM, receives its reply. */
 const RECV = 'rules:in';
 
 /** The slice view holding the table's render model. */
 const VIEW = 'rules:view';
 
 /**
- * Ask the `rules` CI to re-list, minted FROM the table's own receiver Tee: the
+ * Ask the `rules` CI to re-dump, minted FROM the table's own receiver Tee: the
  * server echoes TO=FROM, so the reply lands on `rules:in`, fans into
  * `rules:view` and repaints the table. That repaint IS the result — nothing is
  * returned and no caller awaits one.
@@ -69,8 +69,8 @@ const VIEW = 'rules:view';
  *
  * @param {Object} shell The `_shell` Tap every command routes through.
  */
-function fireList( shell ) {
-	const m = Core.node( RECV )?.command( 'list', [] ) ?? null;
+function fireDump( shell ) {
+	const m = Core.node( RECV )?.command( 'dump', [] ) ?? null;
 	if ( null === m ) {
 		return; // unauthenticated; re-auth is under way
 	}
@@ -82,7 +82,7 @@ function fireList( shell ) {
  * Mount the ruleset editor's graph and return the table with its CRUD verbs.
  *
  * Each mutation's answer lands on the node that asked, and a successful one
- * re-lists — so the TABLE repaints one round trip after the mutation settles.
+ * re-dumps — so the TABLE repaints one round trip after the mutation settles.
  * Read the rules from the returned `rules`, never from a mutation's outcome.
  *
  * @param {Object}   [opts]            Options.
@@ -92,13 +92,13 @@ function fireList( shell ) {
  *                                     the answer lands a tick later, on the
  *                                     node that asked for it.
  * @return {{ rules: Object[], loading: boolean, error: (string|null),
- *   list: () => void,
+ *   dump: () => void,
  *   saveAll: (rules: Object[]) => void,
  *   upsert: (rule: Object) => void,
  *   remove: (id: string) => void,
  *   reset: () => void }}
  *   The `rules:view` render model plus the CRUD callbacks. `loading` starts
- *   true and clears on the first `list` reply; `error` carries a `list`
+ *   true and clears on the first `dump` reply; `error` carries a `dump`
  *   failure's banner — a mutation's failure goes to `onMutation` instead,
  *   leaving the banner for the caller to own.
  */
@@ -124,12 +124,12 @@ export function useRulesGraph( opts = {} ) {
 
 			bumpBuild( ( n ) => n + 1 );
 
-			// One list once the session is up; its reply repaints the table.
+			// One dump once the session is up; its reply repaints the table.
 			ensureSession().then( () => {
 				if ( shellRef.current !== shell ) {
 					return; // unmounted or rebuilt while /auth was in flight
 				}
-				fireList( shell );
+				fireDump( shell );
 			} );
 
 			return () => {
@@ -142,14 +142,14 @@ export function useRulesGraph( opts = {} ) {
 		return teardown;
 	}, [] );
 
-	// One one-shot per verb; a success re-lists, a refusal only reports.
+	// One one-shot per verb; a success re-dumps, a refusal only reports.
 	const onMutationRef = useRef( onMutation );
 	onMutationRef.current = onMutation;
 	const settle = useCallback(
 		( verb ) =>
 			( { error } ) => {
 				if ( ! error && shellRef.current ) {
-					fireList( shellRef.current );
+					fireDump( shellRef.current );
 				}
 				onMutationRef.current?.( { verb, error } );
 			},
@@ -180,9 +180,9 @@ export function useRulesGraph( opts = {} ) {
 		onDone: settle( 'reset' ),
 	} );
 
-	const list = useCallback( () => {
+	const dump = useCallback( () => {
 		if ( shellRef.current ) {
-			fireList( shellRef.current );
+			fireDump( shellRef.current );
 		}
 	}, [] );
 
@@ -212,7 +212,7 @@ export function useRulesGraph( opts = {} ) {
 		rules: model?.rules ?? [],
 		loading: model?.loading ?? true,
 		error: model?.error ?? null,
-		list,
+		dump,
 		saveAll,
 		upsert,
 		remove,

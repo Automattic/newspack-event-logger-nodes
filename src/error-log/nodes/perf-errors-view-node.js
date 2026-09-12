@@ -49,7 +49,7 @@ const clip = ( value, max ) => {
 };
 
 /**
- * `perferrors:view` — owns the Error Log view model.
+ * `error-log:view` — owns the Error Log view model.
  *
  * A `LogStreamViewNode` subclass: the ring, the paused belt and step budget,
  * the decaying lps, seek tracking, and the shared control verbs — `select`

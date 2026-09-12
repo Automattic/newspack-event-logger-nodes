@@ -1,7 +1,7 @@
 <?php
 /**
  * Reqgrep_Core: the rid-grouping / pattern-matching engine shared by the
- * `wp nodes reqgrep` CLI and the `request_grep` performance-CI verb.
+ * `wp nodes reqgrep` CLI and the `grep_requests` performance-CI verb.
  *
  * It owns the part both consumers must agree on byte-for-byte: WHICH firehose
  * lines belong to WHICH request, and WHEN a request has ENDED. The output
@@ -221,7 +221,7 @@ class Reqgrep_Core {
 	 * Both terminals count. `process (aborted)` ends a request as surely as
 	 * `process (complete)` does, and `Request_Builder_Node::TERMINAL_KEYWORDS`
 	 * is the one list: reading only the nominal one drops every lease-killed
-	 * request out of `request_grep` and mislabels it `[incomplete]` in the CLI.
+	 * request out of `grep_requests` and mislabels it `[incomplete]` in the CLI.
 	 *
 	 * @param \stdClass $state The rid's accumulated state.
 	 * @param string    $rid   Request id.

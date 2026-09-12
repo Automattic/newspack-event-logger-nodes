@@ -50,7 +50,7 @@ jest.mock( '../../CategoryTimeChart', () => ( {
 } ) );
 
 import * as React from 'react';
-import { Core, VALUE } from '@newspack-nodes/runtime';
+import { Core, FROM, VALUE } from '@newspack-nodes/runtime';
 import { installFakeCommandWire } from '@newspack-nodes/shared/test-utils/fakeCommandWire';
 import UrlDetailView from '../UrlDetailView';
 import {
@@ -397,8 +397,8 @@ describe( 'UrlDetailView', () => {
 		unmount();
 	} );
 
-	it( 'never charts a series carried by the url_detail payload', () => {
-		// `url_detail` sends no series; a view that would draw one anyway is
+	it( 'never charts a series carried by the dump_url payload', () => {
+		// `dump_url` sends no series; a view that would draw one anyway is
 		// a server change away from the first paint nobody asked for.
 		const { container, unmount } = mount( {
 			urlDetail: { ...baseUrlDetail, stats: { time_series: { a: 1 } } },
@@ -575,10 +575,15 @@ describe( 'UrlDetailView', () => {
 			'deadbeef',
 			'--breakdown=status',
 		] );
+		// The read keeps the one-shot default scope; its refresh tick is a
+		// subject of its own, so the two never collide on `:timer`.
+		expect( msg[ FROM ] ).toMatch( /^performance:url_breakdown:in\// );
+		expect( Core.node( 'url-breakdown:timer' ) ).toBeTruthy();
+		expect( Core.node( 'urldetail:breakdown' ) ).toBeNull();
 		expect(
 			wire.batches
 				.flat()
-				.filter( ( m ) => 'url_detail' === m[ VALUE ]?.name )
+				.filter( ( m ) => 'dump_url' === m[ VALUE ]?.name )
 		).toHaveLength( 0 );
 		unmount();
 	}, 20000 );

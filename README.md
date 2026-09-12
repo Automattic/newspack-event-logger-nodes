@@ -93,14 +93,14 @@ A dashboard reaches the server two ways, both of them the substrate's: a TM_COMM
 
 | Surface | Service CI verbs | Live data | Source |
 |---------|------------------|-----------|--------|
-| **Performance** (Event Logger → Performance) | `performance.{overview, urls, url_detail, url_breakdown, request_search, request_detail, request_grep, ask, hooks_registered}`, `rules.{list, upsert, delete}` | — | `Request_Builder_Node` + `Flame_Builder_Node` + `Stats_Store` + `Reqgrep_Core`, over the `requests` partition index |
+| **Performance** (Event Logger → Performance) | `performance.{overview, urls, dump_url, url_breakdown, search_requests, dump_request, grep_requests, ask, list_hooks}`, `rules.{dump, upsert, delete}` | — | `Request_Builder_Node` + `Flame_Builder_Node` + `Stats_Store` + `Reqgrep_Core`, over the `requests` partition index |
 | **Gyroscope** (Event Logger → Gyroscope) | — | `subscribe=gyroscope.*` | `Request_Flight_Node` in-flight snapshots plus the `completed:tee` fan-out |
-| **Request Log** (Event Logger → Request Log) | substrate `raw-logs.{list_logs, log_status, read_message}` | `subscribe=completed.*` | `completed.p0`, the finished requests `completed:tee` fans out |
-| **Errors** (Event Logger → Errors) | substrate `raw-logs.{list_logs, log_status, read_message}` | `subscribe=errors.*` | `errors.p0`, written by `Request_Builder_Node`: its own error and warning records, and the `stderr` lines `Diagnostics_Bridge` carries in from the substrate |
-| **Settings** (Settings → Event Logger) | `performance.hooks_registered`, `rules.{list, save, upsert, delete, reset}` | — | The hook taxonomy and `Rule_Set` |
-| **Request** (a debug-overlay tab) | `performance.request_detail` | — | This request's own record |
+| **Request Log** (Event Logger → Request Log) | substrate `raw-logs.{list_logs, dump_log, read_message}` | `subscribe=completed.*` | `completed.p0`, the finished requests `completed:tee` fans out |
+| **Errors** (Event Logger → Errors) | substrate `raw-logs.{list_logs, dump_log, read_message}` | `subscribe=errors.*` | `errors.p0`, written by `Request_Builder_Node`: its own error and warning records, and the `stderr` lines `Diagnostics_Bridge` carries in from the substrate |
+| **Settings** (Settings → Event Logger) | `performance.list_hooks`, `rules.{dump, save, upsert, delete, reset}` | — | The hook taxonomy and `Rule_Set` |
+| **Request** (a debug-overlay tab) | `performance.dump_request` | — | This request's own record |
 
-`performance.hooks_registered` answers two surfaces because one editor serves both: the Performance dashboard's "Log this URL" opens the same `RuleEditModal`, and the same hook picker beneath it, that the settings page's ruleset table opens.
+`performance.list_hooks` answers two surfaces because one editor serves both: the Performance dashboard's "Log this URL" opens the same `RuleEditModal`, and the same hook picker beneath it, that the settings page's ruleset table opens.
 
 Two verbs answer no dashboard. `performance.set` is the write a hub's settings sync pushes at a spoke, and `discovery.get` reports a spoke's hook and custom-event roster — to the hub's `Discovery_Collector_Node`, and to the substrate's `vault` CI when it probes one spoke's connection. Substrate-owned surfaces live on the substrate's own **Nodes** admin page, as its tabs: Overview, Jobs, Console, Partition Viewer, Log Viewer, Config Audit, Vault, Sessions and Aggregator.
 
@@ -125,7 +125,7 @@ MCP re-serves ten of the service-CI verbs as JSON-RPC tools, so an agent can rea
 POST /wp-json/newspack-event-logger-nodes/v1/mcp
 ```
 
-Authentication is a scoped command session (issue one under Nodes → Sessions), passed as `Authorization: Bearer <handle>.<key>`. The request becomes that session's minting user and applies the scope as a ceiling, so a scope can only ever subtract and `tools/list` offers only what it covers: a `read` session sees the seven performance tools and `rules_list`, and `tune` adds `rules_upsert` and `rules_delete`.
+Authentication is a scoped command session (issue one under Nodes → Sessions), passed as `Authorization: Bearer <handle>.<key>`. The request becomes that session's minting user and applies the scope as a ceiling, so a scope can only ever subtract and `tools/list` offers only what it covers: a `read` session sees the seven performance tools and `dump_rules`, and `tune` adds `rules_upsert` and `rules_delete`.
 
 Register it with a client — `<ID>` is the local name the client files it under:
 
@@ -152,7 +152,7 @@ Hub and spoke differ by topology membership rather than by a toggle. A spoke run
 [docs/README.md](docs/README.md) is the map. It reads in three groups:
 
 - **Understand it**: [the Event Logger](docs/the-event-logger.md), [hub control](docs/hub-control.md) and [dashboards](docs/dashboards.md), three chapters with diagrams
-- **Reference**: [architecture-guide.md](docs/architecture-guide.md), [architecture-decisions.md](docs/architecture-decisions.md), [security-model.md](docs/security-model.md) and [API.md](docs/API.md)
+- **Reference**: [architecture-guide.md](docs/architecture-guide.md), [architecture-decisions.md](docs/architecture-decisions.md), [security-model.md](docs/security-model.md), [API.md](docs/API.md) and [upgrading.md](docs/upgrading.md)
 - **The substrate**: newspack-nodes' [documentation map](https://github.com/Automattic/newspack-nodes/blob/main/docs/README.md), [getting-started.md](https://github.com/Automattic/newspack-nodes/blob/main/docs/getting-started.md) and [hub-and-spoke.md](https://github.com/Automattic/newspack-nodes/blob/main/docs/hub-and-spoke.md)
 
 [AGENTS.md](AGENTS.md) covers layout, build and release, and [CHANGELOG.md](CHANGELOG.md) the version-by-version history.

@@ -2,7 +2,7 @@
  * useHookCatalogGraph tests — the Performance Logger hook-catalog slice clipped
  * onto the substrate's batched-poll toolkit (exospine + `_http` + a tick).
  *
- * The hook emits `hooks_registered` as a TM_COMMAND through the interpreter
+ * The hook emits `list_hooks` as a TM_COMMAND through the interpreter
  * (FROM=`hookcatalog:in`, TO=`_shell/_http/performance`); the reply routes via
  * TO=FROM back into `hookcatalog:view`, which extracts hooks_by_category.
  *
@@ -32,9 +32,9 @@ import { useHookCatalogGraph } from '../useHookCatalogGraph';
 const INTERPRETER = '_command_interpreter';
 const ROUTER = '_router';
 const HTTP = '_http';
-const RECEIVER = 'hookcatalog:in';
-const FETCHER = 'hookcatalog:fetch';
-const VIEW = 'hookcatalog:view';
+const RECEIVER = 'hook-catalog:in';
+const FETCHER = 'hook-catalog:fetch';
+const VIEW = 'hook-catalog:view';
 const ALL_GRAPH_NAMES = [ HTTP, RECEIVER, VIEW ];
 
 // The ask rides the router tick, so a dispatch is a wait, not a flush.
@@ -107,6 +107,15 @@ describe( 'useHookCatalogGraph — exospine + I/O boundary wiring', () => {
 		}
 	} );
 
+	test( 'names every node `<subject>:<role>`, the subject hyphenated', () => {
+		installWire();
+		renderHook( () => useHookCatalogGraph( { isOpen: true } ) );
+		for ( const role of [ 'timer', 'tee', 'fetch', 'in', 'view' ] ) {
+			expect( Core.node( `hook-catalog:${ role }` ) ).toBeTruthy();
+			expect( Core.node( `hookcatalog:${ role }` ) ).toBeNull();
+		}
+	} );
+
 	test( 'mounts _http without injecting anything into it', () => {
 		installWire();
 		renderHook( () => useHookCatalogGraph( { isOpen: true } ) );
@@ -132,9 +141,9 @@ describe( 'useHookCatalogGraph — exospine + I/O boundary wiring', () => {
 } );
 
 describe( 'useHookCatalogGraph — fire on open routes through the exospine', () => {
-	test( 'flipping isOpen true dispatches a hooks_registered command via _http', async () => {
+	test( 'flipping isOpen true dispatches a list_hooks command via _http', async () => {
 		const wire = installWire( {
-			hooks_registered: { hooks_by_category: {} },
+			list_hooks: { hooks_by_category: {} },
 		} );
 		const { rerender } = renderHook(
 			( props ) => useHookCatalogGraph( props ),
@@ -150,8 +159,8 @@ describe( 'useHookCatalogGraph — fire on open routes through the exospine', ()
 		expect( msg[ FROM ] ).toBe( RECEIVER );
 		// Addressed, not correlated.
 		expect( msg[ ID ] ).toBe( '' );
-		expect( msg[ VALUE ].name ).toBe( 'hooks_registered' );
-		// hooks_registered takes no args; empty token array, no payload.
+		expect( msg[ VALUE ].name ).toBe( 'list_hooks' );
+		// list_hooks takes no args; empty token array, no payload.
 		expect( msg[ VALUE ].arguments ).toEqual( [] );
 		expect( msg[ VALUE ].payload ).toBeUndefined();
 	}, 15000 );
@@ -162,7 +171,7 @@ describe( 'useHookCatalogGraph — fire on open routes through the exospine', ()
 			'REST API': [ 'rest_api_init' ],
 		};
 		installWire( {
-			hooks_registered: { hooks_by_category: hooks, total_hooks: 2 },
+			list_hooks: { hooks_by_category: hooks, total_hooks: 2 },
 		} );
 		const { result, rerender } = renderHook(
 			( props ) => useHookCatalogGraph( props ),
@@ -195,7 +204,7 @@ describe( 'useHookCatalogGraph — fire on open routes through the exospine', ()
 	// while it is on screen, and a refusal recovers without a re-open.
 	test( 'keeps asking while the picker stays open', async () => {
 		const wire = installWire( {
-			hooks_registered: { hooks_by_category: {} },
+			list_hooks: { hooks_by_category: {} },
 		} );
 		renderHook( () => useHookCatalogGraph( { isOpen: true } ) );
 
@@ -212,8 +221,8 @@ describe( 'useHookCatalogGraph — fetch errors fall back to an empty map (mirro
 	// A fetch failure clears loading + empties the catalog (no error UI).
 	test( 'an error reply clears loading without throwing', async () => {
 		installWire(
-			{ hooks_registered: 'capability check failed' },
-			{ errorVerbs: [ 'hooks_registered' ] }
+			{ list_hooks: 'capability check failed' },
+			{ errorVerbs: [ 'list_hooks' ] }
 		);
 		const { result, rerender } = renderHook(
 			( props ) => useHookCatalogGraph( props ),
@@ -262,7 +271,7 @@ describe( 'useHookCatalogGraph — teardown', () => {
 			const reply = newMessage();
 			reply[ TYPE ] = TM_COMMAND | TM_RESPONSE;
 			reply[ VALUE ] = {
-				name: 'hooks_registered',
+				name: 'list_hooks',
 				payload: { hooks_by_category: {} },
 			};
 			resolveReply( [ reply ] );

@@ -149,7 +149,7 @@ describe( 'UrlTable', () => {
 
 	it( 'does not offer the aggregate row as a URL', () => {
 		// The `Other` row stands for every URL past the per-bucket cap, so its
-		// key is not a url_hash and `url_detail` cannot answer for it. Making
+		// key is not a url_hash and `dump_url` cannot answer for it. Making
 		// it clickable would open a modal that errors on a row whose whole job
 		// is to keep the totals honest.
 		const onSelect = jest.fn();

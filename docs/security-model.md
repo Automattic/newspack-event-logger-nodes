@@ -11,7 +11,7 @@ The `newspack-nodes` **hub** pulls log data over HTTPS from 24 **spokes** (23 pu
 The logger defends against these actors:
 
 - **An anonymous visitor.** A request whose URL, query string, `User-Agent` or other header carries bytes chosen to land in a log, to be read back by the operator, or to collide with another request's id.
-- **A holder of a `read` session.** A dashboard user, or an agent holding a read-scoped session, with the lowest capability the substrate grants; `read` alone opens the request-detail and request-grep commands and the `performance_ask` MCP tool.
+- **A holder of a `read` session.** A dashboard user, or an agent holding a read-scoped session, with the lowest capability the substrate grants; `read` alone opens the `dump_request` and `grep_requests` commands and the `performance_ask` MCP tool.
 - **The hub.** A peer that pulls the firehose as the `newspack_nodes_hub` role, `read` and `tune` only, and so sees every line the spoke writes.
 - **A compromised spoke.** An authenticated peer whose `remote_job` entries the hub runs, and whose discovery replies land in the hub-wide lists. The substrate's security model describes what else such a spoke can reach.
 - **A neighbour on the shared cache pool.** Another site on the same memcached pool; the substrate's per-install salt is the defence, and the logger's `Stats_Store` is one of the readers that trust it.
@@ -23,7 +23,7 @@ The logger defends against these actors:
 
 ![Capture, replication and the three egresses](img/2026-09-08-firehose-capture.png)
 
-The PHP logger and the Perl template engine both write the firehose; the logger records each request's URL in full, query string included. The hub pulls as the `newspack_nodes_hub` role, `read` and `tune` only (substrate `includes/class-roles.php:114-117`), and `read` alone opens the request-detail and request-grep commands, so the hub sees them all. The substrate's [reply gate](https://github.com/Automattic/newspack-nodes/blob/main/docs/security-model.md#the-hubspoke-trust-boundary) decides what the hub delivers back to the spoke.
+The PHP logger and the Perl template engine both write the firehose; the logger records each request's URL in full, query string included. The hub pulls as the `newspack_nodes_hub` role, `read` and `tune` only (substrate `includes/class-roles.php:114-117`), and `read` alone opens the `dump_request` and `grep_requests` commands, so the hub sees them all. The substrate's [reply gate](https://github.com/Automattic/newspack-nodes/blob/main/docs/security-model.md#the-hubspoke-trust-boundary) decides what the hub delivers back to the spoke.
 
 ### Redaction: three models for three kinds of data
 

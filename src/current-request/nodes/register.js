@@ -1,6 +1,6 @@
 /**
  * Declares the current-request overlay tab's one slice view,
- * `currentrequest:view`.
+ * `current-request:view`.
  *
  * `registerSliceViews` builds the class from the declaration and merges it into
  * `CommandInterpreterNode.includeNodes`, the type→class table `resolveClass`
@@ -16,16 +16,16 @@ import { registerSliceViews } from '@newspack-nodes/shared/nodes/slice-view-node
 /** The view classes; `CurrentRequestTab` hands one to `addSliceFetcher`. */
 export const views = registerSliceViews( {
 	/**
-	 * `currentrequest:view` — THIS request's own stored record.
+	 * `current-request:view` — THIS request's own stored record.
 	 *
-	 * The `performance` CI's `request_detail` verb answers a PHP array, so the
+	 * The `performance` CI's `dump_request` verb answers a PHP array, so the
 	 * payload arrives decoded and this declaration sets no `json`. Each reply
 	 * replaces the record whole rather than merging into it: the verb answers
 	 * with the complete body every time, and `flame_data` — written after the
 	 * record, which is what the tab's extra ticks wait for — comes inside it.
 	 *
 	 * A worker writes the record moments after the page rendered, so the first
-	 * few asks find nothing and `request_detail` throws. That reply is a
+	 * few asks find nothing and `dump_request` throws. That reply is a
 	 * TM_ERROR the base folds into `error`, leaving `request` null, which the
 	 * tab renders as "still processing". `error` is declared so the failure
 	 * lands in the model and the next good reply clears it; the tab prints no

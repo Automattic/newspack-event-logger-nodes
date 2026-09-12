@@ -26,7 +26,7 @@ const INFLIGHT_STALE_MS = 15 * 60 * 1000;
  * `gyroscope:view` — owns the in-flight request model behind the In-Flight
  * Requests dashboard.
  *
- * Two cadences, deliberately split for performance (mirrors requestlog/view):
+ * Two cadences, deliberately split for performance (mirrors request-log:view):
  * - HIGH frequency (the gyroscope stream): `_inflight` / `_complete` mutate the
  *   `this.requests` map, but do NOT publish. The React view's refresh tick
  *   calls `snapshot()` each interval to read the sorted+capped render list

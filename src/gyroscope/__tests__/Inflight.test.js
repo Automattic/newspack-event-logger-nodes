@@ -140,6 +140,9 @@ describe( 'Inflight', () => {
 		registerViewFixture();
 		mount();
 		expect( useGyroscopeGraph ).toHaveBeenCalled();
+		// The render cadence is the subject's one Timer, named as such.
+		expect( Core.node( 'gyroscope:timer' ) ).toBeTruthy();
+		expect( Core.node( 'gyroscope:display' ) ).toBeNull();
 	} );
 
 	it( 'renders an empty message initially', () => {

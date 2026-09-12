@@ -86,8 +86,8 @@ describe( 'registration', () => {
 describe( 'the data slices', () => {
 	test.each( [
 		[ 'OverviewView', 'overview:view', 'overview' ],
-		[ 'UrlDetailView', 'urldetail:view', 'url_detail' ],
-		[ 'RequestDetailView', 'requestdetail:view', 'request_detail' ],
+		[ 'UrlDetailView', 'url-detail:view', 'dump_url' ],
+		[ 'RequestDetailView', 'request-detail:view', 'dump_request' ],
 	] )(
 		'%s publishes an empty slice, then its payload',
 		( type, name, verb ) => {
@@ -109,9 +109,9 @@ describe( 'the data slices', () => {
 	);
 
 	test( 'a reply carrying no payload keeps the slice already on screen', () => {
-		const v = makeView( 'UrlDetailView', 'urldetail:view' );
-		v.fill( reply( 'url_detail', { requests: [ { rid: 'a' } ] } ) );
-		v.fill( reply( 'url_detail', undefined ) );
+		const v = makeView( 'UrlDetailView', 'url-detail:view' );
+		v.fill( reply( 'dump_url', { requests: [ { rid: 'a' } ] } ) );
+		v.fill( reply( 'dump_url', undefined ) );
 
 		expect( v.setStateCache.view.data ).toEqual( {
 			requests: [ { rid: 'a' } ],
@@ -131,9 +131,9 @@ describe( 'the data slices', () => {
 	} );
 
 	test( 'the graph clears a modal slice through the control path', () => {
-		const v = makeView( 'RequestDetailView', 'requestdetail:view' );
-		v.fill( reply( 'request_detail', { rid: 'r-4219' } ) );
-		v.fill( control( 'requestdetail:view', { action: 'clear' } ) );
+		const v = makeView( 'RequestDetailView', 'request-detail:view' );
+		v.fill( reply( 'dump_request', { rid: 'r-4219' } ) );
+		v.fill( control( 'request-detail:view', { action: 'clear' } ) );
 
 		expect( v.setStateCache.view.data ).toBeNull();
 	} );

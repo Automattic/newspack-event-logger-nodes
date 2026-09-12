@@ -18,14 +18,14 @@ import { addSliceFetcher } from '@newspack-nodes/shared/helpers/addSliceFetcher'
 import { views } from '../nodes/register';
 import { egressPath } from '@newspack-nodes/shared/helpers/egressPath';
 
-/** Fetcher node: turns each tick into one `hooks_registered` command. */
-const FETCHER = 'hookcatalog:fetch';
+/** Fetcher node: turns each tick into one `list_hooks` command. */
+const FETCHER = 'hook-catalog:fetch';
 
 /** Receiver Tee: the Fetcher's FROM, so the CI's reply routes back here. */
-const RECEIVER = 'hookcatalog:in';
+const RECEIVER = 'hook-catalog:in';
 
 /** View node: parses the reply and publishes the slice `useNodeState` reads. */
-const VIEW = 'hookcatalog:view';
+const VIEW = 'hook-catalog:view';
 
 /**
  * Poll cadence. The taxonomy moves when a plugin registers a hook rather than
@@ -42,7 +42,7 @@ const POLL_INTERVAL_MS = 10000;
 const EMPTY = { hooksByCategory: null, descriptions: {}, error: null };
 
 /**
- * Poll the `performance` CI's `hooks_registered` verb while the picker is open,
+ * Poll the `performance` CI's `list_hooks` verb while the picker is open,
  * and hand back the taxonomy it publishes.
  *
  * @param {Object}  [opts]        Options.
@@ -61,14 +61,14 @@ export function useHookCatalogGraph( opts = {} ) {
 			addSliceFetcher( interpreter, {
 				fetcher: FETCHER,
 				receiver: RECEIVER,
-				command: 'hooks_registered',
+				command: 'list_hooks',
 				view: VIEW,
 				viewClass: views.HookCatalogView,
 				tee,
 				target: egressPath( 'performance' ),
 			} ),
-		timerName: 'hookcatalog:timer',
-		teeName: 'hookcatalog:tee',
+		timerName: 'hook-catalog:timer',
+		teeName: 'hook-catalog:tee',
 		enabled: Boolean( isOpen ),
 		intervalMs: POLL_INTERVAL_MS,
 	} );

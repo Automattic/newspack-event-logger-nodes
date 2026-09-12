@@ -26,7 +26,7 @@ import { useGlobStreamGraph } from '../../hooks/useGlobStreamGraph';
 export function useErrorLogGraph( opts = {} ) {
 	return useGlobStreamGraph(
 		{
-			prefix: 'perferrors',
+			prefix: 'error-log',
 			glob: 'errors.*',
 			viewClass: views.PerfErrorsView,
 		},

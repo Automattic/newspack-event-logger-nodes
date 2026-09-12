@@ -132,7 +132,7 @@ re-derived from the pattern.
 
 | Verb | Role | Args | Returns |
 |------|------|------|---------|
-| `list` | READ | — | `{ rules: [...] }` — every rule, with a pointer-tier rule's hooks resolved to the full list (`hooks_for`) and `hooks_in` normalized to `'inline'`. The storage tier is a `Rule_Set` decision the editor never makes. |
+| `dump` | READ | — | `{ rules: [...] }` — every rule, with a pointer-tier rule's hooks resolved to the full list (`hooks_for`) and `hooks_in` normalized to `'inline'`. The storage tier is a `Rule_Set` decision the editor never makes. |
 | `save` | TUNE | `rules` (required, raw JSON array as the first token) | `{ saved: int }` — whole-list replace. Each entry decodes through `Rule::from_array()`, ids are re-derived from patterns, and duplicate patterns collapse to one. One unrepresentable entry throws before anything is stored, so a replace is all or nothing. |
 | `upsert` | TUNE | `rule` (required, raw JSON object as the first token) | `{ rule: {...} }` — single add/replace keyed by pattern. A same-pattern rule is replaced in place; an edit carrying the old id and a changed pattern rekeys and drops the old-pattern entry. This is the performance dashboard's "log this URL" path. |
 | `delete` | TUNE | `id` (required, positional) | `{ deleted: bool }` — drop the matching rule and re-save. |
@@ -145,7 +145,7 @@ anything that does not come back an array.
 
 #### The rule wire shape
 
-`Rule::to_array()` is what `list` returns, what `save` and `upsert` accept, and what the
+`Rule::to_array()` is what `dump` returns, what `save` and `upsert` accept, and what the
 hub syncs to spokes:
 
 | Field | Type | Meaning |
@@ -179,13 +179,13 @@ interpreter wraps the throw as a TM_ERROR reply, so no handler returns an error 
 |------|------|------|---------|
 | `overview` | READ | `--server`, `--breakdown` (comma-separated), `--categories` | `{ total_requests, global_avg_ms, global_avg_peak_mb, aggregate_time_series, global_leaderboard }`, plus `breakdowns` keyed by dimension when `breakdown` is given and `category_time_series` when `categories` is. The site totals come from the global `hourly` namespace, which has no server dimension; `server` scopes the leaderboard and the breakdowns only. A dimension outside `DIMENSIONS` throws `invalid breakdown dimension` rather than answering about the rest. `category_time_series` is `{ names, buckets }` — a name TABLE plus, per bucket, positional `[ nameIndex, t, c, n ]` rows. A category is one hook, callback or plugin, so its name would otherwise be spelled once per bucket, 288 times across a retention window: 838KB of an ~1.1MB reply. Nothing is capped or ranked — each bucket still holds every category the STORE kept for it — and `t` is rounded to four decimal places, a tenth of a nanosecond on a millisecond sum. |
 | `urls` | READ | `--sort` (default `count`), `--order` (`desc`), `--limit` (50, clamped 1–1000), `--offset` (0, clamped 0–10000), `--search`, `--server`, `--errors_only`, `--include_workers` | `{ data, rows, totals, slowest, filters, limit, offset }` — the paginated, sortable URL leaderboard plus the totals and the slowest ten for whatever the filters left. An unknown `sort` falls back to `count`, an unknown `order` to `desc`. Worker traffic is excluded until `include_workers` opts it in. `errors_only` keeps the rows whose status buckets fail to account for every request — the timeouts and fatals that never reached a bucket at all — so a 5xx-heavy URL is excluded, a 5xx being a real response. `rows` is the pager's count, every row the filters left including the folded `Other` and `Other:worker` overflow rows, while `totals.urls` counts the distinct URLs among them; an overflow row is one row standing for many URLs, so the two are never expected to agree. `totals` is null for a server scope the stored rows carry no split for, because 0 would read as idle; `filters` echoes what was applied, so a narrower number never reads as the site's. |
-| `url_detail` | READ | `hash` (required, positional, `[a-f0-9]{8,64}`), `--server`, `--breakdown`, `--categories`, `--since` | `{ stats, requests, scan_stopped_early, requests_window_start, aggregate_flame, aggregate_profiles, last_modified }`, plus `breakdown_time_series` and `category_time_series` when asked for — the latter in the same `{ names, buckets }` shape `overview` uses, so one encoder and one chart serve both. Throws `URL not found` for an unknown hash and `invalid hash format` for a malformed one. |
+| `dump_url` | READ | `hash` (required, positional, `[a-f0-9]{8,64}`), `--server`, `--breakdown`, `--categories`, `--since` | `{ stats, requests, scan_stopped_early, requests_window_start, aggregate_flame, aggregate_profiles, last_modified }`, plus `breakdown_time_series` and `category_time_series` when asked for — the latter in the same `{ names, buckets }` shape `overview` uses, so one encoder and one chart serve both. Throws `URL not found` for an unknown hash and `invalid hash format` for a malformed one. |
 | `url_breakdown` | READ | `hash` (required, positional), `--breakdown` (required) | `{ breakdown_time_series }` and nothing else — memcache only, no index walk, for the chart that polls one dimension while the URL modal is open. Throws `invalid hash format` / `invalid breakdown dimension`. |
-| `request_search` | READ | `rid` (required, positional) | `{ rid, partition, url_hash }`, so the dashboard can deep-link without scanning every partition. Throws `Request not found` for an unknown rid, and `request index scan budget spent before rid <rid> was reached` when the walk ended first — an incomplete search is not a definite negative. |
-| `request_grep` | READ | `pattern` (required, positional), `--limit` (default 20, max 50) | `{ pattern, scope, scanned_partitions, results, truncated, result_count }` — literal, case-insensitive search across the recent firehose window, grouped by request. `scope` is always `recent`: every partition's walk starts at the second-to-last segment. `truncated` reports any of the three bounds — the result `limit`, the grouping engine's per-request byte and line caps, or `GREP_MAX_SCAN_LINES`. Each result carries `rid`, `url`, `method`, `ts`, `match_count` and `first_match_excerpt`. Shares its matching and grouping engine with `wp nodes reqgrep` (`Reqgrep_Core`), so both agree on what matched. Where the CLI hangs a history-miss callback on that engine, this verb wires none: a match on a late line whose earlier lines have already rotated out of the fixed 250-entry × 10-bucket history ring answers with `url` and `method` empty and `truncated` still false, so nothing in the reply says the request was reassembled from its tail alone. |
-| `request_detail` | READ | `rid` (required, positional), `--partition` (default 0) | The full request body and merged flame data, plus computed `findings` and the measurement `caveat`. `partition` is a hint: searched first, then the rest, so any rid `request_search` locates resolves here too. Throws `invalid partition` for an out-of-range partition, `Request not found` for an unknown rid, and the `budget spent` message above. |
+| `search_requests` | READ | `rid` (required, positional) | `{ rid, partition, url_hash }`, so the dashboard can deep-link without scanning every partition. Throws `Request not found` for an unknown rid, and `request index scan budget spent before rid <rid> was reached` when the walk ended first — an incomplete search is not a definite negative. |
+| `grep_requests` | READ | `pattern` (required, positional), `--limit` (default 20, max 50) | `{ pattern, scope, scanned_partitions, results, truncated, result_count }` — literal, case-insensitive search across the recent firehose window, grouped by request. `scope` is always `recent`: every partition's walk starts at the second-to-last segment. `truncated` reports any of the three bounds — the result `limit`, the grouping engine's per-request byte and line caps, or `GREP_MAX_SCAN_LINES`. Each result carries `rid`, `url`, `method`, `ts`, `match_count` and `first_match_excerpt`. Shares its matching and grouping engine with `wp nodes reqgrep` (`Reqgrep_Core`), so both agree on what matched. Where the CLI hangs a history-miss callback on that engine, this verb wires none: a match on a late line whose earlier lines have already rotated out of the fixed 250-entry × 10-bucket history ring answers with `url` and `method` empty and `truncated` still false, so nothing in the reply says the request was reassembled from its tail alone. |
+| `dump_request` | READ | `rid` (required, positional), `--partition` (default 0) | The full request body and merged flame data, plus computed `findings` and the measurement `caveat`. `partition` is a hint: searched first, then the rest, so any rid `search_requests` locates resolves here too. Throws `invalid partition` for an out-of-range partition, `Request not found` for an unknown rid, and the `budget spent` message above. |
 | `ask` | READ | `descriptor` (required, positional; further context descriptors follow it, outermost last), `--server`, `--context` | The brief for one picker descriptor. |
-| `hooks_registered` | READ | — | `{ total_hooks, categories, category_descriptions, hooks_by_category }`. |
+| `list_hooks` | READ | — | `{ total_hooks, categories, category_descriptions, hooks_by_category }`. |
 | `set` | TUNE | `option` and `value` (both required, positional) | `{ option, updated: bool }`. |
 
 Notable bounds, all `Performance_CI_Node` constants: `MAX_INDEX_ENTRIES` 1,000,000,
@@ -194,7 +194,7 @@ Notable bounds, all `Performance_CI_Node` constants: `MAX_INDEX_ENTRIES` 1,000,0
 country, from, ua, ja4`; `URL_SORTS` is `count, url, avg_ms, min_ms, max_ms, avg_peak_mb,
 last_updated`.
 
-**`url_detail`'s request window.** `requests` reaches back to `requests_window_start` and no
+**`dump_url`'s request window.** `requests` reaches back to `requests_window_start` and no
 further — the floor of the same window the modal's charts are drawn from. That window is
 `min_lifetime`, floored at `Stats_Store::PREFIX_FLOOR` (3,600s), rounded up to a whole
 five-minute bucket and capped at the 288 buckets a reader enumerates. Measured back from
@@ -214,8 +214,8 @@ leaving every later partition unread and the flag false.
 `entry:<n>` and `category:<name>`. A `span:` or `entry:` brief also needs its `request:`
 descriptor as context, outermost last; on `request:` the partition is a hint, not a filter.
 Every brief carries the measurement `caveat`, and three carry a `fetch` pointer — the MCP
-call that re-addresses the same subject: `performance_request_detail` for `request:`,
-`performance_url_detail` for `url:`, and `performance_ask` carrying the descriptor and its
+call that re-addresses the same subject: `dump_request` for `request:`,
+`dump_url` for `url:`, and `performance_ask` carrying the descriptor and its
 context for `span:`. A `span:` brief answers for the parent whose copies of that name hold
 the most time, and carries `elsewhere` (`ms`, `count`, `parents`) for the copies under other
 parents — omitted when every copy sits under one parent. A `category:` brief answers from
@@ -227,7 +227,7 @@ click inside a request from the global board would describe a different thing en
 nothing in the payload saying so. `server` scopes the `url:` brief and that fallback board
 the way `urls` scopes its rows. An unparseable descriptor throws `unknown descriptor`.
 
-**The `findings` list** is what `request_detail` computes and what the `request:` and `url:`
+**The `findings` list** is what `dump_request` computes and what the `request:` and `url:`
 briefs carry. Each entry is one record, and the list comes back worst first: `severity` is
 `high`, `medium` or `info`, and that is the sort. `kind` is one of `fatal`,
 `insufficient_instrumentation`, `unattributed`, `dominant_span`, `repetition`, `entry_gap`
@@ -274,11 +274,11 @@ plugin's operators.
 
 | TO | Verbs | What it answers |
 |----|-------|-----------------|
-| `workers` | `list`, `dump_graph`, `cleanup_status`, `restart`, `heartbeat` | The fleet, and the SSE slot keep-alive every dashboard pokes. |
+| `workers` | `list`, `dump_graph`, `dump_cleanup`, `restart`, `heartbeat` | The fleet, and the SSE slot keep-alive every dashboard pokes. |
 | `status` | `get` | A literal `status: ok`, the `runtime_version`, `num_partitions`, the active `topologies`, `cache_available` and a `timestamp`. It carries no application version field. |
 | `settings` | `get`, `set` | `get` answers a snapshot of the seven substrate-owned storage settings: `num_partitions`, `segment_size`, `min_segments`, `num_segments`, `min_lifetime`, `lifetime` and `max_segments`. `set` reaches further — every `int` Field declaring a minimum, which adds the six `remote_*` spoke-geometry keys, the three `alert_*` thresholds and the four bounded `sse_*` limits — and answers with that same seven-key snapshot whatever it wrote. The wider reach is how `Settings_Sync_Node` pushes a hub's `remote_*` geometry out to its spokes. |
 | `vault` | `list`, `get`, `add`, `update`, `delete`, `test` | Remote-spoke credentials. This is where a spoke's URL and Authorization header live. |
-| `aggregator` | `summary`, `servers_status`, `probe` | Per-spoke `Remote_Source_Node` status on the hub. |
+| `aggregator` | `summary`, `list_servers`, `probe` | Per-spoke `Remote_Source_Node` status on the hub. |
 
 The React graphs address `_http/<ci-name>`, so the browser runtime's `HttpOut` node POSTs
 the command and routes the reply back by the TO the server echoed off the sender's FROM.
@@ -365,18 +365,18 @@ encoded unless the verb already returned a string:
 |------|-----------|------|
 | `performance_overview` | `performance.overview` | READ |
 | `performance_urls` | `performance.urls` | READ |
-| `performance_url_detail` | `performance.url_detail` | READ |
-| `performance_request_search` | `performance.request_search` | READ |
-| `performance_request_detail` | `performance.request_detail` | READ |
-| `performance_request_grep` | `performance.request_grep` | READ |
+| `dump_url` | `performance.dump_url` | READ |
+| `search_requests` | `performance.search_requests` | READ |
+| `dump_request` | `performance.dump_request` | READ |
+| `grep_requests` | `performance.grep_requests` | READ |
 | `performance_ask` | `performance.ask` | READ |
-| `rules_list` | `rules.list` | READ |
+| `dump_rules` | `rules.dump` | READ |
 | `rules_upsert` | `rules.upsert` | TUNE |
 | `rules_delete` | `rules.delete` | TUNE |
 
-So a `read` session sees the seven performance tools and `rules_list`; `tune` additionally
+So a `read` session sees the seven performance tools and `dump_rules`; `tune` additionally
 sees `rules_upsert` and `rules_delete`. Six verbs have no tool at all and are reachable only
-over `/command`: `performance.url_breakdown`, `performance.hooks_registered`,
+over `/command`: `performance.url_breakdown`, `performance.list_hooks`,
 `performance.set`, `rules.save`, `rules.reset` and `discovery.get`. `POSITIONAL_ARGS` —
 `descriptor, hash, rid, pattern, rule, id, context` — is the order bare tokens are emitted
 in; every other argument becomes `--key=value`.
@@ -428,7 +428,7 @@ are ignored.
 
 The in-flight cache holds 100 items × 3 buckets, rotating every 60 seconds; anything falling
 out of the oldest bucket prints as `[incomplete]`. `Reqgrep_Core` does the grouping, so this
-command and `performance.request_grep` agree byte for byte on what belongs to which request.
+command and `performance.grep_requests` agree byte for byte on what belongs to which request.
 
 ### `wp nodes ruleset-bench [--iterations=<n>]`
 

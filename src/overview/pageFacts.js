@@ -45,7 +45,7 @@ function num( value, fallback = 0 ) {
  * @param {?Object} [state.urlDetail]        Its detail payload.
  * @param {?string} [state.selectedRequest]  The selected request id.
  * @param {?number} [state.requestPartition] Its partition. Absent reads as 0,
- *                                           the `request_detail` verb's own
+ *                                           the `dump_request` verb's own
  *                                           default.
  * @param {?Object} [state.requestDetail]    Its detail payload.
  * @return {Object} The facts block, discriminated by `surface`.

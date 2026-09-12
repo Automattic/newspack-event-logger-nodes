@@ -4,10 +4,10 @@
  *
  * A THIN wrapper over the shared `LogStreamViewer` chrome (toolbar, filter,
  * counts + rate, pause, step, offset jump, Debug, Clear, banner, body split,
- * virtualized `LogRowList`). The `perferrors:*` node graph (mounted by
- * `useErrorLogGraph`) owns all data: `perferrors:link` (a substrate
+ * virtualized `LogRowList`). The `error-log:*` node graph (mounted by
+ * `useErrorLogGraph`) owns all data: `error-log:link` (a substrate
  * `RemoteLink`) holds the EventSource and fans its frames through the
- * `perferrors:stream` Tee into `perferrors:view` (a `LogStreamViewNode`
+ * `error-log:stream` Tee into `error-log:view` (a `LogStreamViewNode`
  * subclass), whose ring the list reads straight off the node each frame — row
  * data never becomes React state. This component supplies only the differing
  * pieces: the fixed column set, the grid row/header renderers, the entry-count
@@ -54,10 +54,10 @@ const ROW_HEIGHT = 33;
  *
  * @type {string}
  */
-const VIEW_NODE = 'perferrors:view';
+const VIEW_NODE = 'error-log:view';
 
 /**
- * What the chrome renders until `perferrors:view` publishes its first `view`
+ * What the chrome renders until `error-log:view` publishes its first `view`
  * state — the two fields it reads, so the pause button and the reconnect
  * banner never render off an undefined.
  *
@@ -179,7 +179,7 @@ const ErrorRow = memo(
 	 * const, where `memo()` infers the props as `{}`.
 	 *
 	 * @param {Object} props     Props.
-	 * @param {Object} props.row Row from `perferrors:view`. Its `shapeRow()`
+	 * @param {Object} props.row Row from `error-log:view`. Its `shapeRow()`
 	 *                           supplies `ts`, `rid`, `k` and `m` — plus
 	 *                           `method`, `url` and `urlHash` when the entry
 	 *                           carried a URL; the base view node stamps `id`
@@ -236,8 +236,8 @@ const listHeader = logListHeader( {
 /**
  * Error Log Component.
  *
- * Mounts the `perferrors:*` graph, reads the low-frequency view model off
- * `perferrors:view`, and hands `LogStreamViewer` the Error Log's own pieces.
+ * Mounts the `error-log:*` graph, reads the low-frequency view model off
+ * `error-log:view`, and hands `LogStreamViewer` the Error Log's own pieces.
  *
  * Step and the offset input appear only while one partition is selected: a
  * seek addresses a segment within ONE directory, so it means nothing against
