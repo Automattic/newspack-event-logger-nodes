@@ -157,7 +157,7 @@ Each is intentional, stated in full in [`docs/architecture-decisions.md`](docs/a
 | 5 | A memcache schema change is migrated by the flush, and by nothing in this code | [Decision 5](docs/architecture-decisions.md#decision-5-a-memcache-schema-change-is-migrated-by-the-flush-and-by-nothing-in-this-code) |
 | 6 | `get_multi` batching is essential | [Decision 6](docs/architecture-decisions.md#decision-6-get_multi-batching-is-essential) |
 | 7 | Job_Intake for >4KB jobs, the firehose for ≤4KB | [Decision 7](docs/architecture-decisions.md#decision-7-job_intake-for-4kb-jobs-the-firehose-for-4kb) |
-| 8 | Hub vs spoke topology | [Decision 8](docs/architecture-decisions.md#decision-8-hub-vs-spoke-topology) |
+| 8 | A spoke's job is re-keyed `remote_job` when the hub pulls it | [Decision 8](docs/architecture-decisions.md#decision-8-a-spokes-job-is-re-keyed-remote_job-when-the-hub-pulls-it) |
 | 9 | A request's partition is its id, hashed by the substrate | [Decision 9](docs/architecture-decisions.md#decision-9-a-requests-partition-is-its-id-hashed-by-the-substrate) |
 | 10 | The durable mirror writes a bucket once, when it closes, under a key that carries no install scope | [Decision 10](docs/architecture-decisions.md#decision-10-the-durable-mirror-writes-a-bucket-once-when-it-closes-under-a-key-that-carries-no-install-scope) |
 | 11 | The open bucket is durable in the OFFSETLOG until it closes, and the carry is capped | [Decision 11](docs/architecture-decisions.md#decision-11-the-open-bucket-is-durable-in-the-offsetlog-until-it-closes-and-the-carry-is-capped) |
