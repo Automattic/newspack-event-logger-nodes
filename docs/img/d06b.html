@@ -1,0 +1,124 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+  .map { position: relative; width: 1052px; height: 850px; }
+  .map > svg { position: absolute; left: 0; top: 0; }
+  .abs { position: absolute; }
+  .card.node { padding: 12px 14px; }
+  .card.node h3 { font-size: 14px; margin-bottom: 5px; }
+  .card.node p { font-size: 12.5px; margin-bottom: 4px; line-height: 1.45; }
+  .card.node p:last-child { margin-bottom: 0; }
+  .topo { position: absolute; background: #FBFBFC; padding-right: 8px; font-size: 11.5px; color: #787C82; letter-spacing: 0.03em; text-transform: uppercase; }
+  .part {
+    position: absolute; width: 170px; height: 66px; margin: 0; padding: 6px 8px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center;
+  }
+  .part .nm { font-size: 13px; font-weight: 700; color: #003DA5; overflow-wrap: anywhere; }
+  .part .cp { font-size: 11.5px; color: #50575E; line-height: 1.3; margin-top: 3px; }
+  .part.mem { background: #FFF6E5; border-color: #E8C98A; }
+  .part.mem .nm { color: #7A4B00; }
+  .reader { position: absolute; width: 242px; }
+  .reader .panel > header { font-size: 14px; padding: 8px 14px; }
+  .reader .panel > .body { padding: 10px 14px; font-size: 12.5px; color: #50575E; line-height: 1.45; }
+  .status { display: flex; gap: 5px; margin-top: 7px; }
+  .status .chip { flex: 1; margin: 0; padding: 4px 4px; font-size: 11.5px; text-align: center; }
+  .status .chip b { color: #B32D2E; }
+  .band { position: absolute; left: 0; right: 0; border-top: 1px dashed #B0B3B8; }
+  .band span { position: absolute; left: 0; top: -9px; background: #FBFBFC; padding-right: 8px; font-size: 12px; color: #787C82; }
+  .tee { position: absolute; font-size: 11.5px; color: #50575E; text-align: center; width: 60px; }
+</style>
+<div class="sheet">
+<h1>Who reads which partition</h1>
+<p class="sub">The firehose interleaves every request's lines. Four topologies pull them apart: <span class="mono">request-builder</span>, <span class="mono">job-router</span> and <span class="mono">flame-builder</span> belong to the plugin, <span class="mono">job-worker</span> to the runtime. The <span class="mono">complete</span> topology runs all four in one worker, with a Tee splitting one firehose consumer between the builder and the router.</p>
+
+<div class="map">
+  <svg width="1052" height="850" viewBox="0 0 1052 850">
+    <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#003DA5"/></marker></defs>
+
+    <path d="M172 218 L206 218" stroke="#003DA5" stroke-width="1.8" fill="none"/>
+    <circle cx="218" cy="218" r="12" fill="#fff" stroke="#003DA5" stroke-width="2"/>
+    <path d="M230 218 L244 218 L244 60 L258 60" stroke="#003DA5" stroke-width="1.8" fill="none" marker-end="url(#a)"/>
+    <path d="M230 218 L244 218 L244 349 L258 349" stroke="#003DA5" stroke-width="1.8" fill="none" marker-end="url(#a)"/>
+
+    <path d="M522 60 L578 60" stroke="#003DA5" stroke-width="1.8" fill="none" marker-end="url(#a)"/>
+    <path d="M752 60 L808 60" stroke="#003DA5" stroke-width="1.8" fill="none" marker-end="url(#a)"/>
+
+    <path d="M522 174 L578 174" stroke="#003DA5" stroke-width="1.8" fill="none" marker-end="url(#a)"/>
+    <path d="M752 174 L808 174" stroke="#003DA5" stroke-width="1.8" fill="none" marker-end="url(#a)"/>
+
+    <path d="M522 349 L550 349 L550 246 L578 246" stroke="#003DA5" stroke-width="1.8" fill="none" marker-end="url(#a)"/>
+    <path d="M522 349 L550 349 L550 318 L578 318" stroke="#003DA5" stroke-width="1.8" fill="none" marker-end="url(#a)"/>
+    <path d="M522 349 L550 349 L550 390 L578 390" stroke="#003DA5" stroke-width="1.8" fill="none" marker-end="url(#a)"/>
+    <path d="M522 349 L550 349 L550 462 L578 462" stroke="#003DA5" stroke-width="2.6" fill="none" marker-end="url(#a)"/>
+
+    <path d="M752 246 L808 246" stroke="#003DA5" stroke-width="1.8" fill="none" marker-end="url(#a)"/>
+    <path d="M752 318 L808 318" stroke="#003DA5" stroke-width="1.8" fill="none" marker-end="url(#a)"/>
+
+    <path d="M665 495 L665 514 L238 514 L238 616 L256 616" stroke="#003DA5" stroke-width="2.6" fill="none" marker-end="url(#a)"/>
+
+    <path d="M522 636 L550 636 L550 560 L578 560" stroke="#003DA5" stroke-width="1.8" fill="none" marker-end="url(#a)"/>
+    <path d="M522 636 L578 636" stroke="#003DA5" stroke-width="1.8" fill="none" marker-end="url(#a)"/>
+    <path d="M522 636 L550 636 L550 712 L578 712" stroke="#003DA5" stroke-width="1.8" fill="none" marker-end="url(#a)"/>
+
+    <path d="M752 560 L786 560 L786 600" stroke="#003DA5" stroke-width="1.8" fill="none"/>
+    <path d="M752 636 L786 636 L786 600" stroke="#003DA5" stroke-width="1.8" fill="none"/>
+    <path d="M752 462 L786 462 L786 600" stroke="#003DA5" stroke-width="1.6" stroke-dasharray="5 4" fill="none"/>
+    <path d="M752 712 L786 712 L786 600" stroke="#003DA5" stroke-width="1.6" stroke-dasharray="5 4" fill="none"/>
+    <path d="M786 600 L808 600" stroke="#003DA5" stroke-width="1.8" fill="none" marker-end="url(#a)"/>
+  </svg>
+
+  <div class="abs card node" style="left:0;top:140px;width:172px">
+    <h3 class="mono" style="font-size:14px">firehose.pN</h3>
+    <p>Every logged request's lines, interleaved, in the partition its request id hashed to.</p>
+    <p class="grey">One consumer tails one partition.</p>
+  </div>
+  <div class="tee" style="left:188px;top:236px">Tee</div>
+
+  <div class="topo" style="left:260px;top:0">topology job-router</div>
+  <div class="abs card node" style="left:260px;top:16px;width:262px;min-height:88px">
+    <h3>Job_Router_Node</h3>
+    <p>Writes every <span class="mono">job</span> entry to <span class="mono">jobs</span>. A sieve drops any job older than 900 seconds.</p>
+  </div>
+
+  <div class="topo" style="left:260px;top:122px">topology request-builder</div>
+  <div class="abs card node" style="left:260px;top:138px;width:262px;min-height:64px">
+    <h3>Request_Flight_Node</h3>
+    <p>Writes an in-flight snapshot on the router's one-second tick.</p>
+  </div>
+  <div class="abs card node" style="left:260px;top:220px;width:262px;min-height:240px">
+    <h3>Request_Builder_Node</h3>
+    <p>Keys an envelope per request id, folds each line in, checks the line numbers for gaps, and emits the record when the terminal arrives.</p>
+    <p>The consumer checkpoints the envelopes into its offsetlog, so a respawned worker resumes half-built requests. A request silent for 600 seconds is evicted as timed out.</p>
+    <div class="status"><div class="chip"><b>F</b> fatal</div><div class="chip"><b>T</b> timeout</div><div class="chip"><b>A</b> abort</div><div class="chip"><b>I</b> gap</div></div>
+  </div>
+
+  <div class="chip part" style="left:580px;top:27px"><div class="nm mono">jobs</div><div class="cp">every job entry</div></div>
+  <div class="chip part" style="left:580px;top:141px"><div class="nm mono">gyroscope</div><div class="cp">one snapshot a second</div></div>
+  <div class="chip part" style="left:580px;top:213px"><div class="nm mono">completed</div><div class="cp">a summary per finished request</div></div>
+  <div class="chip part" style="left:580px;top:285px"><div class="nm mono">errors</div><div class="cp">error and warning lines</div></div>
+  <div class="chip part" style="left:580px;top:357px"><div class="nm mono">alerts</div><div class="cp">alert lines</div></div>
+  <div class="chip part" style="left:580px;top:429px;border-width:2px"><div class="nm mono">requests.pN</div><div class="cp">the whole record, on the terminal line</div></div>
+
+  <div class="reader" style="left:810px;top:43px"><div class="panel"><header>job-worker (the runtime)</header><div class="body">Runs the handlers.</div></div></div>
+  <div class="reader" style="left:810px;top:150px"><div class="panel"><header>Gyroscope</header><div class="body">What is in flight now.</div></div></div>
+  <div class="reader" style="left:810px;top:229px"><div class="panel"><header>Request Log</header><div class="body">Shows a row per finished request.</div></div></div>
+  <div class="reader" style="left:810px;top:301px"><div class="panel"><header>Errors</header><div class="body">A bridge carries the runtime's own diagnostics into the active request's errors.</div></div></div>
+
+  <div class="band" style="top:500px"><span>flames and statistics</span></div>
+
+  <div class="topo" style="left:260px;top:520px">topology flame-builder</div>
+  <div class="abs card node" style="left:260px;top:536px;width:262px;min-height:180px">
+    <h3>Flame_Builder_Node</h3>
+    <p>Takes one record at a time. Writes a flame tree, nested spans each as wide as its duration, then folds the request into every aggregate: request totals, the slowest categories, a URL index, and time series by category and by dimension (status, method, server, country, user agent).</p>
+    <p class="grey">Flushes at most once every five seconds.</p>
+  </div>
+
+  <div class="chip part" style="left:580px;top:527px"><div class="nm mono">flames.pN</div><div class="cp">one flame tree per request</div></div>
+  <div class="chip part mem" style="left:580px;top:603px"><div class="nm mono">memcache</div><div class="cp">the aggregates, in buckets</div></div>
+  <div class="chip part" style="left:580px;top:679px"><div class="nm mono">flame-stats.pN</div><div class="cp">the durable mirror of every memcache write</div></div>
+
+  <div class="abs" style="left:556px;top:749px;width:230px;text-align:right;font-size:11.5px;color:#50575E">on a memcache miss</div>
+
+  <div class="reader" style="left:810px;top:543px"><div class="panel"><header>Performance</header><div class="body">Reads the statistics and the requests index through the <span class="mono">performance</span> verbs: site totals, the URL leaderboard, one URL's aggregate flame, and one request's trace with its findings.</div></div></div>
+  <div class="reader" style="left:810px;top:704px"><div class="panel"><header>Settings</header><div class="body">The three switches, the effective configuration, and the ruleset editor. A change applies at once through the <span class="mono">rules</span> verbs.</div></div></div>
+</div>
+</div>

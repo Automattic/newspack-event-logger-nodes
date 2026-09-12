@@ -1,0 +1,103 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+  .lane { display: flex; align-items: stretch; gap: 0; }
+  .st {
+    background: #fff; border: 1px solid #C3C4C7; border-radius: 9px; padding: 11px 13px;
+    font-size: 12px; line-height: 1.45; color: #50575E;
+  }
+  .st b { display: block; font-size: 12.5px; color: #101517; margin-bottom: 3px; }
+  .st .mono { color: #003DA5; overflow-wrap: anywhere; }
+  .st.node { border-color: #003DA5; }
+  .arw { flex: 0 0 44px; display: flex; align-items: center; justify-content: center; }
+  .arw.tall { align-items: center; }
+  .tag {
+    display: inline-block; background: #F0F4FB; border: 1px solid #C3D3EC; border-radius: 5px;
+    padding: 3px 7px; font-size: 11.5px; margin: 3px 4px 0 0;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere;
+  }
+  .band { border: 1px solid #C3C4C7; border-radius: 10px; background: #fff; padding: 16px 18px; }
+  .band > h3 { font-size: 15px; margin: 0 0 4px; }
+  .band > p.lead { font-size: 12.5px; color: #50575E; margin: 0 0 14px; line-height: 1.5; }
+  table.m { border-collapse: collapse; width: 100%; }
+  table.m th, table.m td { border: 1px solid #C3C4C7; padding: 8px 11px; font-size: 12px; line-height: 1.45; text-align: left; vertical-align: top; }
+  table.m th { background: #F0F4FB; font-size: 12px; }
+  table.m td.k { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: nowrap; }
+  .fan { font-size: 11.5px; color: #787C82; text-align: center; line-height: 1.4; }
+  .secn { font-size: 13px; font-weight: 700; margin: 0 0 9px; }
+  .secn span { font-weight: 400; color: #50575E; }
+</style>
+<div class="sheet">
+  <h1>What the hub sends out, and what it does with what comes in</h1>
+  <p class="sub">Both control minters run on a 300 second tick and fan out by hand, one signed command per spoke. Inbound, one node relabels every job entry before it reaches the hub's own firehose.</p>
+
+  <svg width="0" height="0" style="position:absolute"><defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#003DA5"/></marker>
+  </defs></svg>
+
+  <p class="secn">Settings go out <span>· hub-control includes the substrate's settings-sync topology and adds the logger's own pieces</span></p>
+  <div class="lane">
+    <div class="st" style="flex:0 0 176px"><b>An option changes</b>Any <span class="mono">newspack_</span> option on the hub. Its name alone is appended to the settings log.</div>
+    <div class="arw"><svg width="34" height="14"><path d="M2 7 L30 7" stroke="#003DA5" stroke-width="1.8" marker-end="url(#ar)"/></svg></div>
+    <div class="st node" style="flex:0 0 160px"><b>settings:consumer</b>Tails that log. <span class="mono">settings-sync</span> reads the option's current value at consume time.</div>
+    <div class="arw"><svg width="34" height="14"><path d="M2 7 L30 7" stroke="#003DA5" stroke-width="1.8" marker-end="url(#ar)"/></svg></div>
+    <div class="st node" style="flex:1 1 auto"><b>settings-sync mints one <span class="mono" style="color:#101517">set</span> command per spoke</b>
+      Each is addressed to an interpreter on that spoke and signed under that spoke's session key. The substrate's own map carries the partition count and the six remote log-geometry settings; hub-control adds three of the logger's own.
+      <div style="margin-top:7px">
+        <span class="tag">→ settings interpreter: num_partitions, segment_size, min_segments, num_segments, max_segments, min_lifetime, lifetime</span>
+        <span class="tag">→ performance interpreter: rules, log_memory, flush_every_line</span>
+      </div>
+    </div>
+    <div class="arw tall"><svg width="34" height="14"><path d="M2 7 L30 7" stroke="#003DA5" stroke-width="1.8" marker-end="url(#ar)"/></svg></div>
+    <div style="flex:0 0 132px;display:flex;flex-direction:column;justify-content:center" class="fan">
+      <div class="st node" style="text-align:left;padding:9px 11px"><b>settings:bend</b>one of 24</div>
+      <div style="margin-top:5px">24 posts, 24 signatures</div>
+    </div>
+  </div>
+  <div class="row" style="gap:14px;margin-top:12px;align-items:stretch">
+    <div class="ok" style="flex:1 1 0">
+      <h4>Why every 300 seconds, and not only on change</h4>
+      <p>The tick re-pushes every registered option, so a spoke that is offline or newly connected converges without anyone touching the option again.</p>
+    </div>
+    <div class="callout" style="flex:1 1 0">
+      <h4>Why a Tee cannot do the fan-out</h4>
+      <p>A signature verifies only at the spoke it is minted for. Re-addressing a signed command after the mint makes it verify nowhere, so each minter signs once per spoke.</p>
+    </div>
+    <div class="note" style="flex:1 1 0;margin-top:0">
+      <h4>The ruleset arrives whole.</h4>
+      <p>The rules push inlines every pointer rule's hooks, so a spoke never receives a rule pointing at a table it does not hold.</p>
+    </div>
+  </div>
+
+  <p class="secn" style="margin-top:26px">Questions go out, and answers come back <span>· the same 300 second cadence, the other minter</span></p>
+  <div class="lane">
+    <div class="st node" style="flex:0 0 206px"><b>discovery-collector</b>Mints one <span class="mono" style="color:#101517">get</span> command per spoke, addressed to that spoke's discovery interpreter.</div>
+    <div class="arw"><svg width="34" height="14"><path d="M2 7 L30 7" stroke="#003DA5" stroke-width="1.8" marker-end="url(#ar)"/></svg></div>
+    <div class="st" style="flex:0 0 206px"><b>The spoke answers</b>Its registered hooks and its custom event names.</div>
+    <div class="arw"><svg width="34" height="14"><path d="M2 7 L30 7" stroke="#003DA5" stroke-width="1.8" marker-end="url(#ar)"/></svg></div>
+    <div class="st node" style="flex:1 1 auto"><b>The reply is addressed TO=FROM</b>It lands back in the collector, which merges every spoke's answer into two staging options on the hub, sanitized and capped at 10,000 entries each. The rule editor's hook picker reads them. Nothing here writes a rule.</div>
+  </div>
+
+  <p class="secn" style="margin-top:26px">Job entries come in <span>· and must not run on the hub as the hub's own</span></p>
+  <div class="band">
+    <div class="lane" style="align-items:flex-start">
+      <div style="flex:1 1 auto">
+        <div class="lane" style="align-items:center">
+          <div class="st node" style="flex:0 0 170px"><b>24 Remote_Sources</b>Each spoke's records, jobs among them.</div>
+          <div class="arw"><svg width="34" height="14"><path d="M2 7 L30 7" stroke="#003DA5" stroke-width="1.8" marker-end="url(#ar)"/></svg></div>
+          <div class="st node" style="flex:1 1 auto"><b>remote-job-rewrite</b>Changes each entry's kind: <span class="mono" style="color:#101517">k: "job"</span> becomes <span class="mono" style="color:#101517">k: "remote_job"</span>. Everything else passes through.</div>
+          <div class="arw"><svg width="34" height="14"><path d="M2 7 L30 7" stroke="#003DA5" stroke-width="1.8" marker-end="url(#ar)"/></svg></div>
+          <div class="st node" style="flex:0 0 150px"><b>firehose:topic</b>The hub's own firehose.</div>
+        </div>
+        <p style="font-size:12.5px;color:#50575E;line-height:1.5;margin:14px 0 0">The job worker picks its handler map by that kind alone, local jobs from one WordPress filter and remote jobs from another. A spoke cannot label its own entries, because its own worker reads the same line.</p>
+      </div>
+      <div style="flex:0 0 430px;padding-left:18px">
+        <table class="m">
+          <tr><th style="width:36%">A handler registered under</th><th>runs</th></tr>
+          <tr><td class="k">local jobs only</td><td>on every site, for its own entries. The hub never runs a spoke's.</td></tr>
+          <tr><td class="k">remote jobs only</td><td>on the hub alone, once per aggregated entry.</td></tr>
+          <tr><td class="k">both</td><td>on every site, and again on the hub.</td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>

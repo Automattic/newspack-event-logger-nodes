@@ -23,4 +23,4 @@ Three chapters, in reading order.
 - [Getting started](https://github.com/Automattic/newspack-nodes/blob/main/docs/getting-started.md): from zero to a running pipeline.
 - [Hub and spoke](https://github.com/Automattic/newspack-nodes/blob/main/docs/hub-and-spoke.md): the connection the hub control chapter here runs over.
 
-The diagrams in the chapters render from `docs/superpowers/series/2026-09-nodes-eln/img/` in the dndocker tree.
+Every diagram is an HTML sheet under `docs/img/` beside the PNG it renders to; `docs/img/render.sh` re-renders them all through headless Chrome.

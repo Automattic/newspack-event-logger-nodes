@@ -1,0 +1,138 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+  .chart { position: relative; width: 1052px; height: 424px; }
+  .chart > svg { position: absolute; left: 0; top: 0; }
+  .lbl { position: absolute; width: 170px; text-align: right; }
+  .lbl b { display: block; font-size: 13px; color: #101517; }
+  .lbl span { display: block; font-size: 11.5px; color: #50575E; line-height: 1.35; margin-top: 2px; overflow-wrap: anywhere; }
+  .tick { position: absolute; font-size: 11.5px; color: #787C82; }
+  .ann { position: absolute; font-size: 11.5px; color: #50575E; line-height: 1.35; }
+  .keybar { display: flex; gap: 6px; margin-top: 4px; }
+  .keybar > div { flex: 1; text-align: center; }
+  .keybar .seg {
+    background: #F0F4FB; border: 1px solid #C3D3EC; border-radius: 5px;
+    padding: 6px 4px; font-size: 13px; font-weight: 700; color: #003DA5; overflow-wrap: anywhere;
+  }
+  .keybar .who { font-size: 11.5px; color: #50575E; line-height: 1.35; margin-top: 4px; }
+  .card.tight { padding: 14px 16px; }
+  .card.tight h3 { font-size: 14px; }
+  .card.tight p { font-size: 12.5px; margin-bottom: 6px; }
+  .card.tight p:last-child { margin-bottom: 0; }
+</style>
+<div class="sheet">
+<h1>The life of a five-minute bucket</h1>
+<p class="sub">Stats_Store writes one memcache key per partition, per namespace, per five-minute bucket, 288 to a day. A flush folds each closed hour of the URL index into a coarse tier, and every write is shadowed to disk. Three tiers, three lifetimes.</p>
+
+<div class="chart">
+  <svg width="1052" height="424" viewBox="0 0 1052 424">
+    <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#003DA5"/></marker></defs>
+
+    <!-- read-window brackets -->
+    <path d="M210 54 L210 44 L816 44 L816 54" fill="none" stroke="#787C82" stroke-width="1.4"/>
+    <path d="M820 54 L820 44 L1018 44 L1018 54" fill="none" stroke="#003DA5" stroke-width="1.6"/>
+
+    <!-- fine tier: 48 five-minute buckets -->
+    <g id="fine"></g>
+    <!-- hourly tier -->
+    <g id="hourly"></g>
+    <!-- mirror -->
+    <g id="mirror"></g>
+
+    <!-- axis -->
+    <line x1="170" y1="344" x2="1024" y2="344" stroke="#C3C4C7" stroke-width="1.4"/>
+    <line x1="210" y1="340" x2="210" y2="348" stroke="#787C82" stroke-width="1.4"/>
+    <line x1="412" y1="340" x2="412" y2="348" stroke="#787C82" stroke-width="1.4"/>
+    <line x1="614" y1="340" x2="614" y2="348" stroke="#787C82" stroke-width="1.4"/>
+    <line x1="816" y1="340" x2="816" y2="348" stroke="#787C82" stroke-width="1.4"/>
+    <line x1="1018" y1="336" x2="1018" y2="352" stroke="#003DA5" stroke-width="2"/>
+
+    <!-- expiry arrow off the left of the fine tier -->
+    
+  </svg>
+
+  <div class="lbl" style="left:0;top:78px">
+    <b>memcache, fine</b>
+    <span class="mono">evlog:pN:{ns}:<br>{Y-m-d-H-i}</span>
+    <span>five minutes a key</span>
+  </div>
+  <div class="lbl" style="left:0;top:160px">
+    <b>memcache, hourly</b>
+    <span class="mono">urls_h:{shard}:{Y-m-d-H}</span>
+    <span>one key an hour, in a fine bucket's row shape</span>
+  </div>
+  <div class="lbl" style="left:0;top:250px">
+    <b>flame-stats.pN</b>
+    <span>the durable mirror, one frame per memcache key</span>
+  </div>
+
+  <div class="tick" style="left:182px;top:354px">4 hours ago</div>
+  <div class="tick" style="left:384px;top:354px">3 hours ago</div>
+  <div class="tick" style="left:583px;top:354px">2 hours ago</div>
+  <div class="tick" style="left:790px;top:354px">1 hour ago</div>
+  <div class="tick blue" style="left:994px;top:354px;font-weight:700">now</div>
+
+  <div class="ann" style="left:210px;top:20px;width:606px;text-align:center">read in hours</div>
+  <div class="ann blue" style="left:820px;top:20px;width:198px;text-align:center;font-weight:700">read in buckets</div>
+  <div class="ann" style="left:210px;top:382px;width:808px;text-align:center">The dashboard reads the last hour in buckets and the rest of the window in hours: <b>36 to 46 keys per shard</b> instead of 288.</div>
+
+  <div class="ann" style="left:660px;top:200px;width:358px;text-align:right">The open hour is not folded yet. A flush folds the URL index's closed hour, at most once every five seconds.</div>
+  <div class="ann" style="left:470px;top:292px;width:548px;text-align:right">A bucket's frames are written at the first checkpoint after it closes. Until then they ride the consumer's offsetlog, capped at two megabytes per checkpoint.</div>
+  <div class="ann" style="left:176px;top:292px;width:280px">Frames are kept for twice the statistics window, so the mirror reaches back past it.</div>
+  <div class="ann" style="left:210px;top:120px;width:500px">Each key expires on its own, so retention is its time to live, floored at an hour.</div>
+</div>
+
+<div class="row" style="gap:14px;margin-top:6px;align-items:stretch">
+  <div class="card tight" style="flex:1.25">
+    <h3>What a key holds</h3>
+    <p>Sums and counts, never means, so buckets and partitions merge by addition and the dashboard divides at read time.</p>
+    <p>Caps hold each value under memcache's one-megabyte limit: <b>50</b> categories, <b>20</b> dimension values and <b>2,000</b> URLs per shard of the URL index. The overflow folds into an <span class="mono">Other</span> row, so totals stay exact.</p>
+    <div class="keybar">
+      <div><div class="seg mono">evlog</div><div class="who">the store</div></div>
+      <div><div class="seg mono">pN</div><div class="who">the partition</div></div>
+      <div><div class="seg mono">{ns}</div><div class="who">the namespace</div></div>
+      <div><div class="seg mono">{Y-m-d-H-i}</div><div class="who">the five-minute bucket the request closed in</div></div>
+    </div>
+  </div>
+  <div class="stack" style="flex:1">
+    <div class="ok" style="margin-top:0">
+      <h4>A miss falls through to the mirror</h4>
+      <p>The read lands the frame back in memcache, within 1,500 milliseconds per verb. The hourly tiers are not mirrored, because the buckets they fold from are.</p>
+    </div>
+    <div class="callout">
+      <h4><span class="mono">wp nodes memcache flush</span></h4>
+      <p>Rotates the install's salt and orphans every key at once. The mirror's keys carry no install scope, so it is the one tier the rotation cannot reach.</p>
+      <p>When memcache is unreachable, every read returns nothing.</p>
+    </div>
+  </div>
+</div>
+
+<script>
+const NS = 'http://www.w3.org/2000/svg';
+const x0 = 210, hour = 202, fine = hour / 12;
+function rect(g, x, y, w, h, fill, stroke, dash) {
+  const r = document.createElementNS(NS, 'rect');
+  r.setAttribute('x', x); r.setAttribute('y', y); r.setAttribute('width', w); r.setAttribute('height', h);
+  r.setAttribute('rx', 3); r.setAttribute('fill', fill);
+  if (stroke) { r.setAttribute('stroke', stroke); r.setAttribute('stroke-width', 1.2); }
+  if (dash) r.setAttribute('stroke-dasharray', '4 3');
+  g.appendChild(r);
+}
+const gf = document.getElementById('fine');
+for (let i = 0; i < 48; i++) {
+  const recent = i >= 36;
+  const open = i === 47;
+  rect(gf, x0 + i * fine + 1.5, 78, fine - 3, 34,
+    open ? '#fff' : (recent ? '#003DA5' : '#C3D3EC'),
+    open ? '#003DA5' : null, open);
+}
+const gh = document.getElementById('hourly');
+for (let i = 0; i < 3; i++) rect(gh, x0 + i * hour + 2, 160, hour - 4, 34, '#5B84C4');
+rect(gh, x0 + 3 * hour + 2, 160, hour - 4, 34, '#FBFBFC', '#C3C4C7', true);
+const gm = document.getElementById('mirror');
+for (let i = -2; i < 48; i++) {
+  const pending = i === 47;
+  rect(gm, x0 + i * fine + 1.5, 250, fine - 3, 34,
+    pending ? '#FBFBFC' : '#787C82', pending ? '#787C82' : null, pending);
+}
+</script>
+</div>
