@@ -19,7 +19,7 @@ import {
 /** Averaging window for the requests/second readout, in seconds. */
 const RPS_WINDOW_SEC = 10;
 
-/** Age out an in-flight row unseen this long — a crash/eviction backstop. */
+/** Age out an in-flight row unseen this long — a lost-completion backstop. */
 const INFLIGHT_STALE_MS = 15 * 60 * 1000;
 
 /**
@@ -203,9 +203,11 @@ export class GyroscopeViewNode extends Node {
 	 *
 	 * A completed request is returned once and deleted in the same pass, so it
 	 * flashes for exactly one tick. An in-flight row unrefreshed for
-	 * INFLIGHT_STALE_MS is dropped unrendered — the backstop for a producer that
-	 * crashed or an entry evicted from its LRU mid-request, which under delta
-	 * mode would otherwise pin the row forever. The reaped count feeds RPS.
+	 * INFLIGHT_STALE_MS is dropped unrendered — the backstop for a request whose
+	 * completion never arrives, which under delta mode would otherwise pin the
+	 * row forever: a producer that crashed or ran `purge_cache()`, an evicted
+	 * request with no URL, or a completion dropped as oversize. LRU eviction of
+	 * any other request emits a timed-out completion. The reaped count feeds RPS.
 	 *
 	 * Calling this mutates the model; the React view is its one caller.
 	 *

@@ -53,9 +53,10 @@ class Request_Flight_Node extends Timer_Node {
 	 * site's whole in-flight set exceeds it. `Timer_Node::fire_cb()` screens
 	 * the null-sink case and the interval pacing before calling this.
 	 *
-	 * A row that still exceeds that cap after `Line_Fitter` halves `url` and
-	 * `user_agent` is dropped with a rate-limited warning; `Partition_Node`
-	 * would otherwise drop it silently.
+	 * A row that still exceeds that cap after `Line_Fitter` shortens `url` and
+	 * `user_agent` is dropped here with a rate-limited warning naming its rid,
+	 * before `Partition_Node` would refuse it with an oversize warning of its
+	 * own.
 	 *
 	 * @api Used by substrate.
 	 */

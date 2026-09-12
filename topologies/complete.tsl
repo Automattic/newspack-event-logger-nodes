@@ -1,6 +1,9 @@
 # Complete topology: one worker runs request-builder, flame-builder,
 # job-router, and job-worker together.
 
+# Restated: an included var is ignored, and job-hub's worker needs 600s.
+var stale_timeout = 600
+
 include performance
 include job-hub
 make_node Tee firehose:tee

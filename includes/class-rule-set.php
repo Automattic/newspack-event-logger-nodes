@@ -294,10 +294,11 @@ final class Rule_Set {
 	}
 
 	/**
-	 * Read the persisted ruleset, falling back to the file config.
+	 * Read the persisted ruleset, falling back to the config seed.
 	 *
-	 * An absent option seeds from config; a corrupt (non-array) one seeds too,
-	 * after a stderr notice. Non-array entries are skipped. Stored ids stand as
+	 * An absent option seeds through `seed_from_config()`; a corrupt
+	 * (non-array) one seeds the same way, after a stderr notice naming the
+	 * type it held. Non-array entries are skipped. Stored ids stand as
 	 * written — only an entry stored without one gets an id minted — because
 	 * every write path already rekeyed by pattern. This is the read side, so an
 	 * unrepresentable row is skipped with a notice rather than thrown: one
@@ -309,7 +310,12 @@ final class Rule_Set {
 			return self::seed_from_config();
 		}
 		if ( ! \is_array( $raw ) ) {
-			Core::stderr( 'Newspack ELN: corrupt rules option; seeding from config.' );
+			Core::stderr(
+				\sprintf(
+					'Newspack ELN: rules option holds type %s, not an array; seeding from the config file and schema default.',
+					\get_debug_type( $raw )
+				)
+			);
 			return self::seed_from_config();
 		}
 		$rules = [];
@@ -321,17 +327,22 @@ final class Rule_Set {
 	}
 
 	/**
-	 * Read-time default when the option is absent (or corrupt): build the ruleset
-	 * from the file config's `rules` list, rekeyed by pattern — a config entry's
-	 * own `id`, if it declares one, is ignored.
+	 * Read-time default when the option is absent or corrupt: the `rules` of
+	 * the config layers BENEATH the option, rekeyed by pattern — a config
+	 * entry's own `id`, if it declares one, is ignored.
 	 *
-	 * Empty means empty — config `rules => []` (or no rules key) yields a zero-rule
-	 * set (log nothing), the same as a stored `[]`; there is no implicit log-all
-	 * baseline. Does NOT persist — the file value stands in until the editor writes
+	 * Beneath, because the option overlay hands a stored value back whatever
+	 * its type, so the merged config would seed a corrupt option from itself
+	 * and log nothing. The layers are `Settings_Schema::RULES`, the shipped
+	 * config file over it, and `LOCAL_NEWSPACK_NODES_CONF` over that; a file
+	 * naming no `rules` key keeps the schema's five exact skips and its `/`
+	 * log rule. Empty means empty — a file's `rules => []`, or any non-array
+	 * value, yields a zero-rule set (log nothing), the same as a stored `[]`.
+	 * Does NOT persist — the config value stands in until the editor writes
 	 * the option.
 	 */
 	private static function seed_from_config(): self {
-		$raw = Config::value( 'rules' );
+		$raw = Config::load_config_defaults()['rules'];
 		return new self( \is_array( $raw ) ? self::rules_from_config( $raw ) : [] );
 	}
 

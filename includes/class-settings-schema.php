@@ -54,9 +54,12 @@ class Settings_Schema {
 	/**
 	 * Seed for the per-URL logging ruleset: the read-time default
 	 * `Rule_Set::load()` falls back to while the
-	 * `newspack_event_logger_nodes_rules` option is absent or corrupt. Once the
-	 * rules editor writes that option, this list stops being consulted until
-	 * `Rule_Set::reset()` deletes it again.
+	 * `newspack_event_logger_nodes_rules` option is absent or holds anything
+	 * but an array, with the config file and `LOCAL_NEWSPACK_NODES_CONF`
+	 * overriding it as they override every key. A stored array, `[]`
+	 * included, stands as written. Once the rules editor writes that option,
+	 * this list stops being consulted until `Rule_Set::reset()` deletes it
+	 * again.
 	 *
 	 * `Rule_Matcher` ranks query-bearing patterns above exact patterns (the
 	 * trailing `?`) above prefixes, so these five exact skips govern their

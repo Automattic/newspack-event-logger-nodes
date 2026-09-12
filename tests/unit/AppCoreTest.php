@@ -1731,6 +1731,40 @@ class AppCoreTest extends TestCase {
 	}
 
 	/**
+	 * A rule buying caller backtraces still names the caller on its query
+	 * spans. `caller_of()` serves hook entries alone, so a label that stopped
+	 * at the transport left nothing on the span saying who asked.
+	 */
+	public function test_a_traced_rule_still_labels_the_query_caller_beyond_the_transport(): void {
+		$this->set_governing_rule(
+			new Rule( '3b8e6d1f0a47', '/reports/', Rule::ACTION_LOG, log_queries: true, trace_callers: 7 )
+		);
+		$core = new Core();
+
+		( new FakeCaller() )->build_articles_query( new FakeTransport(), 'SELECT option_value FROM wp_options WHERE 1' );
+
+		$this->assertStringContainsString(
+			'FakeCaller->build_articles_query',
+			$this->last_entry_label( 'sql (start)' )
+		);
+	}
+
+	/** The outbound-HTTP twin, applied from `WP_Http::request()`. */
+	public function test_a_traced_rule_still_labels_the_http_caller_beyond_the_transport(): void {
+		$this->set_governing_rule(
+			new Rule( '6a1d4f8c2e93', '/checkout/', Rule::ACTION_LOG, trace_callers: 7 )
+		);
+		$core = new Core();
+
+		( new FakeCaller() )->fetch_feed( new FakeTransport(), 'https://img.example.net/a.jpg' );
+
+		$this->assertStringContainsString(
+			'FakeCaller->fetch_feed',
+			$this->last_entry_label( 'http (start)' )
+		);
+	}
+
+	/**
 	 * Query capture replaces literals before the statement is logged.
 	 *
 	 * `log_queries` sends the statement into the firehose, which an aggregator
