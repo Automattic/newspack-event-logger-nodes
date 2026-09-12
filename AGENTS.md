@@ -168,7 +168,6 @@ Each is intentional, stated in full in [`docs/architecture-decisions.md`](docs/a
 | 16 | The breakdown panel is always mounted, and says which kind of nothing it has | [Decision 16](docs/architecture-decisions.md#decision-16-the-breakdown-panel-is-always-mounted-and-says-which-kind-of-nothing-it-has) |
 | 17 | The URL index is stored at TWO resolutions, and the coarse one is DERIVED | [Decision 17](docs/architecture-decisions.md#decision-17-the-url-index-is-stored-at-two-resolutions-and-the-coarse-one-is-derived) |
 | 18 | A stored value may be POSITIONAL, and then its indexes are named constants | [Decision 18](docs/architecture-decisions.md#decision-18-a-stored-value-may-be-positional-and-then-its-indexes-are-named-constants) |
-| 19 | The per-URL percentiles are RETIRED, and the duration reservoir with them | [Decision 19](docs/architecture-decisions.md#decision-19-the-per-url-percentiles-are-retired-and-the-duration-reservoir-with-them) |
 | 20 | A request is filed in the bucket it FINISHED in, and a write into a folded hour goes to the hour key | [Decision 20](docs/architecture-decisions.md#decision-20-a-request-is-filed-in-the-bucket-it-finished-in-and-a-write-into-a-folded-hour-goes-to-the-hour-key) |
 | 21 | Outbound HTTP is timed as a span, and a short-circuited request opens nothing | [Decision 21](docs/architecture-decisions.md#decision-21-outbound-http-is-timed-as-a-span-and-a-short-circuited-request-opens-nothing) |
 | 22 | The fold keeps the CLOSE of any span the kept head left open | [Decision 22](docs/architecture-decisions.md#decision-22-the-fold-keeps-the-close-of-any-span-the-kept-head-left-open) |
@@ -251,7 +250,7 @@ Mistakes that have actually happened.
 
 - **Documentation map**: `docs/README.md` — the three chapters, then the reference set
 - **Architecture**: `docs/architecture-guide.md` — application design, topologies, hub/spoke flow, memcache schema
-- **Decisions**: `docs/architecture-decisions.md` — the 26 decisions, cited as "decision N"
+- **Decisions**: `docs/architecture-decisions.md` — the 25 decisions, cited as "decision N"
 - **Security model**: `docs/security-model.md` — what the logger captures, what crosses to the hub, the tradeoffs
 - **API**: `docs/API.md` — the one REST route (the MCP server), every service-CI verb, the two WP-CLI verbs, the PHP API sibling plugins log through, and the hooks fired and consumed
 - **Runtime**: `../newspack-nodes/` — the substrate this plugin depends on
