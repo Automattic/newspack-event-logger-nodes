@@ -272,7 +272,7 @@ For job handler changes: queue a job through the legitimate caller, wait, check 
 
 - Update `docs/architecture-decisions.md` if the change altered an architecture decision, and AGENTS.md if it altered a key file.
 - If you added a job handler that crosses the hub/spoke boundary, document which side is intended (`job_handlers` vs `remote_job_handlers`).
-- If you called a substrate API newer than 2.51.0, raise the floor in `newspack-event-logger-nodes.php` and say why in the comment beside it.
+- If you called a substrate API newer than 2.56.0, raise the floor in `newspack-event-logger-nodes.php` and say why in the comment beside it.
 - Add the CHANGELOG entry, then `./scripts/bump-version.sh <version>` — it rewrites the header, the `NEWSPACK_EVENT_LOGGER_NODES_VERSION` constant, `package.json` and the substrate pin in `release.yml` together, and refuses to bump when the sibling substrate's version is not tagged locally. Never hand-edit any of the four.
 - Push to this plugin's own remote, `Automattic/newspack-event-logger-nodes`. Pushing a `v<major>.<minor>.<patch>` tag runs the Release workflow, which builds the archive and publishes the zip beside the standalone `00-newspack-profiler.php` drop-in.
 

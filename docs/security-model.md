@@ -23,7 +23,7 @@ The logger defends against these actors:
 
 ![Capture, replication and the three egresses](img/2026-09-08-firehose-capture.png)
 
-The PHP logger and the Perl template engine both write the firehose; the logger records each request's URL in full, query string included. The hub pulls as the `newspack_nodes_hub` role, `read` and `tune` only (substrate [`includes/class-roles.php:114-117`](https://github.com/Automattic/newspack-nodes/blob/v2.55.3/includes/class-roles.php#L114-L117)), and `read` alone opens the [`dump_request`](API.md#performance--the-omnibus-dashboard-ci) and `grep_requests` commands, so the hub sees them all. The substrate's [reply gate](https://github.com/Automattic/newspack-nodes/blob/main/docs/security-model.md#the-hubspoke-trust-boundary) decides what the hub delivers back to the spoke.
+The PHP logger and the Perl template engine both write the firehose; the logger records each request's URL in full, query string included. The hub pulls as the `newspack_nodes_hub` role, `read` and `tune` only (substrate [`includes/class-roles.php:114-117`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/class-roles.php#L114-L117)), and `read` alone opens the [`dump_request`](API.md#performance--the-omnibus-dashboard-ci) and `grep_requests` commands, so the hub sees them all. The substrate's [reply gate](https://github.com/Automattic/newspack-nodes/blob/main/docs/security-model.md#the-hubspoke-trust-boundary) decides what the hub delivers back to the spoke.
 
 ### Redaction: three models for three kinds of data
 
@@ -51,7 +51,7 @@ An Ask brief summarizes one request, URL or log entry for pasting into an AI ass
 
 ## The remote-job rewrite
 
-**Code:** [`includes/class-remote-job-rewrite-node.php`](../includes/class-remote-job-rewrite-node.php); substrate [`includes/class-job-worker-node.php`](https://github.com/Automattic/newspack-nodes/blob/v2.55.3/includes/class-job-worker-node.php#L207-L218) (:207-218); `newspack-pyrobase/includes/runtime/class-evtemplate.php`: `is_this_server()` (:291).
+**Code:** [`includes/class-remote-job-rewrite-node.php`](../includes/class-remote-job-rewrite-node.php); substrate [`includes/class-job-worker-node.php`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/class-job-worker-node.php#L207-L218) (:207-218); `newspack-pyrobase/includes/runtime/class-evtemplate.php`: `is_this_server()` (:291).
 
 **A spoke's job runs on the hub. That is a requirement: foundation community sites depend on the hub running their jobs.** The hub runs a spoke's `remote_job` entries through whatever `remote_job_handlers` registers: neither this plugin nor the substrate registers anything, and pyrobase's deployed hub config registers `evtemplate`, so a spoke can have the hub render one of the hub's own templates with the spoke's parameters as the request. `is_this_server()` compares the job's template host to the worker's `SERVER_NAME`; a worker spawned over HTTP has one, and one started with `wp nodes run` has none and accepts every host. [Remote_Job_Rewrite_Node](architecture-guide.md#remote_job_rewrite_node) and [Job ingress and routing](architecture-guide.md#job-ingress-and-routing) cover the rewrite.
 
