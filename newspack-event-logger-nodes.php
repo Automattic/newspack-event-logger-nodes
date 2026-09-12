@@ -385,6 +385,10 @@ function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\Command_
 		if ( \in_array( $tree, [ 'overview', 'error-log', 'gyroscope', 'requests' ], true ) ) {
 			$style_deps = [ 'wp-components', 'newspack-nodes-graph' ];
 		}
+		if ( 'settings' === $tree ) {
+			// The per-field reset toggle rides the settings form alone.
+			\Newspack_Nodes\Config_System\Field_Reset_Assets::enqueue();
+		}
 
 		$rest_url      = \function_exists( 'rest_url' ) ? \rest_url() : '/wp-json/';
 		$nonce         = \function_exists( 'wp_create_nonce' ) ? \wp_create_nonce( 'wp_rest' ) : '';
