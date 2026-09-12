@@ -154,7 +154,7 @@ Each is intentional, stated in full in [`docs/architecture-decisions.md`](docs/a
 | 2 | Sums, not means | [Decision 2](docs/architecture-decisions.md#decision-2-sums-not-means) |
 | 3 | Stats fail soft | [Decision 3](docs/architecture-decisions.md#decision-3-stats-fail-soft) |
 | 4 | Settings fan-out is a node graph; no consumer means a silent no-op | [Decision 4](docs/architecture-decisions.md#decision-4-settings-fan-out-is-a-node-graph-no-consumer-means-a-silent-no-op) |
-| 5 | Salt-rotation schema migration | [Decision 5](docs/architecture-decisions.md#decision-5-salt-rotation-schema-migration) |
+| 5 | A memcache schema change is migrated by the flush, and by nothing in this code | [Decision 5](docs/architecture-decisions.md#decision-5-a-memcache-schema-change-is-migrated-by-the-flush-and-by-nothing-in-this-code) |
 | 6 | `get_multi` batching is essential | [Decision 6](docs/architecture-decisions.md#decision-6-get_multi-batching-is-essential) |
 | 7 | Job_Intake for >4KB jobs, the firehose for ≤4KB | [Decision 7](docs/architecture-decisions.md#decision-7-job_intake-for-4kb-jobs-the-firehose-for-4kb) |
 | 8 | Hub vs spoke topology | [Decision 8](docs/architecture-decisions.md#decision-8-hub-vs-spoke-topology) |

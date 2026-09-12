@@ -2512,13 +2512,6 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	/**
-	 * The coarse tier needs decision 5's legacy guard too, and worse: a folded
-	 * hour's twelve fine buckets are deliberately never read again, so a ghost
-	 * written here is what the dashboard shows for the whole hour and outlives
-	 * its own source — the buckets age out on their TTL while the hour key
-	 * stands for the full window.
-	 */
-	/**
 	 * A split with ONE server whose count is the row's own is the row restated.
 	 * Storing it as a host name against `null` is ~33 bytes where the positional
 	 * sums are ~112 — and on this fleet every URL is served by exactly one host,
