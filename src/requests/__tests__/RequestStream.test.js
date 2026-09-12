@@ -28,7 +28,7 @@ import { renderComponent, act } from '../../test-helpers/renderHook';
 
 const { useRequestLogGraph } = require( '../hooks/useRequestLogGraph' );
 
-// requestlog:view stand-in: model in setStateCache.view, ring on the node.
+// request-log:view stand-in: model in setStateCache.view, ring on the node.
 function registerViewFixture( {
 	paused = false,
 	connectionError = false,
@@ -61,7 +61,7 @@ function registerViewFixture( {
 		},
 	};
 	node.setState( 'view', { paused, connectionError } );
-	Core.nodes.set( 'requestlog:view', node );
+	Core.nodes.set( 'request-log:view', node );
 	return node;
 }
 
@@ -109,7 +109,7 @@ describe( 'RequestStream', () => {
 		clearGraph = jest.fn();
 		useRequestLogGraph.mockReturnValue( {
 			setFilter: ( term ) => {
-				const view = Core.nodes.get( 'requestlog:view' );
+				const view = Core.nodes.get( 'request-log:view' );
 				if ( view ) {
 					view.filter = String( term ).toLowerCase();
 				}
@@ -146,7 +146,7 @@ describe( 'RequestStream', () => {
 		).toBeNull();
 	} );
 
-	it( 'wires LogRowList at the live requestlog:view node with the fixed row height', () => {
+	it( 'wires LogRowList at the live request-log:view node with the fixed row height', () => {
 		const node = registerViewFixture();
 		mount();
 		expect( logRowListProps.getNode() ).toBe( node );
@@ -435,7 +435,7 @@ describe( 'RequestStream', () => {
 			registerViewFixture();
 			useRequestLogGraph.mockReturnValue( {
 				setFilter: ( term ) => {
-					const view = Core.nodes.get( 'requestlog:view' );
+					const view = Core.nodes.get( 'request-log:view' );
 					if ( view ) {
 						view.filter = String( term ).toLowerCase();
 					}
@@ -469,7 +469,7 @@ describe( 'RequestStream', () => {
 			const selectPartition = jest.fn();
 			useRequestLogGraph.mockReturnValue( {
 				setFilter: ( term ) => {
-					const view = Core.nodes.get( 'requestlog:view' );
+					const view = Core.nodes.get( 'request-log:view' );
 					if ( view ) {
 						view.filter = String( term ).toLowerCase();
 					}
@@ -509,7 +509,7 @@ describe( 'RequestStream', () => {
 			registerViewFixture();
 			useRequestLogGraph.mockReturnValue( {
 				setFilter: ( term ) => {
-					const view = Core.nodes.get( 'requestlog:view' );
+					const view = Core.nodes.get( 'request-log:view' );
 					if ( view ) {
 						view.filter = String( term ).toLowerCase();
 					}
@@ -547,7 +547,7 @@ describe( 'RequestStream', () => {
 			} );
 			useRequestLogGraph.mockReturnValue( {
 				setFilter: ( term ) => {
-					const view = Core.nodes.get( 'requestlog:view' );
+					const view = Core.nodes.get( 'request-log:view' );
 					if ( view ) {
 						view.filter = String( term ).toLowerCase();
 					}

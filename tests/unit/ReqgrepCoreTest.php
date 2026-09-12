@@ -1,7 +1,7 @@
 <?php
 /**
  * Tests for Reqgrep_Core — the shared rid-grouping / pattern-matching engine
- * that both `wp nodes reqgrep` and the `request_grep` performance-CI verb
+ * that both `wp nodes reqgrep` and the `grep_requests` performance-CI verb
  * consume. Pins the grouping + match semantics (exact-rid short-circuit,
  * regex-against-line, history bootstrap, complete-fires-on-complete) so the
  * CLI and dashboard agree byte-for-byte on which lines belong to which request.
@@ -79,7 +79,7 @@ class ReqgrepCoreTest extends TestCase {
 	public function test_an_aborted_request_completes_like_any_other_terminal(): void {
 		// `process (aborted)` is a terminal in `Request_Builder_Node::TERMINAL_KEYWORDS`
 		// too. Firing only on `(complete)` left every lease-killed request out of the
-		// dashboard's `request_grep` reply entirely, and mislabelled `[incomplete]` in
+		// dashboard's `grep_requests` reply entirely, and mislabelled `[incomplete]` in
 		// the CLI — the one request an operator greps for.
 		$completed = [];
 		$core      = $this->make_core( '/calendar', $completed );

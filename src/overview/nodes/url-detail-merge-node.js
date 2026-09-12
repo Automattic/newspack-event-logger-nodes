@@ -8,15 +8,15 @@ import { Node, VALUE, FROM, payloadOf } from '@newspack-nodes/runtime';
 const MERGED_REQUEST_LIMIT = 500;
 
 /**
- * `urldetail:merge` — the url_detail incremental merge and `last_modified`
+ * `url-detail:transform` — the dump_url incremental merge and `last_modified`
  * dedup, hosted on the receiver-Tee → view graph EDGE rather than inside the
  * view. `usePerformanceGraph` declares it in the optional `transform` slot of
- * `addSliceFetcher`, which builds the edge `urldetail:in` (Tee) →
- * `urldetail:merge` → `urldetail:view` and stamps `controlFrom` from the same
+ * `addSliceFetcher`, which builds the edge `url-detail:in` (Tee) →
+ * `url-detail:transform` → `url-detail:view` and stamps `controlFrom` from the same
  * declaration.
  *
  * It receives the raw command reply — VALUE is `{ name, payload }`, the payload
- * being the url_detail object the server returned — merges that payload against
+ * being the dump_url object the server returned — merges that payload against
  * the one it last forwarded, and forwards a message whose VALUE.payload is the
  * MERGED object. It DROPS the message when `last_modified` is unchanged, so an
  * idle auto-refresh tick never re-renders the modal.
@@ -48,7 +48,7 @@ export class UrlDetailMergeNode extends Node {
 	 * as fresh and forwards as-is.
 	 *
 	 * Nothing is published here: this node sits on the graph edge and owns no
-	 * view state — the model belongs to `urldetail:view` downstream.
+	 * view state — the model belongs to `url-detail:view` downstream.
 	 */
 	constructor() {
 		super();
@@ -102,7 +102,7 @@ export class UrlDetailMergeNode extends Node {
 	 * Merge one reply's payload into the retained payload, replacing what is
 	 * retained whenever the result is forwardable.
 	 *
-	 * @param {Object|null} data The url_detail payload this reply carried.
+	 * @param {Object|null} data The dump_url payload this reply carried.
 	 * @return {Object|null} The payload to forward, or null to drop the message
 	 *                       (empty payload, or `last_modified` unchanged).
 	 */
@@ -137,7 +137,7 @@ export class UrlDetailMergeNode extends Node {
 	}
 
 	/**
-	 * The browser's watermark: the newest request this node holds. `url_detail
+	 * The browser's watermark: the newest request this node holds. `dump_url
 	 * --since` hands it to the server, whose reverse scan stops below it — so a
 	 * poll reads the entries since the last one rather than the whole window.
 	 *
@@ -169,7 +169,7 @@ export class UrlDetailMergeNode extends Node {
 		return {
 			category: 'Hidden',
 			description:
-				'Merges url_detail replies incrementally on the receiver→view edge.',
+				'Merges dump_url replies incrementally on the receiver→view edge.',
 			arguments: [],
 			commands: [],
 		};

@@ -356,7 +356,7 @@ export default function Inflight( { maxRows = 20 } ) {
 
 	// A sub-second cadence takes its own slot; a slower one rides the Router.
 	useRouterTick( {
-		name: 'gyroscope:display',
+		name: 'gyroscope:timer',
 		onTick: renderRequests,
 		intervalMs: refreshInterval * 1000,
 	} );

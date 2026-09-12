@@ -6,7 +6,7 @@
  *
  * The page localizes `{ rid, partition, perfUrl }` into
  * `window.NewspackEventLoggerNodes.currentRequest`; the summary, flame graph,
- * and profile breakdown are fetched from the `performance` CI's `request_detail`
+ * and profile breakdown are fetched from the `performance` CI's `dump_request`
  * verb (by rid + partition). The request-builder processes the firehose
  * asynchronously, so a just-loaded page won't be in the log for a beat — that's
  * the "still processing" state. There is no Refresh: the tab asks each tick
@@ -28,7 +28,7 @@ import RequestProfile from '../overview/RequestProfile';
 import { egressPath } from '@newspack-nodes/shared/helpers/egressPath';
 
 /** The view node's name: the poll fills it, `useNodeState` reads it. */
-const VIEW = 'currentrequest:view';
+const VIEW = 'current-request:view';
 
 /** Every router tick: the record lands the moment the worker writes it. */
 const POLL_INTERVAL_MS = 1000;
@@ -60,7 +60,7 @@ function currentRequestData() {
  * Four states, in the order they render: `idle` when the page localized no rid
  * (logging off, running as root, or no matching `log` rule), `loading` until
  * the poll graph mounts the view node, `processing` while the request-builder
- * has yet to write the record, and `found` once `request_detail` answers with
+ * has yet to write the record, and `found` once `dump_request` answers with
  * one.
  *
  * The load is desired state rather than an event: the tab POLLS for its own
@@ -97,7 +97,7 @@ export default function CurrentRequestTab() {
 
 	// @longform
 	// The ask keeps going until the record exists, which serves both failure
-	// modes at once: request_detail answers nothing until requests.log has the
+	// modes at once: dump_request answers nothing until requests.log has the
 	// record, and a refused command answers the same way, so an expired session
 	// recovers on the same retry a slow write does. Settling PAUSES rather than
 	// disabling: `enabled` tears the graph down, taking the view node that owns
@@ -105,17 +105,17 @@ export default function CurrentRequestTab() {
 	useBatchedPoll( {
 		build: ( { interpreter, tee } ) =>
 			addSliceFetcher( interpreter, {
-				fetcher: 'currentrequest:fetch',
-				receiver: 'currentrequest:in',
-				command: 'request_detail',
+				fetcher: 'current-request:fetch',
+				receiver: 'current-request:in',
+				command: 'dump_request',
 				argsFn: () => formatCommandArgs( [ rid ], { partition } ),
 				view: VIEW,
 				viewClass: views.CurrentRequestView,
 				tee,
 				target: egressPath( 'performance' ),
 			} ),
-		timerName: 'currentrequest:timer',
-		teeName: 'currentrequest:tee',
+		timerName: 'current-request:timer',
+		teeName: 'current-request:tee',
 		enabled: Boolean( rid ),
 		paused: hasFlame || asksSinceFound > FLAME_RETRY_TICKS,
 		intervalMs: POLL_INTERVAL_MS,

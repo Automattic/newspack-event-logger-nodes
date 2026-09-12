@@ -1,10 +1,10 @@
 /**
  * UrlDetailMergeNode tests — the net-new transform Node that hosts the
- * url_detail incremental-merge + last_modified dedup on the receiver-Tee → view
+ * dump_url incremental-merge + last_modified dedup on the receiver-Tee → view
  * graph EDGE (the addSliceFetcher `transform` slot), out of view state.
  *
  * It receives the raw command reply (VALUE = { name, payload } where payload is
- * the url_detail object), merges the new payload against the payload it last
+ * the dump_url object), merges the new payload against the payload it last
  * forwarded, and forwards a message whose VALUE.payload is the merged object —
  * EXCEPT when last_modified is unchanged from the prior forward, in which case it
  * drops the message (no republish, matching the old _mergeUrlDetail no-op).
@@ -58,11 +58,11 @@ function makeMerge() {
 	return { node, sink };
 }
 
-// A command-reply message carrying a url_detail payload.
+// A command-reply message carrying a dump_url payload.
 function reply( payload ) {
 	const m = newMessage();
 	m[ TYPE ] = TM_COMMAND | TM_RESPONSE;
-	m[ VALUE ] = { name: 'url_detail', payload };
+	m[ VALUE ] = { name: 'dump_url', payload };
 	return m;
 }
 
@@ -214,7 +214,7 @@ describe( 'UrlDetailMergeNode — control origin', () => {
 
 		const impostor = newMessage();
 		impostor[ TYPE ] = TM_STRUCT;
-		impostor[ FROM ] = 'urldetail:in';
+		impostor[ FROM ] = 'url-detail:in';
 		impostor[ VALUE ] = { action: 'clear' };
 		node.fill( impostor );
 

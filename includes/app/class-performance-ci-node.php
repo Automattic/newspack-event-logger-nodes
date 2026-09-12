@@ -3,16 +3,16 @@
  * Performance_CI: command-dispatch for the performance-dashboard surface.
  *
  * Verbs the live surfaces drive:
- *   - overview / urls / url_detail / request_search / request_grep /
- *     request_detail — the performance dashboard's per-slice graph
+ *   - overview / urls / dump_url / search_requests / grep_requests /
+ *     dump_request — the performance dashboard's per-slice graph
  *     (`src/overview/hooks/usePerformanceGraph.js`), plus the
- *     current-request overlay tab, which fetches `request_detail`.
+ *     current-request overlay tab, which fetches `dump_request`.
  *   - url_breakdown — the URL-detail modal's dimension chart, which polls
  *     one series while the modal is open and wants none of the index walk
- *     `url_detail` pays for.
+ *     `dump_url` pays for.
  *   - ask — one descriptor chain's brief for the `?` picker
  *     (`src/overview/components/AskPanel.js`).
- *   - hooks_registered — the Settings page's hook-catalog tree.
+ *   - list_hooks — the Settings page's hook-catalog tree.
  *   - set — the spoke-side receiver of the substrate Settings_Sync_Node
  *     hub→spoke fanout. `hub-control.tsl` maps three application options
  *     (rules, log_memory, flush_every_line) to this `performance` node;
@@ -134,30 +134,30 @@ class Performance_CI_Node extends Service_CI_Node {
 	private const NODE_FLAME_BUILDER = 'flame-builder';
 	private const NODE_REQUESTS      = 'requests:partition';
 
-	/** `url_detail` per-URL request-list cap, applied to the index walk. */
+	/** `dump_url` per-URL request-list cap, applied to the index walk. */
 	private const RECENT_REQUEST_LIMIT = 500;
 
-	/** `request_grep` default / max matched-request results (bounds the reply). */
+	/** `grep_requests` default / max matched-request results (bounds the reply). */
 	private const GREP_RESULT_LIMIT_DEFAULT = 20;
 	private const GREP_RESULT_LIMIT_MAX     = 50;
 
 	/**
-	 * `request_grep` hard scan budget: stop feeding the grouping engine after this
+	 * `grep_requests` hard scan budget: stop feeding the grouping engine after this
 	 * many firehose lines so a fat firehose can't wedge a request-scope verb even
 	 * inside the (already bounded) `recent` seek window.
 	 */
 	private const GREP_MAX_SCAN_LINES = 200000;
 
-	/** `request_grep` in-flight LRU_Cache geometry (100 × 3 = 300 concurrent rids). */
+	/** `grep_requests` in-flight LRU_Cache geometry (100 × 3 = 300 concurrent rids). */
 	private const GREP_INFLIGHT_BUCKET_SIZE = 100;
 	private const GREP_INFLIGHT_NUM_BUCKETS = 3;
 
-	/** `request_grep` history-bucket geometry for the shared grouping engine. */
+	/** `grep_requests` history-bucket geometry for the shared grouping engine. */
 	private const GREP_HISTORY_BUCKET_SIZE = 250;
 	private const GREP_HISTORY_NUM_BUCKETS = 10;
 
 	/**
-	 * Valid breakdown dimensions for the `overview` / `url_detail` verbs —
+	 * Valid breakdown dimensions for the `overview` / `dump_url` verbs —
 	 * typos fall through without surfacing arbitrary memcache reads.
 	 */
 	private const DIMENSIONS = [ 'status', 'method', 'server', 'country', 'from', 'ua', 'ja4' ];
@@ -431,7 +431,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	/**
 	 * Locate a single request index entry by rid and return the search shape
 	 * `{rid, partition, url_hash}` — enough for the dashboard to then ask for
-	 * `request_detail`; the request body is not read here. Its own partition is
+	 * `dump_request`; the request body is not read here. Its own partition is
 	 * tried first, and the shared scan budget spans the fan-out.
 	 *
 	 * @param string $rid Request id to match.
@@ -473,7 +473,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param int    $limit   Maximum matching requests to return.
 	 * @return array{pattern:string, scope:string, scanned_partitions:int, results:array<int,array<string,mixed>>, truncated:bool, result_count:int}
 	 */
-	private static function run_request_grep( string $pattern, int $limit ): array {
+	private static function run_grep_requests( string $pattern, int $limit ): array {
 		$results       = [];
 		$truncated     = false;
 		$scanned_lines = 0;
@@ -838,7 +838,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		return [
 			'hash'         => $hash,
 			'url'          => '',
-			// Many URLs; `url_detail` cannot answer for it.
+			// Many URLs; `dump_url` cannot answer for it.
 			'aggregate'    => Stats_Store::is_other_key( $hash ),
 			'count'        => 0,
 			'timed_count'  => 0,
@@ -2375,7 +2375,7 @@ class Performance_CI_Node extends Service_CI_Node {
 					},
 				],
 				[
-					'name'        => 'url_detail',
+					'name'        => 'dump_url',
 					'capability'  => Capabilities::READ,
 					'description' => 'Single-URL detail incl. aggregate flame data. Its request list covers the window opening at requests_window_start, not the whole record; `since` tails it.',
 					'args'        => [
@@ -2461,7 +2461,7 @@ class Performance_CI_Node extends Service_CI_Node {
 					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
 				// @longform The chart polls this while the modal is open and
 				// keeps only the series, so it reads memcache and never the
-				// index: `url_detail` walks every partition's index to build
+				// index: `dump_url` walks every partition's index to build
 				// `requests`, which a breakdown fetch throws away.
 				$parsed = Command_Args::parse( self::arg_strings( $args ) );
 				$hash   = $parsed['positional'][0] ?? '';
@@ -2474,7 +2474,7 @@ class Performance_CI_Node extends Service_CI_Node {
 					},
 				],
 				[
-					'name'        => 'request_search',
+					'name'        => 'search_requests',
 					'capability'  => Capabilities::READ,
 					'description' => 'Locate a request by rid across partitions.',
 					'args'        => [
@@ -2494,7 +2494,7 @@ class Performance_CI_Node extends Service_CI_Node {
 					},
 				],
 				[
-					'name'        => 'request_grep',
+					'name'        => 'grep_requests',
 					'capability'  => Capabilities::READ,
 					'description' => 'Pattern-search recent firehose traffic; returns a bounded summary of matching requests (rid, url, method, ts, match_count).',
 					'args'        => [
@@ -2512,11 +2512,11 @@ class Performance_CI_Node extends Service_CI_Node {
 					\max( 1, self::require_option_int( $parsed['options'], 'limit', self::GREP_RESULT_LIMIT_DEFAULT ) )
 				);
 
-				return self::run_request_grep( $pattern, $limit );
+				return self::run_grep_requests( $pattern, $limit );
 					},
 				],
 				[
-					'name'        => 'request_detail',
+					'name'        => 'dump_request',
 					'capability'  => Capabilities::READ,
 					'description' => 'Full request + flame data for a rid; --partition hints where to look first.',
 					'args'        => [
@@ -2573,7 +2573,7 @@ class Performance_CI_Node extends Service_CI_Node {
 					},
 				],
 				[
-					'name'        => 'hooks_registered',
+					'name'        => 'list_hooks',
 					'capability'  => Capabilities::READ,
 					'description' => 'Registered hooks grouped by category.',
 					'args'        => [],

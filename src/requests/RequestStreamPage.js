@@ -4,7 +4,7 @@
  * The `event-logger-requests` submenu prints an empty `#event-logger-stream`
  * div; `index.js` roots this component into it. Nothing here fetches or renders
  * a row: the EventSource, the ring and the render cadence all live in
- * `RequestStream` and the `requestlog:*` node graph it mounts.
+ * `RequestStream` and the `request-log:*` node graph it mounts.
  */
 
 import RequestStream from './RequestStream';
@@ -15,7 +15,7 @@ import DashboardShell from '../components/DashboardShell';
  *
  * Vertical overflow clips here because `RequestStream`'s virtualized row list
  * owns the scrolling; `GyroscopePage` passes `auto` instead, since its table
- * carries no inner scroller. `maxEntries` sizes the `requestlog:view` ring:
+ * carries no inner scroller. `maxEntries` sizes the `request-log:view` ring:
  * 1000 is that view node's own default, stated here because `RequestStream`'s
  * prop default of 500 would otherwise reach it. `page-wrappers.test.js` pins
  * both pages against their shells.

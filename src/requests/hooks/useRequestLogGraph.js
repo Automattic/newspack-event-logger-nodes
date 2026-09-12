@@ -26,7 +26,7 @@ import { useGlobStreamGraph } from '../../hooks/useGlobStreamGraph';
 export function useRequestLogGraph( opts = {} ) {
 	return useGlobStreamGraph(
 		{
-			prefix: 'requestlog',
+			prefix: 'request-log',
 			glob: 'completed.*',
 			viewClass: views.RequestLogView,
 		},

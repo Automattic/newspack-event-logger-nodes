@@ -6,7 +6,7 @@
  * substrate's `newspack_nodes/request_graph_ready` action, beside the
  * `discovery` and `performance` service CIs. The `src/rules` editor, mounted
  * into the settings page's Logging Rules section, drives all five verbs —
- * list, save, upsert, delete, reset.
+ * dump, save, upsert, delete, reset.
  *
  * Every verb goes through `Rule_Set`, so the inline/pointer tiering and the
  * orphan reconcile in `Rule_Set::save()` hold for an editor write exactly as
@@ -110,7 +110,7 @@ class Rules_CI_Node extends Service_CI_Node {
 	 *
 	 * The `capability` key is the whole gate. `Service_CI_Node` wraps each
 	 * handler in `Capabilities::require()` for the role declared here — READ
-	 * for `list`, TUNE for the four writes — so no handler checks again; one
+	 * for `dump`, TUNE for the four writes — so no handler checks again; one
 	 * that did would outrank its own declaration without saying so.
 	 *
 	 * @api Used by the substrate to provide UI etc.
@@ -119,13 +119,13 @@ class Rules_CI_Node extends Service_CI_Node {
 	public static function node_schema(): array {
 		return \array_merge( parent::node_schema(), [
 			'category'    => 'Service',
-			'description' => 'Per-URL logging ruleset CRUD: list / save / upsert / delete / reset, backed by Rule_Set.',
+			'description' => 'Per-URL logging ruleset CRUD: dump / save / upsert / delete / reset, backed by Rule_Set.',
 			'arguments'   => [],
 			'commands'    => [
 				[
-					'name'        => 'list',
+					'name'        => 'dump',
 					'capability'  => Capabilities::READ,
-					'description' => 'All rules, with pointer-tier hooks resolved to the full list.',
+					'description' => 'Every rule with its hooks nested, a pointer-tier rule resolved to the full list.',
 					'args'        => [],
 					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
 						$rules = \array_map(

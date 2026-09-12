@@ -269,7 +269,7 @@ describe( 'useUrlNavigation', () => {
 			window.dispatchEvent( new Event( 'popstate' ) );
 		} );
 		// The caller answers the intent, partition in hand, as the dashboard
-		// does once request_search replies.
+		// does once search_requests replies.
 		await act( async () => {
 			result.current.clearDeepLink();
 			result.current.selectRequest( 'q9kfwjrid42' );

@@ -3,7 +3,7 @@
  * Tests for PerformanceDashboard — the orchestrator (JS-node-graph version).
  *
  * Post-D1b de-god the orchestrator reads FOUR per-slice view nodes
- * (`overview:view` / `urls:view` / `urldetail:view` / `requestdetail:view`), each
+ * (`overview:view` / `urls:view` / `url-detail:view` / `request-detail:view`), each
  * via its own `useNodeState`. `usePerformanceGraph` mounts the polls and hands
  * back `handleUrlParamsChange` alone; the verbs a click drives are this
  * component's own one-shots, held beside the state each reply sets.
@@ -31,8 +31,8 @@ jest.mock( '@newspack-nodes/runtime', () => ( {
 		const sliceByNode = {
 			'overview:view': 'overview',
 			'urls:view': 'urls',
-			'urldetail:view': 'urlDetail',
-			'requestdetail:view': 'requestDetail',
+			'url-detail:view': 'urlDetail',
+			'request-detail:view': 'requestDetail',
 		};
 		const key = sliceByNode[ nodeName ];
 		return key ? mockView[ key ] : undefined;
@@ -109,12 +109,12 @@ function answerCommand( key, answer ) {
 const sentTo = ( key ) => mockCommands[ key ]?.sent ?? [];
 
 // The scopes this page registers, spelled once.
-const SEARCH = 'performance:request_search:search';
-const LOOKUP = 'performance:url_detail:lookup';
-const DEEP_REQUEST = 'performance:request_search:deeplink';
-const DEEP_URL = 'performance:url_detail:deeplink';
-const GREP = 'performance:request_grep';
-const RULES_LIST = 'rules:list';
+const SEARCH = 'request-search';
+const LOOKUP = 'url-lookup';
+const DEEP_REQUEST = 'request-deeplink';
+const DEEP_URL = 'url-deeplink';
+const GREP = 'performance:grep_requests';
+const RULES_DUMP = 'rules:dump';
 const RULES_UPSERT = 'rules:upsert';
 const RULES_DELETE = 'rules:delete';
 
@@ -1133,7 +1133,7 @@ describe( 'PerformanceDashboard', () => {
 		unmount();
 	} );
 
-	it( 'searchRequest asks request_search and selects what it answers', async () => {
+	it( 'searchRequest asks search_requests and selects what it answers', async () => {
 		mockView = loadedView();
 		const { unmount } = renderComponent(
 			React.createElement( PerformanceDashboard, {
@@ -1159,7 +1159,7 @@ describe( 'PerformanceDashboard', () => {
 
 	it( 'landing on a request leaves the server filter behind', async () => {
 		// A rid names one request; the server filter is a browsing scope. Now
-		// that url_detail honours that scope, a search landing on a URL outside
+		// that dump_url honours that scope, a search landing on a URL outside
 		// it would ask for a row the scope excludes and answer "URL not found"
 		// for a URL plainly on screen. The navigation wins, visibly.
 		mockView = loadedView();
@@ -1238,10 +1238,10 @@ describe( 'PerformanceDashboard', () => {
 		unmount();
 	} );
 
-	// request_search answers {rid, partition, url_hash} — never a url. A
+	// search_requests answers {rid, partition, url_hash} — never a url. A
 	// deep-linked request whose URL is off the loaded page therefore has no
 	// title until the hash is looked up, which is what this asserts.
-	it( 'a deep link asks url_detail for a hash outside the loaded page', async () => {
+	it( 'a deep link asks dump_url for a hash outside the loaded page', async () => {
 		mockNavState.deepLink = { requestId: 'rid-offpage', urlHash: null };
 		mockView = loadedView( {
 			urls: {
@@ -1407,7 +1407,7 @@ describe( 'PerformanceDashboard', () => {
 		unmount();
 	} );
 
-	it( 'a /url-pattern search runs request_grep and renders the result list', async () => {
+	it( 'a /url-pattern search runs grep_requests and renders the result list', async () => {
 		mockView = loadedView();
 		const { unmount } = renderComponent(
 			React.createElement( PerformanceDashboard, {
@@ -1418,7 +1418,7 @@ describe( 'PerformanceDashboard', () => {
 		await act( async () => {
 			await globalThis.__overviewProps.onSearch( '/calendar' );
 		} );
-		// Pattern (has '/') → grep, NOT the exact-rid request_search.
+		// Pattern (has '/') → grep, NOT the exact-rid search_requests.
 		expect( sentTo( GREP ) ).toContainEqual( [
 			'/calendar',
 			'--limit=20',
@@ -1717,7 +1717,7 @@ describe( 'PerformanceDashboard', () => {
 			} );
 		}
 
-		// @longform It waits for the ruleset. Enabled before the `list` reply
+		// @longform It waits for the ruleset. Enabled before the `dump` reply
 		// lands, the button reads "Log this URL" and opens a BLANK draft — and
 		// an id-less upsert matches by pattern, so saving it would replace a
 		// configured rule's hooks and thresholds with nothing.
@@ -1735,7 +1735,7 @@ describe( 'PerformanceDashboard', () => {
 			expect( btn ).toBeTruthy();
 			expect( btn.disabled ).toBe( true );
 
-			answerCommand( RULES_LIST, { result: { rules: [] } } );
+			answerCommand( RULES_DUMP, { result: { rules: [] } } );
 			expect( btn.textContent ).toContain( 'Log this URL' );
 			expect( btn.disabled ).toBe( false );
 			unmount();
@@ -1819,8 +1819,8 @@ describe( 'PerformanceDashboard', () => {
 				} )
 			);
 			await flushEffects();
-			answerCommand( RULES_LIST, { result: { rules: [ existing ] } } );
-			expect( sentTo( RULES_LIST ) ).not.toEqual( [] );
+			answerCommand( RULES_DUMP, { result: { rules: [ existing ] } } );
+			expect( sentTo( RULES_DUMP ) ).not.toEqual( [] );
 			const btn = container.querySelector(
 				'.event-logger-rule-control button'
 			);
@@ -1843,7 +1843,7 @@ describe( 'PerformanceDashboard', () => {
 				} )
 			);
 			await flushEffects();
-			answerCommand( RULES_LIST, { result: { rules: [] } } );
+			answerCommand( RULES_DUMP, { result: { rules: [] } } );
 			const btn = container.querySelector(
 				'.event-logger-rule-control button'
 			);
@@ -1868,7 +1868,7 @@ describe( 'PerformanceDashboard', () => {
 				} )
 			);
 			await flushEffects();
-			answerCommand( RULES_LIST, { result: { rules: [ existing ] } } );
+			answerCommand( RULES_DUMP, { result: { rules: [ existing ] } } );
 			await act( async () => {
 				container
 					.querySelector( '.event-logger-rule-control button' )
@@ -1897,7 +1897,7 @@ describe( 'PerformanceDashboard', () => {
 				} )
 			);
 			await flushEffects();
-			answerCommand( RULES_LIST, { result: { rules: [] } } );
+			answerCommand( RULES_DUMP, { result: { rules: [] } } );
 			await act( async () => {
 				container
 					.querySelector( '.event-logger-rule-control button' )
@@ -1915,7 +1915,7 @@ describe( 'PerformanceDashboard', () => {
 				} )
 			);
 			await flushEffects();
-			answerCommand( RULES_LIST, { result: { rules: [] } } );
+			answerCommand( RULES_DUMP, { result: { rules: [] } } );
 			const btn = container.querySelector(
 				'.event-logger-rule-control button'
 			);
@@ -1937,7 +1937,7 @@ describe( 'PerformanceDashboard', () => {
 				} )
 			);
 			await flushEffects();
-			answerCommand( RULES_LIST, { result: { rules: [] } } );
+			answerCommand( RULES_DUMP, { result: { rules: [] } } );
 			await act( async () => {
 				container
 					.querySelector( '.event-logger-rule-control button' )
@@ -1958,7 +1958,7 @@ describe( 'PerformanceDashboard', () => {
 				result: { rule: { id: 'new-1', pattern: '/foo?' } },
 			} );
 			// The ruleset re-reads, so the label follows the SERVER.
-			answerCommand( RULES_LIST, {
+			answerCommand( RULES_DUMP, {
 				result: {
 					rules: [ { id: 'new-1', pattern: '/foo?', action: 'log' } ],
 				},
@@ -1983,7 +1983,7 @@ describe( 'PerformanceDashboard', () => {
 				} )
 			);
 			await flushEffects();
-			answerCommand( RULES_LIST, { result: { rules: [] } } );
+			answerCommand( RULES_DUMP, { result: { rules: [] } } );
 			await act( async () => {
 				container
 					.querySelector( '.event-logger-rule-control button' )

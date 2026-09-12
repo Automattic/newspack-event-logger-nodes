@@ -174,7 +174,7 @@ class StatsStoreTest extends TestCase {
 	/**
 	 * The plan must COVER the window. Reading it at two resolutions is the
 	 * point; reading part of it at neither is a hole, and a hole here is
-	 * traffic missing from every `urls` and `url_detail` answer — silently,
+	 * traffic missing from every `urls` and `dump_url` answer — silently,
 	 * and by an amount that breathes with the clock.
 	 */
 	public function test_the_read_plan_covers_every_bucket_in_the_window(): void {

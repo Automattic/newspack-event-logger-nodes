@@ -2,7 +2,7 @@
  * Current-Request overlay tab — summarizes THIS page's request (the one the
  * overlay is riding), renders its flame graph + profile breakdown, and
  * deep-links to the full performance trace. Data comes from the `performance`
- * CI's `request_detail` verb, addressed by the rid + partition the page
+ * CI's `dump_request` verb, addressed by the rid + partition the page
  * localizes into `window.NewspackEventLoggerNodes.currentRequest`.
  */
 
@@ -93,7 +93,7 @@ test( 'renders the request summary cards + full-trace deep link when found', asy
 		partition: 2,
 		perfUrl: 'admin.php?page=event-logger-overview',
 	} );
-	// `request_detail` returns the request envelope this fixture mirrors.
+	// `dump_request` returns the request envelope this fixture mirrors.
 	answerWith( {
 		rid: 'abc123',
 		url: '/wp-admin/index.php',
@@ -119,10 +119,12 @@ test( 'renders the request summary cards + full-trace deep link when found', asy
 
 	const sent = seen.mock.calls[ 0 ][ 0 ];
 	expect( sent[ TO ] ).toBe( 'performance' );
-	expect( sent[ VALUE ].name ).toBe( 'request_detail' );
+	expect( sent[ VALUE ].name ).toBe( 'dump_request' );
 	expect( sent[ VALUE ].arguments ).toEqual( [ 'abc123', '--partition=2' ] );
 	// Addressed, not correlated: the reply routes back on FROM alone.
-	expect( sent[ FROM ] ).toBe( 'currentrequest:in' );
+	expect( sent[ FROM ] ).toBe( 'current-request:in' );
+	expect( Core.node( 'current-request:view' ) ).toBeTruthy();
+	expect( Core.node( 'currentrequest:view' ) ).toBeNull();
 	expect( sent[ ID ] ).toBe( '' );
 	expect( sent[ KEY ] ).toBe( '' );
 	const text = view.container.textContent;
@@ -172,7 +174,7 @@ test( 'keeps the found request across a re-render from the host', async () => {
 	await act( async () => {} );
 	expect( view.container.textContent ).toContain( 'sticky77' );
 	// The node that owns the answer is still there to answer with.
-	expect( Core.node( 'currentrequest:view' ) ).not.toBeNull();
+	expect( Core.node( 'current-request:view' ) ).not.toBeNull();
 
 	// One re-render from the host — what a drag or a tab switch delivers.
 	view.rerender( <CurrentRequestTab /> );
@@ -354,7 +356,7 @@ test.each( [
 );
 
 // A reply resolving after unmount must be swallowed by the mountedRef guard.
-test( 'ignores a request_detail reply that arrives after the tab unmounts', async () => {
+test( 'ignores a dump_request reply that arrives after the tab unmounts', async () => {
 	setBlob( { rid: 'late1', perfUrl: 'admin.php?page=x' } );
 	// Hold the wire open so the reply lands only after the unmount.
 	const wire = answerWith( { rid: 'late1', url: '/x', duration_ms: 1 } );
@@ -371,7 +373,7 @@ test( 'ignores a request_detail reply that arrives after the tab unmounts', asyn
 	} );
 	// load() fired; the reply is in flight.
 	await waitFor( () => expect( global.fetch ).toHaveBeenCalled() );
-	// Tear the tab down while the request_detail call is still in flight.
+	// Tear the tab down while the dump_request call is still in flight.
 	view.unmount();
 	// Unmounting removed the node, so its request already rejected; the late
 	// reply has nowhere to land. A setState here would fail the suite's

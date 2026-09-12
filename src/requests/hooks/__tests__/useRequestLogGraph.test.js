@@ -1,12 +1,12 @@
 /**
  * useRequestLogGraph tests — the Request Log dashboard graph now clips onto the
  * substrate's canonical rule-#2 backbone (`_command_interpreter` → `_router`)
- * via a SINGLE `RemoteLink` node plus a single `requestlog:view` node.
+ * via a SINGLE `RemoteLink` node plus a single `request-log:view` node.
  *
  * RemoteLink composes the three I/O children every SSE dashboard used to wire by
- * hand — `requestlog:link:sse-in` (SseIn), `requestlog:link:http` (HttpOut) and
- * `requestlog:link:heartbeat` (Heartbeat) — and wires the `connected → slot`
- * bridge to its own heartbeat. The dead `requestlog:route` / `requestlog:transform`
+ * hand — `request-log:link:sse-in` (SseIn), `request-log:link:http` (HttpOut) and
+ * `request-log:link:heartbeat` (Heartbeat) — and wires the `connected → slot`
+ * bridge to its own heartbeat. The dead `request-log:route` / `request-log:transform`
  * intermediate nodes remain gone (defensive shaping inlined into the view).
  *
  * EventSource is faked via `global.EventSource`; SseInNode's connection logic
@@ -93,12 +93,12 @@ afterEach( () => jest.restoreAllMocks() );
 // Transport double keyed by verb, built on the shared HttpOut-seam helper.
 const INTERPRETER = '_command_interpreter';
 const ROUTER = '_router';
-const LINK = 'requestlog:link';
+const LINK = 'request-log:link';
 // RemoteLink: a patron-owned `:sse-in` + shared _http/_heartbeat singletons.
 const HTTP = '_http';
 const HEARTBEAT = '_heartbeat';
-const VIEW = 'requestlog:view';
-const TEE = 'requestlog:stream';
+const VIEW = 'request-log:view';
+const TEE = 'request-log:stream';
 const COMPOSED_NAMES = [ HTTP, HEARTBEAT ];
 const LEASE_OWNER = '9007199254740993';
 
@@ -143,8 +143,8 @@ describe( 'useRequestLogGraph — exospine + RemoteLink wiring', () => {
 			expect( node.sink ).toBe( interpreter );
 		}
 		// Registered so `trace` reaches it; patron keeps it off the canvas.
-		expect( Core.node( 'requestlog:link:sse-in' ) ).toBe(
-			Core.node( 'requestlog:link' ).sseIn
+		expect( Core.node( 'request-log:link:sse-in' ) ).toBe(
+			Core.node( 'request-log:link' ).sseIn
 		);
 	} );
 
@@ -157,8 +157,9 @@ describe( 'useRequestLogGraph — exospine + RemoteLink wiring', () => {
 
 	test( 'does not mount the dropped route or transform intermediate nodes', () => {
 		renderHook( () => useRequestLogGraph() );
-		expect( Core.node( 'requestlog:route' ) ).toBeNull();
-		expect( Core.node( 'requestlog:transform' ) ).toBeNull();
+		expect( Core.node( 'request-log:route' ) ).toBeNull();
+		expect( Core.node( 'request-log:transform' ) ).toBeNull();
+		expect( Core.node( 'requestlog:view' ) ).toBeNull();
 	} );
 
 	test( 'inserts an inspectable Tee on the stream edge: link → tee → view', () => {
@@ -271,7 +272,7 @@ describe( 'useRequestLogGraph — slot keep-alive bridge', () => {
 } );
 
 describe( 'useRequestLogGraph — end-to-end routing through the exospine', () => {
-	test( 'a completed envelope from the EventSource flows into requestlog:view', () => {
+	test( 'a completed envelope from the EventSource flows into request-log:view', () => {
 		renderHook( () => useRequestLogGraph() );
 		act( () => {
 			FakeEventSource.last.dispatch(
@@ -460,7 +461,7 @@ describe( 'useRequestLogGraph — glob browse', () => {
 				{ key: 'completed.p2', label: 'completed.p2' },
 				{ key: 'completed.p3', label: 'completed.p3' },
 			],
-			log_status: { segments: [ { id: 7, size: 4096 } ] },
+			dump_log: { segments: [ { id: 7, size: 4096 } ] },
 		} );
 		const { result } = renderHook( () => useRequestLogGraph() );
 		await act( async () => {} );
@@ -522,7 +523,7 @@ describe( 'useRequestLogGraph — pause vs visibility precedence + replay surviv
 				{ key: 'completed.p1', label: 'completed.p1' },
 			],
 			// Newest segment 9 is 500 bytes — the replay catch-up boundary.
-			log_status: { segments: [ { id: 9, size: 500 } ] },
+			dump_log: { segments: [ { id: 9, size: 500 } ] },
 		} );
 		const { result } = renderHook( () => useRequestLogGraph() );
 		await act( async () => {} );

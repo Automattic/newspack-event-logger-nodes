@@ -101,7 +101,7 @@ class Ask_Assembler {
 			'rule'              => self::rule_shape( $rule ),
 			'findings'          => Findings::for_request( $record, $rule ),
 			'fetch'             => self::fetch(
-				'performance_request_detail',
+				'dump_request',
 				[ 'rid' => Core::as_string( $record['rid'] ?? '' ) ]
 			),
 			'caveat'            => Findings::caveat(),
@@ -386,7 +386,7 @@ class Ask_Assembler {
 	/**
 	 * One URL: its stats and its worst recent requests — plus, when nothing
 	 * governs it, the cold-start finding that says which instrumentation to
-	 * switch on. The dimensional breakdown is `url_detail`'s to return; a
+	 * switch on. The dimensional breakdown is `dump_url`'s to return; a
 	 * brief names that verb rather than carrying an unbounded series.
 	 *
 	 * The requests are drawn from a WINDOW, and both facts about that walk are
@@ -431,7 +431,7 @@ class Ask_Assembler {
 			'rule'               => self::rule_shape( $rule ),
 			'findings'           => Findings::for_url( $stats, $rule ),
 			'fetch'              => self::fetch(
-				'performance_url_detail',
+				'dump_url',
 				[ 'hash' => Core::as_string( $stats['hash'] ?? '' ), 'server' => $server ]
 			),
 			'caveat'             => Findings::caveat(),

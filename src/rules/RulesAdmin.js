@@ -228,7 +228,7 @@ export default function RulesAdmin() {
 	const [ deleting, setDeleting ] = useState( null );
 	// Whether the reset-to-defaults confirmation is open.
 	const [ resetting, setResetting ] = useState( false );
-	// A mutation's failure; `error` belongs to the table's own `list`.
+	// A mutation's failure; `error` belongs to the table's own `dump`.
 	const [ mutationError, setMutationError ] = useState( null );
 
 	// The reply names its verb, so it closes the surface that asked.

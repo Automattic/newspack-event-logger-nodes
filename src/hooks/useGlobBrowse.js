@@ -13,7 +13,7 @@
  * Seeks ride the existing `positions` transport (keyed by partition DIRECTORY,
  * the same key SseIn tracks resume offsets under), so no new server verb is
  * needed. The substrate's `raw-logs` CI answers both catalog questions —
- * `list_logs` for the concrete dirs, polled as a slice, and `log_status` for
+ * `list_logs` for the concrete dirs, polled as a slice, and `dump_log` for
  * one dir's segments. Each rides its OWN nodes, so every reply lands on the
  * node that asked for it and no id pairs them up (ADR-7).
  */
@@ -81,7 +81,7 @@ export default function useGlobBrowse( { glob, graph, step } ) {
 
 	const { source, refresh } = useLogStatusSegments( {
 		sub: selectedPartition,
-		scope: `${ viewName }:status`,
+		scope: `${ prefix }-segments`,
 	} );
 
 	// Switch partition: reset+arm the view's seek (dir), or widen to glob ('').
@@ -123,7 +123,7 @@ export default function useGlobBrowse( { glob, graph, step } ) {
 		sub: selectedPartition,
 		source,
 		refresh,
-		railName: `${ viewName }:segments`,
+		railName: `${ prefix }-rail:timer`,
 		mode: viewModel?.mode ?? LIVE,
 		lastReceivedSegment: viewModel?.lastReceivedSegment ?? null,
 		seek,

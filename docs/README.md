@@ -16,6 +16,7 @@ Three chapters, in reading order.
 - [architecture-decisions.md](architecture-decisions.md): the decisions the design rests on, each with what it forbids.
 - [security-model.md](security-model.md): what the logger captures, what crosses to the hub, the remote-job rewrite and the tradeoffs the logger chooses; the substrate's security-model.md carries the boundaries it enforces.
 - [API.md](API.md): the service-CI verbs, the command endpoint, SSE, MCP, the WP-CLI verbs, the PHP API sibling plugins log through, and the hooks this plugin fires and consumes.
+- [upgrading.md](upgrading.md): read when you're moving a consumer across versions of this plugin: the breaking changes, with the fix beside each.
 
 ## The substrate
 

@@ -5,8 +5,8 @@
  * graph, the profile breakdown, and the log entries table. `PerformanceDashboard`
  * renders this inside the URL modal once a request row is selected.
  *
- * The data arrives already assembled. The `requestdetail:view` node holds the
- * slice the `performance` CI's `request_detail` verb returns — the durable
+ * The data arrives already assembled. The `request-detail:view` node holds the
+ * slice the `performance` CI's `dump_request` verb returns — the durable
  * request body read out of a `requests.log` partition, with the matching
  * `flames.log` entry merged in as `flame_data`. Nothing here fetches: each
  * section renders its prop and hides itself when that prop is empty.
@@ -31,7 +31,7 @@ const SECTION_STYLE = { marginBottom: '20px' };
 
 /**
  * `requestDetail` is the durable request body `record_of()` writes and
- * `request_detail` reads back: `url`, `request_method`, `timestamp` (seconds),
+ * `dump_request` reads back: `url`, `request_method`, `timestamp` (seconds),
  * `duration_ms`, `peak_mb`, `status_code`, `profiles`, `error_status` and
  * `folded`.
  *

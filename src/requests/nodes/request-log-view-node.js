@@ -22,7 +22,7 @@ import { LogStreamViewNode } from '@newspack-nodes/shared/nodes/log-stream-view-
 const DEFAULT_MAX_LINES = 1000;
 
 /**
- * `requestlog:view` — owns the Request Log view model.
+ * `request-log:view` — owns the Request Log view model.
  *
  * A `LogStreamViewNode` subclass: the ring, the paused belt and step budget,
  * the decaying lps, seek tracking, and the shared control verbs — `select`

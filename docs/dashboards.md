@@ -12,15 +12,15 @@ Every dashboard is a React page in wp-admin, and none runs a fetch loop. Each is
 | **Gyroscope** | The in-flight snapshot Request_Flight_Node writes to `gyroscope` on the router's one-second tick | A subscription on `gyroscope.*` |
 | **Request Log** | `completed.p0`, one row per finished request | The substrate's `raw-logs` verbs and a subscription on `completed.*` |
 | **Errors** | `errors.p0`: Request_Builder_Node's error and warning lines, and the runtime's own diagnostics the bridge carries in | The substrate's `raw-logs` verbs and a subscription on `errors.*` |
-| **Settings** | The three switches, the effective configuration and the ruleset | The `rules` verbs and `performance.hooks_registered`; a rule change applies at once, with no Save |
+| **Settings** | The three switches, the effective configuration and the ruleset | The `rules` verbs and `performance.list_hooks`; a rule change applies at once, with no Save |
 
 The map in [the Event Logger](the-event-logger.md#assembling-a-request) draws which partition each one reads. Two shapes of reading follow from the table. Performance and Settings ask verbs on the page's tick and draw the reply. Gyroscope, Request Log and Errors subscribe to a partition, and their rows are read off the view node each frame rather than becoming React state, so a busy stream never re-renders React per message.
 
-`performance.hooks_registered` answers two dashboards because one editor serves both: "Log this URL" on Performance opens the same rule editor, and the same hook picker beneath it, that the Settings ruleset table opens.
+`performance.list_hooks` answers two dashboards because one editor serves both: "Log this URL" on Performance opens the same rule editor, and the same hook picker beneath it, that the Settings ruleset table opens.
 
 ## The current-request overlay
 
-The sixth bundle is a tab in the substrate's debug overlay, which four of the five dashboards mount, Settings excepted, and `?nodes-debug=1` turns on. The page localizes its own request id and partition, and the tab polls `performance.request_detail` for that record each tick: the workers assemble it after the request ends, so a just-loaded page reads as still processing for a beat, then shows its duration, status, errors and peak memory, and links out to the full trace on Performance. It is registered on the substrate's `newspack_nodes/devtools_tab_bundles` filter for the Nodes page and enqueued directly on those four dashboards.
+The sixth bundle is a tab in the substrate's debug overlay, which four of the five dashboards mount, Settings excepted, and `?nodes-debug=1` turns on. The page localizes its own request id and partition, and the tab polls `performance.dump_request` for that record each tick: the workers assemble it after the request ends, so a just-loaded page reads as still processing for a beat, then shows its duration, status, errors and peak memory, and links out to the full trace on Performance. It is registered on the substrate's `newspack_nodes/devtools_tab_bundles` filter for the Nodes page and enqueued directly on those four dashboards.
 
 ## Six build entries
 

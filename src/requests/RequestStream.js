@@ -3,10 +3,10 @@
  *
  * A THIN wrapper over the shared `LogStreamViewer` chrome (toolbar, filter,
  * counts + rate, pause, step, offset jump, Debug, Clear, banner, body split,
- * virtualized `LogRowList`). The `requestlog:*` node graph (mounted by
- * `useRequestLogGraph`) owns all data: `requestlog:link` holds the EventSource
- * and fans its frames through the `requestlog:stream` Tee into
- * `requestlog:view` (a `LogStreamViewNode` subclass), whose ring the list reads
+ * virtualized `LogRowList`). The `request-log:*` node graph (mounted by
+ * `useRequestLogGraph`) owns all data: `request-log:link` holds the EventSource
+ * and fans its frames through the `request-log:stream` Tee into
+ * `request-log:view` (a `LogStreamViewNode` subclass), whose ring the list reads
  * straight off the node each frame — row data never becomes React state. This
  * component supplies only the differing pieces: the column set + picker, the
  * grid row/header renderers, the request-count and rate labels, the filter
@@ -57,10 +57,10 @@ const ROW_HEIGHT = 33;
  *
  * @type {string}
  */
-const VIEW_NODE = 'requestlog:view';
+const VIEW_NODE = 'request-log:view';
 
 /**
- * What the chrome renders until `requestlog:view` publishes its first `view`
+ * What the chrome renders until `request-log:view` publishes its first `view`
  * state — the two fields it reads, so the pause button and the reconnect
  * banner never render off an undefined.
  *
@@ -152,7 +152,7 @@ const renderCount = ( stats ) =>
 	);
 
 /**
- * One cell of a `requestlog:view` row, by column.
+ * One cell of a `request-log:view` row, by column.
  *
  * @type {( col: string, row: Object ) => import('react').ReactElement}
  */
@@ -175,7 +175,7 @@ const StreamRow = memo(
 	 * const, where `memo()` infers the props as `{}`.
 	 *
 	 * @param {Object}   props                Component props.
-	 * @param {Object}   props.row            Row from `requestlog:view`. Its
+	 * @param {Object}   props.row            Row from `request-log:view`. Its
 	 *                                        `shapeRow()` supplies `timestamp`,
 	 *                                        `rid`, `method`, `url`, `urlHash`,
 	 *                                        `status_code`, `remote_addr`,

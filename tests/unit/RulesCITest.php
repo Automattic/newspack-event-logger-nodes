@@ -1,7 +1,7 @@
 <?php
 /**
  * RulesCITest: unit tests for Rules_CI, the service CI backing the rules-editor
- * UI (list/save/upsert/delete over Rule_Set).
+ * UI (dump/save/upsert/delete over Rule_Set).
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -79,28 +79,49 @@ class RulesCITest extends TestCase {
 	}
 
 	// -------------------------------------------------------------------------
-	// list
+	// dump
 	// -------------------------------------------------------------------------
 
-	public function test_list_resolves_pointer_rule_hooks_and_normalizes_tier(): void {
+	public function test_dump_returns_every_rule_with_its_hooks_resolved(): void {
+		$hooks = [ 'init', 'wp_loaded', 'template_redirect' ];
+		$rule  = new Rule( 'dumped', '/dumped/', Rule::ACTION_LOG, hooks: $hooks );
+		( new Rule_Set( [] ) )->save( [ $rule ] );
+
+		$result = $this->fire( 'dump' );
+
+		$this->assertIsArray( $result );
+		$this->assertCount( 1, $result['rules'] );
+		$this->assertSame( '/dumped/', $result['rules'][0]['pattern'] );
+		$this->assertSame( $hooks, $result['rules'][0]['hooks'], 'each rule nests its resolved hooks' );
+	}
+
+	/** The verb is `dump`; nothing answers to the old name, per the substrate's docs/stability.md. */
+	public function test_list_is_refused_as_an_unknown_command(): void {
+		$result = $this->fire( 'list' );
+
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( 'unknown command: list', $result );
+	}
+
+	public function test_dump_resolves_pointer_rule_hooks_and_normalizes_tier(): void {
 		$big  = \array_map( static fn ( $i ) => "hook_$i", \range( 1, Rule_Set::INLINE_HOOK_LIMIT + 1 ) );
 		$rule = new Rule( 'p1', '/heavy/', Rule::ACTION_LOG, hooks: $big );
 		( new Rule_Set( [] ) )->save( [ $rule ] );
 
-		$result = $this->fire( 'list' );
+		$result = $this->fire( 'dump' );
 
 		$this->assertIsArray( $result );
 		$this->assertArrayHasKey( 'rules', $result );
 		$this->assertCount( 1, $result['rules'] );
 		$wire = $result['rules'][0];
-		$this->assertSame( $big, $wire['hooks'], 'list must resolve the pointer tier to the full hook list' );
+		$this->assertSame( $big, $wire['hooks'], 'dump must resolve the pointer tier to the full hook list' );
 		$this->assertSame( 'inline', $wire['hooks_in'], 'the editor never sees the tier — always normalized to inline' );
 	}
 
-	public function test_list_returns_empty_rules_for_an_empty_set(): void {
+	public function test_dump_returns_empty_rules_for_an_empty_set(): void {
 		$GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ] = [];
 
-		$result = $this->fire( 'list' );
+		$result = $this->fire( 'dump' );
 
 		$this->assertSame( [], $result['rules'] );
 	}
@@ -268,7 +289,7 @@ class RulesCITest extends TestCase {
 			'an unrelated upsert must not wipe a sibling pointer rule\'s durable hooks option'
 		);
 		VerbHarness::reset(); // fresh request-scope graph: fire() registers '_router' once per call.
-		$list = $this->fire( 'list' );
+		$list = $this->fire( 'dump' );
 		$sib  = \array_values( \array_filter( $list['rules'], static fn ( array $r ): bool => $sib_id === $r['id'] ) )[0];
 		$this->assertSame( $big, $sib['hooks'], 'list must still resolve the sibling pointer rule to its full hook list' );
 	}
@@ -353,7 +374,7 @@ class RulesCITest extends TestCase {
 
 		$this->assertSame( 'Service', $schema['category'] );
 		$names = \array_column( $schema['commands'], 'name' );
-		$this->assertEqualsCanonicalizing( [ 'list', 'save', 'upsert', 'delete', 'reset' ], $names );
+		$this->assertEqualsCanonicalizing( [ 'dump', 'save', 'upsert', 'delete', 'reset' ], $names );
 	}
 
 	// -------------------------------------------------------------------------
@@ -404,7 +425,7 @@ class RulesCITest extends TestCase {
 
 		$this->fire( 'reset' );
 		VerbHarness::reset();
-		$listed = $this->fire( 'list' );
+		$listed = $this->fire( 'dump' );
 
 		$this->assertIsArray( $listed );
 		$this->assertSame(

@@ -424,7 +424,7 @@ class AskAssemblerTest extends TestCase {
 	}
 
 	/**
-	 * The series is what `url_detail` returns, and nothing renders it here —
+	 * The series is what `dump_url` returns, and nothing renders it here —
 	 * it was the largest thing in the brief and the only unbounded one.
 	 */
 	public function test_a_url_brief_leaves_the_time_series_to_the_verb_that_owns_it(): void {
@@ -439,7 +439,7 @@ class AskAssemblerTest extends TestCase {
 
 		$this->assertArrayNotHasKey( 'breakdown', $brief );
 		$this->assertSame(
-			[ 'performance_url_detail' ],
+			[ 'dump_url' ],
 			\array_column( $brief['fetch'], 'tool' )
 		);
 		$this->assertSame(
@@ -505,7 +505,7 @@ class AskAssemblerTest extends TestCase {
 		);
 
 		$this->assertSame(
-			[ [ 'tool' => 'performance_request_detail', 'arguments' => [ 'rid' => 'c6x0zgrq1w9v' ] ] ],
+			[ [ 'tool' => 'dump_request', 'arguments' => [ 'rid' => 'c6x0zgrq1w9v' ] ] ],
 			$brief['fetch']
 		);
 	}

@@ -3,7 +3,7 @@
  *
  * `PerformanceDashboard` opens a modal for one URL and renders this view inside
  * it. The view owns no slice: everything but the breakdown series draws a
- * payload the parent already fetched from the `performance` CI's `url_detail`
+ * payload the parent already fetched from the `performance` CI's `dump_url`
  * verb. Top to bottom:
  *
  *   1. Aggregate time chart of the breakdown series, with the Metric and
@@ -16,7 +16,7 @@
  *   6. Virtualized recent-requests table with an "Errors Only" filter.
  *
  * The breakdown series is the one read this view issues for itself, because it
- * is a separate round trip from the `url_detail` payload: `url_breakdown` goes
+ * is a separate round trip from the `dump_url` payload: `url_breakdown` goes
  * whenever the Breakdown dropdown or the URL changes, and again on a
  * router-tick timer.
  *
@@ -153,7 +153,7 @@ const RequestRow = memo(
  * heading count, and the bar-scaling maximum alike.
  *
  * @param {Object}                                   props                 Component props.
- * @param {Object}                                   props.urlDetail       The fields this view reads off the `url_detail` payload: stats, requests, scan_stopped_early, aggregate_flame, aggregate_profiles, last_modified, and optional category_time_series.
+ * @param {Object}                                   props.urlDetail       The fields this view reads off the `dump_url` payload: stats, requests, scan_stopped_early, aggregate_flame, aggregate_profiles, last_modified, and optional category_time_series.
  * @param {Array}                                    props.sortedRequests  Recent requests, already sorted by the parent.
  * @param {Object}                                   props.requestSort     Current sort as `{ field, dir }`; drives the header arrows only.
  * @param {(field: string) => void}                  props.onRequestSort   Receives a field name when a sortable header is clicked.
@@ -223,13 +223,12 @@ export default function UrlDetailView( {
 	 * flips would be three commands answered in any order, so the chart could
 	 * draw one dimension's data under another's label, and a dropped reply
 	 * would leave "Loading…" standing forever, because a write never re-asks.
-	 * Retried, the newest pick supersedes. Asking `url_detail` for the series
+	 * Retried, the newest pick supersedes. Asking `dump_url` for the series
 	 * instead would drag a full request-index walk the chart keeps nothing of.
 	 */
 	const { run: fetchBreakdown } = useCommandOnce( {
 		ci: SERVER,
 		command: 'url_breakdown',
-		scope: `${ SERVER }:url_breakdown`,
 		retry: true,
 		// Subject is the PAIR, not the hash: a superseded reply fills nothing.
 		subjectOf: ( args ) => args.join( ' ' ),
@@ -270,7 +269,7 @@ export default function UrlDetailView( {
 		loadBreakdown( chartBreakdown );
 	}, [ chartBreakdown, loadBreakdown ] );
 	useRouterTick( {
-		name: 'urldetail:breakdown',
+		name: 'url-breakdown:timer',
 		onTick: reloadBreakdown,
 		intervalMs: BREAKDOWN_REFRESH_MS,
 	} );

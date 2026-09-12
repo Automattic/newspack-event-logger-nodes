@@ -28,7 +28,7 @@ import { renderComponent, act } from '../../test-helpers/renderHook';
 
 const { useErrorLogGraph } = require( '../hooks/useErrorLogGraph' );
 
-// perferrors:view stand-in: model in setStateCache.view, ring on the node.
+// error-log:view stand-in: model in setStateCache.view, ring on the node.
 function registerViewFixture( {
 	paused = false,
 	connectionError = false,
@@ -61,7 +61,7 @@ function registerViewFixture( {
 		},
 	};
 	node.setState( 'view', { paused, connectionError } );
-	Core.nodes.set( 'perferrors:view', node );
+	Core.nodes.set( 'error-log:view', node );
 	return node;
 }
 
@@ -103,7 +103,7 @@ describe( 'ErrorLog', () => {
 		clearGraph = jest.fn();
 		useErrorLogGraph.mockReturnValue( {
 			setFilter: ( term ) => {
-				const view = Core.nodes.get( 'perferrors:view' );
+				const view = Core.nodes.get( 'error-log:view' );
 				if ( view ) {
 					view.filter = String( term ).toLowerCase();
 				}
@@ -137,7 +137,7 @@ describe( 'ErrorLog', () => {
 		).toBeNull();
 	} );
 
-	it( 'wires LogRowList at the live perferrors:view node with the fixed row height', () => {
+	it( 'wires LogRowList at the live error-log:view node with the fixed row height', () => {
 		const node = registerViewFixture();
 		mount();
 		expect( logRowListProps.getNode() ).toBe( node );
@@ -359,7 +359,7 @@ describe( 'ErrorLog', () => {
 			registerViewFixture();
 			useErrorLogGraph.mockReturnValue( {
 				setFilter: ( term ) => {
-					const view = Core.nodes.get( 'perferrors:view' );
+					const view = Core.nodes.get( 'error-log:view' );
 					if ( view ) {
 						view.filter = String( term ).toLowerCase();
 					}
@@ -393,7 +393,7 @@ describe( 'ErrorLog', () => {
 			const selectPartition = jest.fn();
 			useErrorLogGraph.mockReturnValue( {
 				setFilter: ( term ) => {
-					const view = Core.nodes.get( 'perferrors:view' );
+					const view = Core.nodes.get( 'error-log:view' );
 					if ( view ) {
 						view.filter = String( term ).toLowerCase();
 					}
@@ -433,7 +433,7 @@ describe( 'ErrorLog', () => {
 			registerViewFixture();
 			useErrorLogGraph.mockReturnValue( {
 				setFilter: ( term ) => {
-					const view = Core.nodes.get( 'perferrors:view' );
+					const view = Core.nodes.get( 'error-log:view' );
 					if ( view ) {
 						view.filter = String( term ).toLowerCase();
 					}
@@ -467,7 +467,7 @@ describe( 'ErrorLog', () => {
 			} );
 			useErrorLogGraph.mockReturnValue( {
 				setFilter: ( term ) => {
-					const view = Core.nodes.get( 'perferrors:view' );
+					const view = Core.nodes.get( 'error-log:view' );
 					if ( view ) {
 						view.filter = String( term ).toLowerCase();
 					}

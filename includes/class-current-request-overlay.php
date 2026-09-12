@@ -150,7 +150,7 @@ class Current_Request_Overlay {
 	 * ELN bundle already put on that global.
 	 *
 	 * @param string $rid       Current request id (empty when unlogged).
-	 * @param int    $partition The partition this request's lines hash to (request_detail needs it).
+	 * @param int    $partition The partition this request's lines hash to (dump_request needs it).
 	 * @param string $perf_url  Performance-dashboard base URL for the deep link.
 	 * @return string Inline JS.
 	 */

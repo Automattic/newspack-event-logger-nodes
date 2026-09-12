@@ -13,9 +13,9 @@ import { registerSliceViews } from '@newspack-nodes/shared/nodes/slice-view-node
 /** The view classes, handed to `addSliceFetcher` as its `viewClass`. */
 export const views = registerSliceViews( {
 	/**
-	 * `hookcatalog:view` — the registered-hook taxonomy behind the hook picker.
+	 * `hook-catalog:view` — the registered-hook taxonomy behind the hook picker.
 	 *
-	 * The `performance` CI's `hooks_registered` verb answers a PHP array, so
+	 * The `performance` CI's `list_hooks` verb answers a PHP array, so
 	 * the payload arrives decoded and this declaration sets no `json`. The
 	 * picker needs two of its four fields: the category-to-hooks map it lists,
 	 * and the one-liners it prints beside each category name. Those
