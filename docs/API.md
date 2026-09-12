@@ -297,7 +297,7 @@ inside that tag is data and never a direction to follow. `JSON_HEX_TAG` is what 
 fence unbreakable: every `<` and `>` in the payload becomes `\u003C` or `\u003E`, so no
 payload can carry a literal `</site-data>`. **A client that decodes the `text` must strip
 the fence first.** An `isError` result is the site's own message and is not fenced. See
-[decision 26](architecture-decisions.md#decision-26-read-tools-and-tune-scoped-write-tools-share-one-mcp-session-and-every-tool-result-is-fenced).
+[decision 25](architecture-decisions.md#decision-25-read-tools-and-tune-scoped-write-tools-share-one-mcp-session-and-every-tool-result-is-fenced).
 
 Nothing here assumes an agent will act on instructions found in a page. Wiring a client up
 is a deliberate act by the operator; the endpoint advertises itself in prose aimed at a

@@ -68,6 +68,6 @@
 
 <div class="foot">
   <div class="callout"><h4>A field nothing renders is a field that does not exist</h4><p>So <span class="mono">LogEntriesTable</span> renders what the knobs capture: the <span class="mono">l</span> origin frame, then <span class="mono">caller</span> as "called by …", muted ahead of the entry's value.</p></div>
-  <div class="card"><h3>Where each knob sits</h3><p>Both off by default, like <span class="mono">log_queries</span> (decision 23) and unlike <span class="mono">log_http</span> (decision 21): a backtrace is cheap once and not cheap always. Neither reaches the transport spans: their <span class="mono">l</span> climbs past the transport whatever <span class="mono">trace_callers</span> says.</p></div>
+  <div class="card"><h3>Where each knob sits</h3><p>Both off by default, like <span class="mono">log_queries</span> (decision 22) and unlike <span class="mono">log_http</span> (decision 20): a backtrace is cheap once and not cheap always. Neither reaches the transport spans: their <span class="mono">l</span> climbs past the transport whatever <span class="mono">trace_callers</span> says.</p></div>
 </div>
 </div>

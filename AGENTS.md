@@ -168,13 +168,13 @@ Each is intentional, stated in full in [`docs/architecture-decisions.md`](docs/a
 | 16 | The breakdown panel is always mounted, and says which kind of nothing it has | [Decision 16](docs/architecture-decisions.md#decision-16-the-breakdown-panel-is-always-mounted-and-says-which-kind-of-nothing-it-has) |
 | 17 | The URL index is stored at TWO resolutions, and the coarse one is DERIVED | [Decision 17](docs/architecture-decisions.md#decision-17-the-url-index-is-stored-at-two-resolutions-and-the-coarse-one-is-derived) |
 | 18 | A stored value may be POSITIONAL, and then its indexes are named constants | [Decision 18](docs/architecture-decisions.md#decision-18-a-stored-value-may-be-positional-and-then-its-indexes-are-named-constants) |
-| 20 | A request is filed in the bucket it FINISHED in, and a write into a folded hour goes to the hour key | [Decision 20](docs/architecture-decisions.md#decision-20-a-request-is-filed-in-the-bucket-it-finished-in-and-a-write-into-a-folded-hour-goes-to-the-hour-key) |
-| 21 | Outbound HTTP is timed as a span, and a short-circuited request opens nothing | [Decision 21](docs/architecture-decisions.md#decision-21-outbound-http-is-timed-as-a-span-and-a-short-circuited-request-opens-nothing) |
-| 22 | The fold keeps the CLOSE of any span the kept head left open | [Decision 22](docs/architecture-decisions.md#decision-22-the-fold-keeps-the-close-of-any-span-the-kept-head-left-open) |
-| 23 | Query spans are the same pair as decision 21, but PER-RULE | [Decision 23](docs/architecture-decisions.md#decision-23-query-spans-are-the-same-pair-as-decision-21-but-per-rule) |
-| 24 | A span says how long, never who asked. Two knobs answer the second question, at two prices | [Decision 24](docs/architecture-decisions.md#decision-24-a-span-says-how-long-never-who-asked-two-knobs-answer-the-second-question-at-two-prices) |
-| 25 | A duration nobody measured is not a timing sample | [Decision 25](docs/architecture-decisions.md#decision-25-a-duration-nobody-measured-is-not-a-timing-sample) |
-| 26 | Read tools and TUNE-scoped write tools share one MCP session, and every tool result is fenced | [Decision 26](docs/architecture-decisions.md#decision-26-read-tools-and-tune-scoped-write-tools-share-one-mcp-session-and-every-tool-result-is-fenced) |
+| 19 | A request is filed in the bucket it FINISHED in, and a write into a folded hour goes to the hour key | [Decision 19](docs/architecture-decisions.md#decision-19-a-request-is-filed-in-the-bucket-it-finished-in-and-a-write-into-a-folded-hour-goes-to-the-hour-key) |
+| 20 | Outbound HTTP is timed as a span, and a short-circuited request opens nothing | [Decision 20](docs/architecture-decisions.md#decision-20-outbound-http-is-timed-as-a-span-and-a-short-circuited-request-opens-nothing) |
+| 21 | The fold keeps the CLOSE of any span the kept head left open | [Decision 21](docs/architecture-decisions.md#decision-21-the-fold-keeps-the-close-of-any-span-the-kept-head-left-open) |
+| 22 | Query spans are the same pair as decision 20, but PER-RULE | [Decision 22](docs/architecture-decisions.md#decision-22-query-spans-are-the-same-pair-as-decision-20-but-per-rule) |
+| 23 | A span says how long, never who asked. Two knobs answer the second question, at two prices | [Decision 23](docs/architecture-decisions.md#decision-23-a-span-says-how-long-never-who-asked-two-knobs-answer-the-second-question-at-two-prices) |
+| 24 | A duration nobody measured is not a timing sample | [Decision 24](docs/architecture-decisions.md#decision-24-a-duration-nobody-measured-is-not-a-timing-sample) |
+| 25 | Read tools and TUNE-scoped write tools share one MCP session, and every tool result is fenced | [Decision 25](docs/architecture-decisions.md#decision-25-read-tools-and-tune-scoped-write-tools-share-one-mcp-session-and-every-tool-result-is-fenced) |
 
 ## Layout
 
