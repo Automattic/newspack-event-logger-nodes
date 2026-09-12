@@ -1,6 +1,6 @@
 # Documentation
 
-The Event Logger is an application on the newspack-nodes runtime. Its vocabulary, node, message, topology, partition and the rest, is the substrate's; read the substrate's map first if any of those words is new.
+The Event Logger is an application on the newspack-nodes runtime. Its vocabulary, node, message, topology, partition and the rest, is the substrate's; read [the substrate's map](https://github.com/Automattic/newspack-nodes/blob/main/docs/README.md) first if any of those words is new.
 
 ## Understand it
 
@@ -14,7 +14,7 @@ Three chapters, in reading order.
 
 - [architecture-guide.md](architecture-guide.md): the write path, the per-URL ruleset, every topology, the application nodes, the memcache schema, hub and spoke, configuration, hooks, REST and CLI.
 - [architecture-decisions.md](architecture-decisions.md): the decisions the design rests on, each with what it forbids.
-- [security-model.md](security-model.md): what the logger captures, what crosses to the hub, the remote-job rewrite and the tradeoffs the logger chooses; the substrate's security-model.md carries the boundaries it enforces.
+- [security-model.md](security-model.md): what the logger captures, what crosses to the hub, the remote-job rewrite and the tradeoffs the logger chooses; the substrate's [security-model.md](https://github.com/Automattic/newspack-nodes/blob/main/docs/security-model.md) carries the boundaries it enforces.
 - [API.md](API.md): the service-CI verbs, the command endpoint, SSE, MCP, the WP-CLI verbs, the PHP API sibling plugins log through, and the hooks this plugin fires and consumes.
 - [upgrading.md](upgrading.md): read when you're moving a consumer across versions of this plugin: the breaking changes, with the fix beside each.
 
@@ -24,4 +24,4 @@ Three chapters, in reading order.
 - [Getting started](https://github.com/Automattic/newspack-nodes/blob/main/docs/getting-started.md): from zero to a running pipeline.
 - [Hub and spoke](https://github.com/Automattic/newspack-nodes/blob/main/docs/hub-and-spoke.md): the connection the hub control chapter here runs over.
 
-Every diagram is an HTML sheet under `docs/img/` beside the PNG it renders to; `docs/img/render.sh` re-renders them all through headless Chrome.
+Every diagram is an HTML sheet under [`docs/img/`](img) beside the PNG it renders to; [`docs/img/render.sh`](img/render.sh) re-renders them all through headless Chrome.
