@@ -5,7 +5,7 @@
  *
  * Each child is mocked so we don't pay the SSE / d3 / canvas tax just
  * to assert the wrapper renders. (The Aggregator Status dashboard moved to the
- * newspack-nodes substrate as a DevTools hub tab; the hub supplies its page
+ * newspack-nodes substrate as a station tab; the station supplies its page
  * chrome there, so there is no longer an ELN page wrapper for it.)
  */
 

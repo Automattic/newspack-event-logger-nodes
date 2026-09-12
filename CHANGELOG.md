@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The current-request tab registers on the substrate's station.** The substrate renamed its DevTools hub the station: `Current_Request_Overlay` filters `newspack_nodes/station_tab_bundles`, reads `Admin::overlay_pages()`, and the bundle imports `registerTab` from `@newspack-nodes/shared/tabs/tabRegistry`. The substrate floor rises with it.
+
 - **`rules list` is `rules dump`, and the MCP tool `rules_list` is `dump_rules`.** A verb named `list` whose reply carries a nested structure per item is a dump, and is named for what it is, as the substrate's `list_nodes` and `dump_node` already are: every rule comes back with its hooks resolved. The old verb is refused as `unknown command: list`, with no alias, and the old tool name is absent from `tools/list`; `docs/upgrading.md` names the JS calls to change.
 
 - **Five `performance` verbs are named verb first: `request_search`, `request_grep`, `request_detail`, `url_detail` and `hooks_registered` are `search_requests`, `grep_requests`, `dump_request`, `dump_url` and `list_hooks`, and the four MCP tools wrapping the first four take the verb's name.** A service verb reads verb first, as the substrate's `list_nodes`, `dump_node` and `make_node` do; a noun-noun compound says what the reply is about and not what it does. The old verbs are refused as `unknown command: <name>`, with no alias, and the old tool names are absent from `tools/list`; `docs/upgrading.md` names the JS calls to change. The substrate renames three of its own in the same shape.

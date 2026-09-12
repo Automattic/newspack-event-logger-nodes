@@ -20,7 +20,7 @@ The map in [the Event Logger](the-event-logger.md#assembling-a-request) draws wh
 
 ## The current-request overlay
 
-The sixth bundle is a tab in the substrate's debug overlay, which four of the five dashboards mount, Settings excepted, and `?nodes-debug=1` turns on. The page localizes its own request id and partition, and the tab polls `performance.dump_request` for that record each tick: the workers assemble it after the request ends, so a just-loaded page reads as still processing for a beat, then shows its duration, status, errors and peak memory, and links out to the full trace on Performance. It is registered on the substrate's [`newspack_nodes/devtools_tab_bundles`](https://github.com/Automattic/newspack-nodes/blob/main/docs/API.md#filters) filter for the Nodes page and enqueued directly on those four dashboards.
+The sixth bundle is a tab in the substrate's debug overlay, which four of the five dashboards mount, Settings excepted, and `?nodes-debug=1` turns on. The page localizes its own request id and partition, and the tab polls `performance.dump_request` for that record each tick: the workers assemble it after the request ends, so a just-loaded page reads as still processing for a beat, then shows its duration, status, errors and peak memory, and links out to the full trace on Performance. It is registered on the substrate's [`newspack_nodes/station_tab_bundles`](https://github.com/Automattic/newspack-nodes/blob/main/docs/API.md#filters) filter for the Nodes page and enqueued directly on those four dashboards.
 
 ## Six build entries
 

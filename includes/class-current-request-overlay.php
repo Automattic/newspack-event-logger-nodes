@@ -3,10 +3,10 @@
  * Current-Request overlay tab — server glue.
  *
  * The tab itself is JS (`src/current-request`), which registers into the
- * substrate's window-singleton devtools registry. This class does the three
+ * substrate's window-singleton tab registry. This class does the three
  * server-side jobs that bundle needs: it contributes the bundle descriptor to
- * the substrate's `newspack_nodes/devtools_tab_bundles` filter (which loads it
- * on the Nodes hub page), enqueues it directly on the admin pages that mount
+ * the substrate's `newspack_nodes/station_tab_bundles` filter (which loads it
+ * on the station), enqueues it directly on the admin pages that mount
  * `<DebugOverlay>` themselves, and injects THIS request's id, partition and
  * dashboard deep link into a JS global the tab reads. ELN owns all of it
  * because ELN owns the request lifecycle — `Log_Manager` is what mints the id.
@@ -33,8 +33,8 @@ class Current_Request_Overlay {
 
 	/**
 	 * ELN admin pages that mount `<DebugOverlay>` themselves, and so must load
-	 * the tab bundle themselves. The substrate's `devtools_tab_bundles` filter
-	 * covers the Nodes hub page and nothing else. Four of ELN's five dashboard
+	 * the tab bundle themselves. The substrate's `station_tab_bundles` filter
+	 * covers the station and nothing else. Four of ELN's five dashboard
 	 * trees render the overlay — overview, error-log, gyroscope and requests;
 	 * the settings tree renders none, so its page is absent here.
 	 *
@@ -49,7 +49,7 @@ class Current_Request_Overlay {
 
 	/**
 	 * Enqueue the tab bundle on an overlay page this plugin is responsible for —
-	 * the hub is the substrate filter's job. Every bundle registers into the same
+	 * the station is the substrate filter's job. Every bundle registers into the same
 	 * window-singleton tab registry, so the Request tab lands beside the
 	 * substrate's overlay tabs rather than in a second tab bar.
 	 *
@@ -94,7 +94,7 @@ class Current_Request_Overlay {
 
 	/**
 	 * Whether `$page` is a page that embeds the overlay — the UNION of ELN's own
-	 * defaults and the substrate's `devtools_overlay_pages` registry (so any
+	 * defaults and the substrate's `overlay_pages` registry (so any
 	 * plugin's overlay page, e.g. the AI Newsletter's, gets the Request tab).
 	 *
 	 * @param string $page The `?page=` admin slug.
@@ -106,20 +106,20 @@ class Current_Request_Overlay {
 
 	/**
 	 * The overlay-page set: ELN's own {@see OVERLAY_PAGES} merged with the slugs
-	 * other plugins contribute via the substrate's `devtools_overlay_pages`
+	 * other plugins contribute via the substrate's `overlay_pages`
 	 * registry.
 	 *
 	 * @return string[]
 	 */
 	private static function overlay_pages(): array {
-		$extra = \class_exists( '\Newspack_Nodes\Admin\Admin' ) ? \Newspack_Nodes\Admin\Admin::devtools_overlay_pages() : [];
+		$extra = \class_exists( '\Newspack_Nodes\Admin\Admin' ) ? \Newspack_Nodes\Admin\Admin::overlay_pages() : [];
 		return \array_values( \array_unique( \array_merge( self::OVERLAY_PAGES, $extra ) ) );
 	}
 
 	/**
 	 * Inject this request's id, partition, and performance-dashboard URL into the
 	 * tab's global — but only once the handle is actually enqueued on this page,
-	 * by either path (the substrate's filter on the hub, ours everywhere else).
+	 * by either path (the substrate's filter on the station, ours everywhere else).
 	 * A page that never loaded the bundle gets no global and no inline script.
 	 *
 	 * `Log_Manager` leaves the request id empty when the request went unlogged —
@@ -167,22 +167,22 @@ class Current_Request_Overlay {
 
 	/**
 	 * Register all three callbacks: the substrate's tab-bundle filter for the
-	 * hub page, our own enqueue for the ELN pages that embed the overlay, and
+	 * station page, our own enqueue for the ELN pages that embed the overlay, and
 	 * the per-request data injection.
 	 *
 	 * Called from the plugin's deferred bootstrap, admin requests only.
 	 */
 	public static function init(): void {
-		\add_filter( 'newspack_nodes/devtools_tab_bundles', [ self::class, 'register_bundle' ] );
+		\add_filter( 'newspack_nodes/station_tab_bundles', [ self::class, 'register_bundle' ] );
 		\add_action( 'admin_enqueue_scripts', [ self::class, 'enqueue_on_overlay_pages' ] );
 		// Priority 20: after both enqueue paths, so wp_add_inline_script binds.
 		\add_action( 'admin_enqueue_scripts', [ self::class, 'enqueue_inline_data' ], 20 );
 	}
 
 	/**
-	 * Append our bundle descriptor for the substrate to enqueue on the hub page.
+	 * Append our bundle descriptor for the substrate to enqueue on the station page.
 	 *
-	 * The descriptor carries no `lazy` flag, so the hub ships the tab up front
+	 * The descriptor carries no `lazy` flag, so the station ships the tab up front
 	 * rather than on tab-click — {@see enqueue_inline_data()} depends on the
 	 * handle being enqueued by the time it runs at priority 20.
 	 *

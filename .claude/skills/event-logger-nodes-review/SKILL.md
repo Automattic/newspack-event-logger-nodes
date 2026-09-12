@@ -248,7 +248,7 @@ The plugin fires three extension points — `newspack_event_logger_nodes/setting
 | `newspack_nodes/before_reconcile` / `after_reconcile` | The reconcile pass's own `/jobs/newspack-nodes` context, a shared `$entered` flag keeping the pair honest |
 | `newspack_nodes/stderr` | `Diagnostics_Bridge`, feeding the Error Log |
 | `newspack_nodes/request_graph_ready` | The three service CIs |
-| `newspack_nodes/devtools_tab_bundles` (filter) | `Current_Request_Overlay`'s `current-request` tab bundle |
+| `newspack_nodes/station_tab_bundles` (filter) | `Current_Request_Overlay`'s `current-request` tab bundle |
 
 Preserve each `accepted_args` exactly when re-registering one: inflating it hands arguments to callbacks never written to receive them.
 
