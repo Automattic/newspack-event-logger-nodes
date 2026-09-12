@@ -93,6 +93,3 @@ The GitHub Release is a record, not the artifact anyone installs. Sites run a zi
 ## Not examined
 
 - **Everything outside the two plugins.** This model reads other code only where it writes the firehose or calls into the two trees, and follows nothing past that boundary.
-- **The Perl engine's page-side `_sanitize_url` and `sanitize_url_for_error`**, which touch no log.
-- **Pyrobase's `is_this_server()`.** This model names the path a spoke's job takes through the hub and leaves the host check to pyrobase.
-- **The deploy script and its transport.**
