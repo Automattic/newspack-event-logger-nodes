@@ -9,12 +9,12 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 - **The substrate floor RISES with this release.** The dashboards send the
   substrate's renamed verbs (`raw-logs dump_log`, `workers dump_cleanup`,
   `aggregator list_servers`, `topologies dump`), so this plugin needs the
-  substrate release that carries them; the loader's version floor
+  substrate release that carries them; [the loader's version floor](../newspack-event-logger-nodes.php)
   names it, and below it the plugin goes dormant behind an admin notice rather
   than rendering rails that every fetch refuses. Fix: update `newspack-nodes`
   first.
 
-- **`rules list` is RENAMED to `rules dump`, and the MCP tool `rules_list` to
+- **`rules list` is RENAMED to [`rules dump`](API.md#rules--per-url-logging-ruleset-crud), and the MCP tool `rules_list` to
   `dump_rules`.** The substrate's own vocabulary is the rule: `list_nodes`
   prints one row per node and `dump_node` prints a node's whole structure, and
   every rule in the reply carries its resolved hooks, so the read is a dump.
@@ -22,7 +22,7 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   old tool name is absent from `tools/list`. A caller sending
   `command( 'list', [] )` to the `rules` CI, or
   `useCommandOnce( { ci: 'rules', command: 'list' } )`, changes the verb to
-  `'dump'`; `useRulesGraph` returns the re-read callback as `dump()` rather
+  `'dump'`; [`useRulesGraph`](../src/rules/useRulesGraph.js) returns the re-read callback as `dump()` rather
   than `list()`; an MCP client calls `dump_rules`.
 
 - **Five `performance` verbs are RENAMED verb first: `request_search` is
@@ -33,7 +33,7 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   noun (`overview`, `urls`, `summary`); a name with the noun first, or two
   nouns and no verb, reads as neither. Each old name is refused as
   `unknown command: <name>`, with no alias. An `addSliceFetcher` or
-  `useCommandOnce` aimed at the `performance` CI changes its `command` to the
+  `useCommandOnce` aimed at the [`performance`](API.md#performance--the-omnibus-dashboard-ci) CI changes its `command` to the
   new spelling, and a `scope` named after the verb follows it; a
   `formatCommandArgs` call naming the verb changes the same way. The four MCP
   tools wrapping the first four take the verb's name — `search_requests`,
@@ -44,4 +44,4 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
   `performance_urls` and `performance_ask` keep the interpreter prefix,
   because their verbs are plain nouns. The substrate renames `workers
   cleanup_status`, `aggregator servers_status` and `raw-logs log_status` in the
-  same pass; its `docs/upgrading.md` lists them.
+  same pass; its [`docs/upgrading.md`](https://github.com/Automattic/newspack-nodes/blob/main/docs/upgrading.md) lists them.
