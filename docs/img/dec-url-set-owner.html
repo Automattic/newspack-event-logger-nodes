@@ -1,0 +1,117 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+  .m { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .lanes { display: flex; gap: 16px; align-items: stretch; }
+  .lane { flex: 1; min-width: 0; background: #fff; border: 2px solid #003DA5; border-radius: 10px; overflow: hidden; }
+  .lane > header { background: #003DA5; color: #fff; font-size: 14.5px; font-weight: 700; padding: 9px 14px; }
+  .lane.site { border-color: #50575E; }
+  .lane.site > header { background: #50575E; }
+  .lane .body { padding: 12px 14px 14px; }
+  .req { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; background: #101517; color: #fff; border-radius: 6px; padding: 7px 10px; line-height: 1.5; }
+  .req b { color: #9EC0F5; font-weight: 700; }
+  .down { text-align: center; color: #003DA5; font-size: 18px; font-weight: 700; line-height: 22px; }
+  .fold { border: 1px solid #C3D3EC; background: #F0F4FB; border-radius: 7px; padding: 8px 10px; font-size: 12px; color: #50575E; line-height: 1.45; }
+  .fold .m { color: #101517; }
+  .shards { display: grid; grid-template-columns: repeat(16, 1fr); gap: 3px; margin-top: 6px; }
+  .shards span { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px; text-align: center; background: #fff; border: 1px solid #C3D3EC; border-radius: 3px; color: #003DA5; padding: 2px 0; }
+  .reply { background: #003DA5; color: #fff; border-radius: 6px; text-align: center; font-size: 12.5px; font-weight: 700; padding: 6px; }
+  .fan { display: block; }
+  .outs { display: flex; gap: 8px; }
+  .outs .o { flex: 1; min-width: 0; border: 1px solid #003DA5; border-radius: 6px; padding: 6px 7px; text-align: center; background: #fff; }
+  .outs .o b { display: block; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: #003DA5; }
+  .outs .o span { display: block; font-size: 11px; color: #50575E; line-height: 1.35; margin-top: 2px; }
+  .outs .o i { display: block; font-style: normal; font-size: 11px; color: #101517; font-weight: 700; margin-top: 4px; border-top: 1px solid #EEF0F2; padding-top: 3px; }
+  .lanenote { font-size: 12px; color: #50575E; line-height: 1.45; margin-top: 10px; }
+  .rail { position: relative; margin-top: 8px; }
+  .rail svg { position: absolute; left: 0; top: 0; }
+  .src { position: relative; margin-left: 58px; margin-bottom: 8px; border: 1px solid #C3C4C7; border-radius: 7px; padding: 6px 9px; display: flex; gap: 10px; align-items: center; min-height: 52px; }
+  .src .store { flex: 0 0 96px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; font-weight: 700; color: #101517; line-height: 1.3; }
+  .src .store small { display: block; font-family: Inter, sans-serif; font-weight: 400; font-size: 10.5px; color: #787C82; }
+  .src .fn { flex: 1; min-width: 0; font-size: 11.5px; line-height: 1.45; color: #50575E; }
+  .src .fn .m { color: #003DA5; font-size: 11px; white-space: nowrap; }
+  .src .fn .k { color: #101517; }
+  .src.blocked { background: #F6F7F7; }
+  .src.blocked .fn .m { color: #50575E; }
+  .cards { display: flex; gap: 12px; margin-top: 14px; }
+  .cards > * { flex: 1; min-width: 0; }
+  .cards .card { padding: 11px 13px; }
+  .cards .card h3 { font-size: 13.5px; margin-bottom: 5px; }
+  .card p, .callout p, .ok p { font-size: 12px; }
+  .rate { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; background: #F0F4FB; border: 1px solid #C3D3EC; border-radius: 5px; padding: 4px 7px; color: #003DA5; margin: 3px 0 5px; display: inline-block; }
+  .diff { margin-top: 14px; background: #fff; border: 1px solid #C3C4C7; border-radius: 9px; overflow: hidden; }
+  .diff table { border-collapse: collapse; width: 100%; }
+  .diff th { background: #50575E; color: #fff; font-size: 12.5px; text-align: left; padding: 7px 12px; }
+  .diff td { font-size: 12.5px; padding: 7px 12px; border-top: 1px solid #EEF0F2; color: #50575E; line-height: 1.45; vertical-align: top; }
+  .diff td.k { color: #101517; font-weight: 700; width: 300px; }
+  .rule { display: flex; gap: 12px; margin-top: 14px; }
+  .rule > * { flex: 1; min-width: 0; }
+</style>
+<div class="sheet">
+<h1>The <span class="mono">urls</span> verb owns every URL-set fact; <span class="mono">overview</span> owns the site</h1>
+<p class="sub">One <span class="mono">urls</span> request carries the filters into one fold of the URL index, and one reply feeds the header, the table and the slowest ten, so they cannot disagree. <span class="mono">overview</span> reads the site totals from <span class="mono">hourly</span>, where <span class="mono">server</span> never reaches.</p>
+
+<div class="lanes">
+  <div class="lane"><header>One <span class="mono">urls</span> poll: one fold, one reply</header>
+    <div class="body">
+      <div class="req">urls <b>server</b> · <b>search</b> · <b>errors_only</b> · <b>include_workers</b> · sort · order · offset · limit</div>
+      <div class="down">↓</div>
+      <div class="fold"><span class="m">url_page()</span> applies every filter while it folds the URL index one shard at a time, keeping each shard's best <span class="m">offset + limit</span> rows and best ten by mean (decision 14):
+        <div class="shards"><span>0</span><span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7</span><span>8</span><span>9</span><span>a</span><span>b</span><span>c</span><span>d</span><span>e</span><span>f</span></div></div>
+      <div class="down">↓</div>
+      <div class="reply">one reply</div>
+      <svg class="fan" width="100%" height="30" viewBox="0 0 486 30" preserveAspectRatio="none">
+        <g stroke="#003DA5" stroke-width="1.6" fill="none"><path d="M243 0 L59 28"/><path d="M243 0 L182 28"/><path d="M243 0 L304 28"/><path d="M243 0 L427 28"/></g>
+      </svg>
+      <div class="outs">
+        <div class="o"><b>totals</b><span>URLs, requests, averages, rate</span><i>the header</i></div>
+        <div class="o"><b>rows</b><span>default page: count DESC, the busiest</span><i>the table</i></div>
+        <div class="o"><b>slowest</b><span>ranked by <span class="m">avg_ms</span></span><i>the slowest ten</i></div>
+        <div class="o"><b>filters</b><span>echoed as applied</span><i>every label and the Ask brief</i></div>
+      </div>
+      <p class="lanenote">A filter matching nothing reads as an empty set rather than as zero traffic, and a narrower number never reads as the site's.</p>
+    </div></div>
+
+  <div class="lane site"><header>One <span class="mono">overview</span> poll: <span class="mono">server</span> reaches three parts of four</header>
+    <div class="body">
+      <div class="req">overview <b>server</b> · breakdown · categories</div>
+      <div class="rail">
+        <svg width="60" height="252" viewBox="0 0 60 252">
+          <line x1="16" y1="0" x2="16" y2="222" stroke="#003DA5" stroke-width="2"/>
+          <text x="22" y="14" font-size="10.5" fill="#003DA5" font-weight="700" font-family="ui-monospace, Menlo, monospace">server</text>
+          <line x1="16" y1="42" x2="40" y2="42" stroke="#B32D2E" stroke-width="2" stroke-dasharray="3 3"/>
+          <g stroke="#B32D2E" stroke-width="2.4"><line x1="42" y1="36" x2="54" y2="48"/><line x1="54" y1="36" x2="42" y2="48"/></g>
+          <g stroke="#003DA5" stroke-width="2" fill="#003DA5"><line x1="16" y1="102" x2="50" y2="102"/><path d="M50 97 L57 102 L50 107 Z"/><line x1="16" y1="162" x2="50" y2="162"/><path d="M50 157 L57 162 L50 167 Z"/><line x1="16" y1="222" x2="50" y2="222"/><path d="M50 217 L57 222 L50 227 Z"/></g>
+        </svg>
+        <div style="height:14px"></div>
+        <div class="src blocked"><div class="store">hourly<small>no server dimension</small></div><div class="fn"><span class="k">total_requests · global_avg_ms · global_avg_peak_mb</span><br>the site totals: <span class="red">never scoped</span>, so the payload never contradicts itself</div></div>
+        <div class="src"><div class="store">lb · lb_h · lb_s</div><div class="fn"><span class="m">build_leaderboard( $server )</span><br>→ <span class="k">global_leaderboard</span></div></div>
+        <div class="src"><div class="store">dim</div><div class="fn"><span class="m">merge_dim_across_partitions( $dim, $server )</span><br>→ <span class="k">breakdowns[ $dim ]</span></div></div>
+        <div class="src"><div class="store">categories</div><div class="fn"><span class="m">merge_categories_across_partitions( $server )</span><br>→ <span class="k">category_time_series</span></div></div>
+      </div>
+      <p class="lanenote"><span class="mono">overview</span> never touches the URL index, which holds a filtered poll to one fan-out of it.</p>
+    </div></div>
+</div>
+
+<div class="cards">
+  <div class="card"><h3>Every rate divides by the window</h3>
+    <span class="rate">RECENT_BUCKETS × Stats_Store::BUCKET_SECONDS</span>
+    <p>It drops the bucket still filling, and never divides by the buckets that happened to carry traffic: a URL seen in two of twelve would read six times its rate beside a header that does not.</p></div>
+  <div class="card"><h3>The totals are exact</h3>
+    <p><span class="mono">MAX_URLS_PER_SHARD</span> folds each shard's tail into a synthetic <span class="mono">Other</span> row (<span class="mono">Stats_Store::OTHER_KEY</span>) carrying only the fields that ADD, splits included: exact site-wide, and per server for every server <span class="mono">MAX_SERVER_VALUES</span> keeps, since its own tail folds into an <span class="mono">Other</span> server no real fleet reaches. The row is marked <span class="mono">aggregate</span> and un-clickable.</p></div>
+  <div class="card"><h3>Workers are excluded by default</h3>
+    <p>The row RECORDS worker traffic, never guessing from <span class="mono">?worker_type</span>; <span class="mono">include_workers</span> opts IN, and the tail folds into TWO overflow rows (<span class="mono">Stats_Store::other_key()</span>). A header summed from rows keeping worker timing reads "Avg Response" as 227 ms of cron against 3 ms of reader traffic on a staging hub.</p></div>
+</div>
+
+<div class="diff"><table>
+  <tr><th>Why the two totals differ by construction</th><th><span class="mono">hourly</span> (overview)</th><th>The URL index (urls)</th></tr>
+  <tr><td class="k">Worker requests</td><td>dropped</td><td>kept, on their own rows</td></tr>
+  <tr><td class="k">Evicted and aborted records (decision 25)</td><td>not counted: <span class="mono">count</span> takes only timed requests</td><td>counted</td></tr>
+</table></div>
+
+<div class="rule">
+  <div class="ok"><h4>One scope rule across the surface</h4>
+    <p>A FETCH sends the live selection, so <span class="mono">urls</span>, <span class="mono">dump_url</span> and <span class="mono">ask</span> all ask for what is selected now. A LABEL reads the scope the server echoed back, because it names numbers already on screen. <span class="mono">dump_url</span> takes the same <span class="mono">server</span>, because the modal opens from a row that filter scoped, and a site-wide average under a scoped count is the same defect one click in.</p></div>
+  <div class="callout"><h4>Where the scope does not reach</h4>
+    <p><span class="mono">dump_url</span>'s <span class="mono">breakdown_time_series</span>, <span class="mono">category_time_series</span> and <span class="mono">aggregate_flame</span> are per-URL only: a per-URL-per-server series would be new storage on the axis decision 11 watches. <span class="mono">find_recent_requests_for_url()</span> has no server in the request index. Both are harmless while a stored <span class="mono">url</span> is absolute, which makes one URL one site.</p></div>
+</div>
+</div>

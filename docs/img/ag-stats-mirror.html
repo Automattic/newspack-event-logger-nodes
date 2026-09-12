@@ -1,0 +1,56 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+.tl { background:#fff; border:1px solid #C3C4C7; border-radius:9px; padding:12px 16px 8px; }
+.tl h2 { font-size:14px; margin:0 0 6px; }
+.grid { display:flex; gap:12px; margin-top:14px; }
+.grid .card { flex:1; padding:11px 14px; }
+.grid .card h3 { font-size:13.5px; }
+.grid .card p { font-size:12px; margin:0 0 4px; }
+.grid .card p:last-child { margin-bottom:0; }
+.mono { overflow-wrap:anywhere; }
+.tl svg text[fill="#50575E"], .tl svg text[fill="#787C82"] { paint-order:stroke; stroke:#fff; stroke-width:4px; stroke-linejoin:round; }
+</style>
+<div class="sheet">
+<h1>A bucket lives in memory, is summed into memcache every five seconds, and is mirrored once, when it closes</h1>
+<p class="sub">Flame_Builder_Node files each completed request into the five-minute bucket it FINISHED in. Memcache holds the sums; the offsetlog carries the open bucket across a respawn; <span class="mono">flame-stats.pN</span> keeps one durable frame per closed bucket, which a dashboard reads back on a memcache miss.</p>
+
+<div class="tl">
+  <h2>One five-minute bucket, on four tiers</h2>
+  <svg width="1020" height="296" viewBox="0 0 1020 296" font-family="Inter, Helvetica, Arial, sans-serif" font-size="11">
+    <!-- time axis: 0..8 min over x 150..990 (105 px / min) -->
+    <g stroke="#DCDCDE"><line x1="150" y1="18" x2="150" y2="276"/><line x1="675" y1="18" x2="675" y2="276" stroke="#B32D2E" stroke-dasharray="4 4"/><line x1="780" y1="142" x2="780" y2="276" stroke="#003DA5" stroke-dasharray="4 4"/></g>
+    <g fill="#787C82" text-anchor="middle" font-size="10.5"><text x="150" y="288">bucket opens</text><text x="675" y="288" fill="#B32D2E">bucket closes, +5 min</text><text x="780" y="288" fill="#003DA5">next checkpoint</text><text x="960" y="288">later</text></g>
+    <g fill="#101517" font-weight="700" font-size="12"><text x="0" y="44">requests</text><text x="0" y="104">memcache</text><text x="0" y="164">held frames</text><text x="0" y="224">flame-stats.pN</text></g>
+    <g fill="#50575E" font-size="10.5"><text x="0" y="58">$pending[bucket]</text><text x="0" y="118">evlog:p{N}:…:{bucket}</text><text x="0" y="178">per namespace, in RAM</text><text x="0" y="238">evlog:m1:p{N}:…</text></g>
+    <!-- requests row: dots -->
+    <g fill="#003DA5"><circle cx="175" cy="40" r="4"/><circle cx="230" cy="40" r="4"/><circle cx="262" cy="40" r="4"/><circle cx="340" cy="40" r="4"/><circle cx="410" cy="40" r="4"/><circle cx="455" cy="40" r="4"/><circle cx="530" cy="40" r="4"/><circle cx="600" cy="40" r="4"/><circle cx="650" cy="40" r="4"/></g>
+    <text x="690" y="40" fill="#50575E" font-size="10.5">a late record still files here:</text><text x="690" y="52" fill="#50575E" font-size="10.5">timestamp + duration_ms, clamped to now</text>
+    <!-- memcache row: flush ticks every 5 s (drawn sparser) -->
+    <g fill="#003DA5"><rect x="190" y="92" width="6" height="18" rx="2"/><rect x="243" y="92" width="6" height="18" rx="2"/><rect x="296" y="92" width="6" height="18" rx="2"/><rect x="349" y="92" width="6" height="18" rx="2"/><rect x="402" y="92" width="6" height="18" rx="2"/><rect x="455" y="92" width="6" height="18" rx="2"/><rect x="508" y="92" width="6" height="18" rx="2"/><rect x="561" y="92" width="6" height="18" rx="2"/><rect x="614" y="92" width="6" height="18" rx="2"/><rect x="667" y="92" width="6" height="18" rx="2"/></g>
+    <text x="190" y="126" fill="#50575E" font-size="10.5">flush() at most every 5 s, only when a record arrives: read the bucket's keys,</text><text x="190" y="138" fill="#50575E" font-size="10.5">ADD this worker's sums, cap, write, 500 keys a batch</text>
+    <text x="690" y="100" fill="#50575E" font-size="10.5">expires on its own TTL; roll_up_hours()</text><text x="690" y="112" fill="#50575E" font-size="10.5">folds each closed hour into the coarse tier</text>
+    <!-- held frames row -->
+    <rect x="190" y="150" width="485" height="22" rx="4" fill="#F0F4FB" stroke="#C3D3EC"/>
+    <text x="432" y="165" text-anchor="middle" fill="#003DA5" font-size="10.5">every landed write refreshes the frame { data, ttl } under its key</text>
+    <rect x="675" y="150" width="105" height="22" rx="4" fill="#FBEAEA" stroke="#E6A3A3"/>
+    <text x="727" y="165" text-anchor="middle" fill="#B32D2E" font-size="10.5">closed, still held</text>
+    <text x="790" y="165" fill="#50575E" font-size="10.5">gone from RAM</text>
+    <!-- offsetlog note -->
+    <path d="M190 178 V184 H780 V178" fill="none" stroke="#50575E"/>
+    <text x="190" y="197" fill="#50575E" font-size="10.5">meanwhile the open bucket is durable in the OFFSETLOG: save_state() carries</text><text x="190" y="209" fill="#50575E" font-size="10.5">the held frames, smallest first, under 2 MiB, beside the cursor</text>
+    <!-- flame-stats row -->
+    <rect x="780" y="210" width="230" height="22" rx="4" fill="#003DA5"/>
+    <text x="895" y="225" text-anchor="middle" fill="#fff" font-size="10.5">written ONCE, first checkpoint after the close</text>
+    <text x="190" y="229" fill="#787C82" font-size="10.5">nothing yet: mirroring a growing value would write nine redundant copies,</text><text x="190" y="241" fill="#787C82" font-size="10.5">and a read-back answers only the newest frame for a key</text>
+    <path d="M780 240 V246 H1010 V240" fill="none" stroke="#50575E"/>
+    <text x="790" y="259" fill="#50575E" font-size="10.5">kept for stats_mirror_lifetime,</text><text x="790" y="271" fill="#50575E" font-size="10.5">twice the stats window</text>
+  </svg>
+</div>
+
+<div class="grid">
+  <div class="card"><h3>What is mirrored</h3><p>The aggregates and both per-URL time series in full. Four namespaces are excluded by <span class="mono">STATS_MIRROR_TOPN</span>: the three derived coarse tiers, <span class="mono">urls_h</span>, <span class="mono">urlnames_h</span> and <span class="mono">lb_h</span>, each answered from fine buckets the mirror already keeps, and the <span class="mono">url</span> flame profiles, rank-capped by <span class="mono">set_flame_topn</span> and 0 by default.</p><p>The buffer is bounded by <span class="mono">MAX_HELD_FRAMES</span>, 10,000 a namespace; past it the lowest-ranked frames are written to the partition EARLY, down to 9,000, rather than dropped. <span class="mono">GET_STATS</span> reports <span class="mono">mirror_held_frames</span> and <span class="mono">mirror_held_bytes</span>.</p></div>
+  <div class="card"><h3>A respawn</h3><p><span class="mono">restore_state()</span> takes the carried frames on, and the successor writes them when their bucket closes. The offsetlog is a ring of 60 keyframes, so the open window costs fixed disk there, where <span class="mono">flame-stats</span> keeps every frame it receives. The 2 MiB carry is a policy cap set from the observed held size, ~267–348 KB a checkpoint on a production hub, and bounds that ring near 120 MB; a frame past it is re-merged from memcache by the next write to its bucket. The cliff is far above it: a checkpoint record past <span class="mono" style="white-space:nowrap">Partition_Node</span>'s <span class="mono" style="white-space:nowrap">MAX_LARGE_LINE_SIZE</span>, 32 MiB, is dropped whole, read cursor and every snapshot node's state included.</p></div>
+  <div class="card"><h3>Reading it back</h3><p>Stats_Store hands <span class="mono">$rehydrate</span> to its two backed Tables, the aggregate one and the fine <span class="mono">urls</span> one: a miss falls through to <span class="mono">Partition_Node::locate_by()</span> over the mirror's <span class="mono">.idx</span> and lands back in memcache. The per-URL table is not backed: with <span class="mono">flame_topn</span> 0 nothing ever wrote a frame to find.</p></div>
+  <div class="card"><h3>Two versions, two migrations</h3><p>Memcache migrates by salt rotation (<span class="mono">wp nodes memcache flush</span>), which the mirror is built not to feel; its key carries <span class="mono">MIRROR_KEY_VERSION</span> instead, bumped on a frame-shape change so a frame filed under the previous version is never read back. A frame is TM_STRUCT with the key ONCE, in <span class="mono">Message::KEY</span>; <span class="mono">stats-index</span> hashes it from there.</p></div>
+</div>
+</div>

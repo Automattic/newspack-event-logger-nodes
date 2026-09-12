@@ -1,0 +1,88 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+  .two { display: flex; gap: 16px; align-items: flex-start; }
+  .left { flex: 1.35; }
+  .right { flex: 1; }
+  .pipe { position: relative; padding-left: 34px; }
+  .pipe::before { content: ""; position: absolute; left: 13px; top: 14px; bottom: 26px; width: 2px; background: #003DA5; }
+  .st { position: relative; margin-bottom: 10px; }
+  .st .num { position: absolute; left: -34px; top: 10px; width: 28px; height: 28px; border-radius: 50%; background: #003DA5; color: #fff; font-size: 13px; font-weight: 700; line-height: 28px; text-align: center; }
+  .st .card { padding: 11px 14px; }
+  .st .card h3 { font-size: 14px; margin-bottom: 5px; }
+  .st .card p { margin-bottom: 4px; font-size: 12.5px; }
+  .st .card p:last-child { margin-bottom: 0; }
+  .m { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .src { display: flex; gap: 6px; margin: 6px 0 4px; }
+  .src .chip { flex: 1; margin: 0; font-size: 12px; padding: 6px 8px; line-height: 1.4; }
+  .src .chip b { display: block; color: #003DA5; }
+  .src .chip.first { border-color: #003DA5; background: #E8EEF9; }
+  .ring { display: flex; gap: 8px; margin-top: 6px; }
+  .ring .box { flex: 1; border-radius: 6px; padding: 6px 9px; font-size: 12px; line-height: 1.4; }
+  .ring .box.h { background: #F6F7F7; border: 1px dashed #B0B3B8; color: #50575E; }
+  .ring .box.f { background: #F0F4FB; border: 1px solid #C3D3EC; }
+  .ring .box b { display: block; color: #101517; }
+  .grid { border: 1px solid #C3C4C7; border-radius: 9px; background: #fff; overflow: hidden; }
+  .grid table { border-collapse: collapse; width: 100%; }
+  .grid th { background: #003DA5; color: #fff; font-size: 11.5px; font-weight: 700; text-align: left; padding: 6px 9px; }
+  .grid td { padding: 6px 9px; font-size: 12px; line-height: 1.4; vertical-align: top; border-top: 1px solid #EEF0F2; }
+  .grid td.k { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-weight: 700; color: #003DA5; white-space: nowrap; }
+  .cells { display: grid; grid-template-columns: repeat(8, 1fr); gap: 4px; margin-top: 8px; }
+  .cells .c { background: #F0F4FB; border: 1px solid #C3D3EC; border-radius: 4px; text-align: center; font-size: 11.5px; padding: 4px 0; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .cells .c.pick { background: #003DA5; color: #fff; border-color: #003DA5; }
+  .rows { font-size: 11.5px; color: #50575E; margin-top: 4px; }
+  .out { background: #101517; color: #fff; border-radius: 8px; padding: 10px 12px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11.5px; line-height: 1.55; margin-top: 10px; overflow-wrap: anywhere; }
+  .out .c1 { color: #8FB6F0; }
+</style>
+<div class="sheet">
+  <h1>The two WP-CLI verbs: one reads the firehose back as requests, one prices the hook-storage tiers</h1>
+  <p class="sub">Both register under the substrate's <span class="mono">nodes</span> namespace from the deferred bootstrap and run <span class="mono">@when after_wp_load</span>. <span class="mono">reqgrep</span> shares its grouping engine with the <span class="mono">performance.grep_requests</span> verb; <span class="mono">ruleset-bench</span> is what calibrates <span class="mono">Rule_Set::INLINE_HOOK_LIMIT</span>.</p>
+
+  <div class="two">
+    <div class="left">
+      <div class="pipe">
+        <div class="st"><div class="num">1</div><div class="card"><h3><span class="m">wp nodes reqgrep [&lt;pattern&gt;]</span>: pick the source</h3>
+          <p><span class="m">--firehose=&lt;path&gt;</span> is validated before any directory opens: its <span class="m">realpath</span> must sit inside <span class="m">Config::get_logs_directory()</span>, and a path already naming a partition (<span class="m">.p&lt;N&gt;</span>) reads that partition alone. The dirs come from <span class="m">Log_Manager::firehose_dirs()</span>.</p>
+          <div class="src">
+            <div class="chip first"><b>stdin has data</b>A pipe or a redirected file, detected by fstat. Wins over every other source: <span class="m">--follow</span> and <span class="m">--recent</span> are ignored.</div>
+            <div class="chip"><b>--follow</b>One Consumer per partition, seeded at the tail, run under the event loop; prints requests as they finish.</div>
+            <div class="chip"><b>otherwise: cat</b>One Consumer per partition from the first segment, or from the second-to-last with <span class="m">--recent</span>.</div>
+          </div>
+        </div></div>
+        <div class="st"><div class="num">2</div><div class="card"><h3>Match each line: <span class="m">Reqgrep_Core</span></h3>
+          <p>A line matches when its rid equals the pattern exactly, or when <span class="m">compile()</span>'s regex, the pattern <span class="m">preg_quote</span>d and case-insensitive, is found anywhere in the packed envelope. Regex metacharacters carry no meaning. No pattern means <span class="m">.</span>, which every packed line's float timestamp contains.</p>
+          <div class="ring">
+            <div class="box h"><b>Not yet matched: the history ring</b>Lines of unmatched rids, in <span class="m">--num-buckets</span> (10, clamped 1–100) buckets of <span class="m">--bucket-size</span> (250, clamped 1–10,000) entries, counting rids plus lines; one rid holds at most 10,000 lines in a bucket.</div>
+            <div class="box f"><b>Matched: the in-flight cache</b>The rid enters an LRU of 100 items × 3 buckets, rotating every 60 s, and its buffered history is replayed in, so a match on a late line still yields the request from its first line. Per request: 20,000 lines, 10 MiB.</div>
+          </div>
+          <p style="margin-top:6px">A late match whose earlier lines have rotated out of a FULL ring warns <span class="m">Couldn't find request start in history</span>; a partly filled ring means the reader started mid-request.</p>
+        </div></div>
+        <div class="st"><div class="num">3</div><div class="card"><h3>Print when the request ends</h3>
+          <p>A tracked rid reaching <span class="m">process (complete)</span> or <span class="m">process (aborted)</span> prints as an indented lifecycle tree, or as raw JSONL under <span class="m">--raw</span>; <span class="m">--incomplete</span> keeps only the requests that reached neither. Anything evicted from the oldest in-flight bucket, and anything still open when the run ends, prints with <span class="m">[incomplete]</span>.</p>
+        </div></div>
+      </div>
+    </div>
+
+    <div class="right">
+      <div class="panel">
+        <header><span class="m">wp nodes ruleset-bench [--iterations=&lt;n&gt;]</span></header>
+        <div class="body">
+          <p style="font-size:12.5px;color:#50575E;margin:0 0 6px;line-height:1.5">Measurement only, off the request hot path. Every cell of a hooks-per-rule × rule-count grid times three paths <span class="m">--iterations</span> times (default 200, minimum 1) and prints the median in microseconds; a higher count buys a steadier median at the cost of runtime.</p>
+          <div class="cells">
+            <div class="c">50</div><div class="c" style="border-color:#003DA5;border-width:2px">65</div><div class="c pick">100</div><div class="c">250</div><div class="c">500</div><div class="c">1000</div><div class="c">2500</div><div class="c">5000</div>
+          </div>
+          <div class="rows">hooks per rule, × rule counts 1, 10 and 50. Only the autoload column moves with the rule count. 100 is the limit in force; 65 is the floor it may never go below.</div>
+          <div class="grid" style="margin-top:10px">
+            <table>
+              <tr><th>Column</th><th>What it stands in for</th></tr>
+              <tr><td class="k">autoload_us</td><td>Unserializing a blob of k × rules hook names: the alloptions tax every request pays for inline storage.</td></tr>
+              <tr><td class="k">inline_us</td><td>Walking the already-loaded list: the bind loop inline storage runs per request.</td></tr>
+              <tr><td class="k">pointer_us</td><td>One Table lookup, under a bench-private key, plus the same bind loop.</td></tr>
+            </table>
+          </div>
+          <div class="out"><span class="c1">hooks/rule x #rules  |  autoload_us  inline_us  pointer_us  (median, 200 iters)</span><br>…<br>Pick INLINE_HOOK_LIMIT as the largest K where inline_us stays &lt; the pointer_us floor AND autoload tax stays negligible, and which is &gt;= 65.</div>
+        </div>
+      </div>
+      <div class="callout" style="margin-top:12px"><h4>With no cache backend</h4><p>The sweep still runs but warns: the pointer column then reports the bind loop alone, a floor rather than a measurement.</p></div>
+    </div>
+  </div>
+</div>

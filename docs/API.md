@@ -3,33 +3,33 @@
 The plugin registers exactly **one** REST route of its own — the MCP server. Every other
 call a client makes over HTTP is a verb on a service Command_Interpreter (CI) node,
 addressed by name through the substrate's command endpoint. Beside that wire surface the
-plugin exposes two WP-CLI verbs, the `Log_Manager` PHP API sibling plugins log through,
+plugin exposes two WP-CLI verbs, the [`Log_Manager`](../includes/class-log-manager.php) PHP API sibling plugins log through,
 and the WordPress hooks it fires and consumes.
 
 | Endpoint | Owner | Purpose |
 |----------|-------|---------|
-| `POST /wp-json/newspack-event-logger-nodes/v1/mcp` | this plugin (`App\MCP_Controller`) | JSON-RPC MCP server over ten verbs the dashboards already drive. |
-| `POST /wp-json/newspack-nodes/v1/command` | substrate (`Rest\HTTP_In_Node`) | Routes a batch of packed command Messages to named CI nodes and writes the replies back. |
-| `GET /wp-json/newspack-nodes/v1/messages/stream` | substrate (`Rest\SSE_Out_Node`) | Subscribes to one or more `<log>.pN` partitions and emits 7-field message envelopes as SSE events. |
-| `GET /wp-json/newspack-nodes/v1/log/stream` | substrate (`Rest\Log_Stream_Out_Node`) | The same stream over a named log-registry source rather than a partition. |
-| `POST /wp-json/newspack-nodes/v1/auth` | substrate (`Rest\Auth_Controller`) | Mints the scoped command session an MCP bearer credential names. |
-| `POST /wp-json/newspack-nodes/v1/workers/spawn` | substrate (`Rest\Spawn_Controller`) | HMAC-validated worker bootstrap. Not for public callers. |
-| `POST /wp-json/newspack-nodes/v1/health/cache` | substrate (`Rest\Health_Cache_Controller`) | Token-gated cache probe the state doctor calls. |
+| `POST /wp-json/newspack-event-logger-nodes/v1/mcp` | this plugin ([`App\MCP_Controller`](../includes/app/class-mcp-controller.php)) | JSON-RPC MCP server over ten verbs the dashboards already drive. |
+| `POST /wp-json/newspack-nodes/v1/command` | substrate ([`Rest\HTTP_In_Node`](https://github.com/Automattic/newspack-nodes/blob/v2.55.3/includes/rest/class-http-in-node.php)) | Routes a batch of packed command Messages to named CI nodes and writes the replies back. |
+| `GET /wp-json/newspack-nodes/v1/messages/stream` | substrate ([`Rest\SSE_Out_Node`](https://github.com/Automattic/newspack-nodes/blob/v2.55.3/includes/rest/class-sse-out-node.php)) | Subscribes to one or more `<log>.pN` partitions and emits 7-field message envelopes as SSE events. |
+| `GET /wp-json/newspack-nodes/v1/log/stream` | substrate ([`Rest\Log_Stream_Out_Node`](https://github.com/Automattic/newspack-nodes/blob/v2.55.3/includes/rest/class-log-stream-out-node.php)) | The same stream over a named log-registry source rather than a partition. |
+| `POST /wp-json/newspack-nodes/v1/auth` | substrate ([`Rest\Auth_Controller`](https://github.com/Automattic/newspack-nodes/blob/v2.55.3/includes/rest/class-auth-controller.php)) | Mints the scoped command session an MCP bearer credential names. |
+| `POST /wp-json/newspack-nodes/v1/workers/spawn` | substrate ([`Rest\Spawn_Controller`](https://github.com/Automattic/newspack-nodes/blob/v2.55.3/includes/rest/class-spawn-controller.php)) | HMAC-validated worker bootstrap. Not for public callers. |
+| `POST /wp-json/newspack-nodes/v1/health/cache` | substrate ([`Rest\Health_Cache_Controller`](https://github.com/Automattic/newspack-nodes/blob/v2.55.3/includes/rest/class-health-cache-controller.php)) | Token-gated cache probe the state doctor calls. |
 
 This plugin contributes the verbs its three CIs expose; it registers no route under the
-`newspack-nodes/v1` namespace. See [`../../newspack-nodes/docs/API.md`](../../newspack-nodes/docs/API.md)
+`newspack-nodes/v1` namespace. See [`../../newspack-nodes/docs/API.md`](https://github.com/Automattic/newspack-nodes/blob/main/docs/API.md)
 for the substrate's own wire shapes.
 
 ## Authentication and rate limiting
 
-Every door runs `Bootstrap::fleet_gate()` first: the fleet is network-global, so it runs on
+Every door runs [`Bootstrap::fleet_gate()`](https://github.com/Automattic/newspack-nodes/blob/v2.55.3/includes/class-bootstrap.php) first: the fleet is network-global, so it runs on
 the main site alone and a multisite subsite gets `403 Forbidden`.
 
 `/command` and `/messages/stream` then gate on the substrate's lowest role,
-`Capabilities::READ`. That role resolves to `manage_options` on a stock install and to
+[`Capabilities::READ`](https://github.com/Automattic/newspack-nodes/blob/v2.55.3/includes/class-capabilities.php). That role resolves to `manage_options` on a stock install and to
 `newspack_nodes_read` once `wp nodes caps install` swaps in the granular capabilities;
 `newspack_nodes/capability_map` overrides either. The door demands the least any verb
-behind it needs, and authority is decided per verb: `Service_CI_Node` wraps each handler in
+behind it needs, and authority is decided per verb: [`Service_CI_Node`](https://github.com/Automattic/newspack-nodes/blob/v2.55.3/includes/class-service-ci-node.php) wraps each handler in
 `Capabilities::require()` for the role its schema declares, and a verb declaring none takes
 MANAGE. **No handler in this plugin re-checks a capability** — one that did would outrank
 its own declaration without saying so.
@@ -46,14 +46,13 @@ seconds, keyed by session handle. MCP does not go through `/command`, so the sub
 per-user cap does not bound it.
 
 SSE rate-limiting is independent and **fail-closed**: `SSE_Out_Node` consults
-`\Newspack_Nodes\SSE_Slot_Pool` before opening headers, and memcache down means HTTP 429.
+[`\Newspack_Nodes\SSE_Slot_Pool`](https://github.com/Automattic/newspack-nodes/blob/v2.55.3/includes/class-sse-slot-pool.php) before opening headers, and memcache down means HTTP 429.
 The slot pool IS the rate limit and cannot fall through silently.
 
 ## Sending a command
 
 The `/command` body is **JSONL: one packed Message per line**, each a 7-element positional
-JSON array in `Message` field order — `[TYPE, TIMESTAMP, FROM, TO, ID, KEY, VALUE]`. TYPE
-is `TM_COMMAND` (8), TO names the CI node, and VALUE carries `{ name, arguments }`:
+JSON array in `Message` field order: `[TYPE, TIMESTAMP, FROM, TO, ID, KEY, VALUE]`.
 
 ```http
 POST /wp-json/newspack-nodes/v1/command HTTP/1.1
@@ -62,37 +61,11 @@ Content-Type: text/plain; charset=UTF-8
 [8,1756900000,"","performance","","",{"name":"urls","arguments":["--limit=25","--server=example.com"],"auth":{"nonce":"…","sig":"…"}}]
 ```
 
-- The content type is `text/plain`, never `application/json`. JSONL is not one JSON
-  document, so WordPress parses an `application/json` body itself and answers
-  `rest_invalid_json` before `HTTP_In_Node` is reached.
-- `TO` is the service CI name. This plugin owns `performance`, `discovery` and `rules`. A
-  sub-path addresses a child node; most callers name the CI alone.
-- `FROM` is the sender's own node name, and the door prepends `_output` to it on the way
-  in. A caller with no graph of its own leaves it empty, and the reply lands in the
-  response body.
-- `name` is the verb.
-- `arguments` is a **flat token array**, the one grammar `Command_Args::parse()` (PHP) and
-  `parseCommandArgs()` (browser) both read: required values ride positionally in the order
-  the verb declares, optional ones are `--key=value`, a boolean flag is a bare `--key`
-  (`--key=false` to turn one off), and a list is comma-separated inside one value. The
-  verb tables below say which of its arguments each verb reads positionally.
-- `auth` is the HMAC envelope `Command_Auth::sign()` stamps: a nonce and a signature over
-  `[ts, name, arguments, nonce]`, plus a `handle` when the key is a session key. An
-  in-process (LOCAL) command needs none; anything arriving over the wire is refused
-  without one.
+![The /command wire format and its status decision. A slot row shows the seven positional fields of one body line: TYPE 8 (TM_COMMAND), a TIMESTAMP, an empty FROM that the door prefixes with _output so the reply lands in the body, TO naming the performance, discovery or rules CI (most callers name the CI alone; a sub-path names a child), empty ID and KEY, and a VALUE of name, arguments and auth. Three cards explain the flat token grammar of arguments, the Command_Auth::sign() envelope (a nonce and a signature over ts, name, arguments and nonce, plus a handle for a session key; LOCAL commands need none), and why the body must be text/plain rather than application/json. Below, the gates in order, grouped by owner: HTTP_In_Node::check_permission() answers 403 from the fleet gate, 401 or 403 without Capabilities::READ, and 429 past 30 POSTs per user per second; dispatch() answers 500 when the request graph lacks _router or _output; and Service_CI_Node enforces each verb's own declared capability. Beside them the status, decided once: 200 when a reply opens the body, 401 if a command had already been refused, and when nothing is written back, 202 or 401. The reply is TM_COMMAND|TM_RESPONSE carrying name, arguments and payload, or TM_COMMAND|TM_ERROR carrying the throw's message.](img/api-command-envelope.png)
 
-The reply is a `TM_COMMAND|TM_RESPONSE` envelope sent back via TO=FROM. Its VALUE carries
-`{ name, arguments, payload }` — the verb it answers, the tokens it was given, and the
-verb's return value under `payload`. A verb that throws answers `TM_COMMAND|TM_ERROR`
-instead, whose `payload` is the throw's message text. There is no promise registry and no
-rejected Promise: the refusal lands a tick later on the node that asked, and the view
-surfaces it beside that caller (see architecture-guide.md → "Canonical view contract").
-
-The HTTP status is decided once, when the body opens. The first reply written sends 200, or
-401 if a command had already been refused by then. A batch that writes nothing back answers
-401 when any command was refused and 202 otherwise — the work routed onward, and its replies
-are due on the caller's own SSE stream. A request-scope graph missing `_router` or `_output`
-answers 500 before any command runs.
+The verb tables below say which of each verb's arguments ride positionally. A refusal lands
+a tick later on the node that asked, and the view surfaces it beside that caller (see
+[architecture-guide.md → "Canonical view contract"](architecture-guide.md#canonical-view-contract)).
 
 ## Service CIs
 
@@ -103,8 +76,8 @@ Each subsection below lists the verbs the corresponding `includes/app/class-<nam
 defines a per-class constructor. **TO=`<ci-name>`, `name`=`<verb>`** addresses a verb.
 
 The handlers live in this plugin's `Newspack_Event_Logger_Nodes\App\` namespace:
-`newspack-event-logger-nodes.php` registers it with
-`Command_Interpreter_Node::register_namespace()`, and the CIs mount on the substrate's
+[`newspack-event-logger-nodes.php`](../newspack-event-logger-nodes.php) registers it with
+[`Command_Interpreter_Node::register_namespace()`](https://github.com/Automattic/newspack-nodes/blob/v2.55.3/includes/class-command-interpreter-node.php), and the CIs mount on the substrate's
 `newspack_nodes/request_graph_ready` action.
 
 ### `discovery` — spoke-side hook and event roster
@@ -113,7 +86,7 @@ The handlers live in this plugin's `Newspack_Event_Logger_Nodes\App\` namespace:
 |------|------|------|---------|
 | `get` | READ | — | `{ registered_hooks: string[], custom_events: string[] }` — the union across every LOG rule of its `hooks` (either tier, resolved through `hooks_for`) and its `custom_events` (`Rule_Set::instrumented_union()`), with `custom_events` filtered out of `registered_hooks` so the picker's two catalogs stay disjoint. A `significant_events` name outside the `hooks` list is not in it, though `App\Core` binds one. |
 
-Two callers ask it: the hub's `Discovery_Collector_Node`, which union-merges every spoke's
+Two callers ask it: the hub's [`Discovery_Collector_Node`](../includes/class-discovery-collector-node.php), which union-merges every spoke's
 reply into the `discovered_hooks` / `discovered_events` staging options behind the rules
 editor's hook picker, and the substrate `vault` CI's `test` verb, which probes it to check
 one spoke's connection. It reports the ruleset and never writes it — the editor is the only
@@ -123,12 +96,9 @@ user holding the READ role, which is what satisfies the gate on the far end.
 ### `rules` — per-URL logging ruleset CRUD
 
 Backs the "Logging Rules" editor on the settings page. All five verbs route through
-`Rule_Set`, so the inline↔pointer hook-tiering and orphan-reconcile invariants can never be
-bypassed by a raw `update_option()`. A rule's id is the pattern's hash — `Rule_Set::id_for()`
-runs the pattern through `Log_Manager::url_hash()` — so the pattern is the identity and the
-ruleset can never hold two differently-configured rules for one URL. `upsert` reads a
-client-supplied id to find the entry an edit is moving, but what it stores is always
-re-derived from the pattern.
+[`Rule_Set`](../includes/class-rule-set.php), which owns the hook tiering, the orphan sweep and the pattern-hash identity:
+
+![The rules CI and the two storage tiers of a rule's hook list. Five verb cards: dump (READ) returns every rule with pointer hooks resolved and hooks_in normalized to inline; save, upsert, delete and reset (all TUNE) replace the whole list, add or replace one rule keyed by pattern, drop one by id, and delete the stored option so the file config seeds again. Below, Rule_Set::save() tiers each log rule's hook list: up to INLINE_HOOK_LIMIT (100) hooks ride inline in the autoloaded rules option; past it the rule stores hooks null and hooks_in mc, with the list in a non-autoloaded newspack_event_logger_nodes_rule_hooks_<id> option mirrored into the substrate Table eln-rule-hooks for 3,600 seconds, and a read with both absent returns an empty list and a rate-limited notice. Side cards give the two size gates (MAX_JSON_BYTES 65,536 and MAX_JSON_DEPTH 12), why the crossover is 100 (the ruleset-bench measurement, never below 65), what crosses to a spoke (hooks hydrated before the push, re-tiered by apply_synced()), and the identity rule: a rule's id is Log_Manager::url_hash() of its pattern, re-derived on every write.](img/api-rules-tiers.png)
 
 | Verb | Role | Args | Returns |
 |------|------|------|---------|
@@ -138,14 +108,12 @@ re-derived from the pattern.
 | `delete` | TUNE | `id` (required, positional) | `{ deleted: bool }` — drop the matching rule and re-save. |
 | `reset` | TUNE | — | `{ reset: int }` — DELETE the stored ruleset option so the file config seeds again, and report the seeded rule count. Storing `[]` instead would pin an explicit "log nothing" over the config seed; only an absent row reseeds. Sweeps every pointer rule's durable hooks option on the way out. |
 
-`save` and `upsert` read their blob as the raw first token, not through `Command_Args` — a
-JSON blob carries its own structure and there is nothing to classify. Both refuse a payload
-over `MAX_JSON_BYTES` (65536) before decoding, decode at `MAX_JSON_DEPTH` (12), and refuse
-anything that does not come back an array.
+`save` and `upsert` read their blob as the raw first token, not through `Command_Args`: a
+JSON blob carries its own structure and there is nothing to classify.
 
 #### The rule wire shape
 
-`Rule::to_array()` is what `dump` returns, what `save` and `upsert` accept, and what the
+[`Rule::to_array()`](../includes/class-rule.php) is what `dump` returns, what `save` and `upsert` accept, and what the
 hub syncs to spokes:
 
 | Field | Type | Meaning |
@@ -167,7 +135,7 @@ hub syncs to spokes:
 ### `performance` — the omnibus dashboard CI
 
 The largest CI; every Performance-tree dashboard verb lives here. Its stats verbs build one
-`Stats_Store` per FLAME-BUILDER WORKER, over the indices
+[`Stats_Store`](../includes/class-stats-store.php) per FLAME-BUILDER WORKER, over the indices
 `Bootstrap::node_partitions( 'flame-builder' )` reports across every active topology that
 declares the node — a store is keyed by the worker index that wrote it rather than by a
 partition directory, so the index space is the declaring topology's worker count. With no
@@ -188,66 +156,23 @@ interpreter wraps the throw as a TM_ERROR reply, so no handler returns an error 
 | `list_hooks` | READ | — | `{ total_hooks, categories, category_descriptions, hooks_by_category }`. |
 | `set` | TUNE | `option` and `value` (both required, positional) | `{ option, updated: bool }`. |
 
-Notable bounds, all `Performance_CI_Node` constants: `MAX_INDEX_ENTRIES` 1,000,000,
+Notable bounds, all [`Performance_CI_Node`](../includes/app/class-performance-ci-node.php) constants: `MAX_INDEX_ENTRIES` 1,000,000,
 `RECENT_REQUEST_LIMIT` 500, `GREP_MAX_SCAN_LINES` 200,000, `SLOWEST_ROWS` 10,
 `RECENT_BUCKETS` 12, `INDEX_READ_CHUNK` 12. `DIMENSIONS` is `status, method, server,
 country, from, ua, ja4`; `URL_SORTS` is `count, url, avg_ms, min_ms, max_ms, avg_peak_mb,
 last_updated`.
 
-**`dump_url`'s request window.** `requests` reaches back to `requests_window_start` and no
-further — the floor of the same window the modal's charts are drawn from. That window is
-`min_lifetime`, floored at `Stats_Store::PREFIX_FLOOR` (3,600s), rounded up to a whole
-five-minute bucket and capped at the 288 buckets a reader enumerates. Measured back from
-the current bucket boundary, the floor sits 3,600 seconds back at or below a `min_lifetime`
-of 3,600s, tracks the setting between, and stops at 86,100 seconds back above 85,800s. A
-request that completed before it is absent by design, not by truncation. `since`
-TAILS that list: the walk stops below that epoch, so `requests` reaches back only to the
-watermark while `requests_window_start` still names the window's floor — the caller is
-expected to be accumulating, and the dashboard's merge does. It is compared against a
-request's COMPLETION, not its start, and the stop is exclusive, so a request sharing the
-watermark's second is still returned. `scan_stopped_early` is true when the walk instead
-spent `MAX_INDEX_ENTRIES` before the caller was satisfied, so an empty `requests` is not an
-idle URL. It says nothing about `RECENT_REQUEST_LIMIT`: the 500th row ends the fan-out,
-leaving every later partition unread and the flag false.
+Read three answers closely before trusting them: how far back `dump_url`'s `requests`
+reach, which board an `ask` brief answers from, and where each `findings` record measured
+its number.
 
-**`ask` descriptors** are `url:<hash>`, `request:<rid>[:<partition>]`, `span:<name>`,
-`entry:<n>` and `category:<name>`. A `span:` or `entry:` brief also needs its `request:`
-descriptor as context, outermost last; on `request:` the partition is a hint, not a filter.
-Every brief carries the measurement `caveat`, and three carry a `fetch` pointer — the MCP
-call that re-addresses the same subject: `dump_request` for `request:`,
-`dump_url` for `url:`, and `performance_ask` carrying the descriptor and its
-context for `span:`. A `span:` brief answers for the parent whose copies of that name hold
-the most time, and carries `elsewhere` (`ms`, `count`, `parents`) for the copies under other
-parents — omitted when every copy sits under one parent. A `category:` brief answers from
-one of two boards. With a `request:` descriptor in its context chain it answers from that
-request's own per-category profile and reports `scope: request`; with no request context, or
-with one holding no such category, it falls back to the leaderboard for the recent window
-and reports `scope: recent window`. The two describe different populations, and answering a
-click inside a request from the global board would describe a different thing entirely with
-nothing in the payload saying so. `server` scopes the `url:` brief and that fallback board
-the way `urls` scopes its rows. An unparseable descriptor throws `unknown descriptor`.
-
-**The `findings` list** is what `dump_request` computes and what the `request:` and `url:`
-briefs carry. Each entry is one record, and the list comes back worst first: `severity` is
-`high`, `medium` or `info`, and that is the sort. `kind` is one of `fatal`,
-`insufficient_instrumentation`, `unattributed`, `dominant_span`, `repetition`, `entry_gap`
-and `truncation`. `title` and `detail` are the prose; `metric` is a numbers object whose keys
-follow the kind; `rule_id` names the rule admitting the request, or null when none does.
-`measured` says where the number came from — `flame`, `profiles`, `subtraction`,
-`entry timestamps`, `record markers`, `php fatal`, `rule + record` or `url stats` — because a
-share read off the flame tree and one obtained by subtracting warrant different confidence.
-`proposal` says what rule edit would act on the finding: an `action` (`add_hooks`,
-`trim_hooks`, `mark_significant`, `add_custom_events`, `create_rule` or `none`), a
-`direction` of `more`, `less` or `none`, a `why`, an `undo`, and whichever of `pattern`,
-`hooks`, `field` and `value` that action needs. Every kind but `fatal` carries one, since no
-rule edit fixes a crash. A `direction` is as often `more` as `less`: a proposal that only
-ever turned monitoring off would make the system blinder each time it was taken.
+![Three answers from the performance CI, and what to know before trusting each. First, a timeline of dump_url's request list: requests reaches back to requests_window_start and no further, a floor Stats_Store::window_start() computes from min_lifetime, floored at PREFIX_FLOOR (3,600 seconds), rounded up to a whole five-minute bucket and capped at 288 buckets, so the floor sits 3,600 seconds back at or below a min_lifetime of 3,600, tracks the setting between, and stops 86,100 seconds back above 85,800; a since watermark, compared against each request's completion and exclusive, makes a tailing caller's list shorter while requests_window_start still names the floor; scan_stopped_early is true when the walk spent MAX_INDEX_ENTRIES (1,000,000) first, and says nothing about the 500-row RECENT_REQUEST_LIMIT. Second, a table of the five ask descriptors (url, request with an optional partition hint, span, entry and category), what context each needs, which board it answers from, and its fetch pointer; a category brief answers from the request's own profile with scope request, or else from the recent-window leaderboard, and anything else throws unknown descriptor. Third, the fields of one findings record, listed worst first by severity: kind, title and detail, metric, rule_id, measured (where the number came from), and a proposal carrying action, direction, why, undo and whatever the action needs; every kind but fatal carries one, and a direction is as often more as less. Every brief carries the measurement caveat.](img/api-performance-ask.png)
 
 **`set`** is the normalized positional single-option writer (`set <option> <value>`) over a
 three-option whitelist: `newspack_event_logger_nodes_rules` (array),
 `newspack_event_logger_nodes_log_memory` (bool) and
 `newspack_event_logger_nodes_flush_every_line` (bool). An option absent from it is refused
-as `unknown option`, so the whitelist and `hub-control.tsl`'s `add_setting` lines must stay
+as `unknown option`, so the whitelist and [`hub-control.tsl`](../topologies/hub-control.tsl)'s `add_setting` lines must stay
 in step. Array-typed options carry their value as JSON, and the decoded array is sanitized
 before it is stored: string keys and string values pass through `sanitize_text_field`, an
 object is dropped, and the whole option is refused as `invalid value for option` — a
@@ -263,7 +188,7 @@ empty array rather than refused, and `apply_synced()` SAVES it — so a malforme
 clears the spoke's rules and pins the explicit "log nothing" that `reset` exists to avoid
 storing. A rate-limited `PerformanceCI: rejected non-JSON synced array-option value` notice
 is the only sign. Autoload follows `Config::autoload_for()`, and the write emits a settings
-event that `Settings_Sync_Node` fans out to spokes.
+event that [`Settings_Sync_Node`](https://github.com/Automattic/newspack-nodes/blob/v2.55.3/includes/class-settings-sync-node.php) fans out to spokes.
 
 ## Substrate verbs the dashboards use
 
@@ -278,53 +203,32 @@ plugin's operators.
 | `status` | `get` | A literal `status: ok`, the `runtime_version`, `num_partitions`, the active `topologies`, `cache_available` and a `timestamp`. It carries no application version field. |
 | `settings` | `get`, `set` | `get` answers a snapshot of the seven substrate-owned storage settings: `num_partitions`, `segment_size`, `min_segments`, `num_segments`, `min_lifetime`, `lifetime` and `max_segments`. `set` reaches further — every `int` Field declaring a minimum, which adds the six `remote_*` spoke-geometry keys, the three `alert_*` thresholds and the four bounded `sse_*` limits — and answers with that same seven-key snapshot whatever it wrote. The wider reach is how `Settings_Sync_Node` pushes a hub's `remote_*` geometry out to its spokes. |
 | `vault` | `list`, `get`, `add`, `update`, `delete`, `test` | Remote-spoke credentials. This is where a spoke's URL and Authorization header live. |
-| `aggregator` | `summary`, `list_servers`, `probe` | Per-spoke `Remote_Source_Node` status on the hub. |
+| `aggregator` | `summary`, `list_servers`, `probe` | Per-spoke [`Remote_Source_Node`](https://github.com/Automattic/newspack-nodes/blob/v2.55.3/includes/class-remote-source-node.php) status on the hub. |
 
 The React graphs address `_http/<ci-name>`, so the browser runtime's `HttpOut` node POSTs
 the command and routes the reply back by the TO the server echoed off the sender's FROM.
 `_http/workers` is the heartbeat target: `mountExospine` wires the shared `_heartbeat` node
 to it, and that is fixed wiring rather than a per-dashboard choice.
 
-See [`../../newspack-nodes/docs/API.md`](../../newspack-nodes/docs/API.md) for full schemas.
+See [`../../newspack-nodes/docs/API.md`](https://github.com/Automattic/newspack-nodes/blob/main/docs/API.md) for full schemas.
 
 ## SSE: `/messages/stream`
 
-A client subscribes to one or more `<log>.p<N>` partitions. The server opens with a `retry`
-event carrying the reopen delay and a `connected` envelope carrying the starting resume
-cursors, then emits one `msg` event per data line, a `heartbeat` every 2 seconds while no
-data flows, and a `disconnect` when the slot lease is lost. Every one of them is a 7-field
-message envelope.
+A client subscribes to one or more `<log>.p<N>` partitions, and every frame the server sends
+is a 7-field message envelope.
 
 ```
 GET /wp-json/newspack-nodes/v1/messages/stream?subscribe=<log>.p<N>[,<log>.p<N>...][&positions=...][&multi_writer=1]
 ```
 
-`subscribe` is required and takes a comma-separated list; `positions` carries the resume
-cursors; `multi_writer` is the client's assertion that more than one process appends the
-subscribed logs, which buys the reader a grace window and costs nothing but that when wrong.
+![One subscription over a minute of an idle log, on four lanes. The server lane opens each stream with a retry event naming the reopen delay and a connected envelope carrying the session pid, the heartbeat cadence and each subscription's starting cursor, then sends one msg per data line and a heartbeat every 2 seconds while none flows; after sse_idle_timeout (15 seconds, 0 never closes) with no data it closes cleanly with no terminal frame, and the client reopens after sse_retry_ms (5,000 ms) from its positions, so an idle stream cycles close and reopen. The client lane POSTs workers.heartbeat every 15 seconds, as a hub's Remote_Source_Node does; two slot-lease lanes follow. On the idle stream each open acquires its own lease before any header and the drain's finally releases it at each idle close, so a poke refreshes only the lease of a stream still open, and a poke for a released lease is refused. On a stream that carries data the one lease stays held, and each poke resets its expiry to sse_slot_ttl from the poke: one value for every caller, 60 seconds by default, floored at 45 (three poke intervals) by SSE_Slot_Pool::ttl(). A TTL must outlive the client's poke interval, and at three intervals one lost poke still leaves a refresh before expiry. Cards list the five event types, what ends a stream (idle, a lost lease sending disconnect, and nothing else inside PHP, since the stream runs set_time_limit(0)), and why opening fails closed: the slot is acquired before any header, a full pool or a cache that will not take the lease answers HTTP 429, only the client refreshes a TTL, and the server flushes before it sleeps, never per event.](img/api-sse-lifecycle.png)
 
-Per-line transforms live in the browser, inside each dashboard's view node
-(`RequestLogViewNode`, `GyroscopeViewNode`, `PerfErrorsViewNode`); the browser consumes the
-stream through the `<link>:sse-in` node (`SseInNode`) each `RemoteLink` owns. The slot TTL is
-the same for every caller — the `sse_slot_ttl` setting, default 60s, floored at 45s by
-`SSE_Slot_Pool::ttl()` — and both a browser and a hub-side `Remote_Source_Node` poke
-`workers.heartbeat` every 15 seconds, so one lost poke still leaves a refresh before expiry.
-
-Operational discipline:
-
-- The memcache slot pool gates connections; a new connection fails with **HTTP 429** when
-  the pool is full or memcache is unreachable (fail-closed).
-- Two heartbeats: server→client SSE `heartbeat` events when no data flows, and client→server
-  keep-alive that refreshes the slot. **Only the client refreshes a slot's TTL** — the
-  server-side check is check-only. Each client's TTL must outlive its own poke interval.
-- Flush before the framework sleeps, NOT per event. Per-event flushing tanks throughput on
-  TLS and proxy paths.
-- A stream that has carried no `msg` for `sse_idle_timeout` (default 15s, 0 never closing)
-  closes cleanly, sending no terminal frame, and the client reopens after the `sse_retry_ms`
-  (default 5,000ms) the opening `retry` event named. Heartbeats do not defer that close —
-  only data does — so zero-message streams closing and reopening on that cycle is the normal
-  case. PHP's own execution time limit is disabled, so nothing else inside the application
-  caps a connection; infrastructure (PHP-FPM, a proxy) still can.
+`subscribe` is required; `positions` carries the resume cursors; `multi_writer` is the
+client's assertion that more than one process appends the subscribed logs, which buys the
+reader a grace window and costs nothing but that when wrong. Per-line transforms live in the
+browser, inside each dashboard's view node (`RequestLogViewNode`, `GyroscopeViewNode`,
+`PerfErrorsViewNode`); the browser consumes the stream through the `<link>:sse-in` node
+(`SseInNode`) each `RemoteLink` owns.
 
 ## Worker spawn
 
@@ -334,7 +238,7 @@ POST /wp-json/newspack-nodes/v1/workers/spawn
 
 The substrate's HMAC-validated worker bootstrap, listed for orientation. Not for public
 callers. Nothing in this plugin registers or constrains it; treat
-[`../../newspack-nodes/docs/API.md`](../../newspack-nodes/docs/API.md) as authoritative for
+[`../../newspack-nodes/docs/API.md`](https://github.com/Automattic/newspack-nodes/blob/main/docs/API.md) as authoritative for
 its request shape and HMAC authentication.
 
 ## MCP
@@ -343,23 +247,22 @@ its request shape and HMAC authentication.
 POST /wp-json/newspack-event-logger-nodes/v1/mcp
 ```
 
-A JSON-RPC MCP server over verbs this plugin already answers, speaking protocol revision
-`2025-06-18`. One POST carries every method: `initialize`, `notifications/initialized`
+An [MCP](https://modelcontextprotocol.io/) server over verbs this plugin already answers. It
+speaks protocol revision `2025-06-18` as [JSON-RPC](https://www.jsonrpc.org/specification),
+and one POST carries every method: `initialize`, `notifications/initialized`
 (answered with nothing — JSON-RPC forbids replying to a notification), `tools/list` and
 `tools/call`. It adds no runtime surface: `tools/call` mounts the same request graph
 `/command` does, through `Bootstrap::mount_request_graph()`, and dispatches through the same
 interpreter.
 
-**Permission**: `Authorization: Bearer <handle>.<key>` — 32 hex, a dot, 64 hex — naming a
-live command session (issue one from the station's Sessions tab, or from
-`POST /wp-json/newspack-nodes/v1/auth`). The request then BECOMES that session's minting
-user and installs its scope as a ceiling, so authority is the user's and the scope only ever
-subtracts: a manage-scoped session minted by someone who can do nothing still does nothing.
-`tools/list` offers only the tools the scope covers.
+![The MCP round trip across four lanes: the agent, the permission gate MCP_Controller::check_permission(), the JSON-RPC dispatcher and the verb's interpreter. One JSON-RPC request per POST carries a Bearer handle.key credential, 32 hex, a dot and 64 hex. The gate answers 403 from the fleet gate on a multisite subsite, 401 for a malformed header, and 401 when Command_Auth::load_session_record() finds no live session or the key fails hash_equals; it then makes the request the session's minting user with the scope installed as a ceiling, and last answers 429 on a handle's 21st call inside one 10-second bucket. Dispatch answers initialize with protocol 2025-06-18, capabilities, serverInfo and the measurement caveat as instructions, answers nothing to notifications/initialized, lists only the tools the scope and the user both allow, and returns -32601 for any other method and -32600 for a body that is not JSON-RPC. tools/call refuses an unknown tool and an uncovered one alike, -32601 Unknown tool; turns named arguments into a flat token list, where POSITIONAL_ARGS (descriptor, hash, rid, pattern, rule, id, context) ride bare in that order and the rest become --key=value; and dispatches on the same CI /command reaches. A return becomes one text block, JSON-encoded unless already a string; a throw becomes result.isError, a tool error rather than a transport error. Below: a read session sees eight tools, a tune session two more, and six verbs have no tool at all: performance.url_breakdown, list_hooks and set, rules.save and reset, and discovery.get.](img/api-mcp-round-trip.png)
 
-Ten tools, one per verb. Each tool's named arguments go through `Command_Args::format()` on
-the way in, and the verb's reply comes back unreshaped as one `text` content block, JSON
-encoded unless the verb already returned a string:
+**Permission**: an `Authorization: Bearer <handle>.<key>` header naming a live command
+session, issued from the station's Sessions tab or from `POST /wp-json/newspack-nodes/v1/auth`.
+Authority is the minting user's, and the session's scope only ever subtracts from it: a
+manage-scoped session minted by someone who can do nothing still does nothing.
+
+Ten tools, one per verb:
 
 | Tool | Node.verb | Role |
 |------|-----------|------|
@@ -374,13 +277,6 @@ encoded unless the verb already returned a string:
 | `rules_upsert` | `rules.upsert` | TUNE |
 | `rules_delete` | `rules.delete` | TUNE |
 
-So a `read` session sees the seven performance tools and `dump_rules`; `tune` additionally
-sees `rules_upsert` and `rules_delete`. Six verbs have no tool at all and are reachable only
-over `/command`: `performance.url_breakdown`, `performance.list_hooks`,
-`performance.set`, `rules.save`, `rules.reset` and `discovery.get`. `POSITIONAL_ARGS` —
-`descriptor, hash, rid, pattern, rule, id, context` — is the order bare tokens are emitted
-in; every other argument becomes `--key=value`.
-
 **Connecting a client**. Register the endpoint with the handle and key that session issued.
 `<ID>` is the local name the client files it under:
 
@@ -393,12 +289,6 @@ Every tool description carries the measurement caveat, because a model handed
 cause for the difference — and the invented cause reads exactly like a finding. The same
 caveat is `initialize`'s `instructions`.
 
-A verb refusal comes back as an MCP tool error (`result.isError`), not a transport error:
-the call reached the server and was answered. A tool the session's scope does not cover is
-refused earlier and differently — JSON-RPC error `-32601`, `Unknown tool: <name>`, the same
-answer a name that exists nowhere gets. The server draws no line between a typo and a
-permission refusal, so read `tools/list` for what this session actually offers.
-
 Nothing here assumes an agent will act on instructions found in a page. Wiring a client up
 is a deliberate act by the operator; the endpoint advertises itself in prose aimed at a
 human, and refuses everything without a credential.
@@ -408,12 +298,12 @@ human, and refuses everything without a credential.
 Both verbs register under the substrate's `nodes` namespace, in the deferred bootstrap, and
 both run `@when after_wp_load`.
 
+![The two WP-CLI verbs. wp nodes reqgrep in three steps. First it picks the source: stdin, detected by fstat, wins and ignores --follow and --recent; --follow runs one Consumer per partition from the tail under the event loop; otherwise one Consumer per partition reads from the first segment, or from the second-to-last with --recent; and --firehose must resolve inside Config::get_logs_directory(). Second, Reqgrep_Core matches each line when its rid equals the pattern or the preg_quoted pattern appears case-insensitively, no pattern meaning a dot; unmatched lines wait in a history ring of --num-buckets (10, clamped 1 to 100) buckets of --bucket-size (250, clamped 1 to 10,000), and a matched rid enters an in-flight LRU of 100 items by 3 buckets rotating every 60 seconds, capped at 20,000 lines and 10 MiB a request. Third, it prints each request as it reaches process (complete) or process (aborted), and anything evicted or still open prints as [incomplete]. wp nodes ruleset-bench times three paths, autoload, inline and pointer, over a grid of 50 to 5,000 hooks per rule by 1, 10 and 50 rules, --iterations times (default 200, minimum 1), and prints the rule for picking INLINE_HOOK_LIMIT: the largest K whose inline cost stays below the pointer floor while the autoload tax stays negligible, never below 65. With no cache backend the pointer column is the bind loop alone.](img/api-cli-flows.png)
+
 ### `wp nodes reqgrep [<pattern>]`
 
 Filter the firehose by request id, URL or any text, and print each matching request as an
-indented lifecycle tree. It collects every entry sharing a request id once any line for that
-rid matches. Stdin wins over every other source: with data on it, `--follow` and `--recent`
-are ignored.
+indented lifecycle tree: every entry sharing a request id, once any line for that rid matches.
 
 | Flag | Meaning |
 |------|---------|
@@ -426,24 +316,19 @@ are ignored.
 | `--num-buckets=<count>` | History buckets retained. Default 10, clamped 1–100. |
 | `--firehose=<path>` | Override the firehose base directory, validated before any dir is opened: it must resolve inside `Config::get_logs_directory()`. A path already naming a partition (`.p<N>`) reads that partition alone, under the index it names. |
 
-The in-flight cache holds 100 items × 3 buckets, rotating every 60 seconds; anything falling
-out of the oldest bucket prints as `[incomplete]`. `Reqgrep_Core` does the grouping, so this
-command and `performance.grep_requests` agree byte for byte on what belongs to which request.
+[`Reqgrep_Core`](../includes/class-reqgrep-core.php) does the grouping, so this command and `performance.grep_requests` agree byte
+for byte on what belongs to which request.
 
 ### `wp nodes ruleset-bench [--iterations=<n>]`
 
-Measurement only, off the request hot path. Sweeps a grid of hooks-per-rule × rule-count and
-prints the median autoload, inline and pointer cost in microseconds per cell — what
-`Rule_Set::INLINE_HOOK_LIMIT` (100) is calibrated from. It closes with the rule for reading
-that table: take the largest hooks-per-rule K whose inline cost stays below the pointer
-floor and whose autoload tax stays negligible, never going below 65. `--iterations` defaults
-to 200 and clamps to a minimum of 1; a higher count buys a steadier median at the cost of
-runtime. With no cache backend the sweep still runs but warns, because the pointer column
-then reports the bind loop alone.
+Measurement only, off the request hot path: it times the ruleset's two hook-storage tiers,
+prints the table [`Rule_Set::INLINE_HOOK_LIMIT`](../includes/class-rule-set.php) (100) is calibrated from, and closes
+with the rule for reading it. A higher `--iterations` buys a steadier median at the cost of
+runtime.
 
 ## PHP API
 
-`Log_Manager` is the class other plugins log through. Pyrobase and Nuclear Gyrobase both
+[`Log_Manager`](../includes/class-log-manager.php) is the class other plugins log through. Pyrobase and Nuclear Gyrobase both
 call `Log_Manager::instance()`; the substrate's job worker reaches it through the
 `begin_job_context_filter()` / `end_job_context()` pair.
 
@@ -486,21 +371,12 @@ Public constants: `FATAL_TYPES`, and the four request keywords `REQUEST_LABEL` (
 `Request_Builder_Node::TERMINAL_KEYWORDS`, the pair that closes a record; without one it
 strands in flight until eviction.
 
-**Payload size.** `message()` enforces an encoded-data cap of 3840 bytes — headroom under
-PIPE_BUF (4096), which is what keeps a lock-free append atomic against every other writer on
-this multi-writer log. An oversize map is trimmed and marked `truncated => true`: a string
-`m` is shortened in a re-encoding loop — re-encoding per step, because JSON escaping expands
-bytes — then dropped outright, while an `m` of any other type is dropped whole without the
-loop. Every other key survives, `l` and `caller` included. Where the remaining keys alone
-still exceed the cap, the floor case keeps `n`, `k`, `ts` and the `truncated` flag, and puts
-the encoded map's first 1000 bytes plus a literal `...` in `m`, so a reader can still place
-the entry — that `m` is a legible dump, not decodable JSON. Nothing is chunked and nothing
-reaches `error_log`. The category is never renamed, because a `" (truncated)"` suffix would
-break `Flame_Tree::PATTERN_START` and `Request_Builder_Node`'s `' (start)'` test, so the
-span would never open and its `(complete)` would orphan. The constant is private, so a
-producer sizing its own payloads keeps its own copy — Pyrobase's `Runtime\Log` does.
-Anything that can exceed it belongs in `\Newspack_Nodes\Job_Intake::queue()`, which takes
-the auto-lock around large writes.
+**Payload size.** `message()` holds each encoded entry to 3,840 bytes, the headroom under
+PIPE_BUF (4,096) that keeps a lock-free append atomic against every other writer on this
+multi-writer log. The constant is private, so a producer sizing its own payloads keeps its
+own copy, as Pyrobase's `Runtime\Log` does.
+
+![One firehose line. A slot row shows the 7-field message: TYPE TM_STRUCT (16), TIMESTAMP the cached clock, empty FROM, TO and ID, KEY the request id, so one request lands in one partition, and VALUE the entry. The entry is ['n', 'k'] + $data + ['ts'] in that precedence: n, the line number the builder gap-checks; k, the category that opens, closes or brackets a span and is never renamed; the caller's keys, m (URL-redacted first when it is a string carrying a question mark), l, duration_ms, caller and rule, where a caller's own ts wins over the stamp; ts; and truncated, present only when the fit ran. A ladder shows fit_data(): an encoding at or under 3,840 bytes is untouched; over it, a string m is cut ten percent a step from 3,840 bytes, re-encoding each step, with every other key surviving; when no step fits or m is not a string, m is dropped; and when the rest still exceeds the cap, the floor keeps n, k, ts and truncated, with the first 1,000 bytes of the oversized encoding plus a literal ... as m. Cards say why the category is never renamed (Flame_Tree::PATTERN_START and Request_Builder_Node's ' (start)' test would never open the span), that nothing is chunked or sent to error_log, and that anything larger belongs in \Newspack_Nodes\Job_Intake::queue(), which takes the auto-lock and accepts up to MAX_JOB_SIZE, 32 MiB.](img/api-firehose-entry.png)
 
 **The second producer.** The Perl engine's `Gyrobase::Log` appends to the same firehose, and
 its `@ENV_ALLOWLIST` (34 keys), `ENV_VALUE_MAX` (256 bytes), U+2026 elision marker and URL
@@ -508,7 +384,7 @@ redaction pattern are hand-maintained copies of `Log_Manager`'s. Only dndocker h
 repositories, so its `tools/check-firehose-parity.py` is what keeps the two identical, and
 this plugin's `pre-push` runs that check whenever dndocker is the checkout in hand.
 
-**The profiler drop-in.** `mu-plugins/00-newspack-profiler.php` publishes a `$newspack_profiler`
+**The profiler drop-in.** [`mu-plugins/00-newspack-profiler.php`](../mu-plugins/00-newspack-profiler.php) publishes a `$newspack_profiler`
 global carrying `request_time` (monotonic nanoseconds), `request_ts` (the matching wall
 clock) and one `plugins` row per timed plugin. `Log_Manager`'s constructor adopts and unsets
 the first two, which is what stamps `process (start)` with the moment PHP began the request
@@ -536,9 +412,9 @@ claiming them again. The drop-in depends on nothing; with the plugin inactive it
 | `newspack_nodes/settings_sync/value` (filter, 2 args) | `newspack_event_logger_nodes_resolve_settings_sync_value` — resolves a blank or absent value to the OWNING config's default, and hydrates a pointer rule's hooks so the ruleset ships hook-complete to spokes. |
 | `newspack_nodes/registered_log_producers` | `newspack_event_logger_nodes_register_log_producers` — adds `Log_Manager::firehose_dir_template()`, so the dirs written and the dirs the log GC declares are one statement. |
 | `newspack_nodes/before_reconcile` / `newspack_nodes/after_reconcile` | An anonymous pair sharing an `$entered` flag, giving the minute-cadence reconcile pass its own `/jobs/newspack-nodes` request context. |
-| `newspack_nodes/stderr` | `Diagnostics_Bridge::on_stderr` — carries a substrate diagnostic into the active request or job log as a `stderr` entry, feeding the Error Log. |
+| `newspack_nodes/stderr` | [`Diagnostics_Bridge::on_stderr`](../includes/class-diagnostics-bridge.php) — carries a substrate diagnostic into the active request or job log as a `stderr` entry, feeding the Error Log. |
 | `newspack_nodes/request_graph_ready` | `newspack_event_logger_nodes_mount_service_cis` — mounts `discovery`, `performance` and `rules`. |
-| `newspack_nodes/station_tab_bundles` | `Current_Request_Overlay::register_bundle` — adds the `current-request` bundle descriptor so the station enqueues that tab. `Current_Request_Overlay` registers two `admin_enqueue_scripts` callbacks beside it: `enqueue_on_overlay_pages` at the default priority, for the ELN pages that embed the overlay themselves, and `enqueue_inline_data` at 20, which injects this request's id into the JS global the tab reads once both enqueue paths have run. |
+| `newspack_nodes/station_tab_bundles` | [`Current_Request_Overlay::register_bundle`](../includes/class-current-request-overlay.php) — adds the `current-request` bundle descriptor so the station enqueues that tab. `Current_Request_Overlay` registers two `admin_enqueue_scripts` callbacks beside it: `enqueue_on_overlay_pages` at the default priority, for the ELN pages that embed the overlay themselves, and `enqueue_inline_data` at 20, which injects this request's id into the JS global the tab reads once both enqueue paths have run. |
 
 Named substrate callables the bootstrap registers alongside them:
 
@@ -553,58 +429,20 @@ Named substrate callables the bootstrap registers alongside them:
 
 The plugin binds `newspack_nodes/periodic`, `newspack_nodes/job_handlers` and
 `newspack_nodes/remote_job_handlers` nowhere; the last two are read by the substrate's
-`Job_Worker_Node`.
+[`Job_Worker_Node`](https://github.com/Automattic/newspack-nodes/blob/v2.55.3/includes/class-job-worker-node.php).
 
 ### Consumed from WordPress
 
-`plugins_loaded` (priority 11, the deferred bootstrap), `rest_api_init`, `admin_menu`,
+[`plugins_loaded`](https://developer.wordpress.org/reference/hooks/plugins_loaded/) (priority 11, the deferred bootstrap), [`rest_api_init`](https://developer.wordpress.org/reference/hooks/rest_api_init/), `admin_menu`,
 `admin_enqueue_scripts`, `admin_init`, `admin_post_newspack_event_logger_nodes_reset_settings`,
 `updated_option`, `added_option` and `pre_update_option` (a filter, 3 args) in the admin.
 
-The profiler drop-in binds three more at file scope, outside this plugin's bootstrap.
-`option_active_plugins` (a filter at priority 1) takes the load baseline on its first firing:
-a wall-clock and hrtime pair, plus the declared-class and included-file counts.
-`wp_get_active_and_valid_plugins()` reads that option immediately ahead of the plugin loop,
-the last point still outside every plugin, so anything reading `active_plugins` earlier in
-bootstrap moves the baseline earlier with it. `plugin_loaded` (priority 1) fires after each
-plugin's include and records the difference since the previous firing: elapsed time, new
-classes and new files. That interval also covers the loop's own per-plugin work, because
-WordPress offers no signal bracketing the include alone. `plugins_loaded` (priority -10001)
-writes the rows to the firehose as `(start)` / `(complete)` span pairs, and only when the
-governing rule said `log`; that priority sits one below the default `hook_start_priority`, so
-the rows precede whatever `App\Core` records for the same hook. A listener short-circuiting
-`pre_option_active_plugins` stops `option_active_plugins` from firing, so the baseline is
-never taken and `plugin_loaded` records nothing. Site-activated plugins alone are timed:
-must-use plugins announce themselves on `mu_plugin_loaded` and network-activated ones on
-`network_plugin_loaded`, and the drop-in binds neither.
+The profiler drop-in binds three more at file scope, outside this plugin's bootstrap, and
+[`App\Core`](../includes/app/class-core.php) binds the rest, per governing rule:
 
-`App\Core` binds the rest, per governing rule. Each of a rule's `hooks` gets a start callback
-at `hook_start_priority` (default -10000), a sacrificial no-op spacer at `PHP_INT_MAX - 2`,
-and a complete callback at `PHP_INT_MAX - 1`. The spacer is what keeps that complete firing:
-when a callback removes itself mid-run, `WP_Hook::resort_active_iterations()` parks the
-pointer on the next surviving priority and `apply_filters`' `next()` skips it — the spacer is
-consumed instead of `hook_complete`. A `significant_events` name the `hooks` list omits is
-bound alongside them once a trailing ` hook` is stripped, so a rule may spell one either way
-and naming it is enough to instrument it. One naming a `custom_events` category stays
-unbound: a custom event is a category the application logs itself, so binding it would
-register a filter nothing fires. Two more names never bind at all: `plugin_loaded`, which
-the profiler drop-in owns, and any hook `Hook_Categorizer::is_internal()` reports — a
-`newspack_nodes` or `newspack_event_logger_nodes` prefix — because instrumenting one
-re-enters the logger's own bootstrap. A rule with `log_http` — the default — also gets the
-outbound-HTTP span pair, `pre_http_request` at `PHP_INT_MAX` and `http_api_debug` at
-`PHP_INT_MIN`; one with `log_queries` gets the query pair, `query` at `PHP_INT_MAX` and
-`log_query_custom_data` at `PHP_INT_MIN`, and `SAVEQUERIES` is defined if it is not already.
-Each pair opens after every filter that could rewrite or short-circuit the call and closes
-ahead of the other listeners on the closing hook, so the span covers the work and not its
-audience. A short-circuited HTTP request opens no span at all: `WP_Http::request()` returns
-a non-false `$preempt` without ever firing `http_api_debug`, so a span opened for one would
-never close.
+![What fires and what listens along one logged request, as a priority timeline. The profiler drop-in's option_active_plugins filter at priority 1 takes the load baseline, a wall-clock and hrtime pair plus class and file counts, just ahead of the plugin loop; a listener short-circuiting pre_option_active_plugins stops it. plugin_loaded at priority 1 records one row per site-activated plugin; must-use and network-activated plugins announce on hooks the drop-in does not bind. plugins_loaded at -10001 builds Log_Manager, which resolves the rule for REQUEST_URI, adopts the profiler's request_time and request_ts, registers finish() and writes process (start), and the plugin rows follow as start and complete pairs. plugins_loaded at 11 constructs App\Core, which gives each of the rule's hooks a hook_start at hook_start_priority (-10000), a sacrificial hook_spacer at PHP_INT_MAX - 2 that WP_Hook's pointer skips instead of the close, and a hook_complete at PHP_INT_MAX - 1; binds significant_events names once a trailing ' hook' is stripped; never binds a custom_events category, plugin_loaded, query under log_queries, or an internal newspack_nodes or newspack_event_logger_nodes hook; and adds the log_http pair (pre_http_request at PHP_INT_MAX, opening nothing for a short-circuit, and http_api_debug at PHP_INT_MIN) and the log_queries pair (query at hook_start_priority, so the span covers the filter chain, and log_query_custom_data at PHP_INT_MIN, closing on the rewritten statement and draining $wpdb->queries; SAVEQUERIES is defined if absent). While the request runs, hook_start wraps a significant hook's callbacks registered strictly between hook_start_priority and the spacer, skipping any with a by-reference parameter, each wrapper claiming accepted_args 99 and slicing back. In a worker, the before_job and after_job hooks open and restore a synthetic /jobs/{handler}/{id} context and fire newspack_event_logger_nodes_scope_changed. At shutdown finish() drains open frames as (orphaned) and writes process (complete), with error_status F after a fatal, or process (aborted) with error_status A after a cooperative stop.](img/api-request-hooks.png)
 
-`hook_start` wraps a hook's own callbacks only where the rule names that hook in
-`significant_events`, and two things narrow the wrapping further. It takes only the callbacks
-registered strictly between `hook_start_priority` and the spacer, so everything at or above
-the spacer reads as its own and is left alone. And it skips any callback whose reflection
-reports a by-reference parameter, because wrapping one breaks WordPress's by-reference
-contract. Each wrapper it does install claims `accepted_args = 99` and slices back to the
-original's count before calling it, so the original never sees an argument it did not ask
-for.
+The profiler's baseline is the first [`option_active_plugins`](https://developer.wordpress.org/reference/hooks/option_option/) firing, so anything reading
+`active_plugins` earlier in bootstrap moves the baseline earlier with it. Each [`plugin_loaded`](https://developer.wordpress.org/reference/hooks/plugin_loaded/)
+interval also covers the loop's own per-plugin work, because WordPress offers no signal
+bracketing the include alone.

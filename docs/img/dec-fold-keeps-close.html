@@ -1,0 +1,72 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+  .pair { display: flex; gap: 22px; align-items: stretch; }
+  .col { flex: 1; }
+  .col > .h { font-size: 14px; font-weight: 700; margin: 0 0 8px; }
+  .col.bad > .h { color: #B32D2E; }
+  .col.good > .h { color: #003DA5; }
+  .seg { border-radius: 8px; padding: 8px 10px 6px; margin-bottom: 8px; background: #fff; border: 1px solid #C3C4C7; }
+  .seg .t { font-size: 11.5px; color: #787C82; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 5px; }
+  .seg .t b { color: #50575E; }
+  .row { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; padding: 3px 8px; border-radius: 4px; margin-bottom: 3px; background: #F6F7F7; color: #101517; display: block; }
+  .row.open { background: #F0F4FB; border: 1px solid #003DA5; color: #003DA5; font-weight: 700; }
+  .row.close { background: #EDF7ED; border: 1px solid #9EC89E; color: #1E5B1E; font-weight: 700; }
+  .row.lost { background: #FBEAEA; border: 1px dashed #B32D2E; color: #B32D2E; text-decoration: line-through; }
+  .row.term { background: #fff; border: 1px solid #787C82; }
+  .row .c { font-family: Inter, sans-serif; font-weight: 400; color: #50575E; font-size: 11.5px; text-decoration: none; }
+  .marker { text-align: center; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: #50575E; border: 1px dashed #B0B3B8; border-radius: 6px; padding: 6px; margin-bottom: 8px; background: #FBFBFC; }
+  .marker span { display: block; font-family: Inter, sans-serif; font-size: 11.5px; color: #787C82; margin-top: 2px; }
+  .seg.keep { border: 2px solid #1E5B1E; }
+  .seg.keep.empty { border: 1px dashed #C3C4C7; }
+  .out { font-size: 12.5px; line-height: 1.5; margin-top: 6px; padding: 10px 12px; border-radius: 7px; }
+  .notes { display: flex; gap: 14px; margin-top: 16px; }
+  .notes .card { flex: 1; }
+  .notes .card p { font-size: 12.5px; }
+</style>
+<div class="sheet">
+<h1>The fold keeps the close of any span the kept head left open</h1>
+<p class="sub">One job record from <span class="mono">community.thecoast.ca</span>, folded twice. The gyrobase subprocess opened in the kept head and closed after 535.8 s of a 536.2 s request; ten PHP rows followed it. Left: the close competes for the rolling tail and loses. Right: the fold routes it into the keep bucket, because the fold chose the head and knows which frames it left open.</p>
+
+<div class="pair">
+  <div class="col bad">
+    <p class="h">Without the rule: the close is one more tail row</p>
+    <div class="seg"><div class="t"><b>head</b> · FOLD_KEEP_HEAD = 10</div>
+      <span class="row">process (start)</span>
+      <span class="row">…</span>
+      <span class="row open">gyrobase (start) <span class="c">opened here, frames every row after it</span></span></div>
+    <div class="marker">entries (aggregated)<span>the middle, merged into a Flame_Fold tree</span></div>
+    <div class="seg keep empty"><div class="t"><b>keep</b> · unbounded</div><span class="row" style="background:none;color:#787C82">only lines a producer marked</span></div>
+    <div class="seg"><div class="t"><b>tail</b> · rolling FOLD_KEEP_TAIL = 10</div>
+      <span class="row lost">gyrobase (complete) <span class="c">evicted by the ten rows below</span></span>
+      <span class="row">nuclear_gyrobase</span>
+      <span class="row">query hook × 2 pairs</span>
+      <span class="row">updated_option hook</span>
+      <span class="row">memory · resources</span>
+      <span class="row term">process (complete)</span></div>
+    <div class="out callout"><b style="color:#B32D2E">The entry list leaves gyrobase open</b>, so the span adopts every row after it. The view reconstructs framing the record does not state, and three display defects follow. The flame stays right: <span class="mono">Flame_Fold::close()</span>, the only path that increments a node's count, reads <span class="mono">gyrobase</span> count 1, 535,829.753 ms.</div>
+  </div>
+
+  <div class="col good">
+    <p class="h">With the rule: the fold keeps what it left open</p>
+    <div class="seg"><div class="t"><b>head</b> · FOLD_KEEP_HEAD = 10</div>
+      <span class="row">process (start)</span>
+      <span class="row">…</span>
+      <span class="row open">gyrobase (start) <span class="c">open_in_head() records it at the fold</span></span></div>
+    <div class="marker">entries (aggregated)<span>the middle, merged into a Flame_Fold tree</span></div>
+    <div class="seg keep"><div class="t"><b>keep</b> · spliced between the marker and the tail</div>
+      <span class="row close">gyrobase (complete) <span class="c">closes_head_span() routes it here</span></span></div>
+    <div class="seg"><div class="t"><b>tail</b> · rolling FOLD_KEEP_TAIL = 10</div>
+      <span class="row">nuclear_gyrobase</span>
+      <span class="row">query hook × 2 pairs</span>
+      <span class="row">updated_option hook</span>
+      <span class="row">memory · resources</span>
+      <span class="row term">process (complete) <span class="c">exempt: the terminal must END the record</span></span></div>
+    <div class="out ok"><b style="color:#1E5B1E">The record states its own framing.</b> At most FOLD_KEEP_HEAD closes can land in keep, since that is how many frames a head can leave open. The request's own frame is exempt, as it is for the display's severed-span prune: keep lands BEFORE the tail, and <span class="mono">process (complete)</span> must be last.</div>
+  </div>
+</div>
+
+<div class="notes">
+  <div class="card"><h3>Why this is not tail sizing</h3><p><span class="mono">is_kept()</span> argues that sizing the tail around a producer's shutdown sequence is guesswork the producer should settle by marking the line. A span's close is not that guess: the fold just chose the head, so it knows exactly which frames it left open.</p></div>
+  <div class="card"><h3>Why the close is not detail</h3><p>A span opened in the head FRAMES every row after it. Losing its <span class="mono">(complete)</span> costs the record its shape, not one line.</p></div>
+</div>
+</div>

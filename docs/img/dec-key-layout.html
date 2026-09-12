@@ -1,0 +1,87 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+  .m { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .key { display: flex; gap: 0; align-items: stretch; padding: 12px 14px 4px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .key .seg { display: flex; flex-direction: column; align-items: center; padding: 0 4px; }
+  .key .seg .box { border-radius: 6px; padding: 8px 12px; font-size: 13.5px; font-weight: 700; white-space: nowrap; }
+  .key .seg .lbl { font-family: Inter, Helvetica, Arial, sans-serif; font-size: 11px; color: #50575E; margin-top: 6px; text-align: center; line-height: 1.35; max-width: 170px; }
+  .key .seg.scope .box { background: #F6F7F7; border: 1px dashed #787C82; color: #50575E; }
+  .key .seg.fixed .box { background: #F0F4FB; border: 1px solid #C3D3EC; color: #003DA5; }
+  .key .seg.ns .box { background: #003DA5; color: #fff; }
+  .key .seg.mid .box { background: #fff; border: 1px solid #C3C4C7; color: #101517; }
+  .key .seg.last .box { background: #B32D2E; color: #fff; }
+  .key .colon { align-self: flex-start; padding-top: 8px; color: #787C82; font-size: 14px; }
+  .grid { border: 1px solid #C3C4C7; border-radius: 9px; background: #fff; overflow: hidden; margin-top: 14px; }
+  .grid table { border-collapse: collapse; width: 100%; }
+  .grid th { background: #003DA5; color: #fff; font-size: 11.5px; font-weight: 700; text-align: left; padding: 7px 9px; }
+  .grid td { padding: 5px 9px; font-size: 11.8px; line-height: 1.4; vertical-align: top; border-top: 1px solid #EEF0F2; }
+  .grid td.k { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-weight: 700; color: #003DA5; white-space: nowrap; }
+  .grid td .m { color: #101517; }
+  .grid td.t { white-space: nowrap; color: #50575E; }
+  .grid td:nth-child(2) { white-space: nowrap; }
+  .grid tr.h td { background: #F6F7F7; }
+  .grid tr.nb td.k { color: #787C82; }
+  .cols { display: flex; flex-direction: column; gap: 12px; margin-top: 14px; }
+  .cols .card { flex: 1; min-width: 0; }
+  .cols .card p .m { color: #101517; }
+  .caps { display: flex; gap: 6px; margin-top: 6px; }
+  .caps .c { flex: 1; min-width: 0; background: #F0F4FB; border: 1px solid #C3D3EC; border-radius: 6px; padding: 6px 8px; text-align: center; }
+  .caps .c .big { font-size: 17px; font-weight: 700; color: #003DA5; line-height: 1.2; }
+  .caps .c .k { font-size: 10.5px; color: #50575E; margin-top: 2px; line-height: 1.3; }
+  .caps .c .k .m { color: #101517; white-space: nowrap; }
+</style>
+<div class="sheet">
+  <h1>Every stat lives under one key shape, and the bucket is always the last component</h1>
+  <p class="sub">Memcache is where stats are written and read; the durable mirror of decisions 10 and 11 shadows them for read-back on a miss. Because every scope is a key PREFIX, one <span class="m">lookup_multi</span> serves them all through <span class="m">Stats_Store::lookup_buckets()</span>, retention is the key's own TTL rather than a hand-rolled cutoff pass, and whether a bucket is still open is decided from the key alone.</p>
+
+  <div class="panel">
+    <header>The key, component by component</header>
+    <div class="key">
+      <div class="seg scope"><div class="box">{site scope}</div><div class="lbl"><span class="m">Cache_Backend::site_key()</span> wraps the key as <span class="m">newspack_nodes:{v}:{site}:table:</span>; <span class="m">{site}</span> is 12 hex of md5( DB_NAME : prefix : salt ), and the salt lives there, nowhere in this plugin</div></div><div class="colon">:</div>
+      <div class="seg fixed"><div class="box">evlog</div><div class="lbl">the prefix</div></div><div class="colon">:</div>
+      <div class="seg fixed"><div class="box">p{N}</div><div class="lbl">the flame-builder partition that wrote it</div></div><div class="colon">:</div>
+      <div class="seg ns"><div class="box">{namespace}</div><div class="lbl">one of fourteen, below</div></div><div class="colon">:</div>
+      <div class="seg mid"><div class="box">{scope…}</div><div class="lbl">a dimension, a server, a shard or a url_hash: zero or more components, each a pure prefix</div></div><div class="colon">:</div>
+      <div class="seg last"><div class="box">{Y-m-d-H-i}</div><div class="lbl">the five-minute bucket, LAST. Lexical order is chronological order; <span class="m">is_open_bucket()</span> reads it off the key</div></div>
+    </div>
+    <div style="padding:6px 14px 12px;font-size:12px;color:#50575E;line-height:1.45">The durable mirror files the same key under <span class="m">evlog:m{V}:p{N}:{key}</span> instead, with NO site scope (decision 10), where <span class="m">V</span> is <span class="m">MIRROR_KEY_VERSION</span>.</div>
+  </div>
+
+  <div class="grid">
+    <table>
+      <tr><th>Namespace</th><th>Key after the prefix</th><th>Value</th><th>TTL role</th></tr>
+      <tr><td class="k">hourly</td><td><span class="m">hourly:{bucket}</span></td><td>request totals: <span class="m">count</span>, <span class="m">sum_ms</span>, <span class="m">sum_peak_mb</span>; no server dimension, workers excluded</td><td class="t">max_lifespan</td></tr>
+      <tr><td class="k">lb</td><td><span class="m">lb:{bucket}</span></td><td>the global leaderboard, one entry map per category: the heaviest read the dashboard makes</td><td class="t">max_lifespan</td></tr>
+      <tr class="h"><td class="k">lb_h</td><td><span class="m">lb_h:{Y-m-d-H}</span></td><td>its COARSE tier, folded hourly for exactly decision 17's reason; derived, so not mirrored</td><td class="t">max_lifespan</td></tr>
+      <tr><td class="k">lb_s</td><td><span class="m">lb_s:{server}:{bucket}</span></td><td>the per-server leaderboard. No coarse tier: the servers present in an hour cannot be enumerated from the keyspace</td><td class="t">max_lifespan</td></tr>
+      <tr><td class="k">urls</td><td><span class="m">urls:{shard}:{bucket}</span></td><td>the URL index, sixteen shards by the first hex digit of the url_hash, and a <span class="m">w</span>-prefixed shard family (<span class="m">urls:w3:…</span>) for worker traffic; positional rows (decision 18) carrying the 12-char hash and no URL string</td><td class="t">min( max_lifespan,<br><span class="m">FINE_TTL_SECONDS</span> = 7,200 )</td></tr>
+      <tr class="h"><td class="k">urls_h</td><td><span class="m">urls_h:{shard}:{Y-m-d-H}</span></td><td>its COARSE tier, derived (decision 17); not mirrored</td><td class="t">max_lifespan</td></tr>
+      <tr><td class="k">urlnames</td><td><span class="m">urlnames:{shard}:{bucket}</span></td><td><span class="m">{ hash =&gt; path }</span>: the searchable name index, ~40 keys a shard, where answering per hash through <span class="m">urlmap</span> costs 668,918 keys a poll. PATHS only, uncapped</td><td class="t">min( max_lifespan,<br><span class="m">FINE_TTL_SECONDS</span> = 7,200 )</td></tr>
+      <tr class="h"><td class="k">urlnames_h</td><td><span class="m">urlnames_h:{shard}:{Y-m-d-H}</span></td><td>its COARSE tier, a union; derived, so not mirrored</td><td class="t">max_lifespan</td></tr>
+      <tr class="nb"><td class="k">urlmap</td><td><span class="m">urlmap:{hash}</span></td><td><span class="m">[ path, origin ]</span>, written once, re-written only past half its TTL; readers resolve only the hashes they display. Not bucketed, so never open</td><td class="t">max_lifespan</td></tr>
+      <tr class="nb"><td class="k">url</td><td><span class="m">url:{hash}</span></td><td>the per-URL flame and profile blob. Not bucketed, so never open</td><td class="t">max( 3,600, max_lifespan / 24 )</td></tr>
+      <tr><td class="k">dim</td><td><span class="m">dim:{dimension}[:{server}]:{bucket}</span></td><td>dimensional series, <span class="m">{ c, s, m }</span> per value, named</td><td class="t">max_lifespan</td></tr>
+      <tr><td class="k">url_dim</td><td><span class="m">url_dim:{hash}:{bucket}</span></td><td>one URL's dimensional series, every dimension in the value</td><td class="t">max_lifespan</td></tr>
+      <tr><td class="k">categories</td><td><span class="m">categories[:{server}]:{bucket}</span></td><td>category series; each entry a positional <span class="m">CAT_SUMS</span> triple with <span class="m">CAT_MS</span> rounded to 3 places; a synthetic <span class="m">total</span> category held out of every ranking</td><td class="t">max_lifespan</td></tr>
+      <tr><td class="k">url_cat</td><td><span class="m">url_cat:{hash}:{bucket}</span></td><td>one URL's category series, same shape</td><td class="t">max_lifespan</td></tr>
+    </table>
+  </div>
+
+  <div class="cols">
+    <div class="card">
+      <h3>Three TTL roles, one setting</h3>
+      <p><span class="m">max_lifespan</span> is a <span class="m">Stats_Store</span> constructor property seeded from the substrate's <span class="m">min_lifetime</span> (default 43,200) through <span class="m">Config::stats_retention_seconds()</span>, floored at <span class="m">PREFIX_FLOOR</span> = 3,600; it is not itself a config key on either side. A FINE <span class="m">urls</span> or <span class="m">urlnames</span> bucket gets its own read window, <span class="m">FINE_TTL_SECONDS</span>, two hours, because the coarse tier answers for everything behind it: 24 buckets a shard, the same as the coarse tier's 24 hours; the per-URL blob gets a 24th; everything else gets the whole window.</p>
+    </div>
+    <div class="card">
+      <h3>Caps hold every value under memcache's 1 MB item limit, and overflow folds into <span class="m">Other</span></h3>
+      <div class="caps">
+        <div class="c"><div class="big">20</div><div class="k"><span class="m">MAX_DIM_VALUES</span> per dimension bucket</div></div>
+        <div class="c"><div class="big">128</div><div class="k"><span class="m">MAX_SERVER_VALUES</span>: the <span class="m">server</span> axis, wherever it is stored (<span class="m">dim_cap()</span>)</div></div>
+        <div class="c"><div class="big">10</div><div class="k"><span class="m">MAX_URL_DIM_VALUES</span> per URL dimension bucket</div></div>
+        <div class="c"><div class="big">50</div><div class="k"><span class="m">MAX_CAT_VALUES</span>; the <span class="m">total</span> pseudo-category is preserved before capping</div></div>
+        <div class="c"><div class="big">2,000</div><div class="k"><span class="m">MAX_URLS_PER_SHARD</span> (<span class="m">Flame_Builder_Node</span>): 32,000 URLs a bucket, against a measured refusal at 5,000 rows a shard</div></div>
+      </div>
+      <p style="margin-top:8px">The server ceiling is 128 rather than 20 because 20 binds on a real fleet: it folds every spoke past the twentieth into <span class="m">Other</span>, and a 24-spoke fleet loses four sites from its own picker. Reading the axis as the fleet and leaving it uncapped is wrong: <span class="m">server_name</span> is <span class="m">SERVER_NAME</span>, under Apache's default <span class="m">UseCanonicalName Off</span> the client's Host header, so a catch-all vhost makes it visitor input. Decision 14 owns the reopen condition. A shard is the one component naming no dimension of the data: physical partitioning, because one blob per bucket is the pressure every cap here is sized against.</p>
+    </div>
+  </div>
+</div>

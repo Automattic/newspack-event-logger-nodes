@@ -1,0 +1,85 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+.tr { display:flex; gap:14px; margin-bottom:14px; }
+.transport { flex:1; border-radius:9px; padding:10px 14px; font-size:12px; line-height:1.45; }
+.transport h3 { font-size:13.5px; margin:0 0 4px; }
+.transport p { margin:0; }
+.transport.cmd { background:#F0F4FB; border:1px solid #C3D3EC; }
+.transport.cmd h3 { color:#003DA5; }
+.transport.sse { background:#EDF7ED; border:1px solid #9EC89E; }
+.transport.sse h3 { color:#1E5B1E; }
+.grid { display:grid; grid-template-columns:repeat(3, 1fr); gap:12px; }
+.bd { border:1px solid #C3C4C7; border-radius:9px; background:#fff; padding:11px 13px; font-size:11.5px; line-height:1.45; }
+.bd .name { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-weight:700; font-size:13px; color:#101517; }
+.bd .page { font-size:11px; color:#787C82; margin-bottom:6px; }
+.bd .k { display:inline-block; font-size:10.5px; color:#787C82; text-transform:uppercase; letter-spacing:.04em; width:58px; }
+.bd .line { margin:3px 0; display:flex; gap:4px; align-items:flex-start; }
+.bd .line span:last-child { flex:1; }
+.bd .src { border-radius:5px; padding:4px 8px; margin:6px 0 4px; font-size:11.5px; }
+.bd .src.cmd { background:#F0F4FB; border:1px solid #C3D3EC; color:#003DA5; }
+.bd .src.sse { background:#EDF7ED; border:1px solid #9EC89E; color:#1E5B1E; }
+.globals { margin-top:14px; }
+table.g { border-collapse:collapse; width:100%; font-size:11.5px; }
+table.g th { text-align:left; font-size:11px; color:#787C82; font-weight:600; padding:4px 8px; border-bottom:1px solid #C3C4C7; }
+table.g td { padding:4px 8px; border-top:1px solid #EEF0F2; vertical-align:top; line-height:1.4; }
+table.g td.k { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color:#003DA5; white-space:nowrap; }
+.mono { overflow-wrap:anywhere; }
+</style>
+<div class="sheet">
+<h1>Six bundles, two transports, and no data that did not come through a node</h1>
+<p class="sub">Every tree separates the chrome from the data the same way: the root renders, one hook declares the node graph behind it, and rows reach React off a view node. Three dashboards stream a partition glob; three ask a service CI by command; the six page globals carry what the server knew before the first command ran.</p>
+
+<div class="tr">
+  <div class="transport cmd"><h3>By command: <span class="mono">POST /wp-json/newspack-nodes/v1/command</span></h3><p>A TM_COMMAND minted FROM the dashboard's own Request node, answered TO = FROM, so the reply lands on the node that asked and no correlator exists. A batched Fetcher sends one POST per tick; <span class="mono">useCommandOnce</span> parks a one-shot in the same outbox. Reads retry a MISSING reply and supersede; writes do neither. The server owns the set: search, sort and page are reported upward, never applied in the browser.</p></div>
+  <div class="transport sse"><h3>By stream: <span class="mono">GET /wp-json/newspack-nodes/v1/messages/stream?subscribe=&lt;glob&gt;</span></h3><p>A RemoteLink owning one SseIn child, the shared <span class="mono">_heartbeat</span> keeping its slot, a pass-through Tee, and one view node shaping each 7-field envelope into a row. The log tables read rows off the view node each frame, and <span class="mono">Inflight</span> samples the view's snapshot into state on the operator's cadence, so a busy stream re-renders at that cadence, not per message.</p></div>
+</div>
+
+<div class="grid">
+  <div class="bd"><div class="name">overview</div><div class="page">Performance, admin page</div>
+    <div class="line"><span class="k">root</span><span><span class="mono">PerformanceDashboard</span>, lazy behind <span class="mono">&lt;Suspense&gt;</span>, in <span class="mono">ThemedRoot</span></span></div>
+    <div class="line"><span class="k">hook</span><span><span class="mono">usePerformanceGraph</span></span></div>
+    <div class="src cmd"><span class="mono">performance</span> CI: <span class="mono">overview</span> + <span class="mono">urls</span> on one batched Timer; <span class="mono">dump_url</span> on the modal's own Timer; <span class="mono">dump_request</span>, <span class="mono">search_requests</span>, <span class="mono">grep_requests</span>, <span class="mono">url_breakdown</span>, <span class="mono">ask</span> on demand; <span class="mono">rules</span> CI <span class="mono">dump</span>, <span class="mono">upsert</span>, <span class="mono">delete</span> behind "Log this URL"</div>
+    <div class="line"><span class="k">views</span><span><span class="mono">OverviewView</span>, <span class="mono">UrlsView</span>, <span class="mono">UrlDetailView</span>, <span class="mono">RequestDetailView</span>, <span class="mono">UrlDetailMerge</span></span></div>
+    <div class="line"><span class="k">reads</span><span><span class="mono">hourly</span> for the site; the URL index for the table; <span class="mono">requests.pN</span> through its index for one request</span></div></div>
+  <div class="bd"><div class="name">error-log</div><div class="page">Error Log, admin page</div>
+    <div class="line"><span class="k">root</span><span><span class="mono">ErrorLog</span>, lazy inside <span class="mono">DashboardShell</span>; a thin wrapper over the substrate's <span class="mono">LogStreamViewer</span></span></div>
+    <div class="line"><span class="k">hook</span><span><span class="mono">useErrorLogGraph</span> over <span class="mono">useGlobStreamGraph</span>: pause, single-step, two-level partition pick</span></div>
+    <div class="src sse">glob <span class="mono">errors.*</span>: what Request_Builder fanned to <span class="mono">errors.p0</span>, the Diagnostics_Bridge's <span class="mono">stderr</span> included</div>
+    <div class="line"><span class="k">views</span><span><span class="mono">PerfErrorsView</span></span></div>
+    <div class="line"><span class="k">rate</span><span>lines per second from the substrate's <span class="mono">RateSmoother</span></span></div></div>
+  <div class="bd"><div class="name">gyroscope</div><div class="page">In-Flight Requests, admin page</div>
+    <div class="line"><span class="k">root</span><span><span class="mono">GyroscopePage</span> around <span class="mono">Inflight</span>, which samples <span class="mono">gyroscope:view.snapshot()</span> on the chosen cadence</span></div>
+    <div class="line"><span class="k">hook</span><span><span class="mono">useGyroscopeGraph</span>, straight on <span class="mono">useStreamGraph</span>: no pause, no filter, rows cleared on reopen</span></div>
+    <div class="src sse">glob <span class="mono">gyroscope.*</span>: the compact <span class="mono">complete</span> rows AND Request_Flight's per-tick in-flight rows, folded apart in the browser by <span class="mono">state</span></div>
+    <div class="line"><span class="k">views</span><span><span class="mono">GyroscopeView</span>: an in-flight row for a rid it holds as complete is dropped; a row unrefreshed for 15 min is reaped; <span class="mono">rps</span> from a 10 s bucket window</span></div></div>
+  <div class="bd"><div class="name">requests</div><div class="page">Request Log, admin page</div>
+    <div class="line"><span class="k">root</span><span><span class="mono">RequestStreamPage</span> around <span class="mono">RequestStream</span>, over <span class="mono">LogStreamViewer</span></span></div>
+    <div class="line"><span class="k">hook</span><span><span class="mono">useRequestLogGraph</span> over <span class="mono">useGlobStreamGraph</span></span></div>
+    <div class="src sse">glob <span class="mono">completed.*</span>: the ten-key compact summary; <span class="mono">shapeRow()</span> reads seven and drops a row with no <span class="mono">url</span></div>
+    <div class="line"><span class="k">views</span><span><span class="mono">RequestLogView</span></span></div>
+    <div class="line"><span class="k">links</span><span><span class="mono">ridCell</span> and <span class="mono">urlCell</span> deep-link into <span class="mono">event-logger-overview</span> by <span class="mono">&amp;request=&lt;rid&gt;</span> and <span class="mono">&amp;url=&lt;hash&gt;</span></span></div></div>
+  <div class="bd"><div class="name">settings</div><div class="page">Settings page, "Logging Rules" section</div>
+    <div class="line"><span class="k">root</span><span><span class="mono">RulesAdmin</span> rooted into the "Logging Rules" mount div; <span class="mono">RuleEditModal</span> is the one editor every rule comes through</span></div>
+    <div class="line"><span class="k">hook</span><span><span class="mono">useRulesGraph</span>, plus <span class="mono">useHookCatalogGraph</span> behind the picker</span></div>
+    <div class="src cmd"><span class="mono">rules</span> CI: <span class="mono">dump</span>; <span class="mono">save</span>, <span class="mono">upsert</span>, <span class="mono">delete</span>, <span class="mono">reset</span>, each owning its own nodes and re-dumping on success. <span class="mono">performance list_hooks</span> while the picker is open</div>
+    <div class="line"><span class="k">views</span><span><span class="mono">RulesView</span>, <span class="mono">HookCatalogView</span></span></div></div>
+  <div class="bd"><div class="name">current-request</div><div class="page">A station tab, on the four dashboards that mount <span class="mono">&lt;DebugOverlay&gt;</span></div>
+    <div class="line"><span class="k">root</span><span><span class="mono">CurrentRequestTab</span>, registered through <span class="mono">registerTab</span> on <span class="mono">newspack_nodes/station_tab_bundles</span></span></div>
+    <div class="line"><span class="k">hook</span><span>its own batched-poll slice</span></div>
+    <div class="src cmd"><span class="mono">performance dump_request</span> for THIS request's rid and partition, which <span class="mono">Current_Request_Overlay</span> printed into a global at <span class="mono">admin_enqueue_scripts</span> 20</div>
+    <div class="line"><span class="k">views</span><span><span class="mono">CurrentRequestView</span>: the reply replaces the record whole</span></div>
+    <div class="line"><span class="k">not lazy</span><span>a lazy bundle mounts with no <span class="mono">currentRequest</span> global and strands on its empty state</span></div></div>
+</div>
+
+<div class="globals">
+  <table class="g">
+    <tr><th>page global, bound to the bundle's script handle</th><th>carries</th><th>pages</th></tr>
+    <tr><td class="k">eventLoggerDashboards</td><td><span class="mono">restUrl</span>, <span class="mono">nonce</span>, <span class="mono">retentionSeconds</span>; a falsy reading takes the substrate's 24 h default</td><td>all five</td></tr>
+    <tr><td class="k">eventLoggerHookCategories</td><td><span class="mono">hook_categories.json</span> whole, <span class="mono">_colors</span> and <span class="mono">_patterns</span> included; the Gyroscope legend's contents are a fixed array in <span class="mono">Inflight.js</span></td><td>all five</td></tr>
+    <tr><td class="k">eventLoggerCustomColors</td><td><span class="mono">Config::get_custom_colors()</span>, custom-event name to swatch, read by the substrate's shared <span class="mono">formatUtils</span></td><td>all five</td></tr>
+    <tr><td class="k">newspackNodesRecommendedHooks</td><td><span class="mono">recommended_log_events</span>, what the picker's "Recommended" button selects</td><td>settings, overview</td></tr>
+    <tr><td class="k">newspackNodesCustomColors</td><td>the same custom-colour map, for <span class="mono">CustomEventSelectorModal</span>'s swatches</td><td>settings, overview</td></tr>
+    <tr><td class="k">NewspackEventLoggerNodes.currentRequest</td><td><span class="mono">{ rid, partition, perfUrl }</span> for THIS request, merged by <span class="mono">Object.assign</span> so a sibling key survives</td><td>wherever the overlay tab loads</td></tr>
+  </table>
+</div>
+</div>

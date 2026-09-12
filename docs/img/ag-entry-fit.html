@@ -1,0 +1,67 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+.bar { margin:4px 0 18px; }
+.steps { position:relative; padding-left:38px; }
+.steps::before { content:""; position:absolute; left:15px; top:16px; bottom:30px; width:2px; background:#003DA5; }
+.step { position:relative; margin-bottom:12px; }
+.step .n { position:absolute; left:-38px; top:9px; width:30px; height:30px; border-radius:50%; background:#003DA5; color:#fff; font-size:13px; font-weight:700; line-height:30px; text-align:center; }
+.step .card { padding:12px 16px; }
+.step .card h3 { font-size:14px; margin:0 0 5px; }
+.step .card p { font-size:12.5px; margin:0 0 4px; }
+.step .card p:last-child { margin-bottom:0; }
+.ladder { display:flex; gap:4px; align-items:flex-end; margin:8px 0 6px; height:58px; }
+.rung { background:#003DA5; color:#fff; font-size:10.5px; text-align:center; border-radius:4px 4px 0 0; display:flex; align-items:flex-end; justify-content:center; padding-bottom:3px; }
+.rung.dots { background:#C3D3EC; color:#003DA5; white-space:nowrap; }
+.two { display:flex; gap:14px; margin-top:6px; }
+.two > div { flex:1; } .two > .steps { align-self:flex-start; }
+.mono { overflow-wrap:anywhere; }
+.keep { display:flex; gap:6px; margin-top:8px; }
+.keep .chip { flex:1; margin:0; text-align:center; font-size:12px; padding:6px 6px; }
+.keep .chip.gone { background:#FBEAEA; border-color:#E6A3A3; color:#B32D2E; text-decoration:line-through; }
+.keep .chip.new { background:#EDF7ED; border-color:#9EC89E; color:#1E5B1E; }
+.keep .chip.trim { background:#FFF4E0; border-color:#E6C27A; color:#7A5200; }
+.keep .st { flex:0 0 44px; margin:0; align-self:center; font-size:11px; color:#787C82; font-weight:600; }
+</style>
+<div class="sheet">
+<h1>Over 3,840 bytes, the payload shrinks and the category never does</h1>
+<p class="sub">Log_Manager encodes the whole entry, measures that encoding, and only past the cap runs it through <span class="mono">fit_data()</span>. Three descending stages: the first two return the first encoding that fits, and the floor is returned unmeasured, so a <span class="mono">k</span> over about 2.8 KB still ships oversized. Nothing throws and nothing is chunked: the firehose is fire-and-forget, and the flag is the only symptom.</p>
+
+<div class="bar">
+  <svg width="1052" height="96" viewBox="0 0 1052 96">
+    <text x="526" y="14" text-anchor="middle" fill="#50575E" font-size="12.5" font-family="Inter, Helvetica, Arial, sans-serif">PIPE_BUF, 4,096 bytes: the largest append Linux keeps atomic, and many PHP processes append to one partition</text>
+    <path d="M0 30 L0 22 L1052 22 L1052 30" fill="none" stroke="#50575E" stroke-width="1.5"/>
+    <rect x="0" y="38" width="986" height="30" rx="6" fill="#003DA5"/>
+    <rect x="986" y="38" width="66" height="30" rx="6" fill="#C3C4C7"/><rect x="980" y="38" width="12" height="30" fill="#C3C4C7"/>
+    <text x="493" y="58" text-anchor="middle" fill="#fff" font-size="13" font-weight="700" font-family="Inter, Helvetica, Arial, sans-serif">MAX_DATA_SIZE: the encoded ENTRY, { n, k, …, ts }, at most 3,840 bytes</text>
+    <text x="1019" y="58" text-anchor="middle" fill="#101517" font-size="12" font-weight="700" font-family="Inter, Helvetica, Arial, sans-serif">256</text>
+    <text x="0" y="88" fill="#50575E" font-size="12" font-family="Inter, Helvetica, Arial, sans-serif">The cap measures the entry, not the caller's data: 3,800 bytes of m clear the cap alone and cross it once n, k and ts land.</text>
+    <text x="1052" y="88" text-anchor="end" fill="#50575E" font-size="12" font-family="Inter, Helvetica, Arial, sans-serif">the Message envelope: KEY and framing</text>
+  </svg>
+</div>
+
+<div class="two">
+<div class="steps">
+  <div class="step"><div class="n">0</div><div class="card"><h3>Measure</h3><p><span class="mono">strlen( wp_json_encode( entry ) ) ≤ 3840</span>: ship as is. Otherwise mark <span class="mono">truncated: true</span> and descend.</p></div></div>
+  <div class="step"><div class="n">1</div><div class="card"><h3>A string <span class="mono">m</span>: trim ten percent a step, re-encoding each time</h3>
+    <div class="ladder">
+      <div class="rung" style="flex:38;height:58px">3840</div><div class="rung" style="flex:34;height:52px">3456</div><div class="rung" style="flex:31;height:47px">3110</div><div class="rung" style="flex:28;height:42px">2799</div><div class="rung" style="flex:25;height:38px">2519</div><div class="rung" style="flex:23;height:34px">2267</div><div class="rung" style="flex:20;height:31px">2040</div><div class="rung dots" style="flex:46;height:24px">54 more</div><div class="rung" style="flex:6;height:12px">1</div>
+    </div>
+    <p>Each rung cuts <span class="mono">m</span> to that many bytes and encodes the whole entry again, because JSON escaping expands bytes and a byte-count subtraction can still land over the cap. The first encoding at or under 3,840 ships; 62 rungs run from 3,840 to 1.</p></div></div>
+  <div class="step"><div class="n">2</div><div class="card"><h3>Drop <span class="mono">m</span> whole</h3><p>An array <span class="mono">m</span> skips the ladder and is dropped outright; a string that never fit is dropped too. Every other key survives.</p></div></div>
+  <div class="step"><div class="n">3</div><div class="card"><h3>The floor</h3><p>Reached when the entry still exceeds 3,840 bytes with <span class="mono">m</span> gone, because <span class="mono">l</span>, <span class="mono">caller</span>, <span class="mono">k</span> or another key is itself too large: <span class="mono">{ n, k, ts, truncated: true, m: &lt;first 1,000 bytes of the original encoding&gt; + "..." }</span>. A line no reader can place is worth less than a truncated one.</p></div></div>
+</div>
+
+<div>
+  <div class="card"><h3>What each stage keeps</h3>
+    <div class="keep"><span class="st">1</span><div class="chip"><b>n</b></div><div class="chip"><b>k</b></div><div class="chip trim"><b>m, cut</b></div><div class="chip"><b>l</b></div><div class="chip"><b>caller</b></div><div class="chip"><b>ts</b></div><div class="chip new"><b>truncated</b></div></div>
+    <div class="keep"><span class="st">2</span><div class="chip"><b>n</b></div><div class="chip"><b>k</b></div><div class="chip gone"><b>m</b></div><div class="chip"><b>l</b></div><div class="chip"><b>caller</b></div><div class="chip"><b>ts</b></div><div class="chip new"><b>truncated</b></div></div>
+    <div class="keep"><span class="st">floor</span><div class="chip"><b>n</b></div><div class="chip"><b>k</b></div><div class="chip trim"><b>m, a dump</b></div><div class="chip gone"><b>l</b></div><div class="chip gone"><b>caller</b></div><div class="chip"><b>ts</b></div><div class="chip new"><b>truncated</b></div></div>
+    <p style="margin-top:9px">A span opens and closes on <span class="mono">k</span>, and <span class="mono">l</span>, the flame's aggregation label, keeps it in the right node through stages 1 and 2; <span class="mono">caller</span> is display-only, the detail view's "called by". <span class="mono">k</span> is never renamed: a <span class="mono">(truncated)</span> suffix would fail <span class="mono">Flame_Tree::PATTERN_START</span> and <span class="mono">PATTERN_COMPLETE</span>, so a renamed opening never opens and a renamed close orphans the span it should have ended.</p>
+  </div>
+  <div class="callout" style="margin-top:14px"><h4>The Perl producer bounds a different thing by a different number</h4>
+    <p><span class="mono">Gyrobase::Log</span> holds the whole PACKED LINE to <span class="mono">$MAX_LINE_SIZE = 4096</span>, replaces <span class="mono">m</span> with the stub <span class="mono">(truncated, original N bytes)</span>, keeps <span class="mono">ts</span>, <span class="mono">n</span>, <span class="mono">k</span> and whichever of <span class="mono">duration_ms</span> / <span class="mono">status_code</span> the entry carried, and writes no <span class="mono">truncated</span> key at all. It DROPS an oversized job entry with a warning, because half a job structure is not a job.</p>
+    <p>So a Perl-truncated line reads as whole downstream: <span class="mono">Request_Builder_Node</span> copies the flag where it finds one and cannot invent it, and <span class="mono">LogEntriesTable</span> prints <span class="mono">[truncated]</span> only for a PHP-trimmed entry. A reader must not take the flag's absence as proof a line arrived whole.</p></div>
+  <div class="ok" style="margin-top:14px"><h4>Anything that can exceed the cap goes through <span class="mono">Job_Intake::queue()</span></h4><p><span class="mono">Partition_Node::allow_large_writes()</span> takes the partition's write lock and admits up to 32 MiB. An oversized firehose job arrives at the router with its <span class="mono">m</span> stripped, and reads there as an invalid-handler warning.</p></div>
+</div>
+</div>
+</div>

@@ -1,0 +1,69 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+.cols { display:flex; gap:14px; align-items:flex-start; }
+.col { flex:1; }
+.col h2 { font-size:12px; color:#787C82; text-transform:uppercase; letter-spacing:.05em; margin:0 0 8px; }
+.tp { border:1px solid #C3C4C7; border-radius:9px; background:#fff; padding:10px 12px; margin-bottom:10px; font-size:11.5px; line-height:1.4; }
+.tp .name { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-weight:700; font-size:13px; color:#003DA5; }
+.tp.stock { background:#F6F7F7; border-style:dashed; }
+.tp.stock .name { color:#50575E; }
+.tp.comp { border-color:#003DA5; border-width:2px; }
+.tp .io { display:flex; gap:6px; margin:6px 0 4px; flex-wrap:wrap; }
+.tp .io span { border-radius:4px; padding:2px 7px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:10.5px; }
+.tp .io .r { background:#F6F7F7; border:1px solid #C3C4C7; }
+.tp .io .w { background:#F0F4FB; border:1px solid #C3D3EC; color:#003DA5; }
+.tp .inc { margin-top:6px; }
+.tp .inc span { display:inline-block; border-radius:4px; padding:2px 7px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:10.5px; margin:2px 3px 0 0; }
+.tp .inc .st { background:#F6F7F7; border:1px dashed #B0B3B8; color:#50575E; }
+.tp .inc .pr { background:#003DA5; color:#fff; }
+.tp .inc .cp { background:#fff; border:2px solid #003DA5; color:#003DA5; }
+.tp .inc .lbl { font-size:10.5px; color:#787C82; margin-right:4px; }
+.tp p { margin:4px 0 0; color:#50575E; }
+.tp .var { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color:#B32D2E; font-size:10.5px; }
+.legend { display:flex; gap:18px; font-size:11.5px; color:#50575E; margin-bottom:12px; align-items:center; }
+.legend span span { display:inline-block; border-radius:4px; padding:1px 7px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:10.5px; margin-right:4px; }
+.notes { display:flex; gap:12px; margin-top:6px; }
+.notes .card { flex:1; padding:10px 14px; }
+.notes .card h3 { font-size:13px; }
+.notes .card p { font-size:12px; margin:0; }
+</style>
+<div class="sheet">
+<h1>Ten topologies: five primitives, and five compositions of them and the substrate's stock</h1>
+<p class="sub">A composition is mostly <span class="mono">include</span> lines: <span class="mono">complete</span> adds a Tee, and <span class="mono">hub-control</span> a Discovery_Collector and three <span class="mono">add_setting</span> lines. An included file runs once per load however many parents pull it in, which is why every composition mounts exactly one Topic_Probe. Frontmatter is read from the top-level file alone, so <span class="mono">job-hub</span>, <span class="mono">job-spoke</span> and <span class="mono">hub-control</span> restate the <span class="mono">var</span> they need; <span class="mono">complete</span> restates none. Every file ends with <span class="mono">secure</span>.</p>
+
+<div class="legend"><span><span style="background:#F6F7F7;border:1px dashed #B0B3B8">stock</span>substrate topology</span><span><span style="background:#003DA5;color:#fff">primitive</span>declares its own nodes</span><span><span style="background:#fff;border:2px solid #003DA5;color:#003DA5">composition</span>mostly includes</span><span><span style="background:#F6F7F7;border:1px solid #C3C4C7">reads</span><span style="background:#F0F4FB;border:1px solid #C3D3EC;color:#003DA5">writes</span></span></div>
+
+<div class="cols">
+  <div class="col">
+    <h2>Substrate stock, included</h2>
+    <div class="tp stock"><div class="name">topic-probe</div><div class="io"><span class="w">topicprobe.p0</span></div><p>A 15 s Topic_Probe sweep writing per-worker Consumer stats. Every file reaches it.</p></div>
+    <div class="tp stock"><div class="name">job-intake</div><div class="io"><span class="r">jobintake.pN</span><span class="w">jobs.pN</span></div><p><span class="mono">jobintake:consumer</span> wired straight to <span class="mono">jobs:partition</span> under <span class="mono">void_warranty</span>. Standalone, it is a substrate-only install's job drain; the conflict gate refuses it beside either router.</p></div>
+    <div class="tp stock"><div class="name">job-worker</div><div class="io"><span class="r">jobs.pN</span><span class="w">jobstats.p0</span></div><p><span class="mono">jobs:consumer</span> in line mode, <span class="mono">Job_Worker</span>, a 15 s Job_Probe. <span class="var">var stale_timeout = 600</span>, which an include skips.</p></div>
+    <div class="tp stock"><div class="name">settings-sync</div><div class="io"><span class="r">settings.p0</span></div><p><span class="mono">settings:consumer</span> and the <span class="mono">Settings_Sync</span> node on a 300 s tick, with the substrate's own <span class="mono">add_setting</span> lines: <span class="mono">num_partitions</span>, and each <span class="mono">remote_*</span> axis twice. <span class="var">var num_partitions = 1</span>.</p></div>
+  </div>
+
+  <div class="col">
+    <h2>Primitives, this plugin's</h2>
+    <div class="tp"><div class="name">request-builder</div><div class="io"><span class="r">firehose.pN</span><span class="w">requests.pN</span><span class="w">errors.p0</span><span class="w">alerts.p0</span><span class="w">completed.p0</span><span class="w">gyroscope.p0</span></div><div class="inc"><span class="lbl">includes</span><span class="st">topic-probe</span></div><p><span class="mono">Request_Builder 100 3</span>, snapshotted into the firehose Consumer's offsetlog; <span class="mono">completed:tee</span> fans the summary two ways.</p></div>
+    <div class="tp"><div class="name">flame-builder</div><div class="io"><span class="r">requests.pN</span><span class="w">flames.pN</span><span class="w">flame-stats.pN</span><span class="w">memcache</span></div><div class="inc"><span class="lbl">includes</span><span class="st">topic-probe</span></div><p><span class="mono">configure_stats</span>, <span class="mono">set_stats_target &lt;eln:stats_mirror_node&gt;</span>, <span class="mono">set_is_hub &lt;eln:is_hub&gt;</span>; the mirror partition takes its segment size, segment count and lifetime from <span class="mono">&lt;eln:stats_mirror_*&gt;</span> tokens and the rest of its geometry from <span class="mono">&lt;config:&gt;</span>.</p></div>
+    <div class="tp"><div class="name">job-router</div><div class="io"><span class="r">firehose.pN</span><span class="r">jobintake.pN</span><span class="w">jobs.pN</span></div><div class="inc"><span class="lbl">includes</span><span class="st">job-intake</span></div><p>Re-routes <span class="mono">jobintake:consumer</span> through <span class="mono">Job_Router</span> and <span class="mono">Age_Sieve 900 1</span>.</p></div>
+    <div class="tp"><div class="name">job-feed</div><div class="io"><span class="r">jobfeed.pN</span><span class="r">jobintake.pN</span><span class="w">jobs.pN</span></div><div class="inc"><span class="lbl">includes</span><span class="st">job-intake</span></div><p><span class="mono">job-router</span> with <span class="mono">jobfeed.pN</span> in the firehose's place. An alternative, never a pair: both write <span class="mono">jobs.pN</span> under <span class="mono">void_warranty</span>, and the conflict gate refuses activating the two together.</p></div>
+    <div class="tp"><div class="name">aggregator</div><div class="io"><span class="r">spoke firehose.pN, over SSE</span><span class="w">firehose.pN</span></div><div class="inc"><span class="lbl">includes</span><span class="st">topic-probe</span></div><p><span class="mono">Remote_Job_Rewrite</span> into a multi-partition <span class="mono">Topic</span>. The per-spoke <span class="mono">Remote_Source</span> nodes are operator-wired on the canvas, not shipped.</p></div>
+  </div>
+
+  <div class="col">
+    <h2>Compositions</h2>
+    <div class="tp comp"><div class="name">performance</div><div class="inc"><span class="pr">request-builder</span><span class="pr">flame-builder</span></div><p>Assembly plus flames in one worker; one probe, two Consumers.</p></div>
+    <div class="tp comp"><div class="name">job-hub</div><div class="inc"><span class="pr">job-router</span><span class="st">job-worker</span></div><p><span class="var">var stale_timeout = 600</span> restated: a handler heartbeats only where it reaches <span class="mono">should_continue()</span>, so at the default a peer would steal a busy worker's lock mid-job.</p></div>
+    <div class="tp comp"><div class="name">job-spoke</div><div class="inc"><span class="pr">job-feed</span><span class="st">job-worker</span></div><p>The same, reading <span class="mono">jobfeed</span>. <span class="var">var stale_timeout = 600</span>.</p></div>
+    <div class="tp comp"><div class="name">complete</div><div class="inc"><span class="cp">performance</span><span class="cp">job-hub</span></div><p>Plus <span class="mono">firehose:tee</span>: <span class="mono">job-hub</span> is included last and wires the firehose Consumer to <span class="mono">job-router</span> directly, so five lines re-route that one edge through the Tee to both <span class="mono">request-builder</span> and <span class="mono">job-router</span>. <span class="mono">jobintake:consumer</span> keeps one target and needs no Tee. It restates no <span class="var">var</span>, so its Job_Worker runs at <span class="mono">Lock_Node::STALE_TIMEOUT</span>, 60 s.</p></div>
+    <div class="tp comp"><div class="name">hub-control</div><div class="inc"><span class="st">settings-sync</span></div><p>Plus <span class="mono">Discovery_Collector 300</span> and three <span class="mono">add_setting</span> lines for <span class="mono">rules</span>, <span class="mono">log_memory</span> and <span class="mono">flush_every_line</span>, which must stay in step with <span class="mono">Performance_CI_Node::SETTINGS_OPTIONS</span>. <span class="var">var num_partitions = 1</span>: the fleet runs once whatever the data partition count.</p></div>
+  </div>
+</div>
+
+<div class="notes">
+  <div class="card"><h3>The fleet name scopes every cursor</h3><p><span class="mono">&lt;topology&gt;</span> rides every offsetlog and dead-letter path, so a <span class="mono">request-builder</span> fleet and a <span class="mono">job-router</span> fleet tailing the same <span class="mono">firehose.pN</span> keep separate cursors. Composing them collapses that byte-identical Consumer line into one reader.</p></div>
+  <div class="card"><h3>Five <span class="mono">&lt;eln:&gt;</span> tokens</h3><p><span class="mono">is_hub</span>, <span class="mono">stats_mirror_node</span>, <span class="mono">stats_mirror_lifetime</span> (derived: twice <span class="mono">stats_retention_seconds()</span>), <span class="mono">stats_mirror_segment_size</span> and <span class="mono">stats_mirror_num_segments</span> (0 follows the substrate value in force). <span class="mono">&lt;config:…&gt;</span>, <span class="mono">&lt;partition&gt;</span> and <span class="mono">&lt;topology&gt;</span> are the substrate's.</p></div>
+  <div class="card"><h3>Shell names, not class names</h3><p><span class="mono">make_node Request_Builder</span> resolves to <span class="mono">\Newspack_Event_Logger_Nodes\Request_Builder_Node</span> by scanning the registered namespace prefixes; <span class="mono">Consumer</span>, <span class="mono">Partition</span>, <span class="mono">Tee</span>, <span class="mono">Topic</span>, <span class="mono">Age_Sieve</span> and <span class="mono">Remote_Source</span> resolve under the substrate's.</p></div>
+</div>
+</div>

@@ -1,0 +1,54 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+  .keyrow { display: flex; align-items: stretch; gap: 0; margin: 6px 0; }
+  .keyrow .seg { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; padding: 8px 10px; border: 1px solid #C3C4C7; background: #fff; }
+  .keyrow .seg + .seg { border-left: 0; }
+  .keyrow .seg:first-child { border-radius: 6px 0 0 6px; }
+  .keyrow .seg:last-child { border-radius: 0 6px 6px 0; }
+  .keyrow .seg.s { background: #FBEAEA; color: #B32D2E; font-weight: 700; border-color: #E6A3A3; }
+  .keyrow .seg.s2 { background: #F0F4FB; color: #003DA5; font-weight: 700; border-color: #C3D3EC; }
+  .keyrow .seg.v { background: #EDF7ED; color: #1E5B1E; font-weight: 700; border-color: #9EC89E; }
+  .cap { font-size: 12px; color: #50575E; line-height: 1.45; margin: 2px 0 0; }
+  .act { display: flex; align-items: center; gap: 12px; margin: 12px 0; }
+  .act .cmd { background: #101517; color: #fff; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; padding: 8px 12px; border-radius: 6px; }
+  .act .arr { color: #003DA5; font-size: 20px; font-weight: 700; }
+  .act .chip { margin: 0; font-size: 12.5px; }
+  .grid { display: flex; gap: 16px; }
+  .grid > .panel { flex: 1; }
+  .panel > .body p { font-size: 12.5px; color: #50575E; line-height: 1.5; margin: 0 0 8px; }
+  .three { display: flex; gap: 14px; margin-top: 16px; }
+  .three > * { flex: 1; }
+  .card p, .callout p, .ok p { font-size: 12.5px; }
+</style>
+<div class="sheet">
+<h1>The salt rotation IS the schema migration, and nothing compensates for skipping it</h1>
+<p class="sub">Flushing is the substrate's one button. Rotating the salt moves the install scope that prefixes every memcache key of every Newspack plugin at once, so a schema change orphans the old keys the instant the salt moves. The durable mirror is the one tier the button does not reach, and it carries the one version component this decision otherwise rejects.</p>
+
+<div class="grid">
+  <div class="panel"><header>Memcache: the scope moves, and the old keys are unreachable</header>
+    <div class="body">
+      <p><b>Before:</b> a stats key, as the substrate's Table writes it through <span class="mono">Cache_Backend::site_key()</span>.</p>
+      <div class="keyrow"><span class="seg">newspack_nodes:{v}:</span><span class="seg s">a1b2c3d4e5f6</span><span class="seg">:table:evlog:p0:hourly:2026-09-11-14-05</span></div>
+      <p class="cap">The scope is the first 12 hex of md5( DB_NAME : table prefix : salt ). <span class="mono">Stats_Store</span> keeps no salt of its own.</p>
+      <div class="act"><span class="cmd">wp nodes memcache flush</span><span class="arr">→</span><span class="chip"><span class="mono">Cache_Backend::rotate_salt()</span> stores a new salt</span></div>
+      <p><b>After:</b> the same logical key under a new scope. The old key still sits in memcache until its TTL, and nothing will ever ask for it.</p>
+      <div class="keyrow"><span class="seg">newspack_nodes:{v}:</span><span class="seg s2">9f8e7d6c5b4a</span><span class="seg">:table:evlog:p0:hourly:2026-09-11-14-05</span></div>
+      <p class="cap">A long-running worker memoizes the scope for its life: restart workers for immediate effect.</p>
+    </div></div>
+  <div class="panel"><header>The durable mirror: no scope, its own version</header>
+    <div class="body">
+      <p>The mirror exists to outlive the flush (decision 10), so its key carries no install scope and the rotation reaches nothing on disk.</p>
+      <div class="keyrow"><span class="seg">evlog:</span><span class="seg v">m1</span><span class="seg">:p0:{key}</span></div>
+      <p class="cap"><span class="mono">Stats_Store::entry_key()</span>. The <span class="mono">m1</span> is <span class="mono">MIRROR_KEY_VERSION</span>, folded into every durable key.</p>
+      <div class="act"><span class="cmd" style="background:#003DA5">a frame shape changes</span><span class="arr">→</span><span class="chip">bump <span class="mono">MIRROR_KEY_VERSION</span></span></div>
+      <div class="keyrow"><span class="seg">evlog:</span><span class="seg v">m2</span><span class="seg">:p0:{key}</span></div>
+      <p class="cap">The mirror's own migration lever. Nothing compensates for skipping that bump either.</p>
+    </div></div>
+</div>
+
+<div class="three">
+  <div class="callout"><h4>Skip the button</h4><p>The dashboard reads garbage for one retention window. That is an operator error with a one-command fix, <span class="mono">wp nodes memcache flush</span>, not a case for the runtime to detect.</p></div>
+  <div class="card"><h3>No second mechanism beside it</h3><p>No reader or writer carries a shape probe, a version component in a memcache key, or a row-level legacy test. Each would be a second migration mechanism beside this one button, maintained against every future row shape.</p></div>
+  <div class="card"><h3>One mechanism, two uses</h3><p>Schema bumps and emergency flushes share it: a flush and a migration are the same rotation.</p></div>
+</div>
+</div>

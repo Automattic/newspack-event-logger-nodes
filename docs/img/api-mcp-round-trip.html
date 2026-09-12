@@ -1,0 +1,121 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+.seq { position: relative; width: 1052px; }
+.seq svg.wire { position: absolute; left: 0; top: 0; }
+.seq .lane { position: absolute; top: 0; width: 250px; min-height: 90px; padding: 12px 14px; }
+.seq .lane h3 { font-size: 14.5px; }
+.seq .lane p { font-size: 12px; margin: 0; }
+.seq .hop { position: absolute; background: #fff; border: 1px solid #C3D3EC; border-radius: 7px;
+  padding: 9px 12px 9px 40px; font-size: 12.5px; line-height: 1.5; color: #101517; }
+.seq .n { position: absolute; left: 10px; top: 9px; width: 22px; height: 22px; border-radius: 50%;
+  background: #003DA5; color: #fff; font-size: 12px; font-weight: 700; text-align: center; line-height: 22px; }
+.seq .panel { position: absolute; }
+.seq .panel header { position: relative; padding-left: 44px; font-size: 14px; }
+.seq .panel header .n { background: #fff; color: #003DA5; left: 12px; top: 8px; }
+.seq .panel .body { padding: 12px 14px 6px; }
+.seq .panel .chip { font-size: 12.5px; line-height: 1.45; padding: 7px 10px; }
+.seq .cap { position: absolute; font-size: 12px; color: #50575E; text-align: center; background: #FBFBFC; padding: 0 6px; white-space: nowrap; }
+.seq .hop .mono, .seq .panel .mono { overflow-wrap: anywhere; }
+.chip .st { display: inline-block; min-width: 34px; font-weight: 700; color: #B32D2E; margin-right: 6px; }
+.chip .st.pass { color: #1E5B1E; }
+.two { display: flex; gap: 16px; margin-top: 18px; align-items: stretch; }
+.two .card { flex: 1; }
+.roster { display: flex; gap: 8px; margin-top: 8px; }
+.roster .col { flex: 1; border-radius: 7px; padding: 8px 10px; font-size: 12px; line-height: 1.5; }
+.roster .col.read { flex: 2; background: #F0F4FB; border: 1px solid #C3D3EC; }
+.roster .col.tune { background: #E8EEF9; border: 1px solid #003DA5; }
+.roster .col.none { background: #F6F7F7; border: 1px dashed #B0B3B8; color: #50575E; }
+.roster .col b { display: block; font-size: 12.5px; margin-bottom: 3px; }
+.roster .col.read b, .roster .col.tune b { color: #003DA5; }
+</style>
+<div class="sheet">
+<h1>One POST carries every MCP method, and the session's scope is a ceiling</h1>
+<p class="sub">Six hops take a tool call from an agent to the same verb handler the dashboards drive, and its reply back as one JSON-RPC response. The gate decides whose authority is spent; the interpreter behind it is the one <span class="mono">/command</span> reaches.</p>
+
+<div class="seq" id="seq">
+<svg class="wire" id="wire"><defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#003DA5"/></marker></defs></svg>
+
+<div class="lane card" data-lane="0"><h3>Agent</h3><p>An MCP client registered once with the handle and key a command session issued.</p></div>
+<div class="lane card" data-lane="1"><h3>The gate</h3><p><span class="mono">MCP_Controller::<wbr>check_permission()</span>, the route's permission callback.</p></div>
+<div class="lane card" data-lane="2"><h3>JSON-RPC</h3><p><span class="mono">MCP_Controller::<wbr>dispatch()</span>: one route, <span class="mono">POST …/newspack-event-logger-nodes/v1/mcp</span>, four methods.</p></div>
+<div class="lane card" data-lane="3"><h3>The verb</h3><p>The <span class="mono">performance</span> or <span class="mono">rules</span> interpreter, mounted by <span class="mono">Bootstrap::<wbr>mount_request_graph()</span>, and its handler.</p></div>
+
+<div class="hop" data-span="0,1"><span class="n">1</span>One JSON-RPC request per POST, under <span class="mono">Authorization: Bearer &lt;handle&gt;.&lt;key&gt;</span>: 32 hex, a dot, 64 hex.</div>
+
+<div class="panel" data-arrow="0,1" data-cap="POST, over HTTPS" data-span="1,3">
+  <header><span class="n">2</span>Three refusals, the swap, then the meter; the first to fail answers</header>
+  <div class="body">
+    <div class="chip"><span class="st">403</span><span class="mono">Bootstrap::fleet_gate()</span>: the fleet is network-global, so a multisite subsite is refused.</div>
+    <div class="chip"><span class="st">401</span>The header does not match the Bearer shape.</div>
+    <div class="chip"><span class="st">401</span><span class="mono">Command_Auth::load_session_record( handle )</span> finds no live session, or its key fails <span class="mono">hash_equals</span>.</div>
+    <div class="chip"><span class="st pass">&#10003;</span>The request BECOMES the session's minting user (<span class="mono">wp_set_current_user</span>); the session's scope is installed as <span class="mono">Capabilities::$session_scope</span>, a ceiling and never a grant.</div>
+    <div class="chip"><span class="st">429</span>The handle's 21st call inside one 10-second bucket (<span class="mono">RATE_LIMIT_BURST</span> 20, <span class="mono">RATE_LIMIT_WINDOW_S</span> 10). Checked last, so an unauthenticated flood cannot fill the transient table.</div>
+  </div>
+</div>
+
+<div class="panel" data-arrow="1,2" data-cap="authenticated" data-span="1,3">
+  <header><span class="n">3</span>Dispatch on <span class="mono">method</span></header>
+  <div class="body">
+    <div class="chip"><span class="mono">initialize</span> answers <span class="mono">protocolVersion</span> 2025-06-18, <span class="mono">capabilities.tools</span>, <span class="mono">serverInfo</span> (name, plugin version) and <span class="mono">instructions</span>: the measurement caveat, <span class="mono">Findings::caveat()</span>.</div>
+    <div class="chip"><span class="mono">notifications/initialized</span> answers nothing: JSON-RPC forbids replying to a notification.</div>
+    <div class="chip"><span class="mono">tools/list</span> answers only the tools whose declared role <span class="mono">Capabilities::can()</span> allows, which tests BOTH halves: the ceiling and the user's own capability.</div>
+        <div class="chip danger">Any other method: error <span class="mono">-32601 Unknown method: &lt;method&gt;</span>. A body that is not a JSON-RPC request: <span class="mono">-32600</span>.</div>
+  </div>
+</div>
+
+<div class="panel" data-arrow="2,3" data-cap="tools/call" data-span="1,3">
+  <header><span class="n">4</span>The call becomes a command</header>
+  <div class="body">
+    <div class="chip danger">A name absent from the ten tools, OR a role the session cannot spend: <span class="mono">-32601 Unknown tool: &lt;name&gt;</span>. A typo and a permission refusal get one answer; <span class="mono">tools/list</span> is what tells them apart.</div>
+    <div class="chip">The named arguments become a flat token list: every key in <span class="mono">POSITIONAL_ARGS</span> (<span class="mono">descriptor, hash, rid, pattern, rule, id, context</span>) rides bare, in that order; every other key becomes <span class="mono">--key=value</span> through <span class="mono">Command_Args::format()</span>.</div>
+    <div class="chip"><span class="mono">$node-&gt;dispatch( verb, tokens )</span> on the CI the tool names. The verb's own capability gate and handler run exactly as they do for <span class="mono">/command</span>; the MCP layer adds no verb.</div>
+  </div>
+</div>
+
+<div class="hop" data-arrow="3,2" data-cap="returns, or throws" data-span="1,3"><span class="n">5</span>A return value becomes one <span class="mono">text</span> content block: the string as it is, anything else JSON-encoded. A throw becomes <span class="mono">result.isError: true</span> with the message as the text: a tool error, not a transport error, because the call reached the server and was answered.</div>
+
+<div class="hop" data-arrow="2,0" data-cap="HTTP 200, one JSON-RPC response" data-span="0,3"><span class="n">6</span><span class="mono">{ jsonrpc: "2.0", id, result }</span> or <span class="mono">{ jsonrpc: "2.0", id, error: { code, message } }</span>. Nothing in a reply asks the agent to act; wiring a client up is the operator's deliberate act.</div>
+</div>
+
+<div class="two">
+  <div class="card">
+    <h3>What a session sees: the ceiling only subtracts</h3>
+    <p>A tool is offered and callable only when the session's scope covers its role AND the minting user holds that capability. A manage-scoped session minted by a user who can do nothing still does nothing.</p>
+    <div class="roster">
+      <div class="col read"><b>read scope: eight tools</b>performance_overview, performance_urls, dump_url, search_requests, dump_request, grep_requests, performance_ask, dump_rules</div>
+      <div class="col tune"><b>tune scope: two more</b>rules_upsert, rules_delete</div>
+      <div class="col none"><b>no tool: /command only</b>performance.url_breakdown, list_hooks, set; rules.save, reset; discovery.get</div>
+    </div>
+  </div>
+  <div class="callout" style="flex:0 0 270px">
+    <h4>The caveat rides on every tool</h4>
+    <p>Each description ends with the measurement caveat <span class="mono">initialize</span> hands back as <span class="mono">instructions</span>. A model handed a profiled-versus-duration ratio without it invents a cause for the gap, and the invented cause reads like a finding.</p>
+  </div>
+</div>
+<script>
+(function () {
+  var L = [131, 394, 657, 920], seq = document.getElementById('seq'), svg = document.getElementById('wire');
+  var NS = 'http://www.w3.org/2000/svg', HALF = 125, LAST = L.length - 1;
+  function el(t, a) { var e = document.createElementNS(NS, t); for (var k in a) e.setAttribute(k, a[k]); return e; }
+  var lanes = seq.querySelectorAll('.lane'), headBottom = 0;
+  lanes.forEach(function (c) { var i = +c.dataset.lane; c.style.left = (L[i] - HALF) + 'px'; headBottom = Math.max(headBottom, c.offsetHeight); });
+  var y = headBottom + 18;
+  seq.querySelectorAll('[data-span]').forEach(function (b) {
+    var s = b.dataset.span.split(',').map(Number), x0 = L[s[0]] - HALF + 3, x1 = L[s[1]] + HALF - 3;
+    if (s[1] === LAST) x1 = 1052;
+    if (b.dataset.arrow) {
+      var a = b.dataset.arrow.split(',').map(Number), ay = y + 22, dir = a[1] > a[0] ? 1 : -1;
+      svg.appendChild(el('path', { d: 'M' + L[a[0]] + ' ' + ay + ' H' + (L[a[1]] - 6 * dir), stroke: '#003DA5', 'stroke-width': 1.8, fill: 'none', 'marker-end': 'url(#a)' }));
+      var cap = document.createElement('div'); cap.className = 'cap'; cap.textContent = b.dataset.cap;
+      cap.style.top = (ay - 20) + 'px'; seq.appendChild(cap);
+      cap.style.left = ((L[a[0]] + L[a[1]]) / 2 - cap.offsetWidth / 2) + 'px';
+      y = ay + 10;
+    }
+    b.style.left = x0 + 'px'; b.style.width = (x1 - x0) + 'px'; b.style.top = y + 'px';
+    y += b.offsetHeight + 12;
+  });
+  var boxes = seq.querySelectorAll('[data-span]'), lastTop = boxes[boxes.length - 1].offsetTop;
+  seq.style.height = y + 'px'; svg.setAttribute('width', 1052); svg.setAttribute('height', y);
+  L.forEach(function (x) { svg.insertBefore(el('path', { d: 'M' + x + ' ' + (headBottom + 4) + ' V' + (lastTop - 4), stroke: '#B0B3B8', 'stroke-dasharray': '4 5', 'stroke-width': 1.5 }), svg.firstChild.nextSibling); });
+})();
+</script>

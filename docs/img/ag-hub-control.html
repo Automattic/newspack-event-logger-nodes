@@ -1,0 +1,53 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+.cols { display:flex; gap:18px; align-items:flex-start; }
+.col { flex:1; }
+.col h2 { font-size:15px; margin:0 0 10px; }
+.chain { position:relative; padding-left:34px; }
+.chain::before { content:""; position:absolute; left:13px; top:14px; bottom:26px; width:2px; background:#003DA5; }
+.step { position:relative; margin-bottom:10px; }
+.step .num { position:absolute; left:-34px; top:9px; width:28px; height:28px; border-radius:50%; background:#003DA5; color:#fff; font-size:13px; font-weight:700; line-height:28px; text-align:center; }
+.step .card { padding:10px 14px; }
+.step .card h3 { font-size:13.5px; margin:0 0 4px; }
+.step .card p { font-size:12px; margin:0 0 4px; }
+.step .card p:last-child { margin-bottom:0; }
+.step.spoke .num { background:#fff; color:#003DA5; border:2px solid #003DA5; line-height:24px; }
+.step.spoke .card { border-color:#003DA5; }
+.where { font-size:10.5px; color:#787C82; text-transform:uppercase; letter-spacing:.04em; margin-bottom:2px; }
+.bottom { display:flex; gap:12px; margin-top:6px; }
+.bottom > div { flex:1; }
+.mono { overflow-wrap:anywhere; }
+</style>
+<div class="sheet">
+<h1>The hub pushes settings and pulls discovery, one signed command per spoke</h1>
+<p class="sub"><span class="mono">hub-control</span> is the substrate's <span class="mono">settings-sync</span> topology plus this plugin's three option registrations and its Discovery_Collector, pinned to one partition. Neither fan-out goes through a Tee: a command is signed under its spoke's session key, and re-addressing it after the mint verifies nowhere.</p>
+
+<div class="cols">
+  <div class="col">
+    <h2>Settings out: an option change becomes a push</h2>
+    <div class="chain">
+      <div class="step"><div class="num">1</div><div class="card"><div class="where">any request on the hub</div><h3>An admin edit, an auto-tune decision, a <span class="mono">performance set</span></h3><p>All three write a WordPress option. <span class="mono">Settings_Event_Writer::maybe_emit()</span> watches the <span class="mono">newspack_</span> prefix and returns on any other name.</p></div></div>
+      <div class="step"><div class="num">2</div><div class="card"><div class="where">settings.p0</div><h3>One event per change: the option NAME always</h3><p>Old and new value excerpts ride only for options on <span class="mono">newspack_nodes/settings_audit_values_allowlist</span>. They are audit detail; the sync never reads them.</p></div></div>
+      <div class="step"><div class="num">3</div><div class="card"><div class="where">settings:consumer → Settings_Sync, every 300 s too</div><h3>The value is read at CONSUME time</h3><p>A burst of writes to one option collapses to one current-value push, and no stale value can race a fresher one. The full registered set is re-pushed on the tick.</p><p>ELN's <span class="mono">newspack_nodes/settings_sync/value</span> filter substitutes the OWNING config's default for a blank (<span class="mono">''</span>) or absent (<span class="mono">false</span>) value, substrate keys against the substrate's defaults, and runs the ruleset through <span class="mono">Rule_Set::hydrate_array()</span> so pointer rules ship hook-complete.</p></div></div>
+      <div class="step"><div class="num">4</div><div class="card"><div class="where">per live spoke, over an operator-wired HTTP_Out</div><h3>One signed <span class="mono">set</span> per registered option per spoke</h3><p>The registrations: the substrate's <span class="mono">num_partitions</span> and each <span class="mono">remote_*</span> axis twice (once onto the spoke's own geometry, once to seed its <span class="mono">remote_*</span> copy for ITS spokes), addressed to the spoke's <span class="mono">settings</span> CI; plus this file's <span class="mono">rules</span>, <span class="mono">log_memory</span> and <span class="mono">flush_every_line</span>, addressed to its <span class="mono">performance</span> CI.</p></div></div>
+      <div class="step spoke"><div class="num">5</div><div class="card"><div class="where">on the spoke, for ELN's three keys</div><h3><span class="mono">performance set</span>, a TUNE verb</h3><p>Writes one of the three <span class="mono">SETTINGS_OPTIONS</span> names; anything else comes back as "unknown option". <span class="mono">Rule_Set::OPTION_RULES</span> routes to <span class="mono">apply_synced()</span> instead, which re-tiers on arrival and holds its own no-op gate.</p></div></div>
+    </div>
+  </div>
+
+  <div class="col">
+    <h2>Discovery in: what each spoke could log</h2>
+    <div class="chain">
+      <div class="step"><div class="num">1</div><div class="card"><div class="where">Discovery_Collector, every 300 s</div><h3><span class="mono">fire()</span> walks the live targets</h3><p><span class="mono">make_node Discovery_Collector discovery-collector 300</span>; a blank token also means 300 s. A target with no established session is skipped after asking the egress for a handshake.</p></div></div>
+      <div class="step"><div class="num">2</div><div class="card"><div class="where">per live spoke</div><h3>One signed <span class="mono">discovery.get</span> TM_COMMAND</h3><p>Addressed at that spoke's <span class="mono">discovery</span> CI, FROM this node.</p></div></div>
+      <div class="step spoke"><div class="num">3</div><div class="card"><div class="where">on the spoke</div><h3><span class="mono">discovery get</span>, the CI's only verb</h3><p>Answers <span class="mono">{ registered_hooks, custom_events }</span>: <span class="mono">Rule_Set::instrumented_union()</span> across every LOG rule, custom-event names filtered out of the hooks so the two catalogs stay disjoint. It reports the ruleset and never writes it.</p></div></div>
+      <div class="step"><div class="num">4</div><div class="card"><div class="where">the reply self-routes, TO = FROM</div><h3><span class="mono">fill()</span> union-merges, one reply at a time</h3><p>Monotonic, so out-of-order or partial replies converge. Remote strings are sanitized; both catalogs are capped at <span class="mono">MAX_EVENTS</span> 10,000.</p></div></div>
+      <div class="step"><div class="num">5</div><div class="card"><div class="where">two non-autoloaded options</div><h3>It stages, it does not instrument</h3><p><span class="mono">stage_discovered()</span> writes hooks into <span class="mono">discovered_hooks</span> and custom events into <span class="mono">discovered_events</span>; within one reply, a name reported as a custom event never also stages as a hook. The rules editor's picker reads them, and the editor is the only writer of rules.</p></div></div>
+    </div>
+  </div>
+</div>
+
+<div class="bottom">
+  <div class="ok"><h4>Ungated by design, and still authorized</h4><p>A watched option change always records an event. Without <span class="mono">hub-control</span> active and per-spoke <span class="mono">HTTP_Out &lt;name&gt; &lt;vault-id&gt;</span> nodes wired from the console, the event is tailed and dropped: on a spoke or a standalone site there is no consumer. Cheaper and harder to misconfigure than a per-listener <span class="mono">get_option</span> gate. Who may make the change is a separate question: <span class="mono">Auto_Tuner_Node::authorized()</span> and the TUNE capability still stand.</p></div>
+  <div class="card"><h3>Credentials are the substrate's</h3><p>The Vault holds each spoke's URL and credentials, sealing the password at rest under a key derived from <span class="mono">wp_salt( 'auth' )</span>; this plugin stores none and offers no CRUD surface. On <span class="mono">newspack_nodes/vault/changed</span>, <span class="mono">Bootstrap::reload_vault_consumers()</span> walks every active topology carrying a <span class="mono">Remote_Link</span> or <span class="mono">Remote_Source</span> node and asks each partition's lock to RELOAD, over the reload channel rather than the restart one, so a credential change costs no process recycle.</p></div>
+</div>
+</div>

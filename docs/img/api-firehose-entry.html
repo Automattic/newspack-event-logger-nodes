@@ -1,0 +1,72 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+  .wire { display: flex; align-items: flex-end; gap: 0; font-size: 15px; line-height: 1.2; padding: 12px 16px 14px; }
+  .wire .br { color: #787C82; padding: 0 3px; align-self: flex-end; }
+  .slot { display: flex; flex-direction: column; align-items: center; gap: 5px; }
+  .slot .idx { width: 20px; height: 20px; border-radius: 50%; background: #003DA5; color: #fff; font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; font-family: Inter, sans-serif; }
+  .slot .nm { color: #101517; }
+  .slot .val { font-size: 12px; color: #50575E; font-family: Inter, sans-serif; text-align: center; line-height: 1.3; }
+  .slot.hi .nm { color: #003DA5; font-weight: 700; }
+  .entry { display: flex; gap: 6px; margin-top: 10px; }
+  .entry .f { flex: 1; background: #F0F4FB; border: 1px solid #C3D3EC; border-radius: 6px; padding: 7px 9px; font-size: 12px; line-height: 1.4; }
+  .entry .f b { display: block; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #003DA5; font-size: 13px; }
+  .entry .f.data { background: #fff; border-style: dashed; flex: 2.2; }
+  .entry .f .m { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .ladder { display: flex; gap: 14px; margin-top: 18px; align-items: flex-start; }
+  .steps { flex: 1; }
+  .step { display: flex; gap: 12px; align-items: stretch; margin-bottom: 8px; }
+  .step .bar { flex: 0 0 300px; position: relative; height: 44px; margin-right: 30px; }
+  .step .bar .cap { position: absolute; left: 0; top: 0; height: 44px; width: 100%; border-radius: 6px; border: 1.5px dashed #B0B3B8; }
+  .step .bar .fill { position: absolute; left: 0; top: 4px; height: 36px; border-radius: 5px; background: #003DA5; color: #fff; font-size: 11.5px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+  .step .bar .fill.over { background: #B32D2E; }
+  .step .bar .fill.floor { background: #787C82; }
+  .step .txt { flex: 1; font-size: 12.5px; line-height: 1.45; color: #50575E; align-self: center; }
+  .step .txt b { color: #101517; }
+  .step .txt .m { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #101517; }
+  .side { flex: 0 0 330px; }
+  .side .callout p .m, .side .ok p .m { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+</style>
+<div class="sheet">
+  <h1>A firehose line is one <span class="mono">TM_STRUCT</span> message, and the entry inside it is held to 3,840 bytes</h1>
+  <p class="sub"><span class="mono">Log_Manager::message( category, data )</span> builds the entry, fits its encoding under <span class="mono">MAX_DATA_SIZE</span>, and hands it to the firehose Topic keyed by the request id. Linux appends atomically up to 4,096 bytes; the 256 left over cover the key and the JSON framing.</p>
+
+  <div class="panel">
+    <header>The message: seven slots, four of them filled</header>
+    <div class="wire mono">
+      <span class="br">[</span>
+      <span class="slot hi" style="flex:1"><span class="idx">0</span><span class="nm">TYPE</span><span class="val">TM_STRUCT (16)</span></span><span class="br">,</span>
+      <span class="slot hi" style="flex:1.1"><span class="idx">1</span><span class="nm">TIMESTAMP</span><span class="val">now, the cached clock</span></span><span class="br">,</span>
+      <span class="slot" style="flex:0.8"><span class="idx">2</span><span class="nm">FROM</span><span class="val">empty</span></span><span class="br">,</span>
+      <span class="slot" style="flex:0.8"><span class="idx">3</span><span class="nm">TO</span><span class="val">empty</span></span><span class="br">,</span>
+      <span class="slot" style="flex:0.7"><span class="idx">4</span><span class="nm">ID</span><span class="val">empty</span></span><span class="br">,</span>
+      <span class="slot hi" style="flex:1.1"><span class="idx">5</span><span class="nm">KEY</span><span class="val">the request id: one request, one partition</span></span><span class="br">,</span>
+      <span class="slot hi" style="flex:1"><span class="idx">6</span><span class="nm">VALUE</span><span class="val">the entry, below</span></span>
+      <span class="br">]</span>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <h3>The entry: <span class="mono">[ 'n', 'k' ] + $data + [ 'ts' ]</span>, in that precedence</h3>
+    <div class="entry">
+      <div class="f"><b>n</b>the line number, stamped by the writer; the builder gap-checks it</div>
+      <div class="f"><b>k</b>the category. <span class="m">x (start)</span> opens a span, <span class="m">x (complete)</span> closes it, <span class="m">process (start|complete|aborted)</span> brackets the record. Never renamed.</div>
+      <div class="f data"><b>…the caller's keys</b><span class="m">m</span> the payload (a string carrying <span class="m">?</span> is URL-redacted first); <span class="m">l</span> the aggregation label; <span class="m">duration_ms</span> on a close; <span class="m">caller</span> under <span class="m">trace_callers</span>; <span class="m">rule</span> on the start line. A caller's own <span class="m">ts</span> wins over the stamp, which is how the profiler back-dates plugin-load rows.</div>
+      <div class="f"><b>ts</b>the same cached clock the TIMESTAMP slot carries</div>
+      <div class="f" style="background:#FBEAEA;border-color:#E6A3A3"><b style="color:#B32D2E">truncated</b>present, and true, only when the ladder ran</div>
+    </div>
+  </div>
+
+  <div class="ladder">
+    <div class="steps">
+      <div class="step"><div class="bar"><div class="cap"></div><div class="fill" style="width:74%">encoded entry ≤ 3,840</div></div><div class="txt"><b>Fits.</b> The encoding is measured once; nothing is touched.</div></div>
+      <div class="step"><div class="bar"><div class="cap"></div><div class="fill over" style="width:112%">over the cap</div></div><div class="txt"><b>Over.</b> <span class="m">fit_data()</span> sets <span class="m">truncated: true</span> and works on <span class="m">m</span> alone: it is the only value that reaches this size.</div></div>
+      <div class="step"><div class="bar"><div class="cap"></div><div class="fill" style="width:90%">m cut to 3,840 · 3,456 · 3,110 · …</div></div><div class="txt"><b>A string <span class="m">m</span> is shortened ten percent a step</b>, re-encoding the whole entry each step because JSON escaping expands bytes, until the encoding fits. Every other key survives, <span class="m">l</span> and <span class="m">caller</span> included.</div></div>
+      <div class="step"><div class="bar"><div class="cap"></div><div class="fill" style="width:40%">m dropped</div></div><div class="txt"><b>No step fits, or <span class="m">m</span> is not a string:</b> <span class="m">m</span> is dropped whole and the rest re-encoded.</div></div>
+      <div class="step"><div class="bar"><div class="cap"></div><div class="fill floor" style="width:52%">n · k · m[:1000]… · ts</div></div><div class="txt"><b>The floor, when the other keys alone still exceed the cap:</b> <span class="m">n</span>, <span class="m">k</span>, <span class="m">ts</span>, <span class="m">truncated</span> and, as <span class="m">m</span>, the first 1,000 bytes of the oversized encoding plus a literal <span class="m">...</span>. A reader can still place the line; that <span class="m">m</span> is a legible dump, not decodable JSON.</div></div>
+    </div>
+    <div class="side stack">
+      <div class="callout"><h4>Why the category is never touched</h4><p>A <span class="m">" (truncated)"</span> suffix would break <span class="m">Flame_Tree::PATTERN_START</span> and <span class="m">Request_Builder_Node</span>'s <span class="m">' (start)'</span> test: the span would never open and its <span class="m">(complete)</span> would orphan. Nothing is chunked and nothing reaches <span class="m">error_log</span>; the entry says so itself.</p></div>
+      <div class="ok"><h4>Anything that can exceed the cap</h4><p>goes through <span class="m">\Newspack_Nodes\Job_Intake::queue()</span>, which takes the auto-lock around large writes and accepts up to <span class="m">MAX_JOB_SIZE</span>, 32 MiB. The constant is private, so a producer sizing its own payloads keeps its own copy: Pyrobase's <span class="m">Runtime\Log</span> does.</p></div>
+    </div>
+  </div>
+</div>

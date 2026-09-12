@@ -1,0 +1,62 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+  .gates { display: flex; gap: 14px; margin-bottom: 16px; }
+  .gates > * { flex: 1; }
+  .g { background: #fff; border: 2px solid #003DA5; border-radius: 9px; padding: 12px 14px; }
+  .g h3 { font-size: 14px; margin: 0 0 6px; color: #003DA5; }
+  .g .cond { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; background: #F0F4FB; border-radius: 5px; padding: 6px 9px; margin: 6px 0; color: #101517; }
+  .g p { font-size: 12.5px; color: #50575E; line-height: 1.5; margin: 0; }
+  .grid { border: 1px solid #C3C4C7; border-radius: 9px; overflow: hidden; background: #fff; }
+  table { border-collapse: collapse; width: 100%; }
+  th { background: #003DA5; color: #fff; text-align: left; padding: 8px 12px; font-size: 12.5px; }
+  th.t { background: #50575E; }
+  td { padding: 8px 12px; border-top: 1px solid #EEF0F2; vertical-align: top; font-size: 12.5px; line-height: 1.5; color: #50575E; }
+  td.ns { width: 190px; color: #101517; font-weight: 700; }
+  td.ns span { display: block; font-weight: 400; color: #787C82; font-size: 12px; }
+  td.all { width: 330px; }
+  td.timed { background: #F6F7F7; width: 320px; }
+  td .m { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: #101517; }
+  td.skip { background: #FBEAEA; color: #B32D2E; }
+  .foot { display: flex; gap: 14px; margin-top: 16px; }
+  .foot > * { flex: 1; }
+  .card p, .callout p { font-size: 12.5px; }
+</style>
+<div class="sheet">
+<h1>A duration nobody measured is not a timing sample</h1>
+<p class="sub"><span class="mono">Flame_Builder_Node::accumulate_all_stats()</span> runs two independent gates on every completed request. Read across a row to see what an evicted or aborted request still adds, and what it never touches.</p>
+
+<div class="gates">
+  <div class="g"><h3>Gate 1 · <span class="mono">$count_global</span> (decision 15)</h3>
+    <div class="cond">! is_worker</div>
+    <p>Keeps worker traffic out of every site-wide aggregate, because one long-running job would otherwise dominate the averages. The per-URL row keeps worker timing on rows of its own.</p></div>
+  <div class="g"><h3>Gate 2 · <span class="mono">$record_timing</span></h3>
+    <div class="cond">duration_ms &gt; 0 &amp;&amp; error_status ∉ { T, A }</div>
+    <p><b>T</b>: <span class="mono">Request_Builder_Node::evict_request()</span> stamps it, with <span class="mono">now − start</span>, on a trace the LRU evicted mid-request. <b>A</b>: <span class="mono">Log_Manager</span> stamps it when a cooperative stop lands inside <span class="mono">finish()</span>, or when <span class="mono">end_job_context()</span> is told the job never finished. Both durations measure time to an interruption, not what the request cost.</p></div>
+</div>
+
+<div class="grid"><table>
+  <tr><th>Where it lands</th><th>Every request adds</th><th class="t">Only a timed request adds</th></tr>
+  <tr><td class="ns">The per-URL row<span>urls, positional (decision 18)</span></td>
+    <td class="all"><span class="m">ROW_COUNT</span> and its <span class="m">count_Nxx</span> bucket, <span class="m">ROW_SUM_PEAK_MB</span>, <span class="m">ROW_MAX_PEAK_MB</span>, <span class="m">ROW_LAST_SEEN</span>, <span class="m">ROW_WORKER</span></td>
+    <td class="timed"><span class="m">ROW_TIMED_COUNT</span>, <span class="m">ROW_SUM_MS</span>, <span class="m">ROW_MIN_MS</span>, <span class="m">ROW_MAX_MS</span></td></tr>
+  <tr><td class="ns">The per-URL flame aggregate<span>url</span></td>
+    <td class="all"><span class="m">count</span></td>
+    <td class="timed"><span class="m">sum_value</span> and the children merge</td></tr>
+  <tr><td class="ns">Every dimensional slot<span>dim, url_dim</span></td>
+    <td class="all"><span class="m">c</span></td>
+    <td class="timed"><span class="m">s</span>; an untimed request leaves it at zero</td></tr>
+  <tr><td class="ns">The site totals<span>hourly, non-worker only</span></td>
+    <td class="all"><span class="m">sum_peak_mb</span>, from every non-worker request</td>
+    <td class="timed"><span class="m">count</span> and <span class="m">sum_ms</span></td></tr>
+  <tr><td class="ns">The profiles<span>accumulate_profiles()</span></td>
+    <td class="all skip">nothing: the call is skipped whole</td>
+    <td class="timed">both leaderboards, the three category series and auto-tune</td></tr>
+</table></div>
+
+<div class="foot">
+  <div class="card"><h3>So <span class="mono">count</span> and <span class="mono">timed_count</span> diverge</h3>
+    <p>For a reason that has nothing to do with workers: the row records worker traffic separately, in <span class="mono">ROW_WORKER</span>. <span class="mono">Performance_CI_Node::mean_ms()</span> divides <span class="mono">sum_ms</span> by <span class="mono">timed_count</span>, while <span class="mono">avg_peak_mb</span> divides by <span class="mono">count</span>.</p></div>
+  <div class="callout"><h4><span class="mono">hourly</span> mixes the two populations</h4>
+    <p>Its <span class="mono">sum_peak_mb</span> takes every non-worker request while its <span class="mono">count</span> takes only the timed ones, so <span class="mono">overview</span>'s <span class="mono">global_avg_peak_mb</span> divides across a wider set than its divisor.</p></div>
+</div>
+</div>

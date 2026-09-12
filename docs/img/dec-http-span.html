@@ -1,0 +1,66 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+  .ladder { display: flex; gap: 18px; align-items: stretch; }
+  .main { flex: 0 0 640px; position: relative; padding-left: 30px; }
+  .main::before { content: ""; position: absolute; left: 11px; top: 10px; bottom: 10px; width: 2px; background: #003DA5; }
+  .step { position: relative; margin-bottom: 10px; }
+  .step .n { position: absolute; left: -30px; top: 10px; width: 24px; height: 24px; border-radius: 50%; background: #003DA5; color: #fff; font-size: 12px; font-weight: 700; line-height: 24px; text-align: center; }
+  .step .card { padding: 11px 14px; }
+  .step .card h3 { font-size: 14px; margin-bottom: 6px; }
+  .prio { display: flex; gap: 6px; margin-top: 6px; }
+  .prio .chip { margin: 0; font-size: 12px; line-height: 1.4; padding: 6px 8px; }
+  .prio .chip b { display: block; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; }
+  .prio .chip.us { background: #003DA5; border-color: #003DA5; color: #fff; }
+  .prio .chip.grey { background: #F6F7F7; border-color: #C3C4C7; color: #50575E; }
+  .branch { flex: 1; display: flex; flex-direction: column; gap: 10px; }
+  .rec { background: #fff; border: 1px solid #C3C4C7; border-radius: 8px; overflow: hidden; }
+  .rec header { background: #50575E; color: #fff; font-size: 12.5px; font-weight: 700; padding: 7px 12px; }
+  .rec div { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; padding: 5px 12px; border-top: 1px solid #EEF0F2; overflow-wrap: anywhere; }
+  .rec div span { color: #787C82; font-family: Inter, sans-serif; }
+  .card p, .callout p, .ok p { font-size: 12.5px; }
+  .foot { display: flex; gap: 14px; margin-top: 14px; }
+  .foot > * { flex: 1; }
+</style>
+<div class="sheet">
+<h1>Outbound HTTP is timed as a span, and a short-circuited request opens nothing</h1>
+<p class="sub"><span class="mono">WP_Http::request()</span> is not a hook, but WordPress brackets it: <span class="mono">pre_http_request</span> before, <span class="mono">http_api_debug</span> after. The pair is NOT balanced, and where each callback sits in its chain is the design. Bound for any log rule whose <span class="mono">log_http</span> is not an explicit false.</p>
+
+<div class="ladder">
+  <div class="main">
+    <div class="step"><span class="n">1</span><div class="card"><h3><span class="mono">apply_filters( 'pre_http_request', false, $args, $url )</span></h3>
+      <div class="prio">
+        <div class="chip grey"><b>any priority</b>a cache or a mock may answer the request and return it</div>
+        <div class="chip us"><b>PHP_INT_MAX · http_start</b>last to vote: it sees whether anyone short-circuited</div>
+      </div>
+      <p style="margin-top:8px"><b>$preempt is not false:</b> return it, open nothing. <b>Otherwise:</b> push the label <span class="mono">http</span> and write <span class="mono">http (start)</span>.</p></div></div>
+    <div class="step"><span class="n">2</span><div class="card"><h3>The transport runs</h3>
+      <p>The I/O below PHP userland: the time this span exists to name.</p></div></div>
+    <div class="step"><span class="n">3</span><div class="card"><h3><span class="mono">do_action( 'http_api_debug', $response, … $url )</span></h3>
+      <div class="prio">
+        <div class="chip us"><b>PHP_INT_MIN · http_end</b>first to hear: pops the label it OPENED, writes <span class="mono">http (complete)</span> with the status code</div>
+        <div class="chip grey"><b>every later priority</b>the other listeners, outside the span</div>
+      </div>
+      <p style="margin-top:8px">It pops rather than re-deriving the label from the URL: a redirect hands the action the FINAL url, and a label that no longer matched would leave the span open. Every return path but the short-circuit fires the action, so within one request the pair is exact.</p></div></div>
+  </div>
+
+  <div class="branch">
+    <div class="callout"><h4>The short-circuit fires no close</h4>
+      <p><span class="mono">WP_Http::request()</span> answers a non-false <span class="mono">$preempt</span> with a bare <span class="mono">return $pre;</span> and never fires <span class="mono">http_api_debug</span>. A span opened for it would never close and would adopt every row after it: the severed-span damage decision 13 bounds. A short-circuit is a cache hit with no I/O to time.</p></div>
+    <div class="rec"><header>What one remote call writes</header>
+      <div>http (start) <span>· m</span> the URL, through <span>redact_url()</span></div>
+      <div><span>· l</span> the calling frame, past every WP_Http frame</div>
+      <div>http (complete) <span>· m</span> 200 <span>· duration_ms</span></div></div>
+    <div class="card"><h3>Named for its caller, not its host</h3>
+      <p><span class="mono">l</span> is <span class="mono">origin_frame( true )</span>, which climbs past the class that applied the filter at <span class="mono">TRANSPORT_ORIGIN_DEPTH</span> (16) rather than <span class="mono">ORIGIN_DEPTH</span> (8): "which of my code paths makes this call, how many times" is the reader's question. It climbs whatever decision 24's <span class="mono">trace_callers</span> says, because that budget attaches <span class="mono">caller</span> to hook entries alone.</p></div>
+  </div>
+</div>
+
+<div class="foot">
+  <div class="card"><h3>The record that shows the cost</h3>
+    <p>A BDN <span class="mono">wp-admin/post.php</span> request: 41.7 s wall against 12.2 s CPU, with <span class="mono">Image_CDN::filter_the_content @999999</span> holding 29.4 s of self time and no interior. The 29.5 s off-CPU remainder has no name.</p></div>
+  <div class="card"><h3>What it costs</h3>
+    <p>Two registrations per request and two entries per remote call; zero on a request that makes none. Absent <span class="mono">log_http</span> means ON: only an explicit false drops the spans.</p></div>
+  <div class="card"><h3>Never constructs the logger</h3>
+    <p>Both callbacks ask <span class="mono">Log_Manager::has_instance()</span> first. A binding that outlived its request would otherwise build the logger inside the callback and stamp <span class="mono">process (start)</span> with that moment instead of the profiler's <span class="mono">request_ts</span>.</p></div>
+</div>
+</div>

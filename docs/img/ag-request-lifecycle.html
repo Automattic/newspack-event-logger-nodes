@@ -1,0 +1,60 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+.tl { position:relative; padding-left:150px; }
+.tl::before { content:""; position:absolute; left:132px; top:8px; bottom:8px; width:2px; background:#003DA5; }
+.ev { position:relative; margin-bottom:10px; }
+.ev .when { position:absolute; left:-150px; top:10px; width:118px; text-align:right; font-size:11.5px; color:#50575E; line-height:1.3; }
+.ev .when b { display:block; color:#003DA5; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:11.5px; }
+.ev::before { content:""; position:absolute; left:-23px; top:14px; width:10px; height:10px; border-radius:50%; background:#003DA5; }
+.ev .card { padding:10px 14px; }
+.ev .card h3 { font-size:13.5px; margin:0 0 4px; }
+.ev .card p { font-size:12px; margin:0 0 3px; }
+.ev .card p:last-child { margin-bottom:0; }
+.prio { display:flex; align-items:stretch; gap:0; margin:8px 0 6px; }
+.prio .p { flex:1; border:1px solid #C3D3EC; background:#F0F4FB; padding:6px 8px; font-size:11.5px; line-height:1.3; text-align:center; }
+.prio .p:first-child { border-radius:6px 0 0 6px; }
+.prio .p:last-child { border-radius:0 6px 6px 0; }
+.prio .p b { display:block; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color:#003DA5; font-size:11.5px; }
+.prio .p.ours { background:#003DA5; color:#fff; border-color:#003DA5; }
+.prio .p.ours b { color:#fff; }
+.prio .p.spacer { background:#FBEAEA; border-color:#E6A3A3; }
+.prio .p.spacer b { color:#B32D2E; }
+.pair { display:flex; gap:10px; }
+.pair > div { flex:1; }
+.codes { display:flex; gap:6px; margin-top:8px; }
+.codes .chip { flex:1; margin:0; font-size:11.5px; padding:6px 8px; line-height:1.35; }
+.codes .chip b { display:inline-block; width:18px; height:18px; border-radius:4px; background:#003DA5; color:#fff; text-align:center; line-height:18px; margin-right:5px; font-size:11.5px; }
+.codes .chip.rb b { background:#787C82; }
+.mono { overflow-wrap:anywhere; }
+</style>
+<div class="sheet">
+<h1>What one request binds, and when each line is written</h1>
+<p class="sub">The logger binds only the hooks the governing rule names, so a skip rule binds nothing. Each bound hook is bracketed by three priorities, the callbacks on a significant event are wrapped, and two transport pairs bind as the rule's <span class="mono">log_http</span> and <span class="mono">log_queries</span> allow. PHP's shutdown, not WordPress's, closes the record.</p>
+
+<div class="tl">
+  <div class="ev"><div class="when"><b>PHP begins</b>mu-plugin <span class="mono">00-</span></div><div class="card"><h3>The profiler drop-in reads the clock first</h3><p><span class="mono">00-newspack-profiler.php</span> sorts ahead of every other mu-plugin, records <span class="mono">hrtime()</span> and <span class="mono">microtime()</span>, and times each site-activated plugin's load by differencing each <span class="mono">plugin_loaded</span> firing against the one before, the first against the active-plugins baseline: duration, new classes, new files.</p></div></div>
+  <div class="ev"><div class="when"><b>plugins_loaded</b>priority −10001</div><div class="card"><h3>Plugin spans land, one below <span class="mono">hook_start_priority</span></h3><p>One <span class="mono">&lt;slug&gt; plugin (start)</span> / <span class="mono">(complete)</span> pair per plugin, each carrying its own measured <span class="mono">ts</span>, so plugin loading spreads across the flame rather than collapsing onto the flush moment.</p></div></div>
+  <div class="ev"><div class="when"><b>plugins_loaded</b>priority 11</div><div class="card"><h3><span class="mono">App\Core</span> constructs and binds the rule's hooks</h3><p><span class="mono">Log_Manager</span> consumed the profiler's two readings on first use, so <span class="mono">process (start)</span> is stamped where PHP began. Three exclusions hold even when a rule names the hook: <span class="mono">plugin_loaded</span>, which the drop-in times; <span class="mono">query</span>, when the rule's SQL span already covers it; and any name under the four prefixes <span class="mono">Hook_Categorizer::is_internal()</span> recognises, because instrumenting one re-enters the bootstrap. <span class="mono">newspack_event_logger_nodes_scope_changed</span> rebinds for a job's own rule.</p></div></div>
+  <div class="ev"><div class="when"><b>each bound hook</b>a span pair</div><div class="card"><h3>Three priorities bracket every callback</h3>
+    <div class="prio">
+      <div class="p ours"><b>hook_start</b><span class="mono">hook_start_priority</span>, default −10000</div>
+      <div class="p"><b>callbacks</b>wrapped as listener spans <span class="mono">&lt;callable&gt; @&lt;priority&gt;</span> where the rule names the hook a significant event</div>
+      <div class="p spacer"><b>hook_spacer</b><span class="mono">PHP_INT_MAX − 2</span>, a sacrificial no-op</div>
+      <div class="p ours"><b>hook_complete</b><span class="mono">PHP_INT_MAX − 1</span></div>
+    </div>
+    <p><span class="mono">wrap_callbacks()</span> wraps only priorities strictly between the start and the spacer, so the three never wrap themselves; it skips any callback whose reflection reports a by-reference parameter; each wrapper claims <span class="mono">accepted_args = 99</span> and slices back to the original's count. The spacer absorbs the pointer shift a self-removing filter (es-wp-query) causes, so <span class="mono">hook_complete</span> still fires. A rule with <span class="mono">trace_hooks</span> puts the calling frame on <span class="mono">l</span>.</p></div></div>
+  <div class="ev"><div class="when"><b>per rule</b>two transport pairs</div><div class="card">
+    <div class="pair">
+      <div><h3>Outbound HTTP, <span class="mono">log_http</span> on by default</h3><p><span class="mono">http_start</span> on <span class="mono">pre_http_request</span> at <span class="mono">PHP_INT_MAX</span>, after every short-circuiting filter has voted, and opens NOTHING when <span class="mono">$preempt</span> is not false. <span class="mono">http_end</span> on <span class="mono">http_api_debug</span> at <span class="mono">PHP_INT_MIN</span>, so the span covers the request rather than the other listeners there, closing the label it opened.</p></div>
+      <div><h3>SQL, <span class="mono">log_queries</span> off by default</h3><p><span class="mono">query_start</span> on the <span class="mono">query</span> filter at <span class="mono">hook_start_priority</span>, ahead of the chain, so the span covers every rewrite; <span class="mono">query_end</span>, the one that sees the rewritten SQL, on <span class="mono">log_query_custom_data</span> at <span class="mono">PHP_INT_MIN</span>, which fires only under <span class="mono">SAVEQUERIES</span>. It drains <span class="mono">$wpdb-&gt;queries</span>, so Query Monitor would find it empty.</p></div>
+    </div>
+    <p>Both spans label <span class="mono">l</span> with <span class="mono">origin_frame( true )</span>, which climbs past the transport class, up to <span class="mono">TRANSPORT_ORIGIN_DEPTH</span> 16 frames, to the code that asked. It climbs whatever <span class="mono">trace_callers</span> says: that budget attaches <span class="mono">caller</span> to hook entries alone, so <span class="mono">l</span> is the one field on a transport span naming who asked.</p></div></div>
+  <div class="ev"><div class="when"><b>PHP shutdown</b><span class="mono">register_shutdown_function</span></div><div class="card"><h3><span class="mono">finish()</span> closes what is open and writes the terminal</h3><p>Each start left open — a callback threw, <span class="mono">exit</span> ran, a fatal struck — gets a synthetic <span class="mono">&lt;label&gt; (complete)</span> carrying <span class="mono">m: "(orphaned)"</span> and the measured duration. Then the terminal, with the HTTP status; a fatal in <span class="mono">error_get_last()</span> adds <span class="mono">fatal_error</span>, <span class="mono">fatal_file</span>, <span class="mono">fatal_line</span>, <span class="mono">fatal_type</span> and <span class="mono">fatal_plugin</span>.</p>
+    <div class="codes">
+      <div class="chip"><b>F</b><span class="mono">process (complete)</span>, a fatal</div>
+      <div class="chip"><b>A</b><span class="mono">process (aborted)</span>: a stop inside <span class="mono">finish()</span> or mid-job, or a later <span class="mono">before_job</span> listener declining; a handler that throws still ends complete</div>
+      <div class="chip rb"><b>T</b>no terminal arrived; the builder's LRU evicts the record 400–600 s after its last line, sooner under load</div>
+      <div class="chip rb"><b>I</b>the builder saw a sequence gap in the record</div>
+    </div></div></div>
+</div>
+</div>

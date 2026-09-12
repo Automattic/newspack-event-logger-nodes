@@ -1,0 +1,75 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+.g { position:relative; width:1052px; height:700px; }
+.g svg.wire { position:absolute; left:0; top:0; z-index:3; pointer-events:none; }
+.b { position:absolute; z-index:2; background:#fff; border:1px solid #C3C4C7; border-radius:8px; padding:9px 12px; font-size:11.5px; line-height:1.4; }
+.b h3 { font-size:13px; margin:0 0 4px; }
+.b .t { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-weight:700; font-size:12px; color:#003DA5; }
+.b p { margin:0 0 3px; color:#50575E; }
+.b p:last-child { margin-bottom:0; }
+.spoke { border-color:#787C82; }
+.hub { border:2px solid #003DA5; background:#F0F4FB; z-index:1; }
+.node { border-color:#003DA5; }
+.cap { position:absolute; z-index:4; font-size:10.5px; color:#50575E; background:#FBFBFC; padding:0 4px; white-space:nowrap; }
+.matrix { display:flex; gap:12px; margin-top:16px; }
+.matrix .card { flex:1; padding:11px 14px; }
+.matrix .card h3 { font-size:13.5px; }
+.matrix .card p { font-size:12px; margin:0 0 4px; }
+table.reg { border-collapse:collapse; width:100%; font-size:11.5px; margin-top:4px; }
+table.reg th { text-align:left; font-size:11px; color:#787C82; font-weight:600; padding:3px 6px; border-bottom:1px solid #C3C4C7; }
+table.reg td { padding:4px 6px; border-top:1px solid #EEF0F2; vertical-align:top; line-height:1.4; }
+table.reg td.k { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color:#003DA5; white-space:nowrap; }
+.mono { overflow-wrap:anywhere; }
+</style>
+<div class="sheet">
+<h1>A spoke writes only <span class="mono">job</span>; the hub's rewrite is what makes a job central</h1>
+<p class="sub">Every site runs the same plugin and the same write path. A hub is a site that also activates <span class="mono">aggregator</span> and <span class="mono">hub-control</span>: substrate Remote_Source nodes pull each spoke's firehose over SSE, and the one application node between them and the hub's Topic flips <span class="mono">k:"job"</span> to <span class="mono">k:"remote_job"</span>, so the same handler name can mean local work on the spoke and central work on the hub.</p>
+
+<div class="g" id="g">
+<svg class="wire" id="wire" width="1052" height="700"><defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#003DA5"/></marker></defs></svg>
+
+<div class="b spoke" id="s1" style="left:0;top:0;width:330px"><h3>Spoke 1</h3><p><span class="t">firehose.pN</span> written by Log_Manager; <span class="mono">job-hub</span> or <span class="mono">complete</span> routes its own firehose <span class="mono">k:"job"</span> entries and dispatches them against <span class="mono">newspack_nodes/job_handlers</span> (<span class="mono">job-spoke</span> tails only <span class="mono">jobfeed.pN</span> and <span class="mono">jobintake.pN</span>). It runs neither <span class="mono">aggregator</span> nor the rewrite.</p></div>
+<div class="b spoke" id="s2" style="left:361px;top:0;width:330px"><h3>Spoke 2</h3><p>The same. Its <span class="mono">/messages/stream?subscribe=firehose.pN</span> serves the hub's pull from a slot the pull may take past the browser reserve, three per identity.</p></div>
+<div class="b spoke" id="s3" style="left:722px;top:0;width:330px"><h3>Spoke N</h3><p>The same. Credentials for the hub's pull are the spoke's hub user, sealed in the hub's Vault under <span class="mono">wp_salt( 'auth' )</span>; TLS posture is <span class="mono">vault_verify_ssl</span> / <span class="mono">vault_require_ssl</span>.</p></div>
+
+<div class="b hub" id="hub" style="left:0;top:200px;width:1052px;height:500px"><h3 style="position:absolute;right:14px;bottom:8px;margin:0">Hub: <span class="mono">aggregator</span> + <span class="mono">hub-control</span> active, plus <span class="mono">complete</span> for its own traffic</h3></div>
+
+<div class="b node" id="r1" style="left:20px;top:246px;width:300px"><span class="t">Remote_Source spoke-1</span><p>One per spoke AND partition, operator-wired on the console: <span class="mono">&lt;vault-id&gt; firehose.p&lt;partition&gt; &lt;offsetlog&gt; &lt;deadletter&gt;</span>. Patrons its own SSE_In + HTTP_Out, resumes from JSON <span class="mono">positions</span>, owns reconnect and backoff, and publishes <span class="mono">remote:&lt;node&gt;:&lt;partition&gt;</span> status.</p></div>
+<div class="b node" id="r2" style="left:376px;top:246px;width:300px"><span class="t">Remote_Source spoke-2</span><p><span class="mono">set_multi_writer true</span> on every one: it asks the SPOKE's reader to hold a superseded segment for the seal grace, or a straggler's <span class="mono">process (complete)</span> is orphaned and the request never finalizes here.</p></div>
+<div class="b node" id="r3" style="left:732px;top:246px;width:300px"><span class="t">Remote_Source spoke-N</span><p>Scope the offsetlog with <span class="mono">&lt;topology&gt;</span> so two hubs pulling one spoke partition never share a cursor. Omitting the two directories means no cursor and no quarantine.</p></div>
+
+<div class="b node" id="rw" style="left:326px;top:436px;width:400px"><span class="t">remote-job-rewrite</span><p>Remote_Job_Rewrite_Node: an array VALUE with <span class="mono">k:"job"</span> leaves as <span class="mono">k:"remote_job"</span>, 7 bytes longer; everything else passes untouched. A graph node, not a filter, so the substrate's sources stay application-agnostic.</p></div>
+
+<div class="b node" id="tp" style="left:20px;top:580px;width:480px"><span class="t">firehose:topic</span><p>Multi-partition Topic, <span class="mono">firehose.p{partition}</span>: KEY-routes by request-id hash onto the hub's own <span class="mono">firehose.pN</span> on disk, so each downstream partition sees its own slice, exactly as a local request would.</p></div>
+<div class="b" id="cm" style="left:552px;top:580px;width:480px;background:#fff"><span class="t">the hub's own complete workers</span><p>Request_Builder assembles spoke requests beside local ones; Flame_Builder's <span class="mono">set_is_hub</span> turns on the per-server aggregates; Job_Worker dispatches <span class="mono">remote_job</span> against <span class="mono">newspack_nodes/remote_job_handlers</span>.</p></div>
+</div>
+
+<div class="matrix">
+  <div class="card"><h3>Where a handler registers decides where it runs</h3>
+    <table class="reg"><tr><th>filter</th><th>runs</th></tr>
+      <tr><td class="k">job_handlers only</td><td>locally on every site, hub included; the hub ignores the aggregated <span class="mono">remote_job</span> copy</td></tr>
+      <tr><td class="k">remote_job_handlers only</td><td>on the hub alone, after aggregation; spokes write the entries and never act on them</td></tr>
+      <tr><td class="k">both</td><td>locally everywhere AND centrally on the hub, and the two implementations may differ</td></tr>
+    </table>
+    <p style="margin-top:6px">The kind is read from the ENTRY's <span class="mono">k</span>, never the body's, so the rewrite wins over whatever the spoke wrote inside.</p></div>
+  <div class="card"><h3>Hub-mode is derived, never configured</h3><p><span class="mono">Config::resolve_eln_token( 'is_hub' )</span> answers on either of two signals: an active topology NAMED <span class="mono">aggregator</span>, or one whose include tree reaches it; or any active graph carrying a <span class="mono">Remote_Source</span> node. The stock file ships no such node, so only its name gives it away; a renamed fork gives itself away by its wired reader. Memoized, and re-entrancy-guarded, since a topology naming <span class="mono">&lt;eln:is_hub&gt;</span> resolves through here.</p><p>No <span class="mono">enable_aggregator</span>, no <span class="mono">enable_workers</span>: <span class="mono">RetiredConfigKeysTest</span> holds both names out. Only firehose entries cross to a hub; <span class="mono">jobfeed</span> and <span class="mono">jobintake</span> stay on the site that wrote them.</p></div>
+</div>
+</div>
+<script>
+(function(){
+  var svg=document.getElementById('wire'), NS='http://www.w3.org/2000/svg';
+  function el(t,a){var e=document.createElementNS(NS,t);for(var k in a)e.setAttribute(k,a[k]);return e;}
+  function box(id){var b=document.getElementById(id);return {x:b.offsetLeft,y:b.offsetTop,w:b.offsetWidth,h:b.offsetHeight};}
+  function down(f,t,label){var a=box(f),b=box(t),x=a.x+a.w/2,y0=a.y+a.h,y1=b.y-2;
+    svg.appendChild(el('path',{d:'M'+x+' '+y0+' V'+y1,stroke:'#003DA5','stroke-width':1.6,fill:'none','marker-end':'url(#a)'}));
+    if(label){var c=document.createElement('div');c.className='cap';c.textContent=label;document.getElementById('g').appendChild(c);c.style.left=(x-c.offsetWidth/2)+'px';c.style.top=((y0+y1)/2-8)+'px';}}
+  function elbow(f,t,ym){var a=box(f),b=box(t),x0=a.x+a.w/2,y0=a.y+a.h,x1=b.x+b.w/2,y1=b.y-2;
+    svg.appendChild(el('path',{d:'M'+x0+' '+y0+' V'+ym+' H'+x1+' V'+y1,stroke:'#003DA5','stroke-width':1.6,fill:'none','marker-end':'url(#a)'}));}
+  down('s1','r1','SSE pull');down('s2','r2','SSE pull');down('s3','r3','SSE pull');
+  var trunk=Math.max.apply(null,['r1','r2','r3'].map(function(id){var r=box(id);return r.y+r.h;}))+14;
+  elbow('r1','rw',trunk);down('r2','rw');elbow('r3','rw',trunk);
+  var a=box('rw'),b=box('tp'),c=box('cm');
+  svg.appendChild(el('path',{d:'M'+(a.x+a.w/2)+' '+(a.y+a.h)+' V'+(a.y+a.h+14)+' H'+(b.x+b.w/2)+' V'+(b.y-2),stroke:'#003DA5','stroke-width':1.6,fill:'none','marker-end':'url(#a)'}));
+  svg.appendChild(el('path',{d:'M'+(b.x+b.w)+' '+(b.y+b.h/2)+' H'+(c.x-2),stroke:'#003DA5','stroke-width':1.6,fill:'none','marker-end':'url(#a)'}));
+})();
+</script>

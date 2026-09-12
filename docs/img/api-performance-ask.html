@@ -1,0 +1,94 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+  .tl { background: #fff; border: 1px solid #C3C4C7; border-radius: 9px; padding: 14px 18px 10px; }
+  .tl h3 { font-size: 15px; margin: 0 0 6px; }
+  .tl p { font-size: 12.5px; color: #50575E; margin: 0 0 8px; line-height: 1.5; }
+  .regimes { display: flex; gap: 8px; margin-top: 8px; }
+  .regimes .r { flex: 1; border-radius: 7px; padding: 8px 10px; font-size: 12px; line-height: 1.45; background: #F0F4FB; border: 1px solid #C3D3EC; }
+  .regimes .r b { display: block; color: #003DA5; font-size: 12.5px; }
+  .dec { border: 1px solid #C3C4C7; border-radius: 9px; background: #fff; overflow: hidden; margin-top: 16px; }
+  .dec table { border-collapse: collapse; width: 100%; }
+  .dec th { background: #003DA5; color: #fff; font-size: 12px; font-weight: 700; text-align: left; padding: 8px 10px; }
+  .dec td { padding: 7px 10px; font-size: 12px; line-height: 1.45; vertical-align: top; border-top: 1px solid #EEF0F2; }
+  .dec td.d { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-weight: 700; color: #003DA5; white-space: nowrap; width: 200px; }
+  .dec td.n { width: 190px; }
+  .dec td.f { width: 170px; }
+  .dec td.f .m, .dec td.n .m, .dec td.w .m { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .dec tr.alt td { background: #F6F8FC; }
+  .shape { display: flex; gap: 16px; margin-top: 16px; align-items: flex-start; }
+  .rec { flex: 1; background: #fff; border: 1px solid #C3C4C7; border-radius: 9px; padding: 12px 16px; }
+  .rec h3 { font-size: 15px; margin: 0 0 8px; }
+  .kv { display: grid; grid-template-columns: 110px 1fr; gap: 10px; padding: 5px 0; border-top: 1px solid #EEF0F2; font-size: 12px; line-height: 1.45; }
+  .kv:first-of-type { border-top: 0; }
+  .kv .k { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-weight: 700; color: #003DA5; }
+  .kv .v { color: #50575E; }
+  .kv .v .m { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #101517; }
+  .kv.inner { grid-template-columns: 92px 1fr; margin-left: 18px; }
+  .kv.inner .k { color: #50575E; font-weight: 600; }
+  .callout, .ok { margin-top: 0; }
+</style>
+<div class="sheet">
+  <h1>Three things a reader asks the <span class="mono">performance</span> CI for, and what bounds each answer</h1>
+  <p class="sub">The URL modal's request list reaches back to a floor that is a function of <span class="mono">min_lifetime</span>; a picker descriptor decides which board a brief answers from; and a <span class="mono">findings</span> record says where each number was measured and what rule edit would act on it.</p>
+
+  <div class="tl">
+    <h3><span class="mono">dump_url</span>: <span class="mono">requests</span> reaches back to <span class="mono">requests_window_start</span>, and no further</h3>
+    <svg width="1052" height="96" viewBox="0 0 1052 96">
+      <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#003DA5"/></marker></defs>
+      <line x1="40" y1="52" x2="1012" y2="52" stroke="#C3C4C7" stroke-width="2"/>
+      <rect x="120" y="42" width="892" height="20" rx="4" fill="#F0F4FB" stroke="#C3D3EC"/>
+      <rect x="640" y="42" width="372" height="20" rx="4" fill="#E8EEF9" stroke="#003DA5"/>
+      <line x1="120" y1="30" x2="120" y2="74" stroke="#003DA5" stroke-width="2"/>
+      <text x="120" y="22" text-anchor="middle" font-size="12" font-weight="700" fill="#003DA5" font-family="Inter, Helvetica, Arial, sans-serif">requests_window_start</text>
+      <text x="40" y="88" text-anchor="start" font-size="11.5" fill="#50575E" font-family="Inter, Helvetica, Arial, sans-serif">the floor: (buckets − 1) × 300 s back from the current bucket boundary</text>
+      <line x1="640" y1="30" x2="640" y2="74" stroke="#B32D2E" stroke-width="2" stroke-dasharray="4 3"/>
+      <text x="640" y="22" text-anchor="middle" font-size="12" font-weight="700" fill="#B32D2E" font-family="Inter, Helvetica, Arial, sans-serif">--since (a completion watermark)</text>
+      <text x="640" y="88" text-anchor="middle" font-size="11.5" fill="#50575E" font-family="Inter, Helvetica, Arial, sans-serif">the walk stops below it, exclusive: a request completing in that second is returned</text>
+      <line x1="1012" y1="30" x2="1012" y2="74" stroke="#50575E" stroke-width="2"/>
+      <text x="1012" y="22" text-anchor="end" font-size="12" font-weight="700" fill="#50575E" font-family="Inter, Helvetica, Arial, sans-serif">now</text>
+      <text x="826" y="56" text-anchor="middle" font-size="11.5" font-weight="700" fill="#003DA5" font-family="Inter, Helvetica, Arial, sans-serif">what a tailing caller gets</text>
+      <text x="380" y="56" text-anchor="middle" font-size="11.5" fill="#50575E" font-family="Inter, Helvetica, Arial, sans-serif">what a first call gets, newest first</text>
+      <text x="80" y="38" text-anchor="middle" font-size="11.5" fill="#787C82" font-family="Inter, Helvetica, Arial, sans-serif">absent</text>
+    </svg>
+    <p>The floor is <span class="mono">Stats_Store::window_start()</span>: <span class="mono">min_lifetime</span>, floored at <span class="mono">PREFIX_FLOOR</span> (3,600 s), rounded up to a whole five-minute bucket, and capped at the <span class="mono">MAX_READ_BUCKETS</span> (288) a reader enumerates. A request that completed before it is absent by design, not by truncation. <span class="mono">since</span> is compared against COMPLETION (<span class="mono">timestamp + duration_ms</span>), not start, so <span class="mono">requests</span> is the tail while <span class="mono">requests_window_start</span> still names the floor; the dashboard's merge accumulates.</p>
+    <div class="regimes">
+      <div class="r"><b>min_lifetime ≤ 3,600 s</b>13 buckets: the floor sits 3,600 s back.</div>
+      <div class="r"><b>between</b>⌈min_lifetime ÷ 300⌉ + 1 buckets: the floor tracks the setting.</div>
+      <div class="r"><b>min_lifetime &gt; 85,800 s</b>288 buckets: the floor stops 86,100 s back.</div>
+      <div class="r" style="background:#FBEAEA;border-color:#E6A3A3"><b style="color:#B32D2E">scan_stopped_early: true</b>The walk spent <span class="mono">MAX_INDEX_ENTRIES</span> (1,000,000) first, so an empty list is not an idle URL. It says nothing about <span class="mono">RECENT_REQUEST_LIMIT</span>: the 500th row ends the fan-out with later partitions unread and the flag false.</div>
+    </div>
+  </div>
+
+  <div class="dec">
+    <table>
+      <tr><th>ask descriptor</th><th>Needs</th><th>Answers from</th><th>fetch pointer</th></tr>
+      <tr><td class="d">url:&lt;hash&gt;</td><td class="n">—</td><td class="w">The index row, scoped by <span class="m">--server</span> the way <span class="m">urls</span> scopes its rows.</td><td class="f"><span class="m">dump_url</span></td></tr>
+      <tr class="alt"><td class="d">request:&lt;rid&gt;[:&lt;partition&gt;]</td><td class="n">—</td><td class="w">The record; the partition is a hint searched first, not a filter.</td><td class="f"><span class="m">dump_request</span></td></tr>
+      <tr><td class="d">span:&lt;name&gt;</td><td class="n">a <span class="m">request:</span> descriptor as context, outermost last</td><td class="w">The parent whose copies of that name hold the most time; <span class="m">elsewhere</span> (<span class="m">ms</span>, <span class="m">count</span>, <span class="m">parents</span>) for the copies under other parents, omitted when every copy sits under one.</td><td class="f"><span class="m">performance_ask</span>, carrying the descriptor and its context</td></tr>
+      <tr class="alt"><td class="d">entry:&lt;n&gt;</td><td class="n">a <span class="m">request:</span> descriptor as context</td><td class="w">That entry of the record.</td><td class="f">—</td></tr>
+      <tr><td class="d">category:&lt;name&gt;</td><td class="n">optional <span class="m">request:</span> context</td><td class="w">With a request in the context chain that holds the category: that request's own per-category profile, <span class="m">scope: request</span>. Otherwise the leaderboard for the recent window, <span class="m">scope: recent window</span> (or <span class="m">recent window on &lt;server&gt;</span>). The two describe different populations, and the brief says which. Neither board holding it throws <span class="m">no category '&lt;name&gt;' in this request or the recent window</span>.</td><td class="f">—</td></tr>
+      <tr class="alt"><td class="d" style="color:#B32D2E">anything else</td><td class="n">—</td><td class="w" style="color:#B32D2E">throws <span class="m">unknown descriptor</span></td><td class="f">—</td></tr>
+    </table>
+  </div>
+
+  <div class="shape">
+    <div class="rec">
+      <h3>One <span class="mono">findings</span> record; the list comes back worst first</h3>
+      <div class="kv"><span class="k">severity</span><span class="v"><span class="m">high</span> · <span class="m">medium</span> · <span class="m">info</span>, and that is the sort.</span></div>
+      <div class="kv"><span class="k">kind</span><span class="v"><span class="m">fatal</span> · <span class="m">insufficient_instrumentation</span> · <span class="m">unattributed</span> · <span class="m">dominant_span</span> · <span class="m">repetition</span> · <span class="m">entry_gap</span> · <span class="m">truncation</span></span></div>
+      <div class="kv"><span class="k">title, detail</span><span class="v">The prose.</span></div>
+      <div class="kv"><span class="k">metric</span><span class="v">A numbers object whose keys follow the kind.</span></div>
+      <div class="kv"><span class="k">rule_id</span><span class="v">The rule admitting the request, or null when none does.</span></div>
+      <div class="kv"><span class="k">measured</span><span class="v">Where the number came from: <span class="m">flame</span> · <span class="m">profiles</span> · <span class="m">subtraction</span> · <span class="m">entry timestamps</span> · <span class="m">record markers</span> · <span class="m">php fatal</span> · <span class="m">rule + record</span> · <span class="m">url stats</span>. A share read off the flame tree and one obtained by subtraction warrant different confidence.</span></div>
+      <div class="kv"><span class="k">proposal</span><span class="v">The rule edit that would act on the finding. Every kind but <span class="m">fatal</span> carries one: no rule edit fixes a crash.</span></div>
+      <div class="kv inner"><span class="k">action</span><span class="v"><span class="m">add_hooks</span> · <span class="m">trim_hooks</span> · <span class="m">mark_significant</span> · <span class="m">add_custom_events</span> · <span class="m">create_rule</span> · <span class="m">none</span></span></div>
+      <div class="kv inner"><span class="k">direction</span><span class="v"><span class="m">more</span> · <span class="m">less</span> · <span class="m">none</span>. As often <span class="m">more</span> as <span class="m">less</span>: a proposal that only ever turned monitoring off would make the system blinder each time it was taken.</span></div>
+      <div class="kv inner"><span class="k">why, undo</span><span class="v">The reason, and how to take it back.</span></div>
+      <div class="kv inner"><span class="k">pattern, hooks, field, value</span><span class="v">Whichever the action needs.</span></div>
+    </div>
+    <div style="flex:0 0 300px" class="stack">
+      <div class="ok"><h4>Where the list appears</h4><p><span class="mono">dump_request</span> computes it, and the <span class="mono">request:</span> and <span class="mono">url:</span> briefs carry it, so the picker and an agent read identical evidence.</p></div>
+      <div class="callout"><h4>Every brief carries the caveat</h4><p>The logger times only what a rule names. Unattributed time is unmeasured, not idle, and a brief without that sentence invites an invented cause.</p></div>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,53 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+  .fig { position: relative; width: 1052px; height: 290px; background: #fff; border: 1px solid #C3C4C7; border-radius: 9px; }
+  .fig svg { position: absolute; left: 0; top: 0; }
+  .l { position: absolute; font-size: 12.5px; line-height: 1.4; color: #50575E; }
+  .l b { color: #101517; }
+  .keys { display: flex; gap: 14px; margin-top: 16px; align-items: stretch; }
+  .keys > * { flex: 1; }
+  .k { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; background: #F6F7F7; border-radius: 5px; padding: 7px 9px; margin: 6px 0; overflow-wrap: anywhere; color: #101517; }
+  .k .s { color: #B32D2E; font-weight: 700; }
+  .k .v { color: #003DA5; font-weight: 700; }
+  .card p, .callout p, .ok p { font-size: 12.5px; }
+</style>
+<div class="sheet">
+<h1>The durable mirror writes a bucket once, when it closes, under a key that carries no install scope</h1>
+<p class="sub">One five-minute bucket and the ten 30-second checkpoints that fall inside it. <span class="mono">flame-stats</span> is append-only and last-frame-wins per key, so every frame written before the last one is a dead copy retained for <span class="mono">stats_mirror_lifetime</span>.</p>
+
+<div class="fig">
+  <svg width="1052" height="262" viewBox="0 0 1052 262">
+    <!-- bucket 14:05 to 14:10 = x 170..870 (700 px / 300 s); checkpoints every 30 s = 70 px -->
+    <rect x="170" y="22" width="700" height="22" rx="4" fill="#F0F4FB" stroke="#003DA5" stroke-width="1.5"/>
+    <text x="180" y="38" font-size="12" fill="#003DA5" font-weight="700" font-family="Inter, sans-serif">bucket 2026-09-11-14-05, open</text>
+    <rect x="870" y="22" width="150" height="22" rx="4" fill="#fff" stroke="#C3C4C7"/>
+    <text x="880" y="38" font-size="12" fill="#787C82" font-family="Inter, sans-serif">closed</text>
+    <g stroke="#787C82" stroke-width="1"><line x1="205" y1="50" x2="205" y2="236"/><line x1="275" y1="50" x2="275" y2="236"/><line x1="345" y1="50" x2="345" y2="236"/><line x1="415" y1="50" x2="415" y2="236"/><line x1="485" y1="50" x2="485" y2="236"/><line x1="555" y1="50" x2="555" y2="236"/><line x1="625" y1="50" x2="625" y2="236"/><line x1="695" y1="50" x2="695" y2="236"/><line x1="765" y1="50" x2="765" y2="236"/><line x1="835" y1="50" x2="835" y2="236"/><line x1="905" y1="50" x2="905" y2="236"/></g>
+    <!-- rejected row: a frame every checkpoint -->
+    <g fill="#C3C4C7"><rect x="195" y="80" width="20" height="20" rx="3"/><rect x="265" y="80" width="20" height="20" rx="3"/><rect x="335" y="80" width="20" height="20" rx="3"/><rect x="405" y="80" width="20" height="20" rx="3"/><rect x="475" y="80" width="20" height="20" rx="3"/><rect x="545" y="80" width="20" height="20" rx="3"/><rect x="615" y="80" width="20" height="20" rx="3"/><rect x="685" y="80" width="20" height="20" rx="3"/><rect x="755" y="80" width="20" height="20" rx="3"/></g>
+    <rect x="825" y="80" width="20" height="20" rx="3" fill="#003DA5"/>
+    <g stroke="#B32D2E" stroke-width="2"><line x1="197" y1="82" x2="213" y2="98"/><line x1="267" y1="82" x2="283" y2="98"/><line x1="337" y1="82" x2="353" y2="98"/><line x1="407" y1="82" x2="423" y2="98"/><line x1="477" y1="82" x2="493" y2="98"/><line x1="547" y1="82" x2="563" y2="98"/><line x1="617" y1="82" x2="633" y2="98"/><line x1="687" y1="82" x2="703" y2="98"/><line x1="757" y1="82" x2="773" y2="98"/></g>
+    <!-- chosen row: held in RAM, one frame after close -->
+    <rect x="195" y="170" width="660" height="20" rx="4" fill="#EDF7ED" stroke="#9EC89E"/>
+    <text x="205" y="184" font-size="11.5" fill="#1E5B1E" font-family="Inter, sans-serif">held in RAM and carried in each checkpoint (decision 11); nothing written to flame-stats</text>
+    <rect x="895" y="170" width="20" height="20" rx="3" fill="#003DA5"/>
+  </svg>
+  <div class="l" style="left:14px; top:74px; width:150px"><b style="color:#B32D2E">Every checkpoint</b><br>ten frames, nine dead</div>
+  <div class="l" style="left:14px; top:164px; width:150px"><b style="color:#003DA5">Held until it closes</b><br>one frame</div>
+  <div class="l" style="left:190px; top:110px; width:830px; background:#fff; padding:2px 6px"><b style="color:#B32D2E">77.4%</b>: 4,279,767 of 5,531,418 bytes of a real <span class="mono">flame-stats.p0</span> written at every checkpoint are frames a later frame supersedes.</div>
+  <div class="l" style="left:560px; top:204px; width:470px; background:#fff; padding:2px 6px"><span class="mono">flush_stats_mirror()</span> writes it at the first checkpoint after <span class="mono">Stats_Store::is_open_bucket()</span> says the bucket closed</div>
+  <div class="l" style="left:180px; top:262px; font-size:11.5px; color:#787C82">each vertical line is one 30-second checkpoint</div>
+</div>
+
+<div class="keys">
+  <div class="callout"><h4>A scoped key is orphaned by the rotation it should survive</h4>
+    <div class="k">newspack_nodes:{v}:<span class="s">{site, salted}</span>:table:evlog:p0:…</div>
+    <p>The Table's key, through <span class="mono">Cache_Backend::site_key()</span>. <span class="mono">wp nodes memcache flush</span> rotates the salt, the reader hashes the new scope, and weeks of on-disk history stop answering.</p></div>
+  <div class="ok"><h4>The mirror's key carries no scope</h4>
+    <div class="k">evlog:<span class="v">m{V}</span>:p{N}:{key}</div>
+    <p><span class="mono">Stats_Store::entry_key()</span>, stable across salt rotations. <span class="mono">V</span> is <span class="mono">MIRROR_KEY_VERSION</span>, the mirror's own migration lever (decision 5).</p></div>
+  <div class="card"><h3>One function, so nothing disagrees</h3>
+    <p>The mirror write, the <span class="mono">stats-index</span> hash, the rehydrate compare and the held-frame lookup all key through <span class="mono">entry_key()</span>.</p>
+    <p><span class="mono">restore_state()</span> keeps only keys <span class="mono">is_mirror_key()</span> claims, so a checkpoint carried across a key change holds nothing it cannot look up.</p></div>
+</div>
+</div>

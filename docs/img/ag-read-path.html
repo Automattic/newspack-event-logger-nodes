@@ -1,0 +1,90 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+.g { position:relative; width:1052px; height:830px; }
+.g svg.wire { position:absolute; left:0; top:0; }
+.b { position:absolute; background:#fff; border:1px solid #C3C4C7; border-radius:7px; padding:7px 10px; font-size:11.5px; line-height:1.35; }
+.b .t { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-weight:700; font-size:12px; color:#003DA5; }
+.b .s { color:#50575E; }
+.b.log { background:#F6F7F7; border-style:dashed; }
+.b.log .t { color:#101517; }
+.b.node { border-color:#003DA5; }
+.b.out { background:#F0F4FB; border-color:#C3D3EC; }
+.b.mc { background:#EDF7ED; border-color:#9EC89E; }
+.b.mc .t { color:#1E5B1E; }
+.lane { position:absolute; left:0; font-size:11px; color:#787C82; text-transform:uppercase; letter-spacing:.04em; }
+.cap { position:absolute; font-size:10.5px; color:#50575E; background:#FBFBFC; padding:0 4px; white-space:nowrap; }
+.vars { display:flex; gap:12px; margin-top:16px; }
+.vars .card { flex:1; padding:11px 14px; }
+.vars .card h3 { font-size:13.5px; }
+.vars .card p { font-size:12px; margin:0; }
+</style>
+<div class="sheet">
+<h1>The <span class="mono">complete</span> worker, one partition of it</h1>
+<p class="sub">Four Consumers, two of them tailing what another branch wrote. Solid boxes are Nodes the topology declares; dashed boxes are partition logs on disk; green is memcache. One firehose Consumer feeds two branches through a Tee, and a job crosses two logs, an ingress log and <span class="mono">jobs.pN</span>, before a handler runs it.</p>
+
+<div class="g" id="g">
+<svg class="wire" id="wire" width="1052" height="830"><defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#003DA5"/></marker></defs></svg>
+
+<div class="b log" id="fh" style="left:0;top:0;width:150px"><div class="t">firehose.pN</div><div class="s">many PHP writers</div></div>
+<div class="b node" id="fhc" style="left:196px;top:0;width:176px"><div class="t">firehose:consumer</div><div class="s">multi-writer; snapshots request-builder into its offsetlog</div></div>
+<div class="b node" id="tee" style="left:418px;top:0;width:150px"><div class="t">firehose:tee</div><div class="s">complete adds it; performance and job-hub alone wire the consumer straight</div></div>
+<div class="b node" id="rb" style="left:614px;top:0;width:176px"><div class="t">request-builder</div><div class="s">Request_Builder_Node 100 3: assembles one record per rid, validates <span class="mono">n</span>, evicts a record 400–600 s after its last line, folds under entry pressure. Its hidden Request_Flight sibling ships one in-flight row per request each tick.</div></div>
+<div class="b out" id="req" style="left:836px;top:0;width:216px"><div class="t">requests.pN</div><div class="s">one document per request; request-index</div></div>
+<div class="b out" id="err" style="left:836px;top:66px;width:216px"><div class="t">errors.p0</div><div class="s">error, warning, stderr, *(error), *(warning)</div></div>
+<div class="b out" id="al" style="left:836px;top:132px;width:216px"><div class="t">alerts.p0</div><div class="s">alert entries</div></div>
+<div class="b out" id="ct" style="left:836px;top:186px;width:216px"><div class="t">completed:tee</div><div class="s">compact summary → completed.p0 and gyroscope.p0; in-flight rows → gyroscope.p0</div></div>
+
+<div class="lane" style="top:288px">job routing</div>
+<div class="b log" id="ji" style="left:0;top:306px;width:150px"><div class="t">jobintake.pN</div><div class="s">Job_Intake::queue()</div></div>
+<div class="b node" id="jic" style="left:196px;top:306px;width:176px"><div class="t">jobintake:consumer</div><div class="s">from the included job-intake, re-routed</div></div>
+<div class="b node" id="jr" style="left:418px;top:306px;width:150px"><div class="t">job-router</div><div class="s">Job_Router_Node: body under <span class="mono">m</span> or the entry itself; kind from the entry's <span class="mono">k</span></div></div>
+<div class="b node" id="sv" style="left:614px;top:306px;width:176px"><div class="t">jobs:sieve</div><div class="s">Age_Sieve 900 1: drops an envelope older than 900 s from ENQUEUE, warning on</div></div>
+<div class="b out" id="jobs" style="left:836px;top:306px;width:216px"><div class="t">jobs.pN</div><div class="s">{ k, handler, parameters, ts } + id + dispatch fields; void_warranty</div></div>
+
+<div class="lane" style="top:406px">job dispatch, the substrate's job-worker</div>
+<div class="b log" id="jobs2" style="left:0;top:424px;width:150px"><div class="t">jobs.pN</div><div class="s">line mode</div></div>
+<div class="b node" id="jc" style="left:196px;top:424px;width:176px"><div class="t">jobs:consumer</div><div class="s">a throwing handler's job is dead-lettered here, or re-parked in jobdelay.p0 when it opted into retries</div></div>
+<div class="b node" id="jw" style="left:418px;top:424px;width:150px"><div class="t">job-worker</div><div class="s">Job_Worker_Node; ELN's begin/end_job_context rides its before_job / after_job hooks</div></div>
+<div class="b out" id="h" style="left:614px;top:424px;width:438px"><div class="t">registered handlers</div><div class="s"><span class="mono">k:"job"</span> → <span class="mono">newspack_nodes/job_handlers</span>; <span class="mono">k:"remote_job"</span> → <span class="mono">newspack_nodes/remote_job_handlers</span>. A 15 s Job_Probe writes jobstats.p0.</div></div>
+
+<div class="lane" style="top:540px">flames and stats</div>
+<div class="b log" id="req2" style="left:0;top:558px;width:150px"><div class="t">requests.pN</div><div class="s">what request-builder wrote</div></div>
+<div class="b node" id="rc" style="left:196px;top:558px;width:176px"><div class="t">requests:consumer</div><div class="s">snapshots flame-builder: pending buckets and held mirror frames</div></div>
+<div class="b node" id="fb" style="left:418px;top:558px;width:372px"><div class="t">flame-builder</div><div class="s">Flame_Builder_Node: builds each request's flame tree, files the request in the 5-minute bucket it FINISHED in, flushes at most every 5 s (a throttle inside fill, not a timer), rolls closed hours up, judges the governing rule's auto-tune thresholds. <span class="mono">configure_stats &lt;partition&gt;</span> gives it a Stats_Store; <span class="mono">set_stats_target</span> arms the mirror; <span class="mono">set_is_hub</span> turns on the per-server aggregates.</div></div>
+<div class="b out" id="fl" style="left:836px;top:558px;width:216px"><div class="t">flames.pN</div><div class="s">per-request flame data; flame-index</div></div>
+<div class="b mc" id="mc" style="left:836px;top:618px;width:216px"><div class="t">memcache evlog:pN:…</div><div class="s">through Stats_Store, sums added, 500 keys a flush batch</div></div>
+<div class="b out" id="fs" style="left:836px;top:692px;width:216px"><div class="t">flame-stats.pN</div><div class="s">durable mirror, a frame per closed bucket; stats-index</div></div>
+<div class="b node" id="at" style="left:836px;top:766px;width:216px"><div class="t">flame-builder:auto-tuner</div><div class="s">hidden sibling; mutates one rule, Rule_Set::save()</div></div>
+</div>
+
+<div class="vars">
+  <div class="card"><h3><span class="mono">performance</span></h3><p>The first and last lanes, without the two job lanes: the consumer wires straight to request-builder, and a separate fleet dispatches jobs.</p></div>
+  <div class="card"><h3><span class="mono">flame-builder</span> alone</h3><p>The bottom lane by itself, for a fleet that only turns assembled records into flames and stats.</p></div>
+  <div class="card"><h3><span class="mono">job-spoke</span></h3><p>The two job lanes with <span class="mono">jobfeed.pN</span> in the firehose's place, so the router reads jobs alone.</p></div>
+  <div class="card"><h3>A hub adds <span class="mono">aggregator</span></h3><p>Remote_Source nodes pull each spoke's firehose over SSE, Remote_Job_Rewrite flips <span class="mono">job</span> to <span class="mono">remote_job</span>, and a Topic KEY-routes the lines into this same <span class="mono">firehose.pN</span>.</p></div>
+</div>
+</div>
+<script>
+(function(){
+  var svg=document.getElementById('wire'), NS='http://www.w3.org/2000/svg';
+  function el(t,a){var e=document.createElementNS(NS,t);for(var k in a)e.setAttribute(k,a[k]);return e;}
+  function box(id){var b=document.getElementById(id);return {x:b.offsetLeft,y:b.offsetTop,w:b.offsetWidth,h:b.offsetHeight};}
+  function wire(f,t,opt){opt=opt||{};var a=box(f),b=box(t),d;
+    var y0=a.y+(opt.fy!=null?opt.fy:a.h/2), y1=b.y+(opt.ty!=null?opt.ty:b.h/2);
+    if(opt.down){ // vertical, from bottom-center of f to top-center of t
+      var x=a.x+a.w/2; d='M'+x+' '+(a.y+a.h)+' V'+(b.y-2);
+    } else {
+      var x0=a.x+a.w, x1=b.x-2, mid=x0+(opt.mid!=null?opt.mid:(x1-x0)/2);
+      d= y0===y1 ? 'M'+x0+' '+y0+' H'+x1 : 'M'+x0+' '+y0+' H'+mid+' V'+y1+' H'+x1;
+    }
+    svg.appendChild(el('path',{d:d,stroke:'#003DA5','stroke-width':1.6,fill:'none','marker-end':'url(#a)'}));
+  }
+  wire('fh','fhc');wire('fhc','tee');wire('tee','rb',{ty:22});
+  wire('rb','req',{fy:22,ty:22,mid:20});wire('rb','err',{fy:22,mid:20});wire('rb','al',{fy:22,mid:20});wire('rb','ct',{fy:22,mid:20});
+  wire('tee','jr',{down:true});
+  wire('ji','jic');wire('jic','jr');wire('jr','sv');wire('sv','jobs');
+  wire('jobs2','jc');wire('jc','jw');wire('jw','h');
+  wire('req2','rc');wire('rc','fb',{ty:22});
+  wire('fb','fl',{fy:22,ty:22,mid:20});wire('fb','mc',{fy:22,mid:20});wire('fb','fs',{fy:22,mid:20});wire('fb','at',{fy:22,mid:20});
+})();
+</script>

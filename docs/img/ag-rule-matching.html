@@ -1,0 +1,85 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+.cols { display:flex; gap:16px; align-items:flex-start; }
+.ranks { flex:1.05; }
+.rank { display:flex; gap:10px; align-items:stretch; margin-bottom:8px; }
+.rank .n { flex:0 0 46px; background:#003DA5; color:#fff; border-radius:8px; display:flex; flex-direction:column; align-items:center; justify-content:center; font-weight:700; font-size:18px; }
+.rank .n small { font-size:10px; font-weight:400; opacity:.85; }
+.rank .card { flex:1; padding:9px 13px; }
+.rank .card h3 { font-size:13.5px; margin:0 0 3px; }
+.rank .card p { font-size:12px; margin:0; }
+.gt { text-align:center; color:#003DA5; font-size:12px; margin:-4px 0 4px 56px; }
+.worked { flex:1.2; }
+table.m { border-collapse:collapse; width:100%; font-size:12px; margin-top:8px; }
+table.m th { text-align:left; font-size:11px; color:#787C82; font-weight:600; padding:4px 8px; border-bottom:1px solid #C3C4C7; }
+table.m td { padding:5px 8px; border-top:1px solid #EEF0F2; vertical-align:top; line-height:1.4; }
+table.m td.p { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; width:50%; overflow-wrap:anywhere; } table.m td.v { width:38%; }
+table.m tr.win td { background:#EDF7ED; }
+table.m tr.win td.p { color:#1E5B1E; font-weight:700; }
+table.m td .r { display:inline-block; width:18px; height:18px; border-radius:4px; background:#003DA5; color:#fff; text-align:center; line-height:18px; font-size:11px; font-weight:700; }
+.tiers { display:flex; gap:12px; margin-top:18px; }
+.tier { flex:1; border:1px solid #C3C4C7; border-radius:9px; background:#fff; padding:12px 14px; font-size:12px; line-height:1.45; }
+.tier h3 { font-size:13.5px; margin:0 0 6px; }
+.tier .key { overflow-wrap:normal !important; word-break:normal; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:11.5px; color:#003DA5; background:#F0F4FB; border:1px solid #C3D3EC; border-radius:5px; padding:4px 8px; margin:5px 0; overflow-wrap:anywhere; }
+.tier .key.opt { background:#F6F7F7; border-color:#C3C4C7; color:#101517; }
+.tier .key.mc { background:#EDF7ED; border-color:#9EC89E; color:#1E5B1E; }
+.tier p { margin:0 0 4px; color:#50575E; }
+.mono { overflow-wrap:anywhere; }
+</style>
+<div class="sheet">
+<h1>The most specific rule governs, whatever the list order</h1>
+<p class="sub">Rule_Matcher sorts the ruleset once, by rank and then by pattern length within a rank, and stops at the first hit. Matching is case-insensitive, by raw string prefix rather than path segment, and cached per normalized <span class="mono">path?query</span>, misses included. No match means skip.</p>
+
+<div class="cols">
+  <div class="ranks">
+    <div class="rank"><div class="n">0<small>rank</small></div><div class="card"><h3>Exact path + query prefix</h3><p><span class="mono">/jobs/x?job-work</span>: the path is equal and the query starts with the pattern's. A raw string prefix, so <span class="mono">/jobs/x?job-worker</span> governs <span class="mono">/jobs/x?job-worker&amp;n=1</span> and not the same two parameters reversed.</p></div></div>
+    <div class="gt">outranks every</div>
+    <div class="rank"><div class="n">1<small>rank</small></div><div class="card"><h3>Exact path</h3><p><span class="mono">/about?</span>: the trailing <span class="mono">?</span> is the marker, the path must be equal, the query is ignored.</p></div></div>
+    <div class="gt">outranks every</div>
+    <div class="rank"><div class="n">2<small>rank</small></div><div class="card"><h3>Path prefix</h3><p><span class="mono">/blog</span>: the path starts with the pattern, the query is ignored. <span class="mono">/wp-cron</span> governs <span class="mono">/wp-cron.php</span>; <span class="mono">/shop</span> governs <span class="mono">/shopping</span>.</p></div></div>
+    <div class="callout" style="margin-top:6px"><h4>Length breaks ties WITHIN a rank only</h4><p>This is not longest-prefix-wins: a one-character exact pattern outranks the longest prefix. A rule's id is <span class="mono">url_hash( pattern )</span>, and every write path that accepts outside rules re-derives it, so a supplied id is ignored and there is one rule per URL.</p></div>
+  </div>
+
+  <div class="worked">
+    <div class="card" style="padding:12px 16px">
+      <h3>One URL against the shipped seed, plus two rules an operator added</h3>
+      <p style="margin:0">Target: <span class="mono">/wp-json/newspack-nodes/v1/command?x=1</span>. The matcher walks its sorted list top to bottom, longest pattern first within a rank.</p>
+      <table class="m">
+        <tr><th>sorted order</th><th>rule</th><th>verdict for this URL</th></tr>
+        <tr><td><span class="r">0</span></td><td class="p">/jobs/x?job-worker → log</td><td class="v">path differs</td></tr>
+        <tr><td><span class="r">1</span></td><td class="p">/wp-json/newspack-nodes/v1/messages/stream? → skip</td><td class="v">path differs (43 characters, so first in its rank)</td></tr>
+        <tr><td><span class="r">1</span></td><td class="p">/wp-json/newspack-nodes/v1/workers/spawn? → skip</td><td class="v">path differs (41)</td></tr>
+        <tr><td><span class="r">1</span></td><td class="p">/wp-json/newspack-nodes/v1/log/stream? → skip</td><td class="v">path differs (38)</td></tr>
+        <tr class="win"><td><span class="r">1</span></td><td class="p">/wp-json/newspack-nodes/v1/command? → skip</td><td class="v">path equal: governs. The query never mattered.</td></tr>
+        <tr><td><span class="r">1</span></td><td class="p">/wp-cron.php? → skip</td><td class="v">not reached</td></tr>
+        <tr><td><span class="r">2</span></td><td class="p">/wp-json → log</td><td class="v">would have matched, but sits below every exact rule however long it is</td></tr>
+        <tr><td><span class="r">2</span></td><td class="p">/ → log</td><td class="v">the seed's log-all baseline: without it the seed logs nothing</td></tr>
+      </table>
+      <p style="margin:10px 0 0">The five seed skips are written EXACT so they outrank the <span class="mono">/</span> prefix whatever the list order: the worker IPC, SSE and spawn traffic never logs. Empty means empty: an explicit <span class="mono">rules =&gt; []</span>, or a stored <span class="mono">[]</span>, logs nothing; a config omitting the key takes this seed. The editor's table sorts log rules first, then alphabetically, which is not this order.</p>
+    </div>
+  </div>
+</div>
+
+<div class="tiers">
+  <div class="tier">
+    <h3>The rule list: one autoloaded option</h3>
+    <div class="key opt">newspack_event_logger_nodes_<wbr>rules</div>
+    <p>Every rule, with its hooks inline while they number at most <span class="mono">INLINE_HOOK_LIMIT</span> = 100. The common small-rule path pays no cache hop. <span class="mono">rekey_by_pattern()</span> re-derives every id and collapses duplicate patterns, last entry winning, on every write path that accepts outside rules.</p>
+  </div>
+  <div class="tier">
+    <h3>A heavy rule's hooks: a non-autoloaded option, the system of record</h3>
+    <div class="key opt">newspack_event_logger_nodes_<wbr>rule_hooks_&lt;id&gt;</div>
+    <p>Past 100 hooks the list moves here, so a heavy rule does not bloat autoload, and the rule stores <span class="mono">hooks = null</span>, <span class="mono">hooks_in = mc</span>. <span class="mono">save()</span> applies the threshold, writes the option, warms the mirror, reconciles orphans and re-tiers so <span class="mono">rules() == load()</span>.</p>
+  </div>
+  <div class="tier">
+    <h3>Its warm mirror: the substrate's Table</h3>
+    <div class="key mc">Table_Node::table( TABLE_HOOKS, TABLE_TTL )</div>
+    <p><span class="mono">'eln-rule-hooks'</span> at 3600 s, keys scoped per install. The accessor is nullable: a host with no cache backend has no warm mirror and reads the option. <span class="mono">wp nodes ruleset-bench</span> measures both tiers; 65 is the limit's floor.</p>
+  </div>
+  <div class="tier">
+    <h3>Over the wire, hook-complete</h3>
+    <div class="key">Rule_Set::hydrate_array()</div>
+    <p>Inlines each pointer rule's resolved hooks for a settings-sync push; <span class="mono">apply_synced()</span> re-tiers on the spoke and writes heavy hooks back out to the spoke's own option. A read skips an unrepresentable rule with a rate-limited notice; a write lets the throw stand and keeps the last-good ruleset.</p>
+  </div>
+</div>
+</div>

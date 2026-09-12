@@ -1,0 +1,79 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+  .m { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .flow { display: flex; gap: 12px; align-items: stretch; }
+  .flow .st { flex: 1; background: #fff; border: 1px solid #C3C4C7; border-radius: 9px; padding: 12px 14px; }
+  .flow .st h3 { font-size: 13.5px; margin: 0 0 6px; color: #003DA5; }
+  .flow .st p { font-size: 12.2px; line-height: 1.45; color: #50575E; margin: 0 0 5px; }
+  .flow .st p:last-child { margin: 0; }
+  .flow .st p .m, .card p .m { color: #101517; }
+  .flow .arrow { flex: 0 0 22px; display: flex; align-items: center; justify-content: center; color: #003DA5; font-size: 22px; font-weight: 700; }
+  .budget { margin-top: 14px; background: #fff; border: 1px solid #C3C4C7; border-radius: 9px; padding: 12px 16px; }
+  .budget h3 { font-size: 14px; margin: 0 0 8px; }
+  .bar { position: relative; height: 40px; border: 1.5px dashed #B0B3B8; border-radius: 6px; }
+  .bar .held { position: absolute; left: 0; top: 4px; height: 30px; background: #003DA5; border-radius: 4px; color: #fff; font-size: 11.5px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+  .bar .old { position: absolute; left: 0; top: 4px; height: 30px; border: 2px solid #B32D2E; border-radius: 4px; }
+  .bar .lbl { position: absolute; top: -18px; font-size: 11px; color: #50575E; white-space: nowrap; }
+  .bar .cap { position: absolute; right: 0; top: -18px; font-size: 11px; color: #101517; font-weight: 700; }
+  .legend { display: flex; gap: 12px; margin-top: 8px; font-size: 11.5px; color: #50575E; line-height: 1.45; }
+  .legend div { flex: 1; }
+  .cols { display: flex; gap: 12px; margin-top: 14px; align-items: flex-start; }
+  .cols .card { flex: 1; }
+  .cols .card h3 { font-size: 14px; }
+  .cols .card p { font-size: 12.2px; }
+  .nums { display: flex; gap: 8px; margin-top: 14px; }
+  .nums .n { flex: 1; background: #fff; border: 1px solid #C3C4C7; border-radius: 7px; padding: 8px 10px; text-align: center; }
+  .nums .n .big { font-size: 18px; font-weight: 700; color: #003DA5; line-height: 1.2; }
+  .nums .n .k { font-size: 11px; color: #50575E; margin-top: 3px; line-height: 1.35; }
+  .nums .n .k .m { color: #101517; }
+</style>
+<div class="sheet">
+  <h1>The open bucket is durable in the offsetlog until it closes, and the carry is capped</h1>
+  <p class="sub">A held frame is in no durable log until its bucket closes (decision 10), so the worker's checkpoint carries it. What bounds that carry, which frame goes first when it binds, and what the log says when it fires.</p>
+
+  <div class="flow">
+    <div class="st"><h3>1 · A write lands in memcache and is HELD</h3><p>Each stats write is mirrored into a per-namespace buffer keyed by its entry key, last state wins. The buffer's residency is one open bucket: <span class="m">flush_stats_mirror()</span> drains every closed bucket at each checkpoint, so its size is the distinct keys that bucket sees, which nothing else bounds.</p></div>
+    <div class="arrow">&rarr;</div>
+    <div class="st"><h3>2 · Every 30 s the checkpoint carries the held frames</h3><p><span class="m">save_state()</span> packs them into the Consumer's offsetlog keyframe beside the cursor; <span class="m">restore_state()</span> takes them back. The worker's <span class="m">rehydrate</span> seam consults held frames FIRST, or a mid-bucket eviction makes the read-modify-write restart the bucket from zero. A restored frame carries what is LEFT of the retention window, bounded by its role's TTL (substrate ADR-18): a frame whose CACHE lifetime ran out is still read.</p></div>
+    <div class="arrow">&rarr;</div>
+    <div class="st"><h3>3 · The bucket closes: written once to <span class="m">flame-stats</span></h3><p>At the first checkpoint after <span class="m">is_open_bucket()</span> says it closed, the frames go to the partition under the unscoped mirror key and leave the buffer.</p></div>
+  </div>
+
+  <div class="budget">
+    <h3>The carry is capped at <span class="m">MAX_CHECKPOINT_MIRROR_BYTES</span>, 2,097,152 bytes, and the WIDEST frame is dropped first</h3>
+    <div class="bar" style="margin-top:22px">
+      <span class="lbl" style="left:0">observed held total on a production hub: ~267–348 KB per checkpoint</span>
+      <div class="held" style="width:16%">held</div>
+      <div class="old" style="width:12.5%"></div>
+      <span class="cap">2 MB: ~6× the observed peak, so the log does NOT fire in routine operation</span>
+    </div>
+    <div class="legend">
+      <div><b style="color:#B32D2E">The red outline is 262,144</b>: at that budget the held totals sit just over the cap, a multi-spoke hub drops one to thirteen frames on nearly every checkpoint, and the tripwire trips permanently, which tells you nothing. The margin is what makes "it fired at all" informative.</div>
+      <div><b>Why the widest goes first:</b> narrowest-first keeps the most keys recoverable per byte, and a dropped frame is re-merged from memcache by the next write to its bucket, lost only if the process AND memcache both fail before the bucket closes. <span class="m">Partition_Node</span> DROPS an oversize record outright, and that record is the whole checkpoint, cursor included.</div>
+      <div><b>The pack orders by ENTRY COUNT, not encoded bytes,</b> and encodes only what it carries plus the one it stops on: encoding every held frame to sort them would make the budget bound the OUTPUT and never the work, megabytes of throwaway JSON every thirty seconds. A frame is a map of small numeric entries, so count tracks size closely, and the budget is still enforced against real encoded bytes as they accumulate.</div>
+    </div>
+  </div>
+
+  <div class="nums">
+    <div class="n"><div class="big">10,000</div><div class="k"><span class="m">MAX_HELD_FRAMES</span> per namespace: past it <span class="m">spill_over_backstop()</span> writes a BAND, a tenth of the bound, to the partition EARLY rather than dropping anything; a redundant record, never a lost frame</div></div>
+    <div class="n"><div class="big">60 × 2 MB</div><div class="k"><span class="m">OFFSETLOG_MAX_SEGMENTS</span> keyframes: ~120 MB of disk plus a write every 30 s. The ring caps keyframe COUNT and never bytes, so raising the budget raises the disk cost in direct proportion</div></div>
+    <div class="n"><div class="big">16×</div><div class="k">how far away <span class="m">Partition_Node::MAX_LARGE_LINE_SIZE</span> is; it does not bind</div></div>
+    <div class="n"><div class="big">0 of 12</div><div class="k">pre-deploy buckets kept by a 0.00 req/s URL under a top-100 rank cap: the cap leaves every quieter URL in memcache alone, and a moved cache scope takes its whole history. Buffer-time eviction is a strictly larger loss than a checkpoint drop, so <span class="m">STATS_MIRROR_TOPN</span> rank-caps no per-URL namespace</div></div>
+  </div>
+
+  <div class="cols">
+    <div class="card">
+      <h3>What the log carries when it fires</h3>
+      <p>How many frames dropped of how many held, the budget, the bytes it carried, and the WIDEST held frame with its namespace and size: a sharded <span class="m">urls</span> key and an <span class="m">lb_s</span> key are both opaque, and which one fired is the whole question. Sharding keeps the tripwire's other half honest: an unsharded <span class="m">urls</span> blob would exceed the whole budget and always be the widest frame, satisfying "the widest is NOT a per-server leaderboard" permanently. Sixteen smaller frames sort in among the leaderboards, so the fleet-size signal reads true.</p>
+    </div>
+    <div class="card">
+      <h3>What the <span class="m">GET_STATS</span> payload reports</h3>
+      <p><span class="m">mirror_held_bytes</span>: the exact held total, on a verb an operator asks rather than every checkpoint. Read the trend in BYTES: <span class="m">urls</span> is sharded, so one open URL bucket holds SIXTEEN frames a sixteenth the size, and a frame count steps up with no fault behind it. <span class="m">mirror_held_frames</span>: the WIDEST single namespace's held count, because the backstop is per namespace and a cross-namespace total cannot warn about it: six namespaces holding five thousand each read as thirty thousand with nothing near the bound, while one spilling on every write reads as ten thousand and fifty.</p>
+    </div>
+    <div class="card">
+      <h3>The spill, and the case with no partition</h3>
+      <p>It spills a band rather than one frame: ranking the buffer is a pass over it, and the buffer PINS at the bound under exactly the traffic the bound exists for, so one frame per write puts that pass on every write past it, quadratic in a spray's length. The band is the hysteresis <span class="m">trim_entries()</span> already uses; a rank-ordered structure is NOT the alternative, since a merge changes a key's rank and keeping the buffer ordered pays per write instead. With no partition to spill into, nothing already HELD is discarded: <span class="m">flush_stats_mirror()</span> reads an unresolved name as one that may resolve next checkpoint and keeps the buffer, and the backstop takes the same reading, refusing the ARRIVAL, whose value is still in memcache and whose bucket's next write re-offers it.</p>
+    </div>
+  </div>
+
+</div>

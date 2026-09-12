@@ -1,0 +1,81 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+  .m { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .tl { background: #fff; border: 1px solid #C3C4C7; border-radius: 9px; padding: 14px 18px 12px; }
+  .tl h3 { font-size: 15px; margin: 0 0 4px; }
+  .tl p { font-size: 12.5px; color: #50575E; margin: 6px 0 0; line-height: 1.5; }
+  .tl p .m { color: #101517; }
+  .caps { display: flex; gap: 10px; margin-top: 6px; font-size: 11.5px; line-height: 1.4; color: #50575E; }
+  .caps div { border-top: 2px solid #C3D3EC; padding-top: 6px; }
+  .caps div b { color: #101517; }
+  .caps .m { color: #101517; }
+  .total { margin-top: 10px; background: #F0F4FB; border: 1px solid #C3D3EC; border-radius: 6px; padding: 7px 10px; font-size: 12px; font-weight: 700; color: #003DA5; text-align: center; }
+  .nums { display: flex; gap: 8px; margin-top: 14px; }
+  .nums .n { flex: 1; background: #fff; border: 1px solid #C3C4C7; border-radius: 7px; padding: 8px 10px; text-align: center; }
+  .nums .n .big { font-size: 19px; font-weight: 700; color: #003DA5; line-height: 1.2; }
+  .nums .n .big.red { color: #B32D2E; }
+  .nums .n .k { font-size: 11.5px; color: #50575E; margin-top: 3px; line-height: 1.35; }
+  .cols { display: flex; gap: 14px; margin-top: 14px; align-items: flex-start; }
+  .cols .card { flex: 1; }
+  .cols .card p { margin-bottom: 5px; }
+  .cols .card p .m { color: #101517; }
+  .rej { display: flex; gap: 10px; margin-top: 14px; }
+  .rej .callout { flex: 1; }
+</style>
+<div class="sheet">
+  <h1>The URL index is stored at two resolutions, and the coarse one is derived</h1>
+  <p class="sub">The readers ask at exactly two resolutions: the whole retention window, and the last complete hour. Five-minute precision buys the window's recent EDGE and nothing behind it, so behind the edge the index is read as hours, from a coarse key the writer folds out of the fine buckets.</p>
+
+  <div class="tl">
+    <h3>One shard's read plan across a 24-hour window: <span class="m">Stats_Store::read_plan()</span> splits it into <span class="m">{ fine, hours }</span></h3>
+    <svg width="100%" viewBox="0 0 1052 58" style="display:block">
+      <defs>
+        <pattern id="fine" width="6" height="26" patternUnits="userSpaceOnUse"><rect width="5" height="26" fill="#003DA5"/></pattern>
+      </defs>
+      <text x="0" y="14" font-size="11.5" fill="#50575E" font-family="Inter, Helvetica, Arial, sans-serif">older</text>
+      <text x="1052" y="14" text-anchor="end" font-size="11.5" fill="#50575E" font-family="Inter, Helvetica, Arial, sans-serif">now</text>
+      <rect x="0" y="24" width="660" height="26" rx="4" fill="#787C82"/>
+      <text x="330" y="41" text-anchor="middle" font-size="11.5" font-weight="700" fill="#fff" font-family="Inter, Helvetica, Arial, sans-serif">one key per closed hour: urls_h:{shard}:{Y-m-d-H}, up to 23 of them</text>
+      <rect x="664" y="24" width="180" height="26" rx="4" fill="#fff" stroke="#003DA5" stroke-width="1.5" stroke-dasharray="4 3"/>
+      <text x="754" y="41" text-anchor="middle" font-size="11" fill="#003DA5" font-weight="700" font-family="Inter, Helvetica, Arial, sans-serif">the grace hour</text>
+      <rect x="848" y="24" width="204" height="26" rx="4" fill="url(#fine)"/>
+      <rect x="848" y="24" width="204" height="26" rx="4" fill="none" stroke="#003DA5" stroke-width="1.5"/>
+      <rect x="880" y="28" width="140" height="18" rx="3" fill="#003DA5"/>
+      <text x="950" y="41" text-anchor="middle" font-size="11" fill="#fff" font-weight="700" font-family="Inter, Helvetica, Arial, sans-serif">fine: 13 to 24 buckets</text>
+    </svg>
+    <div class="caps">
+      <div style="flex:660"><b>Anything further back is the coarse tier's alone.</b> An hour with no key there has not been folded YET, and an EMPTY hour is still written, so absence means exactly one thing. Both tiers hold the same row shape on purpose: one <span class="m">fold_index_row()</span> reads both, one <span class="m">merge_url_row()</span> writes both.</div>
+      <div style="flex:180"><b>No coarse key yet?</b> Only the hour right behind the fine tail is answered from its twelve fine buckets, whatever their age (<span class="m">unfolded_hour_buckets()</span>). A fresh deploy, or the hour a worker restarted through, self-heals instead of leaving a hole.</div>
+      <div style="flex:204"><b><span class="m">FINE_BUCKETS</span> (13) is a FLOOR:</b> the tail runs to the END of the hour it lands in. Half fine and half coarse is counted twice or read at NEITHER resolution, a hole of up to eleven buckets that breathes with the minute hand and silently shrinks every count on the page.</div>
+    </div>
+    <div class="total">36 to 46 keys per shard, depending on the minute, against 288. Read at full resolution: 16 shards × 288 buckets × 4 partitions, 18,432 keys and 54 MB of unserialize per request, measured on the staging hub.</div>
+  </div>
+
+  <div class="nums">
+    <div class="n"><div class="big">2</div><div class="k"><span class="m">ROLLUP_HOURS_PER_FLUSH</span>: a cold start's backfill spreads across flushes instead of stalling one</div></div>
+    <div class="n"><div class="big">1</div><div class="k"><span class="m">lookup_multi</span> for the whole window's skip probe; probing per hour pays 23 round trips a flush to learn there is nothing to do, decision 6's latency cliff</div></div>
+    <div class="n"><div class="big">7,200 s</div><div class="k"><span class="m">FINE_TTL_SECONDS</span>: the fine tier's own retention, 24 buckets a shard, against <span class="m">min_lifetime</span> for the coarse tier that outlives it</div></div>
+    <div class="n"><div class="big">12</div><div class="k"><span class="m">INDEX_READ_CHUNK</span>: the read folds one chunk of buckets and drops it before the next; an hour's shards are read together in one chunk, so the ALL-its-shards-or-none check stays exact</div></div>
+    <div class="n"><div class="big red">512 MB</div><div class="k">exhausts in <span class="m">empty_index_row()</span> when the whole window's rows sit resident beside the index being built</div></div>
+  </div>
+
+  <div class="cols">
+    <div class="card">
+      <h3>The fold runs on the writer's flush path</h3>
+      <p>Not on <span class="m">newspack_nodes/periodic</span>: the cron pass is the documented home for minute-or-slower derived housekeeping, but <span class="m">persist_aggregate_stats()</span> rests on one partition having one writer, and a cron process folding p{N}'s keys puts a second one in a keyspace the substrate's routing exists to keep single-writer. Idempotence would make that benign; the invariant is worth more than the placement.</p>
+      <p>The fold is idempotent because it OVERWRITES from the fine buckets; adding into an hour would double-count every re-flush. The fine buckets outlive their fold, and a folded hour's buckets are never read again. It stays PER SHARD: each shard carries its own <span class="m">Other</span> overflow row, and a merge keyed on the url_hash would collapse sixteen of them into one.</p>
+    </div>
+    <div class="card">
+      <h3>Why the coarse tier is not mirrored</h3>
+      <p><span class="m">STATS_MIRROR_TOPN</span> excludes <span class="m">urls_h</span>: it is derived from <span class="m">urls</span>, which is mirrored in full and retained for <span class="m">&lt;eln:stats_mirror_lifetime&gt;</span>, twice the stats window, so a fine bucket long expired from memcache is still on disk and the rehydrate seam rebuilds an evicted hour from it. The fold cannot, because <span class="m">roll_up_hours()</span> reads memcache; a reader can, and that asymmetry is what the exclusion rests on. A durable copy would store the same information twice on the axis decision 11 watches, and an hour frame would be the largest thing in a checkpoint's held set.</p>
+      <p>The grace hour is read from ALL twelve buckets whatever their age against <span class="m">ttl_url_fine()</span>: that TTL is the memcache lifetime, and the reader is not memcache-only.</p>
+    </div>
+    <div class="card">
+      <h3>Not a scope, a resolution</h3>
+      <p>The coarse key does not reopen decision 1: the bucket stays LAST, one <span class="m">lookup_multi</span> serves the tier, and retention is still the key's own TTL. A resolution is a constant this schema chooses, exactly as the shard count is, and not an input it does not control.</p>
+      <p>Decision 6 is unharmed by chunking: the batch is still one round trip for many keys, bounded to a chunk. What exhausts the heap is the volume resident at once, not a duplicate copy.</p>
+    </div>
+  </div>
+
+
+</div>
