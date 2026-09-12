@@ -3,11 +3,11 @@
  * Stats Store
  *
  * The memcache schema for performance stats, expressed as one small key/value
- * API. Eleven namespaces (`hourly`, `lb`, `lb_s`, `urls`, `urls_h`, `urlmap`,
- * `url`, `dim`, `url_dim`, `categories`, `url_cat`) live under the
- * per-partition prefix `evlog:p{N}:`, inside the install scope Cache_Backend
- * owns. `Flame_Builder_Node` produces every value and
- * `App\Performance_CI_Node` reads them for the dashboards.
+ * API. Fourteen namespaces (`hourly`, `lb`, `lb_s`, `lb_h`, `urls`, `urls_h`,
+ * `urlnames`, `urlnames_h`, `urlmap`, `url`, `dim`, `url_dim`, `categories`,
+ * `url_cat`) live under the per-partition prefix `evlog:p{N}:`, inside the
+ * install scope Cache_Backend owns. `Flame_Builder_Node` produces every value
+ * and `App\Performance_CI_Node` reads them for the dashboards.
  *
  * Stats live in memcache alone; nothing here writes durable state. The
  * `$mirror` and `$rehydrate` seams let a caller shadow them to a durable
@@ -37,8 +37,9 @@ if ( ! \defined( 'ABSPATH' ) ) {
  * Retention runs at three lengths, one per table ROLE. Every aggregate
  * namespace expires at `ttl()`, the whole retention window. The per-URL blob
  * (`url`) is the high-volume one and takes `ttl_url_stats()`, a twenty-fourth
- * of that floored at an hour. A FINE `urls` bucket takes `ttl_url_fine()`, its
- * own read window, because `urls_h` answers for it behind the recent tail.
+ * of that floored at an hour. A FINE `urls` or `urlnames` bucket takes
+ * `ttl_url_fine()`, its own read window, because `urls_h` and `urlnames_h`
+ * answer for it behind the recent tail.
  *
  * Bucketing is part of the key schema, so it lives here: `bucket_key()` is the
  * five-minute `Y-m-d-H-i` derivation every producer and reader shares, and
@@ -144,7 +145,8 @@ class Stats_Store {
 	 * The readers distinguish exactly two resolutions — the whole retention
 	 * window, and the last complete hour — so five-minute buckets buy precision
 	 * at the window's EDGE and nothing else. Behind the recent tail they read as
-	 * hours, which is 13 + 23 keys per shard against 288.
+	 * hours, which at the 24-hour read ceiling is 13 + 23 keys per shard
+	 * against 288.
 	 */
 	public const NS_URLS_HOUR   = 'urls_h';
 	/**
@@ -385,29 +387,30 @@ class Stats_Store {
 	public const FINE_BUCKETS = 13;
 
 	/**
-	 * How long a FINE `urls` bucket is kept, against `min_lifetime` for the
-	 * coarse tier that outlives it.
+	 * How long a FINE `urls` or `urlnames` bucket is kept, against
+	 * `min_lifetime` for the coarse tier that outlives it.
 	 *
 	 * The tier has exactly two consumers: `RECENT_BUCKETS` twelve buckets, which
 	 * are the last-hour rate, and `roll_up_hours()`, which builds every coarse
 	 * tier out of a closed hour's fine buckets. It is the window's EDGE and the
 	 * fold's input — never a tier to read old hours from, which is what
-	 * `unfolded_hour_buckets()` now holds the readers to.
+	 * `unfolded_hour_buckets()` holds the readers to.
 	 *
 	 * Two hours covers both: the read plan asks for `FINE_BUCKETS` plus the rest
 	 * of their hour, just under two at the worst minute, and the fold folds an
-	 * hour within a re-probe of it closing. At that width the tier costs 24
-	 * buckets a shard — the same as the coarse tier's 24 hours — where the four
-	 * hours this was, and the 288 the old note costed it at, bought margin for
-	 * a fallback that should not have been reading here at all.
+	 * hour within a re-probe of it closing. At that width the tier holds 24
+	 * buckets a shard, where the coarse tier holds one per hour of the
+	 * retention window — twelve at the 43,200 s `min_lifetime` default.
+	 * `ttl_url_fine()` caps it at that window, so a window under two hours
+	 * bounds the fine tier instead.
 	 */
 	public const FINE_TTL_SECONDS = 7200;
 
-	/** Every namespace but `url` and a fine `urls` bucket; TTL is `ttl()`. */
+	/** Every namespace but `url` and the fine `urls`/`urlnames` buckets; TTL is `ttl()`. */
 	private const ROLE_AGGREGATE = 'aggregate';
 	/** The per-URL blob; TTL is `ttl_url_stats()`, and it accumulates. */
 	private const ROLE_URL       = 'url';
-	/** A fine `urls` bucket; TTL is `ttl_url_fine()`, its own read window. */
+	/** A fine `urls` or `urlnames` bucket; TTL is `ttl_url_fine()`, its own read window. */
 	private const ROLE_URL_FINE  = 'url_fine';
 
 	/**
@@ -1628,12 +1631,12 @@ class Stats_Store {
 		return $this->max_lifespan;
 	}
 
-	/** Retention for a FINE `urls` bucket: its read window, never the whole one. */
+	/** Retention for a FINE `urls` or `urlnames` bucket: its read window, never the whole one. */
 	public function ttl_url_fine(): int {
 		return \min( $this->max_lifespan, self::FINE_TTL_SECONDS );
 	}
 
-	/** Retention for the high-volume `url` namespace: a day's worth cut to a 24th, floored at an hour. */
+	/** Retention for the high-volume `url` namespace: the retention window cut to a 24th, floored at an hour. */
 	public function ttl_url_stats(): int {
 		return \max( self::PREFIX_FLOOR, (int) ( $this->max_lifespan / 24 ) );
 	}
@@ -1641,9 +1644,11 @@ class Stats_Store {
 	/**
 	 * Which table a namespace is written through.
 	 *
-	 * Only the fine URL tier differs: it is read at the window's EDGE and
-	 * answered behind that by `urls_h`, so it is the one namespace whose TTL
-	 * is its read window rather than the retention window.
+	 * Two groups leave the aggregate table. `url` takes its own, for the
+	 * accumulator tier and `ttl_url_stats()`. The fine `urls` and `urlnames`
+	 * tiers are read at the window's EDGE and answered behind that by `urls_h`
+	 * and `urlnames_h`, so their TTL is their read window rather than the
+	 * retention window.
 	 *
 	 * @param string $ns Namespace, an `NS_*` value.
 	 */

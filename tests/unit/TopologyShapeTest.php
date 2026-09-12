@@ -240,6 +240,37 @@ class TopologyShapeTest extends TestCase {
 	}
 
 	/**
+	 * A Job_Worker heartbeats only where its handler reaches should_continue(),
+	 * so a CPU-bound job outlives the 60s lock default and a peer steals the lock
+	 * mid-job, replaying it. `stale_timeout` is read from the named file alone —
+	 * an included `var` is ignored — so every topology composing a Job_Worker
+	 * must restate it, and a new composition is held to it here.
+	 */
+	public function test_every_topology_composing_a_job_worker_holds_its_lock_ten_minutes(): void {
+		\Newspack_Nodes\Topology_Analyzer::reset_caches();
+		$composing = [];
+		$short     = [];
+		foreach ( $this->topology_files() as $path ) {
+			$name  = \basename( $path, '.tsl' );
+			$types = \array_column( \Newspack_Nodes\Topology_Analyzer::graph_for( $name )['nodes'], 'type' );
+			if ( ! \in_array( 'Job_Worker', $types, true ) ) {
+				continue;
+			}
+			$composing[] = $name;
+			$stale       = \Newspack_Nodes\Topology_Registry::synthesize_entry( $name )['stale_timeout'] ?? null;
+			if ( ! \is_int( $stale ) || $stale < 600 ) {
+				$short[ $name ] = $stale;
+			}
+		}
+		$this->assertNotEmpty( $composing, 'no topology composes a Job_Worker — a rename silently disabled this guard' );
+		$this->assertSame(
+			[],
+			$short,
+			'topologies composing a Job_Worker run under a 600s stale_timeout; declare `var stale_timeout = 600` in each file itself: ' . \json_encode( $short )
+		);
+	}
+
+	/**
 	 * Anchor the shape guards to the current corpus: a renamed node-type or verb
 	 * token must not silently disable a guard by matching nothing (and a stale
 	 * classmap must not make every node look non-stateful).

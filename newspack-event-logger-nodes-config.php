@@ -13,7 +13,9 @@
  * option. PRESENCE decides the option layer rather than truthiness, so a stored
  * '', [] or false beats both files. Every key here takes one; the settings page
  * writes `enable_logging`, `log_memory` and `flush_every_line`, and the rules
- * editor writes `rules`.
+ * editor writes `rules`. `rules` takes only an array as a setting: a stored
+ * non-array is corrupt, and `Rule_Set::load()` seeds from this file and the
+ * schema default beneath it instead.
  *
  * `Settings_Schema` is what DECLARES a key; this file only overrides one. A key
  * here that the schema does not declare is an operator typo: it is ignored and
@@ -44,7 +46,8 @@ return [
 
 	// Seed for the per-URL logging ruleset: the read-time default
 	// `Rule_Set::load()` falls back to while the
-	// `newspack_event_logger_nodes_rules` option is absent or corrupt. Once
+	// `newspack_event_logger_nodes_rules` option is absent or holds anything
+	// but an array. A stored array, `[]` included, stands as written. Once
 	// the rules editor writes that option, this list stops being consulted,
 	// and editing it changes nothing until `Rule_Set::reset()` deletes the
 	// option again.

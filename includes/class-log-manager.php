@@ -126,14 +126,6 @@ class Log_Manager {
 	/** Per-value byte cap for environment_v3 map values. */
 	private const ENV_VALUE_MAX = 256;
 
-	/**
-	 * Encoded-data cap in bytes. The headroom under PIPE_BUF (4096) keeps a
-	 * lock-free append atomic against every other writer on this multi-writer
-	 * log, and it also has to cover the `n`, `k` and `ts` keys message() stamps
-	 * onto the entry AFTER this cap is applied. Payloads that can exceed it
-	 * belong in \Newspack_Nodes\Job_Intake::queue(), not here — message()
-	 * truncates.
-	 */
 	private const MAX_DATA_SIZE = 3840;
 
 	/** @var int Maximum timer stack depth to prevent unbounded growth. */
@@ -1138,8 +1130,8 @@ class Log_Manager {
 	 * Write one firehose line: a TM_STRUCT Message keyed by the request id.
 	 *
 	 * The entry carries the line number as `n`, the category as `k`, the caller's
-	 * data, and a `ts` timestamp. Data encoding over MAX_DATA_SIZE is NOT chunked
-	 * — `m` is trimmed.
+	 * data, and a `ts` timestamp. An entry whose encoding exceeds MAX_DATA_SIZE
+	 * is NOT chunked: fit_data() shrinks it, trimming or dropping `m` first.
 	 *
 	 * @param string $category Event category/keyword.
 	 * @param array<string,mixed>  $data     Additional data to include.

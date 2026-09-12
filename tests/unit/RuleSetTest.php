@@ -50,14 +50,16 @@ final class RuleSetTest extends TestCase {
 		global $wpdb;
 		$wpdb       = null;
 		Core::$memd = null;
+		\Newspack_Event_Logger_Nodes\Config::$read_shipped_config = null;
 		\Newspack_Event_Logger_Nodes\Config::reset();
 		parent::tearDown();
 	}
 
-	/** Pin the memoized Config so an absent rules option seeds from these entries. */
+	/** Pin the shipped config file's `rules`, the layer a seed reads. */
 	private function set_config_rules( array $rules ): void {
-		$ref = new \ReflectionProperty( \Newspack_Event_Logger_Nodes\Config::class, 'config' );
-		$ref->setValue( null, [ 'rules' => $rules ] );
+		\Newspack_Event_Logger_Nodes\Config::$read_shipped_config =
+			static fn ( array $base ): array => [ 'rules' => $rules ] + $base;
+		\Newspack_Event_Logger_Nodes\Config::reset();
 	}
 
 	public function test_load_missing_option_with_empty_config_yields_empty_ruleset(): void {
@@ -113,12 +115,28 @@ final class RuleSetTest extends TestCase {
 		$this->assertSame( [ 'init', 'wp' ], $rule->hooks );
 	}
 
-	public function test_load_corrupt_option_with_empty_config_yields_empty_ruleset(): void {
-		// Corrupt option → seed_from_config; with no config rules that is empty
-		// (log nothing), not the old minimal log-all fallback.
-		$this->set_config_rules( [] );
-		$GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ] = 'not-an-array';
-		$this->assertCount( 0, Rule_Set::load()->rules() );
+	public function test_a_corrupt_option_seeds_from_the_config_layers_beneath_it(): void {
+		// The overlay hands a corrupt option straight back, so the seed must
+		// read BENEATH it or the site logs nothing.
+		$this->set_config_rules( [ [ 'pattern' => '/cardamom/', 'action' => 'log' ] ] );
+		$GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ] = 'shibboleth';
+
+		$rules = Rule_Set::load()->rules();
+
+		$this->assertCount( 1, $rules );
+		$this->assertSame( '/cardamom/', $rules[0]->pattern );
+	}
+
+	public function test_a_corrupt_option_under_a_file_naming_no_rules_seeds_the_schema_default(): void {
+		\Newspack_Event_Logger_Nodes\Config::$read_shipped_config = static fn ( array $base ): array => $base;
+		$GLOBALS['_wp_options'][ Rule_Set::OPTION_RULES ] = 17;
+		$shipped = \Newspack_Event_Logger_Nodes\Settings_Schema::get()->defaults()['rules'];
+
+		$rules = Rule_Set::load()->rules();
+
+		$this->assertCount( \count( $shipped ), $rules );
+		$this->assertSame( '/', \end( $rules )->pattern );
+		$this->assertTrue( \end( $rules )->is_log(), 'the schema default logs every unmatched URL' );
 	}
 
 	public function test_load_mints_ids_for_stored_rules_that_lack_one(): void {

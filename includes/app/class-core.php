@@ -478,9 +478,9 @@ class Core {
 	 *
 	 * The label `l` names the frame beyond `WP_Http`, which is what applies
 	 * this filter, because naming the transport names the same string every
-	 * time — unless the rule already buys caller backtraces, which answer that
-	 * question and are not worth paying for twice. The redacted URL rides the
-	 * entry as `m`.
+	 * time. It climbs whatever the rule's `trace_callers` says: that budget
+	 * attaches `caller` to hook entries alone, so `l` is the only field on
+	 * this span naming who asked. The redacted URL rides the entry as `m`.
 	 *
 	 * @param mixed                 $preempt Short-circuit value, false to proceed.
 	 * @param array<string,mixed>   $args    Request arguments (unused).
@@ -501,10 +501,9 @@ class Core {
 		$this->http_spans[] = self::HTTP_STATE;
 		$lm->start(
 			self::HTTP_STATE,
-			// Backtraces already answer who asked; don't pay for it twice.
 			[
 				'm' => Log_Manager::redact_url( $url ),
-				'l' => self::origin_frame( 0 === $this->trace_callers ),
+				'l' => self::origin_frame( true ),
 			]
 		);
 		return $preempt;
@@ -534,8 +533,7 @@ class Core {
 			return $query;
 		}
 		$this->query_spans[] = self::SQL_STATE;
-		// Backtraces already answer who asked; don't pay for it twice.
-		$lm->start( self::SQL_STATE, [ 'l' => self::origin_frame( 0 === $this->trace_callers ) ] );
+		$lm->start( self::SQL_STATE, [ 'l' => self::origin_frame( true ) ] );
 		if ( isset( $this->significant[ self::QUERY_HOOK ] ) ) {
 			$this->wrap_callbacks( self::QUERY_HOOK );
 		}
