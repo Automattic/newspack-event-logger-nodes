@@ -341,7 +341,6 @@ class Request_Builder_Node extends Timer_Node {
 			return;
 		}
 		$entry = $message[ Message::VALUE ];
-		$this->cache->rotate_if_due();
 		if ( ! \is_array( $entry ) ) {
 			return;
 		}
@@ -549,6 +548,8 @@ class Request_Builder_Node extends Timer_Node {
 	 */
 	protected function fire(): void {
 		$this->cache->rotate_if_due();
+		// An eviction emit parks a stop through guarded(); the tick raises it.
+		$this->raise_pending_stop();
 	}
 
 	/**
@@ -934,7 +935,7 @@ class Request_Builder_Node extends Timer_Node {
 		$s = [];
 
 		$s[ Log_Manager::REQUEST_START ] = function ( \stdClass $request, array $entry ): void {
-			$request->timestamp   = $entry['ts'] ?? ( Core::$now ?: Core::right_now() );
+			$request->timestamp   = Core::num_float( $entry['ts'] ?? null, Core::$now ?: Core::right_now() );
 			$request->stack       = [ [ Log_Manager::REQUEST_LABEL, '' ] ];
 			$request->profiles    = [];
 			$request->entries     = [];
@@ -947,8 +948,8 @@ class Request_Builder_Node extends Timer_Node {
 		};
 
 		$s[ Log_Manager::REQUEST_COMPLETE ] = function ( \stdClass $request, array $entry ): void {
-			$request->duration_ms = $entry['duration_ms'] ?? 0;
-			$request->status_code = $entry['status_code'] ?? 0;
+			$request->duration_ms = Core::num_float( $entry['duration_ms'] ?? null );
+			$request->status_code = Core::num_int( $entry['status_code'] ?? null );
 			$error_status         = $entry['error_status'] ?? '-';
 			$allowed = \array_merge( [ '-' ], self::ERROR_STATUSES );
 			if ( ! \is_string( $error_status ) || ! \in_array( $error_status, $allowed, true ) ) {
@@ -962,8 +963,8 @@ class Request_Builder_Node extends Timer_Node {
 
 		// Duration stops at the abort: not a real sample of the URL's cost.
 		$s[ Log_Manager::REQUEST_ABORTED ] = function ( \stdClass $request, array $entry ): void {
-			$request->duration_ms  = $entry['duration_ms'] ?? 0;
-			$request->status_code  = $entry['status_code'] ?? 0;
+			$request->duration_ms  = Core::num_float( $entry['duration_ms'] ?? null );
+			$request->status_code  = Core::num_int( $entry['status_code'] ?? null );
 			$request->error_status = 'A';
 			$request->state        = 'complete';
 		};
@@ -981,7 +982,7 @@ class Request_Builder_Node extends Timer_Node {
 			$request->request_method = $parts[0];
 		};
 
-		$s['environment_v3'] = function ( \stdClass $request, array $entry ): void {
+		$s[ Log_Manager::ENVIRONMENT ] = function ( \stdClass $request, array $entry ): void {
 			$raw = $entry['m'] ?? null;
 			if ( ! \is_array( $raw ) ) {
 				return;
@@ -1099,11 +1100,8 @@ class Request_Builder_Node extends Timer_Node {
 		if ( 'complete' === ( $request->state ?? '' ) ) {
 			return;
 		}
-		$now = \time();
-		// Dynamic \stdClass property is mixed by design; int cast intentional.
-		/** @var int|float|string $ts_raw */
-		$ts_raw                 = $request->timestamp ?? $now;
-		$start_ts               = (int) $ts_raw;
+		$now                    = \time();
+		$start_ts               = Core::num_int( $request->timestamp ?? null, $now );
 		$request->error_status  = 'T';
 		$request->duration_ms   = ( $now - $start_ts ) * 1000;
 		$request->status_code   = $request->status_code ?? 0;
@@ -1434,11 +1432,8 @@ class Request_Builder_Node extends Timer_Node {
 		// Decoded request envelope: string-keyed map, mixed-by-design values.
 		/** @var array<string,mixed> $r */
 		$r = (array) $request;
-		// Preserve native ts/dur type: casting breaks json_encode round-trip.
-		/** @var int|float $ts */
-		$ts = $r['timestamp'] ?? 0;
-		/** @var int|float $dur */
-		$dur = $r['duration_ms'] ?? 0;
+		$ts  = Core::num_float( $r['timestamp'] ?? null );
+		$dur = Core::num_float( $r['duration_ms'] ?? null );
 		// No rid here — it rides Message::KEY on the completed stream.
 		return [
 			'method'       => Core::as_string( $r['request_method'] ?? 'GET' ),
@@ -1557,7 +1552,16 @@ class Request_Builder_Node extends Timer_Node {
 		}
 		// Persisted cache snapshot: string-keyed by design (LRU_Cache state).
 		/** @var array<string,mixed> $cache_state */
-		$fn = static fn ( $val ) => \is_array( $val ) ? (object) $val : $val;
+		// The checkpoint is the one entrance whose numerics nobody coerced.
+		$fn = static function ( $val ) {
+			if ( ! \is_array( $val ) ) {
+				return $val;
+			}
+			$val['timestamp']   = Core::num_float( $val['timestamp'] ?? null );
+			$val['duration_ms'] = Core::num_float( $val['duration_ms'] ?? null );
+			$val['status_code'] = Core::num_int( $val['status_code'] ?? null );
+			return (object) $val;
+		};
 		$this->cache->restore_state( self::map_buckets( $cache_state, $fn ) );
 	}
 

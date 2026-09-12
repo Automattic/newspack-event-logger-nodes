@@ -28,7 +28,7 @@ import {
 } from '@newspack-nodes/shared/hooks/useAskPicker';
 import { useCommandOnce } from '@newspack-nodes/shared/hooks/useCommandOnce';
 import { formatCommandArgs, nodesData } from '@newspack-nodes/runtime';
-import { askClaudeUrl, briefToMarkdown } from '../askBrief';
+import { askClaudeUrl, briefToMarkdown, clipboardBrief } from '../askBrief';
 
 /**
  * The picker's state, held once for the whole dashboard.
@@ -246,7 +246,7 @@ export default function AskPanel( { ask } ) {
 	// The Claude link copies too: past the URL budget it asks for a paste.
 	const copy = useCallback( () => {
 		window.navigator?.clipboard
-			?.writeText( markdown )
+			?.writeText( clipboardBrief( markdown ) )
 			.then( () => setCopied( true ) );
 	}, [ markdown ] );
 

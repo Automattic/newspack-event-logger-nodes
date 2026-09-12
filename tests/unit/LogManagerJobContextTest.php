@@ -204,23 +204,29 @@ class LogManagerJobContextTest extends TestCase {
 	}
 
 	public function test_begin_clears_inherited_content_headers_and_end_restores(): void {
-		// CONTENT_TYPE / CONTENT_LENGTH / HTTP_X_A8C_REQUEST_ID must not bleed
-		// from the outer request into the job context; they're restored on end.
+		// CONTENT_TYPE / CONTENT_LENGTH describe the outer request's body and
+		// must not bleed into the job context; they're restored on end. The
+		// edge header names no identity, so it rides through untouched and
+		// still correlates the job with the request that queued it. A fresh
+		// UNIQUE_ID is what gives the job its own request id.
 		$_SERVER['CONTENT_TYPE']          = 'application/json';
 		$_SERVER['CONTENT_LENGTH']        = '42';
 		$_SERVER['HTTP_X_A8C_REQUEST_ID'] = 'inherited-id';
+		$_SERVER['UNIQUE_ID']             = 'outer-request-unique-id';
 
 		Log_Manager::begin_job_context( 'job/test' );
 		$this->assertArrayNotHasKey( 'CONTENT_TYPE', $_SERVER );
 		$this->assertArrayNotHasKey( 'CONTENT_LENGTH', $_SERVER );
-		$this->assertArrayNotHasKey( 'HTTP_X_A8C_REQUEST_ID', $_SERVER );
+		$this->assertArrayNotHasKey( 'HTTP_X_A8C_REQUEST_ID', $_SERVER, 'a job has no edge id: the spawn request\'s must not ride into its environment line' );
+		$this->assertNotSame( 'outer-request-unique-id', $_SERVER['UNIQUE_ID'] );
 
 		Log_Manager::end_job_context();
 		$this->assertSame( 'application/json', $_SERVER['CONTENT_TYPE'] );
 		$this->assertSame( '42', $_SERVER['CONTENT_LENGTH'] );
 		$this->assertSame( 'inherited-id', $_SERVER['HTTP_X_A8C_REQUEST_ID'] );
+		$this->assertSame( 'outer-request-unique-id', $_SERVER['UNIQUE_ID'] );
 
-		unset( $_SERVER['CONTENT_TYPE'], $_SERVER['CONTENT_LENGTH'], $_SERVER['HTTP_X_A8C_REQUEST_ID'] );
+		unset( $_SERVER['CONTENT_TYPE'], $_SERVER['CONTENT_LENGTH'], $_SERVER['HTTP_X_A8C_REQUEST_ID'], $_SERVER['UNIQUE_ID'] );
 	}
 
 	/**

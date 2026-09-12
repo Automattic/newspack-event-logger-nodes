@@ -104,7 +104,7 @@ Logging is per-URL, never global: there is no `log_urls`, `skip_urls`, `log_even
 3. Write the `summary` for an agent that cannot see the code. `Findings::caveat()` rides every tool description, so the measurement caveat is already carried — say what the tool answers and what an error means.
 4. Arguments pass through `Command_Args`. `POSITIONAL_ARGS` fixes the order bare tokens are emitted in (`descriptor`, `hash`, `rid`, `pattern`, `rule`, `id`, `context`); everything else becomes `--key=value`.
 
-Authorization takes a `Bearer <handle>.<key>` scoped session: the controller becomes that session's minting user and installs the scope as a ceiling, so a scope can only ever subtract. Rate limit is `RATE_LIMIT_BURST` 20 per `RATE_LIMIT_WINDOW_S` 10, keyed by handle and checked after the credential.
+Authorization takes a `Bearer <handle>.<secret>` scoped session: the controller becomes that session's minting user and installs the scope as a ceiling, so a scope can only ever subtract. Rate limit is `RATE_LIMIT_BURST` 20 per `RATE_LIMIT_WINDOW_S` 10, keyed by handle and checked after the credential.
 
 #### Adding a React dashboard / page
 

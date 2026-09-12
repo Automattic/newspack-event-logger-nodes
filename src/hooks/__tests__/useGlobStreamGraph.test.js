@@ -158,7 +158,7 @@ test( 'signs the mount-time catalog fetch', async () => {
 	forgetSession();
 	__setAuthFetch( async () => ( {
 		handle: 'dddd4444dddd4444dddd4444dddd4444',
-		key: 'key-glob-late-auth',
+		secret: 'key-glob-late-auth',
 		expires_in: 3600,
 		now: 1771000000,
 	} ) );

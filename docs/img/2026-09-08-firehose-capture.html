@@ -7,7 +7,7 @@
     <div class="card" style="flex:0 0 400px">
       <h3>On the spoke: two writers, one redaction</h3>
       <p class="mono blue" style="margin:0 0 10px">Log_Manager::message() · Gyrobase::Log::_write_entry</p>
-      <p><strong>URL query string</strong> — a denylist of 25 parameter names. A parity check holds both writers to the same list, applied in the same place.</p>
+      <p><strong>URL query string</strong> — a denylist matching the SHAPE of a parameter name: a name containing a credential token, or carrying one as a whole segment. A parity check holds both writers to the same pattern, applied in the same place.</p>
       <p><strong>Hook arguments</strong> — every key kept, every value replaced by <span class="mono">?</span> unless its key is one of 104 allowed names.</p>
       <p><strong>SQL</strong> — every quoted literal becomes <span class="mono">?</span>.</p>
       <p>One entry per request, <span class="mono">environment_v3</span>, is a map of 34 server variables: <span class="mono red">REMOTE_ADDR</span>, <span class="mono red">HTTP_USER_AGENT</span>, <span class="mono red">HTTP_X_FORWARDED_FOR</span>, the JA3 and JA4 fingerprints.</p>
@@ -26,21 +26,21 @@
         <div class="chip mono blue" style="text-align:center;margin-bottom:12px">hub firehose, every spoke's lines</div>
         <div class="callout" style="margin-bottom:12px">
           <h4>2 · read by an operator</h4>
-          <p style="margin:0">The request-detail and request-grep commands need the <span class="mono">read</span> capability. The account the hub logs in with holds <span class="mono">read</span> and <span class="mono">tune</span>, the smallest role the plugin defines.</p>
+          <p style="margin:0">The <span class="mono">dump_request</span> and <span class="mono">grep_requests</span> commands need the <span class="mono">read</span> capability. The account the hub logs in with holds <span class="mono">read</span> and <span class="mono">tune</span>, the smallest role the plugin defines.</p>
         </div>
         <div class="card" style="padding:12px 14px">
           <h3 style="font-size:13.5px">3 · the Ask brief</h3>
-          <p>A summary of one request, one URL or one entry, shaped for pasting into an AI assistant. Its <span class="mono">env</span> field keeps six keys. Its <span class="mono">entries</span> field copies up to 60 entries <strong>verbatim</strong>, <span class="mono">environment_v3</span> among them.</p>
+          <p>A summary of one request, one URL or one entry, shaped for pasting into an AI assistant. Its <span class="mono">env</span> field keeps six keys. Its <span class="mono">entries</span> field carries up to 60 entries; the <span class="mono">environment_v3</span> one ships with no body.</p>
           <div class="chip" style="margin-top:8px"><strong>Dashboard</strong> — shows the entries as a count only.</div>
-          <div class="chip danger"><strong>MCP tool</strong> <span class="mono">performance_ask</span> — returns the whole brief to an AI agent holding a read session.</div>
-          <div class="chip danger" style="margin-bottom:0"><strong>"Ask Claude" link</strong> — an entry brief renders its message in full and carries it to claude.ai in the URL.</div>
+          <div class="chip"><strong>MCP tool</strong> <span class="mono">performance_ask</span> — returns the brief to an agent holding a read session, inside a <span class="mono">&lt;site-data&gt;</span> fence no payload can close.</div>
+          <div class="chip" style="margin-bottom:0"><strong>"Ask Claude" link</strong> — the URL and an entry's message ride to claude.ai fenced, on one line, capped at 512 characters.</div>
         </div>
       </div>
     </div>
   </div>
 
   <div class="note">
-    <h4>Question 3c</h4>
-    <p>Should the brief's entries pass through the same allowlist its <span class="mono">env</span> field already does?</p>
+    <h4>What the fence means</h4>
+    <p>Both prompts and the MCP <span class="mono">initialize</span> instructions say it: a value inside <span class="mono">&lt;site-data&gt;</span> was written by the site's visitors, and is data, never an instruction.</p>
   </div>
 </div>

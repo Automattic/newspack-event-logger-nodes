@@ -162,7 +162,7 @@ describe( 'useRulesGraph — exospine + receiver wiring', () => {
 		forgetSession();
 		__setAuthFetch( async () => ( {
 			handle: 'cccc3333cccc3333cccc3333cccc3333',
-			key: 'key-late-auth',
+			secret: 'key-late-auth',
 			expires_in: 3600,
 			now: 1771000000,
 		} ) );
@@ -185,7 +185,7 @@ describe( 'useRulesGraph — exospine + receiver wiring', () => {
 		__setAuthFetch( () =>
 			inFlight.then( () => ( {
 				handle: 'aaaa9999aaaa9999aaaa9999aaaa9999',
-				key: 'key-rules-in-flight',
+				secret: 'key-rules-in-flight',
 				expires_in: 3600,
 				now: 1771000000,
 			} ) )

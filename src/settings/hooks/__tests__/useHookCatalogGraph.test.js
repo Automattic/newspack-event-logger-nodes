@@ -87,7 +87,7 @@ describe( 'useHookCatalogGraph — exospine + I/O boundary wiring', () => {
 		forgetSession();
 		__setAuthFetch( async () => ( {
 			handle: 'eeee5555eeee5555eeee5555eeee5555',
-			key: 'key-hookcatalog-late-auth',
+			secret: 'key-hookcatalog-late-auth',
 			expires_in: 3600,
 			now: 1771000000,
 		} ) );

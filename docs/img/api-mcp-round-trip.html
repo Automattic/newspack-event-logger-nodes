@@ -35,19 +35,19 @@
 <div class="seq" id="seq">
 <svg class="wire" id="wire"><defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#003DA5"/></marker></defs></svg>
 
-<div class="lane card" data-lane="0"><h3>Agent</h3><p>An MCP client registered once with the handle and key a command session issued.</p></div>
+<div class="lane card" data-lane="0"><h3>Agent</h3><p>An MCP client registered once with the handle and secret a command session issued.</p></div>
 <div class="lane card" data-lane="1"><h3>The gate</h3><p><span class="mono">MCP_Controller::<wbr>check_permission()</span>, the route's permission callback.</p></div>
 <div class="lane card" data-lane="2"><h3>JSON-RPC</h3><p><span class="mono">MCP_Controller::<wbr>dispatch()</span>: one route, <span class="mono">POST …/newspack-event-logger-nodes/v1/mcp</span>, four methods.</p></div>
 <div class="lane card" data-lane="3"><h3>The verb</h3><p>The <span class="mono">performance</span> or <span class="mono">rules</span> interpreter, mounted by <span class="mono">Bootstrap::<wbr>mount_request_graph()</span>, and its handler.</p></div>
 
-<div class="hop" data-span="0,1"><span class="n">1</span>One JSON-RPC request per POST, under <span class="mono">Authorization: Bearer &lt;handle&gt;.&lt;key&gt;</span>: 32 hex, a dot, 64 hex.</div>
+<div class="hop" data-span="0,1"><span class="n">1</span>One JSON-RPC request per POST, under <span class="mono">Authorization: Bearer &lt;handle&gt;.&lt;secret&gt;</span>: 32 hex, a dot, 64 hex.</div>
 
 <div class="panel" data-arrow="0,1" data-cap="POST, over HTTPS" data-span="1,3">
   <header><span class="n">2</span>Three refusals, the swap, then the meter; the first to fail answers</header>
   <div class="body">
     <div class="chip"><span class="st">403</span><span class="mono">Bootstrap::fleet_gate()</span>: the fleet is network-global, so a multisite subsite is refused.</div>
     <div class="chip"><span class="st">401</span>The header does not match the Bearer shape.</div>
-    <div class="chip"><span class="st">401</span><span class="mono">Command_Auth::load_session_record( handle )</span> finds no live session, or its key fails <span class="mono">hash_equals</span>.</div>
+    <div class="chip"><span class="st">401</span><span class="mono">Command_Auth::load_session_record( handle )</span> finds no live session, or its secret fails <span class="mono">hash_equals</span>.</div>
     <div class="chip"><span class="st pass">&#10003;</span>The request BECOMES the session's minting user (<span class="mono">wp_set_current_user</span>); the session's scope is installed as <span class="mono">Capabilities::$session_scope</span>, a ceiling and never a grant.</div>
     <div class="chip"><span class="st">429</span>The handle's 21st call inside one 10-second bucket (<span class="mono">RATE_LIMIT_BURST</span> 20, <span class="mono">RATE_LIMIT_WINDOW_S</span> 10). Checked last, so an unauthenticated flood cannot fill the transient table.</div>
   </div>
@@ -56,7 +56,7 @@
 <div class="panel" data-arrow="1,2" data-cap="authenticated" data-span="1,3">
   <header><span class="n">3</span>Dispatch on <span class="mono">method</span></header>
   <div class="body">
-    <div class="chip"><span class="mono">initialize</span> answers <span class="mono">protocolVersion</span> 2025-06-18, <span class="mono">capabilities.tools</span>, <span class="mono">serverInfo</span> (name, plugin version) and <span class="mono">instructions</span>: the measurement caveat, <span class="mono">Findings::caveat()</span>.</div>
+    <div class="chip"><span class="mono">initialize</span> answers <span class="mono">protocolVersion</span> 2025-06-18, <span class="mono">capabilities.tools</span>, <span class="mono">serverInfo</span> (name, plugin version) and <span class="mono">instructions</span>: the <span class="mono">&lt;site-data&gt;</span> rule, then the measurement caveat from <span class="mono">Findings::caveat()</span>.</div>
     <div class="chip"><span class="mono">notifications/initialized</span> answers nothing: JSON-RPC forbids replying to a notification.</div>
     <div class="chip"><span class="mono">tools/list</span> answers only the tools whose declared role <span class="mono">Capabilities::can()</span> allows, which tests BOTH halves: the ceiling and the user's own capability.</div>
         <div class="chip danger">Any other method: error <span class="mono">-32601 Unknown method: &lt;method&gt;</span>. A body that is not a JSON-RPC request: <span class="mono">-32600</span>.</div>
@@ -72,7 +72,7 @@
   </div>
 </div>
 
-<div class="hop" data-arrow="3,2" data-cap="returns, or throws" data-span="1,3"><span class="n">5</span>A return value becomes one <span class="mono">text</span> content block: the string as it is, anything else JSON-encoded. A throw becomes <span class="mono">result.isError: true</span> with the message as the text: a tool error, not a transport error, because the call reached the server and was answered.</div>
+<div class="hop" data-arrow="3,2" data-cap="returns, or throws" data-span="1,3"><span class="n">5</span>A return value becomes one <span class="mono">text</span> content block: the reply JSON-encoded with <span class="mono">JSON_HEX_TAG | JSON_UNESCAPED_SLASHES</span> and wrapped in <span class="mono">&lt;site-data&gt;</span>, so no payload can close the fence. A throw becomes <span class="mono">result.isError: true</span> with the message as the text, unfenced: a tool error, not a transport error, because the call reached the server and was answered.</div>
 
 <div class="hop" data-arrow="2,0" data-cap="HTTP 200, one JSON-RPC response" data-span="0,3"><span class="n">6</span><span class="mono">{ jsonrpc: "2.0", id, result }</span> or <span class="mono">{ jsonrpc: "2.0", id, error: { code, message } }</span>. Nothing in a reply asks the agent to act; wiring a client up is the operator's deliberate act.</div>
 </div>
@@ -88,8 +88,9 @@
     </div>
   </div>
   <div class="callout" style="flex:0 0 270px">
-    <h4>The caveat rides on every tool</h4>
-    <p>Each description ends with the measurement caveat <span class="mono">initialize</span> hands back as <span class="mono">instructions</span>. A model handed a profiled-versus-duration ratio without it invents a cause for the gap, and the invented cause reads like a finding.</p>
+    <h4>Two standing rules ride along</h4>
+    <p>Each description ends with the measurement caveat <span class="mono">initialize</span> hands back as part of <span class="mono">instructions</span>. A model handed a profiled-versus-duration ratio without it invents a cause for the gap, and the invented cause reads like a finding.</p>
+    <p>The rest of <span class="mono">instructions</span> says what the fence means: every value inside <span class="mono">&lt;site-data&gt;</span> was written by the site&rsquo;s visitors, so it is data and never a direction to follow.</p>
   </div>
 </div>
 <script>
