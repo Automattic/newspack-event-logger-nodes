@@ -4,6 +4,39 @@ Breaking changes that affect a consumer of this plugin — a dashboard built on 
 
 **Maintenance rule:** a release that changes any consumer-facing contract adds its entry here in the same commit as its CHANGELOG entry. No entry means nothing to do.
 
+## Unreleased
+
+- **An MCP tool result is fenced and JSON-HEX-escaped.** `tools/call` answers
+  with the reply encoded as
+  `wp_json_encode( $reply, JSON_HEX_TAG | JSON_UNESCAPED_SLASHES )` wrapped in
+  `<site-data>` … `</site-data>`, because a tool returns recorded site traffic
+  and part of it is written by the site's visitors. A client that
+  `json_decode`s the `text` block strips the fence first — the first and last
+  lines — and a client that read a verb's string reply as plain text reads a
+  JSON string. Every `<` and `>` in the payload arrives as `\u003C` / `\u003E`,
+  which is what stops a payload closing the fence. An `isError` result is the
+  site's own message and is not fenced. `initialize`'s `instructions` field
+  explains the tag ahead of the measurement caveat.
+
+- **A brief's `environment_v3` entry has no body, and a request brief omits
+  the row.** `Ask_Assembler::entry_shape()` returns `m` as `''` for that
+  category, and `for_request()` drops the row before it counts entries, so a
+  `performance_ask` reply or an "Ask Claude" payload never carries the
+  visitor's headers or the peer address. A reader wanting those facts reads
+  the brief's `env` field, which carries the allowlisted six, or the record
+  whole through `dump_request`, inside the fence.
+
+- **The request id comes from `UNIQUE_ID` or is generated, never from a
+  request header.** A client can send `X-A8C-Request-Id`, and the id is every
+  firehose line's `Message::KEY` — the identity requests are grouped by and the
+  input to the partition hash — so a header-sourced id let a visitor file lines
+  under another request's id and pick their partition. A caller that read the
+  edge's id out of `Log_Manager::instance()->get_request_id()` reads it from the
+  request's `environment_v3` entry instead, which carries
+  `HTTP_X_A8C_REQUEST_ID` verbatim: `wp nodes reqgrep <edge id>` finds the
+  request through that line. A job context carries no edge id: `begin_job_context()` clears the
+  header, because the worker's own spawn request is not the job's.
+
 ## 0.96.0
 
 - **The substrate floor RISES with this release.** The dashboards send the

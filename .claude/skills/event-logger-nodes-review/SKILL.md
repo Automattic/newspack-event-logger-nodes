@@ -39,7 +39,7 @@ A new producer of potentially-large jobs routed through `Log_Manager` is broken:
 
 Neither plugin can host the check — only the dndocker tree sees both producers. `tools/check-firehose-parity.py` is it, and ELN's `pre-push` runs it whenever this tree is the checkout. It also refuses an allowlisted key that reads as a secret.
 
-Those four values are the whole of what it compares. `MAX_DATA_SIZE` (3840) is not among them and the script never reads it, because the Perl side bounds a different thing: `$MAX_LINE_SIZE` is PIPE_BUF itself, 4096, applied to the PACKED LINE rather than to the encoded entry, and its overflow path replaces `m` with a `(truncated, original N bytes)` stub instead of trimming it in a loop. Moving 3840 therefore draws no mechanical warning: reason the two producers against `Log.pm` by hand.
+Those four values, plus where each producer applies the pattern and that neither applies it to a queued job body, are the whole of what it compares. `MAX_DATA_SIZE` (3840) is not among them and the script never reads it, because the Perl side bounds a different thing: `$MAX_LINE_SIZE` is PIPE_BUF itself, 4096, applied to the PACKED LINE rather than to the encoded entry, and its overflow path replaces `m` with a `(truncated, original N bytes)` stub instead of trimming it in a loop. Moving 3840 therefore draws no mechanical warning: reason the two producers against `Log.pm` by hand.
 
 **Cap AFTER redaction.** Reversing the two would let a truncation expose the tail of a secret the redaction covered. A diff editing either side alone ships two producers writing different lines.
 
@@ -301,12 +301,12 @@ Ten more CIs are substrate-owned, mounted on the same hook by `newspack_nodes_mo
 
 ### The MCP surface
 
-`POST /wp-json/newspack-event-logger-nodes/v1/mcp` is a JSON-RPC MCP server wrapping verbs that already exist — ten tools, each one verb, arguments passed through `Command_Args`, replies verbatim.
+`POST /wp-json/newspack-event-logger-nodes/v1/mcp` is a JSON-RPC MCP server wrapping verbs that already exist — ten tools, each one verb, arguments passed through `Command_Args`, replies JSON-encoded inside a `<site-data>` fence.
 
-- **The scope is a ceiling, never a grant.** A `Bearer <handle>.<key>` names a live session; the controller becomes that session's minting user and installs `Capabilities::$session_scope`, so a manage-scoped session minted by someone who can do nothing still does nothing. `Bootstrap::fleet_gate()` runs first.
+- **The scope is a ceiling, never a grant.** A `Bearer <handle>.<secret>` names a live session; the controller becomes that session's minting user and installs `Capabilities::$session_scope`, so a manage-scoped session minted by someone who can do nothing still does nothing. `Bootstrap::fleet_gate()` runs first.
 - **`tools/list` offers only what the scope covers**, and `Findings::caveat()` — the measurement caveat — rides EVERY tool description, not just the first read. A new tool that drops the caveat hands a model a number it will over-read.
 - **Rate limiting is per handle**, `RATE_LIMIT_BURST` 20 per `RATE_LIMIT_WINDOW_S` 10, checked AFTER the credential so an unauthenticated flood cannot poison the transient table. MCP does not route through `/command`, so the substrate's per-user cap does not bound it.
-- **A brief redacts.** `Ask_Assembler` puts every URL through `Log_Manager::redact_url()`, allowlists the environment rather than filtering it, and caps entries. A new brief field bypassing that path leaks.
+- **A brief redacts.** `Ask_Assembler` puts every URL through `Log_Manager::redact_url()`, allowlists the environment rather than filtering it, ships the `environment_v3` entry with no body, and caps entries. A new brief field bypassing that path leaks.
 
 ## Dashboards
 

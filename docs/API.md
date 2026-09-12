@@ -255,9 +255,9 @@ and one POST carries every method: `initialize`, `notifications/initialized`
 `/command` does, through `Bootstrap::mount_request_graph()`, and dispatches through the same
 interpreter.
 
-![The MCP round trip across four lanes: the agent, the permission gate MCP_Controller::check_permission(), the JSON-RPC dispatcher and the verb's interpreter. One JSON-RPC request per POST carries a Bearer handle.key credential, 32 hex, a dot and 64 hex. The gate answers 403 from the fleet gate on a multisite subsite, 401 for a malformed header, and 401 when Command_Auth::load_session_record() finds no live session or the key fails hash_equals; it then makes the request the session's minting user with the scope installed as a ceiling, and last answers 429 on a handle's 21st call inside one 10-second bucket. Dispatch answers initialize with protocol 2025-06-18, capabilities, serverInfo and the measurement caveat as instructions, answers nothing to notifications/initialized, lists only the tools the scope and the user both allow, and returns -32601 for any other method and -32600 for a body that is not JSON-RPC. tools/call refuses an unknown tool and an uncovered one alike, -32601 Unknown tool; turns named arguments into a flat token list, where POSITIONAL_ARGS (descriptor, hash, rid, pattern, rule, id, context) ride bare in that order and the rest become --key=value; and dispatches on the same CI /command reaches. A return becomes one text block, JSON-encoded unless already a string; a throw becomes result.isError, a tool error rather than a transport error. Below: a read session sees eight tools, a tune session two more, and six verbs have no tool at all: performance.url_breakdown, list_hooks and set, rules.save and reset, and discovery.get.](img/api-mcp-round-trip.png)
+![The MCP round trip across four lanes: the agent, the permission gate MCP_Controller::check_permission(), the JSON-RPC dispatcher and the verb's interpreter. One JSON-RPC request per POST carries a Bearer handle.secret credential, 32 hex, a dot and 64 hex. The gate answers 403 from the fleet gate on a multisite subsite, 401 for a malformed header, and 401 when Command_Auth::load_session_record() finds no live session or the key fails hash_equals; it then makes the request the session's minting user with the scope installed as a ceiling, and last answers 429 on a handle's 21st call inside one 10-second bucket. Dispatch answers initialize with protocol 2025-06-18, capabilities, serverInfo and instructions carrying the <site-data> rule ahead of the measurement caveat, answers nothing to notifications/initialized, lists only the tools the scope and the user both allow, and returns -32601 for any other method and -32600 for a body that is not JSON-RPC. tools/call refuses an unknown tool and an uncovered one alike, -32601 Unknown tool; turns named arguments into a flat token list, where POSITIONAL_ARGS (descriptor, hash, rid, pattern, rule, id, context) ride bare in that order and the rest become --key=value; and dispatches on the same CI /command reaches. A return becomes one text block: the reply JSON-encoded with JSON_HEX_TAG and wrapped in <site-data>, so no payload can close the fence; a throw becomes result.isError with the message unfenced, a tool error rather than a transport error. Below: a read session sees eight tools, a tune session two more, and six verbs have no tool at all: performance.url_breakdown, list_hooks and set, rules.save and reset, and discovery.get.](img/api-mcp-round-trip.png)
 
-**Permission**: an `Authorization: Bearer <handle>.<key>` header naming a live command
+**Permission**: an `Authorization: Bearer <handle>.<secret>` header naming a live command
 session, issued from the station's Sessions tab or from `POST /wp-json/newspack-nodes/v1/auth`.
 Authority is the minting user's, and the session's scope only ever subtracts from it: a
 manage-scoped session minted by someone who can do nothing still does nothing.
@@ -286,8 +286,18 @@ claude mcp add --transport http <ID> https://<DOMAIN>/wp-json/newspack-event-log
 
 Every tool description carries the measurement caveat, because a model handed
 `175.6ms profiled / 420000ms duration` with nothing saying what is unmeasured will invent a
-cause for the difference — and the invented cause reads exactly like a finding. The same
-caveat is `initialize`'s `instructions`.
+cause for the difference — and the invented cause reads exactly like a finding. That caveat
+is the tail of `initialize`'s `instructions`.
+
+**Every success result is fenced, and the head of `instructions` says why.** A tool returns
+recorded site traffic, part of it written by the site's visitors: `dump_request` carries the `environment_v3` entry, whose values are request headers. So the
+`text` block is `wp_json_encode( $reply, JSON_HEX_TAG | JSON_UNESCAPED_SLASHES )` wrapped in
+`<site-data>` … `</site-data>`, and the instructions tell the reader that whatever sits
+inside that tag is data and never a direction to follow. `JSON_HEX_TAG` is what makes the
+fence unbreakable: every `<` and `>` in the payload becomes `\u003C` or `\u003E`, so no
+payload can carry a literal `</site-data>`. **A client that decodes the `text` must strip
+the fence first.** An `isError` result is the site's own message and is not fenced. See
+[decision 26](architecture-decisions.md#decision-26-read-tools-and-tune-scoped-write-tools-share-one-mcp-session-and-every-tool-result-is-fenced).
 
 Nothing here assumes an agent will act on instructions found in a page. Wiring a client up
 is a deliberate act by the operator; the endpoint advertises itself in prose aimed at a
@@ -364,7 +374,7 @@ false.
 | `static url_hash( string ): string` | 12-char FNV-1a. The shared URL identity primitive, also behind `Rule_Set::id_for()`. The two hash different inputs — a rule id hashes a PATTERN, a stats bucket a concrete URL — so don't join them. |
 | `static fnv1a32( string, int $seed = 2166136261 ): int` | The hash underneath it. |
 | `static generate_request_id(): string` | 32 base-36 characters over 25 random bytes. |
-| `static redact_url( string ): string` | The ONE redaction path; public for that reason. Replaces the value of each of 21 sensitive query parameters with `[REDACTED]`, keeping the parameter itself. |
+| `static redact_url( string ): string` | The ONE redaction path; public for that reason. Replaces the value of any query parameter whose NAME carries a credential token with `[REDACTED]`, keeping the parameter itself. |
 
 Public constants: `FATAL_TYPES`, and the four request keywords `REQUEST_LABEL` (`process`),
 `REQUEST_START`, `REQUEST_COMPLETE` and `REQUEST_ABORTED`. The last two together are

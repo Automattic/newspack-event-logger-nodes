@@ -64,7 +64,7 @@
 </div>
 
 <div class="card" style="margin-top:14px;padding:11px 16px">
-  <p style="margin:0"><b>The request id</b> is <span class="mono">HTTP_X_A8C_REQUEST_ID</span>, else <span class="mono">UNIQUE_ID</span>, each clipped to 64 characters; absent both, <span class="mono">generate_request_id()</span> mints up to 32 base-36 characters and publishes them into <span class="mono">$_SERVER['UNIQUE_ID']</span>, so a subprocess inherits the identity. It is not one of the entry's fields: readers group a request's lines by the envelope's KEY.</p>
+  <p style="margin:0"><b>The request id</b> is <span class="mono">UNIQUE_ID</span>, clipped to 64 characters and never a request header; absent it, <span class="mono">generate_request_id()</span> mints up to 32 base-36 characters and publishes them into <span class="mono">$_SERVER['UNIQUE_ID']</span>, so a subprocess inherits the identity. It is not one of the entry's fields: readers group a request's lines by the envelope's KEY.</p>
 </div>
 
 <div class="logs">

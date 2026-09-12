@@ -72,6 +72,9 @@ class Log_Manager {
 	 */
 	public const REQUEST_ABORTED = self::REQUEST_LABEL . ' (aborted)';
 
+	/** The category whose `m` is the curated $_SERVER map `log_environment()` writes. */
+	public const ENVIRONMENT = 'environment_v3';
+
 	/** @var int Bytes-to-megabytes divisor. */
 	private const BYTES_PER_MB = 1024 * 1024;
 
@@ -134,8 +137,28 @@ class Log_Manager {
 	/** @var int Nanoseconds-to-milliseconds divisor. */
 	private const NS_PER_MS = 1_000_000;
 
-	/** @var string Regex for sensitive URL query parameters. */
-	private const URL_REDACT_PATTERN = '/([?&])(key|api_key|apikey|cache_cozy_warm|token|access_token|auth_token|refresh_token|password|passwd|pwd|secret|api_secret|client|client_secret|private_key|sig|signature|subscription[_-]?key|bearer|authorization|auth|session|sessionid|credentials)=[^&]*/i';
+	/**
+	 * Regex for sensitive URL query parameters, matched by the SHAPE of the
+	 * parameter name. `$1` is the `?`/`&` delimiter and `$2` the whole name,
+	 * so the body is usable verbatim as Perl's `s/…/$1$2=[REDACTED]/ig`:
+	 * `Gyrobase::Log::_redact_url` carries the identical copy, and
+	 * `tools/check-firehose-parity.py` in dndocker diffs the two bodies.
+	 *
+	 * Two tiers, because a short token collides with ordinary words: a name
+	 * CONTAINING a credential token is redacted wherever the token sits, with
+	 * `auth` sparing the core query var `author`; a short token counts only as a
+	 * whole SEGMENT of the name, bounded by its ends or by `_`, `-` or `.`, so
+	 * `consumer_key` and `api-key` go while `keyword` and `postcode` stay.
+	 *
+	 * This is a DENYLIST: a credential under a name carrying none of these
+	 * tokens reaches the log in cleartext. The segment rule over-reaches on
+	 * `country_code` and `client_id`, redacted though neither is a secret; an
+	 * allowlist is the wrong trade for a URL log, where `?p=`, `?s=` and the
+	 * `utm_*` family are what an operator reads it for.
+	 *
+	 * @var string
+	 */
+	private const URL_REDACT_PATTERN = '/([?&])(?=[^=&#]*(?:secret|token|pass(?:w|phrase)|pwd|hmac|nonce|session|credential|bearer|signature|apikey|subscriptionkey|cache_cozy_warm|authorization|auth(?!or))|(?:[^=&#]*[_.\-])?(?:key|sig|code|pass|pin|otp|client)[_.\-=\[])([^=&#]*)=[^&]*/i';
 
 	/** @var array<int,self> Stack of suspended parent Log_Manager instances. */
 	private static $context_stack = [];
@@ -694,8 +717,7 @@ class Log_Manager {
 	 *                                     still names the causing record.
 	 * @param array<string,string> $server $_SERVER keys overriding the synthetic
 	 *                                     defaults. Describes the request only —
-	 *                                     overriding UNIQUE_ID or
-	 *                                     HTTP_X_A8C_REQUEST_ID would defeat the
+	 *                                     overriding UNIQUE_ID would defeat the
 	 *                                     fresh per-job request identity above.
 	 */
 	public static function begin_job_context( string $handler, string $id = '', array $message = [], array $server = [] ): void {
@@ -722,11 +744,8 @@ class Log_Manager {
 		$_SERVER['REQUEST_METHOD'] = 'POST';
 		$_SERVER['PATH_INFO']      = '';
 		$_SERVER['QUERY_STRING']   = '';
-		unset(
-			$_SERVER['CONTENT_TYPE'],
-			$_SERVER['CONTENT_LENGTH'],
-			$_SERVER['HTTP_X_A8C_REQUEST_ID']
-		);
+		// A job has no edge id: the spawn request's is not its own.
+		unset( $_SERVER['CONTENT_TYPE'], $_SERVER['CONTENT_LENGTH'], $_SERVER['HTTP_X_A8C_REQUEST_ID'] );
 		foreach ( $server as $key => $value ) {
 			$_SERVER[ $key ] = $value;
 		}
@@ -944,16 +963,23 @@ class Log_Manager {
 	/**
 	 * Mint the request id, pick its partition, and attach the firehose Topic.
 	 *
-	 * The id comes from the edge (`HTTP_X_A8C_REQUEST_ID`), else from `UNIQUE_ID`,
-	 * else it is generated and published back into `$_SERVER['UNIQUE_ID']` so a
-	 * subprocess inherits the same identity. `_firehose:topic` is built once per
-	 * process and adopted by every later context.
+	 * The id comes from `UNIQUE_ID`, which Apache's mod_unique_id sets and a
+	 * client cannot, else it is generated and published back into
+	 * `$_SERVER['UNIQUE_ID']` so a subprocess inherits the same identity. No
+	 * request header is ever a source: the id is every firehose line's Message
+	 * KEY, the identity Request_Builder_Node groups by and the input to
+	 * Partition_Node::hash_to_partition(), so a client-suppliable one would let
+	 * a visitor file lines under another request's id and pick their partition.
+	 * The edge's own id stays available for correlation as the allowlisted
+	 * `HTTP_X_A8C_REQUEST_ID` value in the `environment_v3` entry, which is what
+	 * `wp nodes reqgrep <edge id>` finds the request through.
+	 *
+	 * `_firehose:topic` is built once per process and adopted by every later
+	 * context.
 	 */
 	private function init_firehose(): void {
 		// request_id FIRST: Topic ctor re-enters message(), which needs a rid.
-		if ( ! empty( $_SERVER['HTTP_X_A8C_REQUEST_ID'] ) && \is_string( $_SERVER['HTTP_X_A8C_REQUEST_ID'] ) ) {
-			$this->request_id = \substr( \sanitize_text_field( \wp_unslash( $_SERVER['HTTP_X_A8C_REQUEST_ID'] ) ), 0, 64 );
-		} elseif ( ! empty( $_SERVER['UNIQUE_ID'] ) && \is_string( $_SERVER['UNIQUE_ID'] ) ) {
+		if ( ! empty( $_SERVER['UNIQUE_ID'] ) && \is_string( $_SERVER['UNIQUE_ID'] ) ) {
 			$this->request_id = \substr( \sanitize_text_field( \wp_unslash( $_SERVER['UNIQUE_ID'] ) ), 0, 64 );
 		} else {
 			$this->request_id     = self::generate_request_id();
@@ -1122,7 +1148,7 @@ class Log_Manager {
 			$env[ $key ] = $sanitized;
 		}
 		if ( ! empty( $env ) ) {
-			$this->message( 'environment_v3', [ 'm' => $env ] );
+			$this->message( self::ENVIRONMENT, [ 'm' => $env ] );
 		}
 	}
 

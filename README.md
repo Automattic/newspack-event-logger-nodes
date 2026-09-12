@@ -125,7 +125,7 @@ wp nodes ruleset-bench         # measures the ruleset's two hook-storage tiers, 
 POST /wp-json/newspack-event-logger-nodes/v1/mcp
 ```
 
-Authentication is a [scoped command session](https://github.com/Automattic/newspack-nodes/blob/main/docs/commands-capabilities-and-sessions.md#sessions) (issue one under Nodes → Sessions), passed as `Authorization: Bearer <handle>.<key>`. The request becomes that session's minting user and applies the scope as a ceiling, so a scope can only ever subtract and `tools/list` offers only what it covers: a `read` session sees the seven performance tools and `dump_rules`, and `tune` adds `rules_upsert` and `rules_delete`.
+Authentication is a [scoped command session](https://github.com/Automattic/newspack-nodes/blob/main/docs/commands-capabilities-and-sessions.md#sessions) (issue one under Nodes → Sessions), passed as `Authorization: Bearer <handle>.<secret>`. The request becomes that session's minting user and applies the scope as a ceiling, so a scope can only ever subtract and `tools/list` offers only what it covers: a `read` session sees the seven performance tools and `dump_rules`, and `tune` adds `rules_upsert` and `rules_delete`.
 
 Register it with a client — `<ID>` is the local name the client files it under:
 

@@ -15,13 +15,9 @@
  * Three rules hold across every shaper:
  *   - URLs go through `Log_Manager::redact_url()`, the one redaction path.
  *   - `env_of()` drops the environment except an allowlist — no headers, no
- *     IPs, no user agents, no cookies. That holds for the environment FIELD
- *     and not for an entry body: `entry_shape()` copies an entry's `m`
- *     verbatim, and an `environment_v3` entry's `m` IS the curated $_SERVER
- *     map, so a brief carrying that entry carries REMOTE_ADDR and the user
- *     agent off-site. Whether the shaper should apply the same allowlist is
- *     an open question, not a settled invariant — do not read this list as
- *     one until it is answered.
+ *     IPs, no user agents, no cookies — and the `environment_v3` entry ships
+ *     no body; see `entry_shape()`. This bounds the brief alone:
+ *     `dump_request` ships the record whole, inside the MCP fence.
  *   - The caveat rides on every brief, because a model handed a
  *     profiled/duration ratio without one will invent a cause. `Findings`
  *     rides where a detector has something to say: the request and the URL.
@@ -83,7 +79,10 @@ class Ask_Assembler {
 	 * @return array<string,mixed>
 	 */
 	public static function for_request( array $record, ?Rule $rule ): array {
-		$entries   = \is_array( $record['entries'] ?? null ) ? \array_values( $record['entries'] ) : [];
+		$entries   = \array_values( \array_filter(
+			\is_array( $record['entries'] ?? null ) ? $record['entries'] : [],
+			static fn ( mixed $e ): bool => ! \is_array( $e ) || Log_Manager::ENVIRONMENT !== ( $e['k'] ?? '' )
+		) );
 		$truncated = \count( $entries ) > self::MAX_ENTRIES;
 
 		return [
@@ -365,21 +364,30 @@ class Ask_Assembler {
 
 	/**
 	 * One entry, shaped for the brief. The payload is whatever survived the
-	 * firehose; `MAX_ENTRIES` bounds the brief, not the entry.
+	 * firehose; `MAX_ENTRIES` bounds the brief, not the entry. The environment
+	 * entry is the exception: its map is the visitor's headers and the peer, the
+	 * brief's `env` field already carries the facts worth having, and a request
+	 * brief drops the row outright rather than spend a slot on it, so what
+	 * reaches here is an `entry:` ask on that row, which gets its category and
+	 * no body.
 	 *
 	 * @param mixed $entry A raw entry.
 	 * @return array<string,mixed>
 	 */
 	private static function entry_shape( mixed $entry ): array {
-		$entry   = \is_array( $entry ) ? $entry : [];
-		$message = \is_array( $entry['m'] ?? null )
-			? Core::as_string( \wp_json_encode( $entry['m'] ) )
-			: Core::as_string( $entry['m'] ?? '' );
+		$entry    = \is_array( $entry ) ? $entry : [];
+		$category = Core::as_string( $entry['k'] ?? '' );
+		$body     = $entry['m'] ?? '';
+		if ( Log_Manager::ENVIRONMENT === $category ) {
+			$body = '';
+		} elseif ( \is_array( $body ) ) {
+			$body = \wp_json_encode( $body );
+		}
 		return [
 			'n'  => Core::num_int( $entry['n'] ?? 0 ),
 			'ts' => Core::num_float( $entry['ts'] ?? 0 ),
-			'k'  => Core::as_string( $entry['k'] ?? '' ),
-			'm'  => $message,
+			'k'  => $category,
+			'm'  => Core::as_string( $body ),
 		];
 	}
 

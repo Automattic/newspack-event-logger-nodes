@@ -117,6 +117,17 @@ export function pageFacts( {
 }
 
 /**
+ * Escape `<` as `\u003C`, the spelling that keeps a value from opening a tag
+ * wherever it lands: a script element, a `<site-data>` fence.
+ *
+ * @param {string} text Any text.
+ * @return {string} The text with every `<` escaped.
+ */
+export function escapeLt( text ) {
+	return text.replace( /</g, '\\u003C' );
+}
+
+/**
  * The facts as a string safe to sit inside a `<script type="application/json">`
  * element.
  *
@@ -131,8 +142,7 @@ export function pageFacts( {
  * @return {string} JSON, escaped for a script element.
  */
 export function factsJson( facts ) {
-	return JSON.stringify( facts )
-		.replace( /</g, '\\u003C' )
+	return escapeLt( JSON.stringify( facts ) )
 		.replace( /\u2028/g, '\\u2028' )
 		.replace( /\u2029/g, '\\u2029' );
 }

@@ -4,6 +4,7 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 use PHPUnit\Framework\Attributes\CoversClass;
 use Newspack_Event_Logger_Nodes\Request_Builder_Node;
 use Newspack_Event_Logger_Nodes\Request_Flight_Node;
+use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
@@ -396,7 +397,7 @@ class RequestBuilderTest extends TestCase {
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
 		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
-		$this->fill( $rb, 3, 'r1', 'environment_v3', [ 'm' => [ 'REMOTE_ADDR' => '1.2.3.4' ] ] );
+		$this->fill( $rb, 3, 'r1', Log_Manager::ENVIRONMENT, [ 'm' => [ 'REMOTE_ADDR' => '1.2.3.4' ] ] );
 		$this->fill( $rb, 4, 'r1', 'process (complete)', [ 'duration_ms' => 1.0 ] );
 
 		$req = $this->captured_request( $capture );
@@ -410,7 +411,7 @@ class RequestBuilderTest extends TestCase {
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
 		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
-		$this->fill( $rb, 3, 'r1', 'environment_v3', [ 'm' => [ 'REMOTE_ADDR' => 'not-an-ip' ] ] );
+		$this->fill( $rb, 3, 'r1', Log_Manager::ENVIRONMENT, [ 'm' => [ 'REMOTE_ADDR' => 'not-an-ip' ] ] );
 		$this->fill( $rb, 4, 'r1', 'process (complete)' );
 
 		$req = $this->captured_request( $capture );
@@ -425,7 +426,7 @@ class RequestBuilderTest extends TestCase {
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
 		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
 		// REMOTE_ADDR absent (empty ⇒ treated as absent) → XFF fallback supplies the real IP.
-		$this->fill( $rb, 3, 'r1', 'environment_v3', [ 'm' => [
+		$this->fill( $rb, 3, 'r1', Log_Manager::ENVIRONMENT, [ 'm' => [
 			'REMOTE_ADDR'          => '',
 			'HTTP_X_FORWARDED_FOR' => '5.6.7.8, 9.9.9.9',
 		] ] );
@@ -444,7 +445,7 @@ class RequestBuilderTest extends TestCase {
 		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
 		// A present-but-invalid REMOTE_ADDR takes precedence and leaves remote_addr
 		// empty; XFF is only consulted when REMOTE_ADDR is entirely absent.
-		$this->fill( $rb, 3, 'r1', 'environment_v3', [ 'm' => [
+		$this->fill( $rb, 3, 'r1', Log_Manager::ENVIRONMENT, [ 'm' => [
 			'REMOTE_ADDR'          => 'not-an-ip',
 			'HTTP_X_FORWARDED_FOR' => '5.6.7.8',
 		] ] );
@@ -461,7 +462,7 @@ class RequestBuilderTest extends TestCase {
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
 		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
-		$this->fill( $rb, 3, 'r1', 'environment_v3', [ 'm' => [
+		$this->fill( $rb, 3, 'r1', Log_Manager::ENVIRONMENT, [ 'm' => [
 			'SERVER_NAME'        => 'example.com',
 			'GEOIP_COUNTRY_CODE' => 'US',
 			'HTTP_USER_AGENT'    => 'curl/7.0',
@@ -523,7 +524,7 @@ class RequestBuilderTest extends TestCase {
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
 		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
-		$this->fill( $rb, 3, 'r1', 'environment_v3', [ 'm' => [ 'NEWSPACK_NODES_WORKER_TYPE' => 'stream-merger' ] ] );
+		$this->fill( $rb, 3, 'r1', Log_Manager::ENVIRONMENT, [ 'm' => [ 'NEWSPACK_NODES_WORKER_TYPE' => 'stream-merger' ] ] );
 		$this->fill( $rb, 4, 'r1', 'process (complete)' );
 
 		$req = $this->captured_request( $capture );
@@ -537,7 +538,7 @@ class RequestBuilderTest extends TestCase {
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
 		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
-		$this->fill( $rb, 3, 'r1', 'environment_v3', [ 'm' => [ 'NEWSPACK_NODES_WORKER_TYPE' => 'cache-cozy' ] ] );
+		$this->fill( $rb, 3, 'r1', Log_Manager::ENVIRONMENT, [ 'm' => [ 'NEWSPACK_NODES_WORKER_TYPE' => 'cache-cozy' ] ] );
 		$this->fill( $rb, 4, 'r1', 'process (complete)' );
 
 		$req = $this->captured_request( $capture );
@@ -552,7 +553,7 @@ class RequestBuilderTest extends TestCase {
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
 		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
-		$this->fill( $rb, 3, 'r1', 'environment_v3', [ 'm' => [ 'NEWSPACK_NODES_WORKER_TYPE' => 'evil/../type?x' ] ] );
+		$this->fill( $rb, 3, 'r1', Log_Manager::ENVIRONMENT, [ 'm' => [ 'NEWSPACK_NODES_WORKER_TYPE' => 'evil/../type?x' ] ] );
 		$this->fill( $rb, 4, 'r1', 'process (complete)' );
 
 		$req = $this->captured_request( $capture );
@@ -845,7 +846,7 @@ class RequestBuilderTest extends TestCase {
 			$rb,
 			3,
 			'url-context-rid-731',
-			'environment_v3',
+			Log_Manager::ENVIRONMENT,
 			[ 'm' => [ 'NEWSPACK_NODES_WORKER_TYPE' => 'errors-worker-731' ] ]
 		);
 		$this->fill(
@@ -1066,6 +1067,96 @@ class RequestBuilderTest extends TestCase {
 		$this->assertNotNull( $primary, 'Router TIMER tick drove the builder maintenance timeout' );
 		$this->assertSame( 'r1', $primary['rid'] );
 		$this->assertSame( 'T', $primary['error_status'] );
+	}
+
+	// --- poisoned wire scalars --------------------------------------------
+
+	/**
+	 * A hub assembles envelopes a remote spoke authored, so `ts` can arrive as
+	 * a JSON array. Copied onto the envelope it reaches the eviction timer's
+	 * arithmetic, where an array raises an uncaught TypeError and kills the
+	 * worker — and the checkpoint restores the same envelope for the successor.
+	 */
+	public function test_an_array_timestamp_neither_kills_the_eviction_pass_nor_survives_it(): void {
+		Core::$now = 7_000_000.0;
+
+		$rb = new Request_Builder_Node();
+		$rb->name( 'request-builder' );
+		$rb->arguments( [ '100', '2' ] );
+		$rb->set_completed_target( 'completed:tee' );
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+
+		$this->fill( $rb, 1, 'r-poison', 'process (start)', [ 'ts' => [ 'poison' => true ] ] );
+		$this->fill( $rb, 2, 'r-poison', 'request', [ 'm' => 'GET /poisoned' ] );
+
+		$this->force_rotation_due( $rb->cache );
+		$rb->fire_cb();
+		$this->force_rotation_due( $rb->cache );
+		$rb->fire_cb();
+
+		$summary = null;
+		foreach ( $capture->captured as $m ) {
+			if ( 'completed:tee' === ( $m[ Message::TO ] ?? '' ) ) {
+				$summary = (array) $m[ Message::VALUE ];
+			}
+		}
+		$this->assertNotNull( $summary, 'the evicted request still emits its compact summary' );
+		$this->assertIsNumeric( $summary['start_time'] );
+		$this->assertEqualsWithDelta( 7_000_000.0, $summary['start_time'], 1e-9, 'start_time falls back to the clock at REQUEST_START' );
+		$this->assertIsNumeric( $summary['end_time'] );
+
+		$held = [];
+		foreach ( $rb->save_state()['request_cache']['buckets'] as $bucket ) {
+			$held = \array_merge( $held, \array_keys( $bucket ) );
+		}
+		$this->assertNotContains( 'r-poison', $held, 'the evicted envelope is gone from the checkpoint' );
+	}
+
+	public function test_a_stop_raised_while_evicting_reaches_the_tick_as_a_clean_stop(): void {
+		// evict_request() routes its emits through guarded(), which parks the
+		// stop; the tick that drove the eviction must raise it, or the next
+		// fill() clears it and the worker runs on past its deadline.
+		Core::$now = 8_000_000.0;
+
+		$rb = new Request_Builder_Node();
+		$rb->name( 'request-builder' );
+		$rb->arguments( [ '100', '2' ] );
+		$rb->sink( new class() extends \Newspack_Nodes\Node {
+			public function fill( array $message ): void {
+				throw new \Newspack_Nodes\Worker_Should_Stop();
+			}
+		} );
+
+		$this->fill( $rb, 1, 'r-stopping', 'process (start)' );
+		$this->fill( $rb, 2, 'r-stopping', 'request', [ 'm' => 'GET /stopping' ] );
+
+		$this->force_rotation_due( $rb->cache );
+		$rb->fire_cb();
+		$this->force_rotation_due( $rb->cache );
+		$this->expectException( \Newspack_Nodes\Worker_Should_Stop_Clean::class );
+		$rb->fire_cb();
+	}
+
+	public function test_an_array_duration_and_a_non_numeric_status_complete_the_request_at_zero(): void {
+		$rb      = new Request_Builder_Node();
+		$rb->name( 'request-builder' );
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+
+		$this->fill( $rb, 1, 'r-bad-scalars', 'process (start)' );
+		$this->fill( $rb, 2, 'r-bad-scalars', 'request', [ 'm' => 'GET /b' ] );
+		$this->fill(
+			$rb,
+			3,
+			'r-bad-scalars',
+			'process (complete)',
+			[ 'duration_ms' => [ 1 ], 'status_code' => 'abc' ]
+		);
+
+		$req = $this->captured_request( $capture );
+		$this->assertSame( 0.0, $req['duration_ms'] );
+		$this->assertSame( 0, $req['status_code'] );
 	}
 
 	// --- LRU eviction (timed-out) -----------------------------------------
@@ -2213,7 +2304,7 @@ class RequestBuilderTest extends TestCase {
 
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
 		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
-		$this->fill( $rb, 3, 'r1', 'environment_v3', [ 'm' => 'REMOTE_ADDR => "1.2.3.4"' ] );
+		$this->fill( $rb, 3, 'r1', Log_Manager::ENVIRONMENT, [ 'm' => 'REMOTE_ADDR => "1.2.3.4"' ] );
 		$this->fill( $rb, 4, 'r1', 'process (complete)' );
 
 		$req = $this->captured_request( $capture );

@@ -364,8 +364,8 @@ class LogManagerTest extends TestCase {
 		$this->require_config_or_skip();
 		$this->rmdir_recursive( self::TEST_DIR );
 
-		// Max-length rid: init_firehose caps X-A8C-Request-Id at 64 chars.
-		$_SERVER['HTTP_X_A8C_REQUEST_ID'] = \str_repeat( 'R', 70 );
+		// Max-length rid: init_firehose caps UNIQUE_ID at 64 chars.
+		$_SERVER['UNIQUE_ID'] = \str_repeat( 'R', 70 );
 
 		// Adversarial data over MAX_DATA_SIZE: multibyte (6-byte \uXXXX escapes) +
 		// quote/backslash escapes, then ASCII pad — not plain padding, so escape
@@ -1002,7 +1002,7 @@ class LogManagerTest extends TestCase {
 	 */
 	private function env_map( array $entries ): array {
 		foreach ( $entries as $entry ) {
-			if ( 'environment_v3' === ( $entry['k'] ?? '' ) && \is_array( $entry['m'] ?? null ) ) {
+			if ( Log_Manager::ENVIRONMENT === ( $entry['k'] ?? '' ) && \is_array( $entry['m'] ?? null ) ) {
 				return $entry['m'];
 			}
 		}
@@ -1428,7 +1428,7 @@ class LogManagerTest extends TestCase {
 		$kinds   = \array_column( $entries, 'k' );
 
 		// log_environment emits exactly ONE curated environment_v3 message (not one-per-key).
-		$env_entries = \array_values( \array_filter( $entries, static fn( $e ) => 'environment_v3' === ( $e['k'] ?? '' ) ) );
+		$env_entries = \array_values( \array_filter( $entries, static fn( $e ) => Log_Manager::ENVIRONMENT === ( $e['k'] ?? '' ) ) );
 		$this->assertCount( 1, $env_entries, 'log_environment must emit exactly one curated environment_v3 entry' );
 
 		// log_resources emits k=resources.
@@ -1534,7 +1534,7 @@ class LogManagerTest extends TestCase {
 		$lm->finish();
 
 		$entries     = $this->read_firehose_entries();
-		$env_entries = \array_values( \array_filter( $entries, static fn( $e ) => 'environment_v3' === ( $e['k'] ?? '' ) ) );
+		$env_entries = \array_values( \array_filter( $entries, static fn( $e ) => Log_Manager::ENVIRONMENT === ( $e['k'] ?? '' ) ) );
 		$this->assertCount( 1, $env_entries, 'exactly one curated environment_v3 entry' );
 		$env = $env_entries[0]['m'];
 		$this->assertIsArray( $env );
@@ -1821,52 +1821,84 @@ class LogManagerTest extends TestCase {
 		$this->assertFalse( $ref->getValue( $lm ) );
 	}
 
-	// -- request_id forwarders / header sources ------------------------------
+	// -- request_id sources: server-set only, never a request header ---------
 
-	public function test_http_x_a8c_request_id_takes_priority_over_unique_id(): void {
+	/**
+	 * A client-suppliable header can never become the request id.
+	 *
+	 * The id is every firehose line's Message KEY, the identity
+	 * Request_Builder_Node groups by, and the input to
+	 * Partition_Node::hash_to_partition(). Adopting the header would let a
+	 * visitor file lines under another request's id and choose their partition.
+	 */
+	public function test_forged_request_id_header_is_never_adopted(): void {
 		$this->require_config_or_skip();
 		Log_Manager::reset();
 		Config::reset();
 
-		$_SERVER['HTTP_X_A8C_REQUEST_ID'] = 'a8c-priority-rid';
-		$_SERVER['UNIQUE_ID']             = 'should-be-ignored';
-
-		$lm = Log_Manager::instance();
-		$lm->start( 'init' );
-		$this->assertSame( 'a8c-priority-rid', $lm->get_request_id() );
-
-		unset( $_SERVER['HTTP_X_A8C_REQUEST_ID'] );
-	}
-
-	public function test_request_id_header_capped_at_64_chars(): void {
-		$this->require_config_or_skip();
-		Log_Manager::reset();
-		Config::reset();
-
-		$_SERVER['HTTP_X_A8C_REQUEST_ID'] = \str_repeat( 'A', 200 );
+		$_SERVER['HTTP_X_A8C_REQUEST_ID'] = 'a8c-forged-rid';
+		unset( $_SERVER['UNIQUE_ID'] );
 
 		$lm = Log_Manager::instance();
 		$lm->start( 'init' );
 		$rid = $lm->get_request_id();
-		$this->assertSame( 64, \strlen( $rid ), 'Request id from header must be capped at 64 chars' );
 
-		unset( $_SERVER['HTTP_X_A8C_REQUEST_ID'] );
-	}
-
-	public function test_request_id_generated_when_no_header_present(): void {
-		$this->require_config_or_skip();
-		Log_Manager::reset();
-		Config::reset();
-
-		unset( $_SERVER['HTTP_X_A8C_REQUEST_ID'], $_SERVER['UNIQUE_ID'] );
-
-		$lm = Log_Manager::instance();
-		$lm->start( 'init' );
-		$rid = $lm->get_request_id();
-		$this->assertSame( 32, \strlen( $rid ), 'Generated rid must be 32 chars' );
+		$this->assertNotSame( 'a8c-forged-rid', $rid, 'a request header must never become the request id' );
+		$this->assertSame( 32, \strlen( $rid ), 'with no UNIQUE_ID the id is generated, at 32 chars' );
 		$this->assertMatchesRegularExpression( '/^[a-z0-9]+$/', $rid );
-		// UNIQUE_ID must be back-populated to the generated value.
-		$this->assertSame( $rid, $_SERVER['UNIQUE_ID'] ?? null );
+		$this->assertSame( $rid, $_SERVER['UNIQUE_ID'] ?? null, 'the generated id is published into UNIQUE_ID' );
+
+		unset( $_SERVER['HTTP_X_A8C_REQUEST_ID'] );
+	}
+
+	public function test_unique_id_wins_over_a_forged_header(): void {
+		$this->require_config_or_skip();
+		Log_Manager::reset();
+		Config::reset();
+
+		$_SERVER['UNIQUE_ID']             = 'apache-unique-id-9zq4';
+		$_SERVER['HTTP_X_A8C_REQUEST_ID'] = 'a8c-forged-rid';
+
+		$lm = Log_Manager::instance();
+		$lm->start( 'init' );
+		$this->assertSame( 'apache-unique-id-9zq4', $lm->get_request_id() );
+
+		unset( $_SERVER['HTTP_X_A8C_REQUEST_ID'] );
+	}
+
+	public function test_request_id_from_unique_id_capped_at_64_chars(): void {
+		$this->require_config_or_skip();
+		Log_Manager::reset();
+		Config::reset();
+
+		$_SERVER['UNIQUE_ID'] = \str_repeat( 'U', 200 );
+
+		$lm = Log_Manager::instance();
+		$lm->start( 'init' );
+		$this->assertSame( 64, \strlen( $lm->get_request_id() ), 'Request id from UNIQUE_ID must be capped at 64 chars' );
+	}
+
+	/**
+	 * The header value survives in environment_v3, which is the correlation
+	 * path: `wp nodes reqgrep <edge id>` still finds the request through it.
+	 */
+	public function test_forged_header_still_reaches_environment_v3_for_correlation(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::TEST_DIR );
+
+		$_SERVER['HTTP_X_A8C_REQUEST_ID'] = 'a8c-forged-rid';
+		unset( $_SERVER['UNIQUE_ID'] );
+
+		$this->set_rules_option( [ [ 'id' => 'root', 'pattern' => '/', 'action' => 'log', 'custom_events' => [ 'init' ] ] ] );
+		$lm = $this->fresh_log_manager();
+		$lm->start( 'init' );
+		$lm->finish();
+
+		$env = $this->env_map( $this->read_firehose_entries() );
+		$this->assertSame( 'a8c-forged-rid', $env['HTTP_X_A8C_REQUEST_ID'] ?? null );
+		$this->assertNotSame( 'a8c-forged-rid', $lm->get_request_id() );
+
+		unset( $_SERVER['HTTP_X_A8C_REQUEST_ID'] );
 	}
 
 	// -- message() guards ----------------------------------------------------
@@ -2559,10 +2591,14 @@ class LogManagerTest extends TestCase {
 	 * hub operator holding only the least-privilege `hub-user` account reads
 	 * every spoke's warm secret.
 	 *
-	 * The pattern is a NAME LIST anchored at `[?&]`, so it can only ever match
-	 * a name someone remembered to add. Whether that is the right shape is a
-	 * separate question; this closes the known instance.
+	 * The pattern matches a parameter by the shape of its name; this pins the
+	 * one name the census found that no shape rule would guess.
 	 */
+	/** The wire string readers group by; the JS fold exemption spells it too. */
+	public function test_the_environment_category_is_the_wire_string_readers_expect(): void {
+		$this->assertSame( 'environment_v3', Log_Manager::ENVIRONMENT );
+	}
+
 	public function test_the_cache_cozy_warm_secret_is_redacted(): void {
 		$this->assertSame(
 			'https://example.test/?cache_cozy_warm=[REDACTED]',
@@ -2593,6 +2629,14 @@ class LogManagerTest extends TestCase {
 	 */
 	public static function central_redaction_provider(): array {
 		return [
+			'array-valued key'            => [
+				'https://x.example.test/?key[]=AKIAcardamom&b=2',
+				'https://x.example.test/?key[]=[REDACTED]&b=2',
+			],
+			'bare subscriptionkey'        => [
+				'https://ee.iva-api.com/x?subscriptionkey=shibboleth9&b=2',
+				'https://ee.iva-api.com/x?subscriptionkey=[REDACTED]&b=2',
+			],
 			'film-times subscription-Key' => [
 				'https://ee.iva-api.com/x?a=1&subscription-Key=shibboleth&b=2',
 				'https://ee.iva-api.com/x?a=1&subscription-Key=[REDACTED]&b=2',
@@ -2614,6 +2658,159 @@ class LogManagerTest extends TestCase {
 				'https://api.example.test/v1?apiKey=[REDACTED]',
 			],
 		];
+	}
+
+	/**
+	 * The pattern matches a parameter by the SHAPE of its name, not by whole
+	 * name, so a credential wrapped in a vendor's prefix is still covered.
+	 *
+	 *
+	 * @dataProvider credential_name_shape_provider
+	 */
+	public function test_redact_url_matches_a_credential_by_name_shape( string $url, string $expected ): void {
+		$this->assertSame( $expected, Log_Manager::redact_url( $url ) );
+	}
+
+	/**
+	 * @return array<string,array{string,string}>
+	 */
+	public static function credential_name_shape_provider(): array {
+		return [
+			'consumer_key' => [
+				'https://shop.test/wp-json/wc/v3/orders?consumer_key=ck_7f3a91c2e4&per_page=5',
+				'https://shop.test/wp-json/wc/v3/orders?consumer_key=[REDACTED]&per_page=5',
+			],
+			'consumer_secret' => [
+				'https://shop.test/wp-json/wc/v3/orders?consumer_secret=cs_9e4b0d17aa',
+				'https://shop.test/wp-json/wc/v3/orders?consumer_secret=[REDACTED]',
+			],
+			'api-key, hyphenated' => [
+				'https://api.test/v2?api-key=pelican-4471&page=3',
+				'https://api.test/v2?api-key=[REDACTED]&page=3',
+			],
+			'signature' => [
+				'https://api.test/v2?signature=quillon9931',
+				'https://api.test/v2?signature=[REDACTED]',
+			],
+			'sig, a whole segment' => [
+				'https://api.test/v2?sig=marzipan22&page=3',
+				'https://api.test/v2?sig=[REDACTED]&page=3',
+			],
+			'hmac' => [
+				'https://api.test/v2?hmac=8801fbace2',
+				'https://api.test/v2?hmac=[REDACTED]',
+			],
+			'code, the OAuth exchange grant' => [
+				'https://site.test/callback?code=granary7712&state=ok',
+				'https://site.test/callback?code=[REDACTED]&state=ok',
+			],
+			'oauth_token' => [
+				'https://api.test/v2?oauth_token=tarragon5518',
+				'https://api.test/v2?oauth_token=[REDACTED]',
+			],
+			'_wpnonce' => [
+				'https://site.test/wp-admin/admin.php?action=x&_wpnonce=6d2ca41f09',
+				'https://site.test/wp-admin/admin.php?action=x&_wpnonce=[REDACTED]',
+			],
+			'X-Amz-Signature' => [
+				'https://s3.test/o?X-Amz-Date=20260911T0000Z&X-Amz-Signature=4c19ee73bb',
+				'https://s3.test/o?X-Amz-Date=20260911T0000Z&X-Amz-Signature=[REDACTED]',
+			],
+			'client_secret' => [
+				'https://idp.test/token?grant_type=code&client_secret=hazelnut3390',
+				'https://idp.test/token?grant_type=code&client_secret=[REDACTED]',
+			],
+			'access_token' => [
+				'https://api.test/v2?access_token=saffron6604',
+				'https://api.test/v2?access_token=[REDACTED]',
+			],
+			'apiKey, whatever its case' => [
+				'https://api.test/v2?apiKey=juniper8127',
+				'https://api.test/v2?apiKey=[REDACTED]',
+			],
+			'authorization, which the author exception must not spare' => [
+				'https://api.test/v2?authorization=Bearer%20clove4420',
+				'https://api.test/v2?authorization=[REDACTED]',
+			],
+			// The segment rule cannot tell a postal code from an OAuth one, nor
+			// a public OAuth identifier from the credential beside it. These
+			// two are the price of `code` and `client`; pinned, not hidden.
+			'country_code, the documented cost' => [
+				'https://api.test/v2?country_code=CA&page=3',
+				'https://api.test/v2?country_code=[REDACTED]&page=3',
+			],
+			'client_id, the documented cost' => [
+				'https://idp.test/token?client_id=widgets&grant_type=code',
+				'https://idp.test/token?client_id=[REDACTED]&grant_type=code',
+			],
+		];
+	}
+
+	/**
+	 * The shape rule must not eat what an operator reads the URL log FOR.
+	 *
+	 * `?p=`, `?s=`, `?page=` and the `utm_*` family are the whole point of
+	 * logging a URL, and `author` is a core query var one letter from a
+	 * credential token. `country_code` is the one name that loses this
+	 * argument; `credential_name_shape_provider` pins it.
+	 *
+	 * @dataProvider ordinary_parameter_provider
+	 */
+	public function test_redact_url_keeps_an_ordinary_parameter( string $url ): void {
+		$this->assertSame( $url, Log_Manager::redact_url( $url ) );
+	}
+
+	/**
+	 * @return array<string,array{string}>
+	 */
+	public static function ordinary_parameter_provider(): array {
+		return [
+			'keyword'    => [ 'https://site.test/?keyword=marmalade' ],
+			'keywords'   => [ 'https://site.test/?keywords=marmalade,quince' ],
+			'author'     => [ 'https://site.test/?author=41' ],
+			'authors'    => [ 'https://site.test/?authors=41,42' ],
+			'postcode'   => [ 'https://site.test/?postcode=97701' ],
+			'zipcode'    => [ 'https://site.test/?zipcode=97701' ],
+			'design'     => [ 'https://site.test/?design=brutalist' ],
+			'p'          => [ 'https://site.test/?p=8814' ],
+			's'          => [ 'https://site.test/?s=tamarind' ],
+			'page'       => [ 'https://site.test/?page=7' ],
+			'utm_source' => [ 'https://site.test/?utm_source=newsletter&utm_medium=email' ],
+			'rest_route' => [ 'https://site.test/?rest_route=/wp/v2/posts' ],
+			'_locale'    => [ 'https://site.test/wp-admin/admin-ajax.php?action=heartbeat&_locale=user' ],
+			'ver'        => [ 'https://site.test/wp-includes/js/jquery.js?ver=3.7.1' ],
+			'cb'         => [ 'https://site.test/style.css?cb=20260911' ],
+		];
+	}
+
+	/**
+	 * A `job` entry's `m` is the TRANSPORT `Job_Router_Node` dispatches from,
+	 * not a message, and `message()` redacts a string `m` alone: an array
+	 * body passes untouched, or the worker receives a literal `[REDACTED]`.
+	 */
+	public function test_message_leaves_a_job_transport_body_intact(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::TEST_DIR );
+		Log_Manager::reset();
+		Config::reset();
+		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
+		Config::reset();
+
+		$url = 'https://site.test/feed?consumer_key=ck_7f3a91c2e4';
+		$lm  = Log_Manager::instance();
+		$lm->start( 'job_transport_test' );
+		$lm->message( 'job', [
+			'm' => [
+				'handler'    => 'whack-cdn',
+				'id'         => 'transport-1',
+				'parameters' => [ 'urls' => [ $url ] ],
+			],
+		] );
+		$lm->finish();
+
+		$entry = $this->find_last_entry( 'job' );
+		$this->assertNotNull( $entry, 'Should find an entry with k=job' );
+		$this->assertSame( $url, $entry['m']['parameters']['urls'][0] );
 	}
 
 }
