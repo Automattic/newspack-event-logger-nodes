@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.96.0] - 2026-09-11
+
 ### Changed
 
 - **The current-request tab registers on the substrate's station.** The substrate renamed its DevTools hub the station: `Current_Request_Overlay` filters `newspack_nodes/station_tab_bundles`, reads `Admin::overlay_pages()`, and the bundle imports `registerTab` from `@newspack-nodes/shared/tabs/tabRegistry`. The loader's substrate floor rises to 2.56.0 with it.
