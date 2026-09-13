@@ -27,6 +27,7 @@
 
 namespace Newspack_Event_Logger_Nodes\App;
 
+use Newspack_Event_Logger_Nodes\App\Core as App_Core;
 use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Rule;
 use Newspack_Nodes\Core;
@@ -34,9 +35,10 @@ use Newspack_Nodes\Core;
 \defined( 'ABSPATH' ) || exit;
 
 /**
- * Six shapers for five descriptor types — `category:` has two, one for the
- * board inside a request and one for the global board — plus the parser that
- * decides which. Every method is static and the class holds no state.
+ * Eight shapers for five descriptor types — `span:` has two and `category:`
+ * three, one per board a click can land on: a request's own, a URL's
+ * aggregate, the site-wide leaderboard — plus the parser that decides which.
+ * Every method is static and the class holds no state.
  *
  * A shaper returns null when the record does not hold what was asked about: a
  * span absent from the tree, an entry number no line carries, a category off
@@ -74,16 +76,19 @@ class Ask_Assembler {
 	/**
 	 * One request: what it did, how long it took, what the detector found.
 	 *
-	 * @param array<array-key,mixed> $record A stored request record.
-	 * @param Rule|null              $rule   The rule governing its URL.
+	 * @param array<array-key,mixed> $record      A stored request record.
+	 * @param Rule|null              $rule        The rule governing its URL.
+	 * @param string                 $url_context The `url:` descriptor the request was picked under, or ''; it becomes a second `fetch` pointer, so an agent can widen from this request to its URL.
+	 * @param string                 $server      Server the surface it was picked from is scoped to; rides that pointer so the widening stays in scope.
 	 * @return array<string,mixed>
 	 */
-	public static function for_request( array $record, ?Rule $rule ): array {
+	public static function for_request( array $record, ?Rule $rule, string $url_context = '', string $server = '' ): array {
 		$entries   = \array_values( \array_filter(
 			\is_array( $record['entries'] ?? null ) ? $record['entries'] : [],
 			static fn ( mixed $e ): bool => ! \is_array( $e ) || Log_Manager::ENVIRONMENT !== ( $e['k'] ?? '' )
 		) );
 		$truncated = \count( $entries ) > self::MAX_ENTRIES;
+		$url       = self::parse_descriptor( $url_context );
 
 		return [
 			'subject'           => 'request',
@@ -99,10 +104,10 @@ class Ask_Assembler {
 			'entries_truncated' => $truncated,
 			'rule'              => self::rule_shape( $rule ),
 			'findings'          => Findings::for_request( $record, $rule ),
-			'fetch'             => self::fetch(
-				'dump_request',
-				[ 'rid' => Core::as_string( $record['rid'] ?? '' ) ]
-			),
+			'fetch'             => [
+				...self::fetch( 'dump_request', [ 'rid' => Core::as_string( $record['rid'] ?? '' ) ] ),
+				...( 'url' === ( $url['type'] ?? '' ) ? self::fetch( 'dump_url', [ 'hash' => $url['id'], 'server' => $server ] ) : [] ),
+			],
 			'caveat'            => Findings::caveat(),
 		];
 	}
@@ -140,6 +145,25 @@ class Ask_Assembler {
 	}
 
 	/**
+	 * Split `type:id[:qualifier]`. Null on anything outside the vocabulary, so
+	 * a hand-typed or stale descriptor is refused rather than half-honoured.
+	 *
+	 * @param string $descriptor `type:id[:qualifier]`, as a `data-ask` attribute carries it.
+	 * @return array{type:string,id:string,qualifier:string}|null
+	 */
+	public static function parse_descriptor( string $descriptor ): ?array {
+		$parts = \explode( ':', $descriptor, 3 );
+		if ( \count( $parts ) < 2 || ! \in_array( $parts[0], self::TYPES, true ) || '' === $parts[1] ) {
+			return null;
+		}
+		return [
+			'type'      => $parts[0],
+			'id'        => $parts[1],
+			'qualifier' => $parts[2] ?? '',
+		];
+	}
+
+	/**
 	 * One flame span: its subtree, its siblings, and its parent's total — the
 	 * three numbers that say whether it is the problem or merely contains it.
 	 *
@@ -150,7 +174,71 @@ class Ask_Assembler {
 	 * @return array<string,mixed>|null Null when the tree holds no such span.
 	 */
 	public static function for_span( array $record, string $name, ?Rule $rule, string $context = '' ): ?array {
-		$groups = self::span_groups( Findings::flame_of( $record ), $name );
+		return self::span_brief( Findings::flame_of( $record ), $name, self::url_of( $record ), $rule, $context );
+	}
+
+	/**
+	 * One span of a URL's AGGREGATE flame — the tree the URL modal draws, which
+	 * folds every profiled request of that URL into one. Every value on it is
+	 * a per-request MEAN, and no node keeps a call count, so the brief carries
+	 * `scope` saying what the numbers are and no `count` a reader would take
+	 * for one. The root's `count` is the requests the tree folds.
+	 *
+	 * @param array<array-key,mixed> $flame   The aggregate tree, as `dump_url` carries it.
+	 * @param string                 $name    Span name as it appears in the tree.
+	 * @param string                 $url     The URL the aggregate is of.
+	 * @param Rule|null              $rule    The rule an edit would land on.
+	 * @param string                 $context The `url:` descriptor, which `fetch` addresses the brief again by.
+	 * @return array<string,mixed>|null Null when the tree holds no such span.
+	 */
+	public static function for_url_span( array $flame, string $name, string $url, ?Rule $rule, string $context ): ?array {
+		$brief = self::span_brief( $flame, $name, Log_Manager::redact_url( $url ), $rule, $context );
+		if ( null === $brief ) {
+			return null;
+		}
+		return self::without_counts( $brief ) + [ 'scope' => self::aggregate_scope( Core::num_int( $flame['count'] ?? 0 ) ) ];
+	}
+
+	/**
+	 * A span brief with every call count removed — its own, `elsewhere`'s, and
+	 * each sibling's and subtree row's — because the aggregate tree it was read
+	 * off keeps none, and the one the shapers default to is a fact about one
+	 * request. The one place the aggregate's rule lives.
+	 *
+	 * @param array<string,mixed> $brief A span brief.
+	 * @return array<string,mixed> The brief, uncounted.
+	 */
+	private static function without_counts( array $brief ): array {
+		unset( $brief['count'] );
+		if ( isset( $brief['elsewhere'] ) && \is_array( $brief['elsewhere'] ) ) {
+			unset( $brief['elsewhere']['count'] );
+		}
+		foreach ( [ 'siblings', 'subtree' ] as $rows ) {
+			$uncounted = [];
+			foreach ( \is_array( $brief[ $rows ] ?? null ) ? $brief[ $rows ] : [] as $row ) {
+				if ( \is_array( $row ) ) {
+					unset( $row['count'] );
+				}
+				$uncounted[] = $row;
+			}
+			$brief[ $rows ] = $uncounted;
+		}
+
+		return $brief;
+	}
+
+	/**
+	 * The span brief over any flame tree — a request's or a URL's aggregate.
+	 *
+	 * @param array<array-key,mixed> $flame   The tree to resolve the span in.
+	 * @param string                 $name    Span name as it appears in the tree.
+	 * @param string                 $url     The URL, already redacted.
+	 * @param Rule|null              $rule    The rule an edit would land on.
+	 * @param string                 $context Descriptor of the container this span was picked in.
+	 * @return array<string,mixed>|null Null when the tree holds no such span.
+	 */
+	private static function span_brief( array $flame, string $name, string $url, ?Rule $rule, string $context ): ?array {
+		$groups = self::span_groups( $flame, $name );
 		if ( [] === $groups ) {
 			return null;
 		}
@@ -188,7 +276,7 @@ class Ask_Assembler {
 			...( [] === $groups ? [] : [ 'elsewhere' => self::elsewhere( $groups ) ] ),
 			'siblings'  => self::top_spans( $best['siblings'] ),
 			'subtree'   => self::top_spans( $subtree ),
-			'url'       => self::url_of( $record ),
+			'url'       => $url,
 			'rule'      => self::rule_shape( $rule ),
 			'fetch'     => self::fetch(
 				'performance_ask',
@@ -257,6 +345,7 @@ class Ask_Assembler {
 
 	/**
 	 * One span, without its children — the shape siblings and subtree rows use.
+	 * A request node without a count made one call.
 	 *
 	 * @param array<array-key,mixed> $node A flame node.
 	 * @return array{name:string,ms:float,count:int}
@@ -500,9 +589,6 @@ class Ask_Assembler {
 	 */
 	public static function for_request_category( array $record, string $name ): ?array {
 		$profiles = \is_array( $record['profiles'] ?? null ) ? $record['profiles'] : [];
-		if ( ! isset( $profiles[ $name ] ) || ! \is_array( $profiles[ $name ] ) ) {
-			return null;
-		}
 		return self::category_brief( $profiles, $name, 'request', 1, [ 'url' => self::url_of( $record ) ] );
 	}
 
@@ -517,6 +603,37 @@ class Ask_Assembler {
 	}
 
 	/**
+	 * One breakdown row of a URL's AGGREGATE profile — the panel the URL modal
+	 * captions "Average breakdown across N requests" — answered from that
+	 * aggregate rather than the site-wide board, which describes every URL.
+	 *
+	 * @param array<array-key,mixed> $profiles The aggregate profile as `find_url_aggregate()` serves it: `count`, the requests it folds, and `categories`, each `{ time, count, samples }` with the stored sums already divided by that count.
+	 * @param string                 $name     The category clicked.
+	 * @param string                 $url      The URL the aggregate is of.
+	 * @return array<string,mixed>|null Null when the aggregate holds no such category.
+	 */
+	public static function for_url_category( array $profiles, string $name, string $url ): ?array {
+		return self::category_brief(
+			Core::arr( $profiles['categories'] ?? null ),
+			$name,
+			self::aggregate_scope( Core::num_int( $profiles['count'] ?? 0 ) ),
+			null,
+			[ 'url' => Log_Manager::redact_url( $url ) ]
+		);
+	}
+
+	/**
+	 * What an aggregate's numbers are OF, worded once for both subjects: a
+	 * mean, not a sum, and over every server, because the per-URL aggregate
+	 * keeps no per-server split for a filter to narrow.
+	 *
+	 * @param int $samples Requests folded into the aggregate.
+	 */
+	private static function aggregate_scope( int $samples ): string {
+		return "mean per request over {$samples} requests, every server";
+	}
+
+	/**
 	 * One breakdown row: its own numbers, its share, and what it is competing
 	 * with — a category means nothing without the rest of the board.
 	 *
@@ -526,30 +643,35 @@ class Ask_Assembler {
 	 * @return array<string,mixed>|null Null when the board holds no such row.
 	 */
 	public static function for_category( array $categories, string $name, string $server = '' ): ?array {
-		if ( ! isset( $categories[ $name ] ) || ! \is_array( $categories[ $name ] ) ) {
-			return null;
-		}
 		// Stats_Store hands these over as per-request means: time and count.
 		$scope = '' === $server ? 'recent window' : "recent window on {$server}";
-		$mine  = Core::arr( $categories[ $name ] );
-		return self::category_brief( $categories, $name, $scope, Core::num_int( $mine['samples'] ?? 0 ) );
+		return self::category_brief( $categories, $name, $scope );
 	}
 
 	/**
-	 * The shape both category briefs return: this row's numbers, its share of
-	 * the board, and the rest of the board sorted against it.
+	 * The shape every category brief returns: this row's numbers, its share
+	 * of the board, and the rest of the board sorted against it. The board is
+	 * the one the panel draws: a callback row (`hooks @10`) sits beside its
+	 * category there, is neither a competitor nor part of the total, and is
+	 * not a board of its own to ask about.
 	 *
 	 * @param array<array-key,mixed> $rows    Every row of the board, this one included.
 	 * @param string                 $name    The row asked about.
 	 * @param string                 $scope   Names the set these means were taken over.
-	 * @param int                    $samples Requests behind them.
+	 * @param int|null               $samples Requests behind them; null reads the row's own.
 	 * @param array<string,mixed>    $extra   Keys only one caller carries.
-	 * @return array<string,mixed>
+	 * @return array<string,mixed>|null Null when the board holds no such row.
 	 */
-	private static function category_brief( array $rows, string $name, string $scope, int $samples, array $extra = [] ): array {
+	private static function category_brief( array $rows, string $name, string $scope, ?int $samples = null, array $extra = [] ): ?array {
+		if ( ! isset( $rows[ $name ] ) || ! \is_array( $rows[ $name ] ) || App_Core::is_listener_span( $name ) ) {
+			return null;
+		}
 		$total  = 0.0;
 		$others = [];
 		foreach ( $rows as $key => $row ) {
+			if ( App_Core::is_listener_span( (string) $key ) ) {
+				continue;
+			}
 			$time   = \is_array( $row ) ? Core::num_float( $row['time'] ?? 0 ) : 0.0;
 			$total += $time;
 			if ( (string) $key !== $name ) {
@@ -562,7 +684,7 @@ class Ask_Assembler {
 		}
 		\usort( $others, static fn ( array $a, array $b ): int => $b['avg_time_ms'] <=> $a['avg_time_ms'] );
 
-		$mine = Core::arr( $rows[ $name ] ?? null );
+		$mine = Core::arr( $rows[ $name ] );
 		$time = Core::num_float( $mine['time'] ?? 0 );
 		return \array_merge(
 			[
@@ -571,32 +693,13 @@ class Ask_Assembler {
 				'name'        => $name,
 				'avg_time_ms' => $time,
 				'avg_count'   => Core::num_float( $mine['count'] ?? 0 ),
-				'samples'     => $samples,
+				'samples'     => $samples ?? Core::num_int( $mine['samples'] ?? 0 ),
 				'share'       => $total > 0.0 ? $time / $total : 0.0,
 				'others'      => \array_slice( $others, 0, self::TOP_SPANS ),
 				'caveat'      => Findings::caveat(),
 			],
 			$extra
 		);
-	}
-
-	/**
-	 * Split `type:id[:qualifier]`. Null on anything outside the vocabulary, so
-	 * a hand-typed or stale descriptor is refused rather than half-honoured.
-	 *
-	 * @param string $descriptor `type:id[:qualifier]`, as a `data-ask` attribute carries it.
-	 * @return array{type:string,id:string,qualifier:string}|null
-	 */
-	public static function parse_descriptor( string $descriptor ): ?array {
-		$parts = \explode( ':', $descriptor, 3 );
-		if ( \count( $parts ) < 2 || ! \in_array( $parts[0], self::TYPES, true ) || '' === $parts[1] ) {
-			return null;
-		}
-		return [
-			'type'      => $parts[0],
-			'id'        => $parts[1],
-			'qualifier' => $parts[2] ?? '',
-		];
 	}
 
 	/**

@@ -252,7 +252,11 @@ export default function RequestProfile( {
 							return (
 								<Fragment key={ state }>
 									<tr
-										data-ask={ `category:${ state }` }
+										data-ask={
+											isCallbackCategory( state )
+												? undefined
+												: `category:${ state }`
+										}
 										style={ {
 											cursor: hasEntries
 												? 'pointer'

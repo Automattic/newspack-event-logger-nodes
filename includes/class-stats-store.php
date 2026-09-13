@@ -992,7 +992,77 @@ class Stats_Store {
 	 */
 	public function get_url_stats( string $url_hash ): ?array {
 		$val = $this->lookup( $this->key( self::NS_URL, $url_hash ) );
-		return \is_array( $val ) ? $val : null;
+		if ( ! \is_array( $val ) ) {
+			return null;
+		}
+		// The profile is stored as sums; every reader wants per-request means.
+		$profiles = Core::arr( $val['profiles'] ?? null );
+		if ( [] !== $profiles ) {
+			$val['profiles'] = self::sums_to_display(
+				Core::num_int( $profiles['count'] ?? 0 ),
+				Core::num_float( $profiles['sum_req_time'] ?? 0 ),
+				self::string_keys( Core::arr( $profiles['categories'] ?? null ) )
+			);
+		}
+		return $val;
+	}
+
+	/**
+	 * Convert summed leaderboard data to the display shape expected by the frontend.
+	 *
+	 *  - 'time'    = sum_time  / total_count — avg exclusive cat time per request.
+	 *  - 'count'   = sum_count / total_count — avg invocation count per request.
+	 *  - entries   are per-appearance averages (sum / samples).
+	 *
+	 * An entry whose sample count is zero is dropped rather than divided. Past a
+	 * hundred entries a category keeps only its fifty slowest, ranked by average
+	 * exclusive time, so one pathological category cannot flood a payload.
+	 *
+	 * @param int                 $total_count  Total profiled requests.
+	 * @param float               $sum_req_time Sum of per-request $req_time values.
+	 * @param array<string,mixed> $sums         Per-category sums keyed by category name.
+	 * @return array<string,mixed> Display-shaped leaderboard data.
+	 */
+	public static function sums_to_display( int $total_count, float $sum_req_time, array $sums ): array {
+		$display_cats = [];
+		foreach ( $sums as $cat => $data ) {
+			$data      = Core::arr( $data );
+			$samples   = Core::num_int( $data['samples'] ?? null );
+			$sum_time  = Core::num_float( $data['sum_time'] ?? null );
+			$sum_count = Core::num_float( $data['sum_count'] ?? null );
+
+			$entries_out = [];
+			$entries     = ( isset( $data['entries'] ) && \is_array( $data['entries'] ) ) ? $data['entries'] : [];
+			foreach ( $entries as $name => $entry ) {
+				$entry     = Core::arr( $entry );
+				$e_samples = Core::num_int( $entry[2] ?? null );
+				if ( $e_samples > 0 ) {
+					$entries_out[ $name ] = [
+						Core::num_float( $entry[0] ?? null ) / $e_samples,
+						Core::num_float( $entry[1] ?? null ) / $e_samples,
+						$e_samples,
+					];
+				}
+			}
+
+			if ( \count( $entries_out ) > 100 ) {
+				\uasort( $entries_out, fn( $a, $b ) => $b[0] <=> $a[0] );
+				$entries_out = \array_slice( $entries_out, 0, 50, true );
+			}
+
+			$display_cats[ $cat ] = [
+				'time'    => $total_count > 0 ? $sum_time / $total_count : 0.0,
+				'count'   => $total_count > 0 ? $sum_count / $total_count : 0.0,
+				'samples' => $samples,
+				'entries' => $entries_out,
+			];
+		}
+
+		return [
+			'count'      => $total_count,
+			'total_time' => $total_count > 0 ? $sum_req_time / $total_count : 0.0,
+			'categories' => $display_cats,
+		];
 	}
 
 	/**
@@ -1663,6 +1733,17 @@ class Stats_Store {
 	}
 
 	/**
+	 * A name table pair joined back into the URL it was split from — the
+	 * inverse of `split_url()`, and the one place a reader spells the join.
+	 *
+	 * @param array<array-key,mixed> $pair `[ path, origin ]`, as `get_url_names()` hands it back.
+	 * @return string The URL, or '' for a pair that is not one.
+	 */
+	public static function join_url( array $pair ): string {
+		return Core::str( $pair[1] ?? '' ) . Core::str( $pair[0] ?? '' );
+	}
+
+	/**
 	 * Namespace prefix for one shard of the COARSE hourly URL index.
 	 *
 	 * @param string $shard Shard name from `url_shard()`.
@@ -1846,64 +1927,6 @@ class Stats_Store {
 	/** Partition this store reads and writes. */
 	public function partition(): int {
 		return $this->partition;
-	}
-
-	/**
-	 * Convert summed leaderboard data to the display shape expected by the frontend.
-	 *
-	 *  - 'time'    = sum_time  / total_count — avg exclusive cat time per request.
-	 *  - 'count'   = sum_count / total_count — avg invocation count per request.
-	 *  - entries   are per-appearance averages (sum / samples).
-	 *
-	 * An entry whose sample count is zero is dropped rather than divided. Past a
-	 * hundred entries a category keeps only its fifty slowest, ranked by average
-	 * exclusive time, so one pathological category cannot flood a payload.
-	 *
-	 * @param int                 $total_count  Total profiled requests.
-	 * @param float               $sum_req_time Sum of per-request $req_time values.
-	 * @param array<string,mixed> $sums         Per-category sums keyed by category name.
-	 * @return array<string,mixed> Display-shaped leaderboard data.
-	 */
-	public static function sums_to_display( int $total_count, float $sum_req_time, array $sums ): array {
-		$display_cats = [];
-		foreach ( $sums as $cat => $data ) {
-			$data      = Core::arr( $data );
-			$samples   = Core::num_int( $data['samples'] ?? null );
-			$sum_time  = Core::num_float( $data['sum_time'] ?? null );
-			$sum_count = Core::num_float( $data['sum_count'] ?? null );
-
-			$entries_out = [];
-			$entries     = ( isset( $data['entries'] ) && \is_array( $data['entries'] ) ) ? $data['entries'] : [];
-			foreach ( $entries as $name => $entry ) {
-				$entry     = Core::arr( $entry );
-				$e_samples = Core::num_int( $entry[2] ?? null );
-				if ( $e_samples > 0 ) {
-					$entries_out[ $name ] = [
-						Core::num_float( $entry[0] ?? null ) / $e_samples,
-						Core::num_float( $entry[1] ?? null ) / $e_samples,
-						$e_samples,
-					];
-				}
-			}
-
-			if ( \count( $entries_out ) > 100 ) {
-				\uasort( $entries_out, fn( $a, $b ) => $b[0] <=> $a[0] );
-				$entries_out = \array_slice( $entries_out, 0, 50, true );
-			}
-
-			$display_cats[ $cat ] = [
-				'time'    => $total_count > 0 ? $sum_time / $total_count : 0.0,
-				'count'   => $total_count > 0 ? $sum_count / $total_count : 0.0,
-				'samples' => $samples,
-				'entries' => $entries_out,
-			];
-		}
-
-		return [
-			'count'      => $total_count,
-			'total_time' => $total_count > 0 ? $sum_req_time / $total_count : 0.0,
-			'categories' => $display_cats,
-		];
 	}
 
 }

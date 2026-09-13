@@ -37,8 +37,11 @@ import { askClaudeUrl, briefToMarkdown, clipboardBrief } from '../askBrief';
  * assembles the brief. Nothing is shaped here; <AskPanel> renders what arrives.
  *
  * Every ask carries the dashboard's server filter, and the assembler applies it
- * to the two briefs a server can narrow: `url:` and `category:`. The rest are
- * one request or one span inside it, which one server already served.
+ * where a server can narrow the answer: a `url:` brief, a `category:` brief
+ * from the leaderboard, and the URL pointer a request picked under a URL
+ * carries. A span or category inside the URL modal answers from the URL's
+ * aggregate, which is every server's; a request, and anything inside it, one
+ * server already served.
  *
  * @param {Object}   options
  * @param {Function} [options.onError]      Called with a message when an ask fails.

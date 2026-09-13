@@ -1619,6 +1619,12 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( 'request', $result['scope'] );
 	}
 
+	public function test_ask_category_refuses_a_callback_row_before_reading_any_board(): void {
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', [ 'category:hooks @10', 'request:nosuchrid:0' ] );
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( "'hooks @10' is a callback row", $result );
+	}
+
 	public function test_ask_category_brief_honours_the_server_scope(): void {
 		// The Time Breakdown an operator clicks Ask from renders
 		// `build_leaderboard( $server )`, so the brief behind it has to read the
@@ -3011,11 +3017,146 @@ class PerformanceCITest extends TestCase {
 		$this->assertEquals( 480.0, $result['ms'] );
 	}
 
+	public function test_ask_resolves_a_span_through_its_url_context(): void {
+		// The name comes from the name table and the tree from the aggregate,
+		// one key each; no index row is walked for it.
+		$store = new Stats_Store( 0, 86400 );
+		$store->set_url_names( [ 'cafebabe5678' => 'https://example.test/asked-agg' ] );
+		// As the flame builder finalizes it: the count on the root alone.
+		$this->set_url_stats( $store, 'cafebabe5678', [
+			'flame' => [
+				'name'     => 'aggregate',
+				'value'    => 300,
+				'count'    => 3,
+				'children' => [ [ 'name' => 'wp_loaded', 'value' => 240, 'children' => [] ] ],
+			],
+		] );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', [ 'span:wp_loaded', 'url:cafebabe5678' ] );
+
+		$this->assertIsArray( $result, \is_string( $result ) ? $result : '' );
+		$this->assertSame( 'span', $result['subject'] );
+		$this->assertEquals( 240.0, $result['ms'] );
+		$this->assertArrayNotHasKey( 'count', $result );
+		$this->assertSame( 'mean per request over 3 requests, every server', $result['scope'] );
+		$this->assertSame( 'https://example.test/asked-agg', $result['url'] );
+	}
+
+	/** The stored per-URL profile: sums the reader divides, never means. */
+	private function stored_profiles(): array {
+		return [
+			'count'        => 5,
+			'sum_req_time' => 500.0,
+			'categories'   => [
+				'render' => [ 'samples' => 5, 'sum_time' => 300.0, 'sum_count' => 10, 'entries' => [] ],
+				'sql'    => [ 'samples' => 5, 'sum_time' => 100.0, 'sum_count' => 35, 'entries' => [] ],
+			],
+		];
+	}
+
+	public function test_ask_resolves_a_category_through_its_url_context(): void {
+		$store = new Stats_Store( 0, 86400 );
+		$store->set_url_names( [ 'cafebabe9012' => '/asked-cat' ] );
+		$this->set_url_stats( $store, 'cafebabe9012', [ 'profiles' => $this->stored_profiles() ] );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', [ 'category:render', 'url:cafebabe9012' ] );
+
+		$this->assertIsArray( $result, \is_string( $result ) ? $result : '' );
+		$this->assertSame( 'category', $result['subject'] );
+		$this->assertSame( 'mean per request over 5 requests, every server', $result['scope'] );
+		$this->assertSame( '/asked-cat', $result['url'] );
+		$this->assertEqualsWithDelta( 60.0, $result['avg_time_ms'], 1e-6 );
+		$this->assertEqualsWithDelta( 2.0, $result['avg_count'], 1e-6 );
+		$this->assertEqualsWithDelta( 0.75, $result['share'], 1e-6 );
+	}
+
+	public function test_ask_category_under_a_url_whose_aggregate_expired_answers_from_the_leaderboard(): void {
+		// The per-URL blob lives a 24th of the window; the row lives the whole
+		// window. A row with no blob answers from the board the panel beside
+		// it draws.
+		$store  = new Stats_Store( 0, 86400 );
+		$bucket = $this->current_url_bucket();
+		$this->set_url_bucket( $store, $bucket, [
+			'cafebabe7890' => [ 'url' => '/asked-stale', 'count' => 2, 'timed_count' => 2, 'sum_ms' => 20.0, 'last_seen' => 1700001000 ],
+		] );
+		$this->set_leaderboard_bucket( $store, $bucket, [
+			'count'        => 40,
+			'sum_req_time' => 10.0,
+			'categories'   => [ 'wpdb' => [ 'samples' => 40, 'sum_time' => 400.0, 'sum_count' => 80, 'entries' => [] ] ],
+		] );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', [ 'category:wpdb', 'url:cafebabe7890' ] );
+
+		$this->assertIsArray( $result, \is_string( $result ) ? $result : '' );
+		$this->assertSame( 'recent window', $result['scope'] );
+		$this->assertEqualsWithDelta( 10.0, $result['avg_time_ms'], 1e-6 );
+	}
+
+	public function test_dump_url_serves_the_aggregate_profile_as_per_request_means(): void {
+		// The modal's "Average breakdown across N requests" panel reads
+		// `time` and `count` off each row and drops a row carrying neither, so
+		// the stored sums have to be divided before they leave the verb.
+		$store = new Stats_Store( 0, 86400 );
+		$this->set_url_bucket( $store, $this->current_url_bucket(), [
+			'cafebabe2468' => [ 'url' => '/asked-panel', 'count' => 5, 'timed_count' => 5, 'sum_ms' => 500.0, 'last_seen' => 1700001000 ],
+		] );
+		$this->set_url_stats( $store, 'cafebabe2468', [ 'profiles' => $this->stored_profiles() ] );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', 'cafebabe2468' );
+
+		$this->assertIsArray( $result, \is_string( $result ) ? $result : '' );
+		$profiles = $result['aggregate_profiles'];
+		$this->assertSame( 5, $profiles['count'] );
+		$this->assertEqualsWithDelta( 100.0, $profiles['total_time'], 1e-6 );
+		$this->assertEqualsWithDelta( 60.0, $profiles['categories']['render']['time'], 1e-6 );
+		$this->assertEqualsWithDelta( 7.0, $profiles['categories']['sql']['count'], 1e-6 );
+	}
+
+	public function test_ask_carries_the_url_a_request_was_picked_under(): void {
+		$rid = $this->write_request( [
+			'rid'            => 'rid-ask-under-url-12345678901234',
+			'url'            => '/asked-under',
+			'timestamp'      => 1700000800,
+			'duration_ms'    => 120,
+			'status_code'    => 200,
+			'peak_mb'        => 2,
+			'request_method' => 'GET',
+		] );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', [ "request:{$rid}:0", 'url:cafebabe3456', '--server=alpha.example' ] );
+
+		$this->assertIsArray( $result, \is_string( $result ) ? $result : '' );
+		$this->assertSame( 'dump_url', $result['fetch'][1]['tool'] );
+		$this->assertSame( [ 'hash' => 'cafebabe3456', 'server' => 'alpha.example' ], $result['fetch'][1]['arguments'] );
+	}
+
+	public function test_a_span_under_a_url_with_no_aggregate_says_so(): void {
+		$store = new Stats_Store( 0, 86400 );
+		$store->set_url_names( [ 'cafebabe1357' => '/asked-half' ] );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', [ 'span:wp_loaded', 'url:cafebabe1357' ] );
+
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( 'no aggregate for url cafebabe1357', \strtolower( $result ) );
+	}
+
+	public function test_a_span_absent_from_a_urls_aggregate_says_so(): void {
+		$store = new Stats_Store( 0, 86400 );
+		$this->set_url_stats( $store, 'cafebabe1357', [
+			'flame' => [ 'name' => 'aggregate', 'value' => 300, 'count' => 3, 'children' => [ [ 'name' => 'init', 'value' => 10, 'children' => [] ] ] ],
+		] );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', [ 'span:wp_loaded', 'url:cafebabe1357' ] );
+
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( "no span 'wp_loaded' in this url's aggregate", \strtolower( $result ) );
+	}
+
 	public function test_a_span_without_its_request_context_is_refused(): void {
 		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', 'span:wp_loaded' );
 
 		$this->assertIsString( $result );
-		$this->assertStringContainsString( 'needs its request', \strtolower( $result ) );
+		$this->assertStringContainsString( 'needs its request or its url', \strtolower( $result ) );
 	}
 
 	public function test_ask_assembles_a_url_brief(): void {

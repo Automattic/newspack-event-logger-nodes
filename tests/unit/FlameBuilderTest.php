@@ -3147,44 +3147,7 @@ class FlameBuilderTest extends TestCase {
 		$this->assertEmpty( $dim_server, "per-server 'server' dim is skipped" );
 	}
 
-	// --- Per-URL aggregate flame migration paths --------------------------
-
-	public function test_legacy_ema_flame_shape_migrated_on_load(): void {
-		// Pre-seed the store with the legacy EMA-style shape (no sum_value).
-				Core::$memd = new InMemoryMemcached();
-		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		$url      = '/legacy';
-		$url_hash = Log_Manager::url_hash( $url );
-		$this->set_url_stats( $store, $url_hash, [
-			'flame'    => [
-				'name'     => 'aggregate',
-				'value'    => 42.0, // Legacy EMA running mean — no sum_value.
-				'children' => [],
-			],
-			'profiles' => [
-				'count' => 5, // Legacy: no sum_req_time.
-			],
-		] );
-
-		$fb = new Flame_Builder_Node();
-		$fb->set_stats_store( $store );
-
-		$this->fill_request( $fb, $this->completed_request( [
-			'url'         => $url,
-			'duration_ms' => 100.0,
-			'profiles'    => [ 'wpdb' => [ 'time' => 0.2, 'count' => 1, 'entries' => [] ] ],
-		] ) );
-		$fb->flush();
-
-		$stats = $store->get_url_stats( $url_hash );
-		$this->assertNotNull( $stats );
-		// flame_raw should hold the sums (post-migration), flame is finalized.
-		$this->assertArrayHasKey( 'flame_raw', $stats );
-		$this->assertArrayHasKey( 'sum_value', $stats['flame_raw'] );
-		$this->assertEqualsWithDelta( 100.0, $stats['flame_raw']['sum_value'], 1e-6 );
-		// Legacy profiles migrated too.
-		$this->assertArrayHasKey( 'sum_req_time', $stats['profiles'] );
-	}
+	// --- Per-URL aggregate reload ------------------------------------------
 
 	public function test_flame_raw_promoted_to_flame_on_reload(): void {
 		// Set store with an entry that has flame_raw set (post-flush format).

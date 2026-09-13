@@ -98,7 +98,7 @@ npm run lint:phpstan         # types, strict rules and dead code (= lint:deadcod
 npm run lint:deadcode:js     # knip
 ```
 
-`scripts/pre-push` runs the JS suite with coverage and its per-file 90% gate on every push and scopes the rest to the file types the push touched: PHP takes `lint:php`, a container deploy, the PHPUnit coverage suite and a per-class 90% gate; JS and SCSS take their linters and a build. Three checks run on every push, docs-only included — `scripts/lint-docs.sh` holds the prose to the runtime, `scripts/check-substrate-floor.sh` holds the declared floor to the substrate APIs this plugin calls, and dndocker's `tools/check-firehose-parity.py` holds the PHP and Perl firehose producers to one wire contract. The last two skip cleanly when the checkout they need — the sibling substrate, the dndocker tree — is absent.
+`scripts/pre-push` runs the JS suite with coverage and its per-file 90% gate on every push and scopes the rest to the file types the push touched: PHP takes `lint:php`, a container deploy, the PHPUnit coverage suite and a per-class 90% gate; JS and SCSS take their linters and a build. Three checks run on every push, docs-only included — `scripts/lint-docs.sh` holds the prose to the runtime, `scripts/check-substrate-floor.sh` holds the declared floor to the substrate APIs this plugin calls, and dndocker's `tools/check-firehose-parity.py` holds the PHP and Perl firehose producers to one wire contract and the three SQL shapers to one case list. The last two skip cleanly when the checkout they need — the sibling substrate, the dndocker tree — is absent.
 
 This plugin ships as a standard WordPress plugin; deployment is environment-specific and lives outside this repo.
 

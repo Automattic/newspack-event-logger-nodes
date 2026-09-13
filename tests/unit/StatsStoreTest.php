@@ -365,6 +365,24 @@ class StatsStoreTest extends TestCase {
 		);
 	}
 
+	public function test_get_url_stats_hands_out_the_profile_as_per_request_means(): void {
+		$store = $this->make_store();
+		$this->set_url_stats( $store, 'urlhash-m', [
+			'count'    => 4,
+			'profiles' => [
+				'count'        => 4,
+				'sum_req_time' => 200.0,
+				'categories'   => [ 'wpdb' => [ 'samples' => 4, 'sum_time' => 80.0, 'sum_count' => 12, 'entries' => [] ] ],
+			],
+		] );
+		$stats = $store->get_url_stats( 'urlhash-m' );
+		$this->assertSame( 4, $stats['count'] );
+		$this->assertSame( 4, $stats['profiles']['count'] );
+		$this->assertEqualsWithDelta( 50.0, $stats['profiles']['total_time'], 1e-6 );
+		$this->assertEqualsWithDelta( 20.0, $stats['profiles']['categories']['wpdb']['time'], 1e-6 );
+		$this->assertEqualsWithDelta( 3.0, $stats['profiles']['categories']['wpdb']['count'], 1e-6 );
+	}
+
 	public function test_keys_include_partition(): void {
 		$mc       = $this->seed_memd();
 		$store_p0 = $this->make_store( partition: 0 );

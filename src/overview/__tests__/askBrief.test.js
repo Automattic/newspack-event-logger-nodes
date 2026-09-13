@@ -228,6 +228,47 @@ test( 'a span brief carries its parent, its siblings and what is inside it', () 
 	expect( md ).toContain( 'query 610.5ms×17' );
 } );
 
+test( 'a span or category brief asked under a URL says what its numbers aggregate', () => {
+	// An aggregate node has no call count; a row without one prints no ×.
+	const span = briefToMarkdown( {
+		subject: 'span',
+		name: 'wp_loaded hook',
+		ms: 240,
+		parent: 'aggregate',
+		parent_ms: 300,
+		scope: 'mean per request over 17 requests, every server',
+		siblings: [ { name: 'init hook', ms: 12 } ],
+		subtree: [ { name: 'render_block', ms: 200 } ],
+		url: '/asked-agg',
+		rule: null,
+		caveat: 'c',
+	} );
+	expect( span ).toContain(
+		'**scope:** mean per request over 17 requests, every server'
+	);
+	expect( span ).not.toContain( 'calls' );
+	expect( span ).toContain( '**inside it:** render_block 200ms' );
+	expect( span ).not.toContain( '×' );
+
+	const category = briefToMarkdown( {
+		subject: 'category',
+		name: 'render',
+		scope: 'mean per request over 17 requests, every server',
+		avg_time_ms: 60,
+		avg_count: 2,
+		share: 0.75,
+		others: [],
+		url: '/asked-agg',
+		caveat: 'c',
+	} );
+	expect( category ).toContain(
+		'**scope:** mean per request over 17 requests, every server'
+	);
+	expect( category ).toContain(
+		'**url:** <site-data>/asked-agg</site-data>'
+	);
+} );
+
 test( 'a span brief names what the chosen parent leaves out', () => {
 	const md = briefToMarkdown( {
 		subject: 'span',

@@ -22,6 +22,9 @@ import {
 	getAncestorPairIds,
 	isFoldablePairStart,
 	spliceFoldedSpans,
+	structuredValue,
+	prettyJson,
+	formatBody,
 } from '../logEntryUtils';
 
 describe( 'isFoldablePairStart', () => {
@@ -1770,5 +1773,39 @@ describe( 'the drained completes belong to the spans that were still open', () =
 		// And the tail is not re-parented under it.
 		const at = ( k ) => rows.find( ( e ) => e.k === k ).indent;
 		expect( at( 'tail' ) ).toBe( at( 'gyrobase (start)' ) );
+	} );
+} );
+
+describe( 'structuredValue and prettyJson', () => {
+	it( 'parses a JSON string to the value it carries and indents it with keys sorted', () => {
+		expect( structuredValue( '{"b":1,"a":{"d":2,"c":3}}' ) ).toEqual( {
+			b: 1,
+			a: { d: 2, c: 3 },
+		} );
+		expect( prettyJson( structuredValue( '{"b":1,"a":"?"}' ) ) ).toBe(
+			'{\n  "a": "?",\n  "b": 1\n}'
+		);
+		expect( structuredValue( [ 1 ] ) ).toEqual( [ 1 ] );
+	} );
+
+	it( 'leaves a scalar, a scalar JSON string and a clipped string alone', () => {
+		expect( structuredValue( '123' ) ).toBeUndefined();
+		expect( structuredValue( '"x"' ) ).toBeUndefined();
+		expect( structuredValue( '{"a":' ) ).toBeUndefined();
+		expect( structuredValue( 'SELECT 1' ) ).toBeUndefined();
+		expect( structuredValue( 7 ) ).toBeUndefined();
+		expect( structuredValue( null ) ).toBeUndefined();
+	} );
+} );
+
+describe( 'formatBody', () => {
+	it( 'prints a scalar message as itself', () => {
+		// A hook argument can be a number or a bool, written verbatim.
+		expect( formatBody( 55 ) ).toBe( '55' );
+		expect( formatBody( true ) ).toBe( 'true' );
+		expect( formatBody( 0 ) ).toBe( '0' );
+		expect( formatBody( undefined ) ).toBe( '' );
+		expect( formatBody( null ) ).toBe( '' );
+		expect( formatBody( '-' ) ).toBe( '' );
 	} );
 } );

@@ -911,7 +911,12 @@ export const computeVisibleEntries = ( entries, expandedSet ) => {
 					startTs: entry.ts,
 					duration_ms: completeEntry?.duration_ms ?? null,
 					peak_mb: completeEntry?.peak_mb || 0,
-					completeMessage: completeEntry?.m || '',
+					completeMessage: completeEntry?.m ?? '',
+					// The complete's own number: what its body folds under.
+					completeN:
+						completeEntry && '' !== completeEntry.n
+							? completeEntry.n
+							: null,
 					childCount,
 					isMerged: true,
 					originalIdx: i,
@@ -1108,3 +1113,72 @@ export const getAncestorPairIds = ( targetIdx, indentedEntries ) => {
 
 	return ids;
 };
+
+/**
+ * A message's structured value: the object it is, or the object a JSON
+ * string it carries parses to. A hook argument reaches the wire compact —
+ * the producer spends no bytes on indentation — and a string the wire clipped
+ * no longer parses, so it stays the text it is. A scalar JSON string is a
+ * scalar and is not sniffed.
+ *
+ * @testonly Production reaches it through `formatBody()`.
+ * @param {*} m The entry's message.
+ * @return {Object|Array|undefined} The value to pretty-print, or undefined
+ *                                   for a scalar or an unparseable string.
+ */
+export function structuredValue( m ) {
+	if ( 'object' === typeof m && null !== m ) {
+		return m;
+	}
+	if ( 'string' !== typeof m || ! /^[[{]/.test( m ) ) {
+		return undefined;
+	}
+	try {
+		const parsed = JSON.parse( m );
+		return 'object' === typeof parsed && null !== parsed
+			? parsed
+			: undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * A structured value on indented lines, keys alpha-sorted at the top level:
+ * the table's own shape, where `wp nodes reqgrep` indents by four in wire order.
+ *
+ * @testonly Production reaches it through `formatBody()`.
+ * @param {Object|Array} value The value.
+ * @return {string} Its indented JSON.
+ */
+export const prettyJson = ( value ) =>
+	JSON.stringify(
+		Array.isArray( value )
+			? value
+			: Object.fromEntries(
+					Object.keys( value )
+						.sort()
+						.map( ( k ) => [ k, value[ k ] ] )
+			  ),
+		null,
+		2
+	);
+
+/**
+ * A message body as the readers show it: a structured value indented, a
+ * scalar as itself, the `-` placeholder as nothing. Computed once per entry,
+ * because render, search and fold all read the same text.
+ *
+ * @param {*} m The entry's message.
+ * @return {string} The body text; '' for a message that is nothing to show.
+ */
+export function formatBody( m ) {
+	const structured = structuredValue( m );
+	if ( undefined !== structured ) {
+		return prettyJson( structured );
+	}
+	if ( 'string' === typeof m ) {
+		return '-' === m ? '' : m;
+	}
+	return null === m || undefined === m ? '' : String( m );
+}

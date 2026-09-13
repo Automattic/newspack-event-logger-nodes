@@ -143,8 +143,8 @@ class MCP_Controller {
 			'node'    => 'performance',
 			'verb'    => 'ask',
 			'role'    => Capabilities::READ,
-			'summary' => 'The brief for one thing: `url:<hash>`, `request:<rid>:<partition>`, `span:<name>`, `entry:<n>` or `category:<name>`. A span or an entry also needs its `request:` descriptor as a second argument.',
-			'args'    => [ 'descriptor' => 'What to ask about (required).', 'context' => 'The containing descriptor, if any.', 'server' => 'Optional server name; scopes a url: brief the way performance_urls scopes its rows.' ],
+			'summary' => 'The brief for one thing: `url:<hash>`, `request:<rid>:<partition>`, `span:<name>`, `entry:<n>` or `category:<name>`. A span or an entry also needs its `request:` descriptor as a second argument; a span or a category given a `url:` descriptor instead answers from that URL\'s aggregate.',
+			'args'    => [ 'descriptor' => 'What to ask about (required).', 'context' => 'The containing descriptor, if any.', 'server' => 'Optional server name; scopes a url: brief and a category: brief from the leaderboard the way performance_urls scopes its rows. A span or category under a url: answers from that URL\'s aggregate, which is every server\'s.' ],
 		],
 		'dump_rules'               => [
 			'node'    => 'rules',

@@ -38,6 +38,7 @@ import {
 	hasPair,
 	isEmptyPairStart,
 	isFoldablePairStart,
+	formatBody,
 } from '../utils/logEntryUtils';
 
 /**
@@ -218,6 +219,17 @@ const BODY_FOLD_LINES = 5;
 const NEVER_FOLDED = new Set( [ 'environment_v3' ] );
 
 /**
+ * What the producer shaped as a statement — `App\Core::SQL_LEAD`, verb for
+ * verb. A statement's clauses are what a reader came for, so one never folds,
+ * whichever frame carries it: the `sql` span, gyrobase's query frames, or a
+ * hook whose first argument was a query.
+ *
+ * @type {RegExp}
+ */
+const STATEMENT_LEAD =
+	/^\s*(?:SELECT|INSERT|UPDATE|DELETE|REPLACE|SHOW|DESCRIBE|EXPLAIN|CREATE|ALTER|DROP|TRUNCATE)\b/i;
+
+/**
  * Log Entries Table component.
  *
  * Every pair starts folded: `expandedSet` holds the pairIds the reader has
@@ -246,6 +258,23 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 	// The body opened only to show the current match; put back on the next one.
 	const matchOpenedRef = useRef( null );
 	const searchTimerRef = useRef( null );
+
+	/**
+	 * Each message body as shown, computed once per entry list and keyed on
+	 * the message itself: render, search and fold all read this one text, so
+	 * what is matched is what is marked, and a row rebuilt around the same
+	 * message pays nothing. A merged row's complete side is covered because
+	 * the complete row is itself in `entries`.
+	 */
+	const bodies = useMemo( () => {
+		const map = new Map();
+		for ( const e of entries ) {
+			if ( ! map.has( e.m ) ) {
+				map.set( e.m, formatBody( e.m ) );
+			}
+		}
+		return map;
+	}, [ entries ] );
 
 	/**
 	 * Recompute matches 150ms after the query settles.
@@ -282,12 +311,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 					continue;
 				}
 				const keyword = ( e.k || '' ).toLowerCase();
-				let message = '';
-				if ( typeof e.m === 'string' ) {
-					message = e.m.toLowerCase();
-				} else if ( typeof e.m === 'object' ) {
-					message = JSON.stringify( e.m ).toLowerCase();
-				}
+				const message = ( bodies.get( e.m ) ?? '' ).toLowerCase();
 
 				const keywordHit = keyword.includes( query );
 				const messageHit = message.includes( query );
@@ -319,7 +343,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 				clearTimeout( searchTimerRef.current );
 			}
 		};
-	}, [ searchQuery, entries ] );
+	}, [ searchQuery, entries, bodies ] );
 
 	/**
 	 * Every pairId that can be unfolded — the set "Unfold All" applies and
@@ -871,21 +895,9 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 		if ( entry.isPlaceholder ) {
 			return '';
 		}
-		if ( typeof entry.m === 'object' ) {
-			// Pretty-print object values on indented, alpha-sorted lines.
-			const value =
-				entry.m && ! Array.isArray( entry.m )
-					? Object.fromEntries(
-							Object.keys( entry.m )
-								.sort()
-								.map( ( k ) => [ k, entry.m[ k ] ] )
-					  )
-					: entry.m;
-			return JSON.stringify( value, null, 2 );
-		}
-		const msg = entry.m || '';
-		if ( msg && '-' !== msg ) {
-			return msg;
+		const body = bodies.get( entry.m );
+		if ( body ) {
+			return body;
 		}
 		// Merged/complete rows and duration-stat entries carry their own stats.
 		const carriesStats =
@@ -958,6 +970,25 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 	};
 
 	/**
+	 * The figures on a line of their own under the body, with whatever else
+	 * rides beside them, or nothing when there is nothing to put there. A figure
+	 * on the body's last line reads as part of it.
+	 *
+	 * @param {Object}                    entry Log entry object.
+	 * @param {import('react').ReactNode} extra Anything else the line carries.
+	 * @return {import('react').ReactElement|null} The line, or null.
+	 */
+	const renderStatsLine = ( entry, extra = null ) => {
+		const stats = renderStats( entry );
+		return stats || extra ? (
+			<div className="log-entries-stats">
+				{ stats }
+				{ extra }
+			</div>
+		) : null;
+	};
+
+	/**
 	 * Render the trace labels above a span's value.
 	 *
 	 * @param {Object} entry Log entry object.
@@ -986,15 +1017,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 	 */
 	const renderMergedMessage = ( entry ) => {
 		const startMsg = formatMessage( entry );
-		let completeMsg = '';
-		if ( entry.completeMessage && entry.completeMessage !== '-' ) {
-			completeMsg =
-				typeof entry.completeMessage === 'object'
-					? JSON.stringify( entry.completeMessage )
-					: entry.completeMessage;
-		}
-		const hasContent = startMsg || completeMsg;
-		const stats = renderStats( entry );
+		const completeMsg = bodies.get( entry.completeMessage ) ?? '';
 		const childBadge = entry.childCount > 0 && (
 			<span
 				className="newspack-nodes-status is-muted"
@@ -1018,16 +1041,17 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 			<>
 				{ renderTraceLines( entry ) }
 				{ renderFoldedBody( entry, startMsg ) }
-				{ startMsg && completeMsg && ' ' }
-				{ completeMsg && markSearchTerm( completeMsg ) }
+				{ startMsg &&
+					completeMsg &&
+					( completeMsg.includes( '\n' ) ? '\n' : ' ' ) }
+				{ completeMsg &&
+					renderFoldedBody(
+						entry,
+						completeMsg,
+						entry.completeN ?? entry.n
+					) }
 				{ renderTruncatedMark( entry ) }
-				{ ( stats || childBadge ) && (
-					<>
-						{ hasContent && <br /> }
-						{ stats }
-						{ childBadge }
-					</>
-				) }
+				{ renderStatsLine( entry, childBadge ) }
 			</>
 		);
 	};
@@ -1071,22 +1095,28 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 
 	/**
 	 * A message body past `BODY_FOLD_LINES` folds, with a link to see the rest;
-	 * a keyword in `NEVER_FOLDED` is exempt. The trace labels and the stats
+	 * a keyword in `NEVER_FOLDED` or a body opening as a statement is exempt. The trace labels and the stats
 	 * stay outside the fold, so folding never hides a number.
 	 *
-	 * @param {Object} entry Log entry object.
-	 * @param {string} msg   The formatted message body.
+	 * @param {Object}        entry Log entry object.
+	 * @param {string}        msg   The formatted message body.
+	 * @param {number|string} key   What the fold is remembered under; a merged row's
+	 *                              complete side folds under the complete's own number.
 	 * @return {import('react').ReactNode} The body, folded or whole.
 	 */
-	const renderFoldedBody = ( entry, msg ) => {
+	const renderFoldedBody = ( entry, msg, key = entry.n ) => {
 		if ( 'string' !== typeof msg ) {
 			return msg;
 		}
 		const lines = msg.split( '\n' );
-		if ( NEVER_FOLDED.has( entry.k ) || lines.length <= BODY_FOLD_LINES ) {
+		if (
+			NEVER_FOLDED.has( entry.k ) ||
+			STATEMENT_LEAD.test( msg ) ||
+			lines.length <= BODY_FOLD_LINES
+		) {
 			return markSearchTerm( msg );
 		}
-		const open = expandedBodies.has( entry.n );
+		const open = expandedBodies.has( key );
 		return (
 			<>
 				{ markSearchTerm(
@@ -1096,7 +1126,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 					<button
 						type="button"
 						className="button-link"
-						onClick={ ( event ) => toggleBody( entry.n, event ) }
+						onClick={ ( event ) => toggleBody( key, event ) }
 					>
 						{ open
 							? __( 'Show less', 'newspack-event-logger-nodes' )
@@ -1139,7 +1169,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 				{ renderTraceLines( entry ) }
 				{ renderFoldedBody( entry, msg ) }
 				{ renderTruncatedMark( entry ) }
-				{ renderStats( entry ) }
+				{ renderStatsLine( entry ) }
 			</>
 		);
 	};

@@ -110,6 +110,16 @@ function num( value ) {
 }
 
 /**
+ * A call count as a `×n` suffix, or nothing where the brief carries none — an
+ * aggregate span keeps no count, and `×undefined` would read as a value.
+ *
+ * @param {*} count The `count` a span row carries, if any.
+ * @return {string} `×n`, or ''.
+ */
+const times = ( count ) =>
+	Number.isFinite( count ) ? `\u00d7${ count }` : '';
+
+/**
  * `key: value` lines for a flat object, skipping what is absent. A third
  * element `'site'` marks a value the site's traffic wrote, fenced on the way.
  *
@@ -282,6 +292,8 @@ function bodyLines( brief ) {
 			return [
 				...fields( [
 					[ 'span', brief.name ],
+					// Present under a URL: the numbers fold many requests.
+					[ 'scope', brief.scope ],
 					[ 'ms', num( brief.ms ) ],
 					[ 'calls', brief.count ],
 					[
@@ -292,11 +304,11 @@ function bodyLines( brief ) {
 					[
 						'elsewhere',
 						brief.elsewhere
-							? `${ num( brief.elsewhere.ms ) }ms\u00d7${
+							? `${ num( brief.elsewhere.ms ) }ms${ times(
 									brief.elsewhere.count
-							  } under ${ ( brief.elsewhere.parents ?? [] ).join(
-									', '
-							  ) }`
+							  ) } under ${ (
+									brief.elsewhere.parents ?? []
+							  ).join( ', ' ) }`
 							: '',
 					],
 					[
@@ -310,9 +322,9 @@ function bodyLines( brief ) {
 						( brief.subtree ?? [] )
 							.map(
 								( s ) =>
-									`${ s.name } ${ num( s.ms ) }ms×${
+									`${ s.name } ${ num( s.ms ) }ms${ times(
 										s.count
-									}`
+									) }`
 							)
 							.join( ', ' ),
 					],
@@ -347,6 +359,8 @@ function bodyLines( brief ) {
 		case 'category':
 			return fields( [
 				[ 'category', brief.name ],
+				[ 'scope', brief.scope ],
+				[ 'url', brief.url, 'site' ],
 				[ 'avg_time_ms', num( brief.avg_time_ms ) ],
 				[ 'avg_count', num( brief.avg_count ) ],
 				[ 'share', `${ Math.round( ( brief.share ?? 0 ) * 100 ) }%` ],

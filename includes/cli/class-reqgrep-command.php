@@ -578,8 +578,10 @@ class Reqgrep_Command {
 	 *    resolution, keeping repeated same-tick entries readable.
 	 *  - Gaps: elapsed whole seconds render as dot rows at escalating intervals
 	 *    (1s, then 10s, then 100s, …) so a multi-day gap costs O(log gap) rows.
-	 *  - Body: an array `m` pretty-prints as JSON, and every continuation line of
-	 *    a multi-line body is padded to the message column.
+	 *  - Body: an array `m` pretty-prints as JSON in the terminal's own shape,
+	 *    four-space indent and keys in wire order, where the table indents by
+	 *    two and sorts keys; every continuation line of a multi-line body is
+	 *    padded to the message column.
 	 *  - Suffix: `duration_ms` and `peak_mb` trail the line when present.
 	 *
 	 * @param array<int|string,mixed> $entry Decoded JSON entry.
@@ -627,13 +629,21 @@ class Reqgrep_Command {
 			}
 		}
 
-		// Build message body. Arrays pretty-print as JSON; strings verbatim.
+		// Indent a structured value, or the JSON string a hook arrives as.
 		$message = '';
 		if ( isset( $entry['m'] ) ) {
-			if ( \is_array( $entry['m'] ) ) {
-				$message = \wp_json_encode( $entry['m'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ) ?: '';
+			$m = $entry['m'];
+			if ( \is_string( $m ) && 1 === \preg_match( '/^[[{]/', $m ) ) {
+				// Objects stay objects, so an empty `{}` prints as one.
+				$decoded = \json_decode( $m );
+				$m       = \is_array( $decoded ) || \is_object( $decoded ) ? $decoded : $m;
+			}
+			if ( \is_array( $m ) || \is_object( $m ) ) {
+				$message = \wp_json_encode( $m, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE ) ?: '';
+			} elseif ( \is_bool( $m ) ) {
+				$message = $m ? 'true' : 'false';
 			} else {
-				$message = Core::as_string( $entry['m'] );
+				$message = Core::as_string( $m );
 			}
 		}
 
