@@ -674,6 +674,70 @@ class StatsStoreTest extends TestCase {
 		$this->assertSame( [ 'count' => 42 ], $this->get_hourly_bucket( $store, '2026-02-03-04-05' ) );
 	}
 
+	/**
+	 * An absence the mirror answered is remembered, for as long as it holds.
+	 *
+	 * A bucket the mirror has no frame for costs the walk its whole index to
+	 * say so, and a sparse server has such buckets in every window; asked on
+	 * every poll, they spend the read budget before the series is reached. A
+	 * bucket that closed gains no frame, so its absence holds for the window;
+	 * the open bucket's frame may still land, so its absence holds only
+	 * briefly. A key that is no bucket, `urlmap`, holds briefly too.
+	 */
+	public function test_absences_are_not_remembered_unless_a_reader_asks_for_it(): void {
+		// The writer's own folds read a bucket once; a marker there would
+		// only compete with the write that follows.
+		$store = $this->make_store();
+		$asked = 0;
+		$store->rehydrate = static function ( array $keys ) use ( &$asked ): array {
+			++$asked;
+			return [];
+		};
+		$this->assertSame( [], $store->get_leaderboard_buckets( [ '2026-01-01-00-00' ] ) );
+		$this->assertSame( [], $store->get_leaderboard_buckets( [ '2026-01-01-00-00' ] ) );
+		$this->assertSame( 2, $asked );
+	}
+
+	public function test_a_writer_reads_a_readers_marker_as_an_ordinary_miss(): void {
+		// The worker's store shares the key and holds no absences; a marker a
+		// dashboard left must not be its miss, or an evicted open bucket
+		// merges from nothing instead of from the held-frame tier.
+		$reader = $this->make_store();
+		$reader->rehydrate = static fn ( array $keys ): array => [];
+		$reader->absence   = static fn ( string $key ): int => 20;
+		$open = Stats_Store::bucket_key( \time() );
+		$this->assertSame( [], $reader->get_leaderboard_buckets( [ $open ] ) );
+
+		$writer = $this->make_store();
+		$writer->rehydrate = static fn ( array $keys ): array => [ 'lb:' . $open => [ 'value' => [ 'count' => 47, 'sum_req_time' => 2.0, 'categories' => [] ], 'ttl' => 60 ] ];
+		$this->assertSame( 47, $writer->get_leaderboard_buckets( [ $open ] )[ $open ]['count'] ?? null, 'the held frame answers through the marker' );
+	}
+
+	public function test_an_absent_closed_bucket_is_not_asked_of_the_mirror_again(): void {
+		$store = $this->make_store( max_lifespan: 7200 );
+		$asked = [];
+		$store->rehydrate = static function ( array $keys ) use ( &$asked ): array {
+			$asked[] = $keys;
+			return [];
+		};
+		$store->absence = static fn ( string $key ): int => $store->absence_holds( $key );
+		$now    = \time();
+		$closed = Stats_Store::bucket_key( $now - 3600 );
+		$open   = Stats_Store::bucket_key( $now );
+
+		$this->assertSame( [], $store->get_leaderboard_buckets( [ $closed, $open ] ) );
+		$this->assertSame( [], $store->get_leaderboard_buckets( [ $closed, $open ] ) );
+		// Both were asked once; the closed one holds for the window, the open
+		// one only briefly, since its frame may still land.
+		$this->assertSame( [ [ 'lb:' . $closed, 'lb:' . $open ] ], $asked );
+		$expiries = Core::$memd->expiries();
+		$brief    = $expiries[ \Newspack_Nodes\Table_Node::entry_key( Stats_Store::namespace_for( 0 ), 'lb:' . $open ) ] ?? 0;
+		$this->assertEqualsWithDelta( $now + Stats_Store::ABSENCE_HOLD_SECONDS, $brief, 2, 'the open bucket\'s absence holds briefly' );
+		$held     = $expiries[ \Newspack_Nodes\Table_Node::entry_key( Stats_Store::namespace_for( 0 ), 'lb:' . $closed ) ] ?? 0;
+		// The window is 7200s from the bucket's start, an hour ago.
+		$this->assertEqualsWithDelta( $now - ( $now % Stats_Store::BUCKET_SECONDS ) - 3600 + 7200, $held, 2 + Stats_Store::BUCKET_SECONDS, 'held for what is left of the window, not the table lifetime' );
+	}
+
 	public function test_a_miss_is_filled_from_the_durable_backing(): void {
 		$store = $this->make_store();
 		$value = [ 'count' => 9 ];

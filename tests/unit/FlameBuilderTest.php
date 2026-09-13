@@ -4003,8 +4003,39 @@ class FlameBuilderTest extends TestCase {
 		Flame_Builder_Node::arm_stats_reader( $reader );
 		$p->index_scans = 0;
 
-		$this->assertSame( [], ( $reader->rehydrate )( [ 'hourly:' . self::live_hour() ] ), 'a spent budget reads nothing' );
+		$this->assertNull( ( $reader->rehydrate )( [ 'hourly:' . self::live_hour() ] ), 'a spent budget did not look, and says so' );
 		$this->assertSame( 0, $p->index_scans, 'and walks nothing' );
+	}
+
+	/**
+	 * A read the budget cut short is no absence: nothing is remembered of it,
+	 * and the next poll, with budget again, finds the frame.
+	 *
+	 * Through the Table, not the seam alone, since it is the Table that would
+	 * hold the marker — and held for the window, a frame the mirror has would
+	 * then read as missing on every poll after a cold one.
+	 */
+	public function test_a_read_the_budget_cut_short_records_no_absence(): void {
+		Core::$memd = new InMemoryMemcached();
+		Flame_Builder_Node::reset_mirror_read_budget();
+		$dir = $this->make_temp_dir();
+		$this->use_base_dir( $dir, [ 'stats_mirror_node' => 'flames-stats', 'stats_mirror_read_budget_ms' => 0 ] );
+		$store   = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		[ , $p ] = $this->mirrored_builder( $store, 'flames-stats', CountingIndexPartition::class );
+		$bucket  = Stats_Store::bucket_key( \time() - 3 * 3600 );
+		$this->fill_partition_entry( $p, Stats_Store::entry_key( 0, 'lb:' . $bucket ), [ 'count' => 83, 'sum_req_time' => 1.0, 'categories' => [] ], 86400, \time() );
+		$p->flush();
+
+		$reader = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		Flame_Builder_Node::arm_stats_reader( $reader );
+		$this->assertSame( [], $reader->get_leaderboard_buckets( [ $bucket ] ), 'out of budget, the read answers nothing' );
+
+		Flame_Builder_Node::reset_mirror_read_budget();
+		$this->use_base_dir( $dir, [ 'stats_mirror_node' => 'flames-stats', 'stats_mirror_read_budget_ms' => 2500 ] );
+		$reader = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		Flame_Builder_Node::arm_stats_reader( $reader );
+		$rows = $reader->get_leaderboard_buckets( [ $bucket ] );
+		$this->assertSame( 83, $rows[ $bucket ]['count'] ?? null, 'with budget, the frame the mirror holds is found' );
 	}
 
 	/** With budget left, the same read finds the frame — zero is the switch. */
@@ -4023,6 +4054,42 @@ class FlameBuilderTest extends TestCase {
 		$found = ( $reader->rehydrate )( [ 'hourly:' . self::live_hour() ] );
 
 		$this->assertSame( [ 'count' => 83 ], $found['hourly:' . self::live_hour()]['value'] ?? null );
+	}
+
+	/**
+	 * A reader remembers the absences it walked for, so the same poll's next
+	 * turn walks only for what may have landed since.
+	 *
+	 * A sparse server has buckets the mirror holds no frame for in every
+	 * window, and an absent key is the one the walk cannot stop early on;
+	 * asked on every poll they spent the whole budget before the series was
+	 * reached. A closed bucket's absence holds for the window; the walk that
+	 * found nothing is not repeated.
+	 */
+	public function test_a_reader_remembers_a_closed_buckets_absence_and_walks_once(): void {
+		Core::$memd = new InMemoryMemcached();
+		Flame_Builder_Node::reset_mirror_read_budget();
+		$this->use_base_dir( $this->make_temp_dir(), [ 'stats_mirror_node' => 'flames-stats', 'stats_mirror_read_budget_ms' => 2500 ] );
+		$store   = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		/** @var CountingIndexPartition $p */
+		[ , $p ] = $this->mirrored_builder( $store, 'flames-stats', CountingIndexPartition::class );
+		$this->fill_partition_entry( $p, Stats_Store::entry_key( 0, 'hourly:' . self::live_hour() ), [ 'count' => 83 ], 86400, \time() );
+		$p->flush();
+		// A bucket three hours back that the mirror never saw: sparse traffic.
+		$absent = Stats_Store::bucket_key( \time() - 3 * 3600 );
+
+		$reader = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		Flame_Builder_Node::arm_stats_reader( $reader );
+		$p->index_scans = 0;
+
+		$this->assertSame( [], $reader->get_leaderboard_buckets( [ $absent ], 'spoke-sparse' ) );
+		$this->assertSame( 1, $p->index_scans, 'one walk to learn the absence' );
+		// The mirror is appended every few seconds, which is what discards
+		// the walk's own per-request memo; only what landed in memcache holds.
+		$this->fill_partition_entry( $p, Stats_Store::entry_key( 0, 'hourly:' . self::live_hour() ), [ 'count' => 84 ], 86400, \time() );
+		$p->flush();
+		$this->assertSame( [], $reader->get_leaderboard_buckets( [ $absent ], 'spoke-sparse' ) );
+		$this->assertSame( 1, $p->index_scans, 'and none to be told again' );
 	}
 
 	/** An unnamed mirror leaves the reader memcache-only: there is nothing to budget. */

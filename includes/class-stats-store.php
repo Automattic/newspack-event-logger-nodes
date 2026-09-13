@@ -355,6 +355,13 @@ class Stats_Store {
 	public const BUCKET_SECONDS = self::BUCKET_MINUTES * 60;
 
 	/**
+	 * Seconds an absence holds for a key whose frame may still land: the open
+	 * bucket, or a key that is no bucket. Long enough that a polling dashboard
+	 * walks for it a few times a minute rather than every poll.
+	 */
+	public const ABSENCE_HOLD_SECONDS = 20;
+
+	/**
 	 * How far ahead of our clock a producer's bucket still counts as open.
 	 *
 	 * A hub takes each record's own timestamp, so a spoke running slightly fast
@@ -432,9 +439,24 @@ class Stats_Store {
 	 * caller here knowing. Null (default) leaves the tables memcache-only.
 	 * `Flame_Builder_Node::arm_stats_mirror()` is the only wiring.
 	 *
-	 * @var (\Closure(array<array-key,mixed>): array<array-key,array{value: mixed, ttl?: int}>)|null
+	 * @var (\Closure(array<array-key,mixed>): ?array<array-key,array{value: mixed, ttl?: int}>)|null
 	 */
 	public ?\Closure $rehydrate = null;
+
+	/**
+	 * Whether an absence the mirror answered is remembered, and for how long:
+	 * null remembers none. A READER's concern — a dashboard polls the same
+	 * window and a sparse server has buckets the mirror holds no frame for,
+	 * each a full walk to say so — and never the writer's, whose own folds
+	 * read a bucket once and whose writes must not compete with a marker.
+	 * `Flame_Builder_Node::arm_stats_reader()` sets it to `absence_holds()`.
+	 * Signature: `function (string $key): int`, seconds. Read when a table is
+	 * built, so it is set before the first read, as `arm_stats_reader()` does.
+	 *
+	 * @var (\Closure(string): int)|null
+	 */
+	public ?\Closure $absence = null;
+
 	/** @var int Retention window in seconds, as Config::stats_retention_seconds() floored it. */
 	private int $max_lifespan;
 
@@ -1356,9 +1378,10 @@ class Stats_Store {
 			if ( $is_url ) {
 				$table->accumulator( self::URL_ACCUMULATOR_SIZE, self::URL_ACCUMULATOR_BUCKETS );
 			} else {
-				// Indirection: the seam is re-armed after a table is memoized.
+				// Read seam indirect (re-armed later); absence seam as is.
 				$table->backed_by(
-					fn ( array $keys ): array => null !== $this->rehydrate ? ( $this->rehydrate )( $keys ) : []
+					fn ( array $keys ): ?array => null !== $this->rehydrate ? ( $this->rehydrate )( $keys ) : [],
+					$this->absence
 				);
 			}
 			$this->tables[ $role ] = $table;
@@ -1374,6 +1397,144 @@ class Stats_Store {
 	 */
 	public static function namespace_for( int $partition ): string {
 		return self::PREFIX_BASE . ':p' . $partition;
+	}
+
+	/**
+	 * How long an absence the mirror answered for `$key` holds.
+	 *
+	 * A closed bucket gains no frame, so its absence holds for what is left of
+	 * the window, and the walk that found nothing is not repeated all window
+	 * long — a sparse server has such buckets in every window, and asked on
+	 * every poll they spent the read budget before the series was reached. The
+	 * open bucket's frame may still land, and a key that is no bucket may be
+	 * written any time, so those hold only `ABSENCE_HOLD_SECONDS`. A bucket
+	 * counts as closed one further bucket after its span, which covers the
+	 * flush that writes it.
+	 *
+	 * @api The `$absence` seam, per key the mirror did not return.
+	 * @param string $key Table-relative entry key.
+	 * @return int Seconds the absence holds; 0 holds none.
+	 */
+	public function absence_holds( string $key ): int {
+		$now    = (int) Core::right_now();
+		$bucket = self::bucket_span( $key );
+		if ( null === $bucket || $bucket[0] + $bucket[1] + self::BUCKET_SECONDS > $now ) {
+			return self::ABSENCE_HOLD_SECONDS;
+		}
+		return $this->window_remaining( $key, $now );
+	}
+
+	/**
+	 * How long a re-materialized entry is warmed for: what is left of the
+	 * RETENTION window, bounded by its own role's TTL.
+	 *
+	 * The TTL it was written with bounds the CACHE and decays from the WRITE, so
+	 * a spent one says nothing about how long the data is still READ: the window
+	 * does, and it is a pure function of the bucket key, which is the last
+	 * segment and sorts chronologically. Zero or less means genuinely past
+	 * retention — nothing asks for it, and nothing should warm it.
+	 *
+	 * The role's TTL is the other bound and is not the same statement.
+	 * `ttl_url_fine()` is a memcache FOOTPRINT: 24 buckets a shard rather than
+	 * 288, because decision 17's coarse tier answers for everything behind the
+	 * edge. Warming a rehydrated fine bucket for the whole window instead puts
+	 * all 288 back in the cache that tier exists to keep out — up to twelve
+	 * times its footprint, for buckets no reader asks for.
+	 *
+	 * The HOUR branch is unreached from that seam today, because `NS_URLS_HOUR`
+	 * takes 0 in `STATS_MIRROR_TOPN` and is filtered out before this is asked.
+	 * It stays because the alternative is worse than dead: without it an hour
+	 * key falls to the hash-keyed branch and reports a FULL role TTL for a
+	 * bucket most of whose window is spent, the moment that policy changes.
+	 *
+	 * @api The mirror seam, sizing what it hands back.
+	 * @param string $key Table-RELATIVE entry key: `<ns>:…:<bucket>`, as the
+	 *                    rehydrate seam reads its namespace off segment 0.
+	 * @param int    $now Clock, so one answer cannot straddle a boundary.
+	 * @return int Seconds remaining, 0 when the key names no readable bucket.
+	 */
+	public function window_remaining( string $key, int $now ): int {
+		$role   = $this->ttl_for( \explode( ':', $key, 2 )[0] );
+		$bucket = self::bucket_span( $key );
+		if ( null === $bucket ) {
+			// `url` and `urlmap` key on a hash; neither is bucket-shaped.
+			return $role;
+		}
+		return \min( $role, \max( 0, ( $bucket[0] + $this->max_lifespan ) - $now ) );
+	}
+
+	/**
+	 * The bucket a key names — its start and its span in seconds — or null for
+	 * a key that names none.
+	 *
+	 * ISO 8601 through `strtotime()`, because that function reads many
+	 * non-dates as dates, `x` included; the shape is pinned first.
+	 *
+	 * @param string $key Table-relative entry key; the bucket is the last segment.
+	 * @return array{0: int, 1: int}|null
+	 */
+	private static function bucket_span( string $key ): ?array {
+		$parts  = \explode( ':', $key );
+		$bucket = \end( $parts );
+		if ( \preg_match( '/^(\d{4}-\d{2}-\d{2})-(\d{2})-(\d{2})$/D', $bucket, $m ) ) {
+			$stamp = \strtotime( "{$m[1]}T{$m[2]}:{$m[3]}:00+00:00" );
+			$span  = self::BUCKET_SECONDS;
+		} elseif ( \preg_match( '/^(\d{4}-\d{2}-\d{2})-(\d{2})$/D', $bucket, $m ) ) {
+			$stamp = \strtotime( "{$m[1]}T{$m[2]}:00:00+00:00" );
+			$span  = 3600;
+		} else {
+			return null;
+		}
+		return false === $stamp ? null : [ $stamp, $span ];
+	}
+
+	/**
+	 * How long a namespace's value is kept — the role's own TTL.
+	 *
+	 * @param string $ns Namespace, an `NS_*` value.
+	 */
+	private function ttl_for( string $ns ): int {
+		return match ( $this->role_for( $ns ) ) {
+			self::ROLE_URL      => $this->ttl_url_stats(),
+			self::ROLE_URL_FINE => $this->ttl_url_fine(),
+			default             => $this->ttl(),
+		};
+	}
+
+	/** Retention window, in seconds, for every namespace but `url`. */
+	public function ttl(): int {
+		return $this->max_lifespan;
+	}
+
+	/** Retention for a FINE `urls` or `urlnames` bucket: its read window, never the whole one. */
+	public function ttl_url_fine(): int {
+		return \min( $this->max_lifespan, self::FINE_TTL_SECONDS );
+	}
+
+	/** Retention for the high-volume `url` namespace: the retention window cut to a 24th, floored at an hour. */
+	public function ttl_url_stats(): int {
+		return \max( self::PREFIX_FLOOR, (int) ( $this->max_lifespan / 24 ) );
+	}
+
+	/**
+	 * Which table a namespace is written through.
+	 *
+	 * Two groups leave the aggregate table. `url` takes its own, for the
+	 * accumulator tier and `ttl_url_stats()`. The fine `urls` and `urlnames`
+	 * tiers are read at the window's EDGE and answered behind that by `urls_h`
+	 * and `urlnames_h`, so their TTL is their read window rather than the
+	 * retention window.
+	 *
+	 * @param string $ns Namespace, an `NS_*` value.
+	 */
+	private function role_for( string $ns ): string {
+		return match ( $ns ) {
+			self::NS_URL      => self::ROLE_URL,
+			// A name outliving the fine rows it names is a name nothing reads.
+			self::NS_URLS,
+			self::NS_URLNAMES => self::ROLE_URL_FINE,
+			default           => self::ROLE_AGGREGATE,
+		};
 	}
 
 	/**
@@ -1633,103 +1794,6 @@ class Stats_Store {
 			$out[] = $hour . \sprintf( '-%02d', $m );
 		}
 		return $out;
-	}
-
-	/**
-	 * How long a re-materialized entry is warmed for: what is left of the
-	 * RETENTION window, bounded by its own role's TTL.
-	 *
-	 * The TTL it was written with bounds the CACHE and decays from the WRITE, so
-	 * a spent one says nothing about how long the data is still READ: the window
-	 * does, and it is a pure function of the bucket key, which is the last
-	 * segment and sorts chronologically. Zero or less means genuinely past
-	 * retention — nothing asks for it, and nothing should warm it.
-	 *
-	 * The role's TTL is the other bound and is not the same statement.
-	 * `ttl_url_fine()` is a memcache FOOTPRINT: 24 buckets a shard rather than
-	 * 288, because decision 17's coarse tier answers for everything behind the
-	 * edge. Warming a rehydrated fine bucket for the whole window instead puts
-	 * all 288 back in the cache that tier exists to keep out — up to twelve
-	 * times its footprint, for buckets no reader asks for.
-	 *
-	 * The HOUR branch is unreached from that seam today, because `NS_URLS_HOUR`
-	 * takes 0 in `STATS_MIRROR_TOPN` and is filtered out before this is asked.
-	 * It stays because the alternative is worse than dead: without it an hour
-	 * key falls to the hash-keyed branch and reports a FULL role TTL for a
-	 * bucket most of whose window is spent, the moment that policy changes.
-	 *
-	 * @api The mirror seam, sizing what it hands back.
-	 * @param string $key Table-RELATIVE entry key: `<ns>:…:<bucket>`, as the
-	 *                    rehydrate seam reads its namespace off segment 0.
-	 * @param int    $now Clock, so one answer cannot straddle a boundary.
-	 * @return int Seconds remaining, 0 when the key names no readable bucket.
-	 */
-	public function window_remaining( string $key, int $now ): int {
-		$parts  = \explode( ':', $key );
-		$role   = $this->ttl_for( $parts[0] );
-		$bucket = \end( $parts );
-		// ISO 8601: strtotime() reads many non-dates as dates, `x` included.
-		if ( \preg_match( '/^(\d{4}-\d{2}-\d{2})-(\d{2})-(\d{2})$/D', $bucket, $m ) ) {
-			$stamp = \strtotime( "{$m[1]}T{$m[2]}:{$m[3]}:00+00:00" );
-		} elseif ( \preg_match( '/^(\d{4}-\d{2}-\d{2})-(\d{2})$/D', $bucket, $m ) ) {
-			$stamp = \strtotime( "{$m[1]}T{$m[2]}:00:00+00:00" );
-		} else {
-			// `url` and `urlmap` key on a hash; neither is bucket-shaped.
-			return $role;
-		}
-		if ( false === $stamp ) {
-			return $role;
-		}
-		return \min( $role, \max( 0, ( $stamp + $this->max_lifespan ) - $now ) );
-	}
-
-	/**
-	 * How long a namespace's value is kept — the role's own TTL.
-	 *
-	 * @param string $ns Namespace, an `NS_*` value.
-	 */
-	private function ttl_for( string $ns ): int {
-		return match ( $this->role_for( $ns ) ) {
-			self::ROLE_URL      => $this->ttl_url_stats(),
-			self::ROLE_URL_FINE => $this->ttl_url_fine(),
-			default             => $this->ttl(),
-		};
-	}
-
-	/** Retention window, in seconds, for every namespace but `url`. */
-	public function ttl(): int {
-		return $this->max_lifespan;
-	}
-
-	/** Retention for a FINE `urls` or `urlnames` bucket: its read window, never the whole one. */
-	public function ttl_url_fine(): int {
-		return \min( $this->max_lifespan, self::FINE_TTL_SECONDS );
-	}
-
-	/** Retention for the high-volume `url` namespace: the retention window cut to a 24th, floored at an hour. */
-	public function ttl_url_stats(): int {
-		return \max( self::PREFIX_FLOOR, (int) ( $this->max_lifespan / 24 ) );
-	}
-
-	/**
-	 * Which table a namespace is written through.
-	 *
-	 * Two groups leave the aggregate table. `url` takes its own, for the
-	 * accumulator tier and `ttl_url_stats()`. The fine `urls` and `urlnames`
-	 * tiers are read at the window's EDGE and answered behind that by `urls_h`
-	 * and `urlnames_h`, so their TTL is their read window rather than the
-	 * retention window.
-	 *
-	 * @param string $ns Namespace, an `NS_*` value.
-	 */
-	private function role_for( string $ns ): string {
-		return match ( $ns ) {
-			self::NS_URL      => self::ROLE_URL,
-			// A name outliving the fine rows it names is a name nothing reads.
-			self::NS_URLS,
-			self::NS_URLNAMES => self::ROLE_URL_FINE,
-			default           => self::ROLE_AGGREGATE,
-		};
 	}
 
 	/**
