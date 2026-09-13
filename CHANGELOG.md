@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.96.2] - 2026-09-13
+
 ### Fixed
 
 - **A logged statement keeps the layout it was asked with.** `App\Core::without_literals()` collapsed every run of whitespace to one space on the way to the wire, so a query WordPress asks over six indented lines reached the log, the table and `wp nodes reqgrep` as one line. The collapse is gone: a statement keeps its lines and indentation, and a comment leaves with the whitespace that set it off. The shape is otherwise what it was, every literal a `?` and no comments, and pyrobase's `Runtime\Log::sql_shape()` and gyrobase's `Gyrobase::Log::sql_shape` change the same way. The three now read one case list, `tests/fixtures/sql-shape.json`, carried in each repo and held identical by dndocker's firehose parity check, and `without_literals()` is the same one-pass alternation as the other two rather than a byte scanner, which also closes a divergence on a literal ending in a backslash. In the table a statement never folds behind "Show more", so its clauses stay in view. A statement near the entry's byte budget now spends its whitespace against it, so one that trips `truncated` shows a clipped shape where it showed a whole flat one.
