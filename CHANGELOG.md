@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The URL modal's body answers the ask picker.** The request modal marks its body with the request's descriptor, so a picker click anywhere in it asks about that request; the URL modal rendered a bare fragment, so the same click found nothing and only its request rows answered. The view now wraps in an element carrying `url:<hash>`, so a click on the body asks about the URL the way a click on the overview's URL row does. A row, a flame frame and a profile row inside it answer as before.
 - **A marked reset toggle on the settings page turns red.** The substrate's inline highlight lost to the UI stylesheet's secondary-button role, so the `↺` never showed its mark here. The mark is now the `is-danger` button role that sheet paints, and the page prints no style of its own.
 
 ## [0.96.1] - 2026-09-12
