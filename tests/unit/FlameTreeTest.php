@@ -50,6 +50,25 @@ class FlameTreeTest extends TestCase {
 		$this->assertSame( 250.5, $process['children'][0]['t'] );
 	}
 
+	public function test_build_stamps_each_span_with_the_number_of_the_entry_that_opened_it(): void {
+		// Two spans one caller opened, alike in every name; the number is
+		// what the table finds a clicked frame's row by.
+		$tree = Flame_Tree::build_flame_data(
+			[
+				$this->entry( 'process (start)', [ 'n' => 41 ] ),
+				$this->entry( 'sql (start)', [ 'n' => 233, 'l' => 'QM_DB->query' ] ),
+				$this->entry( 'sql (complete)', [ 'n' => 234, 'm' => 'SELECT slow', 'duration_ms' => 18659 ] ),
+				$this->entry( 'sql (start)', [ 'n' => 475, 'l' => 'QM_DB->query' ] ),
+				$this->entry( 'sql (complete)', [ 'n' => 476, 'm' => 'UPDATE fast', 'duration_ms' => 0.3 ] ),
+			]
+		);
+		$this->assertArrayNotHasKey( 'n', $tree );
+		$process = $tree['children'][0];
+		$this->assertSame( 41, $process['n'] );
+		$this->assertSame( 233, $process['children'][0]['n'] );
+		$this->assertSame( 475, $process['children'][1]['n'] );
+	}
+
 	public function test_build_omits_the_offset_entirely_when_no_entry_is_timestamped(): void {
 		$tree = Flame_Tree::build_flame_data(
 			[ $this->entry( 'db (start)' ), $this->entry( 'db (complete)', [ 'duration_ms' => 7 ] ) ]

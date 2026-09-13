@@ -12,9 +12,9 @@
  * section renders its prop and hides itself when that prop is empty.
  *
  * The flame graph and the entries table talk to each other through `revealRef`:
- * `LogEntriesTable` publishes its `revealPath` function there, and a
- * Cmd/Ctrl+click on a flame frame calls it to unfold and scroll to the matching
- * row.
+ * `LogEntriesTable` publishes its `reveal` function there, and a Cmd/Ctrl+click
+ * on a flame frame calls it with the number of the entry the frame opened at,
+ * to unfold and scroll to that row.
  */
 
 import { useRef } from '@wordpress/element';
@@ -117,8 +117,8 @@ export default function RequestDetailView( {
 					<RequestTrace
 						flameData={ flameData }
 						entries={ indentedEntries }
-						onRevealEntry={ ( path ) =>
-							revealRef.current?.( path )
+						onRevealEntry={ ( n, path ) =>
+							revealRef.current?.( n, path )
 						}
 					/>
 				</div>

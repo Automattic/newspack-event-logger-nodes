@@ -167,12 +167,12 @@ describe( 'RequestDetailView', () => {
 		expect( container.textContent ).toContain( 'REQUEST_PROFILE' );
 		expect( container.textContent ).toContain( 'LOG_ENTRIES_TABLE' );
 		act( () => {
-			global.__requestDetailFlameProps.onRevealEntry( [
+			global.__requestDetailFlameProps.onRevealEntry( 233, [
 				'process',
 				'db',
 			] );
 		} );
-		expect( global.__requestDetailReveal ).toHaveBeenCalledWith( [
+		expect( global.__requestDetailReveal ).toHaveBeenCalledWith( 233, [
 			'process',
 			'db',
 		] );

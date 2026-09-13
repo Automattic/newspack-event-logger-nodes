@@ -13,7 +13,7 @@
  * The outermost `process` pair never folds.
  *
  * Search is debounced, counts a start/complete pair once, and answers to
- * `/`, `n`, `p`, and Escape. `revealRef` hands `revealPath()` back to the
+ * `/`, `n`, `p`, and Escape. `revealRef` hands `reveal()` back to the
  * parent so the flame graph can unfold and scroll to a clicked span.
  */
 
@@ -238,7 +238,7 @@ const STATEMENT_LEAD =
  * @param {Object} props             Component props.
  * @param {Array}  props.entries     Array of indented log entries (from computeIndentedEntries).
  * @param {number} [props.realCount] Count of real (non-placeholder) entries; the heading falls back to entries.length.
- * @param {Object} [props.revealRef] Ref the component fills with `revealPath( path )`, the flame graph's way in.
+ * @param {Object} [props.revealRef] Ref the component fills with `reveal( n, path )`, the flame graph's way in.
  * @return {import('react').ReactElement|null} Rendered component or null if no entries.
  */
 export default function LogEntriesTable( { entries, realCount, revealRef } ) {
@@ -535,8 +535,8 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 	);
 
 	/**
-	 * Map flame-graph paths to pairIds, so `revealPath()` can resolve a
-	 * clicked span to a row.
+	 * Map flame-graph paths to pairIds, so `reveal()` can resolve a frame that
+	 * carries no entry number — one of a request folded under load — to a row.
 	 *
 	 * Each open pair contributes two keys along the current spine: the detail
 	 * path (`name: message` per segment), which the flame graph prefers, and
@@ -588,26 +588,44 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 	}, [ entries ] );
 
 	/**
-	 * Reveal the row for a flame-graph path: expand its ancestors and scroll
-	 * to it. An unresolvable path is a no-op.
+	 * The pair the frame's path names, for a frame carrying no entry number.
+	 * The detail path (`name: message`) is tried first, the base-name path
+	 * after it; a path naming nothing is undefined.
 	 *
 	 * @param {string[]} path Segment names from the flame root down to the span.
+	 * @return {*} The pair id, or undefined.
 	 */
-	const revealPath = useCallback(
+	const pairForPath = useCallback(
 		( path ) => {
 			// Flame graph paths have an extra "request" root — strip it.
-			let cleanPath = path;
-			if ( cleanPath[ 0 ] === 'request' ) {
-				cleanPath = cleanPath.slice( 1 );
-			}
-
-			// Try detail path ("name: message"), fall back to base-name.
+			const cleanPath = path[ 0 ] === 'request' ? path.slice( 1 ) : path;
 			const detailKey = cleanPath.join( '/' );
 			const baseKey = cleanPath
 				.map( ( seg ) => seg.replace( /: .+$/, '' ) )
 				.join( '/' );
-			const targetPairId =
-				pathToPairId[ detailKey ] ?? pathToPairId[ baseKey ];
+			return pathToPairId[ detailKey ] ?? pathToPairId[ baseKey ];
+		},
+		[ pathToPairId ]
+	);
+
+	/**
+	 * Reveal the row a flame frame is: expand its ancestors and scroll to it.
+	 *
+	 * The frame carries the number of the entry it opened at, and that row
+	 * is the answer whatever the span is called: two spans one caller opened
+	 * share every name. Only a frame carrying no number — a folded request's — is
+	 * resolved by its path. An unresolvable frame is a no-op.
+	 *
+	 * @param {?number}  n    The entry number the frame opened at, or null.
+	 * @param {string[]} path Segment names from the flame root down to the span.
+	 */
+	const reveal = useCallback(
+		( n, path ) => {
+			const opened =
+				null === n ? undefined : entries.find( ( e ) => e.n === n );
+			const targetPairId = hasPair( opened ?? {} )
+				? opened.pairId
+				: pairForPath( path );
 			if ( targetPairId === undefined ) {
 				return;
 			}
@@ -630,15 +648,15 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 
 			scrollToAndHighlight( tableRef, { pairId: targetPairId } );
 		},
-		[ pathToPairId, entries ]
+		[ pairForPath, entries ]
 	);
 
-	// Hand revealPath to the parent; the flame graph calls it on Cmd-click.
+	// Hand reveal to the parent; the flame graph calls it on Cmd-click.
 	useEffect( () => {
 		if ( revealRef ) {
-			revealRef.current = revealPath;
+			revealRef.current = reveal;
 		}
-	}, [ revealRef, revealPath ] );
+	}, [ revealRef, reveal ] );
 
 	/**
 	 * Toggle fold for a single pair. Folding also removes all descendant pairIds.

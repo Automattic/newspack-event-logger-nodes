@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Cmd-clicking a flame frame reveals the row that frame is, whatever the span is called.** The table found a clicked frame by composing a key from each span's name, message and label along its spine, and every change to what a span's start entry carries broke that composition on one side: this time a `sql` span's start carries the caller as its label and no message, so every query one caller ran shared a key and the last one written won — an 18-second `QM_DB->query` jumped to a sub-millisecond `UPDATE` at the request's end. A per-request frame now carries `n`, the number of the log entry it opened at, and the click hands that to the table, which goes straight to the row. Only a frame carrying no number is still resolved by its path: every frame of a request folded under load, and every flame written before this release.
+
 ## [0.96.2] - 2026-09-13
 
 ### Fixed

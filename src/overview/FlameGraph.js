@@ -13,7 +13,7 @@
  * pointer handlers.
  *
  * Frames arrive from `Flame_Tree` as `{ name, value, children[], detail?, t?,
- * count?, merged? }`, where `value` is milliseconds and a child's value never
+ * n?, count?, merged? }`, where `value` is milliseconds and a child's value never
  * exceeds its parent's. `t` is the frame's start, in milliseconds from the
  * request's, so a frame occupies `[ t, t + value ]` — but only while it stands
  * for ONE span. `merged` is the marker for those that do not: `Flame_Fold`
@@ -409,11 +409,23 @@ const restamp = ( container ) => {
 };
 
 /**
+ * The number of the log entry a frame opened at, or null for a frame that
+ * carries none: an aggregate's, or any frame of a request folded under load.
+ * Two frames that share a name share nothing else but this, and it is what
+ * the log table finds a clicked frame's row by.
+ *
+ * @param {Object} d A d3 hierarchy node.
+ * @return {?number} The frame's `n`.
+ */
+const frameEntry = ( d ) =>
+	Number.isInteger( d?.data?.n ) ? d.data.n : null;
+
+/**
  * Build the root-to-node path, one segment per frame.
  *
  * Segments prefer `detail` ("name: message") over `name`, which is what
- * `LogEntriesTable.revealPath()` expects — it matches on the detail path and
- * falls back to the base names.
+ * `LogEntriesTable`'s path fallback expects — it matches on the detail path
+ * and falls back to the base names.
  *
  * @param {Object} d D3 hierarchy node.
  * @return {string[]} Frame labels from the root down to this node.
@@ -746,10 +758,10 @@ export const withTimeSpacers = ( root, maxSpacers = PRUNE_HARD_MAX_NODES ) => {
  * `lastModified` (a single request, whose flame never changes) makes every
  * render count as a change.
  *
- * @param {Object}                   props                 Component props.
- * @param {Object}                   props.data            Flame tree root: { name, value, children[] }.
- * @param {number}                   [props.lastModified]  Server timestamp gating updates; omit for single requests.
- * @param {(path: string[]) => void} [props.onRevealEntry] Called with the frame's path — root-first frame names — on Cmd/Ctrl+Click; absent disables reveal.
+ * @param {Object}                               props                 Component props.
+ * @param {Object}                               props.data            Flame tree root: { name, value, children[] }.
+ * @param {number}                               [props.lastModified]  Server timestamp gating updates; omit for single requests.
+ * @param {(n: ?number, path: string[]) => void} [props.onRevealEntry] Called on Cmd/Ctrl+Click with the number of the log entry the frame opened at — null for a frame carrying none, an aggregate's or a folded request's — and the frame's path, root-first frame names; absent disables reveal.
  * @return {import('react').ReactElement} Rendered component.
  */
 export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
@@ -850,7 +862,7 @@ export default function FlameGraph( { data, lastModified, onRevealEntry } ) {
 					}
 					if ( onRevealEntry && d && metaClickRef.current ) {
 						metaClickRef.current = false;
-						onRevealEntry( getNodePath( d ) );
+						onRevealEntry( frameEntry( d ), getNodePath( d ) );
 						return;
 					}
 

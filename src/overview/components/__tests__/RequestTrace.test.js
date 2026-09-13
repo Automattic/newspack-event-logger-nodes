@@ -90,12 +90,15 @@ describe( 'RequestTrace', () => {
 			React.createElement( RequestTrace, { flameData, onRevealEntry } )
 		);
 		act( () => {
-			global.__requestTraceFlameProps.onRevealEntry( [
+			global.__requestTraceFlameProps.onRevealEntry( 233, [
 				'process',
 				'db',
 			] );
 		} );
-		expect( onRevealEntry ).toHaveBeenCalledWith( [ 'process', 'db' ] );
+		expect( onRevealEntry ).toHaveBeenCalledWith( 233, [
+			'process',
+			'db',
+		] );
 		unmount();
 	} );
 } );
