@@ -730,6 +730,281 @@ describe( 'LogEntriesTable', () => {
 		unmount();
 	} );
 
+	it( 'never folds a statement, whatever its length', () => {
+		// A statement's clauses are what the reader came for, whichever frame
+		// carries it; a hook argument of the same length that is not one folds.
+		const entries = makeEntries();
+		const body = Array.from(
+			{ length: 8 },
+			( _, i ) => `  clause${ i + 1 }`
+		).join( '\n' );
+		entries[ 1 ] = {
+			...entries[ 1 ],
+			k: 'posts_request hook (start)',
+			m: `SELECT${ body }`,
+		};
+		entries[ 4 ] = {
+			...entries[ 4 ],
+			k: 'args (start)',
+			m: `hook${ body }`,
+		};
+		const { container, unmount } = renderComponent(
+			React.createElement( LogEntriesTable, { entries } )
+		);
+		expect( container.textContent ).toContain( 'SELECT  clause1' );
+		expect( container.textContent ).toContain( 'clause8' );
+		expect( container.textContent ).toContain( 'hook  clause1' );
+		expect(
+			Array.from( container.querySelectorAll( 'button' ) ).filter(
+				( b ) => 'Show more' === b.textContent
+			)
+		).toHaveLength( 1 );
+		unmount();
+	} );
+
+	it( 'counts and marks a search hit on the statement a folded pair shows', () => {
+		const entries = makeEntries();
+		entries[ 1 ] = { ...entries[ 1 ], k: 'query (start)', m: '' };
+		entries[ 3 ] = {
+			...entries[ 3 ],
+			k: 'query (complete)',
+			m: 'SELECT a FROM t WHERE b = ? LIMIT ?',
+		};
+		jest.useFakeTimers();
+		const { container, unmount } = renderComponent(
+			React.createElement( LogEntriesTable, { entries } )
+		);
+		const input = container.querySelector( 'input' );
+		const setter = Object.getOwnPropertyDescriptor(
+			window.HTMLInputElement.prototype,
+			'value'
+		).set;
+		act( () => {
+			setter.call( input, 'from t' );
+			input.dispatchEvent( new Event( 'input', { bubbles: true } ) );
+		} );
+		act( () => {
+			jest.advanceTimersByTime( 200 );
+		} );
+		expect( container.textContent ).toContain( '1 match' );
+		expect( container.querySelector( 'mark' ) ).not.toBeNull();
+		jest.useRealTimers();
+		unmount();
+	} );
+
+	it( "reveals a search hit behind the fold on a merged row's complete side", () => {
+		// An adjacent empty pair stays merged under navigation, so the fold
+		// the search opens has to be the one the merged row's complete side
+		// folds under.
+		const entries = makeEntries();
+		const wide = Object.fromEntries(
+			Array.from( { length: 12 }, ( _, i ) => [ `key${ i }`, `v${ i }` ] )
+		);
+		// The `db` pair becomes a leaf so the fresh pair under it is the only
+		// pair at its depth, and its two halves sit side by side.
+		entries[ 1 ] = { ...entries[ 1 ], k: 'db', pairId: null };
+		entries[ 2 ] = {
+			...entries[ 2 ],
+			k: 'init hook (start)',
+			m: '',
+			pairId: 9,
+		};
+		entries[ 3 ] = {
+			...entries[ 3 ],
+			k: 'init hook (complete)',
+			m: JSON.stringify( wide ),
+			pairId: 9,
+			indent: 2,
+		};
+		jest.useFakeTimers();
+		const { container, unmount } = renderComponent(
+			React.createElement( LogEntriesTable, { entries } )
+		);
+		const input = container.querySelector( 'input' );
+		const setter = Object.getOwnPropertyDescriptor(
+			window.HTMLInputElement.prototype,
+			'value'
+		).set;
+		act( () => {
+			setter.call( input, 'key9' );
+			input.dispatchEvent( new Event( 'input', { bubbles: true } ) );
+		} );
+		act( () => {
+			jest.advanceTimersByTime( 200 );
+		} );
+		expect( container.textContent ).toContain( '1 match' );
+		act( () => {
+			Array.from( container.querySelectorAll( 'button' ) )
+				.find( ( b ) => '▼' === b.textContent )
+				.click();
+		} );
+		const row = Array.from( container.querySelectorAll( 'tr' ) ).find(
+			( r ) => r.textContent.includes( 'init hook' )
+		);
+		expect( row.querySelector( 'mark' ) ).not.toBeNull();
+		expect( row.textContent ).toContain( '"key9"' );
+		jest.useRealTimers();
+		unmount();
+	} );
+
+	it( 'shows a zero-valued complete message on the merged row', () => {
+		const entries = makeEntries();
+		entries[ 1 ] = { ...entries[ 1 ], k: 'count (start)', m: '' };
+		entries[ 3 ] = { ...entries[ 3 ], k: 'count (complete)', m: 0 };
+		const { container, unmount } = renderComponent(
+			React.createElement( LogEntriesTable, { entries } )
+		);
+		const row = Array.from( container.querySelectorAll( 'tr' ) ).find(
+			( r ) => r.textContent.includes( 'count' )
+		);
+		expect( row.textContent ).toContain( '0' );
+		unmount();
+	} );
+
+	it( 'renders a numeric message as itself', () => {
+		const entries = makeEntries();
+		entries[ 2 ] = { ...entries[ 2 ], k: 'excerpt_length hook', m: 55 };
+		const { container, unmount } = renderComponent(
+			React.createElement( LogEntriesTable, { entries } )
+		);
+		const unfoldBtn = Array.from(
+			container.querySelectorAll( 'button' )
+		).find( ( b ) => b.textContent.includes( 'Unfold All' ) );
+		act( () => unfoldBtn.click() );
+		const row = Array.from( container.querySelectorAll( 'tr' ) ).find(
+			( r ) => r.textContent.includes( 'excerpt_length hook' )
+		);
+		expect( row.textContent ).toContain( '55' );
+		unmount();
+	} );
+
+	it( "folds a long structured message on a folded pair's complete side and puts it under the start", () => {
+		const entries = makeEntries();
+		const wide = Object.fromEntries(
+			Array.from( { length: 12 }, ( _, i ) => [ `k${ i }`, i ] )
+		);
+		entries[ 1 ] = {
+			...entries[ 1 ],
+			k: 'init hook (start)',
+			m: 'started',
+		};
+		entries[ 3 ] = {
+			...entries[ 3 ],
+			k: 'init hook (complete)',
+			m: JSON.stringify( wide ),
+		};
+		const { container, unmount } = renderComponent(
+			React.createElement( LogEntriesTable, { entries } )
+		);
+		const row = Array.from( container.querySelectorAll( 'tr' ) ).find(
+			( r ) => r.textContent.includes( 'started' )
+		);
+		expect( row.textContent ).toContain( 'started\n{' );
+		expect( row.textContent ).toContain( 'Show more' );
+		expect( row.textContent ).not.toContain( '"k9"' );
+		unmount();
+	} );
+
+	it( 'searches the text on screen, not the wire form of it', () => {
+		const entries = makeEntries();
+		entries[ 2 ] = {
+			...entries[ 2 ],
+			k: 'args (complete)',
+			m: '{"from":"t","where":"b"}',
+		};
+		jest.useFakeTimers();
+		const { container, unmount } = renderComponent(
+			React.createElement( LogEntriesTable, { entries } )
+		);
+		const unfoldBtn = Array.from(
+			container.querySelectorAll( 'button' )
+		).find( ( b ) => b.textContent.includes( 'Unfold All' ) );
+		act( () => unfoldBtn.click() );
+		const input = container.querySelector( 'input' );
+		const setter = Object.getOwnPropertyDescriptor(
+			window.HTMLInputElement.prototype,
+			'value'
+		).set;
+		const search = ( text ) => {
+			act( () => {
+				setter.call( input, text );
+				input.dispatchEvent( new Event( 'input', { bubbles: true } ) );
+			} );
+			act( () => {
+				jest.advanceTimersByTime( 200 );
+			} );
+		};
+		// On screen the value is indented: the wire's `"from":"t"` is not there.
+		search( '"from":"t"' );
+		expect( container.textContent ).not.toContain( '1 match' );
+		search( '"from": "t"' );
+		expect( container.textContent ).toContain( '1 match' );
+		expect( container.querySelector( 'mark' ) ).not.toBeNull();
+		jest.useRealTimers();
+		unmount();
+	} );
+
+	it( 'puts the duration and memory figures on their own line under the body', () => {
+		// A figure that runs on from the body's last line reads as part of it.
+		const entries = makeEntries();
+		const { container, unmount } = renderComponent(
+			React.createElement( LogEntriesTable, { entries } )
+		);
+		const unfoldBtn = Array.from(
+			container.querySelectorAll( 'button' )
+		).find( ( b ) => b.textContent.includes( 'Unfold All' ) );
+		act( () => unfoldBtn.click() );
+		const completeRow = Array.from(
+			container.querySelectorAll( 'tr' )
+		).find( ( r ) => r.textContent.includes( 'db (complete)' ) );
+		const stats = completeRow.querySelector( '.log-entries-stats' );
+		expect( stats ).not.toBeNull();
+		expect( stats.tagName ).toBe( 'DIV' );
+		expect( stats.textContent ).toContain( '(1000.000ms)' );
+		unmount();
+	} );
+
+	it( 'pretty-prints a message that arrives as a JSON string, keys sorted', () => {
+		// A hook argument reaches the wire compact — the producer spends no
+		// bytes on indentation — so the renderer restores the indentation.
+		const entries = makeEntries();
+		entries[ 2 ] = {
+			...entries[ 2 ],
+			k: 'parse_request hook',
+			m: '{"query_vars":"?","did_permalink":true}',
+		};
+		const { container, unmount } = renderComponent(
+			React.createElement( LogEntriesTable, { entries } )
+		);
+		const unfoldBtn = Array.from(
+			container.querySelectorAll( 'button' )
+		).find( ( b ) => b.textContent.includes( 'Unfold All' ) );
+		act( () => unfoldBtn.click() );
+		const expected = JSON.stringify(
+			{ did_permalink: true, query_vars: '?' },
+			null,
+			2
+		);
+		expect( container.textContent ).toContain( expected );
+		expect( container.textContent ).not.toContain( '{"query_vars":"?"' );
+		unmount();
+	} );
+
+	it( 'leaves a JSON string the wire clipped as it arrived', () => {
+		const entries = makeEntries();
+		const clipped = '{"query_vars":{"p":"?"},"did_perma';
+		entries[ 2 ] = { ...entries[ 2 ], k: 'parse_request hook', m: clipped };
+		const { container, unmount } = renderComponent(
+			React.createElement( LogEntriesTable, { entries } )
+		);
+		const unfoldBtn = Array.from(
+			container.querySelectorAll( 'button' )
+		).find( ( b ) => b.textContent.includes( 'Unfold All' ) );
+		act( () => unfoldBtn.click() );
+		expect( container.textContent ).toContain( clipped );
+		unmount();
+	} );
+
 	it( 'pretty-prints (indented, multi-line, alpha-sorted) message values when entry.m is an object', () => {
 		const entries = makeEntries();
 		// m is a KEY=>value map, inserted out of alpha order.

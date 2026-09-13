@@ -671,6 +671,72 @@ class ReqgrepCommandTest extends TestCase {
 		$this->assertStringContainsString( 'v1', $out );
 	}
 
+	public function test_format_entry_prints_an_empty_object_argument_as_an_object(): void {
+		$cmd      = $this->make_cmd( 'objR' );
+		$captured = $this->capture_output( $cmd );
+
+		$rid = 'objR';
+		$ts  = 1700000000.0;
+		$this->feed( $cmd, [ 'n' => 1, 'rid' => $rid, 'k' => 'process (start)', 'm' => '/o', 'ts' => $ts ] );
+		$this->feed( $cmd, [ 'n' => 2, 'rid' => $rid, 'k' => 'init hook', 'm' => '{"args":{}}', 'ts' => $ts + 0.1 ] );
+		$this->feed( $cmd, [ 'n' => 3, 'rid' => $rid, 'k' => 'process (complete)', 'm' => '/o', 'ts' => $ts + 0.2 ] );
+
+		$this->assertStringContainsString( '"args": {}', self::joined( $captured ) );
+	}
+
+	public function test_format_entry_keeps_non_ascii_and_prints_a_bool_as_the_table_does(): void {
+		$cmd      = $this->make_cmd( 'uniR' );
+		$captured = $this->capture_output( $cmd );
+
+		$rid = 'uniR';
+		$ts  = 1700000000.0;
+		$this->feed( $cmd, [ 'n' => 1, 'rid' => $rid, 'k' => 'process (start)', 'm' => '/u', 'ts' => $ts ] );
+		$this->feed( $cmd, [ 'n' => 2, 'rid' => $rid, 'k' => 'title hook', 'm' => '{"title":"Café"}', 'ts' => $ts + 0.1 ] );
+		$this->feed( $cmd, [ 'n' => 3, 'rid' => $rid, 'k' => 'flag hook', 'm' => false, 'ts' => $ts + 0.2 ] );
+		$this->feed( $cmd, [ 'n' => 4, 'rid' => $rid, 'k' => 'process (complete)', 'm' => '/u', 'ts' => $ts + 0.3 ] );
+
+		$out = self::joined( $captured );
+		$this->assertStringContainsString( '"title": "Café"', $out );
+		$this->assertStringNotContainsString( 'u00e9', $out );
+		$this->assertStringContainsString( 'flag hook:false', $out );
+	}
+
+	public function test_format_entry_pretty_prints_a_json_string_message(): void {
+		// A hook argument reaches the wire as compact JSON; the reader indents it.
+		$cmd      = $this->make_cmd( 'jsnR' );
+		$captured = $this->capture_output( $cmd );
+
+		$rid = 'jsnR';
+		$ts  = 1700000000.0;
+		$this->feed( $cmd, [ 'n' => 1, 'rid' => $rid, 'k' => 'process (start)', 'm' => '/j', 'ts' => $ts ] );
+		$this->feed( $cmd, [
+			'n'   => 2,
+			'rid' => $rid,
+			'k'   => 'parse_request hook',
+			'm'   => '{"key2":"v2","key1":{"deep":"?"}}',
+			'ts'  => $ts + 0.1,
+		] );
+		$this->feed( $cmd, [ 'n' => 3, 'rid' => $rid, 'k' => 'process (complete)', 'm' => '/j', 'ts' => $ts + 0.2 ] );
+
+		$out = self::joined( $captured );
+		$this->assertStringContainsString( '"key1": {', $out, 'the nested object opens on its own indented line' );
+		$this->assertStringNotContainsString( '"key1":{', $out );
+	}
+
+	public function test_format_entry_leaves_a_clipped_json_string_as_it_arrived(): void {
+		$cmd      = $this->make_cmd( 'clpR' );
+		$captured = $this->capture_output( $cmd );
+
+		$rid     = 'clpR';
+		$ts      = 1700000000.0;
+		$clipped = '{"key2":"v2","key1":{"de';
+		$this->feed( $cmd, [ 'n' => 1, 'rid' => $rid, 'k' => 'process (start)', 'm' => '/c', 'ts' => $ts ] );
+		$this->feed( $cmd, [ 'n' => 2, 'rid' => $rid, 'k' => 'parse_request hook', 'm' => $clipped, 'ts' => $ts + 0.1 ] );
+		$this->feed( $cmd, [ 'n' => 3, 'rid' => $rid, 'k' => 'process (complete)', 'm' => '/c', 'ts' => $ts + 0.2 ] );
+
+		$this->assertStringContainsString( $clipped, self::joined( $captured ) );
+	}
+
 	public function test_format_entry_aligns_multiline_message_continuation(): void {
 		$cmd = $this->make_cmd( 'mlR' );
 		$captured = $this->capture_output( $cmd );

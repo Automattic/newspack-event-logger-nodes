@@ -61,6 +61,26 @@ describe( 'RequestProfile', () => {
 		unmount();
 	} );
 
+	it( 'offers the ask picker a hook row but not its callback rows', () => {
+		// A callback's time counts inside the hook that ran it; the hook is
+		// the board to ask about.
+		const { container, unmount } = renderComponent(
+			React.createElement( RequestProfile, {
+				profiles: {
+					...baseProfiles,
+					'hooks @10': { count: 1, time: 5 },
+				},
+				totalMs: 120,
+			} )
+		);
+		const asks = Array.from(
+			container.querySelectorAll( 'tr[data-ask]' )
+		).map( ( r ) => r.getAttribute( 'data-ask' ) );
+		expect( asks ).toContain( 'category:hooks' );
+		expect( asks ).not.toContain( 'category:hooks @10' );
+		unmount();
+	} );
+
 	it( 'computes Total Profiled by summing non-callback categories', () => {
 		const { container, unmount } = renderComponent(
 			React.createElement( RequestProfile, {

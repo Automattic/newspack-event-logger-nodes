@@ -1,0 +1,92 @@
+[
+  [
+    "a bare numeric predicate",
+    "SELECT * FROM Objects WHERE objId = 4815162342",
+    "SELECT * FROM Objects WHERE objId = ?"
+  ],
+  [
+    "a quoted literal",
+    "SELECT * FROM u WHERE email = 'zaphod@betelgeuse.example'",
+    "SELECT * FROM u WHERE email = ?"
+  ],
+  [
+    "both quote characters",
+    "SELECT * FROM u WHERE t = \"nonce-9f3a\" AND s = 'x'",
+    "SELECT * FROM u WHERE t = ? AND s = ?"
+  ],
+  [
+    "an IN list collapses to one placeholder",
+    "SELECT * FROM o WHERE id IN (17, 23, 42)",
+    "SELECT * FROM o WHERE id IN (?)"
+  ],
+  [
+    "LIMIT and OFFSET",
+    "SELECT * FROM o LIMIT 25 OFFSET 300",
+    "SELECT * FROM o LIMIT ? OFFSET ?"
+  ],
+  [
+    "the layout the statement was asked with survives",
+    "SELECT a,\n       b\n  FROM o",
+    "SELECT a,\n       b\n  FROM o"
+  ],
+  [
+    "a comment marker inside a literal opens no comment",
+    "SELECT * FROM o WHERE note = 'a -- b' AND id = 7",
+    "SELECT * FROM o WHERE note = ? AND id = ?"
+  ],
+  [
+    "a quote inside a comment opens no literal",
+    "SELECT * FROM o -- Bob's note\nWHERE id = 7",
+    "SELECT * FROM o\nWHERE id = ?"
+  ],
+  [
+    "a block comment goes, secrets and all",
+    "SELECT /* trace: rid-4f2a */ * FROM o WHERE id = 7",
+    "SELECT * FROM o WHERE id = ?"
+  ],
+  [
+    "the standard's own doubled-quote escape",
+    "SELECT * FROM o WHERE s = 'it''s'",
+    "SELECT * FROM o WHERE s = ?"
+  ],
+  [
+    "and the backslashed quote",
+    "SELECT * FROM o WHERE s = 'a\\'b'",
+    "SELECT * FROM o WHERE s = ?"
+  ],
+  [
+    "an unterminated literal consumes the rest",
+    "SELECT * FROM o WHERE s = 'unterminated",
+    "SELECT * FROM o WHERE s = ?"
+  ],
+  [
+    "a comment at the very start leaves the statement",
+    "-- header\nSELECT 1",
+    "SELECT 1"
+  ],
+  [
+    "a block comment takes the tab before it",
+    "SELECT\t/* c */\ta FROM t",
+    "SELECT\ta FROM t"
+  ],
+  [
+    "CRLF line endings: the comment eats its own CR",
+    "SELECT a\r\nFROM t -- c\r\nWHERE b = 1",
+    "SELECT a\r\nFROM t\nWHERE b = ?"
+  ],
+  [
+    "an unterminated block comment consumes the rest",
+    "SELECT 1 /* open",
+    "SELECT 1"
+  ],
+  [
+    "a form feed is whitespace at either end",
+    "\fSELECT 1\f",
+    "SELECT 1"
+  ],
+  [
+    "an unterminated literal ending in a backslash",
+    "SELECT 'abc\\",
+    "SELECT ?"
+  ]
+]

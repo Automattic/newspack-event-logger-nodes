@@ -44,6 +44,7 @@
 
 namespace Newspack_Event_Logger_Nodes\App;
 
+use Newspack_Event_Logger_Nodes\App\Core as App_Core;
 use Newspack_Event_Logger_Nodes\Config as AppConfig;
 use Newspack_Event_Logger_Nodes\Flame_Builder_Node;
 use Newspack_Event_Logger_Nodes\Hook_Categorizer;
@@ -411,24 +412,6 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * Pull the per-URL aggregate stats blob (flame, profiles, last_modified).
-	 * First partition with a matching blob wins — the blob is whole, not
-	 * summable, so there is nothing to merge across partitions.
-	 *
-	 * @param string $hash 12-char URL hash.
-	 * @return array<array-key,mixed>|null Decoded per-URL stats blob from get_url_stats().
-	 */
-	private static function find_url_aggregate( string $hash ): ?array {
-		foreach ( self::stats_stores() as $store ) {
-			$stats = $store->get_url_stats( $hash );
-			if ( null !== $stats ) {
-				return $stats;
-			}
-		}
-		return null;
-	}
-
-	/**
 	 * Locate a single request index entry by rid and return the search shape
 	 * `{rid, partition, url_hash}` — enough for the dashboard to then ask for
 	 * `dump_request`; the request body is not read here. Its own partition is
@@ -677,7 +660,7 @@ class Performance_CI_Node extends Service_CI_Node {
 			case 'url':
 				return $this->ask_url( $target['id'], $server );
 			case 'request':
-				return self::ask_request( $target['id'], (int) $target['qualifier'] );
+				return self::ask_request( $target['id'], (int) $target['qualifier'], $context, $server );
 			case 'span':
 				return self::ask_span( $target['id'], $context );
 			case 'entry':
@@ -1281,6 +1264,61 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
+	 * The `request:` brief. Picked inside the URL modal, the chain names the
+	 * URL too, and the brief carries a pointer to it.
+	 *
+	 * @param string       $rid       Request id the descriptor names.
+	 * @param int          $partition Partition its qualifier names, searched first.
+	 * @param list<string> $context   Container descriptors, outermost last.
+	 * @param string       $server    Server the modal is scoped to; rides the URL pointer.
+	 * @return array<string,mixed>
+	 * @throws \RuntimeException When the rid resolves nowhere.
+	 */
+	private static function ask_request( string $rid, int $partition, array $context = [], string $server = '' ): array {
+		$record = self::load_request( $rid, $partition );
+		return Ask_Assembler::for_request( $record, self::rule_for_record( $record ), self::descriptor_of( $context, 'url' ), $server );
+	}
+
+	/**
+	 * The `span:` brief. A span is not addressable on its own — it needs the
+	 * tree it sits in, which the descriptor chain supplies: the request it ran
+	 * in, or the URL whose aggregate flame folds it.
+	 *
+	 * @param string       $name    Span name the descriptor carries.
+	 * @param list<string> $context Container descriptors, outermost last.
+	 * @return array<string,mixed>
+	 * @throws \RuntimeException With neither context, or an absent span.
+	 */
+	private static function ask_span( string $name, array $context ): array {
+		$record = self::request_in_context( $context );
+		if ( null !== $record ) {
+			$brief = Ask_Assembler::for_span( $record, $name, self::rule_for_record( $record ), self::descriptor_of( $context, 'request' ) );
+			if ( null === $brief ) {
+				throw new \RuntimeException( \esc_html( "no span '{$name}' in this request" ) );
+			}
+			return $brief;
+		}
+		$url = self::url_in_context( $context );
+		if ( null === $url ) {
+			throw new \RuntimeException( \esc_html( 'a span needs its request or its URL for context' ) );
+		}
+		if ( null === $url['aggregate'] ) {
+			throw new \RuntimeException( \esc_html( "no aggregate for URL {$url['hash']} in this window" ) );
+		}
+		$brief = Ask_Assembler::for_url_span(
+			Core::arr( $url['aggregate']['flame'] ?? null ),
+			$name,
+			$url['name'],
+			self::rule_for_url( $url['name'] ),
+			$url['descriptor']
+		);
+		if ( null === $brief ) {
+			throw new \RuntimeException( \esc_html( "no span '{$name}' in this URL's aggregate" ) );
+		}
+		return $brief;
+	}
+
+	/**
 	 * The rule governing a URL, for the surfaces that hold no record — the
 	 * `url:` brief works from an index row. Matching takes the PATH: a stored
 	 * url is absolute, and `Rule_Matcher` compares against patterns like `/`.
@@ -1298,42 +1336,6 @@ class Performance_CI_Node extends Service_CI_Node {
 		}
 		$query = Core::as_string( \wp_parse_url( $url, \PHP_URL_QUERY ), '' );
 		return Rule_Set::load()->matcher()->match( '' === $query ? $path : "{$path}?{$query}" );
-	}
-
-	/**
-	 * The `request:` brief.
-	 *
-	 * @param string $rid       Request id the descriptor names.
-	 * @param int    $partition Partition its qualifier names, searched first.
-	 * @return array<string,mixed>
-	 * @throws \RuntimeException When the rid resolves nowhere.
-	 */
-	private static function ask_request( string $rid, int $partition ): array {
-		$record = self::load_request( $rid, $partition );
-		return Ask_Assembler::for_request( $record, self::rule_for_record( $record ) );
-	}
-
-	/**
-	 * The `span:` brief. A span is not addressable on its own — it needs the
-	 * request it ran in, which the descriptor chain supplies.
-	 *
-	 * @param string       $name    Span name the descriptor carries.
-	 * @param list<string> $context Container descriptors, outermost last.
-	 * @return array<string,mixed>
-	 * @throws \RuntimeException With no request context, or an absent span.
-	 */
-	private static function ask_span( string $name, array $context ): array {
-		$record = self::request_from_context( $context, 'span' );
-		$brief  = Ask_Assembler::for_span(
-			$record,
-			$name,
-			self::rule_for_record( $record ),
-			self::descriptor_of( $context, 'request' )
-		);
-		if ( null === $brief ) {
-			throw new \RuntimeException( \esc_html( "no span '{$name}' in this request" ) );
-		}
-		return $brief;
 	}
 
 	/**
@@ -1374,20 +1376,34 @@ class Performance_CI_Node extends Service_CI_Node {
 
 	/**
 	 * The `category:` brief. A breakdown row inside a request shows THAT
-	 * request's profile, so the context chain decides which board answers —
-	 * the global leaderboard describes a different thing entirely.
+	 * request's profile, and one inside the URL modal shows that URL's
+	 * aggregate, so the context chain decides which board answers — the
+	 * global leaderboard describes a different thing entirely.
+	 *
+	 * A URL with no aggregate answers from the scoped leaderboard.
 	 *
 	 * @param string       $name    Category name the descriptor carries.
 	 * @param list<string> $context Container descriptors, outermost last.
 	 * @param string       $server  Server the leaderboard fallback answers for;
 	 *                              '' builds the global board.
 	 * @return array<string,mixed>
-	 * @throws \RuntimeException When neither board holds the category.
+	 * @throws \RuntimeException When no board holds the category, or the name is a callback row.
 	 */
 	private static function ask_category( string $name, array $context, string $server = '' ): array {
+		// A callback row is no board; its time counts inside its hook.
+		if ( App_Core::is_listener_span( $name ) ) {
+			throw new \RuntimeException( \esc_html( "'{$name}' is a callback row; ask about the hook it ran under" ) );
+		}
 		$record = self::request_in_context( $context );
 		if ( null !== $record ) {
 			$brief = Ask_Assembler::for_request_category( $record, $name );
+			if ( null !== $brief ) {
+				return $brief;
+			}
+		}
+		$url = self::url_in_context( $context );
+		if ( null !== $url && null !== $url['aggregate'] ) {
+			$brief = Ask_Assembler::for_url_category( Core::arr( $url['aggregate']['profiles'] ?? null ), $name, $url['name'] );
 			if ( null !== $brief ) {
 				return $brief;
 			}
@@ -1400,6 +1416,54 @@ class Performance_CI_Node extends Service_CI_Node {
 			throw new \RuntimeException( \esc_html( "no category '{$name}' in this request or the recent window" ) );
 		}
 		return $brief;
+	}
+
+	/**
+	 * The URL a context chain names — for a span or a category picked inside
+	 * the URL modal, where the chain carries `url:<hash>` and no request — or
+	 * null when it names none.
+	 *
+	 * Two single-key reads and no index walk: the aggregate blob, null when
+	 * the URL has none, and then the name through the one name resolver, ''
+	 * when the table no longer holds it. The blob lives a 24th of the window
+	 * where the row lives all of it, so a URL with no blob is routine, and each
+	 * caller decides what answers then; the name is read only once there is a
+	 * blob to answer with. The aggregate keeps no per-server split, so no
+	 * server narrows this.
+	 *
+	 * @param list<string> $context Container descriptors.
+	 * @return array{descriptor:string, hash:string, name:string, aggregate:?array<array-key,mixed>}|null
+	 */
+	private static function url_in_context( array $context ): ?array {
+		$descriptor = self::descriptor_of( $context, 'url' );
+		$parsed     = Ask_Assembler::parse_descriptor( $descriptor );
+		if ( null === $parsed ) {
+			return null;
+		}
+		$aggregate = self::find_url_aggregate( $parsed['id'] );
+		return [
+			'descriptor' => $descriptor,
+			'hash'       => $parsed['id'],
+			'name'       => null === $aggregate ? '' : Core::as_string( self::resolve_urls( [ [ 'hash' => $parsed['id'], 'url' => '' ] ] )[0]['url'] ?? '' ),
+			'aggregate'  => $aggregate,
+		];
+	}
+
+	/**
+	 * The per-URL aggregate blob — flame tree, profile as per-request means,
+	 * last_modified — from whichever flame-builder partition holds it.
+	 *
+	 * @param string $hash 12-char URL hash.
+	 * @return array<array-key,mixed>|null Null when no partition holds one.
+	 */
+	private static function find_url_aggregate( string $hash ): ?array {
+		foreach ( self::stats_stores() as $store ) {
+			$stats = $store->get_url_stats( $hash );
+			if ( null !== $stats ) {
+				return $stats;
+			}
+		}
+		return null;
 	}
 
 	/**
@@ -1853,7 +1917,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				// @longform Overwrites rather than filling a gap: a url-sorted
 				// page carries the PATH it was ranked by, and this is the one
 				// authority for what a row DISPLAYS — origin and path joined.
-				$rows[ $i ]['url'] = $names[ $hash ][1] . $names[ $hash ][0];
+				$rows[ $i ]['url'] = Stats_Store::join_url( $names[ $hash ] );
 			}
 		}
 		return $rows;

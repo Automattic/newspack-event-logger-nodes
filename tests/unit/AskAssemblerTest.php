@@ -511,6 +511,170 @@ class AskAssemblerTest extends TestCase {
 		);
 	}
 
+	/** The aggregate tree as `dump_url` serves it: a count on the root alone, means below. */
+	private function aggregate_flame(): array {
+		return [
+			'name'     => 'aggregate',
+			'value'    => 300.0,
+			'count'    => 17,
+			'children' => [
+				[ 'name' => 'init', 'value' => 12.0, 'children' => [] ],
+				[
+					'name'     => 'wp_loaded',
+					'value'    => 240.0,
+					'children' => [
+						[ 'name' => 'render_block', 'value' => 200.0, 'children' => [] ],
+						[ 'name' => 'the_content', 'value' => 30.0, 'children' => [] ],
+					],
+				],
+			],
+		];
+	}
+
+	public function test_a_url_span_brief_resolves_on_the_aggregate_flame_and_names_its_scope(): void {
+		// The URL modal's aggregate flame is not a request: every value is a
+		// per-request mean, the brief says so, and its pointer re-asks under
+		// the URL.
+		$brief = Ask_Assembler::for_url_span( $this->aggregate_flame(), 'wp_loaded', 'https://example.test/a?token=hunter2', $this->rule(), 'url:cccccccccccc' );
+
+		$this->assertNotNull( $brief );
+		$this->assertSame( 'span', $brief['subject'] );
+		$this->assertSame( 'wp_loaded', $brief['name'] );
+		$this->assertEquals( 240.0, $brief['ms'] );
+		$this->assertSame( 'mean per request over 17 requests, every server', $brief['scope'] );
+		$this->assertStringNotContainsString( 'hunter2', $brief['url'] );
+		$this->assertSame( '/calendar/today', $brief['rule']['pattern'] );
+		$this->assertSame(
+			[ [ 'tool' => 'performance_ask', 'arguments' => [ 'descriptor' => 'span:wp_loaded', 'context' => 'url:cccccccccccc' ] ] ],
+			$brief['fetch']
+		);
+		$this->assertNull( Ask_Assembler::for_url_span( $this->aggregate_flame(), 'no_such_span', '/a', null, 'url:cccccccccccc' ) );
+	}
+
+	public function test_a_url_span_brief_carries_no_call_count_the_aggregate_never_recorded(): void {
+		// An aggregate node folds many requests and keeps no call count, so a
+		// `count` here would be invented: the request flavour's default of one
+		// call is a fact about one request and a fiction about seventeen.
+		$brief = Ask_Assembler::for_url_span( $this->aggregate_flame(), 'wp_loaded', '/a', null, 'url:cccccccccccc' );
+
+		$this->assertArrayNotHasKey( 'count', $brief );
+		foreach ( [ ...$brief['siblings'], ...$brief['subtree'] ] as $row ) {
+			$this->assertArrayNotHasKey( 'count', $row );
+		}
+		$this->assertSame( 'render_block', $brief['subtree'][0]['name'] );
+	}
+
+	public function test_a_url_category_brief_answers_from_the_urls_own_aggregate(): void {
+		// Rows arrive display-shaped: `find_url_aggregate()` has already
+		// divided the stored sums by the request count.
+		$brief = Ask_Assembler::for_url_category(
+			[
+				'count'      => 17,
+				'categories' => [
+					'render' => [ 'time' => 60.0, 'count' => 2.0, 'samples' => 17 ],
+					'sql'    => [ 'time' => 20.0, 'count' => 7.0, 'samples' => 17 ],
+				],
+			],
+			'render',
+			'https://example.test/a?token=hunter2'
+		);
+
+		$this->assertNotNull( $brief );
+		$this->assertSame( 'category', $brief['subject'] );
+		$this->assertSame( 'mean per request over 17 requests, every server', $brief['scope'] );
+		$this->assertSame( 17, $brief['samples'] );
+		$this->assertEquals( 0.75, $brief['share'] );
+		$this->assertSame( 'sql', $brief['others'][0]['name'] );
+		$this->assertStringNotContainsString( 'hunter2', $brief['url'] );
+		$this->assertNull( Ask_Assembler::for_url_category( [ 'count' => 17, 'categories' => [ 'sql' => [ 'time' => 1.0, 'count' => 1.0 ] ] ], 'render', '/a' ) );
+	}
+
+	public function test_a_request_brief_points_at_the_url_it_was_asked_under(): void {
+		// Picked inside the URL modal, the chain names the URL; the brief's
+		// second pointer is how an agent widens from this request to it, and
+		// it carries the modal's server so the widening stays in scope.
+		$brief = Ask_Assembler::for_request( $this->record(), null, 'url:cccccccccccc', 'alpha.example' );
+
+		$this->assertSame( 'dump_request', $brief['fetch'][0]['tool'] );
+		$this->assertSame( [ 'tool' => 'dump_url', 'arguments' => [ 'hash' => 'cccccccccccc', 'server' => 'alpha.example' ] ], $brief['fetch'][1] );
+		$this->assertSame( [ 'hash' => 'cccccccccccc' ], Ask_Assembler::for_request( $this->record(), null, 'url:cccccccccccc' )['fetch'][1]['arguments'] );
+		$this->assertCount( 1, Ask_Assembler::for_request( $this->record(), null )['fetch'] );
+	}
+
+	public function test_a_url_category_brief_counts_the_requests_the_category_appeared_in(): void {
+		// `samples` means the same thing on every category brief: the requests
+		// the category was seen in, which the row carries; the scope names the
+		// aggregate's own request count, which can be larger.
+		$brief = Ask_Assembler::for_url_category(
+			[ 'count' => 17, 'categories' => [ 'render' => [ 'time' => 60.0, 'count' => 2.0, 'samples' => 12 ] ] ],
+			'render',
+			'/a'
+		);
+
+		$this->assertSame( 12, $brief['samples'] );
+		$this->assertSame( 'mean per request over 17 requests, every server', $brief['scope'] );
+	}
+
+	public function test_a_category_brief_shares_the_board_the_panel_draws(): void {
+		// The panel skips the callback rows (`hooks @10`) beside their category
+		// and so must the share, or the brief quotes a fraction of a board
+		// nobody is looking at.
+		$brief = Ask_Assembler::for_url_category(
+			[
+				'count'      => 4,
+				'categories' => [
+					'hooks'     => [ 'time' => 60.0, 'count' => 1.0, 'samples' => 4 ],
+					'hooks @10' => [ 'time' => 40.0, 'count' => 1.0, 'samples' => 4 ],
+					'render'    => [ 'time' => 20.0, 'count' => 1.0, 'samples' => 4 ],
+				],
+			],
+			'hooks',
+			'/a'
+		);
+
+		$this->assertEqualsWithDelta( 0.75, $brief['share'], 1e-6 );
+		$this->assertSame( [ 'render' ], \array_column( $brief['others'], 'name' ) );
+	}
+
+	public function test_a_category_brief_refuses_a_callback_row_and_ignores_negative_priorities(): void {
+		// A callback row is its category's, not a board of its own; a negative
+		// priority is a callback row too.
+		$board = [
+			'count'      => 4,
+			'categories' => [
+				'hooks'     => [ 'time' => 60.0, 'count' => 1.0, 'samples' => 4 ],
+				'hooks @10' => [ 'time' => 40.0, 'count' => 1.0, 'samples' => 4 ],
+				'init @-10' => [ 'time' => 30.0, 'count' => 1.0, 'samples' => 4 ],
+				'render'    => [ 'time' => 20.0, 'count' => 1.0, 'samples' => 4 ],
+			],
+		];
+
+		$this->assertNull( Ask_Assembler::for_url_category( $board, 'hooks @10', '/a' ) );
+		$this->assertNull( Ask_Assembler::for_category( $board['categories'], 'init @-10' ) );
+		$brief = Ask_Assembler::for_url_category( $board, 'hooks', '/a' );
+		$this->assertEqualsWithDelta( 0.75, $brief['share'], 1e-6 );
+		$this->assertSame( [ 'render' ], \array_column( $brief['others'], 'name' ) );
+	}
+
+	public function test_a_url_span_brief_reports_elsewhere_without_a_call_count(): void {
+		$flame = [
+			'name'     => 'aggregate',
+			'value'    => 300.0,
+			'count'    => 17,
+			'children' => [
+				[ 'name' => 'process', 'value' => 250.0, 'children' => [ [ 'name' => 'query', 'value' => 200.0, 'children' => [] ] ] ],
+				[ 'name' => 'shutdown', 'value' => 50.0, 'children' => [ [ 'name' => 'query', 'value' => 9.0, 'children' => [] ] ] ],
+			],
+		];
+
+		$brief = Ask_Assembler::for_url_span( $flame, 'query', '/a', null, 'url:cccccccccccc' );
+
+		$this->assertSame( 'process', $brief['parent'] );
+		$this->assertEquals( 9.0, $brief['elsewhere']['ms'] );
+		$this->assertSame( [ 'shutdown' ], $brief['elsewhere']['parents'] );
+		$this->assertArrayNotHasKey( 'count', $brief['elsewhere'] );
+	}
+
 	public function test_a_span_brief_says_how_an_agent_fetches_it_again(): void {
 		$brief = Ask_Assembler::for_span( $this->record(), 'wp_loaded', $this->rule(), 'request:c6x0zgr:3' );
 
