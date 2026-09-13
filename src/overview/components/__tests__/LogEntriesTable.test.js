@@ -9,7 +9,7 @@
  *  - search & navigation (n/p, Enter, Shift+Enter, Escape)
  *  - fold/unfold (single, recursive via Cmd, fold-all/unfold-all)
  *  - row click + swatch click highlight
- *  - revealPath via revealRef
+ *  - reveal via revealRef
  *  - keyboard shortcut '/' to focus search
  */
 
@@ -643,9 +643,9 @@ describe( 'LogEntriesTable', () => {
 		);
 		expect( revealRef.current ).toEqual( expect.any( Function ) );
 		// Reveal db pair via flame-style path (starts with "request").
-		act( () => revealRef.current( [ 'request', 'process', 'db' ] ) );
+		act( () => revealRef.current( null, [ 'request', 'process', 'db' ] ) );
 		// Unknown path is a no-op.
-		act( () => revealRef.current( [ 'nope' ] ) );
+		act( () => revealRef.current( null, [ 'nope' ] ) );
 		unmount();
 	} );
 
@@ -697,10 +697,10 @@ describe( 'LogEntriesTable', () => {
 		);
 
 		act( () =>
-			revealRef.current( [
+			revealRef.current( null, [
 				'request',
 				'process',
-				'sql: SELECT wp_users',
+				'sql: SELECT wp_posts',
 			] )
 		);
 		// The highlight lands in a rAF, so flush one frame.
@@ -709,12 +709,101 @@ describe( 'LogEntriesTable', () => {
 		} );
 
 		// Whichever row got the highlight IS the answer. Without the label in
-		// the key both spans share one, and a detail key is LAST-wins — so a
-		// miss lands on `SELECT wp_posts`, the one that was not clicked.
+		// the key the path misses and falls to the base key, whose lookup is
+		// first-wins — so a miss lands on `SELECT wp_users`, not the clicked.
 		const lit = Array.from( container.querySelectorAll( 'tr' ) ).find(
 			( tr ) => tr.querySelector( 'td' )?.style.boxShadow
 		);
-		expect( lit?.dataset.pairId ).toBe( '2' );
+		expect( lit?.dataset.pairId ).toBe( '3' );
+		unmount();
+		jest.useRealTimers();
+	} );
+
+	it( 'reveals the span by the number of the entry that opened it, whatever its names', () => {
+		jest.useFakeTimers();
+		// Two spans one caller opened share every name; the frame carries the
+		// opening entry's number, and that alone finds the row.
+		const entries = [
+			{
+				n: 41,
+				k: 'process (start)',
+				pairId: 1,
+				indent: 0,
+				originalIdx: 0,
+			},
+			{
+				n: 233,
+				k: 'sql (start)',
+				l: 'QM_DB->query',
+				pairId: 2,
+				indent: 1,
+				originalIdx: 1,
+			},
+			{
+				n: 234,
+				k: 'sql (complete)',
+				m: 'SELECT slow',
+				pairId: 2,
+				indent: 1,
+				originalIdx: 2,
+			},
+			{
+				n: 475,
+				k: 'sql (start)',
+				l: 'QM_DB->query',
+				pairId: 3,
+				indent: 1,
+				originalIdx: 3,
+			},
+			{
+				n: 476,
+				k: 'sql (complete)',
+				m: 'UPDATE fast',
+				pairId: 3,
+				indent: 1,
+				originalIdx: 4,
+			},
+			{
+				n: 479,
+				k: 'process (complete)',
+				pairId: 1,
+				indent: 0,
+				originalIdx: 5,
+			},
+		];
+		const revealRef = { current: null };
+		const { container, unmount } = renderComponent(
+			React.createElement( LogEntriesTable, { entries, revealRef } )
+		);
+		const lit = () =>
+			Array.from( container.querySelectorAll( 'tr' ) ).find(
+				( tr ) => tr.querySelector( 'td' )?.style.boxShadow
+			)?.dataset.pairId;
+
+		act( () =>
+			revealRef.current( 233, [
+				'request',
+				'process',
+				'sql: QM_DB->query',
+			] )
+		);
+		act( () => {
+			jest.advanceTimersByTime( 20 );
+		} );
+		expect( lit() ).toBe( '2' );
+
+		// A frame with no number, a merged one's, still resolves by path.
+		act( () =>
+			revealRef.current( null, [
+				'request',
+				'process',
+				'sql: QM_DB->query',
+			] )
+		);
+		act( () => {
+			jest.advanceTimersByTime( 20 );
+		} );
+		expect( lit() ).toBe( '3' );
 		unmount();
 		jest.useRealTimers();
 	} );
@@ -1345,7 +1434,7 @@ describe( 'LogEntriesTable', () => {
 			React.createElement( LogEntriesTable, { entries, revealRef } )
 		);
 		// reveal a known path so scrollToAndHighlight schedules a RAF.
-		act( () => revealRef.current( [ 'process', 'db' ] ) );
+		act( () => revealRef.current( null, [ 'process', 'db' ] ) );
 		// RAF was registered (no throw). Flush it.
 		expect( () => flushRAF() ).not.toThrow();
 		// Now advance timers so the clearHighlight timer runs.
