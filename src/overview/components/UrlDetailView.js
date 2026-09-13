@@ -303,7 +303,8 @@ export default function UrlDetailView( {
 	);
 
 	return (
-		<>
+		// The picker root: a body click outside a row asks about the URL.
+		<div data-ask={ urlHash ? `url:${ urlHash }` : undefined }>
 			{ /* Always mounted: a gate here can strand the operator. */ }
 			<BreakdownControls
 				breakdownData={ breakdownData }
@@ -446,6 +447,6 @@ export default function UrlDetailView( {
 					<p className="newspack-nodes-status">{ scanNote }</p>
 				) }
 			</div>
-		</>
+		</div>
 	);
 }

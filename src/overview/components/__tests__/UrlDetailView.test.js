@@ -139,6 +139,19 @@ const dropdownLabels = ( container ) =>
 	);
 
 describe( 'UrlDetailView', () => {
+	it( 'marks its whole body as the URL for the ask picker, with each request row nested inside', () => {
+		// The picker walks [data-ask] ancestors innermost first, so a click on
+		// the body asks about the URL and a click on a row still asks about
+		// that request.
+		const { container, unmount } = mount( { urlHash: 'cafe0123beef' } );
+		const root = container.firstElementChild;
+		expect( root.getAttribute( 'data-ask' ) ).toBe( 'url:cafe0123beef' );
+		const row = container.querySelector( '[data-ask^="request:"]' );
+		expect( row ).not.toBeNull();
+		expect( root.contains( row ) ).toBe( true );
+		unmount();
+	} );
+
 	it( 'renders the recent-requests heading with the full count', () => {
 		const { container, unmount } = mount();
 		expect( container.textContent ).toContain( 'Recent Requests (3)' );
