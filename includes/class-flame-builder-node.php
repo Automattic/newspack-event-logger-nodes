@@ -2191,9 +2191,9 @@ class Flame_Builder_Node extends Node {
 		$from_partition = $store->rehydrate;
 		if ( null !== $from_partition ) {
 			$partition        = $store->partition();
-			// Both tiers drop non-string keys themselves; no guard needed here.
+			// Unbudgeted, so a null is only an unresolved partition: a miss.
 			$store->rehydrate = fn ( array $keys ): array =>
-				$this->held_frames( $keys, $partition ) + ( $from_partition )( $keys );
+				$this->held_frames( $keys, $partition ) + ( ( $from_partition )( $keys ) ?? [] );
 		}
 	}
 
@@ -2213,11 +2213,14 @@ class Flame_Builder_Node extends Node {
 		if ( null === $seam ) {
 			return;
 		}
+		// A reader polls one window; an absence it walked for is remembered.
+		$store->absence = static fn ( string $key ): int => $store->absence_holds( $key );
 		// num_int: arithmetic, and a corrupt value must read as OFF.
 		$budget_ns        = 1_000_000 * \max( 0, Core::num_int( Config::value( 'stats_mirror_read_budget_ms' ) ) );
-		$store->rehydrate = static function ( array $keys ) use ( $seam, $budget_ns ): array {
+		// Null, not []: a read that did not look is no absence to remember.
+		$store->rehydrate = static function ( array $keys ) use ( $seam, $budget_ns ): ?array {
 			if ( self::$mirror_read_ns >= $budget_ns ) {
-				return [];
+				return null;
 			}
 			$at    = \hrtime( true );
 			$found = $seam( $keys );
@@ -2262,15 +2265,16 @@ class Flame_Builder_Node extends Node {
 	 * @param \Closure(): ?\Newspack_Nodes\Partition_Node $resolve         Where the mirror is.
 	 * @param int                                            $partition_index Keyspace the Table's keys sit in.
 	 * @param Stats_Store                                    $store           Sizes what is handed back, by window.
-	 * @return \Closure(array<array-key,mixed>): array<array-key,array{value: array<array-key,mixed>, ttl: int}>
+	 * @return \Closure(array<array-key,mixed>): ?array<array-key,array{value: array<array-key,mixed>, ttl: int}>
+	 *         Null when the mirror could not be looked at, which is no absence.
 	 */
 	private static function rehydrate_seam( \Closure $resolve, int $partition_index, Stats_Store $store ): \Closure {
 		$partition = null;
-		return static function ( array $keys ) use ( $resolve, $partition_index, $store, &$partition ): array {
+		return static function ( array $keys ) use ( $resolve, $partition_index, $store, &$partition ): ?array {
 			// Retried while null: the node may be built after this one.
 			$partition ??= $resolve();
 			if ( null === $partition ) {
-				return [];
+				return null;
 			}
 			// Frames are filed under the durable key; the Table asks relative.
 			$hashes = [];
