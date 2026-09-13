@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.96.3] - 2026-09-13
+
 ### Fixed
 
 - **A server's per-server series fills in from the mirror however sparse its traffic.** A bucket the mirror holds no frame for costs the index walk its whole length to say so, and a sparse server has such buckets in every window; asked again on every poll, the leaderboard's absent keys alone spent the 1500ms read budget across the first partitions, and the per-server breakdown read after them never reached the mirror, so the server showed only what memcache still held. A dense server was found on every key, every walk stopped early, and it filled in over a few polls. The dashboard's reader now remembers an absence the walk answered: `arm_stats_reader()` sets the store's `$absence` seam to `Stats_Store::absence_holds()`, which holds a closed bucket's absence for what is left of the window and the open bucket's, or a hashed key's, for `ABSENCE_HOLD_SECONDS`, and the substrate's `Table_Node` keeps the marker. The worker's own store remembers none and reads a reader's marker as an ordinary miss, so an evicted open bucket still merges from the held-frame tier. A read the budget cut short records nothing, since only a walk that found nothing is an absence. Needs newspack-nodes 2.58.0.
