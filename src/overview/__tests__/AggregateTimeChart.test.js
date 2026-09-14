@@ -285,11 +285,14 @@ describe( 'AggregateTimeChart', () => {
 		);
 		expect( container.textContent ).toContain( 'Request Volume' );
 		expect( d3Mock.select ).toHaveBeenCalled();
+		// The tooltip is the substrate's elevated card, painted by its role.
 		const tooltip = container.querySelector(
-			'.event-logger-chart-tooltip'
+			'.newspack-nodes-chart__tooltip'
 		);
 		expect( tooltip ).not.toBeNull();
-		expect( tooltip.className ).toBe( 'event-logger-chart-tooltip' );
+		expect(
+			tooltip.classList.contains( 'newspack-nodes-card--elevated' )
+		).toBe( true );
 		expect( tooltip.getAttribute( 'style' ) ).toBeNull();
 		unmount();
 	} );

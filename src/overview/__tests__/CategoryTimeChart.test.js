@@ -177,7 +177,7 @@ describe( 'CategoryTimeChart', () => {
 			} )
 		);
 		expect(
-			drawn.container.querySelectorAll( '.event-logger-chart-tooltip' )
+			drawn.container.querySelectorAll( '.newspack-nodes-chart__tooltip' )
 		).toHaveLength( VIEW_COUNT );
 		drawn.unmount();
 	} );
@@ -205,10 +205,12 @@ describe( 'CategoryTimeChart', () => {
 		// d3.select must have been called (chart actually rendered).
 		expect( d3Mock.select ).toHaveBeenCalled();
 		const tooltips = container.querySelectorAll(
-			'.event-logger-chart-tooltip'
+			'.newspack-nodes-chart__tooltip'
 		);
 		expect( tooltips ).toHaveLength( VIEW_COUNT );
-		expect( tooltips[ 0 ].className ).toBe( 'event-logger-chart-tooltip' );
+		expect(
+			tooltips[ 0 ].classList.contains( 'newspack-nodes-card--elevated' )
+		).toBe( true );
 		expect( tooltips[ 0 ].getAttribute( 'style' ) ).toBeNull();
 		unmount();
 	} );
@@ -354,6 +356,26 @@ describe( 'CategoryTimeChart', () => {
 				lastMouseXRef: { current: 0 },
 			} )
 		).not.toThrow();
+		unmount();
+	} );
+
+	it( 'offers no stack toggle: a callback counts inside its hook', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( CategoryTimeChart, {
+				data: {
+					names: [ 'db', 'http' ],
+					buckets: {
+						[ bucketKeyNow() ]: [
+							[ 0, 5000, 100, 100 ],
+							[ 1, 1500, 30, 30 ],
+						],
+					},
+				},
+			} )
+		);
+		expect(
+			container.querySelector( '.newspack-nodes-chart__stack' )
+		).toBeNull();
 		unmount();
 	} );
 } );

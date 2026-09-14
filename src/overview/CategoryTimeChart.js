@@ -25,12 +25,12 @@ import { useCallback, useMemo } from '@wordpress/element';
 import { __ } from '@wordpress/i18n';
 import {
 	BUCKET_SECONDS,
-	PALETTE,
 	buildTimeSlots,
+	chartColor,
 } from '@newspack-nodes/shared/hooks/useTimeChart';
 import { compactFixed } from '@newspack-nodes/shared/utils/formatters';
 import { hasBuckets } from './AggregateTimeChart';
-import AreaTimeChart from './components/AreaTimeChart';
+import AreaTimeChart from '@newspack-nodes/shared/components/AreaTimeChart';
 import { RETENTION_SECONDS } from './retention';
 
 /**
@@ -203,11 +203,8 @@ export default function CategoryTimeChart( { data } ) {
 		[]
 	);
 
-	// The palette cycles past 20 categories.
-	const colorAt = useCallback(
-		( _label, index ) => PALETTE[ index % PALETTE.length ],
-		[]
-	);
+	// Colour by rank through the skin's own tokens.
+	const colorAt = useCallback( ( _label, index ) => chartColor( index ), [] );
 
 	// Emptiness asks about the BUCKETS, and below every hook: order matters.
 	if ( ! hasBuckets( data?.buckets ) ) {
@@ -222,6 +219,7 @@ export default function CategoryTimeChart( { data } ) {
 			yFormatFor={ yFormatsFor[ index ] }
 			title={ title }
 			height={ CHART_HEIGHT }
+			stackable={ false }
 		/>
 	) );
 }

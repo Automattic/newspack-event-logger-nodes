@@ -25,9 +25,9 @@
 	}
 }
 
-// Unified section heading style
+// Unified section heading style; a chart's own heading is the shared
+// `.newspack-nodes-chart__title` role.
 .event-logger-response-chart,
-.event-logger-aggregate-time-chart,
 .event-logger-flame-container,
 .event-logger-table--requests,
 .event-logger-log-entries {
@@ -41,20 +41,6 @@
 .event-logger-performance-dashboard .components-card__header h2 {
 	margin: 0;
 	font-size: 18px;
-}
-
-.event-logger-chart-tooltip {
-	display: none;
-	position: absolute;
-	padding: 6px 10px;
-	background: color-mix(in srgb, var(--ink) 85%, transparent);
-	color: var(--paper);
-	border-radius: var(--button-radius);
-	font-family: base.$mono-font;
-	font-size: 11px;
-	pointer-events: none;
-	white-space: nowrap;
-	z-index: 10;
 }
 
 .event-logger-request-detail-empty {

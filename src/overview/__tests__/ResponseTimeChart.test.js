@@ -347,7 +347,9 @@ describe( 'ResponseTimeChart', () => {
 	 * @return {Array<Element>} Its legend rows.
 	 */
 	const legendRows = ( container ) => [
-		...container.querySelectorAll( '.newspack-nodes-chart-legend li' ),
+		...container.querySelectorAll(
+			'.newspack-nodes-chart__row > .newspack-nodes-chart-legend li'
+		),
 	];
 
 	it( 'legends only the status classes actually present, beside the plot', () => {

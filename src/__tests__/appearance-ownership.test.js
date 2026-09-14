@@ -237,11 +237,6 @@ const STYLE_APPEARANCE_ALLOWLIST = [
 		properties: [ 'border-radius' ],
 	},
 	{
-		file: 'overview/styles/charts.scss',
-		selector: /^\.event-logger-chart-tooltip$/,
-		properties: [ 'background', 'color', 'border-radius', 'font-family' ],
-	},
-	{
 		file: 'overview/styles/flame-graph.scss',
 		selector: /^\.d3-flame-graph-tip$/,
 		properties: [ 'font-family' ],

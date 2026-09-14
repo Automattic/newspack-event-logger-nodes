@@ -32,10 +32,10 @@ import {
  */
 const MS_PER_SECOND = 1000;
 import {
-	PALETTE,
 	buildTimeSlots,
+	chartColor,
 } from '@newspack-nodes/shared/hooks/useTimeChart';
-import AreaTimeChart from './components/AreaTimeChart';
+import AreaTimeChart from '@newspack-nodes/shared/components/AreaTimeChart';
 import { RETENTION_SECONDS } from './retention';
 
 /**
@@ -213,14 +213,8 @@ export default function AggregateTimeChart( {
 		} );
 		const dimValues = Array.from( valueSet );
 
-		// Status classes keep the dashboard's shared 2xx green, 5xx red.
-		const colorMap = {};
-		dimValues.forEach( ( v, i ) => {
-			colorMap[ v ] =
-				'status' === breakdown && STATUS_COLORS[ v ]
-					? STATUS_COLORS[ v ]
-					: PALETTE[ i % PALETTE.length ];
-		} );
+		// Status classes keep their semantic colours; the rest colour by rank.
+		const colorMap = 'status' === breakdown ? STATUS_COLORS : {};
 
 		const series = dimValues.map( ( label ) => ( {
 			label,
@@ -240,8 +234,7 @@ export default function AggregateTimeChart( {
 	const yFormatFor = Y_FORMATS[ metric ];
 
 	const colorAt = useCallback(
-		( label, index ) =>
-			chartState.colorMap[ label ] || PALETTE[ index % PALETTE.length ],
+		( label, index ) => chartState.colorMap[ label ] || chartColor( index ),
 		[ chartState ]
 	);
 
@@ -291,11 +284,7 @@ export default function AggregateTimeChart( {
 			yFormatFor={ yFormatFor }
 			yLabel={ yLabels[ metric ] }
 			height={ CHART_HEIGHT }
-			totalLabel={
-				chartState.stacked
-					? __( 'Total', 'newspack-event-logger-nodes' )
-					: ''
-			}
+			totalLabel={ __( 'Total', 'newspack-event-logger-nodes' ) }
 			title={
 				sprintf(
 					// translators: 1: metric name (e.g. Request Volume), 2: retention window (e.g. 24 Hours).
