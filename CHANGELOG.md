@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.96.4] - 2026-09-14
+
 ### Fixed
 
 - **The URL detail modal offers no breakdown by server.** `server_name` is the site's host, and the hash is over the whole URL, so one URL split by server drew one line under an axis that repeated the modal's scope. `SCOPED_BREAKDOWN_OPTIONS` names the list without it, which the Overview under a server filter already offered.
