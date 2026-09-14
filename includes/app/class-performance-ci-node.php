@@ -37,7 +37,8 @@
  *    escalate into a partition-wide walk. The durable stats mirror is the
  *    third: `Partition_Node::locate_by()` cannot stop early on a key that is
  *    absent, so `dispatch()` gives each answer one
- *    `stats_mirror_read_budget_ms` to spend across every such walk.
+ *    `stats_mirror_read_budget_ms` to spend across every such walk, and
+ *    naming the rows an answer shows gets one of its own on top.
  *
  * @package Newspack_Event_Logger_Nodes
  */
@@ -1057,8 +1058,12 @@ class Performance_CI_Node extends Service_CI_Node {
 		\usort( $slowest, $by_mean );
 		\usort( $ranked, $by_sort );
 
+		// One naming read for the page and the slowest rows: one pass.
+		$page  = \array_slice( $ranked, $offset, $limit );
+		$top   = \array_slice( $slowest, 0, self::SLOWEST_ROWS );
+		$named = self::resolve_urls( \array_merge( $page, $top ) );
 		return [
-			'data'      => self::resolve_urls( \array_slice( $ranked, $offset, $limit ) ),
+			'data'      => \array_slice( $named, 0, \count( $page ) ),
 			// The pager's question; `totals.urls` is another.
 			'rows'      => $rows,
 			'totals'    => [
@@ -1068,7 +1073,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				'avg_peak_mb'         => $requests > 0 ? $sum_peak / $requests : 0.0,
 				'requests_per_second' => self::recent_rate( $recent ),
 			],
-			'slowest'   => self::resolve_urls( \array_slice( $slowest, 0, self::SLOWEST_ROWS ) ),
+			'slowest'   => \array_slice( $named, \count( $page ) ),
 			// Pre-split data cannot answer a scoped question; see the handler.
 			'has_split' => $has_split,
 		];
@@ -1891,6 +1896,14 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * carrying the PATH a url-sort ranked it by; only the synthetic overflow
 	 * rows are skipped, and they name no URL to look up.
 	 *
+	 * Naming a page is an answer of its own, with a mirror read budget of its
+	 * own: it runs after the index walk, which spends the command's first, and
+	 * a page of counts against blank URLs is no page. One `lookup_multi` per
+	 * partition asks for every missing name at once, so what the second
+	 * budget bounds is one mirror pass per partition beyond it — the walk it
+	 * cannot cut short — and the `urls` verb names its page and its slowest
+	 * rows in ONE call rather than two.
+	 *
 	 * @param array<int,array<array-key,mixed>> $rows Merged display rows.
 	 * @return array<int,array<array-key,mixed>>
 	 */
@@ -1906,11 +1919,14 @@ class Performance_CI_Node extends Service_CI_Node {
 		if ( [] === $wanted ) {
 			return $rows;
 		}
-		$names = [];
-		foreach ( self::stats_stores() as $store ) {
-			// A hash is named in the partition that saw it; first name wins.
-			$names += $store->get_url_names( \array_keys( $wanted ) );
-		}
+		$names = Flame_Builder_Node::with_own_mirror_read_budget( static function () use ( $wanted ): array {
+			$names = [];
+			foreach ( self::stats_stores() as $store ) {
+				// Named in the partition that saw it; first name wins.
+				$names += $store->get_url_names( \array_keys( $wanted ) );
+			}
+			return $names;
+		} );
 		foreach ( $rows as $i => $row ) {
 			$hash = Core::as_string( $row['hash'] ?? '' );
 			if ( isset( $names[ $hash ] ) ) {
