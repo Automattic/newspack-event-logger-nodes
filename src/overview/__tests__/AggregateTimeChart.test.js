@@ -3,7 +3,7 @@
  * Tests for AggregateTimeChart — D3 stacked-area / line chart.
  *
  * Same approach as CategoryTimeChart: mock d3 chainable + useTimeChart's
- * setupTooltip/drawLegend, invoke captured formatEntry callbacks to
+ * setupTooltip, invoke captured formatEntry callbacks to
  * drive the formatSeconds + the per-metric value-computation branches.
  *
  * A dimension is always selected, so every case here is dimensional; the
@@ -84,7 +84,6 @@ jest.mock( '@newspack-nodes/shared/hooks/useTimeChart', () => {
 		__esModule: true,
 		...actual,
 		setupTooltip: jest.fn(),
-		drawLegend: jest.fn(),
 		useTimeChart: ( renderFn ) => {
 			globalThis.__lastRenderFn = renderFn;
 			const containerRef = {
@@ -104,7 +103,7 @@ jest.mock( '@newspack-nodes/shared/hooks/useTimeChart', () => {
 import * as React from 'react';
 import * as d3 from 'd3';
 import AggregateTimeChart, { breakdownState } from '../AggregateTimeChart';
-import { renderComponent } from '../../test-helpers/renderHook';
+import { renderComponent, act } from '../../test-helpers/renderHook';
 
 const d3Mock = d3.__chain;
 
@@ -145,7 +144,6 @@ describe( 'AggregateTimeChart', () => {
 		} );
 		const useTimeChart = require( '@newspack-nodes/shared/hooks/useTimeChart' );
 		useTimeChart.setupTooltip.mockClear();
-		useTimeChart.drawLegend.mockClear();
 	} );
 
 	it( 'returns null when the breakdown is null', () => {
@@ -433,6 +431,61 @@ describe( 'AggregateTimeChart', () => {
 		expect( Array.isArray( entries ) ).toBe( true );
 		// First entry is the Total.
 		expect( entries[ 0 ].label ).toBe( 'Total' );
+		unmount();
+	} );
+
+	it( "the tooltip total stays the bucket's whole total under a pick", () => {
+		const bk = bucketKeyNow();
+		const breakdownData = {
+			[ bk ]: { '2xx': { c: 47, s: 470 }, '5xx': { c: 453, s: 4530 } },
+		};
+		const { container, unmount } = renderComponent(
+			React.createElement( AggregateTimeChart, {
+				breakdownData,
+				metric: 'volume',
+				breakdown: 'status',
+			} )
+		);
+		act( () => {
+			container
+				.querySelectorAll( '.newspack-nodes-chart-legend button' )[ 0 ]
+				.click();
+		} );
+		const entries = getFormatEntry()( lastSlotIndex() );
+		expect( entries[ 0 ].label ).toBe( 'Total' );
+		// 2xx alone is drawn; the bucket still held 500 requests.
+		expect( entries[ 0 ].value ).toBe( '500' );
+		expect( entries.slice( 1 ).map( ( e ) => e.label ) ).toEqual( [
+			'2xx',
+		] );
+		unmount();
+	} );
+
+	it( 'the tooltip total keeps its own unit under a pick that changed the axis unit', () => {
+		// A 45s bucket total, a picked series at 600ms: the axis reads ms,
+		// the total is still 45s, not 45000ms.
+		const bk = bucketKeyNow();
+		const breakdownData = {
+			[ bk ]: { minor: { c: 1, s: 600 }, major: { c: 1, s: 44400 } },
+		};
+		const { container, unmount } = renderComponent(
+			React.createElement( AggregateTimeChart, {
+				breakdownData,
+				metric: 'cumulative',
+				breakdown: 'ua',
+			} )
+		);
+		act( () => {
+			container
+				.querySelectorAll( '.newspack-nodes-chart-legend button' )[ 0 ]
+				.click();
+		} );
+		const entries = getFormatEntry()( lastSlotIndex() );
+		expect( entries[ 0 ].label ).toBe( 'Total' );
+		expect( entries[ 0 ].value ).toBe( '45s' );
+		expect( entries[ 1 ] ).toEqual(
+			expect.objectContaining( { label: 'minor', value: '600ms' } )
+		);
 		unmount();
 	} );
 

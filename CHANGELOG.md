@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The Aggregate, Category and Response Time legends scroll, and pick the series they name.** Each was an SVG column in the chart's right margin, cut at eighteen characters and deaf to the pointer, so a breakdown with more series than the chart is tall legended a fraction of them. They are the substrate's `ChartLegend` beside the plot now: a click draws that series alone, with the axis rescaled to it, a ctrl- or cmd-click adds to the pick, and the Response Time chart's pick keeps a status class's dots alone on the plot with the trend and mean recomputed over them. Needs newspack-nodes 2.59.0.
+
 ## [0.96.4] - 2026-09-14
 
 ### Fixed

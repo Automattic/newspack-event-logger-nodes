@@ -175,7 +175,7 @@ const buildSeries = ( data, mode ) => {
  * Category time charts — one per view over the same category series.
  *
  * The three memos buy identity, not arithmetic: `AreaTimeChart` redraws
- * whenever `series`, `yFormat` or `colorAt` changes, and the URL modal
+ * whenever `series`, `yFormatFor` or `colorAt` changes, and the URL modal
  * re-renders on every scroll event.
  *
  * @param {Object}      props      Component props.
@@ -191,10 +191,12 @@ export default function CategoryTimeChart( { data } ) {
 		[ data ]
 	);
 
-	const yFormats = useMemo(
+	// Each mode's unit is fixed, so the peak the chart draws changes nothing.
+	const yFormatsFor = useMemo(
 		() =>
 			CATEGORY_VIEWS.map(
 				( { mode } ) =>
+					() =>
 					( val ) =>
 						formatYValue( val, mode )
 			),
@@ -217,7 +219,7 @@ export default function CategoryTimeChart( { data } ) {
 			key={ mode }
 			series={ series[ index ] }
 			colorAt={ colorAt }
-			yFormat={ yFormats[ index ] }
+			yFormatFor={ yFormatsFor[ index ] }
 			title={ title }
 			height={ CHART_HEIGHT }
 		/>
