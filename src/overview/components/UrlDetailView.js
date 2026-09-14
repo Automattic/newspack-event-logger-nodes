@@ -37,6 +37,7 @@ import { __, sprintf } from '@wordpress/i18n';
 import { formatCommandArgs } from '@newspack-nodes/runtime';
 import { useCommandOnce } from '@newspack-nodes/shared/hooks/useCommandOnce';
 import { SERVER } from '../hooks/usePerformanceGraph';
+import { SCOPED_BREAKDOWN_OPTIONS } from '../constants';
 
 /**
  * How often the breakdown series is re-fetched, in milliseconds.
@@ -312,6 +313,7 @@ export default function UrlDetailView( {
 				setMetric={ setChartMetric }
 				breakdown={ chartBreakdown }
 				setBreakdown={ setChartBreakdown }
+				breakdownOptions={ SCOPED_BREAKDOWN_OPTIONS }
 				loading={ breakdownLoading }
 				error={ breakdownError }
 			/>
