@@ -3919,6 +3919,28 @@ class PerformanceCITest extends TestCase {
 	}
 
 	/**
+	 * A page's names are resolved LAST, after the index walk, and the walk
+	 * spends the budget first: on a host whose memcache is evicting, the rows
+	 * came back and every name the mirror held did not, and the table showed
+	 * counts against blank URLs until enough polls had warmed the walk. The
+	 * name is the row's identity, so naming a page is an answer of its own
+	 * with a budget of its own.
+	 */
+	public function test_names_are_resolved_within_their_own_budget(): void {
+		$url  = $this->seed_evicted_bucket_on_the_mirror();
+		$rows = [ [ 'hash' => 'ab12cd34ef56', 'url' => '' ] ];
+		// The index walk that preceded the names spent the whole budget.
+		( new \ReflectionProperty( Flame_Builder_Node::class, 'mirror_read_ns' ) )->setValue( null, \PHP_INT_MAX );
+
+		$resolve = new \ReflectionMethod( Performance_CI_Node::class, 'resolve_urls' );
+		$named   = $resolve->invoke( null, $rows );
+
+		$this->assertSame( $url, $named[0]['url'] ?? '', 'the mirror names the row within a budget of its own' );
+		$spent = ( new \ReflectionProperty( Flame_Builder_Node::class, 'mirror_read_ns' ) )->getValue();
+		$this->assertSame( \PHP_INT_MAX, $spent, 'and a walk that follows inherits nothing' );
+	}
+
+	/**
 	 * The reset belongs to the ANSWER, not to the inbound message.
 	 *
 	 * `Mcp_Controller` calls `dispatch()` straight, with no Message behind it,

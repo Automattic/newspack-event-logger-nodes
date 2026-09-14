@@ -256,7 +256,8 @@ class Settings_Schema {
 				),
 				// @longform What the DASHBOARD may spend walking the durable
 				// mirror in ONE verb — a poll batches `overview` and `urls`
-				// into one POST, so a response can spend it twice.
+				// into one POST, so a response can spend it twice, and naming
+				// the rows a verb shows spends one more on top of each.
 				// `locate_by()` has no early stop for an absent key, so every
 				// batch that misses costs a full index pass, and a cold `urls`
 				// poll issues thousands of them across sixteen shards and four

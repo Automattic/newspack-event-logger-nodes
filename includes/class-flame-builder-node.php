@@ -3049,6 +3049,31 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
+	 * Run one read on a mirror read budget of its own, then resume the
+	 * caller's accounting where it stood.
+	 *
+	 * Naming a page is an answer of its own: it runs after the index walk
+	 * that spends the command's budget, and a page of counts against blank
+	 * URLs is no page. Resuming the spend afterwards is what keeps a walk
+	 * that FOLLOWS the read — `ask_category` names a context, then walks —
+	 * from inheriting a budget it did not have.
+	 *
+	 * @api The dashboard reader, around a point read that follows a walk.
+	 * @template T
+	 * @param \Closure(): T $read The read.
+	 * @return T What the read returned.
+	 */
+	public static function with_own_mirror_read_budget( \Closure $read ): mixed {
+		$spent                = self::$mirror_read_ns;
+		self::$mirror_read_ns = 0;
+		try {
+			return $read();
+		} finally {
+			self::$mirror_read_ns = $spent;
+		}
+	}
+
+	/**
 	 * The buffered frames for `$keys` that no durable log holds yet.
 	 *
 	 * The open bucket is deliberately withheld from the mirror, so these buffers
