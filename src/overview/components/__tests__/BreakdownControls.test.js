@@ -19,6 +19,7 @@ jest.mock( '../../AggregateTimeChart', () => ( {
 
 import * as React from 'react';
 import BreakdownControls from '../BreakdownControls';
+import { CHART_BREAKDOWN_OPTIONS } from '../../constants';
 import { renderComponent } from '../../../test-helpers/renderHook';
 
 function mountBreakdown( overrides = {} ) {
@@ -29,6 +30,7 @@ function mountBreakdown( overrides = {} ) {
 			setMetric: jest.fn(),
 			breakdown: 'method',
 			setBreakdown: jest.fn(),
+			breakdownOptions: CHART_BREAKDOWN_OPTIONS,
 			...overrides,
 		} )
 	);
@@ -89,6 +91,23 @@ describe( 'BreakdownControls', () => {
 			( label ) => label.textContent
 		);
 		expect( labels ).toEqual( [ 'Metric', 'Breakdown' ] );
+		unmount();
+	} );
+
+	it( 'offers exactly the dimensions its caller hands it', () => {
+		// Each scope decides what still splits inside it; the panel carries
+		// no list of its own to fall back on.
+		const { container, unmount } = mountBreakdown( {
+			breakdown: 'ja4',
+			breakdownOptions: [
+				{ label: 'Country', value: 'country' },
+				{ label: 'JA4 Hash', value: 'ja4' },
+			],
+		} );
+		const [ , breakdown ] = container.querySelectorAll( 'select' );
+		expect(
+			Array.from( breakdown.options ).map( ( o ) => o.value )
+		).toEqual( [ 'country', 'ja4' ] );
 		unmount();
 	} );
 

@@ -10,7 +10,7 @@
 import { __, sprintf } from '@wordpress/i18n';
 import { SelectControl } from '@wordpress/components';
 
-import { CHART_METRIC_OPTIONS, CHART_BREAKDOWN_OPTIONS } from '../constants';
+import { CHART_METRIC_OPTIONS } from '../constants';
 import AggregateTimeChart, { breakdownState } from '../AggregateTimeChart';
 
 /**
@@ -18,11 +18,11 @@ import AggregateTimeChart, { breakdownState } from '../AggregateTimeChart';
  * the chart, and one line naming what the chart has instead of a series.
  *
  * What differs between the Overview card and the URL modal arrives as a prop —
- * the Server select and a narrowed dimension list on one side, the in-flight
- * flag and the refusal on the other — so neither scope carries a second copy
- * of the panel to hang its own extra on. The Metric list is not a prop: every
- * metric reduces the same three per-bucket totals, so no caller has one to
- * withhold.
+ * the Server select on one side, the in-flight flag and the refusal on the
+ * other, and on both the dimension list that still splits inside that scope —
+ * so neither scope carries a second copy of the panel to hang its own extra
+ * on. The Metric list is not a prop: every metric reduces the same three
+ * per-bucket totals, so no caller has one to withhold.
  *
  * Both callers mount it unconditionally, because the selects are the only way
  * out of a dimension with no rows, a read still in flight or a refused reply.
@@ -31,19 +31,19 @@ import AggregateTimeChart, { breakdownState } from '../AggregateTimeChart';
  * comes from `breakdownState`, which the chart reads too, so the blank frame
  * and the line beneath it cannot disagree.
  *
- * @param {Object}                  props                    Component props.
- * @param {Object|null}             props.breakdownData      Bucket key => dimension value => `{ c, s, m }` — count, summed ms, summed peak MB — or null before the reply.
- * @param {string}                  props.metric             'volume' | 'avg' | 'cumulative' | 'memory'.
- * @param {(value: string) => void} props.setMetric          Metric setter.
- * @param {string}                  props.breakdown          Selected dimension, a value from `breakdownOptions`.
- * @param {(value: string) => void} props.setBreakdown       Breakdown dimension setter.
- * @param {Array<Object>}           [props.breakdownOptions] `{ label, value }` dimension choices; defaults to all of them.
- * @param {Array<Object>|null}      [props.serverOptions]    `{ label, value }` server choices; null renders no Server select, and `[]` is truthy, so it renders an empty one.
- * @param {string}                  [props.serverFilter]     Selected server name, or '' for all servers.
- * @param {(value: string) => void} [props.setServerFilter]  Server filter setter, required alongside `serverOptions`.
- * @param {boolean}                 [props.loading]          True while a read is out. It is not `pending`: a periodic refresh keeps the previous series drawn and still says the read is out.
- * @param {string|null}             [props.error]            Already-translated refusal printed under the chart.
- * @param {string|null}             [props.note]             Already-translated caveat printed under the chart.
+ * @param {Object}                  props                   Component props.
+ * @param {Object|null}             props.breakdownData     Bucket key => dimension value => `{ c, s, m }` — count, summed ms, summed peak MB — or null before the reply.
+ * @param {string}                  props.metric            'volume' | 'avg' | 'cumulative' | 'memory'.
+ * @param {(value: string) => void} props.setMetric         Metric setter.
+ * @param {string}                  props.breakdown         Selected dimension, a value from `breakdownOptions`.
+ * @param {(value: string) => void} props.setBreakdown      Breakdown dimension setter.
+ * @param {Array<Object>}           props.breakdownOptions  `{ label, value }` dimension choices: what still splits inside the caller's scope.
+ * @param {Array<Object>|null}      [props.serverOptions]   `{ label, value }` server choices; null renders no Server select, and `[]` is truthy, so it renders an empty one.
+ * @param {string}                  [props.serverFilter]    Selected server name, or '' for all servers.
+ * @param {(value: string) => void} [props.setServerFilter] Server filter setter, required alongside `serverOptions`.
+ * @param {boolean}                 [props.loading]         True while a read is out. It is not `pending`: a periodic refresh keeps the previous series drawn and still says the read is out.
+ * @param {string|null}             [props.error]           Already-translated refusal printed under the chart.
+ * @param {string|null}             [props.note]            Already-translated caveat printed under the chart.
  * @return {import('react').ReactElement} Rendered panel.
  */
 export default function BreakdownControls( {
@@ -52,7 +52,7 @@ export default function BreakdownControls( {
 	setMetric,
 	breakdown,
 	setBreakdown,
-	breakdownOptions = CHART_BREAKDOWN_OPTIONS,
+	breakdownOptions,
 	serverOptions = null,
 	serverFilter = '',
 	setServerFilter,

@@ -75,13 +75,13 @@ export const CHART_METRIC_OPTIONS = [
  * `Flame_Builder_Node::DIM_FIELDS` (which decides what gets accumulated in the
  * first place). A value in only one of the three yields an empty breakdown.
  *
- * `BreakdownControls` offers the whole list unless its caller narrows it, and
- * only the Overview card does: `OverviewSection` drops `server` whenever
- * `canBreakDownByServer` is false — no server filter, and two or more servers
- * known. `PerformanceDashboard` computes that flag, passes it down, and
- * resolves the active dimension against the same flag, so a reply that has not
- * landed yet keeps the default. The URL modal passes no `breakdownOptions` and
- * therefore offers every entry.
+ * Each caller hands `BreakdownControls` the list it offers. `OverviewSection`
+ * offers this one while `canBreakDownByServer` holds and
+ * `SCOPED_BREAKDOWN_OPTIONS` once it does not — a server filter is on, or a
+ * landed server list names fewer than two; `PerformanceDashboard` computes
+ * that flag, passes it down, and resolves the active dimension against the
+ * same flag, so a list that has not landed yet keeps the default. The URL
+ * modal offers the scoped list always.
  */
 export const CHART_BREAKDOWN_OPTIONS = [
 	{ label: __( 'Server', 'newspack-event-logger-nodes' ), value: 'server' },
@@ -98,6 +98,17 @@ export const CHART_BREAKDOWN_OPTIONS = [
 	{ label: __( 'User Agent', 'newspack-event-logger-nodes' ), value: 'ua' },
 	{ label: __( 'JA4 Hash', 'newspack-event-logger-nodes' ), value: 'ja4' },
 ];
+
+/**
+ * The dimensions that still split INSIDE one server's scope: the list above
+ * minus `server`. `server_name` is the site's host, so a chart already scoped
+ * to one server — a server filter, or one URL, whose hash is over the whole
+ * URL and therefore its host — would draw one line under that axis. The
+ * per-server aggregate skips the axis on the same reasoning.
+ */
+export const SCOPED_BREAKDOWN_OPTIONS = CHART_BREAKDOWN_OPTIONS.filter(
+	( option ) => option.value !== 'server'
+);
 
 /**
  * What the aggregate chart breaks down by until someone chooses otherwise.

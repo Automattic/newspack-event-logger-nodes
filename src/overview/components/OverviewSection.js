@@ -27,6 +27,7 @@ import {
 import {
 	DASHBOARD_REFRESH_OPTIONS,
 	CHART_BREAKDOWN_OPTIONS,
+	SCOPED_BREAKDOWN_OPTIONS,
 } from '../constants';
 import CategoryTimeChart from '../CategoryTimeChart';
 import { ProfileWithCaption } from '../RequestProfile';
@@ -109,14 +110,9 @@ export default function OverviewSection( {
 	}, [ isMultiServer, serverNames ] );
 
 	// Dropping 'server' cannot strand the selection: the caller resolved it.
-	const breakdownOptions = useMemo( () => {
-		if ( canBreakDownByServer ) {
-			return CHART_BREAKDOWN_OPTIONS;
-		}
-		return CHART_BREAKDOWN_OPTIONS.filter(
-			( opt ) => opt.value !== 'server'
-		);
-	}, [ canBreakDownByServer ] );
+	const breakdownOptions = canBreakDownByServer
+		? CHART_BREAKDOWN_OPTIONS
+		: SCOPED_BREAKDOWN_OPTIONS;
 
 	if ( ! overview ) {
 		return null;
