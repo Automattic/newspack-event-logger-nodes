@@ -194,7 +194,7 @@ describe( 'area chart frame', () => {
 		unmount();
 	} );
 
-	it( 'stacks a second series on top of the first', () => {
+	it( 'overlays by default, and stacks a second series on top of the first on the toggle', () => {
 		const breakdownData = {
 			[ bucketKeyNow() ]: {
 				'2xx': { c: 47, s: 5900 },
@@ -209,11 +209,18 @@ describe( 'area chart frame', () => {
 			} )
 		);
 
+		const innerH = 280 - MARGIN.top - MARGIN.bottom;
+		const ceiling = innerH * ( 1 - 1 / 1.1 );
+		// Overlaid: the taller band alone reaches the ceiling.
+		const [ tall, short ] = areas( container );
+		expect( highestPoint( tall ) ).toBeCloseTo( ceiling, 3 );
+		expect( highestPoint( short ) ).toBeGreaterThan( ceiling );
+		act( () => {
+			container.querySelector( '.newspack-nodes-chart__stack' ).click();
+		} );
 		const bands = areas( container );
 		expect( bands ).toHaveLength( 2 );
 		// The top band peaks at the stack total, which the axis pads by 1.1.
-		const innerH = 280 - MARGIN.top - MARGIN.bottom;
-		const ceiling = innerH * ( 1 - 1 / 1.1 );
 		expect( highestPoint( bands[ 1 ] ) ).toBeCloseTo( ceiling, 3 );
 		expect( highestPoint( bands[ 0 ] ) ).toBeGreaterThan( ceiling );
 		unmount();
