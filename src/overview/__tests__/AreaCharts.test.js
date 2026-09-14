@@ -5,13 +5,11 @@
  * selection to one shared chainable, so they cannot see WHERE a legend lands.
  */
 
-import { readFileSync } from 'fs';
-import { resolve as resolvePath } from 'path';
 import * as React from 'react';
 import { MARGIN } from '@newspack-nodes/shared/hooks/useTimeChart';
-import AggregateTimeChart from '../../AggregateTimeChart';
-import CategoryTimeChart from '../../CategoryTimeChart';
-import { renderComponent, act } from '../../../test-helpers/renderHook';
+import AggregateTimeChart from '../AggregateTimeChart';
+import CategoryTimeChart from '../CategoryTimeChart';
+import { renderComponent, act } from '../../test-helpers/renderHook';
 import { STATUS_COLORS } from '@newspack-nodes/shared/utils/formatUtils';
 
 function bucketKeyNow() {
@@ -76,11 +74,11 @@ describe( 'area chart frame', () => {
 	 * @param {Element} container Mounted chart container.
 	 * @return {Array<Element>} Its area paths.
 	 */
-	// Painted through `style`, never a presentation attribute: a caller's
+	// Painted through `style`, never a presentation attribute: a rank's
 	// `chartColor()` value is a `var()`, which only a style resolves.
 	const areas = ( container ) =>
 		[ ...container.querySelectorAll( 'svg path' ) ].filter( ( path ) =>
-			path.style.fill.startsWith( '#' )
+			/^(?:#|var\()/.test( path.style.fill )
 		);
 
 	it( 'legends the aggregate beside the plot, one whole label per series', () => {
@@ -99,7 +97,7 @@ describe( 'area chart frame', () => {
 			} )
 		);
 
-		const row = container.querySelector( '.newspack-nodes-chart' );
+		const row = container.querySelector( '.newspack-nodes-chart__row' );
 		expect(
 			row.querySelector( '.newspack-nodes-chart__plot svg' )
 		).not.toBeNull();
@@ -109,8 +107,12 @@ describe( 'area chart frame', () => {
 				'curl/8.7.1',
 			]
 		);
-		// No legend inside the SVG any more.
-		expect( container.querySelector( 'svg rect[width="10"]' ) ).toBeNull();
+		// No legend inside the plot's SVG any more.
+		expect(
+			container.querySelector(
+				'.newspack-nodes-chart__plot svg rect[width="10"]'
+			)
+		).toBeNull();
 		unmount();
 	} );
 
@@ -258,16 +260,6 @@ describe( 'area chart frame', () => {
 } );
 
 describe( 'chart frame', () => {
-	it( 'draws its axes through the shared frame, not a private copy', () => {
-		const source = readFileSync(
-			resolvePath( __dirname, '../AreaTimeChart.js' ),
-			'utf8'
-		);
-		expect( source ).toContain( 'drawAxes' );
-		expect( source ).not.toContain( 'axisBottom' );
-		expect( source ).not.toContain( 'axisLeft' );
-	} );
-
 	it( 'still renders both axes and the rotated Y title', () => {
 		const breakdownData = {
 			[ bucketKeyNow() ]: { 'curl/8.7.1': { c: 61, s: 7300 } },

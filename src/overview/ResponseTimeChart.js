@@ -257,7 +257,7 @@ export default function ResponseTimeChart( { requests, onRequestClick } ) {
 					'newspack-event-logger-nodes'
 				) }
 			</h3>
-			<div className="newspack-nodes-chart">
+			<div className="newspack-nodes-chart__row">
 				<div
 					ref={ containerRef }
 					className="newspack-nodes-chart__plot"
