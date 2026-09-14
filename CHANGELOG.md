@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.98.0] - 2026-09-14
+
 ### Changed
 
 - **The Aggregate and Category charts draw on the substrate's `AreaTimeChart`, stack on a toggle, and re-skin with the page.** The chart component moved into newspack-nodes 2.60.0, so the floor rises to it. Each chart carries a stack toggle in its corner: the Aggregate chart still stacks `volume` and `cumulative` and overlays `avg` and `memory` by default, the three Category panels overlay and offer no toggle, since a callback's time counts inside its hook's and a stack would double-count it; a click flips the Aggregate chart until the metric's own default moves; the tooltip's Total row prints only while the bands are stacked. Every series that carries no semantic colour — a status class keeps its 2xx green and 5xx red — is coloured by rank through the skin's own `--chart-N` tokens, so the charts follow a skin change like the rest of the page. The tooltip is the substrate's elevated card now, painted by its role.
