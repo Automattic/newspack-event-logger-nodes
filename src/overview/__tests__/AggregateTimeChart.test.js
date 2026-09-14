@@ -1,6 +1,6 @@
 /* global globalThis */
 /**
- * Tests for AggregateTimeChart — D3 stacked-area / line chart.
+ * Tests for AggregateTimeChart — overlaid areas, stacked on the toggle.
  *
  * Same approach as CategoryTimeChart: mock d3 chainable + useTimeChart's
  * setupTooltip, invoke captured formatEntry callbacks to
@@ -124,6 +124,17 @@ function lastSlotIndex() {
 		NUM_BUCKETS,
 	} = require( '@newspack-nodes/shared/hooks/useTimeChart' );
 	return NUM_BUCKETS - 1;
+}
+
+/**
+ * Stack a mounted chart through its corner toggle.
+ *
+ * @param {Element} container The rendered chart.
+ */
+function stack( container ) {
+	act( () => {
+		container.querySelector( '.newspack-nodes-chart__stack' ).click();
+	} );
 }
 
 function getFormatEntry() {
@@ -313,7 +324,7 @@ describe( 'AggregateTimeChart', () => {
 		unmount();
 	} );
 
-	it( 'renders with breakdownData (status) → cumulative stacked area', () => {
+	it( 'renders with breakdownData (status) → cumulative overlaid area', () => {
 		const bk = bucketKeyNow();
 		const breakdownData = {
 			[ bk ]: {
@@ -422,15 +433,19 @@ describe( 'AggregateTimeChart', () => {
 				integer: { c: 1, s: 2_000_000 }, // → 2Ks (no .0)
 			},
 		};
-		const { unmount } = renderComponent(
+		const { container, unmount } = renderComponent(
 			React.createElement( AggregateTimeChart, {
 				breakdownData,
 				metric: 'cumulative',
 				breakdown: 'status',
 			} )
 		);
-		const formatEntry = getFormatEntry();
-		const entries = formatEntry( lastSlotIndex() );
+		// Overlaid by default: no total row until the reader stacks.
+		expect(
+			getFormatEntry()( lastSlotIndex() ).map( ( e ) => e.label )
+		).not.toContain( 'Total' );
+		stack( container );
+		const entries = getFormatEntry()( lastSlotIndex() );
 		expect( Array.isArray( entries ) ).toBe( true );
 		// First entry is the Total.
 		expect( entries[ 0 ].label ).toBe( 'Total' );
@@ -449,6 +464,7 @@ describe( 'AggregateTimeChart', () => {
 				breakdown: 'status',
 			} )
 		);
+		stack( container );
 		act( () => {
 			container
 				.querySelectorAll( '.newspack-nodes-chart-legend button' )[ 0 ]
@@ -478,6 +494,7 @@ describe( 'AggregateTimeChart', () => {
 				breakdown: 'ua',
 			} )
 		);
+		stack( container );
 		act( () => {
 			container
 				.querySelectorAll( '.newspack-nodes-chart-legend button' )[ 0 ]
@@ -489,6 +506,40 @@ describe( 'AggregateTimeChart', () => {
 		expect( entries[ 1 ] ).toEqual(
 			expect.objectContaining( { label: 'minor', value: '600ms' } )
 		);
+		unmount();
+	} );
+
+	it( 'a stack picked under one metric does not carry into the next', () => {
+		// A stack of request counts is a total; a stack of means is not.
+		const bk = bucketKeyNow();
+		const breakdownData = {
+			[ bk ]: { '2xx': { c: 47, s: 470 }, '5xx': { c: 453, s: 4530 } },
+		};
+		const props = { breakdownData, breakdown: 'status' };
+		const { container, rerender, unmount } = renderComponent(
+			React.createElement( AggregateTimeChart, {
+				...props,
+				metric: 'volume',
+			} )
+		);
+		stack( container );
+		expect( getFormatEntry()( lastSlotIndex() )[ 0 ].label ).toBe(
+			'Total'
+		);
+		rerender(
+			React.createElement( AggregateTimeChart, {
+				...props,
+				metric: 'avg',
+			} )
+		);
+		expect(
+			container
+				.querySelector( '.newspack-nodes-chart__stack' )
+				.getAttribute( 'aria-pressed' )
+		).toBe( 'false' );
+		expect(
+			getFormatEntry()( lastSlotIndex() ).map( ( e ) => e.label )
+		).not.toContain( 'Total' );
 		unmount();
 	} );
 

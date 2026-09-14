@@ -1,10 +1,10 @@
 /**
  * Aggregate time chart — the Performance dashboard's main time series.
  *
- * Plots the whole retention window in 5-minute buckets (`buildTimeSlots`) as
- * one of two D3 shapes. `volume` and `cumulative` stack their series; `avg`
- * and `memory` overlay one translucent area per series, because averages do
- * not add up. `AreaTimeChart` owns the frame; this file owns the sampling.
+ * Plots the whole retention window in 5-minute buckets (`buildTimeSlots`),
+ * one translucent area per series, overlaid; the chart's own corner toggle
+ * stacks them, and the total row appears with the stack. `AreaTimeChart` owns
+ * the frame; this file owns the sampling.
  *
  * A breakdown dimension is ALWAYS selected — there is no "None" — so the
  * selected dimension's series is the only thing this chart ever draws. It
@@ -199,10 +199,8 @@ export default function AggregateTimeChart( {
 	serverFilter = '',
 } ) {
 	const chartState = useMemo( () => {
-		// Averages don't add up, so they overlay instead of stacking.
-		const stacked = 'avg' !== metric && 'memory' !== metric;
 		if ( 'series' !== breakdownState( breakdownData ) ) {
-			return { series: [], colorMap: {}, stacked };
+			return { series: [], colorMap: {} };
 		}
 
 		const slots = buildTimeSlots( RETENTION_SECONDS );
@@ -227,7 +225,7 @@ export default function AggregateTimeChart( {
 			} ),
 		} ) );
 
-		return { series, colorMap, stacked };
+		return { series, colorMap };
 	}, [ breakdownData, metric, breakdown ] );
 
 	// The unit follows the DOMAIN: the chart builds it from the peak it draws.
@@ -275,11 +273,12 @@ export default function AggregateTimeChart( {
 					Math.round( RETENTION_SECONDS / 60 )
 			  );
 
+	// Keyed on the metric: a stack of means is no total, so a pick retires.
 	return (
 		<AreaTimeChart
+			key={ metric }
 			className="event-logger-aggregate-time-chart"
 			series={ chartState.series }
-			stacked={ chartState.stacked }
 			colorAt={ colorAt }
 			yFormatFor={ yFormatFor }
 			yLabel={ yLabels[ metric ] }

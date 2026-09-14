@@ -41,9 +41,7 @@ export const DASHBOARD_REFRESH_OPTIONS = [
  * request count, the summed milliseconds and the summed peak megabytes — and
  * the `value` decides how `AggregateTimeChart` reduces them: `volume` plots the
  * count, `avg` the mean millisecond, `cumulative` the summed seconds, `memory`
- * the mean megabyte. It also decides the shape. `volume` and `cumulative` stack
- * their series; `avg` and `memory` overlay one translucent area per series,
- * because averages do not add up.
+ * the mean megabyte.
  *
  * `PerformanceDashboard` and `UrlDetailView` each seed their own state with
  * `'volume'`. The list order sets no default.

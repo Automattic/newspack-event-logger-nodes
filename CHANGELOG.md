@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The Aggregate chart overlays every metric by default.** `volume` and `cumulative` stacked their series before; now every metric starts overlaid, one translucent band per series, and the corner toggle stacks them on request, with the tooltip's Total row arriving with the stack.
+
 ## [0.98.0] - 2026-09-14
 
 ### Changed
