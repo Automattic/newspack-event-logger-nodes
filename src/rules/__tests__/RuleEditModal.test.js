@@ -332,6 +332,20 @@ describe( 'RuleEditModal — log rule fields', () => {
 		expect( onSave.mock.calls[ 0 ][ 0 ].trace_callers ).toBe( 0 );
 	} );
 
+	test( 'the help says what each knob buys, and nothing more', () => {
+		// The label is on HOOK spans alone — SQL and HTTP spans carry theirs
+		// regardless — and the count buys the twenty nearest frames per hook
+		// per request, not a full stack.
+		mount( { ...LOG_RULE, trace_hooks: true } );
+		const help = inDialog( '.rule-edit-trace-row' ).textContent;
+		expect( help ).toContain( 'Labels every hook span with who called it' );
+		expect( help ).toContain(
+			'per request, also record their twenty nearest callers'
+		);
+		expect( help ).not.toContain( 'every span with' );
+		expect( help ).not.toContain( 'full backtrace' );
+	} );
+
 	test( 'the backtrace count shares the checkbox row', () => {
 		mount( { ...LOG_RULE, trace_hooks: true } );
 		expect(

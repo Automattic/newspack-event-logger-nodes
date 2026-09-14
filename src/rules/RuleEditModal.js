@@ -365,11 +365,11 @@ export default function RuleEditModal( {
 								help={
 									traceHooks
 										? __(
-												'Labels every span with who called it, so a hook that runs many times splits by caller in the flame graph. The count is how many firings of each hook also record a full backtrace — expensive; 0 = labels only.',
+												'Labels every hook span with who called it, so a hook that runs many times splits by caller in the flame graph. The count is how many firings of each hook, per request, also record their twenty nearest callers — expensive; 0 = labels only.',
 												'newspack-event-logger-nodes'
 										  )
 										: __(
-												'Labels every span with who called it, so a hook that runs many times splits by caller in the flame graph.',
+												'Labels every hook span with who called it, so a hook that runs many times splits by caller in the flame graph.',
 												'newspack-event-logger-nodes'
 										  )
 								}
