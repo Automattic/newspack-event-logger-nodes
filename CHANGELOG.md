@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The rule editor's caller-tracing help says what each knob buys.** It said the toggle labels every span, where SQL and HTTP spans carry their caller whether or not it is on and only hook spans take it from the toggle, and that the count records a full backtrace, where it records the twenty nearest callers, per hook, per request.
+
 - **The URL table names every row it shows.** A page's names are resolved last, after the index walk, under the one mirror read budget the walk had already spent on a host whose memcache is evicting; the rows came back and every name the mirror held did not, so the table showed counts against blank URLs — the job URLs first, since nothing but this table reads their names — until enough polls had warmed the walk, or a click on the row rehydrated its one name through `dump_url`. Naming a page is an answer of its own with a budget of its own: `resolve_urls()` runs its one read per partition under `Flame_Builder_Node::with_own_mirror_read_budget()`, which resumes the command's accounting afterwards so a walk that follows inherits nothing, and the `urls` verb names its page and its slowest rows in one read rather than two.
 
 ## [0.96.3] - 2026-09-13
