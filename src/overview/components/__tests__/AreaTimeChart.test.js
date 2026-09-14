@@ -11,10 +11,8 @@ import * as React from 'react';
 import { MARGIN } from '@newspack-nodes/shared/hooks/useTimeChart';
 import AggregateTimeChart from '../../AggregateTimeChart';
 import CategoryTimeChart from '../../CategoryTimeChart';
-import { renderComponent } from '../../../test-helpers/renderHook';
-
-// jsdom reports clientWidth 0, so both charts fall back to this width.
-const CHART_WIDTH = 800;
+import { renderComponent, act } from '../../../test-helpers/renderHook';
+import { STATUS_COLORS } from '@newspack-nodes/shared/utils/formatUtils';
 
 function bucketKeyNow() {
 	const now = new Date();
@@ -26,46 +24,6 @@ function bucketKeyNow() {
 		String( now.getUTCHours() ).padStart( 2, '0' ),
 		String( Math.floor( now.getUTCMinutes() / 5 ) * 5 ).padStart( 2, '0' ),
 	].join( '-' );
-}
-
-/**
- * Sum every `translate()` between a node and the SVG root.
- *
- * @param {Element} node Node to locate.
- * @return {{x: number, y: number}} Offset from the SVG origin.
- */
-function absoluteOffset( node ) {
-	let x = 0;
-	let y = 0;
-	for ( let el = node; el && 'svg' !== el.tagName; el = el.parentNode ) {
-		const match = /translate\(\s*([-\d.]+)\s*,\s*([-\d.]+)\s*\)/.exec(
-			el.getAttribute( 'transform' ) || ''
-		);
-		if ( match ) {
-			x += Number( match[ 1 ] );
-			y += Number( match[ 2 ] );
-		}
-	}
-	return { x, y };
-}
-
-/**
- * Locate the legend group by its 10x10 swatch and report where it sits.
- *
- * @param {Element} container Mounted chart container.
- * @return {{x: number, y: number}} Legend offset from the SVG origin.
- */
-function legendOffset( container ) {
-	const groups = [ ...container.querySelectorAll( 'svg g' ) ];
-	const legend = groups.find( ( group ) =>
-		[ ...group.children ].some(
-			( child ) =>
-				'rect' === child.tagName &&
-				'10' === child.getAttribute( 'width' ) &&
-				'10' === child.getAttribute( 'height' )
-		)
-	);
-	return absoluteOffset( legend );
 }
 
 /**
@@ -103,11 +61,35 @@ function valueLabels( container, title ) {
 }
 
 describe( 'area chart frame', () => {
-	const expected = { x: CHART_WIDTH - MARGIN.right + 10, y: MARGIN.top };
+	/**
+	 * The legend rows beside the plot, in order.
+	 *
+	 * @param {Element} container Mounted chart container.
+	 * @return {Array<Element>} Its legend rows.
+	 */
+	const legendRows = ( container ) => [
+		...container.querySelectorAll( '.newspack-nodes-chart-legend li' ),
+	];
+	/**
+	 * The areas the plot holds.
+	 *
+	 * @param {Element} container Mounted chart container.
+	 * @return {Array<Element>} Its area paths.
+	 */
+	// Painted through `style`, never a presentation attribute: a caller's
+	// `chartColor()` value is a `var()`, which only a style resolves.
+	const areas = ( container ) =>
+		[ ...container.querySelectorAll( 'svg path' ) ].filter( ( path ) =>
+			path.style.fill.startsWith( '#' )
+		);
 
-	it( 'places the aggregate legend inside the right margin', () => {
+	it( 'legends the aggregate beside the plot, one whole label per series', () => {
 		const breakdownData = {
-			[ bucketKeyNow() ]: { 'curl/8.7.1': { c: 137, s: 4213, m: 91 } },
+			[ bucketKeyNow() ]: {
+				'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36':
+					{ c: 137, s: 4213, m: 91 },
+				'curl/8.7.1': { c: 12, s: 400, m: 30 },
+			},
 		};
 		const { container, unmount } = renderComponent(
 			React.createElement( AggregateTimeChart, {
@@ -117,21 +99,96 @@ describe( 'area chart frame', () => {
 			} )
 		);
 
-		expect( legendOffset( container ) ).toEqual( expected );
+		const row = container.querySelector( '.newspack-nodes-chart' );
+		expect(
+			row.querySelector( '.newspack-nodes-chart__plot svg' )
+		).not.toBeNull();
+		expect( legendRows( container ).map( ( r ) => r.textContent ) ).toEqual(
+			[
+				'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+				'curl/8.7.1',
+			]
+		);
+		// No legend inside the SVG any more.
+		expect( container.querySelector( 'svg rect[width="10"]' ) ).toBeNull();
 		unmount();
 	} );
 
-	it( 'places the category legend at the same offset', () => {
+	it( 'a picked series is drawn alone, and the axis rescales to it', () => {
+		const breakdownData = {
+			[ bucketKeyNow() ]: {
+				'2xx': { c: 47, s: 5900 },
+				'4xx': { c: 3, s: 300 },
+			},
+		};
+		const { container, unmount } = renderComponent(
+			React.createElement( AggregateTimeChart, {
+				breakdownData,
+				metric: 'volume',
+				breakdown: 'status',
+			} )
+		);
+		expect( areas( container ) ).toHaveLength( 2 );
+		const innerH = 280 - MARGIN.top - MARGIN.bottom;
+		const ceiling = innerH * ( 1 - 1 / 1.1 );
+
+		act( () => {
+			legendRows( container )[ 1 ].querySelector( 'button' ).click();
+		} );
+		const [ only ] = areas( container );
+		expect( areas( container ) ).toHaveLength( 1 );
+		// 4xx keeps its own colour and now peaks at the axis ceiling.
+		expect( only.style.fill ).toBe( STATUS_COLORS[ '4xx' ] );
+		expect( highestPoint( only ) ).toBeCloseTo( ceiling, 3 );
+		expect(
+			legendRows( container )[ 1 ]
+				.querySelector( 'button' )
+				.getAttribute( 'aria-pressed' )
+		).toBe( 'true' );
+		unmount();
+	} );
+
+	it( "a picked series takes its own axis unit, not the full list's", () => {
+		// A slow bot beside a 44ms series: full max 12s, picked max 44ms.
+		const breakdownData = {
+			[ bucketKeyNow() ]: {
+				'SlowBot/1.0': { c: 1, s: 12000 },
+				'curl/8.7.1': { c: 2, s: 88 },
+			},
+		};
+		const { container, unmount } = renderComponent(
+			React.createElement( AggregateTimeChart, {
+				breakdownData,
+				metric: 'avg',
+				breakdown: 'ua',
+			} )
+		);
+		act( () => {
+			legendRows( container )[ 1 ].querySelector( 'button' ).click();
+		} );
+		const title = container.querySelector( 'h3' ).textContent;
+		const labels = valueLabels( container, title );
+		expect( labels ).toContain( '40ms' );
+		expect( labels ).not.toContain( '0s' );
+		unmount();
+	} );
+
+	it( 'legends the category chart the same way', () => {
 		const data = {
-			names: [ 'db' ],
-			buckets: { [ bucketKeyNow() ]: [ [ 0, 2711, 43, 43 ] ] },
+			names: [ 'db', 'http' ],
+			buckets: {
+				[ bucketKeyNow() ]: [
+					[ 0, 2711, 43, 43 ],
+					[ 1, 900, 9, 9 ],
+				],
+			},
 		};
 		const { container, unmount } = renderComponent(
 			React.createElement( CategoryTimeChart, { data } )
 		);
-
-		// The panel draws three views; the first one answers for the frame.
-		expect( legendOffset( container ) ).toEqual( expected );
+		// The panel draws three views; the first answers for the frame.
+		expect( legendRows( container ).length ).toBeGreaterThanOrEqual( 2 );
+		expect( legendRows( container )[ 0 ].textContent ).toBe( 'db' );
 		unmount();
 	} );
 
@@ -150,15 +207,13 @@ describe( 'area chart frame', () => {
 			} )
 		);
 
-		const areas = [ ...container.querySelectorAll( 'svg path' ) ].filter(
-			( path ) => path.getAttribute( 'fill' )?.startsWith( '#' )
-		);
-		expect( areas ).toHaveLength( 2 );
+		const bands = areas( container );
+		expect( bands ).toHaveLength( 2 );
 		// The top band peaks at the stack total, which the axis pads by 1.1.
 		const innerH = 280 - MARGIN.top - MARGIN.bottom;
 		const ceiling = innerH * ( 1 - 1 / 1.1 );
-		expect( highestPoint( areas[ 1 ] ) ).toBeCloseTo( ceiling, 3 );
-		expect( highestPoint( areas[ 0 ] ) ).toBeGreaterThan( ceiling );
+		expect( highestPoint( bands[ 1 ] ) ).toBeCloseTo( ceiling, 3 );
+		expect( highestPoint( bands[ 0 ] ) ).toBeGreaterThan( ceiling );
 		unmount();
 	} );
 

@@ -5,8 +5,9 @@
  * overview dashboard's URL detail view. One dot per request on a continuous
  * time axis — not the slot-bucketed series its `AreaTimeChart` siblings draw —
  * colored by HTTP status class and clickable to open that request; a monotone
- * trend line and a dashed mean line sit behind them, and a legend lists the
- * status classes actually present.
+ * trend line and a dashed mean line sit behind them, and the legend beside
+ * the plot lists the status classes actually present. Picking a class there
+ * keeps its dots alone on the plot, trend and mean recomputed over them.
  *
  * D3 owns this SVG subtree, not React: `useTimeChart` calls the render
  * function on mount, on data change and on container resize, and it redraws
@@ -19,10 +20,11 @@ import { __, sprintf } from '@wordpress/i18n';
 import * as d3 from 'd3';
 import {
 	drawAxes,
-	drawLegend,
 	openFrame,
 	useTimeChart,
 } from '@newspack-nodes/shared/hooks/useTimeChart';
+import ChartLegend from '@newspack-nodes/shared/components/ChartLegend';
+import { useSeriesSelection } from '@newspack-nodes/shared/hooks/useSeriesSelection';
 import {
 	getStatusCategory,
 	getStatusColor,
@@ -61,9 +63,9 @@ export default function ResponseTimeChart( { requests, onRequestClick } ) {
 	 * truthiness test also drops a `duration_ms` of exactly 0. Timestamps
 	 * arrive in seconds and become `Date` objects for the time scale.
 	 *
-	 * @type {Array<{time: Date, duration: number, rid: string, partition: number, status: number}>}
+	 * @type {Array<{time: Date, duration: number, rid: string, partition: number, status: number, klass: string}>}
 	 */
-	const chartData = useMemo( () => {
+	const allPoints = useMemo( () => {
 		if ( ! requests || requests.length === 0 ) {
 			return [];
 		}
@@ -75,9 +77,27 @@ export default function ResponseTimeChart( { requests, onRequestClick } ) {
 				rid: r.rid,
 				partition: r.partition,
 				status: r.status_code || 0,
+				klass: getStatusCategory( r.status_code || 0 ),
 			} ) )
 			.sort( ( a, b ) => a.time.getTime() - b.time.getTime() );
 	}, [ requests ] );
+
+	// The four classes only; a status-less dot is grey and unlegended.
+	const legendItems = useMemo( () => {
+		const present = new Set( allPoints.map( ( d ) => d.klass ) );
+		return [ '2xx', '3xx', '4xx', '5xx' ]
+			.filter( ( key ) => present.has( key ) )
+			.map( ( key ) => ( { color: STATUS_COLORS[ key ], label: key } ) );
+	}, [ allPoints ] );
+	const labels = useMemo(
+		() => legendItems.map( ( i ) => i.label ),
+		[ legendItems ]
+	);
+	const { selected, onSelect, isShown } = useSeriesSelection( labels );
+	const chartData = useMemo(
+		() => allPoints.filter( ( d ) => isShown( d.klass ) ),
+		[ allPoints, isShown ]
+	);
 
 	/**
 	 * Draw every mark, into the container `useTimeChart` hands back.
@@ -102,7 +122,7 @@ export default function ResponseTimeChart( { requests, onRequestClick } ) {
 				return;
 			}
 
-			const { svg, g, width, innerW, innerH } = openFrame(
+			const { g, innerW, innerH } = openFrame(
 				containerRef.current,
 				CHART_HEIGHT
 			);
@@ -219,21 +239,6 @@ export default function ResponseTimeChart( { requests, onRequestClick } ) {
 						),
 					].join( '\n' )
 				);
-
-			// The four classes only: a status-less dot is grey, unlegended.
-			const present = new Set(
-				chartData.map( ( d ) => getStatusCategory( d.status ) )
-			);
-			drawLegend(
-				svg,
-				[ '2xx', '3xx', '4xx', '5xx' ]
-					.filter( ( key ) => present.has( key ) )
-					.map( ( key ) => ( {
-						color: STATUS_COLORS[ key ],
-						label: key,
-					} ) ),
-				width
-			);
 		},
 		[ chartData ]
 	);
@@ -252,10 +257,19 @@ export default function ResponseTimeChart( { requests, onRequestClick } ) {
 					'newspack-event-logger-nodes'
 				) }
 			</h3>
-			<div
-				ref={ containerRef }
-				style={ { width: '100%', minHeight: `${ CHART_HEIGHT }px` } }
-			/>
+			<div className="newspack-nodes-chart">
+				<div
+					ref={ containerRef }
+					className="newspack-nodes-chart__plot"
+					style={ { minHeight: `${ CHART_HEIGHT }px` } }
+				/>
+				<ChartLegend
+					items={ legendItems }
+					selected={ selected }
+					onSelect={ onSelect }
+					height={ CHART_HEIGHT }
+				/>
+			</div>
 		</div>
 	);
 }

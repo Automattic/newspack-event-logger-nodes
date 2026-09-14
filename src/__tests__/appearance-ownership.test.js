@@ -153,7 +153,8 @@ const INLINE_APPEARANCE_PROPERTY =
 const INLINE_SEMANTIC_ALLOWLIST = new Map( [
 	[ 'overview/UrlTable.js', [ /linear-gradient\(to right/ ] ],
 	[ 'overview/components/UrlDetailView.js', [ /linear-gradient\(to right/ ] ],
-	// A legend item's `color` is data handed to `drawLegend`, not a style prop.
+	// A legend item's `color` is series data handed to `ChartLegend`, the
+	// swatch the shared role paints from — not a style prop.
 	[ 'overview/ResponseTimeChart.js', [ /color: STATUS_COLORS/ ] ],
 	[
 		'overview/RequestProfile.js',

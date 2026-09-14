@@ -76,7 +76,6 @@ jest.mock( '@newspack-nodes/shared/hooks/useTimeChart', () => {
 		__esModule: true,
 		...actual,
 		setupTooltip: jest.fn(),
-		drawLegend: jest.fn(),
 		useTimeChart: ( renderFn ) => {
 			globalThis.__lastRenderFn = renderFn;
 			const containerRef = {

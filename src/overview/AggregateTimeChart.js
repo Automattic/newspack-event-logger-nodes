@@ -236,18 +236,8 @@ export default function AggregateTimeChart( {
 		return { series, colorMap, stacked };
 	}, [ breakdownData, metric, breakdown ] );
 
-	// The axis unit is a property of the DOMAIN, not of the metric.
-	const yFormat = useMemo( () => {
-		const max = chartState.series.reduce(
-			( peak, s ) =>
-				s.values.reduce(
-					( m, v ) => Math.max( m, v.value || 0 ),
-					peak
-				),
-			0
-		);
-		return Y_FORMATS[ metric ]( max );
-	}, [ chartState, metric ] );
+	// The unit follows the DOMAIN: the chart builds it from the peak it draws.
+	const yFormatFor = Y_FORMATS[ metric ];
 
 	const colorAt = useCallback(
 		( label, index ) =>
@@ -298,7 +288,7 @@ export default function AggregateTimeChart( {
 			series={ chartState.series }
 			stacked={ chartState.stacked }
 			colorAt={ colorAt }
-			yFormat={ yFormat }
+			yFormatFor={ yFormatFor }
 			yLabel={ yLabels[ metric ] }
 			height={ CHART_HEIGHT }
 			totalLabel={

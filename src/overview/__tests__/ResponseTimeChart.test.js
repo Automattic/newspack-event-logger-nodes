@@ -340,12 +340,44 @@ describe( 'ResponseTimeChart', () => {
 		unmount();
 	} );
 
-	it( 'legends only the status classes actually present', () => {
+	/**
+	 * The legend rows beside the plot, in order.
+	 *
+	 * @param {Element} container Mounted chart container.
+	 * @return {Array<Element>} Its legend rows.
+	 */
+	const legendRows = ( container ) => [
+		...container.querySelectorAll( '.newspack-nodes-chart-legend li' ),
+	];
+
+	it( 'legends only the status classes actually present, beside the plot', () => {
 		const { container, unmount } = mountChart( REQUESTS );
 
-		expect( texts( container ) ).toEqual(
-			expect.arrayContaining( [ '2xx', '3xx', '4xx', '5xx' ] )
+		expect( legendRows( container ).map( ( r ) => r.textContent ) ).toEqual(
+			[ '2xx', '3xx', '4xx', '5xx' ]
 		);
+		expect( texts( container ) ).not.toContain( '2xx' );
+		unmount();
+	} );
+
+	it( 'a picked status class keeps its dots alone on the plot', () => {
+		const { container, unmount } = mountChart( REQUESTS );
+		const before = dots( container ).length;
+		const wanted = dots( container ).filter(
+			( c ) => c.getAttribute( 'fill' ) === STATUS_COLORS[ '5xx' ]
+		).length;
+		expect( wanted ).toBeGreaterThan( 0 );
+		expect( wanted ).toBeLessThan( before );
+
+		act( () => {
+			legendRows( container )[ 3 ].querySelector( 'button' ).click();
+		} );
+		expect( dots( container ) ).toHaveLength( wanted );
+		expect(
+			dots( container ).every(
+				( c ) => c.getAttribute( 'fill' ) === STATUS_COLORS[ '5xx' ]
+			)
+		).toBe( true );
 		unmount();
 	} );
 
@@ -362,8 +394,9 @@ describe( 'ResponseTimeChart', () => {
 
 		const [ circle ] = dots( container );
 		expect( circle.getAttribute( 'fill' ) ).toBe( STATUS_COLORS[ '5xx' ] );
-		expect( texts( container ) ).toContain( '5xx' );
-		expect( texts( container ) ).not.toContain( '2xx' );
+		expect( legendRows( container ).map( ( r ) => r.textContent ) ).toEqual(
+			[ '5xx' ]
+		);
 		unmount();
 	} );
 
