@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.98.2] - 2026-09-14
+
 ### Fixed
 
 - **An on-demand performance worker flushes its stats before it exits.** `Flame_Builder` flushed its pending buckets only inside `fill()`, on a record arriving five seconds or more after the last flush — and an on-demand worker, which spawns on a backlog, folds it within the second and idles out, never saw one. Every record it folded rode `pending` into the consumer's checkpoint and out to the next worker, never reaching the store: gazettenet carried six hours of URL stats that way while its Performance dashboard read zero URLs and zero requests beside charts that still drew. The node now implements `Shutdown_Sweeper`, so every clean stop flushes and the checkpoint carries nothing forward.
