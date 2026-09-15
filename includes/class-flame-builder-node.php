@@ -143,34 +143,31 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	/**
 	 * Byte ceiling on the held mirror frames a checkpoint frame carries.
 	 *
-	 * Set from the OBSERVED held size, not from the drop cliff. A production hub
-	 * reports held totals of ~267KB–348KB per checkpoint, against a topics cache
-	 * peaking under 3.8MB across a day; this sits ~6x over the held peak, so
-	 * routine operation does not trip it and the tripwire below is informative
-	 * when it fires. A budget tight enough to fire every checkpoint reports
-	 * nothing.
+	 * Sized from the OUTER limit, not from an observed size. The checkpoint
+	 * record is the whole of `save_state()` — the read cursor, `pending` and
+	 * these frames — and `add_snapshot_node` lifts its PIPE_BUF cap to
+	 * `Partition_Node::MAX_LARGE_LINE_SIZE` (32MB), past which the record is
+	 * DROPPED, cursor included. This is a policy cap on FRAME bytes alone, so
+	 * keys, nesting and `pending` ride it uncounted; half the cliff leaves the
+	 * other half for them.
+	 *
+	 * A budget set from a fixture binds the first time a real site is bigger
+	 * than it: a staging hub holds ~1,400 per-URL frames, 2.1–3.5MB a
+	 * checkpoint, and a 2MB budget fired the tripwire below on every one of
+	 * them, which reports nothing. `mirror_held_bytes` on GET_STATS is where
+	 * the trend is read against this number.
 	 *
 	 * What it costs is DISK, in the offsetlog. That ring bounds keyframe COUNT
-	 * (`OFFSETLOG_MAX_SEGMENTS`, 60) and never bytes — its retention is count and
-	 * age only — and each keyframe carries a whole checkpoint, so this budget is
-	 * what bounds the ring: 60 x this value, ~120MB, plus a write every 30s.
-	 *
-	 * The cliff is elsewhere and far. `add_snapshot_node` lifts the PIPE_BUF cap
-	 * to `Partition_Node::MAX_LARGE_LINE_SIZE` (32MB), past which the record is
-	 * DROPPED — and the record is the whole checkpoint: the read cursor and every
-	 * snapshot node's state, not just these frames. This is a policy cap on FRAME
-	 * bytes, so keys, nesting and `pending` ride it uncounted; at 1/16th of the
-	 * cliff that slack cannot reach it.
-	 *
-	 * The headroom is also room for growth on the one axis that has none: the
-	 * per-server aggregates grow with the spoke count, one server's leaderboard
-	 * bucket being ~27KB. Decision 11 names bounding that axis as the real fix.
+	 * (`OFFSETLOG_NUM_SEGMENTS`, 30, which binds at a 30s cadence) and never
+	 * bytes, and each keyframe carries a whole checkpoint, so the ring holds 30x
+	 * what is HELD — the budget is its ceiling, 480MB, not its size: a hub
+	 * holding 3.5MB spends ~100MB.
 	 *
 	 * A frame past the budget is re-merged from memcache by the next write to its
 	 * bucket, so it is lost only if the process AND memcache both fail before the
 	 * bucket closes — the same double failure the mirror exists for.
 	 */
-	private const MAX_CHECKPOINT_MIRROR_BYTES = 2097152;
+	private const MAX_CHECKPOINT_MIRROR_BYTES = 16777216;
 
 	/**
 	 * Cap on the per-process string-intern table. Every dimension value, category
