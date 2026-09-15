@@ -661,7 +661,7 @@ const deepestByBase = ( flame ) => {
 	const walk = ( nodes, depth, path ) => {
 		( nodes || [] ).forEach( ( node ) => {
 			const name = String( node.name );
-			const base = name.split( ': ' )[ 0 ];
+			const base = node.k;
 			const here = '' === path ? name : `${ path }/${ name }`;
 			if ( depth > ( depths.get( base ) ?? -1 ) ) {
 				depths.set( base, depth );
@@ -726,7 +726,7 @@ const foldedSpanEntries = (
 		let onScreen = false;
 		( nodes || [] ).forEach( ( node ) => {
 			const name = String( node.name );
-			const base = name.split( ': ' )[ 0 ];
+			const base = node.k;
 			const here = '' === path ? name : `${ path }/${ name }`;
 			// Spent once: labelled siblings share a path.
 			const owns = Math.min(
@@ -750,7 +750,8 @@ const foldedSpanEntries = (
 			const ts = stampOf( node );
 			rows.push( {
 				n: '',
-				k: `${ node.name } (start)`,
+				k: `${ node.k } (start)`,
+				l: node.l,
 				m: '',
 				ts,
 				fromFold: true,
@@ -773,7 +774,7 @@ const foldedSpanEntries = (
 			}
 			rows.push( {
 				n: '',
-				k: `${ node.name } (complete)`,
+				k: `${ node.k } (complete)`,
 				m: merged < 1 ? '' : `${ merged.toLocaleString() } merged`,
 				ts,
 				duration_ms: node.value,

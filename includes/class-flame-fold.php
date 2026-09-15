@@ -65,7 +65,7 @@ final class Flame_Fold {
 	public static function start( ?float $origin = null ): array {
 		return [
 			// Merged tree, children keyed by name so a merge is a lookup.
-			'root'    => self::empty_node(),
+			'root'    => [ 'k' => 'request', 'l' => '' ] + self::empty_node(),
 			// Open spans, innermost last; `path` is the name chain into root.
 			'stack'   => [],
 			// Every entry added, span or not; the fold marker counts from it.
@@ -137,11 +137,11 @@ final class Flame_Fold {
 	 * @param mixed      $ts    Entry timestamp, unix seconds.
 	 */
 	private static function open( array &$state, string $base, string $label, mixed $ts ): void {
-		$name   = '' !== $label ? "{$base}: {$label}" : $base;
+		$name   = Flame_Tree::node_name( $base, $label );
 		$parent = $state['stack'][ \count( $state['stack'] ) - 1 ]['path'] ?? [];
 		$path   = [ ...$parent, $name ];
 		$offset = Flame_Tree::offset_ms( $state['origin'], $ts );
-		self::record( $state['root'], $path, null, $offset );
+		self::record( $state['root'], $path, null, $offset, [ 'k' => $base, 'l' => $label ] );
 
 		if ( \count( $state['stack'] ) < Flame_Tree::MAX_STACK_DEPTH ) {
 			// No `t`: the node keeps the earliest, and frames ride checkpoints.
@@ -165,9 +165,14 @@ final class Flame_Fold {
 	 * @param list<string>           $path     Remaining name chain.
 	 * @param float|null             $duration Milliseconds to fold in, or null for a start.
 	 * @param float|null             $t        Start offset in ms, kept at its EARLIEST.
+	 * @param array{k: string, l: string}|null $as The key and label a start was logged with, kept from the node's first open.
 	 */
-	private static function record( array &$node, array $path, ?float $duration, ?float $t = null ): void {
+	private static function record( array &$node, array $path, ?float $duration, ?float $t = null, ?array $as = null ): void {
 		if ( [] === $path ) {
+			if ( null !== $as ) {
+				$node['k'] ??= $as['k'];
+				$node['l'] ??= $as['l'];
+			}
 			if ( null !== $t ) {
 				$seen      = $node['t'] ?? null;
 				$node['t'] = \is_numeric( $seen ) ? \min( (float) $seen, $t ) : $t;
@@ -187,7 +192,7 @@ final class Flame_Fold {
 		if ( ! isset( $children[ $name ] ) || ! \is_array( $children[ $name ] ) ) {
 			$children[ $name ] = self::empty_node();
 		}
-		self::record( $children[ $name ], $path, $duration, $t );
+		self::record( $children[ $name ], $path, $duration, $t, $as );
 		$node['children'] = $children;
 	}
 
@@ -214,7 +219,9 @@ final class Flame_Fold {
 	/**
 	 * The merged tree in the shape `Flame_Builder_Node` and the browser read:
 	 * name-keyed children flattened to a list, each node carrying `count` and
-	 * `max` alongside its summed `value`.
+	 * `max` alongside its summed `value`, and the `k` and `l` its spans were
+	 * logged with. `name` is only the key the fold merges on; the rows a
+	 * folded request shows read the two fields as logged.
 	 *
 	 * Each node's `t` is the offset its EARLIEST instance started at — the one
 	 * position that is true of a merged node. The detail view stamps its log
@@ -272,8 +279,16 @@ final class Flame_Fold {
 		$needed = null !== $start && null !== $extent
 			? \max( $extent - $start, $sum )
 			: $sum;
+		// A node a pre-change checkpoint restored has no key or label to give.
+		$logged = isset( $node['k'], $node['l'] )
+			? [
+				'k' => Core::str( $node['k'] ),
+				'l' => Core::str( $node['l'] ),
+			]
+			: [];
 		return [
 			'name'     => $name,
+			...$logged,
 			'value'    => \max( \is_numeric( $node['value'] ?? null ) ? (float) $node['value'] : 0.0, $needed ),
 			'count'    => \is_numeric( $node['count'] ?? null ) ? (int) $node['count'] : 0,
 			'merged'   => self::merged( $node ),

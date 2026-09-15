@@ -126,11 +126,11 @@ final class Flame_Tree {
 				$label  = Core::str( $entry['l'] ?? '' );
 				$detail = Core::str( $entry['m'] ?? '' );
 				$new_node = [
-					'name'     => $label ? "{$base_name}: {$label}" : $base_name,
+					'name'     => self::node_name( $base_name, $label ),
 					'value'    => 0,
 					'children' => [],
 				];
-				if ( $detail && $detail !== $label ) {
+				if ( '' !== $detail && $detail !== $label ) {
 					$new_node['detail'] = "{$base_name}: {$detail}";
 				}
 				// The row the frame IS; same-caller spans share every name.
@@ -270,6 +270,19 @@ final class Flame_Tree {
 		}
 		$offset = \round( ( (float) $ts - $origin ) * 1000, 3 );
 		return $offset < 0 ? null : $offset;
+	}
+
+	/**
+	 * The name a span's frame takes: `<base>: <label>`, or the base alone when
+	 * the span carries no label. The one rule, so a folded frame and an
+	 * unfolded one name the same span alike; any label but '' is a label.
+	 *
+	 * @param string $base  Span base name, the key without ` (start)`.
+	 * @param string $label The stable label the span was logged with, or ''.
+	 * @return string The frame's name.
+	 */
+	public static function node_name( string $base, string $label ): string {
+		return '' !== $label ? "{$base}: {$label}" : $base;
 	}
 
 	/**

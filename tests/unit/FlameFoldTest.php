@@ -12,6 +12,7 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use PHPUnit\Framework\Attributes\CoversClass;
 use Newspack_Event_Logger_Nodes\Flame_Fold;
+use Newspack_Event_Logger_Nodes\Flame_Tree;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 
 #[CoversClass( Flame_Fold::class )]
@@ -51,6 +52,55 @@ class FlameFoldTest extends TestCase {
 		// 3 + 4 + 5 summed, 5 the worst.
 		$this->assertEqualsWithDelta( 12.0, $save['value'], 1e-6 );
 		$this->assertEqualsWithDelta( 5.0, $save['max'], 1e-6 );
+	}
+
+	public function test_a_merged_node_keeps_the_key_and_label_it_was_logged_with(): void {
+		// The tree merges on `key: label`; the rows a folded request shows
+		// are built from the entry's own two fields, carried as logged.
+		$tree = Flame_Fold::tree(
+			$this->fold(
+				[
+					$this->at( 'the_content hook (start)', 0, [ 'l' => 'wp_trim_excerpt' ] ),
+					$this->at( 'the_content hook (complete)', 5, [ 'duration_ms' => 5 ] ),
+					$this->at( 'the_content hook (start)', 6, [ 'l' => 'wp_trim_excerpt' ] ),
+					$this->at( 'the_content hook (complete)', 9, [ 'duration_ms' => 3 ] ),
+				]
+			)
+		);
+		$node = $tree['children'][0];
+		$this->assertSame( 'request', $tree['k'] );
+		$this->assertSame( 'the_content hook: wp_trim_excerpt', $node['name'] );
+		$this->assertSame( 'the_content hook', $node['k'] ?? null );
+		$this->assertSame( 'wp_trim_excerpt', $node['l'] ?? null );
+	}
+
+	public function test_a_folded_frame_is_named_as_an_unfolded_one(): void {
+		// One naming rule for both trees; a label of "0" is still a label.
+		$entries = [
+			$this->at( 'hook (start)', 0, [ 'l' => '0' ] ),
+			$this->at( 'hook (complete)', 5, [ 'duration_ms' => 5 ] ),
+		];
+		$folded   = Flame_Fold::tree( $this->fold( $entries ) )['children'][0]['name'];
+		$unfolded = Flame_Tree::build_flame_data( $entries )['children'][0]['name'];
+		$this->assertSame( $unfolded, $folded );
+		$this->assertSame( 'hook: 0', $folded );
+	}
+
+	public function test_a_merged_node_keeps_the_key_and_label_it_first_opened_with(): void {
+		// `a` labelled `b` and an unlabelled `a: b` merge on one name; the node
+		// keeps the first pair rather than flipping on every open.
+		$tree = Flame_Fold::tree(
+			$this->fold(
+				[
+					$this->at( 'a (start)', 0, [ 'l' => 'b' ] ),
+					$this->at( 'a (complete)', 1, [ 'duration_ms' => 1 ] ),
+					$this->at( 'a: b (start)', 2 ),
+					$this->at( 'a: b (complete)', 3, [ 'duration_ms' => 1 ] ),
+				]
+			)
+		);
+		$node = $tree['children'][0];
+		$this->assertSame( [ 'a', 'b' ], [ $node['k'], $node['l'] ] );
 	}
 
 	public function test_distinct_labels_stay_distinct(): void {
@@ -193,18 +243,24 @@ class FlameFoldTest extends TestCase {
 		// floor: a path can never close more often than it opened.
 		$state         = Flame_Fold::start( self::ORIGIN );
 		$state['root'] = [
+			'k'        => 'request',
+			'l'        => '',
 			'value'    => 0.0,
 			'count'    => 0,
 			'max'      => 0.0,
 			't'        => null,
 			'children' => [
 				'outer' => [
+					'k'        => 'outer',
+					'l'        => '',
 					'value'    => 812.5,
 					'count'    => 4,
 					'max'      => 406.25,
 					't'        => 60.25,
 					'children' => [
 						'inner' => [
+							'k'        => 'inner',
+							'l'        => '',
 							'value'    => 9.5,
 							'count'    => 1,
 							'max'      => 9.5,
@@ -221,6 +277,36 @@ class FlameFoldTest extends TestCase {
 		$this->assertTrue( $outer['merged'], 'four completions is four spans' );
 		// 812.5 stands; 300_000.75 + 9.5 - 60.25 is the gap between two runs.
 		$this->assertEqualsWithDelta( 812.5, $outer['value'], 1e-6 );
+	}
+
+	public function test_a_node_restored_without_its_key_and_label_emits_neither(): void {
+		// A request still folding across a deploy restores nodes that never
+		// recorded them; they are left off rather than defaulted or warned on.
+		$state         = Flame_Fold::start( self::ORIGIN );
+		$state['root'] = [
+			'k'        => 'request',
+			'l'        => '',
+			'value'    => 0.0,
+			'count'    => 0,
+			'starts'   => 0,
+			'max'      => 0.0,
+			't'        => null,
+			'children' => [
+				'outer' => [
+					'value'    => 4.5,
+					'count'    => 1,
+					'starts'   => 1,
+					'max'      => 4.5,
+					't'        => 1.5,
+					'children' => [],
+				],
+			],
+		];
+
+		$outer = Flame_Fold::tree( $state )['children'][0];
+		$this->assertSame( 'outer', $outer['name'] );
+		$this->assertArrayNotHasKey( 'k', $outer );
+		$this->assertArrayNotHasKey( 'l', $outer );
 	}
 
 	public function test_a_merged_node_carries_the_offset_it_first_started_at(): void {

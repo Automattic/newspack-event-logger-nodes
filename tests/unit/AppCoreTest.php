@@ -277,6 +277,28 @@ class AppCoreTest extends TestCase {
 		$this->assertStringNotContainsString( 'apply_filters', $origin );
 	}
 
+	/**
+	 * A transport subclass is transport too. Query Monitor's `QM_DB` reaches
+	 * `wpdb::query()` through `parent::query()`, so its own frame sits between
+	 * wpdb's and the code that asked, and every query read as `QM_DB->query`.
+	 */
+	public function test_the_origin_frame_climbs_past_a_transport_subclass(): void {
+		$origin = ( new TransportCallerFixture() )->ask();
+
+		$this->assertStringEndsWith( 'TransportCallerFixture->ask', $origin );
+	}
+
+	/**
+	 * A drop-in whose own `query()` applies the filter is transport, and so is
+	 * the `wpdb` method that called it: HyperDB overrides `query()`, which
+	 * `wpdb::get_results()` reaches through `$this->query()`.
+	 */
+	public function test_the_origin_frame_climbs_past_the_parent_of_a_transport_subclass(): void {
+		$origin = ( new DropInCallerFixture() )->ask();
+
+		$this->assertStringEndsWith( 'DropInCallerFixture->ask', $origin );
+	}
+
 	/** The per-hook trace counters App\Core is holding. */
 	private function traced( Core $core ): array {
 		$prop = new \ReflectionProperty( Core::class, 'traced' );
@@ -1875,5 +1897,60 @@ class FakeCaller {
 	}
 	public function fetch_feed( FakeTransport $t, string $url ) {
 		return $t->dispatch( $url );
+	}
+}
+
+/** Stands in for `wpdb`: the class whose method applies the `query` filter. */
+class TransportFixture {
+	/** Read the origin frame as `App\Core::query_start()` would from here. */
+	public function query(): string {
+		$origin = \Closure::bind( static fn () => Core::origin_frame( true ), null, Core::class );
+		return $origin();
+	}
+}
+
+/** Stands in for Query Monitor's `QM_DB`, which wraps `wpdb::query()`. */
+class TransportSubclassFixture extends TransportFixture {
+	/** Reach the transport through the parent, as `QM_DB::query()` does. */
+	public function query(): string {
+		return parent::query();
+	}
+}
+
+/** The code that ran the query: the frame the label should name. */
+class TransportCallerFixture {
+	/** Run a query through the subclass. */
+	public function ask(): string {
+		return ( new TransportSubclassFixture() )->query();
+	}
+}
+
+/** Stands in for `wpdb`, whose `get_results()` runs `$this->query()`. */
+class DropInBaseFixture {
+	/** Run the query through whatever `query()` the instance has. */
+	public function get_results(): string {
+		return $this->query();
+	}
+
+	/** The base query, which the drop-in replaces. */
+	public function query(): string {
+		return '';
+	}
+}
+
+/** Stands in for a HyperDB-style drop-in: its own `query()` applies the filter. */
+class DropInFixture extends DropInBaseFixture {
+	/** Read the origin frame as `App\Core::query_start()` would from here. */
+	public function query(): string {
+		$origin = \Closure::bind( static fn () => Core::origin_frame( true ), null, Core::class );
+		return $origin();
+	}
+}
+
+/** The code that ran the query through the drop-in. */
+class DropInCallerFixture {
+	/** Run a query the way core does, through `get_results()`. */
+	public function ask(): string {
+		return ( new DropInFixture() )->get_results();
 	}
 }

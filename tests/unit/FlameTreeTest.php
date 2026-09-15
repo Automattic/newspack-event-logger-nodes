@@ -34,6 +34,17 @@ class FlameTreeTest extends TestCase {
 
 	// ----- build_flame_data: request-relative start times -----
 
+	public function test_a_message_of_zero_is_a_detail(): void {
+		// Any message but '' is a detail, as any label but '' is a label.
+		$tree = Flame_Tree::build_flame_data(
+			[
+				[ 'k' => 'hook (start)', 'm' => '0', 'ts' => 1_700_000_000.0 ],
+				[ 'k' => 'hook (complete)', 'duration_ms' => 1, 'ts' => 1_700_000_000.001 ],
+			]
+		);
+		$this->assertSame( 'hook: 0', $tree['children'][0]['detail'] ?? null );
+	}
+
 	public function test_build_stamps_each_span_with_its_offset_from_the_request_start(): void {
 		$tree = Flame_Tree::build_flame_data(
 			[
