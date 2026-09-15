@@ -47,10 +47,12 @@ use Newspack_Nodes\Service_CI_Node;
 class Rules_CI_Node extends Service_CI_Node {
 
 	/**
-	 * Byte cap on a `save` or `upsert` payload. A whole ruleset is small, so
-	 * this bounds a runaway request rather than any edit an operator makes.
+	 * Byte cap on a `save` or `upsert` payload: a bound on a runaway request,
+	 * never on an edit an operator makes. A rule can select a site's whole
+	 * hook catalog — thousands of names, hundreds of kilobytes — so the cap
+	 * sits far above that, at PHP's own default request body limit.
 	 */
-	private const MAX_JSON_BYTES = 65536;
+	private const MAX_JSON_BYTES = 8388608;
 
 	/**
 	 * Decode depth ceiling. A rule list nests three levels — the list, a rule
