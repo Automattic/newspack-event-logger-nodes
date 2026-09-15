@@ -134,6 +134,12 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	/** Minimum seconds between flush() runs; fill() enforces the throttle. */
 	const FLUSH_INTERVAL_SEC = 5;
 
+	/** How long a clean stop waits for a sibling's auto-tune lock: its expiry. */
+	private const AUTO_TUNE_LOCK_WAIT_MS = 5000;
+
+	/** How often that wait re-tries the lock. */
+	private const AUTO_TUNE_LOCK_POLL_US = 100000;
+
 	/**
 	 * Byte ceiling on the held mirror frames a checkpoint frame carries.
 	 *
@@ -1302,10 +1308,15 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	 * substrate runs the sweep before the cursor handoff, while the graph is
 	 * intact, so `save_state()` then snapshots an empty `$pending`.
 	 *
+	 * A sibling partition may hold the auto-tune lock at that moment. A
+	 * periodic flush leaves the decisions for the next flush; a stop has none,
+	 * so it waits the lock out — the lock expires in seconds on its own.
+	 *
 	 * @api Used by substrate.
 	 */
 	public function shutdown_sweep(): void {
 		$this->flush();
+		$this->apply_auto_tune( self::AUTO_TUNE_LOCK_WAIT_MS );
 	}
 
 	/**
@@ -2074,7 +2085,7 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	 * configuration) and no shared memcache handle (single-process, nothing to
 	 * race with).
 	 */
-	private function apply_auto_tune(): void {
+	private function apply_auto_tune( int $wait_ms = 0 ): void {
 		if ( ! \array_filter( $this->auto_tune ) ) {
 			return;
 		}
@@ -2096,8 +2107,13 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 			return;
 		}
 
-		if ( ! $cache->add( $lock_key, $lock_value, $lock_timeout ) ) {
-			return; // Lock held by another worker; retry on next flush.
+		// Lock held by another worker: retry on the next flush, or wait it out.
+		$deadline = \microtime( true ) + $wait_ms / 1000;
+		while ( ! $cache->add( $lock_key, $lock_value, $lock_timeout ) ) {
+			if ( \microtime( true ) >= $deadline ) {
+				return;
+			}
+			\usleep( self::AUTO_TUNE_LOCK_POLL_US );
 		}
 
 		try {
