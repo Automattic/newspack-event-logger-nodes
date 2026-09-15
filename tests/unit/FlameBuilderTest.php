@@ -1569,6 +1569,37 @@ class FlameBuilderTest extends TestCase {
 		);
 	}
 
+	public function test_a_multi_megabyte_held_set_is_carried_whole(): void {
+		// A staging hub holds ~1,400 per-URL frames, 2.1-3.5MB a checkpoint.
+		// The budget is sized from the record cliff, half of
+		// `Partition_Node::MAX_LARGE_LINE_SIZE`, rather than a fixture, so a
+		// held set of that size rides the keyframe entire and the tripwire
+		// stays quiet: one that fires every checkpoint reports nothing.
+		$err = '';
+		Core::set_stderr_handler( static function ( $text ) use ( &$err ) {
+			$err .= $text;
+		} );
+
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		[ $fb ]     = $this->mirrored_builder( $store, 'flames-stats' );
+
+		$open   = 1_700_000_000;
+		$bucket = Stats_Store::bucket_key( $open );
+		$fb->set_clock( static fn() => $open );
+
+		// 5.4MB held: a third of the budget, and past any fixture-sized one.
+		$this->set_hourly_bucket( $store, $bucket, [ 'count' => 3 ] );
+		$this->set_category_bucket( $store, $bucket, [ 'blob' => \str_repeat( 'c', 2400000 ) ] );
+		$this->set_leaderboard_bucket( $store, $bucket, [ 'blob' => \str_repeat( 'x', 3000000 ) ] );
+
+		$frames = $fb->save_state()['mirror']['frames'];
+		$fb->set_clock( null );
+
+		$this->assertStringNotContainsString( 'over the checkpoint budget', $err, 'the tripwire stays quiet' );
+		$this->assertCount( 3, \array_merge( ...\array_values( $frames ) ), 'every held frame is carried' );
+	}
+
 	public function test_the_over_budget_tripwire_names_what_did_not_fit(): void {
 		// ADR-11 calls this log the only tripwire that can tell you the budget
 		// is set wrong. It reported a bare count, so a hub firing it seventeen
@@ -1591,8 +1622,8 @@ class FlameBuilderTest extends TestCase {
 
 		// One that fits and TWO that do not, the leaderboard the larger.
 		$this->set_hourly_bucket( $store, $bucket, [ 'count' => 3 ] );
-		$this->set_category_bucket( $store, $bucket, [ 'blob' => \str_repeat( 'c', 2400000 ) ] );
-		$this->set_leaderboard_bucket( $store, $bucket, [ 'blob' => \str_repeat( 'x', 3000000 ) ] );
+		$this->set_category_bucket( $store, $bucket, [ 'blob' => \str_repeat( 'c', 16800000 ) ] );
+		$this->set_leaderboard_bucket( $store, $bucket, [ 'blob' => \str_repeat( 'x', 16900000 ) ] );
 
 		$fb->save_state();
 		$fb->set_clock( null );
@@ -1611,7 +1642,7 @@ class FlameBuilderTest extends TestCase {
 			$hit,
 			'not the one the loop stopped on'
 		);
-		$this->assertStringContainsString( '2097152', $hit, 'names the budget' );
+		$this->assertStringContainsString( '16777216', $hit, 'names the budget' );
 		// Makes the third bucket load-bearing: without it the counts go unasserted.
 		$this->assertStringContainsString( '2 of 3 frames dropped', $hit, 'counts what fell out' );
 	}
@@ -1635,8 +1666,8 @@ class FlameBuilderTest extends TestCase {
 		$fb->set_clock( static fn() => $open );
 
 		$this->set_hourly_bucket( $store, $bucket, [ 'count' => 7 ] );
-		$this->set_category_bucket( $store, $bucket, [ 'blob' => \str_repeat( 'c', 2400000 ) ] );
-		$this->set_leaderboard_bucket( $store, $bucket, [ 'blob' => \str_repeat( 'x', 3000000 ) ] );
+		$this->set_category_bucket( $store, $bucket, [ 'blob' => \str_repeat( 'c', 16800000 ) ] );
+		$this->set_leaderboard_bucket( $store, $bucket, [ 'blob' => \str_repeat( 'x', 16900000 ) ] );
 
 		$fb->save_state();
 		$fb->set_clock( null );
@@ -1672,8 +1703,8 @@ class FlameBuilderTest extends TestCase {
 		$bucket = Stats_Store::bucket_key( $open );
 		$fb->set_clock( static fn() => $open );
 		$this->set_hourly_bucket( $store, $bucket, [ 'count' => 11 ] );
-		$this->set_category_bucket( $store, $bucket, [ 'blob' => \str_repeat( 'c', 2400000 ) ] );
-		$this->set_leaderboard_bucket( $store, $bucket, [ 'blob' => \str_repeat( 'x', 3000000 ) ] );
+		$this->set_category_bucket( $store, $bucket, [ 'blob' => \str_repeat( 'c', 16800000 ) ] );
+		$this->set_leaderboard_bucket( $store, $bucket, [ 'blob' => \str_repeat( 'x', 16900000 ) ] );
 		$fb->save_state();
 		$fb->set_clock( null );
 
@@ -5057,7 +5088,7 @@ class FlameBuilderTest extends TestCase {
 		$fb->set_clock( static fn() => $open );
 
 		$this->set_hourly_bucket( $store, $bucket, [ 'count' => 3 ] );
-		$this->set_leaderboard_bucket( $store, $bucket, [ 'blob' => \str_repeat( 'x', 3000000 ) ] );
+		$this->set_leaderboard_bucket( $store, $bucket, [ 'blob' => \str_repeat( 'x', 16900000 ) ] );
 
 		// One namespaced space now: flatten it, the assertions are about WHICH
 		// frames rode, not which namespace they sat under.

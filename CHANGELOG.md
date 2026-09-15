@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The checkpoint carries a multi-megabyte held set whole.** `Flame_Builder`'s `MAX_CHECKPOINT_MIRROR_BYTES` was 2 MiB, sized from one production hub's 267–348 KB per checkpoint; a staging hub holds ~1,400 per-URL frames, 2.1–3.5 MB, so every checkpoint of every `complete` worker dropped 52–291 frames and logged the tripwire, which then reported nothing. The budget is 16 MiB now, half of `Partition_Node::MAX_LARGE_LINE_SIZE`, the cliff past which the whole checkpoint record is dropped, with the other half left for the cursor, `pending` and the framing the policy cap does not count. Disk follows what is held, not the budget: the offsetlog ring keeps ~30 keyframes, so that hub spends ~100 MB.
+
 ## [0.98.3] - 2026-09-14
 
 ### Fixed

@@ -40,15 +40,15 @@
   </div>
 
   <div class="budget">
-    <h3>The carry is capped at <span class="m">MAX_CHECKPOINT_MIRROR_BYTES</span>, 2,097,152 bytes, and the WIDEST frame is dropped first</h3>
+    <h3>The carry is capped at <span class="m">MAX_CHECKPOINT_MIRROR_BYTES</span>, 16,777,216 bytes, and the WIDEST frame is dropped first</h3>
     <div class="bar" style="margin-top:22px">
-      <span class="lbl" style="left:0">observed held total on a production hub: ~267–348 KB per checkpoint</span>
-      <div class="held" style="width:16%">held</div>
+      <span class="lbl" style="left:0">held total on a staging hub: 2.1–3.5 MB per checkpoint, ~1,400 per-URL frames</span>
+      <div class="held" style="width:21%">held</div>
       <div class="old" style="width:12.5%"></div>
-      <span class="cap">2 MB: ~6× the observed peak, so the log does NOT fire in routine operation</span>
+      <span class="cap">16 MB: half the record cliff, so the log does NOT fire in routine operation</span>
     </div>
     <div class="legend">
-      <div><b style="color:#B32D2E">The red outline is 262,144</b>: at that budget the held totals sit just over the cap, a multi-spoke hub drops one to thirteen frames on nearly every checkpoint, and the tripwire trips permanently, which tells you nothing. The margin is what makes "it fired at all" informative.</div>
+      <div><b style="color:#B32D2E">The red outline is 2,097,152</b>: a budget set from one production hub's ~267–348 KB, which a staging hub holding 2.1–3.5 MB overran on every checkpoint, dropping 52 to 291 frames each time; the tripwire tripped permanently, which tells you nothing. Sizing from the outer limit rather than an observed size is what makes "it fired at all" informative.</div>
       <div><b>Why the widest goes first:</b> narrowest-first keeps the most keys recoverable per byte, and a dropped frame is re-merged from memcache by the next write to its bucket, lost only if the process AND memcache both fail before the bucket closes. <span class="m">Partition_Node</span> DROPS an oversize record outright, and that record is the whole checkpoint, cursor included.</div>
       <div><b>The pack orders by ENTRY COUNT, not encoded bytes,</b> and encodes only what it carries plus the one it stops on: encoding every held frame to sort them would make the budget bound the OUTPUT and never the work, megabytes of throwaway JSON every thirty seconds. A frame is a map of small numeric entries, so count tracks size closely, and the budget is still enforced against real encoded bytes as they accumulate.</div>
     </div>
@@ -56,8 +56,8 @@
 
   <div class="nums">
     <div class="n"><div class="big">10,000</div><div class="k"><span class="m">MAX_HELD_FRAMES</span> per namespace: past it <span class="m">spill_over_backstop()</span> writes a BAND, a tenth of the bound, to the partition EARLY rather than dropping anything; a redundant record, never a lost frame</div></div>
-    <div class="n"><div class="big">60 × 2 MB</div><div class="k"><span class="m">OFFSETLOG_MAX_SEGMENTS</span> keyframes: ~120 MB of disk plus a write every 30 s. The ring caps keyframe COUNT and never bytes, so raising the budget raises the disk cost in direct proportion</div></div>
-    <div class="n"><div class="big">16×</div><div class="k">how far away <span class="m">Partition_Node::MAX_LARGE_LINE_SIZE</span> is; it does not bind</div></div>
+    <div class="n"><div class="big">30 × held</div><div class="k"><span class="m">OFFSETLOG_NUM_SEGMENTS</span> keyframes of what is HELD, ~100 MB of disk for the staging hub, plus a write every 30 s. The ring caps keyframe COUNT and never bytes, so the budget is its ceiling, 480 MB, not its size</div></div>
+    <div class="n"><div class="big">2×</div><div class="k">how far away <span class="m">Partition_Node::MAX_LARGE_LINE_SIZE</span> is; the other half carries the cursor, <span class="m">pending</span> and the framing the policy cap does not count</div></div>
     <div class="n"><div class="big">0 of 12</div><div class="k">pre-deploy buckets kept by a 0.00 req/s URL under a top-100 rank cap: the cap leaves every quieter URL in memcache alone, and a moved cache scope takes its whole history. Buffer-time eviction is a strictly larger loss than a checkpoint drop, so <span class="m">STATS_MIRROR_TOPN</span> rank-caps no per-URL namespace</div></div>
   </div>
 
