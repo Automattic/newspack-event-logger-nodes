@@ -294,6 +294,25 @@ class RulesCITest extends TestCase {
 		$this->assertSame( $big, $sib['hooks'], 'list must still resolve the sibling pointer rule to its full hook list' );
 	}
 
+	/**
+	 * A rule selecting every hook the site has seen is a real edit, not a
+	 * runaway request: gazettenet's catalog held 4,204 hooks, and the editor's
+	 * "Select Hooks → all" came back `payload too large` at the old 64 KB cap.
+	 */
+	public function test_upsert_accepts_a_rule_selecting_a_whole_hook_catalog(): void {
+		$hooks = [];
+		for ( $i = 0; $i < 5000; $i++ ) {
+			$hooks[] = "woocommerce_after_shop_loop_item_title_{$i}";
+		}
+		$payload = \wp_json_encode( [ 'pattern' => '/everything/', 'action' => Rule::ACTION_LOG, 'hooks' => $hooks ] );
+		$this->assertGreaterThan( 65536, \strlen( $payload ), 'the fixture must exceed the old cap' );
+
+		$result = $this->fire( 'upsert', $payload );
+
+		$this->assertSame( Log_Manager::url_hash( '/everything/' ), $result['rule']['id'] );
+		$this->assertCount( 5000, $result['rule']['hooks'] );
+	}
+
 	public function test_upsert_rejects_invalid_json(): void {
 		$result = $this->fire( 'upsert', 'not json' );
 

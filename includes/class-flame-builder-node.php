@@ -42,6 +42,7 @@ use Newspack_Nodes\Core;
 use Newspack_Nodes\LRU_Cache;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Node;
+use Newspack_Nodes\Shutdown_Sweeper;
 
 if ( ! \defined( 'ABSPATH' ) ) {
 	exit;
@@ -69,7 +70,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
  *   leaderboard_by_server: array<string,Leaderboard_Acc>
  * }
  */
-class Flame_Builder_Node extends Node {
+class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	use \Newspack_Nodes\Schema_Reflection;
 	use \Newspack_Nodes\Deferred_Clean_Stop;
 
@@ -1291,15 +1292,32 @@ class Flame_Builder_Node extends Node {
 	}
 
 	/**
+	 * Flush on a clean stop, so the checkpoint carries nothing forward.
+	 *
+	 * The periodic flush fires inside `fill()`, on a record arriving
+	 * FLUSH_INTERVAL_SEC or more after the last flush, and an on-demand worker
+	 * rarely sees one: it spawns on a backlog, folds it within the second and
+	 * idles out. Without this every record it folded rode `$pending` into the
+	 * checkpoint and out to the next worker, never reaching the store. The
+	 * substrate runs the sweep before the cursor handoff, while the graph is
+	 * intact, so `save_state()` then snapshots an empty `$pending`.
+	 *
+	 * @api Used by substrate.
+	 */
+	public function shutdown_sweep(): void {
+		$this->flush();
+	}
+
+	/**
 	 * Drain every accumulator and start clean.
 	 *
-	 * `fill()` calls this at most once per FLUSH_INTERVAL_SEC, and nothing else
-	 * does. The accumulators do not need it to survive: `save_state()` co-commits
-	 * `$pending` with the read cursor, so a graceful stop carries it across and a
-	 * fatal replays from the cursor that last committed it. What a fatal DOES
-	 * cost is a double-count — the deltas between the last checkpoint and the
-	 * crash are already in memcache and get replayed on top (see the CHANGELOG's
-	 * Known section).
+	 * `fill()` calls this at most once per FLUSH_INTERVAL_SEC, and every clean
+	 * stop calls it through `shutdown_sweep()`. The accumulators do not need
+	 * it to survive a fatal: `save_state()` co-commits `$pending` with the read
+	 * cursor, so the replay resumes from the cursor that last committed it.
+	 * What a fatal DOES cost is a double-count — the deltas between the last
+	 * checkpoint and the crash are already in memcache and get replayed on top
+	 * (see the CHANGELOG's Known section).
 	 *
 	 * With no `Stats_Store` wired the drain is a no-op against storage: the
 	 * accumulators still reset, but nothing is written anywhere.

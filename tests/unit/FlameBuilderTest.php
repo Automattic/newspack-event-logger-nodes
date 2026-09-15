@@ -533,6 +533,38 @@ class FlameBuilderTest extends TestCase {
 		}
 	}
 
+	/**
+	 * A clean stop flushes the pending buckets and hands the checkpoint
+	 * nothing to carry.
+	 *
+	 * The periodic flush runs inside fill(), on a record arriving five seconds
+	 * or more after the last one, and an on-demand worker rarely sees such a
+	 * record: it spawns on a backlog, folds it within the second, idles out.
+	 * Every record it folded rode `pending` into the checkpoint and out to the
+	 * next worker, never reaching the store — gazettenet carried six hours of
+	 * URL stats that way while its dashboard read zero. The substrate calls
+	 * `shutdown_sweep()` on every clean stop, so that is where they land.
+	 */
+	public function test_a_clean_stop_flushes_the_pending_buckets_to_the_store(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/signup', 'duration_ms' => 1132.0 ] ) );
+		$this->assertSame( [], $this->recent_hourly( $store ), 'a record within the flush window stays pending' );
+
+		$this->assertInstanceOf( \Newspack_Nodes\Shutdown_Sweeper::class, $fb );
+		$fb->shutdown_sweep();
+
+		$hourly = $this->recent_hourly( $store );
+		$this->assertCount( 1, $hourly );
+		$this->assertSame( 1, \array_values( $hourly )[0]['count'] );
+		$rows = $store->url_row_sources( \array_keys( $hourly ) );
+		$this->assertCount( 1, $rows, 'the URL row landed with the hourly total' );
+		$this->assertSame( [], $fb->save_state()['pending'], 'the checkpoint carries nothing forward' );
+	}
+
 	public function test_save_state_persists_current_flame_stats_without_a_periodic_flush(): void {
 		// stats_cache (per-URL flame trees) must be co-committed with the cursor at
 		// save_state, exactly like the `pending` aggregates — else a clean recycle advances
