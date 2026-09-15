@@ -700,8 +700,8 @@ class Core {
 	 * out of a budget, which is what lets `l` split a flame node completely.
 	 *
 	 * @param bool $past_transport Climb past the class that applied the filter,
-	 *                             `wpdb` or `WP_Http`, at the wider
-	 *                             TRANSPORT_ORIGIN_DEPTH.
+	 *                             `wpdb` or `WP_Http`, and every class of its
+	 *                             family, at the wider TRANSPORT_ORIGIN_DEPTH.
 	 * @return string `Class->method`, a function name, or '' when only
 	 *                machinery is on the stack.
 	 */
@@ -726,13 +726,15 @@ class Core {
 			// through `wpdb::query()`, so both a fixed skip and a hardcoded
 			// class name land inside wpdb rather than on the code that asked.
 			// The transport is simply the first non-machinery frame, so this
-			// needs no names and covers WP_Http the same way.
+			// needs no names and covers WP_Http the same way. Its whole class
+			// family is transport: Query Monitor's `QM_DB` reaches
+			// `wpdb::query()` through `parent::query()`, between the two.
 			if ( $past_transport && '' !== $class ) {
 				if ( null === $transport ) {
 					$transport = $class;
 					continue;
 				}
-				if ( $class === $transport ) {
+				if ( \is_a( $class, $transport, true ) || \is_a( $transport, $class, true ) ) {
 					continue;
 				}
 			}

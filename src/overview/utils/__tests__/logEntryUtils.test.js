@@ -108,6 +108,56 @@ describe( 'isEmptyPairStart', () => {
 	} );
 } );
 
+describe( 'a folded span row', () => {
+	it( 'keeps the key and label the span was logged with', () => {
+		// The tree names the node `key: label` to merge by it. The rows are
+		// the entry's own two fields, the label on the start as on any pair.
+		const flame = {
+			name: 'request',
+			k: 'request',
+			l: '',
+			count: 0,
+			value: 500,
+			t: 0,
+			children: [
+				{
+					name: 'process',
+					k: 'process',
+					l: '',
+					count: 1,
+					value: 500,
+					t: 0,
+					children: [
+						{
+							name: 'the_content hook: wp_trim_excerpt',
+							k: 'the_content hook',
+							l: 'wp_trim_excerpt',
+							count: 5,
+							merged: true,
+							value: 10.331,
+							t: 5,
+							children: [],
+						},
+					],
+				},
+			],
+		};
+		const stored = [
+			{ n: 1, k: 'process (start)', ts: 1000 },
+			{ n: 2, k: 'entries (aggregated)', ts: 1000.01, m: '9 merged' },
+			{ n: 3, k: 'process (complete)', ts: 1000.5 },
+		];
+		const rows = spliceFoldedSpans( stored, flame ).filter(
+			( e ) => e.fromFold
+		);
+
+		expect( rows.map( ( e ) => [ e.k, e.l ] ) ).toEqual( [
+			[ 'the_content hook (start)', 'wp_trim_excerpt' ],
+			[ 'the_content hook (complete)', undefined ],
+		] );
+	} );
+} );
+
 describe( 'formatDots', () => {
 	it( 'returns empty string for zero or negative counts', () => {
 		expect( formatDots( 0 ) ).toBe( '' );
@@ -241,22 +291,30 @@ describe( 'computeIndentedEntries', () => {
 		// No abort rule is needed here — that was compensating for the gap.
 		const flame = {
 			name: 'request',
+			k: 'request',
+			l: '',
 			t: null,
 			children: [
 				{
 					name: 'process',
+					k: 'process',
+					l: '',
 					count: 0,
 					value: 600000,
 					t: 0,
 					children: [
 						{
 							name: 'gyrobase',
+							k: 'gyrobase',
+							l: '',
 							count: 1,
 							value: 600000,
 							t: 350,
 							children: [
 								{
 									name: 'change',
+									k: 'change',
+									l: '',
 									count: 1237,
 									value: 433827,
 									t: 400,
@@ -300,24 +358,32 @@ describe( 'computeIndentedEntries', () => {
 		// row already on screen, inside a Perl subprocess no PHP hook can enter.
 		const flame = {
 			name: 'request',
+			k: 'request',
+			l: '',
 			count: 0,
 			value: 900,
 			t: 0,
 			children: [
 				{
 					name: 'process',
+					k: 'process',
+					l: '',
 					count: 1,
 					value: 900,
 					t: 0,
 					children: [
 						{
 							name: 'gyrobase',
+							k: 'gyrobase',
+							l: '',
 							count: 1,
 							value: 800,
 							t: 10,
 							children: [
 								{
 									name: 'parse_template',
+									k: 'parse_template',
+									l: '',
 									count: 1,
 									value: 400,
 									t: 20,
@@ -327,6 +393,8 @@ describe( 'computeIndentedEntries', () => {
 						},
 						{
 							name: 'query hook',
+							k: 'query hook',
+							l: '',
 							count: 1,
 							value: 3,
 							t: 850,
@@ -374,24 +442,32 @@ describe( 'computeIndentedEntries', () => {
 		// is what the tree puts inside it, so the prune cannot precede it.
 		const flame = {
 			name: 'request',
+			k: 'request',
+			l: '',
 			count: 0,
 			value: 900,
 			t: 0,
 			children: [
 				{
 					name: 'process',
+					k: 'process',
+					l: '',
 					count: 1,
 					value: 900,
 					t: 0,
 					children: [
 						{
 							name: 'gyrobase',
+							k: 'gyrobase',
+							l: '',
 							count: 1,
 							value: 880,
 							t: 10,
 							children: [
 								{
 									name: 'parse_template',
+									k: 'parse_template',
+									l: '',
 									count: 1,
 									value: 400,
 									t: 20,
@@ -436,6 +512,8 @@ describe( 'computeIndentedEntries', () => {
 		// `macro: …` frames share the base name and must not steal the debt.
 		const macros = ( t ) => ( {
 			name: 'macro: processimages',
+			k: 'macro',
+			l: 'processimages',
 			count: 6,
 			value: 10,
 			t,
@@ -443,18 +521,24 @@ describe( 'computeIndentedEntries', () => {
 		} );
 		const flame = {
 			name: 'request',
+			k: 'request',
+			l: '',
 			count: 0,
 			value: 600000,
 			t: 0,
 			children: [
 				{
 					name: 'process',
+					k: 'process',
+					l: '',
 					count: 0,
 					value: 600000,
 					t: 0,
 					children: [
 						{
 							name: 'change',
+							k: 'change',
+							l: '',
 							count: 1,
 							value: 500000,
 							t: 100,
@@ -465,6 +549,8 @@ describe( 'computeIndentedEntries', () => {
 									// by max `t`, so it points here, not at the
 									// chain the drain actually left open.
 									name: 'render',
+									k: 'render',
+									l: '',
 									count: 1,
 									value: 100,
 									t: 900,
@@ -472,24 +558,32 @@ describe( 'computeIndentedEntries', () => {
 								},
 								{
 									name: 'save',
+									k: 'save',
+									l: '',
 									count: 1,
 									value: 490000,
 									t: 300,
 									children: [
 										{
 											name: 'validation',
+											k: 'validation',
+											l: '',
 											count: 1,
 											value: 480000,
 											t: 400,
 											children: [
 												{
 													name: 'include: /Validation/Location.html',
+													k: 'include',
+													l: '/Validation/Location.html',
 													count: 1,
 													value: 470000,
 													t: 500,
 													children: [
 														{
 															name: 'macro: processvideos',
+															k: 'macro',
+															l: 'processvideos',
 															count: 1,
 															value: 460000,
 															t: 600,
@@ -541,24 +635,32 @@ describe( 'computeIndentedEntries', () => {
 		// synthetic — and hangs every merged child under the copy.
 		const flame = {
 			name: 'request',
+			k: 'request',
+			l: '',
 			count: 0,
 			value: 600000,
 			t: 0,
 			children: [
 				{
 					name: 'process',
+					k: 'process',
+					l: '',
 					count: 0,
 					value: 600000,
 					t: 0,
 					children: [
 						{
 							name: 'gyrobase',
+							k: 'gyrobase',
+							l: '',
 							count: 1,
 							value: 535829,
 							t: 350,
 							children: [
 								{
 									name: 'change',
+									k: 'change',
+									l: '',
 									count: 675,
 									value: 530143,
 									t: 400,
@@ -595,22 +697,30 @@ describe( 'computeIndentedEntries', () => {
 		// the span straddles — so the head's `gyrobase` was severed after all.
 		const flame = {
 			name: 'request',
+			k: 'request',
+			l: '',
 			t: null,
 			children: [
 				{
 					name: 'process',
+					k: 'process',
+					l: '',
 					count: 1,
 					value: 900,
 					t: 0,
 					children: [
 						{
 							name: 'gyrobase',
+							k: 'gyrobase',
+							l: '',
 							count: 1,
 							value: 880,
 							t: 1,
 							children: [
 								{
 									name: 'shortcode',
+									k: 'shortcode',
+									l: '',
 									count: 1,
 									value: 10,
 									t: 2,
@@ -618,6 +728,8 @@ describe( 'computeIndentedEntries', () => {
 								},
 								{
 									name: 'gyrobase',
+									k: 'gyrobase',
+									l: '',
 									count: 2,
 									value: 20,
 									t: 3,
@@ -657,22 +769,30 @@ describe( 'computeIndentedEntries', () => {
 		// inside A, so B's path is `process/A/B`, not `process/B`.
 		const flame = {
 			name: 'request',
+			k: 'request',
+			l: '',
 			t: null,
 			children: [
 				{
 					name: 'process',
+					k: 'process',
+					l: '',
 					count: 1,
 					value: 90,
 					t: 0,
 					children: [
 						{
 							name: 'A',
+							k: 'A',
+							l: '',
 							count: 1,
 							value: 30,
 							t: 1,
 							children: [
 								{
 									name: 'B',
+									k: 'B',
+									l: '',
 									count: 2,
 									value: 20,
 									t: 1,
@@ -993,8 +1113,11 @@ describe( 'getAncestorPairIds for an orphaned complete', () => {
 } );
 
 describe( 'a merged span beside the one the head left open', () => {
+	// Named as `Flame_Fold` names a node, carrying the key and label it keeps.
 	const node = ( name, count, children = [] ) => ( {
 		name,
+		k: name.split( ': ' )[ 0 ],
+		l: name.split( ': ' ).slice( 1 ).join( ': ' ),
 		count,
 		value: 10,
 		t: 1,
@@ -1002,6 +1125,8 @@ describe( 'a merged span beside the one the head left open', () => {
 	} );
 	const nest = ( children ) => ( {
 		name: 'request',
+		k: 'request',
+		l: '',
 		t: null,
 		children: [ node( 'process', 1, children ) ],
 	} );
@@ -1014,22 +1139,23 @@ describe( 'a merged span beside the one the head left open', () => {
 		// `Flame_Fold` names nodes `base: label`, so `template: Home.html` and
 		// `template: Nav.html` are distinct spans with one base. Skipping by
 		// base dissolved BOTH, and Nav's children became Home's.
-		const rows = indentsOf(
-			[
-				{ k: 'process (start)', ts: 1000 },
-				{ k: 'template (start)', l: 'Home.html', ts: 1000 },
-				{ k: 'entries (aggregated)', ts: 1000 },
-				{ k: 'template (complete)', ts: 1002 },
-				{ k: 'process (complete)', ts: 1002 },
-			],
-			nest( [
-				node( 'template: Home.html', 1, [ node( 'sql', 4 ) ] ),
-				node( 'template: Nav.html', 1, [ node( 'shortcode', 2 ) ] ),
-			] )
-		);
-		const keywords = rows.map( ( [ k ] ) => k );
+		const stored = [
+			{ k: 'process (start)', ts: 1000 },
+			{ k: 'template (start)', l: 'Home.html', ts: 1000 },
+			{ k: 'entries (aggregated)', ts: 1000 },
+			{ k: 'template (complete)', ts: 1002 },
+			{ k: 'process (complete)', ts: 1002 },
+		];
+		const flame = nest( [
+			node( 'template: Home.html', 1, [ node( 'sql', 4 ) ] ),
+			node( 'template: Nav.html', 1, [ node( 'shortcode', 2 ) ] ),
+		] );
+		const rows = indentsOf( stored, flame );
+		const folded = spliceFoldedSpans( stored, flame )
+			.filter( ( e ) => e.fromFold )
+			.map( ( e ) => [ e.k, e.l ] );
 
-		expect( keywords ).toContain( 'template: Nav.html (start)' );
+		expect( folded ).toContainEqual( [ 'template (start)', 'Nav.html' ] );
 		// Nav's child is inside Nav, not beside Home's.
 		expect( rows ).toContainEqual( [ 'sql (start)', 2 ] );
 		expect( rows ).toContainEqual( [ 'shortcode (start)', 3 ] );
@@ -1093,12 +1219,17 @@ describe( 'a merged span beside the one the head left open', () => {
 				] )
 			)
 		).entries;
-		const keywords = rows.map( ( e ) => e.k );
+		const folded = rows
+			.filter( ( e ) => e.fromFold )
+			.map( ( e ) => [ e.k, e.l ] );
 
 		// Home is the span on screen, so the tree must not re-emit it.
-		expect( keywords ).not.toContain( 'template: Home.html (start)' );
+		expect( folded ).not.toContainEqual( [
+			'template (start)',
+			'Home.html',
+		] );
 		// Nav is a different span and keeps its own frame.
-		expect( keywords ).toContain( 'template: Nav.html (start)' );
+		expect( folded ).toContainEqual( [ 'template (start)', 'Nav.html' ] );
 	} );
 
 	it( 'stops carrying the chain at the end of the claimed subtree', () => {
@@ -1236,6 +1367,8 @@ describe( 'a merged span beside the one the head left open', () => {
 			],
 			{
 				name: 'request',
+				k: 'request',
+				l: '',
 				t: null,
 				children: [
 					node( 'process', 1, [ node( 'gyrobase', 1 ) ] ),
@@ -1311,22 +1444,30 @@ describe( 'a merged span beside the one the head left open', () => {
 describe( 'spliceFoldedSpans', () => {
 	const FLAME = {
 		name: 'request',
+		k: 'request',
+		l: '',
 		t: null,
 		children: [
 			{
 				name: 'process',
+				k: 'process',
+				l: '',
 				count: 1,
 				value: 900,
 				t: 0,
 				children: [
 					{
 						name: 'pyrobase',
+						k: 'pyrobase',
+						l: '',
 						count: 1,
 						value: 880,
 						t: 8.7,
 						children: [
 							{
 								name: 'function',
+								k: 'function',
+								l: '',
 								count: 200,
 								value: 56,
 								t: 1373.3,
@@ -1398,16 +1539,22 @@ describe( 'spliceFoldedSpans', () => {
 		// ghost of itself.
 		const flame = {
 			name: 'request',
+			k: 'request',
+			l: '',
 			t: null,
 			children: [
 				{
 					name: 'process',
+					k: 'process',
+					l: '',
 					count: 1,
 					value: 900,
 					t: 0,
 					children: [
 						{
 							name: 'locale hook',
+							k: 'locale hook',
+							l: '',
 							count: 1,
 							value: 0.005,
 							t: 1,
@@ -1415,6 +1562,8 @@ describe( 'spliceFoldedSpans', () => {
 						},
 						{
 							name: 'loop',
+							k: 'loop',
+							l: '',
 							count: 5674,
 							value: 27,
 							t: 500,
@@ -1658,6 +1807,8 @@ describe( 'a span the record never closes cannot outlive its parent', () => {
 		// under it: `nuclear_gyrobase` drew at 2 where `request` drew at 1.
 		const flame = {
 			name: 'request',
+			k: 'request',
+			l: '',
 			value: 600716.7,
 			count: 0,
 			t: null,
@@ -1665,18 +1816,24 @@ describe( 'a span the record never closes cannot outlive its parent', () => {
 			children: [
 				{
 					name: 'process',
+					k: 'process',
+					l: '',
 					value: 600716.7,
 					count: 0,
 					t: 0,
 					children: [
 						{
 							name: 'gyrobase',
+							k: 'gyrobase',
+							l: '',
 							value: 600310.7,
 							count: 1,
 							t: 405.957,
 							children: [
 								{
 									name: 'include: /Macros/Global.html',
+									k: 'include',
+									l: '/Macros/Global.html',
 									value: 134.87,
 									count: 1,
 									t: 516.697,
@@ -1729,6 +1886,8 @@ describe( 'the drained completes belong to the spans that were still open', () =
 		// complete, and stayed open across every sibling after it.
 		const kid = ( name, t, children = [] ) => ( {
 			name,
+			k: name.split( ': ' )[ 0 ],
+			l: name.split( ': ' ).slice( 1 ).join( ': ' ),
 			count: 1,
 			value: 100,
 			t,
@@ -1736,6 +1895,8 @@ describe( 'the drained completes belong to the spans that were still open', () =
 		} );
 		const flame = {
 			name: 'request',
+			k: 'request',
+			l: '',
 			t: null,
 			children: [
 				kid( 'process', 0, [
@@ -1764,12 +1925,16 @@ describe( 'the drained completes belong to the spans that were still open', () =
 		const rows = computeIndentedEntries(
 			spliceFoldedSpans( stored, flame )
 		).entries.filter( ( e ) => e.k );
-		const keywords = rows.map( ( e ) => e.k );
+		const folded = rows.filter( ( e ) => e.fromFold );
+		const global = folded.findIndex(
+			( e ) => 'include (start)' === e.k && '/Macros/Global.html' === e.l
+		);
 
 		// The early sibling closes itself rather than waiting for the drain.
-		expect( keywords ).toContain(
-			'include: /Macros/Global.html (complete)'
-		);
+		expect( global ).toBeGreaterThanOrEqual( 0 );
+		expect( folded[ global + 1 ] ).toMatchObject( {
+			k: 'include (complete)',
+		} );
 		// And the tail is not re-parented under it.
 		const at = ( k ) => rows.find( ( e ) => e.k === k ).indent;
 		expect( at( 'tail' ) ).toBe( at( 'gyrobase (start)' ) );

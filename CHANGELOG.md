@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A folded request's merged rows keep the key and label their spans were logged with.** `Flame_Fold` merges spans on `key: label`, and each row the detail view drew for a merged node took that string whole as its key, with no label beside it: `the_content hook: wp_trim_excerpt (complete)` where every other row reads `the_content hook (complete)` over `wp_trim_excerpt`. A merged node now carries the entry's own `k` and `l` beside the `name` it merges on, and its rows read those two as logged. Both trees name a frame through one `Flame_Tree::node_name()`, so a folded frame is named exactly as an unfolded one; a label of `0` now names an unfolded frame too, where the tree's own copy of the rule dropped it, and a message of `0` is a frame's detail.
+- **A query span behind Query Monitor names the code that ran the query.** `origin_frame()` climbs past the class that applied the `query` filter, and matched that class by name, so Query Monitor's `QM_DB`, which reaches `wpdb::query()` through `parent::query()`, read as the caller: every query was labelled `QM_DB->query`, and a fold merged them all into one node. It now climbs past the transport's whole class family.
+
 ## [0.98.4] - 2026-09-14
 
 ### Fixed
