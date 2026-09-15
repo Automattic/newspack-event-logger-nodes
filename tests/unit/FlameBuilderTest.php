@@ -2089,6 +2089,68 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( 'r', $first[ Message::VALUE ]['rule_id'] );
 	}
 
+	/**
+	 * The auto-tune decisions fire on a clean stop, through the sweep.
+	 *
+	 * An on-demand worker folds its backlog and idles out without a periodic
+	 * flush, and the decisions live only in this process, so a stop that did
+	 * not fire them would drop them with the process.
+	 */
+	public function test_a_clean_stop_fires_the_auto_tune_decisions(): void {
+		$this->set_rule( [ 'auto_disable_threshold' => 100 ] );
+		$fb      = new Flame_Builder_Node();
+		$capture = new Capture_Sink_Node();
+		$fb->name( 'fb' );
+		$fb->sink( $capture );
+		$this->fill_request( $fb, $this->completed_request( [
+			'profiles' => [
+				'chatty hook' => [ 'time' => 0.1, 'count' => 250, 'entries' => [] ],
+			],
+		] ) );
+		$this->assertSame( [], $capture->captured, 'nothing fires before the sweep' );
+
+		$fb->shutdown_sweep();
+
+		$fired = \array_values( \array_filter(
+			$capture->captured,
+			static fn( $m ) => 'disable_hooks' === ( $m[ Message::KEY ] ?? '' )
+		) );
+		$this->assertCount( 1, $fired );
+		$this->assertSame( [ 'chatty' ], $fired[0][ Message::VALUE ]['items'] );
+	}
+
+	/**
+	 * A stop waits out a sibling partition's lock rather than dropping the
+	 * decisions: a periodic flush can retry on the next one, a stop has none.
+	 */
+	public function test_a_clean_stop_waits_for_a_held_auto_tune_lock(): void {
+		$mc         = new InMemoryMemcached();
+		Core::$memd = $mc;
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$capture    = new Capture_Sink_Node();
+		$fb->name( 'fb' );
+		$fb->sink( $capture );
+		$fb->set_stats_store( $store );
+		$this->set_rule( [ 'auto_disable_threshold' => 100 ] );
+		$this->fill_request( $fb, $this->completed_request( [
+			'profiles' => [
+				'spam hook' => [ 'time' => 0.1, 'count' => 200, 'entries' => [] ],
+			],
+		] ) );
+		// Another partition holds the lock for one more second.
+		$mc->add( self::scoped( 'evlog:auto_disable_lock' ), 'other-worker', 1 );
+
+		$fb->shutdown_sweep();
+
+		$fired = \array_filter(
+			$capture->captured,
+			static fn( $m ) => 'disable_hooks' === ( $m[ Message::KEY ] ?? '' )
+		);
+		$this->assertNotEmpty( $fired, 'the stop outwaited the lock' );
+		$this->assertNotContains( self::scoped( 'evlog:auto_disable_lock' ), $mc->keys() );
+	}
+
 	public function test_apply_auto_tune_with_store_uses_memcache_lock(): void {
 		$mc         = new InMemoryMemcached();
 		Core::$memd = $mc;

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Auto-tune decisions fire before an on-demand worker idles out.** They fire from the flush a clean stop now runs, and a stop that finds a sibling partition holding the auto-tune lock waits it out — the lock expires in seconds — rather than dropping the decisions with the process, as a periodic flush may, since it has a next flush to retry on.
+
 ## [0.98.2] - 2026-09-14
 
 ### Fixed
