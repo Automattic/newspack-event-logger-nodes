@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.98.6] - 2026-09-15
+
+### Changed
+
+- **Builds against substrate 2.60.7.** The substrate tag this plugin's CI checks out moves from `v2.60.3`, so the published dashboards carry the current shared layout rather than one four substrate releases old. A console graph now keys each card on its least-shared feeder, so two slices sharing one batched poll keep their own rows instead of interleaving; a source with nowhere clear to sit takes the least-crossed row rather than ignoring crossings; and the layout's sorts take each key once, which is most of a 690-node graph laying out in 184ms against 334ms. No application code changes, and the runtime floor stays 2.60.0.
+
 ## [0.98.5] - 2026-09-15
 
 ### Fixed
