@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.98.7] - 2026-09-16
+
 ### Fixed
 
 - **A dominant span names the repeat that multiplies it.** The detector named the deepest span holding most of a request and stopped there, so a `wp-admin/post.php` load where the editor's REST preload rendered the post's content ten times reported `sql: WP_Query->get_posts holds 80% of the profiled time` — one slow query to chase rather than ten renders to explain. It now names the outermost dominating span that ran more than once, in the title and the detail: `…, inside the_content hook: WP_REST_Revisions_Controller->prepare_item_for_response ×10`. Siblings sharing a name count as one repeat at every depth, so an unfolded record, whose tree keeps each render as its own node and so had no single span holding 60%, reports the same leaf and the same multiplier a folded one does instead of falling back to the whole request.
