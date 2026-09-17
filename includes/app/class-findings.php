@@ -117,6 +117,10 @@ class Findings {
 			'field'     => 'custom_events',
 			'undo'      => 'Disable those custom events again once the interior is understood.',
 		],
+		'transport'        => [
+			'detail' => 'The logger times this round trip itself, so there is no interior to switch on: its label names the calling frame, and its entries carry the statement or the URL.',
+			'why'    => '%s is the logger\'s own query or HTTP span, and nothing inside a round trip can be logged. Its label names the calling frame and its entries the statement or URL; the span containing it is where to look for why it ran.',
+		],
 		'listener'         => [
 			'detail' => 'This is one listener on a significant hook — the time is inside this callback.',
 			'why'    => '%s is a listener, logged because its hook is already a significant event — this is the finest grain the logger has, and the answer is inside that callback.',
@@ -341,7 +345,12 @@ class Findings {
 	 * wins: it is the most specific thing that still dominates, and therefore
 	 * the one worth being able to see inside.
 	 *
-	 * @param list<array{name:string,value:float,self_ms:float,depth:int}> $nodes    Flattened flame nodes.
+	 * The finding also names the REPEAT when one exists — the outermost span on
+	 * the way up that both dominates and ran more than once. A query holding
+	 * 80% of a request because the content around it rendered ten times is ten
+	 * renders to explain, not one slow query, and the leaf alone never says so.
+	 *
+	 * @param list<array{name:string,value:float,self_ms:float,depth:int,count:int,parent:?int}> $nodes    Flattened flame nodes.
 	 * @param float                                                        $profiled Profiled milliseconds.
 	 * @param Rule|null                                                    $rule     The governing rule, or null when none does.
 	 * @param float                                                        $duration Request duration in milliseconds.
@@ -351,46 +360,53 @@ class Findings {
 		if ( $profiled <= 0.0 || $duration < self::MIN_DURATION_MS ) {
 			return null;
 		}
-		$best = null;
-		foreach ( $nodes as $node ) {
+		$best_index = null;
+		foreach ( $nodes as $index => $node ) {
 			if ( $node['value'] / $profiled < self::DOMINANT_SHARE ) {
 				continue;
 			}
+			$best = null === $best_index ? null : $nodes[ $best_index ];
 			if ( null === $best
 					|| $node['depth'] > $best['depth']
 					|| ( $node['depth'] === $best['depth'] && $node['value'] > $best['value'] ) ) {
-				$best = $node;
+				$best_index = $index;
 			}
 		}
-		if ( null === $best ) {
+		if ( null === $best_index ) {
 			return null;
 		}
+		$best       = $nodes[ $best_index ];
 		$share      = $best['value'] / $profiled;
 		$self_share = $best['self_ms'] / $profiled;
+		$repeat     = self::repeat_of( $nodes, $best_index, $profiled );
+		$metric     = [
+			'name'       => $best['name'],
+			'ms'         => $best['value'],
+			'share'      => $share,
+			'self_ms'    => $best['self_ms'],
+			'self_share' => $self_share,
+			'depth'      => $best['depth'],
+		];
+		if ( null !== $repeat ) {
+			$metric['repeat'] = $repeat;
+		}
 		return [
 			'kind'     => 'dominant_span',
 			'severity' => 'high',
-			'title'    => \sprintf(
-				'%s holds %d%% of the profiled time',
-				$best['name'],
-				(int) \round( $share * 100 )
-			),
+			'title'    => self::dominant_title( $best['name'], $share, $repeat ),
 			'detail'   => \implode(
 				' ',
 				\array_filter(
-					[ self::spent_detail( $best, $self_share ), self::interior_detail( $best['name'], $rule ) ],
+					[
+						self::repeat_detail( $repeat ),
+						self::spent_detail( $best, $self_share ),
+						self::interior_detail( $best['name'], $rule ),
+					],
 					static fn ( string $sentence ): bool => '' !== $sentence
 				)
 			),
 			'measured' => 'flame',
-			'metric'   => [
-				'name'       => $best['name'],
-				'ms'         => $best['value'],
-				'share'      => $share,
-				'self_ms'    => $best['self_ms'],
-				'self_share' => $self_share,
-				'depth'      => $best['depth'],
-			],
+			'metric'   => $metric,
 			'rule_id'  => $rule?->id,
 			'proposal' => self::visibility_proposal(
 				$best['name'],
@@ -476,15 +492,19 @@ class Findings {
 	}
 
 	/**
-	 * The only three kinds of span the flame carries, classified once so every
-	 * caller reaches the same `SPAN_ADVICE` row. A custom event has no
-	 * listeners, and prose crediting it with any sends the reader hunting a
-	 * callback that does not exist.
+	 * The four kinds of span the flame carries, classified once so every caller
+	 * reaches the same `SPAN_ADVICE` row. A custom event has no listeners, and
+	 * prose crediting it with any sends the reader hunting a callback that does
+	 * not exist; a query or HTTP span is the logger's own, and calling it a
+	 * custom event proposes a rule edit that changes nothing.
 	 *
 	 * @param string $span The span's name, as the flame carries it.
-	 * @return string `hook`, `listener` or `custom`.
+	 * @return string `transport`, `hook`, `listener` or `custom`.
 	 */
 	private static function span_kind( string $span ): string {
+		if ( Hooks::is_transport_span( $span ) ) {
+			return 'transport';
+		}
 		if ( \str_ends_with( $span, Hooks::HOOK_SUFFIX ) ) {
 			return 'hook';
 		}
@@ -497,7 +517,7 @@ class Findings {
 	 * inside the one span guaranteed to contain everything — a `pyrobase` span
 	 * holds 100% of the profiled time and spends 9.5% of it in its own body.
 	 *
-	 * @param array{name:string,value:float,self_ms:float,depth:int} $node       The dominant node.
+	 * @param array{name:string,value:float,self_ms:float,depth:int,count:int,parent:?int} $node       The dominant node.
 	 * @param float                                                  $self_share Its own body's share of the profiled time.
 	 * @return string A leading sentence, or '' where nothing is contained.
 	 */
@@ -510,6 +530,79 @@ class Findings {
 			'It spends %d%% of the profiled time in its own body; the rest is inside what it contains.',
 			(int) \round( $self_share * 100 )
 		);
+	}
+
+	/**
+	 * The sentence that makes the repeat the first question, or '' without one.
+	 *
+	 * @param array{name:string,count:int,ms:float,each_ms:float,own:bool}|null $repeat What `repeat_of()` found.
+	 * @return string
+	 */
+	private static function repeat_detail( ?array $repeat ): string {
+		if ( null === $repeat ) {
+			return '';
+		}
+		if ( $repeat['own'] ) {
+			return \sprintf(
+				'It ran %d times at %s each, so why it runs that often comes before why each run is slow.',
+				$repeat['count'],
+				self::ms( $repeat['each_ms'] )
+			);
+		}
+		return \sprintf(
+			'It runs inside %s, which ran %d times at %s each; the repeat multiplies everything inside it, so why that runs %d times comes before why this is slow.',
+			$repeat['name'],
+			$repeat['count'],
+			self::ms( $repeat['each_ms'] ),
+			$repeat['count']
+		);
+	}
+
+	/**
+	 * The dominant-span headline, carrying the repeat where there is one, since
+	 * a reader who stops at the title should still learn what multiplied it.
+	 *
+	 * @param string                                                     $name   The dominant span.
+	 * @param float                                                      $share  Its share of the profiled time.
+	 * @param array{name:string,count:int,ms:float,each_ms:float,own:bool}|null $repeat What `repeat_of()` found.
+	 * @return string
+	 */
+	private static function dominant_title( string $name, float $share, ?array $repeat ): string {
+		$title = \sprintf( '%s holds %d%% of the profiled time', $name, (int) \round( $share * 100 ) );
+		if ( null === $repeat ) {
+			return $title;
+		}
+		return $repeat['own']
+			? \sprintf( '%s across %d calls', $title, $repeat['count'] )
+			: \sprintf( '%s, inside %s ×%d', $title, $repeat['name'], $repeat['count'] );
+	}
+
+	/**
+	 * The outermost span on the way up from `$index` — itself included — that
+	 * dominates the profiled time and ran more than once, or null when every
+	 * dominating span ran once. `own` says whether that span IS the dominant
+	 * one, decided by index: a span nested in a same-name ancestor is not it.
+	 *
+	 * @param list<array{name:string,value:float,self_ms:float,depth:int,count:int,parent:?int}> $nodes    Flattened flame nodes.
+	 * @param int                                                                                  $index    The dominant node's index.
+	 * @param float                                                                                $profiled Profiled milliseconds.
+	 * @return array{name:string,count:int,ms:float,each_ms:float,own:bool}|null
+	 */
+	private static function repeat_of( array $nodes, int $index, float $profiled ): ?array {
+		$repeat = null;
+		for ( $at = $index; null !== $at; $at = $nodes[ $at ]['parent'] ) {
+			$node = $nodes[ $at ];
+			if ( $node['count'] > 1 && $node['value'] / $profiled >= self::DOMINANT_SHARE ) {
+				$repeat = [
+					'name'    => $node['name'],
+					'count'   => $node['count'],
+					'ms'      => $node['value'],
+					'each_ms' => $node['value'] / $node['count'],
+					'own'     => $at === $index,
+				];
+			}
+		}
+		return $repeat;
 	}
 
 	/**
@@ -563,9 +656,10 @@ class Findings {
 	 */
 	public static function caveat(): string {
 		return 'The logger times ONLY the hooks the URL\'s governing rule names, the custom events '
-			. 'the application logs itself, and every outbound HTTP request — nothing else is '
-			. 'instrumented, so an absence here is as often an unbound hook as an idle one. It does '
-			. 'not see SQL, or time spent below PHP userland, unless the application logs it. '
+			. 'the application logs itself, every outbound HTTP request, and every database query '
+			. 'on a rule that turns on query logging — nothing else is instrumented, so an absence '
+			. 'here is as often an unbound hook as an idle one. Without query logging it sees no '
+			. 'SQL, and below PHP userland it sees only those HTTP calls and queries. '
 			. 'Unattributed time means unmeasured, not idle.';
 	}
 
@@ -588,7 +682,7 @@ class Findings {
 	 *
 	 * @param array<array-key,mixed>                                       $record   The request record.
 	 * @param Rule|null                                                    $rule     The governing rule, or null when none does.
-	 * @param list<array{name:string,value:float,self_ms:float,depth:int}> $nodes    Flattened flame nodes.
+	 * @param list<array{name:string,value:float,self_ms:float,depth:int,count:int,parent:?int}> $nodes    Flattened flame nodes.
 	 * @param float                                                        $profiled Profiled milliseconds.
 	 * @param float                                                        $duration Request duration in milliseconds.
 	 * @return array<string,mixed>|null The finding, or null when the rule and the record between them measure enough.
@@ -658,7 +752,7 @@ class Findings {
 	 * one assembled span-by-span may not.
 	 *
 	 * @param array<array-key,mixed>                                       $flame The flame tree root.
-	 * @param list<array{name:string,value:float,self_ms:float,depth:int}> $nodes Flattened nodes.
+	 * @param list<array{name:string,value:float,self_ms:float,depth:int,count:int,parent:?int}> $nodes Flattened nodes.
 	 * @return float Milliseconds.
 	 */
 	private static function profiled_ms( array $flame, array $nodes ): float {
@@ -676,9 +770,17 @@ class Findings {
 	}
 
 	/**
-	 * Flatten a flame tree into a list of `{name, value, self_ms, depth}`, root
-	 * excluded — the root IS the request, so it can never be the span holding
-	 * most of the request.
+	 * Flatten a flame tree into a list of `{name, value, self_ms, depth, count,
+	 * parent}`, root excluded — the root IS the request, so it can never be the
+	 * span holding most of the request. `parent` is the index of the entry this
+	 * one sits inside, null at the top level.
+	 *
+	 * Spans sharing a name under the same parent are ONE entry, summed, at every
+	 * depth. A stored per-request tree keeps each firing as its own sibling, so
+	 * ten renders of the same content are ten nodes none of which holds much;
+	 * grouped, they are one repeat that dominates, which is what a folded tree
+	 * already says with its `count`. A folded node's `count` is carried; an
+	 * unfolded node counts once.
 	 *
 	 * `self_ms` is what the span spent in its OWN body: its value less what its
 	 * children hold. That is the number that separates a span doing work from
@@ -693,26 +795,55 @@ class Findings {
 	 * `self_ms` is the gaps between its children.
 	 *
 	 * @param array<array-key,mixed> $flame The flame tree root.
-	 * @param int                    $depth The depth of `$flame` itself; its children come back one deeper.
-	 * @return list<array{name:string,value:float,self_ms:float,depth:int}>
+	 * @return list<array{name:string,value:float,self_ms:float,depth:int,count:int,parent:?int}>
 	 */
-	private static function flatten( array $flame, int $depth = 0 ): array {
-		$out      = [];
-		$children = \is_array( $flame['children'] ?? null ) ? $flame['children'] : [];
-		foreach ( $children as $child ) {
-			if ( ! \is_array( $child ) ) {
-				continue;
-			}
-			$value = Core::num_float( $child['value'] ?? 0 );
-			$out[] = [
-				'name'    => Core::as_string( $child['name'] ?? 'unknown', 'unknown' ),
-				'value'   => $value,
-				'self_ms' => $value - self::children_value( $child ),
-				'depth'   => $depth + 1,
-			];
-			$out = \array_merge( $out, self::flatten( $child, $depth + 1 ) );
-		}
+	private static function flatten( array $flame ): array {
+		$out = [];
+		self::flatten_children( $out, [ $flame ], 0, null );
 		return $out;
+	}
+
+	/**
+	 * Append the children of every node in `$parents`, grouped by name, then
+	 * each group's own children beneath it.
+	 *
+	 * @param list<array{name:string,value:float,self_ms:float,depth:int,count:int,parent:?int}> $out     The flattened list, extended in place.
+	 * @param list<array<array-key,mixed>>                                                         $parents Nodes whose children form this level.
+	 * @param int                                                                                  $depth   The depth of `$parents`.
+	 * @param int|null                                                                             $parent  The index of the entry `$parents` flattened to.
+	 */
+	private static function flatten_children( array &$out, array $parents, int $depth, ?int $parent ): void {
+		$groups = [];
+		foreach ( $parents as $node ) {
+			foreach ( \is_array( $node['children'] ?? null ) ? $node['children'] : [] as $child ) {
+				if ( \is_array( $child ) ) {
+					// A key like '404' turns int; keep the name in the value.
+					$name                         = Core::as_string( $child['name'] ?? 'unknown', 'unknown' );
+					$groups[ $name ]['name']      = $name;
+					$groups[ $name ]['members'][] = $child;
+				}
+			}
+		}
+		foreach ( $groups as $group ) {
+			$value = 0.0;
+			$self  = 0.0;
+			$count = 0;
+			foreach ( $group['members'] as $member ) {
+				$member_value = Core::num_float( $member['value'] ?? 0 );
+				$value       += $member_value;
+				$self        += $member_value - self::children_value( $member );
+				$count       += \max( 1, Core::num_int( $member['count'] ?? 0 ) );
+			}
+			$out[] = [
+				'name'    => $group['name'],
+				'value'   => $value,
+				'self_ms' => $self,
+				'depth'   => $depth + 1,
+				'count'   => $count,
+				'parent'  => $parent,
+			];
+			self::flatten_children( $out, $group['members'], $depth + 1, \array_key_last( $out ) );
+		}
 	}
 
 	/**
