@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.98.8] - 2026-09-17
+
 ### Fixed
 
 - **A Cmd-click on a flame frame lands on its own row.** The frame carried its entry's `n`, and the log table took the first row with that number. A nested gyrobase render restarts `n` at 1 under the same request id, so a Cmd-click on the Perl span `include: /Macros/Global.html` jumped to PHP's row 11, `newspack-nodes plugin (start)`. A frame now carries `i`, the entry's position in the stored record, and every row the table draws from that record carries the same `i`. Flames stored before this release carry no `i` and resolve by their path, as a folded request's always have.
