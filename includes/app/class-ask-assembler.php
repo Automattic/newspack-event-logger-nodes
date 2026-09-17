@@ -41,7 +41,7 @@ use Newspack_Nodes\Core;
  * Every method is static and the class holds no state.
  *
  * A shaper returns null when the record does not hold what was asked about: a
- * span absent from the tree, an entry number no line carries, a category off
+ * span absent from the tree, an entry position past the record's end, a category off
  * the board. `Performance_CI_Node` turns that null into the message the picker
  * shows, so no shaper here decides how a miss reads.
  */
@@ -83,10 +83,12 @@ class Ask_Assembler {
 	 * @return array<string,mixed>
 	 */
 	public static function for_request( array $record, ?Rule $rule, string $url_context = '', string $server = '' ): array {
-		$entries   = \array_values( \array_filter(
-			\is_array( $record['entries'] ?? null ) ? $record['entries'] : [],
+		// Keys survive the filter: each is the position an `entry:` ask names.
+		$entries   = \array_filter(
+			\array_values( Core::arr( $record['entries'] ?? null ) ),
 			static fn ( mixed $e ): bool => ! \is_array( $e ) || Log_Manager::ENVIRONMENT !== ( $e['k'] ?? '' )
-		) );
+		);
+		$kept      = \array_slice( $entries, 0, self::MAX_ENTRIES, true );
 		$truncated = \count( $entries ) > self::MAX_ENTRIES;
 		$url       = self::parse_descriptor( $url_context );
 
@@ -98,8 +100,9 @@ class Ask_Assembler {
 			'env'               => self::env_of( $record ),
 			'flame'             => self::flame_summary( $record ),
 			'entries'           => \array_map(
-				[ self::class, 'entry_shape' ],
-				\array_slice( $entries, 0, self::MAX_ENTRIES )
+				self::entry_shape( ... ),
+				$kept,
+				\array_keys( $kept )
 			),
 			'entries_truncated' => $truncated,
 			'rule'              => self::rule_shape( $rule ),
@@ -401,32 +404,26 @@ class Ask_Assembler {
 	 * an uninstrumented call shows up as nothing at all.
 	 *
 	 * @param array<array-key,mixed> $record A stored request record.
-	 * @param int                    $n      The entry's own sequence number.
+	 * @param int                    $index  The entry's position in the record; n
+	 *                                       repeats once a nested render restarts it.
 	 * @return array<string,mixed>|null Null when the record holds no such entry.
 	 */
-	public static function for_entry( array $record, int $n ): ?array {
-		$entries = \is_array( $record['entries'] ?? null ) ? \array_values( $record['entries'] ) : [];
-		$index   = null;
-		foreach ( $entries as $i => $entry ) {
-			if ( \is_array( $entry ) && Core::num_int( $entry['n'] ?? -1, -1 ) === $n ) {
-				$index = $i;
-				break;
-			}
-		}
-		if ( null === $index ) {
+	public static function for_entry( array $record, int $index ): ?array {
+		$entries = \array_values( Core::arr( $record['entries'] ?? null ) );
+		if ( ! \is_array( $entries[ $index ] ?? null ) ) {
 			return null;
 		}
 
 		$neighbours = [];
 		for ( $i = \max( 0, $index - self::NEIGHBOURS ); $i <= \min( \count( $entries ) - 1, $index + self::NEIGHBOURS ); $i++ ) {
 			if ( $i !== $index && \is_array( $entries[ $i ] ) ) {
-				$neighbours[] = self::entry_shape( $entries[ $i ] );
+				$neighbours[] = self::entry_shape( $entries[ $i ], $i );
 			}
 		}
 
 		return [
 			'subject'       => 'entry',
-			'entry'         => self::entry_shape( $entries[ $index ] ),
+			'entry'         => self::entry_shape( $entries[ $index ], $index ),
 			'neighbours'    => $neighbours,
 			'gap_before_ms' => self::gap( $entries, $index - 1, $index ),
 			'gap_after_ms'  => self::gap( $entries, $index, $index + 1 ),
@@ -460,10 +457,11 @@ class Ask_Assembler {
 	 * reaches here is an `entry:` ask on that row, which gets its category and
 	 * no body.
 	 *
-	 * @param mixed $entry A raw entry.
+	 * @param mixed $entry    A raw entry.
+	 * @param int   $position Its index in the record, which names it for `entry:`.
 	 * @return array<string,mixed>
 	 */
-	private static function entry_shape( mixed $entry ): array {
+	private static function entry_shape( mixed $entry, int $position ): array {
 		$entry    = \is_array( $entry ) ? $entry : [];
 		$category = Core::as_string( $entry['k'] ?? '' );
 		$body     = $entry['m'] ?? '';
@@ -473,6 +471,7 @@ class Ask_Assembler {
 			$body = \wp_json_encode( $body );
 		}
 		return [
+			'i'  => $position,
 			'n'  => Core::num_int( $entry['n'] ?? 0 ),
 			'ts' => Core::num_float( $entry['ts'] ?? 0 ),
 			'k'  => $category,

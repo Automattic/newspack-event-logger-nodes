@@ -201,7 +201,7 @@ class AskAssemblerTest extends TestCase {
 	}
 
 	public function test_an_entry_brief_carries_its_neighbours_and_both_gaps(): void {
-		$brief = Ask_Assembler::for_entry( $this->record(), 3 );
+		$brief = Ask_Assembler::for_entry( $this->record(), 2 );
 
 		$this->assertSame( 'entry', $brief['subject'] );
 		$this->assertSame( 'wp_loaded hook', $brief['entry']['k'] );
@@ -212,6 +212,31 @@ class AskAssemblerTest extends TestCase {
 			\array_column( $brief['neighbours'], 'k' ),
 			'NEIGHBOURS entries either side, and this one has none after it'
 		);
+	}
+
+	public function test_an_entry_is_found_by_its_position_when_a_nested_render_repeats_its_number(): void {
+		$record = [
+			'entries' => [
+				[ 'n' => 11, 'ts' => 1000.0, 'k' => 'plugin (start)', 'm' => 'php' ],
+				[ 'n' => 12, 'ts' => 1000.1, 'k' => 'gyrobase (start)', 'm' => '' ],
+				[ 'n' => 11, 'ts' => 1000.2, 'k' => 'include (start)', 'm' => 'perl' ],
+			],
+		];
+
+		$brief = Ask_Assembler::for_entry( $record, 2 );
+
+		$this->assertSame( 'perl', $brief['entry']['m'] );
+		$this->assertSame( 2, $brief['entry']['i'] );
+		$this->assertSame( [ 0, 1 ], \array_column( $brief['neighbours'], 'i' ) );
+	}
+
+	public function test_a_request_brief_names_each_entry_by_its_position_in_the_record(): void {
+		$record            = $this->record();
+		\array_unshift( $record['entries'], [ 'n' => 9, 'ts' => 999.0, 'k' => Log_Manager::ENVIRONMENT, 'm' => [] ] );
+
+		$brief = Ask_Assembler::for_request( $record, null );
+
+		$this->assertSame( [ 1, 2, 3 ], \array_column( $brief['entries'], 'i' ), 'the dropped environment row keeps its place' );
 	}
 
 	public function test_an_unknown_entry_is_refused(): void {
@@ -792,7 +817,7 @@ class AskAssemblerTest extends TestCase {
 			],
 		];
 
-		$entry   = Ask_Assembler::for_entry( $record, 7 )['entry'];
+		$entry   = Ask_Assembler::for_entry( $record, 0 )['entry'];
 		$request = Ask_Assembler::for_request( $record, null );
 
 		$this->assertSame( Log_Manager::ENVIRONMENT, $entry['k'] );
@@ -813,7 +838,7 @@ class AskAssemblerTest extends TestCase {
 
 		$this->assertStringContainsString(
 			'HTTP_HOST',
-			Ask_Assembler::for_entry( $record, 3 )['entry']['m']
+			Ask_Assembler::for_entry( $record, 0 )['entry']['m']
 		);
 	}
 }

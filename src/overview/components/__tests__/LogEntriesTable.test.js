@@ -41,6 +41,7 @@ function makeEntries() {
 			pairId: 1,
 			indent: 0,
 			originalIdx: 0,
+			i: 3,
 		},
 		{
 			n: 2,
@@ -51,6 +52,7 @@ function makeEntries() {
 			pairId: 2,
 			indent: 1,
 			originalIdx: 1,
+			i: 4,
 		},
 		{
 			n: 3,
@@ -60,6 +62,7 @@ function makeEntries() {
 			pairId: null,
 			indent: 2,
 			originalIdx: 2,
+			i: 5,
 		},
 		{
 			n: 4,
@@ -71,6 +74,7 @@ function makeEntries() {
 			pairId: 2,
 			indent: 1,
 			originalIdx: 3,
+			i: 6,
 		},
 		{
 			n: 5,
@@ -81,6 +85,7 @@ function makeEntries() {
 			pairId: 3,
 			indent: 1,
 			originalIdx: 4,
+			i: 7,
 		},
 		{
 			n: 6,
@@ -90,6 +95,7 @@ function makeEntries() {
 			pairId: 3,
 			indent: 1,
 			originalIdx: 5,
+			i: 8,
 		},
 		{
 			n: 7,
@@ -101,6 +107,7 @@ function makeEntries() {
 			pairId: 1,
 			indent: 0,
 			originalIdx: 6,
+			i: 9,
 		},
 	];
 }
@@ -719,56 +726,76 @@ describe( 'LogEntriesTable', () => {
 		jest.useRealTimers();
 	} );
 
-	it( 'reveals the span by the number of the entry that opened it, whatever its names', () => {
+	it( 'reveals the span by the position of the entry that opened it, whatever its number', () => {
 		jest.useFakeTimers();
-		// Two spans one caller opened share every name; the frame carries the
-		// opening entry's number, and that alone finds the row.
+		// A nested render restarts n at 1 under the same rid, so the Perl
+		// include's position is the PHP plugin span's number; only i finds it.
 		const entries = [
 			{
-				n: 41,
+				n: 1,
+				i: 5,
 				k: 'process (start)',
 				pairId: 1,
 				indent: 0,
 				originalIdx: 0,
 			},
 			{
-				n: 233,
-				k: 'sql (start)',
-				l: 'QM_DB->query',
+				n: 11,
+				i: 6,
+				k: 'plugin (start)',
+				l: 'nodes',
 				pairId: 2,
 				indent: 1,
 				originalIdx: 1,
 			},
 			{
-				n: 234,
-				k: 'sql (complete)',
-				m: 'SELECT slow',
+				n: 12,
+				i: 7,
+				k: 'plugin (complete)',
 				pairId: 2,
 				indent: 1,
 				originalIdx: 2,
 			},
 			{
-				n: 475,
-				k: 'sql (start)',
-				l: 'QM_DB->query',
+				n: 1,
+				i: 8,
+				k: 'gyrobase (start)',
 				pairId: 3,
 				indent: 1,
 				originalIdx: 3,
 			},
 			{
-				n: 476,
-				k: 'sql (complete)',
-				m: 'UPDATE fast',
-				pairId: 3,
-				indent: 1,
-				originalIdx: 4,
+				n: 11,
+				i: 11,
+				k: 'include (start)',
+				l: '/Macros/Global.html',
+				pairId: 4,
+				indent: 2,
+				originalIdx: 5,
 			},
 			{
-				n: 479,
+				n: 12,
+				i: 12,
+				k: 'include (complete)',
+				pairId: 4,
+				indent: 2,
+				originalIdx: 6,
+			},
+			{
+				n: 13,
+				i: 13,
+				k: 'gyrobase (complete)',
+				pairId: 3,
+				indent: 1,
+				originalIdx: 7,
+			},
+			{
+				n: 13,
+				i: 14,
 				k: 'process (complete)',
 				pairId: 1,
 				indent: 0,
-				originalIdx: 5,
+				originalIdx: 8,
 			},
 		];
 		const revealRef = { current: null };
@@ -781,31 +808,61 @@ describe( 'LogEntriesTable', () => {
 			)?.dataset.pairId;
 
 		act( () =>
-			revealRef.current( 233, [
+			revealRef.current( 11, [
 				'request',
 				'process',
-				'sql: QM_DB->query',
+				'gyrobase',
+				'include: /Macros/Global.html',
 			] )
+		);
+		act( () => {
+			jest.advanceTimersByTime( 20 );
+		} );
+		expect( lit() ).toBe( '4' );
+
+		// A frame with no position, a merged one's, still resolves by path.
+		act( () =>
+			revealRef.current( null, [ 'request', 'process', 'plugin: nodes' ] )
 		);
 		act( () => {
 			jest.advanceTimersByTime( 20 );
 		} );
 		expect( lit() ).toBe( '2' );
-
-		// A frame with no number, a merged one's, still resolves by path.
-		act( () =>
-			revealRef.current( null, [
-				'request',
-				'process',
-				'sql: QM_DB->query',
-			] )
-		);
-		act( () => {
-			jest.advanceTimersByTime( 20 );
-		} );
-		expect( lit() ).toBe( '3' );
 		unmount();
 		jest.useRealTimers();
+	} );
+
+	it( 'names each row to the picker by its position, never its repeated number', () => {
+		const entries = [
+			{
+				n: 7,
+				i: 4,
+				k: 'publication',
+				m: 'php',
+				pairId: null,
+				indent: 0,
+				originalIdx: 0,
+			},
+			{
+				n: 7,
+				i: 9,
+				k: 'publication',
+				m: 'perl',
+				pairId: null,
+				indent: 0,
+				originalIdx: 1,
+			},
+			{ n: '', k: '', m: '', ts: 1, isPlaceholder: true, indent: 0 },
+		];
+		const { container, unmount } = renderComponent(
+			React.createElement( LogEntriesTable, { entries } )
+		);
+		expect(
+			Array.from( container.querySelectorAll( 'tbody tr' ) ).map(
+				( tr ) => tr.getAttribute( 'data-ask' )
+			)
+		).toEqual( [ 'entry:4', 'entry:9', null ] );
+		unmount();
 	} );
 
 	it( 'shows duration + peak_mb stats on complete entries', () => {
@@ -1501,6 +1558,47 @@ it( 'Show more opens the body and leaves the pair folded', () => {
 
 	expect( container.textContent ).not.toContain( 'line-12' );
 	expect( container.textContent ).not.toContain( 'logged value' );
+	unmount();
+} );
+
+it( 'Show more opens one body, not another row that repeats its number', () => {
+	const body = ( tag ) =>
+		Array.from( { length: 12 }, ( _, i ) => `${ tag }-${ i + 1 }` ).join(
+			'\n'
+		);
+	// A nested render restarts n, so a PHP row and a Perl row share it.
+	const entries = [
+		{
+			n: 12,
+			i: 30,
+			k: 'stderr',
+			m: body( 'php' ),
+			pairId: null,
+			indent: 0,
+			originalIdx: 0,
+		},
+		{
+			n: 12,
+			i: 41,
+			k: 'stderr',
+			m: body( 'perl' ),
+			pairId: null,
+			indent: 0,
+			originalIdx: 1,
+		},
+	];
+	const { container, unmount } = renderComponent(
+		React.createElement( LogEntriesTable, { entries } )
+	);
+
+	act( () => {
+		Array.from( container.querySelectorAll( 'button' ) )
+			.find( ( b ) => b.textContent.startsWith( 'Show more' ) )
+			.click();
+	} );
+
+	expect( container.textContent ).toContain( 'php-12' );
+	expect( container.textContent ).not.toContain( 'perl-12' );
 	unmount();
 } );
 

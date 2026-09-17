@@ -665,7 +665,7 @@ class Performance_CI_Node extends Service_CI_Node {
 			case 'span':
 				return self::ask_span( $target['id'], $context );
 			case 'entry':
-				return self::ask_entry( (int) $target['id'], $context );
+				return self::ask_entry( $target['id'], $context );
 			case 'category':
 				return self::ask_category( $target['id'], $context, $server );
 		}
@@ -1366,15 +1366,17 @@ class Performance_CI_Node extends Service_CI_Node {
 	/**
 	 * The `entry:` brief.
 	 *
-	 * @param int          $n       Entry position within the request.
+	 * @param string       $index   Entry position within the request, as sent.
 	 * @param list<string> $context Container descriptors, outermost last.
 	 * @return array<string,mixed>
 	 * @throws \RuntimeException With no request context, or an absent entry.
 	 */
-	private static function ask_entry( int $n, array $context ): array {
-		$brief = Ask_Assembler::for_entry( self::request_from_context( $context, 'entry' ), $n );
+	private static function ask_entry( string $index, array $context ): array {
+		$record   = self::request_from_context( $context, 'entry' );
+		$position = Core::canonical_decimal( $index );
+		$brief    = null === $position ? null : Ask_Assembler::for_entry( $record, $position );
 		if ( null === $brief ) {
-			throw new \RuntimeException( \esc_html( "no entry {$n} in this request" ) );
+			throw new \RuntimeException( \esc_html( "no entry {$index} in this request" ) );
 		}
 		return $brief;
 	}

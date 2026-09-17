@@ -406,7 +406,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 			// the row. That open is TRANSIENT — stepping to the next match puts
 			// it back, so walking a search leaves no trail of bodies the reader
 			// never chose to open; one already open is left alone.
-			const own = entries[ entryIdx ]?.n;
+			const own = entries[ entryIdx ]?.i;
 			const prior = matchOpenedRef.current;
 			matchOpenedRef.current = expandedBodies.has( own ) ? null : own;
 
@@ -536,7 +536,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 
 	/**
 	 * Map flame-graph paths to pairIds, so `reveal()` can resolve a frame that
-	 * carries no entry number — one of a request folded under load — to a row.
+	 * carries no entry position — one of a request folded under load — to a row.
 	 *
 	 * Each open pair contributes two keys along the current spine: the detail
 	 * path (`name: message` per segment), which the flame graph prefers, and
@@ -588,7 +588,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 	}, [ entries ] );
 
 	/**
-	 * The pair the frame's path names, for a frame carrying no entry number.
+	 * The pair the frame's path names, for a frame carrying no entry position.
 	 * The detail path (`name: message`) is tried first, the base-name path
 	 * after it; a path naming nothing is undefined.
 	 *
@@ -611,18 +611,19 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 	/**
 	 * Reveal the row a flame frame is: expand its ancestors and scroll to it.
 	 *
-	 * The frame carries the number of the entry it opened at, and that row
-	 * is the answer whatever the span is called: two spans one caller opened
-	 * share every name. Only a frame carrying no number — a folded request's — is
-	 * resolved by its path. An unresolvable frame is a no-op.
+	 * The frame carries the position of the entry it opened at, and that row
+	 * is the answer whatever the span is called or numbered: two spans one
+	 * caller opened share every name, and a nested render repeats n. Only a
+	 * frame carrying no position — a folded request's — is resolved by its
+	 * path. An unresolvable frame is a no-op.
 	 *
-	 * @param {?number}  n    The entry number the frame opened at, or null.
+	 * @param {?number}  i    The entry position the frame opened at, or null.
 	 * @param {string[]} path Segment names from the flame root down to the span.
 	 */
 	const reveal = useCallback(
-		( n, path ) => {
+		( i, path ) => {
 			const opened =
-				null === n ? undefined : entries.find( ( e ) => e.n === n );
+				null === i ? undefined : entries.find( ( e ) => e.i === i );
 			const targetPairId = hasPair( opened ?? {} )
 				? opened.pairId
 				: pairForPath( path );
@@ -826,17 +827,17 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 	 * Open or close one message body. Stops the click there: the row beneath
 	 * folds on click, and showing more must never move the fold.
 	 *
-	 * @param {number} n     The entry's `n`.
+	 * @param {number} key   The body's fold key: its entry's `i`.
 	 * @param {Event}  event Click event.
 	 */
-	const toggleBody = useCallback( ( n, event ) => {
+	const toggleBody = useCallback( ( key, event ) => {
 		event.stopPropagation();
 		setExpandedBodies( ( prev ) => {
 			const next = new Set( prev );
-			if ( next.has( n ) ) {
-				next.delete( n );
+			if ( next.has( key ) ) {
+				next.delete( key );
 			} else {
-				next.add( n );
+				next.add( key );
 			}
 			return next;
 		} );
@@ -1063,11 +1064,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 					completeMsg &&
 					( completeMsg.includes( '\n' ) ? '\n' : ' ' ) }
 				{ completeMsg &&
-					renderFoldedBody(
-						entry,
-						completeMsg,
-						entry.completeN ?? entry.n
-					) }
+					renderFoldedBody( entry, completeMsg, entry.completeI ) }
 				{ renderTruncatedMark( entry ) }
 				{ renderStatsLine( entry, childBadge ) }
 			</>
@@ -1116,13 +1113,14 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 	 * a keyword in `NEVER_FOLDED` or a body opening as a statement is exempt. The trace labels and the stats
 	 * stay outside the fold, so folding never hides a number.
 	 *
-	 * @param {Object}        entry Log entry object.
-	 * @param {string}        msg   The formatted message body.
-	 * @param {number|string} key   What the fold is remembered under; a merged row's
-	 *                              complete side folds under the complete's own number.
+	 * @param {Object}  entry Log entry object.
+	 * @param {string}  msg   The formatted message body.
+	 * @param {?number} key   What the fold is remembered under; a merged row's
+	 *                        complete side folds under the complete's own `i`,
+	 *                        and a spliced row, never stored, carries none.
 	 * @return {import('react').ReactNode} The body, folded or whole.
 	 */
-	const renderFoldedBody = ( entry, msg, key = entry.n ) => {
+	const renderFoldedBody = ( entry, msg, key = entry.i ) => {
 		if ( 'string' !== typeof msg ) {
 			return msg;
 		}
@@ -1354,13 +1352,13 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 						{ visibleEntries.map( ( entry, idx ) => {
 							const keyword = entry.k || '';
 							const eventColor = getStateColor( keyword );
-							// Gap and fold rows share n: ''; idx is unique.
+							// Gap and fold rows carry no i; idx is unique.
 							return (
 								<tr
 									key={ idx }
 									data-ask={
-										undefined !== entry.n
-											? `entry:${ entry.n }`
+										undefined !== entry.i
+											? `entry:${ entry.i }`
 											: undefined
 									}
 									data-pair-id={

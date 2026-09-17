@@ -637,8 +637,9 @@ export default function PerformanceDashboard( { onError } ) {
 	/**
 	 * The entry rows the table renders, and how many of them are real.
 	 *
-	 * A folded request's merged tree splices in where its entries were, so the
-	 * indent walk reads one list either way. `realEntryCount` excludes the
+	 * Every stored entry is numbered `i` first, which the table finds rows by,
+	 * and a folded request's merged tree splices in where its entries were, so
+	 * the indent walk reads one list either way. `realEntryCount` excludes the
 	 * placeholder rows `computeIndentedEntries` inserts to span time gaps,
 	 * which is what the header counts.
 	 */

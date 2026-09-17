@@ -92,7 +92,7 @@ final class Flame_Tree {
 	 * measured duration.
 	 *
 	 * @param array<array-key,mixed> $entries Log entries.
-	 * @return array<string,mixed> Root node: `name`, `value`, `children`, plus `t` when the request was timestamped; each span node adds `n`, the number of the entry that opened it.
+	 * @return array<string,mixed> Root node: `name`, `value`, `children`, plus `t` when the request was timestamped; each span node adds `i`, the zero-based position in `$entries` of the entry that opened it, whatever key it arrived under.
 	 */
 	public static function build_flame_data( array $entries ): array {
 		$origin = self::request_origin( $entries );
@@ -113,7 +113,7 @@ final class Flame_Tree {
 			'name' => 'request',
 		];
 
-		foreach ( $entries as $entry ) {
+		foreach ( \array_values( $entries ) as $position => $entry ) {
 			if ( ! \is_array( $entry ) ) {
 				continue;
 			}
@@ -133,10 +133,8 @@ final class Flame_Tree {
 				if ( '' !== $detail && $detail !== $label ) {
 					$new_node['detail'] = "{$base_name}: {$detail}";
 				}
-				// The row the frame IS; same-caller spans share every name.
-				if ( \is_int( $entry['n'] ?? null ) ) {
-					$new_node['n'] = $entry['n'];
-				}
+				// The row the frame IS; a nested render repeats n.
+				$new_node['i'] = $position;
 				$offset = self::offset_ms( $origin, $entry['ts'] ?? null );
 				if ( null !== $offset ) {
 					$new_node['t'] = $offset;

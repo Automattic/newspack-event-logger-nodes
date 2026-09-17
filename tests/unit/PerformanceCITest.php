@@ -3017,6 +3017,36 @@ class PerformanceCITest extends TestCase {
 		$this->assertEquals( 480.0, $result['ms'] );
 	}
 
+	public function test_ask_resolves_an_entry_by_position_and_refuses_one_that_names_none(): void {
+		$rid = $this->write_request( [
+			'rid'            => 'rid-ask-entry-1234567890123456',
+			'url'            => '/asked-entry',
+			'timestamp'      => 1700000900,
+			'duration_ms'    => 500,
+			'status_code'    => 200,
+			'peak_mb'        => 2,
+			'request_method' => 'GET',
+			'entries'        => [
+				[ 'n' => 5, 'ts' => 1700000900.0, 'k' => 'gyrobase (start)', 'm' => 'first' ],
+				[ 'n' => 5, 'ts' => 1700000900.2, 'k' => 'publication', 'm' => 'second' ],
+			],
+		] );
+
+		$ask = static function ( string $descriptor ) use ( $rid ): mixed {
+			VerbHarness::reset();
+			return VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', [ $descriptor, "request:{$rid}:0" ] );
+		};
+
+		$result = $ask( 'entry:1' );
+		$this->assertIsArray( $result );
+		$this->assertSame( 'second', $result['entry']['m'] );
+
+		// An id naming no position is refused, never read as row 0.
+		foreach ( [ 'entry:abc', 'entry:1x', 'entry:-1', 'entry:01' ] as $descriptor ) {
+			$this->assertStringContainsString( 'no entry', Core::as_string( $ask( $descriptor ) ), $descriptor );
+		}
+	}
+
 	public function test_ask_resolves_a_span_through_its_url_context(): void {
 		// The name comes from the name table and the tree from the aggregate,
 		// one key each; no index row is walked for it.
