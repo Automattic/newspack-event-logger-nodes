@@ -13,7 +13,7 @@
  *
  * The flame graph and the entries table talk to each other through `revealRef`:
  * `LogEntriesTable` publishes its `reveal` function there, and a Cmd/Ctrl+click
- * on a flame frame calls it with the number of the entry the frame opened at,
+ * on a flame frame calls it with the position of the entry the frame opened at,
  * to unfold and scroll to that row.
  */
 

@@ -334,7 +334,10 @@ function bodyLines( brief ) {
 			];
 		case 'entry':
 			return fields( [
-				[ 'entry', `#${ brief.entry?.n } ${ brief.entry?.k }` ],
+				[
+					'entry',
+					`#${ brief.entry?.n } ${ brief.entry?.k } (entry:${ brief.entry?.i })`,
+				],
 				[ 'message', brief.entry?.m, 'site' ],
 				[
 					'gap before',
@@ -351,7 +354,7 @@ function bodyLines( brief ) {
 				[
 					'around it',
 					( brief.neighbours ?? [] )
-						.map( ( e ) => `#${ e.n } ${ e.k }` )
+						.map( ( e ) => `#${ e.n } ${ e.k } (entry:${ e.i })` )
 						.join( ', ' ),
 				],
 				[ 'url', brief.url, 'site' ],

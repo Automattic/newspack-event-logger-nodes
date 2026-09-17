@@ -315,10 +315,11 @@ test( 'a span brief with every copy under one parent says nothing about elsewher
 test( 'an entry brief says where the silence around it starts and ends', () => {
 	const md = briefToMarkdown( {
 		subject: 'entry',
-		entry: { n: 41, k: 'query', m: 'SELECT 1' },
+		// n repeats under a nested render; i is what `entry:` asks by.
+		entry: { i: 41, n: 1, k: 'query', m: 'SELECT 1' },
 		neighbours: [
-			{ n: 40, k: 'process (start)' },
-			{ n: 42, k: 'template' },
+			{ i: 40, n: 1, k: 'process (start)' },
+			{ i: 42, n: 2, k: 'template' },
 		],
 		gap_before_ms: 1904.75,
 		gap_after_ms: null,
@@ -326,10 +327,12 @@ test( 'an entry brief says where the silence around it starts and ends', () => {
 		caveat: 'c',
 	} );
 
-	expect( md ).toContain( '**entry:** #41 query' );
+	expect( md ).toContain( '**entry:** #1 query (entry:41)' );
 	expect( md ).toContain( '**gap before:** 1904.8ms' );
 	expect( md ).toContain( '**gap after:** end of request' );
-	expect( md ).toContain( '#40 process (start), #42 template' );
+	expect( md ).toContain(
+		'#1 process (start) (entry:40), #2 template (entry:42)'
+	);
 } );
 
 test( 'a category brief shows its share and what it competes with', () => {

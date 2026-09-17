@@ -7,9 +7,11 @@
  * them. This module turns that list into the nested, foldable, time-ruled rows
  * that `LogEntriesTable` renders, in three passes:
  *
- * 1. `spliceFoldedSpans()` puts a folded record's merged tree back where its
- *    entries were, as ordinary `(start)`/`(complete)` rows, so everything
- *    below reads one list whether the record was folded or not.
+ * 1. `spliceFoldedSpans()` numbers every stored entry `i`, its place in the
+ *    record and the identity every row is found by, then puts a folded
+ *    record's merged tree back where its entries were, as ordinary
+ *    `(start)`/`(complete)` rows, so everything below reads one list whether
+ *    the record was folded or not. An unfolded record still passes through it.
  * 2. `computeIndentedEntries()` derives an indent level and a `pairId` for
  *    every entry from its `(start)`/`(complete)` keyword, and spans time
  *    gaps with placeholder rows.
@@ -249,8 +251,9 @@ const formatTimeDisplay = ( ts, lastHundredth ) => {
  * header reports it.
  *
  * @typedef {Object} IndentedEntries
- * @property {Array<Object>} entries   Rows with `indent`, `pairId`, and the
- *                                     inserted `isPlaceholder` gap rows.
+ * @property {Array<Object>} entries   Rows with `indent`, `pairId`, the stored
+ *                                     rows' `i`, and the inserted
+ *                                     `isPlaceholder` gap rows.
  * @property {number}        realCount Count of real (non-placeholder) entries.
  */
 
@@ -814,13 +817,17 @@ const owedToTree = ( entries, at ) => {
  * Put a folded request's merged spans back where its entries were: directly
  * after the `entries (aggregated)` marker, which is the boundary the fold left.
  *
- * A no-op for an unfolded request, which has no marker and no tree.
+ * Every stored entry is first numbered `i`, its place in the record, because
+ * the rows spliced in shift every index after them and `n` is no identity: a
+ * nested render restarts it under the same request id. The spliced rows carry
+ * no `i`; they were never stored.
  *
- * @param {?Array}  entries Stored entries — kept head, marker, kept tail.
- * @param {?Object} flame   Merged tree from Flame_Fold::tree().
- * @return {?Array} Entries with the merged spans spliced in.
+ * @param {?Array}  input Stored entries — kept head, marker, kept tail.
+ * @param {?Object} flame Merged tree from Flame_Fold::tree().
+ * @return {?Array} Entries numbered, with the merged spans spliced in.
  */
-export const spliceFoldedSpans = ( entries, flame ) => {
+export const spliceFoldedSpans = ( input, flame ) => {
+	const entries = input?.map( ( entry, i ) => ( { ...entry, i } ) );
 	if ( ! entries?.length || ! flame ) {
 		return entries;
 	}
@@ -913,11 +920,8 @@ export const computeVisibleEntries = ( entries, expandedSet ) => {
 					duration_ms: completeEntry?.duration_ms ?? null,
 					peak_mb: completeEntry?.peak_mb || 0,
 					completeMessage: completeEntry?.m ?? '',
-					// The complete's own number: what its body folds under.
-					completeN:
-						completeEntry && '' !== completeEntry.n
-							? completeEntry.n
-							: null,
+					// The complete's own position: what its body folds under.
+					completeI: completeEntry?.i,
 					childCount,
 					isMerged: true,
 					originalIdx: i,

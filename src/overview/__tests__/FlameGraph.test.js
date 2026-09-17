@@ -225,7 +225,7 @@ describe( 'FlameGraph', () => {
 		container.dispatchEvent(
 			new MouseEvent( 'mousedown', { metaKey: true } )
 		);
-		// Invoke onClick — should call onRevealEntry with the number of the
+		// Invoke onClick — should call onRevealEntry with the position of the
 		// entry the frame opened at, and the path for a frame carrying none.
 		flamegraphState.onClick( node );
 		expect( onReveal ).toHaveBeenCalledWith( null, [ 'process' ] );
@@ -233,7 +233,7 @@ describe( 'FlameGraph', () => {
 			new MouseEvent( 'mousedown', { metaKey: true } )
 		);
 		flamegraphState.onClick( {
-			data: { name: 'sql: QM_DB->query', value: 18659, n: 233 },
+			data: { name: 'sql: QM_DB->query', value: 18659, n: 1, i: 233 },
 			parent: node,
 		} );
 		expect( onReveal ).toHaveBeenLastCalledWith( 233, [

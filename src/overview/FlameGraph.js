@@ -409,16 +409,16 @@ const restamp = ( container ) => {
 };
 
 /**
- * The number of the log entry a frame opened at, or null for a frame that
- * carries none: an aggregate's, or any frame of a request folded under load.
- * Two frames that share a name share nothing else but this, and it is what
- * the log table finds a clicked frame's row by.
+ * The position in the record of the log entry a frame opened at, or null for
+ * a frame that carries none: an aggregate's, or any frame of a request folded
+ * under load. Two frames that share a name share nothing else but this, and a
+ * nested render repeats n, so it is what the log table finds a row by.
  *
  * @param {Object} d A d3 hierarchy node.
- * @return {?number} The frame's `n`.
+ * @return {?number} The frame's `i`.
  */
 const frameEntry = ( d ) =>
-	Number.isInteger( d?.data?.n ) ? d.data.n : null;
+	Number.isInteger( d?.data?.i ) ? d.data.i : null;
 
 /**
  * Build the root-to-node path, one segment per frame.
@@ -761,7 +761,7 @@ export const withTimeSpacers = ( root, maxSpacers = PRUNE_HARD_MAX_NODES ) => {
  * @param {Object}                               props                 Component props.
  * @param {Object}                               props.data            Flame tree root: { name, value, children[] }.
  * @param {number}                               [props.lastModified]  Server timestamp gating updates; omit for single requests.
- * @param {(n: ?number, path: string[]) => void} [props.onRevealEntry] Called on Cmd/Ctrl+Click with the number of the log entry the frame opened at — null for a frame carrying none, an aggregate's or a folded request's — and the frame's path, root-first frame names; absent disables reveal.
+ * @param {(i: ?number, path: string[]) => void} [props.onRevealEntry] Called on Cmd/Ctrl+Click with the position of the log entry the frame opened at — null for a frame carrying none, an aggregate's or a folded request's — and the frame's path, root-first frame names; absent disables reveal.
  * @return {import('react').ReactElement} Rendered component.
  */
 export default function FlameGraph( { data, lastModified, onRevealEntry } ) {

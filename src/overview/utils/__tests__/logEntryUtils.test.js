@@ -156,6 +156,50 @@ describe( 'a folded span row', () => {
 			[ 'the_content hook (complete)', undefined ],
 		] );
 	} );
+
+	it( 'numbers each stored row by its place in the record, before rows go in', () => {
+		// A nested render repeats n; the rows spliced in were never stored.
+		const flame = {
+			name: 'request',
+			children: [
+				{
+					name: 'process',
+					k: 'process',
+					value: 500,
+					t: 0,
+					children: [
+						{
+							name: 'q',
+							k: 'q',
+							count: 3,
+							merged: true,
+							value: 9,
+							t: 5,
+							children: [],
+						},
+					],
+				},
+			],
+		};
+		const stored = [
+			{ n: 1, k: 'process (start)', ts: 1000 },
+			{ n: 1, k: 'gyrobase (start)', ts: 1000 },
+			{ n: 2, k: 'entries (aggregated)', ts: 1000.01 },
+			{ n: 2, k: 'process (complete)', ts: 1000.5 },
+		];
+
+		const out = spliceFoldedSpans( stored, flame );
+
+		expect( out.some( ( e ) => e.fromFold ) ).toBe( true );
+		expect(
+			out.filter( ( e ) => ! e.fromFold ).map( ( e ) => [ e.k, e.i ] )
+		).toEqual( stored.map( ( e, i ) => [ e.k, i ] ) );
+		expect(
+			out
+				.filter( ( e ) => e.fromFold )
+				.every( ( e ) => undefined === e.i )
+		).toBe( true );
+	} );
 } );
 
 describe( 'formatDots', () => {
@@ -1608,7 +1652,9 @@ describe( 'spliceFoldedSpans', () => {
 
 	it( 'leaves an unfolded request alone', () => {
 		const plain = [ { n: 1, k: 'process (start)', ts: 1000 } ];
-		expect( spliceFoldedSpans( plain, null ) ).toBe( plain );
+		expect( spliceFoldedSpans( plain, null ) ).toEqual( [
+			{ ...plain[ 0 ], i: 0 },
+		] );
 	} );
 } );
 

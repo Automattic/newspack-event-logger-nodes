@@ -61,23 +61,43 @@ class FlameTreeTest extends TestCase {
 		$this->assertSame( 250.5, $process['children'][0]['t'] );
 	}
 
-	public function test_build_stamps_each_span_with_the_number_of_the_entry_that_opened_it(): void {
-		// Two spans one caller opened, alike in every name; the number is
-		// what the table finds a clicked frame's row by.
+	public function test_build_positions_count_the_entries_whatever_keys_they_arrived_under(): void {
+		// The table and the brief number rows 0.., so the frames must too.
 		$tree = Flame_Tree::build_flame_data(
 			[
-				$this->entry( 'process (start)', [ 'n' => 41 ] ),
-				$this->entry( 'sql (start)', [ 'n' => 233, 'l' => 'QM_DB->query' ] ),
-				$this->entry( 'sql (complete)', [ 'n' => 234, 'm' => 'SELECT slow', 'duration_ms' => 18659 ] ),
-				$this->entry( 'sql (start)', [ 'n' => 475, 'l' => 'QM_DB->query' ] ),
-				$this->entry( 'sql (complete)', [ 'n' => 476, 'm' => 'UPDATE fast', 'duration_ms' => 0.3 ] ),
+				7  => $this->entry( 'process (start)', [ 'n' => 1 ] ),
+				12 => $this->entry( 'sql (start)', [ 'n' => 2 ] ),
+				30 => $this->entry( 'sql (complete)', [ 'n' => 3 ] ),
 			]
 		);
-		$this->assertArrayNotHasKey( 'n', $tree );
 		$process = $tree['children'][0];
-		$this->assertSame( 41, $process['n'] );
-		$this->assertSame( 233, $process['children'][0]['n'] );
-		$this->assertSame( 475, $process['children'][1]['n'] );
+		$this->assertSame( 0, $process['i'] );
+		$this->assertSame( 1, $process['children'][0]['i'] );
+	}
+
+	public function test_build_stamps_each_span_with_the_position_of_the_entry_that_opened_it(): void {
+		// A nested render restarts n at 1 under the same rid, so n repeats; the
+		// position in the record is what the table finds a clicked frame's row by.
+		$tree = Flame_Tree::build_flame_data(
+			[
+				$this->entry( 'publication', [ 'n' => 1 ] ),
+				$this->entry( 'process (start)', [ 'n' => 2 ] ),
+				$this->entry( 'gyrobase (start)', [ 'n' => 1 ] ),
+				$this->entry( 'sql (start)', [ 'n' => 2, 'l' => 'QM_DB->query' ] ),
+				$this->entry( 'sql (complete)', [ 'n' => 3, 'm' => 'SELECT slow', 'duration_ms' => 18659 ] ),
+				$this->entry( 'gyrobase (complete)', [ 'n' => 4 ] ),
+				$this->entry( 'sql (start)', [ 'n' => 3, 'l' => 'QM_DB->query' ] ),
+				$this->entry( 'sql (complete)', [ 'n' => 4, 'm' => 'UPDATE fast', 'duration_ms' => 0.3 ] ),
+			]
+		);
+		$this->assertArrayNotHasKey( 'i', $tree );
+		$process  = $tree['children'][0];
+		$gyrobase = $process['children'][0];
+		$this->assertSame( 1, $process['i'] );
+		$this->assertSame( 2, $gyrobase['i'] );
+		$this->assertSame( 3, $gyrobase['children'][0]['i'] );
+		$this->assertSame( 6, $process['children'][1]['i'] );
+		$this->assertArrayNotHasKey( 'n', $process, 'n repeats across producers; it names no row' );
 	}
 
 	public function test_build_omits_the_offset_entirely_when_no_entry_is_timestamped(): void {

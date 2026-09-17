@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A Cmd-click on a flame frame lands on its own row.** The frame carried its entry's `n`, and the log table took the first row with that number. A nested gyrobase render restarts `n` at 1 under the same request id, so a Cmd-click on the Perl span `include: /Macros/Global.html` jumped to PHP's row 11, `newspack-nodes plugin (start)`. A frame now carries `i`, the entry's position in the stored record, and every row the table draws from that record carries the same `i`. Flames stored before this release carry no `i` and resolve by their path, as a folded request's always have.
+- **Show more opens one body.** The table kept open bodies by `n`, so opening a long PHP message opened the Perl message sharing its number too. It keys them by position now.
+- **An `entry:` Ask answers for the row it was asked about.** The picker and the MCP `performance_ask` tool named an entry by `n`, and the brief described the first entry carrying it, so an Ask on a Perl row could describe a PHP one. `entry:<i>` now names the entry's position, every entry in a request or entry brief carries its `i` to ask by and the copied brief labels entries with it, and an id that is not a canonical position, `01` included, is refused rather than read as the first row.
+
 ## [0.98.7] - 2026-09-16
 
 ### Fixed
