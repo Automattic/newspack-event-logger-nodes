@@ -2,6 +2,7 @@
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Newspack_Event_Logger_Nodes\App\Findings;
 use Newspack_Event_Logger_Nodes\Rule;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
@@ -695,6 +696,64 @@ class FindingsTest extends TestCase {
 		$this->assertStringNotContainsString( 'SQL, outbound HTTP', $caveat );
 	}
 
+	/**
+	 * A span inside a same-name ancestor is common — a `render_block` nested in
+	 * a `render_block`. The repeat is the ancestor's, so the leaf must read as
+	 * inside it, never as having run the ancestor's count at its per-call time.
+	 */
+	public function test_a_leaf_inside_a_same_name_repeat_is_not_credited_with_its_count(): void {
+		$record                = $this->healthy_record();
+		$record['duration_ms'] = 1000.0;
+		$record['flame']       = [
+			'name'     => 'request',
+			'value'    => 1000.0,
+			'children' => [
+				[
+					'name'     => 'render_block hook',
+					'value'    => 900.0,
+					'count'    => 5,
+					'children' => [
+						[ 'name' => 'render_block hook', 'value' => 700.0, 'count' => 1, 'children' => [] ],
+					],
+				],
+			],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'dominant_span' );
+
+		$this->assertNotNull( $found );
+		$this->assertSame( 2, $found['metric']['depth'] );
+		$this->assertStringContainsString( 'inside render_block hook ×5', $found['title'] );
+		$this->assertStringNotContainsString( 'across 5 calls', $found['title'] );
+	}
+
+	/** An HTTP span is recorded on every request, so its advice must not presume a rule governs it. */
+	#[DataProvider( 'transport_spans' )]
+	public function test_a_transport_span_under_no_rule_claims_no_rule( string $span ): void {
+		$record = $this->healthy_record();
+		$record['flame']['children'] = [
+			[ 'name' => 'init hook', 'value' => 12.0, 'children' => [] ],
+			[ 'name' => $span, 'value' => 372.0, 'children' => [] ],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, null ), 'dominant_span' );
+
+		$this->assertNotNull( $found );
+		$this->assertStringNotContainsString( 'rule', $found['proposal']['why'] );
+	}
+
+	/**
+	 * A rule with query logging records every query as a span (decision 22).
+	 * A caveat denying SQL outright contradicts the query findings it rides
+	 * beside, and a model handed both believes the caveat.
+	 */
+	public function test_the_caveat_does_not_deny_the_query_spans_a_rule_can_record(): void {
+		$caveat = Findings::caveat();
+
+		$this->assertStringNotContainsString( 'does not see SQL', $caveat );
+		$this->assertStringContainsString( 'query logging', $caveat );
+	}
+
 	public function test_findings_come_back_worst_first(): void {
 		$record                = $this->healthy_record();
 		$record['duration_ms'] = 420000.0;
@@ -713,5 +772,141 @@ class FindingsTest extends TestCase {
 		$this->assertSame( 'unattributed', $kinds[0], 'the biggest unexplained number leads' );
 		$this->assertContains( 'truncation', $kinds );
 		$this->assertContains( 'repetition', $kinds );
+	}
+
+	/**
+	 * The logger's own query and HTTP spans (decisions 20 and 22), named for
+	 * their caller as the flame names every labelled span.
+	 *
+	 * @return array<string,array{string}>
+	 */
+	public static function transport_spans(): array {
+		return [
+			'query' => [ 'sql: WP_Query->get_posts' ],
+			'http'  => [ 'http: Jetpack_Client->remote_request' ],
+		];
+	}
+
+	/**
+	 * A query or an HTTP call is the logger's own span, not an event the
+	 * application logs: calling it a custom event proposes a rule edit that
+	 * changes nothing, and nothing inside a round trip can be switched on.
+	 */
+	#[DataProvider( 'transport_spans' )]
+	public function test_a_dominant_query_or_http_span_proposes_nothing_to_enable( string $span ): void {
+		$record = $this->healthy_record();
+		$record['flame']['children'] = [
+			[ 'name' => 'init hook', 'value' => 12.0, 'children' => [] ],
+			[ 'name' => $span, 'value' => 372.0, 'children' => [] ],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'dominant_span' );
+
+		$this->assertNotNull( $found );
+		$this->assertSame( 'none', $found['proposal']['action'] );
+		$this->assertStringNotContainsString( 'custom event', $found['proposal']['why'] );
+		$this->assertStringNotContainsString( 'custom event', $found['detail'] );
+	}
+
+	public function test_repetition_of_the_query_span_is_not_proposed_as_a_custom_event(): void {
+		$record             = $this->healthy_record();
+		$record['profiles'] = [
+			'sql' => [ 'count' => 586, 'time' => 53018.2, 'entries' => [] ],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'repetition' );
+
+		$this->assertNotNull( $found );
+		$this->assertSame( 'none', $found['proposal']['action'] );
+	}
+
+	/**
+	 * A BDN post-edit load, folded: the query holds 80% of the request, but it
+	 * holds it because the editor's REST preload rendered the content ten
+	 * times. Naming the leaf alone points at the query; the repeat is the cost.
+	 */
+	public function test_a_dominant_span_names_the_repeated_parent_that_multiplies_it(): void {
+		$revisions             = 'the_content hook: WP_REST_Revisions_Controller->prepare_item_for_response';
+		$record                = $this->healthy_record();
+		$record['duration_ms'] = 64832.6;
+		$record['flame']       = [
+			'name'     => 'request',
+			'value'    => 64832.6,
+			'children' => [
+				[
+					'name'     => 'process',
+					'value'    => 64832.6,
+					'count'    => 1,
+					'children' => [
+						[
+							'name'     => $revisions,
+							'value'    => 59384.1,
+							'count'    => 10,
+							'children' => [
+								[
+									'name'     => 'do_blocks @9',
+									'value'    => 56104.6,
+									'count'    => 10,
+									'children' => [
+										[ 'name' => 'sql: WP_Query->get_posts', 'value' => 52105.4, 'count' => 299, 'children' => [] ],
+									],
+								],
+							],
+						],
+						[ 'name' => 'init hook', 'value' => 104.4, 'count' => 1, 'children' => [] ],
+					],
+				],
+			],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'dominant_span' );
+
+		$this->assertNotNull( $found );
+		$this->assertSame( 'sql: WP_Query->get_posts', $found['metric']['name'] );
+		$this->assertSame( $revisions, $found['metric']['repeat']['name'] );
+		$this->assertSame( 10, $found['metric']['repeat']['count'] );
+		$this->assertStringContainsString( $revisions, $found['title'] );
+		$this->assertStringContainsString( '×10', $found['title'] );
+	}
+
+	/**
+	 * The same load UNFOLDED, which is how nearly every record arrives: a
+	 * stored tree keeps each render as its own sibling, so no single one holds
+	 * 60% and the detector fell back to the whole request. Siblings sharing a
+	 * name are one repeat at every depth, so this names the same leaf and the
+	 * same multiplier the folded record does.
+	 */
+	public function test_same_name_siblings_in_a_stored_tree_dominate_as_one_repeat(): void {
+		$revisions = 'the_content hook: WP_REST_Revisions_Controller->prepare_item_for_response';
+		$renders   = [];
+		for ( $i = 0; $i < 10; $i++ ) {
+			$renders[] = [
+				'name'     => $revisions,
+				'value'    => 5938.4,
+				'children' => [ [ 'name' => 'sql: WP_Query->get_posts', 'value' => 5210.5, 'children' => [] ] ],
+			];
+		}
+		$record                = $this->loaded_record();
+		$record['duration_ms'] = 64832.6;
+		$record['flame_data']  = [
+			'name'     => 'request',
+			'value'    => 64832.6,
+			'children' => [
+				[
+					'name'     => 'process',
+					'value'    => 64832.6,
+					'children' => [ ...$renders, [ 'name' => 'init hook', 'value' => 5448.6, 'children' => [] ] ],
+				],
+			],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'dominant_span' );
+
+		$this->assertNotNull( $found );
+		$this->assertSame( 'sql: WP_Query->get_posts', $found['metric']['name'] );
+		$this->assertEqualsWithDelta( 52105.0, $found['metric']['ms'], 0.5 );
+		$this->assertSame( $revisions, $found['metric']['repeat']['name'] );
+		$this->assertSame( 10, $found['metric']['repeat']['count'] );
+		$this->assertEqualsWithDelta( 59384.0, $found['metric']['repeat']['ms'], 0.5 );
 	}
 }

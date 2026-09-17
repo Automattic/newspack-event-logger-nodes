@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A dominant span names the repeat that multiplies it.** The detector named the deepest span holding most of a request and stopped there, so a `wp-admin/post.php` load where the editor's REST preload rendered the post's content ten times reported `sql: WP_Query->get_posts holds 80% of the profiled time` — one slow query to chase rather than ten renders to explain. It now names the outermost dominating span that ran more than once, in the title and the detail: `…, inside the_content hook: WP_REST_Revisions_Controller->prepare_item_for_response ×10`. Siblings sharing a name count as one repeat at every depth, so an unfolded record, whose tree keeps each render as its own node and so had no single span holding 60%, reports the same leaf and the same multiplier a folded one does instead of falling back to the whole request.
+- **A query or HTTP span is no longer proposed as a custom event.** The detector knew three kinds of span, so the logger's own query and outbound-HTTP spans fell in with the application's custom events: a brief called `sql` "a custom event the application logs itself" and proposed adding it to the rule, an edit that changes nothing. They are a fourth kind now, whose finding proposes nothing to switch on and points at the caller the span's label already names.
+- **The caveat no longer denies SQL.** Every brief and every MCP tool description said the logger does not see SQL, beside query findings from a rule with query logging on. It now says SQL is seen where a rule turns on query logging, and that below PHP userland only those queries and outbound HTTP calls are.
+
 ## [0.98.6] - 2026-09-15
 
 ### Changed

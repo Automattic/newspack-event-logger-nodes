@@ -855,6 +855,26 @@ class Core {
 	}
 
 	/**
+	 * Whether a span name is one of this logger's own round trips — a query
+	 * (decision 22) or an outbound HTTP call (decision 20) — rather than a hook,
+	 * a listener or a custom event the application logs.
+	 *
+	 * `Flame_Tree::node_name()` composes `state: label`, and an unlabelled span
+	 * keeps the bare state, so both spellings answer.
+	 *
+	 * @param string $span A span name, as the flame carries it.
+	 * @return bool
+	 */
+	public static function is_transport_span( string $span ): bool {
+		foreach ( [ self::SQL_STATE, self::HTTP_STATE ] as $state ) {
+			if ( $span === $state || \str_starts_with( $span, "{$state}: " ) ) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
 	 * Close the span `http_start` opened. Registered on `http_api_debug` at
 	 * PHP_INT_MIN so the span covers the request and not the other listeners
 	 * on that action.
