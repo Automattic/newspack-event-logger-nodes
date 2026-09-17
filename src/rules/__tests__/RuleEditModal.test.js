@@ -339,11 +339,16 @@ describe( 'RuleEditModal — log rule fields', () => {
 		mount( { ...LOG_RULE, trace_hooks: true } );
 		const help = inDialog( '.rule-edit-trace-row' ).textContent;
 		expect( help ).toContain( 'Labels every hook span with who called it' );
+		// The number counts FIRINGS traced, not backtraces a firing records.
 		expect( help ).toContain(
-			'per request, also record their twenty nearest callers'
+			'traces that many firings of each hook further'
 		);
+		expect( help ).toContain( 'twenty frames above each call' );
+		expect( help ).toContain( 'At 0 every span still carries its label' );
+		expect( help ).toContain( 'firings traced per hook' );
 		expect( help ).not.toContain( 'every span with' );
 		expect( help ).not.toContain( 'full backtrace' );
+		expect( help ).not.toContain( 'backtraces per hook' );
 	} );
 
 	test( 'the backtrace count shares the checkbox row', () => {

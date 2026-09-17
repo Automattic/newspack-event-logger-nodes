@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The caller-tracing number says what it counts.** The field read `backtraces per hook` beside help ending `0 = labels only`, so a ticked box showing 0 read as a feature that was off. The checkbox alone labels every hook span with its caller — `origin_frame()` runs on every firing — and the number is how many firings of each hook ALSO record the twenty frames above the call. It now reads `firings traced per hook`, and the help says that at 0 every span still carries its label and none records a backtrace.
+
 ## [0.98.8] - 2026-09-17
 
 ### Fixed
