@@ -240,6 +240,21 @@ describe( 'FlameGraph', () => {
 			'process',
 			'sql: QM_DB->query',
 		] );
+		// A path is node names: the table keys rows, and zoom finds frames, by them.
+		container.dispatchEvent(
+			new MouseEvent( 'mousedown', { metaKey: true } )
+		);
+		flamegraphState.onClick( {
+			data: { name: 'db', detail: 'db: SELECT 1', value: 4 },
+			parent: {
+				data: { name: 'process', detail: 'process: /foo' },
+				parent: null,
+			},
+		} );
+		expect( onReveal ).toHaveBeenLastCalledWith( null, [
+			'process',
+			'db',
+		] );
 		unmount();
 	} );
 

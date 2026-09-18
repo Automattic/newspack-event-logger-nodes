@@ -156,17 +156,20 @@ final class Flame_Fold {
 				$m[1],
 				Core::str( $entry['l'] ?? '' ),
 				$ts,
-				self::shape_of( $m[1], $entry['m'] ?? null )
+				self::shape_of( $m[1], $entry['m'] ?? null ),
+				self::number_of( $entry )
 			);
 			return;
 		}
 		if ( \preg_match( Flame_Tree::PATTERN_COMPLETE, $keyword, $m ) ) {
 			$duration = $entry['duration_ms'] ?? 0;
+			$end      = [ 't_end' => Flame_Tree::offset_ms( $state['origin'], $ts ), 'n_end' => self::number_of( $entry ) ];
 			self::close(
 				$state,
 				$m[1],
 				\is_numeric( $duration ) ? (float) $duration : 0.0,
-				self::shape_of( $m[1], $entry['m'] ?? null )
+				self::shape_of( $m[1], $entry['m'] ?? null ),
+				\array_filter( $end, static fn ( $v ) => null !== $v )
 			);
 		}
 	}
@@ -180,8 +183,9 @@ final class Flame_Fold {
 	 * @param string      $base     Span base name.
 	 * @param float       $duration Milliseconds the span took.
 	 * @param string|null $shape    The statement or URL this instance ran, or null.
+	 * @param array{t_end?: float, n_end?: int} $end Where this instance ended, and its entry number.
 	 */
-	private static function close( array &$state, string $base, float $duration, ?string $shape = null ): void {
+	private static function close( array &$state, string $base, float $duration, ?string $shape, array $end ): void {
 		for ( $i = \count( $state['stack'] ) - 1; $i >= 0; $i-- ) {
 			if ( $state['stack'][ $i ]['name'] !== $base ) {
 				continue;
@@ -192,7 +196,7 @@ final class Flame_Fold {
 			// `m` is the fallback — except for http, where that `m` is the
 			// status code and the URL rode the start this state has lost.
 			$shape = $frame['shape'] ?? ( Flame_Tree::HTTP_STATE === $base ? null : $shape );
-			$meta  = null === $shape ? [] : [ 'shape' => $shape ];
+			$meta  = $end + ( null === $shape ? [] : [ 'shape' => $shape ] );
 			// A row already there costs nothing; fold_shape knows which is new.
 			if ( [] !== $meta && ( $state['shape_bytes'] ?? 0 ) >= ( $state['shape_budget'] ?? self::MAX_RECORD_SHAPE_BYTES ) ) {
 				$meta['spent'] = true;
@@ -206,6 +210,16 @@ final class Flame_Fold {
 			\array_splice( $state['stack'], $i );
 			return;
 		}
+	}
+
+	/**
+	 * An entry's number, or null when it carries none.
+	 *
+	 * @param array<array-key,mixed> $entry One stored entry.
+	 * @return int|null Its `n`.
+	 */
+	private static function number_of( array $entry ): ?int {
+		return \is_numeric( $entry['n'] ?? null ) ? (int) $entry['n'] : null;
 	}
 
 	/**
@@ -252,8 +266,9 @@ final class Flame_Fold {
 	 * @param string     $label Stable aggregation label, or ''.
 	 * @param mixed      $ts    Entry timestamp, unix seconds.
 	 * @param string|null $shape What this instance ran, when the START names it.
+	 * @param int|null    $n     The start's entry number, or null.
 	 */
-	private static function open( array &$state, string $base, string $label, mixed $ts, ?string $shape = null ): void {
+	private static function open( array &$state, string $base, string $label, mixed $ts, ?string $shape, ?int $n ): void {
 		$name   = Flame_Tree::node_name( $base, $label );
 		$parent = $state['stack'][ \count( $state['stack'] ) - 1 ]['path'] ?? [];
 		$path   = [ ...$parent, $name ];
@@ -261,6 +276,9 @@ final class Flame_Fold {
 		$meta   = [ 'k' => $base, 'l' => $label ];
 		if ( null !== $offset ) {
 			$meta['t'] = $offset;
+		}
+		if ( null !== $n ) {
+			$meta['n'] = $n;
 		}
 		self::record( $state['root'], $path, null, $meta );
 
@@ -289,7 +307,7 @@ final class Flame_Fold {
 	 * @param array<array-key,mixed> $node     Node to descend from, by reference.
 	 * @param list<string>           $path     Remaining name chain.
 	 * @param float|null             $duration Milliseconds to fold in, or null for a start.
-	 * @param array{k?: string, l?: string, t?: float, shape?: string, spent?: bool} $meta What this instance carried: the key and label a start was logged with, kept from the node's first open; its offset, kept at the EARLIEST; and the statement or URL it ran, for a transport span (see shape_of()).
+	 * @param array{k?: string, l?: string, t?: float, n?: int, t_end?: float, n_end?: int, shape?: string, spent?: bool} $meta What this instance carried: the key and label a start was logged with, and its entry number, kept from the node's first open; its offset, kept at the EARLIEST; where it ended and that complete's number, kept from the LATEST end; and the statement or URL it ran, for a transport span (see shape_of()).
 	 * @return int Bytes a shape new to its node took, for the record's budget.
 	 */
 	private static function record( array &$node, array $path, ?float $duration, array $meta = [] ): int {
@@ -301,6 +319,13 @@ final class Flame_Fold {
 			if ( isset( $meta['t'] ) ) {
 				$seen      = $node['t'] ?? null;
 				$node['t'] = \is_numeric( $seen ) ? \min( (float) $seen, $meta['t'] ) : $meta['t'];
+			}
+			if ( isset( $meta['n'] ) ) {
+				$node['n'] ??= $meta['n'];
+			}
+			if ( isset( $meta['t_end'] ) && $meta['t_end'] >= Core::num_float( $node['t_end'] ?? null ) ) {
+				$node['t_end'] = $meta['t_end'];
+				$node['n_end'] = $meta['n_end'] ?? null;
 			}
 			if ( null === $duration ) {
 				// Starts, not completions: see merged().
@@ -345,6 +370,9 @@ final class Flame_Fold {
 			'starts'   => 0,
 			'max'      => 0.0,
 			't'        => null,
+			'n'        => null,
+			't_end'    => null,
+			'n_end'    => null,
 			'children' => [],
 		];
 	}
@@ -436,9 +464,12 @@ final class Flame_Fold {
 	 * logged with. `name` is only the key the fold merges on; the rows a
 	 * folded request shows read the two fields as logged.
 	 *
-	 * Each node's `t` is the offset its EARLIEST instance started at — the one
-	 * position that is true of a merged node. The detail view stamps its log
-	 * rows from it, and `FlameGraph` positions the frame by it.
+	 * Each node's `t` is the offset its EARLIEST instance started at, and `n`
+	 * that start's entry number; `t_end` is where its LATEST instance ended,
+	 * and `n_end` that complete's number, both null until one closes. Those
+	 * are the positions true of a merged node. The detail view numbers and
+	 * stamps its log rows from them, and `FlameGraph` positions the frame by
+	 * `t`.
 	 *
 	 * The root carries `folded`, which marks the tree as this machine's output
 	 * rather than `Flame_Tree`'s.
@@ -511,6 +542,9 @@ final class Flame_Fold {
 			'merged'   => self::merged( $node ),
 			'max'      => \is_numeric( $node['max'] ?? null ) ? (float) $node['max'] : 0.0,
 			't'        => \is_numeric( $node['t'] ?? null ) ? (float) $node['t'] : null,
+			'n'        => \is_numeric( $node['n'] ?? null ) ? (int) $node['n'] : null,
+			't_end'    => \is_numeric( $node['t_end'] ?? null ) ? (float) $node['t_end'] : null,
+			'n_end'    => \is_numeric( $node['n_end'] ?? null ) ? (int) $node['n_end'] : null,
 			'children' => $children,
 		];
 	}

@@ -118,19 +118,35 @@ const pairBaseName = ( keyword ) => {
 /**
  * Whether a keyword opens a pair the reader may fold.
  *
- * THE rule, in one place. Every caller asks this function — the disclosure
- * triangle, the pointer cursor, the click handler and "Unfold All" — because a
- * second spelling disagrees with it on real input: a `startsWith( 'process ' )`
- * test drops `process queue (start)` from "Unfold All" while the same row still
- * folds on click.
+ * THE rule, in one place: `isFoldableBase()`. The disclosure triangle, the
+ * pointer cursor, the click handler and "Unfold All" all reach it through here
+ * or `isFoldablePairComplete()`, because a second spelling disagrees with it on
+ * real input: a `startsWith( 'process ' )` test drops `process queue (start)`
+ * from "Unfold All" while the same row still folds on click.
  *
  * @param {string} keyword Entry keyword.
  * @return {boolean} True when the pair is foldable.
  */
-export const isFoldablePairStart = ( keyword ) => {
-	const base = pairBaseName( keyword );
-	return null !== base && base !== OUTERMOST_PAIR;
-};
+export const isFoldablePairStart = ( keyword ) =>
+	isFoldableBase( pairBaseName( keyword ) );
+
+/**
+ * Whether a keyword closes a pair the reader may fold — the same rule as
+ * `isFoldablePairStart()`, read off the `(complete)` side.
+ *
+ * @param {string} keyword Entry keyword.
+ * @return {boolean} True when the pair is foldable.
+ */
+export const isFoldablePairComplete = ( keyword ) =>
+	isFoldableBase( ( keyword || '' ).match( COMPLETE_REGEX )?.[ 1 ] ?? null );
+
+/**
+ * Whether a pair of this base name may fold: any but the outermost.
+ *
+ * @param {?string} base A pair's base name, or null.
+ * @return {boolean} True when a pair of that name folds.
+ */
+const isFoldableBase = ( base ) => null !== base && base !== OUTERMOST_PAIR;
 
 /**
  * Whether an entry belongs to a `(start)`/`(complete)` pair.
@@ -220,11 +236,11 @@ const formatTimeDisplay = ( ts, lastHundredth ) => {
 
 	const currentHundredth = Math.round( ts * 100 );
 
-	// Within the same 10ms tick, so this row shows nothing.
+	// Within the same tick, or behind the ruler: shows nothing, moves nothing.
 	if ( currentHundredth <= lastHundredth ) {
 		return {
 			displayTime: '',
-			newHundredth: currentHundredth,
+			newHundredth: lastHundredth,
 		};
 	}
 
@@ -550,9 +566,9 @@ export const computeIndentedEntries = ( entries ) => {
 			}
 		}
 
-		// Update lastHundredth for placeholder gap tracking.
+		// Update lastHundredth for placeholder gap tracking; it never falls.
 		if ( ts > 0 ) {
-			lastHundredth = Math.round( ts * 100 );
+			lastHundredth = Math.max( lastHundredth, Math.round( ts * 100 ) );
 		}
 		prevWasBreak = isBreak;
 
@@ -688,8 +704,12 @@ const deepestByBase = ( flame ) => {
  * flat table that stringifies the nesting into `a / b / c`. The existing
  * fold/unfold interaction then works on them unchanged.
  *
- * Rows carry a real `ts`, derived from the node's own start offset against the
- * request origin, so the view rules and gaps them like any other row.
+ * A start row is numbered and stamped from the node's first start (`n`, `t`),
+ * a complete row from its last end (`n_end`, `t_end`) — carried as `endTs`
+ * alone when the node merged several spans, since that end is no place in the
+ * sequence the ruler draws. A row whose instance is
+ * a kept row, or whose tree never recorded one, goes unnumbered and unstamped
+ * rather than repeating that row or borrowing the other end's.
  *
  * Spans that STRADDLE a boundary are not emitted twice. The one instance open
  * when the head ended is skipped — that row exists, and its tail `(complete)`
@@ -708,6 +728,7 @@ const deepestByBase = ( flame ) => {
  * @param {Map}     kept     Path to complete pairs the kept rows already show.
  * @param {Map}     drained  Base name to the path of its deepest frame.
  * @param {number}  originTs Unix seconds the request started at.
+ * @param {Map}     shown    `n|k` to the times of the kept rows carrying it.
  * @return {Array} Synthetic log entries.
  */
 const foldedSpanEntries = (
@@ -716,15 +737,26 @@ const foldedSpanEntries = (
 	tailEnds,
 	kept,
 	drained,
-	originTs
+	originTs,
+	shown
 ) => {
 	const rows = [];
 	const owedByName = new Map( tailEnds );
 	const unshown = new Map( kept );
-	const stampOf = ( node ) =>
-		Number.isFinite( node.t ) && Number.isFinite( originTs )
-			? originTs + node.t / 1000
-			: 0;
+	// @longform The fold replays the kept head and folds the kept tail, so a
+	// node's first start or last end can be a row already on screen; that
+	// instance's number and time are not this row's to repeat.
+	const place = ( n, k, offset ) => {
+		const ts =
+			Number.isFinite( offset ) && Number.isFinite( originTs )
+				? originTs + offset / 1000
+				: 0;
+		// A nested render reuses n, so the time has to agree as well.
+		const onScreen = ( shown.get( `${ n }|${ k }` ) || [] ).some(
+			( seen ) => Math.abs( seen - ts ) < 0.001
+		);
+		return onScreen ? { n: '', ts: 0 } : { n: n ?? '', ts };
+	};
 
 	const walk = ( nodes, depth, onChain, path ) => {
 		// The head left ONE span open here, not every node sharing its base.
@@ -752,13 +784,12 @@ const foldedSpanEntries = (
 			} else if ( merged < 1 && ! node.children?.length ) {
 				return;
 			}
-			const ts = stampOf( node );
+			const k = `${ node.k } (start)`;
 			rows.push( {
-				n: '',
-				k: `${ node.k } (start)`,
+				...place( node.n, k, node.t ),
+				k,
 				l: node.l,
 				m: '',
-				ts,
 				fromFold: true,
 			} );
 			walk( node.children, depth + 1, claimed, here );
@@ -777,11 +808,15 @@ const foldedSpanEntries = (
 				owedByName.set( base, owed - 1 );
 				return;
 			}
+			const end = `${ node.k } (complete)`;
+			const closed = place( node.n_end, end, node.t_end );
 			rows.push( {
-				n: '',
-				k: `${ node.k } (complete)`,
+				n: closed.n,
+				// A merged node's last end is no place in the sequence.
+				ts: node.merged ? 0 : closed.ts,
+				endTs: closed.ts,
+				k: end,
 				m: mergedBody( node, merged ),
-				ts,
 				duration_ms: node.value,
 				fromFold: true,
 			} );
@@ -826,7 +861,25 @@ const mergedBody = ( node, merged ) => {
 					ms
 				) }  ${ shape }`
 		),
-	].join( '\n' );
+	].join( '\n\n' );
+};
+
+/**
+ * Every kept row's time under its `n|k`, which a nested render can repeat.
+ *
+ * @param {Array} entries Stored entries.
+ * @return {Map} `n|k` to the times of the rows carrying it.
+ */
+const keptTimes = ( entries ) => {
+	const times = new Map();
+	for ( const e of entries ) {
+		const key = `${ e.n }|${ e.k }`;
+		if ( ! times.has( key ) ) {
+			times.set( key, [] );
+		}
+		times.get( key ).push( e.ts );
+	}
+	return times;
 };
 
 /**
@@ -883,7 +936,8 @@ export const spliceFoldedSpans = ( input, flame ) => {
 			owedToTree( entries, at ),
 			keptPairCounts( entries ),
 			deepestByBase( flame ),
-			origin
+			origin,
+			keptTimes( entries )
 		),
 		...entries.slice( at + 1 ),
 	];
@@ -953,9 +1007,11 @@ export const computeVisibleEntries = ( entries, expandedSet ) => {
 				result.push( {
 					...entry,
 					k: baseName,
-					// The complete's ts: the ruler resumes past the pair.
+					// Past the pair; at its start when its end has no place.
 					ts: completeEntry?.ts || entry.ts,
 					startTs: entry.ts,
+					endTs:
+						completeEntry?.endTs || completeEntry?.ts || entry.ts,
 					duration_ms: completeEntry?.duration_ms ?? null,
 					peak_mb: completeEntry?.peak_mb || 0,
 					completeMessage: completeEntry?.m ?? '',

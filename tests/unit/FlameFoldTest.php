@@ -327,6 +327,30 @@ class FlameFoldTest extends TestCase {
 		$this->assertEqualsWithDelta( 100.0, $save['t'], 1e-6 );
 	}
 
+	public function test_a_node_carries_its_first_start_number_and_last_end(): void {
+		// The log numbers and stamps a folded row from these; the complete
+		// row sits where the LAST instance ended, not where the first began.
+		$entries = [];
+		foreach ( [ 3, 41, 7 ] as $i => $ms ) {
+			$entries[] = $this->at( 'save (start)', 100 + $i * 50, [ 'n' => 211 + 2 * $i ] );
+			$entries[] = $this->at( 'save (complete)', 100 + $i * 50 + $ms, [ 'duration_ms' => $ms, 'n' => 212 + 2 * $i ] );
+		}
+
+		$save = Flame_Fold::tree( $this->fold( $entries ) )['children'][0];
+		$this->assertSame( 211, $save['n'] );
+		$this->assertSame( 216, $save['n_end'] );
+		$this->assertEqualsWithDelta( 207.0, $save['t_end'], 1e-6 );
+	}
+
+	public function test_a_node_no_instance_closed_has_no_end(): void {
+		$state = $this->fold( [ $this->at( 'save (start)', 100, [ 'n' => 9 ] ) ] );
+
+		$save = Flame_Fold::tree( $state )['children'][0];
+		$this->assertSame( 9, $save['n'] );
+		$this->assertNull( $save['n_end'] );
+		$this->assertNull( $save['t_end'] );
+	}
+
 	public function test_a_merged_node_counts_its_instances_and_totals_them(): void {
 		// Merging spends the sequence; the node buys back "how many, when did
 		// they start, and what did they cost altogether".
