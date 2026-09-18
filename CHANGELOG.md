@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Topology files use `command_node`.** The shipped `.tsl` files spell each runtime command `command_node` rather than its `cmd` alias, as the substrate's own topologies now do, and `hub-control` drops the stray semicolon after its `var`.
+
 ## [0.98.10] - 2026-09-17
 
 ### Added
