@@ -141,7 +141,7 @@ class Findings {
 	public static function for_request( array $record, ?Rule $rule = null ): array {
 		$duration = Core::num_float( $record['duration_ms'] ?? 0 );
 		$flame    = self::flame_of( $record );
-		$nodes    = self::flatten( $flame );
+		$nodes    = self::flatten( $flame, self::entry_shapes( $record ) );
 		$profiled = self::profiled_ms( $flame, $nodes );
 		$rule_id  = null === $rule ? null : $rule->id;
 
@@ -238,11 +238,17 @@ class Findings {
 	private static function entry_gap( array $record, ?string $rule_id ): ?array {
 		$entries = \is_array( $record['entries'] ?? null ) ? \array_values( $record['entries'] ) : [];
 		$worst   = null;
+		$open    = [];
 		for ( $i = 1; $i < \count( $entries ); $i++ ) {
 			$prev = \is_array( $entries[ $i - 1 ] ) ? $entries[ $i - 1 ] : [];
 			$next = \is_array( $entries[ $i ] ) ? $entries[ $i ] : [];
 			$from = Core::as_string( $prev['k'] ?? '' );
 			$to   = Core::as_string( $next['k'] ?? '' );
+			$open = self::spans_after( $open, $from );
+			// Inside any span but the request's own, the time is measured.
+			if ( \count( $open ) > 1 ) {
+				continue;
+			}
 			// The merged entries ARE this window; truncation() reports it.
 			if ( \in_array( $from, Request_Builder_Node::SEQUENCE_BREAK_KEYS, true ) || \in_array( $to, Request_Builder_Node::SEQUENCE_BREAK_KEYS, true ) ) {
 				continue;
@@ -281,6 +287,29 @@ class Findings {
 				'undo'      => 'Remove it once the gap is explained.',
 			],
 		];
+	}
+
+	/**
+	 * The spans still open once an entry is read, outermost first — LIFO, as
+	 * `Log_Manager::complete()` itself matches, so a complete closes the
+	 * nearest open span of its name and everything opened inside it.
+	 *
+	 * @param list<string> $open    Base names open before this entry.
+	 * @param string       $keyword The entry's keyword.
+	 * @return list<string> Base names open after it.
+	 */
+	private static function spans_after( array $open, string $keyword ): array {
+		if ( 1 === \preg_match( Flame_Tree::PATTERN_START, $keyword, $m ) ) {
+			$open[] = $m[1];
+			return $open;
+		}
+		if ( 1 === \preg_match( Flame_Tree::PATTERN_COMPLETE, $keyword, $m ) ) {
+			$at = \array_search( $m[1], \array_reverse( $open, true ), true );
+			if ( false !== $at ) {
+				return \array_slice( $open, 0, $at );
+			}
+		}
+		return $open;
 	}
 
 	/**
@@ -805,6 +834,47 @@ class Findings {
 	}
 
 	/**
+	 * The statement tables an UNFOLDED record would have had, keyed by the
+	 * name path of the node each belongs to.
+	 *
+	 * A folded record's nodes carry their own; an unfolded one's flame keeps
+	 * each span as its own node, and its statements live in the entries — which
+	 * a brief ships sixty of, so the finding is the only place the answer can
+	 * reach the reader. Folding those entries here, transiently, runs the one
+	 * set of rules `Flame_Fold` already holds — which half names the statement,
+	 * the caps, the bucket — rather than a second copy of them, and stores
+	 * nothing.
+	 *
+	 * @param array<array-key,mixed> $record A stored request record.
+	 * @return array<string,array<array-key,mixed>> Path, names joined by U+001F, to its table.
+	 */
+	private static function entry_shapes( array $record ): array {
+		if ( [] !== Core::arr( $record['flame'] ?? null ) ) {
+			return [];
+		}
+		// Built, read and dropped: no in-flight pool to hold a budget against.
+		$state = Flame_Fold::start( null, \PHP_INT_MAX );
+		foreach ( Core::arr( $record['entries'] ?? null ) as $entry ) {
+			if ( \is_array( $entry ) ) {
+				Flame_Fold::add( $state, $entry );
+			}
+		}
+		$out  = [];
+		$walk = static function ( array $node, string $prefix ) use ( &$walk, &$out ): void {
+			foreach ( Core::arr( $node['children'] ?? null ) as $child ) {
+				$child = Core::arr( $child );
+				$path  = '' === $prefix ? Core::as_string( $child['name'] ?? '' ) : $prefix . "\x1f" . Core::as_string( $child['name'] ?? '' );
+				if ( [] !== Core::arr( $child['shapes'] ?? null ) ) {
+					$out[ $path ] = Core::arr( $child['shapes'] );
+				}
+				$walk( $child, $path );
+			}
+		};
+		$walk( Flame_Fold::tree( $state ), '' );
+		return $out;
+	}
+
+	/**
 	 * Flatten a flame tree into a list of `{name, value, self_ms, depth, count,
 	 * parent}`, root excluded — the root IS the request, so it can never be the
 	 * span holding most of the request. `parent` is the index of the entry this
@@ -829,12 +899,13 @@ class Findings {
 	 * raise is what SET the value, for a span that never reported a duration,
 	 * `self_ms` is the gaps between its children.
 	 *
-	 * @param array<array-key,mixed> $flame The flame tree root.
+	 * @param array<array-key,mixed>               $flame   The flame tree root.
+	 * @param array<string,array<array-key,mixed>> $by_path Tables an unfolded record's entries hold, by name path; see entry_shapes().
 	 * @return list<Flame_Entry>
 	 */
-	private static function flatten( array $flame ): array {
+	private static function flatten( array $flame, array $by_path = [] ): array {
 		$out = [];
-		self::flatten_children( $out, [ $flame ], 0, null );
+		self::flatten_children( $out, [ $flame ], 0, null, $by_path, [] );
 		return $out;
 	}
 
@@ -846,8 +917,10 @@ class Findings {
 	 * @param list<array<array-key,mixed>>                                                         $parents Nodes whose children form this level.
 	 * @param int                                                                                  $depth   The depth of `$parents`.
 	 * @param int|null                                                                             $parent  The index of the entry `$parents` flattened to.
+	 * @param array<string,array<array-key,mixed>>                                                 $by_path Tables an unfolded record's entries hold, by name path.
+	 * @param list<string>                                                                         $prefix  The name path of `$parents`.
 	 */
-	private static function flatten_children( array &$out, array $parents, int $depth, ?int $parent ): void {
+	private static function flatten_children( array &$out, array $parents, int $depth, ?int $parent, array $by_path, array $prefix ): void {
 		$groups = [];
 		foreach ( $parents as $node ) {
 			foreach ( \is_array( $node['children'] ?? null ) ? $node['children'] : [] as $child ) {
@@ -871,6 +944,10 @@ class Findings {
 				$count       += \max( 1, Core::num_int( $member['count'] ?? 0 ) );
 				$shapes       = self::merge_shapes( $shapes, $member );
 			}
+			$path = [ ...$prefix, $group['name'] ];
+			if ( [] === $shapes ) {
+				$shapes = $by_path[ \implode( "\x1f", $path ) ] ?? [];
+			}
 			$entry = [
 				'name'    => $group['name'],
 				'value'   => $value,
@@ -883,7 +960,7 @@ class Findings {
 				$entry['shapes'] = $shapes;
 			}
 			$out[] = $entry;
-			self::flatten_children( $out, $group['members'], $depth + 1, \array_key_last( $out ) );
+			self::flatten_children( $out, $group['members'], $depth + 1, \array_key_last( $out ), $by_path, $path );
 		}
 	}
 
