@@ -44,10 +44,57 @@ if ( ! \defined( 'ABSPATH' ) ) {
 /**
  * One in-flight request's entries, merged by path as they arrive.
  *
- * @phpstan-type Fold_Frame array{name: string, path: list<string>}
- * @phpstan-type Fold_State array{root: array<array-key,mixed>, stack: list<Fold_Frame>, count: int, origin: float|null}
+ * @phpstan-type Fold_Frame array{name: string, path: list<string>, shape?: string|null}
+ * @phpstan-type Fold_State array{root: array<array-key,mixed>, stack: list<Fold_Frame>, count: int, shape_bytes?: int, origin: float|null}
  */
 final class Flame_Fold {
+
+	/**
+	 * Distinct statements a merged transport node keeps, before the rest fold
+	 * into one bucket. A caller running more than this many shapes is building
+	 * its SQL rather than repeating it, and the bucket still carries the count
+	 * and the time, which is what a repeat finding reads.
+	 */
+	public const MAX_SHAPES = 24;
+
+	/**
+	 * Bytes one shape keeps. Measured over 308,395 real `sql` completes here:
+	 * mean 146, median 122, p90 259, p99 488, so this cuts 0.6% of statements
+	 * where 1024 cuts 0.4% at twice the worst case.
+	 */
+	public const MAX_SHAPE_BYTES = 512;
+
+	/**
+	 * What one table row costs beyond its key: the array bucket, the pair, and
+	 * the two numbers in it. Charged with the key so the budget bounds ROWS as
+	 * well as bytes — a record of eight-byte shapes would otherwise take twelve
+	 * times the memory the budget thinks it has allowed.
+	 */
+	private const SHAPE_ROW_BYTES = 128;
+
+	/**
+	 * Bytes of NEW shapes one record takes, past which every further statement
+	 * counts under `SHAPES_OVERFLOW`.
+	 *
+	 * The per-node caps bound a node; a record's node count is O(distinct
+	 * paths) and deliberately unbounded, and the heaviest real folded record
+	 * here holds 117 transport nodes against 73KB of record — so per-node caps
+	 * alone admit megabytes. The POOL is what sizes this: `Request_Builder_Node`
+	 * holds `DEFAULT_BUCKET_SIZE` × `DEFAULT_NUM_BUCKETS` (300) requests in
+	 * flight against a `DEFAULT_ENTRY_BUDGET` worth ~18MB, so 32KB apiece keeps
+	 * the worst case near half of it. A folded envelope is invisible to
+	 * `relieve_pressure()`, which counts `entries` and skips a folded one, so
+	 * nothing downstream would catch the growth — this is the only relief.
+	 * That heaviest record's own statements cost 33.7KB, so it is the one shape
+	 * of record that spends its budget and buckets the tail.
+	 */
+	public const MAX_RECORD_SHAPE_BYTES = 32768;
+
+	/** What a cut shape ends in, and what the overflow bucket is named for. */
+	private const ELISION = '…';
+
+	/** The bucket every shape past the cap folds into; its slot is reserved. */
+	public const SHAPES_OVERFLOW = self::ELISION;
 
 	/**
 	 * A fresh fold state.
@@ -65,12 +112,14 @@ final class Flame_Fold {
 	public static function start( ?float $origin = null ): array {
 		return [
 			// Merged tree, children keyed by name so a merge is a lookup.
-			'root'    => [ 'k' => 'request', 'l' => '' ] + self::empty_node(),
+			'root'        => [ 'k' => 'request', 'l' => '' ] + self::empty_node(),
 			// Open spans, innermost last; `path` is the name chain into root.
-			'stack'   => [],
+			'stack'       => [],
 			// Every entry added, span or not; the fold marker counts from it.
-			'count'   => 0,
-			'origin'  => $origin,
+			'count'       => 0,
+			// New shape bytes taken; see MAX_RECORD_SHAPE_BYTES.
+			'shape_bytes' => 0,
+			'origin'      => $origin,
 		];
 	}
 
@@ -93,12 +142,23 @@ final class Flame_Fold {
 		$keyword = Core::str( $entry['k'] ?? '' );
 
 		if ( \preg_match( Flame_Tree::PATTERN_START, $keyword, $m ) ) {
-			self::open( $state, $m[1], Core::str( $entry['l'] ?? '' ), $ts );
+			self::open(
+				$state,
+				$m[1],
+				Core::str( $entry['l'] ?? '' ),
+				$ts,
+				self::shape_of( $m[1], $entry['m'] ?? null )
+			);
 			return;
 		}
 		if ( \preg_match( Flame_Tree::PATTERN_COMPLETE, $keyword, $m ) ) {
 			$duration = $entry['duration_ms'] ?? 0;
-			self::close( $state, $m[1], \is_numeric( $duration ) ? (float) $duration : 0.0 );
+			self::close(
+				$state,
+				$m[1],
+				\is_numeric( $duration ) ? (float) $duration : 0.0,
+				self::shape_of( $m[1], $entry['m'] ?? null )
+			);
 		}
 	}
 
@@ -107,20 +167,67 @@ final class Flame_Fold {
 	 * `Log_Manager::complete()` itself matches — and pop everything above it.
 	 * A complete matching nothing is dropped.
 	 *
-	 * @param Fold_State $state    Fold state, by reference.
-	 * @param string     $base     Span base name.
-	 * @param float      $duration Milliseconds the span took.
+	 * @param Fold_State  $state    Fold state, by reference.
+	 * @param string      $base     Span base name.
+	 * @param float       $duration Milliseconds the span took.
+	 * @param string|null $shape    The statement or URL this instance ran, or null.
 	 */
-	private static function close( array &$state, string $base, float $duration ): void {
+	private static function close( array &$state, string $base, float $duration, ?string $shape = null ): void {
 		for ( $i = \count( $state['stack'] ) - 1; $i >= 0; $i-- ) {
 			if ( $state['stack'][ $i ]['name'] !== $base ) {
 				continue;
 			}
 			$frame = $state['stack'][ $i ];
-			self::record( $state['root'], $frame['path'], $duration );
+			// @longform A frame restored from a checkpoint written before
+			// frames carried shapes has no key to give, and the complete's own
+			// `m` is the fallback — except for http, where that `m` is the
+			// status code and the URL rode the start this state has lost.
+			$shape = $frame['shape'] ?? ( Flame_Tree::HTTP_STATE === $base ? null : $shape );
+			$meta  = null === $shape ? [] : [ 'shape' => $shape ];
+			// A row already there costs nothing; fold_shape knows which is new.
+			if ( [] !== $meta && ( $state['shape_bytes'] ?? 0 ) >= self::MAX_RECORD_SHAPE_BYTES ) {
+				$meta['spent'] = true;
+			}
+			$state['shape_bytes'] = ( $state['shape_bytes'] ?? 0 ) + self::record(
+				$state['root'],
+				$frame['path'],
+				$duration,
+				$meta
+			);
 			\array_splice( $state['stack'], $i );
 			return;
 		}
+	}
+
+	/**
+	 * The statement or URL an instance ran, for the spans whose message is a
+	 * bounded identifier: a query shape, literals already replaced by
+	 * `App\Core::without_literals()`, or a redacted URL. A hook's message is
+	 * prose of any size and any cardinality, so it is not one of these.
+	 *
+	 * @param string $base Span base name.
+	 * @param mixed  $m    The complete's message.
+	 * @return string|null The shape to fold in, or null.
+	 */
+	private static function shape_of( string $base, mixed $m ): ?string {
+		if ( ! \is_string( $m ) || '' === $m || self::SHAPES_OVERFLOW === $m
+				|| ! Flame_Tree::is_transport_span( $base ) ) {
+			return null;
+		}
+		if ( \strlen( $m ) <= self::MAX_SHAPE_BYTES ) {
+			return $m;
+		}
+		// @longform Cut, then walk back to the torn sequence's start — at most
+		// three bytes, since that is the longest tail a cut can break. Taking
+		// the whole trailing non-ASCII RUN instead throws away everything an
+		// all-multibyte statement had, leaving the elision alone, which is the
+		// bucket's own key. `mb_strcut()` says it in one call and adds an
+		// ext-mbstring dependency WordPress does not polyfill.
+		$cut = \substr( $m, 0, self::MAX_SHAPE_BYTES - \strlen( self::ELISION ) );
+		for ( $back = 1; $back <= 3 && 1 !== \preg_match( '//u', $cut ); $back++ ) {
+			$cut = \substr( $m, 0, self::MAX_SHAPE_BYTES - \strlen( self::ELISION ) - $back );
+		}
+		return $cut . self::ELISION;
 	}
 
 	/**
@@ -135,20 +242,29 @@ final class Flame_Fold {
 	 * @param string     $base  Span base name.
 	 * @param string     $label Stable aggregation label, or ''.
 	 * @param mixed      $ts    Entry timestamp, unix seconds.
+	 * @param string|null $shape What this instance ran, when the START names it.
 	 */
-	private static function open( array &$state, string $base, string $label, mixed $ts ): void {
+	private static function open( array &$state, string $base, string $label, mixed $ts, ?string $shape = null ): void {
 		$name   = Flame_Tree::node_name( $base, $label );
 		$parent = $state['stack'][ \count( $state['stack'] ) - 1 ]['path'] ?? [];
 		$path   = [ ...$parent, $name ];
 		$offset = Flame_Tree::offset_ms( $state['origin'], $ts );
-		self::record( $state['root'], $path, null, $offset, [ 'k' => $base, 'l' => $label ] );
+		$meta   = [ 'k' => $base, 'l' => $label ];
+		if ( null !== $offset ) {
+			$meta['t'] = $offset;
+		}
+		self::record( $state['root'], $path, null, $meta );
 
 		if ( \count( $state['stack'] ) < Flame_Tree::MAX_STACK_DEPTH ) {
 			// No `t`: the node keeps the earliest, and frames ride checkpoints.
-			$state['stack'][] = [
+			$frame = [
 				'name' => $base,
 				'path' => $path,
 			];
+			if ( null !== $shape ) {
+				$frame['shape'] = $shape;
+			}
+			$state['stack'][] = $frame;
 		}
 	}
 
@@ -164,36 +280,44 @@ final class Flame_Fold {
 	 * @param array<array-key,mixed> $node     Node to descend from, by reference.
 	 * @param list<string>           $path     Remaining name chain.
 	 * @param float|null             $duration Milliseconds to fold in, or null for a start.
-	 * @param float|null             $t        Start offset in ms, kept at its EARLIEST.
-	 * @param array{k: string, l: string}|null $as The key and label a start was logged with, kept from the node's first open.
+	 * @param array{k?: string, l?: string, t?: float, shape?: string, spent?: bool} $meta What this instance carried: the key and label a start was logged with, kept from the node's first open; its offset, kept at the EARLIEST; and the statement or URL it ran, for a transport span (see shape_of()).
+	 * @return int Bytes a shape new to its node took, for the record's budget.
 	 */
-	private static function record( array &$node, array $path, ?float $duration, ?float $t = null, ?array $as = null ): void {
+	private static function record( array &$node, array $path, ?float $duration, array $meta = [] ): int {
 		if ( [] === $path ) {
-			if ( null !== $as ) {
-				$node['k'] ??= $as['k'];
-				$node['l'] ??= $as['l'];
+			if ( isset( $meta['k'], $meta['l'] ) ) {
+				$node['k'] ??= $meta['k'];
+				$node['l'] ??= $meta['l'];
 			}
-			if ( null !== $t ) {
+			if ( isset( $meta['t'] ) ) {
 				$seen      = $node['t'] ?? null;
-				$node['t'] = \is_numeric( $seen ) ? \min( (float) $seen, $t ) : $t;
+				$node['t'] = \is_numeric( $seen ) ? \min( (float) $seen, $meta['t'] ) : $meta['t'];
 			}
 			if ( null === $duration ) {
 				// Starts, not completions: see merged().
 				$node['starts'] = Core::num_int( $node['starts'] ?? null ) + 1;
-				return;
+				return 0;
 			}
 			$node['value'] = ( \is_numeric( $node['value'] ?? null ) ? (float) $node['value'] : 0.0 ) + $duration;
 			$node['max']   = \max( \is_numeric( $node['max'] ?? null ) ? (float) $node['max'] : 0.0, $duration );
 			$node['count'] = Core::num_int( $node['count'] ?? null ) + 1;
-			return;
+			if ( ! isset( $meta['shape'] ) ) {
+				return 0;
+			}
+			// Raw: `fold_shape()` normalizes the one row it touches.
+			$table = \is_array( $node['shapes'] ?? null ) ? $node['shapes'] : [];
+			$took  = self::fold_shape( $table, $meta['shape'], 1, $duration, isset( $meta['spent'] ) );
+			$node['shapes'] = $table;
+			return $took;
 		}
 		$name     = \array_shift( $path );
 		$children = \is_array( $node['children'] ?? null ) ? $node['children'] : [];
 		if ( ! isset( $children[ $name ] ) || ! \is_array( $children[ $name ] ) ) {
 			$children[ $name ] = self::empty_node();
 		}
-		self::record( $children[ $name ], $path, $duration, $t, $as );
+		$took             = self::record( $children[ $name ], $path, $duration, $meta );
 		$node['children'] = $children;
+		return $took;
 	}
 
 	/**
@@ -214,6 +338,86 @@ final class Flame_Fold {
 			't'        => null,
 			'children' => [],
 		];
+	}
+
+	/**
+	 * Fold one instance into a node's shape table: a count and the summed
+	 * milliseconds per distinct statement, which is what says whether 667 calls
+	 * were one query repeated or thirty different ones.
+	 *
+	 * A full table EVICTS its cheapest row rather than refusing the newcomer.
+	 * The statement worth naming is as likely to arrive twenty-fifth as first,
+	 * and first-seen-wins would bury it on exactly the request this exists for.
+	 * What is evicted folds into `SHAPES_OVERFLOW`, whose slot is reserved
+	 * inside `MAX_SHAPES` rather than added to it, so the totals stay whole
+	 * while the table holds no more than `MAX_SHAPES` rows in all.
+	 *
+	 * The return is what the table GREW by, in key bytes — what a statement the
+	 * bucket swallowed costs (nothing) is what the record's budget must charge
+	 * it, or one high-cardinality caller spends the whole budget on rows nobody
+	 * stored and strips every other node's table.
+	 *
+	 * @param array<array-key,mixed>            $shapes The table, extended in place; a restored one is trusted row by row.
+	 * @param string                            $shape  The statement or URL, already cut.
+	 * @param int                               $calls  Instances to add.
+	 * @param float                             $ms     Milliseconds to add.
+	 * @param bool                              $spent  Whether the record's byte budget is gone: it refuses a new row the table has room for, and a trade that would grow the record; a trade into a shorter or equal key still goes through.
+	 * @return int Bytes the table gained — key plus row — less any an eviction freed.
+	 */
+	public static function fold_shape( array &$shapes, string $shape, int $calls, float $ms, bool $spent = false ): int {
+		$time_of = static fn ( mixed $row ): float => Core::num_float( Core::arr( $row )[1] ?? null );
+		$real  = \count( $shapes ) - ( isset( $shapes[ self::SHAPES_OVERFLOW ] ) ? 1 : 0 );
+		$freed = 0;
+		$full = $real >= self::MAX_SHAPES - 1;
+		// Spent refuses a new ROW; a full table trades and pays the difference.
+		if ( $spent && ! $full && ! isset( $shapes[ $shape ] ) ) {
+			$shape = self::SHAPES_OVERFLOW;
+		}
+		if ( self::SHAPES_OVERFLOW !== $shape && ! isset( $shapes[ $shape ] ) && $full ) {
+			$cheapest = self::cheapest_of( $shapes );
+			// Spent, a trade is free only where the new key is no longer.
+			$grows    = '' !== $cheapest && \strlen( $shape ) > \strlen( $cheapest );
+			if ( '' === $cheapest || ( $spent && $grows ) || $ms <= $time_of( $shapes[ $cheapest ] ) ) {
+				$shape = self::SHAPES_OVERFLOW;
+			} else {
+				$evicted = Core::arr( $shapes[ $cheapest ] );
+				$freed   = \strlen( $cheapest ) + self::SHAPE_ROW_BYTES;
+				unset( $shapes[ $cheapest ] );
+				$freed -= self::fold_shape(
+					$shapes,
+					self::SHAPES_OVERFLOW,
+					Core::num_int( $evicted[0] ?? null ),
+					Core::num_float( $evicted[1] ?? null )
+				);
+			}
+		}
+		$took             = isset( $shapes[ $shape ] ) ? 0 : \strlen( $shape ) + self::SHAPE_ROW_BYTES;
+		$seen             = Core::arr( $shapes[ $shape ] ?? null );
+		$shapes[ $shape ] = [
+			Core::num_int( $seen[0] ?? null ) + $calls,
+			Core::num_float( $seen[1] ?? null ) + $ms,
+		];
+		return $took - $freed;
+	}
+
+	/**
+	 * The table's cheapest row by time — what a full table gives up. The
+	 * overflow bucket is never it, so eviction cannot empty what it fills.
+	 *
+	 * @param array<array-key,mixed> $shapes The table.
+	 * @return string The key holding the least time, or '' when only the bucket is there. A shape reading as a number arrives here as an int key.
+	 */
+	private static function cheapest_of( array $shapes ): string {
+		$cheapest = '';
+		$least    = null;
+		foreach ( $shapes as $key => $seen ) {
+			$ms = Core::num_float( Core::arr( $seen )[1] ?? null );
+			if ( self::SHAPES_OVERFLOW !== $key && ( null === $least || $ms < $least ) ) {
+				$least    = $ms;
+				$cheapest = (string) $key;
+			}
+		}
+		return $cheapest;
 	}
 
 	/**
@@ -279,6 +483,9 @@ final class Flame_Fold {
 		$needed = null !== $start && null !== $extent
 			? \max( $extent - $start, $sum )
 			: $sum;
+		// Normalized ONCE here; the browser destructures rows, never coerces.
+		$table  = self::shape_table( $node );
+		$shapes = [] === $table ? [] : [ 'shapes' => $table ];
 		// A node a pre-change checkpoint restored has no key or label to give.
 		$logged = isset( $node['k'], $node['l'] )
 			? [
@@ -291,11 +498,30 @@ final class Flame_Fold {
 			...$logged,
 			'value'    => \max( \is_numeric( $node['value'] ?? null ) ? (float) $node['value'] : 0.0, $needed ),
 			'count'    => \is_numeric( $node['count'] ?? null ) ? (int) $node['count'] : 0,
+			...$shapes,
 			'merged'   => self::merged( $node ),
 			'max'      => \is_numeric( $node['max'] ?? null ) ? (float) $node['max'] : 0.0,
 			't'        => \is_numeric( $node['t'] ?? null ) ? (float) $node['t'] : null,
 			'children' => $children,
 		];
+	}
+
+	/**
+	 * One node's shape table, whatever shape a checkpoint restored it in.
+	 *
+	 * @param array<array-key,mixed> $node A merged node.
+	 * @return array<array-key,array{int,float}>
+	 */
+	public static function shape_table( array $node ): array {
+		$out = [];
+		foreach ( Core::arr( $node['shapes'] ?? null ) as $shape => $seen ) {
+			$pair                   = Core::arr( $seen );
+			$out[ (string) $shape ] = [
+				Core::num_int( $pair[0] ?? null ),
+				Core::num_float( $pair[1] ?? null ),
+			];
+		}
+		return $out;
 	}
 
 	/**

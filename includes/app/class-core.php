@@ -32,6 +32,7 @@ namespace Newspack_Event_Logger_Nodes\App;
 
 use Newspack_Event_Logger_Nodes\Config;
 use Newspack_Event_Logger_Nodes\Hook_Categorizer;
+use Newspack_Event_Logger_Nodes\Flame_Tree;
 use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Rule_Set;
 use Newspack_Nodes\Core as RuntimeCore;
@@ -103,7 +104,7 @@ class Core {
 	 * table and per host — the axis `Stats_Store::MAX_CAT_VALUES` bounds — and
 	 * leaves `l`, whose job this is, empty.
 	 */
-	private const SQL_STATE  = 'sql';
+	private const SQL_STATE  = Flame_Tree::SQL_STATE;
 
 	/** The hook the SQL span rides; also the one it makes a generic pair redundant on. */
 	private const QUERY_HOOK = 'query';
@@ -164,7 +165,7 @@ class Core {
 
 	/** What a string has to open with before it is treated as a statement. */
 	private const SQL_LEAD = '/\A\s*(?:SELECT|INSERT|UPDATE|DELETE|REPLACE|SHOW|DESCRIBE|EXPLAIN|CREATE|ALTER|DROP|TRUNCATE)\b/i';
-	private const HTTP_STATE = 'http';
+	private const HTTP_STATE = Flame_Tree::HTTP_STATE;
 
 	/** Dispatchers between a hook and its caller; flipped for O(1) lookup. */
 	private const HOOK_DISPATCHERS = [
@@ -852,26 +853,6 @@ class Core {
 	 */
 	public static function is_listener_span( string $span ): bool {
 		return 1 === \preg_match( self::LISTENER_PATTERN, $span );
-	}
-
-	/**
-	 * Whether a span name is one of this logger's own round trips — a query
-	 * (decision 22) or an outbound HTTP call (decision 20) — rather than a hook,
-	 * a listener or a custom event the application logs.
-	 *
-	 * `Flame_Tree::node_name()` composes `state: label`, and an unlabelled span
-	 * keeps the bare state, so both spellings answer.
-	 *
-	 * @param string $span A span name, as the flame carries it.
-	 * @return bool
-	 */
-	public static function is_transport_span( string $span ): bool {
-		foreach ( [ self::SQL_STATE, self::HTTP_STATE ] as $state ) {
-			if ( $span === $state || \str_starts_with( $span, "{$state}: " ) ) {
-				return true;
-			}
-		}
-		return false;
 	}
 
 	/**

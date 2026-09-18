@@ -146,6 +146,31 @@ class FindingsTest extends TestCase {
 		$this->assertEqualsWithDelta( 0.915, $found['metric']['share'], 0.001 );
 		$this->assertSame( 'flame', $found['measured'] );
 		$this->assertSame( 'a1b2c3d4e5f6', $found['rule_id'] );
+		// A hook span carries no shape table, so the metric names none.
+		$this->assertArrayNotHasKey( 'shape', $found['metric'] );
+	}
+
+	public function test_a_dominant_query_span_names_the_statement_it_spent_most_on(): void {
+		$record                      = $this->healthy_record();
+		$record['flame']['children'] = [
+			[ 'name' => 'init hook', 'value' => 12.0, 'children' => [] ],
+			[
+				'name'     => 'sql: WP_Query->get_posts',
+				'value'    => 372.0,
+				'count'    => 667,
+				'children' => [],
+				'shapes'   => [
+					'SELECT * FROM wp_posts WHERE post_type = ?' => [ 4, 41.0 ],
+					'SELECT * FROM wp_postmeta WHERE post_id IN (?)' => [ 663, 331.0 ],
+				],
+			],
+		];
+
+		$metric = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'dominant_span' )['metric'];
+
+		$this->assertSame( 'SELECT * FROM wp_postmeta WHERE post_id IN (?)', $metric['shape'] );
+		$this->assertSame( 663, $metric['shape_calls'] );
+		$this->assertEqualsWithDelta( 331.0, $metric['shape_ms'], 1e-6 );
 	}
 
 	/** The proposal for a span you cannot see inside adds detail, never removes it. */

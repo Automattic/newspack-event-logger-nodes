@@ -33,6 +33,12 @@ if ( ! \defined( 'ABSPATH' ) ) {
  */
 final class Flame_Tree {
 
+	/** The state a query span carries, as `App\Core` opens it. */
+	public const SQL_STATE = 'sql';
+
+	/** The state an outbound-HTTP span carries, as `App\Core` opens it. */
+	public const HTTP_STATE = 'http';
+
 	/** Keyword a closing span logs: `<label> (complete)`. Capture 1 is the base name. */
 	const PATTERN_COMPLETE = '/^(.+?) \(complete\)$/';
 
@@ -460,6 +466,30 @@ final class Flame_Tree {
 	private static function strip_suffix( string $name ): string {
 		$null_pos = \strpos( $name, "\x00" );
 		return false === $null_pos ? $name : \substr( $name, 0, $null_pos );
+	}
+
+	/**
+	 * Whether a span is one of the logger's own round trips — a query
+	 * (decision 22) or an outbound HTTP call (decision 20) — rather than a
+	 * hook, a listener or a custom event the application logs.
+	 *
+	 * The vocabulary lives here, beside the naming both machines compose spans
+	 * with, because `Flame_Fold` folds a Perl or pyrobase producer's entries as
+	 * readily as `App\Core`'s and must not reach up into one of them to ask.
+	 *
+	 * `node_name()` composes `state: label`, and an unlabelled span keeps the
+	 * bare state, so both spellings answer.
+	 *
+	 * @param string $span A span name, as the flame carries it.
+	 * @return bool
+	 */
+	public static function is_transport_span( string $span ): bool {
+		foreach ( [ self::SQL_STATE, self::HTTP_STATE ] as $state ) {
+			if ( $span === $state || \str_starts_with( $span, "{$state}: " ) ) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/**
