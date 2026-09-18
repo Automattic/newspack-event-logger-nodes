@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.98.10] - 2026-09-17
+
 ### Added
 
 - **An unfolded record names its statement too.** Only a folded record carried a statement table, so a `www.elsol.com.ar/wp-admin/post.php` record whose entries held all 655 queries still produced a dominant-span finding that named none of them — and a brief ships sixty entries, so the reader never saw them. `Findings` now folds an unfolded record's entries transiently through `Flame_Fold`, the same rules and caps, stores nothing, and reads each node's table by its name path. That record's finding now names `SELECT wp_posts.ID … ID NOT IN (?) AND ( term_taxonomy_id IN (?) )`, 202 calls for 12.9s.
