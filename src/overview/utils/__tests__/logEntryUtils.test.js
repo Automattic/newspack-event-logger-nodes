@@ -157,6 +157,98 @@ describe( 'a folded span row', () => {
 		] );
 	} );
 
+	it( 'shows the statements a merged query node ran, worst first', () => {
+		// The fold ate the entries; the shape table is what is left of them.
+		const flame = {
+			name: 'request',
+			children: [
+				{
+					name: 'process',
+					k: 'process',
+					value: 900,
+					t: 0,
+					children: [
+						{
+							name: 'sql: WP_Query->get_posts',
+							k: 'sql',
+							l: 'WP_Query->get_posts',
+							count: 4,
+							merged: true,
+							value: 14,
+							t: 5,
+							children: [],
+							shapes: {
+								'SELECT * FROM wp_posts WHERE ID = ?': [
+									3, 11,
+								],
+								'SELECT * FROM wp_postmeta WHERE post_id IN (?)':
+									[ 1, 3 ],
+							},
+						},
+					],
+				},
+			],
+		};
+		const stored = [
+			{ n: 1, k: 'process (start)', ts: 1000 },
+			{ n: 2, k: 'entries (aggregated)', ts: 1000.01 },
+			{ n: 3, k: 'process (complete)', ts: 1000.9 },
+		];
+
+		const body = spliceFoldedSpans( stored, flame ).find(
+			( e ) => 'sql (complete)' === e.k
+		).m;
+
+		expect( body.split( '\n' ) ).toEqual( [
+			'4 merged',
+			'3× 11.0ms  SELECT * FROM wp_posts WHERE ID = ?',
+			'1× 3.0ms  SELECT * FROM wp_postmeta WHERE post_id IN (?)',
+		] );
+	} );
+
+	it( 'says which population the statements are of when the row shows fewer', () => {
+		// The table counts every instance; the header counts the ones with no
+		// row of their own, and a kept row makes those two numbers differ.
+		const flame = {
+			name: 'request',
+			children: [
+				{
+					name: 'process',
+					k: 'process',
+					value: 900,
+					t: 0,
+					children: [
+						{
+							name: 'sql: q',
+							k: 'sql',
+							l: 'q',
+							count: 4,
+							merged: true,
+							value: 14,
+							t: 5,
+							children: [],
+							shapes: { 'SELECT ?': [ 4, 14 ] },
+						},
+					],
+				},
+			],
+		};
+		const stored = [
+			{ n: 1, k: 'process (start)', ts: 1000 },
+			{ n: 2, k: 'sql (start)', l: 'q', ts: 1000.001 },
+			{ n: 3, k: 'entries (aggregated)', ts: 1000.01 },
+			{ n: 4, k: 'sql (complete)', ts: 1000.02, duration_ms: 3 },
+			{ n: 5, k: 'process (complete)', ts: 1000.9 },
+		];
+
+		const body = spliceFoldedSpans( stored, flame ).find(
+			( e ) => e.fromFold && 'sql (complete)' === e.k
+		).m;
+
+		// One instance shows as its own kept pair and one is the open frame.
+		expect( body.split( '\n' )[ 0 ] ).toBe( '2 merged, of 4 in all' );
+	} );
+
 	it( 'numbers each stored row by its place in the record, before rows go in', () => {
 		// A nested render repeats n; the rows spliced in were never stored.
 		const flame = {

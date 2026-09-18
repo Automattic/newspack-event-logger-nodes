@@ -180,12 +180,16 @@ function findingLines( finding ) {
 	lines.push(
 		`- **severity:** ${ finding.severity } · **measured:** ${ finding.measured }`
 	);
-	const metric = finding.metric ?? {};
+	// A statement is the site's own text, so it takes a fenced line of its own.
+	const { shape, ...metric } = finding.metric ?? {};
 	const numbers = Object.keys( metric )
 		.map( ( key ) => `${ key }=${ num( metric[ key ] ) }` )
 		.join( ' ' );
 	if ( numbers ) {
 		lines.push( `- **numbers:** ${ numbers }` );
+	}
+	if ( shape ) {
+		lines.push( `- **statement:** ${ siteData( shape ) }` );
 	}
 	const proposal = finding.proposal;
 	if ( proposal && 'none' !== proposal.action ) {

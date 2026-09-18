@@ -22,6 +22,8 @@
 
 namespace Newspack_Event_Logger_Nodes\App;
 
+use Newspack_Event_Logger_Nodes\Flame_Fold;
+use Newspack_Event_Logger_Nodes\Flame_Tree;
 use Newspack_Event_Logger_Nodes\Request_Builder_Node;
 use Newspack_Event_Logger_Nodes\Rule;
 use Newspack_Nodes\Core;
@@ -33,6 +35,8 @@ use Newspack_Event_Logger_Nodes\App\Core as Hooks;
 /**
  * Computes what is wrong with one request record, or with one URL nothing
  * measures, as a list of findings ordered worst first.
+ *
+ * @phpstan-type Flame_Entry array{name:string,value:float,self_ms:float,depth:int,count:int,parent:?int,shapes?:array<array-key,mixed>}
  */
 class Findings {
 
@@ -350,7 +354,7 @@ class Findings {
 	 * 80% of a request because the content around it rendered ten times is ten
 	 * renders to explain, not one slow query, and the leaf alone never says so.
 	 *
-	 * @param list<array{name:string,value:float,self_ms:float,depth:int,count:int,parent:?int}> $nodes    Flattened flame nodes.
+	 * @param list<Flame_Entry> $nodes    Flattened flame nodes.
 	 * @param float                                                        $profiled Profiled milliseconds.
 	 * @param Rule|null                                                    $rule     The governing rule, or null when none does.
 	 * @param float                                                        $duration Request duration in milliseconds.
@@ -390,6 +394,7 @@ class Findings {
 		if ( null !== $repeat ) {
 			$metric['repeat'] = $repeat;
 		}
+		$metric += self::worst_shape( $best );
 		return [
 			'kind'     => 'dominant_span',
 			'severity' => 'high',
@@ -502,7 +507,7 @@ class Findings {
 	 * @return string `transport`, `hook`, `listener` or `custom`.
 	 */
 	private static function span_kind( string $span ): string {
-		if ( Hooks::is_transport_span( $span ) ) {
+		if ( Flame_Tree::is_transport_span( $span ) ) {
 			return 'transport';
 		}
 		if ( \str_ends_with( $span, Hooks::HOOK_SUFFIX ) ) {
@@ -517,7 +522,7 @@ class Findings {
 	 * inside the one span guaranteed to contain everything — a `pyrobase` span
 	 * holds 100% of the profiled time and spends 9.5% of it in its own body.
 	 *
-	 * @param array{name:string,value:float,self_ms:float,depth:int,count:int,parent:?int} $node       The dominant node.
+	 * @param Flame_Entry $node       The dominant node.
 	 * @param float                                                  $self_share Its own body's share of the profiled time.
 	 * @return string A leading sentence, or '' where nothing is contained.
 	 */
@@ -578,12 +583,42 @@ class Findings {
 	}
 
 	/**
+	 * The statement or URL a transport span spent most of its time on, as the
+	 * metric's own fields, or nothing where the span carries no table — a hook,
+	 * an unfolded record, or a query the fold never merged.
+	 *
+	 * Worst by TIME, not by calls: one statement run four times for 41ms and
+	 * another run 663 times for 331ms are different findings, and the second is
+	 * the one the repeat is about.
+	 *
+	 * @param array<string,mixed> $node A flattened flame node.
+	 * @return array<string,mixed> `shape`, `shape_calls` and `shape_ms`, or [].
+	 */
+	private static function worst_shape( array $node ): array {
+		$worst = [];
+		$most  = 0.0;
+		foreach ( Flame_Fold::shape_table( $node ) as $shape => $seen ) {
+			// The bucket is what the table gave up, never a statement to name.
+			if ( Flame_Fold::SHAPES_OVERFLOW === $shape || ( [] !== $worst && $seen[1] <= $most ) ) {
+				continue;
+			}
+			$most  = $seen[1];
+			$worst = [
+				'shape'       => (string) $shape,
+				'shape_calls' => $seen[0],
+				'shape_ms'    => $seen[1],
+			];
+		}
+		return $worst;
+	}
+
+	/**
 	 * The outermost span on the way up from `$index` — itself included — that
 	 * dominates the profiled time and ran more than once, or null when every
 	 * dominating span ran once. `own` says whether that span IS the dominant
 	 * one, decided by index: a span nested in a same-name ancestor is not it.
 	 *
-	 * @param list<array{name:string,value:float,self_ms:float,depth:int,count:int,parent:?int}> $nodes    Flattened flame nodes.
+	 * @param list<Flame_Entry> $nodes    Flattened flame nodes.
 	 * @param int                                                                                  $index    The dominant node's index.
 	 * @param float                                                                                $profiled Profiled milliseconds.
 	 * @return array{name:string,count:int,ms:float,each_ms:float,own:bool}|null
@@ -682,7 +717,7 @@ class Findings {
 	 *
 	 * @param array<array-key,mixed>                                       $record   The request record.
 	 * @param Rule|null                                                    $rule     The governing rule, or null when none does.
-	 * @param list<array{name:string,value:float,self_ms:float,depth:int,count:int,parent:?int}> $nodes    Flattened flame nodes.
+	 * @param list<Flame_Entry> $nodes    Flattened flame nodes.
 	 * @param float                                                        $profiled Profiled milliseconds.
 	 * @param float                                                        $duration Request duration in milliseconds.
 	 * @return array<string,mixed>|null The finding, or null when the rule and the record between them measure enough.
@@ -752,7 +787,7 @@ class Findings {
 	 * one assembled span-by-span may not.
 	 *
 	 * @param array<array-key,mixed>                                       $flame The flame tree root.
-	 * @param list<array{name:string,value:float,self_ms:float,depth:int,count:int,parent:?int}> $nodes Flattened nodes.
+	 * @param list<Flame_Entry> $nodes Flattened nodes.
 	 * @return float Milliseconds.
 	 */
 	private static function profiled_ms( array $flame, array $nodes ): float {
@@ -795,7 +830,7 @@ class Findings {
 	 * `self_ms` is the gaps between its children.
 	 *
 	 * @param array<array-key,mixed> $flame The flame tree root.
-	 * @return list<array{name:string,value:float,self_ms:float,depth:int,count:int,parent:?int}>
+	 * @return list<Flame_Entry>
 	 */
 	private static function flatten( array $flame ): array {
 		$out = [];
@@ -807,7 +842,7 @@ class Findings {
 	 * Append the children of every node in `$parents`, grouped by name, then
 	 * each group's own children beneath it.
 	 *
-	 * @param list<array{name:string,value:float,self_ms:float,depth:int,count:int,parent:?int}> $out     The flattened list, extended in place.
+	 * @param list<Flame_Entry> $out     The flattened list, extended in place.
 	 * @param list<array<array-key,mixed>>                                                         $parents Nodes whose children form this level.
 	 * @param int                                                                                  $depth   The depth of `$parents`.
 	 * @param int|null                                                                             $parent  The index of the entry `$parents` flattened to.
@@ -827,14 +862,16 @@ class Findings {
 		foreach ( $groups as $group ) {
 			$value = 0.0;
 			$self  = 0.0;
-			$count = 0;
+			$count  = 0;
+			$shapes = [];
 			foreach ( $group['members'] as $member ) {
 				$member_value = Core::num_float( $member['value'] ?? 0 );
 				$value       += $member_value;
 				$self        += $member_value - self::children_value( $member );
 				$count       += \max( 1, Core::num_int( $member['count'] ?? 0 ) );
+				$shapes       = self::merge_shapes( $shapes, $member );
 			}
-			$out[] = [
+			$entry = [
 				'name'    => $group['name'],
 				'value'   => $value,
 				'self_ms' => $self,
@@ -842,8 +879,33 @@ class Findings {
 				'count'   => $count,
 				'parent'  => $parent,
 			];
+			if ( [] !== $shapes ) {
+				$entry['shapes'] = $shapes;
+			}
+			$out[] = $entry;
 			self::flatten_children( $out, $group['members'], $depth + 1, \array_key_last( $out ) );
 		}
+	}
+
+	/**
+	 * Add one node's shape table to the group's, through `Flame_Fold`'s own
+	 * accumulator so the group can never hold more rows than a node may. A
+	 * folded tree keys its children by `node_name()`, so today every group is
+	 * one member and this copies its table; the accumulator is what keeps that
+	 * true if grouping ever gathers two.
+	 *
+	 * The table stays raw, as `Flame_Fold` writes it: `worst_shape()` is the
+	 * one reader and normalizes what it reads.
+	 *
+	 * @param array<array-key,mixed> $into   The group's table so far.
+	 * @param array<array-key,mixed> $member One flame node.
+	 * @return array<array-key,mixed> The table with this node folded in.
+	 */
+	private static function merge_shapes( array $into, array $member ): array {
+		foreach ( Flame_Fold::shape_table( $member ) as $shape => $seen ) {
+			Flame_Fold::fold_shape( $into, (string) $shape, $seen[0], $seen[1] );
+		}
+		return $into;
 	}
 
 	/**

@@ -344,6 +344,314 @@ class FlameFoldTest extends TestCase {
 		$this->assertEqualsWithDelta( 100.0, $children[0]['t'], 1e-6 );
 	}
 
+	public function test_a_merged_query_node_keeps_every_shape_it_ran(): void {
+		$shapes  = [
+			'SELECT * FROM wp_posts WHERE ID = ?',
+			'SELECT * FROM wp_postmeta WHERE post_id IN (?)',
+		];
+		$entries = [];
+		foreach ( [ 0, 1, 0, 0 ] as $i => $which ) {
+			$entries[] = $this->at( 'sql (start)', $i * 10, [ 'l' => 'WP_Query->get_posts' ] );
+			$entries[] = $this->at(
+				'sql (complete)',
+				$i * 10 + 5,
+				[ 'duration_ms' => 2 + $i, 'm' => $shapes[ $which ] ]
+			);
+		}
+
+		$node = Flame_Fold::tree( $this->fold( $entries ) )['children'][0];
+
+		$this->assertSame( 'sql: WP_Query->get_posts', $node['name'] );
+		$this->assertSame( 4, $node['count'] );
+		// Count and summed ms per shape: 2 + 4 + 5 against 3.
+		$this->assertSame(
+			[
+				$shapes[0] => [ 3, 11.0 ],
+				$shapes[1] => [ 1, 3.0 ],
+			],
+			$node['shapes']
+		);
+	}
+
+	public function test_a_hook_span_carries_no_shapes(): void {
+		// A hook's message is prose of any size and any cardinality; only a
+		// query shape and a redacted URL are bounded by construction.
+		$node = Flame_Fold::tree(
+			$this->fold(
+				[
+					$this->at( 'the_content hook (start)', 0, [ 'l' => 'wp_trim_excerpt' ] ),
+					$this->at( 'the_content hook (complete)', 5, [ 'duration_ms' => 9, 'm' => 'a paragraph of post content' ] ),
+				]
+			)
+		)['children'][0];
+
+		$this->assertArrayNotHasKey( 'shapes', $node );
+	}
+
+	public function test_an_http_node_keeps_the_url_its_span_opened_with(): void {
+		// The URL is on the START; the complete carries the status code, so
+		// reading the close alone builds a table of `200`s.
+		$entries = [];
+		foreach ( [ 0, 1 ] as $i ) {
+			$entries[] = $this->at( 'http (start)', $i * 10, [ 'l' => 'wp_remote_get', 'm' => 'https://api.test/v1/items' ] );
+			$entries[] = $this->at( 'http (complete)', $i * 10 + 5, [ 'duration_ms' => 4 + $i, 'm' => '200' ] );
+		}
+
+		$node = Flame_Fold::tree( $this->fold( $entries ) )['children'][0];
+
+		$this->assertSame( [ 'https://api.test/v1/items' => [ 2, 9.0 ] ], $node['shapes'] );
+	}
+
+	public function test_the_worst_statement_survives_a_full_table(): void {
+		// First-seen-wins would bury it: the slow one arrives last, and the
+		// table is what `Findings` names the dominant span's statement from.
+		$entries = [];
+		for ( $i = 0; $i <= Flame_Fold::MAX_SHAPES; $i++ ) {
+			$entries[] = $this->at( 'sql (start)', $i * 10, [ 'l' => 'WP_Query->get_posts' ] );
+			$entries[] = $this->at(
+				'sql (complete)',
+				$i * 10 + 5,
+				[ 'duration_ms' => $i < Flame_Fold::MAX_SHAPES ? 1.0 : 400.0, 'm' => "SELECT c{$i} FROM wp_posts WHERE ID = ?" ]
+			);
+		}
+
+		$shapes = Flame_Fold::tree( $this->fold( $entries ) )['children'][0]['shapes'];
+
+		$slowest = 'SELECT c' . Flame_Fold::MAX_SHAPES . ' FROM wp_posts WHERE ID = ?';
+		$this->assertSame( [ 1, 400.0 ], $shapes[ $slowest ] ?? null );
+		$this->assertCount( Flame_Fold::MAX_SHAPES, $shapes, 'the overflow bucket counts inside the cap' );
+		// Two of the cheap ones were evicted into it, whole.
+		$this->assertSame( [ 2, 2.0 ], $shapes[ Flame_Fold::SHAPES_OVERFLOW ] );
+	}
+
+	public function test_the_record_stops_taking_new_shapes_once_its_budget_is_spent(): void {
+		// The per-node caps bound a node; nothing bounds a record, whose node
+		// count is O(distinct paths) — 117 transport nodes on the heaviest
+		// real folded record here, so a per-node worst case multiplies.
+		$each    = \str_repeat( 'x', Flame_Fold::MAX_SHAPE_BYTES );
+		$nodes   = (int) \ceil( Flame_Fold::MAX_RECORD_SHAPE_BYTES / Flame_Fold::MAX_SHAPE_BYTES ) + 2;
+		$entries = [];
+		for ( $i = 0; $i < $nodes; $i++ ) {
+			$entries[] = $this->at( 'sql (start)', $i, [ 'l' => "caller{$i}" ] );
+			$entries[] = $this->at( 'sql (complete)', $i + 0.5, [ 'duration_ms' => 1.0, 'm' => "SELECT {$i} {$each}" ] );
+		}
+
+		$children = Flame_Fold::tree( $this->fold( $entries ) )['children'];
+
+		$first = $children[0]['shapes'];
+		$last  = $children[ $nodes - 1 ]['shapes'];
+		$this->assertArrayNotHasKey( Flame_Fold::SHAPES_OVERFLOW, $first, 'the budget was whole when this one ran' );
+		$this->assertSame( [ 1, 1.0 ], $last[ Flame_Fold::SHAPES_OVERFLOW ], 'past the budget only the bucket takes them' );
+		$this->assertCount( 1, $last );
+	}
+
+	public function test_statements_the_bucket_swallowed_cost_the_record_nothing(): void {
+		// One caller running hundreds of cheap distinct statements stores none
+		// of them past its cap; charging the record for each would strip every
+		// other node's table — measured at 7.1x the bytes actually stored.
+		$entries = [];
+		$at      = 0.0;
+		for ( $i = 0; $i < 400; $i++ ) {
+			$entries[] = $this->at( 'sql (start)', $at, [ 'l' => 'chatty' ] );
+			$entries[] = $this->at( 'sql (complete)', ++$at, [ 'duration_ms' => 0.01, 'm' => "SELECT {$i} FROM wp_options WHERE option_name = ?" ] );
+		}
+		$entries[] = $this->at( 'sql (start)', ++$at, [ 'l' => 'ordinary' ] );
+		$entries[] = $this->at( 'sql (complete)', ++$at, [ 'duration_ms' => 9.0, 'm' => 'SELECT * FROM wp_posts WHERE ID = ?' ] );
+
+		$nodes = Flame_Fold::tree( $this->fold( $entries ) )['children'];
+		$last  = $nodes[ \count( $nodes ) - 1 ];
+
+		$this->assertSame( 'sql: ordinary', $last['name'] );
+		$this->assertSame( [ 1, 9.0 ], $last['shapes']['SELECT * FROM wp_posts WHERE ID = ?'] ?? null );
+	}
+
+	public function test_a_frame_restored_without_its_shape_takes_no_http_status_code(): void {
+		// A worker restarting mid-request leaves a checkpoint frame with no
+		// shape; for http the complete's `m` is the status code, not the URL.
+		$state = Flame_Fold::start( self::ORIGIN );
+		Flame_Fold::add( $state, $this->at( 'http (start)', 0, [ 'l' => 'wp_remote_get', 'm' => 'https://api.test/v1' ] ) );
+		foreach ( \array_keys( $state['stack'] ) as $i ) {
+			unset( $state['stack'][ $i ]['shape'] );
+		}
+		Flame_Fold::add( $state, $this->at( 'http (complete)', 5, [ 'duration_ms' => 42.0, 'm' => '200' ] ) );
+
+		$this->assertArrayNotHasKey( 'shapes', Flame_Fold::tree( $state )['children'][0] );
+	}
+
+	public function test_a_cut_shape_stays_valid_utf8(): void {
+		// The cut lands mid-character on a multibyte statement; a torn
+		// sequence would break every JSON encode the record passes through.
+		$entries = [
+			$this->at( 'sql (start)', 0, [ 'l' => 'unicode' ] ),
+			$this->at( 'sql (complete)', 5, [ 'duration_ms' => 1.0, 'm' => \str_repeat( 'é', Flame_Fold::MAX_SHAPE_BYTES ) ] ),
+		];
+
+		$shapes = Flame_Fold::tree( $this->fold( $entries ) )['children'][0]['shapes'];
+		$cut    = (string) \array_key_first( $shapes );
+
+		$this->assertSame( 1, \preg_match( '//u', $cut ), 'the cut tore a character in half' );
+		$this->assertLessThanOrEqual( Flame_Fold::MAX_SHAPE_BYTES, \strlen( $cut ) );
+		// Trimming the whole trailing run, rather than the torn sequence,
+		// leaves the bucket's own key and loses the statement into it.
+		$this->assertNotSame( Flame_Fold::SHAPES_OVERFLOW, $cut );
+		$this->assertGreaterThan( Flame_Fold::MAX_SHAPE_BYTES - 8, \strlen( $cut ) );
+	}
+
+	public function test_the_shape_table_caps_its_keys_and_their_length(): void {
+		$entries = [];
+		for ( $i = 0; $i < Flame_Fold::MAX_SHAPES + 3; $i++ ) {
+			$entries[] = $this->at(
+				'http (start)',
+				$i * 10,
+				[ 'l' => 'wp_remote_get', 'm' => 'https://api.test/' . \str_repeat( "p{$i}/", 400 ) ]
+			);
+			$entries[] = $this->at( 'http (complete)', $i * 10 + 5, [ 'duration_ms' => 7, 'm' => '200' ] );
+		}
+
+		$shapes = Flame_Fold::tree( $this->fold( $entries ) )['children'][0]['shapes'];
+
+		// The bucket is one of the capped keys, never an extra; the `200`s
+		// every complete carried are not a shape and never reach it.
+		$this->assertCount( Flame_Fold::MAX_SHAPES, $shapes );
+		$this->assertSame( [ 4, 28.0 ], $shapes[ Flame_Fold::SHAPES_OVERFLOW ] );
+		foreach ( \array_keys( $shapes ) as $key ) {
+			$this->assertLessThanOrEqual( Flame_Fold::MAX_SHAPE_BYTES, \strlen( $key ) );
+		}
+	}
+
+	public function test_the_bucket_never_evicts_a_statement_to_make_its_own_room(): void {
+		// Its slot is reserved inside the cap, so folding INTO it costs a row
+		// nothing — the budget spends itself through this path on every record.
+		$shapes = [];
+		for ( $i = 0; $i < Flame_Fold::MAX_SHAPES - 1; $i++ ) {
+			Flame_Fold::fold_shape( $shapes, "SELECT {$i}", 1, 1.0 );
+		}
+
+		$took = Flame_Fold::fold_shape( $shapes, Flame_Fold::SHAPES_OVERFLOW, 1, 50.0 );
+
+		$this->assertCount( Flame_Fold::MAX_SHAPES, $shapes );
+		$this->assertSame( [ 1, 1.0 ], $shapes['SELECT 0'] ?? null, 'a real row paid for the bucket' );
+		// Its own row, charged like any other; never a refund from an eviction.
+		$this->assertGreaterThan( 0, $took );
+	}
+
+	public function test_a_wire_table_carries_numbers_a_reader_can_use(): void {
+		// The browser destructures each row; a row the wire left as anything
+		// but [ calls, ms ] takes down the whole request-detail render. A
+		// checkpoint restored through JSON is where a stringy row comes from.
+		$state = $this->fold(
+			[
+				$this->at( 'sql (start)', 0, [ 'l' => 'q' ] ),
+				$this->at( 'sql (complete)', 5, [ 'duration_ms' => 3, 'm' => 'SELECT ?' ] ),
+			]
+		);
+		$state['root']['children']['sql: q']['shapes'] = [ 'SELECT ?' => [ '4', '9.5' ] ];
+
+		$row = Flame_Fold::tree( $state )['children'][0]['shapes']['SELECT ?'];
+
+		$this->assertSame( 4, $row[0] );
+		$this->assertSame( 9.5, $row[1] );
+	}
+
+	public function test_a_spent_budget_still_counts_a_statement_already_kept(): void {
+		// A row the node holds costs no new bytes, so bucketing its repeats
+		// saves nothing and understates the statement a finding names.
+		$each    = \str_repeat( 'x', Flame_Fold::MAX_SHAPE_BYTES );
+		$kept    = 'SELECT kept FROM wp_posts WHERE ID = ?';
+		$entries = [
+			$this->at( 'sql (start)', 0, [ 'l' => 'ordinary' ] ),
+			$this->at( 'sql (complete)', 1, [ 'duration_ms' => 5.0, 'm' => $kept ] ),
+		];
+		$at      = 2.0;
+		$spenders = (int) \ceil( Flame_Fold::MAX_RECORD_SHAPE_BYTES / Flame_Fold::MAX_SHAPE_BYTES ) + 2;
+		for ( $i = 0; $i < $spenders; $i++ ) {
+			$entries[] = $this->at( 'sql (start)', $at, [ 'l' => "caller{$i}" ] );
+			$entries[] = $this->at( 'sql (complete)', ++$at, [ 'duration_ms' => 1.0, 'm' => "SELECT {$i} {$each}" ] );
+		}
+		// The budget is spent by now; this repeat is already on the node.
+		$entries[] = $this->at( 'sql (start)', ++$at, [ 'l' => 'ordinary' ] );
+		$entries[] = $this->at( 'sql (complete)', ++$at, [ 'duration_ms' => 7.0, 'm' => $kept ] );
+
+		$ordinary = Flame_Fold::tree( $this->fold( $entries ) )['children'][0];
+
+		$children = Flame_Fold::tree( $this->fold( $entries ) )['children'];
+		$last     = $children[ \count( $children ) - 1 ];
+
+		$this->assertSame( 'sql: ordinary', $ordinary['name'] );
+		$this->assertSame( [ 2, 12.0 ], $ordinary['shapes'][ $kept ] ?? null );
+		$this->assertArrayNotHasKey( Flame_Fold::SHAPES_OVERFLOW, $ordinary['shapes'] );
+		// The premise: the spenders really did exhaust the budget, so the
+		// repeat above was kept by the guard and not by a budget still whole.
+		$this->assertArrayHasKey( Flame_Fold::SHAPES_OVERFLOW, $last['shapes'] );
+	}
+
+	public function test_a_spent_budget_still_lets_a_full_table_trade_evenly(): void {
+		// An even trade costs the record nothing, so the worst statement still
+		// displaces the cheapest — which is the whole point of eviction.
+		$shapes = [];
+		for ( $i = 0; $i < Flame_Fold::MAX_SHAPES - 1; $i++ ) {
+			Flame_Fold::fold_shape( $shapes, "SELECT {$i}", 1, 0.5 );
+		}
+
+		$took = Flame_Fold::fold_shape( $shapes, 'SELECT !', 1, 2000.0, true );
+
+		$this->assertSame( [ 1, 2000.0 ], $shapes['SELECT !'] ?? null );
+		$this->assertCount( Flame_Fold::MAX_SHAPES, $shapes );
+		// Key for key, plus the bucket row the eviction made. Exact accounting
+		// is what keeps a spent record from growing through this path.
+		$this->assertSame( \strlen( Flame_Fold::SHAPES_OVERFLOW ) + 128, $took );
+	}
+
+	public function test_a_spent_budget_refuses_a_trade_that_would_grow_the_record(): void {
+		// While spent, the worst statement may still displace the cheapest —
+		// but only where it costs nothing. A longer key would carry the record
+		// past its budget one full table at a time, measured at 3.2x.
+		$shapes = [];
+		for ( $i = 0; $i < Flame_Fold::MAX_SHAPES - 1; $i++ ) {
+			Flame_Fold::fold_shape( $shapes, "SELECT {$i}", 1, 0.5 );
+		}
+		$long = 'SELECT ' . \str_repeat( 'c', 200 );
+
+		$took = Flame_Fold::fold_shape( $shapes, $long, 1, 2000.0, true );
+
+		$this->assertArrayNotHasKey( $long, $shapes );
+		$this->assertSame( [ 1, 2000.0 ], $shapes[ Flame_Fold::SHAPES_OVERFLOW ] ?? null );
+		$this->assertLessThanOrEqual( \strlen( Flame_Fold::SHAPES_OVERFLOW ) + 128, $took );
+	}
+
+	public function test_the_shapes_a_record_holds_stay_inside_its_budget(): void {
+		// The invariant the caps exist for, over the stream that breaks it:
+		// many callers, short cheap statements filling each table, then long
+		// slow ones that would each trade a short key for a long one.
+		$entries = [];
+		$at      = 0.0;
+		for ( $caller = 0; $caller < 40; $caller++ ) {
+			for ( $i = 0; $i < 30; $i++ ) {
+				$long      = $i > 22 ? \str_repeat( 'c', 400 ) : '';
+				$entries[] = $this->at( 'sql (start)', $at, [ 'l' => "caller{$caller}" ] );
+				$entries[] = $this->at(
+					'sql (complete)',
+					++$at,
+					[ 'duration_ms' => $i > 22 ? 900.0 : 0.5, 'm' => "SELECT {$caller}:{$i} {$long}" ]
+				);
+			}
+		}
+
+		$held = 0;
+		$walk = static function ( array $node ) use ( &$walk, &$held ): void {
+			foreach ( \array_keys( $node['shapes'] ?? [] ) as $shape ) {
+				$held += \strlen( (string) $shape );
+			}
+			foreach ( $node['children'] ?? [] as $child ) {
+				$walk( $child );
+			}
+		};
+		$walk( Flame_Fold::tree( $this->fold( $entries ) ) );
+
+		$this->assertGreaterThan( 0, $held );
+		$this->assertLessThanOrEqual( Flame_Fold::MAX_RECORD_SHAPE_BYTES, $held );
+	}
+
 	public function test_an_orphan_complete_is_dropped_not_guessed_at(): void {
 		$tree = Flame_Fold::tree( $this->fold( [ $this->at( 'ghost (complete)', 5, [ 'duration_ms' => 9 ] ) ] ) );
 		$this->assertSame( [], $tree['children'] );

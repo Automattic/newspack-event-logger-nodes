@@ -33,6 +33,8 @@
  * marker was selected out of the middle rather than kept consecutive.
  */
 
+import { formatDuration } from '@newspack-nodes/shared/utils/formatUtils';
+
 /**
  * Matches a `<name> (start)` keyword, capturing the pair's name.
  */
@@ -778,7 +780,7 @@ const foldedSpanEntries = (
 			rows.push( {
 				n: '',
 				k: `${ node.k } (complete)`,
-				m: merged < 1 ? '' : `${ merged.toLocaleString() } merged`,
+				m: mergedBody( node, merged ),
 				ts,
 				duration_ms: node.value,
 				fromFold: true,
@@ -788,6 +790,43 @@ const foldedSpanEntries = (
 
 	walk( flame?.children, 0, true, '' );
 	return rows;
+};
+
+/**
+ * The body a merged `(complete)` row shows: how many instances it stands for,
+ * then the statements or URLs they ran, worst first.
+ *
+ * The table is `Flame_Fold`'s, kept on merged transport nodes; see its
+ * `fold_shape()` for what is in it and what bounds it.
+ *
+ * @param {Object} node   A merged flame node.
+ * @param {number} merged Instances this row stands for.
+ * @return {string} The row's message.
+ */
+const mergedBody = ( node, merged ) => {
+	if ( merged < 1 ) {
+		return '';
+	}
+	const head = `${ merged.toLocaleString() } merged`;
+	const rows = Object.entries( node.shapes || {} ).sort(
+		( a, b ) => b[ 1 ][ 1 ] - a[ 1 ][ 1 ]
+	);
+	if ( ! rows.length ) {
+		return head;
+	}
+	const calls = Number( node.count ) || 0;
+	// The table counts every instance; the header counts the shown-less ones.
+	const lead =
+		calls === merged ? '' : `, of ${ calls.toLocaleString() } in all`;
+	return [
+		`${ head }${ lead }`,
+		...rows.map(
+			( [ shape, [ count, ms ] ] ) =>
+				`${ count.toLocaleString() }× ${ formatDuration(
+					ms
+				) }  ${ shape }`
+		),
+	].join( '\n' );
 };
 
 /**

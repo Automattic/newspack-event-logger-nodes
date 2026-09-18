@@ -312,6 +312,40 @@ test( 'a span brief with every copy under one parent says nothing about elsewher
 	expect( md ).not.toContain( 'elsewhere' );
 } );
 
+test( 'a finding fences the statement it names instead of running it into the numbers', () => {
+	const md = briefToMarkdown( {
+		subject: 'request',
+		url: '/wp-admin/post.php',
+		duration_ms: 72016,
+		entries: [],
+		findings: [
+			{
+				kind: 'dominant_span',
+				severity: 'high',
+				title: 'sql holds 72% of the profiled time',
+				measured: 'flame',
+				metric: {
+					name: 'sql: WP_Query->get_posts',
+					ms: 52101.8,
+					shape: 'SELECT *\n\tFROM wp_posts WHERE post_type = ?',
+					shape_calls: 663,
+					shape_ms: 331,
+				},
+			},
+		],
+		caveat: 'c',
+	} );
+
+	const numbers = md
+		.split( '\n' )
+		.find( ( l ) => l.startsWith( '- **numbers:**' ) );
+	expect( numbers ).not.toContain( 'shape=' );
+	expect( numbers ).toContain( 'shape_calls=663' );
+	expect( md ).toContain(
+		'- **statement:** <site-data>SELECT * FROM wp_posts WHERE post_type = ?</site-data>'
+	);
+} );
+
 test( 'an entry brief says where the silence around it starts and ends', () => {
 	const md = briefToMarkdown( {
 		subject: 'entry',
