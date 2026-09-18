@@ -7,7 +7,7 @@
 # `num_partitions = 1` pin must live here — frontmatter is read from the
 # top-level file only, so the included file's `var` is skipped.
 
-var num_partitions = 1;
+var num_partitions = 1
 
 include settings-sync
 
@@ -17,9 +17,9 @@ make_node Discovery_Collector discovery-collector 300
 # and union-merges the replies into the hub options. Its replies come back
 # through the per-spoke egress the operator wires (see settings-sync.tsl), and
 # that egress admits only DECLARED destinations, so each one needs
-# `cmd <egress>:config allow_replies_to discovery-collector` beside the
+# `command_node <egress>:config allow_replies_to discovery-collector` beside the
 # settings-sync declaration or the discovery replies are dropped.
-cmd settings-sync:config add_setting newspack_event_logger_nodes_rules performance newspack_event_logger_nodes_rules
-cmd settings-sync:config add_setting newspack_event_logger_nodes_log_memory performance newspack_event_logger_nodes_log_memory
-cmd settings-sync:config add_setting newspack_event_logger_nodes_flush_every_line performance newspack_event_logger_nodes_flush_every_line
+command_node settings-sync:config add_setting newspack_event_logger_nodes_rules performance newspack_event_logger_nodes_rules
+command_node settings-sync:config add_setting newspack_event_logger_nodes_log_memory performance newspack_event_logger_nodes_log_memory
+command_node settings-sync:config add_setting newspack_event_logger_nodes_flush_every_line performance newspack_event_logger_nodes_flush_every_line
 secure
