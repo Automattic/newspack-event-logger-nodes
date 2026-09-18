@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.98.9] - 2026-09-17
+
 ### Added
 
 - **A folded record says what its queries were.** The fold merges thousands of entries into one node per path, and the statements went with them: a `/wp-admin/post.php` record could say `sql: WP_Query->get_posts` ran 667 times for 58.3s and not one of them. A merged `sql` or `http` node now keeps the distinct statements or URLs it ran, each with a call count and summed milliseconds, so the merged row in the detail view lists them worst first and a dominant-span finding names the one the time went to. Decision 26 states the bounds: 512 bytes a shape, 24 rows a node with one slot reserved for the `…` bucket, 32KB of new shapes a record, and a full table evicts its cheapest row rather than burying a statement that arrives late. The identifier is whichever half of the pair carries it, since `http` puts the URL on the start and its status code on the complete. Hook spans keep no table — their message is prose of any size and any cardinality.
