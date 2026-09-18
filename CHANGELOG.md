@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **An unfolded record names its statement too.** Only a folded record carried a statement table, so a `www.elsol.com.ar/wp-admin/post.php` record whose entries held all 655 queries still produced a dominant-span finding that named none of them — and a brief ships sixty entries, so the reader never saw them. `Findings` now folds an unfolded record's entries transiently through `Flame_Fold`, the same rules and caps, stores nothing, and reads each node's table by its name path. That record's finding now names `SELECT wp_posts.ID … ID NOT IN (?) AND ( term_taxonomy_id IN (?) )`, 202 calls for 12.9s.
+
+### Fixed
+
+- **Time inside an open span is no longer reported as a gap.** The entry-gap finding compared adjacent timestamps with no notion of spans at all, so any span with nothing logged inside it read as unlogged time. Only queries tripped it in practice, because a query never has children while a slow hook usually does: an 830ms Yoast query on `www.elsol.com.ar` read as "830.5ms passed between `sql (start)` and `sql (complete)` with nothing logged" and proposed adding a hook to bracket it. A hook with one slow callback and nothing instrumented inside it would have read the same. A gap is now reported only where nothing but the request itself is open; time inside any other span is that span's, measured as its duration.
+- **A nested metric reads as numbers in a brief.** A dominant-span finding's `repeat` is an object, and the `numbers:` line stringified it to `repeat=[object Object]`. It now opens into `repeat.count=9 repeat.each_ms=3415.2` and the rest of its fields.
+
 ## [0.98.9] - 2026-09-17
 
 ### Added

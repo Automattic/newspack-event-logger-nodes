@@ -45,7 +45,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
  * One in-flight request's entries, merged by path as they arrive.
  *
  * @phpstan-type Fold_Frame array{name: string, path: list<string>, shape?: string|null}
- * @phpstan-type Fold_State array{root: array<array-key,mixed>, stack: list<Fold_Frame>, count: int, shape_bytes?: int, origin: float|null}
+ * @phpstan-type Fold_State array{root: array<array-key,mixed>, stack: list<Fold_Frame>, count: int, shape_bytes?: int, shape_budget?: int, origin: float|null}
  */
 final class Flame_Fold {
 
@@ -106,10 +106,18 @@ final class Flame_Fold {
 	 * a partial one. The fold streams, so it cannot take the earliest across
 	 * every entry the way `Flame_Tree::request_origin()` does.
 	 *
-	 * @param float|null $origin Request start, or null to take the first seen.
+	 * `$shape_budget` is the record's allowance of new shape bytes. A live
+	 * fold keeps `MAX_RECORD_SHAPE_BYTES`, because it rides a pool of in-flight
+	 * envelopes; a fold that is built, read and dropped — `Findings` replaying
+	 * an unfolded record — has no pool to protect and passes `PHP_INT_MAX`, so
+	 * a slow statement first seen late is not bucketed for a memory it never
+	 * holds.
+	 *
+	 * @param float|null $origin       Request start, or null to take the first seen.
+	 * @param int        $shape_budget New shape bytes the record may take.
 	 * @return Fold_State State for add()/tree().
 	 */
-	public static function start( ?float $origin = null ): array {
+	public static function start( ?float $origin = null, int $shape_budget = self::MAX_RECORD_SHAPE_BYTES ): array {
 		return [
 			// Merged tree, children keyed by name so a merge is a lookup.
 			'root'        => [ 'k' => 'request', 'l' => '' ] + self::empty_node(),
@@ -119,6 +127,7 @@ final class Flame_Fold {
 			'count'       => 0,
 			// New shape bytes taken; see MAX_RECORD_SHAPE_BYTES.
 			'shape_bytes' => 0,
+			'shape_budget' => $shape_budget,
 			'origin'      => $origin,
 		];
 	}
@@ -128,7 +137,7 @@ final class Flame_Fold {
 	 * is counted and dropped — the tree is built from spans alone.
 	 *
 	 * @param Fold_State          $state Fold state, by reference.
-	 * @param array<string,mixed> $entry One stored entry.
+	 * @param array<array-key,mixed> $entry One stored entry, as the record or a restored checkpoint holds it.
 	 */
 	public static function add( array &$state, array $entry ): void {
 		++$state['count'];
@@ -185,7 +194,7 @@ final class Flame_Fold {
 			$shape = $frame['shape'] ?? ( Flame_Tree::HTTP_STATE === $base ? null : $shape );
 			$meta  = null === $shape ? [] : [ 'shape' => $shape ];
 			// A row already there costs nothing; fold_shape knows which is new.
-			if ( [] !== $meta && ( $state['shape_bytes'] ?? 0 ) >= self::MAX_RECORD_SHAPE_BYTES ) {
+			if ( [] !== $meta && ( $state['shape_bytes'] ?? 0 ) >= ( $state['shape_budget'] ?? self::MAX_RECORD_SHAPE_BYTES ) ) {
 				$meta['spent'] = true;
 			}
 			$state['shape_bytes'] = ( $state['shape_bytes'] ?? 0 ) + self::record(

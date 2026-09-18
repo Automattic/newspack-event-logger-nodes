@@ -110,6 +110,24 @@ function num( value ) {
 }
 
 /**
+ * One metric as `key=value` pairs. A nested one, such as a dominant span's
+ * `repeat`, opens into `key.field` pairs of its own rather than stringifying
+ * to `[object Object]`.
+ *
+ * @param {string} key   The metric's name.
+ * @param {*}      value Its value.
+ * @return {string[]} The pairs it reads as.
+ */
+function metricPairs( key, value ) {
+	if ( value && 'object' === typeof value && ! Array.isArray( value ) ) {
+		return Object.keys( value ).flatMap( ( field ) =>
+			metricPairs( `${ key }.${ field }`, value[ field ] )
+		);
+	}
+	return [ `${ key }=${ num( value ) }` ];
+}
+
+/**
  * A call count as a `×n` suffix, or nothing where the brief carries none — an
  * aggregate span keeps no count, and `×undefined` would read as a value.
  *
@@ -183,7 +201,7 @@ function findingLines( finding ) {
 	// A statement is the site's own text, so it takes a fenced line of its own.
 	const { shape, ...metric } = finding.metric ?? {};
 	const numbers = Object.keys( metric )
-		.map( ( key ) => `${ key }=${ num( metric[ key ] ) }` )
+		.flatMap( ( key ) => metricPairs( key, metric[ key ] ) )
 		.join( ' ' );
 	if ( numbers ) {
 		lines.push( `- **numbers:** ${ numbers }` );

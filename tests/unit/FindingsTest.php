@@ -4,6 +4,7 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Newspack_Event_Logger_Nodes\App\Findings;
+use Newspack_Event_Logger_Nodes\Flame_Tree;
 use Newspack_Event_Logger_Nodes\Rule;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
 
@@ -171,6 +172,82 @@ class FindingsTest extends TestCase {
 		$this->assertSame( 'SELECT * FROM wp_postmeta WHERE post_id IN (?)', $metric['shape'] );
 		$this->assertSame( 663, $metric['shape_calls'] );
 		$this->assertEqualsWithDelta( 331.0, $metric['shape_ms'], 1e-6 );
+	}
+
+	public function test_an_unfolded_record_names_the_statement_from_its_entries(): void {
+		// Its entries still hold every statement, but a brief ships sixty of
+		// them; the dominant finding is what has to carry the answer.
+		$slow    = 'SELECT wp_posts.ID FROM wp_posts WHERE wp_posts.ID NOT IN (?)';
+		$fast    = 'SELECT option_value FROM wp_options WHERE option_name = ?';
+		$entries = [ [ 'n' => 1, 'ts' => 3000.0, 'k' => 'process (start)', 'm' => '' ] ];
+		$ts      = 3000.0;
+		for ( $i = 0; $i < 6; $i++ ) {
+			$ms        = 0 === $i % 3 ? 3.0 : 150.0;
+			$entries[] = [ 'n' => 2, 'ts' => $ts += 0.001, 'k' => 'sql (start)', 'l' => 'WP_Query->get_posts', 'm' => '' ];
+			$entries[] = [ 'n' => 3, 'ts' => $ts += $ms / 1000, 'k' => 'sql (complete)', 'm' => 0 === $i % 3 ? $fast : $slow, 'duration_ms' => $ms ];
+		}
+		$entries[] = [ 'n' => 4, 'ts' => $ts += 0.01, 'k' => 'process (complete)', 'm' => '', 'duration_ms' => ( $ts - 3000.0 ) * 1000 ];
+
+		$record                = $this->healthy_record();
+		$record['duration_ms'] = ( $ts - 3000.0 ) * 1000;
+		$record['entries']     = $entries;
+		unset( $record['flame'] );
+		$record['flame_data']  = Flame_Tree::build_flame_data( $entries );
+		Flame_Tree::strip_name_suffixes( $record['flame_data'] );
+
+		$metric = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'dominant_span' )['metric'] ?? [];
+
+		$this->assertSame( 'sql: WP_Query->get_posts', $metric['name'] ?? null );
+		$this->assertSame( $slow, $metric['shape'] ?? null );
+		$this->assertSame( 4, $metric['shape_calls'] ?? null );
+		$this->assertEqualsWithDelta( 600.0, $metric['shape_ms'] ?? 0.0, 1e-6 );
+	}
+
+	public function test_a_gap_after_the_fold_still_reports_once_the_head_spans_close(): void {
+		// Decision 21 keeps the close of every span the head left open, so
+		// the tail is back at the request's own level by the time it gaps.
+		$record            = $this->healthy_record();
+		$record['folded']  = true;
+		$record['entries'] = [
+			[ 'n' => 1, 'ts' => 2000.000, 'k' => 'process (start)', 'm' => '' ],
+			[ 'n' => 2, 'ts' => 2000.010, 'k' => 'plugins_loaded hook (start)', 'm' => '' ],
+			[ 'n' => 3, 'ts' => 2000.020, 'k' => 'entries (aggregated)', 'm' => '9 merged' ],
+			[ 'n' => 4, 'ts' => 2000.500, 'k' => 'plugins_loaded hook (complete)', 'm' => '', 'duration_ms' => 490.0 ],
+			[ 'n' => 5, 'ts' => 2000.600, 'k' => 'init hook', 'm' => '' ],
+			[ 'n' => 6, 'ts' => 2002.100, 'k' => 'wp_loaded hook', 'm' => '' ],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'entry_gap' );
+
+		$this->assertSame( 'init hook', $found['metric']['after'] ?? null );
+	}
+
+	public function test_an_unfolded_record_names_a_late_slow_statement(): void {
+		// Nothing is stored, so the live fold's memory budget has no work to
+		// do here — keeping it buckets a statement that first appears late.
+		$record  = $this->healthy_record();
+		$pad     = \str_repeat( 'x', 480 );
+		$entries = [ [ 'n' => 1, 'ts' => 4000.0, 'k' => 'process (start)', 'm' => '' ] ];
+		$ts      = 4000.0;
+		for ( $i = 0; $i < 90; $i++ ) {
+			$entries[] = [ 'n' => 2, 'ts' => $ts += 0.001, 'k' => 'sql (start)', 'l' => "caller{$i}", 'm' => '' ];
+			$entries[] = [ 'n' => 3, 'ts' => $ts += 0.001, 'k' => 'sql (complete)', 'm' => "SELECT {$i} {$pad}", 'duration_ms' => 1.0 ];
+		}
+		$late      = 'SELECT * FROM wp_posts WHERE post_name = ?';
+		$entries[] = [ 'n' => 4, 'ts' => $ts += 0.001, 'k' => 'sql (start)', 'l' => 'heavy', 'm' => '' ];
+		$entries[] = [ 'n' => 5, 'ts' => $ts += 2.0, 'k' => 'sql (complete)', 'm' => $late, 'duration_ms' => 2000.0 ];
+		$entries[] = [ 'n' => 6, 'ts' => $ts += 0.001, 'k' => 'process (complete)', 'm' => '' ];
+
+		$record['duration_ms'] = ( $ts - 4000.0 ) * 1000;
+		$record['entries']     = $entries;
+		unset( $record['flame'] );
+		$record['flame_data'] = Flame_Tree::build_flame_data( $entries );
+		Flame_Tree::strip_name_suffixes( $record['flame_data'] );
+
+		$metric = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'dominant_span' )['metric'] ?? [];
+
+		$this->assertSame( 'sql: heavy', $metric['name'] ?? null );
+		$this->assertSame( $late, $metric['shape'] ?? null );
 	}
 
 	/** The proposal for a span you cannot see inside adds detail, never removes it. */
@@ -351,6 +428,40 @@ class FindingsTest extends TestCase {
 		$this->assertEqualsWithDelta( 3650.0, $found['metric']['gap_ms'], 0.1 );
 		$this->assertSame( 'init hook', $found['metric']['after'] );
 		$this->assertSame( 'wp_loaded hook', $found['metric']['before'] );
+	}
+
+	public function test_a_round_trip_is_not_a_gap(): void {
+		// Nothing logs between a query's own start and complete: that window
+		// IS the query, measured as its duration, and no hook can bracket it.
+		// The gap outside it is the one a hook could explain.
+		$record            = $this->healthy_record();
+		$record['entries'] = [
+			[ 'n' => 1, 'ts' => 2000.000, 'k' => 'process (start)', 'm' => '' ],
+			[ 'n' => 2, 'ts' => 2000.050, 'k' => 'sql (start)', 'l' => 'Yoast\\WP\\Lib\\ORM::execute', 'm' => '' ],
+			[ 'n' => 3, 'ts' => 2000.880, 'k' => 'sql (complete)', 'm' => 'SELECT ?', 'duration_ms' => 830.4 ],
+			[ 'n' => 4, 'ts' => 2001.500, 'k' => 'wp_loaded hook', 'm' => '' ],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'entry_gap' );
+
+		$this->assertNotNull( $found );
+		$this->assertSame( 'sql (complete)', $found['metric']['after'] );
+		$this->assertEqualsWithDelta( 620.0, $found['metric']['gap_ms'], 0.1 );
+	}
+
+	public function test_time_inside_any_open_span_is_not_a_gap(): void {
+		// A hook with one slow callback and nothing instrumented inside it
+		// has the same shape as a query: its own start and complete, far
+		// apart. The span measured that time; nothing went unlogged.
+		$record            = $this->healthy_record();
+		$record['entries'] = [
+			[ 'n' => 1, 'ts' => 2000.000, 'k' => 'process (start)', 'm' => '' ],
+			[ 'n' => 2, 'ts' => 2000.050, 'k' => 'the_content hook (start)', 'm' => '' ],
+			[ 'n' => 3, 'ts' => 2000.950, 'k' => 'the_content hook (complete)', 'm' => '', 'duration_ms' => 900.0 ],
+			[ 'n' => 4, 'ts' => 2001.000, 'k' => 'process (complete)', 'm' => '' ],
+		];
+
+		$this->assertNull( $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'entry_gap' ) );
 	}
 
 	public function test_a_gap_across_the_fold_marker_is_not_a_gap(): void {

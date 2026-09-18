@@ -312,6 +312,31 @@ test( 'a span brief with every copy under one parent says nothing about elsewher
 	expect( md ).not.toContain( 'elsewhere' );
 } );
 
+test( 'a nested metric reads as its own numbers, never as an object', () => {
+	const md = briefToMarkdown( {
+		subject: 'request',
+		url: '/wp-admin/post.php',
+		duration_ms: 34761,
+		entries: [],
+		findings: [
+			{
+				kind: 'dominant_span',
+				severity: 'high',
+				title: 't',
+				measured: 'flame',
+				metric: {
+					name: 'sql: WP_Query->get_posts',
+					repeat: { count: 9, each_ms: 3415.2, own: false },
+				},
+			},
+		],
+		caveat: 'c',
+	} );
+
+	expect( md ).not.toContain( '[object Object]' );
+	expect( md ).toContain( 'repeat.count=9 repeat.each_ms=3415.2' );
+} );
+
 test( 'a finding fences the statement it names instead of running it into the numbers', () => {
 	const md = briefToMarkdown( {
 		subject: 'request',
