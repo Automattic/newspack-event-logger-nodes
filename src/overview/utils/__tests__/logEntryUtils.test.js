@@ -157,6 +157,234 @@ describe( 'a folded span row', () => {
 		] );
 	} );
 
+	it( 'numbers and stamps a folded pair from its first start and its last end', () => {
+		const flame = {
+			name: 'request',
+			children: [
+				{
+					name: 'process',
+					k: 'process',
+					l: '',
+					count: 1,
+					value: 900,
+					t: 0,
+					children: [
+						{
+							name: 'http: wp_remote_post',
+							k: 'http',
+							l: 'wp_remote_post',
+							count: 3,
+							merged: true,
+							value: 410.7,
+							t: 120.5,
+							n: 4411,
+							t_end: 733.25,
+							n_end: 4988,
+							children: [],
+						},
+					],
+				},
+			],
+		};
+		const stored = [
+			{ n: 1, k: 'process (start)', ts: 1000 },
+			{ n: 2, k: 'entries (aggregated)', ts: 1000.01 },
+			{ n: 5000, k: 'process (complete)', ts: 1000.9 },
+		];
+
+		const rows = spliceFoldedSpans( stored, flame ).filter(
+			( e ) => e.fromFold
+		);
+
+		expect( rows.map( ( e ) => [ e.k, e.n ] ) ).toEqual( [
+			[ 'http (start)', 4411 ],
+			[ 'http (complete)', 4988 ],
+		] );
+		expect( rows[ 0 ].ts ).toBeCloseTo( 1000.1205, 6 );
+		// A merged node's last end is no place in the sequence: it rides
+		// beside the row for the time cell, and stays off the ruler.
+		expect( rows[ 1 ].ts ).toBe( 0 );
+		expect( rows[ 1 ].endTs ).toBeCloseTo( 1000.73325, 6 );
+	} );
+
+	it( 'rules a single folded instance from where it ended', () => {
+		const flame = {
+			name: 'request',
+			children: [
+				{
+					name: 'process',
+					k: 'process',
+					l: '',
+					count: 1,
+					value: 900,
+					t: 0,
+					children: [
+						{
+							name: 'http: wp_remote_post',
+							k: 'http',
+							l: 'wp_remote_post',
+							count: 1,
+							merged: false,
+							value: 410.7,
+							t: 120.5,
+							n: 4411,
+							t_end: 531.2,
+							n_end: 4412,
+							children: [],
+						},
+					],
+				},
+			],
+		};
+		const stored = [
+			{ n: 1, k: 'process (start)', ts: 1000 },
+			{ n: 2, k: 'entries (aggregated)', ts: 1000.01 },
+			{ n: 5000, k: 'process (complete)', ts: 1000.9 },
+		];
+
+		const complete = spliceFoldedSpans( stored, flame ).find(
+			( e ) => e.fromFold && 'http (complete)' === e.k
+		);
+
+		expect( complete.ts ).toBeCloseTo( 1000.5312, 6 );
+	} );
+
+	it( 'leaves a folded pair unnumbered and unstamped where the tree says nothing', () => {
+		const flame = {
+			name: 'request',
+			children: [
+				{
+					name: 'process',
+					k: 'process',
+					l: '',
+					count: 1,
+					value: 900,
+					t: 0,
+					children: [
+						{
+							name: 'save',
+							k: 'save',
+							l: '',
+							count: 2,
+							merged: true,
+							value: 12,
+							t: 40,
+							children: [],
+						},
+					],
+				},
+			],
+		};
+		const stored = [
+			{ n: 1, k: 'process (start)', ts: 1000 },
+			{ n: 2, k: 'entries (aggregated)', ts: 1000.01 },
+			{ n: 9, k: 'process (complete)', ts: 1000.9 },
+		];
+
+		const complete = spliceFoldedSpans( stored, flame ).find(
+			( e ) => e.fromFold && 'save (complete)' === e.k
+		);
+
+		expect( complete.n ).toBe( '' );
+		expect( complete.ts ).toBe( 0 );
+	} );
+
+	it( 'repeats no number or time a kept row already shows', () => {
+		// The fold replays the kept head and folds the kept tail as it comes,
+		// so a node's first start or last end can be a row still on screen.
+		const flame = {
+			name: 'request',
+			children: [
+				{
+					name: 'process',
+					k: 'process',
+					l: '',
+					count: 1,
+					value: 900,
+					t: 0,
+					children: [
+						{
+							name: 'hook: init',
+							k: 'hook',
+							l: 'init',
+							count: 3,
+							merged: true,
+							value: 30,
+							t: 5,
+							n: 2,
+							t_end: 880,
+							n_end: 98,
+							children: [],
+						},
+					],
+				},
+			],
+		};
+		const stored = [
+			{ n: 1, k: 'process (start)', ts: 1000 },
+			{ n: 2, k: 'hook (start)', l: 'init', ts: 1000.005 },
+			{ n: 3, k: 'hook (complete)', ts: 1000.01, duration_ms: 5 },
+			{ n: 4, k: 'entries (aggregated)', ts: 1000.02 },
+			{ n: 97, k: 'hook (start)', l: 'init', ts: 1000.87 },
+			{ n: 98, k: 'hook (complete)', ts: 1000.88, duration_ms: 10 },
+			{ n: 99, k: 'process (complete)', ts: 1000.9 },
+		];
+
+		const rows = spliceFoldedSpans( stored, flame ).filter(
+			( e ) => e.fromFold
+		);
+
+		expect( rows.map( ( e ) => [ e.k, e.n, e.ts ] ) ).toEqual( [
+			[ 'hook (start)', '', 0 ],
+			[ 'hook (complete)', '', 0 ],
+		] );
+	} );
+
+	it( 'numbers a folded row whose number a nested render reused', () => {
+		// A nested render restarts n, so a kept row sharing the number and
+		// keyword but not the time is some other entry.
+		const flame = {
+			name: 'request',
+			children: [
+				{
+					name: 'process',
+					k: 'process',
+					l: '',
+					count: 1,
+					value: 900,
+					t: 0,
+					children: [
+						{
+							name: 'sql: q',
+							k: 'sql',
+							l: 'q',
+							count: 2,
+							merged: true,
+							value: 8,
+							t: 300,
+							n: 12,
+							children: [],
+						},
+					],
+				},
+			],
+		};
+		const stored = [
+			{ n: 1, k: 'process (start)', ts: 1000 },
+			{ n: 12, k: 'sql (start)', l: 'q', ts: 1000.02 },
+			{ n: 13, k: 'sql (complete)', ts: 1000.021, duration_ms: 1 },
+			{ n: 14, k: 'entries (aggregated)', ts: 1000.03 },
+			{ n: 99, k: 'process (complete)', ts: 1000.9 },
+		];
+
+		const start = spliceFoldedSpans( stored, flame ).find(
+			( e ) => e.fromFold && 'sql (start)' === e.k
+		);
+
+		expect( start.n ).toBe( 12 );
+		expect( start.ts ).toBeCloseTo( 1000.3, 6 );
+	} );
+
 	it( 'shows the statements a merged query node ran, worst first', () => {
 		// The fold ate the entries; the shape table is what is left of them.
 		const flame = {
@@ -199,7 +427,7 @@ describe( 'a folded span row', () => {
 			( e ) => 'sql (complete)' === e.k
 		).m;
 
-		expect( body.split( '\n' ) ).toEqual( [
+		expect( body.split( '\n\n' ) ).toEqual( [
 			'4 merged',
 			'3× 11.0ms  SELECT * FROM wp_posts WHERE ID = ?',
 			'1× 3.0ms  SELECT * FROM wp_postmeta WHERE post_id IN (?)',
@@ -329,6 +557,50 @@ describe( 'an unclosed pair', () => {
 		expect( visible ).toContain( 'entries (aggregated)' );
 		expect( visible ).toContain( 'metadatacache' );
 		expect( visible ).toContain( 'process (complete)' );
+	} );
+} );
+
+describe( 'the time ruler', () => {
+	it( 'never runs backward past a row stamped earlier than the one above', () => {
+		// A merged complete sits at its LAST end; the next merged start at
+		// its FIRST start, which can be earlier. Dots measure from the latest.
+		const { entries: indented } = computeIndentedEntries( [
+			{ n: 1, k: 'a', ts: 1000.0 },
+			{ n: 2, k: 'b', ts: 1000.5 },
+			{ n: 3, k: 'c', ts: 1000.2 },
+			{ n: 4, k: 'd', ts: 1000.51 },
+			{ n: 5, k: 'e', ts: 1000.9 },
+		] );
+		const out = computeVisibleEntries( indented, new Set() );
+
+		expect( out.find( ( e ) => 'd' === e.k ).displayTime ).toBe(
+			formatDots( 1 )
+		);
+		// Nor does it open a gap for time already ruled.
+		const c = out.findIndex( ( e ) => 'c' === e.k );
+		expect( out[ c + 1 ].k ).toBe( 'd' );
+	} );
+} );
+
+describe( 'a collapsed folded pair', () => {
+	it( 'rules from its start and keeps its end for the time cell', () => {
+		// A merged complete carries its LAST instance's end off the ruler;
+		// that end can lie long after every sibling that follows started.
+		const { entries: indented } = computeIndentedEntries( [
+			{ n: 1, k: 'process (start)', ts: 1000 },
+			{ k: 'sql (start)', ts: 1000.01, fromFold: true },
+			{ k: 'sql (complete)', ts: 0, endTs: 1051.9, fromFold: true },
+			{ k: 'http (start)', ts: 1000.04, fromFold: true },
+			{ k: 'http (complete)', ts: 1000.05, fromFold: true },
+			{ n: 9, k: 'process (complete)', ts: 1052 },
+		] );
+		const out = computeVisibleEntries( indented, new Set( [ 1 ] ) );
+		const sql = out.find( ( e ) => 'sql' === e.k );
+		const http = out.find( ( e ) => 'http' === e.k );
+
+		expect( sql.ts ).toBe( 1000.01 );
+		expect( sql.endTs ).toBe( 1051.9 );
+		expect( http.displayTime ).not.toBe( '' );
 	} );
 } );
 

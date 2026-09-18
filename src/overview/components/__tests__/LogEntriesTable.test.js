@@ -15,6 +15,7 @@
 
 import * as React from 'react';
 import LogEntriesTable from '../LogEntriesTable';
+import { formatFullTimestamp } from '../../utils/logEntryUtils';
 import { renderComponent, act } from '../../../test-helpers/renderHook';
 
 /**
@@ -722,6 +723,144 @@ describe( 'LogEntriesTable', () => {
 			( tr ) => tr.querySelector( 'td' )?.style.boxShadow
 		);
 		expect( lit?.dataset.pairId ).toBe( '3' );
+		unmount();
+		jest.useRealTimers();
+	} );
+
+	/**
+	 * A folded request: the kept `process (start)` carries a message, and two
+	 * hooks each open a labelled `sql` — an empty pair under the second.
+	 *
+	 * @return {Array} Indented entries.
+	 */
+	const foldedHooks = () =>
+		[
+			{
+				k: 'process (start)',
+				m: '745696 on pool7',
+				pairId: 1,
+				indent: 0,
+			},
+			{ k: 'hook (start)', l: 'first', pairId: 2, indent: 1 },
+			{ k: 'sql (start)', l: 'update_meta_cache', pairId: 3, indent: 2 },
+			{ k: 'sql (complete)', pairId: 3, indent: 2 },
+			{ k: 'hook (complete)', pairId: 2, indent: 1 },
+			{ k: 'hook (start)', l: 'second', pairId: 4, indent: 1 },
+			{ k: 'sql (start)', l: 'get_posts', pairId: 5, indent: 2 },
+			{ k: 'sql (complete)', m: '308 merged', pairId: 5, indent: 2 },
+			{ k: 'hook (complete)', pairId: 4, indent: 1 },
+			{ k: 'process (complete)', pairId: 1, indent: 0 },
+		].map( ( e, idx ) => ( { ...e, n: idx + 1, originalIdx: idx } ) );
+
+	/**
+	 * Reveal a folded frame by its path, flush the highlight, and return the
+	 * row it lit.
+	 *
+	 * @param {Object} revealRef The table's reveal ref.
+	 * @param {Object} container The rendered container.
+	 * @return {?HTMLElement} The highlighted row.
+	 */
+	const revealFolded = ( revealRef, container ) => {
+		act( () =>
+			revealRef.current( null, [
+				'request',
+				'process',
+				'hook: second',
+				'sql: get_posts',
+			] )
+		);
+		act( () => {
+			jest.advanceTimersByTime( 20 );
+		} );
+		return Array.from( container.querySelectorAll( 'tr' ) ).find(
+			( tr ) => tr.querySelector( 'td' )?.style.boxShadow
+		);
+	};
+
+	it( 'reveals a folded frame by its node names when the kept row carries a message', () => {
+		jest.useFakeTimers();
+		// A folded frame has no detail, so its path is node names throughout,
+		// while the kept process row keys its detail by its message.
+		const revealRef = { current: null };
+		const { container, unmount } = renderComponent(
+			React.createElement( LogEntriesTable, {
+				entries: foldedHooks(),
+				revealRef,
+			} )
+		);
+
+		expect( revealFolded( revealRef, container )?.dataset.pairId ).toBe(
+			'5'
+		);
+		unmount();
+		jest.useRealTimers();
+	} );
+
+	it( 'reveals the folded row a frame stands for, not a kept instance of its path', () => {
+		jest.useFakeTimers();
+		// The kept head holds one `hook: second`; the fold's row for that path
+		// is the one the merged frame is, whatever the ancestors carry.
+		const entries = [
+			{
+				k: 'process (start)',
+				m: '745696 on pool7',
+				pairId: 1,
+				indent: 0,
+			},
+			{ k: 'hook (start)', l: 'second', pairId: 2, indent: 1 },
+			{ k: 'hook (complete)', pairId: 2, indent: 1 },
+			{
+				k: 'hook (start)',
+				l: 'second',
+				pairId: 3,
+				indent: 1,
+				fromFold: true,
+			},
+			{
+				k: 'sql (start)',
+				l: 'get_posts',
+				pairId: 4,
+				indent: 2,
+				fromFold: true,
+			},
+			{ k: 'sql (complete)', pairId: 4, indent: 2, fromFold: true },
+			{ k: 'hook (complete)', pairId: 3, indent: 1, fromFold: true },
+			{ k: 'process (complete)', pairId: 1, indent: 0 },
+		].map( ( e, idx ) => ( { ...e, n: idx + 1, originalIdx: idx } ) );
+		const revealRef = { current: null };
+		const { container, unmount } = renderComponent(
+			React.createElement( LogEntriesTable, { entries, revealRef } )
+		);
+
+		act( () =>
+			revealRef.current( null, [ 'request', 'process', 'hook: second' ] )
+		);
+		act( () => {
+			jest.advanceTimersByTime( 20 );
+		} );
+
+		const lit = Array.from( container.querySelectorAll( 'tr' ) ).find(
+			( tr ) => tr.querySelector( 'td' )?.style.boxShadow
+		);
+		expect( lit?.dataset.pairId ).toBe( '3' );
+		unmount();
+		jest.useRealTimers();
+	} );
+
+	it( 'leaves an empty pair merged when revealing it', () => {
+		jest.useFakeTimers();
+		const revealRef = { current: null };
+		const { container, unmount } = renderComponent(
+			React.createElement( LogEntriesTable, {
+				entries: foldedHooks(),
+				revealRef,
+			} )
+		);
+
+		revealFolded( revealRef, container );
+
+		expect( container.textContent ).toContain( '▶sql' );
+		expect( container.textContent ).not.toContain( 'sql (complete)' );
 		unmount();
 		jest.useRealTimers();
 	} );
@@ -1652,6 +1791,81 @@ it( 'the row click folds, and leaves the body folded', () => {
 	// The pair opened; the body did not.
 	expect( container.textContent ).toContain( 'logged value' );
 	expect( container.textContent ).not.toContain( 'line-12' );
+	unmount();
+} );
+
+it( 'folds a pair from its complete row as from its start row', () => {
+	const { container, unmount } = renderComponent(
+		React.createElement( LogEntriesTable, { entries: makeEntries() } )
+	);
+	const rowOf = ( keyword ) =>
+		[ ...container.querySelectorAll( 'tbody tr' ) ].find( ( tr ) =>
+			tr.textContent.includes( keyword )
+		);
+
+	act( () => rowOf( 'db' ).click() );
+	expect( container.textContent ).toContain( 'logged value' );
+
+	act( () => rowOf( 'db (complete)' ).click() );
+	expect( container.textContent ).not.toContain( 'logged value' );
+	expect( rowOf( 'db (complete)' ) ).toBeUndefined();
+	unmount();
+} );
+
+it( 'draws a folded row with one known end as that end alone', () => {
+	// Its first instance is a kept row, so only the last end is its own.
+	const entries = makeEntries();
+	entries[ 4 ] = { ...entries[ 4 ], ts: 0, fromFold: true };
+	entries[ 5 ] = { ...entries[ 5 ], ts: 0, endTs: 1700000005 };
+	const { container, unmount } = renderComponent(
+		React.createElement( LogEntriesTable, { entries } )
+	);
+
+	const render = [ ...container.querySelectorAll( 'tbody tr' ) ].find(
+		( tr ) => tr.textContent.includes( 'render' )
+	);
+	expect( render.querySelector( 'br' ) ).toBeNull();
+	expect( render.textContent ).toContain( formatFullTimestamp( 1700000005 ) );
+	unmount();
+} );
+
+it( 'offers no pointer on a complete that closes no pair', () => {
+	const entries = makeEntries();
+	entries.splice( 6, 0, {
+		n: 99,
+		ts: 1700000006,
+		k: 'orphan (complete)',
+		m: '',
+		pairId: null,
+		indent: 1,
+		originalIdx: 6,
+		i: 20,
+	} );
+	const { container, unmount } = renderComponent(
+		React.createElement( LogEntriesTable, { entries } )
+	);
+
+	const orphan = [ ...container.querySelectorAll( 'tbody tr' ) ].find(
+		( tr ) => tr.textContent.includes( 'orphan (complete)' )
+	);
+	expect( orphan.style.cursor ).not.toBe( 'pointer' );
+	unmount();
+} );
+
+it( 'leaves the outermost pair open when its complete row is clicked', () => {
+	const { container, unmount } = renderComponent(
+		React.createElement( LogEntriesTable, { entries: makeEntries() } )
+	);
+	const rows = () => container.querySelectorAll( 'tbody tr' ).length;
+	const before = rows();
+
+	act( () => {
+		[ ...container.querySelectorAll( 'tbody tr' ) ]
+			.find( ( tr ) => tr.textContent.includes( 'process (complete)' ) )
+			.click();
+	} );
+
+	expect( rows() ).toBe( before );
 	unmount();
 } );
 

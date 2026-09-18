@@ -421,20 +421,18 @@ const frameEntry = ( d ) =>
 	Number.isInteger( d?.data?.i ) ? d.data.i : null;
 
 /**
- * Build the root-to-node path, one segment per frame.
- *
- * Segments prefer `detail` ("name: message") over `name`, which is what
- * `LogEntriesTable`'s path fallback expects — it matches on the detail path
- * and falls back to the base names.
+ * Build the root-to-node path, one node name per frame — what
+ * `LogEntriesTable` keys a folded request's rows by and `findNodeByPath()`
+ * walks.
  *
  * @param {Object} d D3 hierarchy node.
- * @return {string[]} Frame labels from the root down to this node.
+ * @return {string[]} Frame names from the root down to this node.
  */
 const getNodePath = ( d ) => {
 	const path = [];
 	let current = d;
 	while ( current ) {
-		path.unshift( current.data?.detail || current.data?.name || 'unknown' );
+		path.unshift( current.data?.name || 'unknown' );
 		current = current.parent;
 	}
 	return path;
@@ -442,10 +440,6 @@ const getNodePath = ( d ) => {
 
 /**
  * Walk a path of frame names down from the root and return the node it names.
- *
- * Matching is on `data.name` alone, so a path segment that `getNodePath()`
- * took from `detail` will not match. Zoom restoration therefore resolves only
- * for detail-less frames.
  *
  * @param {Object}   node D3 hierarchy node (root).
  * @param {string[]} path Names to follow, root first.

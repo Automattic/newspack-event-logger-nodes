@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Cmd-click reveals a folded request's frame, not the first of its name.** A folded frame's path is node names throughout, while the table keyed a kept row carrying a message by that message, so a request whose `process (start)` names its host missed every such path and fell back to the first span sharing the base names — a 0.6ms `update_meta_cache` for a 52-second `WP_Query->get_posts`. Rows are now keyed by node name, which is all a folded frame carries, and a folded row owns its path over a kept instance of it. Flame paths are node names throughout, which also lets a zoom restore to a frame that carries a detail.
+- **Revealing a span leaves pairs with no children merged**, as search already did.
+- **The time column never runs backward.** A row stamped earlier than the one above it shows no time and moves neither the ruler nor the gap tracker, where it used to reset both and draw dots, or gap rows, for time already ruled.
+- **Merged statements sit a blank line apart.** A merged `(complete)` row lists every statement it folded, and multi-line SQL ran one into the next; the header and each statement now stand on their own.
+- **A folded request's rows carry their line numbers and real times.** `Flame_Fold` now keeps each node's first start number (`n`) and its last complete's number and offset (`n_end`, `t_end`), and the detail view numbers and stamps the spliced rows from them. A complete row used to sit at its span's START time — `http (complete)` at the instant its 410ms call began, and a hook's complete above its own children. A single folded instance now closes where it ended; a node that merged several closes off the ruler, since its last end is no place in the sequence, and its collapsed row shows its first start and last end. A row whose instance is a kept row is left unnumbered and unstamped rather than repeating it, and so are rows of a record folded before this, which carries no end.
+- **A `(complete)` row folds its pair.** Clicking it folds the pair as clicking its `(start)` row does, and it takes the pointer cursor to say so. The outermost `process` pair still never folds.
+
 ## [0.98.11] - 2026-09-18
 
 ### Changed

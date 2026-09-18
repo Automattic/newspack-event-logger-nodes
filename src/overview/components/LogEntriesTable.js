@@ -37,6 +37,7 @@ import {
 	getAncestorPairIds,
 	hasPair,
 	isEmptyPairStart,
+	isFoldablePairComplete,
 	isFoldablePairStart,
 	formatBody,
 } from '../utils/logEntryUtils';
@@ -65,15 +66,19 @@ const findStartIdx = ( entries, pairId ) =>
 /**
  * Render a merged row's time cell: both ends when they fall in different
  * tenths, a dot per 10ms tick when they share one, else the row's ruler time.
+ * A row knowing only one end shows that end.
  *
  * @param {Object} entry Merged entry.
  * @return {import('react').ReactNode} Time cell content.
  */
 const renderMergedTime = ( entry ) => {
+	if ( ! entry.startTs || ! entry.endTs ) {
+		return formatFullTimestamp( entry.startTs || entry.endTs );
+	}
 	const startTime = formatFullTimestamp( entry.startTs );
-	const endTime = formatFullTimestamp( entry.ts );
-	const startH = Math.round( ( entry.startTs || 0 ) * 100 );
-	const endH = Math.round( ( entry.ts || 0 ) * 100 );
+	const endTime = formatFullTimestamp( entry.endTs );
+	const startH = Math.round( entry.startTs * 100 );
+	const endH = Math.round( entry.endTs * 100 );
 	const dots = endH - startH;
 	const spansTenths = Math.floor( startH / 10 ) !== Math.floor( endH / 10 );
 	if ( ( startTime && endTime && spansTenths ) || dots > 9 ) {
@@ -538,13 +543,15 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 	 * Map flame-graph paths to pairIds, so `reveal()` can resolve a frame that
 	 * carries no entry position — one of a request folded under load — to a row.
 	 *
-	 * Each open pair contributes two keys along the current spine: the detail
-	 * path (`name: message` per segment), which the flame graph prefers, and
-	 * the base-name path as a fallback. Base-name keys are first-wins, so
-	 * repeated spans resolve to their earliest occurrence.
+	 * Such a frame is `Flame_Fold`'s, named by `Flame_Tree::node_name()` alone
+	 * (`name: label`), so each open pair keys its node-name path. A folded row
+	 * owns its path over a kept instance of it, because the merged frame is
+	 * the folded row; otherwise the first occurrence does. The base-name path
+	 * is the last resort, in a map of its own so it never shadows a node path.
 	 */
 	const pathToPairId = useMemo( () => {
-		const map = {};
+		const byNode = {};
+		const byBase = {};
 		const stack = [];
 
 		for ( const entry of entries ) {
@@ -554,26 +561,19 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 
 			if ( startMatch && hasPair( entry ) ) {
 				const name = startMatch[ 1 ];
-				const msg =
-					typeof entry.m === 'string' && entry.m ? entry.m : '';
 				const label =
 					typeof entry.l === 'string' && entry.l ? entry.l : '';
-				// @longform `Flame_Tree` names a node `base: l` and only falls
-				// back to `m`, and the path arrives built by that rule — so a
-				// key built from `m` alone misses every segment carrying a
-				// label, which with `trace_hooks` on is every hook. A miss
-				// falls through to the base-name key, whose first-wins lookup
-				// reveals the FIRST occurrence rather than the one clicked.
-				const detail =
-					msg && msg !== label
-						? `${ name }: ${ msg }`
-						: ( label && `${ name }: ${ label }` ) || name;
-				stack.push( { name, detail } );
-				const detailKey = stack.map( ( s ) => s.detail ).join( '/' );
-				map[ detailKey ] = entry.pairId;
+				stack.push( {
+					name,
+					node: label ? `${ name }: ${ label }` : name,
+				} );
+				const nodeKey = stack.map( ( s ) => s.node ).join( '/' );
+				if ( entry.fromFold || ! ( nodeKey in byNode ) ) {
+					byNode[ nodeKey ] = entry.pairId;
+				}
 				const baseKey = stack.map( ( s ) => s.name ).join( '/' );
-				if ( ! ( baseKey in map ) ) {
-					map[ baseKey ] = entry.pairId;
+				if ( ! ( baseKey in byBase ) ) {
+					byBase[ baseKey ] = entry.pairId;
 				}
 			} else if ( completeMatch ) {
 				for ( let i = stack.length - 1; i >= 0; i-- ) {
@@ -584,26 +584,28 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 				}
 			}
 		}
-		return map;
+		return { byNode, byBase };
 	}, [ entries ] );
 
 	/**
-	 * The pair the frame's path names, for a frame carrying no entry position.
-	 * The detail path (`name: message`) is tried first, the base-name path
-	 * after it; a path naming nothing is undefined.
+	 * The pair the frame's path names, for a frame carrying no entry position:
+	 * the node-name path first, the base-name path after it. A path naming
+	 * nothing is undefined.
 	 *
-	 * @param {string[]} path Segment names from the flame root down to the span.
+	 * @param {string[]} path Node names from the flame root down to the span.
 	 * @return {*} The pair id, or undefined.
 	 */
 	const pairForPath = useCallback(
 		( path ) => {
 			// Flame graph paths have an extra "request" root — strip it.
 			const cleanPath = path[ 0 ] === 'request' ? path.slice( 1 ) : path;
-			const detailKey = cleanPath.join( '/' );
 			const baseKey = cleanPath
 				.map( ( seg ) => seg.replace( /: .+$/, '' ) )
 				.join( '/' );
-			return pathToPairId[ detailKey ] ?? pathToPairId[ baseKey ];
+			return (
+				pathToPairId.byNode[ cleanPath.join( '/' ) ] ??
+				pathToPairId.byBase[ baseKey ]
+			);
 		},
 		[ pathToPairId ]
 	);
@@ -615,7 +617,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 	 * is the answer whatever the span is called or numbered: two spans one
 	 * caller opened share every name, and a nested render repeats n. Only a
 	 * frame carrying no position — a folded request's — is resolved by its
-	 * path. An unresolvable frame is a no-op.
+	 * path. An unresolvable frame is a no-op, and an empty pair stays merged.
 	 *
 	 * @param {?number}  i    The entry position the frame opened at, or null.
 	 * @param {string[]} path Segment names from the flame root down to the span.
@@ -642,14 +644,16 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 			setExpandedSet( ( prev ) => {
 				const next = new Set( prev );
 				for ( const id of ancestorIds ) {
-					next.add( id );
+					if ( allPairIds.has( id ) ) {
+						next.add( id );
+					}
 				}
 				return next;
 			} );
 
 			scrollToAndHighlight( tableRef, { pairId: targetPairId } );
 		},
-		[ pairForPath, entries ]
+		[ pairForPath, entries, allPairIds ]
 	);
 
 	// Hand reveal to the parent; the flame graph calls it on Cmd-click.
@@ -796,9 +800,9 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 	);
 
 	/**
-	 * Handle row click for fold/unfold. Merged and `(start)` rows toggle;
-	 * everything else, including the outermost `process` pair, ignores the
-	 * click. Cmd/Ctrl-click unfolds the whole subtree.
+	 * Handle row click for fold/unfold. Merged, `(start)` and `(complete)` rows
+	 * toggle; everything else, including the outermost `process` pair, ignores
+	 * the click. Cmd/Ctrl-click unfolds the whole subtree.
 	 *
 	 * @param {Object} entry Visible entry.
 	 * @param {number} idx   Index in visibleEntries.
@@ -808,7 +812,9 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 		( entry, idx, event ) => {
 			const foldable =
 				entry.isMerged ||
-				( hasPair( entry ) && isFoldablePairStart( entry.k ) );
+				( hasPair( entry ) &&
+					( isFoldablePairStart( entry.k ) ||
+						isFoldablePairComplete( entry.k ) ) );
 			const fullIdx = foldable
 				? findStartIdx( entries, entry.pairId )
 				: -1;
@@ -857,7 +863,10 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 	const getRowStyle = useCallback(
 		( entry, idx ) => {
 			const keyword = entry.k || '';
-			const isFoldable = entry.isMerged || isFoldablePairStart( keyword );
+			const isFoldable =
+				entry.isMerged ||
+				isFoldablePairStart( keyword ) ||
+				( hasPair( entry ) && isFoldablePairComplete( keyword ) );
 			const isHighlighted =
 				highlightRange &&
 				idx >= highlightRange.start &&
