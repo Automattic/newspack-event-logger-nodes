@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.98.12] - 2026-09-18
+
 ### Changed
 
 - **Cmd-click reveals a folded request's frame, not the first of its name.** A folded frame's path is node names throughout, while the table keyed a kept row carrying a message by that message, so a request whose `process (start)` names its host missed every such path and fell back to the first span sharing the base names — a 0.6ms `update_meta_cache` for a 52-second `WP_Query->get_posts`. Rows are now keyed by node name, which is all a folded frame carries, and a folded row owns its path over a kept instance of it. Flame paths are node names throughout, which also lets a zoom restore to a frame that carries a detail.
