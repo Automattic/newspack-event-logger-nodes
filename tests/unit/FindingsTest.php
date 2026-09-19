@@ -944,6 +944,45 @@ class FindingsTest extends TestCase {
 		$this->assertStringNotContainsString( 'custom event', $found['detail'] );
 	}
 
+	/**
+	 * The profiler's `<slug> plugin` span is one plugin file's load: no rule
+	 * edit reaches inside it, and calling it a custom event proposes one.
+	 */
+	public function test_a_dominant_plugin_load_span_names_the_load_and_proposes_nothing(): void {
+		$record = $this->healthy_record();
+		$record['flame']['children'] = [
+			[ 'name' => 'init hook', 'value' => 12.0, 'children' => [] ],
+			[ 'name' => 'wpseo-premium plugin', 'value' => 372.0, 'children' => [] ],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'dominant_span' );
+
+		$this->assertNotNull( $found );
+		$this->assertSame( 'none', $found['proposal']['action'] );
+		$this->assertArrayNotHasKey( 'field', $found['proposal'] );
+		$this->assertStringContainsString( 'wpseo-premium plugin', $found['proposal']['why'] );
+		$this->assertStringContainsString( 'load', $found['detail'] );
+		$this->assertStringNotContainsString( 'custom event', $found['proposal']['why'] );
+		$this->assertStringNotContainsString( 'custom event', $found['detail'] );
+	}
+
+	/**
+	 * Only a single-token slug is the profiler's: an application event whose
+	 * name merely ends in "plugin" is still the application's own.
+	 */
+	public function test_a_multi_word_custom_event_ending_in_plugin_stays_custom(): void {
+		$record = $this->healthy_record();
+		$record['flame']['children'] = [
+			[ 'name' => 'init hook', 'value' => 12.0, 'children' => [] ],
+			[ 'name' => 'sync remote plugin', 'value' => 372.0, 'children' => [] ],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'dominant_span' );
+
+		$this->assertNotNull( $found );
+		$this->assertSame( 'add_custom_events', $found['proposal']['action'] );
+	}
+
 	public function test_repetition_of_the_query_span_is_not_proposed_as_a_custom_event(): void {
 		$record             = $this->healthy_record();
 		$record['profiles'] = [

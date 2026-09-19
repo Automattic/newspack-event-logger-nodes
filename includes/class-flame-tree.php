@@ -39,6 +39,9 @@ final class Flame_Tree {
 	/** The state an outbound-HTTP span carries, as `App\Core` opens it. */
 	public const HTTP_STATE = 'http';
 
+	/** A plugin file's load, as the profiler drop-in names it: `<slug> plugin`. */
+	private const PLUGIN_LOAD_PATTERN = '/^\S+ plugin$/';
+
 	/** Keyword a closing span logs: `<label> (complete)`. Capture 1 is the base name. */
 	const PATTERN_COMPLETE = '/^(.+?) \(complete\)$/';
 
@@ -490,6 +493,18 @@ final class Flame_Tree {
 			}
 		}
 		return false;
+	}
+
+	/**
+	 * Whether a span is one plugin file's load, as the profiler drop-in times
+	 * it. A slug is one token, which keeps an application's own multi-word
+	 * event that happens to end in "plugin" out.
+	 *
+	 * @param string $span A span name, as the flame carries it.
+	 * @return bool
+	 */
+	public static function is_plugin_load_span( string $span ): bool {
+		return 1 === \preg_match( self::PLUGIN_LOAD_PATTERN, $span );
 	}
 
 	/**
