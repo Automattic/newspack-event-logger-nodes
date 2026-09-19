@@ -3,7 +3,6 @@ declare( strict_types=1 );
 
 namespace Newspack_Event_Logger_Nodes\Tests\Unit\Cli;
 
-use PHPUnit\Framework\Attributes\Large;
 use PHPUnit\Framework\TestCase;
 use Newspack_Event_Logger_Nodes\CLI\Ruleset_Bench_Command;
 use Newspack_Nodes\Core;
@@ -11,13 +10,6 @@ use Newspack_Nodes\Tests\Helpers\InMemoryMemcached;
 
 require_once \dirname( __DIR__, 4 ) . '/newspack-nodes/tests/Helpers/WPCLIStub.php';
 
-/**
- * The __invoke sweep runs the full grid at the requested iteration count; the
- * default-iterations (200) paths legitimately exceed the 1s Small-test budget,
- * so raise the per-test limit as the substrate does for its heavy suites.
- */
-// The default 200 iterations run for real; under Xdebug that nears 10 s.
-#[Large]
 final class RulesetBenchCommandTest extends TestCase {
 
 	/** @var \Memcached|null Saved handle restored in tearDown. */
@@ -76,9 +68,9 @@ final class RulesetBenchCommandTest extends TestCase {
 		$this->assertStringContainsString( '(median, 3 iters)', $GLOBALS['_test_wp_cli_logs'][0] );
 	}
 
-	public function test_invoke_defaults_iterations_to_200_when_flag_missing(): void {
-		( new Ruleset_Bench_Command() )->__invoke( [], [] );
-		$this->assertStringContainsString( '(median, 200 iters)', $GLOBALS['_test_wp_cli_logs'][0] );
+	public function test_iterations_defaults_to_200_when_flag_missing(): void {
+		// Parsed, not swept: the header test above proves __invoke prints it.
+		$this->assertSame( 200, Ruleset_Bench_Command::iterations( [] ) );
 	}
 
 	public function test_invoke_clamps_nonpositive_iterations_to_one(): void {
@@ -87,10 +79,9 @@ final class RulesetBenchCommandTest extends TestCase {
 		$this->assertStringContainsString( '(median, 1 iters)', $GLOBALS['_test_wp_cli_logs'][0] );
 	}
 
-	public function test_invoke_ignores_non_numeric_iterations(): void {
-		// Non-numeric flag falls through the ternary to the 200 default.
-		( new Ruleset_Bench_Command() )->__invoke( [], [ 'iterations' => 'abc' ] );
-		$this->assertStringContainsString( '(median, 200 iters)', $GLOBALS['_test_wp_cli_logs'][0] );
+	public function test_iterations_ignores_a_non_numeric_flag(): void {
+		// A non-numeric flag reads as the 200 default.
+		$this->assertSame( 200, Ruleset_Bench_Command::iterations( [ 'iterations' => 'abc' ] ) );
 	}
 
 	// -------------------------------------------------------------------------
