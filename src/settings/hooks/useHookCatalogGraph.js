@@ -12,7 +12,7 @@
  * while the picker is on screen reaches the taxonomy on the following tick.
  */
 
-import { useNodeState } from '@newspack-nodes/runtime';
+import { useNodeField } from '@newspack-nodes/runtime';
 import { useBatchedPoll } from '@newspack-nodes/shared/hooks/useBatchedPoll';
 import { addSliceFetcher } from '@newspack-nodes/shared/helpers/addSliceFetcher';
 import { views } from '../nodes/register';
@@ -24,7 +24,7 @@ const FETCHER = 'hook-catalog:fetch';
 /** Receiver Tee: the Fetcher's FROM, so the CI's reply routes back here. */
 const RECEIVER = 'hook-catalog:in';
 
-/** View node: parses the reply and publishes the slice `useNodeState` reads. */
+/** View node: parses the reply and publishes the slice `useNodeField` reads. */
 const VIEW = 'hook-catalog:view';
 
 /**
@@ -73,7 +73,7 @@ export function useHookCatalogGraph( opts = {} ) {
 		intervalMs: POLL_INTERVAL_MS,
 	} );
 
-	const model = useNodeState( VIEW, 'view' ) ?? EMPTY;
+	const model = useNodeField( VIEW, 'view' ) ?? EMPTY;
 
 	return {
 		hooksByCategory: model.hooksByCategory ?? {},

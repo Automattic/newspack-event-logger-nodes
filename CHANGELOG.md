@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Dashboards read view models through `useNodeField( name, 'view' )`,** following the substrate's scalar-only `setState()`. `gyroscope:view` extends the substrate's `ReactBridge` and publishes its reconnect-banner model, `{ connectionError }`, with `setField( 'view', … )`; the flag lives in that model alone, no longer duplicated in a `connectionError` field, and `dump_node` leaves `view` out. `request-log:view` and `error-log:view` seed their model in the constructor rather than publishing it.
+
 ## [0.98.13] - 2026-09-19
 
 ### Added

@@ -218,9 +218,9 @@ test( 'drops the `connected` sentinel (which the SseInNode would otherwise strea
 	expect( v.lines ).toHaveLength( 0 );
 } );
 
-test( 'appending rows does NOT publish setState (no per-row React re-render)', () => {
+test( 'appending rows does NOT notify the view (no per-row React re-render)', () => {
 	const v = makeView( 'error-log:view' );
-	const spy = jest.spyOn( v, 'setState' );
+	const spy = jest.spyOn( v, 'notify' );
 	v.fill( envMsg( 'a', { ts: 1, k: 'error', m: 'x' } ) );
 	v.fill( envMsg( 'b', { ts: 2, k: 'error', m: 'y' } ) );
 	expect( spy ).not.toHaveBeenCalled();
@@ -231,9 +231,7 @@ test( 'pause stops appends and publishes paused', () => {
 	v.fill( controlMsg( { action: 'pause', paused: true } ) );
 	v.fill( envMsg( 'a', { ts: 1, k: 'error', m: 'x' } ) );
 	expect( v.lines ).toHaveLength( 0 );
-	expect( Core.node( 'error-log:view' ).setStateCache.view.paused ).toBe(
-		true
-	);
+	expect( Core.node( 'error-log:view' ).view.paused ).toBe( true );
 } );
 
 test( 'a step budget admits exactly that many rows through the paused belt', () => {
@@ -252,9 +250,7 @@ test( 'a step budget admits exactly that many rows through the paused belt', () 
 test( 'connection control publishes connectionError', () => {
 	const v = makeView( 'error-log:view' );
 	v.fill( controlMsg( { action: 'connection', connectionError: true } ) );
-	expect(
-		Core.node( 'error-log:view' ).setStateCache.view.connectionError
-	).toBe( true );
+	expect( Core.node( 'error-log:view' ).view.connectionError ).toBe( true );
 } );
 
 test( 'clear empties the ring and resets the id counter', () => {
@@ -269,7 +265,7 @@ test( 'clear empties the ring and resets the id counter', () => {
 
 test( 'publishes an initial view model on construction', () => {
 	const v = makeView( 'error-log:view' );
-	expect( v.setStateCache.view ).toEqual( {
+	expect( v.view ).toEqual( {
 		paused: false,
 		connectionError: false,
 		mode: 'live',
@@ -308,7 +304,7 @@ describe( 'error-log:view — seek feedback (single-dir browse)', () => {
 		expect( v.lines ).toHaveLength( 0 );
 		v.fill( envWithId( '98:0:40' ) );
 		expect( v.lastReceivedSegment ).toBe( 98 );
-		expect( v.setStateCache.view.lastReceivedSegment ).toBe( 98 );
+		expect( v.view.lastReceivedSegment ).toBe( 98 );
 	} );
 
 	test( 'a select control with an empty dir disarms tracking and resets it', () => {
@@ -332,12 +328,12 @@ describe( 'error-log:view — seek feedback (single-dir browse)', () => {
 		// A rewind starts clean: replays must not mix into the live tail.
 		expect( v.lines ).toHaveLength( 0 );
 		expect( v.mode ).toBe( 'replay' );
-		expect( v.setStateCache.view.mode ).toBe( 'replay' );
+		expect( v.view.mode ).toBe( 'replay' );
 		v.fill( envWithId( '98:100:20' ) ); // behind the end segment
 		expect( v.mode ).toBe( 'replay' );
 		v.fill( envWithId( '105:1160:40' ) ); // 1160 + 40 = 1200 → caught up
 		expect( v.mode ).toBe( 'live' );
-		expect( v.setStateCache.view.mode ).toBe( 'live' );
+		expect( v.view.mode ).toBe( 'live' );
 	} );
 
 	test( 'follow returns the view to live', () => {

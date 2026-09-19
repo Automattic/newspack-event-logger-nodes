@@ -6,7 +6,7 @@
  * owns none. The graph publishes its data through FOUR independent per-slice
  * view nodes — `overview:view`, `urls:view`, `url-detail:view`,
  * `request-detail:view`. This component reads each slice with its own
- * `useNodeState`, derives the render-time values, and hands the URL table's
+ * `useNodeField`, derives the render-time values, and hands the URL table's
  * paging back through `handleUrlParamsChange`, the one callback the hook
  * returns.
  *
@@ -38,7 +38,7 @@ import {
 } from '@wordpress/components';
 import { __, sprintf } from '@wordpress/i18n';
 
-import { useNodeState, formatCommandArgs } from '@newspack-nodes/runtime';
+import { useNodeField, formatCommandArgs } from '@newspack-nodes/runtime';
 import { useCommandOnce } from '@newspack-nodes/shared/hooks/useCommandOnce';
 import {
 	computeIndentedEntries,
@@ -151,10 +151,10 @@ export default function PerformanceDashboard( { onError } ) {
 	const urlsRef = useRef( [] );
 
 	// Read each slice from its own per-slice view node (null until mounted).
-	const overviewSlice = useNodeState( 'overview:view', 'view' );
-	const urlsSlice = useNodeState( 'urls:view', 'view' );
-	const urlDetailSlice = useNodeState( 'url-detail:view', 'view' );
-	const requestDetailSlice = useNodeState( 'request-detail:view', 'view' );
+	const overviewSlice = useNodeField( 'overview:view', 'view' );
+	const urlsSlice = useNodeField( 'urls:view', 'view' );
+	const urlDetailSlice = useNodeField( 'url-detail:view', 'view' );
+	const requestDetailSlice = useNodeField( 'request-detail:view', 'view' );
 
 	const overview = overviewSlice?.data ?? null;
 	const urls = useMemo( () => urlsSlice?.data ?? [], [ urlsSlice?.data ] );

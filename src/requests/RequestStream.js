@@ -19,7 +19,7 @@
 import { useState, useCallback, memo } from '@wordpress/element';
 import { __, _n } from '@wordpress/i18n';
 
-import { Core, useNodeState } from '@newspack-nodes/runtime';
+import { Core, useNodeField } from '@newspack-nodes/runtime';
 import { useRequestLogGraph } from './hooks/useRequestLogGraph';
 import LogStreamViewer from '@newspack-nodes/shared/components/LogStreamViewer';
 import ColumnPicker from '@newspack-nodes/shared/components/ColumnPicker';
@@ -218,7 +218,7 @@ export default function RequestStream( { maxEntries = 500 } ) {
 	} );
 
 	// The low-frequency model: the pause button and the reconnect banner.
-	const view = useNodeState( VIEW_NODE, 'view' ) ?? EMPTY_VIEW;
+	const view = useNodeField( VIEW_NODE, 'view' ) ?? EMPTY_VIEW;
 	const { paused: isPaused, connectionError } = view;
 
 	const [ showColumnPicker, setShowColumnPicker ] = useState( false );

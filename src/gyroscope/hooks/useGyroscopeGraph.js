@@ -22,7 +22,7 @@ import { useStreamGraph } from '@newspack-nodes/shared/hooks/useStreamGraph';
  *
  * The prefix is a contract rather than a label: it names the three nodes, and
  * `Inflight.js` reaches `gyroscope:view` by that literal string — the
- * reconnect banner through `useNodeState`, the row list through the
+ * reconnect banner through `useNodeField`, the row list through the
  * `snapshot()` its refresh tick calls. The view class is handed over rather
  * than named because the interpreter that builds the graph may belong to
  * another bundle, whose `includeNodes` never registered `GyroscopeView`

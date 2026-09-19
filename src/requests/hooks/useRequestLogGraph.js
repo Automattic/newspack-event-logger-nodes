@@ -12,8 +12,8 @@ import { useGlobStreamGraph } from '../../hooks/useGlobStreamGraph';
 /**
  * Mount the Request Log graph and return the React view's controls.
  *
- * Controls only: the rows, the pause flag and the connection error are the view
- * node's state, which the view reads through `useNodeState`.
+ * Controls only: the rows live on the view node, and the pause flag and the
+ * connection error in its `view` field, which React reads through `useNodeField`.
  *
  * @param {Object} [opts]            Options.
  * @param {number} [opts.maxEntries] View ring cap; `RequestLogViewNode`'s own

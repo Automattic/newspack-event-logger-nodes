@@ -84,9 +84,9 @@ test( 'appends rows newest-first into lines (no publish)', () => {
 	expect( v.lines ).toHaveLength( 3 );
 } );
 
-test( 'appending rows does NOT publish setState (no per-row React re-render)', () => {
+test( 'appending rows does NOT notify the view (no per-row React re-render)', () => {
 	const v = makeView( 'request-log:view' );
-	const spy = jest.spyOn( v, 'setState' );
+	const spy = jest.spyOn( v, 'notify' );
 	v.fill( rowMsg( row() ) );
 	v.fill( rowMsg( row() ) );
 	expect( spy ).not.toHaveBeenCalled();
@@ -199,7 +199,7 @@ test( 'pause stops appends and the published model reflects paused', () => {
 	v.fill( controlMsg( { action: 'pause', paused: true } ) );
 	v.fill( rowMsg( row( { rid: 'ignored' } ) ) );
 	expect( v.lines ).toHaveLength( 0 );
-	expect( v.setStateCache.view.paused ).toBe( true );
+	expect( v.view.paused ).toBe( true );
 } );
 
 test( 'a step budget admits exactly that many rows through the paused belt', () => {
@@ -221,7 +221,7 @@ test( 'resume after pause lets rows through again', () => {
 	v.fill( rowMsg( row( { rid: 'dropped' } ) ) );
 	v.fill( controlMsg( { action: 'pause', paused: false } ) );
 	v.fill( rowMsg( row( { rid: 'kept' } ) ) );
-	expect( v.setStateCache.view.paused ).toBe( false );
+	expect( v.view.paused ).toBe( false );
 	expect( v.lines ).toHaveLength( 1 );
 	expect( v.lines[ 0 ].rid ).toBe( 'kept' );
 } );
@@ -241,7 +241,7 @@ test( 'clear empties the ring and resets the id counter', () => {
 test( 'the published model carries paused, connectionError, and seek feedback', () => {
 	const v = makeView( 'request-log:view' );
 	v.fill( controlMsg( { action: 'pause', paused: false } ) );
-	expect( Object.keys( v.setStateCache.view ).sort() ).toEqual( [
+	expect( Object.keys( v.view ).sort() ).toEqual( [
 		'connectionError',
 		'lastReceivedSegment',
 		'mode',
@@ -252,26 +252,26 @@ test( 'the published model carries paused, connectionError, and seek feedback', 
 test( 'connection control publishes connectionError', () => {
 	const v = makeView( 'request-log:view' );
 	v.fill( controlMsg( { action: 'connection', connectionError: true } ) );
-	expect( v.setStateCache.view.connectionError ).toBe( true );
+	expect( v.view.connectionError ).toBe( true );
 } );
 
 test( 'a connectionError:false control clears the published flag', () => {
 	const v = makeView( 'request-log:view' );
 	v.fill( controlMsg( { action: 'connection', connectionError: true } ) );
 	v.fill( controlMsg( { action: 'connection', connectionError: false } ) );
-	expect( v.setStateCache.view.connectionError ).toBe( false );
+	expect( v.view.connectionError ).toBe( false );
 } );
 
 test( 'an unrelated control leaves connectionError untouched', () => {
 	const v = makeView( 'request-log:view' );
 	v.fill( controlMsg( { action: 'connection', connectionError: true } ) );
 	v.fill( controlMsg( { action: 'pause', paused: true } ) );
-	expect( v.setStateCache.view.connectionError ).toBe( true );
+	expect( v.view.connectionError ).toBe( true );
 } );
 
 test( 'publishes an initial view model on construction', () => {
 	const v = makeView( 'request-log:view' );
-	expect( v.setStateCache.view ).toEqual( {
+	expect( v.view ).toEqual( {
 		paused: false,
 		connectionError: false,
 		mode: 'live',
@@ -369,7 +369,7 @@ describe( 'request-log:view — seek feedback (single-dir browse)', () => {
 		expect( v.lines ).toHaveLength( 0 );
 		v.fill( rowWithId( '98:0:40' ) );
 		expect( v.lastReceivedSegment ).toBe( 98 );
-		expect( v.setStateCache.view.lastReceivedSegment ).toBe( 98 );
+		expect( v.view.lastReceivedSegment ).toBe( 98 );
 	} );
 
 	test( 'a select control with an empty dir disarms tracking and resets it', () => {
@@ -393,12 +393,12 @@ describe( 'request-log:view — seek feedback (single-dir browse)', () => {
 		// A rewind starts clean: replays must not mix into the live tail.
 		expect( v.lines ).toHaveLength( 0 );
 		expect( v.mode ).toBe( 'replay' );
-		expect( v.setStateCache.view.mode ).toBe( 'replay' );
+		expect( v.view.mode ).toBe( 'replay' );
 		v.fill( rowWithId( '98:100:20' ) ); // behind the end segment
 		expect( v.mode ).toBe( 'replay' );
 		v.fill( rowWithId( '105:1160:40' ) ); // 1160 + 40 = 1200 → caught up
 		expect( v.mode ).toBe( 'live' );
-		expect( v.setStateCache.view.mode ).toBe( 'live' );
+		expect( v.view.mode ).toBe( 'live' );
 	} );
 
 	test( 'follow returns the view to live', () => {

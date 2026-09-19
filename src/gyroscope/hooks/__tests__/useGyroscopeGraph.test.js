@@ -30,7 +30,7 @@ import {
 	TM_STRUCT,
 	Core,
 	Node,
-	useNodeState,
+	useNodeField,
 	mountExospine,
 } from '@newspack-nodes/runtime';
 
@@ -433,10 +433,10 @@ describe( 'useGyroscopeGraph — graphGeneration Reset Graph', () => {
 		expect( Core.node( INTERPRETER ) ).toBe( backbone );
 	} );
 
-	test( 'a graphGeneration bump re-renders the consumer so useNodeState re-subscribes to the fresh view', () => {
+	test( 'a graphGeneration bump re-renders the consumer so useNodeField re-subscribes to the fresh view', () => {
 		const { result } = renderHook( () => {
 			useGyroscopeGraph();
-			return useNodeState( VIEW, 'view' );
+			return useNodeField( VIEW, 'view' );
 		} );
 		const firstView = Core.node( VIEW );
 
@@ -448,7 +448,7 @@ describe( 'useGyroscopeGraph — graphGeneration Reset Graph', () => {
 
 		// Fresh view publishes; consumer observes it (proves re-subscribe).
 		act( () => {
-			freshView.setState( 'view', { sampled: true } );
+			freshView.setField( 'view', { sampled: true } );
 		} );
 		expect( result.current ).toEqual( { sampled: true } );
 	} );
