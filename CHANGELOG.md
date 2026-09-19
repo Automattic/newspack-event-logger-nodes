@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The URL modal's header prints a stat the reply did not answer as `—`, not `0`,** as the Overview card does; both now read one stat table.
+
 ## [0.99.0] - 2026-09-19
 
 ### Changed

@@ -950,6 +950,17 @@ describe( 'PerformanceDashboard', () => {
 			],
 		],
 		[
+			'renders a stat the reply did not answer as absent, not zero',
+			{
+				requests_per_second: 3.75,
+				avg_peak_mb: 0,
+			},
+			[
+				[ '3.75', 'req/s' ],
+				[ '—', 'avg' ],
+			],
+		],
+		[
 			'drops the memory stat when nothing measured a peak',
 			{
 				requests_per_second: 2.5,

@@ -33,6 +33,7 @@ import CategoryTimeChart from '../CategoryTimeChart';
 import { ProfileWithCaption } from '../RequestProfile';
 import BreakdownControls from './BreakdownControls';
 import { AskButton } from './AskPanel';
+import HeadlineStats from './HeadlineStats';
 
 /**
  * Overview Section component.
@@ -117,53 +118,6 @@ export default function OverviewSection( {
 	if ( ! overview ) {
 		return null;
 	}
-
-	// @longform Every headline number describes the URL set the filters
-	// selected — the same set the table below lists — so they come from one
-	// payload rather than from whichever namespace happens to hold each
-	// figure. A number that has not arrived renders as absent, because a
-	// plausible zero beside a real total reads as a measurement.
-	const headlineStats = [
-		{
-			key: 'urls',
-			label: __( 'Unique URLs', 'newspack-event-logger-nodes' ),
-			format: ( n ) => n.toLocaleString(),
-		},
-		{
-			key: 'requests',
-			label: __( 'Total Requests', 'newspack-event-logger-nodes' ),
-			format: ( n ) => n.toLocaleString(),
-		},
-		{
-			key: 'avg_ms',
-			label: __( 'Avg Response', 'newspack-event-logger-nodes' ),
-			format: ( n ) => `${ n.toFixed( 0 ) }ms`,
-		},
-		{
-			key: 'requests_per_second',
-			label: __( 'Req/s (last hour)', 'newspack-event-logger-nodes' ),
-			format: ( n ) => n.toFixed( 2 ),
-		},
-		{
-			key: 'avg_peak_mb',
-			label: __( 'Avg Peak Memory', 'newspack-event-logger-nodes' ),
-			format: ( n ) => `${ n.toFixed( 1 ) }MB`,
-			// Absent on installs that do not sample peak memory.
-			onlyWhenPositive: true,
-		},
-	]
-		.filter(
-			( { key, onlyWhenPositive } ) =>
-				! onlyWhenPositive || urlTotals?.[ key ] > 0
-		)
-		.map( ( { key, label, format } ) => ( {
-			key,
-			label,
-			value:
-				'number' === typeof urlTotals?.[ key ]
-					? format( urlTotals[ key ] )
-					: '—',
-		} ) );
 
 	return (
 		<div className="event-logger-performance-overview">
@@ -311,18 +265,7 @@ export default function OverviewSection( {
 						</div>
 					) }
 				<CardBody>
-					<div className="newspack-nodes-stats-grid event-logger-overview-stats">
-						{ headlineStats.map( ( { key, label, value } ) => (
-							<div className="newspack-nodes-stat" key={ key }>
-								<span className="newspack-nodes-stat-value">
-									{ value }
-								</span>
-								<span className="newspack-nodes-stat-label">
-									{ label }
-								</span>
-							</div>
-						) ) }
-					</div>
+					<HeadlineStats totals={ urlTotals } />
 
 					{ /* Unconditional: the Metric, Breakdown and Server
 					     selectors are the only way out of a dimension with

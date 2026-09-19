@@ -60,6 +60,7 @@ import OverviewSection from './components/OverviewSection';
 import UrlDetailView from './components/UrlDetailView';
 import RequestDetailView from './components/RequestDetailView';
 import AskPanel, { AskButton, useAsk } from './components/AskPanel';
+import { headlineStats } from './components/HeadlineStats';
 import { pageFacts, factsJson } from './pageFacts';
 import RuleEditModal from '../rules/RuleEditModal';
 import { BLANK_RULE } from '../rules/constants';
@@ -75,21 +76,6 @@ import UrlTable from './UrlTable';
  * @return {string} The translated placeholder.
  */
 const UNKNOWN_URL = () => __( 'Unknown URL', 'newspack-event-logger-nodes' );
-
-/**
- * The URL modal's header stats as `[ text, label ]` pairs, in display order.
- * Memory comes last and only when something measured a peak.
- *
- * @param {?Object} stats The URL detail's stats block.
- * @return {Array<Array<string>>} Each stat's rendered text and its label.
- */
-const headerStats = ( stats ) => [
-	[ ( stats?.requests_per_second ?? 0 ).toFixed( 2 ), 'req/s' ],
-	[ `${ stats?.avg_ms?.toFixed( 0 ) || 0 }ms`, 'avg' ],
-	...( ( stats?.avg_peak_mb || 0 ) > 0
-		? [ [ `${ stats.avg_peak_mb.toFixed( 1 ) }MB`, 'mem' ] ]
-		: [] ),
-];
 
 import './styles/modal.scss';
 import './styles/tables.scss';
@@ -971,19 +957,21 @@ export default function PerformanceDashboard( { onError } ) {
 							<>
 								{ urlDetail && (
 									<div className="event-logger-header-stats newspack-nodes-stats-grid">
-										{ headerStats( urlDetail.stats ).map(
-											( [ text, label ] ) => (
-												<span
-													key={ label }
-													className="newspack-nodes-stat"
-												>
-													{ text }
-													<small className="newspack-nodes-stat-label">
-														{ label }
-													</small>
-												</span>
-											)
-										) }
+										{ headlineStats( urlDetail.stats, [
+											'requests_per_second',
+											'avg_ms',
+											'avg_peak_mb',
+										] ).map( ( { key, short, value } ) => (
+											<span
+												key={ key }
+												className="newspack-nodes-stat"
+											>
+												{ value }
+												<small className="newspack-nodes-stat-label">
+													{ short }
+												</small>
+											</span>
+										) ) }
 									</div>
 								) }
 								<AskButton ask={ ask } />
