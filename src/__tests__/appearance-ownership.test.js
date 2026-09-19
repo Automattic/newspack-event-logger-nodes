@@ -51,7 +51,7 @@ const CANONICAL_CLASS_CONTRACTS = {
 		'newspack-nodes-status',
 		'is-error',
 	],
-	'overview/components/OverviewSection.js': [
+	'overview/components/HeadlineStats.js': [
 		'newspack-nodes-stats-grid',
 		'newspack-nodes-stat',
 		'newspack-nodes-stat-value',
