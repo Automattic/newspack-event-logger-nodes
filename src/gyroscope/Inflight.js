@@ -19,13 +19,13 @@
  * cadence.
  *
  * The low-frequency `{ connectionError }` model behind the reconnect banner is
- * read separately, through `useNodeState( VIEW_NODE, 'view' )`.
+ * read separately, through `useNodeField( VIEW_NODE, 'view' )`.
  */
 
 import { useState, useEffect, useCallback } from '@wordpress/element';
 import { __, _n } from '@wordpress/i18n';
 
-import { Core, useNodeState } from '@newspack-nodes/runtime';
+import { Core, useNodeField } from '@newspack-nodes/runtime';
 import useRouterTick from '@newspack-nodes/shared/hooks/useRouterTick';
 import { useGyroscopeGraph } from './hooks/useGyroscopeGraph';
 import { INFLIGHT_REFRESH_OPTIONS } from './constants';
@@ -66,7 +66,7 @@ const VIEW_NODE = 'gyroscope:view';
 /**
  * Banner state for the render before the graph's mount effect has run.
  *
- * `useNodeState` returns undefined until the node exists, and destructuring
+ * `useNodeField` returns undefined until the node exists, and destructuring
  * that throws, so the first render reads its banner flag from here.
  */
 const EMPTY_VIEW = { connectionError: false };
@@ -295,7 +295,7 @@ export default function Inflight( { maxRows = 20 } ) {
 	useGyroscopeGraph();
 
 	// The banner's low-frequency model; rows and rps come off the node.
-	const { connectionError } = useNodeState( VIEW_NODE, 'view' ) ?? EMPTY_VIEW;
+	const { connectionError } = useNodeField( VIEW_NODE, 'view' ) ?? EMPTY_VIEW;
 
 	const [ requests, setRequests ] = useState( [] );
 	const [ refreshInterval, setRefreshInterval ] = usePersistedChoice(

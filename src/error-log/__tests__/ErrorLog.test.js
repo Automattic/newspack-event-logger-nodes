@@ -28,7 +28,7 @@ import { renderComponent, act } from '../../test-helpers/renderHook';
 
 const { useErrorLogGraph } = require( '../hooks/useErrorLogGraph' );
 
-// error-log:view stand-in: model in setStateCache.view, ring on the node.
+// error-log:view stand-in: model in the `view` field, ring on the node.
 function registerViewFixture( {
 	paused = false,
 	connectionError = false,
@@ -36,7 +36,6 @@ function registerViewFixture( {
 } = {} ) {
 	const node = {
 		registrations: { view: {} },
-		setStateCache: {},
 		lines,
 		get linesCount() {
 			return this.lines.length;
@@ -46,21 +45,17 @@ function registerViewFixture( {
 		},
 		register( event, listener, cb ) {
 			this.registrations[ event ][ listener ] = cb;
-			if ( event in this.setStateCache ) {
-				cb( this.setStateCache[ event ] );
-			}
 		},
 		unregister( event, listener ) {
 			delete this.registrations[ event ]?.[ listener ];
 		},
-		setState( event, payload ) {
-			this.setStateCache[ event ] = payload;
+		notify( event ) {
 			Object.values( this.registrations[ event ] || {} ).forEach(
-				( cb ) => cb( payload )
+				( cb ) => cb()
 			);
 		},
 	};
-	node.setState( 'view', { paused, connectionError } );
+	node.view = { paused, connectionError };
 	Core.nodes.set( 'error-log:view', node );
 	return node;
 }
@@ -484,7 +479,7 @@ describe( 'ErrorLog', () => {
 	} );
 
 	it( 'falls back to an empty model when the view node is absent', () => {
-		// No fixture → useNodeState undefined; the chrome still renders.
+		// No fixture → useNodeField undefined; the chrome still renders.
 		const { container } = mount();
 		expect( container.textContent ).toContain( 'Error Log' );
 	} );

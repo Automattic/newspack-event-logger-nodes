@@ -16,7 +16,7 @@
 
 import { useState, useEffect } from '@wordpress/element';
 import { __ } from '@wordpress/i18n';
-import { formatCommandArgs, useNodeState } from '@newspack-nodes/runtime';
+import { formatCommandArgs, useNodeField } from '@newspack-nodes/runtime';
 import { useBatchedPoll } from '@newspack-nodes/shared/hooks/useBatchedPoll';
 import { addSliceFetcher } from '@newspack-nodes/shared/helpers/addSliceFetcher';
 import { views } from './nodes/register';
@@ -27,7 +27,7 @@ import RequestTrace from '../overview/components/RequestTrace';
 import RequestProfile from '../overview/RequestProfile';
 import { egressPath } from '@newspack-nodes/shared/helpers/egressPath';
 
-/** The view node's name: the poll fills it, `useNodeState` reads it. */
+/** The view node's name: the poll fills it, `useNodeField` reads it. */
 const VIEW = 'current-request:view';
 
 /** Every router tick: the record lands the moment the worker writes it. */
@@ -77,7 +77,7 @@ export default function CurrentRequestTab() {
 	const { rid = '', partition = 0, perfUrl = '' } = currentRequestData();
 
 	// The record lives on the view node for as long as the tab is mounted.
-	const model = useNodeState( VIEW, 'view' );
+	const model = useNodeField( VIEW, 'view' );
 	const request = model?.request ?? null;
 	const flameData = request?.flame_data;
 	const hasFlame = !! ( flameData && flameData.children?.length > 0 );

@@ -21,7 +21,7 @@
 import { useCallback, memo } from '@wordpress/element';
 import { __, _n } from '@wordpress/i18n';
 
-import { Core, useNodeState } from '@newspack-nodes/runtime';
+import { Core, useNodeField } from '@newspack-nodes/runtime';
 import { useErrorLogGraph } from './hooks/useErrorLogGraph';
 import LogStreamViewer from '@newspack-nodes/shared/components/LogStreamViewer';
 import {
@@ -251,7 +251,7 @@ export default function ErrorLog() {
 	const { setPaused, clear, step, browse, setFilter } = useErrorLogGraph();
 
 	// The low-frequency model: pause button, empty label, reconnect banner.
-	const view = useNodeState( VIEW_NODE, 'view' ) ?? EMPTY_VIEW;
+	const view = useNodeField( VIEW_NODE, 'view' ) ?? EMPTY_VIEW;
 	const { paused: isPaused, connectionError } = view;
 
 	// Read the live node per frame, so a graph rebuild is picked up.

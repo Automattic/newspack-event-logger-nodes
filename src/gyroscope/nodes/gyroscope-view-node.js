@@ -12,6 +12,7 @@ import {
 	FROM,
 	KEY,
 	Node,
+	ReactBridge,
 	VALUE,
 	CommandInterpreterNode,
 } from '@newspack-nodes/runtime';
@@ -32,9 +33,12 @@ const INFLIGHT_STALE_MS = 15 * 60 * 1000;
  *   calls `snapshot()` each interval to read the sorted+capped render list
  *   (which also reaps completed entries and updates RPS), so a high-volume
  *   stream never re-renders React per message.
- * - LOW frequency (control): only `_control` publishes the small view model via
- *   `setState('view', { connectionError })` — the reconnect banner, consumed by
- *   `useNodeState('gyroscope:view','view')`.
+ * - LOW frequency (control): only `_control` publishes the small view model,
+ *   the `view` field `{ connectionError }` set through `setField()` — the
+ *   reconnect banner, consumed by `useNodeField('gyroscope:view','view')`.
+ *   The request map and the RPS readout stay out of it: they change on every
+ *   streamed record, and widening `view` to carry them would re-render the
+ *   dashboard once per in-flight record.
  *
  * The producers write to `gyroscope.p0`, which `useGyroscopeGraph` subscribes to
  * over SSE: PHP `Request_Flight_Node` emits ONE record per in-flight request on
@@ -44,9 +48,9 @@ const INFLIGHT_STALE_MS = 15 * 60 * 1000;
  * field alone says what a record IS. This view is therefore written ONCE,
  * correct under BOTH producer modes (full per-tick re-emit / delta) with NO mode
  * awareness. It tests the ORIGIN first — a message from `controlFrom` is a
- * control the React layer filled in locally, whose `action` picks the verb, and
- * it republishes (the low-frequency path; `useGyroscopeGraph` sends `clear`
- * before every (re)connect). A control is never recognised by what its payload
+ * control the React layer filled in locally, whose `action` picks the verb
+ * (the low-frequency path; `useGyroscopeGraph` sends `clear` before every
+ * (re)connect). A control is never recognised by what its payload
  * looks like: a record carrying an `action` is a record. Everything else is one:
  * - object VALUE with `state` `complete` and a non-empty KEY: a completion — the
  *   source of RETIREMENT under both modes. Merge, derive time_ms/est_ms.
@@ -64,9 +68,12 @@ const INFLIGHT_STALE_MS = 15 * 60 * 1000;
  * @testonly The class is exported for its suite; production reaches it
  *           through the `views` map registered at the foot of this file.
  */
-export class GyroscopeViewNode extends Node {
+export class GyroscopeViewNode extends ReactBridge( Node ) {
+	/** The banner model: what the dashboard renders, not the node's state. */
+	static dumpOmits = [ 'view' ];
+
 	/**
-	 * Start empty and publish the initial view model, so a React subscriber
+	 * Start empty, holding the initial view model, so a React subscriber
 	 * mounting before the first control message reads a defined banner state.
 	 */
 	constructor() {
@@ -78,11 +85,10 @@ export class GyroscopeViewNode extends Node {
 		this.rpsWindowTotal = 0;
 		// The readout `Inflight.js` reads off this node beside `snapshot()`.
 		this.rps = 0;
-		// Reconnect-banner flag; the only field `_publish()` carries.
-		this.connectionError = false;
 		// FROM of controls; unset loses them silently (see LogStreamViewNode).
 		this.controlFrom = '';
-		this._publish();
+		// The published model: the reconnect banner, and nothing else.
+		this.view = { connectionError: false };
 	}
 
 	/**
@@ -99,10 +105,9 @@ export class GyroscopeViewNode extends Node {
 		if ( ! value ) {
 			return;
 		}
-		// A local control: the low-frequency path, which republishes.
+		// A local control: the low-frequency path.
 		if ( '' !== this.controlFrom && message[ FROM ] === this.controlFrom ) {
 			this._control( value );
-			this._publish();
 			return;
 		}
 		// Gyroscope record: rid rides KEY; `state` says what the record IS.
@@ -157,8 +162,9 @@ export class GyroscopeViewNode extends Node {
 	}
 
 	/**
-	 * Dispatch a control message. `clear` empties the model; `connection` sets
-	 * the reconnect banner flag the published view model carries.
+	 * Dispatch a control message. `clear` empties the model; `connection`
+	 * publishes the reconnect banner flag, as a new view object so
+	 * `useNodeField` re-renders.
 	 *
 	 * @param {Object} value The control VALUE, keyed by `action`.
 	 */
@@ -166,7 +172,9 @@ export class GyroscopeViewNode extends Node {
 		if ( 'clear' === value.action ) {
 			this._clear();
 		} else if ( 'connection' === value.action ) {
-			this.connectionError = value.connectionError;
+			this.setField( 'view', {
+				connectionError: !! value.connectionError,
+			} );
 		}
 	}
 
@@ -183,19 +191,6 @@ export class GyroscopeViewNode extends Node {
 		this.rpsBuckets = [];
 		this.rpsWindowTotal = 0;
 		this.rps = 0;
-	}
-
-	/**
-	 * Publish the LOW-frequency view model — the reconnect banner, and nothing
-	 * else.
-	 *
-	 * The request map and the RPS readout deliberately stay off `setState`:
-	 * they change on every streamed record, and React reads them by calling
-	 * `snapshot()` on its own refresh tick instead. Widening this to carry the
-	 * requests would re-render the dashboard once per in-flight record.
-	 */
-	_publish() {
-		this.setState( 'view', { connectionError: this.connectionError } );
 	}
 
 	/**
@@ -280,6 +275,7 @@ export class GyroscopeViewNode extends Node {
 			description: 'Owns the in-flight gyroscope request view model.',
 			arguments: [],
 			commands: [],
+			registrations: [ 'view' ],
 			has_target: false,
 		};
 	}

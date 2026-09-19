@@ -2,7 +2,7 @@
  * usePerformanceGraph — the Performance Dashboard's data layer, expressed as a
  * node graph on the substrate batched-poll toolkit (`useBatchedPoll` +
  * `addSliceFetcher`). This hook owns the dashboard's four slices;
- * `PerformanceDashboard` reads each one back through `useNodeState` rather than
+ * `PerformanceDashboard` reads each one back through `useNodeField` rather than
  * fetching it.
  *
  * POLLED slices. `useBatchedPoll` owns the Timer, the Tee, `_shell`/`_http` and
@@ -41,7 +41,7 @@
  * down, and that hand-back is what a correlation table is made of.
  *
  * This hook returns `handleUrlParamsChange` and nothing else; data reaches
- * React through each slice's own `useNodeState( '<slice>:view', 'view' )`.
+ * React through each slice's own `useNodeField( '<slice>:view', 'view' )`.
  */
 
 import { useCallback, useEffect, useRef } from '@wordpress/element';

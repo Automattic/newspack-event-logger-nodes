@@ -38,24 +38,19 @@ function registerViewFixture( {
 		rps,
 		snapshot: jest.fn( () => rows ),
 		registrations: { view: {} },
-		setStateCache: {},
 		register( event, listener, cb ) {
 			this.registrations[ event ][ listener ] = cb;
-			if ( event in this.setStateCache ) {
-				cb( this.setStateCache[ event ] );
-			}
 		},
 		unregister( event, listener ) {
 			delete this.registrations[ event ]?.[ listener ];
 		},
-		setState( event, payload ) {
-			this.setStateCache[ event ] = payload;
+		notify( event ) {
 			Object.values( this.registrations[ event ] || {} ).forEach(
-				( cb ) => cb( payload )
+				( cb ) => cb()
 			);
 		},
 	};
-	node.setState( 'view', { connectionError } );
+	node.view = { connectionError };
 	Core.nodes.set( 'gyroscope:view', node );
 	return node;
 }

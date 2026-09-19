@@ -92,7 +92,7 @@ describe( 'the data slices', () => {
 		'%s publishes an empty slice, then its payload',
 		( type, name, verb ) => {
 			const v = makeView( type, name );
-			expect( v.setStateCache.view ).toEqual( {
+			expect( v.view ).toEqual( {
 				data: null,
 				loading: false,
 				error: null,
@@ -100,7 +100,7 @@ describe( 'the data slices', () => {
 
 			v.fill( reply( verb, { rid: 'r-4219' } ) );
 
-			expect( v.setStateCache.view ).toEqual( {
+			expect( v.view ).toEqual( {
 				data: { rid: 'r-4219' },
 				loading: false,
 				error: null,
@@ -113,7 +113,7 @@ describe( 'the data slices', () => {
 		v.fill( reply( 'dump_url', { requests: [ { rid: 'a' } ] } ) );
 		v.fill( reply( 'dump_url', undefined ) );
 
-		expect( v.setStateCache.view.data ).toEqual( {
+		expect( v.view.data ).toEqual( {
 			requests: [ { rid: 'a' } ],
 		} );
 	} );
@@ -123,7 +123,7 @@ describe( 'the data slices', () => {
 		v.fill( reply( 'overview', { hits: 8264 } ) );
 		v.fill( reply( 'overview', 'upstream exploded', true ) );
 
-		expect( v.setStateCache.view ).toEqual( {
+		expect( v.view ).toEqual( {
 			data: { hits: 8264 },
 			loading: false,
 			error: 'upstream exploded',
@@ -135,14 +135,14 @@ describe( 'the data slices', () => {
 		v.fill( reply( 'dump_request', { rid: 'r-4219' } ) );
 		v.fill( control( 'request-detail:view', { action: 'clear' } ) );
 
-		expect( v.setStateCache.view.data ).toBeNull();
+		expect( v.view.data ).toBeNull();
 	} );
 } );
 
 describe( 'UrlsView — the envelope slice', () => {
 	test( 'unwraps data and totals, dropping limit and offset', () => {
 		const v = makeView( 'UrlsView', 'urls:view' );
-		expect( v.setStateCache.view ).toEqual( {
+		expect( v.view ).toEqual( {
 			data: [],
 			totals: null,
 			rows: 0,
@@ -166,7 +166,7 @@ describe( 'UrlsView — the envelope slice', () => {
 			} )
 		);
 
-		expect( v.setStateCache.view ).toEqual( {
+		expect( v.view ).toEqual( {
 			data: [ { url: '/a' } ],
 			totals: { urls: 7331, requests: 90210 },
 			rows: 7332,
@@ -187,8 +187,8 @@ describe( 'UrlsView — the envelope slice', () => {
 		);
 		v.fill( reply( 'urls', { nonsense: true } ) );
 
-		expect( v.setStateCache.view.data ).toEqual( [] );
-		expect( v.setStateCache.view.totals ).toBe( null );
+		expect( v.view.data ).toEqual( [] );
+		expect( v.view.totals ).toBe( null );
 	} );
 
 	test( 'a TM_ERROR reply keeps the rows already on screen', () => {
@@ -201,8 +201,8 @@ describe( 'UrlsView — the envelope slice', () => {
 		);
 		v.fill( reply( 'urls', 'query timed out', true ) );
 
-		expect( v.setStateCache.view.data ).toEqual( [ { url: '/a' } ] );
-		expect( v.setStateCache.view.totals ).toEqual( { urls: 7331 } );
-		expect( v.setStateCache.view.error ).toBe( 'query timed out' );
+		expect( v.view.data ).toEqual( [ { url: '/a' } ] );
+		expect( v.view.totals ).toEqual( { urls: 7331 } );
+		expect( v.view.error ).toBe( 'query timed out' );
 	} );
 } );

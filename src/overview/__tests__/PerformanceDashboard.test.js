@@ -4,7 +4,7 @@
  *
  * Post-D1b de-god the orchestrator reads FOUR per-slice view nodes
  * (`overview:view` / `urls:view` / `url-detail:view` / `request-detail:view`), each
- * via its own `useNodeState`. `usePerformanceGraph` mounts the polls and hands
+ * via its own `useNodeField`. `usePerformanceGraph` mounts the polls and hands
  * back `handleUrlParamsChange` alone; the verbs a click drives are this
  * component's own one-shots, held beside the state each reply sets.
  *
@@ -15,7 +15,7 @@
  *
  * The data seam is the slice model: tests set `mockView` (the same combined
  * `{ overview, urls, urlDetail, requestDetail }` shape as before), and the mocked
- * `useNodeState` fans it out by node name so the existing setups work unchanged.
+ * `useNodeField` fans it out by node name so the existing setups work unchanged.
  * The graph control callbacks come from `mockGraph`. Children are mocked at the
  * module boundary as stub components that record their props.
  */
@@ -24,7 +24,7 @@
 let mockView = null;
 jest.mock( '@newspack-nodes/runtime', () => ( {
 	__esModule: true,
-	useNodeState: ( nodeName ) => {
+	useNodeField: ( nodeName ) => {
 		if ( ! mockView ) {
 			return undefined;
 		}

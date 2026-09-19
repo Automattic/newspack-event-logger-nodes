@@ -4,8 +4,8 @@
  * Two cadences: the HIGH-frequency in-flight map (node.requests) + RPS (node.rps)
  * live on the instance and are NOT published — the React view's refresh tick calls
  * node.snapshot() each interval to reap completed entries, age out stragglers, and
- * read the sorted+capped render list. The LOW-frequency control model publishes via
- * setState('view', …).
+ * read the sorted+capped render list. The LOW-frequency control model lives in the
+ * `view` field, announced with notify('view').
  *
  * The producer now emits ONE record per in-flight request (KEY='inflight', rid in
  * VALUE), not one batched list. The view is written ONCE, correct under BOTH producer
@@ -100,9 +100,9 @@ test( 'upserts a per-record inflight envelope into node.requests keyed by rid', 
 	expect( v.requests.get( 'a' ).state ).toBe( 'process' );
 } );
 
-test( 'appending inflight rows does NOT publish setState (no per-row re-render)', () => {
+test( 'appending inflight rows does NOT notify the view (no per-row re-render)', () => {
 	const v = makeView( 'gyroscope:view' );
-	const spy = jest.spyOn( v, 'setState' );
+	const spy = jest.spyOn( v, 'notify' );
 	v.fill( inflightEnvelope( { rid: 'a', url: '/a', state: 'process' } ) );
 	v.fill( completeEnvelope( { rid: 'a', url: '/a', duration_ms: 5 } ) );
 	expect( spy ).not.toHaveBeenCalled();
@@ -322,26 +322,63 @@ test( 'clear empties the map, history and rps', () => {
 test( 'connection control publishes connectionError', () => {
 	const v = makeView( 'gyroscope:view' );
 	v.fill( controlMsg( { action: 'connection', connectionError: true } ) );
-	expect( v.setStateCache.view.connectionError ).toBe( true );
+	expect( v.view.connectionError ).toBe( true );
 } );
 
 test( 'a connectionError:false control clears the published flag', () => {
 	const v = makeView( 'gyroscope:view' );
 	v.fill( controlMsg( { action: 'connection', connectionError: true } ) );
 	v.fill( controlMsg( { action: 'connection', connectionError: false } ) );
-	expect( v.setStateCache.view.connectionError ).toBe( false );
+	expect( v.view.connectionError ).toBe( false );
+} );
+
+test( 'a truthy connectionError control publishes a boolean flag', () => {
+	const v = makeView( 'gyroscope:view' );
+	v.fill( controlMsg( { action: 'connection', connectionError: 'zulu-4' } ) );
+	expect( v.view ).toEqual( { connectionError: true } );
 } );
 
 test( 'an unrelated control leaves connectionError untouched', () => {
 	const v = makeView( 'gyroscope:view' );
 	v.fill( controlMsg( { action: 'connection', connectionError: true } ) );
 	v.fill( controlMsg( { action: 'clear' } ) );
-	expect( v.setStateCache.view.connectionError ).toBe( true );
+	expect( v.view.connectionError ).toBe( true );
 } );
 
 test( 'publishes an initial view model on construction', () => {
 	const v = makeView( 'gyroscope:view' );
-	expect( v.setStateCache.view ).toEqual( { connectionError: false } );
+	expect( v.view ).toEqual( { connectionError: false } );
+} );
+
+test( 'announces each view change to a registered listener', () => {
+	const v = makeView( 'gyroscope:view' );
+	const seen = [];
+	v.register( 'view', 'probe', () => {
+		seen.push( v.view );
+		return true;
+	} );
+	const before = v.view;
+	v.fill( controlMsg( { action: 'connection', connectionError: true } ) );
+	expect( seen ).toEqual( [ { connectionError: true } ] );
+	// A fresh object per change, so useNodeField re-renders.
+	expect( v.view ).not.toBe( before );
+} );
+
+test( 'dumpNode omits the view field and keeps the substrate state', () => {
+	const v = makeView( 'gyroscope:view' );
+	v.fill( controlMsg( { action: 'connection', connectionError: true } ) );
+	const dump = v.dumpNode();
+	expect( dump ).not.toHaveProperty( 'view' );
+	expect( dump ).toHaveProperty( 'registrations' );
+	expect( dump ).toHaveProperty( 'setStateCache' );
+} );
+
+// The flag lives in `view` alone; a second copy on the node could disagree.
+test( 'holds the reconnect flag in the view model only', () => {
+	const v = makeView( 'gyroscope:view' );
+	v.fill( controlMsg( { action: 'connection', connectionError: true } ) );
+	expect( v ).not.toHaveProperty( 'connectionError' );
+	expect( v.view.connectionError ).toBe( true );
 } );
 
 test( 'names the node', () => {

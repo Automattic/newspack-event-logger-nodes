@@ -63,7 +63,7 @@ const clip = ( value, max ) => {
  */
 export class PerfErrorsViewNode extends LogStreamViewNode {
 	/**
-	 * Start disarmed on the glob and publish the initial view model, so a React
+	 * Start disarmed on the glob and hold the initial view model, so a React
 	 * subscriber mounting before the first row reads a defined model rather
 	 * than undefined. Breadcrumb tracking arms only once `select` names a dir:
 	 * across a glob the interleaved segment ids mean nothing.
@@ -73,7 +73,7 @@ export class PerfErrorsViewNode extends LogStreamViewNode {
 	constructor( maxLines ) {
 		super( maxLines || DEFAULT_MAX_LINES );
 		this.seekActive = false;
-		this._publish();
+		this.view = this.viewModel();
 	}
 
 	/**

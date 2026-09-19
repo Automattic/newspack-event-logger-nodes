@@ -26,7 +26,7 @@ import {
 	useCallback,
 } from '@wordpress/element';
 import { __ } from '@wordpress/i18n';
-import { useNodeState } from '@newspack-nodes/runtime';
+import { useNodeField } from '@newspack-nodes/runtime';
 import {
 	useSegmentBrowse,
 	useLogStatusSegments,
@@ -65,7 +65,7 @@ export default function useGlobBrowse( { glob, graph, step } ) {
 	selectedRef.current = selectedPartition;
 
 	// View-derived seek model (mode + received segment), NOT the click state.
-	const viewModel = useNodeState( viewName, 'view' );
+	const viewModel = useNodeField( viewName, 'view' );
 
 	// The glob's concrete partition dirs, narrowed out of the polled catalog.
 	const inGlob = useCallback(

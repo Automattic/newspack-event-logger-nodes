@@ -231,7 +231,7 @@ describe( 'usePerformanceGraph — poll slices fire live args', () => {
 		renderHook( () => usePerformanceGraph() );
 		await act( async () => {} );
 		const view = Core.node( 'overview:view' );
-		expect( view.setStateCache.view.data ).toEqual( { total_requests: 7 } );
+		expect( view.view.data ).toEqual( { total_requests: 7 } );
 	} );
 
 	test( 'a urls reply lands in the urls:view slice (data + totals)', async () => {
@@ -246,7 +246,7 @@ describe( 'usePerformanceGraph — poll slices fire live args', () => {
 		renderHook( () => usePerformanceGraph() );
 		await act( async () => {} );
 		const view = Core.node( 'urls:view' );
-		expect( view.setStateCache.view ).toEqual( {
+		expect( view.view ).toEqual( {
 			data: [ { hash: 'a' } ],
 			totals: { urls: 12, requests: 340 },
 			rows: 0,
@@ -341,7 +341,7 @@ describe( 'usePerformanceGraph — on-demand dump_url / dump_request', () => {
 			parseCommandArgs( detail[ VALUE ].arguments ).positional[ 0 ]
 		).toBe( 'abc' );
 		const view = Core.node( 'url-detail:view' );
-		expect( view.setStateCache.view.data ).toEqual( {
+		expect( view.view.data ).toEqual( {
 			last_modified: 1,
 			requests: [],
 		} );
@@ -369,9 +369,9 @@ describe( 'usePerformanceGraph — on-demand dump_url / dump_request', () => {
 		expect( receiver ).toBeTruthy();
 		expect( receiver.target ).toContain( 'request-detail:view' );
 		// The reply still reaches the view, through the receiver.
-		expect(
-			Core.node( 'request-detail:view' ).setStateCache.view.data
-		).toEqual( { rid: 'r1' } );
+		expect( Core.node( 'request-detail:view' ).view.data ).toEqual( {
+			rid: 'r1',
+		} );
 	} );
 
 	test( 'selecting a request fires dump_request with the partition', async () => {
@@ -789,7 +789,7 @@ describe( 'usePerformanceGraph — invalid selection guards', () => {
 			} );
 		} );
 		expect( countVerbs( wire.batches, 'dump_url' ) ).toBe( before );
-		expect( Core.node( 'url-detail:view' ).setStateCache.view.error ).toBe(
+		expect( Core.node( 'url-detail:view' ).view.error ).toBe(
 			'Invalid URL hash format'
 		);
 	} );
@@ -806,9 +806,9 @@ describe( 'usePerformanceGraph — invalid selection guards', () => {
 			} );
 		} );
 		expect( findVerb( wire.batches, 'dump_request' ) ).toBeNull();
-		expect(
-			Core.node( 'request-detail:view' ).setStateCache.view.error
-		).toBe( 'Invalid request ID format' );
+		expect( Core.node( 'request-detail:view' ).view.error ).toBe(
+			'Invalid request ID format'
+		);
 	} );
 
 	test( 'an unresolved partition reports an error instead of doing nothing', async () => {
@@ -824,7 +824,7 @@ describe( 'usePerformanceGraph — invalid selection guards', () => {
 		} );
 
 		expect( findVerb( wire.batches, 'dump_request' ) ).toBeNull();
-		expect( Core.node( 'request-detail:view' ).model.error ).toBeTruthy();
+		expect( Core.node( 'request-detail:view' ).view.error ).toBeTruthy();
 	} );
 
 	test( 'never reconstructs the partition from the recent-request window', async () => {
@@ -876,10 +876,10 @@ describe( 'usePerformanceGraph — control origins', () => {
 			payload: { last_modified: 9, requests: [ { rid: 'a' } ] },
 		};
 		view.fill( landed );
-		expect( view.model.data ).not.toBeNull();
+		expect( view.view.data ).not.toBeNull();
 
 		selectedUrl = null;
 		act( () => rerender() );
-		expect( view.model.data ).toBeNull();
+		expect( view.view.data ).toBeNull();
 	} );
 } );

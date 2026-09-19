@@ -34,7 +34,7 @@ import {
 	TM_STRUCT,
 	Core,
 	Node,
-	useNodeState,
+	useNodeField,
 	mountExospine,
 } from '@newspack-nodes/runtime';
 
@@ -362,7 +362,7 @@ describe( 'useRequestLogGraph — page visibility / pause lifecycle', () => {
 		act( () => result.current.setPaused( true ) );
 		expect( openSource.closed ).toBe( true );
 		expect( Core.node( HEARTBEAT ).slot ).toBeNull();
-		expect( Core.node( VIEW ).setStateCache.view.paused ).toBe( true );
+		expect( Core.node( VIEW ).view.paused ).toBe( true );
 	} );
 
 	test( 'setPaused(false) reopens the EventSource', () => {
@@ -371,7 +371,7 @@ describe( 'useRequestLogGraph — page visibility / pause lifecycle', () => {
 		const before = FakeEventSource.instances.length;
 		act( () => result.current.setPaused( false ) );
 		expect( FakeEventSource.instances.length ).toBeGreaterThan( before );
-		expect( Core.node( VIEW ).setStateCache.view.paused ).toBe( false );
+		expect( Core.node( VIEW ).view.paused ).toBe( false );
 	} );
 
 	test( 'clear() empties the view buffer', () => {
@@ -655,10 +655,10 @@ describe( 'useRequestLogGraph — graphGeneration Reset Graph', () => {
 		expect( Core.node( INTERPRETER ) ).toBe( backbone );
 	} );
 
-	test( 'a graphGeneration bump re-renders the consumer so useNodeState re-subscribes to the fresh view', () => {
+	test( 'a graphGeneration bump re-renders the consumer so useNodeField re-subscribes to the fresh view', () => {
 		const { result } = renderHook( () => {
 			useRequestLogGraph();
-			return useNodeState( VIEW, 'view' );
+			return useNodeField( VIEW, 'view' );
 		} );
 		const firstView = Core.node( VIEW );
 
@@ -670,7 +670,7 @@ describe( 'useRequestLogGraph — graphGeneration Reset Graph', () => {
 
 		// Fresh view publishes state; consumer must observe it (re-subscribed).
 		act( () => {
-			freshView.setState( 'view', { paused: true } );
+			freshView.setField( 'view', { paused: true } );
 		} );
 		expect( result.current ).toEqual( { paused: true } );
 	} );
@@ -678,13 +678,13 @@ describe( 'useRequestLogGraph — graphGeneration Reset Graph', () => {
 	test( 'reinit while paused re-publishes paused:true so the UI matches the closed stream', () => {
 		const { result } = renderHook( () => useRequestLogGraph() );
 		act( () => result.current.setPaused( true ) );
-		expect( Core.node( VIEW ).setStateCache.view.paused ).toBe( true );
+		expect( Core.node( VIEW ).view.paused ).toBe( true );
 
 		act( () => {
 			Core.bumpGraphGeneration();
 		} );
 
 		// Rebuilt view defaults paused:false; hook re-applies surviving pause.
-		expect( Core.node( VIEW ).setStateCache.view.paused ).toBe( true );
+		expect( Core.node( VIEW ).view.paused ).toBe( true );
 	} );
 } );

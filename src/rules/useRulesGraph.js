@@ -39,7 +39,7 @@ import { useCallback, useEffect, useRef, useState } from '@wordpress/element';
 import {
 	Core,
 	mountExospine,
-	useNodeState,
+	useNodeField,
 	TO,
 	formatCommandArgs,
 	ensureSession,
@@ -110,7 +110,7 @@ export function useRulesGraph( opts = {} ) {
 	const interpreterRef = useRef( null );
 	const shellRef = useRef( null );
 
-	// Bumped on every rebuild so useNodeState re-subscribes to the fresh view.
+	// Bumped on every rebuild so useNodeField re-subscribes to the fresh view.
 	const [ , bumpBuild ] = useState( 0 );
 
 	useEffect( () => {
@@ -207,7 +207,7 @@ export function useRulesGraph( opts = {} ) {
 		[ resetOnce.run ] // eslint-disable-line react-hooks/exhaustive-deps
 	);
 
-	const model = useNodeState( VIEW, 'view' );
+	const model = useNodeField( VIEW, 'view' );
 	return {
 		rules: model?.rules ?? [],
 		loading: model?.loading ?? true,

@@ -227,9 +227,9 @@ describe( 'useRulesGraph — dump populates rules', () => {
 		await act( async () => {} );
 
 		const view = Core.node( VIEW );
-		expect( view.setStateCache.view.rules ).toHaveLength( 2 );
-		expect( view.setStateCache.view.loading ).toBe( false );
-		expect( view.setStateCache.view.error ).toBeNull();
+		expect( view.view.rules ).toHaveLength( 2 );
+		expect( view.view.loading ).toBe( false );
+		expect( view.view.error ).toBeNull();
 		expect( result.current.rules.map( ( r ) => r.id ) ).toEqual( [
 			'r1',
 			'r2',
@@ -369,7 +369,7 @@ describe( 'useRulesGraph — errors', () => {
 		expect( onMutation.mock.calls[ 0 ][ 0 ].error ).toContain(
 			'invalid rule'
 		);
-		expect( Core.node( VIEW ).setStateCache.view.error ).toBeNull();
+		expect( Core.node( VIEW ).view.error ).toBeNull();
 	}, 15000 );
 } );
 

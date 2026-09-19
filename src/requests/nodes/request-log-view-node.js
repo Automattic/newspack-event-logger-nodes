@@ -36,7 +36,7 @@ const DEFAULT_MAX_LINES = 1000;
  */
 export class RequestLogViewNode extends LogStreamViewNode {
 	/**
-	 * Size the ring and publish the initial view model, so a React subscriber
+	 * Size the ring and hold the initial view model, so a React subscriber
 	 * mounting before the first row reads a defined model rather than
 	 * undefined. Seek tracking starts DISARMED because the first subscription
 	 * is the `completed.*` glob: breadcrumbs from several partitions interleave
@@ -51,7 +51,7 @@ export class RequestLogViewNode extends LogStreamViewNode {
 	constructor( maxLines ) {
 		super( maxLines || DEFAULT_MAX_LINES );
 		this.seekActive = false;
-		this._publish();
+		this.view = this.viewModel();
 	}
 
 	/**
