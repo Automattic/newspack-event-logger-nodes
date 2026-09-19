@@ -4,8 +4,6 @@ import fs from 'fs';
 import path from 'path';
 import { pathToFileURL } from 'url';
 import * as sass from 'sass';
-// postcss-scss declares PostCSS as a required peer; both are test/build deps.
-// eslint-disable-next-line import/no-extraneous-dependencies
 import postcss from 'postcss';
 // Jest's Babel toolchain supplies the parser used to inspect real JSX nodes.
 // eslint-disable-next-line import/no-extraneous-dependencies
