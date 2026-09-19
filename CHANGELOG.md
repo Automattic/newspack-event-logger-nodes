@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.98.13] - 2026-09-19
+
 ### Added
 
 - **A plugin-load finding.** The profiler drop-in times every plugin file's load, and when those loads together pass a quarter of a request, the findings now say so: how many plugins loaded, how long they took, what share of the request that was, and the three heaviest. On an El Sol article request, 35 plugins took 59ms of 135ms, led by newspack-plugin at 11.2ms, and nothing reported it because no single load held the 60% the dominant-span finding needs. It proposes no rule edit, since no rule reaches inside a load, and it leaves out a load that alone holds 60%, which the dominant-span finding already reports.
