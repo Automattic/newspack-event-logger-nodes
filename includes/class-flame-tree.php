@@ -39,8 +39,11 @@ final class Flame_Tree {
 	/** The state an outbound-HTTP span carries, as `App\Core` opens it. */
 	public const HTTP_STATE = 'http';
 
+	/** What the profiler drop-in appends to a slug to name a plugin's load. */
+	public const PLUGIN_LOAD_SUFFIX = ' plugin';
+
 	/** A plugin file's load, as the profiler drop-in names it: `<slug> plugin`. */
-	private const PLUGIN_LOAD_PATTERN = '/^\S+ plugin$/';
+	private const PLUGIN_LOAD_PATTERN = '/^\S+' . self::PLUGIN_LOAD_SUFFIX . '$/';
 
 	/** Keyword a closing span logs: `<label> (complete)`. Capture 1 is the base name. */
 	const PATTERN_COMPLETE = '/^(.+?) \(complete\)$/';

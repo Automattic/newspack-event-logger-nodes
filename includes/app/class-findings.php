@@ -24,6 +24,7 @@ namespace Newspack_Event_Logger_Nodes\App;
 
 use Newspack_Event_Logger_Nodes\Flame_Fold;
 use Newspack_Event_Logger_Nodes\Flame_Tree;
+use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Request_Builder_Node;
 use Newspack_Event_Logger_Nodes\Rule;
 use Newspack_Nodes\Core;
@@ -52,6 +53,12 @@ class Findings {
 
 	/** Profiled/duration ratio below which the record explains too little of itself. */
 	public const UNATTRIBUTED_SHARE = 0.5;
+
+	/** Plugin loads together past this share of the request are a finding. */
+	public const PLUGIN_LOAD_SHARE = 0.25;
+
+	/** How many of the heaviest plugin loads the finding names. */
+	private const PLUGIN_LOAD_NAMED = 3;
 
 	/** Unexplained interval between consecutive entries, in milliseconds. */
 	public const GAP_MS = 250.0;
@@ -162,6 +169,7 @@ class Findings {
 			[
 				self::unattributed( $profiled, $duration, $rule_id ),
 				self::dominant_span( $nodes, $profiled, $rule, $duration ),
+				self::plugin_load( $nodes, $rule_id, $duration, $profiled ),
 				self::repetition( $record, $rule ),
 				self::entry_gap( $record, $rule_id ),
 				self::truncation( $record, $rule_id ),
@@ -378,6 +386,77 @@ class Findings {
 	}
 
 	/**
+	 * Plugin files' loads, summed, when together they hold a large share of
+	 * the request. The profiler times each load before any hook can run, so no
+	 * rule edit reaches inside one. A single load holding `DOMINANT_SHARE` is
+	 * `dominant_span()`'s to report, so it is left out here, and the loads
+	 * beside it are a finding only when they reach `PLUGIN_LOAD_SHARE` alone.
+	 *
+	 * @param list<Flame_Entry> $nodes    Flattened flame nodes.
+	 * @param string|null       $rule_id  The governing rule's id, or null when none governs.
+	 * @param float             $duration Request duration in milliseconds.
+	 * @param float             $profiled Profiled milliseconds.
+	 * @return array<string,mixed>|null The finding, or null when the loads, less any dominant one, hold under `PLUGIN_LOAD_SHARE`.
+	 */
+	private static function plugin_load( array $nodes, ?string $rule_id, float $duration, float $profiled ): ?array {
+		if ( $duration < self::MIN_DURATION_MS ) {
+			return null;
+		}
+		$loads = [];
+		foreach ( $nodes as $node ) {
+			if ( Flame_Tree::is_plugin_load_span( $node['name'] ) ) {
+				$loads[] = [
+					'plugin' => \substr( $node['name'], 0, -\strlen( Flame_Tree::PLUGIN_LOAD_SUFFIX ) ),
+					'ms'     => $node['value'],
+				];
+			}
+		}
+		\usort( $loads, static fn ( array $a, array $b ): int => $b['ms'] <=> $a['ms'] );
+		// A dominant load is the dominant span's; count only the rest.
+		if ( [] !== $loads && $profiled > 0.0 && $loads[0]['ms'] / $profiled >= self::DOMINANT_SHARE ) {
+			\array_shift( $loads );
+		}
+		$total = \array_sum( \array_column( $loads, 'ms' ) );
+		if ( $total < $duration * self::PLUGIN_LOAD_SHARE ) {
+			return null;
+		}
+		$heaviest = \array_slice( $loads, 0, self::PLUGIN_LOAD_NAMED );
+		return [
+			'kind'     => 'plugin_load',
+			'severity' => 'medium',
+			'title'    => \sprintf(
+				'Loading %d %s took %s, %d%% of the request',
+				\count( $loads ),
+				1 === \count( $loads ) ? 'plugin' : 'plugins',
+				self::ms( $total ),
+				(int) \round( 100 * $total / $duration )
+			),
+			'detail'   => \sprintf(
+				'The heaviest: %s. Each is a plugin file\'s own load, before any hook runs, so the cost falls only when a plugin is removed or its bootstrap made cheaper.',
+				\implode(
+					', ',
+					\array_map( static fn ( array $load ): string => $load['plugin'] . ' ' . self::ms( $load['ms'] ), $heaviest )
+				)
+			),
+			'measured' => 'flame',
+			'metric'   => [
+				'ms'       => $total,
+				'share'    => $total / $duration,
+				'plugins'  => \count( $loads ),
+				'heaviest' => $heaviest,
+			],
+			'rule_id'  => $rule_id,
+			'proposal' => [
+				'action'    => 'none',
+				'direction' => 'none',
+				'rule_id'   => $rule_id,
+				'why'       => 'A plugin file\'s load is timed by the profiler before any rule applies; no rule edit changes it.',
+				'undo'      => '',
+			],
+		];
+	}
+
+	/**
 	 * One span holding most of the profiled time. The DEEPEST qualifying node
 	 * wins: it is the most specific thing that still dominates, and therefore
 	 * the one worth being able to see inside.
@@ -399,7 +478,7 @@ class Findings {
 		}
 		$best_index = null;
 		foreach ( $nodes as $index => $node ) {
-			if ( $node['value'] / $profiled < self::DOMINANT_SHARE ) {
+			if ( $node['value'] / $profiled < self::DOMINANT_SHARE || self::is_request_frame( $node ) ) {
 				continue;
 			}
 			$best = null === $best_index ? null : $nodes[ $best_index ];
@@ -675,6 +754,17 @@ class Findings {
 			}
 		}
 		return $repeat;
+	}
+
+	/**
+	 * Whether a node is the request's own frame, which holds all of every
+	 * request and so can never be the span that explains one.
+	 *
+	 * @param Flame_Entry $node A flattened node.
+	 * @return bool
+	 */
+	private static function is_request_frame( array $node ): bool {
+		return 1 === $node['depth'] && Log_Manager::REQUEST_LABEL === $node['name'];
 	}
 
 	/**
