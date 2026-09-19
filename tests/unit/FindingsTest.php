@@ -964,6 +964,10 @@ class FindingsTest extends TestCase {
 		$this->assertStringContainsString( 'load', $found['detail'] );
 		$this->assertStringNotContainsString( 'custom event', $found['proposal']['why'] );
 		$this->assertStringNotContainsString( 'custom event', $found['detail'] );
+		$this->assertNull(
+			$this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'plugin_load' ),
+			'one dominant load is the dominant span, reported once'
+		);
 	}
 
 	/**
@@ -981,6 +985,101 @@ class FindingsTest extends TestCase {
 
 		$this->assertNotNull( $found );
 		$this->assertSame( 'add_custom_events', $found['proposal']['action'] );
+	}
+
+	/**
+	 * An El Sol request, shaped as stored: the request's own `process` frame
+	 * under the root, holding thirty-five plugin loads and nothing else.
+	 *
+	 * @param float $load_ms Milliseconds each of the three named plugins took.
+	 */
+	private function plugin_bootstrap_record( float $load_ms ): array {
+		$record                = $this->loaded_record();
+		$record['duration_ms'] = 137.3;
+		$plugins               = [
+			[ 'name' => 'newspack-plugin plugin', 'value' => $load_ms * 2, 'children' => [] ],
+			[ 'name' => 'wordpress-seo plugin', 'value' => $load_ms * 1.5, 'children' => [] ],
+			[ 'name' => 'jetpack plugin', 'value' => $load_ms, 'children' => [] ],
+		];
+		for ( $i = 0; $i < 32; $i++ ) {
+			$plugins[] = [ 'name' => "minor-{$i} plugin", 'value' => 0.25, 'children' => [] ];
+		}
+		$record['flame_data'] = [
+			'name'     => 'request',
+			'value'    => 137.3,
+			'children' => [ [ 'name' => 'process', 'value' => 137.3, 'children' => $plugins ] ],
+		];
+		return $record;
+	}
+
+	/**
+	 * `process` is the request's own frame, so it holds all of every request:
+	 * reporting it as the dominant span says nothing and proposes a no-op.
+	 */
+	public function test_the_request_frame_is_never_the_dominant_span(): void {
+		$findings = Findings::for_request( $this->plugin_bootstrap_record( 6.2 ), $this->instrumented_rule() );
+
+		$this->assertNull( $this->of_kind( $findings, 'dominant_span' ) );
+	}
+
+	/**
+	 * No one plugin holds 60%, but together their loads are a third of the
+	 * request: the finding names the total and the heaviest three.
+	 */
+	public function test_plugin_loads_holding_a_large_share_are_named_heaviest_first(): void {
+		$found = $this->of_kind(
+			Findings::for_request( $this->plugin_bootstrap_record( 6.2 ), $this->instrumented_rule() ),
+			'plugin_load'
+		);
+
+		$this->assertNotNull( $found );
+		$this->assertSame( 35, $found['metric']['plugins'] );
+		$this->assertEqualsWithDelta( 35.9, $found['metric']['ms'], 0.01 );
+		$this->assertSame(
+			[ 'newspack-plugin', 'wordpress-seo', 'jetpack' ],
+			\array_column( $found['metric']['heaviest'], 'plugin' )
+		);
+		$this->assertStringContainsString( '35 plugins', $found['title'] );
+		$this->assertStringContainsString( 'newspack-plugin 12.4ms', $found['detail'] );
+		$this->assertSame( 'none', $found['proposal']['action'] );
+	}
+
+	/**
+	 * One load dominating the profiled time is the dominant span's to name,
+	 * but when the OTHER loads alone still hold a large share of the request,
+	 * that cost belongs to no dominant span and is still reported.
+	 */
+	public function test_the_rest_of_the_loads_are_reported_beside_a_dominant_one(): void {
+		$record                = $this->loaded_record();
+		$record['duration_ms'] = 1200.0;
+		$plugins               = [ [ 'name' => 'giant-7734 plugin', 'value' => 560.0, 'children' => [] ] ];
+		for ( $i = 0; $i < 14; $i++ ) {
+			$plugins[] = [ 'name' => "rest-{$i} plugin", 'value' => 25.0, 'children' => [] ];
+		}
+		$record['flame_data'] = [
+			'name'     => 'request',
+			'value'    => 910.0,
+			'children' => [ [ 'name' => 'process', 'value' => 910.0, 'children' => $plugins ] ],
+		];
+
+		$findings = Findings::for_request( $record, $this->instrumented_rule() );
+
+		$this->assertSame( 'giant-7734 plugin', $this->of_kind( $findings, 'dominant_span' )['metric']['name'] );
+		$found = $this->of_kind( $findings, 'plugin_load' );
+		$this->assertNotNull( $found );
+		// The dominant load is reported once, by the dominant span.
+		$this->assertSame( 14, $found['metric']['plugins'] );
+		$this->assertEqualsWithDelta( 350.0, $found['metric']['ms'], 0.01 );
+		$this->assertNotContains( 'giant-7734', \array_column( $found['metric']['heaviest'], 'plugin' ) );
+	}
+
+	public function test_plugin_loads_holding_a_small_share_are_not_a_finding(): void {
+		$found = $this->of_kind(
+			Findings::for_request( $this->plugin_bootstrap_record( 0.9 ), $this->instrumented_rule() ),
+			'plugin_load'
+		);
+
+		$this->assertNull( $found );
 	}
 
 	public function test_repetition_of_the_query_span_is_not_proposed_as_a_custom_event(): void {
