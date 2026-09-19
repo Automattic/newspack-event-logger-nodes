@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Admin notices land above each Event Logger dashboard, not inside it.** WordPress moves every notice after `.wp-header-end`, or failing that after the first `.wrap` heading, which on the Request Log was inside the app, so a notice covered its header and toolbar. Each dashboard page now prints the anchor ahead of its React root.
 - **The URL modal's header prints a stat the reply did not answer as `—`, not `0`,** as the Overview card does; both now read one stat table.
 
 ## [0.99.0] - 2026-09-19

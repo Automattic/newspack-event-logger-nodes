@@ -67,6 +67,32 @@ class DashboardMenuGateTest extends TestCase {
 		return $slugs;
 	}
 
+	/**
+	 * WordPress moves every admin notice after `.wp-header-end`, or failing
+	 * that after the first `.wrap h1`, which on a React page is inside the
+	 * app: the Request Log's notice landed on top of its toolbar.
+	 */
+	public function test_every_dashboard_page_anchors_notices_above_its_app(): void {
+		$GLOBALS['_current_user_login'] = 'chris-newspack';
+		\do_action( 'admin_menu' );
+
+		$callbacks = [];
+		foreach ( (array) $GLOBALS['_admin_menu_pages'] as $args ) {
+			$callbacks[ (string) $args[3] ] = $args[4];
+		}
+		foreach ( (array) $GLOBALS['_admin_submenu_pages'] as $args ) {
+			$callbacks[ (string) $args[4] ] = $args[5];
+		}
+		$this->assertNotEmpty( $callbacks );
+		foreach ( $callbacks as $slug => $callback ) {
+			\ob_start();
+			$callback();
+			$html = (string) \ob_get_clean();
+			$this->assertStringStartsWith( '<hr class="wp-header-end">', $html, $slug );
+			$this->assertStringContainsString( '<div id="', $html, $slug );
+		}
+	}
+
 	public function test_an_admin_outside_the_allowlist_gets_no_dashboard_menu(): void {
 		// `manage_options` alone is not the gate the operator configured: the
 		// config comment says "restrict admin UI to these usernames", and the

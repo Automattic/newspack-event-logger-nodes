@@ -308,8 +308,10 @@ function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\Command_
 		if ( ! \Newspack_Nodes\Capabilities::can( \Newspack_Nodes\Capabilities::MANAGE ) ) {
 			return;
 		}
-		$manage_cap           = \Newspack_Nodes\Capabilities::cap_for( \Newspack_Nodes\Capabilities::MANAGE );
-		$performance_callback = static fn () => print( '<div id="event-logger-admin" class="event-logger-admin-page"></div>' );
+		$manage_cap = \Newspack_Nodes\Capabilities::cap_for( \Newspack_Nodes\Capabilities::MANAGE );
+		// Notices go after `.wp-header-end`; without one, inside the app.
+		$header_end           = '<hr class="wp-header-end">';
+		$performance_callback = static fn () => print( $header_end . '<div id="event-logger-admin" class="event-logger-admin-page"></div>' ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- hardcoded markup.
 		\add_menu_page(
 			'Event Logger',
 			'Event Logger',
@@ -340,7 +342,7 @@ function newspack_event_logger_nodes_mount_service_cis( \Newspack_Nodes\Command_
 				$manage_cap,
 				$slug,
 				// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- $mount_html is a hardcoded constant string from $dashboards above, not user input.
-			static fn () => print( $mount_html )
+			static fn () => print( $header_end . $mount_html )
 			);
 		}
 	}
