@@ -27,7 +27,7 @@
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
 use PHPUnit\Framework\Attributes\CoversClass;
-use PHPUnit\Framework\Attributes\Large;
+use PHPUnit\Framework\Attributes\Medium;
 use Newspack_Event_Logger_Nodes\App\Performance_CI_Node;
 use Newspack_Event_Logger_Nodes\Flame_Builder_Node;
 use Newspack_Event_Logger_Nodes\Hook_Categorizer;
@@ -44,8 +44,8 @@ use Newspack_Nodes\Message;
 use Newspack_Nodes\Tests\Helpers\InMemoryMemcached;
 
 #[CoversClass( Performance_CI_Node::class )]
-// Three tests walk a million-entry index by design; under Xdebug each nears 10 s.
-#[Large]
+// Under coverage the urls fan-out and the first, class-loading test pass 1 s.
+#[Medium]
 class PerformanceCITest extends TestCase {
 	private string $tmp;
 
@@ -77,6 +77,7 @@ class PerformanceCITest extends TestCase {
 	protected function tearDown(): void {
 		\Newspack_Nodes\Topology_Registry::reset_basename_cache();
 		VerbHarness::reset();
+		Performance_CI_Node::$index_budget  = null;
 		Settings_Event_Writer::$append_seam = null;
 		$GLOBALS['_wp_options']       = [];
 		$GLOBALS['_current_user_can'] = false;
@@ -883,7 +884,7 @@ class PerformanceCITest extends TestCase {
 		] );
 
 		$rows = [];
-		foreach ( Performance_CI_Node::load_index_default() as $row ) {
+		foreach ( Performance_CI_Node::load_index_default( null, self::live_stores() ) as $row ) {
 			$rows[ Core::as_string( $row['hash'] ) ] = Core::as_int( $row['count'] );
 		}
 
@@ -1112,11 +1113,7 @@ class PerformanceCITest extends TestCase {
 		// Newer than that entry and more numerous than the budget. Short lines:
 		// the budget counts entries scanned, not bytes, and a line under the
 		// fixed width parses as no entry.
-		\file_put_contents(
-			$this->tmp . '/logs/requests.p0/0.idx',
-			\str_repeat( "x\n", Performance_CI_Node::MAX_INDEX_ENTRIES + 1 ),
-			FILE_APPEND | LOCK_EX
-		);
+		$this->shrink_index_budget_and_overfill_it();
 
 		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', $hash );
 
@@ -1484,9 +1481,19 @@ class PerformanceCITest extends TestCase {
 			'timestamp'   => 1700005200,
 			'duration_ms' => 15,
 		] );
+		$this->shrink_index_budget_and_overfill_it();
+	}
+
+	/**
+	 * Shrink the scan budget to a handful and append one entry past it to p0's
+	 * request index. The real million is the same boundary, only slower to walk.
+	 */
+	private function shrink_index_budget_and_overfill_it(): void {
+		$budget                             = 17;
+		Performance_CI_Node::$index_budget = $budget;
 		\file_put_contents(
 			$this->tmp . '/logs/requests.p0/0.idx',
-			\str_repeat( "x\n", Performance_CI_Node::MAX_INDEX_ENTRIES + 1 ),
+			\str_repeat( "x\n", $budget + 1 ),
 			FILE_APPEND | LOCK_EX
 		);
 	}
@@ -3648,9 +3655,9 @@ class PerformanceCITest extends TestCase {
 	public function test_the_index_is_read_per_request_not_shared_across_instances(): void {
 		$calls    = 0;
 		$original = Performance_CI_Node::$load_index;
-		Performance_CI_Node::$load_index = static function ( ?string $shard ) use ( &$calls, $original ): array {
+		Performance_CI_Node::$load_index = static function ( ?string $shard, array $stores ) use ( &$calls, $original ): array {
 			++$calls;
-			return ( $original ?? [ Performance_CI_Node::class, 'load_index_default' ] )( $shard );
+			return ( $original ?? [ Performance_CI_Node::class, 'load_index_default' ] )( $shard, $stores );
 		};
 
 		try {
@@ -3963,7 +3970,7 @@ class PerformanceCITest extends TestCase {
 		( new \ReflectionProperty( Flame_Builder_Node::class, 'mirror_read_ns' ) )->setValue( null, \PHP_INT_MAX );
 
 		$resolve = new \ReflectionMethod( Performance_CI_Node::class, 'resolve_urls' );
-		$named   = $resolve->invoke( null, $rows );
+		$named   = $resolve->invoke( null, $rows, self::live_stores() );
 
 		$this->assertSame( $url, $named[0]['url'] ?? '', 'the mirror names the row within a budget of its own' );
 		$spent = ( new \ReflectionProperty( Flame_Builder_Node::class, 'mirror_read_ns' ) )->getValue();
@@ -4175,7 +4182,7 @@ class PerformanceCITest extends TestCase {
 			],
 		] );
 
-		$rows = Performance_CI_Node::load_index_default();
+		$rows = Performance_CI_Node::load_index_default( null, self::live_stores() );
 
 		$row = \array_values( \array_filter( $rows, static fn ( $r ) => 'c0ffee123456' === $r['hash'] ) )[0] ?? null;
 		$this->assertIsArray( $row );
@@ -4185,6 +4192,16 @@ class PerformanceCITest extends TestCase {
 		$this->assertFalse( $row['aggregate'] );
 		$this->assertArrayNotHasKey( 'last_seen', $row, 'the bucket name must not reach the projection' );
 		$this->assertArrayNotHasKey( 'recent', $row, 'the bucket name must not reach the projection' );
+	}
+
+	/**
+	 * The stores the verbs resolve, for a test calling the loader directly.
+	 *
+	 * @return list<Stats_Store>
+	 */
+	private static function live_stores(): array {
+		$m = new \ReflectionMethod( Performance_CI_Node::class, 'stats_stores' );
+		return (array) $m->invoke( null );
 	}
 
 	/** The read window the loader plans over. */
@@ -4257,9 +4274,9 @@ class PerformanceCITest extends TestCase {
 		$seen     = [];
 		$original = Performance_CI_Node::$load_index;
 
-		Performance_CI_Node::$load_index = static function ( ?string $shard ) use ( &$seen, $original ): array {
+		Performance_CI_Node::$load_index = static function ( ?string $shard, array $stores ) use ( &$seen, $original ): array {
 			$seen[] = $shard;
-			return ( $original ?? [ Performance_CI_Node::class, 'load_index_default' ] )( $shard );
+			return ( $original ?? [ Performance_CI_Node::class, 'load_index_default' ] )( $shard, $stores );
 		};
 		try {
 			VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' );
@@ -4274,6 +4291,74 @@ class PerformanceCITest extends TestCase {
 			\array_values( \array_unique( $seen ) ),
 			'every shard is folded, one at a time'
 		);
+	}
+
+	/**
+	 * One `urls` call resolves its stats stores ONCE, not once per shard.
+	 *
+	 * Each resolution asks the substrate for the flame-builder workers, which
+	 * builds the whole topology catalog; sixteen shards asked sixteen times,
+	 * and every dashboard poll paid for it. Counted at the catalog filter, so
+	 * a regression in either repo shows here. The count is one for the worker
+	 * set plus one per store, whose mirror handle resolves on its first miss
+	 * and is kept — a cost set by the worker count, never the shard count.
+	 */
+	public function test_the_urls_verb_does_not_rebuild_the_catalog_per_shard(): void {
+		[ $builds, $read ] = $this->count_catalog_builds_for_urls();
+
+		$this->assertSame( 1 + 3, $builds );
+		$this->assertSame( \array_fill( 0, \count( Stats_Store::url_shards() ), 3 ), $read );
+	}
+
+	/**
+	 * A search, sorted by URL, names every candidate from each shard's name
+	 * index and then names the page it returns. Both reads take the stores
+	 * the verb already resolved, so the count stays set by the worker count.
+	 */
+	public function test_a_url_sorted_search_does_not_rebuild_the_catalog_per_shard(): void {
+		[ $builds, , $reply ] = $this->count_catalog_builds_for_urls( '--search=wombat-7731', '--sort=url' );
+
+		$this->assertSame( 1, $reply['rows'], 'the search reached the seeded row' );
+		$this->assertSame( 'https://kea.test/wombat-7731', $reply['data'][0]['url'] );
+		$this->assertSame( 1 + 3, $builds );
+	}
+
+	/**
+	 * Fire `urls` over three flame-builder workers, one URL seeded in the
+	 * second, and count the topology-catalog builds and the stores each shard
+	 * read was handed.
+	 *
+	 * @param string ...$args Verb options.
+	 * @return array{0:int,1:list<int>,2:array<string,mixed>}
+	 */
+	private function count_catalog_builds_for_urls( string ...$args ): array {
+		// Three workers: distinct from the one setUp activates, so the stores
+		// resolved once must still be all three.
+		$this->activate_shipped_topology( 'performance', 3 );
+		$this->set_url_bucket( new Stats_Store( 1, 86400 ), $this->current_url_bucket(), [
+			'b7731ce0fa11' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 5, 'last_seen' => \time() ],
+		] );
+		$builds = 0;
+		\add_filter(
+			'newspack_nodes/topologies',
+			static function ( array $topologies ) use ( &$builds ): array {
+				++$builds;
+				return $topologies;
+			}
+		);
+		$read     = [];
+		$original = Performance_CI_Node::$load_index;
+		Performance_CI_Node::$load_index = static function ( ?string $shard, array $stores ) use ( &$read, $original ): array {
+			$read[] = \count( $stores );
+			return ( $original ?? [ Performance_CI_Node::class, 'load_index_default' ] )( $shard, $stores );
+		};
+		try {
+			$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', ...$args );
+		} finally {
+			Performance_CI_Node::$load_index = $original;
+			VerbHarness::reset();
+		}
+		return [ $builds, $read, $reply ];
 	}
 
 	/**
@@ -4313,7 +4398,7 @@ class PerformanceCITest extends TestCase {
 		$memd->multi_calls = 0;
 		$memd->multi_keys  = 0;
 
-		$out = Performance_CI_Node::load_index_default();
+		$out = Performance_CI_Node::load_index_default( null, self::live_stores() );
 
 		$this->assertCount( 40, $out, 'every seeded URL still folds' );
 		$this->assertGreaterThan( 1, $memd->multi_calls, 'the window must not be one read' );
@@ -4438,7 +4523,7 @@ class PerformanceCITest extends TestCase {
 			],
 		] );
 
-		$rows = Performance_CI_Node::load_index_default();
+		$rows = Performance_CI_Node::load_index_default( null, self::live_stores() );
 
 		$row = \array_values( \array_filter( $rows, static fn ( $r ) => 'facade000777' === $r['hash'] ) )[0] ?? null;
 		$this->assertIsArray( $row );
