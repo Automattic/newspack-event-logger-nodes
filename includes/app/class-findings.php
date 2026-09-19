@@ -125,6 +125,10 @@ class Findings {
 			'detail' => 'The logger times this round trip itself, so there is no interior to switch on: its label names the calling frame, and its entries carry the statement or the URL.',
 			'why'    => '%s is the logger\'s own query or HTTP span, and nothing inside a round trip can be logged. Its label names the calling frame and its entries the statement or URL; the span containing it is where to look for why it ran.',
 		],
+		'plugin'           => [
+			'detail' => 'This is one plugin file\'s load, timed by the profiler before any hook can run, so no rule edit reaches inside it.',
+			'why'    => '%s is a plugin file\'s load: the cost is that plugin\'s bootstrap, and nothing a rule can switch on runs inside it.',
+		],
 		'listener'         => [
 			'detail' => 'This is one listener on a significant hook — the time is inside this callback.',
 			'why'    => '%s is a listener, logged because its hook is already a significant event — this is the finest grain the logger has, and the answer is inside that callback.',
@@ -526,18 +530,22 @@ class Findings {
 	}
 
 	/**
-	 * The four kinds of span the flame carries, classified once so every caller
+	 * The five kinds of span the flame carries, classified once so every caller
 	 * reaches the same `SPAN_ADVICE` row. A custom event has no listeners, and
 	 * prose crediting it with any sends the reader hunting a callback that does
-	 * not exist; a query or HTTP span is the logger's own, and calling it a
-	 * custom event proposes a rule edit that changes nothing.
+	 * not exist. A query or HTTP span is the logger's own, and a plugin span is
+	 * one plugin file's load; calling either a custom event proposes a rule
+	 * edit that changes nothing.
 	 *
 	 * @param string $span The span's name, as the flame carries it.
-	 * @return string `transport`, `hook`, `listener` or `custom`.
+	 * @return string `transport`, `plugin`, `hook`, `listener` or `custom`.
 	 */
 	private static function span_kind( string $span ): string {
 		if ( Flame_Tree::is_transport_span( $span ) ) {
 			return 'transport';
+		}
+		if ( Flame_Tree::is_plugin_load_span( $span ) ) {
+			return 'plugin';
 		}
 		if ( \str_ends_with( $span, Hooks::HOOK_SUFFIX ) ) {
 			return 'hook';

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A dominant plugin load is no longer called a custom event.** The profiler drop-in times each plugin file's load as a `<slug> plugin` span, and the findings classified it as an event the application logs itself, proposing a custom-event rule edit that changes nothing. Such a span now reads as that plugin's bootstrap cost and proposes no rule edit. Only a one-token slug qualifies, so an application event whose name merely ends in "plugin" keeps its own advice.
+
 ## [0.98.12] - 2026-09-18
 
 ### Changed
