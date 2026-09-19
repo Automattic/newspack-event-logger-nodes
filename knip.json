@@ -37,6 +37,7 @@
 	"ignoreDependencies": [
 		"@commitlint/cli",
 		"lint-staged",
+		"postcss",
 		"postcss-scss",
 		"@noble/hashes",
 		"@wordpress/api-fetch",

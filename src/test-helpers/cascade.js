@@ -11,8 +11,6 @@
 import path from 'path';
 import { pathToFileURL } from 'url';
 import * as sass from 'sass';
-// PostCSS is a test/build dependency used to inspect the compiled cascade.
-// eslint-disable-next-line import/no-extraneous-dependencies
 import postcss from 'postcss';
 
 const SRC = path.resolve( __dirname, '..' );
