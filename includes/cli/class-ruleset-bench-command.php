@@ -24,6 +24,7 @@ namespace Newspack_Event_Logger_Nodes\CLI;
 
 use Newspack_Event_Logger_Nodes\Rule_Set;
 use Newspack_Nodes\Cache_Backend;
+use Newspack_Nodes\Core;
 use Newspack_Nodes\Table_Node;
 
 \defined( 'ABSPATH' ) || exit;
@@ -61,14 +62,11 @@ class Ruleset_Bench_Command {
 	 * @when after_wp_load
 	 *
 	 * @param array<int,string>   $args       Positional arguments; none are read.
-	 * @param array<string,mixed> $assoc_args Flags. A missing or non-numeric
-	 *                                        `iterations` falls back to 200, and
-	 *                                        anything below 1 clamps to 1.
+	 * @param array<string,mixed> $assoc_args Flags; `iterations` is read by `iterations()`.
 	 * @return void
 	 */
 	public function __invoke( array $args, array $assoc_args ): void {
-		$raw        = $assoc_args['iterations'] ?? null;
-		$iterations = ( \is_string( $raw ) || \is_int( $raw ) ) && \is_numeric( $raw ) ? \max( 1, (int) $raw ) : 200;
+		$iterations = self::iterations( $assoc_args );
 
 		\WP_CLI::log( \sprintf( 'hooks/rule x #rules  |  autoload_us  inline_us  pointer_us  (median, %d iters)', $iterations ) );
 		\WP_CLI::log( \str_repeat( '-', 72 ) );
@@ -220,5 +218,16 @@ class Ruleset_Bench_Command {
 			$hooks[] = 'bench_hook_' . $i;
 		}
 		return $hooks;
+	}
+
+	/**
+	 * The timed iteration count per grid cell. A missing or non-numeric
+	 * `iterations` flag falls back to 200, and anything below 1 clamps to 1.
+	 *
+	 * @param array<string,mixed> $assoc_args Flags.
+	 * @return int
+	 */
+	public static function iterations( array $assoc_args ): int {
+		return \max( 1, Core::num_int( $assoc_args['iterations'] ?? null, 200 ) );
 	}
 }
