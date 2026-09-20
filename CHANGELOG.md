@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.99.2] - 2026-09-19
+
 ### Changed
 
 - The `urls` verb resolves its stats stores once per call rather than once per URL shard, including when a search or URL sort names the shards, which cuts the topology-catalog rebuilds on every dashboard poll.
