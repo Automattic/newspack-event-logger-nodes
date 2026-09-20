@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The Request Log and the Error Log open with the browse rail folded**, following the substrate's `LogStreamViewer`. The toggle is unchanged, and a rail a reader has opened is remembered per dashboard.
 
+### Fixed
+
+- **A completed request's What column is empty.** `what` names the innermost span the request is open inside, and the completion record carries no such field — so the Gyroscope's merge let the last in-flight frame outlive its own request, and a finished row read as still rendering a template or running a query. The completion clears it, beside the `state` and the durations it already settles.
+
 ## [0.99.4] - 2026-09-20
 
 ### Fixed

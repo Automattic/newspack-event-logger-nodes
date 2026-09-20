@@ -148,6 +148,11 @@ export class GyroscopeViewNode extends ReactBridge( Node ) {
 	 * unmatched completion still records the request, so a request that finished
 	 * before its first snapshot is shown rather than lost.
 	 *
+	 * `what` is the label of the innermost span the request was OPEN inside, so
+	 * a finished one has none and the completion carries no such field. Left to
+	 * the merge, the in-flight entry's last frame would survive its own request
+	 * and read as work still being done.
+	 *
 	 * @param {Object} req The completion record, with `rid` restored from KEY.
 	 */
 	_complete( req ) {
@@ -156,6 +161,7 @@ export class GyroscopeViewNode extends ReactBridge( Node ) {
 			...existing,
 			...req,
 			state: 'complete',
+			what: '',
 			time_ms: req.duration_ms || 0,
 			est_ms: req.duration_ms || 0,
 		} );
