@@ -16,6 +16,7 @@ import {
 	formatDots,
 	formatFullTimestamp,
 	hasPair,
+	isEmptyPairComplete,
 	isEmptyPairStart,
 	computeIndentedEntries,
 	computeVisibleEntries,
@@ -100,11 +101,53 @@ describe( 'isEmptyPairStart', () => {
 		);
 	} );
 
+	it( 'is true when only gap placeholders separate it from its complete', () => {
+		// The ruler's dot and timestamp rows are filler, not children: a pair
+		// that spans a gap still has nothing inside it to unfold to.
+		const gap = { k: '', pairId: 37, isPlaceholder: true };
+		expect( isEmptyPairStart( [ start, gap, gap, complete ], 0 ) ).toBe(
+			true
+		);
+	} );
+
+	it( 'is false when a real child hides among the placeholders', () => {
+		const gap = { k: '', pairId: 37, isPlaceholder: true };
+		const child = { k: 'query', pairId: 37 };
+		expect(
+			isEmptyPairStart( [ start, gap, child, gap, complete ], 0 )
+		).toBe( false );
+	} );
+
 	it( 'is false for an unpaired row and past the end of the list', () => {
 		expect( isEmptyPairStart( [ { k: 'note', pairId: null } ], 0 ) ).toBe(
 			false
 		);
 		expect( isEmptyPairStart( [ start ], 0 ) ).toBe( false );
+	} );
+} );
+
+describe( 'isEmptyPairComplete', () => {
+	const start = { k: 'db (start)', pairId: 37 };
+	const complete = { k: 'db (complete)', pairId: 37 };
+	const gap = { k: '', pairId: 37, isPlaceholder: true };
+
+	it( 'closes an empty pair across the placeholders between the halves', () => {
+		expect( isEmptyPairComplete( [ start, gap, complete ], 2 ) ).toBe(
+			true
+		);
+		expect( isEmptyPairComplete( [ start, complete ], 1 ) ).toBe( true );
+	} );
+
+	it( 'is false once the pair holds a child, and for the start itself', () => {
+		const child = { k: 'query', pairId: 37 };
+		expect( isEmptyPairComplete( [ start, child, complete ], 2 ) ).toBe(
+			false
+		);
+		expect( isEmptyPairComplete( [ start, complete ], 0 ) ).toBe( false );
+	} );
+
+	it( 'is false for a complete with nothing before it', () => {
+		expect( isEmptyPairComplete( [ complete ], 0 ) ).toBe( false );
 	} );
 } );
 

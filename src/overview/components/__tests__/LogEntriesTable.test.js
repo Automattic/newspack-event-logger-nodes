@@ -532,6 +532,42 @@ describe( 'LogEntriesTable', () => {
 		unmount();
 	} );
 
+	it( 'does not unfold a pair the ruler put placeholders inside', () => {
+		// A pair whose halves straddle a gap holds only the ruler's dot and
+		// timestamp rows — filler, not children, and nothing to unfold to.
+		const entries = makeEntries();
+		const withGap = [
+			...entries.slice( 0, 5 ),
+			{
+				n: '',
+				ts: 1700000004.5,
+				k: '',
+				m: '',
+				pairId: 3,
+				indent: 1,
+				isPlaceholder: true,
+				displayTime: '\u2022\u2022\u2022 \u2022',
+			},
+			...entries.slice( 5 ),
+		];
+		jest.useFakeTimers();
+		const { container, unmount } = renderComponent(
+			React.createElement( LogEntriesTable, { entries: withGap } )
+		);
+		searchFor( container, container.querySelector( 'input' ), 'render' );
+		container.querySelector( 'input' ).blur();
+		act( () => {
+			document.dispatchEvent(
+				new KeyboardEvent( 'keydown', { key: 'n', bubbles: true } )
+			);
+		} );
+		expect(
+			container.querySelectorAll( 'tr[data-pair-id="3"]' ).length
+		).toBe( 1 );
+		jest.useRealTimers();
+		unmount();
+	} );
+
 	it( 'Escape clears active search', () => {
 		const entries = makeEntries();
 		jest.useFakeTimers();

@@ -36,6 +36,7 @@ import {
 	formatFullTimestamp,
 	getAncestorPairIds,
 	hasPair,
+	isEmptyPairComplete,
 	isEmptyPairStart,
 	isFoldablePairComplete,
 	isFoldablePairStart,
@@ -432,7 +433,7 @@ export default function LogEntriesTable( { entries, realCount, revealRef } ) {
 			const ownPairId = entries[ entryIdx ]?.pairId;
 			const staysFolded =
 				isEmptyPairStart( entries, entryIdx ) ||
-				isEmptyPairStart( entries, entryIdx - 1 );
+				isEmptyPairComplete( entries, entryIdx );
 			scrollToAndHighlight(
 				tableRef,
 				staysFolded ? { pairId: ownPairId } : { entryIdx }
