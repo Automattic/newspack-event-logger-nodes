@@ -145,6 +145,21 @@ test( 'a completion retires the matching in-flight entry, merging + marking comp
 	expect( req.status_code ).toBe( 200 );
 } );
 
+test( 'a completion empties the frame the request was last inside', () => {
+	const v = makeView( 'gyroscope:view' );
+	v.fill(
+		inflightEnvelope( {
+			rid: 'a',
+			url: '/a',
+			state: 'include template',
+			what: 'Foundation\\Bundle::render_sidebar',
+		} )
+	);
+	// The completion carries no `what`: a finished request is inside nothing.
+	v.fill( completeEnvelope( { rid: 'a', duration_ms: 12 } ) );
+	expect( v.requests.get( 'a' ).what ).toBe( '' );
+} );
+
 test( 'a rid literally named "inflight" routes purely by state', () => {
 	// No sentinel exists to collide with: KEY is always the rid and the
 	// server-owned state field alone discriminates.
