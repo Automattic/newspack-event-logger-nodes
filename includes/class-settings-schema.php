@@ -104,6 +104,7 @@ class Settings_Schema {
 		'init',
 		'parse_request',
 		'plugins_loaded',
+		'pre_get_posts',
 		'send_headers',
 		'setup_theme',
 		'shutdown',
