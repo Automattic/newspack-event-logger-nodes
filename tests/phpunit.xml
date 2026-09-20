@@ -5,6 +5,7 @@
          colors="true"
          cacheDirectory="/tmp/phpunit-cache-newspack-event-logger-nodes"
          failOnWarning="true"
+         failOnRisky="true"
          beStrictAboutOutputDuringTests="false">
     <php>
         <env name="LOCAL_NEWSPACK_NODES_CONF" value="newspack-event-logger-nodes-test-config.php"/>
