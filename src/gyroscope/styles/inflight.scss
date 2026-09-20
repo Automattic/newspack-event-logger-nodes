@@ -16,6 +16,12 @@
 	flex-direction: column;
 }
 
+// Claims the header's slack, so the readout beside it widens into the gap
+// rather than pushing the whole legend along as a count crosses a digit.
+.topology-header__controls .event-logger-inflight-legend {
+	margin-right: auto;
+}
+
 .newspack-nodes-column-picker {
 	gap: 12px;
 }

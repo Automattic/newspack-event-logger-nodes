@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.99.4] - 2026-09-20
+
+### Fixed
+
+- **The Gyroscope's category legend holds still.** It sat beside a readout that widened whenever the in-flight count or the rate crossed a digit, and the header's controls grew leftward to fit, so the legend jumped on every sample. The legend claims the header's slack now, and the readout widens into the gap instead of pushing it.
+
+
 ## [0.99.3] - 2026-09-20
 
 ### Changed
