@@ -60,8 +60,13 @@ After adding or renaming a Node class, regenerate the classmap that `make_node` 
 # binary (composer pins `^10.0`, resolved 10.5.64), not a bare `phpunit`: neither
 # container puts one on PATH, and an 11.x one would crash the bootstrap with
 # `DispatchingEmitter::exportsObjects`. Always pass `--enforce-time-limit` so a hung
-# test (readline without a TTY, infinite drain loop) aborts at the per-test budget;
-# tests that legitimately sleep through production code mark their class `#[Medium]`.
+# test (readline without a TTY, infinite drain loop) aborts at the per-test budget.
+# `phpunit.xml` sets no `defaultTimeLimit`, so that budget is PHPUnit's one second for
+# every test, and `failOnRisky="true"` beside `failOnWarning="true"` makes a breach FAIL
+# the run rather than an `OK, but there were issues!` the push ignores.
+# `#[Medium]` and `#[Large]` are not the way out, and no class declares either: a
+# test must not wait in real time. It drives a clock instead — `Flame_Builder_Node`'s
+# `set_clock()` here, `Core::$clock` and `Event_Framework::$sleep` in the substrate.
 cd tests && ../vendor/bin/phpunit --enforce-time-limit
 
 tests/run-coverage.sh        # coverage HTML/Clover

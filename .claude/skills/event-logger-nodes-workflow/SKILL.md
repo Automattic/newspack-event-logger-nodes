@@ -179,7 +179,11 @@ Two contracts tie it to this plugin, and both fail quietly when they move:
 # NON-ROOT user: Log_Manager refuses root, and the suite instantiates it.
 # Always pass --enforce-time-limit so a hung test (readline without a TTY,
 # infinite drain loop) aborts at the per-test budget instead of stalling the
-# suite. Tests that legitimately sleep mark their class `#[Medium]`.
+# suite. phpunit.xml sets no defaultTimeLimit, so that budget is one second for
+# every test, and failOnRisky="true" makes a breach fail the run rather than
+# warn. No class declares #[Medium] or #[Large] to buy more: a test that would
+# wait drives a clock instead — Flame_Builder_Node::set_clock() here,
+# Core::$clock and Event_Framework::$sleep in the substrate.
 cd tests && ../vendor/bin/phpunit --enforce-time-limit
 
 # Filter to one test file or method.
