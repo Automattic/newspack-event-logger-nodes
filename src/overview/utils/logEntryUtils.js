@@ -158,9 +158,31 @@ export const hasPair = ( entry ) =>
 	null !== entry?.pairId && undefined !== entry?.pairId;
 
 /**
- * Whether the entry at `idx` opens a pair its own `(complete)` closes on the
- * very next row. Such a pair renders as one merged row however the fold state
- * reads, so unfolding it reveals nothing.
+ * Step over the ruler's gap rows in either direction, which is what makes a
+ * pair spanning a gap read as the empty pair it is.
+ *
+ * @param {Array}  entries Indented entries.
+ * @param {number} idx     Index to step from.
+ * @param {number} step    +1 forwards, -1 backwards.
+ * @return {number} Index of the nearest logged entry, or -1 past the ends.
+ */
+const skipPlaceholders = ( entries, idx, step ) => {
+	for ( let j = idx + step; j >= 0 && j < entries.length; j += step ) {
+		if ( ! entries[ j ].isPlaceholder ) {
+			return j;
+		}
+	}
+	return -1;
+};
+
+/**
+ * Whether the entry at `idx` opens a pair its own `(complete)` closes with
+ * nothing logged in between. Such a pair renders as one merged row however the
+ * fold state reads, so unfolding it reveals nothing.
+ *
+ * The ruler's dot and timestamp rows sit between the halves of any pair that
+ * spans a gap, and they are filler rather than children — counting them would
+ * let a childless pair unfold to nothing but its own elapsed time.
  *
  * @param {Array}  entries Indented entries.
  * @param {number} idx     Index of the candidate `(start)`.
@@ -168,7 +190,7 @@ export const hasPair = ( entry ) =>
  */
 export const isEmptyPairStart = ( entries, idx ) => {
 	const entry = entries[ idx ];
-	const next = entries[ idx + 1 ];
+	const next = entries[ skipPlaceholders( entries, idx, 1 ) ];
 	return (
 		!! next &&
 		hasPair( entry ) &&
@@ -177,6 +199,17 @@ export const isEmptyPairStart = ( entries, idx ) => {
 		( next.k || '' ).includes( '(complete)' )
 	);
 };
+
+/**
+ * Whether the entry at `idx` closes such a pair — the half that owns no row of
+ * its own, since the merged row stands in for both.
+ *
+ * @param {Array}  entries Indented entries.
+ * @param {number} idx     Index of the candidate `(complete)`.
+ * @return {boolean} True when the pair is empty.
+ */
+export const isEmptyPairComplete = ( entries, idx ) =>
+	isEmptyPairStart( entries, skipPlaceholders( entries, idx, -1 ) );
 
 /**
  * Format a count of 10ms dots with a space every 3 for readability.
