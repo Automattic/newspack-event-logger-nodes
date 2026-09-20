@@ -37,6 +37,7 @@ import {
 import fnv1a from '@newspack-nodes/shared/utils/fnv1a';
 import ConnectionBanner from '@newspack-nodes/shared/components/ConnectionBanner';
 import ColumnPicker from '@newspack-nodes/shared/components/ColumnPicker';
+import { HeaderSlot } from '@newspack-nodes/shared/components/HeaderSlot';
 import { useColumnPicker } from '@newspack-nodes/shared/hooks/useColumnPicker';
 import { usePersistedChoice } from '@newspack-nodes/shared/hooks/usePersistedState';
 import {
@@ -286,11 +287,12 @@ const renderCell = cellRenderer( {
  * from the `window.eventLoggerHookCategories` global the plugin prints; a
  * category that global does not carry draws grey.
  *
- * @param {Object} props         Component props.
- * @param {number} props.maxRows Maximum rows to display; the cap `snapshot()` applies.
+ * @param {Object}   props                      Component props.
+ * @param {number}   props.maxRows              Maximum rows to display; the cap `snapshot()` applies.
+ * @param {?Element} [props.headerControlsSlot] Shell header slot to portal the legend and toolbar into; null while it is pending, undefined renders them inline.
  * @return {import('react').ReactElement} Rendered component.
  */
-export default function Inflight( { maxRows = 20 } ) {
+export default function Inflight( { maxRows = 20, headerControlsSlot } ) {
 	// Mount the node graph; it owns the data, this only renders the snapshot.
 	useGyroscopeGraph();
 
@@ -367,13 +369,7 @@ export default function Inflight( { maxRows = 20 } ) {
 			role="table"
 			aria-label="In-flight requests"
 		>
-			<div className="event-logger-inflight-header newspack-nodes-inflight-header">
-				<h1 className="newspack-dashboard-title">
-					{ __(
-						'In-Flight Requests',
-						'newspack-event-logger-nodes'
-					) }
-				</h1>
+			<HeaderSlot slot={ headerControlsSlot }>
 				<div className="event-logger-inflight-legend">
 					{ [
 						'Lifecycle',
@@ -450,7 +446,7 @@ export default function Inflight( { maxRows = 20 } ) {
 						{ __( 'Cols', 'newspack-event-logger-nodes' ) }
 					</button>
 				</span>
-			</div>
+			</HeaderSlot>
 
 			<ConnectionBanner
 				connectionError={ connectionError }

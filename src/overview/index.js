@@ -22,8 +22,7 @@ import {
 } from '@wordpress/element';
 import { __ } from '@wordpress/i18n';
 import { Notice } from '@wordpress/components';
-import DebugOverlay from '@newspack-nodes/debug-overlay';
-import ThemedRoot from '../components/ThemedRoot';
+import DashboardShell from '../components/DashboardShell';
 import LoadingFallback from '../components/LoadingFallback';
 import './nodes/register';
 
@@ -47,17 +46,13 @@ import './styles/base.scss';
  * five seconds later, so a transient poll failure leaves no stuck notice. The
  * reader can also dismiss it.
  *
- * `ThemedRoot` supplies the console-selected skin tokens and paints the
- * surrounding WP-admin gutters to match. The Gyroscope, Request Log and Error
- * Log pages reach it through `DashboardShell`; this page does not, because that
- * shell is a fixed full-viewport box and Performance flows in WP-admin's own
- * padded column. `DebugOverlay` carries this page's own `storageKey`, which
- * keeps its panel layout separate from every sibling dashboard's.
- *
- * Both wrappers carry paired class names: the `newspack-nodes-` half brings the
- * substrate's shared appearance, and `event-logger-admin-wrap` adds this page's
- * padding and min-height. `dashboard-theme-root.test.js` pins both pairs
- * exactly, so a rename fails a test rather than quietly reshaping the page.
+ * `DashboardShell` supplies the skin, the fixed full-viewport box and the
+ * debug overlay, exactly as the Gyroscope, Request Log and Error Log pages do.
+ * The box is what keeps an admin notice off the page: WordPress relocates
+ * every notice to just above the mount, and only a painted, positioned box
+ * covers it. `storageKey` keeps this page's overlay layout separate from every
+ * sibling's, and `overflowY` scrolls here because the dashboard owns no inner
+ * scroller of its own.
  *
  * @return {import('react').ReactElement} Rendered component.
  * @testonly Exported for index.test.js and dashboard-theme-root.test.js; the
@@ -90,42 +85,46 @@ export function AdminApp() {
 	}, [ error ] );
 
 	return (
-		<ThemedRoot>
-			<div className="event-logger-admin-wrap newspack-nodes-admin-wrap">
-				<h1 className="newspack-dashboard-title">
-					{ __(
-						'Event Logger - Performance Dashboard',
-						'newspack-event-logger-nodes'
+		<DashboardShell
+			storageKey="newspack-nodes:debug:performance"
+			subtitle={ __(
+				'Performance Overview',
+				'newspack-event-logger-nodes'
+			) }
+			overflowY="auto"
+		>
+			{ ( headerControlsSlot ) => (
+				<div>
+					{ error && (
+						<Notice
+							status="error"
+							isDismissible
+							onDismiss={ () => setError( null ) }
+						>
+							{ error }
+						</Notice>
 					) }
-				</h1>
 
-				{ error && (
-					<Notice
-						status="error"
-						isDismissible
-						onDismiss={ () => setError( null ) }
-					>
-						{ error }
-					</Notice>
-				) }
-
-				<div className="event-logger-admin-app newspack-nodes-admin-app">
-					<Suspense
-						fallback={
-							<LoadingFallback
-								message={ __(
-									'Loading dashboard…',
-									'newspack-event-logger-nodes'
-								) }
+					<div>
+						<Suspense
+							fallback={
+								<LoadingFallback
+									message={ __(
+										'Loading dashboard…',
+										'newspack-event-logger-nodes'
+									) }
+								/>
+							}
+						>
+							<PerformanceDashboard
+								onError={ handleError }
+								headerControlsSlot={ headerControlsSlot }
 							/>
-						}
-					>
-						<PerformanceDashboard onError={ handleError } />
-					</Suspense>
+						</Suspense>
+					</div>
 				</div>
-				<DebugOverlay storageKey="newspack-nodes:debug:performance" />
-			</div>
-		</ThemedRoot>
+			) }
+		</DashboardShell>
 	);
 }
 

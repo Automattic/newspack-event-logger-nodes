@@ -150,7 +150,9 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit\Admin {
 			$this->assertArrayHasKey( 'nonce', $data );
 			$this->assertArrayHasKey( 'restartNonce', $data );
 			$this->assertSame( $tree, $data['tree'] );
-			$this->assertArrayHasKey( 'version', $data );
+			// The header stamps the plugin that OWNS the surface, so this is
+			// ELN's own release and never the substrate it is built on.
+			$this->assertSame( \NEWSPACK_EVENT_LOGGER_NODES_VERSION, $data['version'] );
 		}
 
 		#[DataProvider( 'graph_dashboard_pages' )]

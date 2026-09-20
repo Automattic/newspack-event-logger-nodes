@@ -47,18 +47,10 @@ describe( 'overview theme root', () => {
 			React.createElement( AdminApp )
 		);
 		const provider = container.firstElementChild;
-		const page = provider.querySelector( '.event-logger-admin-wrap' );
 		expect( provider.className ).toBe(
 			'newspack-nodes-skin-root newspack-nodes-theme newspack-nodes-ui'
 		);
-		expect( page ).not.toBeNull();
-		expect( page.className ).toBe(
-			'event-logger-admin-wrap newspack-nodes-admin-wrap'
-		);
-		expect(
-			page.querySelector( '.event-logger-admin-app' ).className
-		).toBe( 'event-logger-admin-app newspack-nodes-admin-app' );
-		expectNoTokenRoot( page );
+		expectNoTokenRoot( provider.firstElementChild );
 		await flushLazy();
 		unmount();
 	} );

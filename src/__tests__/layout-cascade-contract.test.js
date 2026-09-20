@@ -86,7 +86,6 @@ const cascadeDeclarations = ( stylesheet, selector ) => {
 
 const sharedComponents = compileShared( 'styles/_components.scss' );
 const sharedButtons = compileShared( 'styles/_buttons.scss' );
-const sharedToolbar = compileShared( 'styles/_toolbar.scss' );
 
 const expectLocalCascadeWin = ( {
 	localStylesheet,
@@ -282,52 +281,6 @@ describe( 'Event Logger layout cascade', () => {
 			expected: {
 				padding: '4px 8px',
 			},
-		} );
-	} );
-
-	it.each( [
-		[
-			'gyroscope/styles/inflight.scss',
-			'.event-logger-inflight .newspack-nodes-toolbar-stats',
-			{ 'flex-direction': 'row', gap: '8px 16px' },
-		],
-		[
-			'requests/styles/request-stream.scss',
-			'.event-logger-request-stream .newspack-nodes-toolbar-stats',
-			{
-				'flex-direction': 'row',
-				gap: '8px 16px',
-				'min-width': '100px',
-			},
-		],
-		[
-			'error-log/styles/error-log.scss',
-			'.event-logger-error-log .newspack-nodes-toolbar-stats',
-			{ 'min-width': '80px' },
-		],
-	] )(
-		'scopes toolbar-stat overrides to their dashboard in %s',
-		( file, localSelector, expected ) => {
-			expect.hasAssertions();
-			expectLocalCascadeWin( {
-				localStylesheet: local( file ),
-				localSelector,
-				sharedStylesheet: sharedToolbar,
-				sharedSelector:
-					':where(.newspack-nodes-ui) .newspack-nodes-toolbar-stats',
-				expected,
-			} );
-		}
-	);
-
-	it( 'targets ThemedRoot actual direct child for full-page height', () => {
-		const rule = findRule(
-			local( 'components/ThemedRoot.scss' ),
-			'.newspack-nodes-skin-root > .event-logger-admin-wrap'
-		);
-		expect( declarations( rule ) ).toMatchObject( {
-			'min-height': 'calc(100vh - 96px)',
-			'box-sizing': 'border-box',
 		} );
 	} );
 

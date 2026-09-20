@@ -206,12 +206,16 @@ const StreamRow = memo(
 /**
  * The Request Log dashboard: completed requests in the shared viewer chrome.
  *
- * @param {Object} props              Component props.
- * @param {number} [props.maxEntries] Rows the view ring holds; 500 unless the
- *                                    page names its own.
+ * @param {Object}   props                      Component props.
+ * @param {?Element} [props.headerControlsSlot] Shell header slot to portal the toolbar into; null while it is pending, undefined renders it inline.
+ * @param {number}   [props.maxEntries]         Rows the view ring holds; 500 unless the
+ *                                              page names its own.
  * @return {import('react').ReactElement} Rendered component.
  */
-export default function RequestStream( { maxEntries = 500 } ) {
+export default function RequestStream( {
+	maxEntries = 500,
+	headerControlsSlot,
+} ) {
 	// Mount the graph; it returns the controls and the browse model.
 	const { setPaused, clear, step, browse, setFilter } = useRequestLogGraph( {
 		maxEntries,
@@ -262,8 +266,8 @@ export default function RequestStream( { maxEntries = 500 } ) {
 	return (
 		<LogStreamViewer
 			className="event-logger-request-stream"
+			headerControlsSlot={ headerControlsSlot }
 			ariaLabel={ __( 'Request log', 'newspack-event-logger-nodes' ) }
-			title={ __( 'Request Log', 'newspack-event-logger-nodes' ) }
 			pickerOptions={ browse.pickerOptions }
 			selectedKey={ browse.selectedPartition }
 			onPick={ browse.selectPartition }

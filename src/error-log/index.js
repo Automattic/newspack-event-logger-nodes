@@ -24,6 +24,7 @@
  * settings and current-request trees are separate entries.
  */
 
+import { __ } from '@wordpress/i18n';
 import { createRoot, lazy, Suspense } from '@wordpress/element';
 import DashboardShell from '../components/DashboardShell';
 import LoadingFallback from '../components/LoadingFallback';
@@ -36,7 +37,7 @@ import './styles/base.scss';
  * The split is what lets the shell — the skin, the box and the debug overlay —
  * paint under `LoadingFallback` rather than wait on the whole view.
  *
- * @type {import('react').LazyExoticComponent}
+ * @type {import('react').LazyExoticComponent<typeof import('./ErrorLog').default>}
  */
 const ErrorLog = lazy( () => import( './ErrorLog' ) );
 
@@ -58,11 +59,14 @@ export function ErrorLogPage() {
 	return (
 		<DashboardShell
 			storageKey="newspack-nodes:debug:error-log"
+			subtitle={ __( 'Error Log', 'newspack-event-logger-nodes' ) }
 			overflowY="hidden"
 		>
-			<Suspense fallback={ <LoadingFallback /> }>
-				<ErrorLog />
-			</Suspense>
+			{ ( headerControlsSlot ) => (
+				<Suspense fallback={ <LoadingFallback /> }>
+					<ErrorLog headerControlsSlot={ headerControlsSlot } />
+				</Suspense>
+			) }
 		</DashboardShell>
 	);
 }

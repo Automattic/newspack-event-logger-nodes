@@ -121,10 +121,14 @@ describe( 'ErrorLog', () => {
 		return r;
 	}
 
-	it( 'renders the Error Log heading', () => {
+	it( 'leaves the page heading to the shell', () => {
 		registerViewFixture();
 		const { container } = mount();
-		expect( container.textContent ).toContain( 'Error Log' );
+		// DashboardShell's header already names this surface; a second
+		// heading here is the same words twice down the page.
+		expect(
+			container.querySelector( '.newspack-dashboard-title' )
+		).toBeNull();
 		expect(
 			container.querySelector(
 				'.newspack-nodes-toolbar select.newspack-nodes-select'
@@ -481,6 +485,8 @@ describe( 'ErrorLog', () => {
 	it( 'falls back to an empty model when the view node is absent', () => {
 		// No fixture → useNodeField undefined; the chrome still renders.
 		const { container } = mount();
-		expect( container.textContent ).toContain( 'Error Log' );
+		expect(
+			container.querySelector( '.newspack-nodes-toolbar' )
+		).not.toBeNull();
 	} );
 } );
