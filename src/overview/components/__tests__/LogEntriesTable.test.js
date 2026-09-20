@@ -113,6 +113,31 @@ function makeEntries() {
 	];
 }
 
+/**
+ * `makeEntries()` with the ruler's gap rows inside the `render` pair, as
+ * `computeIndentedEntries()` inserts them whenever a span outlives a gap.
+ * The pair is still childless: placeholders are filler, not children.
+ *
+ * @return {Array} Indented entries.
+ */
+function makeEntriesWithGapPair() {
+	const entries = makeEntries();
+	return [
+		...entries.slice( 0, 5 ),
+		{
+			n: '',
+			ts: 1700000004.5,
+			k: '',
+			m: '',
+			pairId: 3,
+			indent: 1,
+			isPlaceholder: true,
+			displayTime: '\u2022\u2022\u2022 \u2022',
+		},
+		...entries.slice( 5 ),
+	];
+}
+
 describe( 'LogEntriesTable', () => {
 	let rafCallbacks = [];
 	let originalRAF;
@@ -296,6 +321,26 @@ describe( 'LogEntriesTable', () => {
 		// After unfold, all entries should be visible.
 		const rows = container.querySelectorAll( 'tbody tr' );
 		expect( rows.length ).toBeGreaterThan( 0 );
+		unmount();
+	} );
+
+	it( 'Unfold All leaves a gap-spanning pair merged', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( LogEntriesTable, {
+				entries: makeEntriesWithGapPair(),
+			} )
+		);
+		const unfoldBtn = Array.from(
+			container.querySelectorAll( 'button' )
+		).find( ( b ) => b.textContent.includes( 'Unfold All' ) );
+		act( () => unfoldBtn.click() );
+		expect(
+			container.querySelectorAll( 'tr[data-pair-id="3"]' ).length
+		).toBe( 1 );
+		// The pair it encloses does open, so this is not a fold that failed.
+		expect(
+			container.querySelectorAll( 'tr[data-pair-id="1"]' ).length
+		).toBe( 2 );
 		unmount();
 	} );
 
@@ -535,24 +580,11 @@ describe( 'LogEntriesTable', () => {
 	it( 'does not unfold a pair the ruler put placeholders inside', () => {
 		// A pair whose halves straddle a gap holds only the ruler's dot and
 		// timestamp rows — filler, not children, and nothing to unfold to.
-		const entries = makeEntries();
-		const withGap = [
-			...entries.slice( 0, 5 ),
-			{
-				n: '',
-				ts: 1700000004.5,
-				k: '',
-				m: '',
-				pairId: 3,
-				indent: 1,
-				isPlaceholder: true,
-				displayTime: '\u2022\u2022\u2022 \u2022',
-			},
-			...entries.slice( 5 ),
-		];
 		jest.useFakeTimers();
 		const { container, unmount } = renderComponent(
-			React.createElement( LogEntriesTable, { entries: withGap } )
+			React.createElement( LogEntriesTable, {
+				entries: makeEntriesWithGapPair(),
+			} )
 		);
 		searchFor( container, container.querySelector( 'input' ), 'render' );
 		container.querySelector( 'input' ).blur();
