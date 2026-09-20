@@ -129,10 +129,14 @@ describe( 'RequestStream', () => {
 		return r;
 	}
 
-	it( 'renders the Request Log heading (no source picker)', () => {
+	it( 'leaves the page heading to the shell (no source picker)', () => {
 		registerViewFixture();
 		const { container } = mount();
-		expect( container.textContent ).toContain( 'Request Log' );
+		// DashboardShell's header already names this surface; a second
+		// heading here is the same words twice down the page.
+		expect(
+			container.querySelector( '.newspack-dashboard-title' )
+		).toBeNull();
 		// pickerOptions is null: the toolbar has no source dropdown.
 		expect(
 			container.querySelector(
@@ -561,6 +565,8 @@ describe( 'RequestStream', () => {
 	it( 'falls back to an empty model when the view node is absent', () => {
 		// No fixture → useNodeField undefined; the chrome still renders.
 		const { container } = mount();
-		expect( container.textContent ).toContain( 'Request Log' );
+		expect(
+			container.querySelector( '.newspack-nodes-toolbar' )
+		).not.toBeNull();
 	} );
 } );

@@ -1,9 +1,6 @@
-// The shared Nodes UI asset owns every skin surface and component appearance.
-// Event Logger retains only its standalone dashboard and portal geometry.
-.newspack-nodes-skin-root > .event-logger-admin-wrap {
-	min-height: calc(100vh - 96px);
-	box-sizing: border-box;
-}
+// The shared Nodes UI asset owns every skin surface and component appearance,
+// the dashboard shell's own backdrop included — see
+// `newspack-nodes-page-surface`. Event Logger retains only portal geometry.
 
 .event-logger-performance-modal.components-modal__frame {
 	display: flex;

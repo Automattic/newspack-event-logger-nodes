@@ -14,11 +14,6 @@
 	align-items: baseline;
 }
 
-// Overview's admin wrap adds vertical padding (on top of the shared max-width).
-.event-logger-admin-wrap {
-	padding: 16px 0;
-}
-
 // The overview card stacks the aggregate chart clear of the stat row above it;
 // the same panel inside the URL modal opens the body and needs no gap.
 .event-logger-performance-overview .event-logger-aggregate-chart {

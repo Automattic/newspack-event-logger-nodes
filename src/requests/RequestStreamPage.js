@@ -7,6 +7,7 @@
  * `RequestStream` and the `request-log:*` node graph it mounts.
  */
 
+import { __ } from '@wordpress/i18n';
 import RequestStream from './RequestStream';
 import DashboardShell from '../components/DashboardShell';
 
@@ -26,9 +27,15 @@ export default function RequestStreamPage() {
 	return (
 		<DashboardShell
 			storageKey="newspack-nodes:debug:request-stream"
+			subtitle={ __( 'Request Log', 'newspack-event-logger-nodes' ) }
 			overflowY="hidden"
 		>
-			<RequestStream maxEntries={ 1000 } />
+			{ ( headerControlsSlot ) => (
+				<RequestStream
+					maxEntries={ 1000 }
+					headerControlsSlot={ headerControlsSlot }
+				/>
+			) }
 		</DashboardShell>
 	);
 }

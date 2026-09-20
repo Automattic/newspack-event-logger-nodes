@@ -11,6 +11,7 @@
  * and the two are tested together in `src/__tests__/page-wrappers.test.js`.
  */
 
+import { __ } from '@wordpress/i18n';
 import Inflight from './Inflight';
 import DashboardShell from '../components/DashboardShell';
 
@@ -28,9 +29,15 @@ export default function GyroscopePage() {
 	return (
 		<DashboardShell
 			storageKey="newspack-nodes:debug:gyroscope"
+			subtitle={ __( 'Gyroscope', 'newspack-event-logger-nodes' ) }
 			overflowY="auto"
 		>
-			<Inflight maxRows={ 100 } />
+			{ ( headerControlsSlot ) => (
+				<Inflight
+					maxRows={ 100 }
+					headerControlsSlot={ headerControlsSlot }
+				/>
+			) }
 		</DashboardShell>
 	);
 }

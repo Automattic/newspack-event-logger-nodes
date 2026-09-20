@@ -9,20 +9,11 @@
 // Inflight requests (Gyroscope-style live view)
 .event-logger-inflight {
 	padding: 16px;
-	height: 100%;
+	// Grows into what the shell's header leaves; see log-stream-page().
+	flex: 1 1 auto;
+	min-height: 0;
 	display: flex;
 	flex-direction: column;
-}
-
-.event-logger-inflight-header {
-	gap: 8px;
-}
-
-// The stats readout runs count/rps side-by-side here (vs. the canonical
-// class's default stacked layout) — genuine per-dashboard layout, not look.
-.event-logger-inflight .newspack-nodes-toolbar-stats {
-	flex-direction: row;
-	gap: 8px 16px;
 }
 
 .newspack-nodes-column-picker {

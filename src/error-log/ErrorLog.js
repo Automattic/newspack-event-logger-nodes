@@ -244,9 +244,11 @@ const listHeader = logListHeader( {
  * the whole `errors.*` glob. A bare offset resolves against the last segment
  * the view received, falling back to the browsed one.
  *
+ * @param {Object}   props                    Component props.
+ * @param {?Element} props.headerControlsSlot Shell header slot to portal the toolbar into; null while it is pending. DashboardShell is its only caller and always supplies it.
  * @return {import('react').ReactElement} Rendered component.
  */
-export default function ErrorLog() {
+export default function ErrorLog( { headerControlsSlot } ) {
 	// Mount the graph; it returns the controls and the browse model.
 	const { setPaused, clear, step, browse, setFilter } = useErrorLogGraph();
 
@@ -260,8 +262,8 @@ export default function ErrorLog() {
 	return (
 		<LogStreamViewer
 			className="event-logger-error-log"
+			headerControlsSlot={ headerControlsSlot }
 			ariaLabel={ __( 'Error log', 'newspack-event-logger-nodes' ) }
-			title={ __( 'Error Log', 'newspack-event-logger-nodes' ) }
 			pickerOptions={ browse.pickerOptions }
 			selectedKey={ browse.selectedPartition }
 			onPick={ browse.selectPartition }

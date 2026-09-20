@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.99.3] - 2026-09-20
+
+### Changed
+
+- **Every dashboard is headed by the substrate's shared header.** `DashboardShell` renders it, so the Performance Overview, Gyroscope, Request Log and Error Log read as the same product as the station: one `NEWSPACK::NODES` wordmark, a subtitle naming which of the four surfaces you are on, and the version of the plugin that owns it — this one, where the localized `version` had been the substrate's.
+- **Each dashboard's toolbar sits in that header, beside the name of the page it drives.** The shell publishes the header's controls slot to `children`, which is now called with it, and each dashboard places its controls through the shared `HeaderSlot` — the Overview's Ask, search and refresh, the Gyroscope's legend, counts, refresh and Cols, and the two logs' whole toolbars.
+- **The shell paints through the substrate's `newspack-nodes-page-surface`**, retiring the rule it kept of its own. The reason is unchanged: the shell is positioned rather than flowed, so the admin page underneath — an admin notice included — shows through a transparent one.
+
+### Removed
+
+- **Each dashboard's own page title.** The header names the surface, so the h1 below it said the same thing a second time: `Event Logger - Performance Dashboard` over `Performance Overview`, `In-Flight Requests` over `Gyroscope`, and `Request Log` and `Error Log` over themselves. The Overview's `Overview` card heading went with them.
+- **The Overview's `.event-logger-admin-wrap` padding**, and with it the four wrapper class names that styled nothing once the substrate dropped the `max-width` and `margin-top` behind them.
+
+
 ## [0.99.2] - 2026-09-19
 
 ### Changed

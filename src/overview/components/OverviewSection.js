@@ -19,7 +19,6 @@ import { __, _n, sprintf } from '@wordpress/i18n';
 import {
 	Card,
 	CardBody,
-	CardHeader,
 	SelectControl,
 	TextControl,
 } from '@wordpress/components';
@@ -33,6 +32,7 @@ import CategoryTimeChart from '../CategoryTimeChart';
 import { ProfileWithCaption } from '../RequestProfile';
 import BreakdownControls from './BreakdownControls';
 import { AskButton } from './AskPanel';
+import { HeaderSlot } from '@newspack-nodes/shared/components/HeaderSlot';
 import HeadlineStats from './HeadlineStats';
 
 /**
@@ -63,6 +63,7 @@ import HeadlineStats from './HeadlineStats';
  * @param {Object|null}             props.breakdownData          Time series for the selected breakdown dimension; null until that dimension's reply lands.
  * @param {Object|null}             props.categoryData           Category time series, or null.
  * @param {Object}                  props.ask                    The `useAsk` state driving the Ask trigger.
+ * @param {?Element}                [props.headerControlsSlot]   Shell header slot to portal the Ask, search and refresh controls into; null while it is pending, undefined renders them inline.
  * @return {import('react').ReactElement|null} Rendered section, or null without overview data.
  */
 export default function OverviewSection( {
@@ -90,6 +91,7 @@ export default function OverviewSection( {
 	breakdownData,
 	categoryData,
 	ask,
+	headerControlsSlot,
 } ) {
 	// One server offers no choice, so the Server select needs two.
 	const isMultiServer = ( serverNames?.length ?? 0 ) >= 2;
@@ -122,11 +124,9 @@ export default function OverviewSection( {
 	return (
 		<div className="event-logger-performance-overview">
 			<Card>
-				<CardHeader>
-					<h2>{ __( 'Overview', 'newspack-event-logger-nodes' ) }</h2>
+				<HeaderSlot slot={ headerControlsSlot }>
 					<div
 						style={ {
-							marginLeft: 'auto',
 							display: 'flex',
 							alignItems: 'center',
 							gap: '16px',
@@ -212,7 +212,7 @@ export default function OverviewSection( {
 							/>
 						</div>
 					</div>
-				</CardHeader>
+				</HeaderSlot>
 				{ Array.isArray( searchResults ) &&
 					searchResults.length > 0 && (
 						<div className="event-logger-search-results">

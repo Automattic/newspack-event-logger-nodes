@@ -88,15 +88,19 @@ import './styles/charts.scss';
  * It renders a spinner until the `overview:view` slice resolves — until then the
  * graph may not even be mounted, and an empty dashboard would read as no data.
  *
- * @param {Object}                    props         Component props.
- * @param {(message: string) => void} props.onError Ask-failure reporter, handed
- *                                                  straight to `useAsk`, which
- *                                                  calls it with the reason the
- *                                                  ask failed. The page renders
- *                                                  that as a dismissible notice.
+ * @param {Object}                    props                      Component props.
+ * @param {(message: string) => void} props.onError              Ask-failure reporter, handed
+ *                                                               straight to `useAsk`, which
+ *                                                               calls it with the reason the
+ *                                                               ask failed. The page renders
+ *                                                               that as a dismissible notice.
+ * @param {?Element}                  [props.headerControlsSlot] Shell header slot to portal the Ask, search and refresh controls into; null while it is pending, undefined renders them inline.
  * @return {import('react').ReactElement} Rendered component.
  */
-export default function PerformanceDashboard( { onError } ) {
+export default function PerformanceDashboard( {
+	onError,
+	headerControlsSlot,
+} ) {
 	// UI and control state only; the four view-node slices own every datum.
 	const [ requestSort, setRequestSort ] = useState( {
 		field: 'timestamp',
@@ -874,6 +878,7 @@ export default function PerformanceDashboard( { onError } ) {
 				onSelectResult={ selectSearchResult }
 				refreshInterval={ refreshInterval }
 				setRefreshInterval={ setRefreshInterval }
+				headerControlsSlot={ headerControlsSlot }
 				chartMetric={ chartMetric }
 				setChartMetric={ setChartMetric }
 				chartBreakdown={ activeBreakdown }

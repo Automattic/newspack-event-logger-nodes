@@ -100,13 +100,22 @@ describe( 'Inflight', () => {
 		} );
 	};
 
-	it( 'renders the In-Flight Requests heading', () => {
+	it( 'leaves the page heading to the shell', () => {
 		registerViewFixture();
 		const { container } = mount();
-		expect( container.textContent ).toContain( 'In-Flight Requests' );
+		// DashboardShell's header already names this surface; a second
+		// heading here is the same words twice down the page.
 		expect(
-			container.querySelector( '.event-logger-inflight-header' ).className
-		).toBe( 'event-logger-inflight-header newspack-nodes-inflight-header' );
+			container.querySelector( '.newspack-dashboard-title' )
+		).toBeNull();
+		// The legend and toolbar go to the shell header, so no second bar is
+		// left behind holding them.
+		expect(
+			container.querySelector( '.event-logger-inflight-header' )
+		).toBeNull();
+		expect(
+			container.querySelector( '.event-logger-inflight-legend' )
+		).not.toBeNull();
 	} );
 
 	it( 'keeps the toolbar outside the canonical bordered rowgroup', () => {
