@@ -92,6 +92,7 @@ describe( 'ErrorLog', () => {
 
 	beforeEach( () => {
 		Core.reset();
+		window.localStorage.clear();
 		logRowListProps = undefined;
 		setPaused = jest.fn();
 		useErrorLogGraph.mockClear();
@@ -475,6 +476,11 @@ describe( 'ErrorLog', () => {
 				clear: jest.fn(),
 				browse,
 			} );
+			// The rail is folded until a reader opens it.
+			window.localStorage.setItem(
+				'newspack-nodes-rail:event-logger-error-log',
+				'open'
+			);
 			const { container } = mount();
 			expect(
 				container.querySelector( '[data-testid="log-browser"]' )

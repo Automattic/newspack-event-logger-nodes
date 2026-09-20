@@ -555,6 +555,11 @@ describe( 'RequestStream', () => {
 				clear: jest.fn(),
 				browse,
 			} );
+			// The rail is folded until a reader opens it.
+			window.localStorage.setItem(
+				'newspack-nodes-rail:event-logger-request-stream',
+				'open'
+			);
 			const { container } = mount();
 			expect(
 				container.querySelector( '[data-testid="log-browser"]' )
