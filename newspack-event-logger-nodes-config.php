@@ -155,10 +155,8 @@ return [
 	//	// Lifecycle.
 	//	'after_setup_theme',
 	//	'init',
-	//	'parse_query',
 	//	'parse_request',
 	//	'plugins_loaded',
-	//	'pre_get_posts',
 	//	'send_headers',
 	//	'setup_theme',
 	//	'shutdown',
@@ -179,12 +177,9 @@ return [
 	//	'post_class',
 	//	'the_content',
 	//	'the_permalink',
-	//	'the_posts',
 	//	// Query & posts.
 	//	'found_posts',
 	//	'found_posts_query',
-	//	// Taxonomies & terms.
-	//	'get_terms',
 	//	// REST API.
 	//	'rest_api_init',
 	//	'rest_post_dispatch',
