@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.99.5] - 2026-09-20
+
 ### Changed
 
 - **The Request Log and the Error Log open with the browse rail folded**, following the substrate's `LogStreamViewer`. The toggle is unchanged, and a rail a reader has opened is remembered per dashboard.
