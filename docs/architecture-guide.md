@@ -150,7 +150,7 @@ It measures each plugin's file load by differencing one [`plugin_loaded`](https:
 
 Three details of the transport pairs are easy to get wrong. [`WP_Http::request()`](https://developer.wordpress.org/reference/classes/wp_http/request/) returns a short-circuit with a bare `return $pre;` and never fires the closing action, so a span opened on a non-false `$preempt` would never close and would adopt every row after it. `http_end` closes the label it OPENED rather than one re-derived from the URL, which a redirect would change. And enabling `log_queries` defines `SAVEQUERIES` for the life of the process, since a constant cannot be withdrawn.
 
-The `origin_frame()` walk climbs past the transport class, up to `TRANSPORT_ORIGIN_DEPTH` (16) frames, to the code that asked, because "which of my code paths makes this call, how many times" is the reader's question. It climbs whatever the rule's `trace_callers` says: that budget attaches `caller` to hook start entries alone, so `l` is the only field on a transport span that names who asked.
+The `origin_frame()` walk climbs past the transport class, up to `TRANSPORT_ORIGIN_DEPTH` (16) frames, to the code that asked, because "which of my code paths makes this call, how many times" is the reader's question. It climbs whatever the rule's `trace_callers` says, and that budget reaches a transport span as well as a hook: `l` names one frame on every call, `caller` carries the deeper chain while the budget for that statement shape or URL lasts.
 
 The four terminal codes, `F`, `A`, `T` and `I`, are `Request_Builder_Node::ERROR_STATUSES`.
 
@@ -173,7 +173,7 @@ The four terminal codes, `F`, `A`, `T` and `I`, are `Request_Builder_Node::ERROR
 | `log_http` | `true` | Time every outbound HTTP request as a span |
 | `log_queries` | `false` | Time every SQL query as a span; defines `SAVEQUERIES` and costs two entries per query |
 | `trace_hooks` | `false` | Name the calling frame on each hook entry's `l`, splitting one hook into a flame node per caller |
-| `trace_callers` | `0` | Deep caller chains one hook may record per request, on its start entry's `caller` field; a stored `true` decodes to `Rule::TRACE_CALLERS_DEFAULT` (20) |
+| `trace_callers` | `0` | Deep caller chains recorded per request on a span's start entry as `caller`, budgeted per hook name, per query statement shape and per outbound URL; a stored `true` decodes to `Rule::TRACE_CALLERS_DEFAULT` (20) |
 
 The constructor throws when the pattern is empty, and when `hooks` and `hooks_in` contradict each other — a null hook list means the pointer tier and a list means inline, with no third reading.
 
