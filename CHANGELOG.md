@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.100.1] - 2026-09-21
+
 ### Changed
 
 - **The header sits outside the scroller.** The shell box scrolled as a whole, so the header scrolled away with the rows and the scrollbar ran the full height, through the header's own band. The box clips now and the area below the header scrolls; `overflowY` keeps its meaning one level down, on that area. The page's ask target and its ring moved with it, so the ring traces what a reader sees move.
