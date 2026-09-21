@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.100.2] - 2026-09-21
+
+### Fixed
+
+- **The debug overlay draws over this plugin's dialogs again.** The fix is the substrate's — it portals the overlay to the body rather than leaving it inside a shell whose `z-index: 99` trapped it under the URL and request detail dialogs — but the overlay is INLINED into each consumer's bundle, so it reaches a reader only when that bundle is rebuilt. This release is that rebuild, against newspack-nodes 2.65.1.
+
 ## [0.100.1] - 2026-09-21
 
 ### Changed
