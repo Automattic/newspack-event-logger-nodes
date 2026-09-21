@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.100.5] - 2026-09-21
+
 ### Removed
 - `Rule::TRACE_CALLERS_DEFAULT`. It was never a default: the editor seeds its
   field from the stored value or 0, `Rule::to_array()` writes an int, and
