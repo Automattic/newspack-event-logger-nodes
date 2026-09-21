@@ -2168,12 +2168,15 @@ class FlameBuilderTest extends TestCase {
 				'spam hook' => [ 'time' => 0.1, 'count' => 200, 'entries' => [] ],
 			],
 		] ) );
-		// Another partition holds the lock; it lapses while the stop waits.
+		// Another partition holds the lock, and only the seam below releases
+		// it. The TTL must outlive the test: the double expires at
+		// `time() + ttl` at second granularity, so a one-second hold added
+		// near a second boundary is already gone when the stop looks, and the
+		// lock is taken on the first try without ever polling.
 		$lock = self::scoped( 'evlog:auto_disable_lock' );
-		$mc->add( $lock, 'other-worker', 1 );
+		$mc->add( $lock, 'other-worker', 300 );
 		// The seam IS the wait: the sibling's hold ends on the first poll, so
-		// this proves the stop outwaits a lock without spending a real second
-		// on the clock the fake expires against.
+		// this proves the stop outwaits a lock without spending real time.
 		$polls                          = 0;
 		Flame_Builder_Node::$usleep_fn = static function () use ( $mc, $lock, &$polls ): void {
 			++$polls;
