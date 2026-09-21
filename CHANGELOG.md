@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- `Rule::TRACE_CALLERS_DEFAULT`. It was never a default: the editor seeds its
+  field from the stored value or 0, `Rule::to_array()` writes an int, and
+  nothing in the plugin ever stored `true`. Its one consumer was
+  `to_trace_count()` decoding a literal `true`, which now reads as a count of
+  1 — the value that, under the per-caller budget, buys one chain from every
+  caller.
+
+### Fixed
+- The rule editor's "Trace hook callers" row collapsed its help text to one
+  word per line. `.rule-edit-trace-count` set `white-space: nowrap` across the
+  whole block, so its min-content width was the suffix sentence on one line and
+  no flex shrink could go below it, while the checkbox beside it sat at
+  `flex: 1` with a basis of 0. The suffix wraps now, the checkbox has a
+  320px floor, and the row wraps below that.
+
 ### Changed
 - `docs/img/dec-provenance-knobs.png` and `dec-http-span.png` regenerated, and
   `scripts/render-diagram.sh` added so the next one is not hand-captured: it

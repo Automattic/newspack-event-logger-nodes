@@ -311,7 +311,7 @@ describe( 'RuleEditModal — log rule fields', () => {
 	} );
 
 	test( 'editing the backtrace count is reflected in the saved draft', () => {
-		// 7 is distinct from 0 (off) and from Rule::TRACE_CALLERS_DEFAULT (20).
+		// 7 is distinct from 0 (off) and from the 1 a stored `true` decodes to.
 		mount( { ...LOG_RULE, trace_hooks: true } );
 		setInput( inDialog( 'input[name="rule-trace-callers"]' ), '7' );
 		click( saveButton() );

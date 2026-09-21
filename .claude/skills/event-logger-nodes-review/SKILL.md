@@ -187,7 +187,7 @@ Four flags on `Rule` gate instrumentation, and their defaults differ because the
 | `log_http` | on (absent means on) | Two `add_filter` calls per request; two entries per outbound call |
 | `log_queries` | off | Two entries per QUERY, and it turns `SAVEQUERIES` on |
 | `trace_hooks` | off | One shallow backtrace per hook firing, ~0.9µs |
-| `trace_callers` | 0 | A formatted stack per span, capped per HOOK, QUERY SHAPE and URL at the number the rule names; a stored `true` decodes to `Rule::TRACE_CALLERS_DEFAULT` (20) |
+| `trace_callers` | 0 | A formatted stack per span, capped at the number the rule names per CALLER of each hook, query shape and URL; a stored `true` is a count of 1 |
 
 Three invariants a diff must keep. **The HTTP pair is deliberately unbalanced**: `WP_Http::request()` short-circuits with a bare `return $pre;` and never fires `http_api_debug`, so `http_start` binds at `PHP_INT_MAX` and opens nothing when `$preempt` is not false. **`query_end()` drains `$wpdb->queries`**, which is why `log_queries` cannot be always-on — anything else reading that array would find it empty. **Instrumentation never CONSTRUCTS the logger**: all four callbacks ask `Log_Manager::has_instance()` first, or a binding that outlives its request builds a logger inside the callback and stamps `process (start)` with the wrong moment.
 
