@@ -1,11 +1,5 @@
-import {
-	useCallback,
-	useLayoutEffect,
-	useRef,
-	useState,
-} from '@wordpress/element';
+import { useState } from '@wordpress/element';
 import useAdminMenuWidth from '@newspack-nodes/shared/hooks/useAdminMenuWidth';
-import { useContainerRefit } from '@newspack-nodes/shared/hooks/useContainerRefit';
 import Header from '@newspack-nodes/shared/components/Header';
 import DebugOverlay from '@newspack-nodes/debug-overlay';
 import ThemedRoot from './ThemedRoot';
@@ -32,11 +26,12 @@ import { ASK_PAGE_ATTR } from '@newspack-nodes/shared/hooks/useAskPicker';
  * so folding the menu slides the page instead of reflowing it, and the eased
  * transition keeps the two in step.
  *
- * It is a flex COLUMN, as the station's box is. A block box would leave a
- * dashboard root's `height: 100%` resolving against the whole box while the
- * header pushed it down by the header's height — clipped where the caller
- * clips, a permanent scrollbar where it scrolls. A root grows into what the
- * header leaves instead.
+ * Both boxes are flex COLUMNS, as the station's is. The outer one is what
+ * gives the header its own height and hands the rest to the scrolling area;
+ * the scrolling area is what a dashboard root grows into, because every root
+ * here declares `flex: 1 1 auto; min-height: 0` and a block parent ignores
+ * both — the rows then size to their content, and a virtualized list that
+ * measures its own `clientHeight` never scrolls at all.
  *
  * The box paints its own backdrop, through the substrate's shared
  * `newspack-nodes-page-surface` class. It is positioned rather than flowed, so
@@ -50,18 +45,24 @@ import { ASK_PAGE_ATTR } from '@newspack-nodes/shared/hooks/useAskPicker';
  * that ancestor. Both its launcher and its panel are `position: fixed`, so
  * mounting the overlay inside a box that may clip costs it nothing.
  *
- * `overflowY` is required, not defaulted: a dashboard whose body owns its own
- * scroller must clip here, and one without an inner scroller must scroll here.
- * Getting it wrong is a double scrollbar or a truncated page, so each caller
- * states which it is. `overflowX` is not a caller's choice — the box always
- * clips it, so anything wider than the viewport scrolls in its own container.
+ * The HEADER sits outside the scroller. It is chrome rather than content, so
+ * it holds its place while the page moves, and the scrollbar runs beside the
+ * rows instead of through the header's own band. The box therefore clips, and
+ * the area below the header is what scrolls.
+ *
+ * `overflowY` is required, not defaulted, and applies to that area: a
+ * dashboard whose body owns its own scroller must clip there, and one without
+ * an inner scroller must scroll there. Getting it wrong is a double scrollbar
+ * or a truncated page, so each caller states which it is. `overflowX` is not a
+ * caller's choice — it always clips, so anything wider scrolls in its own
+ * container.
  *
  * @param {Object}                                        props                 Component props.
  * @param {string}                                        props.storageKey      Debug-overlay key; scopes the persisted panel layout to this page, so no two dashboards may share one.
  * @param {string}                                        props.subtitle        Names this dashboard in the header, beside the one shared wordmark.
- * @param {import('react').CSSProperties['overflowY']}    props.overflowY       Vertical overflow for the shell box.
+ * @param {import('react').CSSProperties['overflowY']}    props.overflowY       Vertical overflow for the scrolling area below the header.
  * @param {(slot: ?Element) => import('react').ReactNode} props.children        Called with the header's controls slot — null until it mounts — and returns the dashboard root(s) to frame.
- * @param {string}                                        [props.askDescriptor] The `?` picker descriptor for the page itself, on the box whose outline traces it. A page with no brief of its own passes none and stays unaskable.
+ * @param {string}                                        [props.askDescriptor] The `?` picker descriptor for the page itself, on the scrolling area the ring traces. A page with no brief of its own passes none and stays unaskable.
  * @return {import('react').ReactElement} Rendered component.
  */
 export default function DashboardShell( {
@@ -72,63 +73,19 @@ export default function DashboardShell( {
 	children,
 } ) {
 	const menuWidth = useAdminMenuWidth();
-	// @longform One source for the box: the style below positions it, and the
-	// custom properties hand the same numbers to the `?` picker's ring, which
-	// is an overlay because an outline here is painted over by the children —
-	// measured, not assumed.
-	const pageTop = '32px';
-	const pageLeft = `${ menuWidth }px`;
-	const surfaceRef = useRef( null );
-	const [ gutter, setGutter ] = useState( 0 );
-
-	// The scrollbar's own width, measured; only a ringed page reads it.
-	const measureGutter = useCallback( () => {
-		const el = surfaceRef.current;
-		if ( el ) {
-			setGutter( el.offsetWidth - el.clientWidth );
-		}
-	}, [] );
-
-	useLayoutEffect( () => {
-		if ( askDescriptor ) {
-			measureGutter();
-		}
-	}, [ askDescriptor, measureGutter ] );
-
-	// The bar comes and goes with the content; 0ms measures in that frame.
-	useContainerRefit(
-		() => ( askDescriptor ? surfaceRef.current : null ),
-		measureGutter,
-		[ askDescriptor ],
-		0
-	);
 	// Null until the header's slot div mounts; HeaderSlot withholds until then.
 	const [ headerControlsSlot, setHeaderControlsSlot ] = useState( null );
 
 	return (
 		<ThemedRoot>
-			{ /* @longform The page's own ask target is THIS box: it is fixed at
-			     the dashboard's visible rectangle, so its outline traces what
-			     the brief answers for. The scroller inside is content-height,
-			     and an outline round that has its edges off screen. */ }
 			<div
-				ref={ surfaceRef }
 				className="newspack-nodes-page-surface"
-				{ ...( askDescriptor
-					? {
-							'data-ask': askDescriptor,
-							[ ASK_PAGE_ATTR ]: '',
-					  }
-					: {} ) }
 				style={ {
 					position: 'fixed',
-					top: pageTop,
-					left: pageLeft,
+					top: '32px',
+					left: `${ menuWidth }px`,
 					right: '0',
 					bottom: '0',
-					'--nodes-page-top': pageTop,
-					'--nodes-page-left': pageLeft,
-					'--nodes-page-gutter': `${ gutter }px`,
 					zIndex: 99, // Below WP admin menu hover (9990+)
 					transition: 'left 0.1s ease-in-out',
 					margin: 0,
@@ -137,14 +94,37 @@ export default function DashboardShell( {
 					display: 'flex',
 					flexDirection: 'column',
 					overflowX: 'hidden',
-					overflowY,
+					overflowY: 'hidden',
 				} }
 			>
 				<Header
 					subtitle={ subtitle }
 					controlsSlotRef={ setHeaderControlsSlot }
 				/>
-				{ children( headerControlsSlot ) }
+				{ /* @longform The page's own ask target is what SCROLLS: the
+				     reader's page is the area under the header, so that is
+				     what the brief answers for and what the ring traces. */ }
+				<div
+					className="newspack-nodes-page-content"
+					{ ...( askDescriptor
+						? {
+								'data-ask': askDescriptor,
+								[ ASK_PAGE_ATTR ]: '',
+						  }
+						: {} ) }
+					style={ {
+						flex: '1 1 auto',
+						// A flex item's floor is its content; 0 lets it clip.
+						minHeight: 0,
+						// The roots below are flex items; this is their column.
+						display: 'flex',
+						flexDirection: 'column',
+						overflowX: 'hidden',
+						overflowY,
+					} }
+				>
+					{ children( headerControlsSlot ) }
+				</div>
 				<DebugOverlay storageKey={ storageKey } />
 			</div>
 		</ThemedRoot>

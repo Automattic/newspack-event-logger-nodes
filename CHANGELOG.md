@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The header sits outside the scroller.** The shell box scrolled as a whole, so the header scrolled away with the rows and the scrollbar ran the full height, through the header's own band. The box clips now and the area below the header scrolls; `overflowY` keeps its meaning one level down, on that area. The page's ask target and its ring moved with it, so the ring traces what a reader sees move.
+- **The dashboard shell publishes no ring geometry.** It handed the substrate's ring three custom properties and a scrollbar gutter it measured with a ResizeObserver; the ring measures the box itself now, so the shell is back to positioning one box. `AskPanel` mounts the ring while the picker is armed.
+
 ## [0.100.0] - 2026-09-20
 
 ### Added

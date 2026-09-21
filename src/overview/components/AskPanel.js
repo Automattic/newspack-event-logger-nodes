@@ -22,6 +22,7 @@
 import { useCallback, useEffect, useRef, useState } from '@wordpress/element';
 import { __, sprintf } from '@wordpress/i18n';
 import Modal from '@newspack-nodes/shared/components/Modal';
+import AskPageRing from '@newspack-nodes/shared/components/AskPageRing';
 import {
 	ASK_TRIGGER_ATTR,
 	useAskPicker,
@@ -256,7 +257,7 @@ function Finding( { finding } ) {
  *                                         disarms with a brief in hand.
  */
 export default function AskPanel( { ask } ) {
-	const { briefs, open, close } = ask;
+	const { active, briefs, open, close } = ask;
 	const [ copied, setCopied ] = useState( false );
 
 	// Each fresh answer is its own thing to copy.
@@ -276,8 +277,11 @@ export default function AskPanel( { ask } ) {
 			.then( () => setCopied( true ) );
 	}, [ markdown ] );
 
+	// @longform The ring is ARMED-state UI, so it lives here rather than with
+	// the brief: this component is mounted for the page's life, and `open` is
+	// `! active` by definition, so the two never draw at once.
 	if ( ! open || 0 === briefs.length ) {
-		return null;
+		return <AskPageRing active={ active } />;
 	}
 
 	// @longform Summoned FROM the URL and request detail views, which are
