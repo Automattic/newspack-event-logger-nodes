@@ -1033,6 +1033,31 @@ describe( 'PerformanceDashboard', () => {
 		unmount();
 	} );
 
+	// @longform The picker arms, and the page keeps polling underneath it: the
+	// row under the pointer is replaced between hover and click, the `?`
+	// cursor goes stale until the window is re-entered, and the brief
+	// describes numbers the reader never saw. A modal already holds the poll
+	// for the same reason; being asked about is the same reason.
+	it( 'holds the poll while the picker is armed', async () => {
+		mockView = loadedView();
+		const { unmount } = renderComponent(
+			React.createElement( PerformanceDashboard, { onError: jest.fn() } )
+		);
+		await flushEffects();
+
+		expect( mockGraphOpts.askActive ).toBe( false );
+
+		// OverviewSection is mocked here, so the trigger it renders is not on
+		// the page: the picker is armed through the `ask` state the dashboard
+		// hands it, which is the same object the button calls `start` on.
+		await act( async () => {
+			globalThis.__overviewProps.ask.start();
+		} );
+
+		expect( mockGraphOpts.askActive ).toBe( true );
+		unmount();
+	} );
+
 	it( 'never renders an empty modal for a request that has not loaded', async () => {
 		// Both body sections gate on `selectedRequest`: one needs it set AND
 		// the detail present, the other needs it unset. A selected request

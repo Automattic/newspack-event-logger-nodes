@@ -581,6 +581,33 @@ describe( 'usePerformanceGraph — timer suspension on modal open / tab visibili
 		expect( Core.node( 'url-detail:timer' ).mode ).toBe( 'router' );
 	} );
 
+	// The picker holds the poll for the modal's reason: a page that repaints
+	// under a stationary pointer swaps the row being aimed at, strands the `?`
+	// cursor on a node that no longer exists, and answers about numbers the
+	// reader never saw. Asserted on the Timer's own mode, as the modal case
+	// above is — the poll is the hitchhike, so stopping it IS the hold.
+	test( 'an armed picker holds the overview poll, and disarming resumes it', async () => {
+		const wire = installWire( {} );
+		const { rerender } = renderHook( ( p ) => usePerformanceGraph( p ), {
+			initialProps: { askActive: false },
+		} );
+		await act( async () => {} );
+		expect( Core.node( 'performance:timer' ).mode ).toBe( 'router' );
+
+		await act( async () => {
+			rerender( { askActive: true } );
+		} );
+		expect( Core.node( 'performance:timer' ).mode ).not.toBe( 'router' );
+
+		wire.batches.length = 0;
+		await act( async () => {
+			rerender( { askActive: false } );
+		} );
+		expect( Core.node( 'performance:timer' ).mode ).toBe( 'router' );
+		// A held poll leaves the visible page stale, so release refreshes it.
+		expect( findVerb( wire.batches, 'overview' ) ).toBeTruthy();
+	} );
+
 	test( 'closing the last detail modal immediately re-fetches overview + urls (performance:timer was paused)', async () => {
 		const wire = installWire( {
 			dump_url: { last_modified: 1, requests: [] },

@@ -47,13 +47,25 @@ import { askClaudeUrl, briefToMarkdown, clipboardBrief } from '../askBrief';
  * @param {Function} [options.onError]      Called with a message when an ask fails.
  * @param {string}   [options.serverFilter] Server the briefs are scoped to;
  *                                          '' is every server.
+ * @param {?Object}  [options.urlFilters]   The url filters the server echoed,
+ *                                          which the `overview:` brief answers
+ *                                          for: a page brief quoting numbers
+ *                                          the reader cannot see describes a
+ *                                          different site than the one on
+ *                                          screen. Every other descriptor
+ *                                          names one thing, and a filtered
+ *                                          view of one thing is that thing.
  * @return {{active: boolean, start: Function, cancel: Function, briefs: Object[], open: boolean, close: Function}}
  *   The mode and what it gathered: `start` and `cancel` arm and disarm the
  *   picker, `briefs` holds one assembled reply per pick in arrival order,
  *   `open` says the picker is done and something arrived, and `close` discards
  *   the selection.
  */
-export function useAsk( { onError, serverFilter = '' } = {} ) {
+export function useAsk( {
+	onError,
+	serverFilter = '',
+	urlFilters = null,
+} = {} ) {
 	const [ briefs, setBriefs ] = useState( [] );
 
 	const onErrorRef = useRef( onError );
@@ -87,15 +99,26 @@ export function useAsk( { onError, serverFilter = '' } = {} ) {
 
 	const handlePick = useCallback(
 		( descriptors ) => {
-			// A brief under a server's name must not quote site-wide numbers.
+			// @longform No brief may quote numbers outside the scope it was
+			// asked in, so all four filters come from ONE source: the set the
+			// visible rows were fetched under, falling back to the live pick
+			// before the first reply. A server read live beside three echoed
+			// filters names a server the table is not showing yet.
+			const server = urlFilters?.server ?? serverFilter;
 			ask(
-				formatCommandArgs(
-					descriptors,
-					serverFilter ? { server: serverFilter } : {}
-				)
+				formatCommandArgs( descriptors, {
+					...( server ? { server } : {} ),
+					...( urlFilters?.search
+						? { search: urlFilters.search }
+						: {} ),
+					...( urlFilters?.errors_only ? { errors_only: '1' } : {} ),
+					...( urlFilters?.include_workers
+						? { include_workers: '1' }
+						: {} ),
+				} )
 			);
 		},
-		[ ask, serverFilter ]
+		[ ask, serverFilter, urlFilters ]
 	);
 
 	const { active, start, cancel } = useAskPicker( {
@@ -293,7 +316,7 @@ export default function AskPanel( { ask } ) {
 					key={ `${ brief.subject }-${ i }` }
 					className="event-logger-ask__section"
 				>
-					{ ( brief.findings ?? [] ).length > 0 ? (
+					{ ( brief.findings ?? [] ).length > 0 && (
 						<ul className="event-logger-ask__findings">
 							{ brief.findings.map( ( finding, j ) => (
 								<Finding
@@ -302,14 +325,19 @@ export default function AskPanel( { ask } ) {
 								/>
 							) ) }
 						</ul>
-					) : (
-						<p className="newspack-nodes-status">
-							{ __(
-								'Nothing stands out in the numbers here.',
-								'newspack-event-logger-nodes'
-							) }
-						</p>
 					) }
+					{ /* @longform An empty list looked and found nothing; an
+					     absent one had no detector run over it, and saying
+					     nothing stands out there is a claim nobody made. */ }
+					{ Array.isArray( brief.findings ) &&
+						0 === brief.findings.length && (
+							<p className="newspack-nodes-status">
+								{ __(
+									'Nothing stands out in the numbers here.',
+									'newspack-event-logger-nodes'
+								) }
+							</p>
+						) }
 				</div>
 			) ) }
 

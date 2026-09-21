@@ -282,6 +282,10 @@ function urlsArgs( { urlParams, serverFilter } ) {
  * @param {string}  [opts.serverFilter]     Server scope; '' means every
  *                                          server.
  * @param {string}  [opts.chartBreakdown]   The chart's active dimension.
+ * @param {boolean} [opts.askActive]        The `?` picker is armed, which holds
+ *                                          the poll exactly as an open modal
+ *                                          does: the reader is aiming at a row,
+ *                                          and a repaint moves it.
  * @param {string}  [opts.refreshInterval]  Poll cadence in ms, as a STRING —
  *                                          `SelectControl` compares its option
  *                                          values as strings. A value
@@ -309,6 +313,7 @@ export function usePerformanceGraph( opts = {} ) {
 		serverFilter = '',
 		chartBreakdown = 'status',
 		refreshInterval = String( DEFAULT_REFRESH_INTERVAL_MS ),
+		askActive = false,
 		requestPartition = null,
 		selectedUrl = null,
 		selectedRequest = null,
@@ -433,8 +438,10 @@ export function usePerformanceGraph( opts = {} ) {
 		},
 		timerName: 'performance:timer',
 		teeName: 'performance:tee',
-		// Suspend offscreen overview/urls poll while any detail modal is open.
-		paused: !! ( selectedUrl || selectedRequest ),
+		// @longform Suspend the offscreen overview/urls poll while a detail
+		// modal is open, and while the `?` picker is armed: a page repainting
+		// under a stationary pointer swaps the row being aimed at.
+		paused: !! ( selectedUrl || selectedRequest || askActive ),
 		intervalMs,
 	} );
 
@@ -521,15 +528,21 @@ export function usePerformanceGraph( opts = {} ) {
 		pokeOverviewUrls();
 	}, [ serverFilter, chartBreakdown, pokeOverviewUrls ] );
 
-	// The poll pauses while a modal is open, so refresh when the last closes.
-	const modalWasOpen = useRef( false );
+	// Every hold leaves the page stale, so each refreshes on release.
+	const wasHeld = useRef( false );
 	useEffect( () => {
-		const modalOpen = !! ( selectedUrl || selectedRequest );
-		if ( modalWasOpen.current && ! modalOpen && isPageVisible ) {
+		const held = !! ( selectedUrl || selectedRequest || askActive );
+		if ( wasHeld.current && ! held && isPageVisible ) {
 			pokeOverviewUrls();
 		}
-		modalWasOpen.current = modalOpen;
-	}, [ selectedUrl, selectedRequest, isPageVisible, pokeOverviewUrls ] );
+		wasHeld.current = held;
+	}, [
+		selectedUrl,
+		selectedRequest,
+		askActive,
+		isPageVisible,
+		pokeOverviewUrls,
+	] );
 
 	// Selection-driven dump_url fetch on open, and on a change of scope.
 	useEffect( () => {

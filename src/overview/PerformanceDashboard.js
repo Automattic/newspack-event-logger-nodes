@@ -245,6 +245,13 @@ export default function PerformanceDashboard( {
 		selectUrlRef.current( urlObj );
 	}, [] );
 
+	// @longform One picker, several doors. A `url:` or `request:` brief is
+	// about what is selected NOW, as `dump_url` is. The page's own brief is
+	// about the rows on screen, so it takes the echoed `urlFilters` — the
+	// filters those rows were fetched under — and the live pick only until
+	// the first reply. Above the graph, which holds its poll while armed.
+	const ask = useAsk( { onError, serverFilter, urlFilters } );
+
 	// The graph polls and publishes; this page's own verbs are below.
 	const { handleUrlParamsChange } = usePerformanceGraph( {
 		serverFilter,
@@ -253,13 +260,8 @@ export default function PerformanceDashboard( {
 		requestPartition,
 		selectedUrl,
 		selectedRequest,
+		askActive: ask.active,
 	} );
-
-	// @longform One picker, several doors. Live scope, like every other FETCH:
-	// `urls` and `dump_url` both ask for what is selected now, and a brief
-	// assembled for the previous one would contradict the modal it was asked
-	// from. The echoed `urlFilters` labels what is on screen, never steers.
-	const ask = useAsk( { onError, serverFilter } );
 
 	// Reset the search-sourced partition when leaving request detail.
 	useEffect( () => {

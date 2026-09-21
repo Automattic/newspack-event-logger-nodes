@@ -1,8 +1,15 @@
-import { useState } from '@wordpress/element';
+import {
+	useCallback,
+	useLayoutEffect,
+	useRef,
+	useState,
+} from '@wordpress/element';
 import useAdminMenuWidth from '@newspack-nodes/shared/hooks/useAdminMenuWidth';
+import { useContainerRefit } from '@newspack-nodes/shared/hooks/useContainerRefit';
 import Header from '@newspack-nodes/shared/components/Header';
 import DebugOverlay from '@newspack-nodes/debug-overlay';
 import ThemedRoot from './ThemedRoot';
+import { ASK_PAGE_ATTR } from '@newspack-nodes/shared/hooks/useAskPicker';
 
 /**
  * Fixed full-viewport chrome for a standalone dashboard page — the skin, the
@@ -49,33 +56,79 @@ import ThemedRoot from './ThemedRoot';
  * states which it is. `overflowX` is not a caller's choice — the box always
  * clips it, so anything wider than the viewport scrolls in its own container.
  *
- * @param {Object}                                        props            Component props.
- * @param {string}                                        props.storageKey Debug-overlay key; scopes the persisted panel layout to this page, so no two dashboards may share one.
- * @param {string}                                        props.subtitle   Names this dashboard in the header, beside the one shared wordmark.
- * @param {import('react').CSSProperties['overflowY']}    props.overflowY  Vertical overflow for the shell box.
- * @param {(slot: ?Element) => import('react').ReactNode} props.children   Called with the header's controls slot — null until it mounts — and returns the dashboard root(s) to frame.
+ * @param {Object}                                        props                 Component props.
+ * @param {string}                                        props.storageKey      Debug-overlay key; scopes the persisted panel layout to this page, so no two dashboards may share one.
+ * @param {string}                                        props.subtitle        Names this dashboard in the header, beside the one shared wordmark.
+ * @param {import('react').CSSProperties['overflowY']}    props.overflowY       Vertical overflow for the shell box.
+ * @param {(slot: ?Element) => import('react').ReactNode} props.children        Called with the header's controls slot — null until it mounts — and returns the dashboard root(s) to frame.
+ * @param {string}                                        [props.askDescriptor] The `?` picker descriptor for the page itself, on the box whose outline traces it. A page with no brief of its own passes none and stays unaskable.
  * @return {import('react').ReactElement} Rendered component.
  */
 export default function DashboardShell( {
 	storageKey,
 	subtitle,
 	overflowY,
+	askDescriptor = '',
 	children,
 } ) {
 	const menuWidth = useAdminMenuWidth();
+	// @longform One source for the box: the style below positions it, and the
+	// custom properties hand the same numbers to the `?` picker's ring, which
+	// is an overlay because an outline here is painted over by the children —
+	// measured, not assumed.
+	const pageTop = '32px';
+	const pageLeft = `${ menuWidth }px`;
+	const surfaceRef = useRef( null );
+	const [ gutter, setGutter ] = useState( 0 );
+
+	// The scrollbar's own width, measured; only a ringed page reads it.
+	const measureGutter = useCallback( () => {
+		const el = surfaceRef.current;
+		if ( el ) {
+			setGutter( el.offsetWidth - el.clientWidth );
+		}
+	}, [] );
+
+	useLayoutEffect( () => {
+		if ( askDescriptor ) {
+			measureGutter();
+		}
+	}, [ askDescriptor, measureGutter ] );
+
+	// The bar comes and goes with the content; 0ms measures in that frame.
+	useContainerRefit(
+		() => ( askDescriptor ? surfaceRef.current : null ),
+		measureGutter,
+		[ askDescriptor ],
+		0
+	);
 	// Null until the header's slot div mounts; HeaderSlot withholds until then.
 	const [ headerControlsSlot, setHeaderControlsSlot ] = useState( null );
 
 	return (
 		<ThemedRoot>
+			{ /* @longform The page's own ask target is THIS box: it is fixed at
+			     the dashboard's visible rectangle, so its outline traces what
+			     the brief answers for. The scroller inside is content-height,
+			     and an outline round that has its edges off screen. */ }
 			<div
+				ref={ surfaceRef }
 				className="newspack-nodes-page-surface"
+				{ ...( askDescriptor
+					? {
+							'data-ask': askDescriptor,
+							[ ASK_PAGE_ATTR ]: '',
+					  }
+					: {} ) }
 				style={ {
 					position: 'fixed',
-					top: '32px',
-					left: `${ menuWidth }px`,
+					top: pageTop,
+					left: pageLeft,
 					right: '0',
 					bottom: '0',
+					'--nodes-page-top': pageTop,
+					'--nodes-page-left': pageLeft,
+					'--nodes-page-gutter': `${ gutter }px`,
 					zIndex: 99, // Below WP admin menu hover (9990+)
 					transition: 'left 0.1s ease-in-out',
 					margin: 0,

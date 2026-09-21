@@ -96,6 +96,90 @@ test( 'the rule an edit would land on rides along', () => {
 	expect( md ).toContain( '/calendar' );
 } );
 
+// The page's brief was rendering as its own fetch pointers and nothing else:
+// `bodyLines` knew five subjects and answered the sixth with an empty list.
+test( 'an overview brief says what it is of, and what is on the page', () => {
+	const md = briefToMarkdown( {
+		subject: 'overview',
+		server: 'alpha.example',
+		scope: 'alpha.example',
+		filters: {
+			search: 'wp-admin',
+			errors_only: false,
+			include_workers: true,
+		},
+		stats: {
+			urls: 137,
+			requests: 4210,
+			avg_ms: 812.5,
+			avg_peak_mb: 44.25,
+			requests_per_second: 0.83,
+		},
+		urls: [
+			{
+				hash: '5efdf8a72d74',
+				url: '/wp-admin/post.php',
+				count: 90,
+				avg_ms: 3100,
+				max_ms: 32828.4,
+			},
+		],
+		categories: [
+			{ name: 'sql', avg_time_ms: 410, avg_count: 12.5 },
+			{ name: 'core', avg_time_ms: 90, avg_count: 0.075 },
+		],
+		caveat: 'c',
+	} );
+
+	expect( md ).toContain( 'alpha.example' );
+	expect( md ).toContain( 'wp-admin' );
+	expect( md ).toContain( 'workers included' );
+	expect( md ).toContain( '4,210 requests' );
+	expect( md ).toContain( '137 urls' );
+	// `num()` gives a sub-1 value three decimals, as it does everywhere else.
+	expect( md ).toContain( '0.830/s' );
+	expect( md ).toContain( '/wp-admin/post.php' );
+	expect( md ).toContain( '5efdf8a72d74' );
+	expect( md ).toContain( 'sql' );
+	// A board row's count is a per-request MEAN, so `\u00d70.075` reads as a
+	// multiplier of something and says nothing.
+	expect( md ).toContain( '12.5 calls/request' );
+	expect( md ).not.toContain( '\u00d70.075' );
+} );
+
+// `urls` answers totals: null where a server filter cannot be split out of
+// pre-split rows. A brief printing 0 there would read as an idle site.
+test( 'an overview brief with unscopable totals says so rather than zero', () => {
+	const md = briefToMarkdown( {
+		subject: 'overview',
+		server: 'spoke-01',
+		scope: 'spoke-01',
+		filters: {},
+		stats: null,
+		urls: [],
+		categories: [],
+		caveat: 'c',
+	} );
+
+	expect( md ).toContain( 'no per-server totals' );
+	expect( md ).not.toContain( '0 requests' );
+} );
+
+test( 'an overview brief with no server says it is the whole fleet', () => {
+	const md = briefToMarkdown( {
+		subject: 'overview',
+		server: '',
+		scope: 'every server',
+		filters: {},
+		stats: { requests: 7, avg_ms: 10 },
+		urls: [],
+		categories: [],
+		caveat: 'c',
+	} );
+
+	expect( md ).toContain( 'every server' );
+} );
+
 test( 'a URL with no rule says so rather than omitting the line', () => {
 	const md = briefToMarkdown( {
 		subject: 'url',

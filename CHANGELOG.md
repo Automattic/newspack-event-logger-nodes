@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.100.0] - 2026-09-20
+
+### Added
+
+- **The overview page is askable about itself.** `Ask_Assembler` gained an `overview:` descriptor, and `Performance_CI_Node::ask()` assembles it from the same `overview` and `urls` verbs the dashboard already draws: the site's traffic line, the busiest URLs, and where the time goes by category. It takes the CURRENT scope rather than the whole site — the selected server or the whole fleet, plus any active search and the errors-only and workers filters — and says which scope it answered for, because a brief that silently widened the question would be answering a different one.
+- **The `?` picker rings the page itself.** The dashboard shell takes an `askDescriptor` and marks its box with the substrate's `data-ask-page`, publishing its own geometry — top, left, and the scrollbar gutter it measures — so the ring traces the dashboard.
+
+### Fixed
+
+- **The overflow row in an `overview:` brief offers no URL to widen to.** `urls` merges the per-shard overflow row into its data marked `aggregate`, and it sorts high enough by count to reach the brief's top rows. The brief printed its key as a `hash`, which is not a url_hash and which `dump_url` answers `URL not found` for. It now carries no hash and names the row as the table does.
+- **`errors_only` rides the `overview:` pointer.** The brief carried the server, the search and the workers flag into its `performance_urls` fetch and dropped the errors filter, so widening a brief taken under it answered for every URL instead. The MCP tool declares that argument now too, which is what lets an agent send it.
+- **The page brief takes one scope, not two.** Three filters came off the echoed `urlFilters` — what the visible rows were fetched under — while the server came off the live pick, so changing servers with a reply in flight named a server the table was not showing. All four now come from the echo, falling back to the live pick before the first reply.
+- **The graph holds still while a pick is armed.** A poll landing mid-pick moved what the reader was aiming at; `usePerformanceGraph` now treats an armed picker as it treats an open modal, and refreshes once on release.
+- **"Nothing stands out" means an empty findings list, not a missing one.** A brief carrying no `findings` key at all now reads as what it is rather than as a clean bill of health.
+
 ## [0.99.7] - 2026-09-20
 
 ### Fixed

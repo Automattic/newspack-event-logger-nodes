@@ -213,7 +213,7 @@ This plugin registers exactly one REST route of its own: `POST /wp-json/newspack
 | `dump_url` | `performance.dump_url` | One URL's stats, worst recent requests, aggregate flame |
 | `performance_urls` | `performance.urls` | The URL table: every URL-set fact under the filters it applied |
 | `performance_overview` | `performance.overview` | Site totals and breakdowns the URL index cannot answer |
-| `performance_ask` | `performance.ask` | `Findings` for one picker descriptor — `url:`, `request:`, `span:`, `entry:` or `category:` |
+| `performance_ask` | `performance.ask` | `Findings` for one picker descriptor — `overview:`, `url:`, `request:`, `span:`, `entry:` or `category:` |
 | `dump_rules` / `rules_upsert` / `rules_delete` | `rules.*` | The per-URL logging ruleset |
 
 `grep_requests` and `wp nodes reqgrep` share one engine, `Reqgrep_Core`, so they agree byte-for-byte on which lines belong to which request and when it is complete.

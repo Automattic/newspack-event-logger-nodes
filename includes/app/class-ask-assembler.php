@@ -35,7 +35,7 @@ use Newspack_Nodes\Core;
 \defined( 'ABSPATH' ) || exit;
 
 /**
- * Eight shapers for five descriptor types — `span:` has two and `category:`
+ * Nine shapers for six descriptor types — `span:` has two and `category:`
  * three, one per board a click can land on: a request's own, a URL's
  * aggregate, the site-wide leaderboard — plus the parser that decides which.
  * Every method is static and the class holds no state.
@@ -64,7 +64,7 @@ class Ask_Assembler {
 	public const TOP_SPANS = 6;
 
 	/** The descriptor vocabulary. Deliberately small: it is a contract. */
-	private const TYPES = [ 'url', 'request', 'span', 'entry', 'category' ];
+	private const TYPES = [ 'overview', 'url', 'request', 'span', 'entry', 'category' ];
 
 	/**
 	 * Environment fields a brief may carry. Everything else is dropped rather
@@ -535,23 +535,6 @@ class Ask_Assembler {
 	}
 
 	/**
-	 * How an agent fetches this thing again, as an MCP tool call. What a brief
-	 * trims stays reachable: the pointer is the address of the rest.
-	 *
-	 * @param string               $tool      The MCP tool name.
-	 * @param array<string,string> $arguments Its named arguments, absent ones dropped.
-	 * @return list<array<string,mixed>>
-	 */
-	private static function fetch( string $tool, array $arguments ): array {
-		return [
-			[
-				'tool'      => $tool,
-				'arguments' => \array_filter( $arguments, static fn ( string $v ): bool => '' !== $v ),
-			],
-		];
-	}
-
-	/**
 	 * A rule as the brief carries it: what an edit would land on, never a
 	 * roster of names — neither the hooks (hundreds) nor the custom events
 	 * (dozens), which no consumer renders and a model cannot act on.
@@ -699,6 +682,137 @@ class Ask_Assembler {
 			],
 			$extra
 		);
+	}
+
+	/**
+	 * The dashboard itself: the numbers on screen, the URLs behind them and
+	 * the category board beside them, all of the SAME set the reader is
+	 * looking at.
+	 *
+	 * The descriptor is `overview:site` — the id names the subject, and the
+	 * scope rides in the arguments, exactly as `url:<hash>` carries its server
+	 * there. That split is what keeps one descriptor from meaning two things:
+	 * the same page filtered two ways is the same subject, two scopes.
+	 *
+	 * `totals` is null where a server filter cannot be split out of pre-split
+	 * rows, and the brief carries that null rather than zeros, which would
+	 * read as an idle site.
+	 *
+	 * @param array<string,mixed> $page    A `urls` reply: its totals and data.
+	 * @param array<string,mixed> $board   A `build_leaderboard()` reply.
+	 * @param string              $server  Server the page is scoped to; '' is every server.
+	 * @param array<string,mixed> $filters The url filters in force: search, errors_only, include_workers.
+	 * @return array<string,mixed>
+	 */
+	public static function for_overview( array $page, array $board, string $server, array $filters ): array {
+		$totals = \is_array( $page['totals'] ?? null ) ? $page['totals'] : null;
+		$rows   = \array_values( Core::arr( $page['data'] ?? null ) );
+
+		return [
+			'subject'    => 'overview',
+			// What these numbers are OF; every pointer below carries it too.
+			'server'     => $server,
+			'scope'      => '' === $server ? 'every server' : $server,
+			'filters'    => [
+				'search'          => Core::as_string( $filters['search'] ?? '' ),
+				'errors_only'     => (bool) ( $filters['errors_only'] ?? false ),
+				'include_workers' => (bool) ( $filters['include_workers'] ?? false ),
+			],
+			// The keys `urls` answers with, which are the page's own readout.
+			'stats'      => null === $totals ? null : [
+				'urls'                => Core::num_int( $totals['urls'] ?? 0 ),
+				'requests'            => Core::num_int( $totals['requests'] ?? 0 ),
+				'avg_ms'              => Core::num_float( $totals['avg_ms'] ?? 0 ),
+				'avg_peak_mb'         => Core::num_float( $totals['avg_peak_mb'] ?? 0 ),
+				'requests_per_second' => Core::num_float( $totals['requests_per_second'] ?? 0 ),
+			],
+			'urls'       => \array_map(
+				self::overview_url_shape( ... ),
+				\array_slice( $rows, 0, self::TOP_SPANS )
+			),
+			'categories' => self::board_rows( Core::arr( $board['categories'] ?? null ) ),
+			'fetch'      => [
+				...self::fetch(
+					'performance_urls',
+					[
+						'server'          => $server,
+						'search'          => Core::as_string( $filters['search'] ?? '' ),
+						'errors_only'     => ( $filters['errors_only'] ?? false ) ? '1' : '',
+						'include_workers' => ( $filters['include_workers'] ?? false ) ? '1' : '',
+					]
+				),
+				...self::fetch( 'performance_overview', [ 'server' => $server ] ),
+			],
+			'caveat'     => Findings::caveat(),
+		];
+	}
+
+	/**
+	 * How an agent fetches this thing again, as an MCP tool call. What a brief
+	 * trims stays reachable: the pointer is the address of the rest.
+	 *
+	 * @param string               $tool      The MCP tool name.
+	 * @param array<string,string> $arguments Its named arguments, absent ones dropped.
+	 * @return list<array<string,mixed>>
+	 */
+	private static function fetch( string $tool, array $arguments ): array {
+		return [
+			[
+				'tool'      => $tool,
+				'arguments' => \array_filter( $arguments, static fn ( string $v ): bool => '' !== $v ),
+			],
+		];
+	}
+
+	/**
+	 * One leaderboard row as the overview brief carries it: named, so it can
+	 * be asked about again (`category:<name>`), and timed, so the list says
+	 * why it is in this order.
+	 *
+	 * @param array<array-key,mixed> $categories The board, keyed by name.
+	 * @return list<array<string,mixed>>
+	 */
+	private static function board_rows( array $categories ): array {
+		$rows = [];
+		foreach ( $categories as $name => $row ) {
+			if ( App_Core::is_listener_span( (string) $name ) ) {
+				continue;
+			}
+			$row    = Core::arr( $row );
+			$rows[] = [
+				'name'        => (string) $name,
+				'avg_time_ms' => Core::num_float( $row['time'] ?? 0 ),
+				'avg_count'   => Core::num_float( $row['count'] ?? 0 ),
+			];
+		}
+		\usort( $rows, static fn ( array $a, array $b ): int => $b['avg_time_ms'] <=> $a['avg_time_ms'] );
+		return \array_slice( $rows, 0, self::TOP_SPANS );
+	}
+
+	/**
+	 * One URL row as the overview brief carries it: its hash, so an agent can
+	 * widen to `url:<hash>`, and the three numbers the table sorts on.
+	 *
+	 * The per-shard overflow row carries NO hash. Its key is not a url_hash,
+	 * `dump_url` cannot answer for it, and it sorts high enough by count to
+	 * reach this list — so it is named for what it is, as the table names it,
+	 * rather than offered as a `url:<hash>` that answers `URL not found`.
+	 *
+	 * @param mixed $row A `urls` data row.
+	 * @return array<string,mixed>
+	 */
+	private static function overview_url_shape( mixed $row ): array {
+		$row       = Core::arr( $row );
+		$aggregate = ! empty( $row['aggregate'] );
+		return [
+			...( $aggregate ? [] : [ 'hash' => Core::as_string( $row['hash'] ?? '' ) ] ),
+			'url'    => $aggregate
+				? 'traffic from URLs beyond the per-shard cap'
+				: Log_Manager::redact_url( Core::as_string( $row['url'] ?? '' ) ),
+			'count'  => Core::num_int( $row['count'] ?? 0 ),
+			'avg_ms' => Core::num_float( $row['avg_ms'] ?? 0 ),
+			'max_ms' => Core::num_float( $row['max_ms'] ?? 0 ),
+		];
 	}
 
 	/**
