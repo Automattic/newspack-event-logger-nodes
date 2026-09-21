@@ -202,7 +202,7 @@ class Core {
 	/** @var string[] Labels of query spans currently in flight. */
 	private array $query_spans = [];
 
-	/** @var array<string,int> Caller traces spent, by hook name, `sql:<shape>` or `http:<url>`. */
+	/** @var array<string,int> Caller traces spent, by `<hook>:<l>`, `sql:<shape>:<l>` or `http:<url>:<l>`. */
 	private array $traced = [];
 
 	/** @var bool Whether the rule labels a hook span with its calling frame. */
@@ -237,7 +237,7 @@ class Core {
 	 * The aggregation label `l` carries the calling frame under `trace_hooks`
 	 * and is empty otherwise, so the flame either splits one node per caller or
 	 * aggregates every firing on the hook name. `caller` carries the deeper
-	 * summary while the rule's per-hook budget lasts.
+	 * summary while this caller's budget for the hook lasts.
 	 *
 	 * @param mixed $v Filter value (passed through).
 	 * @return mixed
@@ -252,9 +252,10 @@ class Core {
 		$hook_name = \current_filter() ?: '';
 		$category  = $hook_name . self::HOOK_SUFFIX;
 
-		$m = '';
+		$m      = '';
+		$shaped = false;
 		if ( isset( $v ) && \is_scalar( $v ) ) {
-			$m = \is_string( $v ) ? self::shaped_if_sql( $v ) : $v;
+			$m = \is_string( $v ) ? self::shaped_if_sql( $v, $shaped ) : $v;
 		} elseif ( isset( $v ) ) {
 			// Pretty-printing spends the entry's byte budget on indentation.
 			// phpcs:ignore WordPress.WP.AlternativeFunctions.json_encode_json_encode -- wp_json_encode() infinite-loops on circular refs (Core_Upgrader).
@@ -264,12 +265,18 @@ class Core {
 			}
 		}
 		// `l` aggregates the flame, so the origin SPLITS the node by caller.
-		$data = [ 'm' => $m, 'l' => $this->trace_hooks ? self::origin_frame() : '' ];
-		$caller = $this->caller_of( $hook_name );
+		$label  = $this->trace_hooks ? self::origin_frame() : '';
+		$data   = [ 'm' => $m, 'l' => $label ];
+		$caller = '';
+		if ( $this->trace_callers > 0 ) {
+			// The budget keys on the caller even when `l` is not recording it.
+			$origin = '' === $label ? self::origin_frame() : $label;
+			$caller = $this->caller_of( $hook_name . ':' . $origin );
+		}
 		if ( '' !== $caller ) {
 			$data['caller'] = $caller;
 		}
-		$lm->start( $category, $data );
+		$lm->start( $category, $data, $shaped );
 
 		// Wrap significant-hook callbacks each call for late registrations.
 		if ( isset( $this->significant[ $hook_name ] ) ) {
@@ -320,13 +327,26 @@ class Core {
 	 * of hook names, and a list is what the redaction denylist already is — so
 	 * it passes through, and the rule's choice of hook is what bounds it.
 	 *
-	 * @param string $value The filter argument.
+	 * @param string $value  The filter argument.
+	 * @param bool   $shaped Set to whether the shaper REPLACED something, which
+	 *                       is what lets the entry skip the URL redactor. Not
+	 *                       whether the lead matched: `SQL_LEAD` reads a first
+	 *                       WORD, and English has `Update`, `Show` and `Create`
+	 *                       too, so prose would exempt itself and carry a
+	 *                       tokenised URL to the hub in cleartext. A statement
+	 *                       the shaper leaves alone holds no literal to hide,
+	 *                       and redaction stays on it: truncating a placeholder
+	 *                       query is the lesser of the two failures.
 	 * @return string The argument, or its shape when it reads as a statement.
 	 */
-	private static function shaped_if_sql( string $value ): string {
-		return 1 === \preg_match( self::SQL_LEAD, $value )
-			? self::without_literals( $value )
-			: $value;
+	private static function shaped_if_sql( string $value, bool &$shaped ): string {
+		if ( 1 !== \preg_match( self::SQL_LEAD, $value ) ) {
+			$shaped = false;
+			return $value;
+		}
+		$shape  = self::without_literals( $value );
+		$shaped = $shape !== $value;
+		return $shape;
 	}
 
 	/**
@@ -448,8 +468,9 @@ class Core {
 	 * The label `l` names the frame beyond `WP_Http`, which is what applies
 	 * this filter, because naming the transport names the same string every
 	 * time. `caller` carries the deeper chain while the rule's budget lasts,
-	 * counted per URL: a request that calls one endpoint forty times spends
-	 * its budget there and still traces the next endpoint it reaches. The
+	 * counted per URL AND caller: a request that calls one endpoint forty times
+	 * from one place spends that pair's budget and still traces both the next
+	 * endpoint it reaches and the next place that calls this one. The
 	 * redacted URL rides the entry as `m`.
 	 *
 	 * @param mixed                 $preempt Short-circuit value, false to proceed.
@@ -470,11 +491,12 @@ class Core {
 		}
 		$this->http_spans[] = self::HTTP_STATE;
 		$redacted           = Log_Manager::redact_url( $url );
+		$label              = self::origin_frame( true );
 		$data               = [
 			'm' => $redacted,
-			'l' => self::origin_frame( true ),
+			'l' => $label,
 		];
-		$caller = $this->caller_of( self::HTTP_STATE . ':' . $redacted );
+		$caller = $this->caller_of( self::HTTP_STATE . ':' . $redacted . ':' . $label );
 		if ( '' !== $caller ) {
 			$data['caller'] = $caller;
 		}
@@ -495,10 +517,11 @@ class Core {
 	 * `l` names the frame beyond `wpdb`, on the same terms as `http_start()`,
 	 * and `caller` carries the deeper chain while the rule's budget lasts.
 	 *
-	 * That budget is counted per statement SHAPE, which is what makes it worth
-	 * paying: a request runs the same handful of shapes over and over, so a
-	 * per-request count would be spent on the bootstrap and trace none of the
-	 * 477 taxonomy reads that came later. The shape is computed only while
+	 * That budget is counted per statement SHAPE and caller, which is what
+	 * makes it worth paying: a request runs the same handful of shapes over and
+	 * over, so a per-request count would be spent on the bootstrap and trace
+	 * none of the 477 taxonomy reads that came later, and a per-shape one would
+	 * spend the shape's whole allowance on whichever caller asked first. The shape is computed only while
 	 * tracing is on.
 	 *
 	 * @param mixed $query The SQL, passed through untouched.
@@ -513,10 +536,13 @@ class Core {
 			return $query;
 		}
 		$this->query_spans[] = self::SQL_STATE;
-		$data                = [ 'l' => self::origin_frame( true ) ];
+		$label               = self::origin_frame( true );
+		$data                = [ 'l' => $label ];
 		$caller              = $this->trace_callers > 0
 			? $this->caller_of(
-				self::SQL_STATE . ':' . self::without_literals( RuntimeCore::as_string( $query, '' ) )
+				self::SQL_STATE . ':'
+					. self::without_literals( RuntimeCore::as_string( $query, '' ) )
+					. ':' . $label
 			)
 			: '';
 		if ( '' !== $caller ) {
@@ -691,10 +717,13 @@ class Core {
 	 *
 	 * The budget is per KEY and the RULE names the number, because what a
 	 * diagnostic run wants is not what steady state wants: the same question
-	 * asked of `render_block` is 2,601 backtraces. A key is the hook name, or
-	 * the state and statement shape, or the state and URL — whatever the flame
-	 * aggregates that span on, so each of them gets its own budget rather than
-	 * racing the others for one.
+	 * asked of `render_block` is 2,601 backtraces. A key pairs what the flame
+	 * aggregates that span on — the hook name, or the state and statement
+	 * shape, or the state and URL — with `l`, the calling frame that span is
+	 * already labelled by. The pair, because `l` is what SPLITS the flame node:
+	 * budgeting the hook alone spends the whole allowance on whichever caller
+	 * fires first and leaves the other nodes bare, so a number that has to
+	 * cover every caller can never be turned down. Per caller, 1 is useful.
 	 *
 	 * @param string $key What this span aggregates on.
 	 * @return string The caller summary, or '' when not tracing.
@@ -708,7 +737,7 @@ class Core {
 		// @longform The ARRAY form, because core hands back the frames nearest
 		// first and the pretty string is that array REVERSED. Capping the
 		// string keeps the bootstrap and cuts the caller — the whole answer.
-		// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_wp_debug_backtrace_summary -- The caller summary IS the diagnostic; counted per hook and gated per rule.
+		// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_wp_debug_backtrace_summary -- The caller summary IS the diagnostic; counted per hook and caller, gated per rule.
 		$frames = \wp_debug_backtrace_summary( self::class, 0, false );
 		$near   = \array_slice( $frames, 0, self::CALLER_FRAMES );
 		return \implode( ', ', $near );
@@ -791,7 +820,7 @@ class Core {
 		}
 		// Only here is the statement the one the database was actually asked.
 		$sql = self::without_literals( self::without_host_annotation( $query ) );
-		Log_Manager::instance()->complete( $label, '' === $sql ? [] : [ 'm' => $sql ] );
+		Log_Manager::instance()->complete( $label, '' === $sql ? [] : [ 'm' => $sql ], shaped: true );
 		// `property_exists`: never CREATE it on a double that has none.
 		if ( isset( $GLOBALS['wpdb'] ) && \is_object( $GLOBALS['wpdb'] )
 			&& \property_exists( $GLOBALS['wpdb'], 'queries' ) ) {

@@ -2813,4 +2813,35 @@ class LogManagerTest extends TestCase {
 		$this->assertSame( $url, $entry['m']['parameters']['urls'][0] );
 	}
 
+	/**
+	 * A query's `m` is a SHAPE: `App\Core::without_literals()` has already
+	 * replaced every literal and stripped every comment, so every `?` left in
+	 * it is a placeholder. The URL redactor reads one as a query delimiter,
+	 * matches `post_password` on its `passw` token, and — SQL carrying no `&`
+	 * to stop at — eats the statement from that `=` to the end, taking the
+	 * ORDER BY and LIMIT a slow query is read from.
+	 */
+	public function test_a_query_shape_survives_a_credential_shaped_column_name(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::TEST_DIR );
+		Log_Manager::reset();
+		Config::reset();
+		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
+		Config::reset();
+
+		// A placeholder ahead of the column is what arms it: the redactor reads
+		// that `?` as the delimiter and `post_password` as the parameter name.
+		$shape = 'SELECT wp_posts.ID FROM wp_posts WHERE wp_posts.ID NOT IN (?)'
+			. ' AND wp_posts.post_password = ? AND wp_posts.post_type = ?'
+			. ' ORDER BY wp_posts.menu_order DESC LIMIT ?, ?';
+		$lm    = Log_Manager::instance();
+		$lm->start( 'sql', [ 'l' => 'WP_Query->get_posts' ] );
+		$lm->complete( 'sql', [ 'm' => $shape ], 'complete', true );
+		$lm->finish();
+
+		$entry = $this->find_last_entry( 'sql (complete)' );
+		$this->assertNotNull( $entry, 'Should find an entry with k=sql (complete)' );
+		$this->assertSame( $shape, $entry['m'] );
+	}
+
 }

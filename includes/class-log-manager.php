@@ -366,8 +366,9 @@ class Log_Manager {
 	 * @param string              $suffix Parenthesised half of the keyword —
 	 *                                    `complete`, or `aborted` when the
 	 *                                    work stopped early.
+	 * @param bool                $shaped Whether `m` is a query shape — see start().
 	 */
-	public function complete( string $label, array $data = [], string $suffix = 'complete' ): void {
+	public function complete( string $label, array $data = [], string $suffix = 'complete', bool $shaped = false ): void {
 		if ( \count( $this->times ) < 1 ) {
 			return;
 		}
@@ -392,7 +393,7 @@ class Log_Manager {
 			if ( $this->log_memory ) {
 				$data['peak_mb'] = \round( \memory_get_peak_usage( true ) / self::BYTES_PER_MB, 2 );
 			}
-			$this->message( "{$label} ({$suffix})", $data );
+			$this->message( "{$label} ({$suffix})", $data, $shaped );
 		}
 	}
 
@@ -503,14 +504,28 @@ class Log_Manager {
 	 * line that could not be written. Pair every start() with a complete()
 	 * carrying the same label — an unmatched frame drains as `(orphaned)`.
 	 *
-	 * @param string              $label Label for the timer (e.g. 'query', 'template').
-	 * @param array<string,mixed> $data  Extra keys for the emitted start entry.
+	 * `$shaped` says `m` is a query SHAPE rather than prose or a URL, and so
+	 * must not be redacted. A shape needs no redaction: the producer's
+	 * `sql_shape()` — `App\Core::without_literals()` here — has already replaced
+	 * every literal and stripped every comment, which is where a credential in
+	 * SQL can sit, and a URL carrying a query string reaches a statement only
+	 * inside a literal. What is left is keywords, identifiers and placeholders.
+	 *
+	 * Redacting one is worse than wasted. `URL_REDACT_PATTERN` reads a
+	 * placeholder as a query delimiter, and its value half runs to the next `&`
+	 * — which SQL has none of — so a single column named like a credential
+	 * truncates the statement from that `=` to the end. `Gyrobase::Log::start`
+	 * carries the same flag.
+	 *
+	 * @param string              $label  Label for the timer (e.g. 'query', 'template').
+	 * @param array<string,mixed> $data   Extra keys for the emitted start entry.
+	 * @param bool                $shaped Whether `m` is a query shape.
 	 */
-	public function start( string $label, array $data = [] ): void {
+	public function start( string $label, array $data = [], bool $shaped = false ): void {
 		if ( \count( $this->times ) >= self::MAX_TIMER_DEPTH ) {
 			return;
 		}
-		if ( false === $this->message( "{$label} (start)", $data ) ) {
+		if ( false === $this->message( "{$label} (start)", $data, $shaped ) ) {
 			return;
 		}
 		$entry = [ 'label' => $label, 'ts' => \hrtime( true ) ];
@@ -1161,13 +1176,14 @@ class Log_Manager {
 	 *
 	 * @param string $category Event category/keyword.
 	 * @param array<string,mixed>  $data     Additional data to include.
+	 * @param bool   $shaped   Whether `m` is a query shape — see start().
 	 * @return bool True when the line was written; false when logging never started or the Topic is missing.
 	 */
-	public function message( string $category, array $data = [] ): bool {
+	public function message( string $category, array $data = [], bool $shaped = false ): bool {
 		if ( ! $this->started ) {
 			return false;
 		}
-		if ( isset( $data['m'] ) && \is_string( $data['m'] ) && false !== \strpos( $data['m'], '?' ) ) {
+		if ( ! $shaped && isset( $data['m'] ) && \is_string( $data['m'] ) && false !== \strpos( $data['m'], '?' ) ) {
 			$data['m'] = self::redact_url( $data['m'] );
 		}
 		if ( null === $this->topic ) {
