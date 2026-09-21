@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.100.4] - 2026-09-21
+
 ### Changed
 - `trace_callers` budgets the deep caller chain per CALLER of a hook, query
   shape or URL, not per hook, shape or URL. `l` already names the calling frame
