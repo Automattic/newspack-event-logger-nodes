@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.99.6] - 2026-09-20
+
 ### Fixed
 
 - **A pair the ruler put gap rows inside no longer counts as having children.** `isEmptyPairStart()` asked whether the `(complete)` sat on the very next row, so a span that outlived a gap — the dot and timestamp rows the ruler inserts — read as a pair with something in it. Cmd-clicking its frame in the flame graph, stepping a search onto it, or Unfold All then opened it to nothing but that filler. Both halves are found across the placeholders now, and the complete half is addressed by its own `isEmptyPairComplete()` rather than by the row before it, so a search landing there still scrolls to the merged row that stands in for it.
