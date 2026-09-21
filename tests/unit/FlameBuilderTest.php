@@ -56,7 +56,8 @@ class FlameBuilderTest extends TestCase {
 		foreach ( $this->temp_dirs as $dir ) {
 			$this->rrmdir( $dir );
 		}
-		$this->temp_dirs = [];
+		$this->temp_dirs               = [];
+		Flame_Builder_Node::$usleep_fn = null;
 		parent::tearDown();
 	}
 
@@ -2167,10 +2168,21 @@ class FlameBuilderTest extends TestCase {
 				'spam hook' => [ 'time' => 0.1, 'count' => 200, 'entries' => [] ],
 			],
 		] ) );
-		// Another partition holds the lock for one more second.
-		$mc->add( self::scoped( 'evlog:auto_disable_lock' ), 'other-worker', 1 );
+		// Another partition holds the lock; it lapses while the stop waits.
+		$lock = self::scoped( 'evlog:auto_disable_lock' );
+		$mc->add( $lock, 'other-worker', 1 );
+		// The seam IS the wait: the sibling's hold ends on the first poll, so
+		// this proves the stop outwaits a lock without spending a real second
+		// on the clock the fake expires against.
+		$polls                          = 0;
+		Flame_Builder_Node::$usleep_fn = static function () use ( $mc, $lock, &$polls ): void {
+			++$polls;
+			$mc->delete( $lock );
+		};
 
 		$fb->shutdown_sweep();
+
+		$this->assertSame( 1, $polls, 'the stop polled rather than giving up' );
 
 		$fired = \array_filter(
 			$capture->captured,

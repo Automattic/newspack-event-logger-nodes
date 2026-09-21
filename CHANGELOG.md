@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The auto-tune lock wait is driven by a seam, not by the clock.** `FlameBuilderTest::test_a_clean_stop_waits_for_a_held_auto_tune_lock` seeded a one-second memcached lock and let the poll loop spin against it, so the case spent a real second and PHPUnit aborted it at its budget — intermittently, since a second is exactly the line it sat on. `Flame_Builder_Node::$usleep_fn` is the poll-sleep seam now; the test releases the sibling's hold on the first poll and asserts the poll happened, which is what "outwaits a lock" actually means. 131ms.
+
 - **The assembled brief paints over the request and URL detail it was asked from again.** Heading this page with `DashboardShell` in 0.99.3 put it inside a `position: fixed; z-index: 99` box, and a stacking context is where a z-index stops carrying: the panel's own 100002 could no longer clear the `@wordpress/components` modal the ask was made from. The brief had been assembling and answering the whole time, underneath it. Fixed in the substrate's shared `Modal`, which now portals to the body.
 
 ## [0.99.6] - 2026-09-20
