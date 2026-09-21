@@ -16,31 +16,6 @@ import * as React from 'react';
 import DashboardShell from '../DashboardShell';
 import { renderComponent } from '../../test-helpers/renderHook';
 
-// jsdom has no ResizeObserver and lays nothing out, so the observed element is
-// given a box by hand and the observation is fired from here.
-let resizeObserverCb = null;
-let disconnects = 0;
-global.ResizeObserver = class {
-	constructor( cb ) {
-		resizeObserverCb = cb;
-	}
-	observe() {}
-	disconnect() {
-		disconnects++;
-	}
-};
-
-const withScrollbar = ( el, outer, inner ) => {
-	Object.defineProperty( el, 'offsetWidth', {
-		value: outer,
-		configurable: true,
-	} );
-	Object.defineProperty( el, 'clientWidth', {
-		value: inner,
-		configurable: true,
-	} );
-};
-
 describe( 'DashboardShell', () => {
 	it( 'wraps its children in one skinned provider over a fixed viewport box', () => {
 		const { container, unmount } = renderComponent(
@@ -137,86 +112,84 @@ describe( 'DashboardShell', () => {
 		);
 
 		expect(
-			container.firstElementChild.firstElementChild.style.overflowY
+			container.querySelector( '.newspack-nodes-page-content' ).style
+				.overflowY
 		).toBe( 'scroll' );
 		unmount();
 	} );
 
-	// @longform The page's own ask target is this box, not the tall scroller
-	// inside it: the surface is fixed at the dashboard's visible rectangle, so
-	// its outline traces exactly what the brief answers for. On the scroller,
-	// the outline is drawn round a content-height box whose edges are off
-	// screen, which reads as no highlight at all.
-	it( 'carries the page ask target on the surface, when a page has one', () => {
+	// The reader's page is the area under the header — what scrolls, and what
+	// the brief answers for — so the target and the ring go there.
+	it( 'carries the page ask target on what scrolls, when a page has one', () => {
 		const { container, unmount } = renderComponent(
 			React.createElement( DashboardShell, {
 				storageKey: 'k',
+				overflowY: 'scroll',
 				askDescriptor: 'overview:site',
 				children: () => null,
+			} )
+		);
+
+		const content = container.querySelector(
+			'.newspack-nodes-page-content'
+		);
+		expect( content.getAttribute( 'data-ask' ) ).toBe( 'overview:site' );
+		expect( content.hasAttribute( 'data-ask-page' ) ).toBe( true );
+		unmount();
+	} );
+
+	// @longform The header is chrome, not content: it stays put while the
+	// page scrolls, and the scrollbar belongs beside what moves. A box that
+	// scrolls as a whole takes the header away with the rows and runs its
+	// scrollbar the full height, through the header's own band.
+	it( 'scrolls the area below the header, not the box around it', () => {
+		const { container, unmount } = renderComponent(
+			React.createElement( DashboardShell, {
+				storageKey: 'k',
+				overflowY: 'auto',
+				children: () => 'CHILD_MARKER',
 			} )
 		);
 
 		const surface = container.querySelector(
 			'.newspack-nodes-page-surface'
 		);
-		expect( surface.getAttribute( 'data-ask' ) ).toBe( 'overview:site' );
-		expect( surface.hasAttribute( 'data-ask-page' ) ).toBe( true );
-		expect( surface.style.position ).toBe( 'fixed' );
-		// @longform The ring is an overlay, because an outline on this box is
-		// painted over by its own children — measured in the browser: a fixed
-		// overlay inside it draws, an outline on it does not. An overlay must
-		// be told where the box is, and this is where that geometry lives.
-		expect( surface.style.getPropertyValue( '--nodes-page-top' ) ).toBe(
-			surface.style.top
+		const content = container.querySelector(
+			'.newspack-nodes-page-content'
 		);
-		expect( surface.style.getPropertyValue( '--nodes-page-left' ) ).toBe(
-			surface.style.left
+
+		expect( surface.style.overflowY ).toBe( 'hidden' );
+		expect( content.style.overflowY ).toBe( 'auto' );
+		// Header first, then the scroller: the header is outside what moves.
+		expect( surface.firstElementChild.className ).toContain(
+			'topology-header'
 		);
+		expect( content.previousElementSibling ).toBe(
+			surface.firstElementChild
+		);
+		expect( content.textContent ).toContain( 'CHILD_MARKER' );
 		unmount();
 	} );
 
-	// The surface scrolls, so its own scrollbar sits inside its right edge: a
-	// ring drawn at that edge lands beyond the scrollbar and reads as a
-	// browser artifact rather than the page's own boundary. The gutter it
-	// publishes is what pulls the ring back inside what the reader sees.
-	it( 'publishes its scrollbar gutter for the ring to sit inside', () => {
-		resizeObserverCb = null;
-		disconnects = 0;
+	// @longform The dashboard roots are flex items — `flex: 1 1 auto;
+	// min-height: 0` in `log-stream-page()` and `inflight.scss` — so the area
+	// they sit in has to be a column. A block parent ignores both, and a
+	// virtualized list sizing itself from `clientHeight` stops scrolling.
+	it( 'lays the scrolling area out as a column, so a root grows into it', () => {
 		const { container, unmount } = renderComponent(
 			React.createElement( DashboardShell, {
 				storageKey: 'k',
-				askDescriptor: 'overview:site',
+				overflowY: 'hidden',
 				children: () => null,
 			} )
 		);
 
-		const surface = container.querySelector(
-			'.newspack-nodes-page-surface'
+		const content = container.querySelector(
+			'.newspack-nodes-page-content'
 		);
-		// 1200 outside, 1183 inside: a 17px scrollbar, not the 0 the state
-		// starts at, so a shell that never measures fails here.
-		withScrollbar( surface, 1200, 1183 );
-		React.act( () => resizeObserverCb( [] ) );
-
-		expect( surface.style.getPropertyValue( '--nodes-page-gutter' ) ).toBe(
-			'17px'
-		);
-		unmount();
-		expect( disconnects ).toBe( 1 );
-	} );
-
-	// Three dashboards pass no descriptor and draw no ring; observing the box
-	// for a measurement none of them reads is work for nobody.
-	it( 'measures nothing for a page that draws no ring', () => {
-		resizeObserverCb = null;
-		const { unmount } = renderComponent(
-			React.createElement( DashboardShell, {
-				storageKey: 'k',
-				children: () => null,
-			} )
-		);
-
-		expect( resizeObserverCb ).toBeNull();
+		expect( content.style.display ).toBe( 'flex' );
+		expect( content.style.flexDirection ).toBe( 'column' );
+		expect( content.style.minHeight ).toBe( '0' );
 		unmount();
 	} );
 
@@ -224,15 +197,16 @@ describe( 'DashboardShell', () => {
 		const { container, unmount } = renderComponent(
 			React.createElement( DashboardShell, {
 				storageKey: 'k',
+				overflowY: 'scroll',
 				children: () => null,
 			} )
 		);
 
-		const surface = container.querySelector(
-			'.newspack-nodes-page-surface'
+		const content = container.querySelector(
+			'.newspack-nodes-page-content'
 		);
-		expect( surface.hasAttribute( 'data-ask' ) ).toBe( false );
-		expect( surface.hasAttribute( 'data-ask-page' ) ).toBe( false );
+		expect( content.hasAttribute( 'data-ask' ) ).toBe( false );
+		expect( content.hasAttribute( 'data-ask-page' ) ).toBe( false );
 		unmount();
 	} );
 
