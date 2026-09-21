@@ -357,6 +357,173 @@ class AppCoreTest extends TestCase {
 		$this->assertSame( [], $this->traced( $core ) );
 	}
 
+	/**
+	 * A query and an outbound call are asked for by code, exactly as a hook
+	 * firing is, and `l` names one frame of it. The budget the rule sets
+	 * buys the CHAIN — and it is keyed per statement shape and per URL rather
+	 * than per request, or the first few bootstrap queries spend it all and the
+	 * expensive one later in the request is traced for nobody.
+	 */
+	public function test_a_query_span_carries_the_caller_chain_the_rule_paid_for(): void {
+		$this->set_governing_rule(
+			new Rule(
+				'4b7e2c9a1d83',
+				'/reports/',
+				Rule::ACTION_LOG,
+				log_queries: true,
+				trace_callers: 2
+			)
+		);
+		$core = new Core();
+
+		$core->query_start( 'SELECT a FROM wp_posts WHERE id = 7' );
+
+		$this->assertStringStartsWith(
+			"apply_filters('the_content')",
+			$this->last_entry_field( 'sql (start)', 'caller' ),
+			'the chain names the code that asked, nearest frame first'
+		);
+	}
+
+	/** Its budget is per SHAPE, so a second literal is the same query. */
+	public function test_a_query_caller_budget_counts_by_statement_shape(): void {
+		$this->set_governing_rule(
+			new Rule(
+				'4b7e2c9a1d83',
+				'/reports/',
+				Rule::ACTION_LOG,
+				log_queries: true,
+				trace_callers: 2
+			)
+		);
+		$core = new Core();
+
+		$core->query_start( 'SELECT a FROM wp_posts WHERE id = 7' );
+		$core->query_start( 'SELECT a FROM wp_posts WHERE id = 8' );
+		$core->query_start( 'SELECT a FROM wp_posts WHERE id = 9' );
+
+		// Three of one shape against a budget of two: the third pays nothing.
+		$this->assertSame(
+			'',
+			$this->last_entry_field( 'sql (start)', 'caller' )
+		);
+
+		$core->query_start( 'SELECT b FROM wp_terms WHERE id = 1' );
+
+		// A different shape has its own budget, which is the whole point.
+		$this->assertStringStartsWith(
+			"apply_filters('the_content')",
+			$this->last_entry_field( 'sql (start)', 'caller' )
+		);
+		$this->assertSame(
+			[ 2, 1 ],
+			\array_values( $this->traced( $core ) ),
+			'two of one shape, one of the other'
+		);
+	}
+
+	/**
+	 * The budget keys on the STATEMENT, and the host's annotation is a comment
+	 * — which the shaper removes. A platform that annotated per query rather
+	 * than per request would otherwise hand every one of them its own budget,
+	 * and the cap would never bind at all.
+	 */
+	public function test_a_query_caller_budget_ignores_the_host_annotation(): void {
+		$this->set_governing_rule(
+			new Rule(
+				'4b7e2c9a1d83',
+				'/reports/',
+				Rule::ACTION_LOG,
+				log_queries: true,
+				trace_callers: 1
+			)
+		);
+		$core = new Core();
+		$sql  = 'SELECT a FROM wp_posts WHERE id = 7';
+
+		$core->query_start( $sql . ' /* /a request_id: aaaa */' );
+		$core->query_start( $sql . ' /* /b request_id: bbbb */' );
+
+		$this->assertSame(
+			[ 1 ],
+			\array_values( $this->traced( $core ) ),
+			'one key, one trace: the annotation is not part of it'
+		);
+	}
+
+	/**
+	 * A JOB gets its own budget. `Log_Manager` fires the scope change on
+	 * `begin_job_context` / `end_job_context` and the rebind drops every
+	 * counter, so a worker draining a hundred jobs traces each one rather
+	 * than spending the whole request's allowance on the first.
+	 */
+	public function test_a_scope_change_hands_the_next_job_a_fresh_budget(): void {
+		$this->set_governing_rule(
+			new Rule(
+				'4b7e2c9a1d83',
+				'/reports/',
+				Rule::ACTION_LOG,
+				log_queries: true,
+				trace_callers: 1
+			)
+		);
+		$core = new Core();
+		$sql  = 'SELECT a FROM wp_posts WHERE id = 7';
+
+		$core->query_start( $sql );
+		$core->query_start( $sql );
+		$this->assertSame( '', $this->last_entry_field( 'sql (start)', 'caller' ) );
+
+		$core->rebind_for_current_scope();
+		$core->query_start( $sql );
+
+		$this->assertStringStartsWith(
+			"apply_filters('the_content')",
+			$this->last_entry_field( 'sql (start)', 'caller' ),
+			'the next job traces the same statement again'
+		);
+	}
+
+	public function test_an_http_span_carries_the_caller_chain_per_url(): void {
+		$this->set_governing_rule(
+			new Rule(
+				'7c9e1a4b2d3f',
+				'/checkout/',
+				Rule::ACTION_LOG,
+				trace_callers: 1
+			)
+		);
+		$core = new Core();
+
+		$core->http_start( false, [], 'https://img.example.net/a.jpg' );
+		$this->assertStringStartsWith(
+			"apply_filters('the_content')",
+			$this->last_entry_field( 'http (start)', 'caller' )
+		);
+
+		$core->http_start( false, [], 'https://img.example.net/a.jpg' );
+		$this->assertSame(
+			'',
+			$this->last_entry_field( 'http (start)', 'caller' ),
+			'the second call to the same URL is past the budget'
+		);
+	}
+
+	/**
+	 * A guard rather than a regression test: it passes on the code before
+	 * these spans traced anything, and it is here so a later diff cannot make
+	 * the budget opt-OUT by accident.
+	 */
+	public function test_spans_trace_no_callers_when_the_rule_does_not_ask(): void {
+		$this->set_governing_rule( $this->query_rule( true ) );
+		$core = new Core();
+
+		$core->query_start( 'SELECT a FROM wp_posts WHERE id = 7' );
+		$core->http_start( false, [], 'https://img.example.net/a.jpg' );
+
+		$this->assertSame( [], $this->traced( $core ) );
+	}
+
 	// ── query spans ─────────────────────────────────────────────────────
 
 	/** A rule that opts in, distinct from every default. */
@@ -1755,8 +1922,9 @@ class AppCoreTest extends TestCase {
 
 	/**
 	 * A rule buying caller backtraces still names the caller on its query
-	 * spans. `caller_of()` serves hook entries alone, so a label that stopped
-	 * at the transport left nothing on the span saying who asked.
+	 * spans. `caller_of()` traces only the first few of each statement shape,
+	 * so a label that stopped at the transport left every call past that
+	 * budget with nothing on it saying who asked.
 	 */
 	public function test_a_traced_rule_still_labels_the_query_caller_beyond_the_transport(): void {
 		$this->set_governing_rule(

@@ -202,7 +202,7 @@ class Core {
 	/** @var string[] Labels of query spans currently in flight. */
 	private array $query_spans = [];
 
-	/** @var array<string,int> Caller traces already spent, by hook name. */
+	/** @var array<string,int> Caller traces spent, by hook name, `sql:<shape>` or `http:<url>`. */
 	private array $traced = [];
 
 	/** @var bool Whether the rule labels a hook span with its calling frame. */
@@ -277,38 +277,6 @@ class Core {
 		}
 
 		return $v;
-	}
-
-	/**
-	 * Who called this hook, once the rule asks and while the budget lasts.
-	 *
-	 * A span says how long a pass took and nothing about who asked for it, so a
-	 * hook that fires sixteen times reads as sixteen identical mysteries. The
-	 * summary names the NEAREST frames instead, on the entry's `caller` field —
-	 * not `c`, which already means COUNT everywhere else in this schema — and
-	 * ignores this class, so the top frame is the caller rather than the
-	 * instrumentation.
-	 *
-	 * The budget is per HOOK and the RULE names it, because what a diagnostic
-	 * run wants is not what steady state wants: the same question asked of
-	 * `render_block` is 2,601 backtraces.
-	 *
-	 * @param string $hook_name The hook being opened.
-	 * @return string The caller summary, or '' when not tracing.
-	 */
-	private function caller_of( string $hook_name ): string {
-		$spent = $this->traced[ $hook_name ] ?? 0;
-		if ( $spent >= $this->trace_callers ) {
-			return '';
-		}
-		$this->traced[ $hook_name ] = $spent + 1;
-		// @longform The ARRAY form, because core hands back the frames nearest
-		// first and the pretty string is that array REVERSED. Capping the
-		// string keeps the bootstrap and cuts the caller — the whole answer.
-		// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_wp_debug_backtrace_summary -- The caller summary IS the diagnostic; counted per hook and gated per rule.
-		$frames = \wp_debug_backtrace_summary( self::class, 0, false );
-		$near   = \array_slice( $frames, 0, self::CALLER_FRAMES );
-		return \implode( ', ', $near );
 	}
 
 	/**
@@ -479,9 +447,10 @@ class Core {
 	 *
 	 * The label `l` names the frame beyond `WP_Http`, which is what applies
 	 * this filter, because naming the transport names the same string every
-	 * time. It climbs whatever the rule's `trace_callers` says: that budget
-	 * attaches `caller` to hook entries alone, so `l` is the only field on
-	 * this span naming who asked. The redacted URL rides the entry as `m`.
+	 * time. `caller` carries the deeper chain while the rule's budget lasts,
+	 * counted per URL: a request that calls one endpoint forty times spends
+	 * its budget there and still traces the next endpoint it reaches. The
+	 * redacted URL rides the entry as `m`.
 	 *
 	 * @param mixed                 $preempt Short-circuit value, false to proceed.
 	 * @param array<string,mixed>   $args    Request arguments (unused).
@@ -500,13 +469,16 @@ class Core {
 			return $preempt;
 		}
 		$this->http_spans[] = self::HTTP_STATE;
-		$lm->start(
-			self::HTTP_STATE,
-			[
-				'm' => Log_Manager::redact_url( $url ),
-				'l' => self::origin_frame( true ),
-			]
-		);
+		$redacted           = Log_Manager::redact_url( $url );
+		$data               = [
+			'm' => $redacted,
+			'l' => self::origin_frame( true ),
+		];
+		$caller = $this->caller_of( self::HTTP_STATE . ':' . $redacted );
+		if ( '' !== $caller ) {
+			$data['caller'] = $caller;
+		}
+		$lm->start( self::HTTP_STATE, $data );
 		return $preempt;
 	}
 
@@ -520,7 +492,14 @@ class Core {
 	 * The statement is not read here. Opening ahead of the chain means the SQL
 	 * at this point is what the caller wrote, not what the database is asked;
 	 * `query_end()` receives the rewritten statement and reports it. The label
-	 * `l` names the frame beyond `wpdb`, on the same terms as `http_start()`.
+	 * `l` names the frame beyond `wpdb`, on the same terms as `http_start()`,
+	 * and `caller` carries the deeper chain while the rule's budget lasts.
+	 *
+	 * That budget is counted per statement SHAPE, which is what makes it worth
+	 * paying: a request runs the same handful of shapes over and over, so a
+	 * per-request count would be spent on the bootstrap and trace none of the
+	 * 477 taxonomy reads that came later. The shape is computed only while
+	 * tracing is on.
 	 *
 	 * @param mixed $query The SQL, passed through untouched.
 	 * @return mixed
@@ -534,7 +513,16 @@ class Core {
 			return $query;
 		}
 		$this->query_spans[] = self::SQL_STATE;
-		$lm->start( self::SQL_STATE, [ 'l' => self::origin_frame( true ) ] );
+		$data                = [ 'l' => self::origin_frame( true ) ];
+		$caller              = $this->trace_callers > 0
+			? $this->caller_of(
+				self::SQL_STATE . ':' . self::without_literals( RuntimeCore::as_string( $query, '' ) )
+			)
+			: '';
+		if ( '' !== $caller ) {
+			$data['caller'] = $caller;
+		}
+		$lm->start( self::SQL_STATE, $data );
 		if ( isset( $this->significant[ self::QUERY_HOOK ] ) ) {
 			$this->wrap_callbacks( self::QUERY_HOOK );
 		}
@@ -689,6 +677,41 @@ class Core {
 			return ( false !== $pos ? \substr( $class, $pos + 1 ) : $class ) . '::__invoke';
 		}
 		return '{unknown}';
+	}
+
+	/**
+	 * Who asked for this span, once the rule asks and while the budget lasts.
+	 *
+	 * A span says how long a pass took and nothing about who asked for it, so a
+	 * hook that fires sixteen times reads as sixteen identical mysteries, and a
+	 * query shape run four hundred times reads as one. The summary names the
+	 * NEAREST frames instead, on the entry's `caller` field — not `c`, which
+	 * already means COUNT everywhere else in this schema — and ignores this
+	 * class, so the top frame is the caller rather than the instrumentation.
+	 *
+	 * The budget is per KEY and the RULE names the number, because what a
+	 * diagnostic run wants is not what steady state wants: the same question
+	 * asked of `render_block` is 2,601 backtraces. A key is the hook name, or
+	 * the state and statement shape, or the state and URL — whatever the flame
+	 * aggregates that span on, so each of them gets its own budget rather than
+	 * racing the others for one.
+	 *
+	 * @param string $key What this span aggregates on.
+	 * @return string The caller summary, or '' when not tracing.
+	 */
+	private function caller_of( string $key ): string {
+		$spent = $this->traced[ $key ] ?? 0;
+		if ( $spent >= $this->trace_callers ) {
+			return '';
+		}
+		$this->traced[ $key ] = $spent + 1;
+		// @longform The ARRAY form, because core hands back the frames nearest
+		// first and the pretty string is that array REVERSED. Capping the
+		// string keeps the bootstrap and cuts the caller — the whole answer.
+		// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_wp_debug_backtrace_summary -- The caller summary IS the diagnostic; counted per hook and gated per rule.
+		$frames = \wp_debug_backtrace_summary( self::class, 0, false );
+		$near   = \array_slice( $frames, 0, self::CALLER_FRAMES );
+		return \implode( ', ', $near );
 	}
 
 	/**

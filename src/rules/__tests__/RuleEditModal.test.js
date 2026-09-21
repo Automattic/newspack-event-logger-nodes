@@ -334,18 +334,18 @@ describe( 'RuleEditModal — log rule fields', () => {
 
 	test( 'the help says what each knob buys, and nothing more', () => {
 		// The label is on HOOK spans alone — SQL and HTTP spans carry theirs
-		// regardless — and the count buys the twenty nearest frames per hook
-		// per request, not a full stack.
+		// regardless — while the COUNT buys the twenty nearest frames on all
+		// three, budgeted per hook, per statement shape and per URL.
 		mount( { ...LOG_RULE, trace_hooks: true } );
 		const help = inDialog( '.rule-edit-trace-row' ).textContent;
 		expect( help ).toContain( 'Labels every hook span with who called it' );
-		// The number counts FIRINGS traced, not backtraces a firing records.
+		// The number counts CALLS traced, not backtraces a call records.
 		expect( help ).toContain(
-			'traces that many firings of each hook further'
+			'traces that many calls of each hook, query shape and outbound URL'
 		);
-		expect( help ).toContain( 'twenty frames above each call' );
+		expect( help ).toContain( 'twenty frames above each' );
 		expect( help ).toContain( 'At 0 every span still carries its label' );
-		expect( help ).toContain( 'firings traced per hook' );
+		expect( help ).toContain( 'traced per hook, query shape and URL' );
 		expect( help ).not.toContain( 'every span with' );
 		expect( help ).not.toContain( 'full backtrace' );
 		expect( help ).not.toContain( 'backtraces per hook' );

@@ -36,8 +36,8 @@ final class Rule {
 	public const HOOKS_INLINE = 'inline';
 
 	/**
-	 * Caller chains one hook records when `trace_callers` is stored as `true`
-	 * rather than as a count.
+	 * Caller chains one hook, query shape or URL records when `trace_callers`
+	 * is stored as `true` rather than as a count.
 	 *
 	 * Twenty is sized for a hook that fires sixteen times: enough to see a
 	 * repeat whole, few enough that a hot hook stops paying after the first
@@ -68,7 +68,7 @@ final class Rule {
 	 * @param bool          $log_queries                 Time every SQL query as its own span; needs SAVEQUERIES and costs two entries per query.
 	 * @param bool          $log_http                    Time every outbound HTTP request as its own span, between `pre_http_request` and `http_api_debug`. On by default: a request making no remote calls pays two add_filter() calls and nothing else.
 	 * @param bool          $trace_hooks                 Name the calling frame on each hook entry's aggregation label, so one hook firing sixteen times splits into a flame node per caller. Costs one shallow backtrace per firing.
-	 * @param int           $trace_callers               Deep caller chains one hook may record per request, on its start entry's `caller` field; 0 = off. A stored `true` decodes to self::TRACE_CALLERS_DEFAULT.
+	 * @param int           $trace_callers               Deep caller chains recorded per request on a span's start entry as `caller`, budgeted per hook name, per query statement shape and per outbound URL; 0 = off. A stored `true` decodes to self::TRACE_CALLERS_DEFAULT.
 	 *
 	 * @throws \InvalidArgumentException When the pattern is empty, or hooks and hooks_in contradict.
 	 */

@@ -365,7 +365,7 @@ export default function RuleEditModal( {
 								help={
 									traceHooks
 										? __(
-												'Labels every hook span with who called it, so a hook that runs many times splits by caller in the flame graph. The number traces that many firings of each hook further, recording the twenty frames above each call — expensive. At 0 every span still carries its label and none records a backtrace.',
+												'Labels every hook span with who called it, so a hook that runs many times splits by caller in the flame graph. The number traces that many calls of each hook, query shape and outbound URL further, recording the twenty frames above each — expensive. At 0 every span still carries its label and none records a backtrace.',
 												'newspack-event-logger-nodes'
 										  )
 										: __(
@@ -385,7 +385,7 @@ export default function RuleEditModal( {
 										hideLabelFromVision
 										type="number"
 										label={ __(
-											'Firings traced per hook',
+											'Calls traced per hook, query shape and URL',
 											'newspack-event-logger-nodes'
 										) }
 										name="rule-trace-callers"
@@ -394,7 +394,7 @@ export default function RuleEditModal( {
 									/>
 									<span className="newspack-nodes-status is-muted">
 										{ __(
-											'firings traced per hook',
+											'traced per hook, query shape and URL',
 											'newspack-event-logger-nodes'
 										) }
 									</span>
