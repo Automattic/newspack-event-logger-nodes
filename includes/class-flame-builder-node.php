@@ -141,6 +141,15 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	private const AUTO_TUNE_LOCK_POLL_US = 100000;
 
 	/**
+	 * Auto-tune lock poll-sleep seam. Tests reassign it to advance the lock's
+	 * own state instead of waiting out a real second.
+	 * Signature: `function (int $microseconds): void`
+	 *
+	 * @var \Closure|null
+	 */
+	public static ?\Closure $usleep_fn = null;
+
+	/**
 	 * Byte ceiling on the held mirror frames a checkpoint frame carries.
 	 *
 	 * Sized from the OUTER limit, not from an observed size. The checkpoint
@@ -2110,7 +2119,8 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 			if ( \microtime( true ) >= $deadline ) {
 				return;
 			}
-			\usleep( self::AUTO_TUNE_LOCK_POLL_US );
+			$sleep = self::$usleep_fn ?? static fn ( int $us ) => \usleep( $us );
+			$sleep( self::AUTO_TUNE_LOCK_POLL_US );
 		}
 
 		try {
