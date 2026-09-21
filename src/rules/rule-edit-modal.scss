@@ -79,9 +79,9 @@
 		flex-wrap: wrap;
 
 		.components-checkbox-control {
-			// A FLOOR, not a share: at `flex: 1` the basis is 0, so the count
-			// beside it — whose suffix is a sentence — claimed the row and
-			// squeezed the help text to one word per line.
+			// A FLOOR, not a share: at `flex: 1` the basis is 0, so a count
+			// whose suffix is a sentence takes the row and leaves the help
+			// text one word wide.
 			flex: 1 1 320px;
 			min-width: 0;
 		}

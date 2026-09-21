@@ -158,9 +158,6 @@ class Job_Router_Node extends Node {
 	/**
 	 * Topology console manifest: a router with a sink target and no arguments.
 	 *
-	 * Age gating lives in the Age_Sieve downstream, so the empty `arguments` list
-	 * is load-bearing — a stale-timeout argument here would be a regression.
-	 *
 	 * @api Used by the substrate to resolve the node + provide UI.
 	 * @return array<string,mixed> Schema consumed by `Command_Interpreter_Node`.
 	 */
