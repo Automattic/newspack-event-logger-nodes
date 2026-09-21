@@ -412,7 +412,7 @@ final class Flame_Fold {
 		}
 		if ( self::SHAPES_OVERFLOW !== $shape && ! isset( $shapes[ $shape ] ) && $full ) {
 			$cheapest = self::cheapest_of( $shapes );
-			// Spent, a trade is free only where the new key is no longer.
+			// Spent, a trade is free only where the new key is not longer.
 			$grows    = '' !== $cheapest && \strlen( $shape ) > \strlen( $cheapest );
 			if ( '' === $cheapest || ( $spent && $grows ) || $ms <= $time_of( $shapes[ $cheapest ] ) ) {
 				$shape = self::SHAPES_OVERFLOW;
