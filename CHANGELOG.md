@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.100.3] - 2026-09-21
+
 ### Changed
 
 - **A query span and an outbound-HTTP span carry the caller chain too.** `trace_callers` bought the deep `wp_debug_backtrace_summary()` chain for hook spans alone, so a SQL or HTTP span named one frame on its label and nothing else — and the label is the same string every time a wrapper is the caller. Both now carry `caller` on the same budget, which is counted per hook name, per query statement SHAPE and per outbound URL rather than per request: a per-request count is spent on the bootstrap and traces none of the 477 taxonomy reads that came later. The shape is computed only while tracing is on.
