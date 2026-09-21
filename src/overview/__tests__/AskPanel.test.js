@@ -66,8 +66,13 @@ function Harness( { onError, serverFilter = '' } ) {
 }
 
 let view;
+// The panel's Modal portals to the body, so the dialog sits beside the
+// harness's own container rather than inside it. `renderComponent` is this
+// repo's hand-rolled helper, with no `baseElement` to reach for, and it
+// appends that container to the body — so the body holds both.
 const render = ( props = {} ) => {
-	view = renderComponent( <Harness { ...props } /> );
+	const rendered = renderComponent( <Harness { ...props } /> );
+	view = { ...rendered, container: document.body };
 	return view;
 };
 

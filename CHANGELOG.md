@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The assembled brief paints over the request and URL detail it was asked from again.** Heading this page with `DashboardShell` in 0.99.3 put it inside a `position: fixed; z-index: 99` box, and a stacking context is where a z-index stops carrying: the panel's own 100002 could no longer clear the `@wordpress/components` modal the ask was made from. The brief had been assembling and answering the whole time, underneath it. Fixed in the substrate's shared `Modal`, which now portals to the body.
+
 ## [0.99.6] - 2026-09-20
 
 ### Fixed
