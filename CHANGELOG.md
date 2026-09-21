@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `docs/img/dec-provenance-knobs.png` and `dec-http-span.png` regenerated, and
+  `scripts/render-diagram.sh` added so the next one is not hand-captured: it
+  measures a sheet's own `scrollHeight` through headless Chrome's `--dump-dom`,
+  then screenshots at the fixed 1120px width at 2x. Both images and both alt
+  texts now describe the per-caller budget the runtime keys on.
+
 ## [0.100.4] - 2026-09-21
 
 ### Changed
