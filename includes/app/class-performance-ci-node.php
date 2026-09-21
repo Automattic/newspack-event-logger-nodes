@@ -115,6 +115,12 @@ class Performance_CI_Node extends Service_CI_Node {
 	public const MAX_INDEX_ENTRIES = 1000000;
 
 	/**
+	 * URL rows an `overview:` brief walks for: exactly what the brief keeps,
+	 * so raising one raises both. The rest is a pointer to `performance_urls`.
+	 */
+	private const OVERVIEW_BRIEF_URLS = Ask_Assembler::TOP_SPANS;
+
+	/**
 	 * What an `on_hit` callback tells the scan to do next.
 	 *
 	 * The distinction that matters is the middle one: a partition's log is
@@ -653,12 +659,13 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * already expresses that containment, so the picker sends it rather than
 	 * inventing a second attribute for scope.
 	 *
-	 * @param list<string> $descriptors Target first, containers after.
-	 * @param string       $server      Reporting server the brief answers for; '' is every server.
+	 * @param list<string>        $descriptors Target first, containers after.
+	 * @param string              $server      Reporting server the brief answers for; '' is every server.
+	 * @param array<string,mixed> $filters     The url filters in force, which only `overview:` reads: every other descriptor names one thing, and a filtered view of one thing is the same thing.
 	 * @return array<string,mixed>
 	 * @throws \RuntimeException On an unknown descriptor or a missing context.
 	 */
-	private function assemble_ask( array $descriptors, string $server = '' ): array {
+	private function assemble_ask( array $descriptors, string $server = '', array $filters = [] ): array {
 		$target = Ask_Assembler::parse_descriptor( Core::as_string( $descriptors[0] ?? '' ) );
 		if ( null === $target ) {
 			throw new \RuntimeException(
@@ -670,6 +677,8 @@ class Performance_CI_Node extends Service_CI_Node {
 		$context = \array_slice( $descriptors, 1 );
 
 		switch ( $target['type'] ) {
+			case 'overview':
+				return $this->ask_overview( $server, $filters );
 			case 'url':
 				return $this->ask_url( $target['id'], $server );
 			case 'request':
@@ -682,6 +691,45 @@ class Performance_CI_Node extends Service_CI_Node {
 				return self::ask_category( $target['id'], $context, $server );
 		}
 		throw new \RuntimeException( \esc_html( 'unknown descriptor: ' . $target['type'] ) );
+	}
+
+	/**
+	 * The `overview:` brief — the dashboard as it is being read.
+	 *
+	 * It asks the same two verbs the page does, with the same scope, so the
+	 * brief and the screen cannot disagree: `url_page()` for the filtered
+	 * set's totals and leaderboard, `build_leaderboard()` for the category
+	 * board beside it. The site-wide `build_overview_payload()` is
+	 * deliberately NOT used — its totals ignore every filter, so under a
+	 * server or a search they would describe a different site than the one on
+	 * screen.
+	 *
+	 * @param string              $server  Server the page is scoped to; '' is every server.
+	 * @param array<string,mixed> $filters search / errors_only / include_workers, as the page has them.
+	 * @return array<string,mixed>
+	 */
+	private function ask_overview( string $server, array $filters ): array {
+		$page = $this->url_page(
+			$server,
+			Core::as_string( $filters['search'] ?? '' ),
+			(bool) ( $filters['errors_only'] ?? false ),
+			(bool) ( $filters['include_workers'] ?? false ),
+			'count',
+			'desc',
+			0,
+			self::OVERVIEW_BRIEF_URLS
+		);
+
+		return Ask_Assembler::for_overview(
+			[
+				// Pre-split rows cannot answer per-server; null says so.
+				'totals' => ( '' === $server || $page['has_split'] ) ? $page['totals'] : null,
+				'data'   => $page['data'],
+			],
+			self::build_leaderboard( $server ),
+			$server,
+			$filters
+		);
 	}
 
 	/**
@@ -2660,6 +2708,10 @@ class Performance_CI_Node extends Service_CI_Node {
 						[ 'name' => 'server', 'type' => 'string', 'required' => false ],
 						// Declared because the handler reads it, positionally.
 						[ 'name' => 'context', 'type' => 'string', 'required' => false ],
+						// The page's own scope; only `overview:` reads them.
+						[ 'name' => 'search', 'type' => 'string', 'required' => false ],
+						[ 'name' => 'errors_only', 'type' => 'bool', 'required' => false ],
+						[ 'name' => 'include_workers', 'type' => 'bool', 'required' => false ],
 					],
 					'handler'     => static function ( Command_Interpreter_Node $self, array $args, array $envelope = [] ): array {
 				\assert( $self instanceof self );
@@ -2670,7 +2722,12 @@ class Performance_CI_Node extends Service_CI_Node {
 					'' === $context
 						? $parsed['positional']
 						: [ ...$parsed['positional'], $context ],
-					(string) ( $parsed['options']['server'] ?? '' )
+					(string) ( $parsed['options']['server'] ?? '' ),
+					[
+						'search'          => (string) ( $parsed['options']['search'] ?? '' ),
+						'errors_only'     => self::flag( $parsed['options'], 'errors_only' ),
+						'include_workers' => self::flag( $parsed['options'], 'include_workers' ),
+					]
 				);
 					},
 				],

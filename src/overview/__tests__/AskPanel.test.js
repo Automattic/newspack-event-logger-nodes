@@ -49,10 +49,15 @@ const BRIEF = {
 };
 
 // The dashboard shape: one picker, one panel, and something askable.
-function Harness( { onError, serverFilter = '' } ) {
-	const ask = useAsk( { onError, serverFilter } );
+function Harness( {
+	onError,
+	serverFilter = '',
+	urlFilters = null,
+	pageScope = true,
+} ) {
+	const ask = useAsk( { onError, serverFilter, urlFilters } );
 	return (
-		<div>
+		<div data-ask={ pageScope ? 'overview:site' : undefined }>
 			<AskButton ask={ ask } />
 			<div data-ask="span:wp_loaded hook">
 				<span data-ask="request:abc123" id="target">
@@ -131,8 +136,80 @@ test( 'a pick sends the innermost descriptor chain to the ask verb', () => {
 	pick();
 
 	expect( sent ).toEqual( [
-		[ 'request:abc123', 'span:wp_loaded hook', {} ],
+		[ 'request:abc123', 'span:wp_loaded hook', 'overview:site', {} ],
 	] );
+} );
+
+// The page's own brief answers for the page as it is READ: the same server and
+// the same url filters. Sent site-wide under a filter, it would quote numbers
+// the reader cannot see, which is the one thing a brief must never do.
+test( 'a pick carries the scope the page is showing', () => {
+	// Two different servers: the live pick and the one the visible rows were
+	// fetched under. A brief must quote the set on screen, so the echo wins.
+	render( {
+		serverFilter: 'beta.example',
+		urlFilters: {
+			server: 'alpha.example',
+			search: 'wp-admin',
+			errors_only: false,
+			include_workers: true,
+		},
+	} );
+
+	act( () => {
+		view.container.querySelector( '[data-ask-trigger]' ).click();
+	} );
+	act( () => {
+		const page = view.container.querySelector(
+			'[data-ask="overview:site"]'
+		);
+		page.dispatchEvent(
+			new window.MouseEvent( 'mousedown', { bubbles: true } )
+		);
+		page.dispatchEvent(
+			new window.MouseEvent( 'click', { bubbles: true } )
+		);
+	} );
+
+	expect( sent ).toEqual( [
+		[
+			'overview:site',
+			{
+				server: 'alpha.example',
+				search: 'wp-admin',
+				include_workers: '1',
+			},
+		],
+	] );
+} );
+
+// A brief with an empty `findings` list looked and found nothing. One with no
+// `findings` key at all had no detector run over it — saying "nothing stands
+// out" there is a claim nobody made.
+test( 'the panel makes no finding claim for a brief that ran no detector', () => {
+	render();
+	pick();
+
+	answer( {
+		result: {
+			subject: 'overview',
+			scope: 'every server',
+			stats: { requests: 7 },
+			caveat: 'c',
+		},
+	} );
+
+	expect( view.container.textContent ).not.toContain( 'Nothing stands out' );
+	expect( view.container.textContent ).toContain( 'every server' );
+} );
+
+test( 'a brief whose detector found nothing still says so', () => {
+	render();
+	pick();
+
+	answer( { result: { ...BRIEF, findings: [] } } );
+
+	expect( view.container.textContent ).toContain( 'Nothing stands out' );
 } );
 
 test( 'the panel shows the finding, where it was measured, and the proposal', () => {
@@ -390,10 +467,12 @@ test( 'a reply carrying no brief says so rather than vanishing', () => {
 } );
 
 // Clicking nothing is not a failure: the picker stays armed and the `?` cursor
-// says so, so nothing goes to the error banner.
+// says so, so nothing goes to the error banner. Rendered WITHOUT the page
+// descriptor, because a surface that carries one has no un-askable gap left —
+// the request modal and the log table still do.
 test( 'a pick that hits nothing askable stays armed and stays quiet', () => {
 	const onError = jest.fn();
-	render( { onError } );
+	render( { onError, pageScope: false } );
 
 	act( () => {
 		view.container.querySelector( '[data-ask-trigger]' ).click();
@@ -408,7 +487,7 @@ test( 'a pick that hits nothing askable stays armed and stays quiet', () => {
 
 	expect( sent ).toEqual( [] );
 	expect( onError ).not.toHaveBeenCalled();
-	expect( document.body.classList.contains( 'newspack-nodes-asking' ) ).toBe(
-		true
-	);
+	expect(
+		document.documentElement.classList.contains( 'newspack-nodes-asking' )
+	).toBe( true );
 } );

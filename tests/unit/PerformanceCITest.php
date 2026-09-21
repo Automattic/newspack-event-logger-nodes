@@ -1601,6 +1601,69 @@ class PerformanceCITest extends TestCase {
 		$this->assertNull( Stats_Store::swap_url_server_sums( $row, 'alpha.example' ) );
 	}
 
+	/**
+	 * The page's own brief answers for the page as it is being read: the same
+	 * server, the same url filters. Asked with none, it answers for the fleet.
+	 */
+	public function test_ask_overview_answers_for_the_scope_it_is_given(): void {
+		$this->write_request( [
+			'rid' => 'ovrid00000000001', 'url' => 'https://example.test/slow',
+			'duration_ms' => 900.0, 'server_name' => 'alpha.example',
+		] );
+
+		$fleet = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', 'overview:site' );
+
+		$this->assertSame( 'overview', $fleet['subject'] );
+		$this->assertSame( 'every server', $fleet['scope'] );
+		$this->assertSame( '', $fleet['filters']['search'] );
+
+		// One graph per fire: the harness registers `_router` each time.
+		VerbHarness::reset();
+		$scoped = VerbHarness::fire(
+			new Performance_CI_Node(),
+			'performance',
+			'ask',
+			'overview:site --server=alpha.example --search=slow --include_workers=1'
+		);
+
+		$this->assertSame( 'alpha.example', $scoped['server'] );
+		$this->assertSame( 'slow', $scoped['filters']['search'] );
+		$this->assertTrue( $scoped['filters']['include_workers'] );
+		// The pointer widens to the same set, or it widens to another site.
+		$this->assertSame( 'alpha.example', $scoped['fetch'][0]['arguments']['server'] );
+	}
+
+	/**
+	 * The brief's category rows come off `sums_to_display()`, so they are read
+	 * with the keys that producer emits. Seeded 44.4ms over 37 requests and 74
+	 * calls, the board reads 1.2ms and 2 calls a request.
+	 */
+	public function test_ask_overview_reads_the_board_the_producer_writes(): void {
+		$this->set_leaderboard_bucket(
+			new Stats_Store( 0, 86400 ),
+			$this->current_url_bucket(),
+			[
+				'count'        => 37,
+				'sum_req_time' => 3.7,
+				'categories'   => [
+					'wpdb' => [ 'samples' => 37, 'sum_time' => 44.4, 'sum_count' => 74 ],
+				],
+			],
+			'alpha.example'
+		);
+
+		$brief = VerbHarness::fire(
+			new Performance_CI_Node(),
+			'performance',
+			'ask',
+			'overview:site --server=alpha.example'
+		);
+
+		$this->assertSame( 'wpdb', $brief['categories'][0]['name'] );
+		$this->assertEqualsWithDelta( 1.2, $brief['categories'][0]['avg_time_ms'], 0.001 );
+		$this->assertEqualsWithDelta( 2.0, $brief['categories'][0]['avg_count'], 0.001 );
+	}
+
 	public function test_ask_accepts_the_context_it_declares_as_an_option(): void {
 		// The verb declares `context`, so a caller writing `--context=` is
 		// following the schema. Reading context only from the positionals meant

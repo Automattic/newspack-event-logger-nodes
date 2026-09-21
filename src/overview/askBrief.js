@@ -273,6 +273,80 @@ function bodyLines( brief ) {
 				] ),
 				...ruleLines( brief.rule ),
 			];
+		case 'overview':
+			return [
+				...fields( [
+					[ 'scope', brief.scope ],
+					// What the reader narrowed to; absent ones simply omit.
+					[ 'search', brief.filters?.search, 'site' ],
+					[ 'errors only', brief.filters?.errors_only ? 'yes' : '' ],
+					[
+						'workers',
+						brief.filters?.include_workers
+							? 'workers included'
+							: '',
+					],
+					// Null is not zero; pre-split rows cannot answer this.
+					[
+						'traffic',
+						brief.stats
+							? [
+									`${ (
+										brief.stats.requests ?? 0
+									).toLocaleString( 'en-US' ) } requests`,
+									`${ (
+										brief.stats.urls ?? 0
+									).toLocaleString( 'en-US' ) } urls`,
+									`${ num( brief.stats.avg_ms ) }ms avg`,
+									`${ num(
+										brief.stats.requests_per_second
+									) }/s`,
+							  ].join( ', ' )
+							: 'no per-server totals — these rows are pre-split',
+					],
+					[
+						'peak memory',
+						brief.stats?.avg_peak_mb
+							? `${ num( brief.stats.avg_peak_mb ) }MB avg`
+							: '',
+					],
+				] ),
+				...( ( brief.urls ?? [] ).length
+					? [
+							'',
+							'### busiest urls',
+							'',
+							...( brief.urls ?? [] ).map(
+								( u ) =>
+									`- ${ siteData( u.url ) } \`${ u.hash }\` ${
+										u.count
+									}× ${ num( u.avg_ms ) }ms avg, ${ num(
+										u.max_ms
+									) }ms worst`
+							),
+					  ]
+					: [] ),
+				...( ( brief.categories ?? [] ).length
+					? [
+							'',
+							'### where the time goes',
+							'',
+							// A board count is a per-request MEAN: a rate.
+							...( brief.categories ?? [] ).map(
+								( c ) =>
+									`- ${ c.name } ${ num(
+										c.avg_time_ms
+									) }ms avg${
+										Number.isFinite( c.avg_count )
+											? `, ${ num(
+													c.avg_count
+											  ) } calls/request`
+											: ''
+									}`
+							),
+					  ]
+					: [] ),
+			];
 		case 'url':
 			return [
 				...fields( [

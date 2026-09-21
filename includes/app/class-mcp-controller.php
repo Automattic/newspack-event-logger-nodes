@@ -109,7 +109,7 @@ class MCP_Controller {
 			'verb'    => 'urls',
 			'role'    => Capabilities::READ,
 			'summary' => 'The URL leaderboard, sortable and paginated, plus totals and the slowest ten for whatever the filters left. Worker traffic is excluded unless asked for.',
-			'args'    => [ 'sort' => 'count|url|avg_ms|max_ms|…', 'limit' => 'Rows to return.', 'search' => 'Substring filter.', 'server' => 'Optional server name to scope every row and total to.', 'include_workers' => 'Cron, WP-CLI and job traffic is excluded by default; set to include it.' ],
+			'args'    => [ 'sort' => 'count|url|avg_ms|max_ms|…', 'limit' => 'Rows to return.', 'search' => 'Substring filter.', 'server' => 'Optional server name to scope every row and total to.', 'errors_only' => 'Narrows every row and total to error responses.', 'include_workers' => 'Cron, WP-CLI and job traffic is excluded by default; set to include it.' ],
 		],
 		'dump_url'                 => [
 			'node'    => 'performance',
@@ -143,8 +143,8 @@ class MCP_Controller {
 			'node'    => 'performance',
 			'verb'    => 'ask',
 			'role'    => Capabilities::READ,
-			'summary' => 'The brief for one thing: `url:<hash>`, `request:<rid>:<partition>`, `span:<name>`, `entry:<i>` (an entry\'s `i`, its position in the request) or `category:<name>`. A span or an entry also needs its `request:` descriptor as a second argument; a span or a category given a `url:` descriptor instead answers from that URL\'s aggregate.',
-			'args'    => [ 'descriptor' => 'What to ask about (required).', 'context' => 'The containing descriptor, if any.', 'server' => 'Optional server name; scopes a url: brief and a category: brief from the leaderboard the way performance_urls scopes its rows. A span or category under a url: answers from that URL\'s aggregate, which is every server\'s.' ],
+			'summary' => 'The brief for one thing: `overview:site` (the dashboard as scoped), `url:<hash>`, `request:<rid>:<partition>`, `span:<name>`, `entry:<i>` (an entry\'s `i`, its position in the request) or `category:<name>`. A span or an entry also needs its `request:` descriptor as a second argument; a span or a category given a `url:` descriptor instead answers from that URL\'s aggregate.',
+			'args'    => [ 'descriptor' => 'What to ask about (required).', 'context' => 'The containing descriptor, if any.', 'search' => 'Substring filter an `overview:` brief answers under; ignored by every other descriptor.', 'include_workers' => 'Worker traffic an `overview:` brief counts; excluded by default, as performance_urls excludes it.', 'errors_only' => 'Narrows an `overview:` brief to error responses.', 'server' => 'Optional server name; scopes an overview: brief, a url: brief and a category: brief from the leaderboard the way performance_urls scopes its rows. A span or category under a url: answers from that URL\'s aggregate, which is every server\'s.' ],
 		],
 		'dump_rules'               => [
 			'node'    => 'rules',

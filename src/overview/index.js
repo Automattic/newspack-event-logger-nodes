@@ -87,6 +87,8 @@ export function AdminApp() {
 	return (
 		<DashboardShell
 			storageKey="newspack-nodes:debug:performance"
+			// The page's own brief; every other target here is a row inside.
+			askDescriptor="overview:site"
 			subtitle={ __(
 				'Performance Overview',
 				'newspack-event-logger-nodes'

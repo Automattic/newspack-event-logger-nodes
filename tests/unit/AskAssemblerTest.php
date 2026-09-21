@@ -772,11 +772,154 @@ class AskAssemblerTest extends TestCase {
 
 	public function test_a_global_category_brief_says_it_is_global(): void {
 		$brief = Ask_Assembler::for_category(
-			[ 'gyrobase' => [ 'avg_time' => 410.0 ], 'core' => [ 'avg_time' => 90.0 ] ],
+			[ 'gyrobase' => [ 'time' => 410.0 ], 'core' => [ 'time' => 90.0 ] ],
 			'gyrobase'
 		);
 
 		$this->assertSame( 'recent window', $brief['scope'] );
+	}
+
+	/**
+	 * The page's own brief: the numbers on screen are the FILTERED set's, so
+	 * the scope rides with them. A brief that quoted site-wide totals under a
+	 * server filter would describe a different site than the one being read.
+	 */
+	public function test_an_overview_brief_carries_the_scope_its_numbers_are_of(): void {
+		$brief = Ask_Assembler::for_overview(
+			[
+				// The shape `urls` actually answers with — not the per-URL row
+				// shape, which is what this brief first read and printed as 0.
+				'totals' => [
+					'urls'                => 137,
+					'requests'            => 4210,
+					'avg_ms'              => 812.5,
+					'avg_peak_mb'         => 44.25,
+					'requests_per_second' => 0.83,
+				],
+				'data'   => [
+					[ 'hash' => '5efdf8a72d74', 'url' => 'https://example.com/slow', 'count' => 90, 'avg_ms' => 3100.0, 'max_ms' => 32828.4 ],
+					[ 'hash' => 'aaaaaaaaaaaa', 'url' => 'https://example.com/fast', 'count' => 4000, 'avg_ms' => 40.0, 'max_ms' => 120.0 ],
+				],
+			],
+			[
+				'categories' => [
+					'sql'  => [ 'time' => 410.0, 'count' => 12.0, 'samples' => 90 ],
+					'core' => [ 'time' => 90.0, 'count' => 3.0, 'samples' => 90 ],
+				],
+			],
+			'www.elsol.com.ar',
+			[ 'search' => 'wp-admin', 'errors_only' => false, 'include_workers' => true ]
+		);
+
+		$this->assertSame( 'overview', $brief['subject'] );
+		$this->assertSame( 'www.elsol.com.ar', $brief['server'] );
+		$this->assertSame( 'wp-admin', $brief['filters']['search'] );
+		$this->assertTrue( $brief['filters']['include_workers'] );
+		$this->assertSame( 4210, $brief['stats']['requests'] );
+		$this->assertSame( 137, $brief['stats']['urls'] );
+		$this->assertSame( 812.5, $brief['stats']['avg_ms'] );
+		$this->assertSame( 0.83, $brief['stats']['requests_per_second'] );
+		$this->assertSame( 44.25, $brief['stats']['avg_peak_mb'] );
+		$this->assertSame(
+			[ '5efdf8a72d74', 'aaaaaaaaaaaa' ],
+			\array_column( $brief['urls'], 'hash' ),
+			'the leaderboard as ordered, so the brief reads as the page does'
+		);
+		$this->assertSame( 'sql', $brief['categories'][0]['name'] );
+		// The producer's own keys, read as `sums_to_display()` emits them.
+		$this->assertSame( 410.0, $brief['categories'][0]['avg_time_ms'] );
+		$this->assertSame( 12.0, $brief['categories'][0]['avg_count'] );
+		// Every pointer carries the same scope, or widening leaves it.
+		$fetched = \array_column( $brief['fetch'], 'tool' );
+		$this->assertContains( 'performance_urls', $fetched );
+		$this->assertSame( 'www.elsol.com.ar', $brief['fetch'][0]['arguments']['server'] );
+	}
+
+	/**
+	 * The per-shard overflow row sorts high by count, so it reaches this list.
+	 * Its key is not a url_hash — `dump_url` answers `URL not found` for it —
+	 * so the brief must not offer one, and must name the row as the table does.
+	 */
+	public function test_an_overview_brief_offers_no_hash_for_the_overflow_row(): void {
+		$brief = Ask_Assembler::for_overview(
+			[
+				'totals' => [ 'requests' => 4210 ],
+				'data'   => [
+					[ 'hash' => 'other', 'url' => '', 'aggregate' => true, 'count' => 9100, 'avg_ms' => 61.5, 'max_ms' => 940.0 ],
+					[ 'hash' => '5efdf8a72d74', 'url' => 'https://example.com/slow', 'count' => 90, 'avg_ms' => 3100.0, 'max_ms' => 32828.4 ],
+				],
+			],
+			[ 'categories' => [] ],
+			'',
+			[]
+		);
+
+		$this->assertArrayNotHasKey( 'hash', $brief['urls'][0] );
+		$this->assertSame(
+			'traffic from URLs beyond the per-shard cap',
+			$brief['urls'][0]['url']
+		);
+		$this->assertSame( 9100, $brief['urls'][0]['count'] );
+		$this->assertSame( '5efdf8a72d74', $brief['urls'][1]['hash'] );
+	}
+
+	/**
+	 * Every filter in force rides the pointer. One left behind widens the
+	 * fetch to a set the brief never described.
+	 */
+	public function test_an_overview_pointer_carries_every_filter_in_force(): void {
+		$brief = Ask_Assembler::for_overview(
+			[ 'totals' => [ 'requests' => 4210 ], 'data' => [] ],
+			[ 'categories' => [] ],
+			'spoke-07',
+			[ 'search' => 'checkout', 'errors_only' => true, 'include_workers' => true ]
+		);
+
+		$urls = null;
+		foreach ( $brief['fetch'] as $pointer ) {
+			if ( 'performance_urls' === $pointer['tool'] ) {
+				$urls = $pointer['arguments'];
+			}
+		}
+
+		$this->assertSame(
+			[
+				'server'          => 'spoke-07',
+				'search'          => 'checkout',
+				'errors_only'     => '1',
+				'include_workers' => '1',
+			],
+			$urls
+		);
+	}
+
+	/**
+	 * `urls` answers `totals: null` where a server filter cannot be split out
+	 * of the pre-split rows. Zeros there would read as an idle site.
+	 */
+	public function test_an_overview_brief_says_when_the_totals_cannot_be_scoped(): void {
+		$brief = Ask_Assembler::for_overview(
+			[ 'totals' => null, 'data' => [] ],
+			[ 'categories' => [] ],
+			'spoke-01',
+			[]
+		);
+
+		$this->assertNull( $brief['stats'] );
+		$this->assertSame( 'spoke-01', $brief['server'] );
+	}
+
+	/** No server filter is the fleet, and the brief says so rather than ''. */
+	public function test_an_overview_brief_with_no_server_answers_for_the_fleet(): void {
+		$brief = Ask_Assembler::for_overview(
+			[ 'totals' => [ 'requests' => 7 ], 'data' => [] ],
+			[ 'categories' => [] ],
+			'',
+			[]
+		);
+
+		$this->assertSame( '', $brief['server'] );
+		$this->assertSame( 'every server', $brief['scope'] );
 	}
 
 	public function test_a_category_absent_from_the_request_is_refused(): void {
