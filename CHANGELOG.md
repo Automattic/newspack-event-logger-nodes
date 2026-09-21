@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `trace_callers` budgets the deep caller chain per CALLER of a hook, query
+  shape or URL, not per hook, shape or URL. `l` already names the calling frame
+  on every span, and it is what splits the flame node, so a budget keyed on the
+  hook alone spent the whole allowance on whichever caller fired first and left
+  every other node bare — which meant the number had to be large enough to cover
+  them all. Keyed on the pair, 1 reaches every caller.
+
+### Fixed
+- A logged query reached the firehose truncated. `Log_Manager::message()` ran the
+  URL redactor over any `m` carrying a `?`, and a statement shape is placeholders
+  throughout, so the redactor read one as a query delimiter and its value half —
+  bounded by `&`, which SQL has none of — ate the statement from the first
+  credential-shaped column to the end. Core adds `post_password` to every
+  `WP_Query`, so the `ORDER BY` and `LIMIT` a slow query is read from were the
+  usual casualties, and `Flame_Fold::shape_of()` keyed the shape table on the cut
+  string, folding distinct statements into one row. `start()`, `complete()` and
+  `message()` now take a `shaped` flag that the producer sets, and
+  `App\Core::query_end()` sets it: a shape needs no redaction, because
+  `without_literals()` has already replaced every literal and stripped every
+  comment.
+- A hook carrying SQL was truncated the same way. `hook_start()` shapes a value
+  that opens with a SQL keyword, and a rule naming `query`, `posts_request` or
+  `found_posts_query` with query logging OFF sends the statement through there
+  rather than the `sql` span. `shaped_if_sql()` now reports whether it shaped,
+  and `hook_start()` passes that on.
+
 ## [0.100.3] - 2026-09-21
 
 ### Changed

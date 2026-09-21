@@ -341,11 +341,13 @@ describe( 'RuleEditModal — log rule fields', () => {
 		expect( help ).toContain( 'Labels every hook span with who called it' );
 		// The number counts CALLS traced, not backtraces a call records.
 		expect( help ).toContain(
-			'traces that many calls of each hook, query shape and outbound URL'
+			'traces that many calls from each CALLER of a hook, query shape or outbound URL'
 		);
 		expect( help ).toContain( 'twenty frames above each' );
 		expect( help ).toContain( 'At 0 every span still carries its label' );
-		expect( help ).toContain( 'traced per hook, query shape and URL' );
+		expect( help ).toContain(
+			'traced per caller of each hook, query shape and URL'
+		);
 		expect( help ).not.toContain( 'every span with' );
 		expect( help ).not.toContain( 'full backtrace' );
 		expect( help ).not.toContain( 'backtraces per hook' );

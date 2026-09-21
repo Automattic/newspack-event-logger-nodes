@@ -116,7 +116,7 @@ Two tiers, because a short token collides with ordinary words. A name **containi
 
 The accepted cost is that the segment rule cannot tell a postal code from an OAuth one, nor a public OAuth identifier from the credential beside it: `country_code` and `client_id` are redacted though neither is a secret. `LogManagerTest` pins both rather than leaving them to be rediscovered. This stays a DENYLIST — a credential under a name carrying none of these tokens still reaches the log — because an allowlist is the wrong trade for a URL log, where `?p=`, `?s=`, `?page=` and the `utm_*` family are what an operator reads it for.
 
-`log_environment()` redacts before it caps a value at `ENV_VALUE_MAX`, so truncation can never hide a secret's boundary. `Log_Manager::redact_url()` is public because it is the ONE redaction path: anything that sends a URL somewhere it was not already written — the Ask brief, an agent surface — goes through it rather than a second pattern that would drift. `message()` redacts a string `m` alone: the array-valued messages are the environment map, redacted where it is built, and a job body, which is the transport `Job_Router_Node` dispatches from.
+`log_environment()` redacts before it caps a value at `ENV_VALUE_MAX`, so truncation can never hide a secret's boundary. `Log_Manager::redact_url()` is public because it is the ONE redaction path: anything that sends a URL somewhere it was not already written — the Ask brief, an agent surface — goes through it rather than a second pattern that would drift. `message()` redacts a string `m` alone, and only when the producer has not marked it `shaped`: the array-valued messages are the environment map, redacted where it is built, and a job body, which is the transport `Job_Router_Node` dispatches from, while a `shaped` message is a query shape, which `App\Core::without_literals()` has already emptied of every literal and comment. A shape must be exempt rather than merely redundant — its placeholders are all `?`, so the pattern reads one as a query delimiter and its value half, bounded by an `&` that SQL never carries, eats the statement from the first credential-shaped column to the end.
 
 ### Refuse-root
 
@@ -173,7 +173,7 @@ The four terminal codes, `F`, `A`, `T` and `I`, are `Request_Builder_Node::ERROR
 | `log_http` | `true` | Time every outbound HTTP request as a span |
 | `log_queries` | `false` | Time every SQL query as a span; defines `SAVEQUERIES` and costs two entries per query |
 | `trace_hooks` | `false` | Name the calling frame on each hook entry's `l`, splitting one hook into a flame node per caller |
-| `trace_callers` | `0` | Deep caller chains recorded per request on a span's start entry as `caller`, budgeted per hook name, per query statement shape and per outbound URL; a stored `true` decodes to `Rule::TRACE_CALLERS_DEFAULT` (20) |
+| `trace_callers` | `0` | Deep caller chains recorded per request on a span's start entry as `caller`, budgeted per CALLER of each hook, query statement shape and outbound URL; a stored `true` decodes to `Rule::TRACE_CALLERS_DEFAULT` (20) |
 
 The constructor throws when the pattern is empty, and when `hooks` and `hooks_in` contradict each other — a null hook list means the pointer tier and a list means inline, with no third reading.
 

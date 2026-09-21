@@ -323,7 +323,9 @@ class AppCoreTest extends TestCase {
 			$core->hook_start( 'body' );
 		}
 
-		$this->assertSame( [ 'the_content' => $limit ], $this->traced( $core ) );
+		// One caller in this loop, so the pair key is the hook plus this frame.
+		$key = 'the_content:' . self::class . '->test_caller_traces_stop_at_the_limit';
+		$this->assertSame( [ $key => $limit ], $this->traced( $core ) );
 	}
 
 	/**
@@ -419,6 +421,85 @@ class AppCoreTest extends TestCase {
 			[ 2, 1 ],
 			\array_values( $this->traced( $core ) ),
 			'two of one shape, one of the other'
+		);
+	}
+
+	/**
+	 * `l` already names the calling frame on every firing, so the budget keys
+	 * on the PAIR: one chain per CALLER of a hook rather than N for the hook.
+	 * A hook fired from three places is three findings, and at 1 each still
+	 * gets a chain instead of the first caller spending the whole allowance.
+	 */
+	public function test_a_hook_caller_budget_counts_by_hook_and_label(): void {
+		$this->set_governing_rule(
+			new Rule(
+				'4b7e2c9a1d83',
+				'/reports/',
+				Rule::ACTION_LOG,
+				trace_hooks: true,
+				trace_callers: 1
+			)
+		);
+		$core                               = new Core();
+		$GLOBALS['_wp_test_current_filter'] = 'the_content';
+
+		$this->fire_the_content_from_one_place( $core );
+		$this->fire_the_content_from_another( $core );
+
+		$this->assertSame(
+			[ 1, 1 ],
+			\array_values( $this->traced( $core ) ),
+			'one chain per caller, not one for the hook'
+		);
+		$this->assertNotSame(
+			'',
+			$this->last_entry_field( 'the_content hook (start)', 'caller' ),
+			'the second caller is traced, where a per-hook budget had spent out'
+		);
+	}
+
+	/** The cap still binds: one caller firing twice buys one chain. */
+	public function test_a_hook_caller_budget_still_caps_one_caller(): void {
+		$this->set_governing_rule(
+			new Rule(
+				'4b7e2c9a1d83',
+				'/reports/',
+				Rule::ACTION_LOG,
+				trace_hooks: true,
+				trace_callers: 1
+			)
+		);
+		$core                               = new Core();
+		$GLOBALS['_wp_test_current_filter'] = 'the_content';
+
+		$this->fire_the_content_from_one_place( $core );
+		$this->fire_the_content_from_one_place( $core );
+
+		$this->assertSame( [ 1 ], \array_values( $this->traced( $core ) ) );
+		$this->assertSame( '', $this->last_entry_field( 'the_content hook (start)', 'caller' ) );
+	}
+
+	/** One statement shape asked from two places is two findings, not one. */
+	public function test_a_query_caller_budget_counts_by_shape_and_label(): void {
+		$this->set_governing_rule(
+			new Rule(
+				'4b7e2c9a1d83',
+				'/reports/',
+				Rule::ACTION_LOG,
+				log_queries: true,
+				trace_callers: 1
+			)
+		);
+		$core = new Core();
+		$sql  = 'SELECT a FROM wp_posts WHERE id = 7';
+
+		( new QueryCallerOneFixture() )->ask( $core, $sql );
+		( new QueryCallerTwoFixture() )->ask( $core, $sql );
+
+		$this->assertSame(
+			[ 1, 1 ],
+			\array_values( $this->traced( $core ) ),
+			'the same shape from two callers keeps two budgets'
 		);
 	}
 
@@ -592,6 +673,29 @@ class AppCoreTest extends TestCase {
 		return \is_array( $last ) ? (string) ( $last['label'] ?? '' ) : '';
 	}
 
+	/**
+	 * The statement is logged as its SHAPE, and the URL redactor must never
+	 * see one: it reads a placeholder as a query delimiter, and its value half
+	 * runs to the next `&` — which SQL has none of — so a column named like a
+	 * credential costs the ORDER BY and LIMIT a slow query is read from. Core
+	 * puts `post_password` in every WP_Query, and `passw` is a pattern token.
+	 */
+	public function test_a_query_shape_reaches_the_entry_whole(): void {
+		$this->set_governing_rule( $this->query_rule( true ) );
+		$core = new Core();
+		$sql  = 'SELECT wp_posts.ID FROM wp_posts WHERE wp_posts.ID NOT IN (13,21)'
+			. " AND wp_posts.post_password = '' ORDER BY wp_posts.menu_order DESC LIMIT 5";
+
+		$core->query_start( $sql );
+		$core->query_end( null, $sql, 0.002, '', 1.0 );
+
+		$this->assertSame(
+			'SELECT wp_posts.ID FROM wp_posts WHERE wp_posts.ID NOT IN (?)'
+				. ' AND wp_posts.post_password = ? ORDER BY wp_posts.menu_order DESC LIMIT ?',
+			$this->last_entry_field( 'sql (complete)', 'm' )
+		);
+	}
+
 	/** The pair opens one span and closes it, passing both values through. */
 	public function test_a_query_opens_and_closes_one_span(): void {
 		$this->set_governing_rule( $this->query_rule( true ) );
@@ -628,6 +732,50 @@ class AppCoreTest extends TestCase {
 			'SELECT * FROM wp_posts WHERE post_name = ? AND id = ?',
 			$this->open_span_message()
 		);
+	}
+
+	/**
+	 * A hook can carry SQL too — `query`, `posts_request`, `found_posts_query`
+	 * — and `bind_current_scope()` only skips binding `query` when the rule
+	 * turns query logging ON, so with it off the statement arrives here. The
+	 * entry must carry the shape whole: the URL redactor reads a placeholder as
+	 * a query delimiter and cuts the statement at the first credential-shaped
+	 * column, exactly as it did on the `sql` span.
+	 */
+	public function test_a_sql_hook_argument_reaches_the_entry_whole(): void {
+		$this->set_governing_rule( $this->query_rule( false ) );
+		$core                                    = new Core();
+		$GLOBALS['_wp_test_current_filter']      = 'posts_request';
+		$sql                                     = 'SELECT wp_posts.ID FROM wp_posts WHERE wp_posts.ID NOT IN (13,21)'
+			. " AND wp_posts.post_password = '' ORDER BY wp_posts.menu_order DESC LIMIT 5";
+
+		$core->hook_start( $sql );
+
+		$this->assertSame(
+			'SELECT wp_posts.ID FROM wp_posts WHERE wp_posts.ID NOT IN (?)'
+				. ' AND wp_posts.post_password = ? ORDER BY wp_posts.menu_order DESC LIMIT ?',
+			$this->last_entry_field( 'posts_request hook (start)', 'm' )
+		);
+	}
+
+	/**
+	 * `SQL_LEAD` matches a first WORD, and English has those words too. Prose
+	 * opening "Update…" is not a shape, so the redactor must still be its
+	 * second net: the exemption follows whether the shaper actually REPLACED
+	 * something, never whether the value merely looked like a statement.
+	 */
+	public function test_prose_opening_with_a_sql_keyword_is_still_redacted(): void {
+		$this->set_governing_rule( $this->query_rule( false ) );
+		$core                               = new Core();
+		$GLOBALS['_wp_test_current_filter'] = 'gettext';
+
+		$core->hook_start(
+			'Update your password at https://site.test/acct?session_token=shibboleth-cardamom'
+		);
+
+		$m = $this->last_entry_field( 'gettext hook (start)', 'm' );
+		$this->assertStringNotContainsString( 'shibboleth-cardamom', $m );
+		$this->assertStringContainsString( 'session_token=[REDACTED]', $m );
 	}
 
 	/** Prose is not SQL, and an apostrophe in it is not a literal delimiter. */
@@ -1998,6 +2146,17 @@ class AppCoreTest extends TestCase {
 			$ref->invoke( null, "SELECT * FROM t WHERE slug = 'beta' LIMIT 9" )
 		);
 	}
+
+	/** Distinct frames, so `l` differs and the budget key with it. */
+	private function fire_the_content_from_one_place( Core $core ): void {
+		$core->hook_start( 'body copy' );
+	}
+
+	/** Its twin, deliberately a separate frame. */
+	private function fire_the_content_from_another( Core $core ): void {
+		$core->hook_start( 'body copy' );
+	}
+
 }
 
 /**
@@ -2120,5 +2279,29 @@ class DropInCallerFixture {
 	/** Run a query the way core does, through `get_results()`. */
 	public function ask(): string {
 		return ( new DropInFixture() )->get_results();
+	}
+}
+
+/** Stands in for `wpdb`: the frame a query label climbs past. */
+class QueryTransportFixture {
+	/** Open the span the way the `query` filter does. */
+	public function run( Core $core, string $sql ): void {
+		$core->query_start( $sql );
+	}
+}
+
+/** One of the two places that ask for the same statement. */
+class QueryCallerOneFixture {
+	/** Ask through the transport. */
+	public function ask( Core $core, string $sql ): void {
+		( new QueryTransportFixture() )->run( $core, $sql );
+	}
+}
+
+/** The other, on its own class so the label differs. */
+class QueryCallerTwoFixture {
+	/** Ask through the transport. */
+	public function ask( Core $core, string $sql ): void {
+		( new QueryTransportFixture() )->run( $core, $sql );
 	}
 }
