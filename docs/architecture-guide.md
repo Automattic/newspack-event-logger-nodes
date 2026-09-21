@@ -173,7 +173,7 @@ The four terminal codes, `F`, `A`, `T` and `I`, are `Request_Builder_Node::ERROR
 | `log_http` | `true` | Time every outbound HTTP request as a span |
 | `log_queries` | `false` | Time every SQL query as a span; defines `SAVEQUERIES` and costs two entries per query |
 | `trace_hooks` | `false` | Name the calling frame on each hook entry's `l`, splitting one hook into a flame node per caller |
-| `trace_callers` | `0` | Deep caller chains recorded per request on a span's start entry as `caller`, budgeted per CALLER of each hook, query statement shape and outbound URL; a stored `true` decodes to `Rule::TRACE_CALLERS_DEFAULT` (20) |
+| `trace_callers` | `0` | Deep caller chains recorded per request on a span's start entry as `caller`, budgeted per CALLER of each hook, query statement shape and outbound URL; a stored `true` is a count of 1 |
 
 The constructor throws when the pattern is empty, and when `hooks` and `hooks_in` contradict each other — a null hook list means the pointer tier and a list means inline, with no third reading.
 

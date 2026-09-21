@@ -70,15 +70,16 @@ final class RuleTest extends TestCase {
 	 *
 	 * A fixed cap of 20 left 21% of a real record unattributed and cut the
 	 * stack one frame short of the answer, so the number a diagnostic run wants
-	 * is not the number steady state wants. `true` keeps meaning "the default",
-	 * so a rule written before this still reads.
+	 * is not the number steady state wants. `true` still reads as a count, and
+	 * that count is ONE: the budget keys on the caller, so one chain per caller
+	 * is already a chain from every one of them.
 	 */
-	public function test_trace_callers_is_a_count_and_true_means_the_default(): void {
+	public function test_trace_callers_is_a_count_and_true_means_one(): void {
 		$legacy = Rule::from_array( [ 'id' => 'g7', 'pattern' => '/x', 'action' => 'log', 'trace_callers' => true ] );
 		$tuned  = Rule::from_array( [ 'id' => 'h8', 'pattern' => '/x', 'action' => 'log', 'trace_callers' => 250 ] );
 		$off    = Rule::from_array( [ 'id' => 'i9', 'pattern' => '/x', 'action' => 'log', 'trace_callers' => false ] );
 
-		$this->assertSame( Rule::TRACE_CALLERS_DEFAULT, $legacy->trace_callers );
+		$this->assertSame( 1, $legacy->trace_callers );
 		$this->assertSame( 250, $tuned->trace_callers );
 		$this->assertSame( 0, $off->trace_callers );
 	}

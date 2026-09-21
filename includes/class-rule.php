@@ -36,17 +36,6 @@ final class Rule {
 	public const HOOKS_INLINE = 'inline';
 
 	/**
-	 * Caller chains one hook, query shape or URL records when `trace_callers`
-	 * is stored as `true` rather than as a count.
-	 *
-	 * Twenty is sized for a hook that fires sixteen times: enough to see a
-	 * repeat whole, few enough that a hot hook stops paying after the first
-	 * twenty. A rule needing a wider window names its own count, because a
-	 * diagnostic run wants what steady state does not.
-	 */
-	public const TRACE_CALLERS_DEFAULT = 20;
-
-	/**
 	 * Hook tier: `hooks` is null and the list lives in a per-rule durable
 	 * option mirrored into memcache, which `Rule_Set::hooks_for()` resolves.
 	 */
@@ -68,7 +57,7 @@ final class Rule {
 	 * @param bool          $log_queries                 Time every SQL query as its own span; needs SAVEQUERIES and costs two entries per query.
 	 * @param bool          $log_http                    Time every outbound HTTP request as its own span, between `pre_http_request` and `http_api_debug`. On by default: a request making no remote calls pays two add_filter() calls and nothing else.
 	 * @param bool          $trace_hooks                 Name the calling frame on each hook entry's aggregation label, so one hook firing sixteen times splits into a flame node per caller. Costs one shallow backtrace per firing.
-	 * @param int           $trace_callers               Deep caller chains recorded per request on a span's start entry as `caller`, budgeted per CALLER of each hook, query statement shape and outbound URL, so a hook asked for from three places traces three times; 0 = off. A stored `true` decodes to self::TRACE_CALLERS_DEFAULT.
+	 * @param int           $trace_callers               Deep caller chains recorded per request on a span's start entry as `caller`, budgeted per CALLER of each hook, query statement shape and outbound URL, so a hook asked for from three places traces three times; 0 = off, and a stored `true` is a count of 1.
 	 *
 	 * @throws \InvalidArgumentException When the pattern is empty, or hooks and hooks_in contradict.
 	 */
@@ -206,8 +195,9 @@ final class Rule {
 	 * @return int Caller chains per hook; 0 when off.
 	 */
 	private static function to_trace_count( mixed $v ): int {
+		// `true` is a count of ONE: the budget keys on the caller.
 		if ( true === $v ) {
-			return self::TRACE_CALLERS_DEFAULT;
+			return 1;
 		}
 		return \max( 0, Core::num_int( $v, 0 ) );
 	}

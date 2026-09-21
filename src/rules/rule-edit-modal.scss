@@ -74,20 +74,30 @@
 		display: flex;
 		align-items: flex-start;
 		gap: 12px;
+		// Below the checkbox's basis the count takes its own line, rather
+		// than the two splitting a width neither can use.
+		flex-wrap: wrap;
 
 		.components-checkbox-control {
-			flex: 1;
+			// A FLOOR, not a share: at `flex: 1` the basis is 0, so the count
+			// beside it — whose suffix is a sentence — claimed the row and
+			// squeezed the help text to one word per line.
+			flex: 1 1 320px;
+			min-width: 0;
 		}
 	}
 
 	.rule-edit-trace-count {
 		display: flex;
-		align-items: center;
+		align-items: baseline;
 		gap: 6px;
-		white-space: nowrap;
+		flex: 0 1 auto;
+		min-width: 0;
 
 		.components-base-control {
 			margin: 0;
+			// The field keeps its width; only the sentence gives way.
+			flex: none;
 		}
 
 		input {

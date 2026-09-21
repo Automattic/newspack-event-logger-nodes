@@ -337,7 +337,7 @@ class AppCoreTest extends TestCase {
 	 * discarded the caller, which on a real admin request is the whole answer.
 	 */
 	public function test_a_caller_trace_keeps_the_nearest_frames(): void {
-		$this->set_governing_rule( $this->tracing_rule( Rule::TRACE_CALLERS_DEFAULT ) );
+		$this->set_governing_rule( $this->tracing_rule( 9 ) );
 		$core = new Core();
 		$ref  = new \ReflectionMethod( Core::class, 'caller_of' );
 

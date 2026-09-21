@@ -130,7 +130,7 @@ hub syncs to spokes:
 | `log_queries` | bool | Time every SQL query as its own span. Needs `SAVEQUERIES` and costs two entries per query. Default false. |
 | `log_http` | bool | Time every outbound HTTP request as a span, between `pre_http_request` and `http_api_debug`. **Absent means ON** — only an explicit false retires a live span. |
 | `trace_hooks` | bool | Name the calling frame on each hook entry's aggregation label, so one hook firing sixteen times splits into a flame node per caller. Default false. |
-| `trace_callers` | int | Deep caller chains recorded per request on a span's start entry as `caller`, budgeted per CALLER of each hook, query statement shape and outbound URL; 0 is off, and a stored `true` decodes to `Rule::TRACE_CALLERS_DEFAULT` (20). |
+| `trace_callers` | int | Deep caller chains recorded per request on a span's start entry as `caller`, budgeted per CALLER of each hook, query statement shape and outbound URL; 0 is off, and a stored `true` is a count of 1. |
 
 ### `performance` — the omnibus dashboard CI
 
