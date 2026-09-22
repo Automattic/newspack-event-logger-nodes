@@ -762,9 +762,9 @@ class StatsStoreTest extends TestCase {
 		// one only briefly, since its frame may still land.
 		$this->assertSame( [ [ 'lb:' . $closed, 'lb:' . $open ] ], $asked );
 		$expiries = Core::$memd->expiries();
-		$brief    = $expiries[ \Newspack_Nodes\Table_Node::entry_key( Stats_Store::namespace_for( 0 ), 'lb:' . $open ) ] ?? 0;
+		$brief    = $expiries[ self::cache_key( 0, 'lb:' . $open ) ] ?? 0;
 		$this->assertEqualsWithDelta( $now + Stats_Store::ABSENCE_HOLD_SECONDS, $brief, 2, 'the open bucket\'s absence holds briefly' );
-		$held     = $expiries[ \Newspack_Nodes\Table_Node::entry_key( Stats_Store::namespace_for( 0 ), 'lb:' . $closed ) ] ?? 0;
+		$held     = $expiries[ self::cache_key( 0, 'lb:' . $closed ) ] ?? 0;
 		// The window is 7200s from the bucket's start, an hour ago.
 		$this->assertEqualsWithDelta( $now - ( $now % Stats_Store::BUCKET_SECONDS ) - 3600 + 7200, $held, 2 + Stats_Store::BUCKET_SECONDS, 'held for what is left of the window, not the table lifetime' );
 	}

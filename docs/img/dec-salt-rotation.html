@@ -40,7 +40,7 @@
       <p>The mirror exists to outlive the flush (decision 10), so its key carries no install scope and the rotation reaches nothing on disk.</p>
       <div class="keyrow"><span class="seg">evlog:</span><span class="seg">p0:{key}</span></div>
       <p class="cap"><span class="mono">Stats_Store::entry_key()</span>: the partition and the entry, and nothing else.</p>
-      <div class="act"><span class="cmd" style="background:#003DA5">a frame the merge cannot name</span><span class="arr">&rarr;</span><span class="chip">refused, then aged out</span></div>
+      <div class="act"><span class="cmd" style="background:#003DA5">a frame the merge cannot name</span><span class="arr">&rarr;</span><span class="chip">a zero count dropped, or aged out</span></div>
       <p class="cap"><span class="mono">sum_entry()</span> rebuilds an entry the flush touches; a zero-count filter drops an untouched one. Decision 5 names the namespaces with neither. The mirror carries no version component.</p>
     </div></div>
 </div>
