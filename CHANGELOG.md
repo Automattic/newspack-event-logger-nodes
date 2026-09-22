@@ -26,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rehydrate seam retried the resolution while it came back empty, so a
   `stats_mirror_node` no active topology carries paid a catalog walk on
   every read that missed.
+- **A namespace the mirror refuses earns no absence marker.** The reader
+  remembered an absence for every coarse-tier key a cold poll asked for,
+  one cache write each, though the mirror never holds that tier.
 
 ### Changed
 - **Every `App\Core` callback asks `Log_Manager::started_instance()`**,
