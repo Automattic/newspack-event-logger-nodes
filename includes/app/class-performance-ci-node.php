@@ -217,12 +217,6 @@ class Performance_CI_Node extends Service_CI_Node {
 	/** @var string What `$read_window` was built for: its bucket AND its retention. */
 	private static string $read_window_at = '';
 
-	/**
-	 * Valid sort fields for the `urls` verb; anything outside falls back
-	 * to `count`.
-	 */
-	private const URL_SORTS = [ 'count', 'url', 'avg_ms', 'min_ms', 'max_ms', 'avg_peak_mb', 'last_updated' ];
-
 	/** Table namespace of the URL page cache, beside `Rule_Set::TABLE_HOOKS`. */
 	private const URLS_PAGE_NS = 'eln-urls-page';
 
@@ -780,6 +774,247 @@ class Performance_CI_Node extends Service_CI_Node {
 	/**
 	 * The filtered URL set: its totals, its slowest, and one page of it.
 	 *
+	 * The page is CACHED, keyed by every filter, the window bucket, the
+	 * retention and the store count: a fold over a hub's whole URL index runs
+	 * tens of seconds, and every tab polling the same page would otherwise
+	 * pay it again. On the FOLD path that cache holds `URLS_PAGE_TTL_S`, so a
+	 * folded page's `totals.requests` lags by up to that TTL, one bucket's
+	 * slice of the window, and `requests_per_second` moves only when a bucket
+	 * closes — the cache delays that rollover by up to the same TTL. A RANKED
+	 * page's totals come from `url_header()` instead, whose own cache holds
+	 * `Stats_Store::BUCKET_SECONDS` — the bucket's own life — so a ranked
+	 * page's lag is bounded by that, not by `URLS_PAGE_TTL_S`. A fold the
+	 * mirror read budget cut short is served and not kept, or the gap it left
+	 * would stand for the cache's whole life where the next poll would have
+	 * filled it.
+	 *
+	 * Two paths answer. A page with no filter and an end inside the fine
+	 * tier's list depth reads the writer's ranked lists — `URL_RANK_N`
+	 * entries per bucket, cut and folded here — and takes its header from
+	 * the fold through `url_header()`, once per bucket. Everything else
+	 * folds. A ranked page says so with `ranked`, because its averages are
+	 * the means of the bucket averages it ranked with, and a count outside
+	 * every bucket's list is a count the page cannot see.
+	 *
+	 * @param string                 $server  Reporting server to scope to; '' reads every server.
+	 * @param string                 $search  Case-insensitive URL substring; '' matches all.
+	 * @param bool                   $errors  Keep only rows with unclassified requests.
+	 * @param bool                   $workers Keep worker traffic (the default excludes it).
+	 * @param string                 $sort    A URL_SORTS field.
+	 * @param string                 $order   'asc' or 'desc'.
+	 * @param int                    $offset  Page offset.
+	 * @param int                    $limit   Page size.
+	 * @param array<int,Stats_Store> $stores  Stores the caller resolved once.
+	 * @return array{data:array<int,array<array-key,mixed>>,rows:int,totals:array<string,mixed>,slowest:array<int,array<array-key,mixed>>,has_split:bool,ranked:bool,as_of:int}
+	 */
+	private function url_page( string $server, string $search, bool $errors, bool $workers, string $sort, string $order, int $offset, int $limit, array $stores ): array {
+		$ttl = $limit <= self::URLS_PAGE_CACHE_MAX_ROWS ? self::URLS_PAGE_TTL_S : null;
+		/** @var array{data:array<int,array<array-key,mixed>>,rows:int,totals:array<string,mixed>,slowest:array<int,array<array-key,mixed>>,has_split:bool,ranked:bool,as_of:int} */
+		return $this->cached(
+			[ $server, $search, $errors, $workers, $sort, $order, $offset, $limit, Stats_Store::bucket_key( \time() ), AppConfig::stats_retention_seconds(), \count( $stores ) ],
+			$ttl,
+			[ 'data', 'rows', 'totals', 'slowest', 'has_split', 'ranked', 'as_of' ],
+			'URL page not cached: the store refused it',
+			function () use ( $server, $search, $errors, $workers, $sort, $order, $offset, $limit, $stores ): array {
+				$result = self::ranked_serves( $search, $errors, $workers, \max( 0, $offset ) + \max( 0, $limit ) )
+					? $this->ranked_page( $server, $sort, $order, $offset, $limit, $stores )
+					: null;
+				return $result ?? $this->fold_page( $server, $search, $errors, $workers, $sort, $order, $offset, $limit, $stores );
+			}
+		);
+	}
+
+	/**
+	 * Whether the ranked lists can answer a page: nothing filtered, and a page
+	 * that ends inside the fine tier's list depth.
+	 */
+	private static function ranked_serves( string $search, bool $errors, bool $workers, int $end ): bool {
+		return '' === $search && ! $errors && ! $workers && $end <= Stats_Store::URL_RANK_N;
+	}
+
+	/**
+	 * A page from the ranked lists: the two tiers' lists for this scope and
+	 * sort across the read plan, folded by hash and cut here.
+	 *
+	 * An hour whose list is present stands for its twelve buckets; the LEADING
+	 * hour of the plan is the only one whose missing list is answered from its
+	 * fine lists, as the row fold does for `urls_h`, and a missing list behind
+	 * it takes the whole page back to the fold rather than serving a window
+	 * one hour short as ranked.
+	 *
+	 * The two averages are the mean of the per-BUCKET averages at each
+	 * bucket's own tier — a five-minute bucket inside the fine tail, a folded
+	 * hour behind it — every stored bucket weighing the same. So an hour-tier
+	 * entry contributes ONE average covering that hour where a fine entry
+	 * contributes one per five minutes, and nothing reweights them: an entry
+	 * weighs what it ranked as. `fold_index_row()` carries every other field
+	 * exactly as the fold would, and `totals` stays request-weighted, so the
+	 * header and a row's own average answer different questions. No list
+	 * anywhere reads as no tier to read, not as an empty site.
+	 *
+	 * @param string                 $server Reporting server; '' reads the site-wide lists.
+	 * @param string                 $sort   A `Stats_Store::URL_SORTS` value.
+	 * @param string                 $order  A `Stats_Store::URL_ORDERS` value.
+	 * @param int                    $offset Page offset.
+	 * @param int                    $limit  Page size.
+	 * @param array<int,Stats_Store> $stores Stores the caller resolved once.
+	 * @return array{data:array<int,array<array-key,mixed>>,rows:int,totals:array<string,mixed>,slowest:array<int,array<array-key,mixed>>,has_split:bool,ranked:bool,as_of:int}|null
+	 */
+	private function ranked_page( string $server, string $sort, string $order, int $offset, int $limit, array $stores ): ?array {
+		$plan   = Stats_Store::read_plan( \array_values( self::read_window() ) );
+		$recent = \array_flip( self::recent_buckets() );
+		$merged = [];
+		$means  = [];
+		$found  = 0;
+		foreach ( $stores as $store ) {
+			$fine = $plan['fine'];
+			$got  = [];
+			foreach ( $store->url_rank_sources( $plan['hours'], $sort, $order, $server, true ) as [ $hour, $entries ] ) {
+				$got[ $hour ] = true;
+				self::fold_rank_entries( $merged, $means, $entries, false );
+				++$found;
+			}
+			foreach ( $plan['hours'] as $hour ) {
+				if ( isset( $got[ $hour ] ) ) {
+					continue;
+				}
+				$buckets = Stats_Store::unfolded_hour_buckets( $hour, $plan['hours'] );
+				// A hole no fine tier still backs, not an idle hour.
+				if ( [] === $buckets ) {
+					return null;
+				}
+				$fine = \array_merge( $fine, $buckets );
+			}
+			foreach ( $store->url_rank_sources( $fine, $sort, $order, $server, false ) as [ $bucket, $entries ] ) {
+				self::fold_rank_entries( $merged, $means, $entries, isset( $recent[ $bucket ] ) );
+				++$found;
+			}
+		}
+		if ( 0 === $found ) {
+			return null;
+		}
+		$rows = [];
+		foreach ( $merged as $hash => $entry ) {
+			$row = self::project_row( $entry, '' );
+			if ( null === $row ) {
+				continue;
+			}
+			[ $ms, $peak ] = $means[ $hash ];
+			$row['avg_ms']      = [] === $ms ? 0.0 : \array_sum( $ms ) / \count( $ms );
+			$row['avg_peak_mb'] = [] === $peak ? 0.0 : \array_sum( $peak ) / \count( $peak );
+			$rows[]             = $row;
+		}
+		\usort( $rows, self::by_sort( $sort, $order ) );
+		$header = $this->url_header( $server, $stores );
+		return [
+			'data'      => self::resolve_urls( \array_slice( $rows, $offset, $limit ), $stores ),
+			'rows'      => $header['rows'],
+			'totals'    => $header['totals'],
+			'slowest'   => $header['slowest'],
+			'has_split' => $header['has_split'],
+			'ranked'    => true,
+			'as_of'     => \time(),
+		];
+	}
+
+	/**
+	 * Fold one list's entries into the merged rows, and note each bucket's
+	 * two averages beside them.
+	 *
+	 * @param array<string,array<string,mixed>>                 $merged    Merged display rows by hash, mutated.
+	 * @param array<string,array{0:list<float>,1:list<float>}>  $means     Per-hash bucket averages, mutated.
+	 * @param array<array-key,mixed>                             $entries   One list.
+	 * @param bool                                                $is_recent Inside the "last hour" window.
+	 */
+	private static function fold_rank_entries( array &$merged, array &$means, array $entries, bool $is_recent ): void {
+		foreach ( $entries as $raw ) {
+			$entry = Core::arr( $raw );
+			$hash  = Core::as_string( $entry[ Stats_Store::RANK_HASH ] ?? '' );
+			$row   = Core::arr( $entry[ Stats_Store::RANK_ROW ] ?? null );
+			if ( '' === $hash || [] === $row ) {
+				continue;
+			}
+			$merged[ $hash ] = self::fold_index_row( $merged[ $hash ] ?? self::empty_index_row( $hash ), $row, $is_recent );
+			if ( isset( $entry[ Stats_Store::RANK_PATH ] ) ) {
+				$merged[ $hash ]['url'] = Core::str( $entry[ Stats_Store::RANK_PATH ] );
+			}
+			$means[ $hash ] ??= [ [], [] ];
+			$timed = Core::num_int( $row[ Stats_Store::ROW_TIMED_COUNT ] ?? null );
+			$count = Core::num_int( $row[ Stats_Store::ROW_COUNT ] ?? null );
+			if ( $timed > 0 ) {
+				$means[ $hash ][0][] = Core::num_float( $row[ Stats_Store::ROW_SUM_MS ] ?? null ) / $timed;
+			}
+			if ( $count > 0 ) {
+				$means[ $hash ][1][] = Core::num_float( $row[ Stats_Store::ROW_SUM_PEAK_MB ] ?? null ) / $count;
+			}
+		}
+	}
+
+	/**
+	 * The fold's header for the unfiltered page of one scope — `totals.urls`
+	 * is the count of DISTINCT URLs in the window, which no list can answer —
+	 * held until the bucket closes. The thirty-second fold runs once per
+	 * bucket for the header while the lists answer the table every poll.
+	 *
+	 * @param string                 $server Reporting server; '' is the site.
+	 * @param array<int,Stats_Store> $stores Stores the caller resolved once.
+	 * @return array{rows:int,totals:array<string,mixed>,slowest:array<int,array<array-key,mixed>>,has_split:bool}
+	 */
+	private function url_header( string $server, array $stores ): array {
+		/** @var array{rows:int,totals:array<string,mixed>,slowest:array<int,array<array-key,mixed>>,has_split:bool} */
+		return $this->cached(
+			[ 'header', $server, Stats_Store::bucket_key( \time() ), AppConfig::stats_retention_seconds(), \count( $stores ) ],
+			Stats_Store::BUCKET_SECONDS,
+			[ 'rows', 'totals', 'slowest', 'has_split' ],
+			'URL header not cached: the store refused it',
+			function () use ( $server, $stores ): array {
+				$fold = $this->fold_page( $server, '', false, false, 'count', 'desc', 0, 0, $stores );
+				return [ 'rows' => $fold['rows'], 'totals' => $fold['totals'], 'slowest' => $fold['slowest'], 'has_split' => $fold['has_split'] ];
+			}
+		);
+	}
+
+	/**
+	 * The mechanism `url_page()` and `url_header()` both run: encode a key,
+	 * look it up, build on a miss, store the result unless the mirror read
+	 * budget is spent, and log a refused store.
+	 *
+	 * @param array<array-key,mixed> $key_parts What the cache key covers.
+	 * @param int|null               $ttl       Entry TTL in seconds, or null
+	 *                                          for "do not cache" — `$build`
+	 *                                          still runs, it just never
+	 *                                          reads or writes the table.
+	 * @param list<string>           $required  Keys a hit must carry, or it
+	 *                                          reads as a miss.
+	 * @param string                 $refusal   Logged when the store is refused.
+	 * @param \Closure():array<array-key,mixed> $build Produces the value on a miss.
+	 * @return array<array-key,mixed>
+	 */
+	private function cached( array $key_parts, ?int $ttl, array $required, string $refusal, \Closure $build ): array {
+		$encoded = \wp_json_encode( $key_parts );
+		$table   = null !== $ttl && false !== $encoded ? self::page_table( $ttl ) : null;
+		$key     = \md5( (string) $encoded );
+		$hit     = $table?->lookup( $key );
+		if ( \is_array( $hit ) ) {
+			$hit_ok = true;
+			foreach ( $required as $field ) {
+				$hit_ok = $hit_ok && isset( $hit[ $field ] );
+			}
+			if ( $hit_ok ) {
+				return $hit;
+			}
+		}
+		$result = $build();
+		if ( null !== $table && ! Flame_Builder_Node::mirror_budget_spent() && ! $table->store( $key, $result ) ) {
+			$this->print_less_often( $refusal );
+		}
+		return $result;
+	}
+
+	/**
+	 * One page of the URL set, walked from the raw index: its totals, its
+	 * slowest, and one page of it.
+	 *
 	 * Folded ONE SHARD AT A TIME. A url_hash's shard is its first hex digit, so
 	 * shards are disjoint and a shard's fold is complete for every URL it
 	 * holds — there is no cross-shard merge to miss. The whole merged index is
@@ -794,16 +1029,6 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * `avg_ms`, loses nothing. `rows` and `totals` accumulate across shards and
 	 * stay site-wide (decision 15).
 	 *
-	 * The page is CACHED for `URLS_PAGE_TTL_S`, keyed by every filter, the
-	 * window bucket, the retention and the store count: a fold over a hub's
-	 * whole URL index runs tens of seconds, and every tab polling the same
-	 * page would otherwise pay it again. The open bucket accrues inside that
-	 * life, so `totals.requests` lags by up to the TTL, one bucket's slice
-	 * of the window; `requests_per_second` moves only when a bucket closes,
-	 * so the cache delays that rollover by up to the TTL. A fold the mirror
-	 * read budget cut short is served and not kept, or the gap it left would
-	 * stand for a minute where the next poll would have filled it.
-	 *
 	 * @param string                 $server  Reporting server to scope to; '' reads every server.
 	 * @param string                 $search  Case-insensitive URL substring; '' matches all.
 	 * @param bool                   $errors  Keep only rows with unclassified requests.
@@ -813,29 +1038,9 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param int                    $offset  Page offset.
 	 * @param int                    $limit   Page size.
 	 * @param array<int,Stats_Store> $stores  Stores the caller resolved once.
-	 * @return array{data:array<int,array<array-key,mixed>>,rows:int,totals:array<string,mixed>,slowest:array<int,array<array-key,mixed>>,has_split:bool}
+	 * @return array{data:array<int,array<array-key,mixed>>,rows:int,totals:array<string,mixed>,slowest:array<int,array<array-key,mixed>>,has_split:bool,ranked:bool,as_of:int}
 	 */
-	private function url_page( string $server, string $search, bool $errors, bool $workers, string $sort, string $order, int $offset, int $limit, array $stores ): array {
-		$encoded = \wp_json_encode( [
-			$server,
-			$search,
-			$errors,
-			$workers,
-			$sort,
-			$order,
-			$offset,
-			$limit,
-			Stats_Store::bucket_key( \time() ),
-			AppConfig::stats_retention_seconds(),
-			\count( $stores ),
-		] );
-		$table   = $limit <= self::URLS_PAGE_CACHE_MAX_ROWS && false !== $encoded ? self::page_table() : null;
-		$key     = \md5( (string) $encoded );
-		$hit     = $table?->lookup( $key );
-		if ( \is_array( $hit ) && isset( $hit['data'], $hit['rows'], $hit['totals'], $hit['slowest'], $hit['has_split'] ) ) {
-			/** @var array{data:array<int,array<array-key,mixed>>,rows:int,totals:array<string,mixed>,slowest:array<int,array<array-key,mixed>>,has_split:bool} $hit */
-			return $hit;
-		}
+	private function fold_page( string $server, string $search, bool $errors, bool $workers, string $sort, string $order, int $offset, int $limit, array $stores ): array {
 		$term      = '' === $search ? '' : \strtolower( $search );
 		$page_keep = \max( 0, $offset ) + \max( 0, $limit );
 		$ranked    = [];
@@ -849,9 +1054,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		$sum_peak  = 0.0;
 		$has_split = false;
 
-		$by_sort = static fn ( array $a, array $b ): int => 'asc' === $order
-			? ( $a[ $sort ] ?? 0 ) <=> ( $b[ $sort ] ?? 0 )
-			: ( $b[ $sort ] ?? 0 ) <=> ( $a[ $sort ] ?? 0 );
+		$by_sort = self::by_sort( $sort, $order );
 		$by_mean = static fn ( array $a, array $b ): int =>
 			( $b['avg_ms'] ?? 0 ) <=> ( $a['avg_ms'] ?? 0 );
 
@@ -955,7 +1158,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		$page  = \array_slice( $ranked, $offset, $limit );
 		$top   = \array_slice( $slowest, 0, self::SLOWEST_ROWS );
 		$named = self::resolve_urls( \array_merge( $page, $top ), $stores );
-		$result = [
+		return [
 			'data'      => \array_slice( $named, 0, \count( $page ) ),
 			// The pager's question; `totals.urls` is another.
 			'rows'      => $rows,
@@ -969,11 +1172,22 @@ class Performance_CI_Node extends Service_CI_Node {
 			'slowest'   => \array_slice( $named, \count( $page ) ),
 			// Pre-split data cannot answer a scoped question; see the handler.
 			'has_split' => $has_split,
+			'ranked'    => false,
+			'as_of'     => \time(),
 		];
-		if ( null !== $table && ! Flame_Builder_Node::mirror_budget_spent() && ! $table->store( $key, $result ) ) {
-			$this->print_less_often( 'URL page not cached: the store refused it' );
-		}
-		return $result;
+	}
+
+	/**
+	 * The `urls` sort comparator for one `URL_SORTS` field and direction —
+	 * shared by the fold and the ranked reader, so the two agree on ties.
+	 *
+	 * @param string $sort  A URL_SORTS field.
+	 * @param string $order 'asc' or 'desc'.
+	 */
+	private static function by_sort( string $sort, string $order ): \Closure {
+		return static fn ( array $a, array $b ): int => 'asc' === $order
+			? ( $a[ $sort ] ?? 0 ) <=> ( $b[ $sort ] ?? 0 )
+			: ( $b[ $sort ] ?? 0 ) <=> ( $a[ $sort ] ?? 0 );
 	}
 
 	/**
@@ -982,11 +1196,11 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * Its own namespace rather than a partition's: a page folds every
 	 * partition, so it belongs to none, and the install salt still scopes it.
 	 */
-	private static function page_table(): ?\Newspack_Nodes\Table_Node {
+	private static function page_table( int $ttl ): ?\Newspack_Nodes\Table_Node {
 		if ( null === \Newspack_Nodes\Cache_Backend::shared_first() ) {
 			return null;
 		}
-		return \Newspack_Nodes\Table_Node::table( self::URLS_PAGE_NS, self::URLS_PAGE_TTL_S );
+		return \Newspack_Nodes\Table_Node::table( self::URLS_PAGE_NS, $ttl );
 	}
 
 	/**
@@ -2545,7 +2759,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				// Opts IN: the default EXCLUDES. See decision 15.
 				$workers = self::flag( $opts, 'include_workers' );
 
-				if ( ! \in_array( $sort, self::URL_SORTS, true ) ) {
+				if ( ! \in_array( $sort, Stats_Store::URL_SORTS, true ) ) {
 					$sort = 'count';
 				}
 				if ( 'asc' !== $order && 'desc' !== $order ) {
@@ -2563,6 +2777,8 @@ class Performance_CI_Node extends Service_CI_Node {
 						? $page['totals']
 						: null,
 					'slowest' => $page['slowest'],
+					'ranked'  => $page['ranked'],
+					'as_of'   => $page['as_of'],
 					// What the totals are OF, or they read as the site's.
 					'filters' => [
 						'server'      => $server,

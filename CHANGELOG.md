@@ -15,12 +15,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   own `as_of`, so a cached page does not tick and browser and server
   clocks never disagree.
 
+### Fixed
+
+- **Two fine buckets of one folded hour no longer overwrite each other.**
+  A replay covering several buckets of a folded hour produced two writes
+  against the same `urls_h` item in one flush, and both merged into the
+  one value the chunk had read, so only the last survived. Intents sharing
+  an item now apply in sequence and are written once, and each still hears
+  whether the write landed.
+
 ### Changed
 
 - **A URL page is folded once a minute, not once a poll.** `urls` caches
   each page for sixty seconds, keyed by every filter and the window bucket,
   in a Table of its own; a hub holding 690,000 URLs spent 30 seconds per
   poll per tab folding the whole index for the same page.
+- **An unfiltered `urls` page inside the first 200 rows is answered from
+  writer-ranked per-bucket lists**, and says so with `ranked`; the header
+  folds once per bucket. The reply carries `as_of`. A ranked row's two
+  averages are the mean of the per-BUCKET averages at each bucket's own
+  tier — a five-minute bucket inside the fine tail, a folded hour behind
+  it — every stored bucket weighing the same, so an hour-tier entry
+  contributes one average covering that hour where a fine entry
+  contributes one per five minutes; `totals` stays request-weighted. The
+  page is served ranked only when every hour of the read plan behind the
+  leading one has a list in every partition's store: those hours have no
+  fine buckets left to read, so one missing list would serve a window an
+  hour short as whole, and the fold answers instead.
+- **The writer ranks each chunk of a flush as it lands**, rather than
+  holding every bucket's merged reader shards until the whole flush ends,
+  and the buckets ranked together read back the shards they missed in one
+  round trip. A replay spanning the retention window held 288 buckets'
+  worth of capped shards at once.
+- **A write into a folded hour re-ranks it.** A replay merges into the
+  coarse rows the reader takes, but the hour is memoized folded and would
+  never be ranked again, so the new counts showed in the fold and the
+  header and never on a ranked page. However many hours one flush lands
+  in, their coarse rows come back in one round trip and their names in a
+  second.
+- **An hour's site-wide `count:desc` list is written last, and alone.** It
+  is the one key `url_hours_derived()` probes, so written beside a refused
+  sibling it reported an hour that is missing a list as ranked and nothing
+  re-ranked it for the rest of the retention window. A refused hour also
+  stays queued for the next flush instead of waiting out the reprobe.
+  Nothing probes the fine tier's, so a bucket writes its lists in one batch.
+- **The hourly fold writes each hour's ranked lists.** `roll_up_hours()`
+  derives the coarse lists from the shard rows it just folded, in the same
+  pass, so a window read at hour resolution is ranked as well as folded. An
+  hour holding rows and names but no lists — one folded before the rank tier
+  existed, or whose list key was evicted — is ranked from those stored rows
+  rather than folded again, which its expired fine buckets would overwrite
+  with nothing. The probe reads all three tiers in one round trip
+  (`Stats_Store::url_hours_derived()`, replacing `url_hours_folded()`).
 
 ## [0.101.2] - 2026-09-22
 

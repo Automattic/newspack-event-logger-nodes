@@ -1349,4 +1349,160 @@ class StatsStoreTest extends TestCase {
 		$this->assertSame( [ true, false, true ], $results, 'the refusal must be identified, not averaged' );
 		$this->assertSame( 61, $this->get_dimensional_bucket( $store, 'status', '2026-08-27-13-05' )['v'][ Stats_Store::DIM_COUNT ], 'a good key still lands' );
 	}
+
+	public function test_rank_parts_carry_the_sort_the_order_and_the_server_key(): void {
+		$this->assertSame( [ 'urlrank', 'max_ms', 'asc' ], Stats_Store::url_rank_parts( 'max_ms', 'asc', '', false ) );
+		$this->assertSame( [ 'urlrank_h', 'max_ms', 'asc' ], Stats_Store::url_rank_parts( 'max_ms', 'asc', '', true ) );
+		$this->assertSame(
+			[ 'urlrank_s', Stats_Store::server_key( 'kea.test' ), 'url', 'desc' ],
+			Stats_Store::url_rank_parts( 'url', 'desc', 'kea.test', false )
+		);
+		$this->assertSame(
+			[ 'urlrank_sh', Stats_Store::server_key( 'kea.test' ), 'url', 'desc' ],
+			Stats_Store::url_rank_parts( 'url', 'desc', 'kea.test', true )
+		);
+	}
+
+	public function test_a_scoped_row_swaps_the_eight_sums_and_drops_the_split(): void {
+		$row = self::positional_url_row( [
+			'count' => 9, 'timed_count' => 7, 'sum_ms' => 900.0, 'sum_peak_mb' => 45.0,
+			'count_2xx' => 8, 'count_5xx' => 1, 'min_ms' => 12.0, 'max_ms' => 300.0,
+			'max_peak_mb' => 9.0, 'last_seen' => 1758500000, 'worker' => false,
+			'srv' => [
+				'kea.test'  => [ 'count' => 6, 'timed_count' => 5, 'sum_ms' => 500.0, 'sum_peak_mb' => 30.0, 'count_2xx' => 6 ],
+				'moa.test'  => [ 'count' => 3, 'timed_count' => 2, 'sum_ms' => 400.0, 'sum_peak_mb' => 15.0, 'count_2xx' => 2, 'count_5xx' => 1 ],
+			],
+		] );
+		$site = Stats_Store::url_row_scoped( $row, '' );
+		$this->assertArrayNotHasKey( Stats_Store::ROW_SRV, $site );
+		$this->assertSame( 9, $site[ Stats_Store::ROW_COUNT ] );
+		$this->assertSame( 300.0, $site[ Stats_Store::ROW_MAX_MS ] );
+
+		$kea = Stats_Store::url_row_scoped( $row, 'kea.test' );
+		$this->assertArrayNotHasKey( Stats_Store::ROW_SRV, $kea );
+		$this->assertSame( 6, $kea[ Stats_Store::ROW_COUNT ] );
+		$this->assertSame( 500.0, $kea[ Stats_Store::ROW_SUM_MS ] );
+		$this->assertSame( 0, $kea[ Stats_Store::ROW_COUNT_5XX ] );
+		// Extremes are the URL's own (decision 14).
+		$this->assertSame( 300.0, $kea[ Stats_Store::ROW_MAX_MS ] );
+		$this->assertNull( Stats_Store::url_row_scoped( $row, 'tui.test' ) );
+	}
+
+	public function test_a_sole_server_split_scopes_to_the_row_itself(): void {
+		$row = self::positional_url_row( [ 'count' => 4, 'timed_count' => 4, 'sum_ms' => 80.0, 'srv' => [ 'kea.test' => null ] ] );
+		$this->assertSame( 4, Stats_Store::url_row_scoped( $row, 'kea.test' )[ Stats_Store::ROW_COUNT ] );
+	}
+
+	public function test_a_desc_list_cuts_inside_a_tie_group_in_source_order(): void {
+		// Four rows, three of them tied at 40ms, and the list keeps three.
+		// Reversing the ascending order would hand the cut the LAST two of
+		// the tie group instead of the first two, so which equal row a page
+		// can still see would turn on the ranker's shape.
+		$row  = static fn ( float $sum_ms, int $last_seen ): array => self::positional_url_row(
+			[ 'count' => 5, 'timed_count' => 1, 'sum_ms' => $sum_ms, 'min_ms' => $sum_ms, 'max_ms' => $sum_ms, 'last_seen' => $last_seen ]
+		);
+		$rows = [
+			'd4d4d4d4d4d4' => $row( 40.0, 1758500041 ),
+			'e5e5e5e5e5e5' => $row( 40.0, 1758500042 ),
+			'f6f6f6f6f6f6' => $row( 40.0, 1758500043 ),
+			'a7a7a7a7a7a7' => $row( 90.0, 1758500044 ),
+		];
+		$lists  = Stats_Store::rank_url_rows( $rows, [], 3 );
+		$hashes = static fn ( array $entries ): array => \array_column( $entries, Stats_Store::RANK_HASH );
+		$this->assertSame( [ 'a7a7a7a7a7a7', 'd4d4d4d4d4d4', 'e5e5e5e5e5e5' ], $hashes( $lists['avg_ms']['desc'] ) );
+		$this->assertSame( [ 'd4d4d4d4d4d4', 'e5e5e5e5e5e5', 'f6f6f6f6f6f6' ], $hashes( $lists['avg_ms']['asc'] ) );
+	}
+
+	public function test_ranking_cuts_every_list_to_n_in_both_directions(): void {
+		$rows = [
+			'a1a1a1a1a1a1' => self::positional_url_row( [ 'count' => 30, 'timed_count' => 3, 'sum_ms' => 300.0, 'sum_peak_mb' => 60.0, 'min_ms' => 50.0, 'max_ms' => 150.0, 'last_seen' => 1758500030 ] ),
+			'b2b2b2b2b2b2' => self::positional_url_row( [ 'count' => 10, 'timed_count' => 1, 'sum_ms' => 700.0, 'sum_peak_mb' => 5.0, 'min_ms' => 700.0, 'max_ms' => 700.0, 'last_seen' => 1758500010 ] ),
+			'c3c3c3c3c3c3' => self::positional_url_row( [ 'count' => 20, 'timed_count' => 4, 'sum_ms' => 80.0, 'sum_peak_mb' => 40.0, 'min_ms' => 10.0, 'max_ms' => 40.0, 'last_seen' => 1758500020 ] ),
+		];
+		$paths = [ 'a1a1a1a1a1a1' => '/tui', 'b2b2b2b2b2b2' => '/kea', 'c3c3c3c3c3c3' => '/moa' ];
+		$lists = Stats_Store::rank_url_rows( $rows, $paths, 2 );
+
+		$hashes = static fn ( array $entries ): array => \array_column( $entries, Stats_Store::RANK_HASH );
+		$this->assertSame( [ 'a1a1a1a1a1a1', 'c3c3c3c3c3c3' ], $hashes( $lists['count']['desc'] ) );
+		$this->assertSame( [ 'b2b2b2b2b2b2', 'c3c3c3c3c3c3' ], $hashes( $lists['count']['asc'] ) );
+		// The bucket's AVERAGE ranks, so the rarely hit slow page comes first.
+		$this->assertSame( [ 'b2b2b2b2b2b2', 'a1a1a1a1a1a1' ], $hashes( $lists['avg_ms']['desc'] ) );
+		$this->assertSame( [ 'c3c3c3c3c3c3', 'a1a1a1a1a1a1' ], $hashes( $lists['min_ms']['asc'] ) );
+		$this->assertSame( [ 'b2b2b2b2b2b2', 'a1a1a1a1a1a1' ], $hashes( $lists['max_ms']['desc'] ) );
+		$this->assertSame( [ 'a1a1a1a1a1a1', 'c3c3c3c3c3c3' ], $hashes( $lists['avg_peak_mb']['desc'] ) );
+		$this->assertSame( [ 'a1a1a1a1a1a1', 'c3c3c3c3c3c3' ], $hashes( $lists['last_updated']['desc'] ) );
+		$this->assertSame( [ 'b2b2b2b2b2b2', 'c3c3c3c3c3c3' ], $hashes( $lists['url']['asc'] ) );
+		$this->assertSame( '/kea', $lists['url']['asc'][0][ Stats_Store::RANK_PATH ] );
+		$this->assertArrayNotHasKey( Stats_Store::RANK_PATH, $lists['count']['desc'][0] );
+		$this->assertSame( 14, \array_sum( \array_map( 'count', $lists ) ) );
+		$this->assertSame( \array_keys( $rows )[0], $lists['count']['desc'][0][ Stats_Store::RANK_HASH ] );
+		$this->assertSame( 30, $lists['count']['desc'][0][ Stats_Store::RANK_ROW ][ Stats_Store::ROW_COUNT ] );
+	}
+
+	public function test_ranking_skips_overflow_rows_worker_rows_and_untimed_rows_on_timed_sorts(): void {
+		$rows = [
+			Stats_Store::OTHER_KEY => self::positional_url_row( [ 'count' => 999, 'timed_count' => 9, 'sum_ms' => 9.0 ] ),
+			'd4d4d4d4d4d4' => self::positional_url_row( [ 'count' => 50, 'timed_count' => 5, 'sum_ms' => 50.0, 'worker' => true ] ),
+			'e5e5e5e5e5e5' => self::positional_url_row( [ 'count' => 40, 'timed_count' => 0, 'sum_ms' => 0.0, 'min_ms' => 0.0 ] ),
+			'f6f6f6f6f6f6' => self::positional_url_row( [ 'count' => 3, 'timed_count' => 3, 'sum_ms' => 30.0, 'min_ms' => 10.0, 'max_ms' => 10.0 ] ),
+		];
+		$lists = Stats_Store::rank_url_rows( $rows, [], 10 );
+		$hashes = static fn ( array $entries ): array => \array_column( $entries, Stats_Store::RANK_HASH );
+		$this->assertSame( [ 'e5e5e5e5e5e5', 'f6f6f6f6f6f6' ], $hashes( $lists['count']['desc'] ) );
+		$this->assertSame( [ 'f6f6f6f6f6f6' ], $hashes( $lists['min_ms']['asc'] ) );
+		$this->assertSame( [ 'f6f6f6f6f6f6' ], $hashes( $lists['avg_ms']['desc'] ) );
+		$this->assertSame( [], $lists['url']['asc'], 'no path, no url rank' );
+	}
+
+	public function test_rank_sources_read_the_lists_of_the_named_scope(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 2, max_lifespan: 86400 );
+		$entries    = [ [ 'a1a1a1a1a1a1', self::positional_url_row( [ 'count' => 30 ] ) ] ];
+		$store->bucket_set_multi( [
+			[ Stats_Store::url_rank_parts( 'count', 'desc', 'kea.test', false ), '2026-09-22-14-05', $entries ],
+		] );
+		$this->assertSame(
+			[ [ '2026-09-22-14-05', $entries ] ],
+			$store->url_rank_sources( [ '2026-09-22-14-05', '2026-09-22-14-10' ], 'count', 'desc', 'kea.test', false )
+		);
+		$this->assertSame( [], $store->url_rank_sources( [ '2026-09-22-14-05' ], 'count', 'desc', '', false ) );
+	}
+
+	public function test_string_map_restores_the_string_keys_and_values_a_name_blob_declares(): void {
+		// A name blob is `hash => path` both ways, and a decoded one is
+		// neither: PHP hands back an all-digit hash as an int key, and a
+		// truncated or corrupt entry can carry anything at all.
+		$this->assertSame(
+			[ '112233445566' => '/kakapo-4417', 'a7a7a7a7a7a7' => '' ],
+			Stats_Store::string_map( [ 112233445566 => '/kakapo-4417', 'a7a7a7a7a7a7' => [ 'nope' ] ] )
+		);
+	}
+
+	public function test_the_derived_probe_reports_rows_and_lists_apart(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		foreach ( \array_merge( Stats_Store::url_shards(), Stats_Store::url_shards( true ) ) as $shard ) {
+			$store->bucket_set_multi( [
+				[ Stats_Store::url_hour_parts( $shard ), '2026-09-21-07', [] ],
+				[ Stats_Store::url_name_hour_parts( $shard ), '2026-09-21-07', [] ],
+			] );
+		}
+		$store->bucket_set_multi( [ [ Stats_Store::url_rank_parts( 'count', 'desc', '', true ), '2026-09-21-08', [] ] ] );
+		$this->assertSame(
+			[
+				'2026-09-21-07' => [ 'folded' => true, 'ranked' => false ],
+				'2026-09-21-08' => [ 'folded' => false, 'ranked' => true ],
+			],
+			$store->url_hours_derived( [ '2026-09-21-07', '2026-09-21-08', '2026-09-21-09' ] )
+		);
+	}
+
+	public function test_the_fine_rank_tiers_take_the_fine_ttl(): void {
+		$store = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$m     = new \ReflectionMethod( $store, 'ttl_for' );
+		$this->assertSame( $store->ttl_url_fine(), $m->invoke( $store, Stats_Store::NS_URLRANK ) );
+		$this->assertSame( $store->ttl_url_fine(), $m->invoke( $store, Stats_Store::NS_URLRANK_S ) );
+		$this->assertSame( $store->ttl(), $m->invoke( $store, Stats_Store::NS_URLRANK_HOUR ) );
+		$this->assertSame( $store->ttl(), $m->invoke( $store, Stats_Store::NS_URLRANK_HOUR_S ) );
+	}
 }
