@@ -183,8 +183,7 @@ $newspack_profiler_state = [
 			return;
 		}
 
-		$rule = $lm->governing_rule();
-		if ( null === $rule || ! $rule->log_plugin_loads ) {
+		if ( ! $lm->governing_rule()?->log_plugin_loads ) {
 			return;
 		}
 

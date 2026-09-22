@@ -637,7 +637,7 @@ class Core {
 				}
 
 				// Wrap timing; resolve LM per-call to survive suspend/resume.
-				$label   = self::short_name( $original ) . " @{$priority}";
+				$label   = self::short_name( $original ) . Flame_Tree::LISTENER_SEPARATOR . $priority;
 				$wrapper = function () use ( $original, $accepted_args, $label ) {
 					$lm   = Log_Manager::instance();
 					$args = \array_slice( \func_get_args(), 0, $accepted_args );

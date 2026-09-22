@@ -81,6 +81,25 @@ describe( 'RequestProfile', () => {
 		unmount();
 	} );
 
+	it( 'treats a listener at a negative priority as a callback row too', () => {
+		// The priority may be negative; a pattern without the sign reads the
+		// row as a custom event and offers it to the ask picker.
+		const { container, unmount } = renderComponent(
+			React.createElement( RequestProfile, {
+				profiles: {
+					...baseProfiles,
+					'hooks @-5': { count: 1, time: 5 },
+				},
+				totalMs: 120,
+			} )
+		);
+		const asks = Array.from(
+			container.querySelectorAll( 'tr[data-ask]' )
+		).map( ( r ) => r.getAttribute( 'data-ask' ) );
+		expect( asks ).not.toContain( 'category:hooks @-5' );
+		unmount();
+	} );
+
 	it( 'computes Total Profiled by summing non-callback categories', () => {
 		const { container, unmount } = renderComponent(
 			React.createElement( RequestProfile, {

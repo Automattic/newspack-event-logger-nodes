@@ -45,12 +45,15 @@ final class Flame_Tree {
 	/** What `App\Core::hook_start()` appends to a hook's name to make its span's. */
 	public const HOOK_SUFFIX = ' hook';
 
+	/** What `App\Core::wrap_callbacks()` puts between a listener's callable and its priority. */
+	public const LISTENER_SEPARATOR = ' @';
+
 	/**
-	 * What `App\Core::wrap_callbacks()` names a wrapped listener's span:
-	 * `<callable> @<priority>`. The priority may be NEGATIVE, which a pattern
+	 * A wrapped listener's span: `<callable> @<priority>`, built from the
+	 * separator the minter uses. The priority may be NEGATIVE, which a pattern
 	 * without the sign silently reads as a custom event instead.
 	 */
-	public const LISTENER_PATTERN = '/ @-?\d+$/';
+	public const LISTENER_PATTERN = '/' . self::LISTENER_SEPARATOR . '-?\d+$/';
 
 	/** A plugin file's load, as the profiler drop-in names it: `<slug> plugin`. */
 	private const PLUGIN_LOAD_PATTERN = '/^\S+' . self::PLUGIN_LOAD_SUFFIX . '$/';
@@ -513,6 +516,29 @@ final class Flame_Tree {
 	}
 
 	/**
+	 * Whether a span is a wrapped listener's rather than a hook's or one of
+	 * the application's own custom events.
+	 *
+	 * @param string $span A span name, as the flame carries it.
+	 * @return bool
+	 */
+	public static function is_listener_span( string $span ): bool {
+		return 1 === \preg_match( self::LISTENER_PATTERN, self::base_name( $span ) );
+	}
+
+	/**
+	 * Whether a span is one plugin file's load, as the profiler drop-in times
+	 * it. A slug is one token, which keeps an application's own multi-word
+	 * event that happens to end in "plugin" out.
+	 *
+	 * @param string $span A span name, as the flame carries it.
+	 * @return bool
+	 */
+	public static function is_plugin_load_span( string $span ): bool {
+		return 1 === \preg_match( self::PLUGIN_LOAD_PATTERN, self::base_name( $span ) );
+	}
+
+	/**
 	 * The inverse of `node_name()`: the span's own name, without the label it
 	 * was logged with. A traced hook frame is `<hook> hook: <caller>`, and what
 	 * kind of span it is — and what a rule can bind — is decided by the base.
@@ -530,17 +556,6 @@ final class Flame_Tree {
 	}
 
 	/**
-	 * Whether a span is a wrapped listener's rather than a hook's or one of
-	 * the application's own custom events.
-	 *
-	 * @param string $span A span name, as the flame carries it.
-	 * @return bool
-	 */
-	public static function is_listener_span( string $span ): bool {
-		return 1 === \preg_match( self::LISTENER_PATTERN, $span );
-	}
-
-	/**
 	 * The hook a span's base stands for: `App\Core::hook_start()` suffixes the
 	 * hook's name, and a rule stores it bare, so a reader comparing a span to
 	 * a rule takes the suffix off here. A name without it comes back as given.
@@ -552,18 +567,6 @@ final class Flame_Tree {
 		return \str_ends_with( $base, self::HOOK_SUFFIX )
 			? \substr( $base, 0, -\strlen( self::HOOK_SUFFIX ) )
 			: $base;
-	}
-
-	/**
-	 * Whether a span is one plugin file's load, as the profiler drop-in times
-	 * it. A slug is one token, which keeps an application's own multi-word
-	 * event that happens to end in "plugin" out.
-	 *
-	 * @param string $span A span name, as the flame carries it.
-	 * @return bool
-	 */
-	public static function is_plugin_load_span( string $span ): bool {
-		return 1 === \preg_match( self::PLUGIN_LOAD_PATTERN, $span );
 	}
 
 	/**
