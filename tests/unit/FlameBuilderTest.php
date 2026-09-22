@@ -6162,6 +6162,89 @@ class FlameBuilderTest extends TestCase {
 		$this->assertLessThanOrEqual( 820, $bytes[0], 'twenty categories in one frame' );
 	}
 
+	public function test_a_flush_files_the_tokens_of_the_names_it_wrote(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => 'https://kea.test/wombat-7731' ] ) );
+		$fb->flush();
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => 'https://kea.test/wombat-8842' ] ) );
+		$fb->flush();
+
+		$sets = $store->url_token_sets( [ 'womb', 'wombat', '7731', '884' ] );
+		$a    = Log_Manager::url_hash( 'https://kea.test/wombat-7731' );
+		$b    = Log_Manager::url_hash( 'https://kea.test/wombat-8842' );
+		$this->assertSame( [ $a, $b ], $sets['womb'], 'the second flush unions' );
+		$this->assertSame( [ $a, $b ], $sets['wombat'] );
+		$this->assertSame( [ $a ], $sets['7731'] );
+		$this->assertSame( [ $b ], $sets['884'] );
+	}
+
+	public function test_an_all_digit_token_and_hash_round_trip_as_strings(): void {
+		// PHP keys an array by INT wherever the key spells a number, so an
+		// all-digit path token and the one URL in ~220 whose hash is twelve
+		// digits both leave the flush as ints unless something types them back.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+		$url = 'https://kea319.test/20260922';
+		$this->assertSame( '481169627974', Log_Manager::url_hash( $url ), 'the fixture is the all-digit case' );
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => $url ] ) );
+		$fb->flush();
+
+		$this->assertSame( [ '481169627974' ], $store->url_token_sets( [ '20260922' ] )['20260922'] ?? null );
+	}
+
+	public function test_a_saturated_token_key_is_not_rewritten(): void {
+		// A saturated set says "fold for this token"; restamping it every
+		// flush would hold that key alive forever. Skipping the write lets it
+		// expire on the TTL it already had, and the token rebuilds live-only.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new RecordingStatsStore( partition: 0, max_lifespan: 86400 );
+		$store->bucket_set_multi( [
+			[ [ Stats_Store::NS_URLTOKEN ], 'wom', [ Stats_Store::TOKEN_SATURATED => \time() ] ],
+		] );
+		$fb = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => 'https://kea.test/wombat-7731' ] ) );
+		$store->writes = [];
+		$fb->flush();
+
+		$this->assertNotContains( 'wom', $store->writes, 'the saturated token is read and left alone' );
+		$this->assertContains( 'womb', $store->writes, 'its unsaturated siblings are still written' );
+	}
+
+	public function test_a_refused_token_write_leaves_the_url_to_be_filed_again(): void {
+		// `named_urls` is marked before the write, so a refusal used to leave
+		// the URL unsearchable until half a retention window had passed.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new RecordingStatsStore( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+		$url = 'https://kea.test/takahe-4410';
+
+		$store->refuse_tokens = true;
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => $url ] ) );
+		$fb->flush();
+		$this->assertSame( [], $store->url_token_sets( [ 'takahe' ] ), 'the write was refused' );
+
+		$store->refuse_tokens = false;
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => $url ] ) );
+		$fb->flush();
+
+		$this->assertSame(
+			[ 'takahe' => [ Log_Manager::url_hash( $url ) ] ],
+			$store->url_token_sets( [ 'takahe' ] ),
+			'the next flush files it, rather than trusting a memo the write never earned'
+		);
+	}
+
+	public function test_the_token_namespace_is_not_mirrored(): void {
+		$m = new \ReflectionClassConstant( Flame_Builder_Node::class, 'STATS_MIRROR_TOPN' );
+		$this->assertSame( 0, $m->getValue()[ Stats_Store::NS_URLTOKEN ] ?? null );
+	}
 }
 
 /**
@@ -6201,6 +6284,46 @@ class CountingRankFlameBuilder extends Flame_Builder_Node {
 	}
 }
 
+/**
+ * A Stats_Store that records which token buckets a flush wrote, and can
+ * refuse the token writes outright.
+ */
+class RecordingStatsStore extends Stats_Store {
+	/** @var array<int,string> Token buckets written since a test last zeroed it. */
+	public array $writes = [];
+
+	/** @var bool Whether a token write is refused. */
+	public bool $refuse_tokens = false;
+
+	/**
+	 * @param array<int,array{0: array<int,string>, 1: string, 2: array<array-key,mixed>}> $writes `[ parts, bucket, data ]`.
+	 * @return array<int,bool>
+	 */
+	public function bucket_set_multi( array $writes ): array {
+		$refused = [];
+		foreach ( $writes as $at => [ $parts, $bucket ] ) {
+			if ( Stats_Store::NS_URLTOKEN !== ( $parts[0] ?? '' ) ) {
+				continue;
+			}
+			$this->writes[] = $bucket;
+			if ( $this->refuse_tokens ) {
+				$refused[ $at ] = true;
+			}
+		}
+		if ( [] === $refused ) {
+			return parent::bucket_set_multi( $writes );
+		}
+		$kept = \array_diff_key( $writes, $refused );
+		$out  = [] === $kept ? [] : parent::bucket_set_multi( \array_values( $kept ) );
+		$done = [];
+		$next = 0;
+		foreach ( \array_keys( $writes ) as $at ) {
+			$done[ $at ] = isset( $refused[ $at ] ) ? false : ( $out[ $next++ ] ?? false );
+		}
+		return $done;
+	}
+}
+
 /** Counts index scans, so a test can pin the batch path to ONE pass. */
 class CountingIndexPartition extends \Newspack_Nodes\Partition_Node {
 	public int $index_scans = 0;
@@ -6209,5 +6332,4 @@ class CountingIndexPartition extends \Newspack_Nodes\Partition_Node {
 		++$this->index_scans;
 		parent::scan_index( $cb, $newest_first );
 	}
-
 }

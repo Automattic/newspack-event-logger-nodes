@@ -3,9 +3,10 @@
  * Stats Store
  *
  * The memcache schema for performance stats, expressed as one small key/value
- * API. Fourteen namespaces (`hourly`, `lb`, `lb_s`, `lb_h`, `urls`, `urls_h`,
- * `urlnames`, `urlnames_h`, `urlmap`, `url`, `dim`, `url_dim`, `categories`,
- * `url_cat`) live under the per-partition prefix `evlog:p{N}:`, inside the
+ * API. Nineteen namespaces (`hourly`, `lb`, `lb_s`, `lb_h`, `urls`, `urls_h`,
+ * `urlnames`, `urlnames_h`, `urlrank`, `urlrank_h`, `urlrank_s`, `urlrank_sh`,
+ * `urltoken`, `urlmap`, `url`, `dim`, `url_dim`, `categories`, `url_cat`) live
+ * under the per-partition prefix `evlog:p{N}:`, inside the
  * install scope Cache_Backend owns. `Flame_Builder_Node` produces every value
  * and `App\Performance_CI_Node` reads them for the dashboards.
  *
@@ -137,6 +138,30 @@ class Stats_Store {
 
 	/** The name index's COARSE tier, folded beside `urls_h`. See NS_URLNAMES. */
 	public const NS_URLNAMES_HOUR = 'urlnames_h';
+
+	/**
+	 * The search index: `urltoken:{token}` => the hashes of every URL whose
+	 * path carries a token, or a token prefix, spelled so. TTL is the
+	 * retention window, refreshed by every flush that names such a URL, so a
+	 * live token stays and a dead one ages out. Derived, not mirrored.
+	 */
+	public const NS_URLTOKEN = 'urltoken';
+
+	/** Candidates a search takes from the index before it falls back to the fold. */
+	public const URL_SEARCH_MAX = 5000;
+
+	/** Longest prefix the index files; a longer term is cut to it on both sides. */
+	public const URL_TOKEN_PREFIX_MAX = 12;
+
+	/**
+	 * Shortest prefix the index files. A two-character prefix names most of a
+	 * real site's URLs, so it saturates at once and narrows nothing the fold
+	 * would not; a term token that short is answered by the fold instead.
+	 */
+	public const URL_TOKEN_PREFIX_MIN = 3;
+
+	/** The one entry a token set holds once it passed `URL_SEARCH_MAX`: no hash spells so. */
+	public const TOKEN_SATURATED = '*';
 
 	/**
 	 * The URL index's COARSE tier: `urls_h:{shard}:{Y-m-d-H}`, one key per hour
@@ -1095,6 +1120,80 @@ class Stats_Store {
 	}
 
 	/**
+	 * Group named paths by every token each is filed under — the one place
+	 * the tokenize-and-group loop is spelled, for the flush and for a test
+	 * seeding what the flush would have written.
+	 *
+	 * @param array<array-key,string> $names hash => path.
+	 * @return array<array-key,list<string>> token => hashes.
+	 */
+	public static function token_sets_of( array $names ): array {
+		$out = [];
+		foreach ( $names as $hash => $path ) {
+			foreach ( self::url_tokens( $path ) as $token ) {
+				$out[ $token ][] = (string) $hash;
+			}
+		}
+		return $out;
+	}
+
+	/**
+	 * Every key a path is filed under: each prefix of each of its tokens, so
+	 * a term typed halfway still names it.
+	 *
+	 * @param string $path The URL's path, as `split_url()` returns it.
+	 * @return list<string>
+	 */
+	public static function url_tokens( string $path ): array {
+		$out = [];
+		foreach ( self::term_tokens( $path ) as $token ) {
+			for ( $len = self::URL_TOKEN_PREFIX_MIN, $max = \strlen( $token ); $len <= $max; $len++ ) {
+				$out[ \substr( $token, 0, $len ) ] = true;
+			}
+		}
+		return \array_map( 'strval', \array_keys( $out ) );
+	}
+
+	/**
+	 * A search term's tokens, or a path's: lowercase alphanumeric runs of two
+	 * characters or more, cut to `URL_TOKEN_PREFIX_MAX`, in source order.
+	 *
+	 * @param string $text Search term or path.
+	 * @return list<string>
+	 */
+	public static function term_tokens( string $text ): array {
+		$out = [];
+		foreach ( \preg_split( '/[^a-z0-9]+/', \strtolower( $text ) ) ?: [] as $token ) {
+			if ( \strlen( $token ) >= 2 ) {
+				$out[ \substr( $token, 0, self::URL_TOKEN_PREFIX_MAX ) ] = true;
+			}
+		}
+		// An all-digit token is an INT key; every reader promises a string.
+		return \array_map( 'strval', \array_keys( $out ) );
+	}
+
+	/**
+	 * The token sets this partition holds, in one round trip.
+	 *
+	 * @param list<string> $tokens Tokens, as `term_tokens()` spells them.
+	 * @return array<string,list<string>> token => hashes; absent when unheld.
+	 */
+	public function url_token_sets( array $tokens ): array {
+		$reads = [];
+		foreach ( $tokens as $token ) {
+			$reads[] = [ [ self::NS_URLTOKEN ], $token ];
+		}
+		$out = [];
+		foreach ( $this->bucket_get_multi( $reads ) as $i => $set ) {
+			if ( [] !== $set ) {
+				// The hashes are the KEYS; the stamps are the writer's alone.
+				$out[ $tokens[ $i ] ] = \array_map( 'strval', \array_keys( $set ) );
+			}
+		}
+		return $out;
+	}
+
+	/**
 	 * Read many buckets across DIFFERENT namespaces in one round trip.
 	 *
 	 * `lookup_bucket_sets()` reads one namespace over many buckets; this reads
@@ -1254,13 +1353,14 @@ class Stats_Store {
 	 * carry arrays; the writer decides WHICH names are worth re-writing, since
 	 * a name never changes and re-storing it every flush would spend the saving.
 	 *
-	 * @param array<string,string> $names hash => URL.
+	 * @param array<array-key,string> $names hash => URL. An all-digit hash is
+	 *                                        an INT key, as PHP makes it.
 	 * @return void
 	 */
 	public function set_url_names( array $names ): void {
 		$writes = [];
 		foreach ( $names as $hash => $url ) {
-			$writes[] = [ [ self::NS_URLMAP ], $hash, self::split_url( $url ) ];
+			$writes[] = [ [ self::NS_URLMAP ], (string) $hash, self::split_url( $url ) ];
 		}
 		$this->bucket_set_multi( $writes );
 	}
@@ -2086,6 +2186,43 @@ class Stats_Store {
 	}
 
 	/**
+	 * Union one flush's hashes into a token's set, as `hash => last named`.
+	 *
+	 * The stamp per hash is what lets the set SHRINK: an entry a retention
+	 * window has passed over is dropped BEFORE the count, so `$max` bounds
+	 * the LIVE hashes and a URL that has gone quiet stops holding a slot.
+	 *
+	 * Past `$max` the set is the sentinel under its own stamp, and the reader
+	 * folds. A live sentinel is returned UNCHANGED rather than restamped, so
+	 * `flush_writes()` skips the write, the key keeps the TTL it had, and the
+	 * token rebuilds live-only when that expires.
+	 *
+	 * @param array<array-key,mixed> $existing  The stored set, `hash => ts`.
+	 * @param list<string>           $hashes    This flush's.
+	 * @param int                    $max       `URL_SEARCH_MAX` in production.
+	 * @param int                    $now       Unix seconds this flush is at.
+	 * @param int                    $retention Seconds an unnamed hash survives.
+	 * @return array<string,int> hash => last named.
+	 */
+	public static function merge_token_set( array $existing, array $hashes, int $max, int $now, int $retention ): array {
+		$oldest = $now - $retention;
+		$set    = [];
+		foreach ( $existing as $hash => $seen ) {
+			$at = Core::num_int( $seen );
+			if ( $at > $oldest ) {
+				$set[ (string) $hash ] = $at;
+			}
+		}
+		if ( isset( $set[ self::TOKEN_SATURATED ] ) ) {
+			return [ self::TOKEN_SATURATED => $set[ self::TOKEN_SATURATED ] ];
+		}
+		foreach ( $hashes as $hash ) {
+			$set[ $hash ] = $now;
+		}
+		return \count( $set ) > $max ? [ self::TOKEN_SATURATED => $now ] : $set;
+	}
+
+	/**
 	 * Re-key AND re-type a decoded `hash => path` blob. `string_keys()` for the
 	 * key, because an all-digit hash arrives as an int; `Core::str()` for the
 	 * value, because a truncated or corrupt entry is whatever it decoded to and
@@ -2128,6 +2265,17 @@ class Stats_Store {
 	 */
 	public static function join_url( array $pair ): string {
 		return Core::str( $pair[1] ?? '' ) . Core::str( $pair[0] ?? '' );
+	}
+
+	/**
+	 * The PATH half of a name pair — decision 18: a positional value is read
+	 * through a name, never a bare index.
+	 *
+	 * @param array<array-key,mixed> $pair `[ path, origin ]`, from `get_url_names()` or `split_url()`.
+	 * @return string The path, or '' for a pair that is not one.
+	 */
+	public static function path_of( array $pair ): string {
+		return Core::str( $pair[0] ?? '' );
 	}
 
 	/**

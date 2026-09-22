@@ -62,7 +62,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
  *   url_dim: array<array-key,array<string,Dim_Values>>,
  *   url_stats: array<string,mixed>,
  *   url_stats_worker: array<string,mixed>,
- *   url_names: array<string,string>,
+ *   url_names: array<array-key,string>,
  *   cat: Cat_Values,
  *   cat_by_server: array<string,Cat_Values>,
  *   cat_by_url: array<array-key,Cat_Values>,
@@ -269,6 +269,8 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 		Stats_Store::NS_URLRANK_HOUR   => 0,
 		Stats_Store::NS_URLRANK_S      => 0,
 		Stats_Store::NS_URLRANK_HOUR_S => 0,
+		// Derived from `urlmap`; a URL is re-tokenized when it is next named.
+		Stats_Store::NS_URLTOKEN       => 0,
 	];
 
 	/**
@@ -1397,9 +1399,24 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 		if ( null === $stats_store ) {
 			return;
 		}
-		$this->persist_url_names( $stats_store );
 		$intents = [];
 		$last    = [];
+		// A token intent names no bucket, so it precedes `$last`'s indexes.
+		$now = $this->now_ts();
+		foreach ( $this->persist_url_names( $stats_store ) as $token => $hashes ) {
+			$intents[] = self::intent(
+				[ Stats_Store::NS_URLTOKEN ],
+				(string) $token,
+				static fn ( array $existing ): array => Stats_Store::merge_token_set(
+					$existing,
+					$hashes,
+					Stats_Store::URL_SEARCH_MAX,
+					$now,
+					$stats_store->ttl()
+				),
+				fn (): null => $this->unname_urls( $hashes )
+			);
+		}
 		foreach ( $this->pending as $bucket => $acc ) {
 			if ( ! empty( $acc['hourly'] ) ) {
 				$totals    = $acc['hourly'];
@@ -1538,10 +1555,19 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	 * retention window has passed, which re-writes a name that is still in use
 	 * well before its own TTL retires it.
 	 *
+	 * Each name also files the search index, which is why the memo matters.
+	 * A path costs one read-merge-write key per prefix of every word in it,
+	 * `sum( min( word, 12 ) - 2 )` over the words of three characters or
+	 * more: six for `/wombat-7731`, nine for `/blog/2026/my-post-title`, and
+	 * 30 for a path of three words of twelve characters or more. That is
+	 * paid once per URL per half-window, not once per flush.
+	 *
 	 * @param Stats_Store $stats_store The wired store.
-	 * @return void
+	 * @return array<array-key,list<string>> token => hashes, for the names
+	 *                                        written. An all-digit token is an
+	 *                                        INT array key.
 	 */
-	private function persist_url_names( Stats_Store $stats_store ): void {
+	private function persist_url_names( Stats_Store $stats_store ): array {
 		$now     = $this->now_ts();
 		$refresh = \max( 1, (int) ( $stats_store->max_lifespan() / 2 ) );
 		$due     = [];
@@ -1556,6 +1582,11 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 			}
 		}
 		$stats_store->set_url_names( $due );
+		$paths = [];
+		foreach ( $due as $hash => $url ) {
+			$paths[ $hash ] = Stats_Store::path_of( Stats_Store::split_url( $url ) );
+		}
+		return Stats_Store::token_sets_of( $paths );
 	}
 
 	/**
@@ -1596,7 +1627,23 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 				$writes[ $key ][2] = $merge( $writes[ $key ][2] );
 				$owners[ $key ][]  = $i;
 			}
+			// @longform A merge that changed nothing is not a write: it would
+			// cost a round trip and refresh a TTL the value has not earned,
+			// so a key nothing adds to ages out on the one it has.
+			$unchanged = [];
+			foreach ( $writes as $key => $write ) {
+				$read = $existing[ $owners[ $key ][0] ] ?? [];
+				if ( $write[2] === $read ) {
+					$unchanged[ $key ] = $write[2];
+					unset( $writes[ $key ] );
+				}
+			}
 			$keys = \array_keys( $writes );
+			foreach ( $unchanged as $key => $value ) {
+				foreach ( $owners[ $key ] as $i ) {
+					( $chunk[ $i ]['landed'] ?? null )?->__invoke( $value );
+				}
+			}
 			foreach ( $stats_store->bucket_set_multi( \array_values( $writes ) ) as $at => $landed ) {
 				$key = $keys[ $at ];
 				foreach ( $owners[ $key ] as $i ) {
@@ -1970,7 +2017,7 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	 * — the shard token is what tells the two families apart.
 	 *
 	 * @param array<array-key,mixed> $rows  One shard's rows, by url_hash.
-	 * @param array<string,string>   $names This flush's `hash => url` map.
+	 * @param array<array-key,string> $names This flush's `hash => url` map.
 	 * @return array<string,string> hash => path.
 	 */
 	private static function paths_of( array $rows, array $names ): array {
@@ -1978,7 +2025,7 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 		foreach ( \array_keys( $rows ) as $hash ) {
 			$url = $names[ (string) $hash ] ?? '';
 			if ( '' !== $url ) {
-				$out[ (string) $hash ] = Stats_Store::split_url( $url )[0];
+				$out[ (string) $hash ] = Stats_Store::path_of( Stats_Store::split_url( $url ) );
 			}
 		}
 		return $out;
@@ -3328,6 +3375,24 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	 */
 	private static function empty_leaderboard(): array {
 		return [ 'count' => 0, 'sum_req_time' => 0.0, 'categories' => [] ];
+	}
+
+	/**
+	 * Forget that these URLs were named, so the next flush files them again.
+	 *
+	 * The memo is set BEFORE the write, because the write is batched — so a
+	 * refused token write would otherwise leave the URL unsearchable for half
+	 * a retention window while the memo insisted it was filed.
+	 *
+	 * @param list<string> $hashes The refused token's URLs.
+	 */
+	private function unname_urls( array $hashes ): null {
+		foreach ( $hashes as $hash ) {
+			// The LRU has no delete; a zero stamp is older than any refresh.
+			$this->named_urls->set( $hash, 0 );
+		}
+		$this->print_less_often( 'token index write refused; re-filing ' . \count( $hashes ) . ' URLs' );
+		return null;
 	}
 
 	/**

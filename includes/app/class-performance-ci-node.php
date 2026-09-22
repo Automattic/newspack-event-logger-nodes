@@ -797,7 +797,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * every bucket's list is a count the page cannot see.
 	 *
 	 * @param string                 $server  Reporting server to scope to; '' reads every server.
-	 * @param string                 $search  Case-insensitive URL substring; '' matches all.
+	 * @param string                 $search  Case-insensitive URL word or word prefix; '' matches all.
 	 * @param bool                   $errors  Keep only rows with unclassified requests.
 	 * @param bool                   $workers Keep worker traffic (the default excludes it).
 	 * @param string                 $sort    A URL_SORTS field.
@@ -808,7 +808,12 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @return array{data:array<int,array<array-key,mixed>>,rows:int,totals:array<string,mixed>,slowest:array<int,array<array-key,mixed>>,has_split:bool,ranked:bool,as_of:int}
 	 */
 	private function url_page( string $server, string $search, bool $errors, bool $workers, string $sort, string $order, int $offset, int $limit, array $stores ): array {
-		$ttl = $limit <= self::URLS_PAGE_CACHE_MAX_ROWS ? self::URLS_PAGE_TTL_S : null;
+		// @longform Normalized ONCE, here: `Womb`, `womb` and `womb ` are one
+		// search, and a key that normalizes while the paths below it read the
+		// raw term would answer one entry two ways. The handler echoes the
+		// raw value in `filters`, which is the only place it still matters.
+		$search = self::search_term( $search );
+		$ttl    = $limit <= self::URLS_PAGE_CACHE_MAX_ROWS ? self::URLS_PAGE_TTL_S : null;
 		/** @var array{data:array<int,array<array-key,mixed>>,rows:int,totals:array<string,mixed>,slowest:array<int,array<array-key,mixed>>,has_split:bool,ranked:bool,as_of:int} */
 		return $this->cached(
 			[ $server, $search, $errors, $workers, $sort, $order, $offset, $limit, Stats_Store::bucket_key( \time() ), AppConfig::stats_retention_seconds(), \count( $stores ) ],
@@ -1030,7 +1035,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * stay site-wide (decision 15).
 	 *
 	 * @param string                 $server  Reporting server to scope to; '' reads every server.
-	 * @param string                 $search  Case-insensitive URL substring; '' matches all.
+	 * @param string                 $search  Case-insensitive URL word or word prefix; '' matches all.
 	 * @param bool                   $errors  Keep only rows with unclassified requests.
 	 * @param bool                   $workers Keep worker traffic (the default excludes it).
 	 * @param string                 $sort    A URL_SORTS field.
@@ -1041,7 +1046,8 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @return array{data:array<int,array<array-key,mixed>>,rows:int,totals:array<string,mixed>,slowest:array<int,array<array-key,mixed>>,has_split:bool,ranked:bool,as_of:int}
 	 */
 	private function fold_page( string $server, string $search, bool $errors, bool $workers, string $sort, string $order, int $offset, int $limit, array $stores ): array {
-		$term      = '' === $search ? '' : \strtolower( $search );
+		// Normalized by `url_page()`, which keys the cache on the same value.
+		$term      = $search;
 		$page_keep = \max( 0, $offset ) + \max( 0, $limit );
 		$ranked    = [];
 		$slowest   = [];
@@ -1061,18 +1067,45 @@ class Performance_CI_Node extends Service_CI_Node {
 		// @longform A term matches on the name and a url-sort orders by it, so
 		// those two need every candidate named; every other read names a page.
 		$needs_names = '' !== $term || 'url' === $sort;
+		$tokens      = '' === $term ? [] : Stats_Store::term_tokens( $term );
+		$candidates  = '' === $term ? null : self::search_candidates( $tokens, $stores );
 
 		// Worker traffic is its own shard family
-		$shards = $workers
-			? \array_merge( Stats_Store::url_shards(), Stats_Store::url_shards( true ) )
-			: Stats_Store::url_shards();
+		$families = $workers ? [ false, true ] : [ false ];
+		$shards   = [];
+		foreach ( $families as $worker ) {
+			$shards = \array_merge( $shards, Stats_Store::url_shards( $worker ) );
+		}
+
+		// @longform The index named every row the term can reach, so the walk
+		// drops to the shards those hashes fall in and the names come from
+		// `urlmap` over that bounded set rather than every shard's whole blob.
+		$candidate_names = [];
+		if ( null !== $candidates ) {
+			// @longform Nothing walked means nothing to derive a split from,
+			// and a scoped page would report `totals: null` — "this index
+			// predates splits" — where the truth is a term matching no URL.
+			$has_split = [] === $candidates;
+			$in_play = [];
+			foreach ( \array_keys( $candidates ) as $hash ) {
+				foreach ( $families as $worker ) {
+					$in_play[ Stats_Store::url_shard( $hash, $worker ) ] = true;
+				}
+			}
+			$shards = \array_values( \array_intersect( $shards, \array_keys( $in_play ) ) );
+			foreach ( self::url_names( \array_keys( $candidates ), $stores ) as $hash => $pair ) {
+				$candidate_names[ $hash ] = Stats_Store::path_of( $pair );
+			}
+		}
 
 		$overflow = [];
 		foreach ( $shards as $shard ) {
 			$kept  = [];
 			$index = self::read_index( $shard, $stores );
 			// The shard's own name blob: ~40 keys, however many URLs it holds.
-			$names = $needs_names ? self::shard_paths( $shard, $stores ) : [];
+			$names = null !== $candidates
+				? $candidate_names
+				: ( $needs_names ? self::shard_paths( $shard, $stores ) : [] );
 			foreach ( $index as $raw ) {
 				$raw_row = Core::arr( $raw );
 				// Derived here: there is no second walk to spend on it.
@@ -1094,8 +1127,14 @@ class Performance_CI_Node extends Service_CI_Node {
 				// the term speaks about the path, and projecting a row it
 				// rejects is the index's whole work for nothing. An overflow
 				// row is held out above; no term speaks for one.
-				if ( '' !== $term
-					&& false === \strpos( \strtolower( $names[ $hash ] ?? '' ), $term ) ) {
+				if ( null !== $candidates && ! isset( $candidates[ $hash ] ) ) {
+					continue;
+				}
+				// @longform On the index path the token index already answered
+				// for this hash, so a name that expired or was refused drops
+				// nothing; on the fold path the name IS the answer.
+				$named = null === $candidates || isset( $names[ $hash ] );
+				if ( '' !== $term && $named && ! self::term_matches( $names[ $hash ] ?? '', $term, $tokens ) ) {
 					continue;
 				}
 				$row = self::project_row( $raw_row, $server );
@@ -1175,6 +1214,89 @@ class Performance_CI_Node extends Service_CI_Node {
 			'ranked'    => false,
 			'as_of'     => \time(),
 		];
+	}
+
+	/**
+	 * The hashes the token index names for a term, or null when it cannot
+	 * answer: a term with no token, a token shorter than
+	 * `URL_TOKEN_PREFIX_MIN` (refused before the read, since no read can
+	 * answer it), every token saturated, or more candidates than
+	 * `URL_SEARCH_MAX`. A token no partition holds is a real answer — an
+	 * empty set — and folds nothing.
+	 *
+	 * @param list<string>           $tokens The term's tokens.
+	 * @param array<int,Stats_Store> $stores Stores the caller resolved once.
+	 * @return array<string,true>|null
+	 */
+	private static function search_candidates( array $tokens, array $stores ): ?array {
+		if ( [] === $tokens ) {
+			return null;
+		}
+		foreach ( $tokens as $token ) {
+			// Shorter than the shortest prefix filed: no read can answer it.
+			if ( \strlen( $token ) < Stats_Store::URL_TOKEN_PREFIX_MIN ) {
+				return null;
+			}
+		}
+		// @longform Its own budget: an unmirrored absence is never remembered,
+		// so the seam runs each poll and its spend is not the fold's to pay.
+		$sets = [];
+		Flame_Builder_Node::with_own_mirror_read_budget( static function () use ( $tokens, $stores, &$sets ): void {
+			foreach ( $stores as $store ) {
+				foreach ( $store->url_token_sets( $tokens ) as $token => $hashes ) {
+					$sets[ $token ] = \array_merge( $sets[ $token ] ?? [], $hashes );
+				}
+			}
+		} );
+		$result = null;
+		foreach ( $tokens as $token ) {
+			$hashes = $sets[ $token ] ?? [];
+			// One partition's set saturated: that token narrows nothing here.
+			if ( \in_array( Stats_Store::TOKEN_SATURATED, $hashes, true ) ) {
+				continue;
+			}
+			$set    = \array_fill_keys( $hashes, true );
+			$result = null === $result ? $set : \array_intersect_key( $result, $set );
+		}
+		if ( null === $result || \count( $result ) > Stats_Store::URL_SEARCH_MAX ) {
+			return null;
+		}
+		return $result;
+	}
+
+	/**
+	 * Whether a name answers a term: every token of the term begins a WORD of
+	 * it, or the whole term appears when the term has no token at all.
+	 *
+	 * The index files word prefixes, so the fold it falls back to has to read
+	 * a term the same way. Matching a substring here instead would make `77`
+	 * name `/wombat-1177` through the fold and not through the index, so
+	 * which rows a search returned would turn on whether some other token
+	 * happened to have saturated.
+	 *
+	 * @param string       $name   The URL's path.
+	 * @param string       $term   The lowercased search term.
+	 * @param list<string> $tokens The term's tokens.
+	 */
+	private static function term_matches( string $name, string $term, array $tokens ): bool {
+		$name = \strtolower( $name );
+		if ( [] === $tokens ) {
+			return \str_contains( $name, $term );
+		}
+		foreach ( $tokens as $token ) {
+			if ( 1 !== \preg_match( '/(?:^|[^a-z0-9])' . \preg_quote( $token, '/' ) . '/', $name ) ) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	/**
+	 * The search term as every reader spells it: lowercase, trimmed. The cache
+	 * key and the fold take this; `filters` echoes what was typed.
+	 */
+	private static function search_term( string $search ): string {
+		return \strtolower( \trim( $search ) );
 	}
 
 	/**
@@ -2010,13 +2132,8 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * carrying the PATH a url-sort ranked it by; only the synthetic overflow
 	 * rows are skipped, and they name no URL to look up.
 	 *
-	 * Naming a page is an answer of its own, with a mirror read budget of its
-	 * own: it runs after the index walk, which spends the command's first, and
-	 * a page of counts against blank URLs is no page. One `lookup_multi` per
-	 * partition asks for every missing name at once, so what the second
-	 * budget bounds is one mirror pass per partition beyond it — the walk it
-	 * cannot cut short — and the `urls` verb names its page and its slowest
-	 * rows in ONE call rather than two.
+	 * Naming runs on a budget of its own — see `url_names()` — and the `urls`
+	 * verb names its page and its slowest rows in ONE call rather than two.
 	 *
 	 * @param array<int,array<array-key,mixed>> $rows   Merged display rows.
 	 * @param array<int,Stats_Store>            $stores Stores the caller resolved once.
@@ -2034,14 +2151,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		if ( [] === $wanted ) {
 			return $rows;
 		}
-		$names = Flame_Builder_Node::with_own_mirror_read_budget( static function () use ( $wanted, $stores ): array {
-			$names = [];
-			foreach ( $stores as $store ) {
-				// Named in the partition that saw it; first name wins.
-				$names += $store->get_url_names( \array_keys( $wanted ) );
-			}
-			return $names;
-		} );
+		$names = self::url_names( \array_keys( $wanted ), $stores );
 		foreach ( $rows as $i => $row ) {
 			$hash = Core::as_string( $row['hash'] ?? '' );
 			if ( isset( $names[ $hash ] ) ) {
@@ -2052,6 +2162,39 @@ class Performance_CI_Node extends Service_CI_Node {
 			}
 		}
 		return $rows;
+	}
+
+	/**
+	 * Name hashes from whichever partition saw them, on a budget of its own.
+	 *
+	 * Naming is an ANSWER, not a step of the walk: it runs after the index
+	 * walk that spends the command's budget, a page of counts against blank
+	 * URLs is no page, and a fold that inherits the naming's spend answers
+	 * null for every mirror read after it. `with_own_mirror_read_budget()`
+	 * keeps the two apart, whichever caller asks — the page `resolve_urls()`
+	 * returns, or the candidates a search restricts to. One `lookup_multi`
+	 * per partition asks for every missing name at once, so what that second
+	 * budget bounds is one mirror pass per partition beyond it: the walk it
+	 * cannot cut short.
+	 *
+	 * @param array<int,string>      $hashes 12-char URL hashes.
+	 * @param array<int,Stats_Store> $stores Stores the caller resolved once.
+	 * @return array<string,array{0:string,1:string}> hash => [ path, origin ].
+	 */
+	private static function url_names( array $hashes, array $stores ): array {
+		if ( [] === $hashes ) {
+			return [];
+		}
+		return Flame_Builder_Node::with_own_mirror_read_budget(
+			static function () use ( $hashes, $stores ): array {
+				$names = [];
+				foreach ( $stores as $store ) {
+					// Named in the partition that saw it; first name wins.
+					$names += $store->get_url_names( $hashes );
+				}
+				return $names;
+			}
+		);
 	}
 
 	/**

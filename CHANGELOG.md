@@ -26,6 +26,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A URL search reads a token index and folds only the shards its
+  candidates fall in.** The writer files each named path under every
+  prefix of every word it carries, so a search matches a word or a word
+  prefix rather than any substring: the term is lowercased, split on each
+  non-alphanumeric run, and every token must begin a word of the path.
+  The index answers with the hashes, which bounds the walk to their shards
+  and names them through `urlmap` instead of reading every shard's whole
+  name blob. It files prefixes of three characters and up, because a
+  two-character prefix names most of a site; a term the index cannot serve
+  — no token, one under three characters, or one past `URL_SEARCH_MAX`
+  (5,000) live candidates — falls back to folding the index, which matches
+  the same words, so no term loses its answer and no term answers two ways.
+  A token's set records when each hash was last named and drops the ones a
+  retention window has passed over, so a set cannot grow forever and a
+  token saturated by URLs that have since gone quiet recovers. Both reads
+  carry a mirror read budget of their own, so the fold that follows starts
+  on a whole one and the page it builds is complete enough to cache.
 - **A URL page is folded once a minute, not once a poll.** `urls` caches
   each page for sixty seconds, keyed by every filter and the window bucket,
   in a Table of its own; a hub holding 690,000 URLs spent 30 seconds per
