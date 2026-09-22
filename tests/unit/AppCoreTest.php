@@ -187,7 +187,7 @@ class AppCoreTest extends TestCase {
 
 	public function test_a_log_rule_binds_the_outbound_http_pair(): void {
 		$this->require_priority_aware_add_filter_or_skip();
-		$this->set_governing_rule( new Rule( '7c9e1a4b2d3f', '/checkout/', Rule::ACTION_LOG ) );
+		$this->set_governing_rule( new Rule( '7c9e1a4b2d3f', '/checkout/', Rule::ACTION_LOG, log_http: true ) );
 
 		$bound = $this->capture_added_filters( fn() => new Core() );
 
@@ -1243,7 +1243,7 @@ class AppCoreTest extends TestCase {
 	public function test_http_as_a_significant_event_wraps_pre_http_request(): void {
 		$this->require_priority_aware_add_filter_or_skip();
 		$this->set_governing_rule(
-			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'init' ], significant_events: [ 'http' ] )
+			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'init' ], significant_events: [ 'http' ], log_http: true )
 		);
 		$core = new Core();
 		$GLOBALS['_wp_test_current_filter'] = 'pre_http_request';
@@ -2267,7 +2267,7 @@ class AppCoreTest extends TestCase {
 
 	/** Same for outbound HTTP, applied from `WP_Http::request()`. */
 	public function test_an_http_span_labels_the_caller_beyond_the_transport(): void {
-		$this->set_governing_rule( new Rule( '7c9e1a4b2d3f', '/checkout/', Rule::ACTION_LOG ) );
+		$this->set_governing_rule( new Rule( '7c9e1a4b2d3f', '/checkout/', Rule::ACTION_LOG, log_http: true ) );
 		$core = new Core();
 
 		( new FakeCaller() )->fetch_feed( new FakeTransport(), 'https://img.example.net/a.jpg' );
@@ -2301,7 +2301,7 @@ class AppCoreTest extends TestCase {
 	/** The outbound-HTTP twin, applied from `WP_Http::request()`. */
 	public function test_a_traced_rule_still_labels_the_http_caller_beyond_the_transport(): void {
 		$this->set_governing_rule(
-			new Rule( '6a1d4f8c2e93', '/checkout/', Rule::ACTION_LOG, trace_callers: 7 )
+			new Rule( '6a1d4f8c2e93', '/checkout/', Rule::ACTION_LOG, trace_callers: 7, log_http: true )
 		);
 		$core = new Core();
 

@@ -51,37 +51,15 @@ return [
 	// the rules editor writes that option, this list stops being consulted,
 	// and editing it changes nothing until `Rule_Set::reset()` deletes the
 	// option again.
-	// `Rule_Matcher` ranks query-bearing patterns above exact patterns (the
-	// trailing `?`) above prefixes, so these five exact skips govern their
-	// endpoints whatever the list order and whatever `/` says. The four
-	// `/wp-json/newspack-nodes/v1/…` routes are the substrate's own command,
-	// SSE, and worker-spawn endpoints; logging them would log the logger.
+	// The platform's own requests to itself — the cron loopback and the
+	// substrate's endpoints — need no skip: `Log_Manager` names each as a
+	// worker, and the URL table keeps worker traffic off its default rows.
 	// No match means skip, and empty means empty: drop the `/` rule and the
 	// site logs nothing. A `log` rule may also carry hook lists, custom and
 	// significant event names, the two auto-tune thresholds, and the query,
 	// HTTP and hook-trace switches — `Rule` is the full shape. A rule's id is
 	// derived from its pattern, so declaring one here is pointless.
 	// 'rules' => [
-	//	[
-	//		'pattern' => '/wp-json/newspack-nodes/v1/command?',
-	//		'action'  => 'skip',
-	//	],
-	//	[
-	//		'pattern' => '/wp-json/newspack-nodes/v1/log/stream?',
-	//		'action'  => 'skip',
-	//	],
-	//	[
-	//		'pattern' => '/wp-json/newspack-nodes/v1/messages/stream?',
-	//		'action'  => 'skip',
-	//	],
-	//	[
-	//		'pattern' => '/wp-json/newspack-nodes/v1/workers/spawn?',
-	//		'action'  => 'skip',
-	//	],
-	//	[
-	//		'pattern' => '/wp-cron.php?',
-	//		'action'  => 'skip',
-	//	],
 	//	[
 	//		'pattern' => '/',
 	//		'action'  => 'log',

@@ -59,7 +59,7 @@
   <div class="card"><h3>The record that shows the cost</h3>
     <p>A BDN <span class="mono">wp-admin/post.php</span> request: 41.7 s wall against 12.2 s CPU, with <span class="mono">Image_CDN::filter_the_content @999999</span> holding 29.4 s of self time and no interior. The 29.5 s off-CPU remainder has no name.</p></div>
   <div class="card"><h3>What it costs</h3>
-    <p>Two registrations per request and two entries per remote call; zero on a request that makes none. Absent <span class="mono">log_http</span> means ON: only an explicit false drops the spans.</p></div>
+    <p>Two registrations per request and two entries per remote call; zero on a request that makes none. Off unless <span class="mono">log_http</span> is set, as every diagnostic is.</p></div>
   <div class="card"><h3>Never constructs the logger</h3>
     <p>Both callbacks ask <span class="mono">Log_Manager::has_instance()</span> first. A binding that outlived its request would otherwise build the logger inside the callback and stamp <span class="mono">process (start)</span> with that moment instead of the profiler's <span class="mono">request_ts</span>.</p></div>
 </div>

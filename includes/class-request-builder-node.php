@@ -947,6 +947,19 @@ class Request_Builder_Node extends Timer_Node {
 			$request->rule_id     = \is_string( $entry['rule'] ?? null ) ? $entry['rule'] : '';
 		};
 
+		$s[ Log_Manager::WORKER_TYPE ] = function ( \stdClass $request, array $entry ): void {
+			// The worker gets its own ?worker_type URL row.
+			$worker_type = \preg_replace( '/[^a-z0-9_-]/i', '', Core::as_string( $entry['m'] ?? '' ) ) ?? '';
+			if ( '' !== $worker_type ) {
+				$request->is_worker   = true;
+				$request->worker_type = $worker_type;
+			}
+		};
+
+		$s[ Log_Manager::WORKER_PARTITION ] = function ( \stdClass $request, array $entry ): void {
+			$request->worker_partition = Core::num_int( $entry['m'] ?? null );
+		};
+
 		$s[ Log_Manager::REQUEST_COMPLETE ] = function ( \stdClass $request, array $entry ): void {
 			$request->duration_ms = Core::num_float( $entry['duration_ms'] ?? null );
 			$request->status_code = Core::num_int( $entry['status_code'] ?? null );
@@ -1025,12 +1038,6 @@ class Request_Builder_Node extends Timer_Node {
 			$ja4_hash = self::env_str( $env, 'HTTP_X_JA4_HASH' );
 			if ( '' !== $ja4_hash ) {
 				$request->ja4_hash = $ja4_hash;
-			}
-			$worker_type = self::env_str( $env, 'NEWSPACK_NODES_WORKER_TYPE' );
-			if ( '' !== $worker_type ) {
-				// Capture value so worker gets its own ?worker_type URL row.
-				$request->is_worker   = true;
-				$request->worker_type = \preg_replace( '/[^a-z0-9_-]/i', '', $worker_type ) ?? '';
 			}
 		};
 

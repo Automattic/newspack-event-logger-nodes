@@ -23,7 +23,8 @@ use Newspack_Nodes\Tests\Capture_Sink_Node;
  *  - `process (start)` — initializes the request, populates the timestamp
  *  - `process (complete)` — terminal: emits the assembled doc downstream
  *  - `request` — extracts URL + method
- *  - `environment_v3` — extracts REMOTE_ADDR / SERVER_NAME / GEOIP_COUNTRY_CODE / NEWSPACK_NODES_WORKER_TYPE / etc.
+ *  - `worker_type` / `worker_partition` — marks a worker and names its URL row
+ *  - `environment_v3` — extracts REMOTE_ADDR / SERVER_NAME / GEOIP_COUNTRY_CODE / etc.
  *  - `memory` — extracts peak_mb
  *
  * Anything else with " (start)" / " (complete)" suffix pushes/pops the LIFO
@@ -517,64 +518,56 @@ class RequestBuilderTest extends TestCase {
 		);
 	}
 
-	public function test_worker_type_marks_request_as_worker(): void {
+	/** The `worker_type` entry is the whole flag: it marks the worker and names its URL row. */
+	public function test_a_worker_type_entry_marks_request_as_worker(): void {
 		$rb      = new Request_Builder_Node();
 		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
-
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
-		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
-		$this->fill( $rb, 3, 'r1', Log_Manager::ENVIRONMENT, [ 'm' => [ 'NEWSPACK_NODES_WORKER_TYPE' => 'stream-merger' ] ] );
+		$this->fill( $rb, 2, 'r1', 'worker_type', [ 'm' => 'cache-cozy' ] );
+		$this->fill( $rb, 3, 'r1', 'request', [ 'm' => 'GET /x' ] );
 		$this->fill( $rb, 4, 'r1', 'process (complete)' );
-
-		$req = $this->captured_request( $capture );
-		$this->assertTrue( $req['is_worker'] );
-	}
-
-	public function test_environment_v3_captures_worker_type_value(): void {
-		$rb      = new Request_Builder_Node();
-		$capture = new Capture_Sink_Node();
-		$rb->sink( $capture );
-
-		$this->fill( $rb, 1, 'r1', 'process (start)' );
-		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
-		$this->fill( $rb, 3, 'r1', Log_Manager::ENVIRONMENT, [ 'm' => [ 'NEWSPACK_NODES_WORKER_TYPE' => 'cache-cozy' ] ] );
-		$this->fill( $rb, 4, 'r1', 'process (complete)' );
-
 		$req = $this->captured_request( $capture );
 		$this->assertTrue( $req['is_worker'] );
 		$this->assertSame( 'cache-cozy', $req['worker_type'] );
 	}
 
-	public function test_environment_v3_sanitizes_worker_type_value(): void {
+	public function test_a_worker_type_entry_is_sanitized(): void {
 		$rb      = new Request_Builder_Node();
 		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
-
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
-		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
-		$this->fill( $rb, 3, 'r1', Log_Manager::ENVIRONMENT, [ 'm' => [ 'NEWSPACK_NODES_WORKER_TYPE' => 'evil/../type?x' ] ] );
+		$this->fill( $rb, 2, 'r1', 'worker_type', [ 'm' => 'evil/../type?x' ] );
+		$this->fill( $rb, 3, 'r1', 'request', [ 'm' => 'GET /x' ] );
 		$this->fill( $rb, 4, 'r1', 'process (complete)' );
-
 		$req = $this->captured_request( $capture );
 		$this->assertSame( 'eviltypex', $req['worker_type'] );
 	}
 
-	public function test_bare_worker_type_keyword_no_longer_flags_worker(): void {
-		// The museum-era explicit `worker_type` keyword entry is no longer produced
-		// (the substrate sets the env var before the environment block is logged), so
-		// worker detection flows solely through the environment_v3 env-var line.
+	public function test_a_worker_partition_entry_is_carried_as_an_integer(): void {
 		$rb      = new Request_Builder_Node();
 		$capture = new Capture_Sink_Node();
 		$rb->sink( $capture );
-
 		$this->fill( $rb, 1, 'r1', 'process (start)' );
-		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
-		$this->fill( $rb, 3, 'r1', 'worker_type', [ 'm' => 'reconcile' ] );
-		$this->fill( $rb, 4, 'r1', 'process (complete)' );
-
+		$this->fill( $rb, 2, 'r1', 'worker_type', [ 'm' => 'job-spoke' ] );
+		$this->fill( $rb, 3, 'r1', 'worker_partition', [ 'm' => 3 ] );
+		$this->fill( $rb, 4, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$this->fill( $rb, 5, 'r1', 'process (complete)' );
 		$req = $this->captured_request( $capture );
-		$this->assertEmpty( $req['is_worker'] ?? null, 'a bare worker_type keyword must not flag is_worker' );
+		$this->assertSame( 3, $req['worker_partition'] );
+	}
+
+	/** Neither the environment entry's env var nor a key on `process (start)` is the flag. */
+	public function test_only_the_worker_type_entry_flags_a_worker(): void {
+		$rb      = new Request_Builder_Node();
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+		$this->fill( $rb, 1, 'r1', 'process (start)', [ 'worker_type' => 'stream-merger' ] );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$this->fill( $rb, 3, 'r1', Log_Manager::ENVIRONMENT, [ 'm' => [ 'NEWSPACK_NODES_WORKER_TYPE' => 'stream-merger' ] ] );
+		$this->fill( $rb, 4, 'r1', 'process (complete)' );
+		$req = $this->captured_request( $capture );
+		$this->assertEmpty( $req['is_worker'] ?? null );
 	}
 
 	public function test_emit_request_appends_worker_type_to_url(): void {
@@ -842,13 +835,7 @@ class RequestBuilderTest extends TestCase {
 
 		$this->fill( $rb, 1, 'url-context-rid-731', 'process (start)' );
 		$this->fill( $rb, 2, 'url-context-rid-731', 'request', [ 'm' => 'PATCH /error-context-731?token=private' ] );
-		$this->fill(
-			$rb,
-			3,
-			'url-context-rid-731',
-			Log_Manager::ENVIRONMENT,
-			[ 'm' => [ 'NEWSPACK_NODES_WORKER_TYPE' => 'errors-worker-731' ] ]
-		);
+		$this->fill( $rb, 3, 'url-context-rid-731', 'worker_type', [ 'm' => 'errors-worker-731' ] );
 		$this->fill(
 			$rb,
 			4,
