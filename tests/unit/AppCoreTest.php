@@ -2149,7 +2149,8 @@ class AppCoreTest extends TestCase {
 		$core->rebind_for_current_scope();
 
 		$this->assertFalse( $this->is_registered( 'query', [ $core, 'query_start' ] ) );
-		$this->assertFalse( $this->is_registered( 'log_query_custom_data', [ $core, 'query_end' ] ) );
+		// SAVEQUERIES outlives the scope, so the drain stays bound.
+		$this->assertTrue( $this->is_registered( 'log_query_custom_data', [ $core, 'query_end' ] ) );
 	}
 
 	/** SAVEQUERIES outlives the logger; the drain must not wait for one. */

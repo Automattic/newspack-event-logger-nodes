@@ -338,9 +338,8 @@ class Performance_CI_Node extends Service_CI_Node {
 	 */
 	private static function merge_dim_across_partitions( string $dimension, string $server ): array {
 		$store_server = 'server' === $dimension ? '' : $server;
-		$buckets      = self::read_window();
 		return self::merged_across_stores(
-			static fn ( Stats_Store $store ): array => $store->get_dimensional_buckets( $dimension, $buckets, $store_server ),
+			static fn ( Stats_Store $store, array $buckets ): array => $store->get_dimensional_buckets( $dimension, $buckets, $store_server ),
 			Stats_Store::DIM_SUMS,
 			Stats_Store::DIM_COUNT
 		);
@@ -354,9 +353,8 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @return array<string,mixed>
 	 */
 	private static function merge_categories_across_partitions( string $server = '' ): array {
-		$buckets = self::read_window();
 		return self::merged_across_stores(
-			static fn ( Stats_Store $store ): array => $store->get_category_buckets( $buckets, $server ),
+			static fn ( Stats_Store $store, array $buckets ): array => $store->get_category_buckets( $buckets, $server ),
 			Stats_Store::CAT_SUMS,
 			Stats_Store::CAT_REQUESTS
 		);
@@ -369,9 +367,8 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @return array<string,mixed>
 	 */
 	private static function merge_url_categories( string $hash ): array {
-		$buckets = self::read_window();
 		return self::merged_across_stores(
-			static fn ( Stats_Store $store ): array => $store->get_url_category_buckets( $hash, $buckets ),
+			static fn ( Stats_Store $store, array $buckets ): array => $store->get_url_category_buckets( $hash, $buckets ),
 			Stats_Store::CAT_SUMS,
 			Stats_Store::CAT_REQUESTS
 		);
@@ -990,9 +987,8 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @return array<array-key,mixed> Bucket keys derive from decoded memcache blobs.
 	 */
 	private static function merge_url_dim( string $hash, string $dimension ): array {
-		$buckets = self::read_window();
 		return self::merged_across_stores(
-			static function ( Stats_Store $store ) use ( $hash, $buckets, $dimension ): array {
+			static function ( Stats_Store $store, array $buckets ) use ( $hash, $dimension ): array {
 				// Bucket-major: pull the dimension asked for.
 				$series = [];
 				foreach ( $store->get_url_dimensional_buckets( $hash, $buckets ) as $bucket_key => $dims ) {
@@ -1013,41 +1009,24 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * rows summed into the buckets under one field table, the values nothing
 	 * measured dropped once at the end, and the buckets sorted.
 	 *
-	 * @param callable(Stats_Store): array<string,mixed> $rows_of     A store's rows for the series.
-	 * @param array<int|string,bool>                     $fields      Field table for the sum.
-	 * @param int                                        $count_field The entry index a value's request count sits at.
+	 * @param callable(Stats_Store, array<int,string>): array<string,mixed> $rows_of     A store's rows for the series, over the read window.
+	 * @param array<int|string,bool>                                        $fields      Field table for the sum.
+	 * @param int                                                           $count_field The entry index a value's request count sits at.
 	 * @return array<string,array<array-key,mixed>> Bucket key => value name => summed entry.
 	 */
 	private static function merged_across_stores( callable $rows_of, array $fields, int $count_field ): array {
-		$merged = [];
+		$merged  = [];
+		$buckets = self::read_window();
 		foreach ( self::stats_stores() as $store ) {
-			self::merge_buckets_into( $merged, $rows_of( $store ), $fields );
+			foreach ( $rows_of( $store, $buckets ) as $bucket => $values ) {
+				$merged[ $bucket ] = Stats_Store::sum_fields( Core::arr( $merged[ $bucket ] ?? null ), Core::arr( $values ), $fields );
+			}
 		}
 		foreach ( $merged as $bucket => $values ) {
 			$merged[ $bucket ] = Stats_Store::measured( Core::arr( $values ), $count_field );
 		}
 		\ksort( $merged );
 		return $merged;
-	}
-
-	/**
-	 * Sum-merge one namespace's buckets into the running totals, through the
-	 * SAME arithmetic and the same field table the writer used.
-	 *
-	 * Hand-rolled per namespace, a reader reaches for `Core::as_*`, the
-	 * permissive family that casts any scalar, against values the writer stored
-	 * through the refusing `num_*` family — and counts `CAT_CALLS` as a float
-	 * where `CAT_SUMS` calls it whole. One producer, one reader, one table.
-	 *
-	 * @param array<string,mixed>   $merged Mutated.
-	 * @param array<string,mixed>   $rows   Inbound, keyed by bucket.
-	 * @param array<array-key,bool> $fields Field key => is a whole count; an
-	 *                                      index for `DIM_SUMS` and `CAT_SUMS` alike.
-	 */
-	private static function merge_buckets_into( array &$merged, array $rows, array $fields ): void {
-		foreach ( $rows as $bucket => $values ) {
-			$merged[ $bucket ] = Stats_Store::sum_fields( Core::arr( $merged[ $bucket ] ?? null ), Core::arr( $values ), $fields );
-		}
 	}
 
 	/**

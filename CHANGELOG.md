@@ -8,13 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
-- **A scope change unbinds the query pair.** `rebind_for_current_scope()`
-  removed the per-hook trio and the HTTP pair and left `query_start` and
-  `query_end` bound, so a job whose rule never asked for query logging
-  inherited `sql` spans from the job before it.
-- **`query_end()` drains `$wpdb->queries` whether or not a logger is
-  started.** `SAVEQUERIES` outlives the logger in a worker, and the drain
-  sat behind the return that a missing logger took.
+- **A scope change unbinds `query_start`.** `rebind_for_current_scope()`
+  removed the per-hook trio and the HTTP pair and left the query span open
+  for the next scope, so a job whose rule never asked for query logging
+  inherited `sql` spans from the job before it. `query_end` stays bound
+  once armed and drains `$wpdb->queries` whether or not a logger is
+  started, because `SAVEQUERIES` outlives every scope and the drain sat
+  behind the return a missing logger took.
+- **A listener at a negative priority is a callback in the request builder
+  too**, nested under its hook rather than debited from it, the sign the
+  span pattern already carried.
 - **A transport the rule does not log proposes the flag.** The findings' row
   for that state now carries a `log_transport` proposal whose field is
   `log_queries` or `log_http`, so the dashboards render it; a row without an
@@ -27,15 +30,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   constructing the logger inside the callback.
 - **A dimensional value nothing measured is dropped on the read as well as
   the write.** `Stats_Store::measured()` serves `Performance_CI_Node`'s merges
-  and the flame builder's caps alike, so a frame in the pre-positional shape
-  never charts as a flat zero line before the flush ages it out.
+  and the flame builder's caps alike: a zero count is a slot with nothing in
+  it, and it is no chart row on either side.
 - **`Flame_Tree` owns the listener span's name**: `listener_name()` mints it
   and `is_listener_span()` reads it, beside the other span classifiers, and
   the dashboard's callback rows accept a negative priority as the PHP side
   does.
-- **A transport the rule does not log gets one answer**: the findings name the
-  `log_queries` or `log_http` that comes first, rather than proposing a mark
-  the binder would ignore.
 
 ## [0.101.0] - 2026-09-21
 

@@ -359,10 +359,12 @@ class Core {
 	 * a job context switch changes which rule governs mid-request
 	 * (begin_job_context / end_job_context).
 	 *
-	 * Only this class's own filters come off — the per-hook trio and the HTTP
-	 * pair. Callback wrappers already installed by wrap_callbacks() stay in
-	 * $wp_filter and keep timing, and wrapper_ids keeps remembering them, so
-	 * the new scope can't double-wrap.
+	 * Only this class's own filters come off — the per-hook trio, the HTTP
+	 * pair and `query_start`. `query_end` stays bound once armed: SAVEQUERIES
+	 * outlives every scope, so the drain must too, and with no span open it
+	 * closes nothing. Callback wrappers already installed by wrap_callbacks()
+	 * stay in $wp_filter and keep timing, and wrapper_ids keeps remembering
+	 * them, so the new scope can't double-wrap.
 	 */
 	public function rebind_for_current_scope(): void {
 		foreach ( $this->bound_hooks as $hook_name ) {
@@ -374,10 +376,11 @@ class Core {
 		\remove_filter( self::HTTP_HOOK, [ $this, 'http_wrap' ], PHP_INT_MIN );
 		\remove_action( 'http_api_debug', [ $this, 'http_end' ], PHP_INT_MIN );
 		\remove_filter( self::QUERY_HOOK, [ $this, 'query_start' ], $this->start_priority );
-		\remove_filter( 'log_query_custom_data', [ $this, 'query_end' ], PHP_INT_MIN );
 		$this->bound_hooks = [];
 		$this->significant = [];
 		$this->traced      = [];
+		$this->http_spans  = [];
+		$this->query_spans = [];
 		$this->bind_current_scope();
 	}
 
@@ -644,16 +647,13 @@ class Core {
 				$label   = Flame_Tree::listener_name( self::short_name( $original ), $priority );
 				$wrapper = function () use ( $original, $accepted_args, $label ) {
 					$args = \array_slice( \func_get_args(), 0, $accepted_args );
-					// Outlives its request: nowhere to log, call through.
+					// No logger started: only the call.
 					$lm = Log_Manager::started_instance();
-					if ( null === $lm ) {
-						return \call_user_func_array( $original, $args );
-					}
-					$lm->start( $label, [ 'l' => '' ] );
+					$lm?->start( $label, [ 'l' => '' ] );
 					try {
 						$result = \call_user_func_array( $original, $args );
 					} finally {
-						$lm->complete( $label );
+						$lm?->complete( $label );
 					}
 					return $result;
 				};
@@ -983,9 +983,9 @@ class Core {
 	/**
 	 * Close the hook's timing span. Registered at PHP_INT_MAX - 1.
 	 *
-	 * Needs no is_started() check, unlike hook_start: Log_Manager::complete()
-	 * no-ops when no span under this label is open.
-	 *
+	 * Asks for a started logger like every callback: a binding that outlived
+	 * its request must not construct one (decision 20), and complete() has
+	 * nothing to close when no span under this label is open.
 	 * @param mixed $v Filter value (passed through).
 	 * @return mixed
 	 */

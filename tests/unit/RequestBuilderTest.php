@@ -721,6 +721,22 @@ class RequestBuilderTest extends TestCase {
 		$this->assertEqualsWithDelta( 6.25, $req['profiles']['inner']['time'], 1e-9 );
 	}
 
+	/** A listener wrapped below zero is a callback too; its time is the hook's, not a debit from it. */
+	public function test_a_negative_priority_callback_does_not_subtract_from_parent_hook(): void {
+		$rb      = new Request_Builder_Node();
+		$capture = new Capture_Sink_Node();
+		$rb->sink( $capture );
+		$this->fill( $rb, 1, 'r1', 'process (start)' );
+		$this->fill( $rb, 2, 'r1', 'request', [ 'm' => 'GET /x' ] );
+		$this->fill( $rb, 3, 'r1', 'the_content hook (start)' );
+		$this->fill( $rb, 4, 'r1', 'the_content @-5 (start)', [ 'l' => '' ] );
+		$this->fill( $rb, 5, 'r1', 'the_content @-5 (complete)', [ 'duration_ms' => 5.0 ] );
+		$this->fill( $rb, 6, 'r1', 'the_content hook (complete)', [ 'duration_ms' => 20.0 ] );
+		$this->fill( $rb, 7, 'r1', 'process (complete)' );
+		$req = $this->captured_request( $capture );
+		$this->assertSame( 20.0, $req['profiles']['the_content hook']['time'] );
+	}
+
 	public function test_callback_completion_does_not_subtract_from_parent_hook(): void {
 		// Callback frames (' @N') represent breakdowns of their parent hook's
 		// time. So complete-of-callback must not subtract from the parent hook.

@@ -569,7 +569,7 @@ class Findings {
 		// The bare hook, which is what a rule binds and what every row names.
 		$named = Flame_Tree::hook_name( $base );
 		// A transport row binds the flag that logs the span, not the span.
-		$flag = isset( Hooks::TRANSPORT_HOOKS[ $base ] ) ? Rule::transport_flag( $base ) : '';
+		$flag = 'transport' === ( $advice['field'] ?? '' ) ? Rule::transport_flag( $base ) : '';
 		$out  = [
 			'action'    => $advice['action'] ?? 'none',
 			'direction' => $advice['direction'] ?? 'none',
@@ -577,9 +577,12 @@ class Findings {
 			'why'       => \sprintf( $advice['why'], $named, Hooks::TRANSPORT_HOOKS[ $base ] ?? '', $flag ),
 			'undo'      => $binds ? ( $advice['undo'] ?? $undo ) : '',
 		];
-		if ( $binds ) {
-			$out['field'] = 'transport' === $advice['field'] ? $flag : $advice['field'];
-			$out['value'] = 'transport' === $advice['field'] ? $flag : $named;
+		if ( '' !== $flag ) {
+			$out['field'] = $flag;
+			$out['value'] = $flag;
+		} elseif ( $binds ) {
+			$out['field'] = $advice['field'];
+			$out['value'] = $named;
 		}
 		return $out;
 	}
