@@ -34,7 +34,7 @@ The aggregates live in memcache under a key [Stats_Store](../includes/class-stat
 
 ![A timeline of one five-minute bucket across three tiers: the fine memcache keys, the hourly fold, and the durable mirror on disk, with the read window over the last hour](img/d06c.png)
 
-Each key expires on its own, so retention is its time to live, floored at an hour. The builder flushes at most once every five seconds, and a flush folds each closed hour of the URL index into an hourly tier, `urls_h:{shard}:{Y-m-d-H}`, one key an hour in a fine bucket's row shape; the dashboard reads the last hour in buckets and the rest of the window in hours, 36 to 46 keys per shard instead of 288.
+Each key expires on its own, so retention is its time to live, floored at an hour. The builder flushes at most once every five seconds, and a flush folds each closed hour of the URL index into an hourly tier, `urls_h:{shard}:{Y-m-d-H}`, one key an hour in a fine bucket's row shape; the dashboard reads the last hour in buckets and the rest of the window in hours, 36 to 46 keys per shard instead of 288. The same passes also rank each bucket and each folded hour, one list per sort column and direction, and file every word of three characters or more in a URL's path, and every prefix of one down to three characters, against the hashes that carry it, so the dashboard's unfiltered page reads the lists and its search reads that index instead of folding the whole URL index.
 
 ## The mirror
 

@@ -110,24 +110,28 @@ Scripted pivot sessions (`echo cmd | wp nodes cli performance.p0`) drain cleanly
 
 ## Memcache stats schema
 
-Stats are served from memcache, and the `flame-stats` mirror partition is read back only on a miss. It is no full shadow, and that is what a miss that stays empty usually means. `Flame_Builder_Node` buffers each write and lands a frame only once its bucket closes, and `STATS_MIRROR_TOPN` mirrors nothing at all for `url` — the flame profiles, unless `set_flame_topn` raises that 0 — or for the three derived hour tiers, while `url_dim` and `url_cat` mirror in full. `Stats_Store` writes one keyspace per flame-builder partition: the logical prefix is `evlog:p{N}:`, reached through the substrate's `Table_Node`, which prepends `table:`. The full backend address is `newspack_nodes:{key-version}:{scope}:table:evlog:p{N}:{namespace}:…`, where the scope is twelve hex characters hashed from the database name, the network table prefix and the rotatable install salt. No machine goes into it — the SSE slot pool is the one surface scoped per machine.
+Stats are served from memcache, and the `flame-stats` mirror partition is read back only on a miss. It is no full shadow, and that is what a miss that stays empty usually means. `Flame_Builder_Node` buffers each write and lands a frame only once its bucket closes, and `STATS_MIRROR_TOPN` mirrors nothing at all for `url` — the flame profiles, unless `set_flame_topn` raises that 0 — or for the eight derived tiers — `urls_h`, `urlnames_h`, `lb_h`, the four `urlrank` tiers and `urltoken` — while `url_dim` and `url_cat` mirror in full. `Stats_Store` writes one keyspace per flame-builder partition: the logical prefix is `evlog:p{N}:`, reached through the substrate's `Table_Node`, which prepends `table:`. The full backend address is `newspack_nodes:{key-version}:{scope}:table:evlog:p{N}:{namespace}:…`, where the scope is twelve hex characters hashed from the database name, the network table prefix and the rotatable install salt. No machine goes into it — the SSE slot pool is the one surface scoped per machine.
 
-Eleven namespaces sit under that prefix:
+Nineteen namespaces sit under that prefix:
 
 | Namespace | Holds |
 |---|---|
 | `hourly` | Request totals per bucket, one key per partition |
-| `lb` / `lb_s` | Leaderboard buckets, global and per server |
+| `lb` / `lb_h` / `lb_s` | Leaderboard buckets: global, the global coarse hourly tier, and per server |
 | `urls` | The URL index, sharded `urls:{shard}:{bucket}` by the first hex digit of the url_hash |
 | `urls_h` | The URL index's coarse hourly tier, `urls_h:{shard}:{Y-m-d-H}` |
 | `urlmap` | `urlmap:{hash}` => the URL string, rewritten only past half the retention window |
 | `url` | The per-URL flame and profile blob, keyed `url:{hash}` |
 | `dim` / `url_dim` | Dimensional time series, global and per URL |
 | `categories` / `url_cat` | Category time series, global and per URL |
+| `urlnames` / `urlnames_h` | One shard's names, `{ hash => path }`, on the same two tiers and the same read plan as the rows |
+| `urlrank` / `urlrank_h` | The writer's ranked top-N of one bucket or folded hour, `urlrank:{sort}:{order}:{bucket}`, one list per sort key and direction |
+| `urlrank_s` / `urlrank_sh` | The same lists for one server, `urlrank_s:{server}:{sort}:{order}:{bucket}` — the scope is in the KEY here, unlike the stored rows |
+| `urltoken` | The search index, `urltoken:{token}` => `{ hash => last named }` for every URL whose path carries that word or word prefix, three to twelve characters |
 
 Both URL-index tiers shard a second time, by POPULATION: a `w` on the shard token (`urls:w3:…`, `urls_h:w3:…`) carries worker traffic, which the URL table excludes unless a reader asks for it. A key read that comes back empty is often the wrong half of that split.
 
-Every namespace but `url` and `urlmap` is bucketed, and the bucket token is always the LAST key component. Buckets are five minutes wide (`BUCKET_SECONDS` 300) — the `hourly` name notwithstanding — everywhere but the coarse `urls_h` tier, whose token is a whole hour (`Y-m-d-H`). Readers enumerate at most `MAX_READ_BUCKETS` (288). `FINE_BUCKETS` (13) is a floor rather than a ceiling: the fine tail runs that far back and then out to the end of the hour it lands in, because an hour read half fine and half coarse is either counted twice or counted at neither resolution. Everything behind that hour is answered from `urls_h`.
+Every namespace but `url`, `urlmap` and `urltoken` is bucketed, and the bucket token is always the LAST key component; those three end in a hash or a token instead, so none of them ever reads as open. Buckets are five minutes wide (`BUCKET_SECONDS` 300) — the `hourly` name notwithstanding — everywhere but the coarse tiers `lb_h`, `urls_h`, `urlnames_h`, `urlrank_h` and `urlrank_sh`, whose token is a whole hour (`Y-m-d-H`). Readers enumerate at most `MAX_READ_BUCKETS` (288). `FINE_BUCKETS` (13) is a floor rather than a ceiling: the fine tail runs that far back and then out to the end of the hour it lands in, because an hour read half fine and half coarse is either counted twice or counted at neither resolution. Everything behind that hour is answered from `urls_h`.
 
 ```bash
 # Resolve a key without reading it — the fastest way to confirm the scope.
@@ -147,9 +151,9 @@ echo "stats slabs" | nc <memcache-host> 11211
 wp nodes memcache flush
 ```
 
-**Caps to remember**: `MAX_DIM_VALUES=20`, `MAX_SERVER_VALUES=128` on the `server` axis wherever it is stored (`Stats_Store::dim_cap()`), `MAX_URL_DIM_VALUES=10`, `MAX_CAT_VALUES=50`, and `Flame_Builder_Node::MAX_URLS_PER_SHARD=2000` rows per URL-index shard. Overflow folds into a synthetic `Other` bucket rather than dropping, so totals stay exact; the `total` pseudo-category survives capping.
+**Caps to remember**: `MAX_DIM_VALUES=20`, `MAX_SERVER_VALUES=128` on the `server` axis wherever it is stored (`Stats_Store::dim_cap()`), `MAX_URL_DIM_VALUES=10`, `MAX_CAT_VALUES=50`, and `Flame_Builder_Node::MAX_URLS_PER_SHARD=2000` rows per URL-index shard. The derived tiers carry three more: `URL_RANK_N=200` entries in a fine ranked list, `URL_RANK_N_HOUR=500` in an hour's, and `URL_SEARCH_MAX=5000` LIVE hashes in a token's set, past which the set collapses to the `*` sentinel and a term carrying only such tokens is answered by the fold. A token's entries are stamped with the second their URL was last named and dropped once a retention window has passed over them, so the count bounds live hashes alone; `URL_TOKEN_PREFIX_MIN=3` and `URL_TOKEN_PREFIX_MAX=12` bound which prefixes are filed at all, and a two-character term token is unserved. Overflow folds into a synthetic `Other` bucket rather than dropping, so totals stay exact; the `total` pseudo-category survives capping.
 
-**Retention** is `max( Stats_Store::PREFIX_FLOOR, min_lifetime )` — 3600 floor, `min_lifetime` defaulting to 43200. Every aggregate namespace expires at that whole window. The per-URL `url` blob takes `max( 3600, window/24 )`, and a fine `urls` bucket takes `min( window, FINE_TTL_SECONDS )` (7200). At the default window the `url` blob's TTL is the 3600 floor, so a URL unseen for over an hour has lost its flame data while its other stats remain.
+**Retention** is `max( Stats_Store::PREFIX_FLOOR, min_lifetime )` — 3600 floor, `min_lifetime` defaulting to 43200. Every aggregate namespace expires at that whole window. The per-URL `url` blob takes `max( 3600, window/24 )`, and a fine `urls`, `urlnames`, `urlrank` or `urlrank_s` bucket takes `min( window, FINE_TTL_SECONDS )` (7200). At the default window the `url` blob's TTL is the 3600 floor, so a URL unseen for over an hour has lost its flame data while its other stats remain.
 
 **Separate memcache use.** Heavy log rules — hooks past `Rule_Set::INLINE_HOOK_LIMIT` (100) — tier their hook list out of the autoloaded option into the substrate Table namespace `eln-rule-hooks` (`table:eln-rule-hooks:<rule-id>`, TTL 3600, warmed on a miss from the non-autoloaded `newspack_event_logger_nodes_rule_hooks_<id>` option). It is a warm cache, not the system of record. Also separate, and outside this plugin: the SSE slot pool (host-scoped `sse:{slot}`) and each `Remote_Source_Node`'s status snapshot (site-scoped `remote:{node}:{spoke partition}`).
 
