@@ -13,7 +13,7 @@
  * The refresh interval, which the dropdown and the 0-9 keys both set, drives the
  * render cadence. Each tick calls `snapshot( maxRows )` on the view node, which
  * returns completed entries once before dropping them, discards in-flight rows
- * unseen for fifteen minutes, sorts by `est_ms` descending and caps the result;
+ * unseen for twenty minutes, sorts by `est_ms` descending and caps the result;
  * the tick then reads `.rps` off the node. A busy stream therefore never
  * re-renders React per message: only the snapshot arrives, at the operator's
  * cadence.

@@ -80,7 +80,7 @@
     <div class="step">
       <h3>1 · Which bucket: the completion, clamped</h3>
       <div class="formula">bucket = min( now, timestamp + round( duration_ms / 1000 ) )</div>
-      <p>Filing under <span class="m">timestamp</span>, the START, would put a long request in a bucket that may already have closed. Completion needs no new field, and for an aborted request it is the abort moment, because <span class="m">Request_Builder</span> sets <span class="m">duration_ms = now - start</span> at eviction. That removes the request's own duration from the exposure, which the 900 s assembly window bounds at fifteen minutes.</p>
+      <p>Filing under <span class="m">timestamp</span>, the START, would put a long request in a bucket that may already have closed. Completion needs no new field, and for an aborted request it is the abort moment, because <span class="m">Request_Builder</span> sets <span class="m">duration_ms = now - start</span> at eviction. That removes the request's own duration from the exposure, which the 1080 s assembly window bounds at eighteen minutes.</p>
       <p><b>Clamped to now:</b> a completed request cannot have finished after it reached us, so a skewed spoke clock or a bogus duration cannot file into a future bucket that readers, walking backwards from now, would never reach.</p>
     </div>
     <div class="arrow">&rarr;</div>
