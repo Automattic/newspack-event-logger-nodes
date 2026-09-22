@@ -4395,23 +4395,16 @@ class FlameBuilderTest extends TestCase {
 		Core::$memd = new InMemoryMemcached();
 		Flame_Builder_Node::reset_mirror_read_budget();
 		$this->use_base_dir( $this->make_temp_dir(), [ 'stats_mirror_node' => 'flames-nowhere', 'stats_mirror_read_budget_ms' => 2500 ] );
-		$catalog_reads = 0;
-		\add_filter(
-			'newspack_nodes/topologies',
-			static function ( array $topologies ) use ( &$catalog_reads ): array {
-				++$catalog_reads;
-				return $topologies;
-			}
-		);
+		$catalog_reads = self::count_catalog_reads();
 		$reader = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		Flame_Builder_Node::arm_stats_reader( $reader );
 
 		$this->assertNull( ( $reader->rehydrate )( [ 'hourly:' . self::live_hour() ] ), 'no mirror to look at' );
-		$first = $catalog_reads;
+		$first = $catalog_reads();
 		$this->assertNull( ( $reader->rehydrate )( [ 'lb:' . self::live_hour() ] ) );
 
 		$this->assertGreaterThan( 0, $first, 'the mirror was looked for' );
-		$this->assertSame( $first, $catalog_reads, 'and not looked for again' );
+		$this->assertSame( $first, $catalog_reads(), 'and not looked for again' );
 	}
 
 	/** Keys of a namespace the mirror never holds resolve no mirror at all. */
@@ -4419,19 +4412,12 @@ class FlameBuilderTest extends TestCase {
 		Core::$memd = new InMemoryMemcached();
 		Flame_Builder_Node::reset_mirror_read_budget();
 		$this->use_base_dir( $this->make_temp_dir(), [ 'stats_mirror_node' => 'flames-nowhere', 'stats_mirror_read_budget_ms' => 2500 ] );
-		$catalog_reads = 0;
-		\add_filter(
-			'newspack_nodes/topologies',
-			static function ( array $topologies ) use ( &$catalog_reads ): array {
-				++$catalog_reads;
-				return $topologies;
-			}
-		);
+		$catalog_reads = self::count_catalog_reads();
 		$reader = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		Flame_Builder_Node::arm_stats_reader( $reader );
 
 		$this->assertSame( [], ( $reader->rehydrate )( [ Stats_Store::NS_LB_HOUR . ':' . self::live_hour() ] ), 'nothing the mirror could hold' );
-		$this->assertSame( 0, $catalog_reads, 'so no mirror was looked for' );
+		$this->assertSame( 0, $catalog_reads(), 'so no mirror was looked for' );
 	}
 
 	/** With budget left, the same read finds the frame — zero is the switch. */
@@ -4486,6 +4472,24 @@ class FlameBuilderTest extends TestCase {
 		$p->flush();
 		$this->assertSame( [], $reader->get_leaderboard_buckets( [ $absent ], 'spoke-sparse' ) );
 		$this->assertSame( 1, $p->index_scans, 'and none to be told again' );
+	}
+
+	/** A namespace the mirror refuses earns no absence marker: nothing was walked for. */
+	public function test_a_refused_namespace_records_no_absence(): void {
+		Core::$memd = new InMemoryMemcached();
+		Flame_Builder_Node::reset_mirror_read_budget();
+		$this->use_base_dir( $this->make_temp_dir(), [ 'stats_mirror_node' => 'flames-stats', 'stats_mirror_read_budget_ms' => 2500 ] );
+		$store = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$this->mirrored_builder( $store, 'flames-stats', CountingIndexPartition::class );
+		$reader = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		Flame_Builder_Node::arm_stats_reader( $reader );
+		// A closed hour three back: a bucket in this tier would be remembered.
+		$hour        = Stats_Store::hour_of( Stats_Store::bucket_key( \time() - 3 * 3600 ) );
+		$keys_before = \count( Core::$memd->keys() );
+
+		$this->assertSame( [], $reader->get_leaderboard_hours( [ $hour ] ) );
+
+		$this->assertSame( $keys_before, \count( Core::$memd->keys() ), 'no marker for a key the mirror could never hold' );
 	}
 
 	/** An unnamed mirror leaves the reader memcache-only: there is nothing to budget. */

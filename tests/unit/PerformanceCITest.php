@@ -2636,23 +2636,16 @@ class PerformanceCITest extends TestCase {
 		// the catalog reads are the store builds alone.
 		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'min_lifetime' => 86400, 'stats_mirror_read_budget_ms' => 0 ] );
 		$this->activate_shipped_topology( 'performance', 3 );
-		$reads = 0;
-		\add_filter(
-			'newspack_nodes/topologies',
-			static function ( array $topologies ) use ( &$reads ): array {
-				++$reads;
-				return $topologies;
-			}
-		);
+		$reads = self::count_catalog_reads();
 		// Each fire() builds a fresh request-scope graph; reset() drops it and
 		// `Core::$memd` with it, and the backend comes back so stores are built.
-		$catalog_reads_of = static function ( array $args ) use ( &$reads ): int {
+		$catalog_reads_of = static function ( array $args ) use ( $reads ): int {
 			$memd = Core::$memd;
 			VerbHarness::reset();
 			Core::$memd = $memd;
-			$reads      = 0;
+			$before     = $reads();
 			VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', $args );
-			return $reads;
+			return $reads() - $before;
 		};
 
 		$bare = $catalog_reads_of( [] );
@@ -4451,14 +4444,7 @@ class PerformanceCITest extends TestCase {
 		$this->set_url_bucket( new Stats_Store( 1, 86400 ), $this->current_url_bucket(), [
 			'b7731ce0fa11' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 5, 'last_seen' => \time() ],
 		] );
-		$builds = 0;
-		\add_filter(
-			'newspack_nodes/topologies',
-			static function ( array $topologies ) use ( &$builds ): array {
-				++$builds;
-				return $topologies;
-			}
-		);
+		$builds   = self::count_catalog_reads();
 		$read     = [];
 		$original = Performance_CI_Node::$load_index;
 		Performance_CI_Node::$load_index = static function ( ?string $shard, array $stores ) use ( &$read, $original ): array {
@@ -4471,7 +4457,7 @@ class PerformanceCITest extends TestCase {
 			Performance_CI_Node::$load_index = $original;
 			VerbHarness::reset();
 		}
-		return [ $builds, $read, $reply ];
+		return [ $builds(), $read, $reply ];
 	}
 
 	/**

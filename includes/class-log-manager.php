@@ -907,7 +907,7 @@ class Log_Manager {
 	 * logical order. A caller that has just written a `job` entry flushes so the
 	 * Job Router sees the work now rather than whenever the batch happens to fill.
 	 *
-	 * @api Used by external plugins (nuclear-gyrobase, pyrobase).
+	 * @api Used by nuclear-gyrobase.
 	 */
 	public function flush(): void {
 		$this->topic?->flush();
