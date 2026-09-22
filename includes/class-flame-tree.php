@@ -45,8 +45,8 @@ final class Flame_Tree {
 	/** What `App\Core::hook_start()` appends to a hook's name to make its span's. */
 	public const HOOK_SUFFIX = ' hook';
 
-	/** What `App\Core::wrap_callbacks()` puts between a listener's callable and its priority. */
-	public const LISTENER_SEPARATOR = ' @';
+	/** What `listener_name()` puts between a listener's callable and its priority. */
+	private const LISTENER_SEPARATOR = ' @';
 
 	/**
 	 * A wrapped listener's span: `<callable> @<priority>`, built from the
@@ -553,6 +553,18 @@ final class Flame_Tree {
 	public static function base_name( string $name ): string {
 		$at = \strpos( $name, ': ' );
 		return false === $at ? $name : \substr( $name, 0, $at );
+	}
+
+	/**
+	 * A wrapped listener's span name, as `App\Core::wrap_callbacks()` mints it
+	 * and `is_listener_span()` reads it: one format, one owner.
+	 *
+	 * @param string $callable The listener's short name.
+	 * @param int    $priority The priority it is registered at, sign and all.
+	 * @return string
+	 */
+	public static function listener_name( string $callable, int $priority ): string {
+		return $callable . self::LISTENER_SEPARATOR . $priority;
 	}
 
 	/**

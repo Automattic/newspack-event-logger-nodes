@@ -945,6 +945,8 @@ class Log_Manager {
 	 * span opened by a binding that outlived its request would build the
 	 * logger at that moment — stamping `process (start)` with the callback's
 	 * time rather than the mu-profiler's `request_ts`.
+	 *
+	 * @api Used by tests, which ask whether instrumentation constructed a logger.
 	 */
 	public static function has_instance(): bool {
 		return null !== self::$instance;

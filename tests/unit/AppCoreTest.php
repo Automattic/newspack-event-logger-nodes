@@ -1477,6 +1477,26 @@ class AppCoreTest extends TestCase {
 		$this->assertSame( 99, $wp_filter['the_content']->callbacks[10]['test_cb']['accepted_args'] );
 	}
 
+	/** A wrapper outlives its request; firing with no logger, it runs the original and constructs nothing. */
+	public function test_a_wrapper_firing_without_a_logger_constructs_none_and_calls_through(): void {
+		$this->require_priority_aware_add_filter_or_skip();
+		$this->set_governing_rule(
+			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'the_content' ], significant_events: [ 'the_content' ] )
+		);
+		$core = new Core();
+		$GLOBALS['_wp_test_current_filter'] = 'the_content';
+		$hook            = new \WP_Hook();
+		$hook->callbacks = [ 10 => [ 'cb' => [ 'function' => static fn ( $v ) => $v . ' seen', 'accepted_args' => 1 ] ] ];
+		global $wp_filter;
+		$wp_filter['the_content'] = $hook;
+		$core->hook_start( 'x' );
+		$wrapped = $wp_filter['the_content']->callbacks[10]['cb']['function'];
+		Log_Manager::reset();
+
+		$this->assertSame( 'body seen', $wrapped( 'body' ) );
+		$this->assertFalse( Log_Manager::has_instance() );
+	}
+
 	public function test_wrap_callbacks_skips_start_priority(): void {
 		$this->require_priority_aware_add_filter_or_skip();
 		$this->use_config( [

@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Every instrumentation callback asks `Log_Manager::started_instance()`**,
+  the wrapped listeners included: a wrapper outlives its request, and one
+  firing with nowhere to log now calls through untimed rather than
+  constructing the logger inside the callback.
+- **A dimensional value nothing measured is dropped on the read as well as
+  the write.** `Stats_Store::measured()` serves `Performance_CI_Node`'s merges
+  and the flame builder's caps alike, so a frame in the pre-positional shape
+  never charts as a flat zero line before the flush ages it out.
+- **`Flame_Tree` owns the listener span's name**: `listener_name()` mints it
+  and `is_listener_span()` reads it, beside the other span classifiers, and
+  the dashboard's callback rows accept a negative priority as the PHP side
+  does.
+- **A transport the rule does not log gets one answer**: the findings name the
+  `log_queries` or `log_http` that comes first, rather than proposing a mark
+  the binder would ignore.
+
 ## [0.101.0] - 2026-09-21
 
 ### Added

@@ -91,6 +91,9 @@ class Core {
 	 */
 	private const SQL_STATE  = Flame_Tree::SQL_STATE;
 
+	/** The state an outbound HTTP span is logged under. */
+	private const HTTP_STATE = Flame_Tree::HTTP_STATE;
+
 	/** The hook the SQL span rides; also the one it makes a generic pair redundant on. */
 	private const QUERY_HOOK = 'query';
 
@@ -166,7 +169,6 @@ class Core {
 
 	/** What a string has to open with before it is treated as a statement. */
 	private const SQL_LEAD = '/\A\s*(?:SELECT|INSERT|UPDATE|DELETE|REPLACE|SHOW|DESCRIBE|EXPLAIN|CREATE|ALTER|DROP|TRUNCATE)\b/i';
-	private const HTTP_STATE = Flame_Tree::HTTP_STATE;
 
 	/** Dispatchers between a hook and its caller; flipped for O(1) lookup. */
 	private const HOOK_DISPATCHERS = [
@@ -245,8 +247,8 @@ class Core {
 	 */
 	public function hook_start( $v = null ) {
 		// Resolve LM fresh per-call so suspend/resume gets the current scope.
-		$lm = Log_Manager::instance();
-		if ( ! $lm->is_started() ) {
+		$lm = Log_Manager::started_instance();
+		if ( null === $lm ) {
 			return $v;
 		}
 
@@ -637,10 +639,14 @@ class Core {
 				}
 
 				// Wrap timing; resolve LM per-call to survive suspend/resume.
-				$label   = self::short_name( $original ) . Flame_Tree::LISTENER_SEPARATOR . $priority;
+				$label   = Flame_Tree::listener_name( self::short_name( $original ), $priority );
 				$wrapper = function () use ( $original, $accepted_args, $label ) {
-					$lm   = Log_Manager::instance();
 					$args = \array_slice( \func_get_args(), 0, $accepted_args );
+					// Outlives its request: nowhere to log, call through.
+					$lm = Log_Manager::started_instance();
+					if ( null === $lm ) {
+						return \call_user_func_array( $original, $args );
+					}
 					$lm->start( $label, [ 'l' => '' ] );
 					try {
 						$result = \call_user_func_array( $original, $args );
@@ -848,12 +854,13 @@ class Core {
 	 */
 	public function query_end( $data = null, string $query = '', float $query_time = 0.0, string $callstack = '', float $query_start = 0.0 ) {
 		$label = \array_pop( $this->query_spans );
-		if ( null === $label || ! Log_Manager::has_instance() ) {
+		$lm = Log_Manager::started_instance();
+		if ( null === $label || null === $lm ) {
 			return $data;
 		}
 		// Only here is the statement the one the database was actually asked.
 		$sql = self::without_literals( self::without_host_annotation( $query ) );
-		Log_Manager::instance()->complete( $label, '' === $sql ? [] : [ 'm' => $sql ], shaped: true );
+		$lm->complete( $label, '' === $sql ? [] : [ 'm' => $sql ], shaped: true );
 		// `property_exists`: never CREATE it on a double that has none.
 		if ( isset( $GLOBALS['wpdb'] ) && \is_object( $GLOBALS['wpdb'] )
 			&& \property_exists( $GLOBALS['wpdb'], 'queries' ) ) {
@@ -946,12 +953,13 @@ class Core {
 	 */
 	public function http_end( $response = null, string $context = '', string $class = '', array $args = [], string $url = '' ): void {
 		$label = \array_pop( $this->http_spans );
-		if ( null === $label || ! Log_Manager::has_instance() ) {
+		$lm = Log_Manager::started_instance();
+		if ( null === $label || null === $lm ) {
 			return;
 		}
 		$inner = \is_array( $response ) ? RuntimeCore::arr( $response['response'] ?? null, [] ) : [];
 		$code  = RuntimeCore::as_string( $inner['code'] ?? '', '' );
-		Log_Manager::instance()->complete( $label, '' === $code ? [] : [ 'm' => $code ] );
+		$lm->complete( $label, '' === $code ? [] : [ 'm' => $code ] );
 	}
 
 	/**
