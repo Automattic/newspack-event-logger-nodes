@@ -180,7 +180,7 @@ Logging is governed per URL by a **ruleset**: an ordered list of `Rule`s, each a
 
 ### 18. Per-rule diagnostic knobs, and what each costs
 
-Five flags on `Rule` gate instrumentation, and their defaults differ because their prices do:
+Five flags on `Rule` gate instrumentation, every one off unless the rule sets it, and their prices differ:
 
 | Flag | Default | Cost |
 |---|---|---|
