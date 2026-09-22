@@ -360,13 +360,13 @@ class Core {
 	 * (begin_job_context / end_job_context).
 	 *
 	 * Only this class's own filters come off — the per-hook trio, the HTTP
-	 * pair and `query_start`. `query_end` stays bound once armed: SAVEQUERIES
+	 * three and `query_start`. `query_end` stays bound once armed: SAVEQUERIES
 	 * outlives every scope, so the drain must too, and with no span open it
-	 * closes nothing. The open-span stacks for both transports are emptied,
-	 * since a span the old scope opened has no close in the new one.
-	 * Callback wrappers already installed by wrap_callbacks()
-	 * stay in $wp_filter and keep timing, and wrapper_ids keeps remembering
-	 * them, so the new scope can't double-wrap.
+	 * closes nothing. Both open-span stacks are emptied: a span the old scope
+	 * opened and never closed — an exception escaped it — has no close in the
+	 * new one. Callback wrappers already installed by wrap_callbacks() stay in
+	 * $wp_filter and keep timing, and wrapper_ids keeps remembering them, so
+	 * the new scope can't double-wrap.
 	 */
 	public function rebind_for_current_scope(): void {
 		foreach ( $this->bound_hooks as $hook_name ) {
@@ -649,8 +649,7 @@ class Core {
 				$label   = Flame_Tree::listener_name( self::short_name( $original ), $priority );
 				$wrapper = function () use ( $original, $accepted_args, $label ) {
 					$args = \array_slice( \func_get_args(), 0, $accepted_args );
-					// No logger started: only the call.
-					$lm = Log_Manager::started_instance();
+					$lm   = Log_Manager::started_instance();
 					$lm?->start( $label, [ 'l' => '' ] );
 					try {
 						$result = \call_user_func_array( $original, $args );

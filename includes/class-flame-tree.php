@@ -50,11 +50,12 @@ final class Flame_Tree {
 
 	/**
 	 * A wrapped listener's span: `<callable> @<priority>`, built from the
-	 * separator the minter uses, which holds no regex metacharacter because a
-	 * const cannot call `preg_quote()`. The priority may be NEGATIVE, which a
-	 * pattern without the sign silently reads as a custom event instead.
+	 * separator the minter uses, unquoted because a const cannot call
+	 * `preg_quote()`, so the separator must hold no regex metacharacter. The
+	 * priority may be NEGATIVE, which a pattern without the sign silently
+	 * reads as a custom event instead.
 	 */
-	public const LISTENER_PATTERN = '/' . self::LISTENER_SEPARATOR . '-?\d+$/';
+	private const LISTENER_PATTERN = '/' . self::LISTENER_SEPARATOR . '-?\d+$/';
 
 	/** A plugin file's load, as the profiler drop-in names it: `<slug> plugin`. */
 	private const PLUGIN_LOAD_PATTERN = '/^\S+' . self::PLUGIN_LOAD_SUFFIX . '$/';

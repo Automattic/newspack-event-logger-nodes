@@ -988,17 +988,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 */
 	private static function merge_url_dim( string $hash, string $dimension ): array {
 		return self::merged_across_stores(
-			static function ( Stats_Store $store, array $buckets ) use ( $hash, $dimension ): array {
-				// Bucket-major: pull the dimension asked for.
-				$series = [];
-				foreach ( $store->get_url_dimensional_buckets( $hash, $buckets ) as $bucket_key => $dims ) {
-					$values = Core::arr( $dims )[ $dimension ] ?? null;
-					if ( \is_array( $values ) ) {
-						$series[ $bucket_key ] = $values;
-					}
-				}
-				return $series;
-			},
+			static fn ( Stats_Store $store, array $buckets ): array => $store->get_url_dimension_buckets( $hash, $dimension, $buckets ),
 			Stats_Store::DIM_SUMS,
 			Stats_Store::DIM_COUNT
 		);
@@ -1023,7 +1013,7 @@ class Performance_CI_Node extends Service_CI_Node {
 			}
 		}
 		foreach ( $merged as $bucket => $values ) {
-			$merged[ $bucket ] = Stats_Store::measured( Core::arr( $values ), $count_field );
+			$merged[ $bucket ] = Stats_Store::measured( $values, $count_field );
 		}
 		\ksort( $merged );
 		return $merged;
