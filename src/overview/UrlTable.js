@@ -26,6 +26,7 @@ import { __, _n, sprintf } from '@wordpress/i18n';
 import { TextControl } from '@wordpress/components';
 import useVirtualization from '@newspack-nodes/shared/hooks/useVirtualization';
 import { gridTemplate } from '@newspack-nodes/shared/hooks/useColumnPicker';
+import { formatAge } from '@newspack-nodes/shared/utils/formatters';
 
 /**
  * Row height in pixels.
@@ -151,6 +152,13 @@ const COLUMNS = [
 		render: ( url, formatNum ) =>
 			url.avg_peak_mb > 0 ? formatNum( url.avg_peak_mb, 'MB' ) : '-',
 	},
+	{
+		field: 'last_updated',
+		width: '90px',
+		label: __( 'Last seen', 'newspack-event-logger-nodes' ),
+		render: ( url, formatNum, now ) =>
+			now > 0 ? formatAge( url.last_updated, now ) : '-',
+	},
 ].map( ( col ) => ( { kind: 'numeric', ...col } ) );
 
 /**
@@ -203,14 +211,15 @@ const cellClass = ( col ) =>
  * @param {Object}   col       Column declaration from COLUMNS.
  * @param {Object}   url       One row of the `urls` reply.
  * @param {Function} formatNum Number formatter, from the table.
+ * @param {number}   now       Unix timestamp the page's ages are measured from.
  * @return {string|import('react').ReactElement} Cell content.
  */
-const renderCell = ( col, url, formatNum ) => {
+const renderCell = ( col, url, formatNum, now ) => {
 	if ( 'status' === col.kind ) {
 		return pct( url[ col.field ], url.count );
 	}
 	return col.render
-		? col.render( url, formatNum )
+		? col.render( url, formatNum, now )
 		: formatNum( url[ col.field ], 'ms' );
 };
 
@@ -232,6 +241,7 @@ const UrlRow = memo(
 	 * @param {(n: number, s?: string) => *} props.formatNum  Number formatter, from the table.
 	 * @param {number}                       props.maxAvg     The page's p95 of the bar metric; 0 draws no bar.
 	 * @param {string}                       props.metric     'memory' bars avg_peak_mb, 'volume' bars count, 'avg' and 'cumulative' bar avg_ms.
+	 * @param {number}                       props.now        Unix timestamp the page's ages are measured from.
 	 * @return {import('react').ReactElement} Rendered row.
 	 */
 	function UrlRow( {
@@ -241,6 +251,7 @@ const UrlRow = memo(
 		formatNum,
 		maxAvg,
 		metric,
+		now,
 	} ) {
 		let barField = 'avg_ms';
 		if ( metric === 'memory' ) {
@@ -290,7 +301,7 @@ const UrlRow = memo(
 						className={ cellClass( col ) }
 						style={ 'code' === col.kind ? barStyle : undefined }
 					>
-						{ renderCell( col, url, formatNum ) }
+						{ renderCell( col, url, formatNum, now ) }
 					</div>
 				) ) }
 			</div>
@@ -309,6 +320,8 @@ const UrlRow = memo(
  * @param {(params: Object) => void} props.onParamsChange Receives `search`, `sort`, `order`, `offset`, `errorsOnly` and `includeWorkers` whenever one of them changes.
  * @param {number}                   props.totalUrls      Rows the server's filters left, the synthetic overflow rows included; the pager counts rows, not distinct URLs.
  * @param {string}                   [props.metric]       Chart metric the row bars scale.
+ * @param {boolean}                  [props.ranked]       Whether the server answered from its per-bucket ranked lists rather than the whole index.
+ * @param {number}                   [props.now]          Unix seconds the page's rows were current at, from the reply's `as_of`; ages are measured from it so browser and server clocks never disagree and a cached page does not tick.
  * @return {import('react').ReactElement} Rendered component.
  */
 export default function UrlTable( {
@@ -318,6 +331,8 @@ export default function UrlTable( {
 	onParamsChange,
 	totalUrls,
 	metric = 'volume',
+	ranked = false,
+	now = 0,
 } ) {
 	const [ sortField, setSortField ] = useState( 'count' );
 	const [ sortOrder, setSortOrder ] = useState( 'desc' );
@@ -573,6 +588,7 @@ export default function UrlTable( {
 								formatNum={ formatNum }
 								maxAvg={ maxAvg }
 								metric={ metric }
+								now={ now }
 							/>
 						) )
 					) }
@@ -607,6 +623,17 @@ export default function UrlTable( {
 							),
 							total.toLocaleString()
 						) }
+					{ ranked && (
+						<>
+							{ total > 0 && ' · ' }
+							<span className="event-logger-table__ranked-note">
+								{ __(
+									'Ranked per bucket; Avg and Mem are means of bucket averages',
+									'newspack-event-logger-nodes'
+								) }
+							</span>
+						</>
+					) }
 				</span>
 				{ total > URLS_PER_PAGE && (
 					<div className="event-logger-table__pagination-controls">

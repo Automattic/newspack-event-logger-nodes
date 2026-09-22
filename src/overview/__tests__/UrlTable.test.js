@@ -242,6 +242,7 @@ describe( 'UrlTable', () => {
 			'min_ms',
 			'max_ms',
 			'avg_peak_mb',
+			'last_updated',
 		] );
 		expect( fieldsOf( '.event-logger-table__row' ) ).toEqual(
 			fieldsOf( '.event-logger-table__header' )
@@ -602,6 +603,68 @@ describe( 'UrlTable', () => {
 		expect( reqsHeader.textContent.includes( '▼' ) ).toBe( true );
 		unmount();
 	} );
+
+	it( 'sorts by last seen when its header is clicked', () => {
+		const onParamsChange = jest.fn();
+		const { container, unmount } = mount( { onParamsChange } );
+		const header = container.querySelector(
+			'.event-logger-table__header [data-field="last_updated"]'
+		);
+		expect( header.textContent ).toContain( 'Last seen' );
+		expect( header.tagName ).toBe( 'BUTTON' );
+		act( () => {
+			header.click();
+		} );
+		const last =
+			onParamsChange.mock.calls[
+				onParamsChange.mock.calls.length - 1
+			][ 0 ];
+		expect( last.sort ).toBe( 'last_updated' );
+		expect( last.order ).toBe( 'desc' );
+		unmount();
+	} );
+
+	it( 'shows when each URL was last seen, as an age from the server clock', () => {
+		const { container, unmount } = mount( {
+			urls: [ { ...URLS[ 0 ], last_updated: 1000 } ],
+			totalUrls: 1,
+			now: 1300,
+		} );
+		const cell = container.querySelector(
+			'.event-logger-table__list [data-field="last_updated"]'
+		);
+		expect( cell.textContent ).toBe( '5m' );
+		unmount();
+	} );
+
+	it( 'renders "-" for a row with no last_updated, even once now is set', () => {
+		const { container, unmount } = mount( {
+			urls: [ URLS[ 0 ] ],
+			totalUrls: 1,
+			now: 1300,
+		} );
+		const cell = container.querySelector(
+			'.event-logger-table__list [data-field="last_updated"]'
+		);
+		expect( cell.textContent ).toBe( '-' );
+		unmount();
+	} );
+
+	it( 'says when the page is ranked per bucket', () => {
+		const { container, unmount } = mount( { ranked: true } );
+		const note = container.querySelector(
+			'.event-logger-table__pagination-info .event-logger-table__ranked-note'
+		);
+		expect( note.textContent ).toBe(
+			'Ranked per bucket; Avg and Mem are means of bucket averages'
+		);
+		unmount();
+		const plain = mount();
+		expect(
+			plain.container.querySelector( '.event-logger-table__ranked-note' )
+		).toBeNull();
+		plain.unmount();
+	} );
 } );
 
 describe( 'column layout', () => {
@@ -616,7 +679,7 @@ describe( 'column layout', () => {
 			.split( /\s+(?![^(]*\))/ )
 			.filter( Boolean );
 		const cells = header.querySelectorAll( '[data-field]' ).length;
-		expect( cells ).toBe( 10 );
+		expect( cells ).toBe( 11 );
 		expect( tracks ).toHaveLength( cells );
 		unmount();
 	} );
