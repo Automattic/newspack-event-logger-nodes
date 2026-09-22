@@ -223,6 +223,15 @@ class Performance_CI_Node extends Service_CI_Node {
 	 */
 	private const URL_SORTS = [ 'count', 'url', 'avg_ms', 'min_ms', 'max_ms', 'avg_peak_mb', 'last_updated' ];
 
+	/** Table namespace of the URL page cache, beside `Rule_Set::TABLE_HOOKS`. */
+	private const URLS_PAGE_NS = 'eln-urls-page';
+
+	/** Seconds one folded URL page serves every tab asking for it. */
+	private const URLS_PAGE_TTL_S = 60;
+
+	/** The widest page cached: 1,000 named rows can pass the cache item limit. */
+	private const URLS_PAGE_CACHE_MAX_ROWS = 250;
+
 	/**
 	 * Buckets read per `lookup_multi` while folding the index.
 	 *
@@ -699,9 +708,11 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * The `overview:` brief — the dashboard as it is being read.
 	 *
 	 * It asks the same two verbs the page does, with the same scope, so the
-	 * brief and the screen cannot disagree: `url_page()` for the filtered
-	 * set's totals and leaderboard, `build_leaderboard()` for the category
-	 * board beside it. The site-wide `build_overview_payload()` is
+	 * brief and the screen cannot disagree about WHAT they describe:
+	 * `url_page()` for the filtered set's totals and leaderboard,
+	 * `build_leaderboard()` for the category board beside it. They can
+	 * disagree about WHEN: the URL half is a page the cache may hold up to
+	 * `URLS_PAGE_TTL_S` behind the board. The site-wide `build_overview_payload()` is
 	 * deliberately NOT used — its totals ignore every filter, so under a
 	 * server or a search they would describe a different site than the one on
 	 * screen.
@@ -783,6 +794,16 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * `avg_ms`, loses nothing. `rows` and `totals` accumulate across shards and
 	 * stay site-wide (decision 15).
 	 *
+	 * The page is CACHED for `URLS_PAGE_TTL_S`, keyed by every filter, the
+	 * window bucket, the retention and the store count: a fold over a hub's
+	 * whole URL index runs tens of seconds, and every tab polling the same
+	 * page would otherwise pay it again. The open bucket accrues inside that
+	 * life, so `totals.requests` lags by up to the TTL, one bucket's slice
+	 * of the window; `requests_per_second` moves only when a bucket closes,
+	 * so the cache delays that rollover by up to the TTL. A fold the mirror
+	 * read budget cut short is served and not kept, or the gap it left would
+	 * stand for a minute where the next poll would have filled it.
+	 *
 	 * @param string                 $server  Reporting server to scope to; '' reads every server.
 	 * @param string                 $search  Case-insensitive URL substring; '' matches all.
 	 * @param bool                   $errors  Keep only rows with unclassified requests.
@@ -795,6 +816,26 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @return array{data:array<int,array<array-key,mixed>>,rows:int,totals:array<string,mixed>,slowest:array<int,array<array-key,mixed>>,has_split:bool}
 	 */
 	private function url_page( string $server, string $search, bool $errors, bool $workers, string $sort, string $order, int $offset, int $limit, array $stores ): array {
+		$encoded = \wp_json_encode( [
+			$server,
+			$search,
+			$errors,
+			$workers,
+			$sort,
+			$order,
+			$offset,
+			$limit,
+			Stats_Store::bucket_key( \time() ),
+			AppConfig::stats_retention_seconds(),
+			\count( $stores ),
+		] );
+		$table   = $limit <= self::URLS_PAGE_CACHE_MAX_ROWS && false !== $encoded ? self::page_table() : null;
+		$key     = \md5( (string) $encoded );
+		$hit     = $table?->lookup( $key );
+		if ( \is_array( $hit ) && isset( $hit['data'], $hit['rows'], $hit['totals'], $hit['slowest'], $hit['has_split'] ) ) {
+			/** @var array{data:array<int,array<array-key,mixed>>,rows:int,totals:array<string,mixed>,slowest:array<int,array<array-key,mixed>>,has_split:bool} $hit */
+			return $hit;
+		}
 		$term      = '' === $search ? '' : \strtolower( $search );
 		$page_keep = \max( 0, $offset ) + \max( 0, $limit );
 		$ranked    = [];
@@ -914,7 +955,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		$page  = \array_slice( $ranked, $offset, $limit );
 		$top   = \array_slice( $slowest, 0, self::SLOWEST_ROWS );
 		$named = self::resolve_urls( \array_merge( $page, $top ), $stores );
-		return [
+		$result = [
 			'data'      => \array_slice( $named, 0, \count( $page ) ),
 			// The pager's question; `totals.urls` is another.
 			'rows'      => $rows,
@@ -929,6 +970,23 @@ class Performance_CI_Node extends Service_CI_Node {
 			// Pre-split data cannot answer a scoped question; see the handler.
 			'has_split' => $has_split,
 		];
+		if ( null !== $table && ! Flame_Builder_Node::mirror_budget_spent() && ! $table->store( $key, $result ) ) {
+			$this->print_less_often( 'URL page not cached: the store refused it' );
+		}
+		return $result;
+	}
+
+	/**
+	 * The URL page cache, or null with no cache backend, which reads as a miss.
+	 *
+	 * Its own namespace rather than a partition's: a page folds every
+	 * partition, so it belongs to none, and the install salt still scopes it.
+	 */
+	private static function page_table(): ?\Newspack_Nodes\Table_Node {
+		if ( null === \Newspack_Nodes\Cache_Backend::shared_first() ) {
+			return null;
+		}
+		return \Newspack_Nodes\Table_Node::table( self::URLS_PAGE_NS, self::URLS_PAGE_TTL_S );
 	}
 
 	/**

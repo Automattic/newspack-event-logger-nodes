@@ -3755,8 +3755,10 @@ class PerformanceCITest extends TestCase {
 
 	/**
 	 * Each request reads the index for itself: two dispatches on two nodes read
-	 * it twice over, once per shard each. Guards a static memo leaking stale
-	 * stats across requests.
+	 * it twice over, once per shard each. Guards a PHP-static memo leaking stale
+	 * stats across requests; the page cache is the one deliberate share, held
+	 * in the cache backend, which `VerbHarness::reset()` drops between the two
+	 * dispatches here.
 	 */
 	public function test_the_index_is_read_per_request_not_shared_across_instances(): void {
 		$calls    = 0;
@@ -4427,6 +4429,85 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( 1, $reply['rows'], 'the search reached the seeded row' );
 		$this->assertSame( 'https://kea.test/wombat-7731', $reply['data'][0]['url'] );
 		$this->assertSame( 1 + 3, $builds );
+	}
+
+	/**
+	 * One fold per page per minute, however many tabs poll: a second `urls`
+	 * call carrying the same filters inside the cache's life reads no shard,
+	 * and a call carrying different ones folds again.
+	 */
+	public function test_a_repeated_urls_page_is_served_without_a_fold(): void {
+		$this->activate_shipped_topology( 'performance', 3 );
+		$this->set_url_bucket( new Stats_Store( 1, 86400 ), $this->current_url_bucket(), [
+			'b7731ce0fa11' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 5, 'last_seen' => \time() ],
+			'c8842df1ab90' => [ 'url' => 'https://kea.test/kiwi-8842', 'count' => 3, 'last_seen' => \time() ],
+		] );
+		[ $fire, $reads, $restore ] = $this->counting_urls_fire();
+		try {
+			$first  = $fire( '--sort=count', '--order=desc', '--limit=100' );
+			$folded = $reads();
+			$second = $fire( '--sort=count', '--order=desc', '--limit=100' );
+			$this->assertGreaterThan( 0, $folded, 'the first page folds the index' );
+			$this->assertSame( $folded, $reads(), 'the second page folds nothing' );
+			$this->assertSame( $first['data'], $second['data'] );
+			$this->assertSame( 2, $first['rows'] );
+			$fire( '--sort=avg_ms', '--order=desc', '--limit=100' );
+			$this->assertGreaterThan( $folded, $reads(), 'another sort is another page' );
+			// A filter is another page too, and a hit must be THAT page.
+			$before   = $reads();
+			$searched = $fire( '--sort=count', '--order=desc', '--limit=100', '--search=wombat-7731' );
+			$this->assertGreaterThan( $before, $reads(), 'a search folds' );
+			$this->assertSame( 1, $searched['rows'], 'and answers the search, not the cached page' );
+		} finally {
+			$restore();
+		}
+	}
+
+	/** A fold the mirror read budget cut short is a partial page; caching it would pin the gap for a minute. */
+	public function test_a_budget_cut_page_is_not_cached(): void {
+		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'min_lifetime' => 86400, 'stats_mirror_node' => 'flames-stats', 'stats_mirror_read_budget_ms' => 0 ] );
+		$this->activate_shipped_topology( 'performance', 3 );
+		$this->set_url_bucket( new Stats_Store( 1, 86400 ), $this->current_url_bucket(), [
+			'b7731ce0fa11' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 5, 'last_seen' => \time() ],
+		] );
+		[ $fire, $reads, $restore ] = $this->counting_urls_fire();
+		try {
+			$fire( '--sort=count', '--order=desc', '--limit=100' );
+			$folded = $reads();
+			$fire( '--sort=count', '--order=desc', '--limit=100' );
+			$this->assertGreaterThan( $folded, $reads(), 'a page the budget cut is folded again' );
+		} finally {
+			$restore();
+		}
+	}
+
+	/**
+	 * Fire `urls` on a fresh graph each time, keeping the backend, and count
+	 * the shard reads the folds make.
+	 *
+	 * @return array{0: \Closure(string ...): array<string,mixed>, 1: \Closure(): int, 2: \Closure(): void}
+	 */
+	private function counting_urls_fire(): array {
+		$reads    = 0;
+		$original = Performance_CI_Node::$load_index;
+		Performance_CI_Node::$load_index = static function ( ?string $shard, array $stores ) use ( &$reads, $original ): array {
+			++$reads;
+			return ( $original ?? [ Performance_CI_Node::class, 'load_index_default' ] )( $shard, $stores );
+		};
+		return [
+			static function ( string ...$args ): array {
+				$memd = Core::$memd;
+				VerbHarness::reset();
+				Core::$memd = $memd;
+				return VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', $args );
+			},
+			static function () use ( &$reads ): int {
+				return $reads;
+			},
+			static function () use ( $original ): void {
+				Performance_CI_Node::$load_index = $original;
+			},
+		];
 	}
 
 	/**

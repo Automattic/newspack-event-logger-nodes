@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **A URL page is folded once a minute, not once a poll.** `urls` caches
+  each page for sixty seconds, keyed by every filter and the window bucket,
+  in a Table of its own; a hub holding 690,000 URLs spent 30 seconds per
+  poll per tab folding the whole index for the same page.
+
 ## [0.101.2] - 2026-09-22
 
 ### Changed
