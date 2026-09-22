@@ -193,6 +193,26 @@ test( 'a URL with no rule says so rather than omitting the line', () => {
 	expect( md ).toContain( 'no rule governs this URL' );
 } );
 
+test( 'a stamped rule this ruleset lacks is named, not called ungoverned', () => {
+	const md = briefToMarkdown( {
+		subject: 'request',
+		url: '/calendar/today',
+		duration_ms: 812,
+		status_code: 200,
+		env: {},
+		flame: { profiled_ms: 812, top: [] },
+		entries: [],
+		entries_truncated: false,
+		rule: { id: 'cbcdd45b2cba', resolved: false },
+		findings: [],
+		caveat: 'c',
+	} );
+
+	expect( md ).toContain( 'cbcdd45b2cba' );
+	expect( md ).toContain( 'not in this ruleset' );
+	expect( md ).not.toContain( 'no rule governs' );
+} );
+
 test( 'a URL brief names the worst recent requests by rid', () => {
 	const md = briefToMarkdown( {
 		subject: 'url',

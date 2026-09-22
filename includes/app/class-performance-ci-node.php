@@ -1590,7 +1590,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param array<array-key,mixed> $record A stored request record.
 	 */
 	private static function rule_for_record( array $record ): ?Rule {
-		$id = Core::as_string( $record['rule_id'] ?? '' );
+		$id = Findings::rule_stamp( $record );
 		return '' === $id ? null : Rule_Set::load()->rule_by_id( $id );
 	}
 

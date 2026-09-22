@@ -98,6 +98,19 @@ class AskAssemblerTest extends TestCase {
 		$this->assertNotSame( '', $brief['caveat'] );
 	}
 
+	/**
+	 * A record stamped with a rule this ruleset does not hold must not read as
+	 * ungoverned: the brief names the stamp and says it did not resolve.
+	 */
+	public function test_a_request_brief_names_a_stamped_rule_this_ruleset_lacks(): void {
+		$record            = $this->record();
+		$record['rule_id'] = 'cbcdd45b2cba';
+
+		$brief = Ask_Assembler::for_request( $record, null );
+
+		$this->assertSame( [ 'id' => 'cbcdd45b2cba', 'resolved' => false ], $brief['rule'] );
+	}
+
 	public function test_a_request_brief_redacts_the_url_and_drops_the_environment(): void {
 		$brief = Ask_Assembler::for_request( $this->record(), $this->rule() );
 
@@ -186,6 +199,16 @@ class AskAssemblerTest extends TestCase {
 			[ 'render_block', 'the_content' ],
 			\array_column( $brief['subtree'], 'name' )
 		);
+	}
+
+	/** A span inside a stamped-miss request names the stamp, as its request brief does. */
+	public function test_a_span_brief_names_a_stamped_rule_this_ruleset_lacks(): void {
+		$record            = $this->record();
+		$record['rule_id'] = 'cbcdd45b2cba';
+
+		$brief = Ask_Assembler::for_span( $record, 'wp_loaded', null );
+
+		$this->assertSame( [ 'id' => 'cbcdd45b2cba', 'resolved' => false ], $brief['rule'] );
 	}
 
 	/** A span is only actionable through the rule governing its request's URL. */

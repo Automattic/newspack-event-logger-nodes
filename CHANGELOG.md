@@ -17,6 +17,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A request stamped with a rule this ruleset does not hold is no longer
+  reported as ungoverned.** A site running a ruleset the hub never pushed,
+  or a rule whose pattern changed or that was deleted since the request
+  was logged, leaves a stamp the hub cannot resolve, and the cold-start finding read that miss as "No rule
+  governs this URL" and proposed creating one. A new `unresolved_rule`
+  finding names the stamp instead and, like the fatal, carries no
+  proposal; every other finding on that record carries the stamp and drops
+  its proposal, since none reaches that rule; and the request and span
+  briefs' `rule` reads `{ id, resolved: false }` rather than null, which
+  the markdown brief renders as a rule not in this ruleset.
 - **Two fine buckets of one folded hour no longer overwrite each other.**
   A replay covering several buckets of a folded hour produced two writes
   against the same `urls_h` item in one flush, and both merged into the

@@ -159,15 +159,21 @@ function fields( pairs ) {
 }
 
 /**
- * The rule an edit would land on — or the fact that there is none.
+ * The rule an edit would land on — or the fact that there is none, or that
+ * the record's stamp names one this ruleset does not hold.
  *
- * @param {?Object} rule The governing rule, or null.
+ * @param {?Object} rule The governing rule, `{ id, resolved: false }` for a stamp that did not resolve, or null.
  * @return {string[]} Markdown list items.
  */
 function ruleLines( rule ) {
 	if ( ! rule ) {
 		return [
 			'- **rule:** none — no rule governs this URL, so nothing about it is logged',
+		];
+	}
+	if ( false === rule.resolved ) {
+		return [
+			`- **rule:** \`${ rule.id }\` — the rule that governed this request is not in this ruleset`,
 		];
 	}
 	return fields( [
