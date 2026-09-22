@@ -25,7 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A mirror no topology declares is looked for once.** The reader's
   rehydrate seam retried the resolution while it came back empty, so a
   `stats_mirror_node` no active topology carries paid a catalog walk on
-  every bucket miss of every poll.
+  every read that missed.
 
 ### Changed
 - **Every `App\Core` callback asks `Log_Manager::started_instance()`**,

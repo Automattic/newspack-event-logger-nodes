@@ -4414,6 +4414,26 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( $first, $catalog_reads, 'and not looked for again' );
 	}
 
+	/** Keys of a namespace the mirror never holds resolve no mirror at all. */
+	public function test_unmirrored_keys_resolve_no_mirror(): void {
+		Core::$memd = new InMemoryMemcached();
+		Flame_Builder_Node::reset_mirror_read_budget();
+		$this->use_base_dir( $this->make_temp_dir(), [ 'stats_mirror_node' => 'flames-nowhere', 'stats_mirror_read_budget_ms' => 2500 ] );
+		$catalog_reads = 0;
+		\add_filter(
+			'newspack_nodes/topologies',
+			static function ( array $topologies ) use ( &$catalog_reads ): array {
+				++$catalog_reads;
+				return $topologies;
+			}
+		);
+		$reader = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		Flame_Builder_Node::arm_stats_reader( $reader );
+
+		$this->assertSame( [], ( $reader->rehydrate )( [ Stats_Store::NS_LB_HOUR . ':' . self::live_hour() ] ), 'nothing the mirror could hold' );
+		$this->assertSame( 0, $catalog_reads, 'so no mirror was looked for' );
+	}
+
 	/** With budget left, the same read finds the frame — zero is the switch. */
 	public function test_a_reader_inside_its_budget_still_reads_the_mirror(): void {
 		Core::$memd = new InMemoryMemcached();

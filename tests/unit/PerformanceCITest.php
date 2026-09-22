@@ -2632,8 +2632,8 @@ class PerformanceCITest extends TestCase {
 
 	/** One `overview` builds the partitions' stores once, whatever panels it is asked for. */
 	public function test_overview_builds_its_stores_once(): void {
-		// A zero read budget leaves the mirror unarmed, so no store resolves a
-		// mirror handle and the catalog reads are the store builds alone.
+		// A zero read budget stops every store short of resolving a mirror, so
+		// the catalog reads are the store builds alone.
 		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'min_lifetime' => 86400, 'stats_mirror_read_budget_ms' => 0 ] );
 		$this->activate_shipped_topology( 'performance', 3 );
 		$reads = 0;
