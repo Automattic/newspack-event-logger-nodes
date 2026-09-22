@@ -37,6 +37,7 @@ final class RuleTest extends TestCase {
 			'hooks_in'                    => 'inline',
 			'log_queries'                 => true,
 			'log_http'                    => false,
+			'log_plugin_loads'            => false,
 			'trace_hooks'                 => true,
 			'trace_callers'               => 60,
 		];
@@ -60,6 +61,10 @@ final class RuleTest extends TestCase {
 		// what it meant, and only an explicit false turns it off.
 		$this->assertTrue( $rule->log_http );
 		$this->assertFalse( Rule::from_array( [ 'id' => 'd5', 'pattern' => '/y', 'action' => 'log', 'log_http' => false ] )->log_http );
+		// Plugin loads were unconditional before they were a flag, and every
+		// stored rule predates it, so silence keeps meaning what it meant.
+		$this->assertTrue( $rule->log_plugin_loads );
+		$this->assertFalse( Rule::from_array( [ 'id' => 'd6', 'pattern' => '/z', 'action' => 'log', 'log_plugin_loads' => false ] )->log_plugin_loads );
 		// A backtrace per hook firing is a diagnostic, not a default.
 		$this->assertFalse( $rule->trace_hooks );
 		$this->assertSame( 0, $rule->trace_callers );

@@ -44,8 +44,8 @@
     <div class="k">newspack_nodes:{v}:<span class="s">{site, salted}</span>:table:evlog:p0:…</div>
     <p>The Table's key, through <span class="mono">Cache_Backend::site_key()</span>. <span class="mono">wp nodes memcache flush</span> rotates the salt, the reader hashes the new scope, and weeks of on-disk history stop answering.</p></div>
   <div class="ok"><h4>The mirror's key carries no scope</h4>
-    <div class="k">evlog:<span class="v">m{V}</span>:p{N}:{key}</div>
-    <p><span class="mono">Stats_Store::entry_key()</span>, stable across salt rotations. <span class="mono">V</span> is <span class="mono">MIRROR_KEY_VERSION</span>, the mirror's own migration lever (decision 5).</p></div>
+    <div class="k">evlog:p{N}:{key}</div>
+    <p><span class="mono">Stats_Store::entry_key()</span>, stable across salt rotations, and carrying no version component: nothing migrates a frame (decision 5).</p></div>
   <div class="card"><h3>One function, so nothing disagrees</h3>
     <p>The mirror write, the <span class="mono">stats-index</span> hash, the rehydrate compare and the held-frame lookup all key through <span class="mono">entry_key()</span>.</p>
     <p><span class="mono">restore_state()</span> keeps only keys <span class="mono">is_mirror_key()</span> claims, so a checkpoint carried across a key change holds nothing it cannot look up.</p></div>

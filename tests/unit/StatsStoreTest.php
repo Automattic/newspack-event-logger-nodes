@@ -66,6 +66,13 @@ class StatsStoreTest extends TestCase {
 		$this->assertSame( \range( 0, 2 ), \array_keys( Stats_Store::CAT_SUMS ) );
 	}
 
+	public function test_the_dimensional_entry_is_positional_and_contiguous(): void {
+		// Decision 18's THIRD positional value, and the one its reopen clause
+		// had queued. Every DIM_SUMS field ADDS, so the table is the whole
+		// index set and a fourth field appended past the end moves this.
+		$this->assertSame( \range( 0, 2 ), \array_keys( Stats_Store::DIM_SUMS ) );
+	}
+
 	public function test_a_merged_entry_keeps_only_what_its_field_table_names(): void {
 		// The positional switch is the first change to depend on the stated
 		// invariant, and it was not true: the merged entry kept `$into`'s own
@@ -531,15 +538,20 @@ class StatsStoreTest extends TestCase {
 	public function test_entry_key_is_the_durable_key_and_carries_no_install_scope(): void {
 		// The mirror files every frame under this key, and the mirror is what
 		// outlives `wp nodes memcache flush`. A key carrying the install scope
-		// is orphaned by the very rotation it exists to survive. What it
-		// carries instead is the MIRROR's own version, the one lever a frame
-		// shape change turns, since the salt no longer reaches this tier.
+		// is orphaned by the very rotation it exists to survive. It carries the
+		// partition and the entry and nothing else — no scope, and no version
+		// component, which is a migration by another name.
 		// Partition 3 and an odd bucket, so no default satisfies it by accident.
 		$key = Stats_Store::NS_HOURLY . ':2026-03-04-05';
-		$this->assertSame( 'evlog:m' . Stats_Store::MIRROR_KEY_VERSION . ':p3:' . $key, Stats_Store::entry_key( 3, $key ) );
+		$this->assertSame( 'evlog:p3:' . $key, Stats_Store::entry_key( 3, $key ) );
 		$this->assertTrue( Stats_Store::is_mirror_key( Stats_Store::entry_key( 3, $key ) ) );
 		$this->assertFalse( Stats_Store::is_mirror_key( 'newspack_nodes:v3:4f82f2fc5124:table:evlog:p3:' . $key ), 'a scoped cache key is not a mirror key' );
-		$this->assertFalse( Stats_Store::is_mirror_key( 'evlog:m0:p3:' . $key ), 'an older mirror version is not this one' );
+		$this->assertFalse( Stats_Store::is_mirror_key( $key ), 'a key relative to its namespace is not a mirror key' );
+		// The durable key carries the partition and nothing before it. A key
+		// with anything else in that position is not one this mirror writes,
+		// which is what keeps a carry from another key shape out of the buffer
+		// rather than held and re-filed under a key no lookup reaches.
+		$this->assertFalse( Stats_Store::is_mirror_key( 'evlog:x9:p3:' . $key ), 'another segment in the partition slot is not a mirror key' );
 	}
 
 	public function test_set_hourly_invokes_mirror_with_key_data_ttl_ns(): void {
@@ -588,8 +600,8 @@ class StatsStoreTest extends TestCase {
 		$this->set_url_stats( $store, 'h', [ 'flame' => [ 'count' => 1 ] ] );
 		$this->set_leaderboard_bucket( $store, 'b', [ 'count' => 1 ] );
 		$this->set_leaderboard_bucket( $store, 'b', [ 'count' => 1 ], 'srv' );
-		$this->set_dimensional_bucket( $store, 'status', 'b', [ '200' => [ 'c' => 1 ] ] );
-		$this->set_url_dimensional_bucket( $store, 'h', 'b', [ 'status' => [ '200' => [ 'c' => 1 ] ] ] );
+		$this->set_dimensional_bucket( $store, 'status', 'b', [ '200' => self::dim_entry( 1 ) ] );
+		$this->set_url_dimensional_bucket( $store, 'h', 'b', [ 'status' => [ '200' => self::dim_entry( 1 ) ] ] );
 		$this->set_category_bucket( $store, 'b', [ 'total' => [ 'n' => 1 ] ] );
 		$this->set_category_bucket( $store, 'b', [ 'total' => [ 'n' => 1 ] ], 'srv' );
 		$this->set_url_category_bucket( $store, 'h', 'b', [ 'total' => [ 'n' => 1 ] ] );
@@ -814,14 +826,14 @@ class StatsStoreTest extends TestCase {
 		// Every bucketed namespace is keyed with the bucket LAST, so one
 		// lookup_buckets() batch serves them all.
 		$store = $this->make_store();
-		$this->set_dimensional_bucket( $store, 'status', '2026-02-03-04-05', [ '503' => [ 'c' => 47, 's' => 12.5, 'm' => 3.0 ] ] );
-		$this->set_dimensional_bucket( $store, 'status', '2026-02-03-04-05', [ '503' => [ 'c' => 91, 's' => 1.0, 'm' => 1.0 ] ], 'web07' );
+		$this->set_dimensional_bucket( $store, 'status', '2026-02-03-04-05', [ '503' => self::dim_entry( 47, 12.5, 3.0 ) ] );
+		$this->set_dimensional_bucket( $store, 'status', '2026-02-03-04-05', [ '503' => self::dim_entry( 91, 1.0, 1.0 ) ], 'web07' );
 
-		$this->assertSame( 47, $this->get_dimensional_bucket( $store, 'status', '2026-02-03-04-05' )['503']['c'] );
-		$this->assertSame( 91, $this->get_dimensional_bucket( $store, 'status', '2026-02-03-04-05', 'web07' )['503']['c'] );
+		$this->assertSame( 47, $this->get_dimensional_bucket( $store, 'status', '2026-02-03-04-05' )['503'][ Stats_Store::DIM_COUNT ] );
+		$this->assertSame( 91, $this->get_dimensional_bucket( $store, 'status', '2026-02-03-04-05', 'web07' )['503'][ Stats_Store::DIM_COUNT ] );
 		$this->assertSame(
 			47,
-			$store->get_dimensional_buckets( 'status', [ '2026-02-03-04-05' ] )['2026-02-03-04-05']['503']['c'],
+			$store->get_dimensional_buckets( 'status', [ '2026-02-03-04-05' ] )['2026-02-03-04-05']['503'][ Stats_Store::DIM_COUNT ],
 			'the batch read returns the same value keyed by bucket'
 		);
 	}
@@ -844,16 +856,16 @@ class StatsStoreTest extends TestCase {
 		// dimension-by-bucket cross-product.
 		$store = $this->make_store();
 		$this->set_url_dimensional_bucket( $store, 'ab12cd34ef56', '2026-02-03-04-05', [
-			'status' => [ '503' => [ 'c' => 29, 's' => 1.0, 'm' => 1.0 ] ],
-			'method' => [ 'POST' => [ 'c' => 31, 's' => 2.0, 'm' => 2.0 ] ],
+			'status' => [ '503' => self::dim_entry( 29, 1.0, 1.0 ) ],
+			'method' => [ 'POST' => self::dim_entry( 31, 2.0, 2.0 ) ],
 		] );
 
 		$got = $this->get_url_dimensional_bucket( $store, 'ab12cd34ef56', '2026-02-03-04-05' );
-		$this->assertSame( 29, $got['status']['503']['c'] );
-		$this->assertSame( 31, $got['method']['POST']['c'] );
+		$this->assertSame( 29, $got['status']['503'][ Stats_Store::DIM_COUNT ] );
+		$this->assertSame( 31, $got['method']['POST'][ Stats_Store::DIM_COUNT ] );
 		$this->assertSame(
 			29,
-			$store->get_url_dimensional_buckets( 'ab12cd34ef56', [ '2026-02-03-04-05' ] )['2026-02-03-04-05']['status']['503']['c']
+			$store->get_url_dimensional_buckets( 'ab12cd34ef56', [ '2026-02-03-04-05' ] )['2026-02-03-04-05']['status']['503'][ Stats_Store::DIM_COUNT ]
 		);
 	}
 
@@ -891,11 +903,11 @@ class StatsStoreTest extends TestCase {
 		$this->set_leaderboard_bucket( $store, 'b1', [ 'count' => 3 ] );
 		$this->set_leaderboard_bucket( $store, 'b1', [ 'count' => 3 ], 'web07' );
 		$this->set_url_shard( $store, 'b1', '0', [ 'h' => [ 'count' => 3 ] ] );
-		$this->set_dimensional_bucket( $store, 'status', 'b1', [ '503' => [ 'c' => 3 ] ] );
-		$this->set_dimensional_bucket( $store, 'status', 'b1', [ '503' => [ 'c' => 3 ] ], 'web07' );
+		$this->set_dimensional_bucket( $store, 'status', 'b1', [ '503' => self::dim_entry( 3 ) ] );
+		$this->set_dimensional_bucket( $store, 'status', 'b1', [ '503' => self::dim_entry( 3 ) ], 'web07' );
 		$this->set_category_bucket( $store, 'b1', [ 'db' => [ 'n' => 3 ] ] );
 		$this->set_category_bucket( $store, 'b1', [ 'db' => [ 'n' => 3 ] ], 'web07' );
-		$this->set_url_dimensional_bucket( $store, 'h', 'b1', [ 'status' => [ '503' => [ 'c' => 3 ] ] ] );
+		$this->set_url_dimensional_bucket( $store, 'h', 'b1', [ 'status' => [ '503' => self::dim_entry( 3 ) ] ] );
 		$this->set_url_category_bucket( $store, 'h', 'b1', [ 'db' => [ 'n' => 3 ] ] );
 
 		$expiries = $mc->expiries();
@@ -1155,7 +1167,7 @@ class StatsStoreTest extends TestCase {
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$writes     = [];
 		foreach ( [ 'status' => 61, 'server' => 62, 'plugin' => 63 ] as $dim => $n ) {
-			$writes[] = [ Stats_Store::dim_parts( $dim, '' ), '2026-08-27-13-05', [ 'v' => [ 'c' => $n ] ] ];
+			$writes[] = [ Stats_Store::dim_parts( $dim, '' ), '2026-08-27-13-05', [ 'v' => self::dim_entry( $n ) ] ];
 		}
 
 		$this->assertSame( [ true, true, true ], $store->bucket_set_multi( $writes ) );
@@ -1163,7 +1175,7 @@ class StatsStoreTest extends TestCase {
 		foreach ( [ 'status' => 61, 'server' => 62, 'plugin' => 63 ] as $dim => $n ) {
 			$this->assertSame(
 				$n,
-				$this->get_dimensional_bucket( $store, $dim, '2026-08-27-13-05' )['v']['c'],
+				$this->get_dimensional_bucket( $store, $dim, '2026-08-27-13-05' )['v'][ Stats_Store::DIM_COUNT ],
 				"{$dim} must read back what the batch wrote"
 			);
 		}
@@ -1175,7 +1187,7 @@ class StatsStoreTest extends TestCase {
 		Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$store->bucket_set_multi( [
-			[ Stats_Store::dim_parts( 'status', '' ), '2026-08-27-13-05', [ 'v' => [ 'c' => 61 ] ] ],
+			[ Stats_Store::dim_parts( 'status', '' ), '2026-08-27-13-05', [ 'v' => self::dim_entry( 61 ) ] ],
 		] );
 
 		$read = $store->bucket_get_multi( [
@@ -1186,7 +1198,7 @@ class StatsStoreTest extends TestCase {
 
 		$this->assertCount( 3, $read, 'one entry per request, misses included' );
 		$this->assertSame( [], $read[0], 'a miss reads empty, in its own slot' );
-		$this->assertSame( 61, $read[1]['v']['c'] );
+		$this->assertSame( 61, $read[1]['v'][ Stats_Store::DIM_COUNT ] );
 		$this->assertSame( [], $read[2] );
 	}
 
@@ -1296,12 +1308,12 @@ class StatsStoreTest extends TestCase {
 		$store = new Stats_Store( partition: 0, max_lifespan: 86400 );
 
 		$results = $store->bucket_set_multi( [
-			[ Stats_Store::dim_parts( 'status', '' ), '2026-08-27-13-05', [ 'v' => [ 'c' => 61 ] ] ],
-			[ Stats_Store::url_dim_parts( 'refuse-me' ), '2026-08-27-13-05', [ 'v' => [ 'c' => 62 ] ] ],
-			[ Stats_Store::dim_parts( 'plugin', '' ), '2026-08-27-13-05', [ 'v' => [ 'c' => 63 ] ] ],
+			[ Stats_Store::dim_parts( 'status', '' ), '2026-08-27-13-05', [ 'v' => self::dim_entry( 61 ) ] ],
+			[ Stats_Store::url_dim_parts( 'refuse-me' ), '2026-08-27-13-05', [ 'v' => self::dim_entry( 62 ) ] ],
+			[ Stats_Store::dim_parts( 'plugin', '' ), '2026-08-27-13-05', [ 'v' => self::dim_entry( 63 ) ] ],
 		] );
 
 		$this->assertSame( [ true, false, true ], $results, 'the refusal must be identified, not averaged' );
-		$this->assertSame( 61, $this->get_dimensional_bucket( $store, 'status', '2026-08-27-13-05' )['v']['c'], 'a good key still lands' );
+		$this->assertSame( 61, $this->get_dimensional_bucket( $store, 'status', '2026-08-27-13-05' )['v'][ Stats_Store::DIM_COUNT ], 'a good key still lands' );
 	}
 }

@@ -111,6 +111,9 @@ export default function RuleEditModal( {
 	const [ logQueries, setLogQueries ] = useState( !! rule?.log_queries );
 	// Absent means ON: only an explicit false retires the HTTP spans.
 	const [ logHttp, setLogHttp ] = useState( rule?.log_http ?? true );
+	const [ logPluginLoads, setLogPluginLoads ] = useState(
+		rule?.log_plugin_loads ?? true
+	);
 	const [ traceHooks, setTraceHooks ] = useState( !! rule?.trace_hooks );
 	const [ traceCallers, setTraceCallers ] = useState(
 		String( rule?.trace_callers ?? 0 )
@@ -155,6 +158,7 @@ export default function RuleEditModal( {
 			hooks_in: 'inline',
 			log_queries: isLog && logQueries,
 			log_http: isLog && !! logHttp,
+			log_plugin_loads: isLog && !! logPluginLoads,
 			trace_hooks: isLog && traceHooks,
 			// The count refines the caller label, so unticking retires both.
 			trace_callers:
@@ -352,6 +356,21 @@ export default function RuleEditModal( {
 							) }
 							checked={ !! logHttp }
 							onChange={ setLogHttp }
+						/>
+
+						<CheckboxControl
+							__nextHasNoMarginBottom
+							name="rule-log-plugin-loads"
+							label={ __(
+								'Log plugin load time',
+								'newspack-event-logger-nodes'
+							) }
+							help={ __(
+								'Times each site-activated plugin as its own flame span. The measuring happens either way; this is two log entries per plugin, before the request does any work.',
+								'newspack-event-logger-nodes'
+							) }
+							checked={ !! logPluginLoads }
+							onChange={ setLogPluginLoads }
 						/>
 
 						<div className="rule-edit-trace-row">

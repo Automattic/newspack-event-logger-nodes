@@ -174,13 +174,6 @@ class Stats_Store {
 	/** Key prefix under the install scope. */
 	private const PREFIX_BASE  = 'evlog';
 
-	/**
-	 * The durable mirror's own schema version, folded into every key it files
-	 * under. The salt rotation that migrates memcache (decision 5) never reaches
-	 * the mirror, by design (decision 10), so a frame-shape change bumps THIS,
-	 * and a frame filed under the previous version is never read back.
-	 */
-	public const MIRROR_KEY_VERSION = 1;
 	/** Per-URL aggregates one accumulator bucket holds before it rotates. */
 	private const URL_ACCUMULATOR_SIZE    = 1000;
 	/** Accumulator buckets retained; capacity is roughly the product. */
@@ -189,8 +182,29 @@ class Stats_Store {
 	/** Shortest retention window the stats keyspace works with, in seconds. */
 	public const PREFIX_FLOOR = 3600;
 
+	/**
+	 * A stored DIMENSIONAL entry is positional, indexed by these — decision 18's
+	 * shape, on the third value to earn it. `{"c":29,"s":1.0,"m":1.0}` is 24
+	 * bytes of JSON where `[29,1,1]` is 8, across `dim`, `dim`-by-server and
+	 * `url_dim` alike: seven dimensions per URL per five-minute bucket, and the
+	 * mirror carries every frame.
+	 *
+	 * **Never a bare index**, exactly as `CAT_MS` and the `ROW_` block below.
+	 *
+	 * The names match the row's — `DIM_COUNT` beside `ROW_COUNT` — because they
+	 * are the same three measurements, and two vocabularies for one measurement
+	 * read as two measurements.
+	 *
+	 * There is no `DIM_FIELD_NAMES`, for `CAT_SUMS`'s reason: the entry stays
+	 * positional to the wire, so no index anywhere becomes a name, and the two
+	 * React sites that read it index it the way `LB_ENTRY_SUMS` is indexed.
+	 */
+	public const DIM_COUNT       = 0;
+	public const DIM_SUM_MS      = 1;
+	public const DIM_SUM_PEAK_MB = 2;
+
 	/** Summed fields of one dimensional value => whether it is a whole count. */
-	public const DIM_SUMS = [ 'c' => true, 's' => false, 'm' => false ];
+	public const DIM_SUMS = [ self::DIM_COUNT => true, self::DIM_SUM_MS => false, self::DIM_SUM_PEAK_MB => false ];
 
 	/**
 	 * A stored CATEGORY entry is positional, indexed by these — decision 18's
@@ -1226,15 +1240,18 @@ class Stats_Store {
 	 *
 	 * Deliberately NOT the Table's cache key: that one carries the install
 	 * scope, and the scope moves on every salt rotation. The mirror exists to
-	 * outlive `wp nodes memcache flush`, so its key carries the mirror version,
-	 * the partition and the entry, and a rotation orphans nothing on disk.
+	 * outlive `wp nodes memcache flush`, so its key carries the partition and
+	 * the entry and nothing else, and a rotation orphans nothing on disk.
+	 *
+	 * No version component either: a frame in a shape the merge does not name
+	 * is refused by `sum_entry()` and ages out of the retention window.
 	 *
 	 * @param int    $partition Flame-builder partition.
 	 * @param string $key       Entry key within the namespace.
-	 * @return string `evlog:m{V}:p{N}:{key}`, stable across salt rotations.
+	 * @return string `evlog:p{N}:{key}`, stable across salt rotations.
 	 */
 	public static function entry_key( int $partition, string $key ): string {
-		return self::mirror_prefix() . 'p' . $partition . ':' . $key;
+		return self::namespace_for( $partition ) . ':' . $key;
 	}
 
 	/**
@@ -1263,8 +1280,9 @@ class Stats_Store {
 	}
 
 	/**
-	 * Whether a key is one THIS mirror version files under — what the
-	 * checkpoint carry keeps and what a reader may file a frame as.
+	 * Whether a key is an absolute mirror key rather than one relative to its
+	 * namespace — what the checkpoint carry keeps, and what a reader may file a
+	 * frame as.
 	 *
 	 * @param string $key A key read back from a checkpoint or a frame.
 	 */
@@ -1272,9 +1290,12 @@ class Stats_Store {
 		return \str_starts_with( $key, self::mirror_prefix() );
 	}
 
-	/** The `evlog:m{V}:` head every durable key opens with. */
+	/**
+	 * The head every durable key opens with — `namespace_for()`'s, minus the
+	 * partition, so the test and the writer cannot drift apart.
+	 */
 	private static function mirror_prefix(): string {
-		return self::PREFIX_BASE . ':m' . self::MIRROR_KEY_VERSION . ':';
+		return self::PREFIX_BASE . ':p';
 	}
 
 	/**

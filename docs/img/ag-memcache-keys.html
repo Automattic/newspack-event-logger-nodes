@@ -53,7 +53,7 @@ table.ns tr.coarse td.k { color:#1E5B1E; }
   <tr class="tier coarse"><td class="k">urlnames_h:{shard}:{Y-m-d-H}</td><td>its coarse tier, a union rather than a sum, folded in the same pass and the same <span class="mono">bucket_set_multi()</span> as <span class="mono">urls_h</span></td><td class="t">min_lifetime</td></tr>
   <tr><td class="k">urlmap:{hash}</td><td>[ path, origin ], written once per URL and rewritten only after half its TTL; answers about ONE hash</td><td class="t">min_lifetime</td></tr>
   <tr><td class="k">url:{hash}</td><td>the per-URL flame and profile blob, through a rotating accumulator of 5 buckets × 1,000</td><td class="t">max( 3600, min_lifetime / 24 )</td></tr>
-  <tr><td class="k">dim:{dimension}[:{server}]:{bucket}</td><td>{ value → { c, s, m } } for status, method, server, country, from, ua, ja4; MAX_DIM_VALUES 20, the server axis 128</td><td class="t">min_lifetime</td></tr>
+  <tr><td class="k">dim:{dimension}[:{server}]:{bucket}</td><td>{ value → [ count, sumMs, sumPeakMb ] } for status, method, server, country, from, ua, ja4; MAX_DIM_VALUES 20, the server axis 128</td><td class="t">min_lifetime</td></tr>
   <tr><td class="k">url_dim:{hash}:{bucket}</td><td>the same, every dimension in one value, MAX_URL_DIM_VALUES 10</td><td class="t">min_lifetime</td></tr>
   <tr><td class="k">categories[:{server}]:{bucket}</td><td>{ category → [ ms, calls, requests ] }, positional CAT_SUMS, capped at MAX_CAT_VALUES 50, plus a synthetic <span class="mono">total</span> every ranking holds out</td><td class="t">min_lifetime</td></tr>
   <tr><td class="k">url_cat:{hash}:{bucket}</td><td>the same per URL</td><td class="t">min_lifetime</td></tr>

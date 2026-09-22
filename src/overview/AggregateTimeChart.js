@@ -168,7 +168,7 @@ const hasDimValues = ( source ) => {
  * the dimension really has nothing in the window. Calling the first "no data"
  * is a lie that flickers.
  *
- * @param {Object|null} [breakdownData] Bucket key => dimension value => `{ c, s, m }`, or null.
+ * @param {Object|null} [breakdownData] Bucket key => dimension value => `[ count, sumMs, sumPeakMb ]`, or null.
  * @return {'pending'|'empty'|'series'} What the dimension has.
  */
 export function breakdownState( breakdownData = null ) {
@@ -186,7 +186,7 @@ export function breakdownState( breakdownData = null ) {
  * around it, since they are the only way to pick a dimension that does.
  *
  * @param {Object}      props                Component props.
- * @param {Object|null} props.breakdownData  Bucket key => dimension value => `{ c, s, m }` (count, sum ms, sum peak MB).
+ * @param {Object|null} props.breakdownData  Bucket key => dimension value => `[ count, sumMs, sumPeakMb ]`.
  * @param {string}      [props.metric]       'volume' | 'avg' | 'cumulative' | 'memory'; defaults to 'volume'.
  * @param {string}      [props.breakdown]    Dimension `breakdownData` was fetched for, defaulting to 'status'; picks the palette only.
  * @param {string}      [props.serverFilter] Server name for the heading; the caller has already filtered the data.
@@ -217,10 +217,16 @@ export default function AggregateTimeChart( {
 		const series = dimValues.map( ( label ) => ( {
 			label,
 			values: slots.map( ( { date, bucketKey } ) => {
-				const s = breakdownData[ bucketKey ]?.[ label ] || {};
+				// DIM_SUMS, positional from the store to here: decision 18.
+				const s = breakdownData[ bucketKey ]?.[ label ] || [];
 				return {
 					date,
-					value: bucketValue( metric, s.c || 0, s.s || 0, s.m || 0 ),
+					value: bucketValue(
+						metric,
+						s[ 0 ] || 0,
+						s[ 1 ] || 0,
+						s[ 2 ] || 0
+					),
 				};
 			} ),
 		} ) );

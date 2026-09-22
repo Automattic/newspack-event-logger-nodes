@@ -1666,6 +1666,75 @@ class LogManagerTest extends TestCase {
 		$this->assertSame( $early_ts, $process_start['ts'] );
 	}
 
+	/**
+	 * Run the profiler mu-plugin's `plugins_loaded` flush with one plugin row,
+	 * against whatever ruleset the caller seeded.
+	 *
+	 * @param array<string,mixed> $rule The single rule governing the request.
+	 * @return list<array<string,mixed>> The firehose entries it produced.
+	 */
+	private function flush_plugin_row_under_rule( array $rule ): array {
+		$this->rmdir_recursive( self::TEST_DIR );
+		Log_Manager::reset();
+		Config::reset();
+		\putenv( 'LOCAL_NEWSPACK_NODES_CONF=' . $this->config_path( 'logging-enabled' ) );
+		Config::reset();
+		$GLOBALS['_wp_options']['newspack_event_logger_nodes_rules'] = [ $rule ];
+
+		$saved_actions          = $GLOBALS['_wp_actions'] ?? [];
+		$GLOBALS['_wp_actions'] = [];
+		try {
+			$lm = Log_Manager::instance();
+			$lm->start( 'init' );
+			require \dirname( __DIR__, 2 ) . '/mu-plugins/00-newspack-profiler.php';
+			$GLOBALS['newspack_profiler']['plugins'] = [
+				[ 'slug' => 'zither', 'start_ts' => 1.0, 'duration_ns' => 1000, 'new_classes' => 0, 'new_files' => 0 ],
+			];
+			\do_action( 'plugins_loaded' );
+			$lm->finish();
+			return $this->read_firehose_entries();
+		} finally {
+			$GLOBALS['_wp_actions'] = $saved_actions;
+			unset( $GLOBALS['newspack_profiler'], $GLOBALS['_wp_options']['newspack_event_logger_nodes_rules'] );
+			Log_Manager::reset();
+		}
+	}
+
+	/** Whether the entries open a plugin-load span for the seeded row. */
+	private function opened_a_plugin_span( array $entries ): bool {
+		foreach ( $entries as $entry ) {
+			if ( 'zither plugin (start)' === ( $entry['k'] ?? '' ) ) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	public function test_a_rule_can_keep_plugin_loads_out_of_the_record(): void {
+		// The mu-plugin measures either way; the rule decides only whether the
+		// record carries two entries per site-activated plugin, which on a
+		// forty-plugin site is eighty before the request does anything.
+		$this->require_config_or_skip();
+		$this->assertFalse(
+			$this->opened_a_plugin_span( $this->flush_plugin_row_under_rule(
+				[ 'id' => 'r', 'pattern' => '/', 'action' => 'log', 'log_plugin_loads' => false ]
+			) ),
+			'the rule said no plugin loads'
+		);
+	}
+
+	public function test_a_rule_silent_about_plugin_loads_still_logs_them(): void {
+		// Every stored rule predates the flag, so silence keeps meaning what it
+		// meant — the rule `log_http` already follows.
+		$this->require_config_or_skip();
+		$this->assertTrue(
+			$this->opened_a_plugin_span( $this->flush_plugin_row_under_rule(
+				[ 'id' => 'r', 'pattern' => '/', 'action' => 'log' ]
+			) ),
+			'silence still logs them'
+		);
+	}
+
 	public function test_log_process_records_method_and_full_url(): void {
 		$this->require_config_or_skip();
 		$this->rmdir_recursive( self::TEST_DIR );

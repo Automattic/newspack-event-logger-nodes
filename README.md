@@ -77,7 +77,7 @@ Hub-mode is derived, never toggled: an active [`aggregator`](topologies/aggregat
 
 ### Logging rules
 
-Which URLs and hooks get logged is a per-URL ruleset, not a global setting. Each rule pairs a URL pattern with a `log` or `skip` action and, for a `log` rule, its own hooks, custom events, significant events, auto-tune thresholds and per-rule diagnostics (`log_queries`, `log_http`, `trace_hooks`, `trace_callers`).
+Which URLs and hooks get logged is a per-URL ruleset, not a global setting. Each rule pairs a URL pattern with a `log` or `skip` action and, for a `log` rule, its own hooks, custom events, significant events, auto-tune thresholds and per-rule diagnostics (`log_queries`, `log_http`, `log_plugin_loads`, `trace_hooks`, `trace_callers`).
 
 Matching is most-specific-first: a query-bearing pattern (`/jobs/x?job-work`) outranks an exact path (`/about?`), which outranks a prefix (`/blog`). Length breaks ties only *within* a rank, so this is not longest-prefix-wins, and list order never decides the outcome. Comparison is case-insensitive. No rule matched means skip — there is no implicit log-all baseline, so a site that logs everything declares a `/` log rule, as the shipped seed does alongside exact skips for `/wp-cron.php?` and the substrate's own command, SSE and worker-spawn endpoints.
 

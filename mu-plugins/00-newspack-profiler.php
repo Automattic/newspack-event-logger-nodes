@@ -157,7 +157,11 @@ $newspack_profiler_state = [
 	 * `instance()` builds the logger when nothing else has, and that
 	 * construction is what adopts `request_time` and `request_ts` from the
 	 * global. The `is_started()` gate then drops everything when the governing
-	 * rule did not say `log`.
+	 * rule did not say `log`, and the rule's `log_plugin_loads` drops the rows
+	 * alone on a URL logged without them — two entries per site-activated
+	 * plugin, which is eighty of them before a forty-plugin site does any work.
+	 * Reading a `Rule` property couples this file to the plugin's class as
+	 * `is_started()` above already does; both ship from the same release.
 	 *
 	 * Each entry carries its own `ts`, overriding the one `message()` would
 	 * stamp: every row was measured before this flush, and the flush moment
@@ -176,6 +180,11 @@ $newspack_profiler_state = [
 
 		$lm = \Newspack_Event_Logger_Nodes\Log_Manager::instance();
 		if ( ! $lm->is_started() ) {
+			return;
+		}
+
+		$rule = $lm->governing_rule();
+		if ( null !== $rule && ! $rule->log_plugin_loads ) {
 			return;
 		}
 

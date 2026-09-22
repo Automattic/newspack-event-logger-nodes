@@ -179,7 +179,7 @@ describe( 'AggregateTimeChart', () => {
 
 	it( 'draws the breakdown series it is handed', () => {
 		const bk = bucketKeyNow();
-		const breakdownData = { [ bk ]: { '5xx': { c: 7, s: 917 } } };
+		const breakdownData = { [ bk ]: { '5xx': [ 7, 917 ] } };
 		const { container, unmount } = renderComponent(
 			React.createElement( AggregateTimeChart, {
 				breakdownData,
@@ -195,13 +195,33 @@ describe( 'AggregateTimeChart', () => {
 		unmount();
 	} );
 
+	it( 'reads a stored entry positionally', () => {
+		// The stored entry is decision 18's DIM_SUMS triple — count, summed ms,
+		// summed peak MB — and it crosses the wire in that shape, so this is
+		// the only place the indexes are read.
+		const bk = bucketKeyNow();
+		const breakdownData = { [ bk ]: { '5xx': [ 4, 1000, 12 ] } };
+		const { unmount } = renderComponent(
+			React.createElement( AggregateTimeChart, {
+				breakdownData,
+				metric: 'avg',
+				breakdown: 'status',
+			} )
+		);
+		const values = getFormatEntry()( lastSlotIndex() ).map(
+			( entry ) => entry.value
+		);
+		expect( values ).toContain( '250ms' );
+		unmount();
+	} );
+
 	it( 'ticks a slow response-time axis in seconds, not five digits of ms', () => {
 		// `140000ms` is wider than the axis title beside it, so the two collide.
 		// formatSeconds already owns the unit ladder this chart reads in — the
 		// cumulative axis has used it all along — so the avg axis reads the same
 		// way rather than pinning itself to the smallest unit.
 		const bk = bucketKeyNow();
-		const breakdownData = { [ bk ]: { slow: { c: 1, s: 140000 } } };
+		const breakdownData = { [ bk ]: { slow: [ 1, 140000 ] } };
 		const { container, unmount } = renderComponent(
 			React.createElement( AggregateTimeChart, {
 				breakdownData,
@@ -222,7 +242,7 @@ describe( 'AggregateTimeChart', () => {
 
 	it( 'still reads a fast response-time axis in milliseconds', () => {
 		const bk = bucketKeyNow();
-		const breakdownData = { [ bk ]: { fast: { c: 4, s: 1000 } } };
+		const breakdownData = { [ bk ]: { fast: [ 4, 1000 ] } };
 		const { unmount } = renderComponent(
 			React.createElement( AggregateTimeChart, {
 				breakdownData,
@@ -277,15 +297,15 @@ describe( 'AggregateTimeChart', () => {
 		expect( breakdownState( null ) ).toBe( 'pending' );
 		expect( breakdownState( {} ) ).toBe( 'empty' );
 		expect( breakdownState( { [ bk ]: {} } ) ).toBe( 'empty' );
-		expect(
-			breakdownState( { [ bk ]: { 'curl/8.7.1': { c: 313 } } } )
-		).toBe( 'series' );
+		expect( breakdownState( { [ bk ]: { 'curl/8.7.1': [ 313 ] } } ) ).toBe(
+			'series'
+		);
 	} );
 
 	it( 'renders the tooltip frame in volume mode', () => {
 		const bk = bucketKeyNow();
 		const breakdownData = {
-			[ bk ]: { 'curl/8.7.1': { c: 50, s: 500, m: 10 } },
+			[ bk ]: { 'curl/8.7.1': [ 50, 500, 10 ] },
 		};
 		const { container, unmount } = renderComponent(
 			React.createElement( AggregateTimeChart, {
@@ -311,7 +331,7 @@ describe( 'AggregateTimeChart', () => {
 	it( 'titles the memory metric from its own dimension', () => {
 		const bk = bucketKeyNow();
 		const breakdownData = {
-			[ bk ]: { 'curl/8.7.1': { c: 50, s: 500, m: 10 } },
+			[ bk ]: { 'curl/8.7.1': [ 50, 500, 10 ] },
 		};
 		const { container, unmount } = renderComponent(
 			React.createElement( AggregateTimeChart, {
@@ -328,8 +348,8 @@ describe( 'AggregateTimeChart', () => {
 		const bk = bucketKeyNow();
 		const breakdownData = {
 			[ bk ]: {
-				'2xx': { c: 80, s: 800 },
-				'4xx': { c: 20, s: 200 },
+				'2xx': [ 80, 800 ],
+				'4xx': [ 20, 200 ],
 			},
 		};
 		const { container, unmount } = renderComponent(
@@ -347,8 +367,8 @@ describe( 'AggregateTimeChart', () => {
 		const bk = bucketKeyNow();
 		const breakdownData = {
 			[ bk ]: {
-				'2xx': { c: 80, s: 800 },
-				'5xx': { c: 20, s: 200 },
+				'2xx': [ 80, 800 ],
+				'5xx': [ 20, 200 ],
 			},
 		};
 		const { unmount } = renderComponent(
@@ -369,8 +389,8 @@ describe( 'AggregateTimeChart', () => {
 		const bk = bucketKeyNow();
 		const breakdownData = {
 			[ bk ]: {
-				GET: { c: 80, s: 8000 },
-				POST: { c: 20, s: 4000 },
+				GET: [ 80, 8000 ],
+				POST: [ 20, 4000 ],
 			},
 		};
 		const { unmount } = renderComponent(
@@ -408,7 +428,7 @@ describe( 'AggregateTimeChart', () => {
 
 	it( 'serverFilter suffixes the title', () => {
 		const bk = bucketKeyNow();
-		const breakdownData = { [ bk ]: { '5xx': { c: 1, s: 10 } } };
+		const breakdownData = { [ bk ]: { '5xx': [ 1, 10 ] } };
 		const { container, unmount } = renderComponent(
 			React.createElement( AggregateTimeChart, {
 				breakdownData,
@@ -425,12 +445,12 @@ describe( 'AggregateTimeChart', () => {
 		const bk = bucketKeyNow();
 		const breakdownData = {
 			[ bk ]: {
-				zero: { c: 0, s: 0 }, // → 0s
-				sub: { c: 1, s: 500 }, // → 500ms
-				small: { c: 1, s: 5000 }, // → 5.0s
-				big: { c: 1, s: 50000 }, // → 50s
-				huge: { c: 1, s: 1_500_000 }, // → 1.5Ks
-				integer: { c: 1, s: 2_000_000 }, // → 2Ks (no .0)
+				zero: [ 0, 0 ], // → 0s
+				sub: [ 1, 500 ], // → 500ms
+				small: [ 1, 5000 ], // → 5.0s
+				big: [ 1, 50000 ], // → 50s
+				huge: [ 1, 1_500_000 ], // → 1.5Ks
+				integer: [ 1, 2_000_000 ], // → 2Ks (no .0)
 			},
 		};
 		const { container, unmount } = renderComponent(
@@ -455,7 +475,7 @@ describe( 'AggregateTimeChart', () => {
 	it( "the tooltip total stays the bucket's whole total under a pick", () => {
 		const bk = bucketKeyNow();
 		const breakdownData = {
-			[ bk ]: { '2xx': { c: 47, s: 470 }, '5xx': { c: 453, s: 4530 } },
+			[ bk ]: { '2xx': [ 47, 470 ], '5xx': [ 453, 4530 ] },
 		};
 		const { container, unmount } = renderComponent(
 			React.createElement( AggregateTimeChart, {
@@ -485,7 +505,7 @@ describe( 'AggregateTimeChart', () => {
 		// the total is still 45s, not 45000ms.
 		const bk = bucketKeyNow();
 		const breakdownData = {
-			[ bk ]: { minor: { c: 1, s: 600 }, major: { c: 1, s: 44400 } },
+			[ bk ]: { minor: [ 1, 600 ], major: [ 1, 44400 ] },
 		};
 		const { container, unmount } = renderComponent(
 			React.createElement( AggregateTimeChart, {
@@ -513,7 +533,7 @@ describe( 'AggregateTimeChart', () => {
 		// A stack of request counts is a total; a stack of means is not.
 		const bk = bucketKeyNow();
 		const breakdownData = {
-			[ bk ]: { '2xx': { c: 47, s: 470 }, '5xx': { c: 453, s: 4530 } },
+			[ bk ]: { '2xx': [ 47, 470 ], '5xx': [ 453, 4530 ] },
 		};
 		const props = { breakdownData, breakdown: 'status' };
 		const { container, rerender, unmount } = renderComponent(
@@ -545,7 +565,7 @@ describe( 'AggregateTimeChart', () => {
 
 	it( 'tags the y-axis title with the themable y-label class', () => {
 		const bk = bucketKeyNow();
-		const breakdownData = { [ bk ]: { '5xx': { c: 50, s: 500 } } };
+		const breakdownData = { [ bk ]: { '5xx': [ 50, 500 ] } };
 		const { unmount } = renderComponent(
 			React.createElement( AggregateTimeChart, {
 				breakdownData,
@@ -561,7 +581,7 @@ describe( 'AggregateTimeChart', () => {
 
 	it( 'renderFn no-ops on null container', () => {
 		const bk = bucketKeyNow();
-		const breakdownData = { [ bk ]: { '5xx': { c: 1, s: 1 } } };
+		const breakdownData = { [ bk ]: { '5xx': [ 1, 1 ] } };
 		const { unmount } = renderComponent(
 			React.createElement( AggregateTimeChart, {
 				breakdownData,

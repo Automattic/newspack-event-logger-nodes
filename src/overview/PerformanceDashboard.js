@@ -661,10 +661,11 @@ export default function PerformanceDashboard( {
 		let totalC = 0;
 		let totalS = 0;
 		for ( const bucket of Object.values( serverBreakdownData ) ) {
+			// DIM_SUMS: [ count, sumMs, sumPeakMb ] — decision 18.
 			const entry = bucket?.[ serverFilter ];
 			if ( entry ) {
-				totalC += entry.c || 0;
-				totalS += entry.s || 0;
+				totalC += entry[ 0 ] || 0;
+				totalS += entry[ 1 ] || 0;
 			}
 		}
 		return totalC > 0 ? totalS / totalC : 0;

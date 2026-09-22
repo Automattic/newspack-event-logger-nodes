@@ -7,6 +7,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.101.0] - 2026-09-21
+
+### Added
+- **A rule decides whether plugin load time is logged**, through a
+  `log_plugin_loads` checkbox beside the other per-rule diagnostics. The
+  profiler mu-plugin times each site-activated plugin either way — that
+  measurement is gone by the time any regular plugin can run, which is why it
+  lives in an mu-plugin — so the flag gates only the flush, and turning it off
+  costs the measuring nothing. What it saves is two firehose entries per
+  site-activated plugin on every logged request, which on a forty-plugin site
+  is eighty of them before the request does any work of its own. **Absent means
+  ON**, the rule `log_http` already follows: every stored rule predates the
+  flag, and silence has to keep meaning what it meant. `Rule` carries five
+  diagnostic knobs now rather than four, which decision 23 had named as its
+  revisit trigger; the decision records why five separate properties still beat
+  a flags map, `trace_callers` being an int rather than a boolean.
+
+### Changed
+- **A stored DIMENSIONAL entry is positional, and a deploy MUST run `wp nodes
+  memcache flush`.** `DIM_SUMS` is indexed by `Stats_Store::DIM_COUNT`,
+  `DIM_SUM_MS` and `DIM_SUM_PEAK_MB` — the ROW block's vocabulary, because they
+  are the same three measurements — across `dim`, `dim`-by-server and `url_dim`
+  alike. Measured over 12,561 live `flame-stats` frames carrying 66,966
+  entries: the entries themselves go from 1,823,249 bytes to 1,019,657, 44.1%,
+  and a whole frame's data from 3,789,646 to 2,807,929, 25.9%, a mean frame of
+  301 bytes to 223. This is decision 18's shape on its THIRD namespace, and
+  that clause had reserved the third for a per-namespace index table rather
+  than another block of class constants; the block is a deliberate override,
+  recorded in the decision with what the table would have bought and cost.
+  There is no dual-shape reader: `sum_entry()` already rebuilds each entry from
+  its field table, so a pre-deploy `{c,s,m}` merged with a positional one is
+  DISCARDED rather than hybridised, and `add_dim()` drops a pending
+  accumulator slot that is not the current shape — which the first respawn
+  after a deploy really does meet, because the offsetlog checkpoint carries no
+  salt. Losing one worker's un-flushed delta is what `restore_state()` already
+  declares acceptable. Nothing migrates a mirror frame written before the
+  upgrade: memcache is migrated by decision 5's flush, and a stale frame is
+  refused by `sum_entry()` and ages out of the retention window on its own, so
+  an operator who skips the flush gets one window of zeros in the stats
+  dashboards and a one-command fix. The entry stays positional to the WIRE — it has no `DIM_FIELD_NAMES`, for
+  `CAT_SUMS`'s reason — so `AggregateTimeChart` and `PerformanceDashboard`'s
+  `breakdownAvgMs` index it directly, the way `LB_ENTRY_SUMS` is indexed.
+- **`cap_dim()` ranks by `DIM_COUNT`, and drops a value nothing measured.** The
+  ranking moves with the shape rather than fixing a defect that shipped: ranked
+  by a field NAME a positional entry does not carry, `cap_bucket()`'s sort compares
+  nulls, ties every pair, degrades to insertion order and folds the BUSIEST
+  values into `Other` — decision 18 names that failure for `cap_servers()`, and
+  a cap test counting only how many values survived could not see it. The test
+  names the busiest and the quietest now. Alongside it, an entry whose count is
+  zero is dropped rather than stored: every value is seeded by a request, so the
+  only way to hold one is to fold a slot the merge could not name, and what it
+  buys is a cap slot and a chart legend row standing for nothing.
+  `fold_categories()` takes the same guard on `CAT_REQUESTS`, which `add_cat()`
+  counts into every entry it folds, so the two series answer alike.
+
+### Removed
+- **`Stats_Store::MIRROR_KEY_VERSION`, and the `:m{V}:` segment it put in every
+  durable key.** `entry_key()` is `evlog:p{N}:{key}`, which keeps the scope
+  removal that matters: the mirror still outlives a salt rotation. Decision 5
+  rejects a version component and the mirror is no longer an exception to it,
+  so decision 5 now states the exposure that buys — a merge that rebuilds its
+  entry from a field table cannot hybridise a shape it does not name, and
+  `hourly`, `urlnames` and `urlmap`, which do not rebuild, are migrated by the
+  flush and one retention window and by nothing else. `is_mirror_key()` matches
+  `evlog:p`, so a carry written under the old segment is dropped rather than
+  held and re-filed under a key no lookup reaches.
+
+
 ## [0.100.5] - 2026-09-21
 
 ### Removed

@@ -32,7 +32,7 @@ import AggregateTimeChart, { breakdownState } from '../AggregateTimeChart';
  * and the line beneath it cannot disagree.
  *
  * @param {Object}                  props                   Component props.
- * @param {Object|null}             props.breakdownData     Bucket key => dimension value => `{ c, s, m }` — count, summed ms, summed peak MB — or null before the reply.
+ * @param {Object|null}             props.breakdownData     Bucket key => dimension value => `[ count, sumMs, sumPeakMb ]` — count, summed ms, summed peak MB — or null before the reply.
  * @param {string}                  props.metric            'volume' | 'avg' | 'cumulative' | 'memory'.
  * @param {(value: string) => void} props.setMetric         Metric setter.
  * @param {string}                  props.breakdown         Selected dimension, a value from `breakdownOptions`.

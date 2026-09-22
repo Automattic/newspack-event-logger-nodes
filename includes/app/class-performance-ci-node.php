@@ -1022,8 +1022,8 @@ class Performance_CI_Node extends Service_CI_Node {
 	 *
 	 * @param array<string,mixed>   $merged Mutated.
 	 * @param array<string,mixed>   $rows   Inbound, keyed by bucket.
-	 * @param array<array-key,bool> $fields Field key => is a whole count; a name
-	 *                                      for `DIM_SUMS`, an index for `CAT_SUMS`.
+	 * @param array<array-key,bool> $fields Field key => is a whole count; an
+	 *                                      index for `DIM_SUMS` and `CAT_SUMS` alike.
 	 */
 	private static function merge_buckets_into( array &$merged, array $rows, array $fields ): void {
 		foreach ( $rows as $bucket => $values ) {

@@ -22,7 +22,7 @@
 </style>
 <div class="sheet">
 <h1>The salt rotation IS the schema migration, and nothing compensates for skipping it</h1>
-<p class="sub">Flushing is the substrate's one button. Rotating the salt moves the install scope that prefixes every memcache key of every Newspack plugin at once, so a schema change orphans the old keys the instant the salt moves. The durable mirror is the one tier the button does not reach, and it carries the one version component this decision otherwise rejects.</p>
+<p class="sub">Flushing is the substrate's one button. Rotating the salt moves the install scope that prefixes every memcache key of every Newspack plugin at once, so a schema change orphans the old keys the instant the salt moves. The durable mirror is the one tier the button does not reach, and it takes no version component of its own to compensate.</p>
 
 <div class="grid">
   <div class="panel"><header>Memcache: the scope moves, and the old keys are unreachable</header>
@@ -35,14 +35,13 @@
       <div class="keyrow"><span class="seg">newspack_nodes:{v}:</span><span class="seg s2">9f8e7d6c5b4a</span><span class="seg">:table:evlog:p0:hourly:2026-09-11-14-05</span></div>
       <p class="cap">A long-running worker memoizes the scope for its life: restart workers for immediate effect.</p>
     </div></div>
-  <div class="panel"><header>The durable mirror: no scope, its own version</header>
+  <div class="panel"><header>The durable mirror: no scope, and no version</header>
     <div class="body">
       <p>The mirror exists to outlive the flush (decision 10), so its key carries no install scope and the rotation reaches nothing on disk.</p>
-      <div class="keyrow"><span class="seg">evlog:</span><span class="seg v">m1</span><span class="seg">:p0:{key}</span></div>
-      <p class="cap"><span class="mono">Stats_Store::entry_key()</span>. The <span class="mono">m1</span> is <span class="mono">MIRROR_KEY_VERSION</span>, folded into every durable key.</p>
-      <div class="act"><span class="cmd" style="background:#003DA5">a frame shape changes</span><span class="arr">→</span><span class="chip">bump <span class="mono">MIRROR_KEY_VERSION</span></span></div>
-      <div class="keyrow"><span class="seg">evlog:</span><span class="seg v">m2</span><span class="seg">:p0:{key}</span></div>
-      <p class="cap">The mirror's own migration lever. Nothing compensates for skipping that bump either.</p>
+      <div class="keyrow"><span class="seg">evlog:</span><span class="seg">p0:{key}</span></div>
+      <p class="cap"><span class="mono">Stats_Store::entry_key()</span>: the partition and the entry, and nothing else.</p>
+      <div class="act"><span class="cmd" style="background:#003DA5">a frame the merge cannot name</span><span class="arr">&rarr;</span><span class="chip">refused, then aged out</span></div>
+      <p class="cap"><span class="mono">sum_entry()</span> rebuilds an entry the flush touches; a zero-count filter drops an untouched one. Decision 5 names the namespaces with neither. The mirror carries no version component.</p>
     </div></div>
 </div>
 

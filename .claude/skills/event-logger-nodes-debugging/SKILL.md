@@ -270,6 +270,7 @@ If a hub is missing entries from a spoke, read that `remote:` snapshot — but r
 | Knob | Default | What it adds |
 |---|---|---|
 | `log_http` | on | An `http` span per outbound request, between `pre_http_request` at `PHP_INT_MAX` and `http_api_debug` at `PHP_INT_MIN`. A short-circuited request opens nothing, because WordPress returns it without firing the close |
+| `log_plugin_loads` | on | A `{slug} plugin` span per site-activated plugin, flushed by `00-newspack-profiler.php` on `plugins_loaded` at -10001. The mu-plugin times them either way; the knob gates only the flush, so turning it off costs nothing and measures nothing |
 | `log_queries` | off | A `sql` span per query, between `query` and `log_query_custom_data`. It defines `SAVEQUERIES` for the life of the process and costs two entries per query |
 | `trace_hooks` | off | The calling frame on each hook entry's `l`, so one hook firing sixteen times splits into a flame node per caller |
 | `trace_callers` | off | A deep backtrace on the start entry's `caller` field, on hook, query and HTTP spans alike, budgeted per CALLER of each hook, statement shape and URL, and reset for each job — a stored `true` is a count of 1 |
