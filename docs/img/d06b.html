@@ -87,7 +87,7 @@
   <div class="abs card node" style="left:260px;top:220px;width:262px;min-height:240px">
     <h3>Request_Builder_Node</h3>
     <p>Keys an envelope per request id, folds each line in, checks the line numbers for gaps, and emits the record when the terminal arrives.</p>
-    <p>The consumer checkpoints the envelopes into its offsetlog, so a respawned worker resumes half-built requests. A request silent for 600 seconds is evicted as timed out.</p>
+    <p>The consumer checkpoints the envelopes into its offsetlog, so a respawned worker resumes half-built requests. A request silent for 900 seconds is evicted as timed out.</p>
     <div class="status"><div class="chip"><b>F</b> fatal</div><div class="chip"><b>T</b> timeout</div><div class="chip"><b>A</b> abort</div><div class="chip"><b>I</b> gap</div></div>
   </div>
 

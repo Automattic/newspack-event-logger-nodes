@@ -127,8 +127,12 @@ class Request_Builder_Node extends Timer_Node {
 	/** Default number of rotating LRU buckets. */
 	public const DEFAULT_NUM_BUCKETS = 3;
 
-	/** Bucket rotation interval in seconds; see DEFAULT_EVICTION_WINDOW_SEC below. */
-	private const BUCKET_ROTATION_S = 200;
+	/**
+	 * Bucket rotation interval in seconds; see DEFAULT_EVICTION_WINDOW_SEC
+	 * below. Three rotations outlast a worker's 595-second lifetime, so its
+	 * spawn request lands complete rather than timed out.
+	 */
+	private const BUCKET_ROTATION_S = 300;
 
 	/**
 	 * The longest a request stays in flight under the DEFAULT declaration.
