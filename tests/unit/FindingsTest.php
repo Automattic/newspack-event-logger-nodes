@@ -262,7 +262,7 @@ class FindingsTest extends TestCase {
 
 		$this->assertSame( 'more', $found['proposal']['direction'] );
 		$this->assertSame( 'significant_events', $found['proposal']['field'] );
-		$this->assertSame( 'wp_loaded hook', $found['proposal']['value'] );
+		$this->assertSame( 'wp_loaded', $found['proposal']['value'] );
 	}
 
 	public function test_repetition_reports_the_call_count(): void {
@@ -660,8 +660,8 @@ class FindingsTest extends TestCase {
 
 		$found = $this->of_kind( Findings::for_request( $record, $bracket ), 'dominant_span' );
 
-		$this->assertSame( 'wp_loaded hook', $found['proposal']['value'] );
-		$this->assertStringContainsString( 'wp_loaded hook', $found['proposal']['why'] );
+		$this->assertSame( 'wp_loaded', $found['proposal']['value'] );
+		$this->assertStringContainsString( 'Marking wp_loaded a significant event', $found['proposal']['why'] );
 	}
 
 	/** Every proposal that adds instrumentation names what removes it again. */
@@ -728,6 +728,93 @@ class FindingsTest extends TestCase {
 	}
 
 	/**
+	 * With hook tracing on, `App\Core::hook_start()` labels the hook span with
+	 * its caller, and the frame is named `<hook> hook: <caller>`. It is the
+	 * same hook, so the proposal names the hook the rule can bind, never the
+	 * caller.
+	 */
+	public function test_a_traced_hook_span_is_still_a_hook(): void {
+		$found = $this->of_kind( Findings::for_request( $this->traced_hook_record(), $this->instrumented_rule() ), 'dominant_span' );
+
+		$this->assertSame( 'mark_significant', $found['proposal']['action'] );
+		$this->assertSame( 'significant_events', $found['proposal']['field'] );
+		$this->assertSame( 'the_content', $found['proposal']['value'] );
+		$this->assertStringStartsWith( 'Marking the_content a significant event', $found['proposal']['why'] );
+	}
+
+	/** The rule names the hook bare; the frame carries the caller; they are one span. */
+	public function test_a_traced_hook_the_rule_marks_significant_proposes_nothing(): void {
+		$rule = $this->instrumented_rule()->with( [ 'significant_events' => [ 'the_content' ] ] );
+
+		$found = $this->of_kind( Findings::for_request( $this->traced_hook_record(), $rule ), 'dominant_span' );
+
+		$this->assertSame( 'none', $found['proposal']['action'] );
+		$this->assertStringContainsString( 'listeners', $found['detail'] );
+	}
+
+	/**
+	 * A rule binds a custom event by its bare name too, so a labelled one
+	 * proposes the base — `render`, not `render: Event.html`.
+	 */
+	public function test_a_labelled_custom_event_proposes_its_base_name(): void {
+		$record = $this->healthy_record();
+		$record['flame']['children'] = [
+			[ 'name' => 'init hook', 'value' => 12.0, 'children' => [] ],
+			[ 'name' => 'render: Event.html', 'value' => 372.0, 'children' => [] ],
+		];
+
+		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'dominant_span' );
+
+		$this->assertSame( 'add_custom_events', $found['proposal']['action'] );
+		$this->assertSame( 'render', $found['proposal']['value'] );
+	}
+
+	/** A significant `sql` under query logging wraps the `query` filter's listeners, inside the span. */
+	public function test_a_transport_span_the_rule_marks_significant_has_its_listeners_logged(): void {
+		$rule = $this->instrumented_rule()->with( [ 'significant_events' => [ 'sql' ], 'log_queries' => true ] );
+
+		$found = $this->of_kind( Findings::for_request( $this->query_record(), $rule ), 'dominant_span' );
+
+		$this->assertSame( 'none', $found['proposal']['action'] );
+		$this->assertStringContainsString( 'listeners', $found['detail'] );
+	}
+
+	/** The rule lists `sql` but does not log the span: nothing is wrapped, and re-proposing `sql` would change nothing. */
+	public function test_a_transport_span_marked_significant_without_its_logging_is_not_read_as_wrapped(): void {
+		$rule = $this->instrumented_rule()->with( [ 'significant_events' => [ 'sql' ] ] );
+
+		$found = $this->of_kind( Findings::for_request( $this->query_record(), $rule ), 'dominant_span' );
+
+		$this->assertSame( 'none', $found['proposal']['action'] );
+		$this->assertStringContainsString( 'not wrapped', $found['detail'] );
+		$this->assertStringContainsString( 'query', $found['proposal']['why'] );
+	}
+
+	/** `healthy_record()` with one query span holding the time. */
+	private function query_record(): array {
+		$record = $this->healthy_record();
+		$record['flame']['children'] = [
+			[ 'name' => 'init hook', 'value' => 12.0, 'children' => [] ],
+			[ 'name' => 'sql: WP_Query->get_posts', 'value' => 372.0, 'children' => [] ],
+		];
+		return $record;
+	}
+
+	/** `healthy_record()` with one traced hook frame holding the time. */
+	private function traced_hook_record(): array {
+		$record = $this->healthy_record();
+		$record['flame']['children'] = [
+			[ 'name' => 'init hook', 'value' => 12.0, 'children' => [] ],
+			[
+				'name'     => 'the_content hook: Yoast\\WP\\SEO\\Builders\\Indexable_Link_Builder->build',
+				'value'    => 372.0,
+				'children' => [],
+			],
+		];
+		return $record;
+	}
+
+	/**
 	 * A wrapped listener is the finest grain this logger has — it only exists
 	 * because its hook is ALREADY significant, so there is nothing left to
 	 * switch on.
@@ -763,9 +850,9 @@ class FindingsTest extends TestCase {
 	}
 
 	/**
-	 * `bind_current_scope()` accepts a significant event with or without the
-	 * ` hook` suffix, so a rule listing `wp_loaded` already covers the span
-	 * named `wp_loaded hook` — proposing it again is advice to do nothing.
+	 * A rule stores the bare hook name and the span carries the ` hook`
+	 * suffix, so a rule listing `wp_loaded` already covers the span named
+	 * `wp_loaded hook` — proposing it again is advice to do nothing.
 	 */
 	public function test_a_hook_already_significant_without_the_suffix_is_recognised(): void {
 		$rule   = new Rule( 'a1b2c3d4e5f6', '/calendar/today', Rule::ACTION_LOG, 0, 0.0, [ 'wp_loaded' ], [], [ 'init', 'wp_loaded' ] );
@@ -923,13 +1010,21 @@ class FindingsTest extends TestCase {
 		];
 	}
 
+	/** @return array<string,array{string,string,string}> Span, the significant event that names it, the filter it wraps. */
+	public static function transport_filters(): array {
+		return [
+			'query' => [ 'sql: WP_Query->get_posts', 'sql', 'query' ],
+			'http'  => [ 'http: Jetpack_Client->remote_request', 'http', 'pre_http_request' ],
+		];
+	}
+
 	/**
 	 * A query or an HTTP call is the logger's own span, not an event the
 	 * application logs: calling it a custom event proposes a rule edit that
-	 * changes nothing, and nothing inside a round trip can be switched on.
+	 * changes nothing. Marking it significant wraps the filter's listeners.
 	 */
-	#[DataProvider( 'transport_spans' )]
-	public function test_a_dominant_query_or_http_span_proposes_nothing_to_enable( string $span ): void {
+	#[DataProvider( 'transport_filters' )]
+	public function test_a_dominant_query_or_http_span_proposes_marking_it_significant( string $span, string $event, string $filter ): void {
 		$record = $this->healthy_record();
 		$record['flame']['children'] = [
 			[ 'name' => 'init hook', 'value' => 12.0, 'children' => [] ],
@@ -939,7 +1034,9 @@ class FindingsTest extends TestCase {
 		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'dominant_span' );
 
 		$this->assertNotNull( $found );
-		$this->assertSame( 'none', $found['proposal']['action'] );
+		$this->assertSame( 'mark_significant', $found['proposal']['action'] );
+		$this->assertSame( $event, $found['proposal']['value'] );
+		$this->assertStringContainsString( $filter, $found['proposal']['why'] );
 		$this->assertStringNotContainsString( 'custom event', $found['proposal']['why'] );
 		$this->assertStringNotContainsString( 'custom event', $found['detail'] );
 	}
@@ -1082,7 +1179,8 @@ class FindingsTest extends TestCase {
 		$this->assertNull( $found );
 	}
 
-	public function test_repetition_of_the_query_span_is_not_proposed_as_a_custom_event(): void {
+	/** The query span is the logger's own: the proposal is `sql` as a significant event, never a custom one. */
+	public function test_repetition_of_the_query_span_proposes_it_as_significant_not_custom(): void {
 		$record             = $this->healthy_record();
 		$record['profiles'] = [
 			'sql' => [ 'count' => 586, 'time' => 53018.2, 'entries' => [] ],
@@ -1091,7 +1189,8 @@ class FindingsTest extends TestCase {
 		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'repetition' );
 
 		$this->assertNotNull( $found );
-		$this->assertSame( 'none', $found['proposal']['action'] );
+		$this->assertSame( 'mark_significant', $found['proposal']['action'] );
+		$this->assertSame( 'sql', $found['proposal']['value'] );
 	}
 
 	/**

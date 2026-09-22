@@ -100,7 +100,10 @@ class Findings {
 	 * questions — is this span already marked significant, and what kind of
 	 * span is it. One entry per outcome makes the prose and the proposal
 	 * impossible to drift apart; two parallel `if` ladders would have to be
-	 * edited together. A `%s` in a `why` takes the span's name.
+	 * edited together. In a `why`, `%1$s` (or `%s`) takes the name a rule edit
+	 * would bind — the bare value for a row with a `field`, the span's own
+	 * name otherwise — and `%2$s` the filter a transport span covers, from
+	 * `App\Core::TRANSPORT_HOOKS`.
 	 *
 	 * @var array<string,array<string,string>>
 	 */
@@ -109,7 +112,15 @@ class Findings {
 			'detail' => 'It is already a significant event, so its listeners are logged — read those next.',
 			'why'    => 'It is already a significant event; its listeners are in this record.',
 		],
-		'significant'      => [
+		'significant:transport' => [
+			'detail' => 'It is already a significant event, so the listeners on the filter it runs through are logged — read those next.',
+			'why'    => 'It is already a significant event; the listeners on its filter are in this record.',
+		],
+		'transport:unlogged' => [
+			'detail' => 'The rule marks it significant but does not log this span, so the listeners on its filter are not wrapped.',
+			'why'    => 'It is already a significant event; the `%2$s` filter\'s listeners are wrapped only where the rule logs the span, and this rule does not.',
+		],
+		'significant:custom' => [
 			'detail' => 'The application logs this span itself, and marking it significant only keeps it from being auto-disabled — nothing about its interior follows from that.',
 			'why'    => 'It is already a significant event, which for a custom event only keeps it from being auto-disabled; the application decides what it logs inside.',
 		],
@@ -129,8 +140,11 @@ class Findings {
 			'undo'      => 'Disable those custom events again once the interior is understood.',
 		],
 		'transport'        => [
-			'detail' => 'The logger times this round trip itself, so there is no interior to switch on: its label names the calling frame, and its entries carry the statement or the URL.',
-			'why'    => '%s is the logger\'s own query or HTTP span, and nothing inside a round trip can be logged. Its label names the calling frame and its entries the statement or URL; the span containing it is where to look for why it ran.',
+			'detail'    => 'The logger times this round trip itself: its label names the calling frame, and its entries carry the statement or the URL. The listeners on the filter it runs through are not logged.',
+			'why'       => 'Marking %1$s a significant event logs the listeners on the `%2$s` filter, which is where a rewrite or a short-circuit costs time ahead of the round trip; it takes effect where the span is logged.',
+			'action'    => 'mark_significant',
+			'direction' => 'more',
+			'field'     => 'significant_events',
 		],
 		'plugin'           => [
 			'detail' => 'This is one plugin file\'s load, timed by the profiler before any hook can run, so no rule edit reaches inside it.',
@@ -542,17 +556,21 @@ class Findings {
 	 * @return array<string,mixed>
 	 */
 	private static function visibility_proposal( string $span, ?Rule $rule, string $undo ): array {
-		$advice = self::span_advice( $span, $rule );
-		$out    = [
+		$base   = Flame_Tree::base_name( $span );
+		$advice = self::span_advice( $base, $rule );
+		$binds  = isset( $advice['field'] );
+		// A rule edit names what the rule binds: the bare hook, never a label.
+		$named = $binds ? Flame_Tree::hook_name( $base ) : $span;
+		$out   = [
 			'action'    => $advice['action'] ?? 'none',
 			'direction' => $advice['direction'] ?? 'none',
 			'rule_id'   => $rule?->id,
-			'why'       => \sprintf( $advice['why'], $span ),
-			'undo'      => isset( $advice['action'] ) ? ( $advice['undo'] ?? $undo ) : '',
+			'why'       => \sprintf( $advice['why'], $named, Hooks::TRANSPORT_HOOKS[ $base ] ?? '' ),
+			'undo'      => $binds ? ( $advice['undo'] ?? $undo ) : '',
 		];
-		if ( isset( $advice['field'] ) ) {
+		if ( $binds ) {
 			$out['field'] = $advice['field'];
-			$out['value'] = $span;
+			$out['value'] = $named;
 		}
 		return $out;
 	}
@@ -566,46 +584,27 @@ class Findings {
 	 * @return string One sentence, true for this kind of span.
 	 */
 	private static function interior_detail( string $span, ?Rule $rule ): string {
-		return self::span_advice( $span, $rule )['detail'];
+		return self::span_advice( Flame_Tree::base_name( $span ), $rule )['detail'];
 	}
 
 	/**
 	 * The `SPAN_ADVICE` row governing one span.
 	 *
-	 * @param string    $span The span's name, as the flame carries it.
+	 * @param string    $base The span's base name, per `Flame_Tree::base_name()`.
 	 * @param Rule|null $rule The governing rule, or null when none does.
 	 * @return array<string,string>
 	 */
-	private static function span_advice( string $span, ?Rule $rule ): array {
-		$kind = self::span_kind( $span );
-		if ( self::is_significant( $span, $rule ) ) {
-			return self::SPAN_ADVICE[ 'hook' === $kind ? 'significant:hook' : 'significant' ];
+	private static function span_advice( string $base, ?Rule $rule ): array {
+		$kind = self::span_kind( $base );
+		// A listener or a plugin load has no significant row.
+		$row = "significant:{$kind}";
+		if ( isset( self::SPAN_ADVICE[ $row ] ) && null !== $rule && $rule->marks_significant( Flame_Tree::hook_name( $base ) ) ) {
+			if ( 'transport' === $kind && ! Hooks::transport_logged( $base, $rule ) ) {
+				return self::SPAN_ADVICE['transport:unlogged'];
+			}
+			return self::SPAN_ADVICE[ $row ];
 		}
 		return self::SPAN_ADVICE[ $kind ];
-	}
-
-	/**
-	 * Whether the rule already marks this span significant. `bind_current_scope()`
-	 * accepts an event with or without the ` hook` suffix, so both spellings name
-	 * the same hook and a comparison that misses one proposes a no-op edit.
-	 *
-	 * @param string    $span The span's name, as the flame carries it.
-	 * @param Rule|null $rule The governing rule, or null when none does.
-	 * @return bool True when the rule names the span under either spelling.
-	 */
-	private static function is_significant( string $span, ?Rule $rule ): bool {
-		if ( null === $rule ) {
-			return false;
-		}
-		$bare = \str_ends_with( $span, Hooks::HOOK_SUFFIX )
-			? \substr( $span, 0, -\strlen( Hooks::HOOK_SUFFIX ) )
-			: $span;
-		foreach ( $rule->significant_events as $event ) {
-			if ( $event === $span || $event === $bare ) {
-				return true;
-			}
-		}
-		return false;
 	}
 
 	/**
@@ -614,22 +613,23 @@ class Findings {
 	 * prose crediting it with any sends the reader hunting a callback that does
 	 * not exist. A query or HTTP span is the logger's own, and a plugin span is
 	 * one plugin file's load; calling either a custom event proposes a rule
-	 * edit that changes nothing.
+	 * edit that changes nothing. A hook is known by its BASE name: with hook
+	 * tracing on, the frame carries the caller too.
 	 *
-	 * @param string $span The span's name, as the flame carries it.
+	 * @param string $base The span's base name, per `Flame_Tree::base_name()`.
 	 * @return string `transport`, `plugin`, `hook`, `listener` or `custom`.
 	 */
-	private static function span_kind( string $span ): string {
-		if ( Flame_Tree::is_transport_span( $span ) ) {
+	private static function span_kind( string $base ): string {
+		if ( Flame_Tree::is_transport_span( $base ) ) {
 			return 'transport';
 		}
-		if ( Flame_Tree::is_plugin_load_span( $span ) ) {
+		if ( Flame_Tree::is_plugin_load_span( $base ) ) {
 			return 'plugin';
 		}
-		if ( \str_ends_with( $span, Hooks::HOOK_SUFFIX ) ) {
+		if ( Flame_Tree::is_hook_span( $base ) ) {
 			return 'hook';
 		}
-		return Hooks::is_listener_span( $span ) ? 'listener' : 'custom';
+		return Hooks::is_listener_span( $base ) ? 'listener' : 'custom';
 	}
 
 	/**

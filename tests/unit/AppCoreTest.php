@@ -1040,7 +1040,7 @@ class AppCoreTest extends TestCase {
 	public function test_constructor_registers_hook_filters(): void {
 		$this->require_priority_aware_add_filter_or_skip();
 		$this->set_governing_rule(
-			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'the_content', 'wp_head' ], significant_events: [ 'the_content hook' ] ),
+			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'the_content', 'wp_head' ], significant_events: [ 'the_content' ] ),
 			[ 'hook_start_priority' => 1 ]
 		);
 
@@ -1205,7 +1205,7 @@ class AppCoreTest extends TestCase {
 	public function test_constructor_parses_significant_events(): void {
 		$this->require_priority_aware_add_filter_or_skip();
 		$this->set_governing_rule(
-			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'the_content' ], significant_events: [ 'the_content hook', 'wp_head' ] )
+			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'the_content' ], significant_events: [ 'the_content', 'wp_head' ] )
 		);
 
 		$core = new Core();
@@ -1219,12 +1219,226 @@ class AppCoreTest extends TestCase {
 
 	// ── wrap_callbacks tests ────────────────────────────────────────────
 
+	/** A significant `sql` names the `query` filter its span covers: no hook `sql` is bound. */
+	public function test_sql_as_a_significant_event_wraps_the_query_filter(): void {
+		$this->require_priority_aware_add_filter_or_skip();
+		$this->set_governing_rule(
+			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'init' ], significant_events: [ 'sql' ], log_queries: true )
+		);
+
+		$core = new Core();
+		$GLOBALS['_wp_test_current_filter'] = 'query';
+		$hook            = new \WP_Hook();
+		$hook->callbacks = [ 10 => [ 'rewrite' => [ 'function' => static fn ( $q ) => $q, 'accepted_args' => 1 ] ] ];
+		global $wp_filter;
+		$wp_filter['query'] = $hook;
+
+		$core->query_start( 'SELECT 1' );
+
+		$this->assertSame( 99, $wp_filter['query']->callbacks[10]['rewrite']['accepted_args'] );
+		$this->assertArrayNotHasKey( 'sql', $GLOBALS['_wp_test_filters'] ?? [] );
+	}
+
+	/** A significant `http` names `pre_http_request`: `http_wrap()` heads the chain and wraps for the current call. */
+	public function test_http_as_a_significant_event_wraps_pre_http_request(): void {
+		$this->require_priority_aware_add_filter_or_skip();
+		$this->set_governing_rule(
+			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'init' ], significant_events: [ 'http' ] )
+		);
+		$core = new Core();
+		$GLOBALS['_wp_test_current_filter'] = 'pre_http_request';
+		$hook            = new \WP_Hook();
+		$hook->callbacks = [ 10 => [ 'cache' => [ 'function' => static fn ( $p ) => $p, 'accepted_args' => 3 ] ] ];
+		global $wp_filter;
+		$wp_filter['pre_http_request'] = $hook;
+
+		$this->assertFalse( $core->http_wrap( false ) );
+
+		$this->assertSame( 99, $wp_filter['pre_http_request']->callbacks[10]['cache']['accepted_args'] );
+		$this->assertContains( [ $core, 'http_wrap' ], $GLOBALS['_wp_test_filters']['pre_http_request'][ PHP_INT_MIN ] ?? [] );
+		$this->assertArrayNotHasKey( 'http', $GLOBALS['_wp_test_filters'] ?? [] );
+	}
+
+	/** The wrap runs ahead of the chain, so the short-circuiting listener is timed on the call it answers. */
+	public function test_http_wraps_ahead_of_a_short_circuit_and_passes_the_vote_through(): void {
+		$this->require_priority_aware_add_filter_or_skip();
+		$this->set_governing_rule(
+			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'init' ], significant_events: [ 'http' ] )
+		);
+		$core = new Core();
+		$GLOBALS['_wp_test_current_filter'] = 'pre_http_request';
+		$hook            = new \WP_Hook();
+		$hook->callbacks = [ 10 => [ 'cache' => [ 'function' => static fn ( $p ) => $p, 'accepted_args' => 3 ] ] ];
+		global $wp_filter;
+		$wp_filter['pre_http_request'] = $hook;
+		$vote = [ 'response' => [ 'code' => 200 ] ];
+
+		$this->assertSame( $vote, $core->http_wrap( $vote ) );
+		$this->assertSame( 99, $wp_filter['pre_http_request']->callbacks[10]['cache']['accepted_args'] );
+	}
+
+	/** Without query logging there is no sql span to nest listeners in, so `sql` binds nothing. */
+	public function test_sql_as_a_significant_event_binds_nothing_without_query_logging(): void {
+		$this->require_priority_aware_add_filter_or_skip();
+		$this->set_governing_rule(
+			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'init' ], significant_events: [ 'sql' ] )
+		);
+
+		new Core();
+
+		$this->assertArrayNotHasKey( 'query', $GLOBALS['_wp_test_filters'] ?? [] );
+		$this->assertArrayNotHasKey( 'sql', $GLOBALS['_wp_test_filters'] ?? [] );
+	}
+
+	/** No hook_start sits on pre_http_request, so the floor that spares it does not apply: a listener far below it is wrapped too. */
+	public function test_http_wraps_a_listener_below_the_hook_start_floor(): void {
+		$this->require_priority_aware_add_filter_or_skip();
+		$this->set_governing_rule(
+			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'init' ], significant_events: [ 'http' ] )
+		);
+		$core = new Core();
+		$hook            = new \WP_Hook();
+		$hook->callbacks = [ -20000 => [ 'early_cache' => [ 'function' => static fn ( $p ) => $p, 'accepted_args' => 3 ] ] ];
+		global $wp_filter;
+		$wp_filter['pre_http_request'] = $hook;
+
+		$core->http_wrap( false );
+
+		$this->assertSame( 99, $wp_filter['pre_http_request']->callbacks[-20000]['early_cache']['accepted_args'] );
+	}
+
+	/** Every stranger on pre_http_request is wrapped, PHP_INT_MAX included; only our own http_start() is spared, by identity. */
+	public function test_http_wraps_a_stranger_at_the_last_priority_and_spares_only_its_own(): void {
+		$this->require_priority_aware_add_filter_or_skip();
+		$this->set_governing_rule(
+			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'init' ], significant_events: [ 'http' ] )
+		);
+		$core = new Core();
+		$hook            = new \WP_Hook();
+		$hook->callbacks = [
+			PHP_INT_MAX => [
+				'last_word' => [ 'function' => static fn ( $p ) => $p, 'accepted_args' => 3 ],
+				'ours'      => [ 'function' => [ $core, 'http_start' ], 'accepted_args' => 3 ],
+			],
+		];
+		global $wp_filter;
+		$wp_filter['pre_http_request'] = $hook;
+
+		$core->http_wrap( false );
+
+		$this->assertSame( 99, $wp_filter['pre_http_request']->callbacks[ PHP_INT_MAX ]['last_word']['accepted_args'] );
+		$this->assertSame( 3, $wp_filter['pre_http_request']->callbacks[ PHP_INT_MAX ]['ours']['accepted_args'] );
+	}
+
+	/** The bare hook `pre_http_request` as a significant event takes the hook path only; `http` is what binds the head-of-chain wrap. */
+	public function test_the_bare_hook_pre_http_request_does_not_bind_http_wrap(): void {
+		$this->require_priority_aware_add_filter_or_skip();
+		$this->set_governing_rule(
+			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'init' ], significant_events: [ 'pre_http_request' ] )
+		);
+
+		$core = new Core();
+
+		$this->assertNotContains( [ $core, 'http_wrap' ], $GLOBALS['_wp_test_filters']['pre_http_request'][ PHP_INT_MIN ] ?? [] );
+		$this->assertNotEmpty( $GLOBALS['_wp_test_filters']['pre_http_request'] ?? [], 'the hook trio is bound' );
+	}
+
+	/** The gate is `log_http`: without it no `http_wrap()` is bound and the filter's listeners stay unwrapped. */
+	public function test_http_as_a_significant_event_wraps_nothing_without_http_logging(): void {
+		$this->require_priority_aware_add_filter_or_skip();
+		$this->set_governing_rule(
+			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'init' ], significant_events: [ 'http' ], log_http: false )
+		);
+
+		$core = new Core();
+
+		$this->assertNotContains( [ $core, 'http_wrap' ], $GLOBALS['_wp_test_filters']['pre_http_request'][ PHP_INT_MIN ] ?? [] );
+	}
+
+	/** The binder's own listeners on a filter are never wrapped, whatever range the wrap covers. */
+	public function test_http_wrap_spares_the_binders_own_hook_listeners(): void {
+		$this->require_priority_aware_add_filter_or_skip();
+		$this->set_governing_rule(
+			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'pre_http_request' ], significant_events: [ 'http' ] )
+		);
+		$core = new Core();
+		$GLOBALS['_wp_test_current_filter'] = 'pre_http_request';
+		$hook            = new \WP_Hook();
+		$hook->callbacks = [
+			-10000          => [ 'start' => [ 'function' => [ $core, 'hook_start' ], 'accepted_args' => 1 ] ],
+			10              => [ 'cache' => [ 'function' => static fn ( $p ) => $p, 'accepted_args' => 3 ] ],
+			PHP_INT_MAX - 2 => [ 'spacer' => [ 'function' => [ $core, 'hook_spacer' ], 'accepted_args' => 1 ] ],
+			PHP_INT_MAX - 1 => [ 'complete' => [ 'function' => [ $core, 'hook_complete' ], 'accepted_args' => 1 ] ],
+		];
+		global $wp_filter;
+		$wp_filter['pre_http_request'] = $hook;
+
+		$core->http_wrap( false );
+
+		$callbacks = $wp_filter['pre_http_request']->callbacks;
+		$this->assertSame( 99, $callbacks[10]['cache']['accepted_args'] );
+		foreach ( [ -10000 => 'start', PHP_INT_MAX - 2 => 'spacer', PHP_INT_MAX - 1 => 'complete' ] as $priority => $key ) {
+			$this->assertSame( 1, $callbacks[ $priority ][ $key ]['accepted_args'], "$key is the binder's own" );
+		}
+	}
+
+	/** The gate is the flag, not whether `query` happens to be a listed hook. */
+	public function test_sql_as_a_significant_event_marks_nothing_without_query_logging_even_with_query_hooked(): void {
+		$this->require_priority_aware_add_filter_or_skip();
+		$this->set_governing_rule(
+			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'query' ], significant_events: [ 'sql' ] )
+		);
+
+		$core = new Core();
+		$sig  = ( new \ReflectionProperty( Core::class, 'significant' ) )->getValue( $core );
+
+		$this->assertArrayNotHasKey( 'query', $sig );
+		$this->assertArrayNotHasKey( 'sql', $sig );
+	}
+
+	/** Instrumentation never touches the hook table for a logger that is not there. */
+	public function test_http_wraps_nothing_without_a_log_manager(): void {
+		$this->require_priority_aware_add_filter_or_skip();
+		$this->set_governing_rule(
+			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'init' ], significant_events: [ 'http' ] )
+		);
+		$core = new Core();
+		Log_Manager::reset();
+		$hook            = new \WP_Hook();
+		$hook->callbacks = [ 10 => [ 'late' => [ 'function' => static fn ( $p ) => $p, 'accepted_args' => 3 ] ] ];
+		global $wp_filter;
+		$wp_filter['pre_http_request'] = $hook;
+
+		$core->http_wrap( false );
+
+		$this->assertSame( 3, $wp_filter['pre_http_request']->callbacks[10]['late']['accepted_args'] );
+		$this->assertFalse( Log_Manager::has_instance() );
+	}
+
+	/** A listener registered after binding is wrapped on the call it first runs in, as a hook's are. */
+	public function test_http_wraps_a_listener_registered_after_binding(): void {
+		$this->require_priority_aware_add_filter_or_skip();
+		$this->set_governing_rule(
+			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'init' ], significant_events: [ 'http' ] )
+		);
+		$core = new Core();
+		$GLOBALS['_wp_test_current_filter'] = 'pre_http_request';
+		$hook            = new \WP_Hook();
+		$hook->callbacks = [ 10 => [ 'late' => [ 'function' => static fn ( $p ) => $p, 'accepted_args' => 3 ] ] ];
+		global $wp_filter;
+		$wp_filter['pre_http_request'] = $hook;
+
+		$core->http_wrap( false );
+
+		$this->assertSame( 99, $wp_filter['pre_http_request']->callbacks[10]['late']['accepted_args'] );
+	}
+
 	public function test_wrap_callbacks_skips_when_no_wp_filter(): void {
 		$this->require_priority_aware_add_filter_or_skip();
 		$this->use_config( [
 			'enable_logging'     => true,
 			'log_events'         => [ 'the_content' ],
-			'significant_events' => [ 'the_content hook' ],
+			'significant_events' => [ 'the_content' ],
 		] );
 
 		$core = new Core();
@@ -1236,7 +1450,7 @@ class AppCoreTest extends TestCase {
 	public function test_wrap_callbacks_wraps_eligible_callbacks(): void {
 		$this->require_priority_aware_add_filter_or_skip();
 		$this->set_governing_rule(
-			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'the_content' ], significant_events: [ 'the_content hook' ] )
+			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'the_content' ], significant_events: [ 'the_content' ] )
 		);
 
 		$core = new Core();
@@ -1268,7 +1482,7 @@ class AppCoreTest extends TestCase {
 		$this->use_config( [
 			'enable_logging'     => true,
 			'log_events'         => [ 'the_content' ],
-			'significant_events' => [ 'the_content hook' ],
+			'significant_events' => [ 'the_content' ],
 		] );
 
 		$core = new Core();
@@ -1301,7 +1515,7 @@ class AppCoreTest extends TestCase {
 		$this->use_config( [
 			'enable_logging'     => true,
 			'log_events'         => [ 'the_content' ],
-			'significant_events' => [ 'the_content hook' ],
+			'significant_events' => [ 'the_content' ],
 		] );
 
 		$core = new Core();
@@ -1336,7 +1550,7 @@ class AppCoreTest extends TestCase {
 		$this->use_config( [
 			'enable_logging'     => true,
 			'log_events'         => [ 'the_content' ],
-			'significant_events' => [ 'the_content hook' ],
+			'significant_events' => [ 'the_content' ],
 		] );
 
 		$core = new Core();
@@ -1380,7 +1594,7 @@ class AppCoreTest extends TestCase {
 		$this->use_config( [
 			'enable_logging'     => true,
 			'log_events'         => [ 'the_content' ],
-			'significant_events' => [ 'the_content hook' ],
+			'significant_events' => [ 'the_content' ],
 		] );
 
 		$core = new Core();
@@ -1414,7 +1628,7 @@ class AppCoreTest extends TestCase {
 		$this->use_config( [
 			'enable_logging'     => true,
 			'log_events'         => [ 'the_content' ],
-			'significant_events' => [ 'the_content hook' ],
+			'significant_events' => [ 'the_content' ],
 		] );
 
 		$core = new Core();
@@ -1444,7 +1658,7 @@ class AppCoreTest extends TestCase {
 		$this->use_config( [
 			'enable_logging'     => true,
 			'log_events'         => [ 'the_content' ],
-			'significant_events' => [ 'the_content hook' ],
+			'significant_events' => [ 'the_content' ],
 		] );
 
 		$core = new Core();
@@ -1476,7 +1690,7 @@ class AppCoreTest extends TestCase {
 		$this->use_config( [
 			'enable_logging'     => true,
 			'log_events'         => [ 'the_content' ],
-			'significant_events' => [ 'the_content hook' ],
+			'significant_events' => [ 'the_content' ],
 		] );
 
 		$core = new Core();
@@ -1511,15 +1725,14 @@ class AppCoreTest extends TestCase {
 		// Custom events (registered via custom_events) should be excluded.
 		$this->require_priority_aware_add_filter_or_skip();
 		$this->set_governing_rule(
-			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'init' ], significant_events: [ 'the_content hook', 'wp_head' ], custom_events: [] )
+			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'init' ], significant_events: [ 'the_content', 'wp_head' ], custom_events: [] )
 		);
 
 		new Core();
 		$filters = $GLOBALS['_wp_test_filters'] ?? [];
 
-		// 'the_content' was injected from significant_events (with " hook" suffix stripped).
+		// Both significant events sit outside hooks: and are bound anyway.
 		$this->assertArrayHasKey( 'the_content', $filters );
-		// 'wp_head' was injected (no suffix, treated as raw hook name).
 		$this->assertArrayHasKey( 'wp_head', $filters );
 		// 'init' was already in log_events.
 		$this->assertArrayHasKey( 'init', $filters );
@@ -1545,23 +1758,20 @@ class AppCoreTest extends TestCase {
 		$this->assertArrayHasKey( 'init', $filters );
 	}
 
-	public function test_significant_events_with_hook_suffix_marks_significant(): void {
-		// The " hook" suffix is stripped before being added to the
-		// significant set. Verify both forms (with/without suffix) are
-		// registered correctly.
+	/** A significant event is spelled as the rule stores it; nothing strips a suffix off it. */
+	public function test_a_significant_event_is_bound_by_its_bare_name_only(): void {
 		$this->require_priority_aware_add_filter_or_skip();
 		$this->set_governing_rule(
 			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'the_content', 'init' ], significant_events: [ 'the_content hook', 'init' ] )
 		);
 
 		$core = new Core();
-		$ref  = new \ReflectionProperty( Core::class, 'significant' );
-		$sig  = $ref->getValue( $core );
+		$sig  = ( new \ReflectionProperty( Core::class, 'significant' ) )->getValue( $core );
 
-		$this->assertArrayHasKey( 'the_content', $sig );
 		$this->assertArrayHasKey( 'init', $sig );
-		// The full " hook" suffix form must NOT remain as a key.
-		$this->assertArrayNotHasKey( 'the_content hook', $sig );
+		$this->assertArrayNotHasKey( 'the_content', $sig );
+		$this->assertArrayHasKey( 'the_content hook', $sig );
+		$this->assertArrayHasKey( 'the_content hook', $GLOBALS['_wp_test_filters'] ?? [] );
 	}
 
 	// ── Hook-start priority configuration ──────────────────────────────
@@ -1647,7 +1857,7 @@ class AppCoreTest extends TestCase {
 		$this->use_config( [
 			'enable_logging'     => true,
 			'log_events'         => [ 'the_content' ],
-			'significant_events' => [ 'the_content hook' ],
+			'significant_events' => [ 'the_content' ],
 		] );
 
 		$core = new Core();
@@ -1688,7 +1898,7 @@ class AppCoreTest extends TestCase {
 		$this->use_config( [
 			'enable_logging'     => true,
 			'log_events'         => [ 'the_content' ],
-			'significant_events' => [ 'the_content hook' ],
+			'significant_events' => [ 'the_content' ],
 		] );
 
 		$core = new Core();
@@ -1769,7 +1979,7 @@ class AppCoreTest extends TestCase {
 	private function significant_core( array $config = [] ): Core {
 		$this->require_priority_aware_add_filter_or_skip();
 		$this->set_governing_rule(
-			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'the_content' ], significant_events: [ 'the_content hook' ] ),
+			new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'the_content' ], significant_events: [ 'the_content' ] ),
 			$config
 		);
 		$core = new Core();

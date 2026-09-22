@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`sql` and `http` as significant events wrap the filter their span
+  covers.** A rule listing `sql` gets the `query` filter's listeners wrapped
+  inside each `sql` span, and one listing `http` gets `pre_http_request`'s
+  wrapped from the head of the chain on each call, so a rewrite or a
+  short-circuit shows its own cost ahead of the round trip. Neither name is
+  bound as a hook. The findings propose either for a dominant transport span,
+  and read an already-significant one as having its listeners logged.
+
+### Changed
+- **A significant event is spelled bare**, `the_content`, as the rule stores
+  it and as `App\Core` binds it. The binder no longer strips a ` hook` suffix
+  off a rule entry, so `the_content hook` in a rule binds a hook of that name,
+  which nothing fires.
+
+### Fixed
+- **A traced hook frame is a hook.** With hook tracing on, a hook's frame is
+  named `<hook> hook: <caller>`, and the findings classified the whole name:
+  `the_content hook: Yoast\WP\SEO\Builders\Indexable_Link_Builder->build`
+  read as a custom event, the brief said marking it significant "does
+  nothing", and the proposal was to add custom events. The kind of a span, and
+  whether the rule already marks it significant, now read the frame's base
+  name through `Flame_Tree::base_name()`, the inverse of `node_name()`, and a
+  proposal names what the rule stores: the bare hook, `the_content`, never the
+  caller and never the ` hook` suffix. `Flame_Tree::hook_name()` is the one
+  place that suffix comes off a span, for the findings and the auto-tuner
+  alike, so a multi-word custom event the auto-tuner promotes or
+  disables is named whole rather than cut at its first space.
+
 ## [0.101.0] - 2026-09-21
 
 ### Added

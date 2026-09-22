@@ -42,6 +42,9 @@ final class Flame_Tree {
 	/** What the profiler drop-in appends to a slug to name a plugin's load. */
 	public const PLUGIN_LOAD_SUFFIX = ' plugin';
 
+	/** What `App\Core::hook_start()` appends to a hook's name to make its span's. */
+	public const HOOK_SUFFIX = ' hook';
+
 	/** A plugin file's load, as the profiler drop-in names it: `<slug> plugin`. */
 	private const PLUGIN_LOAD_PATTERN = '/^\S+' . self::PLUGIN_LOAD_SUFFIX . '$/';
 
@@ -483,19 +486,53 @@ final class Flame_Tree {
 	 * with, because `Flame_Fold` folds a Perl or pyrobase producer's entries as
 	 * readily as `App\Core`'s and must not reach up into one of them to ask.
 	 *
-	 * `node_name()` composes `state: label`, and an unlabelled span keeps the
-	 * bare state, so both spellings answer.
-	 *
 	 * @param string $span A span name, as the flame carries it.
 	 * @return bool
 	 */
 	public static function is_transport_span( string $span ): bool {
-		foreach ( [ self::SQL_STATE, self::HTTP_STATE ] as $state ) {
-			if ( $span === $state || \str_starts_with( $span, "{$state}: " ) ) {
-				return true;
-			}
-		}
-		return false;
+		return \in_array( self::base_name( $span ), [ self::SQL_STATE, self::HTTP_STATE ], true );
+	}
+
+	/**
+	 * Whether a span is a hook's, as `App\Core::hook_start()` names one — by
+	 * the suffix on its base, so a traced frame carrying its caller answers.
+	 *
+	 * @param string $span A span name, as the flame carries it.
+	 * @return bool
+	 */
+	public static function is_hook_span( string $span ): bool {
+		return \str_ends_with( self::base_name( $span ), self::HOOK_SUFFIX );
+	}
+
+	/**
+	 * The inverse of `node_name()`: the span's own name, without the label it
+	 * was logged with. A traced hook frame is `<hook> hook: <caller>`, and what
+	 * kind of span it is — and what a rule can bind — is decided by the base.
+	 * The split is at the first `: `, so it inverts `node_name()` only for a
+	 * base that carries none, which every hook, transport and plugin span
+	 * satisfies; a custom event named with one is cut at it. `spanBase()` in
+	 * `src/overview/utils/logEntryUtils.js` is the same split for the dashboard.
+	 *
+	 * @param string $name A frame's name, as the flame carries it.
+	 * @return string The base name.
+	 */
+	public static function base_name( string $name ): string {
+		$at = \strpos( $name, ': ' );
+		return false === $at ? $name : \substr( $name, 0, $at );
+	}
+
+	/**
+	 * The hook a span's base stands for: `App\Core::hook_start()` suffixes the
+	 * hook's name, and a rule stores it bare, so a reader comparing a span to
+	 * a rule takes the suffix off here. A name without it comes back as given.
+	 *
+	 * @param string $base A span's base name.
+	 * @return string The hook name a rule would store.
+	 */
+	public static function hook_name( string $base ): string {
+		return \str_ends_with( $base, self::HOOK_SUFFIX )
+			? \substr( $base, 0, -\strlen( self::HOOK_SUFFIX ) )
+			: $base;
 	}
 
 	/**

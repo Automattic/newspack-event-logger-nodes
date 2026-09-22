@@ -90,7 +90,7 @@ class Log_Manager {
 
 - `n` — per-request line number, starting at 1. [`Request_Builder_Node`](../includes/class-request-builder-node.php) validates the sequence, so a gap or a rewind is reported rather than silently assembled. The number is stamped and consumed together: burning one reads as a GAP, which the builder reports while still letting terminals through, where reusing one reads as a duplicate and strands the record in flight until its trace times out.
 - `k` — category. The ` (start)` / ` (complete)` suffix is what pairs a span, and four span shapes share the field with the one-shot entries:
-  - A **hook span**, `"<hook> hook (start)"` / `"<hook> hook (complete)"`, which [`App\Core`](../includes/app/class-core.php) writes around each bound hook. `App\Core::HOOK_SUFFIX` mints the ` hook` word, so that class owns it.
+  - A **hook span**, `"<hook> hook (start)"` / `"<hook> hook (complete)"`, which [`App\Core`](../includes/app/class-core.php) writes around each bound hook. `Flame_Tree::HOOK_SUFFIX` is the ` hook` word, beside the other span vocabulary, and `Flame_Tree::hook_name()` takes it back off a span's base so a reader can compare the span to the bare name a rule stores.
   - A **listener span**, `"<callable> @<priority> (start)"` / `"<callable> @<priority> (complete)"`, which `App\Core::wrap_callbacks()` mints around every callback on a hook the governing rule names a significant event. The callable is `short_name()`'s shortened form — `Class::method`, or `{closure}:file.php:12`. `App\Core::LISTENER_PATTERN` (`/ @-?\d+$/`) is the public seam a reader classifies one with, through `App\Core::is_listener_span()`, and the `-` is load-bearing: a callback registered at a negative priority reads as a custom event without it. [`Findings`](../includes/app/class-findings.php) runs every span through that seam, which is what stops a listener being labelled `custom`.
   - A **plugin span**, `"<slug> plugin (start)"` / `"<slug> plugin (complete)"`, one pair per site-activated plugin the `00-newspack-profiler.php` drop-in timed.
   - A **transport span**, `http` or `sql`, whose state name is fixed. The redacted URL or the whole SQL rides `m` and the calling frame rides `l`, because spelling either into `k` would mint a profile category per host and per table — the axis [`Stats_Store::MAX_CAT_VALUES`](../includes/class-stats-store.php) bounds.
@@ -167,7 +167,7 @@ The four terminal codes, `F`, `A`, `T` and `I`, are `Request_Builder_Node::ERROR
 | `hooks` | `[]` | Hook names this rule instruments; `null` when `hooks_in` is `mc` |
 | `hooks_in` | `inline` | Storage tier: `inline` in the rule list, or `mc` behind a pointer |
 | `custom_events` | `[]` | Categories the application logs itself; never bound as `do_action` hooks |
-| `significant_events` | `[]` | Hooks that get per-callback profiling and are exempt from auto-disable |
+| `significant_events` | `[]` | Hooks that get per-callback profiling and are exempt from auto-disable; `sql` and `http` name the `query` and `pre_http_request` filters their spans cover, and take effect under `log_queries` and `log_http` |
 | `auto_disable_threshold` | `0` | Per-request occurrence count above which auto-tune proposes a disable; 0 is off |
 | `auto_protect_time_threshold` | `0.0` | Mean ms per call at or above which auto-tune promotes a hook to significant; 0.0 is off |
 | `log_http` | `true` | Time every outbound HTTP request as a span |
