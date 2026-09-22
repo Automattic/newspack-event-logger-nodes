@@ -755,8 +755,7 @@ class PerformanceCITest extends TestCase {
 	 * opened from the table answered from the read the table already paid for.
 	 * That memo is what could not fit — the merged index is the count of
 	 * distinct URLs in the window, and a production hub exhausted 512MB inside
-	 * the fold. `raw_row()` now always point-reads the one shard `url_shard()`
-	 * names, which was already the tested fallback whenever the memo was unset.
+	 * the fold. `load_row()` point-reads the one shard `url_shard()` names.
 	 */
 	public function test_one_row_costs_one_shard_not_the_whole_index(): void {
 		$memd  = Core::$memd;
@@ -807,7 +806,7 @@ class PerformanceCITest extends TestCase {
 			$hash => [ 'url' => '/wombat-4471', 'count' => 5, 'timed_count' => 5, 'sum_ms' => 50.0 ],
 		] );
 
-		$row = Performance_CI_Node::load_row_default( $hash, self::live_stores() );
+		$row = Performance_CI_Node::load_row( $hash, self::live_stores() );
 
 		$this->assertNotNull( $row );
 		$this->assertSame( 12, $row['count'], 'the folded hour and the grace hour both counted' );
@@ -833,7 +832,7 @@ class PerformanceCITest extends TestCase {
 		] );
 
 		$this->assertNull(
-			Performance_CI_Node::load_row_default( $hash, self::live_stores() ),
+			Performance_CI_Node::load_row( $hash, self::live_stores() ),
 			'nothing folded it, and the fine tier is not where it is read from'
 		);
 	}
@@ -864,14 +863,14 @@ class PerformanceCITest extends TestCase {
 		$this->seed_url_hour( $store, $hour, $shard, [
 			$hash => [ 'url' => '/wombat-4471', 'count' => 23, 'timed_count' => 23, 'sum_ms' => 460.0 ],
 		] );
-		$this->assertSame( 23, Performance_CI_Node::load_row_default( $hash, self::live_stores() )['count'] );
+		$this->assertSame( 23, Performance_CI_Node::load_row( $hash, self::live_stores() )['count'] );
 
 		// Gone, the way memcache drops an item under pressure.
 		Core::$memd->delete( self::cache_key( 0, Stats_Store::NS_URLS_HOUR . ":{$shard}:{$hour}" ) );
 
 		$this->assertSame(
 			23,
-			Performance_CI_Node::load_row_default( $hash, self::live_stores() )['count'],
+			Performance_CI_Node::load_row( $hash, self::live_stores() )['count'],
 			'the fine buckets answer for an hour that is no longer folded'
 		);
 	}
@@ -924,7 +923,7 @@ class PerformanceCITest extends TestCase {
 			$hash => [ 'url' => '/wombat-4471', 'count' => 5, 'timed_count' => 5, 'sum_ms' => 50.0 ],
 		] );
 
-		$row = Performance_CI_Node::load_row_default( $hash, self::live_stores() );
+		$row = Performance_CI_Node::load_row( $hash, self::live_stores() );
 
 		$this->assertSame( 5, $row['count'], 'the fold replaces its buckets, it does not add to them' );
 	}
@@ -2631,8 +2630,11 @@ class PerformanceCITest extends TestCase {
 		\Newspack_Nodes\Config::reset();
 	}
 
-	/** One `overview` builds the partitions' stores once: the panels it is asked for do not multiply the catalog reads. */
+	/** One `overview` builds the partitions' stores once, whatever panels it is asked for. */
 	public function test_overview_builds_its_stores_once(): void {
+		// A zero read budget leaves the mirror unarmed, so no store resolves a
+		// mirror handle and the catalog reads are the store builds alone.
+		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'min_lifetime' => 86400, 'stats_mirror_read_budget_ms' => 0 ] );
 		$this->activate_shipped_topology( 'performance', 3 );
 		$reads = 0;
 		\add_filter(
@@ -2655,7 +2657,7 @@ class PerformanceCITest extends TestCase {
 
 		$bare = $catalog_reads_of( [] );
 
-		$this->assertGreaterThan( 0, $bare );
+		$this->assertSame( 1, $bare, 'one store build resolves the catalog once' );
 		$this->assertSame(
 			$bare,
 			$catalog_reads_of( [ '--server=web07', '--breakdown=status,method,server', '--categories' ] ),
@@ -4151,7 +4153,7 @@ class PerformanceCITest extends TestCase {
 		}
 		$mirror->flush();
 
-		$row = Performance_CI_Node::load_row_default( $hash, self::live_stores() );
+		$row = Performance_CI_Node::load_row( $hash, self::live_stores() );
 
 		$this->assertNotNull( $row, 'nothing in memcache; the mirror must answer' );
 		$this->assertSame( 41, $row['count'], 'and a spent cache lifetime does not erase the record' );
@@ -4352,7 +4354,7 @@ class PerformanceCITest extends TestCase {
 			'last_updated' => 1711111111,
 		];
 
-		Performance_CI_Node::$load_index = static function ( ?string $shard ) use ( $row ): array {
+		Performance_CI_Node::$load_index = static function ( ?string $shard, array $stores ) use ( $row ): array {
 			return \in_array( $shard, [ '0', '1', '3' ], true ) ? [ $row ] : [];
 		};
 		try {
@@ -4560,7 +4562,7 @@ class PerformanceCITest extends TestCase {
 		$original                        = Performance_CI_Node::$load_index;
 		// Each shard answers for its OWN rows, as the real loader does: a
 		// url_hash lives in exactly one shard (its first hex digit).
-		Performance_CI_Node::$load_index = static function ( ?string $shard ) use ( $rows ): array {
+		Performance_CI_Node::$load_index = static function ( ?string $shard, array $stores ) use ( $rows ): array {
 			return \array_values( \array_filter(
 				$rows,
 				static fn ( array $r ): bool => Stats_Store::url_shard( $r['hash'] ) === $shard

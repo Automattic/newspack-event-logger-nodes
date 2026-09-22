@@ -50,7 +50,7 @@
   <div class="sgrid"><div>0<small></small></div><div>1<small></small></div><div>2<small></small></div><div class="pt">3<small style="background:#fff"></small></div><div>4<small></small></div><div>5<small></small></div><div>6<small></small></div><div>7<small></small></div><div>8<small></small></div><div>9<small></small></div><div>a<small></small></div><div>b<small></small></div><div>c<small></small></div><div>d<small></small></div><div>e<small></small></div><div>f<small></small></div></div>
   <div class="union">
     <div>A url_hash's shard is its first hex digit. Each shard keeps its best <span class="mono">$offset + $limit</span> rows by the sort key and its best <span class="mono">SLOWEST_ROWS</span> by mean (the dark band), then drops the rest before the next shard is read.</div>
-    <div><b style="color:#003DA5">dump_url</b> point-reads the one shard <span class="mono">url_shard()</span> names (dark cell): a sixteenth of the keys, through the same <span class="mono">$read_index</span> seam the table folds, and <span class="mono">raw_row()</span> point-reads the same way.</div>
+    <div><b style="color:#003DA5">dump_url</b> point-reads the one shard <span class="mono">url_shard()</span> names (dark cell): a sixteenth of the keys, through the same <span class="mono">$load_index</span> seam the table folds, and <span class="mono">load_row()</span> point-reads the same way.</div>
     <div class="callout" style="padding:10px 12px"><p><b>No whole-index memo.</b> The merged index counts the DISTINCT URLs in the window, which nothing bounds. Holding it exhausts a production hub's 512 MB inside the fold itself.</p></div>
   </div>
 </div>

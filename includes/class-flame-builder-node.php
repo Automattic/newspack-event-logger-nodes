@@ -2310,9 +2310,13 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	 */
 	private static function rehydrate_seam( \Closure $resolve, int $partition_index, Stats_Store $store ): \Closure {
 		$partition = null;
-		return static function ( array $keys ) use ( $resolve, $partition_index, $store, &$partition ): ?array {
-			// Retried while null: the node may be built after this one.
-			$partition ??= $resolve();
+		$resolved  = false;
+		return static function ( array $keys ) use ( $resolve, $partition_index, $store, &$partition, &$resolved ): ?array {
+			// Once, absence included: an undeclared mirror is not re-sought.
+			if ( ! $resolved ) {
+				$partition = $resolve();
+				$resolved  = true;
+			}
 			if ( null === $partition ) {
 				return null;
 			}

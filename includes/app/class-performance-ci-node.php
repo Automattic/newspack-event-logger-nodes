@@ -239,7 +239,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * real code (mirrors `Insights_CI_Demo_Node::$read_items`).
 	 *
 	 * It takes the SHARD, so a point read goes through it too. A seam that
-	 * cannot express one forces `raw_row()` to branch on the seam's presence,
+	 * cannot express one forces `row()` to branch on the seam's presence,
 	 * and the narrowing this exists to measure never runs under it.
 	 *
 	 * Resolved on every read through `read_index()`; reassign in a test
@@ -332,18 +332,18 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * omits its redundant per-server copy, so keep that dimension global while a
 	 * server scope narrows every other dimension.
 	 *
-	 * @param array<int,Stats_Store> $stores    One per flame-builder partition.
 	 * @param string                 $dimension One of DIMENSIONS.
 	 * @param string                 $server    Server scope; ignored for the `server` dimension.
+	 * @param array<int,Stats_Store> $stores    Stores the caller resolved once.
 	 * @return array<array-key,mixed> Bucket keys derive from decoded memcache blobs.
 	 */
-	private static function merge_dim_across_partitions( array $stores, string $dimension, string $server ): array {
+	private static function merge_dim_across_partitions( string $dimension, string $server, array $stores ): array {
 		$store_server = 'server' === $dimension ? '' : $server;
 		return self::merged_across_stores(
-			$stores,
 			static fn ( Stats_Store $store, array $buckets ): array => $store->get_dimensional_buckets( $dimension, $buckets, $store_server ),
 			Stats_Store::DIM_SUMS,
-			Stats_Store::DIM_COUNT
+			Stats_Store::DIM_COUNT,
+			$stores
 		);
 	}
 
@@ -351,32 +351,32 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * Sum-merge category buckets across all partitions, for one reporting
 	 * server or, with '', for the site.
 	 *
-	 * @param array<int,Stats_Store> $stores One per flame-builder partition.
 	 * @param string                 $server Server scope; '' merges every server.
+	 * @param array<int,Stats_Store> $stores Stores the caller resolved once.
 	 * @return array<string,mixed>
 	 */
-	private static function merge_categories_across_partitions( array $stores, string $server = '' ): array {
+	private static function merge_categories_across_partitions( string $server, array $stores ): array {
 		return self::merged_across_stores(
-			$stores,
 			static fn ( Stats_Store $store, array $buckets ): array => $store->get_category_buckets( $buckets, $server ),
 			Stats_Store::CAT_SUMS,
-			Stats_Store::CAT_REQUESTS
+			Stats_Store::CAT_REQUESTS,
+			$stores
 		);
 	}
 
 	/**
 	 * Sum-merge per-URL category buckets for one hash.
 	 *
-	 * @param array<int,Stats_Store> $stores One per flame-builder partition.
 	 * @param string                 $hash   12-char URL hash.
+	 * @param array<int,Stats_Store> $stores Stores the caller resolved once.
 	 * @return array<string,mixed>
 	 */
-	private static function merge_url_categories( array $stores, string $hash ): array {
+	private static function merge_url_categories( string $hash, array $stores ): array {
 		return self::merged_across_stores(
-			$stores,
 			static fn ( Stats_Store $store, array $buckets ): array => $store->get_url_category_buckets( $hash, $buckets ),
 			Stats_Store::CAT_SUMS,
-			Stats_Store::CAT_REQUESTS
+			Stats_Store::CAT_REQUESTS,
+			$stores
 		);
 	}
 
@@ -390,7 +390,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * (decision 15). Nothing here touches the URL index, which is what keeps a
 	 * filtered poll to ONE fan-out across the retention window.
 	 *
-	 * @param array<int,Stats_Store> $stores One per flame-builder partition.
+	 * @param array<int,Stats_Store> $stores Stores the caller resolved once.
 	 * @return array<string,mixed>
 	 */
 	private static function build_overview_payload( array $stores ): array {
@@ -416,7 +416,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	/**
 	 * Sum-merge per-partition hourly buckets into one sorted time_series.
 	 *
-	 * @param array<int,Stats_Store> $stores One per flame-builder partition.
+	 * @param array<int,Stats_Store> $stores Stores the caller resolved once.
 	 * @return array<int,mixed>
 	 */
 	private static function merge_hourly_across_partitions( array $stores ): array {
@@ -713,7 +713,6 @@ class Performance_CI_Node extends Service_CI_Node {
 	private function ask_overview( string $server, array $filters ): array {
 		$stores = self::stats_stores();
 		$page   = $this->url_page(
-			$stores,
 			$server,
 			Core::as_string( $filters['search'] ?? '' ),
 			(bool) ( $filters['errors_only'] ?? false ),
@@ -721,7 +720,8 @@ class Performance_CI_Node extends Service_CI_Node {
 			'count',
 			'desc',
 			0,
-			self::OVERVIEW_BRIEF_URLS
+			self::OVERVIEW_BRIEF_URLS,
+			$stores
 		);
 
 		return Ask_Assembler::for_overview(
@@ -730,7 +730,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				'totals' => ( '' === $server || $page['has_split'] ) ? $page['totals'] : null,
 				'data'   => $page['data'],
 			],
-			self::build_leaderboard( $stores, $server ),
+			self::build_leaderboard( $server, $stores ),
 			$server,
 			$filters
 		);
@@ -783,18 +783,18 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * `avg_ms`, loses nothing. `rows` and `totals` accumulate across shards and
 	 * stay site-wide (decision 15).
 	 *
-	 * @param array<int,Stats_Store> $stores  One per flame-builder partition.
-	 * @param string $server Reporting server to scope to; '' reads every server.
-	 * @param string $search Case-insensitive URL substring; '' matches all.
-	 * @param bool   $errors Keep only rows with unclassified requests.
-	 * @param bool   $workers Keep worker traffic (the default excludes it).
-	 * @param string $sort   A URL_SORTS field.
-	 * @param string $order  'asc' or 'desc'.
-	 * @param int    $offset Page offset.
-	 * @param int    $limit  Page size.
+	 * @param string                 $server  Reporting server to scope to; '' reads every server.
+	 * @param string                 $search  Case-insensitive URL substring; '' matches all.
+	 * @param bool                   $errors  Keep only rows with unclassified requests.
+	 * @param bool                   $workers Keep worker traffic (the default excludes it).
+	 * @param string                 $sort    A URL_SORTS field.
+	 * @param string                 $order   'asc' or 'desc'.
+	 * @param int                    $offset  Page offset.
+	 * @param int                    $limit   Page size.
+	 * @param array<int,Stats_Store> $stores  Stores the caller resolved once.
 	 * @return array{data:array<int,array<array-key,mixed>>,rows:int,totals:array<string,mixed>,slowest:array<int,array<array-key,mixed>>,has_split:bool}
 	 */
-	private function url_page( array $stores, string $server, string $search, bool $errors, bool $workers, string $sort, string $order, int $offset, int $limit ): array {
+	private function url_page( string $server, string $search, bool $errors, bool $workers, string $sort, string $order, int $offset, int $limit, array $stores ): array {
 		$term      = '' === $search ? '' : \strtolower( $search );
 		$page_keep = \max( 0, $offset ) + \max( 0, $limit );
 		$ranked    = [];
@@ -992,17 +992,17 @@ class Performance_CI_Node extends Service_CI_Node {
 	/**
 	 * Sum-merge per-URL dimensional buckets for one dim/hash.
 	 *
-	 * @param array<int,Stats_Store> $stores    One per flame-builder partition.
 	 * @param string                 $hash      12-char URL hash.
 	 * @param string                 $dimension One of DIMENSIONS.
+	 * @param array<int,Stats_Store> $stores    Stores the caller resolved once.
 	 * @return array<array-key,mixed> Bucket keys derive from decoded memcache blobs.
 	 */
-	private static function merge_url_dim( array $stores, string $hash, string $dimension ): array {
+	private static function merge_url_dim( string $hash, string $dimension, array $stores ): array {
 		return self::merged_across_stores(
-			$stores,
 			static fn ( Stats_Store $store, array $buckets ): array => $store->get_url_dimension_buckets( $hash, $dimension, $buckets ),
 			Stats_Store::DIM_SUMS,
-			Stats_Store::DIM_COUNT
+			Stats_Store::DIM_COUNT,
+			$stores
 		);
 	}
 
@@ -1011,13 +1011,13 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * rows summed into the buckets under one field table, the values nothing
 	 * measured dropped once at the end, and the buckets sorted.
 	 *
-	 * @param array<int,Stats_Store>                                        $stores      One per flame-builder partition, built once per verb.
 	 * @param callable(Stats_Store, array<int,string>): array<string,mixed> $rows_of     A store's rows for the series, over the read window.
 	 * @param array<int|string,bool>                                        $fields      Field table for the sum.
 	 * @param int                                                           $count_field The entry index a value's request count sits at.
+	 * @param array<int,Stats_Store>                                        $stores      Stores the caller resolved once.
 	 * @return array<string,array<array-key,mixed>> Bucket key => value name => summed entry.
 	 */
-	private static function merged_across_stores( array $stores, callable $rows_of, array $fields, int $count_field ): array {
+	private static function merged_across_stores( callable $rows_of, array $fields, int $count_field, array $stores ): array {
 		$merged  = [];
 		$buckets = self::read_window();
 		foreach ( $stores as $store ) {
@@ -1140,7 +1140,7 @@ class Performance_CI_Node extends Service_CI_Node {
 			}
 			return $brief;
 		}
-		$url = self::url_in_context( $context );
+		$url = self::url_in_context( $context, self::stats_stores() );
 		if ( null === $url ) {
 			throw new \RuntimeException( \esc_html( 'a span needs its request or its URL for context' ) );
 		}
@@ -1245,7 +1245,8 @@ class Performance_CI_Node extends Service_CI_Node {
 				return $brief;
 			}
 		}
-		$url = self::url_in_context( $context );
+		$stores = self::stats_stores();
+		$url    = self::url_in_context( $context, $stores );
 		if ( null !== $url && null !== $url['aggregate'] ) {
 			$brief = Ask_Assembler::for_url_category( Core::arr( $url['aggregate']['profiles'] ?? null ), $name, $url['name'] );
 			if ( null !== $brief ) {
@@ -1253,7 +1254,7 @@ class Performance_CI_Node extends Service_CI_Node {
 			}
 		}
 		// The card this is asked from renders the same scoped board.
-		$board      = self::build_leaderboard( self::stats_stores(), $server );
+		$board      = self::build_leaderboard( $server, $stores );
 		$categories = \is_array( $board['categories'] ?? null ) ? $board['categories'] : [];
 		$brief      = Ask_Assembler::for_category( $categories, $name, $server );
 		if ( null === $brief ) {
@@ -1275,16 +1276,16 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * blob to answer with. The aggregate keeps no per-server split, so no
 	 * server narrows this.
 	 *
-	 * @param list<string> $context Container descriptors.
+	 * @param list<string>           $context Container descriptors.
+	 * @param array<int,Stats_Store> $stores  Stores the caller resolved once.
 	 * @return array{descriptor:string, hash:string, name:string, aggregate:?array<array-key,mixed>}|null
 	 */
-	private static function url_in_context( array $context ): ?array {
+	private static function url_in_context( array $context, array $stores ): ?array {
 		$descriptor = self::descriptor_of( $context, 'url' );
 		$parsed     = Ask_Assembler::parse_descriptor( $descriptor );
 		if ( null === $parsed ) {
 			return null;
 		}
-		$stores    = self::stats_stores();
 		$aggregate = self::find_url_aggregate( $parsed['id'], $stores );
 		return [
 			'descriptor' => $descriptor,
@@ -1299,7 +1300,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * last_modified — from whichever flame-builder partition holds it.
 	 *
 	 * @param string                 $hash   12-char URL hash.
-	 * @param array<int,Stats_Store> $stores One per flame-builder partition.
+	 * @param array<int,Stats_Store> $stores Stores the caller resolved once.
 	 * @return array<array-key,mixed>|null Null when no partition holds one.
 	 */
 	private static function find_url_aggregate( string $hash, array $stores ): ?array {
@@ -1318,11 +1319,11 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * thing separating them, and the window is read in ONE round trip per store
 	 * rather than one per bucket across hundreds of them.
 	 *
-	 * @param array<int,Stats_Store> $stores One per flame-builder partition.
 	 * @param string                 $server Server to scope to; '' builds the global board.
+	 * @param array<int,Stats_Store> $stores Stores the caller resolved once.
 	 * @return array<string,mixed>
 	 */
-	private static function build_leaderboard( array $stores, string $server = '' ): array {
+	private static function build_leaderboard( string $server, array $stores ): array {
 		$count        = 0;
 		$sum_req_time = 0.0;
 		$sums         = [];
@@ -1719,11 +1720,11 @@ class Performance_CI_Node extends Service_CI_Node {
 	 *
 	 * @param string                 $hash   12-char URL hash.
 	 * @param string                 $server Reporting server to scope to; '' reads every server.
-	 * @param array<int,Stats_Store> $stores One per flame-builder partition.
+	 * @param array<int,Stats_Store> $stores Stores the caller resolved once.
 	 * @return array<array-key,mixed>|null
 	 */
 	private function row( string $hash, string $server, array $stores ): ?array {
-		$raw = $this->raw_row( $hash, $stores );
+		$raw = self::load_row( $hash, $stores );
 		if ( null === $raw ) {
 			return null;
 		}
@@ -1850,18 +1851,6 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * One URL's unscoped merged row: a POINT READ of the shard its hash names,
-	 * never the whole index.
-	 *
-	 * @param string                 $hash   12-char URL hash.
-	 * @param array<int,Stats_Store> $stores One per flame-builder partition.
-	 * @return array<array-key,mixed>|null The merged row, or null when absent.
-	 */
-	private function raw_row( string $hash, array $stores ): ?array {
-		return self::load_row_default( $hash, $stores );
-	}
-
-	/**
 	 * One URL's merged row, read from the ONE shard its hash names.
 	 *
 	 * `Stats_Store::url_shard()` is the first hex digit of the hash, so a single
@@ -1874,10 +1863,10 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * and a job-only URL still opens.
 	 *
 	 * @param string                 $hash   12-char URL hash.
-	 * @param array<int,Stats_Store> $stores One per flame-builder partition.
+	 * @param array<int,Stats_Store> $stores Stores the caller resolved once.
 	 * @return array<array-key,mixed>|null The merged row, or null when absent.
 	 */
-	public static function load_row_default( string $hash, array $stores ): ?array {
+	public static function load_row( string $hash, array $stores ): ?array {
 		foreach ( [ false, true ] as $worker ) {
 			$found = self::row_in_shard( $hash, Stats_Store::url_shard( $hash, $worker ), $stores );
 			if ( null !== $found ) {
@@ -2457,19 +2446,19 @@ class Performance_CI_Node extends Service_CI_Node {
 				\assert( $self instanceof self );
 				$stores                        = self::stats_stores();
 				$payload                       = self::build_overview_payload( $stores );
-				$payload['global_leaderboard'] = self::build_leaderboard( $stores, $server );
+				$payload['global_leaderboard'] = self::build_leaderboard( $server, $stores );
 
 				// One key per dimension ASKED for, whatever the count.
 				if ( '' !== $breakdown ) {
 					$payload['breakdowns'] = [];
 					foreach ( \array_map( 'trim', \explode( ',', $breakdown ) ) as $dim ) {
 						self::assert_dimension( $dim );
-						$payload['breakdowns'][ $dim ] = self::merge_dim_across_partitions( $stores, $dim, $server );
+						$payload['breakdowns'][ $dim ] = self::merge_dim_across_partitions( $dim, $server, $stores );
 					}
 				}
 
 				if ( $categories ) {
-					$payload['category_time_series'] = self::compact_category_series( self::merge_categories_across_partitions( $stores, $server ) );
+					$payload['category_time_series'] = self::compact_category_series( self::merge_categories_across_partitions( $server, $stores ) );
 				}
 
 				return $payload;
@@ -2509,7 +2498,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				}
 
 				\assert( $self instanceof self );
-				$page = $self->url_page( self::stats_stores(), $server, $search, $errors, $workers, $sort, $order, $offset, $limit );
+				$page = $self->url_page( $server, $search, $errors, $workers, $sort, $order, $offset, $limit, self::stats_stores() );
 
 				return [
 					'data'    => $page['data'],
@@ -2598,11 +2587,11 @@ class Performance_CI_Node extends Service_CI_Node {
 
 				$breakdown = (string) ( $opts['breakdown'] ?? '' );
 				if ( '' !== $breakdown && \in_array( $breakdown, self::DIMENSIONS, true ) ) {
-					$payload['breakdown_time_series'] = self::merge_url_dim( $stores, $hash, $breakdown );
+					$payload['breakdown_time_series'] = self::merge_url_dim( $hash, $breakdown, $stores );
 				}
 
 				if ( self::flag( $opts, 'categories' ) ) {
-					$payload['category_time_series'] = self::compact_category_series( self::merge_url_categories( $stores, $hash ) );
+					$payload['category_time_series'] = self::compact_category_series( self::merge_url_categories( $hash, $stores ) );
 				}
 
 				return $payload;
@@ -2628,7 +2617,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				}
 				$breakdown = (string) ( $parsed['options']['breakdown'] ?? '' );
 				self::assert_dimension( $breakdown );
-				return [ 'breakdown_time_series' => self::merge_url_dim( self::stats_stores(), $hash, $breakdown ) ];
+				return [ 'breakdown_time_series' => self::merge_url_dim( $hash, $breakdown, self::stats_stores() ) ];
 					},
 				],
 				[

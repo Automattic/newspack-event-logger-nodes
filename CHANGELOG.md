@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for that state now carries a `log_transport` proposal whose field is
   `log_queries` or `log_http`, so the dashboards render it; a row without an
   action showed its detail alone.
+- **A mirror no topology declares is looked for once.** The reader's
+  rehydrate seam retried the resolution while it came back empty, so a
+  `stats_mirror_node` no active topology carries paid a catalog walk on
+  every bucket miss of every poll.
 
 ### Changed
 - **Every `App\Core` callback asks `Log_Manager::started_instance()`**,
@@ -35,9 +39,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`Flame_Tree` owns the listener span's name**: `listener_name()` mints it
   and `is_listener_span()` reads it, beside the other span classifiers.
 - **A verb builds its partition stores once.** `overview` handed each panel
-  its own store build, ten per poll with every breakdown asked for; the
-  merges now take the list the verb built, and `dump_url` and
-  `url_breakdown` do the same.
+  its own store build, ten per poll with every breakdown asked for, and
+  `dump_url` paid five; the merges and the row loaders now take the list
+  their verb built, and the ask briefs pay one build too.
 
 ## [0.101.0] - 2026-09-21
 
