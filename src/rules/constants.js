@@ -23,10 +23,10 @@
  * the `mc` tier and a real list with `inline`. Which tier a saved rule lands in
  * is `Rule_Set`'s call, re-derived from the hook count on every save.
  *
- * The instrumentation flags carry `Rule`'s own defaults. HTTP spans cost two
- * entries per outbound call and stay on; query spans cost two per query and
- * need SAVEQUERIES, and the provenance knobs buy a backtrace at hook firings,
- * so a draft asks for none of the three.
+ * Every diagnostic starts off, as it does on a stored rule that says nothing
+ * about it: HTTP spans cost two entries per outbound call, query spans two
+ * per query and need SAVEQUERIES, plugin loads two per site-activated plugin,
+ * and the provenance knobs buy a backtrace at hook firings.
  *
  * @type {Object}
  */
@@ -41,8 +41,8 @@ export const BLANK_RULE = {
 	hooks: [],
 	hooks_in: 'inline',
 	log_queries: false,
-	log_http: true,
-	log_plugin_loads: true,
+	log_http: false,
+	log_plugin_loads: false,
 	trace_hooks: false,
 	trace_callers: 0,
 };

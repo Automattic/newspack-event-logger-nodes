@@ -14,6 +14,7 @@
 
 namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\CoversClass;
 use Newspack_Event_Logger_Nodes\Config;
 use Newspack_Event_Logger_Nodes\Log_Manager;
@@ -646,19 +647,22 @@ class LogManagerTest extends TestCase {
 		$this->assertNotEmpty( $rid );
 	}
 
-	public function test_worker_type_tagging(): void {
+	/** A worker process names itself and its partition as two entries of their own, not as environment. */
+	public function test_a_worker_process_logs_its_type_and_partition_as_entries(): void {
 		$this->require_config_or_skip();
-		Log_Manager::reset();
-		Config::reset();
+		$this->rmdir_recursive( self::TEST_DIR );
+		$this->set_rules_option( [ [ 'id' => 'all', 'pattern' => '/', 'action' => 'log', 'hooks' => [ 'wp' ] ] ] );
+		$_SERVER['REQUEST_URI']                     = '/wp-cron.php';
+		$_SERVER['NEWSPACK_NODES_WORKER_TYPE']      = 'reconcile-731';
+		$_SERVER['NEWSPACK_NODES_WORKER_PARTITION'] = '2';
+		$lm = $this->fresh_log_manager();
+		$lm->start( 'noop' );
+		$lm->finish();
+		unset( $_SERVER['NEWSPACK_NODES_WORKER_TYPE'], $_SERVER['NEWSPACK_NODES_WORKER_PARTITION'] );
 
-		$_SERVER['NEWSPACK_NODES_WORKER_TYPE'] = 'test_worker';
-		$lm = Log_Manager::instance();
-		$lm->start( 'work' );
-		$lm->complete( 'work' );
-
-		// If no exception, worker type was handled.
-		$this->assertTrue( true );
-		unset( $_SERVER['NEWSPACK_NODES_WORKER_TYPE'] );
+		$this->assertSame( 'reconcile-731', $this->find_last_entry( 'worker_type' )['m'] ?? null, 'the env var outranks the path' );
+		$this->assertSame( 2, $this->find_last_entry( 'worker_partition' )['m'] ?? null );
+		$this->assertArrayNotHasKey( 'worker_type', $this->find_last_entry( 'process (start)' ) );
 	}
 
 	// ── Governing rule resolution ────────────────────────────────────────────
@@ -696,6 +700,50 @@ class LogManagerTest extends TestCase {
 		$this->assertFalse( $lm->is_started() );
 		$this->assertNull( $lm->governing_rule() );
 		$this->assertSame( '', $lm->governing_rule_id() );
+	}
+
+	/** @return array<string,array{string,string}> Request URI, the worker type its process (start) carries. */
+	public static function platform_endpoints(): array {
+		return [
+			'cron'     => [ '/wp-cron.php?doing_wp_cron=1790000000.5', 'cron' ],
+			'command'  => [ '/wp-json/newspack-nodes/v1/command', 'command' ],
+			'log'      => [ '/wp-json/newspack-nodes/v1/log/stream?since=12', 'stream' ],
+			'messages' => [ '/wp-json/newspack-nodes/v1/messages/stream', 'stream' ],
+			'spawn'    => [ '/wp-json/newspack-nodes/v1/workers/spawn', 'spawn' ],
+		];
+	}
+
+	/**
+	 * The platform's own requests to itself — the cron loopback and the
+	 * substrate's endpoints — are worker traffic whether or not the substrate
+	 * set its env var, so a rule that logs them keeps them off the global rows.
+	 */
+	#[DataProvider( 'platform_endpoints' )]
+	public function test_the_platforms_own_endpoints_log_as_worker_traffic( string $uri, string $worker_type ): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::TEST_DIR );
+		$this->set_rules_option( [ [ 'id' => 'all', 'pattern' => '/', 'action' => 'log', 'hooks' => [ 'wp' ] ] ] );
+		$_SERVER['REQUEST_URI'] = $uri;
+		unset( $_SERVER['NEWSPACK_NODES_WORKER_TYPE'] );
+		$lm = $this->fresh_log_manager();
+		$lm->start( 'noop' );
+		$lm->finish();
+
+		$this->assertSame( $worker_type, $this->find_last_entry( 'worker_type' )['m'] ?? null );
+		$this->assertNull( $this->find_last_entry( 'worker_partition' ) );
+	}
+
+	public function test_an_ordinary_page_carries_no_worker_type(): void {
+		$this->require_config_or_skip();
+		$this->rmdir_recursive( self::TEST_DIR );
+		$this->set_rules_option( [ [ 'id' => 'all', 'pattern' => '/', 'action' => 'log', 'hooks' => [ 'wp' ] ] ] );
+		$_SERVER['REQUEST_URI'] = '/wp-json/wp/v2/pages/867431';
+		unset( $_SERVER['NEWSPACK_NODES_WORKER_TYPE'] );
+		$lm = $this->fresh_log_manager();
+		$lm->start( 'noop' );
+		$lm->finish();
+
+		$this->assertNull( $this->find_last_entry( 'worker_type' ) );
 	}
 
 	/**
@@ -1449,9 +1497,9 @@ class LogManagerTest extends TestCase {
 		$this->assertArrayNotHasKey( 'SOME_API_KEY', $env, 'KEY-substring keys must be filtered' );
 		$this->assertArrayNotHasKey( 'CUSTOM_NICE_VAR', $env, 'non-curated keys must be dropped' );
 
-		// Worker-identity keys are allowlisted so worker requests stay taggable.
-		$this->assertSame( 'combined', $env['NEWSPACK_NODES_WORKER_TYPE'] ?? null, 'worker type must be curated' );
-		$this->assertSame( '0', $env['NEWSPACK_NODES_WORKER_PARTITION'] ?? null, 'worker partition must be curated' );
+		// Worker identity is its own pair of entries, not environment.
+		$this->assertArrayNotHasKey( 'NEWSPACK_NODES_WORKER_TYPE', $env );
+		$this->assertArrayNotHasKey( 'NEWSPACK_NODES_WORKER_PARTITION', $env );
 
 		// HTTP_REFERER present and redacted at the value layer.
 		$this->assertArrayHasKey( 'HTTP_REFERER', $env );
@@ -1723,15 +1771,14 @@ class LogManagerTest extends TestCase {
 		);
 	}
 
-	public function test_a_rule_silent_about_plugin_loads_still_logs_them(): void {
-		// Every stored rule predates the flag, so silence keeps meaning what it
-		// meant — the rule `log_http` already follows.
+	public function test_a_rule_silent_about_plugin_loads_logs_none(): void {
+		// Every diagnostic is an opt-in; a rule that says nothing has it off.
 		$this->require_config_or_skip();
-		$this->assertTrue(
+		$this->assertFalse(
 			$this->opened_a_plugin_span( $this->flush_plugin_row_under_rule(
 				[ 'id' => 'r', 'pattern' => '/', 'action' => 'log' ]
 			) ),
-			'silence still logs them'
+			'silence logs none'
 		);
 	}
 

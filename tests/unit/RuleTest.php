@@ -56,15 +56,12 @@ final class RuleTest extends TestCase {
 		// Query spans need SAVEQUERIES and cost two entries per query, so a
 		// rule that says nothing gets none.
 		$this->assertFalse( $rule->log_queries );
-		// Outbound HTTP is two entries per REQUEST, not per query, and it was
-		// unconditional before it was a flag — so silence has to keep meaning
-		// what it meant, and only an explicit false turns it off.
-		$this->assertTrue( $rule->log_http );
-		$this->assertFalse( Rule::from_array( [ 'id' => 'd5', 'pattern' => '/y', 'action' => 'log', 'log_http' => false ] )->log_http );
-		// Plugin loads were unconditional before they were a flag, and every
-		// stored rule predates it, so silence keeps meaning what it meant.
-		$this->assertTrue( $rule->log_plugin_loads );
-		$this->assertFalse( Rule::from_array( [ 'id' => 'd6', 'pattern' => '/z', 'action' => 'log', 'log_plugin_loads' => false ] )->log_plugin_loads );
+		// Every diagnostic is an opt-in: a rule that says nothing about a flag
+		// has it off, a stored rule that predates the flag included.
+		$this->assertFalse( $rule->log_http );
+		$this->assertTrue( Rule::from_array( [ 'id' => 'd5', 'pattern' => '/y', 'action' => 'log', 'log_http' => true ] )->log_http );
+		$this->assertFalse( $rule->log_plugin_loads );
+		$this->assertTrue( Rule::from_array( [ 'id' => 'd6', 'pattern' => '/z', 'action' => 'log', 'log_plugin_loads' => true ] )->log_plugin_loads );
 		// A backtrace per hook firing is a diagnostic, not a default.
 		$this->assertFalse( $rule->trace_hooks );
 		$this->assertSame( 0, $rule->trace_callers );

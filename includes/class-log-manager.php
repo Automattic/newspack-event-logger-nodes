@@ -75,6 +75,12 @@ class Log_Manager {
 	/** The category whose `m` is the curated $_SERVER map `log_environment()` writes. */
 	public const ENVIRONMENT = 'environment_v3';
 
+	/** Category of the entry naming the worker a request runs in; its `m` is the type. */
+	public const WORKER_TYPE = 'worker_type';
+
+	/** Category of the entry naming the worker's partition; its `m` is the integer. */
+	public const WORKER_PARTITION = 'worker_partition';
+
 	/** @var int Bytes-to-megabytes divisor. */
 	private const BYTES_PER_MB = 1024 * 1024;
 
@@ -115,8 +121,6 @@ class Log_Manager {
 		'HTTP_X_TCP_RTT_MIN',
 		'HTTP_X_VALID_CERTIFICATE',
 		'HTTP_X_WPLOGIN',
-		'NEWSPACK_NODES_WORKER_PARTITION',
-		'NEWSPACK_NODES_WORKER_TYPE',
 		'REMOTE_ADDR',
 		'REMOTE_PORT',
 		'REQUEST_SCHEME',
@@ -229,6 +233,23 @@ class Log_Manager {
 	private $times = [];
 	/** @var \Newspack_Nodes\Topic_Node|null The firehose Topic; null until init_firehose() runs. */
 	private $topic = null;
+
+	/**
+	 * The platform's requests to itself, by path: the cron loopback and the
+	 * substrate's own endpoints. Each is worker traffic whether or not the
+	 * substrate set `NEWSPACK_NODES_WORKER_TYPE` in the serving process, and
+	 * the value is what the `worker_type` entry carries, so a rule that logs
+	 * one keeps it on the worker rows and off the global averages.
+	 *
+	 * @var array<string,string>
+	 */
+	private const PLATFORM_WORKERS = [
+		'/wp-cron.php'                                  => 'cron',
+		'/wp-json/newspack-nodes/v1/command'            => 'command',
+		'/wp-json/newspack-nodes/v1/log/stream'         => 'stream',
+		'/wp-json/newspack-nodes/v1/messages/stream'    => 'stream',
+		'/wp-json/newspack-nodes/v1/workers/spawn'      => 'spawn',
+	];
 
 	/**
 	 * Resolve this request's context and start logging when a rule allows it.
@@ -1068,11 +1089,6 @@ class Log_Manager {
 		$process_hr   = $this->request_time ?? \hrtime( true );
 		$process_data = [ 'm' => \getmypid() . ' on ' . \gethostname() . ', WordPress ' . \get_bloginfo( 'version' ), 'l' => '' ];
 
-		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Sanitized immediately below.
-		$worker_type = \sanitize_text_field( Core::as_string( $_SERVER['NEWSPACK_NODES_WORKER_TYPE'] ?? '' ) );
-		if ( '' !== $worker_type ) {
-			$process_data['worker_type'] = $worker_type;
-		}
 		if ( null !== $this->request_ts ) {
 			$process_data['ts'] = $this->request_ts;
 		}
@@ -1080,6 +1096,7 @@ class Log_Manager {
 
 		$this->message( self::REQUEST_START, $process_data );
 		$this->times[] = [ 'label' => self::REQUEST_LABEL, 'ts' => $process_hr ];
+		$this->log_worker();
 
 		$method       = \is_string( $_SERVER['REQUEST_METHOD'] ?? null ) ? \sanitize_text_field( \wp_unslash( $_SERVER['REQUEST_METHOD'] ) ) : 'CLI';
 		$server_name  = \is_string( $_SERVER['SERVER_NAME'] ?? null ) ? \sanitize_text_field( \wp_unslash( $_SERVER['SERVER_NAME'] ) ) : '';
@@ -1164,6 +1181,28 @@ class Log_Manager {
 		}
 		if ( ! empty( $env ) ) {
 			$this->message( self::ENVIRONMENT, [ 'm' => $env ] );
+		}
+	}
+
+	/**
+	 * Name the worker this request runs in, as two entries of its own. The
+	 * substrate's env var wins; a platform request without one is named by
+	 * its path; a page writes neither.
+	 */
+	private function log_worker(): void {
+		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Sanitized immediately below.
+		$worker_type = \sanitize_text_field( Core::as_string( $_SERVER['NEWSPACK_NODES_WORKER_TYPE'] ?? '' ) );
+		if ( '' === $worker_type ) {
+			$worker_type = self::platform_worker_type( $this->request_url );
+		}
+		if ( '' === $worker_type ) {
+			return;
+		}
+		$this->message( self::WORKER_TYPE, [ 'm' => $worker_type ] );
+		if ( isset( $_SERVER['NEWSPACK_NODES_WORKER_PARTITION'] ) ) {
+			// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Sanitized on the same line.
+			$partition = \sanitize_text_field( Core::as_string( $_SERVER['NEWSPACK_NODES_WORKER_PARTITION'] ) );
+			$this->message( self::WORKER_PARTITION, [ 'm' => Core::num_int( $partition ) ] );
 		}
 	}
 
@@ -1263,6 +1302,17 @@ class Log_Manager {
 	 */
 	public static function redact_url( string $url ): string {
 		return \preg_replace( self::URL_REDACT_PATTERN, '$1$2=[REDACTED]', $url ) ?? $url;
+	}
+
+	/**
+	 * The worker type a request URL names by its path, or '' for a page.
+	 *
+	 * @param string $url The request URI, query and all.
+	 * @return string One of `PLATFORM_WORKERS`' values, or ''.
+	 */
+	private static function platform_worker_type( string $url ): string {
+		$path = \wp_parse_url( $url, PHP_URL_PATH );
+		return self::PLATFORM_WORKERS[ \is_string( $path ) ? $path : '' ] ?? '';
 	}
 
 	/**

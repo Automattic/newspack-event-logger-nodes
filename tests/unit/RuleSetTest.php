@@ -115,6 +115,18 @@ final class RuleSetTest extends TestCase {
 		$this->assertSame( [ 'init', 'wp' ], $rule->hooks );
 	}
 
+	/** The shipped seed names no diagnostic, and a rule that names none has none. */
+	public function test_the_shipped_seed_logs_with_every_diagnostic_off(): void {
+		$rule = Rule_Set::load()->rules()[0];
+
+		$this->assertSame( '/', $rule->pattern );
+		$this->assertTrue( $rule->is_log() );
+		$this->assertFalse( $rule->log_queries );
+		$this->assertFalse( $rule->log_http );
+		$this->assertFalse( $rule->log_plugin_loads );
+		$this->assertFalse( $rule->trace_hooks );
+	}
+
 	public function test_a_corrupt_option_seeds_from_the_config_layers_beneath_it(): void {
 		// The overlay hands a corrupt option straight back, so the seed must
 		// read BENEATH it or the site logs nothing.

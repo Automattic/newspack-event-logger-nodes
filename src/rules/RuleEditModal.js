@@ -109,10 +109,9 @@ export default function RuleEditModal( {
 		String( rule?.auto_protect_time_threshold ?? 0 )
 	);
 	const [ logQueries, setLogQueries ] = useState( !! rule?.log_queries );
-	// Absent means ON: only an explicit false retires the HTTP spans.
-	const [ logHttp, setLogHttp ] = useState( rule?.log_http ?? true );
+	const [ logHttp, setLogHttp ] = useState( !! rule?.log_http );
 	const [ logPluginLoads, setLogPluginLoads ] = useState(
-		rule?.log_plugin_loads ?? true
+		!! rule?.log_plugin_loads
 	);
 	const [ traceHooks, setTraceHooks ] = useState( !! rule?.trace_hooks );
 	const [ traceCallers, setTraceCallers ] = useState(
@@ -330,6 +329,7 @@ export default function RuleEditModal( {
 						</div>
 
 						<CheckboxControl
+							name="rule-log-queries"
 							__nextHasNoMarginBottom
 							label={ __(
 								'Log database queries',

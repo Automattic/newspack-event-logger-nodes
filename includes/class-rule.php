@@ -73,8 +73,8 @@ final class Rule {
 		public readonly ?array $hooks = [],
 		public readonly string $hooks_in = self::HOOKS_INLINE,
 		public readonly bool $log_queries = false,
-		public readonly bool $log_http = true,
-		public readonly bool $log_plugin_loads = true,
+		public readonly bool $log_http = false,
+		public readonly bool $log_plugin_loads = false,
 		public readonly bool $trace_hooks = false,
 		public readonly int $trace_callers = 0
 	) {
@@ -181,9 +181,8 @@ final class Rule {
 			null === $hooks ? null : self::to_string_list( $hooks ),
 			( self::HOOKS_MC === ( $a['hooks_in'] ?? '' ) ) ? self::HOOKS_MC : self::HOOKS_INLINE,
 			! empty( $a['log_queries'] ),
-			// Absent means ON: only an explicit false retires a live span.
-			! \array_key_exists( 'log_http', $a ) || ! empty( $a['log_http'] ),
-			! \array_key_exists( 'log_plugin_loads', $a ) || ! empty( $a['log_plugin_loads'] ),
+			! empty( $a['log_http'] ),
+			! empty( $a['log_plugin_loads'] ),
 			! empty( $a['trace_hooks'] ),
 			self::to_trace_count( $a['trace_callers'] ?? 0 )
 		);

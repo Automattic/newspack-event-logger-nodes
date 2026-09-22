@@ -7,7 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.101.0] - 2026-09-21
+
 ### Added
+- **A worker names itself in two entries of its own**, `worker_type` and
+  `worker_partition`, written right after `process (start)`; the request
+  builder reads the first to mark the request and name its URL row, and
+  carries the second. `NEWSPACK_NODES_WORKER_TYPE` and
+  `NEWSPACK_NODES_WORKER_PARTITION` leave `ENV_ALLOWLIST`, in the Perl
+  producer as well, so the environment entry no longer carries them.
+- **The platform's own requests log as worker traffic.** `/wp-cron.php` and
+  the substrate's `command`, `log/stream`, `messages/stream` and
+  `workers/spawn` endpoints are named by path — `cron`, `command`, `stream`,
+  `spawn` — when the serving process carries no env var, so a rule that logs
+  them keeps them behind the Include Workers toggle and off the global
+  averages. The shipped seed no longer skips them: it is the `/` log rule
+  alone.
 - **`sql` and `http` as significant events wrap the filter their span
   covers.** A rule listing `sql` gets the `query` filter's listeners wrapped
   inside each `sql` span, and one listing `http` gets `pre_http_request`'s
@@ -15,30 +30,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   short-circuit shows its own cost ahead of the round trip. Neither name is
   bound as a hook. The findings propose either for a dominant transport span,
   and read an already-significant one as having its listeners logged.
-
-### Changed
-- **A significant event is spelled bare**, `the_content`, as the rule stores
-  it and as `App\Core` binds it. The binder no longer strips a ` hook` suffix
-  off a rule entry, so `the_content hook` in a rule binds a hook of that name,
-  which nothing fires.
-
-### Fixed
-- **A traced hook frame is a hook.** With hook tracing on, a hook's frame is
-  named `<hook> hook: <caller>`, and the findings classified the whole name:
-  `the_content hook: Yoast\WP\SEO\Builders\Indexable_Link_Builder->build`
-  read as a custom event, the brief said marking it significant "does
-  nothing", and the proposal was to add custom events. The kind of a span, and
-  whether the rule already marks it significant, now read the frame's base
-  name through `Flame_Tree::base_name()`, the inverse of `node_name()`, and a
-  proposal names what the rule stores: the bare hook, `the_content`, never the
-  caller and never the ` hook` suffix. `Flame_Tree::hook_name()` is the one
-  place that suffix comes off a span, for the findings and the auto-tuner
-  alike, so a multi-word custom event the auto-tuner promotes or
-  disables is named whole rather than cut at its first space.
-
-## [0.101.0] - 2026-09-21
-
-### Added
 - **A rule decides whether plugin load time is logged**, through a
   `log_plugin_loads` checkbox beside the other per-rule diagnostics. The
   profiler mu-plugin times each site-activated plugin either way — that
@@ -54,6 +45,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a flags map, `trace_callers` being an int rather than a boolean.
 
 ### Changed
+- **Every diagnostic flag is off unless a rule sets it.** `log_http` and
+  `log_plugin_loads` join `log_queries` and `trace_hooks`: a new rule opens
+  with all four unchecked, the shipped `/` seed logs with none, and a stored
+  rule that says nothing about a flag has it off, one that predates the flag
+  included.
+- **A significant event is spelled bare**, `the_content`, as the rule stores
+  it and as `App\Core` binds it. The binder no longer strips a ` hook` suffix
+  off a rule entry, so `the_content hook` in a rule binds a hook of that name,
+  which nothing fires.
 - **A stored DIMENSIONAL entry is positional, and a deploy MUST run `wp nodes
   memcache flush`.** `DIM_SUMS` is indexed by `Stats_Store::DIM_COUNT`,
   `DIM_SUM_MS` and `DIM_SUM_PEAK_MB` — the ROW block's vocabulary, because they
@@ -91,6 +91,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `fold_categories()` takes the same guard on `CAT_REQUESTS`, which `add_cat()`
   counts into every entry it folds, so the two series answer alike.
 
+### Fixed
+- **A traced hook frame is a hook.** With hook tracing on, a hook's frame is
+  named `<hook> hook: <caller>`, and the findings classified the whole name:
+  `the_content hook: Yoast\WP\SEO\Builders\Indexable_Link_Builder->build`
+  read as a custom event, the brief said marking it significant "does
+  nothing", and the proposal was to add custom events. The kind of a span, and
+  whether the rule already marks it significant, now read the frame's base
+  name through `Flame_Tree::base_name()`, the inverse of `node_name()`, and a
+  proposal names what the rule stores: the bare hook, `the_content`, never the
+  caller and never the ` hook` suffix. `Flame_Tree::hook_name()` is the one
+  place that suffix comes off a span, for the findings and the auto-tuner
+  alike, so a multi-word custom event the auto-tuner promotes or
+  disables is named whole rather than cut at its first space.
+
 ### Removed
 - **`Stats_Store::MIRROR_KEY_VERSION`, and the `:m{V}:` segment it put in every
   durable key.** `entry_key()` is `evlog:p{N}:{key}`, which keeps the scope
@@ -102,7 +116,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   flush and one retention window and by nothing else. `is_mirror_key()` matches
   `evlog:p`, so a carry written under the old segment is dropped rather than
   held and re-filed under a key no lookup reaches.
-
 
 ## [0.100.5] - 2026-09-21
 

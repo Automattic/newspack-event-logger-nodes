@@ -61,11 +61,10 @@ class Settings_Schema {
 	 * this list stops being consulted until `Rule_Set::reset()` deletes it
 	 * again.
 	 *
-	 * `Rule_Matcher` ranks query-bearing patterns above exact patterns (the
-	 * trailing `?`) above prefixes, so these five exact skips govern their
-	 * endpoints whatever the list order and whatever `/` says. The four
-	 * `/wp-json/newspack-nodes/v1/…` routes are the substrate's own command,
-	 * SSE, and worker-spawn endpoints; logging them would log the logger.
+	 * The platform's own requests to itself — the cron loopback and the
+	 * substrate's endpoints — need no skip: `Log_Manager` names each as a
+	 * worker, and worker traffic sits behind the dashboards' Include Workers
+	 * toggle.
 	 *
 	 * No match means skip, and empty means empty: drop the `/` rule and the
 	 * site logs nothing. A `log` rule may also carry hook lists, custom and
@@ -76,11 +75,6 @@ class Settings_Schema {
 	 * @var list<array<string,string>>
 	 */
 	private const RULES = [
-		[ 'pattern' => '/wp-json/newspack-nodes/v1/command?', 'action' => 'skip' ],
-		[ 'pattern' => '/wp-json/newspack-nodes/v1/log/stream?', 'action' => 'skip' ],
-		[ 'pattern' => '/wp-json/newspack-nodes/v1/messages/stream?', 'action' => 'skip' ],
-		[ 'pattern' => '/wp-json/newspack-nodes/v1/workers/spawn?', 'action' => 'skip' ],
-		[ 'pattern' => '/wp-cron.php?', 'action' => 'skip' ],
 		[ 'pattern' => '/', 'action' => 'log' ],
 	];
 

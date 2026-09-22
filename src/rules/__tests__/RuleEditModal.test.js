@@ -60,6 +60,7 @@ jest.mock( '../../settings/settings/CustomEventSelectorModal', () => ( {
 
 import { renderComponent, act } from '../../test-helpers/renderHook';
 import RuleEditModal from '../RuleEditModal';
+import { BLANK_RULE } from '../constants';
 
 const LOG_RULE = {
 	id: 'r1',
@@ -287,34 +288,51 @@ describe( 'RuleEditModal — log rule fields', () => {
 		expect( onSave.mock.calls[ 0 ][ 0 ].log_queries ).toBe( true );
 	} );
 
+	test( 'a new rule opens with every diagnostic unchecked', () => {
+		mount( { ...BLANK_RULE } );
+		for ( const name of [
+			'rule-log-queries',
+			'rule-log-http',
+			'rule-log-plugin-loads',
+			'rule-trace-hooks',
+		] ) {
+			expect( inDialog( `input[name="${ name }"]` ).checked ).toBe(
+				false
+			);
+		}
+	} );
+
 	test( 'a log rule round-trips its outbound-HTTP opt-in', () => {
-		// It was unconditional before it was a flag, so an untouched rule keeps
-		// it: the box opens checked and only an explicit save turns it off.
-		mount( LOG_RULE );
+		// Distinct from the draft's off: the modal must emit the flag it was given.
+		mount( { ...LOG_RULE, log_http: true } );
 		click( saveButton() );
 		expect( onSave.mock.calls[ 0 ][ 0 ].log_http ).toBe( true );
 	} );
 
-	test( 'unticking outbound HTTP is reflected in the saved draft', () => {
+	test( 'a rule that says nothing about outbound HTTP opens unchecked', () => {
 		mount( LOG_RULE );
+		click( saveButton() );
+		expect( onSave.mock.calls[ 0 ][ 0 ].log_http ).toBe( false );
+	} );
+
+	test( 'unticking outbound HTTP is reflected in the saved draft', () => {
+		mount( { ...LOG_RULE, log_http: true } );
 		toggle( inDialog( 'input[name="rule-log-http"]' ) );
 		click( saveButton() );
 		expect( onSave.mock.calls[ 0 ][ 0 ].log_http ).toBe( false );
 	} );
 
 	test( 'a log rule round-trips its plugin-load opt-in', () => {
-		// Unconditional before it was a flag, like outbound HTTP: the box opens
-		// checked on a rule that says nothing about it.
-		mount( LOG_RULE );
+		mount( { ...LOG_RULE, log_plugin_loads: true } );
 		click( saveButton() );
 		expect( onSave.mock.calls[ 0 ][ 0 ].log_plugin_loads ).toBe( true );
 	} );
 
-	test( 'unticking plugin loads is reflected in the saved draft', () => {
+	test( 'ticking plugin loads is reflected in the saved draft', () => {
 		mount( LOG_RULE );
 		toggle( inDialog( 'input[name="rule-log-plugin-loads"]' ) );
 		click( saveButton() );
-		expect( onSave.mock.calls[ 0 ][ 0 ].log_plugin_loads ).toBe( false );
+		expect( onSave.mock.calls[ 0 ][ 0 ].log_plugin_loads ).toBe( true );
 	} );
 
 	test( 'a log rule round-trips its caller-trace opt-in', () => {
