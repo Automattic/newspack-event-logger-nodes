@@ -2138,8 +2138,8 @@ class AppCoreTest extends TestCase {
 		return false;
 	}
 
-	/** A scope that does not log queries gets no query pair left over from the scope before it. */
-	public function test_rebind_unbinds_the_query_pair_the_new_scope_does_not_ask_for(): void {
+	/** A scope that does not log queries gets no query span opener from the scope before it; the drain stays. */
+	public function test_rebind_unbinds_query_start_and_keeps_the_drain(): void {
 		$this->require_priority_aware_add_filter_or_skip();
 		$this->set_governing_rule( new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'init' ], log_queries: true ) );
 		$core = new Core();

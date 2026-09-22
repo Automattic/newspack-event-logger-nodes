@@ -362,7 +362,9 @@ class Core {
 	 * Only this class's own filters come off — the per-hook trio, the HTTP
 	 * pair and `query_start`. `query_end` stays bound once armed: SAVEQUERIES
 	 * outlives every scope, so the drain must too, and with no span open it
-	 * closes nothing. Callback wrappers already installed by wrap_callbacks()
+	 * closes nothing. The open-span stacks for both transports are emptied,
+	 * since a span the old scope opened has no close in the new one.
+	 * Callback wrappers already installed by wrap_callbacks()
 	 * stay in $wp_filter and keep timing, and wrapper_ids keeps remembering
 	 * them, so the new scope can't double-wrap.
 	 */
@@ -986,6 +988,7 @@ class Core {
 	 * Asks for a started logger like every callback: a binding that outlived
 	 * its request must not construct one (decision 20), and complete() has
 	 * nothing to close when no span under this label is open.
+	 *
 	 * @param mixed $v Filter value (passed through).
 	 * @return mixed
 	 */
