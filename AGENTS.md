@@ -181,6 +181,7 @@ Each is intentional, stated in full in [`docs/architecture-decisions.md`](docs/a
 | 24 | A duration nobody measured is not a timing sample | [Decision 24](docs/architecture-decisions.md#decision-24-a-duration-nobody-measured-is-not-a-timing-sample) |
 | 25 | Read tools and TUNE-scoped write tools share one MCP session, and every tool result is fenced | [Decision 25](docs/architecture-decisions.md#decision-25-read-tools-and-tune-scoped-write-tools-share-one-mcp-session-and-every-tool-result-is-fenced) |
 | 26 | A merged transport node keeps the statements it ran | [Decision 26](docs/architecture-decisions.md#decision-26-a-merged-transport-node-keeps-the-statements-it-ran) |
+| 27 | The platform's requests to itself are worker traffic, named by path | [Decision 27](docs/architecture-decisions.md#decision-27-the-platforms-requests-to-itself-are-worker-traffic-named-by-path) |
 
 ## Layout
 
@@ -256,7 +257,7 @@ Mistakes that have actually happened.
 
 - **Documentation map**: `docs/README.md` — the three chapters, then the reference set
 - **Architecture**: `docs/architecture-guide.md` — application design, topologies, hub/spoke flow, memcache schema
-- **Decisions**: `docs/architecture-decisions.md` — the 25 decisions, cited as "decision N"
+- **Decisions**: `docs/architecture-decisions.md` — the 27 decisions, cited as "decision N"
 - **Security model**: `docs/security-model.md` — what the logger captures, what crosses to the hub, the tradeoffs
 - **API**: `docs/API.md` — the one REST route (the MCP server), every service-CI verb, the two WP-CLI verbs, the PHP API sibling plugins log through, and the hooks fired and consumed
 - **Runtime**: `../newspack-nodes/` — the substrate this plugin depends on

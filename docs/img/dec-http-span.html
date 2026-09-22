@@ -61,6 +61,6 @@
   <div class="card"><h3>What it costs</h3>
     <p>Two registrations per request and two entries per remote call; zero on a request that makes none. Off unless <span class="mono">log_http</span> is set, as every diagnostic is.</p></div>
   <div class="card"><h3>Never constructs the logger</h3>
-    <p>Both callbacks ask <span class="mono">Log_Manager::has_instance()</span> first. A binding that outlived its request would otherwise build the logger inside the callback and stamp <span class="mono">process (start)</span> with that moment instead of the profiler's <span class="mono">request_ts</span>.</p></div>
+    <p>every callback asks <span class="mono">Log_Manager::started_instance()</span> first. A binding that outlived its request would otherwise build the logger inside the callback and stamp <span class="mono">process (start)</span> with that moment instead of the profiler's <span class="mono">request_ts</span>.</p></div>
 </div>
 </div>

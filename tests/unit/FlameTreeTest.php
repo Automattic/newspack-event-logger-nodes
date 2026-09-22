@@ -408,4 +408,10 @@ class FlameTreeTest extends TestCase {
 		$this->assertFalse( Flame_Tree::is_hook_span( 'wp_loaded' ) );
 		$this->assertFalse( Flame_Tree::is_hook_span( 'sync remote plugin' ) );
 	}
+
+	/** The name the minter builds is the name the classifier reads, sign included. */
+	public function test_listener_name_is_what_is_listener_span_reads(): void {
+		$this->assertTrue( Flame_Tree::is_listener_span( Flame_Tree::listener_name( 'Image_CDN::filter_the_content', -5 ) ) );
+		$this->assertSame( 'Image_CDN::filter_the_content @999999', Flame_Tree::listener_name( 'Image_CDN::filter_the_content', 999999 ) );
+	}
 }
