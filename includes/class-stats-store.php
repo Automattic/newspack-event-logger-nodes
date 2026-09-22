@@ -160,6 +160,24 @@ class Stats_Store {
 	 */
 	public const URL_TOKEN_PREFIX_MIN = 3;
 
+	/**
+	 * Shortest run of characters that counts as a WORD, filing or matching.
+	 *
+	 * One below `URL_TOKEN_PREFIX_MIN` deliberately: a two-character word is
+	 * never FILED, because its one prefix is itself and that prefix names most
+	 * of a real site, but `term_matches()` still matches it as a word when the
+	 * fold answers the term — so a term of `/at/88` reaches its URLs through
+	 * the fold rather than matching nothing at all.
+	 */
+	public const TERM_WORD_MIN = 2;
+
+	/**
+	 * What separates two words, as a character class. The FILING rule and the
+	 * MATCHING rule are built from this one spelling, so a term cannot tokenize
+	 * on one alphabet and match on another.
+	 */
+	private const TOKEN_SEP = '[^a-z0-9]';
+
 	/** The one entry a token set holds once it passed `URL_SEARCH_MAX`: no hash spells so. */
 	public const TOKEN_SATURATED = '*';
 
@@ -818,7 +836,7 @@ class Stats_Store {
 	 * @return list<array{0: string, 1: array<array-key,mixed>}>
 	 */
 	public function url_rank_sources( array $buckets, string $sort, string $order, string $server, bool $hour ): array {
-		return \array_values( $this->lookup_bucket_sets( [ self::url_rank_parts( $sort, $order, $server, $hour ) ], $buckets ) );
+		return $this->lookup_bucket_sets( [ self::url_rank_parts( $sort, $order, $server, $hour ) ], $buckets );
 	}
 
 	/**
@@ -963,7 +981,40 @@ class Stats_Store {
 		foreach ( $shards as $one ) {
 			$prefixes[] = [ $ns, $one ];
 		}
-		return \array_values( $this->lookup_bucket_sets( $prefixes, $buckets ) );
+		return $this->lookup_bucket_sets( $prefixes, $buckets );
+	}
+
+	/**
+	 * Read several namespace prefixes across the same buckets in ONE round-trip,
+	 * as `[bucket, value]` pairs.
+	 *
+	 * Decisions 1 and 6. Which prefix answered is not carried, because no
+	 * caller needs it: a read is either of one prefix, or of the shards, whose
+	 * rows say which shard they are on. Keyed internally by the cache key, so
+	 * one prefix cannot shadow another's bucket.
+	 *
+	 * @param array<int,array<int,string>> $prefix_sets Namespace prefix parts, before the bucket.
+	 * @param array<int,string>            $buckets     Bucket keys.
+	 * @return list<array{0: string, 1: array<array-key,mixed>}>
+	 */
+	private function lookup_bucket_sets( array $prefix_sets, array $buckets ): array {
+		if ( empty( $buckets ) || empty( $prefix_sets ) ) {
+			return [];
+		}
+		$map = [];
+		foreach ( $prefix_sets as $parts ) {
+			foreach ( $buckets as $bucket ) {
+				$map[ self::key( ...[ ...$parts, $bucket ] ) ] = $bucket;
+			}
+		}
+		// No table (no backend) reads as empty, like a miss.
+		$out = [];
+		foreach ( $this->table( self::ROLE_AGGREGATE )?->lookup_multi( \array_keys( $map ) ) ?? [] as $key => $value ) {
+			if ( \is_array( $value ) && isset( $map[ $key ] ) ) {
+				$out[] = [ $map[ $key ], $value ];
+			}
+		}
+		return $out;
 	}
 
 	/**
@@ -972,10 +1023,12 @@ class Stats_Store {
 	 * `folded` is complete rows AND names across every shard of both
 	 * populations: rows without names is an hour whose URLs no search can
 	 * reach, and the fold is what would otherwise never revisit it. `ranked`
-	 * is the site-wide count list, one key standing for the hour's lists,
-	 * which the fold derives from the coarse rows and can re-derive alone.
-	 * Asked together because the probe runs on every flush, and decision 6 is
-	 * what keeps that affordable.
+	 * is the hour's DONE marker, one key the ranker writes only once every
+	 * list landed. Asked together because the probe runs on every flush, and
+	 * decision 6 is what keeps that affordable.
+	 *
+	 * Positional: one read per prefix per hour in one round trip, walked in
+	 * the order it was built, so which prefix answered is the slot it is in.
 	 *
 	 * @param array<int,string> $hours Hour keys to probe.
 	 * @return array<string,array{folded: bool, ranked: bool}> Only hours holding something.
@@ -988,89 +1041,52 @@ class Stats_Store {
 				$prefixes[] = [ $ns, $one ];
 			}
 		}
-		$whole      = \count( $prefixes );
-		$rank_parts = self::url_rank_parts( 'count', 'desc', '', true );
-		$prefixes[] = $rank_parts;
-		$rank_key   = \implode( ':', $rank_parts ) . ':';
-		$seen       = [];
-		$out        = [];
-		foreach ( $this->lookup_bucket_sets( $prefixes, $hours ) as $key => [ $hour ] ) {
-			$seen[ $hour ] ??= 0;
+		$whole  = \count( $prefixes );
+		$reads  = [];
+		$owners = [];
+		foreach ( $hours as $hour ) {
+			foreach ( $prefixes as $parts ) {
+				$reads[]  = [ $parts, $hour ];
+				$owners[] = [ $hour, 'folded' ];
+			}
+			$reads[]  = [ self::url_rank_done_parts(), $hour ];
+			$owners[] = [ $hour, 'ranked' ];
+		}
+		$found = [];
+		$out   = [];
+		foreach ( $this->bucket_get_multi( $reads ) as $at => $value ) {
+			if ( null === $value ) {
+				continue;
+			}
+			[ $hour, $half ] = $owners[ $at ];
+			$found[ $hour ] ??= 0;
 			$out[ $hour ]   ??= [ 'folded' => false, 'ranked' => false ];
-			if ( \str_starts_with( $key, $rank_key ) ) {
+			if ( 'ranked' === $half ) {
 				$out[ $hour ]['ranked'] = true;
 			} else {
-				++$seen[ $hour ];
+				++$found[ $hour ];
 			}
 		}
 		foreach ( \array_keys( $out ) as $hour ) {
-			$out[ $hour ]['folded'] = $seen[ $hour ] >= $whole;
+			$out[ $hour ]['folded'] = $found[ $hour ] >= $whole;
 		}
 		return $out;
 	}
 
 	/**
-	 * Read several namespace prefixes across the same buckets in ONE round-trip.
+	 * Namespace prefix of the hour tier's DONE marker: `urlrank_h:done:{hour}`.
 	 *
-	 * Decisions 1 and 6. Keyed by the CACHE key, whose pair names the bucket:
-	 * two prefixes can hold one bucket, and a caller reading several at once
-	 * needs the key to tell which prefix answered. `array_values()` is the
-	 * list every other caller wants.
+	 * An hour's lists are many keys across as many scopes as its rows name
+	 * servers, so nothing among them can stand for the set — a list written
+	 * beside a refused sibling reports an hour that is missing a list as
+	 * ranked, and nothing re-ranks it for the rest of the window. This one
+	 * tiny key says the whole set landed, and is written only once it has.
+	 * `done` is no `URL_SORTS` value, so it can collide with no list.
 	 *
-	 * @param array<int,array<int,string>> $prefix_sets Namespace prefix parts, before the bucket.
-	 * @param array<int,string>            $buckets     Bucket keys.
-	 * @return array<string,array{0: string, 1: array<array-key,mixed>}>
-	 */
-	private function lookup_bucket_sets( array $prefix_sets, array $buckets ): array {
-		if ( empty( $buckets ) || empty( $prefix_sets ) ) {
-			return [];
-		}
-		$map = [];
-		foreach ( $prefix_sets as $parts ) {
-			foreach ( $buckets as $bucket ) {
-				$map[ $this->key( ...[ ...$parts, $bucket ] ) ] = $bucket;
-			}
-		}
-		// No table (no backend) reads as empty, like a miss.
-		$out = [];
-		foreach ( $this->table( self::ROLE_AGGREGATE )?->lookup_multi( \array_keys( $map ) ) ?? [] as $key => $value ) {
-			if ( \is_array( $value ) && isset( $map[ $key ] ) ) {
-				$out[ $key ] = [ $map[ $key ], $value ];
-			}
-		}
-		return $out;
-	}
-
-	/**
-	 * Namespace prefix of one ranked list. The server scope rides in the KEY:
-	 * a list is `URL_RANK_N` rows, which is the bound decision 14 named as
-	 * what would make the key-prefix form affordable.
-	 *
-	 * @param string $sort   A `URL_SORTS` value.
-	 * @param string $order  A `URL_ORDERS` value.
-	 * @param string $server Reporting server; '' is the site-wide list.
-	 * @param bool   $hour   The coarse tier.
 	 * @return array<int,string>
 	 */
-	public static function url_rank_parts( string $sort, string $order, string $server, bool $hour ): array {
-		if ( '' === $server ) {
-			return [ $hour ? self::NS_URLRANK_HOUR : self::NS_URLRANK, $sort, $order ];
-		}
-		return [ $hour ? self::NS_URLRANK_HOUR_S : self::NS_URLRANK_S, self::server_key( $server ), $sort, $order ];
-	}
-
-	/**
-	 * Hash a server name to a key-safe ASCII token (FNV-1a 32-bit hex).
-	 * Used for `lb_s` / `dim:_:srv` keys so server names don't break colons.
-	 *
-	 * @param string $server Server name; '' hashes to ''.
-	 * @return string Eight hex digits, or ''.
-	 */
-	public static function server_key( string $server ): string {
-		if ( '' === $server ) {
-			return '';
-		}
-		return \sprintf( '%08x', Log_Manager::fnv1a32( $server ) );
+	public static function url_rank_done_parts(): array {
+		return [ self::NS_URLRANK_HOUR, 'done' ];
 	}
 
 	/**
@@ -1155,16 +1171,17 @@ class Stats_Store {
 	}
 
 	/**
-	 * A search term's tokens, or a path's: lowercase alphanumeric runs of two
-	 * characters or more, cut to `URL_TOKEN_PREFIX_MAX`, in source order.
+	 * A search term's tokens, or a path's: lowercase alphanumeric runs of
+	 * `TERM_WORD_MIN` characters or more, cut to `URL_TOKEN_PREFIX_MAX`, in
+	 * source order.
 	 *
 	 * @param string $text Search term or path.
 	 * @return list<string>
 	 */
 	public static function term_tokens( string $text ): array {
 		$out = [];
-		foreach ( \preg_split( '/[^a-z0-9]+/', \strtolower( $text ) ) ?: [] as $token ) {
-			if ( \strlen( $token ) >= 2 ) {
+		foreach ( \preg_split( '/' . self::TOKEN_SEP . '+/', \strtolower( $text ) ) ?: [] as $token ) {
+			if ( \strlen( $token ) >= self::TERM_WORD_MIN ) {
 				$out[ \substr( $token, 0, self::URL_TOKEN_PREFIX_MAX ) ] = true;
 			}
 		}
@@ -1175,20 +1192,34 @@ class Stats_Store {
 	/**
 	 * The token sets this partition holds, in one round trip.
 	 *
+	 * WHICH tokens can be answered at all is the schema's to say, so a caller
+	 * tests neither floor nor sentinel: `false` is a token no read can answer —
+	 * one shorter than `URL_TOKEN_PREFIX_MIN`, refused here rather than asked
+	 * for, or one whose set has saturated — and a token this partition simply
+	 * does not hold is ABSENT, which is a real answer narrowing to nothing.
+	 *
 	 * @param list<string> $tokens Tokens, as `term_tokens()` spells them.
-	 * @return array<string,list<string>> token => hashes; absent when unheld.
+	 * @return array<string,list<string>|false> token => hashes, or false when
+	 *                                          no read can answer it; absent when unheld.
 	 */
 	public function url_token_sets( array $tokens ): array {
+		$out   = [];
 		$reads = [];
 		foreach ( $tokens as $token ) {
-			$reads[] = [ [ self::NS_URLTOKEN ], $token ];
-		}
-		$out = [];
-		foreach ( $this->bucket_get_multi( $reads ) as $i => $set ) {
-			if ( [] !== $set ) {
-				// The hashes are the KEYS; the stamps are the writer's alone.
-				$out[ $tokens[ $i ] ] = \array_map( 'strval', \array_keys( $set ) );
+			if ( \strlen( $token ) < self::URL_TOKEN_PREFIX_MIN ) {
+				$out[ $token ] = false;
+				continue;
 			}
+			$reads[ $token ] = [ [ self::NS_URLTOKEN ], $token ];
+		}
+		foreach ( $this->bucket_get_multi( $reads ) as $token => $set ) {
+			if ( null === $set ) {
+				continue;
+			}
+			// The hashes are the KEYS; the stamps are the writer's alone.
+			$out[ (string) $token ] = isset( $set[ self::TOKEN_SATURATED ] )
+				? false
+				: \array_map( 'strval', \array_keys( $set ) );
 		}
 		return $out;
 	}
@@ -1197,13 +1228,17 @@ class Stats_Store {
 	 * Read many buckets across DIFFERENT namespaces in one round trip.
 	 *
 	 * `lookup_bucket_sets()` reads one namespace over many buckets; this reads
-	 * an arbitrary mix, which is what a flush touches. Results are POSITIONAL:
-	 * a miss holds its slot as `[]`, because the caller merges `result[i]` onto
-	 * `reads[i]` and a collapsed miss would land every later merge on the wrong
-	 * key.
+	 * an arbitrary mix, which is what a flush touches. Every read keeps its own
+	 * slot, under the key `$reads` carried, because a caller merges `result[i]`
+	 * onto `reads[i]` and a collapsed miss would land every later merge on the
+	 * wrong key.
 	 *
-	 * @param array<int,array{0: array<int,string>, 1: string}> $reads `[ parts, bucket ]` pairs.
-	 * @return array<int,array<string,mixed>> One entry per read, in order.
+	 * A MISS is null and a stored value is itself, `[]` included: an hour folded
+	 * with no rows is written empty, and a probe reading that as absence folds
+	 * it again for the rest of the window.
+	 *
+	 * @param array<array-key,array{0: array<int,string>, 1: string}> $reads `[ parts, bucket ]` pairs.
+	 * @return array<array-key,array<string,mixed>|null> One entry per read, keyed as `$reads` was.
 	 */
 	public function bucket_get_multi( array $reads ): array {
 		if ( [] === $reads ) {
@@ -1211,14 +1246,14 @@ class Stats_Store {
 		}
 		$keys = [];
 		foreach ( $reads as $i => [ $parts, $bucket ] ) {
-			$keys[ $i ] = $this->key( ...[ ...$parts, $bucket ] );
+			$keys[ $i ] = self::key( ...[ ...$parts, $bucket ] );
 		}
 		// No table (no backend) reads as empty, like a miss.
 		$found = $this->table( self::ROLE_AGGREGATE )?->lookup_multi( \array_values( \array_unique( $keys ) ) ) ?? [];
 		$out   = [];
 		foreach ( $keys as $i => $key ) {
-			$value    = $found[ $key ] ?? null;
-			$out[ $i ] = \is_array( $value ) ? self::string_keys( $value ) : [];
+			$value     = $found[ $key ] ?? null;
+			$out[ $i ] = \is_array( $value ) ? self::string_keys( $value ) : null;
 		}
 		return $out;
 	}
@@ -1231,7 +1266,7 @@ class Stats_Store {
 	 * @return array<array-key,mixed>|null Blob, or null on miss.
 	 */
 	public function get_url_stats( string $url_hash ): ?array {
-		$val = $this->lookup( $this->key( self::NS_URL, $url_hash ) );
+		$val = $this->lookup( self::key( self::NS_URL, $url_hash ) );
 		if ( ! \is_array( $val ) ) {
 			return null;
 		}
@@ -1331,7 +1366,7 @@ class Stats_Store {
 		}
 		$map = [];
 		foreach ( $hashes as $hash ) {
-			$map[ $this->key( self::NS_URLMAP, $hash ) ] = $hash;
+			$map[ self::key( self::NS_URLMAP, $hash ) ] = $hash;
 		}
 		$out = [];
 		foreach ( $this->table( self::ROLE_AGGREGATE )?->lookup_multi( \array_keys( $map ) ) ?? [] as $key => $value ) {
@@ -1383,7 +1418,7 @@ class Stats_Store {
 		// One batch per ROLE
 		$values = [];
 		foreach ( $writes as [ $parts, $bucket, $data ] ) {
-			$values[ $this->role_for( $parts[0] ) ][ $this->key( ...[ ...$parts, $bucket ] ) ] = $data;
+			$values[ $this->role_for( $parts[0] ) ][ self::key( ...[ ...$parts, $bucket ] ) ] = $data;
 		}
 		$landed = true;
 		foreach ( $values as $role => $batch ) {
@@ -1393,7 +1428,7 @@ class Stats_Store {
 			// Shadowed only once the set landed, as `store()` does.
 			if ( null !== $this->mirror ) {
 				foreach ( $writes as [ $parts, $bucket, $data ] ) {
-					$key = $this->key( ...[ ...$parts, $bucket ] );
+					$key = self::key( ...[ ...$parts, $bucket ] );
 					( $this->mirror )( self::entry_key( $this->partition, $key ), $data, $this->ttl_for( $parts[0] ), $parts[0] );
 				}
 			}
@@ -1416,7 +1451,7 @@ class Stats_Store {
 	 * @return bool True when the set landed.
 	 */
 	private function bucket_set( array $parts, string $bucket, array $data ): bool {
-		return $this->store( $this->key( ...[ ...$parts, $bucket ] ), $data, $this->ttl_for( $parts[0] ), $parts[0] );
+		return $this->store( self::key( ...[ ...$parts, $bucket ] ), $data, $this->ttl_for( $parts[0] ), $parts[0] );
 	}
 
 	/**
@@ -1461,31 +1496,6 @@ class Stats_Store {
 	}
 
 	/**
-	 * A stored URL split into the pair the name table holds: `[ path, origin ]`.
-	 *
-	 * The ONE place the schema decides where a URL divides, so the search's
-	 * haystack and the display's join can never disagree about it. A stored url
-	 * is absolute (`https://host/path`); one that carries no scheme is all
-	 * path, which is what a test seeding `/a` means and what a producer with no
-	 * `SERVER_NAME` writes.
-	 *
-	 * @param string $url The stored URL.
-	 * @return array{0:string,1:string} Path, then origin.
-	 */
-	public static function split_url( string $url ): array {
-		$at = \strpos( $url, '://' );
-		if ( false === $at ) {
-			return [ $url, '' ];
-		}
-		// @longform The authority ends at whichever delimiter comes first, so
-		// the split is LOSSLESS — `origin . path` is the stored url again —
-		// and an authority with no path keeps its query on the search half.
-		$host = $at + 3;
-		$end  = $host + \strcspn( $url, '/?#', $host );
-		return [ \substr( $url, $end ), \substr( $url, 0, $end ) ];
-	}
-
-	/**
 	 * Whether a key is an absolute mirror key rather than one relative to its
 	 * namespace — what the checkpoint carry keeps, and what a reader may file a
 	 * frame as.
@@ -1506,7 +1516,7 @@ class Stats_Store {
 	 *               held, or null with no cache backend.
 	 */
 	public function accumulated_url_stats( string $url_hash ): mixed {
-		return $this->table( self::ROLE_URL )?->accumulated( $this->key( self::NS_URL, $url_hash ) );
+		return $this->table( self::ROLE_URL )?->accumulated( self::key( self::NS_URL, $url_hash ) );
 	}
 
 	/**
@@ -1516,7 +1526,7 @@ class Stats_Store {
 	 * @param array<string,mixed> $data     Aggregate to hold.
 	 */
 	public function accumulate_url_stats( string $url_hash, array $data ): void {
-		$this->table( self::ROLE_URL )?->accumulate( $this->key( self::NS_URL, $url_hash ), $data );
+		$this->table( self::ROLE_URL )?->accumulate( self::key( self::NS_URL, $url_hash ), $data );
 	}
 
 	/**
@@ -1532,7 +1542,7 @@ class Stats_Store {
 	 * @param string ...$parts Namespace token first, then any sub-keys.
 	 * @return string Entry key, below the Table's namespace.
 	 */
-	private function key( string ...$parts ): string {
+	public static function key( string ...$parts ): string {
 		return \implode( ':', $parts );
 	}
 
@@ -1669,7 +1679,7 @@ class Stats_Store {
 	 * times its footprint, for buckets no reader asks for.
 	 *
 	 * The HOUR branch is unreached from that seam today, because `NS_URLS_HOUR`
-	 * takes 0 in `STATS_MIRROR_TOPN` and is filtered out before this is asked.
+	 * is a DERIVED namespace and is filtered out before this is asked.
 	 * It stays because the alternative is worse than dead: without it an hour
 	 * key falls to the hash-keyed branch and reports a FULL role TTL for a
 	 * bucket most of whose window is spent, the moment that policy changes.
@@ -1743,11 +1753,6 @@ class Stats_Store {
 			self::ROLE_URL_FINE => $this->ttl_url_fine(),
 			default             => $this->ttl(),
 		};
-	}
-
-	/** Retention window, in seconds, for every namespace but `url`. */
-	public function ttl(): int {
-		return $this->max_lifespan;
 	}
 
 	/** Retention for a FINE `urls` or `urlnames` bucket: its read window, never the whole one. */
@@ -1939,20 +1944,41 @@ class Stats_Store {
 	}
 
 	/**
-	 * Re-key a decoded map with string keys. PHP casts numeric-looking keys to
-	 * int on decode, so a value read back from the cache is `array-key` typed
-	 * even though every namespace stores a string-keyed map; the setters and the
-	 * merge helpers want that guarantee back.
+	 * What answers for every hour the coarse tier did not: the fine buckets
+	 * that stand in, and the hours nothing stands in for.
 	 *
-	 * @param array<array-key,mixed> $map Decoded value.
-	 * @return array<string,mixed>
+	 * Every tier reader asks this one question of a plan, and the two facts
+	 * are independent, so both come back and each caller reads the half it
+	 * acts on. A folded hour's fine buckets are NOT read — they outlive the
+	 * fold, and taking both counts the hour twice — and only the GRACE hour
+	 * falls back, so an older uncovered hour is a HOLE. A fold tolerates one
+	 * and comes up short there; the ranked reader cannot, because serving a
+	 * window an hour short as ranked is worse than folding.
+	 *
+	 * @api `Performance_CI_Node`'s `ranked_page()`, `walk_shard_tiers()` and
+	 *      `build_leaderboard()`.
+	 * @param list<string>        $hours   The plan's hours, newest first.
+	 * @param array<string,mixed> $covered Hours the coarse tier answered, keyed.
+	 * @return array{buckets: list<string>, holes: list<string>}
 	 */
-	public static function string_keys( array $map ): array {
-		$out = [];
-		foreach ( $map as $key => $value ) {
-			$out[ (string) $key ] = $value;
+	public static function fine_fallback( array $hours, array $covered ): array {
+		$out   = [];
+		$holes = [];
+		foreach ( $hours as $hour ) {
+			if ( isset( $covered[ $hour ] ) ) {
+				continue;
+			}
+			$buckets = self::unfolded_hour_buckets( $hour, $hours );
+			if ( [] === $buckets ) {
+				$holes[] = $hour;
+				continue;
+			}
+			$out = \array_merge( $out, $buckets );
 		}
-		return $out;
+		return [
+			'buckets' => $out,
+			'holes'   => $holes,
+		];
 	}
 
 	/**
@@ -1973,7 +1999,7 @@ class Stats_Store {
 	 * `Table_Node::read_through()` to keep serving a record whose cache
 	 * lifetime ran out.
 	 *
-	 * @api The dashboard readers, for an hour the coarse tier cannot answer.
+	 * @api `fine_fallback()`, which is how every reader asks it.
 	 * @param string       $hour  A `Y-m-d-H` hour key.
 	 * @param list<string> $hours The plan's hours, newest first; `$hour` is
 	 *                            read finely only when it leads them.
@@ -1998,6 +2024,61 @@ class Stats_Store {
 	}
 
 	/**
+	 * One scope's ranked lists, as the `[parts, key, entries]` triples
+	 * `bucket_set_multi()` takes. The TIER sets the bound, so a caller names
+	 * which tier it is writing and never the row count twice.
+	 *
+	 * @param array<array-key,mixed> $rows   Rows already scoped to `$server`.
+	 * @param array<string,string>   $paths  hash => path.
+	 * @param string                 $server Reporting server; '' is site-wide.
+	 * @param bool                   $hour   The coarse tier.
+	 * @param string                 $key    Bucket or hour key.
+	 * @return list<array{0: array<int,string>, 1: string, 2: array<array-key,mixed>}>
+	 */
+	public static function ranked_writes( array $rows, array $paths, string $server, bool $hour, string $key ): array {
+		$writes = [];
+		$n      = $hour ? self::URL_RANK_N_HOUR : self::URL_RANK_N;
+		foreach ( self::rank_url_rows( $rows, $paths, $n ) as $sort => $orders ) {
+			foreach ( $orders as $order => $entries ) {
+				$writes[] = [ self::url_rank_parts( $sort, $order, $server, $hour ), $key, $entries ];
+			}
+		}
+		return $writes;
+	}
+
+	/**
+	 * Namespace prefix of one ranked list. The server scope rides in the KEY:
+	 * a list is `URL_RANK_N` rows, which is the bound decision 14 named as
+	 * what would make the key-prefix form affordable.
+	 *
+	 * @param string $sort   A `URL_SORTS` value.
+	 * @param string $order  A `URL_ORDERS` value.
+	 * @param string $server Reporting server; '' is the site-wide list.
+	 * @param bool   $hour   The coarse tier.
+	 * @return array<int,string>
+	 */
+	public static function url_rank_parts( string $sort, string $order, string $server, bool $hour ): array {
+		if ( '' === $server ) {
+			return [ $hour ? self::NS_URLRANK_HOUR : self::NS_URLRANK, $sort, $order ];
+		}
+		return [ $hour ? self::NS_URLRANK_HOUR_S : self::NS_URLRANK_S, self::server_key( $server ), $sort, $order ];
+	}
+
+	/**
+	 * Hash a server name to a key-safe ASCII token (FNV-1a 32-bit hex).
+	 * Used for `lb_s` / `dim:_:srv` keys so server names don't break colons.
+	 *
+	 * @param string $server Server name; '' hashes to ''.
+	 * @return string Eight hex digits, or ''.
+	 */
+	public static function server_key( string $server ): string {
+		if ( '' === $server ) {
+			return '';
+		}
+		return \sprintf( '%08x', Log_Manager::fnv1a32( $server ) );
+	}
+
+	/**
 	 * Every ranked list of one bucket: `sort => order => entries`, each cut
 	 * to `$n`. Overflow rows and worker rows are never ranked, an untimed row
 	 * ranks on no timed sort, and a row with no path ranks on no `url` sort.
@@ -2012,7 +2093,7 @@ class Stats_Store {
 		foreach ( $rows as $key => $raw ) {
 			$hash = (string) $key;
 			$row  = Core::arr( $raw );
-			if ( self::is_other_key( $hash ) || ! empty( $row[ self::ROW_WORKER ] ) ) {
+			if ( ! self::ranks( $hash, $row ) ) {
 				continue;
 			}
 			// '' never refuses; only a named server can be absent from a split.
@@ -2034,51 +2115,38 @@ class Stats_Store {
 				}
 				$values[ $hash ] = self::url_rank_value( $row, $sort, $paths[ $hash ] ?? '' );
 			}
-			// One sort per key: head ascending, tail descending by tie group.
-			\asort( $values );
-			$ranked = [
-				'asc'  => \array_keys( \array_slice( $values, 0, $n, true ) ),
-				'desc' => self::descending_keys( $values, $n ),
-			];
 			foreach ( self::URL_ORDERS as $order ) {
-				$entries = [];
-				foreach ( $ranked[ $order ] as $hash ) {
-					$entry = [ self::RANK_HASH => $hash, self::RANK_ROW => $scalar[ $hash ] ];
-					if ( 'url' === $sort ) {
-						$entry[ self::RANK_PATH ] = $paths[ $hash ];
-					}
-					$entries[] = $entry;
-				}
-				$out[ $sort ][ $order ] = $entries;
+				// arsort, not array_reverse: ties keep their source order.
+				'asc' === $order ? \asort( $values ) : \arsort( $values );
+				$out[ $sort ][ $order ] = self::rank_entries(
+					\array_keys( \array_slice( $values, 0, $n, true ) ),
+					$sort,
+					$scalar,
+					$paths
+				);
 			}
 		}
 		return $out;
 	}
 
 	/**
-	 * One ascending ranking's top `$n` keys in DESCENDING order, each tie
-	 * group keeping the order the ascending sort left it in.
+	 * One ranked list's entries: each hash beside the row it ranked, and the
+	 * path too on a `url` list, which is the only sort that displays one.
 	 *
-	 * A plain `array_reverse()` inverts the ties instead, and a tie at the
-	 * cut decides which of two equal rows the list keeps.
-	 *
-	 * @param array<array-key,float|int|string> $values Ascending, by hash.
-	 * @param int                               $n      Keys to keep.
-	 * @return list<array-key>
+	 * @param list<string>           $hashes The list's hashes, in rank order.
+	 * @param string                 $sort   A `URL_SORTS` value.
+	 * @param array<string,mixed>    $scalar The rankable rows by hash.
+	 * @param array<string,string>   $paths  hash => path.
+	 * @return list<array<int,mixed>>
 	 */
-	private static function descending_keys( array $values, int $n ): array {
-		$keys = \array_keys( $values );
-		$out  = [];
-		$i    = \count( $keys ) - 1;
-		while ( $i >= 0 && \count( $out ) < $n ) {
-			$tie = $i;
-			while ( $tie > 0 && $values[ $keys[ $tie - 1 ] ] === $values[ $keys[ $i ] ] ) {
-				--$tie;
+	private static function rank_entries( array $hashes, string $sort, array $scalar, array $paths ): array {
+		$out = [];
+		foreach ( $hashes as $hash ) {
+			$entry = [ self::RANK_HASH => $hash, self::RANK_ROW => $scalar[ $hash ] ];
+			if ( 'url' === $sort ) {
+				$entry[ self::RANK_PATH ] = $paths[ $hash ];
 			}
-			for ( $k = $tie; $k <= $i && \count( $out ) < $n; ++$k ) {
-				$out[] = $keys[ $k ];
-			}
-			$i = $tie - 1;
+			$out[] = $entry;
 		}
 		return $out;
 	}
@@ -2092,7 +2160,7 @@ class Stats_Store {
 	 * @param string                 $sort A `URL_SORTS` value.
 	 * @param string                 $path The row's path, for the `url` sort.
 	 */
-	public static function url_rank_value( array $row, string $sort, string $path ): float|int|string {
+	private static function url_rank_value( array $row, string $sort, string $path ): float|int|string {
 		return match ( $sort ) {
 			'count'        => Core::num_int( $row[ self::ROW_COUNT ] ?? null ),
 			'avg_ms'       => Core::num_float( $row[ self::ROW_SUM_MS ] ?? null ) / \max( 1, Core::num_int( $row[ self::ROW_TIMED_COUNT ] ?? null ) ),
@@ -2116,7 +2184,53 @@ class Stats_Store {
 	 * @return array<array-key,mixed>|null Null when the server never served the URL.
 	 */
 	public static function url_row_scoped( array $row, string $server ): ?array {
-		$split = self::expand_sole_server( $row, Core::arr( $row[ self::ROW_SRV ] ?? null ) );
+		return self::scoped_by_split(
+			$row,
+			self::expand_sole_server( $row, Core::arr( $row[ self::ROW_SRV ] ?? null ) ),
+			$server
+		);
+	}
+
+	/**
+	 * Every scope one set of rows is ranked in: the site under `''`, then one
+	 * per server any row's split names, each row projected to it.
+	 *
+	 * One pass, and each row's split is expanded ONCE — the enumeration and
+	 * the projection read the same expansion, where asking `url_row_scoped()`
+	 * per server re-expands it per server.
+	 *
+	 * @param array<array-key,mixed> $rows Stored rows by hash, split included.
+	 * @return array<string,array<array-key,mixed>> scope => rows to rank.
+	 */
+	public static function rank_scopes( array $rows ): array {
+		$out = [ '' => $rows ];
+		foreach ( $rows as $key => $raw ) {
+			$hash = (string) $key;
+			$row  = Core::arr( $raw );
+			if ( ! self::ranks( $hash, $row ) ) {
+				continue;
+			}
+			$split = self::expand_sole_server( $row, Core::arr( $row[ self::ROW_SRV ] ?? null ) );
+			foreach ( \array_keys( $split ) as $server ) {
+				$scoped = self::scoped_by_split( $row, $split, (string) $server );
+				if ( null !== $scoped ) {
+					$out[ (string) $server ][ $hash ] = $scoped;
+				}
+			}
+		}
+		return $out;
+	}
+
+	/**
+	 * `url_row_scoped()` over a split the caller has already expanded — the
+	 * projection itself, so `rank_scopes()` can expand once and project many.
+	 *
+	 * @param array<array-key,mixed> $row    A stored URL row.
+	 * @param array<array-key,mixed> $split  That row's EXPANDED split.
+	 * @param string                 $server Reporting server; '' scopes to none.
+	 * @return array<array-key,mixed>|null Null when the server never served the URL.
+	 */
+	private static function scoped_by_split( array $row, array $split, string $server ): ?array {
 		unset( $row[ self::ROW_SRV ] );
 		if ( '' === $server ) {
 			return $row;
@@ -2177,49 +2291,25 @@ class Stats_Store {
 	}
 
 	/**
+	 * Whether a stored row ranks at all: not an overflow row, not a worker's.
+	 *
+	 * Spelled once, because both writers read it — a server named only by rows
+	 * that never rank would otherwise get a list of nothing.
+	 *
+	 * @param string                 $hash The row's key.
+	 * @param array<array-key,mixed> $row  The stored row.
+	 */
+	private static function ranks( string $hash, array $row ): bool {
+		return ! self::is_other_key( $hash ) && empty( $row[ self::ROW_WORKER ] );
+	}
+
+	/**
 	 * Whether a row key is one of the overflow rows — either of them.
 	 *
 	 * @param string $hash A URL row key.
 	 */
 	public static function is_other_key( string $hash ): bool {
 		return self::OTHER_KEY === $hash || self::OTHER_WORKER_KEY === $hash;
-	}
-
-	/**
-	 * Union one flush's hashes into a token's set, as `hash => last named`.
-	 *
-	 * The stamp per hash is what lets the set SHRINK: an entry a retention
-	 * window has passed over is dropped BEFORE the count, so `$max` bounds
-	 * the LIVE hashes and a URL that has gone quiet stops holding a slot.
-	 *
-	 * Past `$max` the set is the sentinel under its own stamp, and the reader
-	 * folds. A live sentinel is returned UNCHANGED rather than restamped, so
-	 * `flush_writes()` skips the write, the key keeps the TTL it had, and the
-	 * token rebuilds live-only when that expires.
-	 *
-	 * @param array<array-key,mixed> $existing  The stored set, `hash => ts`.
-	 * @param list<string>           $hashes    This flush's.
-	 * @param int                    $max       `URL_SEARCH_MAX` in production.
-	 * @param int                    $now       Unix seconds this flush is at.
-	 * @param int                    $retention Seconds an unnamed hash survives.
-	 * @return array<string,int> hash => last named.
-	 */
-	public static function merge_token_set( array $existing, array $hashes, int $max, int $now, int $retention ): array {
-		$oldest = $now - $retention;
-		$set    = [];
-		foreach ( $existing as $hash => $seen ) {
-			$at = Core::num_int( $seen );
-			if ( $at > $oldest ) {
-				$set[ (string) $hash ] = $at;
-			}
-		}
-		if ( isset( $set[ self::TOKEN_SATURATED ] ) ) {
-			return [ self::TOKEN_SATURATED => $set[ self::TOKEN_SATURATED ] ];
-		}
-		foreach ( $hashes as $hash ) {
-			$set[ $hash ] = $now;
-		}
-		return \count( $set ) > $max ? [ self::TOKEN_SATURATED => $now ] : $set;
 	}
 
 	/**
@@ -2232,11 +2322,204 @@ class Stats_Store {
 	 * @return array<string,string>
 	 */
 	public static function string_map( array $map ): array {
+		return \array_map( static fn ( $value ): string => Core::str( $value ), self::string_keys( $map ) );
+	}
+
+	/**
+	 * The PATH of each URL, by hash — what the name blob files and what the
+	 * ranker ranks the `url` sort on. A hash whose URL is '' is absent from
+	 * the map rather than named '': nothing named it, so nothing can find it.
+	 *
+	 * @param array<array-key,string> $urls hash => URL. An all-digit hash is
+	 *                                       an INT key, as PHP makes it.
+	 * @return array<string,string> hash => path.
+	 */
+	public static function paths_of( array $urls ): array {
 		$out = [];
-		foreach ( $map as $key => $value ) {
-			$out[ (string) $key ] = Core::str( $value );
+		foreach ( $urls as $hash => $url ) {
+			if ( '' !== $url ) {
+				$out[ (string) $hash ] = self::path_of( self::split_url( $url ) );
+			}
 		}
 		return $out;
+	}
+
+	/**
+	 * A stored URL split into the pair the name table holds: `[ path, origin ]`.
+	 *
+	 * The ONE place the schema decides where a URL divides, so the search's
+	 * haystack and the display's join can never disagree about it. A stored url
+	 * is absolute (`https://host/path`); one that carries no scheme is all
+	 * path, which is what a test seeding `/a` means and what a producer with no
+	 * `SERVER_NAME` writes.
+	 *
+	 * @param string $url The stored URL.
+	 * @return array{0:string,1:string} Path, then origin.
+	 */
+	public static function split_url( string $url ): array {
+		$at = \strpos( $url, '://' );
+		if ( false === $at ) {
+			return [ $url, '' ];
+		}
+		// @longform The authority ends at whichever delimiter comes first, so
+		// the split is LOSSLESS — `origin . path` is the stored url again —
+		// and an authority with no path keeps its query on the search half.
+		$host = $at + 3;
+		$end  = $host + \strcspn( $url, '/?#', $host );
+		return [ \substr( $url, $end ), \substr( $url, 0, $end ) ];
+	}
+
+	/**
+	 * The PATH half of a name pair — decision 18: a positional value is read
+	 * through a name, never a bare index.
+	 *
+	 * @param array<array-key,mixed> $pair `[ path, origin ]`, from `get_url_names()` or `split_url()`.
+	 * @return string The path, or '' for a pair that is not one.
+	 */
+	public static function path_of( array $pair ): string {
+		return Core::str( $pair[0] ?? '' );
+	}
+
+	/**
+	 * Union one flush's hashes into a token's set, as `hash => last named`.
+	 *
+	 * The stamp per hash is what lets the set SHRINK: every entry a retention
+	 * window has passed over is dropped, so a URL that has gone quiet stops
+	 * holding a slot and stops being named to a reader that counts it against
+	 * `URL_SEARCH_MAX`. A hash leaves a set when its URL stops being named,
+	 * not when the key dies.
+	 *
+	 * The walk is decided before it runs, because re-reading a set of four
+	 * entry by entry on every flush of every token of every URL is the cost
+	 * the cap is there to bound. A flush that would pass the cap prunes
+	 * outright, and is tested first so it skips the scan; otherwise one pass
+	 * over the stamps says whether the prune has anything to do, stopping at
+	 * the first expired one.
+	 *
+	 * Past the cap the set is the sentinel under its own stamp, and the reader
+	 * folds. A live sentinel is returned UNCHANGED rather than restamped, so
+	 * `flush_writes()` skips the write, the key keeps the TTL it had, and the
+	 * token rebuilds live-only when that expires.
+	 *
+	 * @param array<array-key,mixed> $existing The stored set, `hash => ts`.
+	 * @param list<string>           $hashes   This flush's.
+	 * @param int                    $now      Unix seconds this flush is at.
+	 * @return array<string,int> hash => last named.
+	 */
+	public function merge_token_set( array $existing, array $hashes, int $now ): array {
+		$set    = self::string_keys( $existing );
+		$oldest = $now - $this->ttl();
+		if ( \count( $set ) + \count( $hashes ) > self::URL_SEARCH_MAX || self::holds_expired( $set, $oldest ) ) {
+			$set = \array_filter( $set, static fn ( $seen ): bool => Core::num_int( $seen ) > $oldest );
+		}
+		if ( isset( $set[ self::TOKEN_SATURATED ] ) ) {
+			return [ self::TOKEN_SATURATED => Core::num_int( $set[ self::TOKEN_SATURATED ] ) ];
+		}
+		foreach ( $hashes as $hash ) {
+			$set[ $hash ] = $now;
+		}
+		return \count( $set ) > self::URL_SEARCH_MAX
+			? [ self::TOKEN_SATURATED => $now ]
+			: \array_map( static fn ( $seen ): int => Core::num_int( $seen ), $set );
+	}
+
+	/**
+	 * Whether a token set holds a stamp the window has passed over.
+	 *
+	 * The prune's own predicate, asked before the prune: it stops at the
+	 * first expired entry, so a live set costs a walk and no allocation
+	 * where the prune costs both.
+	 *
+	 * @param array<string,mixed> $set    The stored set, `hash => ts`.
+	 * @param int                 $oldest The oldest stamp still live.
+	 */
+	private static function holds_expired( array $set, int $oldest ): bool {
+		foreach ( $set as $seen ) {
+			if ( Core::num_int( $seen ) <= $oldest ) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/** Retention window, in seconds, for every namespace but `url`. */
+	public function ttl(): int {
+		return $this->max_lifespan;
+	}
+
+	/**
+	 * Re-key a decoded map with string keys. PHP casts numeric-looking keys to
+	 * int on decode, so a value read back from the cache is `array-key` typed
+	 * even though every namespace stores a string-keyed map; the setters and the
+	 * merge helpers want that guarantee back.
+	 *
+	 * @param array<array-key,mixed> $map Decoded value.
+	 * @return array<string,mixed>
+	 */
+	public static function string_keys( array $map ): array {
+		$out = [];
+		foreach ( $map as $key => $value ) {
+			$out[ (string) $key ] = $value;
+		}
+		return $out;
+	}
+
+	/**
+	 * Whether a namespace is DERIVED from something the store already holds.
+	 *
+	 * Membership is the whole fact, and it sits beside `role_for()` because it
+	 * is the same kind of statement about a namespace: each of these is
+	 * re-derivable, so a durable copy would store one thing twice. The three
+	 * coarse tiers are re-folded from the mirrored fine buckets, the four
+	 * ranked lists are re-ranked from those rows on the next flush or fold,
+	 * and a token set is rewritten whenever its URL is next named. Every other
+	 * namespace is stored — `url` included, which is bounded by a RANK cap
+	 * instead (`Flame_Builder_Node::set_flame_topn()`, 0 until an operator
+	 * raises it).
+	 *
+	 * @api The durable stats mirror, deciding what it keeps and what it reads.
+	 * @param string $ns Namespace, an `NS_*` value.
+	 */
+	public static function is_derived( string $ns ): bool {
+		return match ( $ns ) {
+			self::NS_URLS_HOUR,
+			self::NS_URLNAMES_HOUR,
+			self::NS_LB_HOUR,
+			self::NS_URLRANK,
+			self::NS_URLRANK_HOUR,
+			self::NS_URLRANK_S,
+			self::NS_URLRANK_HOUR_S,
+			self::NS_URLTOKEN => true,
+			default           => false,
+		};
+	}
+
+	/**
+	 * Whether a name answers a term: every token of the term begins a WORD of
+	 * it, or the whole term appears when the term has no token at all.
+	 *
+	 * The index files word prefixes, so the fold it falls back to has to read
+	 * a term the same way. Matching a substring here instead would make `77`
+	 * name `/wombat-1177` through the fold and not through the index, so
+	 * which rows a search returned would turn on whether some other token
+	 * happened to have saturated.
+	 *
+	 * @api The fold, for a candidate the token index already named.
+	 * @param string       $name   The URL's path.
+	 * @param string       $term   The lowercased search term.
+	 * @param list<string> $tokens The term's tokens, as `term_tokens()` spells them.
+	 */
+	public static function term_matches( string $name, string $term, array $tokens ): bool {
+		$name = \strtolower( $name );
+		if ( [] === $tokens ) {
+			return \str_contains( $name, $term );
+		}
+		foreach ( $tokens as $token ) {
+			if ( 1 !== \preg_match( '/(?:^|' . self::TOKEN_SEP . ')' . \preg_quote( $token, '/' ) . '/', $name ) ) {
+				return false;
+			}
+		}
+		return true;
 	}
 
 	/**
@@ -2265,17 +2548,6 @@ class Stats_Store {
 	 */
 	public static function join_url( array $pair ): string {
 		return Core::str( $pair[1] ?? '' ) . Core::str( $pair[0] ?? '' );
-	}
-
-	/**
-	 * The PATH half of a name pair — decision 18: a positional value is read
-	 * through a name, never a bare index.
-	 *
-	 * @param array<array-key,mixed> $pair `[ path, origin ]`, from `get_url_names()` or `split_url()`.
-	 * @return string The path, or '' for a pair that is not one.
-	 */
-	public static function path_of( array $pair ): string {
-		return Core::str( $pair[0] ?? '' );
 	}
 
 	/**

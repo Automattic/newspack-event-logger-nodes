@@ -27,6 +27,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its proposal, since none reaches that rule; and the request and span
   briefs' `rule` reads `{ id, resolved: false }` rather than null, which
   the markdown brief renders as a rule not in this ruleset.
+- **A bucket whose last writes fell inside the ranking cadence is ranked
+  once it closes.** Ranking is triggered by a write, so a bucket deferred
+  by the cadence and never written into again kept lists missing those
+  last rows for the rest of the retention window. A deferred bucket is
+  remembered and ranked at the end of the first flush it comes due in,
+  reading its whole stored content back.
 - **Two fine buckets of one folded hour no longer overwrite each other.**
   A replay covering several buckets of a folded hour produced two writes
   against the same `urls_h` item in one flush, and both merged into the
@@ -36,6 +42,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A token's search index drops a hash a retention window has passed
+  over on the next flush that touches it**, rather than only when the
+  flush would take the set past `URL_SEARCH_MAX`. A dead hash was named
+  to the reader and counted against that cap for as long as anything kept
+  the token alive. Deciding costs one pass over the stamps, and a flush
+  already over the cap prunes without making it.
+- **A refused hourly-fold write names the shard it lost.** The fold
+  writes 33 keys in one batch and the batch answers per write, so the log
+  line carries the key — `urls_h:{shard}:{hour}` or its name twin —
+  instead of leaving 33 candidates for the hour.
+- **The `urls` poll that folds a page's header now answers from that
+  fold.** A ranked page takes its `rows`, `totals` and `slowest` from a
+  fold cached for the bucket's five minutes, and the poll that missed
+  that cache used to fold a `0, 0` page, throw it away, and read the
+  ranked lists as well. It now folds the page it was actually asked for
+  and answers with it, so that poll reports `ranked: false` and reads no
+  list; every poll after it inside the bucket is ranked as before.
+- **A search term carrying one very short word no longer folds the whole
+  index.** A token under three characters is not in the token index, and
+  it used to send the entire term to the fold; the tokens that ARE
+  indexed now narrow the candidates on their own, and the fold still
+  matches every word of the term against their names. `weka 41` reads one
+  shard where it read sixteen.
+- **A bucket's ranked lists are refreshed once a minute, not once a
+  flush.** The page cache holds a ranked page for its own minute and the
+  dashboard polls against that, so ranking on every five-second flush
+  spent twelve rankings on one read. A bucket the cadence defers is
+  remembered and ranked at the end of the first flush it comes due in,
+  including one that writes nothing into it, so a closed bucket's last
+  rows still reach its lists.
+- **A folded hour marks itself ranked under its own key.** The hour tier
+  writes `urlrank_h:done:{Y-m-d-H}` once every one of its lists has
+  landed, and the fold's probe reads that rather than the site-wide
+  `count:desc` list. A list standing in for the whole set reported an hour
+  missing a sibling as ranked, and nothing re-ranked it for the rest of
+  the retention window.
 - **A URL search reads a token index and folds only the shards its
   candidates fall in.** The writer files each named path under every
   prefix of every word it carries, so a search matches a word or a word
@@ -94,6 +136,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rather than folded again, which its expired fine buckets would overwrite
   with nothing. The probe reads all three tiers in one round trip
   (`Stats_Store::url_hours_derived()`, replacing `url_hours_folded()`).
+- **The coarse tier and the ranked lists are named as one set, by
+  `Stats_Store::is_derived()`**, replacing the per-namespace
+  `STATS_MIRROR_TOPN` frame counts. A namespace is either derived — kept
+  out of the durable mirror and re-derived from the fine buckets on the
+  next flush or fold — or it is mirrored in full; there is no third answer
+  a count expressed.
+- **The index-read seam takes a shard name, not a nullable one.**
+  `Performance_CI_Node::$load_index` is typed `string $shard`, since both
+  readers name the one shard they walk, and a test double replacing it
+  must take a string.
 
 ## [0.101.2] - 2026-09-22
 
