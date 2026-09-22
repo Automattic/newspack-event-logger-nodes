@@ -1974,23 +1974,16 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 
 	/**
 	 * Cap a dimensional bucket: ranked by request count, no reserved row. Named
-	 * so the sort field and the field table cannot be paired wrongly at a call site.
-	 *
-	 * A value is seeded by a request, so its count is at least one, and one at
-	 * zero is a cap slot and a chart legend row standing for nothing. `Other`
-	 * sums counts, so the fold cannot make one either. `fold_categories()`
-	 * holds its own entries to the same rule on `CAT_REQUESTS`.
+	 * so the sort field and the field table cannot be paired wrongly at a call
+	 * site. Only measured entries are ranked; `fold_categories()` holds its
+	 * own to the same rule on `CAT_REQUESTS`.
 	 *
 	 * @param array<array-key,mixed> $values     One bucket's values.
 	 * @param int                    $max_values Ceiling on distinct values.
 	 * @return array<array-key,mixed>
 	 */
 	private static function cap_dim( array $values, int $max_values ): array {
-		$measured = \array_filter(
-			$values,
-			static fn ( $entry ): bool => \is_array( $entry ) && Core::num_int( $entry[ Stats_Store::DIM_COUNT ] ?? null ) > 0
-		);
-		return self::cap_bucket( $measured, $max_values, Stats_Store::DIM_COUNT, Stats_Store::DIM_SUMS );
+		return self::cap_bucket( self::measured( $values, Stats_Store::DIM_COUNT ), $max_values, Stats_Store::DIM_COUNT, Stats_Store::DIM_SUMS );
 	}
 
 	/**
@@ -2018,11 +2011,7 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	 * @return array<array-key,mixed>
 	 */
 	private static function fold_categories( array $existing, array $cats ): array {
-		// Zero requests means a slot the merge could not name.
-		$measured = \array_filter(
-			Stats_Store::sum_fields( $existing, $cats, Stats_Store::CAT_SUMS ),
-			static fn ( $entry ): bool => \is_array( $entry ) && Core::num_int( $entry[ Stats_Store::CAT_REQUESTS ] ?? null ) > 0
-		);
+		$measured = self::measured( Stats_Store::sum_fields( $existing, $cats, Stats_Store::CAT_SUMS ), Stats_Store::CAT_REQUESTS );
 		$capped = self::cap_bucket(
 			$measured,
 			Stats_Store::MAX_CAT_VALUES,
@@ -2041,6 +2030,22 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 			$capped[ $name ] = $entry;
 		}
 		return $capped;
+	}
+
+	/**
+	 * The entries of a bucket that measured anything. An entry the merge could
+	 * not name reads its count as absent, and a zero count is a slot with
+	 * nothing in it: no request, no chart row.
+	 *
+	 * @param array<array-key,mixed> $values      Entries keyed by value name.
+	 * @param int                    $count_field The entry's count index.
+	 * @return array<array-key,mixed> The entries with a count above zero.
+	 */
+	private static function measured( array $values, int $count_field ): array {
+		return \array_filter(
+			$values,
+			static fn ( $entry ): bool => \is_array( $entry ) && Core::num_int( $entry[ $count_field ] ?? null ) > 0
+		);
 	}
 
 	/**

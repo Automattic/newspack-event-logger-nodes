@@ -38,9 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lives in an mu-plugin — so the flag gates only the flush, and turning it off
   costs the measuring nothing. What it saves is two firehose entries per
   site-activated plugin on every logged request, which on a forty-plugin site
-  is eighty of them before the request does any work of its own. **Absent means
-  ON**, the rule `log_http` already follows: every stored rule predates the
-  flag, and silence has to keep meaning what it meant. `Rule` carries five
+  is eighty of them before the request does any work of its own. `Rule` carries five
   diagnostic knobs now rather than four, which decision 23 had named as its
   revisit trigger; the decision records why five separate properties still beat
   a flags map, `trace_callers` being an int rather than a boolean.

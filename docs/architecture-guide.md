@@ -170,8 +170,8 @@ The four terminal codes, `F`, `A`, `T` and `I`, are `Request_Builder_Node::ERROR
 | `significant_events` | `[]` | Hooks that get per-callback profiling and are exempt from auto-disable; `sql` and `http` name the `query` and `pre_http_request` filters their spans cover, and take effect under `log_queries` and `log_http` |
 | `auto_disable_threshold` | `0` | Per-request occurrence count above which auto-tune proposes a disable; 0 is off |
 | `auto_protect_time_threshold` | `0.0` | Mean ms per call at or above which auto-tune promotes a hook to significant; 0.0 is off |
-| `log_http` | `true` | Time every outbound HTTP request as a span |
-| `log_plugin_loads` | `true` | Write the profiler mu-plugin's per-plugin load timings as spans; the measuring happens either way |
+| `log_http` | `false` | Time every outbound HTTP request as a span |
+| `log_plugin_loads` | `false` | Write the profiler mu-plugin's per-plugin load timings as spans; the measuring happens either way |
 | `log_queries` | `false` | Time every SQL query as a span; defines `SAVEQUERIES` and costs two entries per query |
 | `trace_hooks` | `false` | Name the calling frame on each hook entry's `l`, splitting one hook into a flame node per caller |
 | `trace_callers` | `0` | Deep caller chains recorded per request on a span's start entry as `caller`, budgeted per CALLER of each hook, query statement shape and outbound URL; a stored `true` is a count of 1 |

@@ -156,8 +156,8 @@ export default function RuleEditModal( {
 			// The editor holds resolved hooks; Rule_Set re-tiers on save.
 			hooks_in: 'inline',
 			log_queries: isLog && logQueries,
-			log_http: isLog && !! logHttp,
-			log_plugin_loads: isLog && !! logPluginLoads,
+			log_http: isLog && logHttp,
+			log_plugin_loads: isLog && logPluginLoads,
 			trace_hooks: isLog && traceHooks,
 			// The count refines the caller label, so unticking retires both.
 			trace_callers:
@@ -354,7 +354,7 @@ export default function RuleEditModal( {
 								'Times every outbound HTTP request as its own flame span. Two log entries per request, so a request that calls many APIs gets a little slower.',
 								'newspack-event-logger-nodes'
 							) }
-							checked={ !! logHttp }
+							checked={ logHttp }
 							onChange={ setLogHttp }
 						/>
 
@@ -369,7 +369,7 @@ export default function RuleEditModal( {
 								'Times each site-activated plugin as its own flame span. The measuring happens either way; this is two log entries per plugin, before the request does any work.',
 								'newspack-event-logger-nodes'
 							) }
-							checked={ !! logPluginLoads }
+							checked={ logPluginLoads }
 							onChange={ setLogPluginLoads }
 						/>
 

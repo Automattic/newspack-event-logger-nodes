@@ -412,12 +412,10 @@ class Core {
 		$log_events_set = \array_flip( \array_filter( $hooks, 'is_string' ) );
 
 		// Per-callback profiling; a transport's only where its span is logged.
-		$wrap_http = false;
 		foreach ( $rule->significant_events as $event ) {
 			if ( isset( self::TRANSPORT_HOOKS[ $event ] ) ) {
-				if ( self::transport_logged( $event, $rule ) ) {
+				if ( $rule->logs_transport( $event ) ) {
 					$this->significant[ self::TRANSPORT_HOOKS[ $event ] ] = true;
-					$wrap_http = $wrap_http || self::HTTP_STATE === $event;
 				}
 				continue;
 			}
@@ -453,7 +451,7 @@ class Core {
 		if ( $rule->log_http ) {
 			\add_filter( self::HTTP_HOOK, [ $this, 'http_start' ], PHP_INT_MAX, 3 );
 			\add_action( 'http_api_debug', [ $this, 'http_end' ], PHP_INT_MIN, 5 );
-			if ( $wrap_http ) {
+			if ( $rule->marks_significant( self::HTTP_STATE ) ) {
 				\add_filter( self::HTTP_HOOK, [ $this, 'http_wrap' ], PHP_INT_MIN );
 			}
 		}
@@ -471,23 +469,6 @@ class Core {
 		}
 		\add_filter( self::QUERY_HOOK, [ $this, 'query_start' ], $this->start_priority );
 		\add_filter( 'log_query_custom_data', [ $this, 'query_end' ], PHP_INT_MIN, 5 );
-	}
-
-	/**
-	 * Whether a rule logs a transport's span at all — the gate on marking that
-	 * transport significant, read here by the binder and by `Findings`, so the
-	 * two agree on what the rule does.
-	 *
-	 * @param string $state `Flame_Tree::SQL_STATE` or `Flame_Tree::HTTP_STATE`.
-	 * @param \Newspack_Event_Logger_Nodes\Rule $rule The governing rule.
-	 * @return bool
-	 */
-	public static function transport_logged( string $state, \Newspack_Event_Logger_Nodes\Rule $rule ): bool {
-		return match ( $state ) {
-			self::SQL_STATE  => $rule->log_queries,
-			self::HTTP_STATE => $rule->log_http,
-			default          => throw new \InvalidArgumentException( "Not a transport span: {$state}" ),
-		};
 	}
 
 	/**
@@ -517,7 +498,7 @@ class Core {
 		if ( false !== $preempt ) {
 			return $preempt;
 		}
-		$lm = self::started_logger();
+		$lm = Log_Manager::started_instance();
 		if ( null === $lm ) {
 			return $preempt;
 		}
@@ -547,7 +528,7 @@ class Core {
 	 * @return mixed
 	 */
 	public function http_wrap( $preempt = false ) {
-		if ( null !== self::started_logger() ) {
+		if ( null !== Log_Manager::started_instance() ) {
 			$this->wrap_callbacks( self::HTTP_HOOK, PHP_INT_MIN, PHP_INT_MAX );
 		}
 		return $preempt;
@@ -577,7 +558,7 @@ class Core {
 	 * @return mixed
 	 */
 	public function query_start( $query = '' ) {
-		$lm = self::started_logger();
+		$lm = Log_Manager::started_instance();
 		if ( null === $lm ) {
 			return $query;
 		}
@@ -853,21 +834,6 @@ class Core {
 			return \substr( $name, 0, self::ORIGIN_MAX );
 		}
 		return '';
-	}
-
-	/**
-	 * The logger a span may be written into, or null. Instrumentation never
-	 * CONSTRUCTS the logger it reports into (decision 20), so `has_instance()`
-	 * comes first; a logger that exists but has not started takes nothing.
-	 *
-	 * @return Log_Manager|null
-	 */
-	private static function started_logger(): ?Log_Manager {
-		if ( ! Log_Manager::has_instance() ) {
-			return null;
-		}
-		$lm = Log_Manager::instance();
-		return $lm->is_started() ? $lm : null;
 	}
 
 	/**

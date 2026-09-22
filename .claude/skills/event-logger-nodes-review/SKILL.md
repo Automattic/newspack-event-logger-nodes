@@ -184,8 +184,8 @@ Five flags on `Rule` gate instrumentation, and their defaults differ because the
 
 | Flag | Default | Cost |
 |---|---|---|
-| `log_http` | on (absent means on) | Two `add_filter` calls per request; two entries per outbound call |
-| `log_plugin_loads` | on (absent means on) | Two entries per site-activated plugin, before the request does any work; the mu-plugin measures either way |
+| `log_http` | off | Two `add_filter` calls per request; two entries per outbound call |
+| `log_plugin_loads` | off | Two entries per site-activated plugin, before the request does any work; the mu-plugin measures either way |
 | `log_queries` | off | Two entries per QUERY, and it turns `SAVEQUERIES` on |
 | `trace_hooks` | off | One shallow backtrace per hook firing, ~0.9µs |
 | `trace_callers` | 0 | A formatted stack per span, capped at the number the rule names per CALLER of each hook, query shape and URL; a stored `true` is a count of 1 |

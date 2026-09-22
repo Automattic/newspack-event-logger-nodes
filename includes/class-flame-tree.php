@@ -482,9 +482,11 @@ final class Flame_Tree {
 	 * (decision 22) or an outbound HTTP call (decision 20) — rather than a
 	 * hook, a listener or a custom event the application logs.
 	 *
-	 * The vocabulary lives here, beside the naming both machines compose spans
-	 * with, because `Flame_Fold` folds a Perl or pyrobase producer's entries as
-	 * readily as `App\Core`'s and must not reach up into one of them to ask.
+	 * The vocabulary the fold needs lives here, beside the naming both machines
+	 * compose spans with, because `Flame_Fold` folds a Perl or pyrobase
+	 * producer's entries as readily as `App\Core`'s and must not reach up into
+	 * one of them to ask. A listener span is `App\Core`'s alone, since only
+	 * `wrap_callbacks()` mints one, and `LISTENER_PATTERN` stays there.
 	 *
 	 * @param string $span A span name, as the flame carries it.
 	 * @return bool
