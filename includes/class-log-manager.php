@@ -944,8 +944,7 @@ class Log_Manager {
 	 * `instance()` lazily constructs, and a span opened by a binding that
 	 * outlived its request would build the logger at that moment — stamping
 	 * `process (start)` with the callback's time rather than the mu-profiler's
-	 * `request_ts`. Instrumentation asks `started_instance()`; this is how a
-	 * test proves it constructed nothing.
+	 * `request_ts`. Instrumentation asks `started_instance()`.
 	 *
 	 * @api Used by tests, which ask whether instrumentation constructed a logger.
 	 */

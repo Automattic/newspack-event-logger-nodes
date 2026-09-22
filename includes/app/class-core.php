@@ -363,10 +363,11 @@ class Core {
 	 * three and `query_start`. `query_end` stays bound once armed: SAVEQUERIES
 	 * outlives every scope, so the drain must too, and with no span open it
 	 * closes nothing. Both open-span stacks are emptied: a span the old scope
-	 * opened and never closed — an exception escaped it — has no close in the
-	 * new one. Callback wrappers already installed by wrap_callbacks() stay in
-	 * $wp_filter and keep timing, and wrapper_ids keeps remembering them, so
-	 * the new scope can't double-wrap.
+	 * opened and never closed — `wpdb::query()` returning ahead of
+	 * `_do_query()`, or an exception — has no close in the new one. Callback
+	 * wrappers already installed by wrap_callbacks() stay in $wp_filter and
+	 * keep timing, and wrapper_ids keeps remembering them, so the new scope
+	 * can't double-wrap.
 	 */
 	public function rebind_for_current_scope(): void {
 		foreach ( $this->bound_hooks as $hook_name ) {

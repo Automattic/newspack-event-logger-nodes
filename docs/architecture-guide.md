@@ -50,9 +50,9 @@ class Log_Manager {
     private const MAX_TIMER_DEPTH = 100;    // start/complete nesting cap
     private const ENV_VALUE_MAX   = 256;    // per-value cap in environment_v3
 
-    public function start( string $label, array $data = [] ): void;
-    public function complete( string $label, array $data = [], string $suffix = 'complete' ): void;
-    public function message( string $category, array $data = [] ): bool;
+    public function start( string $label, array $data = [], bool $shaped = false ): void;
+    public function complete( string $label, array $data = [], string $suffix = 'complete', bool $shaped = false ): void;
+    public function message( string $category, array $data = [], bool $shaped = false ): bool;
     public function error( string $message ): bool;
     public function warning( string $message ): bool;
     public function info( string $message ): bool;

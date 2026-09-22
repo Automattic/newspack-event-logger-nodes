@@ -34,6 +34,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it, and it is no chart row on either side.
 - **`Flame_Tree` owns the listener span's name**: `listener_name()` mints it
   and `is_listener_span()` reads it, beside the other span classifiers.
+- **A verb builds its partition stores once.** `overview` handed each panel
+  its own store build, ten per poll with every breakdown asked for; the
+  merges now take the list the verb built, and `dump_url` and
+  `url_breakdown` do the same.
 
 ## [0.101.0] - 2026-09-21
 

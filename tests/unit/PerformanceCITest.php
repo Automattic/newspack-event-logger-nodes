@@ -807,7 +807,7 @@ class PerformanceCITest extends TestCase {
 			$hash => [ 'url' => '/wombat-4471', 'count' => 5, 'timed_count' => 5, 'sum_ms' => 50.0 ],
 		] );
 
-		$row = Performance_CI_Node::load_row_default( $hash );
+		$row = Performance_CI_Node::load_row_default( $hash, self::live_stores() );
 
 		$this->assertNotNull( $row );
 		$this->assertSame( 12, $row['count'], 'the folded hour and the grace hour both counted' );
@@ -833,7 +833,7 @@ class PerformanceCITest extends TestCase {
 		] );
 
 		$this->assertNull(
-			Performance_CI_Node::load_row_default( $hash ),
+			Performance_CI_Node::load_row_default( $hash, self::live_stores() ),
 			'nothing folded it, and the fine tier is not where it is read from'
 		);
 	}
@@ -864,14 +864,14 @@ class PerformanceCITest extends TestCase {
 		$this->seed_url_hour( $store, $hour, $shard, [
 			$hash => [ 'url' => '/wombat-4471', 'count' => 23, 'timed_count' => 23, 'sum_ms' => 460.0 ],
 		] );
-		$this->assertSame( 23, Performance_CI_Node::load_row_default( $hash )['count'] );
+		$this->assertSame( 23, Performance_CI_Node::load_row_default( $hash, self::live_stores() )['count'] );
 
 		// Gone, the way memcache drops an item under pressure.
 		Core::$memd->delete( self::cache_key( 0, Stats_Store::NS_URLS_HOUR . ":{$shard}:{$hour}" ) );
 
 		$this->assertSame(
 			23,
-			Performance_CI_Node::load_row_default( $hash )['count'],
+			Performance_CI_Node::load_row_default( $hash, self::live_stores() )['count'],
 			'the fine buckets answer for an hour that is no longer folded'
 		);
 	}
@@ -924,7 +924,7 @@ class PerformanceCITest extends TestCase {
 			$hash => [ 'url' => '/wombat-4471', 'count' => 5, 'timed_count' => 5, 'sum_ms' => 50.0 ],
 		] );
 
-		$row = Performance_CI_Node::load_row_default( $hash );
+		$row = Performance_CI_Node::load_row_default( $hash, self::live_stores() );
 
 		$this->assertSame( 5, $row['count'], 'the fold replaces its buckets, it does not add to them' );
 	}
@@ -2631,6 +2631,38 @@ class PerformanceCITest extends TestCase {
 		\Newspack_Nodes\Config::reset();
 	}
 
+	/** One `overview` builds the partitions' stores once: the panels it is asked for do not multiply the catalog reads. */
+	public function test_overview_builds_its_stores_once(): void {
+		$this->activate_shipped_topology( 'performance', 3 );
+		$reads = 0;
+		\add_filter(
+			'newspack_nodes/topologies',
+			static function ( array $topologies ) use ( &$reads ): array {
+				++$reads;
+				return $topologies;
+			}
+		);
+		// Each fire() builds a fresh request-scope graph; reset() drops it and
+		// `Core::$memd` with it, and the backend comes back so stores are built.
+		$catalog_reads_of = static function ( array $args ) use ( &$reads ): int {
+			$memd = Core::$memd;
+			VerbHarness::reset();
+			Core::$memd = $memd;
+			$reads      = 0;
+			VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', $args );
+			return $reads;
+		};
+
+		$bare = $catalog_reads_of( [] );
+
+		$this->assertGreaterThan( 0, $bare );
+		$this->assertSame(
+			$bare,
+			$catalog_reads_of( [ '--server=web07', '--breakdown=status,method,server', '--categories' ] ),
+			'three breakdowns and the categories cost no further store build'
+		);
+	}
+
 	public function test_search_requests_spans_the_topologys_own_worker_count(): void {
 		// Global num_partitions stays 1; performance runs 4. A rid living in p2 is
 		// invisible to a reader that loops to the global.
@@ -4119,7 +4151,7 @@ class PerformanceCITest extends TestCase {
 		}
 		$mirror->flush();
 
-		$row = Performance_CI_Node::load_row_default( $hash );
+		$row = Performance_CI_Node::load_row_default( $hash, self::live_stores() );
 
 		$this->assertNotNull( $row, 'nothing in memcache; the mirror must answer' );
 		$this->assertSame( 41, $row['count'], 'and a spent cache lifetime does not erase the record' );
