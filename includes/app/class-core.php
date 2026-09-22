@@ -373,6 +373,8 @@ class Core {
 		\remove_filter( self::HTTP_HOOK, [ $this, 'http_start' ], PHP_INT_MAX );
 		\remove_filter( self::HTTP_HOOK, [ $this, 'http_wrap' ], PHP_INT_MIN );
 		\remove_action( 'http_api_debug', [ $this, 'http_end' ], PHP_INT_MIN );
+		\remove_filter( self::QUERY_HOOK, [ $this, 'query_start' ], $this->start_priority );
+		\remove_filter( 'log_query_custom_data', [ $this, 'query_end' ], PHP_INT_MIN );
 		$this->bound_hooks = [];
 		$this->significant = [];
 		$this->traced      = [];
@@ -516,9 +518,9 @@ class Core {
 	 * PHP_INT_MIN, ahead of the chain, when the rule marks `http` significant
 	 * and logs the span: `http_start()` votes last, so from there a listener
 	 * could only be wrapped for the NEXT call, and the short-circuit worth
-	 * timing is the one answering THIS one. A listener that shares the
-	 * PHP_INT_MIN bucket and registered earlier runs before this does, so it
-	 * is wrapped from the second call on.
+	 * timing is the one answering THIS one. Any listener sharing the
+	 * PHP_INT_MIN bucket runs from the copy WP_Hook took before this replaced
+	 * the entry, so it is wrapped from the second call on.
 	 *
 	 * @param mixed $preempt The vote so far, passed through untouched.
 	 * @return mixed
@@ -853,19 +855,19 @@ class Core {
 	 * @return mixed
 	 */
 	public function query_end( $data = null, string $query = '', float $query_time = 0.0, string $callstack = '', float $query_start = 0.0 ) {
+		// SAVEQUERIES outlives any logger: drain first; never CREATE `queries`.
+		if ( isset( $GLOBALS['wpdb'] ) && \is_object( $GLOBALS['wpdb'] )
+			&& \property_exists( $GLOBALS['wpdb'], 'queries' ) ) {
+			$GLOBALS['wpdb']->queries = [];
+		}
 		$label = \array_pop( $this->query_spans );
-		$lm = Log_Manager::started_instance();
+		$lm    = Log_Manager::started_instance();
 		if ( null === $label || null === $lm ) {
 			return $data;
 		}
 		// Only here is the statement the one the database was actually asked.
 		$sql = self::without_literals( self::without_host_annotation( $query ) );
 		$lm->complete( $label, '' === $sql ? [] : [ 'm' => $sql ], shaped: true );
-		// `property_exists`: never CREATE it on a double that has none.
-		if ( isset( $GLOBALS['wpdb'] ) && \is_object( $GLOBALS['wpdb'] )
-			&& \property_exists( $GLOBALS['wpdb'], 'queries' ) ) {
-			$GLOBALS['wpdb']->queries = [];
-		}
 		return $data;
 	}
 
@@ -989,7 +991,7 @@ class Core {
 	 */
 	public function hook_complete( $v = null ) {
 		$hook_name = \current_filter();
-		Log_Manager::instance()->complete( $hook_name . Flame_Tree::HOOK_SUFFIX );
+		Log_Manager::started_instance()?->complete( $hook_name . Flame_Tree::HOOK_SUFFIX );
 		return $v;
 	}
 }

@@ -783,9 +783,10 @@ class FindingsTest extends TestCase {
 	public function test_a_transport_span_under_a_rule_not_logging_it_is_not_proposed_as_significant(): void {
 		$found = $this->of_kind( Findings::for_request( $this->query_record(), $this->instrumented_rule() ), 'dominant_span' );
 
-		$this->assertSame( 'none', $found['proposal']['action'] );
+		$this->assertSame( 'log_transport', $found['proposal']['action'] );
+		$this->assertSame( 'log_queries', $found['proposal']['field'] );
+		$this->assertSame( 'log_queries', $found['proposal']['value'] );
 		$this->assertStringContainsString( 'log_queries', $found['proposal']['why'] );
-		$this->assertStringNotContainsString( 'already', $found['proposal']['why'] );
 	}
 
 	/** The rule lists `sql` but does not log the span: nothing is wrapped, and re-proposing `sql` would change nothing. */
@@ -794,9 +795,9 @@ class FindingsTest extends TestCase {
 
 		$found = $this->of_kind( Findings::for_request( $this->query_record(), $rule ), 'dominant_span' );
 
-		$this->assertSame( 'none', $found['proposal']['action'] );
+		$this->assertSame( 'log_transport', $found['proposal']['action'] );
+		$this->assertSame( 'log_queries', $found['proposal']['field'] );
 		$this->assertStringContainsString( 'not wrapped', $found['detail'] );
-		$this->assertStringContainsString( 'query', $found['proposal']['why'] );
 	}
 
 	/** `healthy_record()` with one query span holding the time. */

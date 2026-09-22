@@ -853,7 +853,7 @@ class Log_Manager {
 	 * finish() has not run yet. The gate every caller that instruments its own
 	 * work — rather than just writing a line — should check first.
 	 *
-	 * @api Used by App\Core and the profiler drop-in.
+	 * @api Used by the profiler drop-in.
 	 */
 	public function is_started(): bool {
 		return true === $this->started;

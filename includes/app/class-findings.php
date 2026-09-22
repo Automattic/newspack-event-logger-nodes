@@ -101,8 +101,10 @@ class Findings {
 	 * span is it. One entry per outcome makes the prose and the proposal
 	 * impossible to drift apart; two parallel `if` ladders would have to be
 	 * edited together. In a `why`, `%1$s` (or `%s`) takes the name a rule edit
-	 * would bind, the bare hook, and `%2$s` the filter a transport span covers,
-	 * from `App\Core::TRANSPORT_HOOKS`. Keys are `<kind>` and `significant:<kind>`,
+	 * would bind, the bare hook, `%2$s` the filter a transport span covers,
+	 * from `App\Core::TRANSPORT_HOOKS`, and `%3$s` the flag that logs it. A
+	 * row whose `field` is `transport` binds that flag rather than the span.
+	 * Keys are `<kind>` and `significant:<kind>`,
 	 * plus the one cell `transport:unlogged` for a rule that does not log the
 	 * span; a second such cell makes the key a tuple and this table a matrix.
 	 *
@@ -118,8 +120,12 @@ class Findings {
 			'why'    => 'It is already a significant event; the listeners on its filter are in this record.',
 		],
 		'transport:unlogged' => [
-			'detail' => 'The rule does not log this span, so the listeners on the filter it runs through are not wrapped.',
-			'why'    => 'The `%2$s` filter\'s listeners are wrapped only where the rule logs the span, and this rule does not: its `log_queries` or `log_http` comes first, and marking %1$s significant after that.',
+			'detail'    => 'The rule does not log this span, so the listeners on the filter it runs through are not wrapped.',
+			'why'       => 'The `%2$s` filter\'s listeners are wrapped only where the rule logs the span, and this rule does not: `%3$s` comes first, and marking %1$s significant after that.',
+			'action'    => 'log_transport',
+			'direction' => 'more',
+			'field'     => 'transport',
+			'undo'      => 'Turn the flag off again once the span is understood; it costs two entries per round trip.',
 		],
 		'significant:custom' => [
 			'detail' => 'The application logs this span itself, and marking it significant only keeps it from being auto-disabled — nothing about its interior follows from that.',
@@ -562,16 +568,18 @@ class Findings {
 		$binds  = isset( $advice['field'] );
 		// The bare hook, which is what a rule binds and what every row names.
 		$named = Flame_Tree::hook_name( $base );
-		$out   = [
+		// A transport row binds the flag that logs the span, not the span.
+		$flag = isset( Hooks::TRANSPORT_HOOKS[ $base ] ) ? Rule::transport_flag( $base ) : '';
+		$out  = [
 			'action'    => $advice['action'] ?? 'none',
 			'direction' => $advice['direction'] ?? 'none',
 			'rule_id'   => $rule?->id,
-			'why'       => \sprintf( $advice['why'], $named, Hooks::TRANSPORT_HOOKS[ $base ] ?? '' ),
+			'why'       => \sprintf( $advice['why'], $named, Hooks::TRANSPORT_HOOKS[ $base ] ?? '', $flag ),
 			'undo'      => $binds ? ( $advice['undo'] ?? $undo ) : '',
 		];
 		if ( $binds ) {
-			$out['field'] = $advice['field'];
-			$out['value'] = $named;
+			$out['field'] = 'transport' === $advice['field'] ? $flag : $advice['field'];
+			$out['value'] = 'transport' === $advice['field'] ? $flag : $named;
 		}
 		return $out;
 	}
