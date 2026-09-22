@@ -125,7 +125,7 @@ Nineteen namespaces sit under that prefix:
 | `dim` / `url_dim` | Dimensional time series, global and per URL |
 | `categories` / `url_cat` | Category time series, global and per URL |
 | `urlnames` / `urlnames_h` | One shard's names, `{ hash => path }`, on the same two tiers and the same read plan as the rows |
-| `urlrank` / `urlrank_h` | The writer's ranked top-N of one bucket or folded hour, `urlrank:{sort}:{order}:{bucket}`, one list per sort key and direction. A bucket's lists are rewritten at most once a minute (`RANK_EVERY_S`), and the hour tier marks itself `urlrank_h:done:{Y-m-d-H}` once every list landed |
+| `urlrank` / `urlrank_h` | The writer's ranked top-N of one bucket or folded hour, `urlrank:{sort}:{order}:{bucket}`, one list per sort key and direction. A bucket's lists are rewritten at most once a minute (`Stats_Store::URL_PAGE_REFRESH_S`, which is also how long a folded page is cached), and the hour tier marks itself `urlrank_h:done:{Y-m-d-H}` once every list landed |
 | `urlrank_s` / `urlrank_sh` | The same lists for one server, `urlrank_s:{server}:{sort}:{order}:{bucket}` — the scope is in the KEY here, unlike the stored rows |
 | `urltoken` | The search index, `urltoken:{token}` => `{ hash => last named }` for every URL whose path carries that word or word prefix, three to twelve characters |
 

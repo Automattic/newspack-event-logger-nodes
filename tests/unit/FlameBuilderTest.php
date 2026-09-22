@@ -921,15 +921,14 @@ class FlameBuilderTest extends TestCase {
 		$fb->set_stats_store( $store );
 		$hour = '2026-08-27-13';
 		( new \ReflectionProperty( $fb, 'folded_hours' ) )->setValue( $fb, [ $hour => true ] );
-		$fb->set_clock( static fn (): int => 1_756_301_337 );
 		$this->flush_buckets( $fb, [
 			$hour . '-05' => [ 'url_stats' => [ 'c6c6c6c6c6c6' => self::positional_url_row( [ 'count' => 6, 'last_seen' => 1756300000 ] ) ] ],
 		] );
 
 		$this->assertSame(
-			[ 'at' => 1_756_301_337 ],
+			[],
 			$this->url_rank_done( $store, $hour ),
-			'the marker carries when the set landed'
+			'the marker is present and empty: nothing reads a value here'
 		);
 	}
 
@@ -940,6 +939,64 @@ class FlameBuilderTest extends TestCase {
 	 */
 	private function url_rank_done( Stats_Store $store, string $hour ): ?array {
 		return $store->bucket_get_multi( [ [ Stats_Store::url_rank_done_parts(), $hour ] ] )[0];
+	}
+
+	public function test_a_refused_ranking_leaves_the_bucket_pending_for_the_next_flush(): void {
+		// A refusal is not a ranking: stamping it would hold the bucket
+		// inside the cadence with stale lists, and a bucket that has closed
+		// gets no further write to trigger a retry. Seeds distinct from every
+		// default: 7 requests refused, then 4 more accepted, ranking 11.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new class( 0, 86400 ) extends Stats_Store {
+			public bool $refuse = true;
+			public function bucket_set_multi( array $writes ): array {
+				// A rank chunk is its own batch, so the whole one is refused
+				// and nothing of it is stored — a real refusal, not a lie.
+				if ( $this->refuse && self::NS_URLRANK === ( $writes[0][0][0] ?? '' ) ) {
+					return \array_fill( 0, \count( $writes ), false );
+				}
+				return parent::bucket_set_multi( $writes );
+			}
+		};
+		$fb = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+		$hash   = 'b5b5b5b5b5b5';
+		$at     = \gmmktime( 9, 7, 0, 9, 22, 2026 );
+		$bucket = Stats_Store::bucket_key( $at );
+		$rows   = static fn ( int $count ): array => [ 'url_stats' => [ $hash => self::positional_url_row( [ 'count' => $count, 'last_seen' => 1758500907 ] ) ] ];
+		$ranked = static function () use ( $store, $bucket ): ?int {
+			$list = $store->url_rank_sources( [ $bucket ], 'count', 'desc', '', false );
+			return $list[0][1][0][ Stats_Store::RANK_ROW ][ Stats_Store::ROW_COUNT ] ?? null;
+		};
+		$pending = new \ReflectionProperty( $fb, 'rank_pending' );
+
+		$fb->set_clock( static fn (): int => $at );
+		$this->flush_buckets( $fb, [ $bucket => $rows( 7 ) ] );
+		$this->assertNull( $ranked(), 'the refused lists are not there' );
+		$this->assertSame( [ $bucket ], \array_keys( $pending->getValue( $fb ) ), 'the bucket is still pending' );
+
+		// Ten seconds on, well inside the cadence a stamp would have imposed.
+		$store->refuse = false;
+		$fb->set_clock( static fn (): int => $at + 10 );
+		$this->flush_buckets( $fb, [ $bucket => $rows( 4 ) ] );
+		$this->assertSame( 11, $ranked(), 'the retry ranks the whole stored bucket' );
+		$this->assertSame( [], $pending->getValue( $fb ), 'and the bucket leaves the memo' );
+	}
+
+	public function test_the_ranking_cadence_and_the_memo_prune_read_one_instant(): void {
+		// A flush can straddle a second, and the prune floor is derived from
+		// the same clock the due test reads: two reads put a bucket on either
+		// side of a boundary the flush never crossed.
+		$reads = 0;
+		$fb    = new Flame_Builder_Node();
+		$fb->set_clock( static function () use ( &$reads ): int {
+			++$reads;
+			return 1_600_000_000 + $reads;
+		} );
+
+		( new \ReflectionMethod( $fb, 'rank_pending_buckets' ) )->invoke( $fb, new Stats_Store( 0, 86400 ) );
+
+		$this->assertSame( 1, $reads, 'the ranking and the prune date from one instant' );
 	}
 
 	public function test_a_bucket_ranks_once_a_minute_rather_than_once_a_flush(): void {
@@ -1202,17 +1259,16 @@ class FlameBuilderTest extends TestCase {
 
 		$this->assertSame(
 			[ null, null ],
-			$for->invoke( $fb, '2026-09-21-11-15', 'w3', $collect ),
+			$for->invoke( $fb, 'w3', false, '2026-09-21-11-15', $collect ),
 			'a worker shard reports to no one'
 		);
 		$this->assertSame(
 			[ $collect, '2026-09-21-11-15' ],
-			$for->invoke( $fb, '2026-09-21-11-15', '3', $collect ),
+			$for->invoke( $fb, '3', false, '2026-09-21-11-15', $collect ),
 			'a reader shard collects, under its bucket'
 		);
-		( new \ReflectionProperty( $fb, 'folded_hours' ) )->setValue( $fb, [ '2026-09-21-11' => true ] );
 		$this->assertNull(
-			$for->invoke( $fb, '2026-09-21-11-15', '3', $collect )[1],
+			$for->invoke( $fb, '3', true, '2026-09-21-11', $collect )[1],
 			'a write into a folded hour re-ranks the HOUR, not the bucket'
 		);
 	}

@@ -143,7 +143,7 @@ class Stats_Store {
 	 * The search index: `urltoken:{token}` => the hashes of every URL whose
 	 * path carries a token, or a token prefix, spelled so. TTL is the
 	 * retention window, refreshed by every flush that names such a URL, so a
-	 * live token stays and a dead one ages out. Derived, not mirrored.
+	 * live token stays and a dead one ages out.
 	 */
 	public const NS_URLTOKEN = 'urltoken';
 
@@ -196,7 +196,7 @@ class Stats_Store {
 	/**
 	 * The writer's ranked top-N of one `urls` bucket, one list per `URL_SORTS`
 	 * key and `URL_ORDERS` direction: `urlrank:{sort}:{order}:{bucket}`. Fine
-	 * tier; `ROLE_URL_FINE`. Derived from `urls`, so not mirrored.
+	 * tier; `ROLE_URL_FINE`.
 	 */
 	public const NS_URLRANK        = 'urlrank';
 	/** The coarse tier of `urlrank`: `urlrank_h:{sort}:{order}:{Y-m-d-H}`, folded with `urls_h`. */
@@ -205,6 +205,14 @@ class Stats_Store {
 	public const NS_URLRANK_S      = 'urlrank_s';
 	/** One server's `urlrank_h`: `urlrank_sh:{server_key}:{sort}:{order}:{Y-m-d-H}`. */
 	public const NS_URLRANK_HOUR_S = 'urlrank_sh';
+
+	/**
+	 * How long a folded URL page is cached, and how often a bucket's ranked
+	 * lists are rewritten. ONE constant, because it is one number: the reader
+	 * looks this often, so ranking more often spends rankings nobody reads,
+	 * and a ranked row therefore lags live traffic by up to twice it.
+	 */
+	public const URL_PAGE_REFRESH_S = 60;
 
 	/** Entries a fine-tier ranked list keeps. A page past this folds. */
 	public const URL_RANK_N      = 200;
@@ -1653,7 +1661,8 @@ class Stats_Store {
 	 * @return int Seconds the absence holds; 0 holds none.
 	 */
 	public function absence_holds( string $key ): int {
-		$now    = (int) Core::right_now();
+		// The tick, never a fresh read: a reply is dated from this clock.
+		$now    = (int) Core::$now;
 		$bucket = self::bucket_span( $key );
 		if ( null === $bucket || $bucket[0] + $bucket[1] + self::BUCKET_SECONDS > $now ) {
 			return self::ABSENCE_HOLD_SECONDS;
@@ -2024,23 +2033,29 @@ class Stats_Store {
 	}
 
 	/**
-	 * One scope's ranked lists, as the `[parts, key, entries]` triples
-	 * `bucket_set_multi()` takes. The TIER sets the bound, so a caller names
-	 * which tier it is writing and never the row count twice.
+	 * Every ranked list one tier's merged rows produce, as the
+	 * `[parts, key, entries]` triples `bucket_set_multi()` takes: the site's
+	 * fourteen, then fourteen for each server a row's split names. The TIER
+	 * sets the bound, so a caller names which tier it is writing and never
+	 * the row count twice.
 	 *
-	 * @param array<array-key,mixed> $rows   Rows already scoped to `$server`.
-	 * @param array<string,string>   $paths  hash => path.
-	 * @param string                 $server Reporting server; '' is site-wide.
-	 * @param bool                   $hour   The coarse tier.
-	 * @param string                 $key    Bucket or hour key.
+	 * The ONE entry to ranking: a caller left to enumerate the scopes itself
+	 * is one that can rank the site and forget the servers.
+	 *
+	 * @param array<array-key,mixed> $rows  The tier's merged rows by hash, split included.
+	 * @param array<string,string>   $paths hash => path.
+	 * @param bool                   $hour  The coarse tier.
+	 * @param string                 $key   Bucket or hour key.
 	 * @return list<array{0: array<int,string>, 1: string, 2: array<array-key,mixed>}>
 	 */
-	public static function ranked_writes( array $rows, array $paths, string $server, bool $hour, string $key ): array {
+	public static function ranked_writes( array $rows, array $paths, bool $hour, string $key ): array {
 		$writes = [];
 		$n      = $hour ? self::URL_RANK_N_HOUR : self::URL_RANK_N;
-		foreach ( self::rank_url_rows( $rows, $paths, $n ) as $sort => $orders ) {
-			foreach ( $orders as $order => $entries ) {
-				$writes[] = [ self::url_rank_parts( $sort, $order, $server, $hour ), $key, $entries ];
+		foreach ( self::rank_scopes( $rows ) as $server => $scoped ) {
+			foreach ( self::rank_url_rows( $scoped, $paths, $n ) as $sort => $orders ) {
+				foreach ( $orders as $order => $entries ) {
+					$writes[] = [ self::url_rank_parts( $sort, $order, (string) $server, $hour ), $key, $entries ];
+				}
 			}
 		}
 		return $writes;
@@ -2079,11 +2094,17 @@ class Stats_Store {
 	}
 
 	/**
-	 * Every ranked list of one bucket: `sort => order => entries`, each cut
-	 * to `$n`. Overflow rows and worker rows are never ranked, an untimed row
-	 * ranks on no timed sort, and a row with no path ranks on no `url` sort.
+	 * Every ranked list of ONE SCOPE's rows: `sort => order => entries`, each
+	 * cut to `$n`. An untimed row ranks on no timed sort, and a row with no
+	 * path ranks on no `url` sort; those two skips are per SORT, so they live
+	 * here.
 	 *
-	 * @param array<array-key,mixed> $rows  Stored rows by hash, split included.
+	 * The rows arrive SCALAR — `rank_scopes()` has already dropped what never
+	 * ranks and projected each row to this scope — so nothing here walks them
+	 * a second time. Handed a row that still carries its split, it ranks that
+	 * row as it stands.
+	 *
+	 * @param array<array-key,mixed> $rows  One scope's rows by hash, projected.
 	 * @param array<string,string>   $paths hash => path.
 	 * @param int                    $n     Entries per list.
 	 * @return array<string,array<string,list<array<int,mixed>>>>
@@ -2091,16 +2112,7 @@ class Stats_Store {
 	public static function rank_url_rows( array $rows, array $paths, int $n ): array {
 		$scalar = [];
 		foreach ( $rows as $key => $raw ) {
-			$hash = (string) $key;
-			$row  = Core::arr( $raw );
-			if ( ! self::ranks( $hash, $row ) ) {
-				continue;
-			}
-			// '' never refuses; only a named server can be absent from a split.
-			$scoped = self::url_row_scoped( $row, '' );
-			if ( null !== $scoped ) {
-				$scalar[ $hash ] = $scoped;
-			}
+			$scalar[ (string) $key ] = Core::arr( $raw );
 		}
 		$out = [];
 		foreach ( self::URL_SORTS as $sort ) {
@@ -2173,25 +2185,6 @@ class Stats_Store {
 	}
 
 	/**
-	 * A stored row's thirteen scalars in one scope, positional.
-	 *
-	 * The writer's twin of `swap_url_server_sums()`, over the STORED shape
-	 * rather than the named display row, and both read `URL_SRV_SUMS` for
-	 * which fields swap. Extremes stay the URL's own (decision 14).
-	 *
-	 * @param array<array-key,mixed> $row    A stored URL row, split included.
-	 * @param string                 $server Reporting server; '' scopes to none.
-	 * @return array<array-key,mixed>|null Null when the server never served the URL.
-	 */
-	public static function url_row_scoped( array $row, string $server ): ?array {
-		return self::scoped_by_split(
-			$row,
-			self::expand_sole_server( $row, Core::arr( $row[ self::ROW_SRV ] ?? null ) ),
-			$server
-		);
-	}
-
-	/**
 	 * Every scope one set of rows is ranked in: the site under `''`, then one
 	 * per server any row's split names, each row projected to it.
 	 *
@@ -2199,11 +2192,17 @@ class Stats_Store {
 	 * the projection read the same expansion, where asking `url_row_scoped()`
 	 * per server re-expands it per server.
 	 *
+	 * The site scope is PROJECTED too, not handed through raw: `rank_url_rows()`
+	 * ranks what it is given, so the site's rows would otherwise reach the
+	 * lists carrying the split no ranked entry holds.
+	 *
 	 * @param array<array-key,mixed> $rows Stored rows by hash, split included.
-	 * @return array<string,array<array-key,mixed>> scope => rows to rank.
+	 * @return array<array-key,array<array-key,mixed>> scope => rows to rank. An
+	 *         all-digit host name is an INT key, as PHP stores one.
 	 */
-	public static function rank_scopes( array $rows ): array {
-		$out = [ '' => $rows ];
+	private static function rank_scopes( array $rows ): array {
+		// Seeded, so a bucket holding nothing rankable still writes its lists.
+		$out = [ '' => [] ];
 		foreach ( $rows as $key => $raw ) {
 			$hash = (string) $key;
 			$row  = Core::arr( $raw );
@@ -2211,8 +2210,9 @@ class Stats_Store {
 				continue;
 			}
 			$split = self::expand_sole_server( $row, Core::arr( $row[ self::ROW_SRV ] ?? null ) );
-			foreach ( \array_keys( $split ) as $server ) {
-				$scoped = self::scoped_by_split( $row, $split, (string) $server );
+			// The site first: '' never refuses, only a named server can.
+			foreach ( [ '', ...\array_keys( $split ) ] as $server ) {
+				$scoped = self::url_row_scoped( $row, (string) $server, $split );
 				if ( null !== $scoped ) {
 					$out[ (string) $server ][ $hash ] = $scoped;
 				}
@@ -2222,15 +2222,25 @@ class Stats_Store {
 	}
 
 	/**
-	 * `url_row_scoped()` over a split the caller has already expanded — the
-	 * projection itself, so `rank_scopes()` can expand once and project many.
+	 * A stored row's thirteen scalars in one scope, positional.
 	 *
-	 * @param array<array-key,mixed> $row    A stored URL row.
-	 * @param array<array-key,mixed> $split  That row's EXPANDED split.
-	 * @param string                 $server Reporting server; '' scopes to none.
+	 * The writer's twin of `swap_url_server_sums()`, over the STORED shape
+	 * rather than the named display row, and both read `URL_SRV_SUMS` for
+	 * which fields swap. Extremes stay the URL's own (decision 14).
+	 *
+	 * A caller projecting one row into MANY scopes passes the expansion it
+	 * already holds, because expanding is per row and projecting is per
+	 * scope: that is `rank_scopes()`, and it is the whole reason the split
+	 * arrives as a parameter rather than being read again here.
+	 *
+	 * @param array<array-key,mixed>      $row    A stored URL row, split included.
+	 * @param string                      $server Reporting server; '' scopes to none.
+	 * @param array<array-key,mixed>|null $split  That row's EXPANDED split, where
+	 *                                            the caller already expanded it.
 	 * @return array<array-key,mixed>|null Null when the server never served the URL.
 	 */
-	private static function scoped_by_split( array $row, array $split, string $server ): ?array {
+	public static function url_row_scoped( array $row, string $server, ?array $split = null ): ?array {
+		$split ??= self::expand_sole_server( $row, Core::arr( $row[ self::ROW_SRV ] ?? null ) );
 		unset( $row[ self::ROW_SRV ] );
 		if ( '' === $server ) {
 			return $row;

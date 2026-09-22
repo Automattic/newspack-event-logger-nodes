@@ -4460,6 +4460,24 @@ class PerformanceCITest extends TestCase {
 		}
 	}
 
+	public function test_the_reply_clock_is_the_ticks_own_rather_than_the_wall(): void {
+		// Inside the drain the tick refreshes `Core::$now`, and every reader on
+		// this path takes THAT: a bare `right_now()` re-reads the wall mid-fold,
+		// so two panels of one reply can date from either side of a second.
+		$ticked    = 1_600_000_000;
+		$previous  = Core::$now;
+		Core::$now = (float) $ticked + 0.75;
+		try {
+			$this->assertSame(
+				$ticked,
+				( new \ReflectionMethod( Performance_CI_Node::class, 'now' ) )->invoke( null ),
+				'the tick\'s clock, not the wall'
+			);
+		} finally {
+			Core::$now = $previous;
+		}
+	}
+
 	public function test_a_urls_reply_dates_itself_from_the_substrate_clock(): void {
 		$this->activate_shipped_topology( 'performance', 3 );
 		// A second already PAST, and a stride no fallback here uses: the real
@@ -4467,8 +4485,11 @@ class PerformanceCITest extends TestCase {
 		// path dates the reply as something else.
 		$pinned   = \time() - 1234;
 		$previous = Core::$clock;
-		// The substrate's own clock, which `Stats_Store` already reads.
+		$ticked   = Core::$now;
+		// The substrate's own clock, pinned the way a drain tick pins it:
+		// `right_now()` is what WRITES `Core::$now`, and the reader takes that.
 		Core::$clock = static fn (): float => (float) $pinned;
+		Core::right_now();
 		try {
 			$this->set_url_bucket( new Stats_Store( 1, 86400 ), Stats_Store::bucket_key( $pinned ), [
 				'b7731ce0fa11' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 5, 'last_seen' => $pinned ],
@@ -4478,6 +4499,7 @@ class PerformanceCITest extends TestCase {
 			$this->assertSame( $pinned, $reply['as_of'] );
 		} finally {
 			Core::$clock = $previous;
+			Core::$now   = $ticked;
 		}
 	}
 
@@ -4487,7 +4509,9 @@ class PerformanceCITest extends TestCase {
 		// read: unpinned, a page built either side of a second reports two.
 		$now      = \time();
 		$previous = Core::$clock;
+		$ticked   = Core::$now;
 		Core::$clock = static fn (): float => (float) $now;
+		Core::right_now();
 		try {
 			$store  = new Stats_Store( 1, 86400 );
 			$bucket = Stats_Store::bucket_key( $now );
@@ -4533,6 +4557,7 @@ class PerformanceCITest extends TestCase {
 			}
 		} finally {
 			Core::$clock = $previous;
+			Core::$now   = $ticked;
 		}
 	}
 

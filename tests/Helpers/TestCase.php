@@ -471,22 +471,38 @@ abstract class TestCase extends RuntimeTestCase {
 			$row = \Newspack_Nodes\Core::arr( $row );
 			unset( $row['url'] );
 			$row = self::positional_url_row( $row );
-			// The writer's own projection: a server-scoped list ranks the
-			// server's OWN split, not the row's unscoped sums, and a row the
-			// server never served drops out rather than ranking on someone
-			// else's traffic.
-			if ( '' !== $server ) {
-				$row = \Newspack_Event_Logger_Nodes\Stats_Store::url_row_scoped( $row, $server );
-				if ( null === $row ) {
-					continue;
-				}
+			// The writer's own projection, which `rank_scopes()` performs for
+			// every scope: a server-scoped list ranks the server's OWN split
+			// rather than the row's unscoped sums, a row that server never
+			// served drops out, and the site's rows shed the split.
+			$row = \Newspack_Event_Logger_Nodes\Stats_Store::url_row_scoped( $row, $server );
+			if ( null === $row ) {
+				continue;
 			}
 			$positional[ $hash ] = $row;
 		}
-		$writes = \Newspack_Event_Logger_Nodes\Stats_Store::ranked_writes( $positional, $paths, $server, $hour, $key );
+		// ONE scope, from the pieces the writer ranks with: production names
+		// every scope its rows' splits do, where a test seeds the one it asks
+		// about — an empty list for a server included, which is how a reader
+		// that refuses a hole in the plan is exercised at all.
+		$writes = [];
+		$lists  = \Newspack_Event_Logger_Nodes\Stats_Store::rank_url_rows(
+			$positional,
+			$paths,
+			$hour ? \Newspack_Event_Logger_Nodes\Stats_Store::URL_RANK_N_HOUR : \Newspack_Event_Logger_Nodes\Stats_Store::URL_RANK_N
+		);
+		foreach ( $lists as $sort => $orders ) {
+			foreach ( $orders as $order => $entries ) {
+				$writes[] = [
+					\Newspack_Event_Logger_Nodes\Stats_Store::url_rank_parts( (string) $sort, (string) $order, $server, $hour ),
+					$key,
+					$entries,
+				];
+			}
+		}
 		// As the writer does: the hour's DONE marker, once the site's lists land.
 		if ( $hour && '' === $server ) {
-			$writes[] = [ \Newspack_Event_Logger_Nodes\Stats_Store::url_rank_done_parts(), $key, [ 'at' => \time() ] ];
+			$writes[] = [ \Newspack_Event_Logger_Nodes\Stats_Store::url_rank_done_parts(), $key, [] ];
 		}
 		return ! \in_array( false, $store->bucket_set_multi( $writes ), true );
 	}

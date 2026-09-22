@@ -72,7 +72,7 @@ class Request_Flight_Node extends Timer_Node {
 			return;
 		}
 		$watermark = $this->last_fire_ts;
-		$now       = Core::$now > 0.0 ? Core::$now : Core::right_now();
+		$now       = Core::$now;
 		$emitted   = false;
 		$delta     = $this->delta();
 		foreach ( $rows as $rid => $row ) {
@@ -126,7 +126,7 @@ class Request_Flight_Node extends Timer_Node {
 			return [];
 		}
 		$out = [];
-		$now = ( Core::$now > 0.0 ? Core::$now : Core::right_now() );
+		$now = Core::$now;
 		foreach ( $patron->cache->iterate() as $rid => $request ) {
 			if ( ! $request instanceof \stdClass ) {
 				continue;

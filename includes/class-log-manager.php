@@ -1232,7 +1232,11 @@ class Log_Manager {
 			return false;
 		}
 
-		// The cached clock is frozen in request scope: read once, use twice.
+		// @longform A FRESH read, deliberately, and the one on this path: the
+		// cached tick is pinned at load in request scope, so every line of a
+		// request would carry one `ts` and the timeline would be flat. It
+		// re-pins `Core::$now` as a side effect, which is why the readers say
+		// their window comes from a memo rather than from a frozen clock.
 		$now   = Core::right_now();
 		$entry = [ 'n' => $this->line_number++, 'k' => $category ] + $data + [ 'ts' => $now ];
 		// Fit the ENTRY, not $data: the cap must bound what the wire carries.

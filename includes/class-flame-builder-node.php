@@ -240,16 +240,6 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	private const ROLLUP_HOURS_PER_FLUSH = 2;
 
 	/**
-	 * How often a bucket's ranked lists are rewritten.
-	 *
-	 * The page cache holds a ranked page for `URLS_PAGE_TTL_S`, so the lists
-	 * are read about once a minute and ranking every five-second flush spends
-	 * twelve rankings on one read. A bucket that has CLOSED is ranked whatever
-	 * the cadence says, because nothing will come back for it.
-	 */
-	private const RANK_EVERY_S = 60;
-
-	/**
 	 * Frames one namespace holds before the overflow is written EARLY.
 	 *
 	 * The buffer's residency is one open bucket — `flush_stats_mirror()` drains
@@ -466,7 +456,7 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	 * @api Used by substrate
 	 */
 	public function __construct() {
-		$this->last_flush_time = Core::$now ?: Core::right_now();
+		$this->last_flush_time = Core::$now;
 		$this->named_urls      = new LRU_Cache( self::NAMED_URL_BUCKET_SIZE, self::NAMED_URL_BUCKETS );
 
 		// Owned auto-tuner sibling (patron-linked; hidden from the canvas).
@@ -547,7 +537,7 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 		$this->accumulate_all_stats( $url_hash, $flame_data, $profiles, $request );
 
 		// Periodic flush; cached per-tick clock gates the throttle.
-		$now_f = Core::$now ?: Core::right_now();
+		$now_f = Core::$now;
 		if ( $now_f - $this->last_flush_time >= self::FLUSH_INTERVAL_SEC ) {
 			$this->guarded( fn () => $this->flush() );
 			$this->last_flush_time = $now_f;
@@ -576,7 +566,7 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 
 		if ( 'GET_STATS' === $verb ) {
 			$stats_count = \iterator_count( $this->stats_store?->accumulating_url_stats() ?? new \EmptyIterator() );
-			$now = ( Core::$now ?: Core::right_now() );
+			$now = Core::$now;
 			$payload = [
 				'stats_count'              => $stats_count,
 				'pending_url_count'        => \array_sum( \array_map( static fn ( array $acc ): int => \count( $acc['url_stats'] ), $this->pending ) ),
@@ -1484,37 +1474,33 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	}
 
 	/**
-	 * Rank every bucket this chunk finished writing that is DUE, and drop all
-	 * of them from the collectors.
+	 * Offer every bucket this chunk finished writing to the ranker, and drop
+	 * all of them from the collectors.
 	 *
-	 * A bucket that is not due keeps nothing: its rows are in the store, it
-	 * is remembered as pending, and the ranking that does happen gap-fills
-	 * them back with everything else that landed meanwhile.
+	 * A bucket that is not due keeps nothing: its rows are in the store, the
+	 * ranker remembers it as pending, and the ranking that does happen
+	 * gap-fills them back with everything else that landed meanwhile. A
+	 * bucket of worker rows alone collected nothing and is not offered.
 	 *
 	 * @param Stats_Store  $stats_store Source and destination.
 	 * @param list<string> $buckets     Buckets whose row writes have all landed.
 	 */
 	private function rank_flushed_buckets( Stats_Store $stats_store, array $buckets ): void {
-		$now = $this->now_ts();
-		$due = [];
-		foreach ( $buckets as $bucket ) {
-			if ( ! isset( $this->flushed_rows[ $bucket ] ) ) {
-				continue;
-			}
-			if ( $this->rank_due( $bucket, $now ) ) {
-				$due[] = $bucket;
-			} else {
-				$this->rank_pending[ $bucket ] = true;
-			}
-		}
-		$this->rank_buckets( $stats_store, $due, $now );
+		$this->rank_buckets(
+			$stats_store,
+			\array_values( \array_filter(
+				$buckets,
+				fn ( string $bucket ): bool => isset( $this->flushed_rows[ $bucket ] )
+			) ),
+			$this->now_ts()
+		);
 		$drop                = \array_flip( $buckets );
 		$this->flushed_rows  = \array_diff_key( $this->flushed_rows, $drop );
 		$this->flushed_paths = \array_diff_key( $this->flushed_paths, $drop );
 	}
 
 	/**
-	 * Rank every deferred bucket that has come due, and prune both memos.
+	 * Offer every deferred bucket to the ranker, and prune both memos.
 	 *
 	 * Runs at the end of every flush, because a deferred bucket comes due by
 	 * the CLOCK: once it closes nothing writes into it again, so no chunk
@@ -1524,36 +1510,50 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	 * @param Stats_Store $stats_store Source and destination.
 	 */
 	private function rank_pending_buckets( Stats_Store $stats_store ): void {
+		// One instant: a flush straddles a second; the prune must not.
 		$now = $this->now_ts();
-		$due = [];
-		foreach ( \array_keys( $this->rank_pending ) as $bucket ) {
-			if ( $this->rank_due( $bucket, $now ) ) {
-				$due[] = $bucket;
-			}
-		}
-		$this->rank_buckets( $stats_store, $due, $now );
+		$this->rank_buckets( $stats_store, \array_keys( $this->rank_pending ), $now );
 		// Lexical order IS chronological, which is what bucket_key() buys.
 		$floor = Stats_Store::bucket_key( $now - ( Stats_Store::FINE_BUCKETS * Stats_Store::BUCKET_SECONDS ) );
-		$keep  = static fn ( string $bucket ): bool => $bucket >= $floor;
-		$this->ranked_at    = \array_filter( $this->ranked_at, $keep, \ARRAY_FILTER_USE_KEY );
-		$this->rank_pending = \array_filter( $this->rank_pending, $keep, \ARRAY_FILTER_USE_KEY );
+		foreach ( \array_keys( $this->ranked_at + $this->rank_pending ) as $bucket ) {
+			if ( $bucket < $floor ) {
+				unset( $this->ranked_at[ $bucket ], $this->rank_pending[ $bucket ] );
+			}
+		}
 	}
 
 	/**
-	 * Rank each bucket over its whole STORED content: the reader-family rows
-	 * this flush landed, plus every shard it did not, read back for the whole
-	 * set in ONE round trip — a read per bucket would be a round trip per
-	 * bucket on a replay. A deferred bucket landed none, so it gap-fills all
-	 * sixteen.
+	 * Rank each bucket that is DUE over its whole STORED content: the
+	 * reader-family rows this flush landed, plus every shard it did not, read
+	 * back for the whole set in ONE round trip — a read per bucket would be a
+	 * round trip per bucket on a replay. A deferred bucket landed none, so it
+	 * gap-fills all sixteen.
+	 *
+	 * The cadence is decided HERE, which owns the `rank_pending` memo: a
+	 * deferred bucket is remembered instead of ranked, and only a bucket whose
+	 * lists LANDED leaves the memo — a refused one is not stamped, so the next
+	 * flush retries it rather than holding stale lists for the cadence, as a
+	 * refused hour stays stale. The caller passes the instant it holds, so one
+	 * flush cannot rank against one second and prune against the next.
 	 *
 	 * @param Stats_Store  $stats_store Source and destination.
-	 * @param list<string> $buckets     Buckets to rank.
+	 * @param list<string> $buckets     Buckets offered for ranking.
 	 * @param int          $now         This flush's clock.
 	 */
 	private function rank_buckets( Stats_Store $stats_store, array $buckets, int $now ): void {
+		// The bucket being written to, once rather than once per candidate.
+		$current = Stats_Store::bucket_key( $now );
+		$due     = [];
+		foreach ( $buckets as $bucket ) {
+			if ( $this->rank_due( $bucket, $now, $current ) ) {
+				$due[] = $bucket;
+			} else {
+				$this->rank_pending[ $bucket ] = true;
+			}
+		}
 		$reads = [];
 		$owner = [];
-		foreach ( $buckets as $bucket ) {
+		foreach ( $due as $bucket ) {
 			$landed = $this->flushed_rows[ $bucket ] ?? [];
 			foreach ( \array_diff( Stats_Store::url_shards(), \array_keys( $landed ) ) as $shard ) {
 				$reads[] = [ Stats_Store::url_shard_parts( $shard ), $bucket ];
@@ -1575,17 +1575,21 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 				$path_maps[ $bucket ][] = Stats_Store::string_map( $value );
 			}
 		}
-		foreach ( $buckets as $bucket ) {
-			// Disjoint by hash, so one replace IS the per-shard union.
+		foreach ( $due as $bucket ) {
 			$names   = $path_maps[ $bucket ] ?? [];
 			$names[] = $this->flushed_paths[ $bucket ] ?? [];
-			$this->write_url_ranks(
+			$landed  = $this->write_url_ranks(
 				$stats_store,
 				$bucket,
 				\array_replace( [], ...\array_values( $this->flushed_rows[ $bucket ] ?? [] ), ...( $row_maps[ $bucket ] ?? [] ) ),
 				\array_replace( [], ...$names ),
 				false
 			);
+			// A refusal is no ranking: stay pending, unstamped, and retry.
+			if ( ! $landed ) {
+				$this->rank_pending[ $bucket ] = true;
+				continue;
+			}
 			$this->ranked_at[ $bucket ] = $now;
 			unset( $this->rank_pending[ $bucket ] );
 		}
@@ -1594,19 +1598,22 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	/**
 	 * Whether a bucket's lists are due to be rewritten.
 	 *
-	 * Never ranked, or ranked over `RANK_EVERY_S` ago, or no longer the bucket
-	 * being written to — a closed bucket is what the reader reads for the rest
-	 * of the window, so the last writes into it must reach its lists rather
-	 * than waiting out a cadence nothing will come back for.
+	 * Never ranked, or ranked over `Stats_Store::URL_PAGE_REFRESH_S` ago — the
+	 * page cache holds a ranked page that long, so ranking every five-second
+	 * flush spends twelve rankings on one read — or no longer the bucket being
+	 * written to: a closed bucket is what the reader reads for the rest of the
+	 * window, so the last writes into it must reach its lists rather than
+	 * waiting out a cadence nothing will come back for.
 	 *
-	 * @param string $bucket Bucket key.
-	 * @param int    $now    This flush's clock.
+	 * @param string $bucket  Bucket key.
+	 * @param int    $now      This flush's clock.
+	 * @param string $current  The bucket `$now` falls in.
 	 */
-	private function rank_due( string $bucket, int $now ): bool {
+	private function rank_due( string $bucket, int $now, string $current ): bool {
 		$at = $this->ranked_at[ $bucket ] ?? null;
 		return null === $at
-			|| $now - $at >= self::RANK_EVERY_S
-			|| $bucket !== Stats_Store::bucket_key( $now );
+			|| $now - $at >= Stats_Store::URL_PAGE_REFRESH_S
+			|| $bucket !== $current;
 	}
 
 	/**
@@ -1796,7 +1803,8 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 				continue;
 			}
 			// @longform Rows and names but no lists: an hour a release before
-			// the rank tier folded, or an evicted list key. Its fine buckets
+			// the rank tier folded, or one whose list write was REFUSED,
+			// which is what leaves the marker unwritten. Its fine buckets
 			// may be gone, so folding again would overwrite it with nothing;
 			// the lists come from the coarse rows, which is what they are
 			// derived from anyway.
@@ -1859,7 +1867,6 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 				);
 			}
 		}
-		// Disjoint by hash: one shard per first hex digit.
 		$rows  = \array_replace( [], ...$row_maps );
 		$paths = \array_replace( [], ...$path_maps );
 		return $this->write_url_ranks( $stats_store, $hour, $rows, $paths, true ) && $landed;
@@ -1877,7 +1884,6 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	 * @return array<string,bool> Whether every list landed, by hour.
 	 */
 	private function rank_hours_from_store( Stats_Store $stats_store, array $hours ): array {
-		// Disjoint by hash, so one replace IS the per-shard union.
 		$row_maps = [];
 		foreach ( $stats_store->url_hour_sources( $hours ) as [ $hour, $shard_rows ] ) {
 			$row_maps[ $hour ][] = Stats_Store::string_keys( $shard_rows );
@@ -1905,6 +1911,9 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	 * names. An overwrite, not a merge — the lists are derived from the
 	 * stored rows, which one partition's one worker just wrote.
 	 *
+	 * Every caller merges the tier's shards with `array_replace()` first:
+	 * they are disjoint by hash, so one replace IS the per-shard union.
+	 *
 	 * The tier picks its own list depth, the way `cap_dim()` picks its field
 	 * table: a pairing that can only go one way is not a parameter.
 	 *
@@ -1916,10 +1925,7 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	 * @return bool Whether every list landed.
 	 */
 	private function write_url_ranks( Stats_Store $stats_store, string $key, array $rows, array $paths, bool $hour ): bool {
-		$writes = [];
-		foreach ( Stats_Store::rank_scopes( $rows ) as $server => $scoped ) {
-			$writes = [ ...$writes, ...Stats_Store::ranked_writes( $scoped, $paths, $server, $hour, $key ) ];
-		}
+		$writes = Stats_Store::ranked_writes( $rows, $paths, $hour, $key );
 		$landed = true;
 		foreach ( \array_chunk( $writes, self::WRITE_BATCH_KEYS ) as $chunk ) {
 			$landed = ! \in_array( false, $stats_store->bucket_set_multi( $chunk ), true ) && $landed;
@@ -1932,10 +1938,11 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 		// and that one key is what `url_hours_derived()` probes. A list
 		// standing in for the set would report an hour missing a sibling as
 		// ranked, and nothing would re-rank it for the rest of the window.
-		// Nothing probes the fine tier, so a bucket marks nothing.
+		// Nothing probes the fine tier, so a bucket marks nothing. The value
+		// is empty because the PRESENCE is the fact.
 		if ( $hour ) {
 			$landed = true === $stats_store->bucket_set_multi( [
-				[ Stats_Store::url_rank_done_parts(), $key, [ 'at' => $this->now_ts() ] ],
+				[ Stats_Store::url_rank_done_parts(), $key, [] ],
 			] )[0];
 		}
 		return $landed;
@@ -2021,14 +2028,15 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 		// shape, same cap: only the key differs.
 		$hour   = Stats_Store::hour_of( $bucket );
 		$folded = isset( $this->folded_hours[ $hour ] );
+		$key    = $folded ? $hour : $bucket;
 		$parts  = $folded ? Stats_Store::url_hour_parts( $shard ) : Stats_Store::url_shard_parts( $shard );
 		// A worker row never ranks; a folded hour ranks after the flush.
-		[ $landed, $group ] = $this->landed_for( $bucket, $shard, function ( array $merged ) use ( $bucket, $shard ): void {
+		[ $landed, $group ] = $this->landed_for( $shard, $folded, $key, function ( array $merged ) use ( $bucket, $shard ): void {
 			$this->flushed_rows[ $bucket ][ $shard ] = $merged;
 		} );
 		return self::intent(
 			$parts,
-			$folded ? $hour : $bucket,
+			$key,
 			static fn ( array $existing ): array => self::cap_url_rows(
 				self::merge_url_rows( $existing, $rows )
 			),
@@ -2072,14 +2080,15 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	private function url_name_intent( string $bucket, string $shard, array $paths ): array {
 		$hour   = Stats_Store::hour_of( $bucket );
 		$folded = isset( $this->folded_hours[ $hour ] );
+		$key    = $folded ? $hour : $bucket;
 		$parts  = $folded ? Stats_Store::url_name_hour_parts( $shard ) : Stats_Store::url_name_parts( $shard );
-		[ $landed, $group ] = $this->landed_for( $bucket, $shard, function ( array $merged ) use ( $bucket ): void {
+		[ $landed, $group ] = $this->landed_for( $shard, $folded, $key, function ( array $merged ) use ( $bucket ): void {
 			$this->flushed_paths[ $bucket ] = ( $this->flushed_paths[ $bucket ] ?? [] )
 				+ Stats_Store::string_map( $merged );
 		} );
 		return self::intent(
 			$parts,
-			$folded ? $hour : $bucket,
+			$key,
 			static fn ( array $existing ): array => \array_replace( $existing, $paths ),
 			// @longform Uncapped and unmirrored, so a refusal is the ONLY
 			// signal: a shard over the item limit loses every name it holds,
@@ -2103,25 +2112,25 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	 * rank — a bucket of worker rows alone forms no group and never ranks,
 	 * and a write into a folded hour re-ranks the HOUR after the flush.
 	 *
-	 * @param string   $bucket  Bucket key the write carries rows or names for.
 	 * @param string   $shard   Shard name from `Stats_Store::url_shard()`.
+	 * @param bool     $folded  The write goes to the coarse hour key.
+	 * @param string   $key     The key it lands under: the bucket, or the hour when folded.
 	 * @param \Closure $collect What a fine-tier reader write collects.
 	 * @return array{0: \Closure|null, 1: string|null} The write's `landed` hook and its group.
 	 */
-	private function landed_for( string $bucket, string $shard, \Closure $collect ): array {
+	private function landed_for( string $shard, bool $folded, string $key, \Closure $collect ): array {
 		if ( \str_starts_with( $shard, Stats_Store::WORKER_SHARD_PREFIX ) ) {
 			return [ null, null ];
 		}
-		$hour = Stats_Store::hour_of( $bucket );
-		if ( isset( $this->folded_hours[ $hour ] ) ) {
+		if ( $folded ) {
 			return [
-				function () use ( $hour ): void {
-					$this->stale_hours[ $hour ] = true;
+				function () use ( $key ): void {
+					$this->stale_hours[ $key ] = true;
 				},
 				null,
 			];
 		}
-		return [ $collect, $bucket ];
+		return [ $collect, $key ];
 	}
 
 	/**
@@ -2804,7 +2813,8 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 					$positions[ $key ] = $at;
 				}
 			}
-			$now   = Core::right_now();
+			// The tick: a read-back must not move the reply's own clock.
+			$now   = Core::$now;
 			$found = [];
 			foreach ( $partition->read_many( $positions ) as $key => $msg ) {
 				$frame = self::read_mirror_frame( $msg );

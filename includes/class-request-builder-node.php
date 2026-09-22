@@ -469,7 +469,7 @@ class Request_Builder_Node extends Timer_Node {
 		// Per-line activity timestamps for the inflight snapshot's *_ms derive.
 		$ts_log_v             = $entry['ts'] ?? 0;
 		$request->last_log_ts = Core::as_float( $ts_log_v );
-		$request->tracker_ts  = Core::$now ?: Core::right_now();
+		$request->tracker_ts  = Core::$now;
 
 		// Runaways stay visible (Perl gyroscope parity); still evicted+bounded.
 		if ( $request->is_runaway ?? false ) {
@@ -933,7 +933,7 @@ class Request_Builder_Node extends Timer_Node {
 		$s = [];
 
 		$s[ Log_Manager::REQUEST_START ] = function ( \stdClass $request, array $entry ): void {
-			$request->timestamp   = Core::num_float( $entry['ts'] ?? null, Core::$now ?: Core::right_now() );
+			$request->timestamp   = Core::num_float( $entry['ts'] ?? null, Core::$now );
 			$request->stack       = [ [ Log_Manager::REQUEST_LABEL, '' ] ];
 			$request->profiles    = [];
 			$request->entries     = [];

@@ -27,6 +27,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its proposal, since none reaches that rule; and the request and span
   briefs' `rule` reads `{ id, resolved: false }` rather than null, which
   the markdown brief renders as a rule not in this ruleset.
+- **A bucket whose ranked lists were refused is ranked again on the next
+  flush.** A refused ranking was stamped as if it had landed, so the
+  bucket held stale lists for the rest of the cadence — and a bucket that
+  had closed got no further write to trigger a retry at all. It stays
+  pending and unstamped instead.
 - **A bucket whose last writes fell inside the ranking cadence is ranked
   once it closes.** Ranking is triggered by a write, so a bucket deferred
   by the cadence and never written into again kept lists missing those
@@ -42,6 +47,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A stats reply dates itself from the tick's clock.** Every reader takes
+  `Core::$now` — the tick's own under a drain, and in request scope the one
+  `Core::reset()` pins as the substrate loads — where the `performance`
+  reader and the mirror's absence and frame read-backs called
+  `Core::right_now()`, which re-reads the wall AND re-pins that clock. A
+  fold running for tens of seconds moved the very clock its reply was dated
+  from. The firehose producer still reads fresh, because each line carries
+  the moment it was written.
+- **The hour tier's DONE marker carries no timestamp.**
+  `urlrank_h:done:{Y-m-d-H}` is written empty: its PRESENCE is the whole
+  fact `url_hours_derived()` probes, and nothing ever read the stamp.
 - **A token's search index drops a hash a retention window has passed
   over on the next flush that touches it**, rather than only when the
   flush would take the set past `URL_SEARCH_MAX`. A dead hash was named
