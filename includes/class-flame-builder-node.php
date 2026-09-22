@@ -3093,6 +3093,19 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	}
 
 	/**
+	 * Whether this answer's mirror read budget is spent.
+	 *
+	 * A reader that reached the budget answered null for every mirror read
+	 * after it, so the fold it produced is missing whatever those reads held.
+	 * That page is the answer for now, not one to keep.
+	 *
+	 * @api The dashboard reader, before it caches a page.
+	 */
+	public static function mirror_budget_spent(): bool {
+		return self::$mirror_read_ns >= 1_000_000 * \max( 0, Core::num_int( Config::value( 'stats_mirror_read_budget_ms' ) ) );
+	}
+
+	/**
 	 * Run one read on a mirror read budget of its own, then resume the
 	 * caller's accounting where it stood.
 	 *
