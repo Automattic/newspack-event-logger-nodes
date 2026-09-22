@@ -102,7 +102,7 @@ class MCP_Controller {
 			'verb'    => 'overview',
 			'role'    => Capabilities::READ,
 			'summary' => 'Site-wide request totals and the aggregate time series. Per-URL facts live in performance_urls.',
-			'args'    => [ 'server' => 'Optional server name; scopes the leaderboard and breakdowns, not the site totals.', 'breakdown' => 'Comma-separated dimensions.' ],
+			'args'    => [ 'server' => 'Optional server name; scopes the leaderboard and breakdowns, not the site totals.', 'breakdown' => 'Comma-separated dimensions. Each value is the positional triple [ requests, summed ms, summed peak MB ] — sums, never means.' ],
 		],
 		'performance_urls'         => [
 			'node'    => 'performance',

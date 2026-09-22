@@ -786,11 +786,9 @@ describe( 'PerformanceDashboard', () => {
 		const serverBuckets = {};
 		for ( let i = 0; i < 20; i++ ) {
 			serverBuckets[ `b${ String( i ).padStart( 2, '0' ) }` ] = {
-				'edge-01':
-					i % 2 === 0
-						? { c: 37, s: 3700, m: 259 }
-						: { c: 41, s: 4920, m: 328 },
-				'edge-02': { c: 11, s: 1430, m: 99 },
+				// DIM_SUMS: [ count, sumMs, sumPeakMb ].
+				'edge-01': i % 2 === 0 ? [ 37, 3700, 259 ] : [ 41, 4920, 328 ],
+				'edge-02': [ 11, 1430, 99 ],
 			};
 		}
 		mockView = loadedView( {

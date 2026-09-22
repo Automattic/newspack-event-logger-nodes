@@ -85,8 +85,8 @@ describe( 'area chart frame', () => {
 		const breakdownData = {
 			[ bucketKeyNow() ]: {
 				'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36':
-					{ c: 137, s: 4213, m: 91 },
-				'curl/8.7.1': { c: 12, s: 400, m: 30 },
+					[ 137, 4213, 91 ],
+				'curl/8.7.1': [ 12, 400, 30 ],
 			},
 		};
 		const { container, unmount } = renderComponent(
@@ -119,8 +119,8 @@ describe( 'area chart frame', () => {
 	it( 'a picked series is drawn alone, and the axis rescales to it', () => {
 		const breakdownData = {
 			[ bucketKeyNow() ]: {
-				'2xx': { c: 47, s: 5900 },
-				'4xx': { c: 3, s: 300 },
+				'2xx': [ 47, 5900 ],
+				'4xx': [ 3, 300 ],
 			},
 		};
 		const { container, unmount } = renderComponent(
@@ -154,8 +154,8 @@ describe( 'area chart frame', () => {
 		// A slow bot beside a 44ms series: full max 12s, picked max 44ms.
 		const breakdownData = {
 			[ bucketKeyNow() ]: {
-				'SlowBot/1.0': { c: 1, s: 12000 },
-				'curl/8.7.1': { c: 2, s: 88 },
+				'SlowBot/1.0': [ 1, 12000 ],
+				'curl/8.7.1': [ 2, 88 ],
 			},
 		};
 		const { container, unmount } = renderComponent(
@@ -197,8 +197,8 @@ describe( 'area chart frame', () => {
 	it( 'overlays by default, and stacks a second series on top of the first on the toggle', () => {
 		const breakdownData = {
 			[ bucketKeyNow() ]: {
-				'2xx': { c: 47, s: 5900 },
-				'4xx': { c: 14, s: 1400 },
+				'2xx': [ 47, 5900 ],
+				'4xx': [ 14, 1400 ],
 			},
 		};
 		const { container, unmount } = renderComponent(
@@ -228,7 +228,7 @@ describe( 'area chart frame', () => {
 
 	it( 'ticks a request-volume axis in whole requests', () => {
 		const breakdownData = {
-			[ bucketKeyNow() ]: { 'curl/8.7.1': { c: 3, s: 51 } },
+			[ bucketKeyNow() ]: { 'curl/8.7.1': [ 3, 51 ] },
 		};
 		const { container, unmount } = renderComponent(
 			React.createElement( AggregateTimeChart, {
@@ -269,7 +269,7 @@ describe( 'area chart frame', () => {
 describe( 'chart frame', () => {
 	it( 'still renders both axes and the rotated Y title', () => {
 		const breakdownData = {
-			[ bucketKeyNow() ]: { 'curl/8.7.1': { c: 61, s: 7300 } },
+			[ bucketKeyNow() ]: { 'curl/8.7.1': [ 61, 7300 ] },
 		};
 		const { container, unmount } = renderComponent(
 			React.createElement( AggregateTimeChart, {

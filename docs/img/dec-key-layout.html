@@ -44,7 +44,7 @@
       <div class="seg mid"><div class="box">{scope…}</div><div class="lbl">a dimension, a server, a shard or a url_hash: zero or more components, each a pure prefix</div></div><div class="colon">:</div>
       <div class="seg last"><div class="box">{Y-m-d-H-i}</div><div class="lbl">the five-minute bucket, LAST. Lexical order is chronological order; <span class="m">is_open_bucket()</span> reads it off the key</div></div>
     </div>
-    <div style="padding:6px 14px 12px;font-size:12px;color:#50575E;line-height:1.45">The durable mirror files the same key under <span class="m">evlog:m{V}:p{N}:{key}</span> instead, with NO site scope (decision 10), where <span class="m">V</span> is <span class="m">MIRROR_KEY_VERSION</span>.</div>
+    <div style="padding:6px 14px 12px;font-size:12px;color:#50575E;line-height:1.45">The durable mirror files the same key under <span class="m">evlog:p{N}:{key}</span> instead, with NO site scope and no version component (decision 10).</div>
   </div>
 
   <div class="grid">
@@ -60,7 +60,7 @@
       <tr class="h"><td class="k">urlnames_h</td><td><span class="m">urlnames_h:{shard}:{Y-m-d-H}</span></td><td>its COARSE tier, a union; derived, so not mirrored</td><td class="t">max_lifespan</td></tr>
       <tr class="nb"><td class="k">urlmap</td><td><span class="m">urlmap:{hash}</span></td><td><span class="m">[ path, origin ]</span>, written once, re-written only past half its TTL; readers resolve only the hashes they display. Not bucketed, so never open</td><td class="t">max_lifespan</td></tr>
       <tr class="nb"><td class="k">url</td><td><span class="m">url:{hash}</span></td><td>the per-URL flame and profile blob. Not bucketed, so never open</td><td class="t">max( 3,600, max_lifespan / 24 )</td></tr>
-      <tr><td class="k">dim</td><td><span class="m">dim:{dimension}[:{server}]:{bucket}</span></td><td>dimensional series, <span class="m">{ c, s, m }</span> per value, named</td><td class="t">max_lifespan</td></tr>
+      <tr><td class="k">dim</td><td><span class="m">dim:{dimension}[:{server}]:{bucket}</span></td><td>dimensional series, a positional <span class="m">DIM_SUMS</span> triple per value</td><td class="t">max_lifespan</td></tr>
       <tr><td class="k">url_dim</td><td><span class="m">url_dim:{hash}:{bucket}</span></td><td>one URL's dimensional series, every dimension in the value</td><td class="t">max_lifespan</td></tr>
       <tr><td class="k">categories</td><td><span class="m">categories[:{server}]:{bucket}</span></td><td>category series; each entry a positional <span class="m">CAT_SUMS</span> triple with <span class="m">CAT_MS</span> rounded to 3 places; a synthetic <span class="m">total</span> category held out of every ranking</td><td class="t">max_lifespan</td></tr>
       <tr><td class="k">url_cat</td><td><span class="m">url_cat:{hash}:{bucket}</span></td><td>one URL's category series, same shape</td><td class="t">max_lifespan</td></tr>

@@ -56,6 +56,7 @@ final class Rule {
 	 * @param string        $hooks_in                    self::HOOKS_INLINE | self::HOOKS_MC.
 	 * @param bool          $log_queries                 Time every SQL query as its own span; needs SAVEQUERIES and costs two entries per query.
 	 * @param bool          $log_http                    Time every outbound HTTP request as its own span, between `pre_http_request` and `http_api_debug`. On by default: a request making no remote calls pays two add_filter() calls and nothing else.
+	 * @param bool          $log_plugin_loads            Write the profiler mu-plugin's per-plugin load timings as spans. On by default: the measuring is the mu-plugin's and happens either way, so this decides only whether the request's record carries two entries per site-activated plugin.
 	 * @param bool          $trace_hooks                 Name the calling frame on each hook entry's aggregation label, so one hook firing sixteen times splits into a flame node per caller. Costs one shallow backtrace per firing.
 	 * @param int           $trace_callers               Deep caller chains recorded per request on a span's start entry as `caller`, budgeted per CALLER of each hook, query statement shape and outbound URL, so a hook asked for from three places traces three times; 0 = off, and a stored `true` is a count of 1.
 	 *
@@ -73,6 +74,7 @@ final class Rule {
 		public readonly string $hooks_in = self::HOOKS_INLINE,
 		public readonly bool $log_queries = false,
 		public readonly bool $log_http = true,
+		public readonly bool $log_plugin_loads = true,
 		public readonly bool $trace_hooks = false,
 		public readonly int $trace_callers = 0
 	) {
@@ -146,6 +148,7 @@ final class Rule {
 			'hooks_in'                    => $this->hooks_in,
 			'log_queries'                 => $this->log_queries,
 			'log_http'                    => $this->log_http,
+			'log_plugin_loads'            => $this->log_plugin_loads,
 			'trace_hooks'                 => $this->trace_hooks,
 			'trace_callers'               => $this->trace_callers,
 		];
@@ -180,6 +183,7 @@ final class Rule {
 			! empty( $a['log_queries'] ),
 			// Absent means ON: only an explicit false retires a live span.
 			! \array_key_exists( 'log_http', $a ) || ! empty( $a['log_http'] ),
+			! \array_key_exists( 'log_plugin_loads', $a ) || ! empty( $a['log_plugin_loads'] ),
 			! empty( $a['trace_hooks'] ),
 			self::to_trace_count( $a['trace_callers'] ?? 0 )
 		);

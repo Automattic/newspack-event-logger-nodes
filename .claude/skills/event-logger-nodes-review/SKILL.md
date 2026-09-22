@@ -66,7 +66,7 @@ The one raw-handle read is the cross-worker auto-tune lock in `Flame_Builder_Nod
 
 The scope is memoized per process, so a live worker keeps writing the OLD prefix until it respawns. Both callers therefore restart the workers after rotating, best-effort — a failure only delays the new scope to the next spawn. A diff that rotates and expects immediate effect without a restart is wrong.
 
-**The rotation IS the schema migration.** Nothing compensates for skipping it: no reader or writer carries a shape probe, a version key component or a row-level legacy test. The durable stats mirror is the exception: the salt never reaches it, so its key carries `Stats_Store::MIRROR_KEY_VERSION`, bumped on a frame-shape change. Each of those is a second migration mechanism to maintain against every future row shape, so reject one.
+**The rotation IS the schema migration.** Nothing compensates for skipping it: no reader or writer carries a shape probe, a version key component or a row-level legacy test. That holds for the durable stats mirror too, which the salt never reaches — `Stats_Store::sum_entry()` rebuilds an entry the flush touches, and a zero-count filter drops an untouched one the field table cannot name. Decision 5 names the namespaces with neither, which are where a shape change costs a retention window. Each of those is a second migration mechanism to maintain against every future row shape, so reject one, the mirror's key included.
 
 ### 6. Memcache value caps
 
@@ -180,11 +180,12 @@ Logging is governed per URL by a **ruleset**: an ordered list of `Rule`s, each a
 
 ### 18. Per-rule diagnostic knobs, and what each costs
 
-Four flags on `Rule` gate instrumentation, and their defaults differ because their prices do:
+Five flags on `Rule` gate instrumentation, and their defaults differ because their prices do:
 
 | Flag | Default | Cost |
 |---|---|---|
 | `log_http` | on (absent means on) | Two `add_filter` calls per request; two entries per outbound call |
+| `log_plugin_loads` | on (absent means on) | Two entries per site-activated plugin, before the request does any work; the mu-plugin measures either way |
 | `log_queries` | off | Two entries per QUERY, and it turns `SAVEQUERIES` on |
 | `trace_hooks` | off | One shallow backtrace per hook firing, ~0.9µs |
 | `trace_callers` | 0 | A formatted stack per span, capped at the number the rule names per CALLER of each hook, query shape and URL; a stored `true` is a count of 1 |

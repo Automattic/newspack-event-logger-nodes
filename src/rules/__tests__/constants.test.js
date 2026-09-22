@@ -20,6 +20,7 @@ describe( 'rules constants', () => {
 			// Query spans are expensive; a blank rule asks for none.
 			log_queries: false,
 			log_http: true,
+			log_plugin_loads: true,
 			trace_hooks: false,
 			trace_callers: 0,
 		} );

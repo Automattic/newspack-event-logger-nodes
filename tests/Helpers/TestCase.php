@@ -471,6 +471,23 @@ abstract class TestCase extends RuntimeTestCase {
 		];
 	}
 
+	/**
+	 * One stored dimensional entry, named at the seed so a test never counts
+	 * indexes — decision 18's `DIM_SUMS` triple.
+	 *
+	 * @param int       $count Requests the value appeared in.
+	 * @param float|int $ms    Summed milliseconds, 0 when untimed.
+	 * @param float|int $peak  Summed peak MB.
+	 * @return array<int,float|int>
+	 */
+	protected static function dim_entry( int $count, float|int $ms = 0, float|int $peak = 0 ): array {
+		return [
+			Stats_Store::DIM_COUNT       => $count,
+			Stats_Store::DIM_SUM_MS      => $ms,
+			Stats_Store::DIM_SUM_PEAK_MB => $peak,
+		];
+	}
+
 	/** @param array<string,mixed> $data */
 	protected function set_category_bucket( Stats_Store $store, string $bucket, array $data, string $server = '' ): bool {
 		return $store->bucket_set_multi( [ [ Stats_Store::cat_parts( $server ), $bucket, $data ] ] )[0];

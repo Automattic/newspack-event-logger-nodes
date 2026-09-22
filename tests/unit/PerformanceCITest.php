@@ -379,7 +379,7 @@ class PerformanceCITest extends TestCase {
 		// that reads an absent key as "still in flight" waits forever.
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
-		$this->set_dimensional_bucket( $store, 'country', $bucket, [ 'PT' => [ 'c' => 23, 's' => 2.3, 'm' => 0.7 ] ] );
+		$this->set_dimensional_bucket( $store, 'country', $bucket, [ 'PT' => self::dim_entry( 23, 2.3, 0.7 ) ] );
 
 		$interpreter = new Performance_CI_Node();
 		$result      = VerbHarness::fire(
@@ -389,7 +389,7 @@ class PerformanceCITest extends TestCase {
 			'--breakdown=country'
 		);
 
-		$this->assertSame( 23, $result['breakdowns']['country'][ $bucket ]['PT']['c'] );
+		$this->assertSame( 23, $result['breakdowns']['country'][ $bucket ]['PT'][ Stats_Store::DIM_COUNT ] );
 		$this->assertArrayNotHasKey( 'breakdown_time_series', $result );
 	}
 
@@ -400,8 +400,8 @@ class PerformanceCITest extends TestCase {
 		// can rely on the nested shape.
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
-		$this->set_dimensional_bucket( $store, 'server', $bucket, [ 'web01' => [ 'c' => 5, 's' => 0.5, 'm' => 0.1 ] ] );
-		$this->set_dimensional_bucket( $store, 'status', $bucket, [ '200' => [ 'c' => 4, 's' => 0.4, 'm' => 0.1 ] ] );
+		$this->set_dimensional_bucket( $store, 'server', $bucket, [ 'web01' => self::dim_entry( 5, 0.5, 0.1 ) ] );
+		$this->set_dimensional_bucket( $store, 'status', $bucket, [ '200' => self::dim_entry( 4, 0.4, 0.1 ) ] );
 
 		$interpreter     = new Performance_CI_Node();
 		$result = VerbHarness::fire(
@@ -414,18 +414,18 @@ class PerformanceCITest extends TestCase {
 		$this->assertArrayHasKey( 'breakdowns', $result );
 		$this->assertArrayHasKey( 'server', $result['breakdowns'] );
 		$this->assertArrayHasKey( 'status', $result['breakdowns'] );
-		$this->assertSame( 5, $result['breakdowns']['server'][ $bucket ]['web01']['c'] );
-		$this->assertSame( 4, $result['breakdowns']['status'][ $bucket ]['200']['c'] );
+		$this->assertSame( 5, $result['breakdowns']['server'][ $bucket ]['web01'][ Stats_Store::DIM_COUNT ] );
+		$this->assertSame( 4, $result['breakdowns']['status'][ $bucket ]['200'][ Stats_Store::DIM_COUNT ] );
 	}
 
 	public function test_overview_server_scope_keeps_the_global_server_dimension(): void {
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
 		$this->set_dimensional_bucket( $store, 'server', $bucket, [
-			'edge-amber.example'  => [ 'c' => 37, 's' => 3700.0, 'm' => 259.0 ],
-			'edge-violet.example' => [ 'c' => 11, 's' => 1430.0, 'm' => 99.0 ],
+			'edge-amber.example'  => self::dim_entry( 37, 3700.0, 259.0 ),
+			'edge-violet.example' => self::dim_entry( 11, 1430.0, 99.0 ),
 		] );
-		$this->set_dimensional_bucket( $store, 'status', $bucket, [ '2xx' => [ 'c' => 37, 's' => 3700.0, 'm' => 259.0 ] ], 'edge-amber.example' );
+		$this->set_dimensional_bucket( $store, 'status', $bucket, [ '2xx' => self::dim_entry( 37, 3700.0, 259.0 ) ], 'edge-amber.example' );
 
 		$interpreter = new Performance_CI_Node();
 		$result      = VerbHarness::fire(
@@ -435,9 +435,9 @@ class PerformanceCITest extends TestCase {
 			'--server=edge-amber.example --breakdown=server,status'
 		);
 
-		$this->assertSame( 37, $result['breakdowns']['server'][ $bucket ]['edge-amber.example']['c'] );
-		$this->assertSame( 11, $result['breakdowns']['server'][ $bucket ]['edge-violet.example']['c'] );
-		$this->assertSame( 37, $result['breakdowns']['status'][ $bucket ]['2xx']['c'] );
+		$this->assertSame( 37, $result['breakdowns']['server'][ $bucket ]['edge-amber.example'][ Stats_Store::DIM_COUNT ] );
+		$this->assertSame( 11, $result['breakdowns']['server'][ $bucket ]['edge-violet.example'][ Stats_Store::DIM_COUNT ] );
+		$this->assertSame( 37, $result['breakdowns']['status'][ $bucket ]['2xx'][ Stats_Store::DIM_COUNT ] );
 	}
 
 	public function test_overview_verb_refuses_an_unknown_breakdown_dimension(): void {
@@ -2475,7 +2475,7 @@ class PerformanceCITest extends TestCase {
 			],
 		] );
 		$bucket = $this->current_url_bucket();
-		$this->set_url_dimensional_bucket( $store, 'abc123def456', $bucket, [ 'method' => [ 'GET' => [ 'c' => 3, 's' => 0.3, 'm' => 0.1 ] ] ] );
+		$this->set_url_dimensional_bucket( $store, 'abc123def456', $bucket, [ 'method' => [ 'GET' => self::dim_entry( 3, 0.3, 0.1 ) ] ] );
 
 		$interpreter     = new Performance_CI_Node();
 		$result = VerbHarness::fire(
@@ -2486,7 +2486,7 @@ class PerformanceCITest extends TestCase {
 		);
 
 		$this->assertArrayHasKey( 'breakdown_time_series', $result );
-		$this->assertSame( 3, $result['breakdown_time_series'][ $bucket ]['GET']['c'] );
+		$this->assertSame( 3, $result['breakdown_time_series'][ $bucket ]['GET'][ Stats_Store::DIM_COUNT ] );
 	}
 
 	public function test_url_breakdown_answers_the_series_alone(): void {
@@ -2497,7 +2497,7 @@ class PerformanceCITest extends TestCase {
 		$this->set_url_bucket( $store, $bucket, [
 			'e71b04ac9d33' => [ 'url' => '/breakdown-only', 'count' => 6, 'timed_count' => 6, 'sum_ms' => 84.0, 'last_seen' => 1700006000 ],
 		] );
-		$this->set_url_dimensional_bucket( $store, 'e71b04ac9d33', $bucket, [ 'status' => [ '503' => [ 'c' => 9, 's' => 1.7, 'm' => 0.4 ] ] ] );
+		$this->set_url_dimensional_bucket( $store, 'e71b04ac9d33', $bucket, [ 'status' => [ '503' => self::dim_entry( 9, 1.7, 0.4 ) ] ] );
 		$detail = VerbHarness::fire(
 			new Performance_CI_Node(),
 			'performance',
@@ -2518,7 +2518,7 @@ class PerformanceCITest extends TestCase {
 		);
 
 		$this->assertSame( $detail['breakdown_time_series'], $result['breakdown_time_series'] );
-		$this->assertSame( 9, $result['breakdown_time_series'][ $bucket ]['503']['c'] );
+		$this->assertSame( 9, $result['breakdown_time_series'][ $bucket ]['503'][ Stats_Store::DIM_COUNT ] );
 		$this->assertArrayNotHasKey( 'requests', $result );
 		$this->assertArrayNotHasKey( 'stats', $result );
 		$this->assertArrayNotHasKey( 'aggregate_flame', $result );

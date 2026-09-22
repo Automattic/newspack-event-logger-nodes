@@ -53,7 +53,7 @@ if ( ! \defined( 'ABSPATH' ) ) {
  *
  * @phpstan-type Pending_Write array{parts: array<int,string>, bucket: string, merge: \Closure(array<array-key,mixed>): array<array-key,mixed>, refused: \Closure|null}
  * @phpstan-type Leaderboard_Acc array{count?: int, sum_req_time?: float|int, categories: array<string,array{samples: int,sum_time: float|int,sum_count: float|int,ts?: int,entries: array<string,array<int,float|int>>}>}
- * @phpstan-type Dim_Values array<string,array{c: int,s: float|int,m: float|int}>
+ * @phpstan-type Dim_Values array<string,array{0: int,1: float|int,2: float|int}>
  * @phpstan-type Cat_Values array<string,array{0: float|int,1: float|int,2: int}>
  * @phpstan-type Bucket_Acc array{
  *   hourly: array<string,mixed>,
@@ -929,16 +929,22 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	 * Fold a request into a dimensional bucket: one more request, its timing,
 	 * its peak memory. Seeds the bucket if this is the first.
 	 *
-	 * @param array{c: int, s: float|int, m: float|int}|null $slot     Bucket, null on first use.
+	 * A slot arriving in any other shape is DISCARDED, not read, for the reason
+	 * `add_cat()` states: the checkpoint carries no salt, so the first respawn
+	 * after a deploy really does meet a pre-deploy `pending`.
+	 *
+	 * @param array{0: int, 1: float|int, 2: float|int}|null $slot     Bucket, null on first use.
 	 * @param float                                          $duration Timing to add, 0 when untimed.
 	 * @param float                                          $peak     Peak MB to add.
-	 * @return array{c: int, s: float|int, m: float|int} The updated bucket.
+	 * @return array{0: int, 1: float|int, 2: float|int} The updated bucket.
 	 */
 	private static function add_dim( ?array $slot, float $duration, float $peak ): array {
-		$slot ??= [ 'c' => 0, 's' => 0, 'm' => 0 ];
-		++$slot['c'];
-		$slot['s'] += $duration;
-		$slot['m'] += $peak;
+		if ( ! isset( $slot[ Stats_Store::DIM_COUNT ] ) ) {
+			$slot = [ Stats_Store::DIM_COUNT => 0, Stats_Store::DIM_SUM_MS => 0, Stats_Store::DIM_SUM_PEAK_MB => 0 ];
+		}
+		++$slot[ Stats_Store::DIM_COUNT ];
+		$slot[ Stats_Store::DIM_SUM_MS ]      += $duration;
+		$slot[ Stats_Store::DIM_SUM_PEAK_MB ] += $peak;
 		return $slot;
 	}
 
@@ -1979,12 +1985,21 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	 * Cap a dimensional bucket: ranked by request count, no reserved row. Named
 	 * so the sort field and the field table cannot be paired wrongly at a call site.
 	 *
+	 * A value is seeded by a request, so its count is at least one, and one at
+	 * zero is a cap slot and a chart legend row standing for nothing. `Other`
+	 * sums counts, so the fold cannot make one either. `fold_categories()`
+	 * holds its own entries to the same rule on `CAT_REQUESTS`.
+	 *
 	 * @param array<array-key,mixed> $values     One bucket's values.
 	 * @param int                    $max_values Ceiling on distinct values.
 	 * @return array<array-key,mixed>
 	 */
 	private static function cap_dim( array $values, int $max_values ): array {
-		return self::cap_bucket( $values, $max_values, 'c', Stats_Store::DIM_SUMS );
+		$measured = \array_filter(
+			$values,
+			static fn ( $entry ): bool => \is_array( $entry ) && Core::num_int( $entry[ Stats_Store::DIM_COUNT ] ?? null ) > 0
+		);
+		return self::cap_bucket( $measured, $max_values, Stats_Store::DIM_COUNT, Stats_Store::DIM_SUMS );
 	}
 
 	/**
@@ -2012,8 +2027,13 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	 * @return array<array-key,mixed>
 	 */
 	private static function fold_categories( array $existing, array $cats ): array {
-		$capped = self::cap_bucket(
+		// Zero requests means a slot the merge could not name.
+		$measured = \array_filter(
 			Stats_Store::sum_fields( $existing, $cats, Stats_Store::CAT_SUMS ),
+			static fn ( $entry ): bool => \is_array( $entry ) && Core::num_int( $entry[ Stats_Store::CAT_REQUESTS ] ?? null ) > 0
+		);
+		$capped = self::cap_bucket(
+			$measured,
 			Stats_Store::MAX_CAT_VALUES,
 			Stats_Store::CAT_MS,
 			Stats_Store::CAT_SUMS,
@@ -2957,7 +2977,7 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 		$first = \reset( $data );
 		if ( \is_array( $first ) ) {
 			foreach ( $first as $vd ) {
-				$sum += \is_array( $vd ) && \is_numeric( $vd['c'] ?? null ) ? (int) $vd['c'] : 0;
+				$sum += \is_array( $vd ) && \is_numeric( $vd[ Stats_Store::DIM_COUNT ] ?? null ) ? (int) $vd[ Stats_Store::DIM_COUNT ] : 0;
 			}
 		}
 		return $sum;
@@ -2977,7 +2997,7 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 			$frame = Core::arr( $frame );
 			$data  = $frame[0] ?? null;
 			$ttl   = Core::num_int( $frame[1] ?? null ) - $elapsed;
-			// A carry from another mirror version matches no lookup; drop it.
+			// A carry that is not an absolute key matches no lookup; drop it.
 			if ( \is_string( $key ) && Stats_Store::is_mirror_key( $key ) && \is_array( $data ) && $ttl > 0 ) {
 				$out[ $key ] = [ $data, $ttl ];
 			}

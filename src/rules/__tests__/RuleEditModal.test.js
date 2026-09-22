@@ -302,6 +302,21 @@ describe( 'RuleEditModal — log rule fields', () => {
 		expect( onSave.mock.calls[ 0 ][ 0 ].log_http ).toBe( false );
 	} );
 
+	test( 'a log rule round-trips its plugin-load opt-in', () => {
+		// Unconditional before it was a flag, like outbound HTTP: the box opens
+		// checked on a rule that says nothing about it.
+		mount( LOG_RULE );
+		click( saveButton() );
+		expect( onSave.mock.calls[ 0 ][ 0 ].log_plugin_loads ).toBe( true );
+	} );
+
+	test( 'unticking plugin loads is reflected in the saved draft', () => {
+		mount( LOG_RULE );
+		toggle( inDialog( 'input[name="rule-log-plugin-loads"]' ) );
+		click( saveButton() );
+		expect( onSave.mock.calls[ 0 ][ 0 ].log_plugin_loads ).toBe( false );
+	} );
+
 	test( 'a log rule round-trips its caller-trace opt-in', () => {
 		// The checkbox is the cheap switch; a tuned deep budget survives an edit.
 		mount( { ...LOG_RULE, trace_hooks: true, trace_callers: 250 } );
