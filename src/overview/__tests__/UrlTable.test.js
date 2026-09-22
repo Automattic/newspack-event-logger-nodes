@@ -665,6 +665,17 @@ describe( 'UrlTable', () => {
 		).toBeNull();
 		plain.unmount();
 	} );
+
+	it( 'names the search as a word or prefix match', () => {
+		// The server reads a token index: the term is split on every
+		// non-alphanumeric run and each token must prefix-match a word of the
+		// path. A box saying "Search URLs" invites a substring nothing answers.
+		const { container, unmount } = mount();
+		expect(
+			container.querySelector( 'input' ).getAttribute( 'placeholder' )
+		).toBe( 'Search by URL word or prefix\u2026' );
+		unmount();
+	} );
 } );
 
 describe( 'column layout', () => {

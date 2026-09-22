@@ -552,12 +552,12 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( '/c', $result['data'][1]['url'] );
 	}
 
-	public function test_a_search_reads_names_per_shard_not_per_url(): void {
+	public function test_a_search_asks_urlmap_for_its_candidates_not_for_the_index(): void {
 		// `resolve_urls()` builds one `urlmap:{hash}` key per row, and a search
-		// hands it the WHOLE shard index rather than the page it documents. On
-		// the hub that is 668,918 hashes x 4 partitions in one poll, which is
-		// what runs the verb to 290 seconds. The names must come from the
-		// shard, in one read, however many URLs it holds.
+		// used to hand it the WHOLE shard index rather than the page it
+		// documents. On the hub that is 668,918 hashes x 4 partitions in one
+		// poll, which is what runs the verb to 290 seconds. The token index
+		// names the term's candidates first, and only those are named.
 		Core::$memd = new class() extends InMemoryMemcached {
 			/** @var array<int,string> */
 			public array $asked = [];
@@ -585,13 +585,16 @@ class PerformanceCITest extends TestCase {
 		$memd         = Core::$memd;
 		$memd->asked  = [];
 
-		VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--search=page-3' );
+		// `31` is a token of `/page-31` alone; `page` is a token of all 137.
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--search=page-31' );
 
+		$this->assertSame( 1, $result['rows'], 'the intersection is one URL' );
+		$this->assertSame( 'https://alpha.test/page-31', $result['data'][0]['url'] );
 		$per_hash = \count( \array_filter(
 			$memd->asked,
 			static fn ( string $key ): bool => false !== \strpos( $key, ':urlmap:' )
 		) );
-		$this->assertLessThan( 137, $per_hash, 'a search does not ask one key per URL' );
+		$this->assertLessThan( 10, $per_hash, 'a search names its candidates, not the index' );
 	}
 
 	public function test_a_search_reaches_an_hour_that_has_not_been_folded_yet(): void {
@@ -4425,9 +4428,9 @@ class PerformanceCITest extends TestCase {
 	}
 
 	/**
-	 * A search, sorted by URL, names every candidate from each shard's name
-	 * index and then names the page it returns. Both reads take the stores
-	 * the verb already resolved, so the count stays set by the worker count.
+	 * A search, sorted by URL, names every candidate the token index gave it
+	 * and then names the page it returns. Both reads take the stores the verb
+	 * already resolved, so the count stays set by the worker count.
 	 */
 	public function test_a_url_sorted_search_does_not_rebuild_the_catalog_per_shard(): void {
 		[ $builds, , $reply ] = $this->count_catalog_builds_for_urls( '--search=wombat-7731', '--sort=url' );
@@ -4989,4 +4992,280 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( "sql: {$message}", $method->invoke( null, 'sql', $message ) );
 	}
 
+	public function test_a_search_folds_only_the_shards_its_candidates_fall_in(): void {
+		$this->activate_shipped_topology( 'performance', 3 );
+		$store  = new Stats_Store( 1, 86400 );
+		$bucket = $this->current_url_bucket();
+		$this->set_url_bucket( $store, $bucket, [
+			'b7731ce0fa11' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 5, 'last_seen' => \time() ],
+			'c8842df1ab90' => [ 'url' => 'https://kea.test/kiwi-8842', 'count' => 3, 'last_seen' => \time() ],
+			'19913aa00fe2' => [ 'url' => 'https://kea.test/tui-9913', 'count' => 2, 'last_seen' => \time() ],
+		] );
+		[ $fire, $reads, $restore ] = $this->counting_urls_fire();
+		try {
+			$page = $fire( '--sort=count', '--order=desc', '--limit=100', '--search=Womb' );
+			$this->assertSame( 1, $reads(), 'one candidate, one shard' );
+			$this->assertSame( [ 'b7731ce0fa11' ], \array_column( $page['data'], 'hash' ) );
+			$this->assertSame( 1, $page['rows'] );
+
+			$before = $reads();
+			$page   = $fire( '--sort=count', '--order=desc', '--limit=100', '--search=mbat' );
+			$this->assertSame( $before, $reads(), 'a token nobody carries reads nothing' );
+			$this->assertSame( [], $page['data'] );
+			$this->assertSame( 0, $page['rows'] );
+
+			// Two tokens intersect: `wombat 88` names nothing, `kiwi-88` names kiwi.
+			$this->assertSame( [], $fire( '--sort=count', '--order=desc', '--limit=100', '--search=wombat 88' )['data'] );
+			$this->assertSame( [ 'c8842df1ab90' ], \array_column( $fire( '--sort=count', '--order=desc', '--limit=100', '--search=kiwi-88' )['data'], 'hash' ) );
+		} finally {
+			$restore();
+		}
+	}
+
+	/**
+	 * A term every URL carries is the case the index does not narrow, and the
+	 * contract has to hold there too: naming costs ONE `urlmap` batch per
+	 * store over the candidates, never a name blob per shard, and the walk
+	 * still visits only the shards those candidates fall in.
+	 */
+	public function test_a_broad_search_names_every_candidate_in_one_batch(): void {
+		Core::$memd = new class() extends InMemoryMemcached {
+			/** @var array<int,array<int,string>> */
+			public array $batches = [];
+
+			public function getMulti( array $keys, int $get_flags = 0 ): array|false {
+				$this->batches[] = \array_map( 'strval', $keys );
+				return parent::getMulti( $keys, $get_flags );
+			}
+		};
+		$store  = new Stats_Store( 0, 86400 );
+		$bucket = $this->current_url_bucket();
+		// 137 URLs, all in shard `a`, distinct from every cap in this schema.
+		$seeded = [];
+		for ( $i = 0; $i < 137; $i++ ) {
+			$seeded[ \sprintf( 'a%011x', $i ) ] = [
+				'url'       => \sprintf( 'https://alpha.test/page-%d', $i ),
+				'count'     => $i + 1,
+				'last_seen' => 1700000000 + $i,
+			];
+		}
+		$this->set_url_bucket( $store, $bucket, $seeded );
+		/** @var object{batches: array<int,array<int,string>>} $memd */
+		$memd          = Core::$memd;
+		$memd->batches = [];
+
+		[ $fire, $reads, $restore ] = $this->counting_urls_fire();
+		try {
+			$page = $fire( '--sort=count', '--order=desc', '--limit=100', '--search=page' );
+			$this->assertSame( 137, $page['rows'], 'every URL carries the term' );
+			$this->assertSame( 1, $reads(), 'one shard holds every candidate' );
+		} finally {
+			$restore();
+		}
+		$batches = \array_values( \array_filter(
+			$memd->batches,
+			static fn ( array $keys ): bool => [] !== \array_filter(
+				$keys,
+				static fn ( string $key ): bool => \str_contains( $key, ':urlmap:' )
+			)
+		) );
+		$this->assertCount( 2, $batches, 'one batch names the candidates, one names the page' );
+		$this->assertCount( 137, $batches[0], 'the candidates, not a name blob per shard' );
+	}
+
+	/**
+	 * `URL_SEARCH_MAX` bounds what the reader will TAKE from the index, which
+	 * is a separate bound from the sentinel the writer leaves once a set
+	 * passed it: a set one partition capped and another did not still arrives
+	 * whole. At the ceiling the index serves; one hash past it the fold does.
+	 */
+	public function test_a_term_past_the_candidate_ceiling_falls_through_to_the_fold(): void {
+		$this->activate_shipped_topology( 'performance', 3 );
+		$store  = new Stats_Store( 1, 86400 );
+		$bucket = $this->current_url_bucket();
+		$this->set_url_bucket( $store, $bucket, [
+			'b7731ce0fa11' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 5, 'last_seen' => \time() ],
+		] );
+		// A real set, never the saturation sentinel: that case has its own
+		// test. Stored as the writer stores it, `hash => last named`.
+		$now        = \time();
+		$at_ceiling = [ 'b7731ce0fa11' => $now ];
+		for ( $i = 0; \count( $at_ceiling ) < Stats_Store::URL_SEARCH_MAX; $i++ ) {
+			$at_ceiling[ \sprintf( 'd%011x', $i ) ] = $now;
+		}
+		$write = static function ( array $set ) use ( $store ): void {
+			$store->bucket_set_multi( [ [ [ Stats_Store::NS_URLTOKEN ], 'wombat', $set ] ] );
+		};
+		[ $fire, $reads, $restore ] = $this->counting_urls_fire();
+		try {
+			$write( $at_ceiling );
+			$page   = $fire( '--sort=count', '--order=desc', '--limit=100', '--search=wombat' );
+			$served = $reads();
+			$this->assertSame( 2, $served, 'at the ceiling the index still names the shards' );
+			$this->assertSame( [ 'b7731ce0fa11' ], \array_column( $page['data'], 'hash' ) );
+
+			// A different page, so the answer is folded rather than cached.
+			$write( [ ...$at_ceiling, 'd99999999999' => $now ] );
+			$page = $fire( '--sort=count', '--order=desc', '--limit=99', '--search=wombat' );
+			$this->assertSame( $served + \count( Stats_Store::url_shards() ), $reads(), 'one past it, every shard' );
+			$this->assertSame( [ 'b7731ce0fa11' ], \array_column( $page['data'], 'hash' ) );
+		} finally {
+			$restore();
+		}
+	}
+
+	public function test_a_candidate_whose_name_expired_still_reaches_the_page(): void {
+		// A name can expire or be refused while its rows are still in the
+		// window. The index already said this hash carries the token, so
+		// dropping it for want of a name hides a row the term really names.
+		$this->activate_shipped_topology( 'performance', 3 );
+		$store  = new Stats_Store( 1, 86400 );
+		$bucket = $this->current_url_bucket();
+		$this->set_url_bucket( $store, $bucket, [
+			'e5510ab77c01' => [ 'url' => 'https://kea.test/hihi-5510', 'count' => 6, 'last_seen' => \time() ],
+		] );
+		// The tokens outlive the name: drop the `urlmap` entry alone.
+		$table = ( new \ReflectionMethod( $store, 'table' ) )->invoke( $store, 'aggregate' );
+		$table->forget( Stats_Store::NS_URLMAP . ':e5510ab77c01' );
+		$this->assertSame( [], $store->get_url_names( [ 'e5510ab77c01' ] ), 'the name is gone; the rows and the tokens are not' );
+
+		$page = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--search=hihi' );
+
+		$this->assertSame( 1, $page['rows'], 'the index named it, so it is on the page' );
+		$this->assertSame( [ 'e5510ab77c01' ], \array_column( $page['data'], 'hash' ) );
+	}
+
+	public function test_the_fold_matches_a_term_token_at_a_word_boundary(): void {
+		// The index matches a word PREFIX, so the fold it falls back to must
+		// not match mid-word: one reading of `77` cannot mean two things.
+		$this->activate_shipped_topology( 'performance', 3 );
+		$store  = new Stats_Store( 1, 86400 );
+		$bucket = $this->current_url_bucket();
+		$this->set_url_bucket( $store, $bucket, [
+			'a7700ce0fa11' => [ 'url' => 'https://kea.test/wombat-77', 'count' => 5, 'last_seen' => \time() ],
+			'b1177df1ab90' => [ 'url' => 'https://kea.test/wombat-1177', 'count' => 3, 'last_seen' => \time() ],
+		] );
+		// Saturate the term's only servable token, so the fold answers.
+		$store->bucket_set_multi( [
+			[ [ Stats_Store::NS_URLTOKEN ], 'wombat', [ Stats_Store::TOKEN_SATURATED => \time() ] ],
+		] );
+
+		// An ARRAY: `fire()` splits a string on whitespace, and this term has some.
+		$page = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', [ '--search=wombat 77' ] );
+
+		$this->assertSame( [ 'a7700ce0fa11' ], \array_column( $page['data'], 'hash' ), '77 is a word of /wombat-77 and not of /wombat-1177' );
+	}
+
+	public function test_a_scoped_search_that_names_nothing_answers_zero_rather_than_null(): void {
+		// `has_split` is derived from the rows the walk saw, and a search with
+		// no candidates walks nothing — which used to read as "this index
+		// predates server splits", so a scoped total came back null.
+		$this->activate_shipped_topology( 'performance', 3 );
+		$store  = new Stats_Store( 1, 86400 );
+		$this->set_url_bucket( $store, $this->current_url_bucket(), [
+			'c3310ab77c02' => [
+				'url'   => 'https://moa.test/kakapo-3310',
+				'count' => 4,
+				'srv'   => [ 'moa.test' => [ 'count' => 4, 'timed_count' => 4, 'sum_ms' => 80.0, 'sum_peak_mb' => 4.0 ] ],
+				'last_seen' => \time(),
+			],
+		] );
+
+		$page = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--server=moa.test --search=nomatch' );
+
+		$this->assertIsArray( $page['totals'], 'a term nothing matches is zero requests, not an unanswerable scope' );
+		$this->assertSame( 0, $page['totals']['requests'] );
+		$this->assertSame( 0, $page['rows'] );
+	}
+
+	public function test_a_whitespace_only_search_is_the_same_page_as_no_search(): void {
+		// The cache key normalizes the term, so a blank search and no search
+		// are one entry — and they have to be one ANSWER too, or whichever
+		// ran first decides whether the other is ranked or folded.
+		$this->activate_shipped_topology( 'performance', 3 );
+		$store  = new Stats_Store( 1, 86400 );
+		$bucket = $this->current_url_bucket();
+		$rows   = [ 'b7731ce0fa11' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 5, 'last_seen' => \time() ] ];
+		$this->set_url_bucket( $store, $bucket, $rows );
+		$this->set_url_rank_lists( $store, $bucket, $rows );
+		$this->seed_hour_lists();
+
+		// An ARRAY: `fire()` would split the string on the very space at issue.
+		$blank = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', [ '--search= ' ] );
+		$memd  = Core::$memd;
+		VerbHarness::reset();
+		// The same cache, so the second call is the one the first left behind.
+		Core::$memd = $memd;
+		$none       = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' );
+
+		$this->assertTrue( $blank['ranked'], 'whitespace is not a filter' );
+		$this->assertTrue( $none['ranked'] );
+		$this->assertSame( $none['data'], $blank['data'] );
+		$this->assertSame( ' ', $blank['filters']['search'], 'the echo still says what was typed' );
+	}
+
+	public function test_one_page_cache_entry_serves_a_term_however_it_was_typed(): void {
+		$this->activate_shipped_topology( 'performance', 3 );
+		$store = new Stats_Store( 1, 86400 );
+		$this->set_url_bucket( $store, $this->current_url_bucket(), [
+			'd4410ab77c03' => [ 'url' => 'https://kea.test/weka-4410', 'count' => 7, 'last_seen' => \time() ],
+		] );
+		[ $fire, $reads, $restore ] = $this->counting_urls_fire();
+		try {
+			$first = $fire( '--sort=count', '--order=desc', '--limit=100', '--search=weka' );
+			$folded = $reads();
+			$this->assertGreaterThan( 0, $folded );
+			$again = $fire( '--sort=count', '--order=desc', '--limit=100', '--search=WEKA ' );
+			$this->assertSame( $folded, $reads(), 'case and trailing space are the same search' );
+			$this->assertSame( $first['data'], $again['data'] );
+			$this->assertSame( 'WEKA ', $again['filters']['search'], 'the echo still says what was typed' );
+		} finally {
+			$restore();
+		}
+	}
+
+	/**
+	 * A search reads its token sets and names its candidates BEFORE the shard
+	 * walk, so both carry a budget of their own. Sharing the command's leaves
+	 * the fold that follows one already part spent: on an evicting host the
+	 * rows it could not rehydrate are missing from the page, and
+	 * `mirror_budget_spent()` then refuses to cache it.
+	 */
+	public function test_a_searched_pages_candidate_reads_carry_their_own_budget(): void {
+		$url   = $this->seed_evicted_bucket_on_the_mirror();
+		$spent = new \ReflectionProperty( Flame_Builder_Node::class, 'mirror_read_ns' );
+
+		// The names: the walk before them spent everything, and the mirror
+		// still answers, exactly as it does for a page `resolve_urls()` names.
+		$spent->setValue( null, \PHP_INT_MAX );
+		$names = ( new \ReflectionMethod( Performance_CI_Node::class, 'url_names' ) )
+			->invoke( null, [ 'ab12cd34ef56' ], self::live_stores() );
+		$this->assertSame( $url, Stats_Store::join_url( $names['ab12cd34ef56'] ?? [ '', '' ] ) );
+		$this->assertSame( \PHP_INT_MAX, $spent->getValue(), 'the walk that follows inherits nothing' );
+
+		// The token sets: an unmirrored key's absence is never remembered, so
+		// the seam runs on every poll and its spend would be the fold's.
+		$spent->setValue( null, 4_242 );
+		( new \ReflectionMethod( Performance_CI_Node::class, 'search_candidates' ) )
+			->invoke( null, [ 'kakapo' ], self::live_stores() );
+		$this->assertSame( 4_242, $spent->getValue(), 'a token miss spends a budget of its own, not the one the fold needs' );
+	}
+
+	public function test_a_saturated_token_falls_through_to_the_fold(): void {
+		$this->activate_shipped_topology( 'performance', 3 );
+		$store  = new Stats_Store( 1, 86400 );
+		$bucket = $this->current_url_bucket();
+		$this->set_url_bucket( $store, $bucket, [
+			'b7731ce0fa11' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 5, 'last_seen' => \time() ],
+		] );
+		$store->bucket_set_multi( [ [ [ Stats_Store::NS_URLTOKEN ], 'wo', [ Stats_Store::TOKEN_SATURATED ] ] ] );
+		[ $fire, $reads, $restore ] = $this->counting_urls_fire();
+		try {
+			$page = $fire( '--sort=count', '--order=desc', '--limit=100', '--search=wo' );
+			$this->assertSame( \count( Stats_Store::url_shards() ), $reads(), 'every shard: the index cannot serve the term' );
+			$this->assertSame( [ 'b7731ce0fa11' ], \array_column( $page['data'], 'hash' ) );
+		} finally {
+			$restore();
+		}
+	}
 }

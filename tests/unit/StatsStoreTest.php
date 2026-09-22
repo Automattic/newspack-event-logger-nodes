@@ -1505,4 +1505,103 @@ class StatsStoreTest extends TestCase {
 		$this->assertSame( $store->ttl(), $m->invoke( $store, Stats_Store::NS_URLRANK_HOUR ) );
 		$this->assertSame( $store->ttl(), $m->invoke( $store, Stats_Store::NS_URLRANK_HOUR_S ) );
 	}
+
+	public function test_term_tokens_are_lowercase_alphanumeric_runs_of_two_or_more(): void {
+		$this->assertSame( [ 'wombat', '7731', 'kea', 'json' ], Stats_Store::term_tokens( '/Wombat-7731/kea/a/?json=1' ) );
+		$this->assertSame( [ 'internationa' ], Stats_Store::term_tokens( 'Internationalization' ) );
+		$this->assertSame( [], Stats_Store::term_tokens( '-/-' ) );
+	}
+
+	public function test_url_tokens_are_every_prefix_of_every_token(): void {
+		// From THREE: a two-character prefix names most of a real site, so it
+		// saturates at once and answers nothing the fold could not.
+		$this->assertSame(
+			[ 'wom', 'womb', 'womba', 'wombat', '773', '7731' ],
+			Stats_Store::url_tokens( '/wombat-7731' )
+		);
+		$this->assertSame( 10, \count( Stats_Store::url_tokens( '/internationalization' ) ), 'cut at the prefix ceiling' );
+		$this->assertSame( [ 'kea' ], Stats_Store::url_tokens( '/kea/kea' ), 'deduplicated' );
+		$this->assertSame( [], Stats_Store::url_tokens( '/at/88' ), 'a two-character word files nothing' );
+	}
+
+	public function test_token_sets_of_groups_every_named_path_by_token(): void {
+		$this->assertSame(
+			[
+				'tui'  => [ 'aa11bb22cc33', 'dd44ee55ff66' ],
+				'tuis' => [ 'dd44ee55ff66' ],
+			],
+			Stats_Store::token_sets_of( [
+				'aa11bb22cc33' => '/tui',
+				'dd44ee55ff66' => '/tuis',
+			] )
+		);
+	}
+
+	public function test_a_name_pair_reads_its_path_through_one_accessor(): void {
+		$this->assertSame( '/kakapo', Stats_Store::path_of( [ '/kakapo', 'https://kea.test' ] ) );
+		$this->assertSame( '', Stats_Store::path_of( [] ) );
+	}
+
+	public function test_a_token_set_unions_until_its_live_count_saturates(): void {
+		$now = 1_700_000_000;
+		$this->assertSame(
+			[ 'a1a1a1a1a1a1' => $now, 'c3c3c3c3c3c3' => $now - 90, 'b2b2b2b2b2b2' => $now ],
+			Stats_Store::merge_token_set(
+				[ 'a1a1a1a1a1a1' => $now - 90, 'c3c3c3c3c3c3' => $now - 90 ],
+				[ 'b2b2b2b2b2b2', 'a1a1a1a1a1a1' ],
+				3,
+				$now,
+				86400
+			),
+			'this flush restamps what it names and leaves the rest of the set standing'
+		);
+		$this->assertSame(
+			[ Stats_Store::TOKEN_SATURATED => $now ],
+			Stats_Store::merge_token_set(
+				[ 'a1a1a1a1a1a1' => $now, 'b2b2b2b2b2b2' => $now, 'c3c3c3c3c3c3' => $now ],
+				[ 'd4d4d4d4d4d4' ],
+				3,
+				$now,
+				86400
+			)
+		);
+		$this->assertSame(
+			[ Stats_Store::TOKEN_SATURATED => $now - 90 ],
+			Stats_Store::merge_token_set( [ Stats_Store::TOKEN_SATURATED => $now - 90 ], [ 'e5e5e5e5e5e5' ], 3, $now, 86400 ),
+			'a live sentinel is returned UNCHANGED, so the write is skipped and the key keeps its TTL'
+		);
+	}
+
+	public function test_a_token_set_drops_the_hashes_a_retention_window_has_passed_over(): void {
+		$now = 1_700_000_000;
+		$this->assertSame(
+			[ 'b2b2b2b2b2b2' => $now - 86_399, 'c3c3c3c3c3c3' => $now ],
+			Stats_Store::merge_token_set(
+				[ 'a1a1a1a1a1a1' => $now - 86_401, 'b2b2b2b2b2b2' => $now - 86_399 ],
+				[ 'c3c3c3c3c3c3' ],
+				3,
+				$now,
+				86400
+			),
+			'a hash nothing has named for a window is gone, and never counts toward the cap'
+		);
+	}
+
+	public function test_a_set_saturated_by_dead_hashes_comes_back_once_they_age_out(): void {
+		$now  = 1_700_000_000;
+		$dead = [ Stats_Store::TOKEN_SATURATED => $now - 86_401 ];
+		$this->assertSame(
+			[ 'f6f6f6f6f6f6' => $now ],
+			Stats_Store::merge_token_set( $dead, [ 'f6f6f6f6f6f6' ], 3, $now, 86400 ),
+			'the sentinel ages out like any entry, and the set rebuilds live-only'
+		);
+	}
+
+	public function test_token_sets_read_the_tokens_the_store_holds(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 3, max_lifespan: 86400 );
+		// Stored as `hash => last named`; the reader takes the hashes alone.
+		$store->bucket_set_multi( [ [ [ Stats_Store::NS_URLTOKEN ], 'womb', [ 'a1a1a1a1a1a1' => 1_700_000_000 ] ] ] );
+		$this->assertSame( [ 'womb' => [ 'a1a1a1a1a1a1' ] ], $store->url_token_sets( [ 'womb', 'kiwi' ] ) );
+	}
 }

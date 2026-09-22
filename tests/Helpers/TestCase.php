@@ -286,7 +286,9 @@ abstract class TestCase extends RuntimeTestCase {
 		foreach ( $rows as $hash => $row ) {
 			$url = \Newspack_Nodes\Core::str( \Newspack_Nodes\Core::arr( $row )['url'] ?? '' );
 			if ( '' !== $url ) {
-				$paths[ (string) $hash ] = \Newspack_Event_Logger_Nodes\Stats_Store::split_url( $url )[0];
+				$paths[ (string) $hash ] = \Newspack_Event_Logger_Nodes\Stats_Store::path_of(
+					\Newspack_Event_Logger_Nodes\Stats_Store::split_url( $url )
+				);
 			}
 		}
 		return $paths;
@@ -304,6 +306,41 @@ abstract class TestCase extends RuntimeTestCase {
 		return $store->bucket_set_multi( [
 			[ \Newspack_Event_Logger_Nodes\Stats_Store::url_name_parts( $shard ), $bucket, $paths ],
 		] )[0];
+	}
+
+	/**
+	 * File the search tokens of named paths, as the flush does: read each
+	 * token's set, union, write.
+	 *
+	 * @param \Newspack_Event_Logger_Nodes\Stats_Store $store Destination.
+	 * @param array<string,string>                     $paths hash => path.
+	 */
+	protected function set_url_tokens( \Newspack_Event_Logger_Nodes\Stats_Store $store, array $paths ): bool {
+		$by_token = \Newspack_Event_Logger_Nodes\Stats_Store::token_sets_of( $paths );
+		$parts    = [ \Newspack_Event_Logger_Nodes\Stats_Store::NS_URLTOKEN ];
+		$tokens   = \array_map( 'strval', \array_keys( $by_token ) );
+		$reads    = [];
+		foreach ( $tokens as $token ) {
+			$reads[] = [ $parts, $token ];
+		}
+		// The stored MAP, not `url_token_sets()`'s hashes: the stamps merge.
+		$existing = $store->bucket_get_multi( $reads );
+		$now      = \time();
+		$writes   = [];
+		foreach ( \array_values( $by_token ) as $at => $hashes ) {
+			$writes[] = [
+				$parts,
+				$tokens[ $at ],
+				\Newspack_Event_Logger_Nodes\Stats_Store::merge_token_set(
+					$existing[ $at ] ?? [],
+					$hashes,
+					\Newspack_Event_Logger_Nodes\Stats_Store::URL_SEARCH_MAX,
+					$now,
+					$store->ttl()
+				),
+			];
+		}
+		return [] === $writes || ! \in_array( false, $store->bucket_set_multi( $writes ), true );
 	}
 
 	/**
@@ -403,6 +440,7 @@ abstract class TestCase extends RuntimeTestCase {
 	 */
 	protected function set_url_bucket( \Newspack_Event_Logger_Nodes\Stats_Store $store, string $bucket, array $data ): bool {
 		$paths = self::url_paths_of( $data );
+		$ok    = $this->set_url_tokens( $store, $paths );
 		$data  = self::store_url_names( $store, $data );
 		// Worker rows go to the worker shard family, as the writer files them.
 		$split = [ false => [], true => [] ];
@@ -410,7 +448,6 @@ abstract class TestCase extends RuntimeTestCase {
 			$row_arr = \Newspack_Nodes\Core::arr( $row );
 			$split[ ! empty( $row_arr[ \Newspack_Event_Logger_Nodes\Stats_Store::ROW_WORKER ] ) ][ $hash ] = $row;
 		}
-		$ok = true;
 		foreach ( [ false, true ] as $worker ) {
 			$by_shard = \Newspack_Event_Logger_Nodes\Stats_Store::rows_by_shard( $split[ $worker ], $worker );
 			foreach ( \Newspack_Event_Logger_Nodes\Stats_Store::url_shards( $worker ) as $shard ) {
