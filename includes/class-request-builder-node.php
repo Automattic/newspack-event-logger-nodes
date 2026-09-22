@@ -816,7 +816,7 @@ class Request_Builder_Node extends Timer_Node {
 		}
 
 		// Subtract child time from ancestors; callbacks (" @N") don't subtract.
-		if ( ! empty( $stack ) && ! self::is_callback_state( $state ) ) {
+		if ( ! empty( $stack ) && ! Flame_Tree::is_listener_span( $state ) ) {
 			for ( $j = \count( $stack ) - 1; $j >= 0; $j-- ) {
 				$ancestor_frame = $stack[ $j ];
 				$ancestor       = $ancestor_frame[0];
@@ -831,7 +831,7 @@ class Request_Builder_Node extends Timer_Node {
 						$profiles[ $ancestor ]['entries'][ $ancestor_label ][0] -= $time;
 					}
 					// Subtract up to first non-callback ancestor, then stop.
-					if ( ! self::is_callback_state( $ancestor ) ) {
+					if ( ! Flame_Tree::is_listener_span( $ancestor ) ) {
 						break;
 					}
 				}
@@ -854,17 +854,6 @@ class Request_Builder_Node extends Timer_Node {
 		if ( ! \is_array( $request->profiles ?? null ) ) {
 			$request->profiles = [];
 		}
-	}
-
-	/**
-	 * Check if a state label is a callback (ends with " @N").
-	 *
-	 * @param string $state State label.
-	 * @return bool True if callback state.
-	 */
-	private static function is_callback_state( string $state ): bool {
-		$at_pos = \strrpos( $state, ' @' );
-		return false !== $at_pos && \ctype_digit( \substr( $state, $at_pos + 2 ) );
 	}
 
 	/**
