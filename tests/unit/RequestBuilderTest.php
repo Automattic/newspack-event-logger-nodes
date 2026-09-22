@@ -1285,6 +1285,9 @@ class RequestBuilderTest extends TestCase {
 	 */
 	public function test_the_eviction_window_outlasts_a_workers_lifetime(): void {
 		$this->assertSame( 900, Request_Builder_Node::DEFAULT_EVICTION_WINDOW_SEC );
+		// The floor is two whole rotations: the first after landing is partial.
+		$rotation = \intdiv( Request_Builder_Node::DEFAULT_EVICTION_WINDOW_SEC, Request_Builder_Node::DEFAULT_NUM_BUCKETS );
+		$this->assertGreaterThan( 595, $rotation * ( Request_Builder_Node::DEFAULT_NUM_BUCKETS - 1 ) );
 	}
 
 	public function test_a_bucket_count_off_the_default_says_the_borrowed_eviction_window_no_longer_measures_it(): void {

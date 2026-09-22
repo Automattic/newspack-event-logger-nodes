@@ -446,7 +446,7 @@ class Request_Builder_Node extends Timer_Node {
     public const DEFAULT_NUM_BUCKETS             = 3;     // positional arg 1
     public const DEFAULT_ENTRY_BUDGET            = 50000; // positional arg 2
     public const DEFAULT_MAX_ENTRIES_PER_REQUEST = 20000; // positional arg 3
-    public const DEFAULT_EVICTION_WINDOW_SEC     = 600;   // DEFAULT_NUM_BUCKETS × BUCKET_ROTATION_S
+    public const DEFAULT_EVICTION_WINDOW_SEC     = 900;   // DEFAULT_NUM_BUCKETS × BUCKET_ROTATION_S
 
     public const LOST_MARKER_KEY     = 'entries (lost)';
     public const FOLD_MARKER_KEY     = 'entries (aggregated)';
@@ -454,7 +454,7 @@ class Request_Builder_Node extends Timer_Node {
     public const ERROR_STATUSES      = [ 'F', 'T', 'A', 'I' ];
     public const TERMINAL_KEYWORDS   = [ 'process (complete)' => true, 'process (aborted)' => true ];
 
-    private const BUCKET_ROTATION_S = 200;
+    private const BUCKET_ROTATION_S = 300;
     private const MAX_STACK_DEPTH   = 50;   // runaway cutoff
     private const FOLD_KEEP_HEAD    = 10;
     private const FOLD_KEEP_TAIL    = 10;

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **The gyroscope ages an in-flight row out at twenty minutes.** Its
+  backstop sat at fifteen, the request builder's new eviction ceiling to
+  the second, so a request evicted at the ceiling could vanish from the
+  in-flight table before its timed-out completion arrived to say so.
+
 ## [0.101.1] - 2026-09-22
 
 ### Fixed

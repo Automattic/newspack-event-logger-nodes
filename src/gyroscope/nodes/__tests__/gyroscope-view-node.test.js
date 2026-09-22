@@ -250,8 +250,8 @@ test( 'snapshot() ages out an in-flight row not refreshed within the staleness w
 				state: 'process',
 			} )
 		);
-		// 16 min later, refresh ONLY 'fresh'; 'stale' passes the aging window.
-		nowSpy.mockReturnValue( 10_000 + 16 * 60 * 1000 );
+		// 21 min later, refresh ONLY 'fresh'; 'stale' passes the twenty-minute window.
+		nowSpy.mockReturnValue( 10_000 + 21 * 60 * 1000 );
 		v.fill(
 			inflightEnvelope( {
 				rid: 'fresh-8202',
