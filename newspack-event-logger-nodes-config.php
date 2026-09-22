@@ -53,7 +53,8 @@ return [
 	// option again.
 	// The platform's own requests to itself — the cron loopback and the
 	// substrate's endpoints — need no skip: `Log_Manager` names each as a
-	// worker, and the URL table keeps worker traffic off its default rows.
+	// worker, and worker traffic stays off the URL table's default rows and
+	// out of the global sums.
 	// No match means skip, and empty means empty: drop the `/` rule and the
 	// site logs nothing. A `log` rule may also carry hook lists, custom and
 	// significant event names, the two auto-tune thresholds, and the query,
