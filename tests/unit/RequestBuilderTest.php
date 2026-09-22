@@ -1284,7 +1284,7 @@ class RequestBuilderTest extends TestCase {
 	 * every `v1/workers/spawn` timed out mid-life.
 	 */
 	public function test_the_eviction_window_outlasts_a_workers_lifetime(): void {
-		$this->assertSame( 900, Request_Builder_Node::DEFAULT_EVICTION_WINDOW_SEC );
+		$this->assertSame( 1080, Request_Builder_Node::DEFAULT_EVICTION_WINDOW_SEC );
 		// The floor is two whole rotations: the first after landing is partial.
 		$rotation = \intdiv( Request_Builder_Node::DEFAULT_EVICTION_WINDOW_SEC, Request_Builder_Node::DEFAULT_NUM_BUCKETS );
 		$this->assertGreaterThan( 595, $rotation * ( Request_Builder_Node::DEFAULT_NUM_BUCKETS - 1 ) );
@@ -1302,7 +1302,7 @@ class RequestBuilderTest extends TestCase {
 		$node->arguments( [ '137', '7' ] );
 
 		$this->assertStringContainsString( 'eviction window', $buf );
-		$this->assertStringContainsString( '2100', $buf, 'the window this declaration actually has' );
+		$this->assertStringContainsString( '2520', $buf, 'the window this declaration actually has' );
 		$node->remove_node();
 	}
 

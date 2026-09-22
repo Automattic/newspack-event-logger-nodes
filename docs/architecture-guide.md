@@ -438,7 +438,7 @@ Cost on regular WP requests is one array append at boot — the `.tsl` files the
 
 [`Request_Builder_Node`](../includes/class-request-builder-node.php) assembles requests from firehose entries via the substrate's [`LRU_Cache`](https://github.com/Automattic/newspack-nodes/blob/v2.56.0/includes/class-lru-cache.php), a `Timer_Node` that hitchhikes the Router's 1s TIMER (registered in `arguments()`) so `fire()` rotates the in-flight cache even when no firehose line arrives to drive rotation via `fill()`.
 
-![Request assembly: the per-line sequence gate (a duplicate n is dropped, a matching n is stored, a gap records gap_after and drops all but a terminal, which lands and leaves an entries (lost) marker); the three-bucket LRU rotating every 300 seconds, where every get() promotes and the oldest bucket evicts with T, 600 to 900 seconds after a record's last line; the five outputs, sink, completed_target with its ten-key summary, errors_target, alerts_target and inflight_target; and the fold, which keeps ten head and ten tail entries around an entries (aggregated) marker and the kept closes, with the middle merged into a Flame_Fold tree, under max_entries_per_request 20,000 for one record and entry_budget 50,000 across all.](img/ag-request-assembly.png)
+![Request assembly: the per-line sequence gate (a duplicate n is dropped, a matching n is stored, a gap records gap_after and drops all but a terminal, which lands and leaves an entries (lost) marker); the three-bucket LRU rotating every 360 seconds, where every get() promotes and the oldest bucket evicts with T, 720 to 1080 seconds after a record's last line; the five outputs, sink, completed_target with its ten-key summary, errors_target, alerts_target and inflight_target; and the fold, which keeps ten head and ten tail entries around an entries (aggregated) marker and the kept closes, with the middle merged into a Flame_Fold tree, under max_entries_per_request 20,000 for one record and entry_budget 50,000 across all.](img/ag-request-assembly.png)
 
 ```php
 class Request_Builder_Node extends Timer_Node {
@@ -446,7 +446,7 @@ class Request_Builder_Node extends Timer_Node {
     public const DEFAULT_NUM_BUCKETS             = 3;     // positional arg 1
     public const DEFAULT_ENTRY_BUDGET            = 50000; // positional arg 2
     public const DEFAULT_MAX_ENTRIES_PER_REQUEST = 20000; // positional arg 3
-    public const DEFAULT_EVICTION_WINDOW_SEC     = 900;   // DEFAULT_NUM_BUCKETS × BUCKET_ROTATION_S
+    public const DEFAULT_EVICTION_WINDOW_SEC     = 1080;  // DEFAULT_NUM_BUCKETS × BUCKET_ROTATION_S
 
     public const LOST_MARKER_KEY     = 'entries (lost)';
     public const FOLD_MARKER_KEY     = 'entries (aggregated)';
@@ -454,7 +454,7 @@ class Request_Builder_Node extends Timer_Node {
     public const ERROR_STATUSES      = [ 'F', 'T', 'A', 'I' ];
     public const TERMINAL_KEYWORDS   = [ 'process (complete)' => true, 'process (aborted)' => true ];
 
-    private const BUCKET_ROTATION_S = 300;
+    private const BUCKET_ROTATION_S = 360;
     private const MAX_STACK_DEPTH   = 50;   // runaway cutoff
     private const FOLD_KEEP_HEAD    = 10;
     private const FOLD_KEEP_TAIL    = 10;

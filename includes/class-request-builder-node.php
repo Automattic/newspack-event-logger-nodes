@@ -131,13 +131,13 @@ class Request_Builder_Node extends Timer_Node {
 	 * Bucket rotation interval in seconds; see DEFAULT_EVICTION_WINDOW_SEC
 	 * below. A request is evicted at the THIRD rotation after it lands, and
 	 * the first of those is a partial window, so the floor is two whole
-	 * rotations: 600 seconds, five past a worker's 595-second lifetime, which
+	 * rotations: 720 seconds, two minutes past a worker's 595-second lifetime, which
 	 * is what lets its spawn request land complete rather than timed out.
 	 * That floor holds while fewer than `bucket_size` requests are in flight
 	 * at once; a full newest bucket rotates early. The grid is wall clock and
 	 * the lifetime monotonic, so a clock step eats into the margin.
 	 */
-	private const BUCKET_ROTATION_S = 300;
+	private const BUCKET_ROTATION_S = 360;
 
 	/**
 	 * The longest a request stays in flight under the DEFAULT declaration.

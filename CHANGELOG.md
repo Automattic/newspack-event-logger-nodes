@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **A silent request is given 720 to 1080 seconds before it is evicted as
+  timed out.** The request builder's LRU rotates every 360 seconds; the
+  600-second floor of the last release cleared a worker's 595-second
+  lifetime by five seconds, which a slow shutdown or a clock step ate.
 - **The gyroscope ages an in-flight row out at twenty minutes.** Its
   backstop sat at fifteen, the request builder's new eviction ceiling to
   the second, so a request evicted at the ceiling could vanish from the

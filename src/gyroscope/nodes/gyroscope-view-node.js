@@ -22,7 +22,7 @@ const RPS_WINDOW_SEC = 10;
 
 /**
  * Age out an in-flight row unseen this long — a lost-completion backstop.
- * Past Request_Builder_Node::DEFAULT_EVICTION_WINDOW_SEC (900 s) by enough
+ * Past Request_Builder_Node::DEFAULT_EVICTION_WINDOW_SEC (1080 s) by enough
  * for the eviction's own completion record to arrive and be rendered.
  */
 const INFLIGHT_STALE_MS = 20 * 60 * 1000;
