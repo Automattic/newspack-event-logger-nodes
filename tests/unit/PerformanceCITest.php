@@ -393,6 +393,24 @@ class PerformanceCITest extends TestCase {
 		$this->assertArrayNotHasKey( 'breakdown_time_series', $result );
 	}
 
+	/**
+	 * A frame written before the positional shape sums to a zero count under
+	 * `DIM_SUMS`; the reader drops it as the writer does, so it is never a
+	 * legend row with a flat zero line until the flush ages it out.
+	 */
+	public function test_overview_breakdown_drops_a_value_nothing_measured(): void {
+		$store  = new Stats_Store( 0, 86400 );
+		$bucket = $this->current_url_bucket();
+		$this->set_dimensional_bucket( $store, 'country', $bucket, [
+			'PT' => self::dim_entry( 23, 2.3, 0.7 ),
+			'FR' => [ 'c' => 9, 's' => 1.0, 'm' => 1.0 ],
+		] );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'overview', '--breakdown=country' );
+
+		$this->assertSame( [ 'PT' ], \array_keys( $result['breakdowns']['country'][ $bucket ] ) );
+	}
+
 	public function test_overview_verb_includes_breakdowns_map_for_multi_dim(): void {
 		// Comma-separated dims return nested `breakdowns: { dim => series }`
 		// (legacy L113-118). Used by the dashboard's `breakdownsFor` deduper

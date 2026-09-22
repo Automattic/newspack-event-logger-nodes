@@ -36,7 +36,6 @@
 
 namespace Newspack_Event_Logger_Nodes;
 
-use Newspack_Event_Logger_Nodes\App\Core as Hooks;
 use Newspack_Nodes\Cache_Backend;
 use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Core;
@@ -1034,7 +1033,7 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 			$category  = self::collision_free_category( $as_logged );
 
 			// Listener and plugin rows are views auto-tune can't act on.
-			$is_callback = Hooks::is_listener_span( $as_logged );
+			$is_callback = Flame_Tree::is_listener_span( $as_logged );
 			$is_plugin   = Flame_Tree::is_plugin_load_span( $as_logged );
 			$base_name   = Flame_Tree::hook_name( $as_logged );
 
@@ -1983,7 +1982,7 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	 * @return array<array-key,mixed>
 	 */
 	private static function cap_dim( array $values, int $max_values ): array {
-		return self::cap_bucket( self::measured( $values, Stats_Store::DIM_COUNT ), $max_values, Stats_Store::DIM_COUNT, Stats_Store::DIM_SUMS );
+		return self::cap_bucket( Stats_Store::measured( $values, Stats_Store::DIM_COUNT ), $max_values, Stats_Store::DIM_COUNT, Stats_Store::DIM_SUMS );
 	}
 
 	/**
@@ -2011,7 +2010,7 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	 * @return array<array-key,mixed>
 	 */
 	private static function fold_categories( array $existing, array $cats ): array {
-		$measured = self::measured( Stats_Store::sum_fields( $existing, $cats, Stats_Store::CAT_SUMS ), Stats_Store::CAT_REQUESTS );
+		$measured = Stats_Store::measured( Stats_Store::sum_fields( $existing, $cats, Stats_Store::CAT_SUMS ), Stats_Store::CAT_REQUESTS );
 		$capped = self::cap_bucket(
 			$measured,
 			Stats_Store::MAX_CAT_VALUES,
@@ -2030,22 +2029,6 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 			$capped[ $name ] = $entry;
 		}
 		return $capped;
-	}
-
-	/**
-	 * The entries of a bucket that measured anything. An entry the merge could
-	 * not name reads its count as absent, and a zero count is a slot with
-	 * nothing in it: no request, no chart row.
-	 *
-	 * @param array<array-key,mixed> $values      Entries keyed by value name.
-	 * @param int                    $count_field The entry's count index.
-	 * @return array<array-key,mixed> The entries with a count above zero.
-	 */
-	private static function measured( array $values, int $count_field ): array {
-		return \array_filter(
-			$values,
-			static fn ( $entry ): bool => \is_array( $entry ) && Core::num_int( $entry[ $count_field ] ?? null ) > 0
-		);
 	}
 
 	/**
