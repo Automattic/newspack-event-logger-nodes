@@ -625,6 +625,11 @@ $GLOBALS['_eln_boot_actions'] = $GLOBALS['_wp_actions'];
 	[ \Newspack_Event_Logger_Nodes\Config::class, 'resolve_eln_token' ]
 );
 
+// Pin the tick once, as `Core::reset()` does at plugin load: production reads
+// `Core::$now` bare, and a test that never ticked would read 0.0 as a date in
+// 1970. A test pinning its own clock still does, and restores it.
+\Newspack_Nodes\Core::right_now();
+
 require_once __DIR__ . '/Helpers/TestCase.php';
 require_once __DIR__ . '/Helpers/SseFrameFactory.php';
 require_once __DIR__ . '/Helpers/VerbHarness.php';

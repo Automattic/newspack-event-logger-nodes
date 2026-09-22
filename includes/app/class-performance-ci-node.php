@@ -220,9 +220,6 @@ class Performance_CI_Node extends Service_CI_Node {
 	/** Table namespace of the URL page cache, beside `Rule_Set::TABLE_HOOKS`. */
 	private const URLS_PAGE_NS = 'eln-urls-page';
 
-	/** Seconds one folded URL page serves every tab asking for it. */
-	private const URLS_PAGE_TTL_S = 60;
-
 	/** The widest page cached: 1,000 named rows can pass the cache item limit. */
 	private const URLS_PAGE_CACHE_MAX_ROWS = 250;
 
@@ -716,7 +713,8 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * `url_page()` for the filtered set's totals and leaderboard,
 	 * `build_leaderboard()` for the category board beside it. They can
 	 * disagree about WHEN: the URL half is a page the cache may hold up to
-	 * `URLS_PAGE_TTL_S` behind the board. The site-wide `build_overview_payload()` is
+	 * `Stats_Store::URL_PAGE_REFRESH_S` behind the board. The site-wide
+	 * `build_overview_payload()` is
 	 * deliberately NOT used — its totals ignore every filter, so under a
 	 * server or a search they would describe a different site than the one on
 	 * screen.
@@ -792,7 +790,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * the means of the bucket averages it ranked with, and a count outside
 	 * every bucket's list is a count the page cannot see.
 	 *
-	 * It is read THROUGH the cache for `URLS_PAGE_TTL_S` under every filter,
+	 * It is read THROUGH the cache for `Stats_Store::URL_PAGE_REFRESH_S` under every filter,
 	 * the window bucket, the retention and the store count: a fold over a
 	 * hub's whole URL index runs tens of seconds, and every tab polling the
 	 * same page would otherwise pay it again. A page wider than
@@ -828,7 +826,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		return self::read_through_page(
 			[ $server, $search, $errors, $workers, $sort, $order, $offset, $limit, Stats_Store::bucket_key( self::now() ), AppConfig::stats_retention_seconds(), \count( $stores ) ],
 			self::PAGE_FIELDS,
-			self::URLS_PAGE_TTL_S,
+			Stats_Store::URL_PAGE_REFRESH_S,
 			$build
 		);
 	}
@@ -1020,7 +1018,10 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * stored value missing a field this reader needs, and a build the mirror
 	 * read budget cut short states `ttl => 0` — served, never warmed, or the
 	 * gap it left would stand for the entry's whole life. With no cache
-	 * backend the table is null and `$build` simply answers.
+	 * backend there is no table and `$build` simply answers.
+	 *
+	 * Its own namespace rather than a partition's: a page folds every
+	 * partition, so it belongs to none, and the install salt still scopes it.
 	 *
 	 * @param array<array-key,mixed>             $parts  What the key covers.
 	 * @param list<string>                       $fields The keys the value carries.
@@ -1029,12 +1030,11 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @return mixed The stored value, or what `$build` produced.
 	 */
 	private static function read_through_page( array $parts, array $fields, int $ttl, \Closure $build ): mixed {
-		$table = self::page_table( $ttl );
-		if ( null === $table ) {
+		if ( null === \Newspack_Nodes\Cache_Backend::shared_first() ) {
 			return $build();
 		}
 		$parts[] = \md5( \implode( ',', $fields ) );
-		return $table->backed_by(
+		return \Newspack_Nodes\Table_Node::table( self::URLS_PAGE_NS, $ttl )->backed_by(
 			static fn ( array $keys ): array => [
 				$keys[0] => [
 					'value' => $build(),
@@ -1312,19 +1312,6 @@ class Performance_CI_Node extends Service_CI_Node {
 		return static fn ( array $a, array $b ): int => 'asc' === $order
 			? ( $a[ $sort ] ?? 0 ) <=> ( $b[ $sort ] ?? 0 )
 			: ( $b[ $sort ] ?? 0 ) <=> ( $a[ $sort ] ?? 0 );
-	}
-
-	/**
-	 * The URL page cache, or null with no cache backend, which reads as a miss.
-	 *
-	 * Its own namespace rather than a partition's: a page folds every
-	 * partition, so it belongs to none, and the install salt still scopes it.
-	 */
-	private static function page_table( int $ttl ): ?\Newspack_Nodes\Table_Node {
-		if ( null === \Newspack_Nodes\Cache_Backend::shared_first() ) {
-			return null;
-		}
-		return \Newspack_Nodes\Table_Node::table( self::URLS_PAGE_NS, $ttl );
 	}
 
 	/**
@@ -2618,13 +2605,18 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * Epoch seconds, from the substrate's canonical clock — `Stats_Store`
-	 * dates its writes from the same one, so a reader and a writer in one
-	 * process cannot disagree about which bucket is current.
+	 * Epoch seconds, from the substrate's canonical clock: the TICK's own
+	 * under a drain, and in request scope the one `Core::reset()` pinned as
+	 * the substrate loaded, which is before any verb can run.
 	 *
+	 * Nothing on the READER's path re-pins it — `Core::right_now()` WRITES
+	 * `Core::$now`, and the mirror read-backs were the one place a fold did.
+	 * The firehose producer still refreshes it per line in a request it is
+	 * logging, so what answers every panel of one reply from ONE window is
+	 * `read_window()`'s memo, which is keyed on the bucket.
 	 */
 	private static function now(): int {
-		return (int) Core::right_now();
+		return (int) Core::$now;
 	}
 
 	/**
