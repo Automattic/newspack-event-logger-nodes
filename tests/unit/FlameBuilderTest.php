@@ -4390,6 +4390,30 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( 83, $rows[ $bucket ]['count'] ?? null, 'with budget, the frame the mirror holds is found' );
 	}
 
+	/** A mirror no topology declares is looked for once, not on every miss. */
+	public function test_an_undeclared_mirror_is_resolved_once(): void {
+		Core::$memd = new InMemoryMemcached();
+		Flame_Builder_Node::reset_mirror_read_budget();
+		$this->use_base_dir( $this->make_temp_dir(), [ 'stats_mirror_node' => 'flames-nowhere', 'stats_mirror_read_budget_ms' => 2500 ] );
+		$catalog_reads = 0;
+		\add_filter(
+			'newspack_nodes/topologies',
+			static function ( array $topologies ) use ( &$catalog_reads ): array {
+				++$catalog_reads;
+				return $topologies;
+			}
+		);
+		$reader = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		Flame_Builder_Node::arm_stats_reader( $reader );
+
+		$this->assertNull( ( $reader->rehydrate )( [ 'hourly:' . self::live_hour() ] ), 'no mirror to look at' );
+		$first = $catalog_reads;
+		$this->assertNull( ( $reader->rehydrate )( [ 'lb:' . self::live_hour() ] ) );
+
+		$this->assertGreaterThan( 0, $first, 'the mirror was looked for' );
+		$this->assertSame( $first, $catalog_reads, 'and not looked for again' );
+	}
+
 	/** With budget left, the same read finds the frame — zero is the switch. */
 	public function test_a_reader_inside_its_budget_still_reads_the_mirror(): void {
 		Core::$memd = new InMemoryMemcached();
