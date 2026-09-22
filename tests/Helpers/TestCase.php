@@ -178,6 +178,27 @@ abstract class TestCase extends RuntimeTestCase {
 	}
 
 	/**
+	 * Count the topology-catalog reads from here on. `newspack_nodes/topologies`
+	 * fires once per catalog read, which no memo spares, so the count is the
+	 * store builds and mirror resolutions a path pays.
+	 *
+	 * @return \Closure(): int The reads so far.
+	 */
+	protected static function count_catalog_reads(): \Closure {
+		$reads = 0;
+		\add_filter(
+			'newspack_nodes/topologies',
+			static function ( array $topologies ) use ( &$reads ): array {
+				++$reads;
+				return $topologies;
+			}
+		);
+		return static function () use ( &$reads ): int {
+			return $reads;
+		};
+	}
+
+	/**
 	 * The install-scoped address of a logical memcache key.
 	 *
 	 * Tests assert on real keys, and the scope is not theirs to spell — deriving
@@ -237,27 +258,6 @@ abstract class TestCase extends RuntimeTestCase {
 			static fn ( $row ): array => self::named_url_row( \Newspack_Nodes\Core::arr( $row ) ),
 			$rows
 		);
-	}
-
-	/**
-	 * Count the topology-catalog reads from here on. `newspack_nodes/topologies`
-	 * fires once per catalog read, which no memo spares, so the count is the
-	 * store builds and mirror resolutions a path pays.
-	 *
-	 * @return \Closure(): int The reads so far.
-	 */
-	protected static function count_catalog_reads(): \Closure {
-		$reads = 0;
-		\add_filter(
-			'newspack_nodes/topologies',
-			static function ( array $topologies ) use ( &$reads ): array {
-				++$reads;
-				return $topologies;
-			}
-		);
-		return static function () use ( &$reads ): int {
-			return $reads;
-		};
 	}
 
 	/**

@@ -2254,9 +2254,7 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 			return;
 		}
 		// Absences walked for are remembered; a refused namespace is not.
-		$store->absence = static fn ( string $key ): int => self::mirrors_namespace( \explode( ':', $key, 2 )[0] )
-			? $store->absence_holds( $key )
-			: 0;
+		$store->absence = static fn ( string $key ): int => self::mirrors_key( $key ) ? $store->absence_holds( $key ) : 0;
 		// num_int: arithmetic, and a corrupt value must read as OFF.
 		$budget_ns        = 1_000_000 * \max( 0, Core::num_int( Config::value( 'stats_mirror_read_budget_ms' ) ) );
 		// Null, not []: a read that did not look is no absence to remember.
@@ -2321,8 +2319,7 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 				if ( ! \is_string( $key ) ) {
 					continue;
 				}
-				// Decision 1: the namespace is the key's first segment.
-				if ( ! self::mirrors_namespace( \explode( ':', $key, 2 )[0] ) ) {
+				if ( ! self::mirrors_key( $key ) ) {
 					continue;
 				}
 				$hashes[ $key ] = Log_Manager::url_hash( Stats_Store::entry_key( $partition_index, $key ) );
@@ -2898,7 +2895,7 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	}
 
 	/**
-	 * Whether the mirror can hold a namespace AT ALL.
+	 * Whether the mirror can hold a key's namespace AT ALL.
 	 *
 	 * `buffer_mirror_write()` drops a namespace capped at zero, so reading one
 	 * back can only walk the whole index and find nothing — and `locate_by()`
@@ -2908,9 +2905,10 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	 * NS_URL's cap is a runtime verb (`set_flame_topn`), so only a STATIC zero
 	 * is a refusal this can be sure of.
 	 *
-	 * @param string $ns Stats_Store namespace token.
+	 * @param string $key Table-relative entry key.
 	 */
-	private static function mirrors_namespace( string $ns ): bool {
+	private static function mirrors_key( string $key ): bool {
+		$ns = Stats_Store::namespace_of( $key );
 		return Stats_Store::NS_URL === $ns || 0 !== ( self::STATS_MIRROR_TOPN[ $ns ] ?? \PHP_INT_MAX );
 	}
 

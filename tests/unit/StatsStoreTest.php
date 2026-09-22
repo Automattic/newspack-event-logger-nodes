@@ -336,6 +336,20 @@ class StatsStoreTest extends TestCase {
 		}
 	}
 
+	/** Decision 1: the namespace is the key's first segment, and the store is what reads it. */
+	public function test_namespace_of_reads_the_keys_first_segment(): void {
+		$this->assertSame( Stats_Store::NS_LB_HOUR, Stats_Store::namespace_of( Stats_Store::NS_LB_HOUR . ':2026-02-03-04' ) );
+		$this->assertSame( 'urlnames', Stats_Store::namespace_of( 'urlnames:7:2026-02-03-04-05' ) );
+		$this->assertSame( 'hourly', Stats_Store::namespace_of( 'hourly' ) );
+	}
+
+	/** The bucket is the key's last segment, whatever sits between it and the namespace. */
+	public function test_bucket_of_reads_the_keys_last_segment(): void {
+		$this->assertSame( '2026-02-03-04-05', Stats_Store::bucket_of( 'lb_s:web07:2026-02-03-04-05' ) );
+		$this->assertSame( '2026-02-03-04', Stats_Store::bucket_of( Stats_Store::NS_LB_HOUR . ':2026-02-03-04' ) );
+		$this->assertSame( 'hourly', Stats_Store::bucket_of( 'hourly' ) );
+	}
+
 	public function test_namespace_constants_exist(): void {
 		$this->assertSame( 'hourly', Stats_Store::NS_HOURLY );
 		$this->assertSame( 'lb', Stats_Store::NS_LB );

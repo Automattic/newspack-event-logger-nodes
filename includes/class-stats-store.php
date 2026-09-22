@@ -443,7 +443,8 @@ class Stats_Store {
 	 * keys a read missed on. Handed to every Table as its durable backing, so a
 	 * miss falls through to the mirror and lands back in memcache without any
 	 * caller here knowing. Null (default) leaves the tables memcache-only.
-	 * `Flame_Builder_Node::arm_stats_mirror()` is the only wiring.
+	 * `Flame_Builder_Node::arm_stats_mirror()` wires the worker's and
+	 * `arm_stats_reader()` a reader's.
 	 *
 	 * @var (\Closure(array<array-key,mixed>): ?array<array-key,array{value: mixed, ttl?: int}>)|null
 	 */
@@ -664,9 +665,8 @@ class Stats_Store {
 	 * @param int    $now Clock, so a test window matches its writer's keys.
 	 */
 	public static function is_open_bucket( string $key, int $now ): bool {
-		$at      = \strrpos( $key, ':' );
-		$bucket  = false === $at ? $key : \substr( $key, $at + 1 );
-		$opened  = self::bucket_key( $now );
+		$bucket = self::bucket_of( $key );
+		$opened = self::bucket_key( $now );
 		// Shape comes from bucket_key() itself, never a second spelling of it.
 		return \strlen( $bucket ) === \strlen( $opened )
 			&& $bucket >= $opened
@@ -1266,8 +1266,9 @@ class Stats_Store {
 	 * the entry and nothing else, and a rotation orphans nothing on disk.
 	 *
 	 * No version component either: a frame in a shape the merge does not name
-	 * sums to a zero count, which `measured()` drops on both sides of the wire,
-	 * and ages out of the retention window.
+	 * sums to a zero count, which `measured()` drops on the write and on the
+	 * read where a sum table names the count; one outside those four
+	 * namespaces ages out of the retention window.
 	 *
 	 * @param int    $partition Flame-builder partition.
 	 * @param string $key       Entry key within the namespace.
@@ -1498,7 +1499,7 @@ class Stats_Store {
 	 * @return int Seconds remaining, 0 when the key names no readable bucket.
 	 */
 	public function window_remaining( string $key, int $now ): int {
-		$role   = $this->ttl_for( \explode( ':', $key, 2 )[0] );
+		$role   = $this->ttl_for( self::namespace_of( $key ) );
 		$bucket = self::bucket_span( $key );
 		if ( null === $bucket ) {
 			// `url` and `urlmap` key on a hash; neither is bucket-shaped.
@@ -1518,8 +1519,7 @@ class Stats_Store {
 	 * @return array{0: int, 1: int}|null
 	 */
 	private static function bucket_span( string $key ): ?array {
-		$parts  = \explode( ':', $key );
-		$bucket = \end( $parts );
+		$bucket = self::bucket_of( $key );
 		if ( \preg_match( '/^(\d{4}-\d{2}-\d{2})-(\d{2})-(\d{2})$/D', $bucket, $m ) ) {
 			$stamp = \strtotime( "{$m[1]}T{$m[2]}:{$m[3]}:00+00:00" );
 			$span  = self::BUCKET_SECONDS;
@@ -1530,6 +1530,25 @@ class Stats_Store {
 			return null;
 		}
 		return false === $stamp ? null : [ $stamp, $span ];
+	}
+
+	/**
+	 * The bucket a key names: its last segment, whatever sits between.
+	 *
+	 * @param string $key `…:<bucket>` — a bare segment answers itself.
+	 */
+	public static function bucket_of( string $key ): string {
+		$at = \strrpos( $key, ':' );
+		return false === $at ? $key : \substr( $key, $at + 1 );
+	}
+
+	/**
+	 * A table-relative key's namespace: its first segment (decision 1).
+	 *
+	 * @param string $key `<ns>:…` — a bare namespace answers itself.
+	 */
+	public static function namespace_of( string $key ): string {
+		return \explode( ':', $key, 2 )[0];
 	}
 
 	/**
