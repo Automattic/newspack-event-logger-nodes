@@ -55,8 +55,8 @@ final class Rule {
 	 * @param string[]|null $hooks                       Inline list when hooks_in=inline; null when hooks_in=mc, meaning unresolved.
 	 * @param string        $hooks_in                    self::HOOKS_INLINE | self::HOOKS_MC.
 	 * @param bool          $log_queries                 Time every SQL query as its own span; needs SAVEQUERIES and costs two entries per query.
-	 * @param bool          $log_http                    Time every outbound HTTP request as its own span, between `pre_http_request` and `http_api_debug`. On by default: a request making no remote calls pays two add_filter() calls and nothing else.
-	 * @param bool          $log_plugin_loads            Write the profiler mu-plugin's per-plugin load timings as spans. On by default: the measuring is the mu-plugin's and happens either way, so this decides only whether the request's record carries two entries per site-activated plugin.
+	 * @param bool          $log_http                    Time every outbound HTTP request as its own span, between `pre_http_request` and `http_api_debug`. Off unless set; on, a request making no remote calls pays two add_filter() calls and nothing else.
+	 * @param bool          $log_plugin_loads            Write the profiler mu-plugin's per-plugin load timings as spans. Off unless set; the measuring is the mu-plugin's and happens either way, so this decides only whether the request's record carries two entries per site-activated plugin.
 	 * @param bool          $trace_hooks                 Name the calling frame on each hook entry's aggregation label, so one hook firing sixteen times splits into a flame node per caller. Costs one shallow backtrace per firing.
 	 * @param int           $trace_callers               Deep caller chains recorded per request on a span's start entry as `caller`, budgeted per CALLER of each hook, query statement shape and outbound URL, so a hook asked for from three places traces three times; 0 = off, and a stored `true` is a count of 1.
 	 *
@@ -229,6 +229,21 @@ final class Rule {
 	 */
 	public function marks_significant( string $name ): bool {
 		return \in_array( $name, $this->significant_events, true );
+	}
+
+	/**
+	 * Whether this rule logs a transport's span at all — the gate on marking
+	 * that transport significant, read by the binder and by `Findings` alike.
+	 *
+	 * @param string $state `Flame_Tree::SQL_STATE` or `Flame_Tree::HTTP_STATE`.
+	 * @return bool
+	 */
+	public function logs_transport( string $state ): bool {
+		return match ( $state ) {
+			Flame_Tree::SQL_STATE  => $this->log_queries,
+			Flame_Tree::HTTP_STATE => $this->log_http,
+			default                => throw new \InvalidArgumentException( "Not a transport span: {$state}" ),
+		};
 	}
 
 	/**

@@ -101,9 +101,10 @@ class Findings {
 	 * span is it. One entry per outcome makes the prose and the proposal
 	 * impossible to drift apart; two parallel `if` ladders would have to be
 	 * edited together. In a `why`, `%1$s` (or `%s`) takes the name a rule edit
-	 * would bind — the bare value for a row with a `field`, the span's own
-	 * name otherwise — and `%2$s` the filter a transport span covers, from
-	 * `App\Core::TRANSPORT_HOOKS`.
+	 * would bind, the bare hook, and `%2$s` the filter a transport span covers,
+	 * from `App\Core::TRANSPORT_HOOKS`. Keys are `<kind>` and `significant:<kind>`,
+	 * plus the one cell `transport:unlogged`; a second such cell makes the key a
+	 * tuple and this table a matrix.
 	 *
 	 * @var array<string,array<string,string>>
 	 */
@@ -559,8 +560,8 @@ class Findings {
 		$base   = Flame_Tree::base_name( $span );
 		$advice = self::span_advice( $base, $rule );
 		$binds  = isset( $advice['field'] );
-		// A rule edit names what the rule binds: the bare hook, never a label.
-		$named = $binds ? Flame_Tree::hook_name( $base ) : $span;
+		// The bare hook, which is what a rule binds and what every row names.
+		$named = Flame_Tree::hook_name( $base );
 		$out   = [
 			'action'    => $advice['action'] ?? 'none',
 			'direction' => $advice['direction'] ?? 'none',
@@ -598,13 +599,12 @@ class Findings {
 		$kind = self::span_kind( $base );
 		// A listener or a plugin load has no significant row.
 		$row = "significant:{$kind}";
-		if ( isset( self::SPAN_ADVICE[ $row ] ) && null !== $rule && $rule->marks_significant( Flame_Tree::hook_name( $base ) ) ) {
-			if ( 'transport' === $kind && ! Hooks::transport_logged( $base, $rule ) ) {
-				return self::SPAN_ADVICE['transport:unlogged'];
-			}
-			return self::SPAN_ADVICE[ $row ];
+		if ( ! isset( self::SPAN_ADVICE[ $row ] ) || null === $rule || ! $rule->marks_significant( Flame_Tree::hook_name( $base ) ) ) {
+			return self::SPAN_ADVICE[ $kind ];
 		}
-		return self::SPAN_ADVICE[ $kind ];
+		return 'transport' === $kind && ! $rule->logs_transport( $base )
+			? self::SPAN_ADVICE['transport:unlogged']
+			: self::SPAN_ADVICE[ $row ];
 	}
 
 	/**

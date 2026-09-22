@@ -184,20 +184,12 @@ class Stats_Store {
 
 	/**
 	 * A stored DIMENSIONAL entry is positional, indexed by these — decision 18's
-	 * shape, on the third value to earn it. `{"c":29,"s":1.0,"m":1.0}` is 24
-	 * bytes of JSON where `[29,1,1]` is 8, across `dim`, `dim`-by-server and
-	 * `url_dim` alike: seven dimensions per URL per five-minute bucket, and the
-	 * mirror carries every frame.
-	 *
-	 * **Never a bare index**, exactly as `CAT_MS` and the `ROW_` block below.
-	 *
-	 * The names match the row's — `DIM_COUNT` beside `ROW_COUNT` — because they
-	 * are the same three measurements, and two vocabularies for one measurement
-	 * read as two measurements.
-	 *
-	 * There is no `DIM_FIELD_NAMES`, for `CAT_SUMS`'s reason: the entry stays
-	 * positional to the wire, so no index anywhere becomes a name, and the two
-	 * React sites that read it index it the way `LB_ENTRY_SUMS` is indexed.
+	 * shape, as `CAT_MS` below, on the third value to earn it. `{"c":29,"s":1.0,"m":1.0}`
+	 * is 24 bytes of JSON where `[29,1,1]` is 8, across `dim`, `dim`-by-server
+	 * and `url_dim` alike: seven dimensions per URL per five-minute bucket, and
+	 * the mirror carries every frame. The names are the row's, `DIM_COUNT` beside
+	 * `ROW_COUNT`, because they are the same three measurements, and the entry
+	 * stays positional to the wire, so no `DIM_FIELD_NAMES` exists.
 	 */
 	public const DIM_COUNT       = 0;
 	public const DIM_SUM_MS      = 1;
@@ -1291,14 +1283,6 @@ class Stats_Store {
 	}
 
 	/**
-	 * The head every durable key opens with — `namespace_for()`'s, minus the
-	 * partition, so the test and the writer cannot drift apart.
-	 */
-	private static function mirror_prefix(): string {
-		return self::PREFIX_BASE . ':p';
-	}
-
-	/**
 	 * Per-URL aggregate accumulator: the un-drained value for a url_hash, or the
 	 * last persisted one when the accumulator holds none.
 	 *
@@ -1417,7 +1401,15 @@ class Stats_Store {
 	 * @param int $partition Flame-builder partition.
 	 */
 	public static function namespace_for( int $partition ): string {
-		return self::PREFIX_BASE . ':p' . $partition;
+		return self::mirror_prefix() . $partition;
+	}
+
+	/**
+	 * The head every durable key opens with — `namespace_for()`'s, minus the
+	 * partition, so the test and the writer cannot drift apart.
+	 */
+	private static function mirror_prefix(): string {
+		return self::PREFIX_BASE . ':p';
 	}
 
 	/**
