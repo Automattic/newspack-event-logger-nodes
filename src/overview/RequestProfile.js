@@ -40,9 +40,9 @@ const VISIBLE_ENTRY_COUNT = 10;
  * segment of the summary bar bills the same work twice.
  *
  * @param {string} state Category name.
- * @return {boolean} True when the name ends in the ` @N` priority suffix.
+ * @return {boolean} True when the name ends in the ` @N` priority suffix, N signed.
  */
-const isCallbackCategory = ( state ) => / @\d+$/.test( state );
+const isCallbackCategory = ( state ) => / @-?\d+$/.test( state );
 
 /**
  * The breakdown of one expanded category by the code that raised it: the

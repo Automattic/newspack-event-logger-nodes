@@ -341,7 +341,10 @@ class Performance_CI_Node extends Service_CI_Node {
 		$merged       = [];
 		$buckets      = self::read_window();
 		foreach ( self::stats_stores() as $store ) {
-			self::merge_buckets_into( $merged, $store->get_dimensional_buckets( $dimension, $buckets, $store_server ), Stats_Store::DIM_SUMS, Stats_Store::DIM_COUNT );
+			self::merge_buckets_into( $merged, $store->get_dimensional_buckets( $dimension, $buckets, $store_server ), Stats_Store::DIM_SUMS );
+		}
+		foreach ( $merged as $bucket => $values ) {
+			$merged[ $bucket ] = Stats_Store::measured( Core::arr( $values ), Stats_Store::DIM_COUNT );
 		}
 		\ksort( $merged );
 		return $merged;
@@ -358,7 +361,10 @@ class Performance_CI_Node extends Service_CI_Node {
 		$merged  = [];
 		$buckets = self::read_window();
 		foreach ( self::stats_stores() as $store ) {
-			self::merge_buckets_into( $merged, $store->get_category_buckets( $buckets, $server ), Stats_Store::CAT_SUMS, Stats_Store::CAT_REQUESTS );
+			self::merge_buckets_into( $merged, $store->get_category_buckets( $buckets, $server ), Stats_Store::CAT_SUMS );
+		}
+		foreach ( $merged as $bucket => $values ) {
+			$merged[ $bucket ] = Stats_Store::measured( Core::arr( $values ), Stats_Store::CAT_REQUESTS );
 		}
 		\ksort( $merged );
 		return $merged;
@@ -374,7 +380,10 @@ class Performance_CI_Node extends Service_CI_Node {
 		$merged  = [];
 		$buckets = self::read_window();
 		foreach ( self::stats_stores() as $store ) {
-			self::merge_buckets_into( $merged, $store->get_url_category_buckets( $hash, $buckets ), Stats_Store::CAT_SUMS, Stats_Store::CAT_REQUESTS );
+			self::merge_buckets_into( $merged, $store->get_url_category_buckets( $hash, $buckets ), Stats_Store::CAT_SUMS );
+		}
+		foreach ( $merged as $bucket => $values ) {
+			$merged[ $bucket ] = Stats_Store::measured( Core::arr( $values ), Stats_Store::CAT_REQUESTS );
 		}
 		\ksort( $merged );
 		return $merged;
@@ -1005,7 +1014,10 @@ class Performance_CI_Node extends Service_CI_Node {
 					$series[ $bucket_key ] = $values;
 				}
 			}
-			self::merge_buckets_into( $merged, $series, Stats_Store::DIM_SUMS, Stats_Store::DIM_COUNT );
+			self::merge_buckets_into( $merged, $series, Stats_Store::DIM_SUMS );
+		}
+		foreach ( $merged as $bucket => $values ) {
+			$merged[ $bucket ] = Stats_Store::measured( Core::arr( $values ), Stats_Store::DIM_COUNT );
 		}
 		\ksort( $merged );
 		return $merged;
@@ -1024,11 +1036,10 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param array<string,mixed>   $rows   Inbound, keyed by bucket.
 	 * @param array<array-key,bool> $fields Field key => is a whole count; an
 	 *                                      index for `DIM_SUMS` and `CAT_SUMS` alike.
-	 * @param int                                   $count_field The entry index a value's request count sits at; a zero count is dropped.
 	 */
-	private static function merge_buckets_into( array &$merged, array $rows, array $fields, int $count_field ): void {
+	private static function merge_buckets_into( array &$merged, array $rows, array $fields ): void {
 		foreach ( $rows as $bucket => $values ) {
-			$merged[ $bucket ] = Stats_Store::measured( Stats_Store::sum_fields( Core::arr( $merged[ $bucket ] ?? null ), Core::arr( $values ), $fields ), $count_field );
+			$merged[ $bucket ] = Stats_Store::sum_fields( Core::arr( $merged[ $bucket ] ?? null ), Core::arr( $values ), $fields );
 		}
 	}
 

@@ -103,9 +103,8 @@ class Findings {
 	 * edited together. In a `why`, `%1$s` (or `%s`) takes the name a rule edit
 	 * would bind, the bare hook, and `%2$s` the filter a transport span covers,
 	 * from `App\Core::TRANSPORT_HOOKS`. Keys are `<kind>` and `significant:<kind>`,
-	 * plus the two transport cells for a rule that does not log the span,
-	 * `transport:off` and `transport:unlogged`; a third axis makes the key a
-	 * tuple and this table a matrix.
+	 * plus the one cell `transport:unlogged` for a rule that does not log the
+	 * span; a second such cell makes the key a tuple and this table a matrix.
 	 *
 	 * @var array<string,array<string,string>>
 	 */
@@ -118,13 +117,9 @@ class Findings {
 			'detail' => 'It is already a significant event, so the listeners on the filter it runs through are logged — read those next.',
 			'why'    => 'It is already a significant event; the listeners on its filter are in this record.',
 		],
-		'transport:off' => [
-			'detail' => 'The rule does not log this span, so the listeners on the filter it runs through cannot be wrapped.',
-			'why'    => 'Marking %1$s a significant event wraps the `%2$s` filter\'s listeners only where the rule logs the span; the rule\'s `log_queries` or `log_http` for this span comes first.',
-		],
 		'transport:unlogged' => [
-			'detail' => 'The rule marks it significant but does not log this span, so the listeners on its filter are not wrapped.',
-			'why'    => 'It is already a significant event; the `%2$s` filter\'s listeners are wrapped only where the rule logs the span, and this rule does not.',
+			'detail' => 'The rule does not log this span, so the listeners on the filter it runs through are not wrapped.',
+			'why'    => 'The `%2$s` filter\'s listeners are wrapped only where the rule logs the span, and this rule does not: its `log_queries` or `log_http` comes first, and marking %1$s significant after that.',
 		],
 		'significant:custom' => [
 			'detail' => 'The application logs this span itself, and marking it significant only keeps it from being auto-disabled — nothing about its interior follows from that.',
@@ -603,11 +598,11 @@ class Findings {
 	private static function span_advice( string $base, ?Rule $rule ): array {
 		$kind = self::span_kind( $base );
 		// A listener or a plugin load has no significant row.
-		$row    = "significant:{$kind}";
-		$marked = isset( self::SPAN_ADVICE[ $row ] ) && null !== $rule && $rule->marks_significant( Flame_Tree::hook_name( $base ) );
+		$row = "significant:{$kind}";
 		if ( 'transport' === $kind && null !== $rule && ! $rule->logs_transport( $base ) ) {
-			return self::SPAN_ADVICE[ $marked ? 'transport:unlogged' : 'transport:off' ];
+			return self::SPAN_ADVICE['transport:unlogged'];
 		}
+		$marked = isset( self::SPAN_ADVICE[ $row ] ) && null !== $rule && $rule->marks_significant( Flame_Tree::hook_name( $base ) );
 		return self::SPAN_ADVICE[ $marked ? $row : $kind ];
 	}
 
