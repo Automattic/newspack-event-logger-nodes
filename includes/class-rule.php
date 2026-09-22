@@ -220,6 +220,32 @@ final class Rule {
 	}
 
 	/**
+	 * Whether this rule logs a transport's span at all — the gate on marking
+	 * that transport significant, read by the binder and by `Findings` alike.
+	 *
+	 * @param string $state `Flame_Tree::SQL_STATE` or `Flame_Tree::HTTP_STATE`.
+	 * @return bool
+	 */
+	public function logs_transport( string $state ): bool {
+		return 'log_queries' === self::transport_flag( $state ) ? $this->log_queries : $this->log_http;
+	}
+
+	/**
+	 * The name of the flag that logs a transport's span — what a proposal
+	 * points an operator at when the rule lacks it.
+	 *
+	 * @param string $state `Flame_Tree::SQL_STATE` or `Flame_Tree::HTTP_STATE`.
+	 * @return string `log_queries` or `log_http`.
+	 */
+	public static function transport_flag( string $state ): string {
+		return match ( $state ) {
+			Flame_Tree::SQL_STATE  => 'log_queries',
+			Flame_Tree::HTTP_STATE => 'log_http',
+			default                => throw new \InvalidArgumentException( "Not a transport span: {$state}" ),
+		};
+	}
+
+	/**
 	 * Whether this rule lists a name among its significant events — the one
 	 * comparison the binder's consumers make, under the one spelling a rule
 	 * stores.
@@ -229,21 +255,6 @@ final class Rule {
 	 */
 	public function marks_significant( string $name ): bool {
 		return \in_array( $name, $this->significant_events, true );
-	}
-
-	/**
-	 * Whether this rule logs a transport's span at all — the gate on marking
-	 * that transport significant, read by the binder and by `Findings` alike.
-	 *
-	 * @param string $state `Flame_Tree::SQL_STATE` or `Flame_Tree::HTTP_STATE`.
-	 * @return bool
-	 */
-	public function logs_transport( string $state ): bool {
-		return match ( $state ) {
-			Flame_Tree::SQL_STATE  => $this->log_queries,
-			Flame_Tree::HTTP_STATE => $this->log_http,
-			default                => throw new \InvalidArgumentException( "Not a transport span: {$state}" ),
-		};
 	}
 
 	/**

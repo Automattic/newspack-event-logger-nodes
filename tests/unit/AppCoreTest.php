@@ -2128,6 +2128,59 @@ class AppCoreTest extends TestCase {
 
 	// ── rebind_for_current_scope ───────────────────────────────────────
 
+	/** Whether the harness holds a callable on a hook at any priority. */
+	private function is_registered( string $hook, array $callable ): bool {
+		foreach ( $GLOBALS['_wp_test_filters'][ $hook ] ?? [] as $listeners ) {
+			if ( \in_array( $callable, $listeners, true ) ) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/** A scope that does not log queries gets no query pair left over from the scope before it. */
+	public function test_rebind_unbinds_the_query_pair_the_new_scope_does_not_ask_for(): void {
+		$this->require_priority_aware_add_filter_or_skip();
+		$this->set_governing_rule( new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'init' ], log_queries: true ) );
+		$core = new Core();
+		$this->assertTrue( $this->is_registered( 'query', [ $core, 'query_start' ] ) );
+
+		$this->set_governing_rule( new Rule( 'q', '/', Rule::ACTION_LOG, hooks: [ 'init' ] ) );
+		$core->rebind_for_current_scope();
+
+		$this->assertFalse( $this->is_registered( 'query', [ $core, 'query_start' ] ) );
+		$this->assertFalse( $this->is_registered( 'log_query_custom_data', [ $core, 'query_end' ] ) );
+	}
+
+	/** SAVEQUERIES outlives the logger; the drain must not wait for one. */
+	public function test_query_end_drains_wpdb_queries_without_a_logger(): void {
+		$this->require_priority_aware_add_filter_or_skip();
+		$this->set_governing_rule( new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'init' ], log_queries: true ) );
+		$core = new Core();
+		Log_Manager::reset();
+		$previous_wpdb   = $GLOBALS['wpdb'] ?? null;
+		$GLOBALS['wpdb'] = (object) [ 'queries' => [ [ 'SELECT 1', 0.1, 'trace', 1.0, [] ] ] ];
+
+		$core->query_end( null, 'SELECT 1' );
+		$drained         = $GLOBALS['wpdb']->queries;
+		$GLOBALS['wpdb'] = $previous_wpdb;
+
+		$this->assertSame( [], $drained );
+		$this->assertFalse( Log_Manager::has_instance() );
+	}
+
+	/** The close of a hook span asks for a started logger like its open does. */
+	public function test_hook_complete_without_a_logger_constructs_none(): void {
+		$this->require_priority_aware_add_filter_or_skip();
+		$this->set_governing_rule( new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'the_content' ] ) );
+		$core = new Core();
+		Log_Manager::reset();
+		$GLOBALS['_wp_test_current_filter'] = 'the_content';
+
+		$this->assertSame( 'x', $core->hook_complete( 'x' ) );
+		$this->assertFalse( Log_Manager::has_instance() );
+	}
+
 	public function test_rebind_for_current_scope_removes_then_rebinds_hooks(): void {
 		// Constructing with a governing rule binds the rule's hooks; rebind must
 		// remove those filters and re-bind the current scope's hooks afresh.

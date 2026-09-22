@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **A scope change unbinds the query pair.** `rebind_for_current_scope()`
+  removed the per-hook trio and the HTTP pair and left `query_start` and
+  `query_end` bound, so a job whose rule never asked for query logging
+  inherited `sql` spans from the job before it.
+- **`query_end()` drains `$wpdb->queries` whether or not a logger is
+  started.** `SAVEQUERIES` outlives the logger in a worker, and the drain
+  sat behind the return that a missing logger took.
+- **A transport the rule does not log proposes the flag.** The findings' row
+  for that state now carries a `log_transport` proposal whose field is
+  `log_queries` or `log_http`, so the dashboards render it; a row without an
+  action showed its detail alone.
+
 ### Changed
 - **Every instrumentation callback asks `Log_Manager::started_instance()`**,
   the wrapped listeners included: a wrapper outlives its request, and one

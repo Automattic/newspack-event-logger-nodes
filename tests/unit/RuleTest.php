@@ -187,4 +187,12 @@ final class RuleTest extends TestCase {
 		$this->expectException( \InvalidArgumentException::class );
 		$rule->logs_transport( 'the_content' );
 	}
+
+	/** The flag a transport's span needs is named by the state, for a proposal to point at. */
+	public function test_transport_flag_names_the_flag_a_span_needs(): void {
+		$this->assertSame( 'log_queries', Rule::transport_flag( Flame_Tree::SQL_STATE ) );
+		$this->assertSame( 'log_http', Rule::transport_flag( Flame_Tree::HTTP_STATE ) );
+		$this->expectException( \InvalidArgumentException::class );
+		Rule::transport_flag( 'wp_head' );
+	}
 }
