@@ -148,6 +148,8 @@ describe( 'UrlsView — the envelope slice', () => {
 			rows: 0,
 			slowest: [],
 			filters: null,
+			ranked: false,
+			as_of: 0,
 			loading: false,
 			error: null,
 		} );
@@ -172,9 +174,45 @@ describe( 'UrlsView — the envelope slice', () => {
 			rows: 7332,
 			slowest: [ { url: '/slow', avg_ms: 2600 } ],
 			filters: { server: 'edge-01', search: '', errors_only: false },
+			ranked: false,
+			as_of: 0,
 			loading: false,
 			error: null,
 		} );
+	} );
+
+	test( 'carries ranked and as_of off the reply when present', () => {
+		const v = makeView( 'UrlsView', 'urls:view' );
+		v.fill(
+			reply( 'urls', {
+				data: [ { url: '/a' } ],
+				totals: { urls: 7331 },
+				rows: 7331,
+				slowest: [],
+				filters: null,
+				ranked: true,
+				as_of: 1758500000,
+			} )
+		);
+
+		expect( v.view.ranked ).toBe( true );
+		expect( v.view.as_of ).toBe( 1758500000 );
+	} );
+
+	test( 'defaults ranked and as_of when the reply carries neither', () => {
+		const v = makeView( 'UrlsView', 'urls:view' );
+		v.fill(
+			reply( 'urls', {
+				data: [ { url: '/a' } ],
+				totals: { urls: 7331 },
+				rows: 7331,
+				slowest: [],
+				filters: null,
+			} )
+		);
+
+		expect( v.view.ranked ).toBe( false );
+		expect( v.view.as_of ).toBe( 0 );
 	} );
 
 	test( 'a malformed envelope publishes an empty table rather than throwing', () => {

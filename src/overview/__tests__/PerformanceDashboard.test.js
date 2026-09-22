@@ -378,6 +378,28 @@ describe( 'PerformanceDashboard', () => {
 		unmount();
 	} );
 
+	it( 'forwards the urls slice ranked flag and server clock to UrlTable', async () => {
+		mockView = loadedView( {
+			urls: {
+				data: [],
+				total: 0,
+				loading: false,
+				error: null,
+				ranked: true,
+				as_of: 1758500000,
+			},
+		} );
+		const { unmount } = renderComponent(
+			React.createElement( PerformanceDashboard, {
+				onError: jest.fn(),
+			} )
+		);
+		await flushEffects();
+		expect( globalThis.__urlTableProps.ranked ).toBe( true );
+		expect( globalThis.__urlTableProps.now ).toBe( 1758500000 );
+		unmount();
+	} );
+
 	it( 'reads refresh interval from localStorage on mount', () => {
 		window.localStorage.setItem( 'event-logger-refresh-interval', '5000' );
 		mockView = loadedView();

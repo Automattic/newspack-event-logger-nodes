@@ -912,6 +912,8 @@ export default function PerformanceDashboard( {
 								onParamsChange={ handleUrlParamsChange }
 								totalUrls={ urlsSlice?.rows ?? 0 }
 								metric={ chartMetric }
+								ranked={ urlsSlice?.ranked }
+								now={ urlsSlice?.as_of }
 							/>
 						</CardBody>
 					</Card>

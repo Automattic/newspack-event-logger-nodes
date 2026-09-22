@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The URL table shows when each URL was last seen.** A sortable `Last
+  seen` column on `last_updated`, which the `urls` verb has sorted by
+  since the sort keys were declared; ages are measured from the reply's
+  own `as_of`, so a cached page does not tick and browser and server
+  clocks never disagree.
+
 ### Changed
 
 - **A URL page is folded once a minute, not once a poll.** `urls` caches

@@ -61,16 +61,20 @@ export const views = {
 		 * `urls:view` — the always-on URL leaderboard.
 		 *
 		 * The `urls` verb answers an envelope, `{ data, rows, totals, slowest,
-		 * filters, limit, offset }`, so the payload is not the slice. `rows`
-		 * counts every row the filters left and is what `<UrlTable>` paginates
-		 * on, while `totals.urls` counts only the distinct URLs among them: the
-		 * two synthetic overflow rows are sliceable but each stands for many
-		 * URLs, so the pager takes `rows` and the header takes `totals`.
-		 * `slowest` is the same set ranked by `avg_ms` for the facts block, and
-		 * `limit` / `offset` are dropped because the fetcher's own args
-		 * produced them. `filters` says what the totals are OF, echoed by the
-		 * verb rather than read back off the client, so it describes the data
-		 * in hand and not what was typed since.
+		 * filters, ranked, as_of, limit, offset }`, so the payload is not the
+		 * slice. `rows` counts every row the filters left and is what
+		 * `<UrlTable>` paginates on, while `totals.urls` counts only the
+		 * distinct URLs among them: the two synthetic overflow rows are
+		 * sliceable but each stands for many URLs, so the pager takes `rows`
+		 * and the header takes `totals`. `slowest` is the same set ranked by
+		 * `avg_ms` for the facts block, and `limit` / `offset` are dropped
+		 * because the fetcher's own args produced them. `filters` says what
+		 * the totals are OF, echoed by the verb rather than read back off the
+		 * client, so it describes the data in hand and not what was typed
+		 * since. `ranked` and `as_of` ride straight off the reply, never
+		 * derived: `ranked` says whether the server answered from its
+		 * per-bucket ranked lists, and `as_of` is the server clock the page's
+		 * rows were current at, which `<UrlTable>` ages every row against.
 		 *
 		 * A malformed envelope publishes an empty table rather than throwing,
 		 * and no totals rather than zeroes: a zero here reads as a measurement.
@@ -85,6 +89,8 @@ export const views = {
 				rows: 0,
 				slowest: [],
 				filters: null,
+				ranked: false,
+				as_of: 0,
 				loading: false,
 				error: null,
 			},
@@ -97,6 +103,8 @@ export const views = {
 							rows: ( payload && payload.rows ) || 0,
 							slowest: ( payload && payload.slowest ) || [],
 							filters: ( payload && payload.filters ) || null,
+							ranked: ( payload && payload.ranked ) || false,
+							as_of: ( payload && payload.as_of ) || 0,
 					  },
 		},
 
