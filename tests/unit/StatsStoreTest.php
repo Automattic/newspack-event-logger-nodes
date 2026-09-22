@@ -1214,13 +1214,16 @@ class StatsStoreTest extends TestCase {
 		}
 	}
 
-	public function test_a_batched_read_returns_a_miss_as_empty_in_place(): void {
-		// Positional: the caller merges result[i] onto writes[i], so a miss has
-		// to hold its slot or every later merge lands on the wrong key.
+	public function test_a_batched_read_tells_a_stored_empty_value_from_a_miss(): void {
+		// Positional: the caller merges result[i] onto writes[i], so a miss
+		// has to hold its slot. It also has to be TELLABLE from a value that
+		// is there and empty — an hour folded with no rows is written empty,
+		// and a probe reading that as absence folds it again forever.
 		Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$store->bucket_set_multi( [
 			[ Stats_Store::dim_parts( 'status', '' ), '2026-08-27-13-05', [ 'v' => self::dim_entry( 61 ) ] ],
+			[ Stats_Store::dim_parts( 'server', '' ), '2026-08-27-13-05', [] ],
 		] );
 
 		$read = $store->bucket_get_multi( [
@@ -1230,9 +1233,9 @@ class StatsStoreTest extends TestCase {
 		] );
 
 		$this->assertCount( 3, $read, 'one entry per request, misses included' );
-		$this->assertSame( [], $read[0], 'a miss reads empty, in its own slot' );
+		$this->assertNull( $read[0], 'a miss reads null, in its own slot' );
 		$this->assertSame( 61, $read[1]['v'][ Stats_Store::DIM_COUNT ] );
-		$this->assertSame( [], $read[2] );
+		$this->assertSame( [], $read[2], 'a stored empty value is empty, not absent' );
 	}
 
 	/**
@@ -1251,6 +1254,47 @@ class StatsStoreTest extends TestCase {
 		$this->assertSame(
 			Stats_Store::buckets_in_hour( $hour ),
 			Stats_Store::unfolded_hour_buckets( $hour, [ $hour, \gmdate( 'Y-m-d-H', \time() - 7200 ) ] )
+		);
+	}
+
+	public function test_the_fine_fallback_answers_the_grace_hour_and_reports_a_hole(): void {
+		// The rule every tier reader shares: an hour with no coarse key has
+		// not been folded YET, and only the grace hour — the one the fold may
+		// simply not have caught — is answered from its fine buckets. The two
+		// facts are independent, so one call reports both and each caller
+		// reads the half it acts on.
+		$hours = [ '2026-09-22-14', '2026-09-22-13', '2026-09-22-12' ];
+
+		$this->assertSame(
+			[
+				'buckets' => [],
+				'holes'   => [],
+			],
+			Stats_Store::fine_fallback( $hours, \array_fill_keys( $hours, true ) ),
+			'every hour folded, so nothing falls back'
+		);
+		$this->assertSame(
+			[
+				'buckets' => Stats_Store::buckets_in_hour( '2026-09-22-14' ),
+				'holes'   => [],
+			],
+			Stats_Store::fine_fallback( $hours, [ '2026-09-22-13' => true, '2026-09-22-12' => true ] )
+		);
+		$this->assertSame(
+			[
+				'buckets' => [],
+				'holes'   => [ '2026-09-22-13' ],
+			],
+			Stats_Store::fine_fallback( $hours, [ '2026-09-22-14' => true, '2026-09-22-12' => true ] ),
+			'an hour behind the grace hour that no coarse key answers is a HOLE'
+		);
+		$this->assertSame(
+			[
+				'buckets' => Stats_Store::buckets_in_hour( '2026-09-22-14' ),
+				'holes'   => [ '2026-09-22-13' ],
+			],
+			Stats_Store::fine_fallback( $hours, [ '2026-09-22-12' => true ] ),
+			'a hole behind it does not cost the grace hour its buckets'
 		);
 	}
 
@@ -1361,6 +1405,11 @@ class StatsStoreTest extends TestCase {
 			[ 'urlrank_sh', Stats_Store::server_key( 'kea.test' ), 'url', 'desc' ],
 			Stats_Store::url_rank_parts( 'url', 'desc', 'kea.test', true )
 		);
+		$this->assertSame(
+			[ 'urlrank_h', 'done' ],
+			Stats_Store::url_rank_done_parts(),
+			'the hour tier marks itself ranked under a key no sort can spell'
+		);
 	}
 
 	public function test_a_scoped_row_swaps_the_eight_sums_and_drops_the_split(): void {
@@ -1439,6 +1488,92 @@ class StatsStoreTest extends TestCase {
 		$this->assertSame( 30, $lists['count']['desc'][0][ Stats_Store::RANK_ROW ][ Stats_Store::ROW_COUNT ] );
 	}
 
+	public function test_rank_scopes_names_the_site_and_every_server_a_row_serves(): void {
+		// One pass over the rows decides every scope the writer ranks: the
+		// site-wide list takes them as they stand, and each server a split
+		// names takes that server's own projection. An overflow row's split
+		// can name a server nothing rankable ever lands under, and a worker
+		// row never ranks at all.
+		$rows = [
+			'a7a7a7a7a7a7'                => self::positional_url_row( [
+				'count' => 47, 'timed_count' => 47, 'sum_ms' => 470.0,
+				'srv'   => [
+					'kea.test' => [ 'count' => 41, 'timed_count' => 41, 'sum_ms' => 410.0 ],
+					'moa.test' => [ 'count' => 6, 'timed_count' => 6, 'sum_ms' => 60.0 ],
+				],
+			] ),
+			'b8b8b8b8b8b8'                => self::positional_url_row( [ 'count' => 13, 'srv' => [ 'kea.test' => null ] ] ),
+			'c9c9c9c9c9c9'                => self::positional_url_row( [ 'count' => 5, 'worker' => true, 'srv' => [ 'weka.test' => null ] ] ),
+			Stats_Store::OTHER_KEY        => self::positional_url_row( [ 'count' => 9, 'srv' => [ 'bogus.test' => null ] ] ),
+		];
+
+		$scopes = Stats_Store::rank_scopes( $rows );
+
+		$this->assertSame( [ '', 'kea.test', 'moa.test' ], \array_keys( $scopes ) );
+		$this->assertSame( $rows, $scopes[''], 'the site-wide scope ranks the rows as they stand' );
+		$this->assertSame( [ 'a7a7a7a7a7a7', 'b8b8b8b8b8b8' ], \array_keys( $scopes['kea.test'] ) );
+		$this->assertSame( 41, $scopes['kea.test']['a7a7a7a7a7a7'][ Stats_Store::ROW_COUNT ] );
+		$this->assertSame( 13, $scopes['kea.test']['b8b8b8b8b8b8'][ Stats_Store::ROW_COUNT ], 'a sole server takes the row itself' );
+		$this->assertArrayNotHasKey( Stats_Store::ROW_SRV, $scopes['kea.test']['a7a7a7a7a7a7'] );
+		$this->assertSame( [ 'a7a7a7a7a7a7' ], \array_keys( $scopes['moa.test'] ) );
+		$this->assertSame( 6, $scopes['moa.test']['a7a7a7a7a7a7'][ Stats_Store::ROW_COUNT ] );
+	}
+
+	public function test_ranked_writes_carry_one_triple_per_list_of_the_named_scope(): void {
+		$rows   = [
+			'a7a7a7a7a7a7' => self::positional_url_row( [ 'count' => 47, 'timed_count' => 2, 'sum_ms' => 88.0, 'sum_peak_mb' => 17.0, 'min_ms' => 41.0, 'max_ms' => 47.0, 'last_seen' => 1758500047 ] ),
+			'b8b8b8b8b8b8' => self::positional_url_row( [ 'count' => 13, 'timed_count' => 1, 'sum_ms' => 19.0, 'sum_peak_mb' => 3.0, 'min_ms' => 19.0, 'max_ms' => 19.0, 'last_seen' => 1758500013 ] ),
+		];
+		$paths  = [ 'a7a7a7a7a7a7' => '/kakapo-4417', 'b8b8b8b8b8b8' => '/weka-1308' ];
+		$writes = Stats_Store::ranked_writes( $rows, $paths, '', false, '2026-09-22-14-05' );
+
+		$expected = [];
+		foreach ( Stats_Store::URL_SORTS as $sort ) {
+			foreach ( Stats_Store::URL_ORDERS as $order ) {
+				$expected[] = Stats_Store::url_rank_parts( $sort, $order, '', false );
+			}
+		}
+		$this->assertSame( $expected, \array_column( $writes, 0 ) );
+		$this->assertSame( \array_fill( 0, 14, '2026-09-22-14-05' ), \array_column( $writes, 1 ) );
+		// The entries are the ranker's, list for list.
+		$this->assertSame(
+			Stats_Store::rank_url_rows( $rows, $paths, Stats_Store::URL_RANK_N )['count']['desc'],
+			$writes[1][2]
+		);
+
+		$scoped = Stats_Store::ranked_writes( $rows, $paths, 'takahe.test', true, '2026-09-22-14' );
+		$this->assertSame(
+			Stats_Store::url_rank_parts( 'count', 'asc', 'takahe.test', true ),
+			$scoped[0][0]
+		);
+		$this->assertSame( \array_fill( 0, 14, '2026-09-22-14' ), \array_column( $scoped, 1 ) );
+	}
+
+	public function test_ranked_writes_cut_each_list_at_the_bound_of_its_own_tier(): void {
+		// 201 rows: the fine tier keeps 200 of them, the coarse tier all 201.
+		$rows = [];
+		for ( $i = 0; $i < 201; $i++ ) {
+			$rows[ \sprintf( '%012x', 0xa70000 + $i ) ] = self::positional_url_row( [ 'count' => 17 + $i ] );
+		}
+		$fine = Stats_Store::ranked_writes( $rows, [], '', false, '2026-09-22-14-05' );
+		$hour = Stats_Store::ranked_writes( $rows, [], '', true, '2026-09-22-14' );
+		$this->assertCount( Stats_Store::URL_RANK_N, $fine[1][2] );
+		$this->assertCount( 201, $hour[1][2] );
+	}
+
+	public function test_paths_of_names_each_url_by_its_path_and_drops_the_unnamed(): void {
+		// An all-digit hash arrives as an INT key, and a name blob is
+		// `hash => path` with string keys both ways.
+		$this->assertSame(
+			[ '112233445566' => '/kakapo-4417', 'c9c9c9c9c9c9' => '/weka-1308?q=7' ],
+			Stats_Store::paths_of( [
+				112233445566   => 'https://kea.test/kakapo-4417',
+				'c9c9c9c9c9c9' => '/weka-1308?q=7',
+				'd1d1d1d1d1d1' => '',
+			] )
+		);
+	}
+
 	public function test_ranking_skips_overflow_rows_worker_rows_and_untimed_rows_on_timed_sorts(): void {
 		$rows = [
 			Stats_Store::OTHER_KEY => self::positional_url_row( [ 'count' => 999, 'timed_count' => 9, 'sum_ms' => 9.0 ] ),
@@ -1487,13 +1622,33 @@ class StatsStoreTest extends TestCase {
 				[ Stats_Store::url_name_hour_parts( $shard ), '2026-09-21-07', [] ],
 			] );
 		}
-		$store->bucket_set_multi( [ [ Stats_Store::url_rank_parts( 'count', 'desc', '', true ), '2026-09-21-08', [] ] ] );
+		$store->bucket_set_multi( [ [ Stats_Store::url_rank_done_parts(), '2026-09-21-08', [ 'at' => 1_758_500_008 ] ] ] );
 		$this->assertSame(
 			[
 				'2026-09-21-07' => [ 'folded' => true, 'ranked' => false ],
 				'2026-09-21-08' => [ 'folded' => false, 'ranked' => true ],
 			],
 			$store->url_hours_derived( [ '2026-09-21-07', '2026-09-21-08', '2026-09-21-09' ] )
+		);
+	}
+
+	public function test_the_derived_probe_reports_one_hour_both_folded_and_ranked(): void {
+		// The two flags are read off the same round trip, so an hour holding
+		// both has to come back carrying both.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		foreach ( \array_merge( Stats_Store::url_shards(), Stats_Store::url_shards( true ) ) as $shard ) {
+			$store->bucket_set_multi( [
+				[ Stats_Store::url_hour_parts( $shard ), '2026-09-21-11', [] ],
+				[ Stats_Store::url_name_hour_parts( $shard ), '2026-09-21-11', [] ],
+			] );
+		}
+		$store->bucket_set_multi( [
+			[ Stats_Store::url_rank_done_parts(), '2026-09-21-11', [ 'at' => 1_758_500_011 ] ],
+		] );
+		$this->assertSame(
+			[ '2026-09-21-11' => [ 'folded' => true, 'ranked' => true ] ],
+			$store->url_hours_derived( [ '2026-09-21-11' ] )
 		);
 	}
 
@@ -1510,6 +1665,18 @@ class StatsStoreTest extends TestCase {
 		$this->assertSame( [ 'wombat', '7731', 'kea', 'json' ], Stats_Store::term_tokens( '/Wombat-7731/kea/a/?json=1' ) );
 		$this->assertSame( [ 'internationa' ], Stats_Store::term_tokens( 'Internationalization' ) );
 		$this->assertSame( [], Stats_Store::term_tokens( '-/-' ) );
+	}
+
+	public function test_term_matches_reads_a_term_the_way_the_index_files_it(): void {
+		$path = '/kakapo/nest-9317';
+		$this->assertTrue( Stats_Store::term_matches( $path, 'kaka', [ 'kaka' ] ) );
+		$this->assertTrue( Stats_Store::term_matches( '/KAKAPO/nest-9317', 'kaka', [ 'kaka' ] ), 'the name is lowercased' );
+		$this->assertTrue( Stats_Store::term_matches( $path, 'kakapo nest', [ 'kakapo', 'nest' ] ), 'every token, in any order' );
+		$this->assertFalse( Stats_Store::term_matches( $path, 'kakapo weka', [ 'kakapo', 'weka' ] ), 'one token missing refuses' );
+		// The separator class is the index's: a token begins a word or nothing.
+		$this->assertFalse( Stats_Store::term_matches( $path, '317', [ '317' ] ), 'a word INFIX never matches' );
+		$this->assertTrue( Stats_Store::term_matches( $path, '931', [ '931' ] ), 'a word PREFIX does, as the index files it' );
+		$this->assertTrue( Stats_Store::term_matches( $path, 'o/n', [] ), 'a term with no token is a substring' );
 	}
 
 	public function test_url_tokens_are_every_prefix_of_every_token(): void {
@@ -1542,58 +1709,64 @@ class StatsStoreTest extends TestCase {
 		$this->assertSame( '', Stats_Store::path_of( [] ) );
 	}
 
-	public function test_a_token_set_unions_until_its_live_count_saturates(): void {
-		$now = 1_700_000_000;
+	public function test_a_token_set_unions_and_drops_a_hash_a_window_has_passed_over(): void {
+		// A set of three, nowhere near the cap: the dead entry still goes,
+		// because a reader names every hash it holds and counts each against
+		// `URL_SEARCH_MAX`. Deciding costs one pass over the stamps, which is
+		// less than the prune it decides on.
+		$store = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$now   = 1_700_000_000;
+
 		$this->assertSame(
-			[ 'a1a1a1a1a1a1' => $now, 'c3c3c3c3c3c3' => $now - 90, 'b2b2b2b2b2b2' => $now ],
-			Stats_Store::merge_token_set(
-				[ 'a1a1a1a1a1a1' => $now - 90, 'c3c3c3c3c3c3' => $now - 90 ],
+			[ 'a1a1a1a1a1a1' => $now, 'b2b2b2b2b2b2' => $now ],
+			$store->merge_token_set(
+				[ 'a1a1a1a1a1a1' => $now - 90, 'c3c3c3c3c3c3' => $now - 86_401 ],
 				[ 'b2b2b2b2b2b2', 'a1a1a1a1a1a1' ],
-				3,
-				$now,
-				86400
+				$now
 			),
-			'this flush restamps what it names and leaves the rest of the set standing'
+			'this flush restamps what it names and the window retires the rest'
 		);
+	}
+
+	public function test_a_token_set_at_the_cap_prunes_the_dead_rather_than_saturating(): void {
+		// The cap is the other trigger, and the cheaper one: a flush that
+		// would pass it prunes without scanning the stamps at all.
+		$store = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$now   = 1_700_000_000;
+		$dead  = [];
+		for ( $i = 0; $i < Stats_Store::URL_SEARCH_MAX; $i++ ) {
+			$dead[ \sprintf( '%012x', 0xd0000 + $i ) ] = $now - 86_401;
+		}
+
+		$this->assertSame(
+			[ 'b2b2b2b2b2b2' => $now ],
+			$store->merge_token_set( $dead, [ 'b2b2b2b2b2b2' ], $now ),
+			'a set nothing has named for a window makes room rather than saturating'
+		);
+	}
+
+	public function test_a_token_set_saturates_when_its_live_count_passes_the_cap(): void {
+		$store = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$now   = 1_700_000_000;
+		$live  = [];
+		for ( $i = 0; $i < Stats_Store::URL_SEARCH_MAX; $i++ ) {
+			$live[ \sprintf( '%012x', 0xe0000 + $i ) ] = $now - 90;
+		}
+
 		$this->assertSame(
 			[ Stats_Store::TOKEN_SATURATED => $now ],
-			Stats_Store::merge_token_set(
-				[ 'a1a1a1a1a1a1' => $now, 'b2b2b2b2b2b2' => $now, 'c3c3c3c3c3c3' => $now ],
-				[ 'd4d4d4d4d4d4' ],
-				3,
-				$now,
-				86400
-			)
+			$store->merge_token_set( $live, [ 'b2b2b2b2b2b2' ], $now )
 		);
+	}
+
+	public function test_a_live_sentinel_is_returned_unchanged_so_its_key_keeps_its_ttl(): void {
+		$store = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$now   = 1_700_000_000;
+
 		$this->assertSame(
 			[ Stats_Store::TOKEN_SATURATED => $now - 90 ],
-			Stats_Store::merge_token_set( [ Stats_Store::TOKEN_SATURATED => $now - 90 ], [ 'e5e5e5e5e5e5' ], 3, $now, 86400 ),
-			'a live sentinel is returned UNCHANGED, so the write is skipped and the key keeps its TTL'
-		);
-	}
-
-	public function test_a_token_set_drops_the_hashes_a_retention_window_has_passed_over(): void {
-		$now = 1_700_000_000;
-		$this->assertSame(
-			[ 'b2b2b2b2b2b2' => $now - 86_399, 'c3c3c3c3c3c3' => $now ],
-			Stats_Store::merge_token_set(
-				[ 'a1a1a1a1a1a1' => $now - 86_401, 'b2b2b2b2b2b2' => $now - 86_399 ],
-				[ 'c3c3c3c3c3c3' ],
-				3,
-				$now,
-				86400
-			),
-			'a hash nothing has named for a window is gone, and never counts toward the cap'
-		);
-	}
-
-	public function test_a_set_saturated_by_dead_hashes_comes_back_once_they_age_out(): void {
-		$now  = 1_700_000_000;
-		$dead = [ Stats_Store::TOKEN_SATURATED => $now - 86_401 ];
-		$this->assertSame(
-			[ 'f6f6f6f6f6f6' => $now ],
-			Stats_Store::merge_token_set( $dead, [ 'f6f6f6f6f6f6' ], 3, $now, 86400 ),
-			'the sentinel ages out like any entry, and the set rebuilds live-only'
+			$store->merge_token_set( [ Stats_Store::TOKEN_SATURATED => $now - 90 ], [ 'e5e5e5e5e5e5' ], $now ),
+			'flush_writes() skips a write whose value equals what it read'
 		);
 	}
 
@@ -1603,5 +1776,42 @@ class StatsStoreTest extends TestCase {
 		// Stored as `hash => last named`; the reader takes the hashes alone.
 		$store->bucket_set_multi( [ [ [ Stats_Store::NS_URLTOKEN ], 'womb', [ 'a1a1a1a1a1a1' => 1_700_000_000 ] ] ] );
 		$this->assertSame( [ 'womb' => [ 'a1a1a1a1a1a1' ] ], $store->url_token_sets( [ 'womb', 'kiwi' ] ) );
+	}
+
+	public function test_the_store_answers_a_saturated_token_and_a_sub_floor_one_alike(): void {
+		// Which tokens can be ANSWERED is the schema's to say: a saturated set
+		// narrows nothing, and a token below URL_TOKEN_PREFIX_MIN was never
+		// filed, so no read can answer either. Both come back false, an unheld
+		// token is absent, and a held one is its hashes.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 3, max_lifespan: 86400 );
+		$store->bucket_set_multi( [
+			[ [ Stats_Store::NS_URLTOKEN ], 'wom', [ Stats_Store::TOKEN_SATURATED => 1_700_000_000 ] ],
+			[ [ Stats_Store::NS_URLTOKEN ], 'takahe', [ 'b2b2b2b2b2b2' => 1_700_000_000 ] ],
+		] );
+
+		$this->assertSame(
+			[ 'at' => false, 'wom' => false, 'takahe' => [ 'b2b2b2b2b2b2' ] ],
+			$store->url_token_sets( [ 'at', 'wom', 'takahe', 'kiwi' ] )
+		);
+	}
+
+	public function test_a_sub_floor_token_is_refused_without_a_read(): void {
+		// No read can answer it, so asking for one is a round trip spent to
+		// learn what URL_TOKEN_PREFIX_MIN already says.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new class( partition: 3, max_lifespan: 86400 ) extends Stats_Store {
+			/** @var list<string> */
+			public array $asked = [];
+			public function bucket_get_multi( array $reads ): array {
+				foreach ( $reads as [ , $bucket ] ) {
+					$this->asked[] = (string) $bucket;
+				}
+				return parent::bucket_get_multi( $reads );
+			}
+		};
+
+		$this->assertSame( [ 'at' => false ], $store->url_token_sets( [ 'at', 'takahe' ] ), 'takahe is unheld, so absent' );
+		$this->assertSame( [ 'takahe' ], $store->asked, 'only the token a read could answer' );
 	}
 }

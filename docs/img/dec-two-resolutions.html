@@ -55,7 +55,7 @@
     <div class="n"><div class="big">2</div><div class="k"><span class="m">ROLLUP_HOURS_PER_FLUSH</span>: a cold start's backfill spreads across flushes instead of stalling one</div></div>
     <div class="n"><div class="big">1</div><div class="k"><span class="m">lookup_multi</span> for the whole window's skip probe; probing per hour pays 23 round trips a flush to learn there is nothing to do, decision 6's latency cliff</div></div>
     <div class="n"><div class="big">7,200 s</div><div class="k"><span class="m">FINE_TTL_SECONDS</span>: the fine tier's own retention, 24 buckets a shard, against <span class="m">min_lifetime</span> for the coarse tier that outlives it</div></div>
-    <div class="n"><div class="big">12</div><div class="k"><span class="m">INDEX_READ_CHUNK</span>: the read folds one chunk of buckets and drops it before the next; an hour's shards are read together in one chunk, so the ALL-its-shards-or-none check stays exact</div></div>
+    <div class="n"><div class="big">12</div><div class="k"><span class="m">INDEX_READ_CHUNK</span>: the read folds one chunk of buckets and drops it before the next, per SHARD &mdash; an hour the coarse tier answered for is taken from it, and only the leading hour falls back to its twelve fine buckets</div></div>
     <div class="n"><div class="big red">512 MB</div><div class="k">exhausts in <span class="m">empty_index_row()</span> when the whole window's rows sit resident beside the index being built</div></div>
   </div>
 
@@ -67,7 +67,7 @@
     </div>
     <div class="card">
       <h3>Why the coarse tier is not mirrored</h3>
-      <p><span class="m">STATS_MIRROR_TOPN</span> excludes <span class="m">urls_h</span>: it is derived from <span class="m">urls</span>, which is mirrored in full and retained for <span class="m">&lt;eln:stats_mirror_lifetime&gt;</span>, twice the stats window, so a fine bucket long expired from memcache is still on disk and the rehydrate seam rebuilds an evicted hour from it. The fold cannot, because <span class="m">roll_up_hours()</span> reads memcache; a reader can, and that asymmetry is what the exclusion rests on. A durable copy would store the same information twice on the axis decision 11 watches, and an hour frame would be the largest thing in a checkpoint's held set.</p>
+      <p><span class="m">Stats_Store::is_derived()</span> names <span class="m">urls_h</span>: it is derived from <span class="m">urls</span>, which is mirrored in full and retained for <span class="m">&lt;eln:stats_mirror_lifetime&gt;</span>, twice the stats window, so a fine bucket long expired from memcache is still on disk and the rehydrate seam rebuilds an evicted hour from it. The fold cannot, because <span class="m">roll_up_hours()</span> reads memcache; a reader can, and that asymmetry is what the exclusion rests on. A durable copy would store the same information twice on the axis decision 11 watches, and an hour frame would be the largest thing in a checkpoint's held set.</p>
       <p>The grace hour is read from ALL twelve buckets whatever their age against <span class="m">ttl_url_fine()</span>: that TTL is the memcache lifetime, and the reader is not memcache-only.</p>
     </div>
     <div class="card">

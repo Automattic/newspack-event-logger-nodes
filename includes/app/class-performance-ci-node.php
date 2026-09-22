@@ -227,6 +227,16 @@ class Performance_CI_Node extends Service_CI_Node {
 	private const URLS_PAGE_CACHE_MAX_ROWS = 250;
 
 	/**
+	 * The keys one URL page carries. Three places assemble a page — the fold,
+	 * the ranked reader and the header — and the cache reads a missing key as
+	 * a miss, so all four spell the shape from here.
+	 */
+	private const PAGE_FIELDS = [ 'data', 'ranked', 'as_of', ...self::HEADER_FIELDS ];
+
+	/** The subset `url_header()` answers for; a ranked page takes them whole. */
+	private const HEADER_FIELDS = [ 'rows', 'totals', 'slowest' ];
+
+	/**
 	 * Buckets read per `lookup_multi` while folding the index.
 	 *
 	 * Decision 6 wants ONE round trip per read, not one per key; it does not
@@ -251,7 +261,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * It takes the STORES too, resolved once by the caller: each resolution
 	 * builds the topology catalog, and a verb reads sixteen shards.
 	 *
-	 * Signature: `function ( ?string $shard, list<Stats_Store> $stores ): array<int,array<string,mixed>>`.
+	 * Signature: `function ( string $shard, list<Stats_Store> $stores ): array<int,array<string,mixed>>`.
 	 *
 	 * @var \Closure|null
 	 */
@@ -731,8 +741,8 @@ class Performance_CI_Node extends Service_CI_Node {
 
 		return Ask_Assembler::for_overview(
 			[
-				// Pre-split rows cannot answer per-server; null says so.
-				'totals' => ( '' === $server || $page['has_split'] ) ? $page['totals'] : null,
+				// The page already answered whether its totals cover the scope.
+				'totals' => $page['totals'],
 				'data'   => $page['data'],
 			],
 			self::build_leaderboard( $server, $stores ),
@@ -774,20 +784,6 @@ class Performance_CI_Node extends Service_CI_Node {
 	/**
 	 * The filtered URL set: its totals, its slowest, and one page of it.
 	 *
-	 * The page is CACHED, keyed by every filter, the window bucket, the
-	 * retention and the store count: a fold over a hub's whole URL index runs
-	 * tens of seconds, and every tab polling the same page would otherwise
-	 * pay it again. On the FOLD path that cache holds `URLS_PAGE_TTL_S`, so a
-	 * folded page's `totals.requests` lags by up to that TTL, one bucket's
-	 * slice of the window, and `requests_per_second` moves only when a bucket
-	 * closes — the cache delays that rollover by up to the same TTL. A RANKED
-	 * page's totals come from `url_header()` instead, whose own cache holds
-	 * `Stats_Store::BUCKET_SECONDS` — the bucket's own life — so a ranked
-	 * page's lag is bounded by that, not by `URLS_PAGE_TTL_S`. A fold the
-	 * mirror read budget cut short is served and not kept, or the gap it left
-	 * would stand for the cache's whole life where the next poll would have
-	 * filled it.
-	 *
 	 * Two paths answer. A page with no filter and an end inside the fine
 	 * tier's list depth reads the writer's ranked lists — `URL_RANK_N`
 	 * entries per bucket, cut and folded here — and takes its header from
@@ -795,6 +791,12 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * folds. A ranked page says so with `ranked`, because its averages are
 	 * the means of the bucket averages it ranked with, and a count outside
 	 * every bucket's list is a count the page cannot see.
+	 *
+	 * It is read THROUGH the cache for `URLS_PAGE_TTL_S` under every filter,
+	 * the window bucket, the retention and the store count: a fold over a
+	 * hub's whole URL index runs tens of seconds, and every tab polling the
+	 * same page would otherwise pay it again. A page wider than
+	 * `URLS_PAGE_CACHE_MAX_ROWS` is built and never stored.
 	 *
 	 * @param string                 $server  Reporting server to scope to; '' reads every server.
 	 * @param string                 $search  Case-insensitive URL word or word prefix; '' matches all.
@@ -805,27 +807,29 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param int                    $offset  Page offset.
 	 * @param int                    $limit   Page size.
 	 * @param array<int,Stats_Store> $stores  Stores the caller resolved once.
-	 * @return array{data:array<int,array<array-key,mixed>>,rows:int,totals:array<string,mixed>,slowest:array<int,array<array-key,mixed>>,has_split:bool,ranked:bool,as_of:int}
+	 * @return array{data:array<int,array<array-key,mixed>>,rows:int,totals:array<string,mixed>|null,slowest:array<int,array<array-key,mixed>>,ranked:bool,as_of:int}
 	 */
 	private function url_page( string $server, string $search, bool $errors, bool $workers, string $sort, string $order, int $offset, int $limit, array $stores ): array {
 		// @longform Normalized ONCE, here: `Womb`, `womb` and `womb ` are one
 		// search, and a key that normalizes while the paths below it read the
 		// raw term would answer one entry two ways. The handler echoes the
 		// raw value in `filters`, which is the only place it still matters.
-		$search = self::search_term( $search );
-		$ttl    = $limit <= self::URLS_PAGE_CACHE_MAX_ROWS ? self::URLS_PAGE_TTL_S : null;
-		/** @var array{data:array<int,array<array-key,mixed>>,rows:int,totals:array<string,mixed>,slowest:array<int,array<array-key,mixed>>,has_split:bool,ranked:bool,as_of:int} */
-		return $this->cached(
-			[ $server, $search, $errors, $workers, $sort, $order, $offset, $limit, Stats_Store::bucket_key( \time() ), AppConfig::stats_retention_seconds(), \count( $stores ) ],
-			$ttl,
-			[ 'data', 'rows', 'totals', 'slowest', 'has_split', 'ranked', 'as_of' ],
-			'URL page not cached: the store refused it',
-			function () use ( $server, $search, $errors, $workers, $sort, $order, $offset, $limit, $stores ): array {
-				$result = self::ranked_serves( $search, $errors, $workers, \max( 0, $offset ) + \max( 0, $limit ) )
-					? $this->ranked_page( $server, $sort, $order, $offset, $limit, $stores )
-					: null;
-				return $result ?? $this->fold_page( $server, $search, $errors, $workers, $sort, $order, $offset, $limit, $stores );
-			}
+		$search = \strtolower( \trim( $search ) );
+		$build  = function () use ( $server, $search, $errors, $workers, $sort, $order, $offset, $limit, $stores ): array {
+			$result = self::ranked_serves( $search, $errors, $workers, \max( 0, $offset ) + \max( 0, $limit ) )
+				? $this->ranked_page( $server, $sort, $order, $offset, $limit, $stores )
+				: null;
+			return $result ?? $this->fold_page( $server, $search, $errors, $workers, $sort, $order, $offset, $limit, $stores );
+		};
+		if ( $limit > self::URLS_PAGE_CACHE_MAX_ROWS ) {
+			return $build();
+		}
+		/** @var array{data:array<int,array<array-key,mixed>>,rows:int,totals:array<string,mixed>|null,slowest:array<int,array<array-key,mixed>>,ranked:bool,as_of:int} */
+		return self::read_through_page(
+			[ $server, $search, $errors, $workers, $sort, $order, $offset, $limit, Stats_Store::bucket_key( self::now() ), AppConfig::stats_retention_seconds(), \count( $stores ) ],
+			self::PAGE_FIELDS,
+			self::URLS_PAGE_TTL_S,
+			$build
 		);
 	}
 
@@ -841,11 +845,13 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * A page from the ranked lists: the two tiers' lists for this scope and
 	 * sort across the read plan, folded by hash and cut here.
 	 *
-	 * An hour whose list is present stands for its twelve buckets; the LEADING
-	 * hour of the plan is the only one whose missing list is answered from its
-	 * fine lists, as the row fold does for `urls_h`, and a missing list behind
-	 * it takes the whole page back to the fold rather than serving a window
-	 * one hour short as ranked.
+	 * Both tiers are known before the first read, so they go out together:
+	 * one round trip per store, and a second only for the gap
+	 * `Stats_Store::fine_fallback()` names. An hour whose list is present
+	 * stands for its twelve buckets; the LEADING hour of the plan is the only
+	 * one whose missing list is answered from its fine lists, as the row fold
+	 * does for `urls_h`, and a missing list behind it takes the whole page
+	 * back to the fold rather than serving a window one hour short as ranked.
 	 *
 	 * The two averages are the mean of the per-BUCKET averages at each
 	 * bucket's own tier — a five-minute bucket inside the fine tail, a folded
@@ -863,34 +869,50 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param int                    $offset Page offset.
 	 * @param int                    $limit  Page size.
 	 * @param array<int,Stats_Store> $stores Stores the caller resolved once.
-	 * @return array{data:array<int,array<array-key,mixed>>,rows:int,totals:array<string,mixed>,slowest:array<int,array<array-key,mixed>>,has_split:bool,ranked:bool,as_of:int}|null
+	 * @return array{data:array<int,array<array-key,mixed>>,rows:int,totals:array<string,mixed>|null,slowest:array<int,array<array-key,mixed>>,ranked:bool,as_of:int}|null
 	 */
 	private function ranked_page( string $server, string $sort, string $order, int $offset, int $limit, array $stores ): ?array {
+		// The header first: its own miss folds the page this poll answers with.
+		$header = $this->url_header( $server, $sort, $order, $offset, $limit, $stores );
+		if ( isset( $header['data'] ) ) {
+			/** @var array{data:array<int,array<array-key,mixed>>,rows:int,totals:array<string,mixed>|null,slowest:array<int,array<array-key,mixed>>,ranked:bool,as_of:int} */
+			return $header;
+		}
 		$plan   = Stats_Store::read_plan( \array_values( self::read_window() ) );
 		$recent = \array_flip( self::recent_buckets() );
+		$hours  = \array_flip( $plan['hours'] );
+		$coarse = Stats_Store::url_rank_parts( $sort, $order, $server, true );
+		$fine   = Stats_Store::url_rank_parts( $sort, $order, $server, false );
 		$merged = [];
 		$means  = [];
 		$found  = 0;
+		// Both tiers in one read; an hour key is never a bucket key.
+		$reads = [];
+		foreach ( $plan['hours'] as $hour ) {
+			$reads[ $hour ] = [ $coarse, $hour ];
+		}
+		foreach ( $plan['fine'] as $bucket ) {
+			$reads[ $bucket ] = [ $fine, $bucket ];
+		}
 		foreach ( $stores as $store ) {
-			$fine = $plan['fine'];
-			$got  = [];
-			foreach ( $store->url_rank_sources( $plan['hours'], $sort, $order, $server, true ) as [ $hour, $entries ] ) {
-				$got[ $hour ] = true;
-				self::fold_rank_entries( $merged, $means, $entries, false );
-				++$found;
-			}
-			foreach ( $plan['hours'] as $hour ) {
-				if ( isset( $got[ $hour ] ) ) {
+			$covered = [];
+			foreach ( $store->bucket_get_multi( $reads ) as $key => $entries ) {
+				if ( null === $entries ) {
 					continue;
 				}
-				$buckets = Stats_Store::unfolded_hour_buckets( $hour, $plan['hours'] );
-				// A hole no fine tier still backs, not an idle hour.
-				if ( [] === $buckets ) {
-					return null;
+				$key = (string) $key;
+				if ( isset( $hours[ $key ] ) ) {
+					$covered[ $key ] = true;
 				}
-				$fine = \array_merge( $fine, $buckets );
+				self::fold_rank_entries( $merged, $means, $entries, isset( $recent[ $key ] ) );
+				++$found;
 			}
-			foreach ( $store->url_rank_sources( $fine, $sort, $order, $server, false ) as [ $bucket, $entries ] ) {
+			$gap = Stats_Store::fine_fallback( $plan['hours'], $covered );
+			// A hole no fine tier still backs, not an idle hour.
+			if ( [] !== $gap['holes'] ) {
+				return null;
+			}
+			foreach ( $store->url_rank_sources( $gap['buckets'], $sort, $order, $server, false ) as [ $bucket, $entries ] ) {
 				self::fold_rank_entries( $merged, $means, $entries, isset( $recent[ $bucket ] ) );
 				++$found;
 			}
@@ -904,32 +926,28 @@ class Performance_CI_Node extends Service_CI_Node {
 			if ( null === $row ) {
 				continue;
 			}
-			[ $ms, $peak ] = $means[ $hash ];
-			$row['avg_ms']      = [] === $ms ? 0.0 : \array_sum( $ms ) / \count( $ms );
-			$row['avg_peak_mb'] = [] === $peak ? 0.0 : \array_sum( $peak ) / \count( $peak );
+			[ $ms_sum, $ms_n, $peak_sum, $peak_n ] = $means[ $hash ];
+			$row['avg_ms']      = self::mean_of( $ms_sum, $ms_n );
+			$row['avg_peak_mb'] = self::mean_of( $peak_sum, $peak_n );
 			$rows[]             = $row;
 		}
 		\usort( $rows, self::by_sort( $sort, $order ) );
-		$header = $this->url_header( $server, $stores );
+		// The header answers `HEADER_FIELDS`; these three are the page's own.
 		return [
-			'data'      => self::resolve_urls( \array_slice( $rows, $offset, $limit ), $stores ),
-			'rows'      => $header['rows'],
-			'totals'    => $header['totals'],
-			'slowest'   => $header['slowest'],
-			'has_split' => $header['has_split'],
-			'ranked'    => true,
-			'as_of'     => \time(),
-		];
+			'data'   => self::resolve_urls( \array_slice( $rows, $offset, $limit ), $stores ),
+			'ranked' => true,
+			'as_of'  => self::now(),
+		] + $header;
 	}
 
 	/**
 	 * Fold one list's entries into the merged rows, and note each bucket's
 	 * two averages beside them.
 	 *
-	 * @param array<string,array<string,mixed>>                 $merged    Merged display rows by hash, mutated.
-	 * @param array<string,array{0:list<float>,1:list<float>}>  $means     Per-hash bucket averages, mutated.
-	 * @param array<array-key,mixed>                             $entries   One list.
-	 * @param bool                                                $is_recent Inside the "last hour" window.
+	 * @param array<string,array<string,mixed>>                        $merged    Merged display rows by hash, mutated.
+	 * @param array<string,array{0:float,1:int,2:float,3:int}>         $means     Per-hash `[ ms sum, ms n, peak sum, peak n ]`, mutated.
+	 * @param array<array-key,mixed>                                   $entries   One list.
+	 * @param bool                                                     $is_recent Inside the "last hour" window.
 	 */
 	private static function fold_rank_entries( array &$merged, array &$means, array $entries, bool $is_recent ): void {
 		foreach ( $entries as $raw ) {
@@ -943,14 +961,16 @@ class Performance_CI_Node extends Service_CI_Node {
 			if ( isset( $entry[ Stats_Store::RANK_PATH ] ) ) {
 				$merged[ $hash ]['url'] = Core::str( $entry[ Stats_Store::RANK_PATH ] );
 			}
-			$means[ $hash ] ??= [ [], [] ];
+			$means[ $hash ] ??= [ 0.0, 0, 0.0, 0 ];
 			$timed = Core::num_int( $row[ Stats_Store::ROW_TIMED_COUNT ] ?? null );
 			$count = Core::num_int( $row[ Stats_Store::ROW_COUNT ] ?? null );
 			if ( $timed > 0 ) {
-				$means[ $hash ][0][] = Core::num_float( $row[ Stats_Store::ROW_SUM_MS ] ?? null ) / $timed;
+				$means[ $hash ][0] += Core::num_float( $row[ Stats_Store::ROW_SUM_MS ] ?? null ) / $timed;
+				++$means[ $hash ][1];
 			}
 			if ( $count > 0 ) {
-				$means[ $hash ][1][] = Core::num_float( $row[ Stats_Store::ROW_SUM_PEAK_MB ] ?? null ) / $count;
+				$means[ $hash ][2] += Core::num_float( $row[ Stats_Store::ROW_SUM_PEAK_MB ] ?? null ) / $count;
+				++$means[ $hash ][3];
 			}
 		}
 	}
@@ -958,62 +978,70 @@ class Performance_CI_Node extends Service_CI_Node {
 	/**
 	 * The fold's header for the unfiltered page of one scope — `totals.urls`
 	 * is the count of DISTINCT URLs in the window, which no list can answer —
-	 * held until the bucket closes. The thirty-second fold runs once per
-	 * bucket for the header while the lists answer the table every poll.
+	 * held for `Stats_Store::BUCKET_SECONDS`, the bucket's own life. So the
+	 * thirty-second fold runs once per bucket while the lists answer the
+	 * table every poll, and a ranked page's totals lag by that rather than by
+	 * the page cache's own minute.
+	 *
+	 * The miss folds THIS page — the caller's sort, order, offset and limit —
+	 * and returns it whole, so the poll that pays for the walk answers with
+	 * what it walked and the next one reads the lists. A hit carries
+	 * `HEADER_FIELDS` alone.
 	 *
 	 * @param string                 $server Reporting server; '' is the site.
+	 * @param string                 $sort   A URL_SORTS field.
+	 * @param string                 $order  'asc' or 'desc'.
+	 * @param int                    $offset Page offset.
+	 * @param int                    $limit  Page size.
 	 * @param array<int,Stats_Store> $stores Stores the caller resolved once.
-	 * @return array{rows:int,totals:array<string,mixed>,slowest:array<int,array<array-key,mixed>>,has_split:bool}
+	 * @return array{rows:int,totals:array<string,mixed>|null,slowest:array<int,array<array-key,mixed>>,data?:array<int,array<array-key,mixed>>,ranked?:bool,as_of?:int}
 	 */
-	private function url_header( string $server, array $stores ): array {
-		/** @var array{rows:int,totals:array<string,mixed>,slowest:array<int,array<array-key,mixed>>,has_split:bool} */
-		return $this->cached(
-			[ 'header', $server, Stats_Store::bucket_key( \time() ), AppConfig::stats_retention_seconds(), \count( $stores ) ],
+	private function url_header( string $server, string $sort, string $order, int $offset, int $limit, array $stores ): array {
+		$page  = null;
+		$build = function () use ( $server, $sort, $order, $offset, $limit, $stores, &$page ): array {
+			$page = $this->fold_page( $server, '', false, false, $sort, $order, $offset, $limit, $stores );
+			return \array_intersect_key( $page, \array_flip( self::HEADER_FIELDS ) );
+		};
+		/** @var array{rows:int,totals:array<string,mixed>|null,slowest:array<int,array<array-key,mixed>>} $header */
+		$header = self::read_through_page(
+			[ 'header', $server, Stats_Store::bucket_key( self::now() ), AppConfig::stats_retention_seconds(), \count( $stores ) ],
+			self::HEADER_FIELDS,
 			Stats_Store::BUCKET_SECONDS,
-			[ 'rows', 'totals', 'slowest', 'has_split' ],
-			'URL header not cached: the store refused it',
-			function () use ( $server, $stores ): array {
-				$fold = $this->fold_page( $server, '', false, false, 'count', 'desc', 0, 0, $stores );
-				return [ 'rows' => $fold['rows'], 'totals' => $fold['totals'], 'slowest' => $fold['slowest'], 'has_split' => $fold['has_split'] ];
-			}
+			$build
 		);
+		return $page ?? $header;
 	}
 
 	/**
-	 * The mechanism `url_page()` and `url_header()` both run: encode a key,
-	 * look it up, build on a miss, store the result unless the mirror read
-	 * budget is spent, and log a refused store.
+	 * This class's page cache, in one spelling: the substrate's read-through
+	 * over `URLS_PAGE_NS`, built on a miss and warmed by the table itself.
 	 *
-	 * @param array<array-key,mixed> $key_parts What the cache key covers.
-	 * @param int|null               $ttl       Entry TTL in seconds, or null
-	 *                                          for "do not cache" — `$build`
-	 *                                          still runs, it just never
-	 *                                          reads or writes the table.
-	 * @param list<string>           $required  Keys a hit must carry, or it
-	 *                                          reads as a miss.
-	 * @param string                 $refusal   Logged when the store is refused.
-	 * @param \Closure():array<array-key,mixed> $build Produces the value on a miss.
-	 * @return array<array-key,mixed>
+	 * The SHAPE rides in the key, because a read-through cannot report a
+	 * stored value missing a field this reader needs, and a build the mirror
+	 * read budget cut short states `ttl => 0` — served, never warmed, or the
+	 * gap it left would stand for the entry's whole life. With no cache
+	 * backend the table is null and `$build` simply answers.
+	 *
+	 * @param array<array-key,mixed>             $parts  What the key covers.
+	 * @param list<string>                       $fields The keys the value carries.
+	 * @param int                                $ttl    Entry lifetime in seconds.
+	 * @param \Closure():array<array-key,mixed>  $build  Produces the value on a miss.
+	 * @return mixed The stored value, or what `$build` produced.
 	 */
-	private function cached( array $key_parts, ?int $ttl, array $required, string $refusal, \Closure $build ): array {
-		$encoded = \wp_json_encode( $key_parts );
-		$table   = null !== $ttl && false !== $encoded ? self::page_table( $ttl ) : null;
-		$key     = \md5( (string) $encoded );
-		$hit     = $table?->lookup( $key );
-		if ( \is_array( $hit ) ) {
-			$hit_ok = true;
-			foreach ( $required as $field ) {
-				$hit_ok = $hit_ok && isset( $hit[ $field ] );
-			}
-			if ( $hit_ok ) {
-				return $hit;
-			}
+	private static function read_through_page( array $parts, array $fields, int $ttl, \Closure $build ): mixed {
+		$table = self::page_table( $ttl );
+		if ( null === $table ) {
+			return $build();
 		}
-		$result = $build();
-		if ( null !== $table && ! Flame_Builder_Node::mirror_budget_spent() && ! $table->store( $key, $result ) ) {
-			$this->print_less_often( $refusal );
-		}
-		return $result;
+		$parts[] = \md5( \implode( ',', $fields ) );
+		return $table->backed_by(
+			static fn ( array $keys ): array => [
+				$keys[0] => [
+					'value' => $build(),
+					'ttl'   => Flame_Builder_Node::mirror_budget_spent() ? 0 : $ttl,
+				],
+			]
+		)->lookup( \md5( (string) \wp_json_encode( $parts ) ) );
 	}
 
 	/**
@@ -1043,11 +1071,10 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param int                    $offset  Page offset.
 	 * @param int                    $limit   Page size.
 	 * @param array<int,Stats_Store> $stores  Stores the caller resolved once.
-	 * @return array{data:array<int,array<array-key,mixed>>,rows:int,totals:array<string,mixed>,slowest:array<int,array<array-key,mixed>>,has_split:bool,ranked:bool,as_of:int}
+	 * @return array{data:array<int,array<array-key,mixed>>,rows:int,totals:array<string,mixed>|null,slowest:array<int,array<array-key,mixed>>,ranked:bool,as_of:int}
 	 */
 	private function fold_page( string $server, string $search, bool $errors, bool $workers, string $sort, string $order, int $offset, int $limit, array $stores ): array {
-		// Normalized by `url_page()`, which keys the cache on the same value.
-		$term      = $search;
+		// `$search` is normalized by `url_page()`, which keys its cache on it.
 		$page_keep = \max( 0, $offset ) + \max( 0, $limit );
 		$ranked    = [];
 		$slowest   = [];
@@ -1066,9 +1093,9 @@ class Performance_CI_Node extends Service_CI_Node {
 
 		// @longform A term matches on the name and a url-sort orders by it, so
 		// those two need every candidate named; every other read names a page.
-		$needs_names = '' !== $term || 'url' === $sort;
-		$tokens      = '' === $term ? [] : Stats_Store::term_tokens( $term );
-		$candidates  = '' === $term ? null : self::search_candidates( $tokens, $stores );
+		$needs_names = '' !== $search || 'url' === $sort;
+		$tokens      = '' === $search ? [] : Stats_Store::term_tokens( $search );
+		$candidates  = '' === $search ? null : self::search_candidates( $tokens, $stores );
 
 		// Worker traffic is its own shard family
 		$families = $workers ? [ false, true ] : [ false ];
@@ -1081,6 +1108,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		// drops to the shards those hashes fall in and the names come from
 		// `urlmap` over that bounded set rather than every shard's whole blob.
 		$candidate_names = [];
+		$named_pairs     = [];
 		if ( null !== $candidates ) {
 			// @longform Nothing walked means nothing to derive a split from,
 			// and a scoped page would report `totals: null` — "this index
@@ -1093,7 +1121,9 @@ class Performance_CI_Node extends Service_CI_Node {
 				}
 			}
 			$shards = \array_values( \array_intersect( $shards, \array_keys( $in_play ) ) );
-			foreach ( self::url_names( \array_keys( $candidates ), $stores ) as $hash => $pair ) {
+			// Named once: the term reads the path, the page displays the pair.
+			$named_pairs = self::url_names( \array_keys( $candidates ), $stores );
+			foreach ( $named_pairs as $hash => $pair ) {
 				$candidate_names[ $hash ] = Stats_Store::path_of( $pair );
 			}
 		}
@@ -1130,11 +1160,10 @@ class Performance_CI_Node extends Service_CI_Node {
 				if ( null !== $candidates && ! isset( $candidates[ $hash ] ) ) {
 					continue;
 				}
-				// @longform On the index path the token index already answered
-				// for this hash, so a name that expired or was refused drops
-				// nothing; on the fold path the name IS the answer.
-				$named = null === $candidates || isset( $names[ $hash ] );
-				if ( '' !== $term && $named && ! self::term_matches( $names[ $hash ] ?? '', $term, $tokens ) ) {
+				// A candidate whose name expired is kept, unmatched.
+				if ( '' !== $search
+					&& ( null === $candidates || isset( $names[ $hash ] ) )
+					&& ! Stats_Store::term_matches( $names[ $hash ] ?? '', $search, $tokens ) ) {
 					continue;
 				}
 				$row = self::project_row( $raw_row, $server );
@@ -1174,7 +1203,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				continue;
 			}
 			// Not one of `totals.urls`, but its requests are real.
-			if ( '' !== $term ) {
+			if ( '' !== $search ) {
 				continue;
 			}
 			if ( $errors && ! self::has_unclassified_requests( $row ) ) {
@@ -1193,36 +1222,41 @@ class Performance_CI_Node extends Service_CI_Node {
 		\usort( $slowest, $by_mean );
 		\usort( $ranked, $by_sort );
 
-		// One naming read for the page and the slowest rows: one pass.
+		// A search named its candidates; this names whatever is left, once.
 		$page  = \array_slice( $ranked, $offset, $limit );
 		$top   = \array_slice( $slowest, 0, self::SLOWEST_ROWS );
-		$named = self::resolve_urls( \array_merge( $page, $top ), $stores );
+		$named = self::resolve_urls( \array_merge( $page, $top ), $stores, $named_pairs );
 		return [
-			'data'      => \array_slice( $named, 0, \count( $page ) ),
+			'data'    => \array_slice( $named, 0, \count( $page ) ),
 			// The pager's question; `totals.urls` is another.
-			'rows'      => $rows,
-			'totals'    => [
+			'rows'    => $rows,
+			// Pre-split rows cannot answer a scope; 0 would read as idle.
+			'totals'  => '' !== $server && ! $has_split ? null : [
 				'urls'                => $urls,
 				'requests'            => $requests,
-				'avg_ms'              => self::mean_ms( $sum_ms, $timed ),
+				'avg_ms'              => self::mean_of( $sum_ms, $timed ),
 				'avg_peak_mb'         => $requests > 0 ? $sum_peak / $requests : 0.0,
 				'requests_per_second' => self::recent_rate( $recent ),
 			],
-			'slowest'   => \array_slice( $named, \count( $page ) ),
-			// Pre-split data cannot answer a scoped question; see the handler.
-			'has_split' => $has_split,
-			'ranked'    => false,
-			'as_of'     => \time(),
+			'slowest' => \array_slice( $named, \count( $page ) ),
+			'ranked'  => false,
+			'as_of'   => self::now(),
 		];
 	}
 
 	/**
 	 * The hashes the token index names for a term, or null when it cannot
-	 * answer: a term with no token, a token shorter than
-	 * `URL_TOKEN_PREFIX_MIN` (refused before the read, since no read can
-	 * answer it), every token saturated, or more candidates than
-	 * `URL_SEARCH_MAX`. A token no partition holds is a real answer — an
-	 * empty set — and folds nothing.
+	 * answer: a term with no token, EVERY token unanswerable, or more
+	 * candidates than `URL_SEARCH_MAX`. Which tokens can be answered is the
+	 * store's to say — `false` is one no read can answer, and one token
+	 * unanswerable among several narrows nothing while the rest still do,
+	 * because the fold matches the whole term against the names anyway. A
+	 * token no partition holds is a real answer — an empty set — and folds
+	 * nothing.
+	 *
+	 * The reads take a budget of their own, for the reason `url_names()`
+	 * states: naming and narrowing are answers, not steps of the walk that
+	 * follows them.
 	 *
 	 * @param list<string>           $tokens The term's tokens.
 	 * @param array<int,Stats_Store> $stores Stores the caller resolved once.
@@ -1232,71 +1266,39 @@ class Performance_CI_Node extends Service_CI_Node {
 		if ( [] === $tokens ) {
 			return null;
 		}
-		foreach ( $tokens as $token ) {
-			// Shorter than the shortest prefix filed: no read can answer it.
-			if ( \strlen( $token ) < Stats_Store::URL_TOKEN_PREFIX_MIN ) {
-				return null;
-			}
-		}
-		// @longform Its own budget: an unmirrored absence is never remembered,
-		// so the seam runs each poll and its spend is not the fold's to pay.
 		$sets = [];
 		Flame_Builder_Node::with_own_mirror_read_budget( static function () use ( $tokens, $stores, &$sets ): void {
 			foreach ( $stores as $store ) {
 				foreach ( $store->url_token_sets( $tokens ) as $token => $hashes ) {
-					$sets[ $token ] = \array_merge( $sets[ $token ] ?? [], $hashes );
+					// One partition's set unanswerable is the token's answer.
+					if ( false === $hashes || false === ( $sets[ $token ] ?? null ) ) {
+						$sets[ $token ] = false;
+						continue;
+					}
+					$sets[ $token ] = ( $sets[ $token ] ?? [] ) + \array_fill_keys( $hashes, true );
 				}
 			}
 		} );
-		$result = null;
+		$usable = [];
 		foreach ( $tokens as $token ) {
-			$hashes = $sets[ $token ] ?? [];
-			// One partition's set saturated: that token narrows nothing here.
-			if ( \in_array( Stats_Store::TOKEN_SATURATED, $hashes, true ) ) {
-				continue;
+			if ( false !== ( $sets[ $token ] ?? null ) ) {
+				$usable[ $token ] = Core::arr( $sets[ $token ] ?? [] );
 			}
-			$set    = \array_fill_keys( $hashes, true );
-			$result = null === $result ? $set : \array_intersect_key( $result, $set );
 		}
-		if ( null === $result || \count( $result ) > Stats_Store::URL_SEARCH_MAX ) {
+		if ( [] === $usable ) {
 			return null;
 		}
+		// Smallest first: every intersection after it walks the smallest side.
+		\uasort( $usable, static fn ( array $a, array $b ): int => \count( $a ) <=> \count( $b ) );
+		$result = null;
+		foreach ( $usable as $set ) {
+			$result = null === $result ? $set : \array_intersect_key( $result, $set );
+		}
+		if ( \count( $result ) > Stats_Store::URL_SEARCH_MAX ) {
+			return null;
+		}
+		/** @var array<string,true> */
 		return $result;
-	}
-
-	/**
-	 * Whether a name answers a term: every token of the term begins a WORD of
-	 * it, or the whole term appears when the term has no token at all.
-	 *
-	 * The index files word prefixes, so the fold it falls back to has to read
-	 * a term the same way. Matching a substring here instead would make `77`
-	 * name `/wombat-1177` through the fold and not through the index, so
-	 * which rows a search returned would turn on whether some other token
-	 * happened to have saturated.
-	 *
-	 * @param string       $name   The URL's path.
-	 * @param string       $term   The lowercased search term.
-	 * @param list<string> $tokens The term's tokens.
-	 */
-	private static function term_matches( string $name, string $term, array $tokens ): bool {
-		$name = \strtolower( $name );
-		if ( [] === $tokens ) {
-			return \str_contains( $name, $term );
-		}
-		foreach ( $tokens as $token ) {
-			if ( 1 !== \preg_match( '/(?:^|[^a-z0-9])' . \preg_quote( $token, '/' ) . '/', $name ) ) {
-				return false;
-			}
-		}
-		return true;
-	}
-
-	/**
-	 * The search term as every reader spells it: lowercase, trimmed. The cache
-	 * key and the fold take this; `filters` echoes what was typed.
-	 */
-	private static function search_term( string $search ): string {
-		return \strtolower( \trim( $search ) );
 	}
 
 	/**
@@ -1743,18 +1745,14 @@ class Performance_CI_Node extends Service_CI_Node {
 
 		$plan = Stats_Store::read_plan( \array_values( self::read_window() ) );
 		foreach ( $stores as $store ) {
-			// @longform An hour the coarse tier cannot answer for is not folded
-			// yet — a fresh deploy, a backfill, a worker down at the boundary —
-			// and its twelve fine buckets answer for it, exactly as the URL
-			// index's do. A folded hour's buckets are NOT read: they outlive
-			// the fold, and taking both counts the hour twice.
+			// @longform The tolerant half of `Stats_Store::fine_fallback()`,
+			// exactly as the URL index reads it: the grace hour's twelve
+			// buckets answer for it while the fold has not caught it, and a
+			// hole older than that leaves the board short there rather than
+			// refusing the window. A folded hour's buckets are NOT read —
+			// they outlive the fold, and taking both counts the hour twice.
 			$hours   = $store->get_leaderboard_hours( $plan['hours'] );
-			$missing = [];
-			foreach ( $plan['hours'] as $hour ) {
-				if ( ! isset( $hours[ $hour ] ) ) {
-					$missing = \array_merge( $missing, Stats_Store::unfolded_hour_buckets( $hour, $plan['hours'] ) );
-				}
-			}
+			$missing = Stats_Store::fine_fallback( $plan['hours'], $hours )['buckets'];
 			$fold( $hours );
 			foreach ( [ $plan['fine'], $missing ] as $tier ) {
 				foreach ( \array_chunk( $tier, self::INDEX_READ_CHUNK ) as $chunk ) {
@@ -1781,7 +1779,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @return int Unix timestamp.
 	 */
 	private static function scan_floor(): int {
-		return Stats_Store::window_start( AppConfig::stats_retention_seconds(), \time() );
+		return Stats_Store::window_start( AppConfig::stats_retention_seconds(), self::now() );
 	}
 
 	/**
@@ -2134,24 +2132,27 @@ class Performance_CI_Node extends Service_CI_Node {
 	 *
 	 * Naming runs on a budget of its own — see `url_names()` — and the `urls`
 	 * verb names its page and its slowest rows in ONE call rather than two.
+	 * A caller that already named these hashes hands those pairs over, so a
+	 * searched page reads no name twice.
 	 *
-	 * @param array<int,array<array-key,mixed>> $rows   Merged display rows.
-	 * @param array<int,Stats_Store>            $stores Stores the caller resolved once.
+	 * @param array<int,array<array-key,mixed>>       $rows   Merged display rows.
+	 * @param array<int,Stats_Store>                  $stores Stores the caller resolved once.
+	 * @param array<string,array{0:string,1:string}>  $names  Pairs already read, by hash.
 	 * @return array<int,array<array-key,mixed>>
 	 */
-	private static function resolve_urls( array $rows, array $stores ): array {
+	private static function resolve_urls( array $rows, array $stores, array $names = [] ): array {
 		$wanted = [];
 		foreach ( $rows as $row ) {
 			$hash = Core::as_string( $row['hash'] ?? '' );
 			// The overflow rows name no URL, so nothing can name them.
-			if ( '' !== $hash && ! Stats_Store::is_other_key( $hash ) ) {
+			if ( '' !== $hash && ! Stats_Store::is_other_key( $hash ) && ! isset( $names[ $hash ] ) ) {
 				$wanted[ $hash ] = true;
 			}
 		}
-		if ( [] === $wanted ) {
+		if ( [] === $wanted && [] === $names ) {
 			return $rows;
 		}
-		$names = self::url_names( \array_keys( $wanted ), $stores );
+		$names += self::url_names( \array_keys( $wanted ), $stores );
 		foreach ( $rows as $i => $row ) {
 			$hash = Core::as_string( $row['hash'] ?? '' );
 			if ( isset( $names[ $hash ] ) ) {
@@ -2205,10 +2206,11 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * many URLs it holds, where `urlmap` answers one key per URL and a hub
 	 * asks it 668,918 times a poll.
 	 *
-	 * BOTH tiers are read unconditionally, unlike `load_index_default()`, which
-	 * skips a folded hour's fine buckets to avoid counting it twice. A name is
-	 * not a count: the merge is a union, so reading an hour and its buckets
-	 * together costs a repeat and can never double anything.
+	 * The same two-tier walk `load_index_default()` makes, over the name
+	 * namespaces: see `walk_shard_tiers()` for which buckets each tier reads.
+	 * A name is not a count, so a repeat would be harmless here — but the
+	 * fallback is not optional, or a row the coarse tier cannot answer for
+	 * arrives nameless and leaves every search until the fold catches up.
 	 *
 	 * @param string                 $shard  Shard token from `Stats_Store::url_shard()`.
 	 * @param array<int,Stats_Store> $stores Stores the caller resolved once.
@@ -2218,31 +2220,14 @@ class Performance_CI_Node extends Service_CI_Node {
 		$plan  = Stats_Store::read_plan( \array_values( self::read_window() ) );
 		$paths = [];
 		foreach ( $stores as $store ) {
-			$covered = [];
-			foreach ( \array_chunk( $plan['hours'], self::INDEX_READ_CHUNK ) as $chunk ) {
-				foreach ( $store->url_name_hour_sources( $chunk, $shard ) as [ $hour, $blob ] ) {
-					$covered[ $hour ] = true;
+			self::walk_shard_tiers(
+				$plan,
+				static fn ( array $hours ): array => $store->url_name_hour_sources( $hours, $shard ),
+				static fn ( array $buckets ): array => $store->url_name_sources( $buckets, $shard ),
+				static function ( string $bucket, array $blob ) use ( &$paths ): void {
 					self::merge_paths( $paths, $blob );
 				}
-			}
-			// @longform An hour the coarse tier cannot answer for is not folded
-			// YET — a fresh deploy, a backfill, a worker down at the boundary
-			// — and `load_index_default()` takes its ROWS from the twelve fine
-			// buckets. Names take the same fallback, or those rows arrive
-			// nameless and leave every search until the fold catches up.
-			$missing = [];
-			foreach ( $plan['hours'] as $hour ) {
-				if ( ! isset( $covered[ $hour ] ) ) {
-					$missing = \array_merge( $missing, Stats_Store::unfolded_hour_buckets( $hour, $plan['hours'] ) );
-				}
-			}
-			foreach ( [ $plan['fine'], $missing ] as $tier ) {
-				foreach ( \array_chunk( $tier, self::INDEX_READ_CHUNK ) as $chunk ) {
-					foreach ( $store->url_name_sources( $chunk, $shard ) as [ , $blob ] ) {
-						self::merge_paths( $paths, $blob );
-					}
-				}
-			}
+			);
 		}
 		return $paths;
 	}
@@ -2334,7 +2319,7 @@ class Performance_CI_Node extends Service_CI_Node {
 
 		// Two populations: a timeout has peak memory but no duration.
 		$all                   = \max( 1, Core::num_int( $scoped['count'] ?? null ) );
-		$scoped['avg_ms']      = self::mean_ms(
+		$scoped['avg_ms']      = self::mean_of(
 			Core::num_float( $scoped['sum_ms'] ?? null ),
 			Core::num_int( $scoped['timed_count'] ?? null )
 		);
@@ -2343,27 +2328,26 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * Mean request duration over the requests that HAVE one.
+	 * A mean over the things that HAVE one — the requests a duration was
+	 * measured for, or the buckets an average was ranked in. Dividing by
+	 * every request instead would understate it by the unmeasured fraction.
 	 *
-	 * Only timed requests contribute milliseconds, so dividing by every request
-	 * would understate the mean by the untimed fraction.
-	 *
-	 * @param float $sum_ms Summed durations.
-	 * @param int   $timed  Requests that contributed one.
+	 * @param float $sum Summed values.
+	 * @param int   $n   How many contributed one.
 	 */
-	private static function mean_ms( float $sum_ms, int $timed ): float {
-		return $timed > 0 ? $sum_ms / $timed : 0.0;
+	private static function mean_of( float $sum, int $n ): float {
+		return $n > 0 ? $sum / $n : 0.0;
 	}
 
 	/**
 	 * The read seam, resolved. One entry point for both shapes, so a test
 	 * counting reads counts a point read as well as a whole-index one.
 	 *
-	 * @param ?string                $shard  One shard's rows; null reads every reader shard.
+	 * @param string                 $shard  Shard token from `Stats_Store::url_shard()`.
 	 * @param array<int,Stats_Store> $stores Stores the caller resolved once.
 	 * @return array<int,array<array-key,mixed>>
 	 */
-	private static function read_index( ?string $shard, array $stores ): array {
+	private static function read_index( string $shard, array $stores ): array {
 		$read = self::$load_index ?? self::load_index_default( ... );
 		$rows = [];
 		foreach ( Core::arr( $read( $shard, $stores ) ) as $row ) {
@@ -2389,59 +2373,24 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * record — never derive another, or the row indexes under a hash no rid
 	 * lookup can produce.
 	 *
-	 * @param ?string                $shard  One shard's rows; null reads every reader shard.
+	 * @param string                 $shard  Shard token from `Stats_Store::url_shard()`.
 	 * @param array<int,Stats_Store> $stores Stores the caller resolved once.
 	 * @return array<int,array<string,mixed>>
 	 */
-	public static function load_index_default( ?string $shard, array $stores ): array {
+	public static function load_index_default( string $shard, array $stores ): array {
 		// ONE window: the flag and the plan cannot straddle a boundary.
 		$plan   = Stats_Store::read_plan( \array_values( self::read_window() ) );
 		$recent = \array_flip( self::recent_buckets() );
 		$result = [];
-		// An hour is folded when EVERY shard this read covers carries it.
-		$whole = null === $shard ? \count( Stats_Store::url_shards() ) : 1;
 		foreach ( $stores as $store ) {
-			// @longform An hour with no coarse key has not been folded YET — a
-			// fresh deploy, or a worker down when it closed — so its twelve
-			// fine buckets answer for it. A folded hour's buckets are NOT read:
-			// they outlive the fold, and reading both counts the hour twice.
-			// ALL its shards or none, because a fold that died between shards
-			// leaves some: taking those beside the buckets answering for the
-			// rest would count the folded shards twice, and the writer treats
-			// the same hour as unfolded and redoes it. Chunked, and the check
-			// stays exact because an hour's shards are read together.
-			$missing = [];
-			foreach ( \array_chunk( $plan['hours'], self::INDEX_READ_CHUNK ) as $hour_chunk ) {
-				$by_hour = [];
-				foreach ( $store->url_hour_sources( $hour_chunk, $shard ) as [ $hour, $data ] ) {
-					$by_hour[ $hour ][] = [ $hour, $data ];
+			self::walk_shard_tiers(
+				$plan,
+				static fn ( array $hours ): array => $store->url_hour_sources( $hours, $shard ),
+				static fn ( array $buckets ): array => $store->url_row_sources( $buckets, $shard ),
+				static function ( string $bucket, array $data ) use ( &$result, $recent ): void {
+					self::fold_bucket( $result, $data, isset( $recent[ $bucket ] ) );
 				}
-				foreach ( $hour_chunk as $hour ) {
-					$found = $by_hour[ $hour ] ?? [];
-					if ( \count( $found ) === $whole ) {
-						foreach ( $found as [ $bucket, $bucket_data ] ) {
-							self::fold_bucket( $result, $bucket_data, isset( $recent[ $bucket ] ) );
-						}
-						continue;
-					}
-					$missing = \array_merge( $missing, Stats_Store::unfolded_hour_buckets( $hour, $plan['hours'] ) );
-				}
-			}
-
-			// @longform Fine, then the fallback for unfolded hours. One fold
-			// for both: an hour key is never a recent five-minute bucket, and
-			// neither is a bucket behind the fine tail, so the recency
-			// predicate is uniform. Order is not load-bearing: no read here
-			// is first-wins. Each chunk is folded and DROPPED before the next
-			// is read, because holding the whole window's rows beside the
-			// index it builds exhausts a production hub's 512MB.
-			foreach ( [ $plan['fine'], $missing ] as $tier ) {
-				foreach ( \array_chunk( $tier, self::INDEX_READ_CHUNK ) as $chunk ) {
-					foreach ( $store->url_row_sources( $chunk, $shard ) as [ $bucket, $bucket_data ] ) {
-						self::fold_bucket( $result, $bucket_data, isset( $recent[ $bucket ] ) );
-					}
-				}
-			}
+			);
 		}
 
 		// @longform The display shape, keeping `sum_ms` and `sum_peak_mb`: the
@@ -2458,6 +2407,50 @@ class Performance_CI_Node extends Service_CI_Node {
 		}
 		unset( $entry );
 		return \array_values( $result );
+	}
+
+	/**
+	 * The two-tier shard walk both index readers make, over one store and one
+	 * shard: every chunk of the plan's coarse hours through `$coarse`, then
+	 * the fine tier and the fallback through `$fine`, each `[ bucket, data ]`
+	 * pair handed to `$fold`.
+	 *
+	 * An hour with no coarse key has not been folded YET — a fresh deploy, a
+	 * backfill, or a worker down when it closed — so the twelve fine buckets
+	 * `Stats_Store::fine_fallback()` names answer for it. A fold tolerates
+	 * the holes it reports beside them and comes up short there; only the
+	 * ranked reader refuses. A folded hour's buckets are NOT read: they
+	 * outlive the fold, and reading both counts the hour twice.
+	 *
+	 * Each chunk is read, folded and DROPPED before the next is read: holding
+	 * the whole window's buckets beside the index they build exhausts a
+	 * production hub's 512MB. Order across the tiers is not load-bearing — no
+	 * read here is first-wins — and one fold serves both, because an hour key
+	 * is never a recent five-minute bucket and neither is a bucket behind the
+	 * fine tail.
+	 *
+	 * @param array{fine: list<string>, hours: list<string>} $plan   `Stats_Store::read_plan()`.
+	 * @param \Closure(list<string>): list<array{0:string,1:array<array-key,mixed>}> $coarse Coarse-tier reader.
+	 * @param \Closure(list<string>): list<array{0:string,1:array<array-key,mixed>}> $fine   Fine-tier reader.
+	 * @param \Closure(string, array<array-key,mixed>): void $fold One pair's sink.
+	 */
+	private static function walk_shard_tiers( array $plan, \Closure $coarse, \Closure $fine, \Closure $fold ): void {
+		$covered = [];
+		foreach ( \array_chunk( $plan['hours'], self::INDEX_READ_CHUNK ) as $chunk ) {
+			foreach ( $coarse( $chunk ) as [ $hour, $data ] ) {
+				$covered[ $hour ] = true;
+				$fold( $hour, $data );
+			}
+		}
+		// A hole leaves the fold short there; the grace hour still answers.
+		$missing = Stats_Store::fine_fallback( $plan['hours'], $covered )['buckets'];
+		foreach ( [ $plan['fine'], $missing ] as $tier ) {
+			foreach ( \array_chunk( $tier, self::INDEX_READ_CHUNK ) as $chunk ) {
+				foreach ( $fine( $chunk ) as [ $bucket, $data ] ) {
+					$fold( $bucket, $data );
+				}
+			}
+		}
 	}
 
 	/**
@@ -2606,13 +2599,14 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * Memoized for as long as the current bucket is current. One `overview` calls
 	 * this ten times (seven dimensions, plus hourly, leaderboard and categories),
 	 * each otherwise rebuilding up to 288 keys with a `gmdate()` apiece — and each
-	 * re-reading the clock, so two panels of one response could straddle a
-	 * boundary and answer for different windows.
+	 * re-reading the clock. The memo on the bucket key is the straddle guard:
+	 * without it two panels of one response could answer for different
+	 * windows, since every call here reads the clock afresh.
 	 *
 	 * @return array<int,string>
 	 */
 	private static function read_window(): array {
-		$now       = \time();
+		$now       = self::now();
 		$retention = AppConfig::stats_retention_seconds();
 		// Keyed on retention too, or a settings change goes unnoticed.
 		$at = Stats_Store::bucket_key( $now ) . ':' . $retention;
@@ -2621,6 +2615,16 @@ class Performance_CI_Node extends Service_CI_Node {
 			self::$read_window_at = $at;
 		}
 		return self::$read_window;
+	}
+
+	/**
+	 * Epoch seconds, from the substrate's canonical clock — `Stats_Store`
+	 * dates its writes from the same one, so a reader and a writer in one
+	 * process cannot disagree about which bucket is current.
+	 *
+	 */
+	private static function now(): int {
+		return (int) Core::right_now();
 	}
 
 	/**
@@ -2915,10 +2919,8 @@ class Performance_CI_Node extends Service_CI_Node {
 				return [
 					'data'    => $page['data'],
 					'rows'    => $page['rows'],
-					// Pre-split data cannot answer this; 0 would read as idle.
-					'totals'  => ( '' === $server || $page['has_split'] )
-						? $page['totals']
-						: null,
+					// Null where pre-split rows cannot answer the scope.
+					'totals'  => $page['totals'],
 					'slowest' => $page['slowest'],
 					'ranked'  => $page['ranked'],
 					'as_of'   => $page['as_of'],

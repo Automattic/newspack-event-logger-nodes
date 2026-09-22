@@ -282,16 +282,11 @@ abstract class TestCase extends RuntimeTestCase {
 	 * @return array<string,string> hash => path.
 	 */
 	private static function url_paths_of( array $rows ): array {
-		$paths = [];
+		$urls = [];
 		foreach ( $rows as $hash => $row ) {
-			$url = \Newspack_Nodes\Core::str( \Newspack_Nodes\Core::arr( $row )['url'] ?? '' );
-			if ( '' !== $url ) {
-				$paths[ (string) $hash ] = \Newspack_Event_Logger_Nodes\Stats_Store::path_of(
-					\Newspack_Event_Logger_Nodes\Stats_Store::split_url( $url )
-				);
-			}
+			$urls[ $hash ] = \Newspack_Nodes\Core::str( \Newspack_Nodes\Core::arr( $row )['url'] ?? '' );
 		}
-		return $paths;
+		return \Newspack_Event_Logger_Nodes\Stats_Store::paths_of( $urls );
 	}
 
 	/**
@@ -318,26 +313,19 @@ abstract class TestCase extends RuntimeTestCase {
 	protected function set_url_tokens( \Newspack_Event_Logger_Nodes\Stats_Store $store, array $paths ): bool {
 		$by_token = \Newspack_Event_Logger_Nodes\Stats_Store::token_sets_of( $paths );
 		$parts    = [ \Newspack_Event_Logger_Nodes\Stats_Store::NS_URLTOKEN ];
-		$tokens   = \array_map( 'strval', \array_keys( $by_token ) );
 		$reads    = [];
-		foreach ( $tokens as $token ) {
-			$reads[] = [ $parts, $token ];
+		foreach ( \array_keys( $by_token ) as $token ) {
+			$reads[ (string) $token ] = [ $parts, (string) $token ];
 		}
 		// The stored MAP, not `url_token_sets()`'s hashes: the stamps merge.
 		$existing = $store->bucket_get_multi( $reads );
 		$now      = \time();
 		$writes   = [];
-		foreach ( \array_values( $by_token ) as $at => $hashes ) {
+		foreach ( $by_token as $token => $hashes ) {
 			$writes[] = [
 				$parts,
-				$tokens[ $at ],
-				\Newspack_Event_Logger_Nodes\Stats_Store::merge_token_set(
-					$existing[ $at ] ?? [],
-					$hashes,
-					\Newspack_Event_Logger_Nodes\Stats_Store::URL_SEARCH_MAX,
-					$now,
-					$store->ttl()
-				),
+				(string) $token,
+				$store->merge_token_set( $existing[ (string) $token ] ?? [], $hashes, $now ),
 			];
 		}
 		return [] === $writes || ! \in_array( false, $store->bucket_set_multi( $writes ), true );
@@ -495,12 +483,10 @@ abstract class TestCase extends RuntimeTestCase {
 			}
 			$positional[ $hash ] = $row;
 		}
-		$n      = $hour ? \Newspack_Event_Logger_Nodes\Stats_Store::URL_RANK_N_HOUR : \Newspack_Event_Logger_Nodes\Stats_Store::URL_RANK_N;
-		$writes = [];
-		foreach ( \Newspack_Event_Logger_Nodes\Stats_Store::rank_url_rows( $positional, $paths, $n ) as $sort => $orders ) {
-			foreach ( $orders as $order => $entries ) {
-				$writes[] = [ \Newspack_Event_Logger_Nodes\Stats_Store::url_rank_parts( $sort, $order, $server, $hour ), $key, $entries ];
-			}
+		$writes = \Newspack_Event_Logger_Nodes\Stats_Store::ranked_writes( $positional, $paths, $server, $hour, $key );
+		// As the writer does: the hour's DONE marker, once the site's lists land.
+		if ( $hour && '' === $server ) {
+			$writes[] = [ \Newspack_Event_Logger_Nodes\Stats_Store::url_rank_done_parts(), $key, [ 'at' => \time() ] ];
 		}
 		return ! \in_array( false, $store->bucket_set_multi( $writes ), true );
 	}
@@ -540,17 +526,17 @@ abstract class TestCase extends RuntimeTestCase {
 
 	/** @return array<string,mixed> */
 	protected function get_hourly_bucket( Stats_Store $store, string $bucket ): array {
-		return $store->bucket_get_multi( [ [ Stats_Store::hourly_parts(), $bucket ] ] )[0];
+		return $store->bucket_get_multi( [ [ Stats_Store::hourly_parts(), $bucket ] ] )[0] ?? [];
 	}
 
 	/** @return array<string,mixed> */
 	protected function get_url_hour( Stats_Store $store, string $hour, string $shard ): array {
-		return $store->bucket_get_multi( [ [ Stats_Store::url_hour_parts( $shard ), $hour ] ] )[0];
+		return $store->bucket_get_multi( [ [ Stats_Store::url_hour_parts( $shard ), $hour ] ] )[0] ?? [];
 	}
 
 	/** @return array<string,mixed> */
 	protected function get_category_bucket( Stats_Store $store, string $bucket, string $server = '' ): array {
-		return $store->bucket_get_multi( [ [ Stats_Store::cat_parts( $server ), $bucket ] ] )[0];
+		return $store->bucket_get_multi( [ [ Stats_Store::cat_parts( $server ), $bucket ] ] )[0] ?? [];
 	}
 
 	/**
@@ -594,7 +580,7 @@ abstract class TestCase extends RuntimeTestCase {
 
 	/** @return array<string,mixed> */
 	protected function get_dimensional_bucket( Stats_Store $store, string $dimension, string $bucket, string $server = '' ): array {
-		return $store->bucket_get_multi( [ [ Stats_Store::dim_parts( $dimension, $server ), $bucket ] ] )[0];
+		return $store->bucket_get_multi( [ [ Stats_Store::dim_parts( $dimension, $server ), $bucket ] ] )[0] ?? [];
 	}
 
 	/** @param array<string,mixed> $data */
@@ -604,7 +590,7 @@ abstract class TestCase extends RuntimeTestCase {
 
 	/** @return array<string,mixed> */
 	protected function get_leaderboard_bucket( Stats_Store $store, string $bucket, string $server = '' ): array {
-		return $store->bucket_get_multi( [ [ Stats_Store::lb_parts( $server ), $bucket ] ] )[0];
+		return $store->bucket_get_multi( [ [ Stats_Store::lb_parts( $server ), $bucket ] ] )[0] ?? [];
 	}
 
 	/** @param array<string,mixed> $data */
@@ -614,7 +600,7 @@ abstract class TestCase extends RuntimeTestCase {
 
 	/** @return array<string,mixed> */
 	protected function get_url_category_bucket( Stats_Store $store, string $url_hash, string $bucket ): array {
-		return $store->bucket_get_multi( [ [ Stats_Store::url_cat_parts( $url_hash ), $bucket ] ] )[0];
+		return $store->bucket_get_multi( [ [ Stats_Store::url_cat_parts( $url_hash ), $bucket ] ] )[0] ?? [];
 	}
 
 	/** @param array<string,mixed> $data */
@@ -624,7 +610,7 @@ abstract class TestCase extends RuntimeTestCase {
 
 	/** @return array<string,mixed> */
 	protected function get_url_dimensional_bucket( Stats_Store $store, string $url_hash, string $bucket ): array {
-		return $store->bucket_get_multi( [ [ Stats_Store::url_dim_parts( $url_hash ), $bucket ] ] )[0];
+		return $store->bucket_get_multi( [ [ Stats_Store::url_dim_parts( $url_hash ), $bucket ] ] )[0] ?? [];
 	}
 
 	/** @param array<string,mixed> $data */
@@ -634,7 +620,7 @@ abstract class TestCase extends RuntimeTestCase {
 
 	/** @return array<string,mixed> */
 	protected function get_url_shard( Stats_Store $store, string $bucket, string $shard ): array {
-		return $store->bucket_get_multi( [ [ Stats_Store::url_shard_parts( $shard ), $bucket ] ] )[0];
+		return $store->bucket_get_multi( [ [ Stats_Store::url_shard_parts( $shard ), $bucket ] ] )[0] ?? [];
 	}
 
 	/** @param array<array-key,mixed> $rows */
