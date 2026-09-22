@@ -48,14 +48,6 @@ if ( ! \defined( 'ABSPATH' ) ) {
 class Core {
 
 	/**
-	 * What a wrapped listener's span is called: `<callable> @<priority>`. This
-	 * class mints that (`wrap_callbacks()`), so it owns the shape — and the
-	 * priority may be NEGATIVE, which a pattern without the sign silently reads
-	 * as a custom event instead.
-	 */
-	public const LISTENER_PATTERN = '/ @-?\d+$/';
-
-	/**
 	 * Frames kept from a caller trace, NEAREST first.
 	 *
 	 * Eight cuts a real stack one frame short of `rest_preload_api_request`, the
@@ -522,7 +514,9 @@ class Core {
 	 * PHP_INT_MIN, ahead of the chain, when the rule marks `http` significant
 	 * and logs the span: `http_start()` votes last, so from there a listener
 	 * could only be wrapped for the NEXT call, and the short-circuit worth
-	 * timing is the one answering THIS one.
+	 * timing is the one answering THIS one. A listener that shares the
+	 * PHP_INT_MIN bucket and registered earlier runs before this does, so it
+	 * is wrapped from the second call on.
 	 *
 	 * @param mixed $preempt The vote so far, passed through untouched.
 	 * @return mixed
@@ -933,17 +927,6 @@ class Core {
 		}
 		// Perl's `\s`, spelled out: PHP's default has NUL, no form feed.
 		return \trim( $out, " \t\n\r\f\x0B" );
-	}
-
-	/**
-	 * Whether a span name is a wrapped listener rather than a hook or one of
-	 * the application's own custom events.
-	 *
-	 * @param string $span A span name, as the flame carries it.
-	 * @return bool
-	 */
-	public static function is_listener_span( string $span ): bool {
-		return 1 === \preg_match( self::LISTENER_PATTERN, $span );
 	}
 
 	/**

@@ -27,8 +27,8 @@
 
 namespace Newspack_Event_Logger_Nodes\App;
 
-use Newspack_Event_Logger_Nodes\App\Core as App_Core;
 use Newspack_Event_Logger_Nodes\Log_Manager;
+use Newspack_Event_Logger_Nodes\Flame_Tree;
 use Newspack_Event_Logger_Nodes\Rule;
 use Newspack_Nodes\Core;
 
@@ -645,13 +645,13 @@ class Ask_Assembler {
 	 * @return array<string,mixed>|null Null when the board holds no such row.
 	 */
 	private static function category_brief( array $rows, string $name, string $scope, ?int $samples = null, array $extra = [] ): ?array {
-		if ( ! isset( $rows[ $name ] ) || ! \is_array( $rows[ $name ] ) || App_Core::is_listener_span( $name ) ) {
+		if ( ! isset( $rows[ $name ] ) || ! \is_array( $rows[ $name ] ) || Flame_Tree::is_listener_span( $name ) ) {
 			return null;
 		}
 		$total  = 0.0;
 		$others = [];
 		foreach ( $rows as $key => $row ) {
-			if ( App_Core::is_listener_span( (string) $key ) ) {
+			if ( Flame_Tree::is_listener_span( (string) $key ) ) {
 				continue;
 			}
 			$time   = \is_array( $row ) ? Core::num_float( $row['time'] ?? 0 ) : 0.0;
@@ -775,7 +775,7 @@ class Ask_Assembler {
 	private static function board_rows( array $categories ): array {
 		$rows = [];
 		foreach ( $categories as $name => $row ) {
-			if ( App_Core::is_listener_span( (string) $name ) ) {
+			if ( Flame_Tree::is_listener_span( (string) $name ) ) {
 				continue;
 			}
 			$row    = Core::arr( $row );

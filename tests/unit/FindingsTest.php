@@ -779,6 +779,15 @@ class FindingsTest extends TestCase {
 		$this->assertStringContainsString( 'listeners', $found['detail'] );
 	}
 
+	/** A rule that does not log the span cannot wrap its listeners: the edit to propose is the flag, not the mark. */
+	public function test_a_transport_span_under_a_rule_not_logging_it_is_not_proposed_as_significant(): void {
+		$found = $this->of_kind( Findings::for_request( $this->query_record(), $this->instrumented_rule() ), 'dominant_span' );
+
+		$this->assertSame( 'none', $found['proposal']['action'] );
+		$this->assertStringContainsString( 'log_queries', $found['proposal']['why'] );
+		$this->assertStringNotContainsString( 'already', $found['proposal']['why'] );
+	}
+
 	/** The rule lists `sql` but does not log the span: nothing is wrapped, and re-proposing `sql` would change nothing. */
 	public function test_a_transport_span_marked_significant_without_its_logging_is_not_read_as_wrapped(): void {
 		$rule = $this->instrumented_rule()->with( [ 'significant_events' => [ 'sql' ] ] );
@@ -1031,7 +1040,9 @@ class FindingsTest extends TestCase {
 			[ 'name' => $span, 'value' => 372.0, 'children' => [] ],
 		];
 
-		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'dominant_span' );
+		$rule = $this->instrumented_rule()->with( [ 'log_queries' => true, 'log_http' => true ] );
+
+		$found = $this->of_kind( Findings::for_request( $record, $rule ), 'dominant_span' );
 
 		$this->assertNotNull( $found );
 		$this->assertSame( 'mark_significant', $found['proposal']['action'] );
@@ -1185,8 +1196,9 @@ class FindingsTest extends TestCase {
 		$record['profiles'] = [
 			'sql' => [ 'count' => 586, 'time' => 53018.2, 'entries' => [] ],
 		];
+		$rule = $this->instrumented_rule()->with( [ 'log_queries' => true ] );
 
-		$found = $this->of_kind( Findings::for_request( $record, $this->instrumented_rule() ), 'repetition' );
+		$found = $this->of_kind( Findings::for_request( $record, $rule ), 'repetition' );
 
 		$this->assertNotNull( $found );
 		$this->assertSame( 'mark_significant', $found['proposal']['action'] );

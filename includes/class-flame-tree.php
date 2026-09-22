@@ -45,6 +45,13 @@ final class Flame_Tree {
 	/** What `App\Core::hook_start()` appends to a hook's name to make its span's. */
 	public const HOOK_SUFFIX = ' hook';
 
+	/**
+	 * What `App\Core::wrap_callbacks()` names a wrapped listener's span:
+	 * `<callable> @<priority>`. The priority may be NEGATIVE, which a pattern
+	 * without the sign silently reads as a custom event instead.
+	 */
+	public const LISTENER_PATTERN = '/ @-?\d+$/';
+
 	/** A plugin file's load, as the profiler drop-in names it: `<slug> plugin`. */
 	private const PLUGIN_LOAD_PATTERN = '/^\S+' . self::PLUGIN_LOAD_SUFFIX . '$/';
 
@@ -485,8 +492,7 @@ final class Flame_Tree {
 	 * The vocabulary the fold needs lives here, beside the naming both machines
 	 * compose spans with, because `Flame_Fold` folds a Perl or pyrobase
 	 * producer's entries as readily as `App\Core`'s and must not reach up into
-	 * one of them to ask. A listener span is `App\Core`'s alone, since only
-	 * `wrap_callbacks()` mints one, and `LISTENER_PATTERN` stays there.
+	 * one of them to ask; `App\Core` mints the names and reads the shapes here.
 	 *
 	 * @param string $span A span name, as the flame carries it.
 	 * @return bool
@@ -521,6 +527,17 @@ final class Flame_Tree {
 	public static function base_name( string $name ): string {
 		$at = \strpos( $name, ': ' );
 		return false === $at ? $name : \substr( $name, 0, $at );
+	}
+
+	/**
+	 * Whether a span is a wrapped listener's rather than a hook's or one of
+	 * the application's own custom events.
+	 *
+	 * @param string $span A span name, as the flame carries it.
+	 * @return bool
+	 */
+	public static function is_listener_span( string $span ): bool {
+		return 1 === \preg_match( self::LISTENER_PATTERN, $span );
 	}
 
 	/**

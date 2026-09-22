@@ -1236,7 +1236,8 @@ class Stats_Store {
 	 * the entry and nothing else, and a rotation orphans nothing on disk.
 	 *
 	 * No version component either: a frame in a shape the merge does not name
-	 * is refused by `sum_entry()` and ages out of the retention window.
+	 * sums to a zero count, which `measured()` drops on both sides of the wire,
+	 * and ages out of the retention window.
 	 *
 	 * @param int    $partition Flame-builder partition.
 	 * @param string $key       Entry key within the namespace.
@@ -1807,6 +1808,23 @@ class Stats_Store {
 			$out[] = $hour . \sprintf( '-%02d', $m );
 		}
 		return $out;
+	}
+
+	/**
+	 * The entries of a bucket that measured anything. An entry in a shape a
+	 * sum table does not name reads its count as absent, and a zero count is
+	 * a slot with nothing in it: no request, no chart row. Writer and reader
+	 * drop it alike, until the flush ages it out.
+	 *
+	 * @param array<array-key,mixed> $values      Entries keyed by value name.
+	 * @param int                    $count_field The entry's count index.
+	 * @return array<array-key,mixed> The entries with a count above zero.
+	 */
+	public static function measured( array $values, int $count_field ): array {
+		return \array_filter(
+			$values,
+			static fn ( $entry ): bool => \is_array( $entry ) && Core::num_int( $entry[ $count_field ] ?? null ) > 0
+		);
 	}
 
 	/**

@@ -45,9 +45,9 @@
 
 namespace Newspack_Event_Logger_Nodes\App;
 
-use Newspack_Event_Logger_Nodes\App\Core as App_Core;
 use Newspack_Event_Logger_Nodes\Config as AppConfig;
 use Newspack_Event_Logger_Nodes\Flame_Builder_Node;
+use Newspack_Event_Logger_Nodes\Flame_Tree;
 use Newspack_Event_Logger_Nodes\Hook_Categorizer;
 use Newspack_Event_Logger_Nodes\Log_Manager;
 use Newspack_Event_Logger_Nodes\Reqgrep_Core;
@@ -341,7 +341,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		$merged       = [];
 		$buckets      = self::read_window();
 		foreach ( self::stats_stores() as $store ) {
-			self::merge_buckets_into( $merged, $store->get_dimensional_buckets( $dimension, $buckets, $store_server ), Stats_Store::DIM_SUMS );
+			self::merge_buckets_into( $merged, $store->get_dimensional_buckets( $dimension, $buckets, $store_server ), Stats_Store::DIM_SUMS, Stats_Store::DIM_COUNT );
 		}
 		\ksort( $merged );
 		return $merged;
@@ -358,7 +358,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		$merged  = [];
 		$buckets = self::read_window();
 		foreach ( self::stats_stores() as $store ) {
-			self::merge_buckets_into( $merged, $store->get_category_buckets( $buckets, $server ), Stats_Store::CAT_SUMS );
+			self::merge_buckets_into( $merged, $store->get_category_buckets( $buckets, $server ), Stats_Store::CAT_SUMS, Stats_Store::CAT_REQUESTS );
 		}
 		\ksort( $merged );
 		return $merged;
@@ -374,7 +374,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		$merged  = [];
 		$buckets = self::read_window();
 		foreach ( self::stats_stores() as $store ) {
-			self::merge_buckets_into( $merged, $store->get_url_category_buckets( $hash, $buckets ), Stats_Store::CAT_SUMS );
+			self::merge_buckets_into( $merged, $store->get_url_category_buckets( $hash, $buckets ), Stats_Store::CAT_SUMS, Stats_Store::CAT_REQUESTS );
 		}
 		\ksort( $merged );
 		return $merged;
@@ -1005,7 +1005,7 @@ class Performance_CI_Node extends Service_CI_Node {
 					$series[ $bucket_key ] = $values;
 				}
 			}
-			self::merge_buckets_into( $merged, $series, Stats_Store::DIM_SUMS );
+			self::merge_buckets_into( $merged, $series, Stats_Store::DIM_SUMS, Stats_Store::DIM_COUNT );
 		}
 		\ksort( $merged );
 		return $merged;
@@ -1024,10 +1024,11 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param array<string,mixed>   $rows   Inbound, keyed by bucket.
 	 * @param array<array-key,bool> $fields Field key => is a whole count; an
 	 *                                      index for `DIM_SUMS` and `CAT_SUMS` alike.
+	 * @param int                                   $count_field The entry index a value's request count sits at; a zero count is dropped.
 	 */
-	private static function merge_buckets_into( array &$merged, array $rows, array $fields ): void {
+	private static function merge_buckets_into( array &$merged, array $rows, array $fields, int $count_field ): void {
 		foreach ( $rows as $bucket => $values ) {
-			$merged[ $bucket ] = Stats_Store::sum_fields( Core::arr( $merged[ $bucket ] ?? null ), Core::arr( $values ), $fields );
+			$merged[ $bucket ] = Stats_Store::measured( Stats_Store::sum_fields( Core::arr( $merged[ $bucket ] ?? null ), Core::arr( $values ), $fields ), $count_field );
 		}
 	}
 
@@ -1234,7 +1235,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 */
 	private static function ask_category( string $name, array $context, string $server = '' ): array {
 		// A callback row is no board; its time counts inside its hook.
-		if ( App_Core::is_listener_span( $name ) ) {
+		if ( Flame_Tree::is_listener_span( $name ) ) {
 			throw new \RuntimeException( \esc_html( "'{$name}' is a callback row; ask about the hook it ran under" ) );
 		}
 		$record = self::request_in_context( $context );
