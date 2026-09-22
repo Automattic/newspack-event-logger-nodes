@@ -1266,9 +1266,8 @@ class Stats_Store {
 	 * the entry and nothing else, and a rotation orphans nothing on disk.
 	 *
 	 * No version component either: a frame in a shape the merge does not name
-	 * sums to a zero count, which `measured()` drops on the write and on the
-	 * read where a sum table names the count; one outside those four
-	 * namespaces ages out of the retention window.
+	 * sums to a zero count `measured()` drops, or ages out with its retention
+	 * window — decision 5 names which namespaces take which.
 	 *
 	 * @param int    $partition Flame-builder partition.
 	 * @param string $key       Entry key within the namespace.
@@ -1493,8 +1492,7 @@ class Stats_Store {
 	 * bucket most of whose window is spent, the moment that policy changes.
 	 *
 	 * @api The mirror seam, sizing what it hands back.
-	 * @param string $key Table-RELATIVE entry key: `<ns>:…:<bucket>`, as the
-	 *                    rehydrate seam reads its namespace off segment 0.
+	 * @param string $key Table-RELATIVE entry key: `<ns>:…:<bucket>`.
 	 * @param int    $now Clock, so one answer cannot straddle a boundary.
 	 * @return int Seconds remaining, 0 when the key names no readable bucket.
 	 */
@@ -1515,7 +1513,7 @@ class Stats_Store {
 	 * ISO 8601 through `strtotime()`, because that function reads many
 	 * non-dates as dates, `x` included; the shape is pinned first.
 	 *
-	 * @param string $key Table-relative entry key; the bucket is the last segment.
+	 * @param string $key Table-relative entry key: `<ns>:…:<bucket>`.
 	 * @return array{0: int, 1: int}|null
 	 */
 	private static function bucket_span( string $key ): ?array {

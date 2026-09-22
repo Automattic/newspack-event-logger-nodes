@@ -218,6 +218,7 @@ abstract class TestCase extends RuntimeTestCase {
 	protected static function cache_key( int $partition, string $key ): string {
 		return \Newspack_Nodes\Table_Node::entry_key( \Newspack_Event_Logger_Nodes\Stats_Store::namespace_for( $partition ), $key );
 	}
+
 	/**
 	 * The inverse of `positional_url_row()`, for assertions.
 	 *
