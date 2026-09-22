@@ -538,6 +538,56 @@ class FindingsTest extends TestCase {
 	}
 
 	/**
+	 * A record stamped with a rule this ruleset does not hold is a provenance
+	 * finding, not an instrumentation one: the site ran a ruleset this hub
+	 * never pushed, or the rule was deleted since. Calling it "no rule
+	 * governs" sends the operator to the rule editor, where no edit reaches it.
+	 */
+	public function test_a_stamped_rule_this_ruleset_lacks_is_named_not_called_ungoverned(): void {
+		$record            = $this->healthy_record();
+		$record['rule_id'] = 'cbcdd45b2cba';
+		$findings          = Findings::for_request( $record, null );
+		$found             = $this->of_kind( $findings, 'unresolved_rule' );
+
+		$this->assertNotNull( $found );
+		$this->assertSame( 'cbcdd45b2cba', $found['rule_id'] );
+		$this->assertStringContainsString( 'cbcdd45b2cba', $found['title'] );
+		$this->assertArrayNotHasKey( 'proposal', $found );
+		$this->assertNull( $this->of_kind( $findings, 'insufficient_instrumentation' ) );
+	}
+
+	/**
+	 * One record, one rule id, and no edit to propose: every finding on a
+	 * stamped-miss record carries the stamp and drops its proposal, since a
+	 * rule this ruleset does not hold is nothing the editor can act on.
+	 */
+	public function test_every_finding_on_a_stamped_miss_record_carries_the_stamp_and_no_proposal(): void {
+		$record                      = $this->healthy_record();
+		$record['rule_id']           = 'cbcdd45b2cba';
+		$record['duration_ms']       = 420000.0;
+		$record['flame']['children'] = [
+			[ 'name' => 'init hook', 'value' => 12.0, 'children' => [] ],
+			[
+				'name'     => 'wp_loaded hook',
+				'value'    => 372.0,
+				'children' => [ [ 'name' => 'render_block hook', 'value' => 366.0, 'children' => [] ] ],
+			],
+		];
+
+		$findings = Findings::for_request( $record, null );
+
+		$this->assertNotEmpty( $this->of_kind( $findings, 'unattributed' ) );
+		$dominant = $this->of_kind( $findings, 'dominant_span' );
+		$this->assertNotNull( $dominant );
+		// What the unknown rule logged inside the span is not known here.
+		$this->assertStringNotContainsString( 'listeners', $dominant['detail'] );
+		foreach ( $findings as $finding ) {
+			$this->assertSame( 'cbcdd45b2cba', $finding['rule_id'], $finding['kind'] );
+			$this->assertArrayNotHasKey( 'proposal', $finding, $finding['kind'] );
+		}
+	}
+
+	/**
 	 * A well-instrumented rule against a request that produced no spans — a
 	 * fast 404, a request that bailed early — is NOT a rule registering no
 	 * hooks, and saying so at severity high is a factual falsehood that

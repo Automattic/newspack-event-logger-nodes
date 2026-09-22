@@ -105,7 +105,7 @@ class Ask_Assembler {
 				\array_keys( $kept )
 			),
 			'entries_truncated' => $truncated,
-			'rule'              => self::rule_shape( $rule ),
+			'rule'              => self::rule_shape( $rule, Findings::rule_stamp( $record ) ),
 			'findings'          => Findings::for_request( $record, $rule ),
 			'fetch'             => [
 				...self::fetch( 'dump_request', [ 'rid' => Core::as_string( $record['rid'] ?? '' ) ] ),
@@ -177,7 +177,7 @@ class Ask_Assembler {
 	 * @return array<string,mixed>|null Null when the tree holds no such span.
 	 */
 	public static function for_span( array $record, string $name, ?Rule $rule, string $context = '' ): ?array {
-		return self::span_brief( Findings::flame_of( $record ), $name, self::url_of( $record ), $rule, $context );
+		return self::span_brief( Findings::flame_of( $record ), $name, self::url_of( $record ), self::rule_shape( $rule, Findings::rule_stamp( $record ) ), $context );
 	}
 
 	/**
@@ -195,7 +195,7 @@ class Ask_Assembler {
 	 * @return array<string,mixed>|null Null when the tree holds no such span.
 	 */
 	public static function for_url_span( array $flame, string $name, string $url, ?Rule $rule, string $context ): ?array {
-		$brief = self::span_brief( $flame, $name, Log_Manager::redact_url( $url ), $rule, $context );
+		$brief = self::span_brief( $flame, $name, Log_Manager::redact_url( $url ), self::rule_shape( $rule ), $context );
 		if ( null === $brief ) {
 			return null;
 		}
@@ -236,11 +236,11 @@ class Ask_Assembler {
 	 * @param array<array-key,mixed> $flame   The tree to resolve the span in.
 	 * @param string                 $name    Span name as it appears in the tree.
 	 * @param string                 $url     The URL, already redacted.
-	 * @param Rule|null              $rule    The rule an edit would land on.
+	 * @param array<string,mixed>|null $rule  The rule an edit would land on, as `rule_shape()` carries it.
 	 * @param string                 $context Descriptor of the container this span was picked in.
 	 * @return array<string,mixed>|null Null when the tree holds no such span.
 	 */
-	private static function span_brief( array $flame, string $name, string $url, ?Rule $rule, string $context ): ?array {
+	private static function span_brief( array $flame, string $name, string $url, ?array $rule, string $context ): ?array {
 		$groups = self::span_groups( $flame, $name );
 		if ( [] === $groups ) {
 			return null;
@@ -280,7 +280,7 @@ class Ask_Assembler {
 			'siblings'  => self::top_spans( $best['siblings'] ),
 			'subtree'   => self::top_spans( $subtree ),
 			'url'       => $url,
-			'rule'      => self::rule_shape( $rule ),
+			'rule'      => $rule,
 			'fetch'     => self::fetch(
 				'performance_ask',
 				[ 'descriptor' => "span:{$name}", 'context' => $context ]
@@ -539,12 +539,20 @@ class Ask_Assembler {
 	 * roster of names — neither the hooks (hundreds) nor the custom events
 	 * (dozens), which no consumer renders and a model cannot act on.
 	 *
-	 * @param Rule|null $rule The rule governing the subject's URL.
-	 * @return array<string,mixed>|null Null when no rule governs it.
+	 * A record's stamp that did not resolve rides as `{ id, resolved: false }`,
+	 * so a brief never reads as ungoverned when the site named a rule this
+	 * ruleset does not hold.
+	 *
+	 * @param Rule|null $rule    The rule governing the subject's URL.
+	 * @param string    $stamped The rule id the record carries, or '' for a subject with no record.
+	 * @return array<string,mixed>|null Null when no rule governs it and none was stamped.
 	 */
-	private static function rule_shape( ?Rule $rule ): ?array {
+	private static function rule_shape( ?Rule $rule, string $stamped = '' ): ?array {
 		if ( null === $rule ) {
-			return null;
+			return '' === $stamped ? null : [
+				'id'       => $stamped,
+				'resolved' => false,
+			];
 		}
 		return [
 			'id'                 => $rule->id,

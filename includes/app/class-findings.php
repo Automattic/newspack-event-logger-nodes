@@ -166,8 +166,12 @@ class Findings {
 	/**
 	 * Findings for one completed request record, worst first.
 	 *
+	 * The record's own `rule_id` is the stamp the site wrote; `$rule` is that
+	 * stamp resolved in THIS ruleset, and null when it is not there. Every
+	 * finding then carries the stamp, so one record names one rule.
+	 *
 	 * @param array<array-key,mixed> $record A stored request record (`requests.p*`).
-	 * @param Rule|null              $rule   The rule governing this request's URL, or null when none does.
+	 * @param Rule|null              $rule   The rule governing this request's URL, or null when none resolves.
 	 * @return list<array<string,mixed>>
 	 */
 	public static function for_request( array $record, ?Rule $rule = null ): array {
@@ -175,6 +179,8 @@ class Findings {
 		$flame    = self::flame_of( $record );
 		$nodes    = self::flatten( $flame, self::entry_shapes( $record ) );
 		$profiled = self::profiled_ms( $flame, $nodes );
+		$stamped  = self::rule_stamp( $record );
+		$missing  = null === $rule && '' !== $stamped;
 		$rule_id  = null === $rule ? null : $rule->id;
 
 		$findings = [];
@@ -182,14 +188,17 @@ class Findings {
 		if ( null !== $fatal ) {
 			$findings[] = $fatal;
 		}
-		$cold     = self::cold_start( $record, $rule, $nodes, $profiled, $duration );
+		if ( $missing ) {
+			$findings[] = self::unresolved_rule( $stamped );
+		}
+		$cold     = $missing ? null : self::cold_start( $record, $rule, $nodes, $profiled, $duration );
 		if ( null !== $cold ) {
 			$findings[] = $cold;
 		}
 		foreach (
 			[
 				self::unattributed( $profiled, $duration, $rule_id ),
-				self::dominant_span( $nodes, $profiled, $rule, $duration ),
+				self::dominant_span( $nodes, $profiled, $rule, $duration, ! $missing ),
 				self::plugin_load( $nodes, $rule_id, $duration, $profiled ),
 				self::repetition( $record, $rule ),
 				self::entry_gap( $record, $rule_id ),
@@ -199,6 +208,17 @@ class Findings {
 			if ( null !== $finding ) {
 				$findings[] = $finding;
 			}
+		}
+		if ( $missing ) {
+			// One record, one rule id; no edit here reaches it, so no proposal.
+			$findings = \array_map(
+				static function ( array $finding ) use ( $stamped ): array {
+					unset( $finding['proposal'] );
+					$finding['rule_id'] = $stamped;
+					return $finding;
+				},
+				$findings
+			);
 		}
 		return self::worst_first( $findings );
 	}
@@ -491,9 +511,10 @@ class Findings {
 	 * @param float                                                        $profiled Profiled milliseconds.
 	 * @param Rule|null                                                    $rule     The governing rule, or null when none does.
 	 * @param float                                                        $duration Request duration in milliseconds.
+	 * @param bool                                                         $rule_known Whether `$rule` is the record's resolution; false when the record's stamp did not resolve, and what the rule logged inside the span is not known here.
 	 * @return array<string,mixed>|null The finding, or null when no span holds `DOMINANT_SHARE`.
 	 */
-	private static function dominant_span( array $nodes, float $profiled, ?Rule $rule, float $duration ): ?array {
+	private static function dominant_span( array $nodes, float $profiled, ?Rule $rule, float $duration, bool $rule_known = true ): ?array {
 		if ( $profiled <= 0.0 || $duration < self::MIN_DURATION_MS ) {
 			return null;
 		}
@@ -538,7 +559,7 @@ class Findings {
 					[
 						self::repeat_detail( $repeat ),
 						self::spent_detail( $best, $self_share ),
-						self::interior_detail( $best['name'], $rule ),
+						$rule_known ? self::interior_detail( $best['name'], $rule ) : '',
 					],
 					static fn ( string $sentence ): bool => '' !== $sentence
 				)
@@ -883,6 +904,28 @@ class Findings {
 	}
 
 	/**
+	 * The record names a rule this ruleset does not hold. The site ran a
+	 * ruleset this hub never pushed, or the rule's pattern changed since —
+	 * the id is the pattern's hash, so an edit re-mints it — or the rule was
+	 * deleted; nothing on the record tells the three apart. Like the fatal it
+	 * carries no proposal: no edit here reaches the rule that governed it.
+	 *
+	 * @param string $stamped The rule id the record carries.
+	 * @return array<string,mixed>
+	 */
+	private static function unresolved_rule( string $stamped ): array {
+		return [
+			'kind'     => 'unresolved_rule',
+			'severity' => 'high',
+			'title'    => "Rule {$stamped} governed this request, and this ruleset does not hold it",
+			'detail'   => 'The site ran a ruleset this hub never pushed, or the rule\'s pattern changed or the rule was deleted after the request was logged. No edit here reaches the rule that governed it.',
+			'measured' => 'record',
+			'metric'   => [ 'rule_id' => $stamped ],
+			'rule_id'  => $stamped,
+		];
+	}
+
+	/**
 	 * The request DIED. The one finding that needs no arithmetic: PHP knew the
 	 * message, file, line and offending plugin at the moment it stopped, and
 	 * `Log_Manager` wrote them down. Stating them here is the difference
@@ -916,6 +959,17 @@ class Findings {
 			],
 			'rule_id'  => $rule_id,
 		];
+	}
+
+	/**
+	 * The rule id the site stamped on a record, or '' when it carries none.
+	 * The stamp is what the site's own ruleset answered; resolving it in THIS
+	 * ruleset is the caller's step, and a miss is a finding in its own right.
+	 *
+	 * @param array<array-key,mixed> $record A stored request record.
+	 */
+	public static function rule_stamp( array $record ): string {
+		return Core::as_string( $record['rule_id'] ?? '' );
 	}
 
 	/**
