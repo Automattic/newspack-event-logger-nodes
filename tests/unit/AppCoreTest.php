@@ -2161,7 +2161,7 @@ class AppCoreTest extends TestCase {
 		$core->query_start( 'SELECT option_value FROM wp_options WHERE 1' );
 		$core->http_start( false, [], 'https://img.example.net/a.jpg' );
 		$this->assertSame( [ 'sql' ], $this->http_spans( $core, 'query_spans' ) );
-		$this->assertCount( 1, $this->http_spans( $core ) );
+		$this->assertSame( [ 'http' ], $this->http_spans( $core ) );
 
 		// The next scope logs both transports too: the reset is unconditional.
 		$this->set_governing_rule( new Rule( 'q', '/', Rule::ACTION_LOG, hooks: [ 'init' ], log_queries: true, log_http: true ) );

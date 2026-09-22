@@ -538,13 +538,23 @@ class Stats_Store {
 	 */
 	public function get_url_dimension_buckets( string $url_hash, string $dimension, array $buckets ): array {
 		$series = [];
-		foreach ( $this->lookup_buckets( [ self::NS_URL_DIM, $url_hash ], $buckets ) as $bucket => $dims ) {
+		foreach ( $this->lookup_buckets( self::url_dim_parts( $url_hash ), $buckets ) as $bucket => $dims ) {
 			$values = Core::arr( $dims )[ $dimension ] ?? null;
 			if ( \is_array( $values ) ) {
 				$series[ $bucket ] = $values;
 			}
 		}
 		return $series;
+	}
+
+	/**
+	 * Namespace prefix for one URL's dimensional series.
+	 *
+	 * @param string $url_hash 12-char URL hash.
+	 * @return array<int,string>
+	 */
+	public static function url_dim_parts( string $url_hash ): array {
+		return [ self::NS_URL_DIM, $url_hash ];
 	}
 
 	/**
@@ -576,7 +586,17 @@ class Stats_Store {
 	 * @return array<string,mixed> Category maps keyed by bucket; misses absent.
 	 */
 	public function get_url_category_buckets( string $url_hash, array $buckets ): array {
-		return $this->lookup_buckets( [ self::NS_URL_CAT, $url_hash ], $buckets );
+		return $this->lookup_buckets( self::url_cat_parts( $url_hash ), $buckets );
+	}
+
+	/**
+	 * Namespace prefix for one URL's category series.
+	 *
+	 * @param string $url_hash 12-char URL hash.
+	 * @return array<int,string>
+	 */
+	public static function url_cat_parts( string $url_hash ): array {
+		return [ self::NS_URL_CAT, $url_hash ];
 	}
 
 	/**
@@ -1899,26 +1919,6 @@ class Stats_Store {
 	 */
 	public static function hourly_parts(): array {
 		return [ self::NS_HOURLY ];
-	}
-
-	/**
-	 * Namespace prefix for one URL's dimensional series.
-	 *
-	 * @param string $url_hash 12-char URL hash.
-	 * @return array<int,string>
-	 */
-	public static function url_dim_parts( string $url_hash ): array {
-		return [ self::NS_URL_DIM, $url_hash ];
-	}
-
-	/**
-	 * Namespace prefix for one URL's category series.
-	 *
-	 * @param string $url_hash 12-char URL hash.
-	 * @return array<int,string>
-	 */
-	public static function url_cat_parts( string $url_hash ): array {
-		return [ self::NS_URL_CAT, $url_hash ];
 	}
 
 	/**
