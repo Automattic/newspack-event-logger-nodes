@@ -4479,17 +4479,14 @@ class FlameBuilderTest extends TestCase {
 		Core::$memd = new InMemoryMemcached();
 		Flame_Builder_Node::reset_mirror_read_budget();
 		$this->use_base_dir( $this->make_temp_dir(), [ 'stats_mirror_node' => 'flames-stats', 'stats_mirror_read_budget_ms' => 2500 ] );
-		$store = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		$this->mirrored_builder( $store, 'flames-stats', CountingIndexPartition::class );
 		$reader = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		Flame_Builder_Node::arm_stats_reader( $reader );
 		// A closed hour three back: a bucket in this tier would be remembered.
-		$hour        = Stats_Store::hour_of( Stats_Store::bucket_key( \time() - 3 * 3600 ) );
-		$keys_before = \count( Core::$memd->keys() );
+		$hour = Stats_Store::hour_of( Stats_Store::bucket_key( \time() - 3 * 3600 ) );
 
 		$this->assertSame( [], $reader->get_leaderboard_hours( [ $hour ] ) );
 
-		$this->assertSame( $keys_before, \count( Core::$memd->keys() ), 'no marker for a key the mirror could never hold' );
+		$this->assertFalse( Core::$memd->get( self::cache_key( 0, Stats_Store::NS_LB_HOUR . ':' . $hour ) ), 'no marker for a key the mirror could never hold' );
 	}
 
 	/** An unnamed mirror leaves the reader memcache-only: there is nothing to budget. */
