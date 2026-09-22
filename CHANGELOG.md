@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.101.2] - 2026-09-22
+
 ### Changed
 - **A silent request is given 720 to 1080 seconds before it is evicted as
   timed out.** The request builder's LRU rotates every 360 seconds; the
