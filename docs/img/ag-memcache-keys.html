@@ -35,11 +35,11 @@ table.ns tr.coarse td.k { color:#1E5B1E; }
   <div class="s scope"><b>&lt;install scope&gt;</b>the substrate's salt lives here; rotating it orphans every key</div>
   <div class="s"><b>evlog</b>PREFIX_BASE</div>
   <div class="s"><b>p{N}</b>the flame-builder partition</div>
-  <div class="s"><b>{namespace}</b>one of fourteen</div>
+  <div class="s"><b>{namespace}</b>one of nineteen</div>
   <div class="s"><b>{scope parts}</b>a shard, a url_hash, a dimension, a server's fnv1a32</div>
   <div class="s bk"><b>{bucket}</b><span class="mono">Y-m-d-H-i</span> floored to 5 minutes, or <span class="mono">Y-m-d-H</span> for a coarse tier</div>
 </div>
-<p class="cap">Lexical order is chronological order, which is what lets expiry compare keys and <span class="mono">is_open_bucket()</span> decide from the key alone whether a bucket is still being written. Two namespaces key on a hash instead of a bucket: <span class="mono">url</span> and <span class="mono">urlmap</span>.</p>
+<p class="cap">Lexical order is chronological order, which is what lets expiry compare keys and <span class="mono">is_open_bucket()</span> decide from the key alone whether a bucket is still being written. Three namespaces end in something else: <span class="mono">url</span> and <span class="mono">urlmap</span> key on a hash, <span class="mono">urltoken</span> on a token.</p>
 
 <table class="ns">
   <tr><th>key, under evlog:p{N}:</th><th>value</th><th>TTL</th></tr>
@@ -49,7 +49,7 @@ table.ns tr.coarse td.k { color:#1E5B1E; }
   <tr><td class="k">lb_s:{server}:{bucket}</td><td>a per-server leaderboard; no coarse tier, since the servers in an hour cannot be enumerated from the keyspace</td><td class="t">min_lifetime</td></tr>
   <tr class="tier"><td class="k">urls:{shard}:{bucket}</td><td>{ url_hash → positional row }, sharded 16 ways by the hash's first hex digit; a <span class="mono">w</span> prefix on the shard names worker traffic. At most MAX_URLS_PER_SHARD 2,000 rows, the tail folded into <span class="mono">Other</span> / <span class="mono">Other:worker</span></td><td class="t">min( min_lifetime, 7200 )</td></tr>
   <tr class="tier coarse"><td class="k">urls_h:{shard}:{Y-m-d-H}</td><td>one hour of merged rows in the same shape. DERIVED; only the grace hour, the newest read coarse, falls back to its twelve fine buckets while it is missing</td><td class="t">min_lifetime</td></tr>
-  <tr class="tier"><td class="k">urlnames:{shard}:{bucket}</td><td>{ url_hash → path }, the searchable name index; paths only, uncapped</td><td class="t">min( min_lifetime, 7200 )</td></tr>
+  <tr class="tier"><td class="k">urlnames:{shard}:{bucket}</td><td>{ url_hash → path }, one shard's names, for the <span class="mono">url</span> sort and for the fold a search falls back to; paths only, uncapped</td><td class="t">min( min_lifetime, 7200 )</td></tr>
   <tr class="tier coarse"><td class="k">urlnames_h:{shard}:{Y-m-d-H}</td><td>its coarse tier, a union rather than a sum, folded in the same pass and the same <span class="mono">bucket_set_multi()</span> as <span class="mono">urls_h</span></td><td class="t">min_lifetime</td></tr>
   <tr><td class="k">urlmap:{hash}</td><td>[ path, origin ], written once per URL and rewritten only after half its TTL; answers about ONE hash</td><td class="t">min_lifetime</td></tr>
   <tr><td class="k">url:{hash}</td><td>the per-URL flame and profile blob, through a rotating accumulator of 5 buckets × 1,000</td><td class="t">max( 3600, min_lifetime / 24 )</td></tr>
@@ -57,6 +57,10 @@ table.ns tr.coarse td.k { color:#1E5B1E; }
   <tr><td class="k">url_dim:{hash}:{bucket}</td><td>the same, every dimension in one value, MAX_URL_DIM_VALUES 10</td><td class="t">min_lifetime</td></tr>
   <tr><td class="k">categories[:{server}]:{bucket}</td><td>{ category → [ ms, calls, requests ] }, positional CAT_SUMS, capped at MAX_CAT_VALUES 50, plus a synthetic <span class="mono">total</span> every ranking holds out</td><td class="t">min_lifetime</td></tr>
   <tr><td class="k">url_cat:{hash}:{bucket}</td><td>the same per URL</td><td class="t">min_lifetime</td></tr>
+  <tr class="tier"><td class="k">urlrank:{sort}:{order}:{bucket}</td><td>the bucket's ranked top URL_RANK_N 200 rows &mdash; one list per URL_SORTS key and URL_ORDERS direction, fourteen a bucket &mdash; as positional [ hash, row ] entries carrying the row's thirteen scalars and never the <span class="mono">srv</span> split. DERIVED from <span class="mono">urls</span> after the flush's merge landed, so not mirrored</td><td class="t">min( min_lifetime, 7200 )</td></tr>
+  <tr class="tier coarse"><td class="k">urlrank_h:{sort}:{order}:{Y-m-d-H}</td><td>its coarse tier, URL_RANK_N_HOUR 500 entries, written by the same <span class="mono">roll_up_hours()</span> pass from the rows it folded; the site-wide <span class="mono">count:desc</span> list goes LAST and is the one key the fold probes</td><td class="t">min_lifetime</td></tr>
+  <tr class="tier"><td class="k">urlrank_s:{server}:{sort}:{order}:{bucket}<br>urlrank_sh:{server}:{sort}:{order}:{Y-m-d-H}</td><td>one server's lists on each tier, the scope in the KEY because a list is bounded; each entry the row projected to that server</td><td class="t">as the two above</td></tr>
+  <tr><td class="k">urltoken:{token}</td><td>{ hash &rarr; last named } for every 3 to 12 character prefix of every word of a URL's path. An entry is dropped once a retention window has passed over it, so the set shrinks with the site; past URL_SEARCH_MAX 5,000 LIVE hashes it is the <span class="mono">*</span> sentinel alone, and that token's term is answered by the fold</td><td class="t">min_lifetime</td></tr>
 </table>
 
 <h3 style="font-size:14px;margin:18px 0 4px">What one read of the URL index asks for</h3>
