@@ -2312,14 +2312,6 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 		$partition = null;
 		$resolved  = false;
 		return static function ( array $keys ) use ( $resolve, $partition_index, $store, &$partition, &$resolved ): ?array {
-			// Once, absence included: an undeclared mirror is not re-sought.
-			if ( ! $resolved ) {
-				$partition = $resolve();
-				$resolved  = true;
-			}
-			if ( null === $partition ) {
-				return null;
-			}
 			// Frames are filed under the durable key; the Table asks relative.
 			$hashes = [];
 			foreach ( $keys as $key ) {
@@ -2336,6 +2328,14 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 			// Nothing this mirror can hold: no walk, no partition to resolve.
 			if ( [] === $hashes ) {
 				return [];
+			}
+			// Once: null is no mirror declared; a late node resolves detached.
+			if ( ! $resolved ) {
+				$partition = $resolve();
+				$resolved  = true;
+			}
+			if ( null === $partition ) {
+				return null;
 			}
 			// Bounded: otherwise a locator per key in the WHOLE partition.
 			$locators = $partition->locate_by(

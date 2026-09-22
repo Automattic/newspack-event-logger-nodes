@@ -239,7 +239,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * real code (mirrors `Insights_CI_Demo_Node::$read_items`).
 	 *
 	 * It takes the SHARD, so a point read goes through it too. A seam that
-	 * cannot express one forces `row()` to branch on the seam's presence,
+	 * cannot express one forces `load_row()` to branch on the seam's presence,
 	 * and the narrowing this exists to measure never runs under it.
 	 *
 	 * Resolved on every read through `read_index()`; reassign in a test
@@ -667,7 +667,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @return array<string,mixed>
 	 * @throws \RuntimeException On an unknown descriptor or a missing context.
 	 */
-	private function assemble_ask( array $descriptors, string $server = '', array $filters = [] ): array {
+	private function assemble_ask( array $descriptors, string $server, array $filters ): array {
 		$target = Ask_Assembler::parse_descriptor( Core::as_string( $descriptors[0] ?? '' ) );
 		if ( null === $target ) {
 			throw new \RuntimeException(
@@ -745,7 +745,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @return array<string,mixed>
 	 * @throws \RuntimeException When no URL row carries that hash.
 	 */
-	private function ask_url( string $hash, string $server = '' ): array {
+	private function ask_url( string $hash, string $server ): array {
 		// @longform Through `row()`, never the loader: the loader emits sums
 		// and leaves the means to the projection, so a reader taking its
 		// output raw quotes a confident 0 for every average. Scoped, because
@@ -1116,7 +1116,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @return array<string,mixed>
 	 * @throws \RuntimeException When the rid resolves nowhere.
 	 */
-	private static function ask_request( string $rid, int $partition, array $context = [], string $server = '' ): array {
+	private static function ask_request( string $rid, int $partition, array $context, string $server ): array {
 		$record = self::load_request( $rid, $partition );
 		return Ask_Assembler::for_request( $record, self::rule_for_record( $record ), self::descriptor_of( $context, 'url' ), $server );
 	}
@@ -1233,7 +1233,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @return array<string,mixed>
 	 * @throws \RuntimeException When no board holds the category, or the name is a callback row.
 	 */
-	private static function ask_category( string $name, array $context, string $server = '' ): array {
+	private static function ask_category( string $name, array $context, string $server ): array {
 		// A callback row is no board; its time counts inside its hook.
 		if ( Flame_Tree::is_listener_span( $name ) ) {
 			throw new \RuntimeException( \esc_html( "'{$name}' is a callback row; ask about the hook it ran under" ) );
@@ -1714,9 +1714,6 @@ class Performance_CI_Node extends Service_CI_Node {
 	/**
 	 * One URL's display row in the given scope, or null when it is absent from
 	 * the index — or present but never served by that server.
-	 *
-	 * Projects the single match, not the whole index: its two callers would
-	 * otherwise hold a second copy of every URL to read one.
 	 *
 	 * @param string                 $hash   12-char URL hash.
 	 * @param string                 $server Reporting server to scope to; '' reads every server.
