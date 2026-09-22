@@ -308,21 +308,26 @@ class StatsStoreTest extends TestCase {
 		// Atomic. Unscoped, `evlog:p0:hourly` is the SAME key for both, so a
 		// co-tenant's request volume lands in this install's dashboard.
 		$mc = $this->seed_memd();
-		// The suite nulls globals between tests; own the shim here.
+		// Own the shim here; the bootstrap's comes back at the end, since a
+		// later suite in the same process asks it for esc_like().
+		$previous_wpdb   = $GLOBALS['wpdb'];
 		$GLOBALS['wpdb'] = new class() {
 			public string $prefix      = 'wp_';
 			public string $base_prefix = 'wp_';
 		};
 		\Newspack_Nodes\Cache_Backend::$site = '';
 
-		$this->set_hourly_bucket( $this->make_store(), '2026-01-01-00', [ "count" => 7719 ] );
-		$mine = $mc->keys();
+		try {
+			$this->set_hourly_bucket( $this->make_store(), '2026-01-01-00', [ "count" => 7719 ] );
+			$mine = $mc->keys();
 
-		$GLOBALS['wpdb']->base_prefix       = 'wpco_tenant_';
-		\Newspack_Nodes\Cache_Backend::$site = '';
-		$this->set_hourly_bucket( $this->make_store(), '2026-01-01-00', [ "count" => 1 ] );
-
-		\Newspack_Nodes\Cache_Backend::$site = '';
+			$GLOBALS['wpdb']->base_prefix       = 'wpco_tenant_';
+			\Newspack_Nodes\Cache_Backend::$site = '';
+			$this->set_hourly_bucket( $this->make_store(), '2026-01-01-00', [ "count" => 1 ] );
+		} finally {
+			\Newspack_Nodes\Cache_Backend::$site = '';
+			$GLOBALS['wpdb']                     = $previous_wpdb;
+		}
 
 		$this->assertNotEmpty( $mine );
 		$this->assertSame( [], \array_intersect( $mine, \array_diff( $mc->keys(), $mine ) ) );
@@ -863,10 +868,24 @@ class StatsStoreTest extends TestCase {
 		$got = $this->get_url_dimensional_bucket( $store, 'ab12cd34ef56', '2026-02-03-04-05' );
 		$this->assertSame( 29, $got['status']['503'][ Stats_Store::DIM_COUNT ] );
 		$this->assertSame( 31, $got['method']['POST'][ Stats_Store::DIM_COUNT ] );
-		$this->assertSame(
-			29,
-			$store->get_url_dimensional_buckets( 'ab12cd34ef56', [ '2026-02-03-04-05' ] )['2026-02-03-04-05']['status']['503'][ Stats_Store::DIM_COUNT ]
-		);
+	}
+
+	/** The store chose the bucket-major blob, so the store cuts one dimension out of it. */
+	public function test_url_dimension_buckets_project_one_dimension_out_of_the_blob(): void {
+		$store = $this->make_store();
+		$this->set_url_dimensional_bucket( $store, 'ab12cd34ef56', '2026-02-03-04-05', [
+			'status' => [ '503' => self::dim_entry( 29, 1.0, 1.0 ) ],
+			'method' => [ 'POST' => self::dim_entry( 31, 2.0, 2.0 ) ],
+		] );
+		$this->set_url_dimensional_bucket( $store, 'ab12cd34ef56', '2026-02-03-04-10', [
+			'method' => [ 'GET' => self::dim_entry( 37, 3.0, 3.0 ) ],
+		] );
+
+		$got = $store->get_url_dimension_buckets( 'ab12cd34ef56', 'status', [ '2026-02-03-04-05', '2026-02-03-04-10', '2026-02-03-04-15' ] );
+
+		$this->assertSame( [ '2026-02-03-04-05' ], \array_keys( $got ), 'a bucket without the dimension, or absent, is no row' );
+		$this->assertSame( [ 503 ], \array_keys( $got['2026-02-03-04-05'] ) );
+		$this->assertSame( 29, $got['2026-02-03-04-05']['503'][ Stats_Store::DIM_COUNT ] );
 	}
 
 	public function test_url_category_bucket_round_trips(): void {

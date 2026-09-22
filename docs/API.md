@@ -351,13 +351,13 @@ false.
 | Method | What it does |
 |--------|--------------|
 | `static instance(): self` | The active instance, constructed on first call. Construction is what may start logging. |
-| `static has_instance(): bool` | Whether one exists, without constructing. Instrumentation asks this first. |
+| `static has_instance(): bool` | Whether one exists, without constructing. Tests ask it to prove instrumentation built none. |
 | `static started_instance(): ?self` | The instance IFF it has started — the seam for "is there somewhere to log this line?". |
 | `static reset(): void` | Finish and drop the instance. |
 | `message( string $category, array $data = [] ): bool` | The one write path. Returns true when the line was written. |
 | `error/warning/info/alert( string ): bool` | One-line writes under those categories. `error` and `warning` reach the Error Log; `alert` routes to `Request_Builder_Node`'s `alerts_target`, the fleet journal, and nowhere else. |
-| `start( string $label, array $data = [] ): void` | Open a timed span and push its frame. Drops the frame at `MAX_TIMER_DEPTH` (100), or when the start line could not be written. |
-| `complete( string $label, array $data = [], string $suffix = 'complete' ): void` | Close the innermost frame carrying that label; frames above it drain as `(orphaned)`. An unknown label matches nothing. |
+| `start( string $label, array $data = [], bool $shaped = false ): void` | Open a timed span and push its frame. `$shaped` marks `m` as a query shape, whose literals the producer already replaced, so it is not redacted as a URL would be. Drops the frame at `MAX_TIMER_DEPTH` (100), or when the start line could not be written. |
+| `complete( string $label, array $data = [], string $suffix = 'complete', bool $shaped = false ): void` | Close the innermost frame carrying that label; frames above it drain as `(orphaned)`. An unknown label matches nothing. |
 | `finish(): void` | Idempotent. Drain the timer stack, then write the terminal. Registered as a shutdown function, so it runs after a fatal too. |
 | `flush(): void` | Drain every materialized Partition batch. Nuclear Gyrobase calls it before `proc_open` and after a `job` entry. |
 | `is_started(): bool` | The rule said `log` and `finish()` has not run. |

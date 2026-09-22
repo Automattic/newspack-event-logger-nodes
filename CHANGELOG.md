@@ -16,15 +16,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   started, because `SAVEQUERIES` outlives every scope and the drain sat
   behind the return a missing logger took.
 - **A listener at a negative priority is a callback in the request builder
-  too**, nested under its hook rather than debited from it, the sign the
-  span pattern already carried.
+  and in the dashboard's callback rows too**, nested under its hook rather
+  than debited from it, the sign the span pattern already carried.
 - **A transport the rule does not log proposes the flag.** The findings' row
   for that state now carries a `log_transport` proposal whose field is
   `log_queries` or `log_http`, so the dashboards render it; a row without an
   action showed its detail alone.
 
 ### Changed
-- **Every instrumentation callback asks `Log_Manager::started_instance()`**,
+- **Every `App\Core` callback asks `Log_Manager::started_instance()`**,
   the wrapped listeners included: a wrapper outlives its request, and one
   firing with nowhere to log now calls through untimed rather than
   constructing the logger inside the callback.
@@ -33,9 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the flame builder's caps alike: a zero count is a slot with nothing in
   it, and it is no chart row on either side.
 - **`Flame_Tree` owns the listener span's name**: `listener_name()` mints it
-  and `is_listener_span()` reads it, beside the other span classifiers, and
-  the dashboard's callback rows accept a negative priority as the PHP side
-  does.
+  and `is_listener_span()` reads it, beside the other span classifiers.
 
 ## [0.101.0] - 2026-09-21
 

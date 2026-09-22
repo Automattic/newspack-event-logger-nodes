@@ -815,7 +815,7 @@ class Request_Builder_Node extends Timer_Node {
 			unset( $profile );
 		}
 
-		// Subtract child time from ancestors; callbacks (" @N") don't subtract.
+		// Subtract child time from ancestors; a listener (" @N") does not.
 		if ( ! empty( $stack ) && ! Flame_Tree::is_listener_span( $state ) ) {
 			for ( $j = \count( $stack ) - 1; $j >= 0; $j-- ) {
 				$ancestor_frame = $stack[ $j ];

@@ -2153,6 +2153,24 @@ class AppCoreTest extends TestCase {
 		$this->assertTrue( $this->is_registered( 'log_query_custom_data', [ $core, 'query_end' ] ) );
 	}
 
+	/** A span the old scope opened and never closed has no close in the new one, so the rebind drops it. */
+	public function test_rebind_empties_both_open_span_stacks(): void {
+		$this->require_priority_aware_add_filter_or_skip();
+		$this->set_governing_rule( new Rule( 'r', '/', Rule::ACTION_LOG, hooks: [ 'init' ], log_queries: true, log_http: true ) );
+		$core = new Core();
+		$core->query_start( 'SELECT option_value FROM wp_options WHERE 1' );
+		$core->http_start( false, [], 'https://img.example.net/a.jpg' );
+		$this->assertSame( [ 'sql' ], $this->http_spans( $core, 'query_spans' ) );
+		$this->assertCount( 1, $this->http_spans( $core ) );
+
+		// The next scope logs both transports too: the reset is unconditional.
+		$this->set_governing_rule( new Rule( 'q', '/', Rule::ACTION_LOG, hooks: [ 'init' ], log_queries: true, log_http: true ) );
+		$core->rebind_for_current_scope();
+
+		$this->assertSame( [], $this->http_spans( $core, 'query_spans' ) );
+		$this->assertSame( [], $this->http_spans( $core ) );
+	}
+
 	/** SAVEQUERIES outlives the logger; the drain must not wait for one. */
 	public function test_query_end_drains_wpdb_queries_without_a_logger(): void {
 		$this->require_priority_aware_add_filter_or_skip();

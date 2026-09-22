@@ -528,14 +528,23 @@ class Stats_Store {
 	}
 
 	/**
-	 * Read many of one URL's dimensional buckets in a single round-trip.
+	 * One dimension of a URL's buckets in a single round-trip, cut out of the
+	 * bucket-major blob here, where its layout was chosen.
 	 *
-	 * @param string            $url_hash 12-char URL hash.
-	 * @param array<int,string> $buckets  Bucket keys.
-	 * @return array<string,mixed> Dimension maps keyed by bucket; misses absent.
+	 * @param string            $url_hash  12-char URL hash.
+	 * @param string            $dimension One of DIMENSIONS.
+	 * @param array<int,string> $buckets   Bucket keys.
+	 * @return array<string,array<array-key,mixed>> Value => entry, keyed by bucket; a bucket without the dimension is absent.
 	 */
-	public function get_url_dimensional_buckets( string $url_hash, array $buckets ): array {
-		return $this->lookup_buckets( [ self::NS_URL_DIM, $url_hash ], $buckets );
+	public function get_url_dimension_buckets( string $url_hash, string $dimension, array $buckets ): array {
+		$series = [];
+		foreach ( $this->lookup_buckets( [ self::NS_URL_DIM, $url_hash ], $buckets ) as $bucket => $dims ) {
+			$values = Core::arr( $dims )[ $dimension ] ?? null;
+			if ( \is_array( $values ) ) {
+				$series[ $bucket ] = $values;
+			}
+		}
+		return $series;
 	}
 
 	/**
