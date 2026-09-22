@@ -1199,10 +1199,11 @@ class Log_Manager {
 			return;
 		}
 		$this->message( self::WORKER_TYPE, [ 'm' => $worker_type ] );
-		if ( isset( $_SERVER['NEWSPACK_NODES_WORKER_PARTITION'] ) ) {
-			// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Sanitized on the same line.
-			$partition = \sanitize_text_field( Core::as_string( $_SERVER['NEWSPACK_NODES_WORKER_PARTITION'] ) );
-			$this->message( self::WORKER_PARTITION, [ 'm' => Core::num_int( $partition ) ] );
+		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Sanitized on the same line.
+		$partition = \sanitize_text_field( Core::as_string( $_SERVER['NEWSPACK_NODES_WORKER_PARTITION'] ?? '' ) );
+		// A value that is not a number names no partition; write nothing.
+		if ( \is_numeric( $partition ) ) {
+			$this->message( self::WORKER_PARTITION, [ 'm' => (int) $partition ] );
 		}
 	}
 

@@ -63,8 +63,8 @@ class Settings_Schema {
 	 *
 	 * The platform's own requests to itself — the cron loopback and the
 	 * substrate's endpoints — need no skip: `Log_Manager` names each as a
-	 * worker, and worker traffic sits behind the dashboards' Include Workers
-	 * toggle.
+	 * worker, and worker traffic stays off the URL table's default rows and
+	 * out of the global sums.
 	 *
 	 * No match means skip, and empty means empty: drop the `/` rule and the
 	 * site logs nothing. A `log` rule may also carry hook lists, custom and

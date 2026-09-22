@@ -10,7 +10,7 @@
       <p><strong>URL query string</strong> — a denylist matching the SHAPE of a parameter name: a name containing a credential token, or carrying one as a whole segment. A parity check holds both writers to the same pattern, applied in the same place.</p>
       <p><strong>Hook arguments</strong> — every key kept, every value replaced by <span class="mono">?</span> unless its key is one of 104 allowed names.</p>
       <p><strong>SQL</strong> — every quoted literal becomes <span class="mono">?</span>.</p>
-      <p>One entry per request, <span class="mono">environment_v3</span>, is a map of 34 server variables: <span class="mono red">REMOTE_ADDR</span>, <span class="mono red">HTTP_USER_AGENT</span>, <span class="mono red">HTTP_X_FORWARDED_FOR</span>, the JA3 and JA4 fingerprints.</p>
+      <p>One entry per request, <span class="mono">environment_v3</span>, is a map of 32 server variables: <span class="mono red">REMOTE_ADDR</span>, <span class="mono red">HTTP_USER_AGENT</span>, <span class="mono red">HTTP_X_FORWARDED_FOR</span>, the JA3 and JA4 fingerprints.</p>
       <p style="margin:0">Each entry is capped at 3,840 bytes so the append stays atomic.</p>
       <div class="chip mono blue" style="margin:12px 0 0;text-align:center">firehose.p0</div>
     </div>

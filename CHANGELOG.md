@@ -20,9 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the substrate's `command`, `log/stream`, `messages/stream` and
   `workers/spawn` endpoints are named by path — `cron`, `command`, `stream`,
   `spawn` — when the serving process carries no env var, so a rule that logs
-  them keeps them behind the Include Workers toggle and off the global
-  averages. The shipped seed no longer skips them: it is the `/` log rule
-  alone.
+  them keeps them off the URL table's default rows and out of the global
+  sums. The shipped seed no longer skips them: it is the `/` log rule alone,
+  and under it every dashboard `command` poll and both SSE streams write a
+  request record into the same retention as visitor traffic.
 - **`sql` and `http` as significant events wrap the filter their span
   covers.** A rule listing `sql` gets the `query` filter's listeners wrapped
   inside each `sql` span, and one listing `http` gets `pre_http_request`'s
