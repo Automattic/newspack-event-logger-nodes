@@ -31,6 +31,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one cache write each, though the mirror never holds that tier.
 
 ### Changed
+- **A silent request is given 600 to 900 seconds before it is evicted as
+  timed out**, up from 400 to 600: the request builder's LRU rotates every
+  300 seconds. A worker's `v1/workers/spawn` request lives its whole
+  595-second `max_runtime`, and the old window timed every one out.
 - **Every `App\Core` callback asks `Log_Manager::started_instance()`**,
   the wrapped listeners included: a wrapper outlives its request, and one
   firing with nowhere to log now calls through untimed rather than

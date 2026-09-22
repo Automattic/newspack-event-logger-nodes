@@ -39,7 +39,7 @@
 </style>
 <div class="sheet">
 <h1>A record is assembled by sequence, evicted by silence, and folded under pressure</h1>
-<p class="sub">Request_Builder_Node keys every firehose line by the envelope's KEY, checks its <span class="mono">n</span> against the number it expects next, and holds the record in a three-bucket LRU until the terminal arrives or the LRU evicts it, 400 to 600 seconds after its last line. Two entry bounds fold a record rather than cap it.</p>
+<p class="sub">Request_Builder_Node keys every firehose line by the envelope's KEY, checks its <span class="mono">n</span> against the number it expects next, and holds the record in a three-bucket LRU until the terminal arrives or the LRU evicts it, 600 to 900 seconds after its last line. Two entry bounds fold a record rather than cap it.</p>
 
 <div class="top">
   <div class="card">
@@ -53,13 +53,13 @@
     <p>A <span class="mono">gyrobase (start)</span> pushes the counter and restarts at 1, so a nested <span class="mono">proc_open</span> render under the same rid is no break; its <span class="mono">(complete)</span> pops it back. Past <span class="mono">MAX_STACK_DEPTH</span> 50 open spans the record is <span class="mono">is_runaway</span>: still visible, for Perl gyroscope parity, no longer accumulating, and evicted by the same rotation as any other.</p>
   </div>
   <div class="card">
-    <h3>The LRU: 3 buckets × 100, rotating every 200 s or when the newest fills</h3>
+    <h3>The LRU: 3 buckets × 100, rotating every 300 s or when the newest fills</h3>
     <div class="buckets">
       <div class="bk"><b>newest</b>every <span class="mono">get()</span> promotes the rid here</div>
       <div class="bk"><b>middle</b>untouched for one rotation</div>
       <div class="bk old"><b>oldest</b>evicted at the next rotation, stamped <span class="mono">T</span></div>
     </div>
-    <p>The window measures SILENCE, not duration: a request still emitting lines is re-promoted on each and never ages out. Rotation runs on an absolute 200 s grid, so a silent record goes at the third rotation, 400 to 600 s after its last line, and sooner when a full newest bucket forces one. <span class="mono">fire()</span> on the Router's 1 s TIMER rotates the cache too, so a stalled request times out on an idle partition.</p><p>Eviction stamps <span class="mono">duration_ms</span> as whole seconds since the start, times 1,000, and emits through <span class="mono">$this-&gt;sink</span>, never a direct file write. A record with no <span class="mono">url</span> is dropped on either path.</p>
+    <p>The window measures SILENCE, not duration: a request still emitting lines is re-promoted on each and never ages out. Rotation runs on an absolute 300 s grid, so a silent record goes at the third rotation, 600 to 900 s after its last line, and sooner when a full newest bucket forces one. <span class="mono">fire()</span> on the Router's 1 s TIMER rotates the cache too, so a stalled request times out on an idle partition.</p><p>Eviction stamps <span class="mono">duration_ms</span> as whole seconds since the start, times 1,000, and emits through <span class="mono">$this-&gt;sink</span>, never a direct file write. A record with no <span class="mono">url</span> is dropped on either path.</p>
   </div>
   <div class="card">
     <h3>What leaves, and where</h3>

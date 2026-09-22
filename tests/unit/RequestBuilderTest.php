@@ -1278,6 +1278,15 @@ class RequestBuilderTest extends TestCase {
 		);
 	}
 
+	/**
+	 * A worker's spawn request lives its whole `max_runtime`, 595 seconds, so
+	 * the window a silent request is given must outlast one: at 400 to 600
+	 * every `v1/workers/spawn` timed out mid-life.
+	 */
+	public function test_the_eviction_window_outlasts_a_workers_lifetime(): void {
+		$this->assertSame( 900, Request_Builder_Node::DEFAULT_EVICTION_WINDOW_SEC );
+	}
+
 	public function test_a_bucket_count_off_the_default_says_the_borrowed_eviction_window_no_longer_measures_it(): void {
 		// `DEFAULT_EVICTION_WINDOW_SEC` is a magnitude other code borrows, and a
 		// constant cannot follow a per-topology declaration. Declaring a
@@ -1290,7 +1299,7 @@ class RequestBuilderTest extends TestCase {
 		$node->arguments( [ '137', '7' ] );
 
 		$this->assertStringContainsString( 'eviction window', $buf );
-		$this->assertStringContainsString( '1400', $buf, 'the window this declaration actually has' );
+		$this->assertStringContainsString( '2100', $buf, 'the window this declaration actually has' );
 		$node->remove_node();
 	}
 
