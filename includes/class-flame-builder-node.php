@@ -36,6 +36,7 @@
 
 namespace Newspack_Event_Logger_Nodes;
 
+use Newspack_Event_Logger_Nodes\App\Core as Hooks;
 use Newspack_Nodes\Cache_Backend;
 use Newspack_Nodes\Command_Interpreter_Node;
 use Newspack_Nodes\Core;
@@ -1029,11 +1030,13 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 			if ( ! \is_string( $category ) || ! \is_array( $data ) ) {
 				continue;
 			}
-			$category = self::collision_free_category( self::intern( $category ) );
+			$as_logged = self::intern( $category );
+			$category  = self::collision_free_category( $as_logged );
 
-			// Callback and plugin rows are views auto-tune can't act on.
-			$is_callback = (bool) \preg_match( '/ @-?\d+$/', $category );
-			$is_plugin   = (bool) \preg_match( '/ plugin$/', $category );
+			// Listener and plugin rows are views auto-tune can't act on.
+			$is_callback = Hooks::is_listener_span( $as_logged );
+			$is_plugin   = Flame_Tree::is_plugin_load_span( $as_logged );
+			$base_name   = Flame_Tree::hook_name( $as_logged );
 
 			$time_raw  = $data['time'] ?? 0;
 			$count_raw = $data['count'] ?? 0;
@@ -1097,8 +1100,7 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 			if ( $auto_tune_active && null !== $lcat && ! $is_callback && ! $is_plugin && $time_threshold > 0 && $lcat['sum_count'] > 0 ) {
 				$avg_per_call = $lcat['sum_time'] / $lcat['sum_count'];
 				if ( $avg_per_call >= $time_threshold ) {
-					$base_name = \explode( ' ', $category, 2 )[0];
-					if ( ! isset( $this->significant_events[ $rule_id ][ $base_name ] ) && ! $this->rule_significant( $rule, $base_name ) ) {
+					if ( ! isset( $this->significant_events[ $rule_id ][ $base_name ] ) && ! $rule->marks_significant( $base_name ) ) {
 						$this->significant_events[ $rule_id ][ $base_name ]     = true;
 						$this->auto_tune['add_significant_events'][ $rule_id ][ $base_name ] = true;
 					}
@@ -1129,7 +1131,6 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 
 			// Noisy detection (global auto-tune signal); workers excluded.
 			if ( $auto_tune_active && $count_global && ! $is_callback && ! $is_plugin && $count_threshold > 0 && $cat_count > $count_threshold ) {
-				$base_name = \explode( ' ', $category, 2 )[0];
 				if ( isset( $this->custom_event_names[ $base_name ] ) ) {
 					$this->auto_tune['disable_custom_events'][ $rule_id ][ $base_name ] = true;
 				} else {
@@ -1297,16 +1298,6 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	 */
 	private function rule_set(): Rule_Set {
 		return $this->rule_set ??= Rule_Set::load();
-	}
-
-	/**
-	 * Whether a name is already a rule-declared significant event.
-	 *
-	 * @param Rule|null $rule Governing rule, or null when none matched.
-	 * @param string    $name Base hook or event name.
-	 */
-	private function rule_significant( ?Rule $rule, string $name ): bool {
-		return null !== $rule && \in_array( $name, $rule->significant_events, true );
 	}
 
 	/**

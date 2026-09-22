@@ -169,4 +169,14 @@ final class RuleTest extends TestCase {
 		$this->assertSame( '/heavy/', $rekeyed->pattern );
 		$this->assertSame( [ 'init', 'wp' ], $rekeyed->hooks );
 	}
+
+	/** A rule marks a significant event under the one name it stores; a span's suffix is not a rule spelling. */
+	public function test_marks_significant_matches_the_stored_name_only(): void {
+		$rule = new Rule( 'a1b2c3d4e5f6', '/calendar/today', Rule::ACTION_LOG, 0, 0.0, [ 'the_content', 'sql' ] );
+
+		$this->assertTrue( $rule->marks_significant( 'the_content' ) );
+		$this->assertTrue( $rule->marks_significant( 'sql' ) );
+		$this->assertFalse( $rule->marks_significant( 'the_content hook' ) );
+		$this->assertFalse( $rule->marks_significant( 'wp_loaded' ) );
+	}
 }

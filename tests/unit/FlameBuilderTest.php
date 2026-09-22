@@ -1879,6 +1879,69 @@ class FlameBuilderTest extends TestCase {
 		$this->assertEmpty( $state['add_significant_events'], 'already-significant event not re-flagged' );
 	}
 
+	/** A custom event's name is proposed whole; only the ` hook` suffix is a suffix. */
+	public function test_a_multi_word_custom_event_is_proposed_whole(): void {
+		$this->set_rule( [ 'auto_protect_time_threshold' => 0.05 ] );
+		$fb = new Flame_Builder_Node();
+
+		$req = $this->completed_request( [
+			'profiles' => [
+				'render page' => [ 'time' => 0.4, 'count' => 2, 'entries' => [] ],
+			],
+		] );
+		$this->fill_request( $fb, $req );
+
+		$this->assertSame( [ 'render page' ], $fb->get_auto_tune_state()['add_significant_events']['r'] );
+	}
+
+	/** Only a one-token slug is a plugin load; a custom event ending in "plugin" is the application's. */
+	public function test_a_multi_word_custom_event_ending_in_plugin_is_still_promoted(): void {
+		$this->set_rule( [ 'auto_protect_time_threshold' => 0.05 ] );
+		$fb = new Flame_Builder_Node();
+
+		$req = $this->completed_request( [
+			'profiles' => [
+				'sync remote plugin' => [ 'time' => 0.4, 'count' => 2, 'entries' => [] ],
+			],
+		] );
+		$this->fill_request( $fb, $req );
+
+		$this->assertSame( [ 'sync remote plugin' ], $fb->get_auto_tune_state()['add_significant_events']['r'] );
+	}
+
+	/** The candidate is the application's own name, not the collision-free key the accumulator files it under. */
+	public function test_a_custom_event_named_total_is_proposed_under_its_own_name(): void {
+		$this->set_rule( [ 'auto_protect_time_threshold' => 0.05 ] );
+		$fb = new Flame_Builder_Node();
+
+		$req = $this->completed_request( [
+			'profiles' => [
+				'total' => [ 'time' => 0.4, 'count' => 2, 'entries' => [] ],
+			],
+		] );
+		$this->fill_request( $fb, $req );
+
+		$this->assertSame( [ 'total' ], $fb->get_auto_tune_state()['add_significant_events']['r'] );
+	}
+
+	/** The noisy path names a custom event whole too, so the applier can find it. */
+	public function test_a_noisy_multi_word_custom_event_is_disabled_whole(): void {
+		$this->set_rule( [ 'auto_disable_threshold' => 50 ] );
+		$fb = new Flame_Builder_Node();
+		$fb->set_custom_event_names( [ 'render page' ] );
+
+		$req = $this->completed_request( [
+			'profiles' => [
+				'render page' => [ 'time' => 0.1, 'count' => 200, 'entries' => [] ],
+			],
+		] );
+		$this->fill_request( $fb, $req );
+
+		$state = $fb->get_auto_tune_state();
+		$this->assertSame( [ 'render page' ], $state['disable_custom_events']['r'] );
+		$this->assertArrayNotHasKey( 'r', $state['disable_hooks'] );
+	}
+
 	// --- restore_state edge cases -----------------------------------------
 
 	public function test_restore_state_ignores_non_array_pending(): void {

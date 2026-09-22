@@ -36,7 +36,7 @@
         <div class="chip us"><b>hook_start_priority · query_start</b>opens <span class="mono">sql</span>, label only: the SQL here is what the caller wrote</div>
         <div class="chip grey"><b>later priorities</b>filters that rewrite the SQL run INSIDE the span</div>
       </div>
-      <p style="margin-top:8px">The same priority the generic hook timer uses (default −10000), so the span covers the filter chain as well as the round trip. A rule marking <span class="mono">query</span> significant gets its per-callback timings nested inside <span class="mono">sql</span>, and <span class="mono">query</span> itself is not bound as an ordinary hook: the SQL span covers it.</p></div></div>
+      <p style="margin-top:8px">The same priority the generic hook timer uses (default −10000), so the span covers the filter chain as well as the round trip. A rule marking <span class="mono">sql</span> significant gets the <span class="mono">query</span> filter's per-callback timings nested inside the span, and <span class="mono">query</span> itself is not bound as an ordinary hook: the SQL span covers it.</p></div></div>
     <div class="step"><span class="n">2</span><div class="card"><h3>The database round trip</h3>
       <p>About 0.4 ms on the measured host.</p></div></div>
     <div class="step gate"><span class="n">3</span><div class="card"><h3><span class="mono">log_query_custom_data</span>, fired only under <span class="mono">SAVEQUERIES</span></h3>

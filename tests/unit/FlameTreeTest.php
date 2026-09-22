@@ -394,4 +394,18 @@ class FlameTreeTest extends TestCase {
 		}
 		return $node;
 	}
+
+	/** `base_name()` inverts `node_name()`: the span's own name, without the label it was logged with. */
+	public function test_base_name_inverts_node_name(): void {
+		$this->assertSame( 'the_content hook', Flame_Tree::base_name( Flame_Tree::node_name( 'the_content hook', 'Yoast\\WP\\SEO\\Builders\\Indexable_Link_Builder->build' ) ) );
+		$this->assertSame( 'sql', Flame_Tree::base_name( 'sql: WP_Query->get_posts' ) );
+		$this->assertSame( 'wp_loaded hook', Flame_Tree::base_name( 'wp_loaded hook' ) );
+	}
+
+	/** A hook span is known by its base name's suffix, beside the transport and plugin classifiers. */
+	public function test_is_hook_span_reads_the_suffix(): void {
+		$this->assertTrue( Flame_Tree::is_hook_span( 'wp_loaded hook' ) );
+		$this->assertFalse( Flame_Tree::is_hook_span( 'wp_loaded' ) );
+		$this->assertFalse( Flame_Tree::is_hook_span( 'sync remote plugin' ) );
+	}
 }

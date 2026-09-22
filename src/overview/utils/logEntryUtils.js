@@ -97,6 +97,8 @@ const SEQUENCE_BREAK_KEYWORDS = new Set( [ 'entries (lost)', FOLD_MARKER ] );
  * the two into one node name — so the same span is `include` where the record
  * closes it and `include: /Macros/Global.html` where the tree names it. Pairing
  * has to see through that or a spliced frame can never be closed.
+ * `Flame_Tree::base_name()` is the same split for the findings, and shares
+ * its one caveat: a span whose own name carries `: ` is cut at it.
  *
  * @param {string} name Span name, decorated or not.
  * @return {string} The part before `: `.

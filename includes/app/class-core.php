@@ -48,15 +48,8 @@ if ( ! \defined( 'ABSPATH' ) ) {
 class Core {
 
 	/**
-	 * What a hook's span is called: `<hook> hook`. This class MINTS that name,
-	 * so it owns the word — `Findings` reads it to tell a hook span from a
-	 * custom event, and a significant event may be written either way.
-	 */
-	public const HOOK_SUFFIX = ' hook';
-
-	/**
 	 * What a wrapped listener's span is called: `<callable> @<priority>`. This
-	 * class mints that too (`wrap_callbacks()`), so it owns the shape — and the
+	 * class mints that (`wrap_callbacks()`), so it owns the shape — and the
 	 * priority may be NEGATIVE, which a pattern without the sign silently reads
 	 * as a custom event instead.
 	 */
@@ -108,6 +101,22 @@ class Core {
 
 	/** The hook the SQL span rides; also the one it makes a generic pair redundant on. */
 	private const QUERY_HOOK = 'query';
+
+	/** The filter an outbound request runs through before it is sent. */
+	private const HTTP_HOOK = 'pre_http_request';
+
+	/**
+	 * The filter each transport span covers, keyed by the span's name. A rule
+	 * marks `sql` or `http` significant to have that filter's listeners
+	 * wrapped, under `log_queries` or `log_http`; neither name is a hook to
+	 * bind. Public so `Findings` names the filter a proposal would reach.
+	 *
+	 * @var array<string,string>
+	 */
+	public const TRANSPORT_HOOKS = [
+		self::SQL_STATE  => self::QUERY_HOOK,
+		self::HTTP_STATE => self::HTTP_HOOK,
+	];
 
 	/**
 	 * Hook-argument keys whose VALUE may be published. Everything else is `?`.
@@ -250,7 +259,7 @@ class Core {
 		}
 
 		$hook_name = \current_filter() ?: '';
-		$category  = $hook_name . self::HOOK_SUFFIX;
+		$category  = $hook_name . Flame_Tree::HOOK_SUFFIX;
 
 		$m      = '';
 		$shaped = false;
@@ -367,7 +376,8 @@ class Core {
 			\remove_filter( $hook_name, [ $this, 'hook_spacer' ], self::SPACER_PRIORITY );
 			\remove_filter( $hook_name, [ $this, 'hook_complete' ], PHP_INT_MAX - 1 );
 		}
-		\remove_filter( 'pre_http_request', [ $this, 'http_start' ], PHP_INT_MAX );
+		\remove_filter( self::HTTP_HOOK, [ $this, 'http_start' ], PHP_INT_MAX );
+		\remove_filter( self::HTTP_HOOK, [ $this, 'http_wrap' ], PHP_INT_MIN );
 		\remove_action( 'http_api_debug', [ $this, 'http_end' ], PHP_INT_MIN );
 		$this->bound_hooks = [];
 		$this->significant = [];
@@ -401,14 +411,19 @@ class Core {
 		$custom_set     = \array_flip( \array_filter( $rule->custom_events, 'is_string' ) );
 		$log_events_set = \array_flip( \array_filter( $hooks, 'is_string' ) );
 
-		// Significant events get per-callback profiling.
+		// Per-callback profiling; a transport's only where its span is logged.
+		$wrap_http = false;
 		foreach ( $rule->significant_events as $event ) {
-			$hook = \str_ends_with( $event, self::HOOK_SUFFIX )
-				? \substr( $event, 0, -\strlen( self::HOOK_SUFFIX ) )
-				: $event;
-			$this->significant[ $hook ] = true;
-			if ( ! isset( $log_events_set[ $hook ] ) && ! isset( $custom_set[ $hook ] ) ) {
-				$hooks[] = $hook;
+			if ( isset( self::TRANSPORT_HOOKS[ $event ] ) ) {
+				if ( self::transport_logged( $event, $rule ) ) {
+					$this->significant[ self::TRANSPORT_HOOKS[ $event ] ] = true;
+					$wrap_http = $wrap_http || self::HTTP_STATE === $event;
+				}
+				continue;
+			}
+			$this->significant[ $event ] = true;
+			if ( ! isset( $log_events_set[ $event ] ) && ! isset( $custom_set[ $event ] ) ) {
+				$hooks[] = $event;
 			}
 		}
 
@@ -436,8 +451,11 @@ class Core {
 
 		// Outbound HTTP blocks below userland, where no hook reaches.
 		if ( $rule->log_http ) {
-			\add_filter( 'pre_http_request', [ $this, 'http_start' ], PHP_INT_MAX, 3 );
+			\add_filter( self::HTTP_HOOK, [ $this, 'http_start' ], PHP_INT_MAX, 3 );
 			\add_action( 'http_api_debug', [ $this, 'http_end' ], PHP_INT_MIN, 5 );
+			if ( $wrap_http ) {
+				\add_filter( self::HTTP_HOOK, [ $this, 'http_wrap' ], PHP_INT_MIN );
+			}
 		}
 
 		if ( ! $rule->log_queries ) {
@@ -453,6 +471,23 @@ class Core {
 		}
 		\add_filter( self::QUERY_HOOK, [ $this, 'query_start' ], $this->start_priority );
 		\add_filter( 'log_query_custom_data', [ $this, 'query_end' ], PHP_INT_MIN, 5 );
+	}
+
+	/**
+	 * Whether a rule logs a transport's span at all — the gate on marking that
+	 * transport significant, read here by the binder and by `Findings`, so the
+	 * two agree on what the rule does.
+	 *
+	 * @param string $state `Flame_Tree::SQL_STATE` or `Flame_Tree::HTTP_STATE`.
+	 * @param \Newspack_Event_Logger_Nodes\Rule $rule The governing rule.
+	 * @return bool
+	 */
+	public static function transport_logged( string $state, \Newspack_Event_Logger_Nodes\Rule $rule ): bool {
+		return match ( $state ) {
+			self::SQL_STATE  => $rule->log_queries,
+			self::HTTP_STATE => $rule->log_http,
+			default          => throw new \InvalidArgumentException( "Not a transport span: {$state}" ),
+		};
 	}
 
 	/**
@@ -482,11 +517,8 @@ class Core {
 		if ( false !== $preempt ) {
 			return $preempt;
 		}
-		if ( ! Log_Manager::has_instance() ) {
-			return $preempt;
-		}
-		$lm = Log_Manager::instance();
-		if ( ! $lm->is_started() ) {
+		$lm = self::started_logger();
+		if ( null === $lm ) {
 			return $preempt;
 		}
 		$this->http_spans[] = self::HTTP_STATE;
@@ -501,6 +533,23 @@ class Core {
 			$data['caller'] = $caller;
 		}
 		$lm->start( self::HTTP_STATE, $data );
+		return $preempt;
+	}
+
+	/**
+	 * Wrap `pre_http_request`'s listeners for the call in flight. Bound at
+	 * PHP_INT_MIN, ahead of the chain, when the rule marks `http` significant
+	 * and logs the span: `http_start()` votes last, so from there a listener
+	 * could only be wrapped for the NEXT call, and the short-circuit worth
+	 * timing is the one answering THIS one.
+	 *
+	 * @param mixed $preempt The vote so far, passed through untouched.
+	 * @return mixed
+	 */
+	public function http_wrap( $preempt = false ) {
+		if ( null !== self::started_logger() ) {
+			$this->wrap_callbacks( self::HTTP_HOOK, PHP_INT_MIN, PHP_INT_MAX );
+		}
 		return $preempt;
 	}
 
@@ -528,11 +577,8 @@ class Core {
 	 * @return mixed
 	 */
 	public function query_start( $query = '' ) {
-		if ( ! Log_Manager::has_instance() ) {
-			return $query;
-		}
-		$lm = Log_Manager::instance();
-		if ( ! $lm->is_started() ) {
+		$lm = self::started_logger();
+		if ( null === $lm ) {
 			return $query;
 		}
 		$this->query_spans[] = self::SQL_STATE;
@@ -556,45 +602,57 @@ class Core {
 	}
 
 	/**
-	 * Wrap each callback on a hook with timing instrumentation.
+	 * Wrap each callback on a hook with timing instrumentation. Callers ask only
+	 * for a hook the rule marks significant; the test stays with them because
+	 * `hook_start()` and `query_start()` are the hottest paths in the class.
 	 *
 	 * Replaces each callback's function with a closure that calls start/complete
-	 * around the original. Only priorities strictly between start_priority and
-	 * SPACER_PRIORITY are touched; everything at or above the spacer is ours.
+	 * around the original, at every priority in `[$min, $max]`. The defaults
+	 * spare our own listeners on a hook span: `hook_start()` and `query_start()`
+	 * sit at start_priority, and everything from the spacer up is ours. On
+	 * `pre_http_request` `http_wrap()` passes PHP_INT_MIN and PHP_INT_MAX, so a
+	 * short-circuit at any priority is wrapped; a listener of this object's
+	 * own, wherever it sits, is skipped by identity.
 	 *
-	 * Safe to call during hook execution at start_priority — callbacks at higher
-	 * priorities haven't been iterated yet, so WordPress picks up the replacements.
+	 * Safe to call during hook execution from the head of the chain — callbacks
+	 * at higher priorities haven't been iterated yet, so WordPress picks up the
+	 * replacements — which is where every caller sits.
 	 *
 	 * Each wrapper claims accepted_args = 99 so WP_Hook hands it every argument
 	 * apply_filters has, then slices back to the original's count before calling
 	 * it. Inflating the count on the wrapper preserves the original's contract;
 	 * the original never sees an argument it didn't ask for.
 	 *
-	 * @param string $hook_name Hook to wrap.
+	 * @param string   $hook_name Hook to wrap.
+	 * @param int|null $min       Lowest priority wrapped, or null for the one above start_priority.
+	 * @param int      $max       Highest priority wrapped.
 	 */
-	private function wrap_callbacks( string $hook_name ): void {
+	private function wrap_callbacks( string $hook_name, ?int $min = null, int $max = self::SPACER_PRIORITY - 1 ): void {
 		/** @var \WP_Hook[] $wp_filter PHPStan drops the @global WP_Hook[] from WP docblocks on a bare global. */
 		global $wp_filter;
 		if ( ! isset( $wp_filter[ $hook_name ] ) ) {
 			return;
 		}
 
-		$min = $this->start_priority;
+		$min ??= $this->start_priority + 1;
 
 		/** @var array<int,array<string,array{function: callable,accepted_args: int|string}>> $wp_filter_callbacks WP_Hook::$callbacks is stubbed as bare array; this annotates the by-ref iterand, not a copy. */
 		$wp_filter_callbacks = &$wp_filter[ $hook_name ]->callbacks;
 		foreach ( $wp_filter_callbacks as $priority => &$priority_callbacks ) {
-			if ( $priority <= $min || $priority >= self::SPACER_PRIORITY ) {
+			if ( $priority < $min || $priority > $max ) {
 				continue;
 			}
 
 			foreach ( $priority_callbacks as &$cb ) {
 				$original      = $cb['function'];
 				$accepted_args = (int) $cb['accepted_args'];
-				$name          = self::short_name( $original );
 
 				// Skip wrappers already made (no double-wrap on recursion).
 				if ( $original instanceof \Closure && isset( $this->wrapper_ids[ \spl_object_id( $original ) ] ) ) {
+					continue;
+				}
+				// Our own trio, when the filter is also a bound hook.
+				if ( \is_array( $original ) && $this === $original[0] ) {
 					continue;
 				}
 
@@ -604,7 +662,7 @@ class Core {
 				}
 
 				// Wrap timing; resolve LM per-call to survive suspend/resume.
-				$label   = "{$name} @{$priority}";
+				$label   = self::short_name( $original ) . " @{$priority}";
 				$wrapper = function () use ( $original, $accepted_args, $label ) {
 					$lm   = Log_Manager::instance();
 					$args = \array_slice( \func_get_args(), 0, $accepted_args );
@@ -624,6 +682,45 @@ class Core {
 			unset( $cb );
 		}
 		unset( $priority_callbacks );
+	}
+
+	/**
+	 * Short name for a callback (no namespace, no priority).
+	 *
+	 * @param mixed $function Callback.
+	 * @return string e.g. "do_blocks", "Image_CDN::filter_the_content",
+	 *                "{closure}:file.php:12" or "Handler::__invoke".
+	 */
+	private static function short_name( $function ): string {
+		if ( \is_string( $function ) ) {
+			$pos = \strrpos( $function, '\\' );
+			return false !== $pos ? \substr( $function, $pos + 1 ) : $function;
+		}
+		if ( \is_array( $function ) && \count( $function ) === 2 ) {
+			$class  = \is_object( $function[0] ) ? \get_class( $function[0] ) : RuntimeCore::str( $function[0] );
+			$method = RuntimeCore::str( $function[1] );
+			$pos    = \strrpos( $class, '\\' );
+			if ( false !== $pos ) {
+				$class = \substr( $class, $pos + 1 );
+			}
+			return "{$class}::{$method}";
+		}
+		if ( $function instanceof \Closure ) {
+			$ref  = new \ReflectionFunction( $function );
+			$file = $ref->getFileName();
+			$line = $ref->getStartLine();
+			if ( $file ) {
+				$file = \basename( $file );
+				return "{closure}:{$file}:{$line}";
+			}
+			return '{closure}';
+		}
+		if ( \is_object( $function ) ) {
+			$class = \get_class( $function );
+			$pos   = \strrpos( $class, '\\' );
+			return ( false !== $pos ? \substr( $class, $pos + 1 ) : $class ) . '::__invoke';
+		}
+		return '{unknown}';
 	}
 
 	/**
@@ -664,45 +761,6 @@ class Core {
 			}
 		}
 		return false;
-	}
-
-	/**
-	 * Short name for a callback (no namespace, no priority).
-	 *
-	 * @param mixed $function Callback.
-	 * @return string e.g. "do_blocks", "Image_CDN::filter_the_content",
-	 *                "{closure}:file.php:12" or "Handler::__invoke".
-	 */
-	private static function short_name( $function ): string {
-		if ( \is_string( $function ) ) {
-			$pos = \strrpos( $function, '\\' );
-			return false !== $pos ? \substr( $function, $pos + 1 ) : $function;
-		}
-		if ( \is_array( $function ) && \count( $function ) === 2 ) {
-			$class  = \is_object( $function[0] ) ? \get_class( $function[0] ) : RuntimeCore::str( $function[0] );
-			$method = RuntimeCore::str( $function[1] );
-			$pos    = \strrpos( $class, '\\' );
-			if ( false !== $pos ) {
-				$class = \substr( $class, $pos + 1 );
-			}
-			return "{$class}::{$method}";
-		}
-		if ( $function instanceof \Closure ) {
-			$ref  = new \ReflectionFunction( $function );
-			$file = $ref->getFileName();
-			$line = $ref->getStartLine();
-			if ( $file ) {
-				$file = \basename( $file );
-				return "{closure}:{$file}:{$line}";
-			}
-			return '{closure}';
-		}
-		if ( \is_object( $function ) ) {
-			$class = \get_class( $function );
-			$pos   = \strrpos( $class, '\\' );
-			return ( false !== $pos ? \substr( $class, $pos + 1 ) : $class ) . '::__invoke';
-		}
-		return '{unknown}';
 	}
 
 	/**
@@ -795,6 +853,21 @@ class Core {
 			return \substr( $name, 0, self::ORIGIN_MAX );
 		}
 		return '';
+	}
+
+	/**
+	 * The logger a span may be written into, or null. Instrumentation never
+	 * CONSTRUCTS the logger it reports into (decision 20), so `has_instance()`
+	 * comes first; a logger that exists but has not started takes nothing.
+	 *
+	 * @return Log_Manager|null
+	 */
+	private static function started_logger(): ?Log_Manager {
+		if ( ! Log_Manager::has_instance() ) {
+			return null;
+		}
+		$lm = Log_Manager::instance();
+		return $lm->is_started() ? $lm : null;
 	}
 
 	/**
@@ -959,7 +1032,7 @@ class Core {
 	 */
 	public function hook_complete( $v = null ) {
 		$hook_name = \current_filter();
-		Log_Manager::instance()->complete( $hook_name . self::HOOK_SUFFIX );
+		Log_Manager::instance()->complete( $hook_name . Flame_Tree::HOOK_SUFFIX );
 		return $v;
 	}
 }

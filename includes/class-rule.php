@@ -50,7 +50,7 @@ final class Rule {
 	 * @param string        $action                      self::ACTION_LOG | self::ACTION_SKIP.
 	 * @param int           $auto_disable_threshold      Per-request occurrence count above which auto-tune proposes disabling a hook or custom event; 0 = off.
 	 * @param float         $auto_protect_time_threshold Average ms per call at or above which auto-tune promotes a hook to significant; 0.0 = off.
-	 * @param string[]      $significant_events          Hook names (a trailing ' hook' is stripped) that get per-callback profiling and are exempt from auto-disable.
+	 * @param string[]      $significant_events          Hook names, spelled bare, that get per-callback profiling and are exempt from auto-disable; `sql` and `http` name the `query` and `pre_http_request` filters their spans cover, and take effect under `log_queries` and `log_http`.
 	 * @param string[]      $custom_events               Categories the application logs itself; never bound as do_action hooks.
 	 * @param string[]|null $hooks                       Inline list when hooks_in=inline; null when hooks_in=mc, meaning unresolved.
 	 * @param string        $hooks_in                    self::HOOKS_INLINE | self::HOOKS_MC.
@@ -218,6 +218,18 @@ final class Rule {
 			return [];
 		}
 		return \array_values( \array_map( static fn ( mixed $item ): string => Core::as_string( $item, '' ), $v ) );
+	}
+
+	/**
+	 * Whether this rule lists a name among its significant events — the one
+	 * comparison the binder's consumers make, under the one spelling a rule
+	 * stores.
+	 *
+	 * @param string $name A hook or event name, as a rule stores it.
+	 * @return bool
+	 */
+	public function marks_significant( string $name ): bool {
+		return \in_array( $name, $this->significant_events, true );
 	}
 
 	/**
