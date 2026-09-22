@@ -934,6 +934,12 @@ class PerformanceCITest extends TestCase {
 	 * depending on where the clock sits in the hour, against the 288
 	 * five-minute buckets it used to enumerate. On a four-partition hub that
 	 * is around 2,300 keys against 18,432, and 54 MB it no longer reads.
+	 *
+	 * No ranked list is seeded here, so `urls`' default page tries the lists
+	 * first — one hour-list read of `count(hours)` keys per store. That finds
+	 * the window a list short behind the leading hour, which no fine tier can
+	 * answer for, so it falls to this same per-shard fold without reading a
+	 * fine list at all. The attempt costs `count(hours)` per store on top.
 	 */
 	public function test_a_folded_window_reads_two_tiers_not_every_bucket(): void {
 		$memd = Core::$memd;
@@ -951,9 +957,9 @@ class PerformanceCITest extends TestCase {
 		$per_shard = \count( $plan['fine'] ) + \count( $plan['hours'] );
 		$this->assertLessThan( 48, $per_shard, 'two tiers, not 288 buckets' );
 		$this->assertSame(
-			$per_shard * Stats_Store::URL_SHARDS,
+			$per_shard * Stats_Store::URL_SHARDS + \count( self::live_stores() ) * \count( $plan['hours'] ),
 			$memd->multi_keys,
-			'a folded window reads no fine bucket behind the recent tail'
+			'a folded window reads no fine bucket behind the recent tail, plus one ranked-list attempt'
 		);
 	}
 
@@ -4463,6 +4469,201 @@ class PerformanceCITest extends TestCase {
 		}
 	}
 
+	public function test_an_unfiltered_page_is_answered_from_the_lists_and_its_header_from_the_fold(): void {
+		$this->activate_shipped_topology( 'performance', 3 );
+		$store  = new Stats_Store( 1, 86400 );
+		$bucket = $this->current_url_bucket();
+		$this->set_url_bucket( $store, $bucket, [
+			'b7731ce0fa11' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 5, 'last_seen' => \time() ],
+			'c8842df1ab90' => [ 'url' => 'https://kea.test/kiwi-8842', 'count' => 3, 'last_seen' => \time() ],
+		] );
+		// The list deliberately disagrees with the rows, so the reply says which it read.
+		$this->set_url_rank_lists( $store, $bucket, [
+			'b7731ce0fa11' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 9, 'last_seen' => \time() ],
+		] );
+		$this->seed_hour_lists();
+		[ $fire, $reads, $restore ] = $this->counting_urls_fire();
+		try {
+			$first = $fire( '--sort=count', '--order=desc', '--limit=100' );
+			$this->assertTrue( $first['ranked'] );
+			$this->assertSame( [ 'b7731ce0fa11' ], \array_column( $first['data'], 'hash' ) );
+			$this->assertSame( 9, $first['data'][0]['count'] );
+			$this->assertSame( 'https://kea.test/wombat-7731', $first['data'][0]['url'] );
+			$this->assertSame( 8, $first['totals']['requests'], 'the header is the fold' );
+			$this->assertSame( 2, $first['rows'] );
+			$this->assertCount( 2, $first['slowest'] );
+			$this->assertGreaterThan( 0, $first['as_of'] );
+			$header_reads = $reads();
+			$this->assertGreaterThan( 0, $header_reads );
+
+			// The header holds for the bucket; the second page's key differs, so it is no cache hit.
+			$second = $fire( '--sort=count', '--order=desc', '--limit=100', '--offset=1' );
+			$this->assertTrue( $second['ranked'] );
+			$this->assertSame( $header_reads, $reads(), 'the second page folds nothing' );
+			$this->assertSame( $first['as_of'], $second['as_of'] );
+
+			$searched = $fire( '--sort=count', '--order=desc', '--limit=100', '--search=wombat' );
+			$this->assertFalse( $searched['ranked'] );
+			$this->assertSame( 5, $searched['data'][0]['count'], 'a search reads the rows' );
+		} finally {
+			$restore();
+		}
+	}
+
+	public function test_a_page_past_the_list_depth_folds(): void {
+		$this->activate_shipped_topology( 'performance', 3 );
+		$store  = new Stats_Store( 1, 86400 );
+		$bucket = $this->current_url_bucket();
+		$this->set_url_bucket( $store, $bucket, [ 'b7731ce0fa11' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 5, 'last_seen' => \time() ] ] );
+		$this->set_url_rank_lists( $store, $bucket, [ 'b7731ce0fa11' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 9, 'last_seen' => \time() ] ] );
+		$this->seed_hour_lists();
+		[ $fire, , $restore ] = $this->counting_urls_fire();
+		try {
+			$page = $fire( '--sort=count', '--order=desc', '--limit=100', '--offset=' . ( Stats_Store::URL_RANK_N - 100 ) );
+			$this->assertTrue( $page['ranked'] );
+			$page = $fire( '--sort=count', '--order=desc', '--limit=100', '--offset=' . ( Stats_Store::URL_RANK_N - 99 ) );
+			$this->assertFalse( $page['ranked'] );
+		} finally {
+			$restore();
+		}
+	}
+
+	public function test_a_ranked_page_presents_the_mean_of_bucket_averages(): void {
+		$this->activate_shipped_topology( 'performance', 3 );
+		$store = new Stats_Store( 1, 86400 );
+		$now   = \time();
+		$newer = Stats_Store::bucket_key( $now );
+		$older = Stats_Store::bucket_key( $now - 300 );
+		$row   = static fn ( int $count, float $sum_ms ): array => [
+			'b7731ce0fa11' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => $count, 'timed_count' => $count, 'sum_ms' => $sum_ms, 'last_seen' => 1758500000 ],
+		];
+		// One slow request, then nine fast ones: request-weighted 19 ms, bucket-weighted 55 ms.
+		$this->set_url_bucket( $store, $older, $row( 1, 100.0 ) );
+		$this->set_url_bucket( $store, $newer, $row( 9, 90.0 ) );
+		$this->set_url_rank_lists( $store, $older, $row( 1, 100.0 ) );
+		$this->set_url_rank_lists( $store, $newer, $row( 9, 90.0 ) );
+		$this->seed_hour_lists();
+		[ $fire, , $restore ] = $this->counting_urls_fire();
+		try {
+			$page = $fire( '--sort=avg_ms', '--order=desc', '--limit=100' );
+			$this->assertTrue( $page['ranked'] );
+			$this->assertSame( 10, $page['data'][0]['count'], 'sums still sum' );
+			$this->assertEqualsWithDelta( 55.0, $page['data'][0]['avg_ms'], 0.001 );
+			$this->assertEqualsWithDelta( 19.0, $page['totals']['avg_ms'], 0.001, 'the header stays request-weighted' );
+		} finally {
+			$restore();
+		}
+	}
+
+	public function test_an_hour_list_stands_in_for_its_buckets_and_a_missing_one_falls_to_them(): void {
+		$this->activate_shipped_topology( 'performance', 3 );
+		$store = new Stats_Store( 1, 86400 );
+		$now   = \time();
+		$plan  = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, $now ) );
+		$this->assertGreaterThanOrEqual( 2, \count( $plan['hours'] ) );
+		// unfolded_hour_buckets() only backfills the LEADING (grace) hour of
+		// the plan, so the missing list must be hours[0] and the folded one
+		// hours[1] — swapped from a naive newest/oldest reading.
+		[ $unfolded, $folded ] = [ $plan['hours'][0], $plan['hours'][1] ];
+		// Every other store gets the writer's empty list for the folded hour;
+		// this one's is overwritten with content below.
+		$this->seed_hour_lists( [ $unfolded ] );
+		$this->set_url_rank_lists( $store, $folded, [ 'b7731ce0fa11' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 6, 'last_seen' => 1758500000 ] ], true );
+		// A bucket inside the folded hour must NOT count twice.
+		$this->set_url_rank_lists( $store, Stats_Store::buckets_in_hour( $folded )[3], [ 'b7731ce0fa11' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 6, 'last_seen' => 1758500000 ] ] );
+		$this->set_url_rank_lists( $store, Stats_Store::buckets_in_hour( $unfolded )[7], [ 'c8842df1ab90' => [ 'url' => 'https://kea.test/kiwi-8842', 'count' => 2, 'last_seen' => 1758500000 ] ] );
+		[ $fire, , $restore ] = $this->counting_urls_fire();
+		try {
+			$page = $fire( '--sort=count', '--order=desc', '--limit=100' );
+			$this->assertTrue( $page['ranked'] );
+			$this->assertSame( [ 'b7731ce0fa11' => 6, 'c8842df1ab90' => 2 ], \array_column( $page['data'], 'count', 'hash' ) );
+		} finally {
+			$restore();
+		}
+	}
+
+	public function test_a_scoped_ranked_page_reads_the_servers_lists(): void {
+		$this->activate_shipped_topology( 'performance', 3 );
+		$store  = new Stats_Store( 1, 86400 );
+		$bucket = $this->current_url_bucket();
+		$rows   = [
+			'b7731ce0fa11' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 5, 'last_seen' => \time(), 'srv' => [ 'kea.test' => null ] ],
+			// Two servers on one row: the row's own count (4) is not the
+			// moa.test share (3), so a projection that skipped scoping and
+			// used the row's own count would give this test a false pass.
+			'c8842df1ab90' => [
+				'url'       => 'https://moa.test/kiwi-8842',
+				'count'     => 4,
+				'last_seen' => \time(),
+				'srv'       => [
+					'moa.test' => [ 'count' => 3, 'last_seen' => \time() ],
+					'kea.test' => [ 'count' => 1, 'last_seen' => \time() ],
+				],
+			],
+		];
+		$this->set_url_bucket( $store, $bucket, $rows );
+		$this->set_url_rank_lists( $store, $bucket, $rows );
+		$this->set_url_rank_lists( $store, $bucket, [ 'c8842df1ab90' => $rows['c8842df1ab90'] ], false, 'moa.test' );
+		$this->seed_hour_lists( [], 'moa.test' );
+		[ $fire, , $restore ] = $this->counting_urls_fire();
+		try {
+			$page = $fire( '--sort=count', '--order=desc', '--limit=100', '--server=moa.test' );
+			$this->assertTrue( $page['ranked'] );
+			$this->assertSame( [ 'c8842df1ab90' ], \array_column( $page['data'], 'hash' ) );
+			$this->assertSame( 3, $page['data'][0]['count'], 'the seeded list is the server-scoped projection, not the row\'s own count' );
+			$this->assertSame( 3, $page['totals']['requests'] );
+			$page = $fire( '--sort=count', '--order=desc', '--limit=100', '--server=tui.test' );
+			$this->assertFalse( $page['ranked'], 'no list for that server: the fold answers' );
+			$this->assertSame( [], $page['data'] );
+		} finally {
+			$restore();
+		}
+	}
+
+	public function test_a_planned_hour_with_no_list_is_not_served_as_ranked(): void {
+		// A hour behind the leading one has no fine buckets left to read, so
+		// a missing list there is a hole nothing can fill — and a page served
+		// `ranked` over it drops that hour\'s traffic without saying so.
+		$this->activate_shipped_topology( 'performance', 3 );
+		$store  = new Stats_Store( 1, 86400 );
+		$bucket = $this->current_url_bucket();
+		$rows   = [ 'b7731ce0fa11' => [ 'url' => 'https://kea.test/weka-3308', 'count' => 5, 'last_seen' => \time() ] ];
+		$this->set_url_bucket( $store, $bucket, $rows );
+		$this->set_url_rank_lists( $store, $bucket, [ 'b7731ce0fa11' => [ 'url' => 'https://kea.test/weka-3308', 'count' => 9, 'last_seen' => \time() ] ] );
+		$plan = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, \time() ) );
+		$this->assertGreaterThanOrEqual( 3, \count( $plan['hours'] ) );
+		$gap = $plan['hours'][2];
+		$this->seed_hour_lists( [ $gap ] );
+		[ $fire, , $restore ] = $this->counting_urls_fire();
+		try {
+			$page = $fire( '--sort=count', '--order=desc', '--limit=100' );
+			$this->assertFalse( $page['ranked'], 'one hour short of the window is not a ranked page' );
+			$this->assertSame( 5, $page['data'][0]['count'], 'the fold answers instead' );
+
+			$this->seed_hour_lists();
+			$page = $fire( '--sort=count', '--order=desc', '--limit=50' );
+			$this->assertTrue( $page['ranked'], 'the window is whole again' );
+			$this->assertSame( 9, $page['data'][0]['count'] );
+		} finally {
+			$restore();
+		}
+	}
+
+	public function test_with_no_lists_at_all_the_page_folds(): void {
+		$this->activate_shipped_topology( 'performance', 3 );
+		$this->set_url_bucket( new Stats_Store( 1, 86400 ), $this->current_url_bucket(), [
+			'b7731ce0fa11' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 5, 'last_seen' => \time() ],
+		] );
+		[ $fire, , $restore ] = $this->counting_urls_fire();
+		try {
+			$page = $fire( '--sort=count', '--order=desc', '--limit=100' );
+			$this->assertFalse( $page['ranked'] );
+			$this->assertSame( 5, $page['data'][0]['count'] );
+		} finally {
+			$restore();
+		}
+	}
+
 	/** A fold the mirror read budget cut short is a partial page; caching it would pin the gap for a minute. */
 	public function test_a_budget_cut_page_is_not_cached(): void {
 		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'min_lifetime' => 86400, 'stats_mirror_node' => 'flames-stats', 'stats_mirror_read_budget_ms' => 0 ] );
@@ -4478,6 +4679,29 @@ class PerformanceCITest extends TestCase {
 			$this->assertGreaterThan( $folded, $reads(), 'a page the budget cut is folded again' );
 		} finally {
 			$restore();
+		}
+	}
+
+	/**
+	 * Seed the empty ranked list the writer leaves behind for a closed hour
+	 * holding nothing, for every hour of the read plan but the ones named.
+	 *
+	 * Every partition the reader resolves, because one store missing an
+	 * hour is the hole the ranked page refuses to serve over.
+	 *
+	 * @param list<string> $skip       Hours to leave without a list.
+	 * @param string       $server     Scope; '' is site-wide.
+	 * @param int          $partitions Stores the active topology declares.
+	 */
+	private function seed_hour_lists( array $skip = [], string $server = '', int $partitions = 3 ): void {
+		$plan = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, \time() ) );
+		for ( $partition = 0; $partition < $partitions; ++$partition ) {
+			$store = new Stats_Store( $partition, 86400 );
+			foreach ( $plan['hours'] as $hour ) {
+				if ( ! \in_array( $hour, $skip, true ) ) {
+					$this->set_url_rank_lists( $store, $hour, [], true, $server );
+				}
+			}
 		}
 	}
 
