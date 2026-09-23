@@ -19,6 +19,17 @@ The logger defends against these actors:
 - **A hostile page a `read` user visits.** A page that opens a stream in that user's name.
 - **An AI assistant.** The recipient of an Ask brief, reached by paste or by the "Ask Claude" query string.
 
+### Who holds `read`
+
+`read` is the widest role and its surface is the raw log, so how many accounts hold it is the fact that sizes every disclosure below. This was surveyed on 2026-09-23 across the 41 sites that run the logger: the community hub, its 23 spokes and the dev site; the `eln` hub and three test sites; four staging clones; and eight production sites.
+
+- **No site filters `newspack_nodes/capability_map`.** `read` resolves to `newspack_nodes_read` on the 27 sites that have the granular capabilities installed, and to `manage_options` on the other 14.
+- **The capability admits between 1 and 50 accounts a site.** They are administrators, the community sites' `admin` role, the hub user, and on Bangor three `audience_admin` accounts that held `manage_options` when the capabilities were installed.
+- **`allowed_users` narrows that to between 1 and 3 accounts a site.** The list names three operator accounts on 40 sites and one on the last, and the substrate applies it after the capability, at every door `read` opens.
+- **The hubs concentrate the exposure.** A hub's `read` holders see every spoke's lines. Two accounts can use `read` on the community hub, and one on the `eln` hub.
+
+The list is configuration, not code. Emptied, it narrows nobody, and the population returns to the capability's 1 to 50 accounts a site.
+
 ## What the logger captures, and what crosses to the hub
 
 ![Capture, replication and the three egresses](img/2026-09-08-firehose-capture.png)
