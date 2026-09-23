@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.102.3] - 2026-09-23
+
 ### Changed
 
 - **The URL modal's Recent Requests table shows the whole timestamp.** Its
