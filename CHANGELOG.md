@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The dashboard reads the stats mirror for up to 5 seconds a verb, up from 1.5.** `stats_mirror_read_budget_ms` now defaults to 5000. A cold poll spent 1.5 seconds before the mirror answered the buckets memcache no longer held, and the charts drew short until a later poll filled them.
+
 ### Fixed
 
 - **"Errors Only" counts errors.** Each row under the filter carries `errors`, the requests no status accounted for, beside a `count` that still counts its traffic, and the totals carry the sum. The table shows that count under an "Errors" heading and ranks a count sort by it, and the headline adds "Total Errors" beside "Total Requests". The totals used to add up all of each erroring URL's traffic, so one timeout among sixty thousand requests put all sixty thousand in the total. The ask brief and the MCP filter description now say the same.
