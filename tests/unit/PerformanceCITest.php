@@ -129,15 +129,6 @@ class PerformanceCITest extends TestCase {
 	// index layout so the verb's scan_index walk picks up our seeded data.
 	// -------------------------------------------------------------------------
 
-	/**
-	 * The moment every seed dates from: the tick the reply reads, stamped at
-	 * setUp. The wall moves on, and a seed dated from it lands a bucket
-	 * later whenever a five-minute boundary falls in between.
-	 */
-	private static function tick(): int {
-		return (int) Core::$now;
-	}
-
 	private function current_url_bucket(): string {
 		return Stats_Store::bucket_key( self::tick() );
 	}
@@ -2554,6 +2545,20 @@ class PerformanceCITest extends TestCase {
 		$this->assertStringContainsString( 'invalid breakdown dimension: server', $result );
 	}
 
+	public function test_dump_url_refuses_the_server_axis(): void {
+		// The same refusal `url_breakdown` gives, not a reply missing a key.
+		$store  = new Stats_Store( 0, 86400 );
+		$bucket = $this->current_url_bucket();
+		$this->set_url_bucket( $store, $bucket, [
+			'b7731ce0fa11' => [ 'url' => '/wombat-7731', 'count' => 3, 'last_seen' => self::tick() ],
+		] );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', 'b7731ce0fa11 --breakdown=server' );
+
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( 'invalid breakdown dimension: server', $result );
+	}
+
 	public function test_dump_url_verb_includes_category_time_series_when_arg_set(): void {
 		// `?categories=1` on /urls/{hash} emits `category_time_series`
 		// (legacy L196, L184-186). Consumed by UrlDetailView L282-295 +
@@ -2585,9 +2590,9 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( 0.2, $result['category_time_series']['buckets'][ $bucket ][0][1] );
 	}
 
-	public function test_dump_url_verb_breakdown_filters_unknown_dims(): void {
-		// Unknown dim → no breakdown_time_series (matches legacy L179's
-		// `in_array(...,DIMENSIONS,true)` guard).
+	public function test_dump_url_verb_refuses_an_unknown_dim(): void {
+		// An unknown dim is refused, as `url_breakdown` refuses it, rather
+		// than answered without the series it asked for.
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
 		$this->set_url_bucket( $store, $bucket, [
@@ -2602,7 +2607,8 @@ class PerformanceCITest extends TestCase {
 			'abc123def456 --breakdown=nosuchdim'
 		);
 
-		$this->assertArrayNotHasKey( 'breakdown_time_series', $result );
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( 'invalid breakdown dimension: nosuchdim', $result );
 	}
 
 	// -------------------------------------------------------------------------
@@ -4325,7 +4331,7 @@ class PerformanceCITest extends TestCase {
 	 * Every shard's overflow row shares ONE key, so they collapse into one row.
 	 *
 	 * `Stats_Store::other_key()` is `Other` / `Other:worker` for every shard, so
-	 * the old whole-index fold merged all sixteen implicitly — decision 14 says
+	 * the old whole-index fold merged all sixteen implicitly — decision 17 says
 	 * so: "a merge keyed on the url_hash would collapse sixteen of them into
 	 * one". Folding per shard loses that unless the overflow is accumulated
 	 * across shards, and the table showed fourteen identical rows.

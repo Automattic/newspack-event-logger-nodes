@@ -57,7 +57,7 @@
   </div>
   <div class="lbl" style="left:0;top:160px">
     <b>memcache, hourly</b>
-    <span class="mono">urls_h:{shard}:{Y-m-d-H}</span>
+    <span class="mono">urls_h:{server_key}:{shard}:{Y-m-d-H}</span>
     <span>one key an hour, in a fine bucket's row shape</span>
   </div>
   <div class="lbl" style="left:0;top:250px">
@@ -76,7 +76,7 @@
   <div class="ann" style="left:210px;top:382px;width:808px;text-align:center">The dashboard reads the last hour in buckets and the rest of the window in hours: <b>36 to 46 keys per shard</b> instead of 288.</div>
 
   <div class="ann" style="left:660px;top:200px;width:358px;text-align:right">The open hour is not folded yet. A flush folds the URL index's closed hour, at most once every five seconds.</div>
-  <div class="ann" style="left:470px;top:292px;width:548px;text-align:right">A bucket's frames are written at the first checkpoint after it closes. Until then they ride the consumer's offsetlog, capped at two megabytes per checkpoint.</div>
+  <div class="ann" style="left:470px;top:292px;width:548px;text-align:right">A bucket's frames are written at the first checkpoint after it closes. Until then they ride the consumer's offsetlog, capped at sixteen megabytes per checkpoint.</div>
   <div class="ann" style="left:176px;top:292px;width:280px">Frames are kept for twice the statistics window, so the mirror reaches back past it.</div>
   <div class="ann" style="left:210px;top:120px;width:500px">Each key expires on its own, so retention is its time to live, floored at an hour.</div>
 </div>
@@ -85,7 +85,7 @@
   <div class="card tight" style="flex:1.25">
     <h3>What a key holds</h3>
     <p>Sums and counts, never means, so buckets and partitions merge by addition and the dashboard divides at read time.</p>
-    <p>Caps hold each value under memcache's one-megabyte limit: <b>50</b> categories, <b>20</b> dimension values and <b>2,000</b> URLs per shard of the URL index. The overflow folds into an <span class="mono">Other</span> row, so totals stay exact.</p>
+    <p>Each producer caps its value to fit memcache's one-megabyte item before writing it: <b>50</b> categories, <b>20</b> dimension values, <b>200</b> leaderboard categories, and as many URL rows per shard as fit by estimated bytes, each server's URLs under keys of their own. The overflow folds into an <span class="mono">Other</span> row, so totals stay exact.</p>
     <div class="keybar">
       <div><div class="seg mono">evlog</div><div class="who">the store</div></div>
       <div><div class="seg mono">pN</div><div class="who">the partition</div></div>

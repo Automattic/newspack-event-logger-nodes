@@ -35,7 +35,7 @@
       <text x="0" y="14" font-size="11.5" fill="#50575E" font-family="Inter, Helvetica, Arial, sans-serif">older</text>
       <text x="1052" y="14" text-anchor="end" font-size="11.5" fill="#50575E" font-family="Inter, Helvetica, Arial, sans-serif">now</text>
       <rect x="0" y="24" width="660" height="26" rx="4" fill="#787C82"/>
-      <text x="330" y="41" text-anchor="middle" font-size="11.5" font-weight="700" fill="#fff" font-family="Inter, Helvetica, Arial, sans-serif">one key per closed hour: urls_h:{shard}:{Y-m-d-H}, up to 23 of them</text>
+      <text x="330" y="41" text-anchor="middle" font-size="11.5" font-weight="700" fill="#fff" font-family="Inter, Helvetica, Arial, sans-serif">one key a server per closed hour: urls_h:{server_key}:{shard}:{Y-m-d-H}, up to 23</text>
       <rect x="664" y="24" width="180" height="26" rx="4" fill="#fff" stroke="#003DA5" stroke-width="1.5" stroke-dasharray="4 3"/>
       <text x="754" y="41" text-anchor="middle" font-size="11" fill="#003DA5" font-weight="700" font-family="Inter, Helvetica, Arial, sans-serif">the grace hour</text>
       <rect x="848" y="24" width="204" height="26" rx="4" fill="url(#fine)"/>
@@ -53,7 +53,7 @@
 
   <div class="nums">
     <div class="n"><div class="big">2</div><div class="k"><span class="m">ROLLUP_HOURS_PER_FLUSH</span>: a cold start's backfill spreads across flushes instead of stalling one</div></div>
-    <div class="n"><div class="big">1</div><div class="k"><span class="m">lookup_multi</span> for the whole window's skip probe; probing per hour pays 23 round trips a flush to learn there is nothing to do, decision 6's latency cliff</div></div>
+    <div class="n"><div class="big">2</div><div class="k"><span class="m">lookup_multi</span> calls for the whole window's skip probe, the hours' server indexes and then every key they name; probing per hour pays 23 round trips a flush to learn there is nothing to do, decision 6's latency cliff</div></div>
     <div class="n"><div class="big">7,200 s</div><div class="k"><span class="m">FINE_TTL_SECONDS</span>: the fine tier's own retention, 24 buckets a shard, against <span class="m">min_lifetime</span> for the coarse tier that outlives it</div></div>
     <div class="n"><div class="big">12</div><div class="k"><span class="m">INDEX_READ_CHUNK</span>: the read folds one chunk of buckets and drops it before the next, per SHARD &mdash; an hour the coarse tier answered for is taken from it, and only the leading hour falls back to its twelve fine buckets</div></div>
     <div class="n"><div class="big red">512 MB</div><div class="k">exhausts in <span class="m">empty_index_row()</span> when the whole window's rows sit resident beside the index being built</div></div>

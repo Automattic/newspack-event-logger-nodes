@@ -809,7 +809,7 @@ class StatsStoreTest extends TestCase {
 		$reader = $this->make_store();
 		$reader->rehydrate = static fn ( array $keys ): array => [];
 		$reader->absence   = static fn ( string $key ): int => 20;
-		$open = Stats_Store::bucket_key( \time() );
+		$open = Stats_Store::bucket_key( self::tick() );
 		$this->assertSame( [], $reader->get_leaderboard_buckets( [ $open ] ) );
 
 		$writer = $this->make_store();
@@ -825,9 +825,11 @@ class StatsStoreTest extends TestCase {
 			return [];
 		};
 		$store->absence = static fn ( string $key ): int => $store->absence_holds( $key );
-		$now    = \time();
+		$now    = self::tick();
 		$closed = Stats_Store::bucket_key( $now - 3600 );
 		$open   = Stats_Store::bucket_key( $now );
+		// The cache double dates an expiry from the wall.
+		$wall   = \time();
 
 		$this->assertSame( [], $store->get_leaderboard_buckets( [ $closed, $open ] ) );
 		$this->assertSame( [], $store->get_leaderboard_buckets( [ $closed, $open ] ) );
@@ -836,10 +838,17 @@ class StatsStoreTest extends TestCase {
 		$this->assertSame( [ [ 'lb:' . $closed, 'lb:' . $open ] ], $asked );
 		$expiries = Core::$memd->expiries();
 		$brief    = $expiries[ self::cache_key( 0, 'lb:' . $open ) ] ?? 0;
-		$this->assertEqualsWithDelta( $now + Stats_Store::ABSENCE_HOLD_SECONDS, $brief, 2, 'the open bucket\'s absence holds briefly' );
+		$this->assertEqualsWithDelta( $wall + Stats_Store::ABSENCE_HOLD_SECONDS, $brief, 2, 'the open bucket\'s absence holds briefly' );
 		$held     = $expiries[ self::cache_key( 0, 'lb:' . $closed ) ] ?? 0;
 		// The window is 7200s from the bucket's start, an hour ago.
-		$this->assertEqualsWithDelta( $now - ( $now % Stats_Store::BUCKET_SECONDS ) - 3600 + 7200, $held, 2 + Stats_Store::BUCKET_SECONDS, 'held for what is left of the window, not the table lifetime' );
+		$this->assertEqualsWithDelta( $wall - ( $now % Stats_Store::BUCKET_SECONDS ) - 3600 + 7200, $held, 2 + Stats_Store::BUCKET_SECONDS, 'held for what is left of the window, not the table lifetime' );
+	}
+
+	public function test_the_open_bucket_is_the_one_the_tick_names(): void {
+		// `absence_holds()` reads the tick; two buckets ahead of the wall, a
+		// bucket dated from the wall is already closed to it.
+		$this->shift_tick( 2 * Stats_Store::BUCKET_SECONDS );
+		$this->test_an_absent_closed_bucket_is_not_asked_of_the_mirror_again();
 	}
 
 	public function test_an_absence_read_does_not_move_the_tick(): void {

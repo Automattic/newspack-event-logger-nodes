@@ -1534,6 +1534,7 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 			$filed = [];
 			foreach ( $servers as $server => $rows ) {
 				$as           = $admitted[ (string) $server ];
+				$rows         = self::refile_rows( $rows, (string) $server, $as );
 				$filed[ $as ] = isset( $filed[ $as ] ) ? self::merge_url_rows( $filed[ $as ], $rows ) : $rows;
 			}
 			foreach ( $filed as $as => $rows ) {
@@ -1884,8 +1885,8 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	/**
 	 * Cut the intents into write batches without splitting a ranking GROUP.
 	 *
-	 * A group is one bucket's reader-family row and name writes — 32 keys at
-	 * most — and it ranks when its last one is answered, so a group split
+	 * A group is one server's reader-family row writes in one bucket — sixteen
+	 * keys — and it ranks when its last one is answered, so a group split
 	 * across chunks would rank the bucket twice and read back every shard the
 	 * second chunk still held.
 	 *
@@ -2097,9 +2098,31 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 		\arsort( $traffic );
 		foreach ( \array_slice( \array_keys( $traffic ), Stats_Store::MAX_SERVER_VALUES ) as $server ) {
 			foreach ( $rows[ $server ] as $shard => $shard_rows ) {
+				$shard_rows                               = self::refile_rows( $shard_rows, (string) $server, Stats_Store::OTHER_KEY );
 				$rows[ Stats_Store::OTHER_KEY ][ $shard ] = self::merge_url_rows( $rows[ Stats_Store::OTHER_KEY ][ $shard ] ?? [], $shard_rows );
 			}
 			unset( $rows[ $server ] );
+		}
+		return $rows;
+	}
+
+	/**
+	 * Rows moving from one server's key to another's, each path re-cut for
+	 * the server it now sits under.
+	 *
+	 * @param array<array-key,mixed> $rows Rows by url_hash.
+	 * @param string                 $from The server they were filed under.
+	 * @param string                 $to   The server they are filed under now.
+	 * @return array<array-key,mixed>
+	 */
+	private static function refile_rows( array $rows, string $from, string $to ): array {
+		if ( $from === $to ) {
+			return $rows;
+		}
+		foreach ( $rows as $hash => $row ) {
+			$row                          = Core::arr( $row );
+			$row[ Stats_Store::ROW_PATH ] = Stats_Store::refile_path( Core::str( $row[ Stats_Store::ROW_PATH ] ?? '' ), $from, $to );
+			$rows[ $hash ]                = $row;
 		}
 		return $rows;
 	}

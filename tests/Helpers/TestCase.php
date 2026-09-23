@@ -28,6 +28,27 @@ abstract class TestCase extends RuntimeTestCase {
 	protected const SEED_SERVER = 'example.com';
 
 	/**
+	 * The moment every seed dates from: the tick the code under test reads,
+	 * stamped at setUp. The wall moves on, and a seed dated from it lands a
+	 * bucket off whenever a five-minute boundary falls in between.
+	 */
+	protected static function tick(): int {
+		return (int) \Newspack_Nodes\Core::$now;
+	}
+
+	/**
+	 * Run the rest of the test on a tick `$seconds` off the wall, the state a
+	 * bucket boundary between setUp and a wall-dated seed leaves behind.
+	 * The substrate's tearDown restores the clock.
+	 *
+	 * @param int $seconds Offset from the wall; negative runs the tick behind.
+	 */
+	protected function shift_tick( int $seconds ): void {
+		\Newspack_Nodes\Core::$clock = static fn (): float => \microtime( true ) + $seconds;
+		\Newspack_Nodes\Core::right_now();
+	}
+
+	/**
 	 * Path to a pre-written config file in `tests/configs/`.
 	 *
 	 * @param string $name Basename without the extension.

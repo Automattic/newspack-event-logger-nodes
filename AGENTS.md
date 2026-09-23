@@ -169,7 +169,7 @@ Each is intentional, stated in full in [`docs/architecture-decisions.md`](docs/a
 | 11 | The open bucket is durable in the OFFSETLOG until it closes, and the carry is capped | [Decision 11](docs/architecture-decisions.md#decision-11-the-open-bucket-is-durable-in-the-offsetlog-until-it-closes-and-the-carry-is-capped) |
 | 12 | A stat times the request; a flame value is a rendering artifact | [Decision 12](docs/architecture-decisions.md#decision-12-a-stat-times-the-request-a-flame-value-is-a-rendering-artifact) |
 | 13 | A sequence-break marker is missing detail, not idle time | [Decision 13](docs/architecture-decisions.md#decision-13-a-sequence-break-marker-is-missing-detail-not-idle-time) |
-| 14 | A server scope the key cannot carry rides inside the value, and is applied as a PROJECTION | [Decision 14](docs/architecture-decisions.md#decision-14-a-server-scope-the-key-cannot-carry-rides-inside-the-value-and-is-applied-as-a-projection) |
+| 14 | A server scope the key cannot carry rides inside the value, and is applied as a PROJECTION — superseded by decision 30 | [Decision 14](docs/architecture-decisions.md#decision-14-a-server-scope-the-key-cannot-carry-rides-inside-the-value-and-is-applied-as-a-projection) |
 | 15 | The `urls` verb owns every URL-set fact; `overview` owns the site | [Decision 15](docs/architecture-decisions.md#decision-15-the-urls-verb-owns-every-url-set-fact-overview-owns-the-site) |
 | 16 | The breakdown panel is always mounted, and says which kind of nothing it has | [Decision 16](docs/architecture-decisions.md#decision-16-the-breakdown-panel-is-always-mounted-and-says-which-kind-of-nothing-it-has) |
 | 17 | The URL index is stored at TWO resolutions, and the coarse one is DERIVED | [Decision 17](docs/architecture-decisions.md#decision-17-the-url-index-is-stored-at-two-resolutions-and-the-coarse-one-is-derived) |
@@ -185,6 +185,7 @@ Each is intentional, stated in full in [`docs/architecture-decisions.md`](docs/a
 | 27 | The platform's requests to itself are worker traffic, named by path | [Decision 27](docs/architecture-decisions.md#decision-27-the-platforms-requests-to-itself-are-worker-traffic-named-by-path) |
 | 28 | The writer ranks each bucket and indexes each name, and the page reads those rather than the index | [Decision 28](docs/architecture-decisions.md#decision-28-the-writer-ranks-each-bucket-and-indexes-each-name-and-the-page-reads-those-rather-than-the-index) |
 | 29 | Every reader dates from the tick, and a reply reads it once | [Decision 29](docs/architecture-decisions.md#decision-29-every-reader-dates-from-the-tick-and-a-reply-reads-it-once) |
+| 30 | Every memcache value is one server's, carries nothing its key implies, and fits one item | [Decision 30](docs/architecture-decisions.md#decision-30-every-memcache-value-is-one-servers-carries-nothing-its-key-implies-and-fits-one-item) |
 
 ## Layout
 
@@ -260,7 +261,7 @@ Mistakes that have actually happened.
 
 - **Documentation map**: `docs/README.md` — the three chapters, then the reference set
 - **Architecture**: `docs/architecture-guide.md` — application design, topologies, hub/spoke flow, memcache schema
-- **Decisions**: `docs/architecture-decisions.md` — the 29 decisions, cited as "decision N"
+- **Decisions**: `docs/architecture-decisions.md` — the 30 decisions, cited as "decision N"
 - **Security model**: `docs/security-model.md` — what the logger captures, what crosses to the hub, the tradeoffs
 - **API**: `docs/API.md` — the one REST route (the MCP server), every service-CI verb, the two WP-CLI verbs, the PHP API sibling plugins log through, and the hooks fired and consumed
 - **Runtime**: `../newspack-nodes/` — the substrate this plugin depends on

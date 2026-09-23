@@ -53,19 +53,18 @@
       <div class="cell ext"><span class="idx">10</span><span class="nm"><b>MAX_PEAK_MB</b>max_peak_mb</span></div>
       <div class="cell ext"><span class="idx">11</span><span class="nm"><b>LAST_SEEN</b>last_seen</span></div>
       <div class="cell ext"><span class="idx">12</span><span class="nm"><b>WORKER</b>worker</span></div>
-      <div class="cell srv"><span class="idx">13</span><span class="nm"><b>SRV</b>srv</span></div>
+      <div class="cell srv"><span class="idx">13</span><span class="nm"><b>PATH</b>path</span></div>
     </div>
     <div class="brace">
-      <div style="flex:8"><span class="m">URL_SRV_SUMS</span>: the summed half. ONE map describes the row and its per-server split alike, so decision 14's "that row restricted to one server" is structural, and <span class="m">cap_servers()</span> ranks a split by index 0 rather than by a field name the positional split does not carry.</div>
-      <div class="g" style="flex:5">Extremes, a timestamp and a flag. Never split: a scoped row keeps the URL's own <span class="m">min_ms</span> and <span class="m">max_ms</span>.</div>
-      <div class="r" style="flex:1">the split: the row's one nested value</div>
+      <div style="flex:8"><span class="m">ROW_SUMS</span>: the summed half. ONE map describes it, so <span class="m">merge_url_row()</span> and <span class="m">fold_url_rows()</span> sum through it without naming a field.</div>
+      <div class="g" style="flex:5">Extremes, a timestamp and a flag: the extremes take the larger or the smaller on a merge, never a sum.</div>
+      <div class="r" style="flex:1">the path: the row's one string</div>
     </div>
   </div>
 
   <div class="nums">
     <div class="n"><div class="big">672 → 398 B</div><div class="k">per row, named against positional, measured on live rows through the real pipeline: 40.9%, taking the hub's 36.1 MB across 58,415 rows to roughly 21</div></div>
-    <div class="n"><div class="big">369 → 290 B</div><div class="k">the sole-server collapse on the hub's own row shape: a further 21.4%, and 56.8% off the 672, on the field that was over half the read</div></div>
-    <div class="n"><div class="big">23–37%</div><div class="k">of the entire fold pass, 34–98 ms per <span class="m">urls</span> poll, that naming the split at the fold would cost: a third field map, a memoized derivation and a 25-line translation, to name data nothing displays</div></div>
+    <div class="n"><div class="big">1,024 B</div><div class="k"><span class="m">MAX_PATH_BYTES</span>: the longest path a row keeps, <span class="m">…</span> included, so a query-string flood cannot grow one row past it</div></div>
     <div class="n"><div class="big">44.1%</div><div class="k">off the entries of a JSON mirror frame, measured across 66,966 of them: <span class="m">CAT_SUMS</span> (<span class="m">CAT_MS</span> 0, <span class="m">CAT_CALLS</span> 1, <span class="m">CAT_REQUESTS</span> 2) and <span class="m">DIM_SUMS</span> (<span class="m">DIM_COUNT</span> 0, <span class="m">DIM_SUM_MS</span> 1, <span class="m">DIM_SUM_PEAK_MB</span> 2) are positional too</div></div>
   </div>
 
@@ -73,17 +72,17 @@
     <div class="card">
       <h3>Where an index becomes a name</h3>
       <p><span class="m">ROW_FIELD_NAMES</span> is the one map, beside the constants it names, in the shape <span class="m">Message::TYPE_NAMES</span> sets, because a private copy is how a reader ends up omitting a field. <span class="m">Performance_CI_Node::fold_index_row()</span> is the one storage/display boundary for the ROW: everything above it is positional, the display row keeps its names because it crosses the wire as JSON, and a second copy of the translation is how the table and the modal come to disagree about one URL.</p>
-      <p>The SPLIT never crosses: <span class="m">swap_url_server_sums()</span> merges one server's sums into the row and unsets it, <span class="m">project_row()</span> unsets <span class="m">srv_recent</span>, and every escape from the index goes through that projection. A thing crosses a boundary where it is CONSUMED, not where it is convenient to convert.</p>
+      <p>The PATH crosses as <span class="m">url</span>: <span class="m">fold_index_row()</span> puts it on the display row, and <span class="m">resolve_urls()</span> replaces it with the whole URL <span class="m">urlmap</span> joins for the rows a page shows. A thing crosses a boundary where it is CONSUMED, not where it is convenient to convert.</p>
       <p><span class="m">CAT_SUMS</span> has no <span class="m">CAT_FIELD_NAMES</span>, and that is not an omission: <span class="m">compact_category_series()</span> emits a POSITIONAL wire row, so no index ever becomes a name, and a name table with no naming site is a second shape waiting to drift. <span class="m">DIM_SUMS</span> has none for the same reason — it stays positional to the wire, where two React sites index it.</p>
     </div>
     <div class="card">
-      <h3>A split of one server is the row restated</h3>
-      <p>A stored <span class="m">url</span> is ABSOLUTE, so on a fleet of disjoint sites every URL has exactly one host: this is the COMMON row. COUNT alone decides it, because every <span class="m">URL_SRV_SUMS</span> field is summed into the row and the split from the same increment.</p>
+      <h3>The path is display, and the host is the key's</h3>
+      <p><span class="m">Stats_Store::row_path()</span> keeps the path and query with no scheme or host when the URL is https under the row's own server, whose name the key implies (decision 30), and the whole URL otherwise, so an http row never displays as https.</p>
       <div class="split">
-        <div class="s a"><b>"host" =&gt; null</b>this host's numbers ARE the row's</div>
-        <div class="s b"><b>host absent</b>never served here: the row drops from a scoped read</div>
+        <div class="s a"><b>https://kea.test/wombat-7731</b>under kea.test's key: <span class="m">/wombat-7731</span></div>
+        <div class="s b"><b>http://kea.test/wombat-7731</b>kept whole: the scheme is not the key's to imply</div>
       </div>
-      <p style="margin-top:8px"><span class="m">collapse_sole_server()</span> and <span class="m">expand_sole_server()</span> are the pair, and every merge, reader or writer, expands BEFORE summing: <span class="m">merge_url_row()</span> and <span class="m">fold_url_rows()</span> do it for both sides, which covers the re-flush, the coarse fold and the overflow tail. <span class="m">sum_fields()</span> skips a non-array value, so an unexpanded null is not a zero but that host deleted from the merge. The rule names writers too, because a write-side merge that skips the expansion breaks no reader's test. The suite pins the shape in ONE test that reads a shard raw and translates everywhere else.</p>
+      <p style="margin-top:8px">The hash is the row's identity and the path its display. A merge keeps whichever side's path is non-empty, and an overflow row's is empty, because one path describes none of the URLs it folds. The byte cap counts every row's path. The suite pins the shape in ONE test that reads a shard raw and translates everywhere else.</p>
     </div>
   </div>
 

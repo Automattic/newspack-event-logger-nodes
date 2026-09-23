@@ -1125,7 +1125,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				$raw_row = Core::arr( $raw );
 				// @longform Every shard's overflow row shares ONE key, so a
 				// per-shard fold must collapse all sixteen deliberately —
-				// decision 14 says a merge on the url_hash collapses sixteen
+				// decision 17 says a merge on the url_hash collapses sixteen
 				// into one. Held raw and projected once below, so the means
 				// divide a whole row.
 				$hash = Core::as_string( $raw_row['hash'] ?? '' );
@@ -2813,7 +2813,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				return [
 					'data'    => $page['data'],
 					'rows'    => $page['rows'],
-					// Null where pre-split rows cannot answer the scope.
+					// Zeros for a scope holding no rows, never null.
 					'totals'  => $page['totals'],
 					'slowest' => $page['slowest'],
 					'ranked'  => $page['ranked'],
@@ -2847,6 +2847,10 @@ class Performance_CI_Node extends Service_CI_Node {
 				$hash   = $parsed['positional'][0] ?? '';
 				if ( ! \preg_match( '/^[a-f0-9]{8,64}$/D', $hash ) ) {
 					throw new \RuntimeException( 'invalid hash format' );
+				}
+				$breakdown = (string) ( $opts['breakdown'] ?? '' );
+				if ( '' !== $breakdown ) {
+					self::assert_dimension( $breakdown, self::URL_DIMENSIONS );
 				}
 
 				// @longform The row that opened this modal was the selected
@@ -2896,8 +2900,7 @@ class Performance_CI_Node extends Service_CI_Node {
 					'last_modified'      => $aggregate['last_modified'] ?? 0,
 				];
 
-				$breakdown = (string) ( $opts['breakdown'] ?? '' );
-				if ( '' !== $breakdown && \in_array( $breakdown, self::URL_DIMENSIONS, true ) ) {
+				if ( '' !== $breakdown ) {
 					$payload['breakdown_time_series'] = self::merge_url_dim( $hash, $breakdown, $stores, $now );
 				}
 
