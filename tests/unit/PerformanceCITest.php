@@ -2059,6 +2059,31 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( 1, $result['totals']['urls'] );
 		$this->assertCount( 1, $result['data'] );
 		$this->assertSame( 'https://example.com/timeouts', $result['data'][0]['url'] );
+		// Its errors beside its traffic: six requests, two of them classified.
+		$this->assertSame( 6, $result['data'][0]['count'] );
+		$this->assertSame( 4, $result['data'][0]['errors'] );
+		$this->assertSame( 6, $result['totals']['requests'] );
+		$this->assertSame( 4, $result['totals']['errors'] );
+	}
+
+	public function test_errors_only_ranks_a_count_sort_by_errors(): void {
+		// Busy with one timeout against quiet with five: errors decide.
+		$store  = new Stats_Store( 0, 86400 );
+		$bucket = $this->current_url_bucket();
+		$this->set_url_bucket( $store, $bucket, [
+			'dddddddddddd' => [
+				'url' => '/busy', 'count' => 300, 'timed_count' => 299, 'sum_ms' => 900.0, 'last_seen' => 1700000011,
+				'count_2xx' => 299, 'count_3xx' => 0, 'count_4xx' => 0, 'count_5xx' => 0,
+			],
+			'eeeeeeeeeeee' => [
+				'url' => '/quiet', 'count' => 12, 'timed_count' => 7, 'sum_ms' => 70.0, 'last_seen' => 1700000012,
+				'count_2xx' => 7, 'count_3xx' => 0, 'count_4xx' => 0, 'count_5xx' => 0,
+			],
+		] );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--errors_only=1 --sort=count --order=desc' );
+
+		$this->assertSame( [ 'https://example.com/quiet', 'https://example.com/busy' ], \array_column( $result['data'], 'url' ) );
 	}
 
 	public function test_urls_verb_search_drops_the_folded_aggregate_row(): void {
@@ -2265,7 +2290,9 @@ class PerformanceCITest extends TestCase {
 
 		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--errors_only=1' );
 
+		// One error among its five requests, and none from the folded tail.
 		$this->assertSame( 5, $result['totals']['requests'] );
+		$this->assertSame( 1, $result['totals']['errors'] );
 		$this->assertSame( 1, $result['totals']['urls'] );
 	}
 

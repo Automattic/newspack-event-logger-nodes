@@ -389,6 +389,39 @@ describe( 'UrlTable', () => {
 		unmount();
 	} );
 
+	it( 'heads an errors-only page "Errors" and keeps shares of all traffic', () => {
+		// Its 2 errors ride beside its 100 requests; shares divide the 100.
+		const { container, unmount } = mount( {
+			errorCounts: true,
+			urls: [
+				{
+					hash: 'e1',
+					url: '/erring',
+					count: 100,
+					errors: 2,
+					count_2xx: 80,
+					count_4xx: 18,
+					avg_ms: 40,
+				},
+			],
+			totalUrls: 1,
+		} );
+		const header = container.querySelector(
+			'.event-logger-table__header [data-field="count"]'
+		);
+		expect( header.textContent ).toContain( 'Errors' );
+		expect(
+			container.querySelector(
+				'.event-logger-table__row [data-field="count"]'
+			).textContent
+		).toBe( '2' );
+		const cell = container.querySelector(
+			'.event-logger-table__row [data-field="count_2xx"]'
+		);
+		expect( cell.textContent ).toBe( '80%' );
+		unmount();
+	} );
+
 	it( 'fires onSelect when a row is clicked', () => {
 		const onSelect = jest.fn();
 		const { container, unmount } = mount( { onSelect } );

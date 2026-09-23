@@ -1072,12 +1072,14 @@ class Performance_CI_Node extends Service_CI_Node {
 		$rows      = 0;
 		$urls      = 0;
 		$requests  = 0;
+		$errored   = 0;
 		$timed     = 0;
 		$recent    = 0;
 		$sum_ms    = 0.0;
 		$sum_peak  = 0.0;
 
-		$by_sort = self::by_sort( $sort, $order );
+		// Under the filter a count ranks the errors, not the traffic.
+		$by_sort = self::by_sort( $errors && 'count' === $sort ? 'errors' : $sort, $order );
 		$by_mean = static fn ( array $a, array $b ): int =>
 			( $b['avg_ms'] ?? 0 ) <=> ( $a['avg_ms'] ?? 0 );
 
@@ -1134,13 +1136,15 @@ class Performance_CI_Node extends Service_CI_Node {
 				}
 				$row       = self::project_row( $raw_row );
 				$aggregate = ! empty( $row['aggregate'] );
-				if ( $errors && ! self::has_unclassified_requests( $row ) ) {
+				$row       = $errors ? self::errors_only_row( $row ) : $row;
+				if ( null === $row ) {
 					continue;
 				}
 				++$rows;
 				// The overflow row stands for many URLs; not one of them.
 				$urls     += $aggregate ? 0 : 1;
 				$requests += Core::num_int( $row['count'] ?? null );
+				$errored  += Core::num_int( $row['errors'] ?? null );
 				$recent   += Core::num_int( $row['recent_count'] ?? null );
 				// Denominator from the SAME row as its numerator.
 				$timed    += Core::num_int( $row['timed_count'] ?? null );
@@ -1162,11 +1166,13 @@ class Performance_CI_Node extends Service_CI_Node {
 			if ( '' !== $search ) {
 				continue;
 			}
-			if ( $errors && ! self::has_unclassified_requests( $row ) ) {
+			$row = $errors ? self::errors_only_row( $row ) : $row;
+			if ( null === $row ) {
 				continue;
 			}
 			++$rows;
 			$requests += Core::num_int( $row['count'] ?? null );
+			$errored  += Core::num_int( $row['errors'] ?? null );
 			$recent   += Core::num_int( $row['recent_count'] ?? null );
 			$timed    += Core::num_int( $row['timed_count'] ?? null );
 			$sum_ms   += Core::num_float( $row['sum_ms'] ?? null );
@@ -1192,7 +1198,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				'avg_ms'              => self::mean_of( $sum_ms, $timed ),
 				'avg_peak_mb'         => $requests > 0 ? $sum_peak / $requests : 0.0,
 				'requests_per_second' => self::recent_rate( $recent ),
-			],
+			] + ( $errors ? [ 'errors' => $errored ] : [] ),
 			'slowest' => \array_slice( $named, \count( $page ) ),
 			'ranked'  => false,
 			'as_of'   => $now,
@@ -2555,26 +2561,33 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * Whether a URL row saw requests no status bucket accounted for — that is
-	 * what the dashboard's "Errors" filter means: timeouts (T) and fatals (F),
-	 * not 5xx, which IS a response.
+	 * A URL row as the dashboard's "Errors" filter shows it, carrying `errors`:
+	 * the requests no status bucket accounted for — timeouts (T) and fatals
+	 * (F), not 5xx, which IS a response — or null when it had none.
 	 *
 	 * Server-side so `total` counts what is rendered: applied on the client
 	 * alone, the filter leaves the footer stating an unfiltered count —
-	 * "1-100 of 5,000" above three rows.
+	 * "1-100 of 5,000" above three rows. `errors` rides BESIDE `count`, so
+	 * every mean and share still divides the traffic it summed.
 	 *
 	 * @param array<array-key,mixed> $row A URL index row.
+	 * @return array<array-key,mixed>|null
 	 */
-	private static function has_unclassified_requests( array $row ): bool {
+	private static function errors_only_row( array $row ): ?array {
 		// A folded row mixes hundreds of URLs; no row test speaks for it.
 		if ( ! empty( $row['aggregate'] ) ) {
-			return false;
+			return null;
 		}
 		$classified = Core::num_int( $row['count_2xx'] ?? 0 )
 			+ Core::num_int( $row['count_3xx'] ?? 0 )
 			+ Core::num_int( $row['count_4xx'] ?? 0 )
 			+ Core::num_int( $row['count_5xx'] ?? 0 );
-		return $classified < Core::num_int( $row['count'] ?? 0 );
+		$errors     = Core::num_int( $row['count'] ?? 0 ) - $classified;
+		if ( $errors <= 0 ) {
+			return null;
+		}
+		$row['errors'] = $errors;
+		return $row;
 	}
 
 	/**

@@ -106,6 +106,8 @@ export default function PerformanceDashboard( {
 		field: 'timestamp',
 		dir: 'desc',
 	} );
+	// Held here, not in the URL modal, which unmounts for every request.
+	const [ detailErrorsOnly, setDetailErrorsOnly ] = useState( false );
 	const [ chartMetric, setChartMetric ] = useState( 'volume' );
 
 	// The server filter is page-wide scope, not the overview card's own.
@@ -307,12 +309,14 @@ export default function PerformanceDashboard( {
 	 *
 	 * @param {Object} url The `{hash, url}` catalog entry to open.
 	 */
+	// A URL picked from an errors-only table opens narrowed to its errors.
 	const openUrl = useCallback(
 		( url ) => {
 			selectRequest( null );
+			setDetailErrorsOnly( !! urlFilters?.errors_only );
 			selectUrlNow( url );
 		},
-		[ selectRequest, selectUrlNow ]
+		[ selectRequest, selectUrlNow, urlFilters ]
 	);
 
 	/**
@@ -914,6 +918,7 @@ export default function PerformanceDashboard( {
 								metric={ chartMetric }
 								ranked={ urlsSlice?.ranked }
 								now={ urlsSlice?.as_of }
+								errorCounts={ !! urlFilters?.errors_only }
 							/>
 						</CardBody>
 					</Card>
@@ -945,6 +950,8 @@ export default function PerformanceDashboard( {
 						}
 						selectUrl( null );
 						selectRequest( null );
+						// Only the table opens a URL narrowed; forget it here.
+						setDetailErrorsOnly( false );
 					} }
 					className="event-logger-performance-modal newspack-nodes-modal newspack-nodes-skin-root newspack-nodes-theme newspack-nodes-ui"
 					headerActions={
@@ -1053,6 +1060,8 @@ export default function PerformanceDashboard( {
 							onRequestSort={ handleRequestSort }
 							onSelectRequest={ selectRequest }
 							urlHash={ selectedUrl.hash }
+							errorsOnly={ detailErrorsOnly }
+							onErrorsOnlyChange={ setDetailErrorsOnly }
 						/>
 					) }
 
