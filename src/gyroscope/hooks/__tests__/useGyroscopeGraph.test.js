@@ -83,12 +83,15 @@ const TEE = 'gyroscope:stream';
 const COMPOSED_NAMES = [ HTTP, HEARTBEAT ];
 const LEASE_OWNER = '9007199254740993';
 
+// The handle jest.setup.js issues every test's command session under.
+const HARNESS_SESSION = 'e2e11111e2e22222e2e33333e2e44444';
+
 // A `connected` envelope as a flat `KEY VALUE` string (SseInNode shape).
-function connectedEnvelope( { pid = 4242, slot = 3 } = {} ) {
+function connectedEnvelope( { slot = 3 } = {} ) {
 	const m = newMessage();
 	m[ TYPE ] = TM_INFO;
 	m[ KEY ] = 'connected';
-	const parts = [ `PID ${ pid }` ];
+	const parts = [ `SESSION ${ HARNESS_SESSION }` ];
 	if ( null !== slot && undefined !== slot ) {
 		parts.push( `SLOT ${ slot } OWNER ${ LEASE_OWNER }` );
 	}
@@ -182,7 +185,7 @@ describe( 'useGyroscopeGraph — exospine + RemoteLink wiring', () => {
 		renderHook( () => useGyroscopeGraph() );
 		expect( FakeEventSource.last ).toBeTruthy();
 		expect( FakeEventSource.last.url ).toBe(
-			'/wp-json/newspack-nodes/v1/messages/stream?subscribe=gyroscope.*&_wpnonce=NONCE'
+			'/wp-json/newspack-nodes/v1/messages/stream?subscribe=gyroscope.*&_wpnonce=NONCE&session=e2e11111e2e22222e2e33333e2e44444&stream=gyroscope%3Alink%3Asse-in'
 		);
 	} );
 
@@ -210,7 +213,7 @@ describe( 'useGyroscopeGraph — slot keep-alive bridge', () => {
 		act( () => {
 			FakeEventSource.last.dispatch(
 				'connected',
-				pack( connectedEnvelope( { pid: 7, slot: 5 } ) )
+				pack( connectedEnvelope( { slot: 5 } ) )
 			);
 		} );
 		const heartbeat = Core.node( HEARTBEAT );
@@ -225,7 +228,7 @@ describe( 'useGyroscopeGraph — slot keep-alive bridge', () => {
 		act( () => {
 			FakeEventSource.last.dispatch(
 				'connected',
-				pack( connectedEnvelope( { pid: 7, slot: null } ) )
+				pack( connectedEnvelope( { slot: null } ) )
 			);
 		} );
 		expect( Core.node( HEARTBEAT ).slot ).toBeNull();
@@ -241,7 +244,7 @@ describe( 'useGyroscopeGraph — slot keep-alive bridge', () => {
 			act( () => {
 				FakeEventSource.last.dispatch(
 					'connected',
-					pack( connectedEnvelope( { pid: 7, slot: 5 } ) )
+					pack( connectedEnvelope( { slot: 5 } ) )
 				);
 			} );
 			act( () => {
@@ -305,7 +308,7 @@ describe( 'useGyroscopeGraph — page visibility lifecycle', () => {
 		act( () => {
 			FakeEventSource.last.dispatch(
 				'connected',
-				pack( connectedEnvelope( { pid: 7, slot: 5 } ) )
+				pack( connectedEnvelope( { slot: 5 } ) )
 			);
 		} );
 		expect( Core.node( HEARTBEAT ).slot ).toBe( 5 );

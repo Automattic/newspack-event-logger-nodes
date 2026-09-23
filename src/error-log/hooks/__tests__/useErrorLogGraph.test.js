@@ -107,12 +107,15 @@ const REMOVED_NODE_NAMES = [
 ];
 const LEASE_OWNER = '9007199254740993';
 
+// The handle jest.setup.js issues every test's command session under.
+const HARNESS_SESSION = 'e2e11111e2e22222e2e33333e2e44444';
+
 // Build a `connected` envelope as a flat `KEY VALUE` string (SseInNode shape).
-function connectedEnvelope( { pid = 4242, slot = 3 } = {} ) {
+function connectedEnvelope( { slot = 3 } = {} ) {
 	const m = newMessage();
 	m[ TYPE ] = TM_INFO;
 	m[ KEY ] = 'connected';
-	const parts = [ `PID ${ pid }` ];
+	const parts = [ `SESSION ${ HARNESS_SESSION }` ];
 	if ( null !== slot && undefined !== slot ) {
 		parts.push( `SLOT ${ slot } OWNER ${ LEASE_OWNER }` );
 	}
@@ -203,7 +206,7 @@ describe( 'useErrorLogGraph — exospine + RemoteLink wiring', () => {
 		renderHook( () => useErrorLogGraph() );
 		expect( FakeEventSource.last ).toBeTruthy();
 		expect( FakeEventSource.last.url ).toBe(
-			'/wp-json/newspack-nodes/v1/messages/stream?subscribe=errors.*&_wpnonce=NONCE'
+			'/wp-json/newspack-nodes/v1/messages/stream?subscribe=errors.*&_wpnonce=NONCE&session=e2e11111e2e22222e2e33333e2e44444&stream=error-log%3Alink%3Asse-in'
 		);
 	} );
 
@@ -231,7 +234,7 @@ describe( 'useErrorLogGraph — slot keep-alive bridge', () => {
 		act( () => {
 			FakeEventSource.last.dispatch(
 				'connected',
-				pack( connectedEnvelope( { pid: 7, slot: 5 } ) )
+				pack( connectedEnvelope( { slot: 5 } ) )
 			);
 		} );
 		expect( Core.node( HEARTBEAT ).slot ).toBe( 5 );
@@ -245,7 +248,7 @@ describe( 'useErrorLogGraph — slot keep-alive bridge', () => {
 		act( () => {
 			FakeEventSource.last.dispatch(
 				'connected',
-				pack( connectedEnvelope( { pid: 7, slot: null } ) )
+				pack( connectedEnvelope( { slot: null } ) )
 			);
 		} );
 		expect( Core.node( HEARTBEAT ).slot ).toBeNull();
@@ -261,7 +264,7 @@ describe( 'useErrorLogGraph — slot keep-alive bridge', () => {
 			act( () => {
 				FakeEventSource.last.dispatch(
 					'connected',
-					pack( connectedEnvelope( { pid: 7, slot: 5 } ) )
+					pack( connectedEnvelope( { slot: 5 } ) )
 				);
 			} );
 			act( () => {
@@ -302,7 +305,7 @@ describe( 'useErrorLogGraph — page visibility / pause lifecycle', () => {
 		act( () => {
 			FakeEventSource.last.dispatch(
 				'connected',
-				pack( connectedEnvelope( { pid: 7, slot: 5 } ) )
+				pack( connectedEnvelope( { slot: 5 } ) )
 			);
 		} );
 		expect( Core.node( HEARTBEAT ).slot ).toBe( 5 );
@@ -353,7 +356,7 @@ describe( 'useErrorLogGraph — page visibility / pause lifecycle', () => {
 		act( () => {
 			FakeEventSource.last.dispatch(
 				'connected',
-				pack( connectedEnvelope( { pid: 7, slot: 5 } ) )
+				pack( connectedEnvelope( { slot: 5 } ) )
 			);
 		} );
 		const openSource = FakeEventSource.last;
