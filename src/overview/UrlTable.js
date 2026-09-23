@@ -25,6 +25,7 @@ import {
 import { __, _n, sprintf } from '@wordpress/i18n';
 import { TextControl } from '@wordpress/components';
 import useVirtualization from '@newspack-nodes/shared/hooks/useVirtualization';
+import { PAGE_CONTENT_CLASS } from '../components/DashboardShell';
 import { gridTemplate } from '@newspack-nodes/shared/hooks/useColumnPicker';
 import { formatAge } from '@newspack-nodes/shared/utils/formatters';
 
@@ -472,9 +473,14 @@ export default function UrlTable( {
 		return sortOrder === 'asc' ? ' ▲' : ' ▼';
 	};
 
-	// Window scroll drives it; the list scrolls only sideways.
+	// The page scrolls, not the window; the list scrolls only sideways.
 	const { startIndex, endIndex, paddingTop, paddingBottom } =
-		useVirtualization( listRef, ROW_HEIGHT, filteredUrls.length, null );
+		useVirtualization(
+			listRef,
+			ROW_HEIGHT,
+			filteredUrls.length,
+			`.${ PAGE_CONTENT_CLASS }`
+		);
 	const visibleUrls = filteredUrls.slice( startIndex, endIndex );
 
 	return (
