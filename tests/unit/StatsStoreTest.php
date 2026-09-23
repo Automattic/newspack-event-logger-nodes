@@ -1076,24 +1076,46 @@ class StatsStoreTest extends TestCase {
 		$this->assertCount( Stats_Store::MAX_READ_BUCKETS, $buckets );
 	}
 
-	public function test_splitting_a_url_always_rejoins_to_the_original(): void {
-		// The pair is stored apart and joined for display, so the split is only
-		// safe if it is lossless. An authority with no path is the case that
-		// bites: everything after the host has to be the PATH half, or the
-		// origin swallows a query and the display grows a slash from nowhere.
-		$urls = [
-			'https://alpha.test/reports',
-			'https://alpha.test/?cache-cozy',
-			'https://alpha.test?q=1',
-			'https://alpha.test',
-			'/a-bare-path',
-			'',
-		];
-		foreach ( $urls as $url ) {
-			[ $path, $origin ] = Stats_Store::split_url( $url );
-			$this->assertSame( $url, $origin . $path, "rejoins: {$url}" );
-			$this->assertStringNotContainsString( 'alpha.test', $path, "the host is not searchable: {$url}" );
-		}
+	public function test_a_url_name_is_its_server_and_the_path_its_row_carries(): void {
+		// The server is the locator a hash-only read needs; the path follows
+		// the row's rule, and display joins the two back through one join.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( 0, 86400 );
+		$store->set_url_names( [
+			'kea.example'          => [
+				'a1a1a1a1a1a1' => 'https://kea.example/kakapo-7731?x=7',
+				'b2b2b2b2b2b2' => 'http://kea.example/plain-3319',
+			],
+			Stats_Store::OTHER_KEY => [ 'c3c3c3c3c3c3' => 'https://moa.example/weka-5521' ],
+			'Unknown'              => [ 'd4d4d4d4d4d4' => '/tui-8812' ],
+		] );
+
+		$this->assertSame(
+			[ 'kea.example', '/kakapo-7731?x=7' ],
+			$store->bucket_get_multi( [ [ [ Stats_Store::NS_URLMAP ], 'a1a1a1a1a1a1' ] ] )[0],
+			'the origin is the server; the value carries the server and the path'
+		);
+		$this->assertSame(
+			[
+				'a1a1a1a1a1a1' => [ 'server' => 'kea.example', 'url' => 'https://kea.example/kakapo-7731?x=7' ],
+				'b2b2b2b2b2b2' => [ 'server' => 'kea.example', 'url' => 'http://kea.example/plain-3319' ],
+				'c3c3c3c3c3c3' => [ 'server' => Stats_Store::OTHER_KEY, 'url' => 'https://moa.example/weka-5521' ],
+				'd4d4d4d4d4d4' => [ 'server' => 'Unknown', 'url' => '/tui-8812' ],
+			],
+			$store->get_url_names( [ 'a1a1a1a1a1a1', 'b2b2b2b2b2b2', 'c3c3c3c3c3c3', 'd4d4d4d4d4d4' ] )
+		);
+	}
+
+	public function test_a_urls_path_drops_its_scheme_and_host_alone(): void {
+		// An authority with no path is the case that bites: everything after
+		// the host is the path, or the host swallows a query.
+		$this->assertSame(
+			[ '/reports', '/?cache-cozy', '?q=1', '', '/a-bare-path', '' ],
+			\array_map(
+				[ Stats_Store::class, 'path_of' ],
+				[ 'https://alpha.test/reports', 'https://alpha.test/?cache-cozy', 'https://alpha.test?q=1', 'https://alpha.test', '/a-bare-path', '' ]
+			)
+		);
 	}
 
 	public function test_sums_to_display_converts_running_sums_to_avg(): void {
@@ -1848,11 +1870,6 @@ class StatsStoreTest extends TestCase {
 				'dd44ee55ff66' => '/tuis',
 			] )
 		);
-	}
-
-	public function test_a_name_pair_reads_its_path_through_one_accessor(): void {
-		$this->assertSame( '/kakapo', Stats_Store::path_of( [ '/kakapo', 'https://kea.test' ] ) );
-		$this->assertSame( '', Stats_Store::path_of( [] ) );
 	}
 
 	public function test_a_token_set_unions_and_drops_a_hash_a_window_has_passed_over(): void {

@@ -165,10 +165,14 @@ class Performance_CI_Node extends Service_CI_Node {
 	private const GREP_HISTORY_NUM_BUCKETS = 10;
 
 	/**
-	 * Valid breakdown dimensions for the `overview` / `dump_url` verbs —
-	 * typos fall through without surfacing arbitrary memcache reads.
+	 * Valid breakdown dimensions for the `dump_url` / `url_breakdown` verbs —
+	 * typos fall through without surfacing arbitrary memcache reads. A URL
+	 * belongs to one server, so it keeps no server axis.
 	 */
-	private const DIMENSIONS = [ 'status', 'method', 'server', 'country', 'from', 'ua', 'ja4' ];
+	private const URL_DIMENSIONS = [ 'status', 'method', 'country', 'from', 'ua', 'ja4' ];
+
+	/** Valid breakdown dimensions for the `overview` verb: the URL's and `server`. */
+	private const DIMENSIONS = [ Stats_Store::DIM_SERVER, ...self::URL_DIMENSIONS ];
 
 	/**
 	 * Complete 5-minute buckets one "Req/s (last hour)" figure averages over.
@@ -1135,7 +1139,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				if ( null !== $candidates && ! isset( $candidates[ $hash ] ) ) {
 					continue;
 				}
-				$path = Stats_Store::path_of( Stats_Store::split_url( Core::as_string( $raw_row['url'] ?? '' ) ) );
+				$path = Stats_Store::path_of( Core::as_string( $raw_row['url'] ?? '' ) );
 				if ( '' !== $search && ! Stats_Store::term_matches( $path, $search, $tokens ) ) {
 					continue;
 				}
@@ -1342,7 +1346,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * Sum-merge per-URL dimensional buckets for one dim/hash.
 	 *
 	 * @param string                 $hash      12-char URL hash.
-	 * @param string                 $dimension One of DIMENSIONS.
+	 * @param string                 $dimension One of URL_DIMENSIONS.
 	 * @param array<int,Stats_Store> $stores    Stores the caller resolved once.
 	 * @param int                    $now       The reply's clock, read once at its entry.
 	 * @return array<array-key,mixed> Bucket keys derive from decoded memcache blobs.
@@ -2067,6 +2071,10 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * One URL's display row in the given scope, or null when it is absent from
 	 * the index — or present but never served by that server.
 	 *
+	 * An unscoped read asks `urlmap` which server the hash is filed under and
+	 * reads that server's keys alone, falling back to every server's when the
+	 * name has expired or its server holds no row.
+	 *
 	 * @param string                 $hash   12-char URL hash.
 	 * @param string                 $server Reporting server to scope to; '' reads every server.
 	 * @param array<int,Stats_Store> $stores Stores the caller resolved once.
@@ -2074,11 +2082,19 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @return array<array-key,mixed>|null
 	 */
 	private function row( string $hash, string $server, array $stores, int $now ): ?array {
-		$raw = self::load_row( $hash, $server, $stores, $now );
+		$name = self::url_names( [ $hash ], $stores )[ $hash ] ?? null;
+		$raw  = null;
+		if ( '' === $server && null !== $name ) {
+			$raw = self::load_row( $hash, $name['server'], $stores, $now );
+		}
+		$raw ??= self::load_row( $hash, $server, $stores, $now );
 		if ( null === $raw ) {
 			return null;
 		}
-		return self::project_row( self::resolve_urls( [ $raw ], $stores )[0] );
+		if ( null !== $name ) {
+			$raw['url'] = $name['url'];
+		}
+		return self::project_row( $raw );
 	}
 
 	/**
@@ -2113,10 +2129,10 @@ class Performance_CI_Node extends Service_CI_Node {
 		foreach ( $rows as $i => $row ) {
 			$hash = Core::as_string( $row['hash'] ?? '' );
 			if ( isset( $names[ $hash ] ) ) {
-				// @longform Overwrites rather than filling a gap: a url-sorted
-				// page carries the PATH it was ranked by, and this is the one
-				// authority for what a row DISPLAYS — origin and path joined.
-				$rows[ $i ]['url'] = Stats_Store::join_url( $names[ $hash ] );
+				// @longform Overwrites rather than filling a gap: a row carries
+				// the PATH it was folded or ranked by, and the name table is
+				// the one authority for what a row DISPLAYS.
+				$rows[ $i ]['url'] = $names[ $hash ]['url'];
 			}
 		}
 		return $rows;
@@ -2136,7 +2152,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 *
 	 * @param array<int,string>      $hashes 12-char URL hashes.
 	 * @param array<int,Stats_Store> $stores Stores the caller resolved once.
-	 * @return array<string,array{0:string,1:string}> hash => [ path, origin ].
+	 * @return array<string,array{server:string,url:string}> hash => its server and URL.
 	 */
 	private static function url_names( array $hashes, array $stores ): array {
 		if ( [] === $hashes ) {
@@ -2666,11 +2682,12 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * a reader that reads an absent dimension as "still in flight" waits on
 	 * one nobody will ever send.
 	 *
-	 * @param string $dimension The dimension name as the caller spelled it.
-	 * @throws \RuntimeException When it is not one of DIMENSIONS.
+	 * @param string       $dimension The dimension name as the caller spelled it.
+	 * @param list<string> $known     The dimensions the verb answers.
+	 * @throws \RuntimeException When it is not one of `$known`.
 	 */
-	private static function assert_dimension( string $dimension ): void {
-		if ( ! \in_array( $dimension, self::DIMENSIONS, true ) ) {
+	private static function assert_dimension( string $dimension, array $known ): void {
+		if ( ! \in_array( $dimension, $known, true ) ) {
 			throw new \RuntimeException( \esc_html( "invalid breakdown dimension: {$dimension}" ) );
 		}
 	}
@@ -2742,7 +2759,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				if ( '' !== $breakdown ) {
 					$payload['breakdowns'] = [];
 					foreach ( \array_map( 'trim', \explode( ',', $breakdown ) ) as $dim ) {
-						self::assert_dimension( $dim );
+						self::assert_dimension( $dim, self::DIMENSIONS );
 						$payload['breakdowns'][ $dim ] = self::merge_dim_across_partitions( $dim, $server, $stores, $now );
 					}
 				}
@@ -2877,7 +2894,7 @@ class Performance_CI_Node extends Service_CI_Node {
 				];
 
 				$breakdown = (string) ( $opts['breakdown'] ?? '' );
-				if ( '' !== $breakdown && \in_array( $breakdown, self::DIMENSIONS, true ) ) {
+				if ( '' !== $breakdown && \in_array( $breakdown, self::URL_DIMENSIONS, true ) ) {
 					$payload['breakdown_time_series'] = self::merge_url_dim( $hash, $breakdown, $stores, $now );
 				}
 
@@ -2907,7 +2924,7 @@ class Performance_CI_Node extends Service_CI_Node {
 					throw new \RuntimeException( 'invalid hash format' );
 				}
 				$breakdown = (string) ( $parsed['options']['breakdown'] ?? '' );
-				self::assert_dimension( $breakdown );
+				self::assert_dimension( $breakdown, self::URL_DIMENSIONS );
 				return [ 'breakdown_time_series' => self::merge_url_dim( $hash, $breakdown, self::stats_stores(), self::now() ) ];
 					},
 				],

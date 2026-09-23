@@ -340,7 +340,7 @@ abstract class TestCase extends RuntimeTestCase {
 			}
 			$out[ $hash ] = self::positional_url_row( $row );
 		}
-		$store->set_url_names( $names );
+		$store->set_url_names( [ $server => $names ] );
 		return $out;
 	}
 
