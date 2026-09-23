@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.102.5] - 2026-09-23
+
+### Documentation
+
+- **The security model says who holds `read`.** A survey of the 42 sites on 2026-09-23 found that none filters the capability map. `read` reaches between 1 and 50 accounts a site, and `allowed_users` narrows its use to between 1 and 3. On Bangor the granular capability install was twice overwritten by an unknown writer.
+- **The security model says who can reach a spoke's stream.** No stream route answers without a WordPress login: anonymous requests are refused on every site, and the edge caches only the refusal. Every credential that reads a stream belongs to a named account, and the shared operator account's superseded aggregator passwords are gone.
+
 ## [0.102.4] - 2026-09-23
 
 ### Fixed
