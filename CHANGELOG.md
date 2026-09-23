@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A URL's request list reaches every partition.** The index walk behind `dump_url`, the rid lookups and the flame lookups was capped at 1,000,000 lines, and it reads partitions one after another. On a hub whose window holds more than that, it ended inside the first partitions, and every request hashed to the rest could not be listed from its URL. On the `eln` hub that was half of them: 2.23 million index lines across four partitions, with the walk stopping about halfway through the second. The cap is now `MAX_INDEX_SCAN_S`, 10 seconds of walking, and `scan_stopped_early` still reports a walk that spends it. A verb that walks twice, as `dump_request` does over requests and then flames, spends one budget across both.
+
 ## [0.102.5] - 2026-09-23
 
 ### Documentation

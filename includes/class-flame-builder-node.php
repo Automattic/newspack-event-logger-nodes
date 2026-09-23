@@ -4048,7 +4048,7 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	/**
 	 * No time at all on a flame line — it is rid, url_hash and a position, and
 	 * offset 44 is `segment`. A walk over this index cannot bound itself by
-	 * time, and its caller keeps the entry budget as its only bound.
+	 * time, and its caller keeps the time budget as its only bound.
 	 *
 	 * @return array{} Always empty.
 	 */

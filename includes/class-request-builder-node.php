@@ -1682,7 +1682,7 @@ class Request_Builder_Node extends Timer_Node {
 	 * Where a line's COMPLETION is read from, for a walk that bounds itself by
 	 * time rather than by a match: the start column, then the duration column
 	 * in milliseconds. A format carrying no time answers `[]`, and its caller
-	 * keeps the entry budget as its only bound.
+	 * keeps the time budget as its only bound.
 	 *
 	 * Completion, not start: this class appends a line when the request ENDS,
 	 * so start is the one time on the line a walk cannot order itself by — a
