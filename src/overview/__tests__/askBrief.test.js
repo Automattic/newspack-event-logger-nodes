@@ -147,6 +147,36 @@ test( 'an overview brief says what it is of, and what is on the page', () => {
 	expect( md ).not.toContain( '\u00d70.075' );
 } );
 
+test( 'an errors-only brief counts the errors before the traffic', () => {
+	const md = briefToMarkdown( {
+		subject: 'overview',
+		scope: 'every server',
+		filters: { errors_only: true },
+		stats: {
+			urls: 2,
+			requests: 6150,
+			errors: 7,
+			avg_ms: 800,
+			requests_per_second: 0.5,
+		},
+		urls: [
+			{
+				hash: '0e11a5c3b2d9',
+				url: '/erring',
+				count: 6100,
+				errors: 6,
+				avg_ms: 790,
+				max_ms: 3100,
+			},
+		],
+		categories: [],
+		caveat: 'c',
+	} );
+
+	expect( md ).toContain( '7 errors, 6,150 requests' );
+	expect( md ).toContain( '6 errors in 6100×' );
+} );
+
 // `urls` answers totals: null where a server filter cannot be split out of
 // pre-split rows. A brief printing 0 there would read as an idle site.
 test( 'an overview brief with unscopable totals says so rather than zero', () => {

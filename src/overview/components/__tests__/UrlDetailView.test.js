@@ -306,16 +306,24 @@ describe( 'UrlDetailView', () => {
 		unmount();
 	} );
 
-	it( 'toggles "Errors Only" filter on click', () => {
-		const { container, unmount } = mount();
+	it( 'asks its owner to flip "Errors Only" on click', () => {
+		const onErrorsOnlyChange = jest.fn();
+		const { container, unmount } = mount( { onErrorsOnlyChange } );
 		const button = Array.from(
 			container.querySelectorAll( 'button' )
 		).find( ( b ) => b.textContent === 'Errors Only' );
 		act( () => {
 			button.click();
 		} );
+		expect( onErrorsOnlyChange ).toHaveBeenCalledWith( true );
+		unmount();
+	} );
+
+	it( 'lists only errors while "Errors Only" is on', () => {
+		const { container, unmount } = mount( { errorsOnly: true } );
 		// Only r2 (error_status=F) remains.
 		expect( container.textContent ).toContain( 'Recent Requests (1)' );
+		expect( container.textContent ).toContain( 'Showing Errors' );
 		expect( container.textContent ).toContain( 'r2' );
 		expect( container.textContent ).not.toContain( 'r1' );
 		unmount();
@@ -323,6 +331,7 @@ describe( 'UrlDetailView', () => {
 
 	it( 'labels an incomplete (I) request and keeps it under "Errors Only"', async () => {
 		const { container, unmount } = mount( {
+			errorsOnly: true,
 			sortedRequests: [
 				{
 					rid: 'gap-9714',
@@ -347,12 +356,6 @@ describe( 'UrlDetailView', () => {
 			cell.querySelector( 'span' ).getAttribute( 'title' )
 		).toContain( 'Incomplete' );
 
-		const button = Array.from(
-			container.querySelectorAll( 'button' )
-		).find( ( b ) => b.textContent === 'Errors Only' );
-		act( () => {
-			button.click();
-		} );
 		expect( container.textContent ).toContain( 'Recent Requests (1)' );
 		expect( container.textContent ).toContain( 'gap-9714' );
 		unmount();

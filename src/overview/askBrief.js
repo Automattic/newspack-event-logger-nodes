@@ -297,6 +297,13 @@ function bodyLines( brief ) {
 						'traffic',
 						brief.stats
 							? [
+									...( undefined === brief.stats.errors
+										? []
+										: [
+												`${ brief.stats.errors.toLocaleString(
+													'en-US'
+												) } errors`,
+										  ] ),
 									`${ (
 										brief.stats.requests ?? 0
 									).toLocaleString( 'en-US' ) } requests`,
@@ -325,10 +332,12 @@ function bodyLines( brief ) {
 							...( brief.urls ?? [] ).map(
 								( u ) =>
 									`- ${ siteData( u.url ) } \`${ u.hash }\` ${
-										u.count
-									}× ${ num( u.avg_ms ) }ms avg, ${ num(
-										u.max_ms
-									) }ms worst`
+										undefined === u.errors
+											? ''
+											: `${ u.errors } errors in `
+									}${ u.count }× ${ num(
+										u.avg_ms
+									) }ms avg, ${ num( u.max_ms ) }ms worst`
 							),
 					  ]
 					: [] ),

@@ -149,17 +149,19 @@ const RequestRow = memo(
  * URL Detail View component.
  *
  * Sorting lives upstream: the parent sorts and hands back `sortedRequests`,
- * and `requestSort` only tells the headers which arrow to draw. The filter is
- * the exception — "Errors Only" is local state and narrows the list, the
- * heading count, and the bar-scaling maximum alike.
+ * and `requestSort` only tells the headers which arrow to draw. "Errors Only"
+ * lives upstream too, and narrows the list, the heading count and the
+ * bar-scaling maximum alike.
  *
- * @param {Object}                                   props                 Component props.
- * @param {Object}                                   props.urlDetail       The fields this view reads off the `dump_url` payload: stats, requests, scan_stopped_early, aggregate_flame, aggregate_profiles, last_modified, and optional category_time_series.
- * @param {Array}                                    props.sortedRequests  Recent requests, already sorted by the parent.
- * @param {Object}                                   props.requestSort     Current sort as `{ field, dir }`; drives the header arrows only.
- * @param {(field: string) => void}                  props.onRequestSort   Receives a field name when a sortable header is clicked.
- * @param {(rid: string, partition: number) => void} props.onSelectRequest Receives a rid AND its partition from a row click or a scatter-plot dot.
- * @param {string}                                   props.urlHash         The URL's 12-char hash, which addresses the `url_breakdown` read below.
+ * @param {Object}                                   props                    Component props.
+ * @param {Object}                                   props.urlDetail          The fields this view reads off the `dump_url` payload: stats, requests, scan_stopped_early, aggregate_flame, aggregate_profiles, last_modified, and optional category_time_series.
+ * @param {Array}                                    props.sortedRequests     Recent requests, already sorted by the parent.
+ * @param {Object}                                   props.requestSort        Current sort as `{ field, dir }`; drives the header arrows only.
+ * @param {(field: string) => void}                  props.onRequestSort      Receives a field name when a sortable header is clicked.
+ * @param {(rid: string, partition: number) => void} props.onSelectRequest    Receives a rid AND its partition from a row click or a scatter-plot dot.
+ * @param {string}                                   props.urlHash            The URL's 12-char hash, which addresses the `url_breakdown` read below.
+ * @param {boolean}                                  [props.errorsOnly]       Whether "Errors Only" narrows the list; the dashboard owns it, so it survives a trip to a request and back.
+ * @param {(on: boolean) => void}                    props.onErrorsOnlyChange Receives the flipped value when the toggle is clicked.
  * @return {import('react').ReactElement} Rendered component.
  */
 export default function UrlDetailView( {
@@ -169,9 +171,10 @@ export default function UrlDetailView( {
 	onRequestSort,
 	onSelectRequest,
 	urlHash,
+	errorsOnly = false,
+	onErrorsOnlyChange,
 } ) {
 	const listRef = useRef( null );
-	const [ errorsOnly, setErrorsOnly ] = useState( false );
 
 	// A list the walk cut short reads exactly like a URL with no traffic.
 	const scanNote = urlDetail.scan_stopped_early
@@ -374,7 +377,7 @@ export default function UrlDetailView( {
 					<button
 						type="button"
 						className={ errorsOnly ? 'button is-active' : 'button' }
-						onClick={ () => setErrorsOnly( ! errorsOnly ) }
+						onClick={ () => onErrorsOnlyChange( ! errorsOnly ) }
 					>
 						{ errorsOnly
 							? __(

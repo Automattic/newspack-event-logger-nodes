@@ -732,7 +732,7 @@ class Ask_Assembler {
 				'avg_ms'              => Core::num_float( $totals['avg_ms'] ?? 0 ),
 				'avg_peak_mb'         => Core::num_float( $totals['avg_peak_mb'] ?? 0 ),
 				'requests_per_second' => Core::num_float( $totals['requests_per_second'] ?? 0 ),
-			],
+			] + self::errors_of( $totals ),
 			'urls'       => \array_map(
 				self::overview_url_shape( ... ),
 				\array_slice( $rows, 0, self::TOP_SPANS )
@@ -819,7 +819,18 @@ class Ask_Assembler {
 			'count'  => Core::num_int( $row['count'] ?? 0 ),
 			'avg_ms' => Core::num_float( $row['avg_ms'] ?? 0 ),
 			'max_ms' => Core::num_float( $row['max_ms'] ?? 0 ),
-		];
+		] + self::errors_of( $row );
+	}
+
+	/**
+	 * The `errors` an errors-only `urls` reply carries on a row or its totals,
+	 * or nothing: every other reply counts none.
+	 *
+	 * @param array<array-key,mixed> $counted A `urls` row or its totals.
+	 * @return array{errors?:int}
+	 */
+	private static function errors_of( array $counted ): array {
+		return isset( $counted['errors'] ) ? [ 'errors' => Core::num_int( $counted['errors'] ) ] : [];
 	}
 
 	/**

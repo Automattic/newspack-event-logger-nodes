@@ -72,20 +72,23 @@ const pct = ( part, total ) => {
  * numeric cell. `status` is an unsortable HTTP-class heading over a `pct()`
  * share, `code` the sortable URL heading over the bar-backed `<code>` cell.
  * `render` overrides the default `formatNum( url[ field ], 'ms' )`, and
- * `width` is the column's grid track.
+ * `width` is the column's grid track. `errorsLabel` heads the column instead
+ * of `label` on an errors-only page, whose rows carry their `errors` too.
  *
  * A `status` column's `status` is a representative code, not a count of that
  * one status: the shared `.entry-status[data-status^="2"]` rules colour the
  * cell by the first digit, so any 2xx code paints the 2xx column.
  *
- * @type {Array<{field: string, width: string, label: string, kind: string, status?: string, render?: Function}>}
+ * @type {Array<{field: string, width: string, label: string, errorsLabel?: string, kind: string, status?: string, render?: Function}>}
  */
 const COLUMNS = [
 	{
 		field: 'count',
 		width: '60px',
 		label: __( 'Reqs', 'newspack-event-logger-nodes' ),
-		render: ( url, formatNum ) => formatNum( url.count ),
+		errorsLabel: __( 'Errors', 'newspack-event-logger-nodes' ),
+		render: ( url, formatNum, now, errorCounts ) =>
+			formatNum( errorCounts ? url.errors : url.count ),
 	},
 	{
 		field: 'url',
@@ -209,18 +212,19 @@ const cellClass = ( col ) =>
  * the class count over the row's total, which a single field lookup cannot
  * express.
  *
- * @param {Object}   col       Column declaration from COLUMNS.
- * @param {Object}   url       One row of the `urls` reply.
- * @param {Function} formatNum Number formatter, from the table.
- * @param {number}   now       Unix timestamp the page's ages are measured from.
+ * @param {Object}   col         Column declaration from COLUMNS.
+ * @param {Object}   url         One row of the `urls` reply.
+ * @param {Function} formatNum   Number formatter, from the table.
+ * @param {number}   now         Unix timestamp the page's ages are measured from.
+ * @param {boolean}  errorCounts Whether the row carries its `errors` to show.
  * @return {string|import('react').ReactElement} Cell content.
  */
-const renderCell = ( col, url, formatNum, now ) => {
+const renderCell = ( col, url, formatNum, now, errorCounts ) => {
 	if ( 'status' === col.kind ) {
 		return pct( url[ col.field ], url.count );
 	}
 	return col.render
-		? col.render( url, formatNum, now )
+		? col.render( url, formatNum, now, errorCounts )
 		: formatNum( url[ col.field ], 'ms' );
 };
 
@@ -235,14 +239,15 @@ const UrlRow = memo(
 	 * A selectable row is a button carrying the `?` picker's `url:`
 	 * descriptor, so a picker click asks about this URL rather than the page.
 	 *
-	 * @param {Object}                       props            Component props.
-	 * @param {Object}                       props.url        One row of the `urls` reply.
-	 * @param {boolean}                      props.isSelected Whether the detail modal is open on this row.
-	 * @param {(url: Object) => void}        props.onSelect   Receives the row on click or Enter/Space.
-	 * @param {(n: number, s?: string) => *} props.formatNum  Number formatter, from the table.
-	 * @param {number}                       props.maxAvg     The page's p95 of the bar metric; 0 draws no bar.
-	 * @param {string}                       props.metric     'memory' bars avg_peak_mb, 'volume' bars count, 'avg' and 'cumulative' bar avg_ms.
-	 * @param {number}                       props.now        Unix timestamp the page's ages are measured from.
+	 * @param {Object}                       props             Component props.
+	 * @param {Object}                       props.url         One row of the `urls` reply.
+	 * @param {boolean}                      props.isSelected  Whether the detail modal is open on this row.
+	 * @param {(url: Object) => void}        props.onSelect    Receives the row on click or Enter/Space.
+	 * @param {(n: number, s?: string) => *} props.formatNum   Number formatter, from the table.
+	 * @param {number}                       props.maxAvg      The page's p95 of the bar metric; 0 draws no bar.
+	 * @param {string}                       props.metric      'memory' bars avg_peak_mb, 'volume' bars count, 'avg' and 'cumulative' bar avg_ms.
+	 * @param {number}                       props.now         Unix timestamp the page's ages are measured from.
+	 * @param {boolean}                      props.errorCounts Whether the row carries its `errors` to show.
 	 * @return {import('react').ReactElement} Rendered row.
 	 */
 	function UrlRow( {
@@ -253,6 +258,7 @@ const UrlRow = memo(
 		maxAvg,
 		metric,
 		now,
+		errorCounts,
 	} ) {
 		let barField = 'avg_ms';
 		if ( metric === 'memory' ) {
@@ -302,7 +308,7 @@ const UrlRow = memo(
 						className={ cellClass( col ) }
 						style={ 'code' === col.kind ? barStyle : undefined }
 					>
-						{ renderCell( col, url, formatNum, now ) }
+						{ renderCell( col, url, formatNum, now, errorCounts ) }
 					</div>
 				) ) }
 			</div>
@@ -323,6 +329,7 @@ const UrlRow = memo(
  * @param {string}                   [props.metric]       Chart metric the row bars scale.
  * @param {boolean}                  [props.ranked]       Whether the server answered from its per-bucket ranked lists rather than the whole index.
  * @param {number}                   [props.now]          Unix seconds the page's rows were current at, from the reply's `as_of`; ages are measured from it so browser and server clocks never disagree and a cached page does not tick.
+ * @param {boolean}                  [props.errorCounts]  Whether the reply was built under "Errors Only", so each row carries its `errors`.
  * @return {import('react').ReactElement} Rendered component.
  */
 export default function UrlTable( {
@@ -334,6 +341,7 @@ export default function UrlTable( {
 	metric = 'volume',
 	ranked = false,
 	now = 0,
+	errorCounts = false,
 } ) {
 	const [ sortField, setSortField ] = useState( 'count' );
 	const [ sortOrder, setSortOrder ] = useState( 'desc' );
@@ -556,7 +564,9 @@ export default function UrlTable( {
 								}` }
 								onClick={ () => handleSort( col.field ) }
 							>
-								{ col.label }
+								{ errorCounts && col.errorsLabel
+									? col.errorsLabel
+									: col.label }
 								{ sortIndicator( col.field ) }
 							</button>
 						)
@@ -595,6 +605,7 @@ export default function UrlTable( {
 								maxAvg={ maxAvg }
 								metric={ metric }
 								now={ now }
+								errorCounts={ errorCounts }
 							/>
 						) )
 					) }

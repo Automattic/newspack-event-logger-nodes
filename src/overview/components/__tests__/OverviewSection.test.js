@@ -115,6 +115,22 @@ describe( 'OverviewSection', () => {
 		unmount();
 	} );
 
+	it( 'shows an errors-only total beside the traffic it came from', () => {
+		const { container, unmount } = mount(
+			{},
+			{ urlTotals: { ...baseTotals, errors: 3 } }
+		);
+		expect( container.textContent ).toContain( 'Total Errors' );
+		expect( container.textContent ).toContain( 'Total Requests' );
+		unmount();
+	} );
+
+	it( 'shows no error total where the reply counts none', () => {
+		const { container, unmount } = mount( {} );
+		expect( container.textContent ).not.toContain( 'Total Errors' );
+		unmount();
+	} );
+
 	it( "divides a server-scoped breakdown by that server's average", () => {
 		// The card's heading is "Time Breakdown (edge-01)" and its categories
 		// come from build_leaderboard( server ), so the denominator has to be

@@ -890,6 +890,23 @@ class AskAssemblerTest extends TestCase {
 	 * Every filter in force rides the pointer. One left behind widens the
 	 * fetch to a set the brief never described.
 	 */
+	public function test_an_errors_only_brief_counts_errors_beside_traffic(): void {
+		$brief = Ask_Assembler::for_overview(
+			[
+				'totals' => [ 'urls' => 2, 'requests' => 6150, 'errors' => 7 ],
+				'data'   => [ [ 'hash' => '0e11a5c3b2d9', 'url' => 'https://example.com/erring', 'count' => 6100, 'errors' => 6 ] ],
+			],
+			[ 'categories' => [] ],
+			'',
+			[ 'errors_only' => true ]
+		);
+
+		$this->assertSame( 7, $brief['stats']['errors'] );
+		$this->assertSame( 6150, $brief['stats']['requests'] );
+		$this->assertSame( 6, $brief['urls'][0]['errors'] );
+		$this->assertSame( 6100, $brief['urls'][0]['count'] );
+	}
+
 	public function test_an_overview_pointer_carries_every_filter_in_force(): void {
 		$brief = Ask_Assembler::for_overview(
 			[ 'totals' => [ 'requests' => 4210 ], 'data' => [] ],

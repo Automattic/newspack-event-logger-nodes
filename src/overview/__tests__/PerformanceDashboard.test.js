@@ -1025,6 +1025,92 @@ describe( 'PerformanceDashboard', () => {
 		unmount();
 	} );
 
+	it( 'carries the errors-only echo to the table and the URL it opens', async () => {
+		mockNavState.selectedUrl = { hash: 'h9', url: '/erring' };
+		mockNavState.selectedRequest = null;
+		mockView = loadedView( {
+			urls: {
+				data: [],
+				filters: { errors_only: true },
+				loading: false,
+				error: null,
+			},
+			urlDetail: {
+				data: { last_modified: 1, stats: {}, requests: [] },
+				loading: false,
+				error: null,
+			},
+		} );
+
+		const { unmount } = renderComponent(
+			React.createElement( PerformanceDashboard, { onError: jest.fn() } )
+		);
+		await act( async () => {} );
+		// Opened the way a click opens it, through the table.
+		await act( async () => {
+			globalThis.__urlTableProps.onSelect( {
+				hash: 'h9',
+				url: '/erring',
+			} );
+		} );
+
+		expect( globalThis.__urlDetailProps.errorsOnly ).toBe( true );
+		// The same echo tells the table its rows carry error counts.
+		expect( globalThis.__urlTableProps.errorCounts ).toBe( true );
+
+		// The page holds the modal's choice, so a request and back keeps it.
+		await act( async () => {
+			globalThis.__urlDetailProps.onErrorsOnlyChange( false );
+		} );
+		expect( globalThis.__urlDetailProps.errorsOnly ).toBe( false );
+		unmount();
+	} );
+
+	it( 'opens a URL reached any other way with every request listed', async () => {
+		// Only the table narrows a URL; closing forgets that, so a deep link
+		// or a request search cannot open on a list hiding what it sought.
+		mockNavState.selectedUrl = { hash: 'h9', url: '/erring' };
+		mockNavState.selectedRequest = null;
+		mockView = loadedView( {
+			urls: {
+				data: [],
+				filters: { errors_only: true },
+				loading: false,
+				error: null,
+			},
+			urlDetail: {
+				data: { last_modified: 1, stats: {}, requests: [] },
+				loading: false,
+				error: null,
+			},
+		} );
+		const { rerender, unmount } = renderComponent(
+			React.createElement( PerformanceDashboard, { onError: jest.fn() } )
+		);
+		await act( async () => {} );
+		await act( async () => {
+			globalThis.__urlTableProps.onSelect( {
+				hash: 'h9',
+				url: '/erring',
+			} );
+		} );
+		await act( async () => {
+			globalThis.__modalOnRequestClose();
+		} );
+
+		mockNavState.selectedUrl = { hash: 'h4', url: '/linked' };
+		await act( async () => {
+			rerender(
+				React.createElement( PerformanceDashboard, {
+					onError: jest.fn(),
+				} )
+			);
+		} );
+
+		expect( globalThis.__urlDetailProps.errorsOnly ).toBe( false );
+		unmount();
+	} );
+
 	it( 'carries the partition with a selected request, not just the rid', async () => {
 		// The partition travels WITH the selection from every entry point. Any
 		// caller that hands over only a rid leaves the detail unable to fetch,

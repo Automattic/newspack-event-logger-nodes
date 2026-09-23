@@ -15,6 +15,12 @@ const STATS = {
 		label: __( 'Total Requests', 'newspack-event-logger-nodes' ),
 		format: ( n ) => n.toLocaleString(),
 	},
+	errors: {
+		label: __( 'Total Errors', 'newspack-event-logger-nodes' ),
+		format: ( n ) => n.toLocaleString(),
+		// Only an errors-only reply counts them.
+		onlyWhenPositive: true,
+	},
 	avg_ms: {
 		label: __( 'Avg Response', 'newspack-event-logger-nodes' ),
 		short: __( 'avg', 'newspack-event-logger-nodes' ),
@@ -76,6 +82,7 @@ export default function HeadlineStats( { totals } ) {
 			{ headlineStats( totals, [
 				'urls',
 				'requests',
+				'errors',
 				'avg_ms',
 				'requests_per_second',
 				'avg_peak_mb',
