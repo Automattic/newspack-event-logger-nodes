@@ -677,7 +677,7 @@ class FlameBuilderTest extends TestCase {
 		$this->assertCount( 1, $by_count );
 		$this->assertSame( [ $wombat, $kiwi ], \array_column( $by_count[0][1], Stats_Store::RANK_HASH ) );
 		$this->assertSame( 3, $by_count[0][1][0][ Stats_Store::RANK_ROW ][ Stats_Store::ROW_COUNT ] );
-		$this->assertArrayNotHasKey( Stats_Store::ROW_SRV, $by_count[0][1][0][ Stats_Store::RANK_ROW ] );
+		$this->assertArrayNotHasKey( Stats_Store::ROW_PATH, $by_count[0][1][0][ Stats_Store::RANK_ROW ] );
 
 		$slowest = $store->url_rank_sources( [ $bucket ], 'avg_ms', 'desc', '', false );
 		$this->assertSame( [ $kiwi, $wombat ], \array_column( $slowest[0][1], Stats_Store::RANK_HASH ) );
@@ -726,10 +726,11 @@ class FlameBuilderTest extends TestCase {
 		$store      = new class( 0, 86400 ) extends Stats_Store {
 			/** @var array<int,array<int,array{0:array<int,string>,1:string}>> */
 			public array $reads_log = [];
+			public string $watch = '';
 			public function bucket_get_multi( array $reads, ?bool &$failed = null ): array {
-				// The rollup probe reads the same way; count the FLUSH's reads.
-				foreach ( $reads as [ $parts ] ) {
-					if ( \in_array( $parts[0], [ self::NS_URLS, self::NS_URLNAMES, self::NS_HOURLY, self::NS_URLTOKEN ], true ) ) {
+				// The rollup reads the same way; count reads of the FLUSHED bucket.
+				foreach ( $reads as [ , $bucket ] ) {
+					if ( $this->watch === $bucket ) {
 						$this->reads_log[] = $reads;
 						break;
 					}
@@ -754,12 +755,13 @@ class FlameBuilderTest extends TestCase {
 		$this->assertCount( Stats_Store::URL_SHARDS, $seen, 'every reader shard represented before the flush' );
 
 		$store->reads_log = [];
+		$store->watch     = Stats_Store::bucket_key( $now );
 		$fb->flush();
 
 		$this->assertCount(
-			1,
+			2,
 			$store->reads_log,
-			'flush_writes() alone; the rank gap-fill reads nothing extra'
+			'the server index and flush_writes() alone; the rank gap-fill reads nothing extra'
 		);
 	}
 
@@ -777,10 +779,11 @@ class FlameBuilderTest extends TestCase {
 				$this->set_log[] = $writes;
 				return parent::bucket_set_multi( $writes );
 			}
+			public string $watch = '';
 			public function bucket_get_multi( array $reads, ?bool &$failed = null ): array {
-				// The rollup probe reads the same way; count the FLUSH's reads.
-				foreach ( $reads as [ $parts ] ) {
-					if ( \in_array( $parts[0], [ self::NS_URLS, self::NS_URLNAMES, self::NS_HOURLY, self::NS_URLTOKEN ], true ) ) {
+				// The rollup reads the same way; count reads of the FLUSHED bucket.
+				foreach ( $reads as [ , $bucket ] ) {
+					if ( $this->watch === $bucket ) {
 						$this->get_log[] = $reads;
 						break;
 					}
@@ -795,6 +798,7 @@ class FlameBuilderTest extends TestCase {
 
 		$store->set_log = [];
 		$store->get_log = [];
+		$store->watch   = Stats_Store::bucket_key( $now );
 		$fb->flush();
 
 		foreach ( $store->set_log as $writes ) {
@@ -806,12 +810,12 @@ class FlameBuilderTest extends TestCase {
 				);
 			}
 		}
-		$this->assertCount( 1, $store->get_log, 'flush_writes() alone; the rank gap-fill never runs' );
+		$this->assertCount( 2, $store->get_log, 'the server index and flush_writes() alone; the rank gap-fill never runs' );
 	}
 
 	public function test_write_url_ranks_skips_a_server_named_only_by_overflow_rows(): void {
-		// The overflow row's own split can still name a server, but nothing
-		// rankable ever lands under it — a fix should write no empty lists.
+		// A server holding only its overflow row has nothing rankable, so it
+		// gets no empty lists.
 		Core::$memd = new InMemoryMemcached();
 		$store      = new class( 0, 86400 ) extends Stats_Store {
 			/** @var array<int,array<int,array{0:array<int,string>,1:string,2:array<array-key,mixed>}>> */
@@ -824,14 +828,13 @@ class FlameBuilderTest extends TestCase {
 		$fb = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
 
-		$rows = [
-			'hash1'                => self::positional_url_row( [ 'url' => '/good-4471', 'count' => 4, 'timed_count' => 4, 'sum_ms' => 40.0, 'srv' => [ 'good.test' => null ] ] ),
-			Stats_Store::OTHER_KEY => self::positional_url_row( [ 'count' => 9, 'timed_count' => 9, 'sum_ms' => 90.0, 'srv' => [ 'bogus.test' => null ] ] ),
+		$servers = [
+			'good.test'  => [ 'hash1' => self::positional_url_row( [ 'path' => '/good-4471', 'count' => 4, 'timed_count' => 4, 'sum_ms' => 40.0 ] ) ],
+			'bogus.test' => [ Stats_Store::OTHER_KEY => self::positional_url_row( [ 'count' => 9, 'timed_count' => 9, 'sum_ms' => 90.0 ] ) ],
 		];
-		$paths = [ 'hash1' => '/good-4471' ];
 
 		( new \ReflectionMethod( $fb, 'write_url_ranks' ) )->invoke(
-			$fb, $store, '2026-09-22-13-05', $rows, $paths, false
+			$fb, $store, '2026-09-22-13-05', $servers, false
 		);
 
 		$servers_written = [];
@@ -861,17 +864,15 @@ class FlameBuilderTest extends TestCase {
 		$fb = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
 
-		$srv = [];
+		$servers = [];
 		for ( $i = 0; $i < 36; $i++ ) {
-			$srv[ "srv{$i}.test" ] = [ 'count' => 1, 'timed_count' => 1, 'sum_ms' => 5.0 ];
+			$servers[ "srv{$i}.test" ] = [
+				\sprintf( 'a%011x', $i ) => self::positional_url_row( [ 'path' => "/many-servers-{$i}", 'count' => 1, 'timed_count' => 1, 'sum_ms' => 5.0 ] ),
+			];
 		}
-		$rows = [
-			'hash1' => self::positional_url_row( [ 'url' => '/many-servers-6620', 'count' => 36, 'timed_count' => 36, 'sum_ms' => 180.0, 'srv' => $srv ] ),
-		];
-		$paths = [ 'hash1' => '/many-servers-6620' ];
 
 		( new \ReflectionMethod( $fb, 'write_url_ranks' ) )->invoke(
-			$fb, $store, '2026-09-22-13-05', $rows, $paths, false
+			$fb, $store, '2026-09-22-13-05', $servers, false
 		);
 
 		$this->assertGreaterThan( 1, $store->set_calls, 'a large ranking round trip chunks like flush_writes() does' );
@@ -1075,7 +1076,7 @@ class FlameBuilderTest extends TestCase {
 		( new \ReflectionProperty( $fb, 'pending' ) )->setValue( $fb, [
 			$bucket => \array_replace(
 				( new \ReflectionMethod( $fb, 'empty_bucket' ) )->invoke( null ),
-				[ 'url_stats' => [ 'e4e4e4e4e4e4' => self::positional_url_row( [ 'count' => 13, 'last_seen' => $first ] ) ] ]
+				[ 'url_stats' => [ self::SEED_SERVER => [ 'e4e4e4e4e4e4' => self::positional_url_row( [ 'count' => 13, 'last_seen' => $first ] ) ] ] ]
 			),
 		] );
 
@@ -1260,7 +1261,7 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( 6, $rows[ $one ]['count'] );
 		$this->assertSame( 8, $rows[ $two ]['count'] );
 		$this->assertSame(
-			[ Stats_Store::key( Stats_Store::NS_URLS_HOUR, $shard, $hour ) ],
+			[ Stats_Store::key( Stats_Store::NS_URLS_HOUR, Stats_Store::server_key( self::SEED_SERVER ), $shard, $hour ) ],
 			$store->hour_writes,
 			'one key, written once'
 		);
@@ -1357,7 +1358,7 @@ class FlameBuilderTest extends TestCase {
 		$collect = static function ( array $merged ): void {};
 		$intents = static fn ( ?\Closure $collects ): array => \array_map(
 			static fn ( array $i ): array => [ $i['parts'], $i['bucket'], $i['landed'], $i['group'], $i['present'] ],
-			$for->invoke( $fb, '2026-09-21-11-15', [ 'fine' ], [ 'coarse' ], $merge, $refused, $collects )
+			$for->invoke( $fb, '2026-09-21-11-15', [ 'fine' ], [ 'coarse' ], $merge, $refused, $collects, 'grp-4471' )
 		);
 
 		$this->assertSame(
@@ -1366,9 +1367,9 @@ class FlameBuilderTest extends TestCase {
 			'a write that never ranks reports to no one'
 		);
 		$this->assertSame(
-			[ [ [ 'fine' ], '2026-09-21-11-15', $collect, '2026-09-21-11-15', false ] ],
+			[ [ [ 'fine' ], '2026-09-21-11-15', $collect, 'grp-4471', false ] ],
 			$intents( $collect ),
-			'a ranked write collects, under its bucket'
+			'a ranked write collects, under its group'
 		);
 
 		( new \ReflectionProperty( $fb, 'folded_hours' ) )->setValue( $fb, [ '2026-09-21-11' => true ] );
@@ -1397,7 +1398,7 @@ class FlameBuilderTest extends TestCase {
 			public function bucket_get_multi( array $reads, ?bool &$failed = null ): array {
 				$url_only = [] !== $reads;
 				foreach ( $reads as [ $parts ] ) {
-					if ( self::NS_URLS !== $parts[0] && self::NS_URLNAMES !== $parts[0] ) {
+					if ( self::NS_URLS !== $parts[0] ) {
 						$url_only = false;
 					}
 				}
@@ -1500,31 +1501,68 @@ class FlameBuilderTest extends TestCase {
 		$this->assertEqualsWithDelta( 42.0, $index[ $url_hash ]['min_ms'], 1e-6 );
 	}
 
-	public function test_url_index_row_carries_the_per_server_split(): void {
+	public function test_a_flush_files_each_servers_rows_under_its_own_key(): void {
+		// Per-server data has the server in the KEY: two servers' rows never
+		// share one value, so neither competes for the other's shard cap, and
+		// a row carries only the path its key does not already say.
 		Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$fb         = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
-
-		// One URL, two reporting servers. The index row is keyed by url_hash and
-		// so carries no server of its own; without this split the dashboard
-		// cannot scope the URL table, and every header stat beside it can.
-		// `srv` is the per-URL `server` dimension co-located with the row so one
-		// get answers for the whole index instead of one get per URL.
 		$now = \time();
-		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/split', 'server_name' => 'alpha.example', 'duration_ms' => 30.0, 'timestamp' => $now ] ) );
-		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/split', 'server_name' => 'beta.example', 'duration_ms' => 70.0, 'timestamp' => $now ] ) );
-		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/split', 'server_name' => 'beta.example', 'duration_ms' => 90.0, 'timestamp' => $now ] ) );
+		foreach ( [ 1, 2, 3 ] as $i ) {
+			$this->fill_request( $fb, $this->completed_request( [ 'url' => 'https://kea.test/wombat-7731', 'server_name' => 'kea.test', 'duration_ms' => 40.0, 'timestamp' => $now ] ) );
+		}
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => 'http://moa.test/kiwi-8842', 'server_name' => 'moa.test', 'duration_ms' => 90.0, 'timestamp' => $now ] ) );
 		$fb->flush();
 
-		$bucket   = Stats_Store::bucket_key( $now );
-		$url_hash = Log_Manager::url_hash( '/split' );
-		$row      = $this->url_bucket_rows( $store, $bucket )[ $url_hash ];
+		$bucket = Stats_Store::bucket_key( $now );
+		$wombat = Log_Manager::url_hash( 'https://kea.test/wombat-7731' );
+		$kiwi   = Log_Manager::url_hash( 'http://moa.test/kiwi-8842' );
+		$kea    = self::named_url_rows( $this->get_url_shard( $store, $bucket, Stats_Store::url_shard( $wombat ), 'kea.test' ) );
+		$moa    = self::named_url_rows( $this->get_url_shard( $store, $bucket, Stats_Store::url_shard( $kiwi ), 'moa.test' ) );
 
-		$this->assertSame( 1, $row['srv']['alpha.example']['count'] );
-		$this->assertSame( 2, $row['srv']['beta.example']['count'] );
-		$this->assertEqualsWithDelta( 30.0, $row['srv']['alpha.example']['sum_ms'], 1e-6 );
-		$this->assertEqualsWithDelta( 160.0, $row['srv']['beta.example']['sum_ms'], 1e-6 );
+		$this->assertSame( [ $wombat ], \array_keys( $kea ), 'kea.test\'s key holds kea.test\'s rows alone' );
+		$this->assertSame( 3, $kea[ $wombat ]['count'] );
+		$this->assertSame( '/wombat-7731', $kea[ $wombat ]['path'], 'the https origin is the key\'s' );
+		$this->assertSame( [ $kiwi ], \array_keys( $moa ) );
+		$this->assertSame( 'http://moa.test/kiwi-8842', $moa[ $kiwi ]['path'], 'an http URL is kept whole' );
+		$this->assertSame(
+			[ Stats_Store::server_key( 'kea.test' ) => 'kea.test', Stats_Store::server_key( 'moa.test' ) => 'moa.test' ],
+			$store->server_index( [ $bucket ], false )[ $bucket ] ?? null,
+			'the bucket\'s index names both'
+		);
+	}
+
+	public function test_a_server_past_the_index_cap_is_filed_under_other(): void {
+		// Host-header spray would otherwise mint a key set per request: once
+		// a bucket names MAX_SERVER_VALUES servers, a new one's rows share the
+		// `Other` server key, and the index gains that one entry.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+		$now    = \time();
+		$bucket = Stats_Store::bucket_key( $now );
+		$index  = [];
+		for ( $i = 0; $i < Stats_Store::MAX_SERVER_VALUES; $i++ ) {
+			$index[ Stats_Store::server_key( "spray{$i}.test" ) ] = "spray{$i}.test";
+		}
+		$store->bucket_set_multi( [ [ Stats_Store::url_srv_parts( false ), $bucket, $index ] ] );
+
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => 'https://late-4471.test/x', 'server_name' => 'late-4471.test', 'timestamp' => $now ] ) );
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => 'https://spray7.test/y', 'server_name' => 'spray7.test', 'timestamp' => $now ] ) );
+		$fb->flush();
+
+		$late    = Log_Manager::url_hash( 'https://late-4471.test/x' );
+		$shard   = Stats_Store::url_shard( $late );
+		$stored  = $store->server_index( [ $bucket ], false )[ $bucket ];
+		$this->assertCount( Stats_Store::MAX_SERVER_VALUES + 1, $stored );
+		$this->assertSame( Stats_Store::OTHER_KEY, $stored[ Stats_Store::server_key( Stats_Store::OTHER_KEY ) ] );
+		$this->assertArrayNotHasKey( Stats_Store::server_key( 'late-4471.test' ), $stored );
+		$this->assertSame( 1, self::named_url_rows( $this->get_url_shard( $store, $bucket, $shard, Stats_Store::OTHER_KEY ) )[ $late ]['count'] );
+		$spray = Log_Manager::url_hash( 'https://spray7.test/y' );
+		$this->assertArrayHasKey( $spray, $this->get_url_shard( $store, $bucket, Stats_Store::url_shard( $spray ), 'spray7.test' ), 'a named server keeps its key' );
 	}
 
 	public function test_a_refused_url_index_write_is_reported(): void {
@@ -1701,86 +1739,6 @@ class FlameBuilderTest extends TestCase {
 		$this->assertFalse( $rows[ Log_Manager::url_hash( '/reader' ) ]['worker'] );
 	}
 
-	public function test_a_busy_url_keeps_every_server_that_served_it(): void {
-		Core::$memd = new InMemoryMemcached();
-		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		$fb         = new Flame_Builder_Node();
-		$fb->set_stats_store( $store );
-		$fb->set_is_hub( true );
-
-		// A cap that binds on a real fleet recreates, one layer down, the defect
-		// `dim_cap()` removes from the picker: the folded server's scoped read
-		// matches nothing, and the URL leaves the filtered table AND its totals
-		// with nothing said. So `MAX_SERVER_VALUES` sits far above any fleet —
-		// 40 servers on one URL, and the split still keeps every one.
-		$now = \time();
-		for ( $i = 0; $i < 40; $i++ ) {
-			$this->fill_request( $fb, $this->completed_request( [
-				'url'         => '/shared',
-				'server_name' => \sprintf( 'edge%02d.example', $i ),
-				'duration_ms' => 3.0,
-				'timestamp'   => $now,
-			] ) );
-		}
-		$fb->flush();
-
-		$hash = Log_Manager::url_hash( '/shared' );
-		$row  = self::named_url_rows( $this->get_url_shard( $store, Stats_Store::bucket_key( $now ), Stats_Store::url_shard( $hash ) ) )[ $hash ];
-		$srv  = $row[ Stats_Store::URL_SRV_FIELD ];
-
-		$this->assertArrayNotHasKey( Stats_Store::OTHER_KEY, $srv );
-		$this->assertCount( 40, $srv );
-		$this->assertSame( 1, $srv['edge39.example']['count'] );
-	}
-
-	/**
-	 * The per-server cap keeps the BUSIEST servers, not the first ones seen.
-	 * `cap_bucket()` ranks on a field of each entry, and the split's fields are
-	 * indexes now — ranking it by the old NAME finds nothing on every entry, so
-	 * every comparison ties and the sort silently becomes insertion order. It
-	 * only bites past `MAX_SERVER_VALUES`, which is exactly the Host-header
-	 * spray the cap exists for.
-	 */
-	public function test_the_server_cap_keeps_the_busiest_not_the_first_seen(): void {
-		Core::$memd = new InMemoryMemcached();
-		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		$fb         = new Flame_Builder_Node();
-		$fb->set_stats_store( $store );
-
-		$now = \time();
-		$url = '/spray-4471';
-		// The quiet ones arrive FIRST, so insertion order would keep them.
-		for ( $i = 0; $i < Stats_Store::MAX_SERVER_VALUES + 20; $i++ ) {
-			$this->fill_request( $fb, $this->completed_request( [
-				'url'         => $url,
-				'server_name' => \sprintf( 'quiet-%03d.example', $i ),
-				'duration_ms' => 3.0,
-				'timestamp'   => $now,
-			] ) );
-		}
-		// One loud host, arriving last, with traffic nothing else comes near.
-		for ( $i = 0; $i < 50; $i++ ) {
-			$this->fill_request( $fb, $this->completed_request( [
-				'url'         => $url,
-				'server_name' => 'loud-8823.example',
-				'duration_ms' => 3.0,
-				'timestamp'   => $now,
-			] ) );
-		}
-		$fb->flush();
-
-		$hash = Log_Manager::url_hash( $url );
-		$row  = self::named_url_rows(
-			$this->get_url_shard( $store, Stats_Store::bucket_key( $now ), Stats_Store::url_shard( $hash ) )
-		)[ $hash ];
-
-		$this->assertArrayHasKey(
-			'loud-8823.example',
-			$row[ Stats_Store::URL_SRV_FIELD ],
-			'the busiest server survives the cap'
-		);
-	}
-
 	public function test_a_host_header_spray_folds_instead_of_growing_the_axis(): void {
 		Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
@@ -1791,9 +1749,9 @@ class FlameBuilderTest extends TestCase {
 		// @longform `server_name` is `SERVER_NAME`, which under Apache's default
 		// `UseCanonicalName Off` is the CLIENT'S Host header — so on a
 		// domain-mapped multisite or any catch-all vhost this axis is visitor
-		// input, not the fleet. Uncapped, the global `dim:server` item and every
-		// row's split grow without limit until memcached refuses the write, and
-		// a refusal discards the WHOLE merged shard-bucket.
+		// input, not the fleet. Uncapped, the global `dim:server` item grows
+		// without limit until memcached refuses the write, and the URL index
+		// mints a key set per name.
 		$now   = \time();
 		$spray = 300;
 		for ( $i = 0; $i < $spray; $i++ ) {
@@ -1808,21 +1766,19 @@ class FlameBuilderTest extends TestCase {
 
 		$bucket  = Stats_Store::bucket_key( $now );
 		$servers = $this->get_dimensional_bucket( $store, 'server', $bucket );
+		$index   = $store->server_index( [ $bucket ], false )[ $bucket ];
 		$hash    = Log_Manager::url_hash( '/xmlrpc.php' );
-		$row     = self::named_url_rows( $this->get_url_shard( $store, $bucket, Stats_Store::url_shard( $hash ) ) )[ $hash ];
-		$srv     = $row[ Stats_Store::URL_SRV_FIELD ];
 
 		$this->assertLessThanOrEqual( Stats_Store::MAX_SERVER_VALUES, \count( $servers ) );
-		$this->assertLessThanOrEqual( Stats_Store::MAX_SERVER_VALUES, \count( $srv ) );
+		$this->assertCount( Stats_Store::MAX_SERVER_VALUES + 1, $index, 'the index names the cap and `Other`' );
 		$this->assertArrayHasKey( Stats_Store::OTHER_KEY, $servers );
-		$this->assertArrayHasKey( Stats_Store::OTHER_KEY, $srv );
+		$this->assertContains( Stats_Store::OTHER_KEY, $index );
 		// Folded, not dropped: every request is still counted on both axes.
 		$this->assertSame( $spray, \array_sum( \array_column( $servers, Stats_Store::DIM_COUNT ) ) );
-		$this->assertSame( $spray, \array_sum( \array_column( $srv, 'count' ) ) );
-		$this->assertSame( $spray, $row['count'] );
+		$this->assertSame( $spray, $this->url_bucket_rows( $store, $bucket )[ $hash ]['count'] );
 	}
 
-	public function test_url_index_split_names_a_nameless_producer_unknown(): void {
+	public function test_a_nameless_producer_is_filed_under_unknown(): void {
 		Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$fb         = new Flame_Builder_Node();
@@ -1831,16 +1787,16 @@ class FlameBuilderTest extends TestCase {
 		// `accumulate_dimensions()` maps an empty server to the literal
 		// 'Unknown' on the `server` axis, and the dashboard builds its picker
 		// from THAT axis — so WP-CLI and cron traffic put 'Unknown' in the
-		// dropdown. Writing no split for it made choosing it empty the table.
-		// The two axes have to agree on the name.
+		// dropdown, and choosing it has to find their rows. The two axes have
+		// to agree on the name.
 		$now = \time();
 		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/cron', 'server_name' => '', 'duration_ms' => 12.0, 'timestamp' => $now ] ) );
 		$fb->flush();
 
-		$row = $this->url_bucket_rows( $store, Stats_Store::bucket_key( $now ) )[ Log_Manager::url_hash( '/cron' ) ];
-
-		// One server, so it collapses: the KEY is what this test is about.
-		$this->assertSame( [ 'Unknown' => null ], $row[ Stats_Store::URL_SRV_FIELD ] );
+		$bucket = Stats_Store::bucket_key( $now );
+		$hash   = Log_Manager::url_hash( '/cron' );
+		$this->assertSame( [ Stats_Store::server_key( 'Unknown' ) => 'Unknown' ], $store->server_index( [ $bucket ], false )[ $bucket ] );
+		$this->assertSame( 1, self::named_url_rows( $this->get_url_shard( $store, $bucket, Stats_Store::url_shard( $hash ), 'Unknown' ) )[ $hash ]['count'] );
 	}
 
 	public function test_no_single_index_item_holds_the_whole_bucket(): void {
@@ -1911,10 +1867,10 @@ class FlameBuilderTest extends TestCase {
 		);
 	}
 
-	public function test_a_stored_url_row_carries_the_hash_not_the_name(): void {
-		// The URL string is 101 of a minimal row's 166 bytes, and the row was
-		// written again in every bucket the URL appeared in: 288 copies of one
-		// name per retention window. The name belongs in one place.
+	public function test_a_stored_url_row_carries_its_path_and_not_its_origin(): void {
+		// The server is the key, so the origin on every row of every bucket
+		// would say it again. The path is what the row names; the whole URL
+		// still lives once in the name table.
 		Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$fb         = new Flame_Builder_Node();
@@ -1924,42 +1880,14 @@ class FlameBuilderTest extends TestCase {
 		$bucket = Stats_Store::bucket_key( $now );
 		$url    = 'https://bend.example/2026/08/31/a-headline-worth-101-bytes/';
 		$hash   = Log_Manager::url_hash( $url );
-		$this->fill_request( $fb, $this->completed_request( [ 'url' => $url, 'duration_ms' => 2.0, 'timestamp' => $now ] ) );
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => $url, 'server_name' => 'bend.example', 'duration_ms' => 2.0, 'timestamp' => $now ] ) );
 		$fb->flush();
 
-		$row = Core::arr( $this->get_url_shard( $store, $bucket, Stats_Store::url_shard( $hash ) )[ $hash ] ?? null );
-		$this->assertNotEmpty( $row, 'the row is there' );
-		$this->assertNotContains( $url, $row, 'and it does not carry the name' );
-		// Stored as the pair a search and a display want separately: the origin
-		// is the `srv` split's key already, so the searchable half is the path.
+		$row = self::named_url_rows( $this->get_url_shard( $store, $bucket, Stats_Store::url_shard( $hash ), 'bend.example' ) )[ $hash ] ?? [];
+		$this->assertSame( '/2026/08/31/a-headline-worth-101-bytes/', $row['path'] ?? null );
 		$this->assertSame(
 			[ $hash => [ '/2026/08/31/a-headline-worth-101-bytes/', 'https://bend.example' ] ],
 			$store->get_url_names( [ $hash ] )
-		);
-	}
-
-	public function test_a_flush_writes_the_shard_name_blob_beside_its_rows(): void {
-		// `urlmap` answers about ONE hash. A search asks about a whole shard,
-		// and answering that per hash is what runs the verb to 290 seconds, so
-		// the flush that writes a shard's rows writes its names in one key too.
-		Core::$memd = new InMemoryMemcached();
-		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		$fb         = new Flame_Builder_Node();
-		$fb->set_stats_store( $store );
-
-		$now    = \time();
-		$bucket = Stats_Store::bucket_key( $now );
-		$url    = 'https://gamma.test/almanac/tide-tables-8823';
-		$hash   = Log_Manager::url_hash( $url );
-		$this->fill_request( $fb, $this->completed_request( [ 'url' => $url, 'duration_ms' => 3.0, 'timestamp' => $now ] ) );
-		$fb->flush();
-
-		$blobs = $store->url_name_sources( [ $bucket ], Stats_Store::url_shard( $hash ) );
-		$this->assertNotEmpty( $blobs, 'the shard has a name blob for the bucket' );
-		$this->assertSame(
-			[ $hash => '/almanac/tide-tables-8823' ],
-			$blobs[0][1],
-			'PATHS only: the origin is the split key and the dropdown axis'
 		);
 	}
 
@@ -1994,10 +1922,9 @@ class FlameBuilderTest extends TestCase {
 		$fb         = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
 
-		// Past MAX_URLS_PER_BUCKET the tail used to be DROPPED, so every total
-		// summed from this index was a lower bound by however much traffic fell
-		// off. Folding it into one row keeps the bucket bounded and the totals
-		// exact — including per server, since the splits fold with it.
+		// A dropped tail would make every total summed from this index a lower
+		// bound by however much traffic fell off. Folding it into one row keeps
+		// the shard bounded and the totals exact.
 		$now    = \time();
 		$bucket = Stats_Store::bucket_key( $now );
 		$seed   = [];
@@ -2020,10 +1947,9 @@ class FlameBuilderTest extends TestCase {
 				'sum_peak_mb' => 0,
 				'max_peak_mb' => 0,
 				'last_seen'   => $now,
-				'srv'         => [ 'alpha.example' => [ 'count' => $base, 'timed_count' => $base, 'sum_ms' => 2.0 * $base, 'count_2xx' => $base ] ],
 			];
 		}
-		$this->set_url_bucket( $store, $bucket, $seed );
+		$this->set_url_bucket( $store, $bucket, $seed, 'alpha.example' );
 
 		// A shard is capped when it is WRITTEN, so the flush has to land in it.
 		$url = '';
@@ -2035,7 +1961,7 @@ class FlameBuilderTest extends TestCase {
 		$this->fill_request( $fb, $this->completed_request( [ 'url' => $url, 'server_name' => 'alpha.example', 'duration_ms' => 2.0, 'timestamp' => $now ] ) );
 		$fb->flush();
 
-		$shard = self::named_url_rows( $this->get_url_shard( $store, $bucket, 'a' ) );
+		$shard = self::named_url_rows( $this->get_url_shard( $store, $bucket, 'a', 'alpha.example' ) );
 		$other = $shard[ Stats_Store::OTHER_KEY ] ?? null;
 
 		$this->assertNotNull( $other, 'the tail folds into one row' );
@@ -2049,13 +1975,10 @@ class FlameBuilderTest extends TestCase {
 		// the 1. Seeding from cap+500 holds those two numbers still.
 		$expected = \array_sum( \range( 401, 502 ) ) + 1;
 		$this->assertSame( $expected, $other['count'] );
-		// The tail was all one host, so the folded split collapses — which says
-		// the same thing more strongly: the collapse is written ONLY when the
-		// sole server's count is the row's own, here all 103 folded rows.
-		$this->assertSame( [ 'alpha.example' => null ], $other['srv'] );
+		$this->assertSame( '', $other['path'], 'many URLs, so no one path' );
 	}
 
-	public function test_url_index_split_is_written_on_a_spoke_too(): void {
+	public function test_the_url_index_is_filed_by_server_on_a_spoke_too(): void {
 		Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$fb         = new Flame_Builder_Node();
@@ -2064,39 +1987,35 @@ class FlameBuilderTest extends TestCase {
 
 		// The three per-server AGGREGATES are hub-only, and this one looks like
 		// it forgot the gate. It did not: the server filter is offered wherever
-		// the `server` dimension has values, which is everywhere, and a scoped
-		// read of a row with no split returns nothing — so gating this would
-		// empty the URL table on every spoke rather than save it anything.
+		// the `server` dimension has values, which is everywhere, so gating
+		// this would empty the URL table on every spoke rather than save it
+		// anything.
 		$now = \time();
 		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/spoke', 'server_name' => 'lone.example', 'duration_ms' => 12.0, 'timestamp' => $now ] ) );
 		$fb->flush();
 
-		$row = $this->url_bucket_rows( $store, Stats_Store::bucket_key( $now ) )[ Log_Manager::url_hash( '/spoke' ) ];
-
-		// One server, so it collapses; a spoke writing the split at all is the point.
-		$this->assertSame( [ 'lone.example' => null ], $row[ Stats_Store::URL_SRV_FIELD ] );
+		$bucket = Stats_Store::bucket_key( $now );
+		$hash   = Log_Manager::url_hash( '/spoke' );
+		$this->assertSame( [ Stats_Store::server_key( 'lone.example' ) => 'lone.example' ], $store->server_index( [ $bucket ], false )[ $bucket ] );
+		$this->assertArrayHasKey( $hash, $this->get_url_shard( $store, $bucket, Stats_Store::url_shard( $hash ), 'lone.example' ) );
 	}
 
-	public function test_url_index_split_carries_exactly_the_summed_fields(): void {
+	public function test_a_stored_row_carries_exactly_the_summed_fields(): void {
 		Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$fb         = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
 
-		// The accumulator builds the split from its own literal field list while
-		// the persist merge builds it from `URL_SRV_SUMS`. A field added to one
-		// and not the other is dropped or invented silently, so the two are held
-		// to the same set here rather than by a comment asking them to agree.
+		// The accumulator adds its fields by hand while the persist merge sums
+		// `ROW_SUMS`. A field added to one and not the other is dropped or
+		// invented silently, so the two are held to the same set here.
 		$now = \time();
 		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/fields', 'server_name' => 'alpha.example', 'duration_ms' => 30.0, 'peak_mb' => 4.0, 'timestamp' => $now ] ) );
-		// A SECOND server, so the split does not collapse to a host name: the
-		// field set is what this test reads, and a collapse would hide it.
-		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/fields', 'server_name' => 'beta.example', 'duration_ms' => 70.0, 'peak_mb' => 9.0, 'timestamp' => $now ] ) );
 		$fb->flush();
 
 		$row = $this->url_bucket_rows( $store, Stats_Store::bucket_key( $now ) )[ Log_Manager::url_hash( '/fields' ) ];
 
-		// Values, not keys: `sum_fields()` materializes all eight at persist, so a
+		// Values, not keys: `sum_entry()` materializes all eight at persist, so a
 		// field the accumulator forgot arrives as a plausible 0.
 		$this->assertSame(
 			[
@@ -2109,7 +2028,7 @@ class FlameBuilderTest extends TestCase {
 				'count_4xx'   => 0,
 				'count_5xx'   => 0,
 			],
-			$row[ Stats_Store::URL_SRV_FIELD ]['alpha.example']
+			\array_intersect_key( $row, \array_flip( \array_intersect_key( Stats_Store::ROW_FIELD_NAMES, Stats_Store::ROW_SUMS ) ) )
 		);
 	}
 
@@ -3131,11 +3050,11 @@ class FlameBuilderTest extends TestCase {
 		// closed hour that has not been folded into the coarse URL tier, which
 		// an idle partition needs as much as a busy one — a missing coarse key
 		// is what sends the reader back to twelve fine buckets.
-		// One fold, four coarse tiers: rows, their names, the leaderboard, and
-		// the ranked lists the fold derives from those rows.
+		// One fold, four coarse tiers: rows, the server index, the leaderboard,
+		// and the ranked lists the fold derives from those rows.
 		$coarse = [
 			':' . Stats_Store::NS_URLS_HOUR . ':',
-			':' . Stats_Store::NS_URLNAMES_HOUR . ':',
+			':' . Stats_Store::NS_URLSRV_HOUR . ':',
 			':' . Stats_Store::NS_LB_HOUR . ':',
 			':' . Stats_Store::NS_URLRANK_HOUR . ':',
 		];
@@ -3248,7 +3167,7 @@ class FlameBuilderTest extends TestCase {
 		$ref = new \ReflectionProperty( $fresh, 'pending' );
 		$ref->setValue( $fresh, [ '2026-08-27-13-40' => \array_replace(
 			( new \ReflectionMethod( $fresh, 'empty_bucket' ) )->invoke( null ),
-			[ 'url_stats' => [ $hash => self::positional_url_row( [ 'url' => '/respawn-7714', 'count' => 8, 'timed_count' => 8, 'sum_ms' => 240.0, 'last_seen' => $now - 5400 ] ) ] ]
+			[ 'url_stats' => [ self::SEED_SERVER => [ $hash => self::positional_url_row( [ 'url' => '/respawn-7714', 'count' => 8, 'timed_count' => 8, 'sum_ms' => 240.0, 'last_seen' => $now - 5400 ] ) ] ] ]
 		) ] );
 		$fresh->flush();
 
@@ -3322,13 +3241,20 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	/**
-	 * Drive one `persist_aggregate_stats()` over hand-built accumulators.
+	 * Drive one `persist_aggregate_stats()` over hand-built accumulators. URL
+	 * rows are given by hash and filed under `SEED_SERVER`, as a request
+	 * carrying the default `server_name` files them.
 	 *
 	 * @param array<string,array<string,mixed>> $buckets bucket => accumulator overrides.
 	 */
 	private function flush_buckets( Flame_Builder_Node $fb, array $buckets ): void {
 		$pending = [];
 		foreach ( $buckets as $bucket => $overrides ) {
+			foreach ( [ 'url_stats', 'url_stats_worker' ] as $slot ) {
+				if ( isset( $overrides[ $slot ] ) ) {
+					$overrides[ $slot ] = [ self::SEED_SERVER => $overrides[ $slot ] ];
+				}
+			}
 			$pending[ $bucket ] = \array_replace(
 				( new \ReflectionMethod( $fb, 'empty_bucket' ) )->invoke( null ),
 				$overrides
@@ -3449,10 +3375,8 @@ class FlameBuilderTest extends TestCase {
 		$fb         = $this->folded_builder( $store, $shard, [
 			$hash => [ 'url' => '/evicted-hour-6071', 'count' => 3, 'timed_count' => 3, 'sum_ms' => 33.0 ],
 		] );
-		// Both halves of the shard, so no twin write re-ranks the hour.
-		$coarse = self::cache_key( 0, "urls_h:{$shard}:2026-08-27-13" );
+		$coarse = self::cache_key( 0, 'urls_h:' . Stats_Store::server_key( self::SEED_SERVER ) . ":{$shard}:2026-08-27-13" );
 		Core::$memd->delete( $coarse );
-		Core::$memd->delete( self::cache_key( 0, "urlnames_h:{$shard}:2026-08-27-13" ) );
 		$store->hour_ranks = [];
 
 		$this->flush_pending( $fb, '2026-08-27-13-40', [
@@ -3463,32 +3387,6 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( 7, $fine[ $hash ]['count'] ?? null, 'the late rows land in their fine bucket' );
 		$this->assertFalse( Core::$memd->get( $coarse ), 'and the missing hour key stays missing' );
 		$this->assertNotContains( '2026-08-27-13', $store->hour_ranks, 'nor is the hour re-ranked off a shard it lacks' );
-	}
-
-	public function test_a_late_name_into_a_folded_hour_missing_its_name_shard_goes_to_its_fine_bucket(): void {
-		Core::$memd = new InMemoryMemcached();
-		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		$hash       = Log_Manager::url_hash( 'https://zeta.test/gannet-5528' );
-		$shard      = Stats_Store::url_shard( $hash );
-		$fb         = $this->folded_builder( $store, $shard, [
-			$hash => [ 'url' => 'https://zeta.test/gannet-5528', 'count' => 3 ],
-		] );
-		$coarse = self::cache_key( 0, "urlnames_h:{$shard}:2026-08-27-13" );
-		Core::$memd->delete( $coarse );
-
-		$this->flush_buckets( $fb, [
-			'2026-08-27-13-40' => [
-				'url_stats' => [ $hash => self::positional_url_row( [ 'count' => 7 ] ) ],
-				'url_names' => [ $hash => 'https://zeta.test/gannet-5528' ],
-			],
-		] );
-
-		$this->assertSame(
-			[ $hash => '/gannet-5528' ],
-			$store->bucket_get_multi( [ [ Stats_Store::url_name_parts( $shard ), '2026-08-27-13-40' ] ] )[0],
-			'the late name lands in its fine bucket'
-		);
-		$this->assertFalse( Core::$memd->get( $coarse ), 'and the missing hour key stays missing' );
 	}
 
 	public function test_a_late_write_into_a_folded_hour_holding_its_shard_lands_in_both_tiers(): void {
@@ -3515,9 +3413,10 @@ class FlameBuilderTest extends TestCase {
 
 	public function test_a_refold_keeps_late_rows_merged_into_a_present_shard(): void {
 		// End to end: the late rows merge into a PRESENT urls_h shard while
-		// its urlnames_h twin is evicted. The reprobe re-folds the whole hour
-		// from its fine buckets, so rows that reached only the hour key are
-		// overwritten away; rows that also reached their fine bucket return.
+		// another shard of the server is evicted. The reprobe re-folds the
+		// whole hour from its fine buckets, so rows that reached only the hour
+		// key are overwritten away; rows that also reached their fine bucket
+		// return.
 		Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$kept       = 'c6c6c6c6c6c6';
@@ -3527,7 +3426,7 @@ class FlameBuilderTest extends TestCase {
 		$fb = $this->folded_builder( $store, $shard, [
 			$kept => [ 'url' => '/kept-row-3390', 'count' => 3 ],
 		] );
-		Core::$memd->delete( self::cache_key( 0, "urlnames_h:{$shard}:2026-08-27-13" ) );
+		Core::$memd->delete( self::cache_key( 0, 'urls_h:' . Stats_Store::server_key( self::SEED_SERVER ) . ':w0:2026-08-27-13' ) );
 		$this->flush_pending( $fb, '2026-08-27-13-40', [
 			$late => self::positional_url_row( [ 'url' => '/late-row-3391', 'count' => 7 ] ),
 		] );
@@ -3540,6 +3439,36 @@ class FlameBuilderTest extends TestCase {
 		$hour = self::named_url_rows( $store->url_hour_sources( [ '2026-08-27-13' ], $shard )[0][1] ?? [] );
 		$this->assertSame( 3, $hour[ $kept ]['count'] ?? null, 'the re-fold keeps the original rows' );
 		$this->assertSame( 7, $hour[ $late ]['count'] ?? null, 'and the late ones' );
+	}
+
+	public function test_a_late_write_from_a_new_server_names_it_in_the_folded_hour_and_the_reprobe_folds_it(): void {
+		// The server index is what every hour reader enumerates, so a server
+		// the folded hour never named has to join it, or its late rows stay
+		// in fine buckets nothing reads. Its hour keys do not exist yet, so
+		// the probe reads the hour as unfolded and the reprobe folds it again.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$hash       = 'c5c5c5c5c5c5';
+		$shard      = Stats_Store::url_shard( $hash );
+		$fb         = $this->folded_builder( $store, $shard, [
+			$hash => [ 'url' => '/folded-5511', 'count' => 3 ],
+		] );
+		$late = 'c9c9c9c9c9c9';
+		( new \ReflectionProperty( $fb, 'pending' ) )->setValue( $fb, [ '2026-08-27-13-40' => \array_replace(
+			( new \ReflectionMethod( $fb, 'empty_bucket' ) )->invoke( null ),
+			[ 'url_stats' => [ 'late-7731.test' => [ $late => self::positional_url_row( [ 'count' => 13, 'path' => '/late-7731' ] ) ] ] ]
+		) ] );
+		( new \ReflectionMethod( $fb, 'persist_aggregate_stats' ) )->invoke( $fb, $store, (int) Core::$now, self::fine_floor( $store, (int) Core::$now ) );
+		( new \ReflectionProperty( $fb, 'pending' ) )->setValue( $fb, [] );
+
+		$this->assertContains( 'late-7731.test', $store->server_index( [ '2026-08-27-13' ], true )['2026-08-27-13'] );
+		$this->assertFalse( $store->url_hours_derived( [ '2026-08-27-13' ] )['2026-08-27-13']['folded'], 'its hour keys are missing' );
+
+		( new \ReflectionProperty( $fb, 'folds_since_reprobe' ) )->setValue( $fb, PHP_INT_MAX - 1 );
+		self::roll_up( $fb, (int) Core::$now );
+
+		$this->assertSame( 13, self::named_url_rows( $this->get_url_hour( $store, '2026-08-27-13', $shard, 'late-7731.test' ) )[ $late ]['count'] ?? null );
+		$this->assertSame( 3, self::named_url_rows( $this->get_url_hour( $store, '2026-08-27-13', $shard ) )[ $hash ]['count'] ?? null );
 	}
 
 	public function test_a_spent_fold_budget_still_memoizes_an_older_folded_hour(): void {
@@ -3649,7 +3578,7 @@ class FlameBuilderTest extends TestCase {
 		$fb         = $this->folded_builder( $store, $shard, [
 			$hash => [ 'url' => '/missed-read-5307', 'count' => 3 ],
 		] );
-		$coarse = self::cache_key( 0, "urls_h:{$shard}:2026-08-27-13" );
+		$coarse = self::cache_key( 0, 'urls_h:' . Stats_Store::server_key( self::SEED_SERVER ) . ":{$shard}:2026-08-27-13" );
 
 		$store->fail = Stats_Store::NS_URLS_HOUR;
 		$this->flush_pending( $fb, '2026-08-27-13-40', [
@@ -3864,8 +3793,9 @@ class FlameBuilderTest extends TestCase {
 			$hash => self::positional_url_row( [ 'count' => 7 ] ),
 		] );
 
-		$this->assertStringContainsString( "urls:{$shard}:2026-08-27-13-40", $err, 'the fine key' );
-		$this->assertStringContainsString( "urls_h:{$shard}:2026-08-27-13", $err, 'and the hour key' );
+		$srv = Stats_Store::server_key( self::SEED_SERVER );
+		$this->assertStringContainsString( "urls:{$srv}:{$shard}:2026-08-27-13-40", $err, 'the fine key' );
+		$this->assertStringContainsString( "urls_h:{$srv}:{$shard}:2026-08-27-13", $err, 'and the hour key' );
 	}
 
 	public function test_the_rank_memo_prune_floor_is_the_read_plans_fine_tail(): void {
@@ -3914,7 +3844,7 @@ class FlameBuilderTest extends TestCase {
 		$held    = ( new \ReflectionProperty( $fb, 'mirror' ) )->getValue( $fb )[ Stats_Store::NS_URLS ] ?? [];
 		$expires = Core::$memd->expiries();
 		foreach ( [ '2026-08-27-13-00', '2026-08-27-13-40' ] as $bucket ) {
-			$key = "urls:{$shard}:{$bucket}";
+			$key = 'urls:' . Stats_Store::server_key( self::SEED_SERVER ) . ":{$shard}:{$bucket}";
 			$this->assertArrayHasKey( Stats_Store::entry_key( 0, $key ), $held, "{$bucket} reaches the mirror" );
 			$this->assertEqualsWithDelta( \time() + $store->ttl_url_fine(), $expires[ self::cache_key( 0, $key ) ] ?? 0, 2, "{$bucket} keeps the fine TTL in memcache" );
 		}
@@ -3947,70 +3877,11 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( 363.0, (float) $rows[ $hash ]['sum_ms'] );
 	}
 
-	public function test_the_hour_fold_carries_the_names_with_the_rows(): void {
-		// A folded hour's fine buckets are never read again, so a name left
-		// behind in them is a URL the search can no longer find — which the
-		// "every URL must be searchable" rule forbids outright.
-		Core::$memd = new InMemoryMemcached();
-		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		$early      = Log_Manager::url_hash( 'https://delta.test/kelp-3140' );
-		$late       = Log_Manager::url_hash( 'https://delta.test/kelp-9052' );
-		$shard      = Stats_Store::url_shard( $early );
-		$now        = \gmmktime( 15, 7, 0, 8, 27, 2026 );
-
-		$store->bucket_set_multi( [
-			[ Stats_Store::url_name_parts( $shard ), '2026-08-27-13-05', [ $early => '/kelp-3140' ] ],
-			[ Stats_Store::url_name_parts( $shard ), '2026-08-27-13-40', [ $late  => '/kelp-9052' ] ],
-		] );
-
-		$fb = new Flame_Builder_Node();
-		$fb->set_stats_store( $store );
-		Core::$now = $now;
-		self::roll_up( $fb, (int) Core::$now );
-
-		$folded = $store->url_name_hour_sources( [ '2026-08-27-13' ], $shard );
-		$this->assertNotEmpty( $folded, 'the hour has a name blob' );
-		$this->assertSame(
-			[ $early => '/kelp-3140', $late => '/kelp-9052' ],
-			$folded[0][1],
-			'and it is the union of the buckets it replaced'
-		);
-	}
-
-	public function test_an_hour_folded_before_the_name_tier_existed_is_folded_again(): void {
-		// The probe decides an hour is done. Asking only the ROW tier means
-		// every hour a previous release folded reads as done forever, so its
-		// rows keep their index and lose their names — a retention window of
-		// URLs that no search can reach and no url-sort can order.
-		Core::$memd = new InMemoryMemcached();
-		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		$hash       = Log_Manager::url_hash( 'https://epsilon.test/anchovy-7781' );
-		$shard      = Stats_Store::url_shard( $hash );
-		$now        = \gmmktime( 15, 7, 0, 8, 27, 2026 );
-
-		// The shape 0.86.3 left behind: every shard has rows, none has names.
-		foreach ( \array_merge( Stats_Store::url_shards(), Stats_Store::url_shards( true ) ) as $one ) {
-			$this->set_url_hour( $store, '2026-08-27-13', $one, [] );
-		}
-		$store->bucket_set_multi( [
-			[ Stats_Store::url_name_parts( $shard ), '2026-08-27-13-05', [ $hash => '/anchovy-7781' ] ],
-		] );
-
-		$fb = new Flame_Builder_Node();
-		$fb->set_stats_store( $store );
-		Core::$now = $now;
-		self::roll_up( $fb, (int) Core::$now );
-
-		$folded = $store->url_name_hour_sources( [ '2026-08-27-13' ], $shard );
-		$this->assertNotEmpty( $folded, 'the hour is folded again for the tier it is missing' );
-		$this->assertSame( [ $hash => '/anchovy-7781' ], $folded[0][1] );
-	}
-
 	public function test_a_refused_hour_shard_write_is_logged_by_shard(): void {
-		// The fold writes 33 keys in one batch, and the batch answers per
-		// write — so a refusal names the shard that was lost, not the hour.
-		// An hour is 33 candidates, and the operator's next move is which
-		// shard is over the item limit.
+		// The fold writes every server's shards in one batch, and the batch
+		// answers per write — so a refusal names the shard that was lost, not
+		// the hour, and the operator's next move is which shard is over the
+		// item limit.
 		$err = '';
 		Core::set_stderr_handler( static function ( $text ) use ( &$err ) {
 			$err .= $text;
@@ -4023,7 +3894,7 @@ class FlameBuilderTest extends TestCase {
 			public function bucket_set_multi( array $writes ): array {
 				$out = parent::bucket_set_multi( $writes );
 				foreach ( $writes as $i => [ $parts ] ) {
-					if ( self::NS_URLS_HOUR === $parts[0] && $this->refuse_shard === ( $parts[1] ?? '' ) ) {
+					if ( self::NS_URLS_HOUR === $parts[0] && $this->refuse_shard === ( $parts[2] ?? '' ) ) {
 						$out[ $i ] = false;
 					}
 				}
@@ -4041,7 +3912,7 @@ class FlameBuilderTest extends TestCase {
 		self::roll_up( $fb, (int) Core::$now );
 
 		$this->assertStringContainsString( 'hour fold write refused', $err );
-		$this->assertStringContainsString( Stats_Store::NS_URLS_HOUR . ':' . $shard . ':2026-08-27-13', $err, 'the refusal names the shard' );
+		$this->assertStringContainsString( Stats_Store::NS_URLS_HOUR . ':' . Stats_Store::server_key( self::SEED_SERVER ) . ':' . $shard . ':2026-08-27-13', $err, 'the refusal names the shard' );
 	}
 
 	public function test_a_refused_fold_write_is_not_re_folded_next_flush(): void {
@@ -4056,7 +3927,7 @@ class FlameBuilderTest extends TestCase {
 			public function bucket_set_multi( array $writes ): array {
 				$refused = [];
 				foreach ( $writes as $i => [ $parts, $key ] ) {
-					if ( self::NS_URLS_HOUR === $parts[0] && $this->refuse_shard === ( $parts[1] ?? '' ) && '2026-08-27-13' === $key ) {
+					if ( self::NS_URLS_HOUR === $parts[0] && $this->refuse_shard === ( $parts[2] ?? '' ) && '2026-08-27-13' === $key ) {
 						++$this->folds;
 						$refused[ $i ] = false;
 					}
@@ -4120,11 +3991,11 @@ class FlameBuilderTest extends TestCase {
 		$now        = \gmmktime( 15, 7, 0, 8, 27, 2026 );
 		$this->set_url_bucket( $store, '2026-08-27-13-05', [
 			'a1a1a1a1a1a1' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 7, 'timed_count' => 7, 'sum_ms' => 70.0, 'last_seen' => 1756300000 ],
-		] );
+		], 'kea.test' );
 		$this->set_url_bucket( $store, '2026-08-27-13-40', [
 			'a1a1a1a1a1a1' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 2, 'timed_count' => 2, 'sum_ms' => 20.0, 'last_seen' => 1756302100 ],
 			'b2b2b2b2b2b2' => [ 'url' => 'https://kea.test/kiwi-8842', 'count' => 4, 'timed_count' => 4, 'sum_ms' => 4000.0, 'last_seen' => 1756302200 ],
-		] );
+		], 'kea.test' );
 
 		$fb = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
@@ -4154,7 +4025,7 @@ class FlameBuilderTest extends TestCase {
 		foreach ( \array_merge( Stats_Store::url_shards(), Stats_Store::url_shards( true ) ) as $one ) {
 			$this->seed_url_hour( $store, '2026-08-27-13', $one, Stats_Store::url_shard( $hash ) === $one
 				? [ $hash => [ 'url' => 'https://moa.test/tui-9913', 'count' => 11, 'timed_count' => 11, 'sum_ms' => 110.0, 'last_seen' => 1756285000 ] ]
-				: [] );
+				: [], 'moa.test' );
 		}
 		$store->bucket_set_multi( [ [ Stats_Store::lb_hour_parts(), '2026-08-27-13', [] ] ] );
 
@@ -4165,6 +4036,7 @@ class FlameBuilderTest extends TestCase {
 
 		$rows = $store->url_hour_sources( [ '2026-08-27-13' ], Stats_Store::url_shard( $hash ) );
 		$this->assertSame( 11, Core::arr( $rows[0][1][ $hash ] )[ Stats_Store::ROW_COUNT ], 'the coarse rows survive' );
+		$this->assertSame( 'moa.test', $rows[0][2], 'under the server the hour\'s index names' );
 		$list = $store->url_rank_sources( [ '2026-08-27-13' ], 'count', 'desc', '', true );
 		$this->assertSame( [ $hash ], \array_column( $list[0][1], Stats_Store::RANK_HASH ) );
 		$this->assertSame( '/tui-9913', $store->url_rank_sources( [ '2026-08-27-13' ], 'url', 'asc', '', true )[0][1][0][ Stats_Store::RANK_PATH ] );
@@ -4363,11 +4235,11 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_due_buckets_rank_in_bounded_reads(): void {
-		// Each due bucket gap-fills 32 keys and holds its row maps until it
-		// ranks, so one read of every offered bucket is the unbounded batch
-		// the per-chunk ranking exists to prevent. A replay's flushed buckets
-		// reach the ranker unpruned, so one bucket more than a write chunk's
-		// worth of groups forces a second read.
+		// Each due bucket gap-fills sixteen keys a server and holds its row
+		// maps until it ranks, so one read of every offered bucket is the
+		// unbounded batch the per-chunk ranking exists to prevent. A replay's
+		// flushed buckets reach the ranker unpruned, so one bucket more than a
+		// write chunk's worth of groups forces a second read.
 		Core::$memd = new InMemoryMemcached();
 		$limit      = ( new \ReflectionClassConstant( Flame_Builder_Node::class, 'WRITE_BATCH_KEYS' ) )->getValue();
 		$store      = new class( 0, 86400 ) extends Stats_Store {
@@ -4381,7 +4253,7 @@ class FlameBuilderTest extends TestCase {
 			}
 		};
 		$at      = \gmmktime( 13, 2, 0, 9, 22, 2026 );
-		$count   = \intdiv( $limit, 2 * Stats_Store::URL_SHARDS ) + 1;
+		$count   = \intdiv( $limit, Stats_Store::URL_SHARDS ) + 1;
 		$buckets = [];
 		for ( $i = 0; $i < $count; $i++ ) {
 			$bucket             = Stats_Store::bucket_key( $at - ( ( $i + 1 ) * Stats_Store::BUCKET_SECONDS ) );
@@ -4515,149 +4387,67 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( [ $hash => [ '/wombat-4471', '' ] ], $store->get_url_names( [ $hash ] ) );
 	}
 
-	/**
-	 * A folded hour must carry the per-server split, and `sum_entry()` does NOT
-	 * fold it — it sums the eight scalars of `URL_SRV_SUMS` and nothing else.
-	 * A folded hour's fine buckets are deliberately not read, so an hour whose
-	 * split came back empty takes every server-scoped read of that URL with it:
-	 * `swap_url_server_sums()` answers null for a row missing the server asked
-	 * for, and the URL leaves the filtered table AND its totals (decision 14).
-	 */
-	public function test_a_folded_hour_carries_the_per_server_split(): void {
+	public function test_a_folded_hour_keeps_each_server_apart(): void {
+		// The fold reads each server's fine keys and writes each server's hour
+		// keys: a folded hour never merges two servers into one value, and its
+		// index names every server its buckets named.
 		Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$hash       = Log_Manager::url_hash( '/wombat-4471' );
 		$shard      = Stats_Store::url_shard( $hash );
 		$now        = \gmmktime( 15, 7, 0, 8, 27, 2026 );
 		$this->seed_url_shard( $store, '2026-08-27-13-05', $shard, [
-			$hash => [
-				'url' => '/wombat-4471', 'count' => 4, 'timed_count' => 4, 'sum_ms' => 40.0,
-				Stats_Store::URL_SRV_FIELD => [ 'web-4471' => [ 'count' => 4, 'timed_count' => 4, 'sum_ms' => 40.0 ] ],
-			],
-		] );
+			$hash => [ 'url' => '/wombat-4471', 'count' => 4, 'timed_count' => 4, 'sum_ms' => 40.0 ],
+		], 'web-4471.test' );
 		$this->seed_url_shard( $store, '2026-08-27-13-40', $shard, [
-			$hash => [
-				'url' => '/wombat-4471', 'count' => 6, 'timed_count' => 6, 'sum_ms' => 90.0,
-				Stats_Store::URL_SRV_FIELD => [ 'web-8823' => [ 'count' => 6, 'timed_count' => 6, 'sum_ms' => 90.0 ] ],
-			],
-		] );
+			$hash => [ 'url' => '/wombat-4471', 'count' => 6, 'timed_count' => 6, 'sum_ms' => 90.0 ],
+		], 'web-8823.test' );
 
 		$fb = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
 		Core::$now = $now;
 		self::roll_up( $fb, (int) Core::$now );
 
-		$hour  = self::named_url_rows( $store->url_hour_sources( [ '2026-08-27-13' ], $shard )[0][1] );
-		$split = $hour[ $hash ][ Stats_Store::URL_SRV_FIELD ];
-		$this->assertSame( [ 'web-4471', 'web-8823' ], \array_keys( $split ) );
-		$this->assertSame( 4, $split['web-4471']['count'] );
-		$this->assertSame( 6, $split['web-8823']['count'] );
-	}
-
-	/**
-	 * A split with ONE server whose count is the row's own is the row restated.
-	 * Storing it as a host name against `null` is ~33 bytes where the positional
-	 * sums are ~112 — and on this fleet every URL is served by exactly one host,
-	 * so `srv` was over half the whole read.
-	 *
-	 * Count alone decides it: every `URL_SRV_SUMS` field is summed into the row
-	 * and into the split from the SAME increment, so a matching count means the
-	 * other seven match by construction.
-	 */
-	public function test_a_single_server_split_collapses_to_the_host_name(): void {
-		Core::$memd = new InMemoryMemcached();
-		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		$fb         = new Flame_Builder_Node();
-		$fb->set_stats_store( $store );
-
-		$now = \time();
-		for ( $i = 0; $i < 4; $i++ ) {
-			$this->fill_request( $fb, $this->completed_request( [
-				'url'         => 'https://one-host.example/wombat-4471',
-				'duration_ms' => 91.0,
-				'timestamp'   => $now,
-				'server_name' => 'one-host.example',
-			] ) );
-		}
-		$fb->flush();
-
-		$hash = Log_Manager::url_hash( 'https://one-host.example/wombat-4471' );
-		$row  = $this->get_url_shard( $store, Stats_Store::bucket_key( $now ), Stats_Store::url_shard( $hash ) )[ $hash ];
+		$this->assertSame( 4, self::named_url_rows( $this->get_url_hour( $store, '2026-08-27-13', $shard, 'web-4471.test' ) )[ $hash ]['count'] );
+		$this->assertSame( 6, self::named_url_rows( $this->get_url_hour( $store, '2026-08-27-13', $shard, 'web-8823.test' ) )[ $hash ]['count'] );
 		$this->assertSame(
-			[ 'one-host.example' => null ],
-			$row[ Stats_Store::ROW_SRV ],
-			'the host name alone, against null'
+			[ Stats_Store::server_key( 'web-4471.test' ) => 'web-4471.test', Stats_Store::server_key( 'web-8823.test' ) => 'web-8823.test' ],
+			$store->server_index( [ '2026-08-27-13' ], true )['2026-08-27-13']
 		);
-		$this->assertSame( 4, $row[ Stats_Store::ROW_COUNT ], 'and the row still carries the numbers' );
+		$this->assertSame( [], $this->get_url_hour( $store, '2026-08-27-13', 'w3', 'web-4471.test' ), 'every shard of a named server is written, empty or not' );
 	}
 
-	/**
-	 * A collapsed split is stored, then read back and merged — by WRITERS, not
-	 * just the reader. `sum_fields()` skips a non-array, so an unexpanded null
-	 * is not a zero: it is that host deleted from the merge, silently.
-	 */
-	public function test_a_second_flush_keeps_the_collapsed_hosts_whole_count(): void {
+	public function test_an_hour_naming_too_many_servers_folds_the_quietest_into_other(): void {
+		// Each bucket admits MAX_SERVER_VALUES, so twelve of them can name
+		// more between them; the hour keeps the busiest and folds the rest
+		// into its `Other` server, whose rows stay whole.
 		Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		$now        = \time();
-		$url        = 'https://reflush.example/wombat-4471';
-
-		// Three, flush, then two MORE into the same bucket, host and URL.
-		foreach ( [ 3, 2 ] as $batch ) {
-			$fb = new Flame_Builder_Node();
-			$fb->set_stats_store( $store );
-			for ( $i = 0; $i < $batch; $i++ ) {
-				$this->fill_request( $fb, $this->completed_request( [
-					'url'         => $url,
-					'duration_ms' => 10.0,
-					'timestamp'   => $now,
-					'server_name' => 'reflush.example',
-				] ) );
-			}
-			$fb->flush();
+		for ( $i = 0; $i < Stats_Store::MAX_SERVER_VALUES; $i++ ) {
+			$this->seed_url_shard( $store, '2026-08-27-13-05', '0', [
+				\sprintf( '0%011x', $i ) => [ 'url' => "/busy-{$i}", 'count' => 5 ],
+			], "busy{$i}.test" );
 		}
-
-		$hash = Log_Manager::url_hash( $url );
-		$row  = self::named_url_rows( $this->get_url_shard( $store, Stats_Store::bucket_key( $now ), Stats_Store::url_shard( $hash ) ) )[ $hash ];
-		$this->assertSame( 5, $row['count'], 'the row counts both flushes' );
-		// Still one host, so still collapsed — which is the assertion: a
-		// collapse means the sole host's count IS the row's, all five.
-		$this->assertSame( [ 'reflush.example' => null ], $row['srv'] );
-	}
-
-	/** The coarse tier merges stored rows too, so it needs the expansion. */
-	public function test_a_folded_hour_keeps_a_collapsed_split(): void {
-		Core::$memd = new InMemoryMemcached();
-		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		$hash       = Log_Manager::url_hash( '/wombat-4471' );
-		$shard      = Stats_Store::url_shard( $hash );
-		$now        = \gmmktime( 15, 7, 0, 8, 27, 2026 );
-
-		foreach ( [ '2026-08-27-13-05', '2026-08-27-13-40' ] as $bucket ) {
-			$this->seed_url_shard( $store, $bucket, $shard, [
-				$hash => [
-					'url' => '/wombat-4471', 'count' => 4, 'timed_count' => 4, 'sum_ms' => 40.0,
-					'srv' => [ 'sole.example' => null ],
-				],
-			] );
-		}
+		$this->seed_url_shard( $store, '2026-08-27-13-40', '0', [
+			'0fffffffffff' => [ 'url' => '/quiet-4471', 'count' => 1 ],
+		], 'quiet-4471.test' );
 
 		$fb = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
-		Core::$now = $now;
+		Core::$now = \gmmktime( 15, 7, 0, 8, 27, 2026 );
 		self::roll_up( $fb, (int) Core::$now );
 
-		$hour = self::named_url_rows( $store->url_hour_sources( [ '2026-08-27-13' ], $shard )[0][1] );
-		$this->assertSame( 8, $hour[ $hash ]['count'], 'both buckets fold' );
-		$this->assertSame( [ 'sole.example' => null ], $hour[ $hash ]['srv'], 'and the split folds with them' );
+		$index = $store->server_index( [ '2026-08-27-13' ], true )['2026-08-27-13'];
+		$this->assertCount( Stats_Store::MAX_SERVER_VALUES + 1, $index );
+		$this->assertArrayNotHasKey( Stats_Store::server_key( 'quiet-4471.test' ), $index );
+		$this->assertSame( Stats_Store::OTHER_KEY, $index[ Stats_Store::server_key( Stats_Store::OTHER_KEY ) ] );
+		$this->assertSame( 1, self::named_url_rows( $this->get_url_hour( $store, '2026-08-27-13', '0', Stats_Store::OTHER_KEY ) )['0fffffffffff']['count'] );
 	}
 
-	/**
-	 * And the capped tail: decision 15 says a total summed from this index is
-	 * exact per server, not just site-wide, so the overflow row's split has to
-	 * carry the hosts the tail was seen on.
-	 */
-	public function test_a_capped_tail_of_collapsed_rows_folds_its_hosts(): void {
+	public function test_a_busy_servers_tail_never_folds_a_quiet_servers_rows(): void {
+		// The reason the server is in the key: a busy spoke filling a shard
+		// folds only its own tail into its own `Other`, and a quiet spoke's
+		// URL in the same shard keeps its row.
 		Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$now        = \time();
@@ -4669,10 +4459,9 @@ class FlameBuilderTest extends TestCase {
 			$seed[ \sprintf( 'a%011x', $i ) ] = [
 				'url' => "/u{$i}", 'count' => 7 + $i, 'timed_count' => 7 + $i,
 				'sum_ms' => 2.0 * ( 7 + $i ), 'last_seen' => $now,
-				'srv' => [ 'tail.example' => null ],
 			];
 		}
-		$this->seed_url_shard( $store, $bucket, 'a', $seed );
+		$this->seed_url_shard( $store, $bucket, 'a', $seed, 'tail.example' );
 
 		$url = '';
 		for ( $i = 0; '' === $url; $i++ ) {
@@ -4685,15 +4474,16 @@ class FlameBuilderTest extends TestCase {
 		$this->fill_request( $fb, $this->completed_request( [
 			'url' => $url, 'server_name' => 'live.example', 'duration_ms' => 2.0, 'timestamp' => $now,
 		] ) );
+		$this->fill_request( $fb, $this->completed_request( [
+			'url' => $url, 'server_name' => 'tail.example', 'duration_ms' => 2.0, 'timestamp' => $now,
+		] ) );
 		$fb->flush();
 
-		$other = self::named_url_rows( $this->get_url_shard( $store, $bucket, 'a' ) )[ Stats_Store::OTHER_KEY ];
-		$this->assertArrayHasKey( 'tail.example', $other['srv'], 'the folded tail keeps its host' );
-		$this->assertSame(
-			$other['count'],
-			$other['srv']['tail.example']['count'] + Core::num_int( $other['srv']['live.example']['count'] ?? null ),
-			'and the split sums to the row: decision 15 is exact PER SERVER'
-		);
+		$live = self::named_url_rows( $this->get_url_shard( $store, $bucket, 'a', 'live.example' ) );
+		$this->assertSame( [ Log_Manager::url_hash( $url ) ], \array_keys( $live ), 'the quiet server keeps its row' );
+		$tail = self::named_url_rows( $this->get_url_shard( $store, $bucket, 'a', 'tail.example' ) );
+		$this->assertLessThanOrEqual( $cap, \count( $tail ), 'the busy server is capped' );
+		$this->assertArrayHasKey( Stats_Store::OTHER_KEY, $tail, 'and folds its own tail' );
 	}
 
 	/**
@@ -4742,38 +4532,6 @@ class FlameBuilderTest extends TestCase {
 		);
 	}
 
-	/** Two hosts are not the row restated, so the split stays whole. */
-	public function test_a_two_server_split_does_not_collapse(): void {
-		Core::$memd = new InMemoryMemcached();
-		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		$fb         = new Flame_Builder_Node();
-		$fb->set_stats_store( $store );
-
-		$now = \time();
-		foreach ( [ 'edge-a.example', 'edge-a.example', 'edge-b.example' ] as $server ) {
-			$this->fill_request( $fb, $this->completed_request( [
-				'url'         => 'https://two-host.example/quokka-8823',
-				'duration_ms' => 47.0,
-				'timestamp'   => $now,
-				'server_name' => $server,
-			] ) );
-		}
-		$fb->flush();
-
-		$hash  = Log_Manager::url_hash( 'https://two-host.example/quokka-8823' );
-		$row   = $this->get_url_shard( $store, Stats_Store::bucket_key( $now ), Stats_Store::url_shard( $hash ) )[ $hash ];
-		$split = $row[ Stats_Store::ROW_SRV ];
-		$this->assertSame( [ 'edge-a.example', 'edge-b.example' ], \array_keys( $split ) );
-		$this->assertSame( 2, $split['edge-a.example'][ Stats_Store::ROW_COUNT ] );
-		$this->assertSame( 1, $split['edge-b.example'][ Stats_Store::ROW_COUNT ] );
-	}
-
-	/**
-	 * An hour folds twelve buckets' URL SETS into one key, so its row count is
-	 * the union of twelve capped sets — up to twelve times a bucket's. It takes
-	 * the same ceiling the bucket does, and its tail FOLDS into the overflow
-	 * rows rather than dropping, so the totals stay exact.
-	 */
 	public function test_a_folded_hour_takes_the_same_row_cap_as_a_bucket(): void {
 		Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
@@ -4821,7 +4579,7 @@ class FlameBuilderTest extends TestCase {
 		Core::$memd = $memd;
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$now        = \gmmktime( 15, 7, 0, 8, 27, 2026 );
-		// Every hour already derived — rows, names and lists — so the probe is
+		// Every hour already derived — index, rows and lists — so the probe is
 		// all this flush does.
 		$families = \array_merge( Stats_Store::url_shards(), Stats_Store::url_shards( true ) );
 		foreach ( Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, $now ) )['hours'] as $hour ) {
@@ -4839,7 +4597,7 @@ class FlameBuilderTest extends TestCase {
 		Core::$now = $now;
 		self::roll_up( $fb, (int) Core::$now );
 
-		$this->assertSame( 1, $memd->multi_calls, 'one probe for the whole window' );
+		$this->assertSame( 2, $memd->multi_calls, 'one probe for the whole window: its heads, then the rows they name' );
 		$this->assertSame( 0, $memd->get_calls, 'and nothing folded, so no per-key reads' );
 	}
 
@@ -4869,7 +4627,7 @@ class FlameBuilderTest extends TestCase {
 
 		$folded = 0;
 		foreach ( Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, $now ) )['hours'] as $hour ) {
-			$folded += \count( $store->url_hour_sources( [ $hour ] ) ) >= Stats_Store::URL_SHARDS ? 1 : 0;
+			$folded += [] !== $store->server_index( [ $hour ], true ) ? 1 : 0;
 		}
 		$this->assertGreaterThanOrEqual( 3, $folded, 'each flush folded its budget' );
 	}
@@ -4895,7 +4653,7 @@ class FlameBuilderTest extends TestCase {
 		$hour = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, $now ) )['hours'][0];
 		$this->assertNotSame(
 			[],
-			$other->url_hour_sources( [ $hour ] ),
+			$other->server_index( [ $hour ], true ),
 			'the new partition gets its own fold'
 		);
 	}
@@ -4915,9 +4673,9 @@ class FlameBuilderTest extends TestCase {
 		self::roll_up( $fb, (int) Core::$now );
 
 		$this->assertSame(
-			[ [ '2026-08-27-13', [] ] ],
-			$store->url_hour_sources( [ '2026-08-27-13' ], 'a' ),
-			'written with no rows, so the read finds it rather than falling back'
+			[ '2026-08-27-13' => [] ],
+			$store->server_index( [ '2026-08-27-13' ], true ),
+			'its index is written naming no server, so the read finds it rather than falling back'
 		);
 	}
 
@@ -4931,7 +4689,7 @@ class FlameBuilderTest extends TestCase {
 		Core::$now = \gmmktime( 15, 7, 0, 8, 27, 2026 );
 		self::roll_up( $fb, (int) Core::$now );
 
-		$this->assertSame( [], $store->url_hour_sources( [ '2026-08-27-15' ], 'a' ) );
+		$this->assertSame( [], $store->server_index( [ '2026-08-27-15' ], true ) );
 	}
 
 	/**
@@ -4948,36 +4706,23 @@ class FlameBuilderTest extends TestCase {
 		$fb->set_stats_store( $store );
 
 		$now = \time();
-		// TWO hosts, so the split does not collapse to a host name: this test
-		// reads the shape INSIDE it, and a collapse would leave a null to check.
-		foreach ( [ 'edge-a.example', 'edge-b.example' ] as $server ) {
-			$this->fill_request( $fb, $this->completed_request( [
-				'url'         => '/wombat-4471',
-				'duration_ms' => 447.0,
-				'timestamp'   => $now,
-				'server_name' => $server,
-			] ) );
-		}
+		$this->fill_request( $fb, $this->completed_request( [
+			'url'         => 'https://edge-a.example/wombat-4471',
+			'duration_ms' => 447.0,
+			'timestamp'   => $now,
+			'server_name' => 'edge-a.example',
+		] ) );
 		$fb->flush();
 
-		$hash = Log_Manager::url_hash( '/wombat-4471' );
+		$hash = Log_Manager::url_hash( 'https://edge-a.example/wombat-4471' );
 		// RAW, not through the naming read helper: the shape is the assertion.
-		$row  = $this->get_url_shard( $store, Stats_Store::bucket_key( $now ), Stats_Store::url_shard( $hash ) )[ $hash ];
+		$row  = $this->get_url_shard( $store, Stats_Store::bucket_key( $now ), Stats_Store::url_shard( $hash ), 'edge-a.example' )[ $hash ];
 		$this->assertSame(
 			[],
 			\array_values( \array_filter( \array_keys( $row ), '\is_string' ) ),
 			'no field NAMES in a stored row — that is the whole point'
 		);
-		// And the split it carries takes the same treatment. Read through
-		// ROW_SRV: `URL_SRV_FIELD` is a NAME, which the assertion above proves
-		// a stored row cannot carry, so it would check an empty array.
-		$split = \array_values( Core::arr( $row[ Stats_Store::ROW_SRV ] ?? null ) )[0] ?? [];
-		$this->assertNotSame( [], $split, 'the row HAS a split to check' );
-		$this->assertSame(
-			[],
-			\array_values( \array_filter( \array_keys( Core::arr( $split ) ), '\is_string' ) ),
-			'nor inside the per-server split, which is eight more names per row'
-		);
+		$this->assertSame( '/wombat-4471', $row[ Stats_Store::ROW_PATH ], 'the path is the row\'s one string' );
 	}
 
 	public function test_url_index_caps_at_500_keeps_top_by_count(): void {
@@ -5988,8 +5733,8 @@ class FlameBuilderTest extends TestCase {
 		[ , $p ] = $this->mirrored_builder( $store, 'flames-stats', CountingIndexPartition::class );
 
 		$keys = [
-			Stats_Store::NS_URLS_HOUR . ':7:' . self::live_hour(),
-			Stats_Store::NS_URLNAMES_HOUR . ':7:' . self::live_hour(),
+			Stats_Store::NS_URLS_HOUR . ':0a1b2c3d:7:' . self::live_hour(),
+			Stats_Store::NS_URLSRV_HOUR . ':' . self::live_hour(),
 			Stats_Store::NS_LB_HOUR . ':' . self::live_hour(),
 		];
 		// Seeded ANYWAY: a reader that looked WOULD find these, so what fails
@@ -6594,14 +6339,14 @@ class FlameBuilderTest extends TestCase {
 
 		// Evict just that row's shard, the way memcache does under pressure.
 		$shard = Stats_Store::url_shard( 'ab12cd34ef56' );
-		$key   = self::cache_key( 0, "urls:{$shard}:{$bucket}" );
+		$key   = self::cache_key( 0, 'urls:' . Stats_Store::server_key( self::SEED_SERVER ) . ":{$shard}:{$bucket}" );
 		Core::$memd->delete( $key );
 		$this->assertFalse( Core::$memd->get( $key ), 'the shard holding it is evicted' );
 		$this->assertNotSame( [], $this->get_hourly_bucket( $store, $bucket ), 'memcache still warm by the old sentinel' );
 
-		// The row alone: the name lives on its own key in the name table.
+		// The row and its path: the whole URL lives on its own key in the name table.
 		$this->assertSame(
-			[ $bucket => [ 'ab12cd34ef56' => [ 'count' => 639 ] ] ],
+			[ $bucket => [ 'ab12cd34ef56' => [ 'count' => 639, 'path' => 'https://example.test/jobs/import' ] ] ],
 			$this->url_rows_by_bucket( $store, [ $bucket ] )
 		);
 	}
@@ -6638,7 +6383,7 @@ class FlameBuilderTest extends TestCase {
 		[ $fb, $p ] = $this->mirrored_builder( $store, 'flames-stats' );
 
 		$bucket = self::live_bucket();
-		$key    = self::cache_key( 0, 'urls:' . Stats_Store::url_shard( 'h' ) . ':' . $bucket );
+		$key    = self::cache_key( 0, 'urls:' . Stats_Store::server_key( self::SEED_SERVER ) . ':' . Stats_Store::url_shard( 'h' ) . ':' . $bucket );
 
 		$this->set_url_bucket( $store, $bucket, [ 'h' => [ 'url' => '/a', 'count' => 11 ] ] );
 		$fb->save_state();
@@ -6675,7 +6420,7 @@ class FlameBuilderTest extends TestCase {
 		$p->flush();
 		foreach ( $buckets as $bucket ) {
 			foreach ( Stats_Store::url_shards() as $shard ) {
-				Core::$memd->delete( self::cache_key( 0, "urls:{$shard}:{$bucket}" ) );
+				Core::$memd->delete( self::cache_key( 0, 'urls:' . Stats_Store::server_key( self::SEED_SERVER ) . ":{$shard}:{$bucket}" ) );
 			}
 		}
 		$p->index_scans = 0;
@@ -6684,7 +6429,8 @@ class FlameBuilderTest extends TestCase {
 
 		$this->assertCount( 3, $out, 'every evicted bucket recovered' );
 		$this->assertSame( 641, $out[ "{$hour}-05" ]['hash0']['count'] );
-		$this->assertSame( 1, $p->index_scans, 'one index pass for all three misses, not one per bucket' );
+		// The seed's own index reads may have built the locator table already.
+		$this->assertLessThanOrEqual( 1, $p->index_scans, 'one index pass for all three misses, not one per bucket' );
 	}
 
 	/**
@@ -7219,6 +6965,35 @@ class FlameBuilderTest extends TestCase {
 		);
 	}
 
+	public function test_a_checkpoint_in_the_old_row_shape_files_no_phantom_server(): void {
+		// The old accumulator keyed rows by hash, each carrying its split at
+		// index 13. Read as server => rows, the hash would become a server and
+		// the split a row keyed `13`. No migration: the old delta is dropped.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+		$now    = \time();
+		$bucket = Stats_Store::bucket_key( $now );
+		$hash   = 'b3b3b3b3b3b3';
+		$fb->restore_state( [
+			'pending' => [
+				$bucket => [
+					'url_stats' => [
+						$hash => [ 4, 4, 88.0, 0, 4, 0, 0, 0, 22.0, 22.0, 0, $now, false, [ 'kea.test' => [ 4, 4, 88.0 ] ] ],
+					],
+				],
+			],
+		] );
+		Core::$now = $now;
+		$fb->flush();
+
+		$this->assertArrayNotHasKey( $bucket, $store->server_index( [ $bucket ], false ), 'no server is admitted for the hash' );
+		foreach ( \array_merge( Stats_Store::url_shards(), Stats_Store::url_shards( true ) ) as $shard ) {
+			$this->assertSame( [], $this->get_url_shard( $store, $bucket, $shard, $hash ), "no phantom row in {$shard}" );
+		}
+	}
+
 	public function test_a_restored_row_missing_a_field_does_not_fault_the_accumulator(): void {
 		// `restore_state()` merges the BUCKET over `empty_bucket()` and stops,
 		// so the per-URL rows inside arrive exactly as the checkpoint held
@@ -7235,9 +7010,11 @@ class FlameBuilderTest extends TestCase {
 				$bucket => [
 					// A checkpoint holds the STORED shape, which is positional.
 					'url_stats' => [
-						$hash => self::positional_url_row(
-							[ 'count' => 6, 'timed_count' => 6, 'sum_ms' => 300.0 ]
-						),
+						self::SEED_SERVER => [
+							$hash => self::positional_url_row(
+								[ 'count' => 6, 'timed_count' => 6, 'sum_ms' => 300.0, 'path' => $url ]
+							),
+						],
 					],
 				],
 			],
@@ -7249,7 +7026,7 @@ class FlameBuilderTest extends TestCase {
 			'timestamp'   => $now,
 		] ) );
 
-		$rows = self::named_url_rows( $fb->save_state()['pending'][ $bucket ]['url_stats'] ?? [] );
+		$rows = self::named_url_rows( $fb->save_state()['pending'][ $bucket ]['url_stats'][ self::SEED_SERVER ] ?? [] );
 		$this->assertSame( 7, $rows[ $hash ]['count'] ?? 0 );
 	}
 	// --- Frame size: one key, rounded milliseconds, positional categories ---

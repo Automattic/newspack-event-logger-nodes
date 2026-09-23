@@ -78,8 +78,6 @@ export const views = {
 		 *
 		 * A malformed envelope publishes an empty table rather than throwing,
 		 * and no totals rather than zeroes: a zero here reads as a measurement.
-		 * Absent totals are a routine answer too — the verb sends `null` for a
-		 * server scope whose stored rows carry no per-server split.
 		 */
 		UrlsView: {
 			description: 'Owns the URL leaderboard slice for its React widget.',

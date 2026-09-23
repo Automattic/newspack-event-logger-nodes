@@ -21,6 +21,13 @@ abstract class TestCase extends RuntimeTestCase {
 	protected const TEST_DIR = '/tmp/newspack-event-logger-nodes-test-logging';
 
 	/**
+	 * The server the URL seed helpers file rows under when a test names none:
+	 * the `server_name` a completed request carries by default, so a row a
+	 * test seeds and a row the flush writes land under one key.
+	 */
+	protected const SEED_SERVER = 'example.com';
+
+	/**
 	 * Path to a pre-written config file in `tests/configs/`.
 	 *
 	 * @param string $name Basename without the extension.
@@ -226,10 +233,6 @@ abstract class TestCase extends RuntimeTestCase {
 	 * row reads `['count']` rather than counting indexes. The SHAPE is pinned
 	 * separately, by the one test that reads a shard raw.
 	 *
-	 * A collapsed split value stays null: it means "this host served every
-	 * request the row counted", and naming it would invent eight fields the
-	 * store deliberately did not write.
-	 *
 	 * @param array<array-key,mixed> $row Stored positional row.
 	 * @return array<string,mixed>
 	 */
@@ -237,13 +240,7 @@ abstract class TestCase extends RuntimeTestCase {
 		$names = \Newspack_Event_Logger_Nodes\Stats_Store::ROW_FIELD_NAMES;
 		$out   = [];
 		foreach ( $row as $index => $value ) {
-			$name = \is_int( $index ) ? ( $names[ $index ] ?? $index ) : $index;
-			$out[ $name ] = \Newspack_Event_Logger_Nodes\Stats_Store::URL_SRV_FIELD === $name
-				? \array_map(
-					static fn ( $sums ) => null === $sums ? null : self::named_url_row( \Newspack_Nodes\Core::arr( $sums ) ),
-					\Newspack_Nodes\Core::arr( $value )
-				)
-				: $value;
+			$out[ \is_int( $index ) ? ( $names[ $index ] ?? $index ) : $index ] = $value;
 		}
 		return $out;
 	}
@@ -262,45 +259,29 @@ abstract class TestCase extends RuntimeTestCase {
 	}
 
 	/**
-	 * Seed one shard of a bucket from NAMED rows.
+	 * Seed one shard of a bucket from NAMED rows, under one server.
 	 *
 	 * @param \Newspack_Event_Logger_Nodes\Stats_Store $store  Destination.
 	 * @param string                                   $bucket Bucket key.
 	 * @param string                                   $shard  Shard name.
 	 * @param array<array-key,mixed>                   $rows   Named rows by hash.
+	 * @param string                                   $server The rows' server.
 	 */
-	protected function seed_url_shard( \Newspack_Event_Logger_Nodes\Stats_Store $store, string $bucket, string $shard, array $rows ): bool {
-		$paths = self::url_paths_of( $rows );
-		$ok    = $this->set_url_shard( $store, $bucket, $shard, self::store_url_names( $store, $rows ) );
-		return $this->set_url_name_shard( $store, $bucket, $shard, $paths ) && $ok;
+	protected function seed_url_shard( \Newspack_Event_Logger_Nodes\Stats_Store $store, string $bucket, string $shard, array $rows, string $server = self::SEED_SERVER ): bool {
+		return $this->set_url_shard( $store, $bucket, $shard, self::store_url_names( $store, $rows, $server ), $server );
 	}
 
 	/**
-	 * The PATH of each named row, as the flush files them into the name blob.
-	 *
-	 * @param array<array-key,mixed> $rows Named rows by hash.
-	 * @return array<string,string> hash => path.
-	 */
-	private static function url_paths_of( array $rows ): array {
-		$urls = [];
-		foreach ( $rows as $hash => $row ) {
-			$urls[ $hash ] = \Newspack_Nodes\Core::str( \Newspack_Nodes\Core::arr( $row )['url'] ?? '' );
-		}
-		return \Newspack_Event_Logger_Nodes\Stats_Store::paths_of( $urls );
-	}
-
-	/**
-	 * Seed one shard's FINE name blob — the half a search reads.
+	 * Seed one shard of a coarse hour from NAMED rows, under one server.
 	 *
 	 * @param \Newspack_Event_Logger_Nodes\Stats_Store $store  Destination.
-	 * @param string                                   $bucket Bucket key.
+	 * @param string                                   $hour   Hour key.
 	 * @param string                                   $shard  Shard name.
-	 * @param array<string,string>                     $paths  hash => path.
+	 * @param array<array-key,mixed>                   $rows   Named rows by hash.
+	 * @param string                                   $server The rows' server.
 	 */
-	protected function set_url_name_shard( \Newspack_Event_Logger_Nodes\Stats_Store $store, string $bucket, string $shard, array $paths ): bool {
-		return $store->bucket_set_multi( [
-			[ \Newspack_Event_Logger_Nodes\Stats_Store::url_name_parts( $shard ), $bucket, $paths ],
-		] )[0];
+	protected function seed_url_hour( \Newspack_Event_Logger_Nodes\Stats_Store $store, string $hour, string $shard, array $rows, string $server = self::SEED_SERVER ): bool {
+		return $this->set_url_hour( $store, $hour, $shard, self::store_url_names( $store, $rows, $server ), $server );
 	}
 
 	/**
@@ -332,39 +313,28 @@ abstract class TestCase extends RuntimeTestCase {
 	}
 
 	/**
-	 * Seed one shard of a coarse hour from NAMED rows.
+	 * Route each named row's `url` to the name table and its path onto the
+	 * row, as the flush does, and store the rest.
 	 *
-	 * @param \Newspack_Event_Logger_Nodes\Stats_Store $store Destination.
-	 * @param string                                   $hour  Hour key.
-	 * @param string                                   $shard Shard name.
-	 * @param array<array-key,mixed>                   $rows  Named rows by hash.
-	 */
-	protected function seed_url_hour( \Newspack_Event_Logger_Nodes\Stats_Store $store, string $hour, string $shard, array $rows ): bool {
-		$paths = self::url_paths_of( $rows );
-		$ok    = $this->set_url_hour( $store, $hour, $shard, self::store_url_names( $store, $rows ) );
-		return $store->bucket_set_multi( [
-			[ \Newspack_Event_Logger_Nodes\Stats_Store::url_name_hour_parts( $shard ), $hour, $paths ],
-		] )[0] && $ok;
-	}
-
-	/**
-	 * Route each named row's `url` to the name table and store the rest.
+	 * A test still says what it means — `'url' => …` beside the counts — and
+	 * this puts each half where production does: the whole URL once in
+	 * `Stats_Store::NS_URLMAP`, the path the server's key does not imply on
+	 * the row.
 	 *
-	 * A stored row carries the hash alone; the name lives once in
-	 * `Stats_Store::NS_URLMAP`. A test still says what it means — `'url' => …`
-	 * beside the counts — and this puts each half where production does.
-	 *
-	 * @param \Newspack_Event_Logger_Nodes\Stats_Store $store Destination.
-	 * @param array<array-key,mixed>                   $rows  Named rows by hash.
+	 * @param \Newspack_Event_Logger_Nodes\Stats_Store $store  Destination.
+	 * @param array<array-key,mixed>                   $rows   Named rows by hash.
+	 * @param string                                   $server The rows' server.
 	 * @return array<array-key,array<int,mixed>>
 	 */
-	private static function store_url_names( \Newspack_Event_Logger_Nodes\Stats_Store $store, array $rows ): array {
+	private static function store_url_names( \Newspack_Event_Logger_Nodes\Stats_Store $store, array $rows, string $server ): array {
 		$names = [];
 		$out   = [];
 		foreach ( $rows as $hash => $row ) {
 			$row = \Newspack_Nodes\Core::arr( $row );
 			if ( isset( $row['url'] ) ) {
-				$names[ (string) $hash ] = \Newspack_Nodes\Core::str( $row['url'] );
+				$url                     = \Newspack_Nodes\Core::str( $row['url'] );
+				$names[ (string) $hash ] = $url;
+				$row['path']           ??= \Newspack_Event_Logger_Nodes\Stats_Store::row_path( $url, $server );
 				unset( $row['url'] );
 			}
 			$out[ $hash ] = self::positional_url_row( $row );
@@ -374,15 +344,23 @@ abstract class TestCase extends RuntimeTestCase {
 	}
 
 	/**
+	 * Merge `$server` into one bucket's or hour's server index, as the flush
+	 * files it, so an unscoped read finds the rows seeded under it.
+	 */
+	private static function index_server( \Newspack_Event_Logger_Nodes\Stats_Store $store, string $key, string $server, bool $hour ): bool {
+		$parts = \Newspack_Event_Logger_Nodes\Stats_Store::url_srv_parts( $hour );
+		$index = $store->bucket_get_multi( [ [ $parts, $key ] ] )[0] ?? [];
+		$index[ \Newspack_Event_Logger_Nodes\Stats_Store::server_key( $server ) ] = $server;
+		return $store->bucket_set_multi( [ [ $parts, $key, $index ] ] )[0];
+	}
+
+	/**
 	 * A stored URL row from a NAMED one, so a test can say what it means.
 	 *
 	 * Storage is positional (`Stats_Store::ROW_*`) because `serialize()` writes
 	 * every key name into every row; a test seeding one should not have to
 	 * count indexes to stay readable. Reverses `ROW_FIELD_NAMES`, so it cannot
 	 * drift from the shape it seeds. A row already positional passes through.
-	 *
-	 * A split VALUE of null is the collapse — the host served every request the
-	 * row counted — and passes through as null rather than recursing.
 	 *
 	 * @param array<array-key,mixed> $row Named row, or an already-stored one.
 	 * @return array<int,mixed>
@@ -404,32 +382,32 @@ abstract class TestCase extends RuntimeTestCase {
 			if ( ! isset( $index[ $field ] ) ) {
 				throw new \RuntimeException( "no such URL row field: {$field}" );
 			}
-			$out[ $index[ $field ] ] = \Newspack_Event_Logger_Nodes\Stats_Store::URL_SRV_FIELD === $field
-				? \array_map(
-					static fn ( $sums ) => null === $sums ? null : self::positional_url_row( \Newspack_Nodes\Core::arr( $sums ) ),
-					\Newspack_Nodes\Core::arr( $value )
-				)
-				: $value;
+			$out[ $index[ $field ] ] = $value;
 		}
 		return $out;
 	}
 
 	/**
-	 * Seed a whole URL bucket, routing each row to the shard its hash names.
+	 * Seed a whole URL bucket for one server, routing each row to the shard
+	 * its hash names.
 	 *
 	 * A test convenience: production writes one shard at a time, which is the
-	 * point of sharding. Writes EVERY shard, because "replace the bucket" has
-	 * to clear the ones this data does not reach.
+	 * point of sharding. Writes EVERY shard of the server, because "replace
+	 * the bucket" has to clear the ones this data does not reach.
 	 *
 	 * @param \Newspack_Event_Logger_Nodes\Stats_Store $store  Destination.
 	 * @param string                                   $bucket Bucket key.
 	 * @param array<array-key,mixed>                   $data   Whole bucket.
+	 * @param string                                   $server The rows' server.
 	 * @return bool True when every shard's set landed.
 	 */
-	protected function set_url_bucket( \Newspack_Event_Logger_Nodes\Stats_Store $store, string $bucket, array $data ): bool {
-		$paths = self::url_paths_of( $data );
-		$ok    = $this->set_url_tokens( $store, $paths );
-		$data  = self::store_url_names( $store, $data );
+	protected function set_url_bucket( \Newspack_Event_Logger_Nodes\Stats_Store $store, string $bucket, array $data, string $server = self::SEED_SERVER ): bool {
+		$urls = [];
+		foreach ( $data as $hash => $row ) {
+			$urls[ $hash ] = \Newspack_Nodes\Core::str( \Newspack_Nodes\Core::arr( $row )['url'] ?? '' );
+		}
+		$ok   = $this->set_url_tokens( $store, \Newspack_Event_Logger_Nodes\Stats_Store::paths_of( $urls ) );
+		$data = self::store_url_names( $store, $data, $server );
 		// Worker rows go to the worker shard family, as the writer files them.
 		$split = [ false => [], true => [] ];
 		foreach ( $data as $hash => $row ) {
@@ -439,15 +417,7 @@ abstract class TestCase extends RuntimeTestCase {
 		foreach ( [ false, true ] as $worker ) {
 			$by_shard = \Newspack_Event_Logger_Nodes\Stats_Store::rows_by_shard( $split[ $worker ], $worker );
 			foreach ( \Newspack_Event_Logger_Nodes\Stats_Store::url_shards( $worker ) as $shard ) {
-				$shard_rows = \Newspack_Nodes\Core::arr( $by_shard[ $shard ] ?? null );
-				$ok = $this->set_url_shard( $store, $bucket, $shard, $shard_rows ) && $ok;
-				// The names of THIS shard's rows, where the flush files them.
-				$ok = $this->set_url_name_shard(
-					$store,
-					$bucket,
-					$shard,
-					\array_intersect_key( $paths, $shard_rows )
-				) && $ok;
+				$ok = $this->set_url_shard( $store, $bucket, $shard, \Newspack_Nodes\Core::arr( $by_shard[ $shard ] ?? null ), $server ) && $ok;
 			}
 		}
 		return $ok;
@@ -467,13 +437,14 @@ abstract class TestCase extends RuntimeTestCase {
 	protected function set_url_rank_lists( \Newspack_Event_Logger_Nodes\Stats_Store $store, string $key, array $rows, bool $hour = false, string $server = '' ): bool {
 		$positional = [];
 		foreach ( $rows as $hash => $row ) {
-			$row = \Newspack_Nodes\Core::arr( $row );
+			$row          = \Newspack_Nodes\Core::arr( $row );
+			$row['path']  = \Newspack_Event_Logger_Nodes\Stats_Store::paths_of( [ $hash => \Newspack_Nodes\Core::str( $row['url'] ?? '' ) ] )[ (string) $hash ] ?? '';
 			unset( $row['url'] );
 			$positional[ $hash ] = self::positional_url_row( $row );
 		}
 		// The writer's own lists, kept for the ONE scope a test asks about.
 		$ranked = [];
-		foreach ( \Newspack_Event_Logger_Nodes\Stats_Store::ranked_writes( $positional, self::url_paths_of( $rows ), $hour, $key ) as [ $parts, , $entries ] ) {
+		foreach ( \Newspack_Event_Logger_Nodes\Stats_Store::ranked_writes( [ '' === $server ? self::SEED_SERVER : $server => $positional ], $hour, $key ) as [ $parts, , $entries ] ) {
 			$ranked[ \implode( ':', $parts ) ] = $entries;
 		}
 		// A server no row serves gets empty lists: a hole a reader must refuse.
@@ -506,8 +477,9 @@ abstract class TestCase extends RuntimeTestCase {
 	 *
 	 * @param array<array-key,mixed> $rows The hour's merged rows.
 	 */
-	protected function set_url_hour( Stats_Store $store, string $hour, string $shard, array $rows ): bool {
-		return $store->bucket_set_multi( [ [ Stats_Store::url_hour_parts( $shard ), $hour, $rows ] ] )[0];
+	protected function set_url_hour( Stats_Store $store, string $hour, string $shard, array $rows, string $server = self::SEED_SERVER ): bool {
+		$ok = $store->bucket_set_multi( [ [ Stats_Store::url_hour_parts( Stats_Store::server_key( $server ), $shard ), $hour, $rows ] ] )[0];
+		return self::index_server( $store, $hour, $server, true ) && $ok;
 	}
 
 	/**
@@ -530,8 +502,8 @@ abstract class TestCase extends RuntimeTestCase {
 	}
 
 	/** @return array<string,mixed> */
-	protected function get_url_hour( Stats_Store $store, string $hour, string $shard ): array {
-		return $store->bucket_get_multi( [ [ Stats_Store::url_hour_parts( $shard ), $hour ] ] )[0] ?? [];
+	protected function get_url_hour( Stats_Store $store, string $hour, string $shard, string $server = self::SEED_SERVER ): array {
+		return $store->bucket_get_multi( [ [ Stats_Store::url_hour_parts( Stats_Store::server_key( $server ), $shard ), $hour ] ] )[0] ?? [];
 	}
 
 	/** @return array<string,mixed> */
@@ -619,12 +591,18 @@ abstract class TestCase extends RuntimeTestCase {
 	}
 
 	/** @return array<string,mixed> */
-	protected function get_url_shard( Stats_Store $store, string $bucket, string $shard ): array {
-		return $store->bucket_get_multi( [ [ Stats_Store::url_shard_parts( $shard ), $bucket ] ] )[0] ?? [];
+	protected function get_url_shard( Stats_Store $store, string $bucket, string $shard, string $server = self::SEED_SERVER ): array {
+		return $store->bucket_get_multi( [ [ Stats_Store::url_shard_parts( Stats_Store::server_key( $server ), $shard ), $bucket ] ] )[0] ?? [];
 	}
 
-	/** @param array<array-key,mixed> $rows */
-	protected function set_url_shard( Stats_Store $store, string $bucket, string $shard, array $rows ): bool {
-		return $store->bucket_set_multi( [ [ Stats_Store::url_shard_parts( $shard ), $bucket, $rows ] ] )[0];
+	/**
+	 * Overwrite one server's shard of a bucket, and name the server in the
+	 * bucket's index as the flush does.
+	 *
+	 * @param array<array-key,mixed> $rows
+	 */
+	protected function set_url_shard( Stats_Store $store, string $bucket, string $shard, array $rows, string $server = self::SEED_SERVER ): bool {
+		$ok = $store->bucket_set_multi( [ [ Stats_Store::url_shard_parts( Stats_Store::server_key( $server ), $shard ), $bucket, $rows ] ] )[0];
+		return self::index_server( $store, $bucket, $server, false ) && $ok;
 	}
 }
