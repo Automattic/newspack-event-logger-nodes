@@ -34,7 +34,7 @@
  *  - Disk scans are bounded twice. The per-URL walk stops at `scan_floor()`,
  *    in a segment that closed before it, because its index carries time.
  *    Every walk, a missing-rid lookup included, also stops after
- *    MAX_INDEX_SCAN_S of walking, one budget per verb. The durable stats
+ *    MAX_SCAN_S of walking, one budget per verb. The durable stats
  *    mirror is the third: `Partition_Node::locate_by()` cannot stop early
  *    on a key that is absent, so `dispatch()` gives each answer one
  *    `stats_mirror_read_budget_ms` to spend across every such walk, and
@@ -88,32 +88,36 @@ use Newspack_Nodes\Service_CI_Node;
 class Performance_CI_Node extends Service_CI_Node {
 
 	/**
-	 * Seconds one disk-walking verb may spend reading .idx lines — the BACKSTOP
-	 * for a walk that has no better bound, not the bound the common case reaches.
+	 * Seconds one disk-walking verb may spend reading — .idx lines, or the
+	 * firehose lines `grep_requests` groups — the BACKSTOP for a walk that has
+	 * no better bound, not the bound the common case reaches.
 	 *
 	 * The per-URL walk stops at `scan_floor()`, so its real cost is a retention
 	 * window of index, whatever the index holds behind that. What is left under
 	 * this cap is a walk with nothing to stop it: a rid lookup, which searches
-	 * for one line and cannot know how far back it sits, and the flame index,
-	 * whose lines carry no time to compare (`Flame_Builder_Node::index_completion_columns()`).
+	 * for one line and cannot know how far back it sits; the flame index,
+	 * whose lines carry no time to compare (`Flame_Builder_Node::index_completion_columns()`);
+	 * and `grep_requests`, whose `recent` window can hold more than a reply
+	 * has time to group.
 	 *
 	 * Time, not a line count, because partitions are walked one after another:
 	 * a count sized to one host's traffic ends a busier hub's walk inside its
 	 * first partitions, and every request hashed to the rest is unreachable
-	 * from its URL. A miss is one `substr` + `trim`, with the clock read once
-	 * per SCAN_CLOCK_STRIDE lines, so a window of millions of lines costs well
-	 * under a second, and the cap binds only a walk that has genuinely run
-	 * long. A verb that walks twice, as a rid lookup does over requests and
+	 * from its URL. An index miss is one `substr` + `trim`, with the clock read
+	 * once per SCAN_CLOCK_STRIDE lines, so a window of millions of index lines
+	 * costs well under a second, and the cap binds only a walk that has
+	 * genuinely run long; a grep line is dearer, grouped whole. A verb that walks twice, as a rid lookup does over requests and
 	 * then flames, spends ONE budget across both. Peak memory stays ONE
 	 * segment's index. A walk that spends it says so; see
 	 * `scan_index_entries()`.
 	 */
-	public const MAX_INDEX_SCAN_S = 10;
+	public const MAX_SCAN_S = 10;
 
 	/**
-	 * Index lines read between two looks at the clock. A clock read costs as
-	 * much as a miss, and one per hundred lines keeps it off the walk's cost,
-	 * far below anything a 10-second budget can notice.
+	 * Lines a walk reads between two looks at the clock — index lines, or the
+	 * firehose lines `grep_requests` reads. A clock read costs as much as an
+	 * index miss, and one per hundred lines keeps it off the walk's cost, far
+	 * below anything a 10-second budget can notice.
 	 */
 	private const SCAN_CLOCK_STRIDE = 100;
 
@@ -151,13 +155,6 @@ class Performance_CI_Node extends Service_CI_Node {
 	/** `grep_requests` default / max matched-request results (bounds the reply). */
 	private const GREP_RESULT_LIMIT_DEFAULT = 20;
 	private const GREP_RESULT_LIMIT_MAX     = 50;
-
-	/**
-	 * `grep_requests` hard scan budget: stop feeding the grouping engine after this
-	 * many firehose lines so a fat firehose can't wedge a request-scope verb even
-	 * inside the (already bounded) `recent` seek window.
-	 */
-	private const GREP_MAX_SCAN_LINES = 200000;
 
 	/** `grep_requests` in-flight LRU_Cache geometry (100 × 3 = 300 concurrent rids). */
 	private const GREP_INFLIGHT_BUCKET_SIZE = 100;
@@ -485,18 +482,22 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * matches. Each firehose partition is drained by an EPHEMERAL request-scope
 	 * Consumer (no offsetlog/deadletter, seeded at `recent`) removed in a finally, so
 	 * the workers' durable cursor dirs are never touched. Bounded three ways: a
-	 * per-request byte/line cap (in the engine), a global scan-line budget, and a
-	 * result cap — every limit is reported honestly in `truncated`.
+	 * per-request byte/line cap (in the engine), MAX_SCAN_S of reading — which
+	 * stops the drain itself, so the partitions after it go unread — and a
+	 * result cap. Every limit is reported honestly in `truncated`.
 	 *
 	 * @param string $pattern Raw user pattern; matched case-insensitively.
 	 * @param int    $limit   Maximum matching requests to return.
 	 * @return array{pattern:string, scope:string, scanned_partitions:int, results:array<int,array<string,mixed>>, truncated:bool, result_count:int}
 	 */
 	private static function run_grep_requests( string $pattern, int $limit ): array {
-		$results       = [];
-		$truncated     = false;
-		$scanned_lines = 0;
-		$regex         = Reqgrep_Core::compile( $pattern );
+		$results   = [];
+		$truncated = false;
+		$regex     = Reqgrep_Core::compile( $pattern );
+		$clock     = self::scan_clock();
+		$deadline  = self::scan_deadline();
+		$lines     = 0;
+		$spent     = false;
 
 		/** @param list<string> $lines */
 		$on_complete = static function ( array $lines, string $rid, bool $clipped = false ) use ( &$results, &$truncated, $limit, $regex ): void {
@@ -519,23 +520,26 @@ class Performance_CI_Node extends Service_CI_Node {
 		);
 
 		/** @param array<int,mixed> $message */
-		$on_message = static function ( array $message ) use ( $core, &$scanned_lines, &$truncated ): void {
+		$on_message = static function ( array $message ) use ( $core, $clock, $deadline, &$lines, &$spent, &$truncated ): void {
 			$entry = $message[ Message::VALUE ];
 			$rid   = Core::as_string( $message[ Message::KEY ] ?? '' );
-			if ( ! \is_array( $entry ) || '' === $rid ) {
+			if ( $spent || ! \is_array( $entry ) || '' === $rid ) {
 				return;
 			}
-			if ( $scanned_lines >= self::GREP_MAX_SCAN_LINES ) {
+			if ( 0 === ++$lines % self::SCAN_CLOCK_STRIDE && $clock() > $deadline ) {
+				$spent     = true;
 				$truncated = true;
 				return;
 			}
-			++$scanned_lines;
 			// array_values keeps the positional list for the packer.
 			$core->push( $entry, $rid, Message::packed( \array_values( $message ) ) );
 		};
 
 		$scanned_partitions = 0;
 		foreach ( Log_Manager::firehose_dirs() as $p => $source_dir ) {
+			if ( $spent ) {
+				break;
+			}
 			if ( ! \is_dir( $source_dir ) ) {
 				continue;
 			}
@@ -546,7 +550,12 @@ class Performance_CI_Node extends Service_CI_Node {
 				// source_dir only: no offsetlog/deadletter (ephemeral).
 				$consumer->arguments( [ $source_dir ] );
 				$consumer->next_offset( 'recent' );
-				$consumer->drain();
+				// By reference: an arrow fn would freeze $spent at false.
+				$consumer->drain(
+					static function () use ( &$spent ): bool {
+						return $spent;
+					}
+				);
 			} finally {
 				$consumer->remove_node();
 			}
@@ -1388,7 +1397,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * RECENT_REQUEST_LIMIT index entries for the given url_hash, deduplicated by
 	 * rid and sorted by timestamp DESC. Each partition's walk ends at
 	 * `scan_floor()`; the whole fan-out ends on that cap or on the shared
-	 * MAX_INDEX_SCAN_S budget.
+	 * MAX_SCAN_S budget.
 	 *
 	 * Both endings are the caller's to pass on. A URL whose entries sit behind
 	 * ten seconds of its neighbours' is never reached, and a list that
@@ -1900,7 +1909,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * Fan a bounded index scan across a set of partition dirs, newest entry
 	 * first, handing every entry whose `$field` equals `$match` to `$on_hit`.
 	 *
-	 * The one boundary MAX_INDEX_SCAN_S lives at: the budget spans the whole
+	 * The one boundary MAX_SCAN_S lives at: the budget spans the whole
 	 * fan-out, and the scan ends everywhere the moment it is spent or `$on_hit`
 	 * returns false. Each scratch Partition is built, named, formatted and
 	 * removed here, so a caller carries nothing but its predicate.
@@ -2006,10 +2015,10 @@ class Performance_CI_Node extends Service_CI_Node {
 
 	/**
 	 * The moment a walk starting now must stop by. A verb that walks twice
-	 * takes one and hands it to both, so it spends MAX_INDEX_SCAN_S once.
+	 * takes one and hands it to both, so it spends MAX_SCAN_S once.
 	 */
 	private static function scan_deadline(): float {
-		return ( self::scan_clock() )() + self::MAX_INDEX_SCAN_S;
+		return ( self::scan_clock() )() + self::MAX_SCAN_S;
 	}
 
 	/**

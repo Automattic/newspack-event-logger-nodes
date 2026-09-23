@@ -64,7 +64,7 @@ class MCP_Controller {
 	 *
 	 * MCP does not go through `/command`, so the substrate's per-user cap does
 	 * not bound it — and the tools behind it are not cheap: `grep_requests` and
-	 * the rid lookups walk every partition's index for up to MAX_INDEX_SCAN_S,
+	 * the rid lookups walk every partition's index for up to MAX_SCAN_S,
 	 * `dump_url` walks one retention window of it, and `overview` and `ask`
 	 * rebuild the leaderboard out of memcache. A looping agent, or a leaked
 	 * bearer, would otherwise hold an unmetered amplification path. Generous
