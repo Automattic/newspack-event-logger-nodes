@@ -10,6 +10,10 @@ Three chapters, in reading order.
 - [Hub control](hub-control.md): read when you run a hub, or need to know what a hub pushes at a spoke and what it does with a spoke's jobs.
 - [Dashboards](dashboards.md): read when you want to know what each of the five dashboards reads, or which bundle a page is.
 
+## Use it
+
+- [The Performance dashboard, for TAMs](tam-guide.md): read when a publisher reports a slow site, to get from the report to a named URL and a named cause.
+
 ## Reference
 
 - [architecture-guide.md](architecture-guide.md): the write path, the per-URL ruleset, every topology, the application nodes, the memcache schema, hub and spoke, configuration, hooks, REST and CLI.
