@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Tooling: the vendored `reorder-node-methods.php` no longer ends an arrow
+  function at the comma between a closure's parameters, which credited the
+  closure body's calls to the enclosing method. Four classes move to the
+  corrected newspaper order, a pure reorder: `Performance_CI_Node`,
+  `Flame_Builder_Node`, `Request_Builder_Node` and `Reqgrep_Command`.
+
 ## [0.102.1] - 2026-09-23
 
 ### Changed

@@ -848,14 +848,6 @@ class Performance_CI_Node extends Service_CI_Node {
 	}
 
 	/**
-	 * Whether the ranked lists can answer a page: nothing filtered, and a page
-	 * that ends inside the fine tier's list depth.
-	 */
-	private static function ranked_serves( string $search, bool $errors, bool $workers, int $end ): bool {
-		return '' === $search && ! $errors && ! $workers && $end <= Stats_Store::URL_RANK_N;
-	}
-
-	/**
 	 * A page from the ranked lists: the two tiers' lists for this scope and
 	 * sort across the read plan, folded by hash and cut here. The site's
 	 * lists are every server's, merged per key by the store.
@@ -2561,6 +2553,14 @@ class Performance_CI_Node extends Service_CI_Node {
 			+ Core::num_int( $row['count_4xx'] ?? 0 )
 			+ Core::num_int( $row['count_5xx'] ?? 0 );
 		return $classified < Core::num_int( $row['count'] ?? 0 );
+	}
+
+	/**
+	 * Whether the ranked lists can answer a page: nothing filtered, and a page
+	 * that ends inside the fine tier's list depth.
+	 */
+	private static function ranked_serves( string $search, bool $errors, bool $workers, int $end ): bool {
+		return '' === $search && ! $errors && ! $workers && $end <= Stats_Store::URL_RANK_N;
 	}
 
 	/**

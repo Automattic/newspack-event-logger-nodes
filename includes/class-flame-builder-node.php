@@ -2892,31 +2892,6 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	}
 
 	/**
-	 * One mirror frame's fields, or null when the envelope is not one — a
-	 * malformed frame must skip, never abort the read repairing a hole.
-	 *
-	 * @param array<int,mixed> $msg Decoded frame envelope.
-	 * @return array{key: string, data: array<array-key,mixed>, ttl: int, ts: float}|null
-	 */
-	private static function read_mirror_frame( array $msg ): ?array {
-		$key   = $msg[ Message::KEY ] ?? null;
-		$value = $msg[ Message::VALUE ] ?? null;
-		if ( ! \is_string( $key ) || '' === $key
-			|| ! \is_array( $value )
-			|| ! \is_array( $value['data'] ?? null )
-			|| ! \is_int( $value['ttl'] ?? null )
-		) {
-			return null;
-		}
-		return [
-			'key'  => $key,
-			'data' => $value['data'],
-			'ttl'  => $value['ttl'],
-			'ts'   => Core::num_float( $msg[ Message::TIMESTAMP ] ?? null ),
-		];
-	}
-
-	/**
 	 * Buffer a mirrored write until the next checkpoint.
 	 *
 	 * Every namespace is kept in full: a key is one (URL, bucket), and with the
@@ -3618,24 +3593,6 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	}
 
 	/**
-	 * Whether the mirror can hold a key's namespace AT ALL.
-	 *
-	 * `buffer_mirror_write()` drops a derived namespace, so reading one back can
-	 * only walk the whole index and find nothing — and `locate_by()` has no
-	 * early stop for a key that is absent, so each such read is a full pass. A
-	 * cold dashboard poll asks for hundreds of coarse-tier keys.
-	 *
-	 * NS_URL is rank-capped rather than derived, and that cap is a runtime verb
-	 * (`set_flame_topn`), so it is never a refusal this can be sure of.
-	 *
-	 * @param string $key Table-relative entry key.
-	 */
-	private static function mirrors_key( string $key ): bool {
-		$ns = Stats_Store::namespace_of( $key );
-		return Stats_Store::NS_URL === $ns || ! Stats_Store::is_derived( $ns );
-	}
-
-	/**
 	 * The live RANK cap on one namespace's buffered frames: `$flame_topn` for
 	 * NS_URL (the flame profiles), 0 for a DERIVED namespace, which keeps
 	 * nothing at all, and no rank for everything else — where both
@@ -3741,6 +3698,49 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	 */
 	private static function empty_leaderboard(): array {
 		return [ 'count' => 0, 'sum_req_time' => 0.0, 'categories' => [] ];
+	}
+
+	/**
+	 * One mirror frame's fields, or null when the envelope is not one — a
+	 * malformed frame must skip, never abort the read repairing a hole.
+	 *
+	 * @param array<int,mixed> $msg Decoded frame envelope.
+	 * @return array{key: string, data: array<array-key,mixed>, ttl: int, ts: float}|null
+	 */
+	private static function read_mirror_frame( array $msg ): ?array {
+		$key   = $msg[ Message::KEY ] ?? null;
+		$value = $msg[ Message::VALUE ] ?? null;
+		if ( ! \is_string( $key ) || '' === $key
+			|| ! \is_array( $value )
+			|| ! \is_array( $value['data'] ?? null )
+			|| ! \is_int( $value['ttl'] ?? null )
+		) {
+			return null;
+		}
+		return [
+			'key'  => $key,
+			'data' => $value['data'],
+			'ttl'  => $value['ttl'],
+			'ts'   => Core::num_float( $msg[ Message::TIMESTAMP ] ?? null ),
+		];
+	}
+
+	/**
+	 * Whether the mirror can hold a key's namespace AT ALL.
+	 *
+	 * `buffer_mirror_write()` drops a derived namespace, so reading one back can
+	 * only walk the whole index and find nothing — and `locate_by()` has no
+	 * early stop for a key that is absent, so each such read is a full pass. A
+	 * cold dashboard poll asks for hundreds of coarse-tier keys.
+	 *
+	 * NS_URL is rank-capped rather than derived, and that cap is a runtime verb
+	 * (`set_flame_topn`), so it is never a refusal this can be sure of.
+	 *
+	 * @param string $key Table-relative entry key.
+	 */
+	private static function mirrors_key( string $key ): bool {
+		$ns = Stats_Store::namespace_of( $key );
+		return Stats_Store::NS_URL === $ns || ! Stats_Store::is_derived( $ns );
 	}
 
 	/**
