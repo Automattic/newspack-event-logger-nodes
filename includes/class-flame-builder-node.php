@@ -678,12 +678,9 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	private function accumulate_all_stats( string $url_hash, array $flame_data, array $profiles, array $request ): void {
 		// The RECORD's duration; the flame's is raised to cover children.
 		$duration_ms  = Core::num_float( $request['duration_ms'] ?? 0 );
-		$error_status = $request['error_status'] ?? '-';
-		// Both durations are fictions and would skew the mean and the max.
-		$is_timed_out = \in_array( $error_status, [ 'T', 'A' ], true );
 		$is_worker    = ! empty( $request['is_worker'] );
 		// Two gates: per-URL rows keep worker timing; global drops workers.
-		$record_timing = $duration_ms > 0 && ! $is_timed_out;
+		$record_timing = self::timing_counts( $duration_ms, $request['error_status'] ?? '-' );
 		$count_global  = ! $is_worker;
 		$now           = (int) Core::$now;
 
@@ -751,12 +748,7 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 		$aggregate = \is_array( $cached ) ? $cached : null;
 		if ( null === $aggregate ) {
 			$aggregate = [
-				'flame'    => [
-					'name'      => 'aggregate',
-					'sum_value' => 0.0,
-					'count'     => 0,
-					'children'  => [],
-				],
+				'flame'    => self::empty_url_flame(),
 				'profiles' => [
 					'count'        => 0,
 					'sum_req_time' => 0.0,
@@ -770,7 +762,50 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 			unset( $aggregate['flame_raw'] );
 		}
 
-		$flame = \is_array( $aggregate['flame'] ?? null ) ? $aggregate['flame'] : [];
+		$flame              = \is_array( $aggregate['flame'] ?? null ) ? $aggregate['flame'] : [];
+		$aggregate['flame'] = self::fold_url_flame( $flame, $flame_data, $duration_ms, $record_timing, $now );
+		return $aggregate;
+	}
+
+	/**
+	 * A URL's running flame before any request has merged into it.
+	 *
+	 * @return array<string,mixed>
+	 */
+	public static function empty_url_flame(): array {
+		return [
+			'name'      => 'aggregate',
+			'sum_value' => 0.0,
+			'count'     => 0,
+			'children'  => [],
+		];
+	}
+
+	/**
+	 * Whether a request's duration is a timing sample. A timeout's and an
+	 * abort's are fictions, and would skew the mean and the max.
+	 *
+	 * @param float $duration_ms  The record's duration.
+	 * @param mixed $error_status The record's error status, `-` when none.
+	 */
+	public static function timing_counts( float $duration_ms, mixed $error_status ): bool {
+		return $duration_ms > 0 && ! \in_array( $error_status, [ 'T', 'A' ], true );
+	}
+
+	/**
+	 * Fold one request's flame into a URL's running one: one more request,
+	 * and, when its timing counts, its duration and its tree. Sums, never
+	 * means; `url_flame_for_display()` divides.
+	 *
+	 * @api Also rebuilds an expired blob in `Performance_CI_Node`.
+	 * @param array<array-key,mixed> $flame         The running flame, un-finalized.
+	 * @param array<array-key,mixed> $flame_data    One request's tree.
+	 * @param float                  $duration_ms   That request's duration.
+	 * @param bool                   $record_timing Per `timing_counts()`.
+	 * @param int                    $now           Stamp for the merged nodes.
+	 * @return array<array-key,mixed>
+	 */
+	public static function fold_url_flame( array $flame, array $flame_data, float $duration_ms, bool $record_timing, int $now ): array {
 		$flame['count'] = ( \is_numeric( $flame['count'] ?? null ) ? $flame['count'] : 0 ) + 1;
 		// Per-URL: workers keep timing on their own row.
 		if ( $record_timing ) {
@@ -779,8 +814,7 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 			$incoming_children  = \is_array( $flame_data['children'] ?? null ) ? $flame_data['children'] : [];
 			$flame['children']  = Flame_Tree::merge_flame_children_incremental( $flame_children, $incoming_children, $now );
 		}
-		$aggregate['flame'] = $flame;
-		return $aggregate;
+		return $flame;
 	}
 
 	/**
@@ -3177,13 +3211,8 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 			/** @var array<string,mixed> $aggregate */
 			// Half the item for profiles, a quarter for each copy of the tree.
 			$aggregate['profiles'] = self::cap_leaderboard( Core::arr( $aggregate['profiles'] ?? null ), \intdiv( Stats_Store::ITEM_BUDGET, 2 ) );
-			$flame                 = Flame_Tree::prune_lightest( Core::arr( $aggregate['flame'] ?? null ), \intdiv( Stats_Store::ITEM_BUDGET, 4 ), Stats_Store::overhead( 'flame_node' ) );
 			// Finalized flame for display; keep flame_raw for merging.
-			$count_raw              = $flame['count'] ?? 0;
-			$total_count            = Core::num_int( $count_raw );
-			$aggregate['flame_raw'] = $flame;
-			Flame_Tree::finalize_flame_node( $flame, $total_count );
-			$aggregate['flame']         = $flame;
+			[ $aggregate['flame_raw'], $aggregate['flame'] ] = self::url_flame_for_display( Core::arr( $aggregate['flame'] ?? null ) );
 			$aggregate['last_modified'] = $now;
 			// @longform One write per URL is one ROUND TRIP per URL, which is
 			// the cost this whole flush path is batched to avoid. Chunked on
@@ -3195,6 +3224,21 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 		foreach ( \array_chunk( $writes, self::WRITE_BATCH_KEYS ) as $chunk ) {
 			$stats_store->bucket_set_multi( $chunk );
 		}
+	}
+
+	/**
+	 * A URL's running flame pruned to its quarter of one item, and the same
+	 * tree finalized to per-request means for display.
+	 *
+	 * @api Also rebuilds an expired blob in `Performance_CI_Node`.
+	 * @param array<array-key,mixed> $flame The running flame, un-finalized.
+	 * @return array{0:array<array-key,mixed>,1:array<array-key,mixed>} The pruned raw tree, then its display form.
+	 */
+	public static function url_flame_for_display( array $flame ): array {
+		$raw     = Flame_Tree::prune_lightest( $flame, \intdiv( Stats_Store::ITEM_BUDGET, 4 ), Stats_Store::overhead( 'flame_node' ) );
+		$display = $raw;
+		Flame_Tree::finalize_flame_node( $display, Core::num_int( $raw['count'] ?? 0 ) );
+		return [ $raw, $display ];
 	}
 
 	/**

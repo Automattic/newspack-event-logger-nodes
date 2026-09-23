@@ -2497,6 +2497,106 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( 1700001111, $result['last_modified'] );
 	}
 
+	/**
+	 * Seed a URL whose flame blob has expired: its row, and two requests whose
+	 * stored flames each carry one `init hook` span.
+	 *
+	 * @return array{0:string,1:int} The URL hash and the newer request's start.
+	 */
+	private function seed_a_cold_url_with_two_flames(): array {
+		$url   = '/cold-flame';
+		$hash  = Log_Manager::url_hash( $url );
+		$now   = self::tick();
+		$store = new Stats_Store( 0, 86400 );
+		$this->set_url_bucket( $store, $this->current_url_bucket(), [
+			$hash => [ 'url' => $url, 'count' => 2, 'timed_count' => 2, 'sum_ms' => 100.0, 'last_seen' => $now - 311 ],
+		] );
+		foreach ( [ [ 'rid-cold-a-8841902', $now - 947, 40, 30 ], [ 'rid-cold-b-8841902', $now - 311, 60, 10 ] ] as [ $rid, $at, $ms, $span ] ) {
+			$this->write_request( [
+				'rid'            => $rid,
+				'url'            => $url,
+				'timestamp'      => $at,
+				'duration_ms'    => $ms,
+				'status_code'    => 200,
+				'request_method' => 'GET',
+			] );
+			$this->write_flame( [
+				'rid'      => $rid,
+				'url_hash' => $hash,
+				'name'     => 'request',
+				'value'    => $ms,
+				'children' => [ [ 'name' => 'init hook', 'value' => $span, 'children' => [] ] ],
+			] );
+		}
+		return [ $hash, $now - 311 ];
+	}
+
+	public function test_dump_url_rebuilds_the_flame_a_cold_url_lost(): void {
+		[ $hash, $newest ] = $this->seed_a_cold_url_with_two_flames();
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', $hash );
+
+		// Per-request means: (40 + 60) / 2 at the root, (30 + 10) / 2 below it.
+		$this->assertEqualsWithDelta( 50.0, $result['aggregate_flame']['value'], 0.001 );
+		$this->assertSame( 'init hook', $result['aggregate_flame']['children'][0]['name'] );
+		$this->assertEqualsWithDelta( 20.0, $result['aggregate_flame']['children'][0]['value'], 0.001 );
+		$this->assertSame( $newest, $result['last_modified'] );
+	}
+
+	public function test_a_rebuild_the_clock_cut_short_answers_no_flame(): void {
+		// A partial fold would read as the URL's whole flame, and be kept.
+		[ $hash ] = $this->seed_a_cold_url_with_two_flames();
+		\file_put_contents(
+			$this->tmp . '/logs/flames.p0/0.idx',
+			\str_repeat( "x\n", ( Performance_CI_Node::MAX_SCAN_S + 3 ) * self::clock_stride() ),
+			FILE_APPEND | LOCK_EX
+		);
+		$seconds      = 0.0;
+		Core::$clock = static function () use ( &$seconds ): float {
+			return $seconds += 1.0;
+		};
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', $hash );
+
+		$this->assertNull( $result['aggregate_flame'] );
+		$this->assertTrue( $result['scan_stopped_early'] );
+	}
+
+	public function test_a_rebuild_reads_only_the_partitions_its_requests_are_in(): void {
+		// Flames partition like the requests they came from; p0 holds none.
+		$this->activate_shipped_topology( 'performance', 2 );
+		$url   = '/cold-in-p1';
+		$hash  = Log_Manager::url_hash( $url );
+		$now   = self::tick();
+		$this->set_url_bucket( new Stats_Store( 0, 86400 ), $this->current_url_bucket(), [
+			$hash => [ 'url' => $url, 'count' => 1, 'timed_count' => 1, 'sum_ms' => 70.0, 'last_seen' => $now - 522 ],
+		] );
+		$this->write_request( [ 'rid' => 'rid-cold-p1-5530981', 'url' => $url, 'timestamp' => $now - 522, 'duration_ms' => 70, 'status_code' => 200, 'request_method' => 'GET' ], 1 );
+		$this->write_flame( [ 'rid' => 'rid-cold-p1-5530981', 'url_hash' => $hash, 'name' => 'request', 'value' => 70, 'children' => [] ], 1 );
+		$this->write_flame( [ 'rid' => 'rid-elsewhere-000001', 'url_hash' => 'f00f00f00f00', 'name' => 'request', 'value' => 1, 'children' => [] ], 0 );
+		\file_put_contents( $this->tmp . '/logs/flames.p0/0.idx', \str_repeat( "x\n", 50 * self::clock_stride() ), FILE_APPEND | LOCK_EX );
+		$reads        = 0;
+		Core::$clock = static function () use ( &$reads ): float {
+			++$reads;
+			return 8080.0;
+		};
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', $hash );
+
+		$this->assertEqualsWithDelta( 70.0, $result['aggregate_flame']['value'], 0.001 );
+		$this->assertLessThan( 10, $reads, "p0's flame index was walked" );
+	}
+
+	public function test_a_tailing_dump_url_rebuilds_nothing_from_its_partial_list(): void {
+		// A `--since` list is the newest few; the held flame stands instead.
+		[ $hash, $newest ] = $this->seed_a_cold_url_with_two_flames();
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', "{$hash} --since=" . ( $newest - 1 ) );
+
+		$this->assertNull( $result['aggregate_flame'] );
+		$this->assertSame( $newest, $result['last_modified'] );
+	}
+
 	public function test_dump_url_verb_rejects_unauthorized(): void {
 		$GLOBALS['_current_user_can'] = false;
 		$interpreter     = new Performance_CI_Node();
