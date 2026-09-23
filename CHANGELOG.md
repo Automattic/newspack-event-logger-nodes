@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The URL modal's Recent Requests table shows the whole timestamp.** Its
+  Time column was 150px and cut `9/22/2026, 1:17:54 PM` short; it is now sized
+  in characters to fit the longest en-US timestamp.
+
 - **The substrate's REST endpoints log as one worker type, `restapi`.** The
   `command`, `log/stream`, `messages/stream` and `workers/spawn` requests were
   typed by endpoint, and the type rides the URL as its query, so their rows
