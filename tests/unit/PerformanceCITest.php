@@ -75,7 +75,7 @@ class PerformanceCITest extends TestCase {
 	protected function tearDown(): void {
 		\Newspack_Nodes\Topology_Registry::reset_basename_cache();
 		VerbHarness::reset();
-		Performance_CI_Node::$index_budget  = null;
+		Core::$clock                        = null;
 		Settings_Event_Writer::$append_seam = null;
 		$GLOBALS['_wp_options']       = [];
 		$GLOBALS['_current_user_can'] = false;
@@ -1194,7 +1194,7 @@ class PerformanceCITest extends TestCase {
 
 	public function test_dump_url_reports_a_scan_that_stopped_before_reaching_the_url(): void {
 		// A low-traffic URL among high-traffic neighbours: the index walk spends
-		// its whole entry budget on the newer lines and never reaches the one
+		// its whole time budget on the newer lines and never reaches the one
 		// matching entry. An empty list then says "no requests", which is a lie
 		// — the truth is that the scan stopped, and the payload has to say so.
 		$url    = '/buried-under-neighbours';
@@ -1214,10 +1214,9 @@ class PerformanceCITest extends TestCase {
 			'peak_mb'        => 5,
 			'request_method' => 'GET',
 		] );
-		// Newer than that entry and more numerous than the budget. Short lines:
-		// the budget counts entries scanned, not bytes, and a line under the
-		// fixed width parses as no entry.
-		$this->shrink_index_budget_and_overfill_it();
+		// Newer than that entry, and more than the clock allows. Short lines:
+		// a line under the fixed width parses as no entry.
+		$this->run_out_the_scan_clock_over_newer_lines();
 
 		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', $hash );
 
@@ -1574,8 +1573,7 @@ class PerformanceCITest extends TestCase {
 	}
 
 	/**
-	 * Bury p0's request index under more entries than the scan budget allows.
-	 * Short lines: the budget counts entries scanned, not bytes.
+	 * Bury p0's request index under more lines than the scan's clock allows.
 	 */
 	private function fill_request_index_past_the_budget(): void {
 		// One real record first: a segment with no `.log` is no segment.
@@ -1585,21 +1583,88 @@ class PerformanceCITest extends TestCase {
 			'timestamp'   => 1700005200,
 			'duration_ms' => 15,
 		] );
-		$this->shrink_index_budget_and_overfill_it();
+		$this->run_out_the_scan_clock_over_newer_lines();
 	}
 
 	/**
-	 * Shrink the scan budget to a handful and append one entry past it to p0's
-	 * request index. The real million is the same boundary, only slower to walk.
+	 * Advance the scan's clock one second per reading and append more lines to
+	 * p0's request index than MAX_INDEX_SCAN_S of those readings cover, at one
+	 * reading per SCAN_CLOCK_STRIDE lines.
 	 */
-	private function shrink_index_budget_and_overfill_it(): void {
-		$budget                             = 17;
-		Performance_CI_Node::$index_budget = $budget;
+	private function run_out_the_scan_clock_over_newer_lines(): void {
+		$seconds      = 0.0;
+		Core::$clock = static function () use ( &$seconds ): float {
+			return $seconds += 1.0;
+		};
 		\file_put_contents(
 			$this->tmp . '/logs/requests.p0/0.idx',
-			\str_repeat( "x\n", $budget + 1 ),
+			\str_repeat( "x\n", ( Performance_CI_Node::MAX_INDEX_SCAN_S + 3 ) * self::clock_stride() ),
 			FILE_APPEND | LOCK_EX
 		);
+	}
+
+	/** Lines the index walk reads between two looks at the clock. */
+	private static function clock_stride(): int {
+		return (int) ( new \ReflectionClassConstant( Performance_CI_Node::class, 'SCAN_CLOCK_STRIDE' ) )->getValue();
+	}
+
+	public function test_dump_request_spends_one_time_budget_across_both_walks(): void {
+		// An unprofiled rid's flame lookup misses over the whole flame index;
+		// it must share the request walk's deadline, not start a second one.
+		$this->write_request( [
+			'rid'         => 'rid-unprofiled-73920184665021',
+			'url'         => '/no-flame-here',
+			'timestamp'   => 1700006300,
+			'duration_ms' => 23,
+		] );
+		$this->write_flame( [
+			'rid'   => 'rid-some-other-profiled-one-5530',
+			'flame' => [ 'name' => 'other', 'value' => 9, 'children' => [] ],
+		] );
+		\file_put_contents(
+			$this->tmp . '/logs/flames.p0/0.idx',
+			\str_repeat( "x\n", ( Performance_CI_Node::MAX_INDEX_SCAN_S + 3 ) * self::clock_stride() ),
+			FILE_APPEND | LOCK_EX
+		);
+		$reads        = 0;
+		Core::$clock = static function () use ( &$reads ): float {
+			return (float) ++$reads;
+		};
+
+		VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_request', 'rid-unprofiled-73920184665021' );
+
+		$this->assertSame( Performance_CI_Node::MAX_INDEX_SCAN_S + 2, $reads );
+	}
+
+	public function test_dump_url_walks_any_number_of_lines_inside_the_time_cap(): void {
+		// The cap is time, not lines: a stopped clock reads the whole window.
+		$url  = '/under-a-deep-index';
+		$hash = Log_Manager::url_hash( $url );
+		$this->set_url_bucket( new Stats_Store( 0, 86400 ), $this->current_url_bucket(), [
+			$hash => [ 'url' => $url, 'count' => 1, 'sum_ms' => 29.0, 'last_seen' => self::tick() - 1777 ],
+		] );
+		$this->write_request( [
+			'rid'            => 'rid-deep-index-58213409761234',
+			'url'            => $url,
+			'timestamp'      => self::tick() - 1777,
+			'duration_ms'    => 29,
+			'status_code'    => 203,
+			'peak_mb'        => 6,
+			'request_method' => 'GET',
+		] );
+		$reads        = 0;
+		Core::$clock = static function () use ( &$reads ): float {
+			++$reads;
+			return 4242.0;
+		};
+		\file_put_contents( $this->tmp . '/logs/requests.p0/0.idx', \str_repeat( "x\n", 5000 ), FILE_APPEND | LOCK_EX );
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', $hash );
+
+		$this->assertSame( 'rid-deep-index-58213409761234', $result['requests'][0]['rid'] ?? null );
+		$this->assertFalse( $result['scan_stopped_early'] );
+		// One reading per stride of lines, not one per line.
+		$this->assertLessThanOrEqual( 1 + \intdiv( 5002, self::clock_stride() ), $reads );
 	}
 
 	public function test_urls_verb_scopes_rows_to_the_selected_server(): void {

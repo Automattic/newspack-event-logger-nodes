@@ -31,12 +31,12 @@
  *    POSTs per user per window, so a polling dashboard is bounded upstream.
  *  - Stats reads fail soft, as `Stats_Store` and the dashboards' "no data"
  *    state do.
- *  - Disk scans are bounded by TIME where the index carries one — the per-URL
- *    walk stops at `scan_floor()`, in a segment that closed before it — and
- *    by MAX_INDEX_ENTRIES everywhere else, so a missing-rid lookup can't
- *    escalate into a partition-wide walk. The durable stats mirror is the
- *    third: `Partition_Node::locate_by()` cannot stop early on a key that is
- *    absent, so `dispatch()` gives each answer one
+ *  - Disk scans are bounded twice. The per-URL walk stops at `scan_floor()`,
+ *    in a segment that closed before it, because its index carries time.
+ *    Every walk, a missing-rid lookup included, also stops after
+ *    MAX_INDEX_SCAN_S of walking, one budget per verb. The durable stats
+ *    mirror is the third: `Partition_Node::locate_by()` cannot stop early
+ *    on a key that is absent, so `dispatch()` gives each answer one
  *    `stats_mirror_read_budget_ms` to spend across every such walk, and
  *    naming the rows an answer shows gets one of its own on top.
  *
@@ -88,8 +88,8 @@ use Newspack_Nodes\Service_CI_Node;
 class Performance_CI_Node extends Service_CI_Node {
 
 	/**
-	 * Hard cap on .idx entries scanned per disk-walking verb — the BACKSTOP for
-	 * a walk that has no better bound, not the bound the common case reaches.
+	 * Seconds one disk-walking verb may spend reading .idx lines — the BACKSTOP
+	 * for a walk that has no better bound, not the bound the common case reaches.
 	 *
 	 * The per-URL walk stops at `scan_floor()`, so its real cost is a retention
 	 * window of index, whatever the index holds behind that. What is left under
@@ -97,22 +97,25 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * for one line and cannot know how far back it sits, and the flame index,
 	 * whose lines carry no time to compare (`Flame_Builder_Node::index_completion_columns()`).
 	 *
-	 * The floor is a full retention window of requests rather than a round
-	 * number, because a budget spent on one URL's high-traffic neighbours never
-	 * reaches that URL at all. At 97 bytes an entry, a million lines is ~97MB
-	 * of index read one segment at a time, so peak memory is ONE segment's
-	 * index — a few tens of MB — and a full spend costs ~0.2s of line work
-	 * rather than ~2s: a miss is one `substr` + `trim`, not a parse. Still an
-	 * answer rather than a wedged verb. A walk that spends the budget says so;
-	 * see `scan_index_entries()`.
-	 *
-	 * Revisit when a TIME-BOUNDED walk spends it — with a floor in place that
-	 * means one retention window holds a million entries, so the site outgrew
-	 * the number rather than misusing it. A rid lookup or a flame walk spending
-	 * it is the cap doing its job, and a bigger number would only buy a slower
-	 * miss.
+	 * Time, not a line count, because partitions are walked one after another:
+	 * a count sized to one host's traffic ends a busier hub's walk inside its
+	 * first partitions, and every request hashed to the rest is unreachable
+	 * from its URL. A miss is one `substr` + `trim`, with the clock read once
+	 * per SCAN_CLOCK_STRIDE lines, so a window of millions of lines costs well
+	 * under a second, and the cap binds only a walk that has genuinely run
+	 * long. A verb that walks twice, as a rid lookup does over requests and
+	 * then flames, spends ONE budget across both. Peak memory stays ONE
+	 * segment's index. A walk that spends it says so; see
+	 * `scan_index_entries()`.
 	 */
-	public const MAX_INDEX_ENTRIES = 1000000;
+	public const MAX_INDEX_SCAN_S = 10;
+
+	/**
+	 * Index lines read between two looks at the clock. A clock read costs as
+	 * much as a miss, and one per hundred lines keeps it off the walk's cost,
+	 * far below anything a 10-second budget can notice.
+	 */
+	private const SCAN_CLOCK_STRIDE = 100;
 
 	/**
 	 * URL rows an `overview:` brief walks for: exactly what the brief keeps,
@@ -266,15 +269,6 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @var \Closure|null
 	 */
 	public static ?\Closure $load_index = null;
-
-	/**
-	 * Index-scan budget seam. Replaces `MAX_INDEX_ENTRIES` in
-	 * `scan_index_entries()` when set; tests set a small budget and restore
-	 * null, so the spent-budget path walks a few lines instead of a million.
-	 *
-	 * @var int|null
-	 */
-	public static ?int $index_budget = null;
 
 	/**
 	 * Coerce and bounds-check one value for `set`.
@@ -1388,10 +1382,10 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * RECENT_REQUEST_LIMIT index entries for the given url_hash, deduplicated by
 	 * rid and sorted by timestamp DESC. Each partition's walk ends at
 	 * `scan_floor()`; the whole fan-out ends on that cap or on the shared
-	 * MAX_INDEX_ENTRIES budget.
+	 * MAX_INDEX_SCAN_S budget.
 	 *
-	 * Both endings are the caller's to pass on. A URL quiet enough to sit behind
-	 * a million of its neighbours' entries is never reached, and a list that
+	 * Both endings are the caller's to pass on. A URL whose entries sit behind
+	 * ten seconds of its neighbours' is never reached, and a list that
 	 * stopped short reads exactly like a URL with no traffic; a list that ran
 	 * out of WINDOW reads the same way, so the floor it stopped at rides back
 	 * with it.
@@ -1829,7 +1823,8 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @return array<array-key,mixed>|null Decoded request body (keys come from the JSON envelope).
 	 */
 	private static function find_request( array $dirs, string $rid ): ?array {
-		$found = self::first_record( $dirs, 'requests', $rid, $stopped );
+		$deadline = self::scan_deadline();
+		$found    = self::first_record( $dirs, 'requests', $rid, $stopped, $deadline );
 		if ( null === $found ) {
 			if ( $stopped ) {
 				self::fail_budget_spent( $rid );
@@ -1839,7 +1834,7 @@ class Performance_CI_Node extends Service_CI_Node {
 		[ $entry, $record ] = $found;
 		$record['url_hash'] = \trim( Core::as_string( $entry['url_hash'] ?? '' ) );
 		// A flame miss is normal, budget or not: unprofiled requests have none.
-		$flame              = self::first_record( Bootstrap::node_dirs( self::NODE_FLAMES ), 'flames', $rid );
+		$flame              = self::first_record( Bootstrap::node_dirs( self::NODE_FLAMES ), 'flames', $rid, deadline: $deadline );
 		if ( null !== $flame ) {
 			$record['flame_data'] = $flame[1];
 		}
@@ -1865,11 +1860,12 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param array<int,string> $dirs    Partition index => dir, in search order.
 	 * @param string            $log     Log basename ('requests' | 'flames').
 	 * @param string            $rid     Request id the entry must carry.
-	 * @param bool|null         $stopped Set true when the budget ended the walk.
+	 * @param bool|null         $stopped  Set true when the budget ended the walk.
+	 * @param float|null        $deadline Shared with an earlier walk; null starts one.
 	 * @param-out bool          $stopped
 	 * @return array{0:array<array-key,mixed>,1:array<array-key,mixed>}|null Entry + decoded record.
 	 */
-	private static function first_record( array $dirs, string $log, string $rid, ?bool &$stopped = null ): ?array {
+	private static function first_record( array $dirs, string $log, string $rid, ?bool &$stopped = null, ?float $deadline = null ): ?array {
 		$found   = null;
 		$stopped = self::scan_index_entries(
 			$dirs,
@@ -1887,7 +1883,9 @@ class Performance_CI_Node extends Service_CI_Node {
 					$found = [ $entry, $record ];
 				}
 				return null === $found ? null : false;
-			}
+			},
+			null,
+			$deadline
 		);
 		return $found;
 	}
@@ -1896,7 +1894,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * Fan a bounded index scan across a set of partition dirs, newest entry
 	 * first, handing every entry whose `$field` equals `$match` to `$on_hit`.
 	 *
-	 * The one boundary MAX_INDEX_ENTRIES lives at: the budget spans the whole
+	 * The one boundary MAX_INDEX_SCAN_S lives at: the budget spans the whole
 	 * fan-out, and the scan ends everywhere the moment it is spent or `$on_hit`
 	 * returns false. Each scratch Partition is built, named, formatted and
 	 * removed here, so a caller carries nothing but its predicate.
@@ -1933,18 +1931,21 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param callable(array<array-key,mixed>, int, int, Partition_Node): (self::SCAN_STOP_PARTITION|bool|null) $on_hit
 	 *        Return false to end the whole fan-out, `SCAN_STOP_PARTITION` to
 	 *        finish this partition and carry on with the next, null to continue.
-	 * @param int|null          $floor  Stop a closed segment below this completion time; null walks to the budget.
-	 * @return bool True when the entry budget ended the scan.
+	 * @param int|null          $floor    Stop a closed segment below this completion time; null walks to the budget.
+	 * @param float|null        $deadline A verb's shared `scan_deadline()`; null starts one.
+	 * @return bool True when the time budget ended the scan.
 	 */
-	private static function scan_index_entries( array $dirs, string $log, string $field, string $match, callable $on_hit, ?int $floor = null ): bool {
+	private static function scan_index_entries( array $dirs, string $log, string $field, string $match, callable $on_hit, ?int $floor = null, ?float $deadline = null ): bool {
 		// Both halves of ONE format: never read an index we didn't write.
 		[ $formatter, $parse, $column, $times ] = 'flames' === $log
 			? [ 'flame-index', Flame_Builder_Node::parse_flame_index( ... ), Flame_Builder_Node::index_column( $field ), Flame_Builder_Node::index_completion_columns() ]
 			: [ 'request-index', Request_Builder_Node::parse_request_index( ... ), Request_Builder_Node::index_column( $field ), Request_Builder_Node::index_completion_columns() ];
 		// Past the columns' last byte: a short line is skipped, not read as 0.
 		$span_end      = [] === $times ? 0 : \max( $times[0][0] + $times[0][1], $times[1][0] + $times[1][1] );
-		$entries_count = 0;
-		$budget        = self::$index_budget ?? self::MAX_INDEX_ENTRIES;
+		$clock     = self::scan_clock();
+		$deadline ??= self::scan_deadline();
+		$spent     = false;
+		$lines     = 0;
 		foreach ( $dirs as $p => $dir ) {
 			$stopped = false;
 			$node    = new Partition_Node();
@@ -1957,9 +1958,9 @@ class Performance_CI_Node extends Service_CI_Node {
 			}
 			$closed = null === $floor || [] === $times ? [] : self::segments_closed_before( $node, $floor );
 			$node->scan_index(
-				static function ( string $line, int $segment ) use ( &$entries_count, &$stopped, $budget, $node, $p, $field, $match, $column, $times, $span_end, $closed, $floor, $parse, $on_hit ): ?bool {
-					++$entries_count;
-					if ( $entries_count > $budget ) {
+				static function ( string $line, int $segment ) use ( &$spent, &$stopped, &$lines, $clock, $deadline, $node, $p, $field, $match, $column, $times, $span_end, $closed, $floor, $parse, $on_hit ): ?bool {
+					if ( 0 === ++$lines % self::SCAN_CLOCK_STRIDE && $clock() > $deadline ) {
+						$spent   = true;
 						$stopped = true;
 						return false;
 					}
@@ -1991,10 +1992,31 @@ class Performance_CI_Node extends Service_CI_Node {
 			);
 			$node->remove_node();
 			if ( $stopped ) {
-				return $entries_count > $budget;
+				return $spent;
 			}
 		}
 		return false;
+	}
+
+	/**
+	 * The moment a walk starting now must stop by. A verb that walks twice
+	 * takes one and hands it to both, so it spends MAX_INDEX_SCAN_S once.
+	 */
+	private static function scan_deadline(): float {
+		return ( self::scan_clock() )() + self::MAX_INDEX_SCAN_S;
+	}
+
+	/**
+	 * The clock the index walks are timed by: the substrate's `Core::$clock`
+	 * seam when a test pins it, else the monotonic `hrtime()`, so a wall-clock
+	 * step can neither end a walk early nor stretch it. The seam is read
+	 * directly because `Core::right_now()` would move the reply's tick
+	 * (decision 29). The deadline and every reading come from this one clock.
+	 *
+	 * @return \Closure(): float
+	 */
+	private static function scan_clock(): \Closure {
+		return Core::$clock ?? static fn (): float => \hrtime( true ) / 1e9;
 	}
 
 	/**
