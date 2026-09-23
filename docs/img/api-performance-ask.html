@@ -55,7 +55,7 @@
       <div class="r"><b>min_lifetime ≤ 3,600 s</b>13 buckets: the floor sits 3,600 s back.</div>
       <div class="r"><b>between</b>⌈min_lifetime ÷ 300⌉ + 1 buckets: the floor tracks the setting.</div>
       <div class="r"><b>min_lifetime &gt; 85,800 s</b>288 buckets: the floor stops 86,100 s back.</div>
-      <div class="r" style="background:#FBEAEA;border-color:#E6A3A3"><b style="color:#B32D2E">scan_stopped_early: true</b>The walk spent <span class="mono">MAX_INDEX_SCAN_S</span> (10 seconds) first, so an empty list is not an idle URL. It says nothing about <span class="mono">RECENT_REQUEST_LIMIT</span>: the 500th row ends the fan-out with later partitions unread and the flag false.</div>
+      <div class="r" style="background:#FBEAEA;border-color:#E6A3A3"><b style="color:#B32D2E">scan_stopped_early: true</b>The walk spent <span class="mono">MAX_SCAN_S</span> (10 seconds) first, so an empty list is not an idle URL. It says nothing about <span class="mono">RECENT_REQUEST_LIMIT</span>: the 500th row ends the fan-out with later partitions unread and the flag false.</div>
     </div>
   </div>
 

@@ -1588,7 +1588,7 @@ class PerformanceCITest extends TestCase {
 
 	/**
 	 * Advance the scan's clock one second per reading and append more lines to
-	 * p0's request index than MAX_INDEX_SCAN_S of those readings cover, at one
+	 * p0's request index than MAX_SCAN_S of those readings cover, at one
 	 * reading per SCAN_CLOCK_STRIDE lines.
 	 */
 	private function run_out_the_scan_clock_over_newer_lines(): void {
@@ -1598,7 +1598,7 @@ class PerformanceCITest extends TestCase {
 		};
 		\file_put_contents(
 			$this->tmp . '/logs/requests.p0/0.idx',
-			\str_repeat( "x\n", ( Performance_CI_Node::MAX_INDEX_SCAN_S + 3 ) * self::clock_stride() ),
+			\str_repeat( "x\n", ( Performance_CI_Node::MAX_SCAN_S + 3 ) * self::clock_stride() ),
 			FILE_APPEND | LOCK_EX
 		);
 	}
@@ -1623,7 +1623,7 @@ class PerformanceCITest extends TestCase {
 		] );
 		\file_put_contents(
 			$this->tmp . '/logs/flames.p0/0.idx',
-			\str_repeat( "x\n", ( Performance_CI_Node::MAX_INDEX_SCAN_S + 3 ) * self::clock_stride() ),
+			\str_repeat( "x\n", ( Performance_CI_Node::MAX_SCAN_S + 3 ) * self::clock_stride() ),
 			FILE_APPEND | LOCK_EX
 		);
 		$reads        = 0;
@@ -1633,7 +1633,7 @@ class PerformanceCITest extends TestCase {
 
 		VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_request', 'rid-unprofiled-73920184665021' );
 
-		$this->assertSame( Performance_CI_Node::MAX_INDEX_SCAN_S + 2, $reads );
+		$this->assertSame( Performance_CI_Node::MAX_SCAN_S + 2, $reads );
 	}
 
 	public function test_dump_url_walks_any_number_of_lines_inside_the_time_cap(): void {
@@ -2916,6 +2916,31 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( 'GET', $summary['method'] );
 		$this->assertGreaterThanOrEqual( 1, $summary['match_count'] );
 		$this->assertStringContainsString( '/calendar', $summary['first_match_excerpt'] );
+	}
+
+	public function test_grep_requests_stops_when_its_time_runs_out(): void {
+		// p0 outlasts the clock; the only match waits in p1, never entered.
+		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 2 ] );
+		$entries = [];
+		$lines   = ( Performance_CI_Node::MAX_SCAN_S + 3 ) * self::clock_stride();
+		for ( $i = 0; $i < $lines; $i++ ) {
+			$entries[] = [ 'rid' => "noise{$i}", 'k' => 'request', 'm' => 'GET /feed', 'ts' => 1700000000.0, 'n' => 1 ];
+		}
+		$this->write_firehose( 0, $entries );
+		$this->write_firehose( 1, [
+			[ 'rid' => 'lateMatch', 'k' => 'request', 'm' => 'GET /past-the-budget-4471', 'ts' => 1700000900.0, 'n' => 1 ],
+			[ 'rid' => 'lateMatch', 'k' => 'process (complete)', 'm' => '(done)', 'ts' => 1700000900.5, 'n' => 2 ],
+		] );
+		$seconds      = 0.0;
+		Core::$clock = static function () use ( &$seconds ): float {
+			return $seconds += 1.0;
+		};
+
+		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'grep_requests', '/past-the-budget-4471' );
+
+		$this->assertSame( [], $result['results'] );
+		$this->assertTrue( $result['truncated'] );
+		$this->assertSame( 1, $result['scanned_partitions'] );
 	}
 
 	public function test_grep_requests_truncates_at_result_limit(): void {
