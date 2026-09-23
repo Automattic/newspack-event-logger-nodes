@@ -1891,11 +1891,11 @@ class StatsStoreTest extends TestCase {
 		$store      = new class( partition: 3, max_lifespan: 86400 ) extends Stats_Store {
 			/** @var list<string> */
 			public array $asked = [];
-			public function bucket_get_multi( array $reads ): array {
+			public function bucket_get_multi( array $reads, ?bool &$failed = null ): array {
 				foreach ( $reads as [ , $bucket ] ) {
 					$this->asked[] = (string) $bucket;
 				}
-				return parent::bucket_get_multi( $reads );
+				return parent::bucket_get_multi( $reads, $failed );
 			}
 		};
 

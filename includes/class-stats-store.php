@@ -1252,10 +1252,17 @@ class Stats_Store {
 	 * with no rows is written empty, and a probe reading that as absence folds
 	 * it again for the rest of the window.
 	 *
-	 * @param array<array-key,array{0: array<int,string>, 1: string}> $reads `[ parts, bucket ]` pairs.
+	 * A read that never happened is null too, so a caller merging onto the
+	 * result passes `$failed` and reads nothing into a null while it is set.
+	 *
+	 * @param array<array-key,array{0: array<int,string>, 1: string}> $reads  `[ parts, bucket ]` pairs.
+	 * @param ?bool                                                   $failed Set true when no cache
+	 *                                                                        backend answered the batch.
+	 * @param-out bool                                                $failed
 	 * @return array<array-key,array<string,mixed>|null> One entry per read, keyed as `$reads` was.
 	 */
-	public function bucket_get_multi( array $reads ): array {
+	public function bucket_get_multi( array $reads, ?bool &$failed = null ): array {
+		$failed = false;
 		if ( [] === $reads ) {
 			return [];
 		}
@@ -1263,8 +1270,9 @@ class Stats_Store {
 		foreach ( $reads as $i => [ $parts, $bucket ] ) {
 			$keys[ $i ] = self::key( ...[ ...$parts, $bucket ] );
 		}
-		// No table (no backend) reads as empty, like a miss.
-		$found = $this->table( self::ROLE_AGGREGATE )?->lookup_multi( \array_values( \array_unique( $keys ) ) ) ?? [];
+		$table  = $this->table( self::ROLE_AGGREGATE );
+		$failed = null === $table;
+		$found  = $table?->lookup_multi( \array_values( \array_unique( $keys ) ), $failed ) ?? [];
 		$out   = [];
 		foreach ( $keys as $i => $key ) {
 			$value     = $found[ $key ] ?? null;
