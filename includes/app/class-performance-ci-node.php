@@ -184,6 +184,9 @@ class Performance_CI_Node extends Service_CI_Node {
 	/** Slowest rows the `urls` reply carries for the Ask brief's examples. */
 	private const SLOWEST_ROWS = 10;
 
+	/** The aggregate flame of a URL with no requests to fold. */
+	private const EMPTY_FLAME = [ 'name' => 'aggregate', 'value' => 0, 'children' => [] ];
+
 	/** Deepest nesting `set` accepts in an array option; deeper is rejected. */
 	private const SETTINGS_ARRAY_DEPTH = 5;
 
@@ -1415,9 +1418,10 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * @param int    $since    Watermark (epoch seconds): a partition's walk ends
 	 *                         at the first entry that COMPLETED below it. 0 reads
 	 *                         the whole retained window.
+	 * @param ?float $deadline The verb's shared `scan_deadline()`; null starts one.
 	 * @return array{requests:array<int,array<string,mixed>>, truncated:bool, window_start:int} The list, whether the budget cut it short, and the window it is of.
 	 */
-	private static function find_recent_requests_for_url( string $url_hash, int $now, int $since = 0 ): array {
+	private static function find_recent_requests_for_url( string $url_hash, int $now, int $since = 0, ?float $deadline = null ): array {
 		$requests  = [];
 		$floor     = self::scan_floor( $now );
 		$truncated = self::scan_index_entries(
@@ -1451,7 +1455,8 @@ class Performance_CI_Node extends Service_CI_Node {
 				];
 				return \count( $requests ) >= self::RECENT_REQUEST_LIMIT ? false : null;
 			},
-			$floor
+			$floor,
+			$deadline
 		);
 
 		\usort( $requests, static fn ( $a, $b ) => $b['timestamp'] <=> $a['timestamp'] );
@@ -1673,6 +1678,92 @@ class Performance_CI_Node extends Service_CI_Node {
 			}
 		}
 		return null;
+	}
+
+	/**
+	 * A URL aggregate rebuilt from the flames its listed requests stored, for a
+	 * URL whose blob has left memcache: it lives an hour past the URL's last
+	 * request, and the durable mirror keeps none.
+	 *
+	 * Rebuilt only on a full read. A tailing read lists only the newest few, and
+	 * a flame folded from them would describe those, not the URL, so it answers
+	 * a null flame, which the dashboard reads as "keep the one you hold". Either
+	 * way `last_modified` is the newest listed request's start, so a poll that
+	 * lists something new is merged and one that lists nothing is dropped.
+	 *
+	 * One walk of the flame index by URL, under the verb's deadline, each hit
+	 * folded as the builder folds it. A flame lands in the partition its
+	 * request did, so the walk visits only the partitions its listed requests
+	 * sit in and leaves each once it holds them all. A walk the deadline cuts
+	 * short answers a null flame and says so, because a partial fold would
+	 * read as the URL's whole flame and be kept. A stored flame has lost the
+	 * suffixes that hold a request's same-named siblings apart, so those merge
+	 * into one node here; and profiles live in the request records, so none
+	 * are rebuilt.
+	 *
+	 * @param string                           $hash     12-char URL hash.
+	 * @param array<int,array<string,mixed>>   $requests The requests `dump_url` lists.
+	 * @param int                              $since    The reply's watermark; above 0 rebuilds nothing.
+	 * @param int                              $now      The reply's clock.
+	 * @param float                            $deadline The verb's shared `scan_deadline()`.
+	 * @return array{flame:?array<array-key,mixed>, profiles:null, last_modified:int, truncated:bool}
+	 */
+	private static function rebuilt_url_aggregate( string $hash, array $requests, int $since, int $now, float $deadline ): array {
+		$newest  = 0;
+		$listed  = [];
+		$missing = [];
+		foreach ( $requests as $request ) {
+			$newest = \max( $newest, Core::num_int( $request['timestamp'] ?? 0 ) );
+			$listed[ Core::as_string( $request['rid'] ?? '' ) ] = $request;
+			$partition             = Core::num_int( $request['partition'] ?? 0 );
+			$missing[ $partition ] = ( $missing[ $partition ] ?? 0 ) + 1;
+		}
+		$rebuilt = [ 'flame' => null, 'profiles' => null, 'last_modified' => $newest, 'truncated' => false ];
+		if ( $since > 0 ) {
+			return $rebuilt;
+		}
+		$flame = Flame_Builder_Node::empty_url_flame();
+		if ( [] !== $listed ) {
+			$cut = self::scan_index_entries(
+				\array_intersect_key( Bootstrap::node_dirs( self::NODE_FLAMES ), $missing ),
+				'flames',
+				'url_hash',
+				$hash,
+				static function ( array $entry, int $partition, int $segment, Partition_Node $node ) use ( &$listed, &$missing, &$flame, $now ): string|bool|null {
+					$rid     = \trim( Core::as_string( $entry['rid'] ?? '' ) );
+					$request = $listed[ $rid ] ?? null;
+					if ( null === $request ) {
+						return null;
+					}
+					$message = $node->read_message_at(
+						Core::as_int( $entry['segment'] ?? 0 ),
+						Core::as_int( $entry['offset'] ?? 0 ),
+						Core::as_int( $entry['length'] ?? 0 )
+					);
+					$tree    = \is_array( $message ) ? ( $message[ Message::VALUE ] ?? null ) : null;
+					if ( \is_array( $tree ) ) {
+						$duration = Core::num_float( $request['duration_ms'] ?? 0 );
+						$flame    = Flame_Builder_Node::fold_url_flame( $flame, $tree, $duration, Flame_Builder_Node::timing_counts( $duration, $request['error_status'] ?? '-' ), $now );
+					}
+					unset( $listed[ $rid ] );
+					--$missing[ $partition ];
+					if ( [] === $listed ) {
+						return false;
+					}
+					return 0 >= $missing[ $partition ] ? self::SCAN_STOP_PARTITION : null;
+				},
+				null,
+				$deadline
+			);
+			if ( $cut ) {
+				$rebuilt['truncated'] = true;
+				return $rebuilt;
+			}
+		}
+		$rebuilt['flame'] = 0 === Core::num_int( $flame['count'] ?? 0 )
+			? self::EMPTY_FLAME
+			: Flame_Builder_Node::url_flame_for_display( $flame )[1];
+		return $rebuilt;
 	}
 
 	/**
@@ -2927,16 +3018,19 @@ class Performance_CI_Node extends Service_CI_Node {
 					throw new \RuntimeException( \esc_html( "URL not found: {$hash}" ) );
 				}
 
-				$aggregate = self::find_url_aggregate( $hash, $stores );
-				$flame     = $aggregate['flame']
-					?? [ 'name' => 'aggregate', 'value' => 0, 'children' => [] ];
+				$since     = self::require_option_int( $opts, 'since', 0 );
+				$deadline  = self::scan_deadline();
+				$recent    = self::find_recent_requests_for_url( $hash, $now, $since, $deadline );
+				$aggregate = self::find_url_aggregate( $hash, $stores )
+					?? self::rebuilt_url_aggregate( $hash, $recent['requests'], $since, $now, $deadline );
+				// A stored blob may hold profiles alone; a null flame is meant.
+				$flame     = \array_key_exists( 'flame', $aggregate ) ? $aggregate['flame'] : self::EMPTY_FLAME;
 
-				$recent  = self::find_recent_requests_for_url( $hash, $now, self::require_option_int( $opts, 'since', 0 ) );
 				$payload = [
 					'stats'              => $stats,
 					'requests'           => $recent['requests'],
 					// An empty list that stopped short is not an empty URL.
-					'scan_stopped_early' => $recent['truncated'],
+					'scan_stopped_early' => $recent['truncated'] || ! empty( $aggregate['truncated'] ),
 					// Nor is one that ran out of window an empty record.
 					'requests_window_start' => $recent['window_start'],
 					'aggregate_flame'    => $flame,

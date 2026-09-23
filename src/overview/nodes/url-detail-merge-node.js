@@ -132,6 +132,12 @@ export class UrlDetailMergeNode extends Node {
 		if ( prev?.scan_stopped_early ) {
 			merged.scan_stopped_early = true;
 		}
+		// Null means "keep yours": a cold URL is rebuilt on a full read only.
+		for ( const field of [ 'aggregate_flame', 'aggregate_profiles' ] ) {
+			if ( null === ( data[ field ] ?? null ) && prev?.[ field ] ) {
+				merged[ field ] = prev[ field ];
+			}
+		}
 		this._merged = merged;
 		return merged;
 	}

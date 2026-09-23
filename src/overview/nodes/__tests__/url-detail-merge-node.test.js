@@ -261,6 +261,34 @@ describe( 'UrlDetailMergeNode — scan_stopped_early describes the merged list',
 		expect( forwardedPayload( sink, 1 ).scan_stopped_early ).toBe( true );
 	} );
 
+	test( 'a tailing reply with no flame keeps the one held', () => {
+		// The server rebuilds a cold URL's flame only on a full read.
+		const { node, sink } = makeMerge();
+		const flame = { name: 'aggregate', value: 50, children: [] };
+		const profiles = { count: 3 };
+		node.fill(
+			reply( {
+				last_modified: 41,
+				aggregate_flame: flame,
+				aggregate_profiles: profiles,
+				requests: [ { rid: 'f1', timestamp: 841 } ],
+			} )
+		);
+		node.fill(
+			reply( {
+				last_modified: 42,
+				aggregate_flame: null,
+				aggregate_profiles: null,
+				requests: [ { rid: 'f2', timestamp: 842 } ],
+			} )
+		);
+		expect( forwardedPayload( sink, 1 ).aggregate_flame ).toBe( flame );
+		expect( forwardedPayload( sink, 1 ).aggregate_profiles ).toBe(
+			profiles
+		);
+		expect( forwardedPayload( sink, 1 ).requests ).toHaveLength( 2 );
+	} );
+
 	test( 'a clear drops the note with the list it described', () => {
 		const { node, sink } = makeMerge();
 		node.fill(
