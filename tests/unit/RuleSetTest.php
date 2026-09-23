@@ -15,7 +15,9 @@ use Newspack_Event_Logger_Nodes\Rule_Set;
 use Newspack_Nodes\Cache_Backend;
 use Newspack_Nodes\Core;
 use Newspack_Nodes\Table_Node;
+use Newspack_Event_Logger_Nodes\Stats_Store;
 use Newspack_Nodes\Tests\Helpers\InMemoryMemcached;
+use PHPUnit\Framework\Attributes\DataProvider;
 
 final class RuleSetTest extends TestCase {
 
@@ -50,6 +52,7 @@ final class RuleSetTest extends TestCase {
 		global $wpdb;
 		$wpdb       = null;
 		Core::$memd = null;
+		Stats_Store::$serializer = null;
 		\Newspack_Event_Logger_Nodes\Config::$read_shipped_config = null;
 		\Newspack_Event_Logger_Nodes\Config::reset();
 		parent::tearDown();
@@ -583,5 +586,55 @@ final class RuleSetTest extends TestCase {
 
 		$this->assertCount( 1, $rules, 'a config typo must not white-screen the site' );
 		$this->assertSame( '/tarot/', $rules[0]->pattern );
+	}
+
+	/** The widest hook list the item budget admits, by `$serializer`'s estimate. */
+	private static function widest_hooks( string $serializer, int $extra = 0 ): array {
+		Stats_Store::$serializer = $serializer;
+		$name  = 200;
+		$count = \intdiv( Stats_Store::ITEM_BUDGET, Stats_Store::overhead( 'hook' ) + $name ) + $extra;
+		$hooks = [];
+		for ( $i = 0; $i < $count; $i++ ) {
+			$hooks[] = \str_pad( "hook_{$i}_", $name, 'x' );
+		}
+		return $hooks;
+	}
+
+	public static function serializers(): array {
+		return [
+			'php'      => [ Stats_Store::SERIALIZER_PHP ],
+			'igbinary' => [ Stats_Store::SERIALIZER_IGBINARY ],
+		];
+	}
+
+	#[DataProvider( 'serializers' )]
+	public function test_the_widest_hook_list_the_budget_admits_is_cached_within_it( string $serializer ): void {
+		Core::$memd = new InMemoryMemcached();
+		$hooks      = self::widest_hooks( $serializer );
+
+		( new Rule_Set( [] ) )->save( [ new Rule( 'w1', '/wide/', Rule::ACTION_LOG, hooks: $hooks ) ] );
+		$cached = $this->hooks_table()->lookup( 'w1' );
+
+		$this->assertSame( $hooks, $cached );
+		$bytes = Stats_Store::SERIALIZER_IGBINARY === $serializer
+			? \strlen( (string) \igbinary_serialize( $cached ) )
+			: \strlen( \serialize( $cached ) );
+		$this->assertLessThanOrEqual( Stats_Store::ITEM_BUDGET, $bytes );
+	}
+
+	#[DataProvider( 'serializers' )]
+	public function test_a_hook_list_past_the_budget_is_refused_before_anything_is_written( string $serializer ): void {
+		Core::$memd = new InMemoryMemcached();
+		$hooks      = self::widest_hooks( $serializer, 1 );
+
+		try {
+			( new Rule_Set( [] ) )->save( [ new Rule( 'w2', '/wide/', Rule::ACTION_LOG, hooks: $hooks ) ] );
+			$this->fail( 'a hook list past the item budget was saved' );
+		} catch ( \InvalidArgumentException $e ) {
+			$this->assertStringContainsString( '/wide/', $e->getMessage() );
+		}
+		$this->assertArrayNotHasKey( Rule_Set::hooks_option_name( 'w2' ), $GLOBALS['_wp_options'] );
+		$this->assertArrayNotHasKey( Rule_Set::OPTION_RULES, $GLOBALS['_wp_options'] );
+		$this->assertNull( $this->hooks_table()->lookup( 'w2' ) );
 	}
 }

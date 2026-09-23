@@ -107,6 +107,8 @@ abstract class TestCase extends RuntimeTestCase {
 	 */
 	protected function setUp(): void {
 		parent::setUp();
+		// Each test's own handle decides the serializer its estimates assume.
+		\Newspack_Event_Logger_Nodes\Stats_Store::$serializer = null;
 		\Newspack_Nodes\Topology_Registry::register_plugin(
 			'Newspack_Event_Logger_Nodes\\',
 			NEWSPACK_EVENT_LOGGER_NODES_DIR . 'topologies'

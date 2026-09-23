@@ -414,4 +414,49 @@ class FlameTreeTest extends TestCase {
 		$this->assertTrue( Flame_Tree::is_listener_span( Flame_Tree::listener_name( 'Image_CDN::filter_the_content', -5 ) ) );
 		$this->assertSame( 'Image_CDN::filter_the_content @999999', Flame_Tree::listener_name( 'Image_CDN::filter_the_content', 999999 ) );
 	}
+
+	/** What a node costs a prune before its name, distinct from every real estimate. */
+	private const NODE_BYTES = 97;
+
+	/** What `prune_lightest()` estimates a tree costs: each node's overhead and name. */
+	private static function tree_bytes( array $node ): int {
+		$bytes = self::NODE_BYTES + \strlen( $node['name'] );
+		foreach ( $node['children'] as $child ) {
+			$bytes += self::tree_bytes( $child );
+		}
+		return $bytes;
+	}
+
+	/** An aggregate node as the merge leaves one. */
+	private static function agg( string $name, float $sum, array $children = [] ): array {
+		return [ 'name' => $name, 'sum_value' => $sum, 'ts' => self::NOW, 'children' => $children ];
+	}
+
+	public function test_a_prune_drops_the_lightest_leaves_first_and_keeps_the_root(): void {
+		$light = self::agg( 'light parent', 7.0, [ self::agg( 'light a', 3.0 ), self::agg( 'light b', 4.0 ) ] );
+		$root  = self::agg(
+			'aggregate',
+			900.0,
+			[ $light, self::agg( 'heavy parent', 800.0, [ self::agg( 'heavy a', 500.0 ), self::agg( 'heavy b', 300.0 ) ] ) ]
+		);
+		// One byte short of room for everything but the light subtree.
+		$budget = self::tree_bytes( $root ) - self::tree_bytes( $light ) - 1;
+
+		$root = Flame_Tree::prune_lightest( $root, $budget, self::NODE_BYTES );
+
+		$this->assertLessThanOrEqual( $budget, self::tree_bytes( $root ) );
+		$this->assertSame( 'aggregate', $root['name'] );
+		$this->assertSame( [ 'heavy parent' ], \array_column( $root['children'], 'name' ), 'the light subtree went whole' );
+		$this->assertSame( [ 'heavy a' ], \array_column( $root['children'][0]['children'], 'name' ), 'then the lighter heavy leaf' );
+		$this->assertSame( [ 0 ], \array_keys( $root['children'][0]['children'] ), 'the survivors are a list again' );
+	}
+
+	public function test_a_prune_takes_a_bared_parent_as_a_leaf_in_its_turn(): void {
+		$root   = self::agg( 'aggregate', 10.0, [ self::agg( 'parent', 1.0, [ self::agg( 'child', 1.0 ) ] ), self::agg( 'heavy', 9.0 ) ] );
+		$budget = self::NODE_BYTES * 2 + \strlen( 'aggregate' ) + \strlen( 'heavy' );
+
+		$root = Flame_Tree::prune_lightest( $root, $budget, self::NODE_BYTES );
+
+		$this->assertSame( [ 'heavy' ], \array_column( $root['children'], 'name' ) );
+	}
 }

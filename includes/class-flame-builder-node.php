@@ -211,17 +211,6 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	];
 
 	/**
-	 * Max URLs kept per server per SHARD of a bucket, ranked by request count.
-	 *
-	 * Sixteen shards, so this admits 16x the URLs per bucket at a sixteenth the
-	 * blob — a backstop against an oversized item, not a policy. The tail folds
-	 * rather than dropping, so reaching it costs detail, never totals. One
-	 * server's rows per key, so a busy server's tail never folds a quiet
-	 * one's rows.
-	 */
-	public const MAX_URLS_PER_SHARD = 2000;
-
-	/**
 	 * Keys per read/write batch in a flush. Bounds the held set: one chunk is
 	 * at most one shard's worth of rows, which is the largest value the schema
 	 * writes. Raise only against a measured peak.
@@ -2066,14 +2055,13 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 		$writes[] = [ Stats_Store::url_srv_parts( true ), $hour, $named ];
 		foreach ( \array_chunk( $writes, self::WRITE_BATCH_KEYS ) as $chunk ) {
 			// @longform The batch answers per write, so a refusal names the
-			// KEY that was lost rather than the hour holding its candidates:
-			// which shard is over the item limit is the operator's next move.
+			// KEY that was lost rather than the hour holding its candidates.
 			foreach ( $stats_store->bucket_set_multi( $chunk ) as $at => $ok ) {
 				if ( $ok ) {
 					continue;
 				}
 				$this->print_less_often(
-					'hour fold write refused; a shard is over the cache item limit',
+					'hour fold write refused; a shard is lost',
 					' — ' . Stats_Store::key( ...[ ...$chunk[ $at ][0], $chunk[ $at ][1] ] )
 				);
 			}
@@ -2175,7 +2163,7 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 			$landed = ! \in_array( false, $stats_store->bucket_set_multi( $chunk ), true ) && $landed;
 		}
 		if ( ! $landed ) {
-			$this->print_less_often( 'URL rank write refused; a ranked list is over the cache item limit', " — {$key}" );
+			$this->print_less_often( 'URL rank write refused', " — {$key}" );
 		}
 	}
 
@@ -2198,7 +2186,7 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 				Stats_Store::merge_leaderboard_bucket( $merged, Stats_Store::string_keys( $row ) );
 			}
 		}
-		return $merged;
+		return Stats_Store::string_keys( self::cap_leaderboard( $merged, Stats_Store::ITEM_BUDGET ) );
 	}
 
 	/**
@@ -2219,13 +2207,11 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 			static fn ( array $existing ): array => self::cap_url_rows(
 				self::merge_url_rows( $existing, $rows )
 			),
-			// @longform The largest blob the schema writes. memcached refuses
-			// an item over its limit, and a discarded return loses this
-			// server's whole shard of the bucket — again on every later merge.
+			// A discarded refusal loses this server's shard of the bucket.
 			function ( string $key ) use ( $rows ): void {
 				// Rows, not bytes: sizing re-serialises a megabyte a flush.
 				$this->print_less_often(
-					'URL index write refused in ' . Stats_Store::namespace_of( $key ) . '; a shard is over the cache item limit and its rows are lost',
+					'URL index write refused in ' . Stats_Store::namespace_of( $key ) . '; its rows are lost',
 					\sprintf( ' — %s, %d rows', $key, \count( $rows ) )
 				);
 			},
@@ -2268,7 +2254,7 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	}
 
 	/**
-	 * Cap one server's shard of rows.
+	 * Cap one server's shard of rows by estimated bytes, busiest first.
 	 *
 	 * Both tiers store the same shape, so both take the same ceiling — and the
 	 * HOUR needs it more than the bucket does, because it folds twelve buckets'
@@ -2288,13 +2274,17 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 		];
 		unset( $rows[ Stats_Store::OTHER_KEY ], $rows[ Stats_Store::OTHER_WORKER_KEY ] );
 		// The overflow rows go back in below either way: the cap counts them.
-		$keep = self::MAX_URLS_PER_SHARD - \count( $other );
-		if ( \count( $rows ) > $keep ) {
+		$per_row = Stats_Store::overhead( 'url_row' );
+		$room    = Stats_Store::ITEM_BUDGET - \count( $other ) * $per_row;
+		$bytes   = static fn ( mixed $stored ): int => $per_row
+			+ \strlen( Core::str( Core::arr( $stored )[ Stats_Store::ROW_PATH ] ?? '' ) );
+		if ( self::fitting( $rows, \PHP_INT_MAX, $room, $bytes ) < \count( $rows ) ) {
 			\uasort(
 				$rows,
 				static fn ( $a, $b ) => Core::num_int( Core::arr( $b )[ Stats_Store::ROW_COUNT ] ?? null )
 					<=> Core::num_int( Core::arr( $a )[ Stats_Store::ROW_COUNT ] ?? null )
 			);
+			$keep = self::fitting( $rows, \PHP_INT_MAX, $room, $bytes );
 			foreach ( \array_slice( $rows, $keep, null, true ) as $row ) {
 				$row           = Core::arr( $row );
 				$key           = Stats_Store::other_key( ! empty( $row[ Stats_Store::ROW_WORKER ] ) );
@@ -2367,8 +2357,7 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 				$existing = self::empty_leaderboard();
 			}
 			Stats_Store::merge_leaderboard_bucket( $existing, $sums );
-			self::cap_leaderboard_entries( $existing );
-			return $existing;
+			return self::cap_leaderboard( $existing, Stats_Store::ITEM_BUDGET );
 		};
 		return '' === $server
 			? $this->hour_tier_intents( $bucket, Stats_Store::lb_parts( '' ), Stats_Store::lb_hour_parts(), $merge, null, null )
@@ -2418,56 +2407,6 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 			self::intent( $fine, $bucket, $merge, $refused ),
 			self::intent( $coarse, $hour, $merge, $refused, $unrank, null, true ),
 		];
-	}
-
-	/**
-	 * Cap each leaderboard category's entries to the global limit (sorted by sum_time).
-	 *
-	 * Same hysteresis as accumulation: trim only past UPPER, and trim to LOWER.
-	 *
-	 * @param array<string,mixed> $bucket Leaderboard bucket, modified in place.
-	 */
-	private static function cap_leaderboard_entries( array &$bucket ): void {
-		$categories = $bucket['categories'] ?? null;
-		if ( ! \is_array( $categories ) ) {
-			return;
-		}
-		foreach ( $categories as &$cat_data ) {
-			if ( ! \is_array( $cat_data ) ) {
-				continue;
-			}
-			$entries = $cat_data['entries'] ?? null;
-			if ( \is_array( $entries ) ) {
-				self::trim_entries( $entries, self::ENTRY_LIMIT_GLOBAL_UPPER, self::ENTRY_LIMIT_GLOBAL_LOWER );
-				$cat_data['entries'] = $entries;
-			}
-		}
-		unset( $cat_data );
-		$bucket['categories'] = $categories;
-	}
-
-	/**
-	 * Trim an entry map back to `$lower` once it passes `$upper`, keeping the
-	 * slowest by `sum_time`. The gap between the two bounds is the hysteresis
-	 * that stops a busy category re-sorting on every request.
-	 *
-	 * Takes `array-key,mixed` because both callers are real: one holds accumulator
-	 * state, the other a bucket decoded from memcache whose entries can be any
-	 * shape. A non-array entry sorts as zero rather than warning.
-	 *
-	 * @param array<array-key,mixed> $entries Entry map, by reference.
-	 * @param int                    $upper   Count that triggers a trim.
-	 * @param int                    $lower   Count to trim back to.
-	 */
-	private static function trim_entries( array &$entries, int $upper, int $lower ): void {
-		if ( \count( $entries ) <= $upper ) {
-			return;
-		}
-		\uasort(
-			$entries,
-			fn ( $a, $b ) => ( \is_array( $b ) ? ( $b[0] ?? 0 ) : 0 ) <=> ( \is_array( $a ) ? ( $a[0] ?? 0 ) : 0 )
-		);
-		$entries = \array_slice( $entries, 0, $lower, true );
 	}
 
 	/**
@@ -2628,52 +2567,6 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 			$capped[ $name ] = $entry;
 		}
 		return $capped;
-	}
-
-	/**
-	 * Cap a bucket's value map to the top `$max_values`, rolling the tail into a
-	 * synthetic `Other`.
-	 *
-	 * The dimensional and category caps differ only in what they sort by, which
-	 * fields they sum, and whether a reserved row (`total`) is lifted clear of the
-	 * ranking — so they are arguments, not two functions.
-	 *
-	 * Key-agnostic: a decoded bucket can carry int keys (a numeric value name);
-	 * the body only ever names `Other` and the caller's reserved row.
-	 *
-	 * @param array<array-key,mixed> $values     One bucket's values.
-	 * @param int                    $max_values Ceiling on distinct values, synthetic slots included.
-	 * @param string|int             $sort_field Field ranking survivors, descending.
-	 * @param array<array-key,bool>  $fields     Field key => is a whole count.
-	 * @param string|null            $reserved   Row held out of the ranking and restored after.
-	 * @return array<array-key,mixed>
-	 */
-	private static function cap_bucket( array $values, int $max_values, string|int $sort_field, array $fields, ?string $reserved = null ): array {
-		if ( \count( $values ) <= $max_values ) {
-			return $values;
-		}
-		$held = null;
-		if ( null !== $reserved ) {
-			$held = $values[ $reserved ] ?? null;
-			unset( $values[ $reserved ] );
-		}
-		// One slot for the overflow key, one more for a reserved row.
-		$keep = \max( 0, $max_values - ( null === $held ? 1 : 2 ) );
-		\uasort(
-			$values,
-			fn( $a, $b ) => ( \is_array( $b ) && \is_numeric( $b[ $sort_field ] ?? null ) ? $b[ $sort_field ] : 0 )
-				<=> ( \is_array( $a ) && \is_numeric( $a[ $sort_field ] ?? null ) ? $a[ $sort_field ] : 0 )
-		);
-		$top  = \array_slice( $values, 0, $keep, true );
-		$rest = [];
-		foreach ( \array_slice( $values, $keep ) as $v ) {
-			$rest = Stats_Store::sum_fields( $rest, [ Stats_Store::OTHER_KEY => Core::arr( $v ) ], $fields );
-		}
-		$top = Stats_Store::sum_fields( $top, $rest, $fields );
-		if ( null !== $held ) {
-			$top[ $reserved ] = $held;
-		}
-		return $top;
 	}
 
 	/**
@@ -3280,8 +3173,10 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 				continue;
 			}
 			/** @var array<string,mixed> $aggregate */
+			// Half the item for profiles, a quarter for each copy of the tree.
+			$aggregate['profiles'] = self::cap_leaderboard( Core::arr( $aggregate['profiles'] ?? null ), \intdiv( Stats_Store::ITEM_BUDGET, 2 ) );
+			$flame                 = Flame_Tree::prune_lightest( Core::arr( $aggregate['flame'] ?? null ), \intdiv( Stats_Store::ITEM_BUDGET, 4 ), Stats_Store::overhead( 'flame_node' ) );
 			// Finalized flame for display; keep flame_raw for merging.
-			$flame                  = \is_array( $aggregate['flame'] ?? null ) ? $aggregate['flame'] : [];
 			$count_raw              = $flame['count'] ?? 0;
 			$total_count            = Core::num_int( $count_raw );
 			$aggregate['flame_raw'] = $flame;
@@ -3298,6 +3193,181 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 		foreach ( \array_chunk( $writes, self::WRITE_BATCH_KEYS ) as $chunk ) {
 			$stats_store->bucket_set_multi( $chunk );
 		}
+	}
+
+	/**
+	 * A leaderboard bucket or a URL's profile as stored: each category's
+	 * entries trimmed to the global limit, then the categories kept slowest
+	 * first under `MAX_LB_CATEGORIES` and `$room` estimated bytes, the rest
+	 * folded into `Other`.
+	 *
+	 * Same entry hysteresis as accumulation: trim only past UPPER, and trim
+	 * to LOWER.
+	 *
+	 * @param array<array-key,mixed> $bucket Leaderboard bucket or profile.
+	 * @param int                    $room   Bytes its categories may take.
+	 * @return array<array-key,mixed>
+	 */
+	private static function cap_leaderboard( array $bucket, int $room ): array {
+		$categories = $bucket['categories'] ?? null;
+		if ( ! \is_array( $categories ) ) {
+			return $bucket;
+		}
+		foreach ( $categories as &$cat_data ) {
+			if ( ! \is_array( $cat_data ) ) {
+				continue;
+			}
+			$entries = $cat_data['entries'] ?? null;
+			if ( \is_array( $entries ) ) {
+				self::trim_entries( $entries, self::ENTRY_LIMIT_GLOBAL_UPPER, self::ENTRY_LIMIT_GLOBAL_LOWER );
+				$cat_data['entries'] = $entries;
+			}
+		}
+		unset( $cat_data );
+		$bucket['categories'] = self::cap_bucket(
+			$categories,
+			Stats_Store::MAX_LB_CATEGORIES,
+			'sum_time',
+			Stats_Store::LB_CAT_SUMS,
+			null,
+			self::category_bytes( ... ),
+			$room
+		);
+		return $bucket;
+	}
+
+	/**
+	 * What one leaderboard or profile category costs stored: its own framing
+	 * and name, and each entry's.
+	 *
+	 * @param mixed      $category The category's sums and entries.
+	 * @param int|string $name     Its name.
+	 */
+	private static function category_bytes( mixed $category, int|string $name ): int {
+		$entry = Stats_Store::overhead( 'lb_entry' );
+		$bytes = Stats_Store::overhead( 'lb_category' ) + \strlen( (string) $name );
+		foreach ( Core::arr( Core::arr( $category )['entries'] ?? null ) as $label => $unused ) {
+			$bytes += $entry + \strlen( (string) $label );
+		}
+		return $bytes;
+	}
+
+	/**
+	 * Trim an entry map back to `$lower` once it passes `$upper`, keeping the
+	 * slowest by `sum_time`. The gap between the two bounds is the hysteresis
+	 * that stops a busy category re-sorting on every request.
+	 *
+	 * Takes `array-key,mixed` because both callers are real: one holds accumulator
+	 * state, the other a bucket decoded from memcache whose entries can be any
+	 * shape. A non-array entry sorts as zero rather than warning.
+	 *
+	 * @param array<array-key,mixed> $entries Entry map, by reference.
+	 * @param int                    $upper   Count that triggers a trim.
+	 * @param int                    $lower   Count to trim back to.
+	 */
+	private static function trim_entries( array &$entries, int $upper, int $lower ): void {
+		if ( \count( $entries ) <= $upper ) {
+			return;
+		}
+		\uasort(
+			$entries,
+			fn ( $a, $b ) => ( \is_array( $b ) ? ( $b[0] ?? 0 ) : 0 ) <=> ( \is_array( $a ) ? ( $a[0] ?? 0 ) : 0 )
+		);
+		$entries = \array_slice( $entries, 0, $lower, true );
+	}
+
+	/**
+	 * Cap a bucket's value map to the top `$max_values`, and to `$room` bytes
+	 * where the caller estimates them, rolling the tail into a synthetic
+	 * `Other`.
+	 *
+	 * The dimensional, category and leaderboard caps differ only in what they
+	 * sort by, which fields they sum, whether a reserved row (`total`) is
+	 * lifted clear of the ranking, and whether their values run wide enough to
+	 * need a byte bound — so they are arguments, not three functions.
+	 *
+	 * Key-agnostic: a decoded bucket can carry int keys (a numeric value name);
+	 * the body only ever names `Other` and the caller's reserved row.
+	 *
+	 * @param array<array-key,mixed> $values     One bucket's values.
+	 * @param int                    $max_values Ceiling on distinct values, synthetic slots included.
+	 * @param string|int             $sort_field Field ranking survivors, descending.
+	 * @param array<array-key,bool>  $fields     Field key => is a whole count.
+	 * @param string|null            $reserved   Row held out of the ranking and restored after.
+	 * @param ?\Closure(mixed, array-key): int $bytes One value's estimated bytes; null counts none.
+	 * @param int                    $room       Bytes the whole map may take.
+	 * @return array<array-key,mixed>
+	 */
+	private static function cap_bucket( array $values, int $max_values, string|int $sort_field, array $fields, ?string $reserved = null, ?\Closure $bytes = null, int $room = \PHP_INT_MAX ): array {
+		$bytes ??= static fn (): int => 0;
+		if ( self::fitting( $values, $max_values, $room, $bytes ) === \count( $values ) ) {
+			return $values;
+		}
+		$held = null;
+		if ( null !== $reserved ) {
+			$held = $values[ $reserved ] ?? null;
+			unset( $values[ $reserved ] );
+		}
+		// One slot for the overflow key, one more for a reserved row.
+		$keep  = \max( 0, $max_values - ( null === $held ? 1 : 2 ) );
+		$room -= $bytes( [], Stats_Store::OTHER_KEY ) + ( null === $held ? 0 : $bytes( $held, (string) $reserved ) );
+		\uasort(
+			$values,
+			fn( $a, $b ) => ( \is_array( $b ) && \is_numeric( $b[ $sort_field ] ?? null ) ? $b[ $sort_field ] : 0 )
+				<=> ( \is_array( $a ) && \is_numeric( $a[ $sort_field ] ?? null ) ? $a[ $sort_field ] : 0 )
+		);
+		$keep = self::fitting( $values, $keep, $room, $bytes );
+		$top   = \array_slice( $values, 0, $keep, true );
+		$rest  = [];
+		$stamp = self::stamp_of( $top[ Stats_Store::OTHER_KEY ] ?? null, null );
+		foreach ( \array_slice( $values, $keep ) as $v ) {
+			$rest  = Stats_Store::sum_fields( $rest, [ Stats_Store::OTHER_KEY => Core::arr( $v ) ], $fields );
+			$stamp = self::stamp_of( $v, $stamp );
+		}
+		$top = Stats_Store::sum_fields( $top, $rest, $fields );
+		// The fold is as fresh as the freshest row it absorbed, or it expires.
+		if ( null !== $stamp && isset( $top[ Stats_Store::OTHER_KEY ] ) ) {
+			$top[ Stats_Store::OTHER_KEY ] = [ 'ts' => $stamp ] + Core::arr( $top[ Stats_Store::OTHER_KEY ] );
+		}
+		if ( null !== $held ) {
+			$top[ $reserved ] = $held;
+		}
+		return $top;
+	}
+
+	/**
+	 * The later of a value's `ts` and `$stamp`: only profile categories carry
+	 * one, which the expiry sweep in `accumulate_profiles()` reads.
+	 *
+	 * @param mixed    $value A capped value.
+	 * @param int|null $stamp The latest `ts` so far.
+	 */
+	private static function stamp_of( mixed $value, ?int $stamp ): ?int {
+		$ts = \is_array( $value ) ? ( $value['ts'] ?? null ) : null;
+		return null === $ts ? $stamp : \max( $stamp ?? 0, Core::num_int( $ts ) );
+	}
+
+	/**
+	 * How many of `$values`, in their order, fit under both a count and a
+	 * byte estimate. Every cap here is this prefix, so a count cap and a byte
+	 * cap are one walk rather than two.
+	 *
+	 * @param array<array-key,mixed>                 $values Ranked values.
+	 * @param int                                    $max    Most values kept.
+	 * @param int                                    $room   Bytes the kept values may take.
+	 * @param \Closure(mixed, array-key): int $bytes  One value's estimated bytes.
+	 * @return int
+	 */
+	private static function fitting( array $values, int $max, int $room, \Closure $bytes ): int {
+		$fit = 0;
+		foreach ( $values as $key => $value ) {
+			$room -= $bytes( $value, $key );
+			if ( $fit >= $max || $room < 0 ) {
+				break;
+			}
+			++$fit;
+		}
+		return $fit;
 	}
 
 	/**

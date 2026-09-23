@@ -558,6 +558,94 @@ final class Flame_Tree {
 	}
 
 	/**
+	 * An aggregate tree without its lightest leaves, dropped one at a time
+	 * until its estimated bytes fit `$budget`. A leaf's weight is its
+	 * `sum_value`; a parent left bare joins the queue as a leaf, so the
+	 * heaviest paths are the last to go. The root stays whatever the budget.
+	 *
+	 * @param array<array-key,mixed> $root       Aggregate root.
+	 * @param int                    $budget     Bytes the tree may take.
+	 * @param int                    $node_bytes What one node costs before its name.
+	 * @return array<array-key,mixed>
+	 */
+	public static function prune_lightest( array $root, int $budget, int $node_bytes ): array {
+		$nodes = [];
+		self::index_nodes( $root, -1, $node_bytes, $nodes );
+		$over = \array_sum( \array_column( $nodes, 2 ) ) - $budget;
+		if ( $over <= 0 ) {
+			return $root;
+		}
+		/** @var \SplMinHeap<array{0: float, 1: int}> $lightest */
+		$lightest = new \SplMinHeap();
+		foreach ( $nodes as $id => [ , $weight, , $children ] ) {
+			if ( 0 < $id && 0 === $children ) {
+				$lightest->insert( [ $weight, $id ] );
+			}
+		}
+		$left    = \array_column( $nodes, 3 );
+		$dropped = [];
+		while ( $over > 0 && ! $lightest->isEmpty() ) {
+			$id             = $lightest->extract()[1];
+			$dropped[ $id ] = true;
+			$over          -= $nodes[ $id ][2];
+			$parent         = $nodes[ $id ][0];
+			if ( 0 < $parent && 0 === --$left[ $parent ] ) {
+				$lightest->insert( [ $nodes[ $parent ][1], $parent ] );
+			}
+		}
+		$next = 0;
+		return self::without( $root, $dropped, $next );
+	}
+
+	/**
+	 * A tree rebuilt without the nodes `$dropped` names, walked in the same
+	 * pre-order `index_nodes()` numbered it in.
+	 *
+	 * @param array<array-key,mixed> $node    The subtree.
+	 * @param array<int,true>        $dropped Ids to leave out.
+	 * @param int                    $next    The next id in the walk, by reference.
+	 * @return array<array-key,mixed>
+	 */
+	private static function without( array $node, array $dropped, int &$next ): array {
+		++$next;
+		$kept = [];
+		foreach ( \array_filter( Core::arr( $node['children'] ?? null ), 'is_array' ) as $child ) {
+			$id    = $next;
+			$child = self::without( $child, $dropped, $next );
+			if ( ! isset( $dropped[ $id ] ) ) {
+				$kept[] = $child;
+			}
+		}
+		if ( isset( $node['children'] ) ) {
+			$node['children'] = $kept;
+		}
+		return $node;
+	}
+
+	/**
+	 * Every node of a tree in pre-order, as `[ parent, weight, own bytes,
+	 * children ]`, its id its position.
+	 *
+	 * @param array<array-key,mixed>                        $node       The subtree.
+	 * @param int                                           $parent     Its parent's id; -1 for the root.
+	 * @param int                                           $node_bytes What one node costs before its name.
+	 * @param list<array{0: int, 1: float, 2: int, 3: int}> $nodes      Collected, by reference.
+	 */
+	private static function index_nodes( array $node, int $parent, int $node_bytes, array &$nodes ): void {
+		$id       = \count( $nodes );
+		$children = \array_filter( Core::arr( $node['children'] ?? null ), 'is_array' );
+		$nodes[]  = [
+			$parent,
+			Core::num_float( $node['sum_value'] ?? null ),
+			$node_bytes + \strlen( Core::str( $node['name'] ?? '' ) ),
+			\count( $children ),
+		];
+		foreach ( $children as $child ) {
+			self::index_nodes( $child, $id, $node_bytes, $nodes );
+		}
+	}
+
+	/**
 	 * A wrapped listener's span name, as `App\Core::wrap_callbacks()` mints it
 	 * and `is_listener_span()` reads it: one format, one owner.
 	 *

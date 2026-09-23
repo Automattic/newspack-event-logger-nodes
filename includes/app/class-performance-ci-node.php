@@ -216,7 +216,10 @@ class Performance_CI_Node extends Service_CI_Node {
 	/** Table namespace of the URL page cache, beside `Rule_Set::TABLE_HOOKS`. */
 	private const URLS_PAGE_NS = 'eln-urls-page';
 
-	/** The widest page cached: 1,000 named rows can pass the cache item limit. */
+	/**
+	 * The widest page cached, and its size bound: 250 of the widest rows a
+	 * reply names serialize to about 490KB, inside `Stats_Store::ITEM_BUDGET`.
+	 */
 	private const URLS_PAGE_CACHE_MAX_ROWS = 250;
 
 	/**
@@ -1052,9 +1055,9 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * shards are disjoint and a shard's fold is complete for every URL it
 	 * holds — there is no cross-shard merge to miss. The whole merged index is
 	 * otherwise the count of distinct URLs across the retention window, which
-	 * nothing bounds: the stored buckets are capped at `MAX_URLS_PER_SHARD`,
-	 * the MERGE of them is not, and folding all sixteen at once exhausts a
-	 * production hub's 512MB inside the fold itself. A server scope reads
+	 * nothing bounds: each stored bucket fits one cache item, the MERGE of
+	 * them does not, and folding all sixteen at once exhausts a production
+	 * hub's 512MB inside the fold itself. A server scope reads
 	 * that server's keys alone; no scope reads every server the index names.
 	 *
 	 * The union of the per-shard top-N is exactly the global top-N, because

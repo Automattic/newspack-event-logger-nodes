@@ -98,8 +98,14 @@ class VerbHarness {
 		return $command['payload'];
 	}
 
-	/** Reset the request-scope graph between tests. */
+	/**
+	 * Reset the request-scope graph, keeping the tick: a test's replies and
+	 * its seeds all date from the one `Core::$now` its setUp stamped, and a
+	 * reset that re-read the wall would split them across a bucket boundary.
+	 */
 	public static function reset(): void {
+		$tick = Core::$now;
 		Core::reset();
+		Core::$now = $tick;
 	}
 }
