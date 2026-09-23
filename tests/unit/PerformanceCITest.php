@@ -738,7 +738,7 @@ class PerformanceCITest extends TestCase {
 	 * on the staging hub that is 18,432 keys and 54 MB to answer about one row.
 	 */
 	public function test_dump_url_reads_only_the_shard_its_hash_names(): void {
-		$memd  = Core::$memd;
+		$memd  = self::row_key_counter();
 		$store = new Stats_Store( 0, 86400 );
 		// Two rows, deliberately in DIFFERENT shards: the first hex digit is
 		// the shard, so `a…` and `b…` cannot share one.
@@ -746,14 +746,14 @@ class PerformanceCITest extends TestCase {
 			'a4471ab0c0de' => [ 'url' => '/wombat-4471', 'count' => 31, 'sum_ms' => 992.0, 'timed_count' => 31 ],
 			'b8823bc1d2ef' => [ 'url' => '/quokka-8823', 'count' => 17, 'sum_ms' => 411.0, 'timed_count' => 17 ],
 		] );
-		$memd->multi_keys = 0;
-		$result           = VerbHarness::fire(
+		$memd->row_keys = 0;
+		$result         = VerbHarness::fire(
 			new Performance_CI_Node(),
 			'performance',
 			'dump_url',
 			'a4471ab0c0de'
 		);
-		$one_shard = $memd->multi_keys;
+		$one_shard = $memd->row_keys;
 
 		$this->assertSame( '/wombat-4471', $result['stats']['url'] );
 		$this->assertSame( 31, $result['stats']['count'] );
@@ -761,16 +761,36 @@ class PerformanceCITest extends TestCase {
 		// Against what the whole table costs — a ratio rather than a count, so
 		// this says "one shard, not sixteen" whatever the read plan's width is.
 		Core::cleanup_all_nodes();
-		$memd->multi_keys = 0;
+		$memd->row_keys = 0;
 		VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' );
 
-		// Plus the name lookup each read pays: a stored row carries the hash,
-		// so one key resolves the one URL this modal shows.
+		// Twice: the reader family, then the worker one when the first misses.
 		$this->assertLessThanOrEqual(
-			(int) ( $memd->multi_keys / Stats_Store::URL_SHARDS ) + 2,
+			2 * (int) ( $memd->row_keys / Stats_Store::URL_SHARDS ),
 			$one_shard,
 			'dump_url must point-read the hash\'s shard, not the whole index'
 		);
+	}
+
+	/**
+	 * A memcache double counting the URL row keys each read asks for — the
+	 * fan-out a point read exists to avoid, apart from the index and names
+	 * every read pays once.
+	 *
+	 * @return InMemoryMemcached&object{row_keys: int}
+	 */
+	private static function row_key_counter(): InMemoryMemcached {
+		Core::$memd = new class() extends InMemoryMemcached {
+			public int $row_keys = 0;
+
+			public function getMulti( array $keys, int $get_flags = 0 ): array|false {
+				foreach ( $keys as $key ) {
+					$this->row_keys += \str_contains( (string) $key, ':' . Stats_Store::NS_URLS . ':' ) ? 1 : 0;
+				}
+				return parent::getMulti( $keys, $get_flags );
+			}
+		};
+		return Core::$memd;
 	}
 
 	/**
@@ -783,7 +803,7 @@ class PerformanceCITest extends TestCase {
 	 * the fold. `load_row()` point-reads the one shard `url_shard()` names.
 	 */
 	public function test_one_row_costs_one_shard_not_the_whole_index(): void {
-		$memd  = Core::$memd;
+		$memd  = self::row_key_counter();
 		$store = new Stats_Store( 0, 86400 );
 		$this->set_url_bucket( $store, $this->current_url_bucket(), [
 			'a4471ab0c0de' => [ 'url' => '/wombat-4471', 'count' => 31, 'sum_ms' => 992.0, 'timed_count' => 31 ],
@@ -791,18 +811,16 @@ class PerformanceCITest extends TestCase {
 		$node = new Performance_CI_Node();
 
 		VerbHarness::fire( $node, 'performance', 'urls' );
-		$table = $memd->multi_keys;
+		$table = $memd->row_keys;
 		Core::cleanup_all_nodes();
-		$memd->multi_keys = 0;
-		$detail           = VerbHarness::fire( $node, 'performance', 'dump_url', 'a4471ab0c0de' );
-		$modal            = $memd->multi_keys;
+		$memd->row_keys = 0;
+		$detail         = VerbHarness::fire( $node, 'performance', 'dump_url', 'a4471ab0c0de' );
+		$modal          = $memd->row_keys;
 
 		$this->assertSame( '/wombat-4471', $detail['stats']['url'] );
 		$this->assertGreaterThan( 0, $modal, 'the row is read, not remembered' );
-		// +2, not +1: both reads resolve the name of what they display, and
-		// the modal's single row is one key against the table's page.
-		$this->assertLessThan(
-			(int) ( $table / \count( Stats_Store::url_shards() ) ) + 2,
+		$this->assertLessThanOrEqual(
+			(int) ( $table / \count( Stats_Store::url_shards() ) ),
 			$modal,
 			'a modal must not pay the table fan-out'
 		);
@@ -831,7 +849,7 @@ class PerformanceCITest extends TestCase {
 			$hash => [ 'url' => '/wombat-4471', 'count' => 5, 'timed_count' => 5, 'sum_ms' => 50.0 ],
 		] );
 
-		$row = Performance_CI_Node::load_row( $hash, self::live_stores(), (int) Core::$now );
+		$row = Performance_CI_Node::load_row( $hash, '', self::live_stores(), (int) Core::$now );
 
 		$this->assertNotNull( $row );
 		$this->assertSame( 12, $row['count'], 'the folded hour and the grace hour both counted' );
@@ -857,7 +875,7 @@ class PerformanceCITest extends TestCase {
 		] );
 
 		$this->assertNull(
-			Performance_CI_Node::load_row( $hash, self::live_stores(), (int) Core::$now ),
+			Performance_CI_Node::load_row( $hash, '', self::live_stores(), (int) Core::$now ),
 			'nothing folded it, and the fine tier is not where it is read from'
 		);
 	}
@@ -888,14 +906,14 @@ class PerformanceCITest extends TestCase {
 		$this->seed_url_hour( $store, $hour, $shard, [
 			$hash => [ 'url' => '/wombat-4471', 'count' => 23, 'timed_count' => 23, 'sum_ms' => 460.0 ],
 		] );
-		$this->assertSame( 23, Performance_CI_Node::load_row( $hash, self::live_stores(), (int) Core::$now )['count'] );
+		$this->assertSame( 23, Performance_CI_Node::load_row( $hash, '', self::live_stores(), (int) Core::$now )['count'] );
 
 		// Gone, the way memcache drops an item under pressure.
 		Core::$memd->delete( self::cache_key( 0, Stats_Store::NS_URLS_HOUR . ":{$shard}:{$hour}" ) );
 
 		$this->assertSame(
 			23,
-			Performance_CI_Node::load_row( $hash, self::live_stores(), (int) Core::$now )['count'],
+			Performance_CI_Node::load_row( $hash, '', self::live_stores(), (int) Core::$now )['count'],
 			'the fine buckets answer for an hour that is no longer folded'
 		);
 	}
@@ -916,17 +934,17 @@ class PerformanceCITest extends TestCase {
 			$hash => [ 'url' => '/wombat-4471', 'count' => 5, 'timed_count' => 5, 'sum_ms' => 50.0 ],
 		] );
 
-		$row = Performance_CI_Node::load_row( $hash, self::live_stores(), (int) Core::$now );
+		$row = Performance_CI_Node::load_row( $hash, '', self::live_stores(), (int) Core::$now );
 
 		$this->assertSame( 5, $row['count'], 'the fold replaces its buckets, it does not add to them' );
 	}
 
 	/**
 	 * The whole point, as a number: with every closed hour folded, a read of
-	 * the URL index costs `fine + hours` keys per shard — between 36 and 47
-	 * depending on where the clock sits in the hour, against the 288
-	 * five-minute buckets it used to enumerate. On a four-partition hub that
-	 * is around 2,300 keys against 18,432, and 54 MB it no longer reads.
+	 * the URL index costs `fine + hours` keys per server per shard — between
+	 * 36 and 47 depending on where the clock sits in the hour, against the
+	 * 288 five-minute buckets it used to enumerate — plus the server index,
+	 * read once per reply rather than once per shard.
 	 *
 	 * The header this scope's ranked pages take their totals from is not
 	 * cached either, so `urls`' default page folds — this same per-shard walk
@@ -947,10 +965,11 @@ class PerformanceCITest extends TestCase {
 
 		$per_shard = \count( $plan['fine'] ) + \count( $plan['hours'] );
 		$this->assertLessThan( 48, $per_shard, 'two tiers, not 288 buckets' );
+		// Only the hours name a server, so only they hold row keys to read.
 		$this->assertSame(
-			$per_shard * Stats_Store::URL_SHARDS,
+			\count( $plan['hours'] ) * Stats_Store::URL_SHARDS + $per_shard,
 			$memd->multi_keys,
-			'a folded window reads no fine bucket behind the recent tail, and no list'
+			'a folded window reads no fine bucket behind the recent tail, no list, and each index once'
 		);
 	}
 
@@ -1511,21 +1530,17 @@ class PerformanceCITest extends TestCase {
 	}
 
 	public function test_urls_verb_scopes_rows_to_the_selected_server(): void {
-		// A URL row carries `srv`, its own server dimension, so the table can be
-		// scoped: only URLs that server served survive, and their counts are
-		// that server's, not every server's.
+		// Each server's rows are its own keys, so a scoped table reads that
+		// server's keys: only URLs it served survive, with its own counts.
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
 		$this->set_url_bucket( $store, $bucket, [
-			'cccccccccccc' => [
-				'url' => '/reviews/941', 'count' => 9, 'timed_count' => 9, 'sum_ms' => 900.0, 'last_seen' => 1700000003,
-				'srv' => [ 'alpha.example' => [ 'count' => 2, 'timed_count' => 2, 'sum_ms' => 260.0, 'sum_peak_mb' => 8.0 ], 'beta.example' => [ 'count' => 7, 'timed_count' => 7, 'sum_ms' => 640.0, 'sum_peak_mb' => 21.0 ] ],
-			],
-			'dddddddddddd' => [
-				'url' => '/events/88', 'count' => 4, 'timed_count' => 4, 'sum_ms' => 122.0, 'last_seen' => 1700000004,
-				'srv' => [ 'beta.example' => [ 'count' => 4, 'timed_count' => 4, 'sum_ms' => 122.0, 'sum_peak_mb' => 12.0 ] ],
-			],
-		] );
+			'cccccccccccc' => [ 'url' => '/reviews/941', 'count' => 2, 'timed_count' => 2, 'sum_ms' => 260.0, 'sum_peak_mb' => 8.0, 'last_seen' => 1700000003 ],
+		], 'alpha.example' );
+		$this->set_url_bucket( $store, $bucket, [
+			'cccccccccccc' => [ 'url' => '/reviews/941', 'count' => 7, 'timed_count' => 7, 'sum_ms' => 640.0, 'sum_peak_mb' => 21.0, 'last_seen' => 1700000003 ],
+			'dddddddddddd' => [ 'url' => '/events/88', 'count' => 4, 'timed_count' => 4, 'sum_ms' => 122.0, 'sum_peak_mb' => 12.0, 'last_seen' => 1700000004 ],
+		], 'beta.example' );
 
 		$interpreter = new Performance_CI_Node();
 		$result      = VerbHarness::fire(
@@ -1545,15 +1560,15 @@ class PerformanceCITest extends TestCase {
 		// Scoping `count` alone would leave `count_2xx..5xx` describing every
 		// server, so a scoped row could report more classified requests than it
 		// had — and `errors_only`, which is `count` minus those four, would read
-		// negative and hide the row. The split carries the row's SUMMED fields.
+		// negative and hide the row. A server's key carries all of its row.
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
 		$this->set_url_bucket( $store, $bucket, [
-			'cccccccccccc' => [
-				'url' => '/mixed', 'count' => 9, 'count_2xx' => 6, 'count_5xx' => 3, 'sum_ms' => 900.0, 'last_seen' => 1700000003,
-				'srv' => [ 'alpha.example' => [ 'count' => 2, 'timed_count' => 2, 'count_2xx' => 1, 'count_5xx' => 1, 'sum_ms' => 260.0 ] ],
-			],
-		] );
+			'cccccccccccc' => [ 'url' => '/mixed', 'count' => 2, 'timed_count' => 2, 'count_2xx' => 1, 'count_5xx' => 1, 'sum_ms' => 260.0, 'last_seen' => 1700000003 ],
+		], 'alpha.example' );
+		$this->set_url_bucket( $store, $bucket, [
+			'cccccccccccc' => [ 'url' => '/mixed', 'count' => 7, 'count_2xx' => 5, 'count_5xx' => 2, 'sum_ms' => 640.0, 'last_seen' => 1700000003 ],
+		], 'beta.example' );
 
 		$interpreter = new Performance_CI_Node();
 		$result      = VerbHarness::fire(
@@ -1576,19 +1591,14 @@ class PerformanceCITest extends TestCase {
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
 		$this->set_url_bucket( $store, $bucket, [
-			'cccccccccccc' => [
-				'url' => '/reviews/941', 'count' => 9, 'timed_count' => 9, 'sum_ms' => 900.0, 'sum_peak_mb' => 36.0, 'last_seen' => 1700000003,
-				'srv' => [ 'alpha.example' => [ 'count' => 2, 'timed_count' => 2, 'sum_ms' => 260.0, 'sum_peak_mb' => 9.0 ] ],
-			],
-			'dddddddddddd' => [
-				'url' => '/reviews/88', 'count' => 4, 'timed_count' => 4, 'sum_ms' => 122.0, 'sum_peak_mb' => 12.0, 'last_seen' => 1700000004,
-				'srv' => [ 'alpha.example' => [ 'count' => 3, 'timed_count' => 3, 'sum_ms' => 90.0, 'sum_peak_mb' => 7.5 ] ],
-			],
-			'eeeeeeeeeeee' => [
-				'url' => '/events/7', 'count' => 5, 'timed_count' => 5, 'sum_ms' => 500.0, 'sum_peak_mb' => 20.0, 'last_seen' => 1700000005,
-				'srv' => [ 'alpha.example' => [ 'count' => 5, 'timed_count' => 5, 'sum_ms' => 500.0, 'sum_peak_mb' => 20.0 ] ],
-			],
-		] );
+			'cccccccccccc' => [ 'url' => '/reviews/941', 'count' => 2, 'timed_count' => 2, 'sum_ms' => 260.0, 'sum_peak_mb' => 9.0, 'last_seen' => 1700000003 ],
+			'dddddddddddd' => [ 'url' => '/reviews/88', 'count' => 3, 'timed_count' => 3, 'sum_ms' => 90.0, 'sum_peak_mb' => 7.5, 'last_seen' => 1700000004 ],
+			'eeeeeeeeeeee' => [ 'url' => '/events/7', 'count' => 5, 'timed_count' => 5, 'sum_ms' => 500.0, 'sum_peak_mb' => 20.0, 'last_seen' => 1700000005 ],
+		], 'alpha.example' );
+		$this->set_url_bucket( $store, $bucket, [
+			'cccccccccccc' => [ 'url' => '/reviews/941', 'count' => 7, 'timed_count' => 7, 'sum_ms' => 640.0, 'sum_peak_mb' => 27.0, 'last_seen' => 1700000003 ],
+			'dddddddddddd' => [ 'url' => '/reviews/88', 'count' => 1, 'timed_count' => 1, 'sum_ms' => 32.0, 'sum_peak_mb' => 4.5, 'last_seen' => 1700000004 ],
+		], 'beta.example' );
 
 		$interpreter = new Performance_CI_Node();
 		$result      = VerbHarness::fire(
@@ -1602,17 +1612,6 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( 5, $result['totals']['requests'] );
 		$this->assertEqualsWithDelta( 70.0, $result['totals']['avg_ms'], 1e-6 );
 		$this->assertEqualsWithDelta( 3.3, $result['totals']['avg_peak_mb'], 1e-6 );
-	}
-
-	public function test_swapping_a_non_array_split_drops_the_row(): void {
-		// Tested directly, because the index merge normalizes a split through
-		// `sum_fields()` before any reader sees it — the hazard is for a caller
-		// handing this public method a raw row. `sum_fields()` SKIPS a non-array
-		// value, so an `isset` guard would name the eight sums off nothing and
-		// report ZERO for a server that did serve the URL.
-		$row = [ 'url' => '/corrupt', 'count' => 9, 'timed_count' => 9, 'sum_ms' => 900.0, 'srv' => [ 'alpha.example' => 'not-an-array' ] ];
-
-		$this->assertNull( Stats_Store::swap_url_server_sums( $row, 'alpha.example' ) );
 	}
 
 	/**
@@ -1745,11 +1744,11 @@ class PerformanceCITest extends TestCase {
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
 		$this->set_url_bucket( $store, $bucket, [
-			'cccccccccccc' => [
-				'url' => '/asked', 'count' => 9, 'timed_count' => 9, 'sum_ms' => 1800.0, 'last_seen' => 1700000003,
-				'srv' => [ 'alpha.example' => [ 'count' => 2, 'timed_count' => 2, 'sum_ms' => 500.0 ] ],
-			],
-		] );
+			'cccccccccccc' => [ 'url' => '/asked', 'count' => 2, 'timed_count' => 2, 'sum_ms' => 500.0, 'last_seen' => 1700000003 ],
+		], 'alpha.example' );
+		$this->set_url_bucket( $store, $bucket, [
+			'cccccccccccc' => [ 'url' => '/asked', 'count' => 7, 'timed_count' => 7, 'sum_ms' => 1300.0, 'last_seen' => 1700000003 ],
+		], 'beta.example' );
 
 		$result = VerbHarness::fire(
 			new Performance_CI_Node(),
@@ -1790,11 +1789,11 @@ class PerformanceCITest extends TestCase {
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
 		$this->set_url_bucket( $store, $bucket, [
-			'cccccccccccc' => [
-				'url' => '/mixed', 'count' => 9, 'timed_count' => 9, 'sum_ms' => 900.0, 'last_seen' => 1700000003,
-				'srv' => [ 'alpha.example' => [ 'count' => 2, 'timed_count' => 2, 'sum_ms' => 260.0 ] ],
-			],
-		] );
+			'cccccccccccc' => [ 'url' => '/mixed', 'count' => 2, 'timed_count' => 2, 'sum_ms' => 260.0, 'last_seen' => 1700000003 ],
+		], 'alpha.example' );
+		$this->set_url_bucket( $store, $bucket, [
+			'cccccccccccc' => [ 'url' => '/mixed', 'count' => 7, 'timed_count' => 7, 'sum_ms' => 640.0, 'last_seen' => 1700000003 ],
+		], 'beta.example' );
 
 		$result = VerbHarness::fire(
 			new Performance_CI_Node(),
@@ -2154,132 +2153,30 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( 0.0, (float) ( $row['avg_ms'] ?? -1 ), 'no milliseconds are invented from it' );
 	}
 
-	/**
-	 * The collapse turns ABSENCE into meaning, and the two states are adjacent
-	 * with opposite answers: `null` says "this server's numbers ARE the row's",
-	 * while a host missing from the split says "never served here" and drops
-	 * the row. Both halves are pinned, because one reading of the other is a
-	 * URL that silently leaves a filtered table or a wrong number in it.
-	 */
-	public function test_a_collapsed_split_resolves_to_the_rows_own_numbers(): void {
-		$store  = new Stats_Store( 0, 86400 );
-		$bucket = $this->current_url_bucket();
-		$this->seed_url_shard( $store, $bucket, Stats_Store::url_shard( 'c0119b5ed001' ), [
-			'c0119b5ed001' => self::positional_url_row( [
-				'url'         => '/collapsed-6142',
-				'count'       => 9,
-				'timed_count' => 9,
-				'sum_ms'      => 819.0,
-				'last_seen'   => 1700000009,
-				'srv'         => [ 'sole-host.example' => null ],
-			] ),
-		] );
-
-		$result = VerbHarness::fire(
-			new Performance_CI_Node(),
-			'performance',
-			'urls',
-			'--server=sole-host.example'
-		);
-		$row = $result['data'][0] ?? [];
-
-		$this->assertSame( '/collapsed-6142', $row['url'] ?? '' );
-		$this->assertSame( 9, $row['count'] ?? -1, 'the collapsed host gets the row back' );
-		$this->assertEqualsWithDelta( 91.0, $row['avg_ms'] ?? -1.0, 1e-6 );
-	}
-
-	/** The adjacent state: absent is not null, and still drops the row. */
-	public function test_a_host_absent_from_a_collapsed_split_drops_the_row(): void {
-		$store  = new Stats_Store( 0, 86400 );
-		$bucket = $this->current_url_bucket();
-		$this->seed_url_shard( $store, $bucket, Stats_Store::url_shard( 'c0119b5ed001' ), [
-			'c0119b5ed001' => self::positional_url_row( [
-				'url'         => '/collapsed-6142',
-				'count'       => 9,
-				'timed_count' => 9,
-				'sum_ms'      => 819.0,
-				'last_seen'   => 1700000009,
-				'srv'         => [ 'sole-host.example' => null ],
-			] ),
-		] );
-
-		$result = VerbHarness::fire(
-			new Performance_CI_Node(),
-			'performance',
-			'urls',
-			'--server=never-served.example'
-		);
-
-		$this->assertSame( [], $result['data'] ?? [ 'not-empty' ] );
-	}
-
-	/**
-	 * And the fold must ADD two collapsed buckets rather than skip them:
-	 * `sum_fields()` ignores a non-array value, so a collapse the reader does
-	 * not expand takes the server's whole history with it.
-	 */
-	public function test_two_collapsed_buckets_merge_to_the_summed_row(): void {
-		$store   = new Stats_Store( 0, 86400 );
-		$buckets = Stats_Store::retention_buckets( 86400, \time() );
-		foreach ( [ [ $buckets[1], 4, 364.0 ], [ $buckets[2], 5, 455.0 ] ] as [ $bucket, $count, $ms ] ) {
-			$this->seed_url_shard( $store, $bucket, Stats_Store::url_shard( 'c0119b5ed001' ), [
-				'c0119b5ed001' => self::positional_url_row( [
-					'url'         => '/collapsed-6142',
-					'count'       => $count,
-					'timed_count' => $count,
-					'sum_ms'      => $ms,
-					'last_seen'   => 1700000009,
-					'srv'         => [ 'sole-host.example' => null ],
-				] ),
-			] );
-		}
-
-		$result = VerbHarness::fire(
-			new Performance_CI_Node(),
-			'performance',
-			'urls',
-			'--server=sole-host.example'
-		);
-		$row = $result['data'][0] ?? [];
-
-		$this->assertSame( 9, $row['count'] ?? -1, 'both buckets, not one and not none' );
-	}
-
-	/** Seed one URL whose row carries a per-server split. */
+	/** Seed one URL two servers served, each under its own key. */
 	private function seed_split_row(): void {
-		$store = new Stats_Store( 0, 86400 );
-		$this->seed_url_shard( $store, $this->current_url_bucket(), Stats_Store::url_shard( '5p117c0de991' ), [
-			'5p117c0de991' => self::positional_url_row( [
-				'url'         => '/split-3907',
-				'count'       => 5,
-				'timed_count' => 5,
-				'sum_ms'      => 650.0,
-				'last_seen'   => 1700000007,
-				'srv'         => [
-					'edge-3907.example' => self::positional_url_row(
-						[ 'count' => 3, 'timed_count' => 3, 'sum_ms' => 390.0 ]
-					),
-					'edge-8823.example' => self::positional_url_row(
-						[ 'count' => 2, 'timed_count' => 2, 'sum_ms' => 260.0 ]
-					),
-				],
-			] ),
-		] );
+		$store  = new Stats_Store( 0, 86400 );
+		$bucket = $this->current_url_bucket();
+		$this->seed_url_shard( $store, $bucket, Stats_Store::url_shard( '5p117c0de991' ), [
+			'5p117c0de991' => [ 'url' => '/split-3907', 'count' => 3, 'timed_count' => 3, 'sum_ms' => 390.0, 'last_seen' => 1700000007 ],
+		], 'edge-3907.example' );
+		$this->seed_url_shard( $store, $bucket, Stats_Store::url_shard( '5p117c0de991' ), [
+			'5p117c0de991' => [ 'url' => '/split-3907', 'count' => 2, 'timed_count' => 2, 'sum_ms' => 260.0, 'last_seen' => 1700000007 ],
+		], 'edge-8823.example' );
 	}
 
 	/**
-	 * Decision 18 rests the positional split on it never crossing to the wire.
-	 * A `srv` on the reply is integer keys the browser cannot read, and JSON
-	 * takes them happily — no assertion elsewhere would notice.
+	 * Decision 18 rests the positional row on it never crossing to the wire:
+	 * integer keys are what the browser cannot read, and JSON takes them
+	 * happily — no assertion elsewhere would notice.
 	 */
-	public function test_an_unscoped_reply_row_carries_no_stored_split(): void {
+	public function test_an_unscoped_reply_row_is_named_and_sums_every_server(): void {
 		$this->seed_split_row();
 
 		$row = ( VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' )['data'][0] ) ?? [];
 
 		$this->assertSame( '/split-3907', $row['url'] ?? '' );
-		$this->assertArrayNotHasKey( Stats_Store::URL_SRV_FIELD, $row );
-		$this->assertArrayNotHasKey( 'srv_recent', $row );
+		$this->assertSame( 5, $row['count'] ?? -1, 'one hash two servers served folds into one row' );
 		$this->assertSame(
 			[],
 			\array_values( \array_filter( \array_keys( $row ), '\is_int' ) ),
@@ -2287,8 +2184,8 @@ class PerformanceCITest extends TestCase {
 		);
 	}
 
-	/** And the scoped read, which is the path that NAMES the split. */
-	public function test_a_scoped_reply_row_carries_no_stored_split(): void {
+	/** And the scoped read, which reads one server's keys. */
+	public function test_a_scoped_reply_row_is_named_and_carries_that_server_alone(): void {
 		$this->seed_split_row();
 
 		$result = VerbHarness::fire(
@@ -2301,7 +2198,7 @@ class PerformanceCITest extends TestCase {
 
 		$this->assertSame( '/split-3907', $row['url'] ?? '' );
 		$this->assertSame( 3, $row['count'] ?? -1, 'the scoped sums arrive under NAMES' );
-		$this->assertArrayNotHasKey( Stats_Store::URL_SRV_FIELD, $row );
+		$this->assertEqualsWithDelta( 130.0, $row['avg_ms'] ?? -1.0, 1e-6 );
 		$this->assertSame(
 			[],
 			\array_values( \array_filter( \array_keys( $row ), '\is_int' ) ),
@@ -3760,9 +3657,9 @@ class PerformanceCITest extends TestCase {
 	public function test_the_index_is_read_per_request_not_shared_across_instances(): void {
 		$calls    = 0;
 		$original = Performance_CI_Node::$load_index;
-		Performance_CI_Node::$load_index = static function ( string $shard, array $stores, int $now ) use ( &$calls, $original ): array {
+		Performance_CI_Node::$load_index = static function ( string $shard, string $server, array $stores, int $now ) use ( &$calls, $original ): array {
 			++$calls;
-			return ( $original ?? [ Performance_CI_Node::class, 'load_index_default' ] )( $shard, $stores, $now );
+			return ( $original ?? [ Performance_CI_Node::class, 'load_index_default' ] )( $shard, $server, $stores, $now );
 		};
 
 		try {
@@ -4131,8 +4028,10 @@ class PerformanceCITest extends TestCase {
 		$mirror->with_index( Flame_Builder_Node::format_stats_index_entry( ... ) );
 		// Written 4 hours ago with the fine tier's real 7200s TTL: spent.
 		$written = \time() - ( 4 * 3600 );
+		$srv     = Stats_Store::server_key( 'example.test' );
 		foreach ( [
-			[ "urls:{$shard}:{$bucket}", [ $hash => self::positional_url_row( [ 'url' => $url, 'count' => 41 ] ) ] ],
+			[ Stats_Store::NS_URLSRV . ":{$bucket}", [ $srv => 'example.test' ] ],
+			[ "urls:{$srv}:{$shard}:{$bucket}", [ $hash => self::positional_url_row( [ 'count' => 41, 'path' => '/rebuilt-past-its-cache-life' ] ) ] ],
 			[ Stats_Store::NS_URLMAP . ":{$hash}", [ $url ] ],
 		] as [ $logical, $data ] ) {
 			$key                       = Stats_Store::entry_key( 0, $logical );
@@ -4145,7 +4044,7 @@ class PerformanceCITest extends TestCase {
 		}
 		$mirror->flush();
 
-		$row = Performance_CI_Node::load_row( $hash, self::live_stores(), (int) Core::$now );
+		$row = Performance_CI_Node::load_row( $hash, '', self::live_stores(), (int) Core::$now );
 
 		$this->assertNotNull( $row, 'nothing in memcache; the mirror must answer' );
 		$this->assertSame( 41, $row['count'], 'and a spent cache lifetime does not erase the record' );
@@ -4167,9 +4066,12 @@ class PerformanceCITest extends TestCase {
 		$url    = 'https://example.test/jobs/import-film-times';
 		$bucket = Stats_Store::bucket_key( \time() );
 		$hash   = 'ab12cd34ef56';
-		$key    = Stats_Store::entry_key( 0, 'urls:' . Stats_Store::url_shard( $hash ) . ':' . $bucket );
+		$srv    = Stats_Store::server_key( 'example.test' );
+		$key    = Stats_Store::entry_key( 0, "urls:{$srv}:" . Stats_Store::url_shard( $hash ) . ':' . $bucket );
 		// A mirrored frame holds the STORED shape, which is positional.
-		$rows   = [ $hash => self::positional_url_row( [ 'url' => $url, 'count' => 2194 ] ) ];
+		$rows   = [ $hash => self::positional_url_row( [ 'count' => 2194, 'path' => '/jobs/import-film-times' ] ) ];
+		// The server index is mirrored too: it is what finds the row's key.
+		$index_key = Stats_Store::entry_key( 0, Stats_Store::NS_URLSRV . ':' . $bucket );
 
 		$mirror = new \Newspack_Nodes\Partition_Node();
 		$mirror->arguments( [ $dir, '67108864' ] );
@@ -4178,7 +4080,7 @@ class PerformanceCITest extends TestCase {
 		// The name is mirrored too, on its own key: a stored row carries the
 		// hash, so a bucket recovered without its names renders anonymous rows.
 		$name_key = Stats_Store::entry_key( 0, Stats_Store::NS_URLMAP . ':' . $hash );
-		foreach ( [ [ $key, $rows ], [ $name_key, [ $url ] ] ] as [ $frame_key, $data ] ) {
+		foreach ( [ [ $index_key, [ $srv => 'example.test' ] ], [ $key, $rows ], [ $name_key, [ $url ] ] ] as [ $frame_key, $data ] ) {
 			$msg                       = Message::new_message();
 			$msg[ Message::TYPE ]      = Message::TM_STRUCT;
 			$msg[ Message::TIMESTAMP ] = \time();
@@ -4287,7 +4189,7 @@ class PerformanceCITest extends TestCase {
 			],
 		] );
 
-		$rows = Performance_CI_Node::load_index_default( Stats_Store::url_shard( 'c0ffee123456' ), self::live_stores(), (int) Core::$now );
+		$rows = Performance_CI_Node::load_index_default( Stats_Store::url_shard( 'c0ffee123456' ), '', self::live_stores(), (int) Core::$now );
 
 		$row = \array_values( \array_filter( $rows, static fn ( $r ) => 'c0ffee123456' === $r['hash'] ) )[0] ?? null;
 		$this->assertIsArray( $row );
@@ -4379,9 +4281,9 @@ class PerformanceCITest extends TestCase {
 		$seen     = [];
 		$original = Performance_CI_Node::$load_index;
 
-		Performance_CI_Node::$load_index = static function ( string $shard, array $stores, int $now ) use ( &$seen, $original ): array {
+		Performance_CI_Node::$load_index = static function ( string $shard, string $server, array $stores, int $now ) use ( &$seen, $original ): array {
 			$seen[] = $shard;
-			return ( $original ?? [ Performance_CI_Node::class, 'load_index_default' ] )( $shard, $stores, $now );
+			return ( $original ?? [ Performance_CI_Node::class, 'load_index_default' ] )( $shard, $server, $stores, $now );
 		};
 		try {
 			VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' );
@@ -4640,24 +4542,17 @@ class PerformanceCITest extends TestCase {
 		$this->activate_shipped_topology( 'performance', 3 );
 		$store  = new Stats_Store( 1, 86400 );
 		$bucket = $this->current_url_bucket();
-		$rows   = [
-			'b7731ce0fa11' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 5, 'last_seen' => \time(), 'srv' => [ 'kea.test' => null ] ],
-			// Two servers on one row: the row's own count (4) is not the
-			// moa.test share (3), so a projection that skipped scoping and
-			// used the row's own count would give this test a false pass.
-			'c8842df1ab90' => [
-				'url'       => 'https://moa.test/kiwi-8842',
-				'count'     => 4,
-				'last_seen' => \time(),
-				'srv'       => [
-					'moa.test' => [ 'count' => 3, 'last_seen' => \time() ],
-					'kea.test' => [ 'count' => 1, 'last_seen' => \time() ],
-				],
-			],
+		// Two servers on one hash: the site's count (4) is not moa.test's (3),
+		// so a page that read the site's list would give this a false pass.
+		$kea = [
+			'b7731ce0fa11' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 5, 'last_seen' => \time() ],
+			'c8842df1ab90' => [ 'url' => 'https://moa.test/kiwi-8842', 'count' => 1, 'last_seen' => \time() ],
 		];
-		$this->set_url_bucket( $store, $bucket, $rows );
-		$this->set_url_rank_lists( $store, $bucket, $rows );
-		$this->set_url_rank_lists( $store, $bucket, [ 'c8842df1ab90' => $rows['c8842df1ab90'] ], false, 'moa.test' );
+		$moa = [ 'c8842df1ab90' => [ 'url' => 'https://moa.test/kiwi-8842', 'count' => 3, 'last_seen' => \time() ] ];
+		$this->set_url_bucket( $store, $bucket, $kea, 'kea.test' );
+		$this->set_url_bucket( $store, $bucket, $moa, 'moa.test' );
+		$this->set_url_rank_lists( $store, $bucket, [ 'b7731ce0fa11' => $kea['b7731ce0fa11'], 'c8842df1ab90' => [ 'url' => 'https://moa.test/kiwi-8842', 'count' => 4, 'last_seen' => \time() ] ] );
+		$this->set_url_rank_lists( $store, $bucket, $moa, false, 'moa.test' );
 		$this->seed_hour_lists( [], 'moa.test' );
 		[ $fire, , $restore ] = $this->counting_urls_fire();
 		try {
@@ -4665,7 +4560,7 @@ class PerformanceCITest extends TestCase {
 			$page = $fire( '--sort=count', '--order=desc', '--limit=100', '--server=moa.test' );
 			$this->assertTrue( $page['ranked'] );
 			$this->assertSame( [ 'c8842df1ab90' ], \array_column( $page['data'], 'hash' ) );
-			$this->assertSame( 3, $page['data'][0]['count'], 'the seeded list is the server-scoped projection, not the row\'s own count' );
+			$this->assertSame( 3, $page['data'][0]['count'], 'the server\'s own list, not the site\'s count' );
 			$this->assertSame( 3, $page['totals']['requests'] );
 			$page = $fire( '--sort=count', '--order=desc', '--limit=100', '--server=tui.test' );
 			$this->assertFalse( $page['ranked'], 'no list for that server: the fold answers' );
@@ -4781,9 +4676,9 @@ class PerformanceCITest extends TestCase {
 	private function counting_urls_fire(): array {
 		$reads    = 0;
 		$original = Performance_CI_Node::$load_index;
-		Performance_CI_Node::$load_index = static function ( string $shard, array $stores, int $now ) use ( &$reads, $original ): array {
+		Performance_CI_Node::$load_index = static function ( string $shard, string $server, array $stores, int $now ) use ( &$reads, $original ): array {
 			++$reads;
-			return ( $original ?? [ Performance_CI_Node::class, 'load_index_default' ] )( $shard, $stores, $now );
+			return ( $original ?? [ Performance_CI_Node::class, 'load_index_default' ] )( $shard, $server, $stores, $now );
 		};
 		return [
 			static function ( string ...$args ): array {
@@ -4819,9 +4714,9 @@ class PerformanceCITest extends TestCase {
 		$builds   = self::count_catalog_reads();
 		$read     = [];
 		$original = Performance_CI_Node::$load_index;
-		Performance_CI_Node::$load_index = static function ( string $shard, array $stores, int $now ) use ( &$read, $original ): array {
+		Performance_CI_Node::$load_index = static function ( string $shard, string $server, array $stores, int $now ) use ( &$read, $original ): array {
 			$read[] = \count( $stores );
-			return ( $original ?? [ Performance_CI_Node::class, 'load_index_default' ] )( $shard, $stores, $now );
+			return ( $original ?? [ Performance_CI_Node::class, 'load_index_default' ] )( $shard, $server, $stores, $now );
 		};
 		try {
 			$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', ...$args );
@@ -4970,7 +4865,7 @@ class PerformanceCITest extends TestCase {
 		$memd->multi_keys  = 0;
 
 		// Every hash is `%012x`, so all forty land in shard 0.
-		$out = Performance_CI_Node::load_index_default( '0', self::live_stores(), (int) Core::$now );
+		$out = Performance_CI_Node::load_index_default( '0', '', self::live_stores(), (int) Core::$now );
 
 		$this->assertCount( 40, $out, 'every seeded URL still folds' );
 		$this->assertGreaterThan( 1, $memd->multi_calls, 'the window must not be one read' );
@@ -5095,7 +4990,7 @@ class PerformanceCITest extends TestCase {
 			],
 		] );
 
-		$rows = Performance_CI_Node::load_index_default( Stats_Store::url_shard( 'facade000777' ), self::live_stores(), (int) Core::$now );
+		$rows = Performance_CI_Node::load_index_default( Stats_Store::url_shard( 'facade000777' ), '', self::live_stores(), (int) Core::$now );
 
 		$row = \array_values( \array_filter( $rows, static fn ( $r ) => 'facade000777' === $r['hash'] ) )[0] ?? null;
 		$this->assertIsArray( $row );
@@ -5189,11 +5084,12 @@ class PerformanceCITest extends TestCase {
 
 	/**
 	 * A term every URL carries is the case the index does not narrow, and the
-	 * contract has to hold there too: naming costs ONE `urlmap` batch per
-	 * store over the candidates, never a name blob per shard, and the walk
-	 * still visits only the shards those candidates fall in.
+	 * contract has to hold there too: the term matches the path each row
+	 * carries, so naming costs ONE `urlmap` batch per store over the rows the
+	 * page shows rather than every candidate, and the walk still visits only
+	 * the shards those candidates fall in.
 	 */
-	public function test_a_broad_search_names_every_candidate_in_one_batch(): void {
+	public function test_a_broad_search_names_only_the_rows_it_shows(): void {
 		Core::$memd = new class() extends InMemoryMemcached {
 			/** @var array<int,array<int,string>> */
 			public array $batches = [];
@@ -5227,6 +5123,7 @@ class PerformanceCITest extends TestCase {
 		} finally {
 			$restore();
 		}
+		$shown = \array_unique( \array_column( [ ...$page['data'], ...$page['slowest'] ], 'hash' ) );
 		$batches = \array_values( \array_filter(
 			$memd->batches,
 			static fn ( array $keys ): bool => [] !== \array_filter(
@@ -5234,8 +5131,8 @@ class PerformanceCITest extends TestCase {
 				static fn ( string $key ): bool => \str_contains( $key, ':urlmap:' )
 			)
 		) );
-		$this->assertCount( 1, $batches, 'the candidates are named once, and the page keeps those names' );
-		$this->assertCount( 137, $batches[0], 'the candidates, not a name blob per shard' );
+		$this->assertCount( 1, $batches, 'the rows shown are named once' );
+		$this->assertCount( \count( $shown ), $batches[0], 'the rows shown, not every candidate' );
 	}
 
 	/**
@@ -5322,19 +5219,13 @@ class PerformanceCITest extends TestCase {
 	}
 
 	public function test_a_scoped_search_that_names_nothing_answers_zero_rather_than_null(): void {
-		// `has_split` is derived from the rows the walk saw, and a search with
-		// no candidates walks nothing — which used to read as "this index
-		// predates server splits", so a scoped total came back null.
+		// A search with no candidates walks nothing, and nothing is zero
+		// requests: a total the page answers, never an unanswerable scope.
 		$this->activate_shipped_topology( 'performance', 3 );
 		$store  = new Stats_Store( 1, 86400 );
 		$this->set_url_bucket( $store, $this->current_url_bucket(), [
-			'c3310ab77c02' => [
-				'url'   => 'https://moa.test/kakapo-3310',
-				'count' => 4,
-				'srv'   => [ 'moa.test' => [ 'count' => 4, 'timed_count' => 4, 'sum_ms' => 80.0, 'sum_peak_mb' => 4.0 ] ],
-				'last_seen' => \time(),
-			],
-		] );
+			'c3310ab77c02' => [ 'url' => 'https://moa.test/kakapo-3310', 'count' => 4, 'timed_count' => 4, 'sum_ms' => 80.0, 'sum_peak_mb' => 4.0, 'last_seen' => \time() ],
+		], 'moa.test' );
 
 		$page = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--server=moa.test --search=nomatch' );
 
@@ -5523,11 +5414,11 @@ class PerformanceCITest extends TestCase {
 		] );
 		$repinned                        = false;
 		$original                        = Performance_CI_Node::$load_index;
-		Performance_CI_Node::$load_index = static function ( string $shard, array $stores, int $now ) use ( $next, $original, &$repinned ): array {
+		Performance_CI_Node::$load_index = static function ( string $shard, string $server, array $stores, int $now ) use ( $next, $original, &$repinned ): array {
 			// A firehose line logged mid-reply re-pins the tick.
 			Core::$now = $next;
 			$repinned  = true;
-			return ( $original ?? Performance_CI_Node::load_index_default( ... ) )( $shard, $stores, $now );
+			return ( $original ?? Performance_CI_Node::load_index_default( ... ) )( $shard, $server, $stores, $now );
 		};
 		try {
 			Core::$now = $at;
@@ -5543,14 +5434,14 @@ class PerformanceCITest extends TestCase {
 	}
 
 	/**
-	 * The page decides whether its totals can answer the scope it was asked
-	 * for; no flag crosses to the handler for it to re-derive.
+	 * A server's rows are its own keys, so any scope answers: a server with
+	 * no rows is zero requests beside another server's traffic.
 	 */
-	public function test_a_scoped_page_with_no_split_answers_null_totals_itself(): void {
+	public function test_a_scoped_page_for_a_server_with_no_rows_answers_zero_totals(): void {
 		$this->activate_shipped_topology( 'performance', 1 );
 		$this->set_url_bucket( new Stats_Store( 0, 86400 ), $this->current_url_bucket(), [
 			'f6620ab77c04' => [ 'url' => 'https://kea.test/takahe-6620', 'count' => 11, 'last_seen' => \time() ],
-		] );
+		], 'kea.test' );
 		$page = ( new \ReflectionMethod( Performance_CI_Node::class, 'url_page' ) )->invoke(
 			new Performance_CI_Node(),
 			'moa.test',
@@ -5565,7 +5456,7 @@ class PerformanceCITest extends TestCase {
 			(int) Core::$now
 		);
 		$this->assertIsArray( $page );
-		$this->assertNull( $page['totals'], 'pre-split rows cannot answer a server scope' );
-		$this->assertArrayNotHasKey( 'has_split', $page, 'the page answers; it carries no flag to be re-read' );
+		$this->assertSame( 0, $page['totals']['requests'], 'moa.test served none of kea.test\'s 11' );
+		$this->assertSame( [], $page['data'] );
 	}
 }

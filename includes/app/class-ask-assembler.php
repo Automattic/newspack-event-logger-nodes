@@ -702,9 +702,8 @@ class Ask_Assembler {
 	 * there. That split is what keeps one descriptor from meaning two things:
 	 * the same page filtered two ways is the same subject, two scopes.
 	 *
-	 * `totals` is null where a server filter cannot be split out of pre-split
-	 * rows, and the brief carries that null rather than zeros, which would
-	 * read as an idle site.
+	 * A page carrying no `totals` leaves the brief's null rather than zeros,
+	 * which would read as an idle site.
 	 *
 	 * @param array<string,mixed> $page    A `urls` reply: its totals and data.
 	 * @param array<string,mixed> $board   A `build_leaderboard()` reply.
