@@ -140,6 +140,20 @@ abstract class TestCase extends RuntimeTestCase {
 	}
 
 	/**
+	 * Drop the process-wide Log_Manager any test left behind.
+	 *
+	 * The substrate's `newspack_nodes/stderr` seam feeds every stderr line to
+	 * `Diagnostics_Bridge`, which writes it through a STARTED logger, and
+	 * `message()` re-reads `Core::right_now()`. A logger one test starts and
+	 * never resets therefore re-pins `Core::$now` to the wall clock under
+	 * every later test that pins it and then trips a `print_less_often()`.
+	 */
+	protected function tearDown(): void {
+		\Newspack_Event_Logger_Nodes\Log_Manager::reset();
+		parent::tearDown();
+	}
+
+	/**
 	 * ELN-specific default prefix so app temp dirs live in their OWN namespace,
 	 * not the substrate's `newspack-nodes-test-`. Under parallel run-coverage the
 	 * nodes and ELN suites each `rm -rf` their prefix; sharing one prefix had each
