@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.102.6] - 2026-09-23
+
 ### Changed
 
 - **The dashboard reads the stats mirror for up to 5 seconds a verb, up from 1.5.** `stats_mirror_read_budget_ms` now defaults to 5000. A cold poll spent 1.5 seconds before the mirror answered the buckets memcache no longer held, and the charts drew short until a later poll filled them.
