@@ -91,6 +91,47 @@ A brief carries URLs and request details, so treat it like any other customer da
 
 Every brief ends with the same caution, and it matters when you read an assistant's answer: the logger times only what the rule names, so **time it did not measure is unknown, not idle.** An assistant that blames the part of a request nobody timed is guessing.
 
+## Connecting Claude to the site
+
+A brief is one snapshot. Connected to the site's MCP server instead, Claude can ask the dashboard's own questions itself, follow a slow URL to its requests and their findings, and come back later without being fed anything.
+
+### 1. Issue a session
+
+A session is a credential Claude uses in the name of whoever issued it, limited to the scope and the lifetime they chose.
+
+1. wp-admin → **Nodes** → the **Sessions** tab → **+ Issue Session**.
+2. **Label:** who it is for and why, such as `Jane — Claude, slow homepage`. The label is how you find it again to revoke it.
+3. **Scope:** **read** for everything in this guide. Choose **tune** only if Claude should also change logging rules itself.
+4. **Lifetime (seconds):** at most 86,400, one day. The session then stops working, and you issue another.
+5. Press **Issue Session** and copy the key it shows, two long codes joined by a dot. It is shown once and cannot be recovered.
+
+Issuing a session needs the **manage** capability. Without it, ask the site's operator to issue one for you and to send the key privately; Claude then acts in the operator's name, within the scope they chose. The key is a password: never paste it into a ticket, a chat or a brief.
+
+### 2. Connect Claude Code
+
+The server lives at `https://<site>/wp-json/newspack-event-logger-nodes/v1/mcp`, and it takes the key as a bearer token. In a terminal, with the site's address and your key filled in:
+
+```sh
+claude mcp add --transport http slow-site \
+  https://example.com/wp-json/newspack-event-logger-nodes/v1/mcp \
+  --header "Authorization: Bearer <the key>"
+```
+
+`slow-site` is only the name Claude Code shows for this connection. Start a new session and ask, for example: *"Which URL on this site is slowest, and what is the cause?"*
+
+The connection needs a custom `Authorization` header. Claude Code takes one; claude.ai's custom connectors authenticate through OAuth and have no field for it. From claude.ai, use **Ask Claude** on the dashboard instead.
+
+### What Claude can do with it
+
+| Scope | Tools |
+|---|---|
+| read | `performance_overview` and `performance_urls` (the page and its URL table), `dump_url` and `dump_request` (one URL, one request with its findings), `search_requests` and `grep_requests` (find a request by id or by text), `performance_ask` (the same briefs as the panel), `dump_rules` (the logging rules) |
+| tune | the above, plus `rules_upsert` and `rules_delete` (change or remove a logging rule) |
+
+A session sees only its scope's tools, and makes at most 20 calls per 10 seconds. Every answer reaches Claude marked as site data, not instructions, because visitors wrote parts of it: a URL or a user agent can say anything.
+
+When you are done, revoke the session under **Sessions** rather than waiting for it to expire.
+
 ## What it cannot tell you
 
 - **Anything the rule does not time.** Step 5 is how you widen it.
