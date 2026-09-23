@@ -84,6 +84,11 @@ class ConfigSchemaTest extends TestCase {
 		);
 	}
 
+	/** A cold dashboard poll reads the mirror for up to five seconds. */
+	public function test_the_mirror_read_budget_defaults_to_five_seconds(): void {
+		$this->assertSame( 5000, Settings_Schema::get()->defaults()['stats_mirror_read_budget_ms'] );
+	}
+
 	/**
 	 * The shipped file's ledger matches the schema, key for key and value for
 	 * value. A documented default drifts silently, which is the whole failure

@@ -92,7 +92,7 @@ return [
 	// the budget the reader answers from memcache alone and the next poll
 	// completes it. 0 turns the reader's mirror read off; the WORKER restoring
 	// its own state is never budgeted.
-	// 'stats_mirror_read_budget_ms' => 1500,
+	// 'stats_mirror_read_budget_ms' => 5000,
 
 	// The stats mirror's OWN ring geometry, in bytes per segment and segments
 	// kept. 0 means "follow the substrate value in force"

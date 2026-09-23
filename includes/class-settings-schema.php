@@ -259,7 +259,7 @@ class Settings_Schema {
 					key: 'stats_mirror_read_budget_ms',
 					type: 'int',
 					ui: false,
-					default: 1500,
+					default: 5000,
 				),
 				// @longform The stats mirror's own ring geometry, 0 meaning
 				// "follow the substrate value in force". `flame-stats` holds
