@@ -128,6 +128,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A stats flush whose batch read fails no longer overwrites stored
+  buckets with its own deltas.** The substrate returned an empty read for
+  a failed batch, which reads as all-miss, so every write in that chunk
+  merged onto nothing and replaced the stored bucket with the flush's
+  delta alone. The flush now asks the substrate whether the read failed,
+  writes nothing for that chunk, and logs `stats flush read failed` once
+  a window; the chunk's deltas are dropped, as decision 3 has stats fail
+  soft. Requires newspack-nodes 2.65.12.
 - **A request stamped with a rule this ruleset does not hold is no longer
   reported as ungoverned.** A site running a ruleset the hub never pushed,
   or a rule whose pattern changed or that was deleted since the request
@@ -153,15 +161,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   held them. A write into a folded hour now always goes to its fine
   bucket, which the hour is derived from, and into the hour key only
   while that key exists; a write that lands there forgets the hour's
-  marker, so the probe re-ranks it. An hour-key write whose read misses,
-  whether the key is absent or the batch read failed, which reads as
-  all-miss, forgets the key instead of writing it. The reprobe finds a
-  missing key and re-folds the hour from its fine buckets, so the late
-  rows come back, including rows merged into shards that were still
-  present. The fine write keeps the normal fine TTL, like any fold read
-  that re-warms the bucket. A refused late write logs the key it lost,
+  marker, so the probe re-ranks it. An hour-key write whose read misses
+  forgets the key instead of writing it. The reprobe finds a missing key
+  and re-folds the hour from its fine buckets, so the late rows come
+  back, including rows merged into shards that were still present. The
+  fine write keeps the normal fine TTL, like any fold read that re-warms
+  the bucket. A refused late write logs the key it lost,
   `urls:{shard}:{bucket}` or `urls_h:{shard}:{hour}` and their name
-  twins, so the tier is named.
+  twins, so the tier is named, and nothing more.
 - **A late record into a folded hour reaches the global leaderboard.**
   The board takes a folded hour's `lb_h` and skips its fine buckets, and
   a replayed record landed only in the fine `lb`, so the board never

@@ -99,6 +99,16 @@ if [[ -f "$docslint" ]]; then
 	ok "lint-docs clean"
 fi
 
+# ELN-only: every Stats_Store NS_* constant has a guide row, and vice versa.
+# lint-docs.sh is vendored from newspack-nodes, so this plugin-specific rule
+# can't live there.
+elndocslint="$(git rev-parse --show-toplevel)/scripts/lint-eln-docs.sh"
+if [[ -f "$elndocslint" ]]; then
+	step "lint-eln-docs (Stats_Store namespace vs guide table)"
+	bash "$elndocslint" || fail "lint-eln-docs failed — namespace docs drifted (see above)"
+	ok "lint-eln-docs clean"
+fi
+
 # The @wordpress/* family compiles against the API the browser is handed, so a
 # declaration carrying a range, or a lock resolved past it, builds against the
 # wrong WordPress.

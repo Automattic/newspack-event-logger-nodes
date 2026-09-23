@@ -726,7 +726,7 @@ class FlameBuilderTest extends TestCase {
 		$store      = new class( 0, 86400 ) extends Stats_Store {
 			/** @var array<int,array<int,array{0:array<int,string>,1:string}>> */
 			public array $reads_log = [];
-			public function bucket_get_multi( array $reads ): array {
+			public function bucket_get_multi( array $reads, ?bool &$failed = null ): array {
 				// The rollup probe reads the same way; count the FLUSH's reads.
 				foreach ( $reads as [ $parts ] ) {
 					if ( \in_array( $parts[0], [ self::NS_URLS, self::NS_URLNAMES, self::NS_HOURLY, self::NS_URLTOKEN ], true ) ) {
@@ -734,7 +734,7 @@ class FlameBuilderTest extends TestCase {
 						break;
 					}
 				}
-				return parent::bucket_get_multi( $reads );
+				return parent::bucket_get_multi( $reads, $failed );
 			}
 		};
 		$fb = new Flame_Builder_Node();
@@ -777,7 +777,7 @@ class FlameBuilderTest extends TestCase {
 				$this->set_log[] = $writes;
 				return parent::bucket_set_multi( $writes );
 			}
-			public function bucket_get_multi( array $reads ): array {
+			public function bucket_get_multi( array $reads, ?bool &$failed = null ): array {
 				// The rollup probe reads the same way; count the FLUSH's reads.
 				foreach ( $reads as [ $parts ] ) {
 					if ( \in_array( $parts[0], [ self::NS_URLS, self::NS_URLNAMES, self::NS_HOURLY, self::NS_URLTOKEN ], true ) ) {
@@ -785,7 +785,7 @@ class FlameBuilderTest extends TestCase {
 						break;
 					}
 				}
-				return parent::bucket_get_multi( $reads );
+				return parent::bucket_get_multi( $reads, $failed );
 			}
 		};
 		$fb = new Flame_Builder_Node();
@@ -974,9 +974,9 @@ class FlameBuilderTest extends TestCase {
 		Core::$memd = new InMemoryMemcached();
 		$store      = new class( 0, 86400 ) extends Stats_Store {
 			public int $later = 0;
-			public function bucket_get_multi( array $reads ): array {
+			public function bucket_get_multi( array $reads, ?bool &$failed = null ): array {
 				Core::$now = $this->later;
-				return parent::bucket_get_multi( $reads );
+				return parent::bucket_get_multi( $reads, $failed );
 			}
 		};
 		$first        = \gmmktime( 10, 59, 59, 9, 22, 2026 );
@@ -1006,9 +1006,9 @@ class FlameBuilderTest extends TestCase {
 		Core::$memd = new InMemoryMemcached();
 		$store      = new class( 0, 86400 ) extends Stats_Store {
 			public int $later = 0;
-			public function bucket_get_multi( array $reads ): array {
+			public function bucket_get_multi( array $reads, ?bool &$failed = null ): array {
 				Core::$now = $this->later;
-				return parent::bucket_get_multi( $reads );
+				return parent::bucket_get_multi( $reads, $failed );
 			}
 		};
 		$first        = 1_600_000_123;
@@ -1394,7 +1394,7 @@ class FlameBuilderTest extends TestCase {
 		Core::$memd = new InMemoryMemcached();
 		$store      = new class( 0, 86400 ) extends Stats_Store {
 			public int $gap_fills = 0;
-			public function bucket_get_multi( array $reads ): array {
+			public function bucket_get_multi( array $reads, ?bool &$failed = null ): array {
 				$url_only = [] !== $reads;
 				foreach ( $reads as [ $parts ] ) {
 					if ( self::NS_URLS !== $parts[0] && self::NS_URLNAMES !== $parts[0] ) {
@@ -1402,7 +1402,7 @@ class FlameBuilderTest extends TestCase {
 					}
 				}
 				$this->gap_fills += $url_only ? 1 : 0;
-				return parent::bucket_get_multi( $reads );
+				return parent::bucket_get_multi( $reads, $failed );
 			}
 		};
 		$fb = new Flame_Builder_Node();
@@ -3617,42 +3617,43 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	/**
-	 * A store whose batch read fails whenever it asks for `$ns`, as
-	 * `Cache_Backend::read_multi()` reports one: every slot a miss.
+	 * A store whose batch read answers every slot a miss whenever it asks for
+	 * `$ns`, as an evicted tier does: an answer, not a failure.
 	 */
-	private static function failing_batch_store( string $ns ): Stats_Store {
+	private static function missing_batch_store( string $ns ): Stats_Store {
 		$store = new class( 0, 86400 ) extends Stats_Store {
 			public string $fail = '';
-			public function bucket_get_multi( array $reads ): array {
+			public function bucket_get_multi( array $reads, ?bool &$failed = null ): array {
+				$failed = false;
 				foreach ( $reads as [ $parts ] ) {
 					if ( $this->fail === $parts[0] ) {
 						return \array_fill_keys( \array_keys( $reads ), null );
 					}
 				}
-				return parent::bucket_get_multi( $reads );
+				return parent::bucket_get_multi( $reads, $failed );
 			}
 		};
 		$store->fail = '';
 		return $store;
 	}
 
-	public function test_an_hour_key_whose_batch_read_failed_is_forgotten_and_re_folded(): void {
-		// The key is there, but the failed batch reads it as missing. Skipped,
+	public function test_an_hour_key_whose_batch_read_missed_is_forgotten_and_re_folded(): void {
+		// The key is there, but the batch reads it as missing. Skipped,
 		// the late rows never reach it and the probe still reads the hour as
 		// folded; forgotten, the reprobe re-folds it from the fine buckets,
 		// which hold both. Seeds: 3 folded requests, 7 late ones.
 		Core::$memd = new InMemoryMemcached();
-		$store      = self::failing_batch_store( Stats_Store::NS_URLS_HOUR );
-		$hash       = Log_Manager::url_hash( '/failed-read-5307' );
+		$store      = self::missing_batch_store( Stats_Store::NS_URLS_HOUR );
+		$hash       = Log_Manager::url_hash( '/missed-read-5307' );
 		$shard      = Stats_Store::url_shard( $hash );
 		$fb         = $this->folded_builder( $store, $shard, [
-			$hash => [ 'url' => '/failed-read-5307', 'count' => 3 ],
+			$hash => [ 'url' => '/missed-read-5307', 'count' => 3 ],
 		] );
 		$coarse = self::cache_key( 0, "urls_h:{$shard}:2026-08-27-13" );
 
 		$store->fail = Stats_Store::NS_URLS_HOUR;
 		$this->flush_pending( $fb, '2026-08-27-13-40', [
-			$hash => self::positional_url_row( [ 'url' => '/failed-read-5307', 'count' => 7 ] ),
+			$hash => self::positional_url_row( [ 'url' => '/missed-read-5307', 'count' => 7 ] ),
 		] );
 		$store->fail = '';
 		$this->assertFalse( Core::$memd->get( $coarse ), 'the hour key is forgotten' );
@@ -3664,11 +3665,11 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( 10, $hour[ $hash ]['count'] ?? null, 'the re-fold holds the original rows and the late ones' );
 	}
 
-	public function test_a_leaderboard_hour_key_whose_batch_read_failed_is_re_folded(): void {
+	public function test_a_leaderboard_hour_key_whose_batch_read_missed_is_re_folded(): void {
 		// The probe has to see a missing `lb_h` for the forget to heal it:
 		// otherwise the hour reads settled and the board stays short of it.
 		Core::$memd = new InMemoryMemcached();
-		$store      = self::failing_batch_store( Stats_Store::NS_LB_HOUR );
+		$store      = self::missing_batch_store( Stats_Store::NS_LB_HOUR );
 		$this->set_leaderboard_bucket( $store, '2026-08-27-13-05', self::lb_sums( 4, 40.0 ) );
 		$fb = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
@@ -3684,6 +3685,74 @@ class FlameBuilderTest extends TestCase {
 		self::roll_up( $fb, (int) Core::$now );
 
 		$this->assertSame( 10, self::lb_hour( $store, '2026-08-27-13' )['count'] ?? null, 'the reprobe re-folds it whole' );
+	}
+
+	public function test_a_chunk_whose_batch_read_failed_writes_nothing_and_says_so(): void {
+		// Decision 3: stats fail soft. A failed read merged onto [] would
+		// write the delta alone over the stored bucket, so the chunk's deltas
+		// are dropped instead. Seeds: 4 stored requests, 6 in the flush.
+		$err = '';
+		Core::set_stderr_handler( static function ( $text ) use ( &$err ) {
+			$err .= $text;
+		} );
+		$memd       = new class() extends InMemoryMemcached {
+			public bool $broken = false;
+			public function getMulti( array $keys, int $get_flags = 0 ): array|false {
+				return $this->broken ? false : parent::getMulti( $keys, $get_flags );
+			}
+		};
+		Core::$memd = $memd;
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+		Core::$now = \gmmktime( 15, 7, 0, 8, 27, 2026 );
+		$this->set_leaderboard_bucket( $store, '2026-08-27-15-05', self::lb_sums( 4, 40.0 ) );
+
+		$memd->broken = true;
+		$this->flush_buckets( $fb, [ '2026-08-27-15-05' => [ 'leaderboard' => self::lb_sums( 6, 60.0 ) ] ] );
+		$memd->broken = false;
+
+		$fine = $store->get_leaderboard_buckets( [ '2026-08-27-15-05' ] )['2026-08-27-15-05'] ?? [];
+		$this->assertSame( 4, $fine['count'] ?? null, 'the stored bucket keeps its value' );
+		$this->assertStringContainsString( 'stats flush read failed', $err, 'the dropped chunk is logged' );
+	}
+
+	/**
+	 * A store that refuses, and does not store, every write into `$refuse`'s
+	 * namespace while it is set.
+	 */
+	private static function refusing_store(): Stats_Store {
+		return new class( 0, 86400 ) extends Stats_Store {
+			public string $refuse = '';
+			public function bucket_set_multi( array $writes ): array {
+				$refused = [];
+				foreach ( $writes as $i => [ $parts ] ) {
+					if ( $this->refuse === $parts[0] ) {
+						$refused[ $i ] = false;
+					}
+				}
+				$kept = \array_diff_key( $writes, $refused );
+				$out  = [] === $kept ? [] : \array_combine( \array_keys( $kept ), parent::bucket_set_multi( \array_values( $kept ) ) );
+				return \array_replace( $out, $refused );
+			}
+		};
+	}
+
+	public function test_a_refused_late_fine_write_leaves_the_hour_key_alone(): void {
+		// Only a derived key is re-derivable; a refused fine write logs.
+		Core::$memd = new InMemoryMemcached();
+		$store      = self::refusing_store();
+		$this->set_leaderboard_bucket( $store, '2026-08-27-13-05', self::lb_sums( 4, 40.0 ) );
+		$fb = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+		Core::$now = \gmmktime( 15, 7, 0, 8, 27, 2026 );
+		self::roll_up( $fb, (int) Core::$now );
+
+		$store->refuse = Stats_Store::NS_LB;
+		$this->flush_buckets( $fb, [ '2026-08-27-13-40' => [ 'leaderboard' => self::lb_sums( 6, 60.0 ) ] ] );
+		$store->refuse = '';
+
+		$this->assertSame( 10, self::lb_hour( $store, '2026-08-27-13' )['count'] ?? null, 'the hour key took the late write' );
 	}
 
 	public function test_a_late_write_forgets_the_hours_marker_and_the_reprobe_re_ranks_it(): void {
@@ -4304,11 +4373,11 @@ class FlameBuilderTest extends TestCase {
 		$store      = new class( 0, 86400 ) extends Stats_Store {
 			/** @var list<int> */
 			public array $shard_reads = [];
-			public function bucket_get_multi( array $reads ): array {
+			public function bucket_get_multi( array $reads, ?bool &$failed = null ): array {
 				if ( self::NS_URLS === ( $reads[ \array_key_first( $reads ) ][0][0] ?? '' ) ) {
 					$this->shard_reads[] = \count( $reads );
 				}
-				return parent::bucket_get_multi( $reads );
+				return parent::bucket_get_multi( $reads, $failed );
 			}
 		};
 		$at      = \gmmktime( 13, 2, 0, 9, 22, 2026 );
@@ -4344,11 +4413,11 @@ class FlameBuilderTest extends TestCase {
 		$store      = new class( 0, 86400 ) extends Stats_Store {
 			/** @var list<string> */
 			public array $touched = [];
-			public function bucket_get_multi( array $reads ): array {
+			public function bucket_get_multi( array $reads, ?bool &$failed = null ): array {
 				foreach ( $reads as [ , $bucket ] ) {
 					$this->touched[] = $bucket;
 				}
-				return parent::bucket_get_multi( $reads );
+				return parent::bucket_get_multi( $reads, $failed );
 			}
 			public function bucket_set_multi( array $writes ): array {
 				foreach ( $writes as [ , $bucket ] ) {

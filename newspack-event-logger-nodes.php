@@ -83,12 +83,14 @@ $_newspack_event_logger_nodes_load = static function (): void {
 	// client and MCP_Controller read. 2.58.0 is the Table's remembered
 	// absence, which Stats_Store's `$absence` seam sets. 2.60.0 is the
 	// shared AreaTimeChart and the chart roles its `ui` sheet paints, which
-	// every dashboard chart draws on. Raise the floor whenever a new hard
+	// every dashboard chart draws on. 2.65.12 is lookup_multi() reporting a
+	// failed batch read, without which a stats flush writes its deltas over
+	// the stored buckets — BEHAVIOUR again. Raise the floor whenever a new hard
 	// requirement appears. The floor is what makes a too-old substrate
 	// DORMANT rather than fatal, so one set too low is worse than none, and
 	// WordPress does not order plugin updates.
 	if ( ! \method_exists( '\\Newspack_Nodes\\Bootstrap', 'version_at_least' )
-		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.60.0', 'Newspack Event Logger Nodes' ) ) {
+		|| ! \Newspack_Nodes\Bootstrap::version_at_least( '2.65.12', 'Newspack Event Logger Nodes' ) ) {
 		return;
 	}
 

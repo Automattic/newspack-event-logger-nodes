@@ -1720,8 +1720,12 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	 *
 	 * A `present` intent whose read MISSED writes nothing and forgets its key
 	 * instead: the key is derived, its source took the same write, and the
-	 * reprobe re-folds a missing key from that source. That holds whether the
-	 * key was absent or the batch read failed, which reads as all-miss.
+	 * reprobe re-folds a missing key from that source. One whose write was
+	 * REFUSED is forgotten the same way, since its source took the late rows.
+	 *
+	 * A chunk whose batch read FAILED writes nothing at all (decision 3):
+	 * merged onto a read that never happened, every write would replace a
+	 * stored bucket with this flush's delta alone. Its deltas are dropped.
 	 *
 	 * @param Stats_Store                 $stats_store Destination.
 	 * @param array<string,Pending_Write> $intents     Pending writes, by cache key.
@@ -1734,7 +1738,11 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 			foreach ( $chunk as $key => $intent ) {
 				$reads[ $key ] = [ $intent['parts'], $intent['bucket'] ];
 			}
-			$existing = $stats_store->bucket_get_multi( $reads );
+			$existing = $stats_store->bucket_get_multi( $reads, $failed );
+			if ( $failed ) {
+				$this->print_less_often( 'stats flush read failed; a chunk\'s deltas are dropped', ' — ' . \count( $chunk ) . ' keys' );
+				continue;
+			}
 			$writes   = [];
 			$groups   = [];
 			foreach ( $chunk as $key => $intent ) {
@@ -1758,16 +1766,13 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 			}
 			$keys = \array_keys( $writes );
 			foreach ( $stats_store->bucket_set_multi( \array_values( $writes ) ) as $at => $landed ) {
-				$key   = $keys[ $at ];
-				$after = $chunk[ $key ][ $landed ? 'landed' : 'refused' ] ?? null;
-				if ( null === $after ) {
+				$key    = $keys[ $at ];
+				$intent = $chunk[ $key ];
+				if ( $landed ) {
+					( $intent['landed'] ?? null )?->__invoke( $writes[ $key ][2] );
 					continue;
 				}
-				if ( $landed ) {
-					$after( $writes[ $key ][2] );
-				} else {
-					$after( $key );
-				}
+				( $intent['refused'] ?? null )?->__invoke( $key );
 			}
 			if ( null !== $after_chunk ) {
 				$after_chunk( \array_keys( $groups ) );
