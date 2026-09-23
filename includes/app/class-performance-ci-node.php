@@ -850,15 +850,17 @@ class Performance_CI_Node extends Service_CI_Node {
 
 	/**
 	 * A page from the ranked lists: the two tiers' lists for this scope and
-	 * sort across the read plan, folded by hash and cut here.
+	 * sort across the read plan, folded by hash and cut here. The site's
+	 * lists are every server's, merged per key by the store.
 	 *
 	 * Both tiers are known before the first read, so they go out together:
-	 * one round trip per store, and a second only for the gap
-	 * `Stats_Store::fine_fallback()` names. An hour whose list is present
-	 * stands for its twelve buckets; the LEADING hour of the plan is the only
-	 * one whose missing list is answered from its fine lists, as the row fold
-	 * does for `urls_h`, and a missing list behind it takes the whole page
-	 * back to the fold rather than serving a window one hour short as ranked.
+	 * one round trip per store after the site's server index, and a second
+	 * only for the gap `Stats_Store::fine_fallback()` names. An hour whose
+	 * list is present stands for its twelve buckets; the LEADING hour of the
+	 * plan is the only one whose missing list is answered from its fine
+	 * lists, as the row fold does for `urls_h`, and a missing list behind it
+	 * takes the whole page back to the fold rather than serving a window one
+	 * hour short as ranked.
 	 *
 	 * The two averages are the mean of the per-BUCKET averages at each
 	 * bucket's own tier — a five-minute bucket inside the fine tail, a folded
@@ -870,7 +872,7 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * header and a row's own average answer different questions. No list
 	 * anywhere reads as no tier to read, not as an empty site.
 	 *
-	 * @param string                 $server Reporting server; '' reads the site-wide lists.
+	 * @param string                 $server Reporting server; '' merges every server's lists.
 	 * @param string                 $sort   A `Stats_Store::URL_SORTS` value.
 	 * @param string                 $order  A `Stats_Store::URL_ORDERS` value.
 	 * @param int                    $offset Page offset.
@@ -889,26 +891,12 @@ class Performance_CI_Node extends Service_CI_Node {
 		$plan   = Stats_Store::read_plan( \array_values( self::read_window( $now ) ) );
 		$recent = \array_flip( self::recent_buckets( $now ) );
 		$hours  = \array_flip( $plan['hours'] );
-		$coarse = Stats_Store::url_rank_parts( $sort, $order, $server, true );
-		$fine   = Stats_Store::url_rank_parts( $sort, $order, $server, false );
 		$merged = [];
 		$means  = [];
 		$found  = 0;
-		// Both tiers in one read; an hour key is never a bucket key.
-		$reads = [];
-		foreach ( $plan['hours'] as $hour ) {
-			$reads[ $hour ] = [ $coarse, $hour ];
-		}
-		foreach ( $plan['fine'] as $bucket ) {
-			$reads[ $bucket ] = [ $fine, $bucket ];
-		}
 		foreach ( $stores as $store ) {
 			$covered = [];
-			foreach ( $store->bucket_get_multi( $reads ) as $key => $entries ) {
-				if ( null === $entries ) {
-					continue;
-				}
-				$key = (string) $key;
+			foreach ( $store->url_rank_window( $plan['hours'], $plan['fine'], $sort, $order, $server ) as [ $key, $entries ] ) {
 				if ( isset( $hours[ $key ] ) ) {
 					$covered[ $key ] = true;
 				}
@@ -920,7 +908,7 @@ class Performance_CI_Node extends Service_CI_Node {
 			if ( [] !== $gap['holes'] ) {
 				return null;
 			}
-			foreach ( $store->url_rank_sources( $gap['buckets'], $sort, $order, $server, false ) as [ $bucket, $entries ] ) {
+			foreach ( $store->url_rank_window( [], $gap['buckets'], $sort, $order, $server ) as [ $bucket, $entries ] ) {
 				self::fold_rank_entries( $merged, $means, $entries, isset( $recent[ $bucket ] ) );
 				++$found;
 			}
@@ -1101,7 +1089,9 @@ class Performance_CI_Node extends Service_CI_Node {
 			( $b['avg_ms'] ?? 0 ) <=> ( $a['avg_ms'] ?? 0 );
 
 		$tokens     = '' === $search ? [] : Stats_Store::term_tokens( $search );
-		$candidates = '' === $search ? null : self::search_candidates( $tokens, $stores );
+		$candidates = '' === $search
+			? null
+			: self::search_candidates( $tokens, $server, $stores, Stats_Store::read_plan( \array_values( self::read_window( $now ) ) ) );
 
 		// Worker traffic is its own shard family
 		$families = $workers ? [ false, true ] : [ false ];
@@ -1226,22 +1216,31 @@ class Performance_CI_Node extends Service_CI_Node {
 	 * token no partition holds is a real answer — an empty set — and folds
 	 * nothing.
 	 *
+	 * Each server files its own sets, so a scope reads its server's and the
+	 * site reads those of every server an index the fold may read names.
+	 *
 	 * The reads take a budget of their own, for the reason `url_names()`
 	 * states: naming and narrowing are answers, not steps of the walk that
 	 * follows them.
 	 *
-	 * @param list<string>           $tokens The term's tokens.
-	 * @param array<int,Stats_Store> $stores Stores the caller resolved once.
+	 * @param list<string>                                   $tokens The term's tokens.
+	 * @param string                                         $server Reporting server; '' is the site.
+	 * @param array<int,Stats_Store>                         $stores Stores the caller resolved once.
+	 * @param array{fine: list<string>, hours: list<string>} $plan   The reply's read plan.
 	 * @return array<string,true>|null
 	 */
-	private static function search_candidates( array $tokens, array $stores ): ?array {
+	private static function search_candidates( array $tokens, string $server, array $stores, array $plan ): ?array {
 		if ( [] === $tokens ) {
 			return null;
 		}
-		$sets = [];
-		Flame_Builder_Node::with_own_mirror_read_budget( static function () use ( $tokens, $stores, &$sets ): void {
+		$buckets = [ ...$plan['fine'], ...Stats_Store::fine_fallback( $plan['hours'], [] )['buckets'] ];
+		$sets    = [];
+		Flame_Builder_Node::with_own_mirror_read_budget( static function () use ( $tokens, $server, $plan, $buckets, $stores, &$sets ): void {
 			foreach ( $stores as $store ) {
-				foreach ( $store->url_token_sets( $tokens ) as $token => $hashes ) {
+				$servers = '' === $server
+					? \array_values( \array_replace( [], ...\array_values( $store->server_index( $plan['hours'], $buckets ) ) ) )
+					: [ $server ];
+				foreach ( $store->url_token_sets( $tokens, $servers ) as $token => $hashes ) {
 					// One partition's set unanswerable is the token's answer.
 					if ( false === $hashes || false === ( $sets[ $token ] ?? null ) ) {
 						$sets[ $token ] = false;

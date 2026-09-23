@@ -348,22 +348,23 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	private array $rank_pending = [];
 
 	/**
-	 * Folded hours the probe found holding rows but no DONE marker, each
-	 * until it is ranked from those stored rows. Pruned to the read plan's
-	 * hours, since no reader plans one the window passed.
+	 * Folded hours the probe found holding rows but some server with no DONE
+	 * marker, each until its servers are ranked from those stored rows.
+	 * Pruned to the read plan's hours, since no reader plans one the window
+	 * passed.
 	 *
-	 * The store holds the debt, not this: an hour missing its marker is found
-	 * again by the next probe, so a stop that leaves one loses nothing.
+	 * The store holds the debt, not this: a server missing its marker is
+	 * found again by the next probe, so a stop that leaves one loses nothing.
 	 *
 	 * @var array<string,true>
 	 */
 	private array $stale_hours = [];
 
 	/**
-	 * Folded hours a late write landed in this flush, whose DONE markers the
-	 * flush forgets, once each, so the probe re-ranks them.
+	 * Folded hours a late write landed in this flush, with the servers whose
+	 * DONE markers the flush forgets, once each, so the probe re-ranks them.
 	 *
-	 * @var array<string,true>
+	 * @var array<string,array<array-key,true>> An all-digit server key is an INT key.
 	 */
 	private array $unranked_hours = [];
 
@@ -381,8 +382,9 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	private const REPROBE_EVERY_FLUSHES = 60;
 
 	/**
-	 * Entries per generation of the named-URL held set: hashes whose name is
-	 * already in the URL name table, against the time it was written.
+	 * Entries per generation of the named-URL held set: each URL, under the
+	 * server its rows are filed as, whose name and tokens are already stored,
+	 * against the time they were written.
 	 *
 	 * A name never changes, so re-storing it every flush would spend the saving
 	 * the table exists for; the held set is what makes the write once-per-URL
@@ -393,7 +395,7 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	/** Generations the named-URL held set keeps. See NAMED_URL_BUCKET_SIZE. */
 	private const NAMED_URL_BUCKETS     = 4;
 
-	/** @var LRU_Cache Hash => Unix time its name was last stored. */
+	/** @var LRU_Cache `{server_key}:{hash}` => Unix time its name was last stored. */
 	private LRU_Cache $named_urls;
 
 	/** Flushes since the memo was last emptied; see REPROBE_EVERY_FLUSHES. */
@@ -1395,21 +1397,44 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	 *                                 fine tail: nothing older ranks.
 	 */
 	private function persist_aggregate_stats( Stats_Store $stats_store, int $now, string $floor ): void {
-		$intents = [];
-		foreach ( $this->persist_url_names( $stats_store, $now ) as $token => $hashes ) {
-			self::add_intent( $intents, self::intent(
-				[ Stats_Store::NS_URLTOKEN ],
-				(string) $token,
-				static fn ( array $existing ): array => $stats_store->merge_token_set( $existing, $hashes, $now ),
-				function () use ( $hashes ): void {
-					$this->print_less_often( 'token index write refused; ' . \count( $hashes ) . ' URLs left unfiled' );
-				}
-			) );
-		}
-		$indexes = $stats_store->server_index( \array_map( 'strval', \array_keys( $this->pending ) ), false );
+		$intents  = [];
+		$unfold   = [];
+		$indexes  = $stats_store->server_index( [], \array_map( 'strval', \array_keys( $this->pending ) ) );
+		$admitted = [];
 		foreach ( $this->pending as $bucket => $acc ) {
-			foreach ( $this->url_intents( $bucket, $acc, $indexes[ $bucket ] ?? [] ) as $intent ) {
+			// @longform An all-digit server name is an INT key wherever PHP
+			// stores it, so every name read off a key is cast back to string.
+			$admitted[ $bucket ] = Stats_Store::admit_servers(
+				$indexes[ $bucket ] ?? [],
+				\array_map( 'strval', \array_keys( $acc['url_stats'] + $acc['url_stats_worker'] ) )
+			);
+		}
+		foreach ( $this->persist_url_names( $stats_store, $now, $admitted ) as $server => $tokens ) {
+			$key = Stats_Store::server_key( (string) $server );
+			foreach ( $tokens as $token => $hashes ) {
+				self::add_intent( $intents, self::intent(
+					Stats_Store::url_token_parts( $key ),
+					(string) $token,
+					static fn ( array $existing ): array => $stats_store->merge_token_set( $existing, $hashes, $now ),
+					function () use ( $hashes ): void {
+						$this->print_less_often( 'token index write refused; ' . \count( $hashes ) . ' URLs left unfiled' );
+					}
+				) );
+			}
+		}
+		foreach ( $this->pending as $bucket => $acc ) {
+			foreach ( $this->url_intents( $bucket, $acc, $indexes[ $bucket ] ?? [], $admitted[ $bucket ] ) as $intent ) {
 				self::add_intent( $intents, $intent );
+			}
+			// @longform A server new to the bucket may be new to its folded
+			// hour, whose index the late write then names beside no hour
+			// lists. Every intent is placed first, so the hour leaves the memo
+			// only for the next flush's probe, which ranks it then rather than
+			// after `REPROBE_EVERY_FLUSHES`.
+			foreach ( $admitted[ $bucket ] as $as ) {
+				if ( ! isset( $indexes[ $bucket ][ Stats_Store::server_key( $as ) ] ) ) {
+					$unfold[ Stats_Store::hour_of( $bucket ) ] = true;
+				}
 			}
 			if ( ! empty( $acc['hourly'] ) ) {
 				$totals = $acc['hourly'];
@@ -1464,6 +1489,7 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 				}
 			}
 		}
+		$this->folded_hours = \array_diff_key( $this->folded_hours, $unfold );
 		// @longform Ranked per CHUNK, not after the flush: the collectors hold
 		// every merged reader shard of every bucket still waiting to rank, and
 		// a replay spanning the window would hold the whole window at once —
@@ -1489,8 +1515,10 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 		// A bucket a failed chunk left short ranks from what the store holds.
 		$this->rank_flushed_buckets( $stats_store, \array_map( 'strval', \array_keys( $this->flushed_rows ) ), $now, $floor );
 		$this->flushed_index = [];
-		foreach ( \array_keys( $this->unranked_hours ) as $hour ) {
-			$stats_store->bucket_forget( Stats_Store::url_rank_done_parts(), $hour );
+		foreach ( $this->unranked_hours as $hour => $keys ) {
+			foreach ( \array_keys( $keys ) as $key ) {
+				$stats_store->bucket_forget( Stats_Store::url_rank_done_parts( (string) $key ), $hour );
+			}
 		}
 		$this->unranked_hours = [];
 		$this->rank_owed( $stats_store, $now, $floor );
@@ -1501,18 +1529,13 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	 * server `Stats_Store::admit_servers()` admits them as, one intent per
 	 * server per shard, and the index naming them.
 	 *
-	 * @param string               $bucket Bucket key.
-	 * @param Bucket_Acc           $acc    The bucket's accumulator.
-	 * @param array<string,string> $index  The bucket's stored server index.
+	 * @param string               $bucket   Bucket key.
+	 * @param Bucket_Acc           $acc      The bucket's accumulator.
+	 * @param array<string,string> $index    The bucket's stored server index.
+	 * @param array<string,string> $admitted Server => the name its rows are filed under.
 	 * @return list<Pending_Write>
 	 */
-	private function url_intents( string $bucket, array $acc, array $index ): array {
-		// @longform An all-digit server name is an INT key wherever PHP stores
-		// it, so every name read off a key below is cast back to the string.
-		$admitted = Stats_Store::admit_servers(
-			$index,
-			\array_map( 'strval', \array_keys( $acc['url_stats'] + $acc['url_stats_worker'] ) )
-		);
+	private function url_intents( string $bucket, array $acc, array $index, array $admitted ): array {
 		$entries = [];
 		$out     = [];
 		foreach ( [ 0 => $acc['url_stats'], 1 => $acc['url_stats_worker'] ] as $worker => $servers ) {
@@ -1642,7 +1665,7 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 			}
 		}
 		$unknown = \array_values( \array_diff( $due, \array_map( 'strval', \array_keys( $this->flushed_index ) ) ) );
-		$indexes = $this->flushed_index + ( [] === $unknown ? [] : $stats_store->server_index( $unknown, false ) );
+		$indexes = $this->flushed_index + ( [] === $unknown ? [] : $stats_store->server_index( [], $unknown ) );
 		// A group is one (server, bucket) pair, a shard read apiece.
 		$budget = \intdiv( self::WRITE_BATCH_KEYS, Stats_Store::URL_SHARDS );
 		$chunk  = [];
@@ -1737,41 +1760,61 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	}
 
 	/**
-	 * Store the names of URLs this flush saw, once each.
+	 * Store the names of URLs this flush saw, once each per server they are
+	 * filed under.
 	 *
 	 * A stored row carries the hash alone, so the name table is what a reader
-	 * resolves a displayed page through. Held hashes are skipped until half the
+	 * resolves a displayed page through. Held pairs are skipped until half the
 	 * retention window has passed, which re-writes a name that is still in use
 	 * well before its own TTL retires it.
 	 *
-	 * Each name also files the search index, which is why the memo matters.
-	 * A path costs one read-merge-write key per prefix of every word in it,
-	 * `sum( min( word, 12 ) - 2 )` over the words of three characters or
-	 * more: six for `/wombat-7731`, nine for `/blog/2026/my-post-title`, and
-	 * 30 for a path of three words of twelve characters or more. That is
-	 * paid once per URL per half-window, not once per flush.
+	 * Each name also files the search index of the server its rows are filed
+	 * under — its own, or `Other` past the index cap — which is why the memo
+	 * holds the pair. A path costs one read-merge-write key per prefix of
+	 * every word in it, `sum( min( word, 12 ) - 2 )` over the words of three
+	 * characters or more: six for `/wombat-7731`, nine for
+	 * `/blog/2026/my-post-title`, and 30 for a path of three words of twelve
+	 * characters or more. That is paid once per URL per half-window, not once
+	 * per flush.
 	 *
-	 * @param Stats_Store $stats_store The wired store.
-	 * @param int         $now         The flush's one read of the tick.
-	 * @return array<array-key,list<string>> token => hashes, for the names
-	 *                                        written. An all-digit token is an
-	 *                                        INT array key.
+	 * @param Stats_Store                        $stats_store The wired store.
+	 * @param int                                $now         The flush's one read of the tick.
+	 * @param array<string,array<string,string>> $admitted    Bucket => server => the
+	 *                                                        name its rows are filed under.
+	 * @return array<array-key,array<array-key,list<string>>> server => token => hashes,
+	 *                                                        for the names written. An
+	 *                                                        all-digit token is an INT key.
 	 */
-	private function persist_url_names( Stats_Store $stats_store, int $now ): array {
+	private function persist_url_names( Stats_Store $stats_store, int $now, array $admitted ): array {
 		$refresh = \max( 1, (int) ( $stats_store->max_lifespan() / 2 ) );
 		$due     = [];
-		foreach ( $this->pending as $acc ) {
-			foreach ( $acc['url_names'] as $hash => $url ) {
-				$written = $this->named_urls->get( $hash );
-				if ( null !== $written && $now - Core::num_int( $written ) < $refresh ) {
-					continue;
+		$filed   = [];
+		foreach ( $this->pending as $bucket => $acc ) {
+			foreach ( [ $acc['url_stats'], $acc['url_stats_worker'] ] as $servers ) {
+				foreach ( $servers as $server => $rows ) {
+					$as = $admitted[ $bucket ][ (string) $server ];
+					foreach ( \array_keys( $rows ) as $hash ) {
+						if ( ! isset( $acc['url_names'][ $hash ] ) ) {
+							continue;
+						}
+						$held    = Stats_Store::server_key( $as ) . ':' . $hash;
+						$written = $this->named_urls->get( $held );
+						if ( null !== $written && $now - Core::num_int( $written ) < $refresh ) {
+							continue;
+						}
+						$url                            = $acc['url_names'][ $hash ];
+						$due[ $hash ]                   = $url;
+						$filed[ $as ][ (string) $hash ] = $url;
+						$this->named_urls->set( $held, $now );
+					}
 				}
-				$due[ $hash ] = $url;
-				$this->named_urls->set( $hash, $now );
 			}
 		}
 		$stats_store->set_url_names( $due );
-		return Stats_Store::token_sets_of( Stats_Store::paths_of( $due ) );
+		return \array_map(
+			static fn ( array $names ): array => Stats_Store::token_sets_of( Stats_Store::paths_of( $names ) ),
+			$filed
+		);
 	}
 
 	/**
@@ -1896,11 +1939,12 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	 * A fold is idempotent because it OVERWRITES from the fine buckets. Adding
 	 * into an hour incrementally would double-count every re-flush. It writes
 	 * the hour's ranked lists in the same pass, from the shard rows it just
-	 * folded; an hour holding every derived key but its DONE marker, which
-	 * a late write that lands forgets, is never folded again, but joins
-	 * `stale_hours`, whose lists the flush ranks from those stored rows. Only a fold spends the budget; such an hour spends none,
-	 * and a spent budget stops the folds but never the probe, so every hour
-	 * the probe found folded is memoized in the same flush.
+	 * folded; an hour holding every derived key but some server's DONE
+	 * marker, which a late write that lands forgets, is never folded again,
+	 * but joins `stale_hours`, whose lists the flush ranks from those stored
+	 * rows. Only a fold spends the budget; such an hour
+	 * spends none, and a spent budget stops the folds but never the probe, so
+	 * every hour the probe found folded is memoized in the same flush.
 	 *
 	 * @param Stats_Store                                    $stats_store Source and destination.
 	 * @param array{fine: list<string>, hours: list<string>} $plan        The flush's read plan.
@@ -1931,19 +1975,17 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 			// @longform A partial fold — a crash between shards — reads as
 			// unfolded and is simply redone, which costs a repeat and cannot
 			// corrupt: the fold overwrites rather than adding.
-			$folded = ! empty( $found[ $hour ]['folded'] );
-			$ranked = ! empty( $found[ $hour ]['ranked'] );
-			if ( $folded && $ranked ) {
-				$this->folded_hours[ $hour ] = true;
-				continue;
-			}
-			// @longform Folded but no marker: an hour a release before the
-			// rank tier folded, one whose marker was evicted or refused, or one
-			// a late write landed in. Its fine buckets may be gone, so folding
-			// again would overwrite it with nothing; the lists come from the
-			// coarse rows, which is what they are derived from anyway.
+			$folded   = ! empty( $found[ $hour ]['folded'] );
+			$unranked = $found[ $hour ]['unranked'] ?? [];
+			// @longform Folded with a server unmarked: one whose marker was
+			// evicted or refused, or one a late write landed in. Its fine
+			// buckets may be gone, so folding again would overwrite it with
+			// nothing; its lists come from the coarse rows, which is what they
+			// are derived from anyway.
 			if ( $folded ) {
-				$this->stale_hours[ $hour ] = true;
+				if ( [] !== $unranked ) {
+					$this->stale_hours[ $hour ] = true;
+				}
 				$this->folded_hours[ $hour ] = true;
 				continue;
 			}
@@ -1977,7 +2019,7 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 		$buckets = Stats_Store::buckets_in_hour( $hour );
 		$shards  = \array_merge( Stats_Store::url_shards(), Stats_Store::url_shards( true ) );
 		$index   = [];
-		foreach ( $stats_store->server_index( $buckets, false ) as $named ) {
+		foreach ( $stats_store->server_index( [], $buckets ) as $named ) {
 			$index += $named;
 		}
 		$reads = [];
@@ -2075,7 +2117,7 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 
 	/**
 	 * Rank each stale hour of `$hours` from the coarse rows it already holds,
-	 * `ROLLUP_HOURS_PER_FLUSH` hours at a time.
+	 * every server its index names, `ROLLUP_HOURS_PER_FLUSH` hours at a time.
 	 *
 	 * Each chunk's rows arrive after one index read in ONE round trip: a read
 	 * per hour is a round trip per hour on a replay. Each ranked hour leaves
@@ -2098,10 +2140,10 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	}
 
 	/**
-	 * Overwrite every ranked list of one bucket or hour from its merged rows:
-	 * the site-wide lists, and one set per server holding a rankable row. An
-	 * overwrite, not a merge — the lists are derived from the stored rows,
-	 * which one partition's one worker just wrote.
+	 * Overwrite every ranked list of one bucket or hour from its merged rows,
+	 * fourteen for each server named. An overwrite, not a merge — the lists
+	 * are derived from the stored rows, which one partition's one worker
+	 * just wrote.
 	 *
 	 * Every caller merges each server's shards by hash first: they are
 	 * disjoint by hash, so one union IS the per-shard union.
@@ -2111,10 +2153,10 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	 *
 	 * A refused list is logged and not retried: the lists are top-N bounded
 	 * to fit, so a refusal is a wrong N, and a transient failure heals at
-	 * the ranking the next write into the key brings. The hour tier's DONE
-	 * marker, which is what `url_hours_derived()` probes, rides the same
-	 * batch whatever the lists answer, so no re-probe ranks the hour again;
-	 * the reader serves an hour ranked only where its list is present.
+	 * the ranking the next write into the key brings. On the hour tier each
+	 * server's DONE marker, which is what `url_hours_derived()` probes, rides
+	 * the same batch whatever the lists answer, so no re-probe ranks the hour
+	 * again; the reader serves an hour ranked only where every list is present.
 	 *
 	 * @param Stats_Store                             $stats_store Destination.
 	 * @param string                                  $key         Bucket or hour key.
@@ -2124,8 +2166,8 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	private function write_url_ranks( Stats_Store $stats_store, string $key, array $servers, bool $hour ): void {
 		$writes = Stats_Store::ranked_writes( $servers, $hour, $key );
 		// Nothing probes the fine tier; the marker's PRESENCE is the fact.
-		if ( $hour ) {
-			$writes[] = [ Stats_Store::url_rank_done_parts(), $key, [] ];
+		foreach ( $hour ? \array_keys( $servers ) : [] as $server ) {
+			$writes[] = [ Stats_Store::url_rank_done_parts( Stats_Store::server_key( (string) $server ) ), $key, [] ];
 		}
 		$landed = true;
 		foreach ( \array_chunk( $writes, self::WRITE_BATCH_KEYS ) as $chunk ) {
@@ -2189,7 +2231,7 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 			self::is_worker_shard( $shard ) ? null : function ( array $merged ) use ( $bucket, $server, $shard ): void {
 				$this->flushed_rows[ $bucket ][ $server ][ $shard ] = $merged;
 			},
-			"{$bucket} {$key}"
+			$key
 		);
 	}
 
@@ -2346,10 +2388,11 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	 * hour key, the rows would recreate it holding themselves alone, which
 	 * the probe reads as folded; `flush_writes()` forgets it instead.
 	 *
-	 * Only a write that collects for the ranker ranks. Into an unfolded hour
-	 * it names its bucket's ranking GROUP; into a folded one its bucket sits
-	 * behind the fine tail, and its hour-key write, once it lands, forgets
-	 * the hour's DONE marker so the probe re-ranks the hour from its rows.
+	 * Only a write that collects for the ranker ranks, and it is one
+	 * server's. Into an unfolded hour it names its ranking GROUP, the
+	 * (bucket, server) pair; into a folded one its bucket sits behind the
+	 * fine tail, and its hour-key write, once it lands, forgets that server's
+	 * DONE marker so the probe re-ranks its hour from its rows.
 	 *
 	 * @param string                                                   $bucket  Bucket key.
 	 * @param array<int,string>                                        $fine    Namespace prefix in the fine tier.
@@ -2358,17 +2401,17 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	 * @param ?\Closure(string): void                                  $refused Called with the key a refused set lost.
 	 * @param ?\Closure(array<array-key,mixed>): void                  $collect What a ranked write collects; null
 	 *                                                                          where nothing ranks.
-	 * @param ?string                                                  $group   The ranking group a collecting
-	 *                                                                          write belongs to.
+	 * @param ?string                                                  $server_key The server a collecting
+	 *                                                                             write's rows are filed under.
 	 * @return list<Pending_Write>
 	 */
-	private function hour_tier_intents( string $bucket, array $fine, array $coarse, \Closure $merge, ?\Closure $refused, ?\Closure $collect, ?string $group = null ): array {
+	private function hour_tier_intents( string $bucket, array $fine, array $coarse, \Closure $merge, ?\Closure $refused, ?\Closure $collect, ?string $server_key = null ): array {
 		$hour = Stats_Store::hour_of( $bucket );
 		if ( ! isset( $this->folded_hours[ $hour ] ) ) {
-			return [ self::intent( $fine, $bucket, $merge, $refused, $collect, null === $collect ? null : $group ) ];
+			return [ self::intent( $fine, $bucket, $merge, $refused, $collect, null === $collect ? null : "{$bucket} {$server_key}" ) ];
 		}
-		$unrank = null === $collect ? null : function () use ( $hour ): void {
-			$this->unranked_hours[ $hour ] = true;
+		$unrank = null === $collect ? null : function () use ( $hour, $server_key ): void {
+			$this->unranked_hours[ $hour ][ (string) $server_key ] = true;
 		};
 		return [
 			self::intent( $fine, $bucket, $merge, $refused ),

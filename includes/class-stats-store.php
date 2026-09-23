@@ -3,9 +3,9 @@
  * Stats Store
  *
  * The memcache schema for performance stats, expressed as one small key/value
- * API. Nineteen namespaces (`hourly`, `lb`, `lb_s`, `lb_h`, `urls`, `urls_h`,
- * `urlsrv`, `urlsrv_h`, `urlrank`, `urlrank_h`, `urlrank_s`, `urlrank_sh`,
- * `urltoken`, `urlmap`, `url`, `dim`, `url_dim`, `categories`, `url_cat`) live
+ * API. Seventeen namespaces (`hourly`, `lb`, `lb_s`, `lb_h`, `urls`, `urls_h`,
+ * `urlsrv`, `urlsrv_h`, `urlrank_s`, `urlrank_sh`, `urltoken`, `urlmap`,
+ * `url`, `dim`, `url_dim`, `categories`, `url_cat`) live
  * under the per-partition prefix `evlog:p{N}:`, inside the
  * install scope Cache_Backend owns. `Flame_Builder_Node` produces every value
  * and `App\Performance_CI_Node` reads them for the dashboards.
@@ -140,10 +140,10 @@ class Stats_Store {
 	public const NS_URLSRV_HOUR = 'urlsrv_h';
 
 	/**
-	 * The search index: `urltoken:{token}` => the hashes of every URL whose
-	 * path carries a token, or a token prefix, spelled so. TTL is the
-	 * retention window, refreshed by every flush that names such a URL, so a
-	 * live token stays and a dead one ages out.
+	 * The search index: `urltoken:{server_key}:{token}` => the hashes of every
+	 * URL of one server whose path carries a token, or a token prefix,
+	 * spelled so. TTL is the retention window, refreshed by every flush that
+	 * names such a URL, so a live token stays and a dead one ages out.
 	 */
 	public const NS_URLTOKEN = 'urltoken';
 
@@ -195,16 +195,18 @@ class Stats_Store {
 	public const NS_URLS_HOUR   = 'urls_h';
 
 	/**
-	 * The writer's ranked top-N of one `urls` bucket, one list per `URL_SORTS`
-	 * key and `URL_ORDERS` direction: `urlrank:{sort}:{order}:{bucket}`. Fine
-	 * tier; `ROLE_URL_FINE`.
+	 * The writer's ranked top-N of one server's `urls` bucket, one list per
+	 * `URL_SORTS` key and `URL_ORDERS` direction:
+	 * `urlrank_s:{server_key}:{sort}:{order}:{bucket}`. Fine tier;
+	 * `ROLE_URL_FINE`. No list spans servers: the site's is the merge of
+	 * every server's, which `url_rank_window()` makes at read time.
 	 */
-	public const NS_URLRANK        = 'urlrank';
-	/** The coarse tier of `urlrank`: `urlrank_h:{sort}:{order}:{Y-m-d-H}`, folded with `urls_h`. */
-	public const NS_URLRANK_HOUR   = 'urlrank_h';
-	/** One server's `urlrank`: `urlrank_s:{server_key}:{sort}:{order}:{bucket}`. */
 	public const NS_URLRANK_S      = 'urlrank_s';
-	/** One server's `urlrank_h`: `urlrank_sh:{server_key}:{sort}:{order}:{Y-m-d-H}`. */
+	/**
+	 * The coarse tier of `urlrank_s`, folded with `urls_h`:
+	 * `urlrank_sh:{server_key}:{sort}:{order}:{Y-m-d-H}`, beside each
+	 * server's DONE marker, `urlrank_sh:done:{server_key}:{Y-m-d-H}`.
+	 */
 	public const NS_URLRANK_HOUR_S = 'urlrank_sh';
 
 	/**
@@ -553,7 +555,7 @@ class Stats_Store {
 	public ?\Closure $absence = null;
 
 	/**
-	 * A reader's memo of the server index, `hour|bucket => index`, for the one
+	 * A reader's memo of the server index, `key => index`, for the one
 	 * reply the store serves: every shard of an unscoped read asks the same
 	 * buckets, and each would read the index again. Null, the default, reads
 	 * every time, which is what the long-lived writer needs.
@@ -850,17 +852,136 @@ class Stats_Store {
 	}
 
 	/**
-	 * One scope's ranked lists over many buckets, as `[bucket, entries]` pairs.
+	 * One scope's ranked lists across both tiers, as `[key, entries]` pairs,
+	 * in one round trip after the server index's own.
 	 *
-	 * @param array<int,string> $buckets Bucket or hour keys.
+	 * A server scope reads that server's list and no index. The site reads
+	 * the index of every key and merges the lists of every server it names
+	 * into the list a ranking over all of their rows would have written:
+	 * URLs are disjoint by server, so the site's top-N lies inside the
+	 * union of the servers' top-Ns.
+	 *
+	 * An hour answers only when every server its index names has its list,
+	 * since the hour stands for twelve buckets and a reader serving it
+	 * ranked must see all of it. A fine bucket answers with the lists it
+	 * holds, which is what a ranking not yet due leaves.
+	 *
+	 * @param array<int,string> $hours   Hour keys.
+	 * @param array<int,string> $buckets Bucket keys.
 	 * @param string            $sort    A `URL_SORTS` value.
 	 * @param string            $order   A `URL_ORDERS` value.
-	 * @param string            $server  Reporting server; '' is site-wide.
-	 * @param bool              $hour    The coarse tier.
+	 * @param string            $server  Reporting server; '' merges every server's.
 	 * @return list<array{0: string, 1: array<array-key,mixed>}>
 	 */
-	public function url_rank_sources( array $buckets, string $sort, string $order, string $server, bool $hour ): array {
-		return $this->lookup_bucket_sets( [ self::url_rank_parts( $sort, $order, $server, $hour ) ], $buckets );
+	public function url_rank_window( array $hours, array $buckets, string $sort, string $order, string $server ): array {
+		$tiers = [
+			[ true, $hours ],
+			[ false, $buckets ],
+		];
+		$index = $this->scope_index( $hours, $buckets, $server );
+		$reads = [];
+		foreach ( $tiers as [ $hour, $keys ] ) {
+			foreach ( $keys as $key ) {
+				foreach ( $index[ $key ] ?? [] as $name ) {
+					$reads[] = [ self::url_rank_parts( $sort, $order, $name, $hour ), $key ];
+				}
+			}
+		}
+		$lists   = [];
+		$missing = [];
+		foreach ( [] === $reads ? [] : $this->bucket_get_multi( $reads ) as $at => $entries ) {
+			$key = $reads[ $at ][1];
+			if ( null === $entries ) {
+				$missing[ $key ] = true;
+				continue;
+			}
+			$lists[ $key ][] = $entries;
+		}
+		$out = [];
+		foreach ( $tiers as [ $hour, $keys ] ) {
+			foreach ( $keys as $key ) {
+				$whole = isset( $index[ $key ] ) && ! isset( $missing[ $key ] );
+				if ( $hour ? ! $whole : ! isset( $lists[ $key ] ) ) {
+					continue;
+				}
+				$out[] = [
+					$key,
+					'' === $server
+						? self::merge_rank_lists( $lists[ $key ] ?? [], $sort, $order, $hour )
+						: $lists[ $key ][0],
+				];
+			}
+		}
+		return $out;
+	}
+
+	/**
+	 * The site's list for one key from each server's list for it: the list
+	 * `ranked_writes()` would have written over every server's rows at once.
+	 *
+	 * Exact while no hour names more than `MAX_SERVER_VALUES` servers: URLs
+	 * are then disjoint by server and a tie breaks by hash, so every entry of
+	 * the site's top-N already heads its own server's list. A hash two
+	 * servers share merges, as its rows would have. Past the cap, admission
+	 * to `Other` varies by bucket, so a server admitted by name in one bucket
+	 * and under `Other` in another holds one URL in two lists, each cut on
+	 * its own share, and can rank short. Search has the matching gap: a
+	 * server the hour folds into its `Other` has its tokens filed under its
+	 * own name, which that hour's index no longer names.
+	 *
+	 * @param list<array<array-key,mixed>> $lists One list per server.
+	 * @param string                       $sort  A `URL_SORTS` value.
+	 * @param string                       $order A `URL_ORDERS` value.
+	 * @param bool                         $hour  The coarse tier, which sets the bound.
+	 * @return list<array<int,mixed>>
+	 */
+	private static function merge_rank_lists( array $lists, string $sort, string $order, bool $hour ): array {
+		$rows = [];
+		foreach ( $lists as $entries ) {
+			foreach ( $entries as $raw ) {
+				$entry = Core::arr( $raw );
+				$hash  = Core::as_string( $entry[ self::RANK_HASH ] ?? '' );
+				$row   = Core::arr( $entry[ self::RANK_ROW ] ?? null );
+				$row[ self::ROW_PATH ] = Core::str( $entry[ self::RANK_PATH ] ?? '' );
+				$rows[ $hash ]         = isset( $rows[ $hash ] ) ? self::merge_url_row( $rows[ $hash ], $row ) : $row;
+			}
+		}
+		return self::rank_list( $rows, $sort, $order, $hour ? self::URL_RANK_N_HOUR : self::URL_RANK_N );
+	}
+
+	/**
+	 * Merge one stored URL row into another for the SAME url.
+	 *
+	 * Both tiers of the write path fold this rule — a flush into its bucket,
+	 * twelve buckets into their hour — so it lives once, beside the field table
+	 * it reads. Sums add, extremes take the larger, `min_ms` folds only from
+	 * TIMED buckets (0 is "nothing folded yet"), and whichever side names the
+	 * path wins, because merge order varies.
+	 *
+	 * Contrast `fold_url_rows()`, which folds DIFFERENT urls into an overflow
+	 * row and therefore keeps only what adds.
+	 *
+	 * @param array<array-key,mixed> $into The row so far.
+	 * @param array<array-key,mixed> $row  The row being folded in.
+	 * @return array<array-key,mixed>
+	 */
+	public static function merge_url_row( array $into, array $row ): array {
+		// Read off `$into`, never `$out`: only ROW_SUMS survives the sum.
+		$out = self::sum_entry( $into, $row, self::ROW_SUMS );
+		$out[ self::ROW_MAX_MS ]      = \max( Core::num_float( $into[ self::ROW_MAX_MS ] ?? null ), Core::num_float( $row[ self::ROW_MAX_MS ] ?? null ) );
+		$out[ self::ROW_MAX_PEAK_MB ] = \max( Core::num_float( $into[ self::ROW_MAX_PEAK_MB ] ?? null ), Core::num_float( $row[ self::ROW_MAX_PEAK_MB ] ?? null ) );
+		$out[ self::ROW_LAST_SEEN ]   = \max( Core::num_int( $into[ self::ROW_LAST_SEEN ] ?? null ), Core::num_int( $row[ self::ROW_LAST_SEEN ] ?? null ) );
+		$out[ self::ROW_WORKER ]      = ! empty( $into[ self::ROW_WORKER ] ) || ! empty( $row[ self::ROW_WORKER ] );
+		// Verbatim, so an unfolded 0 stays the int the empty row seeded.
+		$out[ self::ROW_MIN_MS ] = $into[ self::ROW_MIN_MS ] ?? 0;
+		if ( Core::num_int( $row[ self::ROW_TIMED_COUNT ] ?? null ) > 0 ) {
+			$held                    = Core::num_float( $out[ self::ROW_MIN_MS ] );
+			$row_min                 = Core::num_float( $row[ self::ROW_MIN_MS ] ?? null );
+			$out[ self::ROW_MIN_MS ] = 0.0 === $held ? $row_min : \min( $held, $row_min );
+		}
+		$path                  = Core::str( $into[ self::ROW_PATH ] ?? '' );
+		$out[ self::ROW_PATH ] = '' === $path ? Core::str( $row[ self::ROW_PATH ] ?? '' ) : $path;
+		return $out;
 	}
 
 	/**
@@ -1005,9 +1126,9 @@ class Stats_Store {
 		$shards = null === $shard
 			? ( $workers ? \array_merge( self::url_shards(), self::url_shards( true ) ) : self::url_shards() )
 			: [ $shard ];
-		$index = '' === $server
-			? $this->server_index( $buckets, $hour )
-			: \array_fill_keys( $buckets, [ self::server_key( $server ) => $server ] );
+		$index = $hour
+			? $this->scope_index( $buckets, [], $server )
+			: $this->scope_index( [], $buckets, $server );
 		$reads = [];
 		$names = [];
 		foreach ( $index as $bucket => $servers ) {
@@ -1039,51 +1160,55 @@ class Stats_Store {
 	}
 
 	/**
-	 * Which servers each of `$keys` holds rows for, in one round trip.
+	 * The servers each key of a scope is read under: one server's own name
+	 * for every key, or for the site whatever each key's index names.
 	 *
-	 * @param array<int,string> $keys Bucket keys, or hour keys when `$hour`.
-	 * @param bool              $hour The coarse tier.
+	 * @param array<int,string> $hours   Hour keys.
+	 * @param array<int,string> $buckets Bucket keys.
+	 * @param string            $server  One server; '' reads the index.
+	 * @return array<string,array<string,string>> key => server_key => name;
+	 *                                            a key the site's index lacks is absent.
+	 */
+	private function scope_index( array $hours, array $buckets, string $server ): array {
+		return '' === $server
+			? $this->server_index( $hours, $buckets )
+			: \array_fill_keys( [ ...$hours, ...$buckets ], [ self::server_key( $server ) => $server ] );
+	}
+
+	/**
+	 * Which servers each key of both tiers holds rows for, in ONE round trip
+	 * through the reader's memo where it has one. An hour key never spells a
+	 * bucket key, so the answer and the memo key by the key itself.
+	 *
+	 * @param array<int,string> $hours   Hour keys.
+	 * @param array<int,string> $buckets Bucket keys.
 	 * @return array<string,array<string,string>> key => server_key => name;
 	 *                                            a key holding no index is absent.
 	 */
-	public function server_index( array $keys, bool $hour ): array {
-		$tier  = $hour ? 'hour|' : 'bucket|';
+	public function server_index( array $hours, array $buckets ): array {
 		$reads = [];
-		foreach ( $keys as $key ) {
-			if ( ! \array_key_exists( $tier . $key, $this->server_indexes ?? [] ) ) {
-				$reads[ $key ] = [ self::url_srv_parts( $hour ), $key ];
+		foreach ( [ [ true, $hours ], [ false, $buckets ] ] as [ $hour, $keys ] ) {
+			foreach ( $keys as $key ) {
+				if ( ! \array_key_exists( $key, $this->server_indexes ?? [] ) ) {
+					$reads[ $key ] = [ self::url_srv_parts( $hour ), $key ];
+				}
 			}
 		}
 		$found = [];
-		foreach ( $this->bucket_get_multi( $reads ) as $key => $index ) {
+		foreach ( [] === $reads ? [] : $this->bucket_get_multi( $reads ) as $key => $index ) {
 			$found[ (string) $key ] = null === $index ? null : self::string_map( $index );
 		}
 		if ( null !== $this->server_indexes ) {
-			foreach ( $found as $key => $index ) {
-				$this->server_indexes[ $tier . $key ] = $index;
-			}
+			$this->server_indexes = $found + $this->server_indexes;
 		}
 		$out = [];
-		foreach ( $keys as $key ) {
-			$index = $found[ $key ] ?? $this->server_indexes[ $tier . $key ] ?? null;
+		foreach ( [ ...$hours, ...$buckets ] as $key ) {
+			$index = $found[ $key ] ?? $this->server_indexes[ $key ] ?? null;
 			if ( null !== $index ) {
 				$out[ $key ] = $index;
 			}
 		}
 		return $out;
-	}
-
-	/**
-	 * Re-key AND re-type a decoded string map, as the server index is.
-	 * `string_keys()` for the key, because an all-digit key arrives as an int;
-	 * `Core::str()` for the value, because a truncated or corrupt entry is
-	 * whatever it decoded to and every reader of the map promises a string.
-	 *
-	 * @param array<array-key,mixed> $map Decoded map.
-	 * @return array<string,string>
-	 */
-	public static function string_map( array $map ): array {
-		return \array_map( static fn ( $value ): string => Core::str( $value ), self::string_keys( $map ) );
 	}
 
 	/**
@@ -1118,45 +1243,56 @@ class Stats_Store {
 	 * for each server it names, and the global leaderboard's hour: a server
 	 * missing a shard is an hour whose rows no reader sees whole, a missing
 	 * leaderboard hour is one the board skips, and the fold is what would
-	 * otherwise never revisit either. `ranked` is the hour's DONE marker, one
-	 * key the ranker writes beside its lists whatever they answer. The index,
-	 * the leaderboard and the marker go first, because the index says which
-	 * row keys the second read asks for. The probe runs on every flush, and
-	 * decision 6 is what keeps that affordable.
+	 * otherwise never revisit either. `unranked` names each server the index
+	 * names whose DONE marker is missing — the one key its ranking writes
+	 * beside its lists whatever they answer. The index and the leaderboard go
+	 * first, because the index says which keys the second read asks for.
+	 * The probe runs on every flush, and decision 6 is what keeps that
+	 * affordable.
 	 *
 	 * @param array<int,string> $hours Hour keys to probe.
-	 * @return array<string,array{folded: bool, ranked: bool}> Only hours holding something.
+	 * @return array<string,array{folded: bool, unranked: list<string>}> Only hours holding something.
 	 */
 	public function url_hours_derived( array $hours ): array {
 		$reads = [];
 		foreach ( $hours as $hour ) {
 			$reads[] = [ self::url_srv_parts( true ), $hour ];
 			$reads[] = [ self::lb_hour_parts(), $hour ];
-			$reads[] = [ self::url_rank_done_parts(), $hour ];
 		}
 		$heads  = $this->bucket_get_multi( $reads );
 		$shards = \array_merge( self::url_shards(), self::url_shards( true ) );
-		$rows   = [];
+		$keys   = [];
+		$owner  = [];
 		foreach ( \array_values( $hours ) as $at => $hour ) {
-			foreach ( \array_keys( $heads[ 3 * $at ] ?? [] ) as $key ) {
+			foreach ( self::string_map( $heads[ 2 * $at ] ?? [] ) as $key => $name ) {
+				$keys[]  = [ self::url_rank_done_parts( $key ), $hour ];
+				$owner[] = $name;
 				foreach ( $shards as $shard ) {
-					$rows[] = [ self::url_hour_parts( $key, $shard ), $hour ];
+					$keys[]  = [ self::url_hour_parts( $key, $shard ), $hour ];
+					$owner[] = null;
 				}
 			}
 		}
-		$missing = [];
-		foreach ( $this->bucket_get_multi( $rows ) as $at => $value ) {
-			if ( null === $value ) {
-				$missing[ $rows[ $at ][1] ] = true;
+		$missing  = [];
+		$unranked = [];
+		foreach ( $this->bucket_get_multi( $keys ) as $at => $value ) {
+			if ( null !== $value ) {
+				continue;
+			}
+			$hour = $keys[ $at ][1];
+			if ( null === $owner[ $at ] ) {
+				$missing[ $hour ] = true;
+			} else {
+				$unranked[ $hour ][] = $owner[ $at ];
 			}
 		}
 		$out = [];
 		foreach ( \array_values( $hours ) as $at => $hour ) {
-			[ $index, $board, $done ] = \array_slice( $heads, 3 * $at, 3 );
-			if ( null !== $index || null !== $board || null !== $done ) {
+			[ $index, $board ] = \array_slice( $heads, 2 * $at, 2 );
+			if ( null !== $index || null !== $board ) {
 				$out[ $hour ] = [
-					'folded' => null !== $index && null !== $board && ! isset( $missing[ $hour ] ),
-					'ranked' => null !== $done,
+					'folded'   => null !== $index && null !== $board && ! isset( $missing[ $hour ] ),
+					'unranked' => $unranked[ $hour ] ?? [],
 				];
 			}
 		}
@@ -1175,6 +1311,37 @@ class Stats_Store {
 	}
 
 	/**
+	 * Namespace prefix of one server's DONE marker for an hour:
+	 * `urlrank_sh:done:{server_key}:{hour}`.
+	 *
+	 * A server's hour is fourteen lists, so none of them can stand for the
+	 * set. This one tiny key says the server's ranking of the hour ran, and
+	 * rides that ranking's batch whatever its lists answer; a refused list is
+	 * not retried, and the ranked reader folds an hour whose list it finds
+	 * missing. `done` is never a server key, which is hex, so it can collide
+	 * with no list.
+	 *
+	 * @param string $server_key The server's `server_key()`.
+	 * @return array<int,string>
+	 */
+	public static function url_rank_done_parts( string $server_key ): array {
+		return [ self::NS_URLRANK_HOUR_S, 'done', $server_key ];
+	}
+
+	/**
+	 * Re-key AND re-type a decoded string map, as the server index is.
+	 * `string_keys()` for the key, because an all-digit key arrives as an int;
+	 * `Core::str()` for the value, because a truncated or corrupt entry is
+	 * whatever it decoded to and every reader of the map promises a string.
+	 *
+	 * @param array<array-key,mixed> $map Decoded map.
+	 * @return array<string,string>
+	 */
+	public static function string_map( array $map ): array {
+		return \array_map( static fn ( $value ): string => Core::str( $value ), self::string_keys( $map ) );
+	}
+
+	/**
 	 * Every shard the URL index is spread across.
 	 *
 	 * @param bool $worker Name the WORKER shard family instead of the default one.
@@ -1186,22 +1353,6 @@ class Stats_Store {
 			static fn ( int $i ): string => $prefix . \dechex( $i ),
 			\range( 0, self::URL_SHARDS - 1 )
 		);
-	}
-
-	/**
-	 * Namespace prefix of the hour tier's DONE marker: `urlrank_h:done:{hour}`.
-	 *
-	 * An hour's lists are many keys across as many scopes as its rows name
-	 * servers, so nothing among them can stand for the set. This one tiny
-	 * key says the hour's ranking ran, and rides that ranking's batch
-	 * whatever its lists answer; a refused list is not retried, and the
-	 * ranked reader folds an hour whose list it finds missing.
-	 * `done` is no `URL_SORTS` value, so it can collide with no list.
-	 *
-	 * @return array<int,string>
-	 */
-	public static function url_rank_done_parts(): array {
-		return [ self::NS_URLRANK_HOUR, 'done' ];
 	}
 
 	/**
@@ -1310,36 +1461,47 @@ class Stats_Store {
 	}
 
 	/**
-	 * The token sets this partition holds, in one round trip.
+	 * The token sets this partition holds for `$servers`, unioned per token,
+	 * in one round trip.
 	 *
 	 * WHICH tokens can be answered at all is the schema's to say, so a caller
 	 * tests neither floor nor sentinel: `false` is a token no read can answer —
 	 * one shorter than `URL_TOKEN_PREFIX_MIN`, refused here rather than asked
-	 * for, or one whose set has saturated — and a token this partition simply
-	 * does not hold is ABSENT, which is a real answer narrowing to nothing.
+	 * for, or one whose set has saturated for any server asked — and a token
+	 * none of them holds is ABSENT, which is a real answer narrowing to nothing.
 	 *
-	 * @param list<string> $tokens Tokens, as `term_tokens()` spells them.
+	 * @param list<string> $tokens  Tokens, as `term_tokens()` spells them.
+	 * @param list<string> $servers Server names whose sets to read.
 	 * @return array<string,list<string>|false> token => hashes, or false when
 	 *                                          no read can answer it; absent when unheld.
 	 */
-	public function url_token_sets( array $tokens ): array {
-		$out   = [];
+	public function url_token_sets( array $tokens, array $servers ): array {
+		$sets  = [];
 		$reads = [];
 		foreach ( $tokens as $token ) {
 			if ( \strlen( $token ) < self::URL_TOKEN_PREFIX_MIN ) {
-				$out[ $token ] = false;
+				$sets[ $token ] = false;
 				continue;
 			}
-			$reads[ $token ] = [ [ self::NS_URLTOKEN ], $token ];
+			foreach ( $servers as $server ) {
+				$reads[] = [ self::url_token_parts( self::server_key( $server ) ), $token ];
+			}
 		}
-		foreach ( $this->bucket_get_multi( $reads ) as $token => $set ) {
-			if ( null === $set ) {
+		foreach ( $this->bucket_get_multi( $reads ) as $at => $set ) {
+			$token = $reads[ $at ][1];
+			if ( null === $set || false === ( $sets[ $token ] ?? null ) ) {
 				continue;
 			}
 			// The hashes are the KEYS; the stamps are the writer's alone.
-			$out[ (string) $token ] = isset( $set[ self::TOKEN_SATURATED ] )
+			$sets[ $token ] = isset( $set[ self::TOKEN_SATURATED ] )
 				? false
-				: \array_map( 'strval', \array_keys( $set ) );
+				: ( $sets[ $token ] ?? [] ) + $set;
+		}
+		$out = [];
+		foreach ( $tokens as $token ) {
+			if ( isset( $sets[ $token ] ) ) {
+				$out[ $token ] = false === $sets[ $token ] ? false : \array_map( 'strval', \array_keys( $sets[ $token ] ) );
+			}
 		}
 		return $out;
 	}
@@ -1384,6 +1546,16 @@ class Stats_Store {
 			$out[ $i ] = \is_array( $value ) ? self::string_keys( $value ) : null;
 		}
 		return $out;
+	}
+
+	/**
+	 * Namespace prefix of one server's token sets.
+	 *
+	 * @param string $server_key The server's `server_key()`.
+	 * @return array<int,string>
+	 */
+	public static function url_token_parts( string $server_key ): array {
+		return [ self::NS_URLTOKEN, $server_key ];
 	}
 
 	/**
@@ -1922,7 +2094,6 @@ class Stats_Store {
 			// An index outliving the fine rows it names is one nothing reads.
 			self::NS_URLS,
 			self::NS_URLSRV,
-			self::NS_URLRANK,
 			self::NS_URLRANK_S => self::ROLE_URL_FINE,
 			default            => self::ROLE_AGGREGATE,
 		};
@@ -2031,6 +2202,30 @@ class Stats_Store {
 	}
 
 	/**
+	 * Sum `$fields` from one entry into another — what `sum_fields()` does per
+	 * key, reachable directly by a caller holding a single row rather than a map.
+	 *
+	 * The entry it returns is built from `$fields` and nothing else, so a key
+	 * either side carries outside the table is DISCARDED — which is what makes
+	 * `sum_fields()`'s invariant true. A caller wanting a field the table does
+	 * not name puts it back itself, beside the reason it survives.
+	 *
+	 * @param array<array-key,mixed> $into   The entry so far.
+	 * @param array<array-key,mixed> $from   The entry being added.
+	 * @param array<array-key,bool>  $fields Field => whether it is a whole count.
+	 * @return array<array-key,mixed> The `$fields` keys, summed.
+	 */
+	public static function sum_entry( array $into, array $from, array $fields ): array {
+		$out = [];
+		foreach ( $fields as $field => $is_count ) {
+			$out[ $field ] = $is_count
+				? Core::num_int( $into[ $field ] ?? null ) + Core::num_int( $from[ $field ] ?? null )
+				: Core::num_float( $into[ $field ] ?? null ) + Core::num_float( $from[ $field ] ?? null );
+		}
+		return $out;
+	}
+
+	/**
 	 * What answers for every hour the coarse tier did not: the fine buckets
 	 * that stand in, and the hours nothing stands in for.
 	 *
@@ -2112,17 +2307,13 @@ class Stats_Store {
 
 	/**
 	 * Every ranked list one tier's merged rows produce, as the
-	 * `[parts, key, entries]` triples `bucket_set_multi()` takes: the site's
-	 * fourteen, then fourteen for each server holding a rankable row. The
+	 * `[parts, key, entries]` triples `bucket_set_multi()` takes: fourteen for
+	 * each server named, empty where it holds nothing rankable, so a reader
+	 * can tell a server ranked idle from one whose lists are missing. The
 	 * TIER sets the bound, so a caller names which tier it is writing and
 	 * never the row count twice.
 	 *
-	 * The site ranks every server's rows together: URLs are disjoint by
-	 * server, so their union is the site, and a hash two servers share is
-	 * merged rather than dropped.
-	 *
-	 * The ONE entry to ranking: a caller left to enumerate the scopes itself
-	 * is one that can rank the site and forget the servers.
+	 * No list spans servers: `url_rank_window()` merges the site's.
 	 *
 	 * @param array<array-key,array<array-key,mixed>> $servers Server name =>
 	 *                                                         the tier's merged rows by hash.
@@ -2132,26 +2323,19 @@ class Stats_Store {
 	 */
 	public static function ranked_writes( array $servers, bool $hour, string $key ): array {
 		$n      = $hour ? self::URL_RANK_N_HOUR : self::URL_RANK_N;
-		// Seeded, so a bucket holding nothing rankable still writes its lists.
-		$scopes = [ '' => [] ];
+		$writes = [];
 		foreach ( $servers as $server => $rows ) {
+			$rankable = [];
 			foreach ( $rows as $raw_hash => $raw ) {
 				$hash = (string) $raw_hash;
 				$row  = Core::arr( $raw );
-				if ( ! self::ranks( $hash, $row ) ) {
-					continue;
+				if ( self::ranks( $hash, $row ) ) {
+					$rankable[ $hash ] = $row;
 				}
-				$scopes[ (string) $server ][ $hash ] = $row;
-				$scopes[''][ $hash ]                 = isset( $scopes[''][ $hash ] )
-					? self::merge_url_row( $scopes[''][ $hash ], $row )
-					: $row;
 			}
-		}
-		$writes = [];
-		foreach ( $scopes as $server => $rows ) {
-			foreach ( self::rank_url_rows( $rows, $n ) as $sort => $orders ) {
+			foreach ( self::rank_url_rows( $rankable, $n ) as $sort => $orders ) {
 				foreach ( $orders as $order => $entries ) {
-					$writes[] = [ self::url_rank_parts( $sort, $order, $server, $hour ), $key, $entries ];
+					$writes[] = [ self::url_rank_parts( $sort, $order, (string) $server, $hour ), $key, $entries ];
 				}
 			}
 		}
@@ -2159,20 +2343,17 @@ class Stats_Store {
 	}
 
 	/**
-	 * Namespace prefix of one ranked list. The server scope rides in the KEY:
-	 * a list is `URL_RANK_N` rows, which is the bound decision 14 named as
-	 * what would make the key-prefix form affordable.
+	 * Namespace prefix of one server's ranked list. The server rides in the
+	 * KEY: a list is `URL_RANK_N` rows, which is the bound decision 14 named
+	 * as what would make the key-prefix form affordable.
 	 *
 	 * @param string $sort   A `URL_SORTS` value.
 	 * @param string $order  A `URL_ORDERS` value.
-	 * @param string $server Reporting server; '' is the site-wide list.
+	 * @param string $server Reporting server.
 	 * @param bool   $hour   The coarse tier.
 	 * @return array<int,string>
 	 */
 	public static function url_rank_parts( string $sort, string $order, string $server, bool $hour ): array {
-		if ( '' === $server ) {
-			return [ $hour ? self::NS_URLRANK_HOUR : self::NS_URLRANK, $sort, $order ];
-		}
 		return [ $hour ? self::NS_URLRANK_HOUR_S : self::NS_URLRANK_S, self::server_key( $server ), $sort, $order ];
 	}
 
@@ -2191,43 +2372,57 @@ class Stats_Store {
 	}
 
 	/**
-	 * Every ranked list of ONE SCOPE's rows: `sort => order => entries`, each
-	 * cut to `$n`. An untimed row ranks on no timed sort, and a row with no
-	 * path ranks on no `url` sort; those two skips are per SORT, so they live
-	 * here.
+	 * Every ranked list of ONE server's rows: `sort => order => entries`, each
+	 * cut to `$n`.
 	 *
 	 * The rows arrive filtered — `ranked_writes()` has already dropped what
 	 * never ranks — so nothing here walks them a second time.
 	 *
-	 * @param array<array-key,array<array-key,mixed>> $rows One scope's rows by hash.
+	 * @param array<array-key,array<array-key,mixed>> $rows One server's rows by hash.
 	 * @param int                                     $n    Entries per list.
 	 * @return array<string,array<string,list<array<int,mixed>>>>
 	 */
 	private static function rank_url_rows( array $rows, int $n ): array {
 		$out = [];
 		foreach ( self::URL_SORTS as $sort ) {
-			$timed  = \in_array( $sort, [ 'avg_ms', 'min_ms', 'max_ms' ], true );
-			$values = [];
-			foreach ( $rows as $hash => $row ) {
-				if ( $timed && Core::num_int( $row[ self::ROW_TIMED_COUNT ] ?? null ) <= 0 ) {
-					continue;
-				}
-				if ( 'url' === $sort && '' === Core::str( $row[ self::ROW_PATH ] ?? '' ) ) {
-					continue;
-				}
-				$values[ $hash ] = self::url_rank_value( $row, $sort );
-			}
 			foreach ( self::URL_ORDERS as $order ) {
-				// arsort, not array_reverse: ties keep their source order.
-				'asc' === $order ? \asort( $values ) : \arsort( $values );
-				$out[ $sort ][ $order ] = self::rank_entries(
-					\array_keys( \array_slice( $values, 0, $n, true ) ),
-					$sort,
-					$rows
-				);
+				$out[ $sort ][ $order ] = self::rank_list( $rows, $sort, $order, $n );
 			}
 		}
 		return $out;
+	}
+
+	/**
+	 * One list: the `$n` best rows on one sort in one direction, as entries.
+	 * An untimed row ranks on no timed sort, and a row with no path ranks on
+	 * no `url` sort. A tie breaks by hash, ascending either way, so a cut
+	 * never depends on the order rows arrive in and a merge of servers'
+	 * lists cuts where one list over all of them would.
+	 *
+	 * @param array<array-key,array<array-key,mixed>> $rows  Rows by hash.
+	 * @param string                                  $sort  A `URL_SORTS` value.
+	 * @param string                                  $order A `URL_ORDERS` value.
+	 * @param int                                     $n     Entries to keep.
+	 * @return list<array<int,mixed>>
+	 */
+	private static function rank_list( array $rows, string $sort, string $order, int $n ): array {
+		$timed  = \in_array( $sort, [ 'avg_ms', 'min_ms', 'max_ms' ], true );
+		$values = [];
+		foreach ( $rows as $hash => $row ) {
+			if ( $timed && Core::num_int( $row[ self::ROW_TIMED_COUNT ] ?? null ) <= 0 ) {
+				continue;
+			}
+			if ( 'url' === $sort && '' === Core::str( $row[ self::ROW_PATH ] ?? '' ) ) {
+				continue;
+			}
+			$values[ $hash ] = self::url_rank_value( $row, $sort );
+		}
+		$sign = 'asc' === $order ? 1 : -1;
+		\uksort(
+			$values,
+			static fn ( int|string $a, int|string $b ): int => ( $sign * ( $values[ $a ] <=> $values[ $b ] ) ) ?: \strcmp( (string) $a, (string) $b )
+		);
+		return self::rank_entries( \array_keys( \array_slice( $values, 0, $n, true ) ), $sort, $rows );
 	}
 
 	/**
@@ -2273,65 +2468,6 @@ class Stats_Store {
 			'last_updated' => Core::num_int( $row[ self::ROW_LAST_SEEN ] ?? null ),
 			default        => Core::str( $row[ self::ROW_PATH ] ?? '' ),
 		};
-	}
-
-	/**
-	 * Merge one stored URL row into another for the SAME url.
-	 *
-	 * Both tiers of the write path fold this rule — a flush into its bucket,
-	 * twelve buckets into their hour — so it lives once, beside the field table
-	 * it reads. Sums add, extremes take the larger, `min_ms` folds only from
-	 * TIMED buckets (0 is "nothing folded yet"), and whichever side names the
-	 * path wins, because merge order varies.
-	 *
-	 * Contrast `fold_url_rows()`, which folds DIFFERENT urls into an overflow
-	 * row and therefore keeps only what adds.
-	 *
-	 * @param array<array-key,mixed> $into The row so far.
-	 * @param array<array-key,mixed> $row  The row being folded in.
-	 * @return array<array-key,mixed>
-	 */
-	public static function merge_url_row( array $into, array $row ): array {
-		// Read off `$into`, never `$out`: only ROW_SUMS survives the sum.
-		$out = self::sum_entry( $into, $row, self::ROW_SUMS );
-		$out[ self::ROW_MAX_MS ]      = \max( Core::num_float( $into[ self::ROW_MAX_MS ] ?? null ), Core::num_float( $row[ self::ROW_MAX_MS ] ?? null ) );
-		$out[ self::ROW_MAX_PEAK_MB ] = \max( Core::num_float( $into[ self::ROW_MAX_PEAK_MB ] ?? null ), Core::num_float( $row[ self::ROW_MAX_PEAK_MB ] ?? null ) );
-		$out[ self::ROW_LAST_SEEN ]   = \max( Core::num_int( $into[ self::ROW_LAST_SEEN ] ?? null ), Core::num_int( $row[ self::ROW_LAST_SEEN ] ?? null ) );
-		$out[ self::ROW_WORKER ]      = ! empty( $into[ self::ROW_WORKER ] ) || ! empty( $row[ self::ROW_WORKER ] );
-		// Verbatim, so an unfolded 0 stays the int the empty row seeded.
-		$out[ self::ROW_MIN_MS ] = $into[ self::ROW_MIN_MS ] ?? 0;
-		if ( Core::num_int( $row[ self::ROW_TIMED_COUNT ] ?? null ) > 0 ) {
-			$held                    = Core::num_float( $out[ self::ROW_MIN_MS ] );
-			$row_min                 = Core::num_float( $row[ self::ROW_MIN_MS ] ?? null );
-			$out[ self::ROW_MIN_MS ] = 0.0 === $held ? $row_min : \min( $held, $row_min );
-		}
-		$path                  = Core::str( $into[ self::ROW_PATH ] ?? '' );
-		$out[ self::ROW_PATH ] = '' === $path ? Core::str( $row[ self::ROW_PATH ] ?? '' ) : $path;
-		return $out;
-	}
-
-	/**
-	 * Sum `$fields` from one entry into another — what `sum_fields()` does per
-	 * key, reachable directly by a caller holding a single row rather than a map.
-	 *
-	 * The entry it returns is built from `$fields` and nothing else, so a key
-	 * either side carries outside the table is DISCARDED — which is what makes
-	 * `sum_fields()`'s invariant true. A caller wanting a field the table does
-	 * not name puts it back itself, beside the reason it survives.
-	 *
-	 * @param array<array-key,mixed> $into   The entry so far.
-	 * @param array<array-key,mixed> $from   The entry being added.
-	 * @param array<array-key,bool>  $fields Field => whether it is a whole count.
-	 * @return array<array-key,mixed> The `$fields` keys, summed.
-	 */
-	public static function sum_entry( array $into, array $from, array $fields ): array {
-		$out = [];
-		foreach ( $fields as $field => $is_count ) {
-			$out[ $field ] = $is_count
-				? Core::num_int( $into[ $field ] ?? null ) + Core::num_int( $from[ $field ] ?? null )
-				: Core::num_float( $into[ $field ] ?? null ) + Core::num_float( $from[ $field ] ?? null );
-		}
-		return $out;
 	}
 
 	/**
@@ -2501,7 +2637,7 @@ class Stats_Store {
 	 * Membership is the whole fact, and it sits beside `role_for()` because it
 	 * is the same kind of statement about a namespace: each of these is
 	 * re-derivable, so a durable copy would store one thing twice. The three
-	 * coarse tiers are re-folded from the mirrored fine buckets, the four
+	 * coarse tiers are re-folded from the mirrored fine buckets, the two
 	 * ranked lists are re-ranked from those rows on the next flush or fold,
 	 * and a token set is rewritten whenever its URL is next named. Every other
 	 * namespace is stored — `url` included, which is bounded by a RANK cap
@@ -2516,8 +2652,6 @@ class Stats_Store {
 			self::NS_URLS_HOUR,
 			self::NS_URLSRV_HOUR,
 			self::NS_LB_HOUR,
-			self::NS_URLRANK,
-			self::NS_URLRANK_HOUR,
 			self::NS_URLRANK_S,
 			self::NS_URLRANK_HOUR_S,
 			self::NS_URLTOKEN => true,

@@ -285,15 +285,16 @@ abstract class TestCase extends RuntimeTestCase {
 	}
 
 	/**
-	 * File the search tokens of named paths, as the flush does: read each
-	 * token's set, union, write.
+	 * File the search tokens of named paths under one server, as the flush
+	 * does: read each token's set, union, write.
 	 *
-	 * @param \Newspack_Event_Logger_Nodes\Stats_Store $store Destination.
-	 * @param array<string,string>                     $paths hash => path.
+	 * @param \Newspack_Event_Logger_Nodes\Stats_Store $store  Destination.
+	 * @param array<string,string>                     $paths  hash => path.
+	 * @param string                                   $server The server the URLs are filed under.
 	 */
-	protected function set_url_tokens( \Newspack_Event_Logger_Nodes\Stats_Store $store, array $paths ): bool {
+	protected function set_url_tokens( \Newspack_Event_Logger_Nodes\Stats_Store $store, array $paths, string $server = self::SEED_SERVER ): bool {
 		$by_token = \Newspack_Event_Logger_Nodes\Stats_Store::token_sets_of( $paths );
-		$parts    = [ \Newspack_Event_Logger_Nodes\Stats_Store::NS_URLTOKEN ];
+		$parts    = \Newspack_Event_Logger_Nodes\Stats_Store::url_token_parts( \Newspack_Event_Logger_Nodes\Stats_Store::server_key( $server ) );
 		$reads    = [];
 		foreach ( \array_keys( $by_token ) as $token ) {
 			$reads[ (string) $token ] = [ $parts, (string) $token ];
@@ -406,7 +407,7 @@ abstract class TestCase extends RuntimeTestCase {
 		foreach ( $data as $hash => $row ) {
 			$urls[ $hash ] = \Newspack_Nodes\Core::str( \Newspack_Nodes\Core::arr( $row )['url'] ?? '' );
 		}
-		$ok   = $this->set_url_tokens( $store, \Newspack_Event_Logger_Nodes\Stats_Store::paths_of( $urls ) );
+		$ok   = $this->set_url_tokens( $store, \Newspack_Event_Logger_Nodes\Stats_Store::paths_of( $urls ), $server );
 		$data = self::store_url_names( $store, $data, $server );
 		// Worker rows go to the worker shard family, as the writer files them.
 		$split = [ false => [], true => [] ];
@@ -424,17 +425,18 @@ abstract class TestCase extends RuntimeTestCase {
 	}
 
 	/**
-	 * Seed every ranked list of one scope for one bucket or hour from NAMED
-	 * rows, through the production ranker. The rows are the LIST's content,
+	 * Seed every ranked list of one server for one bucket or hour from NAMED
+	 * rows, through the production ranker, and name the server in the key's
+	 * index so the site's merge reads it. The rows are the LIST's content,
 	 * which a test may deliberately seed apart from the stored rows.
 	 *
 	 * @param \Newspack_Event_Logger_Nodes\Stats_Store $store  Destination.
 	 * @param string                                   $key    Bucket or hour key.
 	 * @param array<array-key,mixed>                   $rows   Named rows by hash, `url` included.
 	 * @param bool                                     $hour   The coarse tier.
-	 * @param string                                   $server Reporting server; '' is site-wide.
+	 * @param string                                   $server Reporting server.
 	 */
-	protected function set_url_rank_lists( \Newspack_Event_Logger_Nodes\Stats_Store $store, string $key, array $rows, bool $hour = false, string $server = '' ): bool {
+	protected function set_url_rank_lists( \Newspack_Event_Logger_Nodes\Stats_Store $store, string $key, array $rows, bool $hour = false, string $server = self::SEED_SERVER ): bool {
 		$positional = [];
 		foreach ( $rows as $hash => $row ) {
 			$row          = \Newspack_Nodes\Core::arr( $row );
@@ -442,24 +444,12 @@ abstract class TestCase extends RuntimeTestCase {
 			unset( $row['url'] );
 			$positional[ $hash ] = self::positional_url_row( $row );
 		}
-		// The writer's own lists, kept for the ONE scope a test asks about.
-		$ranked = [];
-		foreach ( \Newspack_Event_Logger_Nodes\Stats_Store::ranked_writes( [ '' === $server ? self::SEED_SERVER : $server => $positional ], $hour, $key ) as [ $parts, , $entries ] ) {
-			$ranked[ \implode( ':', $parts ) ] = $entries;
+		$writes = \Newspack_Event_Logger_Nodes\Stats_Store::ranked_writes( [ $server => $positional ], $hour, $key );
+		// As the writer does: the server's DONE marker for the hour beside its lists.
+		if ( $hour ) {
+			$writes[] = [ \Newspack_Event_Logger_Nodes\Stats_Store::url_rank_done_parts( \Newspack_Event_Logger_Nodes\Stats_Store::server_key( $server ) ), $key, [] ];
 		}
-		// A server no row serves gets empty lists: a hole a reader must refuse.
-		$writes = [];
-		foreach ( \Newspack_Event_Logger_Nodes\Stats_Store::URL_SORTS as $sort ) {
-			foreach ( \Newspack_Event_Logger_Nodes\Stats_Store::URL_ORDERS as $order ) {
-				$parts    = \Newspack_Event_Logger_Nodes\Stats_Store::url_rank_parts( $sort, $order, $server, $hour );
-				$writes[] = [ $parts, $key, $ranked[ \implode( ':', $parts ) ] ?? [] ];
-			}
-		}
-		// As the writer does: the hour's DONE marker, once the site's lists land.
-		if ( $hour && '' === $server ) {
-			$writes[] = [ \Newspack_Event_Logger_Nodes\Stats_Store::url_rank_done_parts(), $key, [] ];
-		}
-		return ! \in_array( false, $store->bucket_set_multi( $writes ), true );
+		return ! \in_array( false, $store->bucket_set_multi( $writes ), true ) && self::index_server( $store, $key, $server, $hour );
 	}
 
 	// ── Stats_Store named bucket access ─────────────────────────────────────
