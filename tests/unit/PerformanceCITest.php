@@ -4570,6 +4570,94 @@ class PerformanceCITest extends TestCase {
 		}
 	}
 
+	public function test_the_site_ranked_page_is_what_one_list_over_every_server_gives(): void {
+		// No list spans servers, so the site's page merges theirs, and it has
+		// to cut each bucket where a list over all of them would. 301 URLs in
+		// the older bucket: moa.test's list keeps its heaviest, the one a
+		// site-wide `count asc` list cuts, so a union left uncut would add
+		// its 9999 requests to the newer bucket's one.
+		$this->activate_shipped_topology( 'performance', 3 );
+		$store = new Stats_Store( 1, 86400 );
+		$now   = \time();
+		$older = Stats_Store::bucket_key( $now - 300 );
+		$newer = Stats_Store::bucket_key( $now );
+		$heavy = 'f0f0f0f0f0f0';
+		$kea   = [];
+		$moa   = [ $heavy => [ 'url' => 'https://moa.test/heavy-9999', 'count' => 9999, 'last_seen' => $now - 300 ] ];
+		for ( $i = 0; $i < 150; $i++ ) {
+			$kea[ \sprintf( 'a%011x', $i ) ] = [ 'url' => "https://kea.test/k-{$i}", 'count' => 100 + $i, 'last_seen' => $now - 300 ];
+			$moa[ \sprintf( 'b%011x', $i ) ] = [ 'url' => "https://moa.test/m-{$i}", 'count' => 100 + $i, 'last_seen' => $now - 300 ];
+		}
+		$this->set_url_rank_lists( $store, $older, $kea, false, 'kea.test' );
+		$this->set_url_rank_lists( $store, $older, $moa, false, 'moa.test' );
+		$this->set_url_rank_lists( $store, $newer, [ $heavy => [ 'url' => 'https://moa.test/heavy-9999', 'count' => 1, 'last_seen' => $now ] ], false, 'moa.test' );
+		$this->set_url_bucket( $store, $newer, [ $heavy => [ 'url' => 'https://moa.test/heavy-9999', 'count' => 1, 'last_seen' => $now ] ], 'moa.test' );
+		$this->seed_hour_lists();
+		[ $fire, , $restore ] = $this->counting_urls_fire();
+		try {
+			$this->warm_url_header( $fire );
+			$page = $fire( '--sort=count', '--order=asc', '--limit=3' );
+			$this->assertTrue( $page['ranked'] );
+			$this->assertSame(
+				[ $heavy => 1, 'a00000000000' => 100, 'b00000000000' => 100 ],
+				\array_column( $page['data'], 'count', 'hash' ),
+				'the older bucket\'s heaviest is cut, and a tie breaks by hash'
+			);
+		} finally {
+			$restore();
+		}
+	}
+
+	public function test_a_site_search_reads_the_tokens_of_every_server_the_plan_names(): void {
+		// Each server files its own token sets, so a site search that read
+		// one server's would miss the rest.
+		$this->activate_shipped_topology( 'performance', 3 );
+		$store  = new Stats_Store( 1, 86400 );
+		$bucket = $this->current_url_bucket();
+		$this->set_url_bucket( $store, $bucket, [
+			'a1ce0fa11b77' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 5, 'last_seen' => \time() ],
+		], 'kea.test' );
+		$this->set_url_bucket( $store, $bucket, [
+			'b2df1ab90c88' => [ 'url' => 'https://moa.test/wombat-8842', 'count' => 3, 'last_seen' => \time() ],
+		], 'moa.test' );
+
+		$page = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--search=wombat' );
+		$this->assertSame( [ 'a1ce0fa11b77', 'b2df1ab90c88' ], \array_column( $page['data'], 'hash' ) );
+	}
+
+	public function test_a_scoped_search_reads_that_servers_tokens_alone(): void {
+		Core::$memd = new class() extends InMemoryMemcached {
+			/** @var list<string> */
+			public array $read = [];
+
+			public function getMulti( array $keys, int $get_flags = 0 ): array|false {
+				\array_push( $this->read, ...\array_map( 'strval', $keys ) );
+				return parent::getMulti( $keys, $get_flags );
+			}
+		};
+		$this->activate_shipped_topology( 'performance', 3 );
+		$store  = new Stats_Store( 1, 86400 );
+		$bucket = $this->current_url_bucket();
+		$this->set_url_bucket( $store, $bucket, [
+			'a1ce0fa11b77' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 5, 'last_seen' => \time() ],
+		], 'kea.test' );
+		$this->set_url_bucket( $store, $bucket, [
+			'b2df1ab90c88' => [ 'url' => 'https://moa.test/wombat-8842', 'count' => 3, 'last_seen' => \time() ],
+		], 'moa.test' );
+		/** @var object{read: list<string>} $memd */
+		$memd       = Core::$memd;
+		$memd->read = [];
+
+		$page = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--search=wombat --server=moa.test' );
+
+		$this->assertSame( [ 'b2df1ab90c88' ], \array_column( $page['data'], 'hash' ) );
+		$tokens = \array_values( \array_filter( $memd->read, static fn ( string $key ): bool => \str_contains( $key, ':urltoken:' ) ) );
+		$this->assertNotEmpty( $tokens );
+		foreach ( $tokens as $key ) {
+			$this->assertStringContainsString( ':urltoken:' . Stats_Store::server_key( 'moa.test' ) . ':', $key );
+		}
+	}
+
 	public function test_a_planned_hour_with_no_list_is_not_served_as_ranked(): void {
 		// A hour behind the leading one has no fine buckets left to read, so
 		// a missing list there is a hole nothing can fill — and a page served
@@ -4640,10 +4728,10 @@ class PerformanceCITest extends TestCase {
 	 * hour is the hole the ranked page refuses to serve over.
 	 *
 	 * @param list<string> $skip       Hours to leave without a list.
-	 * @param string       $server     Scope; '' is site-wide.
+	 * @param string       $server     The server whose lists are seeded.
 	 * @param int          $partitions Stores the active topology declares.
 	 */
-	private function seed_hour_lists( array $skip = [], string $server = '', int $partitions = 3 ): void {
+	private function seed_hour_lists( array $skip = [], string $server = self::SEED_SERVER, int $partitions = 3 ): void {
 		$plan = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, \time() ) );
 		for ( $partition = 0; $partition < $partitions; ++$partition ) {
 			$store = new Stats_Store( $partition, 86400 );
@@ -5156,7 +5244,7 @@ class PerformanceCITest extends TestCase {
 			$at_ceiling[ \sprintf( 'd%011x', $i ) ] = $now;
 		}
 		$write = static function ( array $set ) use ( $store ): void {
-			$store->bucket_set_multi( [ [ [ Stats_Store::NS_URLTOKEN ], 'wombat', $set ] ] );
+			$store->bucket_set_multi( [ [ Stats_Store::url_token_parts( Stats_Store::server_key( self::SEED_SERVER ) ), 'wombat', $set ] ] );
 		};
 		[ $fire, $reads, $restore ] = $this->counting_urls_fire();
 		try {
@@ -5209,7 +5297,7 @@ class PerformanceCITest extends TestCase {
 		] );
 		// Saturate the term's only servable token, so the fold answers.
 		$store->bucket_set_multi( [
-			[ [ Stats_Store::NS_URLTOKEN ], 'wombat', [ Stats_Store::TOKEN_SATURATED => \time() ] ],
+			[ Stats_Store::url_token_parts( Stats_Store::server_key( self::SEED_SERVER ) ), 'wombat', [ Stats_Store::TOKEN_SATURATED => \time() ] ],
 		] );
 
 		// An ARRAY: `fire()` splits a string on whitespace, and this term has some.
@@ -5310,7 +5398,7 @@ class PerformanceCITest extends TestCase {
 		// the seam runs on every poll and its spend would be the fold's.
 		$spent->setValue( null, 4_242 );
 		( new \ReflectionMethod( Performance_CI_Node::class, 'search_candidates' ) )
-			->invoke( null, [ 'kakapo' ], self::live_stores() );
+			->invoke( null, [ 'kakapo' ], '', self::live_stores(), Stats_Store::read_plan( \array_values( self::read_window_for_test() ) ) );
 		$this->assertSame( 4_242, $spent->getValue(), 'a token miss spends a budget of its own, not the one the fold needs' );
 	}
 
@@ -5321,7 +5409,7 @@ class PerformanceCITest extends TestCase {
 		$this->set_url_bucket( $store, $bucket, [
 			'b7731ce0fa11' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 5, 'last_seen' => \time() ],
 		] );
-		$store->bucket_set_multi( [ [ [ Stats_Store::NS_URLTOKEN ], 'wo', [ Stats_Store::TOKEN_SATURATED ] ] ] );
+		$store->bucket_set_multi( [ [ Stats_Store::url_token_parts( Stats_Store::server_key( self::SEED_SERVER ) ), 'wo', [ Stats_Store::TOKEN_SATURATED ] ] ] );
 		[ $fire, $reads, $restore ] = $this->counting_urls_fire();
 		try {
 			$page = $fire( '--sort=count', '--order=desc', '--limit=100', '--search=wo' );
