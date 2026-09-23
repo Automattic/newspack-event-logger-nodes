@@ -1050,40 +1050,6 @@ class Request_Builder_Node extends Timer_Node {
 	}
 
 	/**
-	 * Read a curated environment_v3 field as a string ('' when absent or non-string).
-	 *
-	 * @param array<string,mixed> $env Curated env map from the environment_v3 entry.
-	 * @param string               $key Field name.
-	 * @return string The field value, or '' when absent or non-string.
-	 */
-	private static function env_str( array $env, string $key ): string {
-		$value = $env[ $key ] ?? '';
-		return Core::str( $value );
-	}
-
-	/**
-	 * Move a fatal's own detail off the terminal entry and onto the record.
-	 *
-	 * `Log_Manager::write_terminal()` resolves the message, file, line, type and
-	 * offending plugin from `error_get_last()` at the one moment PHP still
-	 * knows them. `error_status = 'F'` alone says a fatal happened and nothing
-	 * about where, which is a whole debugging session of difference.
-	 *
-	 * @param \stdClass              $request Record under assembly.
-	 * @param array<array-key,mixed> $entry   The terminal entry.
-	 */
-	private static function carry_fatal( \stdClass $request, array $entry ): void {
-		if ( ! isset( $entry['fatal_error'] ) ) {
-			return;
-		}
-		$request->fatal_error  = Core::str( $entry['fatal_error'], '' );
-		$request->fatal_file   = Core::str( $entry['fatal_file'] ?? '', '' );
-		$request->fatal_line   = Core::int( $entry['fatal_line'] ?? 0, 0 );
-		$request->fatal_type   = Core::int( $entry['fatal_type'] ?? 0, 0 );
-		$request->fatal_plugin = Core::str( $entry['fatal_plugin'] ?? '', '' );
-	}
-
-	/**
 	 * Handle a single evicted request from LRU bucket rotation.
 	 *
 	 * An incomplete request is written out with error_status='T' and a duration
@@ -1661,6 +1627,40 @@ class Request_Builder_Node extends Timer_Node {
 			$names = \array_flip( self::METHOD_CODES );
 		}
 		return $names;
+	}
+
+	/**
+	 * Read a curated environment_v3 field as a string ('' when absent or non-string).
+	 *
+	 * @param array<string,mixed> $env Curated env map from the environment_v3 entry.
+	 * @param string               $key Field name.
+	 * @return string The field value, or '' when absent or non-string.
+	 */
+	private static function env_str( array $env, string $key ): string {
+		$value = $env[ $key ] ?? '';
+		return Core::str( $value );
+	}
+
+	/**
+	 * Move a fatal's own detail off the terminal entry and onto the record.
+	 *
+	 * `Log_Manager::write_terminal()` resolves the message, file, line, type and
+	 * offending plugin from `error_get_last()` at the one moment PHP still
+	 * knows them. `error_status = 'F'` alone says a fatal happened and nothing
+	 * about where, which is a whole debugging session of difference.
+	 *
+	 * @param \stdClass              $request Record under assembly.
+	 * @param array<array-key,mixed> $entry   The terminal entry.
+	 */
+	private static function carry_fatal( \stdClass $request, array $entry ): void {
+		if ( ! isset( $entry['fatal_error'] ) ) {
+			return;
+		}
+		$request->fatal_error  = Core::str( $entry['fatal_error'], '' );
+		$request->fatal_file   = Core::str( $entry['fatal_file'] ?? '', '' );
+		$request->fatal_line   = Core::int( $entry['fatal_line'] ?? 0, 0 );
+		$request->fatal_type   = Core::int( $entry['fatal_type'] ?? 0, 0 );
+		$request->fatal_plugin = Core::str( $entry['fatal_plugin'] ?? '', '' );
 	}
 
 	/**

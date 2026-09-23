@@ -422,80 +422,6 @@ class Reqgrep_Command {
 	}
 
 	/**
-	 * Detect whether `$stream` has piped data attached. fstat() reports the
-	 * type bits — S_IFIFO (pipe) or S_IFREG (file) means data; everything
-	 * else (tty, /dev/null, sockets) is "no piped data, use cat mode."
-	 *
-	 * Defaults to STDIN; tests pass a temp-file handle so the dispatch decision
-	 * is observable without a real STDIN pipe.
-	 *
-	 * @param resource|null $stream Stream to inspect (defaults to STDIN).
-	 * @return bool True when the stream is a pipe or a regular file.
-	 */
-	private function stdin_has_data( $stream = null ): bool {
-		if ( null === $stream ) {
-			if ( ! \defined( 'STDIN' ) ) {
-				return false;
-			}
-			$stream = STDIN;
-		}
-		// A closed or non-resource stream carries no piped data.
-		if ( ! \is_resource( $stream ) ) {
-			return false;
-		}
-		$stat = @\fstat( $stream );
-		if ( ! $stat ) {
-			return false;
-		}
-		$file_type = $stat['mode'] & 0170000;
-		return 0010000 === $file_type || 0100000 === $file_type;
-	}
-
-	/**
-	 * Build the shared grouping/matching engine from the parsed run config. Its
-	 * on_complete emits the assembled request (unless --incomplete suppresses
-	 * completed output); on_history_miss surfaces the tune-your-buckets warning.
-	 * The engine shares the LRU_Cache the on-evict callback drives, so
-	 * output_remaining still walks $this->inflight for the [incomplete] tail.
-	 *
-	 * `Reqgrep_Core` passes on_complete a third `clipped` argument that this
-	 * two-parameter closure drops, so a request the engine's caps trimmed prints
-	 * with no marker saying so.
-	 */
-	private function init_core(): void {
-		$on_complete = function ( array $lines, string $rid ): void {
-			if ( ! $this->incomplete ) {
-				$this->output_request( self::to_lines( $lines ), $rid );
-			}
-		};
-		$on_miss = static function (): void {
-			\WP_CLI::warning( "Couldn't find request start in history - try increasing --bucket-size or --num-buckets" );
-		};
-		$this->core = new Reqgrep_Core(
-			$this->pattern,
-			$this->require_inflight(),
-			$this->bucket_size,
-			$this->num_buckets,
-			$on_complete,
-			$on_miss
-		);
-	}
-
-	/**
-	 * Narrow the run-setup-assigned `$inflight` cache to non-null. The cache is
-	 * built in the command's setup before any line processing; a null here means
-	 * a caller invoked a processing method before setup, which is a bug.
-	 *
-	 * @throws \RuntimeException If the cache has not been built yet.
-	 */
-	private function require_inflight(): LRU_Cache {
-		if ( null === $this->inflight ) {
-			throw new \RuntimeException( 'in-flight cache not initialized' );
-		}
-		return $this->inflight;
-	}
-
-	/**
 	 * Narrow a state object's `->lines` value to a list of strings for
 	 * output_request. `Reqgrep_Core::append_to_state()` only ever appends
 	 * strings, so this is a type narrowing, not a filter that drops real data.
@@ -873,5 +799,79 @@ class Reqgrep_Command {
 		$message[ Message::TYPE ]  = Message::TM_BYTESTREAM;
 		$message[ Message::VALUE ] = \rtrim( $text, "\n" ) . "\n";
 		( $this->stdout ??= new Stdout_Node() )->fill( $message );
+	}
+
+	/**
+	 * Detect whether `$stream` has piped data attached. fstat() reports the
+	 * type bits — S_IFIFO (pipe) or S_IFREG (file) means data; everything
+	 * else (tty, /dev/null, sockets) is "no piped data, use cat mode."
+	 *
+	 * Defaults to STDIN; tests pass a temp-file handle so the dispatch decision
+	 * is observable without a real STDIN pipe.
+	 *
+	 * @param resource|null $stream Stream to inspect (defaults to STDIN).
+	 * @return bool True when the stream is a pipe or a regular file.
+	 */
+	private function stdin_has_data( $stream = null ): bool {
+		if ( null === $stream ) {
+			if ( ! \defined( 'STDIN' ) ) {
+				return false;
+			}
+			$stream = STDIN;
+		}
+		// A closed or non-resource stream carries no piped data.
+		if ( ! \is_resource( $stream ) ) {
+			return false;
+		}
+		$stat = @\fstat( $stream );
+		if ( ! $stat ) {
+			return false;
+		}
+		$file_type = $stat['mode'] & 0170000;
+		return 0010000 === $file_type || 0100000 === $file_type;
+	}
+
+	/**
+	 * Build the shared grouping/matching engine from the parsed run config. Its
+	 * on_complete emits the assembled request (unless --incomplete suppresses
+	 * completed output); on_history_miss surfaces the tune-your-buckets warning.
+	 * The engine shares the LRU_Cache the on-evict callback drives, so
+	 * output_remaining still walks $this->inflight for the [incomplete] tail.
+	 *
+	 * `Reqgrep_Core` passes on_complete a third `clipped` argument that this
+	 * two-parameter closure drops, so a request the engine's caps trimmed prints
+	 * with no marker saying so.
+	 */
+	private function init_core(): void {
+		$on_complete = function ( array $lines, string $rid ): void {
+			if ( ! $this->incomplete ) {
+				$this->output_request( self::to_lines( $lines ), $rid );
+			}
+		};
+		$on_miss = static function (): void {
+			\WP_CLI::warning( "Couldn't find request start in history - try increasing --bucket-size or --num-buckets" );
+		};
+		$this->core = new Reqgrep_Core(
+			$this->pattern,
+			$this->require_inflight(),
+			$this->bucket_size,
+			$this->num_buckets,
+			$on_complete,
+			$on_miss
+		);
+	}
+
+	/**
+	 * Narrow the run-setup-assigned `$inflight` cache to non-null. The cache is
+	 * built in the command's setup before any line processing; a null here means
+	 * a caller invoked a processing method before setup, which is a bug.
+	 *
+	 * @throws \RuntimeException If the cache has not been built yet.
+	 */
+	private function require_inflight(): LRU_Cache {
+		if ( null === $this->inflight ) {
+			throw new \RuntimeException( 'in-flight cache not initialized' );
+		}
+		return $this->inflight;
 	}
 }
