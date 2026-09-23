@@ -31,6 +31,14 @@ The logger defends against these actors:
 
 The list is configuration, not code. Emptied, it narrows nobody, and the population returns to the capability's 1 to 50 accounts a site.
 
+### Who can reach a spoke's stream
+
+Both stream routes, `messages/stream` and `log/stream`, answer only to `Capabilities::can( READ )`: the mapped capability through `current_user_can()`, then `allowed_users`, with no nonce, because a nonce would break the hub's pull. Checked on 2026-09-23 across the same 41 sites, all hosted on WordPress.com Atomic behind its edge, no path reaches either route without a WordPress login.
+
+- **An anonymous request is refused on every site.** On 40, both routes return 401 `rest_forbidden` at the pretty path and through `?rest_route=`. The Atomic edge answers the 41st, a staging clone, with 480 for the whole site. In-process, an anonymous user fails the check on all 41, so no `user_has_cap` filter opens it.
+- **The edge caches the refusal and never a credentialed reply.** On 14 sites the anonymous 401 carries `max-age=300`, and a repeat is served from the edge cache. A request carrying an `Authorization` header bypasses that cache and is answered by WordPress, and the stream's own reply is sent `no-store`, so the edge cannot hand one account's stream to another requester.
+- **Every credential that reaches a stream belongs to a named account.** The hubs pull as a dedicated `newspack-nodes-hub` user, with one application password per spoke — except from the community dev site, which has no such user and whose `aggregator-hub` password on `adminnewspack` was last used on 2026-09-22. The shared `adminnewspack` administrator, which `allowed_users` admits, still holds the aggregator application passwords the hubs used before that user existed, last used on 2026-09-08. It also holds unrelated passwords: two Pugpig integration tests on lookout.co and spacenews.com, a "Debug access control" password on spacenews.com, and a never-used "Cache Cozy" password on spacenews.com and Bangor. None of this is unauthenticated access, but each of those passwords reads the raw stream and holds full administrator rights besides.
+
 ## What the logger captures, and what crosses to the hub
 
 ![Capture, replication and the three egresses](img/2026-09-08-firehose-capture.png)
