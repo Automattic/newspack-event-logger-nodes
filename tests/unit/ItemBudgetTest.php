@@ -308,7 +308,8 @@ class ItemBudgetTest extends TestCase {
 
 		$writes = Stats_Store::ranked_writes( [ self::SEED_SERVER => $rows ], true, '2026-09-22-10' );
 
-		$this->assertNotSame( [], $writes );
+		// A count, not the lists: an assertion exports its value, megabytes here.
+		$this->assertSame( \count( Stats_Store::URL_SORTS ) * \count( Stats_Store::URL_ORDERS ), \count( $writes ) );
 		foreach ( $writes as [ $parts, , $entries ] ) {
 			self::assert_fits_both( $entries, \implode( ':', $parts ) );
 		}
