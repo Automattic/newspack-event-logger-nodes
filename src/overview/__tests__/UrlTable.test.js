@@ -6,16 +6,18 @@
  * a real scroll context).
  */
 
+const mockVirtualization = jest.fn( ( _ref, _row, total ) => ( {
+	startIndex: 0,
+	endIndex: total,
+	paddingTop: 0,
+	paddingBottom: 0,
+	offsetTop: 0,
+	totalHeight: total * 40,
+} ) );
+
 jest.mock( '@newspack-nodes/shared/hooks/useVirtualization', () => ( {
 	__esModule: true,
-	default: ( _ref, _row, total ) => ( {
-		startIndex: 0,
-		endIndex: total,
-		paddingTop: 0,
-		paddingBottom: 0,
-		offsetTop: 0,
-		totalHeight: total * 40,
-	} ),
+	default: ( ...args ) => mockVirtualization( ...args ),
 } ) );
 
 import * as React from 'react';
@@ -72,6 +74,14 @@ function mount( overrides = {} ) {
 }
 
 describe( 'UrlTable', () => {
+	it( 'measures its window against the element the dashboard scrolls', () => {
+		const { unmount } = mount();
+		expect( mockVirtualization.mock.calls.at( -1 )[ 3 ] ).toBe(
+			'.newspack-nodes-page-content'
+		);
+		unmount();
+	} );
+
 	it( 'names the pager count as rows, not URLs', () => {
 		// A capped bucket carries synthetic overflow rows: sliceable, so the
 		// pager pages over them, but not URLs, so the header excludes them.

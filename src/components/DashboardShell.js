@@ -6,6 +6,13 @@ import ThemedRoot from './ThemedRoot';
 import { ASK_PAGE_ATTR } from '@newspack-nodes/shared/hooks/useAskPicker';
 
 /**
+ * The class of the region below the header, which is what the page scrolls:
+ * the surface around it is fixed and clips. A list virtualized against the
+ * page measures against this, never the window, which does not scroll here.
+ */
+export const PAGE_CONTENT_CLASS = 'newspack-nodes-page-content';
+
+/**
  * Fixed full-viewport chrome for a standalone dashboard page — the skin, the
  * box, the header and the debug overlay that the Performance Overview,
  * Gyroscope, Request Log and Error Log dashboards all share.
@@ -105,7 +112,7 @@ export default function DashboardShell( {
 				     reader's page is the area under the header, so that is
 				     what the brief answers for and what the ring traces. */ }
 				<div
-					className="newspack-nodes-page-content"
+					className={ PAGE_CONTENT_CLASS }
 					{ ...( askDescriptor
 						? {
 								'data-ask': askDescriptor,

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The URL table renders the rows you scroll to.** The dashboard scrolls the
+  region below its header, not the window, but the table measured the window,
+  never saw a scroll, and kept its first 64 rows with blank space below them.
+  It now measures `DashboardShell`'s `PAGE_CONTENT_CLASS` region.
+
 ## [0.102.3] - 2026-09-23
 
 ### Changed
