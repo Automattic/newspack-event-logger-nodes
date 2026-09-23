@@ -2035,4 +2035,33 @@ class StatsStoreTest extends TestCase {
 		$writes[] = [ Stats_Store::url_srv_parts( true ), $hour, $index ];
 		$store->bucket_set_multi( $writes );
 	}
+
+	public function test_the_estimate_follows_the_serializer_the_handle_is_configured_with(): void {
+		$mc = $this->seed_memd();
+		$mc->setOption( \Memcached::OPT_SERIALIZER, \Memcached::SERIALIZER_IGBINARY );
+		$igbinary = Stats_Store::overhead( 'url_row' );
+		$this->assertSame( Stats_Store::SERIALIZER_IGBINARY, Stats_Store::$serializer );
+
+		Stats_Store::$serializer = null;
+		$mc->setOption( \Memcached::OPT_SERIALIZER, \Memcached::SERIALIZER_PHP );
+		$php = Stats_Store::overhead( 'url_row' );
+		$this->assertSame( Stats_Store::SERIALIZER_PHP, Stats_Store::$serializer );
+		$this->assertGreaterThan( $igbinary, $php, 'serialize() spells a row longer' );
+
+		$mc->setOption( \Memcached::OPT_SERIALIZER, \Memcached::SERIALIZER_IGBINARY );
+		$this->assertSame( $php, Stats_Store::overhead( 'url_row' ), 'read once, then memoized' );
+	}
+
+	public function test_with_no_handle_the_estimate_is_the_larger_serializers(): void {
+		Core::$memd = null;
+
+		Stats_Store::overhead( 'url_row' );
+
+		$this->assertSame( Stats_Store::SERIALIZER_PHP, Stats_Store::$serializer );
+	}
+
+	public function test_an_unknown_part_has_no_estimate(): void {
+		$this->expectException( \LogicException::class );
+		Stats_Store::overhead( 'no_such_part' );
+	}
 }

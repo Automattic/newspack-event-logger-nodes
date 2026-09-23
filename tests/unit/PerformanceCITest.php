@@ -129,8 +129,17 @@ class PerformanceCITest extends TestCase {
 	// index layout so the verb's scan_index walk picks up our seeded data.
 	// -------------------------------------------------------------------------
 
+	/**
+	 * The moment every seed dates from: the tick the reply reads, stamped at
+	 * setUp. The wall moves on, and a seed dated from it lands a bucket
+	 * later whenever a five-minute boundary falls in between.
+	 */
+	private static function tick(): int {
+		return (int) Core::$now;
+	}
+
 	private function current_url_bucket(): string {
-		return Stats_Store::bucket_key( \time() );
+		return Stats_Store::bucket_key( self::tick() );
 	}
 
 	/** Bytes already appended per scratch segment path — the append offset. */
@@ -158,7 +167,7 @@ class PerformanceCITest extends TestCase {
 
 		$message                       = Message::new_message();
 		$message[ Message::TYPE ]      = Message::TM_STRUCT;
-		$message[ Message::TIMESTAMP ] = (float) ( $body['timestamp'] ?? \time() );
+		$message[ Message::TIMESTAMP ] = (float) ( $body['timestamp'] ?? self::tick() );
 		$message[ Message::VALUE ]     = $body;
 		$packed                        = Message::packed( $message );
 
@@ -202,7 +211,7 @@ class PerformanceCITest extends TestCase {
 		foreach ( $entries as $entry ) {
 			$message                       = Message::new_message();
 			$message[ Message::TYPE ]      = Message::TM_STRUCT;
-			$message[ Message::TIMESTAMP ] = (float) ( $entry['ts'] ?? \time() );
+			$message[ Message::TIMESTAMP ] = (float) ( $entry['ts'] ?? self::tick() );
 			$message[ Message::KEY ]       = (string) ( $entry['rid'] ?? '' );
 			$message[ Message::VALUE ]     = $entry;
 			$buffer                       .= Message::packed( $message ) . "\n";
@@ -232,7 +241,7 @@ class PerformanceCITest extends TestCase {
 		// merged time_series array.
 		$store = new Stats_Store( 0, 86400 );
 		// Inside the reader's enumerated window: buckets are keys now, not a blob.
-		$now = \time();
+		$now = self::tick();
 		$bucket = Stats_Store::bucket_key( $now );
 		$this->set_hourly_bucket( $store, $bucket, [ 'count' => 4, 'sum_ms' => 2000.0, 'sum_peak_mb' => 40.0 ] );
 
@@ -312,7 +321,7 @@ class PerformanceCITest extends TestCase {
 		// it does not need — the read that takes the overview past 15s.
 		$store = new Stats_Store( 0, 86400 );
 		// Two hours back: inside the window, behind the fine tail, folded.
-		$hour  = Stats_Store::hour_of( Stats_Store::bucket_key( \time() - 7200 ) );
+		$hour  = Stats_Store::hour_of( Stats_Store::bucket_key( self::tick() - 7200 ) );
 		$store->bucket_set_multi( [ [ Stats_Store::lb_hour_parts(), $hour, [
 			'count'        => 9,
 			'sum_req_time' => 27.0,
@@ -334,7 +343,7 @@ class PerformanceCITest extends TestCase {
 		// the `buckets` half and ignores the holes beside it, which is what
 		// keeps an older gap from blanking the window.
 		$store = new Stats_Store( 0, 86400 );
-		$plan  = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, \time() ) );
+		$plan  = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, self::tick() ) );
 		$grace = $plan['hours'][0];
 		$this->set_leaderboard_bucket( $store, Stats_Store::buckets_in_hour( $grace )[2], [
 			'count'        => 23,
@@ -627,9 +636,9 @@ class PerformanceCITest extends TestCase {
 		// search can reach, for as long as the fold is behind.
 		$store  = new Stats_Store( 0, 86400 );
 		// Two hours back: inside the window, behind the fine tail, unfolded.
-		$bucket = Stats_Store::bucket_key( \time() - 7200 );
+		$bucket = Stats_Store::bucket_key( self::tick() - 7200 );
 		$this->set_url_bucket( $store, $bucket, [
-			'aaaaaaaaaaaa' => [ 'url' => 'https://zeta.test/mackerel-5502', 'count' => 4, 'last_seen' => \time() - 7200 ],
+			'aaaaaaaaaaaa' => [ 'url' => 'https://zeta.test/mackerel-5502', 'count' => 4, 'last_seen' => self::tick() - 7200 ],
 		] );
 
 		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--search=mackerel' );
@@ -694,7 +703,7 @@ class PerformanceCITest extends TestCase {
 		$url    = 'https://okgazette.example/jobs/filmtimes/import-film-times';
 		$hash   = Log_Manager::url_hash( $url );
 		$store  = new Stats_Store( 0, 86400 );
-		$older  = Stats_Store::bucket_key( \time() - 600 );
+		$older  = Stats_Store::bucket_key( self::tick() - 600 );
 		$newer  = $this->current_url_bucket();
 		// Buckets merge newest-first, so the one REACHED FIRST is the one
 		// without a URL — the order that pins the row blank.
@@ -916,7 +925,7 @@ class PerformanceCITest extends TestCase {
 		$store = new Stats_Store( 0, 86400 );
 		$hash  = 'a4471ab0c0de';
 		$shard = Stats_Store::url_shard( $hash );
-		$plan  = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, \time() ) );
+		$plan  = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, self::tick() ) );
 		// The hour behind the grace hour is folded; the grace hour never was.
 		$this->seed_url_hour( $store, $plan['hours'][1], $shard, [
 			$hash => [ 'url' => '/wombat-4471', 'count' => 7, 'timed_count' => 7, 'sum_ms' => 70.0 ],
@@ -947,7 +956,7 @@ class PerformanceCITest extends TestCase {
 		$store = new Stats_Store( 0, 86400 );
 		$hash  = 'a4471ab0c0de';
 		$shard = Stats_Store::url_shard( $hash );
-		$plan  = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, \time() ) );
+		$plan  = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, self::tick() ) );
 		$stale = Stats_Store::buckets_in_hour( $plan['hours'][2] );
 		$this->seed_url_shard( $store, (string) \end( $stale ), $shard, [
 			$hash => [ 'url' => '/wombat-4471', 'count' => 5, 'timed_count' => 5, 'sum_ms' => 50.0 ],
@@ -977,7 +986,7 @@ class PerformanceCITest extends TestCase {
 		$store = new Stats_Store( 0, 86400 );
 		$hash  = 'a4471ab0c0de';
 		$shard = Stats_Store::url_shard( $hash );
-		$hour  = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, \time() ) )['hours'][0];
+		$hour  = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, self::tick() ) )['hours'][0];
 		$fine = Stats_Store::buckets_in_hour( $hour );
 		$this->seed_url_shard( $store, (string) \end( $fine ), $shard, [
 			$hash => [ 'url' => '/wombat-4471', 'count' => 23, 'timed_count' => 23, 'sum_ms' => 460.0 ],
@@ -1005,7 +1014,7 @@ class PerformanceCITest extends TestCase {
 		$store = new Stats_Store( 0, 86400 );
 		$hash  = 'a4471ab0c0de';
 		$shard = Stats_Store::url_shard( $hash );
-		$hour  = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, \time() ) )['hours'][0];
+		$hour  = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, self::tick() ) )['hours'][0];
 		$this->seed_url_shard( $store, Stats_Store::buckets_in_hour( $hour )[2], $shard, [
 			$hash => [ 'url' => '/wombat-4471', 'count' => 5, 'timed_count' => 5, 'sum_ms' => 50.0 ],
 		] );
@@ -1031,7 +1040,7 @@ class PerformanceCITest extends TestCase {
 	 */
 	public function test_a_folded_window_reads_two_tiers_not_every_bucket(): void {
 		$memd = Core::$memd;
-		$plan = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, \time() ) );
+		$plan = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, self::tick() ) );
 		$store = new Stats_Store( 0, 86400 );
 		foreach ( $plan['hours'] as $hour ) {
 			foreach ( Stats_Store::url_shards() as $shard ) {
@@ -1060,7 +1069,7 @@ class PerformanceCITest extends TestCase {
 		// fixed epoch would put the whole fixture behind it.
 		$url    = '/recent-list';
 		$hash   = Log_Manager::url_hash( $url );
-		$now    = \time();
+		$now    = self::tick();
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
 		$this->set_url_bucket( $store, $bucket, [
@@ -1108,7 +1117,7 @@ class PerformanceCITest extends TestCase {
 	public function test_dump_url_since_stops_on_completion_not_start(): void {
 		$url   = '/long-running';
 		$hash  = Log_Manager::url_hash( $url );
-		$now   = \time();
+		$now   = self::tick();
 		$store = new Stats_Store( 0, 86400 );
 		$this->set_url_bucket( $store, $this->current_url_bucket(), [
 			$hash => [ 'url' => $url, 'count' => 2, 'sum_ms' => 700010.0, 'last_seen' => $now ],
@@ -1159,7 +1168,7 @@ class PerformanceCITest extends TestCase {
 		$this->activate_shipped_topology( 'performance', 2 );
 		$url   = '/two-partitions';
 		$hash  = Log_Manager::url_hash( $url );
-		$now   = \time();
+		$now   = self::tick();
 		$store = new Stats_Store( 0, 86400 );
 		$this->set_url_bucket( $store, $this->current_url_bucket(), [
 			$hash => [ 'url' => $url, 'count' => 2, 'sum_ms' => 20.0, 'last_seen' => $now ],
@@ -1208,13 +1217,13 @@ class PerformanceCITest extends TestCase {
 		$store  = new Stats_Store( 0, 86400 );
 		$bucket = $this->current_url_bucket();
 		$this->set_url_bucket( $store, $bucket, [
-			$hash => [ 'url' => $url, 'count' => 1, 'sum_ms' => 37.0, 'last_seen' => \time() - 2311 ],
+			$hash => [ 'url' => $url, 'count' => 1, 'sum_ms' => 37.0, 'last_seen' => self::tick() - 2311 ],
 		] );
 		// Inside the window, so the BUDGET is the only thing that can stop the walk.
 		$this->write_request( [
 			'rid'            => 'rid-buried-1234567890123456789',
 			'url'            => $url,
-			'timestamp'      => \time() - 2311,
+			'timestamp'      => self::tick() - 2311,
 			'duration_ms'    => 37,
 			'status_code'    => 418,
 			'peak_mb'        => 5,
@@ -1238,7 +1247,7 @@ class PerformanceCITest extends TestCase {
 		$url   = '/at-the-request-cap';
 		$hash  = Log_Manager::url_hash( $url );
 		$limit = (int) ( new \ReflectionClassConstant( Performance_CI_Node::class, 'RECENT_REQUEST_LIMIT' ) )->getValue();
-		$now   = \time();
+		$now   = self::tick();
 		$store = new Stats_Store( 0, 86400 );
 		$this->set_url_bucket( $store, $this->current_url_bucket(), [
 			$hash => [ 'url' => $url, 'count' => $limit + 1, 'sum_ms' => 64.0, 'last_seen' => $now - 907 ],
@@ -1284,7 +1293,7 @@ class PerformanceCITest extends TestCase {
 	/** Backdate a seeded segment's index, the way a segment closed hours ago reads. */
 	private function close_segment_index( int $seconds_ago, int $partition = 0, int $segment = 0 ): void {
 		$path = $this->tmp . "/logs/requests.p{$partition}/{$segment}.idx";
-		\touch( $path, \time() - $seconds_ago );
+		\touch( $path, self::tick() - $seconds_ago );
 		\clearstatcache( true, $path );
 	}
 
@@ -1293,7 +1302,7 @@ class PerformanceCITest extends TestCase {
 		// window — a reply that does not say which reads as the site's whole
 		// record. The number is the walk's own floor, not a rounded hour.
 		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'min_lifetime' => self::SCAN_RETENTION ] );
-		$now  = \time();
+		$now  = self::tick();
 		$url  = '/named-window-6205';
 		$hash = Log_Manager::url_hash( $url );
 		$this->set_url_bucket( new Stats_Store( 0, self::SCAN_RETENTION ), $this->current_url_bucket(), [
@@ -1315,7 +1324,7 @@ class PerformanceCITest extends TestCase {
 		// Completion is what the window asks about, and this one completed
 		// inside it — the matching entry behind it is still reachable.
 		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'min_lifetime' => self::SCAN_RETENTION ] );
-		$now  = \time();
+		$now  = self::tick();
 		$url  = '/behind-a-long-runner-5182';
 		$hash = Log_Manager::url_hash( $url );
 		$this->set_url_bucket( new Stats_Store( 0, self::SCAN_RETENTION ), $this->current_url_bucket(), [
@@ -1354,7 +1363,7 @@ class PerformanceCITest extends TestCase {
 		// and its newest line completed before it — so every line behind it
 		// completed earlier still, and the walk ends rather than reading them.
 		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'min_lifetime' => self::SCAN_RETENTION ] );
-		$now  = \time();
+		$now  = self::tick();
 		$url  = '/behind-the-retention-edge-8813';
 		$hash = Log_Manager::url_hash( $url );
 		$this->set_url_bucket( new Stats_Store( 0, self::SCAN_RETENTION ), $this->current_url_bucket(), [
@@ -1393,7 +1402,7 @@ class PerformanceCITest extends TestCase {
 		// lines between live ones. A segment still being appended to can hold
 		// an in-window row behind any of them.
 		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'min_lifetime' => self::SCAN_RETENTION ] );
-		$now  = \time();
+		$now  = self::tick();
 		$url  = '/behind-a-replayed-spoke-4409';
 		$hash = Log_Manager::url_hash( $url );
 		$this->set_url_bucket( new Stats_Store( 0, self::SCAN_RETENTION ), $this->current_url_bucket(), [
@@ -1429,7 +1438,7 @@ class PerformanceCITest extends TestCase {
 		// Only a line that parses as a completion may end a walk — otherwise one
 		// unreadable line ends a whole partition, silently and totally.
 		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'min_lifetime' => self::SCAN_RETENTION ] );
-		$now  = \time();
+		$now  = self::tick();
 		$url  = '/behind-an-unreadable-line-9047';
 		$hash = Log_Manager::url_hash( $url );
 		$this->set_url_bucket( new Stats_Store( 0, self::SCAN_RETENTION ), $this->current_url_bucket(), [
@@ -1462,7 +1471,7 @@ class PerformanceCITest extends TestCase {
 		// short line reads as 0 — the oldest time there is. One malformed line
 		// must not truncate the walk behind it; only the budget bounds junk.
 		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'min_lifetime' => self::SCAN_RETENTION ] );
-		$now  = \time();
+		$now  = self::tick();
 		$url  = '/behind-a-short-line-9047';
 		$hash = Log_Manager::url_hash( $url );
 		$this->set_url_bucket( new Stats_Store( 0, self::SCAN_RETENTION ), $this->current_url_bucket(), [
@@ -1487,7 +1496,7 @@ class PerformanceCITest extends TestCase {
 	public function test_the_url_walk_returns_every_entry_inside_the_window(): void {
 		// Nothing reaches the edge, so the bound is invisible.
 		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'min_lifetime' => self::SCAN_RETENTION ] );
-		$now  = \time();
+		$now  = self::tick();
 		$url  = '/wholly-inside-the-window-3352';
 		$hash = Log_Manager::url_hash( $url );
 		$this->set_url_bucket( new Stats_Store( 0, self::SCAN_RETENTION ), $this->current_url_bucket(), [
@@ -1955,7 +1964,7 @@ class PerformanceCITest extends TestCase {
 		// every rate down — the dashboard's own rates have always dropped it, and
 		// the server has to drop the same one to answer the same question.
 		$store = new Stats_Store( 0, 86400 );
-		$now   = \time();
+		$now   = self::tick();
 		$this->set_url_bucket( $store, Stats_Store::bucket_key( $now - 600 ), [
 			'cccccccccccc' => [ 'url' => '/rate', 'count' => 3600, 'timed_count' => 3600, 'sum_ms' => 3600.0, 'last_seen' => $now - 600 ],
 		] );
@@ -2068,7 +2077,7 @@ class PerformanceCITest extends TestCase {
 		// real minimum survives — an untimed-only sibling must not clamp it to 0.
 		$store    = new Stats_Store( 0, 86400 );
 		$bucket_b = $this->current_url_bucket();
-		$bucket_a = Stats_Store::bucket_key( \time() - 600 );
+		$bucket_a = Stats_Store::bucket_key( self::tick() - 600 );
 
 		$this->set_url_bucket( $store, $bucket_a, [
 			'bbbbbbbbbbbb' => [
@@ -4033,7 +4042,7 @@ class PerformanceCITest extends TestCase {
 	public function test_an_unfolded_hour_past_the_fine_ttl_is_not_asked_for(): void {
 		$this->activate_shipped_topology( 'performance', 1 );
 		$store = new Stats_Store( 0, 86400 );
-		$now   = \time();
+		$now   = self::tick();
 		// Two unfolded hours: one inside the fine tier, one long past it.
 		$recent  = \gmdate( 'Y-m-d-H', $now - 3600 );
 		$ancient = \gmdate( 'Y-m-d-H', $now - ( 11 * 3600 ) );
@@ -4113,7 +4122,7 @@ class PerformanceCITest extends TestCase {
 
 		$hash   = 'a4471ab0c0de';
 		$shard  = Stats_Store::url_shard( $hash );
-		$hour   = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, \time() ) )['hours'][0];
+		$hour   = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, self::tick() ) )['hours'][0];
 		$bucket = Stats_Store::buckets_in_hour( $hour )[2];
 		$url    = 'https://example.test/rebuilt-past-its-cache-life';
 
@@ -4122,7 +4131,7 @@ class PerformanceCITest extends TestCase {
 		$mirror->void_warranty();
 		$mirror->with_index( Flame_Builder_Node::format_stats_index_entry( ... ) );
 		// Written 4 hours ago with the fine tier's real 7200s TTL: spent.
-		$written = \time() - ( 4 * 3600 );
+		$written = self::tick() - ( 4 * 3600 );
 		$srv     = Stats_Store::server_key( 'example.test' );
 		foreach ( [
 			[ Stats_Store::NS_URLSRV . ":{$bucket}", [ $srv => 'example.test' ] ],
@@ -4159,7 +4168,7 @@ class PerformanceCITest extends TestCase {
 		$this->assertNotSame( '', $dir, 'the shipped topology declares a mirror partition' );
 
 		$url    = 'https://example.test/jobs/import-film-times';
-		$bucket = Stats_Store::bucket_key( \time() );
+		$bucket = Stats_Store::bucket_key( self::tick() );
 		$hash   = 'ab12cd34ef56';
 		$srv    = Stats_Store::server_key( 'example.test' );
 		$key    = Stats_Store::entry_key( 0, "urls:{$srv}:" . Stats_Store::url_shard( $hash ) . ':' . $bucket );
@@ -4178,7 +4187,7 @@ class PerformanceCITest extends TestCase {
 		foreach ( [ [ $index_key, [ $srv => 'example.test' ] ], [ $key, $rows ], [ $name_key, [ 'example.test', '/jobs/import-film-times' ] ] ] as [ $frame_key, $data ] ) {
 			$msg                       = Message::new_message();
 			$msg[ Message::TYPE ]      = Message::TM_STRUCT;
-			$msg[ Message::TIMESTAMP ] = \time();
+			$msg[ Message::TIMESTAMP ] = self::tick();
 			$msg[ Message::KEY ]       = $frame_key;
 			$msg[ Message::VALUE ]     = [ 'key' => $frame_key, 'data' => $data, 'ttl' => 43200 ];
 			$mirror->fill( $msg );
@@ -4227,7 +4236,7 @@ class PerformanceCITest extends TestCase {
 		$this->activate_shipped_topology( 'performance', 3 );
 		$url   = '/spread-across-partitions';
 		$hash  = Log_Manager::url_hash( $url );
-		$now   = \time();
+		$now   = self::tick();
 		$store = new Stats_Store( 0, 86400 );
 		$this->set_url_bucket( $store, $this->current_url_bucket(), [
 			$hash => [ 'url' => $url, 'count' => 2, 'timed_count' => 2, 'sum_ms' => 61.0, 'last_seen' => $now - 742 ],
@@ -4271,7 +4280,7 @@ class PerformanceCITest extends TestCase {
 	 * `recent` / `last_seen` — plus the `aggregate` flag and a defaulted min_ms.
 	 */
 	public function test_the_index_row_carries_the_projections_field_names(): void {
-		$recent_bucket = Stats_Store::retention_buckets( 86400, \time() )[1];
+		$recent_bucket = Stats_Store::retention_buckets( 86400, self::tick() )[1];
 		$store         = new Stats_Store( 0, 86400 );
 		$this->set_url_bucket( $store, $recent_bucket, [
 			'c0ffee123456' => [
@@ -4433,8 +4442,8 @@ class PerformanceCITest extends TestCase {
 	public function test_a_repeated_urls_page_is_served_without_a_fold(): void {
 		$this->activate_shipped_topology( 'performance', 3 );
 		$this->set_url_bucket( new Stats_Store( 1, 86400 ), $this->current_url_bucket(), [
-			'b7731ce0fa11' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 5, 'last_seen' => \time() ],
-			'c8842df1ab90' => [ 'url' => 'https://kea.test/kiwi-8842', 'count' => 3, 'last_seen' => \time() ],
+			'b7731ce0fa11' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 5, 'last_seen' => self::tick() ],
+			'c8842df1ab90' => [ 'url' => 'https://kea.test/kiwi-8842', 'count' => 3, 'last_seen' => self::tick() ],
 		] );
 		[ $fire, $reads, $restore ] = $this->counting_urls_fire();
 		try {
@@ -4455,6 +4464,41 @@ class PerformanceCITest extends TestCase {
 		} finally {
 			$restore();
 		}
+	}
+
+	public function test_the_widest_cached_urls_page_fits_the_item_budget(): void {
+		// The widest page the cache stores, of the widest rows a reply can
+		// name: a 259-byte host, a 1,024-byte path, every number at length.
+		$server = \str_pad( 'srv.', 259, 'x' );
+		$wide   = -1.2345678901234567E+300;
+		$rows   = [];
+		for ( $i = 0; $i < 300; $i++ ) {
+			$count = 999_999_999_999 - $i;
+			$rows[ \sprintf( '%012x', $i ) ] = [
+				'url'   => "https://{$server}" . \str_pad( "/{$i}/", Stats_Store::MAX_PATH_BYTES, 'x' ),
+				'count' => $count, 'timed_count' => $count, 'count_2xx' => $count, 'count_3xx' => $count,
+				'count_4xx' => $count, 'count_5xx' => $count, 'sum_ms' => $wide, 'sum_peak_mb' => $wide,
+				'min_ms' => $wide, 'max_ms' => $wide, 'max_peak_mb' => $wide, 'last_seen' => self::tick(),
+			];
+		}
+		$this->set_url_bucket( new Stats_Store( 0, 86400 ), $this->current_url_bucket(), $rows, $server );
+
+		$page = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--sort=count --order=desc --limit=250' );
+
+		$this->assertCount( 250, $page['data'] );
+		$cached = 0;
+		foreach ( Core::$memd->keys() as $key ) {
+			if ( ! \str_contains( $key, 'eln-urls-page' ) ) {
+				continue;
+			}
+			$value = Core::$memd->get( $key );
+			++$cached;
+			$this->assertLessThanOrEqual( Stats_Store::ITEM_BUDGET, \strlen( \serialize( $value ) ), "{$key}, serialize()" );
+			if ( \function_exists( 'igbinary_serialize' ) ) {
+				$this->assertLessThanOrEqual( Stats_Store::ITEM_BUDGET, \strlen( (string) \igbinary_serialize( $value ) ), "{$key}, igbinary" );
+			}
+		}
+		$this->assertGreaterThan( 0, $cached, 'the page was cached' );
 	}
 
 	public function test_the_reply_clock_is_the_ticks_own_rather_than_the_wall(): void {
@@ -4478,9 +4522,9 @@ class PerformanceCITest extends TestCase {
 	public function test_a_urls_reply_dates_itself_from_the_substrate_clock(): void {
 		$this->activate_shipped_topology( 'performance', 3 );
 		// A second already PAST, and a stride no fallback here uses: the real
-		// clock never returns it again, so a `\time()` left anywhere on this
+		// clock never returns it again, so a `self::tick()` left anywhere on this
 		// path dates the reply as something else.
-		$pinned   = \time() - 1234;
+		$pinned   = self::tick() - 1234;
 		$previous = Core::$clock;
 		$ticked   = Core::$now;
 		// The substrate's own clock, pinned the way a drain tick pins it:
@@ -4504,7 +4548,7 @@ class PerformanceCITest extends TestCase {
 		$this->activate_shipped_topology( 'performance', 3 );
 		// Two commands date themselves independently, so pin the clock both
 		// read: unpinned, a page built either side of a second reports two.
-		$now      = \time();
+		$now      = self::tick();
 		$previous = Core::$clock;
 		$ticked   = Core::$now;
 		Core::$clock = static fn (): float => (float) $now;
@@ -4562,8 +4606,8 @@ class PerformanceCITest extends TestCase {
 		$this->activate_shipped_topology( 'performance', 3 );
 		$store  = new Stats_Store( 1, 86400 );
 		$bucket = $this->current_url_bucket();
-		$this->set_url_bucket( $store, $bucket, [ 'b7731ce0fa11' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 5, 'last_seen' => \time() ] ] );
-		$this->set_url_rank_lists( $store, $bucket, [ 'b7731ce0fa11' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 9, 'last_seen' => \time() ] ] );
+		$this->set_url_bucket( $store, $bucket, [ 'b7731ce0fa11' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 5, 'last_seen' => self::tick() ] ] );
+		$this->set_url_rank_lists( $store, $bucket, [ 'b7731ce0fa11' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 9, 'last_seen' => self::tick() ] ] );
 		$this->seed_hour_lists();
 		[ $fire, , $restore ] = $this->counting_urls_fire();
 		try {
@@ -4580,7 +4624,7 @@ class PerformanceCITest extends TestCase {
 	public function test_a_ranked_page_presents_the_mean_of_bucket_averages(): void {
 		$this->activate_shipped_topology( 'performance', 3 );
 		$store = new Stats_Store( 1, 86400 );
-		$now   = \time();
+		$now   = self::tick();
 		$newer = Stats_Store::bucket_key( $now );
 		$older = Stats_Store::bucket_key( $now - 300 );
 		$row   = static fn ( int $count, float $sum_ms ): array => [
@@ -4608,7 +4652,7 @@ class PerformanceCITest extends TestCase {
 	public function test_an_hour_list_stands_in_for_its_buckets_and_a_missing_one_falls_to_them(): void {
 		$this->activate_shipped_topology( 'performance', 3 );
 		$store = new Stats_Store( 1, 86400 );
-		$now   = \time();
+		$now   = self::tick();
 		$plan  = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, $now ) );
 		$this->assertGreaterThanOrEqual( 2, \count( $plan['hours'] ) );
 		// unfolded_hour_buckets() only backfills the LEADING (grace) hour of
@@ -4640,13 +4684,13 @@ class PerformanceCITest extends TestCase {
 		// Two servers on one hash: the site's count (4) is not moa.test's (3),
 		// so a page that read the site's list would give this a false pass.
 		$kea = [
-			'b7731ce0fa11' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 5, 'last_seen' => \time() ],
-			'c8842df1ab90' => [ 'url' => 'https://moa.test/kiwi-8842', 'count' => 1, 'last_seen' => \time() ],
+			'b7731ce0fa11' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 5, 'last_seen' => self::tick() ],
+			'c8842df1ab90' => [ 'url' => 'https://moa.test/kiwi-8842', 'count' => 1, 'last_seen' => self::tick() ],
 		];
-		$moa = [ 'c8842df1ab90' => [ 'url' => 'https://moa.test/kiwi-8842', 'count' => 3, 'last_seen' => \time() ] ];
+		$moa = [ 'c8842df1ab90' => [ 'url' => 'https://moa.test/kiwi-8842', 'count' => 3, 'last_seen' => self::tick() ] ];
 		$this->set_url_bucket( $store, $bucket, $kea, 'kea.test' );
 		$this->set_url_bucket( $store, $bucket, $moa, 'moa.test' );
-		$this->set_url_rank_lists( $store, $bucket, [ 'b7731ce0fa11' => $kea['b7731ce0fa11'], 'c8842df1ab90' => [ 'url' => 'https://moa.test/kiwi-8842', 'count' => 4, 'last_seen' => \time() ] ] );
+		$this->set_url_rank_lists( $store, $bucket, [ 'b7731ce0fa11' => $kea['b7731ce0fa11'], 'c8842df1ab90' => [ 'url' => 'https://moa.test/kiwi-8842', 'count' => 4, 'last_seen' => self::tick() ] ] );
 		$this->set_url_rank_lists( $store, $bucket, $moa, false, 'moa.test' );
 		$this->seed_hour_lists( [], 'moa.test' );
 		[ $fire, , $restore ] = $this->counting_urls_fire();
@@ -4673,7 +4717,7 @@ class PerformanceCITest extends TestCase {
 		// its 9999 requests to the newer bucket's one.
 		$this->activate_shipped_topology( 'performance', 3 );
 		$store = new Stats_Store( 1, 86400 );
-		$now   = \time();
+		$now   = self::tick();
 		$older = Stats_Store::bucket_key( $now - 300 );
 		$newer = Stats_Store::bucket_key( $now );
 		$heavy = 'f0f0f0f0f0f0';
@@ -4710,10 +4754,10 @@ class PerformanceCITest extends TestCase {
 		$store  = new Stats_Store( 1, 86400 );
 		$bucket = $this->current_url_bucket();
 		$this->set_url_bucket( $store, $bucket, [
-			'a1ce0fa11b77' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 5, 'last_seen' => \time() ],
+			'a1ce0fa11b77' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 5, 'last_seen' => self::tick() ],
 		], 'kea.test' );
 		$this->set_url_bucket( $store, $bucket, [
-			'b2df1ab90c88' => [ 'url' => 'https://moa.test/wombat-8842', 'count' => 3, 'last_seen' => \time() ],
+			'b2df1ab90c88' => [ 'url' => 'https://moa.test/wombat-8842', 'count' => 3, 'last_seen' => self::tick() ],
 		], 'moa.test' );
 
 		$page = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--search=wombat' );
@@ -4734,10 +4778,10 @@ class PerformanceCITest extends TestCase {
 		$store  = new Stats_Store( 1, 86400 );
 		$bucket = $this->current_url_bucket();
 		$this->set_url_bucket( $store, $bucket, [
-			'a1ce0fa11b77' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 5, 'last_seen' => \time() ],
+			'a1ce0fa11b77' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 5, 'last_seen' => self::tick() ],
 		], 'kea.test' );
 		$this->set_url_bucket( $store, $bucket, [
-			'b2df1ab90c88' => [ 'url' => 'https://moa.test/wombat-8842', 'count' => 3, 'last_seen' => \time() ],
+			'b2df1ab90c88' => [ 'url' => 'https://moa.test/wombat-8842', 'count' => 3, 'last_seen' => self::tick() ],
 		], 'moa.test' );
 		/** @var object{read: list<string>} $memd */
 		$memd       = Core::$memd;
@@ -4760,10 +4804,10 @@ class PerformanceCITest extends TestCase {
 		$this->activate_shipped_topology( 'performance', 3 );
 		$store  = new Stats_Store( 1, 86400 );
 		$bucket = $this->current_url_bucket();
-		$rows   = [ 'b7731ce0fa11' => [ 'url' => 'https://kea.test/weka-3308', 'count' => 5, 'last_seen' => \time() ] ];
+		$rows   = [ 'b7731ce0fa11' => [ 'url' => 'https://kea.test/weka-3308', 'count' => 5, 'last_seen' => self::tick() ] ];
 		$this->set_url_bucket( $store, $bucket, $rows );
-		$this->set_url_rank_lists( $store, $bucket, [ 'b7731ce0fa11' => [ 'url' => 'https://kea.test/weka-3308', 'count' => 9, 'last_seen' => \time() ] ] );
-		$plan = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, \time() ) );
+		$this->set_url_rank_lists( $store, $bucket, [ 'b7731ce0fa11' => [ 'url' => 'https://kea.test/weka-3308', 'count' => 9, 'last_seen' => self::tick() ] ] );
+		$plan = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, self::tick() ) );
 		$this->assertGreaterThanOrEqual( 3, \count( $plan['hours'] ) );
 		$gap = $plan['hours'][2];
 		$this->seed_hour_lists( [ $gap ] );
@@ -4785,7 +4829,7 @@ class PerformanceCITest extends TestCase {
 	public function test_with_no_lists_at_all_the_page_folds(): void {
 		$this->activate_shipped_topology( 'performance', 3 );
 		$this->set_url_bucket( new Stats_Store( 1, 86400 ), $this->current_url_bucket(), [
-			'b7731ce0fa11' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 5, 'last_seen' => \time() ],
+			'b7731ce0fa11' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 5, 'last_seen' => self::tick() ],
 		] );
 		[ $fire, , $restore ] = $this->counting_urls_fire();
 		try {
@@ -4802,7 +4846,7 @@ class PerformanceCITest extends TestCase {
 		$this->use_base_dir( $this->tmp, [ 'num_partitions' => 1, 'min_lifetime' => 86400, 'stats_mirror_node' => 'flames-stats', 'stats_mirror_read_budget_ms' => 0 ] );
 		$this->activate_shipped_topology( 'performance', 3 );
 		$this->set_url_bucket( new Stats_Store( 1, 86400 ), $this->current_url_bucket(), [
-			'b7731ce0fa11' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 5, 'last_seen' => \time() ],
+			'b7731ce0fa11' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 5, 'last_seen' => self::tick() ],
 		] );
 		[ $fire, $reads, $restore ] = $this->counting_urls_fire();
 		try {
@@ -4827,7 +4871,7 @@ class PerformanceCITest extends TestCase {
 	 * @param int          $partitions Stores the active topology declares.
 	 */
 	private function seed_hour_lists( array $skip = [], string $server = self::SEED_SERVER, int $partitions = 3 ): void {
-		$plan = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, \time() ) );
+		$plan = Stats_Store::read_plan( Stats_Store::retention_buckets( 86400, self::tick() ) );
 		for ( $partition = 0; $partition < $partitions; ++$partition ) {
 			$store = new Stats_Store( $partition, 86400 );
 			foreach ( $plan['hours'] as $hour ) {
@@ -4892,7 +4936,7 @@ class PerformanceCITest extends TestCase {
 		// resolved once must still be all three.
 		$this->activate_shipped_topology( 'performance', 3 );
 		$this->set_url_bucket( new Stats_Store( 1, 86400 ), $this->current_url_bucket(), [
-			'b7731ce0fa11' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 5, 'last_seen' => \time() ],
+			'b7731ce0fa11' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 5, 'last_seen' => self::tick() ],
 		] );
 		$builds   = self::count_catalog_reads();
 		$read     = [];
@@ -5015,8 +5059,8 @@ class PerformanceCITest extends TestCase {
 	 *
 	 * `url_row_sources()` issued ONE `lookup_multi` across all sixteen shards
 	 * and returned every bucket's rows, so the whole window was resident before
-	 * the first fold — on top of the index being built. At
-	 * `MAX_URLS_PER_SHARD` rows per key that is hundreds of MB, and it is what
+	 * the first fold — on top of the index being built. At a full cache
+	 * item per key that is hundreds of MB, and it is what
 	 * exhausted 512MB on a production hub after both duplicate copies were
 	 * already gone. Decision 6's batching stays; the batch is just bounded.
 	 *
@@ -5186,7 +5230,7 @@ class PerformanceCITest extends TestCase {
 	 * entries, and folding them would carry every appearance in the window.
 	 */
 	public function test_the_leaderboard_sums_categories_without_folding_entries(): void {
-		$window = Stats_Store::retention_buckets( 86400, \time() );
+		$window = Stats_Store::retention_buckets( 86400, self::tick() );
 		$store  = new Stats_Store( 0, 86400 );
 		$this->set_leaderboard_bucket( $store, $window[0], [
 			'count'        => 4,
@@ -5240,9 +5284,9 @@ class PerformanceCITest extends TestCase {
 		$store  = new Stats_Store( 1, 86400 );
 		$bucket = $this->current_url_bucket();
 		$this->set_url_bucket( $store, $bucket, [
-			'b7731ce0fa11' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 5, 'last_seen' => \time() ],
-			'c8842df1ab90' => [ 'url' => 'https://kea.test/kiwi-8842', 'count' => 3, 'last_seen' => \time() ],
-			'19913aa00fe2' => [ 'url' => 'https://kea.test/tui-9913', 'count' => 2, 'last_seen' => \time() ],
+			'b7731ce0fa11' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 5, 'last_seen' => self::tick() ],
+			'c8842df1ab90' => [ 'url' => 'https://kea.test/kiwi-8842', 'count' => 3, 'last_seen' => self::tick() ],
+			'19913aa00fe2' => [ 'url' => 'https://kea.test/tui-9913', 'count' => 2, 'last_seen' => self::tick() ],
 		] );
 		[ $fire, $reads, $restore ] = $this->counting_urls_fire();
 		try {
@@ -5329,11 +5373,11 @@ class PerformanceCITest extends TestCase {
 		$store  = new Stats_Store( 1, 86400 );
 		$bucket = $this->current_url_bucket();
 		$this->set_url_bucket( $store, $bucket, [
-			'b7731ce0fa11' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 5, 'last_seen' => \time() ],
+			'b7731ce0fa11' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 5, 'last_seen' => self::tick() ],
 		] );
 		// A real set, never the saturation sentinel: that case has its own
 		// test. Stored as the writer stores it, `hash => last named`.
-		$now        = \time();
+		$now        = self::tick();
 		$at_ceiling = [ 'b7731ce0fa11' => $now ];
 		for ( $i = 0; \count( $at_ceiling ) < Stats_Store::URL_SEARCH_MAX; $i++ ) {
 			$at_ceiling[ \sprintf( 'd%011x', $i ) ] = $now;
@@ -5367,7 +5411,7 @@ class PerformanceCITest extends TestCase {
 		$store  = new Stats_Store( 1, 86400 );
 		$bucket = $this->current_url_bucket();
 		$this->set_url_bucket( $store, $bucket, [
-			'e5510ab77c01' => [ 'url' => 'https://kea.test/hihi-5510', 'count' => 6, 'last_seen' => \time() ],
+			'e5510ab77c01' => [ 'url' => 'https://kea.test/hihi-5510', 'count' => 6, 'last_seen' => self::tick() ],
 		] );
 		// The tokens outlive the name: drop the `urlmap` entry alone.
 		$table = ( new \ReflectionMethod( $store, 'table' ) )->invoke( $store, 'aggregate' );
@@ -5387,12 +5431,12 @@ class PerformanceCITest extends TestCase {
 		$store  = new Stats_Store( 1, 86400 );
 		$bucket = $this->current_url_bucket();
 		$this->set_url_bucket( $store, $bucket, [
-			'a7700ce0fa11' => [ 'url' => 'https://kea.test/wombat-77', 'count' => 5, 'last_seen' => \time() ],
-			'b1177df1ab90' => [ 'url' => 'https://kea.test/wombat-1177', 'count' => 3, 'last_seen' => \time() ],
+			'a7700ce0fa11' => [ 'url' => 'https://kea.test/wombat-77', 'count' => 5, 'last_seen' => self::tick() ],
+			'b1177df1ab90' => [ 'url' => 'https://kea.test/wombat-1177', 'count' => 3, 'last_seen' => self::tick() ],
 		] );
 		// Saturate the term's only servable token, so the fold answers.
 		$store->bucket_set_multi( [
-			[ Stats_Store::url_token_parts( Stats_Store::server_key( self::SEED_SERVER ) ), 'wombat', [ Stats_Store::TOKEN_SATURATED => \time() ] ],
+			[ Stats_Store::url_token_parts( Stats_Store::server_key( self::SEED_SERVER ) ), 'wombat', [ Stats_Store::TOKEN_SATURATED => self::tick() ] ],
 		] );
 
 		// An ARRAY: `fire()` splits a string on whitespace, and this term has some.
@@ -5407,7 +5451,7 @@ class PerformanceCITest extends TestCase {
 		$this->activate_shipped_topology( 'performance', 3 );
 		$store  = new Stats_Store( 1, 86400 );
 		$this->set_url_bucket( $store, $this->current_url_bucket(), [
-			'c3310ab77c02' => [ 'url' => 'https://moa.test/kakapo-3310', 'count' => 4, 'timed_count' => 4, 'sum_ms' => 80.0, 'sum_peak_mb' => 4.0, 'last_seen' => \time() ],
+			'c3310ab77c02' => [ 'url' => 'https://moa.test/kakapo-3310', 'count' => 4, 'timed_count' => 4, 'sum_ms' => 80.0, 'sum_peak_mb' => 4.0, 'last_seen' => self::tick() ],
 		], 'moa.test' );
 
 		$page = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--server=moa.test --search=nomatch' );
@@ -5417,6 +5461,33 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( 0, $page['rows'] );
 	}
 
+	public function test_the_seeds_date_from_the_tick_the_reply_reads(): void {
+		// The reply dates itself from `Core::$now`, stamped at setUp; a seed
+		// dated from the wall lands a bucket later whenever a five-minute
+		// boundary falls between the two, and the page it seeded reads empty.
+		$previous  = Core::$now;
+		Core::$now = (float) ( \time() + Stats_Store::BUCKET_SECONDS );
+		try {
+			$this->assertSame( Stats_Store::bucket_key( (int) Core::$now ), $this->current_url_bucket() );
+		} finally {
+			Core::$now = $previous;
+		}
+	}
+
+	public function test_a_fresh_graph_keeps_the_tick_its_test_dates_from(): void {
+		// A test fires several replies, each on a fresh graph; re-reading the
+		// wall between them splits one test across two buckets at a boundary.
+		$previous  = Core::$now;
+		Core::$now = (float) ( self::tick() + Stats_Store::BUCKET_SECONDS );
+		$tick      = Core::$now;
+		try {
+			VerbHarness::reset();
+			$this->assertSame( $tick, Core::$now );
+		} finally {
+			Core::$now = $previous;
+		}
+	}
+
 	public function test_a_whitespace_only_search_is_the_same_page_as_no_search(): void {
 		// The cache key normalizes the term, so a blank search and no search
 		// are one entry — and they have to be one ANSWER too, or whichever
@@ -5424,7 +5495,7 @@ class PerformanceCITest extends TestCase {
 		$this->activate_shipped_topology( 'performance', 3 );
 		$store  = new Stats_Store( 1, 86400 );
 		$bucket = $this->current_url_bucket();
-		$rows   = [ 'b7731ce0fa11' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 5, 'last_seen' => \time() ] ];
+		$rows   = [ 'b7731ce0fa11' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 5, 'last_seen' => self::tick() ] ];
 		$this->set_url_bucket( $store, $bucket, $rows );
 		$this->set_url_rank_lists( $store, $bucket, $rows );
 		$this->seed_hour_lists();
@@ -5454,7 +5525,7 @@ class PerformanceCITest extends TestCase {
 		$this->activate_shipped_topology( 'performance', 3 );
 		$store = new Stats_Store( 1, 86400 );
 		$this->set_url_bucket( $store, $this->current_url_bucket(), [
-			'd4410ab77c03' => [ 'url' => 'https://kea.test/weka-4410', 'count' => 7, 'last_seen' => \time() ],
+			'd4410ab77c03' => [ 'url' => 'https://kea.test/weka-4410', 'count' => 7, 'last_seen' => self::tick() ],
 		] );
 		[ $fire, $reads, $restore ] = $this->counting_urls_fire();
 		try {
@@ -5502,7 +5573,7 @@ class PerformanceCITest extends TestCase {
 		$store  = new Stats_Store( 1, 86400 );
 		$bucket = $this->current_url_bucket();
 		$this->set_url_bucket( $store, $bucket, [
-			'b7731ce0fa11' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 5, 'last_seen' => \time() ],
+			'b7731ce0fa11' => [ 'url' => 'https://kea.test/wombat-7731', 'count' => 5, 'last_seen' => self::tick() ],
 		] );
 		$store->bucket_set_multi( [ [ Stats_Store::url_token_parts( Stats_Store::server_key( self::SEED_SERVER ) ), 'wo', [ Stats_Store::TOKEN_SATURATED ] ] ] );
 		[ $fire, $reads, $restore ] = $this->counting_urls_fire();
@@ -5526,8 +5597,8 @@ class PerformanceCITest extends TestCase {
 		$store  = new Stats_Store( 1, 86400 );
 		$bucket = $this->current_url_bucket();
 		$this->set_url_bucket( $store, $bucket, [
-			'a4410ce0fa19' => [ 'url' => 'https://kea.test/kereru-41', 'count' => 12, 'last_seen' => \time() ],
-			'c8842df1ab90' => [ 'url' => 'https://kea.test/kiwi-8842', 'count' => 3, 'last_seen' => \time() ],
+			'a4410ce0fa19' => [ 'url' => 'https://kea.test/kereru-41', 'count' => 12, 'last_seen' => self::tick() ],
+			'c8842df1ab90' => [ 'url' => 'https://kea.test/kiwi-8842', 'count' => 3, 'last_seen' => self::tick() ],
 		] );
 		[ $fire, $reads, $restore ] = $this->counting_urls_fire();
 		try {
@@ -5556,7 +5627,7 @@ class PerformanceCITest extends TestCase {
 		$this->activate_shipped_topology( 'performance', 3 );
 		$store  = new Stats_Store( 1, 86400 );
 		$bucket = $this->current_url_bucket();
-		$rows   = [ 'a5540ce0fa17' => [ 'url' => 'https://kea.test/kereru-5540', 'count' => 17, 'last_seen' => \time() ] ];
+		$rows   = [ 'a5540ce0fa17' => [ 'url' => 'https://kea.test/kereru-5540', 'count' => 17, 'last_seen' => self::tick() ] ];
 		$this->set_url_bucket( $store, $bucket, $rows );
 		$this->set_url_rank_lists( $store, $bucket, $rows );
 		$this->seed_hour_lists();
@@ -5590,7 +5661,7 @@ class PerformanceCITest extends TestCase {
 	 * bucket, and a page of 43 rows, a size no other test caches a page under.
 	 */
 	public function test_a_url_page_is_built_from_the_bucket_it_is_keyed_under(): void {
-		$next = \intdiv( \time(), Stats_Store::BUCKET_SECONDS ) * Stats_Store::BUCKET_SECONDS;
+		$next = \intdiv( self::tick(), Stats_Store::BUCKET_SECONDS ) * Stats_Store::BUCKET_SECONDS;
 		$at   = $next - 1;
 		$this->set_url_bucket( new Stats_Store( 0, 86400 ), Stats_Store::bucket_key( $next ), [
 			'd7a2e91c4b30' => [ 'url' => 'https://kea.test/weka-2931', 'count' => 29, 'last_seen' => $next ],
@@ -5623,7 +5694,7 @@ class PerformanceCITest extends TestCase {
 	public function test_a_scoped_page_for_a_server_with_no_rows_answers_zero_totals(): void {
 		$this->activate_shipped_topology( 'performance', 1 );
 		$this->set_url_bucket( new Stats_Store( 0, 86400 ), $this->current_url_bucket(), [
-			'f6620ab77c04' => [ 'url' => 'https://kea.test/takahe-6620', 'count' => 11, 'last_seen' => \time() ],
+			'f6620ab77c04' => [ 'url' => 'https://kea.test/takahe-6620', 'count' => 11, 'last_seen' => self::tick() ],
 		], 'kea.test' );
 		$page = ( new \ReflectionMethod( Performance_CI_Node::class, 'url_page' ) )->invoke(
 			new Performance_CI_Node(),

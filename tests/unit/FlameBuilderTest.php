@@ -34,6 +34,25 @@ use Newspack_Nodes\Tests\Helpers\InMemoryMemcached;
 class FlameBuilderTest extends TestCase {
 
 	/**
+	 * Rows of `long_path()` enough to pass the item budget under either
+	 * serializer's estimate: about 660 fit under PHP's, 780 under igbinary's.
+	 */
+	private const ROWS_PAST_BUDGET = 1000;
+
+	/** A path 1,000 bytes long, so a shard reaches its byte cap in rows a test can afford. */
+	private static function long_path( string $path ): string {
+		return \str_pad( "{$path}/", 1000, 'x' );
+	}
+
+	/** A stored value fits the item budget under the serializer its cap estimated for. */
+	private static function assert_within_item_budget( array $value ): void {
+		$bytes = Stats_Store::SERIALIZER_IGBINARY === Stats_Store::$serializer
+			? \strlen( (string) \igbinary_serialize( $value ) )
+			: \strlen( \serialize( $value ) );
+		self::assertLessThanOrEqual( Stats_Store::ITEM_BUDGET, $bytes );
+	}
+
+	/**
 	 * An hour inside the retention window, and one of its five-minute buckets.
 	 *
 	 * The mirror seam sizes what it hands back by what is LEFT of the window,
@@ -1638,10 +1657,9 @@ class FlameBuilderTest extends TestCase {
 		$this->assertCount( 24, $servers );
 	}
 
-	public function test_the_cap_counts_the_overflow_rows_it_writes(): void {
-		// At EXACTLY the cap no fold runs, and the two overflow rows are added
-		// back afterwards regardless — so the item ships at MAX + 2 and the
-		// constant stops meaning what its name says.
+	public function test_the_byte_cap_counts_the_overflow_rows_it_writes(): void {
+		// Both overflow rows go back in after the fold, so the cap has to
+		// reserve their bytes too, or the item ships past the budget by them.
 		Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$fb         = new Flame_Builder_Node();
@@ -1653,11 +1671,10 @@ class FlameBuilderTest extends TestCase {
 			Stats_Store::OTHER_KEY        => [ 'count' => 9, 'timed_count' => 9, 'sum_ms' => 18.0, 'worker' => false, 'last_seen' => $now ],
 			Stats_Store::OTHER_WORKER_KEY => [ 'count' => 7, 'timed_count' => 7, 'sum_ms' => 14.0, 'worker' => true, 'last_seen' => $now ],
 		];
-		// One under the cap, so the row this flush adds lands EXACTLY on it.
-		$cap = Flame_Builder_Node::MAX_URLS_PER_SHARD;
-		for ( $i = 0; $i < $cap - 1; $i++ ) {
+		$cap = self::ROWS_PAST_BUDGET;
+		for ( $i = 0; $i < $cap; $i++ ) {
 			$seed[ \sprintf( 'a%011x', $i ) ] = [
-				'url' => "/cap{$i}", 'count' => $cap + 500 - $i, 'timed_count' => $cap + 500 - $i,
+				'url' => self::long_path( "/cap{$i}" ), 'count' => $cap + 500 - $i, 'timed_count' => $cap + 500 - $i,
 				'sum_ms' => 2.0 * ( $cap + 500 - $i ), 'min_ms' => 2.0, 'max_ms' => 2.0,
 				'sum_peak_mb' => 0, 'max_peak_mb' => 0, 'count_2xx' => $cap + 500 - $i,
 				'count_3xx' => 0, 'count_4xx' => 0, 'count_5xx' => 0,
@@ -1678,7 +1695,7 @@ class FlameBuilderTest extends TestCase {
 		$this->fill_request( $fb, $this->completed_request( [ 'url' => $url, 'duration_ms' => 2.0, 'timestamp' => $now ] ) );
 		$fb->flush();
 
-		$this->assertLessThanOrEqual( $cap, \count( $this->get_url_shard( $store, $bucket, 'a' ) ) );
+		self::assert_within_item_budget( $this->get_url_shard( $store, $bucket, 'a' ) );
 	}
 
 	public function test_the_overflow_row_keeps_worker_traffic_separate(): void {
@@ -1693,12 +1710,12 @@ class FlameBuilderTest extends TestCase {
 		$now    = \time();
 		$bucket = Stats_Store::bucket_key( $now );
 		$seed   = [];
-		$cap    = Flame_Builder_Node::MAX_URLS_PER_SHARD;
+		$cap    = self::ROWS_PAST_BUDGET;
 		// Alternating, so BOTH families overflow their own cap.
-		for ( $i = 0; $i < 2 * ( $cap + 100 ); $i++ ) {
+		for ( $i = 0; $i < 2 * $cap; $i++ ) {
 			$base = 2 * $cap + 1000 - $i;
 			$seed[ \sprintf( 'a%011x', $i ) ] = [
-				'url' => "/u{$i}", 'count' => $base, 'timed_count' => $base,
+				'url' => self::long_path( "/u{$i}" ), 'count' => $base, 'timed_count' => $base,
 				'sum_ms' => 2.0 * $base, 'min_ms' => 2.0, 'max_ms' => 2.0,
 				'sum_peak_mb' => 0, 'max_peak_mb' => 0, 'count_2xx' => $base,
 				'count_3xx' => 0, 'count_4xx' => 0, 'count_5xx' => 0,
@@ -1725,11 +1742,8 @@ class FlameBuilderTest extends TestCase {
 		$this->assertArrayNotHasKey( Stats_Store::other_key( true ), $shard, 'the reader family folds reader rows only' );
 		$this->assertFalse( $shard[ Stats_Store::other_key( false ) ]['worker'] );
 		$this->assertTrue( $worker[ Stats_Store::other_key( true ) ]['worker'], 'and the worker family its own' );
-		$this->assertLessThanOrEqual( $cap, \count( $worker ) );
-		// Two overflow rows means two reserved slots, not one — the cap is a
-		// ceiling on the ITEM, and reserving for one row while emitting two
-		// puts it over by exactly the row that was supposed to bound it.
-		$this->assertLessThanOrEqual( $cap, \count( $shard ) );
+		self::assert_within_item_budget( $this->get_url_shard( $store, $bucket, Stats_Store::url_shard( 'a', true ) ) );
+		self::assert_within_item_budget( $this->get_url_shard( $store, $bucket, 'a' ) );
 	}
 
 	public function test_a_url_row_records_whether_its_traffic_was_a_worker(): void {
@@ -1945,13 +1959,13 @@ class FlameBuilderTest extends TestCase {
 		$now    = \time();
 		$bucket = Stats_Store::bucket_key( $now );
 		$seed   = [];
-		$cap    = Flame_Builder_Node::MAX_URLS_PER_SHARD;
-		for ( $i = 0; $i < $cap + 100; $i++ ) {
+		$cap    = self::ROWS_PAST_BUDGET;
+		for ( $i = 0; $i < $cap; $i++ ) {
 			// All in one shard, which is where the cap now applies.
 			$base = $cap + 500 - $i;
 			$seed[ \sprintf( 'a%011x', $i ) ] = [
-				'url'         => "/u{$i}",
-				// Descending, so the last 101 are the ones that fall off.
+				'url'         => self::long_path( "/u{$i}" ),
+				// Descending, so the tail is the quietest rows.
 				'count'       => $base,
 				'timed_count' => $base,
 				'sum_ms'      => 2.0 * $base,
@@ -1982,16 +1996,18 @@ class FlameBuilderTest extends TestCase {
 		$other = $shard[ Stats_Store::OTHER_KEY ] ?? null;
 
 		$this->assertNotNull( $other, 'the tail folds into one row' );
-		// Two under the cap plus both overflow rows: a slot is reserved for each
-		// the fold can emit, whether or not this tail fills them.
-		$this->assertLessThanOrEqual( $cap, \count( $shard ) );
-		$this->assertArrayHasKey( Stats_Store::OTHER_KEY, $shard );
-		// cap+101 rows in the shard (cap+100 seeded plus the one just written,
-		// count 1), keeping cap-2 — a slot reserved for each overflow row the
-		// fold can emit — folds the 103 smallest: counts 502 down to 401, and
-		// the 1. Seeding from cap+500 holds those two numbers still.
-		$expected = \array_sum( \range( 401, 502 ) ) + 1;
-		$this->assertSame( $expected, $other['count'] );
+		self::assert_within_item_budget( $this->get_url_shard( $store, $bucket, 'a', 'alpha.example' ) );
+		// The fold keeps every request: the seeded counts, and the one written.
+		$seeded = \array_sum( \array_column( $seed, 'count' ) );
+		$this->assertSame( $seeded + 1, \array_sum( \array_column( $shard, 'count' ) ) );
+		// And it takes the quietest: every row kept outranks every row folded.
+		$kept   = \array_diff_key( $shard, [ Stats_Store::OTHER_KEY => true ] );
+		$folded = \array_diff_key( $seed, $kept );
+		$this->assertNotSame( [], $folded );
+		$this->assertLessThan(
+			\min( \array_column( \array_intersect_key( $seed, $kept ), 'count' ) ),
+			\max( \array_column( $folded, 'count' ) )
+		);
 		$this->assertSame( '', $other['path'], 'many URLs, so no one path' );
 	}
 
@@ -3590,6 +3606,73 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( 6, $fine['count'] ?? null, 'and the fine bucket a re-fold reads' );
 	}
 
+	public function test_a_profiles_folded_tail_outlives_the_next_request_that_reloads_it(): void {
+		// The stored profile folds its tail into `Other`; a worker that reloads
+		// the blob runs the expiry sweep over it, which reads each `ts`.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+		$now      = (int) Core::$now;
+		$profiles = [];
+		for ( $c = 0; $c < Stats_Store::MAX_LB_CATEGORIES + 37; $c++ ) {
+			$profiles[ "event {$c}" ] = [ 'time' => 3.0 + $c, 'count' => 1, 'ts' => $now, 'entries' => [] ];
+		}
+		$request = [ 'url' => '/tail/7', 'duration_ms' => 900.0, 'timestamp' => $now, 'profiles' => $profiles ];
+
+		$this->fill_request( $fb, $this->completed_request( $request ) );
+		$fb->flush();
+		// A fresh worker holds no aggregate, so it resumes from the stored blob.
+		$store->reset_url_stats();
+		$this->fill_request( $fb, $this->completed_request( [ 'profiles' => [ 'event 0' => $profiles['event 0'] ] ] + $request ) );
+		$fb->flush();
+
+		$hash = Log_Manager::url_hash( '/tail/7' );
+		$blob = Core::arr( $store->bucket_get_multi( [ [ [ Stats_Store::NS_URL ], $hash ] ] )[0] ?? null );
+		$prof = Core::arr( $blob['profiles'] ?? null );
+		$cats = Core::arr( $prof['categories'] ?? null );
+		$this->assertArrayHasKey( Stats_Store::OTHER_KEY, $cats, 'the folded tail survives the reload' );
+		$this->assertEqualsWithDelta(
+			(float) $prof['sum_req_time'],
+			\array_sum( \array_column( $cats, 'sum_time' ) ),
+			1e-6,
+			'every millisecond the requests spent is still in a category'
+		);
+	}
+
+	public function test_a_flushed_leaderboard_keeps_the_slowest_categories_and_folds_the_rest(): void {
+		// Every hook, callback and plugin is a category, 1,198 on one hub,
+		// and nothing capped the count; 300 here, each distinct by time.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+		Core::$now = \gmmktime( 15, 7, 0, 8, 27, 2026 );
+		$sums      = [ 'count' => 300, 'sum_req_time' => 600.0, 'categories' => [] ];
+		for ( $c = 0; $c < 300; $c++ ) {
+			$sums['categories'][ "cat{$c}" ] = [ 'samples' => 1, 'sum_time' => (float) ( 1000 - $c ), 'sum_count' => 1.0, 'entries' => [] ];
+		}
+
+		$this->flush_buckets(
+			$fb,
+			[
+				'2026-08-27-15-05' => [
+					'leaderboard'           => $sums,
+					'leaderboard_by_server' => [ 'alpha.example' => $sums ],
+				],
+			]
+		);
+
+		$total = \array_sum( \array_column( $sums['categories'], 'sum_time' ) );
+		foreach ( [ '', 'alpha.example' ] as $server ) {
+			$cats = Core::arr( ( $store->get_leaderboard_buckets( [ '2026-08-27-15-05' ], $server )['2026-08-27-15-05'] ?? [] )['categories'] ?? null );
+			$this->assertCount( Stats_Store::MAX_LB_CATEGORIES, $cats, "scope '{$server}'" );
+			$this->assertArrayHasKey( 'cat0', $cats, 'the slowest stays' );
+			$this->assertArrayNotHasKey( 'cat299', $cats, 'the quickest folds' );
+			$this->assertEqualsWithDelta( $total, \array_sum( \array_column( $cats, 'sum_time' ) ), 1e-6, 'into Other, whole' );
+		}
+	}
+
 	/**
 	 * A store whose batch read answers every slot a miss whenever it asks for
 	 * `$ns`, as an evicted tier does: an answer, not a failure.
@@ -3972,8 +4055,7 @@ class FlameBuilderTest extends TestCase {
 	public function test_a_refused_hour_shard_write_is_logged_by_shard(): void {
 		// The fold writes every server's shards in one batch, and the batch
 		// answers per write — so a refusal names the shard that was lost, not
-		// the hour, and the operator's next move is which shard is over the
-		// item limit.
+		// the hour.
 		$err = '';
 		Core::set_stderr_handler( static function ( $text ) use ( &$err ) {
 			$err .= $text;
@@ -4546,10 +4628,9 @@ class FlameBuilderTest extends TestCase {
 		$bucket     = Stats_Store::bucket_key( $now );
 
 		$seed = [];
-		$cap  = Flame_Builder_Node::MAX_URLS_PER_SHARD;
-		for ( $i = 0; $i < $cap + 20; $i++ ) {
+		for ( $i = 0; $i < self::ROWS_PAST_BUDGET; $i++ ) {
 			$seed[ \sprintf( 'a%011x', $i ) ] = [
-				'url' => "/u{$i}", 'count' => 7 + $i, 'timed_count' => 7 + $i,
+				'url' => self::long_path( "/u{$i}" ), 'count' => 7 + $i, 'timed_count' => 7 + $i,
 				'sum_ms' => 2.0 * ( 7 + $i ), 'last_seen' => $now,
 			];
 		}
@@ -4574,7 +4655,7 @@ class FlameBuilderTest extends TestCase {
 		$live = self::named_url_rows( $this->get_url_shard( $store, $bucket, 'a', 'live.example' ) );
 		$this->assertSame( [ Log_Manager::url_hash( $url ) ], \array_keys( $live ), 'the quiet server keeps its row' );
 		$tail = self::named_url_rows( $this->get_url_shard( $store, $bucket, 'a', 'tail.example' ) );
-		$this->assertLessThanOrEqual( $cap, \count( $tail ), 'the busy server is capped' );
+		self::assert_within_item_budget( $this->get_url_shard( $store, $bucket, 'a', 'tail.example' ) );
 		$this->assertArrayHasKey( Stats_Store::OTHER_KEY, $tail, 'and folds its own tail' );
 	}
 
@@ -4629,15 +4710,14 @@ class FlameBuilderTest extends TestCase {
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$now        = \gmmktime( 15, 7, 0, 8, 27, 2026 );
 		// Six buckets of distinct URLs, all in one shard, summing to half again
-		// the ceiling the folded hour has to apply.
-		$cap   = Flame_Builder_Node::MAX_URLS_PER_SHARD;
-		$per   = (int) \ceil( $cap / 4 );
+		// what the folded hour's budget holds.
+		$per   = (int) \ceil( self::ROWS_PAST_BUDGET / 4 );
 		$total = 0;
 		foreach ( \array_slice( Stats_Store::buckets_in_hour( '2026-08-27-13' ), 0, 6 ) as $b => $bucket ) {
 			$rows = [];
 			for ( $i = 0; $i < $per; $i++ ) {
 				$rows[ \sprintf( 'a%011x', $b * ( $per + 1 ) + $i ) ] = [
-					'url'   => "/row-{$b}-{$i}",
+					'url'   => self::long_path( "/row-{$b}-{$i}" ),
 					'count' => 3,
 				];
 				$total += 3;
@@ -4651,7 +4731,7 @@ class FlameBuilderTest extends TestCase {
 		self::roll_up( $fb, (int) Core::$now );
 
 		$hour = self::named_url_rows( $store->url_hour_sources( [ '2026-08-27-13' ], 'a' )[0][1] );
-		$this->assertLessThanOrEqual( $cap, \count( $hour ), 'the hour takes the shard cap' );
+		self::assert_within_item_budget( $store->url_hour_sources( [ '2026-08-27-13' ], 'a' )[0][1] );
 		$this->assertArrayHasKey( Stats_Store::OTHER_KEY, $hour, 'the tail folds rather than dropping' );
 		$this->assertSame(
 			$total,

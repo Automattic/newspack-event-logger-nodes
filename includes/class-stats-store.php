@@ -70,6 +70,12 @@ class Stats_Store {
 
 	/** Distinct category values kept per bucket; `Flame_Builder_Node` rolls the overflow into "Other". */
 	public const MAX_CAT_VALUES           = 50;
+	/**
+	 * Categories a leaderboard bucket (`lb`, `lb_s`, `lb_h`) or a URL's
+	 * profile keeps, the slowest first, the rest folded into "Other". A byte
+	 * estimate caps it lower when the categories run wide.
+	 */
+	public const MAX_LB_CATEGORIES        = 200;
 	/** Distinct values kept per global dimension bucket; see `dim_cap()`. */
 	public const MAX_DIM_VALUES           = 20;
 
@@ -84,6 +90,55 @@ class Stats_Store {
 	 * client's Host header, and in the URL index every name is a set of keys.
 	 */
 	public const MAX_SERVER_VALUES        = 128;
+	/**
+	 * Bytes any one stored value may take, and what every byte cap derives
+	 * from: memcached's 1,048,576-byte item limit less a margin for the key
+	 * and the serializer's framing. Uncompressed, and under PHP's own
+	 * `serialize()`, the larger of the two serializers, because nothing
+	 * guarantees production compresses or runs igbinary. A producer caps
+	 * before it writes; a refused set is never how a size is found.
+	 */
+	public const ITEM_BUDGET              = 900000;
+
+	/**
+	 * Bytes each stored part costs under each serializer, before the strings
+	 * it carries: every byte cap estimates a value as these plus `strlen()`.
+	 * Measured with twelve-digit counts, doubles at their longest spelling
+	 * and no string repeated, which igbinary would store once; the rest is
+	 * margin. `url_row` includes its hash key, `flame_node` its key in its
+	 * parent's list, and `hook` one name's framing in a rule's hook list.
+	 */
+	private const OVERHEADS = [
+		self::SERIALIZER_PHP      => [
+			'url_row'     => 360,
+			'lb_category' => 180,
+			'lb_entry'    => 100,
+			'flame_node'  => 130,
+			'hook'        => 20,
+		],
+		self::SERIALIZER_IGBINARY => [
+			'url_row'     => 160,
+			'lb_category' => 56,
+			'lb_entry'    => 44,
+			'flame_node'  => 36,
+			'hook'        => 8,
+		],
+	];
+
+	/** PHP's own `serialize()`: the larger, and what a handle-less estimate assumes. */
+	public const SERIALIZER_PHP = 'php';
+
+	/** igbinary, as a memcached built with it may be configured to use. */
+	public const SERIALIZER_IGBINARY = 'igbinary';
+
+	/**
+	 * The serializer `overhead()` estimates for, read once from
+	 * `Core::$memd`'s `Memcached::OPT_SERIALIZER` and memoized here. Tests
+	 * assign it to estimate for one serializer, and reset it to null.
+	 *
+	 * @var self::SERIALIZER_*|null
+	 */
+	public static ?string $serializer = null;
 	/** Category time series, global or per server. */
 	public const NS_CATEGORIES  = 'categories';
 	/** Dimensional time series, global or per server. */
@@ -1731,9 +1786,9 @@ class Stats_Store {
 	 * Write many buckets across DIFFERENT namespaces in one round trip.
 	 *
 	 * Neither cache backend reports success per KEY, so a refused batch is
-	 * re-sent one key at a time — a caller that logs a specific refusal (an
-	 * oversized URL shard) still learns which one, and the slow path only runs
-	 * when something actually failed.
+	 * re-sent one key at a time — a caller that logs a specific refusal (a
+	 * URL shard) still learns which one, and the slow path only runs when
+	 * something actually failed.
 	 *
 	 * @param array<int,array{0: array<int,string>, 1: string, 2: array<array-key,mixed>}> $writes `[ parts, bucket, data ]`.
 	 * @return array<int,bool> One result per write, in order.
@@ -1850,6 +1905,33 @@ class Stats_Store {
 	 */
 	private static function names_host( string $server ): bool {
 		return '' !== $server && self::OTHER_KEY !== $server && self::UNKNOWN_SERVER !== $server;
+	}
+
+	/**
+	 * What one stored part costs before its strings, under the serializer
+	 * memcached is configured with — the one place a cap learns it.
+	 *
+	 * @param string $part An `OVERHEADS` part: `url_row`, `lb_category`,
+	 *                     `lb_entry`, `flame_node` or `hook`.
+	 * @throws \LogicException When no estimate names the part.
+	 */
+	public static function overhead( string $part ): int {
+		self::$serializer ??= self::configured_serializer();
+		return self::OVERHEADS[ self::$serializer ][ $part ] ?? throw new \LogicException( "no size estimate for a stored {$part}" );
+	}
+
+	/**
+	 * The serializer `Core::$memd` stores with: igbinary when it is configured
+	 * so, PHP's otherwise, and PHP's with no handle, being the larger.
+	 *
+	 * @return self::SERIALIZER_*
+	 */
+	private static function configured_serializer(): string {
+		$memd = Core::$memd;
+		return null !== $memd && \defined( '\Memcached::SERIALIZER_IGBINARY' )
+			&& \Memcached::SERIALIZER_IGBINARY === $memd->getOption( \Memcached::OPT_SERIALIZER )
+			? self::SERIALIZER_IGBINARY
+			: self::SERIALIZER_PHP;
 	}
 
 	/**

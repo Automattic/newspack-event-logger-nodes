@@ -173,20 +173,28 @@ final class Rule_Set {
 	 * Closes by asking the live fleet to re-read; see `request_reloads()`.
 	 *
 	 * @param Rule[] $rules Replaces the whole list — anything omitted is deleted.
+	 * @throws \InvalidArgumentException When a rule's hooks would not fit one
+	 *                                   cache item; nothing is written then.
 	 */
 	public function save( array $rules ): void {
+		$lists = [];
+		foreach ( $rules as $at => $rule ) {
+			if ( ! $rule->is_skip() ) {
+				// A null list is the pointer tier; rehydrate it to size it.
+				$lists[ $at ] = self::fitting_hooks( $rule, $rule->hooks ?? self::hooks_for( $rule ) );
+			}
+		}
 		$tiered        = [];
 		$stored        = [];
 		$live_pointers = [];
 
-		foreach ( $rules as $rule ) {
-			if ( $rule->is_skip() ) {
+		foreach ( $rules as $at => $rule ) {
+			if ( ! isset( $lists[ $at ] ) ) {
 				$tiered[] = $rule;
 				$stored[] = $rule->to_array();
 				continue;
 			}
-			// Null hooks IS the pointer tier; rehydrate to count the real list.
-			$hooks = $rule->hooks ?? self::hooks_for( $rule );
+			$hooks = $lists[ $at ];
 			if ( \count( $hooks ) <= self::INLINE_HOOK_LIMIT ) {
 				// Inline: strip any prior durable/table footprint.
 				\delete_option( self::hooks_option_name( $rule->id ) );
@@ -264,6 +272,26 @@ final class Rule_Set {
 				self::hooks_table()?->forget( $id );
 			}
 		}
+	}
+
+	/**
+	 * A rule's hook list, refused when its estimated bytes would pass the
+	 * cache item budget: the warm mirror stores it whole, and a partial list
+	 * would bind hooks the rule never named.
+	 *
+	 * @param Rule     $rule  The rule the list belongs to.
+	 * @param string[] $hooks Its hook names.
+	 * @return string[]
+	 * @throws \InvalidArgumentException When the list would not fit.
+	 */
+	private static function fitting_hooks( Rule $rule, array $hooks ): array {
+		$bytes = \count( $hooks ) * Stats_Store::overhead( 'hook' ) + \array_sum( \array_map( 'strlen', $hooks ) );
+		if ( $bytes > Stats_Store::ITEM_BUDGET ) {
+			throw new \InvalidArgumentException(
+				\sprintf( 'rule %s names %d hooks, past what one cache item holds', $rule->pattern, \count( $hooks ) )
+			);
+		}
+		return $hooks;
 	}
 
 	/**
