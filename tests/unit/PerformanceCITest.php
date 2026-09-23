@@ -831,7 +831,7 @@ class PerformanceCITest extends TestCase {
 			$hash => [ 'url' => '/wombat-4471', 'count' => 5, 'timed_count' => 5, 'sum_ms' => 50.0 ],
 		] );
 
-		$row = Performance_CI_Node::load_row( $hash, self::live_stores() );
+		$row = Performance_CI_Node::load_row( $hash, self::live_stores(), (int) Core::$now );
 
 		$this->assertNotNull( $row );
 		$this->assertSame( 12, $row['count'], 'the folded hour and the grace hour both counted' );
@@ -857,7 +857,7 @@ class PerformanceCITest extends TestCase {
 		] );
 
 		$this->assertNull(
-			Performance_CI_Node::load_row( $hash, self::live_stores() ),
+			Performance_CI_Node::load_row( $hash, self::live_stores(), (int) Core::$now ),
 			'nothing folded it, and the fine tier is not where it is read from'
 		);
 	}
@@ -888,14 +888,14 @@ class PerformanceCITest extends TestCase {
 		$this->seed_url_hour( $store, $hour, $shard, [
 			$hash => [ 'url' => '/wombat-4471', 'count' => 23, 'timed_count' => 23, 'sum_ms' => 460.0 ],
 		] );
-		$this->assertSame( 23, Performance_CI_Node::load_row( $hash, self::live_stores() )['count'] );
+		$this->assertSame( 23, Performance_CI_Node::load_row( $hash, self::live_stores(), (int) Core::$now )['count'] );
 
 		// Gone, the way memcache drops an item under pressure.
 		Core::$memd->delete( self::cache_key( 0, Stats_Store::NS_URLS_HOUR . ":{$shard}:{$hour}" ) );
 
 		$this->assertSame(
 			23,
-			Performance_CI_Node::load_row( $hash, self::live_stores() )['count'],
+			Performance_CI_Node::load_row( $hash, self::live_stores(), (int) Core::$now )['count'],
 			'the fine buckets answer for an hour that is no longer folded'
 		);
 	}
@@ -916,7 +916,7 @@ class PerformanceCITest extends TestCase {
 			$hash => [ 'url' => '/wombat-4471', 'count' => 5, 'timed_count' => 5, 'sum_ms' => 50.0 ],
 		] );
 
-		$row = Performance_CI_Node::load_row( $hash, self::live_stores() );
+		$row = Performance_CI_Node::load_row( $hash, self::live_stores(), (int) Core::$now );
 
 		$this->assertSame( 5, $row['count'], 'the fold replaces its buckets, it does not add to them' );
 	}
@@ -3760,9 +3760,9 @@ class PerformanceCITest extends TestCase {
 	public function test_the_index_is_read_per_request_not_shared_across_instances(): void {
 		$calls    = 0;
 		$original = Performance_CI_Node::$load_index;
-		Performance_CI_Node::$load_index = static function ( string $shard, array $stores ) use ( &$calls, $original ): array {
+		Performance_CI_Node::$load_index = static function ( string $shard, array $stores, int $now ) use ( &$calls, $original ): array {
 			++$calls;
-			return ( $original ?? [ Performance_CI_Node::class, 'load_index_default' ] )( $shard, $stores );
+			return ( $original ?? [ Performance_CI_Node::class, 'load_index_default' ] )( $shard, $stores, $now );
 		};
 
 		try {
@@ -4145,7 +4145,7 @@ class PerformanceCITest extends TestCase {
 		}
 		$mirror->flush();
 
-		$row = Performance_CI_Node::load_row( $hash, self::live_stores() );
+		$row = Performance_CI_Node::load_row( $hash, self::live_stores(), (int) Core::$now );
 
 		$this->assertNotNull( $row, 'nothing in memcache; the mirror must answer' );
 		$this->assertSame( 41, $row['count'], 'and a spent cache lifetime does not erase the record' );
@@ -4287,7 +4287,7 @@ class PerformanceCITest extends TestCase {
 			],
 		] );
 
-		$rows = Performance_CI_Node::load_index_default( Stats_Store::url_shard( 'c0ffee123456' ), self::live_stores() );
+		$rows = Performance_CI_Node::load_index_default( Stats_Store::url_shard( 'c0ffee123456' ), self::live_stores(), (int) Core::$now );
 
 		$row = \array_values( \array_filter( $rows, static fn ( $r ) => 'c0ffee123456' === $r['hash'] ) )[0] ?? null;
 		$this->assertIsArray( $row );
@@ -4312,7 +4312,7 @@ class PerformanceCITest extends TestCase {
 	/** The read window the loader plans over. */
 	private static function read_window_for_test(): array {
 		$m = new \ReflectionMethod( Performance_CI_Node::class, 'read_window' );
-		return (array) $m->invoke( null );
+		return (array) $m->invoke( null, (int) Core::$now );
 	}
 
 	/**
@@ -4346,7 +4346,7 @@ class PerformanceCITest extends TestCase {
 			'last_updated' => 1711111111,
 		];
 
-		Performance_CI_Node::$load_index = static function ( string $shard, array $stores ) use ( $row ): array {
+		Performance_CI_Node::$load_index = static function ( string $shard ) use ( $row ): array {
 			return \in_array( $shard, [ '0', '1', '3' ], true ) ? [ $row ] : [];
 		};
 		try {
@@ -4379,9 +4379,9 @@ class PerformanceCITest extends TestCase {
 		$seen     = [];
 		$original = Performance_CI_Node::$load_index;
 
-		Performance_CI_Node::$load_index = static function ( string $shard, array $stores ) use ( &$seen, $original ): array {
+		Performance_CI_Node::$load_index = static function ( string $shard, array $stores, int $now ) use ( &$seen, $original ): array {
 			$seen[] = $shard;
-			return ( $original ?? [ Performance_CI_Node::class, 'load_index_default' ] )( $shard, $stores );
+			return ( $original ?? [ Performance_CI_Node::class, 'load_index_default' ] )( $shard, $stores, $now );
 		};
 		try {
 			VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' );
@@ -4781,9 +4781,9 @@ class PerformanceCITest extends TestCase {
 	private function counting_urls_fire(): array {
 		$reads    = 0;
 		$original = Performance_CI_Node::$load_index;
-		Performance_CI_Node::$load_index = static function ( string $shard, array $stores ) use ( &$reads, $original ): array {
+		Performance_CI_Node::$load_index = static function ( string $shard, array $stores, int $now ) use ( &$reads, $original ): array {
 			++$reads;
-			return ( $original ?? [ Performance_CI_Node::class, 'load_index_default' ] )( $shard, $stores );
+			return ( $original ?? [ Performance_CI_Node::class, 'load_index_default' ] )( $shard, $stores, $now );
 		};
 		return [
 			static function ( string ...$args ): array {
@@ -4819,9 +4819,9 @@ class PerformanceCITest extends TestCase {
 		$builds   = self::count_catalog_reads();
 		$read     = [];
 		$original = Performance_CI_Node::$load_index;
-		Performance_CI_Node::$load_index = static function ( string $shard, array $stores ) use ( &$read, $original ): array {
+		Performance_CI_Node::$load_index = static function ( string $shard, array $stores, int $now ) use ( &$read, $original ): array {
 			$read[] = \count( $stores );
-			return ( $original ?? [ Performance_CI_Node::class, 'load_index_default' ] )( $shard, $stores );
+			return ( $original ?? [ Performance_CI_Node::class, 'load_index_default' ] )( $shard, $stores, $now );
 		};
 		try {
 			$reply = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', ...$args );
@@ -4970,7 +4970,7 @@ class PerformanceCITest extends TestCase {
 		$memd->multi_keys  = 0;
 
 		// Every hash is `%012x`, so all forty land in shard 0.
-		$out = Performance_CI_Node::load_index_default( '0', self::live_stores() );
+		$out = Performance_CI_Node::load_index_default( '0', self::live_stores(), (int) Core::$now );
 
 		$this->assertCount( 40, $out, 'every seeded URL still folds' );
 		$this->assertGreaterThan( 1, $memd->multi_calls, 'the window must not be one read' );
@@ -5021,7 +5021,7 @@ class PerformanceCITest extends TestCase {
 		$original                        = Performance_CI_Node::$load_index;
 		// Each shard answers for its OWN rows, as the real loader does: a
 		// url_hash lives in exactly one shard (its first hex digit).
-		Performance_CI_Node::$load_index = static function ( string $shard, array $stores ) use ( $rows ): array {
+		Performance_CI_Node::$load_index = static function ( string $shard ) use ( $rows ): array {
 			return \array_values( \array_filter(
 				$rows,
 				static fn ( array $r ): bool => Stats_Store::url_shard( $r['hash'] ) === $shard
@@ -5095,7 +5095,7 @@ class PerformanceCITest extends TestCase {
 			],
 		] );
 
-		$rows = Performance_CI_Node::load_index_default( Stats_Store::url_shard( 'facade000777' ), self::live_stores() );
+		$rows = Performance_CI_Node::load_index_default( Stats_Store::url_shard( 'facade000777' ), self::live_stores(), (int) Core::$now );
 
 		$row = \array_values( \array_filter( $rows, static fn ( $r ) => 'facade000777' === $r['hash'] ) )[0] ?? null;
 		$this->assertIsArray( $row );
@@ -5508,6 +5508,41 @@ class PerformanceCITest extends TestCase {
 	}
 
 	/**
+	 * A reply reads its clock once. The firehose logger advances the tick
+	 * while a long reply runs, so a page keyed under one bucket must not be
+	 * built from, or dated by, the next bucket's window. Driven through the
+	 * verb, so a handler reading its clock twice fails here. Seeds distinct
+	 * from every default: one URL of count 29, stored only in the later
+	 * bucket, and a page of 43 rows, a size no other test caches a page under.
+	 */
+	public function test_a_url_page_is_built_from_the_bucket_it_is_keyed_under(): void {
+		$next = \intdiv( \time(), Stats_Store::BUCKET_SECONDS ) * Stats_Store::BUCKET_SECONDS;
+		$at   = $next - 1;
+		$this->set_url_bucket( new Stats_Store( 0, 86400 ), Stats_Store::bucket_key( $next ), [
+			'd7a2e91c4b30' => [ 'url' => 'https://kea.test/weka-2931', 'count' => 29, 'last_seen' => $next ],
+		] );
+		$repinned                        = false;
+		$original                        = Performance_CI_Node::$load_index;
+		Performance_CI_Node::$load_index = static function ( string $shard, array $stores, int $now ) use ( $next, $original, &$repinned ): array {
+			// A firehose line logged mid-reply re-pins the tick.
+			Core::$now = $next;
+			$repinned  = true;
+			return ( $original ?? Performance_CI_Node::load_index_default( ... ) )( $shard, $stores, $now );
+		};
+		try {
+			Core::$now = $at;
+			$reply     = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', [ '--sort=count', '--order=desc', '--limit=43' ] );
+		} finally {
+			Performance_CI_Node::$load_index = $original;
+			VerbHarness::reset();
+		}
+		$this->assertTrue( $repinned, 'the fold re-pinned the tick inside the reply' );
+		$this->assertIsArray( $reply );
+		$this->assertSame( [], $reply['data'], 'the later bucket is outside the keyed window' );
+		$this->assertSame( $at, $reply['as_of'], 'and the page dates from the keyed instant' );
+	}
+
+	/**
 	 * The page decides whether its totals can answer the scope it was asked
 	 * for; no flag crosses to the handler for it to re-derive.
 	 */
@@ -5526,7 +5561,8 @@ class PerformanceCITest extends TestCase {
 			'desc',
 			0,
 			50,
-			self::live_stores()
+			self::live_stores(),
+			(int) Core::$now
 		);
 		$this->assertIsArray( $page );
 		$this->assertNull( $page['totals'], 'pre-split rows cannot answer a server scope' );

@@ -10,158 +10,173 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **The URL table shows when each URL was last seen.** A sortable `Last
-  seen` column on `last_updated`, which the `urls` verb has sorted by
-  since the sort keys were declared; ages are measured from the reply's
-  own `as_of`, so a cached page does not tick and browser and server
-  clocks never disagree.
+  seen` column on `last_updated`, which the `urls` verb already sorted
+  by. Ages are measured from the reply's own `as_of`, so a cached page
+  does not tick and browser and server clocks never disagree.
+- **The flame builder writes ranked lists of each URL bucket.** One list
+  per `URL_SORTS` key and `URL_ORDERS` direction, site-wide and for each
+  server a row's split names, in four derived namespaces: `urlrank`
+  (fine tier, `URL_RANK_N` 200 entries), `urlrank_h` (hour tier,
+  `URL_RANK_N_HOUR` 500), and their per-server twins `urlrank_s` and
+  `urlrank_sh`. A bucket is ranked over its whole stored content as each
+  chunk of a flush lands, at most once per `URL_PAGE_REFRESH_S` (60
+  seconds), and again once it closes; a bucket the cadence defers stays
+  pending and ranks at the end of a later flush once it comes due,
+  whether or not that flush writes into it; every due bucket ranks in
+  that flush, read back a bounded batch at a time. Under traffic a ranked row lags live traffic by up to twice
+  `URL_PAGE_REFRESH_S` plus `FLUSH_INTERVAL_SEC`; the flame builder
+  flushes only as records arrive, so on a partition that goes quiet a
+  deferred ranking waits for its next record or the worker's stop. The
+  hourly fold ranks each hour from the rows it just folded, an hour
+  holding rows and names but no lists is ranked from those stored rows
+  rather than folded again, and a late write that lands in a folded
+  hour's key forgets the hour's marker, so the probe re-ranks the hour
+  from its stored rows at the next periodic reprobe or a new worker's
+  first flush.
+  Such a ranking spends none of the fold budget. One flush ranks stale
+  hours up to a fixed per-flush bound, and an hour the window has passed
+  leaves the stale set unranked. An hour writes `urlrank_h:done:{hour}`,
+  empty, in the same batch as its lists, whatever they answer;
+  `Stats_Store::url_hours_derived()` probes that marker, and a ranked
+  page serves an hour only where its list is present, folding
+  otherwise. A refused ranking, a bucket's or an hour's, is logged as
+  `URL rank write refused` and not retried: the lists are top-N bounded
+  to fit, so a refusal is a wrong N, and a transient failure heals at
+  the next write's ranking. A worker's shutdown sweep ranks every bucket
+  still owed, whatever its stamp, and no more stale hours than any flush
+  does: each one's missing marker is in the store, so the next worker's
+  probe finds it again. A bucket older than the oldest bucket the read
+  plan's fine tail reads is never ranked, pending or just flushed; one
+  inside it ranks, however far past `FINE_BUCKETS` the tail runs.
+- **An unfiltered `urls` page is answered from the ranked lists.** A page
+  with no `search`, `errors_only` or `include_workers` whose `offset +
+  limit` is within 200 rows reads the lists and says so with `ranked:
+  true`. Its two averages are the mean of the per-bucket averages, each
+  at its own tier, so an hour-tier entry weighs the same as one
+  five-minute bucket; `totals` stays request-weighted. A `count`-ranked
+  page may be approximate, because a URL just outside every bucket's
+  list can still lead the window. The header — `rows`, `totals`,
+  `slowest` — is folded once per five-minute bucket, and the poll that
+  folds it answers with that fold, `ranked: false`. Any planned hour
+  behind the leading one with no list in some partition's store sends
+  the page to the fold, which never serves a window an hour short.
+  Every reply carries `as_of`, the instant its page was built.
+
+### Changed
+
+- **A URL page is folded at most once a minute, not once a poll.** `urls`
+  caches each page for `URL_PAGE_REFRESH_S` (60 seconds), keyed by every
+  filter, the window bucket, the retention and the store count. A page
+  over 250 rows, or one built after the mirror read budget ran out, is
+  served but not cached. A hub holding 690,000 URLs spent 30 seconds per
+  poll per tab folding the whole index for the same page.
+- **A URL search matches a word or word prefix, not any substring, and
+  folds only the shards its candidates fall in.** The term is
+  lowercased and split on each non-alphanumeric run, and every token
+  must begin a word of the path: `/wombat-7731` is found by `wom`,
+  `wombat` or `7731`, and no longer by `mbat`. The flame builder files
+  each named path in a new `urltoken` index under every prefix of three
+  to twelve characters of each word, stamping each hash with when its
+  URL was last named. A set drops hashes a retention window has passed
+  over and collapses to a saturated marker past `URL_SEARCH_MAX`
+  (5,000). The search intersects its indexed tokens, reads names from
+  `urlmap` for those candidates alone, and folds only their shards.
+  A refused token write is logged and not retried; its URLs are filed
+  again when their names next refresh, half a retention window on.
+  A token under three characters, or one whose set has saturated,
+  narrows nothing while the term's other tokens still do. A term with no
+  token, none the index can answer, or more than `URL_SEARCH_MAX`
+  candidates folds the whole index, matching at the same word boundary,
+  so no term loses its answer.
+- **Every stats reader dates from the tick, and a reply reads it once.**
+  Each `performance` verb reads `Core::$now` at its entry and passes that
+  instant to every reader of the window beneath it, and `as_of` is that
+  instant, so a page keyed under one bucket is never built from the
+  next. The reader read the wall clock per call, and the mirror's
+  absence hold and frame read-back called `Core::right_now()`, which also
+  re-pins the tick. The request builder and the in-flight node date
+  everything from `Core::$now`, a timed-out request's duration and an
+  unstarted request's index stamp included. The flame builder reads the
+  tick once per flush and hands it to the mirror stamp, the hour plan,
+  the due test, the stamp and the prune floor; its flush's one real-clock
+  read is the auto-tune lock deadline, because that wait is real time.
+  `Stats_Store::absence_holds()` and the mirror read-back read the tick
+  themselves, because the substrate's `Table_Node` calls them through
+  closures that carry no instant. The firehose
+  producer still reads fresh, because each line carries the moment it
+  was written.
+- **The hourly fold writes in one batch, and a refused write names its
+  key.** Its 65 writes — the hour's leaderboard and the rows and names
+  of 32 shards — went out in 33 round trips; they now go in one, and the
+  log line names the lost key, `urls_h:{shard}:{hour}`,
+  `urlnames_h:{shard}:{hour}` or the leaderboard's, rather than the hour.
+  A refused write is logged and not retried by the flush. An hour
+  missing a row or name shard, whatever removed it, is re-derived at the
+  next periodic reprobe like an evicted one, from its fine buckets read
+  back from the mirror; a late write reaches the fine buckets that
+  re-fold reads, so the hour comes back with it.
+- **Public signatures follow the clock and the rank tier.**
+  `Stats_Store::url_hours_derived()` replaces `url_hours_folded()` and
+  answers `folded` and `ranked` per hour.
+  `Stats_Store::expand_sole_server()` takes only `$row`: a caller still
+  passing a second argument gets the row's own split, not the one it
+  passed. `Performance_CI_Node::load_row()` takes a trailing `int $now`,
+  and `load_index_default()` takes `string $shard`, no longer nullable,
+  and a trailing `int $now`; the `$load_index` seam is `function (
+  string $shard, list<Stats_Store> $stores, int $now )`.
+  `Flame_Builder_Node::set_clock()` is gone: a test pins `Core::$now`.
 
 ### Fixed
 
 - **A request stamped with a rule this ruleset does not hold is no longer
   reported as ungoverned.** A site running a ruleset the hub never pushed,
   or a rule whose pattern changed or that was deleted since the request
-  was logged, leaves a stamp the hub cannot resolve, and the cold-start finding read that miss as "No rule
-  governs this URL" and proposed creating one. A new `unresolved_rule`
-  finding names the stamp instead and, like the fatal, carries no
-  proposal; every other finding on that record carries the stamp and drops
-  its proposal, since none reaches that rule; and the request and span
-  briefs' `rule` reads `{ id, resolved: false }` rather than null, which
-  the markdown brief renders as a rule not in this ruleset.
-- **A bucket whose ranked lists were refused is ranked again on the next
-  flush.** A refused ranking was stamped as if it had landed, so the
-  bucket held stale lists for the rest of the cadence — and a bucket that
-  had closed got no further write to trigger a retry at all. It stays
-  pending and unstamped instead.
-- **A bucket whose last writes fell inside the ranking cadence is ranked
-  once it closes.** Ranking is triggered by a write, so a bucket deferred
-  by the cadence and never written into again kept lists missing those
-  last rows for the rest of the retention window. A deferred bucket is
-  remembered and ranked at the end of the first flush it comes due in,
-  reading its whole stored content back.
+  was logged, leaves a stamp the hub cannot resolve, and the cold-start
+  finding read that miss as "No rule governs this URL" and proposed
+  creating one. A new `unresolved_rule` finding names the stamp instead
+  and, like the fatal, carries no proposal; every other finding on that
+  record carries the stamp and drops its proposal, since none reaches
+  that rule; and the request and span briefs' `rule` reads `{ id,
+  resolved: false }` rather than null, which the markdown brief renders
+  as a rule not in this ruleset.
 - **Two fine buckets of one folded hour no longer overwrite each other.**
   A replay covering several buckets of a folded hour produced two writes
-  against the same `urls_h` item in one flush, and both merged into the
-  one value the chunk had read, so only the last survived. Intents sharing
-  an item now apply in sequence and are written once, and each still hears
-  whether the write landed.
-
-### Changed
-
-- **A stats reply dates itself from the tick's clock.** Every reader takes
-  `Core::$now` — the tick's own under a drain, and in request scope the one
-  `Core::reset()` pins as the substrate loads — where the `performance`
-  reader and the mirror's absence and frame read-backs called
-  `Core::right_now()`, which re-reads the wall AND re-pins that clock. A
-  fold running for tens of seconds moved the very clock its reply was dated
-  from. The firehose producer still reads fresh, because each line carries
-  the moment it was written.
-- **The hour tier's DONE marker carries no timestamp.**
-  `urlrank_h:done:{Y-m-d-H}` is written empty: its PRESENCE is the whole
-  fact `url_hours_derived()` probes, and nothing ever read the stamp.
-- **A token's search index drops a hash a retention window has passed
-  over on the next flush that touches it**, rather than only when the
-  flush would take the set past `URL_SEARCH_MAX`. A dead hash was named
-  to the reader and counted against that cap for as long as anything kept
-  the token alive. Deciding costs one pass over the stamps, and a flush
-  already over the cap prunes without making it.
-- **A refused hourly-fold write names the shard it lost.** The fold
-  writes 33 keys in one batch and the batch answers per write, so the log
-  line carries the key — `urls_h:{shard}:{hour}` or its name twin —
-  instead of leaving 33 candidates for the hour.
-- **The `urls` poll that folds a page's header now answers from that
-  fold.** A ranked page takes its `rows`, `totals` and `slowest` from a
-  fold cached for the bucket's five minutes, and the poll that missed
-  that cache used to fold a `0, 0` page, throw it away, and read the
-  ranked lists as well. It now folds the page it was actually asked for
-  and answers with it, so that poll reports `ranked: false` and reads no
-  list; every poll after it inside the bucket is ranked as before.
-- **A search term carrying one very short word no longer folds the whole
-  index.** A token under three characters is not in the token index, and
-  it used to send the entire term to the fold; the tokens that ARE
-  indexed now narrow the candidates on their own, and the fold still
-  matches every word of the term against their names. `weka 41` reads one
-  shard where it read sixteen.
-- **A bucket's ranked lists are refreshed once a minute, not once a
-  flush.** The page cache holds a ranked page for its own minute and the
-  dashboard polls against that, so ranking on every five-second flush
-  spent twelve rankings on one read. A bucket the cadence defers is
-  remembered and ranked at the end of the first flush it comes due in,
-  including one that writes nothing into it, so a closed bucket's last
-  rows still reach its lists.
-- **A folded hour marks itself ranked under its own key.** The hour tier
-  writes `urlrank_h:done:{Y-m-d-H}` once every one of its lists has
-  landed, and the fold's probe reads that rather than the site-wide
-  `count:desc` list. A list standing in for the whole set reported an hour
-  missing a sibling as ranked, and nothing re-ranked it for the rest of
-  the retention window.
-- **A URL search reads a token index and folds only the shards its
-  candidates fall in.** The writer files each named path under every
-  prefix of every word it carries, so a search matches a word or a word
-  prefix rather than any substring: the term is lowercased, split on each
-  non-alphanumeric run, and every token must begin a word of the path.
-  The index answers with the hashes, which bounds the walk to their shards
-  and names them through `urlmap` instead of reading every shard's whole
-  name blob. It files prefixes of three characters and up, because a
-  two-character prefix names most of a site; a term the index cannot serve
-  — no token, one under three characters, or one past `URL_SEARCH_MAX`
-  (5,000) live candidates — falls back to folding the index, which matches
-  the same words, so no term loses its answer and no term answers two ways.
-  A token's set records when each hash was last named and drops the ones a
-  retention window has passed over, so a set cannot grow forever and a
-  token saturated by URLs that have since gone quiet recovers. Both reads
-  carry a mirror read budget of their own, so the fold that follows starts
-  on a whole one and the page it builds is complete enough to cache.
-- **A URL page is folded once a minute, not once a poll.** `urls` caches
-  each page for sixty seconds, keyed by every filter and the window bucket,
-  in a Table of its own; a hub holding 690,000 URLs spent 30 seconds per
-  poll per tab folding the whole index for the same page.
-- **An unfiltered `urls` page inside the first 200 rows is answered from
-  writer-ranked per-bucket lists**, and says so with `ranked`; the header
-  folds once per bucket. The reply carries `as_of`. A ranked row's two
-  averages are the mean of the per-BUCKET averages at each bucket's own
-  tier — a five-minute bucket inside the fine tail, a folded hour behind
-  it — every stored bucket weighing the same, so an hour-tier entry
-  contributes one average covering that hour where a fine entry
-  contributes one per five minutes; `totals` stays request-weighted. The
-  page is served ranked only when every hour of the read plan behind the
-  leading one has a list in every partition's store: those hours have no
-  fine buckets left to read, so one missing list would serve a window an
-  hour short as whole, and the fold answers instead.
-- **The writer ranks each chunk of a flush as it lands**, rather than
-  holding every bucket's merged reader shards until the whole flush ends,
-  and the buckets ranked together read back the shards they missed in one
-  round trip. A replay spanning the retention window held 288 buckets'
-  worth of capped shards at once.
-- **A write into a folded hour re-ranks it.** A replay merges into the
-  coarse rows the reader takes, but the hour is memoized folded and would
-  never be ranked again, so the new counts showed in the fold and the
-  header and never on a ranked page. However many hours one flush lands
-  in, their coarse rows come back in one round trip and their names in a
-  second.
-- **An hour's site-wide `count:desc` list is written last, and alone.** It
-  is the one key `url_hours_derived()` probes, so written beside a refused
-  sibling it reported an hour that is missing a list as ranked and nothing
-  re-ranked it for the rest of the retention window. A refused hour also
-  stays queued for the next flush instead of waiting out the reprobe.
-  Nothing probes the fine tier's, so a bucket writes its lists in one batch.
-- **The hourly fold writes each hour's ranked lists.** `roll_up_hours()`
-  derives the coarse lists from the shard rows it just folded, in the same
-  pass, so a window read at hour resolution is ranked as well as folded. An
-  hour holding rows and names but no lists — one folded before the rank tier
-  existed, or whose list key was evicted — is ranked from those stored rows
-  rather than folded again, which its expired fine buckets would overwrite
-  with nothing. The probe reads all three tiers in one round trip
-  (`Stats_Store::url_hours_derived()`, replacing `url_hours_folded()`).
-- **The coarse tier and the ranked lists are named as one set, by
-  `Stats_Store::is_derived()`**, replacing the per-namespace
-  `STATS_MIRROR_TOPN` frame counts. A namespace is either derived — kept
-  out of the durable mirror and re-derived from the fine buckets on the
-  next flush or fold — or it is mirrored in full; there is no third answer
-  a count expressed.
-- **The index-read seam takes a shard name, not a nullable one.**
-  `Performance_CI_Node::$load_index` is typed `string $shard`, since both
-  readers name the one shard they walk, and a test double replacing it
-  must take a string.
+  against the same `urls_h` key in one flush, and both merged onto the
+  one value the flush had read, so only the last survived. Writes
+  sharing a key now compose as the flush builds them and go out once,
+  and each still hears whether the write landed.
+- **A late write into a folded hour whose coarse shard was evicted no
+  longer replaces that shard's rows with its own.** Merged into the
+  missing `urls_h` or `urlnames_h` key, the late rows recreated the
+  shard holding themselves alone, and the probe then read the hour as
+  folded with the original rows lost, though its fine buckets still
+  held them. A write into a folded hour now always goes to its fine
+  bucket, which the hour is derived from, and into the hour key only
+  while that key exists; a write that lands there forgets the hour's
+  marker, so the probe re-ranks it. An hour-key write whose read misses,
+  whether the key is absent or the batch read failed, which reads as
+  all-miss, forgets the key instead of writing it. The reprobe finds a
+  missing key and re-folds the hour from its fine buckets, so the late
+  rows come back, including rows merged into shards that were still
+  present. The fine write keeps the normal fine TTL, like any fold read
+  that re-warms the bucket. A refused late write logs the key it lost,
+  `urls:{shard}:{bucket}` or `urls_h:{shard}:{hour}` and their name
+  twins, so the tier is named.
+- **A late record into a folded hour reaches the global leaderboard.**
+  The board takes a folded hour's `lb_h` and skips its fine buckets, and
+  a replayed record landed only in the fine `lb`, so the board never
+  showed it. The global series now takes the URL index's late-write
+  rule: the fine bucket always, and `lb_h` while it exists. The probe
+  counts `lb_h` among an hour's derived keys, so an hour missing it is
+  re-folded like one missing a URL shard. Per-server leaderboards have
+  no hour tier and are unchanged.
+- **A spent fold budget no longer hides an older folded hour.** The
+  roll-up stopped at its per-flush fold budget before probing the rest
+  of the window, so an hour already folded and ranked behind newer
+  unfolded ones was not recognised as folded, and a late write into it
+  reached only its fine bucket, not the hour key the reader reads. The
+  budget now stops folds only; every hour the probe finds folded is
+  recognised in that flush.
 
 ## [0.101.2] - 2026-09-22
 

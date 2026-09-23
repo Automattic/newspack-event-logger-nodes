@@ -14,7 +14,6 @@ namespace Newspack_Event_Logger_Nodes\Tests\Unit;
 use PHPUnit\Framework\Attributes\CoversClass;
 use Newspack_Event_Logger_Nodes\Request_Builder_Node;
 use Newspack_Event_Logger_Nodes\Tests\TestCase;
-use Newspack_Nodes\Core;
 use Newspack_Nodes\Message;
 use Newspack_Nodes\Node_Names;
 use Newspack_Nodes\Router_Node;
@@ -29,17 +28,9 @@ class RequestBuilderPressureFoldTest extends TestCase {
 	/** Per-request cap, distinct from BUDGET and from the 50000 default. */
 	private const MAX_PER_REQUEST = 24;
 
-	private float $saved_now = 0.0;
-
 	protected function setUp(): void {
 		parent::setUp();
-		$this->saved_now = Core::$now;
 		( new Router_Node() )->name( Node_Names::ROUTER );
-	}
-
-	protected function tearDown(): void {
-		Core::$now = $this->saved_now;
-		parent::tearDown();
 	}
 
 	/** A builder wired to a capture sink, with the budget pinned. */

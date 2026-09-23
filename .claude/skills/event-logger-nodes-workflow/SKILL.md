@@ -182,8 +182,8 @@ Two contracts tie it to this plugin, and both fail quietly when they move:
 # suite. phpunit.xml sets no defaultTimeLimit, so that budget is one second for
 # every test, and failOnRisky="true" makes a breach fail the run rather than
 # warn. No class declares #[Medium] or #[Large] to buy more: a test that would
-# wait drives a clock instead — Flame_Builder_Node::set_clock() here,
-# Core::$clock and Event_Framework::$sleep in the substrate.
+# wait pins a clock instead — Core::$now, the tick every reader here dates
+# from, and Core::$clock and Event_Framework::$sleep in the substrate.
 cd tests && ../vendor/bin/phpunit --enforce-time-limit
 
 # Filter to one test file or method.
