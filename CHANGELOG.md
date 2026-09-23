@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.102.2] - 2026-09-23
+
 ### Fixed
 
 - **Every URL-index reader asks only for the shards a server wrote.** The
