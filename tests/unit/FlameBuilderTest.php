@@ -60,7 +60,7 @@ class FlameBuilderTest extends TestCase {
 	 * is right, and would make a mirror-recovery test vacuous.
 	 */
 	private static function live_hour(): string {
-		return \gmdate( 'Y-m-d-H', \time() - 3600 );
+		return \gmdate( 'Y-m-d-H', self::tick() - 3600 );
 	}
 
 	/** One five-minute bucket of that hour. */
@@ -223,7 +223,7 @@ class FlameBuilderTest extends TestCase {
 			'user_agent'     => 'curl/7.85',
 			'ja4_hash'       => '',
 			'is_worker'      => false,
-			'timestamp'      => \time(),
+			'timestamp'      => self::tick(),
 			'entries'        => [],
 			'profiles'       => [],
 		];
@@ -250,7 +250,7 @@ class FlameBuilderTest extends TestCase {
 	 * @return list<string>
 	 */
 	private function recent_buckets(): array {
-		$now = \time();
+		$now = self::tick();
 		return [ Stats_Store::bucket_key( $now ), Stats_Store::bucket_key( $now - 300 ) ];
 	}
 
@@ -663,7 +663,7 @@ class FlameBuilderTest extends TestCase {
 
 		// A zero-duration request carries no timing (record_timing false): count
 		// increments, timed_count stays 0, so min_ms must persist as 0 — never the sentinel.
-		$now = \time();
+		$now = self::tick();
 		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/w', 'duration_ms' => 0.0, 'timestamp' => $now ] ) );
 		$fb->flush();
 
@@ -681,7 +681,7 @@ class FlameBuilderTest extends TestCase {
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$fb         = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
-		$now = \time();
+		$now = self::tick();
 		foreach ( [ 1, 2, 3 ] as $i ) {
 			$this->fill_request( $fb, $this->completed_request( [ 'url' => 'https://kea.test/wombat-7731', 'duration_ms' => 40.0, 'server_name' => 'kea.test', 'timestamp' => $now ] ) );
 		}
@@ -718,7 +718,7 @@ class FlameBuilderTest extends TestCase {
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$fb         = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
-		$now = \time();
+		$now = self::tick();
 		foreach ( [ 1, 2, 3, 4, 5 ] as $i ) {
 			$this->fill_request( $fb, $this->completed_request( [ 'url' => 'https://kea.test/wombat-7731', 'timestamp' => $now ] ) );
 		}
@@ -759,7 +759,7 @@ class FlameBuilderTest extends TestCase {
 		};
 		$fb = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
-		$now = \time();
+		$now = self::tick();
 
 		$seen = [];
 		for ( $i = 0; \count( $seen ) < Stats_Store::URL_SHARDS; $i++ ) {
@@ -812,7 +812,7 @@ class FlameBuilderTest extends TestCase {
 		};
 		$fb = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
-		$now = \time();
+		$now = self::tick();
 		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/wren-3312?worker_type', 'is_worker' => true, 'timestamp' => $now ] ) );
 
 		$store->set_log = [];
@@ -1312,7 +1312,7 @@ class FlameBuilderTest extends TestCase {
 		};
 		$fb = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
-		$now     = \time();
+		$now     = self::tick();
 		$earlier = Stats_Store::bucket_key( $now - 300 );
 		$later   = Stats_Store::bucket_key( $now );
 		$hash    = Log_Manager::url_hash( 'https://kea.test/hoiho-5520' );
@@ -1347,7 +1347,7 @@ class FlameBuilderTest extends TestCase {
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$fb         = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
-		$now = \time();
+		$now = self::tick();
 		// 480 per-URL dimension keys, then a bucket whose sixteen reader
 		// shards are 32 more: 512 keys over the 500-key chunk.
 		$dims = [];
@@ -1442,7 +1442,7 @@ class FlameBuilderTest extends TestCase {
 		};
 		$fb = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
-		$now     = \time();
+		$now     = self::tick();
 		$buckets = [];
 		foreach ( [ 0, 300, 600 ] as $back ) {
 			$buckets[ Stats_Store::bucket_key( $now - $back ) ] = [
@@ -1476,7 +1476,7 @@ class FlameBuilderTest extends TestCase {
 		};
 		$fb = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
-		$now = \time();
+		$now = self::tick();
 		$this->fill_request( $fb, $this->completed_request( [ 'url' => 'https://kea.test/tuatara-9077', 'duration_ms' => 77.0, 'timestamp' => $now ] ) );
 		$this->flush_buckets( $fb, [
 			Stats_Store::bucket_key( $now ) => [
@@ -1502,7 +1502,7 @@ class FlameBuilderTest extends TestCase {
 		$fb->set_stats_store( $store );
 
 		// Workers now keep per-URL timing on their own ?worker_type row.
-		$now = \time();
+		$now = self::tick();
 		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/w?reconcile', 'duration_ms' => 100.0, 'is_worker' => true, 'timestamp' => $now ] ) );
 		$fb->flush();
 
@@ -1523,7 +1523,7 @@ class FlameBuilderTest extends TestCase {
 
 		// One untimed (worker) + one timed request for the same URL. min_ms must
 		// reflect the real timed minimum, not the sentinel or 0.
-		$now = \time();
+		$now = self::tick();
 		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/m', 'duration_ms' => 100.0, 'is_worker' => true, 'timestamp' => $now ] ) );
 		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/m', 'duration_ms' => 42.0, 'timestamp' => $now ] ) );
 		$fb->flush();
@@ -1543,7 +1543,7 @@ class FlameBuilderTest extends TestCase {
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$fb         = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
-		$now = \time();
+		$now = self::tick();
 		foreach ( [ 1, 2, 3 ] as $i ) {
 			$this->fill_request( $fb, $this->completed_request( [ 'url' => 'https://kea.test/wombat-7731', 'server_name' => 'kea.test', 'duration_ms' => 40.0, 'timestamp' => $now ] ) );
 		}
@@ -1576,7 +1576,7 @@ class FlameBuilderTest extends TestCase {
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$fb         = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
-		$now    = \time();
+		$now    = self::tick();
 		$bucket = Stats_Store::bucket_key( $now );
 		$index  = [];
 		for ( $i = 0; $i < Stats_Store::MAX_SERVER_VALUES; $i++ ) {
@@ -1601,6 +1601,29 @@ class FlameBuilderTest extends TestCase {
 		$this->assertArrayHasKey( $spray, $this->get_url_shard( $store, $bucket, Stats_Store::url_shard( $spray ), 'spray7.test' ), 'a named server keeps its key' );
 	}
 
+	public function test_a_row_filed_under_other_keeps_its_host(): void {
+		// The path was cut against the request's own server; under `Other`
+		// no host joins back on, so the row carries the whole URL.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		$fb         = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+		$now    = self::tick();
+		$bucket = Stats_Store::bucket_key( $now );
+		$index  = [];
+		for ( $i = 0; $i < Stats_Store::MAX_SERVER_VALUES; $i++ ) {
+			$index[ Stats_Store::server_key( "spray{$i}.test" ) ] = "spray{$i}.test";
+		}
+		$store->bucket_set_multi( [ [ Stats_Store::url_srv_parts( false ), $bucket, $index ] ] );
+
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => 'https://late-4471.test/kokako?page=2', 'server_name' => 'late-4471.test', 'timestamp' => $now ] ) );
+		$fb->flush();
+
+		$late = Log_Manager::url_hash( 'https://late-4471.test/kokako?page=2' );
+		$rows = $this->get_url_shard( $store, $bucket, Stats_Store::url_shard( $late ), Stats_Store::OTHER_KEY );
+		$this->assertSame( 'https://late-4471.test/kokako?page=2', $rows[ $late ][ Stats_Store::ROW_PATH ] );
+	}
+
 	public function test_a_refused_url_index_write_is_reported(): void {
 		// memcached refuses an item over 1MB, and this blob is the largest the
 		// schema writes — up to 500 rows, each now carrying its per-server
@@ -1621,7 +1644,7 @@ class FlameBuilderTest extends TestCase {
 		$fb = new Flame_Builder_Node();
 		$fb->set_stats_store( $refused );
 
-		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/too-big', 'duration_ms' => 5.0, 'timestamp' => \time() ] ) );
+		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/too-big', 'duration_ms' => 5.0, 'timestamp' => self::tick() ] ) );
 		$fb->flush();
 
 		$this->assertStringContainsString( 'URL index write refused', $err );
@@ -1640,7 +1663,7 @@ class FlameBuilderTest extends TestCase {
 		// become unselectable, and which four varies by bucket, so even a
 		// listed site loses the buckets it fell out of. Unlike `country` or
 		// `ua`, this axis is bounded by the fleet, so it gets its own ceiling.
-		$now = \time();
+		$now = self::tick();
 		for ( $i = 0; $i < 24; $i++ ) {
 			$this->fill_request( $fb, $this->completed_request( [
 				'url'         => "/s{$i}",
@@ -1665,7 +1688,7 @@ class FlameBuilderTest extends TestCase {
 		$fb         = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
 
-		$now    = \time();
+		$now    = self::tick();
 		$bucket = Stats_Store::bucket_key( $now );
 		$seed   = [
 			Stats_Store::OTHER_KEY        => [ 'count' => 9, 'timed_count' => 9, 'sum_ms' => 18.0, 'worker' => false, 'last_seen' => $now ],
@@ -1707,7 +1730,7 @@ class FlameBuilderTest extends TestCase {
 		// Each population caps its OWN tail now, in its own shard family, so
 		// the two overflow rows can no longer be produced by one blob — and a
 		// worker share can no longer ride into a header that excludes it.
-		$now    = \time();
+		$now    = self::tick();
 		$bucket = Stats_Store::bucket_key( $now );
 		$seed   = [];
 		$cap    = self::ROWS_PAST_BUDGET;
@@ -1758,7 +1781,7 @@ class FlameBuilderTest extends TestCase {
 		// the index inherits them. The row has to say which it is; deriving it
 		// from `?worker_type` in the URL text is the substring guess that made
 		// `--server` empty the table.
-		$now = \time();
+		$now = self::tick();
 		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/w?reconcile', 'duration_ms' => 90000.0, 'is_worker' => true, 'timestamp' => $now ] ) );
 		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/reader', 'duration_ms' => 12.0, 'timestamp' => $now ] ) );
 		$fb->flush();
@@ -1783,7 +1806,7 @@ class FlameBuilderTest extends TestCase {
 		// input, not the fleet. Uncapped, the global `dim:server` item grows
 		// without limit until memcached refuses the write, and the URL index
 		// mints a key set per name.
-		$now   = \time();
+		$now   = self::tick();
 		$spray = 300;
 		for ( $i = 0; $i < $spray; $i++ ) {
 			$this->fill_request( $fb, $this->completed_request( [
@@ -1820,7 +1843,7 @@ class FlameBuilderTest extends TestCase {
 		// from THAT axis — so WP-CLI and cron traffic put 'Unknown' in the
 		// dropdown, and choosing it has to find their rows. The two axes have
 		// to agree on the name.
-		$now = \time();
+		$now = self::tick();
 		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/cron', 'server_name' => '', 'duration_ms' => 12.0, 'timestamp' => $now ] ) );
 		$fb->flush();
 
@@ -1843,7 +1866,7 @@ class FlameBuilderTest extends TestCase {
 		// are unchanged. What changes is the ITEM: memcached refuses one over
 		// its limit and the refused write loses that whole item, so a bucket
 		// that lives in one blob is one blob away from losing every URL in it.
-		$now = \time();
+		$now = self::tick();
 		for ( $i = 0; $i < 320; $i++ ) {
 			$this->fill_request( $fb, $this->completed_request( [
 				'url' => "/wide-{$i}", 'duration_ms' => 5.0, 'timestamp' => $now,
@@ -1878,7 +1901,7 @@ class FlameBuilderTest extends TestCase {
 		// touched anyway (see the test above). This pins that a row goes to the
 		// shard its hash names and nowhere else, which is what makes a point
 		// read able to skip the other fifteen.
-		$now    = \time();
+		$now    = self::tick();
 		$bucket = Stats_Store::bucket_key( $now );
 
 		$written       = [];
@@ -1907,7 +1930,7 @@ class FlameBuilderTest extends TestCase {
 		$fb         = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
 
-		$now    = \time();
+		$now    = self::tick();
 		$bucket = Stats_Store::bucket_key( $now );
 		$url    = 'https://bend.example/2026/08/31/a-headline-worth-101-bytes/';
 		$hash   = Log_Manager::url_hash( $url );
@@ -1931,7 +1954,7 @@ class FlameBuilderTest extends TestCase {
 		$fb         = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
 
-		$now    = \time();
+		$now    = self::tick();
 		$bucket = Stats_Store::bucket_key( $now );
 		$url    = '/served-both-ways-8261';
 		$hash   = Log_Manager::url_hash( $url );
@@ -1956,7 +1979,7 @@ class FlameBuilderTest extends TestCase {
 		// A dropped tail would make every total summed from this index a lower
 		// bound by however much traffic fell off. Folding it into one row keeps
 		// the shard bounded and the totals exact.
-		$now    = \time();
+		$now    = self::tick();
 		$bucket = Stats_Store::bucket_key( $now );
 		$seed   = [];
 		$cap    = self::ROWS_PAST_BUDGET;
@@ -2023,7 +2046,7 @@ class FlameBuilderTest extends TestCase {
 		// the `server` dimension has values, which is everywhere, so gating
 		// this would empty the URL table on every spoke rather than save it
 		// anything.
-		$now = \time();
+		$now = self::tick();
 		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/spoke', 'server_name' => 'lone.example', 'duration_ms' => 12.0, 'timestamp' => $now ] ) );
 		$fb->flush();
 
@@ -2042,7 +2065,7 @@ class FlameBuilderTest extends TestCase {
 		// The accumulator adds its fields by hand while the persist merge sums
 		// `ROW_SUMS`. A field added to one and not the other is dropped or
 		// invented silently, so the two are held to the same set here.
-		$now = \time();
+		$now = self::tick();
 		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/fields', 'server_name' => 'alpha.example', 'duration_ms' => 30.0, 'peak_mb' => 4.0, 'timestamp' => $now ] ) );
 		$fb->flush();
 
@@ -2075,7 +2098,7 @@ class FlameBuilderTest extends TestCase {
 		// flush of an untimed-only (worker) request for the same URL must not
 		// clobber the already-persisted real min — the write-side timed_count
 		// guard protects it across flushes.
-		$now = \time();
+		$now = self::tick();
 		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/p', 'duration_ms' => 42.0, 'timestamp' => $now ] ) );
 		$fb->flush();
 
@@ -2133,7 +2156,7 @@ class FlameBuilderTest extends TestCase {
 	 * stops.
 	 */
 	public function test_a_folded_request_contributes_the_same_stats_as_an_unfolded_one(): void {
-		$now     = \time();
+		$now     = self::tick();
 		$origin  = (float) $now;
 		$entries = [
 			[ 'k' => 'process (start)', 'ts' => $origin ],
@@ -2205,7 +2228,7 @@ class FlameBuilderTest extends TestCase {
 		$fb->flush();
 
 		$timestamp = $request['timestamp'];
-		$bucket    = Stats_Store::bucket_key( \is_int( $timestamp ) ? $timestamp : \time() );
+		$bucket    = Stats_Store::bucket_key( \is_int( $timestamp ) ? $timestamp : self::tick() );
 		return [
 			'leaderboard' => $this->get_leaderboard_bucket( $store, $bucket ),
 			'categories'  => $store->get_category_buckets( [ $bucket ] ),
@@ -2220,7 +2243,7 @@ class FlameBuilderTest extends TestCase {
 		$fb    = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
 
-		$now = \time();
+		$now = self::tick();
 		$req = $this->completed_request( [
 			'duration_ms' => 50.0,
 			'timestamp'   => $now,
@@ -2563,6 +2586,19 @@ class FlameBuilderTest extends TestCase {
 
 	}
 
+	public function test_a_request_is_read_back_from_the_bucket_the_tick_names(): void {
+		// The builder clamps a request to the tick, so a test dated from the
+		// wall reads a bucket off whenever a boundary falls after setUp.
+		$this->shift_tick( -Stats_Store::BUCKET_SECONDS );
+		$this->test_url_index_min_ms_zero_for_untimed_only_url();
+	}
+
+	public function test_the_flush_throttle_is_backdated_from_the_tick(): void {
+		// `fill()` gates the flush on the tick, not the wall.
+		$this->shift_tick( -Stats_Store::BUCKET_SECONDS );
+		$this->test_fill_triggers_flush_when_interval_elapsed();
+	}
+
 	public function test_fill_triggers_flush_when_interval_elapsed(): void {
 				Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
@@ -2575,7 +2611,7 @@ class FlameBuilderTest extends TestCase {
 		$this->fill_request( $fb, $this->completed_request( [ 'duration_ms' => 12.0 ] ) );
 
 		$ref = new \ReflectionProperty( Flame_Builder_Node::class, 'last_flush_time' );
-		$ref->setValue( $fb, \microtime( true ) - ( Flame_Builder_Node::FLUSH_INTERVAL_SEC + 1 ) );
+		$ref->setValue( $fb, Core::$now - ( Flame_Builder_Node::FLUSH_INTERVAL_SEC + 1 ) );
 
 		// Confirm hourly is NOT yet persisted (last fill happened mid-window).
 		$hourly_before = $this->recent_hourly( $store );
@@ -4287,7 +4323,7 @@ class FlameBuilderTest extends TestCase {
 	}
 
 	public function test_two_buckets_of_one_folded_hour_both_reach_the_coarse_key(): void {
-		// Both buckets' rows are keyed on the SAME `urls_h:{shard}:{hour}`
+		// Both buckets' rows are keyed on the SAME `urls_h:{server_key}:{shard}:{hour}`
 		// item, and the chunk reads it once: a merge built on that one
 		// pre-read value discards whatever the intent before it merged in.
 		Core::$memd = new InMemoryMemcached();
@@ -4618,13 +4654,39 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( 1, self::named_url_rows( $this->get_url_hour( $store, '2026-08-27-13', '0', Stats_Store::OTHER_KEY ) )['0fffffffffff']['count'] );
 	}
 
+	public function test_a_row_the_hour_folds_into_other_keeps_its_host(): void {
+		// The quiet server's path was cut against its own host; the hour's
+		// `Other` server names none, so the row carries the whole URL.
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
+		for ( $i = 0; $i < Stats_Store::MAX_SERVER_VALUES; $i++ ) {
+			$this->seed_url_shard( $store, '2026-08-27-13-05', '0', [
+				\sprintf( '0%011x', $i ) => [ 'url' => "https://busy{$i}.test/busy-{$i}", 'count' => 5 ],
+			], "busy{$i}.test" );
+		}
+		$this->seed_url_shard( $store, '2026-08-27-13-40', '0', [
+			'0fffffffffff' => [ 'url' => 'https://quiet-4471.test/quiet-4471?x=9', 'count' => 1 ],
+		], 'quiet-4471.test' );
+		$this->assertSame( '/quiet-4471?x=9', $this->get_url_shard( $store, '2026-08-27-13-40', '0', 'quiet-4471.test' )['0fffffffffff'][ Stats_Store::ROW_PATH ], 'seeded host-stripped' );
+
+		$fb = new Flame_Builder_Node();
+		$fb->set_stats_store( $store );
+		Core::$now = \gmmktime( 15, 7, 0, 8, 27, 2026 );
+		self::roll_up( $fb, (int) Core::$now );
+
+		$rows = $this->get_url_hour( $store, '2026-08-27-13', '0', Stats_Store::OTHER_KEY );
+		$this->assertSame( 'https://quiet-4471.test/quiet-4471?x=9', $rows['0fffffffffff'][ Stats_Store::ROW_PATH ] );
+		$busy = $this->get_url_hour( $store, '2026-08-27-13', '0', 'busy3.test' );
+		$this->assertSame( '/busy-3', $busy['000000000003'][ Stats_Store::ROW_PATH ], 'a server kept by name keeps its cut path' );
+	}
+
 	public function test_a_busy_servers_tail_never_folds_a_quiet_servers_rows(): void {
 		// The reason the server is in the key: a busy spoke filling a shard
 		// folds only its own tail into its own `Other`, and a quiet spoke's
 		// URL in the same shard keeps its row.
 		Core::$memd = new InMemoryMemcached();
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
-		$now        = \time();
+		$now        = self::tick();
 		$bucket     = Stats_Store::bucket_key( $now );
 
 		$seed = [];
@@ -4675,7 +4737,7 @@ class FlameBuilderTest extends TestCase {
 		$fb         = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
 
-		$now = \time();
+		$now = self::tick();
 		for ( $i = 0; $i < 5; $i++ ) {
 			$this->fill_request( $fb, $this->completed_request( [
 				'url'         => '/pangolin-6142',
@@ -4877,7 +4939,7 @@ class FlameBuilderTest extends TestCase {
 		$fb         = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
 
-		$now = \time();
+		$now = self::tick();
 		$this->fill_request( $fb, $this->completed_request( [
 			'url'         => 'https://edge-a.example/wombat-4471',
 			'duration_ms' => 447.0,
@@ -4903,7 +4965,7 @@ class FlameBuilderTest extends TestCase {
 		$fb    = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
 
-		$now = \time();
+		$now = self::tick();
 		// 510 distinct URLs in one bucket. They all survive now: the cap is a
 		// per-SHARD backstop against an oversized item, not a ceiling on how
 		// many URLs a site may have in five minutes — which is what it was when
@@ -4933,7 +4995,7 @@ class FlameBuilderTest extends TestCase {
 		$fb    = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
 
-		$now = \time();
+		$now = self::tick();
 		// 30 distinct user agents → exceeds MAX_DIM_VALUES (20) → Other rollover.
 		for ( $i = 0; $i < 30; $i++ ) {
 			$this->fill_request( $fb, $this->completed_request( [
@@ -4958,7 +5020,7 @@ class FlameBuilderTest extends TestCase {
 		$fb         = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
 
-		$now = \time();
+		$now = self::tick();
 		for ( $i = 0; $i < 2; $i++ ) {
 			$this->fill_request( $fb, $this->completed_request( [
 				'url'            => '/quartz',
@@ -4994,7 +5056,7 @@ class FlameBuilderTest extends TestCase {
 		$fb         = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
 
-		$now    = \time();
+		$now    = self::tick();
 		$bucket = Stats_Store::bucket_key( $now );
 		Core::$now = $now;
 		$fb->restore_state( [
@@ -5029,7 +5091,7 @@ class FlameBuilderTest extends TestCase {
 		$fb         = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
 
-		$now    = \time();
+		$now    = self::tick();
 		$bucket = Stats_Store::bucket_key( $now );
 		Core::$now = $now;
 		$fb->restore_state( [
@@ -5056,7 +5118,7 @@ class FlameBuilderTest extends TestCase {
 		$fb         = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
 
-		$now    = \time();
+		$now    = self::tick();
 		$bucket = Stats_Store::bucket_key( $now );
 		Core::$now = $now;
 		$fb->restore_state( [
@@ -5082,7 +5144,7 @@ class FlameBuilderTest extends TestCase {
 		$fb->set_stats_store( $store );
 
 		// Seeded busiest-LAST, so insertion order is the wrong answer.
-		$now = \time();
+		$now = self::tick();
 		for ( $ua = 0; $ua < 15; $ua++ ) {
 			for ( $hit = 0; $hit <= $ua; $hit++ ) {
 				$this->fill_request( $fb, $this->completed_request( [
@@ -5106,7 +5168,7 @@ class FlameBuilderTest extends TestCase {
 		$fb    = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
 
-		$now = \time();
+		$now = self::tick();
 		// 15 distinct UAs on the SAME URL → exceeds MAX_URL_DIM_VALUES (10) → Other rollover.
 		for ( $i = 0; $i < 15; $i++ ) {
 			$this->fill_request( $fb, $this->completed_request( [
@@ -5133,7 +5195,7 @@ class FlameBuilderTest extends TestCase {
 		$fb    = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
 
-		$now = \time();
+		$now = self::tick();
 		// 60 distinct categories → exceeds MAX_CAT_VALUES (50) → Other rollover.
 		$profiles = [];
 		for ( $i = 0; $i < 60; $i++ ) {
@@ -5166,7 +5228,7 @@ class FlameBuilderTest extends TestCase {
 		];
 		$this->set_category_bucket( $store, '1999-01-01-00-00', $untouched );
 
-		$now = \time();
+		$now = self::tick();
 		$this->fill_request( $fb, $this->completed_request( [
 			'duration_ms' => 5.0,
 			'timestamp'   => $now,
@@ -5187,7 +5249,7 @@ class FlameBuilderTest extends TestCase {
 		$fb->set_stats_store( $store );
 		$fb->set_is_hub( true );
 
-		$now = \time();
+		$now = self::tick();
 		// Generate >100 distinct entry names under one category for one server.
 		$entries = [];
 		for ( $i = 0; $i < 120; $i++ ) {
@@ -5219,7 +5281,7 @@ class FlameBuilderTest extends TestCase {
 		$fb->set_stats_store( $store );
 		$fb->set_is_hub( true );
 
-		$now = \time();
+		$now = self::tick();
 		$this->fill_request( $fb, $this->completed_request( [
 			'server_name' => 'srv-cat',
 			'duration_ms' => 50.0,
@@ -5247,7 +5309,7 @@ class FlameBuilderTest extends TestCase {
 		$fb->set_stats_store( $store );
 		$fb->set_is_hub( true );
 
-		$now = \time();
+		$now = self::tick();
 		$this->fill_request( $fb, $this->completed_request( [
 			'server_name'  => 'srv-x',
 			'request_method' => 'POST',
@@ -5495,7 +5557,7 @@ class FlameBuilderTest extends TestCase {
 		$fb->set_stats_store( $store );
 		$fb->set_is_hub( true );
 
-		$now = \time();
+		$now = self::tick();
 		$this->fill_request( $fb, $this->completed_request( [
 			'server_name' => '',
 			'duration_ms' => 50.0,
@@ -5521,7 +5583,7 @@ class FlameBuilderTest extends TestCase {
 		$fb         = new Flame_Builder_Node();
 		$fb->set_stats_store( $fb_store = $store );
 
-		$now    = \time();
+		$now    = self::tick();
 		$bucket = Stats_Store::bucket_key( $now );
 		Core::$now = $now;
 		$fb->restore_state( [
@@ -5551,7 +5613,7 @@ class FlameBuilderTest extends TestCase {
 		$this->set_dimensional_bucket( $store, 'status', '1999-01-01-00-00', $stale_dim );
 		$this->set_category_bucket( $store, '1999-01-01-00-00', $stale_cat );
 
-		$now = \time();
+		$now = self::tick();
 		Core::$now = $now;
 		$this->fill_request( $fb, $this->completed_request( [
 			'duration_ms' => 27.0,
@@ -5620,7 +5682,7 @@ class FlameBuilderTest extends TestCase {
 		$fb         = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
 
-		$now = \time();
+		$now = self::tick();
 		Core::$now = $now;
 		$this->fill_request( $fb, $this->completed_request( [
 			'url'         => '/dims',
@@ -5646,7 +5708,7 @@ class FlameBuilderTest extends TestCase {
 		$fb         = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
 
-		$now    = \time();
+		$now    = self::tick();
 		$bucket = Stats_Store::bucket_key( $now );
 		Core::$now = $now;
 		$fb->restore_state( [
@@ -5913,7 +5975,7 @@ class FlameBuilderTest extends TestCase {
 		// Seeded ANYWAY: a reader that looked WOULD find these, so what fails
 		// here is the looking, not an empty partition.
 		foreach ( $keys as $key ) {
-			$this->fill_partition_entry( $p, Stats_Store::entry_key( 0, $key ), [ 'seeded' => 4931 ], 86400, \time() );
+			$this->fill_partition_entry( $p, Stats_Store::entry_key( 0, $key ), [ 'seeded' => 4931 ], 86400, self::tick() );
 		}
 		$p->flush();
 		$p->index_scans = 0;
@@ -5939,7 +6001,7 @@ class FlameBuilderTest extends TestCase {
 
 		// The OPEN bucket, so nothing here flushes on its own — every frame
 		// that reaches the partition got there by spilling.
-		$bucket = Stats_Store::bucket_key( \time() );
+		$bucket = Stats_Store::bucket_key( self::tick() );
 		$wrote  = [];
 		for ( $i = 1; $i <= 9; $i++ ) {
 			$this->set_url_dimensional_bucket( $store, "s{$i}", $bucket, [ 'status' => [ '200' => self::dim_entry( $i * 11 + 3, 0, 0 ) ] ] );
@@ -5980,7 +6042,7 @@ class FlameBuilderTest extends TestCase {
 		$fb->set_stats_target( $p->name() );
 
 		// The OPEN bucket, so nothing drains on its own.
-		$bucket = Stats_Store::bucket_key( \time() );
+		$bucket = Stats_Store::bucket_key( self::tick() );
 		CountingRankFlameBuilder::$rank_reads = 0;
 		for ( $i = 1; $i <= 160; $i++ ) {
 			$this->set_url_dimensional_bucket( $store, "z{$i}", $bucket, [ 'status' => [ '200' => self::dim_entry( $i * 13 + 5, 0, 0 ) ] ] );
@@ -6012,7 +6074,7 @@ class FlameBuilderTest extends TestCase {
 		$fb->set_stats_store( $store );
 		$fb->set_stats_target( 'no-stats-partition-here' );
 
-		$bucket = Stats_Store::bucket_key( \time() );
+		$bucket = Stats_Store::bucket_key( self::tick() );
 		for ( $i = 1; $i <= 9; $i++ ) {
 			$this->set_url_dimensional_bucket( $store, "d{$i}", $bucket, [ 'status' => [ '200' => self::dim_entry( $i * 17 + 5, 0, 0 ) ] ] );
 		}
@@ -6086,7 +6148,7 @@ class FlameBuilderTest extends TestCase {
 		// Seeded ANYWAY: a reader that looks WOULD find it, so what fails here
 		// is the looking, not an empty partition.
 		$key = 'urls_h:3:' . self::live_hour();
-		$this->fill_partition_entry( $p, Stats_Store::entry_key( 0, $key ), [ 'ab12cd34ef56' => [ 71 ] ], 86400, \time() );
+		$this->fill_partition_entry( $p, Stats_Store::entry_key( 0, $key ), [ 'ab12cd34ef56' => [ 71 ] ], 86400, self::tick() );
 		$p->flush();
 		$p->index_scans = 0;
 
@@ -6110,7 +6172,7 @@ class FlameBuilderTest extends TestCase {
 		$store   = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		/** @var CountingIndexPartition $p */
 		[ , $p ] = $this->mirrored_builder( $store, 'flames-stats', CountingIndexPartition::class );
-		$this->fill_partition_entry( $p, Stats_Store::entry_key( 0, 'hourly:' . self::live_hour() ), [ 'count' => 83 ], 86400, \time() );
+		$this->fill_partition_entry( $p, Stats_Store::entry_key( 0, 'hourly:' . self::live_hour() ), [ 'count' => 83 ], 86400, self::tick() );
 		$p->flush();
 
 		$reader = new Stats_Store( partition: 0, max_lifespan: 86400 );
@@ -6136,8 +6198,8 @@ class FlameBuilderTest extends TestCase {
 		$this->use_base_dir( $dir, [ 'stats_mirror_node' => 'flames-stats', 'stats_mirror_read_budget_ms' => 0 ] );
 		$store   = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		[ , $p ] = $this->mirrored_builder( $store, 'flames-stats', CountingIndexPartition::class );
-		$bucket  = Stats_Store::bucket_key( \time() - 3 * 3600 );
-		$this->fill_partition_entry( $p, Stats_Store::entry_key( 0, 'lb:' . $bucket ), [ 'count' => 83, 'sum_req_time' => 1.0, 'categories' => [] ], 86400, \time() );
+		$bucket  = Stats_Store::bucket_key( self::tick() - 3 * 3600 );
+		$this->fill_partition_entry( $p, Stats_Store::entry_key( 0, 'lb:' . $bucket ), [ 'count' => 83, 'sum_req_time' => 1.0, 'categories' => [] ], 86400, self::tick() );
 		$p->flush();
 
 		$reader = new Stats_Store( partition: 0, max_lifespan: 86400 );
@@ -6189,7 +6251,7 @@ class FlameBuilderTest extends TestCase {
 		$this->use_base_dir( $this->make_temp_dir(), [ 'stats_mirror_node' => 'flames-stats', 'stats_mirror_read_budget_ms' => 2500 ] );
 		$store   = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		[ , $p ] = $this->mirrored_builder( $store, 'flames-stats', CountingIndexPartition::class );
-		$this->fill_partition_entry( $p, Stats_Store::entry_key( 0, 'hourly:' . self::live_hour() ), [ 'count' => 83 ], 86400, \time() );
+		$this->fill_partition_entry( $p, Stats_Store::entry_key( 0, 'hourly:' . self::live_hour() ), [ 'count' => 83 ], 86400, self::tick() );
 		$p->flush();
 
 		$reader = new Stats_Store( partition: 0, max_lifespan: 86400 );
@@ -6217,10 +6279,10 @@ class FlameBuilderTest extends TestCase {
 		$store   = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		/** @var CountingIndexPartition $p */
 		[ , $p ] = $this->mirrored_builder( $store, 'flames-stats', CountingIndexPartition::class );
-		$this->fill_partition_entry( $p, Stats_Store::entry_key( 0, 'hourly:' . self::live_hour() ), [ 'count' => 83 ], 86400, \time() );
+		$this->fill_partition_entry( $p, Stats_Store::entry_key( 0, 'hourly:' . self::live_hour() ), [ 'count' => 83 ], 86400, self::tick() );
 		$p->flush();
 		// A bucket three hours back that the mirror never saw: sparse traffic.
-		$absent = Stats_Store::bucket_key( \time() - 3 * 3600 );
+		$absent = Stats_Store::bucket_key( self::tick() - 3 * 3600 );
 
 		$reader = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		Flame_Builder_Node::arm_stats_reader( $reader );
@@ -6230,7 +6292,7 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( 1, $p->index_scans, 'one walk to learn the absence' );
 		// The mirror is appended every few seconds, which is what discards
 		// the walk's own per-request memo; only what landed in memcache holds.
-		$this->fill_partition_entry( $p, Stats_Store::entry_key( 0, 'hourly:' . self::live_hour() ), [ 'count' => 84 ], 86400, \time() );
+		$this->fill_partition_entry( $p, Stats_Store::entry_key( 0, 'hourly:' . self::live_hour() ), [ 'count' => 84 ], 86400, self::tick() );
 		$p->flush();
 		$this->assertSame( [], $reader->get_leaderboard_buckets( [ $absent ], 'spoke-sparse' ) );
 		$this->assertSame( 1, $p->index_scans, 'and none to be told again' );
@@ -6244,7 +6306,7 @@ class FlameBuilderTest extends TestCase {
 		$reader = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		Flame_Builder_Node::arm_stats_reader( $reader );
 		// A closed hour three back: a bucket in this tier would be remembered.
-		$hour = Stats_Store::hour_of( Stats_Store::bucket_key( \time() - 3 * 3600 ) );
+		$hour = Stats_Store::hour_of( Stats_Store::bucket_key( self::tick() - 3 * 3600 ) );
 
 		$this->assertSame( [], $reader->get_leaderboard_hours( [ $hour ] ) );
 
@@ -6269,8 +6331,8 @@ class FlameBuilderTest extends TestCase {
 
 		$fine   = 'urls:3:{HOUR}-00';
 		$coarse = 'urls_h:3:{HOUR}';
-		$this->fill_partition_entry( $p, Stats_Store::entry_key( 0, $fine ), [ 'ab12cd34ef56' => [ 71 ] ], 86400, \time() );
-		$this->fill_partition_entry( $p, Stats_Store::entry_key( 0, $coarse ), [ 'ab12cd34ef56' => [ 83 ] ], 86400, \time() );
+		$this->fill_partition_entry( $p, Stats_Store::entry_key( 0, $fine ), [ 'ab12cd34ef56' => [ 71 ] ], 86400, self::tick() );
+		$this->fill_partition_entry( $p, Stats_Store::entry_key( 0, $coarse ), [ 'ab12cd34ef56' => [ 83 ] ], 86400, self::tick() );
 		$p->flush();
 
 		$found = ( $store->rehydrate )( [ $coarse, $fine ] );
@@ -6285,8 +6347,8 @@ class FlameBuilderTest extends TestCase {
 		[ , $p ]    = $this->mirrored_builder( $store, 'flames-stats' );
 
 		// A bucket a day past the window: nothing reads it, nothing restores it.
-		$gone = \gmdate( 'Y-m-d-H', \time() - ( 48 * 3600 ) );
-		$this->fill_partition_entry( $p, Stats_Store::entry_key( 0, "hourly:{$gone}" ), [ 'count' => 53 ], 86400, \time() );
+		$gone = \gmdate( 'Y-m-d-H', self::tick() - ( 48 * 3600 ) );
+		$this->fill_partition_entry( $p, Stats_Store::entry_key( 0, "hourly:{$gone}" ), [ 'count' => 53 ], 86400, self::tick() );
 		$p->flush();
 
 		$this->assertSame( [], $this->get_hourly_bucket( $store, $gone ), 'a bucket past retention stays gone' );
@@ -6343,7 +6405,7 @@ class FlameBuilderTest extends TestCase {
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		[ , $p ]    = $this->mirrored_builder( $store, 'flames-stats' );
 
-		$now = \time();
+		$now = self::tick();
 		$this->fill_partition_entry( $p, Stats_Store::entry_key( 0, 'hourly:' . self::live_hour() ), [ 'count' => 29 ], 100, $now );
 		$this->fill_partition_entry( $p, Stats_Store::entry_key( 0, 'hourly:' . self::live_hour() ), [ 'count' => 74 ], 100, $now );
 		$p->flush();
@@ -6648,7 +6710,7 @@ class FlameBuilderTest extends TestCase {
 		$fb         = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
 
-		$now = \time();
+		$now = self::tick();
 		$req = $this->completed_request( [
 			'url'         => '/?cache-cozy',
 			'duration_ms' => 40.0,
@@ -6697,7 +6759,7 @@ class FlameBuilderTest extends TestCase {
 		$fb         = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
 
-		$now = \time();
+		$now = self::tick();
 		$this->fill_request( $fb, $this->completed_request( [ 'url' => '/x', 'duration_ms' => 40.0, 'peak_mb' => 12.0, 'timestamp' => $now ] ) );
 		$fb->flush();
 
@@ -6721,7 +6783,7 @@ class FlameBuilderTest extends TestCase {
 		$fb_hub->set_is_hub( true );
 
 		// Use current time so the bucket alignment between fill and assertion is exact.
-		$now = \time();
+		$now = self::tick();
 		$req = $this->completed_request( [
 			'server_name' => 'srv-a',
 			'duration_ms' => 50.0,
@@ -7146,7 +7208,7 @@ class FlameBuilderTest extends TestCase {
 		$store      = new Stats_Store( partition: 0, max_lifespan: 86400 );
 		$fb         = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
-		$now    = \time();
+		$now    = self::tick();
 		$bucket = Stats_Store::bucket_key( $now );
 		$hash   = 'b3b3b3b3b3b3';
 		$fb->restore_state( [
@@ -7260,8 +7322,8 @@ class FlameBuilderTest extends TestCase {
 		$fb->set_stats_store( $store );
 		$fb->set_stats_target( $p->name() );
 
-		$other = 'hourly:' . \gmdate( 'Y-m-d-H', \time() - 7200 );
-		$this->fill_partition_entry( $p, Stats_Store::entry_key( 0, $other ), [ 'count' => 61 ], 86400, \time() );
+		$other = 'hourly:' . \gmdate( 'Y-m-d-H', self::tick() - 7200 );
+		$this->fill_partition_entry( $p, Stats_Store::entry_key( 0, $other ), [ 'count' => 61 ], 86400, self::tick() );
 		$p->flush();
 
 		$this->assertSame( [], ( $store->rehydrate )( [ $wanted ] ), 'another key\'s frame is not filed under this one' );
@@ -7300,7 +7362,7 @@ class FlameBuilderTest extends TestCase {
 		$fb         = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
 
-		$now = \time();
+		$now = self::tick();
 		$this->fill_request( $fb, $this->completed_request( [
 			'duration_ms' => 500.51303300000006,
 			'timestamp'   => $now,
@@ -7338,7 +7400,7 @@ class FlameBuilderTest extends TestCase {
 		$fb         = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );
 
-		$now    = \time();
+		$now    = self::tick();
 		$bucket = Stats_Store::bucket_key( $now );
 		$fb->restore_state( [
 			'pending' => [ $bucket => [ 'cat' => [ 'zither render' => [ 't' => 812.5, 'c' => 61, 'n' => 7 ] ] ] ],
@@ -7439,7 +7501,7 @@ class FlameBuilderTest extends TestCase {
 		Core::$memd = new InMemoryMemcached();
 		$store      = new RecordingStatsStore( partition: 0, max_lifespan: 86400 );
 		$store->bucket_set_multi( [
-			[ Stats_Store::url_token_parts( Stats_Store::server_key( self::SEED_SERVER ) ), 'wom', [ Stats_Store::TOKEN_SATURATED => \time() ] ],
+			[ Stats_Store::url_token_parts( Stats_Store::server_key( self::SEED_SERVER ) ), 'wom', [ Stats_Store::TOKEN_SATURATED => self::tick() ] ],
 		] );
 		$fb = new Flame_Builder_Node();
 		$fb->set_stats_store( $store );

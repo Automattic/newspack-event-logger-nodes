@@ -93,10 +93,12 @@ class Stats_Store {
 	/**
 	 * Bytes any one stored value may take, and what every byte cap derives
 	 * from: memcached's 1,048,576-byte item limit less a margin for the key
-	 * and the serializer's framing. Uncompressed, and under PHP's own
-	 * `serialize()`, the larger of the two serializers, because nothing
-	 * guarantees production compresses or runs igbinary. A producer caps
-	 * before it writes; a refused set is never how a size is found.
+	 * and the serializer's framing. Uncompressed, because nothing guarantees
+	 * production compresses. A producer caps before it writes, against an
+	 * estimate `overhead()` makes for the serializer `Core::$memd` is
+	 * configured with: igbinary's where it uses igbinary, and PHP's
+	 * `serialize()`, the larger, otherwise or when no handle is present. A
+	 * refused set is never how a size is found.
 	 */
 	public const ITEM_BUDGET              = 900000;
 
@@ -380,7 +382,7 @@ class Stats_Store {
 	public const URL_SHARDS     = 16;
 
 	/**
-	 * What makes a shard token name WORKER traffic: `urls:w3:{bucket}`.
+	 * What makes a shard token name WORKER traffic: `urls:{server_key}:w3:{bucket}`.
 	 *
 	 * Cron, WP-CLI and job requests are a separate population, not a predicate
 	 * over one — the table excludes them by default, so a shared index makes
@@ -1478,7 +1480,7 @@ class Stats_Store {
 	 * Every key a path is filed under: each prefix of each of its tokens, so
 	 * a term typed halfway still names it.
 	 *
-	 * @param string $path The URL's path, as `split_url()` returns it.
+	 * @param string $path The URL's path, as `path_of()` returns it.
 	 * @return list<string>
 	 */
 	public static function url_tokens( string $path ): array {
@@ -1733,18 +1735,6 @@ class Stats_Store {
 	}
 
 	/**
-	 * The URL a `row_path()` was cut from, given the server it was cut
-	 * against: the inverse `row_path()` answers to, and the one place a
-	 * reader spells the join.
-	 *
-	 * @param string $server The server the path was cut against.
-	 * @param string $path   The stored path.
-	 */
-	private static function join_url( string $server, string $path ): string {
-		return self::names_host( $server ) && \str_starts_with( $path, '/' ) ? "https://{$server}{$path}" : $path;
-	}
-
-	/**
 	 * Whether a stored `urlmap` value is `[ server_name, path ]`. A server
 	 * name never holds `/`, `?` or `#`, so an entry whose first element does
 	 * is the old `[ path, origin ]` shape, and reads as no name at all.
@@ -1875,6 +1865,30 @@ class Stats_Store {
 	 */
 	public static function entry_key( int $partition, string $key ): string {
 		return self::namespace_for( $partition ) . ':' . $key;
+	}
+
+	/**
+	 * A row's path as it reads once the row moves from one server's key to
+	 * another's: joined back to its URL under the old, cut under the new.
+	 *
+	 * @param string $path The row's `ROW_PATH` under `$from`.
+	 * @param string $from The server it was filed under.
+	 * @param string $to   The server it is filed under now.
+	 */
+	public static function refile_path( string $path, string $from, string $to ): string {
+		return self::row_path( self::join_url( $from, $path ), $to );
+	}
+
+	/**
+	 * The URL a `row_path()` was cut from, given the server it was cut
+	 * against: the inverse `row_path()` answers to, and the one place a
+	 * reader spells the join.
+	 *
+	 * @param string $server The server the path was cut against.
+	 * @param string $path   The stored path.
+	 */
+	private static function join_url( string $server, string $path ): string {
+		return self::names_host( $server ) && \str_starts_with( $path, '/' ) ? "https://{$server}{$path}" : $path;
 	}
 
 	/**
@@ -2483,8 +2497,7 @@ class Stats_Store {
 
 	/**
 	 * Namespace prefix of one server's ranked list. The server rides in the
-	 * KEY: a list is `URL_RANK_N` rows, which is the bound decision 14 named
-	 * as what would make the key-prefix form affordable.
+	 * KEY, as it does for every per-server value (decision 30).
 	 *
 	 * @param string $sort   A `URL_SORTS` value.
 	 * @param string $order  A `URL_ORDERS` value.
@@ -2498,7 +2511,8 @@ class Stats_Store {
 
 	/**
 	 * Hash a server name to a key-safe ASCII token (FNV-1a 32-bit hex).
-	 * Used for `lb_s` / `dim:_:srv` keys so server names don't break colons.
+	 * Every per-server key carries it, so a server name cannot break a colon
+	 * or put bytes of its own into a key (decision 30).
 	 *
 	 * @param string $server Server name; '' hashes to ''.
 	 * @return string Eight hex digits, or ''.

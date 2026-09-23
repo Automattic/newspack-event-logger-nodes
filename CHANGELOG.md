@@ -13,41 +13,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   seen` column on `last_updated`, which the `urls` verb already sorted
   by. Ages are measured from the reply's own `as_of`, so a cached page
   does not tick and browser and server clocks never disagree.
-- **The flame builder writes ranked lists of each URL bucket.** One list
-  per `URL_SORTS` key and `URL_ORDERS` direction, site-wide and for each
-  server a row's split names, in four derived namespaces: `urlrank`
-  (fine tier, `URL_RANK_N` 200 entries), `urlrank_h` (hour tier,
-  `URL_RANK_N_HOUR` 500), and their per-server twins `urlrank_s` and
-  `urlrank_sh`. A bucket is ranked over its whole stored content as each
-  chunk of a flush lands, at most once per `URL_PAGE_REFRESH_S` (60
-  seconds), and again once it closes; a bucket the cadence defers stays
-  pending and ranks at the end of a later flush once it comes due,
+- **The flame builder writes ranked lists of each server's URL
+  buckets.** One list per `URL_SORTS` key and `URL_ORDERS` direction for
+  every server a bucket's server index names, empty where the server
+  holds nothing rankable, in two derived namespaces: `urlrank_s` (fine
+  tier, `URL_RANK_N` 200 entries) and `urlrank_sh` (hour tier,
+  `URL_RANK_N_HOUR` 500). No list spans servers: the site's page is
+  `Stats_Store::url_rank_window()` merging every named server's list at
+  read time and cutting it where one list over all their rows would,
+  exact while no hour names more than `MAX_SERVER_VALUES` (128) servers.
+  A tie breaks by hash, ascending in both directions. A bucket is ranked
+  over its whole stored content once every one of its (server, bucket)
+  groups in a flush has landed, at most once per `URL_PAGE_REFRESH_S`
+  (60 seconds), and again once it closes; a bucket the cadence defers
+  stays pending and ranks at the end of a later flush once it comes due,
   whether or not that flush writes into it; every due bucket ranks in
-  that flush, read back a bounded batch at a time. Under traffic a ranked row lags live traffic by up to twice
+  that flush, read back at most 31 (server, bucket) groups at a time.
+  Under traffic a ranked row lags live traffic by up to twice
   `URL_PAGE_REFRESH_S` plus `FLUSH_INTERVAL_SEC`; the flame builder
   flushes only as records arrive, so on a partition that goes quiet a
   deferred ranking waits for its next record or the worker's stop. The
-  hourly fold ranks each hour from the rows it just folded, an hour
-  holding rows and names but no lists is ranked from those stored rows
-  rather than folded again, and a late write that lands in a folded
-  hour's key forgets the hour's marker, so the probe re-ranks the hour
-  from its stored rows at the next periodic reprobe or a new worker's
-  first flush.
-  Such a ranking spends none of the fold budget. One flush ranks stale
-  hours up to a fixed per-flush bound, and an hour the window has passed
-  leaves the stale set unranked. An hour writes `urlrank_h:done:{hour}`,
-  empty, in the same batch as its lists, whatever they answer;
-  `Stats_Store::url_hours_derived()` probes that marker, and a ranked
-  page serves an hour only where its list is present, folding
-  otherwise. A refused ranking, a bucket's or an hour's, is logged as
-  `URL rank write refused` and not retried: the lists are top-N bounded
-  to fit, so a refusal is a wrong N, and a transient failure heals at
-  the next write's ranking. A worker's shutdown sweep ranks every bucket
-  still owed, whatever its stamp, and no more stale hours than any flush
-  does: each one's missing marker is in the store, so the next worker's
-  probe finds it again. A bucket older than the oldest bucket the read
-  plan's fine tail reads is never ranked, pending or just flushed; one
-  inside it ranks, however far past `FINE_BUCKETS` the tail runs.
+  hourly fold ranks each server's hour from the rows it just folded, an
+  hour holding rows but a server with no marker is re-ranked from its
+  stored rows rather than folded again, and a late write that lands in a
+  folded hour's key forgets that server's marker, so the probe re-ranks
+  the hour at the next periodic reprobe or a new worker's first flush.
+  A late write from a server new to a folded hour sends the hour back to
+  the probe on the next flush. Such a ranking spends none of the fold
+  budget. One flush ranks stale hours up to a fixed per-flush bound, and
+  an hour the window has passed leaves the stale set unranked. Each
+  server's hour writes `urlrank_sh:done:{server_key}:{hour}`, empty, in
+  the same batch as its lists, whatever they answer;
+  `Stats_Store::url_hours_derived()` probes those markers, and a ranked
+  page serves a site hour only where every server its index names has
+  its list, folding otherwise. A refused ranking is logged as `URL rank
+  write refused` and not retried: the lists are top-N bounded to fit, so
+  a refusal is a wrong N, and a transient failure heals at the next
+  write's ranking. A worker's shutdown sweep ranks every bucket still
+  owed, whatever its stamp, and no more stale hours than any flush does:
+  each one's missing marker is in the store, so the next worker's probe
+  finds it again. A bucket older than the oldest bucket the read plan's
+  fine tail reads is never ranked, pending or just flushed; one inside
+  it ranks, however far past `FINE_BUCKETS` the tail runs.
 - **An unfiltered `urls` page is answered from the ranked lists.** A page
   with no `search`, `errors_only` or `include_workers` whose `offset +
   limit` is within 200 rows reads the lists and says so with `ranked:
@@ -58,12 +65,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   list can still lead the window. The header — `rows`, `totals`,
   `slowest` — is folded once per five-minute bucket, and the poll that
   folds it answers with that fold, `ranked: false`. Any planned hour
-  behind the leading one with no list in some partition's store sends
-  the page to the fold, which never serves a window an hour short.
-  Every reply carries `as_of`, the instant its page was built.
+  behind the leading one that some partition's store cannot answer for
+  every server sends the page to the fold, which never serves a window
+  an hour short. Every reply carries `as_of`, the instant its page was
+  built.
+- **`urlsrv` and `urlsrv_h`, the URL index's server index.**
+  `urlsrv:{bucket}` maps each server key holding URL rows in the
+  bucket, reader or worker, to its name, and `urlsrv_h:{hour}` is its
+  hourly fold. Every walk not scoped to one server reads it first: an
+  unscoped page, the hour fold, the derived-tier probe and the ranker's
+  gap-fill. It holds at most `MAX_SERVER_VALUES` (128) names; once a
+  bucket's index is full, a new server's rows are filed under the
+  `Other` server, and the hour fold keeps the 128 busiest. A row filed
+  under `Other` carries its whole URL, because no host joins back onto
+  that server's paths. The fine index is mirrored in full; the hour
+  index is derived.
+- **Every stored value is capped to fit one memcache item before it is
+  written.** `Stats_Store::ITEM_BUDGET` is 900,000 bytes, uncompressed:
+  memcached's 1,048,576-byte limit less a margin. Each producer
+  estimates its value from `Stats_Store::overhead()`, a fixed cost per
+  stored part for the serializer `Core::$memd` is configured with —
+  igbinary's where the handle uses it, PHP's `serialize()` otherwise —
+  plus the length of the strings it carries, so no flush serializes to
+  measure. A URL shard keeps the busiest rows the estimate admits and
+  folds the rest into `Other` / `Other:worker`. A leaderboard bucket
+  (`lb`, `lb_s`, and now `lb_h`, which had no cap) keeps at most
+  `MAX_LB_CATEGORIES` (200) categories, the slowest by `sum_time`
+  first, and fewer where their estimated bytes bind; the rest fold into
+  `Other`. A URL's
+  `url` blob takes the same cap on its profiles at half the budget, and
+  each of its two flame-tree copies is pruned lightest leaf first to a
+  quarter, in the stored copy only. `tests/unit/ItemBudgetTest.php`
+  measures the largest value each cap admits under both serializers.
 
 ### Changed
 
+- **The URL index keys by server.** A fine bucket is
+  `urls:{server_key}:{shard}:{bucket}` and an hour
+  `urls_h:{server_key}:{shard}:{hour}`, where `server_key` is
+  `Stats_Store::server_key()`, an FNV hash of `server_name`. Each
+  server's rows now compete only with its own for a shard's cap, so a
+  busy spoke no longer folds a quiet spoke's URLs into `Other` and
+  leaves the quiet spoke's scoped table short. A row no longer carries a
+  per-server split: index 13 is `ROW_PATH`, the path and query with no
+  scheme or host when the URL is https under the row's own server, the
+  whole URL otherwise, cut to `MAX_PATH_BYTES` (1,024) with a trailing
+  `…`. A scoped read reads that server's keys alone; an unscoped read
+  reads each server the index names, one key per server per shard where
+  one key served them all. A search matches a term against each row's
+  own path.
+- **`urlmap:{hash}` holds `[ server_name, path ]`, and locates a
+  hash's server.** `Stats_Store::get_url_names()` joins the two as
+  `https://{server}{path}` for a path starting with `/` under a server
+  that names a host, and takes the path as written otherwise. An
+  unscoped `dump_url` or `ask url:` reads the one server `urlmap` names,
+  and every server's keys when the name has expired or that server holds
+  no row. An entry of any other shape reads as no name.
+- **`url_dim` has no `server` axis.** A URL belongs to one server, so
+  the axis could only hold one value. `dump_url --breakdown=server` and
+  `url_breakdown` with `server` refuse with `invalid breakdown
+  dimension`; `overview`'s server breakdown is unchanged.
+- **`dump_url` refuses a `--breakdown` outside the URL dimensions.** It
+  answered without `breakdown_time_series`; it now throws `invalid
+  breakdown dimension`, as `url_breakdown` does.
+- **A URL page's `totals` is always an object.** A scope holding no rows
+  answers zeros, where a server scope the stored rows carried no split
+  for answered `null`.
+- **A rule whose hook list would not fit one cache item is refused at
+  save.** `Rule_Set::save()` throws before it writes any option or
+  Table entry, and the `rules` CI answers the refusal as a `TM_ERROR`.
+  Such a list used to save, and every read of its warm mirror was then
+  refused by memcached and fell back to the durable option.
 - **A URL page is folded at most once a minute, not once a poll.** `urls`
   caches each page for `URL_PAGE_REFRESH_S` (60 seconds), keyed by every
   filter, the window bucket, the retention and the store count. A page
@@ -75,15 +147,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lowercased and split on each non-alphanumeric run, and every token
   must begin a word of the path: `/wombat-7731` is found by `wom`,
   `wombat` or `7731`, and no longer by `mbat`. The flame builder files
-  each named path in a new `urltoken` index under every prefix of three
-  to twelve characters of each word, stamping each hash with when its
-  URL was last named. A set drops hashes a retention window has passed
-  over and collapses to a saturated marker past `URL_SEARCH_MAX`
-  (5,000). The search intersects its indexed tokens, reads names from
-  `urlmap` for those candidates alone, and folds only their shards.
-  A refused token write is logged and not retried; its URLs are filed
-  again when their names next refresh, half a retention window on.
-  A token under three characters, or one whose set has saturated,
+  each named path in a new `urltoken:{server_key}:{token}` index, one
+  set per server a URL's rows are filed under, under every prefix of
+  three to twelve characters of each word, stamping each hash with when
+  its URL was last named. A set drops hashes a retention window has
+  passed over and collapses to a saturated marker past `URL_SEARCH_MAX`
+  (5,000). A scoped search reads its server's sets and a site search
+  those of every server an index in the read plan names; the search
+  intersects its indexed tokens and folds only their candidates'
+  shards. A refused token write is logged and not retried; its URLs are
+  filed again when their names next refresh, half a retention window
+  on. A token under three characters, or one whose set has saturated,
   narrows nothing while the term's other tokens still do. A term with no
   token, none the index can answer, or more than `URL_SEARCH_MAX`
   candidates folds the whole index, matching at the same word boundary,
@@ -106,25 +180,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   producer still reads fresh, because each line carries the moment it
   was written.
 - **The hourly fold writes in one batch, and a refused write names its
-  key.** Its 65 writes — the hour's leaderboard and the rows and names
-  of 32 shards — went out in 33 round trips; they now go in one, and the
-  log line names the lost key, `urls_h:{shard}:{hour}`,
-  `urlnames_h:{shard}:{hour}` or the leaderboard's, rather than the hour.
-  A refused write is logged and not retried by the flush. An hour
-  missing a row or name shard, whatever removed it, is re-derived at the
+  key.** Its writes — the hour's leaderboard, its server index, and
+  every shard of both families for each server that index names — go
+  out in batches of up to 500 keys rather than one round trip per
+  shard, and the log line names the lost key,
+  `urls_h:{server_key}:{shard}:{hour}`, `urlsrv_h:{hour}` or the
+  leaderboard's, rather than the hour. A refused write is logged and
+  not retried by the flush. An hour missing its server index, a row
+  shard or its leaderboard, whatever removed it, is re-derived at the
   next periodic reprobe like an evicted one, from its fine buckets read
   back from the mirror; a late write reaches the fine buckets that
-  re-fold reads, so the hour comes back with it.
-- **Public signatures follow the clock and the rank tier.**
+  re-fold reads, so the hour comes back with it. The probe takes two
+  round trips: each hour's server index and leaderboard, then every
+  key the index names.
+- **Public signatures follow the clock, the server and the rank tier.**
   `Stats_Store::url_hours_derived()` replaces `url_hours_folded()` and
-  answers `folded` and `ranked` per hour.
-  `Stats_Store::expand_sole_server()` takes only `$row`: a caller still
-  passing a second argument gets the row's own split, not the one it
-  passed. `Performance_CI_Node::load_row()` takes a trailing `int $now`,
-  and `load_index_default()` takes `string $shard`, no longer nullable,
-  and a trailing `int $now`; the `$load_index` seam is `function (
-  string $shard, list<Stats_Store> $stores, int $now )`.
+  answers `folded` and `unranked`, the servers of the hour with no
+  marker. `Stats_Store::url_shard_parts()` and `url_hour_parts()` take
+  the server key before the shard; `url_row_sources()` and
+  `url_hour_sources()` take a server (`''` reads the index) and return
+  `[ bucket, rows, server_name ]` triples; `set_url_names()` takes
+  `server => hash => URL`, and `get_url_names()` returns `hash => {
+  server, url }`. `Performance_CI_Node::load_row()` takes `( string
+  $hash, string $server, array $stores, int $now )` and
+  `load_index_default()` `( string $shard, string $server, array
+  $stores, int $now )`; the `$load_index` seam is `function ( string
+  $shard, string $server, list<Stats_Store> $stores, int $now )`.
   `Flame_Builder_Node::set_clock()` is gone: a test pins `Core::$now`.
+
+### Removed
+
+- **The `urlnames` / `urlnames_h` name blobs.** A row carries its own
+  path.
+- **`Flame_Builder_Node::MAX_URLS_PER_SHARD`.** A URL shard is capped by
+  its estimated bytes alone.
+- **The URL row's per-server split and its API:**
+  `Stats_Store::ROW_SRV`, `URL_SRV_FIELD`, `URL_SRV_SUMS` (now
+  `ROW_SUMS`), `expand_sole_server()`, `collapse_sole_server()`,
+  `swap_url_server_sums()`, `split_url()` (merged into `path_of(
+  string $url )`), and `Performance_CI_Node`'s `srv_recent` field.
 
 ### Fixed
 
@@ -155,20 +249,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and each still hears whether the write landed.
 - **A late write into a folded hour whose coarse shard was evicted no
   longer replaces that shard's rows with its own.** Merged into the
-  missing `urls_h` or `urlnames_h` key, the late rows recreated the
-  shard holding themselves alone, and the probe then read the hour as
-  folded with the original rows lost, though its fine buckets still
-  held them. A write into a folded hour now always goes to its fine
-  bucket, which the hour is derived from, and into the hour key only
-  while that key exists; a write that lands there forgets the hour's
-  marker, so the probe re-ranks it. An hour-key write whose read misses
-  forgets the key instead of writing it. The reprobe finds a missing key
-  and re-folds the hour from its fine buckets, so the late rows come
-  back, including rows merged into shards that were still present. The
-  fine write keeps the normal fine TTL, like any fold read that re-warms
-  the bucket. A refused late write logs the key it lost,
-  `urls:{shard}:{bucket}` or `urls_h:{shard}:{hour}` and their name
-  twins, so the tier is named, and nothing more.
+  missing `urls_h` key, the late rows recreated the shard holding
+  themselves alone, and the probe then read the hour as folded with the
+  original rows lost, though its fine buckets still held them. A write
+  into a folded hour now always goes to its fine bucket, which the hour
+  is derived from, and into the hour key only while that key exists; a
+  write that lands there forgets its server's marker for the hour, so
+  the probe re-ranks it. An hour-key write whose read misses forgets the
+  key instead of writing it. The reprobe finds a missing key and
+  re-folds the hour from its fine buckets, so the late rows come back,
+  including rows merged into shards that were still present. The fine
+  write keeps the normal fine TTL, like any fold read that re-warms the
+  bucket. A refused late write logs the key it lost,
+  `urls:{server_key}:{shard}:{bucket}` or
+  `urls_h:{server_key}:{shard}:{hour}`, so the tier is named, and
+  nothing more.
 - **A late record into a folded hour reaches the global leaderboard.**
   The board takes a folded hour's `lb_h` and skips its fine buckets, and
   a replayed record landed only in the fine `lb`, so the board never
@@ -184,6 +279,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reached only its fine bucket, not the hour key the reader reads. The
   budget now stops folds only; every hour the probe finds folded is
   recognised in that flush.
+
+### Notes
+
+- **Nothing reads a key in the earlier shapes, so an upgrade starts
+  these indexes over.** The URL index restarts empty for its window and
+  refills as traffic arrives; the old `urls` and `urlnames` keys age
+  out on their TTLs. The search index starts empty until URLs
+  are named again, at most half a retention window after each is next
+  seen, so until then a search misses URLs not seen since the upgrade.
+  An old `urlmap` entry reads as missing until its URL flushes again,
+  and the table shows that row's path meanwhile. A checkpoint's URL rows
+  in the old shape are dropped once at restore, losing that flush's
+  pending URL delta. A rule whose hook list is too large for one cache
+  item is refused at save.
 
 ## [0.101.2] - 2026-09-22
 

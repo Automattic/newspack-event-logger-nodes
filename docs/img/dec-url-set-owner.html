@@ -55,7 +55,7 @@
     <div class="body">
       <div class="req">urls <b>server</b> · <b>search</b> · <b>errors_only</b> · <b>include_workers</b> · sort · order · offset · limit</div>
       <div class="down">↓</div>
-      <div class="fold"><span class="m">url_page()</span> applies every filter while it folds the URL index one shard at a time, keeping each shard's best <span class="m">offset + limit</span> rows and best ten by mean (decision 14):
+      <div class="fold"><span class="m">url_page()</span> applies every filter while it folds the URL index one shard at a time, keeping each shard's best <span class="m">offset + limit</span> rows and best ten by mean (decision 17):
         <div class="shards"><span>0</span><span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7</span><span>8</span><span>9</span><span>a</span><span>b</span><span>c</span><span>d</span><span>e</span><span>f</span></div></div>
       <div class="down">↓</div>
       <div class="reply">one reply</div>
@@ -97,7 +97,7 @@
     <span class="rate">RECENT_BUCKETS × Stats_Store::BUCKET_SECONDS</span>
     <p>It drops the bucket still filling, and never divides by the buckets that happened to carry traffic: a URL seen in two of twelve would read six times its rate beside a header that does not.</p></div>
   <div class="card"><h3>The totals are exact</h3>
-    <p><span class="mono">MAX_URLS_PER_SHARD</span> folds each shard's tail into a synthetic <span class="mono">Other</span> row (<span class="mono">Stats_Store::OTHER_KEY</span>) carrying only the fields that ADD, splits included: exact site-wide, and per server for every server <span class="mono">MAX_SERVER_VALUES</span> keeps, since its own tail folds into an <span class="mono">Other</span> server no real fleet reaches. The row is marked <span class="mono">aggregate</span> and un-clickable.</p></div>
+    <p>The byte cap folds each shard's tail into a synthetic <span class="mono">Other</span> row (<span class="mono">Stats_Store::OTHER_KEY</span>) carrying only the fields that ADD: exact site-wide, and per server for every server the index admits by name, since past <span class="mono">MAX_SERVER_VALUES</span> a server's rows file under an <span class="mono">Other</span> server no real fleet reaches. The row is marked <span class="mono">aggregate</span> and un-clickable.</p></div>
   <div class="card"><h3>Workers are excluded by default</h3>
     <p>The row RECORDS worker traffic, never guessing from <span class="mono">?worker_type</span>; <span class="mono">include_workers</span> opts IN, and the tail folds into TWO overflow rows (<span class="mono">Stats_Store::other_key()</span>). A header summed from rows keeping worker timing reads "Avg Response" as 227 ms of cron against 3 ms of reader traffic on a staging hub.</p></div>
 </div>
