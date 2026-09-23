@@ -239,16 +239,19 @@ class Log_Manager {
 	 * substrate's own endpoints. Each is worker traffic whether or not the
 	 * substrate set `NEWSPACK_NODES_WORKER_TYPE` in the serving process, and
 	 * the value is what the `worker_type` entry carries, so a rule that logs
-	 * one keeps it on the worker rows and off the global averages.
+	 * one keeps it on the worker rows and off the global averages. The four
+	 * REST endpoints share `restapi`: the path already names each, and the
+	 * type rides the URL as its query, so a per-endpoint name read
+	 * `…/workers/spawn?spawn`.
 	 *
 	 * @var array<string,string>
 	 */
 	private const PLATFORM_WORKERS = [
 		'/wp-cron.php'                                  => 'cron',
-		'/wp-json/newspack-nodes/v1/command'            => 'command',
-		'/wp-json/newspack-nodes/v1/log/stream'         => 'stream',
-		'/wp-json/newspack-nodes/v1/messages/stream'    => 'stream',
-		'/wp-json/newspack-nodes/v1/workers/spawn'      => 'spawn',
+		'/wp-json/newspack-nodes/v1/command'            => 'restapi',
+		'/wp-json/newspack-nodes/v1/log/stream'         => 'restapi',
+		'/wp-json/newspack-nodes/v1/messages/stream'    => 'restapi',
+		'/wp-json/newspack-nodes/v1/workers/spawn'      => 'restapi',
 	];
 
 	/**

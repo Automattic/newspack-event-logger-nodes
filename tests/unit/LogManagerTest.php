@@ -706,10 +706,10 @@ class LogManagerTest extends TestCase {
 	public static function platform_endpoints(): array {
 		return [
 			'cron'     => [ '/wp-cron.php?doing_wp_cron=1790000000.5', 'cron' ],
-			'command'  => [ '/wp-json/newspack-nodes/v1/command', 'command' ],
-			'log'      => [ '/wp-json/newspack-nodes/v1/log/stream?since=12', 'stream' ],
-			'messages' => [ '/wp-json/newspack-nodes/v1/messages/stream', 'stream' ],
-			'spawn'    => [ '/wp-json/newspack-nodes/v1/workers/spawn', 'spawn' ],
+			'command'  => [ '/wp-json/newspack-nodes/v1/command', 'restapi' ],
+			'log'      => [ '/wp-json/newspack-nodes/v1/log/stream?since=12', 'restapi' ],
+			'messages' => [ '/wp-json/newspack-nodes/v1/messages/stream', 'restapi' ],
+			'spawn'    => [ '/wp-json/newspack-nodes/v1/workers/spawn', 'restapi' ],
 		];
 	}
 
