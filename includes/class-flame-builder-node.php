@@ -196,7 +196,7 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	 * this is a name an operator can select — which means the URL index files
 	 * such rows under it too, or picking it empties the table.
 	 */
-	private const UNKNOWN_VALUE = 'Unknown';
+	private const UNKNOWN_VALUE = Stats_Store::UNKNOWN_SERVER;
 
 	/**
 	 * Where each RAW-COMPARABLE field sits on an index line, `[offset, length]`.
@@ -825,7 +825,7 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 		// and merge RENUMBERS integer keys rather than overwriting them.
 		$acc[ $slot ][ $server ][ $url_hash ] ??= \array_replace(
 			self::empty_url_row( PHP_INT_MAX ),
-			[ Stats_Store::ROW_PATH => Stats_Store::row_path( $url, $server_name ) ]
+			[ Stats_Store::ROW_PATH => Stats_Store::row_path( $url, $server ) ]
 		);
 		// The whole URL goes to the URL name table, once, not into every row.
 		$acc['url_names'][ $url_hash ] = $url;
@@ -924,11 +924,14 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 			}
 
 			// Per-server, skipping the dim that would only repeat the scope.
-			if ( '' !== $server_key && 'server' !== $dim ) {
+			if ( '' !== $server_key && Stats_Store::DIM_SERVER !== $dim ) {
 				$acc['dim_by_server'][ $server_key ][ $dim ][ $val ] = self::add_dim( $acc['dim_by_server'][ $server_key ][ $dim ][ $val ] ?? null, $dim_duration, $dim_peak_mb );
 			}
 
-			// Per-URL.
+			// Per-URL, skipping the server: a URL belongs to one.
+			if ( Stats_Store::DIM_SERVER === $dim ) {
+				continue;
+			}
 			$acc['url_dim'][ $url_hash ][ $dim ][ $val ] = self::add_dim( $acc['url_dim'][ $url_hash ][ $dim ][ $val ] ?? null, $dim_duration, $dim_peak_mb );
 		}
 	}
@@ -1763,10 +1766,11 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	 * Store the names of URLs this flush saw, once each per server they are
 	 * filed under.
 	 *
-	 * A stored row carries the hash alone, so the name table is what a reader
-	 * resolves a displayed page through. Held pairs are skipped until half the
-	 * retention window has passed, which re-writes a name that is still in use
-	 * well before its own TTL retires it.
+	 * The name table is what a reader displays a row's whole URL through,
+	 * and what a hash-only read finds the row's server by. Held pairs are
+	 * skipped until half the retention window has passed, which re-writes a
+	 * name that is still in use well before its own TTL retires it. A hash
+	 * filed under two servers in one flush keeps the last one written.
 	 *
 	 * Each name also files the search index of the server its rows are filed
 	 * under — its own, or `Other` past the index cap — which is why the memo
@@ -1787,7 +1791,6 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 	 */
 	private function persist_url_names( Stats_Store $stats_store, int $now, array $admitted ): array {
 		$refresh = \max( 1, (int) ( $stats_store->max_lifespan() / 2 ) );
-		$due     = [];
 		$filed   = [];
 		foreach ( $this->pending as $bucket => $acc ) {
 			foreach ( [ $acc['url_stats'], $acc['url_stats_worker'] ] as $servers ) {
@@ -1802,15 +1805,13 @@ class Flame_Builder_Node extends Node implements Shutdown_Sweeper {
 						if ( null !== $written && $now - Core::num_int( $written ) < $refresh ) {
 							continue;
 						}
-						$url                            = $acc['url_names'][ $hash ];
-						$due[ $hash ]                   = $url;
-						$filed[ $as ][ (string) $hash ] = $url;
+						$filed[ $as ][ (string) $hash ] = $acc['url_names'][ $hash ];
 						$this->named_urls->set( $held, $now );
 					}
 				}
 			}
 		}
-		$stats_store->set_url_names( $due );
+		$stats_store->set_url_names( $filed );
 		return \array_map(
 			static fn ( array $names ): array => Stats_Store::token_sets_of( Stats_Store::paths_of( $names ) ),
 			$filed

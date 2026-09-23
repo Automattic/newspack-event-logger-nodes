@@ -1903,7 +1903,7 @@ class FlameBuilderTest extends TestCase {
 		$row = self::named_url_rows( $this->get_url_shard( $store, $bucket, Stats_Store::url_shard( $hash ), 'bend.example' ) )[ $hash ] ?? [];
 		$this->assertSame( '/2026/08/31/a-headline-worth-101-bytes/', $row['path'] ?? null );
 		$this->assertSame(
-			[ $hash => [ '/2026/08/31/a-headline-worth-101-bytes/', 'https://bend.example' ] ],
+			[ $hash => [ 'server' => 'bend.example', 'url' => $url ] ],
 			$store->get_url_names( [ $hash ] )
 		);
 	}
@@ -4476,7 +4476,7 @@ class FlameBuilderTest extends TestCase {
 		$this->assertSame( 22.0, (float) $rolled[ $hash ]['max_ms'], 'an extreme is a max, not a sum' );
 		// The name is not in the row: the fold carries statistics, and the URL
 		// name table carries the one copy of what those statistics are about.
-		$this->assertSame( [ $hash => [ '/wombat-4471', '' ] ], $store->get_url_names( [ $hash ] ) );
+		$this->assertSame( [ $hash => [ 'server' => self::SEED_SERVER, 'url' => 'https://' . self::SEED_SERVER . '/wombat-4471' ] ], $store->get_url_names( [ $hash ] ) );
 	}
 
 	public function test_a_folded_hour_keeps_each_server_apart(): void {
@@ -5555,6 +5555,7 @@ class FlameBuilderTest extends TestCase {
 		$bucket = $this->get_url_dimensional_bucket( $store, $hash, Stats_Store::bucket_key( $now ) );
 		$this->assertArrayHasKey( 'status', $bucket );
 		$this->assertArrayHasKey( 'method', $bucket, 'every dimension shares the bucket key' );
+		$this->assertArrayNotHasKey( 'server', $bucket, 'a URL belongs to one server, so it keeps no server axis' );
 	}
 
 	public function test_a_nameless_server_in_a_restored_checkpoint_stays_out_of_the_global_series(): void {

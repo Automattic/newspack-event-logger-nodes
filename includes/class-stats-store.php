@@ -232,20 +232,12 @@ class Stats_Store {
 	public const URL_ORDERS = [ 'asc', 'desc' ];
 
 	/**
-	 * URL name table: `urlmap:{hash}` => `[ path, origin ]`, written once.
+	 * URL name table: `urlmap:{hash}` => `[ server_name, path ]`.
 	 *
-	 * A stored row carries the 12-char hash and nothing else identifying. The
-	 * name is 101 bytes of a 166-byte minimal row, so keeping it on the row puts
-	 * 288 copies of one name in a retention window. Readers resolve only the
-	 * hashes they display, except a search or a url-sort, which need the names
-	 * to answer at all.
-	 *
-	 * ORIGIN and PATH are stored apart because they answer different questions.
-	 * The origin is already the server in the row's key and already the
-	 * `server` dimension the picker is built from, so a search term matching
-	 * it would make one box ask the dropdown's question; the PATH is what a
-	 * search matches. Display joins the two back, and nothing else reads the
-	 * origin.
+	 * The server is the one a hash's rows are filed under, which is what a
+	 * hash-only read needs to find them; the path is the row's own
+	 * `row_path()` against that server. `get_url_names()` joins the two back
+	 * into the URL a reader displays.
 	 */
 	public const NS_URLMAP      = 'urlmap';
 
@@ -322,6 +314,9 @@ class Stats_Store {
 	 * Decision 1. Safe as a URL row key: a url_hash is 12 hex characters.
 	 */
 	public const OTHER_KEY = 'Other';
+
+	/** The server a request whose producer named none is filed under. */
+	public const UNKNOWN_SERVER = 'Unknown';
 
 	/** The overflow row's worker half — see `other_key()`. */
 	public const OTHER_WORKER_KEY = 'Other:worker';
@@ -1651,14 +1646,16 @@ class Stats_Store {
 	}
 
 	/**
-	 * Resolve URL names for the hashes a reader is about to show.
+	 * Resolve URL names for the hashes a reader is about to show or locate.
 	 *
 	 * One `lookup_multi`, like every other reader path (decision 6). Absent
 	 * hashes are simply missing from the result: a name can expire while its
 	 * rows are still in the window, and a row with no name is still a row.
 	 *
 	 * @param array<int,string> $hashes 12-char URL hashes.
-	 * @return array<string,array{0:string,1:string}> hash => [ path, origin ].
+	 * @return array<string,array{server:string,url:string}> hash => the server
+	 *                                                       its rows are filed
+	 *                                                       under, and its URL.
 	 */
 	public function get_url_names( array $hashes ): array {
 		if ( [] === $hashes ) {
@@ -1671,12 +1668,40 @@ class Stats_Store {
 		$out = [];
 		foreach ( $this->table( self::ROLE_AGGREGATE )?->lookup_multi( \array_keys( $map ) ) ?? [] as $key => $value ) {
 			$stored = Core::arr( $value );
-			$path   = Core::str( $stored[0] ?? '' );
-			if ( '' !== $path && isset( $map[ $key ] ) ) {
-				$out[ $map[ $key ] ] = [ $path, Core::str( $stored[1] ?? '' ) ];
+			$server = $stored[0] ?? null;
+			$path   = $stored[1] ?? null;
+			if ( isset( $map[ $key ] ) && self::is_url_name( $server, $path ) ) {
+				$out[ $map[ $key ] ] = [ 'server' => $server, 'url' => self::join_url( $server, $path ) ];
 			}
 		}
 		return $out;
+	}
+
+	/**
+	 * The URL a `row_path()` was cut from, given the server it was cut
+	 * against: the inverse `row_path()` answers to, and the one place a
+	 * reader spells the join.
+	 *
+	 * @param string $server The server the path was cut against.
+	 * @param string $path   The stored path.
+	 */
+	private static function join_url( string $server, string $path ): string {
+		return self::names_host( $server ) && \str_starts_with( $path, '/' ) ? "https://{$server}{$path}" : $path;
+	}
+
+	/**
+	 * Whether a stored `urlmap` value is `[ server_name, path ]`. A server
+	 * name never holds `/`, `?` or `#`, so an entry whose first element does
+	 * is the old `[ path, origin ]` shape, and reads as no name at all.
+	 *
+	 * @param mixed $server The stored first element.
+	 * @param mixed $path   The stored second element.
+	 * @phpstan-assert-if-true non-empty-string $server
+	 * @phpstan-assert-if-true non-empty-string $path
+	 */
+	private static function is_url_name( mixed $server, mixed $path ): bool {
+		return \is_string( $server ) && '' !== $server && false === \strpbrk( $server, '/?#' )
+			&& \is_string( $path ) && '' !== $path;
 	}
 
 	/**
@@ -1688,14 +1713,16 @@ class Stats_Store {
 	 * carry arrays; the writer decides WHICH names are worth re-writing, since
 	 * a name never changes and re-storing it every flush would spend the saving.
 	 *
-	 * @param array<array-key,string> $names hash => URL. An all-digit hash is
-	 *                                        an INT key, as PHP makes it.
+	 * @param array<array-key,array<array-key,string>> $servers Filed server => hash => URL.
+	 *                                                          An all-digit key is an INT.
 	 * @return void
 	 */
-	public function set_url_names( array $names ): void {
+	public function set_url_names( array $servers ): void {
 		$writes = [];
-		foreach ( $names as $hash => $url ) {
-			$writes[] = [ [ self::NS_URLMAP ], (string) $hash, self::split_url( $url ) ];
+		foreach ( $servers as $server => $urls ) {
+			foreach ( $urls as $hash => $url ) {
+				$writes[] = [ [ self::NS_URLMAP ], (string) $hash, [ (string) $server, self::row_path( $url, (string) $server ) ] ];
+			}
 		}
 		$this->bucket_set_multi( $writes );
 	}
@@ -1793,6 +1820,36 @@ class Stats_Store {
 	 */
 	public static function entry_key( int $partition, string $key ): string {
 		return self::namespace_for( $partition ) . ':' . $key;
+	}
+
+	/**
+	 * The `ROW_PATH` of a URL served by `$server`: what the key does not
+	 * already say. An https URL whose authority is the server, when the
+	 * server names a host, keeps only its path, which `join_url()` joins back
+	 * as `https://{server}{path}`; any other
+	 * URL is kept whole, so no reader shows a scheme or host it was not. Cut
+	 * to `MAX_PATH_BYTES`, the last of them an ellipsis.
+	 *
+	 * @param string $url    The stored URL.
+	 * @param string $server The server whose key the row is filed under.
+	 */
+	public static function row_path( string $url, string $server ): string {
+		$origin = 'https://' . $server;
+		$path   = self::names_host( $server ) && \str_starts_with( $url, $origin . '/' ) ? \substr( $url, \strlen( $origin ) ) : $url;
+		if ( \strlen( $path ) <= self::MAX_PATH_BYTES ) {
+			return $path;
+		}
+		return \mb_strcut( $path, 0, self::MAX_PATH_BYTES - \strlen( '…' ), 'UTF-8' ) . '…';
+	}
+
+	/**
+	 * Whether a server name is a host a path joins back onto: the overflow
+	 * and nameless servers stand for many hosts or none.
+	 *
+	 * @param string $server A server name rows are filed under.
+	 */
+	private static function names_host( string $server ): bool {
+		return '' !== $server && self::OTHER_KEY !== $server && self::UNKNOWN_SERVER !== $server;
 	}
 
 	/**
@@ -2505,46 +2562,30 @@ class Stats_Store {
 		$out = [];
 		foreach ( $urls as $hash => $url ) {
 			if ( '' !== $url ) {
-				$out[ (string) $hash ] = self::path_of( self::split_url( $url ) );
+				$out[ (string) $hash ] = self::path_of( $url );
 			}
 		}
 		return $out;
 	}
 
 	/**
-	 * A stored URL split into the pair the name table holds: `[ path, origin ]`.
+	 * The PATH of a URL: what a search matches, with no scheme or host.
 	 *
-	 * The ONE place the schema decides where a URL divides, so the search's
-	 * haystack and the display's join can never disagree about it. A stored url
-	 * is absolute (`https://host/path`); one that carries no scheme is all
-	 * path, which is what a test seeding `/a` means and what a producer with no
-	 * `SERVER_NAME` writes.
+	 * The server is the picker's question, so a term matching the host would
+	 * make one box ask the dropdown's. A URL carrying no scheme is all path,
+	 * which is what a producer with no `SERVER_NAME` writes. The authority
+	 * ends at whichever delimiter comes first, so an authority with no path
+	 * keeps its query on the path.
 	 *
-	 * @param string $url The stored URL.
-	 * @return array{0:string,1:string} Path, then origin.
+	 * @param string $url A URL, or a row's path.
 	 */
-	public static function split_url( string $url ): array {
+	public static function path_of( string $url ): string {
 		$at = \strpos( $url, '://' );
 		if ( false === $at ) {
-			return [ $url, '' ];
+			return $url;
 		}
-		// @longform The authority ends at whichever delimiter comes first, so
-		// the split is LOSSLESS — `origin . path` is the stored url again —
-		// and an authority with no path keeps its query on the search half.
 		$host = $at + 3;
-		$end  = $host + \strcspn( $url, '/?#', $host );
-		return [ \substr( $url, $end ), \substr( $url, 0, $end ) ];
-	}
-
-	/**
-	 * The PATH half of a name pair — decision 18: a positional value is read
-	 * through a name, never a bare index.
-	 *
-	 * @param array<array-key,mixed> $pair `[ path, origin ]`, from `get_url_names()` or `split_url()`.
-	 * @return string The path, or '' for a pair that is not one.
-	 */
-	public static function path_of( array $pair ): string {
-		return Core::str( $pair[0] ?? '' );
+		return \substr( $url, $host + \strcspn( $url, '/?#', $host ) );
 	}
 
 	/**
@@ -2704,17 +2745,6 @@ class Stats_Store {
 		);
 	}
 
-	/**
-	 * A name table pair joined back into the URL it was split from — the
-	 * inverse of `split_url()`, and the one place a reader spells the join.
-	 *
-	 * @param array<array-key,mixed> $pair `[ path, origin ]`, as `get_url_names()` hands it back.
-	 * @return string The URL, or '' for a pair that is not one.
-	 */
-	public static function join_url( array $pair ): string {
-		return Core::str( $pair[1] ?? '' ) . Core::str( $pair[0] ?? '' );
-	}
-
 	/** The retention window every TTL here derives from, in seconds. */
 	public function max_lifespan(): int {
 		return $this->max_lifespan;
@@ -2727,25 +2757,6 @@ class Stats_Store {
 	 */
 	public static function hourly_parts(): array {
 		return [ self::NS_HOURLY ];
-	}
-
-	/**
-	 * The `ROW_PATH` of a URL served by `$server`: what the key does not
-	 * already say. An https URL whose authority is the server keeps only its
-	 * path, which a reader joins back as `https://{server}{path}`; any other
-	 * URL is kept whole, so no reader shows a scheme or host it was not. Cut
-	 * to `MAX_PATH_BYTES`, the last of them an ellipsis.
-	 *
-	 * @param string $url    The stored URL.
-	 * @param string $server The server whose key the row is filed under.
-	 */
-	public static function row_path( string $url, string $server ): string {
-		$origin = 'https://' . $server;
-		$path   = '' !== $server && \str_starts_with( $url, $origin . '/' ) ? \substr( $url, \strlen( $origin ) ) : $url;
-		if ( \strlen( $path ) <= self::MAX_PATH_BYTES ) {
-			return $path;
-		}
-		return \mb_strcut( $path, 0, self::MAX_PATH_BYTES - \strlen( '…' ), 'UTF-8' ) . '…';
 	}
 
 	/**

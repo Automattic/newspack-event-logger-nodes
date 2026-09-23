@@ -570,8 +570,8 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( 3, $result['rows'] );
 		$this->assertCount( 2, $result['data'] );
 		// Desc by count: /b first (5), /c second (3).
-		$this->assertSame( '/b', $result['data'][0]['url'] );
-		$this->assertSame( '/c', $result['data'][1]['url'] );
+		$this->assertSame( 'https://example.com/b', $result['data'][0]['url'] );
+		$this->assertSame( 'https://example.com/c', $result['data'][1]['url'] );
 	}
 
 	public function test_a_search_asks_urlmap_for_its_candidates_not_for_the_index(): void {
@@ -687,7 +687,7 @@ class PerformanceCITest extends TestCase {
 		);
 
 		$this->assertSame( 1, $result['rows'] );
-		$this->assertSame( '/articles/123', $result['data'][0]['url'] );
+		$this->assertSame( 'https://example.com/articles/123', $result['data'][0]['url'] );
 	}
 
 	public function test_a_later_bucket_supplies_the_url_an_earlier_one_omitted(): void {
@@ -755,14 +755,15 @@ class PerformanceCITest extends TestCase {
 		);
 		$one_shard = $memd->row_keys;
 
-		$this->assertSame( '/wombat-4471', $result['stats']['url'] );
+		$this->assertSame( 'https://example.com/wombat-4471', $result['stats']['url'] );
 		$this->assertSame( 31, $result['stats']['count'] );
 
-		// Against what the whole table costs — a ratio rather than a count, so
-		// this says "one shard, not sixteen" whatever the read plan's width is.
+		// Against what the whole table costs in the scope `urlmap` located —
+		// a ratio rather than a count, so this says "one shard, not sixteen"
+		// whatever the read plan's width is.
 		Core::cleanup_all_nodes();
 		$memd->row_keys = 0;
-		VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' );
+		VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls', '--server=' . self::SEED_SERVER );
 
 		// Twice: the reader family, then the worker one when the first misses.
 		$this->assertLessThanOrEqual(
@@ -770,6 +771,83 @@ class PerformanceCITest extends TestCase {
 			$one_shard,
 			'dump_url must point-read the hash\'s shard, not the whole index'
 		);
+	}
+
+	/**
+	 * An unscoped `dump_url` finds its hash's server through `urlmap` and
+	 * reads that server's keys alone, as a scoped one does: a hub's other
+	 * servers hold nothing for a URL whose host is not theirs.
+	 */
+	public function test_an_unscoped_dump_url_reads_only_the_server_its_name_locates(): void {
+		$memd   = self::row_key_counter();
+		$store  = new Stats_Store( 0, 86400 );
+		$bucket = $this->current_url_bucket();
+		$this->set_url_bucket( $store, $bucket, [
+			'a4471ab0c0de' => [ 'url' => 'https://kea.example/wombat-4471', 'count' => 31, 'sum_ms' => 992.0, 'timed_count' => 31 ],
+		], 'kea.example' );
+		$this->set_url_bucket( $store, $bucket, [
+			'a8823bc1d2ef' => [ 'url' => 'https://moa.example/quokka-8823', 'count' => 17, 'sum_ms' => 411.0, 'timed_count' => 17 ],
+		], 'moa.example' );
+
+		$memd->row_keys = 0;
+		$scoped         = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', 'a4471ab0c0de --server=kea.example' );
+		$scoped_keys    = $memd->row_keys;
+		Core::cleanup_all_nodes();
+		$memd->row_keys = 0;
+		$unscoped       = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', 'a4471ab0c0de' );
+
+		$this->assertSame( 'https://kea.example/wombat-4471', $unscoped['stats']['url'] );
+		$this->assertSame( 31, $unscoped['stats']['count'] );
+		$this->assertSame( $scoped['stats'], $unscoped['stats'] );
+		$this->assertSame( $scoped_keys, $memd->row_keys, 'the other server\'s keys are never read' );
+	}
+
+	/**
+	 * A name that has expired, or that locates a server holding no row for
+	 * the hash, leaves the unscoped read to walk every server's keys.
+	 */
+	public function test_an_unscoped_dump_url_without_a_usable_name_reads_every_server(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( 0, 86400 );
+		$bucket     = $this->current_url_bucket();
+		$this->set_url_bucket( $store, $bucket, [
+			'a4471ab0c0de' => [ 'url' => 'https://kea.example/wombat-4471', 'count' => 31, 'sum_ms' => 992.0, 'timed_count' => 31 ],
+		], 'kea.example' );
+		$store->set_url_names( [ 'moa.example' => [ 'a4471ab0c0de' => 'https://moa.example/wombat-4471' ] ] );
+
+		$located = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', 'a4471ab0c0de' );
+		Core::cleanup_all_nodes();
+		$table = ( new \ReflectionMethod( $store, 'table' ) )->invoke( $store, 'aggregate' );
+		$table->forget( Stats_Store::NS_URLMAP . ':a4471ab0c0de' );
+		$expired = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', 'a4471ab0c0de' );
+
+		$this->assertSame( 31, $located['stats']['count'] ?? null, 'the named server holds no row' );
+		$this->assertSame( 31, $expired['stats']['count'] ?? null, 'no name at all' );
+		$this->assertSame( '/wombat-4471', $expired['stats']['url'], 'the row\'s own path until a name returns' );
+	}
+
+	/**
+	 * A `urlmap` entry in the old `[ path, origin ]` shape is a miss, never a
+	 * name: read as `[ server, path ]` it would show the bare origin.
+	 */
+	public function test_an_old_shape_url_name_reads_as_no_name(): void {
+		Core::$memd = new InMemoryMemcached();
+		$store      = new Stats_Store( 0, 86400 );
+		$this->set_url_bucket( $store, $this->current_url_bucket(), [
+			'a4471ab0c0de' => [ 'url' => '/a', 'count' => 31, 'sum_ms' => 992.0, 'timed_count' => 31 ],
+		] );
+		$table = ( new \ReflectionMethod( $store, 'table' ) )->invoke( $store, 'aggregate' );
+		$table->forget( Stats_Store::NS_URLMAP . ':a4471ab0c0de' );
+		$absent = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', 'a4471ab0c0de' );
+		Core::cleanup_all_nodes();
+		$store->bucket_set_multi( [ [ [ Stats_Store::NS_URLMAP ], 'a4471ab0c0de', [ '/a', 'https://example.com' ] ] ] );
+
+		$this->assertSame( [], $store->get_url_names( [ 'a4471ab0c0de' ] ) );
+		$page = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' );
+		$this->assertSame( [ '/a' ], \array_column( $page['data'], 'url' ), 'never the bare origin' );
+		Core::cleanup_all_nodes();
+		$detail = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'dump_url', 'a4471ab0c0de' );
+		$this->assertSame( $absent['stats'], $detail['stats'], 'resolved as with no name at all' );
 	}
 
 	/**
@@ -794,7 +872,8 @@ class PerformanceCITest extends TestCase {
 	}
 
 	/**
-	 * A modal costs ONE SHARD's read, never the table's fan-out.
+	 * A modal costs ONE SHARD's read, never the table's fan-out. The table is
+	 * read in the server `urlmap` locates, the scope the modal reads.
 	 *
 	 * Decision 14 held the whole unscoped index for the request so a modal
 	 * opened from the table answered from the read the table already paid for.
@@ -810,14 +889,14 @@ class PerformanceCITest extends TestCase {
 		] );
 		$node = new Performance_CI_Node();
 
-		VerbHarness::fire( $node, 'performance', 'urls' );
+		VerbHarness::fire( $node, 'performance', 'urls', '--server=' . self::SEED_SERVER );
 		$table = $memd->row_keys;
 		Core::cleanup_all_nodes();
 		$memd->row_keys = 0;
 		$detail         = VerbHarness::fire( $node, 'performance', 'dump_url', 'a4471ab0c0de' );
 		$modal          = $memd->row_keys;
 
-		$this->assertSame( '/wombat-4471', $detail['stats']['url'] );
+		$this->assertSame( 'https://example.com/wombat-4471', $detail['stats']['url'] );
 		$this->assertGreaterThan( 0, $modal, 'the row is read, not remembered' );
 		$this->assertLessThanOrEqual(
 			(int) ( $table / \count( Stats_Store::url_shards() ) ),
@@ -1551,7 +1630,8 @@ class PerformanceCITest extends TestCase {
 		);
 
 		$this->assertSame( 1, $result['totals']['urls'] );
-		$this->assertSame( '/reviews/941', $result['data'][0]['url'] );
+		// One name per hash: the server filed last names it for both.
+		$this->assertSame( 'https://beta.example/reviews/941', $result['data'][0]['url'] );
 		$this->assertSame( 2, $result['data'][0]['count'] );
 		$this->assertEqualsWithDelta( 130.0, $result['data'][0]['avg_ms'], 1e-6 );
 	}
@@ -1846,7 +1926,7 @@ class PerformanceCITest extends TestCase {
 		$this->assertSame( 1, $result['totals']['urls'] );
 		$this->assertSame( 4, $result['totals']['requests'] );
 		$this->assertEqualsWithDelta( 12.0, $result['totals']['avg_ms'], 1e-6 );
-		$this->assertSame( [ '/reader' ], \array_column( $result['data'], 'url' ) );
+		$this->assertSame( [ 'https://example.com/reader' ], \array_column( $result['data'], 'url' ) );
 	}
 
 	public function test_urls_verb_shows_worker_traffic_when_asked(): void {
@@ -1919,7 +1999,7 @@ class PerformanceCITest extends TestCase {
 		// The footer reads `total`; it must count what is actually rendered.
 		$this->assertSame( 1, $result['totals']['urls'] );
 		$this->assertCount( 1, $result['data'] );
-		$this->assertSame( '/timeouts', $result['data'][0]['url'] );
+		$this->assertSame( 'https://example.com/timeouts', $result['data'][0]['url'] );
 	}
 
 	public function test_urls_verb_search_drops_the_folded_aggregate_row(): void {
@@ -1948,7 +2028,7 @@ class PerformanceCITest extends TestCase {
 
 		$this->assertSame( 1, $result['totals']['urls'] );
 		$this->assertCount( 1, $result['data'] );
-		$this->assertSame( '/reviews/spring', $result['data'][0]['url'] );
+		$this->assertSame( 'https://example.com/reviews/spring', $result['data'][0]['url'] );
 		// The 613 folded requests must not reach a scoped total.
 		$this->assertSame( 11, $result['totals']['requests'] );
 	}
@@ -2149,7 +2229,7 @@ class PerformanceCITest extends TestCase {
 		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' );
 
 		$row = $result['data'][0] ?? [];
-		$this->assertSame( '/seconds-era', $row['url'] ?? '' );
+		$this->assertSame( 'https://example.com/seconds-era', $row['url'] ?? '' );
 		$this->assertSame( 0.0, (float) ( $row['avg_ms'] ?? -1 ), 'no milliseconds are invented from it' );
 	}
 
@@ -2175,7 +2255,8 @@ class PerformanceCITest extends TestCase {
 
 		$row = ( VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' )['data'][0] ) ?? [];
 
-		$this->assertSame( '/split-3907', $row['url'] ?? '' );
+		// One name per hash: the server filed last names it for both.
+		$this->assertSame( 'https://edge-8823.example/split-3907', $row['url'] ?? '' );
 		$this->assertSame( 5, $row['count'] ?? -1, 'one hash two servers served folds into one row' );
 		$this->assertSame(
 			[],
@@ -2196,7 +2277,8 @@ class PerformanceCITest extends TestCase {
 		);
 		$row = $result['data'][0] ?? [];
 
-		$this->assertSame( '/split-3907', $row['url'] ?? '' );
+		// One name per hash: the server filed last names it for both.
+		$this->assertSame( 'https://edge-8823.example/split-3907', $row['url'] ?? '' );
 		$this->assertSame( 3, $row['count'] ?? -1, 'the scoped sums arrive under NAMES' );
 		$this->assertEqualsWithDelta( 130.0, $row['avg_ms'] ?? -1.0, 1e-6 );
 		$this->assertSame(
@@ -2224,7 +2306,7 @@ class PerformanceCITest extends TestCase {
 		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'urls' );
 
 		$row = $result['data'][0] ?? [];
-		$this->assertSame( '/bool-at-a-count', $row['url'] ?? '' );
+		$this->assertSame( 'https://example.com/bool-at-a-count', $row['url'] ?? '' );
 		$this->assertSame( 2, $row['count'] ?? -1, 'the real count is untouched' );
 		$this->assertSame( 0, $row['count_4xx'] ?? -1, 'and a bool adds nothing to a count' );
 	}
@@ -2291,7 +2373,7 @@ class PerformanceCITest extends TestCase {
 		$this->assertArrayHasKey( 'stats', $result );
 		$this->assertArrayHasKey( 'requests', $result );
 		$this->assertArrayHasKey( 'aggregate_flame', $result );
-		$this->assertSame( '/articles/777', $result['stats']['url'] );
+		$this->assertSame( 'https://example.com/articles/777', $result['stats']['url'] );
 		$this->assertSame( 9, $result['stats']['count'] );
 		// No flame seeded → default empty-tree shape.
 		$this->assertSame( 'aggregate', $result['aggregate_flame']['name'] );
@@ -2367,7 +2449,7 @@ class PerformanceCITest extends TestCase {
 		);
 
 		$this->assertArrayNotHasKey( 'time_series', $result['stats'] );
-		$this->assertSame( '/reviews/first', $result['stats']['url'] );
+		$this->assertSame( 'https://example.com/reviews/first', $result['stats']['url'] );
 		$this->assertSame( 7, $result['stats']['count'] );
 		$this->assertEqualsWithDelta( 131.0, $result['stats']['avg_ms'], 1e-6 );
 	}
@@ -2448,6 +2530,19 @@ class PerformanceCITest extends TestCase {
 		$this->assertIsString( $result );
 		// Named, because the caller's own spelling is what it has to fix.
 		$this->assertStringContainsString( 'invalid breakdown dimension: nosuchdim', $result );
+	}
+
+	public function test_url_breakdown_refuses_the_server_axis(): void {
+		// One URL is one server's, so a server axis would draw a single line.
+		$result = VerbHarness::fire(
+			new Performance_CI_Node(),
+			'performance',
+			'url_breakdown',
+			'e71b04ac9d33 --breakdown=server'
+		);
+
+		$this->assertIsString( $result );
+		$this->assertStringContainsString( 'invalid breakdown dimension: server', $result );
 	}
 
 	public function test_dump_url_verb_includes_category_time_series_when_arg_set(): void {
@@ -3058,7 +3153,7 @@ class PerformanceCITest extends TestCase {
 		// The name comes from the name table and the tree from the aggregate,
 		// one key each; no index row is walked for it.
 		$store = new Stats_Store( 0, 86400 );
-		$store->set_url_names( [ 'cafebabe5678' => 'https://example.test/asked-agg' ] );
+		$store->set_url_names( [ 'example.test' => [ 'cafebabe5678' => 'https://example.test/asked-agg' ] ] );
 		// As the flame builder finalizes it: the count on the root alone.
 		$this->set_url_stats( $store, 'cafebabe5678', [
 			'flame' => [
@@ -3093,7 +3188,7 @@ class PerformanceCITest extends TestCase {
 
 	public function test_ask_resolves_a_category_through_its_url_context(): void {
 		$store = new Stats_Store( 0, 86400 );
-		$store->set_url_names( [ 'cafebabe9012' => '/asked-cat' ] );
+		$store->set_url_names( [ Stats_Store::UNKNOWN_SERVER => [ 'cafebabe9012' => '/asked-cat' ] ] );
 		$this->set_url_stats( $store, 'cafebabe9012', [ 'profiles' => $this->stored_profiles() ] );
 
 		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', [ 'category:render', 'url:cafebabe9012' ] );
@@ -3169,7 +3264,7 @@ class PerformanceCITest extends TestCase {
 
 	public function test_a_span_under_a_url_with_no_aggregate_says_so(): void {
 		$store = new Stats_Store( 0, 86400 );
-		$store->set_url_names( [ 'cafebabe1357' => '/asked-half' ] );
+		$store->set_url_names( [ Stats_Store::UNKNOWN_SERVER => [ 'cafebabe1357' => '/asked-half' ] ] );
 
 		$result = VerbHarness::fire( new Performance_CI_Node(), 'performance', 'ask', [ 'span:wp_loaded', 'url:cafebabe1357' ] );
 
@@ -3212,7 +3307,7 @@ class PerformanceCITest extends TestCase {
 
 		$this->assertIsArray( $result );
 		$this->assertSame( 'url', $result['subject'] );
-		$this->assertSame( '/asked-url', $result['url'] );
+		$this->assertSame( 'https://example.com/asked-url', $result['url'] );
 	}
 
 	public function test_dump_request_verb_merges_flame_data_when_present(): void {
@@ -3605,7 +3700,7 @@ class PerformanceCITest extends TestCase {
 		);
 
 		$this->assertSame( 1, $result['totals']['urls'] );
-		$this->assertSame( '/only-host', $result['data'][0]['url'] );
+		$this->assertSame( 'https://example.com/only-host', $result['data'][0]['url'] );
 	}
 
 	public function test_urls_verb_sorts_ascending(): void {
@@ -3625,8 +3720,8 @@ class PerformanceCITest extends TestCase {
 		);
 
 		// Ascending by count: /b (1) before /a (5).
-		$this->assertSame( '/b', $result['data'][0]['url'] );
-		$this->assertSame( '/a', $result['data'][1]['url'] );
+		$this->assertSame( 'https://example.com/b', $result['data'][0]['url'] );
+		$this->assertSame( 'https://example.com/a', $result['data'][1]['url'] );
 	}
 
 	// ── overview categories flag (string-valued flag) ───────────────────────
@@ -4032,7 +4127,7 @@ class PerformanceCITest extends TestCase {
 		foreach ( [
 			[ Stats_Store::NS_URLSRV . ":{$bucket}", [ $srv => 'example.test' ] ],
 			[ "urls:{$srv}:{$shard}:{$bucket}", [ $hash => self::positional_url_row( [ 'count' => 41, 'path' => '/rebuilt-past-its-cache-life' ] ) ] ],
-			[ Stats_Store::NS_URLMAP . ":{$hash}", [ $url ] ],
+			[ Stats_Store::NS_URLMAP . ":{$hash}", [ 'example.test', '/rebuilt-past-its-cache-life' ] ],
 		] as [ $logical, $data ] ) {
 			$key                       = Stats_Store::entry_key( 0, $logical );
 			$msg                       = Message::new_message();
@@ -4077,10 +4172,10 @@ class PerformanceCITest extends TestCase {
 		$mirror->arguments( [ $dir, '67108864' ] );
 		$mirror->void_warranty();
 		$mirror->with_index( Flame_Builder_Node::format_stats_index_entry( ... ) );
-		// The name is mirrored too, on its own key: a stored row carries the
-		// hash, so a bucket recovered without its names renders anonymous rows.
+		// The name is mirrored too, on its own key: a row carries its path, so
+		// a bucket recovered without its names renders hostless rows.
 		$name_key = Stats_Store::entry_key( 0, Stats_Store::NS_URLMAP . ':' . $hash );
-		foreach ( [ [ $index_key, [ $srv => 'example.test' ] ], [ $key, $rows ], [ $name_key, [ $url ] ] ] as [ $frame_key, $data ] ) {
+		foreach ( [ [ $index_key, [ $srv => 'example.test' ] ], [ $key, $rows ], [ $name_key, [ 'example.test', '/jobs/import-film-times' ] ] ] as [ $frame_key, $data ] ) {
 			$msg                       = Message::new_message();
 			$msg[ Message::TYPE ]      = Message::TM_STRUCT;
 			$msg[ Message::TIMESTAMP ] = \time();
@@ -5391,7 +5486,7 @@ class PerformanceCITest extends TestCase {
 		$spent->setValue( null, \PHP_INT_MAX );
 		$names = ( new \ReflectionMethod( Performance_CI_Node::class, 'url_names' ) )
 			->invoke( null, [ 'ab12cd34ef56' ], self::live_stores() );
-		$this->assertSame( $url, Stats_Store::join_url( $names['ab12cd34ef56'] ?? [ '', '' ] ) );
+		$this->assertSame( $url, $names['ab12cd34ef56']['url'] ?? null );
 		$this->assertSame( \PHP_INT_MAX, $spent->getValue(), 'the walk that follows inherits nothing' );
 
 		// The token sets: an unmirrored key's absence is never remembered, so
