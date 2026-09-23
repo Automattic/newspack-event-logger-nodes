@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.102.1] - 2026-09-23
+
+### Changed
+
+- **The dashboards' streams address replies to their command session.**
+  Each stream presents the tab's command session, so a reply to a command
+  sent before a reconnect still reaches the console, and a reconnect keeps
+  its slot. Requires newspack-nodes 2.65.13, which the loader's floor now
+  names; below it the plugin stays dormant.
+
 ## [0.102.0] - 2026-09-23
 
 ### Added
