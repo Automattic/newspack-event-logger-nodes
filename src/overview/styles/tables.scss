@@ -128,7 +128,8 @@
 
 	.event-logger-table__header,
 	.event-logger-table__row {
-		grid-template-columns: 150px 50px minmax(0, 1fr) 50px 70px 50px;
+		// Time fits `12/22/2026, 12:17:54 PM`, the longest en-US toLocaleString().
+		grid-template-columns: 24ch 50px minmax(0, 1fr) 50px 70px 50px;
 	}
 
 	.event-logger-table__row {
