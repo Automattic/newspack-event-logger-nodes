@@ -23,8 +23,9 @@ The logger defends against these actors:
 
 `read` is the widest role and its surface is the raw log, so how many accounts hold it is the fact that sizes every disclosure below. This was surveyed on 2026-09-23 across the 41 sites that run the logger: the community hub, its 23 spokes and the dev site; the `eln` hub and three test sites; four staging clones; and eight production sites.
 
-- **No site filters `newspack_nodes/capability_map`.** `read` resolves to `newspack_nodes_read` on the 27 sites that have the granular capabilities installed, and to `manage_options` on the other 14.
-- **The capability admits between 1 and 50 accounts a site.** They are administrators, the community sites' `admin` role, the hub user, and on Bangor three `audience_admin` accounts that held `manage_options` when the capabilities were installed.
+- **No site filters `newspack_nodes/capability_map`.** `read` resolves to `newspack_nodes_read` on the 30 sites that have the granular capabilities installed, the three hubs among them, and to `manage_options` on the other 11.
+- **The capability admits between 1 and 50 accounts a site.** They are administrators, the community sites' `admin` role, the hub user, and on Bangor three accounts holding `audience_admin`, a custom role that holds `manage_options`.
+- **The install's role writes are not atomic.** Each grant rewrites the whole `wp_user_roles` option, so a request saving the roles concurrently can erase grants already made. On Bangor the install's last two role writes are missing: `audience_admin` holds `newspack_nodes_read` and `newspack_nodes_tune` but not `newspack_nodes_manage`, and the `newspack_nodes_hub` role does not exist, while the option that switches the capabilities on is set. Running `wp nodes caps install` again restores both.
 - **`allowed_users` narrows that to between 1 and 3 accounts a site.** The list names three operator accounts on 40 sites and one on the last, and the substrate applies it after the capability, at every door `read` opens.
 - **The hubs concentrate the exposure.** A hub's `read` holders see every spoke's lines. Two accounts can use `read` on the community hub, and one on the `eln` hub.
 
